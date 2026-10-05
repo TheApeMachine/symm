@@ -32,12 +32,14 @@ type ResidualSpanResult struct {
 ResidualSpan reproduces the supplied calibration range update.
 */
 type ResidualSpan struct {
-	err error
+	*core.PrimitiveError
 	out ResidualSpanResult
 }
 
-func NewResidualSpan() core.Primitive {
-	return &ResidualSpan{}
+func NewResidualSpan() *ResidualSpan {
+	return &ResidualSpan{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *ResidualSpan) Next(
@@ -45,6 +47,11 @@ func (op *ResidualSpan) Next(
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			input := (*ResidualSpanInput)(arriving)
 			result := ResidualSpanResult{
 				Count:   input.Count,
@@ -90,15 +97,4 @@ func (op *ResidualSpan) Next(
 			}
 		}
 	}
-}
-
-func (op *ResidualSpan) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

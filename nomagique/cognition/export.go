@@ -2,359 +2,311 @@ package cognition
 
 import (
 	"bytes"
-	"cmp"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
-	"slices"
+	"iter"
+	"math"
 	"strings"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-TrieNodeJSON represents one node in the interactive cognitive radix tree.
+Export publishes the dashboard tree for the association trie as JSON text
+under "tree". Region frames are the slash-separated context. The class is
+the leaf. A class whose strength sits above the graded start, the center
+of the unit interval, is the policy choice.
 */
-type TrieNodeJSON struct {
-	ID              string          `json:"id"`
-	TokenPrefix     string          `json:"prefix"`
-	Probability     float64         `json:"probability"`
-	StepProbability float64         `json:"stepProbability,omitempty"`
-	Count           uint64          `json:"count"`
-	Tokens          []string        `json:"tokens,omitempty"`
-	State           string          `json:"state,omitempty"` // EVALUATED | POLICY CHOICE | ESTIMATED
-	Children        []*TrieNodeJSON `json:"children,omitempty"`
+type Export struct {
+	*core.PrimitiveError
+	memory *Associate
 }
 
-/*
-TrieBranchJSON represents one active branch in the radix trie memory.
-*/
-type TrieBranchJSON struct {
-	Hash       string  `json:"hash"`
-	Depth      int     `json:"depth"`
-	Visits     uint64  `json:"visits"`
-	MeanEdge   float64 `json:"meanEdge"`
-	Confidence float64 `json:"confidence"`
-	Policy     string  `json:"policy"`
+func NewExport(memory *Associate) *Export {
+	return &Export{
+		PrimitiveError: core.NewPrimitiveError(),
+		memory:         memory,
+	}
 }
 
-/*
-FeasibleActionJSON represents one candidate action at the evaluated impulse.
-*/
-type FeasibleActionJSON struct {
-	Rank        int     `json:"rank"`
-	Action      string  `json:"action"`
-	TokenPrefix string  `json:"prefix"`
-	Probability float64 `json:"probability"`
-	State       string  `json:"state"`
-}
+func (op *Export) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			if arriving == nil || op.memory == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-/*
-CognitionTreeExport is the wire structure consumed by the learning dashboard.
-*/
-type CognitionTreeExport struct {
-	Root     *TrieNodeJSON        `json:"root"`
-	Branches []TrieBranchJSON     `json:"branches"`
-	Feasible []FeasibleActionJSON `json:"feasible"`
-}
+			adapter := *(**data.Adapter)(arriving)
 
-/*
-TreeExport traverses the immutable radix trie and produces a hierarchical tree
-and active branch roster for UI visualization without synthesizing fake data.
-*/
-func (op *Engine) TreeExport() CognitionTreeExport {
-	state := op.state.Load()
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-	if state == nil || state.root == nil || state.root.Len() == 0 {
-		return CognitionTreeExport{
-			Root: &TrieNodeJSON{
-				ID:          "root",
-				TokenPrefix: "ROOT",
-				Probability: 1.0,
-				State:       "ESTIMATED",
-			},
-			Branches: []TrieBranchJSON{},
-			Feasible: []FeasibleActionJSON{},
-		}
-	}
+			rootTree := op.memory.root.Load()
 
-	rootTree := state.root
-	currentStep := state.step
-	iterator := rootTree.Root().Iterator()
+			if rootTree == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-	type rawCandidate struct {
-		keyBytes    []byte
-		className   string
-		context     []byte
-		probability float64
-		count       uint64
-	}
+			var classes []string
+			var contexts [][]byte
+			var probabilities []float64
+			var counts []uint64
+			var keys [][]byte
+			iterator := rootTree.Root().Iterator()
 
-	var candidates []rawCandidate
+			for key, value, found := iterator.Next(); found; key, value, found = iterator.Next() {
+				if len(key) < 4 || key[0] != 'b' || key[1] != '/' || len(value) != 24 {
+					continue
+				}
 
-	for keyBytes, valBytes, found := iterator.Next(); found; keyBytes, valBytes, found = iterator.Next() {
-		if len(valBytes) != WeightSize {
-			continue
-		}
+				rest := key[2:]
+				slash := bytes.LastIndexByte(rest, '/')
 
-		classBytes, contextBytes, validBasin := parseBasinKey(keyBytes)
+				if slash <= 0 || slash == len(rest)-1 {
+					continue
+				}
 
-		if !validBasin {
-			continue
-		}
+				count := binary.LittleEndian.Uint64(value[0:8])
 
-		weight := decodeWeight(valBytes).effective(currentStep, op.decayFactor)
+				if count == 0 {
+					continue
+				}
 
-		if weight.Count == 0 {
-			continue
-		}
+				classes = append(classes, string(rest[slash+1:]))
+				contexts = append(contexts, append([]byte{}, rest[:slash]...))
+				probabilities = append(probabilities, math.Float64frombits(binary.LittleEndian.Uint64(value[8:16])))
+				counts = append(counts, count)
+				keys = append(keys, append([]byte{}, key...))
+			}
 
-		candidates = append(candidates, rawCandidate{
-			keyBytes:    keyBytes,
-			className:   string(classBytes),
-			context:     append([]byte{}, contextBytes...),
-			probability: weight.Probability,
-			count:       weight.Count,
-		})
-	}
+			root := map[string]any{
+				"id":              "root",
+				"prefix":          "ROOT",
+				"probability":     core.Unit,
+				"stepProbability": core.Unit,
+				"state":           "ESTIMATED",
+			}
+			branches := make([]any, 0)
+			feasible := make([]any, 0)
 
-	byClass := make(map[string][]rawCandidate)
-	classes := make([]string, 0)
+			if len(classes) > 0 {
+				root["state"] = "EVALUATED"
+			}
 
-	for _, cand := range candidates {
-		cls := strings.ToUpper(cand.className)
+			for index := range classes {
+				parts := bytes.Split(contexts[index], []byte{'/'})
+				var frames []string
+				previous := ""
 
-		if len(byClass[cls]) == 0 {
-			classes = append(classes, cls)
-		}
+				for _, part := range parts {
+					if len(part) == 0 {
+						continue
+					}
 
-		byClass[cls] = append(byClass[cls], cand)
-	}
+					frame := string(part)
 
-	for _, cls := range classes {
-		slices.SortFunc(byClass[cls], func(left, right rawCandidate) int {
-			return cmp.Compare(right.count, left.count)
-		})
-	}
+					if part[0] < 32 {
+						var builder strings.Builder
 
-	topLimit := min(len(candidates), 64)
-	topCandidates := make([]rawCandidate, 0, topLimit)
-	candIdx := 0
+						for itemIndex, item := range part {
+							if itemIndex > 0 {
+								builder.WriteByte('_')
+							}
 
-	for len(topCandidates) < topLimit {
-		addedAny := false
+							builder.WriteString(fmt.Sprintf("R%d", item))
+						}
 
-		for _, cls := range classes {
-			list := byClass[cls]
+						frame = builder.String()
+					}
 
-			if candIdx < len(list) {
-				topCandidates = append(topCandidates, list[candIdx])
-				addedAny = true
+					if frame == "" || frame == previous {
+						continue
+					}
 
-				if len(topCandidates) >= topLimit {
-					break
+					previous = frame
+					frames = append(frames, frame)
+				}
+
+				parent := root
+				var path strings.Builder
+				path.WriteString("root")
+				probability := probabilities[index]
+				count := counts[index]
+
+				for _, frame := range frames {
+					path.WriteByte('/')
+					path.WriteString(frame)
+					children, _ := parent["children"].([]any)
+					var found map[string]any
+
+					for _, child := range children {
+						node, _ := child.(map[string]any)
+
+						if node == nil {
+							continue
+						}
+
+						if leaf, _ := node["leaf"].(bool); leaf {
+							continue
+						}
+
+						if node["prefix"] == frame {
+							found = node
+							break
+						}
+					}
+
+					if found == nil {
+						found = map[string]any{
+							"id":              path.String(),
+							"prefix":          frame,
+							"probability":     probability,
+							"stepProbability": probability,
+							"count":           uint64(0),
+							"tokens":          []string{frame},
+							"state":           "EVALUATED",
+						}
+						children = append(children, found)
+						parent["children"] = children
+					}
+
+					found["count"] = found["count"].(uint64) + count
+					current, _ := found["probability"].(float64)
+
+					if probability > current {
+						found["probability"] = probability
+						found["stepProbability"] = probability
+					}
+
+					parent = found
+				}
+
+				actionName := strings.ToUpper(classes[index])
+				path.WriteByte('/')
+				path.WriteString(actionName)
+				policy := "EVALUATED"
+
+				if probability > core.Unit/2 {
+					policy = "POLICY CHOICE"
+				}
+
+				children, _ := parent["children"].([]any)
+				var action map[string]any
+
+				for _, child := range children {
+					node, _ := child.(map[string]any)
+
+					if node == nil {
+						continue
+					}
+
+					if leaf, _ := node["leaf"].(bool); leaf && node["prefix"] == actionName {
+						action = node
+						break
+					}
+				}
+
+				if action == nil {
+					action = map[string]any{
+						"id":              path.String(),
+						"prefix":          actionName,
+						"probability":     probability,
+						"stepProbability": probability,
+						"count":           uint64(0),
+						"tokens":          []string{classes[index]},
+						"state":           policy,
+						"leaf":            true,
+					}
+					children = append(children, action)
+					parent["children"] = children
+				}
+
+				action["count"] = action["count"].(uint64) + count
+				current, _ := action["probability"].(float64)
+
+				if probability >= current {
+					action["probability"] = probability
+					action["stepProbability"] = probability
+					action["state"] = policy
+				}
+
+				branches = append(branches, map[string]any{
+					"hash":       fmt.Sprintf("0x%x:%s", keys[index], classes[index]),
+					"depth":      len(frames) + 1,
+					"visits":     count,
+					"meanEdge":   probability - core.Unit/2,
+					"confidence": probability * 100,
+					"policy":     actionName,
+				})
+				feasible = append(feasible, map[string]any{
+					"action":      classes[index],
+					"prefix":      fmt.Sprintf("ROOT / [%s] -> %s", strings.Join(frames, ", "), classes[index]),
+					"probability": probability,
+					"state":       policy,
+				})
+			}
+
+			for index := range feasible {
+				node, _ := feasible[index].(map[string]any)
+
+				if node == nil {
+					continue
+				}
+
+				node["rank"] = index + 1
+			}
+
+			stack := []map[string]any{root}
+
+			for len(stack) > 0 {
+				node := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				delete(node, "leaf")
+				children, _ := node["children"].([]any)
+
+				for _, child := range children {
+					next, _ := child.(map[string]any)
+
+					if next == nil {
+						continue
+					}
+
+					stack = append(stack, next)
 				}
 			}
-		}
 
-		if !addedAny {
-			break
-		}
+			encoded, err := json.Marshal(map[string]any{
+				"root":     root,
+				"branches": branches,
+				"feasible": feasible,
+			})
 
-		candIdx++
-	}
-
-	rootNode := &TrieNodeJSON{
-		ID:          "root",
-		TokenPrefix: "ROOT",
-		Probability: 1.0,
-		State:       "EVALUATED",
-	}
-
-	type scoredBranch struct {
-		branch   TrieBranchJSON
-		feasible FeasibleActionJSON
-	}
-
-	var collectedBranches []scoredBranch
-
-	for _, cand := range topCandidates {
-		// Training signatures are structural timesteps of LitRegions tokens.
-		regionTokens := regionFrames(cand.context)
-
-		actionName := strings.ToUpper(cand.className)
-		policyState := "EVALUATED"
-
-		if cand.probability > 0.5 {
-			policyState = "POLICY CHOICE"
-		}
-
-		// Path nodes are region frames only. ENTER/EXIT is a dedicated leaf —
-		// never painted onto intermediate region nodes (shared prefixes would
-		// otherwise show green ENTER mid-chain).
-		currNode := rootNode
-		var pathSoFar strings.Builder
-		pathSoFar.WriteString("root")
-
-		for _, regToken := range regionTokens {
-			pathSoFar.WriteString("/")
-			pathSoFar.WriteString(regToken)
-
-			var foundChild *TrieNodeJSON
-
-			for _, child := range currNode.Children {
-				if !isActionLeaf(child) && len(child.Tokens) > 0 && child.Tokens[0] == regToken {
-					foundChild = child
-					break
-				}
+			if err != nil {
+				op.Error(err)
+				return
 			}
 
-			if foundChild == nil {
-				foundChild = &TrieNodeJSON{
-					ID:              pathSoFar.String(),
-					TokenPrefix:     regToken,
-					Probability:     cand.probability,
-					StepProbability: cand.probability,
-					Count:           0,
-					Tokens:          []string{regToken},
-					State:           "EVALUATED",
-				}
-				currNode.Children = append(currNode.Children, foundChild)
+			published := data.NewTextMap()
+			published.Values["tree"] = string(encoded)
+
+			for range adapter.Next(data.NewValue(published)) {
 			}
 
-			foundChild.Count += cand.count
-
-			if cand.probability > foundChild.Probability {
-				foundChild.Probability = cand.probability
-				foundChild.StepProbability = cand.probability
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
 			}
 
-			currNode = foundChild
-		}
-
-		actionID := pathSoFar.String() + "/" + actionName
-		var actionLeaf *TrieNodeJSON
-
-		for _, child := range currNode.Children {
-			if child.TokenPrefix == actionName && isActionLeaf(child) {
-				actionLeaf = child
-				break
+			if !yield(arriving) {
+				return
 			}
 		}
-
-		if actionLeaf == nil {
-			actionLeaf = &TrieNodeJSON{
-				ID:          actionID,
-				TokenPrefix: actionName,
-				Count:       0,
-				Tokens:      []string{cand.className},
-			}
-			currNode.Children = append(currNode.Children, actionLeaf)
-		}
-
-		actionLeaf.Count += cand.count
-
-		if cand.probability >= actionLeaf.Probability {
-			actionLeaf.Probability = cand.probability
-			actionLeaf.StepProbability = cand.probability
-			actionLeaf.State = policyState
-		}
-
-		hash := fmt.Sprintf("0x%x:%s", cand.keyBytes, cand.className)
-		associationBias := cand.probability - 0.5
-
-		collectedBranches = append(collectedBranches, scoredBranch{
-			branch: TrieBranchJSON{
-				Hash:       hash,
-				Depth:      len(regionTokens) + 1,
-				Visits:     cand.count,
-				MeanEdge:   associationBias,
-				Confidence: cand.probability * 100.0,
-				Policy:     actionName,
-			},
-			feasible: FeasibleActionJSON{
-				Action:      cand.className,
-				TokenPrefix: fmt.Sprintf("ROOT / [%s] -> %s", strings.Join(regionTokens, ", "), cand.className),
-				Probability: cand.probability,
-				State:       policyState,
-			},
-		})
-	}
-
-	maxBranches := min(len(collectedBranches), 16)
-	branches := make([]TrieBranchJSON, maxBranches)
-	feasible := make([]FeasibleActionJSON, maxBranches)
-
-	for idx := 0; idx < maxBranches; idx++ {
-		branches[idx] = collectedBranches[idx].branch
-		feasible[idx] = collectedBranches[idx].feasible
-		feasible[idx].Rank = idx + 1
-	}
-
-	return CognitionTreeExport{
-		Root:     rootNode,
-		Branches: branches,
-		Feasible: feasible,
-	}
-}
-
-/*
-regionFrames splits a temporal context (e.g. "R1_R3_R7/R2_R5_R9") by slash into its
-individual timestep tokens. Consecutive identical tokens collapse (change-point only).
-*/
-func regionFrames(context []byte) []string {
-	if len(context) == 0 {
-		return nil
-	}
-
-	var frames []string
-
-	for part := range bytes.SplitSeq(context, []byte("/")) {
-		if len(part) == 0 {
-			continue
-		}
-
-		frame := formatFrameToken(part)
-
-		if len(frame) == 0 {
-			continue
-		}
-
-		if len(frames) == 0 || frames[len(frames)-1] != frame {
-			frames = append(frames, frame)
-		}
-	}
-
-	return frames
-}
-
-func formatFrameToken(part []byte) string {
-	if len(part) == 0 {
-		return ""
-	}
-
-	if part[0] >= 32 {
-		return string(part)
-	}
-
-	var builder strings.Builder
-
-	for index, val := range part {
-		if index > 0 {
-			builder.WriteByte('_')
-		}
-
-		builder.WriteString(fmt.Sprintf("R%d", val))
-	}
-
-	return builder.String()
-}
-
-func isActionLeaf(node *TrieNodeJSON) bool {
-	if node == nil {
-		return false
-	}
-
-	switch strings.ToUpper(node.TokenPrefix) {
-	case "ENTER", "EXIT", "WAIT":
-		return true
-	default:
-		return false
 	}
 }

@@ -1,51 +1,86 @@
-package statistic_test
+package statistic
 
 import (
+	"errors"
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func TestKish(t *testing.T) {
-	Convey("Given equal weights", t, func() {
-		kish := statistic.NewKish()
-		out := tests.CollectSeq[float64](kish.Next(transport.NewValues(1.0, 1.0, 1.0, 1.0).Next(nil)))
+func TestKishNext(t *testing.T) {
+	Convey("Given a Kish primitive", t, func() {
+		op := NewKish()
 
-		Convey("effective sample size equals the count", func() {
-			So(kish.Error(), ShouldBeNil)
-			So(out[len(out)-1], ShouldEqual, 4)
+		Convey("computes effective sample size of weight stream", func() {
+			out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq([]float64{1.0, 1.0, 1.0})))
+
+			So(op.Error(), ShouldBeNil)
+			So(len(out), ShouldEqual, 3)
+			So(out[0], ShouldEqual, 1.0)
+			So(out[1], ShouldEqual, 2.0)
+			So(out[2], ShouldEqual, 3.0)
+
+			// Unequal weights: 2.0, 1.0 -> (2+1)^2 / (4+1) = 9/5 = 1.8
+			fresh := NewKish()
+			unequal := tests.CollectSeq[float64](fresh.Next(tests.SliceToSeq([]float64{2.0, 1.0})))
+			So(unequal[1], ShouldAlmostEqual, 1.8, 1e-9)
 		})
 
-		Convey("maturity follows 1 - 1/N_eff", func() {
-			maturity := statistic.NewKishMaturity()
-			matOut := tests.CollectSeq[float64](maturity.Next(transport.NewValues(out[len(out)-1]).Next(nil)))
-			So(matOut[0], ShouldAlmostEqual, 0.75, 1e-12)
+		Convey("nil arrival records ErrShape", func() {
+			fresh := NewKish()
+			nilSeq := func(yield func(unsafe.Pointer) bool) {
+				yield(nil)
+			}
+			out := tests.CollectSeq[float64](fresh.Next(nilSeq))
 
-			matSingle := tests.CollectSeq[float64](maturity.Next(transport.NewValues(1.0).Next(nil)))
-			So(matSingle[0], ShouldEqual, 0)
-
-			matZero := tests.CollectSeq[float64](maturity.Next(transport.NewValues(0.0).Next(nil)))
-			So(matZero[0], ShouldEqual, 0)
+			So(len(out), ShouldEqual, 0)
+			So(errors.Is(fresh.Error(), core.ErrShape), ShouldBeTrue)
 		})
 
-		Convey("concentrated weights have lower effective support", func() {
-			k := statistic.NewKish()
-			res := tests.CollectSeq[float64](k.Next(transport.NewValues(1.0, 0.0, 0.0, 0.0).Next(nil)))
-			So(res[len(res)-1], ShouldEqual, 1)
+		Convey("handles early consumer termination", func() {
+			fresh := NewKish()
+			in := []float64{1.0, 2.0, 3.0}
+			count := 0
+
+			for range fresh.Next(tests.SliceToSeq(in)) {
+				count++
+				break
+			}
+
+			So(count, ShouldEqual, 1)
+			So(fresh.Error(), ShouldBeNil)
+		})
+	})
+}
+
+func TestKishMaturityNext(t *testing.T) {
+	Convey("Given a KishMaturity primitive", t, func() {
+		op := NewKishMaturity()
+
+		Convey("maps effective sample support to maturity measure", func() {
+			in := []float64{0.5, 1.0, 2.0, 4.0}
+			out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq(in)))
+
+			So(op.Error(), ShouldBeNil)
+			So(len(out), ShouldEqual, 4)
+			So(out[0], ShouldEqual, 0.0)
+			So(out[1], ShouldEqual, 0.0)
+			So(out[2], ShouldAlmostEqual, 0.5, 1e-9)
+			So(out[3], ShouldAlmostEqual, 0.75, 1e-9)
 		})
 
-		Convey("non-uniform weights yield the hand-calculated N_eff and maturity", func() {
-			k := statistic.NewKish()
-			res := tests.CollectSeq[float64](k.Next(transport.NewValues(1.0, 0.5, 0.25).Next(nil)))
-			nEff := res[len(res)-1]
-			So(nEff, ShouldAlmostEqual, 2.3333333333333335, 1e-12)
+		Convey("nil arrival records ErrShape", func() {
+			fresh := NewKishMaturity()
+			nilSeq := func(yield func(unsafe.Pointer) bool) {
+				yield(nil)
+			}
+			out := tests.CollectSeq[float64](fresh.Next(nilSeq))
 
-			maturity := statistic.NewKishMaturity()
-			matOut := tests.CollectSeq[float64](maturity.Next(transport.NewValues(nEff).Next(nil)))
-			So(matOut[0], ShouldAlmostEqual, 0.5714285714285714, 1e-12)
+			So(len(out), ShouldEqual, 0)
+			So(errors.Is(fresh.Error(), core.ErrShape), ShouldBeTrue)
 		})
 	})
 }

@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -52,15 +51,17 @@ design: an intercept column of ones is included only when the model requires
 it. When rank < p the fit is undefined; no regularization is applied.
 */
 type OLS struct {
-	err error
+	*core.PrimitiveError
 	out OLSFit
 }
 
 /*
 NewFitOLS instantiates the ordinary least squares Primitive.
 */
-func NewFitOLS() core.Primitive {
-	return &OLS{}
+func NewFitOLS() *OLS {
+	return &OLS{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 /*
@@ -77,19 +78,6 @@ func (op *OLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *OLS) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
@@ -183,72 +171,4 @@ func fitOLS(x []float64, y []float64, p int) OLSFit {
 		ResidualVariance:    residualVariance,
 		Defined:             true,
 	}
-}
-
-/*
-CoefficientSNRPair carries one coefficient and the variance it must be judged
-against.
-*/
-type CoefficientSNRPair struct {
-	Coefficient float64
-	Variance    float64
-}
-
-/*
-CoefficientSNR owns the primary coefficient SNR, Coefficient² / Variance, as a
-Primitive. It is non-negative and unbounded. It is not probability or
-confidence, and it is undefined (NaN) when the coefficient variance is
-unavailable or zero.
-*/
-type CoefficientSNR struct {
-	err error
-	out float64
-}
-
-/*
-NewCoefficientSNR instantiates the coefficient signal-to-noise Primitive.
-*/
-func NewCoefficientSNR() core.Primitive {
-	return &CoefficientSNR{}
-}
-
-/*
-Next scores every arriving coefficient/variance pair and hands over the SNR.
-*/
-func (op *CoefficientSNR) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			pair := (*CoefficientSNRPair)(arriving)
-			op.out = coefficientSNR(pair.Coefficient, pair.Variance)
-
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
-			}
-		}
-	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *CoefficientSNR) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-/*
-coefficientSNR returns Coefficient² / Variance, undefined (NaN) when the
-coefficient variance is unavailable or zero.
-*/
-func coefficientSNR(coefficient float64, variance float64) float64 {
-	if math.IsNaN(variance) || math.IsInf(variance, 0) || variance <= 0 {
-		return math.NaN()
-	}
-
-	return coefficient * coefficient / variance
 }

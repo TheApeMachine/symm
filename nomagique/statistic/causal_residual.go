@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -29,17 +28,24 @@ type CausalResidualResult struct {
 CausalResidual owns that projection.
 */
 type CausalResidual struct {
-	err error
+	*core.PrimitiveError
 	out CausalResidualResult
 }
 
-func NewCausalResidual() core.Primitive {
-	return &CausalResidual{}
+func NewCausalResidual() *CausalResidual {
+	return &CausalResidual{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *CausalResidual) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			reading := *(*MomentReading)(arriving)
 			result := CausalResidualResult{
 				MomentReading: reading,
@@ -79,14 +85,4 @@ func (op *CausalResidual) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 			}
 		}
 	}
-}
-
-func (op *CausalResidual) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

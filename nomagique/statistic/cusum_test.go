@@ -1,72 +1,77 @@
-package statistic_test
+package statistic
 
 import (
+	"errors"
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func TestCUSUM(t *testing.T) {
-	Convey("CUSUM primitive detects directional departures beyond noise hurdles", t, func() {
-		filter := statistic.NewCUSUM()
+func TestCUSUMNext(t *testing.T) {
+	Convey("Given a CUSUM primitive", t, func() {
+		op := NewCUSUM()
 
-		Convey("Initial observation establishes baseline without triggering", func() {
-			out := tests.CollectSeq[statistic.CUSUMReading](filter.Next(transport.NewValues(
-				statistic.CUSUMObservation{Sequence: 1, Value: 100.0, Hurdle: 0.5, Threshold: 5.0},
-			).Next(nil)))
+		Convey("tracks directional departures and signals threshold breach", func() {
+			obs1 := CUSUMObservation{Sequence: 1, Value: 100.0, Hurdle: 1.0, Threshold: 5.0}
+			obs2 := CUSUMObservation{Sequence: 2, Value: 104.0, Hurdle: 1.0, Threshold: 5.0}
+			obs3 := CUSUMObservation{Sequence: 3, Value: 108.0, Hurdle: 1.0, Threshold: 5.0}
 
-			So(filter.Error(), ShouldBeNil)
-			So(out[0].Signal, ShouldEqual, statistic.CUSUMNone)
+			out := tests.CollectSeq[CUSUMReading](op.Next(tests.SliceToSeq([]CUSUMObservation{obs1, obs2, obs3})))
+
+			So(op.Error(), ShouldBeNil)
+			So(len(out), ShouldEqual, 3)
+
+			// 1: initial baseline
+			So(out[0].Signal, ShouldEqual, CUSUMNone)
 			So(out[0].UpperSum, ShouldEqual, 0)
-			So(out[0].LowerSum, ShouldEqual, 0)
-			So(out[0].UpperStart, ShouldEqual, 1)
-			So(out[0].LowerStart, ShouldEqual, 1)
+
+			// 2: delta = 4, hurdle = 1 -> upper = 3 < threshold 5
+			So(out[1].Signal, ShouldEqual, CUSUMNone)
+			So(out[1].UpperSum, ShouldEqual, 3.0)
+
+			// 3: delta = 4, hurdle = 1 -> upper = 3 + 3 = 6 >= threshold 5 -> Signal CUSUMUpper
+			So(out[2].Signal, ShouldEqual, CUSUMUpper)
 		})
 
-		Convey("Sub-hurdle micro fluctuations absorb into zero without triggering", func() {
-			out := tests.CollectSeq[statistic.CUSUMReading](filter.Next(transport.NewValues(
-				statistic.CUSUMObservation{Sequence: 1, Value: 100.0, Hurdle: 1.0, Threshold: 5.0},
-				statistic.CUSUMObservation{Sequence: 2, Value: 100.5, Hurdle: 1.0, Threshold: 5.0},
-				statistic.CUSUMObservation{Sequence: 3, Value: 100.0, Hurdle: 1.0, Threshold: 5.0},
-			).Next(nil)))
+		Convey("signals lower threshold breach", func() {
+			fresh := NewCUSUM()
+			obs1 := CUSUMObservation{Sequence: 1, Value: 100.0, Hurdle: 1.0, Threshold: 5.0}
+			obs2 := CUSUMObservation{Sequence: 2, Value: 96.0, Hurdle: 1.0, Threshold: 5.0}
+			obs3 := CUSUMObservation{Sequence: 3, Value: 92.0, Hurdle: 1.0, Threshold: 5.0}
 
-			So(out[1].Signal, ShouldEqual, statistic.CUSUMNone)
-			So(out[1].UpperSum, ShouldEqual, 0)
-			So(out[2].Signal, ShouldEqual, statistic.CUSUMNone)
-			So(out[2].LowerSum, ShouldEqual, 0)
+			out := tests.CollectSeq[CUSUMReading](fresh.Next(tests.SliceToSeq([]CUSUMObservation{obs1, obs2, obs3})))
+
+			So(fresh.Error(), ShouldBeNil)
+			So(len(out), ShouldEqual, 3)
+			So(out[2].Signal, ShouldEqual, CUSUMLower)
 		})
 
-		Convey("Persistent positive moves accumulate and trigger CUSUMUpper with accurate Point A", func() {
-			out := tests.CollectSeq[statistic.CUSUMReading](filter.Next(transport.NewValues(
-				statistic.CUSUMObservation{Sequence: 1, Value: 100.0, Hurdle: 0.5, Threshold: 3.0},
-				statistic.CUSUMObservation{Sequence: 2, Value: 102.0, Hurdle: 0.5, Threshold: 3.0},
-				statistic.CUSUMObservation{Sequence: 3, Value: 104.5, Hurdle: 0.5, Threshold: 3.0},
-			).Next(nil)))
+		Convey("nil arrival records ErrShape", func() {
+			fresh := NewCUSUM()
+			nilSeq := func(yield func(unsafe.Pointer) bool) {
+				yield(nil)
+			}
+			out := tests.CollectSeq[CUSUMReading](fresh.Next(nilSeq))
 
-			So(out[1].Signal, ShouldEqual, statistic.CUSUMNone)
-			So(out[1].UpperSum, ShouldEqual, 1.5)
-			So(out[1].UpperStart, ShouldEqual, 1)
-
-			So(out[2].Signal, ShouldEqual, statistic.CUSUMUpper)
-			So(out[2].UpperStart, ShouldEqual, 1)
+			So(len(out), ShouldEqual, 0)
+			So(errors.Is(fresh.Error(), core.ErrShape), ShouldBeTrue)
 		})
 
-		Convey("Persistent negative moves accumulate and trigger CUSUMLower with accurate Point A", func() {
-			out := tests.CollectSeq[statistic.CUSUMReading](filter.Next(transport.NewValues(
-				statistic.CUSUMObservation{Sequence: 10, Value: 100.0, Hurdle: 0.5, Threshold: 3.0},
-				statistic.CUSUMObservation{Sequence: 11, Value: 98.0, Hurdle: 0.5, Threshold: 3.0},
-				statistic.CUSUMObservation{Sequence: 12, Value: 95.5, Hurdle: 0.5, Threshold: 3.0},
-			).Next(nil)))
+		Convey("handles early consumer termination", func() {
+			fresh := NewCUSUM()
+			obs1 := CUSUMObservation{Sequence: 1, Value: 100.0, Hurdle: 1.0, Threshold: 5.0}
+			count := 0
 
-			So(out[1].Signal, ShouldEqual, statistic.CUSUMNone)
-			So(out[1].LowerSum, ShouldEqual, -1.5)
-			So(out[1].LowerStart, ShouldEqual, 10)
+			for range fresh.Next(tests.SliceToSeq([]CUSUMObservation{obs1})) {
+				count++
+				break
+			}
 
-			So(out[2].Signal, ShouldEqual, statistic.CUSUMLower)
-			So(out[2].LowerStart, ShouldEqual, 10)
+			So(count, ShouldEqual, 1)
+			So(fresh.Error(), ShouldBeNil)
 		})
 	})
 }

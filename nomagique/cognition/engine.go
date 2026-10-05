@@ -18,12 +18,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"io"
 	"iter"
 	"math"
-	"math/rand"
 	"sort"
 	"strings"
 	"sync"
@@ -33,9 +31,8 @@ import (
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/probability"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type Action string
@@ -133,28 +130,25 @@ type engineState struct {
 }
 
 type Engine struct {
-	err         atomic.Pointer[engineError]
+	*core.PrimitiveError
 	cfg         Config
-	state       atomic.Pointer[engineState]
-	decayFactor float64
+	state       core.Primitive
 	classCounts sync.Map
 	remReplays  atomic.Uint64
 }
-
-type engineError struct{ err error }
 
 /*
 NewEngine instantiates the cognitive engine Primitive. Unset bounds in the
 configuration fold to the declared defaults; the normalized values are
 computed here and owned by the engine.
 */
-func NewEngine(cfg Config) *Engine {
+func NewEngine(store core.Primitive, cfg Config) *Engine {
 	engine := &Engine{
-		cfg:         cfg.normalised(),
-		decayFactor: cfg.normalised().decayFactor(),
+		PrimitiveError: core.NewPrimitiveError(),
+		cfg:            cfg.normalised(),
+		state:          store,
 	}
 
-	engine.state.Store(&engineState{root: iradix.New[[]byte](), step: 0})
 	return engine
 }
 
@@ -182,37 +176,6 @@ func (op *Engine) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Engine) Error(errs ...error) error {
-	for _, err := range errs {
-
-		if err == nil {
-			continue
-		}
-
-		for {
-			previous := op.err.Load()
-			joined := err
-
-			if previous != nil {
-				joined = errors.Join(previous.err, err)
-			}
-
-			if op.err.CompareAndSwap(previous, &engineError{joined}) {
-				break
-			}
-		}
-	}
-
-	if recorded := op.err.Load(); recorded != nil {
-		return recorded.err
-	}
-
-	return nil
 }
 
 /*
@@ -277,40 +240,6 @@ func (op *Engine) execute(command *Command) (Result, error) {
 	return Result{Tree: op.Root()}, nil
 }
 
-// Root returns the current immutable radix tree.
-func (op *Engine) Root() *iradix.Tree[[]byte] {
-	if op == nil {
-		return nil
-	}
-
-	state := op.state.Load()
-	if state == nil {
-		return nil
-	}
-
-	return state.root
-}
-
-// Step returns the current observation clock step.
-func (op *Engine) Step() uint64 {
-	if op == nil {
-		return 0
-	}
-
-	state := op.state.Load()
-
-	if state == nil {
-		return 0
-	}
-
-	return state.step
-}
-
-// Order returns the longest n-gram of frames the engine stores and matches.
-func (op *Engine) Order() int {
-	return op.cfg.MaxBackoffOrder
-}
-
 // Evaluate classifies a context sequence against the radix trie.
 func (op *Engine) Evaluate(context []byte) (Result, error) {
 	return op.evaluate(context)
@@ -331,233 +260,6 @@ func (op *Engine) Restore(encoded []byte) (Result, error) {
 	op.state.Store(&engineState{root: iradix.New[[]byte](), step: 0})
 	op.classCounts.Clear()
 	return op.restore(encoded)
-}
-
-// Train ingests a sequence of sensory tokens associated with a target class,
-// decomposing it into suffix n-grams up to MaxBackoffOrder with surprisal-modulated plasticity.
-func (op *Engine) Train(sequence []byte, class []byte, feedback float64) (Result, error) {
-	if len(sequence) == 0 {
-		return Result{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[nomagique.cognition.engine] sequence is required for training",
-			nil,
-		))
-	}
-
-	if len(class) == 0 {
-		return Result{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[nomagique.cognition.engine] class is required for training",
-			nil,
-		))
-	}
-
-	evalResult, evalErr := op.evaluate(sequence)
-
-	if evalErr != nil {
-		return Result{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[nomagique.cognition.engine] failed to evaluate training sequence",
-			evalErr,
-		))
-	}
-
-	plasticity := math.Min(1.0, 0.1+(evalResult.Evaluation.Surprisal/4.0))
-	effectiveFeedback := feedback * plasticity
-	var lastResult Result
-	var err error
-
-	if len(sequence) >= 12 {
-		offset := 0
-		var frameOffsets []int
-
-		for offset < len(sequence) {
-			if offset+4 > len(sequence) {
-				frameOffsets = nil
-				break
-			}
-
-			count := binary.BigEndian.Uint32(sequence[offset : offset+4])
-
-			if count == 0 {
-				frameOffsets = nil
-				break
-			}
-
-			frameSize := 4 + int(count)*8
-
-			if offset+frameSize > len(sequence) {
-				frameOffsets = nil
-				break
-			}
-
-			frameOffsets = append(frameOffsets, offset)
-			offset += frameSize
-		}
-
-		if offset == len(sequence) && len(frameOffsets) > 0 {
-			maxOrder := op.cfg.MaxBackoffOrder
-
-			for startIdx := 0; startIdx < len(frameOffsets); startIdx++ {
-				limitIdx := min(len(frameOffsets), startIdx+maxOrder)
-
-				for endIdx := startIdx + 1; endIdx <= limitIdx; endIdx++ {
-					var subContext []byte
-
-					if endIdx < len(frameOffsets) {
-						subContext = sequence[frameOffsets[startIdx]:frameOffsets[endIdx]]
-					}
-
-					if endIdx >= len(frameOffsets) {
-						subContext = sequence[frameOffsets[startIdx]:]
-					}
-
-					lastResult, err = op.observe(Association{
-						Context:  subContext,
-						Class:    class,
-						Feedback: effectiveFeedback,
-						Graded:   true,
-					})
-
-					if err != nil {
-						return Result{}, errnie.Error(errnie.Err(
-							errnie.Validation,
-							"[nomagique.cognition.engine] failed to observe training sequence",
-							err,
-						))
-					}
-				}
-			}
-
-			return lastResult, nil
-		}
-	}
-
-	if len(sequence)%8 == 0 && len(sequence) >= 8 {
-		tokenCount := len(sequence) / 8
-		maxOrder := op.cfg.MaxBackoffOrder
-
-		for startIdx := 0; startIdx < tokenCount; startIdx++ {
-			limitIdx := min(tokenCount, startIdx+maxOrder)
-
-			for endIdx := startIdx + 1; endIdx <= limitIdx; endIdx++ {
-				subContext := sequence[startIdx*8 : endIdx*8]
-				lastResult, err = op.observe(Association{
-					Context:  subContext,
-					Class:    class,
-					Feedback: effectiveFeedback,
-					Graded:   true,
-				})
-
-				if err != nil {
-					return Result{}, err
-				}
-			}
-		}
-
-		return lastResult, nil
-	}
-
-	delim := byte(0)
-	hasDelim := false
-
-	if bytes.IndexByte(sequence, 0) >= 0 {
-		delim = 0
-		hasDelim = true
-	}
-
-	if !hasDelim && bytes.IndexByte(sequence, '/') >= 0 {
-		delim = '/'
-		hasDelim = true
-	}
-
-	if !hasDelim && bytes.IndexByte(sequence, '_') >= 0 {
-		delim = '_'
-		hasDelim = true
-	}
-
-	if hasDelim {
-		var tokenBounds [][]int
-		startOffset := 0
-
-		for currentOffset, charByte := range sequence {
-			if charByte == delim {
-				if currentOffset > startOffset {
-					tokenBounds = append(tokenBounds, []int{startOffset, currentOffset})
-				}
-
-				startOffset = currentOffset + 1
-			}
-		}
-
-		if len(sequence) > startOffset {
-			tokenBounds = append(tokenBounds, []int{startOffset, len(sequence)})
-		}
-
-		if len(tokenBounds) > 0 {
-			maxOrder := op.cfg.MaxBackoffOrder
-
-			for startIdx := 0; startIdx < len(tokenBounds); startIdx++ {
-				limitIdx := min(len(tokenBounds), startIdx+maxOrder)
-
-				for endIdx := startIdx + 1; endIdx <= limitIdx; endIdx++ {
-					subContext := sequence[tokenBounds[startIdx][0]:tokenBounds[endIdx-1][1]]
-					lastResult, err = op.observe(Association{
-						Context:  subContext,
-						Class:    class,
-						Feedback: effectiveFeedback,
-						Graded:   true,
-					})
-
-					if err != nil {
-						return Result{}, errnie.Error(errnie.Err(
-							errnie.Validation,
-							"[nomagique.cognition.engine] failed to observe training sequence",
-							err,
-						))
-					}
-				}
-			}
-
-			return lastResult, nil
-		}
-	}
-
-	lastResult, err = op.observe(Association{
-		Context:  sequence,
-		Class:    class,
-		Feedback: effectiveFeedback,
-		Graded:   true,
-	})
-
-	if err != nil {
-		return Result{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[nomagique.cognition.engine] failed to observe training sequence",
-			err,
-		))
-	}
-
-	_, suffixes := backoffCandidates(sequence, op.cfg.MaxBackoffOrder)
-
-	for _, suffix := range suffixes {
-		lastResult, err = op.observe(Association{
-			Context:  suffix,
-			Class:    class,
-			Feedback: effectiveFeedback,
-			Graded:   true,
-		})
-
-		if err != nil {
-			return Result{}, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[nomagique.cognition.engine] failed to observe training sequence",
-				err,
-			))
-		}
-	}
-
-	return lastResult, nil
 }
 
 // Prune walks the radix trie and removes records whose effective count
@@ -609,86 +311,6 @@ func (op *Engine) Prune(minEffectiveCount float64) int {
 	}
 
 	return prunedTotal
-}
-
-// Dream generates a candidate continuation sequence via temperature-guided lookahead.
-func (op *Engine) Dream(temperature float64, maxLength int) string {
-	if maxLength <= 0 {
-		maxLength = 64
-	}
-
-	root := op.Root()
-	currentSequence := ""
-
-	for hop := 0; hop < maxLength; hop++ {
-		searchPrefix := makeSensoryKey([]byte(currentSequence))
-		iterator := root.Root().Iterator()
-		iterator.SeekPrefix(searchPrefix)
-
-		var candidates []string
-		var probabilities []float64
-
-		for keyBytes, valBytes, ok := iterator.Next(); ok; keyBytes, valBytes, ok = iterator.Next() {
-			if !bytes.HasPrefix(keyBytes, searchPrefix) {
-				break
-			}
-
-			seqSuffix := string(keyBytes[len("s/"):])
-
-			if len(seqSuffix) <= len(currentSequence) {
-				continue
-			}
-
-			weight := decodeWeight(valBytes)
-			candidates = append(candidates, seqSuffix)
-			probabilities = append(probabilities, math.Max(weight.Probability, 1e-4))
-		}
-
-		if len(candidates) == 0 {
-			break
-		}
-
-		if temperature <= 0 {
-			bestIdx := 0
-			bestProb := probabilities[0]
-
-			for candIdx := 1; candIdx < len(probabilities); candIdx++ {
-				if probabilities[candIdx] > bestProb {
-					bestProb = probabilities[candIdx]
-					bestIdx = candIdx
-				}
-			}
-
-			currentSequence = candidates[bestIdx]
-			continue
-		}
-
-		totalScaled := 0.0
-		scaledWeights := make([]float64, len(probabilities))
-
-		for candIdx, probVal := range probabilities {
-			scaled := math.Pow(probVal, 1.0/temperature)
-			scaledWeights[candIdx] = scaled
-			totalScaled += scaled
-		}
-
-		sampleVal := rand.Float64() * totalScaled
-		runningSum := 0.0
-		selectedCandidate := candidates[len(candidates)-1]
-
-		for candIdx, scaled := range scaledWeights {
-			runningSum += scaled
-
-			if sampleVal <= runningSum {
-				selectedCandidate = candidates[candIdx]
-				break
-			}
-		}
-
-		currentSequence = selectedCandidate
-	}
-
-	return currentSequence
 }
 
 // Consolidate executes an offline REM sleep memory consolidation cycle.
@@ -1748,21 +1370,45 @@ func backoffCandidates(context []byte, maxSteps int) (prefixes [][]byte, suffixe
 	return prefixes, suffixes
 }
 
+type argmaxResult struct {
+	Index int
+	Value float64
+}
+
 /*
 argmax reduces densities through the canonical Argmax primitive, preserving
 the winning value's ordinal.
 */
-func argmax(densities []float64) (probability.ArgmaxResult, bool) {
-	reduction := transport.NewEvaluate(probability.NewArgmax())
-	var result probability.ArgmaxResult
-	found := false
-
-	for out := range reduction.Next(transport.NewValues(densities...).Next(nil)) {
-		result = *(*probability.ArgmaxResult)(out)
-		found = true
+func argmax(densities []float64) (argmaxResult, bool) {
+	if len(densities) == 0 {
+		return argmaxResult{}, false
 	}
 
-	return result, found
+	prim := probability.NewArgmax()
+	state := data.NewState(data.NewMap("value", "value"))
+	adapter := data.NewAdapter(nil, state)
+	input := data.NewOutputMap()
+
+	for _, density := range densities {
+		input.Values["value"] = density
+
+		for range adapter.Next(data.NewValue(input)) {
+		}
+
+		data.Read[*data.Adapter](prim.Next(data.NewValue(adapter)))
+	}
+
+	outputMap := data.NewMap("winner_index", "winner_index", "winner_value", "winner_value")
+	var result data.Map[float64]
+
+	for pointer := range adapter.Next(data.NewValue(outputMap)) {
+		result = *(*data.Map[float64])(pointer)
+	}
+
+	return argmaxResult{
+		Index: int(result.Values["winner_index"]),
+		Value: result.Values["winner_value"],
+	}, true
 }
 
 /*
@@ -1770,14 +1416,44 @@ evidenceShare reads one member's normalized share through the canonical
 composition.
 */
 func evidenceShare(densities []float64, index int) (float64, error) {
-	selection := transport.NewEvaluate(equation.NewEvidenceShare(index))
-	var share float64
-
-	for out := range selection.Next(transport.NewOne(unsafe.Pointer(&densities)).Next(nil)) {
-		share = *(*float64)(out)
+	if index < 0 || index >= len(densities) {
+		return 0, core.ErrShape
 	}
 
-	return share, selection.Error()
+	total := 0.0
+
+	for _, val := range densities {
+		total += val
+	}
+
+	if total == 0 {
+		return 0, core.ErrDomain
+	}
+
+	prim := probability.NewNormalize()
+	state := data.NewState(data.NewMap("value", "value", "total", "total"))
+	adapter := data.NewAdapter(nil, state)
+	input := data.NewOutputMap()
+	input.Values["value"] = densities[index]
+	input.Values["total"] = total
+
+	for range adapter.Next(data.NewValue(input)) {
+	}
+
+	data.Read[*data.Adapter](prim.Next(data.NewValue(adapter)))
+
+	if err := prim.Error(); err != nil {
+		return 0, err
+	}
+
+	outputMap := data.NewMap("normalized", "normalized")
+	var result data.Map[float64]
+
+	for pointer := range adapter.Next(data.NewValue(outputMap)) {
+		result = *(*data.Map[float64])(pointer)
+	}
+
+	return result.Values["normalized"], nil
 }
 
 /*
@@ -1785,12 +1461,34 @@ shannonAmbiguity reads the normalized Shannon entropy of the densities
 through the canonical streaming reduction.
 */
 func shannonAmbiguity(densities []float64) (float64, error) {
-	reduction := probability.NewShannonAmbiguity()
-	var ambiguity float64
-
-	for out := range reduction.Next(transport.NewValues(densities...).Next(nil)) {
-		ambiguity = *(*float64)(out)
+	if len(densities) == 0 {
+		return 0, core.ErrDomain
 	}
 
-	return ambiguity, reduction.Error()
+	prim := probability.NewAmbiguity()
+	state := data.NewState(data.NewMap("value", "value"))
+	adapter := data.NewAdapter(nil, state)
+	input := data.NewOutputMap()
+
+	for _, density := range densities {
+		input.Values["value"] = density
+
+		for range adapter.Next(data.NewValue(input)) {
+		}
+
+		data.Read[*data.Adapter](prim.Next(data.NewValue(adapter)))
+	}
+
+	if err := prim.Error(); err != nil {
+		return 0, err
+	}
+
+	outputMap := data.NewMap("ambiguity", "ambiguity")
+	var result data.Map[float64]
+
+	for pointer := range adapter.Next(data.NewValue(outputMap)) {
+		result = *(*data.Map[float64])(pointer)
+	}
+
+	return result.Values["ambiguity"], nil
 }

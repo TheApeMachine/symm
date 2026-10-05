@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -20,19 +19,26 @@ type Weighted struct {
 WeightedMean owns sum(w x) / sum(w).
 */
 type WeightedMean struct {
-	err   error
+	*core.PrimitiveError
 	mass  float64
 	total float64
 	out   float64
 }
 
-func NewWeightedMean() core.Primitive {
-	return &WeightedMean{}
+func NewWeightedMean() *WeightedMean {
+	return &WeightedMean{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *WeightedMean) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			item := *(*Weighted)(arriving)
 			op.mass += item.Weight
 			op.total += item.Weight * item.Value
@@ -50,34 +56,31 @@ func (op *WeightedMean) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 	}
 }
 
-func (op *WeightedMean) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
 /*
 WeightedVariance owns E_w[x²] - E_w[x]².
 */
 type WeightedVariance struct {
-	err    error
+	*core.PrimitiveError
 	mass   float64
 	first  float64
 	second float64
 	out    float64
 }
 
-func NewWeightedVariance() core.Primitive {
-	return &WeightedVariance{}
+func NewWeightedVariance() *WeightedVariance {
+	return &WeightedVariance{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *WeightedVariance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			item := *(*Weighted)(arriving)
 			op.mass += item.Weight
 			op.first += item.Weight * item.Value
@@ -101,14 +104,4 @@ func (op *WeightedVariance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 			}
 		}
 	}
-}
-
-func (op *WeightedVariance) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

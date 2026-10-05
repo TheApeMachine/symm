@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"slices"
@@ -16,13 +15,16 @@ sample quantile. Observations are local to a single Next delivery; the next
 delivery begins an independent reduction.
 */
 type Quantile struct {
-	err error
+	*core.PrimitiveError
 	q   float64
 	out float64
 }
 
-func NewQuantile(q float64) core.Primitive {
-	return &Quantile{q: q}
+func NewQuantile(q float64) *Quantile {
+	return &Quantile{
+		PrimitiveError: core.NewPrimitiveError(),
+		q:              q,
+	}
 }
 
 func (op *Quantile) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -30,16 +32,21 @@ func (op *Quantile) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		var values []float64
 
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			values = append(values, *(*float64)(arriving))
 		}
 
 		if len(values) == 0 {
-			op.err = errors.Join(op.err, core.ErrShape)
+			op.Error(core.ErrShape)
 			return
 		}
 
 		if op.q < 0 || op.q > 1 {
-			op.err = errors.Join(op.err, core.ErrShape)
+			op.Error(core.ErrShape)
 			return
 		}
 
@@ -59,15 +66,4 @@ func (op *Quantile) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			return
 		}
 	}
-}
-
-func (op *Quantile) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

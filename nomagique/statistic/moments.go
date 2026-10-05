@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -79,18 +78,25 @@ func (reading *MomentReading) Summarize(moments Moments) {
 Estimator owns online Welford moment accumulation as a Primitive.
 */
 type Estimator struct {
-	err     error
+	*core.PrimitiveError
 	moments Moments
 	reading MomentReading
 }
 
-func NewEstimator() core.Primitive {
-	return &Estimator{}
+func NewEstimator() *Estimator {
+	return &Estimator{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Estimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			val := *(*float64)(arriving)
 			op.reading = op.moments.Update(val)
 
@@ -99,14 +105,4 @@ func (op *Estimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 		}
 	}
-}
-
-func (op *Estimator) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

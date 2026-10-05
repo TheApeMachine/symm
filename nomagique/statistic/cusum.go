@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -43,7 +42,7 @@ It accumulates directional innovations exceeding a friction/noise hurdle,
 tracking structural departures without arbitrary polling horizons or single-tick hair-triggers.
 */
 type CUSUM struct {
-	err        error
+	*core.PrimitiveError
 	observed   bool
 	previous   float64
 	upper      float64
@@ -53,13 +52,20 @@ type CUSUM struct {
 	out        CUSUMReading
 }
 
-func NewCUSUM() core.Primitive {
-	return &CUSUM{}
+func NewCUSUM() *CUSUM {
+	return &CUSUM{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *CUSUM) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			obs := *(*CUSUMObservation)(arriving)
 
 			if !op.observed {
@@ -132,14 +138,4 @@ func (op *CUSUM) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *CUSUM) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -21,7 +20,7 @@ type StandardizeInput struct {
 Standardize owns (value - center) / scale.
 */
 type Standardize struct {
-	err    error
+	*core.PrimitiveError
 	center float64
 	scale  float64
 	fixed  bool
@@ -33,8 +32,11 @@ NewStandardize constructs a Standardize primitive.
 If center and scale are provided, it centers and scales arriving *float64 values.
 Otherwise, arriving values are *StandardizeInput.
 */
-func NewStandardize(params ...float64) core.Primitive {
-	op := &Standardize{scale: 1}
+func NewStandardize(params ...float64) *Standardize {
+	op := &Standardize{
+		PrimitiveError: core.NewPrimitiveError(),
+		scale:          1,
+	}
 
 	if len(params) >= 1 {
 		op.center = params[0]
@@ -51,6 +53,11 @@ func NewStandardize(params ...float64) core.Primitive {
 func (op *Standardize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			if op.fixed {
 				val := *(*float64)(arriving)
 				op.out = 0
@@ -78,14 +85,4 @@ func (op *Standardize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			}
 		}
 	}
-}
-
-func (op *Standardize) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

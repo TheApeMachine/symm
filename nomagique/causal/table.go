@@ -3,28 +3,61 @@ package causal
 import (
 	"fmt"
 	"iter"
+	"math"
+	"slices"
 	"unsafe"
+
+	"gonum.org/v1/gonum/mat"
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
+type stateLayout struct {
+	input  data.Map[string]
+	output data.Map[float64]
+}
+
+type adapterLayout struct {
+	primitiveError *core.PrimitiveError
+	measurement    *data.Measurement
+	state          *stateLayout
+	values         data.Map[float64]
+}
+
 /*
-Table coordinates causal estimation over observational tables. It delegates
-interventional expectation and counterfactual reasoning to dedicated primitives.
+Table coordinates causal estimation over observational tables.
 */
 type Table struct {
 	*core.PrimitiveError
-	minimum        int
-	linear         bool
-	backdoor       *Backdoor
-	counterfactual *Counterfactual
-	stump          *Stump
-	input          data.Map[string]
-	output         data.Map[float64]
+	minimum      int
+	rows         [][]float64
+	target       int
+	treatment    int
+	features     []int
+	linear       bool
+	intercept    float64
+	coefficients []float64
+	baseline     float64
+	effect       float64
+	stump        *Stump
+	backdoor     *Backdoor
+	abductive    *Counterfactual
+	input        data.Map[string]
+	output       data.Map[float64]
 }
 
-func NewTable(minimum int, evidence ...any) *Table {
+/*
+NewTable fits structural causal models over observational evidence.
+*/
+func NewTable(
+	minimum int,
+	rows [][]float64,
+	target int,
+	treatment int,
+	features []int,
+	linear bool,
+) *Table {
 	output := data.NewOutputMap()
 	output.Values["expectation"] = 0
 	output.Values["counterfactual"] = 0
@@ -32,67 +65,147 @@ func NewTable(minimum int, evidence ...any) *Table {
 	output.Values["precision"] = 0
 	output.Values["defined"] = 0
 
-	op := &Table{
+	prim := &Table{
 		PrimitiveError: core.NewPrimitiveError(),
 		minimum:        minimum,
-		input:          data.NewMap("level", "level"),
-		output:         output,
+		target:         target,
+		treatment:      treatment,
+		linear:         linear,
+		input: data.NewMap(
+			"level", "level",
+		),
+		output: output,
 	}
 
-	if len(evidence) < 5 {
-		return op
-	}
-
-	rows, rowsOK := evidence[0].([][]float64)
-	target, targetOK := evidence[1].(int)
-	treatment, treatmentOK := evidence[2].(int)
-	controls, controlsOK := evidence[3].([]int)
-	linear, linearOK := evidence[4].(bool)
-
-	if !rowsOK || !targetOK || !treatmentOK || !controlsOK || !linearOK {
-		op.Error(core.ErrShape)
-		return op
+	if minimum < 1 {
+		prim.Error(core.ErrDomain)
+		return prim
 	}
 
 	if len(rows) < minimum {
-		op.Error(fmt.Errorf(
-			"causal: %d observational rows available; need %d: %w",
-			len(rows), minimum, core.ErrDomain,
-		))
-		return op
+		prim.Error(core.ErrDomain)
+		return prim
 	}
 
-	op.linear = linear
+	columnCount := len(rows[0])
 
-	if linear {
-		op.backdoor = NewBackdoor(1e-15, rows, target, treatment, controls)
+	if target < 0 || target >= columnCount {
+		prim.Error(core.ErrShape)
+		return prim
+	}
 
-		if err := op.backdoor.Error(); err != nil {
-			op.Error(err)
-			return op
+	if treatment < 0 || treatment >= columnCount {
+		prim.Error(core.ErrShape)
+		return prim
+	}
+
+	for _, row := range rows {
+		if len(row) != columnCount {
+			prim.Error(core.ErrShape)
+			return prim
+		}
+	}
+
+	featureCols := make([]int, 0, len(features)+1)
+	seen := make(map[int]bool, len(features)+1)
+
+	for _, column := range append(slices.Clone(features), treatment) {
+		if column < 0 || column >= columnCount {
+			prim.Error(core.ErrShape)
+			return prim
 		}
 
-		features := append(controls, treatment)
-		op.counterfactual = NewCounterfactual(1e-15, rows, target, treatment, features)
-
-		if err := op.counterfactual.Error(); err != nil {
-			op.Error(err)
-			return op
+		if column == target || seen[column] {
+			continue
 		}
 
-		return op
+		seen[column] = true
+		featureCols = append(featureCols, column)
 	}
 
-	op.stump = NewStump(rows, target, treatment, controls)
-
-	if err := op.stump.Error(); err != nil {
-		op.Error(err)
-		return op
+	if len(featureCols) == 0 {
+		prim.Error(core.ErrDomain)
+		return prim
 	}
 
-	return op
+	observations := make([][]float64, len(rows))
+
+	for rowIndex, row := range rows {
+		observations[rowIndex] = slices.Clone(row)
+	}
+
+	prim.rows = observations
+	prim.features = featureCols
+
+	if !linear {
+		prim.stump = NewStump(observations, target, treatment, features)
+
+		if prim.stump.Error() != nil {
+			prim.Error(prim.stump.Error())
+		}
+
+		return prim
+	}
+
+	design := mat.NewDense(len(observations), len(featureCols)+1, nil)
+	outcome := mat.NewDense(len(observations), 1, nil)
+
+	for rowIndex, row := range observations {
+		design.Set(rowIndex, 0, 1.0)
+
+		for featureIndex, column := range featureCols {
+			design.Set(rowIndex, featureIndex+1, row[column])
+		}
+
+		outcome.Set(rowIndex, 0, row[target])
+	}
+
+	var coefficients mat.Dense
+	err := coefficients.Solve(design, outcome)
+
+	if err != nil {
+		prim.Error(core.ErrDomain)
+		return prim
+	}
+
+	intercept := coefficients.At(0, 0)
+	coeffs := make([]float64, len(featureCols))
+	treatmentEffect := 0.0
+	covariateSum := 0.0
+
+	for featureIndex, column := range featureCols {
+		coeff := coefficients.At(featureIndex+1, 0)
+		coeffs[featureIndex] = coeff
+
+		if column == treatment {
+			treatmentEffect = coeff
+		}
+
+		if column != treatment {
+			colSum := 0.0
+
+			for _, row := range observations {
+				colSum += row[column]
+			}
+
+			meanCol := colSum / float64(len(observations))
+			covariateSum += coeff * meanCol
+		}
+	}
+
+	prim.intercept = intercept
+	prim.coefficients = coeffs
+	prim.baseline = intercept + covariateSum
+	prim.effect = treatmentEffect
+	prim.backdoor = NewBackdoor(1e-15)
+	prim.abductive = NewCounterfactual(1e-15)
+
+	return prim
 }
 
+/*
+Next evaluates interventional expectation or counterfactual queries.
+*/
 func (op *Table) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
@@ -108,71 +221,115 @@ func (op *Table) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			if adapter.Has("actual_0") {
-				if op.counterfactual == nil {
-					op.Error(core.ErrDomain)
-					return
+			if !op.linear {
+				once := func(forward func(unsafe.Pointer) bool) {
+					forward(arriving)
 				}
 
-				for range op.counterfactual.Next(data.NewValue(adapter)) {
+				for out := range op.stump.Next(once) {
+					if !yield(out) {
+						return
+					}
 				}
 
-				if err := op.counterfactual.Error(); err != nil {
+				if err := op.stump.Error(); err != nil {
 					op.Error(err)
-					return
-				}
-
-				for key, value := range op.counterfactual.output.Values {
-					op.output.Values[key] = value
-				}
-
-				if !yield(arriving) {
 					return
 				}
 
 				continue
 			}
 
-			if op.linear {
-				if op.backdoor == nil {
-					op.Error(core.ErrDomain)
-					return
-				}
+			var values data.Map[float64]
 
-				for range op.backdoor.Next(data.NewValue(adapter)) {
-				}
-
-				if err := op.backdoor.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				for key, value := range op.backdoor.output.Values {
-					op.output.Values[key] = value
-				}
-
-				if !yield(arriving) {
-					return
-				}
-
-				continue
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
 			}
 
-			if op.stump == nil {
-				op.Error(core.ErrDomain)
-				return
-			}
-
-			for range op.stump.Next(data.NewValue(adapter)) {
-			}
-
-			if err := op.stump.Error(); err != nil {
+			if err := adapter.Error(); err != nil {
 				op.Error(err)
 				return
 			}
 
-			for key, value := range op.stump.output.Values {
-				op.output.Values[key] = value
+			level, levelOK := values.Values["level"]
+
+			if !levelOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			inspector := (*adapterLayout)(unsafe.Pointer(adapter))
+			hasActual := false
+
+			if inspector != nil && inspector.state != nil {
+				_, hasActual = inspector.state.output.Values["actual_0"]
+			}
+
+			if hasActual {
+				columnCount := len(op.rows[0])
+				actualRow := make([]float64, columnCount)
+
+				for colIndex := 0; colIndex < columnCount; colIndex++ {
+					key := fmt.Sprintf("actual_%d", colIndex)
+					actualVal, ok := inspector.state.output.Values[key]
+
+					if !ok {
+						op.Error(core.ErrShape)
+						return
+					}
+
+					actualRow[colIndex] = actualVal
+				}
+
+				factualPrediction := op.intercept
+				interventionalPrediction := op.intercept
+
+				for featureIndex, column := range op.features {
+					factualVal := actualRow[column]
+					interventionalVal := actualRow[column]
+
+					if column == op.treatment {
+						interventionalVal = level
+					}
+
+					factualPrediction += op.coefficients[featureIndex] * factualVal
+					interventionalPrediction += op.coefficients[featureIndex] * interventionalVal
+				}
+
+				noise := actualRow[op.target] - factualPrediction
+				counterfactual := interventionalPrediction + noise
+				precision := 1.0 / (1.0 + math.Abs(noise))
+
+				op.output.Values["counterfactual"] = counterfactual
+				op.output.Values["noise"] = noise
+				op.output.Values["precision"] = precision
+				op.output.Values["defined"] = 1.0
+
+				for range adapter.Next(data.NewValue(op.output)) {
+				}
+
+				if err := adapter.Error(); err != nil {
+					op.Error(err)
+					return
+				}
+
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
+			expectation := op.baseline + op.effect*level
+			op.output.Values["expectation"] = expectation
+			op.output.Values["defined"] = 1.0
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
 			}
 
 			if !yield(arriving) {

@@ -1,7 +1,6 @@
 package logic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -13,22 +12,28 @@ Or owns one Boolean operation. Configuration supplies the value a run starts
 from. What it hands over is the running disjunction after every arrival.
 */
 type Or struct {
-	err error
+	*core.PrimitiveError
 	acc bool
 	out bool
 }
 
-func NewOr(current bool) core.Primitive {
+func NewOr(current bool) *Or {
 	return &Or{
-		acc: current,
+		PrimitiveError: core.NewPrimitiveError(),
+		acc:            current,
 	}
 }
 
 func (op *Or) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			in := (*bool)(arriving)
-			op.acc = op.acc || *in
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			val := (*bool)(arriving)
+			op.acc = op.acc || *val
 			op.out = op.acc
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -36,14 +41,4 @@ func (op *Or) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Or) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

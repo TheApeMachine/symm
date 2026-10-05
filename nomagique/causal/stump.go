@@ -10,126 +10,127 @@ import (
 )
 
 /*
-Stump estimates interventional effects through an ensemble of decision stumps.
+Stump estimates interventional effects across observational evidence through
+decision stumps.
 */
 type Stump struct {
 	*core.PrimitiveError
+	rows       [][]float64
+	target     int
+	treatment  int
+	features   []int
 	baseline   float64
-	columns    []int
 	thresholds []float64
 	belows     []float64
 	aboves     []float64
-	treatment  int
-	rows       [][]float64
 	input      data.Map[string]
 	output     data.Map[float64]
 }
 
-func NewStump(evidence ...any) *Stump {
+/*
+NewStump standardizes decision stumps over observational rows.
+*/
+func NewStump(
+	rows [][]float64,
+	target int,
+	treatment int,
+	features []int,
+) *Stump {
 	output := data.NewOutputMap()
 	output.Values["expectation"] = 0
 	output.Values["defined"] = 0
 
-	op := &Stump{
+	prim := &Stump{
 		PrimitiveError: core.NewPrimitiveError(),
-		input:          data.NewMap("level", "level"),
-		output:         output,
+		target:         target,
+		treatment:      treatment,
+		input: data.NewMap(
+			"level", "level",
+		),
+		output: output,
 	}
 
-	if len(evidence) < 4 {
-		return op
-	}
-
-	rows, rowsOK := evidence[0].([][]float64)
-	target, targetOK := evidence[1].(int)
-	treatment, treatmentOK := evidence[2].(int)
-	controls, controlsOK := evidence[3].([]int)
-
-	if !rowsOK || !targetOK || !treatmentOK || !controlsOK {
-		op.Error(core.ErrShape)
-		return op
-	}
-
-	if len(rows) == 0 || target < 0 {
-		op.Error(core.ErrDomain)
-		return op
+	if len(rows) == 0 {
+		prim.Error(core.ErrDomain)
+		return prim
 	}
 
 	columnCount := len(rows[0])
 
-	if target >= columnCount || treatment < 0 || treatment >= columnCount {
-		op.Error(core.ErrShape)
-		return op
+	if target < 0 || target >= columnCount {
+		prim.Error(core.ErrShape)
+		return prim
 	}
 
-	features := make([]int, 0, len(controls)+1)
-	seen := make(map[int]bool, len(controls)+1)
+	if treatment < 0 || treatment >= columnCount {
+		prim.Error(core.ErrShape)
+		return prim
+	}
 
-	for _, feature := range append(slices.Clone(controls), treatment) {
-		if feature < 0 || feature >= columnCount {
-			op.Error(core.ErrShape)
-			return op
+	featureCols := make([]int, 0, len(features)+1)
+	seen := make(map[int]bool, len(features)+1)
+
+	for _, column := range append(slices.Clone(features), treatment) {
+		if column < 0 || column >= columnCount {
+			prim.Error(core.ErrShape)
+			return prim
 		}
 
-		if feature == target || seen[feature] {
+		if column == target || seen[column] {
 			continue
 		}
 
-		seen[feature] = true
-		features = append(features, feature)
+		seen[column] = true
+		featureCols = append(featureCols, column)
 	}
 
-	if len(features) == 0 {
-		op.Error(core.ErrDomain)
-		return op
+	if len(featureCols) == 0 {
+		prim.Error(core.ErrDomain)
+		return prim
 	}
 
-	copied := make([][]float64, len(rows))
+	observations := make([][]float64, len(rows))
 
 	for rowIndex, row := range rows {
 		if len(row) != columnCount {
-			op.Error(core.ErrShape)
-			return op
+			prim.Error(core.ErrShape)
+			return prim
 		}
 
-		copied[rowIndex] = slices.Clone(row)
+		observations[rowIndex] = slices.Clone(row)
 	}
 
-	targetTotal := 0.0
+	targetSum := 0.0
 
-	for _, row := range copied {
-		targetTotal += row[target]
+	for _, row := range observations {
+		targetSum += row[target]
 	}
 
-	baseline := targetTotal / float64(len(copied))
-	residuals := make([]float64, len(copied))
+	baseline := targetSum / float64(len(observations))
+	residuals := make([]float64, len(observations))
 
-	for rowIndex, row := range copied {
+	for rowIndex, row := range observations {
 		residuals[rowIndex] = row[target] - baseline
 	}
 
-	op.baseline = baseline
-	op.treatment = treatment
-	op.rows = copied
-	op.columns = make([]int, 0, len(features))
-	op.thresholds = make([]float64, 0, len(features))
-	op.belows = make([]float64, 0, len(features))
-	op.aboves = make([]float64, 0, len(features))
+	thresholds := make([]float64, len(featureCols))
+	belows := make([]float64, len(featureCols))
+	aboves := make([]float64, len(featureCols))
 
-	for _, column := range features {
-		columnTotal := 0.0
+	for featureIndex, column := range featureCols {
+		colSum := 0.0
 
-		for _, row := range copied {
-			columnTotal += row[column]
+		for _, row := range observations {
+			colSum += row[column]
 		}
 
-		threshold := columnTotal / float64(len(copied))
+		threshold := colSum / float64(len(observations))
 		belowSum := 0.0
 		belowCount := 0
 		aboveSum := 0.0
 		aboveCount := 0
 
-		for rowIndex, row := range copied {
+		for rowIndex, row := range observations {
 			if row[column] <= threshold {
 				belowSum += residuals[rowIndex]
 				belowCount++
@@ -140,27 +141,30 @@ func NewStump(evidence ...any) *Stump {
 			aboveCount++
 		}
 
-		belowVal := 0.0
+		thresholds[featureIndex] = threshold
 
 		if belowCount > 0 {
-			belowVal = belowSum / float64(belowCount)
+			belows[featureIndex] = belowSum / float64(belowCount)
 		}
-
-		aboveVal := 0.0
 
 		if aboveCount > 0 {
-			aboveVal = aboveSum / float64(aboveCount)
+			aboves[featureIndex] = aboveSum / float64(aboveCount)
 		}
-
-		op.columns = append(op.columns, column)
-		op.thresholds = append(op.thresholds, threshold)
-		op.belows = append(op.belows, belowVal)
-		op.aboves = append(op.aboves, aboveVal)
 	}
 
-	return op
+	prim.rows = observations
+	prim.features = featureCols
+	prim.baseline = baseline
+	prim.thresholds = thresholds
+	prim.belows = belows
+	prim.aboves = aboves
+
+	return prim
 }
 
+/*
+Next evaluates interventional expectation through decision stumps.
+*/
 func (op *Stump) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
@@ -173,11 +177,6 @@ func (op *Stump) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if adapter == nil {
 				op.Error(core.ErrShape)
-				return
-			}
-
-			if len(op.rows) == 0 {
-				op.Error(core.ErrDomain)
 				return
 			}
 
@@ -199,30 +198,35 @@ func (op *Stump) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			expectation := 0.0
+			if len(op.rows) == 0 {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			total := 0.0
 
 			for _, observation := range op.rows {
 				prediction := op.baseline
 
-				for index, column := range op.columns {
-					value := observation[column]
+				for featureIndex, column := range op.features {
+					val := observation[column]
 
 					if column == op.treatment {
-						value = level
+						val = level
 					}
 
-					if value <= op.thresholds[index] {
-						prediction += op.belows[index]
+					if val <= op.thresholds[featureIndex] {
+						prediction += op.belows[featureIndex]
 						continue
 					}
 
-					prediction += op.aboves[index]
+					prediction += op.aboves[featureIndex]
 				}
 
-				expectation += prediction
+				total += prediction
 			}
 
-			op.output.Values["expectation"] = expectation / float64(len(op.rows))
+			op.output.Values["expectation"] = total / float64(len(op.rows))
 			op.output.Values["defined"] = 1.0
 
 			for range adapter.Next(data.NewValue(op.output)) {

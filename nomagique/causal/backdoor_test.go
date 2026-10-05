@@ -10,22 +10,19 @@ import (
 
 func TestBackdoorNext(t *testing.T) {
 	Convey("Interventional expectation follows the affine structural model", t, func() {
-		rows := [][]float64{
-			{0, 0, 1},
-			{1, 0, 2},
-			{0, 1, 4},
-			{1, 1, 5},
-			{2, 0, 3},
-			{2, 1, 6},
-		}
-		node := causal.NewBackdoor(1e-15, rows, 2, 1, []int{0})
-		So(node.Error(), ShouldBeNil)
+		node := causal.NewBackdoor(1e-15)
 
 		for _, level := range []float64{1, 0, 2, -1} {
-			state := data.NewState(data.NewMap("level", "level"))
+			state := data.NewState(data.NewMap(
+				"level", "level",
+				"baseline", "baseline",
+				"effect", "effect",
+			))
 			adapter := data.NewAdapter(nil, state)
 			input := data.NewOutputMap()
 			input.Values["level"] = level
+			input.Values["baseline"] = 2.0
+			input.Values["effect"] = 3.0
 
 			for range adapter.Next(data.NewValue(input)) {
 			}

@@ -1,7 +1,6 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,18 +11,25 @@ import (
 Energy owns the sum of squares of each arrival.
 */
 type Energy struct {
-	err error
+	*core.PrimitiveError
 	acc float64
 	out float64
 }
 
-func NewEnergy() core.Primitive {
-	return &Energy{}
+func NewEnergy() *Energy {
+	return &Energy{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Energy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			val := *(*float64)(arriving)
 			op.acc += val * val
 			op.out = op.acc
@@ -33,14 +39,4 @@ func (op *Energy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Energy) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

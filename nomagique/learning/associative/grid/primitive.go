@@ -30,12 +30,12 @@ func NewPrimitive(regions, channels int, weights []float64) *Primitive {
 	output := data.NewOutputMap()
 	mapping := make([]string, 0, channels*2)
 
-	for index := 0; index < channels; index++ {
+	for index := range channels {
 		key := fmt.Sprintf("channel_%d", index)
 		mapping = append(mapping, key, key)
 	}
 
-	for index := 0; index < regions; index++ {
+	for index := range regions {
 		output.Values[fmt.Sprintf("token_%d", index)] = 0
 		output.Values[fmt.Sprintf("level_%d", index)] = 0
 		output.Values[fmt.Sprintf("change_%d", index)] = 0
