@@ -1,45 +1,59 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-/*
-Exp owns one field operation. What it hands over is the exponential of each
-arrival, operating in-place on the wire pointer.
-*/
+/* Exp owns one natural-exponential field operation. */
 type Exp struct {
-	err error
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
 func NewExp() core.Primitive {
-	return &Exp{}
+	output := data.NewOutputMap()
+	output.Values["exp"] = 0
+
+	return &Exp{
+		PrimitiveError: core.NewPrimitiveError(),
+		input:          data.NewMap("value", "value"),
+		output:         output,
+	}
 }
 
 func (op *Exp) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			in := (*float64)(arriving)
-			*in = math.Exp(*in)
+			adapter := *(**data.Adapter)(arriving)
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			value, ok := values.Values["value"]
+
+			if !ok {
+				if !yield(arriving) {
+					return
+				}
+				continue
+			}
+
+			op.output.Values["exp"] = math.Exp(value)
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
 
 			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Exp) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
