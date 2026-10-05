@@ -278,6 +278,15 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		arithmetic.NewDivide(),
 
 		data.NewBind(data.NewMap(
+			"first", "gross_notional_rate_divergence",
+			"second", "signed_net_fraction_divergence",
+			"third", "midpoint_return_rate_divergence",
+			"snr", "SNR",
+			"maturity", "Maturity",
+		)),
+		statistic.NewJointSNR3(),
+
+		data.NewBind(data.NewMap(
 			"value", "net_notional_rate",
 			"at", "At",
 			"slope", "net_notional_rate_velocity",
@@ -336,6 +345,8 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				"midpoint_return_rate_zscore", "midpoint_return_rate_zscore",
 				"net_notional_rate_velocity", "net_notional_rate_velocity",
 				"gross_notional_rate_velocity", "gross_notional_rate_velocity",
+				"SNR", "SNR",
+				"Maturity", "Maturity",
 			),
 			map[string]data.Unit{
 				"trade_count":                         data.UnitCount,
@@ -378,6 +389,8 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				"midpoint_return_rate_zscore":         data.UnitZScore,
 				"net_notional_rate_velocity":          data.UnitAcceleration,
 				"gross_notional_rate_velocity":        data.UnitAcceleration,
+				"SNR":                                 data.UnitSNR,
+				"Maturity":                            data.UnitRatio,
 			},
 			map[string]data.Timescale{
 				"trade_count":                         data.TimescaleEpoch,
@@ -420,6 +433,8 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 				"midpoint_return_rate_zscore":         data.TimescaleRollingWindow,
 				"net_notional_rate_velocity":          data.TimescalePerSecond,
 				"gross_notional_rate_velocity":        data.TimescalePerSecond,
+				"SNR":                                 data.TimescaleRollingWindow,
+				"Maturity":                            data.TimescaleRollingWindow,
 			},
 		),
 	)
