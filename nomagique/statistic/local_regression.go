@@ -9,6 +9,19 @@ import (
 )
 
 /*
+LocalRegressionReading remains as the public result vocabulary for callers
+that have not yet migrated their presentation layer. LocalRegression.Next no
+longer puts this struct on the wire.
+*/
+type LocalRegressionReading struct {
+	Slope        float64
+	SlopeDefined bool
+	SNR          float64
+	SNRDefined   bool
+	Count        float64
+}
+
+/*
 LocalRegression is a streaming OLS slope estimator over a numeric event-time
 coordinate.
 */
