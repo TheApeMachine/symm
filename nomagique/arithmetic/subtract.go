@@ -5,33 +5,53 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-/*
-Subtract owns one field operation. What arrives is already a pair: the left
-and right operand as [2]float64. Each arrival maps independently, so the
-primitive holds no state.
-*/
+/* Subtract owns one field subtraction. */
 type Subtract struct {
 	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
-/*
-NewSubtract creates the binary subtraction primitive.
-*/
 func NewSubtract() core.Primitive {
+	output := data.NewOutputMap()
+	output.Values["difference"] = 0
+
 	return &Subtract{
 		PrimitiveError: core.NewPrimitiveError(),
+		input:          data.NewMap("left", "left", "right", "right"),
+		output:         output,
 	}
 }
 
 func (op *Subtract) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			pair := (*[2]float64)(arriving)
-			out := pair[0] - pair[1]
+			adapter := *(**data.Adapter)(arriving)
+			var values data.Map[float64]
 
-			if !yield(unsafe.Pointer(&out)) {
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			left, leftOK := values.Values["left"]
+			right, rightOK := values.Values["right"]
+
+			if !leftOK || !rightOK {
+				if !yield(arriving) {
+					return
+				}
+				continue
+			}
+
+			op.output.Values["difference"] = left - right
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}

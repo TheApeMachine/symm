@@ -1,43 +1,49 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-/*
-Count counts delivered objects, regardless of their payload.
-*/
+/* Count counts delivered Adapter observations. */
 type Count struct {
-	err error
-	out float64
+	*core.PrimitiveError
+	count  float64
+	output data.Map[float64]
 }
 
 func NewCount() core.Primitive {
-	return &Count{}
+	output := data.NewOutputMap()
+	output.Values["count"] = 0
+
+	return &Count{
+		PrimitiveError: core.NewPrimitiveError(),
+		output:         output,
+	}
 }
 
 func (op *Count) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for range in {
-			op.out++
+		for arriving := range in {
+			adapter := *(**data.Adapter)(arriving)
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			op.count++
+			op.output.Values["count"] = op.count
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Count) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

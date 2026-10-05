@@ -5,85 +5,67 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-/*
-PolarizeInput is a signed value and the scale it is normalized against.
-*/
-type PolarizeInput struct {
-	Value float64
-	Scale float64
-}
-
-/*
-PolarizeResult splits a signed value into nonnegative components.
-*/
-type PolarizeResult struct {
-	Alpha           float64
-	Beta            float64
-	AlphaNormalized float64
-	BetaNormalized  float64
-	Scale           float64
-	Value           float64
-}
-
-/*
-Polarize splits a signed value into nonnegative components and normalizes
-against a configured scale.
-*/
+/* Polarize splits one signed coordinate into nonnegative components. */
 type Polarize struct {
-	err error
-	out PolarizeResult
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
 func NewPolarize() core.Primitive {
-	return &Polarize{}
+	output := data.NewOutputMap()
+	output.Values["positive"] = 0
+	output.Values["negative"] = 0
+
+	return &Polarize{
+		PrimitiveError: core.NewPrimitiveError(),
+		input:          data.NewMap("value", "value"),
+		output:         output,
+	}
 }
 
-func (op *Polarize) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *Polarize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := (*PolarizeInput)(arriving)
-			alpha := input.Value
-			beta := -input.Value
+			adapter := *(**data.Adapter)(arriving)
+			var values data.Map[float64]
 
-			if alpha < 0 {
-				alpha = 0
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
 			}
 
-			if beta < 0 {
-				beta = 0
+			value, ok := values.Values["value"]
+
+			if !ok {
+				if !yield(arriving) {
+					return
+				}
+				continue
 			}
 
-			op.out = PolarizeResult{
-				Alpha: alpha,
-				Beta:  beta,
-				Scale: input.Scale,
+			positive := value
+			negative := -value
+
+			if positive < 0 {
+				positive = 0
 			}
 
-			if input.Scale > 0 {
-				op.out.AlphaNormalized = alpha / (alpha + input.Scale)
-				op.out.BetaNormalized = beta / (beta + input.Scale)
+			if negative < 0 {
+				negative = 0
 			}
 
-			op.out.Value = op.out.AlphaNormalized - op.out.BetaNormalized
+			op.output.Values["positive"] = positive
+			op.output.Values["negative"] = negative
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Polarize) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

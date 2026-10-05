@@ -2,6 +2,7 @@ package adaptive
 
 import (
 	"iter"
+	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -70,8 +71,10 @@ func (op *Baseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			value, ok := values.Values["value"]
 
 			if !ok {
-				op.Error(core.ErrNotHeld)
-				return
+				if !yield(arriving) {
+					return
+				}
+				continue
 			}
 
 			reading := op.moments.Update(value)
@@ -103,14 +106,22 @@ func (op *Baseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			op.moments.Shed(shedRatio)
-			center := value
 
-			if reading.Prior.Count > 0 {
-				center = reading.Prior.Mean
+			if reading.Prior.Count == 0 {
+				if !yield(arriving) {
+					return
+				}
+				continue
 			}
 
-			op.output.Values["center"] = center
-			op.output.Values["scale"] = reading.Dispersion
+			scale := 0.0
+
+			if reading.Prior.Count > 1 && reading.Prior.M2 > 0 {
+				scale = math.Sqrt(reading.Prior.M2 / (reading.Prior.Count - 1))
+			}
+
+			op.output.Values["center"] = reading.Prior.Mean
+			op.output.Values["scale"] = scale
 
 			for range adapter.Next(data.NewValue(op.output)) {
 			}

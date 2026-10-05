@@ -2,6 +2,7 @@ package data
 
 import (
 	"iter"
+	"time"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -114,14 +115,28 @@ func (wrapper *Adapter) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 					return
 				}
 
+				if domainKey == "At" {
+					wrapper.values.Values[nativeKey] = float64(wrapper.measurement.At.UnixNano()) / float64(time.Second)
+					continue
+				}
+
+				if domainKey == "From" {
+					wrapper.values.Values[nativeKey] = float64(wrapper.measurement.From.UnixNano()) / float64(time.Second)
+					continue
+				}
+
+				if domainKey == "SeqIdx" {
+					wrapper.values.Values[nativeKey] = float64(wrapper.measurement.SeqIdx)
+					continue
+				}
+
 				entry := wrapper.measurement.Read(domainKey)
 
 				if entry.Err != nil {
-					wrapper.Error(entry.Err)
-					return
+					continue
 				}
 
-				wrapper.values.Values[nativeKey] = entry.Metric.raw
+				wrapper.values.Values[nativeKey] = entry.Metric.Raw
 			}
 
 			if !yield(unsafe.Pointer(&wrapper.values)) {

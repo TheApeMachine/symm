@@ -1,4 +1,4 @@
-package statistic
+package store
 
 import (
 	"iter"
@@ -8,26 +8,27 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
-/* Sum owns one running arithmetic sum. */
-type Sum struct {
+/* Origin retains and republishes the first observed numeric coordinate. */
+type Origin struct {
 	*core.PrimitiveError
-	total  float64
+	seen   bool
+	held   float64
 	input  data.Map[string]
 	output data.Map[float64]
 }
 
-func NewSum() core.Primitive {
+func NewOrigin() core.Primitive {
 	output := data.NewOutputMap()
-	output.Values["sum"] = 0
+	output.Values["origin"] = 0
 
-	return &Sum{
+	return &Origin{
 		PrimitiveError: core.NewPrimitiveError(),
 		input:          data.NewMap("value", "value"),
 		output:         output,
 	}
 }
 
-func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *Origin) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			adapter := *(**data.Adapter)(arriving)
@@ -46,8 +47,12 @@ func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			op.total += value
-			op.output.Values["sum"] = op.total
+			if !op.seen {
+				op.held = value
+				op.seen = true
+			}
+
+			op.output.Values["origin"] = op.held
 
 			for range adapter.Next(data.NewValue(op.output)) {
 			}

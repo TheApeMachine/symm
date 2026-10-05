@@ -1,4 +1,4 @@
-package statistic
+package arithmetic
 
 import (
 	"iter"
@@ -8,26 +8,28 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
-/* Sum owns one running arithmetic sum. */
-type Sum struct {
+/*
+Midpoint owns the arithmetic midpoint of a strictly positive ordered interval.
+An invalid interval leaves the midpoint undefined.
+*/
+type Midpoint struct {
 	*core.PrimitiveError
-	total  float64
 	input  data.Map[string]
 	output data.Map[float64]
 }
 
-func NewSum() core.Primitive {
+func NewMidpoint() core.Primitive {
 	output := data.NewOutputMap()
-	output.Values["sum"] = 0
+	output.Values["midpoint"] = 0
 
-	return &Sum{
+	return &Midpoint{
 		PrimitiveError: core.NewPrimitiveError(),
-		input:          data.NewMap("value", "value"),
+		input:          data.NewMap("lower", "lower", "upper", "upper"),
 		output:         output,
 	}
 }
 
-func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *Midpoint) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			adapter := *(**data.Adapter)(arriving)
@@ -37,17 +39,17 @@ func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				values = *(*data.Map[float64])(pointer)
 			}
 
-			value, ok := values.Values["value"]
+			lower, lowerOK := values.Values["lower"]
+			upper, upperOK := values.Values["upper"]
 
-			if !ok {
+			if !lowerOK || !upperOK || lower <= 0 || upper <= lower {
 				if !yield(arriving) {
 					return
 				}
 				continue
 			}
 
-			op.total += value
-			op.output.Values["sum"] = op.total
+			op.output.Values["midpoint"] = (lower + upper) / 2
 
 			for range adapter.Next(data.NewValue(op.output)) {
 			}
