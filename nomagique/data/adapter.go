@@ -125,6 +125,11 @@ func (wrapper *Adapter) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 					continue
 				}
 
+				if domainKey == "SeqIdx" {
+					wrapper.values.Values[nativeKey] = float64(wrapper.measurement.SeqIdx)
+					continue
+				}
+
 				entry := wrapper.measurement.Read(domainKey)
 
 				if entry.Err != nil {
