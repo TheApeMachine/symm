@@ -45,7 +45,7 @@ collapsed into a signal-level scalar. A measurement carrying an error is
 rejected as a whole.
 */
 func splitMeasurement(
-	measurement *data.Measurement[float64],
+	measurement *data.Measurement,
 	epoch uint64,
 ) ([]Observation, error) {
 	if measurement == nil {
@@ -71,7 +71,7 @@ func splitMeasurement(
 		observations = append(observations, Observation{
 			Coordinate: Coordinate{
 				Symbol:    measurement.Label,
-				Peer: func() string { v, _ := measurement.GetProvenance("peer"); return v }(),
+				Peer:      func() string { v, _ := measurement.GetProvenance("peer"); return v }(),
 				Source:    measurement.Source,
 				Metric:    metricName,
 				Side:      side,

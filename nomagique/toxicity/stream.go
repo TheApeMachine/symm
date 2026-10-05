@@ -43,7 +43,7 @@ func NewTouchDisposition() core.Primitive {
 func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m == nil || m.Err != nil {
 				if !yield(arriving) {
@@ -111,42 +111,42 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 			midpoint := (bidPrice + askPrice) / 2.0
 			totalTouchQty := bidQty + askQty
 
-			m.SetMetric("best_price:bid", data.NewMetric[float64](
+			m.SetMetric("best_price:bid", data.NewMetric(
 				"best_price:bid",
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
 				midpoint,
 				spread,
 			).Write(bidPrice))
-			m.SetMetric("best_price:ask", data.NewMetric[float64](
+			m.SetMetric("best_price:ask", data.NewMetric(
 				"best_price:ask",
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
 				midpoint,
 				spread,
 			).Write(askPrice))
-			m.SetMetric("touch_quantity:bid", data.NewMetric[float64](
+			m.SetMetric("touch_quantity:bid", data.NewMetric(
 				"touch_quantity:bid",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
 				0.0,
 				totalTouchQty,
 			).Write(bidQty))
-			m.SetMetric("touch_quantity:ask", data.NewMetric[float64](
+			m.SetMetric("touch_quantity:ask", data.NewMetric(
 				"touch_quantity:ask",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
 				0.0,
 				totalTouchQty,
 			).Write(askQty))
-			m.SetMetric("unfilled_residual_quantity:bid", data.NewMetric[float64](
+			m.SetMetric("unfilled_residual_quantity:bid", data.NewMetric(
 				"unfilled_residual_quantity:bid",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
 				0.0,
 				bidQty,
 			).Write(bidQty))
-			m.SetMetric("unfilled_residual_quantity:ask", data.NewMetric[float64](
+			m.SetMetric("unfilled_residual_quantity:ask", data.NewMetric(
 				"unfilled_residual_quantity:ask",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
@@ -163,28 +163,28 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				prevSpread := state.prevAsk - state.prevBid
 				prevTotalTouchQty := state.prevBidQty + state.prevAskQty
 
-				m.SetMetric("previous_touch_quantity:bid", data.NewMetric[float64](
+				m.SetMetric("previous_touch_quantity:bid", data.NewMetric(
 					"previous_touch_quantity:bid",
 					data.UnitQuantity,
 					data.TimescaleInstantaneous,
 					0.0,
 					prevTotalTouchQty,
 				).Write(state.prevBidQty))
-				m.SetMetric("previous_touch_quantity:ask", data.NewMetric[float64](
+				m.SetMetric("previous_touch_quantity:ask", data.NewMetric(
 					"previous_touch_quantity:ask",
 					data.UnitQuantity,
 					data.TimescaleInstantaneous,
 					0.0,
 					prevTotalTouchQty,
 				).Write(state.prevAskQty))
-				m.SetMetric("previous_best_price:bid", data.NewMetric[float64](
+				m.SetMetric("previous_best_price:bid", data.NewMetric(
 					"previous_best_price:bid",
 					data.UnitPrice,
 					data.TimescaleInstantaneous,
 					prevMid,
 					prevSpread,
 				).Write(state.prevBid))
-				m.SetMetric("previous_best_price:ask", data.NewMetric[float64](
+				m.SetMetric("previous_best_price:ask", data.NewMetric(
 					"previous_best_price:ask",
 					data.UnitPrice,
 					data.TimescaleInstantaneous,
@@ -202,7 +202,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 
 				if state.prevBid > 0 && bidPrice > 0 {
 					relSpreadBid := prevSpread / state.prevBid
-					m.SetMetric("touch_price_log_change:bid", data.NewMetric[float64](
+					m.SetMetric("touch_price_log_change:bid", data.NewMetric(
 						"touch_price_log_change:bid",
 						data.UnitDimensionless,
 						data.TimescaleInstantaneous,
@@ -213,7 +213,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 
 				if state.prevAsk > 0 && askPrice > 0 {
 					relSpreadAsk := prevSpread / state.prevAsk
-					m.SetMetric("touch_price_log_change:ask", data.NewMetric[float64](
+					m.SetMetric("touch_price_log_change:ask", data.NewMetric(
 						"touch_price_log_change:ask",
 						data.UnitDimensionless,
 						data.TimescaleInstantaneous,
@@ -223,7 +223,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				}
 
 				if bidPrice < state.prevBid {
-					m.SetMetric("retreated_quantity:bid", data.NewMetric[float64](
+					m.SetMetric("retreated_quantity:bid", data.NewMetric(
 						"retreated_quantity:bid",
 						data.UnitQuantity,
 						data.TimescaleInstantaneous,
@@ -233,7 +233,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 					m.WriteNormalized("retreat_fraction:bid", 1.0)
 					if dt > 0 {
 						retreatRateScale := state.prevBidQty / dt
-						m.SetMetric("retreat_rate:bid", data.NewMetric[float64](
+						m.SetMetric("retreat_rate:bid", data.NewMetric(
 							"retreat_rate:bid",
 							data.UnitRate,
 							data.TimescaleInstantaneous,
@@ -246,7 +246,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				if bidPrice == state.prevBid {
 					if bidQty < state.prevBidQty {
 						withdrawn := state.prevBidQty - bidQty
-						m.SetMetric("net_withdrawn_quantity:bid", data.NewMetric[float64](
+						m.SetMetric("net_withdrawn_quantity:bid", data.NewMetric(
 							"net_withdrawn_quantity:bid",
 							data.UnitQuantity,
 							data.TimescaleInstantaneous,
@@ -258,7 +258,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 						}
 						if dt > 0 {
 							withdrawnRateScale := state.prevBidQty / dt
-							m.SetMetric("net_withdrawal_rate:bid", data.NewMetric[float64](
+							m.SetMetric("net_withdrawal_rate:bid", data.NewMetric(
 								"net_withdrawal_rate:bid",
 								data.UnitRate,
 								data.TimescaleInstantaneous,
@@ -270,7 +270,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 
 					if bidQty > state.prevBidQty {
 						replenished := bidQty - state.prevBidQty
-						m.SetMetric("net_replenished_quantity:bid", data.NewMetric[float64](
+						m.SetMetric("net_replenished_quantity:bid", data.NewMetric(
 							"net_replenished_quantity:bid",
 							data.UnitQuantity,
 							data.TimescaleInstantaneous,
@@ -282,7 +282,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 						}
 						if dt > 0 {
 							replenishRateScale := state.prevBidQty / dt
-							m.SetMetric("net_replenishment_rate:bid", data.NewMetric[float64](
+							m.SetMetric("net_replenishment_rate:bid", data.NewMetric(
 								"net_replenishment_rate:bid",
 								data.UnitRate,
 								data.TimescaleInstantaneous,
@@ -294,7 +294,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				}
 
 				if askPrice > state.prevAsk {
-					m.SetMetric("retreated_quantity:ask", data.NewMetric[float64](
+					m.SetMetric("retreated_quantity:ask", data.NewMetric(
 						"retreated_quantity:ask",
 						data.UnitQuantity,
 						data.TimescaleInstantaneous,
@@ -304,7 +304,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 					m.WriteNormalized("retreat_fraction:ask", 1.0)
 					if dt > 0 {
 						retreatRateScale := state.prevAskQty / dt
-						m.SetMetric("retreat_rate:ask", data.NewMetric[float64](
+						m.SetMetric("retreat_rate:ask", data.NewMetric(
 							"retreat_rate:ask",
 							data.UnitRate,
 							data.TimescaleInstantaneous,
@@ -317,7 +317,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				if askPrice == state.prevAsk {
 					if askQty < state.prevAskQty {
 						withdrawn := state.prevAskQty - askQty
-						m.SetMetric("net_withdrawn_quantity:ask", data.NewMetric[float64](
+						m.SetMetric("net_withdrawn_quantity:ask", data.NewMetric(
 							"net_withdrawn_quantity:ask",
 							data.UnitQuantity,
 							data.TimescaleInstantaneous,
@@ -329,7 +329,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 						}
 						if dt > 0 {
 							withdrawnRateScale := state.prevAskQty / dt
-							m.SetMetric("net_withdrawal_rate:ask", data.NewMetric[float64](
+							m.SetMetric("net_withdrawal_rate:ask", data.NewMetric(
 								"net_withdrawal_rate:ask",
 								data.UnitRate,
 								data.TimescaleInstantaneous,
@@ -341,7 +341,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 
 					if askQty > state.prevAskQty {
 						replenished := askQty - state.prevAskQty
-						m.SetMetric("net_replenished_quantity:ask", data.NewMetric[float64](
+						m.SetMetric("net_replenished_quantity:ask", data.NewMetric(
 							"net_replenished_quantity:ask",
 							data.UnitQuantity,
 							data.TimescaleInstantaneous,
@@ -353,7 +353,7 @@ func (op *TouchDisposition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 						}
 						if dt > 0 {
 							replenishRateScale := state.prevAskQty / dt
-							m.SetMetric("net_replenishment_rate:ask", data.NewMetric[float64](
+							m.SetMetric("net_replenishment_rate:ask", data.NewMetric(
 								"net_replenishment_rate:ask",
 								data.UnitRate,
 								data.TimescaleInstantaneous,
@@ -419,7 +419,7 @@ func NewTradeMatching() core.Primitive {
 func (op *TradeMatching) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m == nil || m.Err != nil {
 				if !yield(arriving) {
@@ -518,49 +518,49 @@ func (op *TradeMatching) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			state.prevTime = m.At
 			state.hasPrevTime = true
 
-			m.SetMetric("bracket_trade_quantity", data.NewMetric[float64](
+			m.SetMetric("bracket_trade_quantity", data.NewMetric(
 				"bracket_trade_quantity",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
 				0.0,
 				state.bracketQty,
 			).Write(state.bracketQty))
-			m.SetMetric("matched_touch_trade_quantity:bid", data.NewMetric[float64](
+			m.SetMetric("matched_touch_trade_quantity:bid", data.NewMetric(
 				"matched_touch_trade_quantity:bid",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
 				0.0,
 				state.bracketQty,
 			).Write(state.matchedBidQty))
-			m.SetMetric("matched_touch_trade_quantity:ask", data.NewMetric[float64](
+			m.SetMetric("matched_touch_trade_quantity:ask", data.NewMetric(
 				"matched_touch_trade_quantity:ask",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
 				0.0,
 				state.bracketQty,
 			).Write(state.matchedAskQty))
-			m.SetMetric("touch_fill_quantity:bid", data.NewMetric[float64](
+			m.SetMetric("touch_fill_quantity:bid", data.NewMetric(
 				"touch_fill_quantity:bid",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
 				0.0,
 				bidQty,
 			).Write(state.touchFillBidQty))
-			m.SetMetric("touch_fill_quantity:ask", data.NewMetric[float64](
+			m.SetMetric("touch_fill_quantity:ask", data.NewMetric(
 				"touch_fill_quantity:ask",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
 				0.0,
 				askQty,
 			).Write(state.touchFillAskQty))
-			m.SetMetric("touch_fill_fraction:bid", data.NewMetric[float64](
+			m.SetMetric("touch_fill_fraction:bid", data.NewMetric(
 				"touch_fill_fraction:bid",
 				data.UnitDimensionless,
 				data.TimescaleInstantaneous,
 				0.5,
 				0.5,
 			).Write(bidFillFrac))
-			m.SetMetric("touch_fill_fraction:ask", data.NewMetric[float64](
+			m.SetMetric("touch_fill_fraction:ask", data.NewMetric(
 				"touch_fill_fraction:ask",
 				data.UnitDimensionless,
 				data.TimescaleInstantaneous,
@@ -569,14 +569,14 @@ func (op *TradeMatching) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			).Write(askFillFrac))
 
 			if hasRate && dt > 0 {
-				m.SetMetric("touch_fill_rate:bid", data.NewMetric[float64](
+				m.SetMetric("touch_fill_rate:bid", data.NewMetric(
 					"touch_fill_rate:bid",
 					data.UnitRate,
 					data.TimescaleInstantaneous,
 					0.0,
 					bidQty/dt,
 				).Write(bidRate))
-				m.SetMetric("touch_fill_rate:ask", data.NewMetric[float64](
+				m.SetMetric("touch_fill_rate:ask", data.NewMetric(
 					"touch_fill_rate:ask",
 					data.UnitRate,
 					data.TimescaleInstantaneous,

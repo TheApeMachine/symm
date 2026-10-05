@@ -13,7 +13,7 @@ from its owned arena, computes its owned facts, finalizes, and returns it.
 The returned Measurement is WORM forever.
 */
 type Node interface {
-	Step(prior *data.Measurement[float64]) *data.Measurement[float64]
+	Step(prior *data.Measurement) *data.Measurement
 }
 
 /*
@@ -39,7 +39,7 @@ type Consumer struct {
 	node      Node
 	source    string
 	arena     *data.ArenaOwner
-	published []*data.Measurement[float64]
+	published []*data.Measurement
 	mask      int64
 	capacity  int
 	tees      []Tee
@@ -53,7 +53,7 @@ func NewConsumer(
 ) *Consumer {
 	consumer := &Consumer{
 		node:      node,
-		published: make([]*data.Measurement[float64], capacity),
+		published: make([]*data.Measurement, capacity),
 		mask:      mask,
 		capacity:  capacity,
 		tees:      tees,
@@ -78,7 +78,7 @@ func NewConsumer(
 	return consumer
 }
 
-func (consumer *Consumer) Step(prior *data.Measurement[float64], seq int64) *data.Measurement[float64] {
+func (consumer *Consumer) Step(prior *data.Measurement, seq int64) *data.Measurement {
 	slot := seq & consumer.mask
 
 	if consumer.arena != nil {
@@ -127,7 +127,7 @@ func (consumer *Consumer) Step(prior *data.Measurement[float64], seq int64) *dat
 
 // Published returns this consumer's WORM output for the given sequence,
 // or nil if the sequence has not been published or the producer returned nil.
-func (consumer *Consumer) Published(sequence int64) *data.Measurement[float64] {
+func (consumer *Consumer) Published(sequence int64) *data.Measurement {
 	return consumer.published[sequence&consumer.mask]
 }
 

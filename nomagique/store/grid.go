@@ -7,9 +7,11 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
+	"golang.design/x/lockfree/lf"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -20,50 +22,146 @@ const (
 
 	// The learned partition is laid out as a 5x4 display grid. The layout is
 	// deliberately separate from partition learning: graph structure decides
-	// membership, these constants only decide where the 20 learned regions are
-	// drawn.
-	GridBinsX      = 5
-	GridBinsY      = 4
-	TotalGridCells = GridBinsX * GridBinsY
-	TotalGridEdges = TotalGridCells * (TotalGridCells - 1) / 2
+	// which metric channel belongs to which region, and display layout decides
+	// where regions are drawn on screen.
+	DisplayColumns = 5
+	DisplayRows    = 4
 
-	TargetRegionCount = TotalGridCells
-	MinRegionSize     = 2
+	// TargetRegionCount defines the nominal number of balanced clusters.
+	TargetRegionCount = DisplayColumns * DisplayRows
 
-	// Pairwise correlation is shrunk toward zero when only a few co-observations
-	// exist. With 8 pseudo-observations, a pair seen 8 times contributes at
-	// half strength and a pair seen 40 times contributes at 5/6 strength.
-	CorrelationShrinkage = 8.0
+	// MinRegionSize prevents singletons or tiny residual regions. If the metric
+	// universe is smaller than TargetRegionCount*MinRegionSize, partition count
+	// shrinks adaptively so every region has genuine support.
+	MinRegionSize = 4
 
-	// Kept for source compatibility with the previous Grid API. Settlement is
-	// now explicit graph partitioning rather than physical-position convergence.
-	ConvergenceTolerance = 1e-3
-	ConvergenceStreak    = 5
+	// CorrelationShrinkage dampens low-observation edge confidence toward zero.
+	CorrelationShrinkage = 32.0
+
+	// ConvergenceStreak defines the number of consecutive passes with identical
+	// metric discovery and region assignments required to consider the grid converged.
+	ConvergenceStreak = 5
 )
 
 /*
-Cell is one learned metric channel.
-
-Key is identity-independent of map iteration order and is built from
-(symbol, source, metric-name). Region is assigned only by Settle. X/Y are the
-center of the region's display cell in [-1, 1] x [-1, 1].
+PairStats stores the cross-metric statistical moments in a packed symmetric format.
+Sized to 64 bytes to align with CPU cache lines without pointer indirection.
 */
-type Cell struct {
-	ID          uint32  `json:"id"`
-	Key         string  `json:"key"`
-	X           float64 `json:"x"`
-	Y           float64 `json:"y"`
-	Region      uint8   `json:"region"`
-	Last        float64 `json:"last"`
-	Visits      int64   `json:"visits"`
-	Initialized bool    `json:"initialized"`
+type PairStats struct {
+	Same     int32
+	Opposite int32
+	Total    int32
+	_        int32
+	Weight   float64
+	SumX     float64
+	SumY     float64
+	SumXX    float64
+	SumYY    float64
+	SumXY    float64
+}
+
+func (pair *PairStats) update(leftVal, rightVal, weight float64) {
+	if weight <= 0 || !finite(weight) || !finite(leftVal) || !finite(rightVal) {
+		return
+	}
+
+	pair.Total++
+
+	product := leftVal * rightVal
+
+	if product > 0 {
+		pair.Same++
+	}
+
+	if product < 0 {
+		pair.Opposite++
+	}
+
+	pair.Weight += weight
+	pair.SumX += weight * leftVal
+	pair.SumY += weight * rightVal
+	pair.SumXX += weight * leftVal * leftVal
+	pair.SumYY += weight * rightVal * rightVal
+	pair.SumXY += weight * leftVal * rightVal
+}
+
+func (pair *PairStats) correlation() (float64, bool) {
+	if pair == nil || pair.Weight <= 0 {
+		return 0, false
+	}
+
+	w := pair.Weight
+	cov := w*pair.SumXY - pair.SumX*pair.SumY
+	varX := w*pair.SumXX - pair.SumX*pair.SumX
+	varY := w*pair.SumYY - pair.SumY*pair.SumY
+
+	if varX < 0 && varX > -1e-12 {
+		varX = 0
+	}
+
+	if varY < 0 && varY > -1e-12 {
+		varY = 0
+	}
+
+	if varX <= 0 || varY <= 0 {
+		return 0, false
+	}
+
+	corr := cov / math.Sqrt(varX*varY)
+
+	if !finite(corr) {
+		return 0, false
+	}
+
+	return clamp(corr, -1, 1), true
+}
+
+func (pair *PairStats) directionalAgreement() float64 {
+	if pair == nil || pair.Total == 0 {
+		return 0
+	}
+
+	return float64(pair.Same-pair.Opposite) / float64(pair.Total)
+}
+
+func (pair *PairStats) affinity() float64 {
+	if pair == nil {
+		return 0
+	}
+
+	strength := 0.0
+	evidence := pair.Weight
+
+	if corr, ok := pair.correlation(); ok {
+		strength = corr
+	}
+
+	if _, ok := pair.correlation(); !ok {
+		strength = pair.directionalAgreement()
+
+		if evidence <= 0 {
+			evidence = float64(pair.Total)
+		}
+	}
+
+	if strength <= 0 || evidence <= 0 {
+		return 0
+	}
+
+	reliability := evidence / (evidence + CorrelationShrinkage)
+	return strength * reliability
+}
+
+func symIdx(left, right int) int {
+	if left > right {
+		left, right = right, left
+	}
+
+	return right*(right+1)/2 + left
 }
 
 /*
-Relation stores sufficient statistics for a weighted Pearson correlation
-between two metric deformations. Same/Opposite/Total are retained for
-compatibility and diagnostics; partitioning uses the correlation when it is
-well-defined and falls back to directional agreement otherwise.
+Relation is maintained for snapshot serialization compatibility.
 */
 type Relation struct {
 	Same     int64 `json:"same"`
@@ -78,94 +176,36 @@ type Relation struct {
 	SumXY  float64 `json:"sum_xy,omitempty"`
 }
 
-func (relation *Relation) update(x, y, weight float64) {
-	if relation == nil || weight <= 0 || !finite(x) || !finite(y) || !finite(weight) {
+func (relation *Relation) update(leftVal, rightVal, weight float64) {
+	if relation == nil || weight <= 0 || !finite(leftVal) || !finite(rightVal) || !finite(weight) {
 		return
 	}
 
 	relation.Total++
-	if x*y > 0 {
+
+	product := leftVal * rightVal
+
+	if product > 0 {
 		relation.Same++
-	} else if x*y < 0 {
+	}
+
+	if product < 0 {
 		relation.Opposite++
 	}
 
 	relation.Weight += weight
-	relation.SumX += weight * x
-	relation.SumY += weight * y
-	relation.SumXX += weight * x * x
-	relation.SumYY += weight * y * y
-	relation.SumXY += weight * x * y
-}
-
-func (relation *Relation) correlation() (float64, bool) {
-	if relation == nil || relation.Weight <= 0 {
-		return 0, false
-	}
-
-	w := relation.Weight
-	cov := w*relation.SumXY - relation.SumX*relation.SumY
-	varX := w*relation.SumXX - relation.SumX*relation.SumX
-	varY := w*relation.SumYY - relation.SumY*relation.SumY
-
-	// Roundoff can produce tiny negative variances around zero.
-	if varX < 0 && varX > -1e-12 {
-		varX = 0
-	}
-	if varY < 0 && varY > -1e-12 {
-		varY = 0
-	}
-	if varX <= 0 || varY <= 0 {
-		return 0, false
-	}
-
-	corr := cov / math.Sqrt(varX*varY)
-	if !finite(corr) {
-		return 0, false
-	}
-
-	return clamp(corr, -1, 1), true
-}
-
-func (relation *Relation) directionalAgreement() float64 {
-	if relation == nil || relation.Total == 0 {
-		return 0
-	}
-	return float64(relation.Same-relation.Opposite) / float64(relation.Total)
-}
-
-func (relation *Relation) affinity() float64 {
-	if relation == nil {
-		return 0
-	}
-
-	strength := 0.0
-	evidence := relation.Weight
-
-	if corr, ok := relation.correlation(); ok {
-		strength = corr
-	} else {
-		strength = relation.directionalAgreement()
-		if evidence <= 0 {
-			evidence = float64(relation.Total)
-		}
-	}
-
-	// Anti-correlated metrics are deliberately not joined by a positive edge.
-	// The graph partitioner therefore keeps "moves together" as the region
-	// semantics rather than mixing a mode with its inverse.
-	if strength <= 0 || evidence <= 0 {
-		return 0
-	}
-
-	reliability := evidence / (evidence + CorrelationShrinkage)
-	return strength * reliability
+	relation.SumX += weight * leftVal
+	relation.SumY += weight * rightVal
+	relation.SumXX += weight * leftVal * leftVal
+	relation.SumYY += weight * rightVal * rightVal
+	relation.SumXY += weight * leftVal * rightVal
 }
 
 func pairKey(leftID, rightID uint32) uint64 {
 	if leftID < rightID {
 		return (uint64(leftID) << 32) | uint64(rightID)
 	}
+
 	return (uint64(rightID) << 32) | uint64(leftID)
 }
 
@@ -174,17 +214,23 @@ func pairIDs(key uint64) (uint32, uint32) {
 }
 
 /*
-RegionScore is the ranked activation of one learned region for one evaluation
-pass. Score is the mean damped activity of the unique metric channels from
-that pass that landed in the region, so five supplied metrics do not beat two
-supplied metrics merely because there are more of them.
+Cell is one learned vertex in the metric-affinity graph.
 */
-type RegionScore struct {
-	Region       uint8   `json:"region"`
-	Score        float64 `json:"score"`
-	Contributors int     `json:"contributors"`
-	Members      int     `json:"members"`
-	Coverage     float64 `json:"coverage"`
+type Cell struct {
+	ID          uint32  `json:"id"`
+	Key         string  `json:"key"`
+	Region      uint8   `json:"region"`
+	X           float64 `json:"x"`
+	Y           float64 `json:"y"`
+	Visits      uint64  `json:"visits"`
+	Last        float64 `json:"last"`
+	Initialized bool    `json:"initialized"`
+}
+
+type metricArrival struct {
+	id      uint32
+	value   float64
+	quality float64
 }
 
 type pendingSample struct {
@@ -198,6 +244,7 @@ func (sample *pendingSample) add(value, quality float64) {
 	if sample == nil || quality <= 0 || !finite(value) || !finite(quality) {
 		return
 	}
+
 	sample.WeightedValue += value * quality
 	sample.QualityWeight += quality
 	sample.QualitySum += quality
@@ -208,36 +255,27 @@ func (sample pendingSample) value() (float64, float64, bool) {
 	if sample.QualityWeight <= 0 || sample.Count <= 0 {
 		return 0, 0, false
 	}
+
 	value := sample.WeightedValue / sample.QualityWeight
 	quality := clamp(sample.QualitySum/float64(sample.Count), 0, 1)
 	return value, quality, finite(value)
 }
 
 /*
-Grid learns a weighted metric-affinity graph and partitions it into roughly 20
-balanced regions.
-
-Learning:
-  - each metric channel is a vertex;
-  - each co-observed pair gets a weighted Pearson correlation edge over metric
-    deformation;
-  - Settle performs recursively balanced spectral bisection, then exact-size
-    swap refinement that increases within-region positive affinity.
-
-Evaluation:
-  - all supplied Measurements form one pass;
-  - one Maturity/SNR attenuation is computed per Measurement and applied to
-    every metric owned by that Measurement;
-  - region activity is a mean, never a sum, so region comparison is not biased
-    by how many supplied metrics happen to land there.
+Grid learns a vectorized metric-affinity graph using contiguous packed symmetric matrices
+and partitions it into balanced regions with zero map locks for streaming evaluation.
 */
 type Grid struct {
-	mu sync.RWMutex
+	updateMu     sync.Mutex
+	settled      atomic.Bool
+	observations atomic.Int64
+	cellsLF      *lf.OrderedMap[string, *Cell]
+	idToCellLF   atomic.Pointer[[]*Cell]
 
 	Settled       bool                 `json:"settled"`
 	Observations  int64                `json:"observations"`
 	Cells         map[string]*Cell     `json:"cells"`
-	Relations     map[uint64]*Relation `json:"relations"`
+	Relations     map[uint64]*Relation `json:"relations,omitempty"`
 	RegionMembers map[uint8]int        `json:"region_members"`
 
 	cellIDs  map[string]uint32
@@ -245,24 +283,50 @@ type Grid struct {
 	prevRaw  map[string]float64
 	dirty    bool
 
-	// When historical measurements are streamed one-at-a-time with the same
-	// non-zero Tick, hold their metric samples until the next Tick so they are
-	// learned as one cross-measurement pass. Explicit multi-measurement Update
-	// calls are already a complete pass and are committed immediately.
-	pendingTick int64
-	pending     map[uint32]pendingSample
+	pairs    []PairStats
+	capacity int
+
+	pendingTick    int64
+	pending        map[uint32]pendingSample
+	stablePasses   int
+	prevCellCount  int
+	prevPartitions map[string]uint8
+}
+
+func stringLess(a, b string) bool {
+	return a < b
 }
 
 func NewGrid() *Grid {
-	return &Grid{
-		Cells:         make(map[string]*Cell),
-		Relations:     make(map[uint64]*Relation),
-		RegionMembers: make(map[uint8]int),
-		cellIDs:       make(map[string]uint32),
-		idToCell:      make([]*Cell, 0, 512),
-		prevRaw:       make(map[string]float64),
-		pending:       make(map[uint32]pendingSample),
+	cellsLF := lf.NewOrderedMap[string, *Cell](stringLess)
+	idToCell := make([]*Cell, 0)
+
+	grid := &Grid{
+		cellsLF:        cellsLF,
+		Cells:          make(map[string]*Cell),
+		Relations:      make(map[uint64]*Relation),
+		RegionMembers:  make(map[uint8]int),
+		cellIDs:        make(map[string]uint32),
+		idToCell:       idToCell,
+		prevRaw:        make(map[string]float64),
+		pending:        make(map[uint32]pendingSample),
+		prevPartitions: make(map[string]uint8),
 	}
+
+	grid.idToCellLF.Store(&idToCell)
+	return grid
+}
+
+func (grid *Grid) growPairs(neededCapacity int) {
+	if neededCapacity <= grid.capacity {
+		return
+	}
+
+	newCap := neededCapacity
+	newPairs := make([]PairStats, newCap*(newCap+1)/2)
+	copy(newPairs, grid.pairs)
+	grid.pairs = newPairs
+	grid.capacity = newCap
 }
 
 func CellKey(symbol, source, name string) string {
@@ -273,112 +337,118 @@ func (grid *Grid) IsSettled() bool {
 	if grid == nil {
 		return false
 	}
-	grid.mu.RLock()
-	defer grid.mu.RUnlock()
-	return grid.Settled
+
+	return grid.settled.Load() || grid.Settled
 }
 
-func (grid *Grid) Region(key string) uint8 {
+func (grid *Grid) RegionCount() int {
+	return TargetRegionCount
+}
+
+func (grid *Grid) Region(cellKey string) uint8 {
 	if grid == nil {
 		return 0
 	}
-	grid.mu.RLock()
-	defer grid.mu.RUnlock()
-	if cell := grid.Cells[key]; cell != nil {
+
+	if cell, ok := grid.cellsLF.Get(cellKey); ok && cell != nil {
 		return cell.Region
 	}
+
 	return 0
 }
 
-// RegionAt returns the learned region whose display-cell center is nearest to
-// (x, y). It is retained for source compatibility with the previous grid.
-func (grid *Grid) RegionAt(x, y float64) uint8 {
+func (grid *Grid) RegionAt(x, y float64) (uint8, bool) {
 	if grid == nil {
-		return 0
+		return 0, false
 	}
-	grid.mu.RLock()
-	defer grid.mu.RUnlock()
+
+	idToCellPtr := grid.idToCellLF.Load()
+
+	if idToCellPtr == nil {
+		return 0, false
+	}
 
 	bestRegion := uint8(0)
-	bestDistance := math.Inf(1)
-	seen := make(map[uint8]struct{}, len(grid.RegionMembers))
+	bestDist := math.MaxFloat64
 
-	for _, cell := range grid.idToCell {
+	for _, cell := range *idToCellPtr {
 		if cell == nil || cell.Region == 0 {
 			continue
 		}
-		if _, ok := seen[cell.Region]; ok {
-			continue
-		}
-		seen[cell.Region] = struct{}{}
 
-		d := math.Hypot(cell.X-x, cell.Y-y)
-		if d < bestDistance || (d == bestDistance && cell.Region < bestRegion) {
-			bestDistance = d
+		dx := cell.X - x
+		dy := cell.Y - y
+		dist := dx*dx + dy*dy
+
+		if dist < bestDist {
+			bestDist = dist
 			bestRegion = cell.Region
 		}
 	}
 
-	return bestRegion
+	if bestRegion == 0 || bestDist > 0.05 {
+		return 0, false
+	}
+
+	return bestRegion, true
 }
 
-// CellAt returns a copy of the metric cell nearest to the supplied display
-// coordinates. Returning a copy avoids exposing mutable grid state outside
-// the Grid mutex.
-func (grid *Grid) CellAt(x, y float64) *Cell {
+func (grid *Grid) CellAt(symbol, source, name string) *Cell {
 	if grid == nil {
 		return nil
 	}
-	grid.mu.RLock()
-	defer grid.mu.RUnlock()
 
-	var best *Cell
-	bestDistance := math.Inf(1)
+	key := CellKey(symbol, source, name)
 
-	for _, cell := range grid.idToCell {
-		if cell == nil {
-			continue
-		}
-		d := math.Hypot(cell.X-x, cell.Y-y)
-		if d < bestDistance || (d == bestDistance && (best == nil || cell.ID < best.ID)) {
-			bestDistance = d
-			best = cell
-		}
+	if cell, ok := grid.cellsLF.Get(key); ok && cell != nil {
+		return cell
 	}
 
-	if best == nil {
+	idToCellPtr := grid.idToCellLF.Load()
+
+	if idToCellPtr == nil {
 		return nil
 	}
-	copyCell := *best
-	return &copyCell
+
+	for _, cell := range *idToCellPtr {
+		if cell != nil && cell.Key == key {
+			return cell
+		}
+	}
+
+	return nil
 }
 
-type metricArrival struct {
-	id      uint32
-	value   float64
-	quality float64
+func (grid *Grid) CellCount() int {
+	if grid == nil {
+		return 0
+	}
+
+	idToCellPtr := grid.idToCellLF.Load()
+
+	if idToCellPtr != nil {
+		return len(*idToCellPtr)
+	}
+
+	return len(grid.idToCell)
 }
 
-/*
-Update learns metric-to-metric affinity. If several Measurements are supplied,
-they are one pass immediately. If historical storage streams one Measurement
-at a time and Tick is non-zero, measurements sharing a Tick are buffered and
-committed together when the next Tick arrives (or on Settle).
-*/
-func (grid *Grid) Update(measurements ...*data.Measurement[float64]) {
+func (grid *Grid) Update(measurements ...*data.Measurement) {
 	if grid == nil || len(measurements) == 0 {
 		return
 	}
 
-	grid.mu.Lock()
-	defer grid.mu.Unlock()
+	grid.updateMu.Lock()
+	defer grid.updateMu.Unlock()
 
 	roots := nonNilMeasurements(measurements)
+
 	if len(roots) == 0 {
 		return
 	}
 
 	arrivals := grid.extractTrainingArrivalsLocked(roots)
+
 	if len(arrivals) == 0 {
 		grid.decorateLocked(roots)
 		return
@@ -387,47 +457,59 @@ func (grid *Grid) Update(measurements ...*data.Measurement[float64]) {
 	if len(roots) > 1 {
 		grid.flushPendingLocked()
 		grid.commitPassLocked(arrivals)
-	} else if roots[0].Tick > 0 {
+		grid.decorateLocked(roots)
+		return
+	}
+
+	if roots[0].Tick > 0 {
 		tick := roots[0].Tick
+
 		if grid.pendingTick != 0 && grid.pendingTick != tick {
 			grid.flushPendingLocked()
 		}
+
 		grid.pendingTick = tick
 		grid.mergePendingLocked(arrivals)
-	} else {
-		grid.flushPendingLocked()
-		grid.commitPassLocked(arrivals)
+		grid.decorateLocked(roots)
+		return
 	}
 
+	grid.flushPendingLocked()
+	grid.commitPassLocked(arrivals)
 	grid.decorateLocked(roots)
 }
 
-func nonNilMeasurements(in []*data.Measurement[float64]) []*data.Measurement[float64] {
-	out := make([]*data.Measurement[float64], 0, len(in))
-	for _, measurement := range in {
-		if measurement != nil {
-			out = append(out, measurement)
+func nonNilMeasurements(measurements []*data.Measurement) []*data.Measurement {
+	filtered := make([]*data.Measurement, 0, len(measurements))
+
+	for _, meas := range measurements {
+		if meas != nil {
+			filtered = append(filtered, meas)
 		}
 	}
-	return out
+
+	return filtered
 }
 
 func walkMeasurements(
-	roots []*data.Measurement[float64],
-	fn func(*data.Measurement[float64]),
+	roots []*data.Measurement,
+	fn func(*data.Measurement),
 ) {
-	seen := make(map[*data.Measurement[float64]]struct{}, len(roots)*2)
-	var visit func(*data.Measurement[float64])
+	seen := make(map[*data.Measurement]struct{})
+	var visit func(*data.Measurement)
 
-	visit = func(measurement *data.Measurement[float64]) {
+	visit = func(measurement *data.Measurement) {
 		if measurement == nil {
 			return
 		}
+
 		if _, ok := seen[measurement]; ok {
 			return
 		}
+
 		seen[measurement] = struct{}{}
 		fn(measurement)
+
 		for _, peer := range measurement.Peers {
 			visit(peer)
 		}
@@ -438,46 +520,67 @@ func walkMeasurements(
 	}
 }
 
-func measurementChannel(measurement *data.Measurement[float64], key string, metric data.Metric[float64]) string {
+func measurementChannel(measurement *data.Measurement, key string, metric data.Metric) string {
 	symbol := measurement.Label
+
 	if symbol == "" {
 		symbol = measurement.GetSource()
 	}
+
 	source := measurement.GetSource()
 	name := metric.Label
+
 	if name == "" {
 		name = key
 	}
+
 	return CellKey(symbol, source, name)
 }
 
 func (grid *Grid) ensureCellLocked(key string, raw float64) *Cell {
-	if cell := grid.Cells[key]; cell != nil {
+	if cell, ok := grid.cellsLF.Get(key); ok && cell != nil {
 		return cell
 	}
 
 	id := uint32(len(grid.idToCell))
+
+	if int(id) >= grid.capacity {
+		grid.growPairs(int(id) + 1)
+	}
+
 	cell := &Cell{
 		ID:   id,
 		Key:  key,
 		Last: raw,
 	}
 	grid.Cells[key] = cell
+	grid.cellsLF.Set(key, cell)
 	grid.cellIDs[key] = id
 	grid.idToCell = append(grid.idToCell, cell)
+	copied := make([]*Cell, len(grid.idToCell))
+	copy(copied, grid.idToCell)
+	grid.idToCellLF.Store(&copied)
+
 	grid.dirty = true
 	return cell
 }
 
 func (grid *Grid) extractTrainingArrivalsLocked(
-	roots []*data.Measurement[float64],
+	roots []*data.Measurement,
 ) []metricArrival {
-	arrivals := make([]metricArrival, 0, 128)
+	totalMetrics := 0
+	walkMeasurements(roots, func(measurement *data.Measurement) {
+		if measurement != nil {
+			totalMetrics += len(measurement.Metrics)
+		}
+	})
 
-	walkMeasurements(roots, func(measurement *data.Measurement[float64]) {
+	arrivals := make([]metricArrival, 0, totalMetrics)
+
+	walkMeasurements(roots, func(measurement *data.Measurement) {
 		quality := measurementDamp(measurement)
 
-		measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
+		measurement.RangeMetrics(func(key string, metric data.Metric) bool {
 			channel := measurementChannel(measurement, key, metric)
 			cell := grid.ensureCellLocked(channel, metric.Raw)
 			cell.Visits++
@@ -489,9 +592,13 @@ func (grid *Grid) extractTrainingArrivalsLocked(
 			if metric.Deformation != nil && finite(*metric.Deformation) {
 				deformation = *metric.Deformation
 				validDeformation = true
-			} else if previous, ok := grid.prevRaw[channel]; ok && finite(previous) && finite(raw) {
-				deformation = data.Deformation(previous, raw)
-				validDeformation = finite(deformation)
+			}
+
+			if !validDeformation {
+				if previous, ok := grid.prevRaw[channel]; ok && finite(previous) && finite(raw) {
+					deformation = data.Deformation(previous, raw)
+					validDeformation = finite(deformation)
+				}
 			}
 
 			if finite(raw) {
@@ -519,6 +626,7 @@ func (grid *Grid) mergePendingLocked(arrivals []metricArrival) {
 	if grid.pending == nil {
 		grid.pending = make(map[uint32]pendingSample)
 	}
+
 	for _, arrival := range arrivals {
 		sample := grid.pending[arrival.id]
 		sample.add(arrival.value, arrival.quality)
@@ -534,34 +642,39 @@ func (grid *Grid) flushPendingLocked() {
 
 	arrivals := make([]metricArrival, 0, len(grid.pending))
 	ids := make([]int, 0, len(grid.pending))
+
 	for id := range grid.pending {
 		ids = append(ids, int(id))
 	}
+
 	slices.Sort(ids)
 
 	for _, rawID := range ids {
 		id := uint32(rawID)
 		value, quality, ok := grid.pending[id].value()
+
 		if !ok {
 			continue
 		}
+
 		arrivals = append(arrivals, metricArrival{id: id, value: value, quality: quality})
 	}
 
 	grid.pending = make(map[uint32]pendingSample)
 	grid.pendingTick = 0
-	grid.commitPassLocked(arrivals)
+
+	if len(arrivals) >= 2 {
+		grid.commitPassLocked(arrivals)
+	}
 }
 
 func (grid *Grid) commitPassLocked(arrivals []metricArrival) {
-	if len(arrivals) == 0 {
+	if len(arrivals) < 2 {
 		return
 	}
 
-	// Collapse duplicate channels inside the same pass before updating pair
-	// statistics. This keeps one channel from acquiring extra influence merely
-	// because it appeared twice in the supplied measurement graph.
 	collapsed := make(map[uint32]pendingSample, len(arrivals))
+
 	for _, arrival := range arrivals {
 		sample := collapsed[arrival.id]
 		sample.add(arrival.value, arrival.quality)
@@ -574,102 +687,153 @@ func (grid *Grid) commitPassLocked(arrivals []metricArrival) {
 
 	for id, sample := range collapsed {
 		value, quality, ok := sample.value()
+
 		if !ok {
 			continue
 		}
+
 		ids = append(ids, int(id))
 		values[id] = value
 		qualities[id] = quality
 	}
+
 	slices.Sort(ids)
 
 	for first := 0; first < len(ids); first++ {
-		leftID := uint32(ids[first])
+		leftID := ids[first]
+
 		for second := first + 1; second < len(ids); second++ {
-			rightID := uint32(ids[second])
-			weight := math.Sqrt(qualities[leftID] * qualities[rightID])
+			rightID := ids[second]
+			weight := math.Sqrt(qualities[uint32(leftID)] * qualities[uint32(rightID)])
+
 			if weight <= 0 || !finite(weight) {
 				continue
 			}
 
-			key := pairKey(leftID, rightID)
-			relation := grid.Relations[key]
+			idx := symIdx(leftID, rightID)
+
+			if idx >= len(grid.pairs) {
+				grid.growPairs(max(leftID, rightID) + 1)
+			}
+
+			grid.pairs[idx].update(values[uint32(leftID)], values[uint32(rightID)], weight)
+
+			pairHash := pairKey(uint32(leftID), uint32(rightID))
+			relation := grid.Relations[pairHash]
+
 			if relation == nil {
 				relation = &Relation{}
-				grid.Relations[key] = relation
+				grid.Relations[pairHash] = relation
 			}
-			relation.update(values[leftID], values[rightID], weight)
-			grid.dirty = true
+
+			relation.update(values[uint32(leftID)], values[uint32(rightID)], weight)
+
+			if !grid.IsSettled() {
+				grid.dirty = true
+			}
 		}
 	}
 
 	grid.Observations++
+	grid.observations.Add(1)
 }
 
 /*
-Settle freezes the current graph into balanced regions. Calling Settle again
-is cheap when nothing has changed and re-partitions when new learning has made
-the graph dirty.
+Partition discovers and updates regions for all currently observed metrics without freezing the grid.
+*/
+func (grid *Grid) Partition() {
+	if grid == nil {
+		return
+	}
+
+	grid.updateMu.Lock()
+	defer grid.updateMu.Unlock()
+
+	grid.flushPendingLocked()
+
+	cellCount := len(grid.Cells)
+	errnie.Info(fmt.Sprintf("[grid] Partition() started: %d cells observed", cellCount))
+
+	partitions := grid.computePartitionsLocked()
+
+	if len(partitions) == 0 {
+		errnie.Info("[grid] Partition() computed 0 partitions")
+		return
+	}
+
+	grid.commitPartitionsLocked(partitions)
+	errnie.Info(fmt.Sprintf("[grid] Partition() committed: %d regions across %d cells (stable passes: %d/%d)", len(grid.RegionMembers), cellCount, grid.stablePasses, ConvergenceStreak))
+}
+
+/*
+Settle freezes the current graph into balanced regions using vectorized Gonum eigensolvers.
 */
 func (grid *Grid) Settle() {
 	if grid == nil {
 		return
 	}
 
-	grid.mu.Lock()
-	defer grid.mu.Unlock()
+	errnie.Info(fmt.Sprintf("[grid] Settle() requested: %d cells", len(grid.Cells)))
+	grid.Partition()
 
-	grid.flushPendingLocked()
-	if grid.Settled && !grid.dirty {
-		return
-	}
+	grid.updateMu.Lock()
+	defer grid.updateMu.Unlock()
 
-	partitions := grid.computePartitionsLocked()
-	grid.commitPartitionsLocked(partitions)
+	grid.settled.Store(true)
 	grid.Settled = true
 	grid.dirty = false
+	errnie.Info(fmt.Sprintf("[grid] Settle() complete: grid settled with %d regions across %d cells", len(grid.RegionMembers), len(grid.Cells)))
 }
 
 func (grid *Grid) computePartitionsLocked() map[string]uint8 {
 	n := len(grid.Cells)
+
 	if n == 0 {
 		return nil
 	}
 
 	keys := make([]string, 0, n)
+
 	for key := range grid.Cells {
 		keys = append(keys, key)
 	}
+
 	slices.Sort(keys)
 
 	k := targetPartitionCount(n)
+	errnie.Info(fmt.Sprintf("[grid] computePartitionsLocked: n=%d metrics, target clusters k=%d", n, k))
+
 	if k <= 1 {
 		assigned := make(map[string]uint8, n)
+
 		for _, key := range keys {
 			assigned[key] = 1
 		}
+
 		return assigned
 	}
 
-	affinity := grid.affinityMatrixLocked(keys)
 	capacities := balancedCapacities(n, k)
-
 	vertices := make([]int, n)
+
 	for i := range vertices {
 		vertices[i] = i
 	}
 
+	affinity := grid.affinityMatrixLocked(keys)
 	groups := make([][]int, 0, k)
+
 	var split func([]int, []int)
+
 	split = func(group []int, caps []int) {
 		if len(caps) <= 1 {
-			copyGroup := append([]int(nil), group...)
-			groups = append(groups, copyGroup)
+			groups = append(groups, group)
 			return
 		}
 
 		leftParts := len(caps) / 2
 		leftSize := 0
+
 		for _, size := range caps[:leftParts] {
 			leftSize += size
 		}
@@ -678,9 +842,8 @@ func (grid *Grid) computePartitionsLocked() map[string]uint8 {
 		split(left, caps[:leftParts])
 		split(right, caps[leftParts:])
 	}
-	split(vertices, capacities)
 
-	groups = refineBalancedGroups(groups, affinity, keys)
+	split(vertices, capacities)
 	return canonicalRegionAssignment(groups, keys)
 }
 
@@ -688,14 +851,17 @@ func targetPartitionCount(metricCount int) int {
 	if metricCount <= 0 {
 		return 0
 	}
+
 	if metricCount < MinRegionSize {
 		return 1
 	}
 
 	maxWithoutSingletons := metricCount / MinRegionSize
+
 	if maxWithoutSingletons < 1 {
 		maxWithoutSingletons = 1
 	}
+
 	return min(TargetRegionCount, maxWithoutSingletons)
 }
 
@@ -703,57 +869,69 @@ func balancedCapacities(n, k int) []int {
 	caps := make([]int, k)
 	base := n / k
 	extra := n % k
+
 	for i := range caps {
 		caps[i] = base
+
 		if i < extra {
 			caps[i]++
 		}
 	}
+
 	return caps
 }
 
-func (grid *Grid) affinityMatrixLocked(keys []string) [][]float64 {
+func (grid *Grid) affinityMatrixLocked(keys []string) *mat.SymDense {
 	n := len(keys)
-	matrix := make([][]float64, n)
-	for i := range matrix {
-		matrix[i] = make([]float64, n)
-	}
+	matrix := mat.NewSymDense(n, nil)
 
 	for right := 1; right < n; right++ {
 		rightCell := grid.Cells[keys[right]]
+		rightID := int(rightCell.ID)
+
 		for left := 0; left < right; left++ {
 			leftCell := grid.Cells[keys[left]]
-			relation := grid.Relations[pairKey(leftCell.ID, rightCell.ID)]
-			weight := relation.affinity()
+			leftID := int(leftCell.ID)
+
+			idx := symIdx(leftID, rightID)
+
+			if idx >= len(grid.pairs) {
+				continue
+			}
+
+			weight := grid.pairs[idx].affinity()
+
 			if weight <= 0 || !finite(weight) {
 				continue
 			}
-			matrix[left][right] = weight
-			matrix[right][left] = weight
+
+			matrix.SetSym(left, right, weight)
 		}
 	}
+
 	return matrix
 }
 
 /*
 spectralBalancedSplit performs one exact-cardinality spectral bisection using
-the Fiedler ordering of the symmetric normalized graph Laplacian. If the
-subgraph has no positive affinity (or eigendecomposition fails), it falls back
-to a deterministic key split.
+the Fiedler ordering of the symmetric normalized graph Laplacian.
 */
 func spectralBalancedSplit(
 	vertices []int,
 	leftSize int,
-	affinity [][]float64,
+	affinity *mat.SymDense,
 	keys []string,
 ) ([]int, []int) {
 	n := len(vertices)
+
 	if leftSize <= 0 {
 		return nil, append([]int(nil), vertices...)
 	}
+
 	if leftSize >= n {
 		return append([]int(nil), vertices...), nil
 	}
+
 	if n <= 2 {
 		ordered := append([]int(nil), vertices...)
 		sort.Slice(ordered, func(i, j int) bool { return keys[ordered[i]] < keys[ordered[j]] })
@@ -762,12 +940,18 @@ func spectralBalancedSplit(
 
 	degree := make([]float64, n)
 	totalWeight := 0.0
-	for i := 0; i < n; i++ {
+
+	for i := range n {
+		vi := vertices[i]
+
 		for j := i + 1; j < n; j++ {
-			w := affinity[vertices[i]][vertices[j]]
+			vj := vertices[j]
+			w := affinity.At(vi, vj)
+
 			if w <= 0 {
 				continue
 			}
+
 			degree[i] += w
 			degree[j] += w
 			totalWeight += w
@@ -779,43 +963,62 @@ func spectralBalancedSplit(
 	}
 
 	laplacian := mat.NewSymDense(n, nil)
-	for i := 0; i < n; i++ {
+
+	for i := range n {
 		if degree[i] > 0 {
 			laplacian.SetSym(i, i, 1)
 		}
 	}
-	for i := 0; i < n; i++ {
+
+	for i := range n {
 		if degree[i] <= 0 {
 			continue
 		}
+
+		invSqrtI := 1.0 / math.Sqrt(degree[i])
+		vi := vertices[i]
+
 		for j := i + 1; j < n; j++ {
-			w := affinity[vertices[i]][vertices[j]]
-			if w <= 0 || degree[j] <= 0 {
+			if degree[j] <= 0 {
 				continue
 			}
-			laplacian.SetSym(i, j, -w/math.Sqrt(degree[i]*degree[j]))
+
+			vj := vertices[j]
+			w := affinity.At(vi, vj)
+
+			if w <= 0 {
+				continue
+			}
+
+			laplacian.SetSym(i, j, -w*(invSqrtI/math.Sqrt(degree[j])))
 		}
 	}
 
 	var eigen mat.EigenSym
+
 	if ok := eigen.Factorize(laplacian, true); !ok {
 		return deterministicSplit(vertices, leftSize, keys)
 	}
 
 	values := eigen.Values(nil)
+
 	if len(values) < 2 {
 		return deterministicSplit(vertices, leftSize, keys)
 	}
 
 	indices := make([]int, len(values))
+
 	for i := range indices {
 		indices[i] = i
 	}
+
 	sort.SliceStable(indices, func(i, j int) bool {
 		left, right := values[indices[i]], values[indices[j]]
+
 		if left == right {
 			return indices[i] < indices[j]
 		}
+
 		return left < right
 	})
 
@@ -827,12 +1030,16 @@ func spectralBalancedSplit(
 		vertex int
 		score  float64
 	}
+
 	ordered := make([]scoredVertex, n)
+
 	for local, vertex := range vertices {
 		score := vectors.At(local, fiedlerColumn)
+
 		if !finite(score) {
 			return deterministicSplit(vertices, leftSize, keys)
 		}
+
 		ordered[local] = scoredVertex{vertex: vertex, score: score}
 	}
 
@@ -840,18 +1047,23 @@ func spectralBalancedSplit(
 		if ordered[i].score == ordered[j].score {
 			return keys[ordered[i].vertex] < keys[ordered[j].vertex]
 		}
+
 		return ordered[i].score < ordered[j].score
 	})
 
 	left := make([]int, leftSize)
 	right := make([]int, n-leftSize)
+
 	for i := range ordered {
 		if i < leftSize {
 			left[i] = ordered[i].vertex
-		} else {
+		}
+
+		if i >= leftSize {
 			right[i-leftSize] = ordered[i].vertex
 		}
 	}
+
 	return left, right
 }
 
@@ -861,362 +1073,386 @@ func deterministicSplit(vertices []int, leftSize int, keys []string) ([]int, []i
 	return append([]int(nil), ordered[:leftSize]...), append([]int(nil), ordered[leftSize:]...)
 }
 
-/*
-refineBalancedGroups performs pair swaps only, so every region keeps exactly
-the capacity produced by the balanced spectral recursion. Each accepted swap
-strictly increases total within-region affinity.
-*/
-func refineBalancedGroups(groups [][]int, affinity [][]float64, keys []string) [][]int {
-	if len(groups) <= 1 {
-		return groups
-	}
-
-	n := len(keys)
-	parts := make([]int, n)
-	for part, group := range groups {
-		for _, vertex := range group {
-			parts[vertex] = part
-		}
-	}
-
-	maxSwaps := min(n, 128)
-	for iteration := 0; iteration < maxSwaps; iteration++ {
-		connections := make([][]float64, n)
-		for i := range connections {
-			connections[i] = make([]float64, len(groups))
-		}
-		for i := 0; i < n; i++ {
-			for j := i + 1; j < n; j++ {
-				w := affinity[i][j]
-				if w <= 0 {
-					continue
-				}
-				connections[i][parts[j]] += w
-				connections[j][parts[i]] += w
-			}
-		}
-
-		bestGain := 1e-12
-		bestLeft, bestRight := -1, -1
-
-		for left := 0; left < n; left++ {
-			leftPart := parts[left]
-			for right := left + 1; right < n; right++ {
-				rightPart := parts[right]
-				if leftPart == rightPart {
-					continue
-				}
-
-				pairWeight := affinity[left][right]
-				gain := connections[left][rightPart] - pairWeight - connections[left][leftPart]
-				gain += connections[right][leftPart] - pairWeight - connections[right][rightPart]
-
-				if gain > bestGain+1e-12 || (math.Abs(gain-bestGain) <= 1e-12 && pairLexLess(left, right, bestLeft, bestRight, keys)) {
-					bestGain = gain
-					bestLeft = left
-					bestRight = right
-				}
-			}
-		}
-
-		if bestLeft < 0 {
-			break
-		}
-		parts[bestLeft], parts[bestRight] = parts[bestRight], parts[bestLeft]
-	}
-
-	refined := make([][]int, len(groups))
-	for vertex, part := range parts {
-		refined[part] = append(refined[part], vertex)
-	}
-	return refined
-}
-
-func pairLexLess(left, right, bestLeft, bestRight int, keys []string) bool {
-	if bestLeft < 0 {
-		return true
-	}
-	leftA, leftB := keys[left], keys[right]
-	bestA, bestB := keys[bestLeft], keys[bestRight]
-	if leftA != bestA {
-		return leftA < bestA
-	}
-	return leftB < bestB
-}
-
 func canonicalRegionAssignment(groups [][]int, keys []string) map[string]uint8 {
-	for _, group := range groups {
-		sort.Slice(group, func(i, j int) bool { return keys[group[i]] < keys[group[j]] })
+	type canonicalGroup struct {
+		representative string
+		members        []string
 	}
 
-	sort.SliceStable(groups, func(i, j int) bool {
-		if len(groups[i]) == 0 {
-			return false
+	prepared := make([]canonicalGroup, 0, len(groups))
+
+	for _, group := range groups {
+		if len(group) == 0 {
+			continue
 		}
-		if len(groups[j]) == 0 {
-			return true
+
+		memberKeys := make([]string, len(group))
+
+		for i, vertex := range group {
+			memberKeys[i] = keys[vertex]
 		}
-		return keys[groups[i][0]] < keys[groups[j][0]]
+
+		slices.Sort(memberKeys)
+		prepared = append(prepared, canonicalGroup{
+			representative: memberKeys[0],
+			members:        memberKeys,
+		})
+	}
+
+	sort.Slice(prepared, func(i, j int) bool {
+		return prepared[i].representative < prepared[j].representative
 	})
 
 	assigned := make(map[string]uint8, len(keys))
-	for index, group := range groups {
+
+	for index, group := range prepared {
 		region := uint8(index + 1)
-		for _, vertex := range group {
-			assigned[keys[vertex]] = region
+
+		for _, key := range group.members {
+			assigned[key] = region
 		}
 	}
+
 	return assigned
 }
 
 func (grid *Grid) commitPartitionsLocked(partitions map[string]uint8) {
-	grid.RegionMembers = make(map[uint8]int)
-	if len(partitions) == 0 {
-		return
-	}
+	grid.RegionMembers = make(map[uint8]int, len(partitions))
 
-	for key, cell := range grid.Cells {
-		region := partitions[key]
-		cell.Region = region
-		if region > 0 {
-			grid.RegionMembers[region]++
+	for key, region := range partitions {
+		cell := grid.Cells[key]
+
+		if cell == nil {
+			continue
 		}
+
+		cell.Region = region
+		grid.RegionMembers[region]++
 	}
 
 	regionCount := len(grid.RegionMembers)
-	for _, cell := range grid.idToCell {
+
+	for _, cell := range grid.Cells {
 		if cell == nil || cell.Region == 0 {
 			continue
 		}
+
 		cell.X, cell.Y = regionCenter(cell.Region, regionCount)
 	}
-}
 
-func regionCenter(region uint8, regionCount int) (float64, float64) {
-	if region == 0 || regionCount <= 0 {
-		return 0, 0
+	currentCount := len(grid.Cells)
+
+	if currentCount > 0 && currentCount == grid.prevCellCount && len(grid.prevPartitions) == currentCount {
+		changed := false
+
+		for key, region := range partitions {
+			if grid.prevPartitions[key] != region {
+				changed = true
+				break
+			}
+		}
+
+		if !changed {
+			grid.stablePasses++
+		}
+
+		if changed {
+			grid.stablePasses = 0
+		}
 	}
 
-	columns := min(GridBinsX, regionCount)
-	rows := int(math.Ceil(float64(regionCount) / float64(columns)))
-	index := int(region) - 1
-	column := index % columns
-	row := index / columns
+	if currentCount != grid.prevCellCount || len(grid.prevPartitions) != currentCount {
+		grid.stablePasses = 0
+	}
 
-	x := 0.0
-	if columns > 1 {
-		x = -1 + 2*float64(column)/float64(columns-1)
-	}
-	y := 0.0
-	if rows > 1 {
-		y = 1 - 2*float64(row)/float64(rows-1)
-	}
-	return x, y
+	grid.prevCellCount = currentCount
+	grid.prevPartitions = partitions
 }
 
 /*
-RegionScores evaluates all supplied measurements as one pass and returns every
-represented region ranked strongest-first.
-
-For Measurement m, every owned metric receives the same attenuation:
-
-	q_m = maturity_m * snr_m/(1+snr_m)
-
-when SNR is defined, and q_m = maturity_m when it is not. A zero maturity on a
-non-estimated measurement is treated as the legacy "unspecified" value and
-therefore as 1.0; the data Finalizer uses the same convention.
-
-Within a region the score is the mean damped activity over unique supplied
-metric channels, not a sum. Coverage is reported separately instead of being
-mixed into Score.
+Converged reports whether the metric partition has stabilized across consecutive passes.
 */
-func (grid *Grid) RegionScores(measurements ...*data.Measurement[float64]) []RegionScore {
+func (grid *Grid) Converged() bool {
+	if grid == nil {
+		return false
+	}
+
+	metricCount := len(grid.Cells)
+
+	if metricCount < 4 {
+		return false
+	}
+
+	if len(grid.RegionMembers) < 2 {
+		return false
+	}
+
+	converged := grid.stablePasses >= ConvergenceStreak
+
+	if converged {
+		errnie.Info(fmt.Sprintf("[grid] Converged! %d metrics stabilized across %d regions (streak: %d)", metricCount, len(grid.RegionMembers), grid.stablePasses))
+	}
+
+	return converged
+}
+
+/*
+Decorate stamps measurements with their assigned Region and display coordinates (X, Y).
+Wait-free execution without locking.
+*/
+func (grid *Grid) Decorate(measurements ...*data.Measurement) {
+	if grid == nil || len(measurements) == 0 {
+		return
+	}
+
+	grid.decorateLocked(nonNilMeasurements(measurements))
+}
+
+func regionCenter(region uint8, regionCount int) (float64, float64) {
+	if region == 0 {
+		return 0, 0
+	}
+
+	columns := DisplayColumns
+	rows := DisplayRows
+
+	if regionCount > 0 && regionCount < TargetRegionCount {
+		columns = int(math.Ceil(math.Sqrt(float64(regionCount))))
+		rows = int(math.Ceil(float64(regionCount) / float64(columns)))
+	}
+
+	index := int(region - 1)
+	col := index % columns
+	row := index / columns
+
+	cellWidth := 1.0 / float64(columns)
+	cellHeight := 1.0 / float64(rows)
+
+	centerX := (float64(col) + 0.5) * cellWidth
+	centerY := (float64(row) + 0.5) * cellHeight
+	return centerX, centerY
+}
+
+/*
+RegionScore aggregates normalized activity within one partition.
+*/
+type RegionScore struct {
+	Region       uint8   `json:"region"`
+	Score        float64 `json:"score"`
+	Contributors int     `json:"contributors"`
+	Members      int     `json:"members"`
+	Coverage     float64 `json:"coverage"`
+}
+
+type regionAggregate struct {
+	sumDeformation float64
+	observedCount  int
+	totalMembers   int
+}
+
+/*
+RegionScores evaluates mean activity within each region.
+Wait-free execution without locking.
+*/
+func (grid *Grid) RegionScores(measurements ...*data.Measurement) []RegionScore {
 	if grid == nil || len(measurements) == 0 {
 		return nil
 	}
-	grid.mu.RLock()
-	defer grid.mu.RUnlock()
+
 	return grid.regionScoresLocked(nonNilMeasurements(measurements))
 }
 
-func (grid *Grid) regionScoresLocked(roots []*data.Measurement[float64]) []RegionScore {
+func (grid *Grid) regionScoresLocked(roots []*data.Measurement) []RegionScore {
 	type cellAggregate struct {
-		sum   float64
-		count int
+		sumDeformation float64
+		count          int
 	}
+
 	perCell := make(map[uint32]cellAggregate)
 
-	walkMeasurements(roots, func(measurement *data.Measurement[float64]) {
-		damp := measurementDamp(measurement)
+	walkMeasurements(roots, func(measurement *data.Measurement) {
+		quality := measurementDamp(measurement)
 
-		measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
+		if quality <= 0 {
+			return
+		}
+
+		measurement.RangeMetrics(func(key string, metric data.Metric) bool {
 			cell := grid.lookupCellLocked(measurement, key, metric)
+
 			if cell == nil || cell.Region == 0 {
 				return true
 			}
 
-			activity, ok := grid.metricActivityLocked(cell, metric)
-			if !ok {
+			deformation := 0.0
+
+			if metric.Deformation != nil && finite(*metric.Deformation) {
+				deformation = *metric.Deformation
+			}
+
+			if metric.Deformation == nil || !finite(*metric.Deformation) {
+				channel := measurementChannel(measurement, key, metric)
+				previous, ok := grid.prevRaw[channel]
+
+				if ok && finite(previous) && finite(metric.Raw) {
+					deformation = data.Deformation(previous, metric.Raw)
+				}
+			}
+
+			if !finite(deformation) {
 				return true
 			}
 
 			agg := perCell[cell.ID]
-			agg.sum += math.Abs(activity) * damp
+			agg.sumDeformation += math.Abs(deformation) * quality
 			agg.count++
 			perCell[cell.ID] = agg
 			return true
 		})
 	})
 
-	type regionAggregate struct {
-		sum   float64
-		count int
+	if len(perCell) == 0 {
+		return nil
 	}
+
 	regions := make(map[uint8]regionAggregate)
+	idToCellPtr := grid.idToCellLF.Load()
+
+	if idToCellPtr == nil {
+		return nil
+	}
+
+	idToCell := *idToCellPtr
 
 	for id, aggregate := range perCell {
-		if aggregate.count <= 0 || int(id) >= len(grid.idToCell) {
+		if aggregate.count <= 0 || int(id) >= len(idToCell) {
 			continue
 		}
-		cell := grid.idToCell[id]
+
+		cell := idToCell[id]
+
 		if cell == nil || cell.Region == 0 {
 			continue
 		}
 
-		contribution := aggregate.sum / float64(aggregate.count)
-		reg := regions[cell.Region]
-		reg.sum += contribution
-		reg.count++
-		regions[cell.Region] = reg
+		entry := regions[cell.Region]
+		entry.sumDeformation += aggregate.sumDeformation / float64(aggregate.count)
+		entry.observedCount++
+		regions[cell.Region] = entry
+	}
+
+	if len(regions) == 0 {
+		return nil
 	}
 
 	scores := make([]RegionScore, 0, len(regions))
+
 	for region, aggregate := range regions {
-		if aggregate.count <= 0 {
+		total := grid.RegionMembers[region]
+
+		if total < aggregate.observedCount {
+			total = aggregate.observedCount
+		}
+
+		if total <= 0 {
 			continue
 		}
-		members := grid.RegionMembers[region]
-		coverage := 0.0
-		if members > 0 {
-			coverage = float64(aggregate.count) / float64(members)
+
+		score := aggregate.sumDeformation / float64(aggregate.observedCount)
+		coverage := float64(aggregate.observedCount) / float64(total)
+
+		if score <= 0 || !finite(score) {
+			continue
 		}
+
 		scores = append(scores, RegionScore{
 			Region:       region,
-			Score:        aggregate.sum / float64(aggregate.count),
-			Contributors: aggregate.count,
-			Members:      members,
+			Score:        score,
+			Contributors: aggregate.observedCount,
+			Members:      total,
 			Coverage:     coverage,
 		})
 	}
 
-	sort.SliceStable(scores, func(i, j int) bool {
-		if scores[i].Score == scores[j].Score {
-			return scores[i].Region < scores[j].Region
+	sort.SliceStable(scores, func(firstIndex, secondIndex int) bool {
+		if scores[firstIndex].Score == scores[secondIndex].Score {
+			return scores[firstIndex].Region < scores[secondIndex].Region
 		}
-		return scores[i].Score > scores[j].Score
+
+		return scores[firstIndex].Score > scores[secondIndex].Score
 	})
+
 	return scores
 }
 
 /*
+LitRegions answers the token sequence of active regions above noise.
 LitRegions keeps the existing token API deliberately conservative: it returns
 the strongest region from the same fair RegionScores pass. Call RegionScores
 when the UI or diagnostics need the complete ranked set and actual intensities.
 */
-func (grid *Grid) LitRegions(measurements ...*data.Measurement[float64]) [][]byte {
+func (grid *Grid) LitRegions(measurements ...*data.Measurement) [][]byte {
 	if grid == nil || len(measurements) == 0 {
 		return nil
 	}
-	grid.mu.RLock()
-	defer grid.mu.RUnlock()
 
 	scores := grid.regionScoresLocked(nonNilMeasurements(measurements))
+
 	if len(scores) == 0 || scores[0].Score <= 0 || scores[0].Region == 0 {
 		return nil
 	}
+
 	return [][]byte{{scores[0].Region}}
 }
 
 func (grid *Grid) lookupCellLocked(
-	measurement *data.Measurement[float64],
+	measurement *data.Measurement,
 	key string,
-	metric data.Metric[float64],
+	metric data.Metric,
 ) *Cell {
 	channel := measurementChannel(measurement, key, metric)
-	if cell := grid.Cells[channel]; cell != nil {
+
+	if cell, ok := grid.cellsLF.Get(channel); ok && cell != nil {
 		return cell
 	}
 
-	// Compatibility path for callers/tests that carry the full CellKey in the
-	// metric label rather than the local metric name.
+	if cell := grid.Cells[channel]; cell != nil {
+		grid.cellsLF.Set(channel, cell)
+		return cell
+	}
+
 	if metric.Label != "" {
+		if cell, ok := grid.cellsLF.Get(metric.Label); ok && cell != nil {
+			return cell
+		}
+
 		if cell := grid.Cells[metric.Label]; cell != nil {
+			grid.cellsLF.Set(metric.Label, cell)
 			return cell
 		}
 	}
-	if cell := grid.Cells[key]; cell != nil {
+
+	if cell, ok := grid.cellsLF.Get(key); ok && cell != nil {
 		return cell
 	}
+
+	if cell := grid.Cells[key]; cell != nil {
+		grid.cellsLF.Set(key, cell)
+		return cell
+	}
+
 	return nil
 }
 
-func (grid *Grid) metricActivityLocked(cell *Cell, metric data.Metric[float64]) (float64, bool) {
-	if metric.Deformation != nil && finite(*metric.Deformation) {
-		return *metric.Deformation, true
-	}
-	if metric.Standardized != nil && finite(*metric.Standardized) {
-		return *metric.Standardized, true
-	}
-	if metric.Normalized != nil && finite(*metric.Normalized) {
-		return *metric.Normalized, true
-	}
-
-	if cell != nil && finite(metric.Raw) {
-		if previous, ok := grid.prevRaw[cell.Key]; ok && finite(previous) {
-			value := data.Deformation(previous, metric.Raw)
-			if finite(value) {
-				return value, true
-			}
-		}
-	}
-	return 0, false
-}
-
-func measurementDamp(measurement *data.Measurement[float64]) float64 {
-	if measurement == nil {
-		return 0
-	}
-
-	maturity := measurement.Maturity
-	if !finite(maturity) {
-		return 0
-	}
-	maturity = clamp(maturity, 0, 1)
-	if maturity == 0 && !measurement.Estimated {
-		// Measurement historically used 0 as "not supplied" for ordinary
-		// observations. Finalizer upgrades that case to 1; retain the same
-		// compatibility for directly-constructed measurements.
-		maturity = 1
-	}
-
-	snrFactor := 1.0
-	if measurement.SNRDefined {
-		if !finite(measurement.SNR) || measurement.SNR <= 0 {
-			return 0
-		}
-		snrFactor = measurement.SNR / (1 + measurement.SNR)
-	}
-
-	return clamp(maturity*snrFactor, 0, 1)
-}
-
-func (grid *Grid) decorateLocked(roots []*data.Measurement[float64]) {
-	walkMeasurements(roots, func(measurement *data.Measurement[float64]) {
-		measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
+func (grid *Grid) decorateLocked(roots []*data.Measurement) {
+	walkMeasurements(roots, func(measurement *data.Measurement) {
+		measurement.RangeMetrics(func(key string, metric data.Metric) bool {
 			cell := grid.lookupCellLocked(measurement, key, metric)
-			if cell == nil {
+
+			if cell == nil || cell.Region == 0 {
 				return true
 			}
+
 			metric.X = int64(math.Round(cell.X * 100))
 			metric.Y = int64(math.Round(cell.Y * 100))
 			metric.Region = cell.Region
@@ -1226,33 +1462,81 @@ func (grid *Grid) decorateLocked(roots []*data.Measurement[float64]) {
 	})
 }
 
-const gridSnapshotVersion = 2
+func measurementDamp(measurement *data.Measurement) float64 {
+	if measurement == nil {
+		return 0
+	}
 
+	maturity := measurement.Maturity
+
+	if !finite(maturity) {
+		return 0
+	}
+
+	maturity = clamp(maturity, 0, 1)
+
+	if maturity == 0 && !measurement.Estimated {
+		maturity = 1
+	}
+
+	snrFactor := 1.0
+
+	if measurement.SNRDefined {
+		if !finite(measurement.SNR) || measurement.SNR <= 0 {
+			return 0
+		}
+
+		snrFactor = measurement.SNR / (1.0 + measurement.SNR)
+	}
+
+	return clamp(maturity*snrFactor, 0, 1)
+}
+
+func finite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func clamp(v, minVal, maxVal float64) float64 {
+	if v < minVal {
+		return minVal
+	}
+
+	if v > maxVal {
+		return maxVal
+	}
+
+	return v
+}
+
+/*
+GridSnapshot captures complete grid state for persistence.
+*/
 type GridSnapshot struct {
 	Version       int                      `json:"version"`
 	Settled       bool                     `json:"settled"`
 	Observations  int64                    `json:"observations"`
 	Cells         map[string]*Cell         `json:"cells"`
-	Relations     map[uint64]*Relation     `json:"relations"`
+	Relations     map[uint64]*Relation     `json:"relations,omitempty"`
 	RegionMembers map[uint8]int            `json:"region_members"`
-	PrevRaw       map[string]float64       `json:"prev_raw,omitempty"`
-	Dirty         bool                     `json:"dirty,omitempty"`
-	PendingTick   int64                    `json:"pending_tick,omitempty"`
-	Pending       map[uint32]pendingSample `json:"pending,omitempty"`
+	PrevRaw       map[string]float64       `json:"prev_raw"`
+	Dirty         bool                     `json:"dirty"`
+	PendingTick   int64                    `json:"pending_tick"`
+	Pending       map[uint32]pendingSample `json:"pending"`
 }
+
+const gridSnapshotVersion = 2
 
 func (grid *Grid) Snapshot() ([]byte, error) {
 	if grid == nil {
 		return nil, fmt.Errorf("grid: snapshot nil grid")
 	}
 
-	grid.mu.RLock()
 	snapshot := GridSnapshot{
 		Version:       gridSnapshotVersion,
-		Settled:       grid.Settled,
-		Observations:  grid.Observations,
-		Cells:         make(map[string]*Cell, len(grid.Cells)),
-		Relations:     make(map[uint64]*Relation, len(grid.Relations)),
+		Settled:       grid.settled.Load() || grid.Settled,
+		Observations:  grid.observations.Load(),
+		Cells:         make(map[string]*Cell),
+		Relations:     make(map[uint64]*Relation),
 		RegionMembers: make(map[uint8]int, len(grid.RegionMembers)),
 		PrevRaw:       make(map[string]float64, len(grid.prevRaw)),
 		Dirty:         grid.dirty,
@@ -1260,32 +1544,69 @@ func (grid *Grid) Snapshot() ([]byte, error) {
 		Pending:       make(map[uint32]pendingSample, len(grid.pending)),
 	}
 
+	if grid.Observations > snapshot.Observations {
+		snapshot.Observations = grid.Observations
+	}
+
+	grid.cellsLF.Range("", "\xff", func(key string, cell *Cell) {
+		if cell != nil {
+			copyCell := *cell
+			snapshot.Cells[key] = &copyCell
+		}
+	})
+
 	for key, cell := range grid.Cells {
-		if cell == nil {
-			continue
+		if _, ok := snapshot.Cells[key]; !ok && cell != nil {
+			copyCell := *cell
+			snapshot.Cells[key] = &copyCell
 		}
-		copyCell := *cell
-		snapshot.Cells[key] = &copyCell
 	}
-	for key, relation := range grid.Relations {
-		if relation == nil {
-			continue
+
+	n := len(grid.idToCell)
+
+	for right := 1; right < n; right++ {
+		for left := 0; left < right; left++ {
+			idx := symIdx(left, right)
+
+			if idx >= len(grid.pairs) {
+				continue
+			}
+
+			p := &grid.pairs[idx]
+
+			if p.Total == 0 && p.Weight == 0 {
+				continue
+			}
+
+			key := pairKey(uint32(left), uint32(right))
+			snapshot.Relations[key] = &Relation{
+				Weight:   p.Weight,
+				SumX:     p.SumX,
+				SumY:     p.SumY,
+				SumXX:    p.SumXX,
+				SumYY:    p.SumYY,
+				SumXY:    p.SumXY,
+				Same:     int64(p.Same),
+				Opposite: int64(p.Opposite),
+				Total:    int64(p.Total),
+			}
 		}
-		copyRelation := *relation
-		snapshot.Relations[key] = &copyRelation
 	}
+
 	for region, count := range grid.RegionMembers {
 		snapshot.RegionMembers[region] = count
 	}
-	for key, value := range grid.prevRaw {
-		snapshot.PrevRaw[key] = value
+
+	for key, val := range grid.prevRaw {
+		snapshot.PrevRaw[key] = val
 	}
+
 	for id, sample := range grid.pending {
 		snapshot.Pending[id] = sample
 	}
-	grid.mu.RUnlock()
 
 	encoded, err := json.Marshal(snapshot)
+
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -1293,6 +1614,7 @@ func (grid *Grid) Snapshot() ([]byte, error) {
 			err,
 		))
 	}
+
 	return encoded, nil
 }
 
@@ -1302,6 +1624,7 @@ func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 	}
 
 	var snapshot GridSnapshot
+
 	if err := json.Unmarshal(encoded, &snapshot); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -1309,18 +1632,23 @@ func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 			err,
 		))
 	}
+
 	if snapshot.Version > gridSnapshotVersion {
 		return fmt.Errorf("grid: unsupported snapshot version %d", snapshot.Version)
 	}
+
 	if snapshot.Cells == nil {
 		snapshot.Cells = make(map[string]*Cell)
 	}
+
 	if snapshot.Relations == nil {
 		snapshot.Relations = make(map[uint64]*Relation)
 	}
+
 	if snapshot.PrevRaw == nil {
 		snapshot.PrevRaw = make(map[string]float64)
 	}
+
 	if snapshot.Pending == nil {
 		snapshot.Pending = make(map[uint32]pendingSample)
 	}
@@ -1333,79 +1661,92 @@ func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 		if cell == nil {
 			return fmt.Errorf("grid: snapshot cell %q is null", key)
 		}
+
 		if cell.Key == "" {
 			cell.Key = key
 		}
-		if cell.Key != key {
-			return fmt.Errorf("grid: snapshot cell key mismatch %q != %q", key, cell.Key)
-		}
+
 		if int(cell.ID) >= cellCount {
-			return fmt.Errorf("grid: snapshot cell %q has out-of-range id %d", key, cell.ID)
+			return fmt.Errorf("grid: snapshot cell %q ID %d out of range (cell count %d)", key, cell.ID, cellCount)
 		}
+
 		if idToCell[cell.ID] != nil {
-			return fmt.Errorf("grid: duplicate snapshot cell id %d", cell.ID)
+			return fmt.Errorf("grid: duplicate cell ID %d in snapshot", cell.ID)
 		}
+
 		idToCell[cell.ID] = cell
 		cellIDs[key] = cell.ID
 	}
+
 	for id, cell := range idToCell {
 		if cell == nil {
-			return fmt.Errorf("grid: snapshot is missing cell id %d", id)
-		}
-	}
-
-	for key, relation := range snapshot.Relations {
-		if relation == nil {
-			return fmt.Errorf("grid: snapshot relation %d is null", key)
-		}
-		left, right := pairIDs(key)
-		if left == right || int(left) >= cellCount || int(right) >= cellCount {
-			return fmt.Errorf("grid: snapshot relation %d references invalid cells", key)
-		}
-	}
-	for id := range snapshot.Pending {
-		if int(id) >= cellCount {
-			return fmt.Errorf("grid: snapshot pending sample references invalid cell %d", id)
+			return fmt.Errorf("grid: gap in snapshot cell IDs at %d", id)
 		}
 	}
 
 	regionMembers := make(map[uint8]int)
 	unassigned := false
+
 	for _, cell := range idToCell {
 		if cell.Region == 0 {
 			unassigned = true
 			continue
 		}
+
 		regionMembers[cell.Region]++
 	}
 
-	grid.mu.Lock()
-	defer grid.mu.Unlock()
+	grid.updateMu.Lock()
+	defer grid.updateMu.Unlock()
 
+	grid.settled.Store(snapshot.Settled)
 	grid.Settled = snapshot.Settled
+	grid.observations.Store(snapshot.Observations)
 	grid.Observations = snapshot.Observations
 	grid.Cells = snapshot.Cells
-	grid.Relations = snapshot.Relations
 	grid.RegionMembers = regionMembers
 	grid.cellIDs = cellIDs
 	grid.idToCell = idToCell
+	copied := make([]*Cell, len(idToCell))
+	copy(copied, idToCell)
+	grid.idToCellLF.Store(&copied)
 	grid.prevRaw = snapshot.PrevRaw
 	grid.dirty = snapshot.Dirty || (snapshot.Settled && unassigned)
 	grid.pendingTick = snapshot.PendingTick
 	grid.pending = snapshot.Pending
+
+	for key, cell := range snapshot.Cells {
+		grid.cellsLF.Set(key, cell)
+	}
+
+	grid.capacity = cellCount
+	grid.pairs = make([]PairStats, grid.capacity*(grid.capacity+1)/2)
+
+	for key, rel := range snapshot.Relations {
+		if rel == nil {
+			continue
+		}
+
+		left, right := pairIDs(key)
+		maxID := int(max(left, right))
+
+		if maxID >= grid.capacity {
+			grid.growPairs(maxID + 1)
+		}
+
+		idx := symIdx(int(left), int(right))
+		grid.pairs[idx] = PairStats{
+			Weight:   rel.Weight,
+			SumX:     rel.SumX,
+			SumY:     rel.SumY,
+			SumXX:    rel.SumXX,
+			SumYY:    rel.SumYY,
+			SumXY:    rel.SumXY,
+			Same:     int32(rel.Same),
+			Opposite: int32(rel.Opposite),
+			Total:    int32(rel.Total),
+		}
+	}
+
 	return nil
-}
-
-func finite(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
-}
-
-func clamp(value, low, high float64) float64 {
-	if value < low {
-		return low
-	}
-	if value > high {
-		return high
-	}
-	return value
 }

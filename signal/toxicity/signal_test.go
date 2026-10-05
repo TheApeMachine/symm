@@ -68,8 +68,8 @@ func TestToxicitySignal(t *testing.T) {
 			prior1.SeqIdx = 1
 			prior1.At = now
 			prior1.From = now
-			prior1.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, askPrice, 1.0).Write(askPrice))
-			prior1.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, trade1Qty).Write(trade1Qty))
+			prior1.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, askPrice, 1.0).Write(askPrice))
+			prior1.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, trade1Qty).Write(trade1Qty))
 			prior1.SetProvenance("side", "buy")
 			prior1.SetProvenance("channel", "trade")
 
@@ -102,8 +102,8 @@ func TestToxicitySignal(t *testing.T) {
 			prior2.SeqIdx = 2
 			prior2.At = trade2At
 			prior2.From = trade2At
-			prior2.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, askPrice, 1.0).Write(askPrice))
-			prior2.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, trade2Qty).Write(trade2Qty))
+			prior2.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, askPrice, 1.0).Write(askPrice))
+			prior2.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, trade2Qty).Write(trade2Qty))
 			prior2.SetProvenance("side", "buy")
 			prior2.SetProvenance("channel", "trade")
 
@@ -155,8 +155,8 @@ func TestToxicitySignal(t *testing.T) {
 			prior1.SeqIdx = 10
 			prior1.At = now
 			prior1.From = now
-			prior1.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, 50001.0, 1.0).Write(50001.0))
-			prior1.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
+			prior1.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 50001.0, 1.0).Write(50001.0))
+			prior1.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
 			prior1.SetProvenance("side", "buy")
 			prior1.SetProvenance("channel", "trade")
 
@@ -197,8 +197,8 @@ func TestToxicitySignal(t *testing.T) {
 			prior2.SeqIdx = 11
 			prior2.At = step2At
 			prior2.From = step2At
-			prior2.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, 49995.0, 1.0).Write(49995.0))
-			prior2.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
+			prior2.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 49995.0, 1.0).Write(49995.0))
+			prior2.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
 			prior2.SetProvenance("side", "sell")
 			prior2.SetProvenance("channel", "trade")
 
@@ -228,8 +228,8 @@ func TestToxicitySignal(t *testing.T) {
 			prior.From = now
 			prior.SetProvenance("side", "buy")
 			prior.SetProvenance("channel", "trade")
-			prior.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, 0.0, 1.0).Write(0.0)) // Invalid zero price
-			prior.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
+			prior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 0.0, 1.0).Write(0.0)) // Invalid zero price
+			prior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
 
 			res := instrument.Step(prior)
 			So(res, ShouldNotBeNil)

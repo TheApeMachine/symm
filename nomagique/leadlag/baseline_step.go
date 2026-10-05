@@ -37,7 +37,7 @@ func NewBaselineStep(window func() core.Primitive) core.Primitive {
 func (op *BaselineStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			lagVal := m.GetMetric("best_lag_seconds").Raw
 			gainVal := m.GetMetric("absolute_correlation_gain").Raw
@@ -49,21 +49,21 @@ func (op *BaselineStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 
 			lagScale := math.Max(lagReading.Dispersion, 1e-6)
 
-			m.SetMetric("lag_baseline_seconds", data.NewMetric[float64](
+			m.SetMetric("lag_baseline_seconds", data.NewMetric(
 				"lag_baseline_seconds",
 				data.UnitDuration,
 				data.TimescaleRollingWindow,
 				0.0,
 				lagScale,
 			).Write(lagReading.Baseline))
-			m.SetMetric("lag_divergence_seconds", data.NewMetric[float64](
+			m.SetMetric("lag_divergence_seconds", data.NewMetric(
 				"lag_divergence_seconds",
 				data.UnitDuration,
 				data.TimescaleInstantaneous,
 				0.0,
 				lagScale,
 			).Write(lagReading.Residual))
-			m.SetMetric("lag_zscore", data.NewMetric[float64](
+			m.SetMetric("lag_zscore", data.NewMetric(
 				"lag_zscore",
 				data.UnitZScore,
 				data.TimescaleRollingWindow,
@@ -72,7 +72,7 @@ func (op *BaselineStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			).Write(lagReading.ZScore))
 
 			if lagReading.VarianceDefined {
-				m.SetMetric("lag_noise_scale_seconds", data.NewMetric[float64](
+				m.SetMetric("lag_noise_scale_seconds", data.NewMetric(
 					"lag_noise_scale_seconds",
 					data.UnitDuration,
 					data.TimescaleRollingWindow,
@@ -81,14 +81,14 @@ func (op *BaselineStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				).Write(lagReading.Dispersion))
 			}
 
-			m.SetMetric("correlation_gain_baseline", data.NewMetric[float64](
+			m.SetMetric("correlation_gain_baseline", data.NewMetric(
 				"correlation_gain_baseline",
 				data.UnitCorrelation,
 				data.TimescaleRollingWindow,
 				0.0,
 				1.0,
 			).Write(gainReading.Baseline))
-			m.SetMetric("correlation_gain_zscore", data.NewMetric[float64](
+			m.SetMetric("correlation_gain_zscore", data.NewMetric(
 				"correlation_gain_zscore",
 				data.UnitZScore,
 				data.TimescaleRollingWindow,
@@ -96,14 +96,14 @@ func (op *BaselineStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				1.0,
 			).Write(gainReading.ZScore))
 
-			m.SetMetric("best_lag_correlation_baseline", data.NewMetric[float64](
+			m.SetMetric("best_lag_correlation_baseline", data.NewMetric(
 				"best_lag_correlation_baseline",
 				data.UnitCorrelation,
 				data.TimescaleRollingWindow,
 				0.0,
 				1.0,
 			).Write(corrReading.Baseline))
-			m.SetMetric("best_lag_correlation_zscore", data.NewMetric[float64](
+			m.SetMetric("best_lag_correlation_zscore", data.NewMetric(
 				"best_lag_correlation_zscore",
 				data.UnitZScore,
 				data.TimescaleRollingWindow,

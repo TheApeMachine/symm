@@ -23,8 +23,8 @@ func (catalog *Catalog) scan(
 	filter iceberg.BooleanExpression,
 	limit int,
 	fields ...string,
-) iter.Seq2[*data.Measurement[float64], error] {
-	return func(yield func(*data.Measurement[float64], error) bool) {
+) iter.Seq2[*data.Measurement, error] {
+	return func(yield func(*data.Measurement, error) bool) {
 		if catalog != nil && catalog.awsConfig != nil {
 			ctx = utils.WithAwsConfig(ctx, catalog.awsConfig)
 		}
@@ -128,7 +128,7 @@ func (catalog *Catalog) scan(
 }
 
 // Collect reads every measurement for one epoch. The scan predicate is the epoch.
-func (catalog *Catalog) Collect(ctx context.Context, tableName string, epoch int64) ([]*data.Measurement[float64], error) {
+func (catalog *Catalog) Collect(ctx context.Context, tableName string, epoch int64) ([]*data.Measurement, error) {
 	if catalog == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -137,7 +137,7 @@ func (catalog *Catalog) Collect(ctx context.Context, tableName string, epoch int
 		))
 	}
 
-	rows := make([]*data.Measurement[float64], 0)
+	rows := make([]*data.Measurement, 0)
 
 	for measurement, err := range catalog.scan(ctx, tableName, epoch, nil, 0) {
 		if err != nil {
@@ -156,9 +156,9 @@ func (catalog *Catalog) Collect(ctx context.Context, tableName string, epoch int
 // Rows are sorted by SeqIdx so Timeline merge (which assumes ordered streams) is correct.
 func (catalog *Catalog) Scan(ctx context.Context, tableName string, epoch int64,
 	filter iceberg.BooleanExpression, limit int, fields ...string,
-) iter.Seq[*data.Measurement[float64]] {
-	return func(yield func(*data.Measurement[float64]) bool) {
-		rows := make([]*data.Measurement[float64], 0)
+) iter.Seq[*data.Measurement] {
+	return func(yield func(*data.Measurement) bool) {
+		rows := make([]*data.Measurement, 0)
 		for measurement, err := range catalog.scan(ctx, tableName, epoch, filter, limit, fields...) {
 			if err != nil {
 				errnie.Error(err)

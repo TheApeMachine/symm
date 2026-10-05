@@ -20,9 +20,9 @@ func TrainingPrice(ctx context.Context) *broker.Price {
 
 // TrainingTape expands alternating opportunity legs into stable volume regimes.
 // The repetitions and one-cent spread specify synthetic data, not detector policy.
-func TrainingTape(legs int) []*data.Measurement[float64] {
+func TrainingTape(legs int) []*data.Measurement {
 	base := ImpulseTape("BTC/USD", legs)
-	var frames []*data.Measurement[float64]
+	var frames []*data.Measurement
 
 	for _, source := range base {
 		for repeat := 0; repeat < 32; repeat++ {
@@ -31,17 +31,17 @@ func TrainingTape(legs int) []*data.Measurement[float64] {
 			frame.SeqIdx = sequence
 			frame.Source = "training"
 			frame.SetProvenance("owner", "training")
-			frame.SetMetric("previous_input", data.Metric[float64]{Raw: float64(sequence - 1)})
-			frame.SetMetric("input_count", data.Metric[float64]{Raw: 4})
-			frame.SetMetric("impulse_version", data.Metric[float64]{Raw: grid.FormatVersion})
+			frame.SetMetric("previous_input", data.Metric{Raw: float64(sequence - 1)})
+			frame.SetMetric("input_count", data.Metric{Raw: 4})
+			frame.SetMetric("impulse_version", data.Metric{Raw: grid.FormatVersion})
 			for index, peer := range frame.Peers {
 				frame.Peers[index] = CloneTestMeasurement(peer)
 				frame.Peers[index].SeqIdx = sequence
 			}
 			trade := frame.Peers[0]
 			value := trade.GetMetric("value").Raw
-			trade.SetMetric("price", data.Metric[float64]{Label: "price", Raw: value, Standardized: &value, Exact: decimal.NewFromFloat64(value)})
-			quote := data.NewMeasurement[float64]("quote", nil)
+			trade.SetMetric("price", data.Metric{Label: "price", Raw: value, Standardized: &value, Exact: decimal.NewFromFloat64(value)})
+			quote := data.NewMeasurement("quote", nil)
 			quote.SeqIdx, quote.Label = sequence, "BTC/USD"
 			quote.SetMetadata("venue", "true")
 			quote.SetMetadata("volume-unit", "base")
@@ -52,9 +52,9 @@ func TrainingTape(legs int) []*data.Measurement[float64] {
 				if side == "ask" {
 					amount += 0.01
 				}
-				quote.SetMetric(side, data.Metric[float64]{Label: side, Raw: amount, Standardized: &amount, Exact: decimal.NewFromFloat64(amount)})
+				quote.SetMetric(side, data.Metric{Label: side, Raw: amount, Standardized: &amount, Exact: decimal.NewFromFloat64(amount)})
 			}
-			frame.Peers = append([]*data.Measurement[float64]{quote}, frame.Peers...)
+			frame.Peers = append([]*data.Measurement{quote}, frame.Peers...)
 			// Changing features within a price regime keeps region contexts observable.
 			for _, peer := range frame.Peers[2:] {
 				metric := peer.GetMetric("value")

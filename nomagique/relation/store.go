@@ -36,7 +36,7 @@ per-coordinate observations and append each of them under the given model
 epoch.
 */
 type MeasurementAppend struct {
-	Measurement *data.Measurement[float64]
+	Measurement *data.Measurement
 	Epoch       uint64
 }
 

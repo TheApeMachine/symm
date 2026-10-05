@@ -55,14 +55,14 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		nmliquidity.NewTouch(),
 		data.NewAdapter(
 			statistic.NewJoint(3),
-			func(m *data.Measurement[float64]) statistic.JointInput {
+			func(m *data.Measurement) statistic.JointInput {
 				return statistic.JointInput{Values: []float64{
 					m.GetMetric("_log_bid_notional").Raw,
 					m.GetMetric("_log_ask_notional").Raw,
 					m.GetMetric("_log_relative_spread").Raw,
 				}}
 			},
-			func(m *data.Measurement[float64], reading statistic.JointReading) {
+			func(m *data.Measurement, reading statistic.JointReading) {
 				if len(reading.Channels) > 0 {
 					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(reading.Channels[0].Count, 'f', -1, 64))
 				}
@@ -87,7 +87,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					if !channel.HasPrior {
 						continue
 					}
-					m.SetMetric(baselineLabels[index], data.NewMetric[float64](
+					m.SetMetric(baselineLabels[index], data.NewMetric(
 						baselineLabels[index],
 						baselineUnits[index],
 						data.TimescaleInstantaneous,
@@ -95,7 +95,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 						channel.ScoreScale,
 					).Write(channel.Baseline))
 					if channel.Baseline > 0 {
-						m.SetMetric(ratioLabels[index], data.NewMetric[float64](
+						m.SetMetric(ratioLabels[index], data.NewMetric(
 							ratioLabels[index],
 							data.UnitRatio,
 							data.TimescaleInstantaneous,
@@ -103,7 +103,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 							channel.ScoreScale/channel.Baseline,
 						).Write(originals[index]/channel.Baseline))
 					}
-					m.SetMetric(divergenceLabels[index], data.NewMetric[float64](
+					m.SetMetric(divergenceLabels[index], data.NewMetric(
 						divergenceLabels[index],
 						baselineUnits[index],
 						data.TimescaleInstantaneous,
@@ -112,7 +112,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					).Write(channel.Residual))
 
 					if channel.ScoreScale > 0 {
-						m.SetMetric(noiseLabels[index], data.NewMetric[float64](
+						m.SetMetric(noiseLabels[index], data.NewMetric(
 							noiseLabels[index],
 							baselineUnits[index],
 							data.TimescaleInstantaneous,
@@ -126,12 +126,12 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			statistic.NewLocalRegression(),
-			func(m *data.Measurement[float64]) temporal.Price {
+			func(m *data.Measurement) temporal.Price {
 				return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("depth_divergence:bid").Raw}
 			},
-			func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
+			func(m *data.Measurement, out statistic.LocalRegressionReading) {
 				if out.SlopeDefined {
-					m.SetMetric("divergence_velocity:bid", data.NewMetric[float64](
+					m.SetMetric("divergence_velocity:bid", data.NewMetric(
 						"divergence_velocity:bid",
 						data.UnitVelocity,
 						data.TimescaleInstantaneous,
@@ -140,7 +140,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					).Write(out.Slope))
 				}
 				if out.SNRDefined {
-					m.SetMetric("divergence_velocity_snr:bid", data.NewMetric[float64](
+					m.SetMetric("divergence_velocity_snr:bid", data.NewMetric(
 						"divergence_velocity_snr:bid",
 						data.UnitSNR,
 						data.TimescaleInstantaneous,
@@ -152,12 +152,12 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			statistic.NewLocalRegression(),
-			func(m *data.Measurement[float64]) temporal.Price {
+			func(m *data.Measurement) temporal.Price {
 				return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("depth_divergence:ask").Raw}
 			},
-			func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
+			func(m *data.Measurement, out statistic.LocalRegressionReading) {
 				if out.SlopeDefined {
-					m.SetMetric("divergence_velocity:ask", data.NewMetric[float64](
+					m.SetMetric("divergence_velocity:ask", data.NewMetric(
 						"divergence_velocity:ask",
 						data.UnitVelocity,
 						data.TimescaleInstantaneous,
@@ -166,7 +166,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					).Write(out.Slope))
 				}
 				if out.SNRDefined {
-					m.SetMetric("divergence_velocity_snr:ask", data.NewMetric[float64](
+					m.SetMetric("divergence_velocity_snr:ask", data.NewMetric(
 						"divergence_velocity_snr:ask",
 						data.UnitSNR,
 						data.TimescaleInstantaneous,
@@ -178,12 +178,12 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			statistic.NewLocalRegression(),
-			func(m *data.Measurement[float64]) temporal.Price {
+			func(m *data.Measurement) temporal.Price {
 				return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("spread_divergence").Raw}
 			},
-			func(m *data.Measurement[float64], out statistic.LocalRegressionReading) {
+			func(m *data.Measurement, out statistic.LocalRegressionReading) {
 				if out.SlopeDefined {
-					m.SetMetric("spread_divergence_velocity", data.NewMetric[float64](
+					m.SetMetric("spread_divergence_velocity", data.NewMetric(
 						"spread_divergence_velocity",
 						data.UnitVelocity,
 						data.TimescaleInstantaneous,
@@ -192,7 +192,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					).Write(out.Slope))
 				}
 				if out.SNRDefined {
-					m.SetMetric("spread_divergence_velocity_snr", data.NewMetric[float64](
+					m.SetMetric("spread_divergence_velocity_snr", data.NewMetric(
 						"spread_divergence_velocity_snr",
 						data.UnitSNR,
 						data.TimescaleInstantaneous,
@@ -214,7 +214,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
 		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
@@ -265,34 +265,34 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
-	out.Peers = []*data.Measurement[float64]{prior}
+	out.Peers = []*data.Measurement{prior}
 
 	midpoint := (bid + ask) / 2.0
 	spread := ask - bid
 	totalQty := bidQty + askQty
 
-	out.SetMetric("bid", data.NewMetric[float64](
+	out.SetMetric("bid", data.NewMetric(
 		"bid",
 		data.UnitPrice,
 		data.TimescaleInstantaneous,
 		midpoint,
 		spread,
 	).Write(bid))
-	out.SetMetric("ask", data.NewMetric[float64](
+	out.SetMetric("ask", data.NewMetric(
 		"ask",
 		data.UnitPrice,
 		data.TimescaleInstantaneous,
 		midpoint,
 		spread,
 	).Write(ask))
-	out.SetMetric("bid_qty", data.NewMetric[float64](
+	out.SetMetric("bid_qty", data.NewMetric(
 		"bid_qty",
 		data.UnitQuantity,
 		data.TimescaleInstantaneous,
 		0.0,
 		totalQty,
 	).Write(bidQty))
-	out.SetMetric("ask_qty", data.NewMetric[float64](
+	out.SetMetric("ask_qty", data.NewMetric(
 		"ask_qty",
 		data.UnitQuantity,
 		data.TimescaleInstantaneous,
@@ -304,7 +304,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		out.SetProvenance("channel", channel)
 	}
 
-	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 

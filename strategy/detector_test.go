@@ -21,8 +21,8 @@ import (
 tradeTape turns synthetic market legs into stored spot:trade measurements of one
 epoch, numbering ticks and sequence indices in tape order.
 */
-func tradeTape(t *testing.T, epoch int64, legs ...[]*data.Measurement[float64]) []*data.Measurement[float64] {
-	var tape []*data.Measurement[float64]
+func tradeTape(t *testing.T, epoch int64, legs ...[]*data.Measurement) []*data.Measurement {
+	var tape []*data.Measurement
 
 	for _, leg := range legs {
 		for _, frame := range leg {
@@ -33,7 +33,7 @@ func tradeTape(t *testing.T, epoch int64, legs ...[]*data.Measurement[float64]) 
 				t.Fatal(err)
 			}
 
-			trade := data.NewMeasurement("spot:trade", map[string]data.Metric[float64]{
+			trade := data.NewMeasurement("spot:trade", map[string]data.Metric{
 				"price": {Raw: exact.Float64(), Exact: exact},
 			})
 			trade.Epoch = epoch
@@ -52,7 +52,7 @@ func tradeTape(t *testing.T, epoch int64, legs ...[]*data.Measurement[float64]) 
 drawUp is the brute-force oracle: the low/high tick pair with the largest
 relative gain where the low strictly precedes the high.
 */
-func drawUp(tape []*data.Measurement[float64]) (int64, int64) {
+func drawUp(tape []*data.Measurement) (int64, int64) {
 	var (
 		best float64
 		low  int64
@@ -115,7 +115,7 @@ func testPrice(ctx context.Context, symbols ...string) *broker.Price {
 	return price
 }
 
-func popMeasurement(storeTee *hindsight.StoreTee) *data.Measurement[float64] {
+func popMeasurement(storeTee *hindsight.StoreTee) *data.Measurement {
 	ptr := storeTee.Next()
 	if ptr == nil {
 		return nil
@@ -141,7 +141,7 @@ func TestDetector_Scan(t *testing.T) {
 				market.NewAdversarialMultiWickTape("BTC/USD", 57000, 10),
 			)
 
-			detector.Scan(func(yield func(*data.Measurement[float64]) bool) {
+			detector.Scan(func(yield func(*data.Measurement) bool) {
 				for _, trade := range tape {
 					if !yield(trade) {
 						return
@@ -171,12 +171,12 @@ func TestDetector_Scan(t *testing.T) {
 				"150", "120", "80", "50", "40", "42", "45", "48", "50", "49",
 			}
 
-			tape := make([]*data.Measurement[float64], len(prices))
+			tape := make([]*data.Measurement, len(prices))
 			for i, pStr := range prices {
 				exact, pErr := decimal.NewFromString(pStr)
 				So(pErr, ShouldBeNil)
 
-				m := data.NewMeasurement("spot:trade", map[string]data.Metric[float64]{
+				m := data.NewMeasurement("spot:trade", map[string]data.Metric{
 					"price": {Raw: exact.Float64(), Exact: exact},
 				})
 				m.Epoch = 100
@@ -186,7 +186,7 @@ func TestDetector_Scan(t *testing.T) {
 				tape[i] = m
 			}
 
-			detector.Scan(func(yield func(*data.Measurement[float64]) bool) {
+			detector.Scan(func(yield func(*data.Measurement) bool) {
 				for _, trade := range tape {
 					if !yield(trade) {
 						return
@@ -216,12 +216,12 @@ func TestDetector_Scan(t *testing.T) {
 				"100", "110", "120", "90", "70", "50", "80", "120", "180", "250",
 			}
 
-			tape := make([]*data.Measurement[float64], len(prices))
+			tape := make([]*data.Measurement, len(prices))
 			for i, pStr := range prices {
 				exact, pErr := decimal.NewFromString(pStr)
 				So(pErr, ShouldBeNil)
 
-				m := data.NewMeasurement("spot:trade", map[string]data.Metric[float64]{
+				m := data.NewMeasurement("spot:trade", map[string]data.Metric{
 					"price": {Raw: exact.Float64(), Exact: exact},
 				})
 				m.Epoch = 100
@@ -231,7 +231,7 @@ func TestDetector_Scan(t *testing.T) {
 				tape[i] = m
 			}
 
-			detector.Scan(func(yield func(*data.Measurement[float64]) bool) {
+			detector.Scan(func(yield func(*data.Measurement) bool) {
 				for _, trade := range tape {
 					if !yield(trade) {
 						return
@@ -261,12 +261,12 @@ func TestDetector_Scan(t *testing.T) {
 				"0.00092", "0.00078", "0.00065",
 			}
 
-			tape := make([]*data.Measurement[float64], len(prices))
+			tape := make([]*data.Measurement, len(prices))
 			for i, pStr := range prices {
 				exact, pErr := decimal.NewFromString(pStr)
 				So(pErr, ShouldBeNil)
 
-				m := data.NewMeasurement("spot:trade", map[string]data.Metric[float64]{
+				m := data.NewMeasurement("spot:trade", map[string]data.Metric{
 					"price": {Raw: exact.Float64(), Exact: exact},
 				})
 				m.Epoch = 100
@@ -276,7 +276,7 @@ func TestDetector_Scan(t *testing.T) {
 				tape[i] = m
 			}
 
-			detector.Scan(func(yield func(*data.Measurement[float64]) bool) {
+			detector.Scan(func(yield func(*data.Measurement) bool) {
 				for _, trade := range tape {
 					if !yield(trade) {
 						return
@@ -302,7 +302,7 @@ func TestDetector_Scan(t *testing.T) {
 			symbols := []string{"BTC/USD", "ETH/USD"}
 			epochs := []int64{100, 101}
 
-			var multiTape []*data.Measurement[float64]
+			var multiTape []*data.Measurement
 			tick := int64(1)
 
 			for _, ep := range epochs {
@@ -310,7 +310,7 @@ func TestDetector_Scan(t *testing.T) {
 					// 50 -> 100 run for each symbol and epoch
 					for _, pStr := range []string{"60", "50", "70", "90", "100", "80"} {
 						exact, _ := decimal.NewFromString(pStr)
-						m := data.NewMeasurement("spot:trade", map[string]data.Metric[float64]{
+						m := data.NewMeasurement("spot:trade", map[string]data.Metric{
 							"price": {Raw: exact.Float64(), Exact: exact},
 						})
 						m.Epoch = ep
@@ -323,7 +323,7 @@ func TestDetector_Scan(t *testing.T) {
 				}
 			}
 
-			detector.Scan(func(yield func(*data.Measurement[float64]) bool) {
+			detector.Scan(func(yield func(*data.Measurement) bool) {
 				for _, trade := range multiTape {
 					if !yield(trade) {
 						return
@@ -345,10 +345,10 @@ func TestDetector_Scan(t *testing.T) {
 
 		Convey("When a tape is monotonically downward with no rallies", func() {
 			prices := []string{"100", "95", "90", "85", "80", "70", "60"}
-			tape := make([]*data.Measurement[float64], len(prices))
+			tape := make([]*data.Measurement, len(prices))
 			for i, pStr := range prices {
 				exact, _ := decimal.NewFromString(pStr)
-				m := data.NewMeasurement("spot:trade", map[string]data.Metric[float64]{
+				m := data.NewMeasurement("spot:trade", map[string]data.Metric{
 					"price": {Raw: exact.Float64(), Exact: exact},
 				})
 				m.Epoch = 100
@@ -358,7 +358,7 @@ func TestDetector_Scan(t *testing.T) {
 				tape[i] = m
 			}
 
-			detector.Scan(func(yield func(*data.Measurement[float64]) bool) {
+			detector.Scan(func(yield func(*data.Measurement) bool) {
 				for _, trade := range tape {
 					if !yield(trade) {
 						return
@@ -372,14 +372,14 @@ func TestDetector_Scan(t *testing.T) {
 		})
 
 		Convey("When a trade carries no exact price", func() {
-			trade := data.NewMeasurement("spot:trade", map[string]data.Metric[float64]{
+			trade := data.NewMeasurement("spot:trade", map[string]data.Metric{
 				"price": {Raw: 60000},
 			})
 			trade.Epoch = 100
 			trade.Label = "BTC/USD"
 			trade.Tick = 1
 
-			detector.Scan(func(yield func(*data.Measurement[float64]) bool) {
+			detector.Scan(func(yield func(*data.Measurement) bool) {
 				yield(trade)
 			})
 
@@ -407,7 +407,7 @@ func TestDetector_FrictionGating(t *testing.T) {
 				market.NewUnprofitableUpperTape("BTC/USD", 60000, 10),
 			)
 
-			detector.Scan(func(yield func(*data.Measurement[float64]) bool) {
+			detector.Scan(func(yield func(*data.Measurement) bool) {
 				for _, trade := range tape {
 					if !yield(trade) {
 						return
@@ -427,7 +427,7 @@ func TestDetector_FrictionGating(t *testing.T) {
 				market.NewProfitableUpperTape("BTC/USD", 60000, 10),
 			)
 
-			detector.Scan(func(yield func(*data.Measurement[float64]) bool) {
+			detector.Scan(func(yield func(*data.Measurement) bool) {
 				for _, trade := range tape {
 					if !yield(trade) {
 						return
@@ -453,7 +453,7 @@ func TestDetector_FrictionGating(t *testing.T) {
 				market.NewChopWhipsawTape("BTC/USD", 60000, 10, 50),
 			)
 
-			detector.Scan(func(yield func(*data.Measurement[float64]) bool) {
+			detector.Scan(func(yield func(*data.Measurement) bool) {
 				for _, trade := range tape {
 					if !yield(trade) {
 						return

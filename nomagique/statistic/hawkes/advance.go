@@ -43,7 +43,7 @@ func NewCounts(history *paths) core.Primitive {
 func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m.Err != nil {
 				if !yield(arriving) {
@@ -101,35 +101,35 @@ func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				m.From = from
 			}
 
-			m.SetMetric("event_count", data.NewMetric[float64](
+			m.SetMetric("event_count", data.NewMetric(
 				"event_count",
 				data.UnitDimensionless,
 				data.TimescaleInstantaneous,
 				count,
 				math.Sqrt(count),
 			).Write(count))
-			m.SetMetric("event_count:buy", data.NewMetric[float64](
+			m.SetMetric("event_count:buy", data.NewMetric(
 				"event_count:buy",
 				data.UnitDimensionless,
 				data.TimescaleInstantaneous,
 				count/2.0,
 				count/2.0,
 			).Write(countBuy))
-			m.SetMetric("event_count:sell", data.NewMetric[float64](
+			m.SetMetric("event_count:sell", data.NewMetric(
 				"event_count:sell",
 				data.UnitDimensionless,
 				data.TimescaleInstantaneous,
 				count/2.0,
 				count/2.0,
 			).Write(countSell))
-			m.SetMetric("event_fraction:buy", data.NewMetric[float64](
+			m.SetMetric("event_fraction:buy", data.NewMetric(
 				"event_fraction:buy",
 				data.UnitDimensionless,
 				data.TimescaleInstantaneous,
 				0.5,
 				0.5,
 			).Write(countBuy/count))
-			m.SetMetric("event_fraction:sell", data.NewMetric[float64](
+			m.SetMetric("event_fraction:sell", data.NewMetric(
 				"event_fraction:sell",
 				data.UnitDimensionless,
 				data.TimescaleInstantaneous,
@@ -139,21 +139,21 @@ func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if span > 0 {
 				rateScale := math.Sqrt(count) / span
-				m.SetMetric("arrival_rate:buy", data.NewMetric[float64](
+				m.SetMetric("arrival_rate:buy", data.NewMetric(
 					"arrival_rate:buy",
 					data.UnitRate,
 					data.TimescaleInstantaneous,
 					(count/2.0)/span,
 					rateScale/2.0,
 				).Write(countBuy/span))
-				m.SetMetric("arrival_rate:sell", data.NewMetric[float64](
+				m.SetMetric("arrival_rate:sell", data.NewMetric(
 					"arrival_rate:sell",
 					data.UnitRate,
 					data.TimescaleInstantaneous,
 					(count/2.0)/span,
 					rateScale/2.0,
 				).Write(countSell/span))
-				m.SetMetric("arrival_rate", data.NewMetric[float64](
+				m.SetMetric("arrival_rate", data.NewMetric(
 					"arrival_rate",
 					data.UnitRate,
 					data.TimescaleInstantaneous,
@@ -202,7 +202,7 @@ func NewExcitation(history *paths) core.Primitive {
 func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 			p := op.history.at(m.Label)
 
 			m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(p.support(), 'f', -1, 64))
@@ -250,7 +250,7 @@ mathematics the fitted bivariate process defines: pre-arrival intensities,
 excitation decomposition, branching descent, likelihoods against nested
 restrictions, and compensator innovations.
 */
-func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrivals, sellArrivals []float64, atSec, mark float64) {
+func (op *Excitation) evaluate(m *data.Measurement, p *path, buyArrivals, sellArrivals []float64, atSec, mark float64) {
 	model := p.model
 
 	muX := model.muX
@@ -267,56 +267,56 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	excessBuy := lambdaBuy - muX
 	excessSell := lambdaSell - muY
 
-	m.SetMetric("conditional_intensity:buy", data.NewMetric[float64](
+	m.SetMetric("conditional_intensity:buy", data.NewMetric(
 		"conditional_intensity:buy",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		muX,
 		muX,
 	).Write(lambdaBuy))
-	m.SetMetric("conditional_intensity:sell", data.NewMetric[float64](
+	m.SetMetric("conditional_intensity:sell", data.NewMetric(
 		"conditional_intensity:sell",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		muY,
 		muY,
 	).Write(lambdaSell))
-	m.SetMetric("conditional_intensity", data.NewMetric[float64](
+	m.SetMetric("conditional_intensity", data.NewMetric(
 		"conditional_intensity",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		muX+muY,
 		muX+muY,
 	).Write(lambdaBuy+lambdaSell))
-	m.SetMetric("background_rate:buy", data.NewMetric[float64](
+	m.SetMetric("background_rate:buy", data.NewMetric(
 		"background_rate:buy",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		muX,
 		muX,
 	).Write(muX))
-	m.SetMetric("background_rate:sell", data.NewMetric[float64](
+	m.SetMetric("background_rate:sell", data.NewMetric(
 		"background_rate:sell",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		muY,
 		muY,
 	).Write(muY))
-	m.SetMetric("background_rate", data.NewMetric[float64](
+	m.SetMetric("background_rate", data.NewMetric(
 		"background_rate",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		muX+muY,
 		muX+muY,
 	).Write(muX+muY))
-	m.SetMetric("excitation_intensity:buy", data.NewMetric[float64](
+	m.SetMetric("excitation_intensity:buy", data.NewMetric(
 		"excitation_intensity:buy",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		0.0,
 		muX,
 	).Write(excessBuy))
-	m.SetMetric("excitation_intensity:sell", data.NewMetric[float64](
+	m.SetMetric("excitation_intensity:sell", data.NewMetric(
 		"excitation_intensity:sell",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
@@ -325,7 +325,7 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	).Write(excessSell))
 
 	if lambdaBuy > 0 {
-		m.SetMetric("excitation_fraction:buy", data.NewMetric[float64](
+		m.SetMetric("excitation_fraction:buy", data.NewMetric(
 			"excitation_fraction:buy",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -335,7 +335,7 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	}
 
 	if lambdaSell > 0 {
-		m.SetMetric("excitation_fraction:sell", data.NewMetric[float64](
+		m.SetMetric("excitation_fraction:sell", data.NewMetric(
 			"excitation_fraction:sell",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -344,28 +344,28 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 		).Write(excessSell/lambdaSell))
 	}
 
-	m.SetMetric("excitation_amplitude:buy_from_buy", data.NewMetric[float64](
+	m.SetMetric("excitation_amplitude:buy_from_buy", data.NewMetric(
 		"excitation_amplitude:buy_from_buy",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		0.0,
 		beta,
 	).Write(alphaXX))
-	m.SetMetric("excitation_amplitude:buy_from_sell", data.NewMetric[float64](
+	m.SetMetric("excitation_amplitude:buy_from_sell", data.NewMetric(
 		"excitation_amplitude:buy_from_sell",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		0.0,
 		beta,
 	).Write(alphaXY))
-	m.SetMetric("excitation_amplitude:sell_from_buy", data.NewMetric[float64](
+	m.SetMetric("excitation_amplitude:sell_from_buy", data.NewMetric(
 		"excitation_amplitude:sell_from_buy",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		0.0,
 		beta,
 	).Write(alphaYX))
-	m.SetMetric("excitation_amplitude:sell_from_sell", data.NewMetric[float64](
+	m.SetMetric("excitation_amplitude:sell_from_sell", data.NewMetric(
 		"excitation_amplitude:sell_from_sell",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
@@ -376,70 +376,70 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	if beta > 0 {
 		timescale := 1.0 / beta
 
-		m.SetMetric("excitation_decay", data.NewMetric[float64](
+		m.SetMetric("excitation_decay", data.NewMetric(
 			"excitation_decay",
 			data.UnitRate,
 			data.TimescaleInstantaneous,
 			0.0,
 			beta,
 		).Write(beta))
-		m.SetMetric("excitation_decay:buy_from_buy", data.NewMetric[float64](
+		m.SetMetric("excitation_decay:buy_from_buy", data.NewMetric(
 			"excitation_decay:buy_from_buy",
 			data.UnitRate,
 			data.TimescaleInstantaneous,
 			0.0,
 			beta,
 		).Write(beta))
-		m.SetMetric("excitation_decay:buy_from_sell", data.NewMetric[float64](
+		m.SetMetric("excitation_decay:buy_from_sell", data.NewMetric(
 			"excitation_decay:buy_from_sell",
 			data.UnitRate,
 			data.TimescaleInstantaneous,
 			0.0,
 			beta,
 		).Write(beta))
-		m.SetMetric("excitation_decay:sell_from_buy", data.NewMetric[float64](
+		m.SetMetric("excitation_decay:sell_from_buy", data.NewMetric(
 			"excitation_decay:sell_from_buy",
 			data.UnitRate,
 			data.TimescaleInstantaneous,
 			0.0,
 			beta,
 		).Write(beta))
-		m.SetMetric("excitation_decay:sell_from_sell", data.NewMetric[float64](
+		m.SetMetric("excitation_decay:sell_from_sell", data.NewMetric(
 			"excitation_decay:sell_from_sell",
 			data.UnitRate,
 			data.TimescaleInstantaneous,
 			0.0,
 			beta,
 		).Write(beta))
-		m.SetMetric("excitation_timescale", data.NewMetric[float64](
+		m.SetMetric("excitation_timescale", data.NewMetric(
 			"excitation_timescale",
 			data.UnitDuration,
 			data.TimescaleInstantaneous,
 			0.0,
 			timescale,
 		).Write(timescale))
-		m.SetMetric("excitation_timescale:buy_from_buy", data.NewMetric[float64](
+		m.SetMetric("excitation_timescale:buy_from_buy", data.NewMetric(
 			"excitation_timescale:buy_from_buy",
 			data.UnitDuration,
 			data.TimescaleInstantaneous,
 			0.0,
 			timescale,
 		).Write(timescale))
-		m.SetMetric("excitation_timescale:buy_from_sell", data.NewMetric[float64](
+		m.SetMetric("excitation_timescale:buy_from_sell", data.NewMetric(
 			"excitation_timescale:buy_from_sell",
 			data.UnitDuration,
 			data.TimescaleInstantaneous,
 			0.0,
 			timescale,
 		).Write(timescale))
-		m.SetMetric("excitation_timescale:sell_from_buy", data.NewMetric[float64](
+		m.SetMetric("excitation_timescale:sell_from_buy", data.NewMetric(
 			"excitation_timescale:sell_from_buy",
 			data.UnitDuration,
 			data.TimescaleInstantaneous,
 			0.0,
 			timescale,
 		).Write(timescale))
-		m.SetMetric("excitation_timescale:sell_from_sell", data.NewMetric[float64](
+		m.SetMetric("excitation_timescale:sell_from_sell", data.NewMetric(
 			"excitation_timescale:sell_from_sell",
 			data.UnitDuration,
 			data.TimescaleInstantaneous,
@@ -450,35 +450,35 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 
 	matrix := branchingMatrix(alphaXX, alphaXY, alphaYX, alphaYY, beta)
 
-	m.SetMetric("offspring:buy_from_buy", data.NewMetric[float64](
+	m.SetMetric("offspring:buy_from_buy", data.NewMetric(
 		"offspring:buy_from_buy",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		1.0,
 	).Write(matrix[0][0]))
-	m.SetMetric("offspring:buy_from_sell", data.NewMetric[float64](
+	m.SetMetric("offspring:buy_from_sell", data.NewMetric(
 		"offspring:buy_from_sell",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		1.0,
 	).Write(matrix[0][1]))
-	m.SetMetric("offspring:sell_from_buy", data.NewMetric[float64](
+	m.SetMetric("offspring:sell_from_buy", data.NewMetric(
 		"offspring:sell_from_buy",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		1.0,
 	).Write(matrix[1][0]))
-	m.SetMetric("offspring:sell_from_sell", data.NewMetric[float64](
+	m.SetMetric("offspring:sell_from_sell", data.NewMetric(
 		"offspring:sell_from_sell",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		1.0,
 	).Write(matrix[1][1]))
-	m.SetMetric("branching_spectral_radius", data.NewMetric[float64](
+	m.SetMetric("branching_spectral_radius", data.NewMetric(
 		"branching_spectral_radius",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
@@ -489,14 +489,14 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	buyParent, sellParent, hasDesc := totalDescendants(alphaXX, alphaXY, alphaYX, alphaYY, beta)
 
 	if hasDesc {
-		m.SetMetric("expected_descendants_from_buy", data.NewMetric[float64](
+		m.SetMetric("expected_descendants_from_buy", data.NewMetric(
 			"expected_descendants_from_buy",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
 			1.0,
 			1.0,
 		).Write(buyParent))
-		m.SetMetric("expected_descendants_from_sell", data.NewMetric[float64](
+		m.SetMetric("expected_descendants_from_sell", data.NewMetric(
 			"expected_descendants_from_sell",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -518,14 +518,14 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	hawkesLL, hawkesOK := model.logLikelihood(streamWindow, atSec)
 
 	if hawkesOK {
-		m.SetMetric("log_likelihood:hawkes", data.NewMetric[float64](
+		m.SetMetric("log_likelihood:hawkes", data.NewMetric(
 			"log_likelihood:hawkes",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
 			0.0,
 			markedCount,
 		).Write(hawkesLL))
-		m.SetMetric("log_likelihood_per_event:hawkes", data.NewMetric[float64](
+		m.SetMetric("log_likelihood_per_event:hawkes", data.NewMetric(
 			"log_likelihood_per_event:hawkes",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -538,7 +538,7 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	poissonLL, poissonOK := poisson.logLikelihood(streamWindow, atSec)
 
 	if poissonOK {
-		m.SetMetric("log_likelihood:poisson", data.NewMetric[float64](
+		m.SetMetric("log_likelihood:poisson", data.NewMetric(
 			"log_likelihood:poisson",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -549,14 +549,14 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 
 	if hawkesOK && poissonOK {
 		gainPoisson := hawkesLL - poissonLL
-		m.SetMetric("log_likelihood_gain_vs_poisson", data.NewMetric[float64](
+		m.SetMetric("log_likelihood_gain_vs_poisson", data.NewMetric(
 			"log_likelihood_gain_vs_poisson",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
 			0.0,
 			markedCount,
 		).Write(gainPoisson))
-		m.SetMetric("log_likelihood_gain_per_event_vs_poisson", data.NewMetric[float64](
+		m.SetMetric("log_likelihood_gain_per_event_vs_poisson", data.NewMetric(
 			"log_likelihood_gain_per_event_vs_poisson",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -570,21 +570,21 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 
 		if selfOK {
 			gainSelf := hawkesLL - selfLL
-			m.SetMetric("log_likelihood:self_only", data.NewMetric[float64](
+			m.SetMetric("log_likelihood:self_only", data.NewMetric(
 				"log_likelihood:self_only",
 				data.UnitDimensionless,
 				data.TimescaleInstantaneous,
 				0.0,
 				markedCount,
 			).Write(selfLL))
-			m.SetMetric("log_likelihood_gain_vs_self_only", data.NewMetric[float64](
+			m.SetMetric("log_likelihood_gain_vs_self_only", data.NewMetric(
 				"log_likelihood_gain_vs_self_only",
 				data.UnitDimensionless,
 				data.TimescaleInstantaneous,
 				0.0,
 				markedCount,
 			).Write(gainSelf))
-			m.SetMetric("log_likelihood_gain_per_event_vs_self_only", data.NewMetric[float64](
+			m.SetMetric("log_likelihood_gain_per_event_vs_self_only", data.NewMetric(
 				"log_likelihood_gain_per_event_vs_self_only",
 				data.UnitDimensionless,
 				data.TimescaleInstantaneous,
@@ -603,28 +603,28 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	innoBuy := priorCountBuy - compBuy
 	innoSell := priorCountSell - compSell
 
-	m.SetMetric("compensator:buy", data.NewMetric[float64](
+	m.SetMetric("compensator:buy", data.NewMetric(
 		"compensator:buy",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		compBuy,
 		math.Sqrt(compBuy),
 	).Write(compBuy))
-	m.SetMetric("compensator:sell", data.NewMetric[float64](
+	m.SetMetric("compensator:sell", data.NewMetric(
 		"compensator:sell",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		compSell,
 		math.Sqrt(compSell),
 	).Write(compSell))
-	m.SetMetric("count_innovation:buy", data.NewMetric[float64](
+	m.SetMetric("count_innovation:buy", data.NewMetric(
 		"count_innovation:buy",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		math.Sqrt(compBuy),
 	).Write(innoBuy))
-	m.SetMetric("count_innovation:sell", data.NewMetric[float64](
+	m.SetMetric("count_innovation:sell", data.NewMetric(
 		"count_innovation:sell",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
@@ -633,7 +633,7 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	).Write(innoSell))
 
 	if compBuy > 0 {
-		m.SetMetric("standardized_innovation:buy", data.NewMetric[float64](
+		m.SetMetric("standardized_innovation:buy", data.NewMetric(
 			"standardized_innovation:buy",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -643,7 +643,7 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	}
 
 	if compSell > 0 {
-		m.SetMetric("standardized_innovation:sell", data.NewMetric[float64](
+		m.SetMetric("standardized_innovation:sell", data.NewMetric(
 			"standardized_innovation:sell",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -664,14 +664,14 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	excessBuyMass := compBuy - muX*spanPrior
 	excessSellMass := compSell - muY*spanPrior
 
-	m.SetMetric("excitation_mass:buy", data.NewMetric[float64](
+	m.SetMetric("excitation_mass:buy", data.NewMetric(
 		"excitation_mass:buy",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		compBuy,
 	).Write(excessBuyMass))
-	m.SetMetric("excitation_mass:sell", data.NewMetric[float64](
+	m.SetMetric("excitation_mass:sell", data.NewMetric(
 		"excitation_mass:sell",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
@@ -680,7 +680,7 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	).Write(excessSellMass))
 
 	if compBuy > 0 {
-		m.SetMetric("excitation_share:buy", data.NewMetric[float64](
+		m.SetMetric("excitation_share:buy", data.NewMetric(
 			"excitation_share:buy",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -690,7 +690,7 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	}
 
 	if compSell > 0 {
-		m.SetMetric("excitation_share:sell", data.NewMetric[float64](
+		m.SetMetric("excitation_share:sell", data.NewMetric(
 			"excitation_share:sell",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -700,7 +700,7 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 	}
 
 	if compTotal := compBuy + compSell; compTotal > 0 {
-		m.SetMetric("excitation_share", data.NewMetric[float64](
+		m.SetMetric("excitation_share", data.NewMetric(
 			"excitation_share",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -726,7 +726,7 @@ func (op *Excitation) evaluate(m *data.Measurement[float64], p *path, buyArrival
 		p.snr = snrSum / float64(snrSides)
 		p.hasSNR = true
 
-		m.SetMetric("snr", data.NewMetric[float64](
+		m.SetMetric("snr", data.NewMetric(
 			"snr",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -766,7 +766,7 @@ func NewRefit(history *paths) core.Primitive {
 func (op *Refit) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 			p := op.history.at(m.Label)
 
 			if m.Err == nil {

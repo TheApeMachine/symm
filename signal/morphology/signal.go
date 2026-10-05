@@ -62,14 +62,14 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		// 1. Adaptive baseline for morphology change
 		data.NewAdapter(
 			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement[float64]) float64 {
+			func(m *data.Measurement) float64 {
 				return m.GetMetric("morphology_change").Raw
 			},
-			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+			func(m *data.Measurement, out adaptive.BaselineReading) {
 				m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
 
 				if out.HasPrior {
-					m.SetMetric("morphology_change_baseline", data.NewMetric[float64](
+					m.SetMetric("morphology_change_baseline", data.NewMetric(
 						"morphology_change_baseline",
 						data.UnitRatio,
 						data.TimescaleRollingWindow,
@@ -77,7 +77,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 						out.ScoreScale,
 					).Write(out.Baseline))
 
-					m.SetMetric("morphology_change_zscore", data.NewMetric[float64](
+					m.SetMetric("morphology_change_zscore", data.NewMetric(
 						"morphology_change_zscore",
 						data.UnitStandardDeviation,
 						data.TimescaleRollingWindow,
@@ -113,7 +113,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
 		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
@@ -130,13 +130,13 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
-	out.Peers = []*data.Measurement[float64]{prior}
+	out.Peers = []*data.Measurement{prior}
 
 	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
 		out.SetProvenance("channel", channel)
 	}
 
-	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 

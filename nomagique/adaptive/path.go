@@ -8,7 +8,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/temporal"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -16,12 +15,17 @@ PathRetention owns the configured mean-shift policy for accepted observations.
 */
 type PathRetention struct {
 	err    error
-	window core.Primitive
+	window *Window
 	out    []temporal.Price
 }
 
-func NewPathRetention(window core.Primitive) core.Primitive {
-	return &PathRetention{window: window}
+func NewPathRetention(window ...*Window) core.Primitive {
+	w := NewWindow()
+	if len(window) > 0 && window[0] != nil {
+		w = window[0]
+	}
+
+	return &PathRetention{window: w}
 }
 
 func (op *PathRetention) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -35,12 +39,8 @@ func (op *PathRetention) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			}
 
 			lastVal := observations[len(observations)-1].Value
-			var capacity float64
-
-			for wPtr := range op.window.Next(transport.NewOne(unsafe.Pointer(&lastVal)).Next(nil)) {
-				w := *(*WindowReading)(wPtr)
-				capacity = w.Capacity
-			}
+			w := op.window.Step(lastVal)
+			capacity := w.Capacity
 
 			start := max(0, len(observations)-int(capacity))
 
@@ -60,12 +60,6 @@ func (op *PathRetention) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 func (op *PathRetention) Error(errs ...error) error {
 	for _, err := range errs {
 		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.window != nil {
-		if err := op.window.Error(); err != nil {
 			op.err = errors.Join(op.err, err)
 		}
 	}

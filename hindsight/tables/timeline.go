@@ -20,8 +20,8 @@ ascending and tick ascending (with seqIdx as tie-breaker).
 func (catalog *Catalog) Trades(
 	ctx context.Context,
 	epoch ...int64,
-) iter.Seq[*data.Measurement[float64]] {
-	return func(yield func(*data.Measurement[float64]) bool) {
+) iter.Seq[*data.Measurement] {
+	return func(yield func(*data.Measurement) bool) {
 		if catalog == nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -41,7 +41,7 @@ func (catalog *Catalog) Trades(
 			iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
 		)
 
-		grouped := make(map[string][]*data.Measurement[float64])
+		grouped := make(map[string][]*data.Measurement)
 
 		for measurement, err := range catalog.scan(ctx, Measurements, targetEpoch, filter, 0) {
 			if err != nil {
@@ -67,7 +67,7 @@ func (catalog *Catalog) Trades(
 		for _, label := range labels {
 			items := grouped[label]
 
-			slices.SortFunc(items, func(left, right *data.Measurement[float64]) int {
+			slices.SortFunc(items, func(left, right *data.Measurement) int {
 				if cmpResult := cmp.Compare(left.Epoch, right.Epoch); cmpResult != 0 {
 					return cmpResult
 				}
@@ -96,8 +96,8 @@ within each label by epoch ascending and tick ascending (with seqIdx as tie-brea
 func (catalog *Catalog) Detections(
 	ctx context.Context,
 	epoch ...int64,
-) iter.Seq[*data.Measurement[float64]] {
-	return func(yield func(*data.Measurement[float64]) bool) {
+) iter.Seq[*data.Measurement] {
+	return func(yield func(*data.Measurement) bool) {
 		if catalog == nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -117,7 +117,7 @@ func (catalog *Catalog) Detections(
 			iceberg.EqualTo(iceberg.Reference("source"), "detector"),
 		)
 
-		grouped := make(map[string][]*data.Measurement[float64])
+		grouped := make(map[string][]*data.Measurement)
 
 		for measurement, err := range catalog.scan(ctx, Measurements, targetEpoch, filter, 0) {
 			if err != nil {
@@ -147,7 +147,7 @@ func (catalog *Catalog) Detections(
 		for _, label := range labels {
 			items := grouped[label]
 
-			slices.SortFunc(items, func(left, right *data.Measurement[float64]) int {
+			slices.SortFunc(items, func(left, right *data.Measurement) int {
 				if cmpResult := cmp.Compare(left.Epoch, right.Epoch); cmpResult != 0 {
 					return cmpResult
 				}
@@ -174,7 +174,7 @@ Excursions is an alias for Detections, retrieving measurements where source = "d
 func (catalog *Catalog) Excursions(
 	ctx context.Context,
 	epoch ...int64,
-) iter.Seq[*data.Measurement[float64]] {
+) iter.Seq[*data.Measurement] {
 	return catalog.Detections(ctx, epoch...)
 }
 
@@ -210,7 +210,7 @@ var SignalLogicSources = append(slices.Clone(SensorySources), LogicSources...)
 /*
 DetectionTicks extracts the lowTick and highTick recorded in a detector measurement.
 */
-func DetectionTicks(measurement *data.Measurement[float64]) (int64, int64, error) {
+func DetectionTicks(measurement *data.Measurement) (int64, int64, error) {
 	if measurement == nil {
 		return 0, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -256,7 +256,7 @@ func DetectionTicks(measurement *data.Measurement[float64]) (int64, int64, error
 /*
 DetectionPrices extracts the entry and exit prices recorded in a detector measurement.
 */
-func DetectionPrices(measurement *data.Measurement[float64]) (*decimal.Decimal, *decimal.Decimal, error) {
+func DetectionPrices(measurement *data.Measurement) (*decimal.Decimal, *decimal.Decimal, error) {
 	if measurement == nil {
 		return nil, nil, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -326,8 +326,8 @@ func (catalog *Catalog) SignalLogic(
 	lowTick int64,
 	highTick int64,
 	sources ...string,
-) iter.Seq[*data.Measurement[float64]] {
-	return func(yield func(*data.Measurement[float64]) bool) {
+) iter.Seq[*data.Measurement] {
+	return func(yield func(*data.Measurement) bool) {
 		if catalog == nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -415,7 +415,7 @@ func (catalog *Catalog) SignalLogic(
 			sourceLookup[src] = struct{}{}
 		}
 
-		var results []*data.Measurement[float64]
+		var results []*data.Measurement
 
 		for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0) {
 			if err != nil {
@@ -446,7 +446,7 @@ func (catalog *Catalog) SignalLogic(
 			results = append(results, measurement)
 		}
 
-		slices.SortFunc(results, func(left, right *data.Measurement[float64]) int {
+		slices.SortFunc(results, func(left, right *data.Measurement) int {
 			if cmpResult := cmp.Compare(left.Tick, right.Tick); cmpResult != 0 {
 				return cmpResult
 			}
@@ -472,10 +472,10 @@ recorded inside a detector measurement.
 */
 func (catalog *Catalog) DetectionSignalLogic(
 	ctx context.Context,
-	detection *data.Measurement[float64],
+	detection *data.Measurement,
 	sources ...string,
-) iter.Seq[*data.Measurement[float64]] {
-	return func(yield func(*data.Measurement[float64]) bool) {
+) iter.Seq[*data.Measurement] {
+	return func(yield func(*data.Measurement) bool) {
 		if detection == nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -517,7 +517,7 @@ func (catalog *Catalog) ExcursionTape(
 	lowTick int64,
 	highTick int64,
 	sources ...string,
-) iter.Seq[*data.Measurement[float64]] {
+) iter.Seq[*data.Measurement] {
 	return catalog.SignalLogic(ctx, epoch, label, lowTick, highTick, sources...)
 }
 
@@ -530,7 +530,7 @@ func (catalog *Catalog) Timeline(
 	label string,
 	fromTick int64,
 	toTick int64,
-) iter.Seq[*data.Measurement[float64]] {
+) iter.Seq[*data.Measurement] {
 	var filter iceberg.BooleanExpression
 
 	if label != "" {

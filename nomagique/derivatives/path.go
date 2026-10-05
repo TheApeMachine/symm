@@ -47,7 +47,7 @@ func NewLiquidation() core.Primitive {
 func (op *Liquidation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m.Err != nil {
 				if !yield(arriving) {
@@ -89,7 +89,7 @@ every received trade, including historical reconnect data; late trades revise
 totals and the earliest boundary, but do not emit a rate or share change until
 the live event-time clock advances again.
 */
-func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationState, existing bool) {
+func (op *Liquidation) observe(m *data.Measurement, state *liquidationState, existing bool) {
 	stamped, advanced := stamp(state.clock, m.Label, m.At, func() bool { v, _ := m.GetProvenance("synthetic_timestamp"); return v == "true" }())
 
 	m.EnsureMetadata()
@@ -107,7 +107,7 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 	typ, _ := m.GetProvenance("type")
 	if typ == "liquidation" {
 		side, _ := m.GetProvenance("side")
-	switch side {
+		switch side {
 		case "buy":
 			state.liqBuyTotal += notional
 		case "sell":
@@ -132,35 +132,35 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 
 	tradeScale := state.grossTradeTotal
 
-	m.SetMetric("liquidation_notional:buy", data.NewMetric[float64](
+	m.SetMetric("liquidation_notional:buy", data.NewMetric(
 		"liquidation_notional:buy",
 		data.UnitNotional,
 		data.TimescaleRollingWindow,
 		0.0,
 		tradeScale,
 	).Write(state.liqBuyTotal))
-	m.SetMetric("liquidation_notional:sell", data.NewMetric[float64](
+	m.SetMetric("liquidation_notional:sell", data.NewMetric(
 		"liquidation_notional:sell",
 		data.UnitNotional,
 		data.TimescaleRollingWindow,
 		0.0,
 		tradeScale,
 	).Write(state.liqSellTotal))
-	m.SetMetric("gross_liquidation_notional", data.NewMetric[float64](
+	m.SetMetric("gross_liquidation_notional", data.NewMetric(
 		"gross_liquidation_notional",
 		data.UnitNotional,
 		data.TimescaleRollingWindow,
 		0.0,
 		tradeScale,
 	).Write(grossLiq))
-	m.SetMetric("net_liquidation_notional", data.NewMetric[float64](
+	m.SetMetric("net_liquidation_notional", data.NewMetric(
 		"net_liquidation_notional",
 		data.UnitNotional,
 		data.TimescaleRollingWindow,
 		0.0,
 		tradeScale,
 	).Write(netLiq))
-	m.SetMetric("gross_derivative_trade_notional", data.NewMetric[float64](
+	m.SetMetric("gross_derivative_trade_notional", data.NewMetric(
 		"gross_derivative_trade_notional",
 		data.UnitNotional,
 		data.TimescaleRollingWindow,
@@ -171,7 +171,7 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 	var currentShare float64
 
 	if grossLiq > 0 {
-		m.SetMetric("liquidation_signed_fraction", data.NewMetric[float64](
+		m.SetMetric("liquidation_signed_fraction", data.NewMetric(
 			"liquidation_signed_fraction",
 			data.UnitRatio,
 			data.TimescaleRollingWindow,
@@ -182,7 +182,7 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 
 	if state.grossTradeTotal > 0 {
 		currentShare = grossLiq / state.grossTradeTotal
-		m.SetMetric("liquidation_share", data.NewMetric[float64](
+		m.SetMetric("liquidation_share", data.NewMetric(
 			"liquidation_share",
 			data.UnitRatio,
 			data.TimescaleRollingWindow,
@@ -197,7 +197,7 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 		if duration > 0 {
 			rate := grossLiq / duration
 			tradeRate := state.grossTradeTotal / duration
-			m.SetMetric("liquidation_notional_rate", data.NewMetric[float64](
+			m.SetMetric("liquidation_notional_rate", data.NewMetric(
 				"liquidation_notional_rate",
 				data.UnitNotionalRate,
 				data.TimescalePerSecond,
@@ -208,7 +208,7 @@ func (op *Liquidation) observe(m *data.Measurement[float64], state *liquidationS
 
 		if state.hasPrevLiqShare {
 			shareVel := currentShare - state.prevLiqShare
-			m.SetMetric("liquidation_share_velocity", data.NewMetric[float64](
+			m.SetMetric("liquidation_share_velocity", data.NewMetric(
 				"liquidation_share_velocity",
 				data.UnitVelocity,
 				data.TimescalePerSecond,

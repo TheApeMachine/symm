@@ -28,12 +28,12 @@ func TestCatalog_Timeline(t *testing.T) {
 
 		writer := tables.NewWriter(catalog, epoch)
 
-		sig1 := data.NewMeasurement[float64]("cvd", nil)
+		sig1 := data.NewMeasurement("cvd", nil)
 		sig1.Label = "BTC/USD"
 		sig1.SeqIdx = 10
 		sig1.At = at
 		sig1.Maturity = 1.0
-		sig1.SetMetric("delta", data.NewMetric[float64](
+		sig1.SetMetric("delta", data.NewMetric(
 			"delta",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -42,12 +42,12 @@ func TestCatalog_Timeline(t *testing.T) {
 		).Write(100.0))
 		writer.Add("measurements", data.Publication{Measurement: sig1})
 
-		sig2 := data.NewMeasurement[float64]("cvd", nil)
+		sig2 := data.NewMeasurement("cvd", nil)
 		sig2.Label = "BTC/USD"
 		sig2.SeqIdx = 20
 		sig2.At = at.Add(time.Second)
 		sig2.Maturity = 1.0
-		sig2.SetMetric("delta", data.NewMetric[float64](
+		sig2.SetMetric("delta", data.NewMetric(
 			"delta",
 			data.UnitDimensionless,
 			data.TimescaleInstantaneous,
@@ -59,7 +59,7 @@ func TestCatalog_Timeline(t *testing.T) {
 		So(writer.CommitReady(ctx, true), ShouldBeNil)
 
 		Convey("Timeline retrieves the stream of measurements ordered by seqIdx", func() {
-			var reconstructed []*data.Measurement[float64]
+			var reconstructed []*data.Measurement
 
 			for reading := range catalog.Timeline(ctx, epoch, "BTC/USD", 0, 0) {
 				reconstructed = append(reconstructed, reading)
@@ -87,28 +87,28 @@ func TestCatalog_Trades(t *testing.T) {
 
 		writer1 := tables.NewWriter(catalog, epoch1)
 
-		trade1 := data.NewMeasurement[float64]("spot:trade", nil)
+		trade1 := data.NewMeasurement("spot:trade", nil)
 		trade1.Label = "BTC/USD"
 		trade1.Epoch = epoch1
 		trade1.Tick = 2
 		trade1.SeqIdx = 20
 		writer1.Add("measurements", data.Publication{Measurement: trade1})
 
-		trade2 := data.NewMeasurement[float64]("spot:trade", nil)
+		trade2 := data.NewMeasurement("spot:trade", nil)
 		trade2.Label = "BTC/USD"
 		trade2.Epoch = epoch1
 		trade2.Tick = 1
 		trade2.SeqIdx = 10
 		writer1.Add("measurements", data.Publication{Measurement: trade2})
 
-		tradeETH := data.NewMeasurement[float64]("spot:trade", nil)
+		tradeETH := data.NewMeasurement("spot:trade", nil)
 		tradeETH.Label = "ETH/USD"
 		tradeETH.Epoch = epoch1
 		tradeETH.Tick = 1
 		tradeETH.SeqIdx = 5
 		writer1.Add("measurements", data.Publication{Measurement: tradeETH})
 
-		nonTrade := data.NewMeasurement[float64]("spot:level3", nil)
+		nonTrade := data.NewMeasurement("spot:level3", nil)
 		nonTrade.Label = "BTC/USD"
 		nonTrade.Epoch = epoch1
 		nonTrade.Tick = 0
@@ -118,7 +118,7 @@ func TestCatalog_Trades(t *testing.T) {
 		So(writer1.CommitReady(ctx, true), ShouldBeNil)
 
 		writer2 := tables.NewWriter(catalog, epoch2)
-		trade3 := data.NewMeasurement[float64]("spot:trade", nil)
+		trade3 := data.NewMeasurement("spot:trade", nil)
 		trade3.Label = "BTC/USD"
 		trade3.Epoch = epoch2
 		trade3.Tick = 1
@@ -128,7 +128,7 @@ func TestCatalog_Trades(t *testing.T) {
 		So(writer2.CommitReady(ctx, true), ShouldBeNil)
 
 		Convey("Trades retrieves only spot:trade, groups by label, and sorts by epoch and tick", func() {
-			var trades []*data.Measurement[float64]
+			var trades []*data.Measurement
 
 			for trade := range catalog.Trades(ctx) {
 				trades = append(trades, trade)
@@ -154,7 +154,7 @@ func TestCatalog_Trades(t *testing.T) {
 		})
 
 		Convey("Trades for a specific epoch retrieves only that epoch", func() {
-			var trades []*data.Measurement[float64]
+			var trades []*data.Measurement
 
 			for trade := range catalog.Trades(ctx, epoch1) {
 				trades = append(trades, trade)
@@ -174,36 +174,36 @@ func TestCatalog_Detections(t *testing.T) {
 
 		writer1 := tables.NewWriter(catalog, epoch1)
 
-		det1 := data.NewMeasurement[float64]("detector", nil)
+		det1 := data.NewMeasurement("detector", nil)
 		det1.Label = "BTC/USD"
 		det1.Epoch = epoch1
 		det1.Tick = 20
 		det1.SeqIdx = 200
-		det1.SetMetric("LowTick", data.Metric[float64]{Raw: 10})
-		det1.SetMetric("HighTick", data.Metric[float64]{Raw: 20})
-		det1.SetMetric("LowSeqIdx", data.Metric[float64]{Raw: 100})
-		det1.SetMetric("HighSeqIdx", data.Metric[float64]{Raw: 200})
+		det1.SetMetric("LowTick", data.Metric{Raw: 10})
+		det1.SetMetric("HighTick", data.Metric{Raw: 20})
+		det1.SetMetric("LowSeqIdx", data.Metric{Raw: 100})
+		det1.SetMetric("HighSeqIdx", data.Metric{Raw: 200})
 		writer1.Add("measurements", data.Publication{Measurement: det1})
 
-		det2 := data.NewMeasurement[float64]("detector", nil)
+		det2 := data.NewMeasurement("detector", nil)
 		det2.Label = "BTC/USD"
 		det2.Epoch = epoch1
 		det2.Tick = 10
 		det2.SeqIdx = 100
-		det2.SetMetric("LowTick", data.Metric[float64]{Raw: 5})
-		det2.SetMetric("HighTick", data.Metric[float64]{Raw: 10})
+		det2.SetMetric("LowTick", data.Metric{Raw: 5})
+		det2.SetMetric("HighTick", data.Metric{Raw: 10})
 		writer1.Add("measurements", data.Publication{Measurement: det2})
 
-		detETH := data.NewMeasurement[float64]("detector", nil)
+		detETH := data.NewMeasurement("detector", nil)
 		detETH.Label = "ETH/USD"
 		detETH.Epoch = epoch1
 		detETH.Tick = 15
 		detETH.SeqIdx = 150
-		detETH.SetMetric("LowTick", data.Metric[float64]{Raw: 10})
-		detETH.SetMetric("HighTick", data.Metric[float64]{Raw: 15})
+		detETH.SetMetric("LowTick", data.Metric{Raw: 10})
+		detETH.SetMetric("HighTick", data.Metric{Raw: 15})
 		writer1.Add("measurements", data.Publication{Measurement: detETH})
 
-		nonDet := data.NewMeasurement[float64]("spot:trade", nil)
+		nonDet := data.NewMeasurement("spot:trade", nil)
 		nonDet.Label = "BTC/USD"
 		nonDet.Epoch = epoch1
 		nonDet.Tick = 10
@@ -214,19 +214,19 @@ func TestCatalog_Detections(t *testing.T) {
 
 		writer2 := tables.NewWriter(catalog, epoch2)
 
-		det3 := data.NewMeasurement[float64]("detector", nil)
+		det3 := data.NewMeasurement("detector", nil)
 		det3.Label = "BTC/USD"
 		det3.Epoch = epoch2
 		det3.Tick = 10
 		det3.SeqIdx = 300
-		det3.SetMetric("LowTick", data.Metric[float64]{Raw: 1})
-		det3.SetMetric("HighTick", data.Metric[float64]{Raw: 10})
+		det3.SetMetric("LowTick", data.Metric{Raw: 1})
+		det3.SetMetric("HighTick", data.Metric{Raw: 10})
 		writer2.Add("measurements", data.Publication{Measurement: det3})
 
 		So(writer2.CommitReady(ctx, true), ShouldBeNil)
 
 		Convey("Detections retrieves only source=detector, groups by label, and sorts by epoch and tick", func() {
-			var detections []*data.Measurement[float64]
+			var detections []*data.Measurement
 
 			for det := range catalog.Detections(ctx) {
 				detections = append(detections, det)
@@ -252,7 +252,7 @@ func TestCatalog_Detections(t *testing.T) {
 		})
 
 		Convey("Excursions alias returns identical results for a specific epoch", func() {
-			var excursions []*data.Measurement[float64]
+			var excursions []*data.Measurement
 
 			for exc := range catalog.Excursions(ctx, epoch1) {
 				excursions = append(excursions, exc)
@@ -272,7 +272,7 @@ func TestCatalog_Detections(t *testing.T) {
 			_, _, err := tables.DetectionTicks(nil)
 			So(err, ShouldNotBeNil)
 
-			emptyDet := data.NewMeasurement[float64]("detector", nil)
+			emptyDet := data.NewMeasurement("detector", nil)
 			_, _, err = tables.DetectionTicks(emptyDet)
 			So(err, ShouldNotBeNil)
 		})
@@ -289,7 +289,7 @@ func TestCatalog_SignalLogic(t *testing.T) {
 		writer := tables.NewWriter(catalog, targetEpoch)
 
 		addMeasurement := func(source string, symbol string, epoch int64, tick int64, seqIdx int64) {
-			measurement := data.NewMeasurement[float64](source, nil)
+			measurement := data.NewMeasurement(source, nil)
 			measurement.Label = symbol
 			measurement.Epoch = epoch
 			measurement.Tick = tick
@@ -319,7 +319,7 @@ func TestCatalog_SignalLogic(t *testing.T) {
 
 		// Outside epoch: epoch 600 at tick 10
 		writerOther := tables.NewWriter(catalog, otherEpoch)
-		otherMeas := data.NewMeasurement[float64]("cvd", nil)
+		otherMeas := data.NewMeasurement("cvd", nil)
 		otherMeas.Label = "BTC/USD"
 		otherMeas.Epoch = otherEpoch
 		otherMeas.Tick = 10
@@ -328,7 +328,7 @@ func TestCatalog_SignalLogic(t *testing.T) {
 		So(writerOther.CommitReady(ctx, true), ShouldBeNil)
 
 		Convey("SignalLogic retrieves exactly signal and logic measurements in tick window", func() {
-			var results []*data.Measurement[float64]
+			var results []*data.Measurement
 
 			for measurement := range catalog.SignalLogic(ctx, targetEpoch, "BTC/USD", 10, 15) {
 				results = append(results, measurement)
@@ -353,14 +353,14 @@ func TestCatalog_SignalLogic(t *testing.T) {
 		})
 
 		Convey("DetectionSignalLogic retrieves matching window from detection measurement", func() {
-			det := data.NewMeasurement[float64]("detector", nil)
+			det := data.NewMeasurement("detector", nil)
 			det.Epoch = targetEpoch
 			det.Label = "BTC/USD"
 			det.Tick = 15
-			det.SetMetric("LowTick", data.Metric[float64]{Raw: 10})
-			det.SetMetric("HighTick", data.Metric[float64]{Raw: 15})
+			det.SetMetric("LowTick", data.Metric{Raw: 10})
+			det.SetMetric("HighTick", data.Metric{Raw: 15})
 
-			var results []*data.Measurement[float64]
+			var results []*data.Measurement
 
 			for measurement := range catalog.DetectionSignalLogic(ctx, det) {
 				results = append(results, measurement)
@@ -372,7 +372,7 @@ func TestCatalog_SignalLogic(t *testing.T) {
 		})
 
 		Convey("SignalLogic with source overrides filters specifically", func() {
-			var results []*data.Measurement[float64]
+			var results []*data.Measurement
 
 			for measurement := range catalog.SignalLogic(ctx, targetEpoch, "BTC/USD", 10, 15, "resonance") {
 				results = append(results, measurement)

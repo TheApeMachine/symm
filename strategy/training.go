@@ -20,12 +20,17 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/ui"
+	"golang.design/x/lockfree/lf"
 )
 
 var (
 	_ ui.CognitionSource = (*Training)(nil)
 	_ ui.FragmentsSource = (*Training)(nil)
 )
+
+func stringLess(a, b string) bool {
+	return a < b
+}
 
 /*
 Training develops one grid, loads the trie from historical excursions, then
@@ -46,27 +51,113 @@ type Training struct {
 	epoch        int64
 	detectorDone chan struct{}
 	scanOnce     sync.Once
-	ingress      chan *data.Measurement[float64]
-	mu           sync.Mutex
-	episodes     map[string]*episode
-	fragments    []ui.TrainedFragment
-	resolved     int64
-	wins         int64
-	returns      float64
+	episodes     *lf.OrderedMap[string, *episode]
+	fragments    atomic.Pointer[[]ui.TrainedFragment]
+	fragCount    atomic.Int64
+	resolved     atomic.Int64
+	wins         atomic.Int64
+	returnsBits  atomic.Uint64
 	passes       atomic.Int64
 }
 
 /*
-episode is one symbol's live state: the rolling frame window the engine is
-asked about, the contexts that triggered the open position's entry and exit,
-and the position's current unrealized return.
+episodeState holds one symbol's live state.
 */
-type episode struct {
+type episodeState struct {
 	window [][]byte
 	entry  []byte
 	exit   []byte
 	mark   float64
 	marked bool
+}
+
+/*
+episode is one symbol's lock-free live state.
+*/
+type episode struct {
+	state atomic.Pointer[episodeState]
+}
+
+func (episode *episode) setEntry(context []byte) {
+	for {
+		oldState := episode.state.Load()
+		if oldState == nil {
+			oldState = &episodeState{}
+		}
+
+		newState := *oldState
+		newState.entry = context
+
+		if episode.state.CompareAndSwap(oldState, &newState) {
+			break
+		}
+	}
+}
+
+func (episode *episode) setExit(context []byte) {
+	for {
+		oldState := episode.state.Load()
+		if oldState == nil {
+			oldState = &episodeState{}
+		}
+
+		newState := *oldState
+		newState.exit = context
+
+		if episode.state.CompareAndSwap(oldState, &newState) {
+			break
+		}
+	}
+}
+
+func (episode *episode) setMark(mark float64) {
+	for {
+		oldState := episode.state.Load()
+		if oldState == nil {
+			oldState = &episodeState{}
+		}
+
+		newState := *oldState
+		newState.mark = mark
+		newState.marked = true
+
+		if episode.state.CompareAndSwap(oldState, &newState) {
+			break
+		}
+	}
+}
+
+func (episode *episode) settle() ([]byte, []byte) {
+	for {
+		oldState := episode.state.Load()
+		if oldState == nil {
+			return nil, nil
+		}
+
+		newState := *oldState
+		newState.entry = nil
+		newState.exit = nil
+		newState.marked = false
+
+		if episode.state.CompareAndSwap(oldState, &newState) {
+			return oldState.entry, oldState.exit
+		}
+	}
+}
+
+func (training *Training) addReturn(val float64) {
+	for {
+		oldBits := training.returnsBits.Load()
+		newBits := math.Float64bits(math.Float64frombits(oldBits) + val)
+
+		if training.returnsBits.CompareAndSwap(oldBits, newBits) {
+			break
+		}
+	}
+}
+
+func (training *Training) getReturn() float64 {
+	return math.Float64frombits(training.returnsBits.Load())
 }
 
 func NewTraining(
@@ -78,6 +169,9 @@ func NewTraining(
 	storeTee runtime.Tee,
 	epoch int64,
 ) *Training {
+	episodes := lf.NewOrderedMap[string, *episode](stringLess)
+	emptyFragments := make([]ui.TrainedFragment, 0)
+
 	training := &Training{
 		System:       runtime.NewSystem(ctx, "training", price),
 		arena:        arena,
@@ -91,13 +185,12 @@ func NewTraining(
 		storeTee:     storeTee,
 		epoch:        epoch,
 		detectorDone: make(chan struct{}),
-		ingress:      make(chan *data.Measurement[float64], 65536),
-		episodes:     make(map[string]*episode),
+		episodes:     episodes,
 	}
 
+	training.fragments.Store(&emptyFragments)
 	desk.OnClose(training.settle)
 	training.Transition(runtime.INIT)
-	go training.offRampLoop()
 	return training
 }
 
@@ -118,11 +211,15 @@ func (training *Training) Fragments() []ui.TrainedFragment {
 		return nil
 	}
 
-	training.mu.Lock()
-	defer training.mu.Unlock()
+	ptr := training.fragments.Load()
 
-	out := make([]ui.TrainedFragment, len(training.fragments))
-	copy(out, training.fragments)
+	if ptr == nil {
+		return nil
+	}
+
+	slice := *ptr
+	out := make([]ui.TrainedFragment, len(slice))
+	copy(out, slice)
 	return out
 }
 
@@ -131,58 +228,14 @@ func (training *Training) CognitionTree() cognition.CognitionTreeExport {
 }
 
 /*
-Step enqueues the live market measurement onto the internal off-ramp worker
-channel and returns immediately, decoupling the Disruptor ring buffer from
-training, classification, and reporting latency.
+Step executes the sequential training, paper trading, and reporting steps for one measurement.
 */
-func (training *Training) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	if prior == nil {
 		return nil
 	}
 
-	select {
-	case <-training.Context().Done():
-		return nil
-	case training.ingress <- prior:
-	default:
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[training] ingress buffer saturated; dropping measurement to protect pipeline throughput",
-			nil,
-		))
-	}
-
-	return nil
-}
-
-/*
-offRampLoop continuously drains the ingress channel sequentially in causal order,
-executing grid updates, paper trading, and UI reporting.
-*/
-func (training *Training) offRampLoop() {
-	for {
-		select {
-		case <-training.Context().Done():
-			return
-		case prior, ok := <-training.ingress:
-			if !ok {
-				return
-			}
-
-			training.process(prior)
-		}
-	}
-}
-
-/*
-process executes the sequential training, paper trading, and reporting steps for one measurement.
-*/
-func (training *Training) process(prior *data.Measurement[float64]) {
-	if prior == nil {
-		return
-	}
-
-	out := data.NewMeasurement[float64](training.Name())
+	out := training.arena.NewMeasurement(training.Name())
 	out.Epoch = prior.Epoch
 	out.Tick = prior.Tick
 	out.SeqIdx = prior.SeqIdx
@@ -191,7 +244,7 @@ func (training *Training) process(prior *data.Measurement[float64]) {
 	out.Peers = prior.Peers
 
 	if prior.Source != "runtime:join" {
-		out.Peers = []*data.Measurement[float64]{prior}
+		out.Peers = []*data.Measurement{prior}
 	}
 
 	snapshot := ReportSnapshot{
@@ -228,22 +281,31 @@ func (training *Training) process(prior *data.Measurement[float64]) {
 	if training.uiTee != nil {
 		training.uiTee.Push(data.NewPublication(out, nil))
 	}
+
+	return out
 }
 
 /*
 develop grows the grid and checkpoints it once it settles.
 */
 func (training *Training) develop(
-	out *data.Measurement[float64], snapshot *ReportSnapshot,
+	out *data.Measurement, snapshot *ReportSnapshot,
 ) {
 	snapshot.Stage = StageModelDevelopment
 	snapshot.Blocker = "grid developing"
 
 	if !training.grid.IsSettled() {
-		return
+		if out.SeqIdx%32 == 0 {
+			training.grid.Partition()
+		}
+
+		if !training.grid.Converged() {
+			return
+		}
+
+		training.grid.Settle()
 	}
 
-	training.grid.Settle()
 	encoded, err := training.grid.Snapshot()
 
 	if err != nil {
@@ -277,7 +339,7 @@ func (training *Training) develop(
 trade classifies the symbol's rolling frame window and acts on the winner
 when the Desk allows that action: enter when flat, exit when holding.
 */
-func (training *Training) trade(prior *data.Measurement[float64], snapshot *ReportSnapshot) {
+func (training *Training) trade(prior *data.Measurement, snapshot *ReportSnapshot) {
 	snapshot.Stage = StageForwardPaperLearning
 	snapshot.Trading = true
 
@@ -292,19 +354,36 @@ func (training *Training) trade(prior *data.Measurement[float64], snapshot *Repo
 		return
 	}
 
-	training.mu.Lock()
 	current := training.episode(symbol)
 
-	if len(current.window) == 0 || !bytes.Equal(current.window[len(current.window)-1], tok) {
-		current.window = append(current.window, tok)
+	var question []byte
+	for {
+		oldState := current.state.Load()
 
-		if overflow := len(current.window) - training.engine.Order(); overflow > 0 {
-			current.window = current.window[overflow:]
+		if oldState == nil {
+			oldState = &episodeState{}
+		}
+
+		newState := *oldState
+
+		if len(newState.window) == 0 || !bytes.Equal(newState.window[len(newState.window)-1], tok) {
+			newWindow := make([][]byte, len(newState.window), len(newState.window)+1)
+			copy(newWindow, newState.window)
+			newWindow = append(newWindow, tok)
+
+			if overflow := len(newWindow) - training.engine.Order(); overflow > 0 {
+				newWindow = newWindow[overflow:]
+			}
+
+			newState.window = newWindow
+		}
+
+		question = bytes.Join(newState.window, []byte("/"))
+
+		if current.state.CompareAndSwap(oldState, &newState) {
+			break
 		}
 	}
-
-	question := bytes.Join(current.window, []byte("/"))
-	training.mu.Unlock()
 
 	result, err := training.engine.Evaluate(question)
 
@@ -331,7 +410,7 @@ func (training *Training) trade(prior *data.Measurement[float64], snapshot *Repo
 			training.act(
 				symbol,
 				training.desk.Enter,
-				func(held *episode, context []byte) { held.entry = context },
+				func(held *episode, context []byte) { held.setEntry(context) },
 				question,
 			)
 			snapshot.Action = 1
@@ -342,7 +421,7 @@ func (training *Training) trade(prior *data.Measurement[float64], snapshot *Repo
 		training.act(
 			symbol,
 			training.desk.Exit,
-			func(held *episode, context []byte) { held.exit = context },
+			func(held *episode, context []byte) { held.setExit(context) },
 			question,
 		)
 		snapshot.Action = 2
@@ -353,20 +432,20 @@ func (training *Training) trade(prior *data.Measurement[float64], snapshot *Repo
 sensoryMeasurements filters a measurement and its peers to retain only Stage 0
 sensory signal producers, excluding higher-order cognitive and physical solvers.
 */
-func sensoryMeasurements(prior *data.Measurement[float64]) []*data.Measurement[float64] {
+func sensoryMeasurements(prior *data.Measurement) []*data.Measurement {
 	if prior == nil {
 		return nil
 	}
 
 	if prior.Source != "runtime:join" {
 		if prior.Source != "resonance" && prior.Source != "manifold" {
-			return []*data.Measurement[float64]{prior}
+			return []*data.Measurement{prior}
 		}
 
 		return nil
 	}
 
-	var sensory []*data.Measurement[float64]
+	var sensory []*data.Measurement
 
 	for _, peer := range prior.Peers {
 		if peer == nil {
@@ -386,7 +465,7 @@ func sensoryMeasurements(prior *data.Measurement[float64]) []*data.Measurement[f
 /*
 solverMeasurement locates a specific solver producer measurement from prior or its peers.
 */
-func solverMeasurement(prior *data.Measurement[float64], source string) *data.Measurement[float64] {
+func solverMeasurement(prior *data.Measurement, source string) *data.Measurement {
 	if prior == nil {
 		return nil
 	}
@@ -412,7 +491,7 @@ authorized applies the execution triad gate:
     entries if resting orders exhibit locked synchronization opposing the move.
 */
 func (training *Training) authorized(
-	resonanceM, manifoldM *data.Measurement[float64],
+	resonanceM, manifoldM *data.Measurement,
 ) bool {
 	if resonanceM != nil {
 		if surpriseMetric, ok := resonanceM.LookupMetric("surprise"); ok {
@@ -443,9 +522,7 @@ rejected operation withdraws the context.
 func (training *Training) act(
 	symbol string, operation func(string) error, record func(*episode, []byte), question []byte,
 ) {
-	training.mu.Lock()
 	record(training.episode(symbol), question)
-	training.mu.Unlock()
 
 	err := operation(symbol)
 
@@ -454,9 +531,6 @@ func (training *Training) act(
 	}
 
 	errnie.Error(err)
-
-	training.mu.Lock()
-	defer training.mu.Unlock()
 
 	record(training.episode(symbol), nil)
 }
@@ -473,12 +547,8 @@ func (training *Training) mark(symbol string) {
 		return
 	}
 
-	training.mu.Lock()
-	defer training.mu.Unlock()
-
 	held := training.episode(symbol)
-	held.mark = pnl.SetScale(decimal.DefaultScale).Div(basis).Float64()
-	held.marked = true
+	held.setMark(pnl.SetScale(decimal.DefaultScale).Div(basis).Float64())
 }
 
 /*
@@ -488,18 +558,14 @@ with its return on the contexts that entered and exited it.
 func (training *Training) settle(closure broker.Closure) {
 	feedback := closure.Realized.SetScale(decimal.DefaultScale).Div(closure.Cost).Float64()
 
-	training.mu.Lock()
 	held := training.episode(closure.Symbol)
-	entry, exit := held.entry, held.exit
-	held.entry, held.exit, held.marked = nil, nil, false
-	training.resolved++
-	training.returns += feedback
+	entry, exit := held.settle()
+	training.resolved.Add(1)
+	training.addReturn(feedback)
 
 	if feedback > 0 {
-		training.wins++
+		training.wins.Add(1)
 	}
-
-	training.mu.Unlock()
 
 	if entry == nil {
 		errnie.Error(errnie.Err(
@@ -533,23 +599,28 @@ score reports win rate and edge over realized round trips plus the current
 marks of open positions. It is display state, not training feedback.
 */
 func (training *Training) score() (int64, float64, float64) {
-	training.mu.Lock()
-	defer training.mu.Unlock()
+	count := training.resolved.Load()
+	wins := training.wins.Load()
+	returns := training.getReturn()
 
-	count, wins, returns := training.resolved, training.wins, training.returns
+	training.episodes.Range("", "\xff\xff\xff\xff", func(symbol string, held *episode) {
+		if held == nil {
+			return
+		}
 
-	for _, held := range training.episodes {
-		if !held.marked {
-			continue
+		state := held.state.Load()
+
+		if state == nil || !state.marked {
+			return
 		}
 
 		count++
-		returns += held.mark
+		returns += state.mark
 
-		if held.mark > 0 {
+		if state.mark > 0 {
 			wins++
 		}
-	}
+	})
 
 	if count > 0 {
 		return count, float64(wins) / float64(count), returns / float64(count)
@@ -580,17 +651,18 @@ func (training *Training) score() (int64, float64, float64) {
 }
 
 /*
-episode returns the symbol's live state. The caller holds training.mu.
+episode returns the symbol's live state.
 */
 func (training *Training) episode(symbol string) *episode {
-	held, ok := training.episodes[symbol]
-
-	if !ok {
-		held = &episode{}
-		training.episodes[symbol] = held
+	if held, ok := training.episodes.Get(symbol); ok && held != nil {
+		return held
 	}
 
-	return held
+	held := &episode{}
+	held.state.Store(&episodeState{})
+	training.episodes.Set(symbol, held)
+	actual, _ := training.episodes.Get(symbol)
+	return actual
 }
 
 /*
@@ -805,7 +877,7 @@ the return multiplier from entry to exit:
   - exit: frames from ignition B+1 up to the frame before the peak C, leaving
     the peak tick for the exit fill.
 */
-func (training *Training) learn(detection *data.Measurement[float64]) (bool, error) {
+func (training *Training) learn(detection *data.Measurement) (bool, error) {
 	if detection == nil {
 		return false, nil
 	}
@@ -909,8 +981,10 @@ func (training *Training) learn(detection *data.Measurement[float64]) (bool, err
 		}
 	}
 
+	fragID := int(training.fragCount.Add(1))
+
 	fragment := ui.TrainedFragment{
-		ID:         len(training.fragments) + 1,
+		ID:         fragID,
 		Symbol:     detection.Label,
 		Epoch:      detection.Epoch,
 		MarkA:      startTick,
@@ -927,9 +1001,24 @@ func (training *Training) learn(detection *data.Measurement[float64]) (bool, err
 		LearnedAt:  time.Now(),
 	}
 
-	training.mu.Lock()
-	training.fragments = append(training.fragments, fragment)
-	training.mu.Unlock()
+	for {
+		oldPtr := training.fragments.Load()
+		var next []ui.TrainedFragment
+
+		if oldPtr != nil {
+			next = make([]ui.TrainedFragment, len(*oldPtr)+1)
+			copy(next, *oldPtr)
+			next[len(*oldPtr)] = fragment
+		}
+
+		if oldPtr == nil {
+			next = []ui.TrainedFragment{fragment}
+		}
+
+		if training.fragments.CompareAndSwap(oldPtr, &next) {
+			break
+		}
+	}
 
 	training.streamFragment(detection, fragment)
 
@@ -957,28 +1046,34 @@ frames reads the excursion's signal and logic tape from the excursion start up t
 the peak and encodes one region token per tick from all signal and logic steps.
 */
 func (training *Training) frames(
-	detection *data.Measurement[float64], startTick, highTick int64,
+	detection *data.Measurement, startTick, highTick int64,
 ) ([]int64, [][]byte, error) {
-	if !training.grid.IsSettled() {
-		for measurement := range training.catalog.SignalLogic(
-			training.Context(), detection.Epoch, detection.Label, startTick, highTick,
-		) {
-			if measurement.Source == "resonance" || measurement.Source == "manifold" {
-				continue
-			}
+	var (
+		rawMeasurements []*data.Measurement
+		ticks           []int64
+		tokens          [][]byte
+		group           []*data.Measurement
+		current         int64 = -1
+	)
 
-			training.grid.Update(measurement)
+	for measurement := range training.catalog.SignalLogic(
+		training.Context(), detection.Epoch, detection.Label, startTick, highTick,
+	) {
+		if measurement.Source == "resonance" || measurement.Source == "manifold" {
+			continue
 		}
 
-		training.grid.Settle()
+		rawMeasurements = append(rawMeasurements, measurement)
 	}
 
-	var (
-		ticks   []int64
-		tokens  [][]byte
-		group   []*data.Measurement[float64]
-		current int64 = -1
-	)
+	if len(rawMeasurements) == 0 {
+		return nil, nil, nil
+	}
+
+	if !training.grid.IsSettled() {
+		training.grid.Update(rawMeasurements...)
+		training.grid.Settle()
+	}
 
 	flush := func() {
 		if len(group) == 0 {
@@ -996,16 +1091,10 @@ func (training *Training) frames(
 		tokens = append(tokens, tok)
 	}
 
-	for measurement := range training.catalog.SignalLogic(
-		training.Context(), detection.Epoch, detection.Label, startTick, highTick,
-	) {
+	for _, measurement := range rawMeasurements {
 		if measurement.Tick != current {
 			flush()
 			current = measurement.Tick
-		}
-
-		if measurement.Source == "resonance" || measurement.Source == "manifold" {
-			continue
 		}
 
 		group = append(group, measurement)
@@ -1015,7 +1104,7 @@ func (training *Training) frames(
 	return ticks, tokens, nil
 }
 
-func (training *Training) token(measurements ...*data.Measurement[float64]) []byte {
+func (training *Training) token(measurements ...*data.Measurement) []byte {
 	lit := training.grid.LitRegions(measurements...)
 
 	if len(lit) == 0 {
@@ -1026,7 +1115,7 @@ func (training *Training) token(measurements ...*data.Measurement[float64]) []by
 }
 
 func (training *Training) priceTape(
-	detection *data.Measurement[float64],
+	detection *data.Measurement,
 	startTick, highTick int64,
 	entry, exit *decimal.Decimal,
 	ticks []int64,
@@ -1084,14 +1173,14 @@ func (training *Training) priceTape(
 }
 
 func (training *Training) streamFragment(
-	detection *data.Measurement[float64],
+	detection *data.Measurement,
 	fragment ui.TrainedFragment,
 ) {
 	if training == nil || training.uiTee == nil {
 		return
 	}
 
-	out := data.NewMeasurement[float64](training.Name())
+	out := data.NewMeasurement(training.Name())
 	out.Label = detection.Label
 	out.SeqIdx = fragment.MarkC
 	out.Tick = fragment.MarkC
@@ -1124,7 +1213,7 @@ func (training *Training) streamFragment(
 
 	training.reporter.Populate(out, snapshot)
 
-	out.SetMetric("agent_entry", data.NewMetric[float64](
+	out.SetMetric("agent_entry", data.NewMetric(
 		"agent_entry",
 		data.UnitCount,
 		data.TimescaleInstantaneous,
@@ -1132,7 +1221,7 @@ func (training *Training) streamFragment(
 		1,
 	).Write(float64(fragment.MarkB)))
 
-	out.SetMetric("agent_exit", data.NewMetric[float64](
+	out.SetMetric("agent_exit", data.NewMetric(
 		"agent_exit",
 		data.UnitCount,
 		data.TimescaleInstantaneous,

@@ -15,7 +15,7 @@ func TestScanOrdersBySeqIdx(t *testing.T) {
 		catalog := tablestest.New(t)
 		writer := tables.NewWriter(catalog, 50)
 		for _, seq := range []int64{3, 1, 2} {
-			m := data.NewMeasurement("signal", map[string]data.Metric[float64]{"v": {Raw: float64(seq)}})
+			m := data.NewMeasurement("signal", map[string]data.Metric{"v": {Raw: float64(seq)}})
 			m.Label = "BTC/USD"
 			m.SeqIdx = seq
 			m.At = time.Unix(seq, 0)

@@ -12,10 +12,10 @@ import (
 )
 
 /*
-UITee is a concrete off-ramp that accepts *data.Measurement[float64]
+UITee is a concrete off-ramp that accepts *data.Measurement
 and yields encoded FlatBuffer []byte frames for the dashboard websocket,
 including ManifoldFrame payloads when a measurement carries a ManifoldState.
-It satisfies runtime.Tee[*data.Measurement[float64], []byte].
+It satisfies runtime.Tee[*data.Measurement, []byte].
 Encoding is executed in a dedicated background worker to eliminate serialization
 jitter from the consumer fast path and immediately release retained publications.
 */
@@ -27,7 +27,7 @@ type UITee struct {
 	available           chan struct{}
 	lastManifoldVersion uint64
 	filters             []func(
-		measurement *data.Measurement[float64],
+		measurement *data.Measurement,
 	) bool
 }
 
@@ -38,11 +38,11 @@ func NewUITee(
 	ctx context.Context,
 	label string,
 	filters ...func(
-		measurement *data.Measurement[float64],
+		measurement *data.Measurement,
 	) bool,
 ) *UITee {
 	if len(filters) == 0 {
-		filters = []func(*data.Measurement[float64]) bool{types.Filters}
+		filters = []func(*data.Measurement) bool{types.Filters}
 	}
 
 	tee := &UITee{
@@ -118,7 +118,8 @@ func (tee *UITee) Next() unsafe.Pointer {
 
 func (tee *UITee) worker(ctx context.Context) {
 	const batchLimit = 1024
-	batch := make([]*data.Measurement[float64], 0, batchLimit)
+	batch := make([]*data.Measurement, 0, batchLimit)
+	pubs := make([]data.Publication, 0, batchLimit)
 
 	for {
 		select {
@@ -128,10 +129,11 @@ func (tee *UITee) worker(ctx context.Context) {
 		case <-tee.wake:
 			for {
 				batch = batch[:0]
+				pubs = pubs[:0]
 				var encodedSomething bool
 				var dequeuedCount int
 
-				for i := 0; i < batchLimit; i++ {
+				for range batchLimit {
 					pub, ok := tee.ingress.Dequeue()
 					if !ok {
 						break
@@ -150,7 +152,9 @@ func (tee *UITee) worker(ctx context.Context) {
 									"[tee] Failed to encode manifold",
 									err,
 								))
-							} else {
+							}
+
+							if err == nil {
 								if tee.egress.Length() >= 4096 {
 									tee.egress.Dequeue()
 								}
@@ -163,18 +167,26 @@ func (tee *UITee) worker(ctx context.Context) {
 					}
 
 					batch = append(batch, measurement)
-					pub.Release()
+					pubs = append(pubs, pub)
 				}
 
 				if len(batch) > 0 {
 					payload, err := types.EncodeMeasurements(batch)
+
+					for _, pub := range pubs {
+						pub.Release()
+					}
+					pubs = pubs[:0]
+
 					if err != nil {
 						errnie.Error(errnie.Err(
 							errnie.UnprocessableContent,
 							"[tee] Failed to encode measurements",
 							err,
 						))
-					} else {
+					}
+
+					if err == nil {
 						if tee.egress.Length() >= 4096 {
 							tee.egress.Dequeue()
 						}

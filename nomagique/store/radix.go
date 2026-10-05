@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
-	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
@@ -18,9 +18,7 @@ source: each arrival is applied to a tree and the next tree is handed over.
 */
 type Radix struct {
 	err  error
-	held *iradix.Tree[[]byte]
-	out  *iradix.Tree[[]byte]
-	mu   sync.RWMutex
+	held atomic.Pointer[iradix.Tree[[]byte]]
 }
 
 func NewRadix(current ...*iradix.Tree[[]byte]) *Radix {
@@ -30,45 +28,46 @@ func NewRadix(current ...*iradix.Tree[[]byte]) *Radix {
 		held = current[0]
 	}
 
-	return &Radix{held: held}
+	radix := &Radix{}
+	radix.held.Store(held)
+	return radix
 }
 
 func (op *Radix) Insert(key, val []byte) {
-	op.mu.Lock()
-	defer op.mu.Unlock()
+	cloned := bytes.Clone(val)
 
-	if op.held == nil {
-		op.held = iradix.New[[]byte]()
+	for {
+		current := op.held.Load()
+		base := current
+
+		if base == nil {
+			base = iradix.New[[]byte]()
+		}
+
+		written, _, _ := base.Insert(key, cloned)
+
+		if op.held.CompareAndSwap(current, written) {
+			return
+		}
 	}
-
-	written, _, _ := op.held.Insert(key, bytes.Clone(val))
-	op.held = written
-	op.out = written
 }
 
 func (op *Radix) Get(key []byte) ([]byte, bool) {
-	op.mu.RLock()
-	defer op.mu.RUnlock()
+	tree := op.held.Load()
 
-	if op.held == nil {
+	if tree == nil {
 		return nil, false
 	}
 
-	return op.held.Get(key)
+	return tree.Get(key)
 }
 
 func (op *Radix) Tree() *iradix.Tree[[]byte] {
-	op.mu.RLock()
-	defer op.mu.RUnlock()
-
-	return op.held
+	return op.held.Load()
 }
 
 func (op *Radix) MarshalJSON() ([]byte, error) {
-	op.mu.RLock()
-	held := op.held
-	op.mu.RUnlock()
-
+	held := op.held.Load()
 	entries := make(map[string][]byte)
 
 	if held != nil {
@@ -89,59 +88,75 @@ func (op *Radix) UnmarshalJSON(payload []byte) error {
 		return err
 	}
 
-	op.mu.Lock()
-	defer op.mu.Unlock()
-
-	op.held = iradix.New[[]byte]()
+	held := iradix.New[[]byte]()
 
 	for key, val := range entries {
-		op.held, _, _ = op.held.Insert([]byte(key), val)
+		held, _, _ = held.Insert([]byte(key), val)
 	}
 
+	op.held.Store(held)
 	return nil
 }
-
 
 func (op *Radix) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			op.mu.Lock()
-			if op.held == nil {
-				op.held = iradix.New[[]byte]()
-			}
-
 			fields := *(*map[string][]byte)(arriving)
 			selector, selecting := fields["selector"]
 			data, writing := fields["data"]
 
 			if !writing {
-				op.out = op.held
-				ptr := unsafe.Pointer(&op.out)
-				op.mu.Unlock()
-				if !yield(ptr) {
+				tree := op.held.Load()
+
+				if tree == nil {
+					tree = iradix.New[[]byte]()
+					op.held.CompareAndSwap(nil, tree)
+					tree = op.held.Load()
+				}
+
+				if !yield(unsafe.Pointer(&tree)) {
 					return
 				}
+
 				continue
 			}
 
 			if !selecting {
 				op.Error(core.ErrShape)
-				op.out = op.held
-				ptr := unsafe.Pointer(&op.out)
-				op.mu.Unlock()
-				if !yield(ptr) {
+				tree := op.held.Load()
+
+				if tree == nil {
+					tree = iradix.New[[]byte]()
+					op.held.CompareAndSwap(nil, tree)
+					tree = op.held.Load()
+				}
+
+				if !yield(unsafe.Pointer(&tree)) {
 					return
 				}
+
 				continue
 			}
 
-			written, _, _ := op.held.Insert(selector, bytes.Clone(data))
-			op.held = written
-			op.out = written
-			ptr := unsafe.Pointer(&op.out)
-			op.mu.Unlock()
-			
-			if !yield(ptr) {
+			cloned := bytes.Clone(data)
+			var written *iradix.Tree[[]byte]
+
+			for {
+				current := op.held.Load()
+				base := current
+
+				if base == nil {
+					base = iradix.New[[]byte]()
+				}
+
+				written, _, _ = base.Insert(selector, cloned)
+
+				if op.held.CompareAndSwap(current, written) {
+					break
+				}
+			}
+
+			if !yield(unsafe.Pointer(&written)) {
 				return
 			}
 		}

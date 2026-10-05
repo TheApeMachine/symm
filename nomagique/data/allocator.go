@@ -15,26 +15,14 @@ func Free(allocator Allocator) {
 }
 
 func New[T any](allocator Allocator) *T {
-	if allocator == nil {
-		return new(T)
-	}
-
 	return arena.New[T](allocator)
 }
 
 func MakeSlice[T any](allocator Allocator, l, c int) []T {
-	if allocator == nil {
-		return make([]T, l, c)
-	}
-
 	return arena.MakeSlice[T](allocator, l, c)
 }
 
 func AppendA[T any](data []T, v T, allocator Allocator) []T {
-	if allocator == nil {
-		return append(data, v)
-	}
-
 	if len(data) < cap(data) {
 		return append(data, v)
 	}

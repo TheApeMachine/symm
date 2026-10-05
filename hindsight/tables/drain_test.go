@@ -42,7 +42,7 @@ func TestCatalog_Drain(t *testing.T) {
 		tee.Transition(runtime.READY)
 		defer func() { So(tee.Close(), ShouldBeNil) }()
 		for sequence := int64(1); sequence <= 8; sequence++ {
-			measurement := data.NewMeasurement[float64]("signal", nil)
+			measurement := data.NewMeasurement("signal", nil)
 			measurement.Label = "BTC/USD"
 			measurement.At = time.Unix(sequence, 0)
 			measurement.SeqIdx = sequence
@@ -76,8 +76,8 @@ func BenchmarkCatalog_Drain(b *testing.B) {
 
 	for batch := 0; b.Loop(); batch++ {
 		for sequence := int64(1); sequence <= 2048; sequence++ {
-			measurement := data.NewMeasurement[float64]("signal", nil)
-			measurement.SetMetric("value", data.NewMetric[float64](
+			measurement := data.NewMeasurement("signal", nil)
+			measurement.SetMetric("value", data.NewMetric(
 				"value",
 				data.UnitDimensionless,
 				data.TimescaleInstantaneous,
@@ -94,5 +94,3 @@ func BenchmarkCatalog_Drain(b *testing.B) {
 		}
 	}
 }
-
-

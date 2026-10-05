@@ -32,14 +32,14 @@ func TestHawkesTradeMetrics(t *testing.T) {
 				prior.At = now.Add(time.Duration(step) * 50 * time.Millisecond)
 				prior.From = prior.At
 
-				prior.SetMetric("price", data.NewMetric[float64](
+				prior.SetMetric("price", data.NewMetric(
 					"price",
 					data.UnitPrice,
 					data.TimescaleInstantaneous,
 					50000.0,
 					1.0,
 				).Write(50000.0))
-				prior.SetMetric("qty", data.NewMetric[float64](
+				prior.SetMetric("qty", data.NewMetric(
 					"qty",
 					data.UnitQuantity,
 					data.TimescaleInstantaneous,
@@ -94,14 +94,14 @@ func TestHawkesTradeMetrics(t *testing.T) {
 			prior.SeqIdx = 100
 			prior.At = now
 			prior.From = now
-			prior.SetMetric("price", data.NewMetric[float64](
+			prior.SetMetric("price", data.NewMetric(
 				"price",
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
 				50000.0,
 				1.0,
 			).Write(50000.0))
-			prior.SetMetric("qty", data.NewMetric[float64](
+			prior.SetMetric("qty", data.NewMetric(
 				"qty",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
@@ -124,14 +124,14 @@ func TestHawkesTradeMetrics(t *testing.T) {
 			prior.From = now
 			prior.SetProvenance("channel", "book")
 			prior.SetProvenance("side", "buy")
-			prior.SetMetric("price", data.NewMetric[float64](
+			prior.SetMetric("price", data.NewMetric(
 				"price",
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
 				50000.0,
 				1.0,
 			).Write(50000.0))
-			prior.SetMetric("qty", data.NewMetric[float64](
+			prior.SetMetric("qty", data.NewMetric(
 				"qty",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,

@@ -47,7 +47,7 @@ func NewUpdateMember(
 func (op *UpdateMember) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m.Err != nil {
 				if !yield(arriving) {
@@ -115,7 +115,7 @@ func NewStampPeers(changes *store.Latest[string, data.CrossMember]) core.Primiti
 func (op *StampPeers) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m.Err != nil {
 				if !yield(arriving) {
@@ -129,10 +129,10 @@ func (op *StampPeers) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				op.membrs, &store.LatestCommand[string, data.CrossMember]{Read: true},
 			)
 
-			peers := make([]*data.Measurement[float64], 0, len(snapshot))
+			peers := make([]*data.Measurement, 0, len(snapshot))
 
 			for _, member := range snapshot {
-				peer := data.NewMeasurement("cross-section", map[string]data.Metric[float64]{
+				peer := data.NewMeasurement("cross-section", map[string]data.Metric{
 					"change": {Label: "change", Raw: member.Change},
 				})
 				peer.Label, peer.At, peer.From = member.Label, member.At, member.From

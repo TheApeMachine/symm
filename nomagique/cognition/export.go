@@ -310,7 +310,11 @@ func regionFrames(context []byte) []string {
 			continue
 		}
 
-		frame := string(part)
+		frame := formatFrameToken(part)
+
+		if len(frame) == 0 {
+			continue
+		}
 
 		if len(frames) == 0 || frames[len(frames)-1] != frame {
 			frames = append(frames, frame)
@@ -318,6 +322,28 @@ func regionFrames(context []byte) []string {
 	}
 
 	return frames
+}
+
+func formatFrameToken(part []byte) string {
+	if len(part) == 0 {
+		return ""
+	}
+
+	if part[0] >= 32 {
+		return string(part)
+	}
+
+	var builder strings.Builder
+
+	for index, val := range part {
+		if index > 0 {
+			builder.WriteByte('_')
+		}
+
+		builder.WriteString(fmt.Sprintf("R%d", val))
+	}
+
+	return builder.String()
 }
 
 func isActionLeaf(node *TrieNodeJSON) bool {

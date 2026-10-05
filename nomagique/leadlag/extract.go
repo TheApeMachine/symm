@@ -31,7 +31,7 @@ func NewExtractPrice() core.Primitive {
 func (op *ExtractPrice) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			metric, found := op.resolve(m)
 
@@ -46,7 +46,7 @@ func (op *ExtractPrice) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				scale = math.Max(metric.Raw*0.001, 1.0)
 			}
 
-			m.SetMetric("last_price", data.NewMetric[float64](
+			m.SetMetric("last_price", data.NewMetric(
 				"last_price",
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
@@ -65,7 +65,7 @@ func (op *ExtractPrice) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 resolve finds the best available last trade price: from a peer if peers
 exist, otherwise from the measurement's own "last" metric.
 */
-func (op *ExtractPrice) resolve(m *data.Measurement[float64]) (data.Metric[float64], bool) {
+func (op *ExtractPrice) resolve(m *data.Measurement) (data.Metric, bool) {
 	if len(m.Peers) > 0 {
 		for _, peer := range m.Peers {
 			if peer == nil || peer.Label == "" {
@@ -91,13 +91,13 @@ func (op *ExtractPrice) resolve(m *data.Measurement[float64]) (data.Metric[float
 			}
 		}
 
-		return data.Metric[float64]{}, false
+		return data.Metric{}, false
 	}
 
 	metric, ok := m.LookupMetric("last")
 
 	if !ok || metric.Raw <= 0 {
-		return data.Metric[float64]{}, false
+		return data.Metric{}, false
 	}
 
 	return metric, true

@@ -31,15 +31,15 @@ type ExcursionProfile struct {
 GenerateTape constructs a multi-leg sequence of measurements reflecting the specified
 excursion dynamics with realistic timestamps and Level 3 metrics.
 */
-func (profile ExcursionProfile) GenerateTape(startSeq int64) []*data.Measurement[float64] {
+func (profile ExcursionProfile) GenerateTape(startSeq int64) []*data.Measurement {
 	totalTicks := profile.PrecursorTicks + profile.RunTicks + profile.ReversalTicks + profile.TailTicks
-	frames := make([]*data.Measurement[float64], 0, totalTicks)
+	frames := make([]*data.Measurement, 0, totalTicks)
 
 	currentSeq := startSeq
 	eventTime := time.Unix(1700000000, 0)
 
 	emit := func(p float64, source string) {
-		m := data.NewMeasurement[float64](source, nil)
+		m := data.NewMeasurement(source, nil)
 		m.SeqIdx = currentSeq
 		m.Label = profile.Symbol
 		m.At = eventTime
@@ -107,7 +107,7 @@ NewProfitableUpperTape generates an upward breakout that comfortably clears roun
 for a $40 position (+3.5% peak return, well above 0.52% fee + spread), with a single-tick stop-loss
 hunter sweep (-3% wick) that immediately rebounds to new highs.
 */
-func NewProfitableUpperTape(symbol string, basePrice, spread float64) []*data.Measurement[float64] {
+func NewProfitableUpperTape(symbol string, basePrice, spread float64) []*data.Measurement {
 	return ExcursionProfile{
 		Symbol:         symbol,
 		BasePrice:      basePrice,
@@ -129,7 +129,7 @@ func NewProfitableUpperTape(symbol string, basePrice, spread float64) []*data.Me
 NewUnprofitableUpperTape generates a weak upward ignition that exhausts after gaining only +0.15%,
 failing to cover round-trip taker fees (0.52%), followed by structural reversal.
 */
-func NewUnprofitableUpperTape(symbol string, basePrice, spread float64) []*data.Measurement[float64] {
+func NewUnprofitableUpperTape(symbol string, basePrice, spread float64) []*data.Measurement {
 	return ExcursionProfile{
 		Symbol:          symbol,
 		BasePrice:       basePrice,
@@ -147,7 +147,7 @@ func NewUnprofitableUpperTape(symbol string, basePrice, spread float64) []*data.
 /*
 NewDownwardBreakdownTape generates a downward departure breaking below lower hurdles.
 */
-func NewDownwardBreakdownTape(symbol string, basePrice, spread float64) []*data.Measurement[float64] {
+func NewDownwardBreakdownTape(symbol string, basePrice, spread float64) []*data.Measurement {
 	return ExcursionProfile{
 		Symbol:         symbol,
 		BasePrice:      basePrice,
@@ -169,8 +169,8 @@ func NewDownwardBreakdownTape(symbol string, basePrice, spread float64) []*data.
 NewChopWhipsawTape generates high-frequency oscillating noise that constantly flips direction
 within the friction deadband without ever sustaining a directional breakout.
 */
-func NewChopWhipsawTape(symbol string, basePrice, spread float64, ticks int) []*data.Measurement[float64] {
-	frames := make([]*data.Measurement[float64], ticks)
+func NewChopWhipsawTape(symbol string, basePrice, spread float64, ticks int) []*data.Measurement {
+	frames := make([]*data.Measurement, ticks)
 	eventTime := time.Unix(1700000000, 0)
 
 	for i := range ticks {
@@ -178,7 +178,7 @@ func NewChopWhipsawTape(symbol string, basePrice, spread float64, ticks int) []*
 		oscillation := math.Sin(float64(i)*1.5) * spread * 0.8
 		p := basePrice + oscillation
 
-		m := data.NewMeasurement[float64]("chop", nil)
+		m := data.NewMeasurement("chop", nil)
 		m.SeqIdx = int64(i + 1)
 		m.Label = symbol
 		m.At = eventTime
@@ -194,12 +194,12 @@ func NewChopWhipsawTape(symbol string, basePrice, spread float64, ticks int) []*
 /*
 NewFlatQuiescentTape generates a flatline tape where price remains virtually motionless.
 */
-func NewFlatQuiescentTape(symbol string, basePrice, spread float64, ticks int) []*data.Measurement[float64] {
-	frames := make([]*data.Measurement[float64], ticks)
+func NewFlatQuiescentTape(symbol string, basePrice, spread float64, ticks int) []*data.Measurement {
+	frames := make([]*data.Measurement, ticks)
 	eventTime := time.Unix(1700000000, 0)
 
 	for i := range ticks {
-		m := data.NewMeasurement[float64]("flat", nil)
+		m := data.NewMeasurement("flat", nil)
 		m.SeqIdx = int64(i + 1)
 		m.Label = symbol
 		m.At = eventTime
@@ -217,7 +217,7 @@ NewAdversarialMultiWickTape generates a strong upward trending excursion that en
 MULTIPLE successive adversarial stop-loss hunter wicks (e.g. at step 3, step 6, step 9),
 each punching down sharply before the tape immediately recovers to new higher highs.
 */
-func NewAdversarialMultiWickTape(symbol string, basePrice, spread float64) []*data.Measurement[float64] {
+func NewAdversarialMultiWickTape(symbol string, basePrice, spread float64) []*data.Measurement {
 	return ExcursionProfile{
 		Symbol:         symbol,
 		BasePrice:      basePrice,
@@ -241,13 +241,13 @@ func NewAdversarialMultiWickTape(symbol string, basePrice, spread float64) []*da
 NewInterleavedMultiAssetTape interleaves observations from multiple assets with contrasting
 regimes into a single deterministic stream to stress test concurrent state isolation.
 */
-func NewInterleavedMultiAssetTape() []*data.Measurement[float64] {
+func NewInterleavedMultiAssetTape() []*data.Measurement {
 	const targetLen = 36
 	btcBase := NewProfitableUpperTape("BTC/USD", 60000.0, 5.0)
 	ethTape := NewFlatQuiescentTape("ETH/USD", 3000.0, 1.0, targetLen)
 	solBase := NewDownwardBreakdownTape("SOL/USD", 150.0, 0.2)
 
-	btcTape := make([]*data.Measurement[float64], targetLen)
+	btcTape := make([]*data.Measurement, targetLen)
 	copy(btcTape, btcBase)
 	lastBTC := btcBase[len(btcBase)-1]
 	for i := len(btcBase); i < targetLen; i++ {
@@ -256,7 +256,7 @@ func NewInterleavedMultiAssetTape() []*data.Measurement[float64] {
 		btcTape[i] = m
 	}
 
-	solTape := make([]*data.Measurement[float64], targetLen)
+	solTape := make([]*data.Measurement, targetLen)
 	copy(solTape, solBase)
 	lastSOL := solBase[len(solBase)-1]
 	for i := len(solBase); i < targetLen; i++ {
@@ -265,7 +265,7 @@ func NewInterleavedMultiAssetTape() []*data.Measurement[float64] {
 		solTape[i] = m
 	}
 
-	interleaved := make([]*data.Measurement[float64], 0, targetLen*3)
+	interleaved := make([]*data.Measurement, 0, targetLen*3)
 	var globalSeq int64 = 1
 	for i := range targetLen {
 		fBTC := CloneTestMeasurement(btcTape[i])
@@ -286,11 +286,11 @@ func NewInterleavedMultiAssetTape() []*data.Measurement[float64] {
 	return interleaved
 }
 
-func CloneTestMeasurement(src *data.Measurement[float64]) *data.Measurement[float64] {
+func CloneTestMeasurement(src *data.Measurement) *data.Measurement {
 	if src == nil {
 		return nil
 	}
-	out := &data.Measurement[float64]{
+	out := &data.Measurement{
 		ID:         src.ID,
 		Label:      src.Label,
 		Source:     src.Source,
@@ -306,7 +306,7 @@ func CloneTestMeasurement(src *data.Measurement[float64]) *data.Measurement[floa
 		Metrics:    make([]data.MetricEntry[float64], len(src.Metrics)),
 		Metadata:   make([]data.StringEntry, len(src.Metadata)),
 		Provenance: make([]data.StringEntry, len(src.Provenance)),
-		Peers:      make([]*data.Measurement[float64], len(src.Peers)),
+		Peers:      make([]*data.Measurement, len(src.Peers)),
 		Result:     src.Result,
 	}
 	copy(out.Metrics, src.Metrics)
@@ -321,7 +321,7 @@ NewFastPumpTape generates a sudden, violent upward breakout (+15% jump in 2 tick
 following a 16-tick precursor consolidation, holding the higher level with a confirmed
 reversal at the new plateau.
 */
-func NewFastPumpTape(symbol string, basePrice, spread, pumpPct float64) []*data.Measurement[float64] {
+func NewFastPumpTape(symbol string, basePrice, spread, pumpPct float64) []*data.Measurement {
 	return ExcursionProfile{
 		Symbol:          symbol,
 		BasePrice:       basePrice,
@@ -340,7 +340,7 @@ func NewFastPumpTape(symbol string, basePrice, spread, pumpPct float64) []*data.
 NewFlashSpikeDumpTape generates a 1-tick violent explosion (+20%) that immediately collapses
 back to the baseline within 2 ticks (a pump-and-dump / flash spike / fat finger).
 */
-func NewFlashSpikeDumpTape(symbol string, basePrice, spread, spikePct float64) []*data.Measurement[float64] {
+func NewFlashSpikeDumpTape(symbol string, basePrice, spread, spikePct float64) []*data.Measurement {
 	return ExcursionProfile{
 		Symbol:          symbol,
 		BasePrice:       basePrice,

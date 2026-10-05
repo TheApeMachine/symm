@@ -32,7 +32,7 @@ func NewFold() core.Primitive {
 func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m.Err != nil || len(m.Peers) == 0 {
 				if !yield(arriving) {
@@ -76,7 +76,7 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			if summary.Defined {
-				m.SetMetric("cohort_signed_correlation", data.NewMetric[float64](
+				m.SetMetric("cohort_signed_correlation", data.NewMetric(
 					"cohort_signed_correlation",
 					data.UnitCorrelation,
 					data.TimescaleRollingWindow,
@@ -84,7 +84,7 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					1.0,
 				).Write(summary.SignedCorrelation))
 
-				m.SetMetric("cohort_absolute_correlation", data.NewMetric[float64](
+				m.SetMetric("cohort_absolute_correlation", data.NewMetric(
 					"cohort_absolute_correlation",
 					data.UnitCorrelation,
 					data.TimescaleRollingWindow,
@@ -92,7 +92,7 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					1.0,
 				).Write(summary.AbsoluteCorrelation))
 
-				m.SetMetric("cohort_effective_peer_count", data.NewMetric[float64](
+				m.SetMetric("cohort_effective_peer_count", data.NewMetric(
 					"cohort_effective_peer_count",
 					data.UnitCount,
 					data.TimescaleRollingWindow,
@@ -100,7 +100,7 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					math.Max(summary.Peers, 1.0),
 				).Write(summary.EffectivePeers))
 			}
-			m.SetMetric("cohort_peer_count", data.NewMetric[float64](
+			m.SetMetric("cohort_peer_count", data.NewMetric(
 				"cohort_peer_count",
 				data.UnitCount,
 				data.TimescaleRollingWindow,
@@ -109,7 +109,7 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			).Write(summary.Peers))
 
 			if summary.FisherDefined {
-				m.SetMetric("cohort_correlation_dispersion", data.NewMetric[float64](
+				m.SetMetric("cohort_correlation_dispersion", data.NewMetric(
 					"cohort_correlation_dispersion",
 					data.UnitVariance,
 					data.TimescaleRollingWindow,
@@ -119,7 +119,7 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			if summary.PeerEnergyRate > 0 {
-				m.SetMetric("peer_return_energy_rate", data.NewMetric[float64](
+				m.SetMetric("peer_return_energy_rate", data.NewMetric(
 					"peer_return_energy_rate",
 					data.UnitRate,
 					data.TimescalePerSecond,
@@ -129,7 +129,7 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 				measuredEnergy := m.GetMetric("return_energy_rate:measured").Raw
 				relEnergy := measuredEnergy / summary.PeerEnergyRate
-				m.SetMetric("relative_return_energy", data.NewMetric[float64](
+				m.SetMetric("relative_return_energy", data.NewMetric(
 					"relative_return_energy",
 					data.UnitRatio,
 					data.TimescalePerSecond,
@@ -171,7 +171,7 @@ func NewHistory() core.Primitive {
 func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m.Err != nil || len(m.Peers) == 0 || m.GetMetric("cohort_peer_count").Raw == 0 {
 				if !yield(arriving) {
@@ -195,7 +195,7 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				divergenceScale = math.Sqrt(view.Variance)
 			}
 
-			m.SetMetric("correlation_baseline", data.NewMetric[float64](
+			m.SetMetric("correlation_baseline", data.NewMetric(
 				"correlation_baseline",
 				data.UnitCorrelation,
 				data.TimescaleRollingWindow,
@@ -203,7 +203,7 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				1.0,
 			).Write(view.Baseline))
 
-			m.SetMetric("correlation_divergence", data.NewMetric[float64](
+			m.SetMetric("correlation_divergence", data.NewMetric(
 				"correlation_divergence",
 				data.UnitCorrelation,
 				data.TimescaleRollingWindow,
@@ -211,7 +211,7 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				divergenceScale,
 			).Write(view.Divergence))
 
-			m.SetMetric("correlation_zscore", data.NewMetric[float64](
+			m.SetMetric("correlation_zscore", data.NewMetric(
 				"correlation_zscore",
 				data.UnitZScore,
 				data.TimescaleRollingWindow,
@@ -263,7 +263,7 @@ func NewRelative() core.Primitive {
 func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m.Err != nil || len(m.Peers) == 0 || m.GetMetric("cohort_peer_count").Raw == 0 {
 				if !yield(arriving) {
@@ -283,21 +283,21 @@ func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			reading := drive[float64, adaptive.BaselineReading](baseline, &relative)
 
 			energyDispersion := math.Max(reading.Dispersion, 1e-6)
-			m.SetMetric("relative_return_energy_baseline", data.NewMetric[float64](
+			m.SetMetric("relative_return_energy_baseline", data.NewMetric(
 				"relative_return_energy_baseline",
 				data.UnitRatio,
 				data.TimescaleRollingWindow,
 				1.0,
 				energyDispersion,
 			).Write(reading.Baseline))
-			m.SetMetric("relative_return_energy_divergence", data.NewMetric[float64](
+			m.SetMetric("relative_return_energy_divergence", data.NewMetric(
 				"relative_return_energy_divergence",
 				data.UnitRatio,
 				data.TimescaleInstantaneous,
 				0.0,
 				energyDispersion,
 			).Write(reading.Residual))
-			m.SetMetric("relative_return_energy_zscore", data.NewMetric[float64](
+			m.SetMetric("relative_return_energy_zscore", data.NewMetric(
 				"relative_return_energy_zscore",
 				data.UnitZScore,
 				data.TimescaleRollingWindow,
@@ -337,7 +337,7 @@ func NewCorrelationVelocity() core.Primitive {
 func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m.Err != nil || len(m.Peers) == 0 || m.GetMetric("cohort_peer_count").Raw == 0 {
 				if !yield(arriving) {
@@ -361,7 +361,7 @@ func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 			reading := drive[temporal.Observation, temporal.VelocityReading](velocity, &observation)
 
 			if reading.Defined {
-				m.SetMetric("correlation_velocity", data.NewMetric[float64](
+				m.SetMetric("correlation_velocity", data.NewMetric(
 					"correlation_velocity",
 					data.UnitVelocity,
 					data.TimescalePerSecond,
@@ -402,7 +402,7 @@ func NewEnergyVelocity() core.Primitive {
 func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m.Err != nil || len(m.Peers) == 0 || m.GetMetric("cohort_peer_count").Raw == 0 {
 				if !yield(arriving) {
@@ -426,7 +426,7 @@ func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 			reading := drive[temporal.Observation, temporal.VelocityReading](velocity, &observation)
 
 			if reading.Defined {
-				m.SetMetric("relative_return_energy_velocity", data.NewMetric[float64](
+				m.SetMetric("relative_return_energy_velocity", data.NewMetric(
 					"relative_return_energy_velocity",
 					data.UnitVelocity,
 					data.TimescalePerSecond,

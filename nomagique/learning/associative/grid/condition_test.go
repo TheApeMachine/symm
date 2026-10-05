@@ -2,25 +2,23 @@ package grid
 
 import (
 	"testing"
-	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-/* tokenOf drives the token primitive for one condition. */
+/* tokenOf drives the Condition primitive for one input tuple. */
 func tokenOf(t testing.TB, quantity uint64, level, change float64) uint64 {
 	t.Helper()
-	token := NewToken()
-	command := TokenCommand{Condition: &TokenCondition{Quantity: quantity, Level: level, Change: change}}
+	op := NewCondition()
+	input := [3]float64{float64(quantity), level, change}
+	token := data.Read[uint64](op.Next(data.NewValue(input)))
 
-	for out := range token.Next(transport.NewOne(unsafe.Pointer(&command)).Next(nil)) {
-		return (*TokenResult)(out).Token
+	if token == 0 && op.Error() != nil {
+		t.Fatal(op.Error())
 	}
 
-	t.Fatal("token primitive held no value")
-
-	return 0
+	return token
 }
 
 func TestCondition(t *testing.T) {
@@ -37,61 +35,24 @@ func TestCondition(t *testing.T) {
 			}
 		}
 	})
-}
 
-func TestRemapCondition(t *testing.T) {
-	Convey("Warmup preserves conditions while quantity registration order changes", t, func() {
-		token := NewToken()
-		remap := func(tokenVal, quantity uint64) uint64 {
-			command := TokenCommand{Remap: &TokenRemap{Token: tokenVal, Quantity: quantity}}
-
-			for out := range token.Next(transport.NewOne(unsafe.Pointer(&command)).Next(nil)) {
-				return (*TokenResult)(out).Token
-			}
-
-			t.Fatal("token primitive held no value")
-
-			return 0
-		}
-		So(remap(1, 9), ShouldEqual, 9)
-		So(remap(tokenOf(t, 1, -1, 1), 9), ShouldEqual, tokenOf(t, 9, -1, 1))
+	Convey("Invalid quantity returns domain error", t, func() {
+		op := NewCondition()
+		input := [3]float64{0, 1, 1}
+		data.Read[uint64](op.Next(data.NewValue(input)))
+		So(op.Error(), ShouldNotBeNil)
 	})
 }
 
-func BenchmarkConditionToken(b *testing.B) {
-	for b.Loop() {
-		if _, err := Condition(1, -1, 1); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func TestConditionQuantity(t *testing.T) {
-	Convey("Conditioned quantities preserve their identity in every directional regime", t, func() {
-		for _, quantity := range []uint64{1, 793, (1 << 48) - 1} {
-			So(conditionQuantity(quantity), ShouldEqual, quantity)
-
-			for _, level := range []float64{-1, 0, 1} {
-				for _, change := range []float64{-1, 0, 1} {
-					token, err := Condition(quantity, level, change)
-					So(err, ShouldBeNil)
-					So(conditionQuantity(token), ShouldEqual, quantity)
-				}
-			}
-		}
-	})
-}
-
-func BenchmarkConditionQuantity(b *testing.B) {
-	token, err := Condition(793, -1, 1)
-
-	if err != nil {
-		b.Fatal(err)
-	}
+func BenchmarkCondition(b *testing.B) {
+	op := NewCondition()
+	input := [3]float64{1, -1, 1}
 
 	for b.Loop() {
-		if conditionQuantity(token) != 793 {
-			b.Fatal("quantity identity changed")
+		token := data.Read[uint64](op.Next(data.NewValue(input)))
+		if token == 0 {
+			b.Fatal("condition produced zero token")
 		}
 	}
 }
+

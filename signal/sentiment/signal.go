@@ -55,19 +55,19 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		nmsentiment.NewCrossSentiment(),
 		data.NewAdapter(
 			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement[float64]) float64 {
+			func(m *data.Measurement) float64 {
 				return m.GetMetric("median_return").Raw
 			},
-			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+			func(m *data.Measurement, out adaptive.BaselineReading) {
 				if out.HasPrior {
-					m.SetMetric("median_return_baseline", data.NewMetric[float64](
+					m.SetMetric("median_return_baseline", data.NewMetric(
 						"median_return_baseline",
 						data.UnitLogReturn,
 						data.TimescaleInstantaneous,
 						out.Baseline,
 						out.ScoreScale,
 					).Write(out.Baseline))
-					m.SetMetric("median_return_divergence", data.NewMetric[float64](
+					m.SetMetric("median_return_divergence", data.NewMetric(
 						"median_return_divergence",
 						data.UnitLogReturn,
 						data.TimescaleInstantaneous,
@@ -80,19 +80,19 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement[float64]) float64 {
+			func(m *data.Measurement) float64 {
 				return m.GetMetric("breadth").Raw
 			},
-			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+			func(m *data.Measurement, out adaptive.BaselineReading) {
 				if out.HasPrior {
-					m.SetMetric("breadth_baseline", data.NewMetric[float64](
+					m.SetMetric("breadth_baseline", data.NewMetric(
 						"breadth_baseline",
 						data.UnitDimensionless,
 						data.TimescaleInstantaneous,
 						out.Baseline,
 						out.ScoreScale,
 					).Write(out.Baseline))
-					m.SetMetric("breadth_divergence", data.NewMetric[float64](
+					m.SetMetric("breadth_divergence", data.NewMetric(
 						"breadth_divergence",
 						data.UnitDimensionless,
 						data.TimescaleInstantaneous,
@@ -105,12 +105,12 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement[float64]) float64 {
+			func(m *data.Measurement) float64 {
 				return m.GetMetric("median_absolute_return").Raw
 			},
-			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+			func(m *data.Measurement, out adaptive.BaselineReading) {
 				if out.HasPrior {
-					m.SetMetric("median_absolute_return_baseline", data.NewMetric[float64](
+					m.SetMetric("median_absolute_return_baseline", data.NewMetric(
 						"median_absolute_return_baseline",
 						data.UnitLogReturn,
 						data.TimescaleInstantaneous,
@@ -118,7 +118,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 						out.ScoreScale,
 					).Write(out.Baseline))
 					if out.Baseline > 0 {
-						m.SetMetric("median_absolute_return_ratio", data.NewMetric[float64](
+						m.SetMetric("median_absolute_return_ratio", data.NewMetric(
 							"median_absolute_return_ratio",
 							data.UnitRatio,
 							data.TimescaleInstantaneous,
@@ -132,12 +132,12 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement[float64]) float64 {
+			func(m *data.Measurement) float64 {
 				return m.GetMetric("return_mad").Raw
 			},
-			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+			func(m *data.Measurement, out adaptive.BaselineReading) {
 				if out.HasPrior {
-					m.SetMetric("return_dispersion_baseline", data.NewMetric[float64](
+					m.SetMetric("return_dispersion_baseline", data.NewMetric(
 						"return_dispersion_baseline",
 						data.UnitLogReturn,
 						data.TimescaleInstantaneous,
@@ -145,7 +145,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 						out.ScoreScale,
 					).Write(out.Baseline))
 					if out.Baseline > 0 {
-						m.SetMetric("return_dispersion_ratio", data.NewMetric[float64](
+						m.SetMetric("return_dispersion_ratio", data.NewMetric(
 							"return_dispersion_ratio",
 							data.UnitRatio,
 							data.TimescaleInstantaneous,
@@ -159,15 +159,15 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			temporal.NewVelocity(),
-			func(m *data.Measurement[float64]) temporal.Observation {
+			func(m *data.Measurement) temporal.Observation {
 				return temporal.Observation{
 					Value: m.GetMetric("median_return").Raw,
 					At:    m.At.UnixNano(),
 				}
 			},
-			func(m *data.Measurement[float64], out temporal.VelocityReading) {
+			func(m *data.Measurement, out temporal.VelocityReading) {
 				if out.Defined {
-					m.SetMetric("median_return_velocity", data.NewMetric[float64](
+					m.SetMetric("median_return_velocity", data.NewMetric(
 						"median_return_velocity",
 						data.UnitVelocity,
 						data.TimescaleInstantaneous,
@@ -179,15 +179,15 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			temporal.NewVelocity(),
-			func(m *data.Measurement[float64]) temporal.Observation {
+			func(m *data.Measurement) temporal.Observation {
 				return temporal.Observation{
 					Value: m.GetMetric("breadth").Raw,
 					At:    m.At.UnixNano(),
 				}
 			},
-			func(m *data.Measurement[float64], out temporal.VelocityReading) {
+			func(m *data.Measurement, out temporal.VelocityReading) {
 				if out.Defined {
-					m.SetMetric("breadth_velocity", data.NewMetric[float64](
+					m.SetMetric("breadth_velocity", data.NewMetric(
 						"breadth_velocity",
 						data.UnitVelocity,
 						data.TimescaleInstantaneous,
@@ -209,7 +209,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
 		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
@@ -231,7 +231,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
-	out.Peers = []*data.Measurement[float64]{prior}
+	out.Peers = []*data.Measurement{prior}
 
 	out.SetMetric("last", priceMetric)
 
@@ -239,7 +239,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		out.SetProvenance("channel", channel)
 	}
 
-	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 
@@ -250,12 +250,12 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	return res
 }
 
-func quotedPriceMetric(measurement *data.Measurement[float64]) (data.Metric[float64], bool) {
+func quotedPriceMetric(measurement *data.Measurement) (data.Metric, bool) {
 	for _, key := range []string{"last", "last_price", "price"} {
 		if metric, ok := measurement.LookupMetric(key); ok && metric.Raw > 0 {
 			return metric, true
 		}
 	}
 
-	return data.Metric[float64]{}, false
+	return data.Metric{}, false
 }

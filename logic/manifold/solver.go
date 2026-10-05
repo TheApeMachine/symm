@@ -142,7 +142,7 @@ func (solver *Solver) Start() {
 /*
 RecordForcing records Hawkes excitation fractions for the given symbol directly.
 */
-func (solver *Solver) RecordForcing(symbol string, hawkes *data.Measurement[float64]) {
+func (solver *Solver) RecordForcing(symbol string, hawkes *data.Measurement) {
 	solver.recordForcing(symbol, hawkes)
 }
 
@@ -187,7 +187,7 @@ func (solver *Solver) run() {
 /*
 Step dispatches on the envelope kind:
 */
-func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 	if solver.Status() != runtime.READY {
 		return nil
 	}
@@ -198,11 +198,11 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 
 	symbol := prior.Label
 
-	var priors []*data.Measurement[float64]
+	var priors []*data.Measurement
 	if prior.Source == "runtime:join" {
 		priors = prior.Peers
 	} else {
-		priors = append([]*data.Measurement[float64]{prior}, prior.Peers...)
+		priors = append([]*data.Measurement{prior}, prior.Peers...)
 	}
 
 	// Process hawkes forcing from prior-stage outputs.
@@ -238,7 +238,7 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
-	out.Peers = []*data.Measurement[float64]{prior}
+	out.Peers = []*data.Measurement{prior}
 
 	reading := solver.Reading()
 	out.Result = reading
@@ -248,91 +248,91 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		return out
 	}
 
-	out.SetMetric("divergence", data.NewMetric[float64](
+	out.SetMetric("divergence", data.NewMetric(
 		"divergence",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		0.0,
 		0.0,
 	).Write(reading.Reading.Divergence))
-	out.SetMetric("guidance_speed", data.NewMetric[float64](
+	out.SetMetric("guidance_speed", data.NewMetric(
 		"guidance_speed",
 		data.UnitVelocity,
 		data.TimescaleInstantaneous,
 		0.0,
 		0.0,
 	).Write(reading.Reading.GuidanceSpeed))
-	out.SetMetric("coherence_mag2", data.NewMetric[float64](
+	out.SetMetric("coherence_mag2", data.NewMetric(
 		"coherence_mag2",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.5,
 		0.5,
 	).Write(reading.Reading.CoherenceMag2))
-	out.SetMetric("pressure_grad_norm", data.NewMetric[float64](
+	out.SetMetric("pressure_grad_norm", data.NewMetric(
 		"pressure_grad_norm",
 		data.UnitAcceleration,
 		data.TimescaleInstantaneous,
 		0.0,
 		0.0,
 	).Write(reading.Reading.PressureGradNorm))
-	out.SetMetric("viscosity_proxy", data.NewMetric[float64](
+	out.SetMetric("viscosity_proxy", data.NewMetric(
 		"viscosity_proxy",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		0.0,
 	).Write(reading.Reading.ViscosityProxy))
-	out.SetMetric("kuramoto_r", data.NewMetric[float64](
+	out.SetMetric("kuramoto_r", data.NewMetric(
 		"kuramoto_r",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.5,
 		0.5,
 	).Write(reading.Reading.KuramotoR))
-	out.SetMetric("kuramoto_psi", data.NewMetric[float64](
+	out.SetMetric("kuramoto_psi", data.NewMetric(
 		"kuramoto_psi",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		math.Pi,
 	).Write(reading.Reading.KuramotoPsi))
-	out.SetMetric("gas_kinetic", data.NewMetric[float64](
+	out.SetMetric("gas_kinetic", data.NewMetric(
 		"gas_kinetic",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		0.0,
 	).Write(reading.Reading.Health.Gas.Kinetic))
-	out.SetMetric("gas_internal", data.NewMetric[float64](
+	out.SetMetric("gas_internal", data.NewMetric(
 		"gas_internal",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		0.0,
 	).Write(reading.Reading.Health.Gas.Internal))
-	out.SetMetric("wave_norm", data.NewMetric[float64](
+	out.SetMetric("wave_norm", data.NewMetric(
 		"wave_norm",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		0.0,
 	).Write(reading.Reading.Health.Wave.Norm))
-	out.SetMetric("vorticity_rms", data.NewMetric[float64](
+	out.SetMetric("vorticity_rms", data.NewMetric(
 		"vorticity_rms",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		0.0,
 		0.0,
 	).Write(reading.Reading.Health.Gas.VorticityRMS))
-	out.SetMetric("strain_rms", data.NewMetric[float64](
+	out.SetMetric("strain_rms", data.NewMetric(
 		"strain_rms",
 		data.UnitRate,
 		data.TimescaleInstantaneous,
 		0.0,
 		0.0,
 	).Write(reading.Reading.Health.Gas.StrainRMS))
-	out.SetMetric("max_mach", data.NewMetric[float64](
+	out.SetMetric("max_mach", data.NewMetric(
 		"max_mach",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
@@ -342,7 +342,7 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 
 	if reading.State != nil {
 		n := float64(reading.State.N)
-		out.SetMetric("particle_count", data.NewMetric[float64](
+		out.SetMetric("particle_count", data.NewMetric(
 			"particle_count",
 			data.UnitCount,
 			data.TimescaleInstantaneous,
@@ -351,14 +351,14 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		).Write(n))
 	}
 
-	out.SetMetric("particle_thermal", data.NewMetric[float64](
+	out.SetMetric("particle_thermal", data.NewMetric(
 		"particle_thermal",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
 		0.0,
 		0.0,
 	).Write(reading.Reading.Health.ParticleThermal))
-	out.SetMetric("particle_kinetic", data.NewMetric[float64](
+	out.SetMetric("particle_kinetic", data.NewMetric(
 		"particle_kinetic",
 		data.UnitDimensionless,
 		data.TimescaleInstantaneous,
@@ -393,7 +393,7 @@ forcing lock alone. A non-finite or invalid fraction is rejected rather than
 silently poisoning resident forcing state. Trade events never advance the field,
 so this path never contends with the physics advance lock.
 */
-func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement[float64]) {
+func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement) {
 	if hawkes == nil || hawkes.Err != nil || symbol == "" {
 		return
 	}

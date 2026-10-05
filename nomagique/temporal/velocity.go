@@ -1,7 +1,7 @@
 package temporal
 
 import (
-	"errors"
+	container "container/ring"
 	"iter"
 	"time"
 	"unsafe"
@@ -10,82 +10,60 @@ import (
 )
 
 /*
-Observation is a value at its nanosecond coordinate. Pairing of source and
-clock is external: Velocity sees one observation.
-*/
-type Observation struct {
-	Value float64
-	At    int64
-}
-
-/*
-VelocityPoint retains a value at its exact nanosecond coordinate.
-*/
-type VelocityPoint struct {
-	Value float64
-	At    int64
-}
-
-/*
-VelocityReading fixes a finite difference, including its definedness.
-*/
-type VelocityReading struct {
-	From, Through             VelocityPoint
-	Elapsed, Difference, Rate float64
-	HasPrior, Defined         bool
-	observed                  bool
-}
-
-/*
 Velocity owns the previous observation. The first observation and
 non-advancing time have zero rate with explicit definedness. The latest point
 is always retained, including when its clock does not advance.
 */
 type Velocity struct {
-	err     error
-	reading VelocityReading
+	*core.PrimitiveError
+	store *container.Ring
+	seen  bool
+	out   float64
 }
 
 func NewVelocity() core.Primitive {
-	return &Velocity{}
+	return &Velocity{
+		PrimitiveError: core.NewPrimitiveError(),
+		store:          container.New(2),
+	}
 }
 
 func (op *Velocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			point := (*Observation)(arriving)
-			reading := VelocityReading{
-				Through:  VelocityPoint{Value: point.Value, At: point.At},
-				HasPrior: op.reading.observed,
-				observed: true,
+			if arriving == nil {
+				continue
 			}
 
-			if reading.HasPrior {
-				reading.From = op.reading.Through
-				reading.Elapsed = float64(point.At-reading.From.At) / float64(time.Second)
-				reading.Difference = point.Value - reading.From.Value
-				reading.Defined = reading.Elapsed > 0
+			pair := *(*[2]float64)(arriving)
+			op.store.Value = pair
+
+			if !op.seen {
+				op.seen = true
+				op.out = 0.0
+				op.store = op.store.Next()
+
+				if !yield(unsafe.Pointer(&op.out)) {
+					return
+				}
+				continue
 			}
 
-			if reading.Defined {
-				reading.Rate = reading.Difference / reading.Elapsed
+			prev := op.store.Prev().Value.([2]float64)
+			dx := pair[0] - prev[0]
+			dt := (pair[1] - prev[1]) / float64(time.Second)
+
+			if dt > 0 {
+				op.out = dx / dt
+			} else {
+				op.out = 0.0
 			}
 
-			op.reading = reading
+			op.store = op.store.Next()
 
-			if !yield(unsafe.Pointer(&op.reading)) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Velocity) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

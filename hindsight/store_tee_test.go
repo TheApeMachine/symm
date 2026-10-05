@@ -18,7 +18,7 @@ func TestStoreTeeWaitFree(t *testing.T) {
 
 		Convey("Push enqueues without blocking the pipeline", func() {
 			for index := 0; index < 100; index++ {
-				measurement := data.NewMeasurement[float64]("websocket", nil)
+				measurement := data.NewMeasurement("websocket", nil)
 				measurement.Label = "BTC/USD"
 				measurement.SeqIdx = int64(index + 1)
 				tee.Push(data.Publication{Measurement: measurement})
@@ -30,7 +30,7 @@ func TestStoreTeeWaitFree(t *testing.T) {
 
 		Convey("Next drains publications in FIFO order", func() {
 			for index := 0; index < 5; index++ {
-				measurement := data.NewMeasurement[float64]("websocket", nil)
+				measurement := data.NewMeasurement("websocket", nil)
 				measurement.Label = "BTC/USD"
 				measurement.SeqIdx = int64(index + 1)
 				tee.Push(data.Publication{Measurement: measurement})

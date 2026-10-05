@@ -12,10 +12,10 @@ type discardNode struct {
 }
 
 func (discardNode) Start(ctx context.Context) error { return nil }
-func (discardNode) Name() string                     { return "discard" }
-func (d discardNode) Arena() *data.ArenaOwner        { return d.arena }
+func (discardNode) Name() string                    { return "discard" }
+func (d discardNode) Arena() *data.ArenaOwner       { return d.arena }
 
-func (d discardNode) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+func (d discardNode) Step(prior *data.Measurement) *data.Measurement {
 	if prior == nil {
 		return nil
 	}
@@ -25,7 +25,7 @@ func (d discardNode) Step(prior *data.Measurement[float64]) *data.Measurement[fl
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
-	out.Peers = []*data.Measurement[float64]{prior}
+	out.Peers = []*data.Measurement{prior}
 	return out
 }
 
@@ -34,12 +34,11 @@ func BenchmarkNodeAllocations(b *testing.B) {
 	node := discardNode{arena: arena}
 	consumer := NewConsumer(node, 1024, 1023)
 
-	prior := data.NewMeasurement[float64]("ingress")
+	prior := data.NewMeasurement("ingress")
 	prior.Label = "BTC/USD"
 	prior.SeqIdx = 1
 
 	b.ReportAllocs()
-	
 
 	for i := 0; b.Loop(); i++ {
 		consumer.Step(prior, int64(i))

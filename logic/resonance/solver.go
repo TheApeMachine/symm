@@ -126,7 +126,7 @@ Step advances the symbol's predictive coder over the canonical microstructure
 sensory features from completed prior-stage signal outputs and writes the
 resulting resonance metrics onto the owned output measurement.
 */
-func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 	if solver.Status() != runtime.READY {
 		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
 		return nil
@@ -155,14 +155,14 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		midpoint = m.Raw
 	}
 
-	var priors []*data.Measurement[float64]
+	var priors []*data.Measurement
 	if prior.Source == "runtime:join" {
 		priors = prior.Peers
 	} else {
-		priors = append([]*data.Measurement[float64]{prior}, prior.Peers...)
+		priors = append([]*data.Measurement{prior}, prior.Peers...)
 	}
 
-	var signals [11]*data.Measurement[float64]
+	var signals [11]*data.Measurement
 	for _, p := range priors {
 		if p == nil || p.Label != symbol {
 			continue
@@ -194,7 +194,7 @@ func (solver *Solver) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	out.SeqIdx = prior.SeqIdx
 	out.At = at
 	out.From = prior.From
-	out.Peers = []*data.Measurement[float64]{prior}
+	out.Peers = []*data.Measurement{prior}
 
 	solver.Update(out, symbol, at, features, midpoint)
 
@@ -233,7 +233,7 @@ otherwise the skill posterior never calibrates regardless of how long the
 stream runs.
 */
 func (solver *Solver) Update(
-	measurement *data.Measurement[float64],
+	measurement *data.Measurement,
 	symbolName string,
 	at time.Time,
 	features []float64,
@@ -322,7 +322,7 @@ func signalIndex(source string) int {
 	}
 }
 
-func extractHeadlineMetric(index int, measurement *data.Measurement[float64]) (float64, bool) {
+func extractHeadlineMetric(index int, measurement *data.Measurement) (float64, bool) {
 	if measurement == nil || measurement.Err != nil || len(measurement.Metrics) == 0 {
 		return 0, false
 	}
@@ -463,7 +463,7 @@ Step advances only the pipelines for signals that actually produced a valid meas
 on this envelope. Absent signals retain their last standardized z-score without observing,
 preventing variance collapse from repeated identical pseudo-observations.
 */
-func (scorer *featureScorer) Step(measurements [11]*data.Measurement[float64]) []float64 {
+func (scorer *featureScorer) Step(measurements [11]*data.Measurement) []float64 {
 	for !scorer.isStepping.CompareAndSwap(false, true) {
 		goruntime.Gosched()
 	}
@@ -501,7 +501,7 @@ canonical finalizer, quality, and authority primitives. Finalization runs when
 the measurement carries no derived quality yet. A failed derivation inhibits
 the observation entirely, matching the old zero-authority behavior.
 */
-func authorityOf(measurement *data.Measurement[float64]) float64 {
+func authorityOf(measurement *data.Measurement) float64 {
 	quality := data.QualityReading{
 		SNR:        measurement.SNR,
 		SNRDefined: measurement.SNRDefined,
@@ -524,7 +524,7 @@ func authorityOf(measurement *data.Measurement[float64]) float64 {
 }
 
 func (solver *Solver) publishReturns(
-	measurement *data.Measurement[float64],
+	measurement *data.Measurement,
 	coder *learning.PredictiveCoder,
 	out learning.PredictiveOutput,
 ) {
@@ -542,11 +542,11 @@ func (solver *Solver) publishReturns(
 	measurement.SetProvenance("confidence", fmt.Sprintf("%f", out.Confidence))
 
 	if out.Reading != nil {
-		measurement.SetMetric("energy", data.Metric[float64]{
+		measurement.SetMetric("energy", data.Metric{
 			Label: "energy",
 			Raw:   out.Reading.Energy,
 		})
-		measurement.SetMetric("surprise", data.Metric[float64]{
+		measurement.SetMetric("surprise", data.Metric{
 			Label: "surprise",
 			Raw:   out.Reading.Surprise,
 		})
@@ -556,7 +556,7 @@ func (solver *Solver) publishReturns(
 	if out.Reading != nil {
 		for i, val := range out.Reading.Latent {
 			label := fmt.Sprintf("latent_%d", i)
-			measurement.SetMetric(label, data.Metric[float64]{
+			measurement.SetMetric(label, data.Metric{
 				Label: label,
 				Raw:   val,
 			})
@@ -565,14 +565,14 @@ func (solver *Solver) publishReturns(
 		for i, layer := range out.Reading.Layers {
 			for j, val := range layer.State {
 				label := fmt.Sprintf("layer_%d_state_%d", i, j)
-				measurement.SetMetric(label, data.Metric[float64]{
+				measurement.SetMetric(label, data.Metric{
 					Label: label,
 					Raw:   val,
 				})
 			}
 			for j, val := range layer.Prediction {
 				label := fmt.Sprintf("layer_%d_prediction_%d", i, j)
-				measurement.SetMetric(label, data.Metric[float64]{
+				measurement.SetMetric(label, data.Metric{
 					Label: label,
 					Raw:   val,
 				})

@@ -61,21 +61,21 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		nmdepthflow.NewBookFlow(signal.books),
 		data.NewAdapter(
 			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement[float64]) float64 {
+			func(m *data.Measurement) float64 {
 				return m.GetMetric("book_imbalance").Raw
 			},
-			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+			func(m *data.Measurement, out adaptive.BaselineReading) {
 				m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
 
 				if out.HasPrior {
-					m.SetMetric("book_imbalance_baseline", data.NewMetric[float64](
+					m.SetMetric("book_imbalance_baseline", data.NewMetric(
 						"book_imbalance_baseline",
 						data.UnitDimensionless,
 						data.TimescaleInstantaneous,
 						out.Baseline,
 						out.ScoreScale,
 					).Write(out.Baseline))
-					m.SetMetric("book_imbalance_divergence", data.NewMetric[float64](
+					m.SetMetric("book_imbalance_divergence", data.NewMetric(
 						"book_imbalance_divergence",
 						data.UnitDimensionless,
 						data.TimescaleInstantaneous,
@@ -93,19 +93,19 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement[float64]) float64 {
+			func(m *data.Measurement) float64 {
 				return m.GetMetric("imbalance_resolution_gap").Raw
 			},
-			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+			func(m *data.Measurement, out adaptive.BaselineReading) {
 				if out.HasPrior {
-					m.SetMetric("resolution_gap_baseline", data.NewMetric[float64](
+					m.SetMetric("resolution_gap_baseline", data.NewMetric(
 						"resolution_gap_baseline",
 						data.UnitDimensionless,
 						data.TimescaleInstantaneous,
 						out.Baseline,
 						out.ScoreScale,
 					).Write(out.Baseline))
-					m.SetMetric("resolution_gap_divergence", data.NewMetric[float64](
+					m.SetMetric("resolution_gap_divergence", data.NewMetric(
 						"resolution_gap_divergence",
 						data.UnitDimensionless,
 						data.TimescaleInstantaneous,
@@ -118,12 +118,12 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement[float64]) float64 {
+			func(m *data.Measurement) float64 {
 				return m.GetMetric("book_turnover_rate").Raw
 			},
-			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+			func(m *data.Measurement, out adaptive.BaselineReading) {
 				if out.HasPrior {
-					m.SetMetric("turnover_baseline", data.NewMetric[float64](
+					m.SetMetric("turnover_baseline", data.NewMetric(
 						"turnover_baseline",
 						data.UnitRate,
 						data.TimescaleInstantaneous,
@@ -132,7 +132,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 					).Write(out.Baseline))
 					if out.Baseline > 0 {
 						turnover := m.GetMetric("book_turnover_rate").Raw
-						m.SetMetric("turnover_ratio", data.NewMetric[float64](
+						m.SetMetric("turnover_ratio", data.NewMetric(
 							"turnover_ratio",
 							data.UnitRatio,
 							data.TimescaleInstantaneous,
@@ -146,19 +146,19 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement[float64]) float64 {
+			func(m *data.Measurement) float64 {
 				return m.GetMetric("net_book_change_rate").Raw
 			},
-			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+			func(m *data.Measurement, out adaptive.BaselineReading) {
 				if out.HasPrior {
-					m.SetMetric("net_book_change_rate_baseline", data.NewMetric[float64](
+					m.SetMetric("net_book_change_rate_baseline", data.NewMetric(
 						"net_book_change_rate_baseline",
 						data.UnitRate,
 						data.TimescaleInstantaneous,
 						out.Baseline,
 						out.ScoreScale,
 					).Write(out.Baseline))
-					m.SetMetric("net_book_change_rate_divergence", data.NewMetric[float64](
+					m.SetMetric("net_book_change_rate_divergence", data.NewMetric(
 						"net_book_change_rate_divergence",
 						data.UnitRate,
 						data.TimescaleInstantaneous,
@@ -171,19 +171,19 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement[float64]) float64 {
+			func(m *data.Measurement) float64 {
 				return m.GetMetric("signed_net_displayed_flow_rate").Raw
 			},
-			func(m *data.Measurement[float64], out adaptive.BaselineReading) {
+			func(m *data.Measurement, out adaptive.BaselineReading) {
 				if out.HasPrior {
-					m.SetMetric("signed_net_displayed_flow_rate_baseline", data.NewMetric[float64](
+					m.SetMetric("signed_net_displayed_flow_rate_baseline", data.NewMetric(
 						"signed_net_displayed_flow_rate_baseline",
 						data.UnitRate,
 						data.TimescaleInstantaneous,
 						out.Baseline,
 						out.ScoreScale,
 					).Write(out.Baseline))
-					m.SetMetric("signed_net_displayed_flow_rate_divergence", data.NewMetric[float64](
+					m.SetMetric("signed_net_displayed_flow_rate_divergence", data.NewMetric(
 						"signed_net_displayed_flow_rate_divergence",
 						data.UnitRate,
 						data.TimescaleInstantaneous,
@@ -196,15 +196,15 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			temporal.NewVelocity(),
-			func(m *data.Measurement[float64]) temporal.Observation {
+			func(m *data.Measurement) temporal.Observation {
 				return temporal.Observation{
 					Value: m.GetMetric("book_imbalance").Raw,
 					At:    m.At.UnixNano(),
 				}
 			},
-			func(m *data.Measurement[float64], out temporal.VelocityReading) {
+			func(m *data.Measurement, out temporal.VelocityReading) {
 				if out.Defined {
-					m.SetMetric("book_imbalance_velocity", data.NewMetric[float64](
+					m.SetMetric("book_imbalance_velocity", data.NewMetric(
 						"book_imbalance_velocity",
 						data.UnitVelocity,
 						data.TimescaleInstantaneous,
@@ -216,15 +216,15 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			temporal.NewVelocity(),
-			func(m *data.Measurement[float64]) temporal.Observation {
+			func(m *data.Measurement) temporal.Observation {
 				return temporal.Observation{
 					Value: m.GetMetric("imbalance_resolution_gap").Raw,
 					At:    m.At.UnixNano(),
 				}
 			},
-			func(m *data.Measurement[float64], out temporal.VelocityReading) {
+			func(m *data.Measurement, out temporal.VelocityReading) {
 				if out.Defined {
-					m.SetMetric("resolution_gap_velocity", data.NewMetric[float64](
+					m.SetMetric("resolution_gap_velocity", data.NewMetric(
 						"resolution_gap_velocity",
 						data.UnitVelocity,
 						data.TimescaleInstantaneous,
@@ -236,7 +236,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		),
 		data.NewAdapter(
 			statistic.NewJoint(4),
-			func(m *data.Measurement[float64]) statistic.JointInput {
+			func(m *data.Measurement) statistic.JointInput {
 				imb := m.GetMetric("book_imbalance_divergence").Raw
 				gap := m.GetMetric("resolution_gap_divergence").Raw
 				turn := m.GetMetric("turnover_zscore").Raw
@@ -244,9 +244,9 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 
 				return statistic.JointInput{Values: []float64{imb, gap, turn, flow}}
 			},
-			func(m *data.Measurement[float64], out statistic.JointReading) {
+			func(m *data.Measurement, out statistic.JointReading) {
 				if out.SNRDefined && out.SNR < 1/math.Sqrt(2.220446049250313e-16) {
-					m.SetMetric("SNR", data.NewMetric[float64](
+					m.SetMetric("SNR", data.NewMetric(
 						"SNR",
 						data.UnitSNR,
 						data.TimescaleInstantaneous,
@@ -280,7 +280,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
 		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
@@ -297,13 +297,13 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
-	out.Peers = []*data.Measurement[float64]{prior}
+	out.Peers = []*data.Measurement{prior}
 
 	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
 		out.SetProvenance("channel", channel)
 	}
 
-	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 

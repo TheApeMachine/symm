@@ -15,7 +15,7 @@ func TestMeasurementRoundTripRestoresScales(t *testing.T) {
 		stdMid, stdSpread := 0.1, 2.5
 		normFlow := 0.7
 		defSpeed := 0.3333333333333333
-		src := data.NewMeasurement("websocket", map[string]data.Metric[float64]{
+		src := data.NewMeasurement("websocket", map[string]data.Metric{
 			"mid": {
 				Label: "mid", Raw: 100000,
 				Standardized: &stdMid,
@@ -43,7 +43,7 @@ func TestMeasurementRoundTripRestoresScales(t *testing.T) {
 		recordBuilder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
 		defer recordBuilder.Release()
 		recordBuilder.Reserve(1)
-		fillMeasurements(recordBuilder, []*data.Measurement[float64]{src}, 1)
+		fillMeasurements(recordBuilder, []*data.Measurement{src}, 1)
 		batch := recordBuilder.NewRecord()
 		defer batch.Release()
 

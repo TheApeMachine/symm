@@ -33,7 +33,7 @@ func NewBookTouch(books broker.BookSource) core.Primitive {
 func (op *BookTouch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m == nil || m.Err != nil {
 				if !yield(arriving) {
@@ -91,7 +91,7 @@ func (op *BookTouch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			midpoint := (bid + ask) / 2.0
 			relativeSpread := spread / midpoint
 
-			m.SetMetric("best_bid", data.NewMetric[float64](
+			m.SetMetric("best_bid", data.NewMetric(
 				"best_bid",
 				data.UnitPrice,
 				data.TimescaleTick,
@@ -99,7 +99,7 @@ func (op *BookTouch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				spread,
 			).Write(bid))
 
-			m.SetMetric("best_ask", data.NewMetric[float64](
+			m.SetMetric("best_ask", data.NewMetric(
 				"best_ask",
 				data.UnitPrice,
 				data.TimescaleTick,
@@ -107,7 +107,7 @@ func (op *BookTouch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				spread,
 			).Write(ask))
 
-			m.SetMetric("midpoint", data.NewMetric[float64](
+			m.SetMetric("midpoint", data.NewMetric(
 				"midpoint",
 				data.UnitPrice,
 				data.TimescaleTick,
@@ -115,7 +115,7 @@ func (op *BookTouch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				spread,
 			).Write(midpoint))
 
-			m.SetMetric("spread", data.NewMetric[float64](
+			m.SetMetric("spread", data.NewMetric(
 				"spread",
 				data.UnitSpread,
 				data.TimescaleTick,
@@ -123,7 +123,7 @@ func (op *BookTouch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				spread,
 			).Write(spread))
 
-			m.SetMetric("relative_spread", data.NewMetric[float64](
+			m.SetMetric("relative_spread", data.NewMetric(
 				"relative_spread",
 				data.UnitRelativeSpread,
 				data.TimescaleTick,
@@ -182,7 +182,7 @@ func NewVolumeClock() core.Primitive {
 func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m == nil || m.Err != nil {
 				if !yield(arriving) {
@@ -277,7 +277,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			duration := m.At.Sub(state.barStartTime).Seconds()
 
 			// Center and scale exist only against a valid book: the touch midpoint and spread are measured.
-			m.SetMetric("trade_price", data.NewMetric[float64](
+			m.SetMetric("trade_price", data.NewMetric(
 				"trade_price",
 				data.UnitPrice,
 				data.TimescaleTick,
@@ -285,7 +285,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				spread,
 			).Write(price))
 
-			m.SetMetric("trade_quantity", data.NewMetric[float64](
+			m.SetMetric("trade_quantity", data.NewMetric(
 				"trade_quantity",
 				data.UnitQuantity,
 				data.TimescaleTick,
@@ -293,7 +293,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				0.0,
 			).Write(qty))
 
-			m.SetMetric("trade_notional", data.NewMetric[float64](
+			m.SetMetric("trade_notional", data.NewMetric(
 				"trade_notional",
 				data.UnitNotional,
 				data.TimescaleTick,
@@ -302,7 +302,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			).Write(notional))
 
 			if hasInterval {
-				m.SetMetric("trade_interval_seconds", data.NewMetric[float64](
+				m.SetMetric("trade_interval_seconds", data.NewMetric(
 					"trade_interval_seconds",
 					data.UnitSecond,
 					data.TimescaleTick,
@@ -312,7 +312,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			}
 
 			if hasInterval && duration > 0 && state.barQty >= state.targetQty {
-				m.SetMetric("volume_bar_target_quantity", data.NewMetric[float64](
+				m.SetMetric("volume_bar_target_quantity", data.NewMetric(
 					"volume_bar_target_quantity",
 					data.UnitQuantity,
 					data.TimescaleVolumeBar,
@@ -320,7 +320,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 					0.0,
 				).Write(state.targetQty))
 
-				m.SetMetric("volume_bar_quantity", data.NewMetric[float64](
+				m.SetMetric("volume_bar_quantity", data.NewMetric(
 					"volume_bar_quantity",
 					data.UnitQuantity,
 					data.TimescaleVolumeBar,
@@ -328,7 +328,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 					0.0,
 				).Write(state.barQty))
 
-				m.SetMetric("volume_bar_notional", data.NewMetric[float64](
+				m.SetMetric("volume_bar_notional", data.NewMetric(
 					"volume_bar_notional",
 					data.UnitNotional,
 					data.TimescaleVolumeBar,
@@ -336,7 +336,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 					0.0,
 				).Write(state.barNotional))
 
-				m.SetMetric("volume_bar_trade_count", data.NewMetric[float64](
+				m.SetMetric("volume_bar_trade_count", data.NewMetric(
 					"volume_bar_trade_count",
 					data.UnitCount,
 					data.TimescaleVolumeBar,
@@ -344,7 +344,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 					0.0,
 				).Write(state.barTradeCount))
 
-				m.SetMetric("volume_bar_duration", data.NewMetric[float64](
+				m.SetMetric("volume_bar_duration", data.NewMetric(
 					"volume_bar_duration",
 					data.UnitDuration,
 					data.TimescaleVolumeBar,
@@ -352,7 +352,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 					0.0,
 				).Write(duration))
 
-				m.SetMetric("volume_rate", data.NewMetric[float64](
+				m.SetMetric("volume_rate", data.NewMetric(
 					"volume_rate",
 					data.UnitVolumeRate,
 					data.TimescalePerSecond,
@@ -360,7 +360,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 					0.0,
 				).Write(state.barQty/duration))
 
-				m.SetMetric("notional_rate", data.NewMetric[float64](
+				m.SetMetric("notional_rate", data.NewMetric(
 					"notional_rate",
 					data.UnitNotionalRate,
 					data.TimescalePerSecond,
@@ -368,7 +368,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 					0.0,
 				).Write(state.barNotional/duration))
 
-				m.SetMetric("trade_rate", data.NewMetric[float64](
+				m.SetMetric("trade_rate", data.NewMetric(
 					"trade_rate",
 					data.UnitTradeRate,
 					data.TimescalePerSecond,
@@ -382,7 +382,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 					logReturn := math.Log(mid / state.barFromMidpoint)
 					returnRateScale := relSpread / duration
 
-					m.SetMetric("midpoint_log_return", data.NewMetric[float64](
+					m.SetMetric("midpoint_log_return", data.NewMetric(
 						"midpoint_log_return",
 						data.UnitLogReturn,
 						data.TimescaleVolumeBar,
@@ -390,7 +390,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 						relSpread,
 					).Write(logReturn))
 
-					m.SetMetric("midpoint_return_rate", data.NewMetric[float64](
+					m.SetMetric("midpoint_return_rate", data.NewMetric(
 						"midpoint_return_rate",
 						data.UnitVelocity,
 						data.TimescalePerSecond,
@@ -407,7 +407,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 						negReturn = logReturn
 					}
 
-					m.SetMetric("positive_midpoint_return", data.NewMetric[float64](
+					m.SetMetric("positive_midpoint_return", data.NewMetric(
 						"positive_midpoint_return",
 						data.UnitLogReturn,
 						data.TimescaleVolumeBar,
@@ -415,7 +415,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 						relSpread,
 					).Write(posReturn))
 
-					m.SetMetric("negative_midpoint_return", data.NewMetric[float64](
+					m.SetMetric("negative_midpoint_return", data.NewMetric(
 						"negative_midpoint_return",
 						data.UnitLogReturn,
 						data.TimescaleVolumeBar,
@@ -425,7 +425,7 @@ func (op *VolumeClock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				}
 
 				state.completedBars++
-				m.SetMetric("completed_bars", data.NewMetric[float64](
+				m.SetMetric("completed_bars", data.NewMetric(
 					"completed_bars",
 					data.UnitCount,
 					data.TimescaleSession,

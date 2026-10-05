@@ -37,7 +37,7 @@ func arrowSchemaFor(schema *iceberg.Schema) (*arrow.Schema, error) {
 
 func fillMeasurements(
 	recordBuilder *array.RecordBuilder,
-	measurements []*data.Measurement[float64],
+	measurements []*data.Measurement,
 	epoch int64,
 ) {
 	epochBuilder := recordBuilder.Field(0).(*array.Int64Builder)
@@ -78,7 +78,7 @@ func fillMeasurements(
 		tickBuilder.Append(measurement.Tick)
 
 		metricsBuilder.Append(true)
-		measurement.RangeMetrics(func(metricKey string, metricVal data.Metric[float64]) bool {
+		measurement.RangeMetrics(func(metricKey string, metricVal data.Metric) bool {
 			metricsKey.Append(metricKey)
 			metricsVal.Append(metricVal.Raw)
 			return true
@@ -102,7 +102,7 @@ func fillMeasurements(
 		}
 		provenanceKey.Append("symm:estimated")
 		provenanceVal.Append(strconv.FormatBool(measurement.Estimated))
-		measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
+		measurement.RangeMetrics(func(key string, metric data.Metric) bool {
 			if metric.Exact != nil {
 				provenanceKey.Append("symm:exact:" + key)
 				provenanceVal.Append(metric.Exact.String())
@@ -128,9 +128,9 @@ func fillMeasurements(
 	}
 }
 
-func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], error) {
+func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 	totalRows := int(batch.NumRows())
-	measurements := make([]*data.Measurement[float64], 0, totalRows)
+	measurements := make([]*data.Measurement, 0, totalRows)
 
 	cols := make(map[string]arrow.Array, batch.NumCols())
 
@@ -158,7 +158,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 			source = sourceCol.Value(rowIdx)
 		}
 
-		measurement := data.NewMeasurement[float64](source, nil)
+		measurement := data.NewMeasurement(source, nil)
 
 		if epochCol != nil && !epochCol.IsNull(rowIdx) {
 			measurement.Epoch = epochCol.Value(rowIdx)
@@ -202,7 +202,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
 				metricKey := keyArray.Value(itemIdx)
 				metricVal := valArray.Value(itemIdx)
-				measurement.SetMetric(metricKey, data.Metric[float64]{
+				measurement.SetMetric(metricKey, data.Metric{
 					Label: metricKey,
 					Raw:   metricVal,
 				})
@@ -240,7 +240,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 					continue
 				}
 
-				if after, ok :=strings.CutPrefix(key, "symm:exact:"); ok  {
+				if after, ok := strings.CutPrefix(key, "symm:exact:"); ok {
 					metricKey := after
 					exact, err := decimal.NewFromString(value)
 
@@ -254,7 +254,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 					continue
 				}
 
-				if after, ok :=strings.CutPrefix(key, "symm:standardized:"); ok  {
+				if after, ok := strings.CutPrefix(key, "symm:standardized:"); ok {
 					metricKey := after
 					parsed, err := strconv.ParseFloat(value, 64)
 
@@ -268,7 +268,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement[float64], er
 					continue
 				}
 
-				if after, ok :=strings.CutPrefix(key, "symm:normalized:"); ok  {
+				if after, ok := strings.CutPrefix(key, "symm:normalized:"); ok {
 					metricKey := after
 					parsed, err := strconv.ParseFloat(value, 64)
 
@@ -376,7 +376,7 @@ func readRuns(batch arrow.RecordBatch) []Run {
 
 func measurementRecords(
 	schema *iceberg.Schema,
-	measurements []*data.Measurement[float64],
+	measurements []*data.Measurement,
 	epoch int64,
 ) (array.RecordReader, error) {
 	if len(measurements) == 0 {
@@ -441,5 +441,3 @@ func runRecords(schema *iceberg.Schema, runs []Run) (array.RecordReader, error) 
 
 	return reader, nil
 }
-
-

@@ -62,8 +62,8 @@ func TestPumpDumpSignal(t *testing.T) {
 			prior1.SeqIdx = 1
 			prior1.At = now
 			prior1.From = now
-			prior1.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, 50001.0, 1.0).Write(50001.0))
-			prior1.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
+			prior1.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 50001.0, 1.0).Write(50001.0))
+			prior1.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
 			prior1.SetProvenance("channel", "trade")
 			prior1.SetProvenance("side", "buy")
 
@@ -81,8 +81,8 @@ func TestPumpDumpSignal(t *testing.T) {
 			prior2.SeqIdx = 2
 			prior2.At = trade2At
 			prior2.From = trade2At
-			prior2.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, 50002.0, 1.0).Write(50002.0))
-			prior2.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
+			prior2.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 50002.0, 1.0).Write(50002.0))
+			prior2.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
 			prior2.SetProvenance("channel", "trade")
 			prior2.SetProvenance("side", "buy")
 
@@ -141,8 +141,8 @@ func TestPumpDumpSignal(t *testing.T) {
 				prior.SeqIdx = int64(step + 10)
 				prior.At = now.Add(time.Duration(step*100) * time.Millisecond)
 				prior.From = prior.At
-				prior.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice, 1.0).Write(basePrice))
-				prior.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 0.5).Write(0.5))
+				prior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice, 1.0).Write(basePrice))
+				prior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 0.5).Write(0.5))
 				prior.SetProvenance("channel", "trade")
 				prior.SetProvenance("side", "buy")
 
@@ -184,8 +184,8 @@ func TestPumpDumpSignal(t *testing.T) {
 			pumpPrior.SeqIdx = 25
 			pumpPrior.At = pumpAt
 			pumpPrior.From = pumpAt
-			pumpPrior.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice+35.0, 1.0).Write(basePrice+35.0))
-			pumpPrior.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 10.0).Write(10.0)) // 20x volume
+			pumpPrior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice+35.0, 1.0).Write(basePrice+35.0))
+			pumpPrior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 10.0).Write(10.0)) // 20x volume
 			pumpPrior.SetProvenance("channel", "trade")
 			pumpPrior.SetProvenance("side", "buy")
 
@@ -246,8 +246,8 @@ func TestPumpDumpSignal(t *testing.T) {
 				prior.SeqIdx = int64(step + 30)
 				prior.At = now.Add(time.Duration(step*100) * time.Millisecond)
 				prior.From = prior.At
-				prior.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice, 1.0).Write(basePrice))
-				prior.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
+				prior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice, 1.0).Write(basePrice))
+				prior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
 				prior.SetProvenance("channel", "trade")
 				prior.SetProvenance("side", "sell")
 
@@ -289,8 +289,8 @@ func TestPumpDumpSignal(t *testing.T) {
 			dumpPrior.SeqIdx = 36
 			dumpPrior.At = dumpAt
 			dumpPrior.From = dumpAt
-			dumpPrior.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice-50.0, 1.0).Write(basePrice-50.0))
-			dumpPrior.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 3.0).Write(3.0))
+			dumpPrior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice-50.0, 1.0).Write(basePrice-50.0))
+			dumpPrior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 3.0).Write(3.0))
 			dumpPrior.SetProvenance("channel", "trade")
 			dumpPrior.SetProvenance("side", "sell")
 
@@ -343,8 +343,8 @@ func TestPumpDumpSignal(t *testing.T) {
 			prior.SeqIdx = 50
 			prior.At = now
 			prior.From = now
-			prior.SetMetric("price", data.NewMetric[float64]("price", data.UnitPrice, data.TimescaleInstantaneous, 50005.0, 1.0).Write(50005.0))
-			prior.SetMetric("qty", data.NewMetric[float64]("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
+			prior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 50005.0, 1.0).Write(50005.0))
+			prior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
 
 			res := crossedInstrument.Step(prior)
 			So(res, ShouldNotBeNil)

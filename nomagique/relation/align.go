@@ -1,7 +1,6 @@
 package relation
 
 import (
-	"errors"
 	"iter"
 	"time"
 	"unsafe"
@@ -59,7 +58,7 @@ and a later request on the same series (or a continued scan) requires
 non-decreasing cutoffs.
 */
 type Align struct {
-	err error
+	*core.PrimitiveError
 	out AlignResult
 }
 
@@ -67,7 +66,9 @@ type Align struct {
 NewAlign creates an Align primitive.
 */
 func NewAlign() core.Primitive {
-	return &Align{}
+	return &Align{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 /*
@@ -78,26 +79,16 @@ func (op *Align) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			request := (*AlignRequest)(arriving)
-			op.out = AlignResult{Rows: alignRows(request.Target, request.Series)}
+
+			op.out = AlignResult{
+				Rows: alignRows(request.Target, request.Series),
+			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Align) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
 
 /*
@@ -124,7 +115,9 @@ func alignRows(targets RingView, series []SeriesView) []AlignedRow {
 
 		for index, predictorSeries := range series {
 			cutoff := target.At.Add(-predictorSeries.Lag)
-			predictor, found := newestAtOrBefore(predictorSeries.History, &cursors[index], cutoff)
+			predictor, found := newestAtOrBefore(
+				predictorSeries.History, &cursors[index], cutoff,
+			)
 
 			if !found {
 				complete = false

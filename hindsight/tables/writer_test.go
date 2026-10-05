@@ -77,7 +77,7 @@ func TestWriter_CommitReady(t *testing.T) {
 		writer := tables.NewWriter(tables.Wrap(adapter), 100)
 		peer := tables.NewWriter(peerCatalog, 100)
 		add := func(target *tables.Writer, sequence int64) {
-			measurement := data.NewMeasurement("hawkes", map[string]data.Metric[float64]{"intensity": {Raw: float64(sequence)}})
+			measurement := data.NewMeasurement("hawkes", map[string]data.Metric{"intensity": {Raw: float64(sequence)}})
 			measurement.Label = "BTC/USD"
 			measurement.At = time.Unix(sequence, 0)
 			measurement.SeqIdx = sequence
@@ -113,5 +113,3 @@ func TestWriter_CommitReady(t *testing.T) {
 		})
 	})
 }
-
-

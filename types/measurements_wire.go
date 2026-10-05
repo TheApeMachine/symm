@@ -22,7 +22,7 @@ recursive MeasurementToWire on peer.Peers exploded FlatBuffer alloc when the
 disruptor Contribute forest was still attached.
 */
 func MeasurementToWire(
-	measurement *data.Measurement[float64],
+	measurement *data.Measurement,
 	alloc data.Allocator,
 	includePeers ...bool,
 ) *wire.MeasurementT {
@@ -34,7 +34,7 @@ func MeasurementToWire(
 }
 
 func measurementToWire(
-	measurement *data.Measurement[float64],
+	measurement *data.Measurement,
 	alloc data.Allocator,
 	includePeers bool,
 ) *wire.MeasurementT {
@@ -43,7 +43,7 @@ func measurementToWire(
 	}
 
 	metrics := data.MakeSlice[*wire.MetricT](alloc, 0, len(measurement.Metrics))
-	measurement.RangeMetrics(func(key string, metric data.Metric[float64]) bool {
+	measurement.RangeMetrics(func(key string, metric data.Metric) bool {
 		wireMetric := data.New[wire.MetricT](alloc)
 		name := metric.Label
 		if name == "" {
@@ -136,7 +136,7 @@ borrowed FlatBuffer bytes directly to fn, returning the builder to the pool once
 fn returns. This avoids defensive heap cloning when writing directly to sockets.
 */
 func EncodeMeasurements(
-	measurements []*data.Measurement[float64],
+	measurements []*data.Measurement,
 ) ([]byte, error) {
 	alloc := data.NewAllocator()
 	defer data.Free(alloc)

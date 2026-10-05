@@ -35,6 +35,7 @@ type Book struct {
 	mutations  atomic.Pointer[func([]kraken.Level3Data)]
 	diverging  sync.Map
 	lastTouch  sync.Map
+	locks      sync.Map
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
@@ -43,7 +44,6 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 	}
 
 	errnie.Info("websocket: initializing book manager")
-	
 
 	book := &Book{
 		seeded:     make(chan struct{}, 1),
@@ -128,6 +128,17 @@ func (book *Book) Wait() error {
 	return nil
 }
 
+func (book *Book) symbolLock(symbol string) *sync.RWMutex {
+	if val, ok := book.locks.Load(symbol); ok {
+		return val.(*sync.RWMutex)
+	}
+
+	symbolLock := &sync.RWMutex{}
+	actual, _ := book.locks.LoadOrStore(symbol, symbolLock)
+
+	return actual.(*sync.RWMutex)
+}
+
 func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	if pendingPtr := book.pending.Load(); pendingPtr != nil {
 		if _, pending := (*pendingPtr)[symbol]; pending {
@@ -138,6 +149,10 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	if _, diverging := book.diverging.Load(symbol); diverging {
 		return
 	}
+
+	symbolLock := book.symbolLock(symbol)
+	symbolLock.RLock()
+	defer symbolLock.RUnlock()
 
 	managed := book.manager.GetBook(symbol)
 
@@ -154,6 +169,10 @@ func (book *Book) Create(symbol string, depth int) {
 			depth = 10
 		}
 	}
+
+	symbolLock := book.symbolLock(symbol)
+	symbolLock.Lock()
+	defer symbolLock.Unlock()
 
 	book.manager.CreateBook(symbol, depth)
 }
@@ -316,7 +335,12 @@ func (book *Book) apply(
 			continue
 		}
 
+		symbolLock := book.symbolLock(data.Symbol)
+		symbolLock.Lock()
+
 		err := func() error {
+			defer symbolLock.Unlock()
+
 			select {
 			case <-book.Context().Done():
 				return errnie.Error(book.Context().Err())
@@ -513,7 +537,7 @@ func (book *Book) SetMutations(mutations func([]kraken.Level3Data)) {
 ApplyMeasurement updates the book from a persisted Level-3 tape measurement.
 It decodes the order mutation and mutates the internal SDK book.
 */
-func (book *Book) ApplyMeasurement(measurement *data.Measurement[float64]) error {
+func (book *Book) ApplyMeasurement(measurement *data.Measurement) error {
 	if book == nil || measurement == nil {
 		return nil
 	}
@@ -679,11 +703,11 @@ func appendDecimalDigits(buf []byte, d *decimal.Decimal) []byte {
 	return raw.Append(buf, 10)
 }
 
-func fastL3Checksum(b *spotbook.Book, expected uint32) bool {
+func fastL3Checksum(managedBook *spotbook.Book, expected uint32) bool {
 	var crc uint32
 	var buf [64]byte
 
-	cursor := b.BestAsk()
+	cursor := managedBook.BestAsk()
 
 	for count := 0; count < 10 && cursor != nil; count++ {
 		for _, order := range cursor.Queue() {
@@ -696,7 +720,7 @@ func fastL3Checksum(b *spotbook.Book, expected uint32) bool {
 		cursor = cursor.Higher
 	}
 
-	cursor = b.BestBid()
+	cursor = managedBook.BestBid()
 
 	for count := 0; count < 10 && cursor != nil; count++ {
 		for _, order := range cursor.Queue() {

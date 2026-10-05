@@ -16,7 +16,7 @@ order never restarts. A ring grows to hold exactly what was written — a ring
 sized up front would leave nil slots for anything the caller did not fill,
 and those are not values a run can carry.
 */
-type Ring[T any] struct {
+type Ring struct {
 	*core.PrimitiveError
 	store     *container.Ring
 	randomize bool
@@ -25,17 +25,17 @@ type Ring[T any] struct {
 /*
 NewRing begins an empty ring primitive.
 */
-func NewRing[T any](n int, randomize bool) *Ring[T] {
-	return &Ring[T]{
+func NewRing(n int, randomize bool) *Ring {
+	return &Ring{
 		PrimitiveError: core.NewPrimitiveError(),
 		store:          container.New(n),
 		randomize:      randomize,
 	}
 }
 
-func (op *Ring[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *Ring) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		query := data.Read[Query[T]](in)
+		query := data.Read[Query](in)
 
 		switch query.Action() {
 		case data.ActionWrite:

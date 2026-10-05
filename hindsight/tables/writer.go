@@ -152,7 +152,7 @@ func (writer *Writer) commitFamily(
 		return err
 	}
 
-	measList := make([]*data.Measurement[float64], len(rowsToCommit))
+	measList := make([]*data.Measurement, len(rowsToCommit))
 	for idx, pub := range rowsToCommit {
 		measList[idx] = pub.Measurement
 	}
@@ -203,7 +203,7 @@ func (writer *Writer) ReleaseRemaining() {
 	writer.bufferedBytes = 0
 }
 
-func measurementSize(measurement *data.Measurement[float64]) int64 {
+func measurementSize(measurement *data.Measurement) int64 {
 	if measurement == nil {
 		return 0
 	}
@@ -224,4 +224,3 @@ func measurementSize(measurement *data.Measurement[float64]) int64 {
 
 	return size
 }
-

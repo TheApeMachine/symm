@@ -47,7 +47,7 @@ func NewGate() core.Primitive {
 func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			metric, traded := m.LookupMetric("last")
 
@@ -79,7 +79,7 @@ func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				scale = math.Max(last, 1.0)
 			}
 
-			m.SetMetric("last_price", data.NewMetric[float64](
+			m.SetMetric("last_price", data.NewMetric(
 				"last_price",
 				data.UnitCurrency,
 				data.TimescaleInstantaneous,
@@ -200,7 +200,7 @@ func NewCross(estimator core.Primitive) core.Primitive {
 func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m.Err != nil {
 				if !yield(arriving) {
@@ -241,7 +241,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.SetMetric("observation_count", data.NewMetric[float64](
+			m.SetMetric("observation_count", data.NewMetric(
 				"observation_count",
 				data.UnitCount,
 				data.TimescaleRollingWindow,
@@ -363,7 +363,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			resolution := selectedPair.Spacing * 1e-9
 			spanScale := math.Max(selectedPair.Span*resolution, 1e-6)
 
-			m.SetMetric("contemporaneous_correlation", data.NewMetric[float64](
+			m.SetMetric("contemporaneous_correlation", data.NewMetric(
 				"contemporaneous_correlation",
 				data.UnitCorrelation,
 				data.TimescaleInstantaneous,
@@ -371,7 +371,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				1,
 			).Write(selectedPair.Contemporaneous))
 
-			m.SetMetric("best_lag_correlation", data.NewMetric[float64](
+			m.SetMetric("best_lag_correlation", data.NewMetric(
 				"best_lag_correlation",
 				data.UnitCorrelation,
 				data.TimescaleInstantaneous,
@@ -379,7 +379,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				1,
 			).Write(selectedPair.Correlation))
 
-			m.SetMetric("absolute_correlation_gain", data.NewMetric[float64](
+			m.SetMetric("absolute_correlation_gain", data.NewMetric(
 				"absolute_correlation_gain",
 				data.UnitCorrelation,
 				data.TimescaleInstantaneous,
@@ -387,7 +387,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				1,
 			).Write(selectedPair.AbsoluteGain))
 
-			m.SetMetric("lag_fraction", data.NewMetric[float64](
+			m.SetMetric("lag_fraction", data.NewMetric(
 				"lag_fraction",
 				data.UnitRatio,
 				data.TimescaleRollingWindow,
@@ -395,7 +395,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				1,
 			).Write(selectedPair.LagFraction))
 
-			m.SetMetric("best_lag_index", data.NewMetric[float64](
+			m.SetMetric("best_lag_index", data.NewMetric(
 				"best_lag_index",
 				data.UnitCount,
 				data.TimescaleInstantaneous,
@@ -403,7 +403,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				math.Max(float64(selectedPair.SearchCount), 1),
 			).Write(selectedPair.LagIndex))
 
-			m.SetMetric("reference_return_count", data.NewMetric[float64](
+			m.SetMetric("reference_return_count", data.NewMetric(
 				"reference_return_count",
 				data.UnitCount,
 				data.TimescaleRollingWindow,
@@ -411,7 +411,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				math.Max(float64(selectedPair.Observations), 1),
 			).Write(selectedPair.Observations))
 
-			m.SetMetric("measured_return_count", data.NewMetric[float64](
+			m.SetMetric("measured_return_count", data.NewMetric(
 				"measured_return_count",
 				data.UnitCount,
 				data.TimescaleRollingWindow,
@@ -419,7 +419,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				math.Max(float64(selectedPair.Observations), 1),
 			).Write(selectedPair.Observations))
 
-			m.SetMetric("overlap_pair_count", data.NewMetric[float64](
+			m.SetMetric("overlap_pair_count", data.NewMetric(
 				"overlap_pair_count",
 				data.UnitCount,
 				data.TimescaleRollingWindow,
@@ -427,7 +427,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				math.Max(float64(selectedPair.Support), 1),
 			).Write(selectedPair.Support))
 
-			m.SetMetric("effective_sample_count", data.NewMetric[float64](
+			m.SetMetric("effective_sample_count", data.NewMetric(
 				"effective_sample_count",
 				data.UnitCount,
 				data.TimescaleRollingWindow,
@@ -435,7 +435,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				math.Max(float64(selectedPair.Support), 1),
 			).Write(selectedPair.Support))
 
-			m.SetMetric("search_count", data.NewMetric[float64](
+			m.SetMetric("search_count", data.NewMetric(
 				"search_count",
 				data.UnitCount,
 				data.TimescaleRollingWindow,
@@ -443,7 +443,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				math.Max(float64(selectedPair.SearchCount), 1),
 			).Write(selectedPair.SearchCount))
 
-			m.SetMetric("best_lag_seconds", data.NewMetric[float64](
+			m.SetMetric("best_lag_seconds", data.NewMetric(
 				"best_lag_seconds",
 				data.UnitDuration,
 				data.TimescaleInstantaneous,
@@ -451,7 +451,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				spanScale,
 			).Write(selectedPair.X))
 
-			m.SetMetric("lag_search_resolution_seconds", data.NewMetric[float64](
+			m.SetMetric("lag_search_resolution_seconds", data.NewMetric(
 				"lag_search_resolution_seconds",
 				data.UnitDuration,
 				data.TimescaleRollingWindow,
@@ -459,7 +459,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				resolution,
 			).Write(resolution))
 
-			m.SetMetric("lag_search_span", data.NewMetric[float64](
+			m.SetMetric("lag_search_span", data.NewMetric(
 				"lag_search_span",
 				data.UnitDuration,
 				data.TimescaleRollingWindow,
@@ -468,7 +468,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			).Write(selectedPair.Span*resolution))
 
 			if selectedPair.ShapeDefined {
-				m.SetMetric("lag_peak_prominence", data.NewMetric[float64](
+				m.SetMetric("lag_peak_prominence", data.NewMetric(
 					"lag_peak_prominence",
 					data.UnitCorrelation,
 					data.TimescaleInstantaneous,
@@ -476,7 +476,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					1,
 				).Write(selectedPair.Prominence))
 
-				m.SetMetric("lag_peak_curvature", data.NewMetric[float64](
+				m.SetMetric("lag_peak_curvature", data.NewMetric(
 					"lag_peak_curvature",
 					data.UnitDimensionless,
 					data.TimescaleInstantaneous,
@@ -486,7 +486,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			if significance.Defined {
-				m.SetMetric("correlation_p_value", data.NewMetric[float64](
+				m.SetMetric("correlation_p_value", data.NewMetric(
 					"correlation_p_value",
 					data.UnitProbability,
 					data.TimescaleRollingWindow,
@@ -494,7 +494,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					0.5,
 				).Write(significance.PValue))
 
-				m.SetMetric("search_adjusted_p_value", data.NewMetric[float64](
+				m.SetMetric("search_adjusted_p_value", data.NewMetric(
 					"search_adjusted_p_value",
 					data.UnitProbability,
 					data.TimescaleRollingWindow,
@@ -505,7 +505,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			lagNoiseScale := math.Max(selected.lag.Dispersion, 1e-6)
 
-			m.SetMetric("lag_baseline_seconds", data.NewMetric[float64](
+			m.SetMetric("lag_baseline_seconds", data.NewMetric(
 				"lag_baseline_seconds",
 				data.UnitDuration,
 				data.TimescaleRollingWindow,
@@ -513,7 +513,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				lagNoiseScale,
 			).Write(selected.lag.Baseline))
 
-			m.SetMetric("lag_divergence_seconds", data.NewMetric[float64](
+			m.SetMetric("lag_divergence_seconds", data.NewMetric(
 				"lag_divergence_seconds",
 				data.UnitDuration,
 				data.TimescaleInstantaneous,
@@ -521,7 +521,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				lagNoiseScale,
 			).Write(selected.lag.Residual))
 
-			m.SetMetric("lag_zscore", data.NewMetric[float64](
+			m.SetMetric("lag_zscore", data.NewMetric(
 				"lag_zscore",
 				data.UnitZScore,
 				data.TimescaleRollingWindow,
@@ -530,7 +530,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			).Write(selected.lag.ZScore))
 
 			if selected.lag.VarianceDefined {
-				m.SetMetric("lag_noise_scale_seconds", data.NewMetric[float64](
+				m.SetMetric("lag_noise_scale_seconds", data.NewMetric(
 					"lag_noise_scale_seconds",
 					data.UnitDuration,
 					data.TimescaleRollingWindow,
@@ -540,7 +540,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			if selected.lagVel.Defined {
-				m.SetMetric("lag_velocity", data.NewMetric[float64](
+				m.SetMetric("lag_velocity", data.NewMetric(
 					"lag_velocity",
 					data.UnitVelocity,
 					data.TimescalePerSecond,
@@ -549,7 +549,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				).Write(selected.lagVel.Rate))
 			}
 
-			m.SetMetric("correlation_gain_baseline", data.NewMetric[float64](
+			m.SetMetric("correlation_gain_baseline", data.NewMetric(
 				"correlation_gain_baseline",
 				data.UnitCorrelation,
 				data.TimescaleRollingWindow,
@@ -557,7 +557,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				1,
 			).Write(selected.gain.Baseline))
 
-			m.SetMetric("correlation_gain_zscore", data.NewMetric[float64](
+			m.SetMetric("correlation_gain_zscore", data.NewMetric(
 				"correlation_gain_zscore",
 				data.UnitZScore,
 				data.TimescaleRollingWindow,
@@ -566,7 +566,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			).Write(selected.gain.ZScore))
 
 			if selected.gainVel.Defined {
-				m.SetMetric("correlation_gain_velocity", data.NewMetric[float64](
+				m.SetMetric("correlation_gain_velocity", data.NewMetric(
 					"correlation_gain_velocity",
 					data.UnitVelocity,
 					data.TimescalePerSecond,
@@ -575,7 +575,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				).Write(selected.gainVel.Rate))
 			}
 
-			m.SetMetric("best_lag_correlation_baseline", data.NewMetric[float64](
+			m.SetMetric("best_lag_correlation_baseline", data.NewMetric(
 				"best_lag_correlation_baseline",
 				data.UnitCorrelation,
 				data.TimescaleRollingWindow,
@@ -583,7 +583,7 @@ func (op *Cross) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				1,
 			).Write(selected.corr.Baseline))
 
-			m.SetMetric("best_lag_correlation_zscore", data.NewMetric[float64](
+			m.SetMetric("best_lag_correlation_zscore", data.NewMetric(
 				"best_lag_correlation_zscore",
 				data.UnitZScore,
 				data.TimescaleRollingWindow,

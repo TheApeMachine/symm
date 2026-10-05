@@ -43,28 +43,28 @@ func TestLiquidityTickerMetrics(t *testing.T) {
 				expectedTotalNotional := expectedBidNotional + expectedAskNotional
 				expectedImbalance := (expectedBidNotional - expectedAskNotional) / expectedTotalNotional
 
-				prior.SetMetric("bid", data.NewMetric[float64](
+				prior.SetMetric("bid", data.NewMetric(
 					"bid",
 					data.UnitPrice,
 					data.TimescaleInstantaneous,
 					midpoint,
 					spread,
 				).Write(bid))
-				prior.SetMetric("ask", data.NewMetric[float64](
+				prior.SetMetric("ask", data.NewMetric(
 					"ask",
 					data.UnitPrice,
 					data.TimescaleInstantaneous,
 					midpoint,
 					spread,
 				).Write(ask))
-				prior.SetMetric("bid_qty", data.NewMetric[float64](
+				prior.SetMetric("bid_qty", data.NewMetric(
 					"bid_qty",
 					data.UnitQuantity,
 					data.TimescaleInstantaneous,
 					0.0,
 					bidQty,
 				).Write(bidQty))
-				prior.SetMetric("ask_qty", data.NewMetric[float64](
+				prior.SetMetric("ask_qty", data.NewMetric(
 					"ask_qty",
 					data.UnitQuantity,
 					data.TimescaleInstantaneous,
@@ -113,28 +113,28 @@ func TestLiquidityTickerMetrics(t *testing.T) {
 			prior.SeqIdx = 100
 			prior.At = now
 			prior.From = now
-			prior.SetMetric("bid", data.NewMetric[float64](
+			prior.SetMetric("bid", data.NewMetric(
 				"bid",
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
 				3005.0,
 				1.0,
 			).Write(3005.0))
-			prior.SetMetric("ask", data.NewMetric[float64](
+			prior.SetMetric("ask", data.NewMetric(
 				"ask",
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
 				3000.0, // crossed: ask < bid
 				1.0,
 			).Write(3000.0))
-			prior.SetMetric("bid_qty", data.NewMetric[float64](
+			prior.SetMetric("bid_qty", data.NewMetric(
 				"bid_qty",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
 				0.0,
 				1.0,
 			).Write(1.0))
-			prior.SetMetric("ask_qty", data.NewMetric[float64](
+			prior.SetMetric("ask_qty", data.NewMetric(
 				"ask_qty",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,

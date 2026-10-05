@@ -49,28 +49,28 @@ func TestCVDSignalMetrics(t *testing.T) {
 					cumBuyNotional += notional
 				}
 
-				prior.SetMetric("price", data.NewMetric[float64](
+				prior.SetMetric("price", data.NewMetric(
 					"price",
 					data.UnitPrice,
 					data.TimescaleInstantaneous,
 					price,
 					10.0,
 				).Write(price))
-				prior.SetMetric("qty", data.NewMetric[float64](
+				prior.SetMetric("qty", data.NewMetric(
 					"qty",
 					data.UnitQuantity,
 					data.TimescaleInstantaneous,
 					0.0,
 					qty,
 				).Write(qty))
-				prior.SetMetric("best_bid", data.NewMetric[float64](
+				prior.SetMetric("best_bid", data.NewMetric(
 					"best_bid",
 					data.UnitPrice,
 					data.TimescaleInstantaneous,
 					price,
 					10.0,
 				).Write(price-5.0))
-				prior.SetMetric("best_ask", data.NewMetric[float64](
+				prior.SetMetric("best_ask", data.NewMetric(
 					"best_ask",
 					data.UnitPrice,
 					data.TimescaleInstantaneous,
@@ -147,14 +147,14 @@ func TestCVDSignalMetrics(t *testing.T) {
 			prior.At = now
 			prior.From = now
 			prior.SetProvenance("side", "buy")
-			prior.SetMetric("price", data.NewMetric[float64](
+			prior.SetMetric("price", data.NewMetric(
 				"price",
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
 				0.0,
 				1.0,
 			).Write(0.0)) // Invalid zero price
-			prior.SetMetric("qty", data.NewMetric[float64](
+			prior.SetMetric("qty", data.NewMetric(
 				"qty",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,

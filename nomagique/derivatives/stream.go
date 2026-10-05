@@ -46,7 +46,7 @@ func NewGate() core.Primitive {
 func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			last, traded := m.LookupMetric("last")
 			index, referenced := m.LookupMetric("index_price")
@@ -118,7 +118,7 @@ func NewTradeGate() core.Primitive {
 func (op *TradeGate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			price, priced := m.LookupMetric("price")
 			quantity, quantified := m.LookupMetric("qty")

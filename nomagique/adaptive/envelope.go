@@ -15,7 +15,7 @@ Envelope replaces a value with the inclusive moment interval when the
 estimator has dispersion.
 */
 type Envelope struct {
-	err         error
+	*core.PrimitiveError
 	moments     core.Primitive
 	coefficient core.Primitive
 	out         float64
@@ -26,8 +26,9 @@ func NewEnvelope(
 	coefficient core.Primitive,
 ) core.Primitive {
 	return &Envelope{
-		moments:     moments,
-		coefficient: coefficient,
+		PrimitiveError: core.NewPrimitiveError(),
+		moments:        moments,
+		coefficient:    coefficient,
 	}
 }
 
@@ -72,26 +73,4 @@ func (op *Envelope) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Envelope) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.moments != nil {
-		if err := op.moments.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.coefficient != nil {
-		if err := op.coefficient.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

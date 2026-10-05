@@ -693,7 +693,7 @@ func newProducer(name, unit, relFile string, line int) producer {
 /*
 callName returns the called function's own identifier, seeing through a
 selector (data.NewMetric) and through generic instantiation
-(data.NewMeasurement[float64]).
+(data.NewMeasurement).
 */
 func callName(call *ast.CallExpr) string {
 	fun := call.Fun
@@ -1154,7 +1154,7 @@ scanKernelConsumers finds runtime.Register(bus, keyFn, callback) call sites
 and classifies the callback by its first parameter's type: a specific
 kernel's own Measurement type (e.g. *hawkes.Measurement) is a "kernel"-kind
 edge (bulk, undifferentiated consumption of that one kernel's whole output);
-the generic *data.Measurement[float64] is a "generic"-kind edge. Any other
+the generic *data.Measurement is a "generic"-kind edge. Any other
 parameter type means this Register call consumes an already-derived artifact
 (e.g. *types.ResonanceArtifact, *graph.GraphUpdate) — those are not metric
 consumers at all and are skipped.
@@ -1225,7 +1225,7 @@ func scanKernelConsumers(pkg *packages.Package, file *ast.File, relFile string) 
 
 /*
 classifyParam maps a runtime.Register callback's first-parameter type string
-to a consumer kind. "*data.Measurement[float64]" (the unwrapped generic
+to a consumer kind. "*data.Measurement" (the unwrapped generic
 stream every kernel's output is merged into, per signal/runner.go) is
 "generic". A pointer to a type from a named signal subpackage (e.g.
 "*hawkes.Measurement") is "kernel", scoped to that one kernel. Anything else
@@ -1238,9 +1238,9 @@ func classifyParam(paramType string) (kind string, kernel string) {
 	inner := strings.TrimPrefix(paramType, "*")
 
 	// go/types formats a generic instantiation as
-	// "github.com/theapemachine/symm/nomagique/data.Measurement[float64]";
+	// "github.com/theapemachine/symm/nomagique/data.Measurement";
 	// go/ast's own selector formatting gives the short form
-	// "data.Measurement[float64]". Reduce both to (lastPkgSegment, typeName).
+	// "data.Measurement". Reduce both to (lastPkgSegment, typeName).
 	base := inner
 	if idx := strings.IndexByte(inner, '['); idx >= 0 {
 		base = inner[:idx]
@@ -1334,7 +1334,7 @@ func exprString(expr ast.Expr) string {
 	ast.Fprint(&sb, nil, expr, ast.NotNilFilter)
 	// ast.Fprint is a debug dump, not source text; use a lighter formatter for
 	// the common shapes this tool actually needs (selector, star, ident,
-	// index expr for generics like Measurement[float64]).
+	// index expr for generics like Measurement).
 	return formatType(expr)
 }
 

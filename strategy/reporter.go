@@ -76,7 +76,7 @@ Populate writes all canonical learning and evaluation metrics, provenance,
 and metadata onto an existing measurement without extra heap allocations.
 */
 func (reporter *Reporter) Populate(
-	out *data.Measurement[float64],
+	out *data.Measurement,
 	snapshot ReportSnapshot,
 ) {
 	if out == nil {
@@ -102,7 +102,7 @@ func (reporter *Reporter) Populate(
 	stepFloat := float64(stepCount)
 	decisionFloat := float64(reporter.decisions.Load())
 
-	out.SetMetric("steps", data.NewMetric[float64](
+	out.SetMetric("steps", data.NewMetric(
 		"steps",
 		data.UnitCount,
 		data.TimescaleSession,
@@ -110,7 +110,7 @@ func (reporter *Reporter) Populate(
 		math.Max(stepFloat, 1.0),
 	).Write(stepFloat))
 
-	out.SetMetric("decisions", data.NewMetric[float64](
+	out.SetMetric("decisions", data.NewMetric(
 		"decisions",
 		data.UnitCount,
 		data.TimescaleSession,
@@ -121,7 +121,7 @@ func (reporter *Reporter) Populate(
 	resolvedCount := float64(snapshot.Resolved)
 	resolvedScale := math.Max(resolvedCount, 1.0)
 
-	out.SetMetric("resolved", data.NewMetric[float64](
+	out.SetMetric("resolved", data.NewMetric(
 		"resolved",
 		data.UnitCount,
 		data.TimescaleSession,
@@ -129,7 +129,7 @@ func (reporter *Reporter) Populate(
 		resolvedScale,
 	).Write(resolvedCount))
 
-	out.SetMetric("edge_sample_count", data.NewMetric[float64](
+	out.SetMetric("edge_sample_count", data.NewMetric(
 		"edge_sample_count",
 		data.UnitCount,
 		data.TimescaleSession,
@@ -137,7 +137,7 @@ func (reporter *Reporter) Populate(
 		resolvedScale,
 	).Write(resolvedCount))
 
-	out.SetMetric("win_rate", data.NewMetric[float64](
+	out.SetMetric("win_rate", data.NewMetric(
 		"win_rate",
 		data.UnitProbability,
 		data.TimescaleRollingWindow,
@@ -145,7 +145,7 @@ func (reporter *Reporter) Populate(
 		0.5,
 	).Write(snapshot.WinRate))
 
-	out.SetMetric("accuracy", data.NewMetric[float64](
+	out.SetMetric("accuracy", data.NewMetric(
 		"accuracy",
 		data.UnitProbability,
 		data.TimescaleRollingWindow,
@@ -153,7 +153,7 @@ func (reporter *Reporter) Populate(
 		0.5,
 	).Write(snapshot.WinRate))
 
-	out.SetMetric("edge", data.NewMetric[float64](
+	out.SetMetric("edge", data.NewMetric(
 		"edge",
 		data.UnitPercent,
 		data.TimescaleRollingWindow,
@@ -161,7 +161,7 @@ func (reporter *Reporter) Populate(
 		0.01,
 	).Write(snapshot.Edge))
 
-	out.SetMetric("confidence", data.NewMetric[float64](
+	out.SetMetric("confidence", data.NewMetric(
 		"confidence",
 		data.UnitConfidence,
 		data.TimescaleRollingWindow,
@@ -169,7 +169,7 @@ func (reporter *Reporter) Populate(
 		0.5,
 	).Write(snapshot.Confidence))
 
-	out.SetMetric("contrast", data.NewMetric[float64](
+	out.SetMetric("contrast", data.NewMetric(
 		"contrast",
 		data.UnitRatio,
 		data.TimescaleRollingWindow,
@@ -177,7 +177,7 @@ func (reporter *Reporter) Populate(
 		1.0,
 	).Write(snapshot.Contrast))
 
-	out.SetMetric("stage_code", data.NewMetric[float64](
+	out.SetMetric("stage_code", data.NewMetric(
 		"stage_code",
 		data.UnitCount,
 		data.TimescaleSession,
@@ -191,7 +191,7 @@ func (reporter *Reporter) Populate(
 		tradingValue = 1.0
 	}
 
-	out.SetMetric("trading", data.NewMetric[float64](
+	out.SetMetric("trading", data.NewMetric(
 		"trading",
 		data.UnitProbability,
 		data.TimescaleInstantaneous,
@@ -199,7 +199,7 @@ func (reporter *Reporter) Populate(
 		0.5,
 	).Write(tradingValue))
 
-	out.SetMetric("action", data.NewMetric[float64](
+	out.SetMetric("action", data.NewMetric(
 		"action",
 		data.UnitRatio,
 		data.TimescaleTick,
@@ -207,7 +207,7 @@ func (reporter *Reporter) Populate(
 		1.0,
 	).Write(float64(snapshot.Action)))
 
-	out.SetMetric("frozen_prediction", data.NewMetric[float64](
+	out.SetMetric("frozen_prediction", data.NewMetric(
 		"frozen_prediction",
 		data.UnitRatio,
 		data.TimescaleTick,
@@ -216,7 +216,7 @@ func (reporter *Reporter) Populate(
 	).Write(float64(snapshot.Action)))
 
 	if snapshot.Clears {
-		out.SetMetric("delayed_target", data.NewMetric[float64](
+		out.SetMetric("delayed_target", data.NewMetric(
 			"delayed_target",
 			data.UnitRatio,
 			data.TimescaleTick,
@@ -226,7 +226,7 @@ func (reporter *Reporter) Populate(
 	}
 
 	if !snapshot.Clears && snapshot.Action != 0 {
-		out.SetMetric("delayed_target", data.NewMetric[float64](
+		out.SetMetric("delayed_target", data.NewMetric(
 			"delayed_target",
 			data.UnitRatio,
 			data.TimescaleTick,
@@ -236,7 +236,7 @@ func (reporter *Reporter) Populate(
 	}
 
 	if snapshot.Direction == "up" {
-		out.SetMetric("excursion_type", data.NewMetric[float64](
+		out.SetMetric("excursion_type", data.NewMetric(
 			"excursion_type",
 			data.UnitCount,
 			data.TimescaleEvent,
@@ -248,7 +248,7 @@ func (reporter *Reporter) Populate(
 	}
 
 	if snapshot.Direction == "down" {
-		out.SetMetric("excursion_type", data.NewMetric[float64](
+		out.SetMetric("excursion_type", data.NewMetric(
 			"excursion_type",
 			data.UnitCount,
 			data.TimescaleEvent,
@@ -262,7 +262,7 @@ func (reporter *Reporter) Populate(
 	seqSpan := math.Max(float64(snapshot.MarkC-snapshot.MarkA), 1.0)
 	seqCenter := float64(snapshot.MarkB)
 
-	out.SetMetric("mark_a", data.NewMetric[float64](
+	out.SetMetric("mark_a", data.NewMetric(
 		"mark_a",
 		data.UnitCount,
 		data.TimescaleEvent,
@@ -270,7 +270,7 @@ func (reporter *Reporter) Populate(
 		seqSpan,
 	).Write(float64(snapshot.MarkA)))
 
-	out.SetMetric("mark_b", data.NewMetric[float64](
+	out.SetMetric("mark_b", data.NewMetric(
 		"mark_b",
 		data.UnitCount,
 		data.TimescaleEvent,
@@ -278,7 +278,7 @@ func (reporter *Reporter) Populate(
 		seqSpan,
 	).Write(float64(snapshot.MarkB)))
 
-	out.SetMetric("mark_c", data.NewMetric[float64](
+	out.SetMetric("mark_c", data.NewMetric(
 		"mark_c",
 		data.UnitCount,
 		data.TimescaleEvent,
@@ -292,7 +292,7 @@ func (reporter *Reporter) Populate(
 		tokenLength = len(snapshot.Tokens)
 	}
 
-	out.SetMetric("precursor_length", data.NewMetric[float64](
+	out.SetMetric("precursor_length", data.NewMetric(
 		"precursor_length",
 		data.UnitCount,
 		data.TimescaleEvent,
@@ -301,7 +301,7 @@ func (reporter *Reporter) Populate(
 	).Write(float64(tokenLength)))
 
 	if snapshot.Price > 0 {
-		out.SetMetric("price", data.NewMetric[float64](
+		out.SetMetric("price", data.NewMetric(
 			"price",
 			data.UnitPrice,
 			data.TimescaleTick,
@@ -311,7 +311,7 @@ func (reporter *Reporter) Populate(
 	}
 
 	excursionMag := snapshot.ExcursionMag
-	out.SetMetric("excursion_mag", data.NewMetric[float64](
+	out.SetMetric("excursion_mag", data.NewMetric(
 		"excursion_mag",
 		data.UnitSpread,
 		data.TimescaleEvent,

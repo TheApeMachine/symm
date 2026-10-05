@@ -2,39 +2,13 @@ package runtime
 
 import (
 	"context"
-	goruntime "runtime"
 	"sync/atomic"
-	"time"
 
 	"github.com/smarty/go-disruptor"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/system"
 )
-
-type adaptiveWaitStrategy struct{}
-
-func (adaptiveWaitStrategy) Gate(int64) {
-	goruntime.Gosched()
-}
-
-func (adaptiveWaitStrategy) Idle(count int64) {
-	if count < 100 {
-		goruntime.Gosched()
-		return
-	}
-
-	time.Sleep(100 * time.Microsecond)
-}
-
-func (adaptiveWaitStrategy) Reserve(count int64) {
-	if count < 64 {
-		goruntime.Gosched()
-		return
-	}
-
-	time.Sleep(50 * time.Microsecond)
-}
 
 func optionList[O any](initial ...O) []O {
 	return initial
@@ -86,14 +60,14 @@ For each sequence S, the architecture is:
 type Workspace struct {
 	*System
 	channel    disruptor.Disruptor
-	buffer     []*data.Measurement[float64]
+	buffer     []*data.Measurement
 	mask       int64
 	capacity   int
 	sequence   atomic.Int64
 	tick       atomic.Int64
 	at         atomic.Int64
 	stages     [][]*Consumer
-	joins      [][]*data.Measurement[float64] // [stageIdx][slot]
+	joins      [][]*data.Measurement // [stageIdx][slot]
 	joinArenas []*data.ArenaOwner
 }
 
@@ -110,19 +84,19 @@ func NewWorkspace(
 	}
 	mask := int64(capacity - 1)
 
-	numJoins := max(len(stages) - 1, 0)
+	numJoins := max(len(stages)-1, 0)
 
 	workspace := &Workspace{
-		buffer:     make([]*data.Measurement[float64], capacity),
+		buffer:     make([]*data.Measurement, capacity),
 		mask:       mask,
 		capacity:   capacity,
 		stages:     make([][]*Consumer, len(stages)),
-		joins:      make([][]*data.Measurement[float64], numJoins),
+		joins:      make([][]*data.Measurement, numJoins),
 		joinArenas: make([]*data.ArenaOwner, numJoins),
 	}
 
 	for joinIdx := 0; joinIdx < numJoins; joinIdx++ {
-		workspace.joins[joinIdx] = make([]*data.Measurement[float64], capacity)
+		workspace.joins[joinIdx] = make([]*data.Measurement, capacity)
 		workspace.joinArenas[joinIdx] = data.NewArenaOwner(capacity)
 		workspace.joinArenas[joinIdx].SetWindow(capacity)
 	}
@@ -130,7 +104,6 @@ func NewWorkspace(
 	opts := optionList(
 		disruptor.Options.BufferCapacity(uint32(capacity)),
 		disruptor.Options.WriterCount(writerCount),
-		disruptor.Options.WaitStrategy(adaptiveWaitStrategy{}),
 	)
 
 	for stageIdx, stageNodes := range stages {
@@ -180,7 +153,7 @@ func NewWorkspace(
 	return workspace
 }
 
-func (workspace *Workspace) Step(payload *data.Measurement[float64]) *data.Measurement[float64] {
+func (workspace *Workspace) Step(payload *data.Measurement) *data.Measurement {
 	if workspace.Status() != READY {
 		errnie.Warn(workspace.Name() + ": Step called before READY; dropping event")
 		return payload
@@ -238,7 +211,7 @@ func (workspace *Workspace) Stages() [][]*Consumer {
 	return workspace.stages
 }
 
-func (workspace *Workspace) Joins() [][]*data.Measurement[float64] {
+func (workspace *Workspace) Joins() [][]*data.Measurement {
 	return workspace.joins
 }
 
@@ -251,7 +224,8 @@ type stageHandler struct {
 func (sh *stageHandler) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
 		slot := seq & sh.workspace.mask
-		var prior *data.Measurement[float64]
+		var prior *data.Measurement
+
 		if sh.stageIdx == 0 {
 			prior = sh.workspace.buffer[slot]
 		} else {
@@ -272,11 +246,13 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 		slot := seq & jh.workspace.mask
 		ingress := jh.workspace.buffer[slot]
 		joinArena := jh.workspace.joinArenas[jh.stageIdx]
+
 		if joinArena != nil {
 			joinArena.Advance(seq)
 		}
 
 		join := joinArena.NewMeasurement("runtime:join")
+
 		if ingress != nil {
 			join.Epoch = ingress.Epoch
 			join.Tick = ingress.Tick
@@ -287,19 +263,19 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 		}
 
 		producers := jh.workspace.stages[jh.stageIdx]
-		var peers []*data.Measurement[float64]
+		var peers []*data.Measurement
 
 		if jh.stageIdx > 0 {
 			prevJoin := jh.workspace.joins[jh.stageIdx-1][slot]
 
 			if prevJoin != nil && len(prevJoin.Peers) > 0 {
-				peers = make([]*data.Measurement[float64], 0, len(prevJoin.Peers)+len(producers))
+				peers = make([]*data.Measurement, 0, len(prevJoin.Peers)+len(producers))
 				peers = append(peers, prevJoin.Peers...)
 			}
 		}
 
 		if peers == nil {
-			peers = make([]*data.Measurement[float64], 0, len(producers))
+			peers = make([]*data.Measurement, 0, len(producers))
 		}
 
 		for _, consumer := range producers {
@@ -307,8 +283,8 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 				peers = append(peers, pub)
 			}
 		}
-		join.Peers = peers
 
+		join.Peers = peers
 		jh.workspace.joins[jh.stageIdx][slot] = join
 	}
 }

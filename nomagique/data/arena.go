@@ -100,6 +100,7 @@ Each producer is sequential with respect to its own Step stream, so ArenaOwner
 does not require a mutex merely to allocate.
 */
 type ArenaOwner struct {
+	source      string
 	current     *ArenaGeneration
 	previous    *ArenaGeneration
 	generations []generationEntry
@@ -110,7 +111,7 @@ type ArenaOwner struct {
 	seqMode     bool
 }
 
-func NewArenaOwner(capacity ...int) *ArenaOwner {
+func NewArenaOwner(source string, capacity ...int) *ArenaOwner {
 	capVal := 1024
 	if len(capacity) > 0 && capacity[0] > 0 {
 		capVal = capacity[0]
@@ -124,6 +125,7 @@ func NewArenaOwner(capacity ...int) *ArenaOwner {
 	current := NewArenaGeneration()
 
 	return &ArenaOwner{
+		source:      source,
 		current:     current,
 		capacity:    capVal,
 		window:      windowVal,
@@ -215,10 +217,6 @@ func (owner *ArenaOwner) Advance(seq int64) {
 }
 
 func (owner *ArenaOwner) Close() {
-	if owner == nil {
-		return
-	}
-
 	if owner.seqMode {
 		for _, entry := range owner.generations {
 			entry.gen.Seal()
@@ -248,21 +246,11 @@ NewMeasurement allocates a fresh Measurement from the current generation.
 Its slices (Metrics, Metadata, Provenance, Peers) are initialized from the arena,
 avoiding GC heap map allocations on the hot path.
 */
-func (owner *ArenaOwner) NewMeasurement(source string) *Measurement[float64] {
-	if owner == nil {
-		return NewMeasurement[float64](source)
-	}
-
+func (owner *ArenaOwner) NewMeasurement() *Measurement {
 	gen := owner.current
 	alloc := gen.Allocator()
 
-	measurement := New[Measurement[float64]](alloc)
-	measurement.ID = -1
-	measurement.Source = source
-	measurement.Metrics = MakeSlice[MetricEntry[float64]](alloc, 0, 16)
-	measurement.Metadata = MakeSlice[StringEntry](alloc, 0, 8)
-	measurement.Provenance = MakeSlice[StringEntry](alloc, 0, 8)
-	measurement.Peers = MakeSlice[*Measurement[float64]](alloc, 0, 4)
+	measurement := New[Measurement](alloc)
 
 	if !owner.seqMode {
 		owner.count++
@@ -279,11 +267,11 @@ Publication carries a WORM Measurement pointer together with its arena generatio
 lifetime token across transport boundaries.
 */
 type Publication struct {
-	Measurement *Measurement[float64]
+	Measurement *Measurement
 	Generation  *ArenaGeneration
 }
 
-func NewPublication(measurement *Measurement[float64], gen *ArenaGeneration) Publication {
+func NewPublication(measurement *Measurement, gen *ArenaGeneration) Publication {
 	return Publication{
 		Measurement: measurement,
 		Generation:  gen,
@@ -301,5 +289,3 @@ func (pub Publication) Release() {
 		pub.Generation.Release()
 	}
 }
-
-

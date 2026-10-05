@@ -1,7 +1,6 @@
 package nomagique
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -17,7 +16,7 @@ nomagique.Number
 no, magic, number
 */
 type Number struct {
-	err    error
+	*core.PrimitiveError
 	stages []core.Primitive
 }
 
@@ -26,12 +25,14 @@ NewNumber instantiates a nomagique.Number composer with the given stages.
 */
 func NewNumber(stages ...core.Primitive) *Number {
 	return &Number{
-		stages: stages,
+		PrimitiveError: core.NewPrimitiveError(),
+		stages:         stages,
 	}
 }
 
 func (number *Number) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	curr := input
+
 	if curr == nil {
 		curr = func(yield func(unsafe.Pointer) bool) {}
 	}
@@ -49,20 +50,4 @@ func (number *Number) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 	}
 
 	return curr
-}
-
-func (number *Number) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			number.err = errors.Join(number.err, err)
-		}
-	}
-
-	for _, stage := range number.stages {
-		if err := stage.Error(); err != nil {
-			number.err = errors.Join(number.err, err)
-		}
-	}
-
-	return number.err
 }

@@ -19,7 +19,7 @@ func TestStep(t *testing.T) {
 		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0)
 		defer solver.Close()
 
-		m := data.NewMeasurement[float64]("resonance", nil)
+		m := data.NewMeasurement("resonance", nil)
 		m.Label = "TEST/USD"
 		m.At = time.Unix(1, 0)
 
@@ -36,20 +36,20 @@ func TestSignalFeatureIngestion(t *testing.T) {
 		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0.01)
 		defer solver.Close()
 
-		createMetric := func(label, metricName string, value float64) *data.Measurement[float64] {
-			measurement := data.NewMeasurement[float64](label, nil)
+		createMetric := func(label, metricName string, value float64) *data.Measurement {
+			measurement := data.NewMeasurement(label, nil)
 			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Unix(10, 0), time.Unix(10, 0)
-			measurement.SetMetric(metricName, data.Metric[float64]{Label: metricName, Raw: value})
+			measurement.SetMetric(metricName, data.Metric{Label: metricName, Raw: value})
 			measurement.SetMetadata(data.MetadataSupport, "1")
 			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 			}
 			return measurement
 		}
 
-		m := data.NewMeasurement[float64]("resonance", nil)
+		m := data.NewMeasurement("resonance", nil)
 		m.Label = "BTC/USD"
 		m.At = time.Unix(10, 0)
-		m.Peers = []*data.Measurement[float64]{
+		m.Peers = []*data.Measurement{
 			createMetric("correlation", "relative_return_energy", 1.2),
 			createMetric("leadlag", "best_lag_correlation", 0.75),
 			createMetric("liquidity", "relative_spread", 0.0002),
@@ -78,22 +78,22 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0.05)
 		defer solver.Close()
 
-		createMeasurement := func(sec int64, cvdVal, toxVal float64) *data.Measurement[float64] {
-			m := data.NewMeasurement[float64]("resonance", nil)
+		createMeasurement := func(sec int64, cvdVal, toxVal float64) *data.Measurement {
+			m := data.NewMeasurement("resonance", nil)
 			m.Label = "ETH/USD"
 			m.At = time.Unix(sec, 0)
 
-			createMetric := func(label, metricName string, val float64) *data.Measurement[float64] {
-				measurement := data.NewMeasurement[float64](label, nil)
+			createMetric := func(label, metricName string, val float64) *data.Measurement {
+				measurement := data.NewMeasurement(label, nil)
 				measurement.Label, measurement.At, measurement.From = "ETH/USD", time.Unix(sec, 0), time.Unix(sec, 0)
-				measurement.SetMetric(metricName, data.Metric[float64]{Label: metricName, Raw: val})
+				measurement.SetMetric(metricName, data.Metric{Label: metricName, Raw: val})
 				measurement.SetMetadata(data.MetadataSupport, "1")
 				for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 				}
 				return measurement
 			}
 
-			m.Peers = []*data.Measurement[float64]{
+			m.Peers = []*data.Measurement{
 				createMetric("correlation", "relative_return_energy", 1.0),
 				createMetric("leadlag", "best_lag_correlation", 0.5),
 				createMetric("liquidity", "relative_spread", 0.0003),
@@ -129,20 +129,20 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		defer solver.Close()
 		solver.Transition(runtime.READY)
 
-		createMetric := func(label, metricName string, val float64, support float64) *data.Measurement[float64] {
-			measurement := data.NewMeasurement[float64](label, nil)
+		createMetric := func(label, metricName string, val float64, support float64) *data.Measurement {
+			measurement := data.NewMeasurement(label, nil)
 			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Now(), time.Now()
-			measurement.SetMetric(metricName, data.Metric[float64]{Label: metricName, Raw: val})
+			measurement.SetMetric(metricName, data.Metric{Label: metricName, Raw: val})
 			measurement.SetMetadata(data.MetadataSupport, strconv.FormatFloat(support, 'f', -1, 64))
 			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 			}
 			return measurement
 		}
 
-		m1 := data.NewMeasurement[float64]("resonance", nil)
+		m1 := data.NewMeasurement("resonance", nil)
 		m1.Label = "BTC/USD"
 		m1.At = time.Unix(100, 0)
-		m1.Peers = []*data.Measurement[float64]{
+		m1.Peers = []*data.Measurement{
 			createMetric("cvd", "signed_net_fraction", 0.1, 1),
 		}
 		res1 := solver.Step(m1)
@@ -150,10 +150,10 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 
 		// 500 measurements arrive where CVD is absent (only DepthFlow is present)
 		for step := int64(1); step <= 500; step++ {
-			mL3 := data.NewMeasurement[float64]("resonance", nil)
+			mL3 := data.NewMeasurement("resonance", nil)
 			mL3.Label = "BTC/USD"
 			mL3.At = time.Unix(100+step, 0)
-			mL3.Peers = []*data.Measurement[float64]{
+			mL3.Peers = []*data.Measurement{
 				createMetric("depthflow", "observed_notional_imbalance", 0.2, float64(step)),
 			}
 			resL3 := solver.Step(mL3)
@@ -161,10 +161,10 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		}
 
 		// Subsequent measurement: CVD changes from 0.1 to 0.8
-		m2 := data.NewMeasurement[float64]("resonance", nil)
+		m2 := data.NewMeasurement("resonance", nil)
 		m2.Label = "BTC/USD"
 		m2.At = time.Unix(700, 0)
-		m2.Peers = []*data.Measurement[float64]{
+		m2.Peers = []*data.Measurement{
 			createMetric("cvd", "signed_net_fraction", 0.8, 2),
 		}
 		res2 := solver.Step(m2)
@@ -184,15 +184,15 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0.05)
 		defer solver.Close()
 
-		var lastMeasurement *data.Measurement[float64]
+		var lastMeasurement *data.Measurement
 		solver.Transition(runtime.READY)
 
-		createMetric := func(source, metricName string, val, support float64) *data.Measurement[float64] {
-			measurement := data.NewMeasurement[float64](source, nil)
+		createMetric := func(source, metricName string, val, support float64) *data.Measurement {
+			measurement := data.NewMeasurement(source, nil)
 			measurement.Label = "BTC/USD"
 			measurement.At = time.Now()
 			measurement.From = measurement.At
-			measurement.SetMetric(metricName, data.Metric[float64]{Label: metricName, Raw: val})
+			measurement.SetMetric(metricName, data.Metric{Label: metricName, Raw: val})
 			measurement.SetMetadata(data.MetadataSupport, strconv.FormatFloat(support, 'f', -1, 64))
 			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
 			}
@@ -200,13 +200,13 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 		}
 
 		for step := 1; step <= 20; step++ {
-			m := data.NewMeasurement[float64]("resonance", nil)
+			m := data.NewMeasurement("resonance", nil)
 			m.Label = "BTC/USD"
 			m.At = time.Now()
 			s := float64(step) + 10.0
 			v := float64(step%5) * 0.2
 
-			m.Peers = []*data.Measurement[float64]{
+			m.Peers = []*data.Measurement{
 				createMetric("correlation", "signed_correlation", 0.5+v, s),
 				createMetric("leadlag", "best_lag_correlation", 0.4+v, s),
 				createMetric("liquidity", "relative_spread", 0.0002+v*0.0001, s),
@@ -220,7 +220,7 @@ func TestSubSourceAndNonZeroLatents(t *testing.T) {
 				createMetric("derivatives", "basis_zscore", 0.05+v, s),
 			}
 
-			priceMetric := data.NewMetric[float64]("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1)
+			priceMetric := data.NewMetric("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1)
 			m.SetMetric("midpoint", priceMetric.Write(50000.0+float64(step)*10.0))
 
 			res := solver.Step(m)
@@ -252,7 +252,7 @@ func TestSolverStepReadiness(t *testing.T) {
 			System: runtime.NewSystem(t.Context(), "readiness-test"),
 			arena:  data.NewArenaOwner(32),
 		}
-		measurement := &data.Measurement[float64]{Label: "BTC/USD", SeqIdx: 7}
+		measurement := &data.Measurement{Label: "BTC/USD", SeqIdx: 7}
 		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
 			node.Transition(stage)
 			So(node.Step(measurement), ShouldBeNil)
@@ -267,19 +267,19 @@ func TestSolverDeformationAcrossTicks(t *testing.T) {
 		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0.05)
 		defer solver.Close()
 
-		createMeasurement := func(sec int64, val float64) *data.Measurement[float64] {
-			m := data.NewMeasurement[float64]("resonance", nil)
+		createMeasurement := func(sec int64, val float64) *data.Measurement {
+			m := data.NewMeasurement("resonance", nil)
 			m.Label = "BTC/USD"
 			m.At = time.Unix(sec, 0)
 
-			mSignal := data.NewMeasurement[float64]("cvd", nil)
+			mSignal := data.NewMeasurement("cvd", nil)
 			mSignal.Label = "BTC/USD"
 			mSignal.At = time.Unix(sec, 0)
-			mSignal.SetMetric("signed_net_fraction", data.Metric[float64]{Label: "signed_net_fraction", Raw: val})
+			mSignal.SetMetric("signed_net_fraction", data.Metric{Label: "signed_net_fraction", Raw: val})
 			mSignal.SetMetadata(data.MetadataSupport, "1")
 			data.NewFinalizer[float64]().Complete(mSignal)
 
-			m.Peers = []*data.Measurement[float64]{mSignal}
+			m.Peers = []*data.Measurement{mSignal}
 			return m
 		}
 

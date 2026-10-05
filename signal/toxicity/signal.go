@@ -63,265 +63,265 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 
 		// 2. Baselines and dynamics
 		data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("net_withdrawal_fraction:bid").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("withdrawal_fraction_baseline:bid", data.NewMetric[float64](
-							"withdrawal_fraction_baseline:bid",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.SetMetric("withdrawal_fraction_divergence:bid", data.NewMetric[float64](
-							"withdrawal_fraction_divergence:bid",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							0.0,
-							out.ScoreScale,
-						).Write(out.Residual))
-						m.WriteStandardized("withdrawal_fraction_zscore:bid", out.ZScore)
-					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("net_withdrawal_fraction:ask").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("withdrawal_fraction_baseline:ask", data.NewMetric[float64](
-							"withdrawal_fraction_baseline:ask",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.SetMetric("withdrawal_fraction_divergence:ask", data.NewMetric[float64](
-							"withdrawal_fraction_divergence:ask",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							0.0,
-							out.ScoreScale,
-						).Write(out.Residual))
-						m.WriteStandardized("withdrawal_fraction_zscore:ask", out.ZScore)
-					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("retreat_fraction:bid").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("retreat_fraction_baseline:bid", data.NewMetric[float64](
-							"retreat_fraction_baseline:bid",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.WriteStandardized("retreat_fraction_zscore:bid", out.ZScore)
-					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("retreat_fraction:ask").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("retreat_fraction_baseline:ask", data.NewMetric[float64](
-							"retreat_fraction_baseline:ask",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.WriteStandardized("retreat_fraction_zscore:ask", out.ZScore)
-					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("net_replenishment_fraction:bid").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("replenishment_fraction_baseline:bid", data.NewMetric[float64](
-							"replenishment_fraction_baseline:bid",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("net_replenishment_fraction:ask").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("replenishment_fraction_baseline:ask", data.NewMetric[float64](
-							"replenishment_fraction_baseline:ask",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-					}
-				},
-			),
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					return temporal.Observation{
-						Value: m.GetMetric("net_withdrawal_fraction:bid").Raw,
-						At:    m.At.UnixNano(),
-					}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("withdrawal_fraction_velocity:bid", data.NewMetric[float64](
-							"withdrawal_fraction_velocity:bid",
-							data.UnitVelocity,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					return temporal.Observation{
-						Value: m.GetMetric("net_withdrawal_fraction:ask").Raw,
-						At:    m.At.UnixNano(),
-					}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("withdrawal_fraction_velocity:ask", data.NewMetric[float64](
-							"withdrawal_fraction_velocity:ask",
-							data.UnitVelocity,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("touch_fill_fraction:bid").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("fill_fraction_baseline:bid", data.NewMetric[float64](
-							"fill_fraction_baseline:bid",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.SetMetric("fill_fraction_divergence:bid", data.NewMetric[float64](
-							"fill_fraction_divergence:bid",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							0.0,
-							out.ScoreScale,
-						).Write(out.Residual))
-						m.WriteStandardized("fill_fraction_zscore:bid", out.ZScore)
-					}
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement) float64 {
+				return m.GetMetric("net_withdrawal_fraction:bid").Raw
+			},
+			func(m *data.Measurement, out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("withdrawal_fraction_baseline:bid", data.NewMetric(
+						"withdrawal_fraction_baseline:bid",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.SetMetric("withdrawal_fraction_divergence:bid", data.NewMetric(
+						"withdrawal_fraction_divergence:bid",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						0.0,
+						out.ScoreScale,
+					).Write(out.Residual))
+					m.WriteStandardized("withdrawal_fraction_zscore:bid", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement) float64 {
+				return m.GetMetric("net_withdrawal_fraction:ask").Raw
+			},
+			func(m *data.Measurement, out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("withdrawal_fraction_baseline:ask", data.NewMetric(
+						"withdrawal_fraction_baseline:ask",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.SetMetric("withdrawal_fraction_divergence:ask", data.NewMetric(
+						"withdrawal_fraction_divergence:ask",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						0.0,
+						out.ScoreScale,
+					).Write(out.Residual))
+					m.WriteStandardized("withdrawal_fraction_zscore:ask", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement) float64 {
+				return m.GetMetric("retreat_fraction:bid").Raw
+			},
+			func(m *data.Measurement, out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("retreat_fraction_baseline:bid", data.NewMetric(
+						"retreat_fraction_baseline:bid",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.WriteStandardized("retreat_fraction_zscore:bid", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement) float64 {
+				return m.GetMetric("retreat_fraction:ask").Raw
+			},
+			func(m *data.Measurement, out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("retreat_fraction_baseline:ask", data.NewMetric(
+						"retreat_fraction_baseline:ask",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.WriteStandardized("retreat_fraction_zscore:ask", out.ZScore)
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement) float64 {
+				return m.GetMetric("net_replenishment_fraction:bid").Raw
+			},
+			func(m *data.Measurement, out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("replenishment_fraction_baseline:bid", data.NewMetric(
+						"replenishment_fraction_baseline:bid",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement) float64 {
+				return m.GetMetric("net_replenishment_fraction:ask").Raw
+			},
+			func(m *data.Measurement, out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("replenishment_fraction_baseline:ask", data.NewMetric(
+						"replenishment_fraction_baseline:ask",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+				}
+			},
+		),
+		data.NewAdapter(
+			temporal.NewVelocity(),
+			func(m *data.Measurement) temporal.Observation {
+				return temporal.Observation{
+					Value: m.GetMetric("net_withdrawal_fraction:bid").Raw,
+					At:    m.At.UnixNano(),
+				}
+			},
+			func(m *data.Measurement, out temporal.VelocityReading) {
+				if out.Defined {
+					m.SetMetric("withdrawal_fraction_velocity:bid", data.NewMetric(
+						"withdrawal_fraction_velocity:bid",
+						data.UnitVelocity,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.Rate))
+				}
+			},
+		),
+		data.NewAdapter(
+			temporal.NewVelocity(),
+			func(m *data.Measurement) temporal.Observation {
+				return temporal.Observation{
+					Value: m.GetMetric("net_withdrawal_fraction:ask").Raw,
+					At:    m.At.UnixNano(),
+				}
+			},
+			func(m *data.Measurement, out temporal.VelocityReading) {
+				if out.Defined {
+					m.SetMetric("withdrawal_fraction_velocity:ask", data.NewMetric(
+						"withdrawal_fraction_velocity:ask",
+						data.UnitVelocity,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.Rate))
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement) float64 {
+				return m.GetMetric("touch_fill_fraction:bid").Raw
+			},
+			func(m *data.Measurement, out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("fill_fraction_baseline:bid", data.NewMetric(
+						"fill_fraction_baseline:bid",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.SetMetric("fill_fraction_divergence:bid", data.NewMetric(
+						"fill_fraction_divergence:bid",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						0.0,
+						out.ScoreScale,
+					).Write(out.Residual))
+					m.WriteStandardized("fill_fraction_zscore:bid", out.ZScore)
+				}
+				m.EnsureMetadata()
+				m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
+				if out.HasPrior {
+					m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
+				}
+				if out.VarianceDefined {
+					m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
+				}
+			},
+		),
+		data.NewAdapter(
+			adaptive.NewBaseline(adaptive.NewWindow()),
+			func(m *data.Measurement) float64 {
+				return m.GetMetric("touch_fill_fraction:ask").Raw
+			},
+			func(m *data.Measurement, out adaptive.BaselineReading) {
+				if out.HasPrior {
+					m.SetMetric("fill_fraction_baseline:ask", data.NewMetric(
+						"fill_fraction_baseline:ask",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						out.Baseline,
+						out.ScoreScale,
+					).Write(out.Baseline))
+					m.SetMetric("fill_fraction_divergence:ask", data.NewMetric(
+						"fill_fraction_divergence:ask",
+						data.UnitDimensionless,
+						data.TimescaleInstantaneous,
+						0.0,
+						out.ScoreScale,
+					).Write(out.Residual))
+					m.WriteStandardized("fill_fraction_zscore:ask", out.ZScore)
 					m.EnsureMetadata()
-					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(out.Count, 'f', -1, 64))
-					if out.HasPrior {
-						m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
-					}
-					if out.VarianceDefined {
-						m.SetMetadata(data.MetadataNoiseVariance, strconv.FormatFloat(out.Variance, 'f', -1, 64))
-					}
-				},
-			),
-			data.NewAdapter(
-				adaptive.NewBaseline(adaptive.NewWindow()),
-				func(m *data.Measurement[float64]) float64 {
-					return m.GetMetric("touch_fill_fraction:ask").Raw
-				},
-				func(m *data.Measurement[float64], out adaptive.BaselineReading) {
-					if out.HasPrior {
-						m.SetMetric("fill_fraction_baseline:ask", data.NewMetric[float64](
-							"fill_fraction_baseline:ask",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							out.Baseline,
-							out.ScoreScale,
-						).Write(out.Baseline))
-						m.SetMetric("fill_fraction_divergence:ask", data.NewMetric[float64](
-							"fill_fraction_divergence:ask",
-							data.UnitDimensionless,
-							data.TimescaleInstantaneous,
-							0.0,
-							out.ScoreScale,
-						).Write(out.Residual))
-						m.WriteStandardized("fill_fraction_zscore:ask", out.ZScore)
-						m.EnsureMetadata()
-						m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
-					}
-				},
-			),
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					return temporal.Observation{
-						Value: m.GetMetric("touch_fill_fraction:bid").Raw,
-						At:    m.At.UnixNano(),
-					}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("fill_fraction_velocity:bid", data.NewMetric[float64](
-							"fill_fraction_velocity:bid",
-							data.UnitVelocity,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
-			data.NewAdapter(
-				temporal.NewVelocity(),
-				func(m *data.Measurement[float64]) temporal.Observation {
-					return temporal.Observation{
-						Value: m.GetMetric("touch_fill_fraction:ask").Raw,
-						At:    m.At.UnixNano(),
-					}
-				},
-				func(m *data.Measurement[float64], out temporal.VelocityReading) {
-					if out.Defined {
-						m.SetMetric("fill_fraction_velocity:ask", data.NewMetric[float64](
-							"fill_fraction_velocity:ask",
-							data.UnitVelocity,
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(out.Rate))
-					}
-				},
-			),
+					m.SetMetadata(data.MetadataDivergence, strconv.FormatFloat(out.Residual, 'f', -1, 64))
+				}
+			},
+		),
+		data.NewAdapter(
+			temporal.NewVelocity(),
+			func(m *data.Measurement) temporal.Observation {
+				return temporal.Observation{
+					Value: m.GetMetric("touch_fill_fraction:bid").Raw,
+					At:    m.At.UnixNano(),
+				}
+			},
+			func(m *data.Measurement, out temporal.VelocityReading) {
+				if out.Defined {
+					m.SetMetric("fill_fraction_velocity:bid", data.NewMetric(
+						"fill_fraction_velocity:bid",
+						data.UnitVelocity,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.Rate))
+				}
+			},
+		),
+		data.NewAdapter(
+			temporal.NewVelocity(),
+			func(m *data.Measurement) temporal.Observation {
+				return temporal.Observation{
+					Value: m.GetMetric("touch_fill_fraction:ask").Raw,
+					At:    m.At.UnixNano(),
+				}
+			},
+			func(m *data.Measurement, out temporal.VelocityReading) {
+				if out.Defined {
+					m.SetMetric("fill_fraction_velocity:ask", data.NewMetric(
+						"fill_fraction_velocity:ask",
+						data.UnitVelocity,
+						data.TimescaleInstantaneous,
+						0.0,
+						0.0,
+					).Write(out.Rate))
+				}
+			},
+		),
 
 		// 3. Recurrence
 		data.NewRecurrence(
@@ -341,7 +341,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
 		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
@@ -358,7 +358,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
-	out.Peers = []*data.Measurement[float64]{prior}
+	out.Peers = []*data.Measurement{prior}
 
 	if side, hasSide := prior.GetProvenance("side"); hasSide {
 		out.SetProvenance("side", side)
@@ -408,7 +408,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 				totalQty := bidQty + askQty
 
 				if _, ok := out.LookupMetric("best_bid"); !ok {
-					out.SetMetric("best_bid", data.NewMetric[float64](
+					out.SetMetric("best_bid", data.NewMetric(
 						"best_bid",
 						data.UnitPrice,
 						data.TimescaleInstantaneous,
@@ -417,7 +417,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 					).Write(bidPrice))
 				}
 				if _, ok := out.LookupMetric("touch_quantity:bid"); !ok {
-					out.SetMetric("touch_quantity:bid", data.NewMetric[float64](
+					out.SetMetric("touch_quantity:bid", data.NewMetric(
 						"touch_quantity:bid",
 						data.UnitQuantity,
 						data.TimescaleInstantaneous,
@@ -426,7 +426,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 					).Write(bidQty))
 				}
 				if _, ok := out.LookupMetric("best_ask"); !ok {
-					out.SetMetric("best_ask", data.NewMetric[float64](
+					out.SetMetric("best_ask", data.NewMetric(
 						"best_ask",
 						data.UnitPrice,
 						data.TimescaleInstantaneous,
@@ -435,7 +435,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 					).Write(askPrice))
 				}
 				if _, ok := out.LookupMetric("touch_quantity:ask"); !ok {
-					out.SetMetric("touch_quantity:ask", data.NewMetric[float64](
+					out.SetMetric("touch_quantity:ask", data.NewMetric(
 						"touch_quantity:ask",
 						data.UnitQuantity,
 						data.TimescaleInstantaneous,
@@ -447,7 +447,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		})
 	}
 
-	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 

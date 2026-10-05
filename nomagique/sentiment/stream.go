@@ -27,7 +27,7 @@ func NewCrossSentiment() core.Primitive {
 func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m == nil || m.Err != nil {
 				if !yield(arriving) {
@@ -118,21 +118,21 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 
 			valid := positive + negative + zero
 			cohortCount := float64(len(m.Peers))
-			m.SetMetric("cohort_member_count", data.NewMetric[float64](
+			m.SetMetric("cohort_member_count", data.NewMetric(
 				"cohort_member_count",
 				data.UnitCount,
 				data.TimescaleInstantaneous,
 				cohortCount,
 				cohortCount,
 			).Write(cohortCount))
-			m.SetMetric("valid_member_count", data.NewMetric[float64](
+			m.SetMetric("valid_member_count", data.NewMetric(
 				"valid_member_count",
 				data.UnitCount,
 				data.TimescaleInstantaneous,
 				cohortCount,
 				cohortCount,
 			).Write(valid))
-			m.SetMetric("excluded_member_count", data.NewMetric[float64](
+			m.SetMetric("excluded_member_count", data.NewMetric(
 				"excluded_member_count",
 				data.UnitCount,
 				data.TimescaleInstantaneous,
@@ -142,21 +142,21 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 
 			if valid > 0 {
 				halfValid := valid / 2.0
-				m.SetMetric("advance_count", data.NewMetric[float64](
+				m.SetMetric("advance_count", data.NewMetric(
 					"advance_count",
 					data.UnitCount,
 					data.TimescaleInstantaneous,
 					halfValid,
 					halfValid,
 				).Write(positive))
-				m.SetMetric("decline_count", data.NewMetric[float64](
+				m.SetMetric("decline_count", data.NewMetric(
 					"decline_count",
 					data.UnitCount,
 					data.TimescaleInstantaneous,
 					halfValid,
 					halfValid,
 				).Write(negative))
-				m.SetMetric("unchanged_count", data.NewMetric[float64](
+				m.SetMetric("unchanged_count", data.NewMetric(
 					"unchanged_count",
 					data.UnitCount,
 					data.TimescaleInstantaneous,
@@ -169,35 +169,35 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				unchangedFraction := zero / valid
 				breadth := advanceFraction - declineFraction
 
-				m.SetMetric("advance_fraction", data.NewMetric[float64](
+				m.SetMetric("advance_fraction", data.NewMetric(
 					"advance_fraction",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
 					0.5,
 					0.5,
 				).Write(advanceFraction))
-				m.SetMetric("decline_fraction", data.NewMetric[float64](
+				m.SetMetric("decline_fraction", data.NewMetric(
 					"decline_fraction",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
 					0.5,
 					0.5,
 				).Write(declineFraction))
-				m.SetMetric("unchanged_fraction", data.NewMetric[float64](
+				m.SetMetric("unchanged_fraction", data.NewMetric(
 					"unchanged_fraction",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
 					0.0,
 					1.0,
 				).Write(unchangedFraction))
-				m.SetMetric("advance_decline_spread", data.NewMetric[float64](
+				m.SetMetric("advance_decline_spread", data.NewMetric(
 					"advance_decline_spread",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
 					0.0,
 					1.0,
 				).Write(breadth))
-				m.SetMetric("breadth", data.NewMetric[float64](
+				m.SetMetric("breadth", data.NewMetric(
 					"breadth",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
@@ -206,7 +206,7 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				).Write(breadth))
 
 				participation := (positive + negative) / valid
-				m.SetMetric("directional_participation", data.NewMetric[float64](
+				m.SetMetric("directional_participation", data.NewMetric(
 					"directional_participation",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
@@ -218,14 +218,14 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				if positive+negative > 0 {
 					dirConsensus = math.Abs(positive-negative) / (positive + negative)
 				}
-				m.SetMetric("directional_consensus", data.NewMetric[float64](
+				m.SetMetric("directional_consensus", data.NewMetric(
 					"directional_consensus",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
 					0.5,
 					0.5,
 				).Write(dirConsensus))
-				m.SetMetric("directional_agreement", data.NewMetric[float64](
+				m.SetMetric("directional_agreement", data.NewMetric(
 					"directional_agreement",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
@@ -270,49 +270,49 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				rms := math.Sqrt(sumSq / valid)
 				returnScale := rms
 
-				m.SetMetric("median_return", data.NewMetric[float64](
+				m.SetMetric("median_return", data.NewMetric(
 					"median_return",
 					data.UnitLogReturn,
 					data.TimescaleInstantaneous,
 					0.0,
 					returnScale,
 				).Write(medianReturn))
-				m.SetMetric("signed_median", data.NewMetric[float64](
+				m.SetMetric("signed_median", data.NewMetric(
 					"signed_median",
 					data.UnitLogReturn,
 					data.TimescaleInstantaneous,
 					0.0,
 					returnScale,
 				).Write(medianReturn))
-				m.SetMetric("median_absolute_return", data.NewMetric[float64](
+				m.SetMetric("median_absolute_return", data.NewMetric(
 					"median_absolute_return",
 					data.UnitLogReturn,
 					data.TimescaleInstantaneous,
 					0.0,
 					returnScale,
 				).Write(medianAbsReturn))
-				m.SetMetric("largest_absolute_return", data.NewMetric[float64](
+				m.SetMetric("largest_absolute_return", data.NewMetric(
 					"largest_absolute_return",
 					data.UnitLogReturn,
 					data.TimescaleInstantaneous,
 					0.0,
 					returnScale,
 				).Write(maxAbsChange))
-				m.SetMetric("median_asof_age_seconds", data.NewMetric[float64](
+				m.SetMetric("median_asof_age_seconds", data.NewMetric(
 					"median_asof_age_seconds",
 					data.UnitSecond,
 					data.TimescaleInstantaneous,
 					0.0,
 					maxAsofAge,
 				).Write(medianAsofAge))
-				m.SetMetric("median_from_age_seconds", data.NewMetric[float64](
+				m.SetMetric("median_from_age_seconds", data.NewMetric(
 					"median_from_age_seconds",
 					data.UnitSecond,
 					data.TimescaleInstantaneous,
 					0.0,
 					maxAsofAge,
 				).Write(medianFromAge))
-				m.SetMetric("max_asof_age_seconds", data.NewMetric[float64](
+				m.SetMetric("max_asof_age_seconds", data.NewMetric(
 					"max_asof_age_seconds",
 					data.UnitSecond,
 					data.TimescaleInstantaneous,
@@ -320,14 +320,14 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 					maxAsofAge,
 				).Write(maxAsofAge))
 
-				m.SetMetric("mean_absolute_return", data.NewMetric[float64](
+				m.SetMetric("mean_absolute_return", data.NewMetric(
 					"mean_absolute_return",
 					data.UnitLogReturn,
 					data.TimescaleInstantaneous,
 					0.0,
 					returnScale,
 				).Write(meanAbs))
-				m.SetMetric("rms_return", data.NewMetric[float64](
+				m.SetMetric("rms_return", data.NewMetric(
 					"rms_return",
 					data.UnitLogReturn,
 					data.TimescaleInstantaneous,
@@ -343,14 +343,14 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 					sumMagMad += math.Abs(c - medianAbsReturn)
 				}
 
-				m.SetMetric("return_mad", data.NewMetric[float64](
+				m.SetMetric("return_mad", data.NewMetric(
 					"return_mad",
 					data.UnitLogReturn,
 					data.TimescaleInstantaneous,
 					0.0,
 					returnScale,
 				).Write(sumMad/valid))
-				m.SetMetric("magnitude_mad", data.NewMetric[float64](
+				m.SetMetric("magnitude_mad", data.NewMetric(
 					"magnitude_mad",
 					data.UnitLogReturn,
 					data.TimescaleInstantaneous,
@@ -360,7 +360,7 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 
 				q1Idx := len(changes) / 4
 				q3Idx := (len(changes) * 3) / 4
-				m.SetMetric("return_interquartile_range", data.NewMetric[float64](
+				m.SetMetric("return_interquartile_range", data.NewMetric(
 					"return_interquartile_range",
 					data.UnitLogReturn,
 					data.TimescaleInstantaneous,
@@ -369,7 +369,7 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				).Write(changes[q3Idx]-changes[q1Idx]))
 
 				if sumAbs > 0 {
-					m.SetMetric("largest_move_share", data.NewMetric[float64](
+					m.SetMetric("largest_move_share", data.NewMetric(
 						"largest_move_share",
 						data.UnitRatio,
 						data.TimescaleInstantaneous,
@@ -380,14 +380,14 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 
 				if hasFocal {
 					halfValid := valid / 2.0
-					m.SetMetric("return", data.NewMetric[float64](
+					m.SetMetric("return", data.NewMetric(
 						"return",
 						data.UnitLogReturn,
 						data.TimescaleInstantaneous,
 						0.0,
 						returnScale,
 					).Write(focalChange))
-					m.SetMetric("absolute_return", data.NewMetric[float64](
+					m.SetMetric("absolute_return", data.NewMetric(
 						"absolute_return",
 						data.UnitLogReturn,
 						data.TimescaleInstantaneous,
@@ -395,21 +395,21 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 						returnScale,
 					).Write(math.Abs(focalChange)))
 
-					m.SetMetric("same_direction_peer_count", data.NewMetric[float64](
+					m.SetMetric("same_direction_peer_count", data.NewMetric(
 						"same_direction_peer_count",
 						data.UnitCount,
 						data.TimescaleInstantaneous,
 						halfValid,
 						halfValid,
 					).Write(sameDir))
-					m.SetMetric("opposite_direction_peer_count", data.NewMetric[float64](
+					m.SetMetric("opposite_direction_peer_count", data.NewMetric(
 						"opposite_direction_peer_count",
 						data.UnitCount,
 						data.TimescaleInstantaneous,
 						halfValid,
 						halfValid,
 					).Write(oppDir))
-					m.SetMetric("zero_return_peer_count", data.NewMetric[float64](
+					m.SetMetric("zero_return_peer_count", data.NewMetric(
 						"zero_return_peer_count",
 						data.UnitCount,
 						data.TimescaleInstantaneous,
@@ -417,21 +417,21 @@ func (op *CrossSentiment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 						valid,
 					).Write(zeroDir))
 
-					m.SetMetric("same_direction_peer_fraction", data.NewMetric[float64](
+					m.SetMetric("same_direction_peer_fraction", data.NewMetric(
 						"same_direction_peer_fraction",
 						data.UnitRatio,
 						data.TimescaleInstantaneous,
 						0.5,
 						0.5,
 					).Write(sameDir/valid))
-					m.SetMetric("opposite_direction_peer_fraction", data.NewMetric[float64](
+					m.SetMetric("opposite_direction_peer_fraction", data.NewMetric(
 						"opposite_direction_peer_fraction",
 						data.UnitRatio,
 						data.TimescaleInstantaneous,
 						0.5,
 						0.5,
 					).Write(oppDir/valid))
-					m.SetMetric("zero_return_peer_fraction", data.NewMetric[float64](
+					m.SetMetric("zero_return_peer_fraction", data.NewMetric(
 						"zero_return_peer_fraction",
 						data.UnitRatio,
 						data.TimescaleInstantaneous,

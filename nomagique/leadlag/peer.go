@@ -24,7 +24,7 @@ func NewPeerEnergy() core.Primitive {
 func (op *PeerEnergy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if len(m.Peers) > 0 {
 				var minPeerFrom int64
@@ -36,7 +36,7 @@ func (op *PeerEnergy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 					}
 				}
 				peerFromSec := float64(minPeerFrom) * 1e-9
-				m.SetMetric("PeerFrom", data.NewMetric[float64](
+				m.SetMetric("PeerFrom", data.NewMetric(
 					"PeerFrom",
 					data.UnitSecond,
 					data.TimescaleInstantaneous,
@@ -46,7 +46,7 @@ func (op *PeerEnergy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			}
 
 			if val, ok := m.LookupMetric("return_energy_rate:measured"); ok {
-				m.SetMetric("focal_return_energy_rate", data.NewMetric[float64](
+				m.SetMetric("focal_return_energy_rate", data.NewMetric(
 					"focal_return_energy_rate",
 					val.Unit,
 					val.Timescale,
@@ -55,7 +55,7 @@ func (op *PeerEnergy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				).Write(val.Raw))
 			}
 			if val, ok := m.LookupMetric("peer_return_energy_rate"); ok {
-				m.SetMetric("relative_cohort_return_energy", data.NewMetric[float64](
+				m.SetMetric("relative_cohort_return_energy", data.NewMetric(
 					"relative_cohort_return_energy",
 					val.Unit,
 					val.Timescale,

@@ -2811,11 +2811,11 @@
 		"config": [
 			{
 				"name": "read",
-				"type": "func(m *data.Measurement[float64]) In"
+				"type": "func(m *data.Measurement) In"
 			},
 			{
 				"name": "write",
-				"type": "func(m *data.Measurement[float64], out Out)"
+				"type": "func(m *data.Measurement, out Out)"
 			}
 		]
 	},

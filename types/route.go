@@ -55,7 +55,7 @@ AllowsRoute reports whether a measurement should go on the dashboard websocket
 for the current page. Raw venue feeds stay off the wire. Focus still limits
 which symbol is published so the UI is not flooded.
 */
-func Filters(measurement *data.Measurement[float64]) bool {
+func Filters(measurement *data.Measurement) bool {
 	if measurement == nil {
 		return false
 	}
@@ -78,7 +78,7 @@ func Filters(measurement *data.Measurement[float64]) bool {
 	}
 }
 
-func isFocus(measurement *data.Measurement[float64]) bool {
+func isFocus(measurement *data.Measurement) bool {
 	if Focus() == "" {
 		return true
 	}
@@ -86,7 +86,7 @@ func isFocus(measurement *data.Measurement[float64]) bool {
 	return measurement.Label == Focus()
 }
 
-func isSignal(measurement *data.Measurement[float64], signals ...string) bool {
+func isSignal(measurement *data.Measurement, signals ...string) bool {
 	if len(signals) == 0 {
 		switch kernelSource(measurement.Source) {
 		case "correlation",
@@ -109,22 +109,22 @@ func isSignal(measurement *data.Measurement[float64], signals ...string) bool {
 	return slices.Contains(signals, kernelSource(measurement.Source))
 }
 
-func isLogic(measurement *data.Measurement[float64], solverNames ...string) bool {
+func isLogic(measurement *data.Measurement, solverNames ...string) bool {
 	if kernelSource(measurement.Source) == "websocket" {
 		return true
 	}
 	return slices.Contains(solverNames, kernelSource(measurement.Source))
 }
 
-func isStrategy(measurement *data.Measurement[float64], strategies ...string) bool {
+func isStrategy(measurement *data.Measurement, strategies ...string) bool {
 	return slices.Contains(strategies, kernelSource(measurement.Source))
 }
 
-func isSpot(measurement *data.Measurement[float64]) bool {
+func isSpot(measurement *data.Measurement) bool {
 	return kernelSource(measurement.Source) == "spot"
 }
 
-func isFutures(measurement *data.Measurement[float64]) bool {
+func isFutures(measurement *data.Measurement) bool {
 	return kernelSource(measurement.Source) == "futures"
 }
 

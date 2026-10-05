@@ -16,9 +16,9 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 		So(grid.IsSettled(), ShouldBeFalse)
 
 		Convey("First tick initializes metrics without false directional movement", func() {
-			measurement := data.NewMeasurement[float64]("BTC/USD", nil)
-			measurement.SetMetric("m1", data.Metric[float64]{Label: "m1", Raw: 150.0})
-			measurement.SetMetric("m2", data.Metric[float64]{Label: "m2", Raw: 300.0})
+			measurement := data.NewMeasurement("BTC/USD", nil)
+			measurement.SetMetric("m1", data.Metric{Label: "m1", Raw: 150.0})
+			measurement.SetMetric("m2", data.Metric{Label: "m2", Raw: 300.0})
 
 			grid.Update(measurement)
 
@@ -28,27 +28,27 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 		})
 
 		Convey("Subsequent ticks record true directional correlation", func() {
-			firstMeasurement := data.NewMeasurement[float64]("websocket", nil)
+			firstMeasurement := data.NewMeasurement("websocket", nil)
 			firstMeasurement.Label = "BTC/USD"
-			firstMeasurement.SetMetric("m1", data.Metric[float64]{Label: "m1", Raw: 100.0})
-			firstMeasurement.SetMetric("m2", data.Metric[float64]{Label: "m2", Raw: 200.0})
-			firstMeasurement.SetMetric("m3", data.Metric[float64]{Label: "m3", Raw: 50.0})
+			firstMeasurement.SetMetric("m1", data.Metric{Label: "m1", Raw: 100.0})
+			firstMeasurement.SetMetric("m2", data.Metric{Label: "m2", Raw: 200.0})
+			firstMeasurement.SetMetric("m3", data.Metric{Label: "m3", Raw: 50.0})
 			grid.Update(firstMeasurement)
 
 			// Tick 2: m1 goes UP, m2 goes UP, m3 goes DOWN
-			secondMeasurement := data.NewMeasurement[float64]("websocket", nil)
+			secondMeasurement := data.NewMeasurement("websocket", nil)
 			secondMeasurement.Label = "BTC/USD"
-			secondMeasurement.SetMetric("m1", data.Metric[float64]{Label: "m1", Raw: 105.0})
-			secondMeasurement.SetMetric("m2", data.Metric[float64]{Label: "m2", Raw: 400.0})
-			secondMeasurement.SetMetric("m3", data.Metric[float64]{Label: "m3", Raw: 40.0})
+			secondMeasurement.SetMetric("m1", data.Metric{Label: "m1", Raw: 105.0})
+			secondMeasurement.SetMetric("m2", data.Metric{Label: "m2", Raw: 400.0})
+			secondMeasurement.SetMetric("m3", data.Metric{Label: "m3", Raw: 40.0})
 			grid.Update(secondMeasurement)
 
 			// Tick 3: m1 goes UP, m2 goes UP, m3 goes DOWN again
-			thirdMeasurement := data.NewMeasurement[float64]("websocket", nil)
+			thirdMeasurement := data.NewMeasurement("websocket", nil)
 			thirdMeasurement.Label = "BTC/USD"
-			thirdMeasurement.SetMetric("m1", data.Metric[float64]{Label: "m1", Raw: 110.0})
-			thirdMeasurement.SetMetric("m2", data.Metric[float64]{Label: "m2", Raw: 800.0})
-			thirdMeasurement.SetMetric("m3", data.Metric[float64]{Label: "m3", Raw: 30.0})
+			thirdMeasurement.SetMetric("m1", data.Metric{Label: "m1", Raw: 110.0})
+			thirdMeasurement.SetMetric("m2", data.Metric{Label: "m2", Raw: 800.0})
+			thirdMeasurement.SetMetric("m3", data.Metric{Label: "m3", Raw: 30.0})
 			grid.Update(thirdMeasurement)
 
 			hasSame := false
@@ -67,14 +67,14 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 		})
 
 		Convey("Peer label is not shadowed by parent symbol", func() {
-			ingress := data.NewMeasurement[float64]("websocket", nil)
+			ingress := data.NewMeasurement("websocket", nil)
 			ingress.Label = "BTC/USD"
-			ingress.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 50000})
+			ingress.SetMetric("mid", data.Metric{Label: "mid", Raw: 50000})
 
-			peer := data.NewMeasurement[float64]("resonance", nil)
+			peer := data.NewMeasurement("resonance", nil)
 			peer.Label = "ETH/USD"
-			peer.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 3000})
-			ingress.Peers = []*data.Measurement[float64]{peer}
+			peer.SetMetric("mid", data.Metric{Label: "mid", Raw: 3000})
+			ingress.Peers = []*data.Measurement{peer}
 
 			grid.Update(ingress)
 
@@ -89,31 +89,31 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 		Convey("Unseen metrics produce no lit regions while learned metrics activate deterministically", func() {
 			settleGrid := store.NewGrid()
 			for tick := 0; tick < 20; tick++ {
-				metricSample := data.NewMeasurement[float64]("BASE/USD", nil)
+				metricSample := data.NewMeasurement("BASE/USD", nil)
 				val1 := math.Sin(float64(tick)*0.2) * 5.0
 				val2 := math.Cos(float64(tick)*0.2) * 5.0
-				metricSample.SetMetric("x1", data.Metric[float64]{Label: "x1", Raw: val1, Deformation: &val1})
-				metricSample.SetMetric("x2", data.Metric[float64]{Label: "x2", Raw: val2, Deformation: &val2})
+				metricSample.SetMetric("x1", data.Metric{Label: "x1", Raw: val1, Deformation: &val1})
+				metricSample.SetMetric("x2", data.Metric{Label: "x2", Raw: val2, Deformation: &val2})
 				settleGrid.Update(metricSample)
 			}
 			settleGrid.Settle()
 			So(settleGrid.IsSettled(), ShouldBeTrue)
 
 			deformation := 0.25
-			unseenMeasurement := data.NewMeasurement[float64]("SOL/USD", nil)
+			unseenMeasurement := data.NewMeasurement("SOL/USD", nil)
 			unseenMeasurement.Maturity = 1.0
 			unseenMeasurement.SNR = 10.0
 			unseenMeasurement.SNRDefined = true
-			unseenMeasurement.SetMetric("depth_flow", data.Metric[float64]{Label: "depth_flow", Raw: 150, Deformation: &deformation})
+			unseenMeasurement.SetMetric("depth_flow", data.Metric{Label: "depth_flow", Raw: 150, Deformation: &deformation})
 
 			tokens := settleGrid.LitRegions(unseenMeasurement)
 			So(tokens, ShouldBeNil)
 
-			learnedMeasurement := data.NewMeasurement[float64]("BASE/USD", nil)
+			learnedMeasurement := data.NewMeasurement("BASE/USD", nil)
 			learnedMeasurement.Maturity = 1.0
 			learnedMeasurement.SNR = 10.0
 			learnedMeasurement.SNRDefined = true
-			learnedMeasurement.SetMetric("x1", data.Metric[float64]{Label: "x1", Raw: 100, Deformation: &deformation})
+			learnedMeasurement.SetMetric("x1", data.Metric{Label: "x1", Raw: 100, Deformation: &deformation})
 
 			firstTokens := settleGrid.LitRegions(learnedMeasurement)
 			secondTokens := settleGrid.LitRegions(learnedMeasurement)
@@ -133,7 +133,7 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 
 			// Stream 40 cycles of synthetic market oscillations
 			for tick := 0; tick < 40; tick++ {
-				measurement := data.NewMeasurement[float64]("BTC/USD", nil)
+				measurement := data.NewMeasurement("BTC/USD", nil)
 
 				for index := 0; index < totalMetrics; index++ {
 					group := index / 25
@@ -143,7 +143,7 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 					values[index] += delta
 
 					label := fmt.Sprintf("metric_%03d", index)
-					measurement.SetMetric(label, data.Metric[float64]{
+					measurement.SetMetric(label, data.Metric{
 						Label: label,
 						Raw:   values[index],
 					})
@@ -165,7 +165,7 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			}
 
 			Convey("RegionScores evaluates mean activity and reports coverage without sum bias", func() {
-				evalMeasurement := data.NewMeasurement[float64]("BTC/USD", nil)
+				evalMeasurement := data.NewMeasurement("BTC/USD", nil)
 				evalMeasurement.Maturity = 1.0
 				evalMeasurement.SNR = 10.0
 				evalMeasurement.SNRDefined = true
@@ -187,7 +187,7 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 				// Region 1 has multiple contributing metrics with activity 1.0
 				activity1 := 1.0
 				for index := 0; index < len(region1Keys); index++ {
-					evalMeasurement.SetMetric(region1Keys[index], data.Metric[float64]{
+					evalMeasurement.SetMetric(region1Keys[index], data.Metric{
 						Label:       region1Keys[index],
 						Deformation: &activity1,
 					})
@@ -195,7 +195,7 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 
 				// Region 2 has a single metric with higher individual spike 2.0
 				activity2 := 2.0
-				evalMeasurement.SetMetric(region2Keys[0], data.Metric[float64]{
+				evalMeasurement.SetMetric(region2Keys[0], data.Metric{
 					Label:       region2Keys[0],
 					Deformation: &activity2,
 				})
@@ -221,7 +221,7 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			})
 
 			Convey("Region with higher mean activity wins LitRegions", func() {
-				evalMeasurement := data.NewMeasurement[float64]("BTC/USD", nil)
+				evalMeasurement := data.NewMeasurement("BTC/USD", nil)
 				evalMeasurement.Maturity = 1.0
 				evalMeasurement.SNR = 10.0
 				evalMeasurement.SNRDefined = true
@@ -239,14 +239,14 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 
 				activity1 := 3.0
 				for index := 0; index < len(region1Keys); index++ {
-					evalMeasurement.SetMetric(region1Keys[index], data.Metric[float64]{
+					evalMeasurement.SetMetric(region1Keys[index], data.Metric{
 						Label:       region1Keys[index],
 						Deformation: &activity1,
 					})
 				}
 
 				activity2 := 2.0
-				evalMeasurement.SetMetric(region2Keys[0], data.Metric[float64]{
+				evalMeasurement.SetMetric(region2Keys[0], data.Metric{
 					Label:       region2Keys[0],
 					Deformation: &activity2,
 				})
@@ -258,14 +258,14 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 		})
 
 		Convey("Snapshot and Restore works cleanly and safely", func() {
-			firstMeasurement := data.NewMeasurement[float64]("BTC/USD", nil)
-			firstMeasurement.SetMetric("alpha", data.Metric[float64]{Label: "alpha", Raw: 10})
-			firstMeasurement.SetMetric("beta", data.Metric[float64]{Label: "beta", Raw: 20})
+			firstMeasurement := data.NewMeasurement("BTC/USD", nil)
+			firstMeasurement.SetMetric("alpha", data.Metric{Label: "alpha", Raw: 10})
+			firstMeasurement.SetMetric("beta", data.Metric{Label: "beta", Raw: 20})
 			grid.Update(firstMeasurement)
 
-			secondMeasurement := data.NewMeasurement[float64]("BTC/USD", nil)
-			secondMeasurement.SetMetric("alpha", data.Metric[float64]{Label: "alpha", Raw: 15})
-			secondMeasurement.SetMetric("beta", data.Metric[float64]{Label: "beta", Raw: 25})
+			secondMeasurement := data.NewMeasurement("BTC/USD", nil)
+			secondMeasurement.SetMetric("alpha", data.Metric{Label: "alpha", Raw: 15})
+			secondMeasurement.SetMetric("beta", data.Metric{Label: "beta", Raw: 25})
 			grid.Update(secondMeasurement)
 
 			grid.Settle()
@@ -286,14 +286,14 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			peerGrid := store.NewGrid()
 
 			for tick := 0; tick < 5; tick++ {
-				ingress := data.NewMeasurement[float64]("websocket", nil)
+				ingress := data.NewMeasurement("websocket", nil)
 				ingress.Label = "BTC/USD"
-				ingress.SetMetric("mid", data.Metric[float64]{Label: "mid", Raw: 50000 + float64(tick)*10})
+				ingress.SetMetric("mid", data.Metric{Label: "mid", Raw: 50000 + float64(tick)*10})
 
-				peer := data.NewMeasurement[float64]("resonance", nil)
+				peer := data.NewMeasurement("resonance", nil)
 				peer.Label = "ETH/USD"
-				peer.SetMetric("spread", data.Metric[float64]{Label: "spread", Raw: 3000 + float64(tick)*5})
-				ingress.Peers = []*data.Measurement[float64]{peer}
+				peer.SetMetric("spread", data.Metric{Label: "spread", Raw: 3000 + float64(tick)*5})
+				ingress.Peers = []*data.Measurement{peer}
 
 				peerGrid.Update(ingress)
 			}
@@ -308,23 +308,23 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			So(peerGrid.Cells[btcKey].Region, ShouldBeGreaterThan, 0)
 			So(peerGrid.Cells[ethKey].Region, ShouldBeGreaterThan, 0)
 
-			evalMeasurement := data.NewMeasurement[float64]("websocket", nil)
+			evalMeasurement := data.NewMeasurement("websocket", nil)
 			evalMeasurement.Label = "BTC/USD"
 			evalMeasurement.Maturity = 1.0
 			evalMeasurement.SNR = 10.0
 			evalMeasurement.SNRDefined = true
 
 			activeValue := 0.35
-			evalPeer := data.NewMeasurement[float64]("resonance", nil)
+			evalPeer := data.NewMeasurement("resonance", nil)
 			evalPeer.Label = "ETH/USD"
 			evalPeer.Maturity = 1.0
 			evalPeer.SNR = 10.0
 			evalPeer.SNRDefined = true
-			evalPeer.SetMetric("spread", data.Metric[float64]{
+			evalPeer.SetMetric("spread", data.Metric{
 				Label:       "spread",
 				Deformation: &activeValue,
 			})
-			evalMeasurement.Peers = []*data.Measurement[float64]{evalPeer}
+			evalMeasurement.Peers = []*data.Measurement{evalPeer}
 
 			tokens := peerGrid.LitRegions(evalMeasurement)
 			So(len(tokens), ShouldEqual, 1)
@@ -334,9 +334,9 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 		Convey("Late arrivals are partitioned when Settle is called again", func() {
 			reGrid := store.NewGrid()
 
-			firstMeasurement := data.NewMeasurement[float64]("BTC/USD", nil)
-			firstMeasurement.SetMetric("alpha", data.Metric[float64]{Label: "alpha", Raw: 10})
-			firstMeasurement.SetMetric("beta", data.Metric[float64]{Label: "beta", Raw: 20})
+			firstMeasurement := data.NewMeasurement("BTC/USD", nil)
+			firstMeasurement.SetMetric("alpha", data.Metric{Label: "alpha", Raw: 10})
+			firstMeasurement.SetMetric("beta", data.Metric{Label: "beta", Raw: 20})
 			reGrid.Update(firstMeasurement)
 			reGrid.Settle()
 
@@ -344,8 +344,8 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			So(reGrid.Cells[store.CellKey("BTC/USD", "BTC/USD", "alpha")].Region, ShouldBeGreaterThan, 0)
 
 			// Add late arrival metric
-			secondMeasurement := data.NewMeasurement[float64]("BTC/USD", nil)
-			secondMeasurement.SetMetric("gamma", data.Metric[float64]{Label: "gamma", Raw: 30})
+			secondMeasurement := data.NewMeasurement("BTC/USD", nil)
+			secondMeasurement.SetMetric("gamma", data.Metric{Label: "gamma", Raw: 30})
 			reGrid.Update(secondMeasurement)
 
 			gammaKey := store.CellKey("BTC/USD", "BTC/USD", "gamma")

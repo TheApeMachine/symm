@@ -68,7 +68,7 @@ tape fragment can later be recovered from storage using its epoch and
 sequence coordinates.
 */
 func (detector *Detector) Scan(
-	measurements iter.Seq[*data.Measurement[float64]],
+	measurements iter.Seq[*data.Measurement],
 ) {
 	var (
 		active bool
@@ -97,7 +97,7 @@ func (detector *Detector) Scan(
 		bestHighAt    time.Time
 	)
 
-	reset := func(measurement *data.Measurement[float64]) {
+	reset := func(measurement *data.Measurement) {
 		active = true
 
 		epoch = measurement.Epoch
@@ -304,9 +304,9 @@ func (detector *Detector) Flush(
 	highAt time.Time,
 	lowPrice *decimal.Decimal,
 	highPrice *decimal.Decimal,
-) *data.Measurement[float64] {
-	metrics := map[string]data.Metric[float64]{
-		"StartSeqIdx": data.NewMetric[float64](
+) *data.Measurement {
+	metrics := map[string]data.Metric{
+		"StartSeqIdx": data.NewMetric(
 			"start_seq_idx",
 			data.UnitCount,
 			data.TimescaleInstantaneous,
@@ -314,7 +314,7 @@ func (detector *Detector) Flush(
 			1,
 		).Write(float64(startIdx)),
 
-		"LowSeqIdx": data.NewMetric[float64](
+		"LowSeqIdx": data.NewMetric(
 			"low_seq_idx",
 			data.UnitCount,
 			data.TimescaleInstantaneous,
@@ -322,7 +322,7 @@ func (detector *Detector) Flush(
 			1,
 		).Write(float64(lowIdx)),
 
-		"HighSeqIdx": data.NewMetric[float64](
+		"HighSeqIdx": data.NewMetric(
 			"high_seq_idx",
 			data.UnitCount,
 			data.TimescaleInstantaneous,
@@ -330,7 +330,7 @@ func (detector *Detector) Flush(
 			1,
 		).Write(float64(highIdx)),
 
-		"StartTick": data.NewMetric[float64](
+		"StartTick": data.NewMetric(
 			"start_tick",
 			data.UnitCount,
 			data.TimescaleInstantaneous,
@@ -338,7 +338,7 @@ func (detector *Detector) Flush(
 			1,
 		).Write(float64(startTick)),
 
-		"LowTick": data.NewMetric[float64](
+		"LowTick": data.NewMetric(
 			"low_tick",
 			data.UnitCount,
 			data.TimescaleInstantaneous,
@@ -346,7 +346,7 @@ func (detector *Detector) Flush(
 			1,
 		).Write(float64(lowTick)),
 
-		"HighTick": data.NewMetric[float64](
+		"HighTick": data.NewMetric(
 			"high_tick",
 			data.UnitCount,
 			data.TimescaleInstantaneous,
@@ -354,7 +354,7 @@ func (detector *Detector) Flush(
 			1,
 		).Write(float64(highTick)),
 
-		"LowPrice": data.NewMetric[float64](
+		"LowPrice": data.NewMetric(
 			"low_price",
 			data.UnitCurrency,
 			data.TimescaleInstantaneous,
@@ -362,7 +362,7 @@ func (detector *Detector) Flush(
 			1,
 		).Write(lowPrice.Float64()),
 
-		"HighPrice": data.NewMetric[float64](
+		"HighPrice": data.NewMetric(
 			"high_price",
 			data.UnitCurrency,
 			data.TimescaleInstantaneous,

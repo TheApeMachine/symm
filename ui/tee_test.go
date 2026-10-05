@@ -67,8 +67,8 @@ func awaitFrame(t *testing.T, tee *UITee) []byte {
 	}
 }
 
-func sentinel(seq int64) *data.Measurement[float64] {
-	measurement := data.NewMeasurement[float64]("hawkes:trade", nil)
+func sentinel(seq int64) *data.Measurement {
+	measurement := data.NewMeasurement("hawkes:trade", nil)
 	measurement.Label = "BTC/USD"
 	measurement.SeqIdx = seq
 
@@ -108,7 +108,7 @@ func TestUITeeNext(t *testing.T) {
 		})
 
 		Convey("Manifold state measurement is yielded as ManifoldFrame", func() {
-			manifoldMeasurement := data.NewMeasurement[float64]("hawkes:trade", nil)
+			manifoldMeasurement := data.NewMeasurement("hawkes:trade", nil)
 			manifoldMeasurement.Label = "BTC/USD"
 			manifoldMeasurement.Result = manifoldFixture()
 			tee.Push(data.Publication{Measurement: manifoldMeasurement})
@@ -122,7 +122,7 @@ func TestUITeeNext(t *testing.T) {
 		Convey("Duplicate manifold versions are dropped", func() {
 			fixture := manifoldFixture()
 			fixture.Version = 10
-			manifoldMeasurement := data.NewMeasurement[float64]("hawkes:trade", nil)
+			manifoldMeasurement := data.NewMeasurement("hawkes:trade", nil)
 			manifoldMeasurement.Label = "BTC/USD"
 			manifoldMeasurement.Result = fixture
 			tee.Push(data.Publication{Measurement: manifoldMeasurement})
@@ -139,7 +139,7 @@ func TestUITeeNext(t *testing.T) {
 
 			newFixture := manifoldFixture()
 			newFixture.Version = 11
-			manifoldMeasurement2 := data.NewMeasurement[float64]("hawkes:trade", nil)
+			manifoldMeasurement2 := data.NewMeasurement("hawkes:trade", nil)
 			manifoldMeasurement2.Label = "BTC/USD"
 			manifoldMeasurement2.Result = newFixture
 			tee.Push(data.Publication{Measurement: manifoldMeasurement2})
@@ -178,10 +178,10 @@ func BenchmarkUITeeNext(b *testing.B) {
 			b.Fatal(err)
 		}
 	}()
-	measurement := data.NewMeasurement[float64]("hawkes:trade", nil)
+	measurement := data.NewMeasurement("hawkes:trade", nil)
 	measurement.Label = "BTC/USD"
-	measurement.SetMetric("conditional_intensity", data.Metric[float64]{Label: "conditional_intensity", Raw: 1.2})
-	measurement.SetMetric("background_rate", data.Metric[float64]{Label: "background_rate", Raw: 0.5})
+	measurement.SetMetric("conditional_intensity", data.Metric{Label: "conditional_intensity", Raw: 1.2})
+	measurement.SetMetric("background_rate", data.Metric{Label: "background_rate", Raw: 0.5})
 
 	for b.Loop() {
 		tee.Push(data.Publication{Measurement: measurement})
@@ -200,7 +200,7 @@ func TestUITeePush(t *testing.T) {
 		tee.Transition(runtime.READY)
 		defer func() { So(tee.Close(), ShouldBeNil) }()
 
-		measurement := data.NewMeasurement[float64]("training", nil)
+		measurement := data.NewMeasurement("training", nil)
 		measurement.Label, measurement.SeqIdx = "BTC/USD", 1
 
 		Convey("A rejected route drops the measurement immediately", func() {
@@ -208,7 +208,7 @@ func TestUITeePush(t *testing.T) {
 			tee.Push(data.Publication{Measurement: measurement})
 			types.SetRoute("learning")
 
-			follower := data.NewMeasurement[float64]("training", nil)
+			follower := data.NewMeasurement("training", nil)
 			follower.Label, follower.SeqIdx = "BTC/USD", 2
 			tee.Push(data.Publication{Measurement: follower})
 

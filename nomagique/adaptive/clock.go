@@ -16,7 +16,7 @@ Clock normalizes |value| by the estimator's inclusive mean and applies its
 configured pace. A non-positive mean leaves the pace unscaled.
 */
 type Clock struct {
-	err     error
+	*core.PrimitiveError
 	moments core.Primitive
 	pace    core.Primitive
 	out     float64
@@ -26,7 +26,11 @@ func NewClock(
 	moments core.Primitive,
 	pace core.Primitive,
 ) core.Primitive {
-	return &Clock{moments: moments, pace: pace}
+	return &Clock{
+		PrimitiveError: core.NewPrimitiveError(),
+		moments:        moments,
+		pace:           pace,
+	}
 }
 
 func (op *Clock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -60,26 +64,4 @@ func (op *Clock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Clock) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.moments != nil {
-		if err := op.moments.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.pace != nil {
-		if err := op.pace.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

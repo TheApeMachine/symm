@@ -2,8 +2,6 @@ package store
 
 import (
 	"iter"
-	"strings"
-	"sync"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -19,27 +17,18 @@ consumer mutates only that copy; peers are live pointers to other slots'
 published snapshots. Sequenced queries read per-observation ring slots; the
 Disruptor's dependency and wrap barriers own their publication and reuse.
 */
-type Register[T any] struct {
+type Register struct {
 	*core.PrimitiveError
-	mu       sync.RWMutex
-	slots    []T
-	frames   [][]T
-	capacity int
+	slots []*data.Measurement
 }
 
 /*
 NewRegister creates a register primitive holding no slots.
 */
-func NewRegister[T any](capacity ...int) *Register[T] {
-	size := 1
-
-	if len(capacity) > 0 {
-		size = capacity[0]
-	}
-
-	return &Register[T]{
-		capacity:       size,
+func NewRegister() *Register {
+	return &Register{
 		PrimitiveError: core.NewPrimitiveError(),
+		slots:          make([]*data.Measurement, 0),
 	}
 }
 
@@ -49,205 +38,15 @@ filled in: identify assigns a slot, a read fills Value from the slot the
 query names, a write replaces the slot the query names. A query addressing a
 slot outside the register is a shape failure that ends the stream.
 */
-func (op *Register[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *Register) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		query := data.Read[Query[T]](in)
+		query := data.Read[Query](in)
 
 		switch query.Action() {
 		case data.ActionIdentify:
-			op.mu.Lock()
-
-			for ptr := range query.payload {
-				op.slots = append(op.slots, *(*T)(ptr))
-				op.frames = append(op.frames, make([]T, op.capacity))
-			}
-
-			slotID := len(op.slots) - 1
-			query.Identify(slotID)
-
-			if slotID >= 0 {
-				meas, ok := any(op.slots[slotID]).(*data.Measurement[float64])
-
-				if ok && meas != nil {
-					meas.ID = slotID
-				}
-			}
-
-			slotVal := op.slots[query.Identity()]
-			op.mu.Unlock()
-
-			if !yield(unsafe.Pointer(&slotVal)) {
-				return
-			}
 		case data.ActionWrite:
-			op.mu.Lock()
-
-			if query.Identity() < 0 || query.Identity() >= len(op.slots) {
-				op.mu.Unlock()
-				op.Error(core.ErrShape)
-				return
-			}
-
-			var value T
-
-			if query.payload != nil {
-				value = data.Read[T](query.payload)
-				op.slots[query.Identity()] = value
-			}
-
-			if query.sequence >= 0 {
-				op.frames[query.Identity()][query.sequence%int64(op.capacity)] = value
-			}
-
-			op.mu.Unlock()
-
-			if !yield(unsafe.Pointer(&value)) {
-				return
-			}
-
 		case data.ActionRead:
-			op.mu.RLock()
-
-			if query.Identity() < 0 {
-				results := make([]T, len(op.slots))
-
-				for index := range op.slots {
-					results[index] = op.published(index, query.sequence)
-				}
-
-				op.mu.RUnlock()
-
-				for index := range results {
-					if !yield(unsafe.Pointer(&results[index])) {
-						return
-					}
-				}
-
-				return
-			}
-
-			if query.Identity() >= len(op.slots) {
-				op.mu.RUnlock()
-				op.Error(core.ErrShape)
-				return
-			}
-
-			slotVal := op.slots[query.Identity()]
-			meas, ok := any(slotVal).(*data.Measurement[float64])
-
-			if ok && meas != nil {
-				working := cloneMeas(meas)
-				interest := ""
-
-				if v, ok := working.GetMetadata("peer-interest"); ok {
-					interest = v
-				}
-
-				if interest != "" {
-					working.Peers = working.Peers[:0]
-					limit := len(op.slots)
-
-					if query.PeerLimit() >= 0 && query.PeerLimit() < limit {
-						limit = query.PeerLimit()
-					}
-
-					if interest == "*" {
-						for idx := 0; idx < limit; idx++ {
-							if idx == query.Identity() {
-								continue
-							}
-
-							value := op.published(idx, query.sequence)
-							peer, peerOk := any(value).(*data.Measurement[float64])
-
-							if !peerOk || peer == nil {
-								continue
-							}
-
-							working.Peers = append(working.Peers, cloneMeas(peer))
-						}
-					}
-
-					if interest != "*" {
-						interests := strings.Split(interest, ",")
-
-						for idx := range interests {
-							interests[idx] = strings.TrimSpace(interests[idx])
-						}
-
-						for idx := 0; idx < limit; idx++ {
-							if idx == query.Identity() {
-								continue
-							}
-
-							value := op.published(idx, query.sequence)
-							peer, peerOk := any(value).(*data.Measurement[float64])
-
-							if !peerOk || peer == nil {
-								continue
-							}
-
-							if matchPeer(peer, interests) {
-								working.Peers = append(working.Peers, cloneMeas(peer))
-							}
-						}
-					}
-				}
-
-				op.mu.RUnlock()
-				out := any(working).(T)
-
-				if !yield(unsafe.Pointer(&out)) {
-					return
-				}
-
-				return
-			}
-
-			op.mu.RUnlock()
-
-			if !yield(unsafe.Pointer(&slotVal)) {
-				return
-			}
 		default:
-			op.Error(core.ErrShape)
-			return
 		}
 	}
 }
-
-func matchPeer(peer *data.Measurement[float64], interests []string) bool {
-	for _, interest := range interests {
-		if interest == "*" || interest == peer.Source || interest == peer.Label {
-			return true
-		}
-	}
-
-	return false
-}
-
-// published reads a sequence slot whose writer has passed the dependency barrier.
-func (op *Register[T]) published(identity int, sequence int64) T {
-	if sequence >= 0 {
-		return op.frames[identity][sequence%int64(op.capacity)]
-	}
-
-	return op.slots[identity]
-}
-
-func cloneMeas(src *data.Measurement[float64]) *data.Measurement[float64] {
-	if src == nil {
-		return nil
-	}
-	cp := *src
-	cp.Metrics = make([]data.MetricEntry[float64], len(src.Metrics))
-	copy(cp.Metrics, src.Metrics)
-	cp.Metadata = make([]data.StringEntry, len(src.Metadata))
-	copy(cp.Metadata, src.Metadata)
-	cp.Provenance = make([]data.StringEntry, len(src.Provenance))
-	copy(cp.Provenance, src.Provenance)
-	cp.Peers = make([]*data.Measurement[float64], len(src.Peers))
-	copy(cp.Peers, src.Peers)
-	return &cp
-}
-

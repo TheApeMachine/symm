@@ -9,7 +9,7 @@ const (
 )
 
 /*
-MeasurementSchema defines the canonical tabular representation of *data.Measurement[float64].
+MeasurementSchema defines the canonical tabular representation of *data.Measurement.
 Top-level columns epoch, source, and label allow Iceberg partition pruning and file-level
 min/max metric pruning before Parquet pages are fetched.
 */

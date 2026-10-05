@@ -73,7 +73,7 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 	return actual.(core.Primitive)
 }
 
-func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[float64] {
+func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
 		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
 		return nil
@@ -117,9 +117,9 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	out.SeqIdx = prior.SeqIdx
 	out.At = prior.At
 	out.From = prior.From
-	out.Peers = []*data.Measurement[float64]{prior}
+	out.Peers = []*data.Measurement{prior}
 
-	out.SetMetric("last_price", data.NewMetric[float64](
+	out.SetMetric("last_price", data.NewMetric(
 		"last_price",
 		data.UnitPrice,
 		data.TimescaleTick,
@@ -135,7 +135,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 		out.From = time.Time{}
 	}
 
-	res := data.Read[*data.Measurement[float64]](signal.pipelineFor(out.Label).Next(
+	res := data.Read[*data.Measurement](signal.pipelineFor(out.Label).Next(
 		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
 	))
 
@@ -146,7 +146,7 @@ func (signal *Signal) Step(prior *data.Measurement[float64]) *data.Measurement[f
 	return res
 }
 
-func quotedPrice(measurement *data.Measurement[float64]) float64 {
+func quotedPrice(measurement *data.Measurement) float64 {
 	for _, key := range []string{"last_price", "last", "price"} {
 		if metric, ok := measurement.LookupMetric(key); ok && metric.Raw > 0 {
 			return metric.Raw

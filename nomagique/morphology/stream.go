@@ -48,7 +48,7 @@ func NewShapeFlow(books broker.BookSource) core.Primitive {
 func (op *ShapeFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			measurement := *(**data.Measurement[float64])(arriving)
+			measurement := *(**data.Measurement)(arriving)
 
 			if measurement == nil || measurement.Err != nil {
 				if !yield(arriving) {
@@ -144,28 +144,28 @@ func (op *ShapeFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 
 			if hasShape {
-				measurement.SetMetric("book_shape_distance", data.NewMetric[float64](
+				measurement.SetMetric("book_shape_distance", data.NewMetric(
 					"book_shape_distance",
 					data.UnitDistance,
 					data.TimescaleInstantaneous,
 					0.0,
 					1.0,
 				).Write(distance))
-				measurement.SetMetric("book_shape_ks", data.NewMetric[float64](
+				measurement.SetMetric("book_shape_ks", data.NewMetric(
 					"book_shape_ks",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
 					0.0,
 					1.0,
 				).Write(ks))
-				measurement.SetMetric("concentration:bid", data.NewMetric[float64](
+				measurement.SetMetric("concentration:bid", data.NewMetric(
 					"concentration:bid",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
 					0.0,
 					1.0,
 				).Write(concBid))
-				measurement.SetMetric("concentration:ask", data.NewMetric[float64](
+				measurement.SetMetric("concentration:ask", data.NewMetric(
 					"concentration:ask",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
@@ -174,14 +174,14 @@ func (op *ShapeFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				).Write(concAsk))
 
 				maxEntropy := math.Log(100.0)
-				measurement.SetMetric("entropy:bid", data.NewMetric[float64](
+				measurement.SetMetric("entropy:bid", data.NewMetric(
 					"entropy:bid",
 					data.UnitNat,
 					data.TimescaleInstantaneous,
 					0.0,
 					maxEntropy,
 				).Write(entBid))
-				measurement.SetMetric("entropy:ask", data.NewMetric[float64](
+				measurement.SetMetric("entropy:ask", data.NewMetric(
 					"entropy:ask",
 					data.UnitNat,
 					data.TimescaleInstantaneous,
@@ -191,7 +191,7 @@ func (op *ShapeFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 
 				if op.hasPrev {
 					change := math.Abs(distance - op.prevDistance)
-					measurement.SetMetric("morphology_change", data.NewMetric[float64](
+					measurement.SetMetric("morphology_change", data.NewMetric(
 						"morphology_change",
 						data.UnitDistance,
 						data.TimescaleInstantaneous,

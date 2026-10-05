@@ -95,7 +95,7 @@ var (
 
 			uiTee := ui.NewUITee(
 				ctx, "uiTee",
-				func(measurement *data.Measurement[float64]) bool {
+				func(measurement *data.Measurement) bool {
 					return types.Filters(measurement)
 				},
 			)
@@ -385,18 +385,18 @@ var (
 										checksumStr := strconv.FormatInt(int64(level3Data.Checksum), 10)
 
 										for _, order := range orders {
-											measurement := data.NewMeasurement[float64]("spot:level3")
-											measurement.SetMetric("checksum", data.Metric[float64]{Raw: float64(level3Data.Checksum)})
+											measurement := data.NewMeasurement("spot:level3")
+											measurement.SetMetric("checksum", data.Metric{Raw: float64(level3Data.Checksum)})
 
 											if order.LimitPrice != nil {
-												measurement.SetMetric("limit_price", data.Metric[float64]{
+												measurement.SetMetric("limit_price", data.Metric{
 													Raw:   kraken.Float64(order.LimitPrice),
 													Exact: order.LimitPrice,
 												})
 											}
 
 											if order.OrderQty != nil {
-												measurement.SetMetric("order_qty", data.Metric[float64]{
+												measurement.SetMetric("order_qty", data.Metric{
 													Raw:   kraken.Float64(order.OrderQty),
 													Exact: order.OrderQty,
 												})
@@ -429,12 +429,12 @@ var (
 								for _, tradeItem := range tradeMsg.Data {
 									price.Update(&tradeItem)
 
-									measurement := data.NewMeasurement[float64]("spot:trade")
-									measurement.SetMetric("price", data.Metric[float64]{
+									measurement := data.NewMeasurement("spot:trade")
+									measurement.SetMetric("price", data.Metric{
 										Raw:   kraken.Float64(&tradeItem.Price),
 										Exact: &tradeItem.Price,
 									})
-									measurement.SetMetric("qty", data.Metric[float64]{
+									measurement.SetMetric("qty", data.Metric{
 										Raw: tradeItem.Qty,
 									})
 

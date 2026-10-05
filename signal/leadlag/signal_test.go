@@ -30,7 +30,7 @@ func TestLeadLagTickerMetrics(t *testing.T) {
 				btc.At = now.Add(time.Duration(step*100) * time.Millisecond)
 				btc.From = btc.At
 				btcPrice := 50000.0 + float64(step)*10.0
-				btc.SetMetric("last", data.NewMetric[float64](
+				btc.SetMetric("last", data.NewMetric(
 					"last",
 					data.UnitPrice,
 					data.TimescaleInstantaneous,
@@ -50,7 +50,7 @@ func TestLeadLagTickerMetrics(t *testing.T) {
 				eth.At = now.Add(time.Duration(step*100+30) * time.Millisecond)
 				eth.From = eth.At
 				ethPrice := 3000.0 + float64(step)*5.0
-				eth.SetMetric("last", data.NewMetric[float64](
+				eth.SetMetric("last", data.NewMetric(
 					"last",
 					data.UnitPrice,
 					data.TimescaleInstantaneous,

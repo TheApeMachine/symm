@@ -38,7 +38,7 @@ func NewBookFlow(books broker.BookSource) core.Primitive {
 func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			measurement := *(**data.Measurement[float64])(arriving)
+			measurement := *(**data.Measurement)(arriving)
 
 			if measurement == nil || measurement.Err != nil {
 				if !yield(arriving) {
@@ -133,42 +133,42 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				totalNotional := obsBid + obsAsk
 				notionalScale := math.Max(totalNotional, 1.0)
 
-				measurement.SetMetric("book_notional:bid", data.NewMetric[float64](
+				measurement.SetMetric("book_notional:bid", data.NewMetric(
 					"book_notional:bid",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
 					0,
 					notionalScale,
 				).Write(obsBid))
-				measurement.SetMetric("book_notional:ask", data.NewMetric[float64](
+				measurement.SetMetric("book_notional:ask", data.NewMetric(
 					"book_notional:ask",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
 					0,
 					notionalScale,
 				).Write(obsAsk))
-				measurement.SetMetric("book_notional", data.NewMetric[float64](
+				measurement.SetMetric("book_notional", data.NewMetric(
 					"book_notional",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
 					0,
 					notionalScale,
 				).Write(totalNotional))
-				measurement.SetMetric("observed_notional:bid", data.NewMetric[float64](
+				measurement.SetMetric("observed_notional:bid", data.NewMetric(
 					"observed_notional:bid",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
 					0,
 					notionalScale,
 				).Write(obsBid))
-				measurement.SetMetric("observed_notional:ask", data.NewMetric[float64](
+				measurement.SetMetric("observed_notional:ask", data.NewMetric(
 					"observed_notional:ask",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
 					0,
 					notionalScale,
 				).Write(obsAsk))
-				measurement.SetMetric("observed_notional", data.NewMetric[float64](
+				measurement.SetMetric("observed_notional", data.NewMetric(
 					"observed_notional",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
@@ -176,42 +176,42 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					notionalScale,
 				).Write(totalNotional))
 
-				measurement.SetMetric("added_notional:bid", data.NewMetric[float64](
+				measurement.SetMetric("added_notional:bid", data.NewMetric(
 					"added_notional:bid",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
 					0,
 					math.Max(addedBid, 1.0),
 				).Write(addedBid))
-				measurement.SetMetric("removed_notional:bid", data.NewMetric[float64](
+				measurement.SetMetric("removed_notional:bid", data.NewMetric(
 					"removed_notional:bid",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
 					0,
 					math.Max(removedBid, 1.0),
 				).Write(removedBid))
-				measurement.SetMetric("net_displayed_flow:bid", data.NewMetric[float64](
+				measurement.SetMetric("net_displayed_flow:bid", data.NewMetric(
 					"net_displayed_flow:bid",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
 					0,
 					math.Max(math.Abs(addedBid-removedBid), 1.0),
 				).Write(addedBid-removedBid))
-				measurement.SetMetric("added_notional:ask", data.NewMetric[float64](
+				measurement.SetMetric("added_notional:ask", data.NewMetric(
 					"added_notional:ask",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
 					0,
 					math.Max(addedAsk, 1.0),
 				).Write(addedAsk))
-				measurement.SetMetric("removed_notional:ask", data.NewMetric[float64](
+				measurement.SetMetric("removed_notional:ask", data.NewMetric(
 					"removed_notional:ask",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
 					0,
 					math.Max(removedAsk, 1.0),
 				).Write(removedAsk))
-				measurement.SetMetric("net_displayed_flow:ask", data.NewMetric[float64](
+				measurement.SetMetric("net_displayed_flow:ask", data.NewMetric(
 					"net_displayed_flow:ask",
 					data.UnitNotional,
 					data.TimescaleInstantaneous,
@@ -222,14 +222,14 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				bookImb := 0.0
 				if totalNotional > 0 {
 					bookImb = (obsBid - obsAsk) / totalNotional
-					measurement.SetMetric("book_imbalance", data.NewMetric[float64](
+					measurement.SetMetric("book_imbalance", data.NewMetric(
 						"book_imbalance",
 						data.UnitRatio,
 						data.TimescaleInstantaneous,
 						0.0,
 						1.0,
 					).Write(bookImb))
-					measurement.SetMetric("observed_notional_imbalance", data.NewMetric[float64](
+					measurement.SetMetric("observed_notional_imbalance", data.NewMetric(
 						"observed_notional_imbalance",
 						data.UnitRatio,
 						data.TimescaleInstantaneous,
@@ -240,7 +240,7 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 				if touchBidNotional > 0 || touchAskNotional > 0 {
 					touchImb := (touchBidNotional - touchAskNotional) / (touchBidNotional + touchAskNotional)
-					measurement.SetMetric("touch_imbalance", data.NewMetric[float64](
+					measurement.SetMetric("touch_imbalance", data.NewMetric(
 						"touch_imbalance",
 						data.UnitRatio,
 						data.TimescaleInstantaneous,
@@ -249,14 +249,14 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					).Write(touchImb))
 
 					gap := touchImb - bookImb
-					measurement.SetMetric("imbalance_resolution_gap", data.NewMetric[float64](
+					measurement.SetMetric("imbalance_resolution_gap", data.NewMetric(
 						"imbalance_resolution_gap",
 						data.UnitRatio,
 						data.TimescaleInstantaneous,
 						0.0,
 						1.0,
 					).Write(gap))
-					measurement.SetMetric("imbalance_resolution_distance", data.NewMetric[float64](
+					measurement.SetMetric("imbalance_resolution_distance", data.NewMetric(
 						"imbalance_resolution_distance",
 						data.UnitRatio,
 						data.TimescaleInstantaneous,
@@ -269,7 +269,7 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				netFlowAsk := addedAsk - removedAsk
 				grossFlow := math.Abs(netFlowBid) + math.Abs(netFlowAsk)
 				if grossFlow > 0 {
-					measurement.SetMetric("flow_activity_imbalance", data.NewMetric[float64](
+					measurement.SetMetric("flow_activity_imbalance", data.NewMetric(
 						"flow_activity_imbalance",
 						data.UnitRatio,
 						data.TimescaleInstantaneous,
@@ -282,42 +282,42 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					elapsedSeconds := measurement.At.Sub(op.prevTime).Seconds()
 
 					if elapsedSeconds > 0 {
-						measurement.SetMetric("added_notional_rate:bid", data.NewMetric[float64](
+						measurement.SetMetric("added_notional_rate:bid", data.NewMetric(
 							"added_notional_rate:bid",
 							data.UnitNotionalRate,
 							data.TimescalePerSecond,
 							0.0,
 							math.Max(addedBid/elapsedSeconds, 1.0),
 						).Write(addedBid/elapsedSeconds))
-						measurement.SetMetric("added_notional_rate:ask", data.NewMetric[float64](
+						measurement.SetMetric("added_notional_rate:ask", data.NewMetric(
 							"added_notional_rate:ask",
 							data.UnitNotionalRate,
 							data.TimescalePerSecond,
 							0.0,
 							math.Max(addedAsk/elapsedSeconds, 1.0),
 						).Write(addedAsk/elapsedSeconds))
-						measurement.SetMetric("removed_notional_rate:bid", data.NewMetric[float64](
+						measurement.SetMetric("removed_notional_rate:bid", data.NewMetric(
 							"removed_notional_rate:bid",
 							data.UnitNotionalRate,
 							data.TimescalePerSecond,
 							0.0,
 							math.Max(removedBid/elapsedSeconds, 1.0),
 						).Write(removedBid/elapsedSeconds))
-						measurement.SetMetric("removed_notional_rate:ask", data.NewMetric[float64](
+						measurement.SetMetric("removed_notional_rate:ask", data.NewMetric(
 							"removed_notional_rate:ask",
 							data.UnitNotionalRate,
 							data.TimescalePerSecond,
 							0.0,
 							math.Max(removedAsk/elapsedSeconds, 1.0),
 						).Write(removedAsk/elapsedSeconds))
-						measurement.SetMetric("net_displayed_flow_rate:bid", data.NewMetric[float64](
+						measurement.SetMetric("net_displayed_flow_rate:bid", data.NewMetric(
 							"net_displayed_flow_rate:bid",
 							data.UnitNotionalRate,
 							data.TimescalePerSecond,
 							0.0,
 							math.Max(math.Abs(netFlowBid/elapsedSeconds), 1.0),
 						).Write(netFlowBid/elapsedSeconds))
-						measurement.SetMetric("net_displayed_flow_rate:ask", data.NewMetric[float64](
+						measurement.SetMetric("net_displayed_flow_rate:ask", data.NewMetric(
 							"net_displayed_flow_rate:ask",
 							data.UnitNotionalRate,
 							data.TimescalePerSecond,
@@ -328,7 +328,7 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 						referenceNotional := (op.prevNotional + totalNotional) / 2.0
 						if referenceNotional > 0 {
 							turnover := (addedBid + removedBid + addedAsk + removedAsk) / (referenceNotional * elapsedSeconds)
-							measurement.SetMetric("book_turnover_rate", data.NewMetric[float64](
+							measurement.SetMetric("book_turnover_rate", data.NewMetric(
 								"book_turnover_rate",
 								data.UnitRate,
 								data.TimescalePerSecond,
@@ -337,7 +337,7 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 							).Write(turnover))
 
 							netBookChange := (totalNotional - op.prevNotional) / (referenceNotional * elapsedSeconds)
-							measurement.SetMetric("net_book_change_rate", data.NewMetric[float64](
+							measurement.SetMetric("net_book_change_rate", data.NewMetric(
 								"net_book_change_rate",
 								data.UnitRate,
 								data.TimescalePerSecond,
@@ -346,7 +346,7 @@ func (op *BookFlow) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 							).Write(netBookChange))
 
 							signedFlowRate := (netFlowBid - netFlowAsk) / (referenceNotional * elapsedSeconds)
-							measurement.SetMetric("signed_net_displayed_flow_rate", data.NewMetric[float64](
+							measurement.SetMetric("signed_net_displayed_flow_rate", data.NewMetric(
 								"signed_net_displayed_flow_rate",
 								data.UnitRate,
 								data.TimescalePerSecond,

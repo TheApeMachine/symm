@@ -2,22 +2,22 @@ package data
 
 import (
 	"errors"
-	"iter"
+	"fmt"
 	"math"
-	"strings"
 	"time"
-	"unsafe"
 
+	"github.com/google/uuid"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
 MetricEntry stores a single metric by its producer key.
 */
-type MetricEntry[T any] struct {
-	Key    string    `json:"key"`
-	Metric Metric[T] `json:"metric"`
+type MetricEntry struct {
+	Key    string `json:"key"`
+	Metric Metric `json:"metric"`
+	Err    error  `json:"error"`
 }
 
 /*
@@ -30,821 +30,303 @@ type StringEntry struct {
 
 /*
 Measurement is the native data type in nomagique.
-Under the WORM model:
-  - Before publication: exactly one writer (the producer), zero readers.
-  - After publication: zero writers, arbitrary concurrent readers.
 
-No mutexes or synchronization primitives are used inside Measurement.
-Hot data is stored in compact arena-backed slices instead of GC heap maps.
+Transferability: when creating a new Measurement using the allocator,
+certain properties must transfer over, so they can act as their own
+prior when forming new Measurements.
 */
-type Measurement[T any] struct {
-	ID         int               `json:"id"`
-	Epoch      int64             `json:"epoch"`
-	Label      string            `json:"label"`
-	Source     string            `json:"source"`
-	SeqIdx     int64             `json:"seqIdx"`
-	Tick       int64             `json:"tick"`
-	Timestamp  int64             `json:"timestamp"`
-	At         time.Time         `json:"at"`
-	From       time.Time         `json:"from"`
-	Maturity   float64           `json:"maturity"`
-	SNR        float64           `json:"snr"`
-	SNRDefined bool              `json:"snrDefined"`
-	Estimated  bool              `json:"estimated"`
-	Err        error             `json:"-"`
-	Metrics    []MetricEntry[T]  `json:"metrics,omitempty"`
-	Metadata   []StringEntry     `json:"metadata,omitempty"`
-	Provenance []StringEntry     `json:"provenance,omitempty"`
-	Peers      []*Measurement[T] `json:"peers,omitempty"`
-	Result     any               `json:"-"`
+type Measurement struct {
+	ID         uint32         // Unique ID (uuid).
+	epoch      int64          // Set once at system start, used for snapshot identification.
+	label      string         // Symbol (e.g. BTC/USD), or other logical label.
+	source     string         // Original owner, which system produced this Measurement.
+	seqIdx     int64          // Event sequence index, used to replay in exact order.
+	tick       int64          // Market tick, used to sync to 1 single tick in time.
+	timestamp  int64          // System nanosecond timestamp (UTC).
+	at         time.Time      // Venue timestamp (UTC).
+	from       time.Time      // Window from as venue timestamp (UTC).
+	snr        float64        // Signal-to-noise ratio (Statistical Mean-to-Standard Deviation).
+	maturity   float64        // Maturity of the Measurement.
+	samples    int64          // Observations accumulated in the current regime.
+	energy     float64        // Total metric excitation energy (sum of z^2).
+	prediction float64        // Expected energy baseline from prior.
+	err        error          // Error if any.
+	metrics    []MetricEntry  // Metrics owned by this Measurement.
+	metadata   []StringEntry  // Metadata owned by this Measurement.
+	peers      []*Measurement // Peers, used to group related Measurements.
 }
 
-func (m *Measurement[T]) localMetric(key string) (Metric[T], bool) {
-	for i := range m.Metrics {
-		if m.Metrics[i].Key == key {
-			return m.Metrics[i].Metric, true
-		}
+/*
+NewMeasurement creates a new Measurement.
+*/
+func NewMeasurement(
+	epoch int64, label string, source string, seqIdx int64, tick int64,
+) *Measurement {
+	return &Measurement{
+		epoch:    epoch,
+		label:    label,
+		source:   source,
+		seqIdx:   seqIdx,
+		tick:     tick,
+		metrics:  make([]MetricEntry, 0),
+		metadata: make([]StringEntry, 0),
+		peers:    make([]*Measurement, 0),
 	}
-	return Metric[T]{}, false
 }
 
-// GetMetric retrieves a metric, checking local Metrics first, then direct Peers.
-func (m *Measurement[T]) GetMetric(key string) Metric[T] {
-	val, _ := m.LookupMetric(key)
-	return val
-}
-
-// LookupMetric searches for a metric in local storage and direct Peers deterministically.
-func (m *Measurement[T]) LookupMetric(key string) (Metric[T], bool) {
-	if m == nil {
-		return Metric[T]{}, false
-	}
-
-	if val, ok := m.localMetric(key); ok {
-		return val, true
-	}
-
-	for _, peer := range m.Peers {
-		if peer == nil {
-			continue
-		}
-
-		if val, ok := peer.localMetric(key); ok {
-			return val, true
-		}
-
-		for _, sub := range peer.Peers {
-			if sub == nil {
-				continue
-			}
-
-			if val, ok := sub.localMetric(key); ok {
-				return val, true
-			}
+/*
+Read returns the metric entry for the given key.
+In compliance with the WORM model, a Measurement can not be read
+before it is finalized.
+*/
+func (measurement *Measurement) Read(key string) MetricEntry {
+	if !measurement.locked() {
+		return MetricEntry{
+			Err: errors.Join(measurement.err, errnie.Error(errnie.Err(
+				errnie.Forbidden,
+				"[data.measurement] not finalized",
+				nil,
+			))),
 		}
 	}
 
-	return Metric[T]{}, false
-}
-
-// LookupPeerMetric searches for a metric originating from a specific source among Peers.
-func (m *Measurement[T]) LookupPeerMetric(source, key string) (Metric[T], bool) {
-	if m == nil {
-		return Metric[T]{}, false
-	}
-
-	for _, peer := range m.Peers {
-		if peer == nil {
-			continue
-		}
-
-		if peer.Source == source {
-			if val, ok := peer.localMetric(key); ok {
-				return val, true
-			}
-		}
-
-		for _, sub := range peer.Peers {
-			if sub != nil && sub.Source == source {
-				if val, ok := sub.localMetric(key); ok {
-					return val, true
-				}
-			}
+	for _, metricEntry := range measurement.metrics {
+		if metricEntry.Metric.label == key {
+			return metricEntry
 		}
 	}
 
-	return Metric[T]{}, false
-}
-
-// SetMetric sets a metric owned locally by this producer.
-func (m *Measurement[T]) SetMetric(key string, val Metric[T]) {
-	if m == nil {
-		return
-	}
-
-	for i := range m.Metrics {
-		if m.Metrics[i].Key == key {
-			m.Metrics[i].Metric = val
-			return
-		}
-	}
-
-	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: val})
-}
-
-// WriteMetric safely writes a raw value to a local metric.
-func (m *Measurement[T]) WriteMetric(key string, val T) {
-	if m == nil {
-		return
-	}
-
-	for index := range m.Metrics {
-		if m.Metrics[index].Key == key {
-			if m.Metrics[index].Metric.Label == "" {
-				m.Metrics[index].Metric.Label = key
-			}
-
-			m.Metrics[index].Metric = m.Metrics[index].Metric.Write(val)
-			return
-		}
-	}
-
-	metric, _ := m.LookupMetric(key)
-	if metric.Label == "" {
-		metric.Label = key
-	}
-
-	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric.Write(val)})
-}
-
-// WriteStandardized sets the raw value and standardized form on a local metric.
-func (m *Measurement[T]) WriteStandardized(key string, val T) {
-	if m == nil {
-		return
-	}
-
-	stdVal := val
-	for index := range m.Metrics {
-		if m.Metrics[index].Key == key {
-			if m.Metrics[index].Metric.Label == "" {
-				m.Metrics[index].Metric.Label = key
-			}
-
-			m.Metrics[index].Metric = m.Metrics[index].Metric.Write(val)
-			m.Metrics[index].Metric.Standardized = &stdVal
-			return
-		}
-	}
-
-	metric, _ := m.LookupMetric(key)
-	if metric.Label == "" {
-		metric.Label = key
-	}
-
-	metric = metric.Write(val)
-	metric.Standardized = &stdVal
-	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric})
-}
-
-// WriteNormalized sets the raw value and normalized form on a local metric.
-func (m *Measurement[T]) WriteNormalized(key string, val T) {
-	if m == nil {
-		return
-	}
-
-	normVal := val
-	for index := range m.Metrics {
-		if m.Metrics[index].Key == key {
-			if m.Metrics[index].Metric.Label == "" {
-				m.Metrics[index].Metric.Label = key
-			}
-
-			m.Metrics[index].Metric = m.Metrics[index].Metric.Write(val)
-			m.Metrics[index].Metric.Normalized = &normVal
-			return
-		}
-	}
-
-	metric, _ := m.LookupMetric(key)
-	if metric.Label == "" {
-		metric.Label = key
-	}
-
-	metric = metric.Write(val)
-	metric.Normalized = &normVal
-	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric})
-}
-
-// SetCenterScale sets the center and scale on a metric and immediately re-evaluates its standardization.
-func (m *Measurement[T]) SetCenterScale(key string, center, scale float64) {
-	if m == nil {
-		return
-	}
-
-	for index := range m.Metrics {
-		if m.Metrics[index].Key == key {
-			if m.Metrics[index].Metric.Label == "" {
-				m.Metrics[index].Metric.Label = key
-			}
-
-			m.Metrics[index].Metric.Center = center
-			m.Metrics[index].Metric.Scale = scale
-			m.Metrics[index].Metric = m.Metrics[index].Metric.Write(m.Metrics[index].Metric.Raw)
-			return
-		}
-	}
-
-	metric, _ := m.LookupMetric(key)
-	if metric.Label == "" {
-		metric.Label = key
-	}
-
-	metric.Center = center
-	metric.Scale = scale
-	m.Metrics = append(m.Metrics, MetricEntry[T]{Key: key, Metric: metric.Write(metric.Raw)})
-}
-
-// RangeMetrics iterates over all local metrics.
-func (m *Measurement[T]) RangeMetrics(f func(key string, metric Metric[T]) bool) {
-	if m == nil {
-		return
-	}
-
-	for _, entry := range m.Metrics {
-		if !f(entry.Key, entry.Metric) {
-			return
-		}
+	return MetricEntry{
+		Err: errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			fmt.Sprintf("[data.measurement] metric %s not found", key),
+			nil,
+		))),
 	}
 }
 
-// GetSource returns Source directly without synchronization.
-func (m *Measurement[T]) GetSource() string {
-	if m == nil {
-		return ""
-	}
-	return m.Source
-}
+/*
+Write the metrics to the Measurement and finalize it.
+This means that the Measurement is now locked and cannot be changed.
+It is therefore exactly "write once".
+*/
+func (measurement *Measurement) Write(
+	metrics ...Metric,
+) *Measurement {
+	if measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] locked",
+			nil,
+		)))
 
-// SetSource sets Source directly without synchronization.
-func (m *Measurement[T]) SetSource(source string) {
-	if m == nil {
-		return
-	}
-	m.Source = source
-}
-
-// SetQuality sets quality indicators on the measurement.
-func (m *Measurement[T]) SetQuality(maturity, snr float64, snrDefined, estimated bool) {
-	if m == nil {
-		return
+		return measurement
 	}
 
-	m.Maturity = maturity
-	m.SNR = snr
-	m.SNRDefined = snrDefined
-	m.Estimated = estimated
-}
-
-func (m *Measurement[T]) EnsureMetadata() {
-	if m != nil && m.Metadata == nil {
-		m.Metadata = make([]StringEntry, 0, 8)
-	}
-}
-
-func (m *Measurement[T]) GetMetadata(key string) (string, bool) {
-	if m == nil {
-		return "", false
+	for _, metric := range metrics {
+		measurement.metrics = append(measurement.metrics, MetricEntry{
+			Key:    metric.label,
+			Metric: metric,
+		})
 	}
 
-	for _, entry := range m.Metadata {
-		if entry.Key == key {
-			return entry.Value, true
-		}
-	}
-
-	return "", false
-}
-
-func (m *Measurement[T]) SetMetadata(key, value string) {
-	if m == nil {
-		return
-	}
-
-	for i := range m.Metadata {
-		if m.Metadata[i].Key == key {
-			m.Metadata[i].Value = value
-			return
-		}
-	}
-
-	m.Metadata = append(m.Metadata, StringEntry{Key: key, Value: value})
-}
-
-func (m *Measurement[T]) DeleteMetadata(key string) {
-	if m == nil {
-		return
-	}
-
-	for i := range m.Metadata {
-		if m.Metadata[i].Key == key {
-			m.Metadata = append(m.Metadata[:i], m.Metadata[i+1:]...)
-			return
-		}
-	}
-}
-
-func (m *Measurement[T]) RangeMetadata(f func(key, value string) bool) {
-	if m == nil {
-		return
-	}
-
-	for _, entry := range m.Metadata {
-		if !f(entry.Key, entry.Value) {
-			return
-		}
-	}
-}
-
-func (m *Measurement[T]) EnsureProvenance() {
-	if m != nil && m.Provenance == nil {
-		m.Provenance = make([]StringEntry, 0, 8)
-	}
-}
-
-func (m *Measurement[T]) GetProvenance(key string) (string, bool) {
-	if m == nil {
-		return "", false
-	}
-
-	for _, entry := range m.Provenance {
-		if entry.Key == key {
-			return entry.Value, true
-		}
-	}
-
-	return "", false
-}
-
-func (m *Measurement[T]) SetProvenance(key, value string) {
-	if m == nil {
-		return
-	}
-
-	for i := range m.Provenance {
-		if m.Provenance[i].Key == key {
-			m.Provenance[i].Value = value
-			return
-		}
-	}
-
-	m.Provenance = append(m.Provenance, StringEntry{Key: key, Value: value})
-}
-
-func (m *Measurement[T]) DeleteProvenance(key string) {
-	if m == nil {
-		return
-	}
-
-	for i := range m.Provenance {
-		if m.Provenance[i].Key == key {
-			m.Provenance = append(m.Provenance[:i], m.Provenance[i+1:]...)
-			return
-		}
-	}
-}
-
-func (m *Measurement[T]) RangeProvenance(f func(key, value string) bool) {
-	if m == nil {
-		return
-	}
-
-	for _, entry := range m.Provenance {
-		if !f(entry.Key, entry.Value) {
-			return
-		}
-	}
-}
-
-func (m *Measurement[T]) Facts() QualityFacts {
-	if m == nil {
-		return QualityFacts{}
-	}
-
-	snap := make(map[string]string, len(m.Metadata))
-	for _, entry := range m.Metadata {
-		snap[entry.Key] = entry.Value
-	}
-
-	return factsFromMetadata(snap)
-}
-
-func (measurement *Measurement[T]) SetSeqIdx(seq int64) {
-	if measurement != nil {
-		measurement.SeqIdx = seq
-	}
-}
-
-func (measurement *Measurement[T]) Identity() int {
-	if measurement == nil {
-		return -1
-	}
-	return measurement.ID
-}
-
-func (measurement *Measurement[T]) Identify(id int) Identifiable[T] {
-	if measurement != nil {
-		measurement.ID = id
-	}
+	measurement.finalize()
 	return measurement
 }
 
-func (measurement *Measurement[T]) FindPeer(predicate func(*Measurement[T]) bool) *Measurement[T] {
-	if measurement == nil || predicate == nil {
-		return nil
+/*
+finalize the Measurement, which locks the Measurement and validates it.
+*/
+func (measurement *Measurement) finalize() *Measurement {
+	if measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] locked",
+			nil,
+		)))
+
+		return measurement
 	}
 
-	for _, peer := range measurement.Peers {
-		if peer != nil && predicate(peer) {
-			return peer
-		}
+	for _, metric := range measurement.metrics {
+		measurement.err = errors.Join(
+			measurement.err,
+			metric.Metric.finalize(float64(measurement.samples)),
+		)
 	}
 
-	return nil
+	measurement.timestamp = time.Now().UnixNano()
+	measurement.setSNR()
+	measurement.setMaturity()
+
+	// Fully finalize the Measurement by writing its ID.
+	measurement.ID = uuid.New().ID()
+	return measurement.valid()
 }
 
-func StampInterval[T any](measurement *Measurement[T], at, from time.Time) {
-	if measurement == nil {
-		return
+/*
+setSNR calculates the Signal-to-Noise ratio for the Measurement.
+Each Metric is a stand-alone value, but the Metrics within a Measurement are not
+truly independent. They observe different expressions of the same underlying
+phenomenon and are therefore subject to the same governing forces. This creates
+an implicit coupling between them: degradation or loss of confidence in one
+Metric is evidence that the shared observation itself may be deteriorating, and
+should therefore reduce confidence in the other Metrics within that Measurement as well.
+*/
+func (measurement *Measurement) setSNR() *Measurement {
+	if measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] locked",
+			nil,
+		)))
 	}
 
-	if !at.IsZero() {
-		measurement.At = at
+	var mean, m2, count float64
+
+	for _, entry := range measurement.metrics {
+		x := math.Abs(entry.Metric.standardized)
+		count++
+		delta := x - mean
+		mean += delta / count
+		m2 += delta * (x - mean)
 	}
 
-	if from.IsZero() || (!measurement.At.IsZero() && from.After(measurement.At)) {
-		return
+	if count > 0 && m2 > 0 {
+		measurement.snr = mean / math.Sqrt(m2/count)
+	} else {
+		measurement.snr = mean
 	}
 
-	measurement.From = from
+	return measurement.valid("snr")
 }
 
-func NewMeasurement[T any](
-	source string, initialMetrics ...map[string]Metric[T],
-) *Measurement[T] {
-	var metrics []MetricEntry[T]
-	if len(initialMetrics) > 0 && initialMetrics[0] != nil {
-		metrics = make([]MetricEntry[T], 0, len(initialMetrics[0]))
-		for k, v := range initialMetrics[0] {
-			metrics = append(metrics, MetricEntry[T]{Key: k, Metric: v})
-		}
+/*
+setMaturityAndSNR calculates both SNR and Maturity directly from the total
+standardized metric energy (sum of z^2) using online Minimum Description Length (MDL).
+Runs in O(metrics) time with zero heap allocations.
+*/
+func (measurement *Measurement) setMaturity() *Measurement {
+	if measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] locked",
+			nil,
+		)))
+
+		return measurement
 	}
 
-	return &Measurement[T]{
-		ID:         -1,
-		Source:     source,
-		Metrics:    metrics,
-		Metadata:   make([]StringEntry, 0, 8),
-		Provenance: make([]StringEntry, 0, 8),
-		Peers:      make([]*Measurement[T], 0, 4),
-	}
-}
+	measurement.energy = 0
 
-const (
-	MetadataSupport        = "support"
-	MetadataMaturity       = "maturity"
-	MetadataDivergence     = "divergence"
-	MetadataNoiseVariance  = "noise_variance"
-	MetadataMahalanobisSNR = "mahalanobis_snr"
-)
-
-type Finalizer[Value any] struct {
-	err      error
-	quality  core.Primitive
-	previous map[string]float64
-}
-
-func NewFinalizer[Value any]() *Finalizer[Value] {
-	return &Finalizer[Value]{
-		quality:  NewQuality(),
-		previous: make(map[string]float64),
-	}
-}
-
-func (op *Finalizer[Value]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			measurement := *(**Measurement[Value])(arriving)
-
-			if measurement != nil {
-				op.Complete(measurement)
-			}
-
-			if !yield(arriving) {
-				return
-			}
-		}
-	}
-}
-
-func (op *Finalizer[Value]) Complete(measurement *Measurement[Value]) {
-	if measurement == nil {
-		return
+	for _, entry := range measurement.metrics {
+		measurement.energy += entry.Metric.standardized * entry.Metric.standardized
 	}
 
-	var midpoint, spread float64
-	var hasMid, hasSpread bool
+	measurement.samples++
+	n := float64(measurement.samples)
 
-	if midMetric, ok := measurement.LookupMetric("midpoint"); ok {
-		if midVal, valid := any(midMetric.Raw).(float64); valid && midVal > 0 {
-			midpoint = midVal
-			hasMid = true
-		}
-	}
-
-	if spreadMetric, ok := measurement.LookupMetric("spread"); ok {
-		if spreadVal, valid := any(spreadMetric.Raw).(float64); valid && spreadVal > 0 {
-			spread = spreadVal
-			hasSpread = true
-		}
-	}
-
-	if !hasMid || !hasSpread {
-		var bid, ask float64
-		var hasBid, hasAsk bool
-
-		for _, bidKey := range []string{"best_bid", "bid", "best_bid_price", "bid_price"} {
-			if bidMetric, ok := measurement.LookupMetric(bidKey); ok {
-				if bidVal, valid := any(bidMetric.Raw).(float64); valid && bidVal > 0 {
-					bid = bidVal
-					hasBid = true
-					break
-				}
-			}
-		}
-
-		for _, askKey := range []string{"best_ask", "ask", "best_ask_price", "ask_price"} {
-			if askMetric, ok := measurement.LookupMetric(askKey); ok {
-				if askVal, valid := any(askMetric.Raw).(float64); valid && askVal > 0 {
-					ask = askVal
-					hasAsk = true
-					break
-				}
-			}
-		}
-
-		if hasBid && hasAsk && ask > bid {
-			if !hasMid {
-				midpoint = (bid + ask) / 2.0
-				hasMid = true
-			}
-
-			if !hasSpread {
-				spread = ask - bid
-				hasSpread = true
-			}
-		}
-	}
-
-	updates := make(map[string]Metric[Value])
-	var zScores []float64
-
-	measurement.RangeMetrics(func(key string, metric Metric[Value]) bool {
-		if metric.Label == "" {
-			metric.Label = key
-		}
-
-		val, valid := any(metric.Raw).(float64)
-
-		if !valid {
-			return true
-		}
-
-		modified := false
-
-		if isPriceMetric(key) && hasMid && hasSpread && spread > 0 {
-			if metric.Center == 0 && metric.Scale == 0 {
-				metric.Center = midpoint
-				metric.Scale = spread
-				modified = true
-			}
-		}
-
-		baseline, hasBaseline := measurement.LookupMetric(key + "_baseline")
-		bVal, isFloat := any(baseline.Raw).(float64)
-
-		if hasBaseline && isFloat {
-			metric.Center = bVal
-			modified = true
-
-			if zscore, hasZscore := measurement.LookupMetric(key + "_zscore"); hasZscore {
-				zVal, ok := any(zscore.Raw).(float64)
-
-				if ok && zVal != 0 {
-					metric.Scale = math.Abs(val-bVal) / math.Abs(zVal)
-				}
-			}
-
-			if metric.Scale == 0 {
-				noiseScale, hasNoiseScale := measurement.LookupMetric(key + "_noise_scale")
-				nVal, ok := any(noiseScale.Raw).(float64)
-
-				if hasNoiseScale && ok && nVal > 0 {
-					metric.Scale = nVal
-				}
-			}
-
-			if metric.Scale == 0 {
-				noiseVar, hasNoiseVar := measurement.LookupMetric(key + "_noise_variance")
-				vVal, ok := any(noiseVar.Raw).(float64)
-
-				if hasNoiseVar && ok && vVal > 0 {
-					metric.Scale = math.Sqrt(vVal)
-				}
-			}
-		}
-
-		if isBoundedMetric(key) {
-			if metric.Normalized == nil {
-				normVal := val
-				metric.Normalized = any(&normVal).(*Value)
-				modified = true
-			}
-
-			if metric.Center == 0 && metric.Scale == 0 {
-				metric.Center = 0
-				metric.Scale = 1
-				modified = true
-			}
-		}
-
-		isZScore := strings.HasSuffix(key, "_zscore") || strings.Contains(key, "_zscore:") || strings.Contains(key, "zscore")
-		if isZScore && metric.Standardized == nil && !math.IsNaN(val) && !math.IsInf(val, 0) {
-			stdVal := val
-			metric.Standardized = any(&stdVal).(*Value)
-			modified = true
-		}
-
-		if metric.Standardized != nil {
-			if sVal, ok := any(*metric.Standardized).(float64); ok && !math.IsNaN(sVal) && !math.IsInf(sVal, 0) {
-				zScores = append(zScores, sVal)
-			}
-		} else if isZScore && !math.IsNaN(val) && !math.IsInf(val, 0) {
-			zScores = append(zScores, val)
-		}
-
-		if modified {
-			updates[key] = metric
-		}
-
-		return true
-	})
-
-	for updateKey, updateMetric := range updates {
-		updateMetric = updateMetric.Write(updateMetric.Raw)
-		measurement.SetMetric(updateKey, updateMetric)
-	}
-
-	readingEval := transport.NewEvaluate(op.quality)
-	var reading QualityReading
-
-	for out := range readingEval.Next(transport.NewValues(measurement.Facts()).Next(nil)) {
-		reading = *(*QualityReading)(out)
-	}
-
-	err := readingEval.Error()
-
-	if err != nil && measurement.Err == nil {
-		measurement.Err = err
-	}
-
-	snr := reading.SNR
-	snrDefined := reading.SNRDefined
-
-	if !reading.Estimated && measurement.SNRDefined {
-		snr = measurement.SNR
-		snrDefined = true
-	}
-
-	facts := measurement.Facts()
-
-	if !snrDefined && facts.HasMahalanobis && facts.MahalanobisSNR >= 0 &&
-		!math.IsInf(facts.MahalanobisSNR, 0) && !math.IsNaN(facts.MahalanobisSNR) &&
-		facts.MahalanobisSNR < 1/math.Sqrt(machineEpsilon) {
-		snr = facts.MahalanobisSNR
-		snrDefined = true
-	}
-
-	if !snrDefined && len(zScores) > 0 {
-		var sumSquares float64
-		for _, zScoreVal := range zScores {
-			sumSquares += zScoreVal * zScoreVal
-		}
-		snr = sumSquares / float64(len(zScores))
-		snrDefined = true
-	}
-
-	if !snrDefined {
-		var snrSum float64
-		var snrCount int
-		for _, entry := range measurement.Metrics {
-			if entry.Metric.Unit == UnitSNR || strings.EqualFold(entry.Key, "snr") || strings.HasSuffix(entry.Key, "_snr") || strings.Contains(entry.Key, "_snr:") {
-				if val, ok := any(entry.Metric.Raw).(float64); ok && val >= 0 && !math.IsNaN(val) && !math.IsInf(val, 0) {
-					snrSum += val
-					snrCount++
-				}
-			}
-		}
-		if snrCount > 0 {
-			snr = snrSum / float64(snrCount)
-			snrDefined = true
-		}
-	}
-
-	if !snrDefined {
-		if facts.HasDivergence && facts.HasNoise && facts.NoiseVariance > 0 {
-			snr = (facts.Divergence * facts.Divergence) / facts.NoiseVariance
-			snrDefined = true
-		}
-	}
-
-	maturity := reading.Maturity
-	if maturity == 0 && measurement.Maturity > 0 {
-		maturity = measurement.Maturity
-	}
-	if maturity == 0 {
-		if facts.HasSupport && facts.Support > 1 {
-			maturity = 1.0 - (1.0 / facts.Support)
-		}
-
-		if maturity == 0 && !reading.Estimated {
-			maturity = 1.0
-		}
-	}
-
-	measurement.SetQuality(
-		maturity, snr, snrDefined, reading.Estimated,
+	// 1. Calculate maturity against PRIOR prediction (surprise)
+	measurement.maturity = math.Max(
+		0.0, math.Min(
+			core.Unit,
+			(core.Unit-core.Unit/n)*(core.Unit/(core.Unit+math.Abs(
+				measurement.energy-measurement.prediction,
+			))),
+		),
 	)
 
-	if op.previous == nil {
-		op.previous = make(map[string]float64)
-	}
+	// 2. Update prediction for next time
+	measurement.prediction += (core.Unit / n) * (measurement.energy - measurement.prediction)
 
-	for index := range measurement.Metrics {
-		rawNumber, isFloat := any(measurement.Metrics[index].Metric.Raw).(float64)
-
-		if !isFloat {
-			continue
-		}
-
-		metricKey := measurement.Metrics[index].Key
-
-		if metricKey == "" {
-			metricKey = measurement.Metrics[index].Metric.Label
-		}
-
-		previousValue, seen := op.previous[metricKey]
-
-		if !seen {
-			previousValue = 0
-		}
-
-		deformationValue := Deformation(previousValue, rawNumber)
-
-		if defPtr, castOk := any(&deformationValue).(*Value); castOk {
-			measurement.Metrics[index].Metric.Deformation = defPtr
-		}
-
-		op.previous[metricKey] = rawNumber
-	}
+	return measurement.valid(
+		"maturity", "energy", "samples", "prediction",
+	)
 }
 
-func isPriceMetric(key string) bool {
-	switch key {
-	case "price", "bid", "ask", "best_bid", "best_ask", "best_bid_price", "best_ask_price",
-		"bid_price", "ask_price", "last", "last_price", "derivative_price", "reference_price",
-		"response_midpoint:at", "response_midpoint:from", "midpoint":
-		return true
-	}
-
-	return false
+/*
+locked protects the WORM guarantee of the Measurement.
+Once finalized, a Measurement cannot be changed.
+*/
+func (measurement *Measurement) locked() bool {
+	return measurement.ID != 0
 }
 
-func isBoundedMetric(key string) bool {
-	if strings.Contains(key, "imbalance") || strings.HasSuffix(key, "_fraction") ||
-		strings.Contains(key, "signed_correlation") || strings.Contains(key, "absolute_correlation") ||
-		strings.HasSuffix(key, "_ks") || strings.HasSuffix(key, "_percentile") {
-		return true
+/*
+valid checks if the Measurement is valid.
+*/
+func (measurement *Measurement) valid(fields ...string) *Measurement {
+	if len(fields) > 0 {
+		mapped := make(map[string]any)
+
+		for _, field := range fields {
+			switch field {
+			case "ID":
+				mapped[field] = measurement.ID
+			case "epoch":
+				mapped[field] = measurement.epoch
+			case "label":
+				mapped[field] = measurement.label
+			case "source":
+				mapped[field] = measurement.source
+			case "seqIdx":
+				mapped[field] = measurement.seqIdx
+			case "tick":
+				mapped[field] = measurement.tick
+			case "timestamp":
+				mapped[field] = measurement.timestamp
+			case "at":
+				mapped[field] = measurement.at
+			case "from":
+				mapped[field] = measurement.from
+			case "maturity":
+				mapped[field] = measurement.maturity
+			case "snr":
+				mapped[field] = measurement.snr
+			case "err":
+				mapped[field] = measurement.err
+			case "metrics":
+				mapped[field] = measurement.metrics
+			case "metadata":
+				mapped[field] = measurement.metadata
+			case "peers":
+				mapped[field] = measurement.peers
+			}
+		}
+
+		measurement.err = errors.Join(
+			measurement.err,
+			errnie.Error(errnie.Require(mapped)),
+		)
+
+		return measurement
 	}
 
-	return false
-}
-
-func (op *Finalizer[Value]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
+	for _, metricEntry := range measurement.metrics {
+		if err := metricEntry.Metric.valid(); err != nil {
+			measurement.err = errors.Join(measurement.err, err)
 		}
 	}
 
-	return op.err
+	if err := errnie.Error(errnie.Require(map[string]any{
+		"ID":        measurement.ID,
+		"epoch":     measurement.epoch,
+		"label":     measurement.label,
+		"source":    measurement.source,
+		"seqIdx":    measurement.seqIdx,
+		"tick":      measurement.tick,
+		"timestamp": measurement.timestamp,
+		"at":        measurement.at,
+		"from":      measurement.from,
+		"maturity":  measurement.maturity,
+		"snr":       measurement.snr,
+		"err":       measurement.err,
+		"metrics":   measurement.metrics,
+		"metadata":  measurement.metadata,
+		"peers":     measurement.peers,
+	})); err != nil {
+		measurement.err = errors.Join(measurement.err, err)
+	}
+
+	return measurement
 }

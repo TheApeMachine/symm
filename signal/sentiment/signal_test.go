@@ -33,7 +33,7 @@ func TestSentimentTickerMetrics(t *testing.T) {
 
 					// 2 declining (idx 0, 1), 1 flat (idx 2), 2 advancing (idx 3, 4)
 					price := 100.0 * float64(idx+1) * (1.0 + float64(step)*0.01*float64(idx-2))
-					prior.SetMetric("last", data.NewMetric[float64](
+					prior.SetMetric("last", data.NewMetric(
 						"last",
 						data.UnitPrice,
 						data.TimescaleInstantaneous,
@@ -85,7 +85,7 @@ func TestSentimentTickerMetrics(t *testing.T) {
 
 					// All symbols advancing by +2% each step
 					price := 100.0 * float64(idx+1) * (1.0 + float64(step)*0.02)
-					prior.SetMetric("last", data.NewMetric[float64](
+					prior.SetMetric("last", data.NewMetric(
 						"last",
 						data.UnitPrice,
 						data.TimescaleInstantaneous,

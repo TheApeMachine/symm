@@ -49,7 +49,7 @@ func TestCatalog_EnsureEvolvesSchema(t *testing.T) {
 			So(found, ShouldBeTrue)
 
 			writer := tables.NewWriter(catalog, 7)
-			measurement := data.NewMeasurement[float64]("spot:trade", nil)
+			measurement := data.NewMeasurement("spot:trade", nil)
 			measurement.Epoch = 7
 			measurement.Label = "BTC/USD"
 			measurement.Tick = 42

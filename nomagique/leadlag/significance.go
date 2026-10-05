@@ -33,7 +33,7 @@ func NewSignificance() core.Primitive {
 func (op *Significance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			op.sample = nmcorrelation.FisherSample{
 				Correlation: m.GetMetric("best_lag_correlation").Raw,
@@ -56,14 +56,14 @@ func (op *Significance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			}
 
 			if op.reading.Defined {
-				m.SetMetric("correlation_p_value", data.NewMetric[float64](
+				m.SetMetric("correlation_p_value", data.NewMetric(
 					"correlation_p_value",
 					data.UnitProbability,
 					data.TimescaleRollingWindow,
 					0.5,
 					0.5,
 				).Write(op.reading.PValue))
-				m.SetMetric("search_adjusted_p_value", data.NewMetric[float64](
+				m.SetMetric("search_adjusted_p_value", data.NewMetric(
 					"search_adjusted_p_value",
 					data.UnitProbability,
 					data.TimescaleRollingWindow,

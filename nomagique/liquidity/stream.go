@@ -26,7 +26,7 @@ func NewGate() core.Primitive {
 func (op *Gate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			measurement := *(**data.Measurement[float64])(arriving)
+			measurement := *(**data.Measurement)(arriving)
 
 			if measurement == nil {
 				continue
@@ -99,7 +99,7 @@ func NewTouch() core.Primitive {
 func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			measurement := *(**data.Measurement[float64])(arriving)
+			measurement := *(**data.Measurement)(arriving)
 
 			if measurement == nil || measurement.Err != nil {
 				if !yield(arriving) {
@@ -122,70 +122,70 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			totalTouchQty := bidQty + askQty
 			totalTouchNotional := bidNotional + askNotional
 
-			measurement.SetMetric("best_bid_price", data.NewMetric[float64](
+			measurement.SetMetric("best_bid_price", data.NewMetric(
 				"best_bid_price",
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
 				midpoint,
 				spread,
 			).Write(bid))
-			measurement.SetMetric("best_ask_price", data.NewMetric[float64](
+			measurement.SetMetric("best_ask_price", data.NewMetric(
 				"best_ask_price",
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
 				midpoint,
 				spread,
 			).Write(ask))
-			measurement.SetMetric("touch_quantity:bid", data.NewMetric[float64](
+			measurement.SetMetric("touch_quantity:bid", data.NewMetric(
 				"touch_quantity:bid",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
 				0.0,
 				totalTouchQty,
 			).Write(bidQty))
-			measurement.SetMetric("touch_quantity:ask", data.NewMetric[float64](
+			measurement.SetMetric("touch_quantity:ask", data.NewMetric(
 				"touch_quantity:ask",
 				data.UnitQuantity,
 				data.TimescaleInstantaneous,
 				0.0,
 				totalTouchQty,
 			).Write(askQty))
-			measurement.SetMetric("touch_notional:bid", data.NewMetric[float64](
+			measurement.SetMetric("touch_notional:bid", data.NewMetric(
 				"touch_notional:bid",
 				data.UnitNotional,
 				data.TimescaleInstantaneous,
 				0.0,
 				totalTouchNotional,
 			).Write(bidNotional))
-			measurement.SetMetric("touch_notional:ask", data.NewMetric[float64](
+			measurement.SetMetric("touch_notional:ask", data.NewMetric(
 				"touch_notional:ask",
 				data.UnitNotional,
 				data.TimescaleInstantaneous,
 				0.0,
 				totalTouchNotional,
 			).Write(askNotional))
-			measurement.SetMetric("midpoint", data.NewMetric[float64](
+			measurement.SetMetric("midpoint", data.NewMetric(
 				"midpoint",
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
 				midpoint,
 				spread,
 			).Write(midpoint))
-			measurement.SetMetric("spread", data.NewMetric[float64](
+			measurement.SetMetric("spread", data.NewMetric(
 				"spread",
 				data.UnitSpread,
 				data.TimescaleInstantaneous,
 				0.0,
 				spread,
 			).Write(spread))
-			measurement.SetMetric("relative_spread", data.NewMetric[float64](
+			measurement.SetMetric("relative_spread", data.NewMetric(
 				"relative_spread",
 				data.UnitRelativeSpread,
 				data.TimescaleInstantaneous,
 				0.0,
 				relative,
 			).Write(relative))
-			measurement.SetMetric("two_sided_touch_notional", data.NewMetric[float64](
+			measurement.SetMetric("two_sided_touch_notional", data.NewMetric(
 				"two_sided_touch_notional",
 				data.UnitNotional,
 				data.TimescaleInstantaneous,
@@ -195,7 +195,7 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if totalTouchNotional > 0 {
 				imbalance := (bidNotional - askNotional) / totalTouchNotional
-				measurement.SetMetric("touch_notional_imbalance", data.NewMetric[float64](
+				measurement.SetMetric("touch_notional_imbalance", data.NewMetric(
 					"touch_notional_imbalance",
 					data.UnitRatio,
 					data.TimescaleInstantaneous,
@@ -205,7 +205,7 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			if bidNotional > 0 {
-				measurement.SetMetric("_log_bid_notional", data.NewMetric[float64](
+				measurement.SetMetric("_log_bid_notional", data.NewMetric(
 					"_log_bid_notional",
 					data.UnitDimensionless,
 					data.TimescaleInstantaneous,
@@ -214,7 +214,7 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				).Write(math.Log(bidNotional)))
 			}
 			if askNotional > 0 {
-				measurement.SetMetric("_log_ask_notional", data.NewMetric[float64](
+				measurement.SetMetric("_log_ask_notional", data.NewMetric(
 					"_log_ask_notional",
 					data.UnitDimensionless,
 					data.TimescaleInstantaneous,
@@ -223,7 +223,7 @@ func (op *Touch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				).Write(math.Log(askNotional)))
 			}
 			if relative > 0 {
-				measurement.SetMetric("_log_relative_spread", data.NewMetric[float64](
+				measurement.SetMetric("_log_relative_spread", data.NewMetric(
 					"_log_relative_spread",
 					data.UnitDimensionless,
 					data.TimescaleInstantaneous,

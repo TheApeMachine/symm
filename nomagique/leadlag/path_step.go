@@ -40,7 +40,7 @@ func NewPathStep(window func() core.Primitive) *PathStep {
 func (op *PathStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			path := op.paths[m.Label]
 
@@ -61,7 +61,7 @@ func (op *PathStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.SetMetric("observation_count", data.NewMetric[float64](
+			m.SetMetric("observation_count", data.NewMetric(
 				"observation_count",
 				data.UnitCount,
 				data.TimescaleRollingWindow,

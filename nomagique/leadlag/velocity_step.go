@@ -31,7 +31,7 @@ func NewVelocityStep() core.Primitive {
 func (op *VelocityStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			at := m.At.UnixNano()
 
@@ -55,7 +55,7 @@ func (op *VelocityStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				if spanScale == 0 {
 					spanScale = 1.0
 				}
-				m.SetMetric("lag_velocity", data.NewMetric[float64](
+				m.SetMetric("lag_velocity", data.NewMetric(
 					"lag_velocity",
 					data.UnitVelocity,
 					data.TimescalePerSecond,
@@ -65,7 +65,7 @@ func (op *VelocityStep) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			}
 
 			if gainReading.Defined {
-				m.SetMetric("correlation_gain_velocity", data.NewMetric[float64](
+				m.SetMetric("correlation_gain_velocity", data.NewMetric(
 					"correlation_gain_velocity",
 					data.UnitVelocity,
 					data.TimescalePerSecond,

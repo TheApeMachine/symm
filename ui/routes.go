@@ -108,7 +108,7 @@ func (routes *Routes) Register() {
 		toTick := parseInt64Query(conn.Query("to"))
 
 		const timelineBatchSize = 256
-		batch := make([]*data.Measurement[float64], 0, timelineBatchSize)
+		batch := make([]*data.Measurement, 0, timelineBatchSize)
 
 		for measurement := range routes.hub.store.Timeline(routes.hub.Context(), epoch, symbol, fromTick, toTick) {
 			batch = append(batch, measurement)
@@ -181,7 +181,7 @@ func (routes *Routes) Register() {
 		}
 
 		epoch := parseInt64Query(run)
-		excursions := []*data.Measurement[float64]{}
+		excursions := []*data.Measurement{}
 		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, nil, 0) {
 			if status, ok := measurement.GetMetadata("status"); ok && status == "resolved" {
 				excursions = append(excursions, measurement)
@@ -204,14 +204,14 @@ func (routes *Routes) Register() {
 		}
 
 		limit := int(parseUintQuery(ctx.Query("limit")))
-		var measurements []*data.Measurement[float64]
+		var measurements []*data.Measurement
 
 		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tableName, epoch, nil, limit) {
 			measurements = append(measurements, measurement)
 		}
 
 		if measurements == nil {
-			measurements = []*data.Measurement[float64]{}
+			measurements = []*data.Measurement{}
 		}
 
 		return ctx.JSON(measurements)
@@ -299,7 +299,7 @@ func (routes *Routes) Register() {
 			return fiber.NewError(fiber.StatusBadRequest, "seq required")
 		}
 
-		var found *data.Measurement[float64]
+		var found *data.Measurement
 
 		for measurement := range routes.hub.store.Timeline(routes.hub.Context(), epoch, symbol, seq, seq) {
 			if measurement == nil {

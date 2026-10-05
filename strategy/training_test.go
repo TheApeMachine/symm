@@ -64,13 +64,13 @@ func trainingFixture(
 
 	defVal := 0.5
 	signal := func(source string, tick int64, seqIdx int64) {
-		measurement := data.NewMeasurement[float64](source, nil)
+		measurement := data.NewMeasurement(source, nil)
 		measurement.Epoch = epoch
 		measurement.Label = "BTC/USD"
 		measurement.Tick = tick
 		measurement.SeqIdx = seqIdx
 		measurement.Maturity = 1.0
-		measurement.SetMetric("value", data.Metric[float64]{Label: "value", Raw: 1.5, Deformation: &defVal})
+		measurement.SetMetric("value", data.Metric{Label: "value", Raw: 1.5, Deformation: &defVal})
 		writer.Add("measurements", data.Publication{Measurement: measurement})
 	}
 
@@ -111,17 +111,17 @@ detection writes one stored detector row for the fixture excursion.
 */
 func detection(lowPrice, highPrice float64) func(*tables.Writer, int64) {
 	return func(writer *tables.Writer, epoch int64) {
-		measurement := data.NewMeasurement[float64]("detector", nil)
+		measurement := data.NewMeasurement("detector", nil)
 		measurement.Epoch = epoch
 		measurement.Label = "BTC/USD"
 		measurement.Tick = 15
 		measurement.SeqIdx = 150
-		measurement.SetMetric("LowTick", data.Metric[float64]{Raw: 10})
-		measurement.SetMetric("HighTick", data.Metric[float64]{Raw: 15})
-		measurement.SetMetric("LowPrice", data.Metric[float64]{
+		measurement.SetMetric("LowTick", data.Metric{Raw: 10})
+		measurement.SetMetric("HighTick", data.Metric{Raw: 15})
+		measurement.SetMetric("LowPrice", data.Metric{
 			Raw: lowPrice, Exact: decimal.NewFromFloat64(lowPrice),
 		})
-		measurement.SetMetric("HighPrice", data.Metric[float64]{
+		measurement.SetMetric("HighPrice", data.Metric{
 			Raw: highPrice, Exact: decimal.NewFromFloat64(highPrice),
 		})
 		writer.Add("measurements", data.Publication{Measurement: measurement})
@@ -156,7 +156,7 @@ func TestTraining_Train(t *testing.T) {
 				exact, err := decimal.NewFromString(price)
 				So(err, ShouldBeNil)
 
-				trade := data.NewMeasurement("spot:trade", map[string]data.Metric[float64]{
+				trade := data.NewMeasurement("spot:trade", map[string]data.Metric{
 					"price": {Raw: exact.Float64(), Exact: exact},
 				})
 				trade.Epoch = epoch
@@ -186,7 +186,7 @@ func TestTraining_Train(t *testing.T) {
 				exact, err := decimal.NewFromString(price)
 				So(err, ShouldBeNil)
 
-				trade := data.NewMeasurement("spot:trade", map[string]data.Metric[float64]{
+				trade := data.NewMeasurement("spot:trade", map[string]data.Metric{
 					"price": {Raw: exact.Float64(), Exact: exact},
 				})
 				trade.Epoch = epoch
@@ -237,9 +237,9 @@ func TestTraining_Step(t *testing.T) {
 		testUITee.Transition(runtime.READY)
 		training.SetUITee(testUITee)
 
-		Convey("Step enqueues without back-pressure and the off-ramp worker processes it", func() {
+		Convey("Step processes measurement synchronously and returns report", func() {
 			val := 1.23
-			measurement := data.NewMeasurement("cvd", map[string]data.Metric[float64]{
+			measurement := data.NewMeasurement("cvd", map[string]data.Metric{
 				"price": {Raw: 60000, Deformation: &val},
 			})
 			measurement.Epoch = 1000
@@ -248,22 +248,9 @@ func TestTraining_Step(t *testing.T) {
 			measurement.SeqIdx = 1
 
 			result := training.Step(measurement)
-			So(result, ShouldBeNil)
-
-			deadline := time.After(2 * time.Second)
-
-			for testUITee.Pending() == 0 {
-				select {
-				case <-deadline:
-					t.Fatal("timed out waiting for off-ramp worker to process measurement")
-				case <-time.After(10 * time.Millisecond):
-				}
-			}
-
-			out := popMeasurement(testUITee)
-			So(out, ShouldNotBeNil)
-			So(out.Source, ShouldEqual, "training")
-			So(out.Label, ShouldEqual, "BTC/USD")
+			So(result, ShouldNotBeNil)
+			So(result.Source, ShouldEqual, "training")
+			So(result.Label, ShouldEqual, "BTC/USD")
 		})
 	})
 }
@@ -273,10 +260,10 @@ func TestTraining_TriadGate(t *testing.T) {
 		training := &Training{}
 
 		Convey("When resonance surprise is positive and manifold impedance is clear", func() {
-			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric[float64]{
+			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric{
 				"surprise": {Raw: 1.5},
 			})
-			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric[float64]{
+			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric{
 				"kuramoto_r":         {Raw: 0.4},
 				"pressure_grad_norm": {Raw: 0.1},
 			})
@@ -285,10 +272,10 @@ func TestTraining_TriadGate(t *testing.T) {
 		})
 
 		Convey("When resonance surprise is zero (equilibrium churn), entry is vetoed", func() {
-			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric[float64]{
+			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric{
 				"surprise": {Raw: 0.0},
 			})
-			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric[float64]{
+			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric{
 				"kuramoto_r": {Raw: 0.4},
 			})
 
@@ -296,10 +283,10 @@ func TestTraining_TriadGate(t *testing.T) {
 		})
 
 		Convey("When manifold has complete locked synchronization and opposing pressure, entry is vetoed", func() {
-			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric[float64]{
+			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric{
 				"surprise": {Raw: 2.0},
 			})
-			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric[float64]{
+			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric{
 				"kuramoto_r":         {Raw: 1.0},
 				"pressure_grad_norm": {Raw: 5.0},
 			})

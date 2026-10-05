@@ -128,7 +128,7 @@ func NewPairs(estimator core.Primitive) core.Primitive {
 func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement[float64])(arriving)
+			m := *(**data.Measurement)(arriving)
 
 			if m.Err != nil {
 				if !yield(arriving) {
@@ -141,7 +141,7 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			last := m.GetMetric("last_price").Raw
 
 			if last == 0 {
-				m.SetMetric("observation_count", data.NewMetric[float64](
+				m.SetMetric("observation_count", data.NewMetric(
 					"observation_count",
 					data.UnitCount,
 					data.TimescaleRollingWindow,
@@ -177,7 +177,7 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			m.SetMetric("observation_count", data.NewMetric[float64](
+			m.SetMetric("observation_count", data.NewMetric(
 				"observation_count",
 				data.UnitCount,
 				data.TimescaleRollingWindow,
@@ -248,9 +248,9 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					continue
 				}
 
-				peerMeas := data.NewMeasurement[float64]("correlation")
+				peerMeas := data.NewMeasurement("correlation")
 				peerMeas.Label = symbol
-				peerMeas.SetMetric("signed_correlation", data.NewMetric[float64](
+				peerMeas.SetMetric("signed_correlation", data.NewMetric(
 					"signed_correlation",
 					data.UnitCorrelation,
 					data.TimescaleInstantaneous,
@@ -268,14 +268,14 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				m.SetProvenance("peer", selection)
 				m.SetProvenance("pair_diagnostics_selection", "last_defined_peer_lexicographic")
 
-				m.SetMetric("signed_correlation", data.NewMetric[float64](
+				m.SetMetric("signed_correlation", data.NewMetric(
 					"signed_correlation",
 					data.UnitCorrelation,
 					data.TimescaleInstantaneous,
 					0,
 					1,
 				).Write(selected.Correlation))
-				m.SetMetric("absolute_correlation", data.NewMetric[float64](
+				m.SetMetric("absolute_correlation", data.NewMetric(
 					"absolute_correlation",
 					data.UnitCorrelation,
 					data.TimescaleInstantaneous,
@@ -283,70 +283,70 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					1,
 				).Write(math.Abs(selected.Correlation)))
 				covScale := math.Max(math.Sqrt(selected.LeftEnergyRate*selected.RightEnergyRate), 1e-6)
-				m.SetMetric("covariance", data.NewMetric[float64](
+				m.SetMetric("covariance", data.NewMetric(
 					"covariance",
 					data.UnitVariance,
 					data.TimescaleRollingWindow,
 					0,
 					covScale,
 				).Write(selected.Covariance))
-				m.SetMetric("return_energy:reference", data.NewMetric[float64](
+				m.SetMetric("return_energy:reference", data.NewMetric(
 					"return_energy:reference",
 					data.UnitRatio,
 					data.TimescaleRollingWindow,
 					0,
 					math.Max(selected.RightEnergy, 1e-6),
 				).Write(selected.RightEnergy))
-				m.SetMetric("return_energy:measured", data.NewMetric[float64](
+				m.SetMetric("return_energy:measured", data.NewMetric(
 					"return_energy:measured",
 					data.UnitRatio,
 					data.TimescaleRollingWindow,
 					0,
 					math.Max(selected.LeftEnergy, 1e-6),
 				).Write(selected.LeftEnergy))
-				m.SetMetric("return_energy_rate:reference", data.NewMetric[float64](
+				m.SetMetric("return_energy_rate:reference", data.NewMetric(
 					"return_energy_rate:reference",
 					data.UnitRate,
 					data.TimescalePerSecond,
 					0,
 					math.Max(selected.RightEnergyRate, 1e-6),
 				).Write(selected.RightEnergyRate))
-				m.SetMetric("return_energy_rate:measured", data.NewMetric[float64](
+				m.SetMetric("return_energy_rate:measured", data.NewMetric(
 					"return_energy_rate:measured",
 					data.UnitRate,
 					data.TimescalePerSecond,
 					0,
 					math.Max(selected.LeftEnergyRate, 1e-6),
 				).Write(selected.LeftEnergyRate))
-				m.SetMetric("overlap_density", data.NewMetric[float64](
+				m.SetMetric("overlap_density", data.NewMetric(
 					"overlap_density",
 					data.UnitRatio,
 					data.TimescaleRollingWindow,
 					0.5,
 					0.5,
 				).Write(selected.OverlapDensity))
-				m.SetMetric("supported_return_count:measured", data.NewMetric[float64](
+				m.SetMetric("supported_return_count:measured", data.NewMetric(
 					"supported_return_count:measured",
 					data.UnitCount,
 					data.TimescaleRollingWindow,
 					0,
 					math.Max(selected.LeftReturns, 1),
 				).Write(selected.LeftReturns))
-				m.SetMetric("supported_return_count:reference", data.NewMetric[float64](
+				m.SetMetric("supported_return_count:reference", data.NewMetric(
 					"supported_return_count:reference",
 					data.UnitCount,
 					data.TimescaleRollingWindow,
 					0,
 					math.Max(selected.RightReturns, 1),
 				).Write(selected.RightReturns))
-				m.SetMetric("overlap_pair_count", data.NewMetric[float64](
+				m.SetMetric("overlap_pair_count", data.NewMetric(
 					"overlap_pair_count",
 					data.UnitCount,
 					data.TimescaleRollingWindow,
 					0,
 					math.Max(selected.Support, 1),
 				).Write(selected.Support))
-				m.SetMetric("shared_time", data.NewMetric[float64](
+				m.SetMetric("shared_time", data.NewMetric(
 					"shared_time",
 					data.UnitDuration,
 					data.TimescaleRollingWindow,
@@ -355,14 +355,14 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				).Write(selected.SharedTime))
 
 				if significance.Defined {
-					m.SetMetric("correlation_p_value", data.NewMetric[float64](
+					m.SetMetric("correlation_p_value", data.NewMetric(
 						"correlation_p_value",
 						data.UnitProbability,
 						data.TimescaleRollingWindow,
 						0.5,
 						0.5,
 					).Write(significance.PValue))
-					m.SetMetric("correlation_standard_error_fisher", data.NewMetric[float64](
+					m.SetMetric("correlation_standard_error_fisher", data.NewMetric(
 						"correlation_standard_error_fisher",
 						data.UnitStandardDeviation,
 						data.TimescaleRollingWindow,
