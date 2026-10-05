@@ -91,7 +91,7 @@ func (measurement *Measurement) Read(key string) MetricEntry {
 	}
 
 	for _, metricEntry := range measurement.metrics {
-		if metricEntry.Metric.label == key {
+		if metricEntry.Metric.Label == key {
 			return metricEntry
 		}
 	}
@@ -125,7 +125,7 @@ func (measurement *Measurement) Write(
 
 	for _, metric := range metrics {
 		measurement.metrics = append(measurement.metrics, MetricEntry{
-			Key:    metric.label,
+			Key:    metric.Label,
 			Metric: metric,
 		})
 	}
@@ -161,6 +161,7 @@ func (measurement *Measurement) finalize() *Measurement {
 		return measurement
 	}
 
+	measurement.samples++
 	n := float64(measurement.samples)
 
 	for index := range measurement.metrics {
@@ -238,7 +239,6 @@ func (measurement *Measurement) setMaturity() *Measurement {
 		measurement.energy += entry.Metric.standardized * entry.Metric.standardized
 	}
 
-	measurement.samples++
 	n := float64(measurement.samples)
 
 	// 1. Calculate maturity against PRIOR prediction (surprise)
