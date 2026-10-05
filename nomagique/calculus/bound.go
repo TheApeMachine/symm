@@ -1,63 +1,102 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-BoundRecord is a value and the interval that may replace it.
-*/
-type BoundRecord struct {
-	Value float64
-	Lower float64
-	Upper float64
-}
-
-/*
-Bound selects lower, value, or upper.
+Bound clamps value between lower and upper bounds.
 */
 type Bound struct {
-	err error
-	out float64
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
-func NewBound() core.Primitive {
-	return &Bound{}
+func NewBound() *Bound {
+	output := data.NewOutputMap()
+	output.Values["value"] = 0
+	output.Values["bound"] = 0
+
+	return &Bound{
+		PrimitiveError: core.NewPrimitiveError(),
+		input: data.NewMap(
+			"value", "value",
+			"lower", "lower",
+			"upper", "upper",
+		),
+		output: output,
+	}
 }
 
 func (op *Bound) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			record := *(*BoundRecord)(arriving)
-			val := record.Value
-
-			if val < record.Lower {
-				val = record.Lower
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			if val > record.Upper {
-				val = record.Upper
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			op.out = val
+			var values data.Map[float64]
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			val, valOK := values.Values["value"]
+			lower, lowerOK := values.Values["lower"]
+			upper, upperOK := values.Values["upper"]
+
+			if !valOK || !lowerOK || !upperOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			if lower > upper {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			result := val
+
+			if result < lower {
+				result = lower
+			}
+
+			if result > upper {
+				result = upper
+			}
+
+			op.output.Values["value"] = result
+			op.output.Values["bound"] = result
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Bound) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -1,96 +1,103 @@
 package causal
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/algo"
+	"gonum.org/v1/gonum/mat"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/nomagique/vector"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-LinearFit composes the table's affine design into ordinary least squares.
+LinearFit estimates ordinary least squares parameters for arriving observations.
 */
 type LinearFit struct {
-	err       error
-	ols       core.Primitive
+	*core.PrimitiveError
 	tolerance float64
-	out       algo.Fit
+	input     data.Map[string]
+	output    data.Map[float64]
 }
 
-func NewLinearFit(tolerance float64) core.Primitive {
+func NewLinearFit(tolerance float64) *LinearFit {
+	output := data.NewOutputMap()
+	output.Values["intercept"] = 0
+	output.Values["coefficient"] = 0
+	output.Values["defined"] = 0
+
 	return &LinearFit{
-		ols:       algo.NewOLS(tolerance),
-		tolerance: tolerance,
+		PrimitiveError: core.NewPrimitiveError(),
+		tolerance:      tolerance,
+		input: data.NewMap(
+			"target", "target",
+			"feature", "feature",
+		),
+		output: output,
 	}
 }
 
-func (op *LinearFit) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *LinearFit) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			query := (*Query)(arriving)
-
-			if !validFeatures(*query) {
+			if arriving == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			designNode := vector.NewDesign(query.Features...)
-			x := make([][]float64, 0, len(query.Rows))
-			y := make([]float64, 0, len(query.Rows))
+			adapter := *(**data.Adapter)(arriving)
 
-			for _, row := range query.Rows {
-				var designRow []float64
-
-				for out := range designNode.Next(transport.NewValues(row).Next(nil)) {
-					copied := make([]float64, len(*(*[]float64)(out)))
-					copy(copied, *(*[]float64)(out))
-					designRow = copied
-				}
-
-				if err := designNode.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				if query.Target < 0 || query.Target >= len(row) {
-					op.Error(core.ErrShape)
-					return
-				}
-
-				x = append(x, designRow)
-				y = append(y, row[query.Target])
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			design := algo.Design{X: x, Y: y}
+			var values data.Map[float64]
 
-			for out := range op.ols.Next(transport.NewValues(design).Next(nil)) {
-				op.out = *(*algo.Fit)(out)
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
 			}
 
-			if err := op.ols.Error(); err != nil {
+			if err := adapter.Error(); err != nil {
 				op.Error(err)
 				return
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			target, targetOK := values.Values["target"]
+			feature, featureOK := values.Values["feature"]
+
+			if !targetOK || !featureOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			design := mat.NewDense(1, 2, []float64{1.0, feature})
+			outcome := mat.NewDense(1, 1, []float64{target})
+
+			var solved mat.Dense
+			err := solved.Solve(design, outcome)
+
+			if err != nil {
+				op.output.Values["defined"] = 0
+			}
+
+			if err == nil {
+				op.output.Values["intercept"] = solved.At(0, 0)
+				op.output.Values["coefficient"] = solved.At(1, 0)
+				op.output.Values["defined"] = 1.0
+			}
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *LinearFit) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

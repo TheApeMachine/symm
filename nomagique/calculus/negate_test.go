@@ -3,21 +3,23 @@ package calculus
 import (
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func TestNegateNext(t *testing.T) {
-	tests.Check(
-		t, tests.Case[float64, float64]{
-			Name: "negate",
-			Seed: 0.0,
-			Factory: func() core.Primitive {
-				return NewNegate()
-			},
-			Reference: func(_ float64, value float64) float64 {
-				return -value
-			},
-		},
-	)
+func TestNegate(t *testing.T) {
+	Convey("Negate computes additive inverse", t, func() {
+		op := NewNegate()
+		state := data.NewState(data.NewMap("value", "value"))
+		adapter := data.NewAdapter(nil, state)
+		input := data.NewOutputMap()
+		input.Values["value"] = 42.0
+
+		for range adapter.Next(data.NewValue(input)) {
+		}
+
+		data.Read[*data.Adapter](op.Next(data.NewValue(adapter)))
+		So(op.Error(), ShouldBeNil)
+		So(op.output.Values["value"], ShouldEqual, -42.0)
+	})
 }

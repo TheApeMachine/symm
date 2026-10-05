@@ -1,27 +1,29 @@
 package calculus
 
 import (
-	"math"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func TestSignNext(t *testing.T) {
-	tests.Check(
-		t, tests.Case[float64, float64]{
-			Name: "sign",
-			Seed: 0.0,
-			Factory: func() core.Primitive {
-				return NewSign()
-			},
-			Reference: func(_ float64, value float64) float64 {
-				if value != 0 {
-					return math.Copysign(1, value)
-				}
-				return value
-			},
-		},
-	)
+func TestSign(t *testing.T) {
+	Convey("Sign computes unit sign of arrival", t, func() {
+		op := NewSign()
+		state := data.NewState(data.NewMap("value", "value"))
+		adapter := data.NewAdapter(nil, state)
+
+		inputs := []float64{10.0, -5.0, 0.0}
+		expected := []float64{1.0, -1.0, 0.0}
+
+		for index, inputVal := range inputs {
+			inputMap := data.NewOutputMap()
+			inputMap.Values["value"] = inputVal
+			for range adapter.Next(data.NewValue(inputMap)) {
+			}
+			data.Read[*data.Adapter](op.Next(data.NewValue(adapter)))
+			So(op.Error(), ShouldBeNil)
+			So(op.output.Values["value"], ShouldEqual, expected[index])
+		}
+	})
 }

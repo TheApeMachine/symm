@@ -1,63 +1,91 @@
 package calculus
 
 import (
-	"fmt"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-RelativeChangeInput is one prior/current pair.
-*/
-type RelativeChangeInput struct {
-	Previous float64
-	Current  float64
-}
-
-/*
-RelativeChange owns one stateless transformation:
-
-	(Current - Previous) / Previous
-
-A zero previous value is undefined.
+RelativeChange owns (current - previous) / previous. A zero previous value is undefined.
 */
 type RelativeChange struct {
-	err error
-	out float64
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
-func NewRelativeChange() core.Primitive {
-	return &RelativeChange{}
+func NewRelativeChange() *RelativeChange {
+	output := data.NewOutputMap()
+	output.Values["value"] = 0
+	output.Values["relative_change"] = 0
+
+	return &RelativeChange{
+		PrimitiveError: core.NewPrimitiveError(),
+		input: data.NewMap(
+			"current", "current",
+			"previous", "previous",
+		),
+		output: output,
+	}
 }
 
 func (op *RelativeChange) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := *(*RelativeChangeInput)(arriving)
-
-			if input.Previous == 0 {
-				op.err = fmt.Errorf("%w: relative change of a zero prior is undefined", core.ErrDomain)
+			if arriving == nil {
+				op.Error(core.ErrShape)
 				return
 			}
 
-			op.out = (input.Current - input.Previous) / input.Previous
+			adapter := *(**data.Adapter)(arriving)
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			current, currentOK := values.Values["current"]
+			previous, previousOK := values.Values["previous"]
+
+			if !currentOK || !previousOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			if previous == 0 {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			result := (current - previous) / previous
+			op.output.Values["value"] = result
+			op.output.Values["relative_change"] = result
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *RelativeChange) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

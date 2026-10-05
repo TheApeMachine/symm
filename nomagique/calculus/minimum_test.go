@@ -1,24 +1,29 @@
 package calculus
 
 import (
-	"math"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func TestMinimumNext(t *testing.T) {
-	tests.Check(
-		t, tests.Case[float64, float64]{
-			Name: "minimum",
-			Seed: 100.0,
-			Factory: func() core.Primitive {
-				return NewMinimum(100.0)
-			},
-			Reference: func(current, value float64) float64 {
-				return math.Min(current, value)
-			},
-		},
-	)
+func TestMinimum(t *testing.T) {
+	Convey("Minimum tracks the running minimum", t, func() {
+		op := NewMinimum()
+		state := data.NewState(data.NewMap("value", "value"))
+		adapter := data.NewAdapter(nil, state)
+
+		inputs := []float64{5.0, 3.0, 8.0, 1.0, 4.0}
+		expected := []float64{5.0, 3.0, 3.0, 1.0, 1.0}
+
+		for index, inputVal := range inputs {
+			inputMap := data.NewOutputMap()
+			inputMap.Values["value"] = inputVal
+			for range adapter.Next(data.NewValue(inputMap)) {
+			}
+			data.Read[*data.Adapter](op.Next(data.NewValue(adapter)))
+			So(op.Error(), ShouldBeNil)
+			So(op.output.Values["value"], ShouldEqual, expected[index])
+		}
+	})
 }

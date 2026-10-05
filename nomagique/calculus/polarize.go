@@ -5,49 +5,74 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
-
-/*
-PolarizeInput is a signed value and the scale it is normalized against.
-*/
-type PolarizeInput struct {
-	Value float64
-	Scale float64
-}
-
-/*
-PolarizeResult splits a signed value into nonnegative components.
-*/
-type PolarizeResult struct {
-	Alpha           float64
-	Beta            float64
-	AlphaNormalized float64
-	BetaNormalized  float64
-	Scale           float64
-	Value           float64
-}
 
 /*
 Polarize splits a signed value into nonnegative components and normalizes
 against a configured scale.
 */
 type Polarize struct {
-	err error
-	out PolarizeResult
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
-func NewPolarize() core.Primitive {
-	return &Polarize{}
+func NewPolarize() *Polarize {
+	output := data.NewOutputMap()
+	output.Values["alpha"] = 0
+	output.Values["beta"] = 0
+	output.Values["scale"] = 0
+	output.Values["alpha_normalized"] = 0
+	output.Values["beta_normalized"] = 0
+	output.Values["value"] = 0
+
+	return &Polarize{
+		PrimitiveError: core.NewPrimitiveError(),
+		input: data.NewMap(
+			"value", "value",
+			"scale", "scale",
+		),
+		output: output,
+	}
 }
 
-func (op *Polarize) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *Polarize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := (*PolarizeInput)(arriving)
-			alpha := input.Value
-			beta := -input.Value
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			val, valOK := values.Values["value"]
+			scale, scaleOK := values.Values["scale"]
+
+			if !valOK || !scaleOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			alpha := val
+			beta := -val
 
 			if alpha < 0 {
 				alpha = 0
@@ -57,33 +82,34 @@ func (op *Polarize) Next(
 				beta = 0
 			}
 
-			op.out = PolarizeResult{
-				Alpha: alpha,
-				Beta:  beta,
-				Scale: input.Scale,
+			alphaNormalized := 0.0
+			betaNormalized := 0.0
+
+			if scale > 0 {
+				alphaNormalized = alpha / (alpha + scale)
+				betaNormalized = beta / (beta + scale)
 			}
 
-			if input.Scale > 0 {
-				op.out.AlphaNormalized = alpha / (alpha + input.Scale)
-				op.out.BetaNormalized = beta / (beta + input.Scale)
+			normalizedValue := alphaNormalized - betaNormalized
+
+			op.output.Values["alpha"] = alpha
+			op.output.Values["beta"] = beta
+			op.output.Values["scale"] = scale
+			op.output.Values["alpha_normalized"] = alphaNormalized
+			op.output.Values["beta_normalized"] = betaNormalized
+			op.output.Values["value"] = normalizedValue
+
+			for range adapter.Next(data.NewValue(op.output)) {
 			}
 
-			op.out.Value = op.out.AlphaNormalized - op.out.BetaNormalized
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Polarize) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

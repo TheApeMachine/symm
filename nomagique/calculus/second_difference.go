@@ -1,53 +1,88 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
-
-/*
-SecondDifferenceInput is three neighbouring ordinates.
-*/
-type SecondDifferenceInput struct {
-	Left   float64
-	Center float64
-	Right  float64
-}
 
 /*
 SecondDifference owns 2*center - left - right.
 */
 type SecondDifference struct {
-	err error
-	out float64
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
-func NewSecondDifference() core.Primitive {
-	return &SecondDifference{}
+func NewSecondDifference() *SecondDifference {
+	output := data.NewOutputMap()
+	output.Values["value"] = 0
+	output.Values["second_difference"] = 0
+
+	return &SecondDifference{
+		PrimitiveError: core.NewPrimitiveError(),
+		input: data.NewMap(
+			"center", "center",
+			"left", "left",
+			"right", "right",
+		),
+		output: output,
+	}
 }
 
 func (op *SecondDifference) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := *(*SecondDifferenceInput)(arriving)
-			op.out = input.Center + input.Center - input.Left - input.Right
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			center, centerOK := values.Values["center"]
+			left, leftOK := values.Values["left"]
+			right, rightOK := values.Values["right"]
+
+			if !centerOK || !leftOK || !rightOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			result := 2*center - left - right
+			op.output.Values["value"] = result
+			op.output.Values["second_difference"] = result
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *SecondDifference) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

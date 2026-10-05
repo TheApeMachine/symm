@@ -1,86 +1,85 @@
 package causal
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/nomagique/vector"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-PredictionQuery is one row evaluated against a fitted affine model.
-*/
-type PredictionQuery struct {
-	Fit      algo.Fit
-	Features []int
-	Row      []float64
-}
-
-/*
-LinearPrediction evaluates one row against a fit. It does not train.
+LinearPrediction evaluates linear combination of inputs and weights.
 */
 type LinearPrediction struct {
-	err error
-	dot core.Primitive
-	out float64
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
-func NewLinearPrediction() core.Primitive {
-	return &LinearPrediction{dot: vector.NewDot()}
+func NewLinearPrediction() *LinearPrediction {
+	output := data.NewOutputMap()
+	output.Values["prediction"] = 0
+
+	return &LinearPrediction{
+		PrimitiveError: core.NewPrimitiveError(),
+		input: data.NewMap(
+			"intercept", "intercept",
+			"weight", "weight",
+			"feature", "feature",
+		),
+		output: output,
+	}
 }
 
-func (op *LinearPrediction) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *LinearPrediction) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			query := (*PredictionQuery)(arriving)
-			designNode := vector.NewDesign(query.Features...)
-
-			var design []float64
-
-			for out := range designNode.Next(transport.NewValues(query.Row).Next(nil)) {
-				copied := make([]float64, len(*(*[]float64)(out)))
-				copy(copied, *(*[]float64)(out))
-				design = copied
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			if err := designNode.Error(); err != nil {
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
 				op.Error(err)
 				return
 			}
 
-			pair := vector.Pair{
-				Left:  query.Fit.Coefficients,
-				Right: design,
+			intercept, interceptOK := values.Values["intercept"]
+			weight, weightOK := values.Values["weight"]
+			feature, featureOK := values.Values["feature"]
+
+			if !interceptOK || !weightOK || !featureOK {
+				op.Error(core.ErrNotHeld)
+				return
 			}
 
-			for out := range op.dot.Next(transport.NewValues(pair).Next(nil)) {
-				op.out = *(*float64)(out)
+			op.output.Values["prediction"] = intercept + weight*feature
+
+			for range adapter.Next(data.NewValue(op.output)) {
 			}
 
-			if err := op.dot.Error(); err != nil {
+			if err := adapter.Error(); err != nil {
 				op.Error(err)
 				return
 			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *LinearPrediction) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

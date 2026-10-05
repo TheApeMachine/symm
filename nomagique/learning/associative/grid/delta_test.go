@@ -14,34 +14,62 @@ func TestDelta(t *testing.T) {
 		delta := NewDelta(2)
 
 		Convey("Sequential steps compute levels and changes accurately", func() {
-			step1 := []float64{10.0, 20.0}
-			results1 := make([][3]float64, 0, 2)
-			for tuple := range data.ReadSeq[[3]float64](delta.Next(data.NewValue(step1))) {
-				results1 = append(results1, tuple)
-			}
-			So(len(results1), ShouldEqual, 2)
-			// Region 1: ID=1, level=10, change=10-0=10
-			So(results1[0], ShouldResemble, [3]float64{1.0, 10.0, 10.0})
-			// Region 2: ID=2, level=20, change=20-0=20
-			So(results1[1], ShouldResemble, [3]float64{2.0, 20.0, 20.0})
+			state1 := data.NewState(
+				data.NewMap("level_0", "level_0", "level_1", "level_1"),
+			)
+			adapter1 := data.NewAdapter(nil, state1)
+			input1 := data.NewOutputMap()
+			input1.Values["level_0"] = 10.0
+			input1.Values["level_1"] = 20.0
 
-			step2 := []float64{12.0, 15.0}
-			results2 := make([][3]float64, 0, 2)
-			for tuple := range data.ReadSeq[[3]float64](delta.Next(data.NewValue(step2))) {
-				results2 = append(results2, tuple)
+			for range adapter1.Next(data.NewValue(input1)) {
 			}
-			So(len(results2), ShouldEqual, 2)
+
+			data.Read[*data.Adapter](delta.Next(data.NewValue(adapter1)))
+			So(delta.Error(), ShouldBeNil)
+			// Region 1: ID=1, level=10, change=10-0=10
+			So(delta.output.Values["level_0"], ShouldEqual, 10.0)
+			So(delta.output.Values["change_0"], ShouldEqual, 10.0)
+			So(delta.output.Values["region_0"], ShouldEqual, 1.0)
+			// Region 2: ID=2, level=20, change=20-0=20
+			So(delta.output.Values["level_1"], ShouldEqual, 20.0)
+			So(delta.output.Values["change_1"], ShouldEqual, 20.0)
+			So(delta.output.Values["region_1"], ShouldEqual, 2.0)
+
+			state2 := data.NewState(
+				data.NewMap("level_0", "level_0", "level_1", "level_1"),
+			)
+			adapter2 := data.NewAdapter(nil, state2)
+			input2 := data.NewOutputMap()
+			input2.Values["level_0"] = 12.0
+			input2.Values["level_1"] = 15.0
+
+			for range adapter2.Next(data.NewValue(input2)) {
+			}
+
+			data.Read[*data.Adapter](delta.Next(data.NewValue(adapter2)))
+			So(delta.Error(), ShouldBeNil)
 			// Region 1: ID=1, level=12, change=12-10=2
-			So(results2[0], ShouldResemble, [3]float64{1.0, 12.0, 2.0})
+			So(delta.output.Values["level_0"], ShouldEqual, 12.0)
+			So(delta.output.Values["change_0"], ShouldEqual, 2.0)
 			// Region 2: ID=2, level=15, change=15-20=-5
-			So(results2[1], ShouldResemble, [3]float64{2.0, 15.0, -5.0})
+			So(delta.output.Values["level_1"], ShouldEqual, 15.0)
+			So(delta.output.Values["change_1"], ShouldEqual, -5.0)
 		})
 
 		Convey("Shape mismatch records ErrShape", func() {
-			invalid := []float64{1.0}
-			data.Read[[3]float64](delta.Next(data.NewValue(invalid)))
+			state := data.NewState(
+				data.NewMap("level_0", "level_0"),
+			)
+			adapter := data.NewAdapter(nil, state)
+			input := data.NewOutputMap()
+			input.Values["level_0"] = 1.0
+
+			for range adapter.Next(data.NewValue(input)) {
+			}
+
+			data.Read[*data.Adapter](delta.Next(data.NewValue(adapter)))
 			So(errors.Is(delta.Error(), core.ErrShape), ShouldBeTrue)
 		})
 	})
 }
-
