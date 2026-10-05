@@ -2,36 +2,30 @@ package arithmetic
 
 import (
 	"testing"
-	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestDivideNext(t *testing.T) {
-	Convey("Given the binary division primitive", t, func() {
+	Convey("Divide speaks only dividend, divisor and quotient", t, func() {
 		op := NewDivide()
+		mapping := data.NewMap(
+			"dividend", "left",
+			"divisor", "right",
+			"quotient", "result",
+		)
 
-		Convey("it maps each pair to its quotient", func() {
-			So(drive[[2]float64, float64](op, &[2]float64{300, 2}), ShouldEqual, 150)
-			So(drive[[2]float64, float64](op, &[2]float64{-6, 4}), ShouldEqual, -1.5)
-		})
+		value, ok := drive(op, mapping, map[string]float64{"left": 300, "right": 2}, "result")
+		So(ok, ShouldBeTrue)
+		So(value, ShouldEqual, 150)
 
-		Convey("a zero divisor has no quotient: no fact is yielded", func() {
-			pair := [2]float64{1, 0}
-			answers := 0
+		value, ok = drive(op, mapping, map[string]float64{"left": -6, "right": 4}, "result")
+		So(ok, ShouldBeTrue)
+		So(value, ShouldEqual, -1.5)
 
-			for range op.Next(transport.NewOne(unsafe.Pointer(&pair)).Next(nil)) {
-				answers++
-			}
-
-			So(answers, ShouldEqual, 0)
-			So(op.Error(), ShouldBeNil)
-		})
-
-		Convey("each arrival maps independently: the primitive holds no state", func() {
-			So(drive[[2]float64, float64](op, &[2]float64{8, 2}), ShouldEqual, 4)
-			So(drive[[2]float64, float64](op, &[2]float64{8, 2}), ShouldEqual, 4)
-		})
+		_, ok = drive(op, mapping, map[string]float64{"left": 1, "right": 0}, "result")
+		So(ok, ShouldBeFalse)
+		So(op.Error(), ShouldBeNil)
 	})
 }

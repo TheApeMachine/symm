@@ -1,45 +1,69 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Log owns one field operation. What it hands over is the natural logarithm of each
-arrival, operating in-place on the wire pointer.
+Log owns the natural logarithm in its native coordinates:
+argument -> logarithm.
 */
 type Log struct {
-	err error
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
 func NewLog() core.Primitive {
-	return &Log{}
+	output := data.NewOutputMap()
+	output.Values["logarithm"] = 0
+
+	return &Log{
+		PrimitiveError: core.NewPrimitiveError(),
+		input:          data.NewMap("argument", "argument"),
+		output:         output,
+	}
 }
 
 func (op *Log) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			in := (*float64)(arriving)
-			*in = math.Log(*in)
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			argument, ok := values.Values["argument"]
+
+			if !ok || argument <= 0 {
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
+			op.output.Values["logarithm"] = math.Log(argument)
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
 
 			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Log) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

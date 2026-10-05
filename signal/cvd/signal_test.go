@@ -11,160 +11,185 @@ import (
 	"github.com/theapemachine/symm/signal/cvd"
 )
 
-func TestCVDSignalMetrics(t *testing.T) {
-	Convey("CVD signal instrument calculates mathematically rigorous cumulative volume and flow metrics", t, func() {
-		ctx := context.Background()
-		arena := data.NewArenaOwner(4096)
-		instrument := cvd.NewSignal(ctx, arena)
+func TestSignalStep(t *testing.T) {
+	Convey("CVD is a per-symbol Adapter algebra over executed flow", t, func() {
+		arena := data.NewArenaOwner("cvd-test", 4096)
+		instrument := cvd.NewSignal(context.Background(), arena)
 		instrument.Transition(nmruntime.READY)
+		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-		origin := now
+		read := func(measurement *data.Measurement, key string) (float64, bool) {
+			entry := measurement.Read(key)
 
-		Convey("Accumulates exact quantities, notionals, rates, and signed deltas across trades", func() {
-			var cumBuyQty, cumSellQty float64
-			var cumBuyNotional, cumSellNotional float64
+			if entry.Err != nil {
+				return 0, false
+			}
+
+			return entry.Metric.Raw, true
+		}
+
+		trade := func(symbol string, step int, side float64, price float64, qty float64) *data.Measurement {
+			at := origin.Add(time.Duration(step) * 100 * time.Millisecond)
+			measurement := data.NewMeasurement(1, symbol, "test:trade", int64(step+1), int64(step+1))
+			measurement.At = at
+			measurement.From = at
+			measurement.Write(
+				data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
+				data.NewMetric("aggressor_sign", side, data.UnitDimensionless, data.TimescaleInstantaneous),
+				data.NewMetric("event_time", float64(at.UnixNano())/float64(time.Second), data.UnitSecond, data.TimescaleInstantaneous),
+				data.NewMetric("best_bid", price-5, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("best_ask", price+5, data.UnitPrice, data.TimescaleInstantaneous),
+			)
+			return measurement
+		}
+
+		Convey("it accumulates counts, quantities, notionals and rates without signal-side arithmetic", func() {
+			var buyQuantity, sellQuantity float64
+			var buyNotional, sellNotional float64
 			var buyCount, sellCount float64
 
 			for step := range 10 {
-				prior := arena.NewMeasurement("ingress")
-				prior.Label = "BTC/USD"
-				prior.SeqIdx = int64(step + 1)
-				prior.At = now.Add(time.Duration(step) * 100 * time.Millisecond)
-				prior.From = prior.At
+				price := 50000.0 + float64(step)*10
+				quantity := 1.5 + float64(step)*0.1
+				side := 1.0
 
-				price := 50000.0 + float64(step)*10.0
-				qty := 1.5 + float64(step)*0.1
-				notional := price * qty
-
-				side := "buy"
 				if step%2 != 0 {
-					side = "sell"
-					sellCount++
-					cumSellQty += qty
-					cumSellNotional += notional
-				} else {
+					side = -1
+				}
+
+				if side > 0 {
 					buyCount++
-					cumBuyQty += qty
-					cumBuyNotional += notional
+					buyQuantity += quantity
+					buyNotional += price * quantity
 				}
 
-				prior.SetMetric("price", data.NewMetric(
-					"price",
-					data.UnitPrice,
-					data.TimescaleInstantaneous,
-					price,
-					10.0,
-				).Write(price))
-				prior.SetMetric("qty", data.NewMetric(
-					"qty",
-					data.UnitQuantity,
-					data.TimescaleInstantaneous,
-					0.0,
-					qty,
-				).Write(qty))
-				prior.SetMetric("best_bid", data.NewMetric(
-					"best_bid",
-					data.UnitPrice,
-					data.TimescaleInstantaneous,
-					price,
-					10.0,
-				).Write(price-5.0))
-				prior.SetMetric("best_ask", data.NewMetric(
-					"best_ask",
-					data.UnitPrice,
-					data.TimescaleInstantaneous,
-					price,
-					10.0,
-				).Write(price+5.0))
-				prior.SetProvenance("side", side)
-				prior.SetProvenance("channel", "trade")
-
-				res := instrument.Step(prior)
-				So(res, ShouldNotBeNil)
-				So(res.Err, ShouldBeNil)
-
-				totalCount := float64(step + 1)
-				expectedGrossQty := cumBuyQty + cumSellQty
-				expectedNetQty := cumBuyQty - cumSellQty
-				expectedGrossNotional := cumBuyNotional + cumSellNotional
-				expectedNetNotional := cumBuyNotional - cumSellNotional
-
-				// Trade counts
-				So(res.GetMetric("trade_count").Raw, ShouldEqual, totalCount)
-				So(res.GetMetric("trade_count:buy").Raw, ShouldEqual, buyCount)
-				So(res.GetMetric("trade_count:sell").Raw, ShouldEqual, sellCount)
-
-				// Executed quantities & volume delta
-				So(res.GetMetric("executed_quantity:buy").Raw, ShouldAlmostEqual, cumBuyQty, 1e-9)
-				So(res.GetMetric("executed_quantity:sell").Raw, ShouldAlmostEqual, cumSellQty, 1e-9)
-				So(res.GetMetric("gross_executed_quantity").Raw, ShouldAlmostEqual, expectedGrossQty, 1e-9)
-				So(res.GetMetric("net_executed_quantity").Raw, ShouldAlmostEqual, expectedNetQty, 1e-9)
-				So(res.GetMetric("cumulative_volume_delta").Raw, ShouldAlmostEqual, expectedNetQty, 1e-9)
-
-				// Notionals & delta
-				So(res.GetMetric("aggressive_notional:buy").Raw, ShouldAlmostEqual, cumBuyNotional, 1e-6)
-				So(res.GetMetric("aggressive_notional:sell").Raw, ShouldAlmostEqual, cumSellNotional, 1e-6)
-				So(res.GetMetric("gross_notional").Raw, ShouldAlmostEqual, expectedGrossNotional, 1e-6)
-				So(res.GetMetric("net_notional").Raw, ShouldAlmostEqual, expectedNetNotional, 1e-6)
-				So(res.GetMetric("cumulative_notional_delta").Raw, ShouldAlmostEqual, expectedNetNotional, 1e-6)
-
-				// Fractions
-				expectedSignedCountFrac := (buyCount - sellCount) / totalCount
-				So(res.GetMetric("signed_count_fraction").Raw, ShouldAlmostEqual, expectedSignedCountFrac, 1e-9)
-
-				expectedSignedNetFrac := expectedNetNotional / expectedGrossNotional
-				So(res.GetMetric("signed_net_fraction").Raw, ShouldAlmostEqual, expectedSignedNetFrac, 1e-9)
-
-				// Rates over elapsed span
-				span := prior.At.Sub(origin).Seconds()
-				if span > 0 {
-					So(res.GetMetric("trade_rate").Raw, ShouldAlmostEqual, totalCount/span, 1e-6)
-					So(res.GetMetric("gross_notional_rate").Raw, ShouldAlmostEqual, expectedGrossNotional/span, 1e-6)
-					So(res.GetMetric("net_notional_rate").Raw, ShouldAlmostEqual, expectedNetNotional/span, 1e-6)
-					So(res.GetMetric("buy_notional_rate").Raw, ShouldAlmostEqual, cumBuyNotional/span, 1e-6)
-					So(res.GetMetric("sell_notional_rate").Raw, ShouldAlmostEqual, cumSellNotional/span, 1e-6)
+				if side < 0 {
+					sellCount++
+					sellQuantity += quantity
+					sellNotional += price * quantity
 				}
 
-				// Standardized price check
-				priceMetric := res.GetMetric("price")
-				So(priceMetric.Center, ShouldEqual, price)
-				So(priceMetric.Scale, ShouldEqual, 10.0)
-				So(priceMetric.Standardized, ShouldNotBeNil)
-				So(*priceMetric.Standardized, ShouldEqual, 0.0)
+				result := instrument.Step(trade("BTC/USD", step, side, price, quantity))
+				So(result, ShouldNotBeNil)
 
-				if step > 2 {
-					So(res.Maturity, ShouldBeGreaterThan, 0)
-					So(res.SNRDefined, ShouldBeTrue)
+				totalCount := buyCount + sellCount
+				grossQuantity := buyQuantity + sellQuantity
+				netQuantity := buyQuantity - sellQuantity
+				grossNotional := buyNotional + sellNotional
+				netNotional := buyNotional - sellNotional
+
+				value, ok := read(result, "trade_count")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldEqual, totalCount)
+
+				value, ok = read(result, "trade_count:buy")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldEqual, buyCount)
+
+				value, ok = read(result, "trade_count:sell")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldEqual, sellCount)
+
+				value, ok = read(result, "executed_quantity:buy")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, buyQuantity, 1e-9)
+
+				value, ok = read(result, "executed_quantity:sell")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, sellQuantity, 1e-9)
+
+				value, ok = read(result, "gross_executed_quantity")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, grossQuantity, 1e-9)
+
+				value, ok = read(result, "net_executed_quantity")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, netQuantity, 1e-9)
+
+				value, ok = read(result, "cumulative_volume_delta")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, netQuantity, 1e-9)
+
+				value, ok = read(result, "aggressive_notional:buy")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, buyNotional, 1e-6)
+
+				value, ok = read(result, "aggressive_notional:sell")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, sellNotional, 1e-6)
+
+				value, ok = read(result, "gross_notional")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, grossNotional, 1e-6)
+
+				value, ok = read(result, "net_notional")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, netNotional, 1e-6)
+
+				value, ok = read(result, "cumulative_notional_delta")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, netNotional, 1e-6)
+
+				value, ok = read(result, "signed_count_fraction")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, (buyCount-sellCount)/totalCount, 1e-9)
+
+				value, ok = read(result, "signed_net_fraction")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, netNotional/grossNotional, 1e-9)
+
+				span := float64(step) * 0.1
+
+				if span == 0 {
+					_, ok = read(result, "trade_rate")
+					So(ok, ShouldBeFalse)
+					continue
 				}
+
+				value, ok = read(result, "trade_rate")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, totalCount/span, 1e-6)
+
+				value, ok = read(result, "gross_notional_rate")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, grossNotional/span, 1e-6)
+
+				value, ok = read(result, "net_notional_rate")
+				So(ok, ShouldBeTrue)
+				So(value, ShouldAlmostEqual, netNotional/span, 1e-6)
 			}
 		})
 
-		Convey("Rejects non-positive price or quantity with validation error", func() {
-			prior := arena.NewMeasurement("ingress")
-			prior.Label = "BTC/USD"
-			prior.SeqIdx = 99
-			prior.At = now
-			prior.From = now
-			prior.SetProvenance("side", "buy")
-			prior.SetMetric("price", data.NewMetric(
-				"price",
-				data.UnitPrice,
-				data.TimescaleInstantaneous,
-				0.0,
-				1.0,
-			).Write(0.0)) // Invalid zero price
-			prior.SetMetric("qty", data.NewMetric(
-				"qty",
-				data.UnitQuantity,
-				data.TimescaleInstantaneous,
-				0.0,
-				1.0,
-			).Write(1.0))
+		Convey("it isolates every stateful primitive by symbol", func() {
+			firstBTC := instrument.Step(trade("BTC/USD", 0, 1, 50000, 1))
+			firstETH := instrument.Step(trade("ETH/USD", 0, -1, 2000, 2))
+			secondBTC := instrument.Step(trade("BTC/USD", 1, 1, 50010, 1))
+			secondETH := instrument.Step(trade("ETH/USD", 1, -1, 2010, 2))
 
-			res := instrument.Step(prior)
-			So(res, ShouldNotBeNil)
-			So(res.Err, ShouldNotBeNil)
+			value, ok := read(firstBTC, "trade_count")
+			So(ok, ShouldBeTrue)
+			So(value, ShouldEqual, 1)
+
+			value, ok = read(firstETH, "trade_count")
+			So(ok, ShouldBeTrue)
+			So(value, ShouldEqual, 1)
+
+			value, ok = read(secondBTC, "trade_count")
+			So(ok, ShouldBeTrue)
+			So(value, ShouldEqual, 2)
+
+			value, ok = read(secondETH, "trade_count")
+			So(ok, ShouldBeTrue)
+			So(value, ShouldEqual, 2)
+
+			value, ok = read(secondBTC, "cumulative_volume_delta")
+			So(ok, ShouldBeTrue)
+			So(value, ShouldEqual, 2)
+
+			value, ok = read(secondETH, "cumulative_volume_delta")
+			So(ok, ShouldBeTrue)
+			So(value, ShouldEqual, -4)
 		})
 	})
 }

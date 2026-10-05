@@ -1,27 +1,30 @@
 package calculus
 
 import (
-	"math"
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestSignNext(t *testing.T) {
-	tests.Check(
-		t, tests.Case[float64, float64]{
-			Name: "sign",
-			Seed: 0.0,
-			Factory: func() core.Primitive {
-				return NewSign()
-			},
-			Reference: func(_ float64, value float64) float64 {
-				if value != 0 {
-					return math.Copysign(1, value)
-				}
-				return value
-			},
-		},
-	)
+	Convey("Sign speaks only argument and sign", t, func() {
+		mapping := data.NewMap(
+			"argument", "input",
+			"sign", "output",
+		)
+
+		for _, fixture := range []struct {
+			input float64
+			sign  float64
+		}{
+			{input: -2, sign: -1},
+			{input: 0, sign: 0},
+			{input: 3, sign: 1},
+		} {
+			value, ok := driveAdapter(NewSign(), mapping, map[string]float64{"input": fixture.input}, "output")
+			So(ok, ShouldBeTrue)
+			So(value, ShouldEqual, fixture.sign)
+		}
+	})
 }

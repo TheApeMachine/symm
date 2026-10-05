@@ -437,6 +437,26 @@ var (
 									measurement.SetMetric("qty", data.Metric{
 										Raw: tradeItem.Qty,
 									})
+									measurement.SetMetric("event_time", data.Metric{
+										Raw: float64(tradeItem.Timestamp.UnixNano()) / float64(time.Second),
+									})
+
+									switch tradeItem.Side {
+									case "buy":
+										measurement.SetMetric("aggressor_sign", data.Metric{Raw: 1})
+									case "sell":
+										measurement.SetMetric("aggressor_sign", data.Metric{Raw: -1})
+									}
+
+									bestBid, bestAsk := price.Touch(tradeItem.Symbol)
+
+									if bestBid != nil {
+										measurement.SetMetric("best_bid", data.Metric{Raw: kraken.Float64(bestBid)})
+									}
+
+									if bestAsk != nil {
+										measurement.SetMetric("best_ask", data.Metric{Raw: kraken.Float64(bestAsk)})
+									}
 
 									measurement.Epoch = epoch
 

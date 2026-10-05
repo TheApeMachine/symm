@@ -1,46 +1,70 @@
 package statistic
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Sum owns the running arithmetic sum.
+Sum owns the running arithmetic sum in its native coordinates:
+value -> sum.
 */
 type Sum struct {
-	err   error
-	total float64
-	out   float64
+	*core.PrimitiveError
+	total  float64
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
 func NewSum() core.Primitive {
-	return &Sum{}
+	output := data.NewOutputMap()
+	output.Values["sum"] = 0
+
+	return &Sum{
+		PrimitiveError: core.NewPrimitiveError(),
+		input:          data.NewMap("value", "value"),
+		output:         output,
+	}
 }
 
 func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			val := *(*float64)(arriving)
-			op.total += val
-			op.out = op.total
+			adapter := *(**data.Adapter)(arriving)
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			value, ok := values.Values["value"]
+
+			if !ok {
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
+			op.total += value
+			op.output.Values["sum"] = op.total
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Sum) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

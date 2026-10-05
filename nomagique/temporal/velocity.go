@@ -3,65 +3,90 @@ package temporal
 import (
 	container "container/ring"
 	"iter"
-	"time"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Velocity owns the previous observation. The first observation and
-non-advancing time have zero rate with explicit definedness. The latest point
-is always retained, including when its clock does not advance.
+Velocity owns the previous observation in its native coordinates:
+position and time -> velocity.
+
+Time is expressed in seconds on the mathematical wire. The first observation
+and non-advancing time have zero rate; the latest point is always retained.
 */
 type Velocity struct {
 	*core.PrimitiveError
-	store *container.Ring
-	seen  bool
-	out   float64
+	store  *container.Ring
+	seen   bool
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
 func NewVelocity() core.Primitive {
+	output := data.NewOutputMap()
+	output.Values["velocity"] = 0
+
 	return &Velocity{
 		PrimitiveError: core.NewPrimitiveError(),
 		store:          container.New(2),
+		input: data.NewMap(
+			"position", "position",
+			"time", "time",
+		),
+		output: output,
 	}
 }
 
 func (op *Velocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				continue
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			pair := *(*[2]float64)(arriving)
-			op.store.Value = pair
+			var values data.Map[float64]
 
-			if !op.seen {
-				op.seen = true
-				op.out = 0.0
-				op.store = op.store.Next()
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
 
-				if !yield(unsafe.Pointer(&op.out)) {
+			position, positionOK := values.Values["position"]
+			at, timeOK := values.Values["time"]
+
+			if !positionOK || !timeOK {
+				if !yield(arriving) {
 					return
 				}
+
 				continue
 			}
 
-			prev := op.store.Prev().Value.([2]float64)
-			dx := pair[0] - prev[0]
-			dt := (pair[1] - prev[1]) / float64(time.Second)
+			point := [2]float64{position, at}
+			op.store.Value = point
+			velocity := 0.0
 
-			if dt > 0 {
-				op.out = dx / dt
-			} else {
-				op.out = 0.0
+			if op.seen {
+				previous := op.store.Prev().Value.([2]float64)
+				elapsed := point[1] - previous[1]
+
+				if elapsed > 0 {
+					velocity = (point[0] - previous[0]) / elapsed
+				}
 			}
 
+			op.seen = true
 			op.store = op.store.Next()
+			op.output.Values["velocity"] = velocity
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
