@@ -1,7 +1,6 @@
 package collection
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"unsafe"
@@ -13,13 +12,16 @@ import (
 At selects an indexed member.
 */
 type At[T any] struct {
-	err   error
+	*core.PrimitiveError
 	index int
 	out   T
 }
 
-func NewAt[T any](index int) core.Primitive {
-	return &At[T]{index: index}
+func NewAt[T any](index int) *At[T] {
+	return &At[T]{
+		PrimitiveError: core.NewPrimitiveError(),
+		index:          index,
+	}
 }
 
 func (op *At[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -39,14 +41,4 @@ func (op *At[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *At[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -1,61 +1,78 @@
 package probability
 
 import (
-	"errors"
 	"iter"
-	"math"
 	"slices"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-CalibratorReading scores the arriving sample against retained prior errors
-before appending it. Ready is false until a prior exists.
-*/
-type CalibratorReading struct {
-	Value      float64
-	Ready      bool
-	PriorCount float64
-}
-
-/*
-Calibrator owns that rank. Retention is a configured collection transform:
-identity for all history, Tail for a bounded history.
+Calibrator scores arriving samples against retained prior errors.
 */
 type Calibrator struct {
-	err       error
+	*core.PrimitiveError
 	history   []float64
 	retention core.Primitive
-	out       CalibratorReading
+	input     data.Map[string]
+	output    data.Map[float64]
 }
 
-func NewCalibrator(retention core.Primitive) core.Primitive {
-	return &Calibrator{retention: retention}
+func NewCalibrator(retention core.Primitive) *Calibrator {
+	output := data.NewOutputMap()
+	output.Values["value"] = 0
+	output.Values["ready"] = 0
+	output.Values["prior_count"] = 0
+
+	return &Calibrator{
+		PrimitiveError: core.NewPrimitiveError(),
+		retention:      retention,
+		input:          data.NewMap("value", "value"),
+		output:         output,
+	}
 }
 
 func (op *Calibrator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if op.err != nil {
+			if arriving == nil {
+				op.Error(core.ErrShape)
 				return
 			}
 
-			val := *(*float64)(arriving)
+			adapter := *(**data.Adapter)(arriving)
 
-			if math.IsNaN(val) || math.IsInf(val, 0) {
-				op.err = errors.Join(op.err, core.ErrShape)
+			if adapter == nil {
+				op.Error(core.ErrShape)
 				return
 			}
 
-			reading := CalibratorReading{
-				PriorCount: float64(len(op.history)),
-				Ready:      len(op.history) > 0,
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
 			}
 
-			if reading.Ready {
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			val, ok := values.Values["value"]
+
+			if !ok {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			priorCount := float64(len(op.history))
+			ready := 0.0
+			score := 0.0
+
+			if priorCount > 0 {
+				ready = 1.0
 				hits := 0.0
 
 				for _, prior := range op.history {
@@ -64,7 +81,7 @@ func (op *Calibrator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 					}
 				}
 
-				reading.Value = hits / reading.PriorCount
+				score = hits / priorCount
 			}
 
 			if op.retention == nil {
@@ -73,44 +90,35 @@ func (op *Calibrator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 
 			if op.retention != nil {
 				candidate := append(slices.Clone(op.history), val)
-				retainedEval := transport.NewEvaluate(op.retention)
 				var retained []float64
 
-				for out := range retainedEval.Next(transport.NewValues(candidate).Next(nil)) {
+				for out := range op.retention.Next(data.NewValue(candidate)) {
 					retained = *(*[]float64)(out)
 				}
 
-				err := retainedEval.Error()
-
-				if err != nil {
-					op.err = errors.Join(op.err, err)
+				if err := op.retention.Error(); err != nil {
+					op.Error(err)
 					return
 				}
 
 				op.history = retained
 			}
 
-			op.out = reading
+			op.output.Values["value"] = score
+			op.output.Values["ready"] = ready
+			op.output.Values["prior_count"] = priorCount
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Calibrator) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.retention != nil {
-		if err := op.retention.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

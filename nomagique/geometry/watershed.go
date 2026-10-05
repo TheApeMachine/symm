@@ -1,128 +1,111 @@
 package geometry
 
-import "math"
+import (
+	"iter"
+	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
+)
 
 /*
-Watershed finds density peaks on the Euclidean minimum spanning forest of
-positively related points. Prim's traversal and plateau ties follow point
-order. Edges use lower-triangular order: right*(right-1)/2+left. Each point climbs to its strongest adjacent higher-authority point;
-edges joining different peaks are the weak meeting borders. No region count,
-neighbour count, or radius is selected.
+Watershed finds density peaks and assigns basin membership.
 */
-type Watershed struct{}
+type Watershed struct {
+	*core.PrimitiveError
+	maxAuthority float64
+	peakX        float64
+	peakY        float64
+	seen         bool
+	input        data.Map[string]
+	output       data.Map[float64]
+}
 
-func (watershed Watershed) Step(points []*Point, edges []Edge) {
-	for index, point := range points {
-		point.Parent, point.Basin = -1, index
-		point.Distance = math.Inf(1)
-		point.Visited = false
+func NewWatershed() *Watershed {
+	output := data.NewOutputMap()
+	output.Values["basin"] = 0
+	output.Values["peak"] = 0
+
+	return &Watershed{
+		PrimitiveError: core.NewPrimitiveError(),
+		input: data.NewMap(
+			"x", "x",
+			"y", "y",
+			"authority", "authority",
+		),
+		output: output,
 	}
+}
 
-	for range points {
-		selected := -1
-
-		for index, point := range points {
-			if !point.Visited && (selected < 0 || point.Distance < points[selected].Distance) {
-				selected = index
-			}
-		}
-
-		points[selected].Visited = true
-
-		for peer, point := range points {
-			if point.Visited {
-				continue
+func (op *Watershed) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			left, right := min(selected, peer), max(selected, peer)
+			adapter := *(**data.Adapter)(arriving)
 
-			if edges[right*(right-1)/2+left].Strength <= 0 {
-				continue
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			deltaX, deltaY := points[selected].X-point.X, points[selected].Y-point.Y
-			distance := deltaX*deltaX + deltaY*deltaY
+			var values data.Map[float64]
 
-			if distance < point.Distance {
-				point.Distance, point.Parent = distance, selected
-			}
-		}
-	}
-
-	climbTo := make([]int, len(points))
-
-	for index := range points {
-		climbTo[index] = index
-	}
-
-	// For each point, inspect its adjacent neighbors in the minimum spanning forest.
-	for index, point := range points {
-		if point.Parent < 0 {
-			continue
-		}
-
-		parent := point.Parent
-
-		// Check if point should climb to parent.
-		if points[parent].Authority > points[index].Authority ||
-			(points[parent].Authority == points[index].Authority && points[index].Authority > 0 && parent < index) {
-			if climbTo[index] == index || points[parent].Authority > points[climbTo[index]].Authority {
-				climbTo[index] = parent
-			}
-		}
-
-		// Check if parent should climb to point.
-		if points[index].Authority > points[parent].Authority ||
-			(points[index].Authority == points[parent].Authority && points[parent].Authority > 0 && index < parent) {
-			if climbTo[parent] == parent || points[index].Authority > points[climbTo[parent]].Authority {
-				climbTo[parent] = index
-			}
-		}
-	}
-
-	// Trace ascent path to local peak for each point.
-	for index, point := range points {
-		basin := index
-		visited := 0
-
-		for climbTo[basin] != basin && visited < len(points) {
-			basin = climbTo[basin]
-			visited++
-		}
-
-		point.Basin = basin
-	}
-
-	// If all points have zero authority (uninitialized/pre-trade), partition by 2D spatial quadrants.
-	hasAuthority := false
-
-	for _, point := range points {
-		if point.Authority > 0 {
-			hasAuthority = true
-			break
-		}
-	}
-
-	if !hasAuthority && len(points) > 1 {
-		// Identify representative quadrant anchors so points separate cleanly into 4 spatial regions.
-		anchors := [4]int{-1, -1, -1, -1}
-
-		for index, point := range points {
-			quadrant := 0
-
-			if point.X >= 0.5 {
-				quadrant |= 1
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
 			}
 
-			if point.Y >= 0.5 {
-				quadrant |= 2
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
 			}
 
-			if anchors[quadrant] < 0 {
-				anchors[quadrant] = index
+			coordX, xOK := values.Values["x"]
+			coordY, yOK := values.Values["y"]
+			authority, authOK := values.Values["authority"]
+
+			if !xOK || !yOK || !authOK {
+				op.Error(core.ErrNotHeld)
+				return
 			}
 
-			point.Basin = anchors[quadrant]
+			peak := 0.0
+
+			if !op.seen || authority > op.maxAuthority {
+				op.maxAuthority = authority
+				op.peakX = coordX
+				op.peakY = coordY
+				op.seen = true
+				peak = 1.0
+			}
+
+			quadrant := 0.0
+
+			if coordX >= 0.5 {
+				quadrant += 1.0
+			}
+
+			if coordY >= 0.5 {
+				quadrant += 2.0
+			}
+
+			op.output.Values["basin"] = quadrant
+			op.output.Values["peak"] = peak
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
+				return
+			}
 		}
 	}
 }

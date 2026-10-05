@@ -1,7 +1,6 @@
 package collection
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,14 +11,15 @@ import (
 Append owns extending a collection.
 */
 type Append[T any] struct {
-	err  error
+	*core.PrimitiveError
 	held []T
 	out  []T
 }
 
-func NewAppend[T any](current []T) core.Primitive {
+func NewAppend[T any](current []T) *Append[T] {
 	return &Append[T]{
-		held: append([]T(nil), current...),
+		PrimitiveError: core.NewPrimitiveError(),
+		held:           append([]T(nil), current...),
 	}
 }
 
@@ -34,14 +34,4 @@ func (op *Append[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 		}
 	}
-}
-
-func (op *Append[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

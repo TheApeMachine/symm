@@ -1,96 +1,87 @@
 package probability
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Reading is one simplex and its named readouts.
-*/
-type Reading struct {
-	Probabilities []float64
-	Winner        int
-	Confidence    float64
-	Ambiguity     float64
-	Sharpness     float64
-}
-
-/*
-Distribution owns softmax then the winner, confidence, ambiguity, and sharpness.
+Distribution owns confidence, ambiguity, and sharpness over probability readouts.
 */
 type Distribution struct {
-	err error
-	out Reading
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
-func NewDistribution() core.Primitive {
-	return &Distribution{}
+func NewDistribution() *Distribution {
+	output := data.NewOutputMap()
+	output.Values["confidence"] = 0
+	output.Values["ambiguity"] = 0
+	output.Values["sharpness"] = 0
+
+	return &Distribution{
+		PrimitiveError: core.NewPrimitiveError(),
+		input: data.NewMap(
+			"confidence", "confidence",
+			"ambiguity", "ambiguity",
+		),
+		output: output,
+	}
 }
 
 func (op *Distribution) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		softmax := NewSoftmax()
-		var probabilities []float64
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-		for pPtr := range softmax.Next(in) {
-			probabilities = append(probabilities, *(*float64)(pPtr))
-		}
+			adapter := *(**data.Adapter)(arriving)
 
-		if err := softmax.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-			return
-		}
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-		if len(probabilities) == 0 {
-			op.err = errors.Join(op.err, core.ErrShape)
-			return
-		}
+			var values data.Map[float64]
 
-		winner := 0
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
 
-		for index, p := range probabilities {
-			if p > probabilities[winner] {
-				winner = index
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			confidence, confOK := values.Values["confidence"]
+			ambiguityVal, ambOK := values.Values["ambiguity"]
+
+			if !confOK || !ambOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			op.output.Values["confidence"] = confidence
+			op.output.Values["ambiguity"] = ambiguityVal
+			op.output.Values["sharpness"] = 1.0 - ambiguityVal
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
+				return
 			}
 		}
-
-		ambiguityValEval := transport.NewEvaluate(NewAmbiguity())
-		var ambiguityVal float64
-
-		for out := range ambiguityValEval.Next(transport.NewValues(probabilities...).Next(nil)) {
-			ambiguityVal = *(*float64)(out)
-		}
-
-		err := ambiguityValEval.Error()
-
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-			return
-		}
-
-		op.out = Reading{
-			Probabilities: probabilities,
-			Winner:        winner,
-			Confidence:    probabilities[winner],
-			Ambiguity:     ambiguityVal,
-			Sharpness:     1 - ambiguityVal,
-		}
-
-		yield(unsafe.Pointer(&op.out))
 	}
-}
-
-func (op *Distribution) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

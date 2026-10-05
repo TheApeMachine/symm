@@ -14,7 +14,7 @@ type Transform struct {
 	weights []float64
 }
 
-func NewTransform(rows, cols int, weights []float64) core.Primitive {
+func NewTransform(rows, cols int, weights []float64) *Transform {
 	return &Transform{
 		PrimitiveError: core.NewPrimitiveError(),
 		rows:           rows,
@@ -38,9 +38,11 @@ func (op *Transform) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			for r := 0; r < op.rows; r++ {
 				sum := 0.0
 				offset := r * op.cols
+
 				for c := 0; c < op.cols; c++ {
 					sum += op.weights[offset+c] * vec[c]
 				}
+
 				out[r] = sum
 			}
 

@@ -14,13 +14,15 @@ AdaptiveZScore uses log-space moments to score arriving observations against
 their prior baseline and dispersion.
 */
 type AdaptiveZScore struct {
-	err     error
+	*core.PrimitiveError
 	moments statistic.Moments
 	out     statistic.CausalResidualResult
 }
 
-func NewAdaptiveZScore() core.Primitive {
-	return &AdaptiveZScore{}
+func NewAdaptiveZScore() *AdaptiveZScore {
+	return &AdaptiveZScore{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *AdaptiveZScore) Next(
@@ -78,15 +80,4 @@ func (op *AdaptiveZScore) Next(
 			}
 		}
 	}
-}
-
-func (op *AdaptiveZScore) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

@@ -14,7 +14,7 @@ type Primitive struct {
 	pipeline *nomagique.Number
 }
 
-func NewPrimitive(regions, channels int, weights []float64) core.Primitive {
+func NewPrimitive(regions, channels int, weights []float64) *Primitive {
 	return &Primitive{
 		PrimitiveError: core.NewPrimitiveError(),
 		pipeline: nomagique.NewNumber(

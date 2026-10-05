@@ -121,7 +121,7 @@ func (wrapper *Adapter) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 					return
 				}
 
-				wrapper.values.Values[nativeKey] = entry.Metric.raw
+				wrapper.values.Values[nativeKey] = entry.Metric.Raw
 			}
 
 			if !yield(unsafe.Pointer(&wrapper.values)) {

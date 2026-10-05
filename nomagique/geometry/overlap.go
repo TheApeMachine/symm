@@ -1,4 +1,4 @@
-package probability
+package geometry
 
 import (
 	"iter"
@@ -10,30 +10,33 @@ import (
 )
 
 /*
-Softmax evaluates shifted exponential normalization for one arrival.
+Overlap owns the normalized inner product and distance between coordinate pairs.
 */
-type Softmax struct {
+type Overlap struct {
 	*core.PrimitiveError
 	input  data.Map[string]
 	output data.Map[float64]
 }
 
-func NewSoftmax() *Softmax {
+func NewOverlap() *Overlap {
 	output := data.NewOutputMap()
-	output.Values["probability"] = 0
+	output.Values["overlap"] = 0
+	output.Values["affinity"] = 0
+	output.Values["distance"] = 0
 
-	return &Softmax{
+	return &Overlap{
 		PrimitiveError: core.NewPrimitiveError(),
 		input: data.NewMap(
-			"logit", "logit",
-			"shift", "shift",
-			"total", "total",
+			"x1", "x1",
+			"y1", "y1",
+			"x2", "x2",
+			"y2", "y2",
 		),
 		output: output,
 	}
 }
 
-func (op *Softmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *Overlap) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			if arriving == nil {
@@ -59,21 +62,30 @@ func (op *Softmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			logit, logitOK := values.Values["logit"]
-			shift, shiftOK := values.Values["shift"]
-			total, totalOK := values.Values["total"]
+			firstX, fxOK := values.Values["x1"]
+			firstY, fyOK := values.Values["y1"]
+			secondX, sxOK := values.Values["x2"]
+			secondY, syOK := values.Values["y2"]
 
-			if !logitOK || !shiftOK || !totalOK {
+			if !fxOK || !fyOK || !sxOK || !syOK {
 				op.Error(core.ErrNotHeld)
 				return
 			}
 
-			if total == 0 {
-				op.Error(core.ErrDomain)
-				return
+			dot := firstX*secondX + firstY*secondY
+			firstNorm := math.Hypot(firstX, firstY)
+			secondNorm := math.Hypot(secondX, secondY)
+			affinity := 0.0
+
+			if firstNorm > 0 && secondNorm > 0 {
+				affinity = dot / (firstNorm * secondNorm)
 			}
 
-			op.output.Values["probability"] = math.Exp(logit-shift) / total
+			distance := math.Hypot(secondX-firstX, secondY-firstY)
+
+			op.output.Values["overlap"] = dot
+			op.output.Values["affinity"] = affinity
+			op.output.Values["distance"] = distance
 
 			for range adapter.Next(data.NewValue(op.output)) {
 			}

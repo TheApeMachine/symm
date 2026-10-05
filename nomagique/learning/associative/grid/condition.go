@@ -17,7 +17,7 @@ type Condition struct {
 	*core.PrimitiveError
 }
 
-func NewCondition() core.Primitive {
+func NewCondition() *Condition {
 	return &Condition{
 		PrimitiveError: core.NewPrimitiveError(),
 	}

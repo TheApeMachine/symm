@@ -1,51 +1,102 @@
 package temporal
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
 Spacings owns consecutive timestamp differences within one delivery run.
 */
 type Spacings struct {
-	err      error
-	previous int64
+	*core.PrimitiveError
+	previous float64
 	seen     bool
-	out      float64
+	input    data.Map[string]
+	output   data.Map[float64]
 }
 
-func NewSpacings() core.Primitive {
-	return &Spacings{}
+func NewSpacings() *Spacings {
+	output := data.NewOutputMap()
+	output.Values["spacing"] = 0
+
+	return &Spacings{
+		PrimitiveError: core.NewPrimitiveError(),
+		input:          data.NewMap("at", "at"),
+		output:         output,
+	}
 }
 
 func (op *Spacings) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			at := *(*int64)(arriving)
-
-			if op.seen {
-				op.out = float64(at - op.previous)
-
-				if !yield(unsafe.Pointer(&op.out)) {
-					return
-				}
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			op.previous, op.seen = at, true
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			at, ok := values.Values["at"]
+
+			if !ok {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			if !op.seen {
+				op.seen = true
+				op.previous = at
+				op.output.Values["spacing"] = 0
+
+				for range adapter.Next(data.NewValue(op.output)) {
+				}
+
+				if err := adapter.Error(); err != nil {
+					op.Error(err)
+					return
+				}
+
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
+			op.output.Values["spacing"] = at - op.previous
+			op.previous = at
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
+				return
+			}
 		}
 	}
-}
-
-func (op *Spacings) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

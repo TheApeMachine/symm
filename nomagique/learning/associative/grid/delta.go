@@ -19,7 +19,7 @@ type Delta struct {
 	previous []float64
 }
 
-func NewDelta(regions int) core.Primitive {
+func NewDelta(regions int) *Delta {
 	return &Delta{
 		PrimitiveError: core.NewPrimitiveError(),
 		regions:        regions,

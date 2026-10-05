@@ -1,65 +1,92 @@
 package probability
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-ArgmaxResult is a winning value and the first index at which it occurred.
-*/
-type ArgmaxResult struct {
-	Index int
-	Value float64
-}
-
-/*
-Argmax preserves a winning value's ordinal through comparison.
+Argmax preserves a winning value's ordinal and value through comparison.
 */
 type Argmax struct {
-	err error
-	out ArgmaxResult
+	*core.PrimitiveError
+	bestValue    float64
+	bestIndex    float64
+	currentIndex float64
+	seen         bool
+	input        data.Map[string]
+	output       data.Map[float64]
 }
 
-func NewArgmax() core.Primitive {
-	return &Argmax{}
+func NewArgmax() *Argmax {
+	output := data.NewOutputMap()
+	output.Values["winner_index"] = 0
+	output.Values["winner_value"] = 0
+
+	return &Argmax{
+		PrimitiveError: core.NewPrimitiveError(),
+		input:          data.NewMap("value", "value"),
+		output:         output,
+	}
 }
 
 func (op *Argmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		var best ArgmaxResult
-		seen := false
-		index := 0
-
 		for arriving := range in {
-			val := *(*float64)(arriving)
-
-			if !seen || val > best.Value {
-				best = ArgmaxResult{Index: index, Value: val}
-				seen = true
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			index++
-		}
+			adapter := *(**data.Adapter)(arriving)
 
-		if !seen {
-			return
-		}
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-		op.out = best
-		yield(unsafe.Pointer(&op.out))
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			val, ok := values.Values["value"]
+
+			if !ok {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			if !op.seen || val > op.bestValue {
+				op.bestValue = val
+				op.bestIndex = op.currentIndex
+				op.seen = true
+			}
+
+			op.currentIndex++
+			op.output.Values["winner_index"] = op.bestIndex
+			op.output.Values["winner_value"] = op.bestValue
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
+				return
+			}
+		}
 	}
-}
-
-func (op *Argmax) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

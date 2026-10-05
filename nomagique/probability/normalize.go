@@ -1,57 +1,88 @@
 package probability
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Normalize divides each arrival by the run's total.
+Normalize divides an arriving value by a run total.
 */
 type Normalize struct {
-	err error
-	out float64
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
-func NewNormalize() core.Primitive {
-	return &Normalize{}
+func NewNormalize() *Normalize {
+	output := data.NewOutputMap()
+	output.Values["normalized"] = 0
+
+	return &Normalize{
+		PrimitiveError: core.NewPrimitiveError(),
+		input: data.NewMap(
+			"value", "value",
+			"total", "total",
+		),
+		output: output,
+	}
 }
 
 func (op *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		var values []float64
-		var total float64
-
 		for arriving := range in {
-			val := *(*float64)(arriving)
-			values = append(values, val)
-			total += val
-		}
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-		if total == 0 {
-			op.err = errors.Join(op.err, core.ErrShape)
-			return
-		}
+			adapter := *(**data.Adapter)(arriving)
 
-		for _, val := range values {
-			op.out = val / total
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			val, valOK := values.Values["value"]
+			total, totalOK := values.Values["total"]
+
+			if !valOK || !totalOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			if total == 0 {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			op.output.Values["normalized"] = val / total
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Normalize) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

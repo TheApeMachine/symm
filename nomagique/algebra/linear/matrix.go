@@ -13,7 +13,7 @@ type Matrix struct {
 	cols int
 }
 
-func NewMatrix(rows, cols int) core.Primitive {
+func NewMatrix(rows, cols int) *Matrix {
 	return &Matrix{
 		PrimitiveError: core.NewPrimitiveError(),
 		rows:           rows,

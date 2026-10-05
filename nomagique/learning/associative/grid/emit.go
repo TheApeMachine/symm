@@ -17,7 +17,7 @@ type Emit struct {
 	regions int
 }
 
-func NewEmit(regions int) core.Primitive {
+func NewEmit(regions int) *Emit {
 	return &Emit{
 		PrimitiveError: core.NewPrimitiveError(),
 		regions:        regions,

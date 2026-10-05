@@ -1,78 +1,121 @@
 package geometry
 
-import "math"
+import (
+	"iter"
+	"math"
+	"unsafe"
 
-/* Point is an addressable coordinate and its measured resistance to movement. */
-type Point struct {
-	X, Y               float64
-	Authority          float64
-	MoveX, MoveY, Mass float64
-	Parent, Basin      int
-	Distance           float64
-	Visited            bool
-}
-
-/* Edge expresses signed attraction between two point indices. */
-type Edge struct {
-	Left, Right int
-	Strength    float64
-}
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
+)
 
 /*
-Relaxation performs one simultaneous weighted stress descent. Unit distance is
-the coordinate system's unit, not a market threshold. Positive evidence lowers
-target distance; negative evidence increases it. Endpoint authority determines
-the opposite endpoint's share of displacement. Scratch fields live with points.
+Relaxation performs one weighted stress descent displacement step.
 */
-type Relaxation struct{}
+type Relaxation struct {
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
+}
 
-func (relaxation Relaxation) Step(points []*Point, edges []Edge) float64 {
-	for _, point := range points {
-		point.MoveX, point.MoveY, point.Mass = 0, 0, 0
+func NewRelaxation() *Relaxation {
+	output := data.NewOutputMap()
+	output.Values["x"] = 0
+	output.Values["y"] = 0
+	output.Values["displacement"] = 0
+
+	return &Relaxation{
+		PrimitiveError: core.NewPrimitiveError(),
+		input: data.NewMap(
+			"x", "x",
+			"y", "y",
+			"target_x", "target_x",
+			"target_y", "target_y",
+			"strength", "strength",
+			"authority", "authority",
+		),
+		output: output,
 	}
+}
 
-	for _, edge := range edges {
-		left, right := points[edge.Left], points[edge.Right]
-		mass := left.Authority + right.Authority
+func (op *Relaxation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-		if mass == 0 || edge.Strength == 0 {
-			continue
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			currentX, xOK := values.Values["x"]
+			currentY, yOK := values.Values["y"]
+			targetX, txOK := values.Values["target_x"]
+			targetY, tyOK := values.Values["target_y"]
+			strength, strOK := values.Values["strength"]
+			authority, authOK := values.Values["authority"]
+
+			if !xOK || !yOK || !txOK || !tyOK || !strOK || !authOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			deltaX := targetX - currentX
+			deltaY := targetY - currentY
+			distance := math.Hypot(deltaX, deltaY)
+
+			displacement := 0.0
+			newX := currentX
+			newY := currentY
+
+			if distance > 0 && authority > 0 && strength != 0 {
+				targetDist := 1.0 - strength
+
+				if strength > 0 {
+					targetDist = 1.0 / (1.0 + strength)
+				}
+
+				weight := math.Abs(strength)
+				force := weight * (distance - targetDist) / distance
+				dx := force * deltaX / authority
+				dy := force * deltaY / authority
+
+				newX += dx
+				newY += dy
+				displacement = dx*dx + dy*dy
+			}
+
+			op.output.Values["x"] = newX
+			op.output.Values["y"] = newY
+			op.output.Values["displacement"] = displacement
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
+				return
+			}
 		}
-
-		deltaX, deltaY := right.X-left.X, right.Y-left.Y
-		distance := math.Hypot(deltaX, deltaY)
-
-		if distance == 0 {
-			continue
-		}
-
-		target := 1 - edge.Strength
-
-		if edge.Strength > 0 {
-			target = 1 / (1 + edge.Strength)
-		}
-
-		weight := math.Abs(edge.Strength)
-		force := weight * (distance - target) / distance
-		left.MoveX += force * deltaX * right.Authority / mass
-		left.MoveY += force * deltaY * right.Authority / mass
-		right.MoveX -= force * deltaX * left.Authority / mass
-		right.MoveY -= force * deltaY * left.Authority / mass
-		left.Mass += weight
-		right.Mass += weight
 	}
-
-	displacement := 0.0
-
-	for _, point := range points {
-		if point.Mass > 0 {
-			dx := point.MoveX / point.Mass
-			dy := point.MoveY / point.Mass
-			point.X += dx
-			point.Y += dy
-			displacement += dx*dx + dy*dy
-		}
-	}
-
-	return displacement
 }

@@ -1,4 +1,4 @@
-package probability
+package geometry
 
 import (
 	"iter"
@@ -10,30 +10,28 @@ import (
 )
 
 /*
-Softmax evaluates shifted exponential normalization for one arrival.
+PhasePath owns angular path construction over the full circle.
 */
-type Softmax struct {
+type PhasePath struct {
 	*core.PrimitiveError
+	index  float64
 	input  data.Map[string]
 	output data.Map[float64]
 }
 
-func NewSoftmax() *Softmax {
+func NewPhasePath() *PhasePath {
 	output := data.NewOutputMap()
-	output.Values["probability"] = 0
+	output.Values["angle"] = 0
+	output.Values["phase"] = 0
 
-	return &Softmax{
+	return &PhasePath{
 		PrimitiveError: core.NewPrimitiveError(),
-		input: data.NewMap(
-			"logit", "logit",
-			"shift", "shift",
-			"total", "total",
-		),
-		output: output,
+		input:          data.NewMap("samples", "samples"),
+		output:         output,
 	}
 }
 
-func (op *Softmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *PhasePath) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			if arriving == nil {
@@ -59,21 +57,23 @@ func (op *Softmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			logit, logitOK := values.Values["logit"]
-			shift, shiftOK := values.Values["shift"]
-			total, totalOK := values.Values["total"]
+			samples, ok := values.Values["samples"]
 
-			if !logitOK || !shiftOK || !totalOK {
+			if !ok {
 				op.Error(core.ErrNotHeld)
 				return
 			}
 
-			if total == 0 {
+			if samples <= 0 {
 				op.Error(core.ErrDomain)
 				return
 			}
 
-			op.output.Values["probability"] = math.Exp(logit-shift) / total
+			angle := 2 * math.Pi * math.Mod(op.index, samples) / samples
+			op.index++
+
+			op.output.Values["angle"] = angle
+			op.output.Values["phase"] = angle / (2 * math.Pi)
 
 			for range adapter.Next(data.NewValue(op.output)) {
 			}

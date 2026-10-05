@@ -1,120 +1,150 @@
 package temporal
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"time"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
-
-/*
-RenewalInput is one increment toward a quantity target.
-*/
-type RenewalInput struct {
-	Increment float64
-	Sample    float64
-	At        int64
-}
-
-/*
-RenewalReading is the rate after one observation.
-*/
-type RenewalReading struct {
-	Rate     float64
-	Change   float64
-	Maturity float64
-	Closed   bool
-	Spans    float64
-	Elapsed  float64
-	Target   float64
-}
 
 /*
 RenewalRate accumulates quantity until a configured target is reached.
 */
 type RenewalRate struct {
-	err         error
+	*core.PrimitiveError
 	target      float64
-	origin      int64
+	origin      float64
 	hasOrigin   bool
 	accumulated float64
 	spans       float64
 	rate        float64
 	lastSample  float64
 	hasSample   bool
-	out         RenewalReading
+	input       data.Map[string]
+	output      data.Map[float64]
 }
 
-func NewRenewalRate(target float64) core.Primitive {
-	return &RenewalRate{target: target}
+func NewRenewalRate(target float64) *RenewalRate {
+	output := data.NewOutputMap()
+	output.Values["rate"] = 0
+	output.Values["change"] = 0
+	output.Values["maturity"] = 0
+	output.Values["closed"] = 0
+	output.Values["spans"] = 0
+	output.Values["elapsed"] = 0
+	output.Values["target"] = target
+
+	return &RenewalRate{
+		PrimitiveError: core.NewPrimitiveError(),
+		target:         target,
+		input: data.NewMap(
+			"increment", "increment",
+			"sample", "sample",
+			"at", "at",
+		),
+		output: output,
+	}
 }
 
 func (op *RenewalRate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := *(*RenewalInput)(arriving)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			if input.Increment < 0 || input.Sample <= 0 || op.target <= 0 {
-				op.err = errors.Join(op.err, core.ErrDomain)
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			increment, incOK := values.Values["increment"]
+			sample, sampleOK := values.Values["sample"]
+			at, atOK := values.Values["at"]
+
+			if !incOK || !sampleOK || !atOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			if increment < 0 || sample <= 0 || op.target <= 0 {
+				op.Error(core.ErrDomain)
 				return
 			}
 
 			if !op.hasOrigin {
-				op.origin = input.At
+				op.origin = at
 				op.hasOrigin = true
 			}
 
-			op.accumulated += input.Increment
-			elapsed := float64(input.At-op.origin) / float64(time.Second)
-			reading := RenewalReading{
-				Rate:     op.rate,
-				Target:   op.target,
-				Elapsed:  elapsed,
-				Spans:    op.spans,
-				Maturity: op.spans / (op.spans + 1),
-			}
+			op.accumulated += increment
+			elapsed := (at - op.origin) / float64(time.Second)
 
 			if elapsed < 0 {
-				op.err = errors.Join(op.err, core.ErrDomain)
+				op.Error(core.ErrDomain)
 				return
 			}
+
+			rate := op.rate
+			change := 0.0
+			closed := 0.0
+			spans := op.spans
+			maturity := spans / (spans + 1)
 
 			if op.accumulated >= op.target && elapsed > 0 {
-				reading.Rate = op.accumulated / elapsed
-				reading.Closed = true
-				reading.Spans = op.spans + 1
-				reading.Maturity = reading.Spans / (reading.Spans + 1)
+				rate = op.accumulated / elapsed
+				closed = 1.0
+				spans = op.spans + 1
+				maturity = spans / (spans + 1)
 
 				if op.hasSample {
-					reading.Change = math.Log(input.Sample / op.lastSample)
+					change = math.Log(sample / op.lastSample)
 				}
 
-				op.rate = reading.Rate
-				op.spans = reading.Spans
-				op.lastSample = input.Sample
+				op.rate = rate
+				op.spans = spans
+				op.lastSample = sample
 				op.hasSample = true
 				op.accumulated = 0
-				op.origin = input.At
+				op.origin = at
 			}
 
-			op.out = reading
+			op.output.Values["rate"] = rate
+			op.output.Values["change"] = change
+			op.output.Values["maturity"] = maturity
+			op.output.Values["closed"] = closed
+			op.output.Values["spans"] = spans
+			op.output.Values["elapsed"] = elapsed
+			op.output.Values["target"] = op.target
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *RenewalRate) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

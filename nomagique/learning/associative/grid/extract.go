@@ -17,7 +17,7 @@ type Extract struct {
 	channels int
 }
 
-func NewExtract(channels int) core.Primitive {
+func NewExtract(channels int) *Extract {
 	return &Extract{
 		PrimitiveError: core.NewPrimitiveError(),
 		channels:       channels,

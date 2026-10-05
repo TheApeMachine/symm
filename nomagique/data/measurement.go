@@ -91,7 +91,7 @@ func (measurement *Measurement) Read(key string) MetricEntry {
 	}
 
 	for _, metricEntry := range measurement.metrics {
-		if metricEntry.Metric.label == key {
+		if metricEntry.Metric.Label == key {
 			return metricEntry
 		}
 	}
@@ -125,7 +125,7 @@ func (measurement *Measurement) Write(
 
 	for _, metric := range metrics {
 		measurement.metrics = append(measurement.metrics, MetricEntry{
-			Key:    metric.label,
+			Key:    metric.Label,
 			Metric: metric,
 		})
 	}
@@ -198,7 +198,7 @@ func (measurement *Measurement) setSNR() *Measurement {
 	var mean, m2, count float64
 
 	for _, entry := range measurement.metrics {
-		x := math.Abs(entry.Metric.standardized)
+		x := math.Abs(entry.Metric.Standardized)
 		count++
 		delta := x - mean
 		mean += delta / count
@@ -233,7 +233,7 @@ func (measurement *Measurement) setMaturity() *Measurement {
 	measurement.energy = 0
 
 	for _, entry := range measurement.metrics {
-		measurement.energy += entry.Metric.standardized * entry.Metric.standardized
+		measurement.energy += entry.Metric.Standardized * entry.Metric.Standardized
 	}
 
 	measurement.samples++

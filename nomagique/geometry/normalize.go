@@ -1,4 +1,4 @@
-package probability
+package geometry
 
 import (
 	"iter"
@@ -10,30 +10,31 @@ import (
 )
 
 /*
-Softmax evaluates shifted exponential normalization for one arrival.
+Normalize scales coordinate pairs to unit energy.
 */
-type Softmax struct {
+type Normalize struct {
 	*core.PrimitiveError
 	input  data.Map[string]
 	output data.Map[float64]
 }
 
-func NewSoftmax() *Softmax {
+func NewNormalize() *Normalize {
 	output := data.NewOutputMap()
-	output.Values["probability"] = 0
+	output.Values["x"] = 0
+	output.Values["y"] = 0
+	output.Values["norm"] = 0
 
-	return &Softmax{
+	return &Normalize{
 		PrimitiveError: core.NewPrimitiveError(),
 		input: data.NewMap(
-			"logit", "logit",
-			"shift", "shift",
-			"total", "total",
+			"x", "x",
+			"y", "y",
 		),
 		output: output,
 	}
 }
 
-func (op *Softmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			if arriving == nil {
@@ -59,21 +60,26 @@ func (op *Softmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			logit, logitOK := values.Values["logit"]
-			shift, shiftOK := values.Values["shift"]
-			total, totalOK := values.Values["total"]
+			coordinateX, xOK := values.Values["x"]
+			coordinateY, yOK := values.Values["y"]
 
-			if !logitOK || !shiftOK || !totalOK {
+			if !xOK || !yOK {
 				op.Error(core.ErrNotHeld)
 				return
 			}
 
-			if total == 0 {
-				op.Error(core.ErrDomain)
-				return
+			norm := math.Hypot(coordinateX, coordinateY)
+			normalizedX := coordinateX
+			normalizedY := coordinateY
+
+			if norm > 0 {
+				normalizedX = coordinateX / norm
+				normalizedY = coordinateY / norm
 			}
 
-			op.output.Values["probability"] = math.Exp(logit-shift) / total
+			op.output.Values["x"] = normalizedX
+			op.output.Values["y"] = normalizedY
+			op.output.Values["norm"] = norm
 
 			for range adapter.Next(data.NewValue(op.output)) {
 			}

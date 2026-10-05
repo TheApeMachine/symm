@@ -1,7 +1,6 @@
 package collection
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"unsafe"
@@ -13,13 +12,16 @@ import (
 Gather selects members at the configured indices.
 */
 type Gather[T any] struct {
-	err     error
+	*core.PrimitiveError
 	indices []int
 	out     []T
 }
 
-func NewGather[T any](indices []int) core.Primitive {
-	return &Gather[T]{indices: append([]int(nil), indices...)}
+func NewGather[T any](indices []int) *Gather[T] {
+	return &Gather[T]{
+		PrimitiveError: core.NewPrimitiveError(),
+		indices:        append([]int(nil), indices...),
+	}
 }
 
 func (op *Gather[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -50,14 +52,4 @@ func (op *Gather[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 		}
 	}
-}
-
-func (op *Gather[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
