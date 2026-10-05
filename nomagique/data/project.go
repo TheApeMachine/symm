@@ -2,6 +2,7 @@ package data
 
 import (
 	"iter"
+	"sort"
 	"time"
 	"unsafe"
 
@@ -19,6 +20,7 @@ type Project struct {
 	aliases    Map[string]
 	units      map[string]Unit
 	timescales map[string]Timescale
+	labels     []string
 	metrics    []Metric
 	out        *Measurement
 }
@@ -30,6 +32,14 @@ func NewProject(
 	units map[string]Unit,
 	timescales map[string]Timescale,
 ) core.Primitive {
+	labels := make([]string, 0, len(aliases.Values))
+
+	for label := range aliases.Values {
+		labels = append(labels, label)
+	}
+
+	sort.Strings(labels)
+
 	return &Project{
 		PrimitiveError: core.NewPrimitiveError(),
 		arena:          arena,
@@ -37,6 +47,7 @@ func NewProject(
 		aliases:        aliases,
 		units:          units,
 		timescales:     timescales,
+		labels:         labels,
 	}
 }
 
@@ -72,7 +83,8 @@ func (op *Project) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				out.From = time.Unix(seconds, nanoseconds)
 			}
 
-			for label, stateKey := range op.aliases.Values {
+			for _, label := range op.labels {
+				stateKey := op.aliases.Values[label]
 				value, ok := adapter.state.output.Values[stateKey]
 
 				if !ok {
