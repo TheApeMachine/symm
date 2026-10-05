@@ -161,10 +161,12 @@ func (measurement *Measurement) finalize() *Measurement {
 		return measurement
 	}
 
-	for _, metric := range measurement.metrics {
+	n := float64(measurement.samples)
+
+	for index := range measurement.metrics {
 		measurement.err = errors.Join(
 			measurement.err,
-			metric.Metric.finalize(float64(measurement.samples)),
+			measurement.metrics[index].Metric.finalize(n),
 		)
 	}
 
