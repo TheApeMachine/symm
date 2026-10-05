@@ -37,14 +37,14 @@ prior when forming new Measurements.
 */
 type Measurement struct {
 	ID         uint32         // Unique ID (uuid).
-	epoch      int64          // Set once at system start, used for snapshot identification.
-	label      string         // Symbol (e.g. BTC/USD), or other logical label.
-	source     string         // Original owner, which system produced this Measurement.
-	seqIdx     int64          // Event sequence index, used to replay in exact order.
-	tick       int64          // Market tick, used to sync to 1 single tick in time.
-	timestamp  int64          // System nanosecond timestamp (UTC).
-	at         time.Time      // Venue timestamp (UTC).
-	from       time.Time      // Window from as venue timestamp (UTC).
+	Epoch      int64          // Set once at system start, used for snapshot identification.
+	Label      string         // Symbol (e.g. BTC/USD), or other logical label.
+	Source     string         // Original owner, which system produced this Measurement.
+	SeqIdx     int64          // Event sequence index, used to replay in exact order.
+	Tick       int64          // Market tick, used to sync to 1 single tick in time.
+	Timestamp  int64          // System nanosecond timestamp (UTC).
+	At         time.Time      // Venue timestamp (UTC).
+	From       time.Time      // Window from as venue timestamp (UTC).
 	snr        float64        // Signal-to-noise ratio (Statistical Mean-to-Standard Deviation).
 	maturity   float64        // Maturity of the Measurement.
 	samples    int64          // Observations accumulated in the current regime.
@@ -63,11 +63,11 @@ func NewMeasurement(
 	epoch int64, label string, source string, seqIdx int64, tick int64,
 ) *Measurement {
 	return &Measurement{
-		epoch:    epoch,
-		label:    label,
-		source:   source,
-		seqIdx:   seqIdx,
-		tick:     tick,
+		Epoch:    epoch,
+		Label:    label,
+		Source:   source,
+		SeqIdx:   seqIdx,
+		Tick:     tick,
 		metrics:  make([]MetricEntry, 0),
 		metadata: make([]StringEntry, 0),
 		peers:    make([]*Measurement, 0),
@@ -135,6 +135,19 @@ func (measurement *Measurement) Write(
 }
 
 /*
+Meta returns the metadata for a key.
+*/
+func (measurement *Measurement) Meta(key string) string {
+	for _, entry := range measurement.metadata {
+		if entry.Key == key {
+			return entry.Value
+		}
+	}
+
+	return ""
+}
+
+/*
 finalize the Measurement, which locks the Measurement and validates it.
 */
 func (measurement *Measurement) finalize() *Measurement {
@@ -155,7 +168,7 @@ func (measurement *Measurement) finalize() *Measurement {
 		)
 	}
 
-	measurement.timestamp = time.Now().UnixNano()
+	measurement.Timestamp = time.Now().UnixNano()
 	measurement.setSNR()
 	measurement.setMaturity()
 
@@ -264,21 +277,21 @@ func (measurement *Measurement) valid(fields ...string) *Measurement {
 			case "ID":
 				mapped[field] = measurement.ID
 			case "epoch":
-				mapped[field] = measurement.epoch
+				mapped[field] = measurement.Epoch
 			case "label":
-				mapped[field] = measurement.label
+				mapped[field] = measurement.Label
 			case "source":
-				mapped[field] = measurement.source
+				mapped[field] = measurement.Source
 			case "seqIdx":
-				mapped[field] = measurement.seqIdx
+				mapped[field] = measurement.SeqIdx
 			case "tick":
-				mapped[field] = measurement.tick
+				mapped[field] = measurement.Tick
 			case "timestamp":
-				mapped[field] = measurement.timestamp
+				mapped[field] = measurement.Timestamp
 			case "at":
-				mapped[field] = measurement.at
+				mapped[field] = measurement.At
 			case "from":
-				mapped[field] = measurement.from
+				mapped[field] = measurement.From
 			case "maturity":
 				mapped[field] = measurement.maturity
 			case "snr":
@@ -310,14 +323,14 @@ func (measurement *Measurement) valid(fields ...string) *Measurement {
 
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"ID":        measurement.ID,
-		"epoch":     measurement.epoch,
-		"label":     measurement.label,
-		"source":    measurement.source,
-		"seqIdx":    measurement.seqIdx,
-		"tick":      measurement.tick,
-		"timestamp": measurement.timestamp,
-		"at":        measurement.at,
-		"from":      measurement.from,
+		"epoch":     measurement.Epoch,
+		"label":     measurement.Label,
+		"source":    measurement.Source,
+		"seqIdx":    measurement.SeqIdx,
+		"tick":      measurement.Tick,
+		"timestamp": measurement.Timestamp,
+		"at":        measurement.At,
+		"from":      measurement.From,
 		"maturity":  measurement.maturity,
 		"snr":       measurement.snr,
 		"err":       measurement.err,

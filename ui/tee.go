@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"time"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -21,18 +22,16 @@ jitter from the consumer fast path and immediately release retained publications
 */
 type UITee struct {
 	*runtime.System
-	ingress             *lf.Queue[data.Publication]
-	egress              *lf.Queue[[]byte]
-	wake                chan struct{}
-	available           chan struct{}
-	lastManifoldVersion uint64
-	filters             []func(
+	ingress *lf.Queue[data.Publication]
+	egress  *lf.Queue[[]byte]
+	filters []func(
 		measurement *data.Measurement,
 	) bool
 }
 
 /*
-NewUITee creates a new wait-free UITee off-ramp with background FlatBuffer encoding.
+NewUITee creates a new wait-free UITee off-ramp
+with background FlatBuffer encoding.
 */
 func NewUITee(
 	ctx context.Context,
@@ -46,24 +45,14 @@ func NewUITee(
 	}
 
 	tee := &UITee{
-		ingress:   lf.NewQueue[data.Publication](),
-		egress:    lf.NewQueue[[]byte](),
-		wake:      make(chan struct{}, 1),
-		available: make(chan struct{}, 1),
-		filters:   filters,
+		ingress: lf.NewQueue[data.Publication](),
+		egress:  lf.NewQueue[[]byte](),
+		filters: filters,
 	}
 
 	tee.System = runtime.NewSystem(ctx, label, tee)
 	go tee.worker(tee.Context())
 	return tee
-}
-
-/*
-Available returns a receive-only notification channel signaled whenever
-a new encoded frame is ready in the egress queue.
-*/
-func (tee *UITee) Available() <-chan struct{} {
-	return tee.available
 }
 
 /*
@@ -77,10 +66,6 @@ func (tee *UITee) Push(pub data.Publication) {
 		return
 	}
 
-	if pub.Measurement == nil {
-		return
-	}
-
 	for _, filter := range tee.filters {
 		if !filter(pub.Measurement) {
 			return
@@ -89,11 +74,6 @@ func (tee *UITee) Push(pub data.Publication) {
 
 	pub.Retain()
 	tee.ingress.Enqueue(pub)
-
-	select {
-	case tee.wake <- struct{}{}:
-	default:
-	}
 }
 
 /*
@@ -117,107 +97,42 @@ func (tee *UITee) Next() unsafe.Pointer {
 }
 
 func (tee *UITee) worker(ctx context.Context) {
-	const batchLimit = 1024
-	batch := make([]*data.Measurement, 0, batchLimit)
-	pubs := make([]data.Publication, 0, batchLimit)
-
 	for {
 		select {
 		case <-ctx.Done():
-			tee.drainIngress()
 			return
-		case <-tee.wake:
-			for {
-				batch = batch[:0]
-				pubs = pubs[:0]
-				var encodedSomething bool
-				var dequeuedCount int
-
-				for range batchLimit {
-					pub, ok := tee.ingress.Dequeue()
-					if !ok {
-						break
-					}
-					dequeuedCount++
-
-					measurement := pub.Measurement
-
-					if manifoldState, ok := measurement.Result.(*types.ManifoldState); ok {
-						if manifoldState != nil && (manifoldState.Version == 0 || manifoldState.Version != tee.lastManifoldVersion) {
-							tee.lastManifoldVersion = manifoldState.Version
-							payload, err := types.EncodeManifold(manifoldState)
-							if err != nil {
-								errnie.Error(errnie.Err(
-									errnie.UnprocessableContent,
-									"[tee] Failed to encode manifold",
-									err,
-								))
-							}
-
-							if err == nil {
-								if tee.egress.Length() >= 4096 {
-									tee.egress.Dequeue()
-								}
-								tee.egress.Enqueue(payload)
-								encodedSomething = true
-							}
-						}
-						pub.Release()
-						continue
-					}
-
-					batch = append(batch, measurement)
-					pubs = append(pubs, pub)
-				}
-
-				if len(batch) > 0 {
-					payload, err := types.EncodeMeasurements(batch)
-
-					for _, pub := range pubs {
-						pub.Release()
-					}
-					pubs = pubs[:0]
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							"[tee] Failed to encode measurements",
-							err,
-						))
-					}
-
-					if err == nil {
-						if tee.egress.Length() >= 4096 {
-							tee.egress.Dequeue()
-						}
-						tee.egress.Enqueue(payload)
-						encodedSomething = true
-					}
-				}
-
-				if encodedSomething {
-					select {
-					case tee.available <- struct{}{}:
-					default:
-					}
-				}
-
-				if dequeuedCount == 0 {
-					break
-				}
+		default:
+			if tee.ingress.Length() == 0 {
+				time.Sleep(10 * time.Millisecond)
+				continue
 			}
 		}
-	}
-}
 
-func (tee *UITee) drainIngress() {
-	for {
-		pub, ok := tee.ingress.Dequeue()
+		for tee.ingress.Length() > 0 {
+			pub, ok := tee.ingress.Dequeue()
 
-		if !ok {
-			return
+			if !ok {
+				break
+			}
+
+			for _, filter := range tee.filters {
+				if !filter(pub.Measurement) {
+					continue
+				}
+			}
+
+			payload, err := types.EncodeMeasurements([]*data.Measurement{pub.Measurement})
+
+			if err != nil {
+				tee.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"[tee] Failed to encode measurement",
+					err,
+				))
+
+			}
+
+			tee.egress.Enqueue(payload)
 		}
-
-		pub.Release()
 	}
 }

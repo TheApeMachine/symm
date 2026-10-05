@@ -204,7 +204,7 @@ var (
 			desk := broker.NewDesk(ctx, privateTransport, price, balance)
 
 			training := strategy.NewTraining(
-				ctx, data.NewArenaOwner(4096),
+				ctx, data.NewArenaOwner("training", 4096),
 				price,
 				desk,
 				catalog,
@@ -215,22 +215,22 @@ var (
 
 			uiTee.Transition(nmruntime.READY)
 
-			manifoldSolver := manifold.NewSolver(ctx, data.NewArenaOwner(4096), book)
+			manifoldSolver := manifold.NewSolver(ctx, data.NewArenaOwner("manifold", 4096), book)
 			book.SetNotify(func(symbol string, _ time.Time) {
 				manifoldSolver.Wake(symbol)
-			})
-			correlationSignal := correlation.NewSignal(ctx, data.NewArenaOwner(4096))
-			cvdSignal := cvd.NewSignal(ctx, data.NewArenaOwner(4096))
-			depthflowSignal := depthflow.NewSignal(ctx, data.NewArenaOwner(4096), book)
-			hawkesSignal := hawkes.NewSignal(ctx, data.NewArenaOwner(4096))
-			leadlagSignal := leadlag.NewSignal(ctx, data.NewArenaOwner(4096))
-			liquiditySignal := liquidity.NewSignal(ctx, data.NewArenaOwner(4096), book)
-			morphologySignal := morphology.NewSignal(ctx, data.NewArenaOwner(4096), book)
-			pumpdumpSignal := pumpdump.NewSignal(ctx, data.NewArenaOwner(4096), book)
-			sentimentSignal := sentiment.NewSignal(ctx, data.NewArenaOwner(4096))
-			toxicitySignal := toxicity.NewSignal(ctx, data.NewArenaOwner(4096), book)
+			})	
+			correlationSignal := correlation.NewSignal(ctx, data.NewArenaOwner("correlation", 4096))
+			cvdSignal := cvd.NewSignal(ctx, data.NewArenaOwner("cvd", 4096))
+			depthflowSignal := depthflow.NewSignal(ctx, data.NewArenaOwner("depthflow", 4096), book)
+			hawkesSignal := hawkes.NewSignal(ctx, data.NewArenaOwner("hawkes", 4096))
+			leadlagSignal := leadlag.NewSignal(ctx, data.NewArenaOwner("leadlag", 4096))
+			liquiditySignal := liquidity.NewSignal(ctx, data.NewArenaOwner("liquidity", 4096), book)
+			morphologySignal := morphology.NewSignal(ctx, data.NewArenaOwner("morphology", 4096), book)
+			pumpdumpSignal := pumpdump.NewSignal(ctx, data.NewArenaOwner("pumpdump", 4096), book)
+			sentimentSignal := sentiment.NewSignal(ctx, data.NewArenaOwner("sentiment", 4096))
+			toxicitySignal := toxicity.NewSignal(ctx, data.NewArenaOwner("toxicity", 4096), book)
 			resonanceSolver := resonance.NewSolver(
-				ctx, data.NewArenaOwner(4096), system.Cfg.Resonance.LearningRate,
+				ctx, data.NewArenaOwner("resonance", 4096), system.Cfg.Resonance.LearningRate,
 			)
 
 			workspace := nmruntime.NewWorkspace(

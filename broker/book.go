@@ -542,15 +542,15 @@ func (book *Book) ApplyMeasurement(measurement *data.Measurement) error {
 		return nil
 	}
 
-	orderID, hasOrder := measurement.GetMetadata("order_id")
+	orderID := measurement.Meta("order_id")
 
-	if !hasOrder || orderID == "" {
+	if orderID == "" {
 		return nil
 	}
 
-	side, _ := measurement.GetMetadata("side")
-	event, _ := measurement.GetMetadata("event")
-	orderType, _ := measurement.GetMetadata("type")
+	side := measurement.Meta("side")
+	event := measurement.Meta("event")
+	orderType := measurement.Meta("type")
 
 	if orderType == "" {
 		orderType = "update"
@@ -558,36 +558,36 @@ func (book *Book) ApplyMeasurement(measurement *data.Measurement) error {
 
 	var priceDec *decimal.Decimal
 
-	if pMetric, ok := measurement.LookupMetric("limit_price"); ok {
-		if pMetric.Exact != nil {
-			priceDec = pMetric.Exact
+	if pMetric := measurement.Read("limit_price"); pMetric.Err == nil {
+		if pMetric.Metric.Exact != nil {
+			priceDec = pMetric.Metric.Exact
 		}
 
-		if priceDec == nil && pMetric.Raw > 0 {
-			priceDec = decimal.NewFromFloat64(pMetric.Raw)
+		if priceDec == nil && pMetric.Metric.Raw > 0 {
+			priceDec = decimal.NewFromFloat64(pMetric.Metric.Raw)
 		}
 	}
 
 	var qtyDec *decimal.Decimal
 
-	if qMetric, ok := measurement.LookupMetric("order_qty"); ok {
-		if qMetric.Exact != nil {
-			qtyDec = qMetric.Exact
+	if qMetric := measurement.Read("order_qty"); qMetric.Err == nil {
+		if qMetric.Metric.Exact != nil {
+			qtyDec = qMetric.Metric.Exact
 		}
 
-		if qtyDec == nil && qMetric.Raw >= 0 {
-			qtyDec = decimal.NewFromFloat64(qMetric.Raw)
+		if qtyDec == nil && qMetric.Metric.Raw >= 0 {
+			qtyDec = decimal.NewFromFloat64(qMetric.Metric.Raw)
 		}
 	}
 
 	var checksum uint32
 
-	if cMetric, ok := measurement.LookupMetric("checksum"); ok {
-		checksum = uint32(cMetric.Raw)
+	if cMetric := measurement.Read("checksum"); cMetric.Err == nil {
+		checksum = uint32(cMetric.Metric.Raw)
 	}
 
 	if checksum == 0 {
-		if cStr, ok := measurement.GetMetadata("checksum"); ok {
+		if cStr := measurement.Meta("checksum"); cStr != "" {
 			if val, err := strconv.ParseUint(cStr, 10, 32); err == nil {
 				checksum = uint32(val)
 			}

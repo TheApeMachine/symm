@@ -83,6 +83,17 @@ Next checks if we're getting a Map[string] (reading) or a Map[float64] (writing)
 func (wrapper *Adapter) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		if in == nil {
+			metrics := make([]Metric, 0, len(wrapper.state.output))
+
+			for key, value := range wrapper.state.output {
+				metrics = append(metrics, Metric{
+					label: key,
+					raw:   value,
+				})
+			}
+
+			wrapper.measurement.Write(metrics...)
+
 			if !yield(unsafe.Pointer(wrapper.measurement)) {
 				return
 			}

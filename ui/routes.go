@@ -182,8 +182,9 @@ func (routes *Routes) Register() {
 
 		epoch := parseInt64Query(run)
 		excursions := []*data.Measurement{}
+
 		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, nil, 0) {
-			if status, ok := measurement.GetMetadata("status"); ok && status == "resolved" {
+			if status := measurement.Meta("status"); status == "resolved" {
 				excursions = append(excursions, measurement)
 			}
 		}

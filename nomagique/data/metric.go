@@ -18,11 +18,11 @@ mathematics runs on Raw alone and never consults it. Derived facts leave it
 nil.
 */
 type Metric struct {
-	label        string           // The name of the metric.
-	raw          float64          // The raw value of the metric.
-	normalized   float64          // The normalized value of the metric.
-	standardized float64          // The standardized value of the metric.
-	exact        *decimal.Decimal // The exact value of the metric.
+	Label        string           // The name of the metric.
+	Raw          float64          // The raw value of the metric.
+	Normalized   float64          // The normalized value of the metric.
+	Standardized float64          // The standardized value of the metric.
+	Exact        *decimal.Decimal // The exact value of the metric.
 	center       float64          // The center of the metric.
 	scale        float64          // The scale of the metric.
 	unit         Unit             // The unit of the metric.
@@ -37,8 +37,8 @@ func NewMetric(
 	label string, raw float64, unit Unit, timescale Timescale,
 ) Metric {
 	return Metric{
-		label:     label,
-		raw:       raw,
+		Label:     label,
+		Raw:       raw,
 		unit:      unit,
 		timescale: timescale,
 	}
@@ -52,9 +52,9 @@ func NewExactMetric(
 	label string, exact *decimal.Decimal, unit Unit, timescale Timescale,
 ) Metric {
 	return Metric{
-		label:     label,
-		raw:       exact.Float64(),
-		exact:     exact,
+		Label:     label,
+		Raw:       exact.Float64(),
+		Exact:     exact,
 		unit:      unit,
 		timescale: timescale,
 	}
@@ -65,13 +65,13 @@ finalize is called from the Measurement to set the derived values, like
 center, scale, normalized, and standardized values.
 */
 func (metric *Metric) finalize(n float64) error {
-	delta := metric.raw - metric.center
+	delta := metric.Raw - metric.center
 	metric.center += delta / n
 
-	if variance := (metric.scale*metric.scale*(n-core.Unit) + delta*(metric.raw-metric.center)) / n; variance > 0 {
+	if variance := (metric.scale*metric.scale*(n-core.Unit) + delta*(metric.Raw-metric.center)) / n; variance > 0 {
 		metric.scale = math.Sqrt(variance)
-		metric.standardized = (metric.raw - metric.center) / metric.scale
-		metric.normalized = math.Tanh(metric.standardized)
+		metric.Standardized = (metric.Raw - metric.center) / metric.scale
+		metric.Normalized = math.Tanh(metric.Standardized)
 	}
 
 	return metric.valid()
@@ -87,15 +87,15 @@ func (metric *Metric) valid(fields ...string) error {
 		for _, field := range fields {
 			switch field {
 			case "label":
-				mapped[field] = metric.label
+				mapped[field] = metric.Label
 			case "raw":
-				mapped[field] = metric.raw
+				mapped[field] = metric.Raw
 			case "normalized":
-				mapped[field] = metric.normalized
+				mapped[field] = metric.Normalized
 			case "standardized":
-				mapped[field] = metric.standardized
+				mapped[field] = metric.Standardized
 			case "exact":
-				mapped[field] = metric.exact
+				mapped[field] = metric.Exact
 			case "center":
 				mapped[field] = metric.center
 			case "scale":
@@ -113,11 +113,11 @@ func (metric *Metric) valid(fields ...string) error {
 	}
 
 	return errnie.Error(errnie.Require(map[string]any{
-		"label":        metric.label,
-		"raw":          metric.raw,
-		"normalized":   metric.normalized,
-		"standardized": metric.standardized,
-		"exact":        metric.exact,
+		"label":        metric.Label,
+		"raw":          metric.Raw,
+		"normalized":   metric.Normalized,
+		"standardized": metric.Standardized,
+		"exact":        metric.Exact,
 		"center":       metric.center,
 		"scale":        metric.scale,
 		"unit":         metric.unit,
