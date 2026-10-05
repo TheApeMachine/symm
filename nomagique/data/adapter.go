@@ -49,6 +49,10 @@ Adapter binds a Measurement's domain keys to the native names used by
 Primitives. String maps request native inputs; float maps publish native
 outputs. The State mapping is the only place where native and domain names
 meet.
+
+An absent coordinate stays absent. Adapter does not invent a zero for a
+missing measurement or an undefined upstream result; the consuming Primitive
+decides whether absence is admissible for its transformation.
 */
 type Adapter struct {
 	*core.PrimitiveError
@@ -110,18 +114,16 @@ func (wrapper *Adapter) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				}
 
 				if wrapper.measurement == nil {
-					wrapper.Error(core.ErrNotHeld)
-					return
+					continue
 				}
 
 				entry := wrapper.measurement.Read(domainKey)
 
 				if entry.Err != nil {
-					wrapper.Error(entry.Err)
-					return
+					continue
 				}
 
-				wrapper.values.Values[nativeKey] = entry.Metric.raw
+				wrapper.values.Values[nativeKey] = entry.Metric.Raw
 			}
 
 			if !yield(unsafe.Pointer(&wrapper.values)) {

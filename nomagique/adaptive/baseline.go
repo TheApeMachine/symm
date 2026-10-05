@@ -70,8 +70,11 @@ func (op *Baseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			value, ok := values.Values["value"]
 
 			if !ok {
-				op.Error(core.ErrNotHeld)
-				return
+				if !yield(arriving) {
+					return
+				}
+
+				continue
 			}
 
 			reading := op.moments.Update(value)

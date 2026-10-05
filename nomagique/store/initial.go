@@ -1,4 +1,4 @@
-package arithmetic
+package store
 
 import (
 	"iter"
@@ -9,32 +9,33 @@ import (
 )
 
 /*
-Divide owns one field operation in its native coordinates:
-dividend / divisor = quotient.
+Initial retains the first defined value in a run and republishes that same
+origin for every later observation.
 
-A zero divisor has no quotient. Undefined stays unwritten.
+Its native coordinates are:
+value -> initial
+value after the first defined observation -> subsequent.
 */
-type Divide struct {
+type Initial struct {
 	*core.PrimitiveError
+	seen   bool
+	held   float64
 	input  data.Map[string]
 	output data.Map[float64]
 }
 
-func NewDivide() core.Primitive {
+func NewInitial() core.Primitive {
 	output := data.NewOutputMap()
-	output.Values["quotient"] = 0
+	output.Values["initial"] = 0
 
-	return &Divide{
+	return &Initial{
 		PrimitiveError: core.NewPrimitiveError(),
-		input: data.NewMap(
-			"dividend", "dividend",
-			"divisor", "divisor",
-		),
-		output: output,
+		input:          data.NewMap("value", "value"),
+		output:         output,
 	}
 }
 
-func (op *Divide) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *Initial) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
 			adapter := *(**data.Adapter)(arriving)
@@ -50,10 +51,9 @@ func (op *Divide) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				values = *(*data.Map[float64])(pointer)
 			}
 
-			dividend, dividendOK := values.Values["dividend"]
-			divisor, divisorOK := values.Values["divisor"]
+			value, ok := values.Values["value"]
 
-			if !dividendOK || !divisorOK || divisor == 0 {
+			if !ok {
 				if !yield(arriving) {
 					return
 				}
@@ -61,7 +61,18 @@ func (op *Divide) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			op.output.Values["quotient"] = dividend / divisor
+			delete(op.output.Values, "subsequent")
+
+			if op.seen {
+				op.output.Values["subsequent"] = value
+			}
+
+			if !op.seen {
+				op.held = value
+				op.seen = true
+			}
+
+			op.output.Values["initial"] = op.held
 
 			for range adapter.Next(data.NewValue(op.output)) {
 			}

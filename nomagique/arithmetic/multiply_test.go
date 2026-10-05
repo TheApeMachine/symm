@@ -4,21 +4,24 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestMultiplyNext(t *testing.T) {
-	Convey("Given the binary multiplication primitive", t, func() {
+	Convey("Multiply speaks only multiplicand, multiplier and product", t, func() {
 		op := NewMultiply()
+		mapping := data.NewMap(
+			"multiplicand", "left",
+			"multiplier", "right",
+			"product", "result",
+		)
 
-		Convey("it maps each pair to its product", func() {
-			So(drive[[2]float64, float64](op, &[2]float64{100, 2}), ShouldEqual, 200)
-			So(drive[[2]float64, float64](op, &[2]float64{-3, 4}), ShouldEqual, -12)
-			So(drive[[2]float64, float64](op, &[2]float64{0, 5}), ShouldEqual, 0)
-		})
+		value, ok := drive(op, mapping, map[string]float64{"left": 100, "right": 2}, "result")
+		So(ok, ShouldBeTrue)
+		So(value, ShouldEqual, 200)
 
-		Convey("each arrival maps independently: the primitive holds no state", func() {
-			So(drive[[2]float64, float64](op, &[2]float64{2, 2}), ShouldEqual, 4)
-			So(drive[[2]float64, float64](op, &[2]float64{2, 2}), ShouldEqual, 4)
-		})
+		value, ok = drive(op, mapping, map[string]float64{"left": -3, "right": 4}, "result")
+		So(ok, ShouldBeTrue)
+		So(value, ShouldEqual, -12)
 	})
 }

@@ -4,21 +4,24 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestSubtractNext(t *testing.T) {
-	Convey("Given the binary subtraction primitive", t, func() {
+	Convey("Subtract speaks only minuend, subtrahend and difference", t, func() {
 		op := NewSubtract()
+		mapping := data.NewMap(
+			"minuend", "left",
+			"subtrahend", "right",
+			"difference", "result",
+		)
 
-		Convey("it maps each pair to its difference", func() {
-			So(drive[[2]float64, float64](op, &[2]float64{5, 3}), ShouldEqual, 2)
-			So(drive[[2]float64, float64](op, &[2]float64{3, 5}), ShouldEqual, -2)
-			So(drive[[2]float64, float64](op, &[2]float64{0, 0}), ShouldEqual, 0)
-		})
+		value, ok := drive(op, mapping, map[string]float64{"left": 5, "right": 3}, "result")
+		So(ok, ShouldBeTrue)
+		So(value, ShouldEqual, 2)
 
-		Convey("each arrival maps independently: the primitive holds no state", func() {
-			So(drive[[2]float64, float64](op, &[2]float64{1, 1}), ShouldEqual, 0)
-			So(drive[[2]float64, float64](op, &[2]float64{1, 1}), ShouldEqual, 0)
-		})
+		value, ok = drive(op, mapping, map[string]float64{"left": 3, "right": 5}, "result")
+		So(ok, ShouldBeTrue)
+		So(value, ShouldEqual, -2)
 	})
 }

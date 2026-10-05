@@ -5,33 +5,66 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Add owns one field operation. What arrives is already a pair: the left and
-right operand as [2]float64. Each arrival maps independently, so the
-primitive holds no state and owns no accumulation.
+Add owns one field operation in its native coordinates:
+augend + addend = sum.
 */
 type Add struct {
 	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
-/*
-NewAdd creates the binary addition primitive.
-*/
 func NewAdd() core.Primitive {
+	output := data.NewOutputMap()
+	output.Values["sum"] = 0
+
 	return &Add{
 		PrimitiveError: core.NewPrimitiveError(),
+		input: data.NewMap(
+			"augend", "augend",
+			"addend", "addend",
+		),
+		output: output,
 	}
 }
 
 func (op *Add) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			pair := (*[2]float64)(arriving)
-			out := pair[0] + pair[1]
+			adapter := *(**data.Adapter)(arriving)
 
-			if !yield(unsafe.Pointer(&out)) {
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			augend, augendOK := values.Values["augend"]
+			addend, addendOK := values.Values["addend"]
+
+			if !augendOK || !addendOK {
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
+			op.output.Values["sum"] = augend + addend
+
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}

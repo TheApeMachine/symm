@@ -1,32 +1,73 @@
 package calculus
 
 import (
-	"errors"
 	"iter"
-	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Sign owns one field operation. What it hands over is the unit sign of each
-arrival, operating in-place on the wire pointer. Zero keeps its own value.
+Sign owns the signum transformation in its native coordinates:
+argument -> sign.
 */
 type Sign struct {
-	err error
+	*core.PrimitiveError
+	input  data.Map[string]
+	output data.Map[float64]
 }
 
 func NewSign() core.Primitive {
-	return &Sign{}
+	output := data.NewOutputMap()
+	output.Values["sign"] = 0
+
+	return &Sign{
+		PrimitiveError: core.NewPrimitiveError(),
+		input:          data.NewMap("argument", "argument"),
+		output:         output,
+	}
 }
 
 func (op *Sign) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			in := (*float64)(arriving)
-			if *in != 0 {
-				*in = math.Copysign(1, *in)
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			argument, ok := values.Values["argument"]
+
+			if !ok {
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
+			sign := 0.0
+
+			if argument > 0 {
+				sign = 1
+			}
+
+			if argument < 0 {
+				sign = -1
+			}
+
+			op.output.Values["sign"] = sign
+
+			for range adapter.Next(data.NewValue(op.output)) {
 			}
 
 			if !yield(arriving) {
@@ -34,14 +75,4 @@ func (op *Sign) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Sign) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
