@@ -30,6 +30,7 @@ const (
 	UnitQuoteCurrencyPerBaseUnit Unit = "quote_per_base"
 	UnitBaseCurrency             Unit = "base_currency"
 	UnitQuoteCurrency            Unit = "quote_currency"
+	UnitInverseQuoteCurrency     Unit = "inverse_quote_currency"
 	UnitQuantity                 Unit = "quantity"
 	UnitVolume                   Unit = "volume"
 	UnitNotional                 Unit = "notional"
