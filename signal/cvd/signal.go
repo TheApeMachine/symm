@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/temporal"
 )
 
 /*
@@ -40,6 +41,9 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 	}
 
 	pipeline := nomagique.NewNumber(
+		data.NewBind(data.NewMap("sequence", "SeqIdx", "at", "At")),
+		temporal.NewCausalOrder(),
+
 		data.NewBind(data.NewMap("value", "price")),
 		logic.NewPositive(),
 		data.NewBind(data.NewMap("value", "qty")),
@@ -174,11 +178,11 @@ func (signal *Signal) pipelineFor(symbol string) core.Primitive {
 		arithmetic.NewDivide(),
 
 		data.NewBind(data.NewMap(
-			"left", "best_bid",
-			"right", "best_ask",
-			"mean", "response_midpoint:at",
+			"lower", "best_bid",
+			"upper", "best_ask",
+			"midpoint", "response_midpoint:at",
 		)),
-		arithmetic.NewMean2(),
+		arithmetic.NewMidpoint(),
 		data.NewBind(data.NewMap("value", "response_midpoint:at", "origin", "response_midpoint:from")),
 		store.NewOrigin(),
 		data.NewBind(data.NewMap(
