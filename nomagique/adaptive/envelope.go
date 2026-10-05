@@ -1,13 +1,12 @@
 package adaptive
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -16,59 +15,133 @@ estimator has dispersion.
 */
 type Envelope struct {
 	*core.PrimitiveError
-	moments     core.Primitive
-	coefficient core.Primitive
-	out         float64
+	moments          core.Primitive
+	coefficient      core.Primitive
+	input            data.Map[string]
+	coefficientInput data.Map[string]
+	count            data.Map[float64]
+	output           data.Map[float64]
 }
 
-func NewEnvelope(
-	moments core.Primitive,
-	coefficient core.Primitive,
-) core.Primitive {
+func NewEnvelope(moments core.Primitive, coefficient core.Primitive) core.Primitive {
+	count := data.NewOutputMap()
+	count.Values["count"] = 0
+	output := data.NewOutputMap()
+	output.Values["value"] = 0
+
 	return &Envelope{
-		PrimitiveError: core.NewPrimitiveError(),
-		moments:        moments,
-		coefficient:    coefficient,
+		PrimitiveError:   core.NewPrimitiveError(),
+		moments:          moments,
+		coefficient:      coefficient,
+		input:            data.NewMap("value", "value"),
+		coefficientInput: data.NewMap("scale", "scale"),
+		count:            count,
+		output:           output,
 	}
 }
 
 func (op *Envelope) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for readingPtr := range op.moments.Next(in) {
-			current := *(*statistic.MomentReading)(readingPtr)
-			value := current.Value
+		for arriving := range in {
+			if arriving == nil || op.moments == nil || op.coefficient == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			value, ok := values.Values["value"]
+
+			if !ok {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			var current statistic.MomentReading
+
+			for pointer := range op.moments.Next(data.NewValue(value)) {
+				current = *(*statistic.MomentReading)(pointer)
+			}
+
+			if err := op.moments.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			bounded := current.Value
 
 			if current.Count > 1 && current.Dispersion > 0 {
-				coeffValEval := transport.NewEvaluate(op.coefficient)
-				var coeffVal float64
+				op.count.Values["count"] = current.Count
 
-				for out := range coeffValEval.Next(transport.NewValues(current.Count).Next(nil)) {
-					coeffVal = *(*float64)(out)
+				for range adapter.Next(data.NewValue(op.count)) {
 				}
 
-				err := coeffValEval.Error()
+				for range op.coefficient.Next(data.NewValue(adapter)) {
+				}
 
-				if err != nil {
-					op.err = errors.Join(op.err, err)
+				if err := op.coefficient.Error(); err != nil {
+					op.Error(err)
 					return
 				}
 
-				margin := current.Dispersion * coeffVal
+				var coefficient data.Map[float64]
+
+				for pointer := range adapter.Next(data.NewValue(op.coefficientInput)) {
+					coefficient = *(*data.Map[float64])(pointer)
+				}
+
+				if err := adapter.Error(); err != nil {
+					op.Error(err)
+					return
+				}
+
+				scale, held := coefficient.Values["scale"]
+
+				if !held {
+					op.Error(core.ErrNotHeld)
+					return
+				}
+
+				margin := current.Dispersion * scale
 				lower := current.Mean - margin
 				upper := current.Mean + margin
 
-				if value < lower {
-					value = lower
+				if bounded < lower {
+					bounded = lower
 				}
 
-				if value > upper {
-					value = upper
+				if bounded > upper {
+					bounded = upper
 				}
 			}
 
-			op.out = value
+			op.output.Values["value"] = bounded
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
