@@ -128,8 +128,7 @@ func (wrapper *Adapter) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				entry := wrapper.measurement.Read(domainKey)
 
 				if entry.Err != nil {
-					wrapper.Error(entry.Err)
-					return
+					continue
 				}
 
 				wrapper.values.Values[nativeKey] = entry.Metric.Raw
