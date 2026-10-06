@@ -370,6 +370,7 @@ type estimateScratch struct {
 	fullResiduals       []float64
 	predictors          []float64
 	fullFitPredictors   []float64
+	row                 []float64
 	cursors             []int
 	aligned             []Observation
 }
@@ -386,7 +387,8 @@ func newEstimateScratch(seriesCount int, expectedRows int) *estimateScratch {
 		restrictedResiduals: make([]float64, 0, expectedRows),
 		fullResiduals:       make([]float64, 0, expectedRows),
 		predictors:          make([]float64, fullParameters),
-		fullFitPredictors:   make([]float64, fullParameters),
+		fullFitPredictors:   make([]float64, fullParameters+1),
+		row:                 make([]float64, 0, fullParameters+1),
 		cursors:             make([]int, seriesCount),
 		aligned:             make([]Observation, seriesCount),
 	}
@@ -407,12 +409,12 @@ Primitive and reports the reading the row produced.
 */
 func foldRegressionRow(
 	accumulator core.Primitive,
-	row *statistic.RegressionRow,
-) (statistic.RegressionReading, bool) {
-	var reading statistic.RegressionReading
+	row *[]float64,
+) ([]float64, bool) {
+	var reading []float64
 
 	for out := range accumulator.Next(singlePointer(unsafe.Pointer(row))) {
-		reading = *(*statistic.RegressionReading)(out)
+		reading = *(*[]float64)(out)
 	}
 
 	if err := accumulator.Error(); err != nil {
@@ -483,7 +485,7 @@ func (op *Influence) estimateAtLag(
 		// model that scored it. The prediction runs on the recursive
 		// least-squares state (O(p²), zero allocation) seeded from the exact
 		// normal equations at the first non-singular design.
-		restrictedRow := statistic.RegressionRow{Predictors: predictors[:restrictedParameters], Target: target.Raw}
+		restrictedRow := append(append(scratch.row[:0], predictors[:restrictedParameters]...), target.Raw)
 		restrictedReading, restrictedOK := foldRegressionRow(restrictedAccumulator, &restrictedRow)
 
 		if !restrictedOK {
@@ -491,7 +493,7 @@ func (op *Influence) estimateAtLag(
 			return false
 		}
 
-		fullRow := statistic.RegressionRow{Predictors: predictors[:fullParameters], Target: target.Raw}
+		fullRow := append(append(scratch.row[:0], predictors[:fullParameters]...), target.Raw)
 		fullReading, fullOK := foldRegressionRow(fullAccumulator, &fullRow)
 
 		if !fullOK {
@@ -505,17 +507,17 @@ func (op *Influence) estimateAtLag(
 		// gate, seeding false when the accumulated design is singular. The
 		// reading's fit counts the row just incorporated, so the pre-add row
 		// count is one less.
-		if restrictedReading.Fit.Observations-1 > restrictedParameters && !restrictedReading.PredictionDefined {
+		if int(restrictedReading[3])-1 > restrictedParameters && restrictedReading[1] != 1 {
 			rankDeficient = true
 		}
 
-		if fullReading.Fit.Observations-1 > fullParameters && !fullReading.PredictionDefined {
+		if int(fullReading[3])-1 > fullParameters && fullReading[1] != 1 {
 			rankDeficient = true
 		}
 
-		if restrictedReading.PredictionDefined && fullReading.PredictionDefined {
-			restrictedResiduals = append(restrictedResiduals, target.Raw-restrictedReading.Prediction)
-			fullResiduals = append(fullResiduals, target.Raw-fullReading.Prediction)
+		if restrictedReading[1] == 1 && fullReading[1] == 1 {
+			restrictedResiduals = append(restrictedResiduals, target.Raw-restrictedReading[0])
+			fullResiduals = append(fullResiduals, target.Raw-fullReading[0])
 		}
 
 		return true
@@ -582,7 +584,7 @@ func (op *Influence) estimateAtLag(
 
 	finalFit := fullFitViews(targetView, sourceView, controlViews, request.Controls, lag, fullParameters, scratch)
 
-	if finalFit == nil || !finalFit.Defined {
+	if finalFit == nil || finalFit[2] != 1 {
 		if rows <= restrictedParameters {
 			result.Status = FitInsufficientSupport
 			return result
@@ -593,12 +595,12 @@ func (op *Influence) estimateAtLag(
 	}
 
 	sourceColumn := restrictedParameters
-	coefficient := finalFit.Coefficients[sourceColumn]
+	parameters := int(finalFit[4])
+	coefficient := finalFit[8+sourceColumn]
 	result.Coefficient = &coefficient
 
-	if sourceColumn >= 0 && sourceColumn < finalFit.Parameters &&
-		len(finalFit.CoefficientVariance) == finalFit.Parameters {
-		variance := finalFit.CoefficientVariance[sourceColumn]
+	if sourceColumn >= 0 && sourceColumn < parameters && finalFit[7] == 1 {
+		variance := finalFit[8+parameters+sourceColumn]
 
 		if !math.IsNaN(variance) && variance > 0 {
 			result.CoefficientVariance = &variance
@@ -705,10 +707,10 @@ func fullFitViews(
 	lag time.Duration,
 	parameterCount int,
 	scratch *estimateScratch,
-) *statistic.RegressionFit {
+) []float64 {
 	accumulator := statistic.NewRegressionAccumulator(parameterCount)
 	predictors := scratch.fullFitPredictors
-	var fit statistic.RegressionFit
+	var fit []float64
 
 	walkAligned(targetView, sourceView, controlViews, controls, lag, scratch.cursors, scratch.aligned, func(target Observation, aligned []Observation) bool {
 		predictors[0] = 1
@@ -720,14 +722,15 @@ func fullFitViews(
 
 		predictors[parameterCount-1] = aligned[len(aligned)-1].Raw
 
-		row := statistic.RegressionRow{Predictors: predictors[:parameterCount], Target: target.Raw}
+		predictors[parameterCount] = target.Raw
+		row := predictors[:parameterCount+1]
 		reading, ok := foldRegressionRow(accumulator, &row)
 
 		if !ok {
 			return false
 		}
 
-		fit = reading.Fit
+		fit = append(fit[:0], reading...)
 
 		return true
 	})
@@ -736,7 +739,7 @@ func fullFitViews(
 		return nil
 	}
 
-	return &fit
+	return fit
 }
 
 /*
@@ -823,10 +826,7 @@ func coefficientSNR(coefficient float64, variance float64) (float64, error) {
 	operation := statistic.NewCoefficientSNR()
 	var snr float64
 
-	for out := range operation.Next(singlePointer(unsafe.Pointer(&statistic.CoefficientSNRPair{
-		Coefficient: coefficient,
-		Variance:    variance,
-	}))) {
+	for out := range operation.Next(singlePointer(unsafe.Pointer(&[2]float64{coefficient, variance}))) {
 		snr = *(*float64)(out)
 	}
 

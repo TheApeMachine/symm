@@ -25,9 +25,9 @@ func TestStandardizeNext(t *testing.T) {
 
 		Convey("Standardize with per-arrival input", func() {
 			std := NewStandardize()
-			in := []StandardizeInput{
-				{Value: 15, Center: 10, Scale: 5},
-				{Value: 5, Center: 10, Scale: 5},
+			in := [][3]float64{
+				{15, 10, 5},
+				{5, 10, 5},
 			}
 			out := tests.CollectSeq[float64](std.Next(tests.SliceToSeq(in)))
 

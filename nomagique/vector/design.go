@@ -9,16 +9,20 @@ import (
 
 /*
 Design selects configured feature positions and prepends the affine intercept.
-Its output is a design vector; it does not fit or predict.
+Each arrival is *[]float64 features; it yields *[]float64, a design vector.
+It does not fit or predict.
 */
 type Design struct {
-	err     error
+	*core.PrimitiveError
 	indices []int
 	out     []float64
 }
 
 func NewDesign(indices ...int) core.Primitive {
-	return &Design{indices: indices}
+	return &Design{
+		PrimitiveError: core.NewPrimitiveError(),
+		indices:        indices,
+	}
 }
 
 func (op *Design) Next(
@@ -45,7 +49,7 @@ func (op *Design) Next(
 
 			for _, idx := range op.indices {
 				if idx < 0 || idx >= len(features) {
-					op.err = core.ErrShape
+					op.Error(core.ErrShape)
 					return
 				}
 
@@ -57,15 +61,4 @@ func (op *Design) Next(
 			}
 		}
 	}
-}
-
-func (op *Design) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

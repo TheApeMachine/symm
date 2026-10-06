@@ -8,15 +8,6 @@ import (
 )
 
 /*
-StandardizeInput is a value and the center/scale that locate it.
-*/
-type StandardizeInput struct {
-	Value  float64
-	Center float64
-	Scale  float64
-}
-
-/*
 Standardize owns (value - center) / scale.
 */
 type Standardize struct {
@@ -30,7 +21,7 @@ type Standardize struct {
 /*
 NewStandardize constructs a Standardize primitive.
 If center and scale are provided, it centers and scales arriving *float64 values.
-Otherwise, arriving values are *StandardizeInput.
+Otherwise, arriving values are *[3]float64 {value, center, scale}.
 */
 func NewStandardize(params ...float64) *Standardize {
 	op := &Standardize{
@@ -73,11 +64,11 @@ func (op *Standardize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				continue
 			}
 
-			input := *(*StandardizeInput)(arriving)
+			input := (*[3]float64)(arriving)
 			op.out = 0
 
-			if input.Scale != 0 {
-				op.out = (input.Value - input.Center) / input.Scale
+			if input[2] != 0 {
+				op.out = (input[0] - input[1]) / input[2]
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {

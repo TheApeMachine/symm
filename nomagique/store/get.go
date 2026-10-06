@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"unsafe"
@@ -13,13 +12,16 @@ import (
 Get owns lookup. Missing keys are explicit failures, never a fabricated zero.
 */
 type Get[K comparable, V any] struct {
-	err error
+	*core.PrimitiveError
 	key K
 	out V
 }
 
 func NewGet[K comparable, V any](key K) core.Primitive {
-	return &Get[K, V]{key: key}
+	return &Get[K, V]{
+		PrimitiveError: core.NewPrimitiveError(),
+		key:            key,
+	}
 }
 
 func (op *Get[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -40,14 +42,4 @@ func (op *Get[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 		}
 	}
-}
-
-func (op *Get[K, V]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

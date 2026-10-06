@@ -1,6 +1,7 @@
 package adaptive
 
 import (
+	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -11,11 +12,14 @@ import (
 )
 
 /*
-Window owns the all/recent moment approximation of the mean-shift policy.
+Window owns the all/recent moment approximation of the mean-shift policy. It
+composes one Estimator for all observations and one for the recent run, each
+with a Shed that reduces its support.
 */
 type Window struct {
 	*core.PrimitiveError
-	all, recent            statistic.Moments
+	all, recent            *statistic.Estimator
+	allShed, recentShed    core.Primitive
 	observations, capacity float64
 	shift                  core.Primitive
 	input                  data.Map[string]
@@ -32,8 +36,15 @@ func NewWindow() core.Primitive {
 	output.Values["recent_count"] = 0
 	output.Values["prior_count"] = 0
 
+	all := statistic.NewEstimator()
+	recent := statistic.NewEstimator()
+
 	return &Window{
 		PrimitiveError: core.NewPrimitiveError(),
+		all:            all,
+		recent:         recent,
+		allShed:        statistic.NewShed(all),
+		recentShed:     statistic.NewShed(recent),
 		shift:          NewMeanShift(),
 		input:          data.NewMap("value", "value"),
 		shiftInput:     data.NewMap("bound", "bound"),
@@ -76,16 +87,36 @@ func (op *Window) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			op.observations++
 			op.capacity++
-			all := op.all.Update(value)
-			op.recent.Update(value)
-			shedRatio := 1.0
+			var all, recent [10]float64
 
-			if op.observations > 3 && op.recent.Count > op.capacity*0.5 {
-				op.recent.Shed(0.5)
+			for pointer := range op.all.Next(data.NewValue(value)) {
+				all = *(*[10]float64)(pointer)
 			}
 
-			variance := all.Variance
-			recentCount := op.recent.Count
+			for pointer := range op.recent.Next(data.NewValue(value)) {
+				recent = *(*[10]float64)(pointer)
+			}
+
+			if err := errors.Join(op.all.Error(), op.recent.Error()); err != nil {
+				op.Error(err)
+				return
+			}
+
+			shedRatio := 1.0
+			recentCount := recent[0]
+
+			if op.observations > 3 && recentCount > op.capacity*0.5 {
+				for pointer := range op.recentShed.Next(data.NewValue(0.5)) {
+					recentCount = (*(*[3]float64)(pointer))[0]
+				}
+
+				if err := op.recentShed.Error(); err != nil {
+					op.Error(err)
+					return
+				}
+			}
+
+			variance := all[8]
 			priorCount := op.capacity - recentCount
 
 			op.output.Values["capacity"] = op.capacity
@@ -130,12 +161,21 @@ func (op *Window) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					return
 				}
 
-				if math.Abs(op.recent.Mean-op.all.Mean) > bound {
+				if math.Abs(recent[1]-all[1]) > bound {
 					capacity := math.Max(1, math.Floor(op.capacity*0.5))
 					shedRatio = capacity / op.capacity
 					op.capacity = capacity
-					op.all.Shed(shedRatio)
-					op.recent = statistic.Moments{}
+
+					for range op.allShed.Next(data.NewValue(shedRatio)) {
+					}
+
+					if err := op.allShed.Error(); err != nil {
+						op.Error(err)
+						return
+					}
+
+					op.recent = statistic.NewEstimator()
+					op.recentShed = statistic.NewShed(op.recent)
 				}
 			}
 

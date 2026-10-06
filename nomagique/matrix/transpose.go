@@ -1,7 +1,6 @@
 package matrix
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -13,12 +12,14 @@ Transpose changes only matrix addressing. Ragged rows are a shape error, not
 silently padded zeros.
 */
 type Transpose[T any] struct {
-	err error
+	*core.PrimitiveError
 	out [][]T
 }
 
 func NewTranspose[T any]() core.Primitive {
-	return &Transpose[T]{}
+	return &Transpose[T]{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Transpose[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -68,14 +69,4 @@ func (op *Transpose[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			}
 		}
 	}
-}
-
-func (op *Transpose[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

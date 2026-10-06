@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -52,6 +53,8 @@ var embedded embed.FS
 
 var (
 	cfgFile string
+	SeqIdx  atomic.Int64
+	Tick    atomic.Int64
 
 	// processStartedAt is the process start instant the Hindsight Run identity
 	// is anchored to. It is captured once at process start so a run's identity
@@ -218,7 +221,7 @@ var (
 			manifoldSolver := manifold.NewSolver(ctx, data.NewArenaOwner("manifold", 4096), book)
 			book.SetNotify(func(symbol string, _ time.Time) {
 				manifoldSolver.Wake(symbol)
-			})	
+			})
 			correlationSignal := correlation.NewSignal(ctx, data.NewArenaOwner("correlation", 4096))
 			cvdSignal := cvd.NewSignal(ctx, data.NewArenaOwner("cvd", 4096))
 			depthflowSignal := depthflow.NewSignal(ctx, data.NewArenaOwner("depthflow", 4096), book)
@@ -325,9 +328,6 @@ var (
 
 			manifoldSolver.Start()
 
-			// Every processing and off-ramp owner is ready before ingress opens.
-			var tick int64
-
 			startIngress := func(
 				client interface{ Read() ([]byte, error) }, name string,
 			) {
@@ -378,6 +378,7 @@ var (
 								for _, level3Data := range level3Msg.Data {
 									for sideIdx, orders := range [][]kraken.Level3Order{level3Data.Bids, level3Data.Asks} {
 										side := "bid"
+
 										if sideIdx == 1 {
 											side = "ask"
 										}
@@ -385,37 +386,52 @@ var (
 										checksumStr := strconv.FormatInt(int64(level3Data.Checksum), 10)
 
 										for _, order := range orders {
-											measurement := data.NewMeasurement("spot:level3")
-											measurement.SetMetric("checksum", data.Metric{Raw: float64(level3Data.Checksum)})
-
-											if order.LimitPrice != nil {
-												measurement.SetMetric("limit_price", data.Metric{
-													Raw:   kraken.Float64(order.LimitPrice),
-													Exact: order.LimitPrice,
-												})
-											}
-
-											if order.OrderQty != nil {
-												measurement.SetMetric("order_qty", data.Metric{
-													Raw:   kraken.Float64(order.OrderQty),
-													Exact: order.OrderQty,
-												})
-											}
-
-											measurement.Epoch = epoch
-											measurement.Label = level3Data.Symbol
-											measurement.At = order.Timestamp
-											if measurement.At.IsZero() {
-												measurement.At = level3Data.Timestamp
-											}
-											measurement.SeqIdx = workspace.Sequence()
-											measurement.SetMetadata("type", level3Data.Type)
-											measurement.SetMetadata("order_id", order.OrderID)
-											measurement.SetMetadata("side", side)
-											measurement.SetMetadata("event", order.Event)
-											measurement.SetMetadata("checksum", checksumStr)
-											measurement.SetProvenance("ingress_channel", "level3")
-											measurement.SetProvenance("channel", "level3")
+											measurement := data.NewMeasurement(
+												epoch,
+												level3Data.Symbol,
+												"spot:level3",
+												SeqIdx.Add(1),
+												Tick.Load(),
+												data.StringEntry{
+													Key:   "type",
+													Value: level3Data.Type,
+												},
+												data.StringEntry{
+													Key:   "order_id",
+													Value: order.OrderID,
+												},
+												data.StringEntry{
+													Key:   "side",
+													Value: side,
+												},
+												data.StringEntry{
+													Key:   "event",
+													Value: order.Event,
+												},
+												data.StringEntry{
+													Key:   "checksum",
+													Value: checksumStr,
+												},
+											).Write(
+												data.NewMetric(
+													"checksum",
+													float64(level3Data.Checksum),
+													data.UnitDimensionless,
+													data.TimescaleInstantaneous,
+												),
+												data.NewExactMetric(
+													"limit_price",
+													order.LimitPrice,
+													data.UnitCurrency,
+													data.TimescaleInstantaneous,
+												),
+												data.NewExactMetric(
+													"order_qty",
+													order.OrderQty,
+													data.UnitVolume,
+													data.TimescaleInstantaneous,
+												),
+											)
 
 											storeTee.Push(data.NewPublication(measurement, nil))
 										}
@@ -429,30 +445,42 @@ var (
 								for _, tradeItem := range tradeMsg.Data {
 									price.Update(&tradeItem)
 
-									measurement := data.NewMeasurement("spot:trade")
-									measurement.SetMetric("price", data.Metric{
-										Raw:   kraken.Float64(&tradeItem.Price),
-										Exact: &tradeItem.Price,
-									})
-									measurement.SetMetric("qty", data.Metric{
-										Raw: tradeItem.Qty,
-									})
-
-									measurement.Epoch = epoch
-
-									tick++
-									measurement.Tick = tick
-									measurement.SeqIdx = tick
-
-									measurement.Label = tradeItem.Symbol
-									measurement.At = tradeItem.Timestamp
-
-									measurement.SetMetadata("type", "trade")
-									measurement.SetMetadata("ord_type", tradeItem.OrderType)
-									measurement.SetMetadata("trade_id", strconv.FormatInt(tradeItem.TradeID, 10))
-									measurement.SetProvenance("ingress_channel", "trade")
-									measurement.SetProvenance("channel", "trade")
-									measurement.SetProvenance("side", tradeItem.Side)
+									measurement := data.NewMeasurement(
+										epoch,
+										tradeItem.Symbol,
+										"spot:trade",
+										SeqIdx.Add(1),
+										Tick.Add(1),
+										data.StringEntry{
+											Key:   "type",
+											Value: "trade",
+										},
+										data.StringEntry{
+											Key:   "ord_type",
+											Value: tradeItem.OrderType,
+										},
+										data.StringEntry{
+											Key:   "trade_id",
+											Value: strconv.FormatInt(tradeItem.TradeID, 10),
+										},
+										data.StringEntry{
+											Key:   "side",
+											Value: tradeItem.Side,
+										},
+									).Write(
+										data.NewExactMetric(
+											"price",
+											&tradeItem.Price,
+											data.UnitCurrency,
+											data.TimescaleInstantaneous,
+										),
+										data.NewMetric(
+											"qty",
+											tradeItem.Qty,
+											data.UnitVolume,
+											data.TimescaleInstantaneous,
+										),
+									)
 
 									workspace.Step(measurement)
 									storeTee.Push(data.NewPublication(measurement, nil))

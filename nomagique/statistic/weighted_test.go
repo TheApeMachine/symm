@@ -15,9 +15,9 @@ func TestWeightedMeanNext(t *testing.T) {
 		op := NewWeightedMean()
 
 		Convey("computes sum(w x) / sum(w)", func() {
-			in := []Weighted{
-				{Weight: 1.0, Value: 10.0},
-				{Weight: 2.0, Value: 20.0},
+			in := [][2]float64{
+				{1.0, 10.0},
+				{2.0, 20.0},
 			}
 			out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq(in)))
 
@@ -40,9 +40,9 @@ func TestWeightedMeanNext(t *testing.T) {
 
 		Convey("handles early consumer termination", func() {
 			fresh := NewWeightedMean()
-			in := []Weighted{
-				{Weight: 1.0, Value: 10.0},
-				{Weight: 2.0, Value: 20.0},
+			in := [][2]float64{
+				{1.0, 10.0},
+				{2.0, 20.0},
 			}
 			count := 0
 
@@ -62,9 +62,9 @@ func TestWeightedVarianceNext(t *testing.T) {
 		op := NewWeightedVariance()
 
 		Convey("computes E_w[x^2] - E_w[x]^2", func() {
-			in := []Weighted{
-				{Weight: 1.0, Value: 10.0},
-				{Weight: 1.0, Value: 20.0},
+			in := [][2]float64{
+				{1.0, 10.0},
+				{1.0, 20.0},
 			}
 			out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq(in)))
 

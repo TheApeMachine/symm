@@ -9,12 +9,8 @@ import (
 
 /*
 Observation is one stored measurement fact for one Coordinate. It preserves
-the raw signed value, the observation window, quality provenance, and the
-originating Measurement ID.
-
-The Measurement SNR is provenance only. It is never the default Relation
-variable; Relation uses the actual signed metric value or its causal
-standardized residual.
+the raw signed value, the observation window, and the originating
+Measurement ID.
 */
 type Observation struct {
 	// Coordinate is the typed coordinate identity this observation belongs to.
@@ -25,65 +21,56 @@ type Observation struct {
 	From time.Time
 	// At is the as-of / emit instant.
 	At time.Time
-	// Maturity is the measurement-level maturity provenance.
-	Maturity float64
-	// SNR is the measurement-level SNR provenance when defined, in the
-	// layer's nullable pointer form (matching InfluenceResult.Coefficient):
-	// nil means undefined (no noise model was estimable), while a genuine
-	// measured zero departure is a non-nil pointer to zero. Undefined is
-	// never zero.
-	SNR *float64
-	// MeasurementID is the originating measurement identifier: the register
-	// slot the producing node owns.
-	MeasurementID int
+	// MeasurementID is the originating (finalized) measurement identifier.
+	MeasurementID uint32
 }
 
 /*
 splitMeasurement splits one data.Measurement into per-coordinate Observations.
-Every valid metric becomes an independent observational fact; nothing is
-collapsed into a signal-level scalar. A measurement carrying an error is
-rejected as a whole.
+A Measurement cannot enumerate its metrics, so the caller names the
+coordinates it projects: each coordinate's Metric (and Side, rendered as
+"metric:side") is the key read from the Measurement, while Symbol, Source,
+Peer (metadata "peer") and Epoch are stamped from the Measurement and the
+request. Every requested metric becomes an independent observational fact;
+nothing is collapsed into a signal-level scalar. A metric that cannot be read
+(unfinalized, missing, or carrying the Measurement's error) rejects the
+measurement as a whole.
 */
 func splitMeasurement(
 	measurement *data.Measurement,
+	coordinates []Coordinate,
 	epoch uint64,
 ) ([]Observation, error) {
 	if measurement == nil {
 		return nil, nil
 	}
 
-	if measurement.Err != nil {
-		return nil, measurement.Err
-	}
+	observations := make([]Observation, 0, len(coordinates))
+	peer := measurement.Meta("peer")
 
-	observations := make([]Observation, 0, len(measurement.Metrics))
+	for _, coordinate := range coordinates {
+		key := coordinate.Metric
 
-	for _, entry := range measurement.Metrics {
-		metricName, side := parseMetricSide(entry.Key)
-
-		var snr *float64
-
-		if measurement.SNRDefined {
-			value := measurement.SNR
-			snr = &value
+		if coordinate.Side != "" {
+			key += ":" + coordinate.Side
 		}
 
+		entry := measurement.Read(key)
+
+		if entry.Err != nil {
+			return nil, entry.Err
+		}
+
+		coordinate.Symbol = measurement.Label
+		coordinate.Peer = peer
+		coordinate.Source = measurement.Source
+		coordinate.Epoch = epoch
+
 		observations = append(observations, Observation{
-			Coordinate: Coordinate{
-				Symbol:    measurement.Label,
-				Peer:      func() string { v, _ := measurement.GetProvenance("peer"); return v }(),
-				Source:    measurement.Source,
-				Metric:    metricName,
-				Side:      side,
-				Unit:      entry.Metric.Unit,
-				Timescale: entry.Metric.Timescale,
-				Epoch:     epoch,
-			},
+			Coordinate:    coordinate,
 			Raw:           entry.Metric.Raw,
 			From:          measurement.From,
 			At:            measurement.At,
-			Maturity:      measurement.Maturity,
-			SNR:           snr,
 			MeasurementID: measurement.ID,
 		})
 	}

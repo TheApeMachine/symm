@@ -8,15 +8,8 @@ import (
 )
 
 /*
-Weighted is one observation with its weight.
-*/
-type Weighted struct {
-	Weight float64
-	Value  float64
-}
-
-/*
-WeightedMean owns sum(w x) / sum(w).
+WeightedMean owns sum(w x) / sum(w). Each arrival is *[2]float64
+{weight, value}.
 */
 type WeightedMean struct {
 	*core.PrimitiveError
@@ -39,9 +32,9 @@ func (op *WeightedMean) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				return
 			}
 
-			item := *(*Weighted)(arriving)
-			op.mass += item.Weight
-			op.total += item.Weight * item.Value
+			item := (*[2]float64)(arriving)
+			op.mass += item[0]
+			op.total += item[0] * item[1]
 
 			op.out = 0
 
@@ -57,7 +50,8 @@ func (op *WeightedMean) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 }
 
 /*
-WeightedVariance owns E_w[x²] - E_w[x]².
+WeightedVariance owns E_w[x²] - E_w[x]². Each arrival is *[2]float64
+{weight, value}.
 */
 type WeightedVariance struct {
 	*core.PrimitiveError
@@ -81,10 +75,10 @@ func (op *WeightedVariance) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Po
 				return
 			}
 
-			item := *(*Weighted)(arriving)
-			op.mass += item.Weight
-			op.first += item.Weight * item.Value
-			op.second += item.Weight * item.Value * item.Value
+			item := (*[2]float64)(arriving)
+			op.mass += item[0]
+			op.first += item[0] * item[1]
+			op.second += item[0] * item[1] * item[1]
 
 			op.out = 0
 

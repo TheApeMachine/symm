@@ -16,8 +16,8 @@ func TestCoefficientSNRNext(t *testing.T) {
 		op := NewCoefficientSNR()
 
 		Convey("computes Coefficient^2 / Variance", func() {
-			in := CoefficientSNRPair{Coefficient: 2.0, Variance: 0.5}
-			out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq([]CoefficientSNRPair{in})))
+			in := [2]float64{2.0, 0.5}
+			out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq([][2]float64{in})))
 
 			So(op.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
@@ -25,10 +25,10 @@ func TestCoefficientSNRNext(t *testing.T) {
 		})
 
 		Convey("returns NaN when variance is non-positive or NaN", func() {
-			in := []CoefficientSNRPair{
-				{Coefficient: 2.0, Variance: 0.0},
-				{Coefficient: 2.0, Variance: -1.0},
-				{Coefficient: 2.0, Variance: math.NaN()},
+			in := [][2]float64{
+				{2.0, 0.0},
+				{2.0, -1.0},
+				{2.0, math.NaN()},
 			}
 			out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq(in)))
 
@@ -52,9 +52,9 @@ func TestCoefficientSNRNext(t *testing.T) {
 
 		Convey("handles early consumer termination", func() {
 			fresh := NewCoefficientSNR()
-			in := []CoefficientSNRPair{
-				{Coefficient: 2.0, Variance: 0.5},
-				{Coefficient: 4.0, Variance: 2.0},
+			in := [][2]float64{
+				{2.0, 0.5},
+				{4.0, 2.0},
 			}
 			count := 0
 

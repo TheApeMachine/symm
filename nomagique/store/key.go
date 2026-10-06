@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -13,13 +12,16 @@ Key associates each arrival with its configured key. Repeated writes to the
 same key in a run retain the last value, exactly as KV does.
 */
 type Key[K comparable, V any] struct {
-	err error
+	*core.PrimitiveError
 	key K
 	out map[K]V
 }
 
 func NewKey[K comparable, V any](key K) core.Primitive {
-	return &Key[K, V]{key: key}
+	return &Key[K, V]{
+		PrimitiveError: core.NewPrimitiveError(),
+		key:            key,
+	}
 }
 
 func (op *Key[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -33,14 +35,4 @@ func (op *Key[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 		}
 	}
-}
-
-func (op *Key[K, V]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

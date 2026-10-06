@@ -1,7 +1,6 @@
 package matrix
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -9,41 +8,37 @@ import (
 )
 
 /*
-AugmentInput is two matrices joined horizontally.
-*/
-type AugmentInput struct {
-	Left  [][]float64
-	Right [][]float64
-}
-
-/*
-Augment joins corresponding rows. Unequal row counts are a shape error.
+Augment joins corresponding rows. Each arrival is *[2][][]float64
+{left, right}; it yields *[][]float64. Unequal row counts are a shape error.
 */
 type Augment struct {
-	err error
+	*core.PrimitiveError
 	out [][]float64
 }
 
 func NewAugment() core.Primitive {
-	return &Augment{}
+	return &Augment{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Augment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := (*AugmentInput)(arriving)
+			input := (*[2][][]float64)(arriving)
+			left, right := input[0], input[1]
 
-			if len(input.Left) != len(input.Right) {
+			if len(left) != len(right) {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			op.out = make([][]float64, len(input.Left))
+			op.out = make([][]float64, len(left))
 
-			for index, left := range input.Left {
-				joined := make([]float64, 0, len(left)+len(input.Right[index]))
+			for index, left := range left {
+				joined := make([]float64, 0, len(left)+len(right[index]))
 				joined = append(joined, left...)
-				joined = append(joined, input.Right[index]...)
+				joined = append(joined, right[index]...)
 				op.out[index] = joined
 			}
 
@@ -52,14 +47,4 @@ func (op *Augment) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Augment) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

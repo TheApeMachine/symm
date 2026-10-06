@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/vector"
@@ -15,13 +14,13 @@ func TestApplyNext(t *testing.T) {
 		for _, values := range [][]float64{{4, 5}, {-2, 7}} {
 			orig0, orig1 := values[0], values[1]
 			node := vector.NewApply(
-				calculus.NewSquare(),
-				calculus.NewNegate(),
+				statistic.NewStandardize(1, 2),
+				statistic.NewStandardize(0, -1),
 			)
 			out := tests.CollectSeq[float64](node.Next(tests.SliceToSeq(values)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 2)
-			So(out[0], ShouldEqual, orig0*orig0)
+			So(out[0], ShouldEqual, (orig0-1)/2)
 			So(out[1], ShouldEqual, -orig1)
 		}
 	})
@@ -48,7 +47,7 @@ func TestApplyIndependentState(t *testing.T) {
 
 func TestApplyShape(t *testing.T) {
 	Convey("Unequal endpoint cardinalities are a shape error", t, func() {
-		node := vector.NewApply(calculus.NewSquare())
+		node := vector.NewApply(statistic.NewSum())
 		tests.CollectSeq[float64](node.Next(tests.SliceToSeq([]float64{1.0, 2.0})))
 		So(node.Error(), ShouldNotBeNil)
 	})

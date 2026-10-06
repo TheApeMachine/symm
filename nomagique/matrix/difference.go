@@ -1,7 +1,6 @@
 package matrix
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -9,40 +8,36 @@ import (
 )
 
 /*
-DifferenceInput is a pair of equally shaped matrices.
-*/
-type DifferenceInput struct {
-	Left  [][]float64
-	Right [][]float64
-}
-
-/*
 Difference subtracts equally shaped matrices in typed coefficient storage.
+Each arrival is *[2][][]float64 {left, right}; it yields *[][]float64.
 */
 type Difference struct {
-	err error
+	*core.PrimitiveError
 	out [][]float64
 }
 
 func NewDifference() core.Primitive {
-	return &Difference{}
+	return &Difference{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Difference) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := (*DifferenceInput)(arriving)
+			input := (*[2][][]float64)(arriving)
+			left, right := input[0], input[1]
 
-			if len(input.Left) != len(input.Right) {
+			if len(left) != len(right) {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			op.out = make([][]float64, len(input.Left))
+			op.out = make([][]float64, len(left))
 			ok := true
 
-			for row, values := range input.Left {
-				if len(values) != len(input.Right[row]) {
+			for row, values := range left {
+				if len(values) != len(right[row]) {
 					op.Error(core.ErrShape)
 					ok = false
 					break
@@ -51,7 +46,7 @@ func (op *Difference) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				op.out[row] = make([]float64, len(values))
 
 				for column, value := range values {
-					op.out[row][column] = value - input.Right[row][column]
+					op.out[row][column] = value - right[row][column]
 				}
 			}
 
@@ -64,14 +59,4 @@ func (op *Difference) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			}
 		}
 	}
-}
-
-func (op *Difference) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

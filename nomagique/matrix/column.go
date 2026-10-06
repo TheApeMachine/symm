@@ -1,7 +1,6 @@
 package matrix
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,12 +11,14 @@ import (
 Column arranges a scalar run as an n-by-one matrix.
 */
 type Column struct {
-	err error
+	*core.PrimitiveError
 	out [][]float64
 }
 
 func NewColumn() core.Primitive {
-	return &Column{}
+	return &Column{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Column) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -38,14 +39,4 @@ func (op *Column) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			return
 		}
 	}
-}
-
-func (op *Column) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

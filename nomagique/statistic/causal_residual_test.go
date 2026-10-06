@@ -16,26 +16,26 @@ func TestCausalResidualNext(t *testing.T) {
 
 		Convey("evaluates residuals against prior moments", func() {
 			est := NewEstimator()
-			var readings []MomentReading
+			var readings [][10]float64
 
 			for out := range est.Next(tests.SliceToSeq([]float64{10.0, 20.0})) {
-				readings = append(readings, *(*MomentReading)(out))
+				readings = append(readings, *(*[10]float64)(out))
 			}
 
-			out := tests.CollectSeq[CausalResidualResult](op.Next(tests.SliceToSeq(readings)))
+			out := tests.CollectSeq[[8]float64](op.Next(tests.SliceToSeq(readings)))
 
 			So(op.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 2)
 
 			// First reading: no prior
-			So(out[0].HasPrior, ShouldBeFalse)
-			So(out[0].Baseline, ShouldEqual, 10.0)
-			So(out[0].Residual, ShouldEqual, 0.0)
+			So(out[0][0], ShouldEqual, 0)
+			So(out[0][1], ShouldEqual, 10.0)
+			So(out[0][4], ShouldEqual, 0.0)
 
 			// Second reading: has prior from first reading
-			So(out[1].HasPrior, ShouldBeTrue)
-			So(out[1].Baseline, ShouldEqual, 10.0)
-			So(out[1].Residual, ShouldEqual, 10.0)
+			So(out[1][0], ShouldEqual, 1)
+			So(out[1][1], ShouldEqual, 10.0)
+			So(out[1][4], ShouldEqual, 10.0)
 		})
 
 		Convey("nil arrival records ErrShape", func() {
@@ -43,7 +43,7 @@ func TestCausalResidualNext(t *testing.T) {
 			nilSeq := func(yield func(unsafe.Pointer) bool) {
 				yield(nil)
 			}
-			out := tests.CollectSeq[CausalResidualResult](fresh.Next(nilSeq))
+			out := tests.CollectSeq[[8]float64](fresh.Next(nilSeq))
 
 			So(len(out), ShouldEqual, 0)
 			So(errors.Is(fresh.Error(), core.ErrShape), ShouldBeTrue)
@@ -52,10 +52,10 @@ func TestCausalResidualNext(t *testing.T) {
 		Convey("handles early consumer termination", func() {
 			fresh := NewCausalResidual()
 			est := NewEstimator()
-			var readings []MomentReading
+			var readings [][10]float64
 
 			for out := range est.Next(tests.SliceToSeq([]float64{10.0, 20.0})) {
-				readings = append(readings, *(*MomentReading)(out))
+				readings = append(readings, *(*[10]float64)(out))
 			}
 
 			count := 0

@@ -9,17 +9,14 @@ import (
 )
 
 /*
-Register is a fixed-slot O(1) lookup table. Slots are assigned once, when a
-subject identifies itself: it is appended and answered its index. From then
-on reads and writes are direct slot access — a write replaces, never
-appends. A measurement read yields a working clone of the slot so the
-consumer mutates only that copy; peers are live pointers to other slots'
-published snapshots. Sequenced queries read per-observation ring slots; the
-Disruptor's dependency and wrap barriers own their publication and reuse.
+Register is a fixed-slot O(1) table. Slots are assigned once, when a
+measurement arrives: it is appended and answered its slot index. A nil run
+plays the slots back in slot order.
 */
 type Register struct {
 	*core.PrimitiveError
 	slots []*data.Measurement
+	index int
 }
 
 /*
@@ -32,21 +29,37 @@ func NewRegister() *Register {
 	}
 }
 
-/*
-Next receives *Query payloads and yields the query back with its answer
-filled in: identify assigns a slot, a read fills Value from the slot the
-query names, a write replaces the slot the query names. A query addressing a
-slot outside the register is a shape failure that ends the stream.
-*/
 func (op *Register) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		query := data.Read[Query](in)
+		if in == nil {
+			for index := range op.slots {
+				if !yield(unsafe.Pointer(&op.slots[index])) {
+					return
+				}
+			}
 
-		switch query.Action() {
-		case data.ActionIdentify:
-		case data.ActionWrite:
-		case data.ActionRead:
-		default:
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			measurement := *(**data.Measurement)(arriving)
+
+			if measurement == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			op.slots = append(op.slots, measurement)
+			op.index = len(op.slots) - 1
+
+			if !yield(unsafe.Pointer(&op.index)) {
+				return
+			}
 		}
 	}
 }

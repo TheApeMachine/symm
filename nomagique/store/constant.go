@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -13,12 +12,15 @@ Constant replaces each arrival with a configured value. The arrival is the
 clock; the payload is ignored.
 */
 type Constant[T any] struct {
-	err error
+	*core.PrimitiveError
 	out T
 }
 
 func NewConstant[T any](current T) core.Primitive {
-	return &Constant[T]{out: current}
+	return &Constant[T]{
+		PrimitiveError: core.NewPrimitiveError(),
+		out:            current,
+	}
 }
 
 func (op *Constant[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -29,14 +31,4 @@ func (op *Constant[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			}
 		}
 	}
-}
-
-func (op *Constant[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

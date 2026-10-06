@@ -1,7 +1,6 @@
 package matrix
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -10,23 +9,26 @@ import (
 )
 
 /*
-SpectralRadius2 owns the spectral radius of a 2-by-2 matrix.
+SpectralRadius2 owns the spectral radius of a 2-by-2 matrix. Each arrival is
+*[4]float64 {a, b, c, d}, row-major; it yields *float64.
 */
 type SpectralRadius2 struct {
-	err error
+	*core.PrimitiveError
 	out float64
 }
 
 func NewSpectralRadius2() core.Primitive {
-	return &SpectralRadius2{}
+	return &SpectralRadius2{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *SpectralRadius2) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(*Matrix2)(arriving)
-			trace := m.A + m.D
-			det := m.A*m.D - m.B*m.C
+			m := (*[4]float64)(arriving)
+			trace := m[0] + m[3]
+			det := m[0]*m[3] - m[1]*m[2]
 			disc := trace*trace - 4*det
 
 			if disc < 0 {
@@ -55,14 +57,4 @@ func (op *SpectralRadius2) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poi
 			}
 		}
 	}
-}
-
-func (op *SpectralRadius2) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

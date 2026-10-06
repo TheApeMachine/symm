@@ -1,7 +1,6 @@
 package matrix
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,12 +11,14 @@ import (
 Diagonal selects row i's member i. An undersized row is a shape error.
 */
 type Diagonal struct {
-	err error
+	*core.PrimitiveError
 	out []float64
 }
 
 func NewDiagonal() core.Primitive {
-	return &Diagonal{}
+	return &Diagonal{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Diagonal) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -46,14 +47,4 @@ func (op *Diagonal) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Diagonal) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

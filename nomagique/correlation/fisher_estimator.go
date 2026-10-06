@@ -1,140 +1,99 @@
 package correlation
 
 import (
+	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
-FisherView is one correlation mapped through atanh, scored against the
-configured causal estimator, then mapped back with tanh. Invalid observations
-do not advance the estimator.
-*/
-type FisherView struct {
-	Correlation     float64
-	Defined         bool
-	Baseline        float64
-	Divergence      float64
-	PriorCount      float64
-	Count           float64
-	ZScore          float64
-	Variance        float64
-	VarianceDefined bool
-	HasPrior        bool
-}
-
-/*
 FisherEstimator transforms admissible scalar correlations through atanh,
-tracks online moments, and computes causal residuals.
+tracks online moments, and computes causal residuals. Each arrival is
+*float64; it yields
+[10]float64{correlation, defined, baseline, divergence, priorCount, count,
+zScore, variance, varianceDefined, hasPrior}. Invalid observations do not
+advance the estimator.
 */
 type FisherEstimator struct {
-	err     error
-	moments statistic.Moments
-	out     FisherView
+	*core.PrimitiveError
+	moments  core.Primitive
+	residual core.Primitive
+	out      [10]float64
 }
 
 func NewFisherEstimator() core.Primitive {
-	return &FisherEstimator{}
+	return &FisherEstimator{
+		PrimitiveError: core.NewPrimitiveError(),
+		moments:        statistic.NewEstimator(),
+		residual:       statistic.NewCausalResidual(),
+	}
 }
 
-func (op *FisherEstimator) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *FisherEstimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			value := *(*float64)(arriving)
-			view := FisherView{Correlation: value}
+			op.out = [10]float64{value}
 
 			if value > -1.0 && value < 1.0 {
 				z := math.Atanh(value)
-				priorMean := op.moments.Mean
-				priorCount := op.moments.Count
-				priorM2 := op.moments.M2
+				var reading [10]float64
+				var res [8]float64
 
-				reading := op.moments.Update(z)
+				for pointer := range op.moments.Next(data.NewValue(z)) {
+					reading = *(*[10]float64)(pointer)
 
-				baseline := z
-
-				if priorCount > 0 {
-					baseline = priorMean
-				}
-
-				res := statistic.CausalResidualResult{
-					MomentReading: reading,
-					HasPrior:      priorCount > 0,
-					Baseline:      baseline,
-					Residual:      0,
-				}
-
-				if priorCount > 0 {
-					res.Residual = z - priorMean
-				}
-
-				if priorCount > 1 {
-					res.PriorVariance = priorM2 / (priorCount - 1)
-				}
-
-				res.ScoreScale = math.Abs(res.Residual)
-
-				if res.PriorVariance > 0 {
-					disp := math.Sqrt(res.PriorVariance)
-
-					if disp > 2.220446049250313e-16 {
-						res.ScoreScale = disp
+					for out := range op.residual.Next(data.NewValue(reading)) {
+						res = *(*[8]float64)(out)
 					}
 				}
 
-				if res.ScoreScale > 0 {
-					res.ZScore = res.Residual / res.ScoreScale
+				if err := errors.Join(op.moments.Error(), op.residual.Error()); err != nil {
+					op.Error(err)
+					return
 				}
 
-				view.Defined = true
-				view.Baseline = math.Tanh(res.Baseline)
-				view.Divergence = res.Residual
-				view.PriorCount = priorCount
-				view.Count = reading.Count
-				view.ZScore = res.ZScore
-				// Noise for Quality SNR is the causal prior variance, not the
-				// post-update sample variance (which collapses when correlation
-				// sits still and then explodes d²/σ²).
-				// Publish causal prior variance only when it cleared the same
-				// ScoreScale distinguishability gate. A collapsed PriorVariance
-				// must not become MetadataNoiseVariance or Quality will emit
-				// Divergence²/ε astronomical SNR.
-				if priorCount > 1 && res.PriorVariance > 0 {
-					disp := math.Sqrt(res.PriorVariance)
-					ref := math.Abs(res.Residual)
+				priorCount := reading[3]
+
+				op.out[1] = 1
+				op.out[2] = math.Tanh(res[1])
+				op.out[3] = res[4]
+				op.out[4] = priorCount
+				op.out[5] = reading[0]
+				op.out[6] = res[6]
+
+				if priorCount > 1 && res[2] > 0 {
+					disp := math.Sqrt(res[2])
+					ref := math.Abs(res[4])
+
 					if ref < 1 {
 						ref = 1
 					}
+
 					if disp > math.Sqrt(2.220446049250313e-16)*ref {
-						view.Variance = res.PriorVariance
-						view.VarianceDefined = true
+						op.out[7] = res[2]
+						op.out[8] = 1
 					}
 				}
-				view.HasPrior = res.HasPrior
-			}
 
-			op.out = view
+				if res[0] == 1 {
+					op.out[9] = 1
+				}
+			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *FisherEstimator) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

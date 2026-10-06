@@ -10,30 +10,36 @@ import (
 
 /*
 Curvature owns neighbouring profile readings around the first absolute peak.
-Edge peaks have no neighbours and report ErrShape.
+Each point arrival is [2]float64{x, y}; it yields *float64. Edge peaks have no
+neighbours and report ErrShape.
 */
 type Curvature struct {
-	err error
+	*core.PrimitiveError
 	out float64
 }
 
 func NewCurvature() core.Primitive {
-	return &Curvature{}
+	return &Curvature{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
-func (op *Curvature) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *Curvature) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		var points []Point
+		var points [][2]float64
 		bestIdx := -1
 		maxMag := -1.0
 
 		for arriving := range in {
-			point := *(*Point)(arriving)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			point := *(*[2]float64)(arriving)
 			idx := len(points)
 			points = append(points, point)
-			mag := math.Abs(point.Y)
+			mag := math.Abs(point[1])
 
 			if mag > maxMag {
 				maxMag = mag
@@ -42,15 +48,15 @@ func (op *Curvature) Next(
 		}
 
 		if bestIdx <= 0 || bestIdx >= len(points)-1 {
-			op.err = core.ErrShape
+			op.Error(core.ErrShape)
 			return
 		}
 
 		left := points[bestIdx-1]
 		mid := points[bestIdx]
 		right := points[bestIdx+1]
-		rise := math.Abs(mid.Y) - 0.5*(math.Abs(left.Y)+math.Abs(right.Y))
-		run := 0.5 * (right.X - left.X)
+		rise := math.Abs(mid[1]) - 0.5*(math.Abs(left[1])+math.Abs(right[1]))
+		run := 0.5 * (right[0] - left[0])
 
 		op.out = 2.0 * rise / (run * run)
 
@@ -58,15 +64,4 @@ func (op *Curvature) Next(
 			return
 		}
 	}
-}
-
-func (op *Curvature) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

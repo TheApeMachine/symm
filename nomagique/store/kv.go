@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"iter"
 	"maps"
 	"unsafe"
@@ -14,7 +13,7 @@ KV associates incoming keys and values with a configured map. It never mutates
 that source: each arrival is merged into a private copy.
 */
 type KV[K comparable, V any] struct {
-	err  error
+	*core.PrimitiveError
 	held map[K]V
 	out  map[K]V
 }
@@ -23,7 +22,10 @@ func NewKV[K comparable, V any](current map[K]V) core.Primitive {
 	held := make(map[K]V, len(current))
 	maps.Copy(held, current)
 
-	return &KV[K, V]{held: held}
+	return &KV[K, V]{
+		PrimitiveError: core.NewPrimitiveError(),
+		held:           held,
+	}
 }
 
 func (op *KV[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -41,14 +43,4 @@ func (op *KV[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *KV[K, V]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

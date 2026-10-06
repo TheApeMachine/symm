@@ -11,11 +11,14 @@ import (
 
 /*
 Baseline owns causal moments and the configured observation-driven window.
+It composes an Estimator for the moments and a Shed over that Estimator for
+the window's support policy.
 */
 type Baseline struct {
 	*core.PrimitiveError
 	window      core.Primitive
-	moments     statistic.Moments
+	moments     core.Primitive
+	shed        core.Primitive
 	input       data.Map[string]
 	windowInput data.Map[string]
 	output      data.Map[float64]
@@ -32,9 +35,13 @@ func NewBaseline(window ...core.Primitive) core.Primitive {
 	output.Values["center"] = 0
 	output.Values["scale"] = 0
 
+	moments := statistic.NewEstimator()
+
 	return &Baseline{
 		PrimitiveError: core.NewPrimitiveError(),
 		window:         adaptiveWindow,
+		moments:        moments,
+		shed:           statistic.NewShed(moments),
 		input:          data.NewMap("value", "value"),
 		windowInput:    data.NewMap("shed_ratio", "shed_ratio"),
 		output:         output,
@@ -74,7 +81,16 @@ func (op *Baseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			reading := op.moments.Update(value)
+			var reading [10]float64
+
+			for pointer := range op.moments.Next(data.NewValue(value)) {
+				reading = *(*[10]float64)(pointer)
+			}
+
+			if err := op.moments.Error(); err != nil {
+				op.Error(err)
+				return
+			}
 
 			for range op.window.Next(data.NewValue(adapter)) {
 			}
@@ -102,15 +118,22 @@ func (op *Baseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			op.moments.Shed(shedRatio)
+			for range op.shed.Next(data.NewValue(shedRatio)) {
+			}
+
+			if err := op.shed.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
 			center := value
 
-			if reading.Prior.Count > 0 {
-				center = reading.Prior.Mean
+			if reading[3] > 0 {
+				center = reading[4]
 			}
 
 			op.output.Values["center"] = center
-			op.output.Values["scale"] = reading.Dispersion
+			op.output.Values["scale"] = reading[9]
 
 			for range adapter.Next(data.NewValue(op.output)) {
 			}

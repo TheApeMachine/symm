@@ -1,7 +1,6 @@
 package vector
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -14,12 +13,15 @@ operation's complete output. Operations retain their identity between runs, so
 each coordinate may own an independent recurrence.
 */
 type Apply struct {
-	err        error
+	*core.PrimitiveError
 	operations []core.Primitive
 }
 
 func NewApply(operations ...core.Primitive) core.Primitive {
-	return &Apply{operations: operations}
+	return &Apply{
+		PrimitiveError: core.NewPrimitiveError(),
+		operations:     operations,
+	}
 }
 
 func (op *Apply) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -50,19 +52,4 @@ func (op *Apply) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			op.Error(core.ErrShape)
 		}
 	}
-}
-
-func (op *Apply) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-	for _, operation := range op.operations {
-		if err := operation.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

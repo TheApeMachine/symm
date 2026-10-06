@@ -1,7 +1,6 @@
 package vector
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -9,33 +8,37 @@ import (
 )
 
 /*
-Difference subtracts paired members. Unequal lengths are a shape error.
+Difference subtracts paired members. Each arrival is *[2][]float64
+{left, right}; it yields *[]float64. Unequal lengths are a shape error.
 */
 type Difference struct {
-	err error
+	*core.PrimitiveError
 	out []float64
 }
 
 func NewDifference() core.Primitive {
-	return &Difference{}
+	return &Difference{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Difference) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			pair := (*Pair)(arriving)
+			pair := (*[2][]float64)(arriving)
+			left, right := pair[0], pair[1]
 
-			if len(pair.Left) != len(pair.Right) {
+			if len(left) != len(right) {
 				op.Error(core.ErrShape)
 				continue
 			}
 
-			if len(op.out) != len(pair.Left) {
-				op.out = make([]float64, len(pair.Left))
+			if len(op.out) != len(left) {
+				op.out = make([]float64, len(left))
 			}
 
-			for index, value := range pair.Left {
-				op.out[index] = value - pair.Right[index]
+			for index, value := range left {
+				op.out[index] = value - right[index]
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -43,14 +46,4 @@ func (op *Difference) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			}
 		}
 	}
-}
-
-func (op *Difference) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

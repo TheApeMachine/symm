@@ -67,7 +67,12 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			context, contextOK := text.Values["context"]
 
-			if !contextOK || context == "" {
+			if !contextOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			if context == "" {
 				op.Error(core.ErrDomain)
 				return
 			}
@@ -76,15 +81,62 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			queries := [][]byte{contextBytes}
 			var prefixes [][]byte
 			var suffixes [][]byte
-			delim := byte(0)
-			delimited := bytes.Contains(contextBytes, []byte{0})
+			framed := len(contextBytes) >= 12
+			var frameAt []int
+			offset := 0
 
-			if !delimited && bytes.Contains(contextBytes, []byte{'/'}) {
+			for framed && offset < len(contextBytes) {
+				if offset+4 > len(contextBytes) {
+					framed = false
+					break
+				}
+
+				count := int(binary.BigEndian.Uint32(contextBytes[offset : offset+4]))
+
+				if count == 0 || offset+4+count*8 > len(contextBytes) {
+					framed = false
+					break
+				}
+
+				frameAt = append(frameAt, offset)
+				offset += 4 + count*8
+			}
+
+			if framed && (offset != len(contextBytes) || len(frameAt) < 2) {
+				framed = false
+			}
+
+			if framed {
+				for step := 1; step < len(frameAt); step++ {
+					prefixes = append(prefixes, contextBytes[:frameAt[len(frameAt)-step]])
+					suffixes = append(suffixes, contextBytes[frameAt[step]:])
+				}
+			}
+
+			aligned := !framed && len(contextBytes) > 8 && len(contextBytes)%8 == 0
+
+			if aligned {
+				tokens := len(contextBytes) / 8
+
+				for step := 1; step < tokens; step++ {
+					prefixes = append(prefixes, contextBytes[:len(contextBytes)-step*8])
+					suffixes = append(suffixes, contextBytes[step*8:])
+				}
+			}
+
+			delim := byte(0)
+			delimited := false
+
+			if !framed && !aligned && bytes.Contains(contextBytes, []byte{0}) {
+				delimited = true
+			}
+
+			if !framed && !aligned && !delimited && bytes.Contains(contextBytes, []byte{'/'}) {
 				delim = '/'
 				delimited = true
 			}
 
-			if !delimited && bytes.Contains(contextBytes, []byte{'_'}) {
+			if !framed && !aligned && !delimited && bytes.Contains(contextBytes, []byte{'_'}) {
 				delim = '_'
 				delimited = true
 			}
@@ -113,16 +165,7 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 			}
 
-			if !delimited && len(contextBytes) >= 8 && len(contextBytes)%8 == 0 {
-				tokens := len(contextBytes) / 8
-
-				for step := 1; step < tokens; step++ {
-					prefixes = append(prefixes, contextBytes[:len(contextBytes)-step*8])
-					suffixes = append(suffixes, contextBytes[step*8:])
-				}
-			}
-
-			if len(prefixes) == 0 && len(suffixes) == 0 && len(contextBytes) > 1 {
+			if !framed && !aligned && !delimited && len(contextBytes) > 1 {
 				half := len(contextBytes) / 2
 				prefixes = append(prefixes, contextBytes[:half])
 				suffixes = append(suffixes, contextBytes[half:])

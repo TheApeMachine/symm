@@ -17,7 +17,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -51,7 +50,7 @@ type EquitySource interface {
 }
 
 type CognitionSource interface {
-	CognitionTree() cognition.CognitionTreeExport
+	CognitionTree() CognitionTreeExport
 }
 
 type FragmentsSource interface {
@@ -455,7 +454,6 @@ func (hub *Hub) SetEquitySource(source EquitySource) {
 
 	hub.equitySource = source
 }
-
 
 /*
 SetCognitionSource attaches the source for active cognitive memory and trie topology.

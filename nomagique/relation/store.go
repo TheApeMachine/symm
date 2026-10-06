@@ -31,12 +31,14 @@ type StoreSnapshot struct {
 }
 
 /*
-MeasurementAppend asks the store to split one data.Measurement into
-per-coordinate observations and append each of them under the given model
-epoch.
+MeasurementAppend asks the store to split one data.Measurement into the
+named per-coordinate observations and append each of them under the given
+model epoch. Coordinates carry Metric, Side, Unit and Timescale; Symbol,
+Source, Peer and Epoch are stamped from the Measurement and Epoch.
 */
 type MeasurementAppend struct {
 	Measurement *data.Measurement
+	Coordinates []Coordinate
 	Epoch       uint64
 }
 
@@ -475,18 +477,19 @@ func (op *ObservationStore) append(observation Observation) StoreResult {
 
 /*
 appendMeasurement splits one data.Measurement into per-coordinate
-observations and appends each of them. A measurement carrying an error is
-rejected as a whole: the error is recorded and nothing is appended.
+observations and appends each of them. A measurement whose requested metrics
+cannot be read is rejected as a whole: the error is recorded and nothing is
+appended.
 */
 func (op *ObservationStore) appendMeasurement(
 	request *MeasurementAppend,
 ) (StoreResult, error) {
-	observations, err := splitMeasurement(request.Measurement, request.Epoch)
+	observations, err := splitMeasurement(request.Measurement, request.Coordinates, request.Epoch)
 
 	if err != nil {
 		return StoreResult{}, fmt.Errorf(
-			"%w: relation: measurement carries an error",
-			core.ErrDomain,
+			"%w: relation: measurement unreadable: %w",
+			core.ErrDomain, err,
 		)
 	}
 

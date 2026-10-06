@@ -8,32 +8,30 @@ import (
 )
 
 /*
-BonferroniInput is a p-value and the number of candidates it is tested among.
-*/
-type BonferroniInput struct {
-	P          float64
-	Candidates float64
-}
-
-/*
-Bonferroni owns min(p * candidates, 1), the union bound.
+Bonferroni owns min(p * candidates, 1), the union bound. Each arrival is
+[2]float64{p, candidates}; it yields *float64.
 */
 type Bonferroni struct {
-	err error
+	*core.PrimitiveError
 	out float64
 }
 
 func NewBonferroni() core.Primitive {
-	return &Bonferroni{}
+	return &Bonferroni{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
-func (op *Bonferroni) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *Bonferroni) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := (*BonferroniInput)(arriving)
-			val := input.P * input.Candidates
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			input := *(*[2]float64)(arriving)
+			val := input[0] * input[1]
 
 			if val > 1.0 {
 				val = 1.0
@@ -46,15 +44,4 @@ func (op *Bonferroni) Next(
 			}
 		}
 	}
-}
-
-func (op *Bonferroni) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

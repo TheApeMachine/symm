@@ -6,7 +6,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
@@ -73,10 +72,10 @@ func (op *Envelope) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			var current statistic.MomentReading
+			var current [10]float64
 
 			for pointer := range op.moments.Next(data.NewValue(value)) {
-				current = *(*statistic.MomentReading)(pointer)
+				current = *(*[10]float64)(pointer)
 			}
 
 			if err := op.moments.Error(); err != nil {
@@ -84,10 +83,10 @@ func (op *Envelope) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			bounded := current.Value
+			bounded := current[6]
 
-			if current.Count > 1 && current.Dispersion > 0 {
-				op.count.Values["count"] = current.Count
+			if current[0] > 1 && current[9] > 0 {
+				op.count.Values["count"] = current[0]
 
 				for range adapter.Next(data.NewValue(op.count)) {
 				}
@@ -118,9 +117,9 @@ func (op *Envelope) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					return
 				}
 
-				margin := current.Dispersion * scale
-				lower := current.Mean - margin
-				upper := current.Mean + margin
+				margin := current[9] * scale
+				lower := current[1] - margin
+				upper := current[1] + margin
 
 				if bounded < lower {
 					bounded = lower

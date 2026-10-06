@@ -87,11 +87,11 @@ func (op *Export) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			root := map[string]any{
-				"id":              "root",
-				"prefix":          "ROOT",
-				"probability":     core.Unit,
-				"stepProbability": core.Unit,
-				"state":           "ESTIMATED",
+				"id":          "root",
+				"prefix":      "ROOT",
+				"probability": core.Unit,
+				"count":       uint64(0),
+				"state":       "ESTIMATED",
 			}
 			branches := make([]any, 0)
 			feasible := make([]any, 0)

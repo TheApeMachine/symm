@@ -12,10 +12,7 @@ import (
 func TestOuterNext(t *testing.T) {
 	Convey("Outer product computes u ⊗ v", t, func() {
 		node := matrix.NewOuter()
-		in := matrix.OuterInput{
-			Left:  []float64{1.0, 2.0},
-			Right: []float64{3.0, 4.0, 5.0},
-		}
+		in := [2][]float64{{1.0, 2.0}, {3.0, 4.0, 5.0}}
 		seq := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&in))
 		}

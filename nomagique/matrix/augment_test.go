@@ -16,7 +16,7 @@ func TestAugmentNext(t *testing.T) {
 		node := matrix.NewAugment()
 		left := [][]float64{{1, 2}, {3, 4}}
 		right := [][]float64{{5, 6, 7}, {8, 9, 10}}
-		in := matrix.AugmentInput{Left: left, Right: right}
+		in := [2][][]float64{left, right}
 		seq := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&in))
 		}
@@ -30,7 +30,7 @@ func TestAugmentNext(t *testing.T) {
 		node := matrix.NewAugment()
 		left := [][]float64{{1, 2}, {3, 4}}
 		right := [][]float64{{5}}
-		in := matrix.AugmentInput{Left: left, Right: right}
+		in := [2][][]float64{left, right}
 		seq := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&in))
 		}

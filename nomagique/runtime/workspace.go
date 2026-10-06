@@ -10,6 +10,8 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
+var SeqIdx *atomic.Int64
+
 func optionList[O any](initial ...O) []O {
 	return initial
 }

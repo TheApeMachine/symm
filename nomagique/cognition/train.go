@@ -13,10 +13,11 @@ import (
 /*
 Train records every contiguous token span of one context under one class.
 
-A span is a run of length-framed timesteps when the whole context is framed,
-otherwise a run of 8-byte tokens when the context is aligned that way,
-otherwise a run of NUL, slash, or underscore separated tokens. The span
-count is the token count of the context that arrived.
+A span is a run of length-framed timesteps when more than one frame fills
+the context, otherwise a run of 8-byte tokens when the context is longer
+than one token and aligned that way, otherwise a run of NUL, slash, or
+underscore separated tokens. The span count is the token count of the
+context that arrived.
 */
 type Train struct {
 	*core.PrimitiveError
@@ -117,7 +118,7 @@ func (op *Train) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				offset += size
 			}
 
-			if framed && (offset != len(contextBytes) || len(starts) == 0) {
+			if framed && (offset != len(contextBytes) || len(starts) < 2) {
 				framed = false
 			}
 
@@ -126,7 +127,7 @@ func (op *Train) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				ends = nil
 			}
 
-			if len(starts) == 0 && len(contextBytes) >= 8 && len(contextBytes)%8 == 0 {
+			if len(starts) == 0 && len(contextBytes) > 8 && len(contextBytes)%8 == 0 {
 				for token := 0; token < len(contextBytes); token += 8 {
 					starts = append(starts, token)
 					ends = append(ends, token+8)

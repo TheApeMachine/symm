@@ -1,141 +1,140 @@
 package cognition
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-func TestRegionFramesDecodesTimesteps(t *testing.T) {
-	ctx := []byte("R1_R2_R3/R10_R20")
-	frames := regionFrames(ctx)
+type treeNode struct {
+	Prefix      string     `json:"prefix"`
+	Probability float64    `json:"probability"`
+	State       string     `json:"state"`
+	Children    []treeNode `json:"children"`
+}
 
-	if len(frames) != 2 || frames[0] != "R1_R2_R3" || frames[1] != "R10_R20" {
-		t.Fatalf("frames=%v", frames)
+type treeExport struct {
+	Root     treeNode `json:"root"`
+	Branches []struct {
+		Policy string `json:"policy"`
+	} `json:"branches"`
+	Feasible []struct {
+		Action string `json:"action"`
+	} `json:"feasible"`
+}
+
+func exported(memory *Associate) treeExport {
+	reading, err := drive(NewExport(memory), nil, nil)
+	So(err, ShouldBeNil)
+	raw, readErr := literal(reading, "tree")
+	So(readErr, ShouldBeNil)
+
+	var export treeExport
+	So(json.Unmarshal([]byte(raw), &export), ShouldBeNil)
+	return export
+}
+
+func observe(memory *Associate, context string, class string, times int) {
+	for range times {
+		_, err := drive(memory, map[string]string{
+			"context": context,
+			"class":   class,
+		}, map[string]float64{
+			"feedback": 1,
+			"graded":   core.Unit,
+		})
+		So(err, ShouldBeNil)
 	}
 }
 
-func TestTreeExportActionIsLeafOnly(t *testing.T) {
-	engine := NewEngine(Config{})
-	ctx := []byte("R3_R8_R19/R1_R2_R5")
-	if _, err := engine.Observe(Association{
-		Context:  ctx,
-		Class:    []byte(ActionEnter),
-		Feedback: 1,
-		Graded:   true,
-	}); err != nil {
-		t.Fatalf("observe: %v", err)
-	}
+func TestExportNext(t *testing.T) {
+	Convey("Given one enter association", t, func() {
+		memory := NewAssociate()
+		observe(memory, "R3_R8_R19/R1_R2_R5", "enter", 1)
+		export := exported(memory)
 
-	export := engine.TreeExport()
-	if export.Root == nil {
-		t.Fatal("nil root")
-	}
+		var enterMidPath bool
+		var walk func(node treeNode, depth int)
+		walk = func(node treeNode, depth int) {
+			prefix := strings.ToUpper(node.Prefix)
+			action := prefix == "ENTER" || prefix == "EXIT"
 
-	var enterMidPath bool
-	var walk func(node *TrieNodeJSON, depth int)
-	walk = func(node *TrieNodeJSON, depth int) {
-		if node == nil {
-			return
-		}
-		prefix := strings.ToUpper(node.TokenPrefix)
-		isAction := prefix == "ENTER" || prefix == "EXIT"
-		if isAction {
-			if len(node.Children) > 0 {
-				t.Fatalf("action leaf %q has children", node.TokenPrefix)
+			if action && len(node.Children) > 0 {
+				enterMidPath = true
 			}
-		} else if depth > 0 && (prefix == "WAIT" || prefix == "ENTER" || prefix == "EXIT") {
-			enterMidPath = true
-		}
-		for _, child := range node.Children {
-			walk(child, depth+1)
-		}
-	}
-	walk(export.Root, 0)
-	if enterMidPath {
-		t.Fatal("ENTER/WAIT painted on mid-path region node")
-	}
-}
 
-func TestRegionFramesCollapsesAAA(t *testing.T) {
-	ctx := []byte("R4_R5_R15/R4_R5_R15/R4_R5_R15")
-	got := regionFrames(ctx)
+			if !action && depth > 0 && (prefix == "WAIT" || prefix == "ENTER" || prefix == "EXIT") {
+				enterMidPath = true
+			}
 
-	if len(got) != 1 || got[0] != "R4_R5_R15" {
-		t.Fatalf("AAA→A frames: got %#v", got)
-	}
-}
-
-func TestRegionFramesCollapsesABBA(t *testing.T) {
-	ctx := []byte("R1_R2_R3/R7_R8_R9/R7_R8_R9/R1_R2_R3")
-	got := regionFrames(ctx)
-	want := []string{"R1_R2_R3", "R7_R8_R9", "R1_R2_R3"}
-
-	if len(got) != len(want) {
-		t.Fatalf("ABBA→ABA len: got %#v want %#v", got, want)
-	}
-
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("ABBA→ABA: got %#v want %#v", got, want)
-		}
-	}
-}
-
-func TestTreeExportStratifiedExitVisibility(t *testing.T) {
-	engine := NewEngine(Config{})
-
-	// Populate 70 distinct ENTER contexts with high count.
-	for i := byte(1); i <= 70; i++ {
-		ctx := []byte{i, 10, 20, 0}
-		for c := 0; c < 10; c++ {
-			if _, err := engine.Observe(Association{
-				Context:  ctx,
-				Class:    []byte(ActionEnter),
-				Feedback: 1,
-				Graded:   true,
-			}); err != nil {
-				t.Fatalf("observe enter: %v", err)
+			for _, child := range node.Children {
+				walk(child, depth+1)
 			}
 		}
-	}
+		walk(export.Root, 0)
 
-	// Populate 5 EXIT contexts with lower count.
-	for i := byte(1); i <= 5; i++ {
-		ctx := []byte{100, i, 50, 0}
-		for c := 0; c < 2; c++ {
-			if _, err := engine.Observe(Association{
-				Context:  ctx,
-				Class:    []byte(ActionExit),
-				Feedback: 1,
-				Graded:   true,
-			}); err != nil {
-				t.Fatalf("observe exit: %v", err)
+		So(enterMidPath, ShouldBeFalse)
+		So(export.Root.Children[0].Children[0].Children[0].Prefix, ShouldEqual, "ENTER")
+		So(export.Root.Children[0].Children[0].Children[0].Probability, ShouldEqual, 0.75)
+		So(export.Root.Children[0].Children[0].Children[0].State, ShouldEqual, "POLICY CHOICE")
+	})
+
+	Convey("Given a repeated region frame", t, func() {
+		memory := NewAssociate()
+		observe(memory, "R4_R5_R15/R4_R5_R15/R4_R5_R15", "enter", 1)
+		export := exported(memory)
+
+		So(len(export.Root.Children), ShouldEqual, 1)
+		So(export.Root.Children[0].Prefix, ShouldEqual, "R4_R5_R15")
+		So(len(export.Root.Children[0].Children), ShouldEqual, 1)
+		So(export.Root.Children[0].Children[0].Prefix, ShouldEqual, "ENTER")
+	})
+
+	Convey("Given an ABBA region path", t, func() {
+		memory := NewAssociate()
+		observe(memory, "R1_R2_R3/R7_R8_R9/R7_R8_R9/R1_R2_R3", "enter", 1)
+		export := exported(memory)
+
+		first := export.Root.Children[0]
+		second := first.Children[0]
+		third := second.Children[0]
+		So(first.Prefix, ShouldEqual, "R1_R2_R3")
+		So(second.Prefix, ShouldEqual, "R7_R8_R9")
+		So(third.Prefix, ShouldEqual, "R1_R2_R3")
+		So(third.Children[0].Prefix, ShouldEqual, "ENTER")
+	})
+
+	Convey("Given many enter contexts and fewer exit contexts", t, func() {
+		memory := NewAssociate()
+
+		for index := 1; index <= 70; index++ {
+			observe(memory, string([]byte{byte(index), 10, 20, 0}), "enter", 10)
+		}
+
+		for index := 1; index <= 5; index++ {
+			observe(memory, string([]byte{100, byte(index), 50, 0}), "exit", 2)
+		}
+
+		export := exported(memory)
+		exitFound := false
+		var walk func(node treeNode)
+		walk = func(node treeNode) {
+			if strings.ToUpper(node.Prefix) == "EXIT" {
+				exitFound = true
+				return
+			}
+
+			for _, child := range node.Children {
+				walk(child)
 			}
 		}
-	}
-
-	export := engine.TreeExport()
-	if export.Root == nil {
-		t.Fatal("nil root")
-	}
-
-	exitFound := false
-	var walk func(node *TrieNodeJSON)
-	walk = func(node *TrieNodeJSON) {
-		if node == nil {
-			return
-		}
-		if strings.ToUpper(node.TokenPrefix) == "EXIT" {
-			exitFound = true
-			return
-		}
-		for _, child := range node.Children {
-			walk(child)
-		}
-	}
-	walk(export.Root)
-
-	if !exitFound {
-		t.Fatal("EXIT candidate was starved by higher frequency ENTER candidates; stratified selection failed")
-	}
+		walk(export.Root)
+		So(exitFound, ShouldBeTrue)
+		So(len(export.Branches), ShouldEqual, 75)
+		So(len(export.Feasible), ShouldEqual, 75)
+	})
 }

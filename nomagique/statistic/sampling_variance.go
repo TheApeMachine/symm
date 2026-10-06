@@ -9,19 +9,8 @@ import (
 )
 
 /*
-SamplingVarianceInput is specificity debt: matched depth, context length,
-support and variance.
-*/
-type SamplingVarianceInput struct {
-	Depth         float64
-	ContextLength float64
-	Support       float64
-	Variance      float64
-}
-
-/*
 SamplingVariance applies specificity debt, with one observation as the sampling
-floor.
+floor. Each arrival is *[4]float64 {depth, context length, support, variance}.
 */
 type SamplingVariance struct {
 	*core.PrimitiveError
@@ -44,20 +33,21 @@ func (op *SamplingVariance) Next(
 				return
 			}
 
-			input := (*SamplingVarianceInput)(arriving)
+			input := (*[4]float64)(arriving)
+			depth, contextLength, support, variance := input[0], input[1], input[2], input[3]
 
-			if input.Depth > input.ContextLength {
+			if depth > contextLength {
 				op.Error(fmt.Errorf("%w: matched depth exceeds context length", core.ErrDomain))
 				return
 			}
 
-			floor := input.Support / (1.0 + (input.ContextLength - input.Depth))
+			floor := support / (1.0 + (contextLength - depth))
 
 			if floor < 1.0 {
 				floor = 1.0
 			}
 
-			op.out = input.Variance / floor
+			op.out = variance / floor
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return

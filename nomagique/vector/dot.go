@@ -1,7 +1,6 @@
 package vector
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -9,30 +8,34 @@ import (
 )
 
 /*
-Dot owns the inner product of two equal-length vectors.
+Dot owns the inner product of two equal-length vectors. Each arrival is
+*[2][]float64 {left, right}; it yields *float64.
 */
 type Dot struct {
-	err error
+	*core.PrimitiveError
 	out float64
 }
 
 func NewDot() core.Primitive {
-	return &Dot{}
+	return &Dot{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Dot) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			pair := (*Pair)(arriving)
+			pair := (*[2][]float64)(arriving)
+			left, right := pair[0], pair[1]
 
-			if len(pair.Left) != len(pair.Right) {
+			if len(left) != len(right) {
 				op.Error(core.ErrShape)
 				continue
 			}
 
 			op.out = 0.0
-			for index, value := range pair.Left {
-				op.out += value * pair.Right[index]
+			for index, value := range left {
+				op.out += value * right[index]
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -40,14 +43,4 @@ func (op *Dot) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Dot) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

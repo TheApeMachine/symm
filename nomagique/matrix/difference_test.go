@@ -17,7 +17,7 @@ func TestDifferenceNext(t *testing.T) {
 
 		Convey("Signed subtraction preserves operands and earlier results", func() {
 			node1 := matrix.NewDifference()
-			in1 := matrix.DifferenceInput{Left: left, Right: right}
+			in1 := [2][][]float64{left, right}
 			seq1 := func(yield func(unsafe.Pointer) bool) {
 				yield(unsafe.Pointer(&in1))
 			}
@@ -26,7 +26,7 @@ func TestDifferenceNext(t *testing.T) {
 			So(first[0], ShouldResemble, [][]float64{{-1, -5}, {-1, 9}})
 
 			node2 := matrix.NewDifference()
-			in2 := matrix.DifferenceInput{Left: right, Right: left}
+			in2 := [2][][]float64{right, left}
 			seq2 := func(yield func(unsafe.Pointer) bool) {
 				yield(unsafe.Pointer(&in2))
 			}
@@ -41,7 +41,7 @@ func TestDifferenceNext(t *testing.T) {
 
 		Convey("Unequal row counts fail", func() {
 			node := matrix.NewDifference()
-			in := matrix.DifferenceInput{Left: left, Right: right[:1]}
+			in := [2][][]float64{left, right[:1]}
 			seq := func(yield func(unsafe.Pointer) bool) {
 				yield(unsafe.Pointer(&in))
 			}
@@ -51,7 +51,7 @@ func TestDifferenceNext(t *testing.T) {
 
 		Convey("Unequal row widths fail", func() {
 			node := matrix.NewDifference()
-			in := matrix.DifferenceInput{Left: left, Right: [][]float64{{1}, {2}}}
+			in := [2][][]float64{left, [][]float64{{1}, {2}}}
 			seq := func(yield func(unsafe.Pointer) bool) {
 				yield(unsafe.Pointer(&in))
 			}

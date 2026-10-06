@@ -7,39 +7,25 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-type CUSUMSignal int
-
+/*
+CUSUM signal values published in slot [0] of a CUSUM reading.
+*/
 const (
-	CUSUMNone CUSUMSignal = iota
-	CUSUMUpper
-	CUSUMLower
+	CUSUMNone  = 0.0
+	CUSUMUpper = 1.0
+	CUSUMLower = -1.0
 )
-
-/*
-CUSUMObservation carries one sequentially stamped observation and its operating hurdles.
-*/
-type CUSUMObservation struct {
-	Sequence  int64
-	Value     float64
-	Hurdle    float64
-	Threshold float64
-}
-
-/*
-CUSUMReading reports Page's two-sided cumulative sum control state.
-*/
-type CUSUMReading struct {
-	Signal     CUSUMSignal
-	UpperSum   float64
-	LowerSum   float64
-	UpperStart int64
-	LowerStart int64
-}
 
 /*
 CUSUM implements Page's two-sided cumulative sum control filter (1954).
 It accumulates directional innovations exceeding a friction/noise hurdle,
 tracking structural departures without arbitrary polling horizons or single-tick hair-triggers.
+
+Each arrival is one sequentially stamped observation and its operating
+hurdles as *[4]float64 {sequence, value, hurdle, threshold}. It yields the
+control state as *[5]float64
+{signal, upper sum, lower sum, upper start, lower start}, where signal is
+CUSUMNone, CUSUMUpper or CUSUMLower.
 */
 type CUSUM struct {
 	*core.PrimitiveError
@@ -47,9 +33,9 @@ type CUSUM struct {
 	previous   float64
 	upper      float64
 	lower      float64
-	upperStart int64
-	lowerStart int64
-	out        CUSUMReading
+	upperStart float64
+	lowerStart float64
+	out        [5]float64
 }
 
 func NewCUSUM() *CUSUM {
@@ -66,18 +52,15 @@ func (op *CUSUM) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			obs := *(*CUSUMObservation)(arriving)
+			obs := (*[4]float64)(arriving)
+			sequence, value, hurdle, threshold := obs[0], obs[1], obs[2], obs[3]
 
 			if !op.observed {
-				op.previous = obs.Value
+				op.previous = value
 				op.observed = true
-				op.upperStart = obs.Sequence
-				op.lowerStart = obs.Sequence
-
-				op.out = CUSUMReading{
-					UpperStart: obs.Sequence,
-					LowerStart: obs.Sequence,
-				}
+				op.upperStart = sequence
+				op.lowerStart = sequence
+				op.out = [5]float64{CUSUMNone, 0, 0, sequence, sequence}
 
 				if !yield(unsafe.Pointer(&op.out)) {
 					return
@@ -86,50 +69,44 @@ func (op *CUSUM) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			delta := obs.Value - op.previous
-			op.previous = obs.Value
+			delta := value - op.previous
+			op.previous = value
 
-			if op.upper == 0 && delta > obs.Hurdle {
-				op.upperStart = obs.Sequence - 1
+			if op.upper == 0 && delta > hurdle {
+				op.upperStart = sequence - 1
 			}
 
-			op.upper += delta - obs.Hurdle
+			op.upper += delta - hurdle
 
 			if op.upper < 0 {
 				op.upper = 0
-				op.upperStart = obs.Sequence
+				op.upperStart = sequence
 			}
 
-			if op.lower == 0 && delta < -obs.Hurdle {
-				op.lowerStart = obs.Sequence - 1
+			if op.lower == 0 && delta < -hurdle {
+				op.lowerStart = sequence - 1
 			}
 
-			op.lower += delta + obs.Hurdle
+			op.lower += delta + hurdle
 
 			if op.lower > 0 {
 				op.lower = 0
-				op.lowerStart = obs.Sequence
+				op.lowerStart = sequence
 			}
 
-			op.out = CUSUMReading{
-				Signal:     CUSUMNone,
-				UpperSum:   op.upper,
-				LowerSum:   op.lower,
-				UpperStart: op.upperStart,
-				LowerStart: op.lowerStart,
-			}
+			op.out = [5]float64{CUSUMNone, op.upper, op.lower, op.upperStart, op.lowerStart}
 
-			if obs.Threshold > 0 {
-				if op.upper >= obs.Threshold {
-					op.out.Signal = CUSUMUpper
+			if threshold > 0 {
+				if op.upper >= threshold {
+					op.out[0] = CUSUMUpper
 					op.upper = 0
-					op.upperStart = obs.Sequence
+					op.upperStart = sequence
 				}
 
-				if op.lower <= -obs.Threshold {
-					op.out.Signal = CUSUMLower
+				if op.lower <= -threshold {
+					op.out[0] = CUSUMLower
 					op.lower = 0
-					op.lowerStart = obs.Sequence
+					op.lowerStart = sequence
 				}
 			}
 

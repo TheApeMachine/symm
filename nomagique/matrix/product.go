@@ -1,7 +1,6 @@
 package matrix
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -9,39 +8,35 @@ import (
 )
 
 /*
-ProductInput is a pair of matrices.
-*/
-type ProductInput struct {
-	Left  [][]float64
-	Right [][]float64
-}
-
-/*
-Product owns matrix multiplication. Coefficients stay in contiguous float64
+Product owns matrix multiplication. Each arrival is *[2][][]float64
+{left, right}; it yields *[][]float64. Coefficients stay in contiguous float64
 storage.
 */
 type Product struct {
-	err error
+	*core.PrimitiveError
 	out [][]float64
 }
 
 func NewProduct() core.Primitive {
-	return &Product{}
+	return &Product{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Product) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := (*ProductInput)(arriving)
+			input := (*[2][][]float64)(arriving)
+			left, right := input[0], input[1]
 			width := 0
 
-			if len(input.Right) > 0 {
-				width = len(input.Right[0])
+			if len(right) > 0 {
+				width = len(right[0])
 			}
 
 			ok := true
 
-			for _, row := range input.Right {
+			for _, row := range right {
 				if len(row) != width {
 					op.Error(core.ErrShape)
 					ok = false
@@ -53,8 +48,8 @@ func (op *Product) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			for _, row := range input.Left {
-				if len(row) != len(input.Right) {
+			for _, row := range left {
+				if len(row) != len(right) {
 					op.Error(core.ErrShape)
 					ok = false
 					break
@@ -65,14 +60,14 @@ func (op *Product) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			op.out = make([][]float64, len(input.Left))
-			values := make([]float64, len(input.Left)*width)
+			op.out = make([][]float64, len(left))
+			values := make([]float64, len(left)*width)
 
-			for row, coefficients := range input.Left {
+			for row, coefficients := range left {
 				op.out[row] = values[row*width : (row+1)*width]
 
 				for inner, coefficient := range coefficients {
-					for column, value := range input.Right[inner] {
+					for column, value := range right[inner] {
 						op.out[row][column] += coefficient * value
 					}
 				}
@@ -83,14 +78,4 @@ func (op *Product) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Product) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

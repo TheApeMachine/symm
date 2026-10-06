@@ -137,11 +137,9 @@ func TestTraining_Train(t *testing.T) {
 
 		Convey("It loads enter and exit associations into the trie and opens trading", func() {
 			So(training.Status(), ShouldEqual, runtime.READY)
-			So(training.engine.Len(), ShouldBeGreaterThan, 0)
-
-			census := training.engine.Census()
-			So(census[string("enter")], ShouldBeGreaterThan, 0)
-			So(census[string("exit")], ShouldBeGreaterThan, 0)
+			So(training.records(), ShouldBeGreaterThan, 0)
+			So(training.classCount("enter"), ShouldBeGreaterThan, 0)
+			So(training.classCount("exit"), ShouldBeGreaterThan, 0)
 		})
 	})
 
@@ -169,7 +167,7 @@ func TestTraining_Train(t *testing.T) {
 
 		Convey("It remains in WAITING without training on the losing excursion", func() {
 			So(training.Status(), ShouldEqual, runtime.WAITING)
-			So(training.engine.Len(), ShouldEqual, 0)
+			So(training.records(), ShouldEqual, 0)
 		})
 	})
 
@@ -199,9 +197,8 @@ func TestTraining_Train(t *testing.T) {
 
 		Convey("It detects the excursion and learns from it in the same pass", func() {
 			So(training.Status(), ShouldEqual, runtime.READY)
-			census := training.engine.Census()
-			So(census[string("enter")], ShouldBeGreaterThan, 0)
-			So(census[string("exit")], ShouldBeGreaterThan, 0)
+			So(training.classCount("enter"), ShouldBeGreaterThan, 0)
+			So(training.classCount("exit"), ShouldBeGreaterThan, 0)
 		})
 	})
 }

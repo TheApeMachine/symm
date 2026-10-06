@@ -104,7 +104,7 @@ func (op *OLS) Error(errs ...error) error {
 /*
 single presents one request pointer as a one-element run.
 */
-func single(request *statistic.OLSRequest) iter.Seq[unsafe.Pointer] {
+func single(request *[2][]float64) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		yield(unsafe.Pointer(request))
 	}
@@ -114,11 +114,11 @@ func single(request *statistic.OLSRequest) iter.Seq[unsafe.Pointer] {
 flatten validates one design and converts it to the statistic layer's
 row-major request.
 */
-func flatten(design *Design) (statistic.OLSRequest, error) {
+func flatten(design *Design) ([2][]float64, error) {
 	observations := len(design.X)
 
 	if observations != len(design.Y) {
-		return statistic.OLSRequest{}, fmt.Errorf(
+		return [2][]float64{}, fmt.Errorf(
 			"%w: algo: OLS design rows and outcomes differ", core.ErrShape,
 		)
 	}
@@ -131,7 +131,7 @@ func flatten(design *Design) (statistic.OLSRequest, error) {
 
 	for _, row := range design.X {
 		if len(row) != parameters {
-			return statistic.OLSRequest{}, fmt.Errorf(
+			return [2][]float64{}, fmt.Errorf(
 				"%w: algo: OLS design is ragged", core.ErrShape,
 			)
 		}
@@ -143,35 +143,42 @@ func flatten(design *Design) (statistic.OLSRequest, error) {
 		flat = append(flat, row...)
 	}
 
-	return statistic.OLSRequest{X: flat, Y: design.Y, P: parameters}, nil
+	return [2][]float64{flat, design.Y}, nil
 }
 
 /*
 fit drives the statistic layer's solver for one request.
 */
-func (op *OLS) fit(request statistic.OLSRequest) (Fit, error) {
-	var solved statistic.OLSFit
+func (op *OLS) fit(request [2][]float64) (Fit, error) {
+	var solved []float64
 
 	for out := range op.solver.Next(single(&request)) {
-		solved = *(*statistic.OLSFit)(out)
+		solved = *(*[]float64)(out)
 	}
 
 	if err := op.solver.Error(); err != nil {
 		return Fit{}, err
 	}
 
+	parameters := int(solved[3])
 	fit := Fit{
-		Coefficients:        solved.Coefficients,
-		CoefficientVariance: solved.CoefficientVariance,
-		Rank:                solved.Rank,
-		Observations:        solved.Observations,
-		Parameters:          solved.Parameters,
-		ResidualSSE:         solved.ResidualSSE,
-		ResidualVariance:    solved.ResidualVariance,
-		Defined:             solved.Defined,
+		Rank:             int(solved[1]),
+		Observations:     int(solved[2]),
+		Parameters:       parameters,
+		ResidualSSE:      solved[4],
+		ResidualVariance: solved[5],
+		Defined:          solved[0] == 1,
 	}
 
-	if !solved.Defined {
+	if fit.Defined {
+		fit.Coefficients = append([]float64(nil), solved[7:7+parameters]...)
+	}
+
+	if fit.Defined && solved[6] == 1 {
+		fit.CoefficientVariance = append([]float64(nil), solved[7+parameters:7+2*parameters]...)
+	}
+
+	if !fit.Defined {
 		fit.ResidualVariance = math.NaN()
 		fit.Coefficients = []float64{}
 		fit.CoefficientVariance = []float64{}

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -13,12 +12,12 @@ First is the leading member of a pair. Pairs travel as one value, so taking
 one member is the smallest operation that takes them apart.
 */
 type First[T any] struct {
-	err error
+	*core.PrimitiveError
 	out T
 }
 
 func NewFirst[T any]() core.Primitive {
-	return &First[T]{}
+	return &First[T]{PrimitiveError: core.NewPrimitiveError()}
 }
 
 func (op *First[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -31,14 +30,4 @@ func (op *First[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *First[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

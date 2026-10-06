@@ -1,7 +1,6 @@
 package matrix
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -9,34 +8,37 @@ import (
 )
 
 /*
-VectorInput is a matrix and the vector it multiplies.
-*/
-type VectorInput struct {
-	Matrix [][]float64
-	Vector []float64
-}
-
-/*
-Vector multiplies a matrix by a vector and retains the vector result.
+Vector multiplies a matrix by a vector and retains the vector result. Each
+arrival is *[2][][]float64 {matrix, {vector}}: the vector travels as the single
+row of the second operand. It yields *[]float64.
 */
 type Vector struct {
-	err error
+	*core.PrimitiveError
 	out []float64
 }
 
 func NewVector() core.Primitive {
-	return &Vector{}
+	return &Vector{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Vector) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := (*VectorInput)(arriving)
-			op.out = make([]float64, len(input.Matrix))
+			input := (*[2][][]float64)(arriving)
+
+			if len(input[1]) != 1 {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			matrix, vector := input[0], input[1][0]
+			op.out = make([]float64, len(matrix))
 			ok := true
 
-			for rowIdx, row := range input.Matrix {
-				if len(row) != len(input.Vector) {
+			for rowIdx, row := range matrix {
+				if len(row) != len(vector) {
 					op.Error(core.ErrShape)
 					ok = false
 					break
@@ -45,7 +47,7 @@ func (op *Vector) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				var sum float64
 
 				for colIdx, val := range row {
-					sum += val * input.Vector[colIdx]
+					sum += val * vector[colIdx]
 				}
 
 				op.out[rowIdx] = sum
@@ -60,14 +62,4 @@ func (op *Vector) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Vector) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -14,13 +14,7 @@ import (
 func TestVectorNext(t *testing.T) {
 	Convey("Vector multiplies a matrix by a vector", t, func() {
 		node := matrix.NewVector()
-		in := matrix.VectorInput{
-			Matrix: [][]float64{
-				{1, 2},
-				{3, 4},
-			},
-			Vector: []float64{5, 6},
-		}
+		in := [2][][]float64{{{1, 2}, {3, 4}}, {{5, 6}}}
 		seq := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&in))
 		}
@@ -32,12 +26,7 @@ func TestVectorNext(t *testing.T) {
 
 	Convey("Mismatched dimensions return ErrShape", t, func() {
 		node := matrix.NewVector()
-		in := matrix.VectorInput{
-			Matrix: [][]float64{
-				{1, 2, 3},
-			},
-			Vector: []float64{5, 6},
-		}
+		in := [2][][]float64{{{1, 2, 3}}, {{5, 6}}}
 		seq := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&in))
 		}

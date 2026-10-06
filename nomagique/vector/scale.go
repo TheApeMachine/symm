@@ -1,7 +1,6 @@
 package vector
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -9,36 +8,64 @@ import (
 )
 
 /*
-ScaleInput is a vector and the scalar that multiplies every member.
-*/
-type ScaleInput struct {
-	Values []float64
-	Factor float64
-}
-
-/*
 Scale multiplies each member by one scalar.
 */
 type Scale struct {
-	err error
-	out []float64
+	*core.PrimitiveError
+	factor float64
+	fixed  bool
+	out    []float64
 }
 
-func NewScale() core.Primitive {
-	return &Scale{}
+/*
+NewScale constructs a Scale primitive. If a factor is provided, arrivals are
+*[]float64 and every member is multiplied by it. Otherwise arrivals are
+*[2][]float64 {values, {factor}}: the factor travels as the single member of
+the second operand. It yields *[]float64.
+*/
+func NewScale(factor ...float64) core.Primitive {
+	op := &Scale{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
+
+	if len(factor) > 0 {
+		op.factor = factor[0]
+		op.fixed = true
+	}
+
+	return op
 }
 
 func (op *Scale) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := (*ScaleInput)(arriving)
-
-			if len(op.out) != len(input.Values) {
-				op.out = make([]float64, len(input.Values))
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			for index, value := range input.Values {
-				op.out[index] = value * input.Factor
+			factor := op.factor
+			var values []float64
+
+			if op.fixed {
+				values = *(*[]float64)(arriving)
+			} else {
+				input := (*[2][]float64)(arriving)
+
+				if len(input[1]) != 1 {
+					op.Error(core.ErrShape)
+					return
+				}
+
+				values, factor = input[0], input[1][0]
+			}
+
+			if len(op.out) != len(values) {
+				op.out = make([]float64, len(values))
+			}
+
+			for index, value := range values {
+				op.out[index] = value * factor
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -46,14 +73,4 @@ func (op *Scale) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Scale) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -7,49 +7,90 @@ import (
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-drive pushes one payload pointer through one primitive and returns the answer
-the primitive yielded.
-*/
-func drive[From, To any](op core.Primitive, payload *From) To {
-	var answer To
-
-	for out := range op.Next(transport.NewOne(unsafe.Pointer(payload)).Next(nil)) {
-		answer = *(*To)(out)
-	}
-
-	return answer
-}
-
-/*
 UpdateMember retains the focal member's price, derives its causal change
-against the value the store replaced (calculus.RelativeChange), and retains
-the change facts in the member store. The stage owns only the store wiring;
-the mathematics lives in the primitives it drives.
+against the price it held before (calculus.RelativeChange), and retains the
+change in the shared member store. The member identity arrives as the text
+"member" on the adapter; the price is the configured metric label. The stage
+owns only the wiring; the mathematics lives in the primitives it drives.
+
+The member store is any keyed-map Primitive (store.NewKV[string, float64]),
+shared with the reductions that read the cross-section back.
 */
 type UpdateMember struct {
-	err    error
-	label  string
-	prices *store.Latest[string, float64]
-	membrs *store.Latest[string, data.CrossMember]
+	*core.PrimitiveError
+	label   string
+	members core.Primitive
+	change  core.Primitive
+	scratch *data.Adapter
+	prices  map[string]float64
+	member  data.Map[string]
+	price   data.Map[string]
+	result  data.Map[string]
+	pair    data.Map[float64]
 }
 
-func NewUpdateMember(
-	label string, prices *store.Latest[string, float64], changes *store.Latest[string, data.CrossMember],
-) core.Primitive {
-	return &UpdateMember{label: label, prices: prices, membrs: changes}
+func NewUpdateMember(label string, members core.Primitive) *UpdateMember {
+	return &UpdateMember{
+		PrimitiveError: core.NewPrimitiveError(),
+		label:          label,
+		members:        members,
+		change:         calculus.NewRelativeChange(),
+		scratch:        data.NewAdapter(nil, data.NewState(data.NewMap())),
+		prices:         make(map[string]float64),
+		member:         data.NewLiteral("member"),
+		price:          data.NewMap(label, label),
+		result:         data.NewMap("relative_change", "relative_change"),
+		pair:           data.NewOutputMap(),
+	}
 }
 
 func (op *UpdateMember) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement)(arriving)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			if m.Err != nil {
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var identity data.Map[string]
+
+			for pointer := range adapter.Next(data.NewValue(op.member)) {
+				identity = *(*data.Map[string])(pointer)
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.price)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			member, memberOK := identity.Values["member"]
+			price, priceOK := values.Values[op.label]
+
+			if !memberOK || !priceOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			prior, held := op.prices[member]
+			op.prices[member] = price
+
+			if !held {
 				if !yield(arriving) {
 					return
 				}
@@ -57,104 +98,44 @@ func (op *UpdateMember) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 				continue
 			}
 
-			reading := drive[store.LatestCommand[string, float64], store.LatestReading[string, float64]](
-				op.prices,
-				&store.LatestCommand[string, float64]{Key: m.Label, Value: m.GetMetric(op.label).Raw},
-			)
+			op.pair.Values["current"] = price
+			op.pair.Values["previous"] = prior
 
-			if !reading.HasPrior {
-				if !yield(arriving) {
-					return
-				}
-
-				continue
+			for range op.scratch.Next(data.NewValue(op.pair)) {
 			}
 
-			input := calculus.RelativeChangeInput{Previous: reading.Prior, Current: reading.Current}
-			change := drive[calculus.RelativeChangeInput, float64](calculus.NewRelativeChange(), &input)
+			for range op.change.Next(data.NewValue(op.scratch)) {
+			}
 
-			drive[store.LatestCommand[string, data.CrossMember], store.LatestReading[string, data.CrossMember]](
-				op.membrs,
-				&store.LatestCommand[string, data.CrossMember]{
-					Key: m.Label, Value: data.CrossMember{Label: m.Label, Change: change, At: m.At, From: m.At},
-				},
-			)
+			if err := op.change.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			var changed data.Map[float64]
+
+			for pointer := range op.scratch.Next(data.NewValue(op.result)) {
+				changed = *(*data.Map[float64])(pointer)
+			}
+
+			if err := op.scratch.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			for range op.members.Next(data.NewValue(map[string]float64{
+				member: changed.Values["relative_change"],
+			})) {
+			}
+
+			if err := op.members.Error(); err != nil {
+				op.Error(err)
+				return
+			}
 
 			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-func (op *UpdateMember) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
-}
-
-/*
-StampPeers reads the retained member changes and stamps them onto the
-measurement's Peers, so every reduction branch reads the cross-section from
-the measurement itself.
-*/
-type StampPeers struct {
-	err    error
-	membrs *store.Latest[string, data.CrossMember]
-}
-
-func NewStampPeers(changes *store.Latest[string, data.CrossMember]) core.Primitive {
-	return &StampPeers{membrs: changes}
-}
-
-func (op *StampPeers) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			m := *(**data.Measurement)(arriving)
-
-			if m.Err != nil {
-				if !yield(arriving) {
-					return
-				}
-
-				continue
-			}
-
-			snapshot := drive[store.LatestCommand[string, data.CrossMember], map[string]data.CrossMember](
-				op.membrs, &store.LatestCommand[string, data.CrossMember]{Read: true},
-			)
-
-			peers := make([]*data.Measurement, 0, len(snapshot))
-
-			for _, member := range snapshot {
-				peer := data.NewMeasurement("cross-section", map[string]data.Metric{
-					"change": {Label: "change", Raw: member.Change},
-				})
-				peer.Label, peer.At, peer.From = member.Label, member.At, member.From
-				peers = append(peers, peer)
-			}
-
-			m.Peers = peers
-
-			if !yield(arriving) {
-				return
-			}
-		}
-	}
-}
-
-func (op *StampPeers) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

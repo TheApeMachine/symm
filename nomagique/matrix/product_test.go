@@ -19,7 +19,7 @@ func TestProductNext(t *testing.T) {
 			left := [][]float64{{1, -2}, {3, 4}}
 			right := [][]float64{{5, 6}, {7, 8}}
 
-			in1 := matrix.ProductInput{Left: left, Right: right}
+			in1 := [2][][]float64{left, right}
 			seq1 := func(yield func(unsafe.Pointer) bool) {
 				yield(unsafe.Pointer(&in1))
 			}
@@ -29,7 +29,7 @@ func TestProductNext(t *testing.T) {
 			So(out1[0], ShouldResemble, [][]float64{{-9, -10}, {43, 50}})
 
 			node2 := matrix.NewProduct()
-			in2 := matrix.ProductInput{Left: right, Right: left}
+			in2 := [2][][]float64{right, left}
 			seq2 := func(yield func(unsafe.Pointer) bool) {
 				yield(unsafe.Pointer(&in2))
 			}
@@ -49,7 +49,7 @@ func TestProductNext(t *testing.T) {
 		} {
 			Convey(fmt.Sprintf("Incompatible shape %d is reported", index), func() {
 				node := matrix.NewProduct()
-				input := matrix.ProductInput{Left: operands[0], Right: operands[1]}
+				input := [2][][]float64{operands[0], operands[1]}
 				seq := func(yield func(unsafe.Pointer) bool) {
 					yield(unsafe.Pointer(&input))
 				}

@@ -1,7 +1,6 @@
 package matrix
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -13,12 +12,14 @@ import (
 Finite reports whether every coefficient is a finite number.
 */
 type Finite struct {
-	err error
+	*core.PrimitiveError
 	out bool
 }
 
 func NewFinite() core.Primitive {
-	return &Finite{}
+	return &Finite{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Finite) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -47,14 +48,4 @@ func (op *Finite) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Finite) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

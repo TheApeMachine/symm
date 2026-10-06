@@ -47,7 +47,6 @@ func fillMeasurements(
 	atBuilder := recordBuilder.Field(4).(*array.TimestampBuilder)
 	maturityBuilder := recordBuilder.Field(5).(*array.Float64Builder)
 	snrBuilder := recordBuilder.Field(6).(*array.Float64Builder)
-	snrDefinedBuilder := recordBuilder.Field(7).(*array.BooleanBuilder)
 	metricsBuilder := recordBuilder.Field(8).(*array.MapBuilder)
 	metadataBuilder := recordBuilder.Field(9).(*array.MapBuilder)
 	provenanceBuilder := recordBuilder.Field(10).(*array.MapBuilder)
@@ -72,9 +71,8 @@ func fillMeasurements(
 		sourceBuilder.Append(measurement.Source)
 		labelBuilder.Append(measurement.Label)
 		atBuilder.Append(arrow.Timestamp(measurement.At.UTC().UnixMicro()))
-		maturityBuilder.Append(measurement.Maturity)
-		snrBuilder.Append(measurement.SNR)
-		snrDefinedBuilder.Append(measurement.SNRDefined)
+		maturityBuilder.Append(measurement.Maturity())
+		snrBuilder.Append(measurement.SNR())
 		tickBuilder.Append(measurement.Tick)
 
 		metricsBuilder.Append(true)
@@ -96,35 +94,27 @@ func fillMeasurements(
 			provenanceVal.Append(entry.Value)
 		}
 
-		if measurement.Err != nil {
+		if measurement.Error() != nil {
 			provenanceKey.Append("symm:error")
-			provenanceVal.Append(fmt.Sprintf("%v", measurement.Err))
+			provenanceVal.Append(fmt.Sprintf("%v", measurement.Error()))
 		}
-		provenanceKey.Append("symm:estimated")
-		provenanceVal.Append(strconv.FormatBool(measurement.Estimated))
-		measurement.RangeMetrics(func(key string, metric data.Metric) bool {
-			if metric.Exact != nil {
-				provenanceKey.Append("symm:exact:" + key)
-				provenanceVal.Append(metric.Exact.String())
+
+		for metric := range measurement.Read() {
+			if metric.Metric.Exact != nil {
+				provenanceKey.Append("symm:exact:" + metric.Key)
+				provenanceVal.Append(metric.Metric.Exact.String())
 			}
 
 			if metric.Standardized != nil {
-				provenanceKey.Append("symm:standardized:" + key)
+				provenanceKey.Append("symm:standardized:" + metric.Key)
 				provenanceVal.Append(strconv.FormatFloat(*metric.Standardized, 'g', -1, 64))
 			}
 
 			if metric.Normalized != nil {
-				provenanceKey.Append("symm:normalized:" + key)
+				provenanceKey.Append("symm:normalized:" + metric.Key)
 				provenanceVal.Append(strconv.FormatFloat(*metric.Normalized, 'g', -1, 64))
 			}
-
-			if metric.Deformation != nil {
-				provenanceKey.Append("symm:deformation:" + key)
-				provenanceVal.Append(strconv.FormatFloat(*metric.Deformation, 'g', -1, 64))
-			}
-
-			return true
-		})
+		}
 	}
 }
 

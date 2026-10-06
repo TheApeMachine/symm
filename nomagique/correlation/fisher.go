@@ -9,93 +9,62 @@ import (
 )
 
 /*
-FisherSample is a correlation, its support, and an optional search multiplicity.
-*/
-type FisherSample struct {
-	Correlation float64
-	Support     float64
-	SearchCount float64
-}
-
-/*
-FisherReading is the Fisher-z normal approximation. Undefined inputs yield
-Defined=false and NaN.
-*/
-type FisherReading struct {
-	Defined              bool
-	PValue               float64
-	Z                    float64
-	StandardError        float64
-	SearchAdjustedPValue float64
-	HasSearch            bool
-}
-
-/*
-Fisher owns that approximation.
+Fisher owns the Fisher-z normal approximation. Each arrival is
+[3]float64{correlation, support, searchCount}; it yields
+[6]float64{defined, pValue, z, standardError, searchAdjustedPValue, hasSearch}.
+Undefined inputs yield defined=0 and zeroed tails.
 */
 type Fisher struct {
-	err error
-	out FisherReading
+	*core.PrimitiveError
+	out [6]float64
 }
 
 func NewFisher() core.Primitive {
-	return &Fisher{}
+	return &Fisher{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
-/*
-Compute evaluates the Fisher-z normal approximation directly without iterator overhead.
-*/
-func (op *Fisher) Compute(sample *FisherSample) FisherReading {
-	reading := FisherReading{
-		HasSearch: sample.SearchCount >= 1,
-	}
-
-	if sample.Support > 3 && math.Abs(sample.Correlation) <= 1 {
-		degrees := math.Sqrt(sample.Support - 3)
-		z := math.Atanh(sample.Correlation) * degrees
-		p := math.Erfc(math.Abs(z) / math.Sqrt2)
-
-		reading.Defined = true
-		reading.PValue = p
-		reading.Z = z
-		reading.StandardError = 1.0 / degrees
-
-		if reading.HasSearch {
-			adj := p * sample.SearchCount
-
-			if adj > 1.0 {
-				adj = 1.0
-			}
-
-			reading.SearchAdjustedPValue = adj
-		}
-	}
-
-	return reading
-}
-
-func (op *Fisher) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *Fisher) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			sample := (*FisherSample)(arriving)
-			op.out = op.Compute(sample)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			sample := *(*[3]float64)(arriving)
+			correlation, support, searchCount := sample[0], sample[1], sample[2]
+			op.out = [6]float64{}
+
+			if searchCount >= 1 {
+				op.out[5] = 1
+			}
+
+			if support > 3 && math.Abs(correlation) <= 1 {
+				degrees := math.Sqrt(support - 3)
+				z := math.Atanh(correlation) * degrees
+				p := math.Erfc(math.Abs(z) / math.Sqrt2)
+
+				op.out[0] = 1
+				op.out[1] = p
+				op.out[2] = z
+				op.out[3] = 1.0 / degrees
+
+				if op.out[5] == 1 {
+					adj := p * searchCount
+
+					if adj > 1.0 {
+						adj = 1.0
+					}
+
+					op.out[4] = adj
+				}
+			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Fisher) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

@@ -6,22 +6,31 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
 AdaptiveZScore uses log-space moments to score arriving observations against
-their prior baseline and dispersion.
+their prior baseline and dispersion. It composes an Estimator over the log of
+each arriving *float64 with a CausalResidual, and yields the CausalResidual
+layout as *[8]float64 with the baseline mapped back out of log space:
+
+	[0] has prior (1 or 0) [1] baseline    [2] prior variance [3] maturity
+	[4] residual           [5] score scale [6] z-score        [7] noise variance
 */
 type AdaptiveZScore struct {
 	*core.PrimitiveError
-	moments statistic.Moments
-	out     statistic.CausalResidualResult
+	moments  core.Primitive
+	residual core.Primitive
+	out      [8]float64
 }
 
 func NewAdaptiveZScore() *AdaptiveZScore {
 	return &AdaptiveZScore{
 		PrimitiveError: core.NewPrimitiveError(),
+		moments:        statistic.NewEstimator(),
+		residual:       statistic.NewCausalResidual(),
 	}
 }
 
@@ -30,50 +39,30 @@ func (op *AdaptiveZScore) Next(
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			val := *(*float64)(arriving)
-			logVal := math.Log(val)
-			priorMean := op.moments.Mean
-			priorCount := op.moments.Count
-			priorM2 := op.moments.M2
-
-			reading := op.moments.Update(logVal)
-
-			baseline := val
-
-			if priorCount > 0 {
-				baseline = math.Exp(priorMean)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			res := statistic.CausalResidualResult{
-				MomentReading: reading,
-				HasPrior:      priorCount > 0,
-				Baseline:      baseline,
-				Residual:      0,
-			}
+			logValue := math.Log(*(*float64)(arriving))
 
-			if priorCount > 0 {
-				res.Residual = logVal - priorMean
-			}
-
-			if priorCount > 1 {
-				res.PriorVariance = priorM2 / (priorCount - 1)
-			}
-
-			res.ScoreScale = math.Abs(res.Residual)
-
-			if res.PriorVariance > 0 {
-				disp := math.Sqrt(res.PriorVariance)
-
-				if disp > 2.220446049250313e-16 {
-					res.ScoreScale = disp
+			for reading := range op.moments.Next(data.NewValue(logValue)) {
+				for pointer := range op.residual.Next(data.NewValue(*(*[10]float64)(reading))) {
+					op.out = *(*[8]float64)(pointer)
 				}
 			}
 
-			if res.ScoreScale > 0 {
-				res.ZScore = res.Residual / res.ScoreScale
+			if err := op.moments.Error(); err != nil {
+				op.Error(err)
+				return
 			}
 
-			op.out = res
+			if err := op.residual.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			op.out[1] = math.Exp(op.out[1])
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return

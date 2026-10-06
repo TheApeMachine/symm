@@ -1,7 +1,6 @@
 package vector
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -9,41 +8,37 @@ import (
 )
 
 /*
-Pair is two vectors of equal length.
-*/
-type Pair struct {
-	Left  []float64
-	Right []float64
-}
-
-/*
-Sum adds paired members. Unequal lengths are a shape error.
+Sum adds paired members. Each arrival is *[2][]float64 {left, right}; it
+yields *[]float64. Unequal lengths are a shape error.
 */
 type Sum struct {
-	err error
+	*core.PrimitiveError
 	out []float64
 }
 
 func NewSum() core.Primitive {
-	return &Sum{}
+	return &Sum{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
 func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			pair := (*Pair)(arriving)
+			pair := (*[2][]float64)(arriving)
+			left, right := pair[0], pair[1]
 
-			if len(pair.Left) != len(pair.Right) {
+			if len(left) != len(right) {
 				op.Error(core.ErrShape)
 				continue
 			}
 
-			if len(op.out) != len(pair.Left) {
-				op.out = make([]float64, len(pair.Left))
+			if len(op.out) != len(left) {
+				op.out = make([]float64, len(left))
 			}
 
-			for index, value := range pair.Left {
-				op.out[index] = value + pair.Right[index]
+			for index, value := range left {
+				op.out[index] = value + right[index]
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -51,14 +46,4 @@ func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Sum) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

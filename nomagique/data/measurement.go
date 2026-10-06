@@ -2,7 +2,7 @@ package data
 
 import (
 	"errors"
-	"fmt"
+	"iter"
 	"math"
 	"time"
 
@@ -60,7 +60,12 @@ type Measurement struct {
 NewMeasurement creates a new Measurement.
 */
 func NewMeasurement(
-	epoch int64, label string, source string, seqIdx int64, tick int64,
+	epoch int64,
+	label string,
+	source string,
+	seqIdx int64,
+	tick int64,
+	metadata ...StringEntry,
 ) *Measurement {
 	return &Measurement{
 		Epoch:    epoch,
@@ -69,7 +74,7 @@ func NewMeasurement(
 		SeqIdx:   seqIdx,
 		Tick:     tick,
 		metrics:  make([]MetricEntry, 0),
-		metadata: make([]StringEntry, 0),
+		metadata: metadata,
 		peers:    make([]*Measurement, 0),
 	}
 }
@@ -79,29 +84,41 @@ Read returns the metric entry for the given key.
 In compliance with the WORM model, a Measurement can not be read
 before it is finalized.
 */
-func (measurement *Measurement) Read(key string) MetricEntry {
+func (measurement *Measurement) Read(keys ...string) iter.Seq[MetricEntry] {
 	if !measurement.locked() {
-		return MetricEntry{
-			Err: errors.Join(measurement.err, errnie.Error(errnie.Err(
-				errnie.Forbidden,
-				"[data.measurement] not finalized",
-				nil,
-			))),
+		return func(yield func(MetricEntry) bool) {
+			if !yield(MetricEntry{
+				Err: errors.Join(measurement.err, errnie.Error(errnie.Err(
+					errnie.Forbidden,
+					"[data.measurement] not finalized",
+					nil,
+				))),
+			}) {
+				return
+			}
 		}
 	}
 
-	for _, metricEntry := range measurement.metrics {
-		if metricEntry.Metric.Label == key {
-			return metricEntry
+	if len(keys) > 0 {
+		return func(yield func(MetricEntry) bool) {
+			for _, key := range keys {
+				for _, metricEntry := range measurement.metrics {
+					if metricEntry.Metric.Label == key {
+						if !yield(metricEntry) {
+							return
+						}
+					}
+				}
+			}
 		}
 	}
 
-	return MetricEntry{
-		Err: errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			fmt.Sprintf("[data.measurement] metric %s not found", key),
-			nil,
-		))),
+	return func(yield func(MetricEntry) bool) {
+		for _, metricEntry := range measurement.metrics {
+			if !yield(metricEntry) {
+				return
+			}
+		}
 	}
 }
 
@@ -175,6 +192,35 @@ func (measurement *Measurement) finalize() *Measurement {
 	// Fully finalize the Measurement by writing its ID.
 	measurement.ID = uuid.New().ID()
 	return measurement.valid()
+}
+
+/*
+SNR returns the signal-to-noise ratio for the Measurement.
+*/
+func (measurement *Measurement) SNR() float64 {
+	if !measurement.locked() {
+		return 0
+	}
+
+	return measurement.snr
+}
+
+/*
+Maturity returns the maturity for the Measurement.
+*/
+func (measurement *Measurement) Maturity() float64 {
+	if !measurement.locked() {
+		return 0
+	}
+
+	return measurement.maturity
+}
+
+/*
+Error returns the Measurement error.
+*/
+func (measurement *Measurement) Error() error {
+	return measurement.err
 }
 
 /*

@@ -8,7 +8,6 @@ import (
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/types"
@@ -34,7 +33,7 @@ func (routes *Routes) Register() {
 
 	routes.hub.app.Get("/cognition/tree", func(c fiber.Ctx) error {
 		if routes.hub.cognitionSource == nil {
-			return c.JSON(cognition.CognitionTreeExport{})
+			return c.JSON(CognitionTreeExport{})
 		}
 
 		export := routes.hub.cognitionSource.CognitionTree()

@@ -12,10 +12,7 @@ import (
 func TestVectorOperations(t *testing.T) {
 	Convey("Vector Sum", t, func() {
 		sum := vector.NewSum()
-		pair := vector.Pair{
-			Left:  []float64{1.0, 2.0, 3.0},
-			Right: []float64{4.0, 5.0, 6.0},
-		}
+		pair := [2][]float64{{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}}
 		in := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&pair))
 		}
@@ -27,10 +24,7 @@ func TestVectorOperations(t *testing.T) {
 
 	Convey("Vector Difference", t, func() {
 		diff := vector.NewDifference()
-		pair := vector.Pair{
-			Left:  []float64{10.0, 20.0},
-			Right: []float64{3.0, 5.0},
-		}
+		pair := [2][]float64{{10.0, 20.0}, {3.0, 5.0}}
 		in := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&pair))
 		}
@@ -42,10 +36,7 @@ func TestVectorOperations(t *testing.T) {
 
 	Convey("Vector Dot", t, func() {
 		dot := vector.NewDot()
-		pair := vector.Pair{
-			Left:  []float64{1.0, 2.0, 3.0},
-			Right: []float64{4.0, 5.0, 6.0},
-		}
+		pair := [2][]float64{{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}}
 		in := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&pair))
 		}
@@ -57,16 +48,24 @@ func TestVectorOperations(t *testing.T) {
 
 	Convey("Vector Scale", t, func() {
 		scale := vector.NewScale()
-		input := vector.ScaleInput{
-			Values: []float64{2.0, 4.0, 6.0},
-			Factor: 2.5,
-		}
+		input := [2][]float64{{2.0, 4.0, 6.0}, {2.5}}
 		in := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&input))
 		}
 		out := tests.CollectSeq[[]float64](scale.Next(in))
 		So(len(out), ShouldEqual, 1)
 		So(out[0], ShouldResemble, []float64{5.0, 10.0, 15.0})
+		So(scale.Error(), ShouldBeNil)
+	})
+
+	Convey("Vector Scale with a constructor factor", t, func() {
+		scale := vector.NewScale(-2)
+		v := []float64{1.0, -3.0}
+		in := func(yield func(unsafe.Pointer) bool) {
+			yield(unsafe.Pointer(&v))
+		}
+		out := tests.CollectSeq[[]float64](scale.Next(in))
+		So(out[0], ShouldResemble, []float64{-2.0, 6.0})
 		So(scale.Error(), ShouldBeNil)
 	})
 

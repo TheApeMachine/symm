@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"sort"
@@ -10,7 +11,6 @@ import (
 	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
 	"golang.design/x/lockfree/lf"
 	"gonum.org/v1/gonum/mat"
 )
@@ -224,6 +224,7 @@ type Cell struct {
 	Y           float64 `json:"y"`
 	Visits      uint64  `json:"visits"`
 	Last        float64 `json:"last"`
+	Deformation float64 `json:"deformation"`
 	Initialized bool    `json:"initialized"`
 }
 
@@ -433,108 +434,39 @@ func (grid *Grid) CellCount() int {
 	return len(grid.idToCell)
 }
 
-func (grid *Grid) Update(measurements ...*data.Measurement) {
-	if grid == nil || len(measurements) == 0 {
+/*
+Update folds one observation pass into the grid. Channels are keyed by
+CellKey(symbol, source, metric) and carry the raw metric value. A positive
+tick buffers the pass until the tick changes, so every channel observed in
+one market tick contributes to a single pass; a non-positive tick commits
+immediately.
+*/
+func (grid *Grid) Update(tick int64, channels map[string]float64) {
+	if grid == nil || len(channels) == 0 {
 		return
 	}
 
 	grid.updateMu.Lock()
 	defer grid.updateMu.Unlock()
 
-	roots := nonNilMeasurements(measurements)
-
-	if len(roots) == 0 {
-		return
-	}
-
-	arrivals := grid.extractTrainingArrivalsLocked(roots)
+	arrivals := grid.extractTrainingArrivalsLocked(channels)
 
 	if len(arrivals) == 0 {
-		grid.decorateLocked(roots)
 		return
 	}
 
-	if len(roots) > 1 {
-		grid.flushPendingLocked()
-		grid.commitPassLocked(arrivals)
-		grid.decorateLocked(roots)
-		return
-	}
-
-	if roots[0].Tick > 0 {
-		tick := roots[0].Tick
-
+	if tick > 0 {
 		if grid.pendingTick != 0 && grid.pendingTick != tick {
 			grid.flushPendingLocked()
 		}
 
 		grid.pendingTick = tick
 		grid.mergePendingLocked(arrivals)
-		grid.decorateLocked(roots)
 		return
 	}
 
 	grid.flushPendingLocked()
 	grid.commitPassLocked(arrivals)
-	grid.decorateLocked(roots)
-}
-
-func nonNilMeasurements(measurements []*data.Measurement) []*data.Measurement {
-	filtered := make([]*data.Measurement, 0, len(measurements))
-
-	for _, meas := range measurements {
-		if meas != nil {
-			filtered = append(filtered, meas)
-		}
-	}
-
-	return filtered
-}
-
-func walkMeasurements(
-	roots []*data.Measurement,
-	fn func(*data.Measurement),
-) {
-	seen := make(map[*data.Measurement]struct{})
-	var visit func(*data.Measurement)
-
-	visit = func(measurement *data.Measurement) {
-		if measurement == nil {
-			return
-		}
-
-		if _, ok := seen[measurement]; ok {
-			return
-		}
-
-		seen[measurement] = struct{}{}
-		fn(measurement)
-
-		for _, peer := range measurement.Peers {
-			visit(peer)
-		}
-	}
-
-	for _, root := range roots {
-		visit(root)
-	}
-}
-
-func measurementChannel(measurement *data.Measurement, key string, metric data.Metric) string {
-	symbol := measurement.Label
-
-	if symbol == "" {
-		symbol = measurement.GetSource()
-	}
-
-	source := measurement.GetSource()
-	name := metric.Label
-
-	if name == "" {
-		name = key
-	}
-
-	return CellKey(symbol, source, name)
 }
 
 func (grid *Grid) ensureCellLocked(key string, raw float64) *Cell {
@@ -565,59 +497,45 @@ func (grid *Grid) ensureCellLocked(key string, raw float64) *Cell {
 	return cell
 }
 
+/*
+extractTrainingArrivalsLocked turns one pass of raw channel values into
+deformation arrivals against each channel's previous raw value. Channels are
+visited in key order so cell IDs are assigned deterministically.
+*/
 func (grid *Grid) extractTrainingArrivalsLocked(
-	roots []*data.Measurement,
+	channels map[string]float64,
 ) []metricArrival {
-	totalMetrics := 0
-	walkMeasurements(roots, func(measurement *data.Measurement) {
-		if measurement != nil {
-			totalMetrics += len(measurement.Metrics)
+	keys := slices.Sorted(maps.Keys(channels))
+	arrivals := make([]metricArrival, 0, len(keys))
+
+	for _, channel := range keys {
+		raw := channels[channel]
+		cell := grid.ensureCellLocked(channel, raw)
+		cell.Visits++
+
+		deformation := 0.0
+		validDeformation := false
+
+		if previous, ok := grid.prevRaw[channel]; ok && finite(previous) && finite(raw) {
+			deformation = deform(previous, raw)
+			validDeformation = finite(deformation)
 		}
-	})
 
-	arrivals := make([]metricArrival, 0, totalMetrics)
+		if finite(raw) {
+			grid.prevRaw[channel] = raw
+			cell.Last = raw
+			cell.Initialized = true
+		}
 
-	walkMeasurements(roots, func(measurement *data.Measurement) {
-		quality := measurementDamp(measurement)
-
-		measurement.RangeMetrics(func(key string, metric data.Metric) bool {
-			channel := measurementChannel(measurement, key, metric)
-			cell := grid.ensureCellLocked(channel, metric.Raw)
-			cell.Visits++
-
-			raw := metric.Raw
-			deformation := 0.0
-			validDeformation := false
-
-			if metric.Deformation != nil && finite(*metric.Deformation) {
-				deformation = *metric.Deformation
-				validDeformation = true
-			}
-
-			if !validDeformation {
-				if previous, ok := grid.prevRaw[channel]; ok && finite(previous) && finite(raw) {
-					deformation = data.Deformation(previous, raw)
-					validDeformation = finite(deformation)
-				}
-			}
-
-			if finite(raw) {
-				grid.prevRaw[channel] = raw
-				cell.Last = raw
-				cell.Initialized = true
-			}
-
-			if validDeformation && quality > 0 {
-				arrivals = append(arrivals, metricArrival{
-					id:      cell.ID,
-					value:   deformation,
-					quality: quality,
-				})
-			}
-
-			return true
-		})
-	})
+		if validDeformation {
+			cell.Deformation = deformation
+			arrivals = append(arrivals, metricArrival{
+				id:      cell.ID,
+				value:   deformation,
+				quality: 1,
+			})
+		}
+	}
 
 	return arrivals
 }
@@ -1196,18 +1114,6 @@ func (grid *Grid) Converged() bool {
 	return converged
 }
 
-/*
-Decorate stamps measurements with their assigned Region and display coordinates (X, Y).
-Wait-free execution without locking.
-*/
-func (grid *Grid) Decorate(measurements ...*data.Measurement) {
-	if grid == nil || len(measurements) == 0 {
-		return
-	}
-
-	grid.decorateLocked(nonNilMeasurements(measurements))
-}
-
 func regionCenter(region uint8, regionCount int) (float64, float64) {
 	if region == 0 {
 		return 0, 0
@@ -1254,62 +1160,46 @@ type regionAggregate struct {
 RegionScores evaluates mean activity within each region.
 Wait-free execution without locking.
 */
-func (grid *Grid) RegionScores(measurements ...*data.Measurement) []RegionScore {
-	if grid == nil || len(measurements) == 0 {
+func (grid *Grid) RegionScores(channels map[string]float64) []RegionScore {
+	if grid == nil || len(channels) == 0 {
 		return nil
 	}
 
-	return grid.regionScoresLocked(nonNilMeasurements(measurements))
+	return grid.regionScoresLocked(channels)
 }
 
-func (grid *Grid) regionScoresLocked(roots []*data.Measurement) []RegionScore {
-	type cellAggregate struct {
-		sumDeformation float64
-		count          int
-	}
+/*
+regionScoresLocked scores each region by the mean absolute deformation of its
+member channels in this pass. A channel whose raw value moved since the grid
+last saw it deforms against that value; a channel the grid has just folded
+in (Update then score) reuses the deformation recorded at that update.
+*/
+func (grid *Grid) regionScoresLocked(channels map[string]float64) []RegionScore {
+	perCell := make(map[uint32]float64)
 
-	perCell := make(map[uint32]cellAggregate)
+	for channel, raw := range channels {
+		cell, ok := grid.cellsLF.Get(channel)
 
-	walkMeasurements(roots, func(measurement *data.Measurement) {
-		quality := measurementDamp(measurement)
-
-		if quality <= 0 {
-			return
+		if !ok || cell == nil {
+			cell = grid.Cells[channel]
 		}
 
-		measurement.RangeMetrics(func(key string, metric data.Metric) bool {
-			cell := grid.lookupCellLocked(measurement, key, metric)
+		if cell == nil || cell.Region == 0 {
+			continue
+		}
 
-			if cell == nil || cell.Region == 0 {
-				return true
-			}
+		deformation := cell.Deformation
 
-			deformation := 0.0
+		if previous, ok := grid.prevRaw[channel]; ok && previous != raw && finite(previous) && finite(raw) {
+			deformation = deform(previous, raw)
+		}
 
-			if metric.Deformation != nil && finite(*metric.Deformation) {
-				deformation = *metric.Deformation
-			}
+		if !finite(deformation) {
+			continue
+		}
 
-			if metric.Deformation == nil || !finite(*metric.Deformation) {
-				channel := measurementChannel(measurement, key, metric)
-				previous, ok := grid.prevRaw[channel]
-
-				if ok && finite(previous) && finite(metric.Raw) {
-					deformation = data.Deformation(previous, metric.Raw)
-				}
-			}
-
-			if !finite(deformation) {
-				return true
-			}
-
-			agg := perCell[cell.ID]
-			agg.sumDeformation += math.Abs(deformation) * quality
-			agg.count++
-			perCell[cell.ID] = agg
-			return true
-		})
-	})
+		perCell[cell.ID] = math.Abs(deformation)
+	}
 
 	if len(perCell) == 0 {
 		return nil
@@ -1324,8 +1214,8 @@ func (grid *Grid) regionScoresLocked(roots []*data.Measurement) []RegionScore {
 
 	idToCell := *idToCellPtr
 
-	for id, aggregate := range perCell {
-		if aggregate.count <= 0 || int(id) >= len(idToCell) {
+	for id, magnitude := range perCell {
+		if int(id) >= len(idToCell) {
 			continue
 		}
 
@@ -1336,7 +1226,7 @@ func (grid *Grid) regionScoresLocked(roots []*data.Measurement) []RegionScore {
 		}
 
 		entry := regions[cell.Region]
-		entry.sumDeformation += aggregate.sumDeformation / float64(aggregate.count)
+		entry.sumDeformation += magnitude
 		entry.observedCount++
 		regions[cell.Region] = entry
 	}
@@ -1391,12 +1281,12 @@ LitRegions keeps the existing token API deliberately conservative: it returns
 the strongest region from the same fair RegionScores pass. Call RegionScores
 when the UI or diagnostics need the complete ranked set and actual intensities.
 */
-func (grid *Grid) LitRegions(measurements ...*data.Measurement) [][]byte {
-	if grid == nil || len(measurements) == 0 {
+func (grid *Grid) LitRegions(channels map[string]float64) [][]byte {
+	if grid == nil || len(channels) == 0 {
 		return nil
 	}
 
-	scores := grid.regionScoresLocked(nonNilMeasurements(measurements))
+	scores := grid.regionScoresLocked(channels)
 
 	if len(scores) == 0 || scores[0].Score <= 0 || scores[0].Region == 0 {
 		return nil
@@ -1405,91 +1295,25 @@ func (grid *Grid) LitRegions(measurements ...*data.Measurement) [][]byte {
 	return [][]byte{{scores[0].Region}}
 }
 
-func (grid *Grid) lookupCellLocked(
-	measurement *data.Measurement,
-	key string,
-	metric data.Metric,
-) *Cell {
-	channel := measurementChannel(measurement, key, metric)
+/*
+deform is the signed, scale-free magnitude movement between two raw values:
+|(|current| - |previous|)| / (|previous| + |current|), signed by direction.
+Unchanged values and equal-magnitude reversals produce 0.
+*/
+func deform(previous, current float64) float64 {
+	extent := math.Abs(previous) + math.Abs(current)
 
-	if cell, ok := grid.cellsLF.Get(channel); ok && cell != nil {
-		return cell
-	}
-
-	if cell := grid.Cells[channel]; cell != nil {
-		grid.cellsLF.Set(channel, cell)
-		return cell
-	}
-
-	if metric.Label != "" {
-		if cell, ok := grid.cellsLF.Get(metric.Label); ok && cell != nil {
-			return cell
-		}
-
-		if cell := grid.Cells[metric.Label]; cell != nil {
-			grid.cellsLF.Set(metric.Label, cell)
-			return cell
-		}
-	}
-
-	if cell, ok := grid.cellsLF.Get(key); ok && cell != nil {
-		return cell
-	}
-
-	if cell := grid.Cells[key]; cell != nil {
-		grid.cellsLF.Set(key, cell)
-		return cell
-	}
-
-	return nil
-}
-
-func (grid *Grid) decorateLocked(roots []*data.Measurement) {
-	walkMeasurements(roots, func(measurement *data.Measurement) {
-		measurement.RangeMetrics(func(key string, metric data.Metric) bool {
-			cell := grid.lookupCellLocked(measurement, key, metric)
-
-			if cell == nil || cell.Region == 0 {
-				return true
-			}
-
-			metric.X = int64(math.Round(cell.X * 100))
-			metric.Y = int64(math.Round(cell.Y * 100))
-			metric.Region = cell.Region
-			measurement.SetMetric(key, metric)
-			return true
-		})
-	})
-}
-
-func measurementDamp(measurement *data.Measurement) float64 {
-	if measurement == nil {
+	if current == previous || extent == 0 {
 		return 0
 	}
 
-	maturity := measurement.Maturity
+	movement := math.Abs(math.Abs(current)-math.Abs(previous)) / extent
 
-	if !finite(maturity) {
-		return 0
+	if current < previous {
+		return -movement
 	}
 
-	maturity = clamp(maturity, 0, 1)
-
-	if maturity == 0 && !measurement.Estimated {
-		maturity = 1
-	}
-
-	snrFactor := 1.0
-
-	if measurement.SNRDefined {
-		if !finite(measurement.SNR) || measurement.SNR <= 0 {
-			return 0
-		}
-
-		snrFactor = measurement.SNR / (1.0 + measurement.SNR)
-	}
-
-	return clamp(maturity*snrFactor, 0, 1)
+	return movement
 }
 
 func finite(value float64) bool {

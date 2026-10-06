@@ -15,25 +15,25 @@ func TestResidualSpanNext(t *testing.T) {
 		op := NewResidualSpan()
 
 		Convey("tracks minimum, maximum, and span across arrivals", func() {
-			in1 := ResidualSpanInput{Count: 0, Residual: 5.0}
-			in2 := ResidualSpanInput{Count: 1, Minimum: 5.0, Maximum: 5.0, Residual: 2.0}
-			in3 := ResidualSpanInput{Count: 2, Minimum: 2.0, Maximum: 5.0, Residual: 8.0}
+			in1 := [4]float64{0, 0, 0, 5.0}
+			in2 := [4]float64{1, 5.0, 5.0, 2.0}
+			in3 := [4]float64{2, 2.0, 5.0, 8.0}
 
-			out := tests.CollectSeq[ResidualSpanResult](op.Next(tests.SliceToSeq([]ResidualSpanInput{in1, in2, in3})))
+			out := tests.CollectSeq[[4]float64](op.Next(tests.SliceToSeq([][4]float64{in1, in2, in3})))
 
 			So(op.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 3)
-			So(out[0].Minimum, ShouldEqual, 5.0)
-			So(out[0].Maximum, ShouldEqual, 5.0)
-			So(out[0].Span, ShouldEqual, 0.0)
+			So(out[0][1], ShouldEqual, 5.0)
+			So(out[0][2], ShouldEqual, 5.0)
+			So(out[0][3], ShouldEqual, 0.0)
 
-			So(out[1].Minimum, ShouldEqual, 2.0)
-			So(out[1].Maximum, ShouldEqual, 5.0)
-			So(out[1].Span, ShouldEqual, 3.0)
+			So(out[1][1], ShouldEqual, 2.0)
+			So(out[1][2], ShouldEqual, 5.0)
+			So(out[1][3], ShouldEqual, 3.0)
 
-			So(out[2].Minimum, ShouldEqual, 2.0)
-			So(out[2].Maximum, ShouldEqual, 8.0)
-			So(out[2].Span, ShouldEqual, 6.0)
+			So(out[2][1], ShouldEqual, 2.0)
+			So(out[2][2], ShouldEqual, 8.0)
+			So(out[2][3], ShouldEqual, 6.0)
 		})
 
 		Convey("nil arrival records ErrShape", func() {
@@ -41,7 +41,7 @@ func TestResidualSpanNext(t *testing.T) {
 			nilSeq := func(yield func(unsafe.Pointer) bool) {
 				yield(nil)
 			}
-			out := tests.CollectSeq[ResidualSpanResult](fresh.Next(nilSeq))
+			out := tests.CollectSeq[[4]float64](fresh.Next(nilSeq))
 
 			So(len(out), ShouldEqual, 0)
 			So(errors.Is(fresh.Error(), core.ErrShape), ShouldBeTrue)
@@ -49,10 +49,10 @@ func TestResidualSpanNext(t *testing.T) {
 
 		Convey("handles early consumer termination", func() {
 			fresh := NewResidualSpan()
-			in := ResidualSpanInput{Count: 0, Residual: 5.0}
+			in := [4]float64{0, 0, 0, 5.0}
 			count := 0
 
-			for range fresh.Next(tests.SliceToSeq([]ResidualSpanInput{in})) {
+			for range fresh.Next(tests.SliceToSeq([][4]float64{in})) {
 				count++
 				break
 			}

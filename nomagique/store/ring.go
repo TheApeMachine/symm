@@ -6,54 +6,49 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Ring owns a ring of rings. Writing builds it; Play plays one child sequence
-per command, then steps the parent so the sequences replay in order and their
-order never restarts. A ring grows to hold exactly what was written — a ring
-sized up front would leave nil slots for anything the caller did not fill,
-and those are not values a run can carry.
+Ring owns a ring of runs. Every inbound run is written as one child sequence
+into the next slot and played through; a nil run plays the child sequence in
+the next slot instead, so written sequences replay in order and their order
+never restarts. Playing a slot that was never written is ErrNotHeld: an empty
+slot is not a value a run can carry.
 */
 type Ring struct {
 	*core.PrimitiveError
-	store     *container.Ring
-	randomize bool
+	store *container.Ring
 }
 
 /*
-NewRing begins an empty ring primitive.
+NewRing begins a ring primitive of n slots.
 */
-func NewRing(n int, randomize bool) *Ring {
+func NewRing(n int) *Ring {
 	return &Ring{
 		PrimitiveError: core.NewPrimitiveError(),
 		store:          container.New(n),
-		randomize:      randomize,
 	}
 }
 
 func (op *Ring) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		query := data.Read[Query](in)
+		op.store = op.store.Next()
 
-		switch query.Action() {
-		case data.ActionWrite:
-			op.store = op.store.Next()
-			op.store.Value = query.payload
+		if in != nil {
+			op.store.Value = in
+		}
 
-			if !yield(unsafe.Pointer(&op.store.Value)) {
-				return
-			}
-		case data.ActionRead:
-			op.store = op.store.Next()
+		played, held := op.store.Value.(iter.Seq[unsafe.Pointer])
 
-			if !yield(unsafe.Pointer(&op.store.Value)) {
-				return
-			}
-		default:
-			op.Error(core.ErrShape)
+		if !held {
+			op.Error(core.ErrNotHeld)
 			return
+		}
+
+		for arriving := range played {
+			if !yield(arriving) {
+				return
+			}
 		}
 	}
 }

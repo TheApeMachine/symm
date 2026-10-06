@@ -1,7 +1,6 @@
 package store
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -13,13 +12,16 @@ Has owns key membership. Missing data can be routed before Get is applied;
 lookup itself continues to reject absent keys rather than inventing a zero.
 */
 type Has[K comparable, V any] struct {
-	err error
+	*core.PrimitiveError
 	key K
 	out bool
 }
 
 func NewHas[K comparable, V any](key K) core.Primitive {
-	return &Has[K, V]{key: key}
+	return &Has[K, V]{
+		PrimitiveError: core.NewPrimitiveError(),
+		key:            key,
+	}
 }
 
 func (op *Has[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -34,14 +36,4 @@ func (op *Has[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 		}
 	}
-}
-
-func (op *Has[K, V]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"slices"
@@ -16,11 +17,17 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/ui"
 	"golang.design/x/lockfree/lf"
+)
+
+const (
+	actionEnter = "enter"
+	actionExit  = "exit"
 )
 
 var (
@@ -40,7 +47,12 @@ type Training struct {
 	*runtime.System
 	arena        *data.ArenaOwner
 	grid         *store.Grid
-	engine       *cognition.Engine
+	memory       *cognition.Associate
+	recall       *cognition.Recall
+	trainer      *cognition.Train
+	census       *cognition.Census
+	snapshot     *cognition.Snapshot
+	tree         *cognition.Export
 	detector     *Detector
 	reporter     *Reporter
 	catalog      *tables.Catalog
@@ -171,12 +183,18 @@ func NewTraining(
 ) *Training {
 	episodes := lf.NewOrderedMap[string, *episode](stringLess)
 	emptyFragments := make([]ui.TrainedFragment, 0)
+	memory := cognition.NewAssociate()
 
 	training := &Training{
 		System:       runtime.NewSystem(ctx, "training", price),
 		arena:        arena,
 		grid:         store.NewGrid(),
-		engine:       cognition.NewEngine(cognition.Config{MemoryScale: 1.0}),
+		memory:       memory,
+		recall:       cognition.NewRecall(memory),
+		trainer:      cognition.NewTrain(memory),
+		census:       cognition.NewCensus(memory),
+		snapshot:     cognition.NewSnapshot(memory),
+		tree:         cognition.NewExport(memory),
 		detector:     NewDetector(ctx, storeTee, price),
 		reporter:     NewReporter(),
 		catalog:      catalog,
@@ -223,8 +241,221 @@ func (training *Training) Fragments() []ui.TrainedFragment {
 	return out
 }
 
-func (training *Training) CognitionTree() cognition.CognitionTreeExport {
-	return training.engine.TreeExport()
+func (training *Training) CognitionTree() ui.CognitionTreeExport {
+	if training == nil || training.tree == nil {
+		return ui.CognitionTreeExport{}
+	}
+
+	reading, err := training.ask(training.tree, nil, nil)
+
+	if err != nil {
+		errnie.Error(err)
+		return ui.CognitionTreeExport{}
+	}
+
+	raw, ok, err := readText(reading, "tree")
+
+	if err != nil {
+		errnie.Error(err)
+		return ui.CognitionTreeExport{}
+	}
+
+	if !ok {
+		return ui.CognitionTreeExport{}
+	}
+
+	var export ui.CognitionTreeExport
+
+	if err = json.Unmarshal([]byte(raw), &export); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] cognition tree",
+			err,
+		))
+		return ui.CognitionTreeExport{}
+	}
+
+	return export
+}
+
+func (training *Training) records() float64 {
+	reading, err := training.ask(training.census, nil, nil)
+
+	if err != nil {
+		errnie.Error(err)
+		return 0
+	}
+
+	value, ok, err := readNumber(reading, "records")
+
+	if err != nil || !ok {
+		return 0
+	}
+
+	return value
+}
+
+func (training *Training) classCount(name string) float64 {
+	reading, err := training.ask(training.census, nil, nil)
+
+	if err != nil {
+		errnie.Error(err)
+		return 0
+	}
+
+	value, ok, err := readNumber(reading, name)
+
+	if err != nil || !ok {
+		return 0
+	}
+
+	return value
+}
+
+func (training *Training) span() int {
+	reading, err := training.ask(training.census, nil, nil)
+
+	if err != nil {
+		errnie.Error(err)
+		return 0
+	}
+
+	value, ok, err := readNumber(reading, "span")
+
+	if err != nil || !ok || value < 1 {
+		return 0
+	}
+
+	return int(value)
+}
+
+func (training *Training) ask(
+	primitive core.Primitive,
+	text map[string]string,
+	numbers map[string]float64,
+) (*data.Adapter, error) {
+	if training == nil || primitive == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] cognition primitive is missing",
+			nil,
+		))
+	}
+
+	adapter := data.NewAdapter(nil, data.NewState(data.NewMap()))
+
+	if len(text) > 0 {
+		issued := data.NewTextMap()
+
+		for key, value := range text {
+			issued.Values[key] = value
+		}
+
+		for range adapter.Next(data.NewValue(issued)) {
+		}
+
+		if err := adapter.Error(); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[training] cognition text",
+				err,
+			))
+		}
+	}
+
+	if len(numbers) > 0 {
+		issued := data.NewOutputMap()
+
+		for key, value := range numbers {
+			issued.Values[key] = value
+		}
+
+		for range adapter.Next(data.NewValue(issued)) {
+		}
+
+		if err := adapter.Error(); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[training] cognition numbers",
+				err,
+			))
+		}
+	}
+
+	for range primitive.Next(data.NewValue(adapter)) {
+	}
+
+	if err := primitive.Error(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] cognition",
+			err,
+		))
+	}
+
+	if err := adapter.Error(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] cognition",
+			err,
+		))
+	}
+
+	return adapter, nil
+}
+
+func readNumber(adapter *data.Adapter, key string) (float64, bool, error) {
+	if adapter == nil {
+		return 0, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] cognition adapter is missing",
+			nil,
+		))
+	}
+
+	var values data.Map[float64]
+
+	for pointer := range adapter.Next(data.NewValue(data.NewMap(key, key))) {
+		values = *(*data.Map[float64])(pointer)
+	}
+
+	if err := adapter.Error(); err != nil {
+		return 0, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] cognition number "+key,
+			err,
+		))
+	}
+
+	value, ok := values.Values[key]
+	return value, ok, nil
+}
+
+func readText(adapter *data.Adapter, key string) (string, bool, error) {
+	if adapter == nil {
+		return "", false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] cognition adapter is missing",
+			nil,
+		))
+	}
+
+	var values data.Map[string]
+
+	for pointer := range adapter.Next(data.NewValue(data.NewLiteral(key))) {
+		values = *(*data.Map[string])(pointer)
+	}
+
+	if err := adapter.Error(); err != nil {
+		return "", false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] cognition text "+key,
+			err,
+		))
+	}
+
+	value, ok := values.Values[key]
+	return value, ok, nil
 }
 
 /*
@@ -354,6 +585,7 @@ func (training *Training) trade(prior *data.Measurement, snapshot *ReportSnapsho
 		return
 	}
 
+	span := training.span()
 	current := training.episode(symbol)
 
 	var question []byte
@@ -370,9 +602,14 @@ func (training *Training) trade(prior *data.Measurement, snapshot *ReportSnapsho
 			newWindow := make([][]byte, len(newState.window), len(newState.window)+1)
 			copy(newWindow, newState.window)
 			newWindow = append(newWindow, tok)
+			limit := len(newWindow)
 
-			if overflow := len(newWindow) - training.engine.Order(); overflow > 0 {
-				newWindow = newWindow[overflow:]
+			if span >= 1 {
+				limit = span
+			}
+
+			if len(newWindow) > limit {
+				newWindow = newWindow[len(newWindow)-limit:]
 			}
 
 			newState.window = newWindow
@@ -385,24 +622,41 @@ func (training *Training) trade(prior *data.Measurement, snapshot *ReportSnapsho
 		}
 	}
 
-	result, err := training.engine.Evaluate(question)
+	reading, err := training.ask(training.recall, map[string]string{
+		"context": string(question),
+	}, nil)
 
 	if err != nil {
 		errnie.Error(errnie.Err(errnie.Validation, "[training] unable to evaluate "+symbol, err))
 		return
 	}
 
-	snapshot.Confidence = result.Evaluation.Confidence
-	snapshot.Contrast = result.Evaluation.Contrast
+	if confidence, ok, readErr := readNumber(reading, "confidence"); readErr == nil && ok {
+		snapshot.Confidence = confidence
+	}
 
-	action := cognition.Action(result.Evaluation.WinnerClass)
+	if contrast, ok, readErr := readNumber(reading, "contrast"); readErr == nil && ok {
+		snapshot.Contrast = contrast
+	}
+
+	winner, _, err := readText(reading, "winner")
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "[training] unable to evaluate "+symbol, err))
+		return
+	}
+
 	state := training.desk.State(symbol)
 
 	if state == broker.HOLDING {
 		training.mark(symbol)
 	}
 
-	if state == broker.FLAT && action == cognition.ActionEnter {
+	if winner == "" {
+		return
+	}
+
+	if state == broker.FLAT && winner == actionEnter {
 		resonanceM := solverMeasurement(prior, "resonance")
 		manifoldM := solverMeasurement(prior, "manifold")
 
@@ -417,7 +671,7 @@ func (training *Training) trade(prior *data.Measurement, snapshot *ReportSnapsho
 		}
 	}
 
-	if state == broker.HOLDING && action == cognition.ActionExit {
+	if state == broker.HOLDING && winner == actionExit {
 		training.act(
 			symbol,
 			training.desk.Exit,
@@ -577,9 +831,13 @@ func (training *Training) settle(closure broker.Closure) {
 		return
 	}
 
-	if _, err := training.engine.Train(
-		entry, []byte(cognition.ActionEnter), feedback,
-	); err != nil {
+	if _, err := training.ask(training.trainer, map[string]string{
+		"context": string(entry),
+		"class":   actionEnter,
+	}, map[string]float64{
+		"feedback": feedback,
+		"graded":   core.Unit,
+	}); err != nil {
 		errnie.Error(err)
 	}
 
@@ -587,9 +845,13 @@ func (training *Training) settle(closure broker.Closure) {
 		return
 	}
 
-	if _, err := training.engine.Train(
-		exit, []byte(cognition.ActionExit), feedback,
-	); err != nil {
+	if _, err := training.ask(training.trainer, map[string]string{
+		"context": string(exit),
+		"class":   actionExit,
+	}, map[string]float64{
+		"feedback": feedback,
+		"graded":   core.Unit,
+	}); err != nil {
 		errnie.Error(err)
 	}
 }
@@ -707,13 +969,31 @@ func (training *Training) Train() {
 			return
 		}
 
-		if trained > 0 && training.engine.Len() > 0 {
-			snapshot, err := training.engine.Snapshot()
+		records := training.records()
+
+		if trained > 0 && records > 0 {
+			reading, err := training.ask(training.snapshot, nil, nil)
 
 			if err == nil {
-				err = training.catalog.PutBlob(
-					training.Context(), fmt.Sprintf("trie/%d", latest), snapshot.Model,
-				)
+				model, ok, readErr := readText(reading, "model")
+
+				if readErr != nil {
+					err = readErr
+				}
+
+				if readErr == nil && !ok {
+					err = errnie.Error(errnie.Err(
+						errnie.Validation,
+						"[training] cognition model is missing",
+						nil,
+					))
+				}
+
+				if err == nil {
+					err = training.catalog.PutBlob(
+						training.Context(), fmt.Sprintf("trie/%d", latest), []byte(model),
+					)
+				}
 			}
 
 			if err != nil {
@@ -722,7 +1002,7 @@ func (training *Training) Train() {
 
 			errnie.Info(fmt.Sprintf(
 				"[training] trie loaded from %d of %d excursions (%d records)",
-				trained, seenCount, training.engine.Len(),
+				trained, seenCount, int(records),
 			))
 
 			training.Transition(runtime.READY)
@@ -939,15 +1219,23 @@ func (training *Training) learn(detection *data.Measurement) (bool, error) {
 		return false, nil
 	}
 
-	if _, err := training.engine.Train(
-		enter, []byte(cognition.ActionEnter), feedback,
-	); err != nil {
+	if _, err := training.ask(training.trainer, map[string]string{
+		"context": string(enter),
+		"class":   actionEnter,
+	}, map[string]float64{
+		"feedback": feedback,
+		"graded":   core.Unit,
+	}); err != nil {
 		return false, errnie.Error(err)
 	}
 
-	if _, err := training.engine.Train(
-		hold, []byte(cognition.ActionExit), feedback,
-	); err != nil {
+	if _, err := training.ask(training.trainer, map[string]string{
+		"context": string(hold),
+		"class":   actionExit,
+	}, map[string]float64{
+		"feedback": feedback,
+		"graded":   core.Unit,
+	}); err != nil {
 		return false, errnie.Error(err)
 	}
 

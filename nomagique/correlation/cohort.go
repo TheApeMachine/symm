@@ -9,68 +9,50 @@ import (
 )
 
 /*
-Peer is one neighbour's correlation, overlap support, and optional energy rate.
-*/
-type Peer struct {
-	Correlation float64
-	Support     float64
-	PeerEnergy  float64
-}
-
-/*
-CohortSummary is one delivery's admitted-peer reductions.
-*/
-type CohortSummary struct {
-	PeersSeen           float64
-	Peers               float64
-	RejectedPeers       float64
-	TotalSupport        float64
-	EffectivePeers      float64
-	SignedCorrelation   float64
-	AbsoluteCorrelation float64
-	PeerEnergyRate      float64
-	Dispersion          float64
-	Defined             bool
-	FisherDefined       bool
-}
-
-/*
-Cohort summarizes one peer run. Support below two is excluded.
+Cohort summarizes one peer run. Each peer arrival is
+[3]float64{correlation, support, peerEnergy}. Support below two is excluded.
+It yields one
+[11]float64{peersSeen, peers, rejected, totalSupport, effectivePeers,
+signedCorrelation, absoluteCorrelation, peerEnergyRate, dispersion,
+defined, fisherDefined}.
 */
 type Cohort struct {
-	err error
-	out CohortSummary
+	*core.PrimitiveError
+	out [11]float64
 }
 
 func NewCohort() core.Primitive {
-	return &Cohort{}
+	return &Cohort{
+		PrimitiveError: core.NewPrimitiveError(),
+	}
 }
 
-func (op *Cohort) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *Cohort) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		var admitted []Peer
+		var admitted [][3]float64
 		seen := 0.0
 
 		for arriving := range in {
-			seen++
-			peer := *(*Peer)(arriving)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			if peer.Support >= 2 {
+			seen++
+			peer := *(*[3]float64)(arriving)
+
+			if peer[1] >= 2 {
 				admitted = append(admitted, peer)
 			}
 		}
 
-		summary := CohortSummary{
-			PeersSeen:     seen,
-			Peers:         float64(len(admitted)),
-			RejectedPeers: seen - float64(len(admitted)),
+		op.out = [11]float64{
+			seen,
+			float64(len(admitted)),
+			seen - float64(len(admitted)),
 		}
 
 		if len(admitted) == 0 {
-			op.out = summary
-
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
@@ -87,13 +69,13 @@ func (op *Cohort) Next(
 		sumZ2 := 0.0
 
 		for _, p := range admitted {
-			w := p.Support
+			w := p[1]
 			totalWeight += w
 			sumWeightSq += w * w
-			sumSigned += w * p.Correlation
-			sumAbsolute += w * math.Abs(p.Correlation)
-			sumEnergy += w * p.PeerEnergy
-			z := math.Atanh(p.Correlation)
+			sumSigned += w * p[0]
+			sumAbsolute += w * math.Abs(p[0])
+			sumEnergy += w * p[2]
+			z := math.Atanh(p[0])
 			sumZ += w * z
 			sumZ2 += w * z * z
 		}
@@ -106,36 +88,35 @@ func (op *Cohort) Next(
 		zMean := sumZ / totalWeight
 		weightedVariance := (sumZ2 / totalWeight) - (zMean * zMean)
 		dispersion := 0.0
-		fisherDefined := false
+		fisherDefined := 0.0
+
 		if weightedVariance >= 0 {
 			dispersion = math.Sqrt(weightedVariance)
-			fisherDefined = true
+			fisherDefined = 1
 		}
 
-		summary.TotalSupport = totalWeight
-		summary.EffectivePeers = kish
-		summary.SignedCorrelation = signedMean
-		summary.AbsoluteCorrelation = absoluteMean
-		summary.PeerEnergyRate = energyMean
-		summary.Dispersion = dispersion
-		summary.Defined = totalWeight > 0
-		summary.FisherDefined = fisherDefined
+		defined := 0.0
 
-		op.out = summary
+		if totalWeight > 0 {
+			defined = 1
+		}
+
+		op.out = [11]float64{
+			seen,
+			float64(len(admitted)),
+			seen - float64(len(admitted)),
+			totalWeight,
+			kish,
+			signedMean,
+			absoluteMean,
+			energyMean,
+			dispersion,
+			defined,
+			fisherDefined,
+		}
 
 		if !yield(unsafe.Pointer(&op.out)) {
 			return
 		}
 	}
-}
-
-func (op *Cohort) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

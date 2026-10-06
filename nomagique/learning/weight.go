@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -65,17 +66,10 @@ func (op *TrustWeight) Next(
 			}
 
 			residual := pair.Actual - pair.Predicted
-			spanInput := statistic.ResidualSpanInput{
-				Count:    op.count,
-				Minimum:  op.min,
-				Maximum:  op.max,
-				Residual: residual,
-			}
+			var span [4]float64
 
-			var span statistic.ResidualSpanResult
-
-			for out := range op.span.Next(transport.NewValues(spanInput).Next(nil)) {
-				span = *(*statistic.ResidualSpanResult)(out)
+			for out := range op.span.Next(data.NewValue([4]float64{op.count, op.min, op.max, residual})) {
+				span = *(*[4]float64)(out)
 			}
 
 			if err := op.span.Error(); err != nil {
@@ -83,12 +77,12 @@ func (op *TrustWeight) Next(
 				return
 			}
 
-			op.count = span.Count
-			op.min = span.Minimum
-			op.max = span.Maximum
+			op.count = span[0]
+			op.min = span[1]
+			op.max = span[2]
 
 			if op.count > 1 {
-				if !(span.Span > 0) {
+				if !(span[3] > 0) {
 					op.Error(core.ErrDomain)
 					return
 				}
@@ -104,7 +98,7 @@ func (op *TrustWeight) Next(
 					return
 				}
 
-				op.rate = magnitude / span.Span
+				op.rate = magnitude / span[3]
 				mixRec := calculus.MixRecord{
 					Left:   op.trust,
 					Right:  math.Max(0, 1-op.rate),

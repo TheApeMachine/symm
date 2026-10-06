@@ -15,13 +15,8 @@ func TestSamplingVarianceNext(t *testing.T) {
 		op := NewSamplingVariance()
 
 		Convey("applies specificity debt floor", func() {
-			in := SamplingVarianceInput{
-				Depth:         2.0,
-				ContextLength: 4.0,
-				Support:       10.0,
-				Variance:      3.0,
-			}
-			out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq([]SamplingVarianceInput{in})))
+			in := [4]float64{2.0, 4.0, 10.0, 3.0}
+			out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq([][4]float64{in})))
 
 			So(op.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
@@ -30,13 +25,8 @@ func TestSamplingVarianceNext(t *testing.T) {
 		})
 
 		Convey("depth exceeding context length records ErrDomain", func() {
-			in := SamplingVarianceInput{
-				Depth:         5.0,
-				ContextLength: 4.0,
-				Support:       10.0,
-				Variance:      3.0,
-			}
-			out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq([]SamplingVarianceInput{in})))
+			in := [4]float64{5.0, 4.0, 10.0, 3.0}
+			out := tests.CollectSeq[float64](op.Next(tests.SliceToSeq([][4]float64{in})))
 
 			So(len(out), ShouldEqual, 0)
 			So(errors.Is(op.Error(), core.ErrDomain), ShouldBeTrue)
@@ -55,9 +45,9 @@ func TestSamplingVarianceNext(t *testing.T) {
 
 		Convey("handles early consumer termination", func() {
 			fresh := NewSamplingVariance()
-			inputs := []SamplingVarianceInput{
-				{Depth: 1.0, ContextLength: 4.0, Support: 10.0, Variance: 2.0},
-				{Depth: 2.0, ContextLength: 4.0, Support: 10.0, Variance: 3.0},
+			inputs := [][4]float64{
+				{1.0, 4.0, 10.0, 2.0},
+				{2.0, 4.0, 10.0, 3.0},
 			}
 			count := 0
 

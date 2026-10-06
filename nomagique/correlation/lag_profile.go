@@ -1,157 +1,113 @@
 package correlation
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-LagEstimate is what an estimator publishes for one timestamp offset.
-*/
-type LagEstimate struct {
-	Correlation float64
-	Covariance  float64
-	Support     float64
-	LeftEnergy  float64
-	RightEnergy float64
-	Defined     bool
-}
-
-/*
-EstimateInput is one pair of decoded return paths, their energies, and the
-timestamp offset at which the estimator is evaluated.
-*/
-type EstimateInput struct {
-	Left        []temporal.LogReturn
-	Right       []temporal.LogReturn
-	LeftEnergy  float64
-	RightEnergy float64
-	Lag         int64
-}
-
-/*
-LagProfileInput is two price paths searched at every lag.
-*/
-type LagProfileInput struct {
-	Left  []temporal.Price
-	Right []temporal.Price
-}
-
-/*
-LagCandidate retains the complete estimator record and its own support.
-*/
-type LagCandidate struct {
-	LagEstimate
-	Index    float64
-	LagIndex float64
-	X        float64
-	Y        float64
-}
-
-/*
 LagProfile owns the configured estimator and exact discrete search coordinates.
+Each arrival is *[2][][2]float64{leftPrices, rightPrices}; for each lag index
+it yields [10]float64{correlation, covariance, support, leftEnergy, rightEnergy,
+defined, index, lagIndex, x, y}.
 */
 type LagProfile struct {
-	err          error
+	*core.PrimitiveError
 	estimator    core.Primitive
 	leftReturns  core.Primitive
 	rightReturns core.Primitive
-	spacing      int64
+	spacing      float64
 	span         float64
-	out          LagCandidate
+	query        [3][]float64
+	out          [10]float64
 }
 
-/*
-NewLagProfile creates a new LagProfile primitive over the supplied estimator.
-*/
-func NewLagProfile(estimator core.Primitive, spacing int64, span float64) core.Primitive {
+func NewLagProfile(estimator core.Primitive, spacing float64, span float64) core.Primitive {
 	return &LagProfile{
-		estimator:    estimator,
-		leftReturns:  temporal.NewPathReturns(),
-		rightReturns: temporal.NewPathReturns(),
-		spacing:      spacing,
-		span:         span,
+		PrimitiveError: core.NewPrimitiveError(),
+		estimator:      estimator,
+		leftReturns:    NewReturns(),
+		rightReturns:   NewReturns(),
+		spacing:        spacing,
+		span:           span,
 	}
 }
 
-func (op *LagProfile) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *LagProfile) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := (*LagProfileInput)(arriving)
-			left, err := decodePath(op.leftReturns, input.Left)
-
-			if err != nil {
-				op.err = errors.Join(op.err, err)
+			if arriving == nil {
+				op.Error(core.ErrShape)
 				return
 			}
 
-			right, err := decodePath(op.rightReturns, input.Right)
+			input := (*[2][][2]float64)(arriving)
+			var left, right [2][]float64
 
-			if err != nil {
-				op.err = errors.Join(op.err, err)
+			for pointer := range op.leftReturns.Next(data.NewValue(input[0])) {
+				left = *(*[2][]float64)(pointer)
+			}
+
+			if err := op.leftReturns.Error(); err != nil {
+				op.Error(err)
 				return
 			}
+
+			for pointer := range op.rightReturns.Next(data.NewValue(input[1])) {
+				right = *(*[2][]float64)(pointer)
+			}
+
+			if err := op.rightReturns.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			leftEnergy, rightEnergy := 0.0, 0.0
+
+			if len(left[1]) > 0 {
+				leftEnergy = left[1][0]
+			}
+
+			if len(right[1]) > 0 {
+				rightEnergy = right[1][0]
+			}
+
+			op.query[0] = left[0]
+			op.query[1] = right[0]
+			op.query[2] = []float64{leftEnergy, rightEnergy, 0}
 
 			limit := int(op.span*2 + 1)
 
-			if fast, ok := op.estimator.(interface {
-				Estimate(query *EstimateInput) (LagEstimate, error)
-			}); ok {
-				var query EstimateInput
-				query.Left = left.Returns
-				query.Right = right.Returns
-				query.LeftEnergy = left.Energy
-				query.RightEnergy = right.Energy
-
-				for index := 0; index < limit; index++ {
-					lagIndex := float64(index) - op.span
-					lag := int64(lagIndex * float64(op.spacing))
-					query.Lag = lag
-					reading, err := fast.Estimate(&query)
-
-					if err != nil {
-						op.err = errors.Join(op.err, err)
-						return
-					}
-
-					op.out = LagCandidate{
-						LagEstimate: reading,
-						Index:       float64(index),
-						LagIndex:    lagIndex,
-						X:           float64(lag) * 1e-9,
-						Y:           reading.Correlation,
-					}
-
-					if !yield(unsafe.Pointer(&op.out)) {
-						return
-					}
-				}
-
-				continue
-			}
-
 			for index := 0; index < limit; index++ {
 				lagIndex := float64(index) - op.span
-				lag := int64(lagIndex * float64(op.spacing))
-				reading, err := estimateAt(op.estimator, left, right, lag)
+				lag := lagIndex * op.spacing
+				op.query[2][2] = lag
 
-				if err != nil {
-					op.err = errors.Join(op.err, err)
+				var reading [6]float64
+
+				for pointer := range op.estimator.Next(data.NewValue(op.query)) {
+					reading = *(*[6]float64)(pointer)
+				}
+
+				if err := op.estimator.Error(); err != nil {
+					op.Error(err)
 					return
 				}
 
-				op.out = LagCandidate{
-					LagEstimate: reading,
-					Index:       float64(index),
-					LagIndex:    lagIndex,
-					X:           float64(lag) * 1e-9,
-					Y:           reading.Correlation,
+				op.out = [10]float64{
+					reading[0],
+					reading[1],
+					reading[2],
+					reading[3],
+					reading[4],
+					reading[5],
+					float64(index),
+					lagIndex,
+					lag * 1e-9,
+					reading[0],
 				}
 
 				if !yield(unsafe.Pointer(&op.out)) {
@@ -160,79 +116,4 @@ func (op *LagProfile) Next(
 			}
 		}
 	}
-}
-
-func (op *LagProfile) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	if op.leftReturns != nil {
-		if err := op.leftReturns.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-	if op.rightReturns != nil {
-		if err := op.rightReturns.Error(); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-/*
-decodePath decodes one price path into its returns and their energy.
-*/
-func decodePath(decoder core.Primitive, prices []temporal.Price) (temporal.ReturnPath, error) {
-	if fast, ok := decoder.(interface {
-		Decode([]temporal.Price) (temporal.ReturnPath, error)
-	}); ok {
-		return fast.Decode(prices)
-	}
-
-	var path temporal.ReturnPath
-	pp := temporal.PricePath{Prices: prices}
-
-	for out := range decoder.Next(func(yield func(unsafe.Pointer) bool) {
-		yield(unsafe.Pointer(&pp))
-	}) {
-		path = *(*temporal.ReturnPath)(out)
-	}
-
-	if err := decoder.Error(); err != nil {
-		return temporal.ReturnPath{}, err
-	}
-
-	return path, nil
-}
-
-/*
-estimateAt drives the configured estimator primitive at one timestamp offset.
-*/
-func estimateAt(
-	executor core.Primitive, left, right temporal.ReturnPath, lag int64,
-) (LagEstimate, error) {
-	var reading LagEstimate
-	input := EstimateInput{
-		Left:        left.Returns,
-		Right:       right.Returns,
-		LeftEnergy:  left.Energy,
-		RightEnergy: right.Energy,
-		Lag:         lag,
-	}
-
-	for out := range executor.Next(func(yield func(unsafe.Pointer) bool) {
-		yield(unsafe.Pointer(&input))
-	}) {
-		reading = *(*LagEstimate)(out)
-	}
-
-	if err := executor.Error(); err != nil {
-		return LagEstimate{}, err
-	}
-
-	return reading, nil
 }

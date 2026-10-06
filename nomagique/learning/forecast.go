@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -39,7 +40,7 @@ statistic.
 */
 type Forecast struct {
 	err     error
-	moments statistic.Moments
+	moments core.Primitive
 	mix     core.Primitive
 	trust   float64
 	scale   float64
@@ -49,9 +50,10 @@ type Forecast struct {
 
 func NewForecast() core.Primitive {
 	return &Forecast{
-		mix:   calculus.NewMix(),
-		trust: 1,
-		scale: 1,
+		moments: statistic.NewEstimator(),
+		mix:     calculus.NewMix(),
+		trust:   1,
+		scale:   1,
 	}
 }
 
@@ -69,14 +71,23 @@ func (op *Forecast) Next(
 			}
 
 			residual := pair.Actual - pair.Predicted
-			moments := op.moments.Update(residual)
+			var moments [10]float64
 
-			if moments.Count > 1 {
+			for out := range op.moments.Next(data.NewValue(residual)) {
+				moments = *(*[10]float64)(out)
+			}
+
+			if err := op.moments.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if moments[0] > 1 {
 				op.rate = 0
 
-				if moments.Variance > 0 {
-					deviation := math.Abs(residual - moments.Mean)
-					spread := math.Sqrt(moments.Variance)
+				if moments[8] > 0 {
+					deviation := math.Abs(residual - moments[1])
+					spread := math.Sqrt(moments[8])
 					op.rate = deviation / spread
 				}
 
@@ -129,8 +140,8 @@ func (op *Forecast) Next(
 				Scale:       op.scale,
 				Trust:       op.trust,
 				Rate:        op.rate,
-				Count:       moments.Count,
-				WeightCount: moments.Count,
+				Count:       moments[0],
+				WeightCount: moments[0],
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {

@@ -9,27 +9,16 @@ import (
 )
 
 /*
-CausalResidualResult measures an observation against the moments that existed
-before it.
-*/
-type CausalResidualResult struct {
-	MomentReading
-	HasPrior      bool
-	Baseline      float64
-	PriorVariance float64
-	Maturity      float64
-	Residual      float64
-	ScoreScale    float64
-	ZScore        float64
-	NoiseVariance float64
-}
+CausalResidual measures an observation against the moments that existed
+before it. It arrives as the Estimator's *[10]float64 reading and yields one
+*[8]float64:
 
-/*
-CausalResidual owns that projection.
+	[0] has prior (1 or 0) [1] baseline   [2] prior variance [3] maturity
+	[4] residual           [5] score scale [6] z-score       [7] noise variance
 */
 type CausalResidual struct {
 	*core.PrimitiveError
-	out CausalResidualResult
+	out [8]float64
 }
 
 func NewCausalResidual() *CausalResidual {
@@ -46,39 +35,40 @@ func (op *CausalResidual) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				return
 			}
 
-			reading := *(*MomentReading)(arriving)
-			result := CausalResidualResult{
-				MomentReading: reading,
-				HasPrior:      reading.Prior.Count > 0,
-				Baseline:      reading.Value,
-				Maturity:      1 - 1/(reading.Prior.Count+1),
-				NoiseVariance: reading.Variance,
+			reading := (*[10]float64)(arriving)
+			priorCount := reading[3]
+			priorMean := reading[4]
+			priorM2 := reading[5]
+			value := reading[6]
+
+			op.out = [8]float64{}
+			op.out[1] = value
+			op.out[3] = 1 - 1/(priorCount+1)
+			op.out[7] = reading[8]
+
+			if priorCount > 0 {
+				op.out[0] = 1
+				op.out[1] = priorMean
 			}
 
-			if result.HasPrior {
-				result.Baseline = reading.Prior.Mean
+			if priorCount > 1 {
+				op.out[2] = priorM2 / (priorCount - 1)
 			}
 
-			if reading.Prior.Count > 1 {
-				result.PriorVariance = reading.Prior.M2 / (reading.Prior.Count - 1)
-			}
+			op.out[4] = value - op.out[1]
+			op.out[5] = math.Abs(op.out[4])
 
-			result.Residual = reading.Value - result.Baseline
-			result.ScoreScale = math.Abs(result.Residual)
-
-			if result.PriorVariance > 0 {
-				dispersion := math.Sqrt(result.PriorVariance)
+			if op.out[2] > 0 {
+				dispersion := math.Sqrt(op.out[2])
 
 				if dispersion > 2.220446049250313e-16 {
-					result.ScoreScale = dispersion
+					op.out[5] = dispersion
 				}
 			}
 
-			if result.ScoreScale > 0 {
-				result.ZScore = result.Residual / result.ScoreScale
+			if op.out[5] > 0 {
+				op.out[6] = op.out[4] / op.out[5]
 			}
-
-			op.out = result
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return

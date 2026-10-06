@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
@@ -68,10 +67,10 @@ func (op *Clock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			var current statistic.MomentReading
+			var current [10]float64
 
 			for pointer := range op.moments.Next(data.NewValue(value)) {
-				current = *(*statistic.MomentReading)(pointer)
+				current = *(*[10]float64)(pointer)
 			}
 
 			if err := op.moments.Error(); err != nil {
@@ -81,7 +80,7 @@ func (op *Clock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			var pace float64
 
-			for pointer := range op.pace.Next(data.NewValue(current.Value)) {
+			for pointer := range op.pace.Next(data.NewValue(current[6])) {
 				pace = *(*float64)(pointer)
 			}
 
@@ -92,8 +91,8 @@ func (op *Clock) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			ratio := 1.0
 
-			if current.Mean > 0 {
-				ratio = math.Abs(current.Value) / current.Mean
+			if current[1] > 0 {
+				ratio = math.Abs(current[6]) / current[1]
 			}
 
 			op.output.Values["clock"] = ratio * pace

@@ -13,7 +13,7 @@ func TestScaleNext(t *testing.T) {
 	Convey("Scale multiplies every coefficient without mutating the source", t, func() {
 		node := matrix.NewScale()
 		values := [][]float64{{1, -2}, {}, {3}}
-		in1 := matrix.ScaleInput{Values: values, Factor: -2}
+		in1 := [2][][]float64{values, {{-2}}}
 		seq1 := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&in1))
 		}
@@ -21,8 +21,8 @@ func TestScaleNext(t *testing.T) {
 		So(node.Error(), ShouldBeNil)
 		So(first[0], ShouldResemble, [][]float64{{-2, 4}, {}, {-6}})
 
-		node2 := matrix.NewScale()
-		in2 := matrix.ScaleInput{Values: values, Factor: 0}
+		node2 := matrix.NewScale(0)
+		in2 := values
 		seq2 := func(yield func(unsafe.Pointer) bool) {
 			yield(unsafe.Pointer(&in2))
 		}

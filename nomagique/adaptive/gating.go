@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
@@ -73,10 +72,10 @@ func (op *Gating) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			var current statistic.MomentReading
+			var current [10]float64
 
 			for pointer := range op.moments.Next(data.NewValue(value)) {
-				current = *(*statistic.MomentReading)(pointer)
+				current = *(*[10]float64)(pointer)
 			}
 
 			if err := op.moments.Error(); err != nil {
@@ -84,7 +83,7 @@ func (op *Gating) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			op.count.Values["count"] = current.Count
+			op.count.Values["count"] = current[0]
 
 			for range adapter.Next(data.NewValue(op.count)) {
 			}
@@ -115,9 +114,9 @@ func (op *Gating) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			gated := current.Value
+			gated := current[6]
 
-			if current.Dispersion > 0 && math.Abs(current.Value-current.Mean) < limit {
+			if current[9] > 0 && math.Abs(current[6]-current[1]) < limit {
 				gated = 0
 			}
 
