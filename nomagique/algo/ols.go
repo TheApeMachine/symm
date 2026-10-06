@@ -1,188 +1,101 @@
 package algo
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
-Design is the observation matrix and its outcomes. Callers include an intercept
-column explicitly.
-*/
-type Design struct {
-	X [][]float64
-	Y []float64
-}
-
-/*
-Fit is one ordinary-least-squares solution. Rank deficiency and n<=p are
-Defined=false with empty coefficients and an undefined residual variance.
-*/
-type Fit struct {
-	Coefficients        []float64
-	CoefficientVariance []float64
-	Rank                int
-	Observations        int
-	Parameters          int
-	ResidualSSE         float64
-	ResidualVariance    float64
-	Defined             bool
-}
-
-/*
-OLS owns the ordinary-least-squares fit over arriving designs, delegating the
-normal-equation solve to the statistic layer's OLS Primitive. There is no
-ridge or invented rank: when the design matrix does not have full column
+OLS is ordinary least squares over observation rows, composed from the
+statistic layer's OLS Primitive, which owns the normal-equation solve. There
+is no ridge or invented rank: when the design matrix does not have full column
 rank the fit is undefined.
+
+Each arrival is *[][]float64 of observation rows {x0, ..., x(p-1), y}: the
+design columns followed by the outcome, the same target-last layout the RLS
+learners use. Callers include an intercept column explicitly. It yields the
+statistic layer's *[]float64 fit:
+
+	[0] defined (1 or 0)  [1] rank         [2] observations
+	[3] parameters        [4] residual SSE [5] residual variance
+	[6] coefficient variance defined (1 or 0)
+	[7 : 7+p]    coefficients, when defined
+	[7+p : 7+2p] diagonal of cov(beta), when [6] is 1
+
+Residual variance is NaN whenever the fit is undefined, including the empty
+design. Rows of differing width, or without an outcome, report ErrShape.
 */
 type OLS struct {
-	err    error
-	solver core.Primitive
-	out    Fit
+	*core.PrimitiveError
+	solver  core.Primitive
+	request [2][]float64
+	out     []float64
 }
 
-/*
-NewOLS creates the ordinary-least-squares Primitive. The tolerance is
-retained for caller compatibility; the statistic layer's solver owns the
-numerical solve.
-*/
-func NewOLS(tolerance float64) core.Primitive {
-	_ = tolerance
-
-	return &OLS{solver: statistic.NewFitOLS()}
+func NewOLS() core.Primitive {
+	return &OLS{
+		PrimitiveError: core.NewPrimitiveError(),
+		solver:         statistic.NewFitOLS(),
+	}
 }
 
-/*
-Next receives *Design payloads and yields a *Fit for each.
-*/
 func (op *OLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			design := (*Design)(arriving)
-			request, err := flatten(design)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			if err != nil {
+			observations := *(*[][]float64)(arriving)
+			width := 0
+
+			if len(observations) > 0 {
+				width = len(observations[0])
+			}
+
+			op.request[0] = op.request[0][:0]
+			op.request[1] = op.request[1][:0]
+
+			for _, row := range observations {
+				if width < 1 || len(row) != width {
+					op.Error(fmt.Errorf("%w: algo: OLS observation rows are ragged or lack an outcome", core.ErrShape))
+					return
+				}
+
+				op.request[0] = append(op.request[0], row[:width-1]...)
+				op.request[1] = append(op.request[1], row[width-1])
+			}
+
+			op.out = op.out[:0]
+
+			for pointer := range op.solver.Next(data.NewValue(op.request)) {
+				op.out = append(op.out[:0], *(*[]float64)(pointer)...)
+			}
+
+			if err := op.solver.Error(); err != nil {
 				op.Error(err)
 				return
 			}
 
-			fit, err := op.fit(request)
-
-			if err != nil {
-				op.Error(err)
+			if len(op.out) < 7 {
+				op.Error(fmt.Errorf("%w: algo: OLS solver yielded no fit", core.ErrShape))
 				return
 			}
 
-			op.out = fit
+			if op.out[0] != 1 {
+				op.out[5] = math.NaN()
+			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *OLS) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-/*
-single presents one request pointer as a one-element run.
-*/
-func single(request *[2][]float64) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		yield(unsafe.Pointer(request))
-	}
-}
-
-/*
-flatten validates one design and converts it to the statistic layer's
-row-major request.
-*/
-func flatten(design *Design) ([2][]float64, error) {
-	observations := len(design.X)
-
-	if observations != len(design.Y) {
-		return [2][]float64{}, fmt.Errorf(
-			"%w: algo: OLS design rows and outcomes differ", core.ErrShape,
-		)
-	}
-
-	parameters := 0
-
-	if observations > 0 {
-		parameters = len(design.X[0])
-	}
-
-	for _, row := range design.X {
-		if len(row) != parameters {
-			return [2][]float64{}, fmt.Errorf(
-				"%w: algo: OLS design is ragged", core.ErrShape,
-			)
-		}
-	}
-
-	flat := make([]float64, 0, observations*parameters)
-
-	for _, row := range design.X {
-		flat = append(flat, row...)
-	}
-
-	return [2][]float64{flat, design.Y}, nil
-}
-
-/*
-fit drives the statistic layer's solver for one request.
-*/
-func (op *OLS) fit(request [2][]float64) (Fit, error) {
-	var solved []float64
-
-	for out := range op.solver.Next(single(&request)) {
-		solved = *(*[]float64)(out)
-	}
-
-	if err := op.solver.Error(); err != nil {
-		return Fit{}, err
-	}
-
-	parameters := int(solved[3])
-	fit := Fit{
-		Rank:             int(solved[1]),
-		Observations:     int(solved[2]),
-		Parameters:       parameters,
-		ResidualSSE:      solved[4],
-		ResidualVariance: solved[5],
-		Defined:          solved[0] == 1,
-	}
-
-	if fit.Defined {
-		fit.Coefficients = append([]float64(nil), solved[7:7+parameters]...)
-	}
-
-	if fit.Defined && solved[6] == 1 {
-		fit.CoefficientVariance = append([]float64(nil), solved[7+parameters:7+2*parameters]...)
-	}
-
-	if !fit.Defined {
-		fit.ResidualVariance = math.NaN()
-		fit.Coefficients = []float64{}
-		fit.CoefficientVariance = []float64{}
-	}
-
-	return fit, nil
 }

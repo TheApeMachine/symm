@@ -219,19 +219,10 @@ func DetectionTicks(measurement *data.Measurement) (int64, int64, error) {
 		))
 	}
 
-	lowMetric, hasLow := measurement.LookupMetric("LowTick")
+	lowMetric := measurement.Read("low_tick")
+	highMetric := measurement.Read("high_tick")
 
-	if !hasLow {
-		lowMetric, hasLow = measurement.LookupMetric("low_tick")
-	}
-
-	highMetric, hasHigh := measurement.LookupMetric("HighTick")
-
-	if !hasHigh {
-		highMetric, hasHigh = measurement.LookupMetric("high_tick")
-	}
-
-	if !hasLow || !hasHigh {
+	if lowMetric == nil || highMetric == nil {
 		return 0, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[catalog] detection measurement missing LowTick or HighTick metric",
@@ -239,8 +230,8 @@ func DetectionTicks(measurement *data.Measurement) (int64, int64, error) {
 		))
 	}
 
-	lowTick := int64(lowMetric.Raw)
-	highTick := int64(highMetric.Raw)
+	lowTick := int64(data.Pull(lowMetric).Metric.Raw)
+	highTick := int64(data.Pull(highMetric).Metric.Raw)
 
 	if lowTick < 0 || (highTick > 0 && highTick < lowTick) {
 		return 0, 0, errnie.Error(errnie.Err(
@@ -265,19 +256,10 @@ func DetectionPrices(measurement *data.Measurement) (*decimal.Decimal, *decimal.
 		))
 	}
 
-	lowMetric, hasLow := measurement.LookupMetric("LowPrice")
+	lowPrice := data.Pull(measurement.Read("low_price"))
+	highPrice := data.Pull(measurement.Read("high_price"))
 
-	if !hasLow {
-		lowMetric, hasLow = measurement.LookupMetric("low_price")
-	}
-
-	highMetric, hasHigh := measurement.LookupMetric("HighPrice")
-
-	if !hasHigh {
-		highMetric, hasHigh = measurement.LookupMetric("high_price")
-	}
-
-	if !hasLow || !hasHigh {
+	if lowPrice.Metric.Label == "" || highPrice.Metric.Label == "" {
 		return nil, nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[catalog] detection measurement missing LowPrice or HighPrice metric",
@@ -287,20 +269,20 @@ func DetectionPrices(measurement *data.Measurement) (*decimal.Decimal, *decimal.
 
 	var entryAsk, exitBid *decimal.Decimal
 
-	if lowMetric.Exact != nil {
-		entryAsk = lowMetric.Exact
+	if lowPrice.Metric.Exact != nil {
+		entryAsk = lowPrice.Metric.Exact
 	}
 
-	if entryAsk == nil && lowMetric.Raw > 0 {
-		entryAsk = decimal.NewFromFloat64(lowMetric.Raw)
+	if entryAsk == nil && lowPrice.Metric.Raw > 0 {
+		entryAsk = decimal.NewFromFloat64(lowPrice.Metric.Raw)
 	}
 
-	if highMetric.Exact != nil {
-		exitBid = highMetric.Exact
+	if highPrice.Metric.Exact != nil {
+		exitBid = highPrice.Metric.Exact
 	}
 
-	if exitBid == nil && highMetric.Raw > 0 {
-		exitBid = decimal.NewFromFloat64(highMetric.Raw)
+	if exitBid == nil && highPrice.Metric.Raw > 0 {
+		exitBid = decimal.NewFromFloat64(highPrice.Metric.Raw)
 	}
 
 	if entryAsk == nil || exitBid == nil || entryAsk.Sign() <= 0 || exitBid.Sign() <= 0 {

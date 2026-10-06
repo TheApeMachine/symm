@@ -39,17 +39,26 @@ func (profile ExcursionProfile) GenerateTape(startSeq int64) []*data.Measurement
 	eventTime := time.Unix(1700000000, 0)
 
 	emit := func(p float64, source string) {
-		m := data.NewMeasurement(source, nil)
-		m.SeqIdx = currentSeq
-		m.Label = profile.Symbol
+		m := data.NewMeasurement(1, profile.Symbol, source, currentSeq, currentSeq)
 		m.At = eventTime
+		m.From = eventTime
 		halfSpread := profile.Spread / 2
 		bid := p - halfSpread
 		ask := p + halfSpread
-		m.WriteStandardized("price", p)
-		m.WriteStandardized("spread", profile.Spread)
-		m.WriteStandardized("bid", bid)
-		m.WriteStandardized("ask", ask)
+
+		priceMetric := data.NewMetric("price", p, data.UnitPrice, data.TimescaleInstantaneous)
+		priceMetric.Standardized = p
+
+		spreadMetric := data.NewMetric("spread", profile.Spread, data.UnitPrice, data.TimescaleInstantaneous)
+		spreadMetric.Standardized = profile.Spread
+
+		bidMetric := data.NewMetric("bid", bid, data.UnitPrice, data.TimescaleInstantaneous)
+		bidMetric.Standardized = bid
+
+		askMetric := data.NewMetric("ask", ask, data.UnitPrice, data.TimescaleInstantaneous)
+		askMetric.Standardized = ask
+
+		m.Write(priceMetric, spreadMetric, bidMetric, askMetric)
 		frames = append(frames, m)
 		currentSeq++
 		eventTime = eventTime.Add(100 * time.Millisecond)
@@ -178,12 +187,17 @@ func NewChopWhipsawTape(symbol string, basePrice, spread float64, ticks int) []*
 		oscillation := math.Sin(float64(i)*1.5) * spread * 0.8
 		p := basePrice + oscillation
 
-		m := data.NewMeasurement("chop", nil)
-		m.SeqIdx = int64(i + 1)
-		m.Label = symbol
+		m := data.NewMeasurement(1, symbol, "chop", int64(i+1), int64(i+1))
 		m.At = eventTime
-		m.WriteStandardized("price", p)
-		m.WriteStandardized("spread", spread)
+		m.From = eventTime
+
+		priceMetric := data.NewMetric("price", p, data.UnitPrice, data.TimescaleInstantaneous)
+		priceMetric.Standardized = p
+
+		spreadMetric := data.NewMetric("spread", spread, data.UnitPrice, data.TimescaleInstantaneous)
+		spreadMetric.Standardized = spread
+
+		m.Write(priceMetric, spreadMetric)
 		frames[i] = m
 		eventTime = eventTime.Add(50 * time.Millisecond)
 	}
@@ -199,12 +213,17 @@ func NewFlatQuiescentTape(symbol string, basePrice, spread float64, ticks int) [
 	eventTime := time.Unix(1700000000, 0)
 
 	for i := range ticks {
-		m := data.NewMeasurement("flat", nil)
-		m.SeqIdx = int64(i + 1)
-		m.Label = symbol
+		m := data.NewMeasurement(1, symbol, "flat", int64(i+1), int64(i+1))
 		m.At = eventTime
-		m.WriteStandardized("price", basePrice)
-		m.WriteStandardized("spread", spread)
+		m.From = eventTime
+
+		priceMetric := data.NewMetric("price", basePrice, data.UnitPrice, data.TimescaleInstantaneous)
+		priceMetric.Standardized = basePrice
+
+		spreadMetric := data.NewMetric("spread", spread, data.UnitPrice, data.TimescaleInstantaneous)
+		spreadMetric.Standardized = spread
+
+		m.Write(priceMetric, spreadMetric)
 		frames[i] = m
 		eventTime = eventTime.Add(100 * time.Millisecond)
 	}
@@ -251,33 +270,26 @@ func NewInterleavedMultiAssetTape() []*data.Measurement {
 	copy(btcTape, btcBase)
 	lastBTC := btcBase[len(btcBase)-1]
 	for i := len(btcBase); i < targetLen; i++ {
-		m := CloneTestMeasurement(lastBTC)
-		m.SeqIdx = int64(i + 1)
-		btcTape[i] = m
+		btcTape[i] = CloneTestMeasurementWithSeq(lastBTC, int64(i+1))
 	}
 
 	solTape := make([]*data.Measurement, targetLen)
 	copy(solTape, solBase)
 	lastSOL := solBase[len(solBase)-1]
 	for i := len(solBase); i < targetLen; i++ {
-		m := CloneTestMeasurement(lastSOL)
-		m.SeqIdx = int64(i + 1)
-		solTape[i] = m
+		solTape[i] = CloneTestMeasurementWithSeq(lastSOL, int64(i+1))
 	}
 
 	interleaved := make([]*data.Measurement, 0, targetLen*3)
 	var globalSeq int64 = 1
 	for i := range targetLen {
-		fBTC := CloneTestMeasurement(btcTape[i])
-		fBTC.SeqIdx = globalSeq
+		fBTC := CloneTestMeasurementWithSeq(btcTape[i], globalSeq)
 		globalSeq++
 
-		fETH := CloneTestMeasurement(ethTape[i])
-		fETH.SeqIdx = globalSeq
+		fETH := CloneTestMeasurementWithSeq(ethTape[i], globalSeq)
 		globalSeq++
 
-		fSOL := CloneTestMeasurement(solTape[i])
-		fSOL.SeqIdx = globalSeq
+		fSOL := CloneTestMeasurementWithSeq(solTape[i], globalSeq)
 		globalSeq++
 
 		interleaved = append(interleaved, fBTC, fETH, fSOL)
@@ -286,34 +298,50 @@ func NewInterleavedMultiAssetTape() []*data.Measurement {
 	return interleaved
 }
 
+func CloneTestMeasurementWithSeq(src *data.Measurement, seqIdx int64) *data.Measurement {
+	if src == nil {
+		return nil
+	}
+
+	var metrics []data.Metric
+	for entry := range src.Read() {
+		metrics = append(metrics, entry.Metric)
+	}
+
+	var peers []*data.Measurement
+	for _, peer := range src.Peers() {
+		peers = append(peers, CloneTestMeasurementWithSeq(peer, seqIdx))
+	}
+
+	var metadata []data.StringEntry
+	for _, key := range []string{"venue", "volume-unit", "channel", "owner", "fixture"} {
+		if val := src.Meta(key); val != "" {
+			metadata = append(metadata, data.StringEntry{Key: key, Value: val})
+		}
+	}
+
+	arena := data.NewArenaOwner("clone", 16)
+	out := arena.NewMeasurement(
+		src.Epoch,
+		src.Label,
+		src.Source,
+		seqIdx,
+		seqIdx,
+		peers,
+		metadata...,
+	)
+	out.At = src.At
+	out.From = src.From
+	out.Write(metrics...)
+	return out
+}
+
 func CloneTestMeasurement(src *data.Measurement) *data.Measurement {
 	if src == nil {
 		return nil
 	}
-	out := &data.Measurement{
-		ID:         src.ID,
-		Label:      src.Label,
-		Source:     src.Source,
-		SeqIdx:     src.SeqIdx,
-		Timestamp:  src.Timestamp,
-		At:         src.At,
-		From:       src.From,
-		Maturity:   src.Maturity,
-		SNR:        src.SNR,
-		SNRDefined: src.SNRDefined,
-		Estimated:  src.Estimated,
-		Err:        src.Err,
-		Metrics:    make([]data.MetricEntry[float64], len(src.Metrics)),
-		Metadata:   make([]data.StringEntry, len(src.Metadata)),
-		Provenance: make([]data.StringEntry, len(src.Provenance)),
-		Peers:      make([]*data.Measurement, len(src.Peers)),
-		Result:     src.Result,
-	}
-	copy(out.Metrics, src.Metrics)
-	copy(out.Metadata, src.Metadata)
-	copy(out.Provenance, src.Provenance)
-	copy(out.Peers, src.Peers)
-	return out
+
+	return CloneTestMeasurementWithSeq(src, src.SeqIdx)
 }
 
 /*

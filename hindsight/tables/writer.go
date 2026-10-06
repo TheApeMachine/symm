@@ -210,16 +210,22 @@ func measurementSize(measurement *data.Measurement) int64 {
 
 	size := int64(128 + len(measurement.Label) + len(measurement.Source))
 
-	for index := range measurement.Metrics {
-		size += int64(32 + len(measurement.Metrics[index].Key))
+	for entry := range measurement.Read() {
+		if entry.Err != nil {
+			continue
+		}
+
+		size += int64(32 + len(entry.Key))
 	}
 
-	for index := range measurement.Metadata {
-		size += int64(16 + len(measurement.Metadata[index].Key) + len(measurement.Metadata[index].Value))
+	for _, key := range []string{"type", "order_id", "side", "event", "checksum", "ord_type", "trade_id", "status", "peer"} {
+		if val := measurement.Meta(key); val != "" {
+			size += int64(16 + len(key) + len(val))
+		}
 	}
 
-	for index := range measurement.Provenance {
-		size += int64(16 + len(measurement.Provenance[index].Key) + len(measurement.Provenance[index].Value))
+	if measurement.Error() != nil {
+		size += int64(32 + len(measurement.Error().Error()))
 	}
 
 	return size

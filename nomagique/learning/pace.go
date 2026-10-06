@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -9,69 +8,92 @@ import (
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/collection"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/probability"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-PaceConfig is rest, bounds, gain, band, and window. These are explicit
-configuration, not newly chosen tuning constants.
-*/
-type PaceConfig struct {
-	Rest   float64
-	Lower  float64
-	Upper  float64
-	Gain   float64
-	Band   float64
-	Window float64
-}
-
-/*
-PaceReading is the adapted learning pace and the current error rank.
-*/
-type PaceReading struct {
-	Alpha float64
-	Rank  float64
-	Ready bool
-	Count float64
-}
-
-/*
 Pace owns empirical prior-error rank and the bounded log-alpha controller.
-The calibrator owns history; Mix owns movement.
+The calibrator owns history; Mix owns movement; Bound owns the limits.
+
+Rest, bounds, gain, band, and window are explicit configuration, not newly
+chosen tuning constants. A rejected configuration is recorded at construction
+and every stream over it yields nothing.
+
+Each arrival is *float64 (the current error); it yields *[4]float64
+{alpha, rank, ready, count}.
 */
 type Pace struct {
-	err        error
-	config     PaceConfig
+	*core.PrimitiveError
+	rest       float64
+	lower      float64
+	upper      float64
+	gain       float64
+	band       float64
+	window     float64
 	calibrator core.Primitive
 	mix        core.Primitive
 	bound      core.Primitive
+	adapter    *data.Adapter
+	publish    data.Map[float64]
+	calibrated data.Map[string]
+	mixed      data.Map[string]
+	bounded    data.Map[string]
 	logAlpha   float64
 	alpha      float64
 	seeded     bool
-	out        PaceReading
+	out        [4]float64
 }
 
-func NewPace(config PaceConfig) core.Primitive {
-	return &Pace{
-		config:     config,
-		calibrator: probability.NewCalibrator(collection.NewTail[float64](int(config.Window))),
-		mix:        calculus.NewMix(),
-		bound:      calculus.NewBound(),
+func NewPace(rest, lower, upper, gain, band, window float64) core.Primitive {
+	pace := &Pace{
+		PrimitiveError: core.NewPrimitiveError(),
+		rest:           rest,
+		lower:          lower,
+		upper:          upper,
+		gain:           gain,
+		band:           band,
+		window:         window,
+		mix:            calculus.NewMix(),
+		bound:          calculus.NewBound(),
+		adapter:        data.NewAdapter(nil, data.NewState(data.NewMap())),
+		publish:        data.NewOutputMap(),
+		calibrated:     data.NewMap("value", "value", "prior_count", "prior_count"),
+		mixed:          data.NewMap("mix", "mix"),
+		bounded:        data.NewMap("bound", "bound"),
 	}
+
+	for _, value := range []float64{rest, lower, upper, gain, band, window} {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			pace.Error(core.ErrDomain)
+			return pace
+		}
+	}
+
+	if !(lower > 0) || !(lower <= rest) || !(rest <= upper) ||
+		!(window > 0) || math.Floor(window) != window {
+		pace.Error(core.ErrDomain)
+		return pace
+	}
+
+	pace.calibrator = probability.NewCalibrator(collection.NewTail[float64](int(window)))
+
+	return pace
 }
 
-func (op *Pace) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *Pace) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	if op.Error() != nil {
+		return func(yield func(unsafe.Pointer) bool) {}
+	}
+
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			val := *(*float64)(arriving)
-
-			if err := op.validate(); err != nil {
-				op.Error(err)
+			if arriving == nil {
+				op.Error(core.ErrShape)
 				return
 			}
+
+			val := *(*float64)(arriving)
 
 			if math.IsNaN(val) || math.IsInf(val, 0) {
 				op.Error(core.ErrDomain)
@@ -79,15 +101,17 @@ func (op *Pace) Next(
 			}
 
 			if !op.seeded {
-				op.logAlpha = math.Log(op.config.Rest)
-				op.alpha = op.config.Rest
+				op.logAlpha = math.Log(op.rest)
+				op.alpha = op.rest
 				op.seeded = true
 			}
 
-			var calibration probability.CalibratorReading
+			op.publish.Values["value"] = val
 
-			for out := range op.calibrator.Next(transport.NewValues(val).Next(nil)) {
-				calibration = *(*probability.CalibratorReading)(out)
+			for range op.adapter.Next(data.NewValue(op.publish)) {
+			}
+
+			for range op.calibrator.Next(data.NewValue(op.adapter)) {
 			}
 
 			if err := op.calibrator.Error(); err != nil {
@@ -95,36 +119,45 @@ func (op *Pace) Next(
 				return
 			}
 
-			ready := op.config.Window <= calibration.PriorCount
-			count := math.Min(op.config.Window, calibration.PriorCount+1)
+			score, priorCount := 0.0, 0.0
+
+			for pointer := range op.adapter.Next(data.NewValue(op.calibrated)) {
+				values := (*data.Map[float64])(pointer).Values
+				score = values["value"]
+				priorCount = values["prior_count"]
+			}
+
+			if err := op.adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			ready := op.window <= priorCount
+			count := math.Min(op.window, priorCount+1)
 			rank := 0.0
 
 			if ready {
-				rank = calibration.Value
-				logRest := math.Log(op.config.Rest)
-				logMin := math.Log(op.config.Lower)
-				logMax := math.Log(op.config.Upper)
+				rank = score
+				logMin := math.Log(op.lower)
+				logMax := math.Log(op.upper)
+				target := math.Log(op.rest)
 
-				target := logRest
-
-				if rank < op.config.Band {
+				if rank < op.band {
 					target = logMax
 				}
 
-				if rank > 1-op.config.Band {
+				if rank > 1-op.band {
 					target = logMin
 				}
 
-				mixRec := calculus.MixRecord{
-					Left:   op.logAlpha,
-					Right:  target,
-					Weight: op.config.Gain,
+				op.publish.Values["left"] = op.logAlpha
+				op.publish.Values["right"] = target
+				op.publish.Values["weight"] = op.gain
+
+				for range op.adapter.Next(data.NewValue(op.publish)) {
 				}
 
-				var mixed float64
-
-				for out := range op.mix.Next(transport.NewValues(mixRec).Next(nil)) {
-					mixed = *(*float64)(out)
+				for range op.mix.Next(data.NewValue(op.adapter)) {
 				}
 
 				if err := op.mix.Error(); err != nil {
@@ -132,84 +165,58 @@ func (op *Pace) Next(
 					return
 				}
 
-				boundRec := calculus.BoundRecord{
-					Value: mixed,
-					Lower: logMin,
-					Upper: logMax,
+				for pointer := range op.adapter.Next(data.NewValue(op.mixed)) {
+					op.publish.Values["value"] = (*data.Map[float64])(pointer).Values["mix"]
 				}
 
-				var logAlpha float64
+				for stage, limits := range [2][2]float64{{logMin, logMax}, {op.lower, op.upper}} {
+					if stage == 1 {
+						op.publish.Values["value"] = math.Exp(op.publish.Values["value"])
+					}
 
-				for out := range op.bound.Next(transport.NewValues(boundRec).Next(nil)) {
-					logAlpha = *(*float64)(out)
+					op.publish.Values["lower"] = limits[0]
+					op.publish.Values["upper"] = limits[1]
+
+					for range op.adapter.Next(data.NewValue(op.publish)) {
+					}
+
+					for range op.bound.Next(data.NewValue(op.adapter)) {
+					}
+
+					if err := op.bound.Error(); err != nil {
+						op.Error(err)
+						return
+					}
+
+					for pointer := range op.adapter.Next(data.NewValue(op.bounded)) {
+						op.publish.Values["value"] = (*data.Map[float64])(pointer).Values["bound"]
+					}
+
+					if err := op.adapter.Error(); err != nil {
+						op.Error(err)
+						return
+					}
+
+					if stage == 0 {
+						op.logAlpha = op.publish.Values["value"]
+						continue
+					}
+
+					op.alpha = op.publish.Values["value"]
 				}
-
-				if err := op.bound.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				alpha := math.Exp(logAlpha)
-				boundAlpha := calculus.BoundRecord{
-					Value: alpha,
-					Lower: op.config.Lower,
-					Upper: op.config.Upper,
-				}
-
-				for out := range op.bound.Next(transport.NewValues(boundAlpha).Next(nil)) {
-					alpha = *(*float64)(out)
-				}
-
-				if err := op.bound.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				op.logAlpha = logAlpha
-				op.alpha = alpha
 			}
 
-			op.out = PaceReading{
-				Alpha: op.alpha,
-				Rank:  rank,
-				Ready: ready,
-				Count: count,
+			readyFlag := 0.0
+
+			if ready {
+				readyFlag = 1
 			}
+
+			op.out = [4]float64{op.alpha, rank, readyFlag, count}
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *Pace) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-func (op *Pace) validate() error {
-	for _, value := range []float64{
-		op.config.Rest, op.config.Lower, op.config.Upper,
-		op.config.Gain, op.config.Band, op.config.Window,
-	} {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return core.ErrDomain
-		}
-	}
-
-	if !(op.config.Lower > 0) ||
-		!(op.config.Lower <= op.config.Rest) ||
-		!(op.config.Rest <= op.config.Upper) ||
-		!(op.config.Window > 0) ||
-		math.Floor(op.config.Window) != op.config.Window {
-		return core.ErrDomain
-	}
-
-	return nil
 }

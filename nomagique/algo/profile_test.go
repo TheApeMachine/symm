@@ -6,8 +6,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/correlation"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestLagProfileSupportAndUnits(t *testing.T) {
@@ -16,37 +16,37 @@ func TestLagProfileSupportAndUnits(t *testing.T) {
 		left := prices(times, []float64{1, 2, 1.5, 3, 2.2, 4})
 		right := prices([]int64{1e9, 2e9, 3e9, 4e9, 5e9, 6e9}, []float64{1, 2, 1.5, 3, 2.2, 4})
 		node := correlation.NewLagProfile(algo.NewHayashiYoshida(), 1e9, 2.0)
-		profile := tests.CollectSeq[correlation.LagCandidate](node.Next(transport.NewValues(correlation.LagProfileInput{Left: left, Right: right}).Next(nil)))
+		profile := tests.CollectSeq[[10]float64](node.Next(data.NewValue([2][][2]float64{left, right})))
 		So(node.Error(), ShouldBeNil)
 		So(len(profile), ShouldEqual, 5)
 
 		peakNode := correlation.NewPeak()
-		points := make([]correlation.Point, 0, len(profile))
+		points := make([][2]float64, 0, len(profile))
 
 		for _, candidate := range profile {
-			So(candidate.Support, ShouldBeGreaterThan, -1)
-			points = append(points, correlation.Point{X: candidate.X, Y: candidate.Y})
+			So(candidate[2], ShouldBeGreaterThan, -1)
+			points = append(points, [2]float64{candidate[8], candidate[9]})
 		}
 
-		peakOut := tests.CollectSeq[correlation.PeakResult](peakNode.Next(transport.NewValues(points...).Next(nil)))
+		peakOut := tests.CollectSeq[[3]float64](peakNode.Next(data.NewValue(points...)))
 		So(peakNode.Error(), ShouldBeNil)
 		So(len(peakOut), ShouldEqual, 1)
-		So(peakOut[0].Point.X, ShouldEqual, 1)
-		So(peakOut[0].Point.Y, ShouldEqual, 1)
+		So(peakOut[0][1], ShouldEqual, 1)
+		So(peakOut[0][2], ShouldEqual, 1)
 	})
 }
 
 func TestProfileCurvatureSeconds(t *testing.T) {
 	Convey("Curvature and prominence use the neighbouring ordinates around the peak", t, func() {
-		points := []correlation.Point{{-1, 0.1}, {0, 0.9}, {1, 0.3}}
+		points := [][2]float64{{-1, 0.1}, {0, 0.9}, {1, 0.3}}
 		curvNode := correlation.NewCurvature()
-		curvature := tests.CollectSeq[float64](curvNode.Next(transport.NewValues(points...).Next(nil)))
+		curvature := tests.CollectSeq[float64](curvNode.Next(data.NewValue(points...)))
 		So(curvNode.Error(), ShouldBeNil)
 		So(len(curvature), ShouldEqual, 1)
 		So(curvature[0], ShouldEqual, 1.4)
 
 		promNode := correlation.NewProminence()
-		prominence := tests.CollectSeq[float64](promNode.Next(transport.NewValues(points...).Next(nil)))
+		prominence := tests.CollectSeq[float64](promNode.Next(data.NewValue(points...)))
 		So(promNode.Error(), ShouldBeNil)
 		So(len(prominence), ShouldEqual, 1)
 		So(prominence[0], ShouldEqual, 0.7)

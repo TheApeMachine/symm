@@ -11,11 +11,13 @@ import (
 
 /*
 HayashiYoshida owns asynchronous covariance of two already-decoded return
-paths. Each arrival is *[3][]float64{
-  leftFlat returns as {value, from, to, ...},
-  rightFlat returns as {value, from, to, ...},
-  {leftEnergy, rightEnergy, lag},
-}; it yields [6]float64{correlation, covariance, support, leftEnergy,
+paths. Each arrival is *[3][]float64:
+
+	[0] left flat returns as {value, from, to, ...}
+	[1] right flat returns as {value, from, to, ...}
+	[2] {leftEnergy, rightEnergy, lag}
+
+It yields *[6]float64{correlation, covariance, support, leftEnergy,
 rightEnergy, defined}. Support counts overlaps, not independent samples.
 */
 type HayashiYoshida struct {

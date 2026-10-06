@@ -46,6 +46,7 @@ func (op *Parallel) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 			}
 
+			op.Error(branch.Error())
 			index++
 		}
 	}

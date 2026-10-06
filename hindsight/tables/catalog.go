@@ -28,8 +28,6 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
-const anonymousCredential = "anonymous"
-
 /*
 Catalog manages connections and schemas for canonical Iceberg tables.
 */
@@ -209,7 +207,7 @@ func (catalog *Catalog) Ensure(ctx context.Context) error {
 
 	properties := iceberg.Properties{
 		table.MetadataDeleteAfterCommitEnabledKey: "true",
-		table.MetadataPreviousVersionsMaxKey:     "5",
+		table.MetadataPreviousVersionsMaxKey:      "5",
 		table.ManifestMergeEnabledKey:             "true",
 	}
 
@@ -722,4 +720,3 @@ func (catalog *Catalog) Runs(ctx context.Context) ([]Run, error) {
 
 	return runs, nil
 }
-

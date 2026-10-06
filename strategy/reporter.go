@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -72,254 +71,15 @@ func NewReporter() *Reporter {
 }
 
 /*
-Populate writes all canonical learning and evaluation metrics, provenance,
-and metadata onto an existing measurement without extra heap allocations.
+Metadata builds all canonical provenance and metadata key-value pairs
+for the report snapshot.
 */
-func (reporter *Reporter) Populate(
-	out *data.Measurement,
-	snapshot ReportSnapshot,
-) {
-	if out == nil {
-		return
+func (reporter *Reporter) Metadata(snapshot ReportSnapshot) []data.StringEntry {
+	var entries []data.StringEntry
+
+	if snapshot.Direction != "" {
+		entries = append(entries, data.StringEntry{Key: "excursion_direction", Value: snapshot.Direction})
 	}
-
-	stepCount := reporter.steps.Add(1)
-
-	if snapshot.Action != 0 {
-		reporter.decisions.Add(1)
-	}
-
-	out.SeqIdx = snapshot.SeqIdx
-
-	if snapshot.Symbol != "" {
-		out.Label = snapshot.Symbol
-	}
-
-	if !snapshot.At.IsZero() {
-		out.At = snapshot.At
-	}
-
-	stepFloat := float64(stepCount)
-	decisionFloat := float64(reporter.decisions.Load())
-
-	out.SetMetric("steps", data.NewMetric(
-		"steps",
-		data.UnitCount,
-		data.TimescaleSession,
-		stepFloat,
-		math.Max(stepFloat, 1.0),
-	).Write(stepFloat))
-
-	out.SetMetric("decisions", data.NewMetric(
-		"decisions",
-		data.UnitCount,
-		data.TimescaleSession,
-		decisionFloat,
-		math.Max(decisionFloat, 1.0),
-	).Write(decisionFloat))
-
-	resolvedCount := float64(snapshot.Resolved)
-	resolvedScale := math.Max(resolvedCount, 1.0)
-
-	out.SetMetric("resolved", data.NewMetric(
-		"resolved",
-		data.UnitCount,
-		data.TimescaleSession,
-		resolvedCount,
-		resolvedScale,
-	).Write(resolvedCount))
-
-	out.SetMetric("edge_sample_count", data.NewMetric(
-		"edge_sample_count",
-		data.UnitCount,
-		data.TimescaleSession,
-		resolvedCount,
-		resolvedScale,
-	).Write(resolvedCount))
-
-	out.SetMetric("win_rate", data.NewMetric(
-		"win_rate",
-		data.UnitProbability,
-		data.TimescaleRollingWindow,
-		0.5,
-		0.5,
-	).Write(snapshot.WinRate))
-
-	out.SetMetric("accuracy", data.NewMetric(
-		"accuracy",
-		data.UnitProbability,
-		data.TimescaleRollingWindow,
-		0.5,
-		0.5,
-	).Write(snapshot.WinRate))
-
-	out.SetMetric("edge", data.NewMetric(
-		"edge",
-		data.UnitPercent,
-		data.TimescaleRollingWindow,
-		0.0,
-		0.01,
-	).Write(snapshot.Edge))
-
-	out.SetMetric("confidence", data.NewMetric(
-		"confidence",
-		data.UnitConfidence,
-		data.TimescaleRollingWindow,
-		0.5,
-		0.5,
-	).Write(snapshot.Confidence))
-
-	out.SetMetric("contrast", data.NewMetric(
-		"contrast",
-		data.UnitRatio,
-		data.TimescaleRollingWindow,
-		0.0,
-		1.0,
-	).Write(snapshot.Contrast))
-
-	out.SetMetric("stage_code", data.NewMetric(
-		"stage_code",
-		data.UnitCount,
-		data.TimescaleSession,
-		0.0,
-		1.0,
-	).Write(float64(snapshot.Stage)))
-
-	tradingValue := 0.0
-
-	if snapshot.Trading {
-		tradingValue = 1.0
-	}
-
-	out.SetMetric("trading", data.NewMetric(
-		"trading",
-		data.UnitProbability,
-		data.TimescaleInstantaneous,
-		0.5,
-		0.5,
-	).Write(tradingValue))
-
-	out.SetMetric("action", data.NewMetric(
-		"action",
-		data.UnitRatio,
-		data.TimescaleTick,
-		0.0,
-		1.0,
-	).Write(float64(snapshot.Action)))
-
-	out.SetMetric("frozen_prediction", data.NewMetric(
-		"frozen_prediction",
-		data.UnitRatio,
-		data.TimescaleTick,
-		0.0,
-		1.0,
-	).Write(float64(snapshot.Action)))
-
-	if snapshot.Clears {
-		out.SetMetric("delayed_target", data.NewMetric(
-			"delayed_target",
-			data.UnitRatio,
-			data.TimescaleTick,
-			0.0,
-			1.0,
-		).Write(1.0))
-	}
-
-	if !snapshot.Clears && snapshot.Action != 0 {
-		out.SetMetric("delayed_target", data.NewMetric(
-			"delayed_target",
-			data.UnitRatio,
-			data.TimescaleTick,
-			0.0,
-			1.0,
-		).Write(float64(snapshot.Action)))
-	}
-
-	if snapshot.Direction == "up" {
-		out.SetMetric("excursion_type", data.NewMetric(
-			"excursion_type",
-			data.UnitCount,
-			data.TimescaleEvent,
-			1.5,
-			0.5,
-		).Write(1.0))
-		out.SetProvenance("excursion_direction", "up")
-		out.SetMetadata("excursion_direction", "up")
-	}
-
-	if snapshot.Direction == "down" {
-		out.SetMetric("excursion_type", data.NewMetric(
-			"excursion_type",
-			data.UnitCount,
-			data.TimescaleEvent,
-			1.5,
-			0.5,
-		).Write(2.0))
-		out.SetProvenance("excursion_direction", "down")
-		out.SetMetadata("excursion_direction", "down")
-	}
-
-	seqSpan := math.Max(float64(snapshot.MarkC-snapshot.MarkA), 1.0)
-	seqCenter := float64(snapshot.MarkB)
-
-	out.SetMetric("mark_a", data.NewMetric(
-		"mark_a",
-		data.UnitCount,
-		data.TimescaleEvent,
-		seqCenter,
-		seqSpan,
-	).Write(float64(snapshot.MarkA)))
-
-	out.SetMetric("mark_b", data.NewMetric(
-		"mark_b",
-		data.UnitCount,
-		data.TimescaleEvent,
-		seqCenter,
-		seqSpan,
-	).Write(float64(snapshot.MarkB)))
-
-	out.SetMetric("mark_c", data.NewMetric(
-		"mark_c",
-		data.UnitCount,
-		data.TimescaleEvent,
-		seqCenter,
-		seqSpan,
-	).Write(float64(snapshot.MarkC)))
-
-	tokenLength := len(snapshot.RegionTokens)
-
-	if tokenLength == 0 {
-		tokenLength = len(snapshot.Tokens)
-	}
-
-	out.SetMetric("precursor_length", data.NewMetric(
-		"precursor_length",
-		data.UnitCount,
-		data.TimescaleEvent,
-		3.0,
-		3.0,
-	).Write(float64(tokenLength)))
-
-	if snapshot.Price > 0 {
-		out.SetMetric("price", data.NewMetric(
-			"price",
-			data.UnitPrice,
-			data.TimescaleTick,
-			snapshot.Price,
-			math.Max(snapshot.Price*0.001, 1e-6),
-		).Write(snapshot.Price))
-	}
-
-	excursionMag := snapshot.ExcursionMag
-	out.SetMetric("excursion_mag", data.NewMetric(
-		"excursion_mag",
-		data.UnitSpread,
-		data.TimescaleEvent,
-		excursionMag,
-		math.Max(excursionMag, 1e-6),
-	).Write(excursionMag))
-
-	out.SetProvenance("stage", snapshot.Stage.String())
 
 	blockerMessage := snapshot.Blocker
 
@@ -327,7 +87,11 @@ func (reporter *Reporter) Populate(
 		blockerMessage = "—"
 	}
 
-	out.SetProvenance("stage_blocker", blockerMessage)
+	entries = append(
+		entries,
+		data.StringEntry{Key: "stage", Value: snapshot.Stage.String()},
+		data.StringEntry{Key: "stage_blocker", Value: blockerMessage},
+	)
 
 	var tokenParts []string
 
@@ -340,7 +104,9 @@ func (reporter *Reporter) Populate(
 			if len(tokenBytes) > 1 {
 				if tokenBytes[0] == 'R' {
 					tokenParts = append(tokenParts, string(tokenBytes))
-				} else {
+				}
+
+				if tokenBytes[0] != 'R' {
 					tokenParts = append(tokenParts, fmt.Sprintf("0x%x", tokenBytes))
 				}
 			}
@@ -357,25 +123,194 @@ func (reporter *Reporter) Populate(
 
 	if len(tokenParts) > 0 {
 		serializedTokens := strings.Join(tokenParts, ",")
-		out.SetProvenance("precursor_tokens", serializedTokens)
-		out.SetMetadata("precursor_tokens", serializedTokens)
+		entries = append(entries, data.StringEntry{Key: "precursor_tokens", Value: serializedTokens})
 	}
 
 	if snapshot.MarkA > 0 {
-		out.SetMetadata("excursion_start", strconv.FormatInt(snapshot.MarkA, 10))
+		entries = append(entries, data.StringEntry{Key: "excursion_start", Value: strconv.FormatInt(snapshot.MarkA, 10)})
 	}
 
 	if snapshot.MarkB > 0 {
-		out.SetMetadata("excursion_ignition", strconv.FormatInt(snapshot.MarkB, 10))
+		entries = append(entries, data.StringEntry{Key: "excursion_ignition", Value: strconv.FormatInt(snapshot.MarkB, 10)})
 	}
 
 	if snapshot.MarkC > 0 {
-		out.SetMetadata("excursion_exit", strconv.FormatInt(snapshot.MarkC, 10))
+		entries = append(entries, data.StringEntry{Key: "excursion_exit", Value: strconv.FormatInt(snapshot.MarkC, 10)})
 	}
 
-	out.SetMetadata("excursion_clears", fmt.Sprintf("%t", snapshot.Clears))
+	entries = append(
+		entries,
+		data.StringEntry{Key: "excursion_clears", Value: fmt.Sprintf("%t", snapshot.Clears)},
+	)
 
 	if snapshot.Event != "" {
-		out.SetMetadata("excursion_event", snapshot.Event)
+		entries = append(entries, data.StringEntry{Key: "excursion_event", Value: snapshot.Event})
 	}
+
+	return entries
+}
+
+/*
+Metrics constructs the telemetry metrics for the report snapshot.
+*/
+func (reporter *Reporter) Metrics(snapshot ReportSnapshot) []data.Metric {
+	stepCount := reporter.steps.Add(1)
+
+	if snapshot.Action != 0 {
+		reporter.decisions.Add(1)
+	}
+
+	stepFloat := float64(stepCount)
+	decisionFloat := float64(reporter.decisions.Load())
+	resolvedCount := float64(snapshot.Resolved)
+
+	metrics := make([]data.Metric, 0, 24)
+
+	stepMetric := data.NewMetric("steps", stepFloat, data.UnitCount, data.TimescaleSession)
+	stepMetric.Standardized = stepFloat
+	metrics = append(metrics, stepMetric)
+
+	decisionMetric := data.NewMetric("decisions", decisionFloat, data.UnitCount, data.TimescaleSession)
+	decisionMetric.Standardized = decisionFloat
+	metrics = append(metrics, decisionMetric)
+
+	resolvedMetric := data.NewMetric("resolved", resolvedCount, data.UnitCount, data.TimescaleSession)
+	resolvedMetric.Standardized = resolvedCount
+	metrics = append(metrics, resolvedMetric)
+
+	edgeSampleMetric := data.NewMetric("edge_sample_count", resolvedCount, data.UnitCount, data.TimescaleSession)
+	edgeSampleMetric.Standardized = resolvedCount
+	metrics = append(metrics, edgeSampleMetric)
+
+	winRateMetric := data.NewMetric("win_rate", snapshot.WinRate, data.UnitProbability, data.TimescaleRollingWindow)
+	winRateMetric.Standardized = snapshot.WinRate
+	metrics = append(metrics, winRateMetric)
+
+	accuracyMetric := data.NewMetric("accuracy", snapshot.WinRate, data.UnitProbability, data.TimescaleRollingWindow)
+	accuracyMetric.Standardized = snapshot.WinRate
+	metrics = append(metrics, accuracyMetric)
+
+	edgeMetric := data.NewMetric("edge", snapshot.Edge, data.UnitPercent, data.TimescaleRollingWindow)
+	edgeMetric.Standardized = snapshot.Edge
+	metrics = append(metrics, edgeMetric)
+
+	confidenceMetric := data.NewMetric("confidence", snapshot.Confidence, data.UnitConfidence, data.TimescaleRollingWindow)
+	confidenceMetric.Standardized = snapshot.Confidence
+	metrics = append(metrics, confidenceMetric)
+
+	contrastMetric := data.NewMetric("contrast", snapshot.Contrast, data.UnitRatio, data.TimescaleRollingWindow)
+	contrastMetric.Standardized = snapshot.Contrast
+	metrics = append(metrics, contrastMetric)
+
+	stageMetric := data.NewMetric("stage_code", float64(snapshot.Stage), data.UnitCount, data.TimescaleSession)
+	stageMetric.Standardized = float64(snapshot.Stage)
+	metrics = append(metrics, stageMetric)
+
+	tradingValue := 0.0
+
+	if snapshot.Trading {
+		tradingValue = 1.0
+	}
+
+	tradingMetric := data.NewMetric("trading", tradingValue, data.UnitProbability, data.TimescaleInstantaneous)
+	tradingMetric.Standardized = tradingValue
+	metrics = append(metrics, tradingMetric)
+
+	actionMetric := data.NewMetric("action", float64(snapshot.Action), data.UnitRatio, data.TimescaleTick)
+	actionMetric.Standardized = float64(snapshot.Action)
+	metrics = append(metrics, actionMetric)
+
+	frozenMetric := data.NewMetric("frozen_prediction", float64(snapshot.Action), data.UnitRatio, data.TimescaleTick)
+	frozenMetric.Standardized = float64(snapshot.Action)
+	metrics = append(metrics, frozenMetric)
+
+	if snapshot.Clears {
+		delayedMetric := data.NewMetric("delayed_target", 1.0, data.UnitRatio, data.TimescaleTick)
+		delayedMetric.Standardized = 1.0
+		metrics = append(metrics, delayedMetric)
+	}
+
+	if !snapshot.Clears && snapshot.Action != 0 {
+		delayedMetric := data.NewMetric("delayed_target", float64(snapshot.Action), data.UnitRatio, data.TimescaleTick)
+		delayedMetric.Standardized = float64(snapshot.Action)
+		metrics = append(metrics, delayedMetric)
+	}
+
+	if snapshot.Direction == "up" {
+		excursionMetric := data.NewMetric("excursion_type", 1.0, data.UnitCount, data.TimescaleEvent)
+		excursionMetric.Standardized = 1.0
+		metrics = append(metrics, excursionMetric)
+	}
+
+	if snapshot.Direction == "down" {
+		excursionMetric := data.NewMetric("excursion_type", 2.0, data.UnitCount, data.TimescaleEvent)
+		excursionMetric.Standardized = 2.0
+		metrics = append(metrics, excursionMetric)
+	}
+
+	markAMetric := data.NewMetric("mark_a", float64(snapshot.MarkA), data.UnitCount, data.TimescaleEvent)
+	markAMetric.Standardized = float64(snapshot.MarkA)
+	metrics = append(metrics, markAMetric)
+
+	markBMetric := data.NewMetric("mark_b", float64(snapshot.MarkB), data.UnitCount, data.TimescaleEvent)
+	markBMetric.Standardized = float64(snapshot.MarkB)
+	metrics = append(metrics, markBMetric)
+
+	markCMetric := data.NewMetric("mark_c", float64(snapshot.MarkC), data.UnitCount, data.TimescaleEvent)
+	markCMetric.Standardized = float64(snapshot.MarkC)
+	metrics = append(metrics, markCMetric)
+
+	tokenLength := len(snapshot.RegionTokens)
+
+	if tokenLength == 0 {
+		tokenLength = len(snapshot.Tokens)
+	}
+
+	precursorMetric := data.NewMetric("precursor_length", float64(tokenLength), data.UnitCount, data.TimescaleEvent)
+	precursorMetric.Standardized = float64(tokenLength)
+	metrics = append(metrics, precursorMetric)
+
+	if snapshot.Price > 0 {
+		priceMetric := data.NewMetric("price", snapshot.Price, data.UnitPrice, data.TimescaleTick)
+		priceMetric.Standardized = snapshot.Price
+		metrics = append(metrics, priceMetric)
+	}
+
+	magMetric := data.NewMetric("excursion_mag", snapshot.ExcursionMag, data.UnitSpread, data.TimescaleEvent)
+	magMetric.Standardized = snapshot.ExcursionMag
+	metrics = append(metrics, magMetric)
+
+	return metrics
+}
+
+/*
+Populate writes all canonical learning and evaluation metrics onto the measurement,
+finalizing it into WORM locked state.
+*/
+func (reporter *Reporter) Populate(
+	out *data.Measurement,
+	snapshot ReportSnapshot,
+	extraMetrics ...data.Metric,
+) *data.Measurement {
+	if out == nil {
+		return nil
+	}
+
+	out.SeqIdx = snapshot.SeqIdx
+
+	if snapshot.Symbol != "" {
+		out.Label = snapshot.Symbol
+	}
+
+	if !snapshot.At.IsZero() {
+		out.At = snapshot.At
+	}
+
+	metrics := reporter.Metrics(snapshot)
+
+	if len(extraMetrics) > 0 {
+		metrics = append(metrics, extraMetrics...)
+	}
+
+	return out.Write(metrics...)
 }

@@ -99,7 +99,7 @@ func NewWorkspace(
 
 	for joinIdx := 0; joinIdx < numJoins; joinIdx++ {
 		workspace.joins[joinIdx] = make([]*data.Measurement, capacity)
-		workspace.joinArenas[joinIdx] = data.NewArenaOwner(capacity)
+		workspace.joinArenas[joinIdx] = data.NewArenaOwner("join", capacity)
 		workspace.joinArenas[joinIdx].SetWindow(capacity)
 	}
 
@@ -178,12 +178,6 @@ func (workspace *Workspace) Step(payload *data.Measurement) *data.Measurement {
 
 	seq := workspace.channel.Reserve(1)
 
-	if payload != nil {
-		payload.SetSeqIdx(workspace.sequence.Add(1))
-		workspace.tick.Store(payload.Tick)
-		workspace.at.Store(payload.At.UnixNano())
-	}
-
 	workspace.buffer[seq&workspace.mask] = payload
 	workspace.channel.Commit(seq, seq)
 	return payload
@@ -253,26 +247,15 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 			joinArena.Advance(seq)
 		}
 
-		join := joinArena.NewMeasurement("runtime:join")
-
-		if ingress != nil {
-			join.Epoch = ingress.Epoch
-			join.Tick = ingress.Tick
-			join.Label = ingress.Label
-			join.SeqIdx = ingress.SeqIdx
-			join.At = ingress.At
-			join.From = ingress.From
-		}
-
 		producers := jh.workspace.stages[jh.stageIdx]
 		var peers []*data.Measurement
 
 		if jh.stageIdx > 0 {
 			prevJoin := jh.workspace.joins[jh.stageIdx-1][slot]
 
-			if prevJoin != nil && len(prevJoin.Peers) > 0 {
-				peers = make([]*data.Measurement, 0, len(prevJoin.Peers)+len(producers))
-				peers = append(peers, prevJoin.Peers...)
+			if prevJoin != nil && len(prevJoin.Peers()) > 0 {
+				peers = make([]*data.Measurement, 0, len(prevJoin.Peers())+len(producers))
+				peers = append(peers, prevJoin.Peers()...)
 			}
 		}
 
@@ -286,7 +269,15 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 			}
 		}
 
-		join.Peers = peers
+		join := joinArena.NewMeasurement(
+			ingress.Epoch,
+			ingress.Label,
+			ingress.Source,
+			ingress.SeqIdx,
+			ingress.Tick,
+			peers,
+		)
+
 		jh.workspace.joins[jh.stageIdx][slot] = join
 	}
 }

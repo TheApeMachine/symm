@@ -20,15 +20,7 @@ const (
 	SourceCausal      SourceType = "causal"
 	SourceCognition   SourceType = "cognition"
 	SourceGraph       SourceType = "graph"
-	SourceAllocator   SourceType = "allocator"
-	SourceArbiter     SourceType = "arbiter"
-	SourceEvaluator   SourceType = "evaluator"
-	SourcePlanner     SourceType = "planner"
-	SourceTrader      SourceType = "trader"
-	SourceEquity      SourceType = "equity"
-	SourceRegulator   SourceType = "regulator"
 	SourceDesk        SourceType = "desk"
-	SourceAudit       SourceType = "audit"
 )
 
 /*

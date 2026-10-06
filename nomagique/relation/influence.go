@@ -1,910 +1,535 @@
 package relation
 
 import (
-	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"math"
-	"sort"
-	"time"
+	"strconv"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
-FitStatus is the explicit state of one Relation estimate. Invalid is not
-zero: every failure state is distinct and observable.
-*/
-type FitStatus uint8
+Influence measures directed temporal predictive contribution of Source on
+Target beyond Target's own history and the explicit Controls. It never infers
+roles from names and never claims causality.
 
-const (
-	// FitOK means the estimate is defined.
-	FitOK FitStatus = iota
-	// FitNoSourceHistory means the Source coordinate has no retained observations.
-	FitNoSourceHistory
-	// FitNoTargetHistory means the Target coordinate has no retained observations.
-	FitNoTargetHistory
-	// FitControlUnavailable means an explicit control coordinate has no retained observations.
-	FitControlUnavailable
-	// FitNoPositiveLag means no positive candidate lag is resolvable from the observed cadence.
-	FitNoPositiveLag
-	// FitNoAlignedRows means no target observation could be aligned with all predictors.
-	FitNoAlignedRows
-	// FitInsufficientSupport means too few aligned rows for the parameter count.
-	FitInsufficientSupport
-	// FitRankDeficient means the design matrix lacks full column rank.
-	FitRankDeficient
-	// FitResidualVarianceUnavailable means no defined prequential residual step exists.
-	FitResidualVarianceUnavailable
-)
+Each arrival is **data.Adapter carrying the explicit roles:
 
-/*
-String renders the fit status for logs and telemetry. Enum rendering follows
-house style (statistic and data payloads carry their own String).
-*/
-func (status FitStatus) String() string {
-	switch status {
-	case FitOK:
-		return "ok"
-	case FitNoSourceHistory:
-		return "no_source_history"
-	case FitNoTargetHistory:
-		return "no_target_history"
-	case FitControlUnavailable:
-		return "control_unavailable"
-	case FitNoPositiveLag:
-		return "no_positive_lag"
-	case FitNoAlignedRows:
-		return "no_aligned_rows"
-	case FitInsufficientSupport:
-		return "insufficient_support"
-	case FitRankDeficient:
-		return "rank_deficient"
-	case FitResidualVarianceUnavailable:
-		return "residual_variance_unavailable"
-	default:
-		return "unknown"
-	}
-}
+	text    "source", "target", "control.<i>"   coordinate keys
+	number  "controls"                          control count
+	number  "control.<i>.lag"                   control lag (ns); <= 0 aligns at the source lag
+	number  "min_lag", "max_lag"                candidate lag domain (ns); 0 derives it
 
-/*
-LagPoint is one point of the lag-response surface: the predictive gain
-measured at one candidate lag. Gains that are mathematically undefined are
-absent, not zero.
-*/
-type LagPoint struct {
-	Lag            time.Duration
-	PredictiveGain *float64
-	DefinedSteps   int
-}
+The history is read from the ObservationStore. The evaluation is
+causal/prequential: each target is predicted by models fitted strictly on
+earlier rows (restricted: intercept, target past, controls; full: plus
+source), and the best candidate lag ranks by defined predictive gain, then
+defined steps, then the smaller lag.
 
-/*
-Control is one explicit control coordinate with its own alignment lag. A
-zero Lag aligns the control at the same cutoff as the Source (t - sourceLag).
-Controls come from an explicit RelationPlan or CausalSchema; the estimator
-never invents semantic controls.
-*/
-type Control struct {
-	Coordinate Coordinate
-	Lag        time.Duration
-}
+It publishes on the same adapter, then yields it:
 
-/*
-InfluenceResult is the complete Relation output contract. Mathematically
-undefined fields are nil pointers; undefined is never zero. Zero-valued
-coefficients and zero PredictiveGain are valid measurements and remain
-representable.
-*/
-type InfluenceResult struct {
-	Source           Coordinate
-	Target           Coordinate
-	Controls         []Control
-	From             time.Time
-	At               time.Time
-	SourceObservedAt time.Time
-	TargetObservedAt time.Time
-	SourceAge        time.Duration
+	status                       one of the Fit* constants
+	lag, lag_resolution, lag_search_span, lag_support_bound   (ns)
+	lag_candidate_count, defined_steps, effective_sample_count, maturity
+	coefficient, coefficient_variance, coefficient_snr
+	restricted_residual_variance, full_residual_variance, predictive_gain
+	from, at, source_observed_at, target_observed_at, source_age   (ns)
+	lag_surface.<i>, lag_surface.<i>.gain, lag_surface.<i>.steps
+	text estimator_version
 
-	Lag           time.Duration
-	LagResolution time.Duration
-	LagSearchSpan time.Duration
-	// LagSupportBound is the largest candidate lag the retained history can
-	// support, derived from the target observation count, the parameter
-	// count, and the observed cadence. It is provenance, not a fixed
-	// constant.
-	LagSupportBound   time.Duration
-	LagCandidateCount int
-	LagSurface        []LagPoint
-
-	Coefficient                *float64
-	CoefficientVariance        *float64
-	CoefficientSNR             *float64
-	RestrictedResidualVariance *float64
-	FullResidualVariance       *float64
-	PredictiveGain             *float64
-	EffectiveSampleCount       float64
-	Maturity                   float64
-
-	EstimatorVersion string
-	Epoch            uint64
-	Status           FitStatus
-	definedSteps     int
-}
-
-/*
-Defined reports whether the estimate reached an OK state.
-*/
-func (result *InfluenceResult) Defined() bool {
-	return result != nil && result.Status == FitOK
-}
-
-/*
-CoefficientDefined reports whether the coefficient and its uncertainty are
-identifiable.
-*/
-func (result *InfluenceResult) CoefficientDefined() bool {
-	return result != nil && result.Coefficient != nil &&
-		result.CoefficientVariance != nil && result.CoefficientSNR != nil
-}
-
-/*
-InfluenceHistory carries the read-locked resident ring views the estimate
-walks: the Source ring, the Target ring, and one ring per explicit control.
-An unregistered coordinate yields a zero view, whose length is zero; the
-estimator reports the matching unavailable status rather than inventing
-history.
-*/
-type InfluenceHistory struct {
-	Source   RingView
-	Target   RingView
-	Controls []RingView
-}
-
-/*
-InfluenceRequest is the explicit estimator input: exact Source, Target, and
-Control coordinates, the resident ring views to walk, and the candidate lag
-domain.
-*/
-type InfluenceRequest struct {
-	Source   Coordinate
-	Target   Coordinate
-	Controls []Control
-	History  InfluenceHistory
-	Lag      LagDomain
-}
-
-/*
-Influence measures directed temporal predictive contribution between
-coordinates. It never infers roles from names; every role is explicit in the
-request. It never claims causality.
-
-The evaluation is causal/prequential: each target is predicted by a model
-fitted strictly on earlier observations. Retained history is read in place
-through the request's ring views — never copied into temporary slices — and
-every found view is closed when the estimate completes.
+Mathematically undefined numbers are NaN; undefined is never zero. Publish
+into a fresh adapter per estimate so nothing stale survives.
 */
 type Influence struct {
-	err     error
-	version string
-	out     *InfluenceResult
+	*core.PrimitiveError
+	version   string
+	store     core.Primitive
+	align     core.Primitive
+	snr       core.Primitive
+	median    core.Primitive
+	roles     data.Map[string]
+	domain    data.Map[string]
+	target    []float64
+	source    []float64
+	controls  [][]float64
+	lags      []float64
+	series    [][]float64
+	gaps      []float64
+	full      []float64
+	restrict  []float64
+	fit       []float64
+	residuals [2][]float64
+	keys      []string
+	candidate map[string]float64
+	best      map[string]float64
 }
 
 /*
-NewInfluence builds the estimator Primitive. The version string is provenance
-recorded in every result; an empty version is recorded as a domain failure
-and every stream over the primitive yields nothing.
+NewInfluence builds the estimator over store. The version string is
+provenance published with every estimate; an empty version or a missing store
+is a domain failure and every run yields nothing.
 */
-func NewInfluence(version string) core.Primitive {
+func NewInfluence(version string, store core.Primitive) *Influence {
+	op := &Influence{
+		PrimitiveError: core.NewPrimitiveError(),
+		version:        version,
+		store:          store,
+		align:          NewAlign(),
+		snr:            statistic.NewCoefficientSNR(),
+		median:         statistic.NewMedian(),
+		roles:          data.NewLiteral("source", "target"),
+		domain:         data.NewMap("controls", "controls", "min_lag", "min_lag", "max_lag", "max_lag"),
+		keys: []string{
+			"lag", "lag_resolution", "lag_search_span", "lag_support_bound",
+			"lag_candidate_count", "defined_steps", "effective_sample_count", "maturity",
+			"coefficient", "coefficient_variance", "coefficient_snr",
+			"restricted_residual_variance", "full_residual_variance", "predictive_gain",
+			"from", "at", "source_observed_at", "target_observed_at", "source_age",
+		},
+		candidate: make(map[string]float64),
+		best:      make(map[string]float64),
+	}
+
 	if version == "" {
-		return &Influence{
-			err: fmt.Errorf(
-				"%w: relation: influence estimator requires a version",
-				core.ErrDomain,
-			),
-		}
+		op.Error(fmt.Errorf("%w: relation: influence estimator requires a version", core.ErrDomain))
 	}
 
-	return &Influence{version: version}
+	if store == nil {
+		op.Error(fmt.Errorf("%w: relation: influence estimator requires a store", core.ErrDomain))
+	}
+
+	return op
 }
 
-/*
-Next receives *InfluenceRequest payloads and yields a *InfluenceResult for
-each: an unavailable result when the request's history cannot support an
-estimate, otherwise the best prequential candidate-lag estimate.
-*/
 func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	if op.err != nil {
-		return func(yield func(unsafe.Pointer) bool) {}
-	}
-
 	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			request := (*InfluenceRequest)(arriving)
-			op.out = op.estimate(request)
+		if op.Error() != nil {
+			return
+		}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+		for arriving := range in {
+			if arriving == nil || *(**data.Adapter)(arriving) == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			adapter := *(**data.Adapter)(arriving)
+			var source, target string
+			var count, minLag, maxLag float64
+
+			for pointer := range adapter.Next(data.NewValue(op.roles)) {
+				roles := *(*data.Map[string])(pointer)
+				source, target = roles.Values["source"], roles.Values["target"]
+			}
+
+			for pointer := range adapter.Next(data.NewValue(op.domain)) {
+				domain := *(*data.Map[float64])(pointer)
+				count, minLag, maxLag = domain.Values["controls"], domain.Values["min_lag"], domain.Values["max_lag"]
+			}
+
+			controls := int(count)
+			controlKeys := make([]string, controls)
+			controlLags := make([]float64, controls)
+
+			if controls > 0 {
+				keyRequest, lagRequest := data.NewLiteral(), data.NewMap()
+
+				for index := range controls {
+					name := "control." + strconv.Itoa(index)
+					keyRequest.Values[name] = name
+					lagRequest.Values[name+".lag"] = name + ".lag"
+				}
+
+				for pointer := range adapter.Next(data.NewValue(keyRequest)) {
+					keys := *(*data.Map[string])(pointer)
+
+					for index := range controls {
+						controlKeys[index] = keys.Values["control."+strconv.Itoa(index)]
+					}
+				}
+
+				for pointer := range adapter.Next(data.NewValue(lagRequest)) {
+					lags := *(*data.Map[float64])(pointer)
+
+					for index := range controls {
+						controlLags[index] = lags.Values["control."+strconv.Itoa(index)+".lag"]
+					}
+				}
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			for len(op.controls) < controls {
+				op.controls = append(op.controls, nil)
+			}
+
+			op.target, op.source = op.target[:0], op.source[:0]
+
+			for index := range controls {
+				op.controls[index] = op.controls[index][:0]
+			}
+
+			for pointer := range op.store.Next(nil) {
+				windows := *(*map[string][]float64)(pointer)
+				op.target = append(op.target, windows[target]...)
+				op.source = append(op.source, windows[source]...)
+
+				for index, key := range controlKeys {
+					op.controls[index] = append(op.controls[index], windows[key]...)
+				}
+			}
+
+			if err := op.store.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			published := data.NewOutputMap()
+
+			for _, key := range op.keys {
+				published.Values[key] = math.NaN()
+			}
+
+			status := FitOK
+
+		estimate:
+			for range 1 {
+				if len(op.source) == 0 {
+					status = FitNoSourceHistory
+					break estimate
+				}
+
+				if len(op.target) == 0 {
+					status = FitNoTargetHistory
+					break estimate
+				}
+
+				for index := range controls {
+					if len(op.controls[index]) == 0 {
+						status = FitControlUnavailable
+						break estimate
+					}
+				}
+
+				// The lag resolution is the slower median positive cadence of
+				// Source and Target; fixed bar counts are never truth.
+				cadences := [2]float64{}
+
+				for side, history := range [2][]float64{op.source, op.target} {
+					op.gaps = op.gaps[:0]
+
+					for index := 2; index+1 < len(history); index += 2 {
+						if gap := history[index] - history[index-2]; gap > 0 {
+							op.gaps = append(op.gaps, gap)
+						}
+					}
+
+					if len(op.gaps) == 0 {
+						continue
+					}
+
+					for pointer := range op.median.Next(data.NewValue(op.gaps...)) {
+						cadences[side] = *(*float64)(pointer)
+					}
+
+					if err := op.median.Error(); err != nil {
+						op.Error(err)
+						return
+					}
+				}
+
+				resolution := max(cadences[0], cadences[1])
+
+				if resolution <= 0 {
+					status = FitNoPositiveLag
+					break estimate
+				}
+
+				searchSpan := op.target[len(op.target)-2] - op.source[0]
+
+				if searchSpan <= 0 {
+					status = FitNoPositiveLag
+					break estimate
+				}
+
+				// Each resolution step of lag consumes at least one target
+				// observation from the alignment, and a fit needs more rows
+				// than parameters: the bound is derived provenance.
+				restrictedParameters := 2 + controls
+				fullParameters := 3 + controls
+				supportBound := float64(max(0, len(op.target)/2-(4+controls))) * resolution
+
+				if maxLag <= 0 || maxLag > searchSpan {
+					maxLag = searchSpan
+				}
+
+				maxLag = min(maxLag, supportBound)
+				startLag := max(minLag, resolution)
+				candidates := 0
+				found := false
+
+				// series: lags, target, target past, controls..., source.
+				op.series = append(op.series[:0], nil, op.target, op.target)
+				op.series = append(op.series, op.controls[:controls]...)
+				op.series = append(op.series, op.source)
+
+				for lag := startLag; startLag > 0 && lag <= maxLag; lag += resolution {
+					surface := "lag_surface." + strconv.Itoa(candidates)
+					published.Values[surface] = lag
+					published.Values[surface+".gain"] = math.NaN()
+					published.Values[surface+".steps"] = 0
+					candidates++
+
+					op.lags = append(op.lags[:0], lag)
+
+					for _, controlLag := range controlLags {
+						if controlLag > 0 {
+							op.lags = append(op.lags, controlLag)
+							continue
+						}
+
+						op.lags = append(op.lags, lag)
+					}
+
+					op.lags = append(op.lags, lag)
+					op.series[0] = op.lags
+					var rows [][]float64
+
+					for pointer := range op.align.Next(data.NewValue(op.series)) {
+						rows = *(*[][]float64)(pointer)
+					}
+
+					if err := op.align.Error(); err != nil {
+						op.Error(err)
+						return
+					}
+
+					if len(rows) == 0 {
+						continue
+					}
+
+					restricted := statistic.NewRegressionAccumulator(restrictedParameters)
+					full := statistic.NewRegressionAccumulator(fullParameters)
+					op.residuals[0], op.residuals[1] = op.residuals[0][:0], op.residuals[1][:0]
+					rankDeficient := false
+
+					for _, row := range rows {
+						// Design row: intercept, target past, controls..., source, target.
+						op.full = append(op.full[:0], 1, row[3])
+
+						for index := range controls {
+							op.full = append(op.full, row[5+2*index])
+						}
+
+						op.restrict = append(append(op.restrict[:0], op.full...), row[1])
+						op.full = append(op.full, row[len(row)-1], row[1])
+
+						// Prequential step: the reading predicts with the model
+						// fitted strictly on earlier rows, then incorporates
+						// the row, so it never trains the model that scored it.
+						var restrictedReading, fullReading []float64
+
+						for pointer := range restricted.Next(data.NewValue(op.restrict)) {
+							restrictedReading = *(*[]float64)(pointer)
+						}
+
+						if err := restricted.Error(); err != nil {
+							op.Error(err)
+							return
+						}
+
+						for pointer := range full.Next(data.NewValue(op.full)) {
+							fullReading = *(*[]float64)(pointer)
+						}
+
+						if err := full.Error(); err != nil {
+							op.Error(err)
+							return
+						}
+
+						// A singular design with more rows than parameters is
+						// rank deficiency; warm-up rows are merely undefined.
+						if int(restrictedReading[3])-1 > restrictedParameters && restrictedReading[1] != 1 {
+							rankDeficient = true
+						}
+
+						if int(fullReading[3])-1 > fullParameters && fullReading[1] != 1 {
+							rankDeficient = true
+						}
+
+						if restrictedReading[1] == 1 && fullReading[1] == 1 {
+							op.residuals[0] = append(op.residuals[0], row[1]-restrictedReading[0])
+							op.residuals[1] = append(op.residuals[1], row[1]-fullReading[0])
+						}
+
+						// The full accumulator's reading after the last row is
+						// the final full fit over every aligned row.
+						op.fit = append(op.fit[:0], fullReading...)
+					}
+
+					clear(op.candidate)
+
+					for _, key := range op.keys {
+						op.candidate[key] = math.NaN()
+					}
+
+					steps := float64(len(op.residuals[0]))
+					op.candidate["status"] = FitOK
+					op.candidate["lag"] = lag
+					op.candidate["defined_steps"] = steps
+					published.Values[surface+".steps"] = steps
+
+				fit:
+					for range 1 {
+						if rankDeficient {
+							op.candidate["status"] = FitRankDeficient
+							break fit
+						}
+
+						if len(op.residuals[0]) == 0 {
+							op.candidate["status"] = FitResidualVarianceUnavailable
+							break fit
+						}
+
+						variances := [2]float64{}
+
+						for side, residuals := range op.residuals {
+							for _, residual := range residuals {
+								variances[side] += residual * residual
+							}
+
+							variances[side] /= float64(len(residuals))
+						}
+
+						op.candidate["restricted_residual_variance"] = variances[0]
+						op.candidate["full_residual_variance"] = variances[1]
+
+						// log(Vr / Vf) is defined only for positive finite
+						// variances; every degenerate case is undefined.
+						if variances[0] > 0 && variances[1] > 0 &&
+							!math.IsInf(variances[0], 0) && !math.IsInf(variances[1], 0) {
+							op.candidate["predictive_gain"] = math.Log(variances[0] / variances[1])
+							published.Values[surface+".gain"] = op.candidate["predictive_gain"]
+						}
+
+						last := rows[len(rows)-1]
+						op.candidate["from"] = rows[0][0]
+						op.candidate["at"] = last[0]
+						op.candidate["target_observed_at"] = last[0]
+						op.candidate["source_observed_at"] = last[len(last)-2]
+						op.candidate["source_age"] = last[0] - last[len(last)-2]
+
+						// Every aligned row carries unit weight, so the Kish
+						// effective sample size is the aligned row count.
+						effective := float64(len(rows))
+						op.candidate["effective_sample_count"] = effective
+						op.candidate["maturity"] = 0
+
+						if len(rows) > 1 {
+							op.candidate["maturity"] = 1 - 1/effective
+						}
+
+						if len(op.fit) < 8 || op.fit[2] != 1 {
+							op.candidate["status"] = FitRankDeficient
+
+							if len(rows) <= restrictedParameters {
+								op.candidate["status"] = FitInsufficientSupport
+							}
+
+							break fit
+						}
+
+						column := restrictedParameters
+						parameters := int(op.fit[4])
+						coefficient := op.fit[8+column]
+						op.candidate["coefficient"] = coefficient
+
+						if column < parameters && op.fit[7] == 1 {
+							variance := op.fit[8+parameters+column]
+
+							if !math.IsNaN(variance) && variance > 0 {
+								op.candidate["coefficient_variance"] = variance
+
+								for pointer := range op.snr.Next(data.NewValue([2]float64{coefficient, variance})) {
+									op.candidate["coefficient_snr"] = *(*float64)(pointer)
+								}
+
+								if err := op.snr.Error(); err != nil {
+									op.Error(err)
+									return
+								}
+							}
+						}
+					}
+
+					// Rank by defined gain, then defined steps, then smaller lag.
+					better := !found
+
+					if found {
+						candidateGain, bestGain := op.candidate["predictive_gain"], op.best["predictive_gain"]
+						candidateDefined, bestDefined := !math.IsNaN(candidateGain), !math.IsNaN(bestGain)
+
+						switch {
+						case candidateDefined != bestDefined:
+							better = candidateDefined
+						case candidateDefined && candidateGain != bestGain:
+							better = candidateGain > bestGain
+						case op.candidate["defined_steps"] != op.best["defined_steps"]:
+							better = op.candidate["defined_steps"] > op.best["defined_steps"]
+						default:
+							better = op.candidate["lag"] < op.best["lag"]
+						}
+					}
+
+					if better {
+						clear(op.best)
+						maps.Copy(op.best, op.candidate)
+						found = true
+					}
+				}
+
+				if !found {
+					status = FitNoPositiveLag
+					break estimate
+				}
+
+				for key, value := range op.best {
+					published.Values[key] = value
+				}
+
+				status = int(op.best["status"])
+				published.Values["lag_resolution"] = resolution
+				published.Values["lag_search_span"] = searchSpan
+				published.Values["lag_support_bound"] = supportBound
+				published.Values["lag_candidate_count"] = float64(candidates)
+			}
+
+			published.Values["status"] = float64(status)
+			version := data.NewTextMap()
+			version.Values["estimator_version"] = op.version
+
+			for range adapter.Next(data.NewValue(published)) {
+			}
+
+			for range adapter.Next(data.NewValue(version)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
-}
-
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Influence) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
-}
-
-/*
-estimate measures the Influence of Source on Target under the explicit
-controls and candidate lag domain, using only the request's resident ring
-views. The evaluation is causal/prequential: each target is predicted by a
-model fitted strictly on earlier observations.
-*/
-func (op *Influence) estimate(request *InfluenceRequest) *InfluenceResult {
-	sourceView := request.History.Source
-	targetView := request.History.Target
-	controlViews := request.History.Controls
-
-	defer func() {
-		sourceView.Close()
-		targetView.Close()
-
-		for _, controlView := range controlViews {
-			controlView.Close()
-		}
-	}()
-
-	if sourceView.Len() == 0 {
-		return op.unavailable(request, FitNoSourceHistory)
-	}
-
-	if targetView.Len() == 0 {
-		return op.unavailable(request, FitNoTargetHistory)
-	}
-
-	for _, controlView := range controlViews {
-		if controlView.Len() == 0 {
-			return op.unavailable(request, FitControlUnavailable)
-		}
-	}
-
-	resolution, resolvable := deriveLagResolution(sourceView, targetView)
-
-	if !resolvable || resolution <= 0 {
-		return op.unavailable(request, FitNoPositiveLag)
-	}
-
-	searchSpan := targetView.At(targetView.Len() - 1).At.Sub(sourceView.At(0).At)
-
-	if searchSpan <= 0 {
-		return op.unavailable(request, FitNoPositiveLag)
-	}
-
-	// The retained history bounds the searchable lag domain: each
-	// resolution step of lag consumes at least one target observation from
-	// the alignment, and a fit needs more rows than parameters. The derived
-	// bound is provenance, not a fixed constant.
-	minRows := 4 + len(request.Controls)
-	supportLagBound := time.Duration(max(0, targetView.Len()-minRows)) * resolution
-
-	maxLag := request.Lag.MaxLag
-
-	if maxLag <= 0 || maxLag > searchSpan {
-		maxLag = searchSpan
-	}
-
-	if maxLag > supportLagBound {
-		maxLag = supportLagBound
-	}
-
-	startLag := request.Lag.MinLag
-
-	if startLag < resolution {
-		startLag = resolution
-	}
-
-	candidates := lagCandidates(startLag, maxLag, resolution)
-	best := (*InfluenceResult)(nil)
-	surface := make([]LagPoint, 0, len(candidates))
-
-	// scratch is built once per estimate and reused across every candidate
-	// lag: the residual/predictor/cursor/aligned buffers are reused slices.
-	// A candidate search routinely walks tens of lags per estimate cycle
-	// across hundreds of candidate pairs per tick, so a fresh set of
-	// buffers per lag was a direct multiplier on process-wide allocation
-	// pressure.
-	scratch := newEstimateScratch(2+len(request.Controls), targetView.Len())
-
-	for _, lag := range candidates {
-		candidate := op.estimateAtLag(
-			request, sourceView, targetView, controlViews, lag, resolution, searchSpan, scratch,
-		)
-
-		if candidate == nil {
-			surface = append(surface, LagPoint{Lag: lag})
-			continue
-		}
-
-		surface = append(surface, LagPoint{
-			Lag:            lag,
-			PredictiveGain: candidate.PredictiveGain,
-			DefinedSteps:   candidate.definedSteps,
-		})
-
-		if betterRelation(candidate, best) {
-			best = candidate
-		}
-	}
-
-	if best == nil {
-		return op.unavailable(request, FitNoPositiveLag)
-	}
-
-	best.LagSurface = surface
-	best.LagCandidateCount = len(candidates)
-	best.LagSupportBound = supportLagBound
-	best.EstimatorVersion = op.version
-	return best
-}
-
-/*
-estimateScratch holds every reusable buffer estimateAtLag/fullFitViews need
-across a single estimate's candidate-lag search: the residual and predictor
-slices, and the per-series cursor/aligned-observation buffers the aligned
-walk scans with. seriesCount is 2 + len(Controls) (target-past, source, one
-slot per control); parameterCount is fullParameters (restrictedParameters +
-1) since that upper-bounds the predictor row.
-*/
-type estimateScratch struct {
-	restrictedResiduals []float64
-	fullResiduals       []float64
-	predictors          []float64
-	fullFitPredictors   []float64
-	row                 []float64
-	cursors             []int
-	aligned             []Observation
-}
-
-/*
-newEstimateScratch allocates one estimateScratch sized for seriesCount
-series (2 + len(Controls)) and an expected row capacity, so the residual
-slices rarely need to grow during the search.
-*/
-func newEstimateScratch(seriesCount int, expectedRows int) *estimateScratch {
-	fullParameters := seriesCount + 1
-
-	return &estimateScratch{
-		restrictedResiduals: make([]float64, 0, expectedRows),
-		fullResiduals:       make([]float64, 0, expectedRows),
-		predictors:          make([]float64, fullParameters),
-		fullFitPredictors:   make([]float64, fullParameters+1),
-		row:                 make([]float64, 0, fullParameters+1),
-		cursors:             make([]int, seriesCount),
-		aligned:             make([]Observation, seriesCount),
-	}
-}
-
-/*
-singlePointer presents one payload pointer as a one-element run.
-*/
-func singlePointer(value unsafe.Pointer) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		yield(value)
-	}
-}
-
-/*
-foldRegressionRow drives one design row through a regression accumulator
-Primitive and reports the reading the row produced.
-*/
-func foldRegressionRow(
-	accumulator core.Primitive,
-	row *[]float64,
-) ([]float64, bool) {
-	var reading []float64
-
-	for out := range accumulator.Next(singlePointer(unsafe.Pointer(row))) {
-		reading = *(*[]float64)(out)
-	}
-
-	if err := accumulator.Error(); err != nil {
-		return reading, false
-	}
-
-	return reading, true
-}
-
-/*
-estimateAtLag runs the prequential restricted/full comparison at one lag. It
-walks the resident target ring exactly twice (the prequential pass and the
-final full fit), aligning predictors with per-series cursors on the resident
-source/control/target rings — no history copy and no aligned-row
-materialization. scratch's buffers are reused across every candidate lag in
-the enclosing search; the accumulators are fresh Primitives per lag.
-*/
-func (op *Influence) estimateAtLag(
-	request *InfluenceRequest,
-	sourceView RingView,
-	targetView RingView,
-	controlViews []RingView,
-	lag time.Duration,
-	resolution time.Duration,
-	searchSpan time.Duration,
-	scratch *estimateScratch,
-) *InfluenceResult {
-	restrictedParameters := 2 + len(request.Controls)
-	fullParameters := 3 + len(request.Controls)
-
-	restrictedAccumulator := statistic.NewRegressionAccumulator(restrictedParameters)
-	fullAccumulator := statistic.NewRegressionAccumulator(fullParameters)
-
-	restrictedResiduals := scratch.restrictedResiduals[:0]
-	fullResiduals := scratch.fullResiduals[:0]
-	rankDeficient := false
-	rows := 0
-	firstTarget := time.Time{}
-	lastTarget := time.Time{}
-	lastSource := time.Time{}
-
-	// Reusable design row: [intercept, targetPast, controls..., source]. It
-	// is reused across rows and across lags; no per-row or per-lag slice is
-	// allocated.
-	predictors := scratch.predictors
-
-	walkAligned(targetView, sourceView, controlViews, request.Controls, lag, scratch.cursors, scratch.aligned, func(target Observation, aligned []Observation) bool {
-		rows++
-
-		if rows == 1 {
-			firstTarget = target.At
-		}
-
-		lastTarget = target.At
-		lastSource = aligned[len(aligned)-1].At
-
-		predictors[0] = 1
-		predictors[1] = aligned[0].Raw
-
-		for controlIndex := 0; controlIndex < len(request.Controls); controlIndex++ {
-			predictors[2+controlIndex] = aligned[1+controlIndex].Raw
-		}
-
-		predictors[restrictedParameters] = aligned[len(aligned)-1].Raw
-
-		// Prequential step: predict with models fitted strictly on earlier
-		// rows, then incorporate the current row so it never trains the
-		// model that scored it. The prediction runs on the recursive
-		// least-squares state (O(p²), zero allocation) seeded from the exact
-		// normal equations at the first non-singular design.
-		restrictedRow := append(append(scratch.row[:0], predictors[:restrictedParameters]...), target.Raw)
-		restrictedReading, restrictedOK := foldRegressionRow(restrictedAccumulator, &restrictedRow)
-
-		if !restrictedOK {
-			op.Error(restrictedAccumulator.Error())
-			return false
-		}
-
-		fullRow := append(append(scratch.row[:0], predictors[:fullParameters]...), target.Raw)
-		fullReading, fullOK := foldRegressionRow(fullAccumulator, &fullRow)
-
-		if !fullOK {
-			op.Error(fullAccumulator.Error())
-			return false
-		}
-
-		// Warm-up steps (rows not exceeding parameters) are not defined and
-		// not rank-deficient; a singular design with more rows than parameters
-		// is rank deficiency. The RLS readiness mirrors the exact Fit Defined
-		// gate, seeding false when the accumulated design is singular. The
-		// reading's fit counts the row just incorporated, so the pre-add row
-		// count is one less.
-		if int(restrictedReading[3])-1 > restrictedParameters && restrictedReading[1] != 1 {
-			rankDeficient = true
-		}
-
-		if int(fullReading[3])-1 > fullParameters && fullReading[1] != 1 {
-			rankDeficient = true
-		}
-
-		if restrictedReading[1] == 1 && fullReading[1] == 1 {
-			restrictedResiduals = append(restrictedResiduals, target.Raw-restrictedReading[0])
-			fullResiduals = append(fullResiduals, target.Raw-fullReading[0])
-		}
-
-		return true
-	})
-
-	// append may have grown the residual slices past their starting
-	// capacity; write the (possibly reallocated) backing arrays back so the
-	// next candidate lag reuses the larger capacity instead of scratch
-	// reverting to its original, smaller allocation.
-	scratch.restrictedResiduals = restrictedResiduals
-	scratch.fullResiduals = fullResiduals
-
-	if rows == 0 {
-		return nil
-	}
-
-	result := &InfluenceResult{
-		Source:            request.Source,
-		Target:            request.Target,
-		Controls:          append([]Control(nil), request.Controls...),
-		Lag:               lag,
-		LagResolution:     resolution,
-		LagSearchSpan:     searchSpan,
-		LagCandidateCount: 1,
-		Epoch:             request.Source.Epoch,
-		Status:            FitOK,
-	}
-
-	result.definedSteps = len(restrictedResiduals)
-
-	if rankDeficient {
-		result.Status = FitRankDeficient
-		return result
-	}
-
-	if len(restrictedResiduals) == 0 {
-		result.Status = FitResidualVarianceUnavailable
-		return result
-	}
-
-	restrictedVariance := meanSquares(restrictedResiduals)
-	fullVariance := meanSquares(fullResiduals)
-	result.RestrictedResidualVariance = &restrictedVariance
-	result.FullResidualVariance = &fullVariance
-
-	if gain := predictiveGain(restrictedVariance, fullVariance); gain != nil {
-		result.PredictiveGain = gain
-	}
-
-	result.From = firstTarget
-	result.At = lastTarget
-	result.SourceObservedAt = lastSource
-	result.TargetObservedAt = lastTarget
-	result.SourceAge = lastTarget.Sub(lastSource)
-
-	// Every aligned row carries unit weight, so the Kish effective sample
-	// size equals the aligned row count exactly.
-	effective := float64(rows)
-	result.EffectiveSampleCount = effective
-
-	if rows > 1 {
-		result.Maturity = 1 - 1/effective
-	}
-
-	finalFit := fullFitViews(targetView, sourceView, controlViews, request.Controls, lag, fullParameters, scratch)
-
-	if finalFit == nil || finalFit[2] != 1 {
-		if rows <= restrictedParameters {
-			result.Status = FitInsufficientSupport
-			return result
-		}
-
-		result.Status = FitRankDeficient
-		return result
-	}
-
-	sourceColumn := restrictedParameters
-	parameters := int(finalFit[4])
-	coefficient := finalFit[8+sourceColumn]
-	result.Coefficient = &coefficient
-
-	if sourceColumn >= 0 && sourceColumn < parameters && finalFit[7] == 1 {
-		variance := finalFit[8+parameters+sourceColumn]
-
-		if !math.IsNaN(variance) && variance > 0 {
-			result.CoefficientVariance = &variance
-
-			snr, err := coefficientSNR(coefficient, variance)
-
-			if err != nil {
-				op.Error(err)
-				return nil
-			}
-
-			result.CoefficientSNR = &snr
-		}
-	}
-
-	return result
-}
-
-/*
-walkAligned visits every target observation that aligns with all predictors
-in chronological order, reading exclusively from resident ring views with
-per-series cursors. The visit callback receives the target and a reusable
-slice of aligned observations ([targetPast, controls..., source]); the slice
-must not be retained across calls. Nothing is materialized. cursors and
-aligned are the caller's reusable per-series buffers (sized 2 +
-len(controlViews)); they are reset in place on every call so the same
-allocation serves every candidate lag in a search.
-*/
-func walkAligned(
-	targetView RingView,
-	sourceView RingView,
-	controlViews []RingView,
-	controls []Control,
-	lag time.Duration,
-	cursors []int,
-	aligned []Observation,
-	visit func(target Observation, aligned []Observation) bool,
-) {
-	seriesCount := 2 + len(controlViews)
-
-	for index := 0; index < seriesCount; index++ {
-		cursors[index] = -1
-	}
-
-	for targetIndex := 0; targetIndex < targetView.Len(); targetIndex++ {
-		target := targetView.At(targetIndex)
-		complete := true
-
-		for seriesIndex := 0; seriesIndex < seriesCount; seriesIndex++ {
-			seriesLag := lag
-
-			if seriesIndex > 0 && seriesIndex <= len(controlViews) {
-				controlLag := controls[seriesIndex-1].Lag
-
-				if controlLag > 0 {
-					seriesLag = controlLag
-				}
-			}
-
-			cutoff := target.At.Add(-seriesLag)
-
-			var history RingView
-
-			switch {
-			case seriesIndex == 0:
-				history = targetView
-			case seriesIndex <= len(controlViews):
-				history = controlViews[seriesIndex-1]
-			default:
-				history = sourceView
-			}
-
-			predictor, found := newestAtOrBefore(history, &cursors[seriesIndex], cutoff)
-
-			if !found {
-				complete = false
-				break
-			}
-
-			aligned[seriesIndex] = predictor
-		}
-
-		if !complete {
-			continue
-		}
-
-		if !visit(target, aligned) {
-			return
-		}
-	}
-}
-
-/*
-fullFitViews fits the final full model over every aligned row from the
-resident rings, in the same alignment used by the prequential pass. It reuses
-scratch's predictor buffer, the same as the prequential pass, so the final
-fit adds no allocations on top of the search that already ran at this lag.
-*/
-func fullFitViews(
-	targetView RingView,
-	sourceView RingView,
-	controlViews []RingView,
-	controls []Control,
-	lag time.Duration,
-	parameterCount int,
-	scratch *estimateScratch,
-) []float64 {
-	accumulator := statistic.NewRegressionAccumulator(parameterCount)
-	predictors := scratch.fullFitPredictors
-	var fit []float64
-
-	walkAligned(targetView, sourceView, controlViews, controls, lag, scratch.cursors, scratch.aligned, func(target Observation, aligned []Observation) bool {
-		predictors[0] = 1
-		predictors[1] = aligned[0].Raw
-
-		for controlIndex := 0; controlIndex < len(controlViews); controlIndex++ {
-			predictors[2+controlIndex] = aligned[1+controlIndex].Raw
-		}
-
-		predictors[parameterCount-1] = aligned[len(aligned)-1].Raw
-
-		predictors[parameterCount] = target.Raw
-		row := predictors[:parameterCount+1]
-		reading, ok := foldRegressionRow(accumulator, &row)
-
-		if !ok {
-			return false
-		}
-
-		fit = append(fit[:0], reading...)
-
-		return true
-	})
-
-	if err := accumulator.Error(); err != nil {
-		return nil
-	}
-
-	return fit
-}
-
-/*
-unavailable synthesizes the explicit unavailable result for one request.
-*/
-func (op *Influence) unavailable(
-	request *InfluenceRequest,
-	status FitStatus,
-) *InfluenceResult {
-	return &InfluenceResult{
-		Source:           request.Source,
-		Target:           request.Target,
-		Controls:         append([]Control(nil), request.Controls...),
-		Epoch:            request.Source.Epoch,
-		EstimatorVersion: op.version,
-		Status:           status,
-	}
-}
-
-/*
-betterRelation ranks candidate lags by causal prequential predictive
-performance: defined PredictiveGain first (higher is better), then more
-defined prequential steps, then the smaller lag.
-*/
-func betterRelation(candidate *InfluenceResult, best *InfluenceResult) bool {
-	if best == nil {
-		return true
-	}
-
-	candidateGain := candidate.PredictiveGain != nil
-	bestGain := best.PredictiveGain != nil
-
-	if candidateGain != bestGain {
-		return candidateGain
-	}
-
-	if candidateGain && bestGain {
-		if *candidate.PredictiveGain != *best.PredictiveGain {
-			return *candidate.PredictiveGain > *best.PredictiveGain
-		}
-	}
-
-	if candidate.definedSteps != best.definedSteps {
-		return candidate.definedSteps > best.definedSteps
-	}
-
-	return candidate.Lag < best.Lag
-}
-
-/*
-predictiveGain computes log(Vr / Vf). It is defined only when both variances
-are positive and finite; every degenerate case, including both-zero, is
-serialized as undefined rather than infinite or NaN.
-*/
-func predictiveGain(restrictedVariance float64, fullVariance float64) *float64 {
-	if restrictedVariance <= 0 || fullVariance <= 0 ||
-		math.IsNaN(restrictedVariance) || math.IsNaN(fullVariance) ||
-		math.IsInf(restrictedVariance, 0) || math.IsInf(fullVariance, 0) {
-		return nil
-	}
-
-	gain := math.Log(restrictedVariance / fullVariance)
-	return &gain
-}
-
-/*
-meanSquares returns the mean of squared residuals.
-*/
-func meanSquares(residuals []float64) float64 {
-	sum := 0.0
-
-	for _, residual := range residuals {
-		sum += residual * residual
-	}
-
-	return sum / float64(len(residuals))
-}
-
-/*
-coefficientSNR drives the statistic layer's coefficient SNR Primitive for one
-coefficient/variance pair.
-*/
-func coefficientSNR(coefficient float64, variance float64) (float64, error) {
-	operation := statistic.NewCoefficientSNR()
-	var snr float64
-
-	for out := range operation.Next(singlePointer(unsafe.Pointer(&[2]float64{coefficient, variance}))) {
-		snr = *(*float64)(out)
-	}
-
-	if err := operation.Error(); err != nil {
-		return 0, fmt.Errorf("relation: coefficient snr: %w", err)
-	}
-
-	return snr, nil
-}
-
-/*
-deriveLagResolution derives the minimum resolvable lag step from the observed
-Source and Target cadence, using the slower typical cadence. Fixed bar counts
-are never used as mathematical truth.
-*/
-func deriveLagResolution(sourceView RingView, targetView RingView) (time.Duration, bool) {
-	sourceCadence := medianCadenceView(sourceView)
-	targetCadence := medianCadenceView(targetView)
-
-	if sourceCadence <= 0 {
-		sourceCadence = targetCadence
-	}
-
-	if targetCadence <= 0 {
-		targetCadence = sourceCadence
-	}
-
-	if sourceCadence <= 0 || targetCadence <= 0 {
-		return 0, false
-	}
-
-	return max(sourceCadence, targetCadence), true
-}
-
-/*
-medianCadenceView returns the median positive inter-observation gap of a
-resident ring view.
-*/
-func medianCadenceView(view RingView) time.Duration {
-	if view.Len() < 2 {
-		return 0
-	}
-
-	gaps := make([]time.Duration, 0, view.Len()-1)
-
-	for index := 1; index < view.Len(); index++ {
-		gap := view.At(index).At.Sub(view.At(index - 1).At)
-
-		if gap > 0 {
-			gaps = append(gaps, gap)
-		}
-	}
-
-	if len(gaps) == 0 {
-		return 0
-	}
-
-	sort.Slice(gaps, func(left int, right int) bool {
-		return gaps[left] < gaps[right]
-	})
-
-	return gaps[len(gaps)/2]
-}
-
-/*
-lagCandidates enumerates the candidate lag times from start to maxLag at the
-given resolution.
-*/
-func lagCandidates(start time.Duration, maxLag time.Duration, resolution time.Duration) []time.Duration {
-	if start <= 0 || maxLag <= 0 || resolution <= 0 || start > maxLag {
-		return nil
-	}
-
-	candidates := make([]time.Duration, 0)
-
-	for lag := start; lag <= maxLag; lag += resolution {
-		candidates = append(candidates, lag)
-	}
-
-	return candidates
 }

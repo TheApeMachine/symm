@@ -165,6 +165,17 @@ func (measurement *Measurement) Meta(key string) string {
 }
 
 /*
+Peers returns the peers of the Measurement.
+*/
+func (measurement *Measurement) Peers() []*Measurement {
+	if !measurement.locked() {
+		return nil
+	}
+
+	return measurement.peers
+}
+
+/*
 finalize the Measurement, which locks the Measurement and validates it.
 */
 func (measurement *Measurement) finalize() *Measurement {

@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -10,62 +9,65 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-TrustReading is the residual-range trust update. No clipping is added to the
-trust recurrence; rate greater than one retains the original extrapolating
-behavior.
-*/
-type TrustReading struct {
-	Value float64
-	Trust float64
-	Rate  float64
-	Count float64
-}
+TrustWeight owns the residual-range trust recurrence. No clipping is added to
+the trust recurrence; rate greater than one retains the original extrapolating
+behavior. Invalid inputs fail before entering retained state.
 
-/*
-TrustWeight owns that recurrence. Invalid inputs fail before entering retained
-state.
+Each arrival is *[2]float64{predicted, actual}; it yields *[4]float64
+{value, trust, rate, count}.
 */
 type TrustWeight struct {
-	err   error
-	span  core.Primitive
-	mix   core.Primitive
-	abs   core.Primitive
-	count float64
-	min   float64
-	max   float64
-	trust float64
-	rate  float64
-	prev  float64
-	out   TrustReading
+	*core.PrimitiveError
+	span     core.Primitive
+	mix      core.Primitive
+	abs      core.Primitive
+	adapter  *data.Adapter
+	publish  data.Map[float64]
+	absolute data.Map[string]
+	mixed    data.Map[string]
+	count    float64
+	min      float64
+	max      float64
+	trust    float64
+	rate     float64
+	out      [4]float64
 }
 
 func NewTrustWeight() core.Primitive {
 	return &TrustWeight{
-		span:  statistic.NewResidualSpan(),
-		mix:   calculus.NewMix(),
-		abs:   calculus.NewAbsolute(),
-		trust: 1,
+		PrimitiveError: core.NewPrimitiveError(),
+		span:           statistic.NewResidualSpan(),
+		mix:            calculus.NewMix(),
+		abs:            calculus.NewAbsolute(),
+		adapter:        data.NewAdapter(nil, data.NewState(data.NewMap())),
+		publish:        data.NewOutputMap(),
+		absolute:       data.NewMap("absolute", "absolute"),
+		mixed:          data.NewMap("mix", "mix"),
+		trust:          1,
 	}
 }
 
-func (op *TrustWeight) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *TrustWeight) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			pair := (*Pair)(arriving)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			if math.IsNaN(pair.Predicted) || math.IsNaN(pair.Actual) ||
-				math.IsInf(pair.Predicted, 0) || math.IsInf(pair.Actual, 0) {
+			pair := (*[2]float64)(arriving)
+			predicted, actual := pair[0], pair[1]
+
+			if math.IsNaN(predicted) || math.IsNaN(actual) ||
+				math.IsInf(predicted, 0) || math.IsInf(actual, 0) {
 				op.Error(core.ErrDomain)
 				return
 			}
 
-			residual := pair.Actual - pair.Predicted
+			residual := actual - predicted
 			var span [4]float64
 
 			for out := range op.span.Next(data.NewValue([4]float64{op.count, op.min, op.max, residual})) {
@@ -87,10 +89,12 @@ func (op *TrustWeight) Next(
 					return
 				}
 
-				magnitude := residual
+				op.publish.Values["value"] = residual
 
-				for out := range op.abs.Next(transport.NewValues(magnitude).Next(nil)) {
-					magnitude = *(*float64)(out)
+				for range op.adapter.Next(data.NewValue(op.publish)) {
+				}
+
+				for range op.abs.Next(data.NewValue(op.adapter)) {
 				}
 
 				if err := op.abs.Error(); err != nil {
@@ -98,17 +102,21 @@ func (op *TrustWeight) Next(
 					return
 				}
 
-				op.rate = magnitude / span[3]
-				mixRec := calculus.MixRecord{
-					Left:   op.trust,
-					Right:  math.Max(0, 1-op.rate),
-					Weight: op.rate,
+				magnitude := 0.0
+
+				for pointer := range op.adapter.Next(data.NewValue(op.absolute)) {
+					magnitude = (*data.Map[float64])(pointer).Values["absolute"]
 				}
 
-				var trust float64
+				op.rate = magnitude / span[3]
+				op.publish.Values["left"] = op.trust
+				op.publish.Values["right"] = math.Max(0, 1-op.rate)
+				op.publish.Values["weight"] = op.rate
 
-				for out := range op.mix.Next(transport.NewValues(mixRec).Next(nil)) {
-					trust = *(*float64)(out)
+				for range op.adapter.Next(data.NewValue(op.publish)) {
+				}
+
+				for range op.mix.Next(data.NewValue(op.adapter)) {
 				}
 
 				if err := op.mix.Error(); err != nil {
@@ -116,30 +124,21 @@ func (op *TrustWeight) Next(
 					return
 				}
 
-				op.trust = trust
-				op.prev = pair.Predicted
+				for pointer := range op.adapter.Next(data.NewValue(op.mixed)) {
+					op.trust = (*data.Map[float64])(pointer).Values["mix"]
+				}
+
+				if err := op.adapter.Error(); err != nil {
+					op.Error(err)
+					return
+				}
 			}
 
-			op.out = TrustReading{
-				Value: op.trust,
-				Trust: op.trust,
-				Rate:  op.rate,
-				Count: op.count,
-			}
+			op.out = [4]float64{op.trust, op.trust, op.rate, op.count}
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *TrustWeight) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

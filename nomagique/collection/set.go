@@ -1,7 +1,6 @@
 package collection
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"slices"
@@ -14,14 +13,18 @@ import (
 Set replaces one indexed member without mutating its input collection.
 */
 type Set[T any] struct {
-	err   error
+	*core.PrimitiveError
 	index int
 	value T
 	out   []T
 }
 
 func NewSet[T any](index int, value T) core.Primitive {
-	return &Set[T]{index: index, value: value}
+	return &Set[T]{
+		PrimitiveError: core.NewPrimitiveError(),
+		index:          index,
+		value:          value,
+	}
 }
 
 func (op *Set[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -43,14 +46,4 @@ func (op *Set[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Set[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -246,11 +246,27 @@ NewMeasurement allocates a fresh Measurement from the current generation.
 Its slices (Metrics, Metadata, Provenance, Peers) are initialized from the arena,
 avoiding GC heap map allocations on the hot path.
 */
-func (owner *ArenaOwner) NewMeasurement() *Measurement {
+func (owner *ArenaOwner) NewMeasurement(
+	epoch int64,
+	label string,
+	source string,
+	seqIdx int64,
+	tick int64,
+	peers []*Measurement,
+	metadata ...StringEntry,
+) *Measurement {
 	gen := owner.current
 	alloc := gen.Allocator()
 
 	measurement := New[Measurement](alloc)
+	measurement.Epoch = epoch
+	measurement.Label = label
+	measurement.Source = source
+	measurement.SeqIdx = seqIdx
+	measurement.Tick = tick
+	measurement.peers = peers
+	measurement.metadata = metadata
+
 
 	if !owner.seqMode {
 		owner.count++

@@ -13,7 +13,7 @@ import (
 /*
 AdaptiveZScore uses log-space moments to score arriving observations against
 their prior baseline and dispersion. It composes an Estimator over the log of
-each arriving *float64 with a CausalResidual, and yields the CausalResidual
+each arriving positive *float64 with a CausalResidual, and yields the CausalResidual
 layout as *[8]float64 with the baseline mapped back out of log space:
 
 	[0] has prior (1 or 0) [1] baseline    [2] prior variance [3] maturity
@@ -44,7 +44,14 @@ func (op *AdaptiveZScore) Next(
 				return
 			}
 
-			logValue := math.Log(*(*float64)(arriving))
+			value := *(*float64)(arriving)
+
+			if value <= 0 {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			logValue := math.Log(value)
 
 			for reading := range op.moments.Next(data.NewValue(logValue)) {
 				for pointer := range op.residual.Next(data.NewValue(*(*[10]float64)(reading))) {

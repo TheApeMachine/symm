@@ -11,102 +11,135 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 )
 
-func TestSentimentTickerMetrics(t *testing.T) {
-	Convey("Sentiment ticker instrument measures cross-sectional breadth, returns, and dispersion", t, func() {
-		ctx := context.Background()
-		arena := data.NewArenaOwner(4096)
+func quote(label string, at time.Time, seq int64, price float64) *data.Measurement {
+	prior := data.NewMeasurement(1, label, "ingress", seq, seq, data.StringEntry{Key: "channel", Value: "ticker"})
+	prior.At = at
+	prior.From = at
 
-		instrument := sentiment.NewSignal(ctx, arena)
+	return prior.Write(data.NewMetric("last", price, data.UnitPrice, data.TimescaleInstantaneous))
+}
+
+func metric(measurement *data.Measurement, label string) (float64, bool) {
+	for entry := range measurement.Read(label) {
+		return entry.Metric.Raw, true
+	}
+
+	return 0, false
+}
+
+func TestSentimentSignalMetrics(t *testing.T) {
+	Convey("Given a READY sentiment signal", t, func() {
+		instrument := sentiment.NewSignal(context.Background(), data.NewArenaOwner("sentiment", 4096))
 		instrument.Transition(nmruntime.READY)
-
-		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 		symbols := []string{"BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD", "XRP/USD"}
 
-		Convey("Measures exact advance/decline breadth, unchanged counts, and median returns across cohort", func() {
-			for step := 0; step < 6; step++ {
+		Convey("It measures advance/decline breadth, unchanged counts, and the median change", func() {
+			for step := range 6 {
 				for idx, symbol := range symbols {
-					prior := arena.NewMeasurement("ingress")
-					prior.Label = symbol
-					prior.SeqIdx = int64(step*len(symbols) + idx + 1)
-					prior.At = now.Add(time.Duration(step*len(symbols)+idx) * 100 * time.Millisecond)
-					prior.From = prior.At
+					seq := int64(step*len(symbols) + idx + 1)
+					at := origin.Add(time.Duration(seq) * 100 * time.Millisecond)
 
-					// 2 declining (idx 0, 1), 1 flat (idx 2), 2 advancing (idx 3, 4)
+					// 2 declining (idx 0, 1), 1 flat (idx 2), 2 advancing (idx 3, 4).
 					price := 100.0 * float64(idx+1) * (1.0 + float64(step)*0.01*float64(idx-2))
-					prior.SetMetric("last", data.NewMetric(
-						"last",
-						data.UnitPrice,
-						data.TimescaleInstantaneous,
-						price,
-						1.0,
-					).Write(price))
 
-					res := instrument.Step(prior)
+					res := instrument.Step(quote(symbol, at, seq, price))
 					So(res, ShouldNotBeNil)
-					So(res.Err, ShouldBeNil)
+					So(instrument.Error(), ShouldBeNil)
+					So(res.Source, ShouldEqual, "sentiment")
+					So(res.Label, ShouldEqual, symbol)
 
-					// After initial step establishes price baselines, subsequent steps calculate returns
+					if step == 0 {
+						count, held := metric(res, "valid_member_count")
+						So(held, ShouldBeTrue)
+						So(count, ShouldEqual, 0)
+
+						_, held = metric(res, "breadth")
+						So(held, ShouldBeFalse)
+						_, held = metric(res, "median_return")
+						So(held, ShouldBeFalse)
+					}
+
 					if step > 1 && idx == len(symbols)-1 {
-						validMembers := res.GetMetric("valid_member_count").Raw
-						So(validMembers, ShouldEqual, 5)
+						expected := map[string]float64{
+							"valid_member_count": 5,
+							"advance_count":      2,
+							"decline_count":      2,
+							"unchanged_count":    1,
+							"advance_fraction":   2.0 / 5.0,
+							"decline_fraction":   2.0 / 5.0,
+							"unchanged_fraction": 1.0 / 5.0,
+							"breadth":            0,
+							"median_return":      0,
+						}
 
-						// 2 advancing, 2 declining, 1 unchanged
-						So(res.GetMetric("advance_count").Raw, ShouldEqual, 2)
-						So(res.GetMetric("decline_count").Raw, ShouldEqual, 2)
-						So(res.GetMetric("unchanged_count").Raw, ShouldEqual, 1)
+						for label, want := range expected {
+							got, held := metric(res, label)
+							So(held, ShouldBeTrue)
+							So(got, ShouldAlmostEqual, want, 1e-9)
+						}
 
-						So(res.GetMetric("advance_fraction").Raw, ShouldAlmostEqual, 2.0/5.0, 1e-9)
-						So(res.GetMetric("decline_fraction").Raw, ShouldAlmostEqual, 2.0/5.0, 1e-9)
-						So(res.GetMetric("unchanged_fraction").Raw, ShouldAlmostEqual, 1.0/5.0, 1e-9)
+						for _, label := range []string{
+							"breadth_baseline", "breadth_divergence",
+							"median_return_baseline", "median_return_divergence",
+							"median_return_velocity", "breadth_velocity",
+						} {
+							_, held := metric(res, label)
+							So(held, ShouldBeTrue)
+						}
 
-						// Symmetric distribution has breadth = 0 and median return = 0
-						So(res.GetMetric("breadth").Raw, ShouldAlmostEqual, 0.0, 1e-9)
-						So(res.GetMetric("median_return").Raw, ShouldAlmostEqual, 0.0, 1e-6)
-
-						// Dispersion is positive
-						So(res.GetMetric("return_mad").Raw, ShouldBeGreaterThan, 0.0)
-						So(res.GetMetric("median_absolute_return").Raw, ShouldBeGreaterThan, 0.0)
+						median, _ := metric(res, "median_return")
+						baseline, _ := metric(res, "median_return_baseline")
+						divergence, _ := metric(res, "median_return_divergence")
+						So(divergence, ShouldAlmostEqual, median-baseline, 1e-12)
 					}
 				}
 			}
 		})
 
-		Convey("Market-wide bull run produces 100% advance breadth and positive median return", func() {
-			bullInstrument := sentiment.NewSignal(ctx, arena)
-			bullInstrument.Transition(nmruntime.READY)
-
-			for step := 0; step < 4; step++ {
+		Convey("A market-wide advance produces full advance breadth and a positive median change", func() {
+			for step := range 4 {
 				for idx, symbol := range symbols {
-					prior := arena.NewMeasurement("ingress")
-					prior.Label = symbol
-					prior.SeqIdx = int64(step*len(symbols) + idx + 100)
-					prior.At = now.Add(time.Duration(step*len(symbols)+idx) * 100 * time.Millisecond)
-					prior.From = prior.At
-
-					// All symbols advancing by +2% each step
+					seq := int64(step*len(symbols) + idx + 100)
+					at := origin.Add(time.Duration(seq) * 100 * time.Millisecond)
 					price := 100.0 * float64(idx+1) * (1.0 + float64(step)*0.02)
-					prior.SetMetric("last", data.NewMetric(
-						"last",
-						data.UnitPrice,
-						data.TimescaleInstantaneous,
-						price,
-						1.0,
-					).Write(price))
 
-					res := bullInstrument.Step(prior)
+					res := instrument.Step(quote(symbol, at, seq, price))
 					So(res, ShouldNotBeNil)
+					So(instrument.Error(), ShouldBeNil)
 
 					if step > 1 && idx == len(symbols)-1 {
-						So(res.GetMetric("advance_count").Raw, ShouldEqual, 5)
-						So(res.GetMetric("decline_count").Raw, ShouldEqual, 0)
-						So(res.GetMetric("unchanged_count").Raw, ShouldEqual, 0)
-						So(res.GetMetric("advance_fraction").Raw, ShouldAlmostEqual, 1.0, 1e-9)
-						So(res.GetMetric("decline_fraction").Raw, ShouldAlmostEqual, 0.0, 1e-9)
-						So(res.GetMetric("breadth").Raw, ShouldAlmostEqual, 1.0, 1e-9)
-						So(res.GetMetric("median_return").Raw, ShouldBeGreaterThan, 0.0)
+						expected := map[string]float64{
+							"advance_count":    5,
+							"decline_count":    0,
+							"unchanged_count":  0,
+							"advance_fraction": 1,
+							"decline_fraction": 0,
+							"breadth":          1,
+						}
+
+						for label, want := range expected {
+							got, held := metric(res, label)
+							So(held, ShouldBeTrue)
+							So(got, ShouldAlmostEqual, want, 1e-9)
+						}
+
+						median, held := metric(res, "median_return")
+						So(held, ShouldBeTrue)
+						So(median, ShouldBeGreaterThan, 0)
 					}
 				}
 			}
+		})
+
+		Convey("It yields no measurement for a quote without a positive price", func() {
+			So(instrument.Step(quote("BTC/USD", origin, 1, 0)), ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
+		})
+
+		Convey("It drops events before READY", func() {
+			cold := sentiment.NewSignal(context.Background(), data.NewArenaOwner("sentiment", 16))
+			So(cold.Step(quote("BTC/USD", origin, 1, 100)), ShouldBeNil)
 		})
 	})
 }

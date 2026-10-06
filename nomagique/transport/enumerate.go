@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -9,23 +8,16 @@ import (
 )
 
 /*
-Indexed is a value and where it fell in its run.
-*/
-type Indexed[T any] struct {
-	Index int
-	Value T
-}
-
-/*
 Enumerate attaches a run-relative index to each value.
+Each yield is *[2]any{index, value}.
 */
 type Enumerate[T any] struct {
-	err error
-	out Indexed[T]
+	*core.PrimitiveError
+	out [2]any
 }
 
 func NewEnumerate[T any]() core.Primitive {
-	return &Enumerate[T]{}
+	return &Enumerate[T]{PrimitiveError: core.NewPrimitiveError()}
 }
 
 func (op *Enumerate[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -33,7 +25,7 @@ func (op *Enumerate[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 		index := 0
 
 		for arriving := range in {
-			op.out = Indexed[T]{Index: index, Value: *(*T)(arriving)}
+			op.out = [2]any{index, *(*T)(arriving)}
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
@@ -42,14 +34,4 @@ func (op *Enumerate[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			index++
 		}
 	}
-}
-
-func (op *Enumerate[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

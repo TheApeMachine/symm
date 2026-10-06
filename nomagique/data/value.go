@@ -44,6 +44,23 @@ func Read[T any](value iter.Seq[unsafe.Pointer]) T {
 }
 
 /*
+Pull a value out of an iterator.
+*/
+func Pull[T any](value iter.Seq[T]) T {
+	var zero T
+
+	if value == nil {
+		return zero
+	}
+
+	for val := range value {
+		return val
+	}
+
+	return zero
+}
+
+/*
 ReadSeq walks all values of a run out of the wire as typed values.
 */
 func ReadSeq[T any](value iter.Seq[unsafe.Pointer]) iter.Seq[T] {

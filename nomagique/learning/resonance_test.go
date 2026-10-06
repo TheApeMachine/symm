@@ -5,7 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestOvercompleteMultiTimescaleManifold(t *testing.T) {
@@ -18,28 +18,27 @@ func TestOvercompleteMultiTimescaleManifold(t *testing.T) {
 		})
 
 		Convey("Settling should compute multi-layer readouts with innovations", func() {
-			reading, err := manifold.execute(&ManifoldCommand{
-				Settle: &SettleIntent{Input: []float64{0.5, -0.5}, AdvanceTemporal: true},
-			})
-			So(err, ShouldBeNil)
+			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(
+				[3][]float64{{ManifoldSettle, 1}, {0.5, -0.5}, nil},
+			)))
+			So(manifold.Error(), ShouldBeNil)
 
 			// [z1(8) + z2(3)] + [e0(2) + e1(8)] = 21 dimensions
-			So(reading.ReadoutDimension, ShouldEqual, 21)
-			So(len(reading.Readout), ShouldEqual, 21)
+			So(reading[0][8], ShouldEqual, 21)
+			So(len(reading[1]), ShouldEqual, 21)
 		})
 
 		Convey("Learn should update all multi-timescale temporal matrices and the RLS head", func() {
-			_, err := manifold.execute(&ManifoldCommand{
-				Settle: &SettleIntent{Input: []float64{0.5, -0.5}},
-			})
-			So(err, ShouldBeNil)
+			data.Read[[10][]float64](manifold.Next(data.NewValue(
+				[3][]float64{{ManifoldSettle}, {0.5, -0.5}, nil},
+			)))
+			So(manifold.Error(), ShouldBeNil)
 
-			reading, learnErr := manifold.execute(&ManifoldCommand{
-				Learn: &LearnIntent{Target: []float64{0.02}},
-			})
-			So(learnErr, ShouldBeNil)
-
-			So(reading.TaskPrediction, ShouldHaveLength, 1)
+			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(
+				[3][]float64{{ManifoldLearn}, {0.02}, nil},
+			)))
+			So(manifold.Error(), ShouldBeNil)
+			So(reading[3], ShouldHaveLength, 1)
 		})
 	})
 }
@@ -47,98 +46,92 @@ func TestOvercompleteMultiTimescaleManifold(t *testing.T) {
 func TestPerHorizonTaskHead(t *testing.T) {
 	Convey("Given a per-horizon task head over architecture [2, 8, 3]", t, func() {
 		manifold := NewResonanceManifold([]int{2, 8, 3}, 1, 4, 0.03, ReadoutAll).(*ResonanceManifold)
+		settle := [3][]float64{{ManifoldSettle}, {0.5, -0.5}, nil}
+		read := [3][]float64{{ManifoldReading}, nil, nil}
 
 		Convey("The task head holds one row per horizon", func() {
 			So(manifold.taskRows, ShouldEqual, 4)
 
-			reading := manifold.snapshot()
-			So(reading.TaskPrediction, ShouldHaveLength, 4)
+			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(read)))
+			So(reading[3], ShouldHaveLength, 4)
 		})
 
-		Convey("ObserveTask trains only the addressed horizon row", func() {
-			reading, err := manifold.execute(&ManifoldCommand{
-				Settle: &SettleIntent{Input: []float64{0.5, -0.5}},
-			})
-			So(err, ShouldBeNil)
+		Convey("A task observation trains only the addressed horizon row", func() {
+			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(settle)))
+			So(manifold.Error(), ShouldBeNil)
 
-			_, err = manifold.execute(&ManifoldCommand{
-				ObserveTask: &TaskIntent{
-					Horizon:    4,
-					Features:   reading.Readout,
-					Prediction: 0.1,
-					Target:     1.0,
-				},
-			})
-			So(err, ShouldBeNil)
+			data.Read[[10][]float64](manifold.Next(data.NewValue(
+				[3][]float64{{ManifoldTask, 4, 0.1, 1.0}, reading[1], nil},
+			)))
+			So(manifold.Error(), ShouldBeNil)
 
-			snapshot := manifold.snapshot()
-			So(snapshot.SkillReady[3], ShouldBeTrue)
-			So(snapshot.Skill[3], ShouldBeGreaterThan, 0)
-			So(snapshot.SkillReady[0], ShouldBeFalse)
+			snapshot := data.Read[[10][]float64](manifold.Next(data.NewValue(read)))
+			So(snapshot[5][3], ShouldEqual, 1)
+			So(snapshot[4][3], ShouldBeGreaterThan, 0)
+			So(snapshot[5][0], ShouldEqual, 0)
 		})
 
-		Convey("RolloutTaskForecast returns one cumulative forecast per horizon from the current readout", func() {
-			_, err := manifold.execute(&ManifoldCommand{
-				Settle: &SettleIntent{Input: []float64{0.5, -0.5}},
-			})
-			So(err, ShouldBeNil)
+		Convey("A forecast returns one cumulative forecast per horizon from the current readout", func() {
+			data.Read[[10][]float64](manifold.Next(data.NewValue(settle)))
+			So(manifold.Error(), ShouldBeNil)
 
-			reading, err := manifold.execute(&ManifoldCommand{
-				Forecast: &ForecastIntent{Steps: 4},
-			})
-			So(err, ShouldBeNil)
-			So(reading.Forecast, ShouldHaveLength, 4)
+			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(
+				[3][]float64{{ManifoldForecast, 4}, nil, nil},
+			)))
+			So(manifold.Error(), ShouldBeNil)
+			So(reading[8], ShouldHaveLength, 4*6)
 
 			// Clamping: a request beyond the head's rows yields the head's rows.
-			clamped, err := manifold.execute(&ManifoldCommand{
-				Forecast: &ForecastIntent{Steps: 9},
-			})
-			So(err, ShouldBeNil)
-			So(clamped.Forecast, ShouldHaveLength, 4)
+			clamped := data.Read[[10][]float64](manifold.Next(data.NewValue(
+				[3][]float64{{ManifoldForecast, 9}, nil, nil},
+			)))
+			So(manifold.Error(), ShouldBeNil)
+			So(clamped[8], ShouldHaveLength, 4*6)
 		})
 
 		Convey("An out-of-range task horizon is rejected", func() {
-			_, err := manifold.execute(&ManifoldCommand{
-				ObserveTask: &TaskIntent{
-					Horizon:  5,
-					Features: make([]float64, 21),
-					Target:   1,
-				},
-			})
-			So(err, ShouldNotBeNil)
+			for range manifold.Next(data.NewValue(
+				[3][]float64{{ManifoldTask, 5, 0, 1}, make([]float64, 21), nil},
+			)) {
+			}
+
+			So(manifold.Error(), ShouldNotBeNil)
 		})
 	})
 }
 
 /*
-TestManifoldPrimitiveWire proves the manifold answers through its command wire
-as a core.Primitive, not only through in-package execution.
+TestManifoldPrimitiveWire proves the manifold answers through its wire as a
+core.Primitive.
 */
 func TestManifoldPrimitiveWire(t *testing.T) {
 	Convey("Given a manifold primitive on the wire", t, func() {
 		var manifold core.Primitive = NewResonanceManifold([]int{2, 4, 2}, 1, 2, 0.05, ReadoutAll)
 
 		Convey("A settle command yields exactly one reading", func() {
-			evaluation := transport.NewEvaluate(manifold)
-			var reading ManifoldReading
+			readings := 0
+			var reading [10][]float64
 
-			for out := range evaluation.Next(transport.NewValues(ManifoldCommand{
-				Settle: &SettleIntent{Input: []float64{0.5, -0.5}},
-			}).Next(nil)) {
-				reading = *(*ManifoldReading)(out)
+			for out := range manifold.Next(data.NewValue(
+				[3][]float64{{ManifoldSettle}, {0.5, -0.5}, nil},
+			)) {
+				reading = *(*[10][]float64)(out)
+				readings++
 			}
 
-			So(evaluation.Error(), ShouldBeNil)
-			So(reading.ReadoutDimension, ShouldEqual, 12)
-			So(reading.Layers, ShouldHaveLength, 3)
+			So(manifold.Error(), ShouldBeNil)
+			So(readings, ShouldEqual, 1)
+			So(reading[0][8], ShouldEqual, 12)
+			// Three layers, each {errorNorm, temporal, state..., prediction...}.
+			So(reading[7], ShouldHaveLength, (2+2*2)+(2+2*4)+(2+2*2))
 		})
 
 		Convey("A rejected architecture yields nothing and records its error", func() {
 			rejected := NewResonanceManifold([]int{2}, 1, 2, 0.05, ReadoutAll)
 
-			for range rejected.Next(transport.NewValues(ManifoldCommand{
-				Settle: &SettleIntent{Input: []float64{0.5}},
-			}).Next(nil)) {
+			for range rejected.Next(data.NewValue(
+				[3][]float64{{ManifoldSettle}, {0.5}, nil},
+			)) {
 				t.Fatal("rejected manifold must yield nothing")
 			}
 

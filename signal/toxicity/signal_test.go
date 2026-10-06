@@ -16,224 +16,179 @@ import (
 	"github.com/theapemachine/symm/signal/toxicity"
 )
 
+func trade(at time.Time, seq int64, side string, price, qty float64) *data.Measurement {
+	prior := data.NewMeasurement(
+		1, "BTC/USD", "ingress", seq, seq,
+		data.StringEntry{Key: "side", Value: side},
+		data.StringEntry{Key: "channel", Value: "trade"},
+	)
+	prior.At = at
+	prior.From = at
+
+	return prior.Write(
+		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
+		data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
+	)
+}
+
+func metric(measurement *data.Measurement, label string) (float64, bool) {
+	for entry := range measurement.Read(label) {
+		if entry.Err != nil {
+			return 0, false
+		}
+
+		return entry.Metric.Raw, true
+	}
+
+	return 0, false
+}
+
+func metricValue(measurement *data.Measurement, label string) float64 {
+	value, held := metric(measurement, label)
+	So(held, ShouldBeTrue)
+	return value
+}
+
+func touch(books *broker.Book, at time.Time, bidID string, bid, bidQty float64, askID string, ask, askQty float64) {
+	books.Update(&kraken.Level3{
+		Channel: "level3",
+		Type:    "snapshot",
+		Data: []kraken.Level3Data{{
+			Symbol: "BTC/USD",
+			Bids: []kraken.Level3Order{{
+				OrderID: bidID, LimitPrice: decimal.NewFromFloat64(bid), OrderQty: decimal.NewFromFloat64(bidQty),
+				Timestamp: at, Event: "add",
+			}},
+			Asks: []kraken.Level3Order{{
+				OrderID: askID, LimitPrice: decimal.NewFromFloat64(ask), OrderQty: decimal.NewFromFloat64(askQty),
+				Timestamp: at, Event: "add",
+			}},
+		}},
+	})
+}
+
 func TestToxicitySignal(t *testing.T) {
 	Convey("Toxicity instrument calculates exact touch dispositions and trade fill matching", t, func() {
 		ctx := context.Background()
-		arena := data.NewArenaOwner(4096)
+		arena := data.NewArenaOwner("toxicity", 4096)
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-
-		normalizer := spot.NewNormalizer()
-		books := broker.NewBook(ctx, normalizer)
+		books := broker.NewBook(ctx, spot.NewNormalizer())
 
 		instrument := toxicity.NewSignal(ctx, arena, books)
 		instrument.Transition(nmruntime.READY)
 
 		Convey("Trade matching at the touch calculates exact fill quantity, fraction, and fill rate", func() {
-			bidPrice := 50000.0
-			askPrice := 50002.0
-			touchQty := 10.0
+			bidPrice, askPrice, touchQty := 50000.0, 50002.0, 10.0
+			touch(books, now, "bid-1", bidPrice, touchQty, "ask-1", askPrice, touchQty)
 
-			books.Update(&kraken.Level3{
-				Channel: "level3",
-				Type:    "snapshot",
-				Data: []kraken.Level3Data{
-					{
-						Symbol: "BTC/USD",
-						Bids: []kraken.Level3Order{
-							{
-								OrderID:    "bid-1",
-								LimitPrice: decimal.NewFromFloat64(bidPrice),
-								OrderQty:   decimal.NewFromFloat64(touchQty),
-								Timestamp:  now,
-								Event:      "add",
-							},
-						},
-						Asks: []kraken.Level3Order{
-							{
-								OrderID:    "ask-1",
-								LimitPrice: decimal.NewFromFloat64(askPrice),
-								OrderQty:   decimal.NewFromFloat64(touchQty),
-								Timestamp:  now,
-								Event:      "add",
-							},
-						},
-					},
-				},
-			})
-
-			// Trade 1: aggressive buy of 1.5 at the ask (50002.0)
 			trade1Qty := 1.5
-			prior1 := arena.NewMeasurement("ingress")
-			prior1.Label = "BTC/USD"
-			prior1.SeqIdx = 1
-			prior1.At = now
-			prior1.From = now
-			prior1.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, askPrice, 1.0).Write(askPrice))
-			prior1.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, trade1Qty).Write(trade1Qty))
-			prior1.SetProvenance("side", "buy")
-			prior1.SetProvenance("channel", "trade")
-
-			res1 := instrument.Step(prior1)
+			res1 := instrument.Step(trade(now, 1, "buy", askPrice, trade1Qty))
 			So(res1, ShouldNotBeNil)
-			So(res1.Err, ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
+			So(res1.Source, ShouldEqual, "toxicity")
 
-			// Touch geometry
-			So(res1.GetMetric("best_price:bid").Raw, ShouldEqual, bidPrice)
-			So(res1.GetMetric("best_price:ask").Raw, ShouldEqual, askPrice)
-			So(res1.GetMetric("touch_quantity:bid").Raw, ShouldEqual, touchQty)
-			So(res1.GetMetric("touch_quantity:ask").Raw, ShouldEqual, touchQty)
+			So(metricValue(res1, "best_price:bid"), ShouldEqual, bidPrice)
+			So(metricValue(res1, "best_price:ask"), ShouldEqual, askPrice)
+			So(metricValue(res1, "touch_quantity:bid"), ShouldEqual, touchQty)
+			So(metricValue(res1, "touch_quantity:ask"), ShouldEqual, touchQty)
 
-			// Trade matching against ask touch
-			So(res1.GetMetric("bracket_trade_quantity").Raw, ShouldAlmostEqual, trade1Qty, 1e-9)
-			So(res1.GetMetric("matched_touch_trade_quantity:ask").Raw, ShouldAlmostEqual, trade1Qty, 1e-9)
-			So(res1.GetMetric("touch_fill_quantity:ask").Raw, ShouldAlmostEqual, trade1Qty, 1e-9)
-			So(res1.GetMetric("touch_fill_fraction:ask").Raw, ShouldAlmostEqual, trade1Qty/touchQty, 1e-9)
+			So(metricValue(res1, "bracket_trade_quantity"), ShouldAlmostEqual, trade1Qty, 1e-9)
+			So(metricValue(res1, "matched_touch_trade_quantity:ask"), ShouldAlmostEqual, trade1Qty, 1e-9)
+			So(metricValue(res1, "touch_fill_quantity:ask"), ShouldAlmostEqual, trade1Qty, 1e-9)
+			So(metricValue(res1, "touch_fill_fraction:ask"), ShouldAlmostEqual, trade1Qty/touchQty, 1e-9)
 
-			// Opposite side (bid) untouched
-			So(res1.GetMetric("matched_touch_trade_quantity:bid").Raw, ShouldAlmostEqual, 0.0, 1e-9)
-			So(res1.GetMetric("touch_fill_quantity:bid").Raw, ShouldAlmostEqual, 0.0, 1e-9)
-			So(res1.GetMetric("touch_fill_fraction:bid").Raw, ShouldAlmostEqual, 0.0, 1e-9)
+			So(metricValue(res1, "matched_touch_trade_quantity:bid"), ShouldAlmostEqual, 0.0, 1e-9)
+			So(metricValue(res1, "touch_fill_quantity:bid"), ShouldAlmostEqual, 0.0, 1e-9)
+			So(metricValue(res1, "touch_fill_fraction:bid"), ShouldAlmostEqual, 0.0, 1e-9)
 
-			// Trade 2: 100ms later, aggressive buy of 2.5 at ask
+			_, held := metric(res1, "previous_best_price:bid")
+			So(held, ShouldBeFalse)
+			_, held = metric(res1, "touch_fill_rate:ask")
+			So(held, ShouldBeFalse)
+
 			trade2Qty := 2.5
 			trade2At := now.Add(100 * time.Millisecond)
-			prior2 := arena.NewMeasurement("ingress")
-			prior2.Label = "BTC/USD"
-			prior2.SeqIdx = 2
-			prior2.At = trade2At
-			prior2.From = trade2At
-			prior2.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, askPrice, 1.0).Write(askPrice))
-			prior2.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, trade2Qty).Write(trade2Qty))
-			prior2.SetProvenance("side", "buy")
-			prior2.SetProvenance("channel", "trade")
-
-			res2 := instrument.Step(prior2)
+			res2 := instrument.Step(trade(trade2At, 2, "buy", askPrice, trade2Qty))
 			So(res2, ShouldNotBeNil)
-			So(res2.Err, ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
 
 			expectedCumQty := trade1Qty + trade2Qty
-			So(res2.GetMetric("touch_fill_quantity:ask").Raw, ShouldAlmostEqual, expectedCumQty, 1e-9)
-			So(res2.GetMetric("touch_fill_fraction:ask").Raw, ShouldAlmostEqual, expectedCumQty/touchQty, 1e-9)
-			So(res2.GetMetric("touch_fill_rate:ask").Raw, ShouldAlmostEqual, expectedCumQty/0.1, 1e-6)
+			So(metricValue(res2, "touch_fill_quantity:ask"), ShouldAlmostEqual, expectedCumQty, 1e-9)
+			So(metricValue(res2, "touch_fill_fraction:ask"), ShouldAlmostEqual, expectedCumQty/touchQty, 1e-9)
+			So(metricValue(res2, "touch_fill_rate:ask"), ShouldAlmostEqual, expectedCumQty/0.1, 1e-6)
+			So(res2.From, ShouldEqual, now)
+
+			// A trade outside the bracket neither brackets nor matches.
+			res3 := instrument.Step(trade(trade2At.Add(100*time.Millisecond), 3, "buy", askPrice+5, 1.0))
+			So(res3, ShouldNotBeNil)
+			So(metricValue(res3, "bracket_trade_quantity"), ShouldAlmostEqual, expectedCumQty, 1e-9)
+			So(metricValue(res3, "touch_fill_quantity:ask"), ShouldAlmostEqual, expectedCumQty, 1e-9)
+			So(metricValue(res3, "touch_fill_fraction:ask"), ShouldAlmostEqual, 0.0, 1e-9)
 		})
 
-		Convey("Touch disposition detects adverse price retreat and liquidity withdrawal", func() {
-			dispositionInstrument := toxicity.NewSignal(ctx, arena, books)
-			dispositionInstrument.Transition(nmruntime.READY)
+		Convey("Touch disposition detects adverse price retreat", func() {
+			touch(books, now, "bid-disp-1", 50000.0, 10.0, "ask-disp-1", 50002.0, 10.0)
+			So(instrument.Step(trade(now, 10, "buy", 50001.0, 1.0)), ShouldNotBeNil)
 
-			// Initial touch book
-			books.Update(&kraken.Level3{
-				Channel: "level3",
-				Type:    "snapshot",
-				Data: []kraken.Level3Data{
-					{
-						Symbol: "BTC/USD",
-						Bids: []kraken.Level3Order{
-							{
-								OrderID:    "bid-disp-1",
-								LimitPrice: decimal.NewFromFloat64(50000.0),
-								OrderQty:   decimal.NewFromFloat64(10.0),
-								Timestamp:  now,
-								Event:      "add",
-							},
-						},
-						Asks: []kraken.Level3Order{
-							{
-								OrderID:    "ask-disp-1",
-								LimitPrice: decimal.NewFromFloat64(50002.0),
-								OrderQty:   decimal.NewFromFloat64(10.0),
-								Timestamp:  now,
-								Event:      "add",
-							},
-						},
-					},
-				},
-			})
-
-			prior1 := arena.NewMeasurement("ingress")
-			prior1.Label = "BTC/USD"
-			prior1.SeqIdx = 10
-			prior1.At = now
-			prior1.From = now
-			prior1.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 50001.0, 1.0).Write(50001.0))
-			prior1.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
-			prior1.SetProvenance("side", "buy")
-			prior1.SetProvenance("channel", "trade")
-
-			dispositionInstrument.Step(prior1)
-
-			// Step 2: Bid retreats down to 49990 (50000 was canceled)
 			step2At := now.Add(200 * time.Millisecond)
-			books.Update(&kraken.Level3{
-				Channel: "level3",
-				Type:    "snapshot",
-				Data: []kraken.Level3Data{
-					{
-						Symbol: "BTC/USD",
-						Bids: []kraken.Level3Order{
-							{
-								OrderID:    "bid-disp-2",
-								LimitPrice: decimal.NewFromFloat64(49990.0), // Retreat by 10 points
-								OrderQty:   decimal.NewFromFloat64(8.0),
-								Timestamp:  step2At,
-								Event:      "add",
-							},
-						},
-						Asks: []kraken.Level3Order{
-							{
-								OrderID:    "ask-disp-1",
-								LimitPrice: decimal.NewFromFloat64(50002.0),
-								OrderQty:   decimal.NewFromFloat64(10.0),
-								Timestamp:  step2At,
-								Event:      "add",
-							},
-						},
-					},
-				},
-			})
+			touch(books, step2At, "bid-disp-2", 49990.0, 8.0, "ask-disp-1", 50002.0, 10.0)
 
-			prior2 := arena.NewMeasurement("ingress")
-			prior2.Label = "BTC/USD"
-			prior2.SeqIdx = 11
-			prior2.At = step2At
-			prior2.From = step2At
-			prior2.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 49995.0, 1.0).Write(49995.0))
-			prior2.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
-			prior2.SetProvenance("side", "sell")
-			prior2.SetProvenance("channel", "trade")
-
-			res2 := dispositionInstrument.Step(prior2)
+			res2 := instrument.Step(trade(step2At, 11, "sell", 49995.0, 1.0))
 			So(res2, ShouldNotBeNil)
+			So(instrument.Error(), ShouldBeNil)
 
-			So(res2.GetMetric("previous_best_price:bid").Raw, ShouldEqual, 50000.0)
-			So(res2.GetMetric("best_price:bid").Raw, ShouldEqual, 49990.0)
-			So(res2.GetMetric("previous_touch_quantity:bid").Raw, ShouldEqual, 10.0)
-			So(res2.GetMetric("touch_quantity:bid").Raw, ShouldEqual, 8.0)
+			So(metricValue(res2, "previous_best_price:bid"), ShouldEqual, 50000.0)
+			So(metricValue(res2, "best_price:bid"), ShouldEqual, 49990.0)
+			So(metricValue(res2, "previous_touch_quantity:bid"), ShouldEqual, 10.0)
+			So(metricValue(res2, "touch_quantity:bid"), ShouldEqual, 8.0)
 
-			// Log change on retreating bid is negative: ln(49990 / 50000) < 0
-			logChange := res2.GetMetric("touch_price_log_change:bid").Raw
-			expectedLogChange := math.Log(49990.0 / 50000.0)
-			So(logChange, ShouldAlmostEqual, expectedLogChange, 1e-6)
+			So(metricValue(res2, "touch_price_log_change:bid"), ShouldAlmostEqual, math.Log(49990.0/50000.0), 1e-12)
+			So(metricValue(res2, "touch_price_log_change:ask"), ShouldAlmostEqual, 0.0, 1e-12)
 
-			// Retreated quantity must equal previous touch quantity (10.0)
-			So(res2.GetMetric("retreated_quantity:bid").Raw, ShouldAlmostEqual, 10.0, 1e-9)
-			So(res2.GetMetric("retreat_rate:bid").Raw, ShouldAlmostEqual, 10.0/0.2, 1e-6)
+			So(metricValue(res2, "retreat_fraction:bid"), ShouldEqual, 1.0)
+			So(metricValue(res2, "retreated_quantity:bid"), ShouldAlmostEqual, 10.0, 1e-9)
+			So(metricValue(res2, "retreat_rate:bid"), ShouldAlmostEqual, 10.0/0.2, 1e-6)
+
+			// A retreating bid is not a withdrawal; the unchanged ask neither retreats nor withdraws.
+			for _, label := range []string{
+				"net_withdrawn_quantity:bid", "retreat_fraction:ask", "retreated_quantity:ask",
+				"net_withdrawn_quantity:ask", "net_replenished_quantity:ask",
+			} {
+				_, held := metric(res2, label)
+				So(held, ShouldBeFalse)
+			}
 		})
 
-		Convey("Rejects non-positive price or quantity with validation error", func() {
-			prior := arena.NewMeasurement("ingress")
-			prior.Label = "BTC/USD"
-			prior.SeqIdx = 99
-			prior.At = now
-			prior.From = now
-			prior.SetProvenance("side", "buy")
-			prior.SetProvenance("channel", "trade")
-			prior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 0.0, 1.0).Write(0.0)) // Invalid zero price
-			prior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
+		Convey("Touch disposition measures withdrawal and replenishment at a held price", func() {
+			touch(books, now, "bid-w-1", 50000.0, 10.0, "ask-w-1", 50002.0, 4.0)
+			So(instrument.Step(trade(now, 20, "buy", 50001.0, 1.0)), ShouldNotBeNil)
 
-			res := instrument.Step(prior)
+			later := now.Add(500 * time.Millisecond)
+			touch(books, later, "bid-w-1", 50000.0, 6.0, "ask-w-1", 50002.0, 7.0)
+
+			res := instrument.Step(trade(later, 21, "buy", 50001.0, 1.0))
 			So(res, ShouldNotBeNil)
-			So(res.Err, ShouldNotBeNil)
+			So(instrument.Error(), ShouldBeNil)
+
+			So(metricValue(res, "net_withdrawn_quantity:bid"), ShouldAlmostEqual, 4.0, 1e-9)
+			So(metricValue(res, "net_withdrawal_fraction:bid"), ShouldAlmostEqual, 0.4, 1e-9)
+			So(metricValue(res, "net_withdrawal_rate:bid"), ShouldAlmostEqual, 4.0/0.5, 1e-6)
+			So(metricValue(res, "net_replenished_quantity:ask"), ShouldAlmostEqual, 3.0, 1e-9)
+			So(metricValue(res, "net_replenishment_fraction:ask"), ShouldAlmostEqual, 0.75, 1e-9)
+			So(metricValue(res, "net_replenishment_rate:ask"), ShouldAlmostEqual, 3.0/0.5, 1e-6)
+
+			_, held := metric(res, "retreat_fraction:bid")
+			So(held, ShouldBeFalse)
+			_, held = metric(res, "net_replenished_quantity:bid")
+			So(held, ShouldBeFalse)
+			_, held = metric(res, "net_withdrawn_quantity:ask")
+			So(held, ShouldBeFalse)
+		})
+
+		Convey("A non-positive trade price yields no measurement", func() {
+			touch(books, now, "bid-1", 50000.0, 10.0, "ask-1", 50002.0, 10.0)
+			So(instrument.Step(trade(now, 99, "buy", 0.0, 1.0)), ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
 		})
 	})
 }

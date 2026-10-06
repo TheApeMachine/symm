@@ -13,18 +13,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
-type stateLayout struct {
-	input  data.Map[string]
-	output data.Map[float64]
-}
-
-type adapterLayout struct {
-	primitiveError *core.PrimitiveError
-	measurement    *data.Measurement
-	state          *stateLayout
-	values         data.Map[float64]
-}
-
 /*
 Table coordinates causal estimation over observational tables.
 */
@@ -44,6 +32,7 @@ type Table struct {
 	backdoor     *Backdoor
 	abductive    *Counterfactual
 	input        data.Map[string]
+	actuals      data.Map[string]
 	output       data.Map[float64]
 }
 
@@ -136,6 +125,13 @@ func NewTable(
 
 	prim.rows = observations
 	prim.features = featureCols
+
+	actualKeys := make([]string, 0, columnCount*2)
+	for colIndex := 0; colIndex < columnCount; colIndex++ {
+		key := fmt.Sprintf("actual_%d", colIndex)
+		actualKeys = append(actualKeys, key, key)
+	}
+	prim.actuals = data.NewMap(actualKeys...)
 
 	if !linear {
 		prim.stump = NewStump(observations, target, treatment, features)
@@ -258,11 +254,18 @@ func (op *Table) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			inspector := (*adapterLayout)(unsafe.Pointer(adapter))
+			var actualValues data.Map[float64]
 			hasActual := false
 
-			if inspector != nil && inspector.state != nil {
-				_, hasActual = inspector.state.output.Values["actual_0"]
+			for pointer := range adapter.Next(data.NewValue(op.actuals)) {
+				actualValues = *(*data.Map[float64])(pointer)
+				hasActual = true
+			}
+
+			if !hasActual {
+				if err := adapter.Error(); err != nil {
+					adapter.PrimitiveError = core.NewPrimitiveError()
+				}
 			}
 
 			if hasActual {
@@ -271,7 +274,7 @@ func (op *Table) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 				for colIndex := 0; colIndex < columnCount; colIndex++ {
 					key := fmt.Sprintf("actual_%d", colIndex)
-					actualVal, ok := inspector.state.output.Values[key]
+					actualVal, ok := actualValues.Values[key]
 
 					if !ok {
 						op.Error(core.ErrShape)

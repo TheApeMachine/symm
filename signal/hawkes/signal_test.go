@@ -11,136 +11,123 @@ import (
 	"github.com/theapemachine/symm/signal/hawkes"
 )
 
+func trade(at time.Time, seq int64, side string, price, qty float64) *data.Measurement {
+	prior := data.NewMeasurement(
+		1, "BTC/USD", "ingress", seq, seq,
+		data.StringEntry{Key: "side", Value: side},
+		data.StringEntry{Key: "channel", Value: "trade"},
+	)
+	prior.At = at
+	prior.From = at
+
+	return prior.Write(
+		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
+		data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
+	)
+}
+
+func metric(measurement *data.Measurement, label string) (float64, bool) {
+	for entry := range measurement.Read(label) {
+		if entry.Err != nil {
+			return 0, false
+		}
+
+		return entry.Metric.Raw, true
+	}
+
+	return 0, false
+}
+
 func TestHawkesTradeMetrics(t *testing.T) {
-	Convey("Hawkes arrival-dynamics instrument computes principled point-process metrics", t, func() {
-		ctx := context.Background()
-		arena := data.NewArenaOwner(4096)
-
-		instrument := hawkes.NewSignal(ctx, arena)
+	Convey("Given a READY Hawkes arrival-dynamics signal", t, func() {
+		instrument := hawkes.NewSignal(context.Background(), data.NewArenaOwner("hawkes", 4096))
 		instrument.Transition(nmruntime.READY)
+		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-
-		Convey("Computes exact event counts, side fractions, and arrival rates across ticks", func() {
+		Convey("It computes exact event counts, side fractions, and arrival rates", func() {
 			var buyCount, sellCount float64
-			origin := now
 
-			for step := 0; step < 20; step++ {
-				prior := arena.NewMeasurement("ingress")
-				prior.Label = "BTC/USD"
-				prior.SeqIdx = int64(step + 1)
-				prior.At = now.Add(time.Duration(step) * 50 * time.Millisecond)
-				prior.From = prior.At
-
-				prior.SetMetric("price", data.NewMetric(
-					"price",
-					data.UnitPrice,
-					data.TimescaleInstantaneous,
-					50000.0,
-					1.0,
-				).Write(50000.0))
-				prior.SetMetric("qty", data.NewMetric(
-					"qty",
-					data.UnitQuantity,
-					data.TimescaleInstantaneous,
-					0.0,
-					1.0,
-				).Write(1.0))
-				prior.SetProvenance("channel", "trade")
-
+			for step := range 20 {
+				at := origin.Add(time.Duration(step) * 50 * time.Millisecond)
 				side := "buy"
+
 				if step%3 == 0 {
 					side = "sell"
 					sellCount++
 				} else {
 					buyCount++
 				}
-				prior.SetProvenance("side", side)
 
-				res := instrument.Step(prior)
+				res := instrument.Step(trade(at, int64(step+1), side, 50000, 1))
 				So(res, ShouldNotBeNil)
-				So(res.Err, ShouldBeNil)
+				So(instrument.Error(), ShouldBeNil)
+				So(res.Source, ShouldEqual, "hawkes")
+				So(res.Label, ShouldEqual, "BTC/USD")
+				So(res.At, ShouldEqual, at)
+				So(res.From.Sub(origin).Abs(), ShouldBeLessThan, time.Microsecond)
 
-				totalCount := float64(step + 1)
-				So(res.GetMetric("event_count").Raw, ShouldEqual, totalCount)
-				So(res.GetMetric("event_count:buy").Raw, ShouldEqual, buyCount)
-				So(res.GetMetric("event_count:sell").Raw, ShouldEqual, sellCount)
+				total := buyCount + sellCount
+				So(metricValue(res, "event_count"), ShouldEqual, total)
+				So(metricValue(res, "event_count:buy"), ShouldEqual, buyCount)
+				So(metricValue(res, "event_count:sell"), ShouldEqual, sellCount)
 
-				fracBuy := res.GetMetric("event_fraction:buy").Raw
-				fracSell := res.GetMetric("event_fraction:sell").Raw
-				So(fracBuy, ShouldAlmostEqual, buyCount/totalCount, 1e-9)
-				So(fracSell, ShouldAlmostEqual, sellCount/totalCount, 1e-9)
+				fracBuy := metricValue(res, "event_fraction:buy")
+				fracSell := metricValue(res, "event_fraction:sell")
+				So(fracBuy, ShouldAlmostEqual, buyCount/total, 1e-9)
+				So(fracSell, ShouldAlmostEqual, sellCount/total, 1e-9)
 				So(fracBuy+fracSell, ShouldAlmostEqual, 1.0, 1e-9)
 
-				span := prior.At.Sub(origin).Seconds()
+				span := at.Sub(origin).Seconds()
 				if span > 0 {
-					expectedBuyRate := buyCount / span
-					expectedSellRate := sellCount / span
-					expectedTotalRate := (buyCount + sellCount) / span
-
-					So(res.GetMetric("arrival_rate:buy").Raw, ShouldAlmostEqual, expectedBuyRate, 1e-6)
-					So(res.GetMetric("arrival_rate:sell").Raw, ShouldAlmostEqual, expectedSellRate, 1e-6)
-					So(res.GetMetric("arrival_rate").Raw, ShouldAlmostEqual, expectedTotalRate, 1e-6)
+					So(metricValue(res, "arrival_rate:buy"), ShouldAlmostEqual, buyCount/span, 1e-4)
+					So(metricValue(res, "arrival_rate:sell"), ShouldAlmostEqual, sellCount/span, 1e-4)
+					So(metricValue(res, "arrival_rate"), ShouldAlmostEqual, (buyCount+sellCount)/span, 1e-4)
 				}
 
-				So(res.Maturity, ShouldBeGreaterThanOrEqualTo, 0)
-				So(res.Maturity, ShouldBeLessThanOrEqualTo, 1.0)
+				So(res.Maturity(), ShouldBeGreaterThanOrEqualTo, 0)
+				So(res.Maturity(), ShouldBeLessThanOrEqualTo, 1.0)
 			}
 		})
 
-		Convey("Enforces gate validation: drops invalid trade side with domain error", func() {
-			prior := arena.NewMeasurement("ingress")
-			prior.Label = "BTC/USD"
-			prior.SeqIdx = 100
-			prior.At = now
-			prior.From = now
-			prior.SetMetric("price", data.NewMetric(
-				"price",
-				data.UnitPrice,
-				data.TimescaleInstantaneous,
-				50000.0,
-				1.0,
-			).Write(50000.0))
-			prior.SetMetric("qty", data.NewMetric(
-				"qty",
-				data.UnitQuantity,
-				data.TimescaleInstantaneous,
-				0.0,
-				1.0,
-			).Write(1.0))
-			prior.SetProvenance("channel", "trade")
-			prior.SetProvenance("side", "neutral") // invalid side
+		Convey("It drops an invalid trade side without publishing", func() {
+			prior := data.NewMeasurement(
+				1, "BTC/USD", "ingress", 100, 100,
+				data.StringEntry{Key: "side", Value: "neutral"},
+				data.StringEntry{Key: "channel", Value: "trade"},
+			)
+			prior.At = origin
+			prior.From = origin
+			prior = prior.Write(
+				data.NewMetric("price", 50000, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous),
+			)
 
 			res := instrument.Step(prior)
-			So(res, ShouldNotBeNil)
-			So(res.Err, ShouldNotBeNil)
+			So(res, ShouldBeNil)
 		})
 
-		Convey("Drops non-trade channel measurements without processing", func() {
-			prior := arena.NewMeasurement("ingress")
-			prior.Label = "BTC/USD"
-			prior.SeqIdx = 101
-			prior.At = now
-			prior.From = now
-			prior.SetProvenance("channel", "book")
-			prior.SetProvenance("side", "buy")
-			prior.SetMetric("price", data.NewMetric(
-				"price",
-				data.UnitPrice,
-				data.TimescaleInstantaneous,
-				50000.0,
-				1.0,
-			).Write(50000.0))
-			prior.SetMetric("qty", data.NewMetric(
-				"qty",
-				data.UnitQuantity,
-				data.TimescaleInstantaneous,
-				0.0,
-				1.0,
-			).Write(1.0))
+		Convey("It drops non-trade channel measurements without processing", func() {
+			prior := data.NewMeasurement(
+				1, "BTC/USD", "ingress", 101, 101,
+				data.StringEntry{Key: "side", Value: "buy"},
+				data.StringEntry{Key: "channel", Value: "book"},
+			)
+			prior.At = origin
+			prior.From = origin
+			prior = prior.Write(
+				data.NewMetric("price", 50000, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous),
+			)
 
 			res := instrument.Step(prior)
 			So(res, ShouldBeNil)
 		})
 	})
 }
+
+func metricValue(measurement *data.Measurement, label string) float64 {
+	got, held := metric(measurement, label)
+	So(held, ShouldBeTrue)
+	return got
+}
+

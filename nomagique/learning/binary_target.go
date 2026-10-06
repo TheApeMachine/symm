@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -11,32 +10,36 @@ import (
 
 /*
 BinaryTarget classifies an increase without inventing a new numeric rule.
+Each arrival is *[2]float64{current, past}; it yields *float64.
 */
 type BinaryTarget struct {
-	err error
+	*core.PrimitiveError
 	out float64
 }
 
 func NewBinaryTarget() core.Primitive {
-	return &BinaryTarget{}
+	return &BinaryTarget{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *BinaryTarget) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *BinaryTarget) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			sample := (*Observation)(arriving)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			if math.IsNaN(sample.Current) || math.IsNaN(sample.Past) ||
-				math.IsInf(sample.Current, 0) || math.IsInf(sample.Past, 0) {
+			sample := (*[2]float64)(arriving)
+
+			if math.IsNaN(sample[0]) || math.IsNaN(sample[1]) ||
+				math.IsInf(sample[0], 0) || math.IsInf(sample[1], 0) {
 				op.Error(core.ErrDomain)
 				return
 			}
 
 			op.out = 0.0
 
-			if sample.Current > sample.Past {
+			if sample[0] > sample[1] {
 				op.out = 1.0
 			}
 
@@ -45,14 +48,4 @@ func (op *BinaryTarget) Next(
 			}
 		}
 	}
-}
-
-func (op *BinaryTarget) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

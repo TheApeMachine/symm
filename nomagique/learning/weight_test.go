@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestTrustWeightNext(t *testing.T) {
@@ -21,20 +21,11 @@ func TestTrustWeightNext(t *testing.T) {
 				residual = 0.4 * math.Sin(float64(index)*0.17)
 			}
 
-			gotEval := transport.NewEvaluate(node)
-			var got learning.TrustReading
+			got := data.Read[[4]float64](node.Next(data.NewValue([2]float64{predicted, predicted + residual})))
 
-			for out := range gotEval.Next(transport.NewValues(learning.Pair{
-				Predicted: predicted,
-				Actual:    predicted + residual,
-			}).Next(nil)) {
-				got = *(*learning.TrustReading)(out)
-			}
-
-			err := gotEval.Error()
-			So(err, ShouldBeNil)
-			So(got.Value, ShouldEqual, got.Trust)
-			So(got.Count, ShouldBeGreaterThan, 0)
+			So(node.Error(), ShouldBeNil)
+			So(got[0], ShouldEqual, got[1])
+			So(got[3], ShouldBeGreaterThan, 0)
 		}
 	})
 }

@@ -23,47 +23,142 @@ func TrainingPrice(ctx context.Context) *broker.Price {
 func TrainingTape(legs int) []*data.Measurement {
 	base := ImpulseTape("BTC/USD", legs)
 	var frames []*data.Measurement
+	arena := data.NewArenaOwner("training", 4096)
 
 	for _, source := range base {
-		for repeat := 0; repeat < 32; repeat++ {
+		sourcePeers := source.Peers()
+
+		if len(sourcePeers) == 0 {
+			continue
+		}
+
+		value := data.Pull(sourcePeers[0].Read("value")).Metric.Raw
+
+		for repeat := range 32 {
 			sequence := int64(len(frames) + 1)
-			frame := CloneTestMeasurement(source)
-			frame.SeqIdx = sequence
-			frame.Source = "training"
-			frame.SetProvenance("owner", "training")
-			frame.SetMetric("previous_input", data.Metric{Raw: float64(sequence - 1)})
-			frame.SetMetric("input_count", data.Metric{Raw: 4})
-			frame.SetMetric("impulse_version", data.Metric{Raw: grid.FormatVersion})
-			for index, peer := range frame.Peers {
-				frame.Peers[index] = CloneTestMeasurement(peer)
-				frame.Peers[index].SeqIdx = sequence
+
+			quoteMeta := []data.StringEntry{
+				{Key: "venue", Value: "true"},
+				{Key: "volume-unit", Value: "base"},
+				{Key: "owner", Value: "quote"},
+				{Key: "channel", Value: "ticker"},
 			}
-			trade := frame.Peers[0]
-			value := trade.GetMetric("value").Raw
-			trade.SetMetric("price", data.Metric{Label: "price", Raw: value, Standardized: &value, Exact: decimal.NewFromFloat64(value)})
-			quote := data.NewMeasurement("quote", nil)
-			quote.SeqIdx, quote.Label = sequence, "BTC/USD"
-			quote.SetMetadata("venue", "true")
-			quote.SetMetadata("volume-unit", "base")
-			quote.SetProvenance("owner", "quote")
-			quote.SetProvenance("channel", "ticker")
-			for _, side := range []string{"bid", "ask"} {
-				amount := value
-				if side == "ask" {
-					amount += 0.01
+
+			bidVal := value
+			bidExact := decimal.NewFromFloat64(bidVal)
+			bidMetric := data.NewExactMetric("bid", bidExact, data.UnitPrice, data.TimescaleInstantaneous)
+			bidMetric.Standardized = bidVal
+
+			askVal := value + 0.01
+			askExact := decimal.NewFromFloat64(askVal)
+			askMetric := data.NewExactMetric("ask", askExact, data.UnitPrice, data.TimescaleInstantaneous)
+			askMetric.Standardized = askVal
+
+			quote := arena.NewMeasurement(
+				1,
+				"BTC/USD",
+				"quote",
+				sequence,
+				sequence,
+				nil,
+				quoteMeta...,
+			)
+			quote.At = source.At
+			quote.From = source.From
+			quote.Write(bidMetric, askMetric)
+
+			var tradeMetrics []data.Metric
+
+			for entry := range sourcePeers[0].Read() {
+				tradeMetrics = append(tradeMetrics, entry.Metric)
+			}
+
+			priceExact := decimal.NewFromFloat64(value)
+			priceMetric := data.NewExactMetric("price", priceExact, data.UnitPrice, data.TimescaleInstantaneous)
+			priceMetric.Standardized = value
+			tradeMetrics = append(tradeMetrics, priceMetric)
+
+			var tradeMeta []data.StringEntry
+
+			for _, key := range []string{"venue", "volume-unit", "channel"} {
+				if val := sourcePeers[0].Meta(key); val != "" {
+					tradeMeta = append(tradeMeta, data.StringEntry{Key: key, Value: val})
 				}
-				quote.SetMetric(side, data.Metric{Label: side, Raw: amount, Standardized: &amount, Exact: decimal.NewFromFloat64(amount)})
 			}
-			frame.Peers = append([]*data.Measurement{quote}, frame.Peers...)
-			// Changing features within a price regime keeps region contexts observable.
-			for _, peer := range frame.Peers[2:] {
-				metric := peer.GetMetric("value")
-				metric.Raw += float64(repeat%2) / 100
-				peer.SetMetric("value", metric)
+
+			trade := arena.NewMeasurement(
+				1,
+				"BTC/USD",
+				sourcePeers[0].Source,
+				sequence,
+				sequence,
+				nil,
+				tradeMeta...,
+			)
+			trade.At = source.At
+			trade.From = source.From
+			trade.Write(tradeMetrics...)
+
+			peers := []*data.Measurement{quote, trade}
+
+			for _, oldPeer := range sourcePeers[1:] {
+				var peerMetrics []data.Metric
+
+				for entry := range oldPeer.Read() {
+					metric := entry.Metric
+
+					if metric.Label == "value" {
+						metric.Raw += float64(repeat%2) / 100
+						metric.Standardized = metric.Raw
+					}
+
+					peerMetrics = append(peerMetrics, metric)
+				}
+
+				extraPeer := arena.NewMeasurement(
+					1,
+					"BTC/USD",
+					oldPeer.Source,
+					sequence,
+					sequence,
+					nil,
+				)
+				extraPeer.At = source.At
+				extraPeer.From = source.From
+				extraPeer.Write(peerMetrics...)
+				peers = append(peers, extraPeer)
 			}
-			frame.SetMetadata("fixture", fmt.Sprint(sequence))
+
+			frameMeta := []data.StringEntry{
+				{Key: "owner", Value: "training"},
+				{Key: "fixture", Value: fmt.Sprint(sequence)},
+			}
+
+			prevInput := data.NewMetric("previous_input", float64(sequence-1), data.UnitCount, data.TimescaleInstantaneous)
+			prevInput.Standardized = float64(sequence - 1)
+
+			inputCount := data.NewMetric("input_count", 4, data.UnitCount, data.TimescaleInstantaneous)
+			inputCount.Standardized = 4
+
+			impulseVer := data.NewMetric("impulse_version", grid.FormatVersion, data.UnitDimensionless, data.TimescaleInstantaneous)
+			impulseVer.Standardized = grid.FormatVersion
+
+			frame := arena.NewMeasurement(
+				1,
+				"BTC/USD",
+				"training",
+				sequence,
+				sequence,
+				peers,
+				frameMeta...,
+			)
+			frame.At = source.At
+			frame.From = source.From
+			frame.Write(prevInput, inputCount, impulseVer)
+
 			frames = append(frames, frame)
 		}
 	}
+
 	return frames
 }

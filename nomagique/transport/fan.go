@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -13,12 +12,15 @@ Fan presents one input run to every configured branch and streams what each
 branch yields.
 */
 type Fan struct {
-	err      error
+	*core.PrimitiveError
 	branches []core.Primitive
 }
 
 func NewFan(branches ...core.Primitive) core.Primitive {
-	return &Fan{branches: branches}
+	return &Fan{
+		PrimitiveError: core.NewPrimitiveError(),
+		branches:       branches,
+	}
 }
 
 func (op *Fan) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -29,16 +31,8 @@ func (op *Fan) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					return
 				}
 			}
+
+			op.Error(branch.Error())
 		}
 	}
-}
-
-func (op *Fan) Error(errs ...error) error {
-	for _, branch := range op.branches {
-		if err := branch.Error(errs...); err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -180,7 +180,7 @@ func (detector *Detector) Scan(
 			reset(measurement)
 		}
 
-		price := measurement.GetMetric("price").Exact
+		price := data.Pull(measurement.Read("price")).Metric.Exact
 		if price == nil || price.Sign() <= 0 {
 			continue
 		}
@@ -305,83 +305,29 @@ func (detector *Detector) Flush(
 	lowPrice *decimal.Decimal,
 	highPrice *decimal.Decimal,
 ) *data.Measurement {
-	metrics := map[string]data.Metric{
-		"StartSeqIdx": data.NewMetric(
-			"start_seq_idx",
-			data.UnitCount,
-			data.TimescaleInstantaneous,
-			0,
-			1,
-		).Write(float64(startIdx)),
-
-		"LowSeqIdx": data.NewMetric(
-			"low_seq_idx",
-			data.UnitCount,
-			data.TimescaleInstantaneous,
-			0,
-			1,
-		).Write(float64(lowIdx)),
-
-		"HighSeqIdx": data.NewMetric(
-			"high_seq_idx",
-			data.UnitCount,
-			data.TimescaleInstantaneous,
-			0,
-			1,
-		).Write(float64(highIdx)),
-
-		"StartTick": data.NewMetric(
-			"start_tick",
-			data.UnitCount,
-			data.TimescaleInstantaneous,
-			0,
-			1,
-		).Write(float64(startTick)),
-
-		"LowTick": data.NewMetric(
-			"low_tick",
-			data.UnitCount,
-			data.TimescaleInstantaneous,
-			0,
-			1,
-		).Write(float64(lowTick)),
-
-		"HighTick": data.NewMetric(
-			"high_tick",
-			data.UnitCount,
-			data.TimescaleInstantaneous,
-			0,
-			1,
-		).Write(float64(highTick)),
-
-		"LowPrice": data.NewMetric(
-			"low_price",
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-			0,
-			1,
-		).Write(lowPrice.Float64()),
-
-		"HighPrice": data.NewMetric(
-			"high_price",
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-			0,
-			1,
-		).Write(highPrice.Float64()),
-	}
-
 	measurement := data.NewMeasurement(
+		epoch,
+		symbol,
 		detector.Name(),
-		metrics,
-	)
-
-	measurement.Epoch = epoch
-	measurement.Tick = highTick
-	measurement.Label = symbol
-	measurement.At = highAt
-	measurement.From = lowAt
-	measurement.Timestamp = time.Now().UnixNano()
+		startIdx,
+		highTick,
+	).Write(data.NewMetric(
+		symbol, float64(startIdx), data.UnitCount, data.TimescaleTick,
+	), data.NewMetric(
+		symbol, float64(startTick), data.UnitCount, data.TimescaleTick,
+	), data.NewMetric(
+		symbol, float64(lowIdx), data.UnitCount, data.TimescaleTick,
+	), data.NewMetric(
+		symbol, float64(lowTick), data.UnitCount, data.TimescaleTick,
+	), data.NewMetric(
+		symbol, float64(highIdx), data.UnitCount, data.TimescaleTick,
+	), data.NewMetric(
+		symbol, float64(highTick), data.UnitCount, data.TimescaleTick,
+	), data.NewMetric(
+		symbol, lowPrice.Float64(), data.UnitCurrency, data.TimescaleTick,
+	), data.NewMetric(
+		symbol, highPrice.Float64(), data.UnitCurrency, data.TimescaleTick,
+	))
 
 	detector.storeTee.Push(
 		data.NewPublication(

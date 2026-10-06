@@ -1,7 +1,5 @@
 package types
 
-import "github.com/theapemachine/symm/nomagique/learning"
-
 /*
 ResonanceReturnForecast is a direction call over the largest contiguous
 horizon whose issued calls beat a coin flip at the regulated confidence.
@@ -12,7 +10,6 @@ distribution is the direction head's signed lean and uncertainty; it is not a
 priced return.
 */
 type ResonanceReturnForecast struct {
-	Distribution     learning.RLSOutput
 	Horizon          int
 	CandidateCall    float64
 	Call             float64

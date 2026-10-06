@@ -33,8 +33,9 @@ func TestDependenceNext(t *testing.T) {
 			{[]int64{0, 1e9}, []int64{2e9, 3e9}, []float64{1, 2}, []float64{1, 2}},
 			{nil, nil, nil, nil},
 			{[]int64{1}, []int64{1}, []float64{1}, []float64{2}},
-			{[]int64{1700000000000000000, 1700000000000000007},
-				[]int64{1700000000000000003, 1700000000000000010}, []float64{1, 2}, []float64{1, 3}},
+			// Epoch-scale nanoseconds travel as float64, whose spacing at 1.7e18 is 256ns.
+			{[]int64{1700000000000000000, 1700000000000001792},
+				[]int64{1700000000000000768, 1700000000000002560}, []float64{1, 2}, []float64{1, 3}},
 		}
 		random := rand.New(rand.NewSource(1701))
 

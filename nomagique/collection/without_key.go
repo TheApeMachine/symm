@@ -8,43 +8,37 @@ import (
 )
 
 /*
-Keyed is one keyed member of a collection. It carries facts between
-primitives and computes nothing.
+WithoutKey excludes one configured key from each arriving keyed collection.
+Each arrival is a *map[K]V; it yields a *map[K]V holding every other member,
+and leaves the arriving map alone.
 */
-type Keyed[K comparable, V any] struct {
-	Key   K
-	Value V
+type WithoutKey[K comparable, V any] struct {
+	*core.PrimitiveError
+	key K
+	out map[K]V
 }
 
-/*
-WithoutKeyInput is one keyed collection with the key to exclude.
-*/
-type WithoutKeyInput[K comparable, V any] struct {
-	Key    K
-	Values []Keyed[K, V]
+func NewWithoutKey[K comparable, V any](key K) core.Primitive {
+	return &WithoutKey[K, V]{
+		PrimitiveError: core.NewPrimitiveError(),
+		key:            key,
+	}
 }
 
-/*
-Without owns the exclusion.
-*/
-type Without[K comparable, V any] struct {
-	err error
-	out []Keyed[K, V]
-}
-
-func NewWithoutKey[K comparable, V any]() core.Primitive {
-	return &Without[K, V]{}
-}
-
-func (op *Without[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *WithoutKey[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			input := *(*WithoutKeyInput[K, V])(arriving)
-			op.out = make([]Keyed[K, V], 0, len(input.Values))
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			for _, member := range input.Values {
-				if member.Key != input.Key {
-					op.out = append(op.out, member)
+			values := *(*map[K]V)(arriving)
+			op.out = make(map[K]V, len(values))
+
+			for key, value := range values {
+				if key != op.key {
+					op.out[key] = value
 				}
 			}
 
@@ -53,15 +47,4 @@ func (op *Without[K, V]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			}
 		}
 	}
-}
-
-func (op *Without[K, V]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = err
-			break
-		}
-	}
-
-	return op.err
 }

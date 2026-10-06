@@ -4,30 +4,12 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"time"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
-
-/*
-reject marks a measurement as failed for later pipeline stages. Measurement.err
-is unexported under the WORM API, so hawkes tracks rejection out-of-band.
-*/
-var rejectedMeasurements = map[*data.Measurement]error{}
-
-func reject(m *data.Measurement, err error) {
-	if m == nil || err == nil {
-		return
-	}
-
-	rejectedMeasurements[m] = err
-}
-
-func rejected(m *data.Measurement) bool {
-	_, ok := rejectedMeasurements[m]
-	return ok
-}
 
 /*
 Paths creates the shared per-symbol arrival registry the pipeline's stages
@@ -40,59 +22,82 @@ func Paths() *paths {
 
 /*
 Counts admits the arrival into the symbol's observation window: it rejects a
-regressing event time, then writes the empirical counts, fractions, and
-arrival rates the window supports, naming the window's start on the
-measurement. Every arrival is yielded exactly once, rejected or not; a
-rejected arrival leaves the history untouched.
+regressing event time, then publishes the empirical counts, fractions, and
+arrival rates the window supports, naming the window's start as "from".
 */
 type Counts struct {
 	*core.PrimitiveError
 	history *paths
+	label   string
+	input   data.Map[string]
+	output  data.Map[float64]
 }
 
 /*
 NewCounts creates the empirical arrival stage over the shared registry.
 */
-func NewCounts(history *paths) core.Primitive {
+func NewCounts(history *paths, label string) core.Primitive {
 	return &Counts{
 		PrimitiveError: core.NewPrimitiveError(),
 		history:        history,
+		label:          label,
+		input:          data.NewMap("buy", "buy", "sell", "sell", "at", "at"),
+		output:         data.NewOutputMap(),
 	}
 }
 
 func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement)(arriving)
-
-			if rejected(m) {
-				if !yield(arriving) {
-					return
-				}
-
-				continue
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
 			}
 
-			p := op.history.at(m.Label)
+			adapter := *(**data.Adapter)(arriving)
 
-			side := m.Meta("side")
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			buy, buyOK := values.Values["buy"]
+			sell, sellOK := values.Values["sell"]
+			atSec, atOK := values.Values["at"]
+
+			if !buyOK || !sellOK || !atOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			at := time.Unix(0, int64(atSec*1e9)).UTC()
 			mark := -1.0
 
-			if side == "buy" {
+			if buy == 1 {
 				mark = 1.0
 			}
 
-			if p.hasLast && m.At.Before(p.lastAt) {
-				reject(m, fmt.Errorf("%w: hawkes: regressing event time", core.ErrDomain))
+			_ = sell
 
-				if !yield(arriving) {
-					return
-				}
+			p := op.history.at(op.label)
 
-				continue
+			if p.hasLast && at.Before(p.lastAt) {
+				op.Error(fmt.Errorf("%w: hawkes: regressing event time", core.ErrDomain))
+				return
 			}
 
-			p.lastAt = m.At
+			p.lastAt = at
 			p.hasLast = true
 
 			buyArrivals, sellArrivals := p.sides()
@@ -102,41 +107,41 @@ func (op *Counts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if mark > 0 {
 				countBuy++
-			}
-
-			if mark <= 0 {
+			} else {
 				countSell++
 			}
 
 			count := countBuy + countSell
-			from := m.At
+			from := at
+			fromSec := atSec
 
 			if len(p.samples) > 0 {
 				from = p.origin()
+				fromSec = float64(from.UnixNano()) * 1e-9
 			}
 
-			span := m.At.Sub(from).Seconds()
+			span := atSec - fromSec
 
-			if !from.After(m.At) {
-				m.From = from
-			}
-
-			var metrics []data.Metric
-
-			metrics = append(metrics, data.NewMetric("event_count", count, data.UnitDimensionless, data.TimescaleInstantaneous))
-			metrics = append(metrics, data.NewMetric("event_count:buy", countBuy, data.UnitDimensionless, data.TimescaleInstantaneous))
-			metrics = append(metrics, data.NewMetric("event_count:sell", countSell, data.UnitDimensionless, data.TimescaleInstantaneous))
-			metrics = append(metrics, data.NewMetric("event_fraction:buy", countBuy/count, data.UnitDimensionless, data.TimescaleInstantaneous))
-			metrics = append(metrics, data.NewMetric("event_fraction:sell", countSell/count, data.UnitDimensionless, data.TimescaleInstantaneous))
+			clear(op.output.Values)
+			op.output.Values["from"] = fromSec
+			op.output.Values["event_count"] = count
+			op.output.Values["event_count:buy"] = countBuy
+			op.output.Values["event_count:sell"] = countSell
+			op.output.Values["event_fraction:buy"] = countBuy / count
+			op.output.Values["event_fraction:sell"] = countSell / count
 
 			if span > 0 {
-				metrics = append(metrics, data.NewMetric("arrival_rate:buy", countBuy/span, data.UnitRate, data.TimescaleInstantaneous))
-				metrics = append(metrics, data.NewMetric("arrival_rate:sell", countSell/span, data.UnitRate, data.TimescaleInstantaneous))
-				metrics = append(metrics, data.NewMetric("arrival_rate", (countBuy+countSell)/span, data.UnitRate, data.TimescaleInstantaneous))
+				op.output.Values["arrival_rate:buy"] = countBuy / span
+				op.output.Values["arrival_rate:sell"] = countSell / span
+				op.output.Values["arrival_rate"] = (countBuy + countSell) / span
 			}
 
-			if len(metrics) > 0 {
-				m.Write(metrics...)
+			for range adapter.Next(data.NewValue(op.output)) {
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
 			}
 
 			if !yield(arriving) {
@@ -152,30 +157,47 @@ conditional intensities, excitation decomposition, the branching matrix and
 its spectral facts, in-window likelihoods against the nested Poisson and
 self-only restrictions, and the compensator innovations whose excitation
 share carries the clustering the fit measured. Without a fitted model there
-is nothing to measure against and the measurement moves through untouched.
+is nothing to measure against and the arrival moves through untouched.
 */
 type Excitation struct {
 	*core.PrimitiveError
 	history *paths
+	label   string
+	input   data.Map[string]
+	output  data.Map[float64]
 }
 
 /*
 NewExcitation creates the model-evaluation stage over the shared registry.
 */
-func NewExcitation(history *paths) core.Primitive {
+func NewExcitation(history *paths, label string) core.Primitive {
 	return &Excitation{
 		PrimitiveError: core.NewPrimitiveError(),
 		history:        history,
+		label:          label,
+		input:          data.NewMap("buy", "buy", "sell", "sell", "at", "at"),
+		output:         data.NewOutputMap(),
 	}
 }
 
 func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement)(arriving)
-			p := op.history.at(m.Label)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			if rejected(m) || !p.modelReady {
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			p := op.history.at(op.label)
+
+			if !p.modelReady {
 				if !yield(arriving) {
 					return
 				}
@@ -183,20 +205,46 @@ func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				continue
 			}
 
-			buyArrivals, sellArrivals := p.sides()
+			var values data.Map[float64]
 
-			side := m.Meta("side")
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			buy, buyOK := values.Values["buy"]
+			_, sellOK := values.Values["sell"]
+			atSec, atOK := values.Values["at"]
+
+			if !buyOK || !sellOK || !atOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
 			mark := -1.0
 
-			if side == "buy" {
+			if buy == 1 {
 				mark = 1.0
 			}
 
-			atSec := float64(m.At.UnixNano()) * 1e-9
-			span := m.At.Sub(p.origin()).Seconds()
+			buyArrivals, sellArrivals := p.sides()
 
-			var _ float64 = span
-			op.evaluate(m, p, buyArrivals, sellArrivals, atSec, mark)
+			clear(op.output.Values)
+			op.evaluate(p, buyArrivals, sellArrivals, atSec, mark)
+
+			if len(op.output.Values) > 0 {
+				for range adapter.Next(data.NewValue(op.output)) {
+				}
+
+				if err := adapter.Error(); err != nil {
+					op.Error(err)
+					return
+				}
+			}
 
 			if !yield(arriving) {
 				return
@@ -206,12 +254,9 @@ func (op *Excitation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 }
 
 /*
-evaluate publishes one event's model-conditioned facts, exactly the
-mathematics the fitted bivariate process defines: pre-arrival intensities,
-excitation decomposition, branching descent, likelihoods against nested
-restrictions, and compensator innovations.
+evaluate publishes one event's model-conditioned facts into op.output.
 */
-func (op *Excitation) evaluate(m *data.Measurement, p *path, buyArrivals, sellArrivals []float64, atSec, mark float64) {
+func (op *Excitation) evaluate(p *path, buyArrivals, sellArrivals []float64, atSec, mark float64) {
 	model := p.model
 
 	muX := model.muX
@@ -228,58 +273,56 @@ func (op *Excitation) evaluate(m *data.Measurement, p *path, buyArrivals, sellAr
 	excessBuy := lambdaBuy - muX
 	excessSell := lambdaSell - muY
 
-	var metrics []data.Metric
-
-	metrics = append(metrics, data.NewMetric("conditional_intensity:buy", lambdaBuy, data.UnitRate, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("conditional_intensity:sell", lambdaSell, data.UnitRate, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("conditional_intensity", lambdaBuy+lambdaSell, data.UnitRate, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("background_rate:buy", muX, data.UnitRate, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("background_rate:sell", muY, data.UnitRate, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("background_rate", muX+muY, data.UnitRate, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("excitation_intensity:buy", excessBuy, data.UnitRate, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("excitation_intensity:sell", excessSell, data.UnitRate, data.TimescaleInstantaneous))
+	op.output.Values["conditional_intensity:buy"] = lambdaBuy
+	op.output.Values["conditional_intensity:sell"] = lambdaSell
+	op.output.Values["conditional_intensity"] = lambdaBuy + lambdaSell
+	op.output.Values["background_rate:buy"] = muX
+	op.output.Values["background_rate:sell"] = muY
+	op.output.Values["background_rate"] = muX + muY
+	op.output.Values["excitation_intensity:buy"] = excessBuy
+	op.output.Values["excitation_intensity:sell"] = excessSell
 
 	if lambdaBuy > 0 {
-		metrics = append(metrics, data.NewMetric("excitation_fraction:buy", excessBuy/lambdaBuy, data.UnitDimensionless, data.TimescaleInstantaneous))
+		op.output.Values["excitation_fraction:buy"] = excessBuy / lambdaBuy
 	}
 
 	if lambdaSell > 0 {
-		metrics = append(metrics, data.NewMetric("excitation_fraction:sell", excessSell/lambdaSell, data.UnitDimensionless, data.TimescaleInstantaneous))
+		op.output.Values["excitation_fraction:sell"] = excessSell / lambdaSell
 	}
 
-	metrics = append(metrics, data.NewMetric("excitation_amplitude:buy_from_buy", alphaXX, data.UnitRate, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("excitation_amplitude:buy_from_sell", alphaXY, data.UnitRate, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("excitation_amplitude:sell_from_buy", alphaYX, data.UnitRate, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("excitation_amplitude:sell_from_sell", alphaYY, data.UnitRate, data.TimescaleInstantaneous))
+	op.output.Values["excitation_amplitude:buy_from_buy"] = alphaXX
+	op.output.Values["excitation_amplitude:buy_from_sell"] = alphaXY
+	op.output.Values["excitation_amplitude:sell_from_buy"] = alphaYX
+	op.output.Values["excitation_amplitude:sell_from_sell"] = alphaYY
 
 	if beta > 0 {
 		timescale := 1.0 / beta
 
-		metrics = append(metrics, data.NewMetric("excitation_decay", beta, data.UnitRate, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("excitation_decay:buy_from_buy", beta, data.UnitRate, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("excitation_decay:buy_from_sell", beta, data.UnitRate, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("excitation_decay:sell_from_buy", beta, data.UnitRate, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("excitation_decay:sell_from_sell", beta, data.UnitRate, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("excitation_timescale", timescale, data.UnitDuration, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("excitation_timescale:buy_from_buy", timescale, data.UnitDuration, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("excitation_timescale:buy_from_sell", timescale, data.UnitDuration, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("excitation_timescale:sell_from_buy", timescale, data.UnitDuration, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("excitation_timescale:sell_from_sell", timescale, data.UnitDuration, data.TimescaleInstantaneous))
+		op.output.Values["excitation_decay"] = beta
+		op.output.Values["excitation_decay:buy_from_buy"] = beta
+		op.output.Values["excitation_decay:buy_from_sell"] = beta
+		op.output.Values["excitation_decay:sell_from_buy"] = beta
+		op.output.Values["excitation_decay:sell_from_sell"] = beta
+		op.output.Values["excitation_timescale"] = timescale
+		op.output.Values["excitation_timescale:buy_from_buy"] = timescale
+		op.output.Values["excitation_timescale:buy_from_sell"] = timescale
+		op.output.Values["excitation_timescale:sell_from_buy"] = timescale
+		op.output.Values["excitation_timescale:sell_from_sell"] = timescale
 	}
 
 	matrix := branchingMatrix(alphaXX, alphaXY, alphaYX, alphaYY, beta)
 
-	metrics = append(metrics, data.NewMetric("offspring:buy_from_buy", matrix[0][0], data.UnitDimensionless, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("offspring:buy_from_sell", matrix[0][1], data.UnitDimensionless, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("offspring:sell_from_buy", matrix[1][0], data.UnitDimensionless, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("offspring:sell_from_sell", matrix[1][1], data.UnitDimensionless, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("branching_spectral_radius", spectralRadius(matrix), data.UnitDimensionless, data.TimescaleInstantaneous))
+	op.output.Values["offspring:buy_from_buy"] = matrix[0][0]
+	op.output.Values["offspring:buy_from_sell"] = matrix[0][1]
+	op.output.Values["offspring:sell_from_buy"] = matrix[1][0]
+	op.output.Values["offspring:sell_from_sell"] = matrix[1][1]
+	op.output.Values["branching_spectral_radius"] = spectralRadius(matrix)
 
 	buyParent, sellParent, hasDesc := totalDescendants(alphaXX, alphaXY, alphaYX, alphaYY, beta)
 
 	if hasDesc {
-		metrics = append(metrics, data.NewMetric("expected_descendants_from_buy", buyParent, data.UnitDimensionless, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("expected_descendants_from_sell", sellParent, data.UnitDimensionless, data.TimescaleInstantaneous))
+		op.output.Values["expected_descendants_from_buy"] = buyParent
+		op.output.Values["expected_descendants_from_sell"] = sellParent
 	}
 
 	streamPrior := newArrivalStream(buyArrivals, sellArrivals)
@@ -295,21 +338,21 @@ func (op *Excitation) evaluate(m *data.Measurement, p *path, buyArrivals, sellAr
 	hawkesLL, hawkesOK := model.logLikelihood(streamWindow, atSec)
 
 	if hawkesOK {
-		metrics = append(metrics, data.NewMetric("log_likelihood:hawkes", hawkesLL, data.UnitDimensionless, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("log_likelihood_per_event:hawkes", hawkesLL/markedCount, data.UnitDimensionless, data.TimescaleInstantaneous))
+		op.output.Values["log_likelihood:hawkes"] = hawkesLL
+		op.output.Values["log_likelihood_per_event:hawkes"] = hawkesLL / markedCount
 	}
 
 	poisson := bivariateFit{muX: muX, muY: muY, beta: beta}
 	poissonLL, poissonOK := poisson.logLikelihood(streamWindow, atSec)
 
 	if poissonOK {
-		metrics = append(metrics, data.NewMetric("log_likelihood:poisson", poissonLL, data.UnitDimensionless, data.TimescaleInstantaneous))
+		op.output.Values["log_likelihood:poisson"] = poissonLL
 	}
 
 	if hawkesOK && poissonOK {
 		gainPoisson := hawkesLL - poissonLL
-		metrics = append(metrics, data.NewMetric("log_likelihood_gain_vs_poisson", gainPoisson, data.UnitDimensionless, data.TimescaleInstantaneous))
-		metrics = append(metrics, data.NewMetric("log_likelihood_gain_per_event_vs_poisson", gainPoisson/markedCount, data.UnitDimensionless, data.TimescaleInstantaneous))
+		op.output.Values["log_likelihood_gain_vs_poisson"] = gainPoisson
+		op.output.Values["log_likelihood_gain_per_event_vs_poisson"] = gainPoisson / markedCount
 	}
 
 	if hawkesOK && p.selfOnlyReady {
@@ -317,9 +360,9 @@ func (op *Excitation) evaluate(m *data.Measurement, p *path, buyArrivals, sellAr
 
 		if selfOK {
 			gainSelf := hawkesLL - selfLL
-			metrics = append(metrics, data.NewMetric("log_likelihood:self_only", selfLL, data.UnitDimensionless, data.TimescaleInstantaneous))
-			metrics = append(metrics, data.NewMetric("log_likelihood_gain_vs_self_only", gainSelf, data.UnitDimensionless, data.TimescaleInstantaneous))
-			metrics = append(metrics, data.NewMetric("log_likelihood_gain_per_event_vs_self_only", gainSelf/markedCount, data.UnitDimensionless, data.TimescaleInstantaneous))
+			op.output.Values["log_likelihood:self_only"] = selfLL
+			op.output.Values["log_likelihood_gain_vs_self_only"] = gainSelf
+			op.output.Values["log_likelihood_gain_per_event_vs_self_only"] = gainSelf / markedCount
 		}
 	}
 
@@ -332,44 +375,38 @@ func (op *Excitation) evaluate(m *data.Measurement, p *path, buyArrivals, sellAr
 	innoBuy := priorCountBuy - compBuy
 	innoSell := priorCountSell - compSell
 
-	metrics = append(metrics, data.NewMetric("compensator:buy", compBuy, data.UnitDimensionless, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("compensator:sell", compSell, data.UnitDimensionless, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("count_innovation:buy", innoBuy, data.UnitDimensionless, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("count_innovation:sell", innoSell, data.UnitDimensionless, data.TimescaleInstantaneous))
+	op.output.Values["compensator:buy"] = compBuy
+	op.output.Values["compensator:sell"] = compSell
+	op.output.Values["count_innovation:buy"] = innoBuy
+	op.output.Values["count_innovation:sell"] = innoSell
 
 	if compBuy > 0 {
-		metrics = append(metrics, data.NewMetric("standardized_innovation:buy", innoBuy/math.Sqrt(compBuy), data.UnitDimensionless, data.TimescaleInstantaneous))
+		op.output.Values["standardized_innovation:buy"] = innoBuy / math.Sqrt(compBuy)
 	}
 
 	if compSell > 0 {
-		metrics = append(metrics, data.NewMetric("standardized_innovation:sell", innoSell/math.Sqrt(compSell), data.UnitDimensionless, data.TimescaleInstantaneous))
+		op.output.Values["standardized_innovation:sell"] = innoSell / math.Sqrt(compSell)
 	}
 
 	// excitation_share is the excitation's share of the integrated
 	// intensity over the whole observation span, where excitation_fraction
-	// above is that share at this one instant. The two answer different
-	// questions: on a bursty stream the instantaneous form samples a
-	// decaying exponential at whatever moment a frame happens to land, so
-	// it reads near zero between bursts even when the fit has found strong
-	// clustering. The integrated form carries the clustering the fit
-	// actually measured, and is what a consumer ranking self-excitation
-	// across symbols must read.
+	// above is that share at this one instant.
 	excessBuyMass := compBuy - muX*spanPrior
 	excessSellMass := compSell - muY*spanPrior
 
-	metrics = append(metrics, data.NewMetric("excitation_mass:buy", excessBuyMass, data.UnitDimensionless, data.TimescaleInstantaneous))
-	metrics = append(metrics, data.NewMetric("excitation_mass:sell", excessSellMass, data.UnitDimensionless, data.TimescaleInstantaneous))
+	op.output.Values["excitation_mass:buy"] = excessBuyMass
+	op.output.Values["excitation_mass:sell"] = excessSellMass
 
 	if compBuy > 0 {
-		metrics = append(metrics, data.NewMetric("excitation_share:buy", excessBuyMass/compBuy, data.UnitDimensionless, data.TimescaleInstantaneous))
+		op.output.Values["excitation_share:buy"] = excessBuyMass / compBuy
 	}
 
 	if compSell > 0 {
-		metrics = append(metrics, data.NewMetric("excitation_share:sell", excessSellMass/compSell, data.UnitDimensionless, data.TimescaleInstantaneous))
+		op.output.Values["excitation_share:sell"] = excessSellMass / compSell
 	}
 
 	if compTotal := compBuy + compSell; compTotal > 0 {
-		metrics = append(metrics, data.NewMetric("excitation_share", (excessBuyMass+excessSellMass)/compTotal, data.UnitDimensionless, data.TimescaleInstantaneous))
+		op.output.Values["excitation_share"] = (excessBuyMass + excessSellMass) / compTotal
 	}
 
 	snrSum := 0.0
@@ -388,20 +425,7 @@ func (op *Excitation) evaluate(m *data.Measurement, p *path, buyArrivals, sellAr
 	if snrSides > 0 {
 		p.snr = snrSum / float64(snrSides)
 		p.hasSNR = true
-
-		metrics = append(metrics, data.NewMetric("snr", p.snr, data.UnitDimensionless, data.TimescaleInstantaneous))
-	}
-
-	if len(metrics) > 0 {
-		if m.ID != 0 {
-			next := data.NewMeasurement(m.Epoch, m.Label, m.Source, m.SeqIdx, m.Tick)
-			next.At = m.At
-			next.From = m.From
-			next.Write(metrics...)
-			*m = *next
-		} else {
-			m.Write(metrics...)
-		}
+		op.output.Values["snr"] = p.snr
 	}
 }
 
@@ -413,37 +437,68 @@ this event was already measured against the model that existed before it.
 type Refit struct {
 	*core.PrimitiveError
 	history *paths
+	label   string
+	input   data.Map[string]
 }
 
 /*
 NewRefit creates the history-advance stage over the shared registry.
 */
-func NewRefit(history *paths) core.Primitive {
+func NewRefit(history *paths, label string) core.Primitive {
 	return &Refit{
 		PrimitiveError: core.NewPrimitiveError(),
 		history:        history,
+		label:          label,
+		input:          data.NewMap("buy", "buy", "sell", "sell", "at", "at"),
 	}
 }
 
 func (op *Refit) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			m := *(**data.Measurement)(arriving)
-			p := op.history.at(m.Label)
-
-			if !rejected(m) {
-				side := m.Meta("side")
-				mark := -1.0
-
-				if side == "buy" {
-					mark = 1.0
-				}
-
-				atSec := float64(m.At.UnixNano()) * 1e-9
-
-				p.remember(m.At, atSec, mark)
-				p.refit(atSec)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
 			}
+
+			adapter := *(**data.Adapter)(arriving)
+
+			if adapter == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			var values data.Map[float64]
+
+			for pointer := range adapter.Next(data.NewValue(op.input)) {
+				values = *(*data.Map[float64])(pointer)
+			}
+
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			buy, buyOK := values.Values["buy"]
+			_, sellOK := values.Values["sell"]
+			atSec, atOK := values.Values["at"]
+
+			if !buyOK || !sellOK || !atOK {
+				op.Error(core.ErrNotHeld)
+				return
+			}
+
+			at := time.Unix(0, int64(atSec*1e9)).UTC()
+			mark := -1.0
+
+			if buy == 1 {
+				mark = 1.0
+			}
+
+			p := op.history.at(op.label)
+
+			p.remember(at, atSec, mark)
+			p.refit(atSec)
 
 			if !yield(arriving) {
 				return

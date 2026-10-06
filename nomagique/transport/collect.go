@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,12 +11,12 @@ import (
 Collect retains the values of one run as one collection.
 */
 type Collect[T any] struct {
-	err error
+	*core.PrimitiveError
 	out []T
 }
 
 func NewCollect[T any]() core.Primitive {
-	return &Collect[T]{}
+	return &Collect[T]{PrimitiveError: core.NewPrimitiveError()}
 }
 
 func (op *Collect[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -34,14 +33,4 @@ func (op *Collect[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			return
 		}
 	}
-}
-
-func (op *Collect[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -11,12 +11,15 @@ import (
 Stages is a Primitive that threads a run through stages.
 */
 type Stages struct {
-	err    error
+	*core.PrimitiveError
 	stages []core.Primitive
 }
 
 func NewStages(stages ...core.Primitive) core.Primitive {
-	return &Stages{stages: stages}
+	return &Stages{
+		PrimitiveError: core.NewPrimitiveError(),
+		stages:         stages,
+	}
 }
 
 func (op *Stages) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -26,15 +29,15 @@ func (op *Stages) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		curr = stage.Next(curr)
 	}
 
-	return curr
-}
+	return func(yield func(unsafe.Pointer) bool) {
+		for out := range curr {
+			if !yield(out) {
+				return
+			}
+		}
 
-func (op *Stages) Error(errs ...error) error {
-	for _, stage := range op.stages {
-		if err := stage.Error(errs...); err != nil {
-			op.err = err
+		for _, stage := range op.stages {
+			op.Error(stage.Error())
 		}
 	}
-
-	return op.err
 }

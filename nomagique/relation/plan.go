@@ -1,332 +1,251 @@
 package relation
 
 import (
-	"errors"
+	"fmt"
 	"iter"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Selector is a structural coordinate selector. An empty field is a wildcard
-for that identity component. Selectors are wiring, not name magic: they bind
-exact coordinates into explicit Source/Target/Control roles.
-*/
-type Selector struct {
-	// Source is the signal source, e.g. "cvd".
-	Source string
-	// Metric is the metric name; empty selects all metrics of Source.
-	Metric string
-	// Side is the side suffix; empty selects both sides.
-	Side string
-}
+Planner is one explicit relation plan compiled against the resident
+coordinates of an ObservationStore. Eligibility is structural only: model
+epoch, symbol scope, peer scope, explicit pairs, the Sources × Targets cross
+product (self-pairs excluded), and exact controls. It never depends on
+current evidence values: a low-gain or zero-gain Relation remains eligible.
 
-/*
-selectorMatches reports whether a coordinate satisfies the selector. An empty
-field is a wildcard for that identity component.
-*/
-func selectorMatches(selector Selector, coordinate Coordinate) bool {
-	if selector.Source != "" && selector.Source != coordinate.Source {
-		return false
-	}
+Selectors are [3]string{source, metric, side}; an empty field is a wildcard.
+Each control selector has the lag at its index in controlLags (a missing or
+non-positive lag aligns the control at the source lag).
 
-	if selector.Metric != "" && selector.Metric != coordinate.Metric {
-		return false
-	}
+Each arrival is **data.Adapter carrying text "symbol" and number "epoch". A
+foreign epoch or a symbol outside the plan scope compiles nothing. Otherwise
+it yields one fresh **data.Adapter per candidate, ready for Influence:
 
-	if selector.Side != "" && selector.Side != coordinate.Side {
-		return false
-	}
+	text    "source", "target", "control.<i>"
+	number  "controls", "control.<i>.lag", "min_lag", "max_lag"
+	number  "controls_complete"   1, or 0 when an exact control is not resident
 
-	return true
-}
-
-/*
-ControlSelector is one explicit control in a RelationPlan: a coordinate
-selector plus the alignment lag for that control. A zero lag aligns the
-control at the same cutoff as the Source (t - sourceLag); a positive lag
-aligns it at t - controlLag, which is required to condition on a mediator at
-the time slice that actually blocks a path.
-*/
-type ControlSelector struct {
-	Selector
-	Lag time.Duration
-}
-
-/*
-PlannedPair is one structurally eligible Source→Target pair in a RelationPlan.
-*/
-type PlannedPair struct {
-	Source Selector
-	Target Selector
-}
-
-/*
-LagDomain is the candidate lag search domain expressed in time. A zero
-MinLag falls back to the derived lag resolution; a zero MaxLag is bounded by
-the retained history (infrastructure provenance, published as LagSearchSpan).
-*/
-type LagDomain struct {
-	MinLag time.Duration
-	MaxLag time.Duration
-}
-
-/*
-RelationPlan is the explicit typed plan that defines which Relations are
-eligible. Eligibility is structural only: symbol scope, peer scope, explicit
-pairs, and exact controls. It never depends on current evidence values — a
-valid low-gain or zero-gain Relation remains eligible and representable.
-*/
-type RelationPlan struct {
-	// Version is the relation-plan version; it participates in the model
-	// epoch contract.
-	Version uint64
-	// Epoch is the model epoch this plan belongs to.
-	Epoch uint64
-	// Symbol is the symbol scope; empty means any symbol.
-	Symbol string
-	// Peer is the peer scope; empty means no peer restriction.
-	Peer string
-	// Pairs enumerates the explicit Source→Target pairs to estimate.
-	Pairs []PlannedPair
-	// Sources and Targets define the cross-product candidate space: every
-	// Source coordinate × every Target coordinate (self-pairs excluded).
-	// This is how a plan declares "all configured same-symbol compatible
-	// coordinate pairs" without enumerating every combination.
-	Sources []Selector
-	Targets []Selector
-	// Controls are the explicit structural controls applied to every pair.
-	Controls []ControlSelector
-	// Lag is the candidate lag domain.
-	Lag LagDomain
-}
-
-/*
-CompiledCandidate represents a pre-resolved (Source, Target, Controls, Lag)
-candidate pair.
-*/
-type CompiledCandidate struct {
-	Plan             *RelationPlan
-	Source           Coordinate
-	Target           Coordinate
-	Controls         []Control
-	ControlsComplete bool
-	Lag              LagDomain
-}
-
-/*
-CompileRequest asks the planner to precompile the relation candidates across
-all active plans for one symbol. Coordinates are the symbol's resident
-coordinates in canonical order; the planner resolves selectors against them
-structurally, never against evidence.
-*/
-type CompileRequest struct {
-	Plans       []*RelationPlan
-	Symbol      string
-	Epoch       uint64
-	Coordinates []Coordinate
-}
-
-/*
-CompileResult is the compiled candidates of one request.
-*/
-type CompileResult struct {
-	Candidates []CompiledCandidate
-}
-
-/*
-Planner compiles RelationPlans into explicit candidates. Eligibility is
-structural only: symbol scope, peer scope, explicit pairs, and exact
-controls, resolved against the resident coordinates supplied per request.
+A missing exact control makes the Relation unavailable rather than silently
+changing the model: the unresolved selector is carried as the control key,
+which no resident coordinate matches, so Influence reports
+FitControlUnavailable.
 */
 type Planner struct {
-	err error
-	out CompileResult
+	*core.PrimitiveError
+	store       core.Primitive
+	epoch       uint64
+	symbol      string
+	peer        string
+	lag         [2]float64
+	pairs       [][2][3]string
+	controls    [][3]string
+	controlLags []time.Duration
+	scope       data.Map[string]
+	stamp       data.Map[string]
+	keys        []string
 }
 
 /*
-NewPlanner creates a Planner primitive.
+NewPlanner builds one plan. An empty symbol or peer means no restriction. A
+zero minLag or maxLag lets Influence derive that bound.
 */
-func NewPlanner() core.Primitive {
-	return &Planner{}
+func NewPlanner(
+	store core.Primitive,
+	epoch uint64,
+	symbol string,
+	peer string,
+	minLag time.Duration,
+	maxLag time.Duration,
+	pairs [][2][3]string,
+	sources [][3]string,
+	targets [][3]string,
+	controls [][3]string,
+	controlLags ...time.Duration,
+) *Planner {
+	op := &Planner{
+		PrimitiveError: core.NewPrimitiveError(),
+		store:          store,
+		epoch:          epoch,
+		symbol:         symbol,
+		peer:           peer,
+		lag:            [2]float64{float64(minLag), float64(maxLag)},
+		pairs:          slices.Clone(pairs),
+		controls:       controls,
+		controlLags:    controlLags,
+		scope:          data.NewLiteral("symbol"),
+		stamp:          data.NewMap("epoch", "epoch"),
+	}
+
+	for _, source := range sources {
+		for _, target := range targets {
+			if source != target {
+				op.pairs = append(op.pairs, [2][3]string{source, target})
+			}
+		}
+	}
+
+	if store == nil {
+		op.Error(fmt.Errorf("%w: relation: planner requires a store", core.ErrDomain))
+	}
+
+	return op
 }
 
-/*
-Next receives *CompileRequest payloads and yields a *CompileResult with the
-compiled candidates for each.
-*/
 func (op *Planner) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			request := (*CompileRequest)(arriving)
-			op.out = CompileResult{
-				Candidates: compileCandidates(
-					request.Plans, request.Symbol, request.Epoch, request.Coordinates,
-				),
-			}
+		if op.Error() != nil {
+			return
+		}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+		for arriving := range in {
+			if arriving == nil || *(**data.Adapter)(arriving) == nil {
+				op.Error(core.ErrShape)
 				return
 			}
-		}
-	}
-}
 
-/*
-Error records the first error it sees and joins any subsequent errors to it.
-*/
-func (op *Planner) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
+			adapter := *(**data.Adapter)(arriving)
+			var symbol string
+			var epoch float64
 
-	return op.err
-}
+			for pointer := range adapter.Next(data.NewValue(op.scope)) {
+				symbol = (*(*data.Map[string])(pointer)).Values["symbol"]
+			}
 
-/*
-compileCandidates precompiles the relation candidates across all active plans
-for one symbol against the symbol's resident coordinates.
-*/
-func compileCandidates(
-	plans []*RelationPlan,
-	symbol string,
-	epoch uint64,
-	coordinates []Coordinate,
-) []CompiledCandidate {
-	var candidates []CompiledCandidate
+			for pointer := range adapter.Next(data.NewValue(op.stamp)) {
+				epoch = (*(*data.Map[float64])(pointer)).Values["epoch"]
+			}
 
-	for _, plan := range plans {
-		if plan == nil || plan.Epoch != epoch {
-			continue
-		}
+			if err := adapter.Error(); err != nil {
+				op.Error(err)
+				return
+			}
 
-		controls, controlsComplete := resolveControls(plan, coordinates)
+			if uint64(epoch) != op.epoch || (op.symbol != "" && op.symbol != symbol) {
+				continue
+			}
 
-		for _, pair := range pairsForSymbol(plan, symbol) {
-			sources := resolveSelector(pair.Source, coordinates, plan.Peer, epoch)
-			targets := resolveSelector(pair.Target, coordinates, plan.Peer, epoch)
+			stamp := strconv.FormatUint(op.epoch, 10)
+			op.keys = op.keys[:0]
 
-			for _, source := range sources {
-				for _, target := range targets {
-					if source == target {
+			for pointer := range op.store.Next(nil) {
+				for key := range *(*map[string][]float64)(pointer) {
+					op.keys = append(op.keys, key)
+				}
+			}
+
+			if err := op.store.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			slices.Sort(op.keys)
+
+			// fields: symbol|source|metric|side|peer|unit|timescale|epoch.
+			resident := make([][]string, 0, len(op.keys))
+
+			for _, key := range op.keys {
+				fields := strings.Split(key, "|")
+
+				if len(fields) != 8 || fields[0] != symbol || fields[7] != stamp ||
+					(op.peer != "" && fields[4] != op.peer) {
+					continue
+				}
+
+				resident = append(resident, fields)
+			}
+
+			controlKeys := make([]string, 0, len(op.controls))
+			controlLags := make([]float64, 0, len(op.controls))
+			complete := true
+
+			for index, selector := range op.controls {
+				lag := 0.0
+
+				if index < len(op.controlLags) {
+					lag = float64(op.controlLags[index])
+				}
+
+				matched := false
+
+				for _, fields := range resident {
+					if (selector[0] == "" || selector[0] == fields[1]) &&
+						(selector[1] == "" || selector[1] == fields[2]) &&
+						(selector[2] == "" || selector[2] == fields[3]) {
+						controlKeys = append(controlKeys, strings.Join(fields, "|"))
+						controlLags = append(controlLags, lag)
+						matched = true
+					}
+				}
+
+				if !matched && selector != [3]string{} {
+					controlKeys = append(controlKeys[:0], strings.Join(selector[:], "|"))
+					controlLags = append(controlLags[:0], lag)
+					complete = false
+					break
+				}
+			}
+
+			for _, pair := range op.pairs {
+				for _, source := range resident {
+					if (pair[0][0] != "" && pair[0][0] != source[1]) ||
+						(pair[0][1] != "" && pair[0][1] != source[2]) ||
+						(pair[0][2] != "" && pair[0][2] != source[3]) {
 						continue
 					}
 
-					candidates = append(candidates, CompiledCandidate{
-						Plan:             plan,
-						Source:           source,
-						Target:           target,
-						Controls:         controls,
-						ControlsComplete: controlsComplete,
-						Lag:              plan.Lag,
-					})
+					for _, target := range resident {
+						if (pair[1][0] != "" && pair[1][0] != target[1]) ||
+							(pair[1][1] != "" && pair[1][1] != target[2]) ||
+							(pair[1][2] != "" && pair[1][2] != target[3]) ||
+							slices.Equal(source, target) {
+							continue
+						}
+
+						roles := data.NewTextMap()
+						roles.Values["source"] = strings.Join(source, "|")
+						roles.Values["target"] = strings.Join(target, "|")
+
+						domain := data.NewOutputMap()
+						domain.Values["controls"] = float64(len(controlKeys))
+						domain.Values["min_lag"] = op.lag[0]
+						domain.Values["max_lag"] = op.lag[1]
+						domain.Values["controls_complete"] = 0
+
+						if complete {
+							domain.Values["controls_complete"] = 1
+						}
+
+						for index, key := range controlKeys {
+							roles.Values["control."+strconv.Itoa(index)] = key
+							domain.Values["control."+strconv.Itoa(index)+".lag"] = controlLags[index]
+						}
+
+						candidate := data.NewAdapter(nil, data.NewState(data.NewMap()))
+
+						for range candidate.Next(data.NewValue(roles)) {
+						}
+
+						for range candidate.Next(data.NewValue(domain)) {
+						}
+
+						if err := candidate.Error(); err != nil {
+							op.Error(err)
+							return
+						}
+
+						if !yield(unsafe.Pointer(&candidate)) {
+							return
+						}
+					}
 				}
 			}
 		}
 	}
-
-	return candidates
-}
-
-/*
-pairsForSymbol returns the planned pairs applicable to one symbol, or nil
-when the plan's scope excludes it. Cross-product pairs are expanded
-structurally; self-pairs (identical Source and Target selectors) are excluded
-because Influence requires a positive lag between distinct coordinates.
-*/
-func pairsForSymbol(plan *RelationPlan, symbol string) []PlannedPair {
-	if plan.Symbol != "" && plan.Symbol != symbol {
-		return nil
-	}
-
-	pairs := make([]PlannedPair, 0, len(plan.Pairs)+len(plan.Sources)*len(plan.Targets))
-	pairs = append(pairs, plan.Pairs...)
-
-	for _, source := range plan.Sources {
-		for _, target := range plan.Targets {
-			if source == target {
-				continue
-			}
-
-			pairs = append(pairs, PlannedPair{Source: source, Target: target})
-		}
-	}
-
-	return pairs
-}
-
-/*
-resolveControls resolves the plan's control selectors against the resident
-coordinates available for the symbol, returning explicit controls in selector
-order. The boolean reports whether every exact control selector resolved to
-a resident coordinate. A wildcard selector resolves to every matching
-coordinate; this is structural availability, not evidence. A missing exact
-control makes the Relation unavailable rather than silently changing the
-model.
-*/
-func resolveControls(plan *RelationPlan, coordinates []Coordinate) ([]Control, bool) {
-	controls := make([]Control, 0, len(plan.Controls))
-
-	for _, selector := range plan.Controls {
-		matched := false
-
-		for _, coordinate := range coordinates {
-			if plan.Peer != "" && coordinate.Peer != plan.Peer {
-				continue
-			}
-
-			if !selectorMatches(selector.Selector, coordinate) {
-				continue
-			}
-
-			controls = append(controls, Control{Coordinate: coordinate, Lag: selector.Lag})
-			matched = true
-		}
-
-		// An exact selector (any identity component populated) with no
-		// matching coordinate is a missing control: the Relation is
-		// unavailable rather than silently changing the model.
-		exact := selector.Source != "" || selector.Metric != "" || selector.Side != ""
-
-		if !matched && exact {
-			return nil, false
-		}
-	}
-
-	return controls, true
-}
-
-/*
-resolveSelector resolves one selector against the symbol's resident
-coordinates, filtered by model epoch and peer scope.
-*/
-func resolveSelector(
-	selector Selector,
-	coordinates []Coordinate,
-	peer string,
-	epoch uint64,
-) []Coordinate {
-	matches := make([]Coordinate, 0)
-
-	for _, coordinate := range coordinates {
-		if coordinate.Epoch != epoch {
-			continue
-		}
-
-		if peer != "" && coordinate.Peer != peer {
-			continue
-		}
-
-		if !selectorMatches(selector, coordinate) {
-			continue
-		}
-
-		matches = append(matches, coordinate)
-	}
-
-	return matches
 }

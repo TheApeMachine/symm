@@ -16,118 +16,166 @@ import (
 	"github.com/theapemachine/symm/signal/depthflow"
 )
 
+func ingress(label string, at time.Time, seq int64) *data.Measurement {
+	prior := data.NewMeasurement(1, label, "ingress", seq, seq)
+	prior.At = at
+	prior.From = at
+	return prior.Write()
+}
+
+func metric(measurement *data.Measurement, label string) (float64, bool) {
+	for entry := range measurement.Read(label) {
+		if entry.Err != nil {
+			return 0, false
+		}
+
+		return entry.Metric.Raw, true
+	}
+
+	return 0, false
+}
+
+func metricValue(measurement *data.Measurement, label string) float64 {
+	value, held := metric(measurement, label)
+	So(held, ShouldBeTrue)
+	return value
+}
+
+func order(id string, price, qty float64, at time.Time) kraken.Level3Order {
+	return kraken.Level3Order{
+		OrderID:    id,
+		LimitPrice: decimal.NewFromFloat64(price),
+		OrderQty:   decimal.NewFromFloat64(qty),
+		Timestamp:  at,
+		Event:      "add",
+	}
+}
+
 func TestDepthflowSignalMetrics(t *testing.T) {
-	Convey("Depthflow signal instrument calculates exact displayed depth mutation and flow metrics", t, func() {
+	Convey("Depthflow instrument measures exact displayed depth mutation and flow", t, func() {
 		ctx := context.Background()
-		arena := data.NewArenaOwner(4096)
-		normalizer := spot.NewNormalizer()
-		books := broker.NewBook(ctx, normalizer)
+		arena := data.NewArenaOwner("depthflow", 4096)
+		books := broker.NewBook(ctx, spot.NewNormalizer())
 
 		instrument := depthflow.NewSignal(ctx, arena, books)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-		Convey("Computes exact level notionals, book imbalance, touch imbalance, and resolution gap", func() {
+		Convey("Level notionals, imbalances, resolution gap, and level-diff flow are exact", func() {
+			var prevBid, prevAsk, prevTotal float64
+
 			for step := 0; step < 10; step++ {
-				// 2 bid levels and 2 ask levels
-				bid1Price := 50000.0
-				bid1Qty := 2.0 + float64(step)*0.1
-				bid2Price := 49990.0
-				bid2Qty := 3.0 + float64(step)*0.2
+				at := now.Add(time.Duration(step) * 100 * time.Millisecond)
 
-				ask1Price := 50002.0
-				ask1Qty := 1.5 + float64(step)*0.1
-				ask2Price := 50010.0
-				ask2Qty := 2.5 + float64(step)*0.1
+				bid1Price, bid1Qty := 50000.0, 2.0+float64(step)*0.1
+				bid2Price, bid2Qty := 49990.0, 3.0+float64(step)*0.2
+				ask1Price, ask1Qty := 50002.0, 1.5+float64(step)*0.1
+				ask2Price, ask2Qty := 50010.0, 2.5+float64(step)*0.1
 
-				expectedTouchBidNotional := bid1Price * bid1Qty
-				expectedObsBid := expectedTouchBidNotional + bid2Price*bid2Qty
-
-				expectedTouchAskNotional := ask1Price * ask1Qty
-				expectedObsAsk := expectedTouchAskNotional + ask2Price*ask2Qty
-
-				expectedTotalNotional := expectedObsBid + expectedObsAsk
-				expectedBookImb := (expectedObsBid - expectedObsAsk) / expectedTotalNotional
-				expectedTouchImb := (expectedTouchBidNotional - expectedTouchAskNotional) / (expectedTouchBidNotional + expectedTouchAskNotional)
-				expectedGap := expectedTouchImb - expectedBookImb
-				expectedDist := math.Abs(expectedGap)
+				touchBid := bid1Price * bid1Qty
+				touchAsk := ask1Price * ask1Qty
+				obsBid := touchBid + bid2Price*bid2Qty
+				obsAsk := touchAsk + ask2Price*ask2Qty
+				total := obsBid + obsAsk
+				bookImb := (obsBid - obsAsk) / total
+				touchImb := (touchBid - touchAsk) / (touchBid + touchAsk)
+				gap := touchImb - bookImb
 
 				books.Update(&kraken.Level3{
 					Channel: "level3",
 					Type:    "snapshot",
-					Data: []kraken.Level3Data{
-						{
-							Symbol: "BTC/USD",
-							Bids: []kraken.Level3Order{
-								{
-									OrderID:    "bid-1",
-									LimitPrice: decimal.NewFromFloat64(bid1Price),
-									OrderQty:   decimal.NewFromFloat64(bid1Qty),
-									Timestamp:  now.Add(time.Duration(step) * 100 * time.Millisecond),
-									Event:      "add",
-								},
-								{
-									OrderID:    "bid-2",
-									LimitPrice: decimal.NewFromFloat64(bid2Price),
-									OrderQty:   decimal.NewFromFloat64(bid2Qty),
-									Timestamp:  now.Add(time.Duration(step) * 100 * time.Millisecond),
-									Event:      "add",
-								},
-							},
-							Asks: []kraken.Level3Order{
-								{
-									OrderID:    "ask-1",
-									LimitPrice: decimal.NewFromFloat64(ask1Price),
-									OrderQty:   decimal.NewFromFloat64(ask1Qty),
-									Timestamp:  now.Add(time.Duration(step) * 100 * time.Millisecond),
-									Event:      "add",
-								},
-								{
-									OrderID:    "ask-2",
-									LimitPrice: decimal.NewFromFloat64(ask2Price),
-									OrderQty:   decimal.NewFromFloat64(ask2Qty),
-									Timestamp:  now.Add(time.Duration(step) * 100 * time.Millisecond),
-									Event:      "add",
-								},
-							},
+					Data: []kraken.Level3Data{{
+						Symbol: "BTC/USD",
+						Bids: []kraken.Level3Order{
+							order("bid-1", bid1Price, bid1Qty, at),
+							order("bid-2", bid2Price, bid2Qty, at),
 						},
-					},
+						Asks: []kraken.Level3Order{
+							order("ask-1", ask1Price, ask1Qty, at),
+							order("ask-2", ask2Price, ask2Qty, at),
+						},
+					}},
 				})
 
-				prior := arena.NewMeasurement("ingress")
-				prior.Label = "BTC/USD"
-				prior.SeqIdx = int64(step + 1)
-				prior.At = now.Add(time.Duration(step) * 100 * time.Millisecond)
-				prior.From = prior.At
-
-				res := instrument.Step(prior)
+				res := instrument.Step(ingress("BTC/USD", at, int64(step+1)))
 				So(res, ShouldNotBeNil)
-				So(res.Err, ShouldBeNil)
+				So(instrument.Error(), ShouldBeNil)
+				So(res.Source, ShouldEqual, "depthflow")
+				So(res.Label, ShouldEqual, "BTC/USD")
 
-				// Level notionals
-				So(res.GetMetric("book_notional:bid").Raw, ShouldAlmostEqual, expectedObsBid, 1e-6)
-				So(res.GetMetric("book_notional:ask").Raw, ShouldAlmostEqual, expectedObsAsk, 1e-6)
-				So(res.GetMetric("book_notional").Raw, ShouldAlmostEqual, expectedTotalNotional, 1e-6)
-				So(res.GetMetric("observed_notional").Raw, ShouldAlmostEqual, expectedTotalNotional, 1e-6)
+				So(metricValue(res, "book_notional:bid"), ShouldAlmostEqual, obsBid, 1e-6)
+				So(metricValue(res, "book_notional:ask"), ShouldAlmostEqual, obsAsk, 1e-6)
+				So(metricValue(res, "book_notional"), ShouldAlmostEqual, total, 1e-6)
+				So(metricValue(res, "observed_notional"), ShouldAlmostEqual, total, 1e-6)
 
-				// Imbalances
-				So(res.GetMetric("book_imbalance").Raw, ShouldAlmostEqual, expectedBookImb, 1e-9)
-				So(res.GetMetric("touch_imbalance").Raw, ShouldAlmostEqual, expectedTouchImb, 1e-9)
-				So(res.GetMetric("imbalance_resolution_gap").Raw, ShouldAlmostEqual, expectedGap, 1e-9)
-				So(res.GetMetric("imbalance_resolution_distance").Raw, ShouldAlmostEqual, expectedDist, 1e-9)
+				So(metricValue(res, "book_imbalance"), ShouldAlmostEqual, bookImb, 1e-9)
+				So(metricValue(res, "touch_imbalance"), ShouldAlmostEqual, touchImb, 1e-9)
+				So(metricValue(res, "imbalance_resolution_gap"), ShouldAlmostEqual, gap, 1e-9)
+				So(metricValue(res, "imbalance_resolution_distance"), ShouldAlmostEqual, math.Abs(gap), 1e-9)
 
-				// Flow additions / removals between steps
-				if step > 0 {
-					So(res.GetMetric("added_notional:bid").Raw, ShouldBeGreaterThan, 0)
-					So(res.GetMetric("added_notional:ask").Raw, ShouldBeGreaterThan, 0)
+				if step == 0 {
+					_, held := metric(res, "added_notional:bid")
+					So(held, ShouldBeFalse)
+					_, held = metric(res, "book_turnover_rate")
+					So(held, ShouldBeFalse)
+					So(res.From, ShouldEqual, at)
+				} else {
+					// Every level only grows, so added equals the notional growth and nothing is removed.
+					So(metricValue(res, "added_notional:bid"), ShouldAlmostEqual, obsBid-prevBid, 1e-6)
+					So(metricValue(res, "added_notional:ask"), ShouldAlmostEqual, obsAsk-prevAsk, 1e-6)
+					So(metricValue(res, "removed_notional:bid"), ShouldAlmostEqual, 0.0, 1e-9)
+					So(metricValue(res, "removed_notional:ask"), ShouldAlmostEqual, 0.0, 1e-9)
+					So(metricValue(res, "added_notional_rate:bid"), ShouldAlmostEqual, (obsBid-prevBid)/0.1, 1e-3)
+
+					reference := (prevTotal + total) / 2.0
+					activity := (obsBid - prevBid) + (obsAsk - prevAsk)
+					So(metricValue(res, "book_turnover_rate"), ShouldAlmostEqual, activity/(reference*0.1), 1e-9)
+					So(metricValue(res, "net_book_change_rate"), ShouldAlmostEqual, (total-prevTotal)/(reference*0.1), 1e-9)
+					So(metricValue(res, "signed_net_displayed_flow_rate"), ShouldAlmostEqual,
+						((obsBid-prevBid)-(obsAsk-prevAsk))/(reference*0.1), 1e-9)
+					So(res.From, ShouldEqual, at.Add(-100*time.Millisecond))
 				}
 
-				if step > 2 {
-					So(res.Maturity, ShouldBeGreaterThan, 0)
-					So(res.SNRDefined, ShouldBeTrue)
-				}
+				prevBid, prevAsk, prevTotal = obsBid, obsAsk, total
 			}
+		})
+
+		Convey("A vanished level counts as removed notional", func() {
+			books.Update(&kraken.Level3{
+				Channel: "level3",
+				Type:    "snapshot",
+				Data: []kraken.Level3Data{{
+					Symbol: "ETH/USD",
+					Bids:   []kraken.Level3Order{order("b1", 3000, 1, now), order("b2", 2999, 2, now)},
+					Asks:   []kraken.Level3Order{order("a1", 3001, 1, now)},
+				}},
+			})
+			So(instrument.Step(ingress("ETH/USD", now, 1)), ShouldNotBeNil)
+
+			later := now.Add(time.Second)
+			books.Update(&kraken.Level3{
+				Channel: "level3",
+				Type:    "snapshot",
+				Data: []kraken.Level3Data{{
+					Symbol: "ETH/USD",
+					Bids:   []kraken.Level3Order{order("b1", 3000, 1, later)},
+					Asks:   []kraken.Level3Order{order("a1", 3001, 1, later)},
+				}},
+			})
+
+			res := instrument.Step(ingress("ETH/USD", later, 2))
+			So(res, ShouldNotBeNil)
+			So(instrument.Error(), ShouldBeNil)
+			So(metricValue(res, "removed_notional:bid"), ShouldAlmostEqual, 2999.0*2, 1e-6)
+			So(metricValue(res, "added_notional:bid"), ShouldAlmostEqual, 0.0, 1e-9)
+			So(metricValue(res, "net_displayed_flow:bid"), ShouldAlmostEqual, -2999.0*2, 1e-6)
+			So(metricValue(res, "flow_activity_imbalance"), ShouldAlmostEqual, -1.0, 1e-9)
+		})
+
+		Convey("An absent book yields no measurement", func() {
+			So(instrument.Step(ingress("XRP/USD", now, 1)), ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
 		})
 	})
 }

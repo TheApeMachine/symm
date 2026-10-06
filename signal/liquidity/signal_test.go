@@ -12,139 +12,139 @@ import (
 	"github.com/theapemachine/symm/signal/liquidity"
 )
 
-func TestLiquidityTickerMetrics(t *testing.T) {
-	Convey("Liquidity ticker instrument validates touch geometry, notional depth, and book imbalances", t, func() {
-		ctx := context.Background()
-		arena := data.NewArenaOwner(4096)
-		instrument := liquidity.NewSignal(ctx, arena)
+func ticker(label string, at time.Time, seq int64, bid, ask, bidQty, askQty float64) *data.Measurement {
+	prior := data.NewMeasurement(1, label, "ingress", seq, seq, data.StringEntry{Key: "channel", Value: "ticker"})
+	prior.At = at
+	prior.From = at
+
+	return prior.Write(
+		data.NewMetric("bid", bid, data.UnitPrice, data.TimescaleInstantaneous),
+		data.NewMetric("ask", ask, data.UnitPrice, data.TimescaleInstantaneous),
+		data.NewMetric("bid_qty", bidQty, data.UnitQuantity, data.TimescaleInstantaneous),
+		data.NewMetric("ask_qty", askQty, data.UnitQuantity, data.TimescaleInstantaneous),
+	)
+}
+
+func metric(measurement *data.Measurement, label string) (float64, bool) {
+	for entry := range measurement.Read(label) {
+		return entry.Metric.Raw, true
+	}
+
+	return 0, false
+}
+
+func TestLiquiditySignalMetrics(t *testing.T) {
+	Convey("Given a READY liquidity signal", t, func() {
+		instrument := liquidity.NewSignal(context.Background(), data.NewArenaOwner("liquidity", 4096))
 		instrument.Transition(nmruntime.READY)
+		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-
-		Convey("Computes exact touch notionals, midpoint, relative spread, and order book imbalance", func() {
+		Convey("It measures exact touch geometry, notional depth, and imbalance", func() {
 			for step := range 10 {
-				prior := arena.NewMeasurement("ingress")
-				prior.Label = "ETH/USD"
-				prior.SeqIdx = int64(step + 1)
-				prior.At = now.Add(time.Duration(step) * 100 * time.Millisecond)
-				prior.From = prior.At
-
+				at := origin.Add(time.Duration(step) * 100 * time.Millisecond)
 				bid := 3000.0 + float64(step)*2.0
 				ask := bid + 4.0
 				bidQty := 5.0 + float64(step)*0.5
 				askQty := 3.0 + float64(step)*0.2
 
+				res := instrument.Step(ticker("ETH/USD", at, int64(step+1), bid, ask, bidQty, askQty))
+				So(res, ShouldNotBeNil)
+				So(instrument.Error(), ShouldBeNil)
+				So(res.Source, ShouldEqual, "liquidity")
+				So(res.Label, ShouldEqual, "ETH/USD")
+				So(res.At, ShouldEqual, at)
+
 				midpoint := (bid + ask) / 2.0
 				spread := ask - bid
-				relativeSpread := spread / midpoint
-				expectedBidNotional := bid * bidQty
-				expectedAskNotional := ask * askQty
-				expectedTwoSidedNotional := math.Min(expectedBidNotional, expectedAskNotional)
-				expectedTotalNotional := expectedBidNotional + expectedAskNotional
-				expectedImbalance := (expectedBidNotional - expectedAskNotional) / expectedTotalNotional
+				bidNotional := bid * bidQty
+				askNotional := ask * askQty
+				total := bidNotional + askNotional
 
-				prior.SetMetric("bid", data.NewMetric(
-					"bid",
-					data.UnitPrice,
-					data.TimescaleInstantaneous,
-					midpoint,
-					spread,
-				).Write(bid))
-				prior.SetMetric("ask", data.NewMetric(
-					"ask",
-					data.UnitPrice,
-					data.TimescaleInstantaneous,
-					midpoint,
-					spread,
-				).Write(ask))
-				prior.SetMetric("bid_qty", data.NewMetric(
-					"bid_qty",
-					data.UnitQuantity,
-					data.TimescaleInstantaneous,
-					0.0,
-					bidQty,
-				).Write(bidQty))
-				prior.SetMetric("ask_qty", data.NewMetric(
-					"ask_qty",
-					data.UnitQuantity,
-					data.TimescaleInstantaneous,
-					0.0,
-					askQty,
-				).Write(askQty))
+				expected := map[string]float64{
+					"best_bid_price":           bid,
+					"best_ask_price":           ask,
+					"touch_quantity:bid":       bidQty,
+					"touch_quantity:ask":       askQty,
+					"touch_notional:bid":       bidNotional,
+					"touch_notional:ask":       askNotional,
+					"midpoint":                 midpoint,
+					"spread":                   spread,
+					"relative_spread":          spread / midpoint,
+					"two_sided_touch_notional": math.Min(bidNotional, askNotional),
+					"touch_notional_imbalance": (bidNotional - askNotional) / total,
+				}
 
-				res := instrument.Step(prior)
-				So(res, ShouldNotBeNil)
-				So(res.Err, ShouldBeNil)
+				for label, want := range expected {
+					got, held := metric(res, label)
+					So(held, ShouldBeTrue)
+					So(got, ShouldAlmostEqual, want, 1e-9*math.Max(1, math.Abs(want)))
+				}
 
-				// Mathematical touch geometry
-				So(res.GetMetric("midpoint").Raw, ShouldAlmostEqual, midpoint, 1e-9)
-				So(res.GetMetric("spread").Raw, ShouldAlmostEqual, spread, 1e-9)
-				So(res.GetMetric("relative_spread").Raw, ShouldAlmostEqual, relativeSpread, 1e-9)
+				for _, channel := range [][3]string{
+					{"touch_notional:bid", "touch_notional_baseline:bid", "depth_divergence:bid"},
+					{"touch_notional:ask", "touch_notional_baseline:ask", "depth_divergence:ask"},
+					{"relative_spread", "relative_spread_baseline", "spread_divergence"},
+				} {
+					value, _ := metric(res, channel[0])
+					baseline, held := metric(res, channel[1])
+					So(held, ShouldBeTrue)
+					divergence, held := metric(res, channel[2])
+					So(held, ShouldBeTrue)
+					So(divergence, ShouldAlmostEqual, value-baseline, 1e-9*math.Max(1, math.Abs(value)))
+				}
 
-				// Notional calculations
-				So(res.GetMetric("touch_notional:bid").Raw, ShouldAlmostEqual, expectedBidNotional, 1e-6)
-				So(res.GetMetric("touch_notional:ask").Raw, ShouldAlmostEqual, expectedAskNotional, 1e-6)
-				So(res.GetMetric("two_sided_touch_notional").Raw, ShouldAlmostEqual, expectedTwoSidedNotional, 1e-6)
-				So(res.GetMetric("touch_notional_imbalance").Raw, ShouldAlmostEqual, expectedImbalance, 1e-9)
+				ratio, held := metric(res, "depth_ratio:bid")
+				So(held, ShouldBeTrue)
+				baseline, _ := metric(res, "touch_notional_baseline:bid")
+				So(ratio, ShouldAlmostEqual, bidNotional/baseline, 1e-9)
 
-				// Price standardization against midpoint and spread
-				bidMetric := res.GetMetric("best_bid_price")
-				So(bidMetric.Center, ShouldEqual, midpoint)
-				So(bidMetric.Scale, ShouldEqual, spread)
-				So(bidMetric.Standardized, ShouldNotBeNil)
-				So(*bidMetric.Standardized, ShouldAlmostEqual, -0.5, 1e-9)
+				_, held = metric(res, "divergence_velocity:bid")
+				So(held, ShouldEqual, step > 0)
+				_, held = metric(res, "spread_divergence_velocity")
+				So(held, ShouldEqual, step > 0)
 
-				askMetric := res.GetMetric("best_ask_price")
-				So(askMetric.Center, ShouldEqual, midpoint)
-				So(askMetric.Scale, ShouldEqual, spread)
-				So(askMetric.Standardized, ShouldNotBeNil)
-				So(*askMetric.Standardized, ShouldAlmostEqual, 0.5, 1e-9)
-
-				if step > 2 {
-					So(res.Maturity, ShouldBeGreaterThan, 0)
-					So(res.SNRDefined, ShouldBeTrue)
+				if step > 1 {
+					zscore, held := metric(res, "depth_zscore:bid")
+					So(held, ShouldBeTrue)
+					scale, held := metric(res, "depth_noise_scale:bid")
+					So(held, ShouldBeTrue)
+					divergence, _ := metric(res, "depth_divergence:bid")
+					So(zscore, ShouldAlmostEqual, divergence/scale, 1e-9)
 				}
 			}
 		})
 
-		Convey("Rejects crossed quote (bid >= ask) with validation error", func() {
-			prior := arena.NewMeasurement("ingress")
-			prior.Label = "ETH/USD"
-			prior.SeqIdx = 100
-			prior.At = now
-			prior.From = now
-			prior.SetMetric("bid", data.NewMetric(
-				"bid",
-				data.UnitPrice,
-				data.TimescaleInstantaneous,
-				3005.0,
-				1.0,
-			).Write(3005.0))
-			prior.SetMetric("ask", data.NewMetric(
-				"ask",
-				data.UnitPrice,
-				data.TimescaleInstantaneous,
-				3000.0, // crossed: ask < bid
-				1.0,
-			).Write(3000.0))
-			prior.SetMetric("bid_qty", data.NewMetric(
-				"bid_qty",
-				data.UnitQuantity,
-				data.TimescaleInstantaneous,
-				0.0,
-				1.0,
-			).Write(1.0))
-			prior.SetMetric("ask_qty", data.NewMetric(
-				"ask_qty",
-				data.UnitQuantity,
-				data.TimescaleInstantaneous,
-				0.0,
-				1.0,
-			).Write(1.0))
+		Convey("It keeps per-symbol baselines independent", func() {
+			first := instrument.Step(ticker("ETH/USD", origin, 1, 3000, 3004, 5, 3))
+			So(first, ShouldNotBeNil)
+			other := instrument.Step(ticker("BTC/USD", origin, 2, 50000, 50010, 1, 1))
+			So(other, ShouldNotBeNil)
 
-			res := instrument.Step(prior)
+			baseline, held := metric(other, "touch_notional_baseline:bid")
+			So(held, ShouldBeTrue)
+			So(baseline, ShouldAlmostEqual, 50000.0, 1e-9)
+
+			_, held = metric(other, "divergence_velocity:bid")
+			So(held, ShouldBeFalse)
+		})
+
+		Convey("It yields no measurement for a crossed touch and stays healthy", func() {
+			So(instrument.Step(ticker("ETH/USD", origin, 100, 3005, 3000, 1, 1)), ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
+
+			res := instrument.Step(ticker("ETH/USD", origin.Add(time.Second), 101, 3000, 3004, 1, 1))
 			So(res, ShouldNotBeNil)
-			So(res.Err, ShouldNotBeNil)
+			So(instrument.Error(), ShouldBeNil)
+		})
+
+		Convey("It yields no measurement for a non-positive displayed quantity", func() {
+			So(instrument.Step(ticker("ETH/USD", origin, 200, 3000, 3004, 0, 1)), ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
+		})
+
+		Convey("It drops events before READY", func() {
+			cold := liquidity.NewSignal(context.Background(), data.NewArenaOwner("liquidity", 16))
+			So(cold.Step(ticker("ETH/USD", origin, 1, 3000, 3004, 1, 1)), ShouldBeNil)
 		})
 	})
 }

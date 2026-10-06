@@ -29,11 +29,11 @@ func TestApplyNext(t *testing.T) {
 func TestApplyIndependentState(t *testing.T) {
 	Convey("Each coordinate owns independent recurrence", t, func() {
 		node := vector.NewApply(
-			statistic.NewSum(),
-			statistic.NewSum(),
+			statistic.NewMean(),
+			statistic.NewMean(),
 		)
 
-		expected := [][2]float64{{2, 20}, {6, 60}, {12, 120}}
+		expected := [][2]float64{{2, 20}, {3, 30}, {4, 40}}
 
 		for i, pair := range [][2]float64{{2, 20}, {4, 40}, {6, 60}} {
 			out := tests.CollectSeq[float64](node.Next(tests.SliceToSeq([]float64{pair[0], pair[1]})))
@@ -47,7 +47,7 @@ func TestApplyIndependentState(t *testing.T) {
 
 func TestApplyShape(t *testing.T) {
 	Convey("Unequal endpoint cardinalities are a shape error", t, func() {
-		node := vector.NewApply(statistic.NewSum())
+		node := vector.NewApply(statistic.NewMean())
 		tests.CollectSeq[float64](node.Next(tests.SliceToSeq([]float64{1.0, 2.0})))
 		So(node.Error(), ShouldNotBeNil)
 	})

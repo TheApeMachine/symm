@@ -84,22 +84,21 @@ type FragmentPoint struct {
 
 type Hub struct {
 	*runtime.System
-	uiTee               *UITee
-	workspace           *runtime.Workspace
-	physics             sensorium.PhysicsMonitor
-	app                 *fiber.App
-	listenAddr          string
-	frontend            atomic.Pointer[websocket.Conn]
-	store               *tables.Catalog
-	positionSource      PositionSource
-	equitySource        EquitySource
-	cognitionSource     CognitionSource
-	fragmentsSource     FragmentsSource
-	exitHandler         func(symbol string)
-	routes              *Routes
-	learningInterval    time.Duration
-	lastLearning        time.Time
-	workbenchSupervisor *WorkbenchSupervisor
+	uiTee            *UITee
+	workspace        *runtime.Workspace
+	physics          sensorium.PhysicsMonitor
+	app              *fiber.App
+	listenAddr       string
+	frontend         atomic.Pointer[websocket.Conn]
+	store            *tables.Catalog
+	positionSource   PositionSource
+	equitySource     EquitySource
+	cognitionSource  CognitionSource
+	fragmentsSource  FragmentsSource
+	exitHandler      func(symbol string)
+	routes           *Routes
+	learningInterval time.Duration
+	lastLearning     time.Time
 }
 
 /*
@@ -122,14 +121,11 @@ func NewHub(
 		workbenchURL = "http://127.0.0.1:8081/workbench/query"
 	}
 
-	workbenchSupervisor := NewWorkbenchSupervisor(workbenchURL)
-
 	hub := &Hub{
-		learningInterval:    viper.GetDuration("ui.websocket.learning_interval"),
-		uiTee:               uiTee,
-		workspace:           workspace,
-		listenAddr:          viper.GetString("ui.addr"),
-		workbenchSupervisor: workbenchSupervisor,
+		learningInterval: viper.GetDuration("ui.websocket.learning_interval"),
+		uiTee:            uiTee,
+		workspace:        workspace,
+		listenAddr:       viper.GetString("ui.addr"),
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
@@ -143,10 +139,6 @@ func NewHub(
 	hub.routes = NewRoutes(hub)
 
 	closers := []io.Closer{uiTee}
-
-	if workbenchSupervisor != nil {
-		closers = append(closers, workbenchSupervisor)
-	}
 
 	hub.System = runtime.NewSystem(ctx, "hub", closers...)
 
@@ -172,7 +164,6 @@ func NewHub(
 	}))
 
 	hub.routes.Register()
-	hub.registerWorkbench()
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		hub.frontend.Store(conn)
@@ -373,13 +364,10 @@ func NewHub(
 		frameTicker := time.NewTicker(16666 * time.Microsecond)
 		defer frameTicker.Stop()
 
-		teeAvailable := hub.uiTee.Available()
-
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-teeAvailable:
 			case <-frameTicker.C:
 				if err := sendTick(); err != nil {
 					return

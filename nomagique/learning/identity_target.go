@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -11,43 +10,37 @@ import (
 
 /*
 IdentityTarget selects the finite current value.
+Each arrival is *[2]float64{current, past}; it yields *float64.
 */
 type IdentityTarget struct {
-	err error
+	*core.PrimitiveError
 	out float64
 }
 
 func NewIdentityTarget() core.Primitive {
-	return &IdentityTarget{}
+	return &IdentityTarget{PrimitiveError: core.NewPrimitiveError()}
 }
 
-func (op *IdentityTarget) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *IdentityTarget) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			sample := (*Observation)(arriving)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			if math.IsNaN(sample.Current) || math.IsInf(sample.Current, 0) {
+			sample := (*[2]float64)(arriving)
+
+			if math.IsNaN(sample[0]) || math.IsInf(sample[0], 0) {
 				op.Error(core.ErrDomain)
 				return
 			}
 
-			op.out = sample.Current
+			op.out = sample[0]
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *IdentityTarget) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

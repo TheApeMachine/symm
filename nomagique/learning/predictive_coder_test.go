@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
@@ -12,57 +13,40 @@ coderFixture builds a coder over a small architecture with the requested
 horizon depth, learning enabled.
 */
 func coderFixture(horizon int) *PredictiveCoder {
-	return NewPredictiveCoder(PredictiveCoderConfig{
-		CustomArch: []int{3, 6, 3},
-		MaxHorizon: horizon,
-		Target:     NewDirectionalTarget(0),
-		Learn:      true,
-	}).(*PredictiveCoder)
+	return NewPredictiveCoder(
+		[]int{3, 6, 3}, horizon, NewDirectionalTarget(0), nil, 0, true, ReadoutAll,
+	).(*PredictiveCoder)
 }
 
 /*
-driver feeds a deterministic reference through one coder, advancing the event
-clock monotonically so successive runs continue the same stream rather than
-rewinding it.
+newDriver feeds a deterministic reference through one coder, advancing the
+event clock monotonically so successive runs continue the same stream rather
+than rewinding it.
 */
-type driver struct {
-	coder     *PredictiveCoder
-	step      int64
-	reference float64
-}
+func newDriver(coder *PredictiveCoder) func(steps int) [12][]float64 {
+	step, reference := 0.0, 100.0
 
-func newDriver(coder *PredictiveCoder) *driver {
-	return &driver{coder: coder, reference: 100.0}
-}
+	return func(steps int) [12][]float64 {
+		var out [12][]float64
 
-func (drive *driver) run(steps int) PredictiveOutput {
-	var out PredictiveOutput
+		for range steps {
+			step++
+			reference *= 1 + 0.01*math.Sin(step)
+			hasReference := 0.0
 
-	for range steps {
-		drive.step++
-		drive.reference *= 1 + 0.01*math.Sin(float64(drive.step))
+			if step > 1 {
+				hasReference = 1
+			}
 
-		out, _ = drive.coder.step(PredictiveInput{
-			Features: []float64{
-				drive.reference,
-				float64(drive.step),
-				math.Sin(float64(drive.step)),
-			},
-			Reference:    drive.reference,
-			HasReference: drive.step > 1,
-			Step:         drive.step,
-			Time:         float64(drive.step),
-		})
+			out = data.Read[[12][]float64](coder.Next(data.NewValue([2][]float64{
+				{reference, step, math.Sin(step)},
+				{reference, hasReference, step, step},
+			})))
+			So(coder.Error(), ShouldBeNil)
+		}
+
+		return out
 	}
-
-	return out
-}
-
-/*
-drive runs a fresh stream of the given length through a coder.
-*/
-func drive(coder *PredictiveCoder, steps int) PredictiveOutput {
-	return newDriver(coder).run(steps)
 }
 
 func TestPredictiveCoderStep(t *testing.T) {
@@ -72,75 +56,69 @@ func TestPredictiveCoderStep(t *testing.T) {
 		coder := coderFixture(horizon)
 
 		Convey("every horizon row is trained, not only the next tick", func() {
-			out := drive(coder, 40)
+			out := newDriver(coder)(40)
 
 			// The whole point of a horizon: a next-tick call is not useful, so
 			// each row must have learned from outcomes at its OWN distance.
 			for step := 1; step <= horizon; step++ {
-				So(step <= len(out.Reading.SkillReady), ShouldBeTrue)
-				So(out.Reading.SkillReady[step-1], ShouldBeTrue)
+				So(step <= len(out[5]), ShouldBeTrue)
+				So(out[5][step-1], ShouldEqual, 1)
 			}
 		})
 
 		Convey("the supported horizon reaches the full declared depth", func() {
-			out := drive(coder, 40)
+			out := newDriver(coder)(40)
 
-			So(out.SupportedHorizon, ShouldEqual, horizon)
-			So(out.Calibrated, ShouldBeTrue)
-			So(len(out.ForwardCurve), ShouldEqual, horizon)
+			So(out[10][0], ShouldEqual, horizon)
+			So(out[10][1], ShouldEqual, 1)
+			So(len(out[11]), ShouldEqual, horizon)
 		})
 
 		Convey("the curve never runs past what the head has learned", func() {
 			// Only a few steps in, most rows have seen no outcome yet. The
-			// curve must stop at the learned reach: untrained rows emit
-			// near-zero and would read downstream as a genuine flat forecast
-			// rather than as absent evidence.
-			out := drive(coder, 4)
+			// curve must stop at the learned reach.
+			out := newDriver(coder)(4)
 
-			So(out.SupportedHorizon, ShouldBeLessThan, horizon)
-			So(len(out.ForwardCurve), ShouldEqual, out.SupportedHorizon)
-			So(len(out.ForwardRetention), ShouldBeLessThanOrEqualTo, out.SupportedHorizon)
+			So(out[10][0], ShouldBeLessThan, horizon)
+			So(len(out[11]), ShouldEqual, int(out[10][0]))
+			So(len(out[9]), ShouldBeLessThanOrEqualTo, int(out[10][0]))
 		})
 
 		Convey("an uncalibrated head publishes no curve at all", func() {
-			fresh := coderFixture(horizon)
-			out := drive(fresh, 1)
+			out := newDriver(coderFixture(horizon))(1)
 
-			So(out.SupportedHorizon, ShouldEqual, 0)
-			So(out.Calibrated, ShouldBeFalse)
-			So(out.ForwardCurve, ShouldBeEmpty)
+			So(out[10][0], ShouldEqual, 0)
+			So(out[10][1], ShouldEqual, 0)
+			So(out[11], ShouldBeEmpty)
 		})
 
 		Convey("a published curve is not mutated by the next step", func() {
 			stream := newDriver(coder)
-			stream.run(40)
+			stream(40)
 
-			held := stream.run(1).ForwardCurve
+			held := stream(1)[11]
 			So(held, ShouldNotBeEmpty)
 
 			retained := append([]float64(nil), held...)
-			stream.run(1)
+			stream(1)
 
 			So(held, ShouldResemble, retained)
 		})
 
 		Convey("one observation resolves once per horizon, not once in total", func() {
-			out := drive(coder, 40)
+			out := newDriver(coder)(40)
 
-			// 40 steps, each issuing a curve that resolves at every horizon it
-			// survives to reach, must produce far more resolutions than the one
-			// per observation a single-horizon coder would report.
-			So(out.ResolvedSteps, ShouldBeGreaterThan, 40)
+			So(out[10][2], ShouldBeGreaterThan, 40)
 		})
 
 		Convey("a resolved observation reports the horizon it was scored at", func() {
-			out := drive(coder, 40)
+			out := newDriver(coder)(40)
+			summary := out[10]
 
-			So(out.LastResolution, ShouldNotBeNil)
-			So(out.LastResolution.Horizon, ShouldBeGreaterThanOrEqualTo, 1)
-			So(out.LastResolution.Horizon, ShouldBeLessThanOrEqualTo, horizon)
-			So(out.LastResolution.Error, ShouldAlmostEqual,
-				out.LastResolution.Target-out.LastResolution.Prediction, 1e-12)
+			So(summary[6], ShouldEqual, 1)
+			So(summary[7], ShouldBeGreaterThanOrEqualTo, 1)
+			So(summary[7], ShouldBeLessThanOrEqualTo, horizon)
+			So(summary[10], ShouldAlmostEqual, summary[9]-summary[8], 1e-12)
 		})
 	})
 
@@ -149,24 +127,25 @@ func TestPredictiveCoderStep(t *testing.T) {
 
 		Convey("skipped caller steps still resolve issued predictions through the temporal ledger", func() {
 			reference := 100.0
+			var out [12][]float64
 
-			for index, step := range []int64{1, 4, 7, 10, 13, 16, 19, 22} {
+			for index, step := range []float64{1, 4, 7, 10, 13, 16, 19, 22} {
 				reference *= 1.01
+				hasReference := 0.0
 
-				coder.step(PredictiveInput{
-					Features:     []float64{reference, float64(step), 1},
-					Reference:    reference,
-					HasReference: index > 0,
-					Step:         step,
-					Time:         float64(step),
-				})
+				if index > 0 {
+					hasReference = 1
+				}
+
+				out = data.Read[[12][]float64](coder.Next(data.NewValue([2][]float64{
+					{reference, step, 1},
+					{reference, hasReference, step, step},
+				})))
+				So(coder.Error(), ShouldBeNil)
 			}
 
-			latest := coder.snapshot()
-			So(latest.ResolvedSteps, ShouldBeGreaterThan, 0)
-
-			manifold := coder.manifold.(*ResonanceManifold)
-			So(manifold.taskScaleReady[0], ShouldBeTrue)
+			So(out[10][2], ShouldBeGreaterThan, 0)
+			So(coder.manifold.(*ResonanceManifold).taskScaleReady[0], ShouldBeTrue)
 		})
 	})
 
@@ -174,68 +153,39 @@ func TestPredictiveCoderStep(t *testing.T) {
 		coder := coderFixture(4)
 
 		Convey("nothing is issued or scored against an unanchored observation", func() {
-			out, err := coder.step(PredictiveInput{
-				Features:     []float64{1, 2, 3},
-				Reference:    100,
-				HasReference: false,
-				Step:         1,
-			})
+			out := data.Read[[12][]float64](coder.Next(data.NewValue([2][]float64{
+				{1, 2, 3},
+				{100, 0, 1, 0},
+			})))
 
-			So(err, ShouldBeNil)
-			So(out.ResolvedSteps, ShouldEqual, 0)
-			So(out.LastResolution, ShouldBeNil)
-			So(out.Calibrated, ShouldBeFalse)
+			So(coder.Error(), ShouldBeNil)
+			So(out[10][2], ShouldEqual, 0)
+			So(out[10][6], ShouldEqual, 0)
+			So(out[10][1], ShouldEqual, 0)
 		})
 	})
 
 	Convey("Given a misconfigured coder", t, func() {
 		Convey("an absent architecture is refused rather than panicking", func() {
-			coder := NewPredictiveCoder(PredictiveCoderConfig{MaxHorizon: 4}).(*PredictiveCoder)
+			coder := NewPredictiveCoder(nil, 4, nil, nil, 0, false, ReadoutAll)
 
-			_, err := coder.step(PredictiveInput{Features: []float64{1}})
+			for range coder.Next(data.NewValue([2][]float64{{1}, nil})) {
+				t.Fatal("a coder without a manifold must yield nothing")
+			}
 
-			So(err, ShouldNotBeNil)
+			So(coder.Error(), ShouldNotBeNil)
 		})
 
 		Convey("an empty feature vector is refused", func() {
-			_, err := coderFixture(4).step(PredictiveInput{})
+			coder := coderFixture(4)
 
-			So(err, ShouldNotBeNil)
+			for range coder.Next(data.NewValue([2][]float64{nil, nil})) {
+				t.Fatal("an empty feature vector must yield nothing")
+			}
+
+			So(coder.Error(), ShouldNotBeNil)
 		})
 	})
-}
-
-/*
-snapshot replays the coder's retained state into its current reading fields
-without a new observation, for assertions between steps.
-*/
-func (coder *PredictiveCoder) snapshot() PredictiveOutput {
-	reading, err := coder.manifoldExecute(ManifoldCommand{Reading: &ReadingIntent{}})
-	So(err, ShouldBeNil)
-
-	output := PredictiveOutput{
-		Reading:        &reading,
-		Readout:        reading.Readout,
-		LastResolution: coder.last,
-		ResolvedSteps:  coder.resolved,
-		Pending:        coder.pending,
-	}
-
-	for horizon := 1; horizon <= coder.horizon && horizon <= len(reading.SkillReady); horizon++ {
-		if !reading.SkillReady[horizon-1] {
-			break
-		}
-
-		output.SupportedHorizon = horizon
-
-		if horizon == 1 {
-			output.Confidence = reading.Skill[0]
-		}
-	}
-
-	output.Calibrated = output.SupportedHorizon > 0
-
-	return output
 }
 
 /*
@@ -247,21 +197,17 @@ func TestPredictiveCoderRetainsBoundedPending(t *testing.T) {
 	Convey("Given a coder driven far beyond its horizon depth", t, func() {
 		const horizon = 5
 
-		coder := coderFixture(horizon)
-		stream := newDriver(coder)
-		stream.run(200)
+		stream := newDriver(coderFixture(horizon))
+		stream(200)
 
 		Convey("it retains no more pending curves than the horizon allows", func() {
-			So(stream.run(1).Pending, ShouldBeLessThanOrEqualTo, horizon)
+			So(stream(1)[10][3], ShouldBeLessThanOrEqualTo, horizon)
 		})
 
 		Convey("the pending set stops growing in steady state", func() {
-			// In steady state a recycled curve is taken straight back by the
-			// next issue, so the free list is transiently empty by design.
-			// What must hold is that the pending set stops growing at all.
-			before := stream.run(1).Pending
+			before := stream(1)[10][3]
 
-			So(stream.run(100).Pending, ShouldEqual, before)
+			So(stream(100)[10][3], ShouldEqual, before)
 		})
 	})
 }
@@ -271,78 +217,58 @@ TestPredictiveCoderReadoutModes proves every readout mode is usable and that
 the narrower ones really do shrink the head.
 
 Each horizon holds a covariance matrix quadratic in the readout width, so at
-high MaxHorizon this choice dominates the coder's memory. ReadoutLatents and
-ReadoutInnovations previously panicked with a dimension mismatch, because the
-workspace was always sized for the widest mode.
+high horizon depth this choice dominates the coder's memory.
 */
 func TestPredictiveCoderReadoutModes(t *testing.T) {
 	Convey("Given coders differing only in readout mode", t, func() {
 		build := func(mode ReadoutMode) *PredictiveCoder {
-			return NewPredictiveCoder(PredictiveCoderConfig{
-				CustomArch: []int{3, 6, 3},
-				MaxHorizon: 4,
-				Target:     NewDirectionalTarget(0),
-				Learn:      true,
-				Readout:    mode,
-			}).(*PredictiveCoder)
+			return NewPredictiveCoder(
+				[]int{3, 6, 3}, 4, NewDirectionalTarget(0), nil, 0, true, mode,
+			).(*PredictiveCoder)
 		}
 
 		Convey("every mode settles and forecasts without a dimension mismatch", func() {
 			for _, mode := range []ReadoutMode{
 				ReadoutAll, ReadoutLatents, ReadoutInnovations,
 			} {
-				coder := build(mode)
-				out := drive(coder, 20)
+				out := newDriver(build(mode))(20)
 
-				So(out.Reading, ShouldNotBeNil)
-				So(len(out.Readout), ShouldBeGreaterThan, 0)
+				So(out[0], ShouldNotBeEmpty)
+				So(len(out[1]), ShouldBeGreaterThan, 0)
 			}
 		})
 
 		Convey("a narrower readout yields a narrower head", func() {
-			wide := build(ReadoutAll)
-			narrow := build(ReadoutLatents)
+			wide := newDriver(build(ReadoutAll))(5)
+			narrow := newDriver(build(ReadoutLatents))(5)
 
-			wideOut := drive(wide, 5)
-			narrowOut := drive(narrow, 5)
-
-			So(narrowOut.Reading.ReadoutDimension, ShouldBeLessThan,
-				wideOut.Reading.ReadoutDimension)
-		})
-
-		Convey("the zero value keeps the widest readout", func() {
-			defaulted := build(ReadoutAll)
-			explicit := NewPredictiveCoder(PredictiveCoderConfig{
-				CustomArch: []int{3, 6, 3},
-				MaxHorizon: 4,
-				Target:     NewDirectionalTarget(0),
-				Learn:      true,
-			}).(*PredictiveCoder)
-
-			So(drive(explicit, 5).Reading.ReadoutDimension, ShouldEqual,
-				drive(defaulted, 5).Reading.ReadoutDimension)
+			So(narrow[0][8], ShouldBeLessThan, wide[0][8])
 		})
 	})
 }
 
 func BenchmarkPredictiveCoderStep(b *testing.B) {
 	coder := coderFixture(300)
-	drive(coder, 400)
+	step := 0.0
+	input := [2][]float64{{100, 1, 0.5}, {100, 1, 0, 0}}
 
-	features := []float64{100, 1, 0.5}
-	step := int64(401)
+	for range 400 {
+		step++
+		input[1][2] = step
+
+		for range coder.Next(data.NewValue(input)) {
+		}
+	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for b.Loop() {
-		coder.step(PredictiveInput{
-			Features:     features,
-			Reference:    100 + float64(step%7),
-			HasReference: true,
-			Step:         step,
-		})
-
 		step++
+		input[1][0] = 100 + math.Mod(step, 7)
+		input[1][2] = step
+
+		for range coder.Next(data.NewValue(input)) {
+		}
 	}
 }

@@ -2,213 +2,144 @@ package sentiment
 
 import (
 	"context"
-	"sync"
-	"unsafe"
+	"errors"
+	"math"
 
 	"github.com/theapemachine/errnie"
 
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/crosssection"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	nmsentiment "github.com/theapemachine/symm/nomagique/sentiment"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
+/*
+Signal is the cross-sectional price-state instrument. It holds no logic of
+its own: its entire behavior is two nomagique pipelines over one shared
+output map and one shared member store. The cohort pipeline retains the
+focal member's price, derives its change, and reduces the cohort's changes
+to sign counts, signed breadth, the median change, and breadth's causal
+baseline. The derived pipeline, a transport.Parallel of stage groups, runs
+only once the cohort holds at least one member change, and derives the
+participation fractions, the median change's causal baseline, and the
+velocities. The quoted price and member identity are the only envelope
+translation.
+*/
 type Signal struct {
 	*runtime.System
-	arena     *data.ArenaOwner
-	pipelines sync.Map
-	prices    *store.Latest[string, float64]
-	changes   *store.Latest[string, data.CrossMember]
-	ID        int
+	arena    *data.ArenaOwner
+	output   data.Map[float64]
+	envelope data.Map[float64]
+	identity data.Map[string]
+	cohort   *data.State
+	states   []*data.State
+	members  core.Primitive
+	reduce   core.Primitive
+	pipeline core.Primitive
+	metrics  [][5]string
 }
 
+/*
+NewSignal composes the cross-sectional price-state instrument.
+*/
 func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
+	output := data.NewOutputMap()
+	members := store.NewKV[string, float64](nil)
+
 	signal := &Signal{
-		arena:   arena,
-		prices:  store.NewLatest[string, float64](),
-		changes: store.NewLatest[string, data.CrossMember](),
+		arena:    arena,
+		output:   output,
+		envelope: data.NewOutputMap(),
+		identity: data.NewTextMap(),
+		members:  members,
+		// The cohort state binds the crosssection reductions' native names to
+		// sentiment domain names.
+		cohort: data.NewState(data.NewMap(
+			"positive_count", "advance_count",
+			"negative_count", "decline_count",
+			"zero_count", "unchanged_count",
+			"signed_fraction", "breadth",
+			"signed_median", "median_return",
+			"signed_fraction_baseline", "breadth_baseline",
+			"signed_fraction_divergence", "breadth_divergence",
+			"signed_fraction_zscore", "breadth_zscore",
+		), output),
+		reduce: transport.NewStages(
+			crosssection.NewUpdateMember("price", members),
+			crosssection.NewChangeCounts(members),
+			crosssection.NewChangeMedian(members),
+			crosssection.NewChangeBaseline(),
+		),
+		states: []*data.State{
+			// 0-2: Participation fractions.
+			data.NewState(data.NewMap("left", "advance_count", "right", "valid_member_count", "divide", "advance_fraction"), output),
+			data.NewState(data.NewMap("left", "decline_count", "right", "valid_member_count", "divide", "decline_fraction"), output),
+			data.NewState(data.NewMap("left", "unchanged_count", "right", "valid_member_count", "divide", "unchanged_fraction"), output),
+			// 3-5: Causal baseline of the median change, divergence, z-score.
+			data.NewState(data.NewMap("value", "median_return", "center", "median_return_baseline", "scale", "median_return_scale"), output),
+			data.NewState(data.NewMap("left", "median_return", "right", "median_return_baseline", "subtract", "median_return_divergence"), output),
+			data.NewState(data.NewMap("left", "median_return_divergence", "right", "median_return_scale", "divide", "median_return_zscore"), output),
+			// 6-7: Velocities of the median change and of breadth.
+			data.NewState(data.NewMap("value", "median_return", "rate", "median_return_velocity", "defined", "median_return_velocity:defined"), output),
+			data.NewState(data.NewMap("value", "breadth", "rate", "breadth_velocity", "defined", "breadth_velocity:defined"), output),
+		},
+		pipeline: transport.NewParallel(
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
+			transport.NewStages(arithmetic.NewSubtract()),
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(temporal.NewVelocity()),
+			transport.NewStages(temporal.NewVelocity()),
+		),
+		// {published label, output key, unit, timescale, gate key}
+		// A non-empty gate key publishes the metric only while that output is non-zero.
+		metrics: [][5]string{
+			{"valid_member_count", "valid_member_count", string(data.UnitCount), string(data.TimescaleInstantaneous), ""},
+			{"advance_count", "advance_count", string(data.UnitCount), string(data.TimescaleInstantaneous), ""},
+			{"decline_count", "decline_count", string(data.UnitCount), string(data.TimescaleInstantaneous), ""},
+			{"unchanged_count", "unchanged_count", string(data.UnitCount), string(data.TimescaleInstantaneous), ""},
+			{"advance_fraction", "advance_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
+			{"decline_fraction", "decline_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
+			{"unchanged_fraction", "unchanged_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
+			{"breadth", "breadth", string(data.UnitDimensionless), string(data.TimescaleInstantaneous), ""},
+			{"median_return", "median_return", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
+			{"breadth_baseline", "breadth_baseline", string(data.UnitDimensionless), string(data.TimescaleRollingWindow), ""},
+			{"breadth_divergence", "breadth_divergence", string(data.UnitDimensionless), string(data.TimescaleRollingWindow), ""},
+			{"breadth_zscore", "breadth_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
+			{"median_return_baseline", "median_return_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
+			{"median_return_divergence", "median_return_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
+			{"median_return_zscore", "median_return_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
+			{"median_return_velocity", "median_return_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "median_return_velocity:defined"},
+			{"breadth_velocity", "breadth_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "breadth_velocity:defined"},
+		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "sentiment", signal)
 	return signal
 }
 
+/*
+Arena exposes the signal's ArenaOwner to the runtime Consumer.
+*/
 func (signal *Signal) Arena() *data.ArenaOwner {
 	return signal.arena
 }
 
-func (signal *Signal) pipelineFor(symbol string) core.Primitive {
-	if existing, ok := signal.pipelines.Load(symbol); ok {
-		return existing.(core.Primitive)
-	}
-
-	pipeline := nomagique.NewNumber(
-		data.NewMetricGate("last"),
-		crosssection.NewUpdateMember("last", signal.prices, signal.changes),
-		crosssection.NewStampPeers(signal.changes),
-		nmsentiment.NewCrossSentiment(),
-		data.NewAdapter(
-			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement) float64 {
-				return m.GetMetric("median_return").Raw
-			},
-			func(m *data.Measurement, out adaptive.BaselineReading) {
-				if out.HasPrior {
-					m.SetMetric("median_return_baseline", data.NewMetric(
-						"median_return_baseline",
-						data.UnitLogReturn,
-						data.TimescaleInstantaneous,
-						out.Baseline,
-						out.ScoreScale,
-					).Write(out.Baseline))
-					m.SetMetric("median_return_divergence", data.NewMetric(
-						"median_return_divergence",
-						data.UnitLogReturn,
-						data.TimescaleInstantaneous,
-						0.0,
-						out.ScoreScale,
-					).Write(out.Residual))
-					m.WriteStandardized("median_return_zscore", out.ZScore)
-				}
-			},
-		),
-		data.NewAdapter(
-			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement) float64 {
-				return m.GetMetric("breadth").Raw
-			},
-			func(m *data.Measurement, out adaptive.BaselineReading) {
-				if out.HasPrior {
-					m.SetMetric("breadth_baseline", data.NewMetric(
-						"breadth_baseline",
-						data.UnitDimensionless,
-						data.TimescaleInstantaneous,
-						out.Baseline,
-						out.ScoreScale,
-					).Write(out.Baseline))
-					m.SetMetric("breadth_divergence", data.NewMetric(
-						"breadth_divergence",
-						data.UnitDimensionless,
-						data.TimescaleInstantaneous,
-						0.0,
-						out.ScoreScale,
-					).Write(out.Residual))
-					m.WriteStandardized("breadth_zscore", out.ZScore)
-				}
-			},
-		),
-		data.NewAdapter(
-			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement) float64 {
-				return m.GetMetric("median_absolute_return").Raw
-			},
-			func(m *data.Measurement, out adaptive.BaselineReading) {
-				if out.HasPrior {
-					m.SetMetric("median_absolute_return_baseline", data.NewMetric(
-						"median_absolute_return_baseline",
-						data.UnitLogReturn,
-						data.TimescaleInstantaneous,
-						out.Baseline,
-						out.ScoreScale,
-					).Write(out.Baseline))
-					if out.Baseline > 0 {
-						m.SetMetric("median_absolute_return_ratio", data.NewMetric(
-							"median_absolute_return_ratio",
-							data.UnitRatio,
-							data.TimescaleInstantaneous,
-							1.0,
-							out.ScoreScale/out.Baseline,
-						).Write(m.GetMetric("median_absolute_return").Raw/out.Baseline))
-					}
-					m.WriteStandardized("median_absolute_return_zscore", out.ZScore)
-				}
-			},
-		),
-		data.NewAdapter(
-			adaptive.NewBaseline(adaptive.NewWindow()),
-			func(m *data.Measurement) float64 {
-				return m.GetMetric("return_mad").Raw
-			},
-			func(m *data.Measurement, out adaptive.BaselineReading) {
-				if out.HasPrior {
-					m.SetMetric("return_dispersion_baseline", data.NewMetric(
-						"return_dispersion_baseline",
-						data.UnitLogReturn,
-						data.TimescaleInstantaneous,
-						out.Baseline,
-						out.ScoreScale,
-					).Write(out.Baseline))
-					if out.Baseline > 0 {
-						m.SetMetric("return_dispersion_ratio", data.NewMetric(
-							"return_dispersion_ratio",
-							data.UnitRatio,
-							data.TimescaleInstantaneous,
-							1.0,
-							out.ScoreScale/out.Baseline,
-						).Write(m.GetMetric("return_mad").Raw/out.Baseline))
-					}
-					m.WriteStandardized("return_dispersion_zscore", out.ZScore)
-				}
-			},
-		),
-		data.NewAdapter(
-			temporal.NewVelocity(),
-			func(m *data.Measurement) temporal.Observation {
-				return temporal.Observation{
-					Value: m.GetMetric("median_return").Raw,
-					At:    m.At.UnixNano(),
-				}
-			},
-			func(m *data.Measurement, out temporal.VelocityReading) {
-				if out.Defined {
-					m.SetMetric("median_return_velocity", data.NewMetric(
-						"median_return_velocity",
-						data.UnitVelocity,
-						data.TimescaleInstantaneous,
-						0.0,
-						0.0,
-					).Write(out.Rate))
-				}
-			},
-		),
-		data.NewAdapter(
-			temporal.NewVelocity(),
-			func(m *data.Measurement) temporal.Observation {
-				return temporal.Observation{
-					Value: m.GetMetric("breadth").Raw,
-					At:    m.At.UnixNano(),
-				}
-			},
-			func(m *data.Measurement, out temporal.VelocityReading) {
-				if out.Defined {
-					m.SetMetric("breadth_velocity", data.NewMetric(
-						"breadth_velocity",
-						data.UnitVelocity,
-						data.TimescaleInstantaneous,
-						0.0,
-						0.0,
-					).Write(out.Rate))
-				}
-			},
-		),
-		data.NewRecurrence(
-			"median_return",
-			"breadth",
-			"return_mad",
-		),
-		data.NewFinalizer[float64](),
-	)
-
-	actual, _ := signal.pipelines.LoadOrStore(symbol, pipeline)
-	return actual.(core.Primitive)
-}
-
+/*
+Step binds the prior quote Measurement to the cohort adapter, runs the cohort
+reduction, runs the derived pipeline once the cohort holds a member change,
+and writes the published facts into a fresh Measurement allocated from the
+signal's own arena. A quote without a finite positive price yields no
+measurement. Facts a stage left unwritten are omitted, never fabricated as
+zero.
+*/
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
 		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
@@ -219,43 +150,86 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	priceMetric, hasPrice := quotedPriceMetric(prior)
-	if !hasPrice || priceMetric.Raw <= 0 {
-		return nil
-	}
+	clear(signal.output.Values)
+	clear(signal.envelope.Values)
+	clear(signal.identity.Values)
 
-	out := signal.arena.NewMeasurement(signal.Name())
-	out.Epoch = prior.Epoch
-	out.Tick = prior.Tick
-	out.Label = prior.Label
-	out.SeqIdx = prior.SeqIdx
-	out.At = prior.At
-	out.From = prior.From
-	out.Peers = []*data.Measurement{prior}
-
-	out.SetMetric("last", priceMetric)
-
-	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
-		out.SetProvenance("channel", channel)
-	}
-
-	res := data.Read[*data.Measurement](signal.pipelineFor(out.Label).Next(
-		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
-	))
-
-	if res == nil {
-		return out
-	}
-
-	return res
-}
-
-func quotedPriceMetric(measurement *data.Measurement) (data.Metric, bool) {
 	for _, key := range []string{"last", "last_price", "price"} {
-		if metric, ok := measurement.LookupMetric(key); ok && metric.Raw > 0 {
-			return metric, true
+		entry := data.Pull(prior.Read(key))
+
+		if entry.Err == nil && entry.Metric.Label != "" && entry.Metric.Raw > 0 && !math.IsInf(entry.Metric.Raw, 0) {
+			signal.envelope.Values["price"] = entry.Metric.Raw
+			break
 		}
 	}
 
-	return data.Metric{}, false
+	if _, held := signal.envelope.Values["price"]; !held {
+		return nil
+	}
+
+	signal.envelope.Values["at"] = float64(prior.At.UnixNano())
+	signal.identity.Values["member"] = prior.Label
+
+	cohort := data.NewAdapter(prior, signal.cohort)
+
+	for range cohort.Next(data.NewValue(signal.envelope)) {
+	}
+
+	for range cohort.Next(data.NewValue(signal.identity)) {
+	}
+
+	for range signal.reduce.Next(data.NewValue(cohort)) {
+	}
+
+	if err := errors.Join(cohort.Error(), signal.reduce.Error()); err != nil {
+		signal.Error(err)
+		return nil
+	}
+
+	if signal.output.Values["valid_member_count"] > 0 {
+		adapters := make([]*data.Adapter, len(signal.states))
+
+		for index, state := range signal.states {
+			adapters[index] = data.NewAdapter(prior, state)
+		}
+
+		for range signal.pipeline.Next(data.NewValue(adapters...)) {
+		}
+
+		if err := signal.pipeline.Error(); err != nil {
+			signal.Error(err)
+			return nil
+		}
+	}
+
+	out := signal.arena.NewMeasurement(
+		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, []*data.Measurement{prior},
+	)
+	out.Epoch = prior.Epoch
+	out.Label = prior.Label
+	out.Source = signal.Name()
+	out.SeqIdx = prior.SeqIdx
+	out.Tick = prior.Tick
+	out.At = prior.At
+	out.From = prior.At
+
+	metrics := make([]data.Metric, 0, len(signal.metrics))
+
+	for _, metric := range signal.metrics {
+		value, held := signal.output.Values[metric[1]]
+
+		if !held {
+			continue
+		}
+
+		if metric[4] != "" && signal.output.Values[metric[4]] == 0 {
+			continue
+		}
+
+		metrics = append(metrics, data.NewMetric(
+			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),
+		))
+	}
+
+	return out.Write(metrics...)
 }

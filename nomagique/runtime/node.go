@@ -68,7 +68,7 @@ func NewConsumer(
 	}
 
 	if consumer.arena == nil {
-		consumer.arena = data.NewArenaOwner(capacity)
+		consumer.arena = data.NewArenaOwner("consumer", capacity)
 	}
 
 	if consumer.arena != nil {

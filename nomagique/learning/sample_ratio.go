@@ -1,7 +1,6 @@
 package learning
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
@@ -10,55 +9,60 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-RatioReading preserves the supplied calibration ratio and observed-range
-ceiling. Those are model policies, not statistical identities.
-*/
-type RatioReading struct {
-	Value     float64
-	PeakRatio float64
-	Count     float64
-}
+SampleRatio preserves the supplied calibration ratio and observed-range
+ceiling over the shared residual-span update. Those are model policies, not
+statistical identities.
 
-/*
-SampleRatio owns that policy over the shared residual-span update.
+Each arrival is *[2]float64{predicted, actual}; it yields *[3]float64
+{value, peakRatio, count}.
 */
 type SampleRatio struct {
-	err       error
+	*core.PrimitiveError
 	span      core.Primitive
 	abs       core.Primitive
+	adapter   *data.Adapter
+	publish   data.Map[float64]
+	request   data.Map[string]
 	count     float64
 	min       float64
 	max       float64
 	prev      float64
 	peakRatio float64
-	out       RatioReading
+	out       [3]float64
 }
 
 func NewSampleRatio() core.Primitive {
 	return &SampleRatio{
-		span: statistic.NewResidualSpan(),
-		abs:  calculus.NewAbsolute(),
+		PrimitiveError: core.NewPrimitiveError(),
+		span:           statistic.NewResidualSpan(),
+		abs:            calculus.NewAbsolute(),
+		adapter:        data.NewAdapter(nil, data.NewState(data.NewMap())),
+		publish:        data.NewOutputMap(),
+		request:        data.NewMap("absolute", "absolute"),
 	}
 }
 
-func (op *SampleRatio) Next(
-	in iter.Seq[unsafe.Pointer],
-) iter.Seq[unsafe.Pointer] {
+func (op *SampleRatio) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			pair := (*Pair)(arriving)
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 
-			if math.IsNaN(pair.Predicted) || math.IsNaN(pair.Actual) ||
-				math.IsInf(pair.Predicted, 0) || math.IsInf(pair.Actual, 0) {
+			pair := (*[2]float64)(arriving)
+			predicted, actual := pair[0], pair[1]
+
+			if math.IsNaN(predicted) || math.IsNaN(actual) ||
+				math.IsInf(predicted, 0) || math.IsInf(actual, 0) {
 				op.Error(core.ErrDomain)
 				return
 			}
 
-			residual := pair.Actual - pair.Predicted
+			residual := actual - predicted
 			var span [4]float64
 
 			for out := range op.span.Next(data.NewValue([4]float64{op.count, op.min, op.max, residual})) {
@@ -73,13 +77,13 @@ func (op *SampleRatio) Next(
 			op.count = span[0]
 			op.min = span[1]
 			op.max = span[2]
-			ratio := pair.Actual / pair.Predicted
+			ratio := actual / predicted
 
-			if pair.Actual < pair.Predicted {
-				ratio = 1 + pair.Actual/pair.Predicted
+			if actual < predicted {
+				ratio = 1 + actual/predicted
 			}
 
-			if !(pair.Predicted <= pair.Actual || ratio >= 0) {
+			if !(predicted <= actual || ratio >= 0) {
 				op.Error(core.ErrDomain)
 				return
 			}
@@ -91,13 +95,26 @@ func (op *SampleRatio) Next(
 			}
 
 			if !(span[3] > 0) {
-				prevAbs := op.prev
+				op.publish.Values["value"] = op.prev
 
-				for out := range op.abs.Next(transport.NewValues(prevAbs).Next(nil)) {
-					prevAbs = *(*float64)(out)
+				for range op.adapter.Next(data.NewValue(op.publish)) {
+				}
+
+				for range op.abs.Next(data.NewValue(op.adapter)) {
 				}
 
 				if err := op.abs.Error(); err != nil {
+					op.Error(err)
+					return
+				}
+
+				prevAbs := 0.0
+
+				for pointer := range op.adapter.Next(data.NewValue(op.request)) {
+					prevAbs = (*data.Map[float64])(pointer).Values["absolute"]
+				}
+
+				if err := op.adapter.Error(); err != nil {
 					op.Error(err)
 					return
 				}
@@ -113,26 +130,12 @@ func (op *SampleRatio) Next(
 				op.peakRatio = ratio
 			}
 
-			op.prev = pair.Predicted
-			op.out = RatioReading{
-				Value:     ratio,
-				PeakRatio: op.peakRatio,
-				Count:     op.count,
-			}
+			op.prev = predicted
+			op.out = [3]float64{ratio, op.peakRatio, op.count}
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
-}
-
-func (op *SampleRatio) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

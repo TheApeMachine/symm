@@ -1,7 +1,6 @@
 package tables
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -35,6 +34,15 @@ func arrowSchemaFor(schema *iceberg.Schema) (*arrow.Schema, error) {
 	return converted, nil
 }
 
+type metricHolder struct {
+	raw             float64
+	exact           *decimal.Decimal
+	standardized    float64
+	hasStandardized bool
+	normalized      float64
+	hasNormalized   bool
+}
+
 func fillMeasurements(
 	recordBuilder *array.RecordBuilder,
 	measurements []*data.Measurement,
@@ -47,6 +55,7 @@ func fillMeasurements(
 	atBuilder := recordBuilder.Field(4).(*array.TimestampBuilder)
 	maturityBuilder := recordBuilder.Field(5).(*array.Float64Builder)
 	snrBuilder := recordBuilder.Field(6).(*array.Float64Builder)
+	snrDefinedBuilder := recordBuilder.Field(7).(*array.BooleanBuilder)
 	metricsBuilder := recordBuilder.Field(8).(*array.MapBuilder)
 	metadataBuilder := recordBuilder.Field(9).(*array.MapBuilder)
 	provenanceBuilder := recordBuilder.Field(10).(*array.MapBuilder)
@@ -63,9 +72,11 @@ func fillMeasurements(
 
 	for _, measurement := range measurements {
 		recEpoch := measurement.Epoch
+
 		if recEpoch <= 0 {
 			recEpoch = epoch
 		}
+
 		epochBuilder.Append(recEpoch)
 		seqIdxBuilder.Append(measurement.SeqIdx)
 		sourceBuilder.Append(measurement.Source)
@@ -73,47 +84,51 @@ func fillMeasurements(
 		atBuilder.Append(arrow.Timestamp(measurement.At.UTC().UnixMicro()))
 		maturityBuilder.Append(measurement.Maturity())
 		snrBuilder.Append(measurement.SNR())
+		snrDefinedBuilder.Append(true)
 		tickBuilder.Append(measurement.Tick)
 
 		metricsBuilder.Append(true)
-		measurement.RangeMetrics(func(metricKey string, metricVal data.Metric) bool {
-			metricsKey.Append(metricKey)
-			metricsVal.Append(metricVal.Raw)
-			return true
-		})
+
+		for entry := range measurement.Read() {
+			if entry.Err != nil {
+				continue
+			}
+
+			metricsKey.Append(entry.Key)
+			metricsVal.Append(entry.Metric.Raw)
+		}
 
 		metadataBuilder.Append(true)
-		for _, entry := range measurement.Metadata {
-			metadataKey.Append(entry.Key)
-			metadataVal.Append(entry.Value)
+
+		for _, key := range []string{"type", "order_id", "side", "event", "checksum", "ord_type", "trade_id", "status", "peer"} {
+			if value := measurement.Meta(key); value != "" {
+				metadataKey.Append(key)
+				metadataVal.Append(value)
+			}
 		}
 
 		provenanceBuilder.Append(true)
-		for _, entry := range measurement.Provenance {
-			provenanceKey.Append(entry.Key)
-			provenanceVal.Append(entry.Value)
-		}
 
 		if measurement.Error() != nil {
 			provenanceKey.Append("symm:error")
 			provenanceVal.Append(fmt.Sprintf("%v", measurement.Error()))
 		}
 
-		for metric := range measurement.Read() {
-			if metric.Metric.Exact != nil {
-				provenanceKey.Append("symm:exact:" + metric.Key)
-				provenanceVal.Append(metric.Metric.Exact.String())
+		for entry := range measurement.Read() {
+			if entry.Err != nil {
+				continue
 			}
 
-			if metric.Standardized != nil {
-				provenanceKey.Append("symm:standardized:" + metric.Key)
-				provenanceVal.Append(strconv.FormatFloat(*metric.Standardized, 'g', -1, 64))
+			if entry.Metric.Exact != nil {
+				provenanceKey.Append("symm:exact:" + entry.Key)
+				provenanceVal.Append(entry.Metric.Exact.String())
 			}
 
-			if metric.Normalized != nil {
-				provenanceKey.Append("symm:normalized:" + metric.Key)
-				provenanceVal.Append(strconv.FormatFloat(*metric.Normalized, 'g', -1, 64))
-			}
+			provenanceKey.Append("symm:standardized:" + entry.Key)
+			provenanceVal.Append(strconv.FormatFloat(entry.Metric.Standardized, 'g', -1, 64))
+
+			provenanceKey.Append("symm:normalized:" + entry.Key)
+			provenanceVal.Append(strconv.FormatFloat(entry.Metric.Normalized, 'g', -1, 64))
 		}
 	}
 }
@@ -133,54 +148,75 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 	sourceCol, _ := cols["source"].(*array.String)
 	labelCol, _ := cols["label"].(*array.String)
 	atCol, _ := cols["at"].(*array.Timestamp)
-	maturityCol, _ := cols["maturity"].(*array.Float64)
-	snrCol, _ := cols["snr"].(*array.Float64)
-	snrDefinedCol, _ := cols["snrDefined"].(*array.Boolean)
 	metricsCol, _ := cols["metrics"].(*array.Map)
 	metadataCol, _ := cols["metadata"].(*array.Map)
 	provenanceCol, _ := cols["provenance"].(*array.Map)
 	tickCol, _ := cols["tick"].(*array.Int64)
 
 	for rowIdx := range totalRows {
+		var epoch int64
+
+		if epochCol != nil && !epochCol.IsNull(rowIdx) {
+			epoch = epochCol.Value(rowIdx)
+		}
+
+		var seqIdx int64
+
+		if seqIdxCol != nil && !seqIdxCol.IsNull(rowIdx) {
+			seqIdx = seqIdxCol.Value(rowIdx)
+		}
+
+		var tick int64
+
+		if tickCol != nil && !tickCol.IsNull(rowIdx) {
+			tick = tickCol.Value(rowIdx)
+		}
+
 		source := ""
 
 		if sourceCol != nil && !sourceCol.IsNull(rowIdx) {
 			source = sourceCol.Value(rowIdx)
 		}
 
-		measurement := data.NewMeasurement(source, nil)
-
-		if epochCol != nil && !epochCol.IsNull(rowIdx) {
-			measurement.Epoch = epochCol.Value(rowIdx)
-		}
-
-		if seqIdxCol != nil && !seqIdxCol.IsNull(rowIdx) {
-			measurement.SeqIdx = seqIdxCol.Value(rowIdx)
-		}
-
-		if tickCol != nil && !tickCol.IsNull(rowIdx) {
-			measurement.Tick = tickCol.Value(rowIdx)
-		}
+		label := ""
 
 		if labelCol != nil && !labelCol.IsNull(rowIdx) {
-			measurement.Label = labelCol.Value(rowIdx)
+			label = labelCol.Value(rowIdx)
 		}
+
+		var metadata []data.StringEntry
+
+		if metadataCol != nil && !metadataCol.IsNull(rowIdx) {
+			keyArray := metadataCol.Keys().(*array.String)
+			valArray := metadataCol.Items().(*array.String)
+			offsets := metadataCol.Offsets()
+			startOffset := int(offsets[rowIdx])
+			endOffset := int(offsets[rowIdx+1])
+
+			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
+				metadata = append(metadata, data.StringEntry{
+					Key:   keyArray.Value(itemIdx),
+					Value: valArray.Value(itemIdx),
+				})
+			}
+		}
+
+		measurement := data.NewMeasurement(
+			epoch,
+			label,
+			source,
+			seqIdx,
+			tick,
+			metadata...,
+		)
 
 		if atCol != nil && !atCol.IsNull(rowIdx) {
 			measurement.At = time.UnixMicro(int64(atCol.Value(rowIdx))).UTC()
+			measurement.Timestamp = int64(atCol.Value(rowIdx)) * 1000
 		}
 
-		if maturityCol != nil && !maturityCol.IsNull(rowIdx) {
-			measurement.Maturity = maturityCol.Value(rowIdx)
-		}
-
-		if snrDefinedCol != nil && !snrDefinedCol.IsNull(rowIdx) {
-			measurement.SNRDefined = snrDefinedCol.Value(rowIdx)
-		}
-
-		if snrCol != nil && !snrCol.IsNull(rowIdx) && measurement.SNRDefined {
-			measurement.SNR = snrCol.Value(rowIdx)
-		}
+		rowMetrics := make(map[string]*metricHolder)
+		var metricKeys []string
 
 		if metricsCol != nil && !metricsCol.IsNull(rowIdx) {
 			keyArray := metricsCol.Keys().(*array.String)
@@ -191,23 +227,8 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
 				metricKey := keyArray.Value(itemIdx)
-				metricVal := valArray.Value(itemIdx)
-				measurement.SetMetric(metricKey, data.Metric{
-					Label: metricKey,
-					Raw:   metricVal,
-				})
-			}
-		}
-
-		if metadataCol != nil && !metadataCol.IsNull(rowIdx) {
-			keyArray := metadataCol.Keys().(*array.String)
-			valArray := metadataCol.Items().(*array.String)
-			offsets := metadataCol.Offsets()
-			startOffset := int(offsets[rowIdx])
-			endOffset := int(offsets[rowIdx+1])
-
-			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
-				measurement.SetMetadata(keyArray.Value(itemIdx), valArray.Value(itemIdx))
+				rowMetrics[metricKey] = &metricHolder{raw: valArray.Value(itemIdx)}
+				metricKeys = append(metricKeys, metricKey)
 			}
 		}
 
@@ -220,76 +241,119 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
 				key, value := keyArray.Value(itemIdx), valArray.Value(itemIdx)
-				if key == "symm:error" {
-					measurement.Err = errors.New(value)
-					continue
-				}
 
-				if key == "symm:estimated" {
-					measurement.Estimated = value == "true"
-					continue
-				}
+				afterExact, isExact := strings.CutPrefix(key, "symm:exact:")
 
-				if after, ok := strings.CutPrefix(key, "symm:exact:"); ok {
-					metricKey := after
+				if isExact {
 					exact, err := decimal.NewFromString(value)
 
 					if err != nil {
-						return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid original decimal quantity", err))
+						return nil, errnie.Error(errnie.Err(
+							errnie.Validation,
+							"iceberg: invalid original decimal quantity",
+							err,
+						))
 					}
 
-					metric := measurement.GetMetric(metricKey)
-					metric.Exact = exact
-					measurement.SetMetric(metricKey, metric)
-					continue
+					holder, exists := rowMetrics[afterExact]
+
+					if !exists {
+						holder = &metricHolder{raw: exact.Float64()}
+						rowMetrics[afterExact] = holder
+						metricKeys = append(metricKeys, afterExact)
+					}
+
+					holder.exact = exact
 				}
 
-				if after, ok := strings.CutPrefix(key, "symm:standardized:"); ok {
-					metricKey := after
+				afterStd, isStd := strings.CutPrefix(key, "symm:standardized:")
+
+				if isStd {
 					parsed, err := strconv.ParseFloat(value, 64)
 
 					if err != nil {
-						return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid standardized metric", err))
+						return nil, errnie.Error(errnie.Err(
+							errnie.Validation,
+							"iceberg: invalid standardized metric",
+							err,
+						))
 					}
 
-					metric := measurement.GetMetric(metricKey)
-					metric.Standardized = &parsed
-					measurement.SetMetric(metricKey, metric)
-					continue
+					holder, exists := rowMetrics[afterStd]
+
+					if !exists {
+						holder = &metricHolder{}
+						rowMetrics[afterStd] = holder
+						metricKeys = append(metricKeys, afterStd)
+					}
+
+					holder.standardized = parsed
+					holder.hasStandardized = true
 				}
 
-				if after, ok := strings.CutPrefix(key, "symm:normalized:"); ok {
-					metricKey := after
+				afterNorm, isNorm := strings.CutPrefix(key, "symm:normalized:")
+
+				if isNorm {
 					parsed, err := strconv.ParseFloat(value, 64)
 
 					if err != nil {
-						return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid normalized metric", err))
+						return nil, errnie.Error(errnie.Err(
+							errnie.Validation,
+							"iceberg: invalid normalized metric",
+							err,
+						))
 					}
 
-					metric := measurement.GetMetric(metricKey)
-					metric.Normalized = &parsed
-					measurement.SetMetric(metricKey, metric)
-					continue
-				}
+					holder, exists := rowMetrics[afterNorm]
 
-				if after, ok := strings.CutPrefix(key, "symm:deformation:"); ok {
-					metricKey := after
-					parsed, err := strconv.ParseFloat(value, 64)
-
-					if err != nil {
-						return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: invalid deformation metric", err))
+					if !exists {
+						holder = &metricHolder{}
+						rowMetrics[afterNorm] = holder
+						metricKeys = append(metricKeys, afterNorm)
 					}
 
-					metric := measurement.GetMetric(metricKey)
-					metric.Deformation = &parsed
-					measurement.SetMetric(metricKey, metric)
-					continue
+					holder.normalized = parsed
+					holder.hasNormalized = true
 				}
-
-				measurement.SetProvenance(key, value)
 			}
 		}
 
+		metrics := make([]data.Metric, 0, len(metricKeys))
+
+		for _, key := range metricKeys {
+			holder := rowMetrics[key]
+			var metric data.Metric
+
+			if holder.exact != nil {
+				metric = data.NewExactMetric(
+					key,
+					holder.exact,
+					data.UnitDimensionless,
+					data.TimescaleInstantaneous,
+				)
+			}
+
+			if holder.exact == nil {
+				metric = data.NewMetric(
+					key,
+					holder.raw,
+					data.UnitDimensionless,
+					data.TimescaleInstantaneous,
+				)
+			}
+
+			if holder.hasStandardized {
+				metric.Standardized = holder.standardized
+			}
+
+			if holder.hasNormalized {
+				metric.Normalized = holder.normalized
+			}
+
+			metrics = append(metrics, metric)
+		}
+
+		measurement.Write(metrics...)
 		measurements = append(measurements, measurement)
 	}
 

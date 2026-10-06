@@ -1,204 +1,220 @@
-package network
+package network_test
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/network"
 )
 
-func intLess(left, right int) bool { return left < right }
+func floatLess(left, right float64) bool { return left < right }
 
-// maxInt is the full-walk upper bound for the int-keyed test graph.
-const maxInt = int(^uint(0) >> 1)
+const maxFloat = math.MaxFloat64
 
-/*
-command wraps one graph intent into the command wire and streams it through the
-graph, returning the single result.
-*/
 func command(
 	graph core.Primitive,
-	cmd GraphCommand[int, string, string],
-) (GraphResult[int, string, string], bool) {
-	var result GraphResult[int, string, string]
+	intent string,
+	numbers map[string]float64,
+	texts map[string]string,
+) (*data.Adapter, bool) {
+	state := data.NewState(data.NewMap())
+	adapter := data.NewAdapter(nil, state)
 
-	for ptr := range graph.Next(tests.SliceToSeq([]GraphCommand[int, string, string]{cmd})) {
-		result = *(*GraphResult[int, string, string])(ptr)
-
-		return result, true
+	if len(numbers) > 0 {
+		payload := data.NewOutputMap()
+		for key, value := range numbers {
+			payload.Values[key] = value
+		}
+		for range adapter.Next(data.NewValue(payload)) {
+		}
 	}
 
-	return result, false
+	textPayload := data.NewTextMap()
+	textPayload.Values["op"] = intent
+	for key, value := range texts {
+		textPayload.Values[key] = value
+	}
+	for range adapter.Next(data.NewValue(textPayload)) {
+	}
+
+	yielded := false
+	for range graph.Next(data.NewValue(adapter)) {
+		yielded = true
+	}
+
+	return adapter, yielded
+}
+
+func readNumbers(adapter *data.Adapter, keys ...string) data.Map[float64] {
+	mapping := make([]string, 0, len(keys)*2)
+	for _, key := range keys {
+		mapping = append(mapping, key, key)
+	}
+	request := data.NewMap(mapping...)
+	var result data.Map[float64]
+	for pointer := range adapter.Next(data.NewValue(request)) {
+		result = *(*data.Map[float64])(pointer)
+	}
+	return result
+}
+
+func readTexts(adapter *data.Adapter, keys ...string) data.Map[string] {
+	request := data.NewLiteral(keys...)
+	var result data.Map[string]
+	for pointer := range adapter.Next(data.NewValue(request)) {
+		result = *(*data.Map[string])(pointer)
+	}
+	return result
 }
 
 func TestGraphNext(t *testing.T) {
 	Convey("Given an empty graph", t, func() {
-		graph := NewGraph[int, string, string](intLess)
+		graph := network.NewGraph(floatLess)
 
 		Convey("it starts empty", func() {
-			id := 1
-			result, ok := command(graph, GraphCommand[int, string, string]{Outgoing: &id})
-
+			adapter, ok := command(graph, "outgoing", map[string]float64{"id": 1}, nil)
 			So(ok, ShouldBeTrue)
-			So(result.Outgoing, ShouldBeNil)
+			So(graph.Error(), ShouldBeNil)
+			So(readNumbers(adapter, "count").Values["count"], ShouldEqual, 0)
 
-			count, ok := command(graph, GraphCommand[int, string, string]{Len: &Count{}})
-
+			adapter, ok = command(graph, "len", nil, nil)
 			So(ok, ShouldBeTrue)
-			So(count.Len, ShouldEqual, 0)
+			So(readNumbers(adapter, "len").Values["len"], ShouldEqual, 0)
 		})
 
 		Convey("nodes can be set and updated in place", func() {
-			_, ok := command(graph, GraphCommand[int, string, string]{
-				SetNode: &Node[int, string]{ID: 1, Data: "one"},
-			})
+			_, ok := command(graph, "set_node", map[string]float64{"id": 1}, map[string]string{"data": "one"})
 			So(ok, ShouldBeTrue)
 
-			_, ok = command(graph, GraphCommand[int, string, string]{
-				SetNode: &Node[int, string]{ID: 2, Data: "two"},
-			})
+			_, ok = command(graph, "set_node", map[string]float64{"id": 2}, map[string]string{"data": "two"})
 			So(ok, ShouldBeTrue)
 
-			id := 1
-			result, ok := command(graph, GraphCommand[int, string, string]{Node: &id})
+			adapter, ok := command(graph, "get_node", map[string]float64{"id": 1}, nil)
 			So(ok, ShouldBeTrue)
-			So(result.Found, ShouldBeTrue)
-			So(result.Node.Data, ShouldEqual, "one")
+			So(readNumbers(adapter, "found").Values["found"], ShouldEqual, 1)
+			So(readTexts(adapter, "data").Values["data"], ShouldEqual, "one")
 
-			missing := 3
-			result, ok = command(graph, GraphCommand[int, string, string]{Node: &missing})
+			adapter, ok = command(graph, "get_node", map[string]float64{"id": 3}, nil)
 			So(ok, ShouldBeTrue)
-			So(result.Found, ShouldBeFalse)
+			So(readNumbers(adapter, "found").Values["found"], ShouldEqual, 0)
 
-			_, ok = command(graph, GraphCommand[int, string, string]{
-				SetNode: &Node[int, string]{ID: 1, Data: "uno"},
-			})
+			_, ok = command(graph, "set_node", map[string]float64{"id": 1}, map[string]string{"data": "uno"})
 			So(ok, ShouldBeTrue)
 
-			result, ok = command(graph, GraphCommand[int, string, string]{Node: &id})
+			adapter, ok = command(graph, "get_node", map[string]float64{"id": 1}, nil)
 			So(ok, ShouldBeTrue)
-			So(result.Node.Data, ShouldEqual, "uno")
+			So(readTexts(adapter, "data").Values["data"], ShouldEqual, "uno")
 		})
 
 		Convey("edges are directed and weighted", func() {
-			_, ok := command(graph, GraphCommand[int, string, string]{
-				SetEdge: &Edge[int, string]{From: 1, To: 2, Weight: 0.75, Data: "a"},
-			})
+			_, ok := command(graph, "set_edge",
+				map[string]float64{"from": 1, "to": 2, "weight": 0.75},
+				map[string]string{"data": "a"},
+			)
 			So(ok, ShouldBeTrue)
 
 			Convey("outgoing is visible from the source only", func() {
-				from, to := 1, 2
-
-				result, ok := command(graph, GraphCommand[int, string, string]{Outgoing: &from})
+				adapter, ok := command(graph, "outgoing", map[string]float64{"id": 1}, nil)
 				So(ok, ShouldBeTrue)
-				So(result.Outgoing, ShouldHaveLength, 1)
+				So(readNumbers(adapter, "count").Values["count"], ShouldEqual, 1)
 
-				result, ok = command(graph, GraphCommand[int, string, string]{Outgoing: &to})
+				adapter, ok = command(graph, "outgoing", map[string]float64{"id": 2}, nil)
 				So(ok, ShouldBeTrue)
-				So(result.Outgoing, ShouldBeEmpty)
+				So(readNumbers(adapter, "count").Values["count"], ShouldEqual, 0)
 			})
 
 			Convey("weight and sign are preserved", func() {
-				id := 1
-
-				result, ok := command(graph, GraphCommand[int, string, string]{Outgoing: &id})
+				adapter, ok := command(graph, "outgoing", map[string]float64{"id": 1}, nil)
 				So(ok, ShouldBeTrue)
-				So(result.Outgoing[0].Weight, ShouldEqual, 0.75)
-				So(result.Outgoing[0].Data, ShouldEqual, "a")
+				numbers := readNumbers(adapter, "edge.0.weight")
+				So(numbers.Values["edge.0.weight"], ShouldEqual, 0.75)
+				So(readTexts(adapter, "edge.0.data").Values["edge.0.data"], ShouldEqual, "a")
 
-				_, ok = command(graph, GraphCommand[int, string, string]{
-					SetEdge: &Edge[int, string]{From: 1, To: 2, Weight: -1.5, Data: "b"},
-				})
+				_, ok = command(graph, "set_edge",
+					map[string]float64{"from": 1, "to": 2, "weight": -1.5},
+					map[string]string{"data": "b"},
+				)
 				So(ok, ShouldBeTrue)
 
-				result, ok = command(graph, GraphCommand[int, string, string]{Outgoing: &id})
+				adapter, ok = command(graph, "outgoing", map[string]float64{"id": 1}, nil)
 				So(ok, ShouldBeTrue)
-				So(result.Outgoing[0].Weight, ShouldEqual, -1.5)
-				So(result.Outgoing, ShouldHaveLength, 1)
+				So(readNumbers(adapter, "count", "edge.0.weight").Values["count"], ShouldEqual, 1)
+				So(readNumbers(adapter, "edge.0.weight").Values["edge.0.weight"], ShouldEqual, -1.5)
 			})
 
 			Convey("reversing direction is a separate edge", func() {
-				_, ok := command(graph, GraphCommand[int, string, string]{
-					SetEdge: &Edge[int, string]{From: 2, To: 1, Weight: 0.25},
-				})
+				_, ok := command(graph, "set_edge",
+					map[string]float64{"from": 2, "to": 1, "weight": 0.25},
+					nil,
+				)
 				So(ok, ShouldBeTrue)
 
-				from, to := 1, 2
-
-				result, ok := command(graph, GraphCommand[int, string, string]{Outgoing: &from})
+				adapter, ok := command(graph, "outgoing", map[string]float64{"id": 1}, nil)
 				So(ok, ShouldBeTrue)
-				So(result.Outgoing, ShouldHaveLength, 1)
+				So(readNumbers(adapter, "count").Values["count"], ShouldEqual, 1)
 
-				result, ok = command(graph, GraphCommand[int, string, string]{Outgoing: &to})
+				adapter, ok = command(graph, "outgoing", map[string]float64{"id": 2}, nil)
 				So(ok, ShouldBeTrue)
-				So(result.Outgoing, ShouldHaveLength, 1)
+				So(readNumbers(adapter, "count").Values["count"], ShouldEqual, 1)
 			})
 		})
 
 		Convey("edges are updated in place without rebuilding the graph", func() {
-			for _, edge := range []Edge[int, string]{
-				{From: 1, To: 2, Weight: 1},
-				{From: 1, To: 3, Weight: 2},
-			} {
-				_, ok := command(graph, GraphCommand[int, string, string]{SetEdge: &edge})
+			for _, edge := range [][3]float64{{1, 2, 1}, {1, 3, 2}} {
+				_, ok := command(graph, "set_edge",
+					map[string]float64{"from": edge[0], "to": edge[1], "weight": edge[2]},
+					nil,
+				)
 				So(ok, ShouldBeTrue)
 			}
 
-			id := 1
-
-			result, ok := command(graph, GraphCommand[int, string, string]{Outgoing: &id})
+			adapter, ok := command(graph, "outgoing", map[string]float64{"id": 1}, nil)
 			So(ok, ShouldBeTrue)
-			So(result.Outgoing, ShouldHaveLength, 2)
+			So(readNumbers(adapter, "count").Values["count"], ShouldEqual, 2)
 
-			update := Edge[int, string]{From: 1, To: 2, Weight: 100}
-			_, ok = command(graph, GraphCommand[int, string, string]{SetEdge: &update})
+			_, ok = command(graph, "set_edge",
+				map[string]float64{"from": 1, "to": 2, "weight": 100},
+				nil,
+			)
 			So(ok, ShouldBeTrue)
 
-			result, ok = command(graph, GraphCommand[int, string, string]{Outgoing: &id})
+			adapter, ok = command(graph, "outgoing", map[string]float64{"id": 1}, nil)
 			So(ok, ShouldBeTrue)
-			So(result.Outgoing, ShouldHaveLength, 2)
+			So(readNumbers(adapter, "count").Values["count"], ShouldEqual, 2)
 
-			walk, ok := command(graph, GraphCommand[int, string, string]{
-				RangeEdges: &Span[int]{From: 0, To: maxInt},
-			})
+			adapter, ok = command(graph, "range_edges",
+				map[string]float64{"from": 0, "to": maxFloat},
+				nil,
+			)
 			So(ok, ShouldBeTrue)
-			So(walk.Edges, ShouldHaveLength, 2)
+			So(readNumbers(adapter, "count").Values["count"], ShouldEqual, 2)
 		})
 
 		Convey("range walks nodes in ascending key order", func() {
-			for _, node := range []Node[int, string]{{ID: 2}, {ID: 1}, {ID: 3}} {
-				_, ok := command(graph, GraphCommand[int, string, string]{SetNode: &node})
+			for _, id := range []float64{2, 1, 3} {
+				_, ok := command(graph, "set_node", map[string]float64{"id": id}, nil)
 				So(ok, ShouldBeTrue)
 			}
 
-			result, ok := command(graph, GraphCommand[int, string, string]{
-				RangeNodes: &Span[int]{From: 0, To: maxInt},
-			})
+			adapter, ok := command(graph, "range_nodes",
+				map[string]float64{"from": 0, "to": maxFloat},
+				nil,
+			)
 			So(ok, ShouldBeTrue)
-
-			ids := []int{}
-
-			for _, node := range result.Nodes {
-				ids = append(ids, node.ID)
-			}
-
-			So(ids, ShouldResemble, []int{1, 2, 3})
+			numbers := readNumbers(adapter, "count", "node.0.id", "node.1.id", "node.2.id")
+			So(numbers.Values["count"], ShouldEqual, 3)
+			So(numbers.Values["node.0.id"], ShouldEqual, 1)
+			So(numbers.Values["node.1.id"], ShouldEqual, 2)
+			So(numbers.Values["node.2.id"], ShouldEqual, 3)
 		})
 
-		Convey("an ambiguous command ends the stream with an error", func() {
-			id := 1
-			cmd := GraphCommand[int, string, string]{
-				Node: &id,
-				Len:  &Count{},
-			}
-
+		Convey("an unknown op ends the stream with an error", func() {
 			count := 0
-
-			for range graph.Next(tests.SliceToSeq([]GraphCommand[int, string, string]{cmd})) {
-				count++
-			}
-
+			_, ok := command(graph, "nope", nil, nil)
+			So(ok, ShouldBeFalse)
 			So(count, ShouldEqual, 0)
 			So(graph.Error(), ShouldNotBeNil)
 		})
@@ -208,26 +224,14 @@ func TestGraphNext(t *testing.T) {
 func TestGraphError(t *testing.T) {
 	Convey("Given graph construction", t, func() {
 		Convey("A nil ordering function is rejected", func() {
-			graph := NewGraph[int, string, string](nil)
-
+			graph := network.NewGraph(nil)
 			So(graph.Error(), ShouldNotBeNil)
 
 			count := 0
-
-			for range graph.Next(tests.SliceToSeq([]GraphCommand[int, string, string]{})) {
+			for range graph.Next(data.NewValue((*data.Adapter)(nil))) {
 				count++
 			}
-
 			So(count, ShouldEqual, 0)
-		})
-
-		Convey("A valid graph records no error", func() {
-			graph := NewGraph[int, string, string](intLess)
-
-			for range graph.Next(tests.SliceToSeq([]GraphCommand[int, string, string]{})) {
-			}
-
-			So(graph.Error(), ShouldBeNil)
 		})
 	})
 }

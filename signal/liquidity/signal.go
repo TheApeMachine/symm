@@ -2,37 +2,92 @@ package liquidity
 
 import (
 	"context"
-	"strconv"
+	"errors"
+	"math"
 	"sync"
-	"unsafe"
 
 	"github.com/theapemachine/errnie"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	nmliquidity "github.com/theapemachine/symm/nomagique/liquidity"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
+/*
+Signal is the touch-liquidity measuring instrument. It holds no logic of its
+own: its entire behavior is one nomagique pipeline per symbol, a
+transport.Parallel of stage groups. Group i receives the data.Adapter bound to
+states[i], whose mapping binds the group's native primitive names to liquidity
+domain names. Every state of a symbol shares one output map, so a domain fact
+published by one group is read by the groups after it. The touch quote (from
+the ticker, or the shared book when the ticker omits it) is the only envelope
+translation.
+*/
 type Signal struct {
 	*runtime.System
 	arena     *data.ArenaOwner
-	pipelines sync.Map
-	ID        int
 	books     broker.BookSource
+	pipelines sync.Map
+	metrics   [][5]string
 }
 
+type symbolPipeline struct {
+	output   data.Map[float64]
+	envelope data.Map[float64]
+	states   []*data.State
+	pipeline core.Primitive
+}
+
+/*
+NewSignal composes the touch-liquidity instrument. The optional BookSource
+supplies the best bid and ask when the arriving ticker does not carry them.
+*/
 func NewSignal(ctx context.Context, arena *data.ArenaOwner, books ...broker.BookSource) *Signal {
 	signal := &Signal{
 		arena: arena,
+		// {published label, output key, unit, timescale, gate key}
+		// A non-empty gate key publishes the metric only while that output is non-zero.
+		metrics: [][5]string{
+			{"best_bid_price", "bid", string(data.UnitPrice), string(data.TimescaleInstantaneous), ""},
+			{"best_ask_price", "ask", string(data.UnitPrice), string(data.TimescaleInstantaneous), ""},
+			{"touch_quantity:bid", "bid_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous), ""},
+			{"touch_quantity:ask", "ask_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous), ""},
+			{"touch_notional:bid", "touch_notional:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
+			{"touch_notional:ask", "touch_notional:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
+			{"midpoint", "midpoint", string(data.UnitPrice), string(data.TimescaleInstantaneous), ""},
+			{"spread", "spread", string(data.UnitSpread), string(data.TimescaleInstantaneous), ""},
+			{"relative_spread", "relative_spread", string(data.UnitRelativeSpread), string(data.TimescaleInstantaneous), ""},
+			{"two_sided_touch_notional", "two_sided_touch_notional", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
+			{"touch_notional_imbalance", "touch_notional_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
+			{"touch_notional_baseline:bid", "touch_notional_baseline:bid", string(data.UnitNotional), string(data.TimescaleRollingWindow), ""},
+			{"touch_notional_baseline:ask", "touch_notional_baseline:ask", string(data.UnitNotional), string(data.TimescaleRollingWindow), ""},
+			{"relative_spread_baseline", "relative_spread_baseline", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow), ""},
+			{"depth_ratio:bid", "depth_ratio:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
+			{"depth_ratio:ask", "depth_ratio:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
+			{"spread_ratio", "spread_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
+			{"depth_divergence:bid", "depth_divergence:bid", string(data.UnitNotional), string(data.TimescaleRollingWindow), ""},
+			{"depth_divergence:ask", "depth_divergence:ask", string(data.UnitNotional), string(data.TimescaleRollingWindow), ""},
+			{"spread_divergence", "spread_divergence", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow), ""},
+			{"depth_noise_scale:bid", "depth_noise_scale:bid", string(data.UnitNotional), string(data.TimescaleRollingWindow), "depth_noise_scale:bid"},
+			{"depth_noise_scale:ask", "depth_noise_scale:ask", string(data.UnitNotional), string(data.TimescaleRollingWindow), "depth_noise_scale:ask"},
+			{"spread_noise_scale", "spread_noise_scale", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow), "spread_noise_scale"},
+			{"depth_zscore:bid", "depth_zscore:bid", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
+			{"depth_zscore:ask", "depth_zscore:ask", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
+			{"spread_zscore", "spread_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
+			{"divergence_velocity:bid", "divergence_velocity:bid", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "divergence_velocity:bid:defined"},
+			{"divergence_velocity:ask", "divergence_velocity:ask", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "divergence_velocity:ask:defined"},
+			{"spread_divergence_velocity", "spread_divergence_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "spread_divergence_velocity:defined"},
+		},
 	}
+
 	if len(books) > 0 {
 		signal.books = books[0]
 	}
@@ -41,179 +96,101 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books ...broker.Book
 	return signal
 }
 
+/*
+Arena exposes the signal's ArenaOwner to the runtime Consumer.
+*/
 func (signal *Signal) Arena() *data.ArenaOwner {
 	return signal.arena
 }
 
-func (signal *Signal) pipelineFor(symbol string) core.Primitive {
+func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 	if existing, ok := signal.pipelines.Load(symbol); ok {
-		return existing.(core.Primitive)
+		return existing.(*symbolPipeline)
 	}
 
-	pipeline := nomagique.NewNumber(
-		nmliquidity.NewGate(),
-		nmliquidity.NewTouch(),
-		data.NewAdapter(
-			statistic.NewJoint(3),
-			func(m *data.Measurement) statistic.JointInput {
-				return statistic.JointInput{Values: []float64{
-					m.GetMetric("_log_bid_notional").Raw,
-					m.GetMetric("_log_ask_notional").Raw,
-					m.GetMetric("_log_relative_spread").Raw,
-				}}
-			},
-			func(m *data.Measurement, reading statistic.JointReading) {
-				if len(reading.Channels) > 0 {
-					m.SetMetadata(data.MetadataSupport, strconv.FormatFloat(reading.Channels[0].Count, 'f', -1, 64))
-				}
-				if reading.SNRDefined {
-					m.SetMetadata(data.MetadataMahalanobisSNR, strconv.FormatFloat(reading.SNR, 'f', -1, 64))
-				}
+	output := data.NewOutputMap()
 
-				originals := []float64{
-					m.GetMetric("touch_notional:bid").Raw,
-					m.GetMetric("touch_notional:ask").Raw,
-					m.GetMetric("relative_spread").Raw,
-				}
+	pipe := &symbolPipeline{
+		output:   output,
+		envelope: data.NewOutputMap(),
+		states: []*data.State{
+			// 0-1: Displayed touch notional per side.
+			data.NewState(data.NewMap("left", "bid", "right", "bid_qty", "multiply", "touch_notional:bid"), output),
+			data.NewState(data.NewMap("left", "ask", "right", "ask_qty", "multiply", "touch_notional:ask"), output),
+			// 2-4: Touch cost geometry.
+			data.NewState(data.NewMap("left", "ask", "right", "bid", "subtract", "spread"), output),
+			data.NewState(data.NewMap("left", "bid", "right", "ask", "weight", "half", "mix", "midpoint"), output),
+			data.NewState(data.NewMap("left", "spread", "right", "midpoint", "divide", "relative_spread"), output),
+			// 5-7: Total and net touch notional, scale-free imbalance.
+			data.NewState(data.NewMap("left", "touch_notional:bid", "right", "touch_notional:ask", "add", "touch_notional"), output),
+			data.NewState(data.NewMap("left", "touch_notional:bid", "right", "touch_notional:ask", "subtract", "net_touch_notional"), output),
+			data.NewState(data.NewMap("left", "net_touch_notional", "right", "touch_notional", "divide", "touch_notional_imbalance"), output),
+			// 8-10: Two-sided notional, min(b, a) = (b + a - |b - a|) / 2.
+			data.NewState(data.NewMap("value", "net_touch_notional", "absolute", "net_touch_notional:absolute"), output),
+			data.NewState(data.NewMap("left", "touch_notional", "right", "net_touch_notional:absolute", "subtract", "two_sided_touch_notional:double"), output),
+			data.NewState(data.NewMap("left", "two_sided_touch_notional:double", "right", "half", "multiply", "two_sided_touch_notional"), output),
+			// 11-16: Bid depth against its own causal baseline.
+			data.NewState(data.NewMap("value", "touch_notional:bid", "center", "touch_notional_baseline:bid", "scale", "depth_noise_scale:bid"), output),
+			data.NewState(data.NewMap("left", "touch_notional:bid", "right", "touch_notional_baseline:bid", "subtract", "depth_divergence:bid"), output),
+			data.NewState(data.NewMap("left", "touch_notional:bid", "right", "touch_notional_baseline:bid", "divide", "depth_ratio:bid"), output),
+			data.NewState(data.NewMap("left", "depth_divergence:bid", "right", "depth_noise_scale:bid", "divide", "depth_zscore:bid"), output),
+			data.NewState(data.NewMap("value", "depth_divergence:bid", "rate", "divergence_velocity:bid", "defined", "divergence_velocity:bid:defined"), output),
+			// 16-20: Ask depth against its own causal baseline.
+			data.NewState(data.NewMap("value", "touch_notional:ask", "center", "touch_notional_baseline:ask", "scale", "depth_noise_scale:ask"), output),
+			data.NewState(data.NewMap("left", "touch_notional:ask", "right", "touch_notional_baseline:ask", "subtract", "depth_divergence:ask"), output),
+			data.NewState(data.NewMap("left", "touch_notional:ask", "right", "touch_notional_baseline:ask", "divide", "depth_ratio:ask"), output),
+			data.NewState(data.NewMap("left", "depth_divergence:ask", "right", "depth_noise_scale:ask", "divide", "depth_zscore:ask"), output),
+			data.NewState(data.NewMap("value", "depth_divergence:ask", "rate", "divergence_velocity:ask", "defined", "divergence_velocity:ask:defined"), output),
+			// 21-25: Relative spread against its own causal baseline.
+			data.NewState(data.NewMap("value", "relative_spread", "center", "relative_spread_baseline", "scale", "spread_noise_scale"), output),
+			data.NewState(data.NewMap("left", "relative_spread", "right", "relative_spread_baseline", "subtract", "spread_divergence"), output),
+			data.NewState(data.NewMap("left", "relative_spread", "right", "relative_spread_baseline", "divide", "spread_ratio"), output),
+			data.NewState(data.NewMap("left", "spread_divergence", "right", "spread_noise_scale", "divide", "spread_zscore"), output),
+			data.NewState(data.NewMap("value", "spread_divergence", "rate", "spread_divergence_velocity", "defined", "spread_divergence_velocity:defined"), output),
+		},
+		pipeline: transport.NewParallel(
+			transport.NewStages(arithmetic.NewMultiply()),
+			transport.NewStages(arithmetic.NewMultiply()),
+			transport.NewStages(arithmetic.NewSubtract()),
+			transport.NewStages(calculus.NewMix()),
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(arithmetic.NewAdd()),
+			transport.NewStages(arithmetic.NewSubtract()),
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(calculus.NewAbsolute()),
+			transport.NewStages(arithmetic.NewSubtract()),
+			transport.NewStages(arithmetic.NewMultiply()),
+			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
+			transport.NewStages(arithmetic.NewSubtract()),
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(temporal.NewVelocity()),
+			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
+			transport.NewStages(arithmetic.NewSubtract()),
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(temporal.NewVelocity()),
+			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
+			transport.NewStages(arithmetic.NewSubtract()),
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(temporal.NewVelocity()),
+		),
+	}
 
-				baselineLabels := []string{"touch_notional_baseline:bid", "touch_notional_baseline:ask", "relative_spread_baseline"}
-				ratioLabels := []string{"depth_ratio:bid", "depth_ratio:ask", "spread_ratio"}
-				divergenceLabels := []string{"depth_divergence:bid", "depth_divergence:ask", "spread_divergence"}
-				noiseLabels := []string{"depth_noise_scale:bid", "depth_noise_scale:ask", "spread_noise_scale"}
-				zscoreLabels := []string{"depth_zscore:bid", "depth_zscore:ask", "spread_zscore"}
-
-				baselineUnits := []data.Unit{data.UnitNotional, data.UnitNotional, data.UnitRelativeSpread}
-				for index, channel := range reading.Channels {
-					if !channel.HasPrior {
-						continue
-					}
-					m.SetMetric(baselineLabels[index], data.NewMetric(
-						baselineLabels[index],
-						baselineUnits[index],
-						data.TimescaleInstantaneous,
-						channel.Baseline,
-						channel.ScoreScale,
-					).Write(channel.Baseline))
-					if channel.Baseline > 0 {
-						m.SetMetric(ratioLabels[index], data.NewMetric(
-							ratioLabels[index],
-							data.UnitRatio,
-							data.TimescaleInstantaneous,
-							1.0,
-							channel.ScoreScale/channel.Baseline,
-						).Write(originals[index]/channel.Baseline))
-					}
-					m.SetMetric(divergenceLabels[index], data.NewMetric(
-						divergenceLabels[index],
-						baselineUnits[index],
-						data.TimescaleInstantaneous,
-						0.0,
-						channel.ScoreScale,
-					).Write(channel.Residual))
-
-					if channel.ScoreScale > 0 {
-						m.SetMetric(noiseLabels[index], data.NewMetric(
-							noiseLabels[index],
-							baselineUnits[index],
-							data.TimescaleInstantaneous,
-							0.0,
-							0.0,
-						).Write(channel.ScoreScale))
-						m.WriteStandardized(zscoreLabels[index], channel.ZScore)
-					}
-				}
-			},
-		),
-		data.NewAdapter(
-			statistic.NewLocalRegression(),
-			func(m *data.Measurement) temporal.Price {
-				return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("depth_divergence:bid").Raw}
-			},
-			func(m *data.Measurement, out statistic.LocalRegressionReading) {
-				if out.SlopeDefined {
-					m.SetMetric("divergence_velocity:bid", data.NewMetric(
-						"divergence_velocity:bid",
-						data.UnitVelocity,
-						data.TimescaleInstantaneous,
-						0.0,
-						0.0,
-					).Write(out.Slope))
-				}
-				if out.SNRDefined {
-					m.SetMetric("divergence_velocity_snr:bid", data.NewMetric(
-						"divergence_velocity_snr:bid",
-						data.UnitSNR,
-						data.TimescaleInstantaneous,
-						0.0,
-						0.0,
-					).Write(out.SNR))
-				}
-			},
-		),
-		data.NewAdapter(
-			statistic.NewLocalRegression(),
-			func(m *data.Measurement) temporal.Price {
-				return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("depth_divergence:ask").Raw}
-			},
-			func(m *data.Measurement, out statistic.LocalRegressionReading) {
-				if out.SlopeDefined {
-					m.SetMetric("divergence_velocity:ask", data.NewMetric(
-						"divergence_velocity:ask",
-						data.UnitVelocity,
-						data.TimescaleInstantaneous,
-						0.0,
-						0.0,
-					).Write(out.Slope))
-				}
-				if out.SNRDefined {
-					m.SetMetric("divergence_velocity_snr:ask", data.NewMetric(
-						"divergence_velocity_snr:ask",
-						data.UnitSNR,
-						data.TimescaleInstantaneous,
-						0.0,
-						0.0,
-					).Write(out.SNR))
-				}
-			},
-		),
-		data.NewAdapter(
-			statistic.NewLocalRegression(),
-			func(m *data.Measurement) temporal.Price {
-				return temporal.Price{At: m.At.UnixNano(), Value: m.GetMetric("spread_divergence").Raw}
-			},
-			func(m *data.Measurement, out statistic.LocalRegressionReading) {
-				if out.SlopeDefined {
-					m.SetMetric("spread_divergence_velocity", data.NewMetric(
-						"spread_divergence_velocity",
-						data.UnitVelocity,
-						data.TimescaleInstantaneous,
-						0.0,
-						0.0,
-					).Write(out.Slope))
-				}
-				if out.SNRDefined {
-					m.SetMetric("spread_divergence_velocity_snr", data.NewMetric(
-						"spread_divergence_velocity_snr",
-						data.UnitSNR,
-						data.TimescaleInstantaneous,
-						0.0,
-						0.0,
-					).Write(out.SNR))
-				}
-			},
-		),
-		data.NewRecurrence(
-			"depth_zscore:bid",
-			"depth_zscore:ask",
-			"spread_zscore",
-		),
-		data.NewFinalizer[float64](),
-	)
-
-	actual, _ := signal.pipelines.LoadOrStore(symbol, pipeline)
-	return actual.(core.Primitive)
+	actual, _ := signal.pipelines.LoadOrStore(symbol, pipe)
+	return actual.(*symbolPipeline)
 }
 
+/*
+Step binds the prior ticker Measurement to one adapter per stage group, runs
+the symbol's pipeline, and writes the published liquidity facts into a fresh
+Measurement allocated from the signal's own arena. An absent, non-finite,
+non-positive, or crossed touch yields no measurement: invalid geometry is
+never fabricated into zero depth. Facts a group left unwritten (a ratio or
+z-score against an undefined baseline or scale, a velocity without a prior
+observation) are omitted.
+*/
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
 		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
@@ -224,93 +201,98 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	var bid, ask, bidQty, askQty float64
-	if bMetric, ok := prior.LookupMetric("bid"); ok && bMetric.Raw > 0 {
-		bid = bMetric.Raw
-	}
-	if aMetric, ok := prior.LookupMetric("ask"); ok && aMetric.Raw > 0 {
-		ask = aMetric.Raw
-	}
-	if bqMetric, ok := prior.LookupMetric("bid_qty"); ok && bqMetric.Raw > 0 {
-		bidQty = bqMetric.Raw
-	}
-	if aqMetric, ok := prior.LookupMetric("ask_qty"); ok && aqMetric.Raw > 0 {
-		askQty = aqMetric.Raw
+	pipe := signal.pipelineFor(prior.Label)
+
+	clear(pipe.output.Values)
+	clear(pipe.envelope.Values)
+
+	for _, key := range []string{"bid", "ask", "bid_qty", "ask_qty"} {
+		if entry := data.Pull(prior.Read(key)); entry.Err == nil && entry.Metric.Label != "" {
+			pipe.envelope.Values[key] = entry.Metric.Raw
+		}
 	}
 
-	if (bid <= 0 || ask <= 0 || bidQty <= 0 || askQty <= 0) && signal.books != nil {
-		signal.books.Book(prior.Label, func(b *spotbook.Book) {
-			if b == nil {
+	if len(pipe.envelope.Values) < 4 && signal.books != nil {
+		signal.books.Book(prior.Label, func(book *spotbook.Book) {
+			if book == nil {
 				return
 			}
-			if bestBid := b.BestBid(); bestBid != nil && bestBid.Price != nil && bestBid.Quantity != nil {
-				bid = kraken.Float64(bestBid.Price)
-				bidQty = kraken.Float64(bestBid.Quantity)
+
+			if best := book.BestBid(); best != nil && best.Price != nil && best.Quantity != nil {
+				pipe.envelope.Values["bid"] = kraken.Float64(best.Price)
+				pipe.envelope.Values["bid_qty"] = kraken.Float64(best.Quantity)
 			}
-			if bestAsk := b.BestAsk(); bestAsk != nil && bestAsk.Price != nil && bestAsk.Quantity != nil {
-				ask = kraken.Float64(bestAsk.Price)
-				askQty = kraken.Float64(bestAsk.Quantity)
+
+			if best := book.BestAsk(); best != nil && best.Price != nil && best.Quantity != nil {
+				pipe.envelope.Values["ask"] = kraken.Float64(best.Price)
+				pipe.envelope.Values["ask_qty"] = kraken.Float64(best.Quantity)
 			}
 		})
 	}
 
-	if bid <= 0 || ask <= 0 || bidQty <= 0 || askQty <= 0 {
+	for _, key := range []string{"bid", "ask", "bid_qty", "ask_qty"} {
+		value, held := pipe.envelope.Values[key]
+
+		if !held || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil
+		}
+	}
+
+	if pipe.envelope.Values["ask"] <= pipe.envelope.Values["bid"] {
+		errnie.Warn(signal.Name() + ": crossed or locked touch; dropping event")
 		return nil
 	}
 
-	out := signal.arena.NewMeasurement(signal.Name())
+	pipe.envelope.Values["half"] = 0.5
+	pipe.envelope.Values["at"] = float64(prior.At.UnixNano())
+
+	publisher := data.NewAdapter(prior, data.NewState(data.NewMap(), pipe.output))
+
+	for range publisher.Next(data.NewValue(pipe.envelope)) {
+	}
+
+	adapters := make([]*data.Adapter, len(pipe.states))
+
+	for index, state := range pipe.states {
+		adapters[index] = data.NewAdapter(prior, state)
+	}
+
+	for range pipe.pipeline.Next(data.NewValue(adapters...)) {
+	}
+
+	if err := errors.Join(publisher.Error(), pipe.pipeline.Error()); err != nil {
+		signal.Error(err)
+		return nil
+	}
+
+	out := signal.arena.NewMeasurement(
+		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, []*data.Measurement{prior},
+	)
 	out.Epoch = prior.Epoch
-	out.Tick = prior.Tick
 	out.Label = prior.Label
+	out.Source = signal.Name()
 	out.SeqIdx = prior.SeqIdx
+	out.Tick = prior.Tick
 	out.At = prior.At
-	out.From = prior.From
-	out.Peers = []*data.Measurement{prior}
+	out.From = prior.At
 
-	midpoint := (bid + ask) / 2.0
-	spread := ask - bid
-	totalQty := bidQty + askQty
+	metrics := make([]data.Metric, 0, len(signal.metrics))
 
-	out.SetMetric("bid", data.NewMetric(
-		"bid",
-		data.UnitPrice,
-		data.TimescaleInstantaneous,
-		midpoint,
-		spread,
-	).Write(bid))
-	out.SetMetric("ask", data.NewMetric(
-		"ask",
-		data.UnitPrice,
-		data.TimescaleInstantaneous,
-		midpoint,
-		spread,
-	).Write(ask))
-	out.SetMetric("bid_qty", data.NewMetric(
-		"bid_qty",
-		data.UnitQuantity,
-		data.TimescaleInstantaneous,
-		0.0,
-		totalQty,
-	).Write(bidQty))
-	out.SetMetric("ask_qty", data.NewMetric(
-		"ask_qty",
-		data.UnitQuantity,
-		data.TimescaleInstantaneous,
-		0.0,
-		totalQty,
-	).Write(askQty))
+	for _, metric := range signal.metrics {
+		value, held := pipe.output.Values[metric[1]]
 
-	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
-		out.SetProvenance("channel", channel)
+		if !held {
+			continue
+		}
+
+		if metric[4] != "" && pipe.output.Values[metric[4]] == 0 {
+			continue
+		}
+
+		metrics = append(metrics, data.NewMetric(
+			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),
+		))
 	}
 
-	res := data.Read[*data.Measurement](signal.pipelineFor(out.Label).Next(
-		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
-	))
-
-	if res == nil {
-		return out
-	}
-
-	return res
+	return out.Write(metrics...)
 }

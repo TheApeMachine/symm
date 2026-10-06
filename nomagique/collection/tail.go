@@ -1,7 +1,6 @@
 package collection
 
 import (
-	"errors"
 	"iter"
 	"slices"
 	"unsafe"
@@ -13,13 +12,16 @@ import (
 Tail selects the last configured number of collection members.
 */
 type Tail[T any] struct {
-	err      error
+	*core.PrimitiveError
 	capacity int
 	out      []T
 }
 
 func NewTail[T any](capacity int) core.Primitive {
-	op := &Tail[T]{capacity: capacity}
+	op := &Tail[T]{
+		PrimitiveError: core.NewPrimitiveError(),
+		capacity:       capacity,
+	}
 
 	if capacity < 0 {
 		op.Error(core.ErrShape)
@@ -44,14 +46,4 @@ func (op *Tail[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Tail[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

@@ -209,7 +209,7 @@ func (wrapper *Adapter) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 					return
 				}
 
-				entry := wrapper.measurement.Read(domainKey)
+				entry := Pull(wrapper.measurement.Read(domainKey))
 
 				if entry.Err != nil {
 					wrapper.Error(entry.Err)

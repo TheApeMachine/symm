@@ -1,7 +1,6 @@
 package collection
 
 import (
-	"errors"
 	"fmt"
 	"iter"
 	"slices"
@@ -14,14 +13,18 @@ import (
 Swap exchanges two indexed members without mutating its input collection.
 */
 type Swap[T any] struct {
-	err   error
+	*core.PrimitiveError
 	left  int
 	right int
 	out   []T
 }
 
 func NewSwap[T any](left, right int) core.Primitive {
-	return &Swap[T]{left: left, right: right}
+	return &Swap[T]{
+		PrimitiveError: core.NewPrimitiveError(),
+		left:           left,
+		right:          right,
+	}
 }
 
 func (op *Swap[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -43,14 +46,4 @@ func (op *Swap[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Swap[T]) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

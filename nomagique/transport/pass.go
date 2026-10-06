@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,11 +11,11 @@ import (
 Pass hands each arrival over unchanged. It is the identity stage.
 */
 type Pass struct {
-	err error
+	*core.PrimitiveError
 }
 
 func NewPass() core.Primitive {
-	return &Pass{}
+	return &Pass{PrimitiveError: core.NewPrimitiveError()}
 }
 
 func (op *Pass) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -27,14 +26,4 @@ func (op *Pass) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Pass) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }

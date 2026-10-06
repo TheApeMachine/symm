@@ -38,74 +38,96 @@ func measurementToWire(
 	alloc data.Allocator,
 	includePeers bool,
 ) *wire.MeasurementT {
-	if measurement == nil || measurement.GetSource() == "cross-section" {
+	if measurement == nil || measurement.Source == "cross-section" {
 		return nil
 	}
 
-	metrics := data.MakeSlice[*wire.MetricT](alloc, 0, len(measurement.Metrics))
-	measurement.RangeMetrics(func(key string, metric data.Metric) bool {
-		wireMetric := data.New[wire.MetricT](alloc)
-		name := metric.Label
-		if name == "" {
-			name = key
-		}
-		wireMetric.Name = name
-		wireMetric.Raw = metric.Raw
-		wireMetric.Unit = string(metric.Unit)
-		wireMetric.Region = metric.Region
-		wireMetric.X = metric.X
-		wireMetric.Y = metric.Y
+	metrics := data.MakeSlice[*wire.MetricT](alloc, 0, 8)
 
-		if metric.Normalized != nil {
-			wireMetric.Normalized = *metric.Normalized
+	for entry := range measurement.Read() {
+		if entry.Err != nil {
+			continue
+		}
+
+		wireMetric := data.New[wire.MetricT](alloc)
+		name := entry.Metric.Label
+
+		if name == "" {
+			name = entry.Key
+		}
+
+		wireMetric.Name = name
+		wireMetric.Raw = entry.Metric.Raw
+
+		if entry.Metric.Normalized != 0 {
+			wireMetric.Normalized = entry.Metric.Normalized
 			wireMetric.HasNormalized = true
-		} else if metric.Standardized != nil {
-			wireMetric.Normalized = *metric.Standardized
+		}
+
+		if entry.Metric.Normalized == 0 && entry.Metric.Standardized != 0 {
+			wireMetric.Normalized = entry.Metric.Standardized
 			wireMetric.HasNormalized = true
 		}
 
 		metrics = data.AppendA(metrics, wireMetric, alloc)
-		return true
-	})
+	}
 
-	provenance := data.MakeSlice[*wire.NamedStringT](alloc, 0, len(measurement.Provenance)+len(measurement.Metadata))
-	seenProvenance := make(map[string]struct{}, len(measurement.Provenance))
-	measurement.RangeProvenance(func(key, val string) bool {
-		ns := data.New[wire.NamedStringT](alloc)
-		ns.Name = key
-		ns.Value = val
-		provenance = data.AppendA(provenance, ns, alloc)
-		seenProvenance[key] = struct{}{}
-		return true
-	})
+	provenance := data.MakeSlice[*wire.NamedStringT](alloc, 0, 8)
+	metadata := data.MakeSlice[*wire.NamedNumberT](alloc, 0, 8)
 
-	metadata := data.MakeSlice[*wire.NamedNumberT](alloc, 0, len(measurement.Metadata))
-	measurement.RangeMetadata(func(key, val string) bool {
+	if measurement.Error() != nil {
+		namedString := data.New[wire.NamedStringT](alloc)
+		namedString.Name = "symm:error"
+		namedString.Value = measurement.Error().Error()
+		provenance = data.AppendA(provenance, namedString, alloc)
+	}
+
+	for entry := range measurement.Read() {
+		if entry.Err != nil || entry.Metric.Exact == nil {
+			continue
+		}
+
+		namedString := data.New[wire.NamedStringT](alloc)
+		namedString.Name = "symm:exact:" + entry.Key
+		namedString.Value = entry.Metric.Exact.String()
+		provenance = data.AppendA(provenance, namedString, alloc)
+	}
+
+	for _, key := range []string{"type", "order_id", "side", "event", "checksum", "ord_type", "trade_id", "status", "peer"} {
+		val := measurement.Meta(key)
+
+		if val == "" {
+			continue
+		}
+
 		floatVal, err := strconv.ParseFloat(val, 64)
+
 		if err == nil {
-			nn := data.New[wire.NamedNumberT](alloc)
-			nn.Name = key
-			nn.Value = floatVal
-			metadata = data.AppendA(metadata, nn, alloc)
-			return true
+			namedNumber := data.New[wire.NamedNumberT](alloc)
+			namedNumber.Name = key
+			namedNumber.Value = floatVal
+			metadata = data.AppendA(metadata, namedNumber, alloc)
 		}
 
-		if _, exists := seenProvenance[key]; !exists {
-			ns := data.New[wire.NamedStringT](alloc)
-			ns.Name = key
-			ns.Value = val
-			provenance = data.AppendA(provenance, ns, alloc)
+		if err != nil {
+			namedString := data.New[wire.NamedStringT](alloc)
+			namedString.Name = key
+			namedString.Value = val
+			provenance = data.AppendA(provenance, namedString, alloc)
 		}
-		return true
-	})
+	}
 
 	var peers []*wire.MeasurementT
-	if includePeers && len(measurement.Peers) > 0 {
-		peers = data.MakeSlice[*wire.MeasurementT](alloc, 0, len(measurement.Peers))
-		for _, peer := range measurement.Peers {
-			if peer == nil || peer.GetSource() == "cross-section" {
+	measurementPeers := measurement.Peers()
+
+	if includePeers && len(measurementPeers) > 0 {
+		peers = data.MakeSlice[*wire.MeasurementT](alloc, 0, len(measurementPeers))
+
+		for _, peer := range measurementPeers {
+			if peer == nil || peer.Source == "cross-section" {
 				continue
 			}
+
 			// Depth 1 only: peer maps, never peer.Peers.
 			if wirePeer := measurementToWire(peer, alloc, false); wirePeer != nil {
 				peers = data.AppendA(peers, wirePeer, alloc)
@@ -114,14 +136,14 @@ func measurementToWire(
 	}
 
 	row := data.New[wire.MeasurementT](alloc)
-	row.Source = measurement.GetSource()
+	row.Source = measurement.Source
 	row.Symbol = measurement.Label
 	row.Tick = measurement.SeqIdx
 	row.At = measurement.At.UnixNano()
 	row.ObservedFrom = measurement.From.UnixNano()
-	row.Maturity = measurement.Maturity
-	row.Snr = measurement.SNR
-	row.SnrDefined = measurement.SNRDefined
+	row.Maturity = measurement.Maturity()
+	row.Snr = measurement.SNR()
+	row.SnrDefined = true
 	row.Metrics = metrics
 	row.Metadata = metadata
 	row.Provenance = provenance
@@ -166,13 +188,4 @@ func EncodeMeasurements(
 	res := append([]byte{}, builder.FinishedBytes()...)
 
 	return res, nil
-}
-
-func fnv1a32(key string) uint32 {
-	var hash uint32 = 2166136261
-	for index := 0; index < len(key); index++ {
-		hash ^= uint32(key[index])
-		hash *= 16777619
-	}
-	return hash
 }

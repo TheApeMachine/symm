@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
-	"github.com/theapemachine/symm/nomagique/relation"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -71,29 +70,19 @@ type forcingState struct {
 }
 
 /*
-forcingInputs is the declared coordinate contract for Manifold forcing. The
-lookup keys below are built from these selectors once during package setup, so
-runtime reads and generated metric lineage cannot drift into separate names.
+forcingInputs is the declared coordinate contract for Manifold forcing as
+relation selectors {source, metric, side}. The lookup keys below are built
+from these selectors once during package setup, so runtime reads and
+generated metric lineage cannot drift into separate names.
 */
-var forcingInputs = struct {
-	Buy  relation.Selector
-	Sell relation.Selector
-}{
-	Buy: relation.Selector{
-		Source: "hawkes",
-		Metric: "excitation_fraction",
-		Side:   "buy",
-	},
-	Sell: relation.Selector{
-		Source: "hawkes",
-		Metric: "excitation_fraction",
-		Side:   "sell",
-	},
+var forcingInputs = [2][3]string{
+	{"hawkes", "excitation_fraction", "buy"},
+	{"hawkes", "excitation_fraction", "sell"},
 }
 
 var (
-	buyExcitationMetric  = forcingInputs.Buy.Metric + ":" + forcingInputs.Buy.Side
-	sellExcitationMetric = forcingInputs.Sell.Metric + ":" + forcingInputs.Sell.Side
+	buyExcitationMetric  = forcingInputs[0][1] + ":" + forcingInputs[0][2]
+	sellExcitationMetric = forcingInputs[1][1] + ":" + forcingInputs[1][2]
 )
 
 func NewSolver(ctx context.Context, arena *data.ArenaOwner, book *broker.Book) *Solver {

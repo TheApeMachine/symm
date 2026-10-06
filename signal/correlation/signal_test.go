@@ -14,7 +14,7 @@ import (
 func TestCorrelationSignalMetrics(t *testing.T) {
 	Convey("Correlation signal measures principled asynchronous price-path co-movements and cohort metrics", t, func() {
 		ctx := context.Background()
-		arena := data.NewArenaOwner(4096)
+		arena := data.NewArenaOwner("test", 4096)
 
 		instrument := correlation.NewSignal(ctx, arena)
 		instrument.Transition(nmruntime.READY)

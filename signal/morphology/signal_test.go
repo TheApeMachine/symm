@@ -16,10 +16,35 @@ import (
 	"github.com/theapemachine/symm/signal/morphology"
 )
 
+func ingress(label string, at time.Time, seq int64) *data.Measurement {
+	prior := data.NewMeasurement(1, label, "ingress", seq, seq)
+	prior.At = at
+	prior.From = at
+	return prior
+}
+
+func metric(measurement *data.Measurement, label string) (float64, bool) {
+	for entry := range measurement.Read(label) {
+		if entry.Err != nil {
+			return 0, false
+		}
+
+		return entry.Metric.Raw, true
+	}
+
+	return 0, false
+}
+
+func metricValue(measurement *data.Measurement, label string) float64 {
+	value, held := metric(measurement, label)
+	So(held, ShouldBeTrue)
+	return value
+}
+
 func TestMorphologyLevel3Metrics(t *testing.T) {
 	Convey("Morphology instrument computes principled distribution geometry, concentration, and entropy", t, func() {
 		ctx := context.Background()
-		arena := data.NewArenaOwner(4096)
+		arena := data.NewArenaOwner("morphology", 4096)
 		normalizer := spot.NewNormalizer()
 		books := broker.NewBook(ctx, normalizer)
 
@@ -64,33 +89,31 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 				},
 			})
 
-			prior := arena.NewMeasurement("ingress")
-			prior.Label = "BTC/USD"
-			prior.SeqIdx = 1
-			prior.At = now
-			prior.From = now
-
-			res := instrument.Step(prior)
+			res := instrument.Step(ingress("BTC/USD", now, 1))
 			So(res, ShouldNotBeNil)
-			So(res.Err, ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
+			So(res.Source, ShouldEqual, "morphology")
+			So(res.Label, ShouldEqual, "BTC/USD")
 
 			// Single level bid has concentration = 1.0 and zero entropy
-			So(res.GetMetric("concentration:bid").Raw, ShouldAlmostEqual, 1.0, 1e-9)
-			So(res.GetMetric("entropy:bid").Raw, ShouldAlmostEqual, 0.0, 1e-9)
+			So(metricValue(res, "concentration:bid"), ShouldAlmostEqual, 1.0, 1e-9)
+			So(metricValue(res, "entropy:bid"), ShouldAlmostEqual, 0.0, 1e-9)
 
 			// Two-level ask has concentration < 1.0 and positive entropy
-			So(res.GetMetric("concentration:ask").Raw, ShouldBeLessThan, 1.0)
-			So(res.GetMetric("entropy:ask").Raw, ShouldBeGreaterThan, 0.0)
+			So(metricValue(res, "concentration:ask"), ShouldBeLessThan, 1.0)
+			So(metricValue(res, "entropy:ask"), ShouldBeGreaterThan, 0.0)
 
 			// Asymmetric shape relative to mid: KS statistic is positive
-			So(res.GetMetric("book_shape_ks").Raw, ShouldBeGreaterThan, 0.0)
-			So(res.GetMetric("book_shape_distance").Raw, ShouldBeGreaterThan, 0.0)
+			So(metricValue(res, "book_shape_ks"), ShouldBeGreaterThan, 0.0)
+			So(metricValue(res, "book_shape_distance"), ShouldBeGreaterThan, 0.0)
+
+			_, held := metric(res, "morphology_change")
+			So(held, ShouldBeFalse)
 		})
 
 		Convey("Multi-level dispersion decreases concentration, increases entropy, and tracks morphology change", func() {
 			var prevDist float64
 			for step := 0; step < 5; step++ {
-				// 4 levels of bids and asks
 				var bids, asks []kraken.Level3Order
 				for level := 0; level < 4; level++ {
 					bids = append(bids, kraken.Level3Order{
@@ -121,30 +144,28 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 					},
 				})
 
-				prior := arena.NewMeasurement("ingress")
-				prior.Label = "BTC/USD"
-				prior.SeqIdx = int64(step + 2)
-				prior.At = now.Add(time.Duration(step) * 100 * time.Millisecond)
-				prior.From = prior.At
-
-				res := instrument.Step(prior)
+				at := now.Add(time.Duration(step) * 100 * time.Millisecond)
+				res := instrument.Step(ingress("BTC/USD", at, int64(step+2)))
 				So(res, ShouldNotBeNil)
-				So(res.Err, ShouldBeNil)
+				So(instrument.Error(), ShouldBeNil)
 
 				// With 4 equal levels, concentration is strictly less than 1.0 (approx 0.25)
-				So(res.GetMetric("concentration:bid").Raw, ShouldBeLessThan, 0.5)
-				So(res.GetMetric("concentration:ask").Raw, ShouldBeLessThan, 0.5)
+				So(metricValue(res, "concentration:bid"), ShouldBeLessThan, 0.5)
+				So(metricValue(res, "concentration:ask"), ShouldBeLessThan, 0.5)
 
 				// Entropy must be positive (approx ln(4) ≈ 1.386)
-				So(res.GetMetric("entropy:bid").Raw, ShouldBeGreaterThan, 1.0)
-				So(res.GetMetric("entropy:ask").Raw, ShouldBeGreaterThan, 1.0)
+				So(metricValue(res, "entropy:bid"), ShouldBeGreaterThan, 1.0)
+				So(metricValue(res, "entropy:ask"), ShouldBeGreaterThan, 1.0)
 
-				currentDist := res.GetMetric("book_shape_distance").Raw
+				currentDist := metricValue(res, "book_shape_distance")
 				So(currentDist, ShouldBeGreaterThan, 0.0)
 
 				if step > 0 {
 					expectedChange := math.Abs(currentDist - prevDist)
-					So(res.GetMetric("morphology_change").Raw, ShouldAlmostEqual, expectedChange, 1e-6)
+					So(metricValue(res, "morphology_change"), ShouldAlmostEqual, expectedChange, 1e-6)
+				} else {
+					_, held := metric(res, "morphology_change")
+					So(held, ShouldBeFalse)
 				}
 				prevDist = currentDist
 			}

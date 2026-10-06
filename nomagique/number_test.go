@@ -6,24 +6,40 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/collection"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/tests"
 )
 
 func TestNewNumber(t *testing.T) {
-	Convey("Given primitives composed with NewNumber", t, func() {
+	Convey("Given adapter-native primitives composed with NewNumber", t, func() {
 		pipeline := NewNumber(
 			calculus.NewSquare(),
 			calculus.NewNegate(),
 		)
 
-		Convey("When streaming inputs through the pipeline", func() {
-			in := tests.SliceToSeq([]float64{2.0, 3.0})
-			// 1st item: 2.0 -> square: 4.0 -> negate: -4.0
-			// 2nd item: 3.0 -> square: 9.0 -> negate: -9.0
-			out := tests.CollectSeq[float64](pipeline.Next(in))
+		run := func(composed *Number, value float64) float64 {
+			adapter := data.NewAdapter(nil, data.NewState(data.NewMap("value", "value")))
+			input := data.NewOutputMap()
+			input.Values["value"] = value
 
-			So(out, ShouldResemble, []float64{-4.0, -9.0})
+			for range adapter.Next(data.NewValue(input)) {
+			}
+
+			So(adapter.Error(), ShouldBeNil)
+
+			for range composed.Next(data.NewValue(adapter)) {
+			}
+
+			values := data.Read[data.Map[float64]](adapter.Next(data.NewValue(data.NewMap("value", "value"))))
+			So(adapter.Error(), ShouldBeNil)
+
+			return values.Values["value"]
+		}
+
+		Convey("When streaming an arrival through the pipeline", func() {
+			So(run(pipeline, 2), ShouldEqual, -4.0)
+			So(run(pipeline, 3), ShouldEqual, -9.0)
 			So(pipeline.Error(), ShouldBeNil)
 		})
 
@@ -33,11 +49,7 @@ func TestNewNumber(t *testing.T) {
 				calculus.NewAbsolute(),
 			)
 
-			in := tests.SliceToSeq([]float64{2.0})
-			// 2.0 -> pipeline: -4.0 -> abs: 4.0
-			out := tests.CollectSeq[float64](outer.Next(in))
-
-			So(out, ShouldResemble, []float64{4.0})
+			So(run(outer, 2), ShouldEqual, 4.0)
 			So(outer.Error(), ShouldBeNil)
 		})
 
@@ -52,16 +64,19 @@ func TestNewNumber(t *testing.T) {
 			pipeline.Error(expectedErr)
 			So(errors.Is(pipeline.Error(), expectedErr), ShouldBeTrue)
 		})
+	})
 
-		Convey("When composing heterogeneous stages (calculus to logic)", func() {
-			hetero := NewNumber(
-				calculus.NewSquare(),
-				logic.NewFinite(),
-			)
-			in := tests.SliceToSeq([]float64{10.0, 20.0})
-			out := tests.CollectSeq[bool](hetero.Next(in))
-			So(out, ShouldResemble, []bool{true, true})
-			So(hetero.Error(), ShouldBeNil)
+	Convey("Given collection primitives composed with NewNumber", t, func() {
+		pipeline := NewNumber(
+			collection.NewOrder[float64](),
+			collection.NewAt[float64](0),
+		)
+
+		Convey("It hands each arrival through every stage in order", func() {
+			out := tests.CollectSeq[float64](pipeline.Next(tests.SliceToSeq([][]float64{{3, 1, 2}})))
+
+			So(out, ShouldResemble, []float64{1})
+			So(pipeline.Error(), ShouldBeNil)
 		})
 	})
 }

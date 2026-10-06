@@ -7,6 +7,11 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
+/*
+Transform multiplies each arriving cols-long vector (*[]float64) by the
+configured row-major rows x cols weights, and yields the rows-long product as
+a *[]float64.
+*/
 type Transform struct {
 	*core.PrimitiveError
 	rows    int
@@ -15,19 +20,34 @@ type Transform struct {
 }
 
 func NewTransform(rows, cols int, weights []float64) *Transform {
-	return &Transform{
+	op := &Transform{
 		PrimitiveError: core.NewPrimitiveError(),
 		rows:           rows,
 		cols:           cols,
-		weights:        weights,
+		weights:        append([]float64(nil), weights...),
 	}
+
+	if rows < 0 || cols < 0 || len(weights) != rows*cols {
+		op.Error(core.ErrShape)
+	}
+
+	return op
 }
 
 func (op *Transform) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if op.Error() != nil {
+			return
+		}
+
 		out := make([]float64, op.rows)
 
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			vec := *(*[]float64)(arriving)
 
 			if len(vec) != op.cols {

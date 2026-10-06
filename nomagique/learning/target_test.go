@@ -6,9 +6,9 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/tests"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestTargetsNext(t *testing.T) {
@@ -38,17 +38,9 @@ func TestTargetsNext(t *testing.T) {
 		} {
 			Convey(test.name, func() {
 				for _, pair := range [][2]float64{{2, 1}, {-1, 2}, {0, 2}, {2, 2}, {2.5, 2}, {-2, -3}} {
-					gotEval := transport.NewEvaluate(test.node)
-					var got float64
+					got := data.Read[float64](test.node.Next(data.NewValue(pair)))
 
-					for out := range gotEval.Next(transport.NewValues(learning.Observation{
-						Current: pair[0], Past: pair[1],
-					}).Next(nil)) {
-						got = *(*float64)(out)
-					}
-
-					err := gotEval.Error()
-					So(err, ShouldBeNil)
+					So(test.node.Error(), ShouldBeNil)
 					So(got, ShouldEqual, test.want(pair[0], pair[1]))
 				}
 			})
@@ -59,56 +51,39 @@ func TestTargetsNext(t *testing.T) {
 func TestTargetInvalidInput(t *testing.T) {
 	Convey("Non-finite values and a zero ratio divisor fail explicitly", t, func() {
 		for _, poison := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
-			_Eval := transport.NewEvaluate(learning.NewDeltaTarget())
+			node := learning.NewDeltaTarget()
 
-			for range _Eval.Next(transport.NewValues(learning.Observation{
-				Current: poison, Past: 1,
-			}).Next(nil)) {
+			for range node.Next(data.NewValue([2]float64{poison, 1})) {
 			}
 
-			err := _Eval.Error()
-			So(err, ShouldNotBeNil)
+			So(node.Error(), ShouldNotBeNil)
 		}
 
-		_Eval := transport.NewEvaluate(learning.NewRatioTarget())
+		node := learning.NewRatioTarget()
 
-		for range _Eval.Next(transport.NewValues(learning.Observation{
-			Current: 1, Past: 0,
-		}).Next(nil)) {
+		for range node.Next(data.NewValue([2]float64{1, 0})) {
 		}
 
-		err := _Eval.Error()
-		So(err, ShouldNotBeNil)
+		So(node.Error(), ShouldNotBeNil)
 	})
 }
 
 func TestTargetConfiguredConnection(t *testing.T) {
 	Convey("A live deadband is configuration of the same target", t, func() {
 		node := learning.NewDirectionalTarget(0.5).(*learning.DirectionalTarget)
-		gotEval := transport.NewEvaluate(node)
-		var got float64
+		got := data.Read[float64](node.Next(data.NewValue([2]float64{2, 1})))
 
-		for out := range gotEval.Next(transport.NewValues(learning.Observation{Current: 2, Past: 1}).Next(nil)) {
-			got = *(*float64)(out)
-		}
-
-		err := gotEval.Error()
-		So(err, ShouldBeNil)
+		So(node.Error(), ShouldBeNil)
 		So(got, ShouldEqual, 1)
 		node.Deadband = 2
-		gotEval = transport.NewEvaluate(node)
+		got = data.Read[float64](node.Next(data.NewValue([2]float64{2, 1})))
 
-		for out := range gotEval.Next(transport.NewValues(learning.Observation{Current: 2, Past: 1}).Next(nil)) {
-			got = *(*float64)(out)
-		}
-
-		err = gotEval.Error()
-		So(err, ShouldBeNil)
+		So(node.Error(), ShouldBeNil)
 		So(got, ShouldEqual, 0)
-		collected := tests.CollectSeq[float64](node.Next(transport.NewValues(
-			learning.Observation{Current: 2, Past: 1},
-			learning.Observation{Current: 2, Past: 1},
-		).Next(nil)))
+		collected := tests.CollectSeq[float64](node.Next(data.NewValue(
+			[2]float64{2, 1},
+			[2]float64{2, 1},
+		)))
 		So(len(collected), ShouldEqual, 2)
 	})
 }
@@ -116,15 +91,12 @@ func TestTargetConfiguredConnection(t *testing.T) {
 func TestDirectionalTargetInvalidConfiguration(t *testing.T) {
 	Convey("A negative or non-finite deadband is refused", t, func() {
 		for _, band := range []float64{-1, math.NaN(), math.Inf(1)} {
-			_Eval := transport.NewEvaluate(learning.NewDirectionalTarget(band))
+			node := learning.NewDirectionalTarget(band)
 
-			for range _Eval.Next(transport.NewValues(learning.Observation{
-				Current: 2, Past: 1,
-			}).Next(nil)) {
+			for range node.Next(data.NewValue([2]float64{2, 1})) {
 			}
 
-			err := _Eval.Error()
-			So(err, ShouldNotBeNil)
+			So(node.Error(), ShouldNotBeNil)
 		}
 	})
 }

@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"errors"
 	"iter"
 	"unsafe"
 
@@ -12,12 +11,12 @@ import (
 Range enumerates [0, count) for each arriving count.
 */
 type Range struct {
-	err error
+	*core.PrimitiveError
 	out float64
 }
 
 func NewRange() core.Primitive {
-	return &Range{}
+	return &Range{PrimitiveError: core.NewPrimitiveError()}
 }
 
 func (op *Range) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -34,14 +33,4 @@ func (op *Range) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 		}
 	}
-}
-
-func (op *Range) Error(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			op.err = errors.Join(op.err, err)
-		}
-	}
-
-	return op.err
 }
