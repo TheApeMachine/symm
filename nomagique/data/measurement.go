@@ -57,6 +57,7 @@ type Measurement struct {
 	owner      *ArenaOwner    // Producer arena; enables prior capture on finalize.
 	prior      *priorSnapshot // Prior pinned at alloc; seeds metric Welford state.
 	resetEpoch uint64         // ArenaOwner reset epoch at alloc; gates prior capture.
+	restored   bool           // SNR and Maturity were carried from storage (Restore).
 }
 
 /*
@@ -221,8 +222,14 @@ func (measurement *Measurement) finalize() *Measurement {
 	}
 
 	measurement.Timestamp = time.Now().UnixNano()
-	measurement.setSNR()
-	measurement.setMaturity()
+
+	// A restored Measurement keeps the SNR and Maturity of the regime it
+	// was produced in; a replay has observed one sample of it, not that
+	// regime, and would re-derive an immature, unrelated confidence.
+	if !measurement.restored {
+		measurement.setSNR()
+		measurement.setMaturity()
+	}
 
 	// Fully finalize the Measurement by writing its ID.
 	measurement.ID = uuid.New().ID()
@@ -257,6 +264,51 @@ func (measurement *Measurement) Maturity() float64 {
 	}
 
 	return measurement.maturity
+}
+
+/*
+Confidence is the trust every Metric of the Measurement shares. The Metrics
+of one Measurement observe different expressions of the same phenomenon and
+are subject to the same governing forces, so the confidence is a property of
+the observation, not of any one Metric: losing it in one Metric lowers SNR or
+Maturity, and so dampens all of its siblings.
+
+It is Maturity times the Wiener gain of the observation, SNR^2 / (1 + SNR^2):
+the share of its power that is signal rather than noise, which is the
+minimum-mean-square-error attenuation of a noisy observation. Both factors
+lie in [0, 1], so a Measurement can only be trusted less than its Metrics
+read, never more.
+*/
+func (measurement *Measurement) Confidence() float64 {
+	if !measurement.locked() {
+		return 0
+	}
+
+	power := measurement.snr * measurement.snr
+	return measurement.maturity * power / (core.Unit + power)
+}
+
+/*
+Restore carries the SNR and Maturity a stored Measurement finalized with into
+its replay. Write then keeps them instead of re-deriving them, because both
+belong to the regime the Measurement was produced in, which a replay never
+observed. It must be called before Write.
+*/
+func (measurement *Measurement) Restore(snr, maturity float64) *Measurement {
+	if measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] locked",
+			nil,
+		)))
+
+		return measurement
+	}
+
+	measurement.snr = snr
+	measurement.maturity = maturity
+	measurement.restored = true
+	return measurement
 }
 
 /*

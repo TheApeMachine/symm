@@ -66,6 +66,10 @@ func (tee *UITee) Push(pub data.Publication) {
 		return
 	}
 
+	if pub.Measurement == nil {
+		return
+	}
+
 	for _, filter := range tee.filters {
 		if !filter(pub.Measurement) {
 			return
@@ -100,6 +104,16 @@ func (tee *UITee) worker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			for {
+				pub, ok := tee.ingress.Dequeue()
+
+				if !ok {
+					break
+				}
+
+				pub.Release()
+			}
+
 			return
 		default:
 			if tee.ingress.Length() == 0 {
@@ -115,13 +129,8 @@ func (tee *UITee) worker(ctx context.Context) {
 				break
 			}
 
-			for _, filter := range tee.filters {
-				if !filter(pub.Measurement) {
-					continue
-				}
-			}
-
 			payload, err := types.EncodeMeasurements([]*data.Measurement{pub.Measurement})
+			pub.Release()
 
 			if err != nil {
 				tee.Error(errnie.Err(
@@ -129,7 +138,7 @@ func (tee *UITee) worker(ctx context.Context) {
 					"[tee] Failed to encode measurement",
 					err,
 				))
-
+				continue
 			}
 
 			tee.egress.Enqueue(payload)

@@ -178,8 +178,44 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 	metadataCol, _ := cols["metadata"].(*array.Map)
 	provenanceCol, _ := cols["provenance"].(*array.Map)
 	tickCol, _ := cols["tick"].(*array.Int64)
+	maturityCol, _ := cols["maturity"].(*array.Float64)
+	snrCol, _ := cols["snr"].(*array.Float64)
+
+	// SNR and Maturity are the confidence the Measurement's Metrics share,
+	// which a replay cannot re-derive. A projection that selects neither
+	// (Labels) reads no replayable tape; a batch carrying only one of them
+	// is not a faithful one.
+	confident := maturityCol != nil && snrCol != nil
+
+	if !confident && (maturityCol != nil || snrCol != nil) {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"iceberg: measurement batch carries only one of maturity/snr",
+			nil,
+		))
+	}
+
+	rowMetrics := make(map[string]*metricHolder, 32)
+	metricKeys := make([]string, 0, 32)
+	holderPool := make([]metricHolder, 0, 32)
 
 	for rowIdx := range totalRows {
+		clear(rowMetrics)
+		metricKeys = metricKeys[:0]
+		holderPool = holderPool[:0]
+
+		getHolder := func(key string) *metricHolder {
+			if holder, exists := rowMetrics[key]; exists {
+				return holder
+			}
+
+			holderPool = append(holderPool, metricHolder{})
+			holder := &holderPool[len(holderPool)-1]
+			rowMetrics[key] = holder
+			metricKeys = append(metricKeys, key)
+			return holder
+		}
+
 		var epoch int64
 
 		if epochCol != nil && !epochCol.IsNull(rowIdx) {
@@ -236,14 +272,23 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 			metadata...,
 		)
 
+		if confident && (maturityCol.IsNull(rowIdx) || snrCol.IsNull(rowIdx)) {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("iceberg: measurement row %d has no maturity/snr", rowIdx),
+				nil,
+			))
+		}
+
+		if confident {
+			measurement.Restore(snrCol.Value(rowIdx), maturityCol.Value(rowIdx))
+		}
+
 		if atCol != nil && !atCol.IsNull(rowIdx) {
 			measurement.At = time.UnixMicro(int64(atCol.Value(rowIdx))).UTC()
 			measurement.From = measurement.At
 			measurement.Timestamp = int64(atCol.Value(rowIdx)) * 1000
 		}
-
-		rowMetrics := make(map[string]*metricHolder)
-		var metricKeys []string
 
 		if metricsCol != nil && !metricsCol.IsNull(rowIdx) {
 			keyArray := metricsCol.Keys().(*array.String)
@@ -254,8 +299,8 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
 				metricKey := keyArray.Value(itemIdx)
-				rowMetrics[metricKey] = &metricHolder{raw: valArray.Value(itemIdx)}
-				metricKeys = append(metricKeys, metricKey)
+				holder := getHolder(metricKey)
+				holder.raw = valArray.Value(itemIdx)
 			}
 		}
 
@@ -282,14 +327,8 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 						))
 					}
 
-					holder, exists := rowMetrics[afterExact]
-
-					if !exists {
-						holder = &metricHolder{raw: exact.Float64()}
-						rowMetrics[afterExact] = holder
-						metricKeys = append(metricKeys, afterExact)
-					}
-
+					holder := getHolder(afterExact)
+					holder.raw = exact.Float64()
 					holder.exact = exact
 				}
 
@@ -306,14 +345,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 						))
 					}
 
-					holder, exists := rowMetrics[afterStd]
-
-					if !exists {
-						holder = &metricHolder{}
-						rowMetrics[afterStd] = holder
-						metricKeys = append(metricKeys, afterStd)
-					}
-
+					holder := getHolder(afterStd)
 					holder.standardized = parsed
 					holder.hasStandardized = true
 				}
@@ -331,14 +363,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 						))
 					}
 
-					holder, exists := rowMetrics[afterNorm]
-
-					if !exists {
-						holder = &metricHolder{}
-						rowMetrics[afterNorm] = holder
-						metricKeys = append(metricKeys, afterNorm)
-					}
-
+					holder := getHolder(afterNorm)
 					holder.normalized = parsed
 					holder.hasNormalized = true
 				}

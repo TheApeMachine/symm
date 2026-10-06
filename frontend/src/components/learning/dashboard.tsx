@@ -31,6 +31,7 @@ import { LearningVisualizer } from "./visualizer";
 
 export type Tab =
 	| "forward"
+	| "historical"
 	| "cognitive"
 	| "impulse"
 	| "recognition"
@@ -39,6 +40,7 @@ export type Tab =
 
 const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "forward", label: "Model training" },
+	{ key: "historical", label: "Historical runs" },
 	{ key: "cognitive", label: "Cognitive tree" },
 	{ key: "impulse", label: "Impulse map" },
 ];
@@ -999,7 +1001,13 @@ export const LearningDashboard = () => {
 			{/* View Panels */}
 			{tab === "forward" && (
 				<div className="flex-1 min-h-0 flex flex-col">
-					<ForwardLearningViz symbol={focusSymbol} />
+					<ForwardLearningViz symbol={focusSymbol} tapeSource="live" />
+				</div>
+			)}
+
+			{tab === "historical" && (
+				<div className="flex-1 min-h-0 flex flex-col">
+					<ForwardLearningViz tapeSource="historical" />
 				</div>
 			)}
 

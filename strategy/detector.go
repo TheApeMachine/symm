@@ -140,6 +140,9 @@ type tape struct {
 	epoch    int64
 	symbol   string
 	start    tapePoint
+	// points keeps every observed trade so Flush can pad precursor left of B
+	// and tape right of C (TRAINING.md) without re-reading storage.
+	points []tapePoint
 
 	// Running extremes. Equal prices never replace an extreme, so the
 	// earliest occurrence gives the widest interval.
@@ -175,6 +178,8 @@ type tape struct {
 }
 
 func (t *tape) observe(p tapePoint) error {
+	t.points = append(t.points, p)
+
 	if t.trough.price == nil {
 		t.trough, t.peak = p, p
 		t.quiet = span{b: p, c: p}
@@ -333,10 +338,20 @@ func (t *tape) closeFlat() {
 
 /*
 flush publishes one detection per class found on the completed tape.
+Fragments without a precursor before B, or whose B→C run is too short to
+leave enter/exit sweet spots, are dropped (TRAINING.md: pad left of B).
 */
 func (t *tape) flush() error {
 	t.closeQuiet()
 	t.closeFlat()
+
+	publish := func(class string, excursion span) {
+		start, end, ok := t.padded(excursion)
+		if !ok {
+			return
+		}
+		t.detector.Flush(class, t.symbol, t.epoch, start, end, excursion)
+	}
 
 	if t.up.held() {
 		clears, err := t.detector.clearFriction(t.up.b.price, t.up.c.price, t.symbol)
@@ -345,12 +360,12 @@ func (t *tape) flush() error {
 		}
 
 		if clears {
-			t.detector.Flush(excursionUp, t.symbol, t.epoch, t.start, t.up)
+			publish(excursionUp, t.up)
 		}
 	}
 
 	if t.near.held() {
-		t.detector.Flush(excursionUpShort, t.symbol, t.epoch, t.start, t.near)
+		publish(excursionUpShort, t.near)
 	}
 
 	if t.down.held() {
@@ -360,20 +375,83 @@ func (t *tape) flush() error {
 		}
 
 		if clears {
-			t.detector.Flush(excursionDown, t.symbol, t.epoch, t.start, t.down)
+			publish(excursionDown, t.down)
 		}
 	}
 
 	if t.chop.held() {
-		t.detector.Flush(excursionChop, t.symbol, t.epoch, t.chop.b, t.chop)
+		publish(excursionChop, t.chop)
 	}
 
 	if t.flat.held() {
-		t.detector.Flush(excursionFlat, t.symbol, t.epoch, t.flat.b, t.flat)
+		publish(excursionFlat, t.flat)
 	}
 
 	return nil
 }
+
+/*
+padded answers the stored fragment window around an excursion: precursor left
+of B at least as many trades as the B→C move, and some tape right of C
+(TRAINING.md). ok is false when there is no trade before B or B→C is too
+short to leave a frame between them.
+*/
+func (t *tape) padded(excursion span) (start, end tapePoint, ok bool) {
+	if !excursion.held() || len(t.points) == 0 {
+		return tapePoint{}, tapePoint{}, false
+	}
+
+	bIdx, cIdx := -1, -1
+	for i, p := range t.points {
+		if p.tick == excursion.b.tick && p.idx == excursion.b.idx {
+			bIdx = i
+		}
+		if p.tick == excursion.c.tick && p.idx == excursion.c.idx {
+			cIdx = i
+		}
+	}
+
+	if bIdx < 0 || cIdx <= bIdx {
+		return tapePoint{}, tapePoint{}, false
+	}
+
+	width := cIdx - bIdx
+	// Pad scale follows the move; short B→C still stores — rehearsal teaches
+	// those phases with weakened feedback rather than soft-skipping.
+	left, right := max(width, 1), max(width/2, 1)
+	startIdx := max(0, bIdx-left)
+	endIdx := min(len(t.points)-1, cIdx+right)
+	// startIdx may equal bIdx when B is the first trade of the scanned tape;
+	// still store B→C with right pad. Rehearsal/chart padWindow reads left of
+	// B from storage when earlier trades exist (TRAINING.md precursor).
+
+	return t.points[startIdx], t.points[endIdx], true
+}
+
+/*
+padWindow is the tick window rehearsal/chart read around B→C when a stored
+detection's start is tight or missing end (TRAINING.md left/right pad). The
+pad equals the move width so long moves keep a proportional precursor; short
+B→C spans get a minimum left pad so ignition is not the first lit token
+(otherwise there is no precursor to teach, and B sits on the chart's left edge).
+*/
+func padWindow(b, c int64) (lo, hi int64) {
+	width := c - b
+	if width < 1 {
+		width = 1
+	}
+
+	left := width
+	if left < minPrecursorPad {
+		left = minPrecursorPad
+	}
+
+	return b - left, c + max(width/2, 1)
+}
+
+// minPrecursorPad is the smallest left pad (in ticks) so short B→C fragments
+// still carry teachable precursor frames before ignition.
+const minPrecursorPad = 4
 
 /*
 Scan scans the tape once from beginning to end and flushes the detections of
@@ -544,14 +622,16 @@ func (detector *Detector) clearFriction(
 /*
 Flush writes one detected excursion of the given class to storeTee.
 B is ignition (or the start of a chop/flat stretch) and C is exhaustion (or
-its end). The stored epoch and tick coordinates identify the exact
-contiguous historical tape fragment from start through C.
+its end). start and end are the padded fragment window (precursor left of B,
+tape right of C); the stored epoch and tick coordinates identify that
+contiguous historical tape.
 */
 func (detector *Detector) Flush(
 	class string,
 	symbol string,
 	epoch int64,
 	start tapePoint,
+	end tapePoint,
 	excursion span,
 ) *data.Measurement {
 	measurement := data.NewMeasurement(
@@ -559,7 +639,7 @@ func (detector *Detector) Flush(
 		symbol,
 		detector.Name(),
 		start.idx,
-		excursion.c.tick,
+		end.tick,
 		&data.StringEntry{Key: "type", Value: class},
 	)
 	measurement.At = excursion.c.at
@@ -572,6 +652,7 @@ func (detector *Detector) Flush(
 		data.NewMetric("b_tick", float64(excursion.b.tick), data.UnitCount, data.TimescaleTick),
 		data.NewMetric("c_idx", float64(excursion.c.idx), data.UnitCount, data.TimescaleTick),
 		data.NewMetric("c_tick", float64(excursion.c.tick), data.UnitCount, data.TimescaleTick),
+		data.NewMetric("end_tick", float64(end.tick), data.UnitCount, data.TimescaleTick),
 		data.NewExactMetric("b_price", excursion.b.price, data.UnitPrice, data.TimescaleTick),
 		data.NewExactMetric("c_price", excursion.c.price, data.UnitPrice, data.TimescaleTick),
 	)

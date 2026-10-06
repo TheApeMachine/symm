@@ -159,19 +159,12 @@ func (owner *ArenaOwner) SetWindow(window int) {
 }
 
 func (owner *ArenaOwner) CurrentGeneration() *ArenaGeneration {
-	if owner == nil {
-		return nil
-	}
-
 	return owner.current
 }
 
 func (owner *ArenaOwner) Rotate() {
-	if owner == nil {
-		return
-	}
-
 	old := owner.previous
+
 	if old != nil {
 		old.Seal()
 		old.Release()
@@ -183,13 +176,10 @@ func (owner *ArenaOwner) Rotate() {
 }
 
 func (owner *ArenaOwner) Advance(seq int64) {
-	if owner == nil || owner.capacity <= 0 {
-		return
-	}
-
 	owner.seqMode = true
 
 	genIdx := seq / int64(owner.capacity)
+
 	if len(owner.generations) == 0 {
 		owner.currentGen = genIdx
 		owner.generations = append(owner.generations, generationEntry{
@@ -208,14 +198,11 @@ func (owner *ArenaOwner) Advance(seq int64) {
 		})
 	}
 
-	window := int64(owner.window)
-	if window < int64(owner.capacity) {
-		window = int64(owner.capacity)
-	}
-
+	window := max(int64(owner.window), int64(owner.capacity))
 	safeMargin := window + int64(owner.capacity)
 
 	retained := owner.generations[:0]
+
 	for _, entry := range owner.generations {
 		if entry.endSeq < seq-safeMargin {
 			entry.gen.Seal()
@@ -353,6 +340,7 @@ func (owner *ArenaOwner) NewMeasurement(
 
 	if !owner.seqMode {
 		owner.count++
+
 		if owner.capacity > 0 && owner.count >= owner.capacity {
 			owner.Rotate()
 		}
@@ -384,6 +372,7 @@ func (owner *ArenaOwner) applyPrior(measurement *Measurement) {
 	}
 
 	prior, ok := owner.priors[measurement.Label]
+	
 	if !ok || prior == nil {
 		return
 	}

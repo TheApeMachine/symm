@@ -32,6 +32,7 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 			&data.StringEntry{Key: "type", Value: "limit"},
 		)
 		measurement.At = at
+		measurement.Restore(1.25, 0.75)
 		measurement.Write(
 			data.NewExactMetric("price", price, data.UnitCurrency, data.TimescaleInstantaneous),
 			data.NewMetric("volume", 1.5, data.UnitVolume, data.TimescaleInstantaneous),
@@ -64,6 +65,8 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 				So(reconstructed.At.Equal(at), ShouldBeTrue)
 				So(reconstructed.Meta("side"), ShouldEqual, "bid")
 				So(reconstructed.Meta("type"), ShouldEqual, "limit")
+				So(reconstructed.SNR(), ShouldEqual, 1.25)
+				So(reconstructed.Maturity(), ShouldEqual, 0.75)
 
 				priceMetric := data.Pull(reconstructed.Read("price"))
 				So(priceMetric.Err, ShouldBeNil)

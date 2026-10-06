@@ -495,6 +495,7 @@ func (catalog *Catalog) Timeline(
 	label string,
 	fromTick int64,
 	toTick int64,
+	sources ...string,
 ) iter.Seq2[*data.Measurement, error] {
 	var filter iceberg.BooleanExpression
 
@@ -511,12 +512,26 @@ func (catalog *Catalog) Timeline(
 		and(iceberg.EqualTo(iceberg.Reference("label"), label))
 	}
 
+	if len(sources) == 1 {
+		and(iceberg.EqualTo(iceberg.Reference("source"), sources[0]))
+	}
+
+	if len(sources) > 1 {
+		and(iceberg.IsIn(iceberg.Reference("source"), sources...))
+	}
+
 	if fromTick > 0 {
 		and(iceberg.GreaterThanEqual(iceberg.Reference("tick"), fromTick))
 	}
 
 	if toTick > 0 && toTick >= fromTick {
 		and(iceberg.LessThanEqual(iceberg.Reference("tick"), toTick))
+	}
+
+	sourceLookup := make(map[string]struct{}, len(sources))
+
+	for _, source := range sources {
+		sourceLookup[source] = struct{}{}
 	}
 
 	return func(yield func(*data.Measurement, error) bool) {
@@ -530,6 +545,12 @@ func (catalog *Catalog) Timeline(
 			// window on every row so no out-of-window frame leaks through.
 			if label != "" && measurement.Label != label {
 				continue
+			}
+
+			if len(sourceLookup) > 0 {
+				if _, ok := sourceLookup[measurement.Source]; !ok {
+					continue
+				}
 			}
 
 			if fromTick > 0 && measurement.Tick < fromTick {

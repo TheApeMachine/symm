@@ -108,14 +108,14 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			settleGrid.Settle()
 			So(settleGrid.IsSettled(), ShouldBeTrue)
 
-			tokens := settleGrid.LitRegions(map[string]float64{
-				store.CellKey("depth_flow"): 150,
-			})
+			tokens := settleGrid.LitRegion(trusted(map[string]float64{
+				store.CellKey("depth_flow"): 1,
+			}, 1))
 			So(tokens, ShouldBeNil)
 
-			learned := map[string]float64{x1: 100}
-			firstTokens := settleGrid.LitRegions(learned)
-			secondTokens := settleGrid.LitRegions(learned)
+			learned := trusted(map[string]float64{x1: 1}, 1)
+			firstTokens := settleGrid.LitRegion(learned)
+			secondTokens := settleGrid.LitRegion(learned)
 
 			So(firstTokens, ShouldNotBeNil)
 			So(secondTokens, ShouldNotBeNil)
@@ -172,47 +172,59 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			So(len(region1Keys), ShouldBeGreaterThan, 0)
 			So(len(region2Keys), ShouldBeGreaterThan, 0)
 
-			Convey("RegionScores evaluates mean activity and reports coverage without sum bias", func() {
-				channels := make(map[string]float64)
+			// excited answers the deformation that stands sigmas above the
+			// cell's own noise floor.
+			excited := func(cellKey string, sigmas float64) float64 {
+				cell := grid.Cells[cellKey]
+				return cell.Mean + sigmas*math.Sqrt(cell.M2/float64(cell.Visits-1))
+			}
 
-				// Region 1 has multiple contributing metrics with activity 0.5
+			pass := func(largeConfidence float64) map[string]store.Excitation {
+				channels := make(map[string]store.Excitation)
+
 				for _, cellKey := range region1Keys {
-					channels[cellKey] = 0.5
+					channels[cellKey] = store.Excitation{Deformation: excited(cellKey, 1), Confidence: largeConfidence}
 				}
 
-				// Region 2 has a single metric with a higher individual spike 0.75
-				channels[region2Keys[0]] = 0.75
+				// One cell of region 2 spikes further above its floor.
+				channels[region2Keys[0]] = store.Excitation{Deformation: excited(region2Keys[0], 2), Confidence: 1}
+				return channels
+			}
 
-				scores := grid.RegionScores(channels)
-				So(len(scores), ShouldBeGreaterThanOrEqualTo, 2)
+			Convey("A uniformly excited large region is not outshone by one hotter cell", func() {
+				scores := grid.RegionScores(pass(1))
+				So(len(scores), ShouldEqual, 2)
 
-				So(scores[0].Region, ShouldEqual, 2)
-				So(scores[0].Score, ShouldAlmostEqual, 0.75, 1e-9)
-				So(scores[0].Contributors, ShouldEqual, 1)
+				So(scores[0].Region, ShouldEqual, 1)
+				So(scores[0].Score, ShouldAlmostEqual, math.Sqrt(float64(len(region1Keys))), 1e-9)
+				So(scores[0].Contributors, ShouldEqual, len(region1Keys))
+				So(scores[0].Coverage, ShouldAlmostEqual, 1.0, 1e-9)
 
-				So(scores[1].Region, ShouldEqual, 1)
-				So(scores[1].Score, ShouldAlmostEqual, 0.5, 1e-9)
-				So(scores[1].Contributors, ShouldEqual, len(region1Keys))
-				So(scores[1].Coverage, ShouldAlmostEqual, 1.0, 1e-9)
+				So(scores[1].Region, ShouldEqual, 2)
+				So(scores[1].Score, ShouldAlmostEqual, 2, 1e-9)
+				So(scores[1].Contributors, ShouldEqual, 1)
 
-				// LitRegions conservatively returns the top-ranked region by score
-				tokens := grid.LitRegions(channels)
-				So(len(tokens), ShouldEqual, 1)
-				So(tokens[0][0], ShouldEqual, 2)
+				So(grid.LitRegion(pass(1)), ShouldResemble, []byte{1})
 			})
 
-			Convey("Region with higher mean activity wins LitRegions", func() {
-				channels := make(map[string]float64)
+			Convey("Low Measurement confidence dims every metric it observed", func() {
+				dim := 1 / math.Sqrt(float64(len(region1Keys)))
+				scores := grid.RegionScores(pass(dim))
+
+				So(scores[0].Region, ShouldEqual, 2)
+				So(scores[1].Region, ShouldEqual, 1)
+				So(scores[1].Score, ShouldAlmostEqual, 1, 1e-9)
+				So(grid.LitRegion(pass(dim)), ShouldResemble, []byte{2})
+			})
+
+			Convey("A pass at or below every noise floor lights nothing", func() {
+				quiet := make(map[string]store.Excitation)
 
 				for _, cellKey := range region1Keys {
-					channels[cellKey] = 0.75
+					quiet[cellKey] = store.Excitation{Deformation: excited(cellKey, -1), Confidence: 1}
 				}
 
-				channels[region2Keys[0]] = 0.5
-
-				tokens := grid.LitRegions(channels)
-				So(len(tokens), ShouldEqual, 1)
-				So(tokens[0][0], ShouldEqual, 1)
+				So(grid.LitRegion(quiet), ShouldBeNil)
 			})
 		})
 
@@ -233,7 +245,7 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			So(len(restoredGrid.RegionMembers), ShouldEqual, len(grid.RegionMembers))
 		})
 
-		Convey("Peer metrics light up their regions in LitRegions", func() {
+		Convey("Peer metrics light up their regions in LitRegion", func() {
 			peerGrid := store.NewGrid()
 			peerStream := store.NewStream()
 			btcKey := store.CellKey("mid")
@@ -253,11 +265,10 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			So(peerGrid.Cells[btcKey].Region, ShouldBeGreaterThan, 0)
 			So(peerGrid.Cells[ethKey].Region, ShouldBeGreaterThan, 0)
 
-			tokens := peerGrid.LitRegions(map[string]float64{
+			tokens := peerGrid.LitRegion(trusted(map[string]float64{
 				ethKey: 0.5,
-			})
-			So(len(tokens), ShouldEqual, 1)
-			So(tokens[0][0], ShouldEqual, peerGrid.Cells[ethKey].Region)
+			}, 1))
+			So(tokens, ShouldResemble, []byte{peerGrid.Cells[ethKey].Region})
 		})
 
 		Convey("Late arrivals are partitioned when Settle is called again", func() {
@@ -282,6 +293,19 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			So(reGrid.Cells[gammaKey].Region, ShouldBeGreaterThan, 0)
 		})
 	})
+}
+
+/*
+trusted lights every deformation of a pass with one shared confidence.
+*/
+func trusted(deformations map[string]float64, confidence float64) map[string]store.Excitation {
+	pass := make(map[string]store.Excitation, len(deformations))
+
+	for channel, deformation := range deformations {
+		pass[channel] = store.Excitation{Deformation: deformation, Confidence: confidence}
+	}
+
+	return pass
 }
 
 /*

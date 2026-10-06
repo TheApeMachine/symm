@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type StageCode int
@@ -72,10 +73,37 @@ type Reporter struct {
 	fragChop   atomic.Int64
 	fragFlat   atomic.Int64
 	fragUnsup  atomic.Int64
+	tee        runtime.Tee
 }
 
 func NewReporter() *Reporter {
 	return &Reporter{}
+}
+
+/*
+SetTee attaches the UI tee every published report is pushed to. It is wired
+once, before the pipeline starts.
+*/
+func (reporter *Reporter) SetTee(tee runtime.Tee) {
+	reporter.tee = tee
+}
+
+/*
+Publish populates out with the snapshot's telemetry and pushes it to the UI
+tee, when one is attached.
+*/
+func (reporter *Reporter) Publish(
+	out *data.Measurement,
+	snapshot ReportSnapshot,
+	extraMetrics ...*data.Metric,
+) *data.Measurement {
+	out = reporter.Populate(out, snapshot, extraMetrics...)
+
+	if reporter.tee != nil {
+		reporter.tee.Push(data.NewPublication(out, nil))
+	}
+
+	return out
 }
 
 /*

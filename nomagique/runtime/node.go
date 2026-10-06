@@ -1,8 +1,6 @@
 package runtime
 
 import (
-	"fmt"
-
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -85,33 +83,16 @@ func (consumer *Consumer) Step(prior *data.Measurement, seq int64) *data.Measure
 		consumer.arena.Advance(seq)
 	}
 
-	result := consumer.node.Step(prior)
+	consumer.published[slot] = consumer.node.Step(prior)
 
-	if result != nil {
-		if result.Epoch == 0 && prior != nil {
-			result.Epoch = prior.Epoch
-		}
-		if result.Tick == 0 && prior != nil {
-			result.Tick = prior.Tick
-		}
-		if result.Source == "" {
-			panic("source identity missing: node returned measurement with empty Source")
-		}
-		if consumer.source != "" && result.Source != consumer.source {
-			panic(fmt.Sprintf("source mismatch: declared %q but got %q", consumer.source, result.Source))
-		}
-	}
-
-	consumer.published[slot] = result
-
-	if result != nil && len(consumer.tees) > 0 {
+	if len(consumer.tees) > 0 {
 		var gen *data.ArenaGeneration
 		if consumer.arena != nil {
 			gen = consumer.arena.CurrentGeneration()
 		}
 
 		pub := data.Publication{
-			Measurement: result,
+			Measurement: consumer.published[slot],
 			Generation:  gen,
 		}
 
@@ -122,26 +103,11 @@ func (consumer *Consumer) Step(prior *data.Measurement, seq int64) *data.Measure
 		}
 	}
 
-	return result
+	return consumer.published[slot]
 }
 
 // Published returns this consumer's WORM output for the given sequence,
 // or nil if the sequence has not been published or the producer returned nil.
 func (consumer *Consumer) Published(sequence int64) *data.Measurement {
 	return consumer.published[sequence&consumer.mask]
-}
-
-// Name returns this consumer's producer identity.
-func (consumer *Consumer) Name() string {
-	return consumer.source
-}
-
-// Arena returns this consumer's ArenaOwner.
-func (consumer *Consumer) Arena() *data.ArenaOwner {
-	return consumer.arena
-}
-
-// Node returns the underlying Node.
-func (consumer *Consumer) Node() Node {
-	return consumer.node
 }

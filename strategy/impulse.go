@@ -1,7 +1,6 @@
 package strategy
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -46,10 +45,10 @@ func newImpulse(catalog *tables.Catalog) *impulse {
 
 /*
 observe folds one live step of symbol into its stream and answers the
-deformation of every sensory channel. While the grid develops, the step also
-trains it; a settled grid is frozen and no longer pays the pair update.
+lighting pass of every sensory channel. While the grid develops, the step
+also trains it; a settled grid is frozen and no longer pays the pair update.
 */
-func (impulse *impulse) observe(prior *data.Measurement) map[string]float64 {
+func (impulse *impulse) observe(prior *data.Measurement) map[string]store.Excitation {
 	stream, ok := impulse.live[prior.Label]
 
 	if !ok {
@@ -57,13 +56,14 @@ func (impulse *impulse) observe(prior *data.Measurement) map[string]float64 {
 		impulse.live[prior.Label] = stream
 	}
 
-	deformations := stream.Deform(channelsFrom(sensoryMeasurements(prior)...))
+	observed := channelsFrom(sensoryMeasurements(prior)...)
+	deformations := stream.Deform(observed.raw)
 
 	if !impulse.grid.IsSettled() {
 		impulse.grid.Update(prior.Tick, deformations)
 	}
 
-	return deformations
+	return observed.excite(deformations)
 }
 
 /*
@@ -168,20 +168,6 @@ func (impulse *impulse) checkpoint(ctx context.Context, epoch, seqIdx int64) (bo
 }
 
 /*
-token joins the lit regions of one pass of deformations into a region token.
-An unlit pass has no token.
-*/
-func (impulse *impulse) token(deformations map[string]float64) []byte {
-	lit := impulse.grid.LitRegions(deformations)
-
-	if len(lit) == 0 {
-		return nil
-	}
-
-	return bytes.Join(lit, []byte("_"))
-}
-
-/*
 tokens encodes one replayed tape (tick-ordered sensory rows of one symbol)
 into one region token per tick on the frozen grid, through a stream of its
 own. Ticks that light no region carry no frame.
@@ -208,7 +194,8 @@ func (impulse *impulse) tokens(rows []*data.Measurement) ([]int64, [][]byte, err
 		}
 
 		tick := group[0].Tick
-		tok := impulse.token(stream.Deform(channelsFrom(group...)))
+		observed := channelsFrom(group...)
+		tok := impulse.grid.LitRegion(observed.excite(stream.Deform(observed.raw)))
 		group = group[:0]
 
 		if len(tok) == 0 {
@@ -233,34 +220,62 @@ func (impulse *impulse) tokens(rows []*data.Measurement) ([]int64, [][]byte, err
 }
 
 /*
+channels is one pass of grid cells: the raw value of every cell and the
+confidence of the Measurements that observed it (data.Measurement.Confidence).
+Confidence belongs to the Measurement, not to its Metrics, so every cell a
+Measurement feeds carries the same one.
+*/
+type channels struct {
+	raw        map[string]float64
+	confidence map[string]float64
+}
+
+/*
 channelsFrom extracts one raw value per grid cell from measurements. Several
 observations of one cell in a pass (the same label from two producers, or one
 pair fact "<fact>@<peer>" across every peer symbol) are reduced to their
-mean, so the cell value does not depend on peer order.
+mean, and so is the confidence of the Measurements behind them, so the cell
+does not depend on peer order.
 */
-func channelsFrom(measurements ...*data.Measurement) map[string]float64 {
-	sums := make(map[string]float64)
+func channelsFrom(measurements ...*data.Measurement) channels {
+	raw := make(map[string]float64)
+	confidence := make(map[string]float64)
 	counts := make(map[string]int)
 
 	for _, measurement := range measurements {
+		trust := measurement.Confidence()
+
 		for entry := range measurement.Read() {
 			if entry == nil || entry.Err != nil || entry.Metric == nil {
 				continue
 			}
 
 			key := store.CellKey(entry.Metric.Label)
-			sums[key] += entry.Metric.Raw
+			raw[key] += entry.Metric.Raw
+			confidence[key] += trust
 			counts[key]++
 		}
 	}
 
-	channels := make(map[string]float64, len(sums))
-
-	for key, sum := range sums {
-		channels[key] = sum / float64(counts[key])
+	for key, count := range counts {
+		raw[key] /= float64(count)
+		confidence[key] /= float64(count)
 	}
 
-	return channels
+	return channels{raw: raw, confidence: confidence}
+}
+
+/*
+excite pairs every deformation of the pass with the confidence of its cell.
+*/
+func (channels channels) excite(deformations map[string]float64) map[string]store.Excitation {
+	pass := make(map[string]store.Excitation, len(deformations))
+
+	for key, deformation := range deformations {
+		pass[key] = store.Excitation{Deformation: deformation, Confidence: channels.confidence[key]}
+	}
+
+	return pass
 }
 
 /*

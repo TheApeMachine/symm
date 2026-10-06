@@ -70,10 +70,12 @@ type TrainedFragment struct {
 	Direction  string          `json:"direction"`
 	Class      string          `json:"class"`
 	Tokens     []string        `json:"tokens"`
-	Points     []FragmentPoint `json:"points"`
-	EntryIdx   int             `json:"entry_idx"`
-	ExitIdx    int             `json:"exit_idx"`
-	LearnedAt  time.Time       `json:"learned_at"`
+	Points            []FragmentPoint `json:"points"`
+	EntryIdx          int             `json:"entry_idx"`
+	ExitIdx           int             `json:"exit_idx"`
+	PredictedEntryIdx int             `json:"predicted_entry_idx"`
+	PredictedExitIdx  int             `json:"predicted_exit_idx"`
+	LearnedAt         time.Time       `json:"learned_at"`
 }
 
 /*

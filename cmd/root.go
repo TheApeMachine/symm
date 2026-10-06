@@ -224,7 +224,7 @@ var (
 				))
 			}
 
-			training.SetUITee(uiTee)
+			training.Reporter.SetTee(uiTee)
 
 			uiTee.Transition(nmruntime.READY)
 
@@ -305,8 +305,8 @@ var (
 			)
 
 			hub := ui.NewHub(ctx, catalog, uiTee, workspace)
-			hub.SetCognitionSource(training)
-			hub.SetFragmentsSource(training)
+			hub.SetCognitionSource(training.Model)
+			hub.SetFragmentsSource(training.Rehearsal.Chart)
 			hub.SetEquitySource(balance)
 			hub.SetPositionSource(desk)
 			hub.SetExitHandler(func(symbol string) {

@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/tests/tablestest"
 )
 
 /*
@@ -60,7 +61,35 @@ func tapeWindow(ctx context.Context, training *Training) (*data.Measurement, int
 	return detectionRow, startTick, cTick
 }
 
-func TestTraining_PriceTape(t *testing.T) {
+func TestChart_PriceTape(t *testing.T) {
+	Convey("Given a stored excursion over its trade tape whose data files then fail to read", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		Convey("priceTape returns the read failure instead of an empty or fabricated tape", func() {
+			training := trainingSetup(t, ctx, regimeTape, detection(excursionUp, 60000, 63000))
+			detectionRow := firstDetection(ctx, training)
+			So(detectionRow, ShouldNotBeNil)
+
+			startTick, _, cTick, err := tables.DetectionTicks(detectionRow)
+			So(err, ShouldBeNil)
+
+			// Healthy storage reads the stored trades, so the failure below
+			// is the read itself, not the shape of the window.
+			points, err := training.Rehearsal.Chart.priceTape(ctx, detectionRow, startTick, cTick)
+			So(err, ShouldBeNil)
+			So(points, ShouldNotBeEmpty)
+
+			tablestest.DropDataFiles(t, training.catalog, tables.Measurements)
+
+			points, err = training.Rehearsal.Chart.priceTape(ctx, detectionRow, startTick, cTick)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "unable to read price tape")
+			So(err.Error(), ShouldContainSubstring, "[iceberg]")
+			So(points, ShouldBeNil)
+		})
+	})
+
 	Convey("Given a stored detection whose window holds no spot:trade row", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -71,7 +100,7 @@ func TestTraining_PriceTape(t *testing.T) {
 			training := trainingSetup(t, ctx, regimeTape, bare)
 			detectionRow, startTick, cTick := tapeWindow(ctx, training)
 
-			points, err := training.priceTape(detectionRow, startTick, cTick)
+			points, err := training.Rehearsal.Chart.priceTape(ctx, detectionRow, startTick, cTick)
 			So(err, ShouldNotBeNil)
 			So(errnie.IsNotFound(err), ShouldBeTrue)
 			So(err.Error(), ShouldContainSubstring, "no spot:trade price tape")
@@ -79,24 +108,24 @@ func TestTraining_PriceTape(t *testing.T) {
 			So(points, ShouldBeNil)
 		})
 
-		Convey("learnAt returns that error and stores no fragment", func() {
+		Convey("learn returns that error and stores no fragment", func() {
 			training := trainingSetup(t, ctx, regimeTape, bare)
 			detectionRow, _, _ := tapeWindow(ctx, training)
 
-			_, _, err := training.learnAt(detectionRow, 0)
+			_, _, _, err := training.Rehearsal.learn(ctx, detectionRow, 0)
 			So(err, ShouldNotBeNil)
 			So(errnie.IsNotFound(err), ShouldBeTrue)
 			So(err.Error(), ShouldContainSubstring, "no spot:trade price tape")
-			So(training.Fragments(), ShouldBeEmpty)
+			So(training.Rehearsal.Chart.Fragments(), ShouldBeEmpty)
 		})
 
 		Convey("The training pass halts Internal", func() {
 			training := trainingFixture(t, ctx, regimeTape, bare)
 
 			haltedInternal(training)
-			So(training.Error().Error(), ShouldContainSubstring, "failed during training pass")
+			So(training.Error().Error(), ShouldContainSubstring, "failed during rehearsal")
 			So(training.Error().Error(), ShouldContainSubstring, "no spot:trade price tape")
-			So(training.Fragments(), ShouldBeEmpty)
+			So(training.Rehearsal.Chart.Fragments(), ShouldBeEmpty)
 		})
 	})
 
@@ -112,7 +141,7 @@ func TestTraining_PriceTape(t *testing.T) {
 		detectionRow, startTick, cTick := tapeWindow(ctx, training)
 
 		Convey("priceTape ignores them and errors on the missing trade tape", func() {
-			points, err := training.priceTape(detectionRow, startTick, cTick)
+			points, err := training.Rehearsal.Chart.priceTape(ctx, detectionRow, startTick, cTick)
 			So(err, ShouldNotBeNil)
 			So(errnie.IsNotFound(err), ShouldBeTrue)
 			So(points, ShouldBeNil)
@@ -142,7 +171,7 @@ func TestTraining_PriceTape(t *testing.T) {
 		)
 		detectionRow, startTick, cTick := tapeWindow(ctx, training)
 
-		points, err := training.priceTape(detectionRow, startTick, cTick)
+		points, err := training.Rehearsal.Chart.priceTape(ctx, detectionRow, startTick, cTick)
 		So(err, ShouldBeNil)
 
 		Convey("priceTape keeps only the window's trades, in tick order, with X as the index", func() {
@@ -162,13 +191,13 @@ func TestTraining_PriceTape(t *testing.T) {
 		Convey("pointAt lands a frame on the first trade at or after its tick", func() {
 			ticks := []int64{7, 8, 10, 13, 15, 16}
 
-			So(training.pointAt(points, ticks, 0), ShouldEqual, 0) // tick 7  -> trade 7
-			So(training.pointAt(points, ticks, 1), ShouldEqual, 1) // tick 8  -> trade 9
-			So(training.pointAt(points, ticks, 2), ShouldEqual, 2) // tick 10 -> trade 12
-			So(training.pointAt(points, ticks, 3), ShouldEqual, 3) // tick 13 -> trade 14
-			So(training.pointAt(points, ticks, 4), ShouldEqual, 4) // tick 15 -> trade 15
-			So(training.pointAt(points, ticks, 5), ShouldEqual, -1)
-			So(training.pointAt(points, ticks, -1), ShouldEqual, -1)
+			So(pointAt(points, ticks, 0), ShouldEqual, 0) // tick 7  -> trade 7
+			So(pointAt(points, ticks, 1), ShouldEqual, 1) // tick 8  -> trade 9
+			So(pointAt(points, ticks, 2), ShouldEqual, 2) // tick 10 -> trade 12
+			So(pointAt(points, ticks, 3), ShouldEqual, 3) // tick 13 -> trade 14
+			So(pointAt(points, ticks, 4), ShouldEqual, 4) // tick 15 -> trade 15
+			So(pointAt(points, ticks, 5), ShouldEqual, -1)
+			So(pointAt(points, ticks, -1), ShouldEqual, -1)
 		})
 	})
 
@@ -187,7 +216,7 @@ func TestTraining_PriceTape(t *testing.T) {
 		detectionRow, startTick, cTick := tapeWindow(ctx, training)
 
 		Convey("priceTape errors on that row instead of stamping it with the current time", func() {
-			points, err := training.priceTape(detectionRow, startTick, cTick)
+			points, err := training.Rehearsal.Chart.priceTape(ctx, detectionRow, startTick, cTick)
 			So(err, ShouldNotBeNil)
 			So(errnie.IsValidation(err), ShouldBeTrue)
 			So(err.Error(), ShouldContainSubstring, "spot:trade without a timestamp")

@@ -299,6 +299,8 @@ func TestDetector_Scan(t *testing.T) {
 				So(metricRaw(detection, "c_price"), ShouldEqual, 250)
 				So(metricRaw(detection, "b_tick"), ShouldEqual, 6)
 				So(metricRaw(detection, "c_tick"), ShouldEqual, 10)
+				So(metricRaw(detection, "start_tick"), ShouldBeLessThan, metricRaw(detection, "b_tick"))
+				So(metricRaw(detection, "end_tick"), ShouldBeGreaterThanOrEqualTo, metricRaw(detection, "c_tick"))
 			})
 		})
 
@@ -562,7 +564,8 @@ func TestDetector_FrictionGating(t *testing.T) {
 				detection := byClass[excursionChop][0]
 				So(metricRaw(detection, "b_tick"), ShouldEqual, float64(tape[0].Tick))
 				So(metricRaw(detection, "c_tick"), ShouldEqual, float64(tape[len(tape)-1].Tick))
-				So(metricRaw(detection, "start_tick"), ShouldEqual, metricRaw(detection, "b_tick"))
+				So(metricRaw(detection, "start_tick"), ShouldBeLessThanOrEqualTo, metricRaw(detection, "b_tick"))
+				So(metricRaw(detection, "end_tick"), ShouldBeGreaterThanOrEqualTo, metricRaw(detection, "c_tick"))
 			})
 		})
 

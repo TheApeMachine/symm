@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -228,6 +229,11 @@ type partitionDrift struct {
 
 /*
 Cell is one learned vertex in the metric-affinity graph.
+
+Mean and M2 are the Welford moments of the cell's deformation magnitude over
+its Visits while the grid develops. They are the cell's own noise floor: a
+frozen grid standardizes every lit deformation against them, so cells (and
+regions) of different natural activity are compared in one unit.
 */
 type Cell struct {
 	ID     uint32  `json:"id"`
@@ -236,6 +242,31 @@ type Cell struct {
 	X      float64 `json:"x"`
 	Y      float64 `json:"y"`
 	Visits uint64  `json:"visits"`
+	Mean   float64 `json:"mean"`
+	M2     float64 `json:"m2"`
+}
+
+/*
+observe folds one deformation magnitude into the cell's noise floor.
+*/
+func (cell *Cell) observe(magnitude float64) {
+	cell.Visits++
+	delta := magnitude - cell.Mean
+	cell.Mean += delta / float64(cell.Visits)
+	cell.M2 += delta * (magnitude - cell.Mean)
+}
+
+/*
+standardize answers how far magnitude stands above the cell's noise floor, in
+units of its dispersion. A cell that has not shown any dispersion has no
+noise floor yet, and its excitation is undefined rather than zero.
+*/
+func (cell *Cell) standardize(magnitude float64) (float64, bool) {
+	if cell.Visits < 2 || cell.M2 <= 0 {
+		return 0, false
+	}
+
+	return (magnitude - cell.Mean) / math.Sqrt(cell.M2/float64(cell.Visits-1)), true
 }
 
 type metricArrival struct {
@@ -556,7 +587,7 @@ func (grid *Grid) extractTrainingArrivalsLocked(
 
 	for _, channel := range keys {
 		cell := grid.ensureCellLocked(channel)
-		cell.Visits++
+		cell.observe(math.Abs(deformations[channel]))
 
 		arrivals = append(arrivals, metricArrival{
 			id:      cell.ID,
@@ -1355,7 +1386,17 @@ func regionCenter(region uint8, regionCount int) (float64, float64) {
 }
 
 /*
-RegionScore aggregates normalized activity within one partition.
+Excitation is one channel of one lighting pass: its deformation (see
+Stream.Deform) and the Confidence of the Measurement that observed it (see
+data.Measurement.Confidence).
+*/
+type Excitation struct {
+	Deformation float64
+	Confidence  float64
+}
+
+/*
+RegionScore is the brightness of one region in one lighting pass.
 */
 type RegionScore struct {
 	Region       uint8   `json:"region"`
@@ -1366,130 +1407,93 @@ type RegionScore struct {
 }
 
 type regionAggregate struct {
-	sumDeformation float64
-	observedCount  int
-	totalMembers   int
+	evidence      float64
+	observedCount int
 }
 
 /*
-RegionScores evaluates mean deformation magnitude within each region for one
-pass of channel deformations (see Stream.Deform). It never takes the update
-lock.
+RegionScores ranks the regions lit by one pass, brightest first. It never
+takes the update lock.
+
+Every contributing cell is standardized against its own noise floor (see
+Cell.standardize) and the result is dampened by the confidence of the
+observation it came from, so a deteriorating Measurement dims all of its
+Metrics together. A region's brightness is the Stouffer combination of its
+contributors' dampened evidence, sum / sqrt(contributors): under the noise
+floor every region then has the same unit spread whatever its size. A plain
+mean would not: averaging n contributors shrinks its spread by sqrt(n), so a
+one- or two-cell region would outshine a large region on noise alone, while a
+plain sum would do the opposite.
+
+Channels without a region (never observed, or arrived after the partition)
+and cells without a noise floor do not contribute.
 */
-func (grid *Grid) RegionScores(deformations map[string]float64) []RegionScore {
-	if grid == nil || len(deformations) == 0 {
+func (grid *Grid) RegionScores(pass map[string]Excitation) []RegionScore {
+	if grid == nil || len(pass) == 0 {
 		return nil
 	}
 
-	return grid.regionScoresLocked(deformations)
-}
+	regions := make(map[uint8]regionAggregate)
 
-/*
-regionScoresLocked scores each region by the mean absolute deformation of its
-member channels in this pass. Channels without a region (not yet observed, or
-arrived after the partition) do not score.
-*/
-func (grid *Grid) regionScoresLocked(deformations map[string]float64) []RegionScore {
-	perCell := make(map[uint32]float64, len(deformations))
-
-	for channel, deformation := range deformations {
+	for channel, excitation := range pass {
 		cell, ok := grid.cellsLF.Get(channel)
 
 		if !ok || cell == nil || cell.Region == 0 {
 			continue
 		}
 
-		perCell[cell.ID] = math.Abs(deformation)
-	}
+		evidence, defined := cell.standardize(math.Abs(excitation.Deformation))
 
-	if len(perCell) == 0 {
-		return nil
-	}
-
-	regions := make(map[uint8]regionAggregate)
-	idToCellPtr := grid.idToCellLF.Load()
-
-	if idToCellPtr == nil {
-		return nil
-	}
-
-	idToCell := *idToCellPtr
-
-	for id, magnitude := range perCell {
-		if int(id) >= len(idToCell) {
-			continue
-		}
-
-		cell := idToCell[id]
-
-		if cell == nil || cell.Region == 0 {
+		if !defined {
 			continue
 		}
 
 		entry := regions[cell.Region]
-		entry.sumDeformation += magnitude
+		entry.evidence += excitation.Confidence * evidence
 		entry.observedCount++
 		regions[cell.Region] = entry
-	}
-
-	if len(regions) == 0 {
-		return nil
 	}
 
 	scores := make([]RegionScore, 0, len(regions))
 
 	for region, aggregate := range regions {
-		total := max(grid.RegionMembers[region], aggregate.observedCount)
-
-		if total <= 0 {
-			continue
-		}
-
-		score := aggregate.sumDeformation / float64(aggregate.observedCount)
-		coverage := float64(aggregate.observedCount) / float64(total)
-
-		if score <= 0 || !finite(score) {
-			continue
-		}
+		members := max(grid.RegionMembers[region], aggregate.observedCount)
 
 		scores = append(scores, RegionScore{
 			Region:       region,
-			Score:        score,
+			Score:        aggregate.evidence / math.Sqrt(float64(aggregate.observedCount)),
 			Contributors: aggregate.observedCount,
-			Members:      total,
-			Coverage:     coverage,
+			Members:      members,
+			Coverage:     float64(aggregate.observedCount) / float64(members),
 		})
 	}
 
-	sort.SliceStable(scores, func(firstIndex, secondIndex int) bool {
-		if scores[firstIndex].Score == scores[secondIndex].Score {
-			return scores[firstIndex].Region < scores[secondIndex].Region
+	slices.SortStableFunc(scores, func(left, right RegionScore) int {
+		if order := cmp.Compare(right.Score, left.Score); order != 0 {
+			return order
 		}
 
-		return scores[firstIndex].Score > scores[secondIndex].Score
+		return cmp.Compare(left.Region, right.Region)
 	})
 
 	return scores
 }
 
 /*
-LitRegions answers the token sequence of active regions above noise.
-LitRegions keeps the existing token API deliberately conservative: it returns
-the strongest region from the same fair RegionScores pass. Call RegionScores
-when the UI or diagnostics need the complete ranked set and actual intensities.
+LitRegion answers the one-hot region token of a pass: the brightest region,
+provided it stands above its noise floor. A pass whose regions all read at or
+below their noise floor lights nothing. One region per pass keeps the token
+alphabet at the region count; tokens built from the N brightest regions would
+grow it combinatorially instead of reducing the grid's dimensionality.
 */
-func (grid *Grid) LitRegions(deformations map[string]float64) [][]byte {
-	if grid == nil || len(deformations) == 0 {
+func (grid *Grid) LitRegion(pass map[string]Excitation) []byte {
+	scores := grid.RegionScores(pass)
+
+	if len(scores) == 0 || scores[0].Score <= 0 {
 		return nil
 	}
 
-	scores := grid.regionScoresLocked(deformations)
-
-	if len(scores) == 0 || scores[0].Score <= 0 || scores[0].Region == 0 {
-		return nil
-	}
-
-	return [][]byte{{scores[0].Region}}
+	return []byte{scores[0].Region}
 }
 
 /*
@@ -1545,13 +1549,14 @@ type GridSnapshot struct {
 }
 
 /*
-gridSnapshotVersion 4 keys cells by metric label alone and holds no previous
-raw values: deformation is measured per stream by its owner (Stream), not by
-the grid. Versions 1 and 2 keyed cells by symbol\x00source\x00metric, and
-version 3 carried one previous raw value per label shared across symbols;
-neither maps onto this grid, so they are rejected rather than restored.
+gridSnapshotVersion 5 keys cells by metric label alone, holds no previous raw
+values (deformation is measured per stream by its owner, Stream), and carries
+every cell's noise floor (Cell.Mean, Cell.M2). Versions 1 and 2 keyed cells by
+symbol\x00source\x00metric, version 3 carried one previous raw value per
+label shared across symbols, and version 4 had no noise floors to light
+against; none maps onto this grid, so they are rejected rather than restored.
 */
-const gridSnapshotVersion = 4
+const gridSnapshotVersion = 5
 
 func (grid *Grid) Snapshot() ([]byte, error) {
 	if grid == nil {

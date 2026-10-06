@@ -109,6 +109,8 @@ it("renders A/B/C and ENTER/EXIT markers from a trained fragment", async () => {
 							],
 							entry_idx: 2,
 							exit_idx: 5,
+							predicted_entry_idx: 2,
+							predicted_exit_idx: 5,
 							learned_at: new Date().toISOString(),
 						},
 					],
@@ -118,7 +120,7 @@ it("renders A/B/C and ENTER/EXIT markers from a trained fragment", async () => {
 		}),
 	);
 
-	const { container } = render(<ForwardLearningViz />);
+	const { container } = render(<ForwardLearningViz tapeSource="historical" />);
 
 	await act(async () => {
 		vi.advanceTimersByTime(50);
@@ -128,6 +130,8 @@ it("renders A/B/C and ENTER/EXIT markers from a trained fragment", async () => {
 	expect(container.textContent).toContain("A:");
 	expect(container.textContent).toContain("B:");
 	expect(container.textContent).toContain("C:");
+	expect(container.textContent).toContain("ENTER");
+	expect(container.textContent).toContain("EXIT");
 	expect(container.textContent).toContain("PREDICTED ENTER");
 	expect(container.textContent).toContain("PREDICTED EXIT");
 	expect(container.textContent).toContain("UPWARD EXCURSION");
@@ -165,6 +169,8 @@ it("surfaces up_friction class on fragment list and detail", async () => {
 							],
 							entry_idx: 0,
 							exit_idx: 2,
+							predicted_entry_idx: -1,
+							predicted_exit_idx: -1,
 							learned_at: new Date().toISOString(),
 						},
 					],
@@ -174,7 +180,7 @@ it("surfaces up_friction class on fragment list and detail", async () => {
 		}),
 	);
 
-	const { container } = render(<ForwardLearningViz />);
+	const { container } = render(<ForwardLearningViz tapeSource="historical" />);
 
 	await act(async () => {
 		vi.advanceTimersByTime(50);
@@ -187,3 +193,75 @@ it("surfaces up_friction class on fragment list and detail", async () => {
 		"up_friction",
 	);
 });
+
+it("keeps a pinned historical fragment when live BTC hub updates arrive", async () => {
+	vi.useFakeTimers();
+	vi.stubGlobal(
+		"fetch",
+		vi.fn().mockImplementation(async (url: string) => {
+			if (String(url).includes("/training/fragments")) {
+				return {
+					ok: true,
+					json: async () => [
+						{
+							id: 9,
+							symbol: "ETH/USD",
+							epoch: 42,
+							mark_a: 1,
+							mark_b: 2,
+							mark_c: 3,
+							entry_price: 3000,
+							exit_price: 3100,
+							magnitude: 0.033,
+							direction: "up",
+							class: "up",
+							tokens: ["R0", "R1"],
+							points: [
+								{ x: 0, y: 3000, seq: 1, time: 1 },
+								{ x: 1, y: 3050, seq: 2, time: 2 },
+								{ x: 2, y: 3100, seq: 3, time: 3 },
+							],
+							entry_idx: 0,
+							exit_idx: 2,
+							predicted_entry_idx: -1,
+							predicted_exit_idx: -1,
+							learned_at: new Date().toISOString(),
+						},
+					],
+				};
+			}
+			return { ok: true, json: async () => ({ branches: [] }) };
+		}),
+	);
+
+	const { container } = render(<ForwardLearningViz tapeSource="historical" />);
+
+	await act(async () => {
+		vi.advanceTimersByTime(50);
+		await Promise.resolve();
+	});
+
+	expect(container.textContent).toContain("ETH/USD");
+	expect(container.textContent).toContain("3 frames evaluated");
+	expect(container.querySelector('[data-l="historical-run-active"]')).toBeTruthy();
+
+	const ring = new RingBuffer<MeasurementT>(8);
+	await act(async () => {
+		const frame = new MeasurementT();
+		frame.source = "training";
+		frame.symbol = "BTC/USD";
+		frame.tick = 99n;
+		frame.metrics = [new MetricT("price", 85000), new MetricT("stage_code", 1)];
+		ring.add(frame);
+		signals.training.setState(() => ({ "BTC/USD": ring }));
+	});
+
+	// Selection must stick: live BTC must not replace the ETH fragment tape.
+	expect(container.textContent).toContain("ETH/USD");
+	expect(container.textContent).toContain("3 frames evaluated");
+	expect(container.textContent).not.toContain("85000");
+	expect(container.querySelector('[data-l="tape-title"]')?.textContent).toContain(
+		"HISTORICAL RUNS",
+	);
+});
+

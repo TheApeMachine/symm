@@ -38,6 +38,8 @@ interface TrainedFragmentResponse {
 	points: { x: number; y: number; seq: number; time: number }[];
 	entry_idx: number;
 	exit_idx: number;
+	predicted_entry_idx: number;
+	predicted_exit_idx: number;
 	learned_at: string;
 }
 
@@ -206,18 +208,27 @@ const getTargetRing = (
 
 export interface ForwardLearningVizProps {
 	symbol?: string;
+	/*
+	 * live (default): MODEL TRAINING — stage-1 stream paints the tape, but a
+	 * selected fragment pins the chart so BTC/USD hub updates cannot stomp it.
+	 * historical: HISTORICAL RUNS tab — tape only from /training/fragments;
+	 * live hub never writes points/symbol/excursion on the chart.
+	 */
+	tapeSource?: "live" | "historical";
 }
 
 export const ForwardLearningViz = ({
 	symbol: propSymbol,
+	tapeSource = "live",
 }: ForwardLearningVizProps = {}) => {
 	const globalFocus = useSelector(focusAtom, (state) => state);
 	const targetSymbol = propSymbol || globalFocus;
+	const historicalOnly = tapeSource === "historical";
 	const tapeRef = useRef<HTMLDivElement>(null);
 	const [tapeDim, setTapeDim] = useState({ width: 800, height: 300 });
 	const [isPlaying, setIsPlaying] = useState(true);
 
-	// Real tape points accumulated from the live training measurements
+	// Real tape points: live stage stream and/or a pinned trained fragment.
 	const [points, setPoints] = useState<ForwardTapePoint[]>([]);
 
 	// Real stage & execution mode
@@ -262,6 +273,8 @@ export const ForwardLearningViz = ({
 		marks: { A: number; B: number; C: number };
 		entryIdx: number | null;
 		exitIdx: number | null;
+		predictedEntryIdx: number | null;
+		predictedExitIdx: number | null;
 		classCode?: string;
 	} | null>(null);
 
@@ -284,9 +297,16 @@ export const ForwardLearningViz = ({
 
 	const [trainedFragments, setTrainedFragments] = useState<TrainedFragmentResponse[]>([]);
 	const [selectedFragmentIndex, setSelectedFragmentIndex] = useState<number>(-1);
+	/*
+	 * pinnedFragmentRef freezes the tape chart while the operator inspects a
+	 * historical run. Live hub measurements still update stage/side metrics,
+	 * but must not rewrite points, symbol, or excursion markers on the chart.
+	 */
+	const pinnedFragmentRef = useRef(false);
 
 	const loadFragment = useCallback((frag: TrainedFragmentResponse) => {
 		if (!frag) return;
+		pinnedFragmentRef.current = true;
 		setCurrentEpisode(null);
 		currentEpisodeRef.current = null;
 		setCurrentSymbol(frag.symbol);
@@ -303,6 +323,8 @@ export const ForwardLearningViz = ({
 			marks: { A: frag.mark_a, B: frag.mark_b, C: frag.mark_c },
 			entryIdx: frag.entry_idx,
 			exitIdx: frag.exit_idx,
+			predictedEntryIdx: frag.predicted_entry_idx ?? -1,
+			predictedExitIdx: frag.predicted_exit_idx ?? -1,
 			classCode: fragmentClassCode(frag.class, frag.direction),
 		});
 		setRawPrecursorTokens(frag.tokens ?? []);
@@ -318,6 +340,19 @@ export const ForwardLearningViz = ({
 		},
 		[trainedFragments, loadFragment],
 	);
+
+	const resumeLiveTape = useCallback(() => {
+		if (historicalOnly) return;
+		pinnedFragmentRef.current = false;
+		setSelectedFragmentIndex(-1);
+		setCurrentEpisode(null);
+		currentEpisodeRef.current = null;
+		setPoints([]);
+		setExcursionEvent(null);
+		setRawPrecursorTokens([]);
+		setFrozenAction("ABSTAIN");
+		setDelayedLabel("RESOLVING");
+	}, [historicalOnly]);
 
 	const replayFragment = useCallback(() => {
 		if (selectedFragmentIndex < 0 || selectedFragmentIndex >= trainedFragments.length) return;
@@ -358,12 +393,15 @@ export const ForwardLearningViz = ({
 	}, []);
 
 	useEffect(() => {
-		if (selectedFragmentIndex === -1 && trainedFragments.length > 0 && points.length === 0) {
-			const lastIdx = trainedFragments.length - 1;
-			setSelectedFragmentIndex(lastIdx);
-			loadFragment(trainedFragments[lastIdx]);
-		}
-	}, [trainedFragments, selectedFragmentIndex, points.length, loadFragment]);
+		// Only the Historical runs tab auto-selects. Model training stays on the
+		// live stream until the operator explicitly picks a fragment (or uses Live).
+		if (!historicalOnly) return;
+		if (trainedFragments.length === 0) return;
+		if (selectedFragmentIndex >= 0) return;
+		const lastIdx = trainedFragments.length - 1;
+		setSelectedFragmentIndex(lastIdx);
+		loadFragment(trainedFragments[lastIdx]);
+	}, [trainedFragments, selectedFragmentIndex, loadFragment, historicalOnly]);
 
 	useEffect(() => {
 		const unsubPos = positionCountAtom.subscribe((count) => {
@@ -470,14 +508,18 @@ export const ForwardLearningViz = ({
 		}
 	}, [currentEpisode, playbackTick]);
 
-	// Subscribe to real live training measurements stream filtered by target symbol
+	// Subscribe to real live training measurements stream filtered by target symbol.
+	// Historical-runs mode still reads stage/metrics for the side panels, but never
+	// mutates the tape chart — selection must stick against BTC/USD hub updates.
 	useEffect(() => {
 		const cursor = new RingCursor<MeasurementT>();
 		pendingEpisodeRef.current = [];
 		currentEpisodeRef.current = null;
 		setEpisodeQueue([]);
-		setPoints([]);
-		setExcursionEvent(null);
+		if (!historicalOnly && !pinnedFragmentRef.current) {
+			setPoints([]);
+			setExcursionEvent(null);
+		}
 		lastSeenExcursionStartRef.current = -1;
 
 		const handleRing = (ring: RingBuffer<MeasurementT>) => {
@@ -485,8 +527,10 @@ export const ForwardLearningViz = ({
 
 			cursor.read(ring, (measurement) => {
 				const activeSym = String(measurement.symbol || "TRAINING");
+				const tapePinned = historicalOnly || pinnedFragmentRef.current;
 
 				if (
+					!tapePinned &&
 					lastSeenSymbolRef.current !== "" &&
 					activeSym !== lastSeenSymbolRef.current
 				) {
@@ -499,7 +543,9 @@ export const ForwardLearningViz = ({
 					lastSeenExcursionStartRef.current = -1;
 				}
 				lastSeenSymbolRef.current = activeSym;
-				setCurrentSymbol(activeSym);
+				if (!tapePinned) {
+					setCurrentSymbol(activeSym);
+				}
 
 				const metricMap: Record<string, number> = {};
 				for (const m of measurement.metrics ?? []) {
@@ -567,7 +613,9 @@ export const ForwardLearningViz = ({
 						}
 					}
 				}
-				setRawPrecursorTokens(tokensList);
+				if (!tapePinned) {
+					setRawPrecursorTokens(tokensList);
+				}
 
 				const markA =
 					excStart !== undefined
@@ -598,19 +646,21 @@ export const ForwardLearningViz = ({
 				const filledRaw = metricMap.paper_filled ?? 0;
 				setIsPaperFilled(filledRaw === 1);
 
-				const actRaw = metricMap.action;
-				const frozenRaw =
-					metricMap.frozen_prediction !== undefined
-						? metricMap.frozen_prediction
-						: actRaw;
-				setFrozenAction(prediction(frozenRaw));
-				setDelayedLabel(
-					outcomeText(
-						excDirection,
-						metricMap.excursion_type ?? 0,
-						metricMap.delayed_target,
-					),
-				);
+				if (!tapePinned) {
+					const actRaw = metricMap.action;
+					const frozenRaw =
+						metricMap.frozen_prediction !== undefined
+							? metricMap.frozen_prediction
+							: actRaw;
+					setFrozenAction(prediction(frozenRaw));
+					setDelayedLabel(
+						outcomeText(
+							excDirection,
+							metricMap.excursion_type ?? 0,
+							metricMap.delayed_target,
+						),
+					);
+				}
 
 				// Historical held-out
 				setHistOpportunities(Math.floor(metricMap.hist_opportunities ?? 0));
@@ -698,16 +748,22 @@ export const ForwardLearningViz = ({
 						measurement.at,
 						measurement.observedFrom,
 					);
-					pendingEpisodeRef.current.push({
-						x: pendingEpisodeRef.current.length,
-						y: pointPrice,
-						seq: seqVal,
-						time: ptTime,
-					});
+					if (!tapePinned) {
+						pendingEpisodeRef.current.push({
+							x: pendingEpisodeRef.current.length,
+							y: pointPrice,
+							seq: seqVal,
+							time: ptTime,
+						});
+					}
 
 					// Stream into visible points during active historical validation (stage 1)
-					// when no episode is currently playing animation. Live stage 2+ does NOT pollute the fragment chart.
-					if (sCode === 1 && currentEpisodeRef.current === null) {
+					// when no episode is playing and no historical fragment is pinned.
+					if (
+						!tapePinned &&
+						sCode === 1 &&
+						currentEpisodeRef.current === null
+					) {
 						const pending = pendingEpisodeRef.current;
 						setPoints(
 							pending.map((pt, i) => ({
@@ -731,13 +787,26 @@ export const ForwardLearningViz = ({
 				const kind = excursionKind(excDirection, metricMap.excursion_type ?? 0);
 				const hasMarks = markA > 0 || markB > 0 || markC > 0;
 
-				if (kind || hasMarks || entryIdx !== null || exitIdx !== null) {
+				if (
+					!tapePinned &&
+					(kind || hasMarks || entryIdx !== null || exitIdx !== null)
+				) {
 					setExcursionEvent({
 						type: kind,
 						magnitude: metricMap.excursion_mag ?? 0,
 						marks: { A: markA, B: markB, C: markC },
 						entryIdx,
 						exitIdx,
+						predictedEntryIdx:
+							metricMap.predicted_entry !== undefined &&
+							metricMap.predicted_entry > 0
+								? Math.floor(metricMap.predicted_entry)
+								: null,
+						predictedExitIdx:
+							metricMap.predicted_exit !== undefined &&
+							metricMap.predicted_exit > 0
+								? Math.floor(metricMap.predicted_exit)
+								: null,
 					});
 				}
 
@@ -778,7 +847,7 @@ export const ForwardLearningViz = ({
 		return () => {
 			unsub?.unsubscribe?.();
 		};
-	}, [targetSymbol]);
+	}, [targetSymbol, historicalOnly]);
 
 	// Scales for real tape rendering
 	const {
@@ -904,32 +973,96 @@ export const ForwardLearningViz = ({
 
 	return (
 		<div className="flex flex-col w-full h-full gap-2 font-mono text-[11px] bg-(--bg) p-2 overflow-hidden text-(--f2)">
-			{/* TOP ROW: Real Tape + Right Sidebar */}
+			{/* TOP ROW: optional fragment rail + Real Tape + Right Sidebar */}
 			<div className="flex h-3/5 gap-2 min-h-0">
+				{historicalOnly && (
+					<div
+						className="w-56 bg-(--surface) border-(--line) border rounded flex flex-col shrink-0 min-h-0"
+						data-l="historical-runs-list"
+					>
+						<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 text-(--f3) shrink-0 justify-between">
+							<span className="tracking-widest uppercase font-bold text-[10px]">
+								Historical Runs
+							</span>
+							<span className="text-[10px] text-(--f4)">
+								{trainedFragments.length}
+							</span>
+						</div>
+						<div className="flex-1 overflow-y-auto min-h-0">
+							{trainedFragments.length === 0 ? (
+								<div className="p-3 text-(--f4) text-[10px] leading-relaxed">
+									No published fragments yet. Rehearsal writes them to Chart →
+									/training/fragments.
+								</div>
+							) : (
+								trainedFragments
+									.map((frag, idx) => ({ frag, idx }))
+									.reverse()
+									.map(({ frag, idx }) => {
+										const active = idx === selectedFragmentIndex;
+										const cls = fragmentClassCode(frag.class, frag.direction);
+										return (
+											<button
+												key={frag.id ?? idx}
+												type="button"
+												onClick={() => selectFragment(idx)}
+												className={cn(
+													"w-full text-left px-2.5 py-2 border-b border-(--line) cursor-pointer transition-colors",
+													active
+														? "bg-(--acc)/10 text-(--acc)"
+														: "hover:bg-(--sunken) text-(--f2)",
+												)}
+												data-l={active ? "historical-run-active" : undefined}
+											>
+												<div className="flex items-center justify-between gap-2">
+													<span className="font-bold text-[10px] truncate">
+														#{frag.id} {frag.symbol}
+													</span>
+													<span className="text-[9px] uppercase tracking-wider shrink-0 opacity-80">
+														[{cls}]
+													</span>
+												</div>
+												<div className="mt-0.5 text-[9px] text-(--f4) flex justify-between gap-2">
+													<span>{(frag.direction || "").toUpperCase()}</span>
+													<span>{(frag.magnitude * 100).toFixed(2)}%</span>
+												</div>
+											</button>
+										);
+									})
+							)}
+						</div>
+					</div>
+				)}
 				{/* Main Episodic Tape */}
 				<div className="flex-1 bg-(--sunken) border-(--line) border rounded flex flex-col relative min-w-0 shadow-[inset_0_0_24px_rgba(0,0,0,0.85)]">
 					{/* Tape Header */}
 					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 justify-between text-(--f3) shrink-0">
-						<div className="flex items-center gap-2">
+						<div className="flex items-center gap-2 min-w-0">
 							<span
 								data-l="tape-title"
 								className={cn(
-									"font-bold px-1.5 py-0.5 rounded text-[10px]",
-									stageCode === 1
-										? "bg-(--acc)/10 text-(--acc) border border-(--acc)/30"
-										: "bg-(--info)/10 text-(--info) border border-(--info)/30",
+									"font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0",
+									historicalOnly || selectedFragmentIndex >= 0
+										? "bg-(--info)/10 text-(--info) border border-(--info)/30"
+										: stageCode === 1
+											? "bg-(--acc)/10 text-(--acc) border border-(--acc)/30"
+											: "bg-(--info)/10 text-(--info) border border-(--info)/30",
 								)}
 							>
-								{isForward
-									? "TRAINED FRAGMENTS"
-									: "HISTORICAL REPLAY TAPE"}
+								{historicalOnly
+									? "HISTORICAL RUNS"
+									: selectedFragmentIndex >= 0
+										? "TRAINED FRAGMENTS"
+										: isForward
+											? "TRAINED FRAGMENTS"
+											: "HISTORICAL REPLAY TAPE"}
 							</span>
-							<span className="bg-(--surface) border-(--line) border px-1.5 py-0.5 rounded text-[10px] text-(--f1) font-bold">
+							<span className="bg-(--surface) border-(--line) border px-1.5 py-0.5 rounded text-[10px] text-(--f1) font-bold shrink-0">
 								{currentSymbol}
 							</span>
 
-							{stageCode !== 1 && trainedFragments.length > 0 && (
-								<div className="flex items-center gap-1 ml-1">
+							{trainedFragments.length > 0 && (
+								<div className="flex items-center gap-1 ml-1 min-w-0" data-l="fragment-selector">
 									<button
 										type="button"
 										onClick={() => selectFragment(selectedFragmentIndex - 1)}
@@ -942,8 +1075,12 @@ export const ForwardLearningViz = ({
 									<select
 										value={selectedFragmentIndex}
 										onChange={(e) => selectFragment(Number(e.target.value))}
-										className="bg-(--surface) border border-(--line) text-(--f1) text-[10px] px-1.5 py-0.5 rounded focus:outline-none focus:border-(--acc) cursor-pointer"
+										className="bg-(--surface) border border-(--line) text-(--f1) text-[10px] px-1.5 py-0.5 rounded focus:outline-none focus:border-(--acc) cursor-pointer max-w-[280px]"
+										aria-label="Select historical training run"
 									>
+										{!historicalOnly && selectedFragmentIndex < 0 && (
+											<option value={-1}>Live stream…</option>
+										)}
 										{trainedFragments.map((frag, idx) => (
 											<option key={frag.id ?? idx} value={idx}>
 												#{frag.id} {frag.symbol} [{fragmentClassCode(frag.class, frag.direction)}] ({frag.direction.toUpperCase()} {(frag.magnitude * 100).toFixed(2)}%)
@@ -962,11 +1099,23 @@ export const ForwardLearningViz = ({
 									<button
 										type="button"
 										onClick={replayFragment}
-										className="ml-1 px-1.5 py-0.5 rounded bg-(--acc)/10 text-(--acc) border border-(--acc)/30 hover:bg-(--acc)/20 text-[10px] font-bold cursor-pointer"
+										disabled={selectedFragmentIndex < 0}
+										className="ml-1 px-1.5 py-0.5 rounded bg-(--acc)/10 text-(--acc) border border-(--acc)/30 hover:bg-(--acc)/20 disabled:opacity-30 disabled:pointer-events-none text-[10px] font-bold cursor-pointer"
 										title="Replay this fragment animation"
 									>
 										Replay
 									</button>
+									{!historicalOnly && selectedFragmentIndex >= 0 && (
+										<button
+											type="button"
+											onClick={resumeLiveTape}
+											className="px-1.5 py-0.5 rounded bg-(--surface) border border-(--line) text-(--f2) hover:text-(--acc) text-[10px] font-bold cursor-pointer"
+											title="Return to live training tape"
+											data-l="resume-live-tape"
+										>
+											Live
+										</button>
+									)}
 								</div>
 							)}
 
@@ -1075,11 +1224,15 @@ export const ForwardLearningViz = ({
 
 						{points.length === 0 && (
 							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-xs tracking-wider z-5">
-								{stageCode === 1
-									? `Awaiting training stream for ${currentSymbol}...`
-									: trainedFragments.length > 0
-										? `Select a trained fragment above to inspect`
-										: `Awaiting historical replay tape stream for ${currentSymbol}...`}
+								{historicalOnly
+									? trainedFragments.length > 0
+										? "Select a historical training run"
+										: "No trained fragments yet — waiting for rehearsal to publish"
+									: stageCode === 1 && selectedFragmentIndex < 0
+										? `Awaiting training stream for ${currentSymbol}...`
+										: trainedFragments.length > 0
+											? "Select a trained fragment above to inspect"
+											: `Awaiting historical replay tape stream for ${currentSymbol}...`}
 							</div>
 						)}
 
@@ -1270,6 +1423,16 @@ export const ForwardLearningViz = ({
 											excursionEvent.exitIdx >= 0
 												? resolveIdx(excursionEvent.exitIdx)
 												: null;
+										const predictedEntryPtIdx =
+											excursionEvent.predictedEntryIdx !== null &&
+											excursionEvent.predictedEntryIdx >= 0
+												? resolveIdx(excursionEvent.predictedEntryIdx)
+												: null;
+										const predictedExitPtIdx =
+											excursionEvent.predictedExitIdx !== null &&
+											excursionEvent.predictedExitIdx >= 0
+												? resolveIdx(excursionEvent.predictedExitIdx)
+												: null;
 
 										return (
 											<g>
@@ -1310,7 +1473,7 @@ export const ForwardLearningViz = ({
 													);
 												})}
 
-												{/* Entry Boundary Marker */}
+												{/* Ground-truth ENTER sweet spot */}
 												{entryPtIdx !== null &&
 													entryPtIdx >= 0 &&
 													entryPtIdx < points.length && (
@@ -1325,13 +1488,39 @@ export const ForwardLearningViz = ({
 																fontSize="9px"
 																fontWeight="bold"
 															>
-																PREDICTED ENTER
+																ENTER
 															</text>
 															<line
 																y2={tapeDim.height}
 																stroke="#22c55e"
 																opacity="0.3"
 															/>
+														</g>
+													)}
+
+												{/* Post-teach predicted ENTER (outline, distinct from GT) */}
+												{predictedEntryPtIdx !== null &&
+													predictedEntryPtIdx >= 0 &&
+													predictedEntryPtIdx < points.length && (
+														<g
+															transform={`translate(${xScale(predictedEntryPtIdx)}, ${yScale(points[predictedEntryPtIdx].y)})`}
+														>
+															<circle
+																r={6}
+																fill="none"
+																stroke="#4ade80"
+																strokeWidth={2}
+																strokeDasharray="3 2"
+															/>
+															<text
+																x={8}
+																y={12}
+																fill="#4ade80"
+																fontSize="8px"
+																fontWeight="bold"
+															>
+																PREDICTED ENTER
+															</text>
 														</g>
 													)}
 
@@ -1365,7 +1554,7 @@ export const ForwardLearningViz = ({
 														</g>
 													)}
 
-												{/* Exit Boundary Marker */}
+												{/* Ground-truth EXIT sweet spot */}
 												{exitPtIdx !== null &&
 													exitPtIdx >= 0 &&
 													exitPtIdx < points.length && (
@@ -1380,13 +1569,38 @@ export const ForwardLearningViz = ({
 																fontSize="9px"
 																fontWeight="bold"
 															>
-																PREDICTED EXIT
+																EXIT
 															</text>
 															<line
 																y2={tapeDim.height}
 																stroke="#ef4444"
 																opacity="0.3"
 															/>
+														</g>
+													)}
+
+												{predictedExitPtIdx !== null &&
+													predictedExitPtIdx >= 0 &&
+													predictedExitPtIdx < points.length && (
+														<g
+															transform={`translate(${xScale(predictedExitPtIdx)}, ${yScale(points[predictedExitPtIdx].y)})`}
+														>
+															<circle
+																r={6}
+																fill="none"
+																stroke="#f87171"
+																strokeWidth={2}
+																strokeDasharray="3 2"
+															/>
+															<text
+																x={8}
+																y={12}
+																fill="#f87171"
+																fontSize="8px"
+																fontWeight="bold"
+															>
+																PREDICTED EXIT
+															</text>
 														</g>
 													)}
 											</g>

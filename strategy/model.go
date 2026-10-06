@@ -2,6 +2,9 @@ package strategy
 
 import (
 	"encoding/json"
+	"errors"
+	"sync"
+	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/cognition"
@@ -19,11 +22,16 @@ protocol those primitives speak: callers ask for a call, teach an action, or
 take a checkpoint in one operation.
 */
 type Model struct {
-	recall   *cognition.Recall
-	trainer  *cognition.Train
-	census   *cognition.Census
-	snapshot *cognition.Snapshot
-	tree     *cognition.Export
+	recall        *cognition.Recall
+	trainer       *cognition.Train
+	census        *cognition.Census
+	snapshot      *cognition.Snapshot
+	tree          *cognition.Export
+	version       atomic.Uint64
+	cachedVersion uint64
+	cachedTree    ui.CognitionTreeExport
+	hasCache      bool
+	treeMu        sync.RWMutex
 }
 
 /*
@@ -75,9 +83,12 @@ func (model *Model) Recall(context string) (Call, error) {
 }
 
 /*
-Teach grades context with class and its positive feedback.
+Teach grades context with class and signed feedback: positive reinforces,
+negative inhibits (cognition.Reinforce).
 */
 func (model *Model) Teach(context, class string, feedback float64) error {
+	model.version.Add(1)
+
 	_, err := ask(model.trainer, map[string]string{
 		"context": context,
 		"class":   class,
@@ -90,8 +101,9 @@ func (model *Model) Teach(context, class string, feedback float64) error {
 }
 
 /*
-Count answers one census figure: "records", "span", or a class name. A figure
-the census does not report yet (an empty trie) is zero.
+Count answers one census figure: "records", "span", or a class name. The
+census only publishes classes that introduced a key, so an absent class has
+introduced none and counts zero.
 */
 func (model *Model) Count(key string) (float64, error) {
 	reading, err := ask(model.census, nil, nil)
@@ -136,6 +148,16 @@ CognitionTree exports the trie topology for the UI. A failed export is logged
 and shows an empty tree; it never feeds trading.
 */
 func (model *Model) CognitionTree() ui.CognitionTreeExport {
+	currentVersion := model.version.Load()
+
+	model.treeMu.RLock()
+	if model.hasCache && model.cachedVersion == currentVersion {
+		cached := model.cachedTree
+		model.treeMu.RUnlock()
+		return cached
+	}
+	model.treeMu.RUnlock()
+
 	reading, err := ask(model.tree, nil, nil)
 
 	if err != nil {
@@ -160,6 +182,12 @@ func (model *Model) CognitionTree() ui.CognitionTreeExport {
 		errnie.Error(errnie.Err(errnie.Validation, "[model] cognition tree", err))
 		return ui.CognitionTreeExport{}
 	}
+
+	model.treeMu.Lock()
+	model.cachedVersion = currentVersion
+	model.cachedTree = export
+	model.hasCache = true
+	model.treeMu.Unlock()
 
 	return export
 }
@@ -219,6 +247,12 @@ func ask(
 	return adapter, nil
 }
 
+/*
+readNumber reads key from an answered adapter. A key the primitive did not
+publish is absent (false, nil); the adapter's error state is sticky, so a
+published value is taken whenever it arrived, and any other failure is an
+error.
+*/
 func readNumber(adapter *data.Adapter, key string) (float64, bool, error) {
 	var values data.Map[float64]
 
@@ -226,11 +260,12 @@ func readNumber(adapter *data.Adapter, key string) (float64, bool, error) {
 		values = *(*data.Map[float64])(pointer)
 	}
 
-	if err := adapter.Error(); err != nil {
+	value, ok := values.Values[key]
+
+	if err := absence(adapter.Error(), ok); err != nil {
 		return 0, false, errnie.Error(errnie.Err(errnie.Validation, "[model] cognition number "+key, err))
 	}
 
-	value, ok := values.Values[key]
 	return value, ok, nil
 }
 
@@ -241,10 +276,27 @@ func readText(adapter *data.Adapter, key string) (string, bool, error) {
 		values = *(*data.Map[string])(pointer)
 	}
 
-	if err := adapter.Error(); err != nil {
+	value, ok := values.Values[key]
+
+	if err := absence(adapter.Error(), ok); err != nil {
 		return "", false, errnie.Error(errnie.Err(errnie.Validation, "[model] cognition text "+key, err))
 	}
 
-	value, ok := values.Values[key]
 	return value, ok, nil
+}
+
+/*
+absence answers the adapter error that remains a failure: none when the key
+arrived, none when the only failure is that the key was never published.
+*/
+func absence(err error, arrived bool) error {
+	if err == nil || arrived {
+		return nil
+	}
+
+	if errors.Is(err, core.ErrNotHeld) {
+		return nil
+	}
+
+	return err
 }
