@@ -1,10 +1,16 @@
 package system
 
 import (
+	"sync/atomic"
+
 	"github.com/theapemachine/errnie"
 )
 
-var Cfg *Config
+var (
+	SeqIdx atomic.Int64
+	Tick   atomic.Int64
+	Cfg    *Config
+)
 
 func init() {
 	Cfg = NewConfig()

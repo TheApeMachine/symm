@@ -32,7 +32,6 @@ translation.
 */
 type Signal struct {
 	*runtime.System
-	arena    *data.ArenaOwner
 	output   data.Map[float64]
 	envelope data.Map[float64]
 	identity data.Map[string]
@@ -47,12 +46,11 @@ type Signal struct {
 /*
 NewSignal composes the cross-sectional price-state instrument.
 */
-func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	output := data.NewOutputMap()
 	members := store.NewKV[string, float64](nil)
 
 	signal := &Signal{
-		arena:    arena,
 		output:   output,
 		envelope: data.NewOutputMap(),
 		identity: data.NewTextMap(),
@@ -171,13 +169,6 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 }
 
 /*
-Arena exposes the signal's ArenaOwner to the runtime Consumer.
-*/
-func (signal *Signal) Arena() *data.ArenaOwner {
-	return signal.arena
-}
-
-/*
 Step binds the prior quote Measurement to the cohort adapter, runs the cohort
 reduction, runs the derived pipeline once the cohort holds a member change,
 and writes the published facts into a fresh Measurement allocated from the
@@ -252,17 +243,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		signal.output.Values["directional_participation"] = (signal.output.Values["advance_count"] + signal.output.Values["decline_count"]) / valid
 	}
 
-	out := signal.arena.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, []*data.Measurement{prior},
+	out := data.NewMeasurement(
+		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick,
 	)
-	out.Epoch = prior.Epoch
-	out.Label = prior.Label
-	out.Source = signal.Name()
-	out.SeqIdx = prior.SeqIdx
-	out.Tick = prior.Tick
+	out.Peers(prior)
 	out.At = prior.At
 	out.From = prior.At
-
 	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {

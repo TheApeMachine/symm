@@ -34,7 +34,6 @@ Facts accumulate in the output map and are written once.
 */
 type Signal struct {
 	*runtime.System
-	arena     *data.ArenaOwner
 	paths     core.Primitive
 	pipelines sync.Map
 	metrics   map[string][2]string
@@ -47,9 +46,8 @@ type symbolPipeline struct {
 	pipeline core.Primitive
 }
 
-func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		arena: arena,
 		paths: store.NewKV[string, [][2]float64](nil),
 		// {output key without "@reference"}: {unit, timescale}
 		metrics: map[string][2]string{
@@ -95,10 +93,6 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 
 	signal.System = runtime.NewSystem(ctx, "leadlag", signal)
 	return signal
-}
-
-func (signal *Signal) Arena() *data.ArenaOwner {
-	return signal.arena
 }
 
 func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
@@ -172,15 +166,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	var metadata []*data.StringEntry
-
-	if channel := prior.Meta("channel"); channel != "" {
-		metadata = append(metadata, &data.StringEntry{Key: "channel", Value: channel})
-	}
-
-	out := signal.arena.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, []*data.Measurement{prior}, metadata...,
+	out := data.NewMeasurement(
+		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick,
 	)
+	out.Peers(prior)
 	out.At = prior.At
 	out.From = prior.At
 

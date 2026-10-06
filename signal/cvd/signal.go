@@ -29,7 +29,6 @@ by the groups after it. The trade side is the only envelope translation: the
 */
 type Signal struct {
 	*runtime.System
-	arena    *data.ArenaOwner
 	output   data.Map[float64]
 	envelope data.Map[float64]
 	states   []*data.State
@@ -37,11 +36,10 @@ type Signal struct {
 	metrics  [][4]string
 }
 
-func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	output := data.NewOutputMap()
 
 	signal := &Signal{
-		arena:    arena,
 		output:   output,
 		envelope: data.NewOutputMap(),
 		states: []*data.State{
@@ -162,13 +160,6 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 }
 
 /*
-Arena exposes the signal's ArenaOwner to the runtime Consumer.
-*/
-func (signal *Signal) Arena() *data.ArenaOwner {
-	return signal.arena
-}
-
-/*
 Step binds the prior trade Measurement to one adapter per stage group, runs
 the pipeline, and writes the published CVD facts into a fresh Measurement
 allocated from the signal's own arena. Facts a group left unwritten (an
@@ -221,10 +212,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	out := signal.arena.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, nil,
+	out := data.NewMeasurement(
+		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick,
 	)
-
+	out.Peers(prior)
 	out.At = prior.At
 	out.From = prior.At
 

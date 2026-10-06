@@ -182,7 +182,7 @@ func TestRehearsal_MissingTapeHalts(t *testing.T) {
 				measurement.At = time.Now().UTC()
 				measurement.From = measurement.At
 				// Write finalizes the row (WORM); it carries no metric.
-				writer.Add("measurements", data.Publication{Measurement: measurement.Write()})
+				writer.Add("measurements", measurement.Write())
 			}
 		}
 

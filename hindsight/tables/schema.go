@@ -14,34 +14,46 @@ Top-level columns epoch, source, and label allow Iceberg partition pruning and f
 min/max metric pruning before Parquet pages are fetched.
 */
 func MeasurementSchema() *iceberg.Schema {
+	metricStruct := &iceberg.StructType{
+		FieldList: []iceberg.NestedField{
+			{ID: 18, Name: "raw", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+			{ID: 19, Name: "normalized", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+			{ID: 20, Name: "standardized", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+			{ID: 21, Name: "exact", Type: iceberg.PrimitiveTypes.String, Required: false},
+			{ID: 22, Name: "center", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+			{ID: 23, Name: "scale", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+			{ID: 24, Name: "unit", Type: iceberg.PrimitiveTypes.String, Required: true},
+			{ID: 25, Name: "timescale", Type: iceberg.PrimitiveTypes.String, Required: true},
+		},
+	}
+
 	return iceberg.NewSchema(0,
 		iceberg.NestedField{ID: 1, Name: "epoch", Type: iceberg.PrimitiveTypes.Int64, Required: true},
 		iceberg.NestedField{ID: 2, Name: "seqIdx", Type: iceberg.PrimitiveTypes.Int64, Required: true},
 		iceberg.NestedField{ID: 3, Name: "source", Type: iceberg.PrimitiveTypes.String, Required: true},
 		iceberg.NestedField{ID: 4, Name: "label", Type: iceberg.PrimitiveTypes.String, Required: true},
-		iceberg.NestedField{ID: 5, Name: "at", Type: iceberg.PrimitiveTypes.TimestampTz, Required: true},
-		iceberg.NestedField{ID: 6, Name: "maturity", Type: iceberg.PrimitiveTypes.Float64, Required: true},
-		iceberg.NestedField{ID: 7, Name: "snr", Type: iceberg.PrimitiveTypes.Float64, Required: false},
-		iceberg.NestedField{ID: 8, Name: "snrDefined", Type: iceberg.PrimitiveTypes.Bool, Required: true},
-		iceberg.NestedField{ID: 9, Name: "metrics", Required: false,
+		iceberg.NestedField{ID: 5, Name: "tick", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 6, Name: "at", Type: iceberg.PrimitiveTypes.TimestampTz, Required: true},
+		iceberg.NestedField{ID: 7, Name: "from", Type: iceberg.PrimitiveTypes.TimestampTz, Required: true},
+		iceberg.NestedField{ID: 8, Name: "timestamp", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 9, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 10, Name: "coherence", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+		iceberg.NestedField{ID: 11, Name: "maturity", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+		iceberg.NestedField{ID: 12, Name: "samples", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 13, Name: "energy", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+		iceberg.NestedField{ID: 14, Name: "prediction", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+		iceberg.NestedField{ID: 15, Name: "metrics", Required: false,
 			Type: &iceberg.MapType{
-				KeyID: 101, KeyType: iceberg.PrimitiveTypes.String,
-				ValueID: 102, ValueType: iceberg.PrimitiveTypes.Float64, ValueRequired: false,
+				KeyID: 16, KeyType: iceberg.PrimitiveTypes.String,
+				ValueID: 17, ValueType: metricStruct, ValueRequired: false,
 			},
 		},
-		iceberg.NestedField{ID: 10, Name: "metadata", Required: false,
+		iceberg.NestedField{ID: 26, Name: "metadata", Required: false,
 			Type: &iceberg.MapType{
-				KeyID: 201, KeyType: iceberg.PrimitiveTypes.String,
-				ValueID: 202, ValueType: iceberg.PrimitiveTypes.String, ValueRequired: false,
+				KeyID: 27, KeyType: iceberg.PrimitiveTypes.String,
+				ValueID: 28, ValueType: iceberg.PrimitiveTypes.String, ValueRequired: false,
 			},
 		},
-		iceberg.NestedField{ID: 11, Name: "provenance", Required: false,
-			Type: &iceberg.MapType{
-				KeyID: 301, KeyType: iceberg.PrimitiveTypes.String,
-				ValueID: 302, ValueType: iceberg.PrimitiveTypes.String, ValueRequired: false,
-			},
-		},
-		iceberg.NestedField{ID: 12, Name: "tick", Type: iceberg.PrimitiveTypes.Int64, Required: false},
 	)
 }
 

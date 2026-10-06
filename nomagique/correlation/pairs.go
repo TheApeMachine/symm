@@ -124,7 +124,10 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.output.Values["return_energy_rate:measured"+suffix] = dependence[9]
 				op.output.Values["shared_time"+suffix] = dependence[11]
 				op.output.Values["overlap_density"+suffix] = dependence[12]
-				op.output.Values["relative_return_energy"+suffix] = dependence[9] / dependence[8]
+
+				if dependence[8] > 0 && dependence[9] > 0 {
+					op.output.Values["relative_return_energy"+suffix] = dependence[9] / dependence[8]
+				}
 
 				fisher, known := op.fisher[peer]
 
@@ -172,7 +175,10 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					op.output.Values["cohort_absolute_correlation"] = cohort[6]
 					op.output.Values["peer_return_energy_rate"] = cohort[7]
 					op.output.Values["focal_return_energy_rate"] = focalRate
-					op.output.Values["relative_cohort_return_energy"] = focalRate / cohort[7]
+
+					if cohort[7] > 0 && focalRate > 0 {
+						op.output.Values["relative_cohort_return_energy"] = focalRate / cohort[7]
+					}
 				}
 
 				if cohort[10] == 1 {

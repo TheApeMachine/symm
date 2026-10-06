@@ -70,7 +70,6 @@ type Workspace struct {
 	at         atomic.Int64
 	stages     [][]*Consumer
 	joins      [][]*data.Measurement // [stageIdx][slot]
-	joinArenas []*data.ArenaOwner
 }
 
 func NewWorkspace(
@@ -94,13 +93,10 @@ func NewWorkspace(
 		capacity:   capacity,
 		stages:     make([][]*Consumer, len(stages)),
 		joins:      make([][]*data.Measurement, numJoins),
-		joinArenas: make([]*data.ArenaOwner, numJoins),
 	}
 
 	for joinIdx := 0; joinIdx < numJoins; joinIdx++ {
 		workspace.joins[joinIdx] = make([]*data.Measurement, capacity)
-		workspace.joinArenas[joinIdx] = data.NewArenaOwner("join", capacity)
-		workspace.joinArenas[joinIdx].SetWindow(capacity)
 	}
 
 	opts := optionList(
@@ -241,11 +237,6 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
 		slot := seq & jh.workspace.mask
 		ingress := jh.workspace.buffer[slot]
-		joinArena := jh.workspace.joinArenas[jh.stageIdx]
-
-		if joinArena != nil {
-			joinArena.Advance(seq)
-		}
 
 		producers := jh.workspace.stages[jh.stageIdx]
 		var peers []*data.Measurement
@@ -279,14 +270,14 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 			continue
 		}
 
-		join := joinArena.NewMeasurement(
+		join := data.NewMeasurement(
 			ingress.Epoch,
 			ingress.Label,
 			"runtime:join",
 			ingress.SeqIdx,
 			ingress.Tick,
-			peers,
 		)
+		join.Peers(peers...)
 
 		join.At = ingress.At
 		join.From = ingress.From

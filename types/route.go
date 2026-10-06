@@ -120,14 +120,6 @@ func isStrategy(measurement *data.Measurement, strategies ...string) bool {
 	return slices.Contains(strategies, kernelSource(measurement.Source))
 }
 
-func isSpot(measurement *data.Measurement) bool {
-	return kernelSource(measurement.Source) == "spot"
-}
-
-func isFutures(measurement *data.Measurement) bool {
-	return kernelSource(measurement.Source) == "futures"
-}
-
 func kernelSource(source string) string {
 	if before, _, ok := strings.Cut(source, ":"); ok {
 		return before

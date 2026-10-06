@@ -44,9 +44,8 @@ func metric(measurement *data.Measurement, label string) (float64, bool) {
 func TestLeadLagSignalMetrics(t *testing.T) {
 	Convey("Leadlag instrument computes principled asynchronous Hayashi-Yoshida cross lead-lag", t, func() {
 		ctx := context.Background()
-		arena := data.NewArenaOwner("test", 4096)
 
-		instrument := leadlag.NewSignal(ctx, arena)
+		instrument := leadlag.NewSignal(ctx)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -139,7 +138,7 @@ func TestLeadLagSignalMetrics(t *testing.T) {
 
 func TestLeadLagCapturedBoundaryTape(t *testing.T) {
 	Convey("Given the captured CRV/DOT trade tape whose uneven spacing put the best lag on the profile boundary", t, func() {
-		instrument := leadlag.NewSignal(context.Background(), data.NewArenaOwner("leadlag", 4096))
+		instrument := leadlag.NewSignal(context.Background())
 		instrument.Transition(nmruntime.READY)
 
 		Convey("Every spot:trade frame steps without a panic or an error", func() {

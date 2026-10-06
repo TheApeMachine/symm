@@ -43,7 +43,6 @@ type Training struct {
 	Model     *Model
 	Rehearsal *Rehearsal
 	Reporter  *Reporter
-	arena     *data.ArenaOwner
 	impulse   *impulse
 	paper     *paper
 	detector  *Detector
@@ -60,7 +59,6 @@ type Training struct {
 
 func NewTraining(
 	ctx context.Context,
-	arena *data.ArenaOwner,
 	price *broker.Price,
 	desk *broker.Desk,
 	catalog *tables.Catalog,
@@ -79,7 +77,6 @@ func NewTraining(
 			catalog, price, impulse, model, newChart(catalog, reporter, system.Name()), epoch,
 		),
 		Reporter:     reporter,
-		arena:        arena,
 		impulse:      impulse,
 		detector:     NewDetector(ctx, storeTee, price),
 		catalog:      catalog,
@@ -98,10 +95,6 @@ func NewTraining(
 	training.paper = newPaper(desk, model)
 	training.Transition(runtime.INIT)
 	return training
-}
-
-func (training *Training) Arena() *data.ArenaOwner {
-	return training.arena
 }
 
 /*
@@ -171,15 +164,15 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 		peers = []*data.Measurement{prior}
 	}
 
-	out := training.arena.NewMeasurement(
+	out := data.NewMeasurement(
 		prior.Epoch,
 		prior.Label,
 		training.Name(),
 		prior.SeqIdx,
 		prior.Tick,
-		peers,
 		training.Reporter.Metadata(snapshot)...,
 	)
+	out.Peers(peers...)
 	out.At = prior.At
 	out.From = prior.At
 
@@ -414,13 +407,13 @@ func (training *Training) runDetectorScan() {
 					break
 				}
 
-				pub := data.To[data.Publication](ptr)
-				if pub.Measurement == nil {
-					pub.Release()
+				measurement := data.To[*data.Measurement](ptr)
+
+				if measurement == nil {
 					continue
 				}
 
-				writer.Add(tables.Measurements, pub)
+				writer.Add(tables.Measurements, measurement)
 				drained++
 			}
 

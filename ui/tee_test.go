@@ -23,16 +23,13 @@ func TestUITee(t *testing.T) {
 		tee := ui.NewUITee(ctx, "testTee")
 		tee.Transition(nmruntime.READY)
 
-		arena := data.NewArenaOwner("test", 1024)
-
 		Convey("It admits allowed publications and encodes them", func() {
-			measurement := arena.NewMeasurement(1, "BTC/USD", "hawkes", 1, 1, nil)
+			measurement := data.NewMeasurement(1, "BTC/USD", "hawkes", 1, 1)
 			measurement.At = time.Now()
 			measurement.From = measurement.At
 			measurement.Write(data.NewMetric("event_count", 1, data.UnitCount, data.TimescaleInstantaneous))
 
-			pub := data.NewPublication(measurement, nil)
-			tee.Push(pub)
+			tee.Push(measurement)
 
 			time.Sleep(20 * time.Millisecond)
 

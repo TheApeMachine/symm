@@ -15,19 +15,19 @@ StoreTee queues measurements for the catalog drain.
 */
 type StoreTee struct {
 	*runtime.System
-	queue *lf.Queue[data.Publication]
+	queue *lf.Queue[*data.Measurement]
 }
 
 func NewStoreTee(ctx context.Context, label string) *StoreTee {
 	tee := &StoreTee{
-		queue: lf.NewQueue[data.Publication](),
+		queue: lf.NewQueue[*data.Measurement](),
 	}
 
 	tee.System = runtime.NewSystem(ctx, label, tee)
 	return tee
 }
 
-func (tee *StoreTee) Push(pub data.Publication) {
+func (tee *StoreTee) Push(measurement *data.Measurement) {
 	if tee.Status() != runtime.READY {
 		errnie.Warn(
 			"[storeTee] pushing to a non-ready system may have unintended consequences",
@@ -36,12 +36,11 @@ func (tee *StoreTee) Push(pub data.Publication) {
 		return
 	}
 
-	if pub.Measurement == nil {
+	if measurement == nil {
 		return
 	}
 
-	pub.Retain()
-	tee.queue.Enqueue(pub)
+	tee.queue.Enqueue(measurement)
 }
 
 func (tee *StoreTee) Next() unsafe.Pointer {

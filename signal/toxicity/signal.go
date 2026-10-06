@@ -41,7 +41,6 @@ written once.
 */
 type Signal struct {
 	*runtime.System
-	arena     *data.ArenaOwner
 	books     broker.BookSource
 	pipelines sync.Map
 	metrics   [][4]string
@@ -69,9 +68,8 @@ NewSignal composes the toxic-flow instrument. The BookSource is required: it
 is the sole authority for the touch. A missing BookSource is a wiring fault
 and halts the instrument.
 */
-func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSource) *Signal {
+func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	signal := &Signal{
-		arena: arena,
 		books: books,
 		// {published label, output key, unit, timescale}
 		metrics: [][4]string{
@@ -148,13 +146,6 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 	}
 
 	return signal
-}
-
-/*
-Arena exposes the signal's ArenaOwner to the runtime Consumer.
-*/
-func (signal *Signal) Arena() *data.ArenaOwner {
-	return signal.arena
 }
 
 func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
@@ -594,9 +585,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	pipe.prevAt = prior.At
 	pipe.hasPrev = true
 
-	out := signal.arena.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, []*data.Measurement{prior},
+	out := data.NewMeasurement(
+		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick,
 	)
+	out.Peers(prior)
 	out.Epoch = prior.Epoch
 	out.Label = prior.Label
 	out.Source = signal.Name()

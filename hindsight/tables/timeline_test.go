@@ -43,7 +43,7 @@ func TestCatalog_TimelineReadFailure(t *testing.T) {
 				measurement.At = time.Now().UTC()
 				measurement.From = measurement.At
 				measurement.Write(data.NewMetric("value", float64(tick), data.UnitCount, data.TimescaleTick))
-				writer.Add(tables.Measurements, data.Publication{Measurement: measurement})
+				writer.Add(tables.Measurements, measurement)
 			}
 		}
 
@@ -138,7 +138,7 @@ func TestCatalog_TimelineTickWindow(t *testing.T) {
 			measurement.At = time.Now().UTC()
 			measurement.From = measurement.At
 			measurement.Write(data.NewMetric("value", float64(seq), data.UnitCount, data.TimescaleTick))
-			writer.Add(tables.Measurements, data.Publication{Measurement: measurement})
+			writer.Add(tables.Measurements, measurement)
 		}
 
 		So(writer.CommitReady(ctx, true), ShouldBeNil)

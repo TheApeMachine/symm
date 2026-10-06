@@ -3,7 +3,6 @@ package store
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"math"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"golang.design/x/lockfree/lf"
@@ -66,7 +66,7 @@ type PairStats struct {
 }
 
 func (pair *PairStats) update(leftVal, rightVal, weight float64) {
-	if weight <= 0 || !finite(weight) || !finite(leftVal) || !finite(rightVal) {
+	if weight <= 0 {
 		return
 	}
 
@@ -114,19 +114,7 @@ func (pair *PairStats) correlation() (float64, bool) {
 
 	corr := cov / math.Sqrt(varX*varY)
 
-	if !finite(corr) {
-		return 0, false
-	}
-
-	return clamp(corr, -1, 1), true
-}
-
-func (pair *PairStats) directionalAgreement() float64 {
-	if pair == nil || pair.Total == 0 {
-		return 0
-	}
-
-	return float64(pair.Same-pair.Opposite) / float64(pair.Total)
+	return math.Min(math.Max(corr, -1), 1), true
 }
 
 func (pair *PairStats) affinity() float64 {
@@ -142,7 +130,7 @@ func (pair *PairStats) affinity() float64 {
 	}
 
 	if _, ok := pair.correlation(); !ok {
-		strength = pair.directionalAgreement()
+		strength = float64(pair.Same-pair.Opposite) / float64(pair.Total)
 
 		if evidence <= 0 {
 			evidence = float64(pair.Total)
@@ -179,31 +167,6 @@ type Relation struct {
 	SumXX  float64 `json:"sum_xx,omitempty"`
 	SumYY  float64 `json:"sum_yy,omitempty"`
 	SumXY  float64 `json:"sum_xy,omitempty"`
-}
-
-func (relation *Relation) update(leftVal, rightVal, weight float64) {
-	if relation == nil || weight <= 0 || !finite(leftVal) || !finite(rightVal) || !finite(weight) {
-		return
-	}
-
-	relation.Total++
-
-	product := leftVal * rightVal
-
-	if product > 0 {
-		relation.Same++
-	}
-
-	if product < 0 {
-		relation.Opposite++
-	}
-
-	relation.Weight += weight
-	relation.SumX += weight * leftVal
-	relation.SumY += weight * rightVal
-	relation.SumXX += weight * leftVal * leftVal
-	relation.SumYY += weight * rightVal * rightVal
-	relation.SumXY += weight * leftVal * rightVal
 }
 
 func pairKey(leftID, rightID uint32) uint64 {
@@ -283,7 +246,7 @@ type pendingSample struct {
 }
 
 func (sample *pendingSample) add(value, quality float64) {
-	if sample == nil || quality <= 0 || !finite(value) || !finite(quality) {
+	if sample == nil || quality <= 0 {
 		return
 	}
 
@@ -299,8 +262,8 @@ func (sample pendingSample) value() (float64, float64, bool) {
 	}
 
 	value := sample.WeightedValue / sample.QualityWeight
-	quality := clamp(sample.QualitySum/float64(sample.Count), 0, 1)
-	return value, quality, finite(value)
+	quality := math.Min(sample.QualitySum/float64(sample.Count), 1)
+	return value, quality, true
 }
 
 /*
@@ -512,6 +475,26 @@ func (grid *Grid) CellCount() int {
 }
 
 /*
+CellsSnapshot returns a lock-free snapshot copy of all registered cells.
+*/
+func (grid *Grid) CellsSnapshot() []*Cell {
+	if grid == nil {
+		return nil
+	}
+
+	idToCellPtr := grid.idToCellLF.Load()
+
+	if idToCellPtr == nil {
+		return nil
+	}
+
+	cells := *idToCellPtr
+	out := make([]*Cell, len(cells))
+	copy(out, cells)
+	return out
+}
+
+/*
 Update folds one observation pass into the grid. Deformations are keyed by
 CellKey(metric) and carry each channel's movement within its own stream (see
 Stream.Deform), so a cell shared by several symbols never deforms across
@@ -691,7 +674,7 @@ func (grid *Grid) commitPassLocked(arrivals []metricArrival) {
 			right := pass[second]
 			weight := math.Sqrt(left.quality * right.quality)
 
-			if weight <= 0 || !finite(weight) {
+			if weight <= 0 {
 				continue
 			}
 
@@ -980,7 +963,7 @@ func (grid *Grid) affinityMatrixLocked(keys []string) *mat.SymDense {
 
 			weight := grid.pairs[idx].affinity()
 
-			if weight <= 0 || !finite(weight) {
+			if weight <= 0 {
 				continue
 			}
 
@@ -1114,11 +1097,6 @@ func spectralBalancedSplit(
 
 	for local, vertex := range vertices {
 		score := vectors.At(local, fiedlerColumn)
-
-		if !finite(score) {
-			return deterministicSplit(vertices, leftSize, keys)
-		}
-
 		ordered[local] = scoredVertex{vertex: vertex, score: score}
 	}
 
@@ -1212,12 +1190,64 @@ func (grid *Grid) commitPartitionsLocked(partitions map[string]uint8, partitione
 	regionCount := len(grid.RegionMembers)
 	grid.regionsFormed.Store(int32(regionCount))
 
-	for _, cell := range grid.Cells {
-		if cell == nil || cell.Region == 0 {
+	regionCells := make(map[uint8][]string, regionCount)
+
+	for key, region := range partitions {
+		if cell := grid.Cells[key]; cell != nil && region > 0 {
+			regionCells[region] = append(regionCells[region], key)
+		}
+	}
+
+	columns := DisplayColumns
+	rows := DisplayRows
+
+	if regionCount > 0 && regionCount < TargetRegionCount {
+		columns = int(math.Ceil(math.Sqrt(float64(regionCount))))
+		rows = int(math.Ceil(float64(regionCount) / float64(columns)))
+	}
+
+	tileW := 1.0 / float64(columns)
+	tileH := 1.0 / float64(rows)
+	innerW := tileW * 0.70
+	innerH := tileH * 0.70
+
+	for region, keys := range regionCells {
+		slices.Sort(keys)
+		rcX, rcY := regionCenter(region, regionCount)
+		count := len(keys)
+
+		if count == 0 {
 			continue
 		}
 
-		cell.X, cell.Y = regionCenter(cell.Region, regionCount)
+		subCols := int(math.Ceil(math.Sqrt(float64(count))))
+		subRows := int(math.Ceil(float64(count) / float64(subCols)))
+		stepX := 0.0
+		stepY := 0.0
+
+		if subCols > 1 {
+			stepX = innerW / float64(subCols-1)
+		}
+
+		if subRows > 1 {
+			stepY = innerH / float64(subRows-1)
+		}
+
+		startX := rcX - innerW/2.0
+		startY := rcY - innerH/2.0
+
+		for index, key := range keys {
+			cell := grid.Cells[key]
+
+			if cell == nil {
+				continue
+			}
+
+			col := index % subCols
+			row := index / subCols
+			cell.X = startX + float64(col)*stepX
+			cell.Y = startY + float64(row)*stepY
+		}
 	}
 
 	grid.observeDriftLocked(partitions, partitionedCount)
@@ -1517,22 +1547,6 @@ func deform(previous, current float64) float64 {
 	return movement
 }
 
-func finite(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
-}
-
-func clamp(v, minVal, maxVal float64) float64 {
-	if v < minVal {
-		return minVal
-	}
-
-	if v > maxVal {
-		return maxVal
-	}
-
-	return v
-}
-
 /*
 GridSnapshot captures complete grid state for persistence.
 */
@@ -1627,7 +1641,7 @@ func (grid *Grid) Snapshot() ([]byte, error) {
 	maps.Copy(snapshot.RegionMembers, grid.RegionMembers)
 	maps.Copy(snapshot.Pending, grid.pending)
 
-	encoded, err := json.Marshal(snapshot)
+	encoded, err := sonic.Marshal(snapshot)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -1647,7 +1661,7 @@ func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 
 	var snapshot GridSnapshot
 
-	if err := json.Unmarshal(encoded, &snapshot); err != nil {
+	if err := sonic.Unmarshal(encoded, &snapshot); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"grid: decode snapshot",

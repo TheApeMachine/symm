@@ -46,7 +46,6 @@ number of live orders rather than by the message rate.
 */
 type Solver struct {
 	*runtime.System
-	arena       *data.ArenaOwner
 	isAdvancing atomic.Bool
 	book        *broker.Book
 	dataset     *Dataset
@@ -85,9 +84,8 @@ var (
 	sellExcitationMetric = forcingInputs[1][1] + ":" + forcingInputs[1][2]
 )
 
-func NewSolver(ctx context.Context, arena *data.ArenaOwner, book *broker.Book) *Solver {
+func NewSolver(ctx context.Context, book *broker.Book) *Solver {
 	solver := &Solver{
-		arena:   arena,
 		book:    book,
 		dataset: NewDataset(),
 		loaded:  make(map[int64]string),
@@ -102,10 +100,6 @@ func NewSolver(ctx context.Context, arena *data.ArenaOwner, book *broker.Book) *
 	solver.System = runtime.NewSystem(ctx, "manifold", solver.physics)
 	solver.Transition(runtime.READY)
 	return solver
-}
-
-func (solver *Solver) Arena() *data.ArenaOwner {
-	return solver.arena
 }
 
 /*
@@ -245,10 +239,10 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 		))
 	}
 
-	out := solver.arena.NewMeasurement(
+	out := data.NewMeasurement(
 		prior.Epoch, symbol, solver.Name(), prior.SeqIdx, prior.Tick,
-		[]*data.Measurement{prior},
 	)
+	out.Peers(prior)
 	if prior.At.IsZero() {
 		solver.Error(errnie.Err(
 			errnie.Validation,

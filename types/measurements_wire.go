@@ -142,7 +142,7 @@ func measurementToWire(
 	row.At = measurement.At.UnixNano()
 	row.ObservedFrom = measurement.From.UnixNano()
 	row.Maturity = measurement.Maturity()
-	row.Snr = measurement.SNR()
+	row.Snr = measurement.Coherence()
 	row.SnrDefined = true
 	row.Metrics = metrics
 	row.Metadata = metadata

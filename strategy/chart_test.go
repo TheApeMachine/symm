@@ -27,7 +27,7 @@ func storedTrade(seqIdx, tick int64, price string, at time.Time) func(*tables.Wr
 		trade.At = at
 		trade.From = at
 		trade.Write(data.NewExactMetric("price", exact, data.UnitPrice, data.TimescaleTick))
-		writer.Add("measurements", data.Publication{Measurement: trade})
+		writer.Add("measurements", trade)
 	}
 }
 
@@ -43,7 +43,7 @@ func pricedRow(source string, tick int64, price float64) func(*tables.Writer, in
 		measurement.Write(data.NewExactMetric(
 			"price", decimal.NewFromFloat64(price), data.UnitPrice, data.TimescaleTick,
 		))
-		writer.Add("measurements", data.Publication{Measurement: measurement})
+		writer.Add("measurements", measurement)
 	}
 }
 

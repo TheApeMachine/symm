@@ -72,11 +72,10 @@ func touch(books *broker.Book, at time.Time, bidID string, bid, bidQty float64, 
 func TestPumpDumpSignal(t *testing.T) {
 	Convey("Volume-clocked activity instrument measures tape, touch, and midpoint response", t, func() {
 		ctx := context.Background()
-		arena := data.NewArenaOwner("pumpdump", 4096)
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 		books := broker.NewBook(ctx, spot.NewNormalizer())
 
-		instrument := pumpdump.NewSignal(ctx, arena, books)
+		instrument := pumpdump.NewSignal(ctx, books)
 		instrument.Transition(nmruntime.READY)
 
 		Convey("Volume clock aggregates exact trade bars, durations, and volume/notional rates", func() {
@@ -260,7 +259,7 @@ func TestPumpDumpSignal(t *testing.T) {
 	})
 
 	Convey("A pumpdump signal constructed without a book manager fails with an error", t, func() {
-		instrument := pumpdump.NewSignal(context.Background(), data.NewArenaOwner("pumpdump", 16), nil)
+		instrument := pumpdump.NewSignal(context.Background(), nil)
 		So(instrument.Error(), ShouldNotBeNil)
 		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
 	})

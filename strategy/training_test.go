@@ -95,7 +95,7 @@ func trainingSetup(
 	storeTee.Transition(runtime.READY)
 
 	training := NewTraining(
-		ctx, data.NewArenaOwner("training", 4096), price, broker.NewDesk(ctx, nil, price), catalog, storeTee, 1000,
+		ctx, price, broker.NewDesk(ctx, nil, price), catalog, storeTee, 1000,
 	)
 
 	// Develop the grid on the run's sensory tape through the live path,
@@ -166,15 +166,24 @@ the idle stretch is every cell's noise floor. On its active ticks the value
 rises with the tick, so each active move stands far above that floor.
 */
 func sensor(writer *tables.Writer, epoch int64, source string, scale float64, phase int64, active ...int64) {
-	owner := data.NewArenaOwner(source, 4096)
 	level := func(tick int64) float64 { return scale * (1.5 + float64(tick)*0.1) }
 
+	var prior *data.Measurement
+
 	write := func(tick int64, value float64) {
-		measurement := owner.NewMeasurement(epoch, "BTC/USD", source, tick*10, tick, nil)
+		var measurement *data.Measurement
+		if prior == nil {
+			measurement = data.NewMeasurement(epoch, "BTC/USD", source, tick*10, tick)
+		} else {
+			measurement = prior.Next(source)
+			measurement.SeqIdx = tick * 10
+			measurement.Tick = tick
+		}
 		measurement.At = time.Now().UTC()
 		measurement.From = measurement.At
 		measurement.Write(data.NewMetric(source+"_value", value, data.UnitCount, data.TimescaleTick))
-		writer.Add("measurements", data.Publication{Measurement: measurement})
+		prior = measurement
+		writer.Add("measurements", measurement)
 	}
 
 	for tick := int64(1); tick < active[0]; tick++ {
@@ -264,7 +273,7 @@ func trades(prices map[int64]string) func(*tables.Writer, int64) {
 			trade.At = time.Now().UTC()
 			trade.From = trade.At
 			trade.Write(data.NewExactMetric("price", exact, data.UnitPrice, data.TimescaleTick))
-			writer.Add("measurements", data.Publication{Measurement: trade})
+			writer.Add("measurements", trade)
 		}
 	}
 }
@@ -289,7 +298,7 @@ func detectionRowAt(
 			data.NewExactMetric("b_price", decimal.NewFromFloat64(bPrice), data.UnitPrice, data.TimescaleEvent),
 			data.NewExactMetric("c_price", decimal.NewFromFloat64(cPrice), data.UnitPrice, data.TimescaleEvent),
 		)
-		writer.Add("measurements", data.Publication{Measurement: measurement})
+		writer.Add("measurements", measurement)
 	}
 }
 
@@ -356,7 +365,7 @@ func TestTraining_Train(t *testing.T) {
 				priceMetric := data.NewMetric("price", exact.Float64(), data.UnitPrice, data.TimescaleTick)
 				priceMetric.Exact = exact
 				trade.Write(priceMetric)
-				writer.Add("measurements", data.Publication{Measurement: trade})
+				writer.Add("measurements", trade)
 			}
 		})
 
@@ -400,7 +409,7 @@ func TestTraining_Train(t *testing.T) {
 				priceMetric := data.NewMetric("price", exact.Float64(), data.UnitPrice, data.TimescaleTick)
 				priceMetric.Exact = exact
 				trade.Write(priceMetric)
-				writer.Add("measurements", data.Publication{Measurement: trade})
+				writer.Add("measurements", trade)
 			}
 		})
 
@@ -425,7 +434,7 @@ func TestTraining_Step(t *testing.T) {
 		storeTee.Transition(runtime.READY)
 
 		training := NewTraining(
-			ctx, data.NewArenaOwner("training", 4096), price, desk, catalog, storeTee, 1000,
+			ctx, price, desk, catalog, storeTee, 1000,
 		)
 
 		testUITee := hindsight.NewStoreTee(ctx, "uiTee")

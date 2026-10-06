@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -45,7 +46,7 @@ type Measurement struct {
 	Timestamp  int64          // System nanosecond timestamp (UTC).
 	At         time.Time      // Venue timestamp (UTC).
 	From       time.Time      // Window from as venue timestamp (UTC).
-	snr        float64        // Signal-to-noise ratio (Statistical Mean-to-Standard Deviation).
+	coherence  float64        // Cross-metric coherence: Jain's fairness index of |z_i| in [0, 1].
 	maturity   float64        // Maturity of the Measurement.
 	samples    int64          // Observations accumulated in the current regime.
 	energy     float64        // Total metric excitation energy (sum of z^2).
@@ -54,10 +55,6 @@ type Measurement struct {
 	metrics    []*MetricEntry // Metrics owned by this Measurement.
 	metadata   []*StringEntry // Metadata owned by this Measurement.
 	peers      []*Measurement // Peers, used to group related Measurements.
-	owner      *ArenaOwner    // Producer arena; enables prior capture on finalize.
-	prior      *priorSnapshot // Prior pinned at alloc; seeds metric Welford state.
-	resetEpoch uint64         // ArenaOwner reset epoch at alloc; gates prior capture.
-	restored   bool           // SNR and Maturity were carried from storage (Restore).
 }
 
 /*
@@ -84,6 +81,43 @@ func NewMeasurement(
 }
 
 /*
+Next instantiates a new Measurement, using the current instance
+as its prior, copying over the center and scale of all metrics.
+*/
+func (measurement *Measurement) Next(source string, values map[string]float64) *Measurement {
+	next := NewMeasurement(
+		measurement.Epoch,
+		measurement.Label,
+		source,
+		system.SeqIdx.Add(1),
+		system.Tick.Load(),
+		measurement.metadata...,
+	)
+
+	next.At = measurement.At
+	next.From = measurement.From
+	next.Timestamp = time.Now().UnixNano()
+	next.samples = measurement.samples
+	next.prediction = measurement.prediction
+	next.peers = append(next.peers, measurement.peers...)
+
+	for entry := range measurement.Read() {
+		out := *entry.Metric
+		out.Raw = values[entry.Key]
+		out.Exact = nil
+		out.Normalized = 0
+		out.Standardized = 0
+
+		next.metrics = append(next.metrics, &MetricEntry{
+			Key:    entry.Key,
+			Metric: &out,
+		})
+	}
+
+	return next
+}
+
+/*
 Read returns the metric entry for the given key.
 In compliance with the WORM model, a Measurement can not be read
 before it is finalized.
@@ -91,17 +125,16 @@ before it is finalized.
 func (measurement *Measurement) Read(keys ...string) iter.Seq[*MetricEntry] {
 	if !measurement.locked() {
 		return func(yield func(*MetricEntry) bool) {
-			// Forbidden is returned, not logged: callers probing peers that
-			// are still being written must see the error without a log flood.
-			if !yield(&MetricEntry{
-				Err: errors.Join(measurement.err, errnie.Err(
-					errnie.Forbidden,
-					"[data.measurement] not finalized",
-					nil,
-				)),
-			}) {
-				return
-			}
+			err := errnie.Error(errnie.Err(
+				errnie.Forbidden,
+				"[data.measurement] not finalized",
+				nil,
+			))
+			measurement.err = errors.Join(measurement.err, err)
+
+			yield(&MetricEntry{
+				Err: err,
+			})
 		}
 	}
 
@@ -147,6 +180,22 @@ func (measurement *Measurement) Write(
 	}
 
 	for _, metric := range metrics {
+		var found *MetricEntry
+		for _, entry := range measurement.metrics {
+			if entry != nil && entry.Key == metric.Label {
+				found = entry
+				break
+			}
+		}
+
+		if found != nil {
+			found.Metric.Raw = metric.Raw
+			found.Metric.Exact = metric.Exact
+			found.Metric.unit = metric.unit
+			found.Metric.timescale = metric.timescale
+			continue
+		}
+
 		measurement.metrics = append(measurement.metrics, &MetricEntry{
 			Key:    metric.Label,
 			Metric: metric,
@@ -161,7 +210,21 @@ func (measurement *Measurement) Write(
 Meta returns the metadata for a key.
 */
 func (measurement *Measurement) Meta(key string) string {
+	if !measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		)))
+
+		return ""
+	}
+
 	for _, entry := range measurement.metadata {
+		if entry == nil {
+			continue
+		}
+
 		if entry.Key == key {
 			return entry.Value
 		}
@@ -173,9 +236,19 @@ func (measurement *Measurement) Meta(key string) string {
 /*
 Peers returns the peers of the Measurement.
 */
-func (measurement *Measurement) Peers() []*Measurement {
-	if !measurement.locked() {
+func (measurement *Measurement) Peers(peers ...*Measurement) []*Measurement {
+	if len(peers) == 0 && !measurement.locked() {
+		measurement.err = errors.Join(errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		)))
+
 		return nil
+	}
+
+	if len(peers) > 0 {
+		measurement.peers = append(measurement.peers, peers...)
 	}
 
 	return measurement.peers
@@ -199,21 +272,6 @@ func (measurement *Measurement) finalize() *Measurement {
 	// Measurement statistics agree on n and never divide by zero.
 	measurement.samples++
 
-	// Seed metric Welford state from the prior pinned at alloc (same
-	// snapshot samples/prediction came from) before this observation
-	// updates center/scale.
-	if measurement.prior != nil {
-		for _, entry := range measurement.metrics {
-			if entry == nil || entry.Metric == nil {
-				continue
-			}
-			if seed, ok := measurement.prior.metric(entry.Metric.Label); ok {
-				entry.Metric.center = seed.center
-				entry.Metric.scale = seed.scale
-			}
-		}
-	}
-
 	for _, metric := range measurement.metrics {
 		measurement.err = errors.Join(
 			measurement.err,
@@ -222,37 +280,29 @@ func (measurement *Measurement) finalize() *Measurement {
 	}
 
 	measurement.Timestamp = time.Now().UnixNano()
-
-	// A restored Measurement keeps the SNR and Maturity of the regime it
-	// was produced in; a replay has observed one sample of it, not that
-	// regime, and would re-derive an immature, unrelated confidence.
-	if !measurement.restored {
-		measurement.setSNR()
-		measurement.setMaturity()
-	}
+	measurement.setCoherence()
+	measurement.setMaturity()
 
 	// Fully finalize the Measurement by writing its ID.
-	measurement.ID = uuid.New().ID()
-	measurement.valid()
-
-	// Hold transferable stats on the ArenaOwner until the next
-	// NewMeasurement for this Label copies them, replacing this snapshot.
-	if measurement.owner != nil {
-		measurement.owner.capturePrior(measurement)
-	}
-
-	return measurement
+	return measurement.valid()
 }
 
 /*
-SNR returns the signal-to-noise ratio for the Measurement.
+Coherence returns the cross-metric coherence (Jain's fairness index of
+standardized magnitudes) for the Measurement.
 */
-func (measurement *Measurement) SNR() float64 {
+func (measurement *Measurement) Coherence() float64 {
 	if !measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		)))
+
 		return 0
 	}
 
-	return measurement.snr
+	return measurement.coherence
 }
 
 /*
@@ -260,6 +310,12 @@ Maturity returns the maturity for the Measurement.
 */
 func (measurement *Measurement) Maturity() float64 {
 	if !measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		)))
+
 		return 0
 	}
 
@@ -267,48 +323,23 @@ func (measurement *Measurement) Maturity() float64 {
 }
 
 /*
-Confidence is the trust every Metric of the Measurement shares. The Metrics
-of one Measurement observe different expressions of the same phenomenon and
-are subject to the same governing forces, so the confidence is a property of
-the observation, not of any one Metric: losing it in one Metric lowers SNR or
-Maturity, and so dampens all of its siblings.
-
-It is Maturity times the Wiener gain of the observation, SNR^2 / (1 + SNR^2):
-the share of its power that is signal rather than noise, which is the
-minimum-mean-square-error attenuation of a noisy observation. Both factors
-lie in [0, 1], so a Measurement can only be trusted less than its Metrics
-read, never more.
+Confidence is temporal maturity times cross-metric coherence:
+how unsurprising the observation's energy is relative to the regime,
+scaled by how evenly that energy is distributed across its metrics.
+Both factors lie in [0, 1].
 */
 func (measurement *Measurement) Confidence() float64 {
 	if !measurement.locked() {
-		return 0
-	}
-
-	power := measurement.snr * measurement.snr
-	return measurement.maturity * power / (core.Unit + power)
-}
-
-/*
-Restore carries the SNR and Maturity a stored Measurement finalized with into
-its replay. Write then keeps them instead of re-deriving them, because both
-belong to the regime the Measurement was produced in, which a replay never
-observed. It must be called before Write.
-*/
-func (measurement *Measurement) Restore(snr, maturity float64) *Measurement {
-	if measurement.locked() {
 		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
 			errnie.Forbidden,
-			"[data.measurement] locked",
+			"[data.measurement] not finalized",
 			nil,
 		)))
 
-		return measurement
+		return 0
 	}
 
-	measurement.snr = snr
-	measurement.maturity = maturity
-	measurement.restored = true
-	return measurement
+	return measurement.maturity * measurement.coherence
 }
 
 /*
@@ -319,46 +350,60 @@ func (measurement *Measurement) Error() error {
 }
 
 /*
-setSNR calculates the Signal-to-Noise ratio for the Measurement.
-Each Metric is a stand-alone value, but the Metrics within a Measurement are not
-truly independent. They observe different expressions of the same underlying
-phenomenon and are therefore subject to the same governing forces. This creates
-an implicit coupling between them: degradation or loss of confidence in one
-Metric is evidence that the shared observation itself may be deteriorating, and
-should therefore reduce confidence in the other Metrics within that Measurement as well.
+setCoherence calculates cross-metric coherence using Jain's fairness index
+on the absolute standardized metric magnitudes:
+
+	coherence = (\sum |z_i|)^2 / (N * \sum z_i^2)
+
+It measures how evenly the Measurement's standardized activity is distributed
+across its Metrics. If all Metrics participate equally, coherence is 1.0. If
+only one Metric carries the observation, coherence is 1/N. If all Metrics are
+quiescent (zero energy), coherence is 0.
 */
-func (measurement *Measurement) setSNR() *Measurement {
+func (measurement *Measurement) setCoherence() *Measurement {
 	if measurement.locked() {
 		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
 			errnie.Forbidden,
 			"[data.measurement] locked",
 			nil,
 		)))
+
+		return measurement
 	}
 
-	var mean, m2, count float64
+	count := float64(len(measurement.metrics))
+
+	if count == 0 {
+		measurement.coherence = 0
+		return measurement
+	}
+
+	var sumAbs float64
+	measurement.energy = 0
 
 	for _, entry := range measurement.metrics {
-		x := math.Abs(entry.Metric.Standardized)
-		count++
-		delta := x - mean
-		mean += delta / count
-		m2 += delta * (x - mean)
+		if entry == nil || entry.Metric == nil {
+			continue
+		}
+
+		z := entry.Metric.Standardized
+		sumAbs += math.Abs(z)
+		measurement.energy += z * z
 	}
 
-	if count > 0 && m2 > 0 {
-		measurement.snr = mean / math.Sqrt(m2/count)
+	if count > 0 && measurement.energy > 0 {
+		measurement.coherence = (sumAbs * sumAbs) / (count * measurement.energy)
 	} else {
-		measurement.snr = mean
+		measurement.coherence = 0
 	}
 
-	return measurement.valid("snr")
+	return measurement
 }
 
 /*
-setMaturityAndSNR calculates both SNR and Maturity directly from the total
-standardized metric energy (sum of z^2) using online Minimum Description Length (MDL).
-Runs in O(metrics) time with zero heap allocations.
+setMaturity calculates temporal maturity directly against the prior prediction
+of total standardized metric energy using online Minimum Description Length (MDL).
+Runs in O(1) time using the energy computed by setCoherence.
 */
 func (measurement *Measurement) setMaturity() *Measurement {
 	if measurement.locked() {
@@ -371,30 +416,17 @@ func (measurement *Measurement) setMaturity() *Measurement {
 		return measurement
 	}
 
-	measurement.energy = 0
-
-	for _, entry := range measurement.metrics {
-		measurement.energy += entry.Metric.Standardized * entry.Metric.Standardized
-	}
-
 	n := float64(measurement.samples)
 
 	// 1. Calculate maturity against PRIOR prediction (surprise)
-	measurement.maturity = math.Max(
-		0.0, math.Min(
-			core.Unit,
-			(core.Unit-core.Unit/n)*(core.Unit/(core.Unit+math.Abs(
-				measurement.energy-measurement.prediction,
-			))),
-		),
-	)
+	measurement.maturity = (core.Unit - core.Unit/n) / (core.Unit + math.Abs(
+		measurement.energy-measurement.prediction,
+	))
 
 	// 2. Update prediction for next time
 	measurement.prediction += (core.Unit / n) * (measurement.energy - measurement.prediction)
 
-	return measurement.valid(
-		"maturity", "energy", "samples", "prediction",
-	)
+	return measurement
 }
 
 /*
@@ -408,50 +440,8 @@ func (measurement *Measurement) locked() bool {
 /*
 valid checks if the Measurement is valid.
 */
-func (measurement *Measurement) valid(fields ...string) *Measurement {
-	if len(fields) > 0 {
-		mapped := make(map[string]any)
-
-		for _, field := range fields {
-			switch field {
-			case "ID":
-				mapped[field] = measurement.ID
-			case "epoch":
-				mapped[field] = measurement.Epoch
-			case "label":
-				mapped[field] = measurement.Label
-			case "source":
-				mapped[field] = measurement.Source
-			case "seqIdx":
-				mapped[field] = measurement.SeqIdx
-			case "tick":
-				mapped[field] = measurement.Tick
-			case "timestamp":
-				mapped[field] = measurement.Timestamp
-			case "at":
-				mapped[field] = measurement.At
-			case "from":
-				mapped[field] = measurement.From
-			case "maturity":
-				mapped[field] = measurement.maturity
-			case "snr":
-				mapped[field] = measurement.snr
-			case "err":
-				mapped[field] = measurement.err
-			case "metrics":
-				mapped[field] = measurement.metrics
-			case "metadata":
-				mapped[field] = measurement.metadata
-			case "peers":
-				mapped[field] = measurement.peers
-			}
-		}
-
-		measurement.err = errors.Join(
-			measurement.err,
-			errnie.Error(errnie.Require(mapped)),
-		)
-
+func (measurement *Measurement) valid() *Measurement {
+	if measurement.locked() {
 		return measurement
 	}
 
@@ -464,6 +454,8 @@ func (measurement *Measurement) valid(fields ...string) *Measurement {
 	// metrics, metadata and peers are optional unless requested explicitly
 	// (valid("metrics"), ...). A runtime join carries only Peers, and an
 	// arena-allocated Measurement starts with a nil metrics slice.
+	measurement.ID = uuid.New().ID()
+
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"ID":        measurement.ID,
 		"epoch":     measurement.Epoch,
@@ -475,7 +467,7 @@ func (measurement *Measurement) valid(fields ...string) *Measurement {
 		"at":        measurement.At,
 		"from":      measurement.From,
 		"maturity":  measurement.maturity,
-		"snr":       measurement.snr,
+		"coherence": measurement.coherence,
 	})); err != nil {
 		measurement.err = errors.Join(measurement.err, err)
 	}

@@ -38,13 +38,13 @@ func (catalog *Catalog) Drain(
 				continue
 			}
 
-			pub := data.To[data.Publication](ptr)
+			measurement := data.To[*data.Measurement](ptr)
 
-			if pub.Measurement == nil {
+			if measurement.Error() != nil {
 				continue
 			}
 
-			writer.Add(Measurements, pub)
+			writer.Add(Measurements, measurement)
 		}
 
 		return nil

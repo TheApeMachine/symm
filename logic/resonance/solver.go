@@ -63,7 +63,6 @@ preventing variance collapse from repeated identical pseudo-observations.
 */
 type Solver struct {
 	*runtime.System
-	arena         *data.ArenaOwner
 	detectors     *sync.Map
 	standardizers *sync.Map
 	references    *sync.Map
@@ -81,12 +80,10 @@ NewSolver returns a feature detection solver using the configured pace.
 */
 func NewSolver(
 	ctx context.Context,
-	arena *data.ArenaOwner,
 	pace float64,
 ) *Solver {
 	solver := &Solver{
 		System:        runtime.NewSystem(ctx, "resonance"),
-		arena:         arena,
 		detectors:     &sync.Map{},
 		standardizers: &sync.Map{},
 		references:    &sync.Map{},
@@ -96,10 +93,6 @@ func NewSolver(
 
 	solver.Transition(runtime.READY)
 	return solver
-}
-
-func (solver *Solver) Arena() *data.ArenaOwner {
-	return solver.arena
 }
 
 /*
@@ -211,15 +204,14 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	measurement := solver.arena.NewMeasurement(
-		prior.Epoch, symbol, solver.Name(), prior.SeqIdx, prior.Tick,
-		[]*data.Measurement{prior},
-		metadata...,
+	measurement := data.NewMeasurement(
+		prior.Epoch, prior.Label, solver.Name(), prior.SeqIdx, prior.Tick, metadata...,
 	)
-	measurement.At = at
+	measurement.Peers(prior)
+	measurement.At = prior.At
 	measurement.From = prior.From
 	if measurement.From.IsZero() {
-		measurement.From = at // From defaults to a point window [At, At].
+		measurement.From = measurement.At
 	}
 
 	return measurement.Write(metrics...)

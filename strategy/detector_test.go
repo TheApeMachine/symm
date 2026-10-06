@@ -143,8 +143,7 @@ func popMeasurement(storeTee *hindsight.StoreTee) *data.Measurement {
 	if ptr == nil {
 		return nil
 	}
-	pub := *(*data.Publication)(ptr)
-	return pub.Measurement
+	return data.To[*data.Measurement](ptr)
 }
 
 /*

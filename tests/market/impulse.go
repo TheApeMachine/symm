@@ -16,7 +16,6 @@ owns its publications, as persisted workspace output does.
 func ImpulseTape(symbol string, legs int) []*data.Measurement {
 	tape := NewOpportunityTape(symbol, time.Unix(1700000000, 0), legs)
 	frames := make([]*data.Measurement, len(tape.Steps))
-	arena := data.NewArenaOwner("impulse", 4096)
 
 	for index, step := range tape.Steps {
 		seqIdx := int64(index + 1)
@@ -60,13 +59,12 @@ func ImpulseTape(symbol string, legs int) []*data.Measurement {
 				metrics = append(metrics, qtyMetric)
 			}
 
-			observation := arena.NewMeasurement(
+			observation := data.NewMeasurement(
 				1,
 				symbol,
 				name,
 				seqIdx,
 				seqIdx,
-				nil,
 				metadata...,
 			)
 			observation.At = step.EventTime
@@ -76,14 +74,14 @@ func ImpulseTape(symbol string, legs int) []*data.Measurement {
 			peers = append(peers, observation)
 		}
 
-		frame := arena.NewMeasurement(
+		frame := data.NewMeasurement(
 			1,
 			symbol,
 			"frame",
 			seqIdx,
 			seqIdx,
-			peers,
 		)
+		frame.Peers(peers...)
 		frame.At = step.EventTime
 		frame.From = step.EventTime
 		frame.Write()

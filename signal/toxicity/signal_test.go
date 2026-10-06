@@ -72,11 +72,10 @@ func touch(books *broker.Book, at time.Time, bidID string, bid, bidQty float64, 
 func TestToxicitySignal(t *testing.T) {
 	Convey("Toxicity instrument calculates exact touch dispositions and trade fill matching", t, func() {
 		ctx := context.Background()
-		arena := data.NewArenaOwner("toxicity", 4096)
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 		books := broker.NewBook(ctx, spot.NewNormalizer())
 
-		instrument := toxicity.NewSignal(ctx, arena, books)
+		instrument := toxicity.NewSignal(ctx, books)
 		instrument.Transition(nmruntime.READY)
 
 		Convey("Trade matching at the touch calculates exact fill quantity, fraction, and fill rate", func() {
@@ -270,7 +269,7 @@ func TestToxicitySignal(t *testing.T) {
 	})
 
 	Convey("A toxicity signal constructed without a book manager fails with an error", t, func() {
-		instrument := toxicity.NewSignal(context.Background(), data.NewArenaOwner("toxicity", 16), nil)
+		instrument := toxicity.NewSignal(context.Background(), nil)
 		So(instrument.Error(), ShouldNotBeNil)
 		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
 	})

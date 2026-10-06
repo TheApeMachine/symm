@@ -45,11 +45,10 @@ func metricValue(measurement *data.Measurement, label string) float64 {
 func TestMorphologyLevel3Metrics(t *testing.T) {
 	Convey("Morphology instrument computes principled distribution geometry, concentration, and entropy", t, func() {
 		ctx := context.Background()
-		arena := data.NewArenaOwner("morphology", 4096)
 		normalizer := spot.NewNormalizer()
 		books := broker.NewBook(ctx, normalizer)
 
-		instrument := morphology.NewSignal(ctx, arena, books)
+		instrument := morphology.NewSignal(ctx, books)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -195,7 +194,7 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 
 func TestMorphologySignalRequiresBookManager(t *testing.T) {
 	Convey("A morphology signal constructed without a book manager fails with an error", t, func() {
-		instrument := morphology.NewSignal(context.Background(), data.NewArenaOwner("morphology", 16), nil)
+		instrument := morphology.NewSignal(context.Background(), nil)
 		So(instrument.Error(), ShouldNotBeNil)
 		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
 	})

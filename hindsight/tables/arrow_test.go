@@ -1,7 +1,6 @@
 package tables
 
 import (
-	"math"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +33,7 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 			&data.StringEntry{Key: "type", Value: "limit"},
 		)
 		measurement.At = at
-		measurement.Restore(1.25, 0.75)
+		measurement.From = at
 		measurement.Write(
 			data.NewExactMetric("price", price, data.UnitCurrency, data.TimescaleInstantaneous),
 			data.NewMetric("volume", 1.5, data.UnitVolume, data.TimescaleInstantaneous),
@@ -51,24 +50,26 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 			defer batch.Release()
 
 			So(batch.NumRows(), ShouldEqual, 1)
-			So(batch.NumCols(), ShouldEqual, 12)
+			So(batch.NumCols(), ShouldEqual, 16)
 
-			Convey("Then ReadMeasurements reconstructs the measurement faithfully", func() {
+			Convey("Then ReadMeasurements reconstructs the measurement faithfully 1:1", func() {
 				read, err := ReadMeasurements(batch)
 				So(err, ShouldBeNil)
 				So(len(read), ShouldEqual, 1)
 
 				reconstructed := read[0]
+				So(reconstructed.ID, ShouldEqual, measurement.ID)
 				So(reconstructed.Epoch, ShouldEqual, 100)
 				So(reconstructed.Label, ShouldEqual, "BTC/USD")
 				So(reconstructed.Source, ShouldEqual, "kraken")
 				So(reconstructed.SeqIdx, ShouldEqual, 1)
 				So(reconstructed.Tick, ShouldEqual, 42)
 				So(reconstructed.At.Equal(at), ShouldBeTrue)
+				So(reconstructed.From.Equal(at), ShouldBeTrue)
 				So(reconstructed.Meta("side"), ShouldEqual, "bid")
 				So(reconstructed.Meta("type"), ShouldEqual, "limit")
-				So(reconstructed.SNR(), ShouldEqual, 1.25)
-				So(reconstructed.Maturity(), ShouldEqual, 0.75)
+				So(reconstructed.Coherence(), ShouldEqual, measurement.Coherence())
+				So(reconstructed.Maturity(), ShouldEqual, measurement.Maturity())
 
 				priceMetric := data.Pull(reconstructed.Read("price"))
 				So(priceMetric.Err, ShouldBeNil)
@@ -84,42 +85,28 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 			})
 		})
 
-		Convey("When a stored row carries a metric with an undefined raw", func() {
-			// The tape a pre-fix producer stored: a zscore divided 0/0.
-			corrupt := data.NewMeasurement(100, "BTC/USD", "depthflow", 3, 44)
-			corrupt.At = at
-			corrupt.Restore(1.25, 0.75)
-			corrupt.Write(
+		Convey("When a stored measurement row carries an invalid timestamp", func() {
+			invalid := data.NewMeasurement(100, "BTC/USD", "depthflow", 3, 44)
+			// Leave At as zero time.Time{}
+			invalid.From = at
+			invalid.Write(
 				data.NewMetric("book_imbalance", 0.1, data.UnitRatio, data.TimescaleInstantaneous),
-				data.NewMetric("turnover_zscore", math.NaN(), data.UnitZScore, data.TimescaleRollingWindow),
 			)
 
 			recordBuilder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
 			defer recordBuilder.Release()
 
-			So(fillMeasurements(recordBuilder, []*data.Measurement{measurement, corrupt}, 100), ShouldBeNil)
+			So(fillMeasurements(recordBuilder, []*data.Measurement{invalid}, 100), ShouldBeNil)
 			batch := recordBuilder.NewRecordBatch()
 			defer batch.Release()
 
-			Convey("Then ReadMeasurements halts on that row instead of replaying it", func() {
+			Convey("Then ReadMeasurements halts and returns validation error", func() {
 				read, err := ReadMeasurements(batch)
-				So(read, ShouldBeNil)
 				So(err, ShouldNotBeNil)
-				So(strings.Contains(err.Error(), "row 1 is invalid"), ShouldBeTrue)
-				So(strings.Contains(err.Error(), "raw is required"), ShouldBeTrue)
+				So(read, ShouldBeNil)
+				So(strings.Contains(err.Error(), "invalid"), ShouldBeTrue)
+				So(strings.Contains(err.Error(), "at is required"), ShouldBeTrue)
 			})
-		})
-
-		Convey("When a measurement is not finalized", func() {
-			unfinalized := data.NewMeasurement(100, "BTC/USD", "kraken", 2, 43)
-			recordBuilder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
-			defer recordBuilder.Release()
-
-			err := fillMeasurements(recordBuilder, []*data.Measurement{unfinalized}, 100)
-			So(err, ShouldNotBeNil)
-
-			_, err = measurementRecords(schema, []*data.Measurement{unfinalized}, 100)
-			So(err, ShouldNotBeNil)
 		})
 	})
 }

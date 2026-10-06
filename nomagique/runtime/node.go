@@ -15,28 +15,19 @@ type Node interface {
 }
 
 /*
-ArenaAware is implemented by nodes that own an ArenaOwner.
-*/
-type ArenaAware interface {
-	Arena() *data.ArenaOwner
-}
-
-/*
 Consumer binds one Node to a Workspace sequence-safe ring.
 It holds published WORM pointers for the ring capacity.
 For each sequence:
- 1. Advances the node's ArenaOwner to rotate generations at ring boundaries.
- 2. Invokes node.Step(prior).
- 3. Enforces strict Source identity assertion.
- 4. Stores the exact WORM pointer in published.
- 5. Pushes the exact pointer with its ArenaGeneration token to async Tees.
+ 1. Invokes node.Step(prior).
+ 2. Enforces strict Source identity assertion.
+ 3. Stores the exact WORM pointer in published.
+ 4. Pushes the exact pointer to async Tees.
 
 No StageInput. No reusable published measurement. No reset. No clone. No detached snapshot.
 */
 type Consumer struct {
 	node      Node
 	source    string
-	arena     *data.ArenaOwner
 	published []*data.Measurement
 	mask      int64
 	capacity  int
@@ -61,44 +52,18 @@ func NewConsumer(
 		consumer.source = sys.Name()
 	}
 
-	if aa, ok := node.(ArenaAware); ok {
-		consumer.arena = aa.Arena()
-	}
-
-	if consumer.arena == nil {
-		consumer.arena = data.NewArenaOwner("consumer", capacity)
-	}
-
-	if consumer.arena != nil {
-		consumer.arena.SetWindow(capacity)
-	}
-
 	return consumer
 }
 
 func (consumer *Consumer) Step(prior *data.Measurement, seq int64) *data.Measurement {
 	slot := seq & consumer.mask
 
-	if consumer.arena != nil {
-		consumer.arena.Advance(seq)
-	}
-
 	consumer.published[slot] = consumer.node.Step(prior)
 
 	if len(consumer.tees) > 0 {
-		var gen *data.ArenaGeneration
-		if consumer.arena != nil {
-			gen = consumer.arena.CurrentGeneration()
-		}
-
-		pub := data.Publication{
-			Measurement: consumer.published[slot],
-			Generation:  gen,
-		}
-
 		for _, tee := range consumer.tees {
 			if tee != nil {
-				tee.Push(pub)
+				tee.Push(consumer.published[slot])
 			}
 		}
 	}

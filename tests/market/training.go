@@ -24,7 +24,6 @@ func TrainingPrice(ctx context.Context) *broker.Price {
 func TrainingTape(legs int) []*data.Measurement {
 	base := ImpulseTape("BTC/USD", legs)
 	var frames []*data.Measurement
-	arena := data.NewArenaOwner("training", 4096)
 
 	for _, source := range base {
 		sourcePeers := source.Peers()
@@ -56,13 +55,12 @@ func TrainingTape(legs int) []*data.Measurement {
 			qtyMetric := data.NewExactMetric("qty", qty.Exact, data.UnitQuantity, data.TimescaleInstantaneous)
 			qtyMetric.Standardized = qty.Standardized
 
-			trade := arena.NewMeasurement(
+			trade := data.NewMeasurement(
 				1,
 				"BTC/USD",
 				"spot:trade",
 				sequence,
 				sequence,
-				nil,
 				&data.StringEntry{Key: "type", Value: "trade"},
 				&data.StringEntry{Key: "side", Value: side},
 			)
@@ -86,13 +84,12 @@ func TrainingTape(legs int) []*data.Measurement {
 					peerMetrics = append(peerMetrics, metric)
 				}
 
-				extraPeer := arena.NewMeasurement(
+				extraPeer := data.NewMeasurement(
 					1,
 					"BTC/USD",
 					oldPeer.Source,
 					sequence,
 					sequence,
-					nil,
 				)
 				extraPeer.At = source.At
 				extraPeer.From = source.From
@@ -114,15 +111,15 @@ func TrainingTape(legs int) []*data.Measurement {
 			impulseVer := data.NewMetric("impulse_version", grid.FormatVersion, data.UnitDimensionless, data.TimescaleInstantaneous)
 			impulseVer.Standardized = grid.FormatVersion
 
-			frame := arena.NewMeasurement(
+			frame := data.NewMeasurement(
 				1,
 				"BTC/USD",
 				"training",
 				sequence,
 				sequence,
-				peers,
 				frameMeta...,
 			)
+			frame.Peers(peers...)
 			frame.At = source.At
 			frame.From = source.From
 			frame.Write(prevInput, inputCount, impulseVer)

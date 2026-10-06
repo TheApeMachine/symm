@@ -129,7 +129,7 @@ func TestPaper_SettleRefines(t *testing.T) {
 		storeTee.Transition(runtime.READY)
 
 		training := NewTraining(
-			ctx, data.NewArenaOwner("training", 4096), price, desk, catalog, storeTee, 1000,
+			ctx, price, desk, catalog, storeTee, 1000,
 		)
 		training.Transition(runtime.READY)
 
@@ -207,7 +207,7 @@ func TestPaper_WaitNeverEnters(t *testing.T) {
 		storeTee.Transition(runtime.READY)
 
 		training := NewTraining(
-			ctx, data.NewArenaOwner("training", 4096), price, desk, tablestest.New(t), storeTee, 1000,
+			ctx, price, desk, tablestest.New(t), storeTee, 1000,
 		)
 
 		history := store.NewStream()
@@ -222,12 +222,8 @@ func TestPaper_WaitNeverEnters(t *testing.T) {
 		training.impulse.grid.Settle()
 		training.Transition(runtime.READY)
 
-		// One producer finalizes every live row, so the second row carries
-		// the SNR and Maturity of a regime it continues.
-		producer := data.NewArenaOwner("cvd", 64)
-
 		live := func(value float64) *data.Measurement {
-			measurement := producer.NewMeasurement(1000, "BTC/USD", "cvd", 1, 1, nil)
+			measurement := data.NewMeasurement(1000, "BTC/USD", "cvd", 1, 1)
 			measurement.At = time.Now().UTC()
 			measurement.From = measurement.At
 			return measurement.Write(
@@ -318,7 +314,7 @@ func TestPaper_LossDampensEnter(t *testing.T) {
 		storeTee.Transition(runtime.READY)
 
 		training := NewTraining(
-			ctx, data.NewArenaOwner("training", 4096), price, desk, tablestest.New(t), storeTee, 1000,
+			ctx, price, desk, tablestest.New(t), storeTee, 1000,
 		)
 		training.Transition(runtime.READY)
 
@@ -400,7 +396,7 @@ func TestPaper_LossDoesNotTeachExitWithoutEnter(t *testing.T) {
 		storeTee.Transition(runtime.READY)
 
 		training := NewTraining(
-			ctx, data.NewArenaOwner("training", 4096), price, desk, tablestest.New(t), storeTee, 1000,
+			ctx, price, desk, tablestest.New(t), storeTee, 1000,
 		)
 		training.Transition(runtime.READY)
 

@@ -243,6 +243,10 @@ func channelsFrom(measurements ...*data.Measurement) channels {
 	counts := make(map[string]int)
 
 	for _, measurement := range measurements {
+		if measurement == nil || measurement.Error() != nil {
+			continue
+		}
+
 		trust := measurement.Confidence()
 
 		for entry := range measurement.Read() {

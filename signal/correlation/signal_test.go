@@ -43,9 +43,7 @@ func metric(measurement *data.Measurement, label string) (float64, bool) {
 func TestCorrelationSignalMetrics(t *testing.T) {
 	Convey("Correlation signal measures principled asynchronous price-path co-movements and cohort metrics", t, func() {
 		ctx := context.Background()
-		arena := data.NewArenaOwner("test", 4096)
-
-		instrument := correlation.NewSignal(ctx, arena)
+		instrument := correlation.NewSignal(ctx)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)

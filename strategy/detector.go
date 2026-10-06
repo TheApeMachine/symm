@@ -672,12 +672,7 @@ func (detector *Detector) Flush(
 		data.NewExactMetric("c_price", excursion.c.price, data.UnitPrice, data.TimescaleTick),
 	)
 
-	detector.storeTee.Push(
-		data.NewPublication(
-			measurement,
-			nil,
-		),
-	)
+	detector.storeTee.Push(measurement)
 
 	return measurement
 }

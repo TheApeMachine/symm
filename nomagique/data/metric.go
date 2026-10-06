@@ -19,12 +19,12 @@ nil.
 */
 type Metric struct {
 	Label        string           // The name of the metric.
+	center       float64          // The center of the metric.
+	scale        float64          // The scale of the metric.
 	Raw          float64          // The raw value of the metric.
 	Normalized   float64          // The normalized value of the metric.
 	Standardized float64          // The standardized value of the metric.
 	Exact        *decimal.Decimal // The exact value of the metric.
-	center       float64          // The center of the metric.
-	scale        float64          // The scale of the metric.
 	unit         Unit             // The unit of the metric.
 	timescale    Timescale        // The timescale of the metric.
 }
@@ -117,7 +117,13 @@ func (metric *Metric) valid(fields ...string) error {
 			}
 		}
 
-		return errnie.Error(errnie.Require(mapped), "metric", metric.Label, "raw", metric.Raw)
+		return errnie.Error(
+			errnie.Require(mapped),
+			"metric", metric.Label,
+			"raw", metric.Raw,
+			"center", metric.center,
+			"scale", metric.scale,
+		)
 	}
 
 	// Exact is optional by contract: only venue-printed observations carry

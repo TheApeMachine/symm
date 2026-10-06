@@ -35,7 +35,6 @@ accumulate in the output map and are written once.
 */
 type Signal struct {
 	*runtime.System
-	arena     *data.ArenaOwner
 	books     broker.BookSource
 	pipelines sync.Map
 	metrics   [][4]string
@@ -61,9 +60,8 @@ type symbolPipeline struct {
 NewSignal composes the displayed-depth flow instrument. The BookSource
 supplies the aggregated levels whose mutation is measured.
 */
-func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSource) *Signal {
+func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	signal := &Signal{
-		arena: arena,
 		books: books,
 		// {published label, output key, unit, timescale, gate key}
 		// A non-empty gate key publishes the metric only while that output is non-zero.
@@ -125,13 +123,6 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 	}
 
 	return signal
-}
-
-/*
-Arena exposes the signal's ArenaOwner to the runtime Consumer.
-*/
-func (signal *Signal) Arena() *data.ArenaOwner {
-	return signal.arena
 }
 
 func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
@@ -481,14 +472,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	pipe.prevAt = prior.At
 	pipe.hasPrev = true
 
-	out := signal.arena.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, []*data.Measurement{prior},
+	out := data.NewMeasurement(
+		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick,
 	)
-	out.Epoch = prior.Epoch
-	out.Label = prior.Label
-	out.Source = signal.Name()
-	out.SeqIdx = prior.SeqIdx
-	out.Tick = prior.Tick
+	out.Peers(prior)
 	out.At = prior.At
 	out.From = prior.At
 

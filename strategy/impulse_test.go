@@ -143,10 +143,18 @@ func TestChannelsFrom_CarriesMeasurementConfidence(t *testing.T) {
 			return measurement.Write(metrics...)
 		}
 
-		trusted := write("liquidity", data.NewMeasurement(1, "BTC/USD", "liquidity", 1, 1).Restore(2, 0.5),
+		priorM := write("liquidity", data.NewMeasurement(1, "BTC/USD", "liquidity", 1, 1),
 			data.NewMetric("spread", 1, data.UnitCount, data.TimescaleTick),
 			data.NewMetric("depth", 2, data.UnitCount, data.TimescaleTick),
 		)
+		So(priorM.Error(), ShouldBeNil)
+
+		trusted := write("liquidity", priorM.Next("liquidity"),
+			data.NewMetric("spread", 1.1, data.UnitCount, data.TimescaleTick),
+			data.NewMetric("depth", 2.1, data.UnitCount, data.TimescaleTick),
+		)
+		So(trusted.Confidence(), ShouldBeGreaterThan, 0)
+
 		immature := write("cvd", data.NewMeasurement(1, "BTC/USD", "cvd", 1, 1),
 			data.NewMetric("cvd_value", 3, data.UnitCount, data.TimescaleTick),
 		)

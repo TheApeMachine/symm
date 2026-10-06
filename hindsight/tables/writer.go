@@ -3,6 +3,7 @@ package tables
 import (
 	"context"
 	"sync"
+	"unsafe"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -22,7 +23,7 @@ type Writer struct {
 	epoch   int64
 
 	mu            sync.Mutex
-	measurements  []data.Publication
+	measurements  []*data.Measurement
 	bufferedBytes int64
 }
 
@@ -47,38 +48,16 @@ func NewWriter(catalog *Catalog, epoch int64) *Writer {
 /*
 Add routes an incoming publication to its canonical table family buffer.
 */
-func (writer *Writer) Add(channel string, pub data.Publication) {
-	if pub.Measurement == nil {
+func (writer *Writer) Add(channel string, measurement *data.Measurement) {
+	if measurement == nil {
 		return
 	}
 
-	size := measurementSize(pub.Measurement)
-
 	writer.lock()
 	defer writer.unlock()
 
-	writer.measurements = append(writer.measurements, pub)
-	writer.bufferedBytes += size
-}
-
-/*
-Pending returns total buffered measurements.
-*/
-func (writer *Writer) Pending() int {
-	writer.lock()
-	defer writer.unlock()
-
-	return len(writer.measurements)
-}
-
-/*
-BufferedBytes returns total estimated bytes of buffered measurements.
-*/
-func (writer *Writer) BufferedBytes() int64 {
-	writer.lock()
-	defer writer.unlock()
-
-	return writer.bufferedBytes
+	writer.measurements = append(writer.measurements, measurement)
+	writer.bufferedBytes += int64(unsafe.Sizeof(*measurement))
 }
 
 /*
@@ -97,14 +76,14 @@ func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
 		threshold = viper.GetInt("hindsight.capture.commit_rows")
 	}
 
-	if err := writer.commitFamily(ctx, Measurements, targetBytes, threshold, forceAll, func() ([]data.Publication, int64) {
+	if err := writer.commitFamily(ctx, Measurements, targetBytes, threshold, forceAll, func() ([]*data.Measurement, int64) {
 		rows := writer.measurements
 		bytes := writer.bufferedBytes
 		writer.measurements = nil
 		writer.bufferedBytes = 0
 
 		return rows, bytes
-	}, func(remaining []data.Publication, remainingBytes int64) {
+	}, func(remaining []*data.Measurement, remainingBytes int64) {
 		writer.measurements = append(remaining, writer.measurements...)
 		writer.bufferedBytes += remainingBytes
 	}); err != nil {
@@ -120,8 +99,8 @@ func (writer *Writer) commitFamily(
 	targetBytes int64,
 	thresholdRows int,
 	forceAll bool,
-	takeRows func() ([]data.Publication, int64),
-	putRows func([]data.Publication, int64),
+	takeRows func() ([]*data.Measurement, int64),
+	putRows func([]*data.Measurement, int64),
 ) error {
 	writer.lock()
 
@@ -153,9 +132,7 @@ func (writer *Writer) commitFamily(
 	}
 
 	measList := make([]*data.Measurement, len(rowsToCommit))
-	for idx, pub := range rowsToCommit {
-		measList[idx] = pub.Measurement
-	}
+	copy(measList, rowsToCommit)
 
 	reader, err := measurementRecords(tbl.Schema(), measList, writer.epoch)
 	if err != nil {
@@ -184,11 +161,6 @@ func (writer *Writer) commitFamily(
 		))
 	}
 
-	// Release generations now that storage has committed the batch
-	for _, pub := range rowsToCommit {
-		pub.Release()
-	}
-
 	return nil
 }
 
@@ -196,37 +168,6 @@ func (writer *Writer) ReleaseRemaining() {
 	writer.lock()
 	defer writer.unlock()
 
-	for _, p := range writer.measurements {
-		p.Release()
-	}
 	writer.measurements = nil
 	writer.bufferedBytes = 0
-}
-
-func measurementSize(measurement *data.Measurement) int64 {
-	if measurement == nil {
-		return 0
-	}
-
-	size := int64(128 + len(measurement.Label) + len(measurement.Source))
-
-	for entry := range measurement.Read() {
-		if entry.Err != nil {
-			continue
-		}
-
-		size += int64(32 + len(entry.Key))
-	}
-
-	for _, key := range []string{"type", "order_id", "side", "event", "checksum", "ord_type", "trade_id", "status", "peer"} {
-		if val := measurement.Meta(key); val != "" {
-			size += int64(16 + len(key) + len(val))
-		}
-	}
-
-	if measurement.Error() != nil {
-		size += int64(32 + len(measurement.Error().Error()))
-	}
-
-	return size
 }

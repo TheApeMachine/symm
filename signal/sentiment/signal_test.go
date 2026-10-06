@@ -36,7 +36,7 @@ func metric(measurement *data.Measurement, label string) (float64, bool) {
 
 func TestSentimentSignalMetrics(t *testing.T) {
 	Convey("Given a READY sentiment signal", t, func() {
-		instrument := sentiment.NewSignal(context.Background(), data.NewArenaOwner("sentiment", 4096))
+		instrument := sentiment.NewSignal(context.Background())
 		instrument.Transition(nmruntime.READY)
 		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 		symbols := []string{"BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD", "XRP/USD"}
@@ -147,7 +147,7 @@ func TestSentimentSignalMetrics(t *testing.T) {
 		})
 
 		Convey("It drops events before READY", func() {
-			cold := sentiment.NewSignal(context.Background(), data.NewArenaOwner("sentiment", 16))
+			cold := sentiment.NewSignal(context.Background())
 			So(cold.Step(trade("BTC/USD", origin, 1, 100)), ShouldBeNil)
 		})
 	})

@@ -55,10 +55,9 @@ func order(id string, price, qty float64, at time.Time) kraken.Level3Order {
 func TestDepthflowSignalMetrics(t *testing.T) {
 	Convey("Depthflow instrument measures exact displayed depth mutation and flow", t, func() {
 		ctx := context.Background()
-		arena := data.NewArenaOwner("depthflow", 4096)
 		books := broker.NewBook(ctx, spot.NewNormalizer())
 
-		instrument := depthflow.NewSignal(ctx, arena, books)
+		instrument := depthflow.NewSignal(ctx, books)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -204,7 +203,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 
 func TestDepthflowSignalRequiresBookManager(t *testing.T) {
 	Convey("A depthflow signal constructed without a book manager fails with an error", t, func() {
-		instrument := depthflow.NewSignal(context.Background(), data.NewArenaOwner("depthflow", 16), nil)
+		instrument := depthflow.NewSignal(context.Background(), nil)
 		So(instrument.Error(), ShouldNotBeNil)
 		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
 	})

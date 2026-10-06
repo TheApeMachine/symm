@@ -10,11 +10,9 @@ import (
 
 func TestRouteFilters(t *testing.T) {
 	Convey("Given route filtering logic", t, func() {
-		arena := data.NewArenaOwner("test", 1024)
-
 		Convey("Fluid route rejects raw manifold measurements to prevent websocket buffer flooding", func() {
 			types.SetRoute("fluid")
-			measurement := arena.NewMeasurement(1, "BTC/USD", "manifold", 1, 1, nil)
+			measurement := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
 			So(types.Filters(measurement), ShouldBeFalse)
 		})
 
@@ -22,26 +20,26 @@ func TestRouteFilters(t *testing.T) {
 			types.SetRoute("dashboard")
 			types.SetFocus("BTC/USD")
 
-			hawkes := arena.NewMeasurement(1, "BTC/USD", "hawkes", 1, 1, nil)
+			hawkes := data.NewMeasurement(1, "BTC/USD", "hawkes", 1, 1)
 			So(types.Filters(hawkes), ShouldBeTrue)
 
-			otherSymbol := arena.NewMeasurement(1, "ETH/USD", "hawkes", 1, 1, nil)
+			otherSymbol := data.NewMeasurement(1, "ETH/USD", "hawkes", 1, 1)
 			So(types.Filters(otherSymbol), ShouldBeFalse)
 
-			manifold := arena.NewMeasurement(1, "BTC/USD", "manifold", 1, 1, nil)
+			manifold := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
 			So(types.Filters(manifold), ShouldBeFalse)
 		})
 
 		Convey("Learning route only admits training strategy outputs", func() {
 			types.SetRoute("learning")
 
-			training := arena.NewMeasurement(1, "BTC/USD", "training", 1, 1, nil)
+			training := data.NewMeasurement(1, "BTC/USD", "training", 1, 1)
 			So(types.Filters(training), ShouldBeTrue)
 
-			hawkes := arena.NewMeasurement(1, "BTC/USD", "hawkes", 1, 1, nil)
+			hawkes := data.NewMeasurement(1, "BTC/USD", "hawkes", 1, 1)
 			So(types.Filters(hawkes), ShouldBeFalse)
 
-			manifold := arena.NewMeasurement(1, "BTC/USD", "manifold", 1, 1, nil)
+			manifold := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
 			So(types.Filters(manifold), ShouldBeFalse)
 		})
 	})

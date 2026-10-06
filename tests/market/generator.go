@@ -328,16 +328,15 @@ func CloneTestMeasurementWithSeq(src *data.Measurement, seqIdx int64) *data.Meas
 		}
 	}
 
-	arena := data.NewArenaOwner("clone", 16)
-	out := arena.NewMeasurement(
+	out := data.NewMeasurement(
 		src.Epoch,
 		src.Label,
 		src.Source,
 		seqIdx,
 		seqIdx,
-		peers,
 		metadata...,
 	)
+	out.Peers(peers...)
 	out.At = src.At
 	out.From = src.From
 	out.Write(metrics...)

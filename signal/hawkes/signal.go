@@ -27,7 +27,6 @@ pipeline's shared stage registry.
 */
 type Signal struct {
 	*runtime.System
-	arena     *data.ArenaOwner
 	pipelines sync.Map
 	metrics   [][4]string
 }
@@ -42,9 +41,8 @@ type symbolPipeline struct {
 /*
 NewSignal composes the arrival-dynamics instrument.
 */
-func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		arena: arena,
 		// {published label, output key, unit, timescale}
 		metrics: [][4]string{
 			{"event_count", "event_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
@@ -113,10 +111,6 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 
 	signal.System = runtime.NewSystem(ctx, "hawkes", signal)
 	return signal
-}
-
-func (signal *Signal) Arena() *data.ArenaOwner {
-	return signal.arena
 }
 
 func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
@@ -207,15 +201,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	out := signal.arena.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, []*data.Measurement{prior},
+	out := data.NewMeasurement(
+		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick,
 		&data.StringEntry{Key: "side", Value: prior.Meta("side")},
 	)
-	out.Epoch = prior.Epoch
-	out.Label = prior.Label
-	out.Source = signal.Name()
-	out.SeqIdx = prior.SeqIdx
-	out.Tick = prior.Tick
+	out.Peers(prior)
 	out.At = prior.At
 	out.From = prior.At
 

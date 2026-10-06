@@ -35,7 +35,7 @@ func signalPeer(source, symbol, metricName string, value float64, at time.Time) 
 
 func TestStep(t *testing.T) {
 	Convey("Given a resonance solver", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner("resonance-test", 32), 0)
+		solver := NewSolver(context.Background(), 0)
 		defer solver.Close()
 
 		at := time.Unix(1, 0).UTC()
@@ -56,7 +56,7 @@ func TestStep(t *testing.T) {
 
 func TestSignalFeatureIngestion(t *testing.T) {
 	Convey("Given a resonance solver receiving measurements with all 11 canonical signal peers", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner("resonance-test", 32), 0.01)
+		solver := NewSolver(context.Background(), 0.01)
 		defer solver.Close()
 
 		at := time.Unix(10, 0).UTC()
@@ -74,7 +74,8 @@ func TestSignalFeatureIngestion(t *testing.T) {
 			signalPeer("derivatives", "BTC/USD", "basis", 0.001, at),
 		}
 
-		m := solver.Arena().NewMeasurement(1, "BTC/USD", "runtime:join", 10, 10, peers)
+		m := data.NewMeasurement(1, "BTC/USD", "runtime:join", 10, 10)
+		m.Peers(peers...)
 		m.At = at
 		m.From = at
 		m = m.Write(data.NewMetric("midpoint", 50000, data.UnitPrice, data.TimescaleInstantaneous))
@@ -118,7 +119,7 @@ func TestSignalFeatureIngestion(t *testing.T) {
 
 func TestSurpriseBreakInCommonFlow(t *testing.T) {
 	Convey("Given a resonance solver receiving consecutive sensory observations", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner("resonance-test", 32), 0.05)
+		solver := NewSolver(context.Background(), 0.05)
 		defer solver.Close()
 
 		createMeasurement := func(sec int64, cvdVal, toxVal float64) *data.Measurement {
@@ -137,7 +138,8 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 				signalPeer("derivatives", "ETH/USD", "basis", 0.0005, at),
 			}
 
-			m := solver.Arena().NewMeasurement(1, "ETH/USD", "runtime:join", sec, sec, peers)
+			m := data.NewMeasurement(1, "ETH/USD", "runtime:join", sec, sec)
+			m.Peers(peers...)
 			m.At = at
 			m.From = at
 			return m.Write(data.NewMetric("midpoint", 3000, data.UnitPrice, data.TimescaleInstantaneous))
@@ -160,14 +162,13 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 
 func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 	Convey("Given a resonance solver receiving interspersed signals", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner("resonance-test", 32), 0.05)
+		solver := NewSolver(context.Background(), 0.05)
 		defer solver.Close()
 		solver.Transition(runtime.READY)
 
 		at := time.Unix(100, 0).UTC()
-		m1 := solver.Arena().NewMeasurement(1, "BTC/USD", "runtime:join", 100, 100, []*data.Measurement{
-			signalPeer("cvd", "BTC/USD", "signed_net_fraction", 0.1, at),
-		})
+		m1 := data.NewMeasurement(1, "BTC/USD", "runtime:join", 100, 100)
+		m1.Peers(signalPeer("cvd", "BTC/USD", "signed_net_fraction", 0.1, at))
 		m1.At = at
 		m1.From = at
 		m1 = m1.Write(data.NewMetric("midpoint", 50000, data.UnitPrice, data.TimescaleInstantaneous))
@@ -175,9 +176,8 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		So(res1, ShouldNotBeNil)
 
 		at2 := time.Unix(101, 0).UTC()
-		m2 := solver.Arena().NewMeasurement(1, "BTC/USD", "runtime:join", 101, 101, []*data.Measurement{
-			signalPeer("toxicity", "BTC/USD", "net_withdrawal_fraction:bid", 0.2, at2),
-		})
+		m2 := data.NewMeasurement(1, "BTC/USD", "runtime:join", 101, 101)
+		m2.Peers(signalPeer("toxicity", "BTC/USD", "net_withdrawal_fraction:bid", 0.2, at2))
 		m2.At = at2
 		m2.From = at2
 		m2 = m2.Write(data.NewMetric("midpoint", 50010, data.UnitPrice, data.TimescaleInstantaneous))

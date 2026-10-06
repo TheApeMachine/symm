@@ -33,7 +33,7 @@ func metric(measurement *data.Measurement, label string) (float64, bool) {
 
 func TestCVDSignalMetrics(t *testing.T) {
 	Convey("Given a READY CVD signal", t, func() {
-		instrument := cvd.NewSignal(context.Background(), data.NewArenaOwner("cvd", 4096))
+		instrument := cvd.NewSignal(context.Background())
 		instrument.Transition(nmruntime.READY)
 		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
@@ -130,7 +130,7 @@ func TestCVDSignalMetrics(t *testing.T) {
 		})
 
 		Convey("It drops events before READY", func() {
-			cold := cvd.NewSignal(context.Background(), data.NewArenaOwner("cvd", 16))
+			cold := cvd.NewSignal(context.Background())
 			So(cold.Step(trade(origin, 1, "buy", 50000, 1)), ShouldBeNil)
 		})
 	})

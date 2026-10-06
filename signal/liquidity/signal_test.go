@@ -82,7 +82,7 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 	Convey("Given a READY liquidity signal", t, func() {
 		ctx := context.Background()
 		books := broker.NewBook(ctx, spot.NewNormalizer())
-		instrument := liquidity.NewSignal(ctx, data.NewArenaOwner("liquidity", 4096), books)
+		instrument := liquidity.NewSignal(ctx, books)
 		instrument.Transition(nmruntime.READY)
 		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
@@ -227,7 +227,7 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 		})
 
 		Convey("It drops events before READY", func() {
-			cold := liquidity.NewSignal(ctx, data.NewArenaOwner("liquidity", 16), books)
+			cold := liquidity.NewSignal(ctx, books)
 			So(stepTouch(cold, books, "ETH/USD", origin, 1, 3000, 3004, 1, 1), ShouldBeNil)
 		})
 
@@ -267,7 +267,7 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 	})
 
 	Convey("Given a liquidity signal constructed without a book manager", t, func() {
-		instrument := liquidity.NewSignal(context.Background(), data.NewArenaOwner("liquidity", 16), nil)
+		instrument := liquidity.NewSignal(context.Background(), nil)
 
 		Convey("It fails construction with an error instead of running blind", func() {
 			So(instrument.Error(), ShouldNotBeNil)

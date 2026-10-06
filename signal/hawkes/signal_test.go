@@ -40,7 +40,7 @@ func metric(measurement *data.Measurement, label string) (float64, bool) {
 
 func TestHawkesTradeMetrics(t *testing.T) {
 	Convey("Given a READY Hawkes arrival-dynamics signal", t, func() {
-		instrument := hawkes.NewSignal(context.Background(), data.NewArenaOwner("hawkes", 4096))
+		instrument := hawkes.NewSignal(context.Background())
 		instrument.Transition(nmruntime.READY)
 		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 

@@ -138,7 +138,7 @@ func (reporter *Reporter) Publish(
 	out = reporter.Populate(out, snapshot, extraMetrics...)
 
 	if reporter.tee != nil {
-		reporter.tee.Push(data.NewPublication(out, nil))
+		reporter.tee.Push(out)
 	}
 
 	snapCopy := snapshot

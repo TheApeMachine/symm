@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -54,8 +53,6 @@ var embedded embed.FS
 
 var (
 	cfgFile string
-	SeqIdx  atomic.Int64
-	Tick    atomic.Int64
 
 	// processStartedAt is the process start instant the Hindsight Run identity
 	// is anchored to. It is captured once at process start so a run's identity
@@ -208,7 +205,7 @@ var (
 			desk := broker.NewDesk(ctx, privateTransport, price, balance)
 
 			training := strategy.NewTraining(
-				ctx, data.NewArenaOwner("training", 4096),
+				ctx,
 				price,
 				desk,
 				catalog,
@@ -228,22 +225,22 @@ var (
 
 			uiTee.Transition(nmruntime.READY)
 
-			manifoldSolver := manifold.NewSolver(ctx, data.NewArenaOwner("manifold", 4096), book)
+			manifoldSolver := manifold.NewSolver(ctx, book)
 			book.SetNotify(func(symbol string, _ time.Time) {
 				manifoldSolver.Wake(symbol)
 			})
-			correlationSignal := correlation.NewSignal(ctx, data.NewArenaOwner("correlation", 4096))
-			cvdSignal := cvd.NewSignal(ctx, data.NewArenaOwner("cvd", 4096))
-			depthflowSignal := depthflow.NewSignal(ctx, data.NewArenaOwner("depthflow", 4096), book)
-			hawkesSignal := hawkes.NewSignal(ctx, data.NewArenaOwner("hawkes", 4096))
-			leadlagSignal := leadlag.NewSignal(ctx, data.NewArenaOwner("leadlag", 4096))
-			liquiditySignal := liquidity.NewSignal(ctx, data.NewArenaOwner("liquidity", 4096), book)
-			morphologySignal := morphology.NewSignal(ctx, data.NewArenaOwner("morphology", 4096), book)
-			pumpdumpSignal := pumpdump.NewSignal(ctx, data.NewArenaOwner("pumpdump", 4096), book)
-			sentimentSignal := sentiment.NewSignal(ctx, data.NewArenaOwner("sentiment", 4096))
-			toxicitySignal := toxicity.NewSignal(ctx, data.NewArenaOwner("toxicity", 4096), book)
+			correlationSignal := correlation.NewSignal(ctx)
+			cvdSignal := cvd.NewSignal(ctx)
+			depthflowSignal := depthflow.NewSignal(ctx, book)
+			hawkesSignal := hawkes.NewSignal(ctx)
+			leadlagSignal := leadlag.NewSignal(ctx)
+			liquiditySignal := liquidity.NewSignal(ctx, book)
+			morphologySignal := morphology.NewSignal(ctx, book)
+			pumpdumpSignal := pumpdump.NewSignal(ctx, book)
+			sentimentSignal := sentiment.NewSignal(ctx)
+			toxicitySignal := toxicity.NewSignal(ctx, book)
 			resonanceSolver := resonance.NewSolver(
-				ctx, data.NewArenaOwner("resonance", 4096), system.Cfg.Resonance.LearningRate,
+				ctx, system.Cfg.Resonance.LearningRate,
 			)
 
 			// Pipeline nodes report construction faults (for example a missing
@@ -546,8 +543,8 @@ var (
 											epoch,
 											level3Data.Symbol,
 											"spot:level3",
-											SeqIdx.Add(1),
-											Tick.Load(),
+											system.SeqIdx.Add(1),
+											system.Tick.Load(),
 											&data.StringEntry{
 												Key:   "type",
 												Value: level3Data.Type,
@@ -609,7 +606,7 @@ var (
 											),
 										)
 
-										storeTee.Push(data.NewPublication(measurement, nil))
+										storeTee.Push(measurement)
 									}
 								}
 							}
@@ -634,8 +631,8 @@ var (
 										epoch,
 										tradeItem.Symbol,
 										"spot:trade",
-										SeqIdx.Add(1),
-										Tick.Add(1),
+										system.SeqIdx.Add(1),
+										system.Tick.Add(1),
 										&data.StringEntry{
 											Key:   "type",
 											Value: "trade",
@@ -688,7 +685,7 @@ var (
 									)
 
 									workspace.Step(measurement)
-									storeTee.Push(data.NewPublication(measurement, nil))
+									storeTee.Push(measurement)
 									balance.Invalidate()
 								}
 							}

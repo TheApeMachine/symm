@@ -24,7 +24,7 @@ jitter from the consumer fast path and immediately release retained publications
 */
 type UITee struct {
 	*nmruntime.System
-	ingress *lf.Queue[data.Publication]
+	ingress *lf.Queue[*data.Measurement]
 	egress  *lf.Queue[[]byte]
 	filters []func(
 		measurement *data.Measurement,
@@ -50,7 +50,7 @@ func NewUITee(
 	}
 
 	tee := &UITee{
-		ingress:   lf.NewQueue[data.Publication](),
+		ingress:   lf.NewQueue[*data.Measurement](),
 		egress:    lf.NewQueue[[]byte](),
 		filters:   filters,
 		route:     types.Route(),
@@ -68,7 +68,7 @@ Push receives measurements from the workspace. Raw venue feeds stay off the
 dashboard websocket; the page route still selects which analytical sources
 are on the wire.
 */
-func (tee *UITee) Push(pub data.Publication) {
+func (tee *UITee) Push(measurement *data.Measurement) {
 	if tee.Status() != nmruntime.READY {
 		errnie.Warn("pushing to a non-ready system may have unintended consequences")
 		return
@@ -79,18 +79,17 @@ func (tee *UITee) Push(pub data.Publication) {
 		runtime.Gosched()
 	}
 
-	if pub.Measurement == nil {
+	if measurement == nil {
 		return
 	}
 
 	for _, filter := range tee.filters {
-		if !filter(pub.Measurement) {
+		if !filter(measurement) {
 			return
 		}
 	}
 
-	pub.Retain()
-	tee.ingress.Enqueue(pub)
+	tee.ingress.Enqueue(measurement)
 }
 
 /*
@@ -122,16 +121,6 @@ func (tee *UITee) worker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			for {
-				pub, ok := tee.ingress.Dequeue()
-
-				if !ok {
-					break
-				}
-
-				pub.Release()
-			}
-
 			return
 		default:
 			tee.switcheroo()
@@ -143,7 +132,7 @@ func (tee *UITee) worker(ctx context.Context) {
 		}
 
 		for tee.ingress.Length() > 0 {
-			pub, ok := tee.ingress.Dequeue()
+			measurement, ok := tee.ingress.Dequeue()
 
 			if !ok {
 				break
@@ -152,10 +141,9 @@ func (tee *UITee) worker(ctx context.Context) {
 			dropped := false
 
 			for _, filter := range tee.filters {
-				if !filter(pub.Measurement) {
+				if !filter(measurement) {
 					// When the pimp's in the crib ma...
 					dropped = true
-					pub.Release()
 				}
 			}
 
@@ -165,10 +153,8 @@ func (tee *UITee) worker(ctx context.Context) {
 			}
 
 			payload, err := types.EncodeMeasurements(
-				[]*data.Measurement{pub.Measurement},
+				[]*data.Measurement{measurement},
 			)
-
-			pub.Release()
 
 			if err != nil {
 				tee.Error(errnie.Err(
@@ -196,26 +182,9 @@ func (tee *UITee) switcheroo() {
 		tee.route = types.Route()
 		tee.symbol = types.Focus()
 
-		// We have unfinished business...
-		drain := tee.ingress
-
 		// They're FRESH! Exciting, they're so exciting to me!
-		tee.ingress = lf.NewQueue[data.Publication]()
+		tee.ingress = lf.NewQueue[*data.Measurement]()
 		tee.egress = lf.NewQueue[[]byte]()
-
-		go func() {
-			for drain.Length() > 0 {
-				// You're all 86.
-				pub, ok := drain.Dequeue()
-
-				if !ok {
-					continue
-				}
-
-				// Let my people go.
-				pub.Release()
-			}
-		}()
 
 		tee.switching.Store(false)
 		errnie.Info("[tee] I does that shit.")
