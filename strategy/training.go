@@ -19,7 +19,9 @@ import (
 const (
 	actionEnter = "enter"
 	actionExit  = "exit"
-	actionWait  = "wait"
+	// actionWait names abstention / precursor stance. It is not a terminal
+	// trie class — Teach rejects it; Recall with no enter/exit winner waits.
+	actionWait = "wait"
 )
 
 /*
@@ -436,4 +438,26 @@ func (training *Training) runDetectorScan() {
 			}
 		}
 	}
+}
+
+/*
+LearningSummary returns the latest high-density summary of the learning system.
+*/
+func (training *Training) LearningSummary() string {
+	if training == nil || training.Reporter == nil {
+		return ""
+	}
+
+	return training.Reporter.LatestSummary()
+}
+
+/*
+LearningReport returns structured high-value report metrics for inspection.
+*/
+func (training *Training) LearningReport() any {
+	if training == nil || training.Reporter == nil {
+		return nil
+	}
+
+	return training.Reporter.ReportData()
 }

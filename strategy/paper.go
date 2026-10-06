@@ -106,7 +106,7 @@ func (paper *paper) trade(prior *data.Measurement, tok []byte, snapshot *ReportS
 		question = bytes.Join(window, []byte("/"))
 	})
 
-	call, err := paper.model.Recall(string(question))
+	call, err := paper.model.Recall(string(question), "")
 
 	if err != nil {
 		errnie.Error(errnie.Err(errnie.Validation, "[paper] unable to evaluate "+symbol, err))
@@ -241,9 +241,8 @@ settle consumes one realized round trip from the Desk and refines the trie
 on the contexts that entered and exited it. A winning entry reinforces enter
 with its return and teaches exit on the exit context with the same return —
 enter and exit are always taught together (TRAINING.md: exit only if we have
-entered). A losing entry teaches wait with the loss avoided and actively
-weakens enter on the entry context (negative feedback); wait alone would
-train a wait expert. Losses never teach exit alone.
+entered). A losing entry dampens enter on the entry context (negative
+feedback); wait is abstention, never a leaf. Losses never teach exit alone.
 */
 func (paper *paper) settle(closure broker.Closure) {
 	feedback := closure.Realized.SetScale(decimal.DefaultScale).Div(closure.Cost).Float64()
@@ -278,10 +277,7 @@ func (paper *paper) settle(closure broker.Closure) {
 			loss = 1e-6
 		}
 
-		if err := paper.model.Teach(string(settled.entry), actionWait, loss); err != nil {
-			errnie.Error(err)
-		}
-
+		// Dampen the losing enter sequence; wait is not a terminal action.
 		if err := paper.model.Teach(string(settled.entry), actionEnter, -loss); err != nil {
 			errnie.Error(err)
 		}

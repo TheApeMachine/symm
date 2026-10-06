@@ -144,14 +144,9 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					return
 				}
 
-				if history[1] == 1 && history[9] == 1 {
-					op.output.Values["correlation_baseline"+suffix] = history[2]
-					op.output.Values["correlation_divergence"+suffix] = history[3]
-				}
-
-				if history[1] == 1 && history[8] == 1 {
-					op.output.Values["correlation_zscore"+suffix] = history[6]
-				}
+				op.output.Values["correlation_baseline"+suffix] = history[2]
+				op.output.Values["correlation_divergence"+suffix] = history[3]
+				op.output.Values["correlation_zscore"+suffix] = history[6]
 
 				focalRate = dependence[9]
 				op.rows = append(op.rows, [3]float64{correlation, dependence[2], dependence[8]})

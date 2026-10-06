@@ -38,7 +38,7 @@ type Signal struct {
 	arena     *data.ArenaOwner
 	books     broker.BookSource
 	pipelines sync.Map
-	metrics   [][5]string
+	metrics   [][4]string
 }
 
 type symbolPipeline struct {
@@ -67,52 +67,54 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 		books: books,
 		// {published label, output key, unit, timescale, gate key}
 		// A non-empty gate key publishes the metric only while that output is non-zero.
-		metrics: [][5]string{
-			{"book_notional:bid", "notional:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
-			{"book_notional:ask", "notional:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
-			{"book_notional", "book_notional", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
-			{"observed_notional:bid", "notional:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
-			{"observed_notional:ask", "notional:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
-			{"observed_notional", "book_notional", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
-			{"book_imbalance", "book_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"observed_notional_imbalance", "book_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"touch_imbalance", "touch_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"imbalance_resolution_gap", "imbalance_resolution_gap", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"imbalance_resolution_distance", "imbalance_resolution_distance", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"added_notional:bid", "added:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous), "flow:defined"},
-			{"removed_notional:bid", "removed:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous), "flow:defined"},
-			{"net_displayed_flow:bid", "net_displayed_flow:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous), "flow:defined"},
-			{"added_notional:ask", "added:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous), "flow:defined"},
-			{"removed_notional:ask", "removed:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous), "flow:defined"},
-			{"net_displayed_flow:ask", "net_displayed_flow:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous), "flow:defined"},
-			{"flow_activity_imbalance", "flow_activity_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous), "flow:defined"},
-			{"book_imbalance_baseline", "book_imbalance_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"book_imbalance_divergence", "book_imbalance_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"book_imbalance_zscore", "book_imbalance_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"resolution_gap_baseline", "resolution_gap_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"resolution_gap_divergence", "resolution_gap_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"resolution_gap_zscore", "resolution_gap_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"book_imbalance_velocity", "book_imbalance_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "book_imbalance_velocity:defined"},
-			{"resolution_gap_velocity", "resolution_gap_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "resolution_gap_velocity:defined"},
-			{"added_notional_rate:bid", "added_notional_rate:bid", string(data.UnitNotionalRate), string(data.TimescalePerSecond), ""},
-			{"added_notional_rate:ask", "added_notional_rate:ask", string(data.UnitNotionalRate), string(data.TimescalePerSecond), ""},
-			{"removed_notional_rate:bid", "removed_notional_rate:bid", string(data.UnitNotionalRate), string(data.TimescalePerSecond), ""},
-			{"removed_notional_rate:ask", "removed_notional_rate:ask", string(data.UnitNotionalRate), string(data.TimescalePerSecond), ""},
-			{"net_displayed_flow_rate:bid", "net_displayed_flow_rate:bid", string(data.UnitNotionalRate), string(data.TimescalePerSecond), ""},
-			{"net_displayed_flow_rate:ask", "net_displayed_flow_rate:ask", string(data.UnitNotionalRate), string(data.TimescalePerSecond), ""},
-			{"book_turnover_rate", "book_turnover_rate", string(data.UnitRate), string(data.TimescalePerSecond), ""},
-			{"net_book_change_rate", "net_book_change_rate", string(data.UnitRate), string(data.TimescalePerSecond), ""},
-			{"signed_net_displayed_flow_rate", "signed_net_displayed_flow_rate", string(data.UnitRate), string(data.TimescalePerSecond), ""},
-			{"turnover_baseline", "turnover_baseline", string(data.UnitRate), string(data.TimescaleRollingWindow), ""},
-			{"turnover_divergence", "turnover_divergence", string(data.UnitRate), string(data.TimescaleRollingWindow), ""},
-			{"turnover_zscore", "turnover_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"turnover_ratio", "turnover_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"net_book_change_rate_baseline", "net_book_change_rate_baseline", string(data.UnitRate), string(data.TimescaleRollingWindow), ""},
-			{"net_book_change_rate_divergence", "net_book_change_rate_divergence", string(data.UnitRate), string(data.TimescaleRollingWindow), ""},
-			{"net_book_change_rate_zscore", "net_book_change_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"signed_net_displayed_flow_rate_baseline", "signed_net_displayed_flow_rate_baseline", string(data.UnitRate), string(data.TimescaleRollingWindow), ""},
-			{"signed_net_displayed_flow_rate_divergence", "signed_net_displayed_flow_rate_divergence", string(data.UnitRate), string(data.TimescaleRollingWindow), ""},
-			{"signed_net_displayed_flow_rate_zscore", "signed_net_displayed_flow_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
+		metrics: [][4]string{
+			{"book_notional:bid", "notional:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"book_notional:ask", "notional:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"book_notional", "book_notional", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"observed_notional:bid", "notional:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"observed_notional:ask", "notional:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"observed_notional", "book_notional", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"book_imbalance", "book_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"observed_notional_imbalance", "book_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"touch_imbalance", "touch_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"imbalance_resolution_gap", "imbalance_resolution_gap", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"imbalance_resolution_distance", "imbalance_resolution_distance", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"added_notional:bid", "added:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"removed_notional:bid", "removed:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"net_displayed_flow:bid", "net_displayed_flow:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"added_notional:ask", "added:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"removed_notional:ask", "removed:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"net_displayed_flow:ask", "net_displayed_flow:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"flow_activity_imbalance", "flow_activity_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"book_imbalance_baseline", "book_imbalance_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"book_imbalance_divergence", "book_imbalance_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"book_imbalance_zscore", "book_imbalance_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"resolution_gap_baseline", "resolution_gap_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"resolution_gap_divergence", "resolution_gap_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"resolution_gap_zscore", "resolution_gap_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"book_imbalance_velocity", "book_imbalance_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"resolution_gap_velocity", "resolution_gap_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"added_notional_rate:bid", "added_notional_rate:bid", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
+			{"added_notional_rate:ask", "added_notional_rate:ask", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
+			{"removed_notional_rate:bid", "removed_notional_rate:bid", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
+			{"removed_notional_rate:ask", "removed_notional_rate:ask", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
+			{"net_displayed_flow_rate:bid", "net_displayed_flow_rate:bid", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
+			{"net_displayed_flow_rate:ask", "net_displayed_flow_rate:ask", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
+			{"book_turnover_rate", "book_turnover_rate", string(data.UnitRate), string(data.TimescalePerSecond)},
+			{"net_book_change_rate", "net_book_change_rate", string(data.UnitRate), string(data.TimescalePerSecond)},
+			{"signed_net_displayed_flow_rate", "signed_net_displayed_flow_rate", string(data.UnitRate), string(data.TimescalePerSecond)},
+			{"turnover_baseline", "turnover_baseline", string(data.UnitRate), string(data.TimescaleRollingWindow)},
+			{"turnover_divergence", "turnover_divergence", string(data.UnitRate), string(data.TimescaleRollingWindow)},
+			{"turnover_zscore", "turnover_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"turnover_ratio", "turnover_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"net_book_change_rate_baseline", "net_book_change_rate_baseline", string(data.UnitRate), string(data.TimescaleRollingWindow)},
+			{"net_book_change_rate_divergence", "net_book_change_rate_divergence", string(data.UnitRate), string(data.TimescaleRollingWindow)},
+			{"net_book_change_rate_zscore", "net_book_change_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"signed_net_displayed_flow_rate_baseline", "signed_net_displayed_flow_rate_baseline", string(data.UnitRate), string(data.TimescaleRollingWindow)},
+			{"signed_net_displayed_flow_rate_divergence", "signed_net_displayed_flow_rate_divergence", string(data.UnitRate), string(data.TimescaleRollingWindow)},
+			{"signed_net_displayed_flow_rate_zscore", "signed_net_displayed_flow_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"historical_path_distance", "historical_path_distance", string(data.UnitDistance), string(data.TimescaleRollingWindow)},
+			{"historical_path_percentile", "historical_path_percentile", string(data.UnitPercent), string(data.TimescaleRollingWindow)},
 		},
 	}
 
@@ -392,35 +394,37 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	// Level-diff fold: displayed quantity that appeared or vanished at each
-	// price since the previous book, in notional.
-	for price, qty := range pipe.currBids {
-		delta := price * (qty - pipe.prevBids[price])
-		addedBid += math.Max(delta, 0)
-		removedBid += math.Max(-delta, 0)
-	}
-
-	for price, qty := range pipe.prevBids {
-		if _, held := pipe.currBids[price]; !held {
-			removedBid += price * qty
-		}
-	}
-
-	for price, qty := range pipe.currAsks {
-		delta := price * (qty - pipe.prevAsks[price])
-		addedAsk += math.Max(delta, 0)
-		removedAsk += math.Max(-delta, 0)
-	}
-
-	for price, qty := range pipe.prevAsks {
-		if _, held := pipe.currAsks[price]; !held {
-			removedAsk += price * qty
-		}
-	}
-
 	hadPrev := pipe.hasPrev
 	prevAt := pipe.prevAt
 	flowReady := hadPrev && prior.At.After(prevAt)
+
+	// Level-diff fold: displayed quantity that appeared or vanished at each
+	// price since the previous book, in notional.
+	if hadPrev {
+		for price, qty := range pipe.currBids {
+			delta := price * (qty - pipe.prevBids[price])
+			addedBid += math.Max(delta, 0)
+			removedBid += math.Max(-delta, 0)
+		}
+
+		for price, qty := range pipe.prevBids {
+			if _, held := pipe.currBids[price]; !held {
+				removedBid += price * qty
+			}
+		}
+
+		for price, qty := range pipe.currAsks {
+			delta := price * (qty - pipe.prevAsks[price])
+			addedAsk += math.Max(delta, 0)
+			removedAsk += math.Max(-delta, 0)
+		}
+
+		for price, qty := range pipe.prevAsks {
+			if _, held := pipe.currAsks[price]; !held {
+				removedAsk += price * qty
+			}
+		}
+	}
 
 	pipe.envelope.Values["notional:bid"] = bidNotional
 	pipe.envelope.Values["notional:ask"] = askNotional
@@ -495,15 +499,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
-		value, held := pipe.output.Values[metric[1]]
-
-		if !held {
-			continue
-		}
-
-		if metric[4] != "" && pipe.output.Values[metric[4]] == 0 {
-			continue
-		}
+		value := pipe.output.Values[metric[1]]
 
 		metrics = append(metrics, data.NewMetric(
 			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),

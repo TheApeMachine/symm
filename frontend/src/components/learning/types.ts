@@ -39,7 +39,7 @@ export interface TrieBranch {
 	visits: number;
 	meanEdge: number;
 	confidence: number;
-	policy: "ENTER" | "WAIT" | "EXIT";
+	policy: "ENTER" | "EXIT"; // wait is abstention, never a leaf policy
 }
 
 export interface FeasibleAction {

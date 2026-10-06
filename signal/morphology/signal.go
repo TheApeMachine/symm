@@ -255,6 +255,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	pipe.output.Values["concentration:ask"] = concAsk
 	pipe.output.Values["entropy:bid"] = entBid
 	pipe.output.Values["entropy:ask"] = entAsk
+	pipe.output.Values["morphology_change"] = 0
 
 	if pipe.hasPrev {
 		pipe.output.Values["morphology_change"] = math.Abs(distance - pipe.prevDist)
@@ -277,11 +278,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
-		value, held := pipe.output.Values[metric[1]]
-
-		if !held {
-			continue
-		}
+		value := pipe.output.Values[metric[1]]
 
 		metrics = append(metrics, data.NewMetric(
 			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),

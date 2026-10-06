@@ -27,6 +27,7 @@ func TestTrainNext(t *testing.T) {
 	winner := func(memory *Associate, context string) string {
 		reading, err := drive(NewRecall(memory), map[string]string{
 			"context": context,
+			"stance":  "",
 		}, nil)
 		So(err, ShouldBeNil)
 		class, readErr := literal(reading, "winner")

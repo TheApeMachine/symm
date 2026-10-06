@@ -247,8 +247,8 @@ func TestPaper_WaitNeverEnters(t *testing.T) {
 			So(training.Model.Teach(string(tok), action, 0.01), ShouldBeNil)
 		}
 
-		Convey("When the trie answers wait", func() {
-			teach(actionWait)
+		Convey("When the trie abstains (wait stance, no enter leaf)", func() {
+			// No Teach: empty Winner is precursor wait stance, not a wait leaf.
 			out := training.Step(live(4.0))
 
 			Convey("No order is submitted and the desk stays flat", func() {
@@ -256,7 +256,7 @@ func TestPaper_WaitNeverEnters(t *testing.T) {
 
 				select {
 				case <-transport.write:
-					t.Fatal("wait submitted an order")
+					t.Fatal("abstention submitted an order")
 				case <-time.After(200 * time.Millisecond):
 				}
 
@@ -282,7 +282,7 @@ func TestPaper_WaitNeverEnters(t *testing.T) {
 	})
 }
 
-func TestPaper_LossTeachesWait(t *testing.T) {
+func TestPaper_LossDampensEnter(t *testing.T) {
 	Convey("Given a READY training session that paper trades a losing round trip", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -350,15 +350,16 @@ func TestPaper_LossTeachesWait(t *testing.T) {
 			}
 		}
 
-		Convey("The losing entry context teaches wait and weakens enter, never exit alone", func() {
+		Convey("The losing entry context dampens enter, never wait or exit alone", func() {
 			So(math.Float64frombits(training.paper.returnsBits.Load()), ShouldBeLessThan, 0)
-			So(census(training, actionWait), ShouldBeGreaterThan, 0)
+			So(census(training, actionWait), ShouldEqual, 0)
 			So(census(training, actionEnter), ShouldBeGreaterThan, 0)
 			So(census(training, actionExit), ShouldEqual, 0)
 
-			call, err := training.Model.Recall("R0_R1/R1_R2")
+			call, err := training.Model.Recall("R0_R1/R1_R2", "")
 			So(err, ShouldBeNil)
-			So(call.Winner, ShouldEqual, actionWait)
+			// Penalized enter may still win until pruned; it must not be wait.
+			So(call.Winner, ShouldNotEqual, actionWait)
 		})
 	})
 }
@@ -431,15 +432,15 @@ func TestPaper_LossDoesNotTeachExitWithoutEnter(t *testing.T) {
 			}
 		}
 
-		Convey("A loss teaches wait and weakens enter, never exit without enter", func() {
+		Convey("A loss dampens enter, never wait or exit without enter", func() {
 			So(math.Float64frombits(training.paper.returnsBits.Load()), ShouldBeLessThan, 0)
-			So(census(training, actionWait), ShouldBeGreaterThan, 0)
+			So(census(training, actionWait), ShouldEqual, 0)
 			So(census(training, actionEnter), ShouldBeGreaterThan, 0)
 			So(census(training, actionExit), ShouldEqual, 0)
 
-			call, err := training.Model.Recall("R0_R1/R1_R2")
+			call, err := training.Model.Recall("R0_R1/R1_R2", "")
 			So(err, ShouldBeNil)
-			So(call.Winner, ShouldEqual, actionWait)
+			So(call.Winner, ShouldNotEqual, actionWait)
 		})
 	})
 }

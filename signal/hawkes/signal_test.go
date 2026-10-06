@@ -63,6 +63,7 @@ func TestHawkesTradeMetrics(t *testing.T) {
 				So(instrument.Error(), ShouldBeNil)
 				So(res.Source, ShouldEqual, "hawkes")
 				So(res.Label, ShouldEqual, "BTC/USD")
+				So(res.Meta("side"), ShouldEqual, side)
 				So(res.At, ShouldEqual, at)
 				So(res.From.Sub(origin).Abs(), ShouldBeLessThan, time.Microsecond)
 

@@ -59,6 +59,7 @@ func TestSnapshotNext(t *testing.T) {
 
 			recalled, recallErr := drive(NewRecall(fresh), map[string]string{
 				"context": "ctx",
+				"stance":  "",
 			}, nil)
 			So(recallErr, ShouldBeNil)
 			winner, winnerErr := literal(recalled, "winner")

@@ -74,7 +74,12 @@ records and reports it. Requires MarkA < MarkB < MarkC.
 func (chart *Chart) draw(
 	ctx context.Context, detection *data.Measurement, move excursion, tape frames,
 ) error {
-	lo, hi := move.window()
+	lo, hi, err := move.window()
+
+	if err != nil {
+		return err
+	}
+
 	points, err := chart.priceTape(ctx, detection, lo, hi)
 
 	if err != nil {
@@ -154,6 +159,12 @@ empty window means storage and detections disagree.
 func (chart *Chart) priceTape(
 	ctx context.Context, detection *data.Measurement, startTick, highTick int64,
 ) ([]ui.FragmentPoint, error) {
+	startTick, highTick, err := clampTapeTicks(startTick, highTick)
+
+	if err != nil {
+		return nil, err
+	}
+
 	window := fmt.Sprintf(
 		"%s epoch %d ticks %d..%d", detection.Label, detection.Epoch, startTick, highTick,
 	)

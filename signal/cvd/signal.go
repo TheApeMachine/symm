@@ -137,6 +137,23 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 			{"signed_net_fraction_baseline", "signed_net_fraction_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
 			{"signed_net_fraction_divergence", "signed_net_fraction_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
 			{"signed_net_fraction_zscore", "signed_net_fraction_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"response_midpoint:from", "response_midpoint:from", string(data.UnitPrice), string(data.TimescaleRollingWindow)},
+			{"response_midpoint:at", "response_midpoint:at", string(data.UnitPrice), string(data.TimescaleRollingWindow)},
+			{"midpoint_log_return", "midpoint_log_return", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
+			{"midpoint_return_rate", "midpoint_return_rate", string(data.UnitVelocity), string(data.TimescalePerSecond)},
+			{"flow_aligned_midpoint_return", "flow_aligned_midpoint_return", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
+			{"midpoint_response_per_net_notional", "midpoint_response_per_net_notional", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"gross_notional_rate_baseline", "gross_notional_rate_baseline", string(data.UnitNotionalRate), string(data.TimescaleRollingWindow)},
+			{"gross_notional_rate_ratio", "gross_notional_rate_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"gross_notional_rate_divergence", "gross_notional_rate_divergence", string(data.UnitNotionalRate), string(data.TimescaleRollingWindow)},
+			{"gross_notional_rate_zscore", "gross_notional_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"midpoint_return_rate_baseline", "midpoint_return_rate_baseline", string(data.UnitVelocity), string(data.TimescaleRollingWindow)},
+			{"midpoint_return_rate_divergence", "midpoint_return_rate_divergence", string(data.UnitVelocity), string(data.TimescaleRollingWindow)},
+			{"midpoint_return_rate_zscore", "midpoint_return_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"net_notional_rate_velocity", "net_notional_rate_velocity", string(data.UnitAcceleration), string(data.TimescalePerSecond)},
+			{"gross_notional_rate_velocity", "gross_notional_rate_velocity", string(data.UnitAcceleration), string(data.TimescalePerSecond)},
+			{"historical_path_distance", "historical_path_distance", string(data.UnitDistance), string(data.TimescaleRollingWindow)},
+			{"historical_path_percentile", "historical_path_percentile", string(data.UnitPercent), string(data.TimescaleRollingWindow)},
 		},
 	}
 
@@ -214,11 +231,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
-		value, held := signal.output.Values[metric[1]]
-
-		if !held {
-			continue
-		}
+		value := signal.output.Values[metric[1]]
 
 		metrics = append(metrics, data.NewMetric(
 			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),

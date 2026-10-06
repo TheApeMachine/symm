@@ -15,10 +15,21 @@ import (
 /*
 Recall reads the class associated with a context. An exact basin hit wins.
 Failing that, the longest stored prefix is tried, then the longest stored
-suffix. Equal leading masses abstain. Contrast is the log ratio of the
-leading share to the next share. Surprisal is the information of the
-sensory count against the observation clock, and is published only when
-that sensory record exists.
+suffix. Equal leading masses abstain. Wait is not an action — legacy wait
+basins are ignored, so abstention is the precursor stance when no enter
+or exit leads.
+
+Stance names the one action the asker can take (enter while flat, exit
+while holding); an empty stance lets every class compete. Enter and exit
+are never alternatives at the same moment, so under a stance the other
+class is not evidence and its basins are skipped — otherwise exit, taught
+on the same region spans with the larger gross feedback, outweighs enter on
+every shared context. A stance admits a single class, so there is no
+runner-up to contrast against: that class leads only while its
+reinforcement holds it above the graded start, the policy choice Export
+draws, and abstains once losing feedback has pushed it below. Contrast is the log ratio of the leading share to the next
+share. Surprisal is the information of the sensory count against the
+observation clock, and is published only when that sensory record exists.
 */
 type Recall struct {
 	*core.PrimitiveError
@@ -56,7 +67,7 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			var text data.Map[string]
 
-			for pointer := range adapter.Next(data.NewValue(data.NewLiteral("context"))) {
+			for pointer := range adapter.Next(data.NewValue(data.NewLiteral("context", "stance"))) {
 				text = *(*data.Map[string])(pointer)
 			}
 
@@ -66,8 +77,9 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			context, contextOK := text.Values["context"]
+			stance, stanceOK := text.Values["stance"]
 
-			if !contextOK {
+			if !contextOK || !stanceOK {
 				op.Error(core.ErrNotHeld)
 				return
 			}
@@ -177,6 +189,7 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			var names []string
 			var masses []float64
 			var supports []float64
+			var strengths []float64
 
 			for _, query := range queries {
 				before := len(names)
@@ -205,6 +218,11 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					}
 
 					className := string(rest[slash+1:])
+
+					if className == "wait" || (stance != "" && className != stance) {
+						continue
+					}
+
 					count := binary.LittleEndian.Uint64(value[0:8])
 					probability := math.Float64frombits(binary.LittleEndian.Uint64(value[8:16]))
 					mass := float64(count) * probability
@@ -218,6 +236,7 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 						if mass > masses[index] {
 							masses[index] = mass
 							supports[index] = float64(count)
+							strengths[index] = probability
 						}
 
 						placed = true
@@ -228,6 +247,7 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 						names = append(names, className)
 						masses = append(masses, mass)
 						supports = append(supports, float64(count))
+						strengths = append(strengths, probability)
 					}
 				}
 
@@ -345,6 +365,10 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 
 				confidence = share.Values["normalized"]
+
+				if stance != "" && strengths[winnerIndex] <= core.Unit/2 {
+					winner = ""
+				}
 			}
 
 			if total > 0 && runnerIndex >= 0 {

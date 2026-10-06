@@ -216,11 +216,13 @@ func TestChart_PriceTape(t *testing.T) {
 		detectionRow, startTick, cTick := tapeWindow(ctx, training)
 
 		Convey("priceTape errors on that row instead of stamping it with the current time", func() {
+			// The stored row itself is invalid, so the tape read halts on it
+			// before the chart ever sees a zero timestamp.
 			points, err := training.Rehearsal.Chart.priceTape(ctx, detectionRow, startTick, cTick)
 			So(err, ShouldNotBeNil)
-			So(errnie.IsValidation(err), ShouldBeTrue)
-			So(err.Error(), ShouldContainSubstring, "spot:trade without a timestamp")
+			So(err.Error(), ShouldContainSubstring, "source spot:trade")
 			So(err.Error(), ShouldContainSubstring, "tick 12")
+			So(err.Error(), ShouldContainSubstring, "at is required")
 			So(points, ShouldBeNil)
 		})
 	})

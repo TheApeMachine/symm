@@ -135,5 +135,33 @@ func TestReporter(t *testing.T) {
 			So(metric, ShouldNotBeNil)
 			So(metric.Raw, ShouldEqual, 1)
 		})
+
+		Convey("it renders concise high-density summary text and structured report data", func() {
+			snapshot.GridCells = 48
+			snapshot.GridRegions = 12
+
+			summary := reporter.Summary(snapshot)
+			So(summary, ShouldContainSubstring, "[learning] stage=HISTORICAL VALIDATION")
+			So(summary, ShouldContainSubstring, `blocker="evaluating"`)
+			So(summary, ShouldContainSubstring, "grid=[cells:48 regions:12]")
+			So(summary, ShouldContainSubstring, "paper=[trades:10 win_rate:60.0% edge:+2.00%]")
+
+			out := data.NewMeasurement(1, "BTC/USD", "training", 42, 42)
+			out.At = snapshot.At
+			out.From = snapshot.At
+			reporter.Publish(out, snapshot)
+
+			So(reporter.LatestSummary(), ShouldEqual, summary)
+
+			report := reporter.ReportData().(LearningReportData)
+			So(report.Stage, ShouldEqual, "HISTORICAL VALIDATION")
+			So(report.Blocker, ShouldEqual, "evaluating")
+			So(report.Grid.Cells, ShouldEqual, 48)
+			So(report.Grid.Regions, ShouldEqual, 12)
+			So(report.Paper.Trading, ShouldBeTrue)
+			So(report.Paper.Resolved, ShouldEqual, 10)
+			So(report.Paper.WinRate, ShouldEqual, 0.6)
+			So(report.Paper.Edge, ShouldEqual, 0.02)
+		})
 	})
 }

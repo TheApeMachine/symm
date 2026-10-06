@@ -117,7 +117,7 @@ func (metric *Metric) valid(fields ...string) error {
 			}
 		}
 
-		return errnie.Error(errnie.Require(mapped))
+		return errnie.Error(errnie.Require(mapped), "metric", metric.Label, "raw", metric.Raw)
 	}
 
 	// Exact is optional by contract: only venue-printed observations carry

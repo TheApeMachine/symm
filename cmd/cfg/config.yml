@@ -276,6 +276,10 @@ learning:
   # Resource allocation, including the consolidated-model evaluator.
   traders: 8
   checkpoint_interval: 1m
+  # Opt-in rehearsal augmentation: also teach each rehearsed context with one
+  # region frame missing and with one frame swapped for another region of the
+  # same fragment (dropout-style noise). Off by default.
+  rehearsal_dropout: false
 
 cognition:
   # A binary confidence of 0.5 is exactly indifferent. Cognition must exceed

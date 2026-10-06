@@ -61,10 +61,12 @@ func TestSentimentSignalMetrics(t *testing.T) {
 						So(held, ShouldBeTrue)
 						So(count, ShouldEqual, 0)
 
-						_, held = metric(res, "breadth")
-						So(held, ShouldBeFalse)
-						_, held = metric(res, "median_return")
-						So(held, ShouldBeFalse)
+						b, held := metric(res, "breadth")
+						So(held, ShouldBeTrue)
+						So(b, ShouldEqual, 0)
+						m, held := metric(res, "median_return")
+						So(held, ShouldBeTrue)
+						So(m, ShouldEqual, 0)
 					}
 
 					if step > 1 && idx == len(symbols)-1 {

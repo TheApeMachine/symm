@@ -123,10 +123,8 @@ func (op *Leads) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.output.Values["absolute_correlation_gain"+suffix] = summary[18]
 				op.output.Values["lag_fraction"+suffix] = summary[19]
 
-				if summary[11] == 1 {
-					op.output.Values["lag_peak_prominence"+suffix] = summary[20]
-					op.output.Values["lag_peak_curvature"+suffix] = summary[21]
-				}
+				op.output.Values["lag_peak_prominence"+suffix] = summary[20]
+				op.output.Values["lag_peak_curvature"+suffix] = summary[21]
 
 				fisher, known := op.fisher[peer]
 
@@ -146,13 +144,8 @@ func (op *Leads) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					return
 				}
 
-				if history[1] == 1 && history[9] == 1 {
-					op.output.Values["best_lag_correlation_baseline"+suffix] = history[2]
-				}
-
-				if history[1] == 1 && history[8] == 1 {
-					op.output.Values["best_lag_correlation_zscore"+suffix] = history[6]
-				}
+				op.output.Values["best_lag_correlation_baseline"+suffix] = history[2]
+				op.output.Values["best_lag_correlation_zscore"+suffix] = history[6]
 			}
 
 			for range adapter.Next(data.NewValue(op.output)) {

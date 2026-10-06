@@ -106,6 +106,8 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 			{"excitation_share:sell", "excitation_share:sell", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
 			{"excitation_share", "excitation_share", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
 			{"snr", "snr", string(data.UnitSNR), string(data.TimescaleInstantaneous)},
+			{"historical_path_distance", "historical_path_distance", string(data.UnitDistance), string(data.TimescaleRollingWindow)},
+			{"historical_path_percentile", "historical_path_percentile", string(data.UnitPercent), string(data.TimescaleRollingWindow)},
 		},
 	}
 
@@ -207,6 +209,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	out := signal.arena.NewMeasurement(
 		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, []*data.Measurement{prior},
+		&data.StringEntry{Key: "side", Value: prior.Meta("side")},
 	)
 	out.Epoch = prior.Epoch
 	out.Label = prior.Label
@@ -223,11 +226,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
-		value, held := pipe.output.Values[metric[1]]
-
-		if !held {
-			continue
-		}
+		value := pipe.output.Values[metric[1]]
 
 		metrics = append(metrics, data.NewMetric(
 			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),

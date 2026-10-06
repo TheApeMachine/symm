@@ -57,19 +57,24 @@ type FragmentsSource interface {
 	Fragments() []TrainedFragment
 }
 
+type LearningSource interface {
+	LearningSummary() string
+	LearningReport() any
+}
+
 type TrainedFragment struct {
-	ID         int             `json:"id"`
-	Symbol     string          `json:"symbol"`
-	Epoch      int64           `json:"epoch"`
-	MarkA      int64           `json:"mark_a"`
-	MarkB      int64           `json:"mark_b"`
-	MarkC      int64           `json:"mark_c"`
-	EntryPrice float64         `json:"entry_price"`
-	ExitPrice  float64         `json:"exit_price"`
-	Magnitude  float64         `json:"magnitude"`
-	Direction  string          `json:"direction"`
-	Class      string          `json:"class"`
-	Tokens     []string        `json:"tokens"`
+	ID                int             `json:"id"`
+	Symbol            string          `json:"symbol"`
+	Epoch             int64           `json:"epoch"`
+	MarkA             int64           `json:"mark_a"`
+	MarkB             int64           `json:"mark_b"`
+	MarkC             int64           `json:"mark_c"`
+	EntryPrice        float64         `json:"entry_price"`
+	ExitPrice         float64         `json:"exit_price"`
+	Magnitude         float64         `json:"magnitude"`
+	Direction         string          `json:"direction"`
+	Class             string          `json:"class"`
+	Tokens            []string        `json:"tokens"`
 	Points            []FragmentPoint `json:"points"`
 	EntryIdx          int             `json:"entry_idx"`
 	ExitIdx           int             `json:"exit_idx"`
@@ -103,6 +108,7 @@ type Hub struct {
 	equitySource     EquitySource
 	cognitionSource  CognitionSource
 	fragmentsSource  FragmentsSource
+	learningSource   LearningSource
 	exitHandler      func(symbol string)
 	routes           *Routes
 	learningInterval time.Duration
@@ -175,11 +181,11 @@ func NewHub(
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		hub.frontend.Store(conn)
-		errnie.Info("hub: frontend websocket connected")
+		errnie.Info("[hub] frontend websocket connected")
 
 		defer func() {
 			hub.frontend.CompareAndSwap(conn, nil)
-			errnie.Info("hub: frontend websocket disconnected")
+			errnie.Info("[hub] frontend websocket disconnected")
 			conn.Conn.Close()
 		}()
 
@@ -225,6 +231,7 @@ func NewHub(
 			}
 
 			summary := positionsSummary(wireFrame.Rows)
+			
 			if ver != 0 && ver == lastPositionsVersion && summary == lastPositionsSummary {
 				return nil
 			}
@@ -471,6 +478,17 @@ func (hub *Hub) SetFragmentsSource(source FragmentsSource) {
 	}
 
 	hub.fragmentsSource = source
+}
+
+/*
+SetLearningSource attaches the source for active learning system telemetry and reports.
+*/
+func (hub *Hub) SetLearningSource(source LearningSource) {
+	if hub == nil {
+		return
+	}
+
+	hub.learningSource = source
 }
 
 /*

@@ -107,7 +107,8 @@ func TestCVDSignalMetrics(t *testing.T) {
 					got, held := metric(res, label)
 
 					if span == 0 {
-						So(held, ShouldBeFalse)
+						So(held, ShouldBeTrue)
+						So(got, ShouldEqual, 0.0)
 						continue
 					}
 

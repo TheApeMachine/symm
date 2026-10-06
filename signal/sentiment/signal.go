@@ -41,7 +41,7 @@ type Signal struct {
 	members  core.Primitive
 	reduce   core.Primitive
 	pipeline core.Primitive
-	metrics  [][5]string
+	metrics  [][4]string
 }
 
 /*
@@ -98,26 +98,71 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 			transport.NewStages(temporal.NewVelocity()),
 			transport.NewStages(temporal.NewVelocity()),
 		),
-		// {published label, output key, unit, timescale, gate key}
-		// A non-empty gate key publishes the metric only while that output is non-zero.
-		metrics: [][5]string{
-			{"valid_member_count", "valid_member_count", string(data.UnitCount), string(data.TimescaleInstantaneous), ""},
-			{"advance_count", "advance_count", string(data.UnitCount), string(data.TimescaleInstantaneous), ""},
-			{"decline_count", "decline_count", string(data.UnitCount), string(data.TimescaleInstantaneous), ""},
-			{"unchanged_count", "unchanged_count", string(data.UnitCount), string(data.TimescaleInstantaneous), ""},
-			{"advance_fraction", "advance_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"decline_fraction", "decline_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"unchanged_fraction", "unchanged_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"breadth", "breadth", string(data.UnitDimensionless), string(data.TimescaleInstantaneous), ""},
-			{"median_return", "median_return", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"breadth_baseline", "breadth_baseline", string(data.UnitDimensionless), string(data.TimescaleRollingWindow), ""},
-			{"breadth_divergence", "breadth_divergence", string(data.UnitDimensionless), string(data.TimescaleRollingWindow), ""},
-			{"breadth_zscore", "breadth_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"median_return_baseline", "median_return_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"median_return_divergence", "median_return_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"median_return_zscore", "median_return_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"median_return_velocity", "median_return_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "median_return_velocity:defined"},
-			{"breadth_velocity", "breadth_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "breadth_velocity:defined"},
+		// {published label, output key, unit, timescale}
+		metrics: [][4]string{
+			{"cohort_member_count", "cohort_member_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
+			{"valid_member_count", "valid_member_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
+			{"excluded_member_count", "excluded_member_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
+			{"cohort_horizon_seconds", "cohort_horizon_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
+			{"return", "return", string(data.UnitLogReturn), string(data.TimescaleInstantaneous)},
+			{"absolute_return", "absolute_return", string(data.UnitLogReturn), string(data.TimescaleInstantaneous)},
+			{"asof_age_seconds", "asof_age_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
+			{"from_age_seconds", "from_age_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
+			{"advance_count", "advance_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
+			{"decline_count", "decline_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
+			{"unchanged_count", "unchanged_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
+			{"advance_fraction", "advance_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"decline_fraction", "decline_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"unchanged_fraction", "unchanged_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"directional_participation", "directional_participation", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"breadth", "breadth", string(data.UnitDimensionless), string(data.TimescaleInstantaneous)},
+			{"directional_agreement", "directional_agreement", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"directional_consensus", "directional_consensus", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"median_return", "median_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"median_absolute_return", "median_absolute_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"mean_absolute_return", "mean_absolute_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"rms_return", "rms_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"return_mad", "return_mad", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"magnitude_mad", "magnitude_mad", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"return_interquartile_range", "return_interquartile_range", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"largest_move_tie_count", "largest_move_tie_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
+			{"largest_absolute_return", "largest_absolute_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"largest_signed_return", "largest_signed_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"largest_move_share", "largest_move_share", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"peer_median_absolute_return", "peer_median_absolute_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"peer_magnitude_mad", "peer_magnitude_mad", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"largest_move_excess", "largest_move_excess", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"largest_move_ratio", "largest_move_ratio", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"largest_move_mad_excess", "largest_move_mad_excess", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"same_direction_peer_count", "same_direction_peer_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
+			{"opposite_direction_peer_count", "opposite_direction_peer_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
+			{"zero_return_peer_count", "zero_return_peer_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
+			{"same_direction_peer_fraction", "same_direction_peer_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"opposite_direction_peer_fraction", "opposite_direction_peer_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"zero_return_peer_fraction", "zero_return_peer_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"median_asof_age_seconds", "median_asof_age_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
+			{"max_asof_age_seconds", "max_asof_age_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
+			{"median_from_age_seconds", "median_from_age_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
+			{"median_return_baseline", "median_return_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"median_return_divergence", "median_return_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"median_return_zscore", "median_return_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"breadth_baseline", "breadth_baseline", string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
+			{"breadth_divergence", "breadth_divergence", string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
+			{"breadth_zscore", "breadth_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"median_absolute_return_baseline", "median_absolute_return_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"median_absolute_return_ratio", "median_absolute_return_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"median_absolute_return_zscore", "median_absolute_return_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"return_dispersion_baseline", "return_dispersion_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"return_dispersion_ratio", "return_dispersion_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"return_dispersion_zscore", "return_dispersion_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"largest_move_share_baseline", "largest_move_share_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"largest_move_share_zscore", "largest_move_share_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"median_return_velocity", "median_return_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"breadth_velocity", "breadth_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"median_absolute_return_velocity", "median_absolute_return_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"return_dispersion_velocity", "return_dispersion_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"historical_path_distance", "historical_path_distance", string(data.UnitDistance), string(data.TimescaleRollingWindow)},
+			{"historical_path_percentile", "historical_path_percentile", string(data.UnitPercent), string(data.TimescaleRollingWindow)},
 		},
 	}
 
@@ -202,6 +247,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 	}
 
+	if valid := signal.output.Values["valid_member_count"]; valid > 0 {
+		signal.output.Values["cohort_member_count"] = valid
+		signal.output.Values["directional_participation"] = (signal.output.Values["advance_count"] + signal.output.Values["decline_count"]) / valid
+	}
+
 	out := signal.arena.NewMeasurement(
 		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, []*data.Measurement{prior},
 	)
@@ -216,15 +266,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
-		value, held := signal.output.Values[metric[1]]
-
-		if !held {
-			continue
-		}
-
-		if metric[4] != "" && signal.output.Values[metric[4]] == 0 {
-			continue
-		}
+		value := signal.output.Values[metric[1]]
 
 		metrics = append(metrics, data.NewMetric(
 			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),

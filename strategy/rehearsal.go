@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -95,7 +96,8 @@ built up enough skill"): enter had ground truth to grade, and either the
 prequential pass beat the best constant policy, or post-teach retention did.
 Retention covers the case where random A offsets keep creating novel
 contexts so prequential hits stay low even after the trie learned enter/exit.
-A trie that only learned wait can never open a paper position.
+A trie that never learned enter can never open a paper position —
+wait is abstention, not a graded leaf action.
 */
 func (skill skill) open() bool {
 	if skill.trained == 0 || skill.asked[actionEnter] == 0 {
@@ -201,17 +203,18 @@ func (rehearsal *Rehearsal) pass(ctx context.Context) (skill, error) {
 		seen[key] = struct{}{}
 		result.latest = max(result.latest, detection.Epoch)
 
-		// A detection that cannot be learned (missing tape, inconsistent
-		// class, unpriceable friction) stops the pass. Skipping it would
-		// bias the trie and the skill gate toward the excursions that
-		// happened to load.
+		// Hard errors (missing tape, absurd B/C geometry, inconsistent
+		// class, unpriceable friction) stop the pass — skipping those would
+		// bias the trie and the skill gate. Soft-skip only when the tape
+		// exists but forms no teachable phase (empty asked below). A left
+		// pad past tick 0 is clamped, not an error.
 		asked, hits, retained, err := rehearsal.learn(ctx, detection, -1)
 
 		if err != nil {
 			return skill{}, errnie.Err(errnie.Internal, "[rehearsal] unable to learn detection "+key, err)
 		}
 
-		// Its tape exists, but its geometry forms no phase (see learn).
+		// Soft-skip: tape exists, geometry forms no phase (see learn).
 		if len(asked) == 0 {
 			continue
 		}
@@ -231,19 +234,34 @@ func (rehearsal *Rehearsal) pass(ctx context.Context) (skill, error) {
 
 /*
 phase is one trainable stretch of a fragment: its deduplicated token
-context, the action being graded or inhibited, and signed feedback
-(positive reinforces, negative weakens).
+context, the action being graded or inhibited, signed feedback (positive
+reinforces, negative weakens), and the frames the context was cut from
+(nil for a correction of a wrong call, which augment never perturbs).
 */
 type phase struct {
 	context  string
 	action   string
 	feedback float64
+	frames   [][]byte
 }
 
 /*
-learn cuts one stored excursion into its trainable phases. Every class maps
-onto the three trie actions (enter, exit, wait) by what the right call was
-at that point of the tape (TRAINING.md: exit only if we have entered):
+drill is the A-dependent stretch of a fragment: A may start on any frame
+before limit, the stretch runs from A up to end, and it teaches enter with
+feedback (negative dampens). It is what changes when A moves. Zero feedback
+means the graded draw taught nothing from A, so neither does augment.
+*/
+type drill struct {
+	limit    int
+	end      int
+	feedback float64
+}
+
+/*
+learn cuts one stored excursion into its trainable phases. Terminal trie
+actions are enter and exit only (TRAINING.md: exit only if we have
+entered). Wait is not a leaf — abstention is the precursor stance when
+enter is not the call:
 
   - up: the precursor from a random A offset up to the frame before
     ignition B teaches enter, with the net round-trip return; the holding
@@ -253,11 +271,11 @@ at that point of the tape (TRAINING.md: exit only if we have entered):
     fill-latency pullback still teaches enter (and exit on the ignition
     window when any frame remains), with feedback scaled down so short
     observations weaken rather than dominate or soft-skip.
-  - up_friction / down / chop / flat: the precursor teaches wait with the
-    loss or friction avoided, and actively weakens enter on the same
-    context (negative feedback). Wait alone would train a wait expert that
-    never beats the constant-wait skill baseline; inhibiting enter is what
-    makes losing tape push the trie off enter. No exit without enter.
+  - up_friction / down / chop / flat: the losing sequence dampens enter
+    on the precursor context (negative feedback). No wait basin is
+    written. If enter was never strong there, dampening inserts a
+    penalized enter that cognition may prune once useless. No exit
+    without enter.
 
 Wrong non-abstaining predictions on a graded phase are also weakened
 (negative feedback on the mistaken action). Exit without enter is a hard
@@ -266,9 +284,12 @@ error. Feedback is signed and must be non-zero.
 aOffset counts token frames from the first frame A may occupy; a negative
 aOffset draws a fresh random A (TRAINING.md fragment rehearsal), so the trie
 does not only memorize one precursor length. A is always strictly before B.
-Ground-truth ENTER/EXIT UI markers sit on the sweet-spot frames of the phases
-that teach them; after Teach, the same contexts are Recall'd (no teach) and
-those predictions are reported alongside.
+That draw is the graded one; augment then teaches the same fragment from
+every other distinct A (see augment). Ground-truth ENTER/EXIT UI markers sit
+on the sweet-spot frames of the graded phases that teach them; after Teach,
+the same contexts are Recall'd under the stance that phase acts from (flat
+for enter, holding for exit; no teach) and agreeing predictions are
+reported alongside.
 
 Before any phase is taught, the trie is asked which action it would take on
 it. The returned map counts the questions per ground-truth action, and the
@@ -303,7 +324,11 @@ func (rehearsal *Rehearsal) learn(
 	}
 
 	class := move.class
-	lo, hi := move.window()
+	lo, hi, err := move.window()
+
+	if err != nil {
+		return nil, 0, 0, errnie.Error(err)
+	}
 
 	// tape errors on a missing or region-less tape, so from here on the
 	// tape exists and every "nothing to learn" return is geometry alone.
@@ -340,11 +365,8 @@ func (rehearsal *Rehearsal) learn(
 		startA     int
 		enterFrame = -1
 		exitFrame  = -1
+		stretch    drill
 	)
-
-	contextOf := func(frames [][]byte) string {
-		return string(bytes.Join(deduplicateTokens(frames), []byte("/")))
-	}
 
 	// Every phase slice is non-empty and tokens only holds non-empty frames,
 	// so an empty context is a slicing bug, never a short window.
@@ -355,7 +377,7 @@ func (rehearsal *Rehearsal) learn(
 			return false
 		}
 
-		phases = append(phases, phase{context, action, feedback})
+		phases = append(phases, phase{context, action, feedback, frames})
 		return true
 	}
 
@@ -370,7 +392,7 @@ func (rehearsal *Rehearsal) learn(
 			return
 		}
 
-		weakens = append(weakens, phase{context, action, -magnitude})
+		weakens = append(weakens, phase{context, action, -magnitude, frames})
 	}
 
 	switch class {
@@ -399,11 +421,12 @@ func (rehearsal *Rehearsal) learn(
 
 		startA = drawA(0, endB)
 		precursorFrames := tokens[startA:endB]
+		stretch = drill{limit: endB, end: endB}
 
 		/*
 			Exit is only taught when enter is (TRAINING.md: "if we have entered").
-			Losing precursors (up_friction, down) teach wait and actively weaken
-			enter on the same context — wait alone would train a wait expert.
+			Losing precursors (up_friction, down) dampen enter on the same
+			context — wait is abstention, never a terminal leaf.
 		*/
 		if precursor == actionEnter {
 			startHolding := ignition + 1
@@ -421,6 +444,8 @@ func (rehearsal *Rehearsal) learn(
 				endC = min(peak+1, len(tokens))
 				scale = shortObservationScale
 			}
+
+			stretch.feedback = precursorFeedback * scale
 
 			if startHolding >= endC {
 				// Only the precursor remains — teach enter weakened, no exit.
@@ -447,7 +472,8 @@ func (rehearsal *Rehearsal) learn(
 				exitFrame = max(endC-1, startHolding)
 			}
 		} else {
-			if !add(actionWait, precursorFeedback, precursorFrames) {
+			// Dampen enter on the losing precursor; no wait leaf.
+			if len(contextOf(precursorFrames)) == 0 {
 				return nil, 0, 0, errnie.Error(errnie.Err(
 					errnie.Internal,
 					"[rehearsal] "+class+" phase has an empty context: "+detection.Label,
@@ -456,6 +482,10 @@ func (rehearsal *Rehearsal) learn(
 			}
 
 			weaken(actionEnter, precursorFeedback, precursorFrames)
+
+			if precursorFeedback > 0 {
+				stretch.feedback = -precursorFeedback
+			}
 		}
 	case excursionChop, excursionFlat:
 		end := min(peak+1, len(tokens))
@@ -467,8 +497,10 @@ func (rehearsal *Rehearsal) learn(
 
 		startA = drawA(0, ignition)
 		quietFrames := tokens[startA:end]
+		stretch = drill{limit: ignition, end: end}
 
-		if !add(actionWait, -net, quietFrames) {
+		// Chop/flat: dampen enter only — wait is abstention, not a leaf.
+		if len(contextOf(quietFrames)) == 0 {
 			return nil, 0, 0, errnie.Error(errnie.Err(
 				errnie.Internal,
 				"[rehearsal] "+class+" phase has an empty context: "+detection.Label,
@@ -477,6 +509,10 @@ func (rehearsal *Rehearsal) learn(
 		}
 
 		weaken(actionEnter, -net, quietFrames)
+
+		if net < 0 {
+			stretch.feedback = net
+		}
 	default:
 		return nil, 0, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -514,11 +550,14 @@ func (rehearsal *Rehearsal) learn(
 		))
 	}
 
+	// The fragment's ground-truth lessons, before wrong-call corrections
+	// join weakens: augment perturbs these, never a correction.
+	lessons := append(slices.Clone(phases), weakens...)
 	asked := make(map[string]int, len(phases))
 	hits := 0
 
 	for _, learned := range phases {
-		call, err := rehearsal.model.Recall(learned.context)
+		call, err := rehearsal.model.Recall(learned.context, "")
 
 		if err != nil {
 			return nil, 0, 0, errnie.Error(err)
@@ -537,7 +576,7 @@ func (rehearsal *Rehearsal) learn(
 			if magnitude < 0 {
 				magnitude = -magnitude
 			}
-			weakens = append(weakens, phase{learned.context, call.Winner, -magnitude})
+			weakens = append(weakens, phase{learned.context, call.Winner, -magnitude, nil})
 		}
 	}
 
@@ -561,15 +600,25 @@ func (rehearsal *Rehearsal) learn(
 		}
 	}
 
-	// Post-teach predict on the same contexts (no teach): which action the
-	// model would now take. Ground-truth sweet spots stay on enter/exit;
-	// predicted* frames light only when Recall agrees with the taught action.
-	// Retained counts post-teach agreement for the skill gate.
+	if err := rehearsal.augment(
+		tokens, stretch, contextOf(tokens[startA:stretch.end]), lessons,
+		system.Cfg.Learning.RehearsalDropout,
+	); err != nil {
+		return nil, 0, 0, err
+	}
+
+	// Post-teach predict on the same contexts (no teach). Retained counts
+	// unconditioned post-teach agreement for the skill gate, graded the same
+	// way as the prequential hits. The predicted* markers ask from the
+	// stance the phase acts in — flat for enter, holding for exit — because
+	// enter and exit are never alternatives at one moment: unconditioned,
+	// exit (taught on the same region spans with the larger gross feedback)
+	// outweighs enter on every shared context, and enter never lights.
 	predictEnter, predictExit := -1, -1
 	retained := 0
 
 	for _, learned := range phases {
-		call, err := rehearsal.model.Recall(learned.context)
+		call, err := rehearsal.model.Recall(learned.context, "")
 
 		if err != nil {
 			return nil, 0, 0, errnie.Error(err)
@@ -579,15 +628,21 @@ func (rehearsal *Rehearsal) learn(
 			retained++
 		}
 
+		stanced, err := rehearsal.model.Recall(learned.context, learned.action)
+
+		if err != nil {
+			return nil, 0, 0, errnie.Error(err)
+		}
+
+		if stanced.Winner != learned.action {
+			continue
+		}
+
 		switch learned.action {
 		case actionEnter:
-			if call.Winner == actionEnter {
-				predictEnter = enterFrame
-			}
+			predictEnter = enterFrame
 		case actionExit:
-			if call.Winner == actionExit {
-				predictExit = exitFrame
-			}
+			predictExit = exitFrame
 		}
 	}
 
@@ -604,6 +659,122 @@ func (rehearsal *Rehearsal) learn(
 	}
 
 	return asked, hits, retained, nil
+}
+
+/*
+augment teaches a fragment past its graded draw. Every pass draws one random
+A, and that draw is the one the skill gate grades. A single draw ties the
+trie to whichever precursor length it happened to pick, so the same fragment
+is also taught from every other distinct A: A starting anywhere inside one
+run of a repeated region yields the same deduplicated context, so the run
+starts before the drill limit enumerate exactly the distinct precursors the
+tape offers — a few per fragment, bounded by its region transitions, never a
+count chosen here. These are taught, not asked, so the prequential grade
+and its constant-policy baseline keep their meaning.
+
+With dropout enabled (system.Learning.RehearsalDropout) each ground-truth
+lesson and each augmented precursor is also taught once with one of its
+region frames missing and once with one frame swapped for another region of
+the same fragment tape — a single edit each, so no noise rate is invented.
+*/
+func (rehearsal *Rehearsal) augment(
+	tokens [][]byte, precursor drill, graded string, lessons []phase, dropout bool,
+) error {
+	if precursor.end > len(tokens) || precursor.limit > precursor.end || precursor.limit < 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"[rehearsal] drill is outside its tape: limit=%d end=%d frames=%d feedback=%g",
+				precursor.limit, precursor.end, len(tokens), precursor.feedback,
+			),
+			nil,
+		))
+	}
+
+	teach := func(context, action string, feedback float64) error {
+		if err := rehearsal.model.Teach(context, action, feedback); err != nil {
+			return errnie.Error(err)
+		}
+
+		return nil
+	}
+
+	for start := range precursor.limit {
+		if precursor.feedback == 0 {
+			break
+		}
+
+		if start > 0 && bytes.Equal(tokens[start], tokens[start-1]) {
+			continue
+		}
+
+		frames := tokens[start:precursor.end]
+		context := contextOf(frames)
+
+		if context == "" || context == graded {
+			continue
+		}
+
+		if err := teach(context, actionEnter, precursor.feedback); err != nil {
+			return err
+		}
+
+		lessons = append(lessons, phase{context, actionEnter, precursor.feedback, frames})
+	}
+
+	if !dropout {
+		return nil
+	}
+
+	vocabulary := deduplicateTokens(tokens)
+
+	for _, lesson := range lessons {
+		base := deduplicateTokens(lesson.frames)
+
+		if len(base) < 2 {
+			continue
+		}
+
+		missing := rand.IntN(len(base))
+		dropped := append(slices.Clone(base[:missing]), base[missing+1:]...)
+
+		if context := contextOf(dropped); context != lesson.context {
+			if err := teach(context, lesson.action, lesson.feedback); err != nil {
+				return err
+			}
+		}
+
+		swap := rand.IntN(len(base))
+		var others [][]byte
+
+		for _, token := range vocabulary {
+			if !bytes.Equal(token, base[swap]) {
+				others = append(others, token)
+			}
+		}
+
+		if len(others) == 0 {
+			continue
+		}
+
+		noisy := slices.Clone(base)
+		noisy[swap] = others[rand.IntN(len(others))]
+
+		if context := contextOf(noisy); context != lesson.context {
+			if err := teach(context, lesson.action, lesson.feedback); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+/*
+contextOf joins a stretch of token frames into its deduplicated context.
+*/
+func contextOf(frames [][]byte) string {
+	return string(bytes.Join(deduplicateTokens(frames), []byte("/")))
 }
 
 /*
@@ -624,9 +795,23 @@ type excursion struct {
 /*
 window is the tape fragment rehearsal and chart read: precursor left of B and
 some tape right of C (TRAINING.md), sized to the move itself. Stored start/end
-expand the window when the detector already padded further.
+expand the window when the detector already padded further. lo is never
+negative (padWindow clamps). Absurd geometry (B before tick 0, or C not
+after B) is a hard validation error — soft-skip only applies when the tape
+exists but forms no teachable phase.
 */
-func (move excursion) window() (lo, hi int64) {
+func (move excursion) window() (lo, hi int64, err error) {
+	if move.b < 0 || move.c <= move.b {
+		return 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"[rehearsal] absurd excursion geometry: B=%d C=%d",
+				move.b, move.c,
+			),
+			nil,
+		))
+	}
+
 	// Always size to the move (TRAINING.md sweet-spot fragment), never the
 	// full epoch start — that left B on a tiny stub or drowned A in days of
 	// tape. end_tick may extend the right pad when the detector stored more.
@@ -636,7 +821,18 @@ func (move excursion) window() (lo, hi int64) {
 		hi = move.end
 	}
 
-	return lo, hi
+	if hi < lo {
+		return 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"[rehearsal] absurd tape window after pad: lo=%d hi=%d B=%d C=%d",
+				lo, hi, move.b, move.c,
+			),
+			nil,
+		))
+	}
+
+	return lo, hi, nil
 }
 
 func excursionOf(detection *data.Measurement) (excursion, error) {
@@ -675,7 +871,8 @@ func excursionOf(detection *data.Measurement) (excursion, error) {
 /*
 directionalFeedback answers the precursor action and the feedback of the
 precursor and holding phases of a directional excursion, and rejects a
-class whose stored prices contradict it.
+class whose stored prices contradict it. An empty precursor action means
+dampen enter only — wait is not a terminal action.
 */
 func directionalFeedback(
 	class, symbol string, net, gross float64,
@@ -696,7 +893,8 @@ func directionalFeedback(
 			))
 		}
 
-		return actionWait, -net, gross, nil
+		// Empty precursor action: dampen enter only (no wait leaf).
+		return "", -net, gross, nil
 	}
 
 	if gross >= 0 {
@@ -705,7 +903,30 @@ func directionalFeedback(
 		))
 	}
 
-	return actionWait, -net, -gross, nil
+	return "", -net, -gross, nil
+}
+
+/*
+clampTapeTicks forces a catalog read window onto non-negative ticks with
+high >= low. Negative lows come from a left pad past the epoch start; those
+are clamped rather than rejected so one early-B detection cannot halt the
+whole rehearsal. A window that still cannot satisfy high >= low after clamp
+is absurd geometry and a hard validation error.
+*/
+func clampTapeTicks(low, high int64) (int64, int64, error) {
+	if low < 0 {
+		low = 0
+	}
+
+	if high < low {
+		return 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[rehearsal] absurd tape ticks after clamp: low=%d high=%d", low, high),
+			nil,
+		))
+	}
+
+	return low, high, nil
 }
 
 /*
@@ -717,6 +938,12 @@ rows light no grid region at all, is an error, never an empty window.
 func (rehearsal *Rehearsal) tape(
 	ctx context.Context, detection *data.Measurement, startTick, highTick int64,
 ) ([]int64, [][]byte, error) {
+	startTick, highTick, err := clampTapeTicks(startTick, highTick)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
 	window := fmt.Sprintf(
 		"%s epoch %d ticks %d..%d", detection.Label, detection.Epoch, startTick, highTick,
 	)

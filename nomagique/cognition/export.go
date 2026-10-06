@@ -16,9 +16,11 @@ import (
 
 /*
 Export publishes the dashboard tree for the association trie as JSON text
-under "tree". Region frames are the slash-separated context. The class is
-the leaf. A class whose strength sits above the graded start, the center
-of the unit interval, is the policy choice.
+under "tree". Region frames are the slash-separated context (edges). The
+terminal class is the leaf — enter or exit only; wait is never a leaf
+(legacy wait basins are skipped). A class whose strength sits above the
+graded start, the center of the unit interval, is the policy choice.
+Internal region nodes are the precursor stance before an enter/exit leaf.
 */
 type Export struct {
 	*core.PrimitiveError
@@ -101,6 +103,10 @@ func (op *Export) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			for index := range classes {
+				if classes[index] == "wait" {
+					continue
+				}
+
 				parts := bytes.Split(contexts[index], []byte{'/'})
 				var frames []string
 				previous := ""

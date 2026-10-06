@@ -406,6 +406,24 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 		}
 
 		measurement.Write(metrics...)
+
+		// A replayable row (maturity/snr selected, so every column is) that
+		// fails its own Write is corrupt tape, e.g. a metric stored with an
+		// undefined raw by a producer that divided 0/0. Replaying it would
+		// re-log the same failure on every pass and teach from a hole, so the
+		// read halts here and names the row. A partial projection (Labels)
+		// carries no replayable Measurement and is not validated as one.
+		if err := measurement.Error(); confident && err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"iceberg: stored measurement row %d is invalid (epoch %d, source %s, label %s, tick %d)",
+					rowIdx, epoch, source, label, tick,
+				),
+				err,
+			))
+		}
+
 		measurements = append(measurements, measurement)
 	}
 

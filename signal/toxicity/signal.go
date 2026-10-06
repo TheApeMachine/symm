@@ -44,7 +44,7 @@ type Signal struct {
 	arena     *data.ArenaOwner
 	books     broker.BookSource
 	pipelines sync.Map
-	metrics   [][5]string
+	metrics   [][4]string
 }
 
 type symbolPipeline struct {
@@ -73,70 +73,71 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 	signal := &Signal{
 		arena: arena,
 		books: books,
-		// {published label, output key, unit, timescale, gate key}
-		// A non-empty gate key publishes the metric only while that output is non-zero.
-		metrics: [][5]string{
-			{"best_price:bid", "bid", string(data.UnitPrice), string(data.TimescaleInstantaneous), ""},
-			{"best_price:ask", "ask", string(data.UnitPrice), string(data.TimescaleInstantaneous), ""},
-			{"touch_quantity:bid", "bid_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous), ""},
-			{"touch_quantity:ask", "ask_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous), ""},
-			{"unfilled_residual_quantity:bid", "bid_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous), ""},
-			{"unfilled_residual_quantity:ask", "ask_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous), ""},
-			{"bracket_trade_quantity", "bracket_trade_quantity", string(data.UnitQuantity), string(data.TimescaleSession), ""},
-			{"matched_touch_trade_quantity:bid", "touch_fill_quantity:bid", string(data.UnitQuantity), string(data.TimescaleSession), ""},
-			{"matched_touch_trade_quantity:ask", "touch_fill_quantity:ask", string(data.UnitQuantity), string(data.TimescaleSession), ""},
-			{"touch_fill_quantity:bid", "touch_fill_quantity:bid", string(data.UnitQuantity), string(data.TimescaleSession), ""},
-			{"touch_fill_quantity:ask", "touch_fill_quantity:ask", string(data.UnitQuantity), string(data.TimescaleSession), ""},
-			{"touch_fill_fraction:bid", "touch_fill_fraction:bid", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"touch_fill_fraction:ask", "touch_fill_fraction:ask", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"fill_fraction_baseline:bid", "fill_fraction_baseline:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"fill_fraction_baseline:ask", "fill_fraction_baseline:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"fill_fraction_divergence:bid", "fill_fraction_divergence:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"fill_fraction_divergence:ask", "fill_fraction_divergence:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"fill_fraction_zscore:bid", "fill_fraction_zscore:bid", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"fill_fraction_zscore:ask", "fill_fraction_zscore:ask", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"fill_fraction_velocity:bid", "fill_fraction_velocity:bid", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "fill_fraction_velocity:bid:defined"},
-			{"fill_fraction_velocity:ask", "fill_fraction_velocity:ask", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "fill_fraction_velocity:ask:defined"},
-			{"previous_best_price:bid", "prev_bid", string(data.UnitPrice), string(data.TimescaleInstantaneous), ""},
-			{"previous_best_price:ask", "prev_ask", string(data.UnitPrice), string(data.TimescaleInstantaneous), ""},
-			{"previous_touch_quantity:bid", "prev_bid_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous), ""},
-			{"previous_touch_quantity:ask", "prev_ask_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous), ""},
-			{"touch_price_log_change:bid", "touch_price_log_change:bid", string(data.UnitLogReturn), string(data.TimescaleInstantaneous), ""},
-			{"touch_price_log_change:ask", "touch_price_log_change:ask", string(data.UnitLogReturn), string(data.TimescaleInstantaneous), ""},
-			{"retreated_quantity:bid", "retreated_quantity:bid", string(data.UnitQuantity), string(data.TimescaleInstantaneous), "retreat_fraction:bid"},
-			{"retreated_quantity:ask", "retreated_quantity:ask", string(data.UnitQuantity), string(data.TimescaleInstantaneous), "retreat_fraction:ask"},
-			{"retreat_fraction:bid", "retreat_fraction:bid", string(data.UnitRatio), string(data.TimescaleInstantaneous), "retreat_fraction:bid"},
-			{"retreat_fraction:ask", "retreat_fraction:ask", string(data.UnitRatio), string(data.TimescaleInstantaneous), "retreat_fraction:ask"},
-			{"retreat_rate:bid", "retreat_rate:bid", string(data.UnitRate), string(data.TimescalePerSecond), "retreat_fraction:bid"},
-			{"retreat_rate:ask", "retreat_rate:ask", string(data.UnitRate), string(data.TimescalePerSecond), "retreat_fraction:ask"},
-			{"net_withdrawn_quantity:bid", "net_withdrawn_quantity:bid", string(data.UnitQuantity), string(data.TimescaleInstantaneous), "net_withdrawn_quantity:bid"},
-			{"net_withdrawn_quantity:ask", "net_withdrawn_quantity:ask", string(data.UnitQuantity), string(data.TimescaleInstantaneous), "net_withdrawn_quantity:ask"},
-			{"net_withdrawal_fraction:bid", "net_withdrawal_fraction:bid", string(data.UnitRatio), string(data.TimescaleInstantaneous), "net_withdrawn_quantity:bid"},
-			{"net_withdrawal_fraction:ask", "net_withdrawal_fraction:ask", string(data.UnitRatio), string(data.TimescaleInstantaneous), "net_withdrawn_quantity:ask"},
-			{"net_withdrawal_rate:bid", "net_withdrawal_rate:bid", string(data.UnitRate), string(data.TimescalePerSecond), "net_withdrawn_quantity:bid"},
-			{"net_withdrawal_rate:ask", "net_withdrawal_rate:ask", string(data.UnitRate), string(data.TimescalePerSecond), "net_withdrawn_quantity:ask"},
-			{"net_replenished_quantity:bid", "net_replenished_quantity:bid", string(data.UnitQuantity), string(data.TimescaleInstantaneous), "net_replenished_quantity:bid"},
-			{"net_replenished_quantity:ask", "net_replenished_quantity:ask", string(data.UnitQuantity), string(data.TimescaleInstantaneous), "net_replenished_quantity:ask"},
-			{"net_replenishment_fraction:bid", "net_replenishment_fraction:bid", string(data.UnitRatio), string(data.TimescaleInstantaneous), "net_replenished_quantity:bid"},
-			{"net_replenishment_fraction:ask", "net_replenishment_fraction:ask", string(data.UnitRatio), string(data.TimescaleInstantaneous), "net_replenished_quantity:ask"},
-			{"net_replenishment_rate:bid", "net_replenishment_rate:bid", string(data.UnitRate), string(data.TimescalePerSecond), "net_replenished_quantity:bid"},
-			{"net_replenishment_rate:ask", "net_replenishment_rate:ask", string(data.UnitRate), string(data.TimescalePerSecond), "net_replenished_quantity:ask"},
-			{"touch_fill_rate:bid", "touch_fill_rate:bid", string(data.UnitRate), string(data.TimescalePerSecond), ""},
-			{"touch_fill_rate:ask", "touch_fill_rate:ask", string(data.UnitRate), string(data.TimescalePerSecond), ""},
-			{"withdrawal_fraction_baseline:bid", "withdrawal_fraction_baseline:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"withdrawal_fraction_baseline:ask", "withdrawal_fraction_baseline:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"withdrawal_fraction_divergence:bid", "withdrawal_fraction_divergence:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"withdrawal_fraction_divergence:ask", "withdrawal_fraction_divergence:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"withdrawal_fraction_zscore:bid", "withdrawal_fraction_zscore:bid", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"withdrawal_fraction_zscore:ask", "withdrawal_fraction_zscore:ask", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"withdrawal_fraction_velocity:bid", "withdrawal_fraction_velocity:bid", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "withdrawal_fraction_velocity:bid:defined"},
-			{"withdrawal_fraction_velocity:ask", "withdrawal_fraction_velocity:ask", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "withdrawal_fraction_velocity:ask:defined"},
-			{"retreat_fraction_baseline:bid", "retreat_fraction_baseline:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"retreat_fraction_baseline:ask", "retreat_fraction_baseline:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"retreat_fraction_zscore:bid", "retreat_fraction_zscore:bid", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"retreat_fraction_zscore:ask", "retreat_fraction_zscore:ask", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"replenishment_fraction_baseline:bid", "replenishment_fraction_baseline:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"replenishment_fraction_baseline:ask", "replenishment_fraction_baseline:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
+		// {published label, output key, unit, timescale}
+		metrics: [][4]string{
+			{"best_price:bid", "bid", string(data.UnitPrice), string(data.TimescaleInstantaneous)},
+			{"best_price:ask", "ask", string(data.UnitPrice), string(data.TimescaleInstantaneous)},
+			{"touch_quantity:bid", "bid_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"touch_quantity:ask", "ask_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"unfilled_residual_quantity:bid", "bid_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"unfilled_residual_quantity:ask", "ask_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"bracket_trade_quantity", "bracket_trade_quantity", string(data.UnitQuantity), string(data.TimescaleSession)},
+			{"matched_touch_trade_quantity:bid", "touch_fill_quantity:bid", string(data.UnitQuantity), string(data.TimescaleSession)},
+			{"matched_touch_trade_quantity:ask", "touch_fill_quantity:ask", string(data.UnitQuantity), string(data.TimescaleSession)},
+			{"touch_fill_quantity:bid", "touch_fill_quantity:bid", string(data.UnitQuantity), string(data.TimescaleSession)},
+			{"touch_fill_quantity:ask", "touch_fill_quantity:ask", string(data.UnitQuantity), string(data.TimescaleSession)},
+			{"touch_fill_fraction:bid", "touch_fill_fraction:bid", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"touch_fill_fraction:ask", "touch_fill_fraction:ask", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"fill_fraction_baseline:bid", "fill_fraction_baseline:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"fill_fraction_baseline:ask", "fill_fraction_baseline:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"fill_fraction_divergence:bid", "fill_fraction_divergence:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"fill_fraction_divergence:ask", "fill_fraction_divergence:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"fill_fraction_zscore:bid", "fill_fraction_zscore:bid", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"fill_fraction_zscore:ask", "fill_fraction_zscore:ask", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"fill_fraction_velocity:bid", "fill_fraction_velocity:bid", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"fill_fraction_velocity:ask", "fill_fraction_velocity:ask", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"previous_best_price:bid", "prev_bid", string(data.UnitPrice), string(data.TimescaleInstantaneous)},
+			{"previous_best_price:ask", "prev_ask", string(data.UnitPrice), string(data.TimescaleInstantaneous)},
+			{"previous_touch_quantity:bid", "prev_bid_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"previous_touch_quantity:ask", "prev_ask_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"touch_price_log_change:bid", "touch_price_log_change:bid", string(data.UnitLogReturn), string(data.TimescaleInstantaneous)},
+			{"touch_price_log_change:ask", "touch_price_log_change:ask", string(data.UnitLogReturn), string(data.TimescaleInstantaneous)},
+			{"retreated_quantity:bid", "retreated_quantity:bid", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"retreated_quantity:ask", "retreated_quantity:ask", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"retreat_fraction:bid", "retreat_fraction:bid", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"retreat_fraction:ask", "retreat_fraction:ask", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"retreat_rate:bid", "retreat_rate:bid", string(data.UnitRate), string(data.TimescalePerSecond)},
+			{"retreat_rate:ask", "retreat_rate:ask", string(data.UnitRate), string(data.TimescalePerSecond)},
+			{"net_withdrawn_quantity:bid", "net_withdrawn_quantity:bid", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"net_withdrawn_quantity:ask", "net_withdrawn_quantity:ask", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"net_withdrawal_fraction:bid", "net_withdrawal_fraction:bid", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"net_withdrawal_fraction:ask", "net_withdrawal_fraction:ask", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"net_withdrawal_rate:bid", "net_withdrawal_rate:bid", string(data.UnitRate), string(data.TimescalePerSecond)},
+			{"net_withdrawal_rate:ask", "net_withdrawal_rate:ask", string(data.UnitRate), string(data.TimescalePerSecond)},
+			{"net_replenished_quantity:bid", "net_replenished_quantity:bid", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"net_replenished_quantity:ask", "net_replenished_quantity:ask", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"net_replenishment_fraction:bid", "net_replenishment_fraction:bid", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"net_replenishment_fraction:ask", "net_replenishment_fraction:ask", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"net_replenishment_rate:bid", "net_replenishment_rate:bid", string(data.UnitRate), string(data.TimescalePerSecond)},
+			{"net_replenishment_rate:ask", "net_replenishment_rate:ask", string(data.UnitRate), string(data.TimescalePerSecond)},
+			{"touch_fill_rate:bid", "touch_fill_rate:bid", string(data.UnitRate), string(data.TimescalePerSecond)},
+			{"touch_fill_rate:ask", "touch_fill_rate:ask", string(data.UnitRate), string(data.TimescalePerSecond)},
+			{"withdrawal_fraction_baseline:bid", "withdrawal_fraction_baseline:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"withdrawal_fraction_baseline:ask", "withdrawal_fraction_baseline:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"withdrawal_fraction_divergence:bid", "withdrawal_fraction_divergence:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"withdrawal_fraction_divergence:ask", "withdrawal_fraction_divergence:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"withdrawal_fraction_zscore:bid", "withdrawal_fraction_zscore:bid", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"withdrawal_fraction_zscore:ask", "withdrawal_fraction_zscore:ask", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"withdrawal_fraction_velocity:bid", "withdrawal_fraction_velocity:bid", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"withdrawal_fraction_velocity:ask", "withdrawal_fraction_velocity:ask", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"retreat_fraction_baseline:bid", "retreat_fraction_baseline:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"retreat_fraction_baseline:ask", "retreat_fraction_baseline:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"retreat_fraction_zscore:bid", "retreat_fraction_zscore:bid", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"retreat_fraction_zscore:ask", "retreat_fraction_zscore:ask", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"replenishment_fraction_baseline:bid", "replenishment_fraction_baseline:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"replenishment_fraction_baseline:ask", "replenishment_fraction_baseline:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"historical_path_distance", "historical_path_distance", string(data.UnitDistance), string(data.TimescaleRollingWindow)},
+			{"historical_path_percentile", "historical_path_percentile", string(data.UnitPercent), string(data.TimescaleRollingWindow)},
 		},
 	}
 
@@ -611,15 +612,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
-		value, held := pipe.output.Values[metric[1]]
-
-		if !held {
-			continue
-		}
-
-		if metric[4] != "" && pipe.output.Values[metric[4]] == 0 {
-			continue
-		}
+		value := pipe.output.Values[metric[1]]
 
 		metrics = append(metrics, data.NewMetric(
 			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),

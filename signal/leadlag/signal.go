@@ -61,6 +61,8 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 			"overlap_pair_count":            {string(data.UnitCount), string(data.TimescaleRollingWindow)},
 			"return_energy:reference":       {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
 			"return_energy:measured":        {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
+			"reference_return_count":        {string(data.UnitCount), string(data.TimescaleRollingWindow)},
+			"measured_return_count":         {string(data.UnitCount), string(data.TimescaleRollingWindow)},
 			"best_lag_index":                {string(data.UnitCount), string(data.TimescaleRollingWindow)},
 			"best_lag_seconds":              {string(data.UnitSecond), string(data.TimescaleRollingWindow)},
 			"leads":                         {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
@@ -73,8 +75,21 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 			"lag_fraction":                  {string(data.UnitRatio), string(data.TimescaleRollingWindow)},
 			"lag_peak_prominence":           {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
 			"lag_peak_curvature":            {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
+			"effective_sample_count":        {string(data.UnitCount), string(data.TimescaleRollingWindow)},
+			"correlation_p_value":           {string(data.UnitProbability), string(data.TimescaleRollingWindow)},
+			"search_adjusted_p_value":       {string(data.UnitProbability), string(data.TimescaleRollingWindow)},
+			"lag_baseline_seconds":          {string(data.UnitSecond), string(data.TimescaleRollingWindow)},
+			"lag_divergence_seconds":        {string(data.UnitSecond), string(data.TimescaleRollingWindow)},
+			"lag_noise_scale_seconds":       {string(data.UnitSecond), string(data.TimescaleRollingWindow)},
+			"lag_zscore":                    {string(data.UnitZScore), string(data.TimescaleRollingWindow)},
 			"best_lag_correlation_baseline": {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
 			"best_lag_correlation_zscore":   {string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			"correlation_gain_baseline":     {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"correlation_gain_zscore":       {string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			"lag_velocity":                  {string(data.UnitVelocity), string(data.TimescalePerSecond)},
+			"correlation_gain_velocity":     {string(data.UnitVelocity), string(data.TimescalePerSecond)},
+			"historical_path_distance":      {string(data.UnitDistance), string(data.TimescaleRollingWindow)},
+			"historical_path_percentile":    {string(data.UnitPercent), string(data.TimescaleRollingWindow)},
 		},
 	}
 
@@ -187,7 +202,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		declared, published := signal.metrics[fact]
 		value := pipe.output.Values[key]
 
-		if !published || math.IsNaN(value) || math.IsInf(value, 0) {
+		if !published {
 			continue
 		}
 

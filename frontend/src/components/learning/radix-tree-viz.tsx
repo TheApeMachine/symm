@@ -256,11 +256,12 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		return "var(--f4)";
 	};
 
+	// Terminal leaves are enter/exit only. Wait is precursor stance on
+	// internal region nodes (abstention), never a terminating action leaf.
 	const isActionPrefix = (prefix?: string) => {
 		switch ((prefix ?? "").toUpperCase()) {
 			case "ENTER":
 			case "EXIT":
-			case "WAIT":
 				return true;
 			default:
 				return false;

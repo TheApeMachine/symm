@@ -152,6 +152,38 @@ func (routes *Routes) Register() {
 		Origins: []string{"*"},
 	}))
 
+	routes.hub.app.Get("/learning/report", func(ctx fiber.Ctx) error {
+		if routes.hub.learningSource == nil {
+			return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error": "learning source unavailable",
+			})
+		}
+
+		report := routes.hub.learningSource.LearningReport()
+
+		if report == nil {
+			return ctx.Status(fiber.StatusNoContent).JSON(fiber.Map{
+				"error": "no learning report available yet",
+			})
+		}
+
+		return ctx.JSON(report)
+	})
+
+	routes.hub.app.Get("/learning/summary", func(ctx fiber.Ctx) error {
+		if routes.hub.learningSource == nil {
+			return ctx.Status(fiber.StatusServiceUnavailable).SendString("learning source unavailable")
+		}
+
+		summary := routes.hub.learningSource.LearningSummary()
+
+		if summary == "" {
+			return ctx.Status(fiber.StatusNoContent).SendString("no learning summary available yet")
+		}
+
+		return ctx.SendString(summary)
+	})
+
 	routes.hub.app.Get("/hindsight/symbols", func(ctx fiber.Ctx) error {
 		if routes.hub.store == nil {
 			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")

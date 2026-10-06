@@ -307,6 +307,7 @@ var (
 			hub := ui.NewHub(ctx, catalog, uiTee, workspace)
 			hub.SetCognitionSource(training.Model)
 			hub.SetFragmentsSource(training.Rehearsal.Chart)
+			hub.SetLearningSource(training)
 			hub.SetEquitySource(balance)
 			hub.SetPositionSource(desk)
 			hub.SetExitHandler(func(symbol string) {

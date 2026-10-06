@@ -22,14 +22,21 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
+// basinFloor is the useful-strength floor for a graded basin. After negative
+// feedback, a probability below this floor is pruned from the trie.
+const basinFloor = core.Unit / 16
+
 /*
 Associate owns the association trie. Key 0 in that trie is the observation
 clock and key 1 is the longest stored token span, written in the same
 transaction as the association they describe. Basin keys are
-b/<context>/<class>. Sensory keys are s/<context>. A graded association
-starts at the center of the unit interval. An ungraded association starts
-at one. A graded observation whose feedback is zero records the sensory
-transition and does not reinforce the basin.
+b/<context>/<class>. Sensory keys are s/<context>. Terminal basin classes
+are enter and exit only — wait is not an action and is rejected. A graded
+association starts at the center of the unit interval. An ungraded
+association starts at one. A graded observation whose feedback is zero
+records the sensory transition and does not reinforce the basin. Negative
+feedback that drives a basin below basinFloor deletes that sequence
+(prune) instead of storing a useless leaf.
 */
 type Associate struct {
 	*core.PrimitiveError
@@ -83,6 +90,13 @@ func (op *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			}
 
 			if context == "" {
+				op.Error(core.ErrDomain)
+				return
+			}
+
+			// Wait is precursor stance (abstention / internal prefix), never a
+			// terminal basin class. Edges are region tokens; leaves are enter/exit.
+			if class == "wait" {
 				op.Error(core.ErrDomain)
 				return
 			}
@@ -147,6 +161,7 @@ func (op *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 
 				transaction := current.Txn()
 				isNew := false
+				prunedExisting := false
 
 				if recordBasin {
 					basin := make([]byte, 2+len(contextBytes)+1+len(classBytes))
@@ -215,11 +230,24 @@ func (op *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 						return
 					}
 
-					var packed [24]byte
-					binary.LittleEndian.PutUint64(packed[0:8], count)
-					binary.LittleEndian.PutUint64(packed[8:16], math.Float64bits(updated))
-					binary.LittleEndian.PutUint64(packed[16:24], clock)
-					transaction.Insert(basin, bytes.Clone(packed[:]))
+					// Losing / wrong sequences dampen. Once strength is useless,
+					// prune the basin so a branch never keeps a dead leaf.
+					pruned := gradedFlag != 0 && feedback < 0 && updated < basinFloor
+
+					if pruned {
+						if found {
+							transaction.Delete(basin)
+							prunedExisting = true
+						}
+
+						isNew = false
+					} else {
+						var packed [24]byte
+						binary.LittleEndian.PutUint64(packed[0:8], count)
+						binary.LittleEndian.PutUint64(packed[8:16], math.Float64bits(updated))
+						binary.LittleEndian.PutUint64(packed[16:24], clock)
+						transaction.Insert(basin, bytes.Clone(packed[:]))
+					}
 				}
 
 				sensory := make([]byte, 2+len(contextBytes))
@@ -296,6 +324,14 @@ func (op *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				if op.root.CompareAndSwap(current, committed) {
 					if isNew {
 						introduced = class
+					}
+
+					if prunedExisting && class != "" {
+						if counter, held := op.classes.Load(class); held {
+							if counted, ok := counter.(*atomic.Int32); ok && counted != nil {
+								counted.Add(-1)
+							}
+						}
 					}
 
 					break

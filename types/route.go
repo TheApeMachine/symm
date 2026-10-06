@@ -72,7 +72,7 @@ func Filters(measurement *data.Measurement) bool {
 
 		return isLogic(measurement, "resonance")
 	case "fluid":
-		return isLogic(measurement, "manifold")
+		return false
 	default:
 		return false
 	}

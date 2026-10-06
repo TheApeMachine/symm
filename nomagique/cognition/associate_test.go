@@ -104,6 +104,7 @@ func TestAssociateNext(t *testing.T) {
 		Convey("Recall reads that class back", func() {
 			recalled, recallErr := drive(NewRecall(memory), map[string]string{
 				"context": "ctx",
+				"stance":  "",
 			}, nil)
 
 			So(recallErr, ShouldBeNil)
@@ -139,6 +140,7 @@ func TestAssociateNext(t *testing.T) {
 
 		recalled, recallErr := drive(NewRecall(memory), map[string]string{
 			"context": "ctx",
+			"stance":  "",
 		}, nil)
 		So(recallErr, ShouldBeNil)
 		winner, winnerErr := literal(recalled, "winner")
@@ -150,5 +152,54 @@ func TestAssociateNext(t *testing.T) {
 		records, recordsErr := number(census, "records")
 		So(recordsErr, ShouldBeNil)
 		So(records, ShouldEqual, 1)
+	})
+}
+
+func TestAssociateRejectsWait(t *testing.T) {
+	Convey("Given a wait class", t, func() {
+		_, err := drive(NewAssociate(), map[string]string{
+			"context": "R0/R1",
+			"class":   "wait",
+		}, map[string]float64{
+			"feedback": 1,
+			"graded":   core.Unit,
+		})
+
+		So(errors.Is(err, core.ErrDomain), ShouldBeTrue)
+	})
+}
+
+func TestAssociatePrunesUselessBasin(t *testing.T) {
+	Convey("Given an enter basin dampened below the useful floor", t, func() {
+		memory := NewAssociate()
+		_, err := drive(memory, map[string]string{
+			"context": "R0/R1",
+			"class":   "enter",
+		}, map[string]float64{
+			"feedback": 1,
+			"graded":   core.Unit,
+		})
+		So(err, ShouldBeNil)
+
+		// Strong negative feedback: 0.75 / (1+16) = 0.044 < basinFloor (1/16).
+		_, err = drive(memory, map[string]string{
+			"context": "R0/R1",
+			"class":   "enter",
+		}, map[string]float64{
+			"feedback": -16,
+			"graded":   core.Unit,
+		})
+		So(err, ShouldBeNil)
+
+		Convey("Recall abstains — the losing sequence was pruned", func() {
+			recalled, recallErr := drive(NewRecall(memory), map[string]string{
+				"context": "R0/R1",
+				"stance":  "",
+			}, nil)
+			So(recallErr, ShouldBeNil)
+			winner, winnerErr := literal(recalled, "winner")
+			So(winnerErr, ShouldBeNil)
+			So(winner, ShouldEqual, "")
+		})
 	})
 }

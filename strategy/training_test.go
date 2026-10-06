@@ -360,14 +360,13 @@ func TestTraining_Train(t *testing.T) {
 			}
 		})
 
-		Convey("It learns the deadband tape as wait, weakens enter, and remains in WAITING", func() {
+		Convey("It dampens enter on the deadband tape (no wait leaf) and remains in WAITING", func() {
 			So(training.Status(), ShouldEqual, runtime.WAITING)
 			So(census(training, "records"), ShouldBeGreaterThan, 0)
-			So(census(training, actionWait), ShouldBeGreaterThan, 0)
+			So(census(training, actionWait), ShouldEqual, 0)
 			So(census(training, actionEnter), ShouldBeGreaterThan, 0)
-			// Constant-wait baseline equals the number of wait phases asked.
-			So(graded(training).baseline(), ShouldBeGreaterThan, 0)
-			So(graded(training).hits, ShouldBeLessThanOrEqualTo, graded(training).baseline())
+			// Dampen-only phases are not skill-graded (no enter/exit truth).
+			So(graded(training).trained, ShouldEqual, 0)
 
 			So(len(training.Rehearsal.Chart.Fragments()), ShouldBeGreaterThan, 0)
 			for _, fragment := range training.Rehearsal.Chart.Fragments() {
@@ -455,12 +454,11 @@ func TestTraining_LosingClasses(t *testing.T) {
 
 		training := trainingFixture(t, ctx, regimeTape, detection(excursionUpShort, 60000, 60010))
 
-		Convey("Its precursor teaches wait and weakens enter — never exit without enter", func() {
-			So(census(training, actionWait), ShouldBeGreaterThan, 0)
+		Convey("Its precursor dampens enter — never wait leaf or exit without enter", func() {
+			So(census(training, actionWait), ShouldEqual, 0)
 			So(census(training, actionExit), ShouldEqual, 0)
-			// Negative enter feedback still records the class; wait must win.
 			So(census(training, actionEnter), ShouldBeGreaterThan, 0)
-			So(graded(training).baseline(), ShouldEqual, 1)
+			So(graded(training).trained, ShouldEqual, 0)
 			So(training.Status(), ShouldEqual, runtime.WAITING)
 
 			frags := training.Rehearsal.Chart.Fragments()
@@ -481,8 +479,8 @@ func TestTraining_LosingClasses(t *testing.T) {
 
 		training := trainingFixture(t, ctx, regimeTape, detection(excursionDown, 63000, 60000))
 
-		Convey("Its precursor before the top teaches wait and weakens enter — never exit", func() {
-			So(census(training, actionWait), ShouldBeGreaterThan, 0)
+		Convey("Its precursor before the top dampens enter — never wait leaf or exit", func() {
+			So(census(training, actionWait), ShouldEqual, 0)
 			So(census(training, actionExit), ShouldEqual, 0)
 			So(census(training, actionEnter), ShouldBeGreaterThan, 0)
 			So(training.Status(), ShouldEqual, runtime.WAITING)
@@ -502,8 +500,8 @@ func TestTraining_LosingClasses(t *testing.T) {
 
 		training := trainingFixture(t, ctx, regimeTape, detectionAt(excursionFlat, 8, 11, 14, 60000, 60000))
 
-		Convey("It teaches wait, weakens enter, and opens no paper trading without an enter phase", func() {
-			So(census(training, actionWait), ShouldBeGreaterThan, 0)
+		Convey("It dampens enter and opens no paper trading without an enter phase", func() {
+			So(census(training, actionWait), ShouldEqual, 0)
 			So(census(training, actionEnter), ShouldBeGreaterThan, 0)
 			So(census(training, actionExit), ShouldEqual, 0)
 			So(training.Status(), ShouldEqual, runtime.WAITING)
@@ -530,10 +528,10 @@ func TestTraining_LosingClasses(t *testing.T) {
 			detection(excursionUpShort, 60000, 60010),
 		)
 
-		Convey("Both are learned; up teaches enter+exit, up_friction teaches wait and weakens enter", func() {
+		Convey("Both are learned; up teaches enter+exit, up_friction dampens enter (no wait leaf)", func() {
 			So(census(training, actionEnter), ShouldBeGreaterThan, 0)
 			So(census(training, actionExit), ShouldBeGreaterThan, 0)
-			So(census(training, actionWait), ShouldBeGreaterThan, 0)
+			So(census(training, actionWait), ShouldEqual, 0)
 			So(graded(training).asked[actionEnter], ShouldEqual, graded(training).asked[actionExit])
 			So(graded(training).baseline(), ShouldEqual, 1)
 		})

@@ -78,6 +78,20 @@ func TestExportNext(t *testing.T) {
 		walk(export.Root, 0)
 
 		So(enterMidPath, ShouldBeFalse)
+
+		var waitLeaf bool
+		var walkWait func(node treeNode)
+		walkWait = func(node treeNode) {
+			if strings.ToUpper(node.Prefix) == "WAIT" {
+				waitLeaf = true
+			}
+			for _, child := range node.Children {
+				walkWait(child)
+			}
+		}
+		walkWait(export.Root)
+		So(waitLeaf, ShouldBeFalse)
+
 		So(export.Root.Children[0].Children[0].Children[0].Prefix, ShouldEqual, "ENTER")
 		So(export.Root.Children[0].Children[0].Children[0].Probability, ShouldEqual, 0.75)
 		So(export.Root.Children[0].Children[0].Children[0].State, ShouldEqual, "POLICY CHOICE")
@@ -136,5 +150,27 @@ func TestExportNext(t *testing.T) {
 		So(exitFound, ShouldBeTrue)
 		So(len(export.Branches), ShouldEqual, 75)
 		So(len(export.Feasible), ShouldEqual, 75)
+	})
+}
+
+func TestExportSkipsWaitLeaf(t *testing.T) {
+	Convey("Given only enter associations, export never terminates in WAIT", t, func() {
+		memory := NewAssociate()
+		observe(memory, "R1_R2/R3_R4", "enter", 2)
+		export := exported(memory)
+
+		var waitLeaf bool
+		var walk func(node treeNode)
+		walk = func(node treeNode) {
+			if strings.ToUpper(node.Prefix) == "WAIT" && len(node.Children) == 0 {
+				waitLeaf = true
+			}
+			for _, child := range node.Children {
+				walk(child)
+			}
+		}
+		walk(export.Root)
+		So(waitLeaf, ShouldBeFalse)
+		So(export.Branches[0].Policy, ShouldEqual, "ENTER")
 	})
 }

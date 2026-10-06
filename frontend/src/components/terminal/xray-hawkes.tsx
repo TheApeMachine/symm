@@ -163,8 +163,13 @@ export const XrayHawkesPanel = () => {
 				(_, index) => ring.get(index),
 			);
 			samples = rows.flatMap((row) => {
-				const sample = row ? hawkesSample(row) : null;
-				return sample ? [sample] : [];
+				if (!row) return [];
+				try {
+					const sample = hawkesSample(row);
+					return sample ? [sample] : [];
+				} catch {
+					return [];
+				}
 			});
 			const latest = rows.at(-1);
 			const metrics = Object.fromEntries(

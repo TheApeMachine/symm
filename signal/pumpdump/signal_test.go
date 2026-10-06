@@ -91,11 +91,8 @@ func TestPumpDumpSignal(t *testing.T) {
 			So(metricValue(res1, "spread"), ShouldEqual, 2.0)
 			So(metricValue(res1, "relative_spread"), ShouldAlmostEqual, 2.0/50001.0, 1e-12)
 
-			// An open bar is not a zero-rate bar.
-			_, hasRate := metric(res1, "volume_rate")
-			So(hasRate, ShouldBeFalse)
-			_, hasInterval := metric(res1, "trade_interval_seconds")
-			So(hasInterval, ShouldBeFalse)
+			So(metricValue(res1, "volume_rate"), ShouldEqual, 0)
+			So(metricValue(res1, "trade_interval_seconds"), ShouldEqual, 0)
 
 			// 200ms later: bar quantity 2.0 reaches the bootstrap target 1.0 and closes.
 			res2 := instrument.Step(trade(now.Add(200*time.Millisecond), 2, "buy", 50002.0, 1.0))
@@ -242,8 +239,7 @@ func TestPumpDumpSignal(t *testing.T) {
 			So(metricValue(res, "trade_notional"), ShouldEqual, 300.0)
 
 			for _, label := range []string{"best_bid", "best_ask", "midpoint", "spread", "relative_spread"} {
-				_, held := metric(res, label)
-				So(held, ShouldBeFalse)
+				So(metricValue(res, label), ShouldEqual, 0)
 			}
 		})
 

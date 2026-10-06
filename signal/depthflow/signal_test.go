@@ -116,10 +116,10 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 				So(metricValue(res, "imbalance_resolution_distance"), ShouldAlmostEqual, math.Abs(gap), 1e-9)
 
 				if step == 0 {
-					_, held := metric(res, "added_notional:bid")
-					So(held, ShouldBeFalse)
-					_, held = metric(res, "book_turnover_rate")
-					So(held, ShouldBeFalse)
+					So(metricValue(res, "added_notional:bid"), ShouldEqual, 0.0)
+					So(metricValue(res, "book_turnover_rate"), ShouldEqual, 0.0)
+					So(metricValue(res, "historical_path_distance"), ShouldEqual, 0.0)
+					So(metricValue(res, "historical_path_percentile"), ShouldEqual, 0.0)
 					So(res.From, ShouldEqual, at)
 				} else {
 					// Every level only grows, so added equals the notional growth and nothing is removed.

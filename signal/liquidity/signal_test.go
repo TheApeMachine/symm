@@ -103,14 +103,15 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 				So(res.At, ShouldEqual, at)
 
 				if step == 0 {
-					// One observation has no dispersion: the noise scales and
-					// the z-scores dividing by them are not published.
 					for _, label := range []string{
 						"depth_noise_scale:bid", "depth_noise_scale:ask", "spread_noise_scale",
 						"depth_zscore:bid", "depth_zscore:ask", "spread_zscore",
+						"divergence_velocity:bid", "divergence_velocity:ask", "spread_divergence_velocity",
+						"historical_path_distance", "historical_path_percentile",
 					} {
-						_, held := metric(res, label)
-						So(held, ShouldBeFalse)
+						val, held := metric(res, label)
+						So(held, ShouldBeTrue)
+						So(val, ShouldEqual, 0.0)
 					}
 				}
 
@@ -159,9 +160,9 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 				So(ratio, ShouldAlmostEqual, bidNotional/baseline, 1e-9)
 
 				_, held = metric(res, "divergence_velocity:bid")
-				So(held, ShouldEqual, step > 0)
+				So(held, ShouldBeTrue)
 				_, held = metric(res, "spread_divergence_velocity")
-				So(held, ShouldEqual, step > 0)
+				So(held, ShouldBeTrue)
 
 				if step > 1 {
 					zscore, held := metric(res, "depth_zscore:bid")
@@ -184,8 +185,9 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 			So(held, ShouldBeTrue)
 			So(baseline, ShouldAlmostEqual, 50000.0, 1e-9)
 
-			_, held = metric(other, "divergence_velocity:bid")
-			So(held, ShouldBeFalse)
+			otherVel, held := metric(other, "divergence_velocity:bid")
+			So(held, ShouldBeTrue)
+			So(otherVel, ShouldEqual, 0.0)
 		})
 
 		Convey("A crossed touch is corrupt book state: it halts with an Internal error naming the symbol", func() {

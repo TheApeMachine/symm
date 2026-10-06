@@ -56,10 +56,14 @@ func NewModel() *Model {
 }
 
 /*
-Recall answers the action the trie takes on context.
+Recall answers the action the trie takes on context. Stance is the one
+action the asker can take — enter while flat, exit while holding — and
+keeps the other action from outweighing it on a shared context; under a
+stance the action leads only while reinforced above its graded start. An
+empty stance lets enter and exit compete (cognition.Recall).
 */
-func (model *Model) Recall(context string) (Call, error) {
-	reading, err := ask(model.recall, map[string]string{"context": context}, nil)
+func (model *Model) Recall(context, stance string) (Call, error) {
+	reading, err := ask(model.recall, map[string]string{"context": context, "stance": stance}, nil)
 
 	if err != nil {
 		return Call{}, errnie.Error(err)
@@ -84,9 +88,26 @@ func (model *Model) Recall(context string) (Call, error) {
 
 /*
 Teach grades context with class and signed feedback: positive reinforces,
-negative inhibits (cognition.Reinforce).
+negative inhibits (cognition.Reinforce). Terminal classes are enter and
+exit only — wait is precursor stance (abstention), never a leaf action.
 */
 func (model *Model) Teach(context, class string, feedback float64) error {
+	if class == actionWait {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[model] wait is not a terminal action; dampen enter or abstain",
+			nil,
+		))
+	}
+
+	if class != actionEnter && class != actionExit {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[model] terminal action must be enter or exit, got \""+class+"\"",
+			nil,
+		))
+	}
+
 	model.version.Add(1)
 
 	_, err := ask(model.trainer, map[string]string{

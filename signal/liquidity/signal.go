@@ -36,7 +36,7 @@ type Signal struct {
 	arena     *data.ArenaOwner
 	books     broker.BookSource
 	pipelines sync.Map
-	metrics   [][5]string
+	metrics   [][4]string
 }
 
 type symbolPipeline struct {
@@ -55,38 +55,39 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 	signal := &Signal{
 		arena: arena,
 		books: books,
-		// {published label, output key, unit, timescale, gate key}
-		// A non-empty gate key publishes the metric only while that output is non-zero.
-		metrics: [][5]string{
-			{"best_bid_price", "bid", string(data.UnitPrice), string(data.TimescaleInstantaneous), ""},
-			{"best_ask_price", "ask", string(data.UnitPrice), string(data.TimescaleInstantaneous), ""},
-			{"touch_quantity:bid", "bid_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous), ""},
-			{"touch_quantity:ask", "ask_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous), ""},
-			{"touch_notional:bid", "touch_notional:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
-			{"touch_notional:ask", "touch_notional:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
-			{"midpoint", "midpoint", string(data.UnitPrice), string(data.TimescaleInstantaneous), ""},
-			{"spread", "spread", string(data.UnitSpread), string(data.TimescaleInstantaneous), ""},
-			{"relative_spread", "relative_spread", string(data.UnitRelativeSpread), string(data.TimescaleInstantaneous), ""},
-			{"two_sided_touch_notional", "two_sided_touch_notional", string(data.UnitNotional), string(data.TimescaleInstantaneous), ""},
-			{"touch_notional_imbalance", "touch_notional_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous), ""},
-			{"touch_notional_baseline:bid", "touch_notional_baseline:bid", string(data.UnitNotional), string(data.TimescaleRollingWindow), ""},
-			{"touch_notional_baseline:ask", "touch_notional_baseline:ask", string(data.UnitNotional), string(data.TimescaleRollingWindow), ""},
-			{"relative_spread_baseline", "relative_spread_baseline", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow), ""},
-			{"depth_ratio:bid", "depth_ratio:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"depth_ratio:ask", "depth_ratio:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"spread_ratio", "spread_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow), ""},
-			{"depth_divergence:bid", "depth_divergence:bid", string(data.UnitNotional), string(data.TimescaleRollingWindow), ""},
-			{"depth_divergence:ask", "depth_divergence:ask", string(data.UnitNotional), string(data.TimescaleRollingWindow), ""},
-			{"spread_divergence", "spread_divergence", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow), ""},
-			{"depth_noise_scale:bid", "depth_noise_scale:bid", string(data.UnitNotional), string(data.TimescaleRollingWindow), "depth_noise_scale:bid"},
-			{"depth_noise_scale:ask", "depth_noise_scale:ask", string(data.UnitNotional), string(data.TimescaleRollingWindow), "depth_noise_scale:ask"},
-			{"spread_noise_scale", "spread_noise_scale", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow), "spread_noise_scale"},
-			{"depth_zscore:bid", "depth_zscore:bid", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"depth_zscore:ask", "depth_zscore:ask", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"spread_zscore", "spread_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), ""},
-			{"divergence_velocity:bid", "divergence_velocity:bid", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "divergence_velocity:bid:defined"},
-			{"divergence_velocity:ask", "divergence_velocity:ask", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "divergence_velocity:ask:defined"},
-			{"spread_divergence_velocity", "spread_divergence_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous), "spread_divergence_velocity:defined"},
+		// {published label, output key, unit, timescale}
+		metrics: [][4]string{
+			{"best_bid_price", "bid", string(data.UnitPrice), string(data.TimescaleInstantaneous)},
+			{"best_ask_price", "ask", string(data.UnitPrice), string(data.TimescaleInstantaneous)},
+			{"touch_quantity:bid", "bid_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"touch_quantity:ask", "ask_qty", string(data.UnitQuantity), string(data.TimescaleInstantaneous)},
+			{"touch_notional:bid", "touch_notional:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"touch_notional:ask", "touch_notional:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"midpoint", "midpoint", string(data.UnitPrice), string(data.TimescaleInstantaneous)},
+			{"spread", "spread", string(data.UnitSpread), string(data.TimescaleInstantaneous)},
+			{"relative_spread", "relative_spread", string(data.UnitRelativeSpread), string(data.TimescaleInstantaneous)},
+			{"two_sided_touch_notional", "two_sided_touch_notional", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
+			{"touch_notional_imbalance", "touch_notional_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
+			{"touch_notional_baseline:bid", "touch_notional_baseline:bid", string(data.UnitNotional), string(data.TimescaleRollingWindow)},
+			{"touch_notional_baseline:ask", "touch_notional_baseline:ask", string(data.UnitNotional), string(data.TimescaleRollingWindow)},
+			{"relative_spread_baseline", "relative_spread_baseline", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow)},
+			{"depth_ratio:bid", "depth_ratio:bid", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"depth_ratio:ask", "depth_ratio:ask", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"spread_ratio", "spread_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"depth_divergence:bid", "depth_divergence:bid", string(data.UnitNotional), string(data.TimescaleRollingWindow)},
+			{"depth_divergence:ask", "depth_divergence:ask", string(data.UnitNotional), string(data.TimescaleRollingWindow)},
+			{"spread_divergence", "spread_divergence", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow)},
+			{"depth_noise_scale:bid", "depth_noise_scale:bid", string(data.UnitNotional), string(data.TimescaleRollingWindow)},
+			{"depth_noise_scale:ask", "depth_noise_scale:ask", string(data.UnitNotional), string(data.TimescaleRollingWindow)},
+			{"spread_noise_scale", "spread_noise_scale", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow)},
+			{"depth_zscore:bid", "depth_zscore:bid", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"depth_zscore:ask", "depth_zscore:ask", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"spread_zscore", "spread_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"divergence_velocity:bid", "divergence_velocity:bid", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"divergence_velocity:ask", "divergence_velocity:ask", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"spread_divergence_velocity", "spread_divergence_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
+			{"historical_path_distance", "historical_path_distance", string(data.UnitDistance), string(data.TimescaleRollingWindow)},
+			{"historical_path_percentile", "historical_path_percentile", string(data.UnitPercent), string(data.TimescaleRollingWindow)},
 		},
 	}
 
@@ -301,15 +302,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
-		value, held := pipe.output.Values[metric[1]]
-
-		if !held {
-			continue
-		}
-
-		if metric[4] != "" && pipe.output.Values[metric[4]] == 0 {
-			continue
-		}
+		value := pipe.output.Values[metric[1]]
 
 		metrics = append(metrics, data.NewMetric(
 			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),

@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests/tablestest"
 )
 
@@ -60,14 +61,13 @@ func TestRehearsal_FragmentMarkers(t *testing.T) {
 			So(frag.Magnitude, ShouldBeGreaterThan, 0)
 			So(frag.EntryIdx, ShouldBeGreaterThanOrEqualTo, 0)
 			So(frag.ExitIdx, ShouldBeGreaterThanOrEqualTo, 0)
-			// Post-teach Predict: when the trie already agrees, markers align
-			// with the ground-truth sweet spots; abstention leaves -1.
-			if frag.PredictedEntryIdx >= 0 {
-				So(frag.PredictedEntryIdx, ShouldEqual, frag.EntryIdx)
-			}
-			if frag.PredictedExitIdx >= 0 {
-				So(frag.PredictedExitIdx, ShouldEqual, frag.ExitIdx)
-			}
+			// Post-teach Predict: the uniform tape gives the precursor and
+			// the holding run one shared token, so exit (gross feedback)
+			// outweighs enter (net) on that context when both compete. Asked
+			// from the stance each phase acts in, both are recalled and both
+			// predicted markers sit on their ground-truth sweet spots.
+			So(frag.PredictedEntryIdx, ShouldEqual, frag.EntryIdx)
+			So(frag.PredictedExitIdx, ShouldEqual, frag.ExitIdx)
 		})
 	})
 }
@@ -298,7 +298,7 @@ func TestSkill_Blocker(t *testing.T) {
 		})
 
 		Convey("A trie that was never graded on enter cannot open paper trading", func() {
-			grade := skill{trained: 2, hits: 4, asked: map[string]int{actionWait: 2, actionExit: 2}}
+			grade := skill{trained: 2, hits: 4, asked: map[string]int{actionExit: 2}}
 			So(grade.blocker(), ShouldContainSubstring, "no enter phase")
 			So(grade.open(), ShouldBeFalse)
 		})
@@ -315,6 +315,144 @@ func TestSkill_Blocker(t *testing.T) {
 			grade.hits = 1
 			grade.retained = 2
 			So(grade.open(), ShouldBeTrue)
+		})
+	})
+}
+
+func TestPadWindow_ClampsNegativeLow(t *testing.T) {
+	Convey("Given an ignition near the epoch start with a wide B→C", t, func() {
+		Convey("padWindow never returns a negative lowTick", func() {
+			// Crash repro: B small, move width large → b-left was -5923.
+			lo, hi := padWindow(100, 12000)
+			So(lo, ShouldBeGreaterThanOrEqualTo, 0)
+			So(hi, ShouldBeGreaterThanOrEqualTo, lo)
+			So(hi, ShouldBeGreaterThanOrEqualTo, int64(12000))
+		})
+
+		Convey("When B is at tick 0 the left pad clamps to 0", func() {
+			lo, hi := padWindow(0, 50)
+			So(lo, ShouldEqual, 0)
+			So(hi, ShouldBeGreaterThanOrEqualTo, lo)
+		})
+
+		Convey("Short moves still get the minimum precursor pad when room allows", func() {
+			lo, hi := padWindow(20, 22)
+			So(lo, ShouldEqual, 20-minPrecursorPad)
+			So(hi, ShouldBeGreaterThan, int64(22))
+		})
+	})
+}
+
+func TestClampTapeTicks(t *testing.T) {
+	Convey("Given a tape read window", t, func() {
+		Convey("A negative low is clamped to 0 when high stays above it", func() {
+			lo, hi, err := clampTapeTicks(-5923, 19577)
+			So(err, ShouldBeNil)
+			So(lo, ShouldEqual, 0)
+			So(hi, ShouldEqual, 19577)
+		})
+
+		Convey("A window that remains inverted after clamp is absurd geometry", func() {
+			_, _, err := clampTapeTicks(-10, -5)
+			So(err, ShouldNotBeNil)
+			So(errnie.IsValidation(err), ShouldBeTrue)
+			So(err.Error(), ShouldContainSubstring, "absurd tape ticks")
+		})
+	})
+}
+
+func TestExcursionWindow_AbsurdGeometry(t *testing.T) {
+	Convey("Given an excursion with impossible B/C ticks", t, func() {
+		Convey("window hard-errors instead of inventing a pad", func() {
+			_, _, err := (excursion{b: 10, c: 10}).window()
+			So(err, ShouldNotBeNil)
+			So(errnie.IsValidation(err), ShouldBeTrue)
+			So(err.Error(), ShouldContainSubstring, "absurd excursion geometry")
+
+			_, _, err = (excursion{b: -1, c: 5}).window()
+			So(err, ShouldNotBeNil)
+			So(errnie.IsValidation(err), ShouldBeTrue)
+		})
+
+		Convey("A valid early-B move clamps without error", func() {
+			lo, hi, err := (excursion{b: 2, c: 5000, end: 5000}).window()
+			So(err, ShouldBeNil)
+			So(lo, ShouldEqual, 0)
+			So(hi, ShouldBeGreaterThanOrEqualTo, int64(5000))
+		})
+	})
+}
+
+func TestRehearsal_Augment(t *testing.T) {
+	Convey("Given a fragment tape whose precursor crosses three regions", t, func() {
+		region := func(name string) []byte { return []byte(name) }
+		tokens := [][]byte{
+			region("R0"), region("R0"), region("R1"), region("R2"), region("R2"), region("R3"),
+		}
+		// A may start on frames 0..3 and the stretch runs up to frame 5;
+		// the graded draw started A on frame 3, so its context is "R2".
+		stretch := drill{limit: 4, end: 5, feedback: 0.01}
+		graded := contextOf(tokens[3:5])
+		So(graded, ShouldEqual, "R2")
+
+		recall := func(rehearsal *Rehearsal, context string) string {
+			call, err := rehearsal.model.Recall(context, actionEnter)
+			So(err, ShouldBeNil)
+			return call.Winner
+		}
+
+		Convey("It teaches enter from every other distinct A, one per region run", func() {
+			rehearsal := &Rehearsal{model: NewModel()}
+			So(rehearsal.augment(tokens, stretch, graded, nil, false), ShouldBeNil)
+
+			So(recall(rehearsal, "R0/R1/R2"), ShouldEqual, actionEnter)
+			So(recall(rehearsal, "R1/R2"), ShouldEqual, actionEnter)
+
+			records, err := rehearsal.model.Count("records")
+			So(err, ShouldBeNil)
+
+			// Frame 1 repeats frame 0's region and frame 3 is the graded
+			// draw: neither adds a context, so a second run adds no record.
+			So(rehearsal.augment(tokens, stretch, graded, nil, false), ShouldBeNil)
+			again, err := rehearsal.model.Count("records")
+			So(err, ShouldBeNil)
+			So(again, ShouldEqual, records)
+		})
+
+		Convey("A drill whose graded draw taught nothing from A teaches nothing", func() {
+			rehearsal := &Rehearsal{model: NewModel()}
+			So(rehearsal.augment(tokens, drill{limit: 4, end: 5}, graded, nil, false), ShouldBeNil)
+
+			records, err := rehearsal.model.Count("records")
+			So(err, ShouldBeNil)
+			So(records, ShouldEqual, 0)
+		})
+
+		Convey("A drill outside its tape is a validation error", func() {
+			rehearsal := &Rehearsal{model: NewModel()}
+			err := rehearsal.augment(tokens, drill{limit: 4, end: len(tokens) + 1, feedback: 0.01}, graded, nil, false)
+			So(err, ShouldNotBeNil)
+			So(errnie.IsValidation(err), ShouldBeTrue)
+		})
+
+		Convey("Dropout is off unless enabled, and adds missing-frame and noisy contexts when it is", func() {
+			So(system.NewLearning().RehearsalDropout, ShouldBeFalse)
+
+			census := func(dropout bool) float64 {
+				rehearsal := &Rehearsal{model: NewModel()}
+
+				// Each run draws a fresh missing frame and swap; enough runs
+				// that the perturbations reach contexts no clean span holds.
+				for range 16 {
+					So(rehearsal.augment(tokens, stretch, graded, nil, dropout), ShouldBeNil)
+				}
+
+				records, err := rehearsal.model.Count("records")
+				So(err, ShouldBeNil)
+				return records
+			}
+
+			So(census(true), ShouldBeGreaterThan, census(false))
 		})
 	})
 }

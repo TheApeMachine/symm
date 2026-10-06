@@ -434,6 +434,9 @@ detection's start is tight or missing end (TRAINING.md left/right pad). The
 pad equals the move width so long moves keep a proportional precursor; short
 B→C spans get a minimum left pad so ignition is not the first lit token
 (otherwise there is no precursor to teach, and B sits on the chart's left edge).
+The left pad never goes before tick 0: when B is near the epoch start, lo is
+clamped to 0 and hi is kept >= lo so SignalLogic/Timeline never see a negative
+lowTick.
 */
 func padWindow(b, c int64) (lo, hi int64) {
 	width := c - b
@@ -446,7 +449,19 @@ func padWindow(b, c int64) (lo, hi int64) {
 		left = minPrecursorPad
 	}
 
-	return b - left, c + max(width/2, 1)
+	// Tick 0 is the earliest stored frame; never ask the catalog for a
+	// negative lowTick (SignalLogic rejects it and halted training).
+	lo = b - left
+	if lo < 0 {
+		lo = 0
+	}
+
+	hi = c + max(width/2, 1)
+	if hi < lo {
+		hi = lo
+	}
+
+	return lo, hi
 }
 
 // minPrecursorPad is the smallest left pad (in ticks) so short B→C fragments

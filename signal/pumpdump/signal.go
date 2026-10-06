@@ -43,7 +43,7 @@ type Signal struct {
 	arena     *data.ArenaOwner
 	books     broker.BookSource
 	pipelines sync.Map
-	metrics   [][5]string
+	metrics   [][4]string
 }
 
 type symbolPipeline struct {
@@ -78,47 +78,48 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 	signal := &Signal{
 		arena: arena,
 		books: books,
-		// {published label, output key, unit, timescale, gate key}
-		// A non-empty gate key publishes the metric only while that output is positive.
-		metrics: [][5]string{
-			{"trade_price", "price", string(data.UnitPrice), string(data.TimescaleTick), ""},
-			{"trade_quantity", "qty", string(data.UnitQuantity), string(data.TimescaleTick), ""},
-			{"trade_notional", "trade_notional", string(data.UnitNotional), string(data.TimescaleTick), ""},
-			{"trade_interval_seconds", "trade_interval_seconds", string(data.UnitSecond), string(data.TimescaleTick), "trade_interval_seconds"},
-			{"volume_bar_target_quantity", "volume_bar_target_quantity", string(data.UnitQuantity), string(data.TimescaleVolumeBar), "completed_bars"},
-			{"volume_bar_quantity", "volume_bar_quantity", string(data.UnitQuantity), string(data.TimescaleVolumeBar), "completed_bars"},
-			{"volume_bar_notional", "volume_bar_notional", string(data.UnitNotional), string(data.TimescaleVolumeBar), "completed_bars"},
-			{"volume_bar_trade_count", "volume_bar_trade_count", string(data.UnitCount), string(data.TimescaleVolumeBar), "completed_bars"},
-			{"volume_bar_duration", "volume_bar_duration", string(data.UnitDuration), string(data.TimescaleVolumeBar), "completed_bars"},
-			{"volume_rate", "volume_rate", string(data.UnitVolumeRate), string(data.TimescalePerSecond), "completed_bars"},
-			{"notional_rate", "notional_rate", string(data.UnitNotionalRate), string(data.TimescalePerSecond), "completed_bars"},
-			{"trade_rate", "trade_rate", string(data.UnitTradeRate), string(data.TimescalePerSecond), "completed_bars"},
-			{"completed_bars", "completed_bars", string(data.UnitCount), string(data.TimescaleSession), "completed_bars"},
-			{"notional_rate_baseline", "notional_rate_baseline", string(data.UnitNotionalRate), string(data.TimescaleRollingWindow), "notional_rate_noise_scale"},
-			{"notional_rate_ratio", "notional_rate_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow), "notional_rate_noise_scale"},
-			{"notional_rate_divergence", "notional_rate_divergence", string(data.UnitLogReturn), string(data.TimescaleRollingWindow), "notional_rate_noise_scale"},
-			{"notional_rate_zscore", "notional_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), "notional_rate_noise_scale"},
-			{"notional_rate_velocity", "notional_rate_velocity", string(data.UnitVelocity), string(data.TimescalePerSecond), "notional_rate_velocity:defined"},
-			{"best_bid", "bid", string(data.UnitPrice), string(data.TimescaleTick), "relative_spread"},
-			{"best_ask", "ask", string(data.UnitPrice), string(data.TimescaleTick), "relative_spread"},
-			{"midpoint", "midpoint", string(data.UnitPrice), string(data.TimescaleTick), "relative_spread"},
-			{"spread", "spread", string(data.UnitSpread), string(data.TimescaleTick), "relative_spread"},
-			{"relative_spread", "relative_spread", string(data.UnitRelativeSpread), string(data.TimescaleTick), "relative_spread"},
-			{"relative_spread_baseline", "relative_spread_baseline", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow), "spread_noise_scale"},
-			{"spread_ratio", "spread_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow), "spread_noise_scale"},
-			{"spread_divergence", "spread_divergence", string(data.UnitLogReturn), string(data.TimescaleRollingWindow), "spread_noise_scale"},
-			{"spread_zscore", "spread_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), "spread_noise_scale"},
-			{"spread_divergence_velocity", "spread_divergence_velocity", string(data.UnitVelocity), string(data.TimescalePerSecond), "spread_divergence_velocity:defined"},
-			{"midpoint:from", "midpoint:from", string(data.UnitPrice), string(data.TimescaleVolumeBar), "midpoint_ratio"},
-			{"midpoint:at", "midpoint", string(data.UnitPrice), string(data.TimescaleVolumeBar), "midpoint_ratio"},
-			{"midpoint_log_return", "midpoint_log_return", string(data.UnitLogReturn), string(data.TimescaleVolumeBar), "midpoint_ratio"},
-			{"midpoint_return_rate", "midpoint_return_rate", string(data.UnitVelocity), string(data.TimescalePerSecond), "midpoint_ratio"},
-			{"positive_midpoint_return", "positive_midpoint_return", string(data.UnitLogReturn), string(data.TimescaleVolumeBar), "midpoint_ratio"},
-			{"negative_midpoint_return", "negative_midpoint_return", string(data.UnitLogReturn), string(data.TimescaleVolumeBar), "midpoint_ratio"},
-			{"midpoint_return_baseline", "midpoint_return_baseline", string(data.UnitLogReturn), string(data.TimescaleRollingWindow), "midpoint_return_noise_scale"},
-			{"midpoint_return_divergence", "midpoint_return_divergence", string(data.UnitLogReturn), string(data.TimescaleRollingWindow), "midpoint_return_noise_scale"},
-			{"midpoint_return_zscore", "midpoint_return_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow), "midpoint_return_noise_scale"},
-			{"midpoint_return_velocity", "midpoint_return_velocity", string(data.UnitVelocity), string(data.TimescalePerSecond), "midpoint_return_velocity:defined"},
+		// {published label, output key, unit, timescale}
+		metrics: [][4]string{
+			{"trade_price", "price", string(data.UnitPrice), string(data.TimescaleTick)},
+			{"trade_quantity", "qty", string(data.UnitQuantity), string(data.TimescaleTick)},
+			{"trade_notional", "trade_notional", string(data.UnitNotional), string(data.TimescaleTick)},
+			{"trade_interval_seconds", "trade_interval_seconds", string(data.UnitSecond), string(data.TimescaleTick)},
+			{"volume_bar_target_quantity", "volume_bar_target_quantity", string(data.UnitQuantity), string(data.TimescaleVolumeBar)},
+			{"volume_bar_quantity", "volume_bar_quantity", string(data.UnitQuantity), string(data.TimescaleVolumeBar)},
+			{"volume_bar_notional", "volume_bar_notional", string(data.UnitNotional), string(data.TimescaleVolumeBar)},
+			{"volume_bar_trade_count", "volume_bar_trade_count", string(data.UnitCount), string(data.TimescaleVolumeBar)},
+			{"volume_bar_duration", "volume_bar_duration", string(data.UnitDuration), string(data.TimescaleVolumeBar)},
+			{"volume_rate", "volume_rate", string(data.UnitVolumeRate), string(data.TimescalePerSecond)},
+			{"notional_rate", "notional_rate", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
+			{"trade_rate", "trade_rate", string(data.UnitTradeRate), string(data.TimescalePerSecond)},
+			{"completed_bars", "completed_bars", string(data.UnitCount), string(data.TimescaleSession)},
+			{"notional_rate_baseline", "notional_rate_baseline", string(data.UnitNotionalRate), string(data.TimescaleRollingWindow)},
+			{"notional_rate_ratio", "notional_rate_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"notional_rate_divergence", "notional_rate_divergence", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
+			{"notional_rate_zscore", "notional_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"notional_rate_velocity", "notional_rate_velocity", string(data.UnitVelocity), string(data.TimescalePerSecond)},
+			{"best_bid", "bid", string(data.UnitPrice), string(data.TimescaleTick)},
+			{"best_ask", "ask", string(data.UnitPrice), string(data.TimescaleTick)},
+			{"midpoint", "midpoint", string(data.UnitPrice), string(data.TimescaleTick)},
+			{"spread", "spread", string(data.UnitSpread), string(data.TimescaleTick)},
+			{"relative_spread", "relative_spread", string(data.UnitRelativeSpread), string(data.TimescaleTick)},
+			{"relative_spread_baseline", "relative_spread_baseline", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow)},
+			{"spread_ratio", "spread_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			{"spread_divergence", "spread_divergence", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
+			{"spread_zscore", "spread_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"spread_divergence_velocity", "spread_divergence_velocity", string(data.UnitVelocity), string(data.TimescalePerSecond)},
+			{"midpoint:from", "midpoint:from", string(data.UnitPrice), string(data.TimescaleVolumeBar)},
+			{"midpoint:at", "midpoint", string(data.UnitPrice), string(data.TimescaleVolumeBar)},
+			{"midpoint_log_return", "midpoint_log_return", string(data.UnitLogReturn), string(data.TimescaleVolumeBar)},
+			{"midpoint_return_rate", "midpoint_return_rate", string(data.UnitVelocity), string(data.TimescalePerSecond)},
+			{"positive_midpoint_return", "positive_midpoint_return", string(data.UnitLogReturn), string(data.TimescaleVolumeBar)},
+			{"negative_midpoint_return", "negative_midpoint_return", string(data.UnitLogReturn), string(data.TimescaleVolumeBar)},
+			{"midpoint_return_baseline", "midpoint_return_baseline", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
+			{"midpoint_return_divergence", "midpoint_return_divergence", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
+			{"midpoint_return_zscore", "midpoint_return_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+			{"midpoint_return_velocity", "midpoint_return_velocity", string(data.UnitVelocity), string(data.TimescalePerSecond)},
+			{"historical_path_distance", "historical_path_distance", string(data.UnitDistance), string(data.TimescaleRollingWindow)},
+			{"historical_path_percentile", "historical_path_percentile", string(data.UnitPercent), string(data.TimescaleRollingWindow)},
 		},
 	}
 
@@ -513,15 +514,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
-		value, held := pipe.output.Values[metric[1]]
-
-		if !held || math.IsNaN(value) || math.IsInf(value, 0) {
-			continue
-		}
-
-		if metric[4] != "" && !(pipe.output.Values[metric[4]] > 0) {
-			continue
-		}
+		value := pipe.output.Values[metric[1]]
 
 		metrics = append(metrics, data.NewMetric(
 			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),

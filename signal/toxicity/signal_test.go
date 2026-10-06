@@ -103,10 +103,8 @@ func TestToxicitySignal(t *testing.T) {
 			So(metricValue(res1, "touch_fill_quantity:bid"), ShouldAlmostEqual, 0.0, 1e-9)
 			So(metricValue(res1, "touch_fill_fraction:bid"), ShouldAlmostEqual, 0.0, 1e-9)
 
-			_, held := metric(res1, "previous_best_price:bid")
-			So(held, ShouldBeFalse)
-			_, held = metric(res1, "touch_fill_rate:ask")
-			So(held, ShouldBeFalse)
+			So(metricValue(res1, "previous_best_price:bid"), ShouldEqual, 0.0)
+			So(metricValue(res1, "touch_fill_rate:ask"), ShouldEqual, 0.0)
 
 			trade2Qty := 2.5
 			trade2At := now.Add(100 * time.Millisecond)
@@ -156,8 +154,9 @@ func TestToxicitySignal(t *testing.T) {
 				"net_withdrawn_quantity:bid", "retreat_fraction:ask", "retreated_quantity:ask",
 				"net_withdrawn_quantity:ask", "net_replenished_quantity:ask",
 			} {
-				_, held := metric(res2, label)
-				So(held, ShouldBeFalse)
+				val, held := metric(res2, label)
+				So(held, ShouldBeTrue)
+				So(val, ShouldEqual, 0.0)
 			}
 		})
 
@@ -179,12 +178,13 @@ func TestToxicitySignal(t *testing.T) {
 			So(metricValue(res, "net_replenishment_fraction:ask"), ShouldAlmostEqual, 0.75, 1e-9)
 			So(metricValue(res, "net_replenishment_rate:ask"), ShouldAlmostEqual, 3.0/0.5, 1e-6)
 
-			_, held := metric(res, "retreat_fraction:bid")
-			So(held, ShouldBeFalse)
-			_, held = metric(res, "net_replenished_quantity:bid")
-			So(held, ShouldBeFalse)
-			_, held = metric(res, "net_withdrawn_quantity:ask")
-			So(held, ShouldBeFalse)
+			for _, label := range []string{
+				"retreat_fraction:bid", "net_replenished_quantity:bid", "net_withdrawn_quantity:ask",
+			} {
+				val, held := metric(res, label)
+				So(held, ShouldBeTrue)
+				So(val, ShouldEqual, 0.0)
+			}
 		})
 
 		Convey("A non-positive trade price yields no measurement", func() {

@@ -108,8 +108,7 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 			So(metricValue(res, "book_shape_ks"), ShouldBeGreaterThan, 0.0)
 			So(metricValue(res, "book_shape_distance"), ShouldBeGreaterThan, 0.0)
 
-			_, held := metric(res, "morphology_change")
-			So(held, ShouldBeFalse)
+			So(metricValue(res, "morphology_change"), ShouldEqual, 0.0)
 		})
 
 		Convey("A crossed book is corrupt state: it halts with an Internal error naming the symbol", func() {
@@ -186,8 +185,7 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 					expectedChange := math.Abs(currentDist - prevDist)
 					So(metricValue(res, "morphology_change"), ShouldAlmostEqual, expectedChange, 1e-6)
 				} else {
-					_, held := metric(res, "morphology_change")
-					So(held, ShouldBeFalse)
+					So(metricValue(res, "morphology_change"), ShouldEqual, 0.0)
 				}
 				prevDist = currentDist
 			}
