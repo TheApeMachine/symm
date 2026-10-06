@@ -466,35 +466,27 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	out := training.arena.NewMeasurement(training.Name())
-	out.Epoch = prior.Epoch
-	out.Tick = prior.Tick
-	out.SeqIdx = prior.SeqIdx
-	out.Label = prior.Label
-	out.At = prior.At
-	out.Peers = prior.Peers
-
-	if prior.Source != "runtime:join" {
-		out.Peers = []*data.Measurement{prior}
-	}
-
 	snapshot := ReportSnapshot{
 		Source: training.Name(),
 		Symbol: prior.Label,
 		SeqIdx: prior.SeqIdx,
 		At:     prior.At,
-		Price:  prior.GetMetric("price").Raw,
+		Price:  data.Pull(prior.Read("price")).Metric.Raw,
 	}
 
 	status := training.Status()
 	sensory := sensoryMeasurements(prior)
 
 	if len(sensory) > 0 {
-		training.grid.Update(sensory...)
+		channels := channelsFrom(sensory...)
+
+		if len(channels) > 0 {
+			training.grid.Update(prior.Tick, channels)
+		}
 	}
 
 	if status == runtime.INIT {
-		training.develop(out, &snapshot)
+		training.develop(prior.Epoch, prior.SeqIdx, &snapshot)
 	}
 
 	if status == runtime.WAITING {
@@ -507,6 +499,26 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	snapshot.Resolved, snapshot.WinRate, snapshot.Edge = training.score()
+
+	peers := prior.Peers()
+
+	if prior.Source != "runtime:join" {
+		peers = []*data.Measurement{prior}
+	}
+
+	metadata := training.reporter.Metadata(snapshot)
+	out := training.arena.NewMeasurement(
+		prior.Epoch,
+		prior.Label,
+		training.Name(),
+		prior.SeqIdx,
+		prior.Tick,
+		peers,
+		metadata...,
+	)
+	out.At = prior.At
+	out.From = prior.At
+
 	training.reporter.Populate(out, snapshot)
 
 	if training.uiTee != nil {
@@ -520,13 +532,13 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 develop grows the grid and checkpoints it once it settles.
 */
 func (training *Training) develop(
-	out *data.Measurement, snapshot *ReportSnapshot,
+	epoch, seqIdx int64, snapshot *ReportSnapshot,
 ) {
 	snapshot.Stage = StageModelDevelopment
 	snapshot.Blocker = "grid developing"
 
 	if !training.grid.IsSettled() {
-		if out.SeqIdx%32 == 0 {
+		if seqIdx%32 == 0 {
 			training.grid.Partition()
 		}
 
@@ -542,26 +554,26 @@ func (training *Training) develop(
 	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO,
-			fmt.Sprintf("[training] unable to snapshot grid/%d/%d", out.Epoch, out.SeqIdx),
+			fmt.Sprintf("[training] unable to snapshot grid/%d/%d", epoch, seqIdx),
 			err,
 		))
+
+		return
 	}
 
-	if err == nil {
-		go func(ctx context.Context, epoch, seqIdx int64, blob []byte) {
-			if putErr := training.catalog.PutBlob(
-				ctx,
-				fmt.Sprintf("grid/%d/%d", epoch, seqIdx),
-				blob,
-			); putErr != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					fmt.Sprintf("[training] unable to checkpoint grid/%d/%d", epoch, seqIdx),
-					putErr,
-				))
-			}
-		}(training.Context(), out.Epoch, out.SeqIdx, encoded)
-	}
+	go func(ctx context.Context, epoch, seqIdx int64, blob []byte) {
+		if putErr := training.catalog.PutBlob(
+			ctx,
+			fmt.Sprintf("grid/%d/%d", epoch, seqIdx),
+			blob,
+		); putErr != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				fmt.Sprintf("[training] unable to checkpoint grid/%d/%d", epoch, seqIdx),
+				putErr,
+			))
+		}
+	}(training.Context(), epoch, seqIdx, encoded)
 
 	training.Transition(runtime.WAITING)
 }
@@ -576,7 +588,7 @@ func (training *Training) trade(prior *data.Measurement, snapshot *ReportSnapsho
 
 	symbol := prior.Label
 	sensory := sensoryMeasurements(prior)
-	tokens := training.grid.LitRegions(sensory...)
+	tokens := training.grid.LitRegions(channelsFrom(sensory...))
 	snapshot.RegionTokens = tokens
 
 	tok := training.token(sensory...)
@@ -683,6 +695,30 @@ func (training *Training) trade(prior *data.Measurement, snapshot *ReportSnapsho
 }
 
 /*
+channelsFrom extracts key-value telemetry pairs from measurements for grid updates.
+*/
+func channelsFrom(measurements ...*data.Measurement) map[string]float64 {
+	channels := make(map[string]float64)
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		for entry := range measurement.Read() {
+			if entry.Err != nil {
+				continue
+			}
+
+			key := store.CellKey(measurement.Label, measurement.Source, entry.Metric.Label)
+			channels[key] = entry.Metric.Raw
+		}
+	}
+
+	return channels
+}
+
+/*
 sensoryMeasurements filters a measurement and its peers to retain only Stage 0
 sensory signal producers, excluding higher-order cognitive and physical solvers.
 */
@@ -701,7 +737,7 @@ func sensoryMeasurements(prior *data.Measurement) []*data.Measurement {
 
 	var sensory []*data.Measurement
 
-	for _, peer := range prior.Peers {
+	for _, peer := range prior.Peers() {
 		if peer == nil {
 			continue
 		}
@@ -728,7 +764,7 @@ func solverMeasurement(prior *data.Measurement, source string) *data.Measurement
 		return prior
 	}
 
-	for _, peer := range prior.Peers {
+	for _, peer := range prior.Peers() {
 		if peer != nil && peer.Source == source {
 			return peer
 		}
@@ -748,21 +784,27 @@ func (training *Training) authorized(
 	resonanceM, manifoldM *data.Measurement,
 ) bool {
 	if resonanceM != nil {
-		if surpriseMetric, ok := resonanceM.LookupMetric("surprise"); ok {
-			if surpriseMetric.Raw <= 0 {
-				return false
-			}
+		surpriseEntry := data.Pull(resonanceM.Read("surprise"))
+
+		if surpriseEntry.Err == nil && surpriseEntry.Metric.Label == "surprise" && surpriseEntry.Metric.Raw <= 0 {
+			return false
 		}
 	}
 
-	if manifoldM != nil {
-		if rMetric, ok := manifoldM.LookupMetric("kuramoto_r"); ok {
-			if rMetric.Raw >= 1.0 {
-				if pressMetric, ok := manifoldM.LookupMetric("pressure_grad_norm"); ok && pressMetric.Raw > 0 {
-					return false
-				}
-			}
-		}
+	if manifoldM == nil {
+		return true
+	}
+
+	kuramotoEntry := data.Pull(manifoldM.Read("kuramoto_r"))
+
+	if kuramotoEntry.Err != nil || kuramotoEntry.Metric.Label != "kuramoto_r" || kuramotoEntry.Metric.Raw < 1.0 {
+		return true
+	}
+
+	pressureEntry := data.Pull(manifoldM.Read("pressure_grad_norm"))
+
+	if pressureEntry.Err == nil && pressureEntry.Metric.Label == "pressure_grad_norm" && pressureEntry.Metric.Raw > 0 {
+		return false
 	}
 
 	return true
@@ -962,51 +1004,64 @@ func (training *Training) Train() {
 		}
 
 		trained, latest, seenCount, err := training.trainPass()
-		training.passes.Add(1)
 
 		if err != nil {
+			training.passes.Add(1)
 			training.Error(errnie.Err(errnie.BadGateway, "[training] failed during training pass", err))
 			return
 		}
 
 		records := training.records()
 
-		if trained > 0 && records > 0 {
-			reading, err := training.ask(training.snapshot, nil, nil)
-
-			if err == nil {
-				model, ok, readErr := readText(reading, "model")
-
-				if readErr != nil {
-					err = readErr
-				}
-
-				if readErr == nil && !ok {
-					err = errnie.Error(errnie.Err(
-						errnie.Validation,
-						"[training] cognition model is missing",
-						nil,
-					))
-				}
-
-				if err == nil {
-					err = training.catalog.PutBlob(
-						training.Context(), fmt.Sprintf("trie/%d", latest), []byte(model),
-					)
-				}
-			}
-
-			if err != nil {
-				errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", err))
-			}
-
-			errnie.Info(fmt.Sprintf(
-				"[training] trie loaded from %d of %d excursions (%d records)",
-				trained, seenCount, int(records),
-			))
-
-			training.Transition(runtime.READY)
+		if trained <= 0 || records <= 0 {
+			training.passes.Add(1)
+			return
 		}
+
+		reading, askErr := training.ask(training.snapshot, nil, nil)
+
+		if askErr != nil {
+			errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", askErr))
+			training.Transition(runtime.READY)
+			training.passes.Add(1)
+			return
+		}
+
+		model, ok, readErr := readText(reading, "model")
+
+		if readErr != nil {
+			errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", readErr))
+			training.Transition(runtime.READY)
+			training.passes.Add(1)
+			return
+		}
+
+		if !ok {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[training] cognition model is missing",
+				nil,
+			))
+			training.Transition(runtime.READY)
+			training.passes.Add(1)
+			return
+		}
+
+		putErr := training.catalog.PutBlob(
+			training.Context(), fmt.Sprintf("trie/%d", latest), []byte(model),
+		)
+
+		if putErr != nil {
+			errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", putErr))
+		}
+
+		errnie.Info(fmt.Sprintf(
+			"[training] trie loaded from %d of %d excursions (%d records)",
+			trained, seenCount, int(records),
+		))
+
+		training.Transition(runtime.READY)
+		training.passes.Add(1)
 	}()
 }
 
@@ -1168,13 +1223,17 @@ func (training *Training) learn(detection *data.Measurement) (bool, error) {
 	}
 
 	startTick := int64(0)
-	if metric, ok := detection.LookupMetric("StartTick"); ok {
-		startTick = int64(metric.Raw)
+	startEntry := data.Pull(detection.Read("StartTick"))
+
+	if startEntry.Err == nil && startEntry.Metric.Label == "StartTick" {
+		startTick = int64(startEntry.Metric.Raw)
 	}
 
 	if startTick == 0 {
-		if metric, ok := detection.LookupMetric("start_tick"); ok {
-			startTick = int64(metric.Raw)
+		lowerEntry := data.Pull(detection.Read("start_tick"))
+
+		if lowerEntry.Err == nil && lowerEntry.Metric.Label == "start_tick" {
+			startTick = int64(lowerEntry.Metric.Raw)
 		}
 	}
 
@@ -1191,10 +1250,6 @@ func (training *Training) learn(detection *data.Measurement) (bool, error) {
 
 	ignition, _ := slices.BinarySearch(ticks, lowTick)
 	peak, _ := slices.BinarySearch(ticks, highTick)
-
-	if ignition < 1 || ignition >= peak {
-		return false, nil
-	}
 
 	// Pull back context before ignition and peak to account for order fill latencies.
 	startA := 0
@@ -1214,6 +1269,10 @@ func (training *Training) learn(detection *data.Measurement) (bool, error) {
 
 	holdingTokens := deduplicateTokens(tokens[startHolding:endC])
 	hold := bytes.Join(holdingTokens, []byte("/"))
+
+	if ignition < 1 || ignition >= peak {
+		return false, nil
+	}
 
 	if len(enter) == 0 || len(hold) == 0 {
 		return false, nil
@@ -1359,7 +1418,14 @@ func (training *Training) frames(
 	}
 
 	if !training.grid.IsSettled() {
-		training.grid.Update(rawMeasurements...)
+		for _, measurement := range rawMeasurements {
+			channels := channelsFrom(measurement)
+
+			if len(channels) > 0 {
+				training.grid.Update(measurement.Tick, channels)
+			}
+		}
+
 		training.grid.Settle()
 	}
 
@@ -1393,7 +1459,7 @@ func (training *Training) frames(
 }
 
 func (training *Training) token(measurements ...*data.Measurement) []byte {
-	lit := training.grid.LitRegions(measurements...)
+	lit := training.grid.LitRegions(channelsFrom(measurements...))
 
 	if len(lit) == 0 {
 		return nil
@@ -1418,9 +1484,9 @@ func (training *Training) priceTape(
 				continue
 			}
 
-			priceMetric := measurement.GetMetric("price")
+			entry := data.Pull(measurement.Read("price"))
 
-			if priceMetric.Raw <= 0 {
+			if entry.Err != nil || entry.Metric.Raw <= 0 {
 				continue
 			}
 
@@ -1432,7 +1498,7 @@ func (training *Training) priceTape(
 
 			points = append(points, ui.FragmentPoint{
 				X:    len(points),
-				Y:    priceMetric.Raw,
+				Y:    entry.Metric.Raw,
 				Seq:  measurement.Tick,
 				Time: timeMs,
 			})
@@ -1464,14 +1530,9 @@ func (training *Training) streamFragment(
 	detection *data.Measurement,
 	fragment ui.TrainedFragment,
 ) {
-	if training == nil || training.uiTee == nil {
+	if training == nil || training.uiTee == nil || detection == nil {
 		return
 	}
-
-	out := data.NewMeasurement(training.Name())
-	out.Label = detection.Label
-	out.SeqIdx = fragment.MarkC
-	out.Tick = fragment.MarkC
 
 	var regionTokens [][]byte
 
@@ -1499,23 +1560,24 @@ func (training *Training) streamFragment(
 		Event:        "completed",
 	}
 
-	training.reporter.Populate(out, snapshot)
+	entryMetric := data.NewMetric("agent_entry", float64(fragment.MarkB), data.UnitCount, data.TimescaleInstantaneous)
+	entryMetric.Standardized = float64(fragment.MarkB)
 
-	out.SetMetric("agent_entry", data.NewMetric(
-		"agent_entry",
-		data.UnitCount,
-		data.TimescaleInstantaneous,
-		0,
-		1,
-	).Write(float64(fragment.MarkB)))
+	exitMetric := data.NewMetric("agent_exit", float64(fragment.MarkC), data.UnitCount, data.TimescaleInstantaneous)
+	exitMetric.Standardized = float64(fragment.MarkC)
 
-	out.SetMetric("agent_exit", data.NewMetric(
-		"agent_exit",
-		data.UnitCount,
-		data.TimescaleInstantaneous,
-		0,
-		1,
-	).Write(float64(fragment.MarkC)))
+	metadata := training.reporter.Metadata(snapshot)
+	out := data.NewMeasurement(
+		detection.Epoch,
+		detection.Label,
+		training.Name(),
+		fragment.MarkC,
+		fragment.MarkC,
+		metadata...,
+	)
+	out.At = snapshot.At
+	out.From = snapshot.At
 
+	training.reporter.Populate(out, snapshot, entryMetric, exitMetric)
 	training.uiTee.Push(data.NewPublication(out, nil))
 }

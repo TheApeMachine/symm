@@ -53,7 +53,6 @@ type Solver struct {
 	forcing     sync.Map
 	wake        chan struct{}
 	dirty       sync.Map
-	finalizers  sync.Map
 	loaded      map[int64]string
 	reading     atomic.Pointer[State]
 	version     atomic.Uint64
@@ -106,16 +105,6 @@ func NewSolver(ctx context.Context, arena *data.ArenaOwner, book *broker.Book) *
 
 func (solver *Solver) Arena() *data.ArenaOwner {
 	return solver.arena
-}
-
-func (solver *Solver) finalizer(symbol string) *data.Finalizer[float64] {
-	if loaded, found := solver.finalizers.Load(symbol); found {
-		return loaded.(*data.Finalizer[float64])
-	}
-
-	created := data.NewFinalizer[float64]()
-	actual, _ := solver.finalizers.LoadOrStore(symbol, created)
-	return actual.(*data.Finalizer[float64])
 }
 
 /*
@@ -189,9 +178,9 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 
 	var priors []*data.Measurement
 	if prior.Source == "runtime:join" {
-		priors = prior.Peers
+		priors = prior.Peers()
 	} else {
-		priors = append([]*data.Measurement{prior}, prior.Peers...)
+		priors = append([]*data.Measurement{prior}, prior.Peers()...)
 	}
 
 	// Process hawkes forcing from prior-stage outputs.
@@ -220,160 +209,55 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 	default:
 	}
 
-	out := solver.arena.NewMeasurement(solver.Name())
-	out.Epoch = prior.Epoch
-	out.Tick = prior.Tick
-	out.Label = symbol
-	out.SeqIdx = prior.SeqIdx
-	out.At = prior.At
-	out.From = prior.From
-	out.Peers = []*data.Measurement{prior}
-
 	reading := solver.Reading()
-	out.Result = reading
+	metrics := make([]data.Metric, 0, 16)
 
-	if reading == nil {
-		solver.finalizer(symbol).Complete(out)
-		return out
-	}
+	if reading != nil {
+		metrics = append(metrics,
+			data.NewMetric("divergence", reading.Reading.Divergence, data.UnitRate, data.TimescaleInstantaneous),
+			data.NewMetric("guidance_speed", reading.Reading.GuidanceSpeed, data.UnitVelocity, data.TimescaleInstantaneous),
+			data.NewMetric("coherence_mag2", reading.Reading.CoherenceMag2, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("pressure_grad_norm", reading.Reading.PressureGradNorm, data.UnitAcceleration, data.TimescaleInstantaneous),
+			data.NewMetric("viscosity_proxy", reading.Reading.ViscosityProxy, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("kuramoto_r", reading.Reading.KuramotoR, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("kuramoto_psi", reading.Reading.KuramotoPsi, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("gas_kinetic", reading.Reading.Health.Gas.Kinetic, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("gas_internal", reading.Reading.Health.Gas.Internal, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("wave_norm", reading.Reading.Health.Wave.Norm, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("vorticity_rms", reading.Reading.Health.Gas.VorticityRMS, data.UnitRate, data.TimescaleInstantaneous),
+			data.NewMetric("strain_rms", reading.Reading.Health.Gas.StrainRMS, data.UnitRate, data.TimescaleInstantaneous),
+			data.NewMetric("max_mach", reading.Reading.Health.Gas.MaxMach, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("particle_thermal", reading.Reading.Health.ParticleThermal, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("particle_kinetic", reading.Reading.Health.ParticleKinetic, data.UnitDimensionless, data.TimescaleInstantaneous),
+		)
 
-	out.SetMetric("divergence", data.NewMetric(
-		"divergence",
-		data.UnitRate,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.Divergence))
-	out.SetMetric("guidance_speed", data.NewMetric(
-		"guidance_speed",
-		data.UnitVelocity,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.GuidanceSpeed))
-	out.SetMetric("coherence_mag2", data.NewMetric(
-		"coherence_mag2",
-		data.UnitDimensionless,
-		data.TimescaleInstantaneous,
-		0.5,
-		0.5,
-	).Write(reading.Reading.CoherenceMag2))
-	out.SetMetric("pressure_grad_norm", data.NewMetric(
-		"pressure_grad_norm",
-		data.UnitAcceleration,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.PressureGradNorm))
-	out.SetMetric("viscosity_proxy", data.NewMetric(
-		"viscosity_proxy",
-		data.UnitDimensionless,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.ViscosityProxy))
-	out.SetMetric("kuramoto_r", data.NewMetric(
-		"kuramoto_r",
-		data.UnitDimensionless,
-		data.TimescaleInstantaneous,
-		0.5,
-		0.5,
-	).Write(reading.Reading.KuramotoR))
-	out.SetMetric("kuramoto_psi", data.NewMetric(
-		"kuramoto_psi",
-		data.UnitDimensionless,
-		data.TimescaleInstantaneous,
-		0.0,
-		math.Pi,
-	).Write(reading.Reading.KuramotoPsi))
-	out.SetMetric("gas_kinetic", data.NewMetric(
-		"gas_kinetic",
-		data.UnitDimensionless,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.Health.Gas.Kinetic))
-	out.SetMetric("gas_internal", data.NewMetric(
-		"gas_internal",
-		data.UnitDimensionless,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.Health.Gas.Internal))
-	out.SetMetric("wave_norm", data.NewMetric(
-		"wave_norm",
-		data.UnitDimensionless,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.Health.Wave.Norm))
-	out.SetMetric("vorticity_rms", data.NewMetric(
-		"vorticity_rms",
-		data.UnitRate,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.Health.Gas.VorticityRMS))
-	out.SetMetric("strain_rms", data.NewMetric(
-		"strain_rms",
-		data.UnitRate,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.Health.Gas.StrainRMS))
-	out.SetMetric("max_mach", data.NewMetric(
-		"max_mach",
-		data.UnitDimensionless,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.Health.Gas.MaxMach))
-
-	if reading.State != nil {
-		n := float64(reading.State.N)
-		out.SetMetric("particle_count", data.NewMetric(
-			"particle_count",
-			data.UnitCount,
-			data.TimescaleInstantaneous,
-			0.0,
-			0.0,
-		).Write(n))
-	}
-
-	out.SetMetric("particle_thermal", data.NewMetric(
-		"particle_thermal",
-		data.UnitDimensionless,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.Health.ParticleThermal))
-	out.SetMetric("particle_kinetic", data.NewMetric(
-		"particle_kinetic",
-		data.UnitDimensionless,
-		data.TimescaleInstantaneous,
-		0.0,
-		0.0,
-	).Write(reading.Reading.Health.ParticleKinetic))
-
-	maturity, snr, snrDefined, estimated := out.Maturity, out.SNR, out.SNRDefined, out.Estimated
-	if reading.State != nil && reading.State.N > 1 {
-		maturity = 1.0 - 1.0/float64(reading.State.N)
-	}
-
-	if reading.Reading.KuramotoR > 0 {
-		r2 := reading.Reading.KuramotoR * reading.Reading.KuramotoR
-		denom := 1.0 - r2
-
-		if denom > 0 {
-			snr = r2 / denom
-			snrDefined = true
-			estimated = true
+		if reading.State != nil {
+			metrics = append(metrics, data.NewMetric(
+				"particle_count", float64(reading.State.N), data.UnitCount, data.TimescaleInstantaneous,
+			))
 		}
 	}
-	out.SetQuality(maturity, snr, snrDefined, estimated)
-	solver.finalizer(symbol).Complete(out)
 
-	return out
+	if len(metrics) == 0 {
+		metrics = append(metrics, data.NewMetric(
+			"kuramoto_r", 0, data.UnitDimensionless, data.TimescaleInstantaneous,
+		))
+	}
+
+	out := solver.arena.NewMeasurement(
+		prior.Epoch, symbol, solver.Name(), prior.SeqIdx, prior.Tick,
+		[]*data.Measurement{prior},
+	)
+	out.At = prior.At
+	out.From = prior.From
+	if out.At.IsZero() {
+		out.At = time.Now().UTC()
+	}
+	if out.From.IsZero() {
+		out.From = out.At
+	}
+
+	return out.Write(metrics...)
 }
 
 /*
@@ -383,12 +267,12 @@ silently poisoning resident forcing state. Trade events never advance the field,
 so this path never contends with the physics advance lock.
 */
 func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement) {
-	if hawkes == nil || hawkes.Err != nil || symbol == "" {
+	if hawkes == nil || hawkes.Error() != nil || symbol == "" {
 		return
 	}
 
-	buyMetric, buyFound := hawkes.LookupMetric(buyExcitationMetric)
-	sellMetric, sellFound := hawkes.LookupMetric(sellExcitationMetric)
+	buyMetric, buyFound := readMetric(hawkes, buyExcitationMetric)
+	sellMetric, sellFound := readMetric(hawkes, sellExcitationMetric)
 
 	if !buyFound && !sellFound {
 		return
@@ -412,6 +296,21 @@ func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement) {
 	}
 
 	solver.forcing.Store(symbol, forcingState{buyExcitation: buy, sellExcitation: sell})
+}
+
+func readMetric(measurement *data.Measurement, label string) (data.Metric, bool) {
+	if measurement == nil {
+		return data.Metric{}, false
+	}
+
+	for entry := range measurement.Read(label) {
+		if entry.Err != nil {
+			continue
+		}
+		return entry.Metric, true
+	}
+
+	return data.Metric{}, false
 }
 
 /*

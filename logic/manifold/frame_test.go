@@ -24,13 +24,13 @@ func TestPrimitiveResidentFrame(t *testing.T) {
 		}
 		previous = x
 	}
-	before := frame.symbols["A"].lastPrice.Count
+	before := frame.symbols["A"].lastPrice[0]
 	for range 5 {
 		if _, _, err := frame.placePrice("A", math.Log(101)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	after := frame.symbols["A"].lastPrice.Count
+	after := frame.symbols["A"].lastPrice[0]
 	if before != after {
 		t.Fatal("probe trained observed frame")
 	}

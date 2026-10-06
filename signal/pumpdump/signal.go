@@ -150,8 +150,9 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 			data.NewState(data.NewMap("from", "bar_start", "to", "at", "elapsed", "volume_bar_duration"), output),
 			// 5: Causal trade-quantity baseline (prior mean; the first trade bootstraps itself).
 			data.NewState(data.NewMap("value", "qty", "center", "trade_quantity_baseline", "scale", "trade_quantity_noise_scale"), output),
-			// 6-9: Target fixed when the bar opens: bar_open = 1 - sign(prior count)².
-			data.NewState(data.NewMap("value", "bar_trade_count:prior", "sign", "bar_occupied"), output),
+			// 6-10: Target fixed when the bar opens: bar_open = 1 - sign(prior count)².
+			data.NewState(data.NewMap("left", "bar_trade_count:prior", "right", "one", "multiply", "bar_occupied"), output),
+			data.NewState(data.NewMap("value", "bar_occupied", "sign", "bar_occupied"), output),
 			data.NewState(data.NewMap("left", "bar_occupied", "right", "bar_occupied", "multiply", "bar_occupied:square"), output),
 			data.NewState(data.NewMap("left", "one", "right", "bar_occupied:square", "subtract", "bar_open"), output),
 			data.NewState(data.NewMap("left", "bar_target:prior", "right", "trade_quantity_baseline", "weight", "bar_open", "mix", "volume_bar_target_quantity"), output),
@@ -163,6 +164,7 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 			transport.NewStages(arithmetic.NewAdd()),
 			transport.NewStages(temporal.NewElapsed()),
 			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
+			transport.NewStages(arithmetic.NewMultiply()),
 			transport.NewStages(calculus.NewSign()),
 			transport.NewStages(arithmetic.NewMultiply()),
 			transport.NewStages(arithmetic.NewSubtract()),
@@ -180,22 +182,27 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 			data.NewState(data.NewMap("left", "ask", "right", "bid", "subtract", "spread"), output),
 			data.NewState(data.NewMap("left", "bid", "right", "ask", "weight", "half", "mix", "midpoint"), output),
 			data.NewState(data.NewMap("left", "spread", "right", "midpoint", "divide", "relative_spread"), output),
-			// 3-8: Log relative spread against its own causal baseline.
-			data.NewState(data.NewMap("value", "relative_spread", "log", "log_relative_spread"), output),
+			// 3-10: Log relative spread against its own causal baseline.
+			// Unary primitives answer in place, so each operand is copied (x · 1) first.
+			data.NewState(data.NewMap("left", "relative_spread", "right", "one", "multiply", "log_relative_spread"), output),
+			data.NewState(data.NewMap("value", "log_relative_spread", "log", "log_relative_spread"), output),
 			data.NewState(data.NewMap("value", "log_relative_spread", "center", "log_relative_spread_baseline", "scale", "spread_noise_scale"), output),
-			data.NewState(data.NewMap("value", "log_relative_spread_baseline", "exp", "relative_spread_baseline"), output),
+			data.NewState(data.NewMap("left", "log_relative_spread_baseline", "right", "one", "multiply", "relative_spread_baseline"), output),
+			data.NewState(data.NewMap("value", "relative_spread_baseline", "exp", "relative_spread_baseline"), output),
 			data.NewState(data.NewMap("left", "log_relative_spread", "right", "log_relative_spread_baseline", "subtract", "spread_divergence"), output),
 			data.NewState(data.NewMap("left", "relative_spread", "right", "relative_spread_baseline", "divide", "spread_ratio"), output),
 			data.NewState(data.NewMap("left", "spread_divergence", "right", "spread_noise_scale", "divide", "spread_zscore"), output),
-			// 9: Spread divergence velocity.
+			// 11: Spread divergence velocity.
 			data.NewState(data.NewMap("value", "spread_divergence", "rate", "spread_divergence_velocity", "defined", "spread_divergence_velocity:defined"), output),
 		},
 		touch: transport.NewParallel(
 			transport.NewStages(arithmetic.NewSubtract()),
 			transport.NewStages(calculus.NewMix()),
 			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(arithmetic.NewMultiply()),
 			transport.NewStages(calculus.NewLog()),
 			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
+			transport.NewStages(arithmetic.NewMultiply()),
 			transport.NewStages(calculus.NewExp()),
 			transport.NewStages(arithmetic.NewSubtract()),
 			transport.NewStages(arithmetic.NewDivide()),
@@ -207,24 +214,28 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 			data.NewState(data.NewMap("left", "volume_bar_quantity", "right", "volume_bar_duration", "divide", "volume_rate"), output),
 			data.NewState(data.NewMap("left", "volume_bar_notional", "right", "volume_bar_duration", "divide", "notional_rate"), output),
 			data.NewState(data.NewMap("left", "volume_bar_trade_count", "right", "volume_bar_duration", "divide", "trade_rate"), output),
-			// 3-8: Log notional rate against its own causal baseline.
-			data.NewState(data.NewMap("value", "notional_rate", "log", "log_notional_rate"), output),
+			// 3-10: Log notional rate against its own causal baseline.
+			data.NewState(data.NewMap("left", "notional_rate", "right", "one", "multiply", "log_notional_rate"), output),
+			data.NewState(data.NewMap("value", "log_notional_rate", "log", "log_notional_rate"), output),
 			data.NewState(data.NewMap("value", "log_notional_rate", "center", "log_notional_rate_baseline", "scale", "notional_rate_noise_scale"), output),
-			data.NewState(data.NewMap("value", "log_notional_rate_baseline", "exp", "notional_rate_baseline"), output),
+			data.NewState(data.NewMap("left", "log_notional_rate_baseline", "right", "one", "multiply", "notional_rate_baseline"), output),
+			data.NewState(data.NewMap("value", "notional_rate_baseline", "exp", "notional_rate_baseline"), output),
 			data.NewState(data.NewMap("left", "log_notional_rate", "right", "log_notional_rate_baseline", "subtract", "notional_rate_divergence"), output),
 			data.NewState(data.NewMap("left", "notional_rate", "right", "notional_rate_baseline", "divide", "notional_rate_ratio"), output),
 			data.NewState(data.NewMap("left", "notional_rate_divergence", "right", "notional_rate_noise_scale", "divide", "notional_rate_zscore"), output),
-			// 9: Log notional rate velocity.
+			// 11: Log notional rate velocity.
 			data.NewState(data.NewMap("value", "log_notional_rate", "rate", "notional_rate_velocity", "defined", "notional_rate_velocity:defined"), output),
-			// 10: Completed bar count.
+			// 12: Completed bar count.
 			data.NewState(data.NewMap("value", "one", "sum", "completed_bars"), output),
 		},
 		bar: transport.NewParallel(
 			transport.NewStages(arithmetic.NewDivide()),
 			transport.NewStages(arithmetic.NewDivide()),
 			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(arithmetic.NewMultiply()),
 			transport.NewStages(calculus.NewLog()),
 			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
+			transport.NewStages(arithmetic.NewMultiply()),
 			transport.NewStages(calculus.NewExp()),
 			transport.NewStages(arithmetic.NewSubtract()),
 			transport.NewStages(arithmetic.NewDivide()),
@@ -233,27 +244,31 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 			transport.NewStages(statistic.NewSum()),
 		),
 		responseStates: []*data.State{
-			// 0-2: Midpoint log return over the bar and its rate.
+			// 0-3: Midpoint log return over the bar and its rate.
 			data.NewState(data.NewMap("left", "midpoint", "right", "midpoint:from", "divide", "midpoint_ratio"), output),
-			data.NewState(data.NewMap("value", "midpoint_ratio", "log", "midpoint_log_return"), output),
+			data.NewState(data.NewMap("left", "midpoint_ratio", "right", "one", "multiply", "midpoint_log_return"), output),
+			data.NewState(data.NewMap("value", "midpoint_log_return", "log", "midpoint_log_return"), output),
 			data.NewState(data.NewMap("left", "midpoint_log_return", "right", "volume_bar_duration", "divide", "midpoint_return_rate"), output),
-			// 3-7: Exact decomposition r = r⁺ - r⁻, r⁺ = (|r| + r) / 2, r⁻ = (|r| - r) / 2.
-			data.NewState(data.NewMap("value", "midpoint_log_return", "absolute", "midpoint_log_return:absolute"), output),
+			// 4-9: Exact decomposition r = r⁺ - r⁻, r⁺ = (|r| + r) / 2, r⁻ = (|r| - r) / 2.
+			data.NewState(data.NewMap("left", "midpoint_log_return", "right", "one", "multiply", "midpoint_log_return:absolute"), output),
+			data.NewState(data.NewMap("value", "midpoint_log_return:absolute", "absolute", "midpoint_log_return:absolute"), output),
 			data.NewState(data.NewMap("left", "midpoint_log_return:absolute", "right", "midpoint_log_return", "add", "positive_midpoint_return:double"), output),
 			data.NewState(data.NewMap("left", "positive_midpoint_return:double", "right", "half", "multiply", "positive_midpoint_return"), output),
 			data.NewState(data.NewMap("left", "midpoint_log_return:absolute", "right", "midpoint_log_return", "subtract", "negative_midpoint_return:double"), output),
 			data.NewState(data.NewMap("left", "negative_midpoint_return:double", "right", "half", "multiply", "negative_midpoint_return"), output),
-			// 8-10: Signed return against its own additive causal baseline.
+			// 10-12: Signed return against its own additive causal baseline.
 			data.NewState(data.NewMap("value", "midpoint_log_return", "center", "midpoint_return_baseline", "scale", "midpoint_return_noise_scale"), output),
 			data.NewState(data.NewMap("left", "midpoint_log_return", "right", "midpoint_return_baseline", "subtract", "midpoint_return_divergence"), output),
 			data.NewState(data.NewMap("left", "midpoint_return_divergence", "right", "midpoint_return_noise_scale", "divide", "midpoint_return_zscore"), output),
-			// 11: Midpoint return velocity.
+			// 13: Midpoint return velocity.
 			data.NewState(data.NewMap("value", "midpoint_log_return", "rate", "midpoint_return_velocity", "defined", "midpoint_return_velocity:defined"), output),
 		},
 		response: transport.NewParallel(
 			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(arithmetic.NewMultiply()),
 			transport.NewStages(calculus.NewLog()),
 			transport.NewStages(arithmetic.NewDivide()),
+			transport.NewStages(arithmetic.NewMultiply()),
 			transport.NewStages(calculus.NewAbsolute()),
 			transport.NewStages(arithmetic.NewAdd()),
 			transport.NewStages(arithmetic.NewMultiply()),

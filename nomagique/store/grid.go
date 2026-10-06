@@ -1194,6 +1194,10 @@ func (grid *Grid) regionScoresLocked(channels map[string]float64) []RegionScore 
 			deformation = deform(previous, raw)
 		}
 
+		if deformation == 0 && finite(raw) && raw != 0 {
+			deformation = deform(0, raw)
+		}
+
 		if !finite(deformation) {
 			continue
 		}

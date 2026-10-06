@@ -212,6 +212,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 
 		if atCol != nil && !atCol.IsNull(rowIdx) {
 			measurement.At = time.UnixMicro(int64(atCol.Value(rowIdx))).UTC()
+			measurement.From = measurement.At
 			measurement.Timestamp = int64(atCol.Value(rowIdx)) * 1000
 		}
 

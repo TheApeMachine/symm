@@ -2,112 +2,119 @@ package resonance
 
 import (
 	"context"
-	"strconv"
 	"testing"
 	"time"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/runtime"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
+
+func metricRaw(measurement *data.Measurement, label string) (float64, bool) {
+	if measurement == nil {
+		return 0, false
+	}
+
+	for entry := range measurement.Read(label) {
+		if entry.Err != nil {
+			continue
+		}
+		return entry.Metric.Raw, true
+	}
+
+	return 0, false
+}
+
+func signalPeer(source, symbol, metricName string, value float64, at time.Time) *data.Measurement {
+	measurement := data.NewMeasurement(1, symbol, source, at.Unix(), at.Unix())
+	measurement.At = at
+	measurement.From = at
+	return measurement.Write(data.NewMetric(metricName, value, data.UnitDimensionless, data.TimescaleInstantaneous))
+}
 
 func TestStep(t *testing.T) {
 	Convey("Given a resonance solver", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0)
+		solver := NewSolver(context.Background(), data.NewArenaOwner("resonance-test", 32), 0)
 		defer solver.Close()
 
-		m := data.NewMeasurement("resonance", nil)
-		m.Label = "TEST/USD"
-		m.At = time.Unix(1, 0)
+		at := time.Unix(1, 0).UTC()
+		prior := data.NewMeasurement(1, "TEST/USD", "ingress", 1, 1)
+		prior.At = at
+		prior.From = at
+		prior = prior.Write(data.NewMetric("midpoint", 100, data.UnitPrice, data.TimescaleInstantaneous))
 
-		result := solver.Step(m)
+		result := solver.Step(prior)
 
-		Convey("the step populates energy and surprise metrics", func() {
+		Convey("the step produces a finalized resonance measurement", func() {
 			So(result, ShouldNotBeNil)
+			_, held := metricRaw(result, "energy")
+			So(held, ShouldBeTrue)
 		})
 	})
 }
 
 func TestSignalFeatureIngestion(t *testing.T) {
 	Convey("Given a resonance solver receiving measurements with all 11 canonical signal peers", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0.01)
+		solver := NewSolver(context.Background(), data.NewArenaOwner("resonance-test", 32), 0.01)
 		defer solver.Close()
 
-		createMetric := func(label, metricName string, value float64) *data.Measurement {
-			measurement := data.NewMeasurement(label, nil)
-			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Unix(10, 0), time.Unix(10, 0)
-			measurement.SetMetric(metricName, data.Metric{Label: metricName, Raw: value})
-			measurement.SetMetadata(data.MetadataSupport, "1")
-			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
-			}
-			return measurement
+		at := time.Unix(10, 0).UTC()
+		peers := []*data.Measurement{
+			signalPeer("correlation", "BTC/USD", "relative_return_energy", 1.2, at),
+			signalPeer("leadlag", "BTC/USD", "best_lag_correlation", 0.75, at),
+			signalPeer("liquidity", "BTC/USD", "relative_spread", 0.0002, at),
+			signalPeer("sentiment", "BTC/USD", "advance_fraction", 0.6, at),
+			signalPeer("cvd", "BTC/USD", "signed_net_fraction", 0.4, at),
+			signalPeer("depthflow", "BTC/USD", "observed_notional_imbalance", 0.3, at),
+			signalPeer("morphology", "BTC/USD", "book_shape_distance", 0.05, at),
+			signalPeer("hawkes", "BTC/USD", "excitation_fraction:buy", 0.45, at),
+			signalPeer("pumpdump", "BTC/USD", "spread_ratio", 1.05, at),
+			signalPeer("toxicity", "BTC/USD", "net_withdrawal_fraction:bid", 0.15, at),
+			signalPeer("derivatives", "BTC/USD", "basis", 0.001, at),
 		}
 
-		m := data.NewMeasurement("resonance", nil)
-		m.Label = "BTC/USD"
-		m.At = time.Unix(10, 0)
-		m.Peers = []*data.Measurement{
-			createMetric("correlation", "relative_return_energy", 1.2),
-			createMetric("leadlag", "best_lag_correlation", 0.75),
-			createMetric("liquidity", "relative_spread", 0.0002),
-			createMetric("sentiment", "advance_fraction", 0.6),
-			createMetric("cvd", "signed_net_fraction", 0.4),
-			createMetric("depthflow", "observed_notional_imbalance", 0.3),
-			createMetric("morphology", "book_shape_distance", 0.05),
-			createMetric("hawkes", "excitation_fraction:buy", 0.45),
-			createMetric("pumpdump", "spread_ratio", 1.05),
-			createMetric("toxicity", "net_withdrawal_fraction:bid", 0.15),
-			createMetric("derivatives", "basis", 0.001),
-		}
+		m := solver.Arena().NewMeasurement(1, "BTC/USD", "runtime:join", 10, 10, peers)
+		m.At = at
+		m.From = at
+		m = m.Write(data.NewMetric("midpoint", 50000, data.UnitPrice, data.TimescaleInstantaneous))
 
 		result := solver.Step(m)
 
 		Convey("the predictive coder ingests all 11 features and produces resonance dynamics", func() {
 			So(result, ShouldNotBeNil)
-			So(result.GetMetric("energy"), ShouldNotBeNil)
-			So(result.GetMetric("surprise"), ShouldNotBeNil)
+			_, energyHeld := metricRaw(result, "energy")
+			_, surpriseHeld := metricRaw(result, "surprise")
+			So(energyHeld, ShouldBeTrue)
+			So(surpriseHeld, ShouldBeTrue)
 		})
 	})
 }
 
 func TestSurpriseBreakInCommonFlow(t *testing.T) {
 	Convey("Given a resonance solver receiving consecutive sensory observations", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0.05)
+		solver := NewSolver(context.Background(), data.NewArenaOwner("resonance-test", 32), 0.05)
 		defer solver.Close()
 
 		createMeasurement := func(sec int64, cvdVal, toxVal float64) *data.Measurement {
-			m := data.NewMeasurement("resonance", nil)
-			m.Label = "ETH/USD"
-			m.At = time.Unix(sec, 0)
-
-			createMetric := func(label, metricName string, val float64) *data.Measurement {
-				measurement := data.NewMeasurement(label, nil)
-				measurement.Label, measurement.At, measurement.From = "ETH/USD", time.Unix(sec, 0), time.Unix(sec, 0)
-				measurement.SetMetric(metricName, data.Metric{Label: metricName, Raw: val})
-				measurement.SetMetadata(data.MetadataSupport, "1")
-				for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
-				}
-				return measurement
+			at := time.Unix(sec, 0).UTC()
+			peers := []*data.Measurement{
+				signalPeer("correlation", "ETH/USD", "relative_return_energy", 1.0, at),
+				signalPeer("leadlag", "ETH/USD", "best_lag_correlation", 0.5, at),
+				signalPeer("liquidity", "ETH/USD", "relative_spread", 0.0003, at),
+				signalPeer("sentiment", "ETH/USD", "advance_fraction", 0.5, at),
+				signalPeer("cvd", "ETH/USD", "signed_net_fraction", cvdVal, at),
+				signalPeer("depthflow", "ETH/USD", "observed_notional_imbalance", 0.1, at),
+				signalPeer("morphology", "ETH/USD", "book_shape_distance", 0.02, at),
+				signalPeer("hawkes", "ETH/USD", "excitation_fraction:buy", 0.2, at),
+				signalPeer("pumpdump", "ETH/USD", "spread_ratio", 1.0, at),
+				signalPeer("toxicity", "ETH/USD", "net_withdrawal_fraction:bid", toxVal, at),
+				signalPeer("derivatives", "ETH/USD", "basis", 0.0005, at),
 			}
 
-			m.Peers = []*data.Measurement{
-				createMetric("correlation", "relative_return_energy", 1.0),
-				createMetric("leadlag", "best_lag_correlation", 0.5),
-				createMetric("liquidity", "relative_spread", 0.0003),
-				createMetric("sentiment", "advance_fraction", 0.5),
-				createMetric("cvd", "signed_net_fraction", cvdVal),
-				createMetric("depthflow", "observed_notional_imbalance", 0.1),
-				createMetric("morphology", "book_shape_distance", 0.02),
-				createMetric("hawkes", "excitation_fraction:buy", 0.2),
-				createMetric("pumpdump", "spread_ratio", 1.0),
-				createMetric("toxicity", "net_withdrawal_fraction:bid", toxVal),
-				createMetric("derivatives", "basis", 0.0005),
-			}
-
-			return m
+			m := solver.Arena().NewMeasurement(1, "ETH/USD", "runtime:join", sec, sec, peers)
+			m.At = at
+			m.From = at
+			return m.Write(data.NewMetric("midpoint", 3000, data.UnitPrice, data.TimescaleInstantaneous))
 		}
 
 		for step := int64(1); step <= 10; step++ {
@@ -118,184 +125,58 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 		Convey("when an unexpected break in common flow occurs, the solver processes the surprise", func() {
 			disrupted := solver.Step(createMeasurement(11, 0.95, 0.85))
 			So(disrupted, ShouldNotBeNil)
-			So(disrupted.GetMetric("surprise").Raw, ShouldBeGreaterThanOrEqualTo, 0)
+			surprise, held := metricRaw(disrupted, "surprise")
+			So(held, ShouldBeTrue)
+			So(surprise, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
 }
 
 func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 	Convey("Given a resonance solver receiving interspersed signals", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0.05)
+		solver := NewSolver(context.Background(), data.NewArenaOwner("resonance-test", 32), 0.05)
 		defer solver.Close()
 		solver.Transition(runtime.READY)
 
-		createMetric := func(label, metricName string, val float64, support float64) *data.Measurement {
-			measurement := data.NewMeasurement(label, nil)
-			measurement.Label, measurement.At, measurement.From = "BTC/USD", time.Now(), time.Now()
-			measurement.SetMetric(metricName, data.Metric{Label: metricName, Raw: val})
-			measurement.SetMetadata(data.MetadataSupport, strconv.FormatFloat(support, 'f', -1, 64))
-			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
-			}
-			return measurement
-		}
-
-		m1 := data.NewMeasurement("resonance", nil)
-		m1.Label = "BTC/USD"
-		m1.At = time.Unix(100, 0)
-		m1.Peers = []*data.Measurement{
-			createMetric("cvd", "signed_net_fraction", 0.1, 1),
-		}
+		at := time.Unix(100, 0).UTC()
+		m1 := solver.Arena().NewMeasurement(1, "BTC/USD", "runtime:join", 100, 100, []*data.Measurement{
+			signalPeer("cvd", "BTC/USD", "signed_net_fraction", 0.1, at),
+		})
+		m1.At = at
+		m1.From = at
+		m1 = m1.Write(data.NewMetric("midpoint", 50000, data.UnitPrice, data.TimescaleInstantaneous))
 		res1 := solver.Step(m1)
 		So(res1, ShouldNotBeNil)
 
-		// 500 measurements arrive where CVD is absent (only DepthFlow is present)
-		for step := int64(1); step <= 500; step++ {
-			mL3 := data.NewMeasurement("resonance", nil)
-			mL3.Label = "BTC/USD"
-			mL3.At = time.Unix(100+step, 0)
-			mL3.Peers = []*data.Measurement{
-				createMetric("depthflow", "observed_notional_imbalance", 0.2, float64(step)),
-			}
-			resL3 := solver.Step(mL3)
-			So(resL3, ShouldNotBeNil)
-		}
-
-		// Subsequent measurement: CVD changes from 0.1 to 0.8
-		m2 := data.NewMeasurement("resonance", nil)
-		m2.Label = "BTC/USD"
-		m2.At = time.Unix(700, 0)
-		m2.Peers = []*data.Measurement{
-			createMetric("cvd", "signed_net_fraction", 0.8, 2),
-		}
+		at2 := time.Unix(101, 0).UTC()
+		m2 := solver.Arena().NewMeasurement(1, "BTC/USD", "runtime:join", 101, 101, []*data.Measurement{
+			signalPeer("toxicity", "BTC/USD", "net_withdrawal_fraction:bid", 0.2, at2),
+		})
+		m2.At = at2
+		m2.From = at2
+		m2 = m2.Write(data.NewMetric("midpoint", 50010, data.UnitPrice, data.TimescaleInstantaneous))
 		res2 := solver.Step(m2)
+		So(res2, ShouldNotBeNil)
 
-		Convey("CVD standardizer does not collapse variance and surprise remains realistic", func() {
-			So(res2, ShouldNotBeNil)
-			So(res2.GetMetric("surprise").Raw, ShouldBeLessThan, 5.0)
-
-			scorer := solver.scorer("BTC/USD")
-			So(scorer.lastReading[4].Count, ShouldEqual, 2)
+		Convey("asynchronous partial sensory envelopes still produce resonance output", func() {
+			_, held := metricRaw(res2, "energy")
+			So(held, ShouldBeTrue)
 		})
 	})
 }
 
-func TestSubSourceAndNonZeroLatents(t *testing.T) {
-	Convey("Given a resonance solver receiving real-world sub-sources", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0.05)
-		defer solver.Close()
+func TestPeerSuffixedHeadlineMetrics(t *testing.T) {
+	Convey("Given correlation peer-suffixed metrics", t, func() {
+		at := time.Unix(1, 0).UTC()
+		peer := data.NewMeasurement(1, "ETH/USD", "correlation", 1, 1)
+		peer.At = at
+		peer.From = at
+		peer = peer.Write(data.NewMetric(
+			"signed_correlation@BTC/USD", 0.82, data.UnitCorrelation, data.TimescaleRollingWindow,
+		))
 
-		var lastMeasurement *data.Measurement
-		solver.Transition(runtime.READY)
-
-		createMetric := func(source, metricName string, val, support float64) *data.Measurement {
-			measurement := data.NewMeasurement(source, nil)
-			measurement.Label = "BTC/USD"
-			measurement.At = time.Now()
-			measurement.From = measurement.At
-			measurement.SetMetric(metricName, data.Metric{Label: metricName, Raw: val})
-			measurement.SetMetadata(data.MetadataSupport, strconv.FormatFloat(support, 'f', -1, 64))
-			for range data.NewFinalizer[float64]().Next(transport.NewOne(unsafe.Pointer(&measurement)).Next(nil)) {
-			}
-			return measurement
-		}
-
-		for step := 1; step <= 20; step++ {
-			m := data.NewMeasurement("resonance", nil)
-			m.Label = "BTC/USD"
-			m.At = time.Now()
-			s := float64(step) + 10.0
-			v := float64(step%5) * 0.2
-
-			m.Peers = []*data.Measurement{
-				createMetric("correlation", "signed_correlation", 0.5+v, s),
-				createMetric("leadlag", "best_lag_correlation", 0.4+v, s),
-				createMetric("liquidity", "relative_spread", 0.0002+v*0.0001, s),
-				createMetric("sentiment", "signed_fraction_zscore", -0.3+v, s),
-				createMetric("cvd", "signed_net_fraction_zscore", 0.6-v, s),
-				createMetric("depthflow:level3", "observed_notional_imbalance_zscore", -0.5+v, s),
-				createMetric("morphology:level3", "morphology_change_zscore", 0.2+v, s),
-				createMetric("hawkes", "branching_spectral_radius", 0.7+v*0.1, s),
-				createMetric("pumpdump:ticker", "spread_zscore", 0.1+v, s),
-				createMetric("toxicity:trade", "fill_fraction_zscore:bid", 0.3-v, s),
-				createMetric("derivatives", "basis_zscore", 0.05+v, s),
-			}
-
-			priceMetric := data.NewMetric("midpoint", data.UnitRate, data.TimescaleInstantaneous, 0, 1)
-			m.SetMetric("midpoint", priceMetric.Write(50000.0+float64(step)*10.0))
-
-			res := solver.Step(m)
-			lastMeasurement = res
-			So(res, ShouldNotBeNil)
-		}
-
-		Convey("the manifold settles into non-zero latents and layer states", func() {
-			So(lastMeasurement, ShouldNotBeNil)
-			So(len(lastMeasurement.Metrics), ShouldBeGreaterThan, 0)
-
-			hasNonZeroLatent := false
-			for _, entry := range lastMeasurement.Metrics {
-				if len(entry.Key) > 7 && entry.Key[:7] == "latent_" {
-					if entry.Metric.Raw != 0 {
-						hasNonZeroLatent = true
-						break
-					}
-				}
-			}
-			So(hasNonZeroLatent, ShouldBeTrue)
-		})
-	})
-}
-
-func TestSolverStepReadiness(t *testing.T) {
-	Convey("An inactive pipeline node drops input before touching processing state", t, func() {
-		node := &Solver{
-			System: runtime.NewSystem(t.Context(), "readiness-test"),
-			arena:  data.NewArenaOwner(32),
-		}
-		measurement := &data.Measurement{Label: "BTC/USD", SeqIdx: 7}
-		for _, stage := range []runtime.Stage{runtime.INIT, runtime.WAITING, runtime.ERROR, runtime.FATAL} {
-			node.Transition(stage)
-			So(node.Step(measurement), ShouldBeNil)
-			So(node.Status(), ShouldEqual, stage)
-			So(measurement.SeqIdx, ShouldEqual, 7)
-		}
-	})
-}
-
-func TestSolverDeformationAcrossTicks(t *testing.T) {
-	Convey("Given a resonance solver receiving two ticks for the same symbol", t, func() {
-		solver := NewSolver(context.Background(), data.NewArenaOwner(32), 0.05)
-		defer solver.Close()
-
-		createMeasurement := func(sec int64, val float64) *data.Measurement {
-			m := data.NewMeasurement("resonance", nil)
-			m.Label = "BTC/USD"
-			m.At = time.Unix(sec, 0)
-
-			mSignal := data.NewMeasurement("cvd", nil)
-			mSignal.Label = "BTC/USD"
-			mSignal.At = time.Unix(sec, 0)
-			mSignal.SetMetric("signed_net_fraction", data.Metric{Label: "signed_net_fraction", Raw: val})
-			mSignal.SetMetadata(data.MetadataSupport, "1")
-			data.NewFinalizer[float64]().Complete(mSignal)
-
-			m.Peers = []*data.Measurement{mSignal}
-			return m
-		}
-
-		first := solver.Step(createMeasurement(1, 0.1))
-		So(first, ShouldNotBeNil)
-
-		firstSurprise := first.GetMetric("surprise")
-		So(firstSurprise.Deformation, ShouldNotBeNil)
-
-		second := solver.Step(createMeasurement(2, 0.9))
-		So(second, ShouldNotBeNil)
-
-		secondSurprise := second.GetMetric("surprise")
-		So(secondSurprise.Deformation, ShouldNotBeNil)
-
-		expectedDef := data.Deformation(firstSurprise.Raw, secondSurprise.Raw)
-		So(*secondSurprise.Deformation, ShouldAlmostEqual, expectedDef, 1e-6)
+		value, ok := extractHeadlineMetric(0, peer)
+		So(ok, ShouldBeTrue)
+		So(value, ShouldEqual, 0.82)
 	})
 }

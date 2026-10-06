@@ -66,33 +66,3 @@ func TestSolverProject(t *testing.T) {
 		})
 	})
 }
-
-func TestManifoldSolverPersistentFinalizer(t *testing.T) {
-	Convey("Given a manifold solver", t, func() {
-		solver := projectionSolver(t)
-
-		Convey("The same symbol returns the identical persistent Finalizer instance", func() {
-			finalizerBTC := solver.finalizer("BTC/USD")
-			So(finalizerBTC, ShouldNotBeNil)
-
-			finalizerBTC2 := solver.finalizer("BTC/USD")
-			So(finalizerBTC2 == finalizerBTC, ShouldBeTrue)
-
-			finalizerETH := solver.finalizer("ETH/USD")
-			So(finalizerETH != finalizerBTC, ShouldBeTrue)
-		})
-	})
-}
-
-func BenchmarkSolverProject(b *testing.B) {
-	solver := projectionSolver(b)
-	for b.Loop() {
-		solver.markDirty("BTC/USD")
-		solver.markDirty("ETH/USD")
-		_, batch := solver.project()
-		if batch == nil {
-			b.Fatal("missing projected state")
-		}
-		sensorium.StatePool.Put(batch)
-	}
-}

@@ -8,9 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/adaptive"
 
 	"github.com/theapemachine/errnie"
 
@@ -18,7 +15,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
@@ -60,16 +57,15 @@ families, capturing independent microstructural facets without high cross-collin
  10. Derivatives (basis): Futures price basis relative to index (institutional leverage / funding pressure).
 
 ADAPTIVE STANDARDIZATION:
-Each feature channel is standardized causally through nomagique's adaptive.Baseline (backed
-by adaptive.Window). Starting with span 1 on observation #1, each channel normalizes into
-empirical z-scores without static windows, hardcoded sigmas, or arbitrary magic constants.
+Each feature channel is standardized causally through an Estimator + CausalResidual pair.
+Observations advance only on envelopes where the corresponding signal measurement fired,
+preventing variance collapse from repeated identical pseudo-observations.
 */
 type Solver struct {
 	*runtime.System
 	arena         *data.ArenaOwner
 	detectors     *sync.Map
 	standardizers *sync.Map
-	finalizers    *sync.Map
 	references    *sync.Map
 	steps         *sync.Map
 	pace          float64
@@ -93,7 +89,6 @@ func NewSolver(
 		arena:         arena,
 		detectors:     &sync.Map{},
 		standardizers: &sync.Map{},
-		finalizers:    &sync.Map{},
 		references:    &sync.Map{},
 		steps:         &sync.Map{},
 		pace:          pace,
@@ -107,24 +102,10 @@ func (solver *Solver) Arena() *data.ArenaOwner {
 	return solver.arena
 }
 
-func (solver *Solver) finalizer(symbol string) *data.Finalizer[float64] {
-	if solver.finalizers == nil {
-		solver.finalizers = &sync.Map{}
-	}
-
-	if loaded, found := solver.finalizers.Load(symbol); found {
-		return loaded.(*data.Finalizer[float64])
-	}
-
-	created := data.NewFinalizer[float64]()
-	actual, _ := solver.finalizers.LoadOrStore(symbol, created)
-	return actual.(*data.Finalizer[float64])
-}
-
 /*
 Step advances the symbol's predictive coder over the canonical microstructure
 sensory features from completed prior-stage signal outputs and writes the
-resulting resonance metrics onto the owned output measurement.
+resulting resonance metrics onto a fresh owned Measurement in one Write.
 */
 func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 	if solver.Status() != runtime.READY {
@@ -143,33 +124,26 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 
 	at := prior.At
 	if at.IsZero() {
-		at = time.Now()
+		at = time.Now().UTC()
 	}
 
-	midpoint := 0.0
-	if m, ok := prior.LookupMetric("midpoint"); ok && m.Raw > 0 {
-		midpoint = m.Raw
-	} else if m, ok := prior.LookupMetric("last_price"); ok && m.Raw > 0 {
-		midpoint = m.Raw
-	} else if m, ok := prior.LookupMetric("price"); ok && m.Raw > 0 {
-		midpoint = m.Raw
-	}
+	midpoint := firstPositive(prior, "midpoint", "last_price", "price", "last")
 
 	var priors []*data.Measurement
 	if prior.Source == "runtime:join" {
-		priors = prior.Peers
+		priors = prior.Peers()
 	} else {
-		priors = append([]*data.Measurement{prior}, prior.Peers...)
+		priors = append([]*data.Measurement{prior}, prior.Peers()...)
 	}
 
 	var signals [11]*data.Measurement
-	for _, p := range priors {
-		if p == nil || p.Label != symbol {
+	for _, peer := range priors {
+		if peer == nil || peer.Label != symbol {
 			continue
 		}
 
-		if idx := signalIndex(p.Source); idx >= 0 {
-			signals[idx] = p
+		if idx := signalIndex(peer.Source); idx >= 0 {
+			signals[idx] = peer
 			continue
 		}
 
@@ -178,114 +152,92 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 				continue
 			}
 
-			if _, ok := extractHeadlineMetric(index, p); ok {
-				signals[index] = p
+			if _, ok := extractHeadlineMetric(index, peer); ok {
+				signals[index] = peer
 			}
 		}
 	}
 
-	scorer := solver.scorer(symbol)
-	features := scorer.Step(signals)
+	features := solver.scorer(symbol).Step(signals)
 
-	out := solver.arena.NewMeasurement(solver.Name())
-	out.Epoch = prior.Epoch
-	out.Tick = prior.Tick
-	out.Label = symbol
-	out.SeqIdx = prior.SeqIdx
-	out.At = at
-	out.From = prior.From
-	out.Peers = []*data.Measurement{prior}
-
-	solver.Update(out, symbol, at, features, midpoint)
-
-	maturity, snr, snrDefined, estimated := out.Maturity, out.SNR, out.SNRDefined, out.Estimated
-	if loadedStep, found := solver.steps.Load(symbol); found {
-		if stepCount := loadedStep.(*atomic.Int64).Load(); stepCount > 1 {
-			maturity = 1.0 - 1.0/float64(stepCount)
-		}
-	}
-
-	if energyMetric, ok := out.LookupMetric("energy"); ok && energyMetric.Raw > 0 {
-		if surpriseMetric, ok := out.LookupMetric("surprise"); ok && surpriseMetric.Raw > 0 {
-			snr = energyMetric.Raw / surpriseMetric.Raw
-			snrDefined = true
-			estimated = true
-		}
-	}
-	out.SetQuality(maturity, snr, snrDefined, estimated)
-	solver.finalizer(symbol).Complete(out)
-
-	return out
-}
-
-/*
-Update steps one feature detector for one symbol and publishes the settled
-output as the symbol-keyed resonance frame the frontend renders: the readout
-representation as the latent row, with energy and surprise alongside.
-
-The same pass publishes the coder's manifold, its calibrated return forecast,
-and its physical dynamics onto the symbol's resonance map. The downstream
-graph and causal solvers read exactly these slots; without them the predictive
-readiness gate can never open and the planner would remain structurally flat.
-The previous midpoint is retained per symbol so `coder.Step` receives an
-honest reference and the temporal ledger actually supervises the task head —
-otherwise the skill posterior never calibrates regardless of how long the
-stream runs.
-*/
-func (solver *Solver) Update(
-	measurement *data.Measurement,
-	symbolName string,
-	at time.Time,
-	features []float64,
-	midpoint float64,
-) {
-	detector, found := solver.detectors.Load(symbolName)
-
-	if !found {
-		detector = learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
-			CustomArch:   []int{len(features), len(features) * 4, len(features) * 2, len(features)}, // Overcomplete dictionary with latent space
-			InitialAlpha: solver.pace,                                                               // Adaptive learning pace
-			Learn:        true,
-		})
-		solver.detectors.Store(symbolName, detector)
-	}
-
-	coder, ok := detector.(*learning.PredictiveCoder)
-
-	if !ok {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("resonance: detector step failed for %s", symbolName),
-			nil,
-		))
-		return
-	}
-
-	loadedStep, _ := solver.steps.LoadOrStore(symbolName, &atomic.Int64{})
+	loadedStep, _ := solver.steps.LoadOrStore(symbol, &atomic.Int64{})
 	step := loadedStep.(*atomic.Int64).Add(1)
 
-	stepStarted := time.Now()
+	coder := solver.coder(symbol, len(features))
+	if coder == nil {
+		return nil
+	}
 
-	out, err := stepCoder(coder, learning.PredictiveInput{
-		Features: features,
-		Step:     step,
-		Time:     float64(at.UnixNano()) / 1e9,
-	})
+	hasReference := 0.0
+	if _, held := solver.references.Load(symbol); held {
+		hasReference = 1
+	}
+	if midpoint > 0 {
+		solver.references.Store(symbol, midpoint)
+	}
+
+	stepStarted := time.Now()
+	out := data.Read[[12][]float64](coder.Next(data.NewValue([2][]float64{
+		features,
+		{midpoint, hasReference, float64(step), float64(at.UnixNano()) / 1e9},
+	})))
 
 	if solver.ObserveModule != nil {
 		solver.ObserveModule("resonance", time.Since(stepStarted))
 	}
 
-	if err != nil {
+	if err := coder.Error(); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Internal,
-			fmt.Sprintf("resonance: detector step failed for %s", symbolName),
+			fmt.Sprintf("resonance: detector step failed for %s", symbol),
 			err,
 		))
-		return
+		return nil
 	}
 
-	solver.publishReturns(measurement, coder, out)
+	metrics, metadata := publishReturns(out)
+
+	measurement := solver.arena.NewMeasurement(
+		prior.Epoch, symbol, solver.Name(), prior.SeqIdx, prior.Tick,
+		[]*data.Measurement{prior},
+		metadata...,
+	)
+	measurement.At = at
+	measurement.From = prior.From
+	if measurement.From.IsZero() {
+		measurement.From = at
+	}
+
+	return measurement.Write(metrics...)
+}
+
+func (solver *Solver) coder(symbol string, featureDim int) *learning.PredictiveCoder {
+	if featureDim <= 0 {
+		featureDim = 11
+	}
+
+	if loaded, found := solver.detectors.Load(symbol); found {
+		if coder, ok := loaded.(*learning.PredictiveCoder); ok {
+			return coder
+		}
+	}
+
+	arch := []int{featureDim, featureDim * 4, featureDim * 2, featureDim}
+	created := learning.NewPredictiveCoder(
+		arch, 8, learning.NewDirectionalTarget(0), nil, solver.pace, true, learning.ReadoutAll,
+	)
+	coder, ok := created.(*learning.PredictiveCoder)
+	if !ok {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("resonance: detector construction failed for %s", symbol),
+			nil,
+		))
+		return nil
+	}
+
+	actual, _ := solver.detectors.LoadOrStore(symbol, coder)
+	return actual.(*learning.PredictiveCoder)
 }
 
 func signalIndex(source string) int {
@@ -323,7 +275,7 @@ func signalIndex(source string) int {
 }
 
 func extractHeadlineMetric(index int, measurement *data.Measurement) (float64, bool) {
-	if measurement == nil || measurement.Err != nil || len(measurement.Metrics) == 0 {
+	if measurement == nil {
 		return 0, false
 	}
 
@@ -388,15 +340,15 @@ func extractHeadlineMetric(index int, measurement *data.Measurement) (float64, b
 	}
 
 	for _, label := range candidates {
-		if metric, found := measurement.LookupMetric(label); found {
-			if metric.Standardized != nil || metric.Raw != 0 {
+		if metric, found := lookupMetric(measurement, label); found {
+			if metric.Standardized != 0 || metric.Raw != 0 {
 				return metric.Raw, true
 			}
 		}
 	}
 
 	for _, label := range candidates {
-		if metric, found := measurement.LookupMetric(label); found {
+		if metric, found := lookupMetric(measurement, label); found {
 			return metric.Raw, true
 		}
 	}
@@ -405,21 +357,41 @@ func extractHeadlineMetric(index int, measurement *data.Measurement) (float64, b
 }
 
 /*
-stepCoder drives one observation through the coder primitive and returns its
-published reading.
+lookupMetric finds a metric by exact label, or by "<label>@<peer>" so correlation
+and leadlag peer-suffixed facts remain addressable as their unsuffixed headline.
 */
-func stepCoder(
-	coder core.Primitive,
-	input learning.PredictiveInput,
-) (learning.PredictiveOutput, error) {
-	evaluation := transport.NewEvaluate(coder)
-	var output learning.PredictiveOutput
-
-	for out := range evaluation.Next(transport.NewValues(input).Next(nil)) {
-		output = *(*learning.PredictiveOutput)(out)
+func lookupMetric(measurement *data.Measurement, label string) (data.Metric, bool) {
+	if measurement == nil {
+		return data.Metric{}, false
 	}
 
-	return output, evaluation.Error()
+	for entry := range measurement.Read(label) {
+		if entry.Err != nil {
+			continue
+		}
+		return entry.Metric, true
+	}
+
+	prefix := label + "@"
+	for entry := range measurement.Read() {
+		if entry.Err != nil {
+			continue
+		}
+		if entry.Metric.Label == label || strings.HasPrefix(entry.Metric.Label, prefix) {
+			return entry.Metric, true
+		}
+	}
+
+	return data.Metric{}, false
+}
+
+func firstPositive(measurement *data.Measurement, labels ...string) float64 {
+	for _, label := range labels {
+		if metric, found := lookupMetric(measurement, label); found && metric.Raw > 0 {
+			return metric.Raw
+		}
+	}
+	return 0
 }
 
 func (solver *Solver) scorer(symbol string) *featureScorer {
@@ -443,16 +415,17 @@ preventing variance collapse from repeated identical pseudo-observations.
 */
 type featureScorer struct {
 	isStepping   atomic.Bool
-	pipelines    [11]core.Primitive
+	moments      [11]core.Primitive
+	residuals    [11]core.Primitive
 	standardized [11]float64
-	lastReading  [11]adaptive.BaselineReading
 }
 
 func newFeatureScorer() *featureScorer {
 	scorer := &featureScorer{}
 
-	for index := range scorer.pipelines {
-		scorer.pipelines[index] = adaptive.NewBaseline(adaptive.NewWindow())
+	for index := range scorer.moments {
+		scorer.moments[index] = statistic.NewEstimator()
+		scorer.residuals[index] = statistic.NewCausalResidual()
 	}
 
 	return scorer
@@ -470,24 +443,32 @@ func (scorer *featureScorer) Step(measurements [11]*data.Measurement) []float64 
 	defer scorer.isStepping.Store(false)
 
 	for index, measurement := range measurements {
-		if measurement == nil || measurement.Err != nil {
+		if measurement == nil {
 			continue
 		}
 
 		val, ok := extractHeadlineMetric(index, measurement)
-
 		if !ok {
 			continue
 		}
 
-		var reading adaptive.BaselineReading
-
-		for out := range scorer.pipelines[index].Next(transport.NewOne(unsafe.Pointer(&val)).Next(nil)) {
-			reading = *(*adaptive.BaselineReading)(out)
+		var reading *[10]float64
+		for out := range scorer.moments[index].Next(data.NewValue(val)) {
+			reading = (*[10]float64)(out)
+		}
+		if err := scorer.moments[index].Error(); err != nil || reading == nil {
+			continue
 		}
 
-		scorer.lastReading[index] = reading
-		scorer.standardized[index] = reading.ZScore * authorityOf(measurement) * reading.Maturity
+		var residual [8]float64
+		for out := range scorer.residuals[index].Next(data.NewValue(*reading)) {
+			residual = *(*[8]float64)(out)
+		}
+		if err := scorer.residuals[index].Error(); err != nil {
+			continue
+		}
+
+		scorer.standardized[index] = residual[6]
 	}
 
 	features := make([]float64, 11)
@@ -496,89 +477,65 @@ func (scorer *featureScorer) Step(measurements [11]*data.Measurement) []float64 
 }
 
 /*
-authorityOf derives one measurement's evidence authority weight through the
-canonical finalizer, quality, and authority primitives. Finalization runs when
-the measurement carries no derived quality yet. A failed derivation inhibits
-the observation entirely, matching the old zero-authority behavior.
+publishReturns projects the coder's *[12][]float64 reading into Measurement metrics
+and provenance metadata. Energy and surprise come from the manifold summary; the
+coder summary carries calibration and horizon evidence.
 */
-func authorityOf(measurement *data.Measurement) float64 {
-	quality := data.QualityReading{
-		SNR:        measurement.SNR,
-		SNRDefined: measurement.SNRDefined,
-		Estimated:  measurement.Estimated,
-		Maturity:   measurement.Maturity,
+func publishReturns(out [12][]float64) ([]data.Metric, []data.StringEntry) {
+	metrics := make([]data.Metric, 0, 16)
+	metadata := make([]data.StringEntry, 0, 8)
+
+	if len(out[0]) > 1 {
+		metrics = append(metrics, data.NewMetric(
+			"energy", out[0][1], data.UnitDimensionless, data.TimescaleInstantaneous,
+		))
+	}
+	if len(out[0]) > 5 {
+		metrics = append(metrics, data.NewMetric(
+			"surprise", out[0][5], data.UnitDimensionless, data.TimescaleInstantaneous,
+		))
 	}
 
-	evidence := transport.NewEvaluate(data.NewAuthority())
-	var authority float64
-
-	for out := range evidence.Next(transport.NewOne(unsafe.Pointer(&quality)).Next(nil)) {
-		authority = *(*float64)(out)
+	for i, val := range out[2] {
+		metrics = append(metrics, data.NewMetric(
+			fmt.Sprintf("latent_%d", i), val, data.UnitDimensionless, data.TimescaleInstantaneous,
+		))
 	}
 
-	if err := evidence.Error(); err != nil {
-		return 0
+	for i, val := range out[11] {
+		metrics = append(metrics, data.NewMetric(
+			fmt.Sprintf("forward_%d", i), val, data.UnitDimensionless, data.TimescaleInstantaneous,
+		))
 	}
 
-	return authority
-}
-
-func (solver *Solver) publishReturns(
-	measurement *data.Measurement,
-	coder *learning.PredictiveCoder,
-	out learning.PredictiveOutput,
-) {
-	if measurement == nil || coder == nil {
-		return
+	if len(out[10]) > 0 {
+		metadata = append(metadata,
+			data.StringEntry{Key: "supported_horizon", Value: fmt.Sprintf("%g", out[10][0])},
+		)
 	}
-
-	measurement.SetProvenance("calibrated", "false")
-	if out.Calibrated {
-		measurement.SetProvenance("calibrated", "true")
-	}
-
-	measurement.SetProvenance("supported_horizon", fmt.Sprintf("%d", out.SupportedHorizon))
-	measurement.SetProvenance("resolved_steps", fmt.Sprintf("%d", out.ResolvedSteps))
-	measurement.SetProvenance("confidence", fmt.Sprintf("%f", out.Confidence))
-
-	if out.Reading != nil {
-		measurement.SetMetric("energy", data.Metric{
-			Label: "energy",
-			Raw:   out.Reading.Energy,
-		})
-		measurement.SetMetric("surprise", data.Metric{
-			Label: "surprise",
-			Raw:   out.Reading.Surprise,
-		})
-	}
-
-	// Add latent state as indexed metrics if needed
-	if out.Reading != nil {
-		for i, val := range out.Reading.Latent {
-			label := fmt.Sprintf("latent_%d", i)
-			measurement.SetMetric(label, data.Metric{
-				Label: label,
-				Raw:   val,
-			})
+	if len(out[10]) > 1 {
+		calibrated := "false"
+		if out[10][1] != 0 {
+			calibrated = "true"
 		}
-
-		for i, layer := range out.Reading.Layers {
-			for j, val := range layer.State {
-				label := fmt.Sprintf("layer_%d_state_%d", i, j)
-				measurement.SetMetric(label, data.Metric{
-					Label: label,
-					Raw:   val,
-				})
-			}
-			for j, val := range layer.Prediction {
-				label := fmt.Sprintf("layer_%d_prediction_%d", i, j)
-				measurement.SetMetric(label, data.Metric{
-					Label: label,
-					Raw:   val,
-				})
-			}
-		}
+		metadata = append(metadata, data.StringEntry{Key: "calibrated", Value: calibrated})
+	}
+	if len(out[10]) > 2 {
+		metadata = append(metadata,
+			data.StringEntry{Key: "resolved_steps", Value: fmt.Sprintf("%g", out[10][2])},
+		)
+	}
+	if len(out[10]) > 4 {
+		metadata = append(metadata,
+			data.StringEntry{Key: "confidence", Value: fmt.Sprintf("%f", out[10][4])},
+		)
 	}
 
-	measurement.Result = nil
+	if len(metrics) == 0 {
+		metrics = append(metrics, data.NewMetric(
+			"energy", 0, data.UnitDimensionless, data.TimescaleInstantaneous,
+		))
+	}
+
+	return metrics, metadata
 }

@@ -62,15 +62,12 @@ func trainingFixture(
 	writer := tables.NewWriter(catalog, epoch)
 	tape(writer, epoch)
 
-	defVal := 0.5
 	signal := func(source string, tick int64, seqIdx int64) {
-		measurement := data.NewMeasurement(source, nil)
-		measurement.Epoch = epoch
-		measurement.Label = "BTC/USD"
-		measurement.Tick = tick
-		measurement.SeqIdx = seqIdx
-		measurement.Maturity = 1.0
-		measurement.SetMetric("value", data.Metric{Label: "value", Raw: 1.5, Deformation: &defVal})
+		measurement := data.NewMeasurement(epoch, "BTC/USD", source, seqIdx, tick)
+		measurement.At = time.Now().UTC()
+		measurement.From = measurement.At
+		valMetric := data.NewMetric("value", 1.5+float64(tick)*0.1, data.UnitCount, data.TimescaleTick)
+		measurement.Write(valMetric)
 		writer.Add("measurements", data.Publication{Measurement: measurement})
 	}
 
@@ -88,7 +85,7 @@ func trainingFixture(
 	storeTee.Transition(runtime.READY)
 
 	training := NewTraining(
-		ctx, data.NewArenaOwner(4096), price, broker.NewDesk(ctx, nil, price), catalog, storeTee, 1000,
+		ctx, data.NewArenaOwner("training", 4096), price, broker.NewDesk(ctx, nil, price), catalog, storeTee, 1000,
 	)
 	training.Transition(runtime.WAITING)
 	training.Train()
@@ -111,19 +108,14 @@ detection writes one stored detector row for the fixture excursion.
 */
 func detection(lowPrice, highPrice float64) func(*tables.Writer, int64) {
 	return func(writer *tables.Writer, epoch int64) {
-		measurement := data.NewMeasurement("detector", nil)
-		measurement.Epoch = epoch
-		measurement.Label = "BTC/USD"
-		measurement.Tick = 15
-		measurement.SeqIdx = 150
-		measurement.SetMetric("LowTick", data.Metric{Raw: 10})
-		measurement.SetMetric("HighTick", data.Metric{Raw: 15})
-		measurement.SetMetric("LowPrice", data.Metric{
-			Raw: lowPrice, Exact: decimal.NewFromFloat64(lowPrice),
-		})
-		measurement.SetMetric("HighPrice", data.Metric{
-			Raw: highPrice, Exact: decimal.NewFromFloat64(highPrice),
-		})
+		measurement := data.NewMeasurement(epoch, "BTC/USD", "detector", 150, 15)
+		measurement.At = time.Now().UTC()
+		measurement.From = measurement.At
+		lowTickMetric := data.NewMetric("low_tick", 10, data.UnitCount, data.TimescaleEvent)
+		highTickMetric := data.NewMetric("high_tick", 15, data.UnitCount, data.TimescaleEvent)
+		lowPriceMetric := data.NewExactMetric("low_price", decimal.NewFromFloat64(lowPrice), data.UnitPrice, data.TimescaleEvent)
+		highPriceMetric := data.NewExactMetric("high_price", decimal.NewFromFloat64(highPrice), data.UnitPrice, data.TimescaleEvent)
+		measurement.Write(lowTickMetric, highTickMetric, lowPriceMetric, highPriceMetric)
 		writer.Add("measurements", data.Publication{Measurement: measurement})
 	}
 }
@@ -154,13 +146,12 @@ func TestTraining_Train(t *testing.T) {
 				exact, err := decimal.NewFromString(price)
 				So(err, ShouldBeNil)
 
-				trade := data.NewMeasurement("spot:trade", map[string]data.Metric{
-					"price": {Raw: exact.Float64(), Exact: exact},
-				})
-				trade.Epoch = epoch
-				trade.Label = "BTC/USD"
-				trade.Tick = tick
-				trade.SeqIdx = tick
+				trade := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", tick, tick)
+				trade.At = time.Now().UTC()
+				trade.From = trade.At
+				priceMetric := data.NewMetric("price", exact.Float64(), data.UnitPrice, data.TimescaleTick)
+				priceMetric.Exact = exact
+				trade.Write(priceMetric)
 				writer.Add("measurements", data.Publication{Measurement: trade})
 			}
 		})
@@ -184,13 +175,12 @@ func TestTraining_Train(t *testing.T) {
 				exact, err := decimal.NewFromString(price)
 				So(err, ShouldBeNil)
 
-				trade := data.NewMeasurement("spot:trade", map[string]data.Metric{
-					"price": {Raw: exact.Float64(), Exact: exact},
-				})
-				trade.Epoch = epoch
-				trade.Label = "BTC/USD"
-				trade.Tick = tick
-				trade.SeqIdx = tick
+				trade := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", tick, tick)
+				trade.At = time.Now().UTC()
+				trade.From = trade.At
+				priceMetric := data.NewMetric("price", exact.Float64(), data.UnitPrice, data.TimescaleTick)
+				priceMetric.Exact = exact
+				trade.Write(priceMetric)
 				writer.Add("measurements", data.Publication{Measurement: trade})
 			}
 		})
@@ -227,7 +217,7 @@ func TestTraining_Step(t *testing.T) {
 		storeTee.Transition(runtime.READY)
 
 		training := NewTraining(
-			ctx, data.NewArenaOwner(4096), price, desk, catalog, storeTee, 1000,
+			ctx, data.NewArenaOwner("training", 4096), price, desk, catalog, storeTee, 1000,
 		)
 
 		testUITee := hindsight.NewStoreTee(ctx, "uiTee")
@@ -235,14 +225,11 @@ func TestTraining_Step(t *testing.T) {
 		training.SetUITee(testUITee)
 
 		Convey("Step processes measurement synchronously and returns report", func() {
-			val := 1.23
-			measurement := data.NewMeasurement("cvd", map[string]data.Metric{
-				"price": {Raw: 60000, Deformation: &val},
-			})
-			measurement.Epoch = 1000
-			measurement.Label = "BTC/USD"
-			measurement.Tick = 1
-			measurement.SeqIdx = 1
+			measurement := data.NewMeasurement(1000, "BTC/USD", "cvd", 1, 1)
+			measurement.At = time.Now().UTC()
+			measurement.From = measurement.At
+			priceMetric := data.NewMetric("price", 60000, data.UnitPrice, data.TimescaleTick)
+			measurement.Write(priceMetric)
 
 			result := training.Step(measurement)
 			So(result, ShouldNotBeNil)
@@ -257,36 +244,37 @@ func TestTraining_TriadGate(t *testing.T) {
 		training := &Training{}
 
 		Convey("When resonance surprise is positive and manifold impedance is clear", func() {
-			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric{
-				"surprise": {Raw: 1.5},
-			})
-			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric{
-				"kuramoto_r":         {Raw: 0.4},
-				"pressure_grad_norm": {Raw: 0.1},
-			})
+			resonanceM := data.NewMeasurement(1, "BTC/USD", "resonance", 1, 1)
+			resonanceM.Write(data.NewMetric("surprise", 1.5, data.UnitRatio, data.TimescaleInstantaneous))
+
+			manifoldM := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
+			manifoldM.Write(
+				data.NewMetric("kuramoto_r", 0.4, data.UnitRatio, data.TimescaleInstantaneous),
+				data.NewMetric("pressure_grad_norm", 0.1, data.UnitRatio, data.TimescaleInstantaneous),
+			)
 
 			So(training.authorized(resonanceM, manifoldM), ShouldBeTrue)
 		})
 
 		Convey("When resonance surprise is zero (equilibrium churn), entry is vetoed", func() {
-			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric{
-				"surprise": {Raw: 0.0},
-			})
-			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric{
-				"kuramoto_r": {Raw: 0.4},
-			})
+			resonanceM := data.NewMeasurement(1, "BTC/USD", "resonance", 1, 1)
+			resonanceM.Write(data.NewMetric("surprise", 0.0, data.UnitRatio, data.TimescaleInstantaneous))
+
+			manifoldM := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
+			manifoldM.Write(data.NewMetric("kuramoto_r", 0.4, data.UnitRatio, data.TimescaleInstantaneous))
 
 			So(training.authorized(resonanceM, manifoldM), ShouldBeFalse)
 		})
 
 		Convey("When manifold has complete locked synchronization and opposing pressure, entry is vetoed", func() {
-			resonanceM := data.NewMeasurement("resonance", map[string]data.Metric{
-				"surprise": {Raw: 2.0},
-			})
-			manifoldM := data.NewMeasurement("manifold", map[string]data.Metric{
-				"kuramoto_r":         {Raw: 1.0},
-				"pressure_grad_norm": {Raw: 5.0},
-			})
+			resonanceM := data.NewMeasurement(1, "BTC/USD", "resonance", 1, 1)
+			resonanceM.Write(data.NewMetric("surprise", 2.0, data.UnitRatio, data.TimescaleInstantaneous))
+
+			manifoldM := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
+			manifoldM.Write(
+				data.NewMetric("kuramoto_r", 1.0, data.UnitRatio, data.TimescaleInstantaneous),
+				data.NewMetric("pressure_grad_norm", 5.0, data.UnitRatio, data.TimescaleInstantaneous),
+			)
 
 			So(training.authorized(resonanceM, manifoldM), ShouldBeFalse)
 		})

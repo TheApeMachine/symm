@@ -311,23 +311,20 @@ func (detector *Detector) Flush(
 		detector.Name(),
 		startIdx,
 		highTick,
-	).Write(data.NewMetric(
-		symbol, float64(startIdx), data.UnitCount, data.TimescaleTick,
-	), data.NewMetric(
-		symbol, float64(startTick), data.UnitCount, data.TimescaleTick,
-	), data.NewMetric(
-		symbol, float64(lowIdx), data.UnitCount, data.TimescaleTick,
-	), data.NewMetric(
-		symbol, float64(lowTick), data.UnitCount, data.TimescaleTick,
-	), data.NewMetric(
-		symbol, float64(highIdx), data.UnitCount, data.TimescaleTick,
-	), data.NewMetric(
-		symbol, float64(highTick), data.UnitCount, data.TimescaleTick,
-	), data.NewMetric(
-		symbol, lowPrice.Float64(), data.UnitCurrency, data.TimescaleTick,
-	), data.NewMetric(
-		symbol, highPrice.Float64(), data.UnitCurrency, data.TimescaleTick,
-	))
+	)
+	measurement.At = highAt
+	measurement.From = lowAt
+
+	measurement.Write(
+		data.NewMetric("start_idx", float64(startIdx), data.UnitCount, data.TimescaleTick),
+		data.NewMetric("start_tick", float64(startTick), data.UnitCount, data.TimescaleTick),
+		data.NewMetric("low_idx", float64(lowIdx), data.UnitCount, data.TimescaleTick),
+		data.NewMetric("low_tick", float64(lowTick), data.UnitCount, data.TimescaleTick),
+		data.NewMetric("high_idx", float64(highIdx), data.UnitCount, data.TimescaleTick),
+		data.NewMetric("high_tick", float64(highTick), data.UnitCount, data.TimescaleTick),
+		data.NewExactMetric("low_price", lowPrice, data.UnitPrice, data.TimescaleTick),
+		data.NewExactMetric("high_price", highPrice, data.UnitPrice, data.TimescaleTick),
+	)
 
 	detector.storeTee.Push(
 		data.NewPublication(

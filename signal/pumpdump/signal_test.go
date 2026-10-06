@@ -2,6 +2,7 @@ package pumpdump_test
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -15,340 +16,172 @@ import (
 	"github.com/theapemachine/symm/signal/pumpdump"
 )
 
-func TestPumpDumpSignal(t *testing.T) {
-	Convey("Pumpdump / Volume-Clocked Activity instrument computes principled market anomaly metrics", t, func() {
-		ctx := context.Background()
-		arena := data.NewArenaOwner(4096)
-		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+func trade(at time.Time, seq int64, side string, price, qty float64) *data.Measurement {
+	prior := data.NewMeasurement(
+		1, "BTC/USD", "ingress", seq, seq,
+		data.StringEntry{Key: "side", Value: side},
+		data.StringEntry{Key: "channel", Value: "trade"},
+	)
+	prior.At = at
+	prior.From = at
 
-		normalizer := spot.NewNormalizer()
-		books := broker.NewBook(ctx, normalizer)
+	return prior.Write(
+		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
+		data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
+	)
+}
+
+func metric(measurement *data.Measurement, label string) (float64, bool) {
+	for entry := range measurement.Read(label) {
+		if entry.Err != nil {
+			return 0, false
+		}
+
+		return entry.Metric.Raw, true
+	}
+
+	return 0, false
+}
+
+func metricValue(measurement *data.Measurement, label string) float64 {
+	value, held := metric(measurement, label)
+	So(held, ShouldBeTrue)
+	return value
+}
+
+func touch(books *broker.Book, at time.Time, bidID string, bid, bidQty float64, askID string, ask, askQty float64) {
+	books.Update(&kraken.Level3{
+		Channel: "level3",
+		Type:    "snapshot",
+		Data: []kraken.Level3Data{{
+			Symbol: "BTC/USD",
+			Bids: []kraken.Level3Order{{
+				OrderID: bidID, LimitPrice: decimal.NewFromFloat64(bid), OrderQty: decimal.NewFromFloat64(bidQty),
+				Timestamp: at, Event: "add",
+			}},
+			Asks: []kraken.Level3Order{{
+				OrderID: askID, LimitPrice: decimal.NewFromFloat64(ask), OrderQty: decimal.NewFromFloat64(askQty),
+				Timestamp: at, Event: "add",
+			}},
+		}},
+	})
+}
+
+func TestPumpDumpSignal(t *testing.T) {
+	Convey("Volume-clocked activity instrument measures tape, touch, and midpoint response", t, func() {
+		ctx := context.Background()
+		arena := data.NewArenaOwner("pumpdump", 4096)
+		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+		books := broker.NewBook(ctx, spot.NewNormalizer())
 
 		instrument := pumpdump.NewSignal(ctx, arena, books)
 		instrument.Transition(nmruntime.READY)
 
 		Convey("Volume clock aggregates exact trade bars, durations, and volume/notional rates", func() {
-			books.Update(&kraken.Level3{
-				Channel: "level3",
-				Type:    "snapshot",
-				Data: []kraken.Level3Data{
-					{
-						Symbol: "BTC/USD",
-						Bids: []kraken.Level3Order{
-							{
-								OrderID:    "bid-1",
-								LimitPrice: decimal.NewFromFloat64(50000.0),
-								OrderQty:   decimal.NewFromFloat64(5.0),
-								Timestamp:  now,
-								Event:      "add",
-							},
-						},
-						Asks: []kraken.Level3Order{
-							{
-								OrderID:    "ask-1",
-								LimitPrice: decimal.NewFromFloat64(50002.0),
-								OrderQty:   decimal.NewFromFloat64(5.0),
-								Timestamp:  now,
-								Event:      "add",
-							},
-						},
-					},
-				},
-			})
+			touch(books, now, "bid-1", 50000.0, 5.0, "ask-1", 50002.0, 5.0)
 
-			// Trade 1: establishes start time and initial target quantity
-			prior1 := arena.NewMeasurement("ingress")
-			prior1.Label = "BTC/USD"
-			prior1.SeqIdx = 1
-			prior1.At = now
-			prior1.From = now
-			prior1.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 50001.0, 1.0).Write(50001.0))
-			prior1.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
-			prior1.SetProvenance("channel", "trade")
-			prior1.SetProvenance("side", "buy")
-
-			res1 := instrument.Step(prior1)
+			res1 := instrument.Step(trade(now, 1, "buy", 50001.0, 1.0))
 			So(res1, ShouldNotBeNil)
-			So(res1.Err, ShouldBeNil)
-			So(res1.GetMetric("trade_price").Raw, ShouldEqual, 50001.0)
-			So(res1.GetMetric("trade_quantity").Raw, ShouldEqual, 1.0)
-			So(res1.GetMetric("trade_notional").Raw, ShouldEqual, 50001.0)
+			So(metricValue(res1, "trade_price"), ShouldEqual, 50001.0)
+			So(metricValue(res1, "trade_quantity"), ShouldEqual, 1.0)
+			So(metricValue(res1, "trade_notional"), ShouldEqual, 50001.0)
+			So(metricValue(res1, "midpoint"), ShouldEqual, 50001.0)
+			So(metricValue(res1, "spread"), ShouldEqual, 2.0)
+			So(metricValue(res1, "relative_spread"), ShouldAlmostEqual, 2.0/50001.0, 1e-12)
 
-			// Trade 2: 200ms later, qty=1.0. Accumulates barQty=2.0 >= targetQty (1.0). Bar completes!
-			trade2At := now.Add(200 * time.Millisecond)
-			prior2 := arena.NewMeasurement("ingress")
-			prior2.Label = "BTC/USD"
-			prior2.SeqIdx = 2
-			prior2.At = trade2At
-			prior2.From = trade2At
-			prior2.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 50002.0, 1.0).Write(50002.0))
-			prior2.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
-			prior2.SetProvenance("channel", "trade")
-			prior2.SetProvenance("side", "buy")
+			// An open bar is not a zero-rate bar.
+			_, hasRate := metric(res1, "volume_rate")
+			So(hasRate, ShouldBeFalse)
+			_, hasInterval := metric(res1, "trade_interval_seconds")
+			So(hasInterval, ShouldBeFalse)
 
-			res2 := instrument.Step(prior2)
+			// 200ms later: bar quantity 2.0 reaches the bootstrap target 1.0 and closes.
+			res2 := instrument.Step(trade(now.Add(200*time.Millisecond), 2, "buy", 50002.0, 1.0))
 			So(res2, ShouldNotBeNil)
-			So(res2.Err, ShouldBeNil)
+			So(res2.From, ShouldEqual, now)
+			So(instrument.Error(), ShouldBeNil)
 
-			// Exact volume bar metrics
-			So(res2.GetMetric("volume_bar_quantity").Raw, ShouldAlmostEqual, 2.0, 1e-9)
-			So(res2.GetMetric("volume_bar_notional").Raw, ShouldAlmostEqual, 50001.0+50002.0, 1e-6)
-			So(res2.GetMetric("volume_bar_trade_count").Raw, ShouldEqual, 2)
-			So(res2.GetMetric("volume_bar_duration").Raw, ShouldAlmostEqual, 0.2, 1e-6)
-			So(res2.GetMetric("volume_rate").Raw, ShouldAlmostEqual, 2.0/0.2, 1e-6)
-			So(res2.GetMetric("notional_rate").Raw, ShouldAlmostEqual, 100003.0/0.2, 1e-6)
-			So(res2.GetMetric("trade_rate").Raw, ShouldAlmostEqual, 2.0/0.2, 1e-6)
-			So(res2.GetMetric("completed_bars").Raw, ShouldEqual, 1)
+			So(metricValue(res2, "trade_interval_seconds"), ShouldAlmostEqual, 0.2, 1e-9)
+			So(metricValue(res2, "volume_bar_target_quantity"), ShouldAlmostEqual, 1.0, 1e-9)
+			So(metricValue(res2, "volume_bar_quantity"), ShouldAlmostEqual, 2.0, 1e-9)
+			So(metricValue(res2, "volume_bar_notional"), ShouldAlmostEqual, 50001.0+50002.0, 1e-6)
+			So(metricValue(res2, "volume_bar_trade_count"), ShouldEqual, 2)
+			So(metricValue(res2, "volume_bar_duration"), ShouldAlmostEqual, 0.2, 1e-9)
+			So(metricValue(res2, "volume_rate"), ShouldAlmostEqual, 2.0/0.2, 1e-6)
+			So(metricValue(res2, "notional_rate"), ShouldAlmostEqual, 100003.0/0.2, 1e-6)
+			So(metricValue(res2, "trade_rate"), ShouldAlmostEqual, 2.0/0.2, 1e-6)
+			So(metricValue(res2, "completed_bars"), ShouldEqual, 1)
+
+			// Unchanged touch: a valid zero midpoint return.
+			So(metricValue(res2, "midpoint:from"), ShouldEqual, 50001.0)
+			So(metricValue(res2, "midpoint:at"), ShouldEqual, 50001.0)
+			So(metricValue(res2, "midpoint_log_return"), ShouldEqual, 0.0)
 		})
 
-		Convey("Detects pump anomaly: explosive volume surge and spread blowout trigger positive divergences and z-score", func() {
-			pumpInstrument := pumpdump.NewSignal(ctx, arena, books)
-			pumpInstrument.Transition(nmruntime.READY)
-
-			// Step 1: Establish baseline with 12 small calm trades with tight spread
+		Convey("Pump: activity surge and spread blowout yield positive divergences and an outlier z-score", func() {
 			basePrice := 50000.0
+
 			for step := 0; step < 12; step++ {
-				books.Update(&kraken.Level3{
-					Channel: "level3",
-					Type:    "snapshot",
-					Data: []kraken.Level3Data{
-						{
-							Symbol: "BTC/USD",
-							Bids: []kraken.Level3Order{
-								{
-									OrderID:    "bid-calm",
-									LimitPrice: decimal.NewFromFloat64(basePrice - 1.0),
-									OrderQty:   decimal.NewFromFloat64(5.0),
-									Timestamp:  now.Add(time.Duration(step*100) * time.Millisecond),
-									Event:      "add",
-								},
-							},
-							Asks: []kraken.Level3Order{
-								{
-									OrderID:    "ask-calm",
-									LimitPrice: decimal.NewFromFloat64(basePrice + 1.0),
-									OrderQty:   decimal.NewFromFloat64(5.0),
-									Timestamp:  now.Add(time.Duration(step*100) * time.Millisecond),
-									Event:      "add",
-								},
-							},
-						},
-					},
-				})
-
-				prior := arena.NewMeasurement("ingress")
-				prior.Label = "BTC/USD"
-				prior.SeqIdx = int64(step + 10)
-				prior.At = now.Add(time.Duration(step*100) * time.Millisecond)
-				prior.From = prior.At
-				prior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice, 1.0).Write(basePrice))
-				prior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 0.5).Write(0.5))
-				prior.SetProvenance("channel", "trade")
-				prior.SetProvenance("side", "buy")
-
-				pumpInstrument.Step(prior)
+				at := now.Add(time.Duration(step*100) * time.Millisecond)
+				touch(books, at, "bid-calm", basePrice-1.0, 5.0, "ask-calm", basePrice+1.0, 5.0)
+				So(instrument.Step(trade(at, int64(step+10), "buy", basePrice, 0.5)), ShouldNotBeNil)
 			}
 
-			// Step 2: Explosive pump event: spread blows out 20x and massive trade volume arrives
 			pumpAt := now.Add(1300 * time.Millisecond)
-			books.Update(&kraken.Level3{
-				Channel: "level3",
-				Type:    "snapshot",
-				Data: []kraken.Level3Data{
-					{
-						Symbol: "BTC/USD",
-						Bids: []kraken.Level3Order{
-							{
-								OrderID:    "bid-pump",
-								LimitPrice: decimal.NewFromFloat64(basePrice),
-								OrderQty:   decimal.NewFromFloat64(1.0),
-								Timestamp:  pumpAt,
-								Event:      "add",
-							},
-						},
-						Asks: []kraken.Level3Order{
-							{
-								OrderID:    "ask-pump",
-								LimitPrice: decimal.NewFromFloat64(basePrice + 40.0), // Massive spread blowout
-								OrderQty:   decimal.NewFromFloat64(1.0),
-								Timestamp:  pumpAt,
-								Event:      "add",
-							},
-						},
-					},
-				},
-			})
+			touch(books, pumpAt, "bid-pump", basePrice, 1.0, "ask-pump", basePrice+40.0, 1.0)
 
-			pumpPrior := arena.NewMeasurement("ingress")
-			pumpPrior.Label = "BTC/USD"
-			pumpPrior.SeqIdx = 25
-			pumpPrior.At = pumpAt
-			pumpPrior.From = pumpAt
-			pumpPrior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice+35.0, 1.0).Write(basePrice+35.0))
-			pumpPrior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 10.0).Write(10.0)) // 20x volume
-			pumpPrior.SetProvenance("channel", "trade")
-			pumpPrior.SetProvenance("side", "buy")
-
-			pumpRes := pumpInstrument.Step(pumpPrior)
+			pumpRes := instrument.Step(trade(pumpAt, 25, "buy", basePrice+35.0, 10.0))
 			So(pumpRes, ShouldNotBeNil)
+			So(instrument.Error(), ShouldBeNil)
 
-			// Statistical divergence and anomaly metrics
-			spreadDivMetric, hasDiv := pumpRes.LookupMetric("spread_divergence")
-			So(hasDiv, ShouldBeTrue)
-			So(spreadDivMetric.Raw, ShouldBeGreaterThan, 0.0) // Positive spread blowout divergence
-
-			zscoreMetric, hasZ := pumpRes.LookupMetric("spread_zscore")
-			So(hasZ, ShouldBeTrue)
-			So(zscoreMetric.Raw, ShouldBeGreaterThan, 2.0) // Statistical outlier z-score > 2.0
-
-			notionalDivMetric, hasNotionalDiv := pumpRes.LookupMetric("notional_rate_divergence")
-			So(hasNotionalDiv, ShouldBeTrue)
-			So(notionalDivMetric.Raw, ShouldBeGreaterThan, 0.0)
+			So(metricValue(pumpRes, "spread_divergence"), ShouldBeGreaterThan, 0.0)
+			So(metricValue(pumpRes, "spread_ratio"), ShouldBeGreaterThan, 1.0)
+			So(metricValue(pumpRes, "spread_zscore"), ShouldBeGreaterThan, 2.0)
+			So(metricValue(pumpRes, "notional_rate_divergence"), ShouldBeGreaterThan, 0.0)
+			So(metricValue(pumpRes, "notional_rate_ratio"), ShouldBeGreaterThan, 1.0)
+			So(metricValue(pumpRes, "positive_midpoint_return"), ShouldBeGreaterThan, 0.0)
+			So(metricValue(pumpRes, "negative_midpoint_return"), ShouldEqual, 0.0)
 		})
 
-		Convey("Detects dump anomaly: heavy sell trade under price crash captures negative midpoint return", func() {
-			dumpInstrument := pumpdump.NewSignal(ctx, arena, books)
-			dumpInstrument.Transition(nmruntime.READY)
-
-			// Calm baseline
+		Convey("Dump: a midpoint crash yields a negative return decomposed into r⁺ - r⁻", func() {
 			basePrice := 50000.0
+
 			for step := 0; step < 5; step++ {
-				books.Update(&kraken.Level3{
-					Channel: "level3",
-					Type:    "snapshot",
-					Data: []kraken.Level3Data{
-						{
-							Symbol: "BTC/USD",
-							Bids: []kraken.Level3Order{
-								{
-									OrderID:    "bid-calm",
-									LimitPrice: decimal.NewFromFloat64(basePrice - 2.0),
-									OrderQty:   decimal.NewFromFloat64(5.0),
-									Timestamp:  now.Add(time.Duration(step*100) * time.Millisecond),
-									Event:      "add",
-								},
-							},
-							Asks: []kraken.Level3Order{
-								{
-									OrderID:    "ask-calm",
-									LimitPrice: decimal.NewFromFloat64(basePrice + 2.0),
-									OrderQty:   decimal.NewFromFloat64(5.0),
-									Timestamp:  now.Add(time.Duration(step*100) * time.Millisecond),
-									Event:      "add",
-								},
-							},
-						},
-					},
-				})
-
-				prior := arena.NewMeasurement("ingress")
-				prior.Label = "BTC/USD"
-				prior.SeqIdx = int64(step + 30)
-				prior.At = now.Add(time.Duration(step*100) * time.Millisecond)
-				prior.From = prior.At
-				prior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice, 1.0).Write(basePrice))
-				prior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
-				prior.SetProvenance("channel", "trade")
-				prior.SetProvenance("side", "sell")
-
-				dumpInstrument.Step(prior)
+				at := now.Add(time.Duration(step*100) * time.Millisecond)
+				touch(books, at, "bid-calm", basePrice-2.0, 5.0, "ask-calm", basePrice+2.0, 5.0)
+				So(instrument.Step(trade(at, int64(step+30), "sell", basePrice, 1.0)), ShouldNotBeNil)
 			}
 
-			// Sharp dump: price drops by 50 points under selling
 			dumpAt := now.Add(600 * time.Millisecond)
-			books.Update(&kraken.Level3{
-				Channel: "level3",
-				Type:    "snapshot",
-				Data: []kraken.Level3Data{
-					{
-						Symbol: "BTC/USD",
-						Bids: []kraken.Level3Order{
-							{
-								OrderID:    "bid-dump",
-								LimitPrice: decimal.NewFromFloat64(basePrice - 52.0),
-								OrderQty:   decimal.NewFromFloat64(5.0),
-								Timestamp:  dumpAt,
-								Event:      "add",
-							},
-						},
-						Asks: []kraken.Level3Order{
-							{
-								OrderID:    "ask-dump",
-								LimitPrice: decimal.NewFromFloat64(basePrice - 48.0),
-								OrderQty:   decimal.NewFromFloat64(5.0),
-								Timestamp:  dumpAt,
-								Event:      "add",
-							},
-						},
-					},
-				},
-			})
+			touch(books, dumpAt, "bid-dump", basePrice-52.0, 5.0, "ask-dump", basePrice-48.0, 5.0)
 
-			dumpPrior := arena.NewMeasurement("ingress")
-			dumpPrior.Label = "BTC/USD"
-			dumpPrior.SeqIdx = 36
-			dumpPrior.At = dumpAt
-			dumpPrior.From = dumpAt
-			dumpPrior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, basePrice-50.0, 1.0).Write(basePrice-50.0))
-			dumpPrior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 3.0).Write(3.0))
-			dumpPrior.SetProvenance("channel", "trade")
-			dumpPrior.SetProvenance("side", "sell")
-
-			dumpRes := dumpInstrument.Step(dumpPrior)
+			dumpRes := instrument.Step(trade(dumpAt, 36, "sell", basePrice-50.0, 3.0))
 			So(dumpRes, ShouldNotBeNil)
+			So(instrument.Error(), ShouldBeNil)
 
-			negReturnMetric, hasNeg := dumpRes.LookupMetric("negative_midpoint_return")
-			So(hasNeg, ShouldBeTrue)
-			So(negReturnMetric.Raw, ShouldBeLessThan, 0.0)
-
-			returnRateMetric, hasRate := dumpRes.LookupMetric("midpoint_return_rate")
-			So(hasRate, ShouldBeTrue)
-			So(returnRateMetric.Raw, ShouldBeLessThan, 0.0)
+			logReturn := math.Log((basePrice - 50.0) / basePrice)
+			So(metricValue(dumpRes, "midpoint_log_return"), ShouldAlmostEqual, logReturn, 1e-12)
+			So(metricValue(dumpRes, "midpoint_return_rate"), ShouldAlmostEqual, logReturn/0.2, 1e-9)
+			So(metricValue(dumpRes, "positive_midpoint_return"), ShouldEqual, 0.0)
+			So(metricValue(dumpRes, "negative_midpoint_return"), ShouldAlmostEqual, -logReturn, 1e-12)
 		})
 
-		Convey("Rejects crossed order book quotes with explicit internal error", func() {
-			crossedInstrument := pumpdump.NewSignal(ctx, arena, books)
-			crossedInstrument.Transition(nmruntime.READY)
+		Convey("A crossed touch advances tape accounting but omits every touch-dependent fact", func() {
+			touch(books, now, "bid-crossed", 50010.0, 1.0, "ask-crossed", 50000.0, 1.0)
 
-			books.Update(&kraken.Level3{
-				Channel: "level3",
-				Type:    "snapshot",
-				Data: []kraken.Level3Data{
-					{
-						Symbol: "BTC/USD",
-						Bids: []kraken.Level3Order{
-							{
-								OrderID:    "bid-crossed",
-								LimitPrice: decimal.NewFromFloat64(50010.0),
-								OrderQty:   decimal.NewFromFloat64(1.0),
-								Timestamp:  now,
-								Event:      "add",
-							},
-						},
-						Asks: []kraken.Level3Order{
-							{
-								OrderID:    "ask-crossed",
-								LimitPrice: decimal.NewFromFloat64(50000.0), // crossed: ask < bid
-								OrderQty:   decimal.NewFromFloat64(1.0),
-								Timestamp:  now,
-								Event:      "add",
-							},
-						},
-					},
-				},
-			})
-
-			prior := arena.NewMeasurement("ingress")
-			prior.Label = "BTC/USD"
-			prior.SeqIdx = 50
-			prior.At = now
-			prior.From = now
-			prior.SetMetric("price", data.NewMetric("price", data.UnitPrice, data.TimescaleInstantaneous, 50005.0, 1.0).Write(50005.0))
-			prior.SetMetric("qty", data.NewMetric("qty", data.UnitQuantity, data.TimescaleInstantaneous, 0.0, 1.0).Write(1.0))
-
-			res := crossedInstrument.Step(prior)
+			res := instrument.Step(trade(now, 50, "buy", 50005.0, 1.0))
 			So(res, ShouldNotBeNil)
-			So(res.Err, ShouldNotBeNil)
+			So(metricValue(res, "trade_notional"), ShouldEqual, 50005.0)
+
+			for _, label := range []string{"best_bid", "best_ask", "midpoint", "spread", "relative_spread"} {
+				_, held := metric(res, label)
+				So(held, ShouldBeFalse)
+			}
+		})
+
+		Convey("A trade without a positive quantity yields no measurement", func() {
+			touch(books, now, "bid-1", 50000.0, 5.0, "ask-1", 50002.0, 5.0)
+			So(instrument.Step(trade(now, 60, "buy", 50001.0, 0.0)), ShouldBeNil)
 		})
 	})
 }

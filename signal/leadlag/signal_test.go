@@ -2,6 +2,8 @@ package leadlag_test
 
 import (
 	"context"
+	"math"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -11,96 +13,112 @@ import (
 	"github.com/theapemachine/symm/signal/leadlag"
 )
 
-func TestLeadLagTickerMetrics(t *testing.T) {
-	Convey("Leadlag ticker instrument computes principled asynchronous Hayashi-Yoshida cross lead-lag", t, func() {
+func quote(label string, at time.Time, seq int64, price float64) *data.Measurement {
+	prior := data.NewMeasurement(1, label, "ingress", seq, seq)
+	prior.At = at
+	prior.From = at
+
+	return prior.Write(data.NewMetric("last", price, data.UnitPrice, data.TimescaleInstantaneous))
+}
+
+func metric(measurement *data.Measurement, label string) (float64, bool) {
+	for entry := range measurement.Read(label) {
+		if entry.Err != nil {
+			return 0, false
+		}
+
+		return entry.Metric.Raw, true
+	}
+
+	return 0, false
+}
+
+func TestLeadLagSignalMetrics(t *testing.T) {
+	Convey("Leadlag instrument computes principled asynchronous Hayashi-Yoshida cross lead-lag", t, func() {
 		ctx := context.Background()
-		arena := data.NewArenaOwner(4096)
+		arena := data.NewArenaOwner("test", 4096)
 
 		instrument := leadlag.NewSignal(ctx, arena)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-		Convey("Computes cross-correlation, observation counts, and lag gain across asynchronous asset streams", func() {
-			for step := 0; step < 25; step++ {
-				// Feed BTC
-				btc := arena.NewMeasurement("ingress")
-				btc.Label = "BTC/USD"
-				btc.SeqIdx = int64(step*2 + 1)
-				btc.At = now.Add(time.Duration(step*100) * time.Millisecond)
-				btc.From = btc.At
-				btcPrice := 50000.0 + float64(step)*10.0
-				btc.SetMetric("last", data.NewMetric(
-					"last",
-					data.UnitPrice,
-					data.TimescaleInstantaneous,
-					btcPrice,
-					1.0,
-				).Write(btcPrice))
+		Convey("Recovers a positive lag when the reference path leads the measured path", func() {
+			// One latent log-price random walk on a 10ms grid. BTC samples it on
+			// the 100ms grid; ETH samples it 30ms later, but sees the latent path
+			// as it stood 200ms earlier: BTC leads ETH by two search steps.
+			random := rand.New(rand.NewSource(11))
+			latent := make([]float64, 40*10+21)
 
-				resBTC := instrument.Step(btc)
-				So(resBTC, ShouldNotBeNil)
-				So(resBTC.Err, ShouldBeNil)
-				So(resBTC.GetMetric("last").Raw, ShouldEqual, btcPrice)
-
-				// Feed ETH with deliberate 30ms latency offset
-				eth := arena.NewMeasurement("ingress")
-				eth.Label = "ETH/USD"
-				eth.SeqIdx = int64(step*2 + 2)
-				eth.At = now.Add(time.Duration(step*100+30) * time.Millisecond)
-				eth.From = eth.At
-				ethPrice := 3000.0 + float64(step)*5.0
-				eth.SetMetric("last", data.NewMetric(
-					"last",
-					data.UnitPrice,
-					data.TimescaleInstantaneous,
-					ethPrice,
-					1.0,
-				).Write(ethPrice))
-
-				resETH := instrument.Step(eth)
-				So(resETH, ShouldNotBeNil)
-				So(resETH.Err, ShouldBeNil)
-				So(resETH.GetMetric("last").Raw, ShouldEqual, ethPrice)
-
-				if step >= 15 {
-					// Both assets have trending correlated prices
-					bestCorrMetric, hasCorr := resETH.LookupMetric("best_lag_correlation")
-					if hasCorr {
-						// Correlation must be mathematically bounded in [-1.0, 1.0]
-						So(bestCorrMetric.Raw, ShouldBeGreaterThanOrEqualTo, -1.0)
-						So(bestCorrMetric.Raw, ShouldBeLessThanOrEqualTo, 1.0)
-						// Trending assets must exhibit positive correlation
-						So(bestCorrMetric.Raw, ShouldBeGreaterThan, 0.5)
-
-						// Contemporaneous correlation bounded in [-1.0, 1.0]
-						contemp := resETH.GetMetric("contemporaneous_correlation").Raw
-						So(contemp, ShouldBeGreaterThanOrEqualTo, -1.0)
-						So(contemp, ShouldBeLessThanOrEqualTo, 1.0)
-
-						// Absolute gain from lag optimization must be non-negative
-						gain := resETH.GetMetric("absolute_correlation_gain").Raw
-						So(gain, ShouldBeGreaterThanOrEqualTo, 0.0)
-
-						// Lag fraction must be bounded in [0.0, 1.0]
-						lagFrac := resETH.GetMetric("lag_fraction").Raw
-						So(lagFrac, ShouldBeGreaterThanOrEqualTo, 0.0)
-						So(lagFrac, ShouldBeLessThanOrEqualTo, 1.0)
-					}
-				}
+			for index := 1; index < len(latent); index++ {
+				latent[index] = latent[index-1] + random.NormFloat64()*1e-3
 			}
+
+			measured := 0
+
+			for step := range 40 {
+				btcPrice := 50000.0 * math.Exp(latent[step*10+20])
+				resBTC := instrument.Step(quote(
+					"BTC/USD", now.Add(time.Duration(step*100)*time.Millisecond), int64(step*2+1), btcPrice,
+				))
+				So(resBTC, ShouldNotBeNil)
+				So(instrument.Error(), ShouldBeNil)
+				lastBTC, held := metric(resBTC, "last")
+				So(held, ShouldBeTrue)
+				So(lastBTC, ShouldEqual, btcPrice)
+
+				ethPrice := 3000.0 * math.Exp(latent[step*10+3])
+				resETH := instrument.Step(quote(
+					"ETH/USD", now.Add(time.Duration(step*100+30)*time.Millisecond), int64(step*2+2), ethPrice,
+				))
+				So(resETH, ShouldNotBeNil)
+				So(instrument.Error(), ShouldBeNil)
+				lastETH, held := metric(resETH, "last")
+				So(held, ShouldBeTrue)
+				So(lastETH, ShouldEqual, ethPrice)
+
+				if step < 30 {
+					continue
+				}
+
+				best, ok := metric(resETH, "best_lag_correlation@BTC/USD")
+
+				if !ok {
+					continue
+				}
+
+				measured++
+				So(best, ShouldBeGreaterThan, 0.5)
+
+				lag, held := metric(resETH, "best_lag_seconds@BTC/USD")
+				So(held, ShouldBeTrue)
+				So(lag, ShouldBeGreaterThan, 0)
+
+				leads, held := metric(resETH, "leads@BTC/USD")
+				So(held, ShouldBeTrue)
+				So(leads, ShouldEqual, 1)
+
+				gain, held := metric(resETH, "absolute_correlation_gain@BTC/USD")
+				So(held, ShouldBeTrue)
+				So(gain, ShouldBeGreaterThan, 0)
+
+				fraction, held := metric(resETH, "lag_fraction@BTC/USD")
+				So(held, ShouldBeTrue)
+				So(fraction, ShouldBeBetweenOrEqual, 0.0, 1.0)
+
+				_, held = metric(resETH, "contemporaneous_correlation@BTC/USD")
+				So(held, ShouldBeTrue)
+			}
+
+			So(measured, ShouldBeGreaterThan, 0)
 		})
 
 		Convey("Rejects non-positive or missing prices cleanly", func() {
-			prior := arena.NewMeasurement("ingress")
-			prior.Label = "BTC/USD"
-			prior.SeqIdx = 999
+			prior := data.NewMeasurement(1, "BTC/USD", "ingress", 999, 999)
 			prior.At = now
 			prior.From = now
-			// No price metric set
 
-			res := instrument.Step(prior)
-			So(res, ShouldBeNil)
+			So(instrument.Step(prior.Write()), ShouldBeNil)
 		})
 	})
 }

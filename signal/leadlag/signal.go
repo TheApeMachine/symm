@@ -2,37 +2,80 @@ package leadlag
 
 import (
 	"context"
+	"errors"
+	"math"
+	"slices"
+	"strings"
 	"sync"
-	"unsafe"
+	"time"
 
 	"github.com/theapemachine/errnie"
 
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
+	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
-	nmleadlag "github.com/theapemachine/symm/nomagique/leadlag"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-Ticker is the asynchronous price-path lead-lag instrument. It holds no state
-and no logic of its own: its entire behavior is one nomagique pipeline over
-the measurement itself — every stage writes its facts into the measurement
-where it computes them, and the workload's register owns the measurement's
-lifetime.
+Signal is the asynchronous price-path lead-lag instrument. It holds no logic
+of its own: its entire behavior is one nomagique Stages pipeline per symbol
+over a shared output map. Member admits the arrival into the symbol's retained
+path and publishes that path into the signal's shared path store; Leads runs
+the exact discrete lag search of the symbol against every peer path in the
+store. Peers never live on the Measurement: the keyed path store is the only
+place symbols meet. Pair facts are published as "<fact>@<reference>"; a
+positive lag means the reference's changes precede the measured symbol's.
+Facts accumulate in the output map and are written once.
 */
 type Signal struct {
 	*runtime.System
 	arena     *data.ArenaOwner
+	paths     core.Primitive
 	pipelines sync.Map
-	ID        int
+	metrics   map[string][2]string
+}
+
+type symbolPipeline struct {
+	output   data.Map[float64]
+	envelope data.Map[float64]
+	state    *data.State
+	pipeline core.Primitive
 }
 
 func NewSignal(ctx context.Context, arena *data.ArenaOwner) *Signal {
 	signal := &Signal{
 		arena: arena,
+		paths: store.NewKV[string, [][2]float64](nil),
+		// {output key without "@reference"}: {unit, timescale}
+		metrics: map[string][2]string{
+			"last":                          {string(data.UnitPrice), string(data.TimescaleTick)},
+			"observation_count":             {string(data.UnitCount), string(data.TimescaleRollingWindow)},
+			"pair_observation_count":        {string(data.UnitCount), string(data.TimescaleRollingWindow)},
+			"best_lag_correlation":          {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"best_lag_covariance":           {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
+			"overlap_pair_count":            {string(data.UnitCount), string(data.TimescaleRollingWindow)},
+			"return_energy:reference":       {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
+			"return_energy:measured":        {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
+			"best_lag_index":                {string(data.UnitCount), string(data.TimescaleRollingWindow)},
+			"best_lag_seconds":              {string(data.UnitSecond), string(data.TimescaleRollingWindow)},
+			"leads":                         {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
+			"contemporaneous_correlation":   {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"search_count":                  {string(data.UnitCount), string(data.TimescaleRollingWindow)},
+			"lag_search_resolution_seconds": {string(data.UnitSecond), string(data.TimescaleRollingWindow)},
+			"lag_search_span":               {string(data.UnitCount), string(data.TimescaleRollingWindow)},
+			"lag_search_scale":              {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"absolute_correlation_gain":     {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"lag_fraction":                  {string(data.UnitRatio), string(data.TimescaleRollingWindow)},
+			"lag_peak_prominence":           {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"lag_peak_curvature":            {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
+			"best_lag_correlation_baseline": {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"best_lag_correlation_zscore":   {string(data.UnitZScore), string(data.TimescaleRollingWindow)},
+		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "leadlag", signal)
@@ -43,32 +86,34 @@ func (signal *Signal) Arena() *data.ArenaOwner {
 	return signal.arena
 }
 
-/*
-Step supplies the arriving measurement to the pipeline and returns it: the
-measurement is the pipeline's state, enriched in place.
-*/
-
-func (signal *Signal) pipelineFor(symbol string) core.Primitive {
+func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 	if existing, ok := signal.pipelines.Load(symbol); ok {
-		return existing.(core.Primitive)
+		return existing.(*symbolPipeline)
 	}
 
-	pipeline := nomagique.NewNumber(
-		nmleadlag.NewGate(),
-		nmleadlag.NewCross(algo.NewHayashiYoshida()),
-		nmleadlag.NewPeerEnergy(),
-		data.NewRecurrence(
-			"best_lag_seconds",
-			"best_lag_correlation",
-			"correlation_gain_zscore",
-		),
-		data.NewFinalizer[float64](),
-	)
+	output := data.NewOutputMap()
 
-	actual, _ := signal.pipelines.LoadOrStore(symbol, pipeline)
-	return actual.(core.Primitive)
+	pipe := &symbolPipeline{
+		output:   output,
+		envelope: data.NewOutputMap(),
+		state:    data.NewState(data.NewMap(), output),
+		pipeline: transport.NewStages(
+			nmcorrelation.NewMember(symbol, signal.paths, adaptive.NewWindow()),
+			nmcorrelation.NewLeads(symbol, signal.paths, algo.NewHayashiYoshida()),
+		),
+	}
+
+	actual, _ := signal.pipelines.LoadOrStore(symbol, pipe)
+	return actual.(*symbolPipeline)
 }
 
+/*
+Step binds the arriving quote to the symbol's pipeline and writes the
+published facts into a fresh Measurement allocated from the signal's own
+arena. An arrival without a positive, finite quoted price yields no
+measurement. Facts a stage left unwritten, or that are not finite, are
+omitted, never fabricated as zero.
+*/
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
 		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
@@ -79,79 +124,79 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	price := quotedPrice(prior)
-	if price <= 0 {
+	price := 0.0
+
+	for _, key := range []string{"last_price", "last", "price"} {
+		if entry := data.Pull(prior.Read(key)); entry.Err == nil && entry.Metric.Label != "" && entry.Metric.Raw > 0 {
+			price = entry.Metric.Raw
+			break
+		}
+	}
+
+	if price <= 0 || math.IsInf(price, 0) || math.IsNaN(price) {
 		return nil
 	}
 
-	out := signal.arena.NewMeasurement(signal.Name())
-	out.Epoch = prior.Epoch
-	out.Tick = prior.Tick
-	out.Label = prior.Label
-	out.SeqIdx = prior.SeqIdx
+	pipe := signal.pipelineFor(prior.Label)
+
+	clear(pipe.output.Values)
+	clear(pipe.envelope.Values)
+
+	pipe.envelope.Values["at"] = float64(prior.At.UnixNano())
+	pipe.envelope.Values["price"] = price
+	pipe.envelope.Values["last"] = price
+
+	adapter := data.NewAdapter(prior, pipe.state)
+
+	for range adapter.Next(data.NewValue(pipe.envelope)) {
+	}
+
+	for range pipe.pipeline.Next(data.NewValue(adapter)) {
+	}
+
+	if err := errors.Join(adapter.Error(), pipe.pipeline.Error()); err != nil {
+		signal.Error(err)
+		return nil
+	}
+
+	var metadata []data.StringEntry
+
+	if channel := prior.Meta("channel"); channel != "" {
+		metadata = append(metadata, data.StringEntry{Key: "channel", Value: channel})
+	}
+
+	out := signal.arena.NewMeasurement(
+		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, []*data.Measurement{prior}, metadata...,
+	)
 	out.At = prior.At
-	out.From = prior.From
-	out.Peers = []*data.Measurement{prior}
+	out.From = prior.At
 
-	midpoint := 0.0
-	spread := 0.0
-
-	bid := prior.GetMetric("best_bid").Raw
-	if bid == 0 {
-		bid = prior.GetMetric("bid").Raw
-	}
-	ask := prior.GetMetric("best_ask").Raw
-	if ask == 0 {
-		ask = prior.GetMetric("ask").Raw
+	if from, held := pipe.output.Values["path_from"]; held && from <= float64(prior.At.UnixNano()) {
+		out.From = time.Unix(0, int64(from)).UTC()
 	}
 
-	if bid > 0 && ask > bid {
-		midpoint = (bid + ask) / 2.0
-		spread = ask - bid
-	} else if midMetric, ok := prior.LookupMetric("midpoint"); ok && midMetric.Raw > 0 {
-		midpoint = midMetric.Raw
-		if spreadMetric, ok := prior.LookupMetric("spread"); ok && spreadMetric.Raw > 0 {
-			spread = spreadMetric.Raw
+	keys := make([]string, 0, len(pipe.output.Values))
+
+	for key := range pipe.output.Values {
+		keys = append(keys, key)
+	}
+
+	slices.Sort(keys)
+	metrics := make([]data.Metric, 0, len(keys))
+
+	for _, key := range keys {
+		fact, _, _ := strings.Cut(key, "@")
+		declared, published := signal.metrics[fact]
+		value := pipe.output.Values[key]
+
+		if !published || math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
 		}
+
+		metrics = append(metrics, data.NewMetric(
+			key, value, data.Unit(declared[0]), data.Timescale(declared[1]),
+		))
 	}
 
-	out.SetMetric("last", data.NewMetric(
-		"last",
-		data.UnitPrice,
-		data.TimescaleTick,
-		midpoint,
-		spread,
-	).Write(price))
-
-	out.SetMetric("last_price", data.NewMetric(
-		"last_price",
-		data.UnitPrice,
-		data.TimescaleTick,
-		midpoint,
-		spread,
-	).Write(price))
-
-	if channel, hasCh := prior.GetProvenance("channel"); hasCh {
-		out.SetProvenance("channel", channel)
-	}
-
-	res := data.Read[*data.Measurement](signal.pipelineFor(out.Label).Next(
-		transport.NewOne(unsafe.Pointer(&out)).Next(nil),
-	))
-
-	if res == nil {
-		return out
-	}
-
-	return res
-}
-
-func quotedPrice(measurement *data.Measurement) float64 {
-	for _, key := range []string{"last_price", "last", "price"} {
-		if metric, ok := measurement.LookupMetric(key); ok && metric.Raw > 0 {
-			return metric.Raw
-		}
-	}
-
-	return 0
+	return out.Write(metrics...)
 }

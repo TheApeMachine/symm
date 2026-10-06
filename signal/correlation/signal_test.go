@@ -2,6 +2,8 @@ package correlation_test
 
 import (
 	"context"
+	"math"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -10,6 +12,26 @@ import (
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
 )
+
+func quote(label string, at time.Time, seq int64, price float64) *data.Measurement {
+	prior := data.NewMeasurement(1, label, "ingress", seq, seq)
+	prior.At = at
+	prior.From = at
+
+	return prior.Write(data.NewMetric("last", price, data.UnitPrice, data.TimescaleInstantaneous))
+}
+
+func metric(measurement *data.Measurement, label string) (float64, bool) {
+	for entry := range measurement.Read(label) {
+		if entry.Err != nil {
+			return 0, false
+		}
+
+		return entry.Metric.Raw, true
+	}
+
+	return 0, false
+}
 
 func TestCorrelationSignalMetrics(t *testing.T) {
 	Convey("Correlation signal measures principled asynchronous price-path co-movements and cohort metrics", t, func() {
@@ -22,86 +44,81 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
 		Convey("Computes bounded signed and absolute correlations across co-trending assets", func() {
+			measuredPairs := 0
+
+			// One latent log-price random walk on a 10ms grid. BTC samples it on
+			// the 100ms grid; ETH samples it, plus small idiosyncratic noise,
+			// 20ms later: asynchronous co-movement without a shared clock.
+			random := rand.New(rand.NewSource(7))
+			latent := make([]float64, 25*10+3)
+
+			for index := 1; index < len(latent); index++ {
+				latent[index] = latent[index-1] + random.NormFloat64()*1e-3
+			}
+
 			for step := range 25 {
-				// Feed BTC
-				btc := arena.NewMeasurement("ingress")
-				btc.Label = "BTC/USD"
-				btc.SeqIdx = int64(step*2 + 1)
-				btc.At = now.Add(time.Duration(step*100) * time.Millisecond)
-				btc.From = btc.At
-				btcPrice := 50000.0 + float64(step)*10.0
-				btc.SetMetric("last", data.NewMetric(
-					"last",
-					data.UnitPrice,
-					data.TimescaleInstantaneous,
-					btcPrice,
-					1.0,
-				).Write(btcPrice))
-
-				resBTC := instrument.Step(btc)
+				btcPrice := 50000.0 * math.Exp(latent[step*10])
+				resBTC := instrument.Step(quote(
+					"BTC/USD", now.Add(time.Duration(step*100)*time.Millisecond), int64(step*2+1), btcPrice,
+				))
 				So(resBTC, ShouldNotBeNil)
-				So(resBTC.Err, ShouldBeNil)
-				So(resBTC.GetMetric("last_price").Raw, ShouldEqual, btcPrice)
+				So(instrument.Error(), ShouldBeNil)
+				lastBTC, held := metric(resBTC, "last_price")
+				So(held, ShouldBeTrue)
+				So(lastBTC, ShouldEqual, btcPrice)
 
-				// Feed ETH with 20ms asynchronous offset
-				eth := arena.NewMeasurement("ingress")
-				eth.Label = "ETH/USD"
-				eth.SeqIdx = int64(step*2 + 2)
-				eth.At = now.Add(time.Duration(step*100+20) * time.Millisecond)
-				eth.From = eth.At
-				ethPrice := 3000.0 + float64(step)*2.0
-				eth.SetMetric("last", data.NewMetric(
-					"last",
-					data.UnitPrice,
-					data.TimescaleInstantaneous,
-					ethPrice,
-					1.0,
-				).Write(ethPrice))
-
-				resETH := instrument.Step(eth)
+				// ETH follows BTC's moves with a 20ms asynchronous offset.
+				ethPrice := 3000.0 * math.Exp(latent[step*10+2]+random.NormFloat64()*1e-4)
+				resETH := instrument.Step(quote(
+					"ETH/USD", now.Add(time.Duration(step*100+20)*time.Millisecond), int64(step*2+2), ethPrice,
+				))
 				So(resETH, ShouldNotBeNil)
-				So(resETH.Err, ShouldBeNil)
-				So(resETH.GetMetric("last_price").Raw, ShouldEqual, ethPrice)
+				So(instrument.Error(), ShouldBeNil)
+				lastETH, held := metric(resETH, "last_price")
+				So(held, ShouldBeTrue)
+				So(lastETH, ShouldEqual, ethPrice)
 
 				if step >= 15 {
-					// Check observation counts
-					So(resETH.GetMetric("observation_count").Raw, ShouldBeGreaterThanOrEqualTo, 15)
+					count, held := metric(resETH, "observation_count")
+					So(held, ShouldBeTrue)
+					So(count, ShouldBeGreaterThanOrEqualTo, 15)
 
-					if signedCorr, ok := resETH.LookupMetric("signed_correlation"); ok {
-						// Mathematical bounds on correlation
-						So(signedCorr.Raw, ShouldBeGreaterThanOrEqualTo, -1.0)
-						So(signedCorr.Raw, ShouldBeLessThanOrEqualTo, 1.0)
-						// Trending together must produce positive correlation
-						So(signedCorr.Raw, ShouldBeGreaterThan, 0.5)
+					if signed, ok := metric(resETH, "signed_correlation@BTC/USD"); ok {
+						measuredPairs++
+						So(signed, ShouldBeGreaterThanOrEqualTo, -1.0)
+						So(signed, ShouldBeLessThanOrEqualTo, 1.0)
+						So(signed, ShouldBeGreaterThan, 0.5)
 
-						absCorr := resETH.GetMetric("absolute_correlation").Raw
-						So(absCorr, ShouldBeGreaterThanOrEqualTo, 0.0)
-						So(absCorr, ShouldBeLessThanOrEqualTo, 1.0)
+						absolute, held := metric(resETH, "absolute_correlation@BTC/USD")
+						So(held, ShouldBeTrue)
+						So(absolute, ShouldBeBetweenOrEqual, 0.0, 1.0)
 					}
 
-					if cohortSigned, ok := resETH.LookupMetric("cohort_signed_correlation"); ok {
-						So(cohortSigned.Raw, ShouldBeGreaterThanOrEqualTo, -1.0)
-						So(cohortSigned.Raw, ShouldBeLessThanOrEqualTo, 1.0)
-						So(cohortSigned.Raw, ShouldBeGreaterThan, 0.5)
+					if cohort, ok := metric(resETH, "cohort_signed_correlation"); ok {
+						So(cohort, ShouldBeBetweenOrEqual, -1.0, 1.0)
+						So(cohort, ShouldBeGreaterThan, 0.5)
 
-						cohortAbs := resETH.GetMetric("cohort_absolute_correlation").Raw
-						So(cohortAbs, ShouldBeGreaterThanOrEqualTo, 0.0)
-						So(cohortAbs, ShouldBeLessThanOrEqualTo, 1.0)
+						cohortAbs, held := metric(resETH, "cohort_absolute_correlation")
+						So(held, ShouldBeTrue)
+						So(cohortAbs, ShouldBeBetweenOrEqual, 0.0, 1.0)
+					}
+
+					// The reference symbol measures the focal one from its own side.
+					if signed, ok := metric(resBTC, "signed_correlation@ETH/USD"); ok {
+						So(signed, ShouldBeBetweenOrEqual, -1.0, 1.0)
 					}
 				}
 			}
+
+			So(measuredPairs, ShouldBeGreaterThan, 0)
 		})
 
 		Convey("Rejects non-positive or missing prices cleanly", func() {
-			prior := arena.NewMeasurement("ingress")
-			prior.Label = "BTC/USD"
-			prior.SeqIdx = 999
+			prior := data.NewMeasurement(1, "BTC/USD", "ingress", 999, 999)
 			prior.At = now
 			prior.From = now
-			// Missing price
 
-			res := instrument.Step(prior)
-			So(res, ShouldBeNil)
+			So(instrument.Step(prior.Write()), ShouldBeNil)
 		})
 	})
 }
