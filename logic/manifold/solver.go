@@ -307,7 +307,7 @@ func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement) {
 
 func readMetric(measurement *data.Measurement, label string) (*data.Metric, bool) {
 	if measurement == nil {
-		return &data.Metric{}, false
+		return nil, false
 	}
 
 	for entry := range measurement.Read(label) {
@@ -317,7 +317,7 @@ func readMetric(measurement *data.Measurement, label string) (*data.Metric, bool
 		return entry.Metric, true
 	}
 
-	return &data.Metric{}, false
+	return nil, false
 }
 
 /*

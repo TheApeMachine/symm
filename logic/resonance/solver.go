@@ -200,7 +200,16 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	metrics, metadata := publishReturns(out)
+	metrics, metadata, err := publishReturns(out, coderArch(len(features)))
+
+	if err != nil {
+		solver.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("resonance: unable to publish coder reading for %s", symbol),
+			err,
+		))
+		return nil
+	}
 
 	measurement := solver.arena.NewMeasurement(
 		prior.Epoch, symbol, solver.Name(), prior.SeqIdx, prior.Tick,
@@ -216,10 +225,21 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 	return measurement.Write(metrics...)
 }
 
-func (solver *Solver) coder(symbol string, featureDim int) *learning.PredictiveCoder {
+/*
+coderArch is the predictive coder's layer stack for a feature width: the
+sensory layer, an overcomplete 4x dictionary, a 2x bottleneck and a top
+latent of feature width. The manifold reports one entry per layer in
+reading[7], so publishing decodes against this same stack.
+*/
+func coderArch(featureDim int) []int {
 	if featureDim <= 0 {
 		featureDim = 11
 	}
+
+	return []int{featureDim, featureDim * 4, featureDim * 2, featureDim}
+}
+
+func (solver *Solver) coder(symbol string, featureDim int) *learning.PredictiveCoder {
 
 	if loaded, found := solver.detectors.Load(symbol); found {
 		if coder, ok := loaded.(*learning.PredictiveCoder); ok {
@@ -227,7 +247,7 @@ func (solver *Solver) coder(symbol string, featureDim int) *learning.PredictiveC
 		}
 	}
 
-	arch := []int{featureDim, featureDim * 4, featureDim * 2, featureDim}
+	arch := coderArch(featureDim)
 	created := learning.NewPredictiveCoder(
 		arch, 8, learning.NewDirectionalTarget(0), nil, solver.pace, true, learning.ReadoutAll,
 	)
@@ -387,7 +407,7 @@ func lookupMetric(measurement *data.Measurement, label string) (*data.Metric, bo
 		}
 	}
 
-	return &data.Metric{}, false
+	return nil, false
 }
 
 func firstPositive(measurement *data.Measurement, labels ...string) float64 {
@@ -485,8 +505,14 @@ func (scorer *featureScorer) Step(measurements [11]*data.Measurement) []float64 
 publishReturns projects the coder's *[12][]float64 reading into Measurement metrics
 and provenance metadata. Energy and surprise come from the manifold summary; the
 coder summary carries calibration and horizon evidence.
+
+Every layer of the predictive-coding stack is published as
+layer_<i>_state_<j> / layer_<i>_prediction_<j> (plus layer_<i>_error and
+layer_<i>_temporal), decoded from reading[7] against arch. latent_<j> is the
+top layer only; the forward curve is forward_curve_<h>. A reading[7] whose
+length disagrees with arch is an error rather than a partial decode.
 */
-func publishReturns(out [12][]float64) ([]*data.Metric, []*data.StringEntry) {
+func publishReturns(out [12][]float64, arch []int) ([]*data.Metric, []*data.StringEntry, error) {
 	metrics := make([]*data.Metric, 0, 16)
 	metadata := make([]*data.StringEntry, 0, 8)
 
@@ -507,9 +533,46 @@ func publishReturns(out [12][]float64) ([]*data.Metric, []*data.StringEntry) {
 		))
 	}
 
+	if len(out[7]) > 0 {
+		offset := 0
+
+		for layer, rows := range arch {
+			width := 2 + 2*rows
+
+			if offset+width > len(out[7]) {
+				return nil, nil, fmt.Errorf(
+					"resonance: layer reading holds %d values, layer %d of arch %v needs %d",
+					len(out[7]), layer, arch, offset+width,
+				)
+			}
+
+			block := out[7][offset : offset+width]
+			offset += width
+
+			metrics = append(metrics,
+				data.NewMetric(fmt.Sprintf("layer_%d_error", layer), block[0], data.UnitDimensionless, data.TimescaleInstantaneous),
+				data.NewMetric(fmt.Sprintf("layer_%d_temporal", layer), block[1], data.UnitDimensionless, data.TimescaleInstantaneous),
+			)
+
+			for j := range rows {
+				metrics = append(metrics,
+					data.NewMetric(fmt.Sprintf("layer_%d_state_%d", layer, j), block[2+j], data.UnitDimensionless, data.TimescaleInstantaneous),
+					data.NewMetric(fmt.Sprintf("layer_%d_prediction_%d", layer, j), block[2+rows+j], data.UnitDimensionless, data.TimescaleInstantaneous),
+				)
+			}
+		}
+
+		if offset != len(out[7]) {
+			return nil, nil, fmt.Errorf(
+				"resonance: layer reading holds %d values, arch %v accounts for %d",
+				len(out[7]), arch, offset,
+			)
+		}
+	}
+
 	for i, val := range out[11] {
 		metrics = append(metrics, data.NewMetric(
-			fmt.Sprintf("forward_%d", i), val, data.UnitDimensionless, data.TimescaleInstantaneous,
+			fmt.Sprintf("forward_curve_%d", i), val, data.UnitDimensionless, data.TimescaleInstantaneous,
 		))
 	}
 
@@ -542,5 +605,5 @@ func publishReturns(out [12][]float64) ([]*data.Metric, []*data.StringEntry) {
 		))
 	}
 
-	return metrics, metadata
+	return metrics, metadata, nil
 }

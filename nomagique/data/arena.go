@@ -400,10 +400,12 @@ Welford updates so the next NewMeasurement continues the regime. The
 previous snapshot is dropped (freed for GC) once replaced.
 
 A Measurement allocated before a ResetPrior/ResetPriors that covers its
-Label is not captured: its statistics belong to the discarded regime.
+Label is not captured: its statistics belong to the discarded regime. A
+Measurement that finalized with an error is not captured either: its
+statistics are not evidence, and the held prior stays the last valid one.
 */
 func (owner *ArenaOwner) capturePrior(measurement *Measurement) {
-	if owner == nil || measurement == nil || !measurement.locked() {
+	if owner == nil || measurement == nil || !measurement.locked() || measurement.err != nil {
 		return
 	}
 

@@ -97,9 +97,22 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 				res := stepTouch(instrument, books, "ETH/USD", at, int64(step+1), bid, ask, bidQty, askQty)
 				So(res, ShouldNotBeNil)
 				So(instrument.Error(), ShouldBeNil)
+				So(res.Error(), ShouldBeNil)
 				So(res.Source, ShouldEqual, "liquidity")
 				So(res.Label, ShouldEqual, "ETH/USD")
 				So(res.At, ShouldEqual, at)
+
+				if step == 0 {
+					// One observation has no dispersion: the noise scales and
+					// the z-scores dividing by them are not published.
+					for _, label := range []string{
+						"depth_noise_scale:bid", "depth_noise_scale:ask", "spread_noise_scale",
+						"depth_zscore:bid", "depth_zscore:ask", "spread_zscore",
+					} {
+						_, held := metric(res, label)
+						So(held, ShouldBeFalse)
+					}
+				}
 
 				midpoint := (bid + ask) / 2.0
 				spread := ask - bid

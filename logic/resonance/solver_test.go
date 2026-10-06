@@ -2,6 +2,7 @@ package resonance
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -86,6 +87,31 @@ func TestSignalFeatureIngestion(t *testing.T) {
 			_, surpriseHeld := metricRaw(result, "surprise")
 			So(energyHeld, ShouldBeTrue)
 			So(surpriseHeld, ShouldBeTrue)
+		})
+
+		Convey("every layer of the predictive-coding stack is published", func() {
+			arch := coderArch(11)
+			So(len(arch), ShouldEqual, 4)
+
+			for layer, rows := range arch {
+				_, errHeld := metricRaw(result, fmt.Sprintf("layer_%d_error", layer))
+				So(errHeld, ShouldBeTrue)
+
+				_, firstHeld := metricRaw(result, fmt.Sprintf("layer_%d_state_0", layer))
+				So(firstHeld, ShouldBeTrue)
+
+				_, lastHeld := metricRaw(result, fmt.Sprintf("layer_%d_state_%d", layer, rows-1))
+				So(lastHeld, ShouldBeTrue)
+
+				_, predHeld := metricRaw(result, fmt.Sprintf("layer_%d_prediction_%d", layer, rows-1))
+				So(predHeld, ShouldBeTrue)
+
+				_, pastHeld := metricRaw(result, fmt.Sprintf("layer_%d_state_%d", layer, rows))
+				So(pastHeld, ShouldBeFalse)
+			}
+
+			_, extraHeld := metricRaw(result, fmt.Sprintf("layer_%d_state_0", len(arch)))
+			So(extraHeld, ShouldBeFalse)
 		})
 	})
 }
@@ -178,5 +204,15 @@ func TestPeerSuffixedHeadlineMetrics(t *testing.T) {
 		value, ok := extractHeadlineMetric(0, peer)
 		So(ok, ShouldBeTrue)
 		So(value, ShouldEqual, 0.82)
+	})
+}
+
+func TestPublishReturnsRejectsMisshapedLayers(t *testing.T) {
+	Convey("Given a layer reading that disagrees with the architecture", t, func() {
+		var out [12][]float64
+		out[7] = make([]float64, 2+2*3+1)
+
+		_, _, err := publishReturns(out, []int{3})
+		So(err, ShouldNotBeNil)
 	})
 }

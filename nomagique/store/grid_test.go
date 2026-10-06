@@ -3,6 +3,7 @@ package store_test
 import (
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -12,31 +13,32 @@ import (
 func TestGridLifecycleAndCorrectness(t *testing.T) {
 	Convey("Given a fresh Grid", t, func() {
 		grid := store.NewGrid()
+		stream := store.NewStream()
 		So(grid.IsSettled(), ShouldBeFalse)
 
 		key := func(name string) string {
-			return store.CellKey("BTC/USD", "websocket", name)
+			return store.CellKey(name)
 		}
 
 		Convey("First tick initializes metrics without false directional movement", func() {
-			grid.Update(0, map[string]float64{key("m1"): 150.0, key("m2"): 300.0})
+			grid.Update(0, stream.Deform(map[string]float64{key("m1"): 150.0, key("m2"): 300.0}))
 
-			for _, relation := range grid.Relations {
+			for _, relation := range grid.Relations() {
 				So(relation.Total, ShouldEqual, 0)
 			}
 		})
 
 		Convey("Subsequent ticks record true directional correlation", func() {
-			grid.Update(0, map[string]float64{key("m1"): 100, key("m2"): 200, key("m3"): 50})
+			grid.Update(0, stream.Deform(map[string]float64{key("m1"): 100, key("m2"): 200, key("m3"): 50}))
 			// Tick 2: m1 goes UP, m2 goes UP, m3 goes DOWN
-			grid.Update(0, map[string]float64{key("m1"): 105, key("m2"): 400, key("m3"): 40})
+			grid.Update(0, stream.Deform(map[string]float64{key("m1"): 105, key("m2"): 400, key("m3"): 40}))
 			// Tick 3: m1 goes UP, m2 goes UP, m3 goes DOWN again
-			grid.Update(0, map[string]float64{key("m1"): 110, key("m2"): 800, key("m3"): 30})
+			grid.Update(0, stream.Deform(map[string]float64{key("m1"): 110, key("m2"): 800, key("m3"): 30}))
 
 			hasSame := false
 			hasOpposite := false
 
-			for _, relation := range grid.Relations {
+			for _, relation := range grid.Relations() {
 				hasSame = hasSame || relation.Same > 0
 				hasOpposite = hasOpposite || relation.Opposite > 0
 			}
@@ -45,34 +47,69 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			So(hasOpposite, ShouldBeTrue)
 		})
 
-		Convey("Channels from different symbols and sources stay distinct", func() {
-			btcKey := store.CellKey("BTC/USD", "websocket", "mid")
-			ethKey := store.CellKey("ETH/USD", "resonance", "mid")
+		Convey("A cell is identified by metric label alone", func() {
+			So(store.CellKey("mid"), ShouldEqual, "mid")
 
-			grid.Update(0, map[string]float64{btcKey: 50000, ethKey: 3000})
+			grid.Update(0, stream.Deform(map[string]float64{store.CellKey("mid"): 50000}))
+			grid.Update(0, stream.Deform(map[string]float64{store.CellKey("mid"): 3000}))
 
-			So(grid.Cells[btcKey], ShouldNotBeNil)
-			So(grid.Cells[ethKey], ShouldNotBeNil)
-			So(btcKey, ShouldNotEqual, ethKey)
+			So(grid.CellCount(), ShouldEqual, 1)
+			So(grid.CellAt("mid"), ShouldNotBeNil)
+		})
+
+		Convey("Peer-qualified pair facts collapse onto their fact label", func() {
+			So(store.CellKey("signed_correlation@ETH/USD"), ShouldEqual, "signed_correlation")
+			So(store.CellKey("return_energy:reference@BTC/USD"), ShouldEqual, "return_energy:reference")
+		})
+
+		Convey("A background partition is single-flight and does not hold the update lock", func() {
+			for tick := range 40 {
+				channels := make(map[string]float64, 12)
+
+				for metric := range 12 {
+					channels[fmt.Sprintf("m%d", metric)] = float64((tick+1)*(metric+1)) + math.Sin(float64(tick*metric))
+				}
+
+				grid.Update(0, stream.Deform(channels))
+			}
+
+			started := grid.PartitionAsync()
+			grid.Update(0, stream.Deform(map[string]float64{"m0": 1, "m1": 2}))
+			grid.WaitPartition()
+
+			So(started, ShouldBeTrue)
+			So(grid.RegionMembers, ShouldNotBeEmpty)
+
+			grid.Settle()
+			So(grid.PartitionAsync(), ShouldBeFalse)
+		})
+
+		Convey("Snapshots keyed by symbol/source are rejected", func() {
+			legacy := []byte(`{"version":2,"cells":{"BTC/USD\u0000cvd\u0000value":{"id":0}}}`)
+			So(store.NewGrid().RestoreSnapshot(legacy), ShouldNotBeNil)
+
+			current := []byte(`{"version":3,"cells":{"BTC/USD\u0000cvd\u0000value":{"id":0}}}`)
+			So(store.NewGrid().RestoreSnapshot(current), ShouldNotBeNil)
 		})
 
 		Convey("Unseen metrics produce no lit regions while learned metrics activate deterministically", func() {
 			settleGrid := store.NewGrid()
-			x1 := store.CellKey("BASE/USD", "BASE/USD", "x1")
-			x2 := store.CellKey("BASE/USD", "BASE/USD", "x2")
+			settleStream := store.NewStream()
+			x1 := store.CellKey("x1")
+			x2 := store.CellKey("x2")
 
 			for tick := 0; tick < 20; tick++ {
-				settleGrid.Update(0, map[string]float64{
+				settleGrid.Update(0, settleStream.Deform(map[string]float64{
 					x1: math.Sin(float64(tick)*0.2) * 5.0,
 					x2: math.Cos(float64(tick)*0.2) * 5.0,
-				})
+				}))
 			}
 
 			settleGrid.Settle()
 			So(settleGrid.IsSettled(), ShouldBeTrue)
 
 			tokens := settleGrid.LitRegions(map[string]float64{
-				store.CellKey("SOL/USD", "SOL/USD", "depth_flow"): 150,
+				store.CellKey("depth_flow"): 150,
 			})
 			So(tokens, ShouldBeNil)
 
@@ -105,7 +142,7 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 					channels[key(fmt.Sprintf("metric_%03d", index))] = values[index]
 				}
 
-				grid.Update(0, channels)
+				grid.Update(0, stream.Deform(channels))
 			}
 
 			grid.Settle()
@@ -135,21 +172,16 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			So(len(region1Keys), ShouldBeGreaterThan, 0)
 			So(len(region2Keys), ShouldBeGreaterThan, 0)
 
-			// A move from L to L*(1+a)/(1-a) deforms by exactly a.
-			moved := func(cellKey string, activity float64) float64 {
-				return grid.Cells[cellKey].Last * (1 + activity) / (1 - activity)
-			}
-
 			Convey("RegionScores evaluates mean activity and reports coverage without sum bias", func() {
 				channels := make(map[string]float64)
 
 				// Region 1 has multiple contributing metrics with activity 0.5
 				for _, cellKey := range region1Keys {
-					channels[cellKey] = moved(cellKey, 0.5)
+					channels[cellKey] = 0.5
 				}
 
 				// Region 2 has a single metric with a higher individual spike 0.75
-				channels[region2Keys[0]] = moved(region2Keys[0], 0.75)
+				channels[region2Keys[0]] = 0.75
 
 				scores := grid.RegionScores(channels)
 				So(len(scores), ShouldBeGreaterThanOrEqualTo, 2)
@@ -173,10 +205,10 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 				channels := make(map[string]float64)
 
 				for _, cellKey := range region1Keys {
-					channels[cellKey] = moved(cellKey, 0.75)
+					channels[cellKey] = 0.75
 				}
 
-				channels[region2Keys[0]] = moved(region2Keys[0], 0.5)
+				channels[region2Keys[0]] = 0.5
 
 				tokens := grid.LitRegions(channels)
 				So(len(tokens), ShouldEqual, 1)
@@ -185,8 +217,8 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 		})
 
 		Convey("Snapshot and Restore works cleanly and safely", func() {
-			grid.Update(0, map[string]float64{key("alpha"): 10, key("beta"): 20})
-			grid.Update(0, map[string]float64{key("alpha"): 15, key("beta"): 25})
+			grid.Update(0, stream.Deform(map[string]float64{key("alpha"): 10, key("beta"): 20}))
+			grid.Update(0, stream.Deform(map[string]float64{key("alpha"): 15, key("beta"): 25}))
 			grid.Settle()
 
 			encoded, err := grid.Snapshot()
@@ -203,14 +235,15 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 
 		Convey("Peer metrics light up their regions in LitRegions", func() {
 			peerGrid := store.NewGrid()
-			btcKey := store.CellKey("BTC/USD", "websocket", "mid")
-			ethKey := store.CellKey("ETH/USD", "resonance", "spread")
+			peerStream := store.NewStream()
+			btcKey := store.CellKey("mid")
+			ethKey := store.CellKey("spread")
 
 			for tick := 0; tick < 5; tick++ {
-				peerGrid.Update(0, map[string]float64{
+				peerGrid.Update(0, peerStream.Deform(map[string]float64{
 					btcKey: 50000 + float64(tick)*10,
 					ethKey: 3000 + float64(tick)*5,
-				})
+				}))
 			}
 
 			peerGrid.Settle()
@@ -221,7 +254,7 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			So(peerGrid.Cells[ethKey].Region, ShouldBeGreaterThan, 0)
 
 			tokens := peerGrid.LitRegions(map[string]float64{
-				ethKey: peerGrid.Cells[ethKey].Last * 3,
+				ethKey: 0.5,
 			})
 			So(len(tokens), ShouldEqual, 1)
 			So(tokens[0][0], ShouldEqual, peerGrid.Cells[ethKey].Region)
@@ -229,9 +262,9 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 
 		Convey("Late arrivals are partitioned when Settle is called again", func() {
 			reGrid := store.NewGrid()
-			alphaKey := store.CellKey("BTC/USD", "BTC/USD", "alpha")
-			betaKey := store.CellKey("BTC/USD", "BTC/USD", "beta")
-			gammaKey := store.CellKey("BTC/USD", "BTC/USD", "gamma")
+			alphaKey := store.CellKey("alpha")
+			betaKey := store.CellKey("beta")
+			gammaKey := store.CellKey("gamma")
 
 			reGrid.Update(0, map[string]float64{alphaKey: 10, betaKey: 20})
 			reGrid.Settle()
@@ -247,6 +280,61 @@ func TestGridLifecycleAndCorrectness(t *testing.T) {
 			// Re-settle
 			reGrid.Settle()
 			So(reGrid.Cells[gammaKey].Region, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+/*
+latentGroupPasses feeds the grid passes of channels drawn from latent groups
+of unequal size (each member is its group's factor plus idiosyncratic noise)
+and partitions after every pass. Balanced regions must cut through the larger
+groups, so their exchangeable members never repeat one exact assignment.
+*/
+func latentGroupPasses(grid *store.Grid, stream *store.Stream, rng *rand.Rand, tick *int64, sizes []int) {
+	for range 32 {
+		channels := map[string]float64{}
+
+		for group, size := range sizes {
+			factor := rng.NormFloat64()
+
+			for member := range size {
+				channels[fmt.Sprintf("g%d_m%d", group, member)] = 10 + factor + 1.5*rng.NormFloat64()
+			}
+		}
+
+		grid.Update(*tick, stream.Deform(channels))
+		*tick++
+	}
+
+	grid.Partition()
+}
+
+func TestGrid_Converged(t *testing.T) {
+	Convey("Given unequal latent groups that balanced regions must split", t, func() {
+		rng := rand.New(rand.NewPCG(1, 2))
+		grid := store.NewGrid()
+		stream := store.NewStream()
+		tick := int64(1)
+		sizes := []int{11, 7, 5, 13, 3, 9, 6, 16}
+
+		Convey("It converges once the partition drift stops falling, without exact repetition", func() {
+			passes := 0
+
+			for passes < 200 && !grid.Converged() {
+				latentGroupPasses(grid, stream, rng, &tick, sizes)
+				passes++
+			}
+
+			So(grid.Converged(), ShouldBeTrue)
+			So(passes, ShouldBeGreaterThanOrEqualTo, store.ConvergenceStreak*2)
+		})
+
+		Convey("It never converges while new metrics keep arriving", func() {
+			for pass := range 3 * store.ConvergenceStreak {
+				grid.Update(0, map[string]float64{fmt.Sprintf("arrival_%d", pass): 0})
+				latentGroupPasses(grid, stream, rng, &tick, sizes)
+				So(grid.Converged(), ShouldBeFalse)
+			}
 		})
 	})
 }

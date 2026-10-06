@@ -62,9 +62,17 @@ func NewExactMetric(
 
 /*
 finalize is called from the Measurement to set the derived values, like
-center, scale, normalized, and standardized values.
+center, scale, normalized, and standardized values. An invalid observation
+is rejected before the Welford update.
 */
 func (metric *Metric) finalize(n float64) error {
+	// The observation is checked before it touches the Welford state: a
+	// producer that computed an undefined Raw fails this Measurement here,
+	// and the center/scale it would have poisoned stay as they were.
+	if err := metric.valid("label", "raw", "unit", "timescale"); err != nil {
+		return err
+	}
+
 	delta := metric.Raw - metric.center
 	metric.center += delta / n
 
@@ -124,5 +132,10 @@ func (metric *Metric) valid(fields ...string) error {
 		"unit":         metric.unit,
 		"timescale":    metric.timescale,
 		"updated":      true,
-	}))
+	}),
+		"metric", metric.Label,
+		"raw", metric.Raw,
+		"center", metric.center,
+		"scale", metric.scale,
+	)
 }

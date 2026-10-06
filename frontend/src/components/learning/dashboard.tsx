@@ -75,6 +75,10 @@ export const LearningDashboard = () => {
 	// Impulse Map real nodes & regions
 	const knownNodesRef = useRef<Map<string, ImpulseNode>>(new Map());
 	const [impulseNodes, setImpulseNodes] = useState<ImpulseNode[]>([]);
+	const [gridTotals, setGridTotals] = useState<{
+		cells?: number;
+		regions?: number;
+	}>({});
 	const [impulseRegions, setImpulseRegions] = useState<
 		Array<{
 			id: number;
@@ -522,6 +526,16 @@ export const LearningDashboard = () => {
 					}
 				}
 
+				if (metricMap.grid_cells !== undefined || metricMap.grid_regions !== undefined) {
+					const cells = metricMap.grid_cells;
+					const regions = metricMap.grid_regions;
+					setGridTotals((held) =>
+						held.cells === cells && held.regions === regions
+							? held
+							: { cells, regions },
+					);
+				}
+
 				const grid = measurement.grid;
 				const isGridSymbolMatch =
 					!grid?.symbol ||
@@ -558,12 +572,17 @@ export const LearningDashboard = () => {
 						present: cell.present ?? true,
 					}));
 				} else {
-					const allPeers = [
-						...(measurement.metrics && measurement.metrics.length > 0
-							? [measurement]
-							: []),
-						...(measurement.peers ?? []),
-					];
+					// Mirror the backend grid: only sensory peers feed cells.
+					// Training's own report metrics and the resonance/manifold
+					// solvers never become grid cells.
+					const allPeers = (measurement.peers ?? []).filter((peer) => {
+						const source = String(peer?.source || "");
+						return (
+							source !== "resonance" &&
+							source !== "manifold" &&
+							source !== String(measurement.source || "")
+						);
+					});
 
 					if (allPeers.length > 0) {
 						const regionActivity: Record<
@@ -572,7 +591,6 @@ export const LearningDashboard = () => {
 						> = {};
 						for (const peer of allPeers) {
 							if (!peer) continue;
-							const peerSource = String(peer.source || "");
 							for (const metric of peer.metrics ?? []) {
 								if (!metric || !metric.name) continue;
 								const nameStr = String(metric.name);
@@ -586,12 +604,13 @@ export const LearningDashboard = () => {
 								} else if (raw !== 0) {
 									activity = Math.abs(raw) < 1 ? Math.abs(raw) : 1.0;
 								}
-								const nodeId = peerSource
-									? `${peerSource}:${nameStr}`
-									: nameStr;
+								// Node identity is the grid CellKey: the metric label with
+								// any "@<peer symbol>" pair qualifier dropped. Source and
+								// symbol are not part of a cell's identity.
+								const cellKey = nameStr.split("@")[0] ?? nameStr;
 								mappedNodes.push({
-									id: nodeId,
-									label: nameStr,
+									id: cellKey,
+									label: cellKey,
 									cluster: regionId,
 									snr: 1,
 									activation: activity,
@@ -999,6 +1018,8 @@ export const LearningDashboard = () => {
 						data={impulseNodes}
 						regions={impulseRegions}
 						activeEvents={activePrecursors}
+						gridCells={gridTotals.cells}
+						gridRegions={gridTotals.regions}
 					/>
 				</div>
 			)}

@@ -524,6 +524,9 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 		training.develop(prior.Epoch, prior.SeqIdx, &snapshot)
 	}
 
+	snapshot.GridCells = training.grid.CellCount()
+	snapshot.GridRegions = training.grid.RegionsFormed()
+
 	if status == runtime.WAITING {
 		snapshot.Stage = StageHistoricalValidation
 		snapshot.Blocker = "loading trie from historical excursions"
@@ -598,8 +601,11 @@ func (training *Training) develop(
 		if restored {
 			snapshot.Blocker = "grid restored from checkpoint"
 		} else {
+			// Spectral partitioning is O(n^3) in cells; it runs single-flight
+			// in the background so the training stage never stalls the
+			// disruptor while regions are recomputed.
 			if seqIdx%32 == 0 {
-				training.grid.Partition()
+				training.grid.PartitionAsync()
 			}
 
 			if !training.grid.Converged() {
@@ -831,10 +837,14 @@ func (training *Training) trade(prior *data.Measurement, snapshot *ReportSnapsho
 }
 
 /*
-channelsFrom extracts key-value telemetry pairs from measurements for grid updates.
+channelsFrom extracts one value per grid cell from measurements for grid
+updates. Several observations of one cell in a pass (the same label from two
+producers, or one pair fact "<fact>@<peer>" across every peer symbol) are
+reduced to their mean, so the cell value does not depend on peer order.
 */
 func channelsFrom(measurements ...*data.Measurement) map[string]float64 {
-	channels := make(map[string]float64)
+	sums := make(map[string]float64)
+	counts := make(map[string]int)
 
 	for _, measurement := range measurements {
 		if measurement == nil {
@@ -846,9 +856,20 @@ func channelsFrom(measurements ...*data.Measurement) map[string]float64 {
 				continue
 			}
 
-			key := store.CellKey(measurement.Label, measurement.Source, entry.Metric.Label)
-			channels[key] = entry.Metric.Raw
+			if math.IsNaN(entry.Metric.Raw) || math.IsInf(entry.Metric.Raw, 0) {
+				continue
+			}
+
+			key := store.CellKey(entry.Metric.Label)
+			sums[key] += entry.Metric.Raw
+			counts[key]++
 		}
+	}
+
+	channels := make(map[string]float64, len(sums))
+
+	for key, sum := range sums {
+		channels[key] = sum / float64(counts[key])
 	}
 
 	return channels

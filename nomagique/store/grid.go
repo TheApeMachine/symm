@@ -1,16 +1,19 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"math"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"golang.design/x/lockfree/lf"
 	"gonum.org/v1/gonum/mat"
 )
@@ -38,8 +41,9 @@ const (
 	// CorrelationShrinkage dampens low-observation edge confidence toward zero.
 	CorrelationShrinkage = 32.0
 
-	// ConvergenceStreak defines the number of consecutive passes with identical
-	// metric discovery and region assignments required to consider the grid converged.
+	// ConvergenceStreak is the length of each of the two windows of
+	// comparable passes whose mean co-membership drift Converged compares
+	// (see observeDriftLocked).
 	ConvergenceStreak = 5
 )
 
@@ -214,18 +218,24 @@ func pairIDs(key uint64) (uint32, uint32) {
 }
 
 /*
+partitionDrift is the co-membership drift of one comparable partition pass
+and the evidence (Observations) it was computed from.
+*/
+type partitionDrift struct {
+	drift        float64
+	observations int64
+}
+
+/*
 Cell is one learned vertex in the metric-affinity graph.
 */
 type Cell struct {
-	ID          uint32  `json:"id"`
-	Key         string  `json:"key"`
-	Region      uint8   `json:"region"`
-	X           float64 `json:"x"`
-	Y           float64 `json:"y"`
-	Visits      uint64  `json:"visits"`
-	Last        float64 `json:"last"`
-	Deformation float64 `json:"deformation"`
-	Initialized bool    `json:"initialized"`
+	ID     uint32  `json:"id"`
+	Key    string  `json:"key"`
+	Region uint8   `json:"region"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Visits uint64  `json:"visits"`
 }
 
 type metricArrival struct {
@@ -267,21 +277,20 @@ Grid learns a vectorized metric-affinity graph using contiguous packed symmetric
 and partitions it into balanced regions with zero map locks for streaming evaluation.
 */
 type Grid struct {
+	*runtime.System
 	updateMu     sync.Mutex
 	settled      atomic.Bool
 	observations atomic.Int64
 	cellsLF      *lf.OrderedMap[string, *Cell]
 	idToCellLF   atomic.Pointer[[]*Cell]
 
-	Settled       bool                 `json:"settled"`
-	Observations  int64                `json:"observations"`
-	Cells         map[string]*Cell     `json:"cells"`
-	Relations     map[uint64]*Relation `json:"relations,omitempty"`
-	RegionMembers map[uint8]int        `json:"region_members"`
+	Settled       bool             `json:"settled"`
+	Observations  int64            `json:"observations"`
+	Cells         map[string]*Cell `json:"cells"`
+	RegionMembers map[uint8]int    `json:"region_members"`
 
 	cellIDs  map[string]uint32
 	idToCell []*Cell
-	prevRaw  map[string]float64
 	dirty    bool
 
 	pairs    []PairStats
@@ -289,9 +298,20 @@ type Grid struct {
 
 	pendingTick    int64
 	pending        map[uint32]pendingSample
-	stablePasses   int
-	prevCellCount  int
 	prevPartitions map[string]uint8
+
+	// drifts holds the co-membership drift of the latest comparable
+	// partitions (at most two ConvergenceStreak windows) since the cell set
+	// last changed.
+	drifts []partitionDrift
+
+	// partitioning single-flights PartitionAsync: at most one spectral
+	// partition computes at a time, and the caller never waits for it.
+	partitioning atomic.Bool
+	partitionWG  sync.WaitGroup
+
+	// regionsFormed mirrors len(RegionMembers) for lock-free telemetry.
+	regionsFormed atomic.Int32
 }
 
 func stringLess(a, b string) bool {
@@ -305,14 +325,14 @@ func NewGrid() *Grid {
 	grid := &Grid{
 		cellsLF:        cellsLF,
 		Cells:          make(map[string]*Cell),
-		Relations:      make(map[uint64]*Relation),
 		RegionMembers:  make(map[uint8]int),
 		cellIDs:        make(map[string]uint32),
 		idToCell:       idToCell,
-		prevRaw:        make(map[string]float64),
 		pending:        make(map[uint32]pendingSample),
 		prevPartitions: make(map[string]uint8),
 	}
+
+	grid.System = runtime.NewSystem(context.Background(), "store:grid")
 
 	grid.idToCellLF.Store(&idToCell)
 	return grid
@@ -330,8 +350,22 @@ func (grid *Grid) growPairs(neededCapacity int) {
 	grid.capacity = newCap
 }
 
-func CellKey(symbol, source, name string) string {
-	return symbol + "\x00" + source + "\x00" + name
+/*
+CellKey identifies a grid cell by metric label alone. The grid learns the
+geometry of metrics, not of symbols or producers: the same metric observed
+for BTC/USD and ETH/USD, or published by two producers, is one cell.
+
+Pair facts published as "<fact>@<peer symbol>" (correlation, leadlag) carry
+a symbol in the label; the peer qualifier is dropped so every peer of one
+fact lands in the single <fact> cell. Without this the grid grows one cell
+per fact per peer symbol and the O(n^2) pair update explodes.
+*/
+func CellKey(name string) string {
+	if fact, _, qualified := strings.Cut(name, "@"); qualified {
+		return fact
+	}
+
+	return name
 }
 
 func (grid *Grid) IsSettled() bool {
@@ -340,6 +374,18 @@ func (grid *Grid) IsSettled() bool {
 	}
 
 	return grid.settled.Load() || grid.Settled
+}
+
+/*
+RegionsFormed answers how many regions the last committed partition holds
+(0 until a partition has committed). It never takes the update lock.
+*/
+func (grid *Grid) RegionsFormed() int {
+	if grid == nil {
+		return 0
+	}
+
+	return int(grid.regionsFormed.Load())
 }
 
 func (grid *Grid) RegionCount() int {
@@ -394,12 +440,12 @@ func (grid *Grid) RegionAt(x, y float64) (uint8, bool) {
 	return bestRegion, true
 }
 
-func (grid *Grid) CellAt(symbol, source, name string) *Cell {
+func (grid *Grid) CellAt(name string) *Cell {
 	if grid == nil {
 		return nil
 	}
 
-	key := CellKey(symbol, source, name)
+	key := CellKey(name)
 
 	if cell, ok := grid.cellsLF.Get(key); ok && cell != nil {
 		return cell
@@ -435,21 +481,22 @@ func (grid *Grid) CellCount() int {
 }
 
 /*
-Update folds one observation pass into the grid. Channels are keyed by
-CellKey(symbol, source, metric) and carry the raw metric value. A positive
-tick buffers the pass until the tick changes, so every channel observed in
-one market tick contributes to a single pass; a non-positive tick commits
-immediately.
+Update folds one observation pass into the grid. Deformations are keyed by
+CellKey(metric) and carry each channel's movement within its own stream (see
+Stream.Deform), so a cell shared by several symbols never deforms across
+them. A positive tick buffers the pass until the tick changes, so every
+channel observed in one market tick contributes to a single pass; a
+non-positive tick commits immediately.
 */
-func (grid *Grid) Update(tick int64, channels map[string]float64) {
-	if grid == nil || len(channels) == 0 {
+func (grid *Grid) Update(tick int64, deformations map[string]float64) {
+	if grid == nil || len(deformations) == 0 {
 		return
 	}
 
 	grid.updateMu.Lock()
 	defer grid.updateMu.Unlock()
 
-	arrivals := grid.extractTrainingArrivalsLocked(channels)
+	arrivals := grid.extractTrainingArrivalsLocked(deformations)
 
 	if len(arrivals) == 0 {
 		return
@@ -469,7 +516,7 @@ func (grid *Grid) Update(tick int64, channels map[string]float64) {
 	grid.commitPassLocked(arrivals)
 }
 
-func (grid *Grid) ensureCellLocked(key string, raw float64) *Cell {
+func (grid *Grid) ensureCellLocked(key string) *Cell {
 	if cell, ok := grid.cellsLF.Get(key); ok && cell != nil {
 		return cell
 	}
@@ -481,9 +528,8 @@ func (grid *Grid) ensureCellLocked(key string, raw float64) *Cell {
 	}
 
 	cell := &Cell{
-		ID:   id,
-		Key:  key,
-		Last: raw,
+		ID:  id,
+		Key: key,
 	}
 	grid.Cells[key] = cell
 	grid.cellsLF.Set(key, cell)
@@ -498,43 +544,25 @@ func (grid *Grid) ensureCellLocked(key string, raw float64) *Cell {
 }
 
 /*
-extractTrainingArrivalsLocked turns one pass of raw channel values into
-deformation arrivals against each channel's previous raw value. Channels are
-visited in key order so cell IDs are assigned deterministically.
+extractTrainingArrivalsLocked turns one pass of channel deformations into
+arrivals. Channels are visited in key order so cell IDs are assigned
+deterministically.
 */
 func (grid *Grid) extractTrainingArrivalsLocked(
-	channels map[string]float64,
+	deformations map[string]float64,
 ) []metricArrival {
-	keys := slices.Sorted(maps.Keys(channels))
+	keys := slices.Sorted(maps.Keys(deformations))
 	arrivals := make([]metricArrival, 0, len(keys))
 
 	for _, channel := range keys {
-		raw := channels[channel]
-		cell := grid.ensureCellLocked(channel, raw)
+		cell := grid.ensureCellLocked(channel)
 		cell.Visits++
 
-		deformation := 0.0
-		validDeformation := false
-
-		if previous, ok := grid.prevRaw[channel]; ok && finite(previous) && finite(raw) {
-			deformation = deform(previous, raw)
-			validDeformation = finite(deformation)
-		}
-
-		if finite(raw) {
-			grid.prevRaw[channel] = raw
-			cell.Last = raw
-			cell.Initialized = true
-		}
-
-		if validDeformation {
-			cell.Deformation = deformation
-			arrivals = append(arrivals, metricArrival{
-				id:      cell.ID,
-				value:   deformation,
-				quality: 1,
-			})
-		}
+		arrivals = append(arrivals, metricArrival{
+			id:      cell.ID,
+			value:   deformations[channel],
+			quality: 1,
+		})
 	}
 
 	return arrivals
@@ -599,9 +627,13 @@ func (grid *Grid) commitPassLocked(arrivals []metricArrival) {
 		collapsed[arrival.id] = sample
 	}
 
-	ids := make([]int, 0, len(collapsed))
-	values := make(map[uint32]float64, len(collapsed))
-	qualities := make(map[uint32]float64, len(collapsed))
+	type passValue struct {
+		id      int
+		value   float64
+		quality float64
+	}
+
+	pass := make([]passValue, 0, len(collapsed))
 
 	for id, sample := range collapsed {
 		value, quality, ok := sample.value()
@@ -610,46 +642,35 @@ func (grid *Grid) commitPassLocked(arrivals []metricArrival) {
 			continue
 		}
 
-		ids = append(ids, int(id))
-		values[id] = value
-		qualities[id] = quality
+		pass = append(pass, passValue{id: int(id), value: value, quality: quality})
 	}
 
-	slices.Sort(ids)
+	slices.SortFunc(pass, func(left, right passValue) int { return left.id - right.id })
 
-	for first := 0; first < len(ids); first++ {
-		leftID := ids[first]
+	if len(pass) > 0 {
+		grid.growPairs(pass[len(pass)-1].id + 1)
+	}
 
-		for second := first + 1; second < len(ids); second++ {
-			rightID := ids[second]
-			weight := math.Sqrt(qualities[uint32(leftID)] * qualities[uint32(rightID)])
+	touched := false
+
+	for first := range pass {
+		left := pass[first]
+
+		for second := first + 1; second < len(pass); second++ {
+			right := pass[second]
+			weight := math.Sqrt(left.quality * right.quality)
 
 			if weight <= 0 || !finite(weight) {
 				continue
 			}
 
-			idx := symIdx(leftID, rightID)
-
-			if idx >= len(grid.pairs) {
-				grid.growPairs(max(leftID, rightID) + 1)
-			}
-
-			grid.pairs[idx].update(values[uint32(leftID)], values[uint32(rightID)], weight)
-
-			pairHash := pairKey(uint32(leftID), uint32(rightID))
-			relation := grid.Relations[pairHash]
-
-			if relation == nil {
-				relation = &Relation{}
-				grid.Relations[pairHash] = relation
-			}
-
-			relation.update(values[uint32(leftID)], values[uint32(rightID)], weight)
-
-			if !grid.IsSettled() {
-				grid.dirty = true
-			}
+			grid.pairs[symIdx(left.id, right.id)].update(left.value, right.value, weight)
+			touched = true
 		}
+	}
+
+	if touched && !grid.IsSettled() {
+		grid.dirty = true
 	}
 
 	grid.Observations++
@@ -657,30 +678,148 @@ func (grid *Grid) commitPassLocked(arrivals []metricArrival) {
 }
 
 /*
-Partition discovers and updates regions for all currently observed metrics without freezing the grid.
+Relations answers the non-empty pair statistics of the learned graph, derived
+from the packed pair matrix (the only pair store).
+*/
+func (grid *Grid) Relations() []Relation {
+	if grid == nil {
+		return nil
+	}
+
+	grid.updateMu.Lock()
+	defer grid.updateMu.Unlock()
+
+	n := len(grid.idToCell)
+	relations := make([]Relation, 0)
+
+	for right := 1; right < n; right++ {
+		for left := 0; left < right; left++ {
+			idx := symIdx(left, right)
+
+			if idx >= len(grid.pairs) {
+				continue
+			}
+
+			pair := &grid.pairs[idx]
+
+			if pair.Total == 0 && pair.Weight == 0 {
+				continue
+			}
+
+			relations = append(relations, Relation{
+				Same:     int64(pair.Same),
+				Opposite: int64(pair.Opposite),
+				Total:    int64(pair.Total),
+				Weight:   pair.Weight,
+				SumX:     pair.SumX,
+				SumY:     pair.SumY,
+				SumXX:    pair.SumXX,
+				SumYY:    pair.SumYY,
+				SumXY:    pair.SumXY,
+			})
+		}
+	}
+
+	return relations
+}
+
+/*
+Partition discovers and updates regions for all currently observed metrics
+without freezing the grid. It blocks the caller for the full spectral
+computation; hot paths use PartitionAsync. The lock is held only to copy the
+affinity graph and to commit the result, never across the eigensolves, so
+Update keeps flowing while regions are computed.
 */
 func (grid *Grid) Partition() {
 	if grid == nil {
 		return
 	}
 
+	grid.partition(false)
+}
+
+/*
+PartitionAsync starts a background Partition unless one is already running,
+and returns immediately either way. It reports whether a pass was started.
+*/
+func (grid *Grid) PartitionAsync() bool {
+	if grid == nil || grid.IsSettled() || !grid.partitioning.CompareAndSwap(false, true) {
+		return false
+	}
+
+	grid.partitionWG.Add(1)
+
+	go func() {
+		defer grid.partitionWG.Done()
+		defer grid.partitioning.Store(false)
+		grid.partition(true)
+	}()
+
+	return true
+}
+
+/*
+WaitPartition blocks until a running PartitionAsync pass has committed.
+*/
+func (grid *Grid) WaitPartition() {
+	if grid == nil {
+		return
+	}
+
+	grid.partitionWG.Wait()
+}
+
+/*
+partition computes and commits one region assignment. A background pass
+(background=true) that finishes after the grid settled is discarded: only
+Settle's own partition may assign regions to a frozen grid.
+*/
+func (grid *Grid) partition(background bool) {
 	grid.updateMu.Lock()
-	defer grid.updateMu.Unlock()
-
 	grid.flushPendingLocked()
+	keys, affinity := grid.affinitySnapshotLocked()
+	grid.updateMu.Unlock()
 
-	cellCount := len(grid.Cells)
+	cellCount := len(keys)
 	errnie.Info(fmt.Sprintf("[grid] Partition() started: %d cells observed", cellCount))
 
-	partitions := grid.computePartitionsLocked()
+	partitions := computePartitions(keys, affinity)
 
 	if len(partitions) == 0 {
 		errnie.Info("[grid] Partition() computed 0 partitions")
 		return
 	}
 
-	grid.commitPartitionsLocked(partitions)
-	errnie.Info(fmt.Sprintf("[grid] Partition() committed: %d regions across %d cells (stable passes: %d/%d)", len(grid.RegionMembers), cellCount, grid.stablePasses, ConvergenceStreak))
+	grid.updateMu.Lock()
+	defer grid.updateMu.Unlock()
+
+	if background && grid.IsSettled() {
+		return
+	}
+
+	grid.commitPartitionsLocked(partitions, cellCount)
+	errnie.Info(fmt.Sprintf("[grid] Partition() committed: %d regions across %d cells (comparable passes: %d/%d)", len(grid.RegionMembers), cellCount, len(grid.drifts), ConvergenceStreak*2))
+}
+
+/*
+affinitySnapshotLocked copies the sorted cell keys and their affinity matrix
+so the spectral partition can run without the update lock.
+*/
+func (grid *Grid) affinitySnapshotLocked() ([]string, *mat.SymDense) {
+	n := len(grid.Cells)
+
+	if n == 0 {
+		return nil, nil
+	}
+
+	keys := make([]string, 0, n)
+
+	for key := range grid.Cells {
+		keys = append(keys, key)
+	}
+
+	slices.Sort(keys)
+	return keys, grid.affinityMatrixLocked(keys)
 }
 
 /*
@@ -691,7 +830,11 @@ func (grid *Grid) Settle() {
 		return
 	}
 
-	errnie.Info(fmt.Sprintf("[grid] Settle() requested: %d cells", len(grid.Cells)))
+	// A background pass committing after settlement would reassign frozen
+	// regions, so it finishes before the settling partition runs.
+	grid.WaitPartition()
+
+	errnie.Info(fmt.Sprintf("[grid] Settle() requested: %d cells", grid.CellCount()))
 	grid.Partition()
 
 	grid.updateMu.Lock()
@@ -703,23 +846,15 @@ func (grid *Grid) Settle() {
 	errnie.Info(fmt.Sprintf("[grid] Settle() complete: grid settled with %d regions across %d cells", len(grid.RegionMembers), len(grid.Cells)))
 }
 
-func (grid *Grid) computePartitionsLocked() map[string]uint8 {
-	n := len(grid.Cells)
+func computePartitions(keys []string, affinity *mat.SymDense) map[string]uint8 {
+	n := len(keys)
 
 	if n == 0 {
 		return nil
 	}
 
-	keys := make([]string, 0, n)
-
-	for key := range grid.Cells {
-		keys = append(keys, key)
-	}
-
-	slices.Sort(keys)
-
 	k := targetPartitionCount(n)
-	errnie.Info(fmt.Sprintf("[grid] computePartitionsLocked: n=%d metrics, target clusters k=%d", n, k))
+	errnie.Info(fmt.Sprintf("[grid] computePartitions: n=%d metrics, target clusters k=%d", n, k))
 
 	if k <= 1 {
 		assigned := make(map[string]uint8, n)
@@ -738,7 +873,6 @@ func (grid *Grid) computePartitionsLocked() map[string]uint8 {
 		vertices[i] = i
 	}
 
-	affinity := grid.affinityMatrixLocked(keys)
 	groups := make([][]int, 0, k)
 
 	var split func([]int, []int)
@@ -774,11 +908,7 @@ func targetPartitionCount(metricCount int) int {
 		return 1
 	}
 
-	maxWithoutSingletons := metricCount / MinRegionSize
-
-	if maxWithoutSingletons < 1 {
-		maxWithoutSingletons = 1
-	}
+	maxWithoutSingletons := max(metricCount/MinRegionSize, 1)
 
 	return min(TargetRegionCount, maxWithoutSingletons)
 }
@@ -1034,7 +1164,7 @@ func canonicalRegionAssignment(groups [][]int, keys []string) map[string]uint8 {
 	return assigned
 }
 
-func (grid *Grid) commitPartitionsLocked(partitions map[string]uint8) {
+func (grid *Grid) commitPartitionsLocked(partitions map[string]uint8, partitionedCount int) {
 	grid.RegionMembers = make(map[uint8]int, len(partitions))
 
 	for key, region := range partitions {
@@ -1049,6 +1179,7 @@ func (grid *Grid) commitPartitionsLocked(partitions map[string]uint8) {
 	}
 
 	regionCount := len(grid.RegionMembers)
+	grid.regionsFormed.Store(int32(regionCount))
 
 	for _, cell := range grid.Cells {
 		if cell == nil || cell.Region == 0 {
@@ -1058,33 +1189,114 @@ func (grid *Grid) commitPartitionsLocked(partitions map[string]uint8) {
 		cell.X, cell.Y = regionCenter(cell.Region, regionCount)
 	}
 
-	currentCount := len(grid.Cells)
-
-	if currentCount > 0 && currentCount == grid.prevCellCount && len(grid.prevPartitions) == currentCount {
-		changed := false
-
-		for key, region := range partitions {
-			if grid.prevPartitions[key] != region {
-				changed = true
-				break
-			}
-		}
-
-		if !changed {
-			grid.stablePasses++
-		}
-
-		if changed {
-			grid.stablePasses = 0
-		}
-	}
-
-	if currentCount != grid.prevCellCount || len(grid.prevPartitions) != currentCount {
-		grid.stablePasses = 0
-	}
-
-	grid.prevCellCount = currentCount
+	grid.observeDriftLocked(partitions, partitionedCount)
 	grid.prevPartitions = partitions
+}
+
+/*
+observeDriftLocked records the co-membership drift between this partition
+and the previous one. Balanced regions must cut through latent groups larger
+than a region, and the members of such a group are exchangeable: which of
+them lands on which side of the cut is decided by sampling noise on every
+pass, so the drift has an irreducible floor and exact repetition need never
+happen. More evidence only lowers the drift while it still resolves
+structure.
+
+Converged compares the mean drift of the latest ConvergenceStreak passes with
+the mean of the ConvergenceStreak passes before them. The grid has converged
+once the latest window no longer drifts less than the earlier one: what still
+moves after that is exchangeable noise, which freezing cannot make worse.
+
+A pass is only comparable with its predecessor over the same cell set and
+only once new evidence arrived between them; a repeat over unchanged pair
+statistics would record a drift of zero that measures nothing. Cells that
+arrived while an async partition computed, or a new metric, restart the
+record.
+*/
+func (grid *Grid) observeDriftLocked(partitions map[string]uint8, partitionedCount int) {
+	if len(grid.Cells) != partitionedCount || len(grid.prevPartitions) != partitionedCount {
+		grid.drifts = grid.drifts[:0]
+		return
+	}
+
+	if count := len(grid.drifts); count > 0 && grid.drifts[count-1].observations == grid.Observations {
+		return
+	}
+
+	drift, ok := coMembershipDrift(grid.prevPartitions, partitions)
+
+	if !ok {
+		grid.drifts = grid.drifts[:0]
+		return
+	}
+
+	grid.drifts = append(grid.drifts, partitionDrift{
+		drift:        drift,
+		observations: grid.Observations,
+	})
+
+	if excess := len(grid.drifts) - ConvergenceStreak*2; excess > 0 {
+		grid.drifts = append(grid.drifts[:0], grid.drifts[excess:]...)
+	}
+}
+
+/*
+driftSettledLocked applies the window comparison described on
+observeDriftLocked.
+*/
+func (grid *Grid) driftSettledLocked() bool {
+	if len(grid.drifts) < ConvergenceStreak*2 {
+		return false
+	}
+
+	earlier := grid.drifts[:ConvergenceStreak]
+	latest := grid.drifts[ConvergenceStreak:]
+	earlierDrift, latestDrift := 0.0, 0.0
+
+	for index := range ConvergenceStreak {
+		earlierDrift += earlier[index].drift
+		latestDrift += latest[index].drift
+	}
+
+	return latestDrift >= earlierDrift
+}
+
+/*
+coMembershipDrift is the fraction of cell pairs whose same-region relation
+differs between two partitions of one cell set (1 minus the Rand index). It
+is invariant to region relabeling. It is undefined (false) when the cell sets
+differ or hold fewer than two cells.
+*/
+func coMembershipDrift(previous, current map[string]uint8) (float64, bool) {
+	if len(previous) != len(current) || len(current) < 2 {
+		return 0, false
+	}
+
+	keys := slices.Sorted(maps.Keys(current))
+
+	for _, key := range keys {
+		if _, ok := previous[key]; !ok {
+			return 0, false
+		}
+	}
+
+	disagreements := 0
+	pairs := 0
+
+	for first := range keys {
+		for second := first + 1; second < len(keys); second++ {
+			was := previous[keys[first]] == previous[keys[second]]
+			is := current[keys[first]] == current[keys[second]]
+
+			if was != is {
+				disagreements++
+			}
+
+			pairs++
+		}
+	}
+
+	return float64(disagreements) / float64(pairs), true
 }
 
 /*
@@ -1094,6 +1306,9 @@ func (grid *Grid) Converged() bool {
 	if grid == nil {
 		return false
 	}
+
+	grid.updateMu.Lock()
+	defer grid.updateMu.Unlock()
 
 	metricCount := len(grid.Cells)
 
@@ -1105,10 +1320,10 @@ func (grid *Grid) Converged() bool {
 		return false
 	}
 
-	converged := grid.stablePasses >= ConvergenceStreak
+	converged := grid.driftSettledLocked()
 
 	if converged {
-		errnie.Info(fmt.Sprintf("[grid] Converged! %d metrics stabilized across %d regions (streak: %d)", metricCount, len(grid.RegionMembers), grid.stablePasses))
+		errnie.Info(fmt.Sprintf("[grid] Converged! %d metrics stabilized across %d regions (drift %.4f)", metricCount, len(grid.RegionMembers), grid.drifts[len(grid.drifts)-1].drift))
 	}
 
 	return converged
@@ -1157,48 +1372,30 @@ type regionAggregate struct {
 }
 
 /*
-RegionScores evaluates mean activity within each region.
-Wait-free execution without locking.
+RegionScores evaluates mean deformation magnitude within each region for one
+pass of channel deformations (see Stream.Deform). It never takes the update
+lock.
 */
-func (grid *Grid) RegionScores(channels map[string]float64) []RegionScore {
-	if grid == nil || len(channels) == 0 {
+func (grid *Grid) RegionScores(deformations map[string]float64) []RegionScore {
+	if grid == nil || len(deformations) == 0 {
 		return nil
 	}
 
-	return grid.regionScoresLocked(channels)
+	return grid.regionScoresLocked(deformations)
 }
 
 /*
 regionScoresLocked scores each region by the mean absolute deformation of its
-member channels in this pass. A channel whose raw value moved since the grid
-last saw it deforms against that value; a channel the grid has just folded
-in (Update then score) reuses the deformation recorded at that update.
+member channels in this pass. Channels without a region (not yet observed, or
+arrived after the partition) do not score.
 */
-func (grid *Grid) regionScoresLocked(channels map[string]float64) []RegionScore {
-	perCell := make(map[uint32]float64)
+func (grid *Grid) regionScoresLocked(deformations map[string]float64) []RegionScore {
+	perCell := make(map[uint32]float64, len(deformations))
 
-	for channel, raw := range channels {
+	for channel, deformation := range deformations {
 		cell, ok := grid.cellsLF.Get(channel)
 
-		if !ok || cell == nil {
-			cell = grid.Cells[channel]
-		}
-
-		if cell == nil || cell.Region == 0 {
-			continue
-		}
-
-		deformation := cell.Deformation
-
-		if previous, ok := grid.prevRaw[channel]; ok && previous != raw && finite(previous) && finite(raw) {
-			deformation = deform(previous, raw)
-		}
-
-		if deformation == 0 && finite(raw) && raw != 0 {
-			deformation = deform(0, raw)
-		}
-
-		if !finite(deformation) {
+		if !ok || cell == nil || cell.Region == 0 {
 			continue
 		}
 
@@ -1242,11 +1439,7 @@ func (grid *Grid) regionScoresLocked(channels map[string]float64) []RegionScore 
 	scores := make([]RegionScore, 0, len(regions))
 
 	for region, aggregate := range regions {
-		total := grid.RegionMembers[region]
-
-		if total < aggregate.observedCount {
-			total = aggregate.observedCount
-		}
+		total := max(grid.RegionMembers[region], aggregate.observedCount)
 
 		if total <= 0 {
 			continue
@@ -1285,12 +1478,12 @@ LitRegions keeps the existing token API deliberately conservative: it returns
 the strongest region from the same fair RegionScores pass. Call RegionScores
 when the UI or diagnostics need the complete ranked set and actual intensities.
 */
-func (grid *Grid) LitRegions(channels map[string]float64) [][]byte {
-	if grid == nil || len(channels) == 0 {
+func (grid *Grid) LitRegions(deformations map[string]float64) [][]byte {
+	if grid == nil || len(deformations) == 0 {
 		return nil
 	}
 
-	scores := grid.regionScoresLocked(channels)
+	scores := grid.regionScoresLocked(deformations)
 
 	if len(scores) == 0 || scores[0].Score <= 0 || scores[0].Region == 0 {
 		return nil
@@ -1346,13 +1539,19 @@ type GridSnapshot struct {
 	Cells         map[string]*Cell         `json:"cells"`
 	Relations     map[uint64]*Relation     `json:"relations,omitempty"`
 	RegionMembers map[uint8]int            `json:"region_members"`
-	PrevRaw       map[string]float64       `json:"prev_raw"`
 	Dirty         bool                     `json:"dirty"`
 	PendingTick   int64                    `json:"pending_tick"`
 	Pending       map[uint32]pendingSample `json:"pending"`
 }
 
-const gridSnapshotVersion = 2
+/*
+gridSnapshotVersion 4 keys cells by metric label alone and holds no previous
+raw values: deformation is measured per stream by its owner (Stream), not by
+the grid. Versions 1 and 2 keyed cells by symbol\x00source\x00metric, and
+version 3 carried one previous raw value per label shared across symbols;
+neither maps onto this grid, so they are rejected rather than restored.
+*/
+const gridSnapshotVersion = 4
 
 func (grid *Grid) Snapshot() ([]byte, error) {
 	if grid == nil {
@@ -1366,7 +1565,6 @@ func (grid *Grid) Snapshot() ([]byte, error) {
 		Cells:         make(map[string]*Cell),
 		Relations:     make(map[uint64]*Relation),
 		RegionMembers: make(map[uint8]int, len(grid.RegionMembers)),
-		PrevRaw:       make(map[string]float64, len(grid.prevRaw)),
 		Dirty:         grid.dirty,
 		PendingTick:   grid.pendingTick,
 		Pending:       make(map[uint32]pendingSample, len(grid.pending)),
@@ -1421,17 +1619,8 @@ func (grid *Grid) Snapshot() ([]byte, error) {
 		}
 	}
 
-	for region, count := range grid.RegionMembers {
-		snapshot.RegionMembers[region] = count
-	}
-
-	for key, val := range grid.prevRaw {
-		snapshot.PrevRaw[key] = val
-	}
-
-	for id, sample := range grid.pending {
-		snapshot.Pending[id] = sample
-	}
+	maps.Copy(snapshot.RegionMembers, grid.RegionMembers)
+	maps.Copy(snapshot.Pending, grid.pending)
 
 	encoded, err := json.Marshal(snapshot)
 
@@ -1448,7 +1637,7 @@ func (grid *Grid) Snapshot() ([]byte, error) {
 
 func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 	if grid == nil {
-		return fmt.Errorf("grid: restore into nil grid")
+		return errnie.Error(fmt.Errorf("grid: restore into nil grid"))
 	}
 
 	var snapshot GridSnapshot
@@ -1461,8 +1650,15 @@ func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 		))
 	}
 
-	if snapshot.Version > gridSnapshotVersion {
-		return fmt.Errorf("grid: unsupported snapshot version %d", snapshot.Version)
+	if snapshot.Version != gridSnapshotVersion {
+		return grid.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"grid: unsupported snapshot version %d (want %d; older snapshots key cells by symbol/source or share raw values across symbols and must be deleted)",
+				snapshot.Version, gridSnapshotVersion,
+			),
+			nil,
+		))
 	}
 
 	if snapshot.Cells == nil {
@@ -1471,10 +1667,6 @@ func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 
 	if snapshot.Relations == nil {
 		snapshot.Relations = make(map[uint64]*Relation)
-	}
-
-	if snapshot.PrevRaw == nil {
-		snapshot.PrevRaw = make(map[string]float64)
 	}
 
 	if snapshot.Pending == nil {
@@ -1487,19 +1679,23 @@ func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 
 	for key, cell := range snapshot.Cells {
 		if cell == nil {
-			return fmt.Errorf("grid: snapshot cell %q is null", key)
+			return grid.Error(fmt.Errorf("grid: snapshot cell %q is null", key))
 		}
 
 		if cell.Key == "" {
 			cell.Key = key
 		}
 
+		if cell.Key != key || strings.Contains(key, "\x00") {
+			return grid.Error(fmt.Errorf("grid: snapshot cell %q is not a metric-label key", key))
+		}
+
 		if int(cell.ID) >= cellCount {
-			return fmt.Errorf("grid: snapshot cell %q ID %d out of range (cell count %d)", key, cell.ID, cellCount)
+			return grid.Error(fmt.Errorf("grid: snapshot cell %q ID %d out of range (cell count %d)", key, cell.ID, cellCount))
 		}
 
 		if idToCell[cell.ID] != nil {
-			return fmt.Errorf("grid: duplicate cell ID %d in snapshot", cell.ID)
+			return grid.Error(fmt.Errorf("grid: duplicate cell ID %d in snapshot", cell.ID))
 		}
 
 		idToCell[cell.ID] = cell
@@ -1508,7 +1704,7 @@ func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 
 	for id, cell := range idToCell {
 		if cell == nil {
-			return fmt.Errorf("grid: gap in snapshot cell IDs at %d", id)
+			return grid.Error(fmt.Errorf("grid: gap in snapshot cell IDs at %d", id))
 		}
 	}
 
@@ -1533,12 +1729,12 @@ func (grid *Grid) RestoreSnapshot(encoded []byte) error {
 	grid.Observations = snapshot.Observations
 	grid.Cells = snapshot.Cells
 	grid.RegionMembers = regionMembers
+	grid.regionsFormed.Store(int32(len(regionMembers)))
 	grid.cellIDs = cellIDs
 	grid.idToCell = idToCell
 	copied := make([]*Cell, len(idToCell))
 	copy(copied, idToCell)
 	grid.idToCellLF.Store(&copied)
-	grid.prevRaw = snapshot.PrevRaw
 	grid.dirty = snapshot.Dirty || (snapshot.Settled && unassigned)
 	grid.pendingTick = snapshot.PendingTick
 	grid.pending = snapshot.Pending

@@ -18,7 +18,8 @@ before/after facts of that observation are yielded as one *[10]float64:
 	[3] prior count [4] prior mean  [5] prior m2
 	[6] value       [7] delta       [8] variance  [9] dispersion
 
-Variance is m2 / (count - 1); it is only defined when count > 1.
+Variance is m2 / (count - 1); it is only defined when count > 1. Before
+that, variance and dispersion are left at zero (undefined), never 0/0.
 */
 type Estimator struct {
 	*core.PrimitiveError
@@ -57,8 +58,17 @@ func (op *Estimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 			op.out[2] = op.m2
 			op.out[6] = value
 			op.out[7] = delta
-			op.out[8] = op.m2 / (op.count - 1)
-			op.out[9] = math.Sqrt(op.out[8])
+			op.out[8] = 0
+			op.out[9] = 0
+
+			// m2 / (count - 1) is 0/0 on the first observation: the sample
+			// variance does not exist yet, so it stays unwritten (zero, the
+			// undefined-dispersion contract Divide and the publish gates
+			// read) instead of leaking NaN into every downstream scale.
+			if op.count > 1 {
+				op.out[8] = op.m2 / (op.count - 1)
+				op.out[9] = math.Sqrt(op.out[8])
+			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return

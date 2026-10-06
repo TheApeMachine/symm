@@ -19,6 +19,10 @@ interface ImpulseMapVizProps {
 		activity: number;
 		members?: number;
 	}>;
+	/** Backend grid cell count (grid_cells); preferred over the node count. */
+	gridCells?: number;
+	/** Regions in the grid's last committed partition (grid_regions). */
+	gridRegions?: number;
 	className?: string;
 }
 
@@ -26,6 +30,8 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	data = [],
 	regions: _regions = [],
 	activeEvents = [],
+	gridCells,
+	gridRegions,
 	className,
 }) => {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -538,7 +544,12 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	}, [dimensions.width, dimensions.height, renderScene]);
 
 	// Count metrics and formed regions
-	const metricCount = data.length > 0 ? data.length : nodesRef.current.length;
+	const metricCount =
+		gridCells !== undefined && gridCells > 0
+			? gridCells
+			: data.length > 0
+				? data.length
+				: nodesRef.current.length;
 	const uniqueClusters = new Set<number>();
 	for (const node of data) {
 		if (node.cluster != null && Number(node.cluster) > 0) {
@@ -550,7 +561,12 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			uniqueClusters.add(Number(r.id));
 		}
 	}
-	const regionCount = _regions.length > 0 ? _regions.length : uniqueClusters.size;
+	const regionCount =
+		gridRegions !== undefined
+			? gridRegions
+			: _regions.length > 0
+				? _regions.length
+				: uniqueClusters.size;
 
 	return (
 		<div className={cn("flex flex-col w-full h-full", className)}>

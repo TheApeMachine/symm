@@ -43,6 +43,8 @@ type ReportSnapshot struct {
 	Contrast     float64
 	Tokens       []byte
 	RegionTokens [][]byte
+	GridCells    int // Grid cells (unique metric labels) learned so far.
+	GridRegions  int // Regions in the grid's last committed partition.
 	MarkA        int64
 	MarkB        int64
 	MarkC        int64
@@ -325,6 +327,14 @@ func (reporter *Reporter) Metrics(snapshot ReportSnapshot) []*data.Metric {
 	if tokenLength == 0 {
 		tokenLength = len(snapshot.Tokens)
 	}
+
+	gridCellsMetric := data.NewMetric("grid_cells", float64(snapshot.GridCells), data.UnitCount, data.TimescaleSession)
+	gridCellsMetric.Standardized = float64(snapshot.GridCells)
+	metrics = append(metrics, gridCellsMetric)
+
+	gridRegionsMetric := data.NewMetric("grid_regions", float64(snapshot.GridRegions), data.UnitCount, data.TimescaleSession)
+	gridRegionsMetric.Standardized = float64(snapshot.GridRegions)
+	metrics = append(metrics, gridRegionsMetric)
 
 	precursorMetric := data.NewMetric("precursor_length", float64(tokenLength), data.UnitCount, data.TimescaleEvent)
 	precursorMetric.Standardized = float64(tokenLength)

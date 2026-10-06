@@ -409,8 +409,9 @@ func (measurement *Measurement) valid(fields ...string) *Measurement {
 		}
 	}
 
-	// metadata and peers are optional unless valid("metadata") /
-	// valid("peers") is requested explicitly.
+	// metrics, metadata and peers are optional unless requested explicitly
+	// (valid("metrics"), ...). A runtime join carries only Peers, and an
+	// arena-allocated Measurement starts with a nil metrics slice.
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"ID":        measurement.ID,
 		"epoch":     measurement.Epoch,
@@ -423,7 +424,6 @@ func (measurement *Measurement) valid(fields ...string) *Measurement {
 		"from":      measurement.From,
 		"maturity":  measurement.maturity,
 		"snr":       measurement.snr,
-		"metrics":   measurement.metrics,
 	})); err != nil {
 		measurement.err = errors.Join(measurement.err, err)
 	}

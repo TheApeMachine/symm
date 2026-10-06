@@ -139,7 +139,7 @@ func signal(writer *tables.Writer, epoch int64, source string, tick int64, scale
 	measurement := data.NewMeasurement(epoch, "BTC/USD", source, tick*10, tick)
 	measurement.At = time.Now().UTC()
 	measurement.From = measurement.At
-	measurement.Write(data.NewMetric("value", scale*(1.5+float64(tick)*0.1), data.UnitCount, data.TimescaleTick))
+	measurement.Write(data.NewMetric(source+"_value", scale*(1.5+float64(tick)*0.1), data.UnitCount, data.TimescaleTick))
 	writer.Add("measurements", data.Publication{Measurement: measurement})
 }
 
@@ -463,10 +463,10 @@ func TestTraining_GridCheckpointRoundtrip(t *testing.T) {
 		training := &Training{grid: store.NewGrid()}
 
 		base := map[string]float64{
-			store.CellKey("BTC/USD", "cvd", "value"):       1.0,
-			store.CellKey("BTC/USD", "hawkes", "value"):    2.0,
-			store.CellKey("BTC/USD", "depthflow", "value"): 3.0,
-			store.CellKey("BTC/USD", "liquidity", "value"): 4.0,
+			store.CellKey("cvd_value"):       1.0,
+			store.CellKey("hawkes_value"):    2.0,
+			store.CellKey("depthflow_value"): 3.0,
+			store.CellKey("liquidity_value"): 4.0,
 		}
 
 		for tick := int64(1); tick <= 8; tick++ {
@@ -481,10 +481,10 @@ func TestTraining_GridCheckpointRoundtrip(t *testing.T) {
 		So(training.grid.IsSettled(), ShouldBeTrue)
 
 		lit := map[string]float64{
-			store.CellKey("BTC/USD", "cvd", "value"):       2.5,
-			store.CellKey("BTC/USD", "hawkes", "value"):    3.5,
-			store.CellKey("BTC/USD", "depthflow", "value"): 4.5,
-			store.CellKey("BTC/USD", "liquidity", "value"): 5.5,
+			store.CellKey("cvd_value"):       2.5,
+			store.CellKey("hawkes_value"):    3.5,
+			store.CellKey("depthflow_value"): 4.5,
+			store.CellKey("liquidity_value"): 5.5,
 		}
 		before := training.grid.LitRegions(lit)
 		So(len(before), ShouldBeGreaterThan, 0)
@@ -921,8 +921,8 @@ func TestTraining_WaitNeverEnters(t *testing.T) {
 
 		for tick := int64(1); tick <= 16; tick++ {
 			training.grid.Update(tick, map[string]float64{
-				store.CellKey("BTC/USD", "cvd", "value"):    1.5 + float64(tick)*0.1,
-				store.CellKey("BTC/USD", "hawkes", "value"): 3.0 + float64(tick)*0.2,
+				store.CellKey("cvd_value"):    1.5 + float64(tick)*0.1,
+				store.CellKey("hawkes_value"): 3.0 + float64(tick)*0.2,
 			})
 		}
 
@@ -934,7 +934,7 @@ func TestTraining_WaitNeverEnters(t *testing.T) {
 			measurement.At = time.Now().UTC()
 			measurement.From = measurement.At
 			return measurement.Write(
-				data.NewMetric("value", 2.0, data.UnitCount, data.TimescaleTick),
+				data.NewMetric("cvd_value", 2.0, data.UnitCount, data.TimescaleTick),
 			)
 		}
 
@@ -1365,6 +1365,53 @@ func TestTraining_RestoreGridUnconfiguredStorage(t *testing.T) {
 			restored, err := training.restoreGrid()
 			So(err, ShouldBeNil)
 			So(restored, ShouldBeFalse)
+		})
+	})
+}
+
+func TestChannelsFrom_KeysByMetricLabel(t *testing.T) {
+	Convey("Given the same metric from two symbols and two producers", t, func() {
+		at := time.Now().UTC()
+		write := func(label, source string, raw float64) *data.Measurement {
+			measurement := data.NewMeasurement(1, label, source, 1, 1)
+			measurement.At = at
+			measurement.From = at
+			return measurement.Write(
+				data.NewMetric("spread", raw, data.UnitCount, data.TimescaleTick),
+			)
+		}
+
+		channels := channelsFrom(
+			write("BTC/USD", "liquidity", 1),
+			write("ETH/USD", "pumpdump", 2),
+		)
+
+		Convey("They map onto one cell keyed by the metric label alone", func() {
+			So(channels, ShouldHaveLength, 1)
+			So(channels, ShouldContainKey, store.CellKey("spread"))
+		})
+	})
+}
+
+func TestChannelsFrom_CollapsesPeerQualifiedFacts(t *testing.T) {
+	Convey("Given one correlation fact published against three peer symbols", t, func() {
+		at := time.Now().UTC()
+		measurement := data.NewMeasurement(1, "BTC/USD", "correlation", 1, 1)
+		measurement.At = at
+		measurement.From = at
+		measurement = measurement.Write(
+			data.NewMetric("signed_correlation@ETH/USD", 0.2, data.UnitCorrelation, data.TimescaleRollingWindow),
+			data.NewMetric("signed_correlation@SOL/USD", 0.4, data.UnitCorrelation, data.TimescaleRollingWindow),
+			data.NewMetric("signed_correlation@XRP/USD", 0.9, data.UnitCorrelation, data.TimescaleRollingWindow),
+			data.NewMetric("cohort_peer_count", 3, data.UnitCount, data.TimescaleInstantaneous),
+		)
+
+		channels := channelsFrom(measurement)
+
+		Convey("They land in one fact cell holding the mean across peers", func() {
+			So(channels, ShouldHaveLength, 2)
+			So(channels["signed_correlation"], ShouldAlmostEqual, 0.5, 1e-12)
+			So(channels["cohort_peer_count"], ShouldEqual, 3)
 		})
 	})
 }

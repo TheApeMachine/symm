@@ -29,6 +29,18 @@ func TestMomentsNext(t *testing.T) {
 			So(last[9], ShouldAlmostEqual, math.Sqrt(32.0/7.0), 1e-12)
 		})
 
+		Convey("leaves variance and dispersion undefined (zero) on the first observation", func() {
+			fresh := NewEstimator()
+			out := tests.CollectSeq[[10]float64](fresh.Next(tests.SliceToSeq([]float64{7.0})))
+
+			So(fresh.Error(), ShouldBeNil)
+			So(len(out), ShouldEqual, 1)
+			So(out[0][0], ShouldEqual, 1)
+			So(out[0][1], ShouldEqual, 7.0)
+			So(out[0][8], ShouldEqual, 0)
+			So(out[0][9], ShouldEqual, 0)
+		})
+
 		Convey("nil arrival records ErrShape", func() {
 			fresh := NewEstimator()
 			nilSeq := func(yield func(unsafe.Pointer) bool) {

@@ -92,6 +92,27 @@ func TestArenaPriorTransfer(t *testing.T) {
 			So(priceOf(btc2).center, ShouldEqual, 105)
 		})
 
+		Convey("a Measurement that fails on an undefined Raw does not replace the held prior", func() {
+			first := owner.NewMeasurement(1, "BTC/USD", "test-producer", 1, 1, nil)
+			stamp(first, 1)
+			first.Write(NewMetric("price", 100, UnitCurrency, TimescaleInstantaneous))
+			So(first.Error(), ShouldBeNil)
+
+			broken := owner.NewMeasurement(1, "BTC/USD", "test-producer", 2, 2, nil)
+			stamp(broken, 2)
+			broken.Write(NewMetric("price", math.NaN(), UnitCurrency, TimescaleInstantaneous))
+			So(broken.Error(), ShouldNotBeNil)
+			So(strings.Contains(broken.Error().Error(), "raw is required"), ShouldBeTrue)
+
+			next := owner.NewMeasurement(1, "BTC/USD", "test-producer", 3, 3, nil)
+			stamp(next, 3)
+			So(next.samples, ShouldEqual, 1)
+			next.Write(NewMetric("price", 110, UnitCurrency, TimescaleInstantaneous))
+			So(next.Error(), ShouldBeNil)
+			So(next.samples, ShouldEqual, 2)
+			So(priceOf(next).center, ShouldEqual, 105)
+		})
+
 		Convey("nil metadata and peers do not fail Require", func() {
 			measurement := owner.NewMeasurement(1, "BTC/USD", "test-producer", 1, 1, nil)
 			stamp(measurement, 1)
@@ -232,6 +253,23 @@ func TestArenaPriorReset(t *testing.T) {
 			second.Write(NewMetric("price", 120, UnitCurrency, TimescaleInstantaneous))
 			So(second.samples, ShouldEqual, 2)
 			So(priceOf(second).center, ShouldEqual, 110)
+		})
+	})
+}
+
+func TestArenaMeasurement_MetricLessWrite(t *testing.T) {
+	Convey("Given an arena Measurement that carries only peers (a runtime join)", t, func() {
+		owner := NewArenaOwner("join", 16)
+		defer owner.Close()
+
+		join := owner.NewMeasurement(1, "BTC/USD", "runtime:join", 1, 1, nil)
+		join.At = time.Now().UTC()
+		join.From = join.At
+
+		Convey("Write finalizes it without a metrics-required error", func() {
+			join.Write()
+			So(join.locked(), ShouldBeTrue)
+			So(join.Error(), ShouldBeNil)
 		})
 	})
 }
