@@ -17,6 +17,17 @@ import (
 	"github.com/theapemachine/symm/tests/market"
 )
 
+func metricRaw(measurement *data.Measurement, key string) float64 {
+	return data.Pull(measurement.Read(key)).Metric.Raw
+}
+
+func tradeWithPrice(epoch int64, label string, tick int64, exact *decimal.Decimal) *data.Measurement {
+	trade := data.NewMeasurement(epoch, label, "spot:trade", tick, tick)
+	return trade.Write(
+		data.NewExactMetric("price", exact, data.UnitPrice, data.TimescaleTick),
+	)
+}
+
 /*
 tradeTape turns synthetic market legs into stored spot:trade measurements of one
 epoch, numbering ticks and sequence indices in tape order.
@@ -26,20 +37,14 @@ func tradeTape(t *testing.T, epoch int64, legs ...[]*data.Measurement) []*data.M
 
 	for _, leg := range legs {
 		for _, frame := range leg {
-			raw := frame.GetMetric("price").Raw
+			raw := metricRaw(frame, "price")
 			exact, err := decimal.NewFromString(strconv.FormatFloat(raw, 'f', 8, 64))
 
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			trade := data.NewMeasurement("spot:trade", map[string]data.Metric{
-				"price": {Raw: exact.Float64(), Exact: exact},
-			})
-			trade.Epoch = epoch
-			trade.Label = frame.Label
-			trade.Tick = int64(len(tape) + 1)
-			trade.SeqIdx = trade.Tick
+			trade := tradeWithPrice(epoch, frame.Label, int64(len(tape)+1), exact)
 			trade.At = frame.At
 			tape = append(tape, trade)
 		}
@@ -61,8 +66,8 @@ func drawUp(tape []*data.Measurement) (int64, int64) {
 
 	for left := range tape {
 		for right := left + 1; right < len(tape); right++ {
-			pLeft := tape[left].GetMetric("price").Raw
-			pRight := tape[right].GetMetric("price").Raw
+			pLeft := metricRaw(tape[left], "price")
+			pRight := metricRaw(tape[right], "price")
 
 			if pLeft <= 0 {
 				continue
@@ -156,9 +161,9 @@ func TestDetector_Scan(t *testing.T) {
 				So(detection, ShouldNotBeNil)
 
 				low, high := drawUp(tape)
-				So(detection.GetMetric("LowTick").Raw, ShouldEqual, float64(low))
-				So(detection.GetMetric("HighTick").Raw, ShouldEqual, float64(high))
-				So(detection.GetMetric("HighPrice").Raw, ShouldBeGreaterThan, detection.GetMetric("LowPrice").Raw)
+				So(metricRaw(detection, "low_tick"), ShouldEqual, float64(low))
+				So(metricRaw(detection, "high_tick"), ShouldEqual, float64(high))
+				So(metricRaw(detection, "high_price"), ShouldBeGreaterThan, metricRaw(detection, "low_price"))
 			})
 		})
 
@@ -176,14 +181,7 @@ func TestDetector_Scan(t *testing.T) {
 				exact, pErr := decimal.NewFromString(pStr)
 				So(pErr, ShouldBeNil)
 
-				m := data.NewMeasurement("spot:trade", map[string]data.Metric{
-					"price": {Raw: exact.Float64(), Exact: exact},
-				})
-				m.Epoch = 100
-				m.Label = "BTC/USD"
-				m.Tick = int64(i + 1)
-				m.SeqIdx = m.Tick
-				tape[i] = m
+				tape[i] = tradeWithPrice(100, "BTC/USD", int64(i+1), exact)
 			}
 
 			detector.Scan(func(yield func(*data.Measurement) bool) {
@@ -201,10 +199,10 @@ func TestDetector_Scan(t *testing.T) {
 				So(detection, ShouldNotBeNil)
 
 				// Must choose the 100 -> 250 run, NOT the 40 -> 50 bounce!
-				So(detection.GetMetric("LowPrice").Raw, ShouldEqual, 100)
-				So(detection.GetMetric("HighPrice").Raw, ShouldEqual, 250)
-				So(detection.GetMetric("LowTick").Raw, ShouldEqual, 1)
-				So(detection.GetMetric("HighTick").Raw, ShouldEqual, 6)
+				So(metricRaw(detection, "low_price"), ShouldEqual, 100)
+				So(metricRaw(detection, "high_price"), ShouldEqual, 250)
+				So(metricRaw(detection, "low_tick"), ShouldEqual, 1)
+				So(metricRaw(detection, "high_tick"), ShouldEqual, 6)
 			})
 		})
 
@@ -221,14 +219,7 @@ func TestDetector_Scan(t *testing.T) {
 				exact, pErr := decimal.NewFromString(pStr)
 				So(pErr, ShouldBeNil)
 
-				m := data.NewMeasurement("spot:trade", map[string]data.Metric{
-					"price": {Raw: exact.Float64(), Exact: exact},
-				})
-				m.Epoch = 100
-				m.Label = "BTC/USD"
-				m.Tick = int64(i + 1)
-				m.SeqIdx = m.Tick
-				tape[i] = m
+				tape[i] = tradeWithPrice(100, "BTC/USD", int64(i+1), exact)
 			}
 
 			detector.Scan(func(yield func(*data.Measurement) bool) {
@@ -245,10 +236,10 @@ func TestDetector_Scan(t *testing.T) {
 				detection := popMeasurement(storeTee)
 				So(detection, ShouldNotBeNil)
 
-				So(detection.GetMetric("LowPrice").Raw, ShouldEqual, 50)
-				So(detection.GetMetric("HighPrice").Raw, ShouldEqual, 250)
-				So(detection.GetMetric("LowTick").Raw, ShouldEqual, 6)
-				So(detection.GetMetric("HighTick").Raw, ShouldEqual, 10)
+				So(metricRaw(detection, "low_price"), ShouldEqual, 50)
+				So(metricRaw(detection, "high_price"), ShouldEqual, 250)
+				So(metricRaw(detection, "low_tick"), ShouldEqual, 6)
+				So(metricRaw(detection, "high_tick"), ShouldEqual, 10)
 			})
 		})
 
@@ -266,14 +257,7 @@ func TestDetector_Scan(t *testing.T) {
 				exact, pErr := decimal.NewFromString(pStr)
 				So(pErr, ShouldBeNil)
 
-				m := data.NewMeasurement("spot:trade", map[string]data.Metric{
-					"price": {Raw: exact.Float64(), Exact: exact},
-				})
-				m.Epoch = 100
-				m.Label = "SWEAT/USD"
-				m.Tick = int64(i + 1)
-				m.SeqIdx = m.Tick
-				tape[i] = m
+				tape[i] = tradeWithPrice(100, "SWEAT/USD", int64(i+1), exact)
 			}
 
 			detector.Scan(func(yield func(*data.Measurement) bool) {
@@ -291,10 +275,10 @@ func TestDetector_Scan(t *testing.T) {
 				So(detection, ShouldNotBeNil)
 
 				So(detection.Label, ShouldEqual, "SWEAT/USD")
-				So(detection.GetMetric("LowPrice").Raw, ShouldEqual, 0.00042)
-				So(detection.GetMetric("HighPrice").Raw, ShouldEqual, 0.00105)
-				So(detection.GetMetric("LowTick").Raw, ShouldEqual, 1)
-				So(detection.GetMetric("HighTick").Raw, ShouldEqual, 12)
+				So(metricRaw(detection, "low_price"), ShouldEqual, 0.00042)
+				So(metricRaw(detection, "high_price"), ShouldEqual, 0.00105)
+				So(metricRaw(detection, "low_tick"), ShouldEqual, 1)
+				So(metricRaw(detection, "high_tick"), ShouldEqual, 12)
 			})
 		})
 
@@ -310,14 +294,7 @@ func TestDetector_Scan(t *testing.T) {
 					// 50 -> 100 run for each symbol and epoch
 					for _, pStr := range []string{"60", "50", "70", "90", "100", "80"} {
 						exact, _ := decimal.NewFromString(pStr)
-						m := data.NewMeasurement("spot:trade", map[string]data.Metric{
-							"price": {Raw: exact.Float64(), Exact: exact},
-						})
-						m.Epoch = ep
-						m.Label = sym
-						m.Tick = tick
-						m.SeqIdx = tick
-						multiTape = append(multiTape, m)
+						multiTape = append(multiTape, tradeWithPrice(ep, sym, tick, exact))
 						tick++
 					}
 				}
@@ -337,8 +314,8 @@ func TestDetector_Scan(t *testing.T) {
 				for i := 0; i < 4; i++ {
 					det := popMeasurement(storeTee)
 					So(det, ShouldNotBeNil)
-					So(det.GetMetric("LowPrice").Raw, ShouldEqual, 50)
-					So(det.GetMetric("HighPrice").Raw, ShouldEqual, 100)
+					So(metricRaw(det, "low_price"), ShouldEqual, 50)
+					So(metricRaw(det, "high_price"), ShouldEqual, 100)
 				}
 			})
 		})
@@ -348,14 +325,7 @@ func TestDetector_Scan(t *testing.T) {
 			tape := make([]*data.Measurement, len(prices))
 			for i, pStr := range prices {
 				exact, _ := decimal.NewFromString(pStr)
-				m := data.NewMeasurement("spot:trade", map[string]data.Metric{
-					"price": {Raw: exact.Float64(), Exact: exact},
-				})
-				m.Epoch = 100
-				m.Label = "BTC/USD"
-				m.Tick = int64(i + 1)
-				m.SeqIdx = m.Tick
-				tape[i] = m
+				tape[i] = tradeWithPrice(100, "BTC/USD", int64(i+1), exact)
 			}
 
 			detector.Scan(func(yield func(*data.Measurement) bool) {
@@ -372,12 +342,8 @@ func TestDetector_Scan(t *testing.T) {
 		})
 
 		Convey("When a trade carries no exact price", func() {
-			trade := data.NewMeasurement("spot:trade", map[string]data.Metric{
-				"price": {Raw: 60000},
-			})
-			trade.Epoch = 100
-			trade.Label = "BTC/USD"
-			trade.Tick = 1
+			trade := data.NewMeasurement(100, "BTC/USD", "spot:trade", 1, 1)
+			trade.Write(data.NewMetric("price", 60000, data.UnitPrice, data.TimescaleTick))
 
 			detector.Scan(func(yield func(*data.Measurement) bool) {
 				yield(trade)
@@ -442,7 +408,7 @@ func TestDetector_FrictionGating(t *testing.T) {
 				So(detection, ShouldNotBeNil)
 				So(detection.Label, ShouldEqual, "BTC/USD")
 				So(detection.Epoch, ShouldEqual, 100)
-				So(detection.GetMetric("HighPrice").Raw, ShouldBeGreaterThan, detection.GetMetric("LowPrice").Raw)
+				So(metricRaw(detection, "high_price"), ShouldBeGreaterThan, metricRaw(detection, "low_price"))
 			})
 		})
 
