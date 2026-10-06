@@ -112,10 +112,10 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 }
 
 /*
-Step binds the arriving quote to the symbol's pipeline and writes the
+Step binds the arriving trade to the symbol's pipeline and writes the
 published facts into a fresh Measurement allocated from the signal's own
-arena. An arrival without a positive, finite quoted price yields no
-measurement. Facts a stage left unwritten, or that are not finite, are
+arena. A trade frame that cannot be read or lacks price is an error; a trade
+without a positive, finite price yields no measurement. Facts a stage left unwritten, or that are not finite, are
 omitted, never fabricated as zero.
 */
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
@@ -128,13 +128,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	price := 0.0
+	price, err := tradeValue(prior, "price")
 
-	for _, key := range []string{"last_price", "last", "price"} {
-		if entry := data.Pull(prior.Read(key)); entry.Err == nil && entry.Metric.Label != "" && entry.Metric.Raw > 0 {
-			price = entry.Metric.Raw
-			break
-		}
+	if err != nil {
+		signal.Error(err)
+		return nil
 	}
 
 	if price <= 0 || math.IsInf(price, 0) || math.IsNaN(price) {
@@ -158,20 +156,32 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	for range pipe.pipeline.Next(data.NewValue(adapter)) {
 	}
 
-	if err := errors.Join(adapter.Error(), pipe.pipeline.Error()); err != nil {
+	if err := errors.Join(
+		adapter.Error(), pipe.pipeline.Error(),
+	); err != nil {
 		signal.Error(err)
 		return nil
 	}
 
-	var metadata []data.StringEntry
+	var metadata []*data.StringEntry
 
 	if channel := prior.Meta("channel"); channel != "" {
-		metadata = append(metadata, data.StringEntry{Key: "channel", Value: channel})
+		metadata = append(metadata, &data.StringEntry{
+			Key:   "channel",
+			Value: channel,
+		})
 	}
 
 	out := signal.arena.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, []*data.Measurement{prior}, metadata...,
+		prior.Epoch,
+		prior.Label,
+		signal.Name(),
+		prior.SeqIdx,
+		prior.Tick,
+		[]*data.Measurement{prior},
+		metadata...,
 	)
+
 	out.At = prior.At
 	out.From = prior.At
 
@@ -186,7 +196,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	slices.Sort(keys)
-	metrics := make([]data.Metric, 0, len(keys))
+	metrics := make([]*data.Metric, 0, len(keys))
 
 	for _, key := range keys {
 		fact, _, _ := strings.Cut(key, "@")
@@ -203,4 +213,25 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	return out.Write(metrics...)
+}
+
+/*
+tradeValue reads one required trade field from a trade frame. A read failure
+or an absent field is an error: every trade frame carries price and qty, so a
+frame without them is broken upstream and must not be silently skipped.
+*/
+func tradeValue(prior *data.Measurement, key string) (float64, error) {
+	entry := data.Pull(prior.Read(key))
+
+	if entry != nil && entry.Err != nil {
+		return 0, entry.Err
+	}
+
+	if entry == nil || entry.Metric == nil || entry.Metric.Label != key {
+		return 0, errnie.Err(
+			errnie.NotAcceptable, "[correlation] trade frame is missing "+key, nil,
+		)
+	}
+
+	return entry.Metric.Raw, nil
 }

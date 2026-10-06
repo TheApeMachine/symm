@@ -68,6 +68,7 @@ type TrainedFragment struct {
 	ExitPrice  float64         `json:"exit_price"`
 	Magnitude  float64         `json:"magnitude"`
 	Direction  string          `json:"direction"`
+	Class      string          `json:"class"`
 	Tokens     []string        `json:"tokens"`
 	Points     []FragmentPoint `json:"points"`
 	EntryIdx   int             `json:"entry_idx"`
@@ -75,10 +76,15 @@ type TrainedFragment struct {
 	LearnedAt  time.Time       `json:"learned_at"`
 }
 
+/*
+FragmentPoint is one chart point of a trained fragment. Tick is the trade's
+market tick (not its sequence index); the wire name stays "seq" for the
+frontend contract.
+*/
 type FragmentPoint struct {
 	X    int     `json:"x"`
 	Y    float64 `json:"y"`
-	Seq  int64   `json:"seq"`
+	Tick int64   `json:"seq"`
 	Time int64   `json:"time"`
 }
 

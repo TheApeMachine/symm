@@ -19,7 +19,8 @@ func TrainingPrice(ctx context.Context) *broker.Price {
 }
 
 // TrainingTape expands alternating opportunity legs into stable volume regimes.
-// The repetitions and one-cent spread specify synthetic data, not detector policy.
+// The repetitions specify synthetic data, not detector policy. Each frame
+// carries one spot:trade peer followed by the opposed signal peers.
 func TrainingTape(legs int) []*data.Measurement {
 	base := ImpulseTape("BTC/USD", legs)
 	var frames []*data.Measurement
@@ -37,72 +38,42 @@ func TrainingTape(legs int) []*data.Measurement {
 		for repeat := range 32 {
 			sequence := int64(len(frames) + 1)
 
-			quoteMeta := []data.StringEntry{
-				{Key: "venue", Value: "true"},
-				{Key: "volume-unit", Value: "base"},
-				{Key: "owner", Value: "quote"},
-				{Key: "channel", Value: "ticker"},
+			// The pipeline carries spot:trade frames only: exact price, qty,
+			// and aggressor side. No touch is fabricated here; a consumer
+			// that needs one reads a seeded BookManager.
+			qty := data.Pull(sourcePeers[0].Read("qty")).Metric
+			side := "buy"
+
+			if repeat%2 != 0 {
+				side = "sell"
 			}
 
-			bidVal := value
-			bidExact := decimal.NewFromFloat64(bidVal)
-			bidMetric := data.NewExactMetric("bid", bidExact, data.UnitPrice, data.TimescaleInstantaneous)
-			bidMetric.Standardized = bidVal
-
-			askVal := value + 0.01
-			askExact := decimal.NewFromFloat64(askVal)
-			askMetric := data.NewExactMetric("ask", askExact, data.UnitPrice, data.TimescaleInstantaneous)
-			askMetric.Standardized = askVal
-
-			quote := arena.NewMeasurement(
-				1,
-				"BTC/USD",
-				"quote",
-				sequence,
-				sequence,
-				nil,
-				quoteMeta...,
+			priceMetric := data.NewExactMetric(
+				"price", decimal.NewFromFloat64(value), data.UnitPrice, data.TimescaleInstantaneous,
 			)
-			quote.At = source.At
-			quote.From = source.From
-			quote.Write(bidMetric, askMetric)
-
-			var tradeMetrics []data.Metric
-
-			for entry := range sourcePeers[0].Read() {
-				tradeMetrics = append(tradeMetrics, entry.Metric)
-			}
-
-			priceExact := decimal.NewFromFloat64(value)
-			priceMetric := data.NewExactMetric("price", priceExact, data.UnitPrice, data.TimescaleInstantaneous)
 			priceMetric.Standardized = value
-			tradeMetrics = append(tradeMetrics, priceMetric)
 
-			var tradeMeta []data.StringEntry
-
-			for _, key := range []string{"venue", "volume-unit", "channel"} {
-				if val := sourcePeers[0].Meta(key); val != "" {
-					tradeMeta = append(tradeMeta, data.StringEntry{Key: key, Value: val})
-				}
-			}
+			qtyMetric := data.NewExactMetric("qty", qty.Exact, data.UnitQuantity, data.TimescaleInstantaneous)
+			qtyMetric.Standardized = qty.Standardized
 
 			trade := arena.NewMeasurement(
 				1,
 				"BTC/USD",
-				sourcePeers[0].Source,
+				"spot:trade",
 				sequence,
 				sequence,
 				nil,
-				tradeMeta...,
+				&data.StringEntry{Key: "type", Value: "trade"},
+				&data.StringEntry{Key: "side", Value: side},
 			)
 			trade.At = source.At
 			trade.From = source.From
-			trade.Write(tradeMetrics...)
+			trade.Write(priceMetric, qtyMetric)
 
-			peers := []*data.Measurement{quote, trade}
+			peers := []*data.Measurement{trade}
 
 			for _, oldPeer := range sourcePeers[1:] {
-				var peerMetrics []data.Metric
+				var peerMetrics []*data.Metric
 
 				for entry := range oldPeer.Read() {
 					metric := entry.Metric
@@ -129,7 +100,7 @@ func TrainingTape(legs int) []*data.Measurement {
 				peers = append(peers, extraPeer)
 			}
 
-			frameMeta := []data.StringEntry{
+			frameMeta := []*data.StringEntry{
 				{Key: "owner", Value: "training"},
 				{Key: "fixture", Value: fmt.Sprint(sequence)},
 			}
@@ -137,8 +108,8 @@ func TrainingTape(legs int) []*data.Measurement {
 			prevInput := data.NewMetric("previous_input", float64(sequence-1), data.UnitCount, data.TimescaleInstantaneous)
 			prevInput.Standardized = float64(sequence - 1)
 
-			inputCount := data.NewMetric("input_count", 4, data.UnitCount, data.TimescaleInstantaneous)
-			inputCount.Standardized = 4
+			inputCount := data.NewMetric("input_count", float64(len(peers)), data.UnitCount, data.TimescaleInstantaneous)
+			inputCount.Standardized = float64(len(peers))
 
 			impulseVer := data.NewMetric("impulse_version", grid.FormatVersion, data.UnitDimensionless, data.TimescaleInstantaneous)
 			impulseVer.Standardized = grid.FormatVersion

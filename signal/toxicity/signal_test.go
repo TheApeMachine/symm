@@ -3,12 +3,14 @@ package toxicity_test
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -18,9 +20,9 @@ import (
 
 func trade(at time.Time, seq int64, side string, price, qty float64) *data.Measurement {
 	prior := data.NewMeasurement(
-		1, "BTC/USD", "ingress", seq, seq,
-		data.StringEntry{Key: "side", Value: side},
-		data.StringEntry{Key: "channel", Value: "trade"},
+		1, "BTC/USD", "spot:trade", seq, seq,
+		&data.StringEntry{Key: "type", Value: "trade"},
+		&data.StringEntry{Key: "side", Value: side},
 	)
 	prior.At = at
 	prior.From = at
@@ -190,5 +192,86 @@ func TestToxicitySignal(t *testing.T) {
 			So(instrument.Step(trade(now, 99, "buy", 0.0, 1.0)), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
 		})
+
+		Convey("The touch comes only from the book manager, never from the trade frame", func() {
+			touch(books, now, "bid-src", 50000.0, 10.0, "ask-src", 50002.0, 4.0)
+
+			prior := data.NewMeasurement(
+				1, "BTC/USD", "spot:trade", 120, 120,
+				&data.StringEntry{Key: "type", Value: "trade"},
+				&data.StringEntry{Key: "side", Value: "buy"},
+			)
+			prior.At = now
+			prior.From = now
+			prior = prior.Write(
+				data.NewMetric("price", 50002.0, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("qty", 1.0, data.UnitQuantity, data.TimescaleInstantaneous),
+				data.NewMetric("bid", 1.0, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("ask", 2.0, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("bid_qty", 99.0, data.UnitQuantity, data.TimescaleInstantaneous),
+				data.NewMetric("ask_qty", 99.0, data.UnitQuantity, data.TimescaleInstantaneous),
+			)
+
+			res := instrument.Step(prior)
+			So(res, ShouldNotBeNil)
+			So(instrument.Error(), ShouldBeNil)
+			So(metricValue(res, "best_price:bid"), ShouldEqual, 50000.0)
+			So(metricValue(res, "best_price:ask"), ShouldEqual, 50002.0)
+			So(metricValue(res, "touch_quantity:bid"), ShouldEqual, 10.0)
+			So(metricValue(res, "touch_quantity:ask"), ShouldEqual, 4.0)
+		})
+
+		Convey("A trade for a symbol without a book yields no measurement and stays healthy", func() {
+			prior := data.NewMeasurement(
+				1, "SOL/USD", "spot:trade", 130, 130,
+				&data.StringEntry{Key: "type", Value: "trade"},
+				&data.StringEntry{Key: "side", Value: "buy"},
+			)
+			prior.At = now
+			prior.From = now
+
+			So(instrument.Step(prior.Write(
+				data.NewMetric("price", 150.0, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("qty", 1.0, data.UnitQuantity, data.TimescaleInstantaneous),
+			)), ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
+		})
+
+		Convey("A crossed touch is corrupt book state: it halts with an Internal error naming the symbol", func() {
+			touch(books, now, "bid-x", 50010.0, 1.0, "ask-x", 50000.0, 1.0)
+
+			So(instrument.Step(trade(now, 150, "buy", 50005.0, 1.0)), ShouldBeNil)
+
+			err := instrument.Error()
+			So(err, ShouldNotBeNil)
+			So(errnie.IsInternal(err), ShouldBeTrue)
+			So(err.Error(), ShouldContainSubstring, "crossed or locked")
+			So(err.Error(), ShouldContainSubstring, "BTC/USD")
+			So(strings.Contains(err.Error(), "book manager is required"), ShouldBeFalse)
+			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
+		})
+
+		Convey("A trade frame without qty is an error, not a silent drop", func() {
+			touch(books, now, "bid-1", 50000.0, 10.0, "ask-1", 50002.0, 10.0)
+
+			prior := data.NewMeasurement(
+				1, "BTC/USD", "spot:trade", 140, 140,
+				&data.StringEntry{Key: "type", Value: "trade"},
+				&data.StringEntry{Key: "side", Value: "buy"},
+			)
+			prior.At = now
+			prior.From = now
+
+			So(instrument.Step(prior.Write(
+				data.NewMetric("price", 50001.0, data.UnitPrice, data.TimescaleInstantaneous),
+			)), ShouldBeNil)
+			So(instrument.Error(), ShouldNotBeNil)
+		})
+	})
+
+	Convey("A toxicity signal constructed without a book manager fails with an error", t, func() {
+		instrument := toxicity.NewSignal(context.Background(), data.NewArenaOwner("toxicity", 16), nil)
+		So(instrument.Error(), ShouldNotBeNil)
+		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
 	})
 }

@@ -69,8 +69,54 @@ func TestReporter(t *testing.T) {
 			So(metricMap["trading"], ShouldEqual, 1.0)
 			So(metricMap["action"], ShouldEqual, 1.0)
 			So(metricMap["excursion_type"], ShouldEqual, 1.0)
+			So(metricMap["fragments_up"], ShouldEqual, 0)
+			So(metricMap["fragments_up_friction"], ShouldEqual, 0)
+			So(metricMap["fragments_down"], ShouldEqual, 0)
+			So(metricMap["fragments_chop"], ShouldEqual, 0)
+			So(metricMap["fragments_flat"], ShouldEqual, 0)
+			So(metricMap["fragments_unsupported"], ShouldEqual, 0)
 			So(metricMap["price"], ShouldEqual, 60000.0)
 			So(metricMap["excursion_mag"], ShouldEqual, 150.0)
+		})
+
+		Convey("it maps all five excursion classes onto excursion_type and fragment counters", func() {
+			cases := []struct {
+				class string
+				code  float64
+				key   string
+			}{
+				{"up", 1.0, "fragments_up"},
+				{"up_friction", 5.0, "fragments_up_friction"},
+				{"down", 2.0, "fragments_down"},
+				{"chop", 3.0, "fragments_chop"},
+				{"flat", 4.0, "fragments_flat"},
+			}
+
+			for _, tc := range cases {
+				reporter.RecordFragment(tc.class)
+				snap := snapshot
+				snap.Direction = tc.class
+				metrics := reporter.Metrics(snap)
+				metricMap := make(map[string]float64)
+				for _, metric := range metrics {
+					metricMap[metric.Label] = metric.Raw
+				}
+				So(metricMap["excursion_type"], ShouldEqual, tc.code)
+				So(metricMap[tc.key], ShouldBeGreaterThan, 0)
+			}
+
+			reporter.RecordFragment("mystery")
+			metrics := reporter.Metrics(snapshot)
+			metricMap := make(map[string]float64)
+			for _, metric := range metrics {
+				metricMap[metric.Label] = metric.Raw
+			}
+			So(metricMap["fragments_up"], ShouldEqual, 1)
+			So(metricMap["fragments_up_friction"], ShouldEqual, 1)
+			So(metricMap["fragments_down"], ShouldEqual, 1)
+			So(metricMap["fragments_chop"], ShouldEqual, 1)
+			So(metricMap["fragments_flat"], ShouldEqual, 1)
+			So(metricMap["fragments_unsupported"], ShouldEqual, 1)
 		})
 
 		Convey("it populates and finalizes an output measurement", func() {
@@ -84,9 +130,10 @@ func TestReporter(t *testing.T) {
 			So(finalized.Label, ShouldEqual, "BTC/USD")
 			So(finalized.SeqIdx, ShouldEqual, 42)
 
-			val := data.Pull(finalized.Read("steps"))
-			So(val.Err, ShouldBeNil)
-			So(val.Metric.Raw, ShouldEqual, 1)
+			metric, err := readMetric(finalized, "steps")
+			So(err, ShouldBeNil)
+			So(metric, ShouldNotBeNil)
+			So(metric.Raw, ShouldEqual, 1)
 		})
 	})
 }

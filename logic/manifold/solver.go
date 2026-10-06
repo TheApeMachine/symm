@@ -12,6 +12,7 @@ import (
 	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
@@ -210,7 +211,7 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	reading := solver.Reading()
-	metrics := make([]data.Metric, 0, 16)
+	metrics := make([]*data.Metric, 0, 16)
 
 	if reading != nil {
 		metrics = append(metrics,
@@ -248,13 +249,19 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 		prior.Epoch, symbol, solver.Name(), prior.SeqIdx, prior.Tick,
 		[]*data.Measurement{prior},
 	)
+	if prior.At.IsZero() {
+		solver.Error(errnie.Err(
+			errnie.Validation,
+			"manifold: prior for "+symbol+" has no venue time (At)",
+			nil,
+		))
+		return nil
+	}
+
 	out.At = prior.At
 	out.From = prior.From
-	if out.At.IsZero() {
-		out.At = time.Now().UTC()
-	}
 	if out.From.IsZero() {
-		out.From = out.At
+		out.From = out.At // From defaults to a point window [At, At].
 	}
 
 	return out.Write(metrics...)
@@ -298,9 +305,9 @@ func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement) {
 	solver.forcing.Store(symbol, forcingState{buyExcitation: buy, sellExcitation: sell})
 }
 
-func readMetric(measurement *data.Measurement, label string) (data.Metric, bool) {
+func readMetric(measurement *data.Measurement, label string) (*data.Metric, bool) {
 	if measurement == nil {
-		return data.Metric{}, false
+		return &data.Metric{}, false
 	}
 
 	for entry := range measurement.Read(label) {
@@ -310,7 +317,7 @@ func readMetric(measurement *data.Measurement, label string) (data.Metric, bool)
 		return entry.Metric, true
 	}
 
-	return data.Metric{}, false
+	return &data.Metric{}, false
 }
 
 /*

@@ -45,10 +45,22 @@ type ExecutionFee struct {
 	Qty   float64 `json:"qty"`
 }
 
-func NewExecution(buf []byte) *Execution {
+/*
+NewExecution decodes an executions frame. An undecodable frame is an error:
+applying a partially decoded fill would silently diverge the desk's positions.
+*/
+func NewExecution(buf []byte) (*Execution, error) {
 	frame := &Execution{}
-	errnie.Error(sonic.Unmarshal(buf, frame))
-	return frame
+
+	if err := sonic.Unmarshal(buf, frame); err != nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[kraken.execution] invalid executions frame",
+			err,
+		)
+	}
+
+	return frame, nil
 }
 
 func (execution *Execution) MarshalJSON() ([]byte, error) {

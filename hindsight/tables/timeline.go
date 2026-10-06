@@ -16,18 +16,21 @@ import (
 Trades efficiently retrieves measurements from the measurements table where
 source = "spot:trade", grouped by label, and sorted within each label by epoch
 ascending and tick ascending (with seqIdx as tie-breaker).
+
+A read failure (including a failed validation of the arguments) is yielded as
+a non-nil error and ends the sequence; it is never reported as end-of-stream.
 */
 func (catalog *Catalog) Trades(
 	ctx context.Context,
 	epoch ...int64,
-) iter.Seq[*data.Measurement] {
-	return func(yield func(*data.Measurement) bool) {
+) iter.Seq2[*data.Measurement, error] {
+	return func(yield func(*data.Measurement, error) bool) {
 		if catalog == nil {
-			errnie.Error(errnie.Err(
+			yield(nil, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[catalog] catalog is required",
 				nil,
-			))
+			)))
 			return
 		}
 
@@ -45,7 +48,7 @@ func (catalog *Catalog) Trades(
 
 		for measurement, err := range catalog.scan(ctx, Measurements, targetEpoch, filter, 0) {
 			if err != nil {
-				errnie.Error(err)
+				yield(nil, err)
 				return
 			}
 
@@ -80,7 +83,7 @@ func (catalog *Catalog) Trades(
 			})
 
 			for _, measurement := range items {
-				if !yield(measurement) {
+				if !yield(measurement, nil) {
 					return
 				}
 			}
@@ -92,18 +95,21 @@ func (catalog *Catalog) Trades(
 Detections efficiently retrieves measurements from the measurements table where
 source = "detector", optionally filtered by epoch, grouped by label, and sorted
 within each label by epoch ascending and tick ascending (with seqIdx as tie-breaker).
+
+A read failure (including a failed validation of the arguments) is yielded as
+a non-nil error and ends the sequence; it is never reported as end-of-stream.
 */
 func (catalog *Catalog) Detections(
 	ctx context.Context,
 	epoch ...int64,
-) iter.Seq[*data.Measurement] {
-	return func(yield func(*data.Measurement) bool) {
+) iter.Seq2[*data.Measurement, error] {
+	return func(yield func(*data.Measurement, error) bool) {
 		if catalog == nil {
-			errnie.Error(errnie.Err(
+			yield(nil, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[catalog] catalog is required",
 				nil,
-			))
+			)))
 			return
 		}
 
@@ -121,7 +127,7 @@ func (catalog *Catalog) Detections(
 
 		for measurement, err := range catalog.scan(ctx, Measurements, targetEpoch, filter, 0) {
 			if err != nil {
-				errnie.Error(err)
+				yield(nil, err)
 				return
 			}
 
@@ -160,7 +166,7 @@ func (catalog *Catalog) Detections(
 			})
 
 			for _, measurement := range items {
-				if !yield(measurement) {
+				if !yield(measurement, nil) {
 					return
 				}
 			}
@@ -174,7 +180,7 @@ Excursions is an alias for Detections, retrieving measurements where source = "d
 func (catalog *Catalog) Excursions(
 	ctx context.Context,
 	epoch ...int64,
-) iter.Seq[*data.Measurement] {
+) iter.Seq2[*data.Measurement, error] {
 	return catalog.Detections(ctx, epoch...)
 }
 
@@ -208,44 +214,63 @@ SignalLogicSources enumerates the canonical signal and logic producer sources.
 var SignalLogicSources = append(slices.Clone(SensorySources), LogicSources...)
 
 /*
-DetectionTicks extracts the lowTick and highTick recorded in a detector measurement.
+DetectionTicks extracts the start, B, and C ticks recorded in a detector
+measurement. B is ignition (or the start of a chop/flat stretch) and C is
+exhaustion (or its end); start precedes or equals B, and B precedes C.
 */
-func DetectionTicks(measurement *data.Measurement) (int64, int64, error) {
+func DetectionTicks(measurement *data.Measurement) (int64, int64, int64, error) {
 	if measurement == nil {
-		return 0, 0, errnie.Error(errnie.Err(
+		return 0, 0, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[catalog] measurement is required",
 			nil,
 		))
 	}
 
-	lowMetric := measurement.Read("low_tick")
-	highMetric := measurement.Read("high_tick")
+	ticks := make([]int64, 0, 3)
 
-	if lowMetric == nil || highMetric == nil {
-		return 0, 0, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[catalog] detection measurement missing LowTick or HighTick metric",
-			nil,
-		))
+	for _, key := range []string{"start_tick", "b_tick", "c_tick"} {
+		entry := data.Pull(measurement.Read(key))
+
+		if entry == nil || entry.Err != nil || entry.Metric == nil || entry.Metric.Label != key {
+			return 0, 0, 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[catalog] detection measurement missing "+key,
+				entryErr(entry),
+			))
+		}
+
+		ticks = append(ticks, int64(entry.Metric.Raw))
 	}
 
-	lowTick := int64(data.Pull(lowMetric).Metric.Raw)
-	highTick := int64(data.Pull(highMetric).Metric.Raw)
-
-	if lowTick < 0 || (highTick > 0 && highTick < lowTick) {
-		return 0, 0, errnie.Error(errnie.Err(
+	if ticks[0] < 0 || ticks[0] > ticks[1] || ticks[1] >= ticks[2] {
+		return 0, 0, 0, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[catalog] invalid tick range in detection measurement",
 			nil,
 		))
 	}
 
-	return lowTick, highTick, nil
+	return ticks[0], ticks[1], ticks[2], nil
 }
 
 /*
-DetectionPrices extracts the entry and exit prices recorded in a detector measurement.
+entryErr returns the read error carried by entry, if any. A key the
+measurement never wrote yields a nil entry and so a nil error; the caller's
+"missing" message carries that case.
+*/
+func entryErr(entry *data.MetricEntry) error {
+	if entry == nil {
+		return nil
+	}
+
+	return entry.Err
+}
+
+/*
+DetectionPrices extracts the B and C prices recorded in a detector
+measurement. C may be above B (up classes), below it (down), or near it
+(chop/flat).
 */
 func DetectionPrices(measurement *data.Measurement) (*decimal.Decimal, *decimal.Decimal, error) {
 	if measurement == nil {
@@ -256,50 +281,42 @@ func DetectionPrices(measurement *data.Measurement) (*decimal.Decimal, *decimal.
 		))
 	}
 
-	lowPrice := data.Pull(measurement.Read("low_price"))
-	highPrice := data.Pull(measurement.Read("high_price"))
+	prices := make([]*decimal.Decimal, 0, 2)
 
-	if lowPrice.Metric.Label == "" || highPrice.Metric.Label == "" {
-		return nil, nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[catalog] detection measurement missing LowPrice or HighPrice metric",
-			nil,
-		))
+	for _, key := range []string{"b_price", "c_price"} {
+		entry := data.Pull(measurement.Read(key))
+
+		if entry == nil || entry.Err != nil || entry.Metric == nil || entry.Metric.Label != key {
+			return nil, nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[catalog] detection measurement missing "+key,
+				entryErr(entry),
+			))
+		}
+
+		price := entry.Metric.Exact
+
+		if price == nil || price.Sign() <= 0 {
+			return nil, nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[catalog] detection measurement has no positive exact "+key,
+				nil,
+			))
+		}
+
+		prices = append(prices, price)
 	}
 
-	var entryAsk, exitBid *decimal.Decimal
-
-	if lowPrice.Metric.Exact != nil {
-		entryAsk = lowPrice.Metric.Exact
-	}
-
-	if entryAsk == nil && lowPrice.Metric.Raw > 0 {
-		entryAsk = decimal.NewFromFloat64(lowPrice.Metric.Raw)
-	}
-
-	if highPrice.Metric.Exact != nil {
-		exitBid = highPrice.Metric.Exact
-	}
-
-	if exitBid == nil && highPrice.Metric.Raw > 0 {
-		exitBid = decimal.NewFromFloat64(highPrice.Metric.Raw)
-	}
-
-	if entryAsk == nil || exitBid == nil || entryAsk.Sign() <= 0 || exitBid.Sign() <= 0 {
-		return nil, nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[catalog] invalid prices in detection measurement",
-			nil,
-		))
-	}
-
-	return entryAsk, exitBid, nil
+	return prices[0], prices[1], nil
 }
 
 /*
 SignalLogic retrieves signal and logic measurements for a specific epoch, label,
 and tick range [lowTick, highTick], sorted chronologically by tick ascending,
 with seqIdx and source as tie-breakers.
+
+A read failure (including a failed validation of the arguments) is yielded as
+a non-nil error and ends the sequence; it is never reported as end-of-stream.
 */
 func (catalog *Catalog) SignalLogic(
 	ctx context.Context,
@@ -308,50 +325,50 @@ func (catalog *Catalog) SignalLogic(
 	lowTick int64,
 	highTick int64,
 	sources ...string,
-) iter.Seq[*data.Measurement] {
-	return func(yield func(*data.Measurement) bool) {
+) iter.Seq2[*data.Measurement, error] {
+	return func(yield func(*data.Measurement, error) bool) {
 		if catalog == nil {
-			errnie.Error(errnie.Err(
+			yield(nil, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[catalog] catalog is required",
 				nil,
-			))
+			)))
 			return
 		}
 
 		if epoch <= 0 {
-			errnie.Error(errnie.Err(
+			yield(nil, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[catalog] valid positive epoch is required",
 				nil,
-			))
+			)))
 			return
 		}
 
 		if label == "" {
-			errnie.Error(errnie.Err(
+			yield(nil, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[catalog] label is required",
 				nil,
-			))
+			)))
 			return
 		}
 
 		if lowTick < 0 {
-			errnie.Error(errnie.Err(
+			yield(nil, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[catalog] lowTick must be non-negative",
 				nil,
-			))
+			)))
 			return
 		}
 
 		if highTick > 0 && lowTick > highTick {
-			errnie.Error(errnie.Err(
+			yield(nil, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[catalog] lowTick cannot exceed highTick",
 				nil,
-			))
+			)))
 			return
 		}
 
@@ -401,7 +418,7 @@ func (catalog *Catalog) SignalLogic(
 
 		for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0) {
 			if err != nil {
-				errnie.Error(err)
+				yield(nil, err)
 				return
 			}
 
@@ -441,48 +458,7 @@ func (catalog *Catalog) SignalLogic(
 		})
 
 		for _, measurement := range results {
-			if !yield(measurement) {
-				return
-			}
-		}
-	}
-}
-
-/*
-DetectionSignalLogic retrieves signal and logic measurements using the excursion parameters
-recorded inside a detector measurement.
-*/
-func (catalog *Catalog) DetectionSignalLogic(
-	ctx context.Context,
-	detection *data.Measurement,
-	sources ...string,
-) iter.Seq[*data.Measurement] {
-	return func(yield func(*data.Measurement) bool) {
-		if detection == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[catalog] detection measurement is required",
-				nil,
-			))
-			return
-		}
-
-		lowTick, highTick, err := DetectionTicks(detection)
-
-		if err != nil {
-			errnie.Error(err)
-			return
-		}
-
-		for measurement := range catalog.SignalLogic(
-			ctx,
-			detection.Epoch,
-			detection.Label,
-			lowTick,
-			highTick,
-			sources...,
-		) {
-			if !yield(measurement) {
+			if !yield(measurement, nil) {
 				return
 			}
 		}
@@ -499,12 +475,19 @@ func (catalog *Catalog) ExcursionTape(
 	lowTick int64,
 	highTick int64,
 	sources ...string,
-) iter.Seq[*data.Measurement] {
+) iter.Seq2[*data.Measurement, error] {
 	return catalog.SignalLogic(ctx, epoch, label, lowTick, highTick, sources...)
 }
 
 /*
 Timeline reconstructs the sequential market tape from the unified Measurements table.
+
+The window [fromTick, toTick] is in market ticks only (a bound <= 0 is open).
+Rows are yielded in sequence-index order. To address a single frame by its
+sequence index, use Scan with a seqIdx predicate instead.
+
+A read failure is yielded as a non-nil error and ends the sequence; it is never
+reported as end-of-stream.
 */
 func (catalog *Catalog) Timeline(
 	ctx context.Context,
@@ -512,40 +495,56 @@ func (catalog *Catalog) Timeline(
 	label string,
 	fromTick int64,
 	toTick int64,
-) iter.Seq[*data.Measurement] {
+) iter.Seq2[*data.Measurement, error] {
 	var filter iceberg.BooleanExpression
 
+	and := func(expression iceberg.BooleanExpression) {
+		if filter == nil {
+			filter = expression
+			return
+		}
+
+		filter = iceberg.NewAnd(filter, expression)
+	}
+
 	if label != "" {
-		filter = iceberg.EqualTo(iceberg.Reference("label"), label)
+		and(iceberg.EqualTo(iceberg.Reference("label"), label))
 	}
 
 	if fromTick > 0 {
-		expression := iceberg.NewOr(
-			iceberg.GreaterThanEqual(iceberg.Reference("tick"), fromTick),
-			iceberg.GreaterThanEqual(iceberg.Reference("seqIdx"), fromTick),
-		)
-
-		if filter != nil {
-			expression = iceberg.NewAnd(filter, expression)
-		}
-
-		filter = expression
+		and(iceberg.GreaterThanEqual(iceberg.Reference("tick"), fromTick))
 	}
 
 	if toTick > 0 && toTick >= fromTick {
-		expression := iceberg.NewOr(
-			iceberg.LessThanEqual(iceberg.Reference("tick"), toTick),
-			iceberg.LessThanEqual(iceberg.Reference("seqIdx"), toTick),
-		)
-
-		if filter != nil {
-			expression = iceberg.NewAnd(filter, expression)
-		}
-
-		filter = expression
+		and(iceberg.LessThanEqual(iceberg.Reference("tick"), toTick))
 	}
 
-	return catalog.Scan(ctx, Measurements, epoch, filter, 0)
+	return func(yield func(*data.Measurement, error) bool) {
+		for measurement, err := range catalog.Scan(ctx, Measurements, epoch, filter, 0) {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+
+			// The pushed-down predicate may only prune files; enforce the
+			// window on every row so no out-of-window frame leaks through.
+			if label != "" && measurement.Label != label {
+				continue
+			}
+
+			if fromTick > 0 && measurement.Tick < fromTick {
+				continue
+			}
+
+			if toTick > 0 && toTick >= fromTick && measurement.Tick > toTick {
+				continue
+			}
+
+			if !yield(measurement, nil) {
+				return
+			}
+		}
+	}
 }
 
 /*
@@ -554,8 +553,12 @@ Labels discovers distinct labels present in an epoch by reading only the label c
 func (catalog *Catalog) Labels(ctx context.Context, epoch int64) ([]string, error) {
 	labelSet := make(map[string]struct{})
 
-	for measurement := range catalog.Scan(ctx, Measurements, epoch, nil, 0, "label") {
-		if measurement.Label != "" {
+	for measurement, err := range catalog.scan(ctx, Measurements, epoch, nil, 0, "label") {
+		if err != nil {
+			return nil, err
+		}
+
+		if measurement != nil && measurement.Label != "" {
 			labelSet[measurement.Label] = struct{}{}
 		}
 	}

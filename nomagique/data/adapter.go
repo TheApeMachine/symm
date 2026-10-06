@@ -211,8 +211,18 @@ func (wrapper *Adapter) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 
 				entry := Pull(wrapper.measurement.Read(domainKey))
 
+				if entry == nil {
+					wrapper.Error(core.ErrNotHeld)
+					return
+				}
+
 				if entry.Err != nil {
 					wrapper.Error(entry.Err)
+					return
+				}
+
+				if entry.Metric == nil {
+					wrapper.Error(core.ErrNotHeld)
 					return
 				}
 

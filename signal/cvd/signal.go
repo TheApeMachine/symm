@@ -211,7 +211,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	out.At = prior.At
 	out.From = prior.At
 
-	metrics := make([]data.Metric, 0, len(signal.metrics))
+	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
 		value, held := signal.output.Values[metric[1]]

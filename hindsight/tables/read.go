@@ -152,28 +152,50 @@ func (catalog *Catalog) Collect(ctx context.Context, tableName string, epoch int
 	return rows, nil
 }
 
-// Scan exposes the existing display scan; replay uses scan directly to propagate failures.
-// Rows are sorted by SeqIdx so Timeline merge (which assumes ordered streams) is correct.
+/*
+Scan reads measurements from a table for display and replay consumers, sorted by
+SeqIdx (then Tick) so Timeline merge (which assumes ordered streams) is correct.
+
+A read failure is yielded as a non-nil error and ends the sequence; it is never
+reported as end-of-stream. Because rows are sorted before they are yielded, a
+failure yields no rows at all: a partial window never looks like a short one.
+*/
 func (catalog *Catalog) Scan(ctx context.Context, tableName string, epoch int64,
 	filter iceberg.BooleanExpression, limit int, fields ...string,
-) iter.Seq[*data.Measurement] {
-	return func(yield func(*data.Measurement) bool) {
+) iter.Seq2[*data.Measurement, error] {
+	return func(yield func(*data.Measurement, error) bool) {
+		if catalog == nil {
+			yield(nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[catalog] catalog is required",
+				nil,
+			)))
+			return
+		}
+
 		rows := make([]*data.Measurement, 0)
+
 		for measurement, err := range catalog.scan(ctx, tableName, epoch, filter, limit, fields...) {
 			if err != nil {
-				errnie.Error(err)
+				yield(nil, err)
 				return
 			}
-			rows = append(rows, measurement)
+
+			if measurement != nil {
+				rows = append(rows, measurement)
+			}
 		}
+
 		sort.SliceStable(rows, func(i, j int) bool {
 			if rows[i].SeqIdx != rows[j].SeqIdx {
 				return rows[i].SeqIdx < rows[j].SeqIdx
 			}
+
 			return rows[i].Tick < rows[j].Tick
 		})
+
 		for _, measurement := range rows {
-			if !yield(measurement) {
+			if !yield(measurement, nil) {
 				return
 			}
 		}

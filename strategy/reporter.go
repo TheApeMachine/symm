@@ -62,8 +62,14 @@ Reporter writes the canonical learning telemetry onto Training's output
 measurement, feeding the Learning Dashboard and ForwardLearningViz.
 */
 type Reporter struct {
-	steps     atomic.Int64
-	decisions atomic.Int64
+	steps      atomic.Int64
+	decisions  atomic.Int64
+	fragUp     atomic.Int64
+	fragUpFric atomic.Int64
+	fragDown   atomic.Int64
+	fragChop   atomic.Int64
+	fragFlat   atomic.Int64
+	fragUnsup  atomic.Int64
 }
 
 func NewReporter() *Reporter {
@@ -71,14 +77,56 @@ func NewReporter() *Reporter {
 }
 
 /*
+RecordFragment tallies one completed tape fragment by its excursion class.
+Unknown classes land in fragments_unsupported.
+*/
+func (reporter *Reporter) RecordFragment(class string) {
+	switch class {
+	case "up":
+		reporter.fragUp.Add(1)
+	case "up_friction":
+		reporter.fragUpFric.Add(1)
+	case "down":
+		reporter.fragDown.Add(1)
+	case "chop":
+		reporter.fragChop.Add(1)
+	case "flat":
+		reporter.fragFlat.Add(1)
+	default:
+		reporter.fragUnsup.Add(1)
+	}
+}
+
+/*
+excursionTypeCode maps the five trained tape classes onto the numeric
+excursion_type metric the learning UI reads when direction metadata is absent.
+*/
+func excursionTypeCode(direction string) float64 {
+	switch direction {
+	case "up":
+		return 1
+	case "down":
+		return 2
+	case "chop":
+		return 3
+	case "flat":
+		return 4
+	case "up_friction":
+		return 5
+	default:
+		return 0
+	}
+}
+
+/*
 Metadata builds all canonical provenance and metadata key-value pairs
 for the report snapshot.
 */
-func (reporter *Reporter) Metadata(snapshot ReportSnapshot) []data.StringEntry {
-	var entries []data.StringEntry
+func (reporter *Reporter) Metadata(snapshot ReportSnapshot) []*data.StringEntry {
+	var entries []*data.StringEntry
 
 	if snapshot.Direction != "" {
-		entries = append(entries, data.StringEntry{Key: "excursion_direction", Value: snapshot.Direction})
+		entries = append(entries, &data.StringEntry{Key: "excursion_direction", Value: snapshot.Direction})
 	}
 
 	blockerMessage := snapshot.Blocker
@@ -89,8 +137,8 @@ func (reporter *Reporter) Metadata(snapshot ReportSnapshot) []data.StringEntry {
 
 	entries = append(
 		entries,
-		data.StringEntry{Key: "stage", Value: snapshot.Stage.String()},
-		data.StringEntry{Key: "stage_blocker", Value: blockerMessage},
+		&data.StringEntry{Key: "stage", Value: snapshot.Stage.String()},
+		&data.StringEntry{Key: "stage_blocker", Value: blockerMessage},
 	)
 
 	var tokenParts []string
@@ -123,28 +171,28 @@ func (reporter *Reporter) Metadata(snapshot ReportSnapshot) []data.StringEntry {
 
 	if len(tokenParts) > 0 {
 		serializedTokens := strings.Join(tokenParts, ",")
-		entries = append(entries, data.StringEntry{Key: "precursor_tokens", Value: serializedTokens})
+		entries = append(entries, &data.StringEntry{Key: "precursor_tokens", Value: serializedTokens})
 	}
 
 	if snapshot.MarkA > 0 {
-		entries = append(entries, data.StringEntry{Key: "excursion_start", Value: strconv.FormatInt(snapshot.MarkA, 10)})
+		entries = append(entries, &data.StringEntry{Key: "excursion_start", Value: strconv.FormatInt(snapshot.MarkA, 10)})
 	}
 
 	if snapshot.MarkB > 0 {
-		entries = append(entries, data.StringEntry{Key: "excursion_ignition", Value: strconv.FormatInt(snapshot.MarkB, 10)})
+		entries = append(entries, &data.StringEntry{Key: "excursion_ignition", Value: strconv.FormatInt(snapshot.MarkB, 10)})
 	}
 
 	if snapshot.MarkC > 0 {
-		entries = append(entries, data.StringEntry{Key: "excursion_exit", Value: strconv.FormatInt(snapshot.MarkC, 10)})
+		entries = append(entries, &data.StringEntry{Key: "excursion_exit", Value: strconv.FormatInt(snapshot.MarkC, 10)})
 	}
 
 	entries = append(
 		entries,
-		data.StringEntry{Key: "excursion_clears", Value: fmt.Sprintf("%t", snapshot.Clears)},
+		&data.StringEntry{Key: "excursion_clears", Value: fmt.Sprintf("%t", snapshot.Clears)},
 	)
 
 	if snapshot.Event != "" {
-		entries = append(entries, data.StringEntry{Key: "excursion_event", Value: snapshot.Event})
+		entries = append(entries, &data.StringEntry{Key: "excursion_event", Value: snapshot.Event})
 	}
 
 	return entries
@@ -153,7 +201,7 @@ func (reporter *Reporter) Metadata(snapshot ReportSnapshot) []data.StringEntry {
 /*
 Metrics constructs the telemetry metrics for the report snapshot.
 */
-func (reporter *Reporter) Metrics(snapshot ReportSnapshot) []data.Metric {
+func (reporter *Reporter) Metrics(snapshot ReportSnapshot) []*data.Metric {
 	stepCount := reporter.steps.Add(1)
 
 	if snapshot.Action != 0 {
@@ -164,7 +212,7 @@ func (reporter *Reporter) Metrics(snapshot ReportSnapshot) []data.Metric {
 	decisionFloat := float64(reporter.decisions.Load())
 	resolvedCount := float64(snapshot.Resolved)
 
-	metrics := make([]data.Metric, 0, 24)
+	metrics := make([]*data.Metric, 0, 32)
 
 	stepMetric := data.NewMetric("steps", stepFloat, data.UnitCount, data.TimescaleSession)
 	stepMetric.Standardized = stepFloat
@@ -236,16 +284,28 @@ func (reporter *Reporter) Metrics(snapshot ReportSnapshot) []data.Metric {
 		metrics = append(metrics, delayedMetric)
 	}
 
-	if snapshot.Direction == "up" {
-		excursionMetric := data.NewMetric("excursion_type", 1.0, data.UnitCount, data.TimescaleEvent)
-		excursionMetric.Standardized = 1.0
+	if code := excursionTypeCode(snapshot.Direction); code > 0 {
+		excursionMetric := data.NewMetric("excursion_type", code, data.UnitCount, data.TimescaleEvent)
+		excursionMetric.Standardized = code
 		metrics = append(metrics, excursionMetric)
 	}
 
-	if snapshot.Direction == "down" {
-		excursionMetric := data.NewMetric("excursion_type", 2.0, data.UnitCount, data.TimescaleEvent)
-		excursionMetric.Standardized = 2.0
-		metrics = append(metrics, excursionMetric)
+	fragmentCounters := []struct {
+		label string
+		count float64
+	}{
+		{"fragments_up", float64(reporter.fragUp.Load())},
+		{"fragments_up_friction", float64(reporter.fragUpFric.Load())},
+		{"fragments_down", float64(reporter.fragDown.Load())},
+		{"fragments_chop", float64(reporter.fragChop.Load())},
+		{"fragments_flat", float64(reporter.fragFlat.Load())},
+		{"fragments_unsupported", float64(reporter.fragUnsup.Load())},
+	}
+
+	for _, counter := range fragmentCounters {
+		metric := data.NewMetric(counter.label, counter.count, data.UnitCount, data.TimescaleSession)
+		metric.Standardized = counter.count
+		metrics = append(metrics, metric)
 	}
 
 	markAMetric := data.NewMetric("mark_a", float64(snapshot.MarkA), data.UnitCount, data.TimescaleEvent)
@@ -290,7 +350,7 @@ finalizing it into WORM locked state.
 func (reporter *Reporter) Populate(
 	out *data.Measurement,
 	snapshot ReportSnapshot,
-	extraMetrics ...data.Metric,
+	extraMetrics ...*data.Metric,
 ) *data.Measurement {
 	if out == nil {
 		return nil

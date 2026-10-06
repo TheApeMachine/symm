@@ -93,7 +93,7 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 }
 
 func (book *Book) Status() runtime.Stage {
-	return book.Status()
+	return book.System.Status()
 }
 
 /*
@@ -126,6 +126,19 @@ func (book *Book) Wait() error {
 	}
 
 	return nil
+}
+
+/*
+Stale marks symbols whose Level3 stream dropped. Their local state stops
+tracking the venue the moment the socket goes down, so readers get nothing
+(exactly like a checksum-diverged symbol) and deltas are dropped until the
+resubscribe delivers a fresh snapshot, which clears the mark. No resync is
+requested: the reconnecting transport resubscribes on its own.
+*/
+func (book *Book) Stale(symbols []string) {
+	for _, symbol := range symbols {
+		book.diverging.Store(symbol, struct{}{})
+	}
 }
 
 func (book *Book) symbolLock(symbol string) *sync.RWMutex {
@@ -484,9 +497,10 @@ func (book *Book) apply(
 					// The venue checksum is authority. Local state is known wrong,
 					// so it is discarded rather than kept serving corrupt depth,
 					// the symbol is marked diverged so later deltas are dropped,
-					// and the transport is asked to resubscribe — only a fresh
-					// snapshot restores trust.
+					// and the book enters ERROR — same halt posture as an absent
+					// level. Only a fresh snapshot restores trust.
 					book.manager.CreateBook(data.Symbol, depth)
+					book.Transition(runtime.ERROR)
 
 					if _, marked := book.diverging.LoadOrStore(data.Symbol, struct{}{}); !marked {
 						resynced = append(resynced, data.Symbol)
@@ -558,7 +572,7 @@ func (book *Book) ApplyMeasurement(measurement *data.Measurement) error {
 
 	var priceDec *decimal.Decimal
 
-	if pMetric := data.Pull[data.MetricEntry](measurement.Read("limit_price")); pMetric.Err == nil {
+	if pMetric := data.Pull[*data.MetricEntry](measurement.Read("limit_price")); pMetric.Err == nil {
 		if pMetric.Metric.Exact != nil {
 			priceDec = pMetric.Metric.Exact
 		}
@@ -570,7 +584,7 @@ func (book *Book) ApplyMeasurement(measurement *data.Measurement) error {
 
 	var qtyDec *decimal.Decimal
 
-	if qMetric := data.Pull[data.MetricEntry](measurement.Read("order_qty")); qMetric.Err == nil {
+	if qMetric := data.Pull[*data.MetricEntry](measurement.Read("order_qty")); qMetric.Err == nil {
 		if qMetric.Metric.Exact != nil {
 			qtyDec = qMetric.Metric.Exact
 		}
@@ -582,7 +596,7 @@ func (book *Book) ApplyMeasurement(measurement *data.Measurement) error {
 
 	var checksum uint32
 
-	if cMetric := data.Pull[data.MetricEntry](measurement.Read("checksum")); cMetric.Err == nil {
+	if cMetric := data.Pull[*data.MetricEntry](measurement.Read("checksum")); cMetric.Err == nil {
 		checksum = uint32(cMetric.Metric.Raw)
 	}
 

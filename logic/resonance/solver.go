@@ -124,7 +124,12 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 
 	at := prior.At
 	if at.IsZero() {
-		at = time.Now().UTC()
+		solver.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("resonance: prior for %s has no venue time (At)", symbol),
+			nil,
+		))
+		return nil
 	}
 
 	midpoint := firstPositive(prior, "midpoint", "last_price", "price", "last")
@@ -205,7 +210,7 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 	measurement.At = at
 	measurement.From = prior.From
 	if measurement.From.IsZero() {
-		measurement.From = at
+		measurement.From = at // From defaults to a point window [At, At].
 	}
 
 	return measurement.Write(metrics...)
@@ -360,9 +365,9 @@ func extractHeadlineMetric(index int, measurement *data.Measurement) (float64, b
 lookupMetric finds a metric by exact label, or by "<label>@<peer>" so correlation
 and leadlag peer-suffixed facts remain addressable as their unsuffixed headline.
 */
-func lookupMetric(measurement *data.Measurement, label string) (data.Metric, bool) {
+func lookupMetric(measurement *data.Measurement, label string) (*data.Metric, bool) {
 	if measurement == nil {
-		return data.Metric{}, false
+		return nil, false
 	}
 
 	for entry := range measurement.Read(label) {
@@ -382,7 +387,7 @@ func lookupMetric(measurement *data.Measurement, label string) (data.Metric, boo
 		}
 	}
 
-	return data.Metric{}, false
+	return &data.Metric{}, false
 }
 
 func firstPositive(measurement *data.Measurement, labels ...string) float64 {
@@ -481,9 +486,9 @@ publishReturns projects the coder's *[12][]float64 reading into Measurement metr
 and provenance metadata. Energy and surprise come from the manifold summary; the
 coder summary carries calibration and horizon evidence.
 */
-func publishReturns(out [12][]float64) ([]data.Metric, []data.StringEntry) {
-	metrics := make([]data.Metric, 0, 16)
-	metadata := make([]data.StringEntry, 0, 8)
+func publishReturns(out [12][]float64) ([]*data.Metric, []*data.StringEntry) {
+	metrics := make([]*data.Metric, 0, 16)
+	metadata := make([]*data.StringEntry, 0, 8)
 
 	if len(out[0]) > 1 {
 		metrics = append(metrics, data.NewMetric(
@@ -510,7 +515,7 @@ func publishReturns(out [12][]float64) ([]data.Metric, []data.StringEntry) {
 
 	if len(out[10]) > 0 {
 		metadata = append(metadata,
-			data.StringEntry{Key: "supported_horizon", Value: fmt.Sprintf("%g", out[10][0])},
+			&data.StringEntry{Key: "supported_horizon", Value: fmt.Sprintf("%g", out[10][0])},
 		)
 	}
 	if len(out[10]) > 1 {
@@ -518,16 +523,16 @@ func publishReturns(out [12][]float64) ([]data.Metric, []data.StringEntry) {
 		if out[10][1] != 0 {
 			calibrated = "true"
 		}
-		metadata = append(metadata, data.StringEntry{Key: "calibrated", Value: calibrated})
+		metadata = append(metadata, &data.StringEntry{Key: "calibrated", Value: calibrated})
 	}
 	if len(out[10]) > 2 {
 		metadata = append(metadata,
-			data.StringEntry{Key: "resolved_steps", Value: fmt.Sprintf("%g", out[10][2])},
+			&data.StringEntry{Key: "resolved_steps", Value: fmt.Sprintf("%g", out[10][2])},
 		)
 	}
 	if len(out[10]) > 4 {
 		metadata = append(metadata,
-			data.StringEntry{Key: "confidence", Value: fmt.Sprintf("%f", out[10][4])},
+			&data.StringEntry{Key: "confidence", Value: fmt.Sprintf("%f", out[10][4])},
 		)
 	}
 

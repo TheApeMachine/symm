@@ -15,9 +15,9 @@ import (
 MetricEntry stores a single metric by its producer key.
 */
 type MetricEntry struct {
-	Key    string `json:"key"`
-	Metric Metric `json:"metric"`
-	Err    error  `json:"error"`
+	Key    string  `json:"key"`
+	Metric *Metric `json:"metric"`
+	Err    error   `json:"error"`
 }
 
 /*
@@ -51,9 +51,12 @@ type Measurement struct {
 	energy     float64        // Total metric excitation energy (sum of z^2).
 	prediction float64        // Expected energy baseline from prior.
 	err        error          // Error if any.
-	metrics    []MetricEntry  // Metrics owned by this Measurement.
-	metadata   []StringEntry  // Metadata owned by this Measurement.
+	metrics    []*MetricEntry // Metrics owned by this Measurement.
+	metadata   []*StringEntry // Metadata owned by this Measurement.
 	peers      []*Measurement // Peers, used to group related Measurements.
+	owner      *ArenaOwner    // Producer arena; enables prior capture on finalize.
+	prior      *priorSnapshot // Prior pinned at alloc; seeds metric Welford state.
+	resetEpoch uint64         // ArenaOwner reset epoch at alloc; gates prior capture.
 }
 
 /*
@@ -65,7 +68,7 @@ func NewMeasurement(
 	source string,
 	seqIdx int64,
 	tick int64,
-	metadata ...StringEntry,
+	metadata ...*StringEntry,
 ) *Measurement {
 	return &Measurement{
 		Epoch:    epoch,
@@ -73,7 +76,7 @@ func NewMeasurement(
 		Source:   source,
 		SeqIdx:   seqIdx,
 		Tick:     tick,
-		metrics:  make([]MetricEntry, 0),
+		metrics:  make([]*MetricEntry, 0),
 		metadata: metadata,
 		peers:    make([]*Measurement, 0),
 	}
@@ -84,15 +87,17 @@ Read returns the metric entry for the given key.
 In compliance with the WORM model, a Measurement can not be read
 before it is finalized.
 */
-func (measurement *Measurement) Read(keys ...string) iter.Seq[MetricEntry] {
+func (measurement *Measurement) Read(keys ...string) iter.Seq[*MetricEntry] {
 	if !measurement.locked() {
-		return func(yield func(MetricEntry) bool) {
-			if !yield(MetricEntry{
-				Err: errors.Join(measurement.err, errnie.Error(errnie.Err(
+		return func(yield func(*MetricEntry) bool) {
+			// Forbidden is returned, not logged: callers probing peers that
+			// are still being written must see the error without a log flood.
+			if !yield(&MetricEntry{
+				Err: errors.Join(measurement.err, errnie.Err(
 					errnie.Forbidden,
 					"[data.measurement] not finalized",
 					nil,
-				))),
+				)),
 			}) {
 				return
 			}
@@ -100,7 +105,7 @@ func (measurement *Measurement) Read(keys ...string) iter.Seq[MetricEntry] {
 	}
 
 	if len(keys) > 0 {
-		return func(yield func(MetricEntry) bool) {
+		return func(yield func(*MetricEntry) bool) {
 			for _, key := range keys {
 				for _, metricEntry := range measurement.metrics {
 					if metricEntry.Metric.Label == key {
@@ -113,7 +118,7 @@ func (measurement *Measurement) Read(keys ...string) iter.Seq[MetricEntry] {
 		}
 	}
 
-	return func(yield func(MetricEntry) bool) {
+	return func(yield func(*MetricEntry) bool) {
 		for _, metricEntry := range measurement.metrics {
 			if !yield(metricEntry) {
 				return
@@ -128,7 +133,7 @@ This means that the Measurement is now locked and cannot be changed.
 It is therefore exactly "write once".
 */
 func (measurement *Measurement) Write(
-	metrics ...Metric,
+	metrics ...*Metric,
 ) *Measurement {
 	if measurement.locked() {
 		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
@@ -141,7 +146,7 @@ func (measurement *Measurement) Write(
 	}
 
 	for _, metric := range metrics {
-		measurement.metrics = append(measurement.metrics, MetricEntry{
+		measurement.metrics = append(measurement.metrics, &MetricEntry{
 			Key:    metric.Label,
 			Metric: metric,
 		})
@@ -189,6 +194,25 @@ func (measurement *Measurement) finalize() *Measurement {
 		return measurement
 	}
 
+	// Count this observation before any Welford update, so metric and
+	// Measurement statistics agree on n and never divide by zero.
+	measurement.samples++
+
+	// Seed metric Welford state from the prior pinned at alloc (same
+	// snapshot samples/prediction came from) before this observation
+	// updates center/scale.
+	if measurement.prior != nil {
+		for _, entry := range measurement.metrics {
+			if entry == nil || entry.Metric == nil {
+				continue
+			}
+			if seed, ok := measurement.prior.metric(entry.Metric.Label); ok {
+				entry.Metric.center = seed.center
+				entry.Metric.scale = seed.scale
+			}
+		}
+	}
+
 	for _, metric := range measurement.metrics {
 		measurement.err = errors.Join(
 			measurement.err,
@@ -202,7 +226,15 @@ func (measurement *Measurement) finalize() *Measurement {
 
 	// Fully finalize the Measurement by writing its ID.
 	measurement.ID = uuid.New().ID()
-	return measurement.valid()
+	measurement.valid()
+
+	// Hold transferable stats on the ArenaOwner until the next
+	// NewMeasurement for this Label copies them, replacing this snapshot.
+	if measurement.owner != nil {
+		measurement.owner.capturePrior(measurement)
+	}
+
+	return measurement
 }
 
 /*
@@ -293,7 +325,6 @@ func (measurement *Measurement) setMaturity() *Measurement {
 		measurement.energy += entry.Metric.Standardized * entry.Metric.Standardized
 	}
 
-	measurement.samples++
 	n := float64(measurement.samples)
 
 	// 1. Calculate maturity against PRIOR prediction (surprise)
@@ -378,6 +409,8 @@ func (measurement *Measurement) valid(fields ...string) *Measurement {
 		}
 	}
 
+	// metadata and peers are optional unless valid("metadata") /
+	// valid("peers") is requested explicitly.
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"ID":        measurement.ID,
 		"epoch":     measurement.Epoch,
@@ -390,10 +423,7 @@ func (measurement *Measurement) valid(fields ...string) *Measurement {
 		"from":      measurement.From,
 		"maturity":  measurement.maturity,
 		"snr":       measurement.snr,
-		"err":       measurement.err,
 		"metrics":   measurement.metrics,
-		"metadata":  measurement.metadata,
-		"peers":     measurement.peers,
 	})); err != nil {
 		measurement.err = errors.Join(measurement.err, err)
 	}

@@ -13,9 +13,9 @@ import (
 
 func trade(at time.Time, seq int64, side string, price, qty float64) *data.Measurement {
 	prior := data.NewMeasurement(
-		1, "BTC/USD", "ingress", seq, seq,
-		data.StringEntry{Key: "side", Value: side},
-		data.StringEntry{Key: "channel", Value: "trade"},
+		1, "BTC/USD", "spot:trade", seq, seq,
+		&data.StringEntry{Key: "type", Value: "trade"},
+		&data.StringEntry{Key: "side", Value: side},
 	)
 	prior.At = at
 	prior.From = at
@@ -91,9 +91,9 @@ func TestHawkesTradeMetrics(t *testing.T) {
 
 		Convey("It drops an invalid trade side without publishing", func() {
 			prior := data.NewMeasurement(
-				1, "BTC/USD", "ingress", 100, 100,
-				data.StringEntry{Key: "side", Value: "neutral"},
-				data.StringEntry{Key: "channel", Value: "trade"},
+				1, "BTC/USD", "spot:trade", 100, 100,
+				&data.StringEntry{Key: "type", Value: "trade"},
+				&data.StringEntry{Key: "side", Value: "neutral"},
 			)
 			prior.At = origin
 			prior.From = origin
@@ -106,11 +106,10 @@ func TestHawkesTradeMetrics(t *testing.T) {
 			So(res, ShouldBeNil)
 		})
 
-		Convey("It drops non-trade channel measurements without processing", func() {
+		Convey("It treats a non-trade frame as a wiring error", func() {
 			prior := data.NewMeasurement(
-				1, "BTC/USD", "ingress", 101, 101,
-				data.StringEntry{Key: "side", Value: "buy"},
-				data.StringEntry{Key: "channel", Value: "book"},
+				1, "BTC/USD", "spot:level3", 101, 101,
+				&data.StringEntry{Key: "side", Value: "buy"},
 			)
 			prior.At = origin
 			prior.From = origin
@@ -121,6 +120,7 @@ func TestHawkesTradeMetrics(t *testing.T) {
 
 			res := instrument.Step(prior)
 			So(res, ShouldBeNil)
+			So(instrument.Error(), ShouldNotBeNil)
 		})
 	})
 }
@@ -130,4 +130,3 @@ func metricValue(measurement *data.Measurement, label string) float64 {
 	So(held, ShouldBeTrue)
 	return got
 }
-

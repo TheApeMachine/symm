@@ -33,6 +33,7 @@ interface TrainedFragmentResponse {
 	exit_price: number;
 	magnitude: number;
 	direction: string;
+	class?: string;
 	tokens: string[];
 	points: { x: number; y: number; seq: number; time: number }[];
 	entry_idx: number;
@@ -82,6 +83,7 @@ function formatClockTime(ms: number, withSeconds: boolean): string {
 
 type ExcursionKind =
 	| "UPWARD EXCURSION"
+	| "UP FRICTION"
 	| "DOWNWARD EXCURSION"
 	| "CHOPPY MARKET"
 	| "FLAT TAPE";
@@ -92,10 +94,62 @@ function excursionKind(
 ): ExcursionKind | null {
 	const named = outcome(direction, typeCode);
 	if (named === "UP") return "UPWARD EXCURSION";
+	if (named === "UP_FRICTION") return "UP FRICTION";
 	if (named === "DOWN") return "DOWNWARD EXCURSION";
 	if (named === "CHOP") return "CHOPPY MARKET";
 	if (named === "FLAT") return "FLAT TAPE";
 	return null;
+}
+
+/* fragmentClass maps the five trained tape classes onto the banner label. */
+function fragmentClass(className: string | undefined, direction: string): ExcursionKind {
+	switch (className) {
+		case "up":
+			return "UPWARD EXCURSION";
+		case "up_friction":
+			return "UP FRICTION";
+		case "down":
+			return "DOWNWARD EXCURSION";
+		case "chop":
+			return "CHOPPY MARKET";
+		case "flat":
+			return "FLAT TAPE";
+		default:
+			return direction === "up"
+				? "UPWARD EXCURSION"
+				: direction === "down"
+					? "DOWNWARD EXCURSION"
+					: direction === "chop"
+						? "CHOPPY MARKET"
+						: "FLAT TAPE";
+	}
+}
+
+/* fragmentClassCode keeps the raw class token for the operator list/detail. */
+function fragmentClassCode(className: string | undefined, direction: string): string {
+	if (className) return className;
+	return direction || "unknown";
+}
+
+function fragmentDelayedLabel(className: string | undefined, direction: string): string {
+	switch (className ?? direction) {
+		case "up":
+			return "ENTER (CLEARS)";
+		case "up_friction":
+			return "WAIT (FRICTION)";
+		case "down":
+			return "WAIT (DOWN)";
+		case "chop":
+			return "WAIT (CHOP)";
+		case "flat":
+			return "WAIT (FLAT)";
+		default:
+			return "RESOLVING";
+	}
+}
+
+function fragmentFrozenAction(className: string | undefined, direction: string): string {
+	return (className ?? direction) === "up" ? "ENTER" : "WAIT";
 }
 
 function outcomeText(
@@ -208,6 +262,7 @@ export const ForwardLearningViz = ({
 		marks: { A: number; B: number; C: number };
 		entryIdx: number | null;
 		exitIdx: number | null;
+		classCode?: string;
 	} | null>(null);
 
 	// Episode Buffer for playback
@@ -243,15 +298,16 @@ export const ForwardLearningViz = ({
 		}));
 		setPoints(mappedPoints);
 		setExcursionEvent({
-			type: frag.direction === "up" ? "UPWARD EXCURSION" : "DOWNWARD EXCURSION",
+			type: fragmentClass(frag.class, frag.direction),
 			magnitude: frag.magnitude,
 			marks: { A: frag.mark_a, B: frag.mark_b, C: frag.mark_c },
 			entryIdx: frag.entry_idx,
 			exitIdx: frag.exit_idx,
+			classCode: fragmentClassCode(frag.class, frag.direction),
 		});
 		setRawPrecursorTokens(frag.tokens ?? []);
-		setFrozenAction("ENTER");
-		setDelayedLabel("ENTER (CLEARS)");
+		setFrozenAction(fragmentFrozenAction(frag.class, frag.direction));
+		setDelayedLabel(fragmentDelayedLabel(frag.class, frag.direction));
 	}, []);
 
 	const selectFragment = useCallback(
@@ -890,7 +946,7 @@ export const ForwardLearningViz = ({
 									>
 										{trainedFragments.map((frag, idx) => (
 											<option key={frag.id ?? idx} value={idx}>
-												#{frag.id} {frag.symbol} ({frag.direction.toUpperCase()} {(frag.magnitude * 100).toFixed(2)}%)
+												#{frag.id} {frag.symbol} [{fragmentClassCode(frag.class, frag.direction)}] ({frag.direction.toUpperCase()} {(frag.magnitude * 100).toFixed(2)}%)
 											</option>
 										))}
 									</select>
@@ -985,13 +1041,23 @@ export const ForwardLearningViz = ({
 									"border-b flex items-center px-3 text-[10px] font-bold z-10 shrink-0",
 									excursionEvent.type === "UPWARD EXCURSION"
 										? "bg-(--up)/10 border-(--up)/20 text-(--up)"
-										: excursionEvent.type === "DOWNWARD EXCURSION"
-											? "bg-(--down)/10 border-(--down)/20 text-(--down)"
-											: "bg-(--sunken) border-(--line) text-(--f3)",
+										: excursionEvent.type === "UP FRICTION"
+											? "bg-(--warn)/10 border-(--warn)/20 text-(--warn)"
+											: excursionEvent.type === "DOWNWARD EXCURSION"
+												? "bg-(--down)/10 border-(--down)/20 text-(--down)"
+												: "bg-(--sunken) border-(--line) text-(--f3)",
 								)}
 							>
 								<span>
 									{excursionEvent.type}{" "}
+									{excursionEvent.classCode ? (
+										<span
+											data-l="fragment-class"
+											className="ml-1 font-mono text-[9px] uppercase tracking-wider opacity-90"
+										>
+											[{excursionEvent.classCode}]
+										</span>
+									) : null}{" "}
 									<span className="text-(--f3) ml-1 font-normal">
 										confirmed
 									</span>
@@ -1395,6 +1461,10 @@ export const ForwardLearningViz = ({
 							</span>
 						</div>
 						<div className="flex items-center gap-2" data-l="abc-markers">
+							<span className="text-(--f4)">Class:</span>
+							<span data-l="fragment-class-detail" className="font-bold text-(--f1) uppercase">
+								{excursionEvent?.classCode ?? "—"}
+							</span>
 							<span className="text-(--f4)">Boundaries:</span>
 							<span>A: {excursionEvent?.marks.A ?? 0}</span>
 							<span>→</span>

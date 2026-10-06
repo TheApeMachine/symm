@@ -29,8 +29,8 @@ func ImpulseTape(symbol string, legs int) []*data.Measurement {
 				value = -value
 			}
 
-			var metadata []data.StringEntry
-			var metrics []data.Metric
+			var metadata []*data.StringEntry
+			var metrics []*data.Metric
 
 			valueMetric := data.NewMetric(
 				"value",
@@ -45,9 +45,9 @@ func ImpulseTape(symbol string, legs int) []*data.Measurement {
 				quantity := decimal.NewFromInt64(int64(index%2 + 1))
 				metadata = append(
 					metadata,
-					data.StringEntry{Key: "venue", Value: "true"},
-					data.StringEntry{Key: "volume-unit", Value: "base"},
-					data.StringEntry{Key: "channel", Value: "trade"},
+					&data.StringEntry{Key: "venue", Value: "true"},
+					&data.StringEntry{Key: "volume-unit", Value: "base"},
+					&data.StringEntry{Key: "channel", Value: "trade"},
 				)
 
 				qtyMetric := data.NewExactMetric(

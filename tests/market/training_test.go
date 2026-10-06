@@ -22,16 +22,24 @@ func TestTrainingTape(t *testing.T) {
 				So(prevInput.Metric.Label, ShouldEqual, "previous_input")
 
 				peers := frame.Peers()
-				So(len(peers), ShouldEqual, 4)
+				So(len(peers), ShouldEqual, 3)
 
-				quote := peers[0]
-				So(quote.Source, ShouldEqual, "quote")
-				So(data.Pull(quote.Read("bid")).Metric.Label, ShouldEqual, "bid")
-				So(data.Pull(quote.Read("ask")).Metric.Label, ShouldEqual, "ask")
+				trade := peers[0]
+				So(trade.Source, ShouldEqual, "spot:trade")
+				So(trade.Meta("type"), ShouldEqual, "trade")
+				So(trade.Meta("side"), ShouldBeIn, "buy", "sell")
+				So(data.Pull(trade.Read("price")).Metric.Exact, ShouldNotBeNil)
+				So(data.Pull(trade.Read("qty")).Metric.Exact, ShouldNotBeNil)
 
-				trade := peers[1]
-				So(trade.Source, ShouldEqual, "public")
-				So(data.Pull(trade.Read("price")).Metric.Label, ShouldEqual, "price")
+				// Touch never rides a pipeline frame.
+				for _, peer := range peers {
+					for _, key := range []string{"bid", "ask"} {
+						So(data.Pull(peer.Read(key)), ShouldBeNil)
+					}
+				}
+
+				So(peers[1].Source, ShouldEqual, "direct")
+				So(peers[2].Source, ShouldEqual, "inverse")
 			}
 		})
 	})

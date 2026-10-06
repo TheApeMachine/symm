@@ -269,15 +269,34 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 			}
 		}
 
+		if ingress == nil || ingress.At.IsZero() {
+			jh.workspace.joins[jh.stageIdx][slot] = nil
+			jh.workspace.Error(errnie.Err(
+				errnie.Internal,
+				"[workspace] join without ingress venue time (At)",
+				nil,
+			))
+			continue
+		}
+
 		join := joinArena.NewMeasurement(
 			ingress.Epoch,
 			ingress.Label,
-			ingress.Source,
+			"runtime:join",
 			ingress.SeqIdx,
 			ingress.Tick,
 			peers,
 		)
 
-		jh.workspace.joins[jh.stageIdx][slot] = join
+		join.At = ingress.At
+		join.From = ingress.From
+
+		if join.From.IsZero() {
+			join.From = ingress.At
+		}
+
+		// The join carries no metrics of its own; Write finalizes it so the
+		// next stage can read Peers() under the WORM lock.
+		jh.workspace.joins[jh.stageIdx][slot] = join.Write()
 	}
 }

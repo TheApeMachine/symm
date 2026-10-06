@@ -3,7 +3,6 @@ package liquidity
 import (
 	"context"
 	"errors"
-	"math"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -27,9 +26,10 @@ own: its entire behavior is one nomagique pipeline per symbol, a
 transport.Parallel of stage groups. Group i receives the data.Adapter bound to
 states[i], whose mapping binds the group's native primitive names to liquidity
 domain names. Every state of a symbol shares one output map, so a domain fact
-published by one group is read by the groups after it. The touch quote (from
-the ticker, or the shared book when the ticker omits it) is the only envelope
-translation.
+published by one group is read by the groups after it. The pipeline is driven
+by trade frames only; the touch quote is read exclusively from the injected
+BookSource and is the only envelope translation. Nothing about the touch is
+ever read from the arriving measurement.
 */
 type Signal struct {
 	*runtime.System
@@ -47,12 +47,14 @@ type symbolPipeline struct {
 }
 
 /*
-NewSignal composes the touch-liquidity instrument. The optional BookSource
-supplies the best bid and ask when the arriving ticker does not carry them.
+NewSignal composes the touch-liquidity instrument. The BookSource is required:
+it is the sole authority for the best bid, best ask, and their displayed
+quantities. A missing BookSource is a wiring fault and halts the instrument.
 */
-func NewSignal(ctx context.Context, arena *data.ArenaOwner, books ...broker.BookSource) *Signal {
+func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSource) *Signal {
 	signal := &Signal{
 		arena: arena,
+		books: books,
 		// {published label, output key, unit, timescale, gate key}
 		// A non-empty gate key publishes the metric only while that output is non-zero.
 		metrics: [][5]string{
@@ -88,11 +90,12 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books ...broker.Book
 		},
 	}
 
-	if len(books) > 0 {
-		signal.books = books[0]
+	signal.System = runtime.NewSystem(ctx, "liquidity", signal)
+
+	if err := errnie.Require(map[string]any{"books": books}); err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[liquidity] book manager is required", err))
 	}
 
-	signal.System = runtime.NewSystem(ctx, "liquidity", signal)
 	return signal
 }
 
@@ -183,13 +186,16 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 }
 
 /*
-Step binds the prior ticker Measurement to one adapter per stage group, runs
-the symbol's pipeline, and writes the published liquidity facts into a fresh
-Measurement allocated from the signal's own arena. An absent, non-finite,
-non-positive, or crossed touch yields no measurement: invalid geometry is
-never fabricated into zero depth. Facts a group left unwritten (a ratio or
-z-score against an undefined baseline or scale, a velocity without a prior
-observation) are omitted.
+Step reads the symbol's touch from the BookSource on each trade frame, binds
+it to one adapter per stage group, runs the symbol's pipeline, and writes the
+published liquidity facts into a fresh Measurement allocated from the signal's
+own arena. The trade itself contributes only identity and venue time. A book
+that is momentarily absent or one-sided yields no measurement (as in
+depthflow). A present touch with a non-finite or non-positive price or
+quantity (broker.InvalidTouch) or a crossed or locked touch
+(broker.CrossedTouch) is corrupt book state and halts the signal. Facts a group left
+unwritten (a ratio or z-score against an undefined baseline or scale, a
+velocity without a prior observation) are omitted.
 */
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
@@ -201,45 +207,61 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
+	if signal.books == nil {
+		signal.Error(errnie.Err(errnie.Internal, "[liquidity] book manager is required", nil))
+		return nil
+	}
+
 	pipe := signal.pipelineFor(prior.Label)
 
 	clear(pipe.output.Values)
 	clear(pipe.envelope.Values)
 
-	for _, key := range []string{"bid", "ask", "bid_qty", "ask_qty"} {
-		if entry := data.Pull(prior.Read(key)); entry.Err == nil && entry.Metric.Label != "" {
-			pipe.envelope.Values[key] = entry.Metric.Raw
+	signal.books.Book(prior.Label, func(book *spotbook.Book) {
+		if book == nil {
+			return
 		}
+
+		bid := book.BestBid()
+		ask := book.BestAsk()
+
+		if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil ||
+			bid.Quantity == nil || ask.Quantity == nil {
+			return
+		}
+
+		pipe.envelope.Values["bid"] = kraken.Float64(bid.Price)
+		pipe.envelope.Values["bid_qty"] = kraken.Float64(bid.Quantity)
+		pipe.envelope.Values["ask"] = kraken.Float64(ask.Price)
+		pipe.envelope.Values["ask_qty"] = kraken.Float64(ask.Quantity)
+	})
+
+	// An absent or one-sided book is momentary: drop the event. Once the
+	// touch is present, impossible values are corrupt book state and halt.
+	if _, held := pipe.envelope.Values["bid"]; !held {
+		return nil
 	}
 
-	if len(pipe.envelope.Values) < 4 && signal.books != nil {
-		signal.books.Book(prior.Label, func(book *spotbook.Book) {
-			if book == nil {
-				return
-			}
-
-			if best := book.BestBid(); best != nil && best.Price != nil && best.Quantity != nil {
-				pipe.envelope.Values["bid"] = kraken.Float64(best.Price)
-				pipe.envelope.Values["bid_qty"] = kraken.Float64(best.Quantity)
-			}
-
-			if best := book.BestAsk(); best != nil && best.Price != nil && best.Quantity != nil {
-				pipe.envelope.Values["ask"] = kraken.Float64(best.Price)
-				pipe.envelope.Values["ask_qty"] = kraken.Float64(best.Quantity)
-			}
-		})
-	}
+	touch := map[string]float64{}
 
 	for _, key := range []string{"bid", "ask", "bid_qty", "ask_qty"} {
-		value, held := pipe.envelope.Values[key]
+		touch[key] = pipe.envelope.Values[key]
+	}
 
-		if !held || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+	for _, value := range touch {
+		if !broker.ValidTouchValue(value) {
+			signal.Error(broker.InvalidTouch("liquidity", prior.Label, touch))
 			return nil
 		}
 	}
 
 	if pipe.envelope.Values["ask"] <= pipe.envelope.Values["bid"] {
-		errnie.Warn(signal.Name() + ": crossed or locked touch; dropping event")
+		// BookSource already withholds pending and checksum-diverging books,
+		// so a crossed or locked touch here is corrupt book state, never a
+		// market fact. It halts (Internal) like a missing BookSource, but its
+		// Conflict cause and message name the symbol and touch so the two
+		// faults are never confused.
+		signal.Error(broker.CrossedTouch("liquidity", prior.Label, pipe.envelope.Values["bid"], pipe.envelope.Values["ask"]))
 		return nil
 	}
 
@@ -276,7 +298,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	out.At = prior.At
 	out.From = prior.At
 
-	metrics := make([]data.Metric, 0, len(signal.metrics))
+	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
 		value, held := pipe.output.Values[metric[1]]

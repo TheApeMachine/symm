@@ -29,6 +29,10 @@ type AuthNonce struct {
 	highWater     atomic.Int64
 	isPersisting  atomic.Bool
 	lastPersistNs atomic.Int64
+	// persistErr holds the first high-water persist failure. It is sticky:
+	// once the on-disk high-water cannot be trusted, NewAuthenticatedREST
+	// refuses to sign new clients instead of continuing on unpersisted state.
+	persistErr atomic.Pointer[error]
 }
 
 /*
@@ -66,6 +70,20 @@ func (nonce *AuthNonce) Next() string {
 	return strconv.FormatInt(next, 10)
 }
 
+/*
+Err reports the first high-water persist failure, or nil.
+*/
+func (nonce *AuthNonce) Err() error {
+	if nonce == nil {
+		return nil
+	}
+
+	if ptr := nonce.persistErr.Load(); ptr != nil {
+		return *ptr
+	}
+
+	return nil
+}
 
 /*
 processAuthNonce returns the process-wide generator shared by authenticated
@@ -73,34 +91,46 @@ Live transports. Construction errors prevent REST Nonce wiring and auth.
 */
 func ProcessAuthNonce() (*AuthNonce, error) {
 	processNonceOnce.Do(func() {
-		processNonce, processNonceErr = NewAuthNonce(nonceDir())
+		dir, err := nonceDir()
+
+		if err != nil {
+			processNonceErr = err
+			return
+		}
+
+		processNonce, processNonceErr = NewAuthNonce(dir)
 	})
 
 	return processNonce, processNonceErr
 }
 
-func nonceDir() string {
+/*
+nonceDir resolves the directory holding the persisted nonce high-water. An
+unresolvable home directory is an error, never a fall back to the temp dir:
+a high-water written somewhere that does not survive restarts is not one.
+*/
+func nonceDir() (string, error) {
 	dataPath := strings.TrimSpace(viper.GetString("system.data_path"))
 
-	if strings.HasPrefix(dataPath, "~/") {
-		home, err := os.UserHomeDir()
+	if dataPath != "" && !strings.HasPrefix(dataPath, "~/") {
+		return dataPath, nil
+	}
 
-		if err == nil {
-			dataPath = filepath.Join(home, strings.TrimPrefix(dataPath, "~/"))
-		}
+	home, err := os.UserHomeDir()
+
+	if err != nil {
+		return "", errnie.Error(errnie.Err(
+			errnie.IO,
+			"[kraken.nonce] home directory unavailable for auth nonce",
+			err,
+		))
 	}
 
 	if dataPath == "" {
-		home, err := os.UserHomeDir()
-
-		if err != nil {
-			return os.TempDir()
-		}
-
-		dataPath = filepath.Join(home, ".symm", "data")
+		return filepath.Join(home, ".symm", "data"), nil
 	}
 
-	return dataPath
+	return filepath.Join(home, strings.TrimPrefix(dataPath, "~/")), nil
 }
 
 /*
@@ -161,36 +191,35 @@ func (nonce *AuthNonce) persistValue(value int64, force bool) {
 	defer nonce.isPersisting.Store(false)
 
 	nonce.lastPersistNs.Store(now)
-	nonce.writeAtomic(value)
+
+	if err := nonce.writeAtomic(value); err != nil {
+		nonce.persistErr.CompareAndSwap(nil, &err)
+	}
 }
 
 /*
 writeAtomic writes and syncs the nonce to a temporary file, then renames it into
 place so a crash cannot leave a truncated high-water file.
 */
-func (nonce *AuthNonce) writeAtomic(value int64) {
+func (nonce *AuthNonce) writeAtomic(value int64) error {
 	dir := filepath.Dir(nonce.path)
 
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"websocket: failed to create nonce directory",
+			"[kraken.nonce] failed to create nonce directory",
 			err,
 		))
-
-		return
 	}
 
 	temporary, err := os.CreateTemp(dir, "kraken-auth-nonce-*.tmp")
 
 	if err != nil {
-		errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"websocket: failed to create nonce temp file",
+			"[kraken.nonce] failed to create nonce temp file",
 			err,
 		))
-
-		return
 	}
 
 	temporaryPath := temporary.Name()
@@ -199,44 +228,44 @@ func (nonce *AuthNonce) writeAtomic(value int64) {
 	if _, err := temporary.Write(payload); err != nil {
 		temporary.Close()
 		os.Remove(temporaryPath)
-		errnie.Error(errnie.Err(
+
+		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"websocket: failed to write auth nonce",
+			"[kraken.nonce] failed to write auth nonce",
 			err,
 		))
-
-		return
 	}
 
 	if err := temporary.Sync(); err != nil {
 		temporary.Close()
 		os.Remove(temporaryPath)
-		errnie.Error(errnie.Err(
+
+		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"websocket: failed to sync auth nonce",
+			"[kraken.nonce] failed to sync auth nonce",
 			err,
 		))
-
-		return
 	}
 
 	if err := temporary.Close(); err != nil {
 		os.Remove(temporaryPath)
-		errnie.Error(errnie.Err(
+
+		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"websocket: failed to close auth nonce temp file",
+			"[kraken.nonce] failed to close auth nonce temp file",
 			err,
 		))
-
-		return
 	}
 
 	if err := os.Rename(temporaryPath, nonce.path); err != nil {
 		os.Remove(temporaryPath)
-		errnie.Error(errnie.Err(
+
+		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"websocket: failed to persist auth nonce",
+			"[kraken.nonce] failed to persist auth nonce",
 			err,
 		))
 	}
+
+	return nil
 }

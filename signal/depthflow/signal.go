@@ -117,6 +117,11 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 	}
 
 	signal.System = runtime.NewSystem(ctx, "depthflow", signal)
+
+	if err := errnie.Require(map[string]any{"books": books}); err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[depthflow] book manager is required", err))
+	}
+
 	return signal
 }
 
@@ -281,8 +286,9 @@ notional plus per-level added and removed notional against the symbol's
 previous book, drives the level pipeline and (once a previous book exists and
 venue time has advanced) the flow pipeline, and writes the published
 depth-flow facts into a fresh Measurement allocated from the signal's own
-arena. An absent, empty, or crossed book yields no measurement: invalid
-geometry is never fabricated into zero depth. Level-diff facts are omitted on
+arena. An absent or empty book yields no measurement: invalid geometry is
+never fabricated into zero depth. A crossed or locked book is corrupt state
+and halts the signal (broker.CrossedTouch). Level-diff facts are omitted on
 a symbol's first observation, and rates are omitted until time advances.
 */
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
@@ -291,7 +297,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	if prior == nil || prior.Label == "" || signal.books == nil {
+	if prior == nil || prior.Label == "" {
+		return nil
+	}
+
+	if signal.books == nil {
+		signal.Error(errnie.Err(errnie.Internal, "[depthflow] book manager is required", nil))
 		return nil
 	}
 
@@ -304,7 +315,9 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	var bidNotional, askNotional, touchBid, touchAsk float64
 	var addedBid, removedBid, addedAsk, removedAsk float64
+	var crossedBid, crossedAsk float64
 	ok := false
+	crossed := false
 
 	signal.books.Book(prior.Label, func(book *spotbook.Book) {
 		if book == nil {
@@ -319,6 +332,9 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 
 		if kraken.Float64(ask.Price) <= kraken.Float64(bid.Price) {
+			crossed = true
+			crossedBid = kraken.Float64(bid.Price)
+			crossedAsk = kraken.Float64(ask.Price)
 			return
 		}
 
@@ -364,6 +380,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 		ok = len(pipe.currBids) > 0 && len(pipe.currAsks) > 0
 	})
+
+	// Raised outside the book read lock. Book withholds pending and
+	// checksum-diverging books, so a crossed touch is corrupt state: halt.
+	if crossed {
+		signal.Error(broker.CrossedTouch("depthflow", prior.Label, crossedBid, crossedAsk))
+		return nil
+	}
 
 	if !ok {
 		return nil
@@ -469,7 +492,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		out.From = prevAt
 	}
 
-	metrics := make([]data.Metric, 0, len(signal.metrics))
+	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
 		value, held := pipe.output.Values[metric[1]]

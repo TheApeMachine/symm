@@ -61,6 +61,7 @@ export const prediction = (raw: number | undefined) => {
 /* outcome names a resolved excursion. Direction is the record; the type code is the same fact when only a metric arrived. */
 export const outcome = (direction: string, typeCode: number) => {
 	if (direction === "up") return "UP";
+	if (direction === "up_friction") return "UP_FRICTION";
 	if (direction === "down") return "DOWN";
 	if (direction === "chop") return "CHOP";
 	if (direction === "flat") return "FLAT";
@@ -68,6 +69,7 @@ export const outcome = (direction: string, typeCode: number) => {
 	if (typeCode === 2) return "DOWN";
 	if (typeCode === 3) return "CHOP";
 	if (typeCode === 4) return "FLAT";
+	if (typeCode === 5) return "UP_FRICTION";
 	return "";
 };
 

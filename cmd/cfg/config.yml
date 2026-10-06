@@ -83,7 +83,7 @@ system:
     # exposes it: the unacknowledged retransmits eventually fail the socket.
     ping_interval: 20s
     channel:
-      # Public book/trade/ticker ingress queues and UI fan-out. Undersizing
+      # Public trade and Level3 ingress queues and UI fan-out. Undersizing
       # stalls the Kraken reader behind book decode and starves trades.
       # ponytail: fixed capacity is an intentional simplification with memory
       # and burst limits; telemetry-driven or adaptive sizing is the upgrade path.

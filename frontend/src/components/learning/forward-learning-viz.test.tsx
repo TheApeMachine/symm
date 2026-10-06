@@ -75,3 +75,115 @@ it("renders screen plate scanlines and time-scale span for tape fragments", asyn
 	const scanlineEl = container.querySelector("[aria-hidden='true']");
 	expect(scanlineEl).toBeDefined();
 });
+
+it("renders A/B/C and ENTER/EXIT markers from a trained fragment", async () => {
+	vi.useFakeTimers();
+	vi.stubGlobal(
+		"fetch",
+		vi.fn().mockImplementation(async (url: string) => {
+			if (String(url).includes("/training/fragments")) {
+				return {
+					ok: true,
+					json: async () => [
+						{
+							id: 1,
+							symbol: "BTC/USD",
+							epoch: 100,
+							mark_a: 7,
+							mark_b: 10,
+							mark_c: 15,
+							entry_price: 60000,
+							exit_price: 63000,
+							magnitude: 0.05,
+							direction: "up",
+							class: "up",
+							tokens: ["R0", "R1", "R0"],
+							points: [
+								{ x: 0, y: 60000, seq: 7, time: 1 },
+								{ x: 1, y: 60100, seq: 8, time: 2 },
+								{ x: 2, y: 60200, seq: 9, time: 3 },
+								{ x: 3, y: 60500, seq: 10, time: 4 },
+								{ x: 4, y: 61000, seq: 12, time: 5 },
+								{ x: 5, y: 62000, seq: 14, time: 6 },
+								{ x: 6, y: 63000, seq: 15, time: 7 },
+							],
+							entry_idx: 2,
+							exit_idx: 5,
+							learned_at: new Date().toISOString(),
+						},
+					],
+				};
+			}
+			return { ok: true, json: async () => ({ branches: [] }) };
+		}),
+	);
+
+	const { container } = render(<ForwardLearningViz />);
+
+	await act(async () => {
+		vi.advanceTimersByTime(50);
+		await Promise.resolve();
+	});
+
+	expect(container.textContent).toContain("A:");
+	expect(container.textContent).toContain("B:");
+	expect(container.textContent).toContain("C:");
+	expect(container.textContent).toContain("PREDICTED ENTER");
+	expect(container.textContent).toContain("PREDICTED EXIT");
+	expect(container.textContent).toContain("UPWARD EXCURSION");
+	expect(container.textContent).toContain("[up]");
+	expect(container.querySelector('[data-l="fragment-class"]')?.textContent).toContain("up");
+	expect(container.querySelector('[data-l="fragment-class-detail"]')?.textContent).toContain("up");
+});
+
+it("surfaces up_friction class on fragment list and detail", async () => {
+	vi.useFakeTimers();
+	vi.stubGlobal(
+		"fetch",
+		vi.fn().mockImplementation(async (url: string) => {
+			if (String(url).includes("/training/fragments")) {
+				return {
+					ok: true,
+					json: async () => [
+						{
+							id: 2,
+							symbol: "ETH/USD",
+							epoch: 101,
+							mark_a: 1,
+							mark_b: 2,
+							mark_c: 3,
+							entry_price: 3000,
+							exit_price: 3010,
+							magnitude: 0.003,
+							direction: "up",
+							class: "up_friction",
+							tokens: ["R0"],
+							points: [
+								{ x: 0, y: 3000, seq: 1, time: 1 },
+								{ x: 1, y: 3005, seq: 2, time: 2 },
+								{ x: 2, y: 3010, seq: 3, time: 3 },
+							],
+							entry_idx: 0,
+							exit_idx: 2,
+							learned_at: new Date().toISOString(),
+						},
+					],
+				};
+			}
+			return { ok: true, json: async () => ({ branches: [] }) };
+		}),
+	);
+
+	const { container } = render(<ForwardLearningViz />);
+
+	await act(async () => {
+		vi.advanceTimersByTime(50);
+		await Promise.resolve();
+	});
+
+	expect(container.textContent).toContain("UP FRICTION");
+	expect(container.textContent).toContain("[up_friction]");
+	expect(container.querySelector('[data-l="fragment-class-detail"]')?.textContent).toContain(
+		"up_friction",
+	);
+});

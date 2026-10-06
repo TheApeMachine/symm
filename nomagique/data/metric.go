@@ -35,8 +35,8 @@ center and scale its values are standardized against.
 */
 func NewMetric(
 	label string, raw float64, unit Unit, timescale Timescale,
-) Metric {
-	return Metric{
+) *Metric {
+	return &Metric{
 		Label:     label,
 		Raw:       raw,
 		unit:      unit,
@@ -50,8 +50,8 @@ exact value of the metric.
 */
 func NewExactMetric(
 	label string, exact *decimal.Decimal, unit Unit, timescale Timescale,
-) Metric {
-	return Metric{
+) *Metric {
+	return &Metric{
 		Label:     label,
 		Raw:       exact.Float64(),
 		Exact:     exact,
@@ -112,12 +112,13 @@ func (metric *Metric) valid(fields ...string) error {
 		return errnie.Error(errnie.Require(mapped))
 	}
 
+	// Exact is optional by contract: only venue-printed observations carry
+	// it, derived facts leave it nil.
 	return errnie.Error(errnie.Require(map[string]any{
 		"label":        metric.Label,
 		"raw":          metric.Raw,
 		"normalized":   metric.Normalized,
 		"standardized": metric.Standardized,
-		"exact":        metric.Exact,
 		"center":       metric.center,
 		"scale":        metric.scale,
 		"unit":         metric.unit,

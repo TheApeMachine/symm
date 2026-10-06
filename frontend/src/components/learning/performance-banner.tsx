@@ -126,6 +126,7 @@ export const LearningPerformanceBanner = React.memo(() => {
 							<span className="text-(--f4) uppercase tracking-wider">Tape Fragments:</span>
 							<div className="flex items-center gap-2">
 								<span className="text-(--up)">UP: <span data-metric="fragments_up" data-format="integer">0</span></span>
+								<span className="text-(--up) opacity-70">UP_F: <span data-metric="fragments_up_friction" data-format="integer">0</span></span>
 								<span className="text-(--down)">DN: <span data-metric="fragments_down" data-format="integer">0</span></span>
 								<span className="text-(--f3)">CHOP: <span data-metric="fragments_chop" data-format="integer">0</span></span>
 								<span className="text-(--f4)">FLAT: <span data-metric="fragments_flat" data-format="integer">0</span></span>

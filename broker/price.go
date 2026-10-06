@@ -2,7 +2,6 @@ package broker
 
 import (
 	"context"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1129,12 +1128,10 @@ func (price *Price) loadFees(symbols []string) (*kraken.TradeVolumeResult, error
 		return paper.TradeVolume(symbols)
 	}
 
-	client := spot.NewREST()
-	client.PublicKey = os.Getenv("KRAKEN_API_KEY")
-	client.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
+	client, err := kraken.NewAuthenticatedREST()
 
-	if nonce, err := kraken.ProcessAuthNonce(); err == nil && nonce != nil {
-		client.Nonce = nonce.Next
+	if err != nil {
+		return nil, err
 	}
 
 	req, err := client.NewRequest(spot.RequestOptions{

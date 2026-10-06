@@ -12,7 +12,10 @@ package tablestest
 import (
 	"context"
 	"database/sql"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/apache/iceberg-go/catalog"
@@ -65,4 +68,45 @@ func Underlying(t testing.TB) catalog.Catalog {
 	}
 
 	return underlying
+}
+
+/*
+DropDataFiles deletes every Parquet data file of one table while leaving its
+metadata and manifests intact. A later scan still plans those files and then
+fails to read them: a real storage failure in the middle of a read, not a
+missing table.
+*/
+func DropDataFiles(t testing.TB, catalog *tables.Catalog, name string) {
+	t.Helper()
+
+	loaded, err := catalog.Load(context.Background(), name)
+
+	if err != nil {
+		t.Fatalf("tablestest: load %s: %v", name, err)
+	}
+
+	location := strings.TrimPrefix(loaded.Location(), "file://")
+	dropped := 0
+
+	err = filepath.WalkDir(location, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		if entry.IsDir() || filepath.Ext(path) != ".parquet" {
+			return nil
+		}
+
+		dropped++
+
+		return os.Remove(path)
+	})
+
+	if err != nil {
+		t.Fatalf("tablestest: drop data files of %s: %v", name, err)
+	}
+
+	if dropped == 0 {
+		t.Fatalf("tablestest: %s has no data files to drop under %s", name, location)
+	}
 }

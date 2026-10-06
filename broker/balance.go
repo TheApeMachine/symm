@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"maps"
-	"os"
 	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -238,12 +237,10 @@ func (balance *Balance) Update() error {
 		return nil
 	}
 
-	client := spot.NewREST()
-	client.PublicKey = os.Getenv("KRAKEN_API_KEY")
-	client.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
+	client, err := kraken.NewAuthenticatedREST()
 
-	if nonce, err := kraken.ProcessAuthNonce(); err == nil && nonce != nil {
-		client.Nonce = nonce.Next
+	if err != nil {
+		return errnie.Error(err)
 	}
 
 	resp, err := client.Balances()
@@ -330,19 +327,127 @@ func (balance *Balance) Unrealized() *decimal.Decimal {
 UpdateWallet applies a streamed wallet frame. The streamed frame carries no
 trade balance, so the last one the venue reported is kept until the next
 refresh replaces it.
+
+A "snapshot" frame replaces the wallet. An "update" frame carries ledger
+entries for the assets that changed, each with that asset's new total, so it
+is merged into the held wallet: assets it does not mention keep their last
+balance, and a changed asset's Available/Reserved split is dropped (the
+ledger entry does not carry it) so Cash falls back to the new total. Any
+other frame type, or an update with no held wallet to merge into, is an
+error: the account state is never replaced with a partial view.
 */
-func (balance *Balance) UpdateWallet(wallet *kraken.Balance) {
-	if balance == nil || wallet == nil {
-		return
+func (balance *Balance) UpdateWallet(wallet *kraken.Balance) error {
+	if balance == nil {
+		return errnie.Err(errnie.Validation, "[balance] nil balance instance", nil)
 	}
 
-	var tradeBalance *kraken.TradeBalanceResult
+	if wallet == nil {
+		return errnie.Err(errnie.Validation, "[balance] nil wallet frame", nil)
+	}
+
+	var (
+		tradeBalance *kraken.TradeBalanceResult
+		held         *kraken.Balance
+	)
 
 	if current := balance.snapshot.Load(); current != nil {
 		tradeBalance = current.TradeBalance
+		held = current.Wallet
+	}
+
+	switch wallet.Type {
+	case "snapshot":
+	case "update":
+		if held == nil {
+			return errnie.Err(
+				errnie.Validation,
+				"[balance] wallet update without a held wallet snapshot",
+				nil,
+			)
+		}
+
+		merged, err := mergeWalletUpdate(held, wallet)
+
+		if err != nil {
+			return err
+		}
+
+		wallet = merged
+	default:
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"[balance] unknown wallet frame type "+wallet.Type,
+			nil,
+		)
 	}
 
 	balance.snapshot.Store(newAccountSnapshot(balance.Quote, wallet, tradeBalance))
+	return nil
+}
+
+/*
+mergeWalletUpdate returns a new wallet: held with every asset named in update
+replaced by its new total. held is never mutated; snapshots are immutable.
+*/
+func mergeWalletUpdate(held, update *kraken.Balance) (*kraken.Balance, error) {
+	changed := make(map[string]kraken.BalanceData, len(update.Data))
+	order := make([]string, 0, len(update.Data))
+
+	for _, entry := range update.Data {
+		if entry.Asset == "" {
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[balance] wallet update entry without asset",
+				nil,
+			)
+		}
+
+		if entry.Balance == nil {
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[balance] wallet update without balance for "+entry.Asset,
+				nil,
+			)
+		}
+
+		if _, seen := changed[entry.Asset]; !seen {
+			order = append(order, entry.Asset)
+		}
+
+		// Ledger entries within one frame are in venue order; the last one
+		// for an asset carries its final total.
+		changed[entry.Asset] = kraken.BalanceData{
+			Asset:      entry.Asset,
+			AssetClass: entry.AssetClass,
+			Balance:    entry.Balance,
+		}
+	}
+
+	merged := &kraken.Balance{
+		Channel:   update.Channel,
+		Type:      "snapshot",
+		Sequence:  update.Sequence,
+		Timestamp: update.Timestamp,
+		Data:      make([]kraken.BalanceData, 0, len(held.Data)+len(changed)),
+	}
+
+	for _, entry := range held.Data {
+		if replacement, ok := changed[entry.Asset]; ok {
+			merged.Data = append(merged.Data, replacement)
+			delete(changed, entry.Asset)
+			continue
+		}
+
+		merged.Data = append(merged.Data, entry)
+	}
+
+	for _, asset := range order {
+		if entry, ok := changed[asset]; ok {
+			merged.Data = append(merged.Data, entry)
+		}
+	}
+
+	return merged, nil
 }
 
 /*

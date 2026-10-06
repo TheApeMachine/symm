@@ -63,25 +63,6 @@ var LogicSourceStrings = []string{
 }
 
 /*
-TickerReceivers names the signals that drain per-symbol ticker queues.
-*/
-var TickerReceivers = []SourceType{
-	SourceCorrelation,
-	SourceLeadLag,
-	SourceLiquidity,
-	SourcePumpDump,
-	SourceSentiment,
-}
-
-var TickerReceiverStrings = []string{
-	"correlation",
-	"leadlag",
-	"liquidity",
-	"pumpdump",
-	"sentiment",
-}
-
-/*
 TradeReceivers names the signals that drain per-symbol trade queues.
 */
 var TradeReceivers = []SourceType{

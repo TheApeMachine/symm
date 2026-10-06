@@ -248,15 +248,20 @@ func expandLevel3Decimal(text string) (string, error) {
 	return rational.FloatString(scale), nil
 }
 
-func NewLevel3(buf []byte) *Level3 {
+/*
+NewLevel3 decodes one venue level3 frame. A frame that cannot be decoded is an
+error, never a partial or empty frame: a lost delta leaves the local book
+silently wrong, so the caller must halt rather than apply what was parsed.
+*/
+func NewLevel3(buf []byte) (*Level3, error) {
 	var level3 Level3
 
 	if err := sonic.Unmarshal(buf, &level3); err != nil {
-		errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			"invalid level3",
 			err,
-		))
+		)
 	}
 
 	for index := range level3.Data {
@@ -265,7 +270,7 @@ func NewLevel3(buf []byte) *Level3 {
 		}
 	}
 
-	return &level3
+	return &level3, nil
 }
 
 func (level3 *Level3) Action() string {

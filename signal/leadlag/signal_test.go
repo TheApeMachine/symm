@@ -11,14 +11,22 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/leadlag"
+	"github.com/theapemachine/symm/tests/market"
 )
 
-func quote(label string, at time.Time, seq int64, price float64) *data.Measurement {
-	prior := data.NewMeasurement(1, label, "ingress", seq, seq)
+func trade(label string, at time.Time, seq int64, price float64) *data.Measurement {
+	prior := data.NewMeasurement(
+		1, label, "spot:trade", seq, seq,
+		&data.StringEntry{Key: "type", Value: "trade"},
+		&data.StringEntry{Key: "side", Value: "buy"},
+	)
 	prior.At = at
 	prior.From = at
 
-	return prior.Write(data.NewMetric("last", price, data.UnitPrice, data.TimescaleInstantaneous))
+	return prior.Write(
+		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
+		data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous),
+	)
 }
 
 func metric(measurement *data.Measurement, label string) (float64, bool) {
@@ -58,7 +66,7 @@ func TestLeadLagSignalMetrics(t *testing.T) {
 
 			for step := range 40 {
 				btcPrice := 50000.0 * math.Exp(latent[step*10+20])
-				resBTC := instrument.Step(quote(
+				resBTC := instrument.Step(trade(
 					"BTC/USD", now.Add(time.Duration(step*100)*time.Millisecond), int64(step*2+1), btcPrice,
 				))
 				So(resBTC, ShouldNotBeNil)
@@ -68,7 +76,7 @@ func TestLeadLagSignalMetrics(t *testing.T) {
 				So(lastBTC, ShouldEqual, btcPrice)
 
 				ethPrice := 3000.0 * math.Exp(latent[step*10+3])
-				resETH := instrument.Step(quote(
+				resETH := instrument.Step(trade(
 					"ETH/USD", now.Add(time.Duration(step*100+30)*time.Millisecond), int64(step*2+2), ethPrice,
 				))
 				So(resETH, ShouldNotBeNil)
@@ -113,12 +121,33 @@ func TestLeadLagSignalMetrics(t *testing.T) {
 			So(measured, ShouldBeGreaterThan, 0)
 		})
 
-		Convey("Rejects non-positive or missing prices cleanly", func() {
-			prior := data.NewMeasurement(1, "BTC/USD", "ingress", 999, 999)
+		Convey("Rejects a non-positive trade price without error", func() {
+			So(instrument.Step(trade("BTC/USD", now, 998, 0)), ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
+		})
+
+		Convey("Treats a trade frame without price as an error", func() {
+			prior := data.NewMeasurement(1, "BTC/USD", "spot:trade", 999, 999)
 			prior.At = now
 			prior.From = now
 
 			So(instrument.Step(prior.Write()), ShouldBeNil)
+			So(instrument.Error(), ShouldNotBeNil)
+		})
+	})
+}
+
+func TestLeadLagCapturedBoundaryTape(t *testing.T) {
+	Convey("Given the captured CRV/DOT trade tape whose uneven spacing put the best lag on the profile boundary", t, func() {
+		instrument := leadlag.NewSignal(context.Background(), data.NewArenaOwner("leadlag", 4096))
+		instrument.Transition(nmruntime.READY)
+
+		Convey("Every spot:trade frame steps without a panic or an error", func() {
+			for _, frame := range market.LeadLagTape() {
+				So(frame.Source, ShouldEqual, "spot:trade")
+				So(func() { instrument.Step(frame) }, ShouldNotPanic)
+				So(instrument.Error(), ShouldBeNil)
+			}
 		})
 	})
 }

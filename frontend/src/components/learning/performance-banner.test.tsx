@@ -22,9 +22,11 @@ describe("LearningPerformanceBanner", () => {
 		expect(html).toContain('data-metric="contrast"');
 		expect(html).toContain('data-metric="precursor_length"');
 		expect(html).toContain('data-metric="fragments_up"');
+		expect(html).toContain('data-metric="fragments_up_friction"');
 		expect(html).toContain('data-metric="fragments_down"');
 		expect(html).toContain('data-metric="fragments_chop"');
 		expect(html).toContain('data-metric="fragments_flat"');
+		expect(html).toContain('data-metric="fragments_unsupported"');
 
 		// Pillar 2: Held-out & forward paper metrics
 		expect(html).toContain("HELD-OUT SKILL AND FORWARD PAPER");

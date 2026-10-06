@@ -1,6 +1,7 @@
 package data
 
 import (
+	"sync"
 	"sync/atomic"
 )
 
@@ -109,6 +110,20 @@ type ArenaOwner struct {
 	count       int
 	currentGen  int64
 	seqMode     bool
+	// priors holds the last finalized Measurement statistics per Label.
+	// Heap-resident so they survive generation Seal/Release/Free; applied
+	// into the next NewMeasurement for that Label, then replaced on capture.
+	// priorMu guards priors and the reset epochs below, so a regime reset
+	// issued from outside the producer goroutine cannot race alloc/finalize.
+	priorMu sync.Mutex
+	priors  map[string]*priorSnapshot
+	// resetEpoch increments on every ResetPrior/ResetPriors call. Each
+	// Measurement records the epoch it was allocated under; a capture from
+	// a Measurement allocated before the reset that covers its Label is
+	// dropped, so in-flight work cannot resurrect the old regime.
+	resetEpoch    uint64
+	resetAllEpoch uint64
+	labelEpochs   map[string]uint64
 }
 
 func NewArenaOwner(source string, capacity ...int) *ArenaOwner {
@@ -130,6 +145,8 @@ func NewArenaOwner(source string, capacity ...int) *ArenaOwner {
 		capacity:    capVal,
 		window:      windowVal,
 		generations: []generationEntry{{gen: current, endSeq: int64(capVal - 1)}},
+		priors:      make(map[string]*priorSnapshot),
+		labelEpochs: make(map[string]uint64),
 	}
 }
 
@@ -225,6 +242,7 @@ func (owner *ArenaOwner) Close() {
 		owner.generations = nil
 		owner.current = nil
 		owner.previous = nil
+		owner.dropPriors()
 		return
 	}
 
@@ -239,12 +257,76 @@ func (owner *ArenaOwner) Close() {
 		owner.previous.Release()
 		owner.previous = nil
 	}
+
+	owner.dropPriors()
+}
+
+func (owner *ArenaOwner) dropPriors() {
+	owner.priorMu.Lock()
+	defer owner.priorMu.Unlock()
+
+	owner.priors = nil
+	owner.labelEpochs = nil
+}
+
+/*
+ResetPrior discards the held prior for label so the next NewMeasurement for
+that Label starts cold (samples 0, no prediction, no metric center/scale
+seeds). Use it when the producer knows the statistics of label no longer
+describe the market (regime change, feed gap, venue resync).
+
+Measurements for label allocated before the reset but finalized after it do
+not re-capture their (old-regime) statistics. Other Labels are untouched.
+*/
+func (owner *ArenaOwner) ResetPrior(label string) {
+	if owner == nil {
+		return
+	}
+
+	owner.priorMu.Lock()
+	defer owner.priorMu.Unlock()
+
+	owner.resetEpoch++
+
+	if owner.labelEpochs == nil {
+		owner.labelEpochs = make(map[string]uint64)
+	}
+
+	owner.labelEpochs[label] = owner.resetEpoch
+	delete(owner.priors, label)
+}
+
+/*
+ResetPriors discards the held priors for every Label on this ArenaOwner, so
+every next NewMeasurement starts cold. In-flight Measurements allocated
+before the reset do not re-capture on finalize.
+*/
+func (owner *ArenaOwner) ResetPriors() {
+	if owner == nil {
+		return
+	}
+
+	owner.priorMu.Lock()
+	defer owner.priorMu.Unlock()
+
+	owner.resetEpoch++
+	owner.resetAllEpoch = owner.resetEpoch
+	owner.labelEpochs = make(map[string]uint64)
+
+	if owner.priors != nil {
+		owner.priors = make(map[string]*priorSnapshot)
+	}
 }
 
 /*
 NewMeasurement allocates a fresh Measurement from the current generation.
 Its slices (Metrics, Metadata, Provenance, Peers) are initialized from the arena,
 avoiding GC heap map allocations on the hot path.
+
+Transferability: if this ArenaOwner holds a priorSnapshot for label (captured
+from the previous finalized Measurement), samples and prediction are copied
+into the new Measurement and metric center/scale seeds are applied on Write.
+The prior snapshot itself is replaced when that Measurement finalizes.
 */
 func (owner *ArenaOwner) NewMeasurement(
 	epoch int64,
@@ -253,7 +335,7 @@ func (owner *ArenaOwner) NewMeasurement(
 	seqIdx int64,
 	tick int64,
 	peers []*Measurement,
-	metadata ...StringEntry,
+	metadata ...*StringEntry,
 ) *Measurement {
 	gen := owner.current
 	alloc := gen.Allocator()
@@ -266,7 +348,8 @@ func (owner *ArenaOwner) NewMeasurement(
 	measurement.Tick = tick
 	measurement.peers = peers
 	measurement.metadata = metadata
-
+	measurement.owner = owner
+	owner.applyPrior(measurement)
 
 	if !owner.seqMode {
 		owner.count++
@@ -276,6 +359,84 @@ func (owner *ArenaOwner) NewMeasurement(
 	}
 
 	return measurement
+}
+
+/*
+applyPrior copies transferable regime statistics from the held prior for
+measurement.Label into the new Measurement and pins that snapshot on the
+Measurement, so finalize seeds metric center/scale from the same prior the
+samples/prediction came from (even if another Measurement for the Label
+finalizes, or a reset happens, in between). The prior remains held until
+capturePrior replaces it after finalize.
+*/
+func (owner *ArenaOwner) applyPrior(measurement *Measurement) {
+	if owner == nil || measurement == nil {
+		return
+	}
+
+	owner.priorMu.Lock()
+	defer owner.priorMu.Unlock()
+
+	measurement.resetEpoch = owner.resetEpoch
+
+	if owner.priors == nil {
+		return
+	}
+
+	prior, ok := owner.priors[measurement.Label]
+	if !ok || prior == nil {
+		return
+	}
+
+	measurement.prior = prior
+	measurement.samples = prior.samples
+	measurement.prediction = prior.prediction
+}
+
+/*
+capturePrior replaces the held prior for measurement.Label with a heap
+snapshot of the just-finalized Measurement. Called from finalize after
+Welford updates so the next NewMeasurement continues the regime. The
+previous snapshot is dropped (freed for GC) once replaced.
+
+A Measurement allocated before a ResetPrior/ResetPriors that covers its
+Label is not captured: its statistics belong to the discarded regime.
+*/
+func (owner *ArenaOwner) capturePrior(measurement *Measurement) {
+	if owner == nil || measurement == nil || !measurement.locked() {
+		return
+	}
+
+	snapshot := snapshotFrom(measurement)
+
+	owner.priorMu.Lock()
+	defer owner.priorMu.Unlock()
+
+	if measurement.resetEpoch < owner.resetAllEpoch ||
+		measurement.resetEpoch < owner.labelEpochs[measurement.Label] {
+		return
+	}
+
+	if owner.priors == nil {
+		owner.priors = make(map[string]*priorSnapshot)
+	}
+
+	owner.priors[measurement.Label] = snapshot
+}
+
+func (owner *ArenaOwner) priorFor(label string) *priorSnapshot {
+	if owner == nil {
+		return nil
+	}
+
+	owner.priorMu.Lock()
+	defer owner.priorMu.Unlock()
+
+	if owner.priors == nil {
+		return nil
+	}
+
+	return owner.priors[label]
 }
 
 /*

@@ -32,8 +32,10 @@ volume bar against a target fixed from the causal quantity baseline when the
 bar opens. The interval pipeline runs once a previous trade exists; the touch
 pipeline whenever an executable, uncrossed touch is available; the bar
 pipeline when the bar closes; the response pipeline when a closed bar has a
-valid touch at both ends. The trade, the touch (from the trade, or the shared
-book), and the open bar's running totals are the only envelope translation.
+valid touch at both ends. The pipeline is driven by trade frames only: the
+trade supplies price and quantity, and the touch is read exclusively from the
+injected BookSource. The trade, the touch, and the open bar's running totals
+are the only envelope translation.
 Facts accumulate in the output map and are written once.
 */
 type Signal struct {
@@ -68,8 +70,9 @@ type symbolPipeline struct {
 }
 
 /*
-NewSignal composes the volume-clocked activity instrument. The BookSource
-supplies the touch when the arriving trade does not carry it.
+NewSignal composes the volume-clocked activity instrument. The BookSource is
+required: it is the sole authority for the touch. A missing BookSource is a
+wiring fault and halts the instrument.
 */
 func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSource) *Signal {
 	signal := &Signal{
@@ -120,6 +123,11 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 	}
 
 	signal.System = runtime.NewSystem(ctx, "pumpdump", signal)
+
+	if err := errnie.Require(map[string]any{"books": books}); err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[pumpdump] book manager is required", err))
+	}
+
 	return signal
 }
 
@@ -288,10 +296,14 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 /*
 Step binds the prior trade, the active touch, and the open bar's running
 totals to the symbol's pipelines and writes the published activity facts into
-a fresh Measurement allocated from the signal's own arena. A trade without a
-positive, finite price and quantity yields no measurement. A trade without an
-executable, uncrossed touch still advances tape accounting, but every
-touch-dependent fact is omitted. Bar facts are published only on the trade
+a fresh Measurement allocated from the signal's own arena. A trade frame that
+cannot be read, or that lacks price or qty, is an error; one without a
+positive, finite price and quantity yields no measurement. The touch comes
+only from the BookSource. While the book is momentarily absent or one-sided
+the trade still advances tape accounting, but every touch-dependent fact is
+omitted. A present touch with a non-finite or non-positive price
+(broker.InvalidTouch) or a crossed or locked touch (broker.CrossedTouch) is
+corrupt book state and halts the signal; no touch is ever inferred from the trade. Bar facts are published only on the trade
 that closes a bar (accumulated quantity at or above the target, positive
 duration); an open bar is never reported as a zero-rate bar. Baseline-relative
 facts are omitted until their causal noise scale is defined and positive.
@@ -306,55 +318,64 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
+	if signal.books == nil {
+		signal.Error(errnie.Err(errnie.Internal, "[pumpdump] book manager is required", nil))
+		return nil
+	}
+
 	pipe := signal.pipelineFor(prior.Label)
 
 	clear(pipe.output.Values)
 	clear(pipe.envelope.Values)
 
-	for _, key := range []string{"price", "qty", "bid", "ask"} {
-		if entry := data.Pull(prior.Read(key)); entry.Err == nil && entry.Metric.Label != "" {
-			pipe.envelope.Values[key] = entry.Metric.Raw
-		}
-	}
-
 	for _, key := range []string{"price", "qty"} {
-		value, held := pipe.envelope.Values[key]
+		value, err := tradeValue(prior, key)
 
-		if !held || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		if err != nil {
+			signal.Error(err)
 			return nil
 		}
+
+		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil
+		}
+
+		pipe.envelope.Values[key] = value
 	}
 
-	if signal.books != nil {
-		signal.books.Book(prior.Label, func(book *spotbook.Book) {
-			if book == nil {
-				return
-			}
+	signal.books.Book(prior.Label, func(book *spotbook.Book) {
+		if book == nil {
+			return
+		}
 
-			if _, held := pipe.envelope.Values["bid"]; !held {
-				if best := book.BestBid(); best != nil && best.Price != nil {
-					pipe.envelope.Values["bid"] = kraken.Float64(best.Price)
-				}
-			}
+		bid := book.BestBid()
+		ask := book.BestAsk()
 
-			if _, held := pipe.envelope.Values["ask"]; !held {
-				if best := book.BestAsk(); best != nil && best.Price != nil {
-					pipe.envelope.Values["ask"] = kraken.Float64(best.Price)
-				}
-			}
-		})
-	}
+		if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
+			return
+		}
+
+		pipe.envelope.Values["bid"] = kraken.Float64(bid.Price)
+		pipe.envelope.Values["ask"] = kraken.Float64(ask.Price)
+	})
 
 	bid, bidHeld := pipe.envelope.Values["bid"]
 	ask, askHeld := pipe.envelope.Values["ask"]
-	touchValid := bidHeld && askHeld &&
-		bid > 0 && !math.IsInf(bid, 0) && !math.IsNaN(bid) &&
-		ask > bid && !math.IsInf(ask, 0) && !math.IsNaN(ask)
+	touchValid := bidHeld && askHeld
 
-	if !touchValid {
-		errnie.Warn(signal.Name() + ": absent, crossed, or locked touch; touch facts omitted")
-		delete(pipe.envelope.Values, "bid")
-		delete(pipe.envelope.Values, "ask")
+	if touchValid && (!broker.ValidTouchValue(bid) || !broker.ValidTouchValue(ask)) {
+		// Both sides are present, so impossible values are corrupt book
+		// state, not a momentary absence: halt like a crossed touch.
+		signal.Error(broker.InvalidTouch("pumpdump", prior.Label, map[string]float64{"bid": bid, "ask": ask}))
+		return nil
+	}
+
+	if touchValid && ask <= bid {
+		// BookSource withholds pending and checksum-diverging books, so a
+		// crossed or locked touch is corrupt book state: halt, distinct from a
+		// missing BookSource (see broker.CrossedTouch).
+		signal.Error(broker.CrossedTouch("pumpdump", prior.Label, bid, ask))
+		return nil
 	}
 
 	hadPrev := pipe.hasPrev
@@ -489,7 +510,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		out.From = barStart
 	}
 
-	metrics := make([]data.Metric, 0, len(signal.metrics))
+	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
 		value, held := pipe.output.Values[metric[1]]
@@ -508,4 +529,25 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	return out.Write(metrics...)
+}
+
+/*
+tradeValue reads one required trade field from a trade frame. A read failure
+or an absent field is an error: every trade frame carries price and qty, so a
+frame without them is broken upstream and must not be silently skipped.
+*/
+func tradeValue(prior *data.Measurement, key string) (float64, error) {
+	entry := data.Pull(prior.Read(key))
+
+	if entry != nil && entry.Err != nil {
+		return 0, entry.Err
+	}
+
+	if entry == nil || entry.Metric == nil || entry.Metric.Label != key {
+		return 0, errnie.Err(
+			errnie.NotAcceptable, "[pumpdump] trade frame is missing "+key, nil,
+		)
+	}
+
+	return entry.Metric.Raw, nil
 }

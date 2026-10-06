@@ -55,7 +55,7 @@ export const RecognitionPanel = React.memo(() => (
 								<span className="text-(--down) font-bold" data-metric="hist_missed_enter" data-format="integer">0</span>
 							</div>
 							<div className="flex justify-between">
-								<span className="text-(--down)">False ENTER (DOWN/CHOP/FLAT):</span>
+								<span className="text-(--down)">False ENTER (DOWN/UP_F/CHOP/FLAT):</span>
 								<span className="text-(--down) font-bold" data-metric="hist_false_enter" data-format="integer">0</span>
 							</div>
 							<div className="flex justify-between">
@@ -130,10 +130,14 @@ export const RecognitionPanel = React.memo(() => (
 						<div className="text-(--f2) font-bold uppercase tracking-wider text-[10px]">
 							Completed Tape Fragments
 						</div>
-						<div className="grid grid-cols-5 gap-2 text-center text-[10px]">
+						<div className="grid grid-cols-6 gap-2 text-center text-[10px]">
 							<div className="p-1.5 border border-(--line) rounded bg-(--surface)">
 								<div className="text-(--up) font-bold">UP</div>
 								<div className="text-sm font-bold mt-1" data-metric="fragments_up" data-format="integer">0</div>
+							</div>
+							<div className="p-1.5 border border-(--line) rounded bg-(--surface)">
+								<div className="text-(--up) font-bold opacity-70">UP_F</div>
+								<div className="text-sm font-bold mt-1" data-metric="fragments_up_friction" data-format="integer">0</div>
 							</div>
 							<div className="p-1.5 border border-(--line) rounded bg-(--surface)">
 								<div className="text-(--down) font-bold">DOWN</div>

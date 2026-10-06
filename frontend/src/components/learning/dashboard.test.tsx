@@ -105,6 +105,7 @@ describe("LearningDashboard", () => {
 			new MetricT("decisions", 56),
 			new MetricT("resolved", 42),
 			new MetricT("fragments_up", 15),
+			new MetricT("fragments_up_friction", 4),
 			new MetricT("fragments_down", 12),
 			new MetricT("fragments_chop", 8),
 			new MetricT("fragments_flat", 7),
@@ -124,6 +125,7 @@ describe("LearningDashboard", () => {
 		expect(container.querySelector('[data-metric="steps"]')?.textContent).toBe("1,234");
 		expect(container.querySelector('[data-metric="decisions"]')?.textContent).toBe("56");
 		expect(container.querySelector('[data-metric="fragments_up"]')?.textContent).toBe("15");
+		expect(container.querySelector('[data-metric="fragments_up_friction"]')?.textContent).toBe("4");
 		expect(container.querySelector('[data-metric="fragments_down"]')?.textContent).toBe("12");
 		expect(container.querySelector('[data-metric="fragments_chop"]')?.textContent).toBe("8");
 		expect(container.querySelector('[data-metric="fragments_flat"]')?.textContent).toBe("7");

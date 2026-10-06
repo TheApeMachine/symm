@@ -2,27 +2,50 @@ package strategy
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"math/big"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
+Excursion classes (TRAINING.md "Excursion Detection"). Each detection is
+stored with its class under the "type" metadata key.
+*/
+const (
+	// excursionUp is the largest causal rise that clears round-trip friction.
+	excursionUp = "up"
+	// excursionUpShort is the largest causal rise that falls short of
+	// round-trip friction: the near miss that looks like ignition but loses.
+	excursionUpShort = "up_friction"
+	// excursionDown is the largest causal fall whose magnitude clears
+	// round-trip friction.
+	excursionDown = "down"
+	// excursionChop is the longest stretch whose whole price range stays
+	// inside the friction deadband without being a flat line.
+	excursionChop = "chop"
+	// excursionFlat is the longest run of trades at one unchanged price.
+	excursionFlat = "flat"
+)
+
+/*
 Detector scans market tape from beginning to end.
-Given raw spot trade measurements, the detector finds the single best
-causal low -> high excursion for each symbol and epoch.
-The scan is streaming and O(1). It keeps:
+Given raw spot trade measurements, the detector finds, for each symbol and
+epoch, one representative fragment of every excursion class:
 
-- the running trough, which is the best possible low for future highs;
-- the best completed excursion observed anywhere in the tape so far.
+  - up: the best friction-clearing low -> high move;
+  - up_friction: the best low -> high move that does not clear friction;
+  - down: the best high -> low move whose magnitude clears friction;
+  - chop: the longest deadband stretch (range never clears friction);
+  - flat: the longest run of one unchanged price.
 
-These are separate pieces of state. A later lower wick may replace the
-running trough without destroying an earlier, larger completed excursion.
+The scan is streaming and O(1) in memory per symbol/epoch tape.
 */
 type Detector struct {
 	*runtime.System
@@ -32,135 +55,357 @@ type Detector struct {
 
 /*
 NewDetector creates a new detector and stores the tee used to publish
-detected excursions.
+detected excursions. Every excursion class is defined against round-trip
+friction, so the price system is a hard dependency: without it the detector
+enters ERROR and Scan refuses to classify anything.
 */
 func NewDetector(
 	ctx context.Context,
 	storeTee runtime.Tee,
 	price *broker.Price,
 ) *Detector {
-	return &Detector{
+	detector := &Detector{
 		System:   runtime.NewSystem(ctx, "detector"),
 		storeTee: storeTee,
 		price:    price,
 	}
+
+	if err := errnie.Require(map[string]any{
+		"price":    price,
+		"storeTee": storeTee,
+	}); err != nil {
+		detector.Error(errnie.Err(
+			errnie.Validation,
+			"[detector] cannot classify excursions without friction",
+			err,
+		))
+	}
+
+	return detector
 }
 
 /*
-Scan scans the tape once from beginning to end.
-For each contiguous symbol/epoch tape, the detector finds the causal
-low/high pair having the largest gross price multiplier:
+tapePoint is one priced trade coordinate on the tape.
+*/
+type tapePoint struct {
+	idx   int64
+	tick  int64
+	at    time.Time
+	price *decimal.Decimal
+}
 
-highPrice / lowPrice
+/*
+span is a B -> C pair of tape points.
+*/
+type span struct {
+	b tapePoint
+	c tapePoint
+}
 
-subject to:
+func (s span) held() bool {
+	return s.b.price != nil && s.c.price != nil && s.b.tick < s.c.tick
+}
 
-lowTick < highTick
+func (s span) width() int64 {
+	if !s.held() {
+		return 0
+	}
 
-The running trough is the minimum price observed before the current trade.
-Every valid future high is evaluated against that trough.
-Once a completed excursion becomes the best excursion seen so far, it is
-retained independently of subsequent trough changes. This prevents a late
-stop-loss wick from destroying an earlier macro move.
-If two excursions have exactly the same gain, the wider excursion wins.
-Only the winning low/high coordinates are retained. The complete native
-tape fragment can later be recovered from storage using its epoch and
-sequence coordinates.
+	return s.c.tick - s.b.tick
+}
+
+/*
+improves reports whether a candidate ratio beats the best ratio so far.
+Equal ratios prefer the wider fragment.
+*/
+func improves(ratio *big.Rat, candidate span, best *big.Rat, held span) bool {
+	if best == nil {
+		return true
+	}
+
+	cmp := ratio.Cmp(best)
+
+	if cmp != 0 {
+		return cmp > 0
+	}
+
+	return candidate.width() > held.width()
+}
+
+/*
+tape is the streaming state for one contiguous symbol/epoch tape.
+*/
+type tape struct {
+	detector *Detector
+	epoch    int64
+	symbol   string
+	start    tapePoint
+
+	// Running extremes. Equal prices never replace an extreme, so the
+	// earliest occurrence gives the widest interval.
+	trough tapePoint
+	peak   tapePoint
+
+	// Best completed excursions. They are independent of later changes to
+	// the running extremes, so a late wick cannot erase an earlier move.
+	up       span
+	upGain   *big.Rat
+	near     span
+	nearGain *big.Rat
+	down     span
+	downDrop *big.Rat
+
+	// clearGain is the smallest gross gain observed to clear friction.
+	// Round-trip PnL sign depends only on the exit/entry ratio against the
+	// fee, so any larger gain clears as well and need not be priced again.
+	// The ratio threshold is fee-specific: clearFee is the fee rate it was
+	// priced under, and a fee change (tier refresh) drops the cache.
+	clearGain *big.Rat
+	clearFee  *decimal.Decimal
+
+	// Current deadband stretch and its price range.
+	quiet    span
+	quietMin *decimal.Decimal
+	quietMax *decimal.Decimal
+	chop     span
+
+	// Current run of one unchanged price.
+	run  span
+	flat span
+}
+
+func (t *tape) observe(p tapePoint) error {
+	if t.trough.price == nil {
+		t.trough, t.peak = p, p
+		t.quiet = span{b: p, c: p}
+		t.quietMin, t.quietMax = p.price, p.price
+		t.run = span{b: p, c: p}
+		return nil
+	}
+
+	if err := t.rise(p); err != nil {
+		return err
+	}
+
+	t.fall(p)
+
+	if err := t.settle(p); err != nil {
+		return err
+	}
+
+	t.hold(p)
+	return nil
+}
+
+/*
+rise tracks the best low -> high move from the running trough, and the best
+low -> high move that does not clear friction.
+*/
+func (t *tape) rise(p tapePoint) error {
+	if p.price.Cmp(t.trough.price) < 0 {
+		t.trough = p
+		return nil
+	}
+
+	if p.tick <= t.trough.tick || p.price.Cmp(t.trough.price) == 0 {
+		return nil
+	}
+
+	gain := new(big.Rat).Quo(p.price.Rat(), t.trough.price.Rat())
+	candidate := span{b: t.trough, c: p}
+
+	if improves(gain, candidate, t.upGain, t.up) {
+		t.upGain, t.up = gain, candidate
+	}
+
+	fee := t.detector.feeRate(t.symbol)
+
+	if t.clearGain != nil && (fee == nil || t.clearFee == nil || fee.Cmp(t.clearFee) != 0) {
+		t.clearGain, t.clearFee = nil, nil
+	}
+
+	if t.clearGain != nil && gain.Cmp(t.clearGain) >= 0 {
+		return nil
+	}
+
+	if !improves(gain, candidate, t.nearGain, t.near) {
+		return nil
+	}
+
+	clears, err := t.detector.clearFriction(t.trough.price, p.price, t.symbol)
+	if err != nil {
+		return err
+	}
+
+	if clears {
+		t.clearGain, t.clearFee = gain, fee
+		return nil
+	}
+
+	t.nearGain, t.near = gain, candidate
+	return nil
+}
+
+/*
+fall tracks the best high -> low move from the running peak.
+*/
+func (t *tape) fall(p tapePoint) {
+	if p.price.Cmp(t.peak.price) > 0 {
+		t.peak = p
+		return
+	}
+
+	if p.tick <= t.peak.tick || p.price.Cmp(t.peak.price) == 0 {
+		return
+	}
+
+	drop := new(big.Rat).Quo(t.peak.price.Rat(), p.price.Rat())
+	candidate := span{b: t.peak, c: p}
+
+	if improves(drop, candidate, t.downDrop, t.down) {
+		t.downDrop, t.down = drop, candidate
+	}
+}
+
+/*
+settle grows the current deadband stretch until a trade widens its price
+range far enough to clear friction; that trade starts the next stretch.
+*/
+func (t *tape) settle(p tapePoint) error {
+	low, high := t.quietMin, t.quietMax
+	widened := false
+
+	if p.price.Cmp(low) < 0 {
+		low, widened = p.price, true
+	}
+
+	if p.price.Cmp(high) > 0 {
+		high, widened = p.price, true
+	}
+
+	if widened {
+		clears, err := t.detector.clearFriction(low, high, t.symbol)
+		if err != nil {
+			return err
+		}
+
+		if clears {
+			t.closeQuiet()
+			t.quiet = span{b: p, c: p}
+			t.quietMin, t.quietMax = p.price, p.price
+			return nil
+		}
+	}
+
+	t.quiet.c = p
+	t.quietMin, t.quietMax = low, high
+	return nil
+}
+
+func (t *tape) closeQuiet() {
+	if t.quietMin == nil || t.quietMin.Cmp(t.quietMax) == 0 {
+		return
+	}
+
+	if t.quiet.width() > t.chop.width() {
+		t.chop = t.quiet
+	}
+}
+
+/*
+hold grows the current run of one unchanged price.
+*/
+func (t *tape) hold(p tapePoint) {
+	if p.price.Cmp(t.run.b.price) == 0 {
+		t.run.c = p
+		return
+	}
+
+	t.closeFlat()
+	t.run = span{b: p, c: p}
+}
+
+func (t *tape) closeFlat() {
+	if t.run.width() > t.flat.width() {
+		t.flat = t.run
+	}
+}
+
+/*
+flush publishes one detection per class found on the completed tape.
+*/
+func (t *tape) flush() error {
+	t.closeQuiet()
+	t.closeFlat()
+
+	if t.up.held() {
+		clears, err := t.detector.clearFriction(t.up.b.price, t.up.c.price, t.symbol)
+		if err != nil {
+			return err
+		}
+
+		if clears {
+			t.detector.Flush(excursionUp, t.symbol, t.epoch, t.start, t.up)
+		}
+	}
+
+	if t.near.held() {
+		t.detector.Flush(excursionUpShort, t.symbol, t.epoch, t.start, t.near)
+	}
+
+	if t.down.held() {
+		clears, err := t.detector.clearFriction(t.down.c.price, t.down.b.price, t.symbol)
+		if err != nil {
+			return err
+		}
+
+		if clears {
+			t.detector.Flush(excursionDown, t.symbol, t.epoch, t.start, t.down)
+		}
+	}
+
+	if t.chop.held() {
+		t.detector.Flush(excursionChop, t.symbol, t.epoch, t.chop.b, t.chop)
+	}
+
+	if t.flat.held() {
+		t.detector.Flush(excursionFlat, t.symbol, t.epoch, t.flat.b, t.flat)
+	}
+
+	return nil
+}
+
+/*
+Scan scans the tape once from beginning to end and flushes the detections of
+every contiguous symbol/epoch tape when its boundary is crossed, and of the
+last tape when the iterator is exhausted. Only the B/C coordinates of each
+detection are retained; the native tape fragment is recovered from storage
+by its epoch and tick coordinates.
+
+Scan halts on the first error: a tape read failure, a detector without a
+price system, a trade without a positive exact price, or a round trip that
+cannot be priced. It never classifies an excursion as if friction were zero,
+and never flushes a tape whose read failed part-way, because its last
+excursion would be cut at an arbitrary tick instead of its real end.
 */
 func (detector *Detector) Scan(
-	measurements iter.Seq[*data.Measurement],
-) {
-	var (
-		active bool
-
-		// Active tape.
-		epoch     int64
-		symbol    string
-		startIdx  int64
-		startTick int64
-
-		// Running trough.
-		troughPrice *decimal.Decimal
-		troughIdx   int64
-		troughTick  int64
-		troughAt    time.Time
-
-		// Best completed excursion.
-		bestGain      *big.Rat
-		bestLowPrice  *decimal.Decimal
-		bestLowIdx    int64
-		bestLowTick   int64
-		bestLowAt     time.Time
-		bestHighPrice *decimal.Decimal
-		bestHighIdx   int64
-		bestHighTick  int64
-		bestHighAt    time.Time
-	)
-
-	reset := func(measurement *data.Measurement) {
-		active = true
-
-		epoch = measurement.Epoch
-		symbol = measurement.Label
-		startIdx = measurement.SeqIdx
-		startTick = measurement.Tick
-
-		troughPrice = nil
-		troughIdx = 0
-		troughTick = 0
-		troughAt = time.Time{}
-
-		bestGain = nil
-
-		bestLowPrice = nil
-		bestLowIdx = 0
-		bestLowTick = 0
-		bestLowAt = time.Time{}
-
-		bestHighPrice = nil
-		bestHighIdx = 0
-		bestHighTick = 0
-		bestHighAt = time.Time{}
+	measurements iter.Seq2[*data.Measurement, error],
+) error {
+	if err := detector.Error(); err != nil {
+		return err
 	}
 
-	flush := func() {
-		if !active {
-			return
+	var current *tape
+
+	for measurement, err := range measurements {
+		if err != nil {
+			return detector.Error(errnie.Err(
+				errnie.IO,
+				"[detector] trade tape read failed",
+				err,
+			))
 		}
 
-		if bestLowPrice == nil || bestHighPrice == nil {
-			return
-		}
-
-		if bestLowTick >= bestHighTick {
-			return
-		}
-
-		if !detector.clearFriction(
-			bestLowPrice,
-			bestHighPrice,
-			symbol,
-		) {
-			return
-		}
-
-		detector.Flush(
-			symbol,
-			epoch,
-			startIdx,
-			startTick,
-			bestLowIdx,
-			bestHighIdx,
-			bestLowTick,
-			bestHighTick,
-			bestLowAt,
-			bestHighAt,
-			bestLowPrice,
-			bestHighPrice,
-		)
-	}
-
-	for measurement := range measurements {
 		if measurement == nil {
 			continue
 		}
@@ -169,108 +414,106 @@ func (detector *Detector) Scan(
 			continue
 		}
 
-		// Start a new tape, or flush the completed tape when its
-		// symbol/epoch boundary is crossed.
-		if !active {
-			reset(measurement)
-		}
-
-		if measurement.Label != symbol || measurement.Epoch != epoch {
-			flush()
-			reset(measurement)
-		}
-
-		price := data.Pull(measurement.Read("price")).Metric.Exact
-		if price == nil || price.Sign() <= 0 {
-			continue
-		}
-
-		// Maintain the running minimum.
-		// Equal prices deliberately do not replace the existing trough.
-		// Keeping the earliest occurrence gives the widest interval when
-		// the same low price occurs multiple times.
-		if troughPrice == nil || price.Cmp(troughPrice) < 0 {
-			troughPrice = price
-			troughIdx = measurement.SeqIdx
-			troughTick = measurement.Tick
-			troughAt = measurement.At
-			continue
-		}
-
-		// A valid excursion must be causal and must actually rise from
-		// the current trough.
-		if measurement.Tick <= troughTick {
-			continue
-		}
-
-		if price.Cmp(troughPrice) <= 0 {
-			continue
-		}
-
-		// Gross return ratio for the candidate excursion.
-		// Rational representation preserves exact arithmetic precision
-		// without truncation or scale artifacts.
-		gain := new(big.Rat).Quo(price.Rat(), troughPrice.Rat())
-
-		if bestGain != nil {
-			cmp := gain.Cmp(bestGain)
-
-			// Strictly worse than the best completed excursion.
-			if cmp < 0 {
-				continue
+		if current != nil && (measurement.Label != current.symbol || measurement.Epoch != current.epoch) {
+			if err := current.flush(); err != nil {
+				return detector.Error(err)
 			}
 
-			// For identical gains, retain the widest tape fragment.
-			if cmp == 0 {
-				candidateSpan := measurement.Tick - troughTick
-				bestSpan := bestHighTick - bestLowTick
+			current = nil
+		}
 
-				if candidateSpan <= bestSpan {
-					continue
-				}
+		if current == nil {
+			current = &tape{
+				detector: detector,
+				epoch:    measurement.Epoch,
+				symbol:   measurement.Label,
+				start: tapePoint{
+					idx:  measurement.SeqIdx,
+					tick: measurement.Tick,
+					at:   measurement.At,
+				},
 			}
 		}
 
-		// This trough -> current price pair is now the globally best
-		// completed excursion observed in this symbol/epoch.
-		// Crucially, these values are independent from the running
-		// trough after being recorded. A later lower wick cannot erase
-		// this excursion unless a subsequent rally actually beats it.
-		bestGain = gain
+		metric, err := readMetric(measurement, "price")
 
-		bestLowPrice = troughPrice
-		bestLowIdx = troughIdx
-		bestLowTick = troughTick
-		bestLowAt = troughAt
+		if err != nil || metric == nil || metric.Exact == nil || metric.Exact.Sign() <= 0 {
+			return detector.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"[detector] spot:trade without a positive exact price: %s epoch=%d tick=%d",
+					measurement.Label, measurement.Epoch, measurement.Tick,
+				),
+				err,
+			))
+		}
 
-		bestHighPrice = price
-		bestHighIdx = measurement.SeqIdx
-		bestHighTick = measurement.Tick
-		bestHighAt = measurement.At
+		if measurement.At.IsZero() {
+			return detector.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"[detector] spot:trade without venue time (At): %s epoch=%d tick=%d",
+					measurement.Label, measurement.Epoch, measurement.Tick,
+				),
+				nil,
+			))
+		}
+
+		price := metric.Exact
+
+		if err := current.observe(tapePoint{
+			idx:   measurement.SeqIdx,
+			tick:  measurement.Tick,
+			at:    measurement.At,
+			price: price,
+		}); err != nil {
+			return detector.Error(err)
+		}
 	}
 
-	// Flush the final active tape after the iterator is exhausted.
-	flush()
+	if current != nil {
+		if err := current.flush(); err != nil {
+			return detector.Error(err)
+		}
+	}
+
+	return nil
 }
 
 /*
-clearFriction verifies that the selected excursion remains profitable after
-round-trip taker friction.
+clearFriction verifies that buying at lowPrice and selling at highPrice
+remains profitable after round-trip taker friction. A missing price system
+or a round trip that cannot be priced is an error, never a guess.
 */
+/*
+feeRate returns the fee rate clearFriction prices under for symbol, or nil
+when none is available (clearFriction then errors on its own).
+*/
+func (detector *Detector) feeRate(symbol string) *decimal.Decimal {
+	if detector.price == nil {
+		return nil
+	}
+
+	fee := detector.price.Fee(symbol)
+
+	if fee == nil {
+		return nil
+	}
+
+	return fee.Fee
+}
+
 func (detector *Detector) clearFriction(
 	lowPrice *decimal.Decimal,
 	highPrice *decimal.Decimal,
 	symbol string,
-) bool {
-	if lowPrice == nil ||
-		highPrice == nil ||
-		lowPrice.Sign() <= 0 ||
-		highPrice.Sign() <= 0 {
-		return false
-	}
-
+) (bool, error) {
 	if detector.price == nil {
-		return highPrice.Cmp(lowPrice) > 0
+		return false, errnie.Err(
+			errnie.Validation,
+			"[detector] price system is required to measure friction: "+symbol,
+			nil,
+		)
 	}
 
 	pnl, _, err := detector.price.RoundTrip(
@@ -279,51 +522,58 @@ func (detector *Detector) clearFriction(
 		highPrice,
 	)
 
-	if err != nil || pnl == nil {
-		return false
+	if err != nil {
+		return false, errnie.Err(
+			errnie.Validation,
+			"[detector] round trip cannot be priced: "+symbol,
+			err,
+		)
 	}
 
-	return pnl.Sign() > 0
+	if pnl == nil {
+		return false, errnie.Err(
+			errnie.Validation,
+			"[detector] round trip returned no pnl: "+symbol,
+			nil,
+		)
+	}
+
+	return pnl.Sign() > 0, nil
 }
 
 /*
-Flush writes the detected excursion to storeTee.
-The stored epoch and sequence coordinates identify the exact contiguous
-historical tape fragment from the winning low through the winning high.
+Flush writes one detected excursion of the given class to storeTee.
+B is ignition (or the start of a chop/flat stretch) and C is exhaustion (or
+its end). The stored epoch and tick coordinates identify the exact
+contiguous historical tape fragment from start through C.
 */
 func (detector *Detector) Flush(
+	class string,
 	symbol string,
 	epoch int64,
-	startIdx int64,
-	startTick int64,
-	lowIdx int64,
-	highIdx int64,
-	lowTick int64,
-	highTick int64,
-	lowAt time.Time,
-	highAt time.Time,
-	lowPrice *decimal.Decimal,
-	highPrice *decimal.Decimal,
+	start tapePoint,
+	excursion span,
 ) *data.Measurement {
 	measurement := data.NewMeasurement(
 		epoch,
 		symbol,
 		detector.Name(),
-		startIdx,
-		highTick,
+		start.idx,
+		excursion.c.tick,
+		&data.StringEntry{Key: "type", Value: class},
 	)
-	measurement.At = highAt
-	measurement.From = lowAt
+	measurement.At = excursion.c.at
+	measurement.From = excursion.b.at
 
 	measurement.Write(
-		data.NewMetric("start_idx", float64(startIdx), data.UnitCount, data.TimescaleTick),
-		data.NewMetric("start_tick", float64(startTick), data.UnitCount, data.TimescaleTick),
-		data.NewMetric("low_idx", float64(lowIdx), data.UnitCount, data.TimescaleTick),
-		data.NewMetric("low_tick", float64(lowTick), data.UnitCount, data.TimescaleTick),
-		data.NewMetric("high_idx", float64(highIdx), data.UnitCount, data.TimescaleTick),
-		data.NewMetric("high_tick", float64(highTick), data.UnitCount, data.TimescaleTick),
-		data.NewExactMetric("low_price", lowPrice, data.UnitPrice, data.TimescaleTick),
-		data.NewExactMetric("high_price", highPrice, data.UnitPrice, data.TimescaleTick),
+		data.NewMetric("start_idx", float64(start.idx), data.UnitCount, data.TimescaleTick),
+		data.NewMetric("start_tick", float64(start.tick), data.UnitCount, data.TimescaleTick),
+		data.NewMetric("b_idx", float64(excursion.b.idx), data.UnitCount, data.TimescaleTick),
+		data.NewMetric("b_tick", float64(excursion.b.tick), data.UnitCount, data.TimescaleTick),
+		data.NewMetric("c_idx", float64(excursion.c.idx), data.UnitCount, data.TimescaleTick),
+		data.NewMetric("c_tick", float64(excursion.c.tick), data.UnitCount, data.TimescaleTick),
+		data.NewExactMetric("b_price", excursion.b.price, data.UnitPrice, data.TimescaleTick),
+		data.NewExactMetric("c_price", excursion.c.price, data.UnitPrice, data.TimescaleTick),
 	)
 
 	detector.storeTee.Push(

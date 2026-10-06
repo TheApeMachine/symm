@@ -69,6 +69,11 @@ func NewSignal(ctx context.Context, arena *data.ArenaOwner, books broker.BookSou
 	}
 
 	signal.System = runtime.NewSystem(ctx, "morphology", signal)
+
+	if err := errnie.Require(map[string]any{"books": books}); err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[morphology] book manager is required", err))
+	}
+
 	return signal
 }
 
@@ -102,8 +107,9 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 Step folds the shared book's levels into dimensionless distance-from-midpoint
 point streams, drives the symbol's distribution primitives, and writes the
 published morphology facts into a fresh Measurement allocated from the
-signal's own arena. An absent, empty, or crossed book yields no measurement:
-invalid geometry is never fabricated into zero distance. morphology_change is
+signal's own arena. An absent or empty book yields no measurement: invalid
+geometry is never fabricated into zero distance. A crossed or locked book is
+corrupt state and halts the signal (broker.CrossedTouch). morphology_change is
 omitted on a symbol's first observation.
 */
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
@@ -112,7 +118,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	if prior == nil || prior.Label == "" || signal.books == nil {
+	if prior == nil || prior.Label == "" {
+		return nil
+	}
+
+	if signal.books == nil {
+		signal.Error(errnie.Err(errnie.Internal, "[morphology] book manager is required", nil))
 		return nil
 	}
 
@@ -124,6 +135,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	var bidPrice, askPrice float64
 	ok := false
+	crossed := false
 
 	signal.books.Book(prior.Label, func(book *spotbook.Book) {
 		if book == nil {
@@ -141,7 +153,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		askPrice = kraken.Float64(ask.Price)
 		spread := askPrice - bidPrice
 
-		if spread <= 0 || math.IsNaN(spread) || math.IsInf(spread, 0) {
+		if spread <= 0 && !math.IsNaN(spread) {
+			crossed = true
+			return
+		}
+
+		if math.IsNaN(spread) || math.IsInf(spread, 0) {
 			return
 		}
 
@@ -179,6 +196,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 		ok = len(pipe.bids) > 0 && len(pipe.asks) > 0
 	})
+
+	// Raised outside the book read lock. Book withholds pending and
+	// checksum-diverging books, so a crossed touch is corrupt state: halt.
+	if crossed {
+		signal.Error(broker.CrossedTouch("morphology", prior.Label, bidPrice, askPrice))
+		return nil
+	}
 
 	if !ok {
 		return nil
@@ -250,7 +274,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	out.At = prior.At
 	out.From = prior.At
 
-	metrics := make([]data.Metric, 0, len(signal.metrics))
+	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
 		value, held := pipe.output.Values[metric[1]]

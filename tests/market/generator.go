@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -16,7 +17,7 @@ confirmed structural reversals, and post-excursion tail margins.
 type ExcursionProfile struct {
 	Symbol          string
 	BasePrice       float64
-	Spread          float64
+	Spread          float64 // Noise and wick geometry scale only; no touch is ever emitted.
 	PrecursorTicks  int
 	RunTicks        int
 	PeakReturn      float64
@@ -24,12 +25,50 @@ type ExcursionProfile struct {
 	ReversalTicks   int
 	ReversalReturn  float64
 	TailTicks       int
-	MicroNoiseRatio float64 // Bid-ask bouncing magnitude relative to spread
+	MicroNoiseRatio float64 // Trade-price bouncing magnitude relative to Spread
+}
+
+/*
+tradeFrame builds one spot:trade observation, the only frame the pipeline
+carries: an exact price, a unit quantity, and the aggressor side. It never
+carries bid or ask; touch belongs to the BookManager.
+*/
+func tradeFrame(symbol, phase string, seq int64, at time.Time, price float64, side string) *data.Measurement {
+	measurement := data.NewMeasurement(
+		1, symbol, "spot:trade", seq, seq,
+		&data.StringEntry{Key: "type", Value: "trade"},
+		&data.StringEntry{Key: "side", Value: side},
+		&data.StringEntry{Key: "phase", Value: phase},
+	)
+	measurement.At = at
+	measurement.From = at
+
+	priceMetric := data.NewExactMetric(
+		"price", decimal.NewFromFloat64(price), data.UnitPrice, data.TimescaleInstantaneous,
+	)
+	priceMetric.Standardized = price
+
+	qtyMetric := data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous)
+	qtyMetric.Standardized = 1
+
+	return measurement.Write(priceMetric, qtyMetric)
+}
+
+/*
+aggressor names the side that moved the trade price: an uptick or flat print
+is a buy, a downtick a sell. It is fixture shape, not a classification rule.
+*/
+func aggressor(previous, price float64, first bool) string {
+	if first || price >= previous {
+		return "buy"
+	}
+
+	return "sell"
 }
 
 /*
 GenerateTape constructs a multi-leg sequence of measurements reflecting the specified
-excursion dynamics with realistic timestamps and Level 3 metrics.
+excursion dynamics as spot:trade frames with realistic timestamps.
 */
 func (profile ExcursionProfile) GenerateTape(startSeq int64) []*data.Measurement {
 	totalTicks := profile.PrecursorTicks + profile.RunTicks + profile.ReversalTicks + profile.TailTicks
@@ -38,28 +77,13 @@ func (profile ExcursionProfile) GenerateTape(startSeq int64) []*data.Measurement
 	currentSeq := startSeq
 	eventTime := time.Unix(1700000000, 0)
 
-	emit := func(p float64, source string) {
-		m := data.NewMeasurement(1, profile.Symbol, source, currentSeq, currentSeq)
-		m.At = eventTime
-		m.From = eventTime
-		halfSpread := profile.Spread / 2
-		bid := p - halfSpread
-		ask := p + halfSpread
+	var previous float64
 
-		priceMetric := data.NewMetric("price", p, data.UnitPrice, data.TimescaleInstantaneous)
-		priceMetric.Standardized = p
-
-		spreadMetric := data.NewMetric("spread", profile.Spread, data.UnitPrice, data.TimescaleInstantaneous)
-		spreadMetric.Standardized = profile.Spread
-
-		bidMetric := data.NewMetric("bid", bid, data.UnitPrice, data.TimescaleInstantaneous)
-		bidMetric.Standardized = bid
-
-		askMetric := data.NewMetric("ask", ask, data.UnitPrice, data.TimescaleInstantaneous)
-		askMetric.Standardized = ask
-
-		m.Write(priceMetric, spreadMetric, bidMetric, askMetric)
-		frames = append(frames, m)
+	emit := func(p float64, phase string) {
+		frames = append(frames, tradeFrame(
+			profile.Symbol, phase, currentSeq, eventTime, p, aggressor(previous, p, len(frames) == 0),
+		))
+		previous = p
 		currentSeq++
 		eventTime = eventTime.Add(100 * time.Millisecond)
 	}
@@ -187,18 +211,13 @@ func NewChopWhipsawTape(symbol string, basePrice, spread float64, ticks int) []*
 		oscillation := math.Sin(float64(i)*1.5) * spread * 0.8
 		p := basePrice + oscillation
 
-		m := data.NewMeasurement(1, symbol, "chop", int64(i+1), int64(i+1))
-		m.At = eventTime
-		m.From = eventTime
+		previous := p
 
-		priceMetric := data.NewMetric("price", p, data.UnitPrice, data.TimescaleInstantaneous)
-		priceMetric.Standardized = p
+		if i > 0 {
+			previous = basePrice + math.Sin(float64(i-1)*1.5)*spread*0.8
+		}
 
-		spreadMetric := data.NewMetric("spread", spread, data.UnitPrice, data.TimescaleInstantaneous)
-		spreadMetric.Standardized = spread
-
-		m.Write(priceMetric, spreadMetric)
-		frames[i] = m
+		frames[i] = tradeFrame(symbol, "chop", int64(i+1), eventTime, p, aggressor(previous, p, i == 0))
 		eventTime = eventTime.Add(50 * time.Millisecond)
 	}
 
@@ -213,18 +232,7 @@ func NewFlatQuiescentTape(symbol string, basePrice, spread float64, ticks int) [
 	eventTime := time.Unix(1700000000, 0)
 
 	for i := range ticks {
-		m := data.NewMeasurement(1, symbol, "flat", int64(i+1), int64(i+1))
-		m.At = eventTime
-		m.From = eventTime
-
-		priceMetric := data.NewMetric("price", basePrice, data.UnitPrice, data.TimescaleInstantaneous)
-		priceMetric.Standardized = basePrice
-
-		spreadMetric := data.NewMetric("spread", spread, data.UnitPrice, data.TimescaleInstantaneous)
-		spreadMetric.Standardized = spread
-
-		m.Write(priceMetric, spreadMetric)
-		frames[i] = m
+		frames[i] = tradeFrame(symbol, "flat", int64(i+1), eventTime, basePrice, "buy")
 		eventTime = eventTime.Add(100 * time.Millisecond)
 	}
 
@@ -303,7 +311,7 @@ func CloneTestMeasurementWithSeq(src *data.Measurement, seqIdx int64) *data.Meas
 		return nil
 	}
 
-	var metrics []data.Metric
+	var metrics []*data.Metric
 	for entry := range src.Read() {
 		metrics = append(metrics, entry.Metric)
 	}
@@ -313,10 +321,10 @@ func CloneTestMeasurementWithSeq(src *data.Measurement, seqIdx int64) *data.Meas
 		peers = append(peers, CloneTestMeasurementWithSeq(peer, seqIdx))
 	}
 
-	var metadata []data.StringEntry
-	for _, key := range []string{"venue", "volume-unit", "channel", "owner", "fixture"} {
+	var metadata []*data.StringEntry
+	for _, key := range []string{"type", "side", "phase", "venue", "volume-unit", "channel", "owner", "fixture"} {
 		if val := src.Meta(key); val != "" {
-			metadata = append(metadata, data.StringEntry{Key: key, Value: val})
+			metadata = append(metadata, &data.StringEntry{Key: key, Value: val})
 		}
 	}
 

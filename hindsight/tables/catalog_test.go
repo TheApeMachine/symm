@@ -132,8 +132,6 @@ func TestCatalog_RunsDeduplication(t *testing.T) {
 	})
 }
 
-
-
 func BenchmarkCatalog_Ensure(b *testing.B) {
 	savedConfig := system.Cfg
 	system.Cfg = &system.Config{Storage: &system.Storage{Iceberg: &system.Iceberg{CommitRetries: 4}}}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -214,6 +215,15 @@ var (
 				storeTee,
 				epoch,
 			)
+
+			if training.Status() == nmruntime.ERROR {
+				return errnie.Error(errnie.Err(
+					errnie.NotAcceptable,
+					"[symm] training is not usable",
+					training.Error(),
+				))
+			}
+
 			training.SetUITee(uiTee)
 
 			uiTee.Transition(nmruntime.READY)
@@ -235,6 +245,35 @@ var (
 			resonanceSolver := resonance.NewSolver(
 				ctx, data.NewArenaOwner("resonance", 4096), system.Cfg.Resonance.LearningRate,
 			)
+
+			// Pipeline nodes report construction faults (for example a missing
+			// BookSource) by entering ERROR. ERROR -> READY is a legal
+			// transition, so the READY sweep below would silently paper over
+			// it; halt here with the node's own error instead.
+			pipelineNodes := []nmruntime.RuntimeSystem{
+				correlationSignal,
+				cvdSignal,
+				depthflowSignal,
+				hawkesSignal,
+				leadlagSignal,
+				liquiditySignal,
+				morphologySignal,
+				pumpdumpSignal,
+				sentimentSignal,
+				toxicitySignal,
+				resonanceSolver,
+				manifoldSolver,
+			}
+
+			for _, node := range pipelineNodes {
+				if node.Status() == nmruntime.ERROR || node.Status() == nmruntime.FATAL {
+					return errnie.Error(errnie.Err(
+						errnie.Internal,
+						fmt.Sprintf("symm: %s failed construction", node.Name()),
+						node.Error(),
+					))
+				}
+			}
 
 			workspace := nmruntime.NewWorkspace(
 				ctx,
@@ -281,6 +320,8 @@ var (
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
+			instrument.SetLevel3Stale(book.Stale)
+
 			if err := instrument.Subscribe(); err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.Internal,
@@ -322,17 +363,50 @@ var (
 
 			drainErrors := make(chan error, 1)
 
+			// A pipeline node closes its own System on an Internal error (for
+			// example a crossed book touch). A closed node drops every later
+			// frame, so the process halts with its error rather than trading
+			// on a degenerate workspace.
+			// The instrument closes itself when a trade or Level3 resubscribe
+			// fails after a reconnect; that stream would otherwise stay dark.
+			haltWatched := append(
+				[]nmruntime.RuntimeSystem{instrument}, pipelineNodes...,
+			)
+
+			nodeHalted := make(chan nmruntime.RuntimeSystem, len(haltWatched))
+
+			for _, node := range haltWatched {
+				go func() {
+					select {
+					case <-ctx.Done():
+					case <-node.Context().Done():
+						nodeHalted <- node
+					}
+				}()
+			}
+
 			go func() {
 				drainErrors <- catalog.Drain(ctx, epoch, storeTee)
 			}()
 
 			manifoldSolver.Start()
 
+			// Ingress reports a fault it cannot continue past (a Level3 frame
+			// the book could not apply). The first fault halts the process.
+			ingressHalted := make(chan error, 1)
+
 			startIngress := func(
 				client interface{ Read() ([]byte, error) }, name string,
 			) {
 				go func() {
 					errnie.Info(fmt.Sprintf("[root] starting %s ingress", name))
+
+					halt := func(err error) {
+						select {
+						case ingressHalted <- err:
+						default:
+						}
+					}
 
 					for {
 						select {
@@ -344,6 +418,27 @@ var (
 						buf, err := client.Read()
 
 						if err != nil {
+							// A client that closed itself (failed reconnect
+							// resubscribe, paper teardown) will never deliver
+							// again: halt with its recorded error instead of
+							// spinning on an instantly failing Read.
+							if closed, ok := client.(interface {
+								Context() context.Context
+								Error(...error) error
+							}); ok && closed.Context().Err() != nil {
+								if ctx.Err() != nil {
+									return
+								}
+
+								halt(errnie.Err(
+									errnie.IO,
+									fmt.Sprintf("symm: %s ingress transport closed", name),
+									errors.Join(closed.Error(), err),
+								))
+
+								return
+							}
+
 							// Soft disconnect/reconnect is expected (1006, reset).
 							// Read redials with backoff and warnOnce; do not ERROR-flood here.
 							continue
@@ -352,6 +447,19 @@ var (
 						channelNode, err := sonic.Get(buf, "channel")
 
 						if err != nil {
+							// Method acks carry no channel. A rejected subscribe
+							// leaves that stream dark (stale token, unknown
+							// symbol), so it halts rather than being dropped.
+							if rejection := subscribeRejection(buf); rejection != nil {
+								halt(errnie.Err(
+									errnie.NotAcceptable,
+									fmt.Sprintf("symm: %s subscription rejected", name),
+									rejection,
+								))
+
+								return
+							}
+
 							continue
 						}
 
@@ -363,85 +471,161 @@ var (
 
 						switch channel {
 						case "executions":
-							desk.Apply(kraken.NewExecution(buf))
-							balance.Invalidate()
-						case "balances":
-							balance.UpdateWallet(kraken.NewBalance(buf))
-							balance.Invalidate()
-						case "level3":
-							level3Msg := kraken.NewLevel3(buf)
-							if level3Msg != nil && book != nil {
-								book.Update(level3Msg)
+							// A fill that cannot be decoded would leave the desk's
+							// positions diverged from the venue: halt.
+							execution, err := kraken.NewExecution(buf)
+
+							if err != nil {
+								halt(errnie.Err(
+									errnie.UnprocessableContent,
+									fmt.Sprintf("symm: %s executions frame undecodable", name),
+									err,
+								))
+
+								return
 							}
 
-							if level3Msg != nil {
-								for _, level3Data := range level3Msg.Data {
-									for sideIdx, orders := range [][]kraken.Level3Order{level3Data.Bids, level3Data.Asks} {
-										side := "bid"
+							desk.Apply(execution)
+							balance.Invalidate()
+						case "balances":
+							wallet, err := kraken.NewBalance(buf)
 
-										if sideIdx == 1 {
-											side = "ask"
+							if err == nil {
+								err = balance.UpdateWallet(wallet)
+							}
+
+							if err != nil {
+								halt(errnie.Err(
+									errnie.UnprocessableContent,
+									fmt.Sprintf("symm: %s balances frame rejected", name),
+									err,
+								))
+
+								return
+							}
+
+							balance.Invalidate()
+						case "level3":
+							level3Msg, err := kraken.NewLevel3(buf)
+
+							if err == nil {
+								err = book.Update(level3Msg)
+							}
+
+							if err != nil {
+								// An undecodable frame or a failed apply (checksum
+								// divergence, a delta against an absent level) leaves
+								// the local book wrong. No resync is wired, so the
+								// symbol would stay diverged and every book reader
+								// would silently go dark: halt instead.
+								select {
+								case ingressHalted <- errnie.Err(
+									errnie.Internal,
+									fmt.Sprintf("symm: %s level3 book update failed", name),
+									err,
+								):
+								default:
+								}
+
+								return
+							}
+
+							for _, level3Data := range level3Msg.Data {
+								for sideIdx, orders := range [][]kraken.Level3Order{level3Data.Bids, level3Data.Asks} {
+									side := "bid"
+
+									if sideIdx == 1 {
+										side = "ask"
+									}
+
+									checksumStr := strconv.FormatInt(int64(level3Data.Checksum), 10)
+
+									for _, order := range orders {
+										measurement := data.NewMeasurement(
+											epoch,
+											level3Data.Symbol,
+											"spot:level3",
+											SeqIdx.Add(1),
+											Tick.Load(),
+											&data.StringEntry{
+												Key:   "type",
+												Value: level3Data.Type,
+											},
+											&data.StringEntry{
+												Key:   "order_id",
+												Value: order.OrderID,
+											},
+											&data.StringEntry{
+												Key:   "side",
+												Value: side,
+											},
+											&data.StringEntry{
+												Key:   "event",
+												Value: order.Event,
+											},
+											&data.StringEntry{
+												Key:   "checksum",
+												Value: checksumStr,
+											},
+										)
+
+										// Venue time is the order event time; without it the
+										// observation cannot be placed on the tape, so halt.
+										if order.Timestamp.IsZero() {
+											select {
+											case ingressHalted <- errnie.Err(
+												errnie.Validation,
+												fmt.Sprintf("symm: %s level3 order without timestamp", name),
+												nil,
+											):
+											default:
+											}
+
+											return
 										}
 
-										checksumStr := strconv.FormatInt(int64(level3Data.Checksum), 10)
+										measurement.At = order.Timestamp.UTC()
+										measurement.From = measurement.At
 
-										for _, order := range orders {
-											measurement := data.NewMeasurement(
-												epoch,
-												level3Data.Symbol,
-												"spot:level3",
-												SeqIdx.Add(1),
-												Tick.Load(),
-												data.StringEntry{
-													Key:   "type",
-													Value: level3Data.Type,
-												},
-												data.StringEntry{
-													Key:   "order_id",
-													Value: order.OrderID,
-												},
-												data.StringEntry{
-													Key:   "side",
-													Value: side,
-												},
-												data.StringEntry{
-													Key:   "event",
-													Value: order.Event,
-												},
-												data.StringEntry{
-													Key:   "checksum",
-													Value: checksumStr,
-												},
-											).Write(
-												data.NewMetric(
-													"checksum",
-													float64(level3Data.Checksum),
-													data.UnitDimensionless,
-													data.TimescaleInstantaneous,
-												),
-												data.NewExactMetric(
-													"limit_price",
-													order.LimitPrice,
-													data.UnitCurrency,
-													data.TimescaleInstantaneous,
-												),
-												data.NewExactMetric(
-													"order_qty",
-													order.OrderQty,
-													data.UnitVolume,
-													data.TimescaleInstantaneous,
-												),
-											)
+										measurement.Write(
+											data.NewMetric(
+												"checksum",
+												float64(level3Data.Checksum),
+												data.UnitDimensionless,
+												data.TimescaleInstantaneous,
+											),
+											data.NewExactMetric(
+												"limit_price",
+												order.LimitPrice,
+												data.UnitCurrency,
+												data.TimescaleInstantaneous,
+											),
+											data.NewExactMetric(
+												"order_qty",
+												order.OrderQty,
+												data.UnitVolume,
+												data.TimescaleInstantaneous,
+											),
+										)
 
-											storeTee.Push(data.NewPublication(measurement, nil))
-										}
+										storeTee.Push(data.NewPublication(measurement, nil))
 									}
 								}
 							}
 						case "trade":
-							tradeMsg := kraken.NewTrade(buf)
+							tradeMsg, err := kraken.NewTrade(buf)
 
-							if tradeMsg != nil && tradeMsg.IsSuccess() {
+							if err != nil {
+								halt(errnie.Err(
+									errnie.UnprocessableContent,
+									fmt.Sprintf("symm: %s trade frame undecodable", name),
+									err,
+								))
+
+								return
+							}
+
+							if tradeMsg.IsSuccess() {
 								for _, tradeItem := range tradeMsg.Data {
 									price.Update(&tradeItem)
 
@@ -451,23 +635,43 @@ var (
 										"spot:trade",
 										SeqIdx.Add(1),
 										Tick.Add(1),
-										data.StringEntry{
+										&data.StringEntry{
 											Key:   "type",
 											Value: "trade",
 										},
-										data.StringEntry{
+										&data.StringEntry{
 											Key:   "ord_type",
 											Value: tradeItem.OrderType,
 										},
-										data.StringEntry{
+										&data.StringEntry{
 											Key:   "trade_id",
 											Value: strconv.FormatInt(tradeItem.TradeID, 10),
 										},
-										data.StringEntry{
+										&data.StringEntry{
 											Key:   "side",
 											Value: tradeItem.Side,
 										},
-									).Write(
+									)
+
+									// Venue time is the trade print time; without it the
+									// observation cannot be placed on the tape, so halt.
+									if tradeItem.Timestamp.IsZero() {
+										select {
+										case ingressHalted <- errnie.Err(
+											errnie.Validation,
+											fmt.Sprintf("symm: %s trade without timestamp", name),
+											nil,
+										):
+										default:
+										}
+
+										return
+									}
+
+									measurement.At = tradeItem.Timestamp.UTC()
+									measurement.From = measurement.At
+
+									measurement.Write(
 										data.NewExactMetric(
 											"price",
 											&tradeItem.Price,
@@ -571,6 +775,33 @@ var (
 				case err := <-drainErrors:
 					return errnie.Error(errnie.Err(
 						errnie.IO, "symm: catalog drain stopped", err,
+					))
+				case <-training.Context().Done():
+					// Training only closes itself on an internal error (for
+					// example a detector scan that cannot price friction).
+					// The process halts with that error instead of trading on.
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+
+					return errnie.Error(errnie.Err(
+						errnie.Internal, "symm: training halted", training.Error(),
+					))
+				case err := <-ingressHalted:
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+
+					return errnie.Error(err)
+				case node := <-nodeHalted:
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+
+					return errnie.Error(errnie.Err(
+						errnie.Internal,
+						fmt.Sprintf("symm: %s halted", node.Name()),
+						node.Error(),
 					))
 				}
 			}

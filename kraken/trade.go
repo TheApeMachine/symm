@@ -25,18 +25,22 @@ type TradeData struct {
 	Timestamp time.Time       `json:"timestamp"`
 }
 
-func NewTrade(buf []byte) *Trade {
+/*
+NewTrade decodes a trade frame. An undecodable frame is an error, never a
+partially filled Trade: ingress halts instead of stepping a half-decoded print.
+*/
+func NewTrade(buf []byte) (*Trade, error) {
 	var trade Trade
 
 	if err := sonic.Unmarshal(buf, &trade); err != nil {
-		errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.UnprocessableContent,
-			"invalid trade",
+			"[kraken.trade] invalid trade frame",
 			err,
-		))
+		)
 	}
 
-	return &trade
+	return &trade, nil
 }
 
 func (trade *Trade) IsSuccess() bool {
@@ -89,7 +93,7 @@ type TradeVolumeResult struct {
 }
 
 type TradeVolume struct {
-	Error  []any     `json:"error"`
+	Error  []any             `json:"error"`
 	Result TradeVolumeResult `json:"result"`
 }
 
@@ -135,8 +139,8 @@ func (request *TradeVolumeRequest) MarshalJSON() ([]byte, error) {
 }
 
 type TradeSubscription struct {
-	Method string                     `json:"method"`
-	Params TradeSubscriptionParams    `json:"params"`
+	Method string                  `json:"method"`
+	Params TradeSubscriptionParams `json:"params"`
 }
 
 type TradeSubscriptionParams struct {

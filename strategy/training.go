@@ -5,8 +5,10 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	rand "math/rand/v2"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -28,6 +30,12 @@ import (
 const (
 	actionEnter = "enter"
 	actionExit  = "exit"
+	actionWait  = "wait"
+
+	// fragmentRehearsals is how many times Train walks every stored excursion
+	// with a fresh random A offset before the trie is frozen for paper trading.
+	// TRAINING.md: loop fragments with A offset before B to harden precursors.
+	fragmentRehearsals = 4
 )
 
 var (
@@ -70,6 +78,12 @@ type Training struct {
 	wins         atomic.Int64
 	returnsBits  atomic.Uint64
 	passes       atomic.Int64
+	skill        atomic.Int64
+	baseline     atomic.Int64
+	// gridRestore runs the grid/latest lookup once per process: a missing
+	// checkpoint must not cost an object-storage round trip on every Step.
+	gridRestore    sync.Once
+	gridRestoreErr error
 }
 
 /*
@@ -207,6 +221,14 @@ func NewTraining(
 	}
 
 	training.fragments.Store(&emptyFragments)
+
+	// The detector labels every excursion against friction. Without it the
+	// training system halts here instead of learning from mislabeled tape.
+	if err := training.detector.Error(); err != nil {
+		training.Error(errnie.Err(errnie.Internal, "[training] detector is not usable", err))
+		return training
+	}
+
 	desk.OnClose(training.settle)
 	training.Transition(runtime.INIT)
 	return training
@@ -471,7 +493,20 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 		Symbol: prior.Label,
 		SeqIdx: prior.SeqIdx,
 		At:     prior.At,
-		Price:  data.Pull(prior.Read("price")).Metric.Raw,
+	}
+
+	// Display only: sensory ticks that are not trades carry no price.
+	// Absence leaves Price at 0 (omitted by the reporter); it never feeds
+	// friction, profitability, or labels. A real read failure is logged —
+	// never invent a price, and never treat it as absence.
+	if price, err := readMetric(prior, "price"); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"[training] display price read failed",
+			err,
+		))
+	} else if price != nil {
+		snapshot.Price = price.Raw
 	}
 
 	status := training.Status()
@@ -492,6 +527,13 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	if status == runtime.WAITING {
 		snapshot.Stage = StageHistoricalValidation
 		snapshot.Blocker = "loading trie from historical excursions"
+	}
+
+	if status == runtime.WAITING && training.passes.Load() > 0 {
+		snapshot.Blocker = fmt.Sprintf(
+			"skill gate: %d correct calls, constant-policy baseline %d",
+			training.skill.Load(), training.baseline.Load(),
+		)
 	}
 
 	if status == runtime.READY {
@@ -530,6 +572,8 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 
 /*
 develop grows the grid and checkpoints it once it settles.
+A previously checkpointed grid (grid/latest) is restored first so a restart
+does not re-discover regions that already froze.
 */
 func (training *Training) develop(
 	epoch, seqIdx int64, snapshot *ReportSnapshot,
@@ -538,15 +582,101 @@ func (training *Training) develop(
 	snapshot.Blocker = "grid developing"
 
 	if !training.grid.IsSettled() {
-		if seqIdx%32 == 0 {
-			training.grid.Partition()
-		}
+		restored, err := training.restoreGrid()
 
-		if !training.grid.Converged() {
+		if err != nil {
+			// Internal closes training; root halts with this error.
+			training.Error(errnie.Err(
+				errnie.Internal,
+				"[training] grid checkpoint restore failed",
+				err,
+			))
+
 			return
 		}
 
-		training.grid.Settle()
+		if restored {
+			snapshot.Blocker = "grid restored from checkpoint"
+		} else {
+			if seqIdx%32 == 0 {
+				training.grid.Partition()
+			}
+
+			if !training.grid.Converged() {
+				return
+			}
+
+			training.grid.Settle()
+		}
+	}
+
+	if !training.checkpointGrid(epoch, seqIdx) {
+		return
+	}
+
+	training.Transition(runtime.WAITING)
+}
+
+const gridLatestKey = "grid/latest"
+
+/*
+restoreGrid loads grid/latest when object storage is configured and a
+checkpoint exists. Unconfigured storage or a missing checkpoint leaves the
+live develop path (false, nil). A configured store that fails to read, or a
+checkpoint that fails to restore, is an error: silently re-developing would
+then overwrite grid/latest with a fresh grid and discard the trained one.
+The lookup runs once per process; later calls only report IsSettled.
+*/
+func (training *Training) restoreGrid() (bool, error) {
+	if training == nil || training.catalog == nil || training.grid == nil {
+		return false, nil
+	}
+
+	if training.grid.IsSettled() {
+		return true, nil
+	}
+
+	training.gridRestore.Do(func() {
+		encoded, err := training.catalog.GetBlob(training.Context(), gridLatestKey)
+
+		if errors.Is(err, tables.ErrBlobMissing) ||
+			errors.Is(err, tables.ErrBlobStorageUnconfigured) {
+			return
+		}
+
+		if err != nil {
+			training.gridRestoreErr = errnie.Err(
+				errnie.IO,
+				"[training] unable to read grid/latest",
+				err,
+			)
+
+			return
+		}
+
+		if err = training.grid.RestoreSnapshot(encoded); err != nil {
+			training.gridRestoreErr = errnie.Err(
+				errnie.IO,
+				"[training] unable to restore grid/latest",
+				err,
+			)
+		}
+	})
+
+	if training.gridRestoreErr != nil {
+		return false, training.gridRestoreErr
+	}
+
+	return training.grid.IsSettled(), nil
+}
+
+/*
+checkpointGrid snapshots the settled grid to grid/{epoch}/{seqIdx} and
+grid/latest. Returns false when the snapshot itself cannot be taken.
+*/
+func (training *Training) checkpointGrid(epoch, seqIdx int64) bool {
+	if training == nil || training.grid == nil {
+		return false
 	}
 
 	encoded, err := training.grid.Snapshot()
@@ -557,25 +687,31 @@ func (training *Training) develop(
 			fmt.Sprintf("[training] unable to snapshot grid/%d/%d", epoch, seqIdx),
 			err,
 		))
-
-		return
+		return false
 	}
 
-	go func(ctx context.Context, epoch, seqIdx int64, blob []byte) {
-		if putErr := training.catalog.PutBlob(
-			ctx,
-			fmt.Sprintf("grid/%d/%d", epoch, seqIdx),
-			blob,
-		); putErr != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				fmt.Sprintf("[training] unable to checkpoint grid/%d/%d", epoch, seqIdx),
-				putErr,
-			))
-		}
-	}(training.Context(), epoch, seqIdx, encoded)
+	if training.catalog == nil {
+		return true
+	}
 
-	training.Transition(runtime.WAITING)
+	keys := []string{
+		fmt.Sprintf("grid/%d/%d", epoch, seqIdx),
+		gridLatestKey,
+	}
+
+	go func(ctx context.Context, blob []byte, keys []string) {
+		for _, key := range keys {
+			if putErr := training.catalog.PutBlob(ctx, key, blob); putErr != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("[training] unable to checkpoint %s", key),
+					putErr,
+				))
+			}
+		}
+	}(training.Context(), encoded, keys)
+
+	return true
 }
 
 /*
@@ -706,7 +842,7 @@ func channelsFrom(measurements ...*data.Measurement) map[string]float64 {
 		}
 
 		for entry := range measurement.Read() {
-			if entry.Err != nil {
+			if entry == nil || entry.Err != nil || entry.Metric == nil {
 				continue
 			}
 
@@ -784,9 +920,9 @@ func (training *Training) authorized(
 	resonanceM, manifoldM *data.Measurement,
 ) bool {
 	if resonanceM != nil {
-		surpriseEntry := data.Pull(resonanceM.Read("surprise"))
+		surprise, err := readMetric(resonanceM, "surprise")
 
-		if surpriseEntry.Err == nil && surpriseEntry.Metric.Label == "surprise" && surpriseEntry.Metric.Raw <= 0 {
+		if err == nil && surprise != nil && surprise.Raw <= 0 {
 			return false
 		}
 	}
@@ -795,15 +931,15 @@ func (training *Training) authorized(
 		return true
 	}
 
-	kuramotoEntry := data.Pull(manifoldM.Read("kuramoto_r"))
+	kuramoto, err := readMetric(manifoldM, "kuramoto_r")
 
-	if kuramotoEntry.Err != nil || kuramotoEntry.Metric.Label != "kuramoto_r" || kuramotoEntry.Metric.Raw < 1.0 {
+	if err != nil || kuramoto == nil || kuramoto.Raw < 1.0 {
 		return true
 	}
 
-	pressureEntry := data.Pull(manifoldM.Read("pressure_grad_norm"))
+	pressure, err := readMetric(manifoldM, "pressure_grad_norm")
 
-	if pressureEntry.Err == nil && pressureEntry.Metric.Label == "pressure_grad_norm" && pressureEntry.Metric.Raw > 0 {
+	if err == nil && pressure != nil && pressure.Raw > 0 {
 		return false
 	}
 
@@ -849,7 +985,12 @@ func (training *Training) mark(symbol string) {
 
 /*
 settle consumes one realized round trip from the Desk and refines the trie
-with its return on the contexts that entered and exited it.
+on the contexts that entered and exited it. A winning entry reinforces enter
+with its return. A losing entry is a losing precursor: it teaches wait with
+the loss avoided, so live losses never strengthen enter. The exit context is
+always taught exit: a winning round trip grades it with the return it
+realized, a losing one with the loss magnitude, because closing a bad trade
+was the right action and must not be weakened by the loss it stopped.
 */
 func (training *Training) settle(closure broker.Closure) {
 	feedback := closure.Realized.SetScale(decimal.DefaultScale).Div(closure.Cost).Float64()
@@ -873,11 +1014,20 @@ func (training *Training) settle(closure broker.Closure) {
 		return
 	}
 
+	entered, entryFeedback := actionEnter, feedback
+
+	exitFeedback := feedback
+
+	if feedback <= 0 {
+		entered, entryFeedback = actionWait, -feedback
+		exitFeedback = -feedback
+	}
+
 	if _, err := training.ask(training.trainer, map[string]string{
 		"context": string(entry),
-		"class":   actionEnter,
+		"class":   entered,
 	}, map[string]float64{
-		"feedback": feedback,
+		"feedback": entryFeedback,
 		"graded":   core.Unit,
 	}); err != nil {
 		errnie.Error(err)
@@ -891,7 +1041,7 @@ func (training *Training) settle(closure broker.Closure) {
 		"context": string(exit),
 		"class":   actionExit,
 	}, map[string]float64{
-		"feedback": feedback,
+		"feedback": exitFeedback,
 		"graded":   core.Unit,
 	}); err != nil {
 		errnie.Error(err)
@@ -1003,26 +1153,87 @@ func (training *Training) Train() {
 			return
 		}
 
-		trained, latest, seenCount, err := training.trainPass()
+		var (
+			trained   int
+			latest    int64
+			seenCount int
+			hits      int
+			asked     map[string]int
+		)
 
-		if err != nil {
-			training.passes.Add(1)
-			training.Error(errnie.Err(errnie.BadGateway, "[training] failed during training pass", err))
-			return
+		for rehearsal := 0; rehearsal < fragmentRehearsals; rehearsal++ {
+			passTrained, passLatest, passSeen, passHits, passAsked, err := training.trainPass()
+
+			// A failed pass halts training. Internal closes the training
+			// context, which cmd/root watches, so the process stops with
+			// this error instead of opening paper trading on a trie that
+			// silently missed part of its tape. The error is recorded
+			// before the pass is counted so a waiter never observes a
+			// finished pass without its ERROR.
+			if err != nil {
+				training.Error(errnie.Err(errnie.Internal, "[training] failed during training pass", err))
+				training.passes.Add(1)
+				return
+			}
+
+			trained += passTrained
+			hits = passHits
+			asked = passAsked
+
+			if passLatest > latest {
+				latest = passLatest
+			}
+
+			if passSeen > seenCount {
+				seenCount = passSeen
+			}
+
+			// Nothing to rehearse: stay WAITING without opening paper trading.
+			if passTrained <= 0 && rehearsal == 0 {
+				break
+			}
 		}
 
 		records := training.records()
+		calls, baseline := 0, 0
 
-		if trained <= 0 || records <= 0 {
+		for _, count := range asked {
+			calls += count
+			baseline = max(baseline, count)
+		}
+
+		training.skill.Store(int64(hits))
+		training.baseline.Store(int64(baseline))
+
+		/*
+			Skill gate (TRAINING.md: paper trading starts once the model "has
+			built up enough skill"). Every learned rehearsal asks the trie for
+			the action at each of its phases before it is trained on them, so
+			each call is graded against ground truth the trie has not yet seen
+			at that A offset. A constant policy (always enter, always exit,
+			always wait) scores exactly the calls whose truth is its action,
+			and an abstaining trie scores zero. The best constant policy is
+			therefore the largest single-action share of the latest pass's
+			calls. Paper trading opens only when that pass beats it, and only
+			once enter has ground truth to be graded on: a trie that has only
+			learned wait and exit can never open a paper position.
+		*/
+		if trained == 0 || asked[actionEnter] == 0 || hits <= baseline {
+			errnie.Info(fmt.Sprintf(
+				"[training] skill gate closed: %d of %d calls correct, baseline %d (%d records)",
+				hits, calls, baseline, int(records),
+			))
 			training.passes.Add(1)
 			return
 		}
 
 		reading, askErr := training.ask(training.snapshot, nil, nil)
 
+		// The snapshot reads the in-memory trie. Failing to read it means
+		// the cognition memory itself is broken, so training halts instead
+		// of opening paper trading on it.
 		if askErr != nil {
-			errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", askErr))
-			training.Transition(runtime.READY)
+			training.Error(errnie.Err(errnie.Internal, "[training] unable to snapshot trie", askErr))
 			training.passes.Add(1)
 			return
 		}
@@ -1030,19 +1241,17 @@ func (training *Training) Train() {
 		model, ok, readErr := readText(reading, "model")
 
 		if readErr != nil {
-			errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", readErr))
-			training.Transition(runtime.READY)
+			training.Error(errnie.Err(errnie.Internal, "[training] unable to snapshot trie", readErr))
 			training.passes.Add(1)
 			return
 		}
 
 		if !ok {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
+			training.Error(errnie.Err(
+				errnie.Internal,
 				"[training] cognition model is missing",
 				nil,
 			))
-			training.Transition(runtime.READY)
 			training.passes.Add(1)
 			return
 		}
@@ -1051,6 +1260,9 @@ func (training *Training) Train() {
 			training.Context(), fmt.Sprintf("trie/%d", latest), []byte(model),
 		)
 
+		// Object storage is optional (restoreGrid treats an unconfigured
+		// bucket as "no checkpoint"), so a failed upload only loses the
+		// restart checkpoint; the trie in memory is intact and correct.
 		if putErr != nil {
 			errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", putErr))
 		}
@@ -1067,10 +1279,16 @@ func (training *Training) Train() {
 
 /*
 runDetectorScan runs as its own background process.
-It finds the latest measurement where source = detector, and scans any new
+It finds the latest stored detection (source = detector), and scans any new
 trade tape collected for epochs strictly before the current run's epoch
-(epoch < training.epoch). Once all prior tape before the current epoch is
+(epoch < training.epoch). A run that already has stored detections is never
+scanned again: a classless detection left over from before the excursion
+classes halts trainPass, so the fix is to reset those tables, not to append
+classified rows next to it. Once all prior tape before the current epoch is
 exhausted, the process exits.
+
+A catalog read failure halts training with an Internal error, because the
+runs it hides would look like runs that need no scan, or like an empty tape.
 */
 func (training *Training) runDetectorScan() {
 	defer training.scanOnce.Do(func() {
@@ -1088,7 +1306,19 @@ func (training *Training) runDetectorScan() {
 		latestTick  int64
 	)
 
-	for det := range training.catalog.Detections(ctx) {
+	for det, err := range training.catalog.Detections(ctx) {
+		// Shutdown cancels the read; that is not a storage failure.
+		if err != nil && ctx.Err() != nil {
+			return
+		}
+
+		if err != nil {
+			training.Error(errnie.Err(
+				errnie.Internal, "[training] unable to read detections for detector scan", err,
+			))
+			return
+		}
+
 		if det == nil || det.Epoch >= training.epoch {
 			continue
 		}
@@ -1099,9 +1329,11 @@ func (training *Training) runDetectorScan() {
 		}
 	}
 
+	// Without the run list no prior tape can be scanned, and training would
+	// rehearse only what happens to be stored already.
 	runs, err := training.catalog.Runs(ctx)
 	if err != nil {
-		errnie.Error(err)
+		training.Error(errnie.Err(errnie.Internal, "[training] unable to list runs for detector scan", err))
 		return
 	}
 
@@ -1118,18 +1350,42 @@ func (training *Training) runDetectorScan() {
 			continue
 		}
 
-		existingCount := 0
-		for range training.catalog.Detections(ctx, run.Epoch) {
-			existingCount++
-			break
+		stored := false
+
+		for det, err := range training.catalog.Detections(ctx, run.Epoch) {
+			if err != nil && ctx.Err() != nil {
+				return
+			}
+
+			if err != nil {
+				training.Error(errnie.Err(
+					errnie.Internal,
+					fmt.Sprintf("[training] unable to read detections for run %d", run.Epoch),
+					err,
+				))
+				return
+			}
+
+			if det != nil {
+				stored = true
+				break
+			}
 		}
 
-		if existingCount > 0 {
+		if stored {
 			continue
 		}
 
 		trades := training.catalog.Trades(ctx, run.Epoch)
-		training.detector.Scan(trades)
+
+		// A failed scan halts training: classifying the remaining tape
+		// without friction would teach the trie mislabeled excursions, and
+		// a tape whose read failed part-way would end its last excursion at
+		// an arbitrary tick.
+		if err := training.detector.Scan(trades); err != nil {
+			training.Error(errnie.Err(errnie.Internal, "[training] detector scan failed", err))
+			return
+		}
 
 		if training.storeTee != nil {
 			writer := tables.NewWriter(training.catalog, run.Epoch)
@@ -1150,18 +1406,33 @@ func (training *Training) runDetectorScan() {
 				drained++
 			}
 
+			// Detections that fail to commit never reach trainPass, so the
+			// trie would silently train without them.
 			if drained > 0 {
 				if commitErr := writer.CommitReady(ctx, true); commitErr != nil {
-					errnie.Error(commitErr)
+					training.Error(errnie.Err(
+						errnie.Internal,
+						fmt.Sprintf("[training] unable to commit detections for run %d", run.Epoch),
+						commitErr,
+					))
+					return
 				}
 			}
 		}
 	}
 }
 
-func (training *Training) trainPass() (int, int64, int, error) {
+/*
+trainPass rehearses every stored excursion once and returns the fragments
+learned, the latest epoch, the distinct excursions seen, the correct
+prequential action calls made before learning them, and how many of those
+calls each ground-truth action posed.
+*/
+func (training *Training) trainPass() (int, int64, int, int, map[string]int, error) {
+	asked := make(map[string]int)
+
 	if training.catalog == nil {
-		return 0, 0, 0, nil
+		return 0, 0, 0, 0, asked, nil
 	}
 
 	ctx := training.Context()
@@ -1169,18 +1440,29 @@ func (training *Training) trainPass() (int, int64, int, error) {
 	var (
 		latest  int64
 		trained int
+		hits    int
 	)
 
-	for detection := range training.catalog.Detections(ctx) {
+	for detection, err := range training.catalog.Detections(ctx) {
+		// A failed read is not the end of the stored excursions: a pass
+		// over the part that loaded would grade the trie on a subset.
 		if ctx.Err() != nil {
-			return 0, 0, 0, ctx.Err()
+			return 0, 0, 0, 0, nil, ctx.Err()
+		}
+
+		if err != nil {
+			return 0, 0, 0, 0, nil, errnie.Err(
+				errnie.IO, "[training] unable to read stored detections", err,
+			)
 		}
 
 		if detection == nil || detection.Epoch >= training.epoch {
 			continue
 		}
 
-		key := fmt.Sprintf("%d/%s/%d", detection.Epoch, detection.Label, detection.Tick)
+		key := fmt.Sprintf(
+			"%d/%s/%s/%d", detection.Epoch, detection.Label, detection.Meta("type"), detection.Tick,
+		)
 		if _, done := seen[key]; done {
 			continue
 		}
@@ -1190,157 +1472,360 @@ func (training *Training) trainPass() (int, int64, int, error) {
 			latest = detection.Epoch
 		}
 
-		learned, err := training.learn(detection)
+		// A detection that cannot be learned (missing tape, inconsistent
+		// class, unpriceable friction) stops the pass. Skipping it would
+		// bias the trie and the skill gate toward the excursions that
+		// happened to load.
+		questions, correct, err := training.learn(detection)
 		if err != nil {
-			errnie.Error(err)
+			return 0, 0, 0, 0, nil, errnie.Err(
+				errnie.Internal,
+				"[training] unable to learn detection "+key,
+				err,
+			)
+		}
+
+		// Its tape exists, but its geometry forms no phase (see learnAt).
+		if len(questions) == 0 {
 			continue
 		}
 
-		if learned {
-			trained++
+		trained++
+		hits += correct
+
+		for action, count := range questions {
+			asked[action] += count
 		}
 	}
 
-	return trained, latest, len(seen), nil
+	return trained, latest, len(seen), hits, asked, nil
 }
 
 /*
-learn cuts one excursion into its two trainable pieces and trains each with
-the return multiplier from entry to exit:
-  - enter: precursor frames up to the frame before ignition B, leaving
-    the ignition tick itself for the market fill;
-  - exit: frames from ignition B+1 up to the frame before the peak C, leaving
-    the peak tick for the exit fill.
+learn cuts one stored excursion into its trainable phases. Every class maps
+onto the three trie actions (enter, exit, wait) by what the right call was
+at that point of the tape:
+
+  - up: the precursor from a random A offset up to the frame before
+    ignition B teaches enter, with the net round-trip return; the holding
+    run from B+1 up to the frame before the peak C teaches exit, with the
+    gross move captured.
+  - up_friction: the precursor teaches wait, because entering loses after
+    friction, with the loss avoided as feedback; the holding run still
+    teaches exit, with the gross move captured.
+  - down: the precursor before the top B teaches wait, with the loss
+    avoided; the fall from B+1 to the frame before the bottom C teaches
+    exit, with the fall avoided.
+  - chop and flat: the stretch from a random A offset through C teaches
+    wait, with the round-trip friction avoided.
+
+Losing and quiet tape therefore never reinforces enter; it competes with
+enter for the same contexts under wait.
+
+A is offset randomly before B on every call (TRAINING.md fragment rehearsal)
+so the trie does not only memorize one precursor length. ENTER/EXIT UI markers
+sit on the sweet-spot frames of the phases that teach them, not on B/C.
+
+Before any phase is trained, the trie is asked which action it would take on
+it. The returned map counts the questions per ground-truth action, and the
+returned count is how many of them the trie answered correctly; abstention is
+a miss. An empty map means the excursion was not learned.
 */
-func (training *Training) learn(detection *data.Measurement) (bool, error) {
+func (training *Training) learn(detection *data.Measurement) (map[string]int, int, error) {
+	return training.learnAt(detection, -1)
+}
+
+/*
+learnAt is learn with an explicit A offset, counted in token frames from the
+first frame A may occupy. Pass aOffset < 0 to draw a fresh random A.
+
+Errors versus "nothing to learn": every stored detection must have its
+signal/logic tape, and a detection whose tape is missing, or lights no grid
+region, is data loss and returns an error that stops the pass. An empty map
+with a nil error is returned only when the tape exists (or is never needed)
+but the excursion's geometry cannot form a phase:
+
+  - a directional excursion that ignites on the first tick of its tape has
+    no precursor, so its tape is not read at all;
+  - no token frame falls before ignition B (no precursor frame), or B and
+    the peak C fall onto the same frame;
+  - the holding run between B and C is too short to leave a frame once the
+    fill-latency pullback before C is taken;
+  - a chop/flat stretch has no token frame at or after B.
+*/
+func (training *Training) learnAt(detection *data.Measurement, aOffset int) (map[string]int, int, error) {
 	if detection == nil {
-		return false, nil
+		return nil, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] detection is required",
+			nil,
+		))
 	}
 
-	lowTick, highTick, err := tables.DetectionTicks(detection)
+	class := detection.Meta("type")
+
+	startTick, bTick, cTick, err := tables.DetectionTicks(detection)
 	if err != nil {
-		return false, errnie.Error(err)
+		return nil, 0, errnie.Error(err)
 	}
 
-	startTick := int64(0)
-	startEntry := data.Pull(detection.Read("StartTick"))
-
-	if startEntry.Err == nil && startEntry.Metric.Label == "StartTick" {
-		startTick = int64(startEntry.Metric.Raw)
+	bPrice, cPrice, err := tables.DetectionPrices(detection)
+	if err != nil {
+		return nil, 0, errnie.Error(err)
 	}
 
-	if startTick == 0 {
-		lowerEntry := data.Pull(detection.Read("start_tick"))
+	net, err := training.net(detection.Label, bPrice, cPrice)
+	if err != nil {
+		return nil, 0, errnie.Error(err)
+	}
 
-		if lowerEntry.Err == nil && lowerEntry.Metric.Label == "start_tick" {
-			startTick = int64(lowerEntry.Metric.Raw)
+	gross := cPrice.Sub(bPrice).SetScale(decimal.DefaultScale).Div(bPrice).Float64()
+
+	// Legitimately empty: a directional excursion igniting on the first tick
+	// of its tape has no precursor frame to learn, so its tape is not read.
+	directional := class == excursionUp || class == excursionUpShort || class == excursionDown
+
+	if directional && bTick <= startTick {
+		return nil, 0, nil
+	}
+
+	// frames errors on a missing or region-less tape, so from here on the
+	// tape exists and every "nothing to learn" return is geometry alone.
+	ticks, tokens, err := training.frames(detection, startTick, cTick)
+	if err != nil {
+		return nil, 0, errnie.Error(err)
+	}
+
+	ignition, _ := slices.BinarySearch(ticks, bTick)
+	peak, _ := slices.BinarySearch(ticks, cTick)
+
+	drawA := func(from, to int) int {
+		if to-from <= 1 {
+			return from
+		}
+
+		if aOffset < 0 {
+			return from + rand.IntN(to-from)
+		}
+
+		return from + min(aOffset, to-from-1)
+	}
+
+	var (
+		phases []struct {
+			context  string
+			action   string
+			feedback float64
+		}
+		startA     int
+		enterFrame = -1
+		exitFrame  = -1
+	)
+
+	// Every phase slice is non-empty and frames only keeps non-empty tokens,
+	// so an empty context is a slicing bug, never a short window.
+	phase := func(action string, feedback float64, frames [][]byte) bool {
+		context := bytes.Join(deduplicateTokens(frames), []byte("/"))
+
+		if len(context) == 0 {
+			return false
+		}
+
+		phases = append(phases, struct {
+			context  string
+			action   string
+			feedback float64
+		}{string(context), action, feedback})
+
+		return true
+	}
+
+	switch class {
+	case excursionUp, excursionUpShort, excursionDown:
+		// Legitimately empty: no frame before B, or B and C share a frame.
+		if ignition < 1 || ignition >= peak {
+			return nil, 0, nil
+		}
+
+		precursor := actionWait
+		precursorFeedback := -net
+		holdingFeedback := gross
+
+		switch class {
+		case excursionUp:
+			if net <= 0 {
+				return nil, 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[training] up excursion does not clear friction: "+detection.Label,
+					nil,
+				))
+			}
+
+			precursor = actionEnter
+			precursorFeedback = net
+		case excursionUpShort:
+			if net > 0 {
+				return nil, 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[training] up_friction excursion clears friction: "+detection.Label,
+					nil,
+				))
+			}
+		case excursionDown:
+			if gross >= 0 {
+				return nil, 0, errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[training] down excursion does not fall: "+detection.Label,
+					nil,
+				))
+			}
+
+			holdingFeedback = -gross
+		}
+
+		// Pull back context before B and C to account for order fill latency.
+		endB := ignition
+		if ignition > 1 {
+			endB = ignition - 1
+		}
+
+		startA = drawA(0, endB)
+
+		startHolding := ignition + 1
+		endC := peak
+		if peak > startHolding+1 {
+			endC = peak - 1
+		}
+
+		// Legitimately empty: the holding run is too short to leave a frame.
+		if startHolding >= endC {
+			return nil, 0, nil
+		}
+
+		if !phase(precursor, precursorFeedback, tokens[startA:endB]) ||
+			!phase(actionExit, holdingFeedback, tokens[startHolding:endC]) {
+			return nil, 0, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"[training] "+class+" phase has an empty context: "+detection.Label,
+				nil,
+			))
+		}
+
+		// Sweet spots: last precursor frame before B, last holding frame before C.
+		if precursor == actionEnter {
+			enterFrame = max(endB-1, startA)
+		}
+
+		exitFrame = max(endC-1, startHolding)
+	case excursionChop, excursionFlat:
+		end := min(peak+1, len(tokens))
+
+		// Legitimately empty: no frame at or after B inside the stretch.
+		if ignition >= end {
+			return nil, 0, nil
+		}
+
+		startA = drawA(ignition, end)
+
+		if !phase(actionWait, -net, tokens[startA:end]) {
+			return nil, 0, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"[training] "+class+" phase has an empty context: "+detection.Label,
+				nil,
+			))
+		}
+	default:
+		return nil, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] detection has unknown excursion class: \""+class+"\"",
+			nil,
+		))
+	}
+
+	for _, learned := range phases {
+		if learned.feedback <= 0 {
+			return nil, 0, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[training] "+class+" "+learned.action+" phase has no positive feedback: "+detection.Label,
+				nil,
+			))
 		}
 	}
 
-	entry, exit, err := tables.DetectionPrices(detection)
+	asked := make(map[string]int, len(phases))
+	hits := 0
+
+	for _, learned := range phases {
+		reading, err := training.ask(training.recall, map[string]string{
+			"context": learned.context,
+		}, nil)
+
+		if err != nil {
+			return nil, 0, errnie.Error(err)
+		}
+
+		winner, _, err := readText(reading, "winner")
+
+		if err != nil {
+			return nil, 0, errnie.Error(err)
+		}
+
+		asked[learned.action]++
+
+		if winner == learned.action {
+			hits++
+		}
+	}
+
+	for _, learned := range phases {
+		if _, err := training.ask(training.trainer, map[string]string{
+			"context": learned.context,
+			"class":   learned.action,
+		}, map[string]float64{
+			"feedback": learned.feedback,
+			"graded":   core.Unit,
+		}); err != nil {
+			return nil, 0, errnie.Error(err)
+		}
+	}
+
+	points, err := training.priceTape(detection, startTick, cTick)
+
 	if err != nil {
-		return false, errnie.Error(err)
+		return nil, 0, err
 	}
 
-	feedback := exit.Sub(entry).SetScale(decimal.DefaultScale).Div(entry).Float64()
-	ticks, tokens, err := training.frames(detection, startTick, highTick)
-	if err != nil {
-		return false, errnie.Error(err)
-	}
-
-	ignition, _ := slices.BinarySearch(ticks, lowTick)
-	peak, _ := slices.BinarySearch(ticks, highTick)
-
-	// Pull back context before ignition and peak to account for order fill latencies.
-	startA := 0
-	endB := ignition
-	if ignition > 1 {
-		endB = ignition - 1
-	}
-
-	precursorTokens := deduplicateTokens(tokens[startA:endB])
-	enter := bytes.Join(precursorTokens, []byte("/"))
-
-	startHolding := ignition + 1
-	endC := peak
-	if peak > startHolding+1 {
-		endC = peak - 1
-	}
-
-	holdingTokens := deduplicateTokens(tokens[startHolding:endC])
-	hold := bytes.Join(holdingTokens, []byte("/"))
-
-	if ignition < 1 || ignition >= peak {
-		return false, nil
-	}
-
-	if len(enter) == 0 || len(hold) == 0 {
-		return false, nil
-	}
-
-	if _, err := training.ask(training.trainer, map[string]string{
-		"context": string(enter),
-		"class":   actionEnter,
-	}, map[string]float64{
-		"feedback": feedback,
-		"graded":   core.Unit,
-	}); err != nil {
-		return false, errnie.Error(err)
-	}
-
-	if _, err := training.ask(training.trainer, map[string]string{
-		"context": string(hold),
-		"class":   actionExit,
-	}, map[string]float64{
-		"feedback": feedback,
-		"graded":   core.Unit,
-	}); err != nil {
-		return false, errnie.Error(err)
-	}
-
-	points := training.priceTape(detection, startTick, highTick, entry, exit, ticks)
 	tokenStrings := make([]string, len(tokens))
 
 	for index, tok := range tokens {
 		tokenStrings[index] = string(tok)
 	}
 
-	entryPointIdx := ignition
-	exitPointIdx := peak
+	entryPointIdx := training.pointAt(points, ticks, enterFrame)
+	exitPointIdx := training.pointAt(points, ticks, exitFrame)
 
-	for _, pt := range points {
-		if pt.Seq == lowTick {
-			entryPointIdx = pt.X
-		}
+	direction := "flat"
 
-		if pt.Seq == highTick {
-			exitPointIdx = pt.X
-		}
+	if gross > 0 {
+		direction = "up"
 	}
 
-	if len(points) > 0 {
-		if entryPointIdx >= len(points) {
-			entryPointIdx = len(points) - 1
-		}
-
-		if exitPointIdx <= entryPointIdx {
-			exitPointIdx = min(entryPointIdx+1, len(points)-1)
-		}
+	if gross < 0 {
+		direction = "down"
 	}
-
-	fragID := int(training.fragCount.Add(1))
 
 	fragment := ui.TrainedFragment{
-		ID:         fragID,
+		ID:         int(training.fragCount.Add(1)),
 		Symbol:     detection.Label,
 		Epoch:      detection.Epoch,
-		MarkA:      startTick,
-		MarkB:      lowTick,
-		MarkC:      highTick,
-		EntryPrice: entry.Float64(),
-		ExitPrice:  exit.Float64(),
-		Magnitude:  feedback,
-		Direction:  "up",
+		MarkA:      ticks[startA],
+		MarkB:      bTick,
+		MarkC:      cTick,
+		EntryPrice: bPrice.Float64(),
+		ExitPrice:  cPrice.Float64(),
+		Magnitude:  gross,
+		Direction:  direction,
+		Class:      class,
 		Tokens:     tokenStrings,
 		Points:     points,
 		EntryIdx:   entryPointIdx,
@@ -1367,9 +1852,63 @@ func (training *Training) learn(detection *data.Measurement) (bool, error) {
 		}
 	}
 
+	training.reporter.RecordFragment(class)
 	training.streamFragment(detection, fragment)
 
-	return true, nil
+	return asked, hits, nil
+}
+
+/*
+pointAt maps a token frame index onto the fragment's price tape: the first
+trade at or after the frame's tick, which is where an order placed on that
+frame would fill. A negative frame, or a frame after the last trade, has no
+marker and maps to -1. priceTape returns the points sorted by tick (Seq), the
+key searched here, with X equal to each point's index.
+*/
+func (training *Training) pointAt(points []ui.FragmentPoint, ticks []int64, frame int) int {
+	if frame < 0 || frame >= len(ticks) {
+		return -1
+	}
+
+	index, _ := slices.BinarySearchFunc(points, ticks[frame], func(point ui.FragmentPoint, tick int64) int {
+		return cmp.Compare(point.Tick, tick)
+	})
+
+	if index >= len(points) {
+		return -1
+	}
+
+	return points[index].X
+}
+
+/*
+net is the round-trip return of buying at entry and selling at exit after
+taker friction, relative to the entry cost.
+*/
+func (training *Training) net(symbol string, entry, exit *decimal.Decimal) (float64, error) {
+	if training.price == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] price system is required to grade excursions",
+			nil,
+		))
+	}
+
+	pnl, cost, err := training.price.RoundTrip(symbol, entry, exit)
+
+	if err != nil {
+		return 0, errnie.Error(err)
+	}
+
+	if pnl == nil || cost == nil || cost.Sign() <= 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] round trip has no cost basis: "+symbol,
+			nil,
+		))
+	}
+
+	return pnl.SetScale(decimal.DefaultScale).Div(cost).Float64(), nil
 }
 
 func deduplicateTokens(tokens [][]byte) [][]byte {
@@ -1391,6 +1930,8 @@ func deduplicateTokens(tokens [][]byte) [][]byte {
 /*
 frames reads the excursion's signal and logic tape from the excursion start up to
 the peak and encodes one region token per tick from all signal and logic steps.
+A stored detection always has its tape, so a window with no signal/logic rows,
+or whose rows light no grid region at all, is an error, never an empty window.
 */
 func (training *Training) frames(
 	detection *data.Measurement, startTick, highTick int64,
@@ -1403,9 +1944,21 @@ func (training *Training) frames(
 		current         int64 = -1
 	)
 
-	for measurement := range training.catalog.SignalLogic(
+	for measurement, err := range training.catalog.SignalLogic(
 		training.Context(), detection.Epoch, detection.Label, startTick, highTick,
 	) {
+		// A failed read must not look like a missing or shorter tape.
+		if err != nil {
+			return nil, nil, errnie.Err(
+				errnie.IO,
+				fmt.Sprintf(
+					"[training] unable to read signal/logic tape: %s epoch %d ticks %d..%d",
+					detection.Label, detection.Epoch, startTick, highTick,
+				),
+				err,
+			)
+		}
+
 		if measurement.Source == "resonance" || measurement.Source == "manifold" {
 			continue
 		}
@@ -1413,20 +1966,41 @@ func (training *Training) frames(
 		rawMeasurements = append(rawMeasurements, measurement)
 	}
 
+	if err := training.Context().Err(); err != nil {
+		return nil, nil, err
+	}
+
 	if len(rawMeasurements) == 0 {
-		return nil, nil, nil
+		return nil, nil, errnie.Err(
+			errnie.NotFound,
+			fmt.Sprintf(
+				"[training] detection has no signal/logic tape: %s epoch %d ticks %d..%d",
+				detection.Label, detection.Epoch, startTick, highTick,
+			),
+			nil,
+		)
 	}
 
 	if !training.grid.IsSettled() {
-		for _, measurement := range rawMeasurements {
-			channels := channelsFrom(measurement)
+		restored, err := training.restoreGrid()
 
-			if len(channels) > 0 {
-				training.grid.Update(measurement.Tick, channels)
-			}
+		if err != nil {
+			return nil, nil, err
 		}
 
-		training.grid.Settle()
+		if !restored {
+			for _, measurement := range rawMeasurements {
+				channels := channelsFrom(measurement)
+
+				if len(channels) > 0 {
+					training.grid.Update(measurement.Tick, channels)
+				}
+			}
+
+			training.grid.Settle()
+		}
+
+		training.checkpointGrid(detection.Epoch, highTick)
 	}
 
 	flush := func() {
@@ -1455,6 +2029,18 @@ func (training *Training) frames(
 	}
 
 	flush()
+
+	if len(tokens) == 0 {
+		return nil, nil, errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"[training] signal/logic tape lights no grid region: %s epoch %d ticks %d..%d (%d rows)",
+				detection.Label, detection.Epoch, startTick, highTick, len(rawMeasurements),
+			),
+			nil,
+		)
+	}
+
 	return ticks, tokens, nil
 }
 
@@ -1468,62 +2054,120 @@ func (training *Training) token(measurements ...*data.Measurement) []byte {
 	return bytes.Join(lit, []byte("_"))
 }
 
+/*
+priceTape reads the fragment's chart points: the spot:trade rows of the
+detection's label and epoch whose tick lies in [startTick, highTick], in tick
+order (sequence index breaks ties), so X is the trade's position in tick order
+and pointAt can binary-search the points by tick. FragmentPoint.Tick carries
+the trade's tick.
+
+Rows from any other source are ignored even when they carry a price metric,
+and so are rows the Timeline admits only through its sequence-index bound.
+Nothing is ever fabricated: a failed read, a trade without a positive exact
+price, a trade without a timestamp, or a window holding no trade at all is an
+error. The detector derives every excursion from this same trade tape, so an
+empty window means storage and detections disagree.
+*/
 func (training *Training) priceTape(
 	detection *data.Measurement,
 	startTick, highTick int64,
-	entry, exit *decimal.Decimal,
-	ticks []int64,
-) []ui.FragmentPoint {
-	var points []ui.FragmentPoint
-
-	if training.catalog != nil {
-		for measurement := range training.catalog.Timeline(
-			training.Context(), detection.Epoch, detection.Label, startTick, highTick,
-		) {
-			if measurement == nil {
-				continue
-			}
-
-			entry := data.Pull(measurement.Read("price"))
-
-			if entry.Err != nil || entry.Metric.Raw <= 0 {
-				continue
-			}
-
-			timeMs := measurement.At.UnixMilli()
-
-			if timeMs <= 0 {
-				timeMs = time.Now().UnixMilli()
-			}
-
-			points = append(points, ui.FragmentPoint{
-				X:    len(points),
-				Y:    entry.Metric.Raw,
-				Seq:  measurement.Tick,
-				Time: timeMs,
-			})
-		}
+) ([]ui.FragmentPoint, error) {
+	if training.catalog == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[training] catalog is required to read the price tape",
+			nil,
+		))
 	}
 
-	if len(points) == 0 && len(ticks) > 0 {
-		entryVal := entry.Float64()
-		exitVal := exit.Float64()
-		span := float64(len(ticks))
+	window := fmt.Sprintf(
+		"%s epoch %d ticks %d..%d", detection.Label, detection.Epoch, startTick, highTick,
+	)
 
-		for idx, tick := range ticks {
-			frac := float64(idx) / math.Max(span-1, 1.0)
-			val := entryVal + (exitVal-entryVal)*frac
+	var trades []*data.Measurement
 
-			points = append(points, ui.FragmentPoint{
-				X:    idx,
-				Y:    val,
-				Seq:  tick,
-				Time: time.Now().UnixMilli(),
-			})
+	for measurement, err := range training.catalog.Timeline(
+		training.Context(), detection.Epoch, detection.Label, startTick, highTick,
+	) {
+		if err != nil {
+			return nil, errnie.Err(
+				errnie.IO, "[training] unable to read price tape: "+window, err,
+			)
 		}
+
+		if measurement == nil || measurement.Source != "spot:trade" {
+			continue
+		}
+
+		// Timeline already bounds on tick; re-check so the fragment's
+		// window never depends on the catalog's filtering.
+		if measurement.Label != detection.Label ||
+			measurement.Epoch != detection.Epoch ||
+			measurement.Tick < startTick ||
+			measurement.Tick > highTick {
+			continue
+		}
+
+		trades = append(trades, measurement)
 	}
 
-	return points
+	if len(trades) == 0 {
+		return nil, errnie.Err(
+			errnie.NotFound,
+			"[training] detection has no spot:trade price tape: "+window,
+			nil,
+		)
+	}
+
+	// Timeline yields sequence-index order; pointAt searches by tick.
+	slices.SortStableFunc(trades, func(left, right *data.Measurement) int {
+		if order := cmp.Compare(left.Tick, right.Tick); order != 0 {
+			return order
+		}
+
+		return cmp.Compare(left.SeqIdx, right.SeqIdx)
+	})
+
+	points := make([]ui.FragmentPoint, 0, len(trades))
+
+	for _, trade := range trades {
+		metric, err := readMetric(trade, "price")
+
+		if err != nil || metric == nil || metric.Exact == nil || metric.Exact.Sign() <= 0 {
+			return nil, errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"[training] spot:trade without a positive exact price in price tape: %s (tick %d seq %d)",
+					window, trade.Tick, trade.SeqIdx,
+				),
+				err,
+			)
+		}
+
+		price := metric.Exact
+
+		timeMs := trade.At.UnixMilli()
+
+		if timeMs <= 0 {
+			return nil, errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"[training] spot:trade without a timestamp in price tape: %s (tick %d seq %d)",
+					window, trade.Tick, trade.SeqIdx,
+				),
+				nil,
+			)
+		}
+
+		points = append(points, ui.FragmentPoint{
+			X:    len(points),
+			Y:    price.Float64(),
+			Tick: trade.Tick,
+			Time: timeMs,
+		})
+	}
+
+	return points, nil
 }
 
 func (training *Training) streamFragment(
@@ -1540,14 +2184,35 @@ func (training *Training) streamFragment(
 		regionTokens = append(regionTokens, []byte(tok))
 	}
 
+	enters := fragment.EntryIdx >= 0 && fragment.EntryIdx < len(fragment.Points)
+	action := 0
+
+	if enters {
+		action = 1
+	}
+
+	// The fragment is historical: its venue time is the detection's C, never
+	// the wall clock at replay.
+	if detection.At.IsZero() {
+		training.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"[training] detection without venue time (At): %s tick %d",
+				detection.Label, detection.Tick,
+			),
+			nil,
+		))
+		return
+	}
+
 	snapshot := ReportSnapshot{
 		Source:       training.Name(),
 		Symbol:       detection.Label,
 		SeqIdx:       fragment.MarkC,
-		At:           time.Now(),
+		At:           detection.At,
 		Stage:        StageHistoricalValidation,
 		Blocker:      "historical validation",
-		Action:       1,
+		Action:       action,
 		Confidence:   1.0,
 		RegionTokens: regionTokens,
 		MarkA:        fragment.MarkA,
@@ -1555,16 +2220,29 @@ func (training *Training) streamFragment(
 		MarkC:        fragment.MarkC,
 		Price:        fragment.ExitPrice,
 		ExcursionMag: fragment.Magnitude,
-		Direction:    fragment.Direction,
-		Clears:       true,
+		Direction:    fragment.Class,
+		Clears:       fragment.Class == excursionUp,
 		Event:        "completed",
 	}
 
-	entryMetric := data.NewMetric("agent_entry", float64(fragment.MarkB), data.UnitCount, data.TimescaleInstantaneous)
-	entryMetric.Standardized = float64(fragment.MarkB)
+	// ENTER/EXIT markers track the fill sweet spots stored on the fragment,
+	// not ground-truth B/C. A fragment whose phases never teach that action
+	// (wait-only chop/flat, the precursor of a losing excursion) has none.
+	var markers []*data.Metric
 
-	exitMetric := data.NewMetric("agent_exit", float64(fragment.MarkC), data.UnitCount, data.TimescaleInstantaneous)
-	exitMetric.Standardized = float64(fragment.MarkC)
+	if enters {
+		mark := float64(fragment.Points[fragment.EntryIdx].Tick)
+		metric := data.NewMetric("agent_entry", mark, data.UnitCount, data.TimescaleInstantaneous)
+		metric.Standardized = mark
+		markers = append(markers, metric)
+	}
+
+	if fragment.ExitIdx >= 0 && fragment.ExitIdx < len(fragment.Points) {
+		mark := float64(fragment.Points[fragment.ExitIdx].Tick)
+		metric := data.NewMetric("agent_exit", mark, data.UnitCount, data.TimescaleInstantaneous)
+		metric.Standardized = mark
+		markers = append(markers, metric)
+	}
 
 	metadata := training.reporter.Metadata(snapshot)
 	out := data.NewMeasurement(
@@ -1578,6 +2256,6 @@ func (training *Training) streamFragment(
 	out.At = snapshot.At
 	out.From = snapshot.At
 
-	training.reporter.Populate(out, snapshot, entryMetric, exitMetric)
+	training.reporter.Populate(out, snapshot, markers...)
 	training.uiTee.Push(data.NewPublication(out, nil))
 }

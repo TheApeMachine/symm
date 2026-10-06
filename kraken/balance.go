@@ -81,18 +81,22 @@ func (subscription BalanceSubscription) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func NewBalance(buf []byte) *Balance {
+/*
+NewBalance decodes a streamed balances frame. An undecodable frame is an
+error, never a partially filled wallet that would overwrite the account state.
+*/
+func NewBalance(buf []byte) (*Balance, error) {
 	var balance Balance
 
 	if err := sonic.Unmarshal(buf, &balance); err != nil {
-		errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.UnprocessableContent,
-			"invalid balance",
+			"[kraken.balance] invalid balances frame",
 			err,
-		))
+		)
 	}
 
-	return &balance
+	return &balance, nil
 }
 
 func (balance *Balance) MarshalJSON() ([]byte, error) {

@@ -3,12 +3,14 @@ package pumpdump_test
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -18,9 +20,9 @@ import (
 
 func trade(at time.Time, seq int64, side string, price, qty float64) *data.Measurement {
 	prior := data.NewMeasurement(
-		1, "BTC/USD", "ingress", seq, seq,
-		data.StringEntry{Key: "side", Value: side},
-		data.StringEntry{Key: "channel", Value: "trade"},
+		1, "BTC/USD", "spot:trade", seq, seq,
+		&data.StringEntry{Key: "type", Value: "trade"},
+		&data.StringEntry{Key: "side", Value: side},
 	)
 	prior.At = at
 	prior.From = at
@@ -166,12 +168,78 @@ func TestPumpDumpSignal(t *testing.T) {
 			So(metricValue(dumpRes, "negative_midpoint_return"), ShouldAlmostEqual, -logReturn, 1e-12)
 		})
 
-		Convey("A crossed touch advances tape accounting but omits every touch-dependent fact", func() {
+		Convey("A crossed touch is corrupt book state: it halts with an Internal error naming the symbol", func() {
 			touch(books, now, "bid-crossed", 50010.0, 1.0, "ask-crossed", 50000.0, 1.0)
 
-			res := instrument.Step(trade(now, 50, "buy", 50005.0, 1.0))
+			So(instrument.Step(trade(now, 50, "buy", 50005.0, 1.0)), ShouldBeNil)
+
+			err := instrument.Error()
+			So(err, ShouldNotBeNil)
+			So(errnie.IsInternal(err), ShouldBeTrue)
+			So(err.Error(), ShouldContainSubstring, "crossed or locked")
+			So(err.Error(), ShouldContainSubstring, "BTC/USD")
+			So(strings.Contains(err.Error(), "book manager is required"), ShouldBeFalse)
+			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
+		})
+
+		Convey("A present touch with a non-positive price is corrupt book state and halts", func() {
+			touch(books, now, "bid-neg", -1.0, 1.0, "ask-neg", 50000.0, 1.0)
+
+			So(instrument.Step(trade(now, 55, "buy", 50000.0, 1.0)), ShouldBeNil)
+
+			err := instrument.Error()
+			So(err, ShouldNotBeNil)
+			So(errnie.IsInternal(err), ShouldBeTrue)
+			So(err.Error(), ShouldContainSubstring, "non-finite or non-positive book touch")
+			So(err.Error(), ShouldContainSubstring, "BTC/USD")
+			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
+		})
+
+		Convey("A trade without a positive quantity yields no measurement", func() {
+			touch(books, now, "bid-1", 50000.0, 5.0, "ask-1", 50002.0, 5.0)
+			So(instrument.Step(trade(now, 60, "buy", 50001.0, 0.0)), ShouldBeNil)
+		})
+
+		Convey("The touch comes only from the book manager, never from the trade frame", func() {
+			touch(books, now, "bid-src", 50000.0, 5.0, "ask-src", 50002.0, 5.0)
+
+			prior := data.NewMeasurement(
+				1, "BTC/USD", "spot:trade", 70, 70,
+				&data.StringEntry{Key: "type", Value: "trade"},
+				&data.StringEntry{Key: "side", Value: "buy"},
+			)
+			prior.At = now
+			prior.From = now
+			prior = prior.Write(
+				data.NewMetric("price", 50001.0, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("qty", 1.0, data.UnitQuantity, data.TimescaleInstantaneous),
+				data.NewMetric("bid", 1.0, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("ask", 2.0, data.UnitPrice, data.TimescaleInstantaneous),
+			)
+
+			res := instrument.Step(prior)
 			So(res, ShouldNotBeNil)
-			So(metricValue(res, "trade_notional"), ShouldEqual, 50005.0)
+			So(instrument.Error(), ShouldBeNil)
+			So(metricValue(res, "best_bid"), ShouldEqual, 50000.0)
+			So(metricValue(res, "best_ask"), ShouldEqual, 50002.0)
+		})
+
+		Convey("Without a book the trade advances tape accounting and omits touch facts", func() {
+			prior := data.NewMeasurement(
+				1, "SOL/USD", "spot:trade", 80, 80,
+				&data.StringEntry{Key: "type", Value: "trade"},
+				&data.StringEntry{Key: "side", Value: "buy"},
+			)
+			prior.At = now
+			prior.From = now
+
+			res := instrument.Step(prior.Write(
+				data.NewMetric("price", 150.0, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("qty", 2.0, data.UnitQuantity, data.TimescaleInstantaneous),
+			))
+			So(res, ShouldNotBeNil)
+			So(instrument.Error(), ShouldBeNil)
+			So(metricValue(res, "trade_notional"), ShouldEqual, 300.0)
 
 			for _, label := range []string{"best_bid", "best_ask", "midpoint", "spread", "relative_spread"} {
 				_, held := metric(res, label)
@@ -179,9 +247,25 @@ func TestPumpDumpSignal(t *testing.T) {
 			}
 		})
 
-		Convey("A trade without a positive quantity yields no measurement", func() {
-			touch(books, now, "bid-1", 50000.0, 5.0, "ask-1", 50002.0, 5.0)
-			So(instrument.Step(trade(now, 60, "buy", 50001.0, 0.0)), ShouldBeNil)
+		Convey("A trade frame without price is an error, not a silent drop", func() {
+			prior := data.NewMeasurement(
+				1, "BTC/USD", "spot:trade", 90, 90,
+				&data.StringEntry{Key: "type", Value: "trade"},
+				&data.StringEntry{Key: "side", Value: "buy"},
+			)
+			prior.At = now
+			prior.From = now
+
+			So(instrument.Step(prior.Write(
+				data.NewMetric("qty", 1.0, data.UnitQuantity, data.TimescaleInstantaneous),
+			)), ShouldBeNil)
+			So(instrument.Error(), ShouldNotBeNil)
 		})
+	})
+
+	Convey("A pumpdump signal constructed without a book manager fails with an error", t, func() {
+		instrument := pumpdump.NewSignal(context.Background(), data.NewArenaOwner("pumpdump", 16), nil)
+		So(instrument.Error(), ShouldNotBeNil)
+		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
 	})
 }

@@ -47,7 +47,7 @@ func fillMeasurements(
 	recordBuilder *array.RecordBuilder,
 	measurements []*data.Measurement,
 	epoch int64,
-) {
+) error {
 	epochBuilder := recordBuilder.Field(0).(*array.Int64Builder)
 	seqIdxBuilder := recordBuilder.Field(1).(*array.Int64Builder)
 	sourceBuilder := recordBuilder.Field(2).(*array.StringBuilder)
@@ -91,7 +91,19 @@ func fillMeasurements(
 
 		for entry := range measurement.Read() {
 			if entry.Err != nil {
-				continue
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"[iceberg] measurement metric read failed during write",
+					entry.Err,
+				))
+			}
+
+			if entry.Metric == nil {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[iceberg] measurement metric missing during write",
+					nil,
+				))
 			}
 
 			metricsKey.Append(entry.Key)
@@ -116,7 +128,19 @@ func fillMeasurements(
 
 		for entry := range measurement.Read() {
 			if entry.Err != nil {
-				continue
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"[iceberg] measurement provenance read failed during write",
+					entry.Err,
+				))
+			}
+
+			if entry.Metric == nil {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[iceberg] measurement metric missing during provenance write",
+					nil,
+				))
 			}
 
 			if entry.Metric.Exact != nil {
@@ -131,6 +155,8 @@ func fillMeasurements(
 			provenanceVal.Append(strconv.FormatFloat(entry.Metric.Normalized, 'g', -1, 64))
 		}
 	}
+
+	return nil
 }
 
 func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
@@ -184,7 +210,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 			label = labelCol.Value(rowIdx)
 		}
 
-		var metadata []data.StringEntry
+		var metadata []*data.StringEntry
 
 		if metadataCol != nil && !metadataCol.IsNull(rowIdx) {
 			keyArray := metadataCol.Keys().(*array.String)
@@ -194,7 +220,7 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 			endOffset := int(offsets[rowIdx+1])
 
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
-				metadata = append(metadata, data.StringEntry{
+				metadata = append(metadata, &data.StringEntry{
 					Key:   keyArray.Value(itemIdx),
 					Value: valArray.Value(itemIdx),
 				})
@@ -319,11 +345,11 @@ func ReadMeasurements(batch arrow.RecordBatch) ([]*data.Measurement, error) {
 			}
 		}
 
-		metrics := make([]data.Metric, 0, len(metricKeys))
+		metrics := make([]*data.Metric, 0, len(metricKeys))
 
 		for _, key := range metricKeys {
 			holder := rowMetrics[key]
-			var metric data.Metric
+			var metric *data.Metric
 
 			if holder.exact != nil {
 				metric = data.NewExactMetric(
@@ -452,7 +478,11 @@ func measurementRecords(
 	defer recordBuilder.Release()
 
 	recordBuilder.Reserve(len(measurements))
-	fillMeasurements(recordBuilder, measurements, epoch)
+
+	if err := fillMeasurements(recordBuilder, measurements, epoch); err != nil {
+		return nil, err
+	}
+
 	batch := recordBuilder.NewRecordBatch()
 	defer batch.Release()
 

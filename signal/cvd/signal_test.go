@@ -13,7 +13,7 @@ import (
 )
 
 func trade(at time.Time, seq int64, side string, price, qty float64) *data.Measurement {
-	prior := data.NewMeasurement(1, "BTC/USD", "ingress", seq, seq, data.StringEntry{Key: "side", Value: side})
+	prior := data.NewMeasurement(1, "BTC/USD", "ingress", seq, seq, &data.StringEntry{Key: "side", Value: side})
 	prior.At = at
 	prior.From = at
 

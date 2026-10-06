@@ -28,8 +28,8 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 			"kraken",
 			1,
 			42,
-			data.StringEntry{Key: "side", Value: "bid"},
-			data.StringEntry{Key: "type", Value: "limit"},
+			&data.StringEntry{Key: "side", Value: "bid"},
+			&data.StringEntry{Key: "type", Value: "limit"},
 		)
 		measurement.At = at
 		measurement.Write(
@@ -43,7 +43,7 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 			recordBuilder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
 			defer recordBuilder.Release()
 
-			fillMeasurements(recordBuilder, measurements, 100)
+			So(fillMeasurements(recordBuilder, measurements, 100), ShouldBeNil)
 			batch := recordBuilder.NewRecordBatch()
 			defer batch.Release()
 
@@ -67,14 +67,28 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 
 				priceMetric := data.Pull(reconstructed.Read("price"))
 				So(priceMetric.Err, ShouldBeNil)
+				So(priceMetric.Metric, ShouldNotBeNil)
 				So(priceMetric.Metric.Exact, ShouldNotBeNil)
-				So(priceMetric.Metric.Exact.String(), ShouldEqual, "65432.1")
+				So(priceMetric.Metric.Exact.String(), ShouldEqual, "65432.10")
 				So(priceMetric.Metric.Raw, ShouldEqual, 65432.10)
 
 				volumeMetric := data.Pull(reconstructed.Read("volume"))
 				So(volumeMetric.Err, ShouldBeNil)
+				So(volumeMetric.Metric, ShouldNotBeNil)
 				So(volumeMetric.Metric.Raw, ShouldEqual, 1.5)
 			})
+		})
+
+		Convey("When a measurement is not finalized", func() {
+			unfinalized := data.NewMeasurement(100, "BTC/USD", "kraken", 2, 43)
+			recordBuilder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
+			defer recordBuilder.Release()
+
+			err := fillMeasurements(recordBuilder, []*data.Measurement{unfinalized}, 100)
+			So(err, ShouldNotBeNil)
+
+			_, err = measurementRecords(schema, []*data.Measurement{unfinalized}, 100)
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

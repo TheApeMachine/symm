@@ -154,18 +154,18 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	clear(signal.envelope.Values)
 	clear(signal.identity.Values)
 
-	for _, key := range []string{"last", "last_price", "price"} {
-		entry := data.Pull(prior.Read(key))
+	price, err := tradeValue(prior, "price")
 
-		if entry.Err == nil && entry.Metric.Label != "" && entry.Metric.Raw > 0 && !math.IsInf(entry.Metric.Raw, 0) {
-			signal.envelope.Values["price"] = entry.Metric.Raw
-			break
-		}
-	}
-
-	if _, held := signal.envelope.Values["price"]; !held {
+	if err != nil {
+		signal.Error(err)
 		return nil
 	}
+
+	if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+		return nil
+	}
+
+	signal.envelope.Values["price"] = price
 
 	signal.envelope.Values["at"] = float64(prior.At.UnixNano())
 	signal.identity.Values["member"] = prior.Label
@@ -213,7 +213,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	out.At = prior.At
 	out.From = prior.At
 
-	metrics := make([]data.Metric, 0, len(signal.metrics))
+	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
 		value, held := signal.output.Values[metric[1]]
@@ -232,4 +232,25 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	return out.Write(metrics...)
+}
+
+/*
+tradeValue reads one required trade field from a trade frame. A read failure
+or an absent field is an error: every trade frame carries price and qty, so a
+frame without them is broken upstream and must not be silently skipped.
+*/
+func tradeValue(prior *data.Measurement, key string) (float64, error) {
+	entry := data.Pull(prior.Read(key))
+
+	if entry != nil && entry.Err != nil {
+		return 0, entry.Err
+	}
+
+	if entry == nil || entry.Metric == nil || entry.Metric.Label != key {
+		return 0, errnie.Err(
+			errnie.NotAcceptable, "[sentiment] trade frame is missing "+key, nil,
+		)
+	}
+
+	return entry.Metric.Raw, nil
 }

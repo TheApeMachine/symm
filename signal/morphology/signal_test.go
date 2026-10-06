@@ -9,6 +9,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -17,7 +18,7 @@ import (
 )
 
 func ingress(label string, at time.Time, seq int64) *data.Measurement {
-	prior := data.NewMeasurement(1, label, "ingress", seq, seq)
+	prior := data.NewMeasurement(1, label, "spot:trade", seq, seq)
 	prior.At = at
 	prior.From = at
 	return prior
@@ -111,6 +112,27 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 			So(held, ShouldBeFalse)
 		})
 
+		Convey("A crossed book is corrupt state: it halts with an Internal error naming the symbol", func() {
+			books.Update(&kraken.Level3{
+				Channel: "level3",
+				Type:    "snapshot",
+				Data: []kraken.Level3Data{{
+					Symbol: "XBT/USD",
+					Bids:   []kraken.Level3Order{{OrderID: "bid-x", LimitPrice: decimal.NewFromFloat64(50010.0), OrderQty: decimal.NewFromFloat64(1.0), Timestamp: now, Event: "add"}},
+					Asks:   []kraken.Level3Order{{OrderID: "ask-x", LimitPrice: decimal.NewFromFloat64(50000.0), OrderQty: decimal.NewFromFloat64(1.0), Timestamp: now, Event: "add"}},
+				}},
+			})
+
+			So(instrument.Step(ingress("XBT/USD", now, 900)), ShouldBeNil)
+
+			err := instrument.Error()
+			So(err, ShouldNotBeNil)
+			So(errnie.IsInternal(err), ShouldBeTrue)
+			So(err.Error(), ShouldContainSubstring, "crossed or locked")
+			So(err.Error(), ShouldContainSubstring, "XBT/USD")
+			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
+		})
+
 		Convey("Multi-level dispersion decreases concentration, increases entropy, and tracks morphology change", func() {
 			var prevDist float64
 			for step := 0; step < 5; step++ {
@@ -170,5 +192,13 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 				prevDist = currentDist
 			}
 		})
+	})
+}
+
+func TestMorphologySignalRequiresBookManager(t *testing.T) {
+	Convey("A morphology signal constructed without a book manager fails with an error", t, func() {
+		instrument := morphology.NewSignal(context.Background(), data.NewArenaOwner("morphology", 16), nil)
+		So(instrument.Error(), ShouldNotBeNil)
+		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
 	})
 }

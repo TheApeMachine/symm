@@ -18,6 +18,11 @@ import (
 // ErrBlobMissing is the cause when the model object has not been written.
 var ErrBlobMissing = errors.New("model blob is missing")
 
+// ErrBlobStorageUnconfigured is the cause when the catalog has no object
+// storage at all (no AWS config). Callers that treat object storage as
+// optional match on it; a configured store that fails is a different error.
+var ErrBlobStorageUnconfigured = errors.New("object storage is not configured")
+
 func (catalog *Catalog) PutBlob(ctx context.Context, key string, body []byte) error {
 	client, bucket, err := catalog.blobs()
 
@@ -89,7 +94,7 @@ func (catalog *Catalog) blobs() (*s3.Client, string, error) {
 		return nil, "", errnie.Error(errnie.Err(
 			errnie.Validation,
 			"catalog: object storage is not configured",
-			nil,
+			ErrBlobStorageUnconfigured,
 		))
 	}
 

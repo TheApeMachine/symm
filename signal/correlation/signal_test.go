@@ -13,12 +13,19 @@ import (
 	"github.com/theapemachine/symm/signal/correlation"
 )
 
-func quote(label string, at time.Time, seq int64, price float64) *data.Measurement {
-	prior := data.NewMeasurement(1, label, "ingress", seq, seq)
+func trade(label string, at time.Time, seq int64, price float64) *data.Measurement {
+	prior := data.NewMeasurement(
+		1, label, "spot:trade", seq, seq,
+		&data.StringEntry{Key: "type", Value: "trade"},
+		&data.StringEntry{Key: "side", Value: "buy"},
+	)
 	prior.At = at
 	prior.From = at
 
-	return prior.Write(data.NewMetric("last", price, data.UnitPrice, data.TimescaleInstantaneous))
+	return prior.Write(
+		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
+		data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous),
+	)
 }
 
 func metric(measurement *data.Measurement, label string) (float64, bool) {
@@ -58,7 +65,7 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 
 			for step := range 25 {
 				btcPrice := 50000.0 * math.Exp(latent[step*10])
-				resBTC := instrument.Step(quote(
+				resBTC := instrument.Step(trade(
 					"BTC/USD", now.Add(time.Duration(step*100)*time.Millisecond), int64(step*2+1), btcPrice,
 				))
 				So(resBTC, ShouldNotBeNil)
@@ -69,7 +76,7 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 
 				// ETH follows BTC's moves with a 20ms asynchronous offset.
 				ethPrice := 3000.0 * math.Exp(latent[step*10+2]+random.NormFloat64()*1e-4)
-				resETH := instrument.Step(quote(
+				resETH := instrument.Step(trade(
 					"ETH/USD", now.Add(time.Duration(step*100+20)*time.Millisecond), int64(step*2+2), ethPrice,
 				))
 				So(resETH, ShouldNotBeNil)
@@ -113,12 +120,18 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 			So(measuredPairs, ShouldBeGreaterThan, 0)
 		})
 
-		Convey("Rejects non-positive or missing prices cleanly", func() {
-			prior := data.NewMeasurement(1, "BTC/USD", "ingress", 999, 999)
+		Convey("Rejects a non-positive trade price without error", func() {
+			So(instrument.Step(trade("BTC/USD", now, 998, 0)), ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
+		})
+
+		Convey("Treats a trade frame without price as an error", func() {
+			prior := data.NewMeasurement(1, "BTC/USD", "spot:trade", 999, 999)
 			prior.At = now
 			prior.From = now
 
 			So(instrument.Step(prior.Write()), ShouldBeNil)
+			So(instrument.Error(), ShouldNotBeNil)
 		})
 	})
 }

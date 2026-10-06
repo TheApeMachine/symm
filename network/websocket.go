@@ -19,14 +19,15 @@ while status != READY ("client is not ready").
 */
 type WebsocketClient struct {
 	*runtime.System
-	mu          sync.Mutex
-	conn        *gorilla.Conn
-	url         string
-	pinger      *Pinger
-	onReconnect func() error
-	backoff     time.Duration
-	lastWarn    time.Time
-	dial        func(url string) (*gorilla.Conn, *http.Response, error)
+	mu           sync.Mutex
+	conn         *gorilla.Conn
+	url          string
+	pinger       *Pinger
+	onReconnect  func() error
+	onDisconnect func()
+	backoff      time.Duration
+	lastWarn     time.Time
+	dial         func(url string) (*gorilla.Conn, *http.Response, error)
 }
 
 func NewWebsocketClient(ctx context.Context) *WebsocketClient {
@@ -44,11 +45,29 @@ func NewWebsocketClient(ctx context.Context) *WebsocketClient {
 /*
 OnReconnect registers a hook invoked after a successful redial (level3
 resubscribe). Nil clears the hook.
+
+A hook failure is fatal for the client: a redialed socket whose resubscribe
+failed carries no data and would otherwise look healthy while the stream is
+dark. The client records the error, closes itself (cancelling its context),
+and returns the error from Open/Read/Write; ingress sees the closed context
+and halts with Error().
 */
 func (client *WebsocketClient) OnReconnect(hook func() error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	client.onReconnect = hook
+}
+
+/*
+OnDisconnect registers a hook invoked when a live connection drops (before
+any redial). Consumers whose state is only valid while the stream is live
+(a Level3 book) mark it stale here, so readers do not see frozen state for
+the whole backoff window. Nil clears the hook.
+*/
+func (client *WebsocketClient) OnDisconnect(hook func()) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.onDisconnect = hook
 }
 
 func (client *WebsocketClient) Open(url string) error {
@@ -62,15 +81,39 @@ func (client *WebsocketClient) Open(url string) error {
 		return err
 	}
 
-	if hook != nil {
-		if hookErr := hook(); hookErr != nil {
-			client.mu.Lock()
-			client.warnOnce("reconnect hook failed: " + hookErr.Error())
-			client.mu.Unlock()
-		}
+	return client.runHook(hook)
+}
+
+/*
+runHook runs the reconnect hook outside the client lock. A failure halts the
+client (see OnReconnect); there is no retry on a socket that redialed but
+could not resubscribe.
+*/
+func (client *WebsocketClient) runHook(hook func() error) error {
+	if hook == nil {
+		return nil
 	}
 
-	return nil
+	hookErr := hook()
+
+	if hookErr == nil {
+		return nil
+	}
+
+	cause := errnie.Err(
+		errnie.IO,
+		"[network.websocket] reconnect hook failed",
+		hookErr,
+	)
+
+	client.mu.Lock()
+	client.closeConnLocked()
+	client.mu.Unlock()
+
+	client.System.Error(cause)
+	client.System.Close()
+
+	return cause
 }
 
 func (client *WebsocketClient) dialLocked() error {
@@ -217,8 +260,6 @@ func (client *WebsocketClient) ensureReady() error {
 		wait = 30 * time.Second
 	}
 
-	url := client.url
-	_ = url
 	client.mu.Unlock()
 
 	select {
@@ -250,20 +291,14 @@ func (client *WebsocketClient) ensureReady() error {
 
 	client.mu.Unlock()
 
-	if hook != nil {
-		if hookErr := hook(); hookErr != nil {
-			client.mu.Lock()
-			client.warnOnce("reconnect hook failed: " + hookErr.Error())
-			client.mu.Unlock()
-		}
-	}
-
-	return nil
+	return client.runHook(hook)
 }
 
 func (client *WebsocketClient) softDown(cause error) error {
 	client.mu.Lock()
-	defer client.mu.Unlock()
+
+	wasLive := client.conn != nil
+	hook := client.onDisconnect
 
 	client.closeConnLocked()
 
@@ -273,6 +308,12 @@ func (client *WebsocketClient) softDown(cause error) error {
 	}
 
 	client.warnOnce("disconnected: " + cause.Error())
+	client.mu.Unlock()
+
+	if wasLive && hook != nil {
+		hook()
+	}
+
 	return cause
 }
 

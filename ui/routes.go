@@ -7,6 +7,7 @@ import (
 	"github.com/apache/iceberg-go"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/signal"
@@ -109,7 +110,14 @@ func (routes *Routes) Register() {
 		const timelineBatchSize = 256
 		batch := make([]*data.Measurement, 0, timelineBatchSize)
 
-		for measurement := range routes.hub.store.Timeline(routes.hub.Context(), epoch, symbol, fromTick, toTick) {
+		for measurement, err := range routes.hub.store.Timeline(routes.hub.Context(), epoch, symbol, fromTick, toTick) {
+			// A failed read must reach the client as a failure, not as a
+			// normally closed (shorter) timeline.
+			if err != nil {
+				failTimeline(conn, err)
+				return
+			}
+
 			batch = append(batch, measurement)
 
 			if len(batch) < timelineBatchSize {
@@ -158,8 +166,12 @@ func (routes *Routes) Register() {
 		epoch := parseInt64Query(run)
 		symbols := []string{}
 		seen := make(map[string]bool)
-		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, nil, 0) {
-			if measurement != nil && measurement.Label != "" && !seen[measurement.Label] {
+		for measurement, err := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, nil, 0) {
+			if err != nil {
+				return readFailure(err)
+			}
+
+			if measurement.Label != "" && !seen[measurement.Label] {
 				seen[measurement.Label] = true
 				symbols = append(symbols, measurement.Label)
 			}
@@ -182,7 +194,11 @@ func (routes *Routes) Register() {
 		epoch := parseInt64Query(run)
 		excursions := []*data.Measurement{}
 
-		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, nil, 0) {
+		for measurement, err := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, nil, 0) {
+			if err != nil {
+				return readFailure(err)
+			}
+
 			if status := measurement.Meta("status"); status == "resolved" {
 				excursions = append(excursions, measurement)
 			}
@@ -206,7 +222,11 @@ func (routes *Routes) Register() {
 		limit := int(parseUintQuery(ctx.Query("limit")))
 		var measurements []*data.Measurement
 
-		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tableName, epoch, nil, limit) {
+		for measurement, err := range routes.hub.store.Scan(routes.hub.Context(), tableName, epoch, nil, limit) {
+			if err != nil {
+				return readFailure(err)
+			}
+
 			measurements = append(measurements, measurement)
 		}
 
@@ -249,8 +269,12 @@ func (routes *Routes) Register() {
 			filter = expression
 		}
 
-		for measurement := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, filter, maxCaptures) {
-			if measurement == nil || measurement.SeqIdx < after {
+		for measurement, err := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, filter, maxCaptures) {
+			if err != nil {
+				return readFailure(err)
+			}
+
+			if measurement.SeqIdx < after {
 				continue
 			}
 
@@ -301,11 +325,23 @@ func (routes *Routes) Register() {
 
 		var found *data.Measurement
 
-		for measurement := range routes.hub.store.Timeline(routes.hub.Context(), epoch, symbol, seq, seq) {
-			if measurement == nil {
-				continue
+		// Envelope addresses a frame by sequence index, not by tick.
+		frameFilter := iceberg.BooleanExpression(iceberg.EqualTo(iceberg.Reference("seqIdx"), seq))
+
+		if symbol != "" {
+			frameFilter = iceberg.NewAnd(
+				iceberg.EqualTo(iceberg.Reference("label"), symbol),
+				frameFilter,
+			)
+		}
+
+		for measurement, err := range routes.hub.store.Scan(routes.hub.Context(), tables.Measurements, epoch, frameFilter, 0) {
+			// A failed read is not "frame not found".
+			if err != nil {
+				return readFailure(err)
 			}
-			if measurement.SeqIdx == seq {
+
+			if measurement.SeqIdx == seq && (symbol == "" || measurement.Label == symbol) {
 				found = measurement
 				break
 			}
@@ -361,4 +397,33 @@ func (routes *Routes) Register() {
 	routes.hub.app.Get("/hindsight/state", func(ctx fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "no witnessed state at sequence")
 	})
+}
+
+/*
+readFailure turns a catalog read error into a 500 for an HTTP route, so a
+failed read never answers as an empty or shorter result.
+*/
+func readFailure(err error) error {
+	return fiber.NewError(fiber.StatusInternalServerError, errnie.Error(err).Error())
+}
+
+/*
+failTimeline ends a timeline stream whose catalog read failed with a 1011
+close frame carrying the error, so the client sees a failure instead of a
+normally closed, shorter timeline. The reason is clipped to the 123 bytes a
+close frame allows.
+*/
+func failTimeline(conn *websocket.Conn, err error) {
+	reason := errnie.Error(err).Error()
+
+	if len(reason) > 123 {
+		reason = reason[:123]
+	}
+
+	if writeErr := conn.WriteMessage(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseInternalServerErr, reason),
+	); writeErr != nil {
+		errnie.Error(writeErr)
+	}
 }

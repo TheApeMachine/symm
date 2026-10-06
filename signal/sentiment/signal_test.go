@@ -11,12 +11,19 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 )
 
-func quote(label string, at time.Time, seq int64, price float64) *data.Measurement {
-	prior := data.NewMeasurement(1, label, "ingress", seq, seq, data.StringEntry{Key: "channel", Value: "ticker"})
+func trade(label string, at time.Time, seq int64, price float64) *data.Measurement {
+	prior := data.NewMeasurement(
+		1, label, "spot:trade", seq, seq,
+		&data.StringEntry{Key: "type", Value: "trade"},
+		&data.StringEntry{Key: "side", Value: "buy"},
+	)
 	prior.At = at
 	prior.From = at
 
-	return prior.Write(data.NewMetric("last", price, data.UnitPrice, data.TimescaleInstantaneous))
+	return prior.Write(
+		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
+		data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous),
+	)
 }
 
 func metric(measurement *data.Measurement, label string) (float64, bool) {
@@ -43,7 +50,7 @@ func TestSentimentSignalMetrics(t *testing.T) {
 					// 2 declining (idx 0, 1), 1 flat (idx 2), 2 advancing (idx 3, 4).
 					price := 100.0 * float64(idx+1) * (1.0 + float64(step)*0.01*float64(idx-2))
 
-					res := instrument.Step(quote(symbol, at, seq, price))
+					res := instrument.Step(trade(symbol, at, seq, price))
 					So(res, ShouldNotBeNil)
 					So(instrument.Error(), ShouldBeNil)
 					So(res.Source, ShouldEqual, "sentiment")
@@ -104,7 +111,7 @@ func TestSentimentSignalMetrics(t *testing.T) {
 					at := origin.Add(time.Duration(seq) * 100 * time.Millisecond)
 					price := 100.0 * float64(idx+1) * (1.0 + float64(step)*0.02)
 
-					res := instrument.Step(quote(symbol, at, seq, price))
+					res := instrument.Step(trade(symbol, at, seq, price))
 					So(res, ShouldNotBeNil)
 					So(instrument.Error(), ShouldBeNil)
 
@@ -132,14 +139,14 @@ func TestSentimentSignalMetrics(t *testing.T) {
 			}
 		})
 
-		Convey("It yields no measurement for a quote without a positive price", func() {
-			So(instrument.Step(quote("BTC/USD", origin, 1, 0)), ShouldBeNil)
+		Convey("It yields no measurement for a trade without a positive price", func() {
+			So(instrument.Step(trade("BTC/USD", origin, 1, 0)), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
 		})
 
 		Convey("It drops events before READY", func() {
 			cold := sentiment.NewSignal(context.Background(), data.NewArenaOwner("sentiment", 16))
-			So(cold.Step(quote("BTC/USD", origin, 1, 100)), ShouldBeNil)
+			So(cold.Step(trade("BTC/USD", origin, 1, 100)), ShouldBeNil)
 		})
 	})
 }

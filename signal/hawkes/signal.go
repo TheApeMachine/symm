@@ -144,7 +144,9 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 /*
 Step binds the prior trade Measurement to one adapter, runs the sequential
 hawkes Stages pipeline, and writes the published facts into a fresh
-Measurement allocated from the signal's own arena. Facts a stage left
+Measurement allocated from the signal's own arena. The pipeline carries
+spot:trade frames only; any other frame, or a trade frame that cannot be read
+or lacks price or qty, is a wiring fault and an error. Facts a stage left
 unwritten are omitted, never fabricated as zero.
 */
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
@@ -157,15 +159,18 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	if prior.Meta("channel") != "trade" {
+	if prior.Source != "spot:trade" {
+		signal.Error(errnie.Err(
+			errnie.NotAcceptable, "[hawkes] non-trade frame "+prior.Source+" reached a trade-only signal", nil,
+		))
 		return nil
 	}
 
-	price := data.Pull(prior.Read("price"))
-	qty := data.Pull(prior.Read("qty"))
-
-	if price.Err != nil || qty.Err != nil || price.Metric.Label == "" || qty.Metric.Label == "" {
-		return nil
+	for _, key := range []string{"price", "qty"} {
+		if _, err := tradeValue(prior, key); err != nil {
+			signal.Error(err)
+			return nil
+		}
 	}
 
 	pipe := signal.pipelineFor(prior.Label)
@@ -215,7 +220,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		out.From = time.Unix(0, int64(fromSec*1e9)).UTC()
 	}
 
-	metrics := make([]data.Metric, 0, len(signal.metrics))
+	metrics := make([]*data.Metric, 0, len(signal.metrics))
 
 	for _, metric := range signal.metrics {
 		value, held := pipe.output.Values[metric[1]]
@@ -230,4 +235,25 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	return out.Write(metrics...)
+}
+
+/*
+tradeValue reads one required trade field from a trade frame. A read failure
+or an absent field is an error: every trade frame carries price and qty, so a
+frame without them is broken upstream and must not be silently skipped.
+*/
+func tradeValue(prior *data.Measurement, key string) (float64, error) {
+	entry := data.Pull(prior.Read(key))
+
+	if entry != nil && entry.Err != nil {
+		return 0, entry.Err
+	}
+
+	if entry == nil || entry.Metric == nil || entry.Metric.Label != key {
+		return 0, errnie.Err(
+			errnie.NotAcceptable, "[hawkes] trade frame is missing "+key, nil,
+		)
+	}
+
+	return entry.Metric.Raw, nil
 }

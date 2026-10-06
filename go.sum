@@ -574,8 +574,8 @@ github.com/testcontainers/testcontainers-go/modules/compose v0.42.0 h1:+t1ZN31TD
 github.com/testcontainers/testcontainers-go/modules/compose v0.42.0/go.mod h1:CfMpouDHqNTCHC8CijEURU2ZotTV3QhH6pXd48s6ofk=
 github.com/theapemachine/datura v1.2.11 h1:d3bbjvCIFlRYI5uPLqvjnMGSwnYKM/w2Dm2xRlpni5Y=
 github.com/theapemachine/datura v1.2.11/go.mod h1:EIRynIm5PAXoQTXc4sjRuAPqoPu17oZYQ8kPDz1hIO8=
-github.com/theapemachine/errnie v1.2.9 h1:n3TTUa0JThWktuRD2kBnWWHgk6U1Ly27YU0VgnBTYfM=
-github.com/theapemachine/errnie v1.2.9/go.mod h1:lzUJVUSJSrXRb0LmgwQtyxf6LupsXhrXTz2etTbAJlg=
+github.com/theapemachine/errnie v1.2.10 h1:k0LauZHKnhHzq5RZs5ZJXFi82ylhMTkbO+iq5bbn1Ac=
+github.com/theapemachine/errnie v1.2.10/go.mod h1:lzUJVUSJSrXRb0LmgwQtyxf6LupsXhrXTz2etTbAJlg=
 github.com/tilt-dev/fsnotify v1.4.8-0.20220602155310-fff9c274a375 h1:QB54BJwA6x8QU9nHY3xJSZR2kX9bgpZekRKGkLTmEXA=
 github.com/tilt-dev/fsnotify v1.4.8-0.20220602155310-fff9c274a375/go.mod h1:xRroudyp5iVtxKqZCrA6n2TLFRBf8bmnjr1UD4x+z7g=
 github.com/tinylib/msgp v1.6.4 h1:mOwYbyYDLPj35mkA2BjjYejgJk9BuHxDdvRnb6v2ZcQ=
