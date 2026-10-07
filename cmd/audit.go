@@ -116,7 +116,8 @@ func init() {
 
 var auditLong = `
 Run a read-only, component-by-component empirical audit of the SYMM sensory and representation pipeline.
-Inspects six decoupled boundaries without model checkpointing or paper trading:\n  0. Hard Metric Contract Integrity
+Inspects six decoupled boundaries without model checkpointing or paper trading:
+  0. Hard Metric Contract Integrity
   1. Metric Vitality & Redundancy (Variance, Coverage, Collinear Clones)
   2. Pair Relationships & Sympathy vs. Shuffled Null (Permutation Test)
   3. Grid Partitioning & Temporal Stability across Disjoint Time Periods (Adjusted Rand Index)
