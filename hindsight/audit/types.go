@@ -105,7 +105,8 @@ type Stage2Sympathy struct {
 	SeparationRatio  float64                  `json:"separation_ratio"` // Fraction of pairs exceeding 95th percentile null
 	KSStatistic      float64                  `json:"ks_statistic"`     // Kolmogorov-Smirnov distance vs null
 	SummaryText      string                   `json:"summary_text"`
-	Passed           bool                     `json:"passed"`
+	Status           string                   `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed           bool                     `json:"passed"` // compatibility: true when experiment executed with sufficient data
 }
 
 /*
@@ -131,7 +132,8 @@ type Stage3GridStability struct {
 	RandIndex       float64           `json:"rand_index"`
 	AdjustedRandIdx float64           `json:"adjusted_rand_idx"`
 	SummaryText     string            `json:"summary_text"`
-	Passed          bool              `json:"passed"`
+	Status          string            `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed          bool              `json:"passed"` // compatibility: true when experiment executed with sufficient data
 }
 
 /*
