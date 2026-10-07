@@ -64,7 +64,7 @@ func TestHayashiYoshidaNext(t *testing.T) {
 			So(out[0][3], ShouldEqual, 1)
 			So(out[0][4], ShouldEqual, 2)
 			So(out[0][2], ShouldEqual, 2)
-			So(out[0][0], ShouldAlmostEqual, math.Sqrt2)
+			So(out[0][0], ShouldAlmostEqual, 1.0)
 		}
 	})
 }
@@ -104,6 +104,7 @@ func TestHayashiReference(t *testing.T) {
 			}
 
 			covariance, support, leftEnergy, rightEnergy := 0.0, 0.0, 0.0, 0.0
+			overlapLeftEnergy, overlapRightEnergy := 0.0, 0.0
 
 			for index := 1; index < len(lp); index++ {
 				increment := math.Log(lp[index]) - math.Log(lp[index-1])
@@ -111,7 +112,10 @@ func TestHayashiReference(t *testing.T) {
 
 				for other := 1; other < len(rp); other++ {
 					if lt[index-1] < rt[other] && rt[other-1] < lt[index] {
-						covariance += increment * (math.Log(rp[other]) - math.Log(rp[other-1]))
+						rightIncrement := math.Log(rp[other]) - math.Log(rp[other-1])
+						covariance += increment * rightIncrement
+						overlapLeftEnergy += increment * increment
+						overlapRightEnergy += rightIncrement * rightIncrement
 						support++
 					}
 				}
@@ -127,7 +131,7 @@ func TestHayashiReference(t *testing.T) {
 			So(node.Error(), ShouldBeNil)
 			So(out[0][1], ShouldEqual, covariance)
 			So(out[0][2], ShouldEqual, support)
-			So(out[0][0], ShouldAlmostEqual, covariance/math.Sqrt(leftEnergy*rightEnergy))
+			So(out[0][0], ShouldAlmostEqual, covariance/math.Sqrt(overlapLeftEnergy*overlapRightEnergy))
 		}
 	})
 }
@@ -206,12 +210,15 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 
 		for _, lag := range []float64{-float64(time.Second), 0, float64(43 * time.Millisecond), float64(time.Second)} {
 			covariance, support := 0.0, 0.0
+			overlapLeftEnergy, overlapRightEnergy := 0.0, 0.0
 
 			for leftIndex := 0; leftIndex < len(leftReturns); leftIndex += 3 {
 				for rightIndex := 0; rightIndex < len(rightReturns); rightIndex += 3 {
 					if leftReturns[leftIndex+1]+lag < rightReturns[rightIndex+2] &&
 						rightReturns[rightIndex+1] < leftReturns[leftIndex+2]+lag {
 						covariance += leftReturns[leftIndex] * rightReturns[rightIndex]
+						overlapLeftEnergy += leftReturns[leftIndex] * leftReturns[leftIndex]
+						overlapRightEnergy += rightReturns[rightIndex] * rightReturns[rightIndex]
 						support++
 					}
 				}

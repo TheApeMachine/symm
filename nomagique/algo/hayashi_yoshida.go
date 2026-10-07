@@ -17,8 +17,7 @@ paths. Each arrival is *[3][]float64:
 	[1] right flat returns as {value, from, to, ...}
 	[2] {leftEnergy, rightEnergy, lag}
 
-It yields *[6]float64{correlation, covariance, support, leftEnergy,
-rightEnergy, defined}. Support counts overlaps, not independent samples.
+It yields *[6]float64{correlation, covariance, support, leftEnergy,\nrightEnergy, defined}. Support counts overlaps, not independent samples.\n\nCorrelation normalizes the Hayashi-Yoshida overlap sum with the energies of\nthe same expanded overlap-pair vectors. If one coarse return overlaps several\nfine returns, that coarse return contributes once per overlap to both the\ncovariance numerator and its normalization. This preserves the asynchronous\noverlap estimator while making the published correlation a genuine bounded\ncosine in [-1, 1]. leftEnergy/rightEnergy remain the original path energies\nfor downstream volatility diagnostics.
 */
 type HayashiYoshida struct {
 	*core.PrimitiveError
@@ -66,6 +65,7 @@ func (op *HayashiYoshida) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 			}
 
 			covariance, support := 0.0, 0.0
+			overlapLeftEnergy, overlapRightEnergy := 0.0, 0.0
 			leftIndex, rightIndex := 0, 0
 			leftCount := len(left) / 3
 			rightCount := len(right) / 3
@@ -80,6 +80,8 @@ func (op *HayashiYoshida) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 
 				if leftFrom < rightTo && rightFrom < leftTo {
 					covariance += leftValue * rightValue
+					overlapLeftEnergy += leftValue * leftValue
+					overlapRightEnergy += rightValue * rightValue
 					support++
 				}
 
@@ -91,15 +93,17 @@ func (op *HayashiYoshida) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				rightIndex++
 			}
 
-			scale := math.Sqrt(leftEnergy * rightEnergy)
+			scale := math.Sqrt(overlapLeftEnergy * overlapRightEnergy)
 			defined := 0.0
+			correlation := math.NaN()
 
-			if support > 0 && leftEnergy > 0 && rightEnergy > 0 {
+			if support > 0 && overlapLeftEnergy > 0 && overlapRightEnergy > 0 {
 				defined = 1
+				correlation = covariance / scale
 			}
 
 			op.out = [6]float64{
-				covariance / scale,
+				correlation,
 				covariance,
 				support,
 				leftEnergy,
