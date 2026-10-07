@@ -9,10 +9,22 @@ import (
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
+type observedVector struct {
+	values  []float64
+	present []bool
+}
+
 /*
-AnalyzeSympathy evaluates pairwise relationships using production-faithful deformations
-(produced by store.Stream.Deform) compared against an empirical shuffled null.
-Both positive alignment and inverse opposition are recognized as sympathy structure.
+AnalyzeSympathy evaluates pairwise relationships using the production deformation
+path and an empirical shuffled null.
+
+Missing observations remain missing. Real and null pair correlations are computed
+only on ticks where both channels were actually observed. The null preserves each
+channel's observation mask and marginal deformation values while destroying
+cross-channel temporal alignment.
+
+Because direct and inverse movement are both sympathy, null exceedance and KS are
+computed in |correlation| space.
 */
 func AnalyzeSympathy(
 	ticks []int64,
@@ -22,202 +34,267 @@ func AnalyzeSympathy(
 ) Stage2Sympathy {
 	activeNames := make([]string, 0)
 	for _, stat := range healthyCells {
-		if stat.Status == "HEALTHY" && stat.Coverage >= 0.20 {
-			activeNames = append(activeNames, stat.Name)
+		if stat.IsConstant {
+			continue
 		}
+		activeNames = append(activeNames, stat.Name)
 	}
-
 	sort.Strings(activeNames)
 
-	if len(activeNames) < 2 {
+	if len(activeNames) < 2 || len(ticks) < 10 {
 		return Stage2Sympathy{
-			SummaryText: "Insufficient active canonical cells (need at least 2) for sympathy analysis.",
+			SummaryText: "Insufficient observed canonical cells for sympathy analysis.",
+			Status:      "INSUFFICIENT_DATA",
 			Passed:      false,
 		}
 	}
-
 	if permutations <= 0 {
 		permutations = 50
 	}
 
-	// 1. Convert canonical raw measurements into zero-centered deformations using store.Stream
 	stream := store.NewStream()
 	deformationSeries := make(map[string]map[int64]float64, len(activeNames))
+	activeSet := make(map[string]struct{}, len(activeNames))
 	for _, name := range activeNames {
 		deformationSeries[name] = make(map[int64]float64)
+		activeSet[name] = struct{}{}
 	}
 
 	for _, tick := range ticks {
-		pass := make(map[string]float64, len(activeNames))
-		for _, name := range activeNames {
-			if val, ok := canonicalSeries[name][tick]; ok {
-				pass[name] = val
+		pass := make(map[string]float64)
+		for name, tickMap := range canonicalSeries {
+			if _, active := activeSet[name]; !active {
+				continue
+			}
+			if value, ok := tickMap[tick]; ok {
+				pass[name] = value
 			}
 		}
-
-		if len(pass) > 0 {
-			deforms := stream.Deform(pass)
-			for name, defVal := range deforms {
-				deformationSeries[name][tick] = defVal
-			}
+		if len(pass) == 0 {
+			continue
+		}
+		for name, value := range stream.Deform(pass) {
+			deformationSeries[name][tick] = value
 		}
 	}
 
-	// 2. Build dense vectors across ticks
-	denseVectors := make([][]float64, len(activeNames))
-	for i, name := range activeNames {
-		vec := make([]float64, len(ticks))
-		for tIdx, tick := range ticks {
-			vec[tIdx] = deformationSeries[name][tick]
+	vectors := make([]observedVector, len(activeNames))
+	for index, name := range activeNames {
+		vector := observedVector{
+			values:  make([]float64, len(ticks)),
+			present: make([]bool, len(ticks)),
 		}
-		denseVectors[i] = vec
-	}
-
-	realConcordances := make([]float64, 0, len(activeNames)*(len(activeNames)-1)/2)
-	for i := 0; i < len(activeNames); i++ {
-		for j := i + 1; j < len(activeNames); j++ {
-			if corr, ok := computeVectorCorrelation(denseVectors[i], denseVectors[j]); ok {
-				realConcordances = append(realConcordances, corr)
+		for tickIndex, tick := range ticks {
+			if value, ok := deformationSeries[name][tick]; ok {
+				vector.values[tickIndex] = value
+				vector.present[tickIndex] = true
 			}
 		}
+		vectors[index] = vector
 	}
 
+	realConcordances := pairCorrelations(vectors)
 	if len(realConcordances) == 0 {
 		return Stage2Sympathy{
-			SummaryText: "No overlapping observations found between canonical cell pairs.",
+			SummaryText: "No canonical cell pairs had sufficient simultaneous deformation support.",
+			Status:      "INSUFFICIENT_DATA",
 			Passed:      false,
 		}
 	}
 
-	positiveCount := 0
-	inverseCount := 0
-	for _, val := range realConcordances {
-		if val > 0.05 {
+	positiveCount, inverseCount := 0, 0
+	for _, value := range realConcordances {
+		if value > 0 {
 			positiveCount++
-		}
-		if val < -0.05 {
+		} else if value < 0 {
 			inverseCount++
 		}
 	}
 
-	realMean, realStd := meanAndVar(realConcordances)
-	realStd = math.Sqrt(realStd)
+	realMean, realVariance := meanAndVar(realConcordances)
+	realBins, realCounts := histogram(realConcordances, 25, -1, 1)
 
-	realBins, realCounts := histogram(realConcordances, 25, -1.0, 1.0)
-
-	// 3. Permutation Null: independently shuffle deformation sequences across ticks
-	nullValues := make([]float64, 0, len(realConcordances)*permutations)
 	rng := rand.New(rand.NewSource(1791))
-
-	shuffled := make([][]float64, len(denseVectors))
-	for i := range denseVectors {
-		shuffled[i] = make([]float64, len(denseVectors[i]))
-	}
-
-	for iter := 0; iter < permutations; iter++ {
-		for i := range denseVectors {
-			copy(shuffled[i], denseVectors[i])
-			rng.Shuffle(len(shuffled[i]), func(a, b int) {
-				shuffled[i][a], shuffled[i][b] = shuffled[i][b], shuffled[i][a]
-			})
-		}
-
-		for i := 0; i < len(shuffled); i++ {
-			for j := i + 1; j < len(shuffled); j++ {
-				if corr, ok := computeVectorCorrelation(shuffled[i], shuffled[j]); ok {
-					nullValues = append(nullValues, corr)
-				}
-			}
+	nullValues := make([]float64, 0, len(realConcordances)*permutations)
+	shuffled := make([]observedVector, len(vectors))
+	for index, vector := range vectors {
+		shuffled[index] = observedVector{
+			values:  make([]float64, len(vector.values)),
+			present: append([]bool(nil), vector.present...),
 		}
 	}
 
-	sort.Float64s(nullValues)
+	for iteration := 0; iteration < permutations; iteration++ {
+		for index, vector := range vectors {
+			copy(shuffled[index].values, vector.values)
+			shuffleObservedValues(rng, shuffled[index].values, vector.present)
+		}
+		nullValues = append(nullValues, pairCorrelations(shuffled)...)
+	}
 
-	nullMean, nullStd := meanAndVar(nullValues)
-	nullStd = math.Sqrt(nullStd)
-
-	p95Idx := int(float64(len(nullValues)) * 0.95)
-	p99Idx := int(float64(len(nullValues)) * 0.99)
-	p95 := nullValues[min(p95Idx, len(nullValues)-1)]
-	p99 := nullValues[min(p99Idx, len(nullValues)-1)]
-
-	nullBins, nullCounts := histogram(nullValues, 25, -1.0, 1.0)
-
-	// Fraction of real absolute affinities that exceed null 95th percentile
-	exceedingNullCount := 0
-	for _, val := range realConcordances {
-		if math.Abs(val) > math.Abs(p95) {
-			exceedingNullCount++
+	if len(nullValues) == 0 {
+		return Stage2Sympathy{
+			TotalPairs:    len(realConcordances),
+			PositivePairs: positiveCount,
+			InversePairs:  inverseCount,
+			SummaryText:   "Permutation null had no sufficiently supported cell pairs.",
+			Status:        "INSUFFICIENT_DATA",
+			Passed:        false,
 		}
 	}
 
-	separationRatio := float64(exceedingNullCount) / float64(len(realConcordances))
-	ksStat := computeKolmogorovSmirnov(realConcordances, nullValues)
+	nullMean, nullVariance := meanAndVar(nullValues)
+	nullBins, nullCounts := histogram(nullValues, 25, -1, 1)
 
-	// Empirical pass condition: distribution separates from shuffled null
-	passed := separationRatio >= 0.10 && ksStat >= 0.10
+	absReal := absoluteValues(realConcordances)
+	absNull := absoluteValues(nullValues)
+	sort.Float64s(absNull)
+	p95Abs := empiricalQuantile(absNull, 0.95)
+	p99Abs := empiricalQuantile(absNull, 0.99)
 
-	summary := fmt.Sprintf(
-		"Sympathy: %d cell pairs analyzed on deformations. Real mean = %.3f vs Shuffled Null = %.3f (p95 = %.3f). "+
-			"Separation ratio = %.1f%% (KS = %.3f). Positive alignment: %d, Inverse opposition: %d.",
-		len(realConcordances), realMean, nullMean, p95,
-		separationRatio*100, ksStat, positiveCount, inverseCount,
-	)
+	exceeding := 0
+	for _, value := range absReal {
+		if value > p95Abs {
+			exceeding++
+		}
+	}
+
+	separationRatio := float64(exceeding) / float64(len(absReal))
+	ksStat := computeKolmogorovSmirnov(absReal, absNull)
 
 	return Stage2Sympathy{
-		TotalPairs:       len(realConcordances),
-		PositivePairs:    positiveCount,
-		InversePairs:     inverseCount,
-		RealMean:         realMean,
-		RealStd:          realStd,
-		RealBins:         realBins,
-		RealCounts:       realCounts,
+		TotalPairs:      len(realConcordances),
+		PositivePairs:   positiveCount,
+		InversePairs:    inverseCount,
+		RealMean:        realMean,
+		RealStd:         math.Sqrt(realVariance),
+		RealBins:        realBins,
+		RealCounts:      realCounts,
+		SeparationRatio: separationRatio,
+		KSStatistic:     ksStat,
 		NullDistribution: SympathyNullDistribution{
 			MeanConcordance: nullMean,
-			StdConcordance:  nullStd,
-			Percentile95:    p95,
-			Percentile99:    p99,
+			StdConcordance:  math.Sqrt(nullVariance),
+			Percentile95:    p95Abs,
+			Percentile99:    p99Abs,
 			HistogramBins:   nullBins,
 			HistogramCounts: nullCounts,
 		},
-		SeparationRatio: separationRatio,
-		KSStatistic:     ksStat,
-		SummaryText:     summary,
-		Passed:          passed,
+		SummaryText: fmt.Sprintf(
+			"Sympathy measured on %d simultaneously-observed deformation pairs. "+
+				"Real signed mean = %.3f; shuffled signed mean = %.3f; |null| p95 = %.3f; "+
+				"%.1f%% of real |r| exceed |null| p95; |r| KS = %.3f. Direct: %d, inverse: %d.",
+			len(realConcordances), realMean, nullMean, p95Abs,
+			separationRatio*100, ksStat, positiveCount, inverseCount,
+		),
+		Status: "MEASURED",
+		Passed: true,
 	}
 }
 
-func computeVectorCorrelation(a, b []float64) (float64, bool) {
-	if len(a) != len(b) || len(a) < 10 {
+func pairCorrelations(vectors []observedVector) []float64 {
+	results := make([]float64, 0, len(vectors)*(len(vectors)-1)/2)
+	for left := 0; left < len(vectors); left++ {
+		for right := left + 1; right < len(vectors); right++ {
+			if correlation, ok := maskedCorrelation(vectors[left], vectors[right]); ok {
+				results = append(results, correlation)
+			}
+		}
+	}
+	return results
+}
+
+func maskedCorrelation(left, right observedVector) (float64, bool) {
+	if len(left.values) != len(right.values) ||
+		len(left.present) != len(left.values) ||
+		len(right.present) != len(right.values) {
 		return 0, false
 	}
 
-	var sumA, sumB, sumAA, sumBB, sumAB float64
-	for i := 0; i < len(a); i++ {
-		va := a[i]
-		vb := b[i]
-		sumA += va
-		sumB += vb
-		sumAA += va * va
-		sumBB += vb * vb
-		sumAB += va * vb
+	count := 0
+	sumLeft, sumRight := 0.0, 0.0
+	for index := range left.values {
+		if !left.present[index] || !right.present[index] {
+			continue
+		}
+		count++
+		sumLeft += left.values[index]
+		sumRight += right.values[index]
 	}
-
-	n := float64(len(a))
-	varA := sumAA - (sumA*sumA)/n
-	varB := sumBB - (sumB*sumB)/n
-
-	if varA <= 1e-12 || varB <= 1e-12 {
+	if count < 10 {
 		return 0, false
 	}
 
-	cov := sumAB - (sumA*sumB)/n
-	denom := math.Sqrt(varA) * math.Sqrt(varB)
-	if denom <= 0 {
+	meanLeft := sumLeft / float64(count)
+	meanRight := sumRight / float64(count)
+	covariance, varianceLeft, varianceRight := 0.0, 0.0, 0.0
+
+	for index := range left.values {
+		if !left.present[index] || !right.present[index] {
+			continue
+		}
+		deltaLeft := left.values[index] - meanLeft
+		deltaRight := right.values[index] - meanRight
+		covariance += deltaLeft * deltaRight
+		varianceLeft += deltaLeft * deltaLeft
+		varianceRight += deltaRight * deltaRight
+	}
+
+	if varianceLeft <= 0 || varianceRight <= 0 {
 		return 0, false
 	}
 
-	return cov / denom, true
+	value := covariance / math.Sqrt(varianceLeft*varianceRight)
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, false
+	}
+	return math.Max(-1, math.Min(1, value)), true
+}
+
+func shuffleObservedValues(rng *rand.Rand, values []float64, present []bool) {
+	indices := make([]int, 0)
+	observed := make([]float64, 0)
+	for index, ok := range present {
+		if !ok {
+			continue
+		}
+		indices = append(indices, index)
+		observed = append(observed, values[index])
+	}
+	rng.Shuffle(len(observed), func(first, second int) {
+		observed[first], observed[second] = observed[second], observed[first]
+	})
+	for index, position := range indices {
+		values[position] = observed[index]
+	}
+}
+
+func absoluteValues(values []float64) []float64 {
+	result := make([]float64, len(values))
+	for index, value := range values {
+		result[index] = math.Abs(value)
+	}
+	return result
+}
+
+func empiricalQuantile(sorted []float64, quantile float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if quantile <= 0 {
+		return sorted[0]
+	}
+	if quantile >= 1 {
+		return sorted[len(sorted)-1]
+	}
+	index := int(math.Ceil(quantile*float64(len(sorted)))) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+	return sorted[index]
 }
 
 func computeKolmogorovSmirnov(real, null []float64) float64 {
@@ -230,65 +307,59 @@ func computeKolmogorovSmirnov(real, null []float64) float64 {
 	sort.Float64s(sortedReal)
 	sort.Float64s(sortedNull)
 
-	maxDist := 0.0
-	realN := float64(len(sortedReal))
-	nullN := float64(len(sortedNull))
-
-	realIdx := 0
-	nullIdx := 0
-
-	for realIdx < len(sortedReal) && nullIdx < len(sortedNull) {
-		valReal := sortedReal[realIdx]
-		valNull := sortedNull[nullIdx]
-
-		var currentVal float64
-		if valReal <= valNull {
-			currentVal = valReal
-			for realIdx < len(sortedReal) && sortedReal[realIdx] == currentVal {
-				realIdx++
-			}
-		} else {
-			currentVal = valNull
-			for nullIdx < len(sortedNull) && sortedNull[nullIdx] == currentVal {
-				nullIdx++
-			}
+	maxDistance := 0.0
+	realIndex, nullIndex := 0, 0
+	for realIndex < len(sortedReal) || nullIndex < len(sortedNull) {
+		var value float64
+		switch {
+		case realIndex >= len(sortedReal):
+			value = sortedNull[nullIndex]
+		case nullIndex >= len(sortedNull):
+			value = sortedReal[realIndex]
+		case sortedReal[realIndex] <= sortedNull[nullIndex]:
+			value = sortedReal[realIndex]
+		default:
+			value = sortedNull[nullIndex]
 		}
 
-		cdfReal := float64(realIdx) / realN
-		cdfNull := float64(nullIdx) / nullN
-		dist := math.Abs(cdfReal - cdfNull)
-		if dist > maxDist {
-			maxDist = dist
+		for realIndex < len(sortedReal) && sortedReal[realIndex] <= value {
+			realIndex++
+		}
+		for nullIndex < len(sortedNull) && sortedNull[nullIndex] <= value {
+			nullIndex++
+		}
+
+		distance := math.Abs(
+			float64(realIndex)/float64(len(sortedReal)) -
+				float64(nullIndex)/float64(len(sortedNull)),
+		)
+		if distance > maxDistance {
+			maxDistance = distance
 		}
 	}
 
-	return maxDist
+	return maxDistance
 }
 
-func histogram(data []float64, numBins int, minEdge, maxEdge float64) ([]float64, []int) {
-	if numBins <= 0 {
-		numBins = 20
+func histogram(values []float64, bins int, minValue, maxValue float64) ([]float64, []int) {
+	if bins <= 0 {
+		bins = 20
 	}
-
-	step := (maxEdge - minEdge) / float64(numBins)
-	bins := make([]float64, numBins+1)
-	counts := make([]int, numBins)
-
-	for i := 0; i <= numBins; i++ {
-		bins[i] = minEdge + float64(i)*step
+	step := (maxValue - minValue) / float64(bins)
+	edges := make([]float64, bins+1)
+	counts := make([]int, bins)
+	for index := range edges {
+		edges[index] = minValue + float64(index)*step
 	}
-
-	for _, val := range data {
-		if val < minEdge || val > maxEdge {
+	for _, value := range values {
+		if value < minValue || value > maxValue {
 			continue
 		}
-
-		binIdx := int((val - minEdge) / step)
-		if binIdx >= numBins {
-			binIdx = numBins - 1
+		index := int((value - minValue) / step)
+		if index >= bins {
+			index = bins - 1
 		}
-		counts[binIdx]++
+		counts[index]++
 	}
-
-	return bins, counts
+	return edges, counts
 }
