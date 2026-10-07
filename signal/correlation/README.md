@@ -123,37 +123,22 @@ r_i^Xr_j^Y\omega_{ij}
 }
 \]
 
-Only return intervals that participate in at least one cross-path overlap contribute to the self-energy terms.
-
-Let:
-
-\[
-\mathcal{I}_X=
-\left\{
-i:\exists j,\omega_{ij}=1
-\right\}
-\]
-
-\[
-\mathcal{I}_Y=
-\left\{
-j:\exists i,\omega_{ij}=1
-\right\}
-\]
-
-Then:
+The covariance numerator is normalized over the same expanded overlap-pair
+population. A return that overlaps more than one return on the other path is
+therefore represented once for every overlap in both the numerator and the
+normalizing energies:
 
 \[
 \boxed{
-V_X=
-\sum_{i\in\mathcal{I}_X}(r_i^X)^2
+V_X^{\cap}=
+\sum_{i,j}(r_i^X)^2\omega_{ij}
 }
 \]
 
 \[
 \boxed{
-V_Y=
-\sum_{j\in\mathcal{I}_Y}(r_j^Y)^2
+V_Y^{\cap}=
+\sum_{i,j}(r_j^Y)^2\omega_{ij}
 }
 \]
 
@@ -164,23 +149,26 @@ and:
 \rho_{XY}
 =
 \frac{C_{XY}}
-{\sqrt{V_XV_Y}}
+{\sqrt{V_X^{\cap}V_Y^{\cap}}}
 }
 \]
 
 when:
 
 \[
-V_X>0,\qquad V_Y>0
+V_X^{\cap}>0,\qquad V_Y^{\cap}>0
 \]
 
-The correlation is bounded:
+This is the cosine of the two return vectors expanded over the actual
+Hayashi-Yoshida overlap pairs, so Cauchy-Schwarz gives the hard contract:
 
 \[
 -1\le\rho_{XY}\le1
 \]
 
-Using only overlap-participating returns prevents unmatched high-frequency observations on one path from inflating its denominator while contributing nothing to the cross-covariance.
+The unexpanded path energies remain useful diagnostics, but they are not a
+valid normalization for a covariance numerator that can count one return
+multiple times through asynchronous overlaps.
 
 ---
 
