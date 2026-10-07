@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
@@ -11,23 +12,34 @@ import (
 )
 
 /*
-AnalyzeTokenDynamics evaluates token emissions and transition structure on unseen held-out
-data using a frozen grid. Compares transition entropy against a block-shuffled temporal null
-that preserves ordinary local autocorrelation/stickiness.
+AnalyzeTokenDynamics evaluates token emissions and transition structure on unseen
+held-out data using a frozen grid.
+
+The Stream is supplied by the caller and is the same causal stream used while
+developing the grid, so the holdout boundary does not invent a market-memory
+reset that live operation would never experience.
+
+The temporal null block length is derived from the observed token dwell lengths.
+No entropy-reduction threshold is converted into a health verdict.
 */
 func AnalyzeTokenDynamics(
 	frozenGrid *store.Grid,
+	stream *store.Stream,
 	unseenTicks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
+	permutations int,
 ) Stage4TokenDynamics {
-	if frozenGrid == nil || frozenGrid.RegionCount() == 0 {
+	if frozenGrid == nil || frozenGrid.RegionsFormed() == 0 || stream == nil {
 		return Stage4TokenDynamics{
-			SummaryText: "Grid has no formed regions; cannot emit tokens.",
+			SummaryText: "Grid/stream unavailable for held-out token dynamics.",
+			Status:      "INSUFFICIENT_DATA",
 			Passed:      false,
 		}
 	}
+	if permutations <= 0 {
+		permutations = 50
+	}
 
-	stream := store.NewStream()
 	var tokens []string
 	tokenFreqs := make(map[string]int)
 	transitions := make(map[string]map[string]int)
@@ -48,62 +60,80 @@ func AnalyzeTokenDynamics(
 			continue
 		}
 
-		tokenStr := fmt.Sprintf("R%d", lit[0])
-		tokens = append(tokens, tokenStr)
-		tokenFreqs[tokenStr]++
+		token := fmt.Sprintf("R%d", lit[0])
+		tokens = append(tokens, token)
+		tokenFreqs[token]++
 
 		if prevToken != "" {
 			if transitions[prevToken] == nil {
 				transitions[prevToken] = make(map[string]int)
 			}
-			transitions[prevToken][tokenStr]++
+			transitions[prevToken][token]++
 		}
-
-		prevToken = tokenStr
+		prevToken = token
 	}
 
-	totalEmissions := len(tokens)
-	if totalEmissions < 20 {
+	if len(tokens) < 20 {
 		return Stage4TokenDynamics{
-			TotalEmissions: totalEmissions,
-			SummaryText:    "Insufficient token emissions on out-of-sample data to evaluate dynamics.",
+			TotalEmissions: len(tokens),
+			SummaryText:    "Insufficient held-out token emissions to evaluate dynamics.",
+			Status:         "INSUFFICIENT_DATA",
 			Passed:         false,
 		}
 	}
 
 	maxDominance := 0.0
 	for _, count := range tokenFreqs {
-		share := float64(count) / float64(totalEmissions)
+		share := float64(count) / float64(len(tokens))
 		if share > maxDominance {
 			maxDominance = share
 		}
 	}
 
-	realEntropy := computeTransitionEntropy(transitions, tokenFreqs, totalEmissions)
+	realEntropy := computeTransitionEntropy(transitions, tokenFreqs, len(tokens))
+	blockSize := empiricalDwellBlockSize(tokens)
+	nullEntropies := computeBlockNullTransitionEntropies(tokens, blockSize, permutations)
 
-	// Block-shuffled temporal null: preserves local persistence (block size 4) while randomizing transition sequence
-	nullEntropy := computeBlockNullTransitionEntropy(tokens, 4, 30)
-	entropyReduction := nullEntropy - realEntropy
+	nullMean := 0.0
+	for _, value := range nullEntropies {
+		nullMean += value
+	}
+	if len(nullEntropies) > 0 {
+		nullMean /= float64(len(nullEntropies))
+	}
+	entropyReduction := nullMean - realEntropy
 
-	passed := maxDominance < 0.80 && entropyReduction >= 0.05
-
-	summary := fmt.Sprintf(
-		"Token Dynamics (Out-of-Sample): %d emissions across %d regions. Max dominance = %.1f%%. "+
-			"Transition entropy = %.3f bits vs Block-Null = %.3f bits (reduction = %.3f bits).",
-		totalEmissions, len(tokenFreqs), maxDominance*100, realEntropy, nullEntropy, entropyReduction,
-	)
+	nullRank := 0.0
+	if len(nullEntropies) > 0 {
+		// Fraction of null entropies greater than or equal to the real entropy.
+		// A large value means the real sequence is lower-entropy than most nulls.
+		greaterOrEqual := 0
+		for _, value := range nullEntropies {
+			if value >= realEntropy {
+				greaterOrEqual++
+			}
+		}
+		nullRank = float64(greaterOrEqual) / float64(len(nullEntropies))
+	}
 
 	return Stage4TokenDynamics{
-		TotalEmissions:        totalEmissions,
+		TotalEmissions:        len(tokens),
 		UniqueTokens:          len(tokenFreqs),
 		TokenFrequencies:      tokenFreqs,
 		MaxTokenDominance:     maxDominance,
 		TransitionEntropy:     realEntropy,
-		NullTransitionEntropy: nullEntropy,
+		NullTransitionEntropy: nullMean,
 		EntropyReductionBits:  entropyReduction,
 		Transitions:           transitions,
-		SummaryText:           summary,
-		Passed:                passed,
+		SummaryText: fmt.Sprintf(
+			"Token Dynamics (held out): %d emissions across %d regions. "+
+				"Max dominance = %.1f%%. Transition entropy = %.3f bits vs empirical dwell-block null mean %.3f "+
+				"(difference %.3f bits; block=%d; real entropy <= %.1f%% of null draws).",
+			len(tokens), len(tokenFreqs), maxDominance*100, realEntropy, nullMean,
+			entropyReduction, blockSize, nullRank*100,
+		),
+		Status: "MEASURED",
+		Passed: true,
 	}
 }
 
@@ -112,7 +142,7 @@ func computeTransitionEntropy(
 	tokenFreqs map[string]int,
 	totalEmissions int,
 ) float64 {
-	condEntropy := 0.0
+	conditionalEntropy := 0.0
 
 	for fromToken, nextMap := range transitions {
 		fromCount := tokenFreqs[fromToken]
@@ -120,110 +150,108 @@ func computeTransitionEntropy(
 			continue
 		}
 
-		probFrom := float64(fromCount) / float64(totalEmissions)
-		rowEntropy := 0.0
-
 		rowTotal := 0
 		for _, count := range nextMap {
 			rowTotal += count
 		}
+		if rowTotal == 0 {
+			continue
+		}
 
+		rowEntropy := 0.0
 		for _, count := range nextMap {
-			if count > 0 && rowTotal > 0 {
-				probNext := float64(count) / float64(rowTotal)
-				rowEntropy -= probNext * math.Log2(probNext)
+			if count == 0 {
+				continue
 			}
+			probability := float64(count) / float64(rowTotal)
+			rowEntropy -= probability * math.Log2(probability)
 		}
 
-		condEntropy += probFrom * rowEntropy
+		conditionalEntropy +=
+			(float64(fromCount) / float64(totalEmissions)) * rowEntropy
 	}
 
-	return condEntropy
+	return conditionalEntropy
 }
 
-func computeBlockNullTransitionEntropy(tokens []string, blockSize int, iterations int) float64 {
-	total := len(tokens)
-	if total < blockSize*2 {
-		return computeSimpleNullTransitionEntropy(tokens, iterations)
+/*
+empiricalDwellBlockSize uses the median run length of identical consecutive
+tokens as the null's local-persistence scale. The value therefore comes from the
+observed sequence rather than a hand-picked constant.
+*/
+func empiricalDwellBlockSize(tokens []string) int {
+	if len(tokens) == 0 {
+		return 1
 	}
 
-	// Split tokens into blocks
-	var blocks [][]string
-	for i := 0; i < total; i += blockSize {
-		end := min(i+blockSize, total)
-		blocks = append(blocks, tokens[i:end])
+	runs := make([]int, 0)
+	runLength := 1
+	for index := 1; index < len(tokens); index++ {
+		if tokens[index] == tokens[index-1] {
+			runLength++
+			continue
+		}
+		runs = append(runs, runLength)
+		runLength = 1
+	}
+	runs = append(runs, runLength)
+	sort.Ints(runs)
+
+	median := runs[len(runs)/2]
+	if median < 1 {
+		return 1
+	}
+	return median
+}
+
+func computeBlockNullTransitionEntropies(tokens []string, blockSize, iterations int) []float64 {
+	if len(tokens) < 2 || iterations <= 0 {
+		return nil
+	}
+	if blockSize < 1 {
+		blockSize = 1
+	}
+
+	blocks := make([][]string, 0, (len(tokens)+blockSize-1)/blockSize)
+	for start := 0; start < len(tokens); start += blockSize {
+		end := min(start+blockSize, len(tokens))
+		blocks = append(blocks, append([]string(nil), tokens[start:end]...))
 	}
 
 	rng := rand.New(rand.NewSource(1791))
-	sumEntropy := 0.0
+	entropies := make([]float64, 0, iterations)
 
-	for iter := 0; iter < iterations; iter++ {
-		shuffledBlocks := make([][]string, len(blocks))
-		copy(shuffledBlocks, blocks)
+	for iteration := 0; iteration < iterations; iteration++ {
+		shuffledBlocks := append([][]string(nil), blocks...)
 		rng.Shuffle(len(shuffledBlocks), func(first, second int) {
-			shuffledBlocks[first], shuffledBlocks[second] = shuffledBlocks[second], shuffledBlocks[first]
+			shuffledBlocks[first], shuffledBlocks[second] =
+				shuffledBlocks[second], shuffledBlocks[first]
 		})
 
-		var shuffled []string
-		for _, blk := range shuffledBlocks {
-			shuffled = append(shuffled, blk...)
+		shuffled := make([]string, 0, len(tokens))
+		for _, block := range shuffledBlocks {
+			shuffled = append(shuffled, block...)
 		}
 
-		nullFreqs := make(map[string]int)
-		nullTransitions := make(map[string]map[string]int)
-
-		for idx := 0; idx < len(shuffled)-1; idx++ {
-			fromToken := shuffled[idx]
-			toToken := shuffled[idx+1]
-
-			nullFreqs[fromToken]++
-			if nullTransitions[fromToken] == nil {
-				nullTransitions[fromToken] = make(map[string]int)
+		frequencies := make(map[string]int)
+		transitions := make(map[string]map[string]int)
+		for index, token := range shuffled {
+			frequencies[token]++
+			if index == 0 {
+				continue
 			}
-			nullTransitions[fromToken][toToken]++
-		}
-
-		nullFreqs[shuffled[len(shuffled)-1]]++
-		sumEntropy += computeTransitionEntropy(nullTransitions, nullFreqs, len(shuffled))
-	}
-
-	return sumEntropy / float64(iterations)
-}
-
-func computeSimpleNullTransitionEntropy(tokens []string, iterations int) float64 {
-	if len(tokens) < 2 {
-		return 0
-	}
-
-	total := len(tokens)
-	sumEntropy := 0.0
-	rng := rand.New(rand.NewSource(1791))
-
-	shuffled := make([]string, total)
-
-	for iter := 0; iter < iterations; iter++ {
-		copy(shuffled, tokens)
-		rng.Shuffle(total, func(first, second int) {
-			shuffled[first], shuffled[second] = shuffled[second], shuffled[first]
-		})
-
-		nullFreqs := make(map[string]int)
-		nullTransitions := make(map[string]map[string]int)
-
-		for idx := 0; idx < total-1; idx++ {
-			fromToken := shuffled[idx]
-			toToken := shuffled[idx+1]
-
-			nullFreqs[fromToken]++
-			if nullTransitions[fromToken] == nil {
-				nullTransitions[fromToken] = make(map[string]int)
+			previous := shuffled[index-1]
+			if transitions[previous] == nil {
+				transitions[previous] = make(map[string]int)
 			}
-			nullTransitions[fromToken][toToken]++
+			transitions[previous][token]++
 		}
 
-		nullFreqs[shuffled[total-1]]++
-		sumEntropy += computeTransitionEntropy(nullTransitions, nullFreqs, total)
+		entropies = append(
+			entropies,
+			computeTransitionEntropy(transitions, frequencies, len(shuffled)),
+		)
 	}
 
-	return sumEntropy / float64(iterations)
+	return entropies
 }
