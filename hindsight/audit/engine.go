@@ -106,7 +106,7 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	errnie.Info("[audit] Stage 2 completed: " + sympathy.SummaryText)
 
 	// Stage 3: Grid Partitioning & Temporal Stability (cross-chronological split)
-	stability := AnalyzeGridStability(orderedTicks, tickMeasurements, vitality.CanonicalCells)
+	stability := AnalyzeGridStability(orderedTicks, tickMeasurements, vitality.CanonicalCells, opts.Permutations)
 	errnie.Info("[audit] Stage 3 completed: " + stability.SummaryText)
 
 	// Stage 4: Token Dynamics on Unseen Data (train 60%, evaluate on held-out 40%)
@@ -123,7 +123,7 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	frozenGrid.Partition()
 	frozenGrid.Settle()
 
-	dynamics := AnalyzeTokenDynamics(frozenGrid, unseenTicks, tickMeasurements)
+	dynamics := AnalyzeTokenDynamics(frozenGrid, trainStream, unseenTicks, tickMeasurements, opts.Permutations)
 	errnie.Info("[audit] Stage 4 completed: " + dynamics.SummaryText)
 
 	// Stage 5: Precursor Informativeness (A->B Ignition and B->C Exhaustion)
