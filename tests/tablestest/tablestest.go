@@ -21,6 +21,7 @@ import (
 	"github.com/apache/iceberg-go/catalog"
 	icesql "github.com/apache/iceberg-go/catalog/sql"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/system"
 
 	// modernc's driver is pure Go, so tests need no cgo toolchain.
 	_ "modernc.org/sqlite"
@@ -32,6 +33,21 @@ table already created. The directory is removed when the test finishes.
 */
 func New(t testing.TB) *tables.Catalog {
 	t.Helper()
+
+	savedCfg := system.Cfg
+	t.Cleanup(func() {
+		system.Cfg = savedCfg
+	})
+
+	if system.Cfg != nil && system.Cfg.Storage != nil && system.Cfg.Storage.S3 != nil {
+		s3Copy := *system.Cfg.Storage.S3
+		s3Copy.Endpoint = ""
+		storageCopy := *system.Cfg.Storage
+		storageCopy.S3 = &s3Copy
+		cfgCopy := *system.Cfg
+		cfgCopy.Storage = &storageCopy
+		system.Cfg = &cfgCopy
+	}
 
 	catalog := tables.Wrap(Underlying(t))
 

@@ -244,7 +244,6 @@ func main() {
 			unresolved = append(unresolved, u...)
 
 			consumers = append(consumers, scanFineConsumers(pkg, file, relFile)...)
-			consumers = append(consumers, scanCategoryConsumers(pkg, file, relFile)...)
 			consumers = append(consumers, scanKernelConsumers(pkg, file, relFile)...)
 			consumers = append(consumers, scanLearnedConsumers(pkg, file, relFile)...)
 			consumers = append(consumers, scanAdvisorConsumers(pkg, file, relFile)...)
@@ -966,6 +965,25 @@ func declaredSelector(
 	relFile string,
 	consumer string,
 ) (consumerEdge, bool) {
+	if len(literal.Elts) == 3 {
+		source := typedString(pkg, literal.Elts[0])
+		metric := typedString(pkg, literal.Elts[1])
+		side := typedString(pkg, literal.Elts[2])
+
+		if source != "" && metric != "" {
+			position := pkg.Fset.Position(literal.Pos())
+
+			return consumerEdge{
+				ID:       metricID{Source: source, Metric: metric, Side: side},
+				Kind:     "catalog",
+				Consumer: consumer + " (" + pkg.PkgPath + ")",
+				Package:  pkg.PkgPath,
+				File:     relFile,
+				Line:     position.Line,
+			}, true
+		}
+	}
+
 	selectorType, ok := pkg.TypesInfo.TypeOf(literal.Type).(*types.Named)
 
 	if !ok || selectorType.Obj().Pkg() == nil ||
@@ -1013,102 +1031,7 @@ func declaredSelector(
 	}, true
 }
 
-/*
-scanCategoryConsumers finds the explicit types.CategorySchema table. Category
-schemas are named semantic consumers: each row names
-one exact producer identity and the market-state interpretation it contributes
-to. Source is a typed string constant rather than a literal, so go/types is
-used to resolve its value instead of guessing from the identifier spelling.
-*/
-func scanCategoryConsumers(
-	pkg *packages.Package,
-	file *ast.File,
-	relFile string,
-) []consumerEdge {
-	if !strings.HasSuffix(pkg.PkgPath, "/types") {
-		return nil
-	}
 
-	var out []consumerEdge
-
-	ast.Inspect(file, func(node ast.Node) bool {
-		declaration, ok := node.(*ast.ValueSpec)
-
-		if !ok || !namesIdentifier(declaration.Names, "CategorySchemas") {
-			return true
-		}
-
-		for _, value := range declaration.Values {
-			table, ok := value.(*ast.CompositeLit)
-
-			if !ok {
-				continue
-			}
-
-			for _, element := range table.Elts {
-				literal, ok := element.(*ast.CompositeLit)
-
-				if !ok {
-					continue
-				}
-
-				if edge, found := categoryConsumer(pkg, literal, relFile); found {
-					out = append(out, edge)
-				}
-			}
-		}
-
-		return false
-	})
-
-	return out
-}
-
-func categoryConsumer(
-	pkg *packages.Package,
-	literal *ast.CompositeLit,
-	relFile string,
-) (consumerEdge, bool) {
-	var source, metric, category string
-
-	for _, element := range literal.Elts {
-		field, ok := element.(*ast.KeyValueExpr)
-
-		if !ok {
-			continue
-		}
-
-		name, ok := field.Key.(*ast.Ident)
-
-		if !ok {
-			continue
-		}
-
-		switch name.Name {
-		case "Source":
-			source = typedString(pkg, field.Value)
-		case "Metric":
-			metric = stringLiteral(field.Value)
-		case "Category":
-			category = expressionName(field.Value)
-		}
-	}
-
-	if source == "" || metric == "" || category == "" {
-		return consumerEdge{}, false
-	}
-
-	position := pkg.Fset.Position(literal.Pos())
-
-	return consumerEdge{
-		ID:       splitMetricIdentity(source, metric),
-		Kind:     "bound",
-		Consumer: "category:" + category + " (" + pkg.PkgPath + ")",
-		Package:  pkg.PkgPath,
-		File:     relFile,
-		Line:     position.Line,
-	}, true
-}
 
 func namesIdentifier(names []*ast.Ident, target string) bool {
 	for _, name := range names {

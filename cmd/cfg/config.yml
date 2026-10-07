@@ -91,6 +91,11 @@ system:
 
 hindsight:
   capture:
+    # Controls whether the root symm process tees and drains live streaming
+    # market and sensory data into Iceberg. Set to true only for standalone recording;
+    # when symm collect runs on a dedicated collector node, leave false here to
+    # prevent duplicate table writes and fragmented short runs.
+    enabled: false
     # Records queue in memory while the writer drains them into the tables.
     # Maximum records collected before one drain of the queue.
     batch_size: 256
@@ -280,6 +285,8 @@ learning:
   # region frame missing and with one frame swapped for another region of the
   # same fragment (dropout-style noise). Off by default.
   rehearsal_dropout: false
+  # Precursor horizon: maximum transitions leading up to ignition B taught as context.
+  precursor_horizon: 8
 
 cognition:
   # A binary confidence of 0.5 is exactly indifferent. Cognition must exceed

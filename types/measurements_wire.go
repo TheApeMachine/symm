@@ -189,3 +189,28 @@ func EncodeMeasurements(
 
 	return res, nil
 }
+
+/*
+PackMeasurementsFrame encodes pre-built wire.MeasurementT rows directly into
+a FlatBuffer MeasurementsFrame payload without constructing or validating
+intermediate domain data.Measurement structs.
+*/
+func PackMeasurementsFrame(rows []*wire.MeasurementT) []byte {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	frame := &wire.MeasurementsFrameT{
+		Rows: rows,
+	}
+
+	builder := measurementsBuilderPool.Get().(*flatbuffers.Builder)
+	builder.Reset()
+	defer measurementsBuilderPool.Put(builder)
+
+	offset := frame.Pack(builder)
+	builder.Finish(offset)
+
+	return append([]byte{}, builder.FinishedBytes()...)
+}
+

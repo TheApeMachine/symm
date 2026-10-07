@@ -6,7 +6,6 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
-	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 )
@@ -197,10 +196,6 @@ func (measurement *Measurement) Decode(batch arrow.RecordBatch, rowIdx int) erro
 				})
 			}
 		}
-	}
-
-	if measurement.ID == 0 {
-		measurement.ID = uuid.New().ID()
 	}
 
 	measurement.valid()

@@ -16,6 +16,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -98,6 +99,7 @@ type FragmentPoint struct {
 type Hub struct {
 	*runtime.System
 	uiTee            *UITee
+	storeTee         *hindsight.StoreTee
 	workspace        *runtime.Workspace
 	physics          sensorium.PhysicsMonitor
 	app              *fiber.App
@@ -360,6 +362,61 @@ func NewHub(
 			return conn.Conn.WriteMessage(websocket.BinaryMessage, builder.FinishedBytes())
 		}
 
+		var lastDiagnosticsPush time.Time
+
+		sendDiagnostics := func() error {
+			now := time.Now()
+			nowNs := now.UnixNano()
+			var rows []*wire.MeasurementT
+
+			if hub.uiTee != nil {
+				uiPending := hub.uiTee.Pending()
+				uiIngress := hub.uiTee.IngressLength()
+				uiEgress := hub.uiTee.EgressLength()
+
+				rows = append(rows, &wire.MeasurementT{
+					Source: "ui_tee",
+					At:     nowNs,
+					Metrics: []*wire.MetricT{
+						{Name: "backlog", Raw: float64(uiPending)},
+						{Name: "ingress", Raw: float64(uiIngress)},
+						{Name: "egress", Raw: float64(uiEgress)},
+					},
+					Metadata: []*wire.NamedNumberT{
+						{Name: "stage", Value: 4},
+					},
+				})
+			}
+
+			if hub.storeTee != nil {
+				storePending := hub.storeTee.Pending()
+				rows = append(rows, &wire.MeasurementT{
+					Source: "store_tee",
+					At:     nowNs,
+					Metrics: []*wire.MetricT{
+						{Name: "backlog", Raw: float64(storePending)},
+					},
+					Metadata: []*wire.NamedNumberT{
+						{Name: "stage", Value: 4},
+					},
+				})
+			}
+
+			if len(rows) == 0 {
+				return nil
+			}
+
+			payload := types.PackMeasurementsFrame(rows)
+
+			if len(payload) == 0 {
+				return nil
+			}
+
+			lastDiagnosticsPush = now
+			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
+		}
+
+
 		if err := sendPositions(); err != nil {
 			return
 		}
@@ -373,6 +430,10 @@ func NewHub(
 		}
 
 		if err := sendTick(); err != nil {
+			return
+		}
+
+		if err := sendDiagnostics(); err != nil {
 			return
 		}
 
@@ -407,6 +468,12 @@ func NewHub(
 				}
 			}
 
+			if time.Since(lastDiagnosticsPush) >= 100*time.Millisecond {
+				if err := sendDiagnostics(); err != nil {
+					return
+				}
+			}
+
 			if hub.Status() != runtime.READY {
 				continue
 			}
@@ -434,6 +501,18 @@ func NewHub(
 	}))
 
 	return hub
+}
+
+/*
+SetStoreTee attaches the persistence StoreTee so its queue depth
+can be surfaced for diagnostics and backpressure detection.
+*/
+func (hub *Hub) SetStoreTee(source *hindsight.StoreTee) {
+	if hub == nil {
+		return
+	}
+
+	hub.storeTee = source
 }
 
 /*

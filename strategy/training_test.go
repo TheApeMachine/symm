@@ -171,11 +171,10 @@ func sensor(writer *tables.Writer, epoch int64, source string, scale float64, ph
 	var prior *data.Measurement
 
 	write := func(tick int64, value float64) {
-		var measurement *data.Measurement
-		if prior == nil {
-			measurement = data.NewMeasurement(epoch, "BTC/USD", source, tick*10, tick)
-		} else {
-			measurement = prior.Next(source)
+		measurement := data.NewMeasurement(epoch, "BTC/USD", source, tick*10, tick)
+
+		if prior != nil {
+			measurement = prior.Next(source, map[string]float64{})
 			measurement.SeqIdx = tick * 10
 			measurement.Tick = tick
 		}

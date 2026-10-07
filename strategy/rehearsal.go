@@ -6,6 +6,7 @@ import (
 	"fmt"
 	rand "math/rand/v2"
 	"slices"
+	"strings"
 	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -26,15 +27,25 @@ Chart owns the learned fragments the UI draws.
 // shortObservationScale damps Teach feedback on short B→C geometry so brief
 // excursions still train (weaken short observations) instead of soft-skipping.
 const shortObservationScale = 0.25
+const defaultPrecursorHorizon = 8
+
+func precursorHorizon() int {
+	if system.Cfg != nil && system.Cfg.Learning.PrecursorHorizon > 0 {
+		return system.Cfg.Learning.PrecursorHorizon
+	}
+
+	return defaultPrecursorHorizon
+}
 
 type Rehearsal struct {
-	Chart   *Chart
-	catalog *tables.Catalog
-	price   *broker.Price
-	impulse *impulse
-	model   *Model
-	epoch   int64
-	grade   atomic.Pointer[skill]
+	Chart    *Chart
+	catalog  *tables.Catalog
+	price    *broker.Price
+	impulse  *impulse
+	model    *Model
+	reporter *Reporter
+	epoch    int64
+	grade    atomic.Pointer[skill]
 }
 
 func newRehearsal(
@@ -43,15 +54,23 @@ func newRehearsal(
 	impulse *impulse,
 	model *Model,
 	chart *Chart,
+	reporter *Reporter,
 	epoch int64,
 ) *Rehearsal {
 	return &Rehearsal{
-		Chart:   chart,
-		catalog: catalog,
-		price:   price,
-		impulse: impulse,
-		model:   model,
-		epoch:   epoch,
+		Chart:    chart,
+		catalog:  catalog,
+		price:    price,
+		impulse:  impulse,
+		model:    model,
+		reporter: reporter,
+		epoch:    epoch,
+	}
+}
+
+func (rehearsal *Rehearsal) log(format string, args ...any) {
+	if rehearsal != nil && rehearsal.reporter != nil {
+		rehearsal.reporter.Log(format, args...)
 	}
 }
 
@@ -138,13 +157,44 @@ rehearse. The grade is published after every pass for Step's blocker.
 */
 func (rehearsal *Rehearsal) run(ctx context.Context) (skill, error) {
 	var best *skill
+	passIndex := 0
 
 	for {
+		passIndex++
+		rehearsal.log("[PASS:%d START] epoch=%d", passIndex, rehearsal.epoch)
 		graded, err := rehearsal.pass(ctx)
 
 		if err != nil {
+			rehearsal.log("[PASS:%d ERROR] %v", passIndex, err)
 			return skill{}, err
 		}
+
+		gateStatus := "BLOCKED"
+
+		if graded.open() {
+			gateStatus = "OPEN"
+		}
+
+		hitRate := 0.0
+		callsCount := graded.calls()
+
+		if callsCount > 0 {
+			hitRate = float64(graded.hits) / float64(callsCount) * 100
+		}
+
+		retainedRate := 0.0
+
+		if callsCount > 0 {
+			retainedRate = float64(graded.retained) / float64(callsCount) * 100
+		}
+
+		rehearsal.log(
+			"[PASS:%d COMPLETE] trained=%d seen=%d hits=%d/%d (%.1f%%) retained=%d/%d (%.1f%%) baseline=%d gate=%s blocker=%q",
+			passIndex, graded.trained, graded.seen,
+			graded.hits, callsCount, hitRate,
+			graded.retained, callsCount, retainedRate,
+			graded.baseline(), gateStatus, graded.blocker(),
+		)
 
 		errnie.Info(fmt.Sprintf(
 			"[rehearsal] pass: %d of %d excursions, %d of %d calls correct (retained %d), baseline %d",
@@ -211,11 +261,18 @@ func (rehearsal *Rehearsal) pass(ctx context.Context) (skill, error) {
 		asked, hits, retained, err := rehearsal.learn(ctx, detection, -1)
 
 		if err != nil {
+			if strings.Contains(err.Error(), "lights no grid region") {
+				rehearsal.log("[EXCURSION:SKIP] key=%s reason=%s", key, err.Error())
+				continue
+			}
+
+			rehearsal.log("[EXCURSION:ERROR] key=%s err=%v", key, err)
 			return skill{}, errnie.Err(errnie.Internal, "[rehearsal] unable to learn detection "+key, err)
 		}
 
 		// Soft-skip: tape exists, geometry forms no phase (see learn).
 		if len(asked) == 0 {
+			rehearsal.log("[EXCURSION:SKIP] key=%s reason=\"geometry forms no phase\"", key)
 			continue
 		}
 
@@ -225,6 +282,31 @@ func (rehearsal *Rehearsal) pass(ctx context.Context) (skill, error) {
 
 		for action, count := range asked {
 			result.asked[action] += count
+		}
+
+		if result.trained%10 == 0 || result.trained == 1 {
+			totalAsked := 0
+
+			for _, count := range result.asked {
+				totalAsked += count
+			}
+
+			hitRate := 0.0
+
+			if totalAsked > 0 {
+				hitRate = float64(result.hits) / float64(totalAsked) * 100
+			}
+
+			retainedRate := 0.0
+
+			if totalAsked > 0 {
+				retainedRate = float64(result.retained) / float64(totalAsked) * 100
+			}
+
+			rehearsal.log(
+				"[PASS:PROGRESS] seen=%d trained=%d asked=%d hits=%d (%.1f%%) retained=%d (%.1f%%) latest=%s",
+				len(seen), result.trained, totalAsked, result.hits, hitRate, result.retained, retainedRate, key,
+			)
 		}
 	}
 
@@ -252,6 +334,7 @@ feedback (negative dampens). It is what changes when A moves. Zero feedback
 means the graded draw taught nothing from A, so neither does augment.
 */
 type drill struct {
+	start    int
 	limit    int
 	end      int
 	feedback float64
@@ -335,7 +418,7 @@ func (rehearsal *Rehearsal) learn(
 	ticks, tokens, err := rehearsal.tape(ctx, detection, lo, hi)
 
 	if err != nil {
-		return nil, 0, 0, errnie.Error(err)
+		return nil, 0, 0, err
 	}
 
 	ignition, _ := slices.BinarySearch(ticks, move.b)
@@ -400,7 +483,13 @@ func (rehearsal *Rehearsal) learn(
 		// Truly empty: no lit precursor before B (cannot place A < B), or B and
 		// C share a frame. Short holding after fill pullback still teaches
 		// (weakened) below — that is not empty.
-		if ignition < 1 || ignition >= peak {
+		if ignition < 1 {
+			rehearsal.log("[EXCURSION:SKIP] symbol=%s key=%d/%d reason=\"no lit precursor before ignition B (ignition_idx=%d B_tick=%d)\"", detection.Label, detection.Epoch, detection.Tick, ignition, move.b)
+			return nil, 0, 0, nil
+		}
+
+		if ignition >= peak {
+			rehearsal.log("[EXCURSION:SKIP] symbol=%s key=%d/%d reason=\"ignition B and peak C on same token frame (ignition_idx=%d peak_idx=%d)\"", detection.Label, detection.Epoch, detection.Tick, ignition, peak)
 			return nil, 0, 0, nil
 		}
 
@@ -419,9 +508,16 @@ func (rehearsal *Rehearsal) learn(
 			endB = ignition - 1
 		}
 
-		startA = drawA(0, endB)
+		horizon := precursorHorizon()
+		floorA := 0
+
+		if endB > horizon {
+			floorA = endB - horizon
+		}
+
+		startA = drawA(floorA, endB)
 		precursorFrames := tokens[startA:endB]
-		stretch = drill{limit: endB, end: endB}
+		stretch = drill{start: floorA, limit: endB, end: endB}
 
 		/*
 			Exit is only taught when enter is (TRAINING.md: "if we have entered").
@@ -435,6 +531,10 @@ func (rehearsal *Rehearsal) learn(
 
 			if peak > startHolding+1 {
 				endC = peak - 1
+			}
+
+			if endC-startHolding > horizon {
+				startHolding = endC - horizon
 			}
 
 			// Short B→C: still teach, but scale feedback down so brief
@@ -492,12 +592,25 @@ func (rehearsal *Rehearsal) learn(
 
 		// Need precursor frames before B so A < B (TRAINING.md).
 		if ignition < 1 || ignition >= end {
+			rehearsal.log("[EXCURSION:SKIP] symbol=%s key=%d/%d reason=\"no precursor or frames at/after B (ignition_idx=%d end_idx=%d)\"", detection.Label, detection.Epoch, detection.Tick, ignition, end)
 			return nil, 0, 0, nil
 		}
 
-		startA = drawA(0, ignition)
+		horizon := precursorHorizon()
+		floorA := 0
+
+		if ignition > horizon {
+			floorA = ignition - horizon
+		}
+
+		startA = drawA(floorA, ignition)
+
+		if end-startA > horizon {
+			end = startA + horizon
+		}
+
 		quietFrames := tokens[startA:end]
-		stretch = drill{limit: ignition, end: end}
+		stretch = drill{start: floorA, limit: ignition, end: end}
 
 		// Chop/flat: dampen enter only — wait is abstention, not a leaf.
 		if len(contextOf(quietFrames)) == 0 {
@@ -550,6 +663,13 @@ func (rehearsal *Rehearsal) learn(
 		))
 	}
 
+	rehearsal.log(
+		"[EXCURSION:TRAIN] symbol=%s class=%s ticks=%d..%d B=%d C=%d bPrice=%s cPrice=%s gross=%+.4f%% net=%+.4f%% frames=%d phases=%d",
+		detection.Label, class, lo, hi, move.b, move.c,
+		move.bPrice.String(), move.cPrice.String(),
+		move.gross*100, net*100, len(tokens), len(phases),
+	)
+
 	// The fragment's ground-truth lessons, before wrong-call corrections
 	// join weakens: augment perturbs these, never a correction.
 	lessons := append(slices.Clone(phases), weakens...)
@@ -564,8 +684,14 @@ func (rehearsal *Rehearsal) learn(
 		}
 
 		asked[learned.action]++
+		hit := call.Winner == learned.action
 
-		if call.Winner == learned.action {
+		rehearsal.log(
+			"[EXCURSION:PRE_RECALL] symbol=%s action=%s context=%q winner=%s conf=%.3f contrast=%.3f hit=%t",
+			detection.Label, learned.action, learned.context, call.Winner, call.Confidence, call.Contrast, hit,
+		)
+
+		if hit {
 			hits++
 			continue
 		}
@@ -576,6 +702,10 @@ func (rehearsal *Rehearsal) learn(
 			if magnitude < 0 {
 				magnitude = -magnitude
 			}
+			rehearsal.log(
+				"[EXCURSION:INHIBIT] symbol=%s mistimed=%s context=%q feedback=%.4f",
+				detection.Label, call.Winner, learned.context, -magnitude,
+			)
 			weakens = append(weakens, phase{learned.context, call.Winner, -magnitude, nil})
 		}
 	}
@@ -624,9 +754,16 @@ func (rehearsal *Rehearsal) learn(
 			return nil, 0, 0, errnie.Error(err)
 		}
 
-		if call.Winner == learned.action {
+		retainedMatch := call.Winner == learned.action
+
+		if retainedMatch {
 			retained++
 		}
+
+		rehearsal.log(
+			"[EXCURSION:POST_RECALL] symbol=%s action=%s context=%q winner=%s retained=%t",
+			detection.Label, learned.action, learned.context, call.Winner, retainedMatch,
+		)
 
 		stanced, err := rehearsal.model.Recall(learned.context, learned.action)
 
@@ -680,12 +817,12 @@ the same fragment tape — a single edit each, so no noise rate is invented.
 func (rehearsal *Rehearsal) augment(
 	tokens [][]byte, precursor drill, graded string, lessons []phase, dropout bool,
 ) error {
-	if precursor.end > len(tokens) || precursor.limit > precursor.end || precursor.limit < 0 {
+	if precursor.end > len(tokens) || precursor.limit > precursor.end || precursor.start < 0 || precursor.start > precursor.limit {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf(
-				"[rehearsal] drill is outside its tape: limit=%d end=%d frames=%d feedback=%g",
-				precursor.limit, precursor.end, len(tokens), precursor.feedback,
+				"[rehearsal] drill is outside its tape: start=%d limit=%d end=%d frames=%d feedback=%g",
+				precursor.start, precursor.limit, precursor.end, len(tokens), precursor.feedback,
 			),
 			nil,
 		))
@@ -699,12 +836,12 @@ func (rehearsal *Rehearsal) augment(
 		return nil
 	}
 
-	for start := range precursor.limit {
+	for start := precursor.start; start < precursor.limit; start++ {
 		if precursor.feedback == 0 {
 			break
 		}
 
-		if start > 0 && bytes.Equal(tokens[start], tokens[start-1]) {
+		if start > precursor.start && bytes.Equal(tokens[start], tokens[start-1]) {
 			continue
 		}
 
@@ -816,6 +953,10 @@ func (move excursion) window() (lo, hi int64, err error) {
 	// full epoch start — that left B on a tiny stub or drowned A in days of
 	// tape. end_tick may extend the right pad when the detector stored more.
 	lo, hi = padWindow(move.b, move.c)
+
+	if move.start >= 0 && move.start < lo {
+		lo = move.start
+	}
 
 	if move.end > hi {
 		hi = move.end
@@ -975,7 +1116,7 @@ func (rehearsal *Rehearsal) tape(
 		)
 	}
 
-	ticks, tokens, err := rehearsal.impulse.tokens(rows)
+	ticks, tokens, stats, err := rehearsal.impulse.tokens(rows)
 
 	if err != nil {
 		return nil, nil, err
@@ -984,10 +1125,18 @@ func (rehearsal *Rehearsal) tape(
 	if len(tokens) == 0 {
 		return nil, nil, errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf("[rehearsal] signal/logic tape lights no grid region: %s (%d rows)", window, len(rows)),
+			fmt.Sprintf(
+				"[rehearsal] signal/logic tape lights no grid region: %s (%d rows across %d ticks, peak region score %.6f <= 0)",
+				window, len(rows), stats.uniqueTicks, stats.maxScore,
+			),
 			nil,
 		)
 	}
+
+	rehearsal.log(
+		"[EXCURSION:TAPE] %s rows=%d unique_ticks=%d lit_tokens=%d peak_score=%.4f",
+		window, len(rows), stats.uniqueTicks, len(tokens), stats.maxScore,
+	)
 
 	return ticks, tokens, nil
 }

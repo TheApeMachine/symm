@@ -2,8 +2,10 @@ package strategy
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -109,12 +111,62 @@ type Reporter struct {
 	lastBlocker atomic.Pointer[string]
 	lastTrades  atomic.Int64
 	latestSnap  atomic.Pointer[ReportSnapshot]
+	logFile     *os.File
+	logFileMu   sync.Mutex
 }
 
 func NewReporter() *Reporter {
 	reporter := &Reporter{}
 	reporter.lastStage.Store(-1)
 	return reporter
+}
+
+/*
+Log writes a structured timestamped record to training.log.
+*/
+func (reporter *Reporter) Log(format string, args ...any) {
+	if reporter == nil {
+		return
+	}
+
+	reporter.logFileMu.Lock()
+	defer reporter.logFileMu.Unlock()
+
+	if reporter.logFile == nil {
+		file, err := os.OpenFile("training.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return
+		}
+		reporter.logFile = file
+
+		if fi, err := file.Stat(); err == nil && fi.Size() == 0 {
+			file.WriteString(fmt.Sprintf("=== SYMM TRAINING SESSION START %s ===\n", time.Now().UTC().Format(time.RFC3339)))
+		}
+	}
+
+	timestamp := time.Now().UTC().Format("2006-01-02 15:04:05.000")
+	line := timestamp + " " + fmt.Sprintf(format, args...) + "\n"
+	reporter.logFile.WriteString(line)
+}
+
+/*
+Close flushes and closes the training log file.
+*/
+func (reporter *Reporter) Close() error {
+	if reporter == nil {
+		return nil
+	}
+
+	reporter.logFileMu.Lock()
+	defer reporter.logFileMu.Unlock()
+
+	if reporter.logFile != nil {
+		err := reporter.logFile.Close()
+		reporter.logFile = nil
+		return err
+	}
+
+	return nil
 }
 
 /*
@@ -160,7 +212,9 @@ func (reporter *Reporter) Publish(
 
 	if stageChanged || blockerChanged || tradesChanged || (nowNano-lastLog) >= int64(10*time.Second) {
 		reporter.lastLogNano.Store(nowNano)
-		errnie.Info(reporter.Summary(snapshot))
+		summary := reporter.Summary(snapshot)
+		errnie.Info(summary)
+		reporter.Log("%s", summary)
 	}
 
 	return out

@@ -10,11 +10,11 @@ import (
 Encode writes the Measurement's complete state into the supplied Arrow RecordBuilder.
 */
 func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch ...int64) error {
-	if measurement == nil || measurement.err != nil {
+	if measurement == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"[data.encoder] measurement is nil or has error",
-			measurement.err,
+			"[data.encoder] measurement is nil",
+			nil,
 		))
 	}
 

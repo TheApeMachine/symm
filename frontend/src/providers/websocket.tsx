@@ -25,6 +25,7 @@ import { Message } from "#/providers/telemetry/telemetry/message";
 import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
 import { TickFrame } from "#/providers/telemetry/telemetry/tick-frame";
+import { topologyStore } from "#/collections/topology";
 
 let globalWsWorker: Worker | null = null;
 
@@ -119,6 +120,8 @@ Each Measurement row carries its own source, symbol, tick, snr, and metrics.
 Engine tick and clock are owned by TickFrame, never by individual rows.
 */
 export function dispatchMeasurements(frame: MeasurementsFrame) {
+	topologyStore.actions.ingestMeasurements(frame);
+
 	const count = frame.rowsLength();
 
 	for (let i = 0; i < count; i++) {

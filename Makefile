@@ -27,7 +27,7 @@ ADVISOR_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run workbench optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map goodindahood build-cuda
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run collect workbench optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map goodindahood build-cuda
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
@@ -67,6 +67,10 @@ metric-map:
 # static Project/Binding scanner) and the Influence UI loses most of the graph.
 run:
 	go run main.go
+
+collect:
+	@echo "symm collect running (Ctrl+C to stop)"
+	go run $(LDFLAGS) main.go collect $(CONFIG_FLAG)
 
 # Analytical Workbench is a separate process on purpose: DuckDB/cgo must not share
 # the trading binary. Hub proxies POST /workbench/query → workbench.url (default

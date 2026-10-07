@@ -1,5 +1,189 @@
 import { createStore } from "@tanstack/react-store";
 import type { BoundaryStamp } from "#/providers/telemetry/telemetry/boundary-stamp";
+import type { Measurement, MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import type { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
+
+export const PIPELINE_TOPOLOGY: Record<
+	string,
+	{ group: string; stage: number }
+> = {
+	kraken: { group: "venue", stage: 0 },
+	spot: { group: "venue", stage: 0 },
+	trade: { group: "venue", stage: 0 },
+	ticker: { group: "venue", stage: 0 },
+	book: { group: "venue", stage: 0 },
+
+	correlation: { group: "signal", stage: 1 },
+	cvd: { group: "signal", stage: 1 },
+	depthflow: { group: "signal", stage: 1 },
+	hawkes: { group: "signal", stage: 1 },
+	leadlag: { group: "signal", stage: 1 },
+	liquidity: { group: "signal", stage: 1 },
+	morphology: { group: "signal", stage: 1 },
+	pumpdump: { group: "signal", stage: 1 },
+	sentiment: { group: "signal", stage: 1 },
+	toxicity: { group: "signal", stage: 1 },
+
+	manifold: { group: "logic", stage: 2 },
+	resonance: { group: "logic", stage: 2 },
+	cognition: { group: "logic", stage: 2 },
+
+	training: { group: "strategy", stage: 3 },
+	paper: { group: "strategy", stage: 3 },
+	impulse: { group: "strategy", stage: 3 },
+	trader: { group: "strategy", stage: 3 },
+
+	ui_tee: { group: "tees", stage: 4 },
+	store_tee: { group: "tees", stage: 4 },
+};
+
+export const normalizeSource = (
+	raw: string | Uint8Array | null | undefined,
+): string => {
+	if (!raw) return "";
+	const text = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
+	const lower = text.toLowerCase().trim();
+	const base = lower.includes(":") ? lower.split(":")[0] : lower;
+	if (base === "spot" || base === "trade" || base === "ticker" || base === "book") {
+		return "kraken";
+	}
+	return base;
+};
+
+type ExtractedMeasurement = {
+	source: string;
+	at: number;
+	backlog: number;
+	group?: string;
+	stage?: number;
+	peers: { source: string; at: number }[];
+	rawMeasurement?: MeasurementT;
+};
+
+function extractMeasurement(
+	item: Measurement | MeasurementT,
+): ExtractedMeasurement | null {
+	if (!item) return null;
+
+	if ("unpack" in item && typeof (item as Measurement).source === "function") {
+		const m = item as Measurement;
+		const rawSource = m.source();
+		const source = normalizeSource(rawSource);
+		if (!source) return null;
+
+		const at = Number(m.at());
+		let backlog = 0;
+		const metricsLen = m.metricsLength();
+		for (let i = 0; i < metricsLen; i++) {
+			const met = m.metrics(i);
+			if (met && met.name() === "backlog") {
+				backlog = Number(met.raw());
+				break;
+			}
+		}
+
+		let group: string | undefined;
+		let stage: number | undefined;
+
+		const provLen = m.provenanceLength();
+		for (let i = 0; i < provLen; i++) {
+			const entry = m.provenance(i);
+			if (!entry) continue;
+			if (entry.name() === "group") {
+				const val = entry.value();
+				group = typeof val === "string" ? val : undefined;
+			}
+		}
+
+		const metaLen = m.metadataLength();
+		for (let i = 0; i < metaLen; i++) {
+			const entry = m.metadata(i);
+			if (!entry) continue;
+			if (entry.name() === "group" && !group) {
+				group = String(entry.value());
+			}
+			if (entry.name() === "stage") {
+				stage = Number(entry.value());
+			}
+		}
+
+		const peers: { source: string; at: number }[] = [];
+		const peersLen = m.peersLength();
+
+		for (let i = 0; i < peersLen; i++) {
+			const peer = m.peers(i);
+			if (peer) {
+				const peerSource = normalizeSource(peer.source());
+				if (peerSource && peerSource !== source) {
+					peers.push({
+						source: peerSource,
+						at: Number(peer.at()),
+					});
+				}
+			}
+		}
+
+		const rawMeasurement =
+			typeof m.unpack === "function" ? m.unpack() : undefined;
+
+		return { source, at, backlog, group, stage, peers, rawMeasurement };
+	}
+
+	const mt = item as MeasurementT;
+	const source = normalizeSource(mt.source);
+	if (!source) return null;
+
+	const at = Number(mt.at ?? 0n);
+	let backlog = 0;
+	for (const met of mt.metrics ?? []) {
+		if (met?.name === "backlog") {
+			backlog = Number(met.raw);
+			break;
+		}
+	}
+
+	let group: string | undefined;
+	let stage: number | undefined;
+
+	for (const entry of mt.provenance ?? []) {
+		if (!entry) continue;
+		if (entry.name === "group") {
+			const val = entry.value;
+			group =
+				typeof val === "string"
+					? val
+					: val
+						? new TextDecoder().decode(val)
+						: undefined;
+		}
+	}
+
+	for (const entry of mt.metadata ?? []) {
+		if (!entry) continue;
+		if (entry.name === "group" && !group) {
+			group = String(entry.value);
+		}
+		if (entry.name === "stage") {
+			stage = Number(entry.value);
+		}
+	}
+
+	const peers: { source: string; at: number }[] = [];
+
+	for (const peer of mt.peers ?? []) {
+		if (peer) {
+			const peerSource = normalizeSource(peer.source);
+			if (peerSource && peerSource !== source) {
+				peers.push({
+					source: peerSource,
+					at: Number(peer.at ?? 0n),
+				});
+			}
+		}
+	}
+
+	return { source, at, backlog, group, stage, peers, rawMeasurement: mt };
+}
 
 /*
 NodeStats is one diagnostics stage's live health, read straight off its own
@@ -29,6 +213,7 @@ export type NodeStats = {
 	// single instantaneous backlog reading can look fine right after a spike
 	// drains.
 	maxBacklog: number;
+	lastMeasurement?: MeasurementT;
 };
 
 /*
@@ -182,6 +367,139 @@ export const topologyStore = createStore(
 								(latencyNs - existing.avgLatencyNs) * EDGE_LATENCY_EMA_WEIGHT;
 							existing.lastLatencyNs = latencyNs;
 							existing.lastAtNs = Number(to.atNs);
+						}
+					}
+				}
+
+				return {
+					nodes: prev.nodes,
+					edges: prev.edges,
+					version: prev.version + 1,
+				};
+			});
+		},
+
+		ingestMeasurements: (
+			target: MeasurementsFrame | (Measurement | MeasurementT)[],
+		) => {
+			const extracted: ExtractedMeasurement[] = [];
+
+			if ("rowsLength" in target && typeof target.rowsLength === "function") {
+				const count = target.rowsLength();
+				for (let i = 0; i < count; i++) {
+					const row = target.rows(i);
+					if (row) {
+						const ex = extractMeasurement(row);
+						if (ex) extracted.push(ex);
+					}
+				}
+			} else if (Array.isArray(target)) {
+				for (const item of target) {
+					const ex = extractMeasurement(item);
+					if (ex) extracted.push(ex);
+				}
+			}
+
+			if (extracted.length === 0) return;
+
+			setState((prev) => {
+				for (const measurement of extracted) {
+					const { source, peers, backlog, group: metaGroup, stage: metaStage } = measurement;
+					const defaultTopo = PIPELINE_TOPOLOGY[source] ?? {
+						group: "signal",
+						stage: 1,
+					};
+					const group = metaGroup ?? defaultTopo.group;
+					const stage = metaStage ?? defaultTopo.stage;
+
+					const atNs =
+						measurement.at > 0 ? measurement.at : Date.now() * 1_000_000;
+					const existingNode = prev.nodes.get(source);
+
+					let seqCount = 1;
+					let avgGapNs = 0;
+					let lastGapNs = 0;
+					let maxBacklog = backlog;
+
+					if (existingNode) {
+						seqCount = existingNode.seqCount + 1;
+						maxBacklog = Math.max(existingNode.maxBacklog, backlog);
+						if (existingNode.lastAtNs > 0 && atNs > existingNode.lastAtNs) {
+							lastGapNs = atNs - existingNode.lastAtNs;
+							avgGapNs =
+								existingNode.avgGapNs <= 0
+									? lastGapNs
+									: existingNode.avgGapNs +
+										(lastGapNs - existingNode.avgGapNs) *
+											EDGE_LATENCY_EMA_WEIGHT;
+						} else {
+							lastGapNs = existingNode.lastGapNs;
+							avgGapNs = existingNode.avgGapNs;
+						}
+					}
+
+					prev.nodes.set(source, {
+						label: source,
+						group,
+						stage,
+						seqCount,
+						avgGapNs,
+						lastGapNs,
+						lastAtNs: atNs,
+						backlog,
+						maxBacklog,
+						lastMeasurement:
+							measurement.rawMeasurement ?? existingNode?.lastMeasurement,
+					});
+
+					for (const p of peers) {
+						const feeder = p.source;
+						if (!feeder || feeder === source) continue;
+
+						if (!prev.nodes.has(feeder)) {
+							const feederTopo = PIPELINE_TOPOLOGY[feeder] ?? {
+								group: stage > 1 ? "signal" : "venue",
+								stage: Math.max(0, stage - 1),
+							};
+							prev.nodes.set(feeder, {
+								label: feeder,
+								group: feederTopo.group,
+								stage: feederTopo.stage,
+								seqCount: 0,
+								avgGapNs: 0,
+								lastGapNs: 0,
+								lastAtNs: 0,
+								backlog: 0,
+								maxBacklog: 0,
+							});
+						}
+
+						const key = edgeKey(feeder, source);
+						const latencyNs =
+							p.at > 0 && atNs > p.at ? atNs - p.at : 0;
+						const existingEdge = prev.edges.get(key);
+
+						if (!existingEdge) {
+							prev.edges.set(key, {
+								from: feeder,
+								to: source,
+								hopCount: 1,
+								avgLatencyNs: latencyNs,
+								lastLatencyNs: latencyNs,
+								lastAtNs: atNs,
+							});
+						} else {
+							existingEdge.hopCount += 1;
+							if (latencyNs > 0) {
+								existingEdge.avgLatencyNs =
+									existingEdge.avgLatencyNs <= 0
+										? latencyNs
+										: existingEdge.avgLatencyNs +
+											(latencyNs - existingEdge.avgLatencyNs) *
+												EDGE_LATENCY_EMA_WEIGHT;
+								existingEdge.lastLatencyNs = latencyNs;
+							}
+							existingEdge.lastAtNs = atNs;
 						}
 					}
 				}

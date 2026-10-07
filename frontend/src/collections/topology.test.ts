@@ -144,4 +144,105 @@ describe("topologyStore.ingest", () => {
 		expect(hop?.hopCount).toBe(1);
 		expect(hop?.lastLatencyNs).toBe(500);
 	});
+
+	it("ingests Measurement objects and derives topology, stages, and hops", () => {
+		topologyStore.setState(() => ({
+			nodes: new Map(),
+			edges: new Map(),
+			version: 0,
+		}));
+
+		topologyStore.actions.ingestMeasurements([
+			{
+				source: "kraken:trade",
+				at: 1_000_000_000n,
+			} as any,
+			{
+				source: "cvd",
+				at: 1_000_020_000n,
+				peers: [{ source: "kraken", at: 1_000_000_000n }],
+			} as any,
+			{
+				source: "depthflow",
+				at: 1_000_025_000n,
+				peers: [{ source: "kraken", at: 1_000_000_000n }],
+			} as any,
+			{
+				source: "manifold",
+				at: 1_000_050_000n,
+				peers: [
+					{ source: "cvd", at: 1_000_020_000n },
+					{ source: "depthflow", at: 1_000_025_000n },
+				],
+			} as any,
+			{
+				source: "training",
+				at: 1_000_080_000n,
+				peers: [{ source: "manifold", at: 1_000_050_000n }],
+			} as any,
+		]);
+
+		const { nodes, edges } = topologyStore.state;
+
+		expect(nodes.has("kraken")).toBe(true);
+		expect(nodes.has("cvd")).toBe(true);
+		expect(nodes.has("depthflow")).toBe(true);
+		expect(nodes.has("manifold")).toBe(true);
+		expect(nodes.has("training")).toBe(true);
+
+		expect(nodes.get("kraken")?.group).toBe("venue");
+		expect(nodes.get("cvd")?.group).toBe("signal");
+		expect(nodes.get("manifold")?.group).toBe("logic");
+		expect(nodes.get("training")?.group).toBe("strategy");
+
+		expect(edges.has("kraken>cvd")).toBe(true);
+		expect(edges.has("kraken>depthflow")).toBe(true);
+		expect(edges.has("cvd>manifold")).toBe(true);
+		expect(edges.has("manifold>training")).toBe(true);
+		// Sibling signals do not hop each other
+		expect(edges.has("cvd>depthflow")).toBe(false);
+	});
+
+	it("tracks Tee nodes and their queue backpressure", () => {
+		topologyStore.setState(() => ({
+			nodes: new Map(),
+			edges: new Map(),
+			version: 0,
+		}));
+
+		topologyStore.actions.ingestMeasurements([
+			{
+				source: "ui_tee",
+				at: 2_000_000_000n,
+				metrics: [{ name: "backlog", raw: 42 }],
+				metadata: [{ name: "group", value: "tees" }, { name: "stage", value: "4" }],
+			} as any,
+			{
+				source: "store_tee",
+				at: 2_000_000_000n,
+				metrics: [{ name: "backlog", raw: 1500 }],
+				metadata: [{ name: "group", value: "tees" }, { name: "stage", value: "4" }],
+			} as any,
+		]);
+
+		const { nodes } = topologyStore.state;
+		expect(nodes.has("ui_tee")).toBe(true);
+		expect(nodes.has("store_tee")).toBe(true);
+
+		const uiNode = nodes.get("ui_tee");
+		expect(uiNode?.group).toBe("tees");
+		expect(uiNode?.stage).toBe(4);
+		expect(uiNode?.backlog).toBe(42);
+		expect(uiNode?.maxBacklog).toBe(42);
+		expect(uiNode?.lastMeasurement).toBeDefined();
+		expect(uiNode?.lastMeasurement?.metrics?.[0]?.raw).toBe(42);
+
+		const storeNode = nodes.get("store_tee");
+		expect(storeNode?.group).toBe("tees");
+		expect(storeNode?.stage).toBe(4);
+		expect(storeNode?.backlog).toBe(1500);
+		expect(storeNode?.maxBacklog).toBe(1500);
+		expect(storeNode?.lastMeasurement).toBeDefined();
+		expect(storeNode?.lastMeasurement?.metrics?.[0]?.raw).toBe(1500);
+	});
 });

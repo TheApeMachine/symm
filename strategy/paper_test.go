@@ -21,11 +21,17 @@ import (
 
 func TestAuthorized(t *testing.T) {
 	Convey("Given a Training component with triad gating", t, func() {
+		at := time.Now().UTC()
+
 		Convey("When resonance surprise is positive and manifold impedance is clear", func() {
 			resonanceM := data.NewMeasurement(1, "BTC/USD", "resonance", 1, 1)
+			resonanceM.At = at
+			resonanceM.From = at
 			resonanceM.Write(data.NewMetric("surprise", 1.5, data.UnitRatio, data.TimescaleInstantaneous))
 
 			manifoldM := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
+			manifoldM.At = at
+			manifoldM.From = at
 			manifoldM.Write(
 				data.NewMetric("kuramoto_r", 0.4, data.UnitRatio, data.TimescaleInstantaneous),
 				data.NewMetric("pressure_grad_norm", 0.1, data.UnitRatio, data.TimescaleInstantaneous),
@@ -36,9 +42,13 @@ func TestAuthorized(t *testing.T) {
 
 		Convey("When resonance surprise is zero (equilibrium churn), entry is vetoed", func() {
 			resonanceM := data.NewMeasurement(1, "BTC/USD", "resonance", 1, 1)
+			resonanceM.At = at
+			resonanceM.From = at
 			resonanceM.Write(data.NewMetric("surprise", 0.0, data.UnitRatio, data.TimescaleInstantaneous))
 
 			manifoldM := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
+			manifoldM.At = at
+			manifoldM.From = at
 			manifoldM.Write(data.NewMetric("kuramoto_r", 0.4, data.UnitRatio, data.TimescaleInstantaneous))
 
 			So(authorized(resonanceM, manifoldM), ShouldBeFalse)
@@ -46,9 +56,13 @@ func TestAuthorized(t *testing.T) {
 
 		Convey("When manifold has complete locked synchronization and opposing pressure, entry is vetoed", func() {
 			resonanceM := data.NewMeasurement(1, "BTC/USD", "resonance", 1, 1)
+			resonanceM.At = at
+			resonanceM.From = at
 			resonanceM.Write(data.NewMetric("surprise", 2.0, data.UnitRatio, data.TimescaleInstantaneous))
 
 			manifoldM := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
+			manifoldM.At = at
+			manifoldM.From = at
 			manifoldM.Write(
 				data.NewMetric("kuramoto_r", 1.0, data.UnitRatio, data.TimescaleInstantaneous),
 				data.NewMetric("pressure_grad_norm", 5.0, data.UnitRatio, data.TimescaleInstantaneous),
@@ -222,13 +236,21 @@ func TestPaper_WaitNeverEnters(t *testing.T) {
 		training.impulse.grid.Settle()
 		training.Transition(runtime.READY)
 
+		var priorLive *data.Measurement
+
 		live := func(value float64) *data.Measurement {
 			measurement := data.NewMeasurement(1000, "BTC/USD", "cvd", 1, 1)
+
+			if priorLive != nil {
+				measurement = priorLive.Next("cvd")
+			}
+
 			measurement.At = time.Now().UTC()
 			measurement.From = measurement.At
-			return measurement.Write(
+			priorLive = measurement.Write(
 				data.NewMetric("cvd_value", value, data.UnitCount, data.TimescaleTick),
 			)
+			return priorLive
 		}
 
 		// The live stream needs one observation before it moves; the

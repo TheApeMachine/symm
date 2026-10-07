@@ -21,16 +21,18 @@ the open position) and the realized score.
 type paper struct {
 	desk        *broker.Desk
 	model       *Model
+	reporter    *Reporter
 	episodes    *lf.OrderedMap[string, *episode]
 	resolved    atomic.Int64
 	wins        atomic.Int64
 	returnsBits atomic.Uint64
 }
 
-func newPaper(desk *broker.Desk, model *Model) *paper {
+func newPaper(desk *broker.Desk, model *Model, reporter *Reporter) *paper {
 	paper := &paper{
-		desk:  desk,
-		model: model,
+		desk:     desk,
+		model:    model,
+		reporter: reporter,
 		episodes: lf.NewOrderedMap[string, *episode](func(left, right string) bool {
 			return left < right
 		}),
@@ -38,6 +40,12 @@ func newPaper(desk *broker.Desk, model *Model) *paper {
 
 	desk.OnClose(paper.settle)
 	return paper
+}
+
+func (paper *paper) log(format string, args ...any) {
+	if paper != nil && paper.reporter != nil {
+		paper.reporter.Log(format, args...)
+	}
 }
 
 /*
@@ -129,6 +137,9 @@ func (paper *paper) trade(prior *data.Measurement, tok []byte, snapshot *ReportS
 			state.entry = context
 		}, question)
 		snapshot.Action = 1
+		paper.log("[PAPER:ENTER] symbol=%s context=%s confidence=%.3f contrast=%.3f",
+			symbol, string(question), call.Confidence, call.Contrast,
+		)
 	}
 
 	if state == broker.HOLDING && call.Winner == actionExit {
@@ -136,6 +147,9 @@ func (paper *paper) trade(prior *data.Measurement, tok []byte, snapshot *ReportS
 			state.exit = context
 		}, question)
 		snapshot.Action = 2
+		paper.log("[PAPER:EXIT] symbol=%s context=%s confidence=%.3f contrast=%.3f",
+			symbol, string(question), call.Confidence, call.Contrast,
+		)
 	}
 }
 
@@ -259,6 +273,20 @@ func (paper *paper) settle(closure broker.Closure) {
 	if feedback > 0 {
 		paper.wins.Add(1)
 	}
+
+	resolvedCount := paper.resolved.Load()
+	winsCount := paper.wins.Load()
+	winRate := 0.0
+
+	if resolvedCount > 0 {
+		winRate = float64(winsCount) / float64(resolvedCount) * 100
+	}
+
+	paper.log(
+		"[PAPER:SETTLE] symbol=%s realized=%s cost=%s return=%+.4f%% (resolved=%d wins=%d win_rate=%.1f%%)",
+		closure.Symbol, closure.Realized.String(), closure.Cost.String(), feedback*100,
+		resolvedCount, winsCount, winRate,
+	)
 
 	if settled.entry == nil {
 		errnie.Error(errnie.Err(

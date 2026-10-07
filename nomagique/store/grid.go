@@ -1478,8 +1478,14 @@ func (grid *Grid) RegionScores(pass map[string]Excitation) []RegionScore {
 			continue
 		}
 
+		confidence := excitation.Confidence
+
+		if confidence <= 0 {
+			confidence = 1.0
+		}
+
 		entry := regions[cell.Region]
-		entry.evidence += excitation.Confidence * evidence
+		entry.evidence += confidence * evidence
 		entry.observedCount++
 		regions[cell.Region] = entry
 	}

@@ -14,7 +14,35 @@ import {
 	formatRate,
 	isHop,
 } from "#/components/dashboard/diagnostics-graph";
-import { Button } from "#/components/ui";
+import { Button, Tabs } from "#/components/ui";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+
+const serializeMeasurement = (m: MeasurementT): string => {
+	return JSON.stringify(
+		m,
+		(_key, value) => (typeof value === "bigint" ? value.toString() : value),
+		2,
+	);
+};
+
+const formatNanosDate = (nanos: bigint | number): string => {
+	const n =
+		typeof nanos === "bigint"
+			? Number(nanos / 1_000_000n)
+			: Number(nanos) / 1_000_000;
+	if (!n || n <= 0) return "—";
+	const d = new Date(n);
+	if (isNaN(d.getTime())) return "—";
+	return d.toISOString().replace("T", " ").replace("Z", "");
+};
+
+const formatMetricVal = (num: number): string => {
+	if (!Number.isFinite(num)) return "—";
+	if (Number.isInteger(num)) return num.toLocaleString();
+	const abs = Math.abs(num);
+	if (abs !== 0 && abs < 0.001) return num.toExponential(3);
+	return num.toFixed(4);
+};
 
 const Metric = ({
 	label,
@@ -37,17 +65,254 @@ const Metric = ({
 	</div>
 );
 
+const MeasurementView = ({
+	measurement,
+	onSelectStage,
+}: {
+	measurement: MeasurementT | null | undefined;
+	onSelectStage: (name: string) => void;
+}) => {
+	if (!measurement) {
+		return (
+			<div className="flex flex-col items-center justify-center py-8 text-center">
+				<span className="size-2 rounded-full bg-(--warn) animate-pulse mb-2" />
+				<div className="font-mono text-[11px] text-(--f2)">
+					No measurement captured yet
+				</div>
+				<div className="font-mono text-[9px] text-(--f4) mt-1">
+					Waiting for a live measurement frame from this stage...
+				</div>
+			</div>
+		);
+	}
+
+	const metrics = measurement.metrics ?? [];
+	const metadata = measurement.metadata ?? [];
+	const provenance = measurement.provenance ?? [];
+	const peers = measurement.peers ?? [];
+
+	return (
+		<div className="space-y-3 py-2">
+			{/* Identity & Core Status */}
+			<div className="grid grid-cols-2 gap-x-3">
+				<Metric
+					label="Tick"
+					value={measurement.tick ? `#${measurement.tick.toString()}` : "—"}
+					tone="text-(--acc)"
+				/>
+				<Metric
+					label="Symbol"
+					value={(typeof measurement.symbol === "string" && measurement.symbol) || "pipeline"}
+				/>
+				<Metric
+					label="SNR"
+					value={
+						measurement.snrDefined && Number.isFinite(measurement.snr)
+							? `${measurement.snr.toFixed(2)} dB`
+							: "—"
+					}
+					tone={measurement.snrDefined && measurement.snr > 0 ? "text-(--up)" : "text-(--f1)"}
+				/>
+				<Metric
+					label="Maturity"
+					value={
+						measurement.maturity > 0
+							? `${(measurement.maturity * 100).toFixed(1)}%`
+							: "—"
+					}
+				/>
+				<Metric
+					label="Timestamp (At)"
+					value={formatNanosDate(measurement.at)}
+				/>
+				<Metric
+					label="Horizon"
+					value={
+						measurement.horizon > 0n
+							? formatNanos(Number(measurement.horizon))
+							: "—"
+					}
+				/>
+			</div>
+
+			{measurement.id ? (
+				<div className="border-(--line) border-b pb-2">
+					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+						ID
+					</div>
+					<div className="mt-0.5 font-mono text-[10px] text-(--f3) break-all">
+						{typeof measurement.id === "string" ? measurement.id : String(measurement.id)}
+					</div>
+				</div>
+			) : null}
+
+			{/* Metrics Table */}
+			<div className="border-(--line) border-b pb-2">
+				<div className="flex items-center justify-between mb-1.5">
+					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+						Metrics ({metrics.length})
+					</div>
+				</div>
+				{metrics.length === 0 ? (
+					<div className="font-mono text-[9px] text-(--f4)">No metrics attached</div>
+				) : (
+					<div className="space-y-1.5">
+						{metrics.map((m, idx) => {
+							const name = typeof m.name === "string" ? m.name : String(m.name ?? idx);
+							const rawVal = formatMetricVal(m.raw);
+							const hasNorm = m.hasNormalized && Number.isFinite(m.normalized);
+							const normVal = hasNorm ? Math.min(1, Math.max(0, m.normalized)) : 0;
+							const unit = typeof m.unit === "string" ? m.unit : "";
+
+							return (
+								<div
+									key={name + idx}
+									className="rounded bg-(--sunken) p-1.5 font-mono text-[10px] border border-(--line)"
+								>
+									<div className="flex items-center justify-between">
+										<span className="font-bold text-(--f1)">{name}</span>
+										<span className="tabular-nums text-(--acc)">
+											{rawVal} {unit ? <span className="text-(--f4) text-[9px]">{unit}</span> : null}
+										</span>
+									</div>
+									{hasNorm ? (
+										<div className="mt-1 flex items-center gap-2">
+											<div className="h-1 flex-1 rounded bg-(--line) overflow-hidden">
+												<div
+													className="h-full bg-(--acc) transition-all duration-300"
+													style={{ width: `${(normVal * 100).toFixed(0)}%` }}
+												/>
+											</div>
+											<span className="text-[8px] text-(--f4) tabular-nums">
+												{(normVal * 100).toFixed(0)}%
+											</span>
+										</div>
+									) : null}
+									{m.region > 0 ? (
+										<div className="mt-1 text-[8px] text-(--f4)">
+											region: <span className="text-(--f2)">{m.region}</span>
+											{m.x > 0n || m.y > 0n ? ` · (${m.x}, ${m.y})` : ""}
+										</div>
+									) : null}
+								</div>
+							);
+						})}
+					</div>
+				)}
+			</div>
+
+			{/* Metadata & Provenance */}
+			{metadata.length > 0 || provenance.length > 0 ? (
+				<div className="border-(--line) border-b pb-2">
+					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4) mb-1.5">
+						Metadata & Provenance
+					</div>
+					<div className="flex flex-wrap gap-1">
+						{metadata.map((entry, idx) => (
+							<span
+								key={idx}
+								className="rounded border border-(--line) bg-(--sunken) px-1.5 py-0.5 font-mono text-[9px] text-(--f3)"
+							>
+								<span className="text-(--f4)">{entry.name}:</span> {entry.value}
+							</span>
+						))}
+						{provenance.map((entry, idx) => (
+							<span
+								key={idx}
+								className="rounded border border-(--line) bg-(--sunken) px-1.5 py-0.5 font-mono text-[9px] text-(--f3)"
+							>
+								<span className="text-(--f4)">{entry.name}:</span> {entry.value}
+							</span>
+						))}
+					</div>
+				</div>
+			) : null}
+
+			{/* Attached Peers */}
+			{peers.length > 0 ? (
+				<div className="border-(--line) border-b pb-2">
+					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4) mb-1.5">
+						Attached Peers ({peers.length})
+					</div>
+					<div className="flex flex-wrap gap-1">
+						{peers.map((peer, idx) => {
+							const peerSource = typeof peer.source === "string" ? peer.source : "";
+							return (
+								<Button
+									key={idx}
+									variant="outline"
+									size="xxs"
+									onClick={() => peerSource && onSelectStage(peerSource)}
+								>
+									{peerSource || "peer"}
+								</Button>
+							);
+						})}
+					</div>
+				</div>
+			) : null}
+		</div>
+	);
+};
+
+const MeasurementJsonView = ({
+	measurement,
+}: {
+	measurement: MeasurementT | null | undefined;
+}) => {
+	const [copied, setCopied] = useState(false);
+
+	if (!measurement) {
+		return (
+			<div className="flex flex-col items-center justify-center py-8 text-center">
+				<span className="size-2 rounded-full bg-(--warn) animate-pulse mb-2" />
+				<div className="font-mono text-[11px] text-(--f2)">
+					No measurement captured yet
+				</div>
+			</div>
+		);
+	}
+
+	const json = serializeMeasurement(measurement);
+
+	const handleCopy = () => {
+		navigator.clipboard.writeText(json);
+		setCopied(true);
+		setTimeout(() => setCopied(false), 2000);
+	};
+
+	return (
+		<div className="py-2 space-y-2">
+			<div className="flex items-center justify-between">
+				<span className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					Wire Representation (JSON)
+				</span>
+				<Button variant="outline" size="xxs" onClick={handleCopy}>
+					{copied ? "Copied!" : "Copy JSON"}
+				</Button>
+			</div>
+			<pre className="max-h-[60vh] overflow-auto rounded border border-(--line) bg-(--sunken) p-2 font-mono text-[9px] leading-tight text-(--f2) select-all">
+				{json}
+			</pre>
+		</div>
+	);
+};
+
 const StageDetail = ({
 	name,
 	stage,
 	nodes,
 	edges,
+	activeTab,
+	onTabChange,
 	onSelect,
 }: {
 	name: string;
 	stage: NodeStats | undefined;
 	nodes: Map<string, NodeStats>;
 	edges: EdgeStats[];
+	activeTab: "overview" | "measurement" | "json";
+	onTabChange: (tab: "overview" | "measurement" | "json") => void;
 	onSelect: (selection: DiagnosticsSelection) => void;
 }) => {
 	// Only real hops. A stamp from a concurrent sibling is the same barrier
@@ -84,97 +349,135 @@ const StageDetail = ({
 					</button>
 				) : null}
 			</div>
+
+			<div className="border-(--line) border-b px-3 py-1.5 bg-(--sunken)">
+				<Tabs size="xs" fullWidth>
+					<Tabs.Tab
+						active={activeTab === "overview"}
+						onClick={() => onTabChange("overview")}
+						grow
+					>
+						Overview
+					</Tabs.Tab>
+					<Tabs.Tab
+						active={activeTab === "measurement"}
+						onClick={() => onTabChange("measurement")}
+						grow
+					>
+						Measurement {stage?.lastMeasurement?.metrics?.length ? `(${stage.lastMeasurement.metrics.length})` : ""}
+					</Tabs.Tab>
+					<Tabs.Tab
+						active={activeTab === "json"}
+						onClick={() => onTabChange("json")}
+						grow
+					>
+						JSON
+					</Tabs.Tab>
+				</Tabs>
+			</div>
+
 			<div className="min-h-0 flex-1 overflow-auto px-3">
-				<div className="grid grid-cols-2 gap-x-3">
-					<Metric
-						label="rate"
-						value={stage ? formatRate(stage.avgGapNs) : "—"}
-					/>
-					<Metric label="last gap" value={formatNanos(stage?.lastGapNs)} />
-					<Metric label="average gap" value={formatNanos(stage?.avgGapNs)} />
-					<Metric
-						label="lifetime calls"
-						value={(stage?.seqCount ?? 0).toLocaleString()}
-					/>
-					<Metric
-						label="ring backlog"
-						value={(stage?.backlog ?? 0).toLocaleString()}
-						tone={(stage?.backlog ?? 0) > 0 ? "text-(--warn)" : "text-(--f1)"}
-					/>
-					<Metric
-						label="session peak backlog"
-						value={(stage?.maxBacklog ?? 0).toLocaleString()}
-					/>
-				</div>
-				<div className="border-(--line) border-b py-2">
-					<div className="mb-1 font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						fed by
-					</div>
-					<div className="flex flex-wrap gap-1">
-						{fedBy.map((edge) => (
-							<Button
-								key={edge.from}
-								variant="outline"
-								size="xxs"
-								onClick={() => onSelect({ kind: "stage", name: edge.from })}
-							>
-								{edge.from} · {formatNanos(edge.avgLatencyNs)}
-							</Button>
-						))}
-						{fedBy.length === 0 ? (
-							<span className="font-mono text-[9px] text-(--f4)">
-								source stage
-							</span>
+				{activeTab === "overview" ? (
+					<>
+						<div className="grid grid-cols-2 gap-x-3">
+							<Metric
+								label="rate"
+								value={stage ? formatRate(stage.avgGapNs) : "—"}
+							/>
+							<Metric label="last gap" value={formatNanos(stage?.lastGapNs)} />
+							<Metric label="average gap" value={formatNanos(stage?.avgGapNs)} />
+							<Metric
+								label="lifetime calls"
+								value={(stage?.seqCount ?? 0).toLocaleString()}
+							/>
+							<Metric
+								label="ring backlog"
+								value={(stage?.backlog ?? 0).toLocaleString()}
+								tone={(stage?.backlog ?? 0) > 0 ? "text-(--warn)" : "text-(--f1)"}
+							/>
+							<Metric
+								label="session peak backlog"
+								value={(stage?.maxBacklog ?? 0).toLocaleString()}
+							/>
+						</div>
+						<div className="border-(--line) border-b py-2">
+							<div className="mb-1 font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+								fed by
+							</div>
+							<div className="flex flex-wrap gap-1">
+								{fedBy.map((edge) => (
+									<Button
+										key={edge.from}
+										variant="outline"
+										size="xxs"
+										onClick={() => onSelect({ kind: "stage", name: edge.from })}
+									>
+										{edge.from} · {formatNanos(edge.avgLatencyNs)}
+									</Button>
+								))}
+								{fedBy.length === 0 ? (
+									<span className="font-mono text-[9px] text-(--f4)">
+										source stage
+									</span>
+								) : null}
+							</div>
+						</div>
+						<div className="border-(--line) border-b py-2">
+							<div className="mb-1 font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+								feeds
+							</div>
+							<div className="flex flex-wrap gap-1">
+								{feeds.map((edge) => (
+									<Button
+										key={edge.to}
+										variant="outline"
+										size="xxs"
+										onClick={() => onSelect({ kind: "stage", name: edge.to })}
+									>
+										{edge.to} · {formatNanos(edge.avgLatencyNs)}
+									</Button>
+								))}
+								{feeds.length === 0 ? (
+									<span className="font-mono text-[9px] text-(--f4)">
+										terminal stage
+									</span>
+								) : null}
+							</div>
+						</div>
+						{siblings.length > 0 ? (
+							<div className="border-(--line) border-b py-2">
+								<div className="mb-1 font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+									runs alongside
+								</div>
+								<div className="flex flex-wrap gap-1">
+									{siblings.map((sibling) => (
+										<Button
+											key={sibling.label}
+											variant="outline"
+											size="xxs"
+											onClick={() =>
+												onSelect({ kind: "stage", name: sibling.label })
+											}
+										>
+											{sibling.label}
+										</Button>
+									))}
+								</div>
+								<div className="mt-1 font-mono text-[9px] leading-relaxed text-(--f4)">
+									Same handler group, same barrier — these run concurrently against
+									the same envelope, so nothing orders them against each other.
+								</div>
+							</div>
 						) : null}
-					</div>
-				</div>
-				<div className="border-(--line) border-b py-2">
-					<div className="mb-1 font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						feeds
-					</div>
-					<div className="flex flex-wrap gap-1">
-						{feeds.map((edge) => (
-							<Button
-								key={edge.to}
-								variant="outline"
-								size="xxs"
-								onClick={() => onSelect({ kind: "stage", name: edge.to })}
-							>
-								{edge.to} · {formatNanos(edge.avgLatencyNs)}
-							</Button>
-						))}
-						{feeds.length === 0 ? (
-							<span className="font-mono text-[9px] text-(--f4)">
-								terminal stage
-							</span>
-						) : null}
-					</div>
-				</div>
-				{siblings.length > 0 ? (
-					<div className="border-(--line) border-b py-2">
-						<div className="mb-1 font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-							runs alongside
-						</div>
-						<div className="flex flex-wrap gap-1">
-							{siblings.map((sibling) => (
-								<Button
-									key={sibling.label}
-									variant="outline"
-									size="xxs"
-									onClick={() =>
-										onSelect({ kind: "stage", name: sibling.label })
-									}
-								>
-									{sibling.label}
-								</Button>
-							))}
-						</div>
-						<div className="mt-1 font-mono text-[9px] leading-relaxed text-(--f4)">
-							Same handler group, same barrier — these run concurrently against
-							the same envelope, so nothing orders them against each other.
-						</div>
-					</div>
-				) : null}
+					</>
+				) : activeTab === "measurement" ? (
+					<MeasurementView
+						measurement={stage?.lastMeasurement}
+						onSelectStage={(target) => onSelect({ kind: "stage", name: target })}
+					/>
+				) : (
+					<MeasurementJsonView measurement={stage?.lastMeasurement} />
+				)}
 			</div>
 		</>
 	);
@@ -302,11 +605,15 @@ const DetailPanel = ({
 	nodes,
 	edges,
 	selection,
+	activeTab,
+	onTabChange,
 	onSelect,
 }: {
 	nodes: Map<string, NodeStats>;
 	edges: EdgeStats[];
 	selection: DiagnosticsSelection | null;
+	activeTab: "overview" | "measurement" | "json";
+	onTabChange: (tab: "overview" | "measurement" | "json") => void;
 	onSelect: (selection: DiagnosticsSelection) => void;
 }) => {
 	if (selection?.kind === "stage") {
@@ -316,6 +623,8 @@ const DetailPanel = ({
 				stage={nodes.get(selection.name)}
 				nodes={nodes}
 				edges={edges}
+				activeTab={activeTab}
+				onTabChange={onTabChange}
 				onSelect={onSelect}
 			/>
 		);
@@ -439,6 +748,9 @@ const DiagnosticsSurface = () => {
 	const { nodes, edges } = topologyStore.state;
 	const connection = useSelector(onlineAtom, (s) => s);
 	const [selection, setSelection] = useState<DiagnosticsSelection | null>(null);
+	const [activeTab, setActiveTab] = useState<"overview" | "measurement" | "json">(
+		"overview",
+	);
 
 	const edgeList = Array.from(edges.values());
 	const atNs = Math.max(
@@ -488,6 +800,8 @@ const DiagnosticsSurface = () => {
 					nodes={nodes}
 					edges={edgeList}
 					selection={selection}
+					activeTab={activeTab}
+					onTabChange={setActiveTab}
 					onSelect={setSelection}
 				/>
 			</aside>

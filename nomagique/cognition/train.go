@@ -193,32 +193,32 @@ func (op *Train) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
+			end := len(starts)
+
 			for start := 0; start < len(starts); start++ {
-				for end := start + 1; end <= len(starts); end++ {
-					label := data.NewTextMap()
-					label.Values["class"] = class
-					label.Values["context"] = string(contextBytes[starts[start]:ends[end-1]])
+				label := data.NewTextMap()
+				label.Values["class"] = class
+				label.Values["context"] = string(contextBytes[starts[start]:ends[end-1]])
 
-					for range bridge.Next(data.NewValue(label)) {
-					}
+				for range bridge.Next(data.NewValue(label)) {
+				}
 
-					if err := bridge.Error(); err != nil {
-						op.Error(err)
-						return
-					}
+				if err := bridge.Error(); err != nil {
+					op.Error(err)
+					return
+				}
 
-					for range op.memory.Next(data.NewValue(bridge)) {
-					}
+				for range op.memory.Next(data.NewValue(bridge)) {
+				}
 
-					if err := op.memory.Error(); err != nil {
-						op.Error(err)
-						return
-					}
+				if err := op.memory.Error(); err != nil {
+					op.Error(err)
+					return
+				}
 
-					if err := bridge.Error(); err != nil {
-						op.Error(err)
-						return
-					}
+				if err := bridge.Error(); err != nil {
+					op.Error(err)
+					return
 				}
 			}
 

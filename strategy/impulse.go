@@ -167,14 +167,19 @@ func (impulse *impulse) checkpoint(ctx context.Context, epoch, seqIdx int64) (bo
 	return true, nil
 }
 
+type tapeStats struct {
+	uniqueTicks int
+	maxScore    float64
+}
+
 /*
 tokens encodes one replayed tape (tick-ordered sensory rows of one symbol)
 into one region token per tick on the frozen grid, through a stream of its
 own. Ticks that light no region carry no frame.
 */
-func (impulse *impulse) tokens(rows []*data.Measurement) ([]int64, [][]byte, error) {
+func (impulse *impulse) tokens(rows []*data.Measurement) ([]int64, [][]byte, tapeStats, error) {
 	if !impulse.grid.IsSettled() {
-		return nil, nil, errnie.Error(errnie.Err(
+		return nil, nil, tapeStats{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[impulse] region tokens are only comparable on a settled grid",
 			nil,
@@ -182,10 +187,12 @@ func (impulse *impulse) tokens(rows []*data.Measurement) ([]int64, [][]byte, err
 	}
 
 	var (
-		stream = store.NewStream()
-		ticks  []int64
-		frames [][]byte
-		group  []*data.Measurement
+		stream   = store.NewStream()
+		ticks    []int64
+		frames   [][]byte
+		group    []*data.Measurement
+		stats    tapeStats
+		maxScore float64
 	)
 
 	flush := func() {
@@ -194,8 +201,17 @@ func (impulse *impulse) tokens(rows []*data.Measurement) ([]int64, [][]byte, err
 		}
 
 		tick := group[0].Tick
+		stats.uniqueTicks++
 		observed := channelsFrom(group...)
-		tok := impulse.grid.LitRegion(observed.excite(stream.Deform(observed.raw)))
+		deforms := stream.Deform(observed.raw)
+		excited := observed.excite(deforms)
+		scores := impulse.grid.RegionScores(excited)
+
+		if len(scores) > 0 && scores[0].Score > maxScore {
+			maxScore = scores[0].Score
+		}
+
+		tok := impulse.grid.LitRegion(excited)
 		group = group[:0]
 
 		if len(tok) == 0 {
@@ -215,8 +231,9 @@ func (impulse *impulse) tokens(rows []*data.Measurement) ([]int64, [][]byte, err
 	}
 
 	flush()
+	stats.maxScore = maxScore
 
-	return ticks, frames, nil
+	return ticks, frames, stats, nil
 }
 
 /*

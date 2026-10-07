@@ -74,7 +74,7 @@ func NewTraining(
 		System: system,
 		Model:  model,
 		Rehearsal: newRehearsal(
-			catalog, price, impulse, model, newChart(catalog, reporter, system.Name()), epoch,
+			catalog, price, impulse, model, newChart(catalog, reporter, system.Name()), reporter, epoch,
 		),
 		Reporter:     reporter,
 		impulse:      impulse,
@@ -92,7 +92,7 @@ func NewTraining(
 		return training
 	}
 
-	training.paper = newPaper(desk, model)
+	training.paper = newPaper(desk, model, reporter)
 	training.Transition(runtime.INIT)
 	return training
 }
@@ -196,6 +196,12 @@ func (training *Training) develop(prior *data.Measurement, snapshot *ReportSnaps
 	}
 
 	if settled {
+		cells := training.impulse.grid.CellCount()
+		regions := training.impulse.grid.RegionsFormed()
+		training.Reporter.Log(
+			"[GRID:SETTLE] settled=true cells=%d regions=%d epoch=%d seqIdx=%d",
+			cells, regions, prior.Epoch, prior.SeqIdx,
+		)
 		training.Transition(runtime.WAITING)
 	}
 }
@@ -212,6 +218,7 @@ gate; an open gate checkpoints the trie and opens paper trading (READY).
 */
 func (training *Training) Train() {
 	go func() {
+		training.Reporter.Log("[TRAIN:START] awaiting grid settle and detector scan (epoch=%d)", training.epoch)
 		go training.runDetectorScan()
 
 		for training.Status() == runtime.INIT {
@@ -226,6 +233,7 @@ func (training *Training) Train() {
 		case <-training.Context().Done():
 			return
 		case <-training.detectorDone:
+			training.Reporter.Log("[DETECTOR:SCAN] scan finished for past runs (epoch=%d)", training.epoch)
 		}
 
 		if training.Status() != runtime.WAITING {
@@ -255,8 +263,13 @@ func (training *Training) Train() {
 
 		if !graded.open() {
 			errnie.Info(fmt.Sprintf("[training] paper trading stays closed: %s (%d records)", graded.blocker(), int(records)))
+			training.Reporter.Log("[SKILL:GATE] CLOSED: %s (records=%d)", graded.blocker(), int(records))
 			return
 		}
+
+		training.Reporter.Log("[SKILL:GATE] OPEN: %d of %d calls correct (retained %d, baseline %d, records=%d)",
+			graded.hits, graded.calls(), graded.retained, graded.baseline(), int(records),
+		)
 
 		// The checkpoint reads the in-memory trie. Failing to read it means
 		// the cognition memory itself is broken, so training halts instead
@@ -275,7 +288,12 @@ func (training *Training) Train() {
 			training.Context(), fmt.Sprintf("trie/%d", graded.latest), model,
 		); err != nil {
 			errnie.Error(errnie.Err(errnie.IO, "[training] unable to checkpoint trie", err))
+			training.Reporter.Log("[TRIE:CHECKPOINT] ERROR key=trie/%d err=%v", graded.latest, err)
 		}
+
+		training.Reporter.Log("[TRIE:CHECKPOINT] SAVED key=trie/%d excursions=%d/%d records=%d -> transitioning to READY",
+			graded.latest, graded.trained, graded.seen, int(records),
+		)
 
 		errnie.Info(fmt.Sprintf(
 			"[training] trie loaded from %d of %d excursions (%d records)",
@@ -352,6 +370,10 @@ func (training *Training) runDetectorScan() {
 
 	for _, run := range runs {
 		if run.Epoch >= training.epoch {
+			continue
+		}
+
+		if run.Status == "observing" {
 			continue
 		}
 

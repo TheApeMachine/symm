@@ -84,13 +84,25 @@ func NewMeasurement(
 Next instantiates a new Measurement, using the current instance
 as its prior, copying over the center and scale of all metrics.
 */
-func (measurement *Measurement) Next(source string, values map[string]float64) *Measurement {
+func (measurement *Measurement) Next(source string, values ...map[string]float64) *Measurement {
+	seqIdx := system.SeqIdx.Add(1)
+
+	if seqIdx <= 0 {
+		seqIdx = measurement.SeqIdx + 1
+	}
+
+	tick := system.Tick.Load()
+
+	if tick <= 0 {
+		tick = measurement.Tick
+	}
+
 	next := NewMeasurement(
 		measurement.Epoch,
 		measurement.Label,
 		source,
-		system.SeqIdx.Add(1),
-		system.Tick.Load(),
+		seqIdx,
+		tick,
 		measurement.metadata...,
 	)
 
@@ -101,9 +113,18 @@ func (measurement *Measurement) Next(source string, values map[string]float64) *
 	next.prediction = measurement.prediction
 	next.peers = append(next.peers, measurement.peers...)
 
+	var valMap map[string]float64
+
+	if len(values) > 0 {
+		valMap = values[0]
+	}
+
 	for entry := range measurement.Read() {
 		out := *entry.Metric
-		out.Raw = values[entry.Key]
+
+		if valMap != nil {
+			out.Raw = valMap[entry.Key]
+		}
 		out.Exact = nil
 		out.Normalized = 0
 		out.Standardized = 0
@@ -441,35 +462,44 @@ func (measurement *Measurement) locked() bool {
 valid checks if the Measurement is valid.
 */
 func (measurement *Measurement) valid() *Measurement {
-	if measurement.locked() {
-		return measurement
-	}
-
 	for _, metricEntry := range measurement.metrics {
-		if err := metricEntry.Metric.valid(); err != nil {
-			measurement.err = errors.Join(measurement.err, err)
+		if metricEntry != nil && metricEntry.Metric != nil {
+			if err := metricEntry.Metric.valid(); err != nil {
+				measurement.err = errors.Join(measurement.err, err)
+			}
 		}
 	}
 
-	// metrics, metadata and peers are optional unless requested explicitly
-	// (valid("metrics"), ...). A runtime join carries only Peers, and an
-	// arena-allocated Measurement starts with a nil metrics slice.
-	measurement.ID = uuid.New().ID()
+	if measurement.ID == 0 {
+		measurement.ID = uuid.New().ID()
+	}
 
 	if err := errnie.Error(errnie.Require(map[string]any{
 		"ID":        measurement.ID,
 		"epoch":     measurement.Epoch,
 		"label":     measurement.Label,
 		"source":    measurement.Source,
-		"seqIdx":    measurement.SeqIdx,
-		"tick":      measurement.Tick,
-		"timestamp": measurement.Timestamp,
 		"at":        measurement.At,
 		"from":      measurement.From,
 		"maturity":  measurement.maturity,
 		"coherence": measurement.coherence,
-	})); err != nil {
+	}),
+		"source", measurement.Source,
+		"label", measurement.Label,
+	); err != nil {
 		measurement.err = errors.Join(measurement.err, err)
+	}
+
+	if measurement.Tick < 0 {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Validation, "tick must be non-negative", nil,
+		)))
+	}
+
+	if measurement.SeqIdx < 0 {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Validation, "seqIdx must be non-negative", nil,
+		)))
 	}
 
 	return measurement

@@ -42,5 +42,19 @@ func TestRouteFilters(t *testing.T) {
 			manifold := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
 			So(types.Filters(manifold), ShouldBeFalse)
 		})
+
+		Convey("Diagnostics route admits focused measurements for system visibility", func() {
+			types.SetRoute("diagnostics")
+			types.SetFocus("BTC/USD")
+
+			cvd := data.NewMeasurement(1, "BTC/USD", "cvd", 1, 1)
+			So(types.Filters(cvd), ShouldBeTrue)
+
+			manifold := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
+			So(types.Filters(manifold), ShouldBeTrue)
+
+			other := data.NewMeasurement(1, "ETH/USD", "cvd", 1, 1)
+			So(types.Filters(other), ShouldBeFalse)
+		})
 	})
 }

@@ -117,6 +117,37 @@ func (tee *UITee) Next() unsafe.Pointer {
 	return unsafe.Pointer(&payload)
 }
 
+/*
+IngressLength reports how many measurements are waiting in the ingress queue
+to be encoded by the background worker.
+*/
+func (tee *UITee) IngressLength() int {
+	if tee == nil || tee.ingress == nil {
+		return 0
+	}
+
+	return int(tee.ingress.Length())
+}
+
+/*
+EgressLength reports how many encoded FlatBuffer frames are queued waiting for
+client transmission.
+*/
+func (tee *UITee) EgressLength() int {
+	if tee == nil || tee.egress == nil {
+		return 0
+	}
+
+	return int(tee.egress.Length())
+}
+
+/*
+Pending returns the total backlog of un-transmitted items across ingress and egress.
+*/
+func (tee *UITee) Pending() int {
+	return tee.IngressLength() + tee.EgressLength()
+}
+
 func (tee *UITee) worker(ctx context.Context) {
 	for {
 		select {

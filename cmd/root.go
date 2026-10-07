@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -52,7 +51,8 @@ which allows a developer to easily override the config file.
 var embedded embed.FS
 
 var (
-	cfgFile string
+	cfgFile     string
+	captureFlag bool
 
 	// processStartedAt is the process start instant the Hindsight Run identity
 	// is anchored to. It is captured once at process start so a run's identity
@@ -116,12 +116,20 @@ var (
 				return err
 			}
 
+			captureEnabled := captureFlag || viper.GetBool("hindsight.capture.enabled")
+
+			runStatus := "running"
+
+			if !captureEnabled {
+				runStatus = "observer"
+			}
+
 			// Register this process in the Runs metadata table so Hindsight can
 			// list a capture identity even when the tape is still thin.
 			if err := catalog.RecordRun(ctx, tables.Run{
 				Epoch:     epoch,
 				StartedAt: processStartedAt.UTC(),
-				Status:    "running",
+				Status:    runStatus,
 			}); err != nil {
 				errnie.Warn("[root] failed to record hindsight run: " + err.Error())
 			}
@@ -200,7 +208,12 @@ var (
 			}
 
 			errnie.Info("symm: initializing training and UI hub...")
-			storeTee := hindsight.NewStoreTee(ctx, "storeTee")
+			detectorTee := hindsight.NewStoreTee(ctx, "detectorTee")
+			var ingressStoreTee *hindsight.StoreTee
+
+			if captureEnabled {
+				ingressStoreTee = hindsight.NewStoreTee(ctx, "storeTee")
+			}
 
 			desk := broker.NewDesk(ctx, privateTransport, price, balance)
 
@@ -209,7 +222,7 @@ var (
 				price,
 				desk,
 				catalog,
-				storeTee,
+				detectorTee,
 				epoch,
 			)
 
@@ -222,6 +235,7 @@ var (
 			}
 
 			training.Reporter.SetTee(uiTee)
+			defer training.Reporter.Close()
 
 			uiTee.Transition(nmruntime.READY)
 
@@ -272,6 +286,12 @@ var (
 				}
 			}
 
+			workspaceTees := []nmruntime.Tee{uiTee}
+
+			if ingressStoreTee != nil {
+				workspaceTees = append(workspaceTees, ingressStoreTee)
+			}
+
 			workspace := nmruntime.NewWorkspace(
 				ctx,
 				2,
@@ -297,11 +317,11 @@ var (
 						training,
 					},
 				},
-				uiTee,
-				storeTee,
+				workspaceTees...,
 			)
 
 			hub := ui.NewHub(ctx, catalog, uiTee, workspace)
+			hub.SetStoreTee(ingressStoreTee)
 			hub.SetCognitionSource(training.Model)
 			hub.SetFragmentsSource(training.Rehearsal.Chart)
 			hub.SetLearningSource(training)
@@ -338,9 +358,9 @@ var (
 
 			// Start consumers before opening any ingress. All construction and
 			// seeding have completed at this point.
-			for _, runsys := range []nmruntime.RuntimeSystem{
+			runsystems := []nmruntime.RuntimeSystem{
 				uiTee,
-				storeTee,
+				detectorTee,
 				hub,
 				manifoldSolver,
 				resonanceSolver,
@@ -355,7 +375,13 @@ var (
 				sentimentSignal,
 				toxicitySignal,
 				workspace,
-			} {
+			}
+
+			if ingressStoreTee != nil {
+				runsystems = append(runsystems, ingressStoreTee)
+			}
+
+			for _, runsys := range runsystems {
 				runsys.Transition(nmruntime.READY)
 			}
 
@@ -383,9 +409,11 @@ var (
 				}()
 			}
 
-			go func() {
-				drainErrors <- catalog.Drain(ctx, epoch, storeTee)
-			}()
+			if ingressStoreTee != nil {
+				go func() {
+					drainErrors <- catalog.Drain(ctx, epoch, ingressStoreTee)
+				}()
+			}
 
 			manifoldSolver.Start()
 
@@ -504,190 +532,14 @@ var (
 
 							balance.Invalidate()
 						case "level3":
-							level3Msg, err := kraken.NewLevel3(buf)
-
-							if err == nil {
-								err = book.Update(level3Msg)
-							}
-
-							if err != nil {
-								// An undecodable frame or a failed apply (checksum
-								// divergence, a delta against an absent level) leaves
-								// the local book wrong. No resync is wired, so the
-								// symbol would stay diverged and every book reader
-								// would silently go dark: halt instead.
-								select {
-								case ingressHalted <- errnie.Err(
-									errnie.Internal,
-									fmt.Sprintf("symm: %s level3 book update failed", name),
-									err,
-								):
-								default:
-								}
-
+							if err := handleLevel3(buf, epoch, book, ingressStoreTee, name); err != nil {
+								halt(err)
 								return
-							}
-
-							for _, level3Data := range level3Msg.Data {
-								for sideIdx, orders := range [][]kraken.Level3Order{level3Data.Bids, level3Data.Asks} {
-									side := "bid"
-
-									if sideIdx == 1 {
-										side = "ask"
-									}
-
-									checksumStr := strconv.FormatInt(int64(level3Data.Checksum), 10)
-
-									for _, order := range orders {
-										measurement := data.NewMeasurement(
-											epoch,
-											level3Data.Symbol,
-											"spot:level3",
-											system.SeqIdx.Add(1),
-											system.Tick.Load(),
-											&data.StringEntry{
-												Key:   "type",
-												Value: level3Data.Type,
-											},
-											&data.StringEntry{
-												Key:   "order_id",
-												Value: order.OrderID,
-											},
-											&data.StringEntry{
-												Key:   "side",
-												Value: side,
-											},
-											&data.StringEntry{
-												Key:   "event",
-												Value: order.Event,
-											},
-											&data.StringEntry{
-												Key:   "checksum",
-												Value: checksumStr,
-											},
-										)
-
-										// Venue time is the order event time; without it the
-										// observation cannot be placed on the tape, so halt.
-										if order.Timestamp.IsZero() {
-											select {
-											case ingressHalted <- errnie.Err(
-												errnie.Validation,
-												fmt.Sprintf("symm: %s level3 order without timestamp", name),
-												nil,
-											):
-											default:
-											}
-
-											return
-										}
-
-										measurement.At = order.Timestamp.UTC()
-										measurement.From = measurement.At
-
-										measurement.Write(
-											data.NewMetric(
-												"checksum",
-												float64(level3Data.Checksum),
-												data.UnitDimensionless,
-												data.TimescaleInstantaneous,
-											),
-											data.NewExactMetric(
-												"limit_price",
-												order.LimitPrice,
-												data.UnitCurrency,
-												data.TimescaleInstantaneous,
-											),
-											data.NewExactMetric(
-												"order_qty",
-												order.OrderQty,
-												data.UnitVolume,
-												data.TimescaleInstantaneous,
-											),
-										)
-
-										storeTee.Push(measurement)
-									}
-								}
 							}
 						case "trade":
-							tradeMsg, err := kraken.NewTrade(buf)
-
-							if err != nil {
-								halt(errnie.Err(
-									errnie.UnprocessableContent,
-									fmt.Sprintf("symm: %s trade frame undecodable", name),
-									err,
-								))
-
+							if err := handleTrade(buf, epoch, price, workspace, ingressStoreTee, name, balance.Invalidate); err != nil {
+								halt(err)
 								return
-							}
-
-							if tradeMsg.IsSuccess() {
-								for _, tradeItem := range tradeMsg.Data {
-									price.Update(&tradeItem)
-
-									measurement := data.NewMeasurement(
-										epoch,
-										tradeItem.Symbol,
-										"spot:trade",
-										system.SeqIdx.Add(1),
-										system.Tick.Add(1),
-										&data.StringEntry{
-											Key:   "type",
-											Value: "trade",
-										},
-										&data.StringEntry{
-											Key:   "ord_type",
-											Value: tradeItem.OrderType,
-										},
-										&data.StringEntry{
-											Key:   "trade_id",
-											Value: strconv.FormatInt(tradeItem.TradeID, 10),
-										},
-										&data.StringEntry{
-											Key:   "side",
-											Value: tradeItem.Side,
-										},
-									)
-
-									// Venue time is the trade print time; without it the
-									// observation cannot be placed on the tape, so halt.
-									if tradeItem.Timestamp.IsZero() {
-										select {
-										case ingressHalted <- errnie.Err(
-											errnie.Validation,
-											fmt.Sprintf("symm: %s trade without timestamp", name),
-											nil,
-										):
-										default:
-										}
-
-										return
-									}
-
-									measurement.At = tradeItem.Timestamp.UTC()
-									measurement.From = measurement.At
-
-									measurement.Write(
-										data.NewExactMetric(
-											"price",
-											&tradeItem.Price,
-											data.UnitCurrency,
-											data.TimescaleInstantaneous,
-										),
-										data.NewMetric(
-											"qty",
-											tradeItem.Qty,
-											data.UnitVolume,
-											data.TimescaleInstantaneous,
-										),
-									)
-
-									workspace.Step(measurement)
-									storeTee.Push(measurement)
-									balance.Invalidate()
-								}
 							}
 						}
 					}
@@ -825,6 +677,13 @@ func init() {
 		"config",
 		"",
 		"path to config file (default: try cmd/cfg/config.yml, ./config.yml, $HOME/.symm/config.yml, then embedded default)",
+	)
+
+	rootCmd.Flags().BoolVar(
+		&captureFlag,
+		"capture",
+		false,
+		"enable live market and sensory data persistence to Iceberg storage (default: false, handled by symm collect)",
 	)
 }
 

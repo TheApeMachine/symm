@@ -18,6 +18,7 @@ type Learning struct {
 	Traders            int
 	CheckpointInterval time.Duration
 	RehearsalDropout   bool
+	PrecursorHorizon   int
 }
 
 func NewLearning() *Learning {
@@ -26,9 +27,11 @@ func NewLearning() *Learning {
 	// Operational persistence cadence, never a decision or outcome horizon.
 	viper.SetDefault("learning.checkpoint_interval", "1m")
 	viper.SetDefault("learning.rehearsal_dropout", false)
+	viper.SetDefault("learning.precursor_horizon", 8)
 	return &Learning{
 		Traders:            viper.GetInt("learning.traders"),
 		CheckpointInterval: viper.GetDuration("learning.checkpoint_interval"),
 		RehearsalDropout:   viper.GetBool("learning.rehearsal_dropout"),
+		PrecursorHorizon:   viper.GetInt("learning.precursor_horizon"),
 	}
 }

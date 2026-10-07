@@ -1,7 +1,6 @@
 package main
 
 import (
-	"go/ast"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -55,33 +54,7 @@ func TestBuildReport(t *testing.T) {
 	})
 }
 
-func TestScanCategoryConsumers(t *testing.T) {
-	Convey("Given the production CategorySchemas declaration", t, func() {
-		loaded, err := packages.Load(&packages.Config{
-			Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-				packages.NeedTypes | packages.NeedTypesInfo,
-			Dir: "../..",
-		}, "./types")
-		So(err, ShouldBeNil)
-		So(loaded, ShouldHaveLength, 1)
 
-		var edges []consumerEdge
-
-		for _, file := range loaded[0].Syntax {
-			edges = append(edges, scanCategoryConsumers(loaded[0], file, "types/category.go")...)
-		}
-
-		Convey("Every declared row becomes a side-normalized named consumer", func() {
-			So(len(edges), ShouldEqual, lenCategorySchemaRows(loaded[0].Syntax))
-			So(edges, ShouldContainConsumerEdge, consumerEdge{
-				ID:       metricID{Source: "toxicity", Metric: "fill_fraction_zscore", Side: "ask"},
-				Kind:     "bound",
-				Consumer: "category:LiquidityVacuum (github.com/theapemachine/symm/types)",
-				Package:  "github.com/theapemachine/symm/types",
-			})
-		})
-	})
-}
 
 func TestScanFineConsumers(t *testing.T) {
 	Convey("Given Manifold's declared forcing selectors", t, func() {
@@ -121,29 +94,7 @@ func TestScanFineConsumers(t *testing.T) {
 	})
 }
 
-func lenCategorySchemaRows(files []*ast.File) int {
-	count := 0
 
-	for _, file := range files {
-		ast.Inspect(file, func(node ast.Node) bool {
-			declaration, ok := node.(*ast.ValueSpec)
-
-			if !ok || !namesIdentifier(declaration.Names, "CategorySchemas") {
-				return true
-			}
-
-			for _, value := range declaration.Values {
-				if table, ok := value.(*ast.CompositeLit); ok {
-					count += len(table.Elts)
-				}
-			}
-
-			return false
-		})
-	}
-
-	return count
-}
 
 func shouldContainConsumerEdge(actual any, expected ...any) string {
 	edges := actual.([]consumerEdge)

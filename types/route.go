@@ -73,13 +73,15 @@ func Filters(measurement *data.Measurement) bool {
 		return isLogic(measurement, "resonance")
 	case "fluid":
 		return false
+	case "diagnostics":
+		return isFocus(measurement)
 	default:
 		return false
 	}
 }
 
 func isFocus(measurement *data.Measurement) bool {
-	if Focus() == "" {
+	if Focus() == "" || measurement.Label == "" {
 		return true
 	}
 
