@@ -31,12 +31,15 @@ const (
 	UnitBaseCurrency             Unit = "base_currency"
 	UnitQuoteCurrency            Unit = "quote_currency"
 	UnitQuantity                 Unit = "quantity"
+	UnitSignedQuantity           Unit = "signed_quantity"
 	UnitVolume                   Unit = "volume"
 	UnitNotional                 Unit = "notional"
+	UnitSignedNotional           Unit = "signed_notional"
 	UnitDistance                 Unit = "distance"
 
 	// Discrete Counts
-	UnitCount Unit = "count"
+	UnitCount       Unit = "count"
+	UnitIndexOffset Unit = "index_offset"
 
 	// Rates & Dynamics
 	UnitRate         Unit = "rate"
@@ -47,6 +50,7 @@ const (
 	UnitVelocity     Unit = "velocity"
 	UnitAcceleration Unit = "acceleration"
 	UnitVariance     Unit = "variance"
+	UnitCovariance   Unit = "covariance"
 
 	// Time & Duration
 	UnitDuration    Unit = "duration"
@@ -54,6 +58,7 @@ const (
 	UnitMicrosecond Unit = "microsecond"
 	UnitMillisecond Unit = "millisecond"
 	UnitSecond      Unit = "second"
+	UnitTimeOffset  Unit = "time_offset_seconds"
 	UnitMinute      Unit = "minute"
 	UnitHour        Unit = "hour"
 )
