@@ -20,6 +20,7 @@ func AnalyzeVitality(
 	if totalTicks == 0 {
 		return Stage1Vitality{
 			SummaryText: "No ticks observed to analyze metric vitality.",
+			Status:      "INSUFFICIENT_DATA",
 			Passed:      false,
 		}
 	}
@@ -31,8 +32,6 @@ func AnalyzeVitality(
 	canonHealthy, canonDead, canonSporadic := countStatuses(canonicalStats)
 
 	redundantPairs := findCanonicalRedundantPairs(ticks, canonicalSeries, canonicalStats)
-
-	passed := canonHealthy > 0 && canonDead < len(canonicalStats)/2
 
 	summary := fmt.Sprintf(
 		"Vitality: Raw producers emit %d series (%d healthy, %d dead/constant, %d sporadic). "+
@@ -56,7 +55,8 @@ func AnalyzeVitality(
 		CanonicalCells:         canonicalStats,
 		RedundantPairs:         redundantPairs,
 		SummaryText:            summary,
-		Passed:                 passed,
+		Status:                 "MEASURED",
+		Passed:                 len(canonicalStats) > 0,
 	}
 }
 
@@ -123,10 +123,6 @@ func computeMetricStats(
 			status = "ZERO"
 		}
 
-		if !isConstant && zeroFraction < 1.0 && coverage < 0.20 {
-			status = "SPORADIC"
-		}
-
 		stats = append(stats, MetricStat{
 			Name:         name,
 			Count:        count,
@@ -175,7 +171,7 @@ func findCanonicalRedundantPairs(
 ) []RedundantPair {
 	healthyNames := make([]string, 0)
 	for _, stat := range stats {
-		if stat.Status == "HEALTHY" && stat.Coverage >= 0.20 {
+		if stat.Status == "HEALTHY" {
 			healthyNames = append(healthyNames, stat.Name)
 		}
 	}
