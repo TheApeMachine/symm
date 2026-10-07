@@ -75,7 +75,8 @@ type Stage1Vitality struct {
 	CanonicalCells         []MetricStat    `json:"canonical_cells"`
 	RedundantPairs         []RedundantPair `json:"redundant_pairs"`
 	SummaryText            string          `json:"summary_text"`
-	Passed                 bool            `json:"passed"`
+	Status                 string          `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed                 bool            `json:"passed"` // compatibility: true when experiment executed with sufficient data
 }
 
 /*
@@ -149,7 +150,8 @@ type Stage4TokenDynamics struct {
 	EntropyReductionBits  float64                   `json:"entropy_reduction_bits"`
 	Transitions           map[string]map[string]int `json:"transitions"`
 	SummaryText           string                    `json:"summary_text"`
-	Passed                bool                      `json:"passed"`
+	Status                string                    `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed                bool                      `json:"passed"` // compatibility: true when experiment executed with sufficient data
 }
 
 /*
