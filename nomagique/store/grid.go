@@ -126,11 +126,11 @@ func (pair *PairStats) affinity() float64 {
 	evidence := pair.Weight
 
 	if corr, ok := pair.correlation(); ok {
-		strength = corr
+		strength = math.Abs(corr)
 	}
 
 	if _, ok := pair.correlation(); !ok {
-		strength = float64(pair.Same-pair.Opposite) / float64(pair.Total)
+		strength = math.Abs(float64(pair.Same-pair.Opposite)) / float64(pair.Total)
 
 		if evidence <= 0 {
 			evidence = float64(pair.Total)

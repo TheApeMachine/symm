@@ -1,20 +1,49 @@
 package audit
 
 /*
-MetricStat holds vitality metrics for a single observed metric.
+ContractBreach records one metric's violation of its mathematical contract.
+*/
+type ContractBreach struct {
+	Metric         string  `json:"metric"`
+	DeclaredUnit   string  `json:"declared_unit"`
+	DeclaredDomain string  `json:"declared_domain"`
+	ViolationType  string  `json:"violation_type"`
+	BreachCount    int     `json:"breach_count"`
+	TotalSamples   int     `json:"total_samples"`
+	BreachFraction float64 `json:"breach_fraction"`
+	MinVal         float64 `json:"min_val"`
+	MaxVal         float64 `json:"max_val"`
+	MeanVal        float64 `json:"mean_val"`
+}
+
+/*
+Stage0Contract contains the mathematical contract audit of all ingested metrics.
+*/
+type Stage0Contract struct {
+	TotalMetricsChecked   int              `json:"total_metrics_checked"`
+	BreachingMetricsCount int              `json:"breaching_metrics_count"`
+	TotalBreaches         int              `json:"total_breaches"`
+	Breaches              []ContractBreach `json:"breaches"`
+	DiagnosisText         string           `json:"diagnosis_text"`
+	SummaryText           string           `json:"summary_text"`
+	Passed                bool             `json:"passed"`
+}
+
+/*
+MetricStat holds vitality metrics for a single observed metric or canonical grid cell.
 */
 type MetricStat struct {
-	Name        string  `json:"name"`
-	Count       int     `json:"count"`
-	TotalTicks  int     `json:"total_ticks"`
-	Coverage    float64 `json:"coverage"`
-	Mean        float64 `json:"mean"`
-	Variance    float64 `json:"variance"`
-	Min         float64 `json:"min"`
-	Max         float64 `json:"max"`
+	Name         string  `json:"name"`
+	Count        int     `json:"count"`
+	TotalTicks   int     `json:"total_ticks"`
+	Coverage     float64 `json:"coverage"`
+	Mean         float64 `json:"mean"`
+	Variance     float64 `json:"variance"`
+	Min          float64 `json:"min"`
+	Max          float64 `json:"max"`
 	ZeroFraction float64 `json:"zero_fraction"`
-	IsConstant  bool    `json:"is_constant"`
-	Status      string  `json:"status"` // "HEALTHY", "SPORADIC", "DEAD", "ZERO"
+	IsConstant   bool    `json:"is_constant"`
+	Status       string  `json:"status"` // "HEALTHY", "SPORADIC", "DEAD", "ZERO"
 }
 
 /*
@@ -27,17 +56,26 @@ type RedundantPair struct {
 }
 
 /*
-Stage1Vitality contains the results of the metric vitality and redundancy analysis.
+Stage1Vitality contains the results of the metric vitality and redundancy analysis,
+split cleanly between raw producer output health and canonical grid input health.
 */
 type Stage1Vitality struct {
-	TotalMetrics    int             `json:"total_metrics"`
-	HealthyMetrics  int             `json:"healthy_metrics"`
-	DeadMetrics     int             `json:"dead_metrics"`
-	SporadicMetrics int             `json:"sporadic_metrics"`
-	Metrics         []MetricStat    `json:"metrics"`
-	RedundantPairs  []RedundantPair `json:"redundant_pairs"`
-	SummaryText     string          `json:"summary_text"`
-	Passed          bool            `json:"passed"`
+	// Raw producer outputs (e.g. 7,134 peer-qualified named series)
+	RawProducerMetrics int          `json:"raw_producer_metrics"`
+	RawHealthyMetrics  int          `json:"raw_healthy_metrics"`
+	RawDeadMetrics     int          `json:"raw_dead_metrics"`
+	RawSporadicMetrics int          `json:"raw_sporadic_metrics"`
+	RawMetrics         []MetricStat `json:"raw_metrics"`
+
+	// Canonical grid cells (e.g. 377 canonical dimensions after peer aggregation)
+	CanonicalGridCells     int             `json:"canonical_grid_cells"`
+	CanonicalHealthyCells  int             `json:"canonical_healthy_cells"`
+	CanonicalDeadCells     int             `json:"canonical_dead_cells"`
+	CanonicalSporadicCells int             `json:"canonical_sporadic_cells"`
+	CanonicalCells         []MetricStat    `json:"canonical_cells"`
+	RedundantPairs         []RedundantPair `json:"redundant_pairs"`
+	SummaryText            string          `json:"summary_text"`
+	Passed                 bool            `json:"passed"`
 }
 
 /*
@@ -56,18 +94,18 @@ type SympathyNullDistribution struct {
 Stage2Sympathy contains pairwise relationship statistics compared against the shuffled null.
 */
 type Stage2Sympathy struct {
-	TotalPairs         int                      `json:"total_pairs"`
-	PositivePairs      int                      `json:"positive_pairs"`
-	InversePairs       int                      `json:"inverse_pairs"`
-	RealMean           float64                  `json:"real_mean"`
-	RealStd            float64                  `json:"real_std"`
-	RealBins           []float64                `json:"real_bins"`
-	RealCounts         []int                    `json:"real_counts"`
-	NullDistribution   SympathyNullDistribution `json:"null_distribution"`
-	SeparationRatio    float64                  `json:"separation_ratio"`    // Fraction of pairs exceeding 95th percentile null
-	KSStatistic        float64                  `json:"ks_statistic"`        // Kolmogorov-Smirnov distance vs null
-	SummaryText        string                   `json:"summary_text"`
-	Passed             bool                     `json:"passed"`
+	TotalPairs       int                      `json:"total_pairs"`
+	PositivePairs    int                      `json:"positive_pairs"`
+	InversePairs     int                      `json:"inverse_pairs"`
+	RealMean         float64                  `json:"real_mean"`
+	RealStd          float64                  `json:"real_std"`
+	RealBins         []float64                `json:"real_bins"`
+	RealCounts       []int                    `json:"real_counts"`
+	NullDistribution SympathyNullDistribution `json:"null_distribution"`
+	SeparationRatio  float64                  `json:"separation_ratio"` // Fraction of pairs exceeding 95th percentile null
+	KSStatistic      float64                  `json:"ks_statistic"`     // Kolmogorov-Smirnov distance vs null
+	SummaryText      string                   `json:"summary_text"`
+	Passed           bool                     `json:"passed"`
 }
 
 /*
@@ -97,36 +135,50 @@ type Stage3GridStability struct {
 }
 
 /*
-Stage4TokenDynamics records region token emissions and state transition structure.
+Stage4TokenDynamics records region token emissions and state transition structure on unseen data.
 */
 type Stage4TokenDynamics struct {
-	TotalEmissions        int                  `json:"total_emissions"`
-	UniqueTokens          int                  `json:"unique_tokens"`
-	TokenFrequencies      map[string]int       `json:"token_frequencies"`
-	MaxTokenDominance     float64              `json:"max_token_dominance"`
-	TransitionEntropy     float64              `json:"transition_entropy"`
-	NullTransitionEntropy float64              `json:"null_transition_entropy"`
-	EntropyReductionBits  float64              `json:"entropy_reduction_bits"`
+	TotalEmissions        int                       `json:"total_emissions"`
+	UniqueTokens          int                       `json:"unique_tokens"`
+	TokenFrequencies      map[string]int            `json:"token_frequencies"`
+	MaxTokenDominance     float64                   `json:"max_token_dominance"`
+	TransitionEntropy     float64                   `json:"transition_entropy"`
+	NullTransitionEntropy float64                   `json:"null_transition_entropy"`
+	EntropyReductionBits  float64                   `json:"entropy_reduction_bits"`
 	Transitions           map[string]map[string]int `json:"transitions"`
-	SummaryText           string               `json:"summary_text"`
-	Passed                bool                 `json:"passed"`
+	SummaryText           string                    `json:"summary_text"`
+	Passed                bool                      `json:"passed"`
 }
 
 /*
-Stage5PrecursorSeparation tests whether token sequences preceding B/C are distinct from background.
+PrecursorHypothesis evaluates one specific precursor hypothesis against its control.
+*/
+type PrecursorHypothesis struct {
+	Name              string         `json:"name"`
+	Description       string         `json:"description"`
+	EventTokens       map[string]int `json:"event_tokens"`
+	ControlTokens     map[string]int `json:"control_tokens"`
+	EventTokenCount   int            `json:"event_token_count"`
+	ControlTokenCount int            `json:"control_token_count"`
+	DivergenceBits    float64        `json:"divergence_bits"`
+	NullDivergence95  float64        `json:"null_divergence_95"`
+	SeparationRatio   float64        `json:"separation_ratio"`
+	Status            string         `json:"status"` // "PASS", "FAIL", "INSUFFICIENT_DATA"
+	Passed            bool           `json:"passed"`
+}
+
+/*
+Stage5PrecursorSeparation tests whether token sequences preceding B (ignition) and C (exhaustion)
+are distinct from negative controls and pure background tape.
 */
 type Stage5PrecursorSeparation struct {
-	DetectionsFound     int            `json:"detections_found"`
-	ExcursionsFound     []string       `json:"excursions_found,omitempty"`
-	PrecursorTicks      int            `json:"precursor_ticks"`
-	PrecursorDivergence float64        `json:"precursor_divergence"`
-	NullDivergenceMean  float64        `json:"null_divergence_mean"`
-	NullDivergence95    float64        `json:"null_divergence_95"`
-	SeparationRatio     float64        `json:"separation_ratio"`
-	PrecursorTokens     map[string]int `json:"precursor_tokens,omitempty"`
-	BackgroundTokens    map[string]int `json:"background_tokens,omitempty"`
-	SummaryText         string         `json:"summary_text"`
-	Passed              bool           `json:"passed"`
+	DetectionsFound      int                 `json:"detections_found"`
+	ExcursionsFound      []string            `json:"excursions_found,omitempty"`
+	IgnitionHypothesis   PrecursorHypothesis `json:"ignition_hypothesis"`   // A -> B
+	ExhaustionHypothesis PrecursorHypothesis `json:"exhaustion_hypothesis"` // B -> C
+	BackgroundTokens     map[string]int      `json:"background_tokens,omitempty"`
+	SummaryText          string              `json:"summary_text"`
+	Passed               bool                `json:"passed"`
 }
 
 /*
@@ -137,6 +189,7 @@ type AuditReport struct {
 	Epoch           int64                     `json:"epoch"`
 	Symbol          string                    `json:"symbol"`
 	TotalTicks      int                       `json:"total_ticks"`
+	Contract        Stage0Contract            `json:"contract"`
 	Vitality        Stage1Vitality            `json:"vitality"`
 	Sympathy        Stage2Sympathy            `json:"sympathy"`
 	GridStability   Stage3GridStability       `json:"grid_stability"`

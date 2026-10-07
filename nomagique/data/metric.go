@@ -60,6 +60,22 @@ func NewExactMetric(
 	}
 }
 
+func (metric *Metric) Unit() Unit {
+	if metric == nil {
+		return ""
+	}
+
+	return metric.unit
+}
+
+func (metric *Metric) Timescale() Timescale {
+	if metric == nil {
+		return ""
+	}
+
+	return metric.timescale
+}
+
 /*
 finalize is called from the Measurement to set the derived values, like
 center, scale, normalized, and standardized values. An invalid observation

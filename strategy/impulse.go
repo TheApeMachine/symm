@@ -56,14 +56,14 @@ func (impulse *impulse) observe(prior *data.Measurement) map[string]store.Excita
 		impulse.live[prior.Label] = stream
 	}
 
-	observed := channelsFrom(sensoryMeasurements(prior)...)
-	deformations := stream.Deform(observed.raw)
+	observed := ChannelsFrom(SensoryMeasurements(prior)...)
+	deformations := stream.Deform(observed.Raw)
 
 	if !impulse.grid.IsSettled() {
 		impulse.grid.Update(prior.Tick, deformations)
 	}
 
-	return observed.excite(deformations)
+	return observed.Excite(deformations)
 }
 
 /*
@@ -202,9 +202,9 @@ func (impulse *impulse) tokens(rows []*data.Measurement) ([]int64, [][]byte, tap
 
 		tick := group[0].Tick
 		stats.uniqueTicks++
-		observed := channelsFrom(group...)
-		deforms := stream.Deform(observed.raw)
-		excited := observed.excite(deforms)
+		observed := ChannelsFrom(group...)
+		deforms := stream.Deform(observed.Raw)
+		excited := observed.Excite(deforms)
 		scores := impulse.grid.RegionScores(excited)
 
 		if len(scores) > 0 && scores[0].Score > maxScore {
@@ -237,24 +237,24 @@ func (impulse *impulse) tokens(rows []*data.Measurement) ([]int64, [][]byte, tap
 }
 
 /*
-channels is one pass of grid cells: the raw value of every cell and the
+Channels is one pass of grid cells: the raw value of every cell and the
 confidence of the Measurements that observed it (data.Measurement.Confidence).
 Confidence belongs to the Measurement, not to its Metrics, so every cell a
 Measurement feeds carries the same one.
 */
-type channels struct {
-	raw        map[string]float64
-	confidence map[string]float64
+type Channels struct {
+	Raw        map[string]float64
+	Confidence map[string]float64
 }
 
 /*
-channelsFrom extracts one raw value per grid cell from measurements. Several
+ChannelsFrom extracts one raw value per grid cell from measurements. Several
 observations of one cell in a pass (the same label from two producers, or one
 pair fact "<fact>@<peer>" across every peer symbol) are reduced to their
 mean, and so is the confidence of the Measurements behind them, so the cell
 does not depend on peer order.
 */
-func channelsFrom(measurements ...*data.Measurement) channels {
+func ChannelsFrom(measurements ...*data.Measurement) Channels {
 	raw := make(map[string]float64)
 	confidence := make(map[string]float64)
 	counts := make(map[string]int)
@@ -283,28 +283,28 @@ func channelsFrom(measurements ...*data.Measurement) channels {
 		confidence[key] /= float64(count)
 	}
 
-	return channels{raw: raw, confidence: confidence}
+	return Channels{Raw: raw, Confidence: confidence}
 }
 
 /*
-excite pairs every deformation of the pass with the confidence of its cell.
+Excite pairs every deformation of the pass with the confidence of its cell.
 */
-func (channels channels) excite(deformations map[string]float64) map[string]store.Excitation {
+func (channels Channels) Excite(deformations map[string]float64) map[string]store.Excitation {
 	pass := make(map[string]store.Excitation, len(deformations))
 
 	for key, deformation := range deformations {
-		pass[key] = store.Excitation{Deformation: deformation, Confidence: channels.confidence[key]}
+		pass[key] = store.Excitation{Deformation: deformation, Confidence: channels.Confidence[key]}
 	}
 
 	return pass
 }
 
 /*
-sensoryMeasurements answers the Stage 0 sensory producers of a measurement
+SensoryMeasurements answers the Stage 0 sensory producers of a measurement
 and its peers. Resonance and manifold are execution vetoes (see
 paper.authorized), not grid cells.
 */
-func sensoryMeasurements(prior *data.Measurement) []*data.Measurement {
+func SensoryMeasurements(prior *data.Measurement) []*data.Measurement {
 	if prior.Source != "runtime:join" {
 		if isSolver(prior) {
 			return nil

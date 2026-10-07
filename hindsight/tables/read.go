@@ -55,7 +55,7 @@ func (catalog *Catalog) scan(
 			predicate = filter
 		}
 
-		var options []icetable.ScanOption
+		options := []icetable.ScanOption{icetable.WitMaxConcurrency(8)}
 
 		if predicate != nil {
 			options = append(options, icetable.WithRowFilter(predicate))

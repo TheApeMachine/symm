@@ -4,18 +4,17 @@ import (
 	"fmt"
 	"math"
 	"sort"
-
-	"github.com/theapemachine/symm/nomagique/store"
 )
 
 /*
-AnalyzeVitality processes an aligned sequence of tick observations and computes Stage 1 metrics.
-ticks is an ordered slice of ticks.
-metricSeries maps metricName -> map[tick]value.
+AnalyzeVitality processes both raw producer series (e.g. 7,134 peer-qualified metrics)
+and canonical grid input cells (e.g. 377 cells after ChannelsFrom aggregation),
+evaluating coverage, dead/sporadic series, and canonical redundancy.
 */
 func AnalyzeVitality(
 	ticks []int64,
-	metricSeries map[string]map[int64]float64,
+	rawSeries map[string]map[int64]float64,
+	canonicalSeries map[string]map[int64]float64,
 ) Stage1Vitality {
 	totalTicks := len(ticks)
 	if totalTicks == 0 {
@@ -25,23 +24,60 @@ func AnalyzeVitality(
 		}
 	}
 
-	result := Stage1Vitality{
-		Metrics:        make([]MetricStat, 0, len(metricSeries)),
-		RedundantPairs: make([]RedundantPair, 0),
-	}
+	rawStats := computeMetricStats(ticks, rawSeries)
+	canonicalStats := computeMetricStats(ticks, canonicalSeries)
 
-	for name, series := range metricSeries {
-		count := len(series)
+	rawHealthy, rawDead, rawSporadic := countStatuses(rawStats)
+	canonHealthy, canonDead, canonSporadic := countStatuses(canonicalStats)
+
+	redundantPairs := findCanonicalRedundantPairs(ticks, canonicalSeries, canonicalStats)
+
+	passed := canonHealthy > 0 && canonDead < len(canonicalStats)/2
+
+	summary := fmt.Sprintf(
+		"Vitality: Raw producers emit %d series (%d healthy, %d dead/constant, %d sporadic). "+
+			"Canonical grid universe aggregates to %d cells (%d healthy, %d dead, %d sporadic). "+
+			"Canonical redundancy: %d cell pairs (|r| >= 0.95).",
+		len(rawStats), rawHealthy, rawDead, rawSporadic,
+		len(canonicalStats), canonHealthy, canonDead, canonSporadic,
+		len(redundantPairs),
+	)
+
+	return Stage1Vitality{
+		RawProducerMetrics:     len(rawStats),
+		RawHealthyMetrics:      rawHealthy,
+		RawDeadMetrics:         rawDead,
+		RawSporadicMetrics:     rawSporadic,
+		RawMetrics:             rawStats,
+		CanonicalGridCells:     len(canonicalStats),
+		CanonicalHealthyCells:  canonHealthy,
+		CanonicalDeadCells:     canonDead,
+		CanonicalSporadicCells: canonSporadic,
+		CanonicalCells:         canonicalStats,
+		RedundantPairs:         redundantPairs,
+		SummaryText:            summary,
+		Passed:                 passed,
+	}
+}
+
+func computeMetricStats(
+	ticks []int64,
+	series map[string]map[int64]float64,
+) []MetricStat {
+	totalTicks := len(ticks)
+	stats := make([]MetricStat, 0, len(series))
+
+	for name, tickMap := range series {
+		count := len(tickMap)
 		coverage := float64(count) / float64(totalTicks)
 
 		if count == 0 {
-			result.DeadMetrics++
-			result.Metrics = append(result.Metrics, MetricStat{
-				Name:        name,
-				TotalTicks:  totalTicks,
-				Coverage:    0,
-				IsConstant:  true,
-				Status:      "DEAD",
+			stats = append(stats, MetricStat{
+				Name:       name,
+				TotalTicks: totalTicks,
+				Coverage:   0,
+				IsConstant: true,
+				Status:     "DEAD",
 			})
 			continue
 		}
@@ -53,7 +89,7 @@ func AnalyzeVitality(
 		zeroCount := 0
 		index := 0
 
-		for _, val := range series {
+		for _, val := range tickMap {
 			index++
 			delta := val - mean
 			mean += delta / float64(index)
@@ -62,11 +98,9 @@ func AnalyzeVitality(
 			if val < minVal {
 				minVal = val
 			}
-
 			if val > maxVal {
 				maxVal = val
 			}
-
 			if val == 0 {
 				zeroCount++
 			}
@@ -83,24 +117,17 @@ func AnalyzeVitality(
 		status := "HEALTHY"
 		if isConstant {
 			status = "DEAD"
-			result.DeadMetrics++
 		}
 
 		if !isConstant && zeroFraction == 1.0 {
 			status = "ZERO"
-			result.DeadMetrics++
 		}
 
 		if !isConstant && zeroFraction < 1.0 && coverage < 0.20 {
 			status = "SPORADIC"
-			result.SporadicMetrics++
 		}
 
-		if status == "HEALTHY" {
-			result.HealthyMetrics++
-		}
-
-		result.Metrics = append(result.Metrics, MetricStat{
+		stats = append(stats, MetricStat{
 			Name:         name,
 			Count:        count,
 			TotalTicks:   totalTicks,
@@ -115,47 +142,45 @@ func AnalyzeVitality(
 		})
 	}
 
-	result.TotalMetrics = len(result.Metrics)
-
-	sort.Slice(result.Metrics, func(first, second int) bool {
-		return result.Metrics[first].Name < result.Metrics[second].Name
+	sort.Slice(stats, func(first, second int) bool {
+		return stats[first].Name < stats[second].Name
 	})
 
-	result.RedundantPairs = findRedundantPairs(ticks, metricSeries, result.Metrics)
+	return stats
+}
 
-	result.Passed = result.HealthyMetrics > 0 && result.DeadMetrics < result.TotalMetrics/2
-	result.SummaryText = fmt.Sprintf(
-		"Vitality: %d/%d healthy, %d dead/constant, %d sporadic. Found %d redundant metric pairs (|r| >= 0.95).",
-		result.HealthyMetrics, result.TotalMetrics, result.DeadMetrics, result.SporadicMetrics, len(result.RedundantPairs),
-	)
-
-	return result
+func countStatuses(stats []MetricStat) (int, int, int) {
+	healthy, dead, sporadic := 0, 0, 0
+	for _, s := range stats {
+		switch s.Status {
+		case "HEALTHY":
+			healthy++
+		case "DEAD", "ZERO":
+			dead++
+		case "SPORADIC":
+			sporadic++
+		}
+	}
+	return healthy, dead, sporadic
 }
 
 /*
-findRedundantPairs checks pairwise correlations among healthy metrics.
+findCanonicalRedundantPairs checks pairwise correlations across ALL healthy canonical grid cells.
+Does not impose arbitrary ordering-dependent subsets.
 */
-func findRedundantPairs(
+func findCanonicalRedundantPairs(
 	ticks []int64,
 	series map[string]map[int64]float64,
 	stats []MetricStat,
 ) []RedundantPair {
 	healthyNames := make([]string, 0)
-	seenCanonical := make(map[string]struct{})
 	for _, stat := range stats {
 		if stat.Status == "HEALTHY" && stat.Coverage >= 0.20 {
-			canonical := store.CellKey(stat.Name)
-			if _, exists := seenCanonical[canonical]; !exists {
-				seenCanonical[canonical] = struct{}{}
-				healthyNames = append(healthyNames, stat.Name)
-			}
+			healthyNames = append(healthyNames, stat.Name)
 		}
 	}
 
 	sort.Strings(healthyNames)
-	if len(healthyNames) > 100 {
-		healthyNames = healthyNames[:100]
-	}
 
 	redundant := make([]RedundantPair, 0)
 	totalHealthy := len(healthyNames)

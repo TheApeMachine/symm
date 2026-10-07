@@ -10,27 +10,20 @@ import (
 )
 
 /*
-AnalyzeSympathy evaluates pairwise relationships against an empirical shuffled null.
-ticks is the ordered list of observation points.
-series maps metricName -> map[tick]value.
-permutations is the number of shuffle iterations (e.g. 50).
+AnalyzeSympathy evaluates pairwise relationships using production-faithful deformations
+(produced by store.Stream.Deform) compared against an empirical shuffled null.
+Both positive alignment and inverse opposition are recognized as sympathy structure.
 */
 func AnalyzeSympathy(
 	ticks []int64,
-	series map[string]map[int64]float64,
-	healthyMetrics []MetricStat,
+	canonicalSeries map[string]map[int64]float64,
+	healthyCells []MetricStat,
 	permutations int,
 ) Stage2Sympathy {
-	seenCanonical := make(map[string]struct{})
 	activeNames := make([]string, 0)
-
-	for _, stat := range healthyMetrics {
+	for _, stat := range healthyCells {
 		if stat.Status == "HEALTHY" && stat.Coverage >= 0.20 {
-			canonical := store.CellKey(stat.Name)
-			if _, exists := seenCanonical[canonical]; !exists {
-				seenCanonical[canonical] = struct{}{}
-				activeNames = append(activeNames, stat.Name)
-			}
+			activeNames = append(activeNames, stat.Name)
 		}
 	}
 
@@ -38,20 +31,60 @@ func AnalyzeSympathy(
 
 	if len(activeNames) < 2 {
 		return Stage2Sympathy{
-			SummaryText: "Insufficient active metrics (need at least 2) for sympathy analysis.",
+			SummaryText: "Insufficient active canonical cells (need at least 2) for sympathy analysis.",
 			Passed:      false,
 		}
 	}
 
-	// Limit to top 50 metrics to prevent O(N^2) explosion during permutation test
-	if len(activeNames) > 50 {
-		activeNames = activeNames[:50]
+	if permutations <= 0 {
+		permutations = 50
 	}
 
-	realConcordances := computeAllConcordances(ticks, series, activeNames)
+	// 1. Convert canonical raw measurements into zero-centered deformations using store.Stream
+	stream := store.NewStream()
+	deformationSeries := make(map[string]map[int64]float64, len(activeNames))
+	for _, name := range activeNames {
+		deformationSeries[name] = make(map[int64]float64)
+	}
+
+	for _, tick := range ticks {
+		pass := make(map[string]float64, len(activeNames))
+		for _, name := range activeNames {
+			if val, ok := canonicalSeries[name][tick]; ok {
+				pass[name] = val
+			}
+		}
+
+		if len(pass) > 0 {
+			deforms := stream.Deform(pass)
+			for name, defVal := range deforms {
+				deformationSeries[name][tick] = defVal
+			}
+		}
+	}
+
+	// 2. Build dense vectors across ticks
+	denseVectors := make([][]float64, len(activeNames))
+	for i, name := range activeNames {
+		vec := make([]float64, len(ticks))
+		for tIdx, tick := range ticks {
+			vec[tIdx] = deformationSeries[name][tick]
+		}
+		denseVectors[i] = vec
+	}
+
+	realConcordances := make([]float64, 0, len(activeNames)*(len(activeNames)-1)/2)
+	for i := 0; i < len(activeNames); i++ {
+		for j := i + 1; j < len(activeNames); j++ {
+			if corr, ok := computeVectorCorrelation(denseVectors[i], denseVectors[j]); ok {
+				realConcordances = append(realConcordances, corr)
+			}
+		}
+	}
+
 	if len(realConcordances) == 0 {
 		return Stage2Sympathy{
-			SummaryText: "No overlapping observations found between metric pairs.",
+			SummaryText: "No overlapping observations found between canonical cell pairs.",
 			Passed:      false,
 		}
 	}
@@ -72,39 +105,30 @@ func AnalyzeSympathy(
 
 	realBins, realCounts := histogram(realConcordances, 25, -1.0, 1.0)
 
-	// Permutation Null: independently shuffle metric values across ticks
+	// 3. Permutation Null: independently shuffle deformation sequences across ticks
 	nullValues := make([]float64, 0, len(realConcordances)*permutations)
 	rng := rand.New(rand.NewSource(1791))
 
+	shuffled := make([][]float64, len(denseVectors))
+	for i := range denseVectors {
+		shuffled[i] = make([]float64, len(denseVectors[i]))
+	}
+
 	for iter := 0; iter < permutations; iter++ {
-		shuffledSeries := make(map[string]map[int64]float64, len(activeNames))
-
-		for _, name := range activeNames {
-			vals := make([]float64, 0, len(ticks))
-			for _, tick := range ticks {
-				if val, ok := series[name][tick]; ok {
-					vals = append(vals, val)
-				}
-			}
-
-			rng.Shuffle(len(vals), func(first, second int) {
-				vals[first], vals[second] = vals[second], vals[first]
+		for i := range denseVectors {
+			copy(shuffled[i], denseVectors[i])
+			rng.Shuffle(len(shuffled[i]), func(a, b int) {
+				shuffled[i][a], shuffled[i][b] = shuffled[i][b], shuffled[i][a]
 			})
-
-			shuffledMap := make(map[int64]float64, len(vals))
-			valIndex := 0
-			for _, tick := range ticks {
-				if _, ok := series[name][tick]; ok {
-					shuffledMap[tick] = vals[valIndex]
-					valIndex++
-				}
-			}
-
-			shuffledSeries[name] = shuffledMap
 		}
 
-		iterConcordances := computeAllConcordances(ticks, shuffledSeries, activeNames)
-		nullValues = append(nullValues, iterConcordances...)
+		for i := 0; i < len(shuffled); i++ {
+			for j := i + 1; j < len(shuffled); j++ {
+				if corr, ok := computeVectorCorrelation(shuffled[i], shuffled[j]); ok {
+					nullValues = append(nullValues, corr)
+				}
+			}
+		}
 	}
 
 	sort.Float64s(nullValues)
@@ -119,6 +143,7 @@ func AnalyzeSympathy(
 
 	nullBins, nullCounts := histogram(nullValues, 25, -1.0, 1.0)
 
+	// Fraction of real absolute affinities that exceed null 95th percentile
 	exceedingNullCount := 0
 	for _, val := range realConcordances {
 		if math.Abs(val) > math.Abs(p95) {
@@ -129,21 +154,24 @@ func AnalyzeSympathy(
 	separationRatio := float64(exceedingNullCount) / float64(len(realConcordances))
 	ksStat := computeKolmogorovSmirnov(realConcordances, nullValues)
 
-	passed := separationRatio >= 0.15 || ksStat >= 0.20
+	// Empirical pass condition: distribution separates from shuffled null
+	passed := separationRatio >= 0.10 && ksStat >= 0.10
 
 	summary := fmt.Sprintf(
-		"Sympathy: %d pairs analyzed. Real vs Shuffled Null separation ratio = %.1f%% (KS-dist = %.3f). Positive: %d, Inverse: %d.",
-		len(realConcordances), separationRatio*100, ksStat, positiveCount, inverseCount,
+		"Sympathy: %d cell pairs analyzed on deformations. Real mean = %.3f vs Shuffled Null = %.3f (p95 = %.3f). "+
+			"Separation ratio = %.1f%% (KS = %.3f). Positive alignment: %d, Inverse opposition: %d.",
+		len(realConcordances), realMean, nullMean, p95,
+		separationRatio*100, ksStat, positiveCount, inverseCount,
 	)
 
 	return Stage2Sympathy{
-		TotalPairs:      len(realConcordances),
-		PositivePairs:   positiveCount,
-		InversePairs:    inverseCount,
-		RealMean:        realMean,
-		RealStd:         realStd,
-		RealBins:        realBins,
-		RealCounts:      realCounts,
+		TotalPairs:       len(realConcordances),
+		PositivePairs:    positiveCount,
+		InversePairs:     inverseCount,
+		RealMean:         realMean,
+		RealStd:          realStd,
+		RealBins:         realBins,
+		RealCounts:       realCounts,
 		NullDistribution: SympathyNullDistribution{
 			MeanConcordance: nullMean,
 			StdConcordance:  nullStd,
@@ -159,130 +187,108 @@ func AnalyzeSympathy(
 	}
 }
 
-func computeAllConcordances(
-	ticks []int64,
-	series map[string]map[int64]float64,
-	names []string,
-) []float64 {
-	results := make([]float64, 0, len(names)*(len(names)-1)/2)
-
-	for first := 0; first < len(names); first++ {
-		nameA := names[first]
-		seriesA := series[nameA]
-
-		for second := first + 1; second < len(names); second++ {
-			nameB := names[second]
-			seriesB := series[nameB]
-
-			concordance, ok := pairConcordance(ticks, seriesA, seriesB)
-			if ok {
-				results = append(results, concordance)
-			}
-		}
-	}
-
-	return results
-}
-
-/*
-pairConcordance calculates sign and magnitude agreement between two time series.
-Positive concordance indicates moving in the same direction; negative indicates inverse movement.
-*/
-func pairConcordance(
-	ticks []int64,
-	seriesA map[int64]float64,
-	seriesB map[int64]float64,
-) (float64, bool) {
-	alignedCount := 0
-	sumProduct := 0.0
-	sumA2 := 0.0
-	sumB2 := 0.0
-
-	for _, tick := range ticks {
-		valA, okA := seriesA[tick]
-		valB, okB := seriesB[tick]
-
-		if okA && okB {
-			alignedCount++
-			sumProduct += valA * valB
-			sumA2 += valA * valA
-			sumB2 += valB * valB
-		}
-	}
-
-	if alignedCount < 10 || sumA2 == 0 || sumB2 == 0 {
+func computeVectorCorrelation(a, b []float64) (float64, bool) {
+	if len(a) != len(b) || len(a) < 10 {
 		return 0, false
 	}
 
-	denominator := math.Sqrt(sumA2 * sumB2)
-	if denominator == 0 {
+	var sumA, sumB, sumAA, sumBB, sumAB float64
+	for i := 0; i < len(a); i++ {
+		va := a[i]
+		vb := b[i]
+		sumA += va
+		sumB += vb
+		sumAA += va * va
+		sumBB += vb * vb
+		sumAB += va * vb
+	}
+
+	n := float64(len(a))
+	varA := sumAA - (sumA*sumA)/n
+	varB := sumBB - (sumB*sumB)/n
+
+	if varA <= 1e-12 || varB <= 1e-12 {
 		return 0, false
 	}
 
-	score := sumProduct / denominator
-	if math.IsNaN(score) || math.IsInf(score, 0) {
+	cov := sumAB - (sumA*sumB)/n
+	denom := math.Sqrt(varA) * math.Sqrt(varB)
+	if denom <= 0 {
 		return 0, false
 	}
 
-	return score, true
+	return cov / denom, true
 }
 
-func histogram(values []float64, bins int, minVal, maxVal float64) ([]float64, []int) {
-	step := (maxVal - minVal) / float64(bins)
-	binEdges := make([]float64, bins+1)
-	counts := make([]int, bins)
-
-	for idx := 0; idx <= bins; idx++ {
-		binEdges[idx] = minVal + float64(idx)*step
-	}
-
-	for _, val := range values {
-		if val < minVal || val > maxVal {
-			continue
-		}
-
-		binIdx := int((val - minVal) / step)
-		if binIdx >= bins {
-			binIdx = bins - 1
-		}
-
-		counts[binIdx]++
-	}
-
-	return binEdges, counts
-}
-
-func computeKolmogorovSmirnov(realVals, nullVals []float64) float64 {
-	if len(realVals) == 0 || len(nullVals) == 0 {
+func computeKolmogorovSmirnov(real, null []float64) float64 {
+	if len(real) == 0 || len(null) == 0 {
 		return 0
 	}
 
-	sortedReal := make([]float64, len(realVals))
-	copy(sortedReal, realVals)
+	sortedReal := append([]float64(nil), real...)
+	sortedNull := append([]float64(nil), null...)
 	sort.Float64s(sortedReal)
-
-	sortedNull := make([]float64, len(nullVals))
-	copy(sortedNull, nullVals)
 	sort.Float64s(sortedNull)
 
-	maxDiff := 0.0
-	realTotal := float64(len(sortedReal))
-	nullTotal := float64(len(sortedNull))
+	maxDist := 0.0
+	realN := float64(len(sortedReal))
+	nullN := float64(len(sortedNull))
 
-	for idx, val := range sortedReal {
-		realCdf := float64(idx+1) / realTotal
+	realIdx := 0
+	nullIdx := 0
 
-		nullIdx := sort.Search(len(sortedNull), func(i int) bool {
-			return sortedNull[i] >= val
-		})
+	for realIdx < len(sortedReal) && nullIdx < len(sortedNull) {
+		valReal := sortedReal[realIdx]
+		valNull := sortedNull[nullIdx]
 
-		nullCdf := float64(nullIdx) / nullTotal
-		diff := math.Abs(realCdf - nullCdf)
+		var currentVal float64
+		if valReal <= valNull {
+			currentVal = valReal
+			for realIdx < len(sortedReal) && sortedReal[realIdx] == currentVal {
+				realIdx++
+			}
+		} else {
+			currentVal = valNull
+			for nullIdx < len(sortedNull) && sortedNull[nullIdx] == currentVal {
+				nullIdx++
+			}
+		}
 
-		if diff > maxDiff {
-			maxDiff = diff
+		cdfReal := float64(realIdx) / realN
+		cdfNull := float64(nullIdx) / nullN
+		dist := math.Abs(cdfReal - cdfNull)
+		if dist > maxDist {
+			maxDist = dist
 		}
 	}
 
-	return maxDiff
+	return maxDist
+}
+
+func histogram(data []float64, numBins int, minEdge, maxEdge float64) ([]float64, []int) {
+	if numBins <= 0 {
+		numBins = 20
+	}
+
+	step := (maxEdge - minEdge) / float64(numBins)
+	bins := make([]float64, numBins+1)
+	counts := make([]int, numBins)
+
+	for i := 0; i <= numBins; i++ {
+		bins[i] = minEdge + float64(i)*step
+	}
+
+	for _, val := range data {
+		if val < minEdge || val > maxEdge {
+			continue
+		}
+
+		binIdx := int((val - minEdge) / step)
+		if binIdx >= numBins {
+			binIdx = numBins - 1
+		}
+		counts[binIdx]++
+	}
+
+	return bins, counts
 }

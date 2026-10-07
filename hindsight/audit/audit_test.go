@@ -5,43 +5,68 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func TestAuditVitalityAndSympathy(t *testing.T) {
+func TestAuditStages(t *testing.T) {
 	Convey("Given simulated multi-metric observations", t, func() {
 		ticks := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
-		series := make(map[string]map[int64]float64)
+		rawSeries := make(map[string]map[int64]float64)
+		canonicalSeries := make(map[string]map[int64]float64)
 
-		// Metric 1: Sine wave (healthy)
-		// Metric 2: Highly correlated to Metric 1 (redundant clone)
-		// Metric 3: Inverse sine wave (inverse sympathy)
-		// Metric 4: Constant zero (dead)
-		series["sensor_sin"] = make(map[int64]float64)
-		series["sensor_clone"] = make(map[int64]float64)
-		series["sensor_inv"] = make(map[int64]float64)
-		series["sensor_dead"] = make(map[int64]float64)
+		rawSeries["sensor_sin@PEER"] = make(map[int64]float64)
+		rawSeries["sensor_clone@PEER"] = make(map[int64]float64)
+		rawSeries["sensor_inv@PEER"] = make(map[int64]float64)
+		rawSeries["sensor_dead@PEER"] = make(map[int64]float64)
+
+		canonicalSeries["sensor_sin"] = make(map[int64]float64)
+		canonicalSeries["sensor_clone"] = make(map[int64]float64)
+		canonicalSeries["sensor_inv"] = make(map[int64]float64)
+		canonicalSeries["sensor_dead"] = make(map[int64]float64)
 
 		for _, tick := range ticks {
 			val := math.Sin(float64(tick) * 0.5)
-			series["sensor_sin"][tick] = val
-			series["sensor_clone"][tick] = val + 0.001 // Collinear
-			series["sensor_inv"][tick] = -val         // Inverse
-			series["sensor_dead"][tick] = 0.0          // Dead
+			rawSeries["sensor_sin@PEER"][tick] = val
+			rawSeries["sensor_clone@PEER"][tick] = val + 0.001
+			rawSeries["sensor_inv@PEER"][tick] = -val
+			rawSeries["sensor_dead@PEER"][tick] = 0.0
+
+			canonicalSeries["sensor_sin"][tick] = val
+			canonicalSeries["sensor_clone"][tick] = val + 0.001
+			canonicalSeries["sensor_inv"][tick] = -val
+			canonicalSeries["sensor_dead"][tick] = 0.0
 		}
 
-		Convey("When analyzing metric vitality (Stage 1)", func() {
-			vitality := AnalyzeVitality(ticks, series)
+		Convey("When analyzing contract integrity (Stage 0)", func() {
+			meas := data.NewMeasurement(1, "BTC/USD", "test", 1, 1)
+			meas = meas.Write(
+				data.NewMetric("good_corr", 0.5, data.UnitCorrelation, data.TimescaleTick),
+				data.NewMetric("bad_corr", 1.45, data.UnitCorrelation, data.TimescaleTick),
+			)
 
-			So(vitality.TotalMetrics, ShouldEqual, 4)
-			So(vitality.HealthyMetrics, ShouldEqual, 3)
-			So(vitality.DeadMetrics, ShouldEqual, 1)
+			contract := AnalyzeContract([]*data.Measurement{meas})
+			So(contract.TotalMetricsChecked, ShouldEqual, 2)
+			So(contract.BreachingMetricsCount, ShouldEqual, 1)
+			So(contract.Breaches[0].Metric, ShouldEqual, "bad_corr")
+			So(contract.Breaches[0].MaxVal, ShouldAlmostEqual, 1.45, 1e-6)
+			So(contract.Passed, ShouldBeFalse)
+		})
+
+		Convey("When analyzing metric vitality (Stage 1)", func() {
+			vitality := AnalyzeVitality(ticks, rawSeries, canonicalSeries)
+
+			So(vitality.RawProducerMetrics, ShouldEqual, 4)
+			So(vitality.RawHealthyMetrics, ShouldEqual, 3)
+			So(vitality.CanonicalGridCells, ShouldEqual, 4)
+			So(vitality.CanonicalHealthyCells, ShouldEqual, 3)
+			So(vitality.CanonicalDeadCells, ShouldEqual, 1)
 			So(len(vitality.RedundantPairs), ShouldBeGreaterThanOrEqualTo, 1)
 			So(math.Abs(vitality.RedundantPairs[0].Correlation), ShouldBeGreaterThan, 0.99)
 		})
 
 		Convey("When analyzing pair sympathy against shuffled null (Stage 2)", func() {
-			vitality := AnalyzeVitality(ticks, series)
-			sympathy := AnalyzeSympathy(ticks, series, vitality.Metrics, 20)
+			vitality := AnalyzeVitality(ticks, rawSeries, canonicalSeries)
+			sympathy := AnalyzeSympathy(ticks, canonicalSeries, vitality.CanonicalCells, 20)
 
 			So(sympathy.TotalPairs, ShouldBeGreaterThan, 0)
 			So(sympathy.PositivePairs, ShouldBeGreaterThan, 0)

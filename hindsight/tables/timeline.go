@@ -92,6 +92,66 @@ func (catalog *Catalog) Trades(
 }
 
 /*
+TradesForSymbol retrieves trades strictly filtered to a single symbol and epoch,
+enabling partition and metadata pruning.
+*/
+func (catalog *Catalog) TradesForSymbol(
+	ctx context.Context,
+	symbol string,
+	epoch ...int64,
+) iter.Seq2[*data.Measurement, error] {
+	return func(yield func(*data.Measurement, error) bool) {
+		if catalog == nil {
+			yield(nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[catalog] catalog is required",
+				nil,
+			)))
+			return
+		}
+
+		targetEpoch := int64(0)
+		if len(epoch) > 0 && epoch[0] > 0 {
+			targetEpoch = epoch[0]
+		}
+
+		filter := iceberg.BooleanExpression(
+			iceberg.NewAnd(
+				iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
+				iceberg.EqualTo(iceberg.Reference("label"), symbol),
+			),
+		)
+
+		var trades []*data.Measurement
+		for measurement, err := range catalog.scan(ctx, Measurements, targetEpoch, filter, 0) {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			if measurement != nil {
+				trades = append(trades, measurement)
+			}
+		}
+
+		slices.SortFunc(trades, func(left, right *data.Measurement) int {
+			if cmpResult := cmp.Compare(left.Epoch, right.Epoch); cmpResult != 0 {
+				return cmpResult
+			}
+			if cmpResult := cmp.Compare(left.Tick, right.Tick); cmpResult != 0 {
+				return cmpResult
+			}
+			return cmp.Compare(left.SeqIdx, right.SeqIdx)
+		})
+
+		for _, measurement := range trades {
+			if !yield(measurement, nil) {
+				return
+			}
+		}
+	}
+}
+
+/*
 Detections efficiently retrieves measurements from the measurements table where
 source = "detector", optionally filtered by epoch, grouped by label, and sorted
 within each label by epoch ascending and tick ascending (with seqIdx as tie-breaker).

@@ -99,14 +99,14 @@ func TestChannelsFrom_KeysByMetricLabel(t *testing.T) {
 			)
 		}
 
-		channels := channelsFrom(
+		channels := ChannelsFrom(
 			write("BTC/USD", "liquidity", 1),
 			write("ETH/USD", "pumpdump", 2),
 		)
 
 		Convey("They map onto one cell keyed by the metric label alone", func() {
-			So(channels.raw, ShouldHaveLength, 1)
-			So(channels.raw, ShouldContainKey, store.CellKey("spread"))
+			So(channels.Raw, ShouldHaveLength, 1)
+			So(channels.Raw, ShouldContainKey, store.CellKey("spread"))
 		})
 	})
 }
@@ -124,12 +124,12 @@ func TestChannelsFrom_CollapsesPeerQualifiedFacts(t *testing.T) {
 			data.NewMetric("cohort_peer_count", 3, data.UnitCount, data.TimescaleInstantaneous),
 		)
 
-		channels := channelsFrom(measurement)
+		channels := ChannelsFrom(measurement)
 
 		Convey("They land in one fact cell holding the mean across peers", func() {
-			So(channels.raw, ShouldHaveLength, 2)
-			So(channels.raw["signed_correlation"], ShouldAlmostEqual, 0.5, 1e-12)
-			So(channels.raw["cohort_peer_count"], ShouldEqual, 3)
+			So(channels.Raw, ShouldHaveLength, 2)
+			So(channels.Raw["signed_correlation"], ShouldAlmostEqual, 0.5, 1e-12)
+			So(channels.Raw["cohort_peer_count"], ShouldEqual, 3)
 		})
 	})
 }
@@ -159,16 +159,16 @@ func TestChannelsFrom_CarriesMeasurementConfidence(t *testing.T) {
 			data.NewMetric("cvd_value", 3, data.UnitCount, data.TimescaleTick),
 		)
 
-		channels := channelsFrom(trusted, immature)
+		channels := ChannelsFrom(trusted, immature)
 
 		Convey("Every metric of a Measurement shares its confidence", func() {
-			So(channels.confidence["spread"], ShouldAlmostEqual, trusted.Confidence(), 1e-12)
-			So(channels.confidence["depth"], ShouldAlmostEqual, trusted.Confidence(), 1e-12)
-			So(channels.confidence["cvd_value"], ShouldEqual, 0)
+			So(channels.Confidence["spread"], ShouldAlmostEqual, trusted.Confidence(), 1e-12)
+			So(channels.Confidence["depth"], ShouldAlmostEqual, trusted.Confidence(), 1e-12)
+			So(channels.Confidence["cvd_value"], ShouldEqual, 0)
 		})
 
 		Convey("excite pairs each deformation with its cell's confidence", func() {
-			pass := channels.excite(map[string]float64{"spread": 0.5, "cvd_value": 0.25})
+			pass := channels.Excite(map[string]float64{"spread": 0.5, "cvd_value": 0.25})
 
 			So(pass, ShouldHaveLength, 2)
 			So(pass["spread"], ShouldResemble, store.Excitation{Deformation: 0.5, Confidence: trusted.Confidence()})

@@ -61,6 +61,7 @@ var auditCmd = &cobra.Command{
 		fmt.Printf("Target Run Epoch: %d\n", report.Epoch)
 		fmt.Printf("Symbol Audited:   %s (%d ticks)\n", report.Symbol, report.TotalTicks)
 		fmt.Printf("Overall Health:   %s\n\n", formatOverallHealth(report.OverallHealthy))
+		fmt.Printf("Stage 0 (Contract):   %s\n", report.Contract.SummaryText)
 		fmt.Printf("Stage 1 (Vitality):   %s\n", report.Vitality.SummaryText)
 		fmt.Printf("Stage 2 (Sympathy):   %s\n", report.Sympathy.SummaryText)
 		fmt.Printf("Stage 3 (Stability):  %s\n", report.GridStability.SummaryText)
