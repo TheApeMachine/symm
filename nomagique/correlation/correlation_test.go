@@ -60,6 +60,7 @@ func TestDependenceNext(t *testing.T) {
 
 		for _, test := range cases {
 			covariance, support, leftEnergy, rightEnergy := 0.0, 0.0, 0.0, 0.0
+			overlapLeftEnergy, overlapRightEnergy := 0.0, 0.0
 			leftRates, rightRates := []float64{}, []float64{}
 
 			for index := 1; index < len(test.lp); index++ {
@@ -69,7 +70,10 @@ func TestDependenceNext(t *testing.T) {
 
 				for other := 1; other < len(test.rp); other++ {
 					if test.lt[index-1] < test.rt[other] && test.rt[other-1] < test.lt[index] {
-						covariance += increment * (math.Log(test.rp[other]) - math.Log(test.rp[other-1]))
+						rightIncrement := math.Log(test.rp[other]) - math.Log(test.rp[other-1])
+						covariance += increment * rightIncrement
+						overlapLeftEnergy += increment * increment
+						overlapRightEnergy += rightIncrement * rightIncrement
 						support++
 					}
 				}
@@ -108,12 +112,12 @@ func TestDependenceNext(t *testing.T) {
 			So(got[7], ShouldEqual, float64(max(0, len(test.rp)-1)))
 			defined := 0.0
 
-			if support > 0 && leftEnergy > 0 && rightEnergy > 0 {
+			if support > 0 && overlapLeftEnergy > 0 && overlapRightEnergy > 0 {
 				defined = 1
 			}
 
 			So(got[5], ShouldEqual, defined)
-			sameFloat(got[0], covariance/math.Sqrt(leftEnergy*rightEnergy))
+			sameFloat(got[0], covariance/math.Sqrt(overlapLeftEnergy*overlapRightEnergy))
 			sameFloat(got[8], medianRate(leftRates))
 			sameFloat(got[9], medianRate(rightRates))
 		}
