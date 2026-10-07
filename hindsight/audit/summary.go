@@ -13,15 +13,16 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 	var sb strings.Builder
 
 	overall := "AUDIT MEASURED"
-	if !report.Contract.Passed {
-		overall = "CONTRACT_BREACHES PRESENT"
-	}
 	if report.Vitality.Status == "INSUFFICIENT_DATA" ||
 		report.Sympathy.Status == "INSUFFICIENT_DATA" ||
 		report.GridStability.Status == "INSUFFICIENT_DATA" ||
 		report.TokenDynamics.Status == "INSUFFICIENT_DATA" ||
 		report.Precursor.IgnitionHypothesis.Status == "INSUFFICIENT_DATA" {
 		overall = "INCOMPLETE EVIDENCE"
+	}
+
+	if !report.Contract.Passed {
+		overall = "CONTRACT_BREACHES PRESENT"
 	}
 
 	sb.WriteString("# SYMM Pipeline Empirical Audit\n\n")
