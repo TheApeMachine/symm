@@ -188,9 +188,6 @@ func AnalyzePrecursorSeparation(
 	)
 
 	measured := ignition.Status == "MEASURED"
-	if exhaustion.Status != "INSUFFICIENT_DATA" {
-		measured = measured && exhaustion.Status == "MEASURED"
-	}
 
 	return Stage5PrecursorSeparation{
 		DetectionsFound:      len(detections),
