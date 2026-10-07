@@ -42,10 +42,13 @@ func TestAuditStages(t *testing.T) {
 			meas = meas.Write(
 				data.NewMetric("good_corr", 0.5, data.UnitCorrelation, data.TimescaleTick),
 				data.NewMetric("bad_corr", 1.45, data.UnitCorrelation, data.TimescaleTick),
+				// The label contains "correlation", but the declared coordinate is a
+				// z-score and is therefore not bounded to [-1,1].
+				data.NewMetric("correlation_zscore@PEER", 6.2, data.UnitZScore, data.TimescaleTick),
 			)
 
 			contract := AnalyzeContract([]*data.Measurement{meas})
-			So(contract.TotalMetricsChecked, ShouldEqual, 2)
+			So(contract.TotalMetricsChecked, ShouldEqual, 3)
 			So(contract.BreachingMetricsCount, ShouldEqual, 1)
 			So(contract.Breaches[0].Metric, ShouldEqual, "bad_corr")
 			So(contract.Breaches[0].MaxVal, ShouldAlmostEqual, 1.45, 1e-6)
