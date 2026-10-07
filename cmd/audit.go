@@ -56,11 +56,11 @@ var auditCmd = &cobra.Command{
 
 		absOut, _ := filepath.Abs(opts.OutputDir)
 		fmt.Printf("%s", "\n" + stringsRepeat("=", 70) + "\n")
-		fmt.Printf("🎯 SYMM PIPELINE HEALTH AUDIT COMPLETED\n")
+		fmt.Printf("🎯 SYMM PIPELINE EMPIRICAL AUDIT COMPLETED\n")
 		fmt.Printf("%s", stringsRepeat("=", 70) + "\n\n")
 		fmt.Printf("Target Run Epoch: %d\n", report.Epoch)
 		fmt.Printf("Symbol Audited:   %s (%d ticks)\n", report.Symbol, report.TotalTicks)
-		fmt.Printf("Overall Health:   %s\n\n", formatOverallHealth(report.OverallHealthy))
+		fmt.Printf("Audit State:      %s\n\n", formatAuditState(report))
 		fmt.Printf("Stage 0 (Contract):   %s\n", report.Contract.SummaryText)
 		fmt.Printf("Stage 1 (Vitality):   %s\n", report.Vitality.SummaryText)
 		fmt.Printf("Stage 2 (Sympathy):   %s\n", report.Sympathy.SummaryText)
@@ -114,8 +114,8 @@ func init() {
 }
 
 var auditLong = `
-Run a read-only, component-by-component statistical health audit of the SYMM sensory and representation pipeline.
-Inspects 5 decoupled boundaries without model checkpointing or paper trading:
+Run a read-only, component-by-component empirical audit of the SYMM sensory and representation pipeline.
+Inspects six decoupled boundaries without model checkpointing or paper trading:\n  0. Hard Metric Contract Integrity
   1. Metric Vitality & Redundancy (Variance, Coverage, Collinear Clones)
   2. Pair Relationships & Sympathy vs. Shuffled Null (Permutation Test)
   3. Grid Partitioning & Temporal Stability across Disjoint Time Periods (Adjusted Rand Index)
