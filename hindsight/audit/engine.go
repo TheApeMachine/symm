@@ -123,7 +123,7 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	frozenGrid.Partition()
 	frozenGrid.Settle()
 
-	dynamics := AnalyzeTokenDynamics(frozenGrid, unseenTicks, tickMeasurements)
+	dynamics := AnalyzeTokenDynamics(frozenGrid, trainStream, unseenTicks, tickMeasurements, opts.Permutations)
 	errnie.Info("[audit] Stage 4 completed: " + dynamics.SummaryText)
 
 	// Stage 5: Precursor Informativeness (A->B Ignition and B->C Exhaustion)
