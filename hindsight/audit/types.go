@@ -123,7 +123,22 @@ type GridPartitionStat struct {
 }
 
 /*
-Stage3GridStability compares two grids developed from disjoint chronological market segments.
+GridStabilityObservation is one independent comparison of two disjoint
+chronological grid-development windows.
+*/
+type GridStabilityObservation struct {
+	WindowTicks  int     `json:"window_ticks"`
+	PairIndex    int     `json:"pair_index"`
+	SharedCells  int     `json:"shared_cells"`
+	Overlap      float64 `json:"overlap"`
+	AdjustedRand float64 `json:"adjusted_rand"`
+	NullMeanARI  float64 `json:"null_mean_ari"`
+}
+
+/*
+Stage3GridStability compares grids developed from disjoint chronological market segments.
+The primary fields retain the largest half-vs-half comparison; StabilityCurve
+contains repeated disjoint comparisons at multiple evidence sizes.
 */
 type Stage3GridStability struct {
 	GridA           GridPartitionStat `json:"grid_a"`
@@ -132,6 +147,8 @@ type Stage3GridStability struct {
 	OverlapFraction float64           `json:"overlap_fraction"`
 	RandIndex       float64           `json:"rand_index"`
 	AdjustedRandIdx float64           `json:"adjusted_rand_idx"`
+	NullAdjustedRandMean float64     `json:"null_adjusted_rand_mean"`
+	StabilityCurve  []GridStabilityObservation `json:"stability_curve"`
 	SummaryText     string            `json:"summary_text"`
 	Status          string            `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
 	Passed          bool              `json:"passed"` // compatibility: true when experiment executed with sufficient data
