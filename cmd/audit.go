@@ -23,7 +23,7 @@ var (
 
 var auditCmd = &cobra.Command{
 	Use:   "audit",
-	Short: "Run a read-only 5-stage health audit over archived market and sensory observations",
+	Short: "Run a read-only empirical audit over archived market and sensory observations",
 	Long:  auditLong,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		system.NewConfig()
@@ -77,11 +77,21 @@ var auditCmd = &cobra.Command{
 	},
 }
 
-func formatOverallHealth(healthy bool) string {
-	if healthy {
-		return "✅ SOUND (All representation boundaries pass empirical null tests)"
+func formatAuditState(report *audit.AuditReport) string {
+	if report == nil {
+		return "INVALID_EXPERIMENT"
 	}
-	return "⚠️ ATTENTION REQUIRED (One or more representation boundaries exhibit degradation)"
+	if !report.Contract.Passed {
+		return "CONTRACT_BREACH"
+	}
+	if report.Vitality.Status == "INSUFFICIENT_DATA" ||
+		report.Sympathy.Status == "INSUFFICIENT_DATA" ||
+		report.GridStability.Status == "INSUFFICIENT_DATA" ||
+		report.TokenDynamics.Status == "INSUFFICIENT_DATA" ||
+		report.Precursor.IgnitionHypothesis.Status == "INSUFFICIENT_DATA" {
+		return "INCOMPLETE_EVIDENCE"
+	}
+	return "MEASURED"
 }
 
 func stringsRepeat(s string, count int) string {
