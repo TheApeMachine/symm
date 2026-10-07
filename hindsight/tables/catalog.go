@@ -608,12 +608,16 @@ func (catalog *Catalog) Load(ctx context.Context, name string) (*table.Table, er
 	))
 }
 
-func (catalog *Catalog) context(ctx context.Context) context.Context {
-	if catalog.awsConfig == nil {
+func (catalog *Catalog) Context(ctx context.Context) context.Context {
+	if catalog == nil || catalog.awsConfig == nil {
 		return ctx
 	}
 
 	return utils.WithAwsConfig(ctx, catalog.awsConfig)
+}
+
+func (catalog *Catalog) context(ctx context.Context) context.Context {
+	return catalog.Context(ctx)
 }
 
 /*
