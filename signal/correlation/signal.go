@@ -55,7 +55,7 @@ func NewSignal(ctx context.Context) *Signal {
 			"observation_count":                 {string(data.UnitCount), string(data.TimescaleRollingWindow)},
 			"signed_correlation":                {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
 			"absolute_correlation":              {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
-			"covariance":                        {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
+			"covariance":                        {string(data.UnitCovariance), string(data.TimescaleRollingWindow)},
 			"overlap_pair_count":                {string(data.UnitCount), string(data.TimescaleRollingWindow)},
 			"return_energy:reference":           {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
 			"return_energy:measured":            {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
