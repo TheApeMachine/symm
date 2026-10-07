@@ -88,7 +88,8 @@ func formatAuditState(report *audit.AuditReport) string {
 		report.Sympathy.Status == "INSUFFICIENT_DATA" ||
 		report.GridStability.Status == "INSUFFICIENT_DATA" ||
 		report.TokenDynamics.Status == "INSUFFICIENT_DATA" ||
-		report.Precursor.IgnitionHypothesis.Status == "INSUFFICIENT_DATA" {
+		report.Precursor.IgnitionHypothesis.Status == "INSUFFICIENT_DATA" ||
+		report.Precursor.ExhaustionHypothesis.Status == "INSUFFICIENT_DATA" {
 		return "INCOMPLETE_EVIDENCE"
 	}
 	return "MEASURED"
