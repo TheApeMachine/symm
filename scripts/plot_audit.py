@@ -163,7 +163,7 @@ def plot_stage1_vitality(report, out_dir):
         'Stage 1: Sensor Vitality & Universe Dimension Mapping',
         'Compares raw producer output series (peer-qualified) against the canonical collapsed grid universe.',
         f'Raw: {raw_healthy}/{raw_total} healthy. Canonical Grid: {canon_healthy}/{canon_total} healthy.',
-        'HIGHER HEALTHY FRACTION IS BETTER (Dead constants should be eliminated; canonical cells must stay alive).'
+        'DESCRIPTIVE ONLY (Coverage and constancy are observations, not a health cutoff).'
     )
     
     fig.savefig(os.path.join(out_dir, 'stage1_metric_vitality.png'), dpi=180, bbox_inches='tight')
@@ -256,7 +256,7 @@ def plot_stage2_orientation(report, out_dir):
     total = max(1, pos + inv)
 
     fig, ax = plt.subplots(figsize=(9, 6.5))
-    bars = ax.bar(['Positive Sympathy\n(r > 0.05)', 'Inverse Opposition\n(r < -0.05)'],
+    bars = ax.bar(['Positive Sympathy\n(r > 0)', 'Inverse Opposition\n(r < 0)'],
                    [pos, inv],
                    color=['#2ea043', '#f0883e'],
                    width=0.45, edgecolor='#22272e')
@@ -389,7 +389,7 @@ def plot_stage4_transition_matrix(report, out_dir):
         'Stage 4: Out-of-Sample Region State Transition Matrix',
         'Empirical probability distribution of transitions between consecutive regional states.',
         'Structured pathways (bright diagonal/off-diagonal corridors) rather than diffuse uniform smear.',
-        'SPARSE STRUCTURED PATHWAYS ARE BETTER (Shows non-random temporal market trajectories).'
+        'DESCRIPTIVE TRANSITION GEOMETRY (Compare against the temporal null; do not grade by appearance).'
     )
 
     fig.tight_layout()
@@ -442,7 +442,7 @@ def plot_stage5_precursor(report, out_dir):
     ign_status = ign.get('status', 'INSUFFICIENT_DATA')
     ign_n = ign.get('event_token_count', 0)
 
-    ign_color = '#2ea043' if ign.get('passed', False) else '#d29922'
+    ign_color = '#58a6ff' if ign_status == 'MEASURED' else '#d29922'
     ax1.bar(['Ignition Divergence', 'Null-95 Bound'], [ign_jsd, ign_null], color=[ign_color, '#8b949e'], width=0.45)
     ax1.set_ylabel('Divergence vs Control (Bits)', fontsize=10, color='#adbac7')
     ax1.set_title(f'Hypothesis A->B (Ignition): {ign_status} (N={ign_n})', fontsize=11, fontweight='bold')
@@ -454,7 +454,7 @@ def plot_stage5_precursor(report, out_dir):
     exh_status = exh.get('status', 'INSUFFICIENT_DATA')
     exh_n = exh.get('event_token_count', 0)
 
-    exh_color = '#2ea043' if exh.get('passed', False) else '#d29922'
+    exh_color = '#58a6ff' if exh_status == 'MEASURED' else '#d29922'
     ax2.bar(['Exhaustion Divergence', 'Null-95 Bound'], [exh_jsd, exh_null], color=[exh_color, '#8b949e'], width=0.45)
     ax2.set_ylabel('Divergence vs Holding (Bits)', fontsize=10, color='#adbac7')
     ax2.set_title(f'Hypothesis B->C (Exhaustion): {exh_status} (N={exh_n})', fontsize=11, fontweight='bold')
@@ -465,7 +465,7 @@ def plot_stage5_precursor(report, out_dir):
         f'Stage 5: Precursor Informativeness (Detections: {det_found}, Classes: {", ".join(classes) if classes else "none"})',
         'Tests whether state distributions prior to ignition (A->B) and exhaustion (B->C) diverge from controls.',
         f'A->B status: {ign_status}. B->C status: {exh_status}. Background control: {len(bg_tokens)} tokens.',
-        'HIGHER DIVERGENCE IS BETTER (Absence of evidence is INSUFFICIENT_DATA, never PASS).'
+        'EMPIRICAL COMPARISON ONLY (Absence of evidence is INSUFFICIENT_DATA; measured divergence is reported against its null).'
     )
 
     fig.savefig(os.path.join(out_dir, 'stage5_precursor_separation.png'), dpi=180, bbox_inches='tight')
