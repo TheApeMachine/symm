@@ -13,6 +13,13 @@ type Value[T any] struct {
 }
 
 func NewValue[T any](values ...T) *Value[T] {
+	if ptrs, ok := any(values).([]unsafe.Pointer); ok {
+		return &Value[T]{
+			PrimitiveError: core.NewPrimitiveError(),
+			Values:         ptrs,
+		}
+	}
+
 	wrapped := make([]unsafe.Pointer, len(values))
 
 	for i := range values {

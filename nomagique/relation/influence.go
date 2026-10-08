@@ -208,7 +208,26 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				op.series = append(op.series, op.controls[:controlsCount]...)
 				op.series = append(op.series, op.source)
 
-				for lag := startLag; startLag > 0 && lag <= maxLag; lag += resolution {
+				maxCandidates := len(op.target) / 2
+				if maxCandidates > 1024 {
+					maxCandidates = 1024
+				}
+
+				if maxCandidates < 1 {
+					status = FitNoPositiveLag
+					break estimate
+				}
+
+				stepSize := resolution
+				if (maxLag-startLag)/stepSize > float64(maxCandidates) {
+					stepSize = (maxLag - startLag) / float64(maxCandidates)
+				}
+
+				for lag := startLag; startLag > 0 && lag <= maxLag && candidates < maxCandidates; lag += stepSize {
+					if lag+stepSize <= lag {
+						break
+					}
+
 					surface := "lag_surface." + strconv.Itoa(candidates)
 					metrics[surface] = lag
 					metrics[surface+".gain"] = math.NaN()

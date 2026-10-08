@@ -28,7 +28,7 @@ type safeZstdCodec struct {
 	compress.Codec
 }
 
-func (c safeZstdCodec) Decode(dst, src []byte) (out []byte) {
+func (codec safeZstdCodec) Decode(dst, src []byte) (out []byte) {
 	dec := zstdDecoderPool.Get().(*zstd.Decoder)
 
 	var (
@@ -38,35 +38,54 @@ func (c safeZstdCodec) Decode(dst, src []byte) (out []byte) {
 
 	func() {
 		defer func() {
-			if r := recover(); r != nil {
-				panicked = r
+			if recovery := recover(); recovery != nil {
+				panicked = recovery
 			}
 		}()
+
 		out, err = dec.DecodeAll(src, dst[:0])
 	}()
 
-	if panicked != nil || err != nil {
-		dec.Close()
-		fresh, freshErr := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.IgnoreChecksum(true))
-		if freshErr == nil {
-			defer fresh.Close()
-			out, err = fresh.DecodeAll(src, dst[:0])
-			if err == nil {
-				return out
-			}
-		}
-		if panicked != nil {
-			panic(panicked)
-		}
-		panic(err)
+	if panicked == nil && err == nil {
+		zstdDecoderPool.Put(dec)
+		return out
 	}
 
-	zstdDecoderPool.Put(dec)
+	dec.Close()
+
+	fresh, freshErr := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.IgnoreChecksum(true))
+	if freshErr != nil {
+		return nil
+	}
+	defer fresh.Close()
+
+	func() {
+		defer func() {
+			if recovery := recover(); recovery != nil {
+				out = nil
+			}
+		}()
+
+		res, decErr := fresh.DecodeAll(src, nil)
+		if decErr != nil {
+			out = nil
+			return
+		}
+
+		if len(dst) >= len(res) {
+			copy(dst, res)
+			out = dst[:len(res)]
+			return
+		}
+
+		out = res
+	}()
+
 	return out
 }
 
-func (c safeZstdCodec) NewReader(r io.Reader) io.ReadCloser {
-	ret, _ := zstd.NewReader(r, zstd.WithDecoderConcurrency(1), zstd.IgnoreChecksum(true))
+func (codec safeZstdCodec) NewReader(reader io.Reader) io.ReadCloser {
+	ret, _ := zstd.NewReader(reader, zstd.WithDecoderConcurrency(1), zstd.IgnoreChecksum(true))
 	return &zstdcloser{Decoder: ret}
 }
 

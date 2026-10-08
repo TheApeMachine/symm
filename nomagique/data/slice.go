@@ -13,27 +13,44 @@ type Slice struct {
 	End   int
 }
 
-func NewSlice(start, end int) core.Primitive {
-	return &Slice{
-		PrimitiveError: core.NewPrimitiveError(),
-		Start:          start,
-		End:            end,
+// NewSlice selects [start,end). Omitting end retains the remainder of the run.
+func NewSlice(start int, end ...int) core.Primitive {
+	op := &Slice{PrimitiveError: core.NewPrimitiveError(), Start: start, End: -1}
+
+	if start < 0 || len(end) > 1 {
+		op.Error(core.ErrShape)
+		return op
 	}
+
+	if len(end) == 1 {
+		op.End = end[0]
+
+		if op.End < start {
+			op.Error(core.ErrShape)
+		}
+	}
+
+	return op
 }
 
 func (op *Slice) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		idx := 0
+		if op.Error() != nil {
+			return
+		}
+
+		index := 0
+
 		for arriving := range in {
-			if idx >= op.End {
+			if op.End >= 0 && index >= op.End {
 				return
 			}
-			if idx >= op.Start {
-				if !yield(arriving) {
-					return
-				}
+
+			if index >= op.Start && !yield(arriving) {
+				return
 			}
-			idx++
+
+			index++
 		}
 	}
 }

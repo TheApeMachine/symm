@@ -2,13 +2,14 @@ package morphology
 
 import (
 	"context"
-	"unsafe"
+	"strconv"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -17,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/vector"
 )
 
 var outputKeys = []string{
@@ -32,51 +34,80 @@ var outputKeys = []string{
 type Signal struct {
 	*runtime.System
 	books    broker.BookSource
-	pipeline core.Primitive
+	pipeline *nomagique.Number
 }
 
 func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	signal := &Signal{
 		books: books,
 		pipeline: nomagique.NewNumber(
-			transport.NewAddressable(
-				"symbolstore",
-				store.NewKV(),
-				nomagique.NewNumber(
-					// Stage 1: Select inputs for the 6 distribution primitives
-					// 0: pairs -> Wasserstein1
-					// 1: pairs -> KolmogorovSmirnov
-					// 2: bids  -> ConcentrationPoints (bid)
-					// 3: asks  -> ConcentrationPoints (ask)
-					// 4: bids  -> EntropyPoints (bid)
-					// 5: asks  -> EntropyPoints (ask)
-					data.NewSelect(0, 0, 1, 2, 1, 2),
-					data.NewBatch(1, 1, 1, 1, 1, 1),
-					transport.NewParallel(
-						distribution.NewWasserstein1Pairs(),
-						distribution.NewKolmogorovSmirnovPairs(),
-						distribution.NewConcentrationPoints(),
-						distribution.NewConcentrationPoints(),
-						distribution.NewEntropyPoints(),
-						distribution.NewEntropyPoints(),
+			transport.NewAddressable("symbolstore", store.NewKV(func() core.Primitive {
+				// Both sides use the same stateless projection. Parallel consumes
+				// branches in deterministic order; only Previous retains a book.
+				projection := nomagique.NewNumber(
+					// Input: bid, ask, then individual price/quantity operands.
+					transport.NewFanout[float64](
+						nomagique.NewNumber(data.NewSelect(0, 1), calculus.NewPositive(), transport.NewDiscard()),
+						nomagique.NewNumber(data.NewSelect(0, 1), arithmetic.NewAdd(), vector.NewScale(0.5)),
+						nomagique.NewNumber(data.NewSelect(1, 0), arithmetic.NewSubtract(), calculus.NewPositive()),
+						data.NewSlice(2),
 					),
-					// Stage 2: Select 0..5 and repeat distance at 6, then pass 0..5 and compute morphology_change at 6
-					data.NewSelect(0, 1, 2, 3, 4, 5, 0),
-					data.NewBatch(1, 1, 1, 1, 1, 1, 1),
-					transport.NewParallel(
-						transport.NewPass(),
-						transport.NewPass(),
-						transport.NewPass(),
-						transport.NewPass(),
-						transport.NewPass(),
-						transport.NewPass(),
+					// Per level: signed spread coordinate and displayed notional.
+					transport.NewMap(2, transport.NewFanout[float64](
 						nomagique.NewNumber(
-							temporal.NewDelta(),
-							calculus.NewAbsolute(),
+							transport.NewFanout[float64](
+								nomagique.NewNumber(data.NewSelect(2, 0), arithmetic.NewSubtract()),
+								data.NewSelect(1),
+							), arithmetic.NewDivide(),
+						),
+						nomagique.NewNumber(
+							transport.NewFanout[float64](
+								nomagique.NewNumber(data.NewSelect(2), calculus.NewPositive()),
+								data.NewSelect(3),
+							), vector.NewScale(),
+						),
+					), 2),
+					distribution.NewSortedPositions(),
+					distribution.NewNormalize(2, 1),
+					data.NewPack[float64](),
+				)
+
+				return nomagique.NewNumber(
+					transport.NewParallel(projection, projection),
+					// A whole book requires both normalized side distributions.
+					data.NewPack[core.Primitive](2), data.NewUnpack(),
+					transport.NewFanout[core.Primitive](
+						// Fold each normalized side only for bilateral comparisons.
+						nomagique.NewNumber(
+							transport.NewParallel(
+								nomagique.NewNumber(
+									transport.NewMap(2, transport.NewFanout[float64](
+										nomagique.NewNumber(data.NewSelect(0), calculus.NewAbsolute()),
+										data.NewSelect(1),
+									)), distribution.NewSortedPositions(), data.NewPack[float64](),
+								),
+								data.NewPack[float64](),
+							), distribution.NewMergedWalk(), data.NewSelect(1, 0),
+						),
+						// Moments use the same side masses, not recomputed price data.
+						nomagique.NewNumber(
+							data.NewSelect(0, 1, 0, 1),
+							transport.NewParallel(
+								distribution.NewConcentrationPoints(), distribution.NewConcentrationPoints(),
+								distribution.NewEntropyPoints(), distribution.NewEntropyPoints(),
+							),
+						),
+						// Keep signed positions. Each side contributes half the mass.
+						nomagique.NewNumber(
+							data.NewUnpack(),
+							transport.NewMap(2, transport.NewFanout[float64](
+								data.NewSelect(0),
+								nomagique.NewNumber(data.NewSelect(1), vector.NewScale(0.5)),
+							)), temporal.NewPrevious(), distribution.NewWasserstein1Pairs(),
 						),
 					),
-				),
-			),
+				)
+			})),
 		),
 	}
 
@@ -90,128 +121,77 @@ func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 }
 
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY {
-		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
+	if signal.Status() != runtime.READY || prior == nil || prior.Label == "" {
 		return nil
 	}
 
-	if prior == nil || prior.Label == "" {
-		return nil
-	}
-
-	if signal.books == nil {
-		signal.Error(errnie.Err(errnie.Internal, "[morphology] book manager is required", nil))
-		return nil
-	}
-
-	var bids, asks [][2]float64
-	var crossedBid, crossedAsk float64
-	ok := false
-	crossed := false
+	var bids, asks []float64
+	var inputErr error
 
 	signal.books.Book(prior.Label, func(book *spotbook.Book) {
 		if book == nil {
 			return
 		}
-
-		bid := book.BestBid()
-		ask := book.BestAsk()
+		bid, ask := book.BestBid(), book.BestAsk()
 
 		if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
 			return
 		}
+		bids = append(bids, kraken.Float64(bid.Price), kraken.Float64(ask.Price))
+		asks = append(asks, kraken.Float64(bid.Price), kraken.Float64(ask.Price))
 
-		bidPrice := kraken.Float64(bid.Price)
-		askPrice := kraken.Float64(ask.Price)
-
-		if askPrice <= bidPrice {
-			crossed = true
-			crossedBid = bidPrice
-			crossedAsk = askPrice
-			return
-		}
-
-		spread := askPrice - bidPrice
-		mid := (askPrice + bidPrice) / 2.0
-
-		for cursor, count := bid, 0; cursor != nil && count < 100; cursor, count = cursor.Lower, count+1 {
+		for cursor := bid; cursor != nil; cursor = cursor.Lower {
 			if cursor.Price == nil || cursor.Quantity == nil {
-				continue
+				inputErr = core.ErrShape
+				return
 			}
 
-			p := kraken.Float64(cursor.Price)
-			q := kraken.Float64(cursor.Quantity)
-
-			if p <= 0 || q <= 0 {
-				continue
-			}
-
-			rBid := (mid - p) / spread
-			w := p * q
-			bids = append(bids, [2]float64{rBid, w})
+			bids = append(bids, kraken.Float64(cursor.Price), kraken.Float64(cursor.Quantity))
 		}
 
-		for cursor, count := ask, 0; cursor != nil && count < 100; cursor, count = cursor.Higher, count+1 {
+		for cursor := ask; cursor != nil; cursor = cursor.Higher {
 			if cursor.Price == nil || cursor.Quantity == nil {
-				continue
+				inputErr = core.ErrShape
+				return
 			}
 
-			p := kraken.Float64(cursor.Price)
-			q := kraken.Float64(cursor.Quantity)
-
-			if p <= 0 || q <= 0 {
-				continue
-			}
-
-			rAsk := (p - mid) / spread
-			w := p * q
-			asks = append(asks, [2]float64{rAsk, w})
+			asks = append(asks, kraken.Float64(cursor.Price), kraken.Float64(cursor.Quantity))
 		}
-
-		ok = len(bids) > 0 && len(asks) > 0
 	})
 
-	if crossed {
-		signal.Error(broker.CrossedTouch("morphology", prior.Label, crossedBid, crossedAsk))
+	if inputErr != nil {
+		signal.Error(errnie.Err(errnie.Validation, "[morphology] incomplete book level", inputErr))
 		return nil
 	}
 
-	if !ok {
+	if len(bids) == 0 || len(asks) == 0 {
 		return nil
 	}
-
-	pairs := [2][][2]float64{bids, asks}
 
 	output := make(map[string]float64)
 	index := 0
 
-	for ptr := range signal.pipeline.Next(
-		data.NewMessage(
-			data.WRITE,
-			"symbolstore",
-			prior.Label,
-			data.NewPointers(
-				unsafe.Pointer(&pairs),
-				unsafe.Pointer(&bids),
-				unsafe.Pointer(&asks),
-			),
-		).Next(nil),
-	) {
-		if index >= len(outputKeys) {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"[signal.morphology] overflow",
-				nil,
-			))
+	for pointer := range signal.pipeline.Next(data.NewMessage(
+		data.EVALUATE, "symbolstore", strconv.FormatInt(prior.Epoch, 10)+"/"+prior.Label,
+		data.NewValue[core.Primitive](data.NewValue(bids...), data.NewValue(asks...)),
+	).Next(nil)) {
+		if pointer == nil || index >= len(outputKeys) {
+			signal.Error(errnie.Err(errnie.Validation, "[morphology] invalid pipeline output", core.ErrShape))
 			return nil
 		}
 
-		if ptr == nil {
-			continue
-		}
-
-		output[outputKeys[index]] = *(*float64)(ptr)
+		output[outputKeys[index]] = *(*float64)(pointer)
 		index++
+	}
+
+	if err := signal.pipeline.Error(); err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[morphology] "+prior.Label+": invalid book or pipeline state", err))
+		return nil
+	}
+
+	// Only the final metric is optional: a first book has no prior comparison.
+	if index != len(outputKeys)-1 && index != len(outputKeys) {
+		return nil
 	}
 
 	return prior.Next(signal.Name(), output)

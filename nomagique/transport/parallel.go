@@ -1,63 +1,79 @@
 package transport
 
 import (
-	"context"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"golang.org/x/sync/errgroup"
 )
 
-/*
-Parallel distributes sequential arrivals from an inbound sequence across its
-configured branch primitives. Arrival i maps to branch i. Each branch's yields
-are streamed downstream.
-*/
+// Parallel routes input group i to branch i and yields results in branch order.
+// A group is a core.Primitive whose Next yields its operands individually.
+// Evaluation is ordered: the former goroutines only built lazy iterators and
+// did not execute the branches in parallel.
 type Parallel struct {
 	*core.PrimitiveError
 	branches []core.Primitive
 }
 
 func NewParallel(branches ...core.Primitive) core.Primitive {
-	return &Parallel{
-		PrimitiveError: core.NewPrimitiveError(),
-		branches:       branches,
-	}
+	return &Parallel{PrimitiveError: core.NewPrimitiveError(), branches: branches}
 }
 
 func (op *Parallel) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if op.Error() != nil {
+			return
+		}
+
 		values := make([]core.Primitive, 0, len(op.branches))
-		out := make([]iter.Seq[unsafe.Pointer], len(op.branches))
-		group, ctx := errgroup.WithContext(context.Background())
 
 		for arriving := range in {
-			values = append(values, *(*core.Primitive)(arriving))
+			if arriving == nil || len(values) == len(op.branches) {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			value := *(*core.Primitive)(arriving)
+
+			if value == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			values = append(values, value)
+		}
+
+		if len(values) != len(op.branches) {
+			op.Error(core.ErrShape)
+			return
+		}
+
+		for _, branch := range op.branches {
+			if branch == nil {
+				op.Error(core.ErrShape)
+				return
+			}
 		}
 
 		for index, branch := range op.branches {
-			group.Go(func() error {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
+			if err := op.Error(branch.Error(), values[index].Error()); err != nil {
+				return
+			}
 
-				out[index] = branch.Next(values[index].Next(nil))
-				return nil
-			})
-		}
-
-		if err := group.Wait(); err != nil {
-			op.Error(err)
-		}
-
-		for _, seq := range out {
-			for val := range seq {
-				if !yield(val) {
+			for value := range branch.Next(values[index].Next(nil)) {
+				if value == nil {
+					op.Error(core.ErrShape)
 					return
 				}
+
+				if !yield(value) {
+					return
+				}
+			}
+
+			if err := op.Error(branch.Error(), values[index].Error()); err != nil {
+				return
 			}
 		}
 	}

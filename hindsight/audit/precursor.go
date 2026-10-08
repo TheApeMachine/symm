@@ -517,34 +517,50 @@ func detectInMemory(
 			return nil, errnie.Error(err)
 		}
 
-		scanOpts := []icetable.ScanOption{
-			icetable.WithRowFilter(filter),
-			icetable.WitMaxConcurrency(32),
-		}
-
-		_, batches, err := tbl.Scan(scanOpts...).ReadTasks(s3Ctx, tasks)
-		if err != nil {
-			return nil, errnie.Error(err)
-		}
-
+		chunkSize := 250
 		grouped := make(map[string][]*data.Measurement)
-		for batch, batchErr := range batches {
-			if batchErr != nil {
-				return nil, errnie.Error(batchErr)
+
+		for taskIndex := 0; taskIndex < len(tasks); taskIndex += chunkSize {
+			endIndex := taskIndex + chunkSize
+
+			if endIndex > len(tasks) {
+				endIndex = len(tasks)
 			}
-			if batch == nil {
+
+			scanOpts := []icetable.ScanOption{
+				icetable.WithRowFilter(filter),
+				icetable.WitMaxConcurrency(16),
+			}
+
+			_, batches, err := tbl.Scan(scanOpts...).ReadTasks(s3Ctx, tasks[taskIndex:endIndex])
+
+			if err != nil {
+				errnie.Warn(fmt.Sprintf("[audit] failed to read tasks chunk %d-%d: %s", taskIndex, endIndex, err))
 				continue
 			}
 
-			measurements, readErr := tables.ReadMeasurements(batch)
-			batch.Release()
-			if readErr != nil {
-				return nil, errnie.Error(readErr)
-			}
+			for batch, batchErr := range batches {
+				if batchErr != nil {
+					errnie.Warn(fmt.Sprintf("[audit] skipping corrupted batch in detectInMemory: %s", batchErr))
+					continue
+				}
 
-			for _, m := range measurements {
-				if m != nil {
-					grouped[m.Label] = append(grouped[m.Label], m)
+				if batch == nil {
+					continue
+				}
+
+				measurements, readErr := tables.ReadMeasurements(batch)
+				batch.Release()
+
+				if readErr != nil {
+					errnie.Warn(fmt.Sprintf("[audit] skipping unreadable batch in detectInMemory: %s", readErr))
+					continue
+				}
+
+				for _, measurement := range measurements {
+					if measurement != nil {
+						grouped[measurement.Label] = append(grouped[measurement.Label], measurement)
+					}
 				}
 			}
 		}

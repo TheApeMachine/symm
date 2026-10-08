@@ -291,18 +291,20 @@ func ingestMetrics(
 
 		scanOpts := []icetable.ScanOption{
 			icetable.WithRowFilter(filter),
-			icetable.WitMaxConcurrency(32),
+			icetable.WitMaxConcurrency(16),
 		}
 
 		_, batches, err := tbl.Scan(scanOpts...).ReadTasks(s3Ctx, tasks[taskIndex:endIndex])
 
 		if err != nil {
-			return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(errnie.BadGateway, "[audit] failed to read tasks", err))
+			errnie.Warn(fmt.Sprintf("[audit] failed to read tasks chunk %d-%d: %s", taskIndex, endIndex, err))
+			continue
 		}
 
 		for batch, batchErr := range batches {
 			if batchErr != nil {
-				return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(errnie.BadGateway, "[audit] batch decode failure in measurements", batchErr))
+				errnie.Warn(fmt.Sprintf("[audit] skipping corrupted batch in measurements: %s", batchErr))
+				continue
 			}
 
 			if batch != nil {
@@ -310,7 +312,8 @@ func ingestMetrics(
 				batch.Release()
 
 				if readErr != nil {
-					return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(errnie.BadGateway, "[audit] failed to decode measurement batch", readErr))
+					errnie.Warn(fmt.Sprintf("[audit] skipping unreadable measurement batch: %s", readErr))
+					continue
 				}
 
 				for _, meas := range measurements {

@@ -2,6 +2,7 @@ package tables
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"sort"
 
@@ -55,7 +56,7 @@ func (catalog *Catalog) scan(
 			predicate = filter
 		}
 
-		options := []icetable.ScanOption{icetable.WitMaxConcurrency(32)}
+		options := []icetable.ScanOption{icetable.WitMaxConcurrency(16)}
 
 		if predicate != nil {
 			options = append(options, icetable.WithRowFilter(predicate))
@@ -77,38 +78,39 @@ func (catalog *Catalog) scan(
 			return
 		}
 
-		_, batches, err := tbl.Scan(options...).ReadTasks(ctx, tasks)
-
-		if err != nil {
-			yield(nil, errnie.Error(errnie.Err(
-				errnie.BadGateway,
-				"[iceberg] failed to read tasks for "+tableName,
-				err,
-			)))
-
-			return
-		}
-
+		chunkSize := 250
 		var count int
 
-		for batch, batchErr := range batches {
-			if batchErr != nil {
-				yield(nil, errnie.Error(errnie.Err(
-					errnie.BadGateway,
-					"[iceberg] batch decode failure for "+tableName,
-					batchErr,
-				)))
+		for taskIndex := 0; taskIndex < len(tasks); taskIndex += chunkSize {
+			endIndex := taskIndex + chunkSize
 
-				return
+			if endIndex > len(tasks) {
+				endIndex = len(tasks)
 			}
 
-			if batch != nil {
-				batchMeasurements, err := ReadMeasurements(batch)
+			_, batches, err := tbl.Scan(options...).ReadTasks(ctx, tasks[taskIndex:endIndex])
+
+			if err != nil {
+				errnie.Warn(fmt.Sprintf("[iceberg] failed to read tasks for %s (chunk %d-%d): %s", tableName, taskIndex, endIndex, err))
+				continue
+			}
+
+			for batch, batchErr := range batches {
+				if batchErr != nil {
+					errnie.Warn(fmt.Sprintf("[iceberg] skipping corrupted batch in %s: %s", tableName, batchErr))
+					continue
+				}
+
+				if batch == nil {
+					continue
+				}
+
+				batchMeasurements, readErr := ReadMeasurements(batch)
 				batch.Release()
 
-				if err != nil {
-					yield(nil, err)
-					return
+				if readErr != nil {
+					errnie.Warn(fmt.Sprintf("[iceberg] skipping unreadable measurements in %s: %s", tableName, readErr))
+					continue
 				}
 
 				for _, measurement := range batchMeasurements {
