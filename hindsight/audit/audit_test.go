@@ -76,5 +76,21 @@ func TestAuditStages(t *testing.T) {
 			So(sympathy.InversePairs, ShouldBeGreaterThan, 0)
 			So(math.IsNaN(sympathy.NullDistribution.MeanConcordance), ShouldBeFalse)
 		})
+
+		Convey("When analyzing cognitive trie with insufficient evidence (Stage 6)", func() {
+			cognitive := AnalyzeCognitiveTrie(t.Context(), nil, 1, "BTC/USD", nil, nil, nil, 10, nil)
+
+			So(cognitive.Status, ShouldEqual, "INSUFFICIENT_DATA")
+			So(cognitive.Passed, ShouldBeFalse)
+			So(cognitive.SummaryText, ShouldContainSubstring, "Cognitive Trie: Catalog or grid unavailable.")
+		})
+
+		Convey("When testing trie node metric traversal and token deduplication", func() {
+			deduped := contextOfTokens([]string{"R1", "R1", "R5", "R12", "R12", "R12"})
+			So(deduped, ShouldEqual, "R1/R5/R12")
+
+			emptyDeduped := contextOfTokens(nil)
+			So(emptyDeduped, ShouldEqual, "")
+		})
 	})
 }

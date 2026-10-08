@@ -2,24 +2,113 @@ package leadlag
 
 import (
 	"context"
-	"errors"
+	"iter"
 	"math"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/theapemachine/errnie"
 
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
+
+var leadLagPeerFactKeys = []string{
+	"best_lag_correlation",
+	"best_lag_covariance",
+	"overlap_pair_count",
+	"return_energy:reference",
+	"return_energy:measured",
+	"best_lag_index",
+	"best_lag_seconds",
+	"leads",
+	"contemporaneous_correlation",
+	"search_count",
+	"lag_search_resolution_seconds",
+	"lag_search_span",
+	"pair_observation_count",
+	"lag_search_scale",
+	"absolute_correlation_gain",
+	"lag_fraction",
+	"lag_peak_prominence",
+	"lag_peak_curvature",
+	"best_lag_correlation_baseline",
+	"best_lag_correlation_zscore",
+}
+
+type pathStore struct {
+	*core.PrimitiveError
+	mu    sync.RWMutex
+	paths map[string][][2]float64
+}
+
+func newPathStore() *pathStore {
+	return &pathStore{
+		PrimitiveError: core.NewPrimitiveError(),
+		paths:          make(map[string][][2]float64),
+	}
+}
+
+func (store *pathStore) peers(exclude string) []string {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	peers := make([]string, 0, len(store.paths))
+
+	for symbol := range store.paths {
+		if symbol != exclude {
+			peers = append(peers, symbol)
+		}
+	}
+
+	slices.Sort(peers)
+	return peers
+}
+
+func (store *pathStore) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			if arriving == nil {
+				continue
+			}
+
+			payload := *(*map[string][][2]float64)(arriving)
+
+			if len(payload) == 0 {
+				store.mu.RLock()
+				snapshot := make(map[string][][2]float64, len(store.paths))
+
+				for key, val := range store.paths {
+					snapshot[key] = val
+				}
+
+				store.mu.RUnlock()
+
+				if !yield(unsafe.Pointer(&snapshot)) {
+					return
+				}
+
+				continue
+			}
+
+			store.mu.Lock()
+
+			for key, val := range payload {
+				store.paths[key] = val
+			}
+
+			store.mu.Unlock()
+		}
+	}
+}
 
 /*
 Signal is the asynchronous price-path lead-lag instrument. It holds no logic
@@ -34,44 +123,41 @@ Facts accumulate in the output map and are written once.
 */
 type Signal struct {
 	*runtime.System
-	paths     core.Primitive
+	paths     *pathStore
 	pipelines sync.Map
 	metrics   map[string][2]string
 }
 
 type symbolPipeline struct {
-	output   data.Map[float64]
-	envelope data.Map[float64]
-	state    *data.State
 	pipeline core.Primitive
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		paths: store.NewKV[string, [][2]float64](nil),
+		paths: newPathStore(),
 		// {output key without "@reference"}: {unit, timescale}
 		metrics: map[string][2]string{
 			"last":                          {string(data.UnitPrice), string(data.TimescaleTick)},
 			"observation_count":             {string(data.UnitCount), string(data.TimescaleRollingWindow)},
 			"pair_observation_count":        {string(data.UnitCount), string(data.TimescaleRollingWindow)},
-			"best_lag_correlation":          {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
-			"best_lag_covariance":           {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
+			"best_lag_correlation":          {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
+			"best_lag_covariance":           {string(data.UnitCovariance), string(data.TimescaleRollingWindow)},
 			"overlap_pair_count":            {string(data.UnitCount), string(data.TimescaleRollingWindow)},
 			"return_energy:reference":       {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
 			"return_energy:measured":        {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
 			"reference_return_count":        {string(data.UnitCount), string(data.TimescaleRollingWindow)},
 			"measured_return_count":         {string(data.UnitCount), string(data.TimescaleRollingWindow)},
-			"best_lag_index":                {string(data.UnitCount), string(data.TimescaleRollingWindow)},
+			"best_lag_index":                {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
 			"best_lag_seconds":              {string(data.UnitSecond), string(data.TimescaleRollingWindow)},
 			"leads":                         {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
-			"contemporaneous_correlation":   {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"contemporaneous_correlation":   {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
 			"search_count":                  {string(data.UnitCount), string(data.TimescaleRollingWindow)},
 			"lag_search_resolution_seconds": {string(data.UnitSecond), string(data.TimescaleRollingWindow)},
 			"lag_search_span":               {string(data.UnitCount), string(data.TimescaleRollingWindow)},
-			"lag_search_scale":              {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
-			"absolute_correlation_gain":     {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"lag_search_scale":              {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
+			"absolute_correlation_gain":     {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
 			"lag_fraction":                  {string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			"lag_peak_prominence":           {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"lag_peak_prominence":           {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
 			"lag_peak_curvature":            {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
 			"effective_sample_count":        {string(data.UnitCount), string(data.TimescaleRollingWindow)},
 			"correlation_p_value":           {string(data.UnitProbability), string(data.TimescaleRollingWindow)},
@@ -80,9 +166,9 @@ func NewSignal(ctx context.Context) *Signal {
 			"lag_divergence_seconds":        {string(data.UnitSecond), string(data.TimescaleRollingWindow)},
 			"lag_noise_scale_seconds":       {string(data.UnitSecond), string(data.TimescaleRollingWindow)},
 			"lag_zscore":                    {string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			"best_lag_correlation_baseline": {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"best_lag_correlation_baseline": {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
 			"best_lag_correlation_zscore":   {string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			"correlation_gain_baseline":     {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
+			"correlation_gain_baseline":     {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
 			"correlation_gain_zscore":       {string(data.UnitZScore), string(data.TimescaleRollingWindow)},
 			"lag_velocity":                  {string(data.UnitVelocity), string(data.TimescalePerSecond)},
 			"correlation_gain_velocity":     {string(data.UnitVelocity), string(data.TimescalePerSecond)},
@@ -100,13 +186,8 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 		return existing.(*symbolPipeline)
 	}
 
-	output := data.NewOutputMap()
-
 	pipe := &symbolPipeline{
-		output:   output,
-		envelope: data.NewOutputMap(),
-		state:    data.NewState(data.NewMap(), output),
-		pipeline: transport.NewStages(
+		pipeline: nomagique.NewNumber(
 			nmcorrelation.NewMember(symbol, signal.paths, adaptive.NewWindow()),
 			nmcorrelation.NewLeads(symbol, signal.paths, algo.NewHayashiYoshida()),
 		),
@@ -145,23 +226,53 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	pipe := signal.pipelineFor(prior.Label)
+	output := make(map[string]float64)
+	output["last"] = price
 
-	clear(pipe.output.Values)
-	clear(pipe.envelope.Values)
+	atNano := float64(prior.At.UnixNano())
+	peers := signal.paths.peers(prior.Label)
+	index := 0
+	var pathFrom float64
 
-	pipe.envelope.Values["at"] = float64(prior.At.UnixNano())
-	pipe.envelope.Values["price"] = price
-	pipe.envelope.Values["last"] = price
+	for ptr := range pipe.pipeline.Next(data.NewValue(atNano, price).Next(nil)) {
+		if ptr == nil {
+			continue
+		}
 
-	adapter := data.NewAdapter(prior, pipe.state)
+		val := *(*float64)(ptr)
 
-	for range adapter.Next(data.NewValue(pipe.envelope)) {
+		if index == 0 {
+			output["observation_count"] = val
+		}
+
+		if index == 1 {
+			output["path_accepted"] = val
+		}
+
+		if index == 2 {
+			output["path_restated"] = val
+		}
+
+		if index == 3 {
+			output["path_from"] = val
+			pathFrom = val
+		}
+
+		if index >= 4 {
+			peerIdx := (index - 4) / 20
+			factIdx := (index - 4) % 20
+
+			if peerIdx < len(peers) && !math.IsNaN(val) {
+				peer := peers[peerIdx]
+				fact := leadLagPeerFactKeys[factIdx]
+				output[fact+"@"+peer] = val
+			}
+		}
+
+		index++
 	}
 
-	for range pipe.pipeline.Next(data.NewValue(adapter)) {
-	}
-
-	if err := errors.Join(adapter.Error(), pipe.pipeline.Error()); err != nil {
+	if err := pipe.pipeline.Error(); err != nil {
 		signal.Error(err)
 		return nil
 	}
@@ -173,13 +284,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	out.At = prior.At
 	out.From = prior.At
 
-	if from, held := pipe.output.Values["path_from"]; held && from <= float64(prior.At.UnixNano()) {
-		out.From = time.Unix(0, int64(from)).UTC()
+	if pathFrom > 0 && pathFrom <= atNano {
+		out.From = time.Unix(0, int64(pathFrom)).UTC()
 	}
 
-	keys := make([]string, 0, len(pipe.output.Values))
+	keys := make([]string, 0, len(output))
 
-	for key := range pipe.output.Values {
+	for key := range output {
 		keys = append(keys, key)
 	}
 
@@ -189,7 +300,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	for _, key := range keys {
 		fact, _, _ := strings.Cut(key, "@")
 		declared, published := signal.metrics[fact]
-		value := pipe.output.Values[key]
+		value := output[key]
 
 		if !published {
 			continue

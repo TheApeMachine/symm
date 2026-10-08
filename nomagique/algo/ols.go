@@ -75,7 +75,7 @@ func (op *OLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			op.out = op.out[:0]
 
-			for pointer := range op.solver.Next(data.NewValue(op.request)) {
+			for pointer := range op.solver.Next(data.NewValue(op.request).Next(nil)) {
 				op.out = append(op.out[:0], *(*[]float64)(pointer)...)
 			}
 

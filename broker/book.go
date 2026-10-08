@@ -572,7 +572,7 @@ func (book *Book) ApplyMeasurement(measurement *data.Measurement) error {
 
 	var priceDec *decimal.Decimal
 
-	if pMetric := data.Pull[*data.MetricEntry](measurement.Read("limit_price")); pMetric.Err == nil {
+	if pMetric := data.Pull(measurement.Read("limit_price")); pMetric.Err == nil {
 		if pMetric.Metric.Exact != nil {
 			priceDec = pMetric.Metric.Exact
 		}
@@ -584,7 +584,7 @@ func (book *Book) ApplyMeasurement(measurement *data.Measurement) error {
 
 	var qtyDec *decimal.Decimal
 
-	if qMetric := data.Pull[*data.MetricEntry](measurement.Read("order_qty")); qMetric.Err == nil {
+	if qMetric := data.Pull(measurement.Read("order_qty")); qMetric.Err == nil {
 		if qMetric.Metric.Exact != nil {
 			qtyDec = qMetric.Metric.Exact
 		}
@@ -596,15 +596,15 @@ func (book *Book) ApplyMeasurement(measurement *data.Measurement) error {
 
 	var checksum uint32
 
-	if cMetric := data.Pull[*data.MetricEntry](measurement.Read("checksum")); cMetric.Err == nil {
-		checksum = uint32(cMetric.Metric.Raw)
+	if cStr := measurement.Meta("checksum"); cStr != "" {
+		if val, err := strconv.ParseUint(cStr, 10, 32); err == nil {
+			checksum = uint32(val)
+		}
 	}
 
 	if checksum == 0 {
-		if cStr := measurement.Meta("checksum"); cStr != "" {
-			if val, err := strconv.ParseUint(cStr, 10, 32); err == nil {
-				checksum = uint32(val)
-			}
+		if cMetric := data.Pull(measurement.Read("checksum")); cMetric.Err == nil {
+			checksum = uint32(cMetric.Metric.Raw)
 		}
 	}
 

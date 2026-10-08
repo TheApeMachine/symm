@@ -5,6 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/tests"
 )
 
 func TestEmit(t *testing.T) {
@@ -12,24 +13,10 @@ func TestEmit(t *testing.T) {
 		emitter := NewEmit(3)
 
 		Convey("Accumulates tokens and yields when matching region count", func() {
-			state := data.NewState(
-				data.NewMap("token_0", "token_0", "token_1", "token_1", "token_2", "token_2"),
-			)
-			adapter := data.NewAdapter(nil, state)
-			inputValues := data.NewOutputMap()
-			inputValues.Values["token_0"] = 101
-			inputValues.Values["token_1"] = 102
-			inputValues.Values["token_2"] = 103
-
-			for range adapter.Next(data.NewValue(inputValues)) {
-			}
-
-			data.Read[*data.Adapter](emitter.Next(data.NewValue(adapter)))
+			out := tests.CollectSeq[float64](emitter.Next(data.NewValue(101.0, 102.0, 103.0).Next(nil)))
 
 			So(emitter.Error(), ShouldBeNil)
-			So(emitter.output.Values["token_0"], ShouldEqual, 101)
-			So(emitter.output.Values["token_1"], ShouldEqual, 102)
-			So(emitter.output.Values["token_2"], ShouldEqual, 103)
+			So(out, ShouldResemble, []float64{101.0, 102.0, 103.0})
 		})
 	})
 }

@@ -2,118 +2,166 @@ package depthflow
 
 import (
 	"context"
-	"errors"
 	"math"
 	"sync"
 	"time"
-
-	"github.com/theapemachine/errnie"
+	"unsafe"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Signal is the displayed-depth flow instrument. It holds no logic of its own:
-its entire behavior is two nomagique pipelines per symbol, each a
-transport.Parallel of stage groups over one shared output map. The book levels
-are the only envelope translation — folded into per-side displayed notional
-and per-level added and removed notional against the previous book, which the
-adapter cannot carry as maps. The level pipeline runs on every observation;
-the flow pipeline, which divides by elapsed time and the reference notional,
-runs only once a previous book exists and venue time has advanced. Facts
-accumulate in the output map and are written once.
-*/
+var outputKeys = []string{
+	"book_notional:bid",
+	"book_notional:ask",
+	"book_notional",
+	"observed_notional:bid",
+	"observed_notional:ask",
+	"observed_notional",
+	"book_imbalance",
+	"observed_notional_imbalance",
+	"touch_imbalance",
+	"imbalance_resolution_gap",
+	"imbalance_resolution_distance",
+	"added_notional:bid",
+	"removed_notional:bid",
+	"net_displayed_flow:bid",
+	"added_notional:ask",
+	"removed_notional:ask",
+	"net_displayed_flow:ask",
+	"flow_activity_imbalance",
+	"book_imbalance_baseline",
+	"book_imbalance_divergence",
+	"book_imbalance_zscore",
+	"resolution_gap_baseline",
+	"resolution_gap_divergence",
+	"resolution_gap_zscore",
+	"book_imbalance_velocity",
+	"resolution_gap_velocity",
+	"added_notional_rate:bid",
+	"added_notional_rate:ask",
+	"removed_notional_rate:bid",
+	"removed_notional_rate:ask",
+	"net_displayed_flow_rate:bid",
+	"net_displayed_flow_rate:ask",
+	"book_turnover_rate",
+	"net_book_change_rate",
+	"signed_net_displayed_flow_rate",
+	"turnover_baseline",
+	"turnover_divergence",
+	"turnover_zscore",
+	"turnover_ratio",
+	"net_book_change_rate_baseline",
+	"net_book_change_rate_divergence",
+	"net_book_change_rate_zscore",
+	"signed_net_displayed_flow_rate_baseline",
+	"signed_net_displayed_flow_rate_divergence",
+	"signed_net_displayed_flow_rate_zscore",
+	"historical_path_distance",
+	"historical_path_percentile",
+}
+
 type Signal struct {
 	*runtime.System
-	books     broker.BookSource
-	pipelines sync.Map
-	metrics   [][4]string
+	books    broker.BookSource
+	pipeline *nomagique.Number
+	history  sync.Map
 }
 
-type symbolPipeline struct {
-	output       data.Map[float64]
-	envelope     data.Map[float64]
-	levelStates  []*data.State
-	level        core.Primitive
-	flowStates   []*data.State
-	flow         core.Primitive
+type symbolHistory struct {
 	prevBids     map[float64]float64
 	prevAsks     map[float64]float64
-	currBids     map[float64]float64
-	currAsks     map[float64]float64
-	hasPrev      bool
 	prevNotional float64
 	prevAt       time.Time
+	hasPrev      bool
 }
 
-/*
-NewSignal composes the displayed-depth flow instrument. The BookSource
-supplies the aggregated levels whose mutation is measured.
-*/
 func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	signal := &Signal{
 		books: books,
-		// {published label, output key, unit, timescale, gate key}
-		// A non-empty gate key publishes the metric only while that output is non-zero.
-		metrics: [][4]string{
-			{"book_notional:bid", "notional:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"book_notional:ask", "notional:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"book_notional", "book_notional", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"observed_notional:bid", "notional:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"observed_notional:ask", "notional:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"observed_notional", "book_notional", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"book_imbalance", "book_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"observed_notional_imbalance", "book_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"touch_imbalance", "touch_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"imbalance_resolution_gap", "imbalance_resolution_gap", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"imbalance_resolution_distance", "imbalance_resolution_distance", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"added_notional:bid", "added:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"removed_notional:bid", "removed:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"net_displayed_flow:bid", "net_displayed_flow:bid", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"added_notional:ask", "added:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"removed_notional:ask", "removed:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"net_displayed_flow:ask", "net_displayed_flow:ask", string(data.UnitNotional), string(data.TimescaleInstantaneous)},
-			{"flow_activity_imbalance", "flow_activity_imbalance", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"book_imbalance_baseline", "book_imbalance_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"book_imbalance_divergence", "book_imbalance_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"book_imbalance_zscore", "book_imbalance_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"resolution_gap_baseline", "resolution_gap_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"resolution_gap_divergence", "resolution_gap_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"resolution_gap_zscore", "resolution_gap_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"book_imbalance_velocity", "book_imbalance_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
-			{"resolution_gap_velocity", "resolution_gap_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
-			{"added_notional_rate:bid", "added_notional_rate:bid", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
-			{"added_notional_rate:ask", "added_notional_rate:ask", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
-			{"removed_notional_rate:bid", "removed_notional_rate:bid", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
-			{"removed_notional_rate:ask", "removed_notional_rate:ask", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
-			{"net_displayed_flow_rate:bid", "net_displayed_flow_rate:bid", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
-			{"net_displayed_flow_rate:ask", "net_displayed_flow_rate:ask", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
-			{"book_turnover_rate", "book_turnover_rate", string(data.UnitRate), string(data.TimescalePerSecond)},
-			{"net_book_change_rate", "net_book_change_rate", string(data.UnitRate), string(data.TimescalePerSecond)},
-			{"signed_net_displayed_flow_rate", "signed_net_displayed_flow_rate", string(data.UnitRate), string(data.TimescalePerSecond)},
-			{"turnover_baseline", "turnover_baseline", string(data.UnitRate), string(data.TimescaleRollingWindow)},
-			{"turnover_divergence", "turnover_divergence", string(data.UnitRate), string(data.TimescaleRollingWindow)},
-			{"turnover_zscore", "turnover_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"turnover_ratio", "turnover_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"net_book_change_rate_baseline", "net_book_change_rate_baseline", string(data.UnitRate), string(data.TimescaleRollingWindow)},
-			{"net_book_change_rate_divergence", "net_book_change_rate_divergence", string(data.UnitRate), string(data.TimescaleRollingWindow)},
-			{"net_book_change_rate_zscore", "net_book_change_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"signed_net_displayed_flow_rate_baseline", "signed_net_displayed_flow_rate_baseline", string(data.UnitRate), string(data.TimescaleRollingWindow)},
-			{"signed_net_displayed_flow_rate_divergence", "signed_net_displayed_flow_rate_divergence", string(data.UnitRate), string(data.TimescaleRollingWindow)},
-			{"signed_net_displayed_flow_rate_zscore", "signed_net_displayed_flow_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"historical_path_distance", "historical_path_distance", string(data.UnitDistance), string(data.TimescaleRollingWindow)},
-			{"historical_path_percentile", "historical_path_percentile", string(data.UnitPercent), string(data.TimescaleRollingWindow)},
-		},
+		pipeline: nomagique.NewNumber(
+			transport.NewAddressable(
+				"symbolstore", store.NewKV(),
+				nomagique.NewNumber(
+					data.NewValue[core.Primitive](
+						nomagique.NewNumber(
+							data.NewSlice(0, 10),
+							transport.NewParallel(
+								nomagique.NewNumber(transport.NewSpread[float64](), arithmetic.NewAdd()),
+								nomagique.NewNumber(transport.NewSpread[float64](), arithmetic.NewSubtract()),
+								nomagique.NewNumber(transport.NewSpread[float64](), arithmetic.NewAdd()),
+								nomagique.NewNumber(transport.NewSpread[float64](), arithmetic.NewSubtract()),
+								nomagique.NewNumber(transport.NewSpread[float64](), arithmetic.NewSubtract()),
+								nomagique.NewNumber(transport.NewSpread[float64](), arithmetic.NewSubtract()),
+								nomagique.NewNumber(transport.NewSpread[float64](), arithmetic.NewDivide()),
+								nomagique.NewNumber(transport.NewSpread[float64](), arithmetic.NewDivide()),
+								nomagique.NewNumber(transport.NewSpread[float64](), arithmetic.NewSubtract()),
+								nomagique.NewNumber(transport.NewSpread[float64](), calculus.NewAbsolute()),
+							),
+						),
+						data.NewSlice(10, 20),
+					),
+					data.NewValue[core.Primitive](
+						data.NewSlice(0, 20),
+						nomagique.NewNumber(
+							data.NewSelect(
+								0, 0,
+								1, 1,
+								2, 2,
+								3, 3,
+								4, 4,
+								5, 5,
+								6, 6,
+								7, 7,
+								8, 8,
+								9, 9,
+								10, 10,
+								11, 11,
+								12, 12,
+								13, 13,
+							),
+							data.NewBatch(2, 2),
+							transport.NewParallel(
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewSubtract()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewSubtract()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+							),
+						),
+					),
+					data.NewSelect(
+						0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+						10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+						20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+						30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+						40, 41, 42, 43, 44, 45, 46,
+					),
+				),
+				data.NewMessage(data.WRITE, "symbolstore", "depthflow_state", data.NewValue[core.Primitive]()),
+			),
+		),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "depthflow", signal)
@@ -125,165 +173,20 @@ func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	return signal
 }
 
-func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
-	if existing, ok := signal.pipelines.Load(symbol); ok {
-		return existing.(*symbolPipeline)
+func (signal *Signal) getHistory(symbol string) *symbolHistory {
+	val, ok := signal.history.Load(symbol)
+	if ok {
+		return val.(*symbolHistory)
 	}
 
-	output := data.NewOutputMap()
-
-	pipe := &symbolPipeline{
-		output:   output,
-		envelope: data.NewOutputMap(),
+	hist := &symbolHistory{
 		prevBids: make(map[float64]float64),
 		prevAsks: make(map[float64]float64),
-		currBids: make(map[float64]float64),
-		currAsks: make(map[float64]float64),
-		levelStates: []*data.State{
-			// 0-2: Displayed book notional and its scale-free imbalance.
-			data.NewState(data.NewMap("left", "notional:bid", "right", "notional:ask", "add", "book_notional"), output),
-			data.NewState(data.NewMap("left", "notional:bid", "right", "notional:ask", "subtract", "net_book_notional"), output),
-			data.NewState(data.NewMap("left", "net_book_notional", "right", "book_notional", "divide", "book_imbalance"), output),
-			// 3-5: Touch notional and its imbalance.
-			data.NewState(data.NewMap("left", "touch_notional:bid", "right", "touch_notional:ask", "add", "touch_notional"), output),
-			data.NewState(data.NewMap("left", "touch_notional:bid", "right", "touch_notional:ask", "subtract", "net_touch_notional"), output),
-			data.NewState(data.NewMap("left", "net_touch_notional", "right", "touch_notional", "divide", "touch_imbalance"), output),
-			// 6-8: How far the touch imbalance has yet to resolve into the book.
-			data.NewState(data.NewMap("left", "touch_imbalance", "right", "book_imbalance", "subtract", "imbalance_resolution_gap"), output),
-			data.NewState(data.NewMap("left", "imbalance_resolution_gap", "right", "zero", "subtract", "imbalance_resolution_distance"), output),
-			data.NewState(data.NewMap("value", "imbalance_resolution_distance", "absolute", "imbalance_resolution_distance"), output),
-			// 9-11: Net displayed flow per side and signed across sides.
-			data.NewState(data.NewMap("left", "added:bid", "right", "removed:bid", "subtract", "net_displayed_flow:bid"), output),
-			data.NewState(data.NewMap("left", "added:ask", "right", "removed:ask", "subtract", "net_displayed_flow:ask"), output),
-			data.NewState(data.NewMap("left", "net_displayed_flow:bid", "right", "net_displayed_flow:ask", "subtract", "signed_net_displayed_flow"), output),
-			// 12-17: Gross flow activity and the scale-free flow imbalance.
-			data.NewState(data.NewMap("left", "net_displayed_flow:bid", "right", "zero", "subtract", "gross_displayed_flow:bid"), output),
-			data.NewState(data.NewMap("value", "gross_displayed_flow:bid", "absolute", "gross_displayed_flow:bid"), output),
-			data.NewState(data.NewMap("left", "net_displayed_flow:ask", "right", "zero", "subtract", "gross_displayed_flow:ask"), output),
-			data.NewState(data.NewMap("value", "gross_displayed_flow:ask", "absolute", "gross_displayed_flow:ask"), output),
-			data.NewState(data.NewMap("left", "gross_displayed_flow:bid", "right", "gross_displayed_flow:ask", "add", "gross_displayed_flow"), output),
-			data.NewState(data.NewMap("left", "signed_net_displayed_flow", "right", "gross_displayed_flow", "divide", "flow_activity_imbalance"), output),
-			// 18-20: Book imbalance against its own causal baseline.
-			data.NewState(data.NewMap("value", "book_imbalance", "center", "book_imbalance_baseline", "scale", "book_imbalance_noise_scale"), output),
-			data.NewState(data.NewMap("left", "book_imbalance", "right", "book_imbalance_baseline", "subtract", "book_imbalance_divergence"), output),
-			data.NewState(data.NewMap("left", "book_imbalance_divergence", "right", "book_imbalance_noise_scale", "divide", "book_imbalance_zscore"), output),
-			// 21-23: Resolution gap against its own causal baseline.
-			data.NewState(data.NewMap("value", "imbalance_resolution_gap", "center", "resolution_gap_baseline", "scale", "resolution_gap_noise_scale"), output),
-			data.NewState(data.NewMap("left", "imbalance_resolution_gap", "right", "resolution_gap_baseline", "subtract", "resolution_gap_divergence"), output),
-			data.NewState(data.NewMap("left", "resolution_gap_divergence", "right", "resolution_gap_noise_scale", "divide", "resolution_gap_zscore"), output),
-			// 24-25: Imbalance and gap velocities.
-			data.NewState(data.NewMap("value", "book_imbalance", "rate", "book_imbalance_velocity", "defined", "book_imbalance_velocity:defined"), output),
-			data.NewState(data.NewMap("value", "imbalance_resolution_gap", "rate", "resolution_gap_velocity", "defined", "resolution_gap_velocity:defined"), output),
-		},
-		level: transport.NewParallel(
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(calculus.NewAbsolute()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(calculus.NewAbsolute()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(calculus.NewAbsolute()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(temporal.NewVelocity()),
-			transport.NewStages(temporal.NewVelocity()),
-		),
-		flowStates: []*data.State{
-			// 0-3: Elapsed venue time and the reference notional exposure.
-			data.NewState(data.NewMap("from", "prev_at", "to", "at", "elapsed", "elapsed"), output),
-			data.NewState(data.NewMap("left", "book_notional", "right", "prev_notional", "add", "reference_notional:double"), output),
-			data.NewState(data.NewMap("left", "reference_notional:double", "right", "half", "multiply", "reference_notional"), output),
-			data.NewState(data.NewMap("left", "reference_notional", "right", "elapsed", "multiply", "reference_exposure"), output),
-			// 4-9: Per-side notional rates.
-			data.NewState(data.NewMap("left", "added:bid", "right", "elapsed", "divide", "added_notional_rate:bid"), output),
-			data.NewState(data.NewMap("left", "added:ask", "right", "elapsed", "divide", "added_notional_rate:ask"), output),
-			data.NewState(data.NewMap("left", "removed:bid", "right", "elapsed", "divide", "removed_notional_rate:bid"), output),
-			data.NewState(data.NewMap("left", "removed:ask", "right", "elapsed", "divide", "removed_notional_rate:ask"), output),
-			data.NewState(data.NewMap("left", "net_displayed_flow:bid", "right", "elapsed", "divide", "net_displayed_flow_rate:bid"), output),
-			data.NewState(data.NewMap("left", "net_displayed_flow:ask", "right", "elapsed", "divide", "net_displayed_flow_rate:ask"), output),
-			// 10-16: Turnover, net change, and signed flow per unit exposure.
-			data.NewState(data.NewMap("left", "added:bid", "right", "removed:bid", "add", "book_activity:bid"), output),
-			data.NewState(data.NewMap("left", "added:ask", "right", "removed:ask", "add", "book_activity:ask"), output),
-			data.NewState(data.NewMap("left", "book_activity:bid", "right", "book_activity:ask", "add", "book_activity"), output),
-			data.NewState(data.NewMap("left", "book_activity", "right", "reference_exposure", "divide", "book_turnover_rate"), output),
-			data.NewState(data.NewMap("left", "book_notional", "right", "prev_notional", "subtract", "net_book_change"), output),
-			data.NewState(data.NewMap("left", "net_book_change", "right", "reference_exposure", "divide", "net_book_change_rate"), output),
-			data.NewState(data.NewMap("left", "signed_net_displayed_flow", "right", "reference_exposure", "divide", "signed_net_displayed_flow_rate"), output),
-			// 17-20: Turnover against its own causal baseline.
-			data.NewState(data.NewMap("value", "book_turnover_rate", "center", "turnover_baseline", "scale", "turnover_noise_scale"), output),
-			data.NewState(data.NewMap("left", "book_turnover_rate", "right", "turnover_baseline", "subtract", "turnover_divergence"), output),
-			data.NewState(data.NewMap("left", "turnover_divergence", "right", "turnover_noise_scale", "divide", "turnover_zscore"), output),
-			data.NewState(data.NewMap("left", "book_turnover_rate", "right", "turnover_baseline", "divide", "turnover_ratio"), output),
-			// 21-23: Net book change rate against its own causal baseline.
-			data.NewState(data.NewMap("value", "net_book_change_rate", "center", "net_book_change_rate_baseline", "scale", "net_book_change_rate_noise_scale"), output),
-			data.NewState(data.NewMap("left", "net_book_change_rate", "right", "net_book_change_rate_baseline", "subtract", "net_book_change_rate_divergence"), output),
-			data.NewState(data.NewMap("left", "net_book_change_rate_divergence", "right", "net_book_change_rate_noise_scale", "divide", "net_book_change_rate_zscore"), output),
-			// 24-26: Signed displayed flow rate against its own causal baseline.
-			data.NewState(data.NewMap("value", "signed_net_displayed_flow_rate", "center", "signed_net_displayed_flow_rate_baseline", "scale", "signed_net_displayed_flow_rate_noise_scale"), output),
-			data.NewState(data.NewMap("left", "signed_net_displayed_flow_rate", "right", "signed_net_displayed_flow_rate_baseline", "subtract", "signed_net_displayed_flow_rate_divergence"), output),
-			data.NewState(data.NewMap("left", "signed_net_displayed_flow_rate_divergence", "right", "signed_net_displayed_flow_rate_noise_scale", "divide", "signed_net_displayed_flow_rate_zscore"), output),
-		},
-		flow: transport.NewParallel(
-			transport.NewStages(temporal.NewElapsed()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-		),
 	}
-
-	actual, _ := signal.pipelines.LoadOrStore(symbol, pipe)
-	return actual.(*symbolPipeline)
+	actual, _ := signal.history.LoadOrStore(symbol, hist)
+	return actual.(*symbolHistory)
 }
 
-/*
-Step folds the shared book's levels into per-side displayed and touch
-notional plus per-level added and removed notional against the symbol's
-previous book, drives the level pipeline and (once a previous book exists and
-venue time has advanced) the flow pipeline, and writes the published
-depth-flow facts into a fresh Measurement allocated from the signal's own
-arena. An absent or empty book yields no measurement: invalid geometry is
-never fabricated into zero depth. A crossed or locked book is corrupt state
-and halts the signal (broker.CrossedTouch). Level-diff facts are omitted on
-a symbol's first observation, and rates are omitted until time advances.
-*/
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
 		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
@@ -299,12 +202,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	pipe := signal.pipelineFor(prior.Label)
+	hist := signal.getHistory(prior.Label)
 
-	clear(pipe.output.Values)
-	clear(pipe.envelope.Values)
-	clear(pipe.currBids)
-	clear(pipe.currAsks)
+	currBids := make(map[float64]float64)
+	currAsks := make(map[float64]float64)
 
 	var bidNotional, askNotional, touchBid, touchAsk float64
 	var addedBid, removedBid, addedAsk, removedAsk float64
@@ -343,11 +244,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 				continue
 			}
 
-			if len(pipe.currBids) == 0 {
+			if len(currBids) == 0 {
 				touchBid = price * qty
 			}
 
-			pipe.currBids[price] = qty
+			currBids[price] = qty
 			bidNotional += price * qty
 		}
 
@@ -363,19 +264,17 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 				continue
 			}
 
-			if len(pipe.currAsks) == 0 {
+			if len(currAsks) == 0 {
 				touchAsk = price * qty
 			}
 
-			pipe.currAsks[price] = qty
+			currAsks[price] = qty
 			askNotional += price * qty
 		}
 
-		ok = len(pipe.currBids) > 0 && len(pipe.currAsks) > 0
+		ok = len(currBids) > 0 && len(currAsks) > 0
 	})
 
-	// Raised outside the book read lock. Book withholds pending and
-	// checksum-diverging books, so a crossed touch is corrupt state: halt.
 	if crossed {
 		signal.Error(broker.CrossedTouch("depthflow", prior.Label, crossedBid, crossedAsk))
 		return nil
@@ -385,113 +284,151 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	hadPrev := pipe.hasPrev
-	prevAt := pipe.prevAt
+	hadPrev := hist.hasPrev
+	prevAt := hist.prevAt
 	flowReady := hadPrev && prior.At.After(prevAt)
 
-	// Level-diff fold: displayed quantity that appeared or vanished at each
-	// price since the previous book, in notional.
 	if hadPrev {
-		for price, qty := range pipe.currBids {
-			delta := price * (qty - pipe.prevBids[price])
+		for price, qty := range currBids {
+			delta := price * (qty - hist.prevBids[price])
 			addedBid += math.Max(delta, 0)
 			removedBid += math.Max(-delta, 0)
 		}
 
-		for price, qty := range pipe.prevBids {
-			if _, held := pipe.currBids[price]; !held {
+		for price, qty := range hist.prevBids {
+			if _, held := currBids[price]; !held {
 				removedBid += price * qty
 			}
 		}
 
-		for price, qty := range pipe.currAsks {
-			delta := price * (qty - pipe.prevAsks[price])
+		for price, qty := range currAsks {
+			delta := price * (qty - hist.prevAsks[price])
 			addedAsk += math.Max(delta, 0)
 			removedAsk += math.Max(-delta, 0)
 		}
 
-		for price, qty := range pipe.prevAsks {
-			if _, held := pipe.currAsks[price]; !held {
+		for price, qty := range hist.prevAsks {
+			if _, held := currAsks[price]; !held {
 				removedAsk += price * qty
 			}
 		}
 	}
 
-	pipe.envelope.Values["notional:bid"] = bidNotional
-	pipe.envelope.Values["notional:ask"] = askNotional
-	pipe.envelope.Values["touch_notional:bid"] = touchBid
-	pipe.envelope.Values["touch_notional:ask"] = touchAsk
-	pipe.envelope.Values["added:bid"] = addedBid
-	pipe.envelope.Values["removed:bid"] = removedBid
-	pipe.envelope.Values["added:ask"] = addedAsk
-	pipe.envelope.Values["removed:ask"] = removedAsk
-	pipe.envelope.Values["prev_notional"] = pipe.prevNotional
-	pipe.envelope.Values["prev_at"] = float64(prevAt.UnixNano())
-	pipe.envelope.Values["at"] = float64(prior.At.UnixNano())
-	pipe.envelope.Values["zero"] = 0
-	pipe.envelope.Values["half"] = 0.5
-	pipe.envelope.Values["flow:defined"] = 0
+	totalNotional := bidNotional + askNotional
+	touchTotal := touchBid + touchAsk
+	var bookImbalance, touchImbalance, imbalanceGap, imbalanceDistance float64
+	if totalNotional > 0 {
+		bookImbalance = (bidNotional - askNotional) / totalNotional
+	}
+	if touchTotal > 0 {
+		touchImbalance = (touchBid - touchAsk) / touchTotal
+	}
+	imbalanceGap = touchImbalance - bookImbalance
+	imbalanceDistance = math.Abs(imbalanceGap)
 
-	if hadPrev {
-		pipe.envelope.Values["flow:defined"] = 1
+	netDisplayedFlowBid := addedBid - removedBid
+	netDisplayedFlowAsk := addedAsk - removedAsk
+	signedNetFlow := netDisplayedFlowBid - netDisplayedFlowAsk
+	grossDisplayedFlow := math.Abs(netDisplayedFlowBid) + math.Abs(netDisplayedFlowAsk)
+	var flowActivityImbalance float64
+	if grossDisplayedFlow > 0 {
+		flowActivityImbalance = signedNetFlow / grossDisplayedFlow
 	}
 
-	publisher := data.NewAdapter(prior, data.NewState(data.NewMap(), pipe.output))
-
-	for range publisher.Next(data.NewValue(pipe.envelope)) {
-	}
-
-	levelAdapters := make([]*data.Adapter, len(pipe.levelStates))
-
-	for index, state := range pipe.levelStates {
-		levelAdapters[index] = data.NewAdapter(prior, state)
-	}
-
-	for range pipe.level.Next(data.NewValue(levelAdapters...)) {
-	}
+	var addedRateBid, addedRateAsk, removedRateBid, removedRateAsk float64
+	var netFlowRateBid, netFlowRateAsk, bookTurnoverRate, netBookChangeRate, signedNetDisplayedFlowRate float64
 
 	if flowReady {
-		flowAdapters := make([]*data.Adapter, len(pipe.flowStates))
+		elapsed := prior.At.Sub(prevAt).Seconds()
+		if elapsed > 0 {
+			addedRateBid = addedBid / elapsed
+			addedRateAsk = addedAsk / elapsed
+			removedRateBid = removedBid / elapsed
+			removedRateAsk = removedAsk / elapsed
+			netFlowRateBid = netDisplayedFlowBid / elapsed
+			netFlowRateAsk = netDisplayedFlowAsk / elapsed
 
-		for index, state := range pipe.flowStates {
-			flowAdapters[index] = data.NewAdapter(prior, state)
-		}
-
-		for range pipe.flow.Next(data.NewValue(flowAdapters...)) {
+			refNotional := (totalNotional + hist.prevNotional) / 2.0
+			refExposure := refNotional * elapsed
+			if refExposure > 0 {
+				bookActivity := (addedBid + removedBid) + (addedAsk + removedAsk)
+				bookTurnoverRate = bookActivity / refExposure
+				netBookChangeRate = (totalNotional - hist.prevNotional) / refExposure
+				signedNetDisplayedFlowRate = signedNetFlow / refExposure
+			}
 		}
 	}
 
-	if err := errors.Join(publisher.Error(), pipe.level.Error(), pipe.flow.Error()); err != nil {
-		signal.Error(err)
-		return nil
+	output := make(map[string]float64)
+
+	rawMetrics := []float64{
+		bidNotional,
+		askNotional,
+		totalNotional,
+		bidNotional,
+		askNotional,
+		totalNotional,
+		bookImbalance,
+		bookImbalance,
+		touchImbalance,
+		imbalanceGap,
+		imbalanceDistance,
+		addedBid,
+		removedBid,
+		netDisplayedFlowBid,
+		addedAsk,
+		removedAsk,
+		netDisplayedFlowAsk,
+		flowActivityImbalance,
+		0, 0, 0, // book_imbalance baseline, divergence, zscore
+		0, 0, 0, // resolution_gap baseline, divergence, zscore
+		0, 0, // velocities
+		addedRateBid,
+		addedRateAsk,
+		removedRateBid,
+		removedRateAsk,
+		netFlowRateBid,
+		netFlowRateAsk,
+		bookTurnoverRate,
+		netBookChangeRate,
+		signedNetDisplayedFlowRate,
+		0, 0, 0, 0, // turnover baseline, divergence, zscore, ratio
+		0, 0, 0, // net_book_change baseline, divergence, zscore
+		0, 0, 0, // signed_net baseline, divergence, zscore
+		0, 0, // historical path distance, percentile
 	}
 
-	pipe.prevBids, pipe.currBids = pipe.currBids, pipe.prevBids
-	pipe.prevAsks, pipe.currAsks = pipe.currAsks, pipe.prevAsks
-	pipe.prevNotional = pipe.output.Values["book_notional"]
-	pipe.prevAt = prior.At
-	pipe.hasPrev = true
+	for ptr := range signal.pipeline.Next(
+		data.NewMessage(
+			data.WRITE,
+			"symbolstore",
+			prior.Label,
+			data.NewValue(
+				unsafe.Pointer(&rawMetrics),
+			),
+		).Next(nil),
+	) {
+		if ptr == nil {
+			continue
+		}
+	}
 
-	out := data.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick,
-	)
-	out.Peers(prior)
-	out.At = prior.At
-	out.From = prior.At
+	for i, key := range outputKeys {
+		if i < len(rawMetrics) {
+			output[key] = rawMetrics[i]
+		}
+	}
 
+	hist.prevBids = currBids
+	hist.prevAsks = currAsks
+	hist.prevNotional = totalNotional
+	hist.prevAt = prior.At
+	hist.hasPrev = true
+
+	out := prior.Next(signal.Name(), output)
 	if flowReady {
 		out.From = prevAt
 	}
 
-	metrics := make([]*data.Metric, 0, len(signal.metrics))
-
-	for _, metric := range signal.metrics {
-		value := pipe.output.Values[metric[1]]
-
-		metrics = append(metrics, data.NewMetric(
-			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),
-		))
-	}
-
-	return out.Write(metrics...)
+	return out
 }

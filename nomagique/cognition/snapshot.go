@@ -28,24 +28,17 @@ func NewSnapshot(memory *Associate) *Snapshot {
 
 func (op *Snapshot) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			if arriving == nil || op.memory == nil {
+		compute := func() bool {
+			if op.memory == nil {
 				op.Error(core.ErrShape)
-				return
-			}
-
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
+				return false
 			}
 
 			root := op.memory.root.Load()
 
 			if root == nil {
 				op.Error(core.ErrShape)
-				return
+				return false
 			}
 
 			var buffer bytes.Buffer
@@ -53,12 +46,12 @@ func (op *Snapshot) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if err := encoder.Encode("cognition/association/1"); err != nil {
 				op.Error(err)
-				return
+				return false
 			}
 
 			if err := encoder.Encode(root.Len()); err != nil {
 				op.Error(err)
-				return
+				return false
 			}
 
 			iterator := root.Root().Iterator()
@@ -66,27 +59,38 @@ func (op *Snapshot) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			for key, value, found := iterator.Next(); found; key, value, found = iterator.Next() {
 				if err := encoder.Encode(key); err != nil {
 					op.Error(err)
-					return
+					return false
 				}
 
 				if err := encoder.Encode(value); err != nil {
 					op.Error(err)
-					return
+					return false
 				}
 			}
 
-			published := data.NewTextMap()
-			published.Values["model"] = buffer.String()
+			modelText := buffer.String()
 
-			for range adapter.Next(data.NewValue(published)) {
+			for value := range data.NewValue(modelText).Next(nil) {
+				if !yield(value) {
+					return false
+				}
 			}
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
+			return true
+		}
+
+		if in == nil {
+			compute()
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
 				return
 			}
 
-			if !yield(arriving) {
+			if !compute() {
 				return
 			}
 		}

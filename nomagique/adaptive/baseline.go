@@ -10,41 +10,30 @@ import (
 )
 
 /*
-Baseline owns causal moments and the configured observation-driven window.
-It composes an Estimator for the moments and a Shed over that Estimator for
-the window's support policy.
+Baseline owns causal moments and observation-driven baseline tracking.
+Arriving values are folded into running moments.
+Yields center (baseline) and scale (dispersion).
 */
 type Baseline struct {
 	*core.PrimitiveError
-	window      core.Primitive
-	moments     core.Primitive
-	shed        core.Primitive
-	input       data.Map[string]
-	windowInput data.Map[string]
-	output      data.Map[float64]
+	window  core.Primitive
+	moments *statistic.Estimator
+	shed    *statistic.Shed
 }
 
 func NewBaseline(window ...core.Primitive) core.Primitive {
-	adaptiveWindow := NewWindow()
-
+	var w core.Primitive
 	if len(window) > 0 && window[0] != nil {
-		adaptiveWindow = window[0]
+		w = window[0]
 	}
-
-	output := data.NewOutputMap()
-	output.Values["center"] = 0
-	output.Values["scale"] = 0
 
 	moments := statistic.NewEstimator()
 
 	return &Baseline{
 		PrimitiveError: core.NewPrimitiveError(),
-		window:         adaptiveWindow,
+		window:         w,
 		moments:        moments,
 		shed:           statistic.NewShed(moments),
-		input:          data.NewMap("value", "value"),
-		windowInput:    data.NewMap("shed_ratio", "shed_ratio"),
-		output:         output,
 	}
 }
 
@@ -56,72 +45,14 @@ func (op *Baseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			var values data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			value, ok := values.Values["value"]
-
-			if !ok {
-				op.Error(core.ErrNotHeld)
-				return
-			}
+			value := *(*float64)(arriving)
 
 			var reading [10]float64
-
-			for pointer := range op.moments.Next(data.NewValue(value)) {
+			for pointer := range op.moments.Next(data.NewValue(value).Next(nil)) {
 				reading = *(*[10]float64)(pointer)
 			}
 
 			if err := op.moments.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			for range op.window.Next(data.NewValue(adapter)) {
-			}
-
-			if err := op.window.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			var window data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(op.windowInput)) {
-				window = *(*data.Map[float64])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			shedRatio, held := window.Values["shed_ratio"]
-
-			if !held {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			for range op.shed.Next(data.NewValue(shedRatio)) {
-			}
-
-			if err := op.shed.Error(); err != nil {
 				op.Error(err)
 				return
 			}
@@ -132,19 +63,12 @@ func (op *Baseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				center = reading[4]
 			}
 
-			op.output.Values["center"] = center
-			op.output.Values["scale"] = reading[9]
+			scale := reading[9]
 
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
-				return
+			for val := range data.NewValue(center, scale).Next(nil) {
+				if !yield(val) {
+					return
+				}
 			}
 		}
 	}

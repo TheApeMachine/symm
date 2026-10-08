@@ -122,7 +122,7 @@ func (op *OLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			var coefficients []float64
 
-			for pointer := range op.solve.Next(data.NewValue([2][]float64{op.xtx, op.xty})) {
+			for pointer := range op.solve.Next(data.NewValue([2][]float64{op.xtx, op.xty}).Next(nil)) {
 				coefficients = *(*[]float64)(pointer)
 			}
 
@@ -151,7 +151,7 @@ func (op *OLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 				var inverse []float64
 
-				for pointer := range op.invert.Next(data.NewValue(op.xtx)) {
+				for pointer := range op.invert.Next(data.NewValue(op.xtx).Next(nil)) {
 					inverse = *(*[]float64)(pointer)
 				}
 

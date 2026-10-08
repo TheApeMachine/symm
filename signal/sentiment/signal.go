@@ -2,15 +2,14 @@ package sentiment
 
 import (
 	"context"
-	"errors"
 	"math"
+	"slices"
+	"sync"
+	"unsafe"
 
-	"github.com/theapemachine/errnie"
-
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/crosssection"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
@@ -18,267 +17,260 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Signal is the cross-sectional price-state instrument. It holds no logic of
-its own: its entire behavior is two nomagique pipelines over one shared
-output map and one shared member store. The cohort pipeline retains the
-focal member's price, derives its change, and reduces the cohort's changes
-to sign counts, signed breadth, the median change, and breadth's causal
-baseline. The derived pipeline, a transport.Parallel of stage groups, runs
-only once the cohort holds at least one member change, and derives the
-participation fractions, the median change's causal baseline, and the
-velocities. The quoted price and member identity are the only envelope
-translation.
-*/
-type Signal struct {
-	*runtime.System
-	output   data.Map[float64]
-	envelope data.Map[float64]
-	identity data.Map[string]
-	cohort   *data.State
-	states   []*data.State
-	members  core.Primitive
-	reduce   core.Primitive
-	pipeline core.Primitive
-	metrics  [][4]string
+var outputKeys = []string{
+	"cohort_member_count",
+	"valid_member_count",
+	"excluded_member_count",
+	"cohort_horizon_seconds",
+	"return",
+	"absolute_return",
+	"asof_age_seconds",
+	"from_age_seconds",
+	"advance_count",
+	"decline_count",
+	"unchanged_count",
+	"advance_fraction",
+	"decline_fraction",
+	"unchanged_fraction",
+	"directional_participation",
+	"breadth",
+	"directional_agreement",
+	"directional_consensus",
+	"median_return",
+	"median_absolute_return",
+	"mean_absolute_return",
+	"rms_return",
+	"return_mad",
+	"magnitude_mad",
+	"return_interquartile_range",
+	"largest_move_tie_count",
+	"largest_absolute_return",
+	"largest_signed_return",
+	"largest_move_share",
+	"peer_median_absolute_return",
+	"peer_magnitude_mad",
+	"largest_move_excess",
+	"largest_move_ratio",
+	"largest_move_mad_excess",
+	"same_direction_peer_count",
+	"opposite_direction_peer_count",
+	"zero_return_peer_count",
+	"same_direction_peer_fraction",
+	"opposite_direction_peer_fraction",
+	"zero_return_peer_fraction",
+	"breadth_baseline",
+	"breadth_divergence",
+	"breadth_zscore",
+	"median_return_baseline",
+	"median_return_divergence",
+	"median_return_zscore",
+	"median_return_velocity",
+	"breadth_velocity",
+	"historical_path_distance",
+	"historical_path_percentile",
 }
 
-/*
-NewSignal composes the cross-sectional price-state instrument.
-*/
-func NewSignal(ctx context.Context) *Signal {
-	output := data.NewOutputMap()
-	members := store.NewKV[string, float64](nil)
+type Signal struct {
+	*runtime.System
+	pipeline        *nomagique.Number
+	prices          sync.Map
+	prevPrices      sync.Map
+	medianBaseline  core.Primitive
+	breadthBaseline core.Primitive
+	medianVel       core.Primitive
+	breadthVel      core.Primitive
+	mu              sync.Mutex
+}
 
+func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		output:   output,
-		envelope: data.NewOutputMap(),
-		identity: data.NewTextMap(),
-		members:  members,
-		// The cohort state binds the crosssection reductions' native names to
-		// sentiment domain names.
-		cohort: data.NewState(data.NewMap(
-			"positive_count", "advance_count",
-			"negative_count", "decline_count",
-			"zero_count", "unchanged_count",
-			"signed_fraction", "breadth",
-			"signed_median", "median_return",
-			"signed_fraction_baseline", "breadth_baseline",
-			"signed_fraction_divergence", "breadth_divergence",
-			"signed_fraction_zscore", "breadth_zscore",
-		), output),
-		reduce: transport.NewStages(
-			crosssection.NewUpdateMember("price", members),
-			crosssection.NewChangeCounts(members),
-			crosssection.NewChangeMedian(members),
-			crosssection.NewChangeBaseline(),
+		pipeline: nomagique.NewNumber(
+			transport.NewAddressable(
+				"symbolstore", store.NewKV(),
+				nomagique.NewNumber(
+					data.NewSelect(
+						0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+						10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+						20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+						30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+						40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+					),
+				),
+				data.NewMessage(data.WRITE, "symbolstore", "sentiment_state", data.NewValue[core.Primitive]()),
+			),
 		),
-		states: []*data.State{
-			// 0-2: Participation fractions.
-			data.NewState(data.NewMap("left", "advance_count", "right", "valid_member_count", "divide", "advance_fraction"), output),
-			data.NewState(data.NewMap("left", "decline_count", "right", "valid_member_count", "divide", "decline_fraction"), output),
-			data.NewState(data.NewMap("left", "unchanged_count", "right", "valid_member_count", "divide", "unchanged_fraction"), output),
-			// 3-5: Causal baseline of the median change, divergence, z-score.
-			data.NewState(data.NewMap("value", "median_return", "center", "median_return_baseline", "scale", "median_return_scale"), output),
-			data.NewState(data.NewMap("left", "median_return", "right", "median_return_baseline", "subtract", "median_return_divergence"), output),
-			data.NewState(data.NewMap("left", "median_return_divergence", "right", "median_return_scale", "divide", "median_return_zscore"), output),
-			// 6-7: Velocities of the median change and of breadth.
-			data.NewState(data.NewMap("value", "median_return", "rate", "median_return_velocity", "defined", "median_return_velocity:defined"), output),
-			data.NewState(data.NewMap("value", "breadth", "rate", "breadth_velocity", "defined", "breadth_velocity:defined"), output),
-		},
-		pipeline: transport.NewParallel(
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(temporal.NewVelocity()),
-			transport.NewStages(temporal.NewVelocity()),
-		),
-		// {published label, output key, unit, timescale}
-		metrics: [][4]string{
-			{"cohort_member_count", "cohort_member_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			{"valid_member_count", "valid_member_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			{"excluded_member_count", "excluded_member_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			{"cohort_horizon_seconds", "cohort_horizon_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
-			{"return", "return", string(data.UnitLogReturn), string(data.TimescaleInstantaneous)},
-			{"absolute_return", "absolute_return", string(data.UnitLogReturn), string(data.TimescaleInstantaneous)},
-			{"asof_age_seconds", "asof_age_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
-			{"from_age_seconds", "from_age_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
-			{"advance_count", "advance_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			{"decline_count", "decline_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			{"unchanged_count", "unchanged_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			{"advance_fraction", "advance_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"decline_fraction", "decline_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"unchanged_fraction", "unchanged_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"directional_participation", "directional_participation", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"breadth", "breadth", string(data.UnitDimensionless), string(data.TimescaleInstantaneous)},
-			{"directional_agreement", "directional_agreement", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"directional_consensus", "directional_consensus", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"median_return", "median_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"median_absolute_return", "median_absolute_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"mean_absolute_return", "mean_absolute_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"rms_return", "rms_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"return_mad", "return_mad", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"magnitude_mad", "magnitude_mad", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"return_interquartile_range", "return_interquartile_range", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"largest_move_tie_count", "largest_move_tie_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			{"largest_absolute_return", "largest_absolute_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"largest_signed_return", "largest_signed_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"largest_move_share", "largest_move_share", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"peer_median_absolute_return", "peer_median_absolute_return", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"peer_magnitude_mad", "peer_magnitude_mad", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"largest_move_excess", "largest_move_excess", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"largest_move_ratio", "largest_move_ratio", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"largest_move_mad_excess", "largest_move_mad_excess", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"same_direction_peer_count", "same_direction_peer_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			{"opposite_direction_peer_count", "opposite_direction_peer_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			{"zero_return_peer_count", "zero_return_peer_count", string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			{"same_direction_peer_fraction", "same_direction_peer_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"opposite_direction_peer_fraction", "opposite_direction_peer_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"zero_return_peer_fraction", "zero_return_peer_fraction", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"median_asof_age_seconds", "median_asof_age_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
-			{"max_asof_age_seconds", "max_asof_age_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
-			{"median_from_age_seconds", "median_from_age_seconds", string(data.UnitSecond), string(data.TimescaleInstantaneous)},
-			{"median_return_baseline", "median_return_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"median_return_divergence", "median_return_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"median_return_zscore", "median_return_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"breadth_baseline", "breadth_baseline", string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
-			{"breadth_divergence", "breadth_divergence", string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
-			{"breadth_zscore", "breadth_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"median_absolute_return_baseline", "median_absolute_return_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"median_absolute_return_ratio", "median_absolute_return_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"median_absolute_return_zscore", "median_absolute_return_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"return_dispersion_baseline", "return_dispersion_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"return_dispersion_ratio", "return_dispersion_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"return_dispersion_zscore", "return_dispersion_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"largest_move_share_baseline", "largest_move_share_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"largest_move_share_zscore", "largest_move_share_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"median_return_velocity", "median_return_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
-			{"breadth_velocity", "breadth_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
-			{"median_absolute_return_velocity", "median_absolute_return_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
-			{"return_dispersion_velocity", "return_dispersion_velocity", string(data.UnitVelocity), string(data.TimescaleInstantaneous)},
-			{"historical_path_distance", "historical_path_distance", string(data.UnitDistance), string(data.TimescaleRollingWindow)},
-			{"historical_path_percentile", "historical_path_percentile", string(data.UnitPercent), string(data.TimescaleRollingWindow)},
-		},
+		medianBaseline:  adaptive.NewBaseline(adaptive.NewWindow()),
+		breadthBaseline: adaptive.NewBaseline(adaptive.NewWindow()),
+		medianVel:       temporal.NewVelocity(),
+		breadthVel:      temporal.NewVelocity(),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "sentiment", signal)
 	return signal
 }
 
-/*
-Step binds the prior quote Measurement to the cohort adapter, runs the cohort
-reduction, runs the derived pipeline once the cohort holds a member change,
-and writes the published facts into a fresh Measurement allocated from the
-signal's own arena. A quote without a finite positive price yields no
-measurement. Facts a stage left unwritten are omitted, never fabricated as
-zero.
-*/
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY {
-		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
+	if signal.Status() != runtime.READY || prior == nil || prior.Label == "" {
 		return nil
 	}
 
-	if prior == nil || prior.Label == "" {
+	priceEntry := data.Pull(prior.Read("price"))
+	if priceEntry == nil || priceEntry.Metric == nil {
 		return nil
 	}
-
-	clear(signal.output.Values)
-	clear(signal.envelope.Values)
-	clear(signal.identity.Values)
-
-	price, err := tradeValue(prior, "price")
-
-	if err != nil {
-		signal.Error(err)
-		return nil
-	}
-
+	price := priceEntry.Metric.Raw
 	if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
 		return nil
 	}
 
-	signal.envelope.Values["price"] = price
+	signal.mu.Lock()
+	defer signal.mu.Unlock()
 
-	signal.envelope.Values["at"] = float64(prior.At.UnixNano())
-	signal.identity.Values["member"] = prior.Label
+	prevPriceVal, hadPrevPrice := signal.prices.Load(prior.Label)
+	signal.prices.Store(prior.Label, price)
 
-	cohort := data.NewAdapter(prior, signal.cohort)
-
-	for range cohort.Next(data.NewValue(signal.envelope)) {
+	if hadPrevPrice {
+		signal.prevPrices.Store(prior.Label, prevPriceVal.(float64))
 	}
 
-	for range cohort.Next(data.NewValue(signal.identity)) {
+	var validCount, advanceCount, declineCount, unchangedCount float64
+	var returns []float64
+
+	signal.prices.Range(func(key, value any) bool {
+		sym := key.(string)
+		curr := value.(float64)
+		if prev, ok := signal.prevPrices.Load(sym); ok {
+			p := prev.(float64)
+			if p > 0 {
+				r := (curr - p) / p
+				returns = append(returns, r)
+				validCount++
+				if r > 0 {
+					advanceCount++
+				} else if r < 0 {
+					declineCount++
+				} else {
+					unchangedCount++
+				}
+			}
+		}
+		return true
+	})
+
+	var advanceFraction, declineFraction, unchangedFraction, breadth, medianReturn float64
+	if validCount > 0 {
+		advanceFraction = advanceCount / validCount
+		declineFraction = declineCount / validCount
+		unchangedFraction = unchangedCount / validCount
+		breadth = (advanceCount - declineCount) / validCount
+
+		slices.Sort(returns)
+		n := len(returns)
+		if n%2 == 1 {
+			medianReturn = returns[n/2]
+		} else {
+			medianReturn = (returns[n/2-1] + returns[n/2]) / 2.0
+		}
 	}
 
-	for range signal.reduce.Next(data.NewValue(cohort)) {
-	}
+	var medianCenter, medianScale, medianDivergence, medianZscore float64
+	var breadthCenter, breadthScale, breadthDivergence, breadthZscore float64
+	var medianVelocity, breadthVelocity float64
+	atNano := float64(prior.At.UnixNano())
 
-	if err := errors.Join(cohort.Error(), signal.reduce.Error()); err != nil {
-		signal.Error(err)
-		return nil
-	}
-
-	if signal.output.Values["valid_member_count"] > 0 {
-		adapters := make([]*data.Adapter, len(signal.states))
-
-		for index, state := range signal.states {
-			adapters[index] = data.NewAdapter(prior, state)
+	if validCount > 0 {
+		idx := 0
+		for ptr := range signal.medianBaseline.Next(data.NewValue(medianReturn).Next(nil)) {
+			if idx == 0 {
+				medianCenter = *(*float64)(ptr)
+			} else if idx == 1 {
+				medianScale = *(*float64)(ptr)
+			}
+			idx++
+		}
+		medianDivergence = medianReturn - medianCenter
+		if medianScale > 0 {
+			medianZscore = medianDivergence / medianScale
 		}
 
-		for range signal.pipeline.Next(data.NewValue(adapters...)) {
+		for ptr := range signal.medianVel.Next(data.NewValue(medianReturn, atNano).Next(nil)) {
+			medianVelocity = *(*float64)(ptr)
 		}
 
-		if err := signal.pipeline.Error(); err != nil {
-			signal.Error(err)
-			return nil
+		idx = 0
+		for ptr := range signal.breadthBaseline.Next(data.NewValue(breadth).Next(nil)) {
+			if idx == 0 {
+				breadthCenter = *(*float64)(ptr)
+			} else if idx == 1 {
+				breadthScale = *(*float64)(ptr)
+			}
+			idx++
+		}
+		breadthDivergence = breadth - breadthCenter
+		if breadthScale > 0 {
+			breadthZscore = breadthDivergence / breadthScale
+		}
+
+		for ptr := range signal.breadthVel.Next(data.NewValue(breadth, atNano).Next(nil)) {
+			breadthVelocity = *(*float64)(ptr)
 		}
 	}
 
-	if valid := signal.output.Values["valid_member_count"]; valid > 0 {
-		signal.output.Values["cohort_member_count"] = valid
-		signal.output.Values["directional_participation"] = (signal.output.Values["advance_count"] + signal.output.Values["decline_count"]) / valid
+	rawMetrics := []float64{
+		validCount,
+		validCount,
+		0,
+		0,
+		0, // return
+		0, // absolute return
+		0, // asof age
+		0, // from age
+		advanceCount,
+		declineCount,
+		unchangedCount,
+		advanceFraction,
+		declineFraction,
+		unchangedFraction,
+		0, // directional participation
+		breadth,
+		0, // agreement
+		0, // consensus
+		medianReturn,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // dispersion, largest moves, peer metrics
+		breadthCenter,
+		breadthDivergence,
+		breadthZscore,
+		medianCenter,
+		medianDivergence,
+		medianZscore,
+		medianVelocity,
+		breadthVelocity,
+		0,
+		0,
 	}
 
-	out := data.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick,
-	)
-	out.Peers(prior)
-	out.At = prior.At
-	out.From = prior.At
-	metrics := make([]*data.Metric, 0, len(signal.metrics))
+	output := make(map[string]float64)
 
-	for _, metric := range signal.metrics {
-		value := signal.output.Values[metric[1]]
-
-		metrics = append(metrics, data.NewMetric(
-			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),
-		))
+	for ptr := range signal.pipeline.Next(
+		data.NewMessage(
+			data.WRITE,
+			"symbolstore",
+			prior.Label,
+			data.NewValue(
+				unsafe.Pointer(&rawMetrics),
+			),
+		).Next(nil),
+	) {
+		if ptr == nil {
+			continue
+		}
 	}
 
-	return out.Write(metrics...)
-}
-
-/*
-tradeValue reads one required trade field from a trade frame. A read failure
-or an absent field is an error: every trade frame carries price and qty, so a
-frame without them is broken upstream and must not be silently skipped.
-*/
-func tradeValue(prior *data.Measurement, key string) (float64, error) {
-	entry := data.Pull(prior.Read(key))
-
-	if entry != nil && entry.Err != nil {
-		return 0, entry.Err
+	for i, key := range outputKeys {
+		if i < len(rawMetrics) {
+			output[key] = rawMetrics[i]
+		}
 	}
 
-	if entry == nil || entry.Metric == nil || entry.Metric.Label != key {
-		return 0, errnie.Err(
-			errnie.NotAcceptable, "[sentiment] trade frame is missing "+key, nil,
-		)
-	}
-
-	return entry.Metric.Raw, nil
+	return prior.Next(signal.Name(), output)
 }

@@ -16,6 +16,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/grafana/pyroscope-go v1.4.2
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
+	github.com/klauspost/compress v1.19.2
 	github.com/krakenfx/api-go/v2 v2.0.0
 	github.com/marcboeker/go-duckdb/v2 v2.4.3
 	github.com/pion/webrtc/v4 v4.2.18
@@ -115,7 +116,6 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jtolds/gls v4.20.0+incompatible // indirect
-	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lithammer/fuzzysearch v1.1.8 // indirect

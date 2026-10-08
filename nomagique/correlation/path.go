@@ -22,25 +22,14 @@ type Path struct {
 	*core.PrimitiveError
 	retention    core.Primitive
 	observations [][2]float64
-	adapter      *data.Adapter
-	value        data.Map[float64]
-	shedRequest  data.Map[string]
 	out          [2][]float64
 	flags        []float64
 	flat         []float64
 }
 
 func NewPath(retention ...core.Primitive) core.Primitive {
-	output := data.NewOutputMap()
-	output.Values["value"] = 0
-	state := data.NewState(data.NewMap("value", "value", "shed_ratio", "shed_ratio"), output)
-	value := data.NewOutputMap()
-	value.Values["value"] = 0
 	path := &Path{
 		PrimitiveError: core.NewPrimitiveError(),
-		adapter:        data.NewAdapter(nil, state),
-		value:          value,
-		shedRequest:    data.NewMap("shed_ratio", "shed_ratio"),
 		flags:          make([]float64, 9),
 	}
 
@@ -81,35 +70,13 @@ func (op *Path) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 
 				if op.retention != nil {
-					op.value.Values["value"] = sample[1]
+					shedRatio := 1.0
 
-					for range op.adapter.Next(data.NewValue(op.value)) {
-					}
-
-					if err := op.adapter.Error(); err != nil {
-						op.Error(err)
-						return
-					}
-
-					for range op.retention.Next(data.NewValue(op.adapter)) {
+					for pointer := range op.retention.Next(data.NewValue(unsafe.Pointer(&sample[1])).Next(nil)) {
+						shedRatio = *(*float64)(pointer)
 					}
 
 					if err := op.retention.Error(); err != nil {
-						op.Error(err)
-						return
-					}
-
-					shedRatio := 1.0
-
-					for pointer := range op.adapter.Next(data.NewValue(op.shedRequest)) {
-						values := *(*data.Map[float64])(pointer)
-
-						if ratio, ok := values.Values["shed_ratio"]; ok {
-							shedRatio = ratio
-						}
-					}
-
-					if err := op.adapter.Error(); err != nil {
 						op.Error(err)
 						return
 					}

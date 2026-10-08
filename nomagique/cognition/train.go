@@ -12,12 +12,6 @@ import (
 
 /*
 Train records every contiguous token span of one context under one class.
-
-A span is a run of length-framed timesteps when more than one frame fills
-the context, otherwise a run of 8-byte tokens when the context is longer
-than one token and aligned that way, otherwise a run of NUL, slash, or
-underscore separated tokens. The span count is the token count of the
-context that arrived.
 */
 type Train struct {
 	*core.PrimitiveError
@@ -39,53 +33,23 @@ func (op *Train) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
+			rec := (*TrainRecord)(arriving)
 
-			if adapter == nil {
+			if rec == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			var text data.Map[string]
+			context := rec.Context
+			class := rec.Class
 
-			for pointer := range adapter.Next(data.NewValue(data.NewLiteral("context", "class"))) {
-				text = *(*data.Map[string])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			context, contextOK := text.Values["context"]
-			class, classOK := text.Values["class"]
-
-			if !contextOK || !classOK || context == "" || class == "" {
+			if context == "" || class == "" {
 				op.Error(core.ErrDomain)
 				return
 			}
 
-			var numbers data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(data.NewMap(
-				"feedback", "feedback",
-				"graded", "graded",
-			))) {
-				numbers = *(*data.Map[float64])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			feedback, feedbackOK := numbers.Values["feedback"]
-			graded, gradedOK := numbers.Values["graded"]
-
-			if !feedbackOK || !gradedOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
+			feedback := rec.Feedback
+			graded := rec.Graded
 
 			contextBytes := []byte(context)
 			framed := len(contextBytes) >= 12
@@ -101,71 +65,85 @@ func (op *Train) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 				count := int(binary.BigEndian.Uint32(contextBytes[offset : offset+4]))
 
-				if count == 0 {
-					framed = false
-					break
-				}
-
-				size := 4 + count*8
-
-				if offset+size > len(contextBytes) {
+				if count == 0 || offset+4+count*8 > len(contextBytes) {
 					framed = false
 					break
 				}
 
 				starts = append(starts, offset)
-				ends = append(ends, offset+size)
-				offset += size
+				ends = append(ends, offset+4+count*8)
+				offset += 4 + count*8
 			}
 
-			if framed && (offset != len(contextBytes) || len(starts) < 2) {
+			if framed && offset != len(contextBytes) {
 				framed = false
 			}
 
-			if !framed {
-				starts = nil
-				ends = nil
-			}
+			if !framed && len(contextBytes) > 8 && len(contextBytes)%8 == 0 {
+				starts, ends = nil, nil
+				tokens := len(contextBytes) / 8
 
-			if len(starts) == 0 && len(contextBytes) > 8 && len(contextBytes)%8 == 0 {
-				for token := 0; token < len(contextBytes); token += 8 {
-					starts = append(starts, token)
-					ends = append(ends, token+8)
+				for index := range tokens {
+					starts = append(starts, index*8)
+					ends = append(ends, (index+1)*8)
 				}
 			}
 
-			delim := byte(0)
-			delimited := false
-
 			if len(starts) == 0 && bytes.Contains(contextBytes, []byte{0}) {
-				delim = 0
-				delimited = true
-			}
-
-			if len(starts) == 0 && !delimited && bytes.Contains(contextBytes, []byte{'/'}) {
-				delim = '/'
-				delimited = true
-			}
-
-			if len(starts) == 0 && !delimited && bytes.Contains(contextBytes, []byte{'_'}) {
-				delim = '_'
-				delimited = true
-			}
-
-			if delimited {
+				starts, ends = nil, nil
 				start := 0
 
-				for index := 0; index < len(contextBytes); index++ {
-					if contextBytes[index] != delim {
-						continue
-					}
+				for index, item := range contextBytes {
+					if item == 0 {
+						if index > start {
+							starts = append(starts, start)
+							ends = append(ends, index)
+						}
 
-					if index > start {
-						starts = append(starts, start)
-						ends = append(ends, index)
+						start = index + 1
 					}
+				}
 
-					start = index + 1
+				if start < len(contextBytes) {
+					starts = append(starts, start)
+					ends = append(ends, len(contextBytes))
+				}
+			}
+
+			if len(starts) == 0 && bytes.Contains(contextBytes, []byte{'/'}) {
+				starts, ends = nil, nil
+				start := 0
+
+				for index, item := range contextBytes {
+					if item == '/' {
+						if index > start {
+							starts = append(starts, start)
+							ends = append(ends, index)
+						}
+
+						start = index + 1
+					}
+				}
+
+				if start < len(contextBytes) {
+					starts = append(starts, start)
+					ends = append(ends, len(contextBytes))
+				}
+			}
+
+			if len(starts) == 0 && bytes.Contains(contextBytes, []byte{'_'}) {
+				starts, ends = nil, nil
+				start := 0
+
+				for index, item := range contextBytes {
+					if item == '_' {
+						if index > start {
+							starts = append(starts, start)
+							ends = append(ends, index)
+						}
+
+						start = index + 1
+					}
 				}
 
 				if start < len(contextBytes) {
@@ -179,77 +157,44 @@ func (op *Train) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				ends = []int{len(contextBytes)}
 			}
 
-			bridgeState := data.NewState(data.NewMap())
-			bridge := data.NewAdapter(nil, bridgeState)
-			issued := data.NewOutputMap()
-			issued.Values["feedback"] = feedback
-			issued.Values["graded"] = graded
+			var lastRecords, lastSpan float64
 
-			for range bridge.Next(data.NewValue(issued)) {
-			}
+			for spanLen := 1; spanLen <= len(starts); spanLen++ {
+				for start := 0; start+spanLen <= len(starts); start++ {
+					end := start + spanLen
+					subContext := string(contextBytes[starts[start]:ends[end-1]])
 
-			if err := bridge.Error(); err != nil {
-				op.Error(err)
-				return
-			}
+					record := &Record{
+						Context:  subContext,
+						Class:    class,
+						Feedback: feedback,
+						Graded:   graded,
+					}
 
-			end := len(starts)
+					var recordVals [2]float64
+					recordIdx := 0
 
-			for start := 0; start < len(starts); start++ {
-				label := data.NewTextMap()
-				label.Values["class"] = class
-				label.Values["context"] = string(contextBytes[starts[start]:ends[end-1]])
+					for pointer := range op.memory.Next(data.NewValue(unsafe.Pointer(record)).Next(nil)) {
+						if recordIdx < 2 {
+							recordVals[recordIdx] = *(*float64)(pointer)
+							recordIdx++
+						}
+					}
 
-				for range bridge.Next(data.NewValue(label)) {
+					if err := op.memory.Error(); err != nil {
+						op.Error(err)
+						return
+					}
+
+					lastRecords = recordVals[0]
+					lastSpan = recordVals[1]
 				}
+			}
 
-				if err := bridge.Error(); err != nil {
-					op.Error(err)
+			for value := range data.NewValue(lastRecords, lastSpan).Next(nil) {
+				if !yield(value) {
 					return
 				}
-
-				for range op.memory.Next(data.NewValue(bridge)) {
-				}
-
-				if err := op.memory.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				if err := bridge.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-			}
-
-			var published data.Map[float64]
-
-			for pointer := range bridge.Next(data.NewValue(data.NewMap(
-				"records", "records",
-				"span", "span",
-			))) {
-				published = *(*data.Map[float64])(pointer)
-			}
-
-			if err := bridge.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			forwarded := data.NewOutputMap()
-			forwarded.Values["records"] = published.Values["records"]
-			forwarded.Values["span"] = published.Values["span"]
-
-			for range adapter.Next(data.NewValue(forwarded)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
-				return
 			}
 		}
 	}

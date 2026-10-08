@@ -15,35 +15,7 @@ import (
 
 /*
 Influence measures directed temporal predictive contribution of Source on
-Target beyond Target's own history and the explicit Controls. It never infers
-roles from names and never claims causality.
-
-Each arrival is **data.Adapter carrying the explicit roles:
-
-	text    "source", "target", "control.<i>"   coordinate keys
-	number  "controls"                          control count
-	number  "control.<i>.lag"                   control lag (ns); <= 0 aligns at the source lag
-	number  "min_lag", "max_lag"                candidate lag domain (ns); 0 derives it
-
-The history is read from the ObservationStore. The evaluation is
-causal/prequential: each target is predicted by models fitted strictly on
-earlier rows (restricted: intercept, target past, controls; full: plus
-source), and the best candidate lag ranks by defined predictive gain, then
-defined steps, then the smaller lag.
-
-It publishes on the same adapter, then yields it:
-
-	status                       one of the Fit* constants
-	lag, lag_resolution, lag_search_span, lag_support_bound   (ns)
-	lag_candidate_count, defined_steps, effective_sample_count, maturity
-	coefficient, coefficient_variance, coefficient_snr
-	restricted_residual_variance, full_residual_variance, predictive_gain
-	from, at, source_observed_at, target_observed_at, source_age   (ns)
-	lag_surface.<i>, lag_surface.<i>.gain, lag_surface.<i>.steps
-	text estimator_version
-
-Mathematically undefined numbers are NaN; undefined is never zero. Publish
-into a fresh adapter per estimate so nothing stale survives.
+Target beyond Target's own history and explicit Controls.
 */
 type Influence struct {
 	*core.PrimitiveError
@@ -52,8 +24,6 @@ type Influence struct {
 	align     core.Primitive
 	snr       core.Primitive
 	median    core.Primitive
-	roles     data.Map[string]
-	domain    data.Map[string]
 	target    []float64
 	source    []float64
 	controls  [][]float64
@@ -70,9 +40,7 @@ type Influence struct {
 }
 
 /*
-NewInfluence builds the estimator over store. The version string is
-provenance published with every estimate; an empty version or a missing store
-is a domain failure and every run yields nothing.
+NewInfluence builds the estimator over store.
 */
 func NewInfluence(version string, store core.Primitive) *Influence {
 	op := &Influence{
@@ -82,8 +50,6 @@ func NewInfluence(version string, store core.Primitive) *Influence {
 		align:          NewAlign(),
 		snr:            statistic.NewCoefficientSNR(),
 		median:         statistic.NewMedian(),
-		roles:          data.NewLiteral("source", "target"),
-		domain:         data.NewMap("controls", "controls", "min_lag", "min_lag", "max_lag", "max_lag"),
 		keys: []string{
 			"lag", "lag_resolution", "lag_search_span", "lag_support_bound",
 			"lag_candidate_count", "defined_steps", "effective_sample_count", "maturity",
@@ -113,67 +79,34 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 		}
 
 		for arriving := range in {
-			if arriving == nil || *(**data.Adapter)(arriving) == nil {
+			if arriving == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-			var source, target string
-			var count, minLag, maxLag float64
+			req := (*Candidate)(arriving)
 
-			for pointer := range adapter.Next(data.NewValue(op.roles)) {
-				roles := *(*data.Map[string])(pointer)
-				source, target = roles.Values["source"], roles.Values["target"]
-			}
-
-			for pointer := range adapter.Next(data.NewValue(op.domain)) {
-				domain := *(*data.Map[float64])(pointer)
-				count, minLag, maxLag = domain.Values["controls"], domain.Values["min_lag"], domain.Values["max_lag"]
-			}
-
-			controls := int(count)
-			controlKeys := make([]string, controls)
-			controlLags := make([]float64, controls)
-
-			if controls > 0 {
-				keyRequest, lagRequest := data.NewLiteral(), data.NewMap()
-
-				for index := range controls {
-					name := "control." + strconv.Itoa(index)
-					keyRequest.Values[name] = name
-					lagRequest.Values[name+".lag"] = name + ".lag"
-				}
-
-				for pointer := range adapter.Next(data.NewValue(keyRequest)) {
-					keys := *(*data.Map[string])(pointer)
-
-					for index := range controls {
-						controlKeys[index] = keys.Values["control."+strconv.Itoa(index)]
-					}
-				}
-
-				for pointer := range adapter.Next(data.NewValue(lagRequest)) {
-					lags := *(*data.Map[float64])(pointer)
-
-					for index := range controls {
-						controlLags[index] = lags.Values["control."+strconv.Itoa(index)+".lag"]
-					}
-				}
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
+			if req == nil {
+				op.Error(core.ErrShape)
 				return
 			}
 
-			for len(op.controls) < controls {
+			source := req.Source
+			target := req.Target
+			minLag := req.MinLag
+			maxLag := req.MaxLag
+			controlKeys := req.Controls
+			controlLags := req.ControlLags
+			controlsCount := len(controlKeys)
+
+			for len(op.controls) < controlsCount {
 				op.controls = append(op.controls, nil)
 			}
 
-			op.target, op.source = op.target[:0], op.source[:0]
+			op.target = op.target[:0]
+			op.source = op.source[:0]
 
-			for index := range controls {
+			for index := range controlsCount {
 				op.controls[index] = op.controls[index][:0]
 			}
 
@@ -192,10 +125,10 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				return
 			}
 
-			published := data.NewOutputMap()
+			metrics := make(map[string]float64)
 
 			for _, key := range op.keys {
-				published.Values[key] = math.NaN()
+				metrics[key] = math.NaN()
 			}
 
 			status := FitOK
@@ -212,15 +145,13 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					break estimate
 				}
 
-				for index := range controls {
+				for index := range controlsCount {
 					if len(op.controls[index]) == 0 {
 						status = FitControlUnavailable
 						break estimate
 					}
 				}
 
-				// The lag resolution is the slower median positive cadence of
-				// Source and Target; fixed bar counts are never truth.
 				cadences := [2]float64{}
 
 				for side, history := range [2][]float64{op.source, op.target} {
@@ -236,7 +167,7 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 						continue
 					}
 
-					for pointer := range op.median.Next(data.NewValue(op.gaps...)) {
+					for pointer := range op.median.Next(data.NewValue(op.gaps...).Next(nil)) {
 						cadences[side] = *(*float64)(pointer)
 					}
 
@@ -260,12 +191,9 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					break estimate
 				}
 
-				// Each resolution step of lag consumes at least one target
-				// observation from the alignment, and a fit needs more rows
-				// than parameters: the bound is derived provenance.
-				restrictedParameters := 2 + controls
-				fullParameters := 3 + controls
-				supportBound := float64(max(0, len(op.target)/2-(4+controls))) * resolution
+				restrictedParameters := 2 + controlsCount
+				fullParameters := 3 + controlsCount
+				supportBound := float64(max(0, len(op.target)/2-(4+controlsCount))) * resolution
 
 				if maxLag <= 0 || maxLag > searchSpan {
 					maxLag = searchSpan
@@ -276,23 +204,22 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				candidates := 0
 				found := false
 
-				// series: lags, target, target past, controls..., source.
 				op.series = append(op.series[:0], nil, op.target, op.target)
-				op.series = append(op.series, op.controls[:controls]...)
+				op.series = append(op.series, op.controls[:controlsCount]...)
 				op.series = append(op.series, op.source)
 
 				for lag := startLag; startLag > 0 && lag <= maxLag; lag += resolution {
 					surface := "lag_surface." + strconv.Itoa(candidates)
-					published.Values[surface] = lag
-					published.Values[surface+".gain"] = math.NaN()
-					published.Values[surface+".steps"] = 0
+					metrics[surface] = lag
+					metrics[surface+".gain"] = math.NaN()
+					metrics[surface+".steps"] = 0
 					candidates++
 
 					op.lags = append(op.lags[:0], lag)
 
-					for _, controlLag := range controlLags {
-						if controlLag > 0 {
-							op.lags = append(op.lags, controlLag)
+					for _, cLag := range controlLags {
+						if cLag > 0 {
+							op.lags = append(op.lags, cLag)
 							continue
 						}
 
@@ -303,7 +230,7 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					op.series[0] = op.lags
 					var rows [][]float64
 
-					for pointer := range op.align.Next(data.NewValue(op.series)) {
+					for pointer := range op.align.Next(data.NewValue(op.series).Next(nil)) {
 						rows = *(*[][]float64)(pointer)
 					}
 
@@ -322,22 +249,18 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					rankDeficient := false
 
 					for _, row := range rows {
-						// Design row: intercept, target past, controls..., source, target.
 						op.full = append(op.full[:0], 1, row[3])
 
-						for index := range controls {
+						for index := range controlsCount {
 							op.full = append(op.full, row[5+2*index])
 						}
 
 						op.restrict = append(append(op.restrict[:0], op.full...), row[1])
 						op.full = append(op.full, row[len(row)-1], row[1])
 
-						// Prequential step: the reading predicts with the model
-						// fitted strictly on earlier rows, then incorporates
-						// the row, so it never trains the model that scored it.
 						var restrictedReading, fullReading []float64
 
-						for pointer := range restricted.Next(data.NewValue(op.restrict)) {
+						for pointer := range restricted.Next(data.NewValue(op.restrict).Next(nil)) {
 							restrictedReading = *(*[]float64)(pointer)
 						}
 
@@ -346,7 +269,7 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 							return
 						}
 
-						for pointer := range full.Next(data.NewValue(op.full)) {
+						for pointer := range full.Next(data.NewValue(op.full).Next(nil)) {
 							fullReading = *(*[]float64)(pointer)
 						}
 
@@ -355,8 +278,6 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 							return
 						}
 
-						// A singular design with more rows than parameters is
-						// rank deficiency; warm-up rows are merely undefined.
 						if int(restrictedReading[3])-1 > restrictedParameters && restrictedReading[1] != 1 {
 							rankDeficient = true
 						}
@@ -370,8 +291,6 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 							op.residuals[1] = append(op.residuals[1], row[1]-fullReading[0])
 						}
 
-						// The full accumulator's reading after the last row is
-						// the final full fit over every aligned row.
 						op.fit = append(op.fit[:0], fullReading...)
 					}
 
@@ -385,7 +304,7 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					op.candidate["status"] = FitOK
 					op.candidate["lag"] = lag
 					op.candidate["defined_steps"] = steps
-					published.Values[surface+".steps"] = steps
+					metrics[surface+".steps"] = steps
 
 				fit:
 					for range 1 {
@@ -412,12 +331,10 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 						op.candidate["restricted_residual_variance"] = variances[0]
 						op.candidate["full_residual_variance"] = variances[1]
 
-						// log(Vr / Vf) is defined only for positive finite
-						// variances; every degenerate case is undefined.
 						if variances[0] > 0 && variances[1] > 0 &&
 							!math.IsInf(variances[0], 0) && !math.IsInf(variances[1], 0) {
 							op.candidate["predictive_gain"] = math.Log(variances[0] / variances[1])
-							published.Values[surface+".gain"] = op.candidate["predictive_gain"]
+							metrics[surface+".gain"] = op.candidate["predictive_gain"]
 						}
 
 						last := rows[len(rows)-1]
@@ -427,8 +344,6 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 						op.candidate["source_observed_at"] = last[len(last)-2]
 						op.candidate["source_age"] = last[0] - last[len(last)-2]
 
-						// Every aligned row carries unit weight, so the Kish
-						// effective sample size is the aligned row count.
 						effective := float64(len(rows))
 						op.candidate["effective_sample_count"] = effective
 						op.candidate["maturity"] = 0
@@ -458,7 +373,7 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 							if !math.IsNaN(variance) && variance > 0 {
 								op.candidate["coefficient_variance"] = variance
 
-								for pointer := range op.snr.Next(data.NewValue([2]float64{coefficient, variance})) {
+								for pointer := range op.snr.Next(data.NewValue([2]float64{coefficient, variance}).Next(nil)) {
 									op.candidate["coefficient_snr"] = *(*float64)(pointer)
 								}
 
@@ -470,7 +385,6 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 						}
 					}
 
-					// Rank by defined gain, then defined steps, then smaller lag.
 					better := !found
 
 					if found {
@@ -502,33 +416,29 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				}
 
 				for key, value := range op.best {
-					published.Values[key] = value
+					metrics[key] = value
 				}
 
 				status = int(op.best["status"])
-				published.Values["lag_resolution"] = resolution
-				published.Values["lag_search_span"] = searchSpan
-				published.Values["lag_support_bound"] = supportBound
-				published.Values["lag_candidate_count"] = float64(candidates)
+				metrics["lag_resolution"] = resolution
+				metrics["lag_search_span"] = searchSpan
+				metrics["lag_support_bound"] = supportBound
+				metrics["lag_candidate_count"] = float64(candidates)
 			}
 
-			published.Values["status"] = float64(status)
-			version := data.NewTextMap()
-			version.Values["estimator_version"] = op.version
+			metrics["status"] = float64(status)
 
-			for range adapter.Next(data.NewValue(published)) {
+			estimateResult := &Estimate{
+				Status:           status,
+				Lag:              metrics["lag"],
+				EstimatorVersion: op.version,
+				Metrics:          metrics,
 			}
 
-			for range adapter.Next(data.NewValue(version)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
-				return
+			for value := range data.NewValue(unsafe.Pointer(estimateResult)).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

@@ -239,17 +239,26 @@ func TestPaper_WaitNeverEnters(t *testing.T) {
 		var priorLive *data.Measurement
 
 		live := func(value float64) *data.Measurement {
-			measurement := data.NewMeasurement(1000, "BTC/USD", "cvd", 1, 1)
+			var measurement *data.Measurement
 
-			if priorLive != nil {
-				measurement = priorLive.Next("cvd")
+			if priorLive == nil {
+				measurement = data.NewMeasurement(1000, "BTC/USD", "cvd", 1, 1)
+				measurement.At = time.Now().UTC()
+				measurement.From = measurement.At
+				measurement.Write(
+					data.NewMetric("cvd_value", value, data.UnitCount, data.TimescaleTick),
+				)
 			}
 
-			measurement.At = time.Now().UTC()
-			measurement.From = measurement.At
-			priorLive = measurement.Write(
-				data.NewMetric("cvd_value", value, data.UnitCount, data.TimescaleTick),
-			)
+			if priorLive != nil {
+				measurement = priorLive.Next("cvd", map[string]float64{
+					"cvd_value": value,
+				})
+				measurement.At = time.Now().UTC()
+				measurement.From = measurement.At
+			}
+
+			priorLive = measurement
 			return priorLive
 		}
 

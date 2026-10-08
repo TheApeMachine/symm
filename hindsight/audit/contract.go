@@ -140,16 +140,8 @@ func declaredDomain(unit data.Unit) string {
 		return "[0, 1]"
 	case data.UnitVariance,
 		data.UnitCount,
-		data.UnitQuantity,
 		data.UnitVolume,
-		data.UnitNotional,
 		data.UnitDuration,
-		data.UnitNanosecond,
-		data.UnitMicrosecond,
-		data.UnitMillisecond,
-		data.UnitSecond,
-		data.UnitMinute,
-		data.UnitHour,
 		data.UnitDistance:
 		return "[0, +inf)"
 	default:
@@ -173,16 +165,8 @@ func contractViolation(unit data.Unit, value float64) string {
 		}
 	case data.UnitVariance,
 		data.UnitCount,
-		data.UnitQuantity,
 		data.UnitVolume,
-		data.UnitNotional,
 		data.UnitDuration,
-		data.UnitNanosecond,
-		data.UnitMicrosecond,
-		data.UnitMillisecond,
-		data.UnitSecond,
-		data.UnitMinute,
-		data.UnitHour,
 		data.UnitDistance:
 		if value < 0 {
 			return "negative_value_for_non_negative_unit"

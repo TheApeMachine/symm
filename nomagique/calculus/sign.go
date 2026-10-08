@@ -2,7 +2,6 @@ package calculus
 
 import (
 	"iter"
-	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -10,23 +9,15 @@ import (
 )
 
 /*
-Sign owns the unit sign transformation of an arrival. Zero keeps its own value.
+Sign returns -1, 0, or 1 based on the sign of the arrival.
 */
 type Sign struct {
 	*core.PrimitiveError
-	input  data.Map[string]
-	output data.Map[float64]
 }
 
-func NewSign() *Sign {
-	output := data.NewOutputMap()
-	output.Values["value"] = 0
-	output.Values["sign"] = 0
-
+func NewSign() core.Primitive {
 	return &Sign{
 		PrimitiveError: core.NewPrimitiveError(),
-		input:          data.NewMap("value", "value"),
-		output:         output,
 	}
 }
 
@@ -38,50 +29,21 @@ func (op *Sign) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
+			val := *(*float64)(arriving)
+			var sgn float64
 
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
+			if val > 0 {
+				sgn = 1.0
 			}
 
-			var values data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
+			if val < 0 {
+				sgn = -1.0
 			}
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			val, ok := values.Values["value"]
-
-			if !ok {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			result := 0.0
-
-			if val != 0 {
-				result = math.Copysign(1, val)
-			}
-
-			op.output.Values["value"] = result
-			op.output.Values["sign"] = result
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
-				return
+			for value := range data.NewValue(sgn).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

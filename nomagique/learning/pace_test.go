@@ -15,7 +15,7 @@ func TestPaceNext(t *testing.T) {
 		rng := rand.New(rand.NewSource(86))
 
 		for index := 0; index < 200; index++ {
-			got := data.Read[[4]float64](node.Next(data.NewValue(rng.Float64() + float64(index/50))))
+			got := data.Read[[4]float64](node.Next(data.NewValue(rng.Float64() + float64(index/50)).Next(nil)))
 
 			So(node.Error(), ShouldBeNil)
 
@@ -37,7 +37,7 @@ func TestPaceNext(t *testing.T) {
 		node := learning.NewPace(0.03, 0, 0.15, 0.1, 0.2, 8)
 		So(node.Error(), ShouldNotBeNil)
 
-		for range node.Next(data.NewValue(1.0)) {
+		for range node.Next(data.NewValue(1.0).Next(nil)) {
 			t.Fatal("rejected pace must yield nothing")
 		}
 	})

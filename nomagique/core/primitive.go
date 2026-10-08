@@ -41,3 +41,4 @@ type Primitive interface {
 	Next(iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 	Error(...error) error
 }
+

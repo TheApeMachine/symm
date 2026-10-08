@@ -10,23 +10,15 @@ import (
 )
 
 /*
-Exp owns the exponential transformation of an arrival.
+Exp computes e^x for each arrival.
 */
 type Exp struct {
 	*core.PrimitiveError
-	input  data.Map[string]
-	output data.Map[float64]
 }
 
-func NewExp() *Exp {
-	output := data.NewOutputMap()
-	output.Values["value"] = 0
-	output.Values["exp"] = 0
-
+func NewExp() core.Primitive {
 	return &Exp{
 		PrimitiveError: core.NewPrimitiveError(),
-		input:          data.NewMap("value", "value"),
-		output:         output,
 	}
 }
 
@@ -38,45 +30,10 @@ func (op *Exp) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			var values data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			val, ok := values.Values["value"]
-
-			if !ok {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			result := math.Exp(val)
-			op.output.Values["value"] = result
-			op.output.Values["exp"] = result
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
-				return
+			for value := range data.NewValue(math.Exp(*(*float64)(arriving))).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

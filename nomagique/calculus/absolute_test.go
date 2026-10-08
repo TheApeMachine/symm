@@ -1,26 +1,31 @@
 package calculus
 
 import (
+	"errors"
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestAbsolute(t *testing.T) {
-	Convey("Absolute returns non-negative magnitude", t, func() {
+	Convey("Given an Absolute primitive", t, func() {
 		op := NewAbsolute()
-		state := data.NewState(data.NewMap("value", "value"))
-		adapter := data.NewAdapter(nil, state)
-		input := data.NewOutputMap()
-		input.Values["value"] = -42.5
 
-		for range adapter.Next(data.NewValue(input)) {
-		}
+		Convey("Computes absolute value", func() {
+			got := data.Read[float64](op.Next(data.NewValue(-42.0).Next(nil)))
+			So(op.Error(), ShouldBeNil)
+			So(got, ShouldEqual, 42.0)
+		})
 
-		data.Read[*data.Adapter](op.Next(data.NewValue(adapter)))
-		So(op.Error(), ShouldBeNil)
-		So(op.output.Values["value"], ShouldEqual, 42.5)
-		So(op.output.Values["absolute"], ShouldEqual, 42.5)
+		Convey("Nil arrival records ErrShape", func() {
+			nilSeq := func(yield func(unsafe.Pointer) bool) {
+				yield(nil)
+			}
+			data.Read[float64](op.Next(nilSeq))
+			So(errors.Is(op.Error(), core.ErrShape), ShouldBeTrue)
+		})
 	})
 }

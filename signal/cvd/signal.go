@@ -2,236 +2,305 @@ package cvd
 
 import (
 	"context"
-	"errors"
-	"time"
+	"unsafe"
 
 	"github.com/theapemachine/errnie"
-
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/nomagique/vector"
 )
 
-/*
-Signal is the CVD executed-flow measuring instrument. It holds no logic of its
-own: its entire behavior is one nomagique pipeline, a transport.Parallel of
-stage groups. Group i receives the data.Adapter bound to states[i], whose
-mapping binds the group's native primitive names to CVD domain names. Every
-state shares one output map, so a domain fact published by one group is read
-by the groups after it. The trade side is the only envelope translation: the
-"side" metadata becomes the "buy" and "sell" indicators.
-*/
+var outputKeys = []string{
+	"trade_count:buy",
+	"trade_count:sell",
+	"trade_count",
+	"signed_count_fraction",
+	"executed_quantity:buy",
+	"executed_quantity:sell",
+	"gross_executed_quantity",
+	"net_executed_quantity",
+	"cumulative_volume_delta",
+	"aggressive_notional:buy",
+	"aggressive_notional:sell",
+	"gross_notional",
+	"net_notional",
+	"cumulative_notional_delta",
+	"signed_net_fraction",
+	"mean_trade_notional",
+	"trade_rate",
+	"gross_notional_rate",
+	"net_notional_rate",
+	"buy_notional_rate",
+	"sell_notional_rate",
+	"cvd_epoch_from",
+	"response_midpoint:from",
+	"response_midpoint:at",
+	"midpoint_log_return",
+	"midpoint_return_rate",
+	"flow_aligned_midpoint_return",
+	"midpoint_response_per_net_notional",
+	"gross_notional_rate_baseline",
+	"gross_notional_rate_ratio",
+	"gross_notional_rate_divergence",
+	"gross_notional_rate_zscore",
+	"signed_net_fraction_baseline",
+	"signed_net_fraction_divergence",
+	"signed_net_fraction_zscore",
+	"midpoint_return_rate_baseline",
+	"midpoint_return_rate_divergence",
+	"midpoint_return_rate_zscore",
+	"net_notional_rate_velocity",
+	"gross_notional_rate_velocity",
+	"historical_path_distance",
+	"historical_path_percentile",
+}
+
 type Signal struct {
 	*runtime.System
-	output   data.Map[float64]
-	envelope data.Map[float64]
-	states   []*data.State
-	pipeline core.Primitive
-	metrics  [][4]string
+	pipeline *nomagique.Number
 }
 
 func NewSignal(ctx context.Context) *Signal {
-	output := data.NewOutputMap()
-
 	signal := &Signal{
-		output:   output,
-		envelope: data.NewOutputMap(),
-		states: []*data.State{
-			// 0: Per-trade notional.
-			data.NewState(data.NewMap("left", "price", "right", "qty", "multiply", "notional"), output),
-			// 1-2: Executed quantity per aggressor side.
-			data.NewState(data.NewMap("left", "qty", "right", "buy", "value", "executed_quantity:buy:increment", "sum", "executed_quantity:buy"), output),
-			data.NewState(data.NewMap("left", "qty", "right", "sell", "value", "executed_quantity:sell:increment", "sum", "executed_quantity:sell"), output),
-			// 3-4: Aggressive notional per aggressor side.
-			data.NewState(data.NewMap("left", "notional", "right", "buy", "value", "aggressive_notional:buy:increment", "sum", "aggressive_notional:buy"), output),
-			data.NewState(data.NewMap("left", "notional", "right", "sell", "value", "aggressive_notional:sell:increment", "sum", "aggressive_notional:sell"), output),
-			// 5-6: Trade count per aggressor side.
-			data.NewState(data.NewMap("value", "buy", "sum", "trade_count:buy"), output),
-			data.NewState(data.NewMap("value", "sell", "sum", "trade_count:sell"), output),
-			// 7-9: Trade count and its signed fraction.
-			data.NewState(data.NewMap("left", "trade_count:buy", "right", "trade_count:sell", "add", "trade_count"), output),
-			data.NewState(data.NewMap("left", "trade_count:buy", "right", "trade_count:sell", "subtract", "net_trade_count"), output),
-			data.NewState(data.NewMap("left", "net_trade_count", "right", "trade_count", "divide", "signed_count_fraction"), output),
-			// 10-11: Gross and net executed quantity.
-			data.NewState(data.NewMap("left", "executed_quantity:buy", "right", "executed_quantity:sell", "add", "gross_executed_quantity"), output),
-			data.NewState(data.NewMap("left", "executed_quantity:buy", "right", "executed_quantity:sell", "subtract", "net_executed_quantity"), output),
-			// 12-15: Gross and net notional, signed net fraction, mean trade notional.
-			data.NewState(data.NewMap("left", "aggressive_notional:buy", "right", "aggressive_notional:sell", "add", "gross_notional"), output),
-			data.NewState(data.NewMap("left", "aggressive_notional:buy", "right", "aggressive_notional:sell", "subtract", "net_notional"), output),
-			data.NewState(data.NewMap("left", "net_notional", "right", "gross_notional", "divide", "signed_net_fraction"), output),
-			data.NewState(data.NewMap("left", "gross_notional", "right", "trade_count", "divide", "mean_trade_notional"), output),
-			// 16-17: CVD epoch origin and the elapsed span since it.
-			data.NewState(data.NewMap("value", "cvd_epoch_from", "min", "cvd_epoch_from"), output),
-			data.NewState(data.NewMap("from", "cvd_epoch_from", "to", "at", "elapsed", "cvd_elapsed"), output),
-			// 18-22: Rates over the elapsed span; undefined while the span is zero.
-			data.NewState(data.NewMap("left", "trade_count", "right", "cvd_elapsed", "divide", "trade_rate"), output),
-			data.NewState(data.NewMap("left", "gross_notional", "right", "cvd_elapsed", "divide", "gross_notional_rate"), output),
-			data.NewState(data.NewMap("left", "net_notional", "right", "cvd_elapsed", "divide", "net_notional_rate"), output),
-			data.NewState(data.NewMap("left", "aggressive_notional:buy", "right", "cvd_elapsed", "divide", "buy_notional_rate"), output),
-			data.NewState(data.NewMap("left", "aggressive_notional:sell", "right", "cvd_elapsed", "divide", "sell_notional_rate"), output),
-			// 23-25: Causal baseline of the signed net fraction, divergence, z-score.
-			data.NewState(data.NewMap("value", "signed_net_fraction", "center", "signed_net_fraction_baseline", "scale", "signed_net_fraction_scale"), output),
-			data.NewState(data.NewMap("left", "signed_net_fraction", "right", "signed_net_fraction_baseline", "subtract", "signed_net_fraction_divergence"), output),
-			data.NewState(data.NewMap("left", "signed_net_fraction_divergence", "right", "signed_net_fraction_scale", "divide", "signed_net_fraction_zscore"), output),
-		},
-		pipeline: transport.NewParallel(
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(arithmetic.NewMultiply(), statistic.NewSum()),
-			transport.NewStages(arithmetic.NewMultiply(), statistic.NewSum()),
-			transport.NewStages(arithmetic.NewMultiply(), statistic.NewSum()),
-			transport.NewStages(arithmetic.NewMultiply(), statistic.NewSum()),
-			transport.NewStages(statistic.NewSum()),
-			transport.NewStages(statistic.NewSum()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(calculus.NewMinimum()),
-			transport.NewStages(temporal.NewElapsed()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
+		pipeline: nomagique.NewNumber(
+			transport.NewAddressable(
+				"symbolstore", store.NewKV(),
+				nomagique.NewNumber(
+					data.NewValue[core.Primitive](
+						nomagique.NewNumber(
+							data.NewSlice(0, 3),
+							transport.NewParallel(
+								nomagique.NewNumber(
+									transport.NewSpread[float64](),
+									data.NewValue[core.Primitive](
+										transport.NewPass(),
+										arithmetic.NewAdd(),
+										nomagique.NewNumber(
+											data.NewValue[core.Primitive](
+												arithmetic.NewSubtract(),
+												arithmetic.NewAdd(),
+											),
+											arithmetic.NewDivide(),
+										),
+									),
+								),
+								nomagique.NewNumber(
+									transport.NewSpread[float64](),
+									data.NewValue[core.Primitive](
+										transport.NewPass(),
+										arithmetic.NewAdd(),
+										arithmetic.NewSubtract(),
+										arithmetic.NewSubtract(),
+									),
+								),
+								nomagique.NewNumber(
+									vector.NewScale(),
+									transport.NewSpread[float64](),
+									data.NewValue[core.Primitive](
+										transport.NewPass(),
+										arithmetic.NewAdd(),
+										arithmetic.NewSubtract(),
+										arithmetic.NewSubtract(),
+										nomagique.NewNumber(
+											data.NewValue[core.Primitive](
+												arithmetic.NewSubtract(),
+												arithmetic.NewAdd(),
+											),
+											arithmetic.NewDivide(),
+										),
+										arithmetic.NewAdd(),
+									),
+								),
+							),
+						),
+						data.NewSlice(3, 8),
+					),
+					data.NewValue[core.Primitive](
+						data.NewSlice(0, 21),
+						nomagique.NewNumber(
+							data.NewSelect(
+								2, 16,
+								11, 16,
+								12, 16,
+								9, 16,
+								10, 16,
+								17, 17,
+								20, 16,
+							),
+							data.NewBatch(2, 2),
+							transport.NewParallel(
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+							),
+						),
+						data.NewSlice(16, 21),
+					),
+					data.NewValue[core.Primitive](
+						data.NewSlice(0, 33),
+						nomagique.NewNumber(
+							data.NewSelect(
+								28, 28,
+								29, 29,
+								30, 30,
+								30, 14,
+								30, 12,
+								17, 17,
+								14, 14,
+								22, 22,
+								18, 27,
+								17, 27,
+								27, 27,
+								27, 27,
+							),
+							data.NewBatch(2, 2),
+							transport.NewParallel(
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewMultiply()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+							),
+						),
+					),
+					data.NewValue[core.Primitive](
+						data.NewSlice(0, 48),
+						nomagique.NewNumber(
+							data.NewSelect(
+								17, 38, 38,
+								17, 38, 38,
+								17, 38, 39,
+								14, 40, 40,
+								14, 40, 41,
+								22, 42, 42,
+								22, 42, 43,
+							),
+							data.NewBatch(3, 3),
+							transport.NewParallel(
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewSubtract()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewValue[core.Primitive](arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewSubtract()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewValue[core.Primitive](arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewSubtract()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewValue[core.Primitive](arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
+							),
+						),
+					),
+					data.NewSelect(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 33, 34, 35, 22, 36, 37, 38, 48, 49, 50, 40, 51, 52, 42, 53, 54, 44, 45, 46, 47),
+				),
+				data.NewMessage(data.WRITE, "symbolstore", "cvd_state", data.NewValue[core.Primitive]()),
+			),
 		),
-		// {published label, output key, unit, timescale}
-		metrics: [][4]string{
-			{"trade_count", "trade_count", string(data.UnitCount), string(data.TimescaleEpoch)},
-			{"trade_count:buy", "trade_count:buy", string(data.UnitCount), string(data.TimescaleEpoch)},
-			{"trade_count:sell", "trade_count:sell", string(data.UnitCount), string(data.TimescaleEpoch)},
-			{"signed_count_fraction", "signed_count_fraction", string(data.UnitRatio), string(data.TimescaleEpoch)},
-			{"executed_quantity:buy", "executed_quantity:buy", string(data.UnitQuantity), string(data.TimescaleEpoch)},
-			{"executed_quantity:sell", "executed_quantity:sell", string(data.UnitQuantity), string(data.TimescaleEpoch)},
-			{"gross_executed_quantity", "gross_executed_quantity", string(data.UnitQuantity), string(data.TimescaleEpoch)},
-			{"net_executed_quantity", "net_executed_quantity", string(data.UnitQuantity), string(data.TimescaleEpoch)},
-			{"cumulative_volume_delta", "net_executed_quantity", string(data.UnitQuantity), string(data.TimescaleEpoch)},
-			{"aggressive_notional:buy", "aggressive_notional:buy", string(data.UnitNotional), string(data.TimescaleEpoch)},
-			{"aggressive_notional:sell", "aggressive_notional:sell", string(data.UnitNotional), string(data.TimescaleEpoch)},
-			{"gross_notional", "gross_notional", string(data.UnitNotional), string(data.TimescaleEpoch)},
-			{"net_notional", "net_notional", string(data.UnitNotional), string(data.TimescaleEpoch)},
-			{"cumulative_notional_delta", "net_notional", string(data.UnitNotional), string(data.TimescaleEpoch)},
-			{"signed_net_fraction", "signed_net_fraction", string(data.UnitRatio), string(data.TimescaleEpoch)},
-			{"mean_trade_notional", "mean_trade_notional", string(data.UnitNotional), string(data.TimescaleEpoch)},
-			{"cvd_epoch_from", "cvd_epoch_from", string(data.UnitNanosecond), string(data.TimescaleEpoch)},
-			{"trade_rate", "trade_rate", string(data.UnitTradeRate), string(data.TimescalePerSecond)},
-			{"gross_notional_rate", "gross_notional_rate", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
-			{"net_notional_rate", "net_notional_rate", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
-			{"buy_notional_rate", "buy_notional_rate", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
-			{"sell_notional_rate", "sell_notional_rate", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
-			{"signed_net_fraction_baseline", "signed_net_fraction_baseline", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"signed_net_fraction_divergence", "signed_net_fraction_divergence", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"signed_net_fraction_zscore", "signed_net_fraction_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"response_midpoint:from", "response_midpoint:from", string(data.UnitPrice), string(data.TimescaleRollingWindow)},
-			{"response_midpoint:at", "response_midpoint:at", string(data.UnitPrice), string(data.TimescaleRollingWindow)},
-			{"midpoint_log_return", "midpoint_log_return", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
-			{"midpoint_return_rate", "midpoint_return_rate", string(data.UnitVelocity), string(data.TimescalePerSecond)},
-			{"flow_aligned_midpoint_return", "flow_aligned_midpoint_return", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
-			{"midpoint_response_per_net_notional", "midpoint_response_per_net_notional", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"gross_notional_rate_baseline", "gross_notional_rate_baseline", string(data.UnitNotionalRate), string(data.TimescaleRollingWindow)},
-			{"gross_notional_rate_ratio", "gross_notional_rate_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"gross_notional_rate_divergence", "gross_notional_rate_divergence", string(data.UnitNotionalRate), string(data.TimescaleRollingWindow)},
-			{"gross_notional_rate_zscore", "gross_notional_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"midpoint_return_rate_baseline", "midpoint_return_rate_baseline", string(data.UnitVelocity), string(data.TimescaleRollingWindow)},
-			{"midpoint_return_rate_divergence", "midpoint_return_rate_divergence", string(data.UnitVelocity), string(data.TimescaleRollingWindow)},
-			{"midpoint_return_rate_zscore", "midpoint_return_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"net_notional_rate_velocity", "net_notional_rate_velocity", string(data.UnitAcceleration), string(data.TimescalePerSecond)},
-			{"gross_notional_rate_velocity", "gross_notional_rate_velocity", string(data.UnitAcceleration), string(data.TimescalePerSecond)},
-			{"historical_path_distance", "historical_path_distance", string(data.UnitDistance), string(data.TimescaleRollingWindow)},
-			{"historical_path_percentile", "historical_path_percentile", string(data.UnitPercent), string(data.TimescaleRollingWindow)},
-		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "cvd", signal)
 	return signal
 }
 
-/*
-Step binds the prior trade Measurement to one adapter per stage group, runs
-the pipeline, and writes the published CVD facts into a fresh Measurement
-allocated from the signal's own arena. Facts a group left unwritten (an
-undefined rate or fraction) are omitted, never fabricated as zero.
-*/
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY {
-		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
+	if signal.Status() != runtime.READY || prior == nil {
 		return nil
 	}
 
-	if prior == nil {
-		return nil
-	}
+	side := prior.Meta("side")
 
-	clear(signal.output.Values)
-	clear(signal.envelope.Values)
-
-	switch prior.Meta("side") {
-	case "buy":
-		signal.envelope.Values["buy"] = 1
-		signal.envelope.Values["sell"] = 0
-	case "sell":
-		signal.envelope.Values["buy"] = 0
-		signal.envelope.Values["sell"] = 1
-	default:
-		errnie.Warn(signal.Name() + ": trade without an explicit aggressor side; dropping event")
-		return nil
-	}
-
-	signal.envelope.Values["at"] = float64(prior.At.UnixNano())
-	signal.envelope.Values["cvd_epoch_from"] = float64(prior.At.UnixNano())
-
-	publisher := data.NewAdapter(prior, data.NewState(data.NewMap(), signal.output))
-
-	for range publisher.Next(data.NewValue(signal.envelope)) {
-	}
-
-	adapters := make([]*data.Adapter, len(signal.states))
-
-	for index, state := range signal.states {
-		adapters[index] = data.NewAdapter(prior, state)
-	}
-
-	for range signal.pipeline.Next(data.NewValue(adapters...)) {
-	}
-
-	if err := errors.Join(publisher.Error(), signal.pipeline.Error()); err != nil {
-		signal.Error(err)
-		return nil
-	}
-
-	out := data.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick,
-	)
-	out.Peers(prior)
-	out.At = prior.At
-	out.From = prior.At
-
-	metrics := make([]*data.Metric, 0, len(signal.metrics))
-
-	for _, metric := range signal.metrics {
-		value := signal.output.Values[metric[1]]
-
-		metrics = append(metrics, data.NewMetric(
-			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),
+	if side != "buy" && side != "sell" {
+		errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[signal.cvd] no side",
+			nil,
 		))
+
+		return nil
 	}
 
-	if epochFrom, held := signal.output.Values["cvd_epoch_from"]; held {
-		out.From = time.Unix(0, int64(epochFrom)).UTC()
+	price := data.Pull(prior.Read("price")).Metric.Raw
+	qty := data.Pull(prior.Read("qty")).Metric.Raw
+
+	var (
+		buyQty, sellQty     float64
+		buyCount, sellCount float64
+	)
+
+	if side == "buy" {
+		buyCount = 1
+		buyQty = qty
 	}
 
-	return out.Write(metrics...)
+	if side == "sell" {
+		sellCount = 1
+		sellQty = qty
+	}
+
+	counts := []float64{buyCount, sellCount}
+	quantities := []float64{buyQty, sellQty}
+	notionals := [2][]float64{quantities, {price}}
+
+	timeDelta := float64(prior.At.Sub(prior.From).Seconds())
+	if timeDelta == 0 {
+		timeDelta = 1
+	}
+	epochFrom := float64(prior.From.UnixNano())
+	midpointFrom := 0.0
+	midpointAt := 0.0
+	midpointLogReturn := 0.0
+
+	output := make(map[string]float64)
+	index := 0
+
+	for ptr := range signal.pipeline.Next(
+		data.NewMessage(
+			data.WRITE,
+			"symbolstore",
+			prior.Label,
+			data.NewValue(
+				unsafe.Pointer(&counts),
+				unsafe.Pointer(&quantities),
+				unsafe.Pointer(&notionals),
+				unsafe.Pointer(&timeDelta),
+				unsafe.Pointer(&epochFrom),
+				unsafe.Pointer(&midpointFrom),
+				unsafe.Pointer(&midpointAt),
+				unsafe.Pointer(&midpointLogReturn),
+			),
+		).Next(nil),
+	) {
+		if index >= len(outputKeys) {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[signal.cvd] overflow",
+				nil,
+			))
+
+			return nil
+		}
+
+		if ptr == nil {
+			continue
+		}
+
+		output[outputKeys[index]] = *(*float64)(ptr)
+		index++
+	}
+
+	return prior.Next(signal.Name(), output)
 }

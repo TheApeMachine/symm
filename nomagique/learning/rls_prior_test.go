@@ -15,7 +15,7 @@ func TestRlsPriorNext(t *testing.T) {
 		output := data.Read[[][]float64](node.Next(data.NewValue([2][]float64{
 			{1, 2, -3},
 			{1},
-		})))
+		}).Next(nil)))
 
 		So(node.Error(), ShouldBeNil)
 		So(output[1], ShouldResemble, []float64{0, 0, 0})
@@ -27,7 +27,7 @@ func TestRlsPriorNext(t *testing.T) {
 			for range rejected.Next(data.NewValue([2][]float64{
 				{1, 2, -3},
 				{1},
-			})) {
+			}).Next(nil)) {
 			}
 
 			err := rejected.Error()

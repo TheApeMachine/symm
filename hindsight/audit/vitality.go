@@ -3,7 +3,9 @@ package audit
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"sort"
+	"sync"
 )
 
 /*
@@ -178,76 +180,142 @@ func findCanonicalRedundantPairs(
 
 	sort.Strings(healthyNames)
 
-	redundant := make([]RedundantPair, 0)
 	totalHealthy := len(healthyNames)
+	if totalHealthy < 2 || len(ticks) < 10 {
+		return nil
+	}
 
-	for first := 0; first < totalHealthy; first++ {
-		nameA := healthyNames[first]
-		seriesA := series[nameA]
+	dense := make([]denseVector, totalHealthy)
+	for index, name := range healthyNames {
+		ser := series[name]
+		vals := make([]float64, len(ticks))
+		pres := make([]bool, len(ticks))
 
-		for second := first + 1; second < totalHealthy; second++ {
-			nameB := healthyNames[second]
-			seriesB := series[nameB]
-
-			corr, ok := computeCorrelation(ticks, seriesA, seriesB)
-			if !ok {
-				continue
-			}
-
-			if math.Abs(corr) >= 0.95 {
-				redundant = append(redundant, RedundantPair{
-					MetricA:     nameA,
-					MetricB:     nameB,
-					Correlation: corr,
-				})
+		for tIdx, tick := range ticks {
+			if val, ok := ser[tick]; ok {
+				vals[tIdx] = val
+				pres[tIdx] = true
 			}
 		}
+
+		dense[index] = denseVector{
+			name:    name,
+			values:  vals,
+			present: pres,
+		}
 	}
+
+	workers := runtime.NumCPU()
+	if workers < 1 {
+		workers = 1
+	}
+
+	results := make([][]RedundantPair, workers)
+	var wg sync.WaitGroup
+
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			local := make([]RedundantPair, 0)
+
+			for first := workerID; first < totalHealthy; first += workers {
+				vecA := dense[first]
+
+				for second := first + 1; second < totalHealthy; second++ {
+					vecB := dense[second]
+					corr, ok := denseCorrelation(vecA.values, vecA.present, vecB.values, vecB.present)
+
+					if !ok {
+						continue
+					}
+
+					if math.Abs(corr) >= 0.95 {
+						local = append(local, RedundantPair{
+							MetricA:     vecA.name,
+							MetricB:     vecB.name,
+							Correlation: corr,
+						})
+					}
+				}
+			}
+
+			results[workerID] = local
+		}(worker)
+	}
+
+	wg.Wait()
+
+	var redundant []RedundantPair
+	for _, chunk := range results {
+		redundant = append(redundant, chunk...)
+	}
+
+	sort.Slice(redundant, func(i, j int) bool {
+		if math.Abs(redundant[i].Correlation) != math.Abs(redundant[j].Correlation) {
+			return math.Abs(redundant[i].Correlation) > math.Abs(redundant[j].Correlation)
+		}
+
+		if redundant[i].MetricA != redundant[j].MetricA {
+			return redundant[i].MetricA < redundant[j].MetricA
+		}
+
+		return redundant[i].MetricB < redundant[j].MetricB
+	})
 
 	return redundant
 }
 
-func computeCorrelation(
-	ticks []int64,
-	seriesA map[int64]float64,
-	seriesB map[int64]float64,
+type denseVector struct {
+	name    string
+	values  []float64
+	present []bool
+}
+
+func denseCorrelation(
+	valsA []float64,
+	presA []bool,
+	valsB []float64,
+	presB []bool,
 ) (float64, bool) {
-	var valsA []float64
-	var valsB []float64
+	count := 0
+	sumA := 0.0
+	sumB := 0.0
 
-	for _, tick := range ticks {
-		valA, okA := seriesA[tick]
-		valB, okB := seriesB[tick]
-
-		if okA && okB {
-			valsA = append(valsA, valA)
-			valsB = append(valsB, valB)
+	for idx := range presA {
+		if presA[idx] && presB[idx] {
+			count++
+			sumA += valsA[idx]
+			sumB += valsB[idx]
 		}
 	}
 
-	if len(valsA) < 10 {
+	if count < 10 {
 		return 0, false
 	}
 
-	meanA, varA := meanAndVar(valsA)
-	meanB, varB := meanAndVar(valsB)
+	meanA := sumA / float64(count)
+	meanB := sumB / float64(count)
 
-	if varA == 0 || varB == 0 {
-		return 0, false
-	}
-
+	m2A := 0.0
+	m2B := 0.0
 	cov := 0.0
-	for idx := range valsA {
-		cov += (valsA[idx] - meanA) * (valsB[idx] - meanB)
+
+	for idx := range presA {
+		if presA[idx] && presB[idx] {
+			diffA := valsA[idx] - meanA
+			diffB := valsB[idx] - meanB
+			m2A += diffA * diffA
+			m2B += diffB * diffB
+			cov += diffA * diffB
+		}
 	}
 
-	cov /= float64(len(valsA) - 1)
-	corr := cov / (math.Sqrt(varA) * math.Sqrt(varB))
-
-	if math.IsNaN(corr) || math.IsInf(corr, 0) {
+	if m2A <= 0 || m2B <= 0 {
 		return 0, false
 	}
 
+	corr := cov / (math.Sqrt(m2A) * math.Sqrt(m2B))
 	return corr, true
 }
 

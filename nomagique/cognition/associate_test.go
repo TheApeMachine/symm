@@ -3,6 +3,7 @@ package cognition
 import (
 	"errors"
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
 
@@ -10,79 +11,193 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
+type DriveResult struct {
+	Numbers map[string]float64
+	Texts   map[string]string
+}
+
 func drive(
 	primitive core.Primitive,
 	text map[string]string,
 	numbers map[string]float64,
-) (*data.Adapter, error) {
-	adapter := data.NewAdapter(nil, data.NewState(data.NewMap()))
-
-	if len(text) > 0 {
-		issued := data.NewTextMap()
-
-		for key, value := range text {
-			issued.Values[key] = value
-		}
-
-		for range adapter.Next(data.NewValue(issued)) {
-		}
-
-		if err := adapter.Error(); err != nil {
-			return adapter, err
-		}
+) (*DriveResult, error) {
+	result := &DriveResult{
+		Numbers: make(map[string]float64),
+		Texts:   make(map[string]string),
 	}
 
-	if len(numbers) > 0 {
-		issued := data.NewOutputMap()
+	switch p := primitive.(type) {
+	case *Associate:
+		rec := &Record{
+			Context:  text["context"],
+			Class:    text["class"],
+			Feedback: numbers["feedback"],
+			Graded:   numbers["graded"],
+		}
+		var vals [2]float64
+		idx := 0
 
-		for key, value := range numbers {
-			issued.Values[key] = value
+		for ptr := range p.Next(data.NewValue(unsafe.Pointer(rec)).Next(nil)) {
+			if idx < 2 {
+				vals[idx] = *(*float64)(ptr)
+				idx++
+			}
 		}
 
-		for range adapter.Next(data.NewValue(issued)) {
+		if err := p.Error(); err != nil {
+			return result, err
 		}
 
-		if err := adapter.Error(); err != nil {
-			return adapter, err
+		result.Numbers["records"] = vals[0]
+		result.Numbers["span"] = vals[1]
+
+	case *Reinforce:
+		var updated float64
+
+		for ptr := range p.Next(data.NewValue(numbers["probability"], numbers["count"], numbers["feedback"], numbers["graded"]).Next(nil)) {
+			updated = *(*float64)(ptr)
 		}
+
+		if err := p.Error(); err != nil {
+			return result, err
+		}
+
+		result.Numbers["probability"] = updated
+
+	case *Recall:
+		query := &RecallQuery{
+			Context: text["context"],
+			Stance:  text["stance"],
+		}
+		var res *RecallResult
+
+		for ptr := range p.Next(data.NewValue(unsafe.Pointer(query)).Next(nil)) {
+			res = (*RecallResult)(ptr)
+		}
+
+		if err := p.Error(); err != nil {
+			return result, err
+		}
+
+		if res != nil {
+			result.Texts["winner"] = res.Winner
+			result.Texts["runner_up"] = res.RunnerUp
+			result.Numbers["confidence"] = res.Confidence
+			result.Numbers["contrast"] = res.Contrast
+			result.Numbers["support"] = res.Support
+			result.Numbers["ambiguity"] = res.Ambiguity
+
+			if res.HasSurprisal {
+				result.Numbers["surprisal"] = res.Surprisal
+			}
+		}
+
+	case *Train:
+		rec := &TrainRecord{
+			Context:  text["context"],
+			Class:    text["class"],
+			Feedback: numbers["feedback"],
+			Graded:   numbers["graded"],
+		}
+		var vals [2]float64
+		idx := 0
+
+		for ptr := range p.Next(data.NewValue(unsafe.Pointer(rec)).Next(nil)) {
+			if idx < 2 {
+				vals[idx] = *(*float64)(ptr)
+				idx++
+			}
+		}
+
+		if err := p.Error(); err != nil {
+			return result, err
+		}
+
+		result.Numbers["records"] = vals[0]
+		result.Numbers["span"] = vals[1]
+
+	case *Census:
+		var res *CensusResult
+
+		for ptr := range p.Next(nil) {
+			res = (*CensusResult)(ptr)
+		}
+
+		if err := p.Error(); err != nil {
+			return result, err
+		}
+
+		if res != nil {
+			result.Numbers["records"] = res.Records
+			result.Numbers["span"] = res.Span
+
+			for key, val := range res.Classes {
+				result.Numbers[key] = val
+			}
+		}
+
+	case *Snapshot:
+		var model string
+
+		for ptr := range p.Next(nil) {
+			model = *(*string)(ptr)
+		}
+
+		if err := p.Error(); err != nil {
+			return result, err
+		}
+
+		result.Texts["model"] = model
+
+	case *Restore:
+		modelStr := text["model"]
+		var records float64
+
+		for ptr := range p.Next(data.NewValue(modelStr).Next(nil)) {
+			records = *(*float64)(ptr)
+		}
+
+		if err := p.Error(); err != nil {
+			return result, err
+		}
+
+		result.Numbers["records"] = records
+
+	case *Export:
+		var tree string
+
+		for ptr := range p.Next(nil) {
+			tree = *(*string)(ptr)
+		}
+
+		if err := p.Error(); err != nil {
+			return result, err
+		}
+
+		result.Texts["tree"] = tree
 	}
 
-	for range primitive.Next(data.NewValue(adapter)) {
-	}
-
-	if err := primitive.Error(); err != nil {
-		return adapter, err
-	}
-
-	return adapter, adapter.Error()
+	return result, nil
 }
 
-func number(adapter *data.Adapter, key string) (float64, error) {
-	var values data.Map[float64]
+func number(result *DriveResult, key string) (float64, error) {
+	val, ok := result.Numbers[key]
 
-	for pointer := range adapter.Next(data.NewValue(data.NewMap(key, key))) {
-		values = *(*data.Map[float64])(pointer)
+	if !ok {
+		return 0, core.ErrNotHeld
 	}
 
-	if err := adapter.Error(); err != nil {
-		return 0, err
-	}
-
-	return values.Values[key], nil
+	return val, nil
 }
 
-func literal(adapter *data.Adapter, key string) (string, error) {
-	var values data.Map[string]
+func literal(result *DriveResult, key string) (string, error) {
+	val, ok := result.Texts[key]
 
-	for pointer := range adapter.Next(data.NewValue(data.NewLiteral(key))) {
-		values = *(*data.Map[string])(pointer)
+	if !ok {
+		return "", core.ErrNotHeld
 	}
 
-	if err := adapter.Error(); err != nil {
-		return "", err
-	}
-
-	return values.Values[key], nil
+	return val, nil
 }
 
 func TestAssociateNext(t *testing.T) {
@@ -181,7 +296,6 @@ func TestAssociatePrunesUselessBasin(t *testing.T) {
 		})
 		So(err, ShouldBeNil)
 
-		// Strong negative feedback: 0.75 / (1+16) = 0.044 < basinFloor (1/16).
 		_, err = drive(memory, map[string]string{
 			"context": "R0/R1",
 			"class":   "enter",

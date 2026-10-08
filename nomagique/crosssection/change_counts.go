@@ -11,52 +11,30 @@ import (
 
 /*
 ChangeCounts takes the sign census of the member changes held by the shared
-member store and publishes the sign counts, the valid member count, and the
-signed fraction (positive - negative) / valid. The member with the largest
-absolute change is published as the text "extreme_key".
+member store and yields valid_member_count, positive_count, negative_count,
+zero_count, and signed_fraction.
 */
 type ChangeCounts struct {
 	*core.PrimitiveError
-	members core.Primitive
-	output  data.Map[float64]
-	text    data.Map[string]
+	members    *MemberStore
+	extremeKey string
 }
 
-func NewChangeCounts(members core.Primitive) *ChangeCounts {
+func NewChangeCounts(members *MemberStore) *ChangeCounts {
 	return &ChangeCounts{
 		PrimitiveError: core.NewPrimitiveError(),
 		members:        members,
-		output:         data.NewOutputMap(),
-		text:           data.NewTextMap(),
 	}
+}
+
+func (op *ChangeCounts) ExtremeKey() string {
+	return op.extremeKey
 }
 
 func (op *ChangeCounts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			var snapshot map[string]float64
-
-			for pointer := range op.members.Next(data.NewValue(map[string]float64{})) {
-				snapshot = *(*map[string]float64)(pointer)
-			}
-
-			if err := op.members.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
+		compute := func() bool {
+			snapshot := op.members.Snapshot()
 			positive, negative, zero := 0.0, 0.0, 0.0
 			extremeKey := ""
 			extreme := 0.0
@@ -64,50 +42,53 @@ func (op *ChangeCounts) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 			for member, change := range snapshot {
 				magnitude := math.Abs(change)
 
-				if extremeKey == "" || magnitude > extreme ||
-					(magnitude == extreme && member < extremeKey) {
+				if extremeKey == "" || magnitude > extreme || (magnitude == extreme && member < extremeKey) {
 					extreme = magnitude
 					extremeKey = member
 				}
 
-				switch {
-				case change > 0:
+				if change > 0 {
 					positive++
-				case change < 0:
+				}
+
+				if change < 0 {
 					negative++
-				default:
+				}
+
+				if change == 0 {
 					zero++
 				}
 			}
 
+			op.extremeKey = extremeKey
 			valid := positive + negative + zero
-
-			clear(op.output.Values)
-			op.output.Values["valid_member_count"] = valid
-			op.output.Values["positive_count"] = positive
-			op.output.Values["negative_count"] = negative
-			op.output.Values["zero_count"] = zero
+			signedFraction := 0.0
 
 			if valid > 0 {
-				op.output.Values["signed_fraction"] = (positive - negative) / valid
+				signedFraction = (positive - negative) / valid
 			}
 
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if extremeKey != "" {
-				op.text.Values["extreme_key"] = extremeKey
-
-				for range adapter.Next(data.NewValue(op.text)) {
+			for value := range data.NewValue(valid, positive, negative, zero, signedFraction).Next(nil) {
+				if !yield(value) {
+					return false
 				}
 			}
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
+			return true
+		}
+
+		if in == nil {
+			compute()
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
 				return
 			}
 
-			if !yield(arriving) {
+			if !compute() {
 				return
 			}
 		}

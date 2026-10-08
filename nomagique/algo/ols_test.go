@@ -37,7 +37,7 @@ func TestOLSNext(t *testing.T) {
 				rows[row][parameters] += 0.2 * random.NormFloat64()
 			}
 
-			out := tests.CollectSeq[[]float64](node.Next(data.NewValue(rows)))
+			out := tests.CollectSeq[[]float64](node.Next(data.NewValue(rows).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
 			fit := out[0]
@@ -56,7 +56,7 @@ func TestOLSNext(t *testing.T) {
 				{{1, 0, 1}, {1, 1, 2}},
 				{},
 			} {
-				out := tests.CollectSeq[[]float64](node.Next(data.NewValue(rows)))
+				out := tests.CollectSeq[[]float64](node.Next(data.NewValue(rows).Next(nil)))
 				So(node.Error(), ShouldBeNil)
 				So(len(out), ShouldEqual, 1)
 				So(out[0][0], ShouldEqual, 0)
@@ -68,7 +68,7 @@ func TestOLSNext(t *testing.T) {
 		Convey("ragged observation rows are a shape error", func() {
 			errNode := algo.NewOLS()
 
-			for range errNode.Next(data.NewValue([][]float64{{1, 2, 3}, {1, 2}})) {
+			for range errNode.Next(data.NewValue([][]float64{{1, 2, 3}, {1, 2}}).Next(nil)) {
 				t.Fatal("a ragged design must yield nothing")
 			}
 

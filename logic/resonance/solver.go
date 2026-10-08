@@ -178,7 +178,7 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 	out := data.Read[[12][]float64](coder.Next(data.NewValue([2][]float64{
 		features,
 		{midpoint, hasReference, float64(step), float64(at.UnixNano()) / 1e9},
-	})))
+	}).Next(nil)))
 
 	if solver.ObserveModule != nil {
 		solver.ObserveModule("resonance", time.Since(stepStarted))
@@ -470,7 +470,7 @@ func (scorer *featureScorer) Step(measurements [11]*data.Measurement) []float64 
 		}
 
 		var reading *[10]float64
-		for out := range scorer.moments[index].Next(data.NewValue(val)) {
+		for out := range scorer.moments[index].Next(data.NewValue(val).Next(nil)) {
 			reading = (*[10]float64)(out)
 		}
 		if err := scorer.moments[index].Error(); err != nil || reading == nil {
@@ -478,7 +478,7 @@ func (scorer *featureScorer) Step(measurements [11]*data.Measurement) []float64 
 		}
 
 		var residual [8]float64
-		for out := range scorer.residuals[index].Next(data.NewValue(*reading)) {
+		for out := range scorer.residuals[index].Next(data.NewValue(*reading).Next(nil)) {
 			residual = *(*[8]float64)(out)
 		}
 		if err := scorer.residuals[index].Error(); err != nil {

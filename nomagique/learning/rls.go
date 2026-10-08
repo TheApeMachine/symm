@@ -88,7 +88,7 @@ func (op *RLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.query[1] = op.control[:2]
 			}
 
-			for out := range op.learner.Next(data.NewValue(op.query)) {
+			for out := range op.learner.Next(data.NewValue(op.query).Next(nil)) {
 				op.out = *(*[][]float64)(out)
 			}
 

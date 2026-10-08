@@ -16,7 +16,7 @@ func TestLagProfileSupportAndUnits(t *testing.T) {
 		left := prices(times, []float64{1, 2, 1.5, 3, 2.2, 4})
 		right := prices([]int64{1e9, 2e9, 3e9, 4e9, 5e9, 6e9}, []float64{1, 2, 1.5, 3, 2.2, 4})
 		node := correlation.NewLagProfile(algo.NewHayashiYoshida(), 1e9, 2.0)
-		profile := tests.CollectSeq[[10]float64](node.Next(data.NewValue([2][][2]float64{left, right})))
+		profile := tests.CollectSeq[[10]float64](node.Next(data.NewValue([2][][2]float64{left, right}).Next(nil)))
 		So(node.Error(), ShouldBeNil)
 		So(len(profile), ShouldEqual, 5)
 
@@ -28,7 +28,7 @@ func TestLagProfileSupportAndUnits(t *testing.T) {
 			points = append(points, [2]float64{candidate[8], candidate[9]})
 		}
 
-		peakOut := tests.CollectSeq[[3]float64](peakNode.Next(data.NewValue(points...)))
+		peakOut := tests.CollectSeq[[3]float64](peakNode.Next(data.NewValue(points...).Next(nil)))
 		So(peakNode.Error(), ShouldBeNil)
 		So(len(peakOut), ShouldEqual, 1)
 		So(peakOut[0][1], ShouldEqual, 1)
@@ -40,13 +40,13 @@ func TestProfileCurvatureSeconds(t *testing.T) {
 	Convey("Curvature and prominence use the neighbouring ordinates around the peak", t, func() {
 		points := [][2]float64{{-1, 0.1}, {0, 0.9}, {1, 0.3}}
 		curvNode := correlation.NewCurvature()
-		curvature := tests.CollectSeq[float64](curvNode.Next(data.NewValue(points...)))
+		curvature := tests.CollectSeq[float64](curvNode.Next(data.NewValue(points...).Next(nil)))
 		So(curvNode.Error(), ShouldBeNil)
 		So(len(curvature), ShouldEqual, 1)
 		So(curvature[0], ShouldEqual, 1.4)
 
 		promNode := correlation.NewProminence()
-		prominence := tests.CollectSeq[float64](promNode.Next(data.NewValue(points...)))
+		prominence := tests.CollectSeq[float64](promNode.Next(data.NewValue(points...).Next(nil)))
 		So(promNode.Error(), ShouldBeNil)
 		So(len(prominence), ShouldEqual, 1)
 		So(prominence[0], ShouldEqual, 0.7)

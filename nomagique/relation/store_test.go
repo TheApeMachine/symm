@@ -26,7 +26,7 @@ func appendSeries(store *ObservationStore, key string, values []float64, step ti
 		flat = append(flat, float64(time.Duration(index)*step), value)
 	}
 
-	for range store.Next(data.NewValue(map[string][]float64{key: flat})) {
+	for range store.Next(data.NewValue(map[string][]float64{key: flat}).Next(nil)) {
 	}
 }
 
@@ -54,7 +54,7 @@ func TestObservationStoreRetention(t *testing.T) {
 		for index, value := range values {
 			for range store.Next(data.NewValue(map[string][]float64{
 				key: {float64(int64(index) * int64(time.Second)), value},
-			})) {
+			}).Next(nil)) {
 			}
 		}
 
@@ -86,7 +86,7 @@ func TestObservationStoreEpochSeparation(t *testing.T) {
 		for range store.Next(data.NewValue(map[string][]float64{
 			epochOne: {1, 1},
 			epochTwo: {2, 2},
-		})) {
+		}).Next(nil)) {
 		}
 
 		Convey("incompatible epochs are never mixed", func() {
@@ -109,7 +109,7 @@ func TestObservationStoreCoordinates(t *testing.T) {
 			fixtureKey("cvd", "signed_net_fraction_zscore"): {1, 1},
 			fixtureKey("hawkes", "arrival_rate_zscore"):     {2, 2},
 			fixtureKey("cvd", "midpoint_log_return"):        {3, 3},
-		})) {
+		}).Next(nil)) {
 		}
 
 		Convey("every observed coordinate is resident", func() {
@@ -119,7 +119,7 @@ func TestObservationStoreCoordinates(t *testing.T) {
 		Convey("an empty batch registers a coordinate without observing it", func() {
 			fourth := fixtureKey("cvd", "gross_notional_rate_zscore")
 
-			for range store.Next(data.NewValue(map[string][]float64{fourth: nil})) {
+			for range store.Next(data.NewValue(map[string][]float64{fourth: nil}).Next(nil)) {
 			}
 
 			resident := residentCopy(store)
@@ -127,7 +127,7 @@ func TestObservationStoreCoordinates(t *testing.T) {
 			So(resident[fourth], ShouldBeEmpty)
 
 			Convey("and registration is idempotent", func() {
-				for range store.Next(data.NewValue(map[string][]float64{fourth: nil})) {
+				for range store.Next(data.NewValue(map[string][]float64{fourth: nil}).Next(nil)) {
 				}
 
 				So(residentCopy(store), ShouldHaveLength, 4)
@@ -149,7 +149,7 @@ func TestObservationStoreShape(t *testing.T) {
 
 			var yielded int
 
-			for range invalid.Next(data.NewValue(map[string][]float64{"k": {1, 1}})) {
+			for range invalid.Next(data.NewValue(map[string][]float64{"k": {1, 1}}).Next(nil)) {
 				yielded++
 			}
 
@@ -164,7 +164,7 @@ func TestObservationStoreShape(t *testing.T) {
 			store := NewObservationStore(4)
 			var yielded int
 
-			for range store.Next(data.NewValue(map[string][]float64{"k": {1, 1, 2}})) {
+			for range store.Next(data.NewValue(map[string][]float64{"k": {1, 1, 2}}).Next(nil)) {
 				yielded++
 			}
 
@@ -187,7 +187,7 @@ func BenchmarkObservationStoreAppend(b *testing.B) {
 		batch[key][0] = float64(iteration)
 		batch[key][1] = float64(iteration)
 
-		for range store.Next(data.NewValue(batch)) {
+		for range store.Next(data.NewValue(batch).Next(nil)) {
 		}
 
 		benchmarkStoreSink++

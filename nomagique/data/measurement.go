@@ -119,11 +119,19 @@ func (measurement *Measurement) Next(source string, values ...map[string]float64
 		valMap = values[0]
 	}
 
+	seen := make(map[string]bool)
+
 	for entry := range measurement.Read() {
+		if entry == nil || entry.Metric == nil {
+			continue
+		}
+
 		out := *entry.Metric
 
 		if valMap != nil {
-			out.Raw = valMap[entry.Key]
+			if val, ok := valMap[entry.Key]; ok {
+				out.Raw = val
+			}
 		}
 		out.Exact = nil
 		out.Normalized = 0
@@ -133,8 +141,19 @@ func (measurement *Measurement) Next(source string, values ...map[string]float64
 			Key:    entry.Key,
 			Metric: &out,
 		})
+		seen[entry.Key] = true
 	}
 
+	for key, val := range valMap {
+		if !seen[key] {
+			next.metrics = append(next.metrics, &MetricEntry{
+				Key:    key,
+				Metric: NewMetric(key, val, UnitDimensionless, TimescaleInstantaneous),
+			})
+		}
+	}
+
+	next.finalize()
 	return next
 }
 
@@ -225,6 +244,39 @@ func (measurement *Measurement) Write(
 
 	measurement.finalize()
 	return measurement
+}
+
+/*
+PurgeMetric removes a metric by its key from the Measurement.
+*/
+func (measurement *Measurement) PurgeMetric(key string) {
+	for index, entry := range measurement.metrics {
+		if entry != nil && entry.Key == key {
+			measurement.metrics = append(measurement.metrics[:index], measurement.metrics[index+1:]...)
+			return
+		}
+	}
+}
+
+/*
+ApproximateBytes returns an estimate of the serialized byte size of the Measurement.
+*/
+func (measurement *Measurement) ApproximateBytes() int64 {
+	size := int64(128 + len(measurement.Label) + len(measurement.Source))
+
+	for _, entry := range measurement.metrics {
+		if entry != nil {
+			size += int64(64 + len(entry.Key))
+		}
+	}
+
+	for _, entry := range measurement.metadata {
+		if entry != nil {
+			size += int64(32 + len(entry.Key) + len(entry.Value))
+		}
+	}
+
+	return size
 }
 
 /*

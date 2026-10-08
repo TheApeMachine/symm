@@ -2,234 +2,249 @@ package correlation
 
 import (
 	"context"
-	"errors"
-	"math"
-	"slices"
-	"strings"
-	"sync"
-	"time"
+	"unsafe"
 
 	"github.com/theapemachine/errnie"
-
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/core"
-	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Signal is the asynchronous price-path correlation instrument. It holds no
-logic of its own: its entire behavior is one nomagique Stages pipeline per
-symbol over a shared output map. Member admits the arrival into the symbol's
-retained path and publishes that path into the signal's shared path store;
-Pairs measures the symbol against every peer path in the store and the cohort
-across them. Peers never live on the Measurement: the keyed path store is the
-only place symbols meet. Pair facts are published as "<fact>@<reference>",
-cohort facts unsuffixed. Facts accumulate in the output map and are written
-once.
-*/
-type Signal struct {
-	*runtime.System
-	paths     core.Primitive
-	pipelines sync.Map
-	metrics   map[string][2]string
+var outputKeys = []string{
+	"last_price",
+	"observation_count",
+	"signed_correlation",
+	"absolute_correlation",
+	"cohort_signed_correlation",
+	"cohort_absolute_correlation",
+	"covariance",
+	"return_energy:reference",
+	"return_energy:measured",
+	"return_energy_rate:reference",
+	"return_energy_rate:measured",
+	"peer_return_energy_rate",
+	"focal_return_energy_rate",
+	"supported_return_count:measured",
+	"supported_return_count:reference",
+	"shared_time",
+	"overlap_density",
+	"overlap_pair_count",
+	"effective_sample_count",
+	"correlation_p_value",
+	"correlation_standard_error_fisher",
+	"cohort_peer_count",
+	"cohort_correlation_dispersion",
+	"cohort_effective_peer_count",
+	"relative_return_energy",
+	"relative_cohort_return_energy",
+	"correlation_baseline",
+	"correlation_divergence",
+	"correlation_zscore",
+	"correlation_velocity",
+	"relative_return_energy_baseline",
+	"relative_return_energy_divergence",
+	"relative_return_energy_zscore",
+	"relative_return_energy_velocity",
 }
 
-type symbolPipeline struct {
-	output   data.Map[float64]
-	envelope data.Map[float64]
-	state    *data.State
-	pipeline core.Primitive
+type Signal struct {
+	*runtime.System
+	pipeline *nomagique.Number
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		paths: store.NewKV[string, [][2]float64](nil),
-		// {output key without "@reference"}: {unit, timescale}
-		metrics: map[string][2]string{
-			"last_price":                        {string(data.UnitPrice), string(data.TimescaleTick)},
-			"observation_count":                 {string(data.UnitCount), string(data.TimescaleRollingWindow)},
-			"signed_correlation":                {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
-			"absolute_correlation":              {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
-			"covariance":                        {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
-			"overlap_pair_count":                {string(data.UnitCount), string(data.TimescaleRollingWindow)},
-			"return_energy:reference":           {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
-			"return_energy:measured":            {string(data.UnitVariance), string(data.TimescaleRollingWindow)},
-			"return_count:reference":            {string(data.UnitCount), string(data.TimescaleRollingWindow)},
-			"return_count:measured":             {string(data.UnitCount), string(data.TimescaleRollingWindow)},
-			"supported_return_count:reference":  {string(data.UnitCount), string(data.TimescaleRollingWindow)},
-			"supported_return_count:measured":   {string(data.UnitCount), string(data.TimescaleRollingWindow)},
-			"return_energy_rate:reference":      {string(data.UnitRate), string(data.TimescalePerSecond)},
-			"return_energy_rate:measured":       {string(data.UnitRate), string(data.TimescalePerSecond)},
-			"shared_time":                       {string(data.UnitSecond), string(data.TimescaleRollingWindow)},
-			"overlap_density":                   {string(data.UnitPerSecond), string(data.TimescaleRollingWindow)},
-			"relative_return_energy":            {string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			"effective_sample_count":            {string(data.UnitCount), string(data.TimescaleRollingWindow)},
-			"correlation_baseline":              {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
-			"correlation_divergence":            {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
-			"correlation_zscore":                {string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			"relative_return_energy_baseline":   {string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			"relative_return_energy_divergence": {string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
-			"relative_return_energy_zscore":     {string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			"correlation_velocity":              {string(data.UnitVelocity), string(data.TimescalePerSecond)},
-			"relative_return_energy_velocity":   {string(data.UnitVelocity), string(data.TimescalePerSecond)},
-			"historical_path_distance":          {string(data.UnitDistance), string(data.TimescaleRollingWindow)},
-			"historical_path_percentile":        {string(data.UnitPercent), string(data.TimescaleRollingWindow)},
-			"cohort_peer_count":                 {string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			"cohort_effective_peer_count":       {string(data.UnitCount), string(data.TimescaleInstantaneous)},
-			"cohort_signed_correlation":         {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
-			"cohort_absolute_correlation":       {string(data.UnitCorrelation), string(data.TimescaleRollingWindow)},
-			"cohort_correlation_dispersion":     {string(data.UnitDimensionless), string(data.TimescaleRollingWindow)},
-			"focal_return_energy_rate":          {string(data.UnitRate), string(data.TimescalePerSecond)},
-			"peer_return_energy_rate":           {string(data.UnitRate), string(data.TimescalePerSecond)},
-			"relative_cohort_return_energy":     {string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-		},
+		pipeline: nomagique.NewNumber(
+			transport.NewAddressable(
+				"symbolstore", store.NewKV(),
+				nomagique.NewNumber(
+					data.NewValue[core.Primitive](
+						nomagique.NewNumber(
+							data.NewSlice(0, 2),
+							transport.NewParallel(
+								nomagique.NewNumber(
+									transport.NewSpread[float64](),
+									data.NewValue[core.Primitive](
+										transport.NewPass(),
+										arithmetic.NewAdd(),
+										arithmetic.NewSubtract(),
+										nomagique.NewNumber(
+											data.NewValue[core.Primitive](
+												arithmetic.NewSubtract(),
+												arithmetic.NewAdd(),
+											),
+											arithmetic.NewDivide(),
+										),
+									),
+								),
+								nomagique.NewNumber(
+									transport.NewSpread[float64](),
+									data.NewValue[core.Primitive](
+										transport.NewPass(),
+										arithmetic.NewAdd(),
+										arithmetic.NewSubtract(),
+									),
+								),
+							),
+						),
+						data.NewSlice(2, 4),
+					),
+					data.NewValue[core.Primitive](
+						data.NewSlice(0, 11),
+						nomagique.NewNumber(
+							data.NewSelect(
+								0, 9,
+								1, 9,
+								2, 9,
+								3, 9,
+								5, 9,
+								6, 9,
+								7, 9,
+								8, 9,
+								0, 0,
+								1, 1,
+								2, 2,
+								3, 3,
+							),
+							data.NewBatch(2, 2),
+							transport.NewParallel(
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+							),
+						),
+					),
+					data.NewValue[core.Primitive](
+						data.NewSlice(0, 23),
+						nomagique.NewNumber(
+							data.NewSelect(
+								11, 11,
+								12, 12,
+								13, 13,
+								14, 14,
+								15, 15,
+								16, 16,
+								17, 17,
+								18, 18,
+								19, 19,
+								20, 20,
+								21, 21,
+								22, 22,
+								11, 11,
+								12, 12,
+								13, 13,
+								14, 14,
+							),
+							data.NewBatch(2, 2),
+							transport.NewParallel(
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewSubtract()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewSubtract()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+							),
+						),
+					),
+					data.NewSelect(
+						0, 5, 2, 3, 4, 1, 6, 7, 8, 11,
+						12, 13, 14, 15, 16, 9, 17, 18, 19, 20,
+						21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+						31, 32, 33, 34,
+					),
+				),
+				data.NewMessage(data.WRITE, "symbolstore", "correlation_state", data.NewValue[core.Primitive]()),
+			),
+		),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "correlation", signal)
 	return signal
 }
 
-func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
-	if existing, ok := signal.pipelines.Load(symbol); ok {
-		return existing.(*symbolPipeline)
-	}
-
-	output := data.NewOutputMap()
-
-	pipe := &symbolPipeline{
-		output:   output,
-		envelope: data.NewOutputMap(),
-		state:    data.NewState(data.NewMap(), output),
-		pipeline: transport.NewStages(
-			nmcorrelation.NewMember(symbol, signal.paths, adaptive.NewWindow()),
-			nmcorrelation.NewPairs(symbol, signal.paths, algo.NewHayashiYoshida()),
-		),
-	}
-
-	actual, _ := signal.pipelines.LoadOrStore(symbol, pipe)
-	return actual.(*symbolPipeline)
-}
-
-/*
-Step binds the arriving trade to the symbol's pipeline and writes the
-published facts into a fresh Measurement allocated from the signal's own
-arena. A trade frame that cannot be read or lacks price is an error; a trade
-without a positive, finite price yields no measurement. Facts a stage left unwritten, or that are not finite, are
-omitted, never fabricated as zero.
-*/
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY {
-		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
+	if signal.Status() != runtime.READY || prior == nil {
 		return nil
 	}
 
-	if prior == nil || prior.Label == "" {
+	priceEntry := data.Pull(prior.Read("price"))
+	if priceEntry == nil || priceEntry.Metric == nil {
+		errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[signal.correlation] no price",
+			nil,
+		))
 		return nil
 	}
+	price := priceEntry.Metric.Raw
 
-	price, err := tradeValue(prior, "price")
+	counts := []float64{1, 1}
+	prices := []float64{price, price}
 
-	if err != nil {
-		signal.Error(err)
-		return nil
+	timeDelta := float64(prior.At.Sub(prior.From).Seconds())
+	if timeDelta == 0 {
+		timeDelta = 1
 	}
+	epochFrom := float64(prior.From.UnixNano())
 
-	if price <= 0 || math.IsInf(price, 0) || math.IsNaN(price) {
-		return nil
-	}
+	output := make(map[string]float64)
+	index := 0
 
-	pipe := signal.pipelineFor(prior.Label)
+	for ptr := range signal.pipeline.Next(
+		data.NewMessage(
+			data.WRITE,
+			"symbolstore",
+			prior.Label,
+			data.NewValue(
+				unsafe.Pointer(&prices),
+				unsafe.Pointer(&counts),
+				unsafe.Pointer(&timeDelta),
+				unsafe.Pointer(&epochFrom),
+			),
+		).Next(nil),
+	) {
+		if index >= len(outputKeys) {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[signal.correlation] overflow",
+				nil,
+			))
 
-	clear(pipe.output.Values)
-	clear(pipe.envelope.Values)
+			return nil
+		}
 
-	pipe.envelope.Values["at"] = float64(prior.At.UnixNano())
-	pipe.envelope.Values["price"] = price
-	pipe.envelope.Values["last_price"] = price
-
-	adapter := data.NewAdapter(prior, pipe.state)
-
-	for range adapter.Next(data.NewValue(pipe.envelope)) {
-	}
-
-	for range pipe.pipeline.Next(data.NewValue(adapter)) {
-	}
-
-	if err := errors.Join(
-		adapter.Error(), pipe.pipeline.Error(),
-	); err != nil {
-		signal.Error(err)
-		return nil
-	}
-
-	var metadata []*data.StringEntry
-
-	if channel := prior.Meta("channel"); channel != "" {
-		metadata = append(metadata, &data.StringEntry{
-			Key:   "channel",
-			Value: channel,
-		})
-	}
-
-	out := data.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick, metadata...,
-	)
-	out.Peers(prior)
-	out.At = prior.At
-	out.From = prior.At
-
-	if from, held := pipe.output.Values["path_from"]; held && from <= float64(prior.At.UnixNano()) {
-		out.From = time.Unix(0, int64(from)).UTC()
-	}
-
-	keys := make([]string, 0, len(pipe.output.Values))
-
-	for key := range pipe.output.Values {
-		keys = append(keys, key)
-	}
-
-	slices.Sort(keys)
-	metrics := make([]*data.Metric, 0, len(keys))
-
-	for _, key := range keys {
-		fact, _, _ := strings.Cut(key, "@")
-		declared, published := signal.metrics[fact]
-		value := pipe.output.Values[key]
-
-		if !published {
+		if ptr == nil {
 			continue
 		}
 
-		metrics = append(metrics, data.NewMetric(
-			key, value, data.Unit(declared[0]), data.Timescale(declared[1]),
-		))
+		output[outputKeys[index]] = *(*float64)(ptr)
+		index++
 	}
 
-	return out.Write(metrics...)
-}
-
-/*
-tradeValue reads one required trade field from a trade frame. A read failure
-or an absent field is an error: every trade frame carries price and qty, so a
-frame without them is broken upstream and must not be silently skipped.
-*/
-func tradeValue(prior *data.Measurement, key string) (float64, error) {
-	entry := data.Pull(prior.Read(key))
-
-	if entry != nil && entry.Err != nil {
-		return 0, entry.Err
-	}
-
-	if entry == nil || entry.Metric == nil || entry.Metric.Label != key {
-		return 0, errnie.Err(
-			errnie.NotAcceptable, "[correlation] trade frame is missing "+key, nil,
-		)
-	}
-
-	return entry.Metric.Raw, nil
+	return prior.Next(signal.Name(), output)
 }

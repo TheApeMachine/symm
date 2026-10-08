@@ -5,7 +5,6 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -21,31 +20,19 @@ Each arrival is *[2]float64{predicted, actual}; it yields *[4]float64
 */
 type TrustWeight struct {
 	*core.PrimitiveError
-	span     core.Primitive
-	mix      core.Primitive
-	abs      core.Primitive
-	adapter  *data.Adapter
-	publish  data.Map[float64]
-	absolute data.Map[string]
-	mixed    data.Map[string]
-	count    float64
-	min      float64
-	max      float64
-	trust    float64
-	rate     float64
-	out      [4]float64
+	span  core.Primitive
+	count float64
+	min   float64
+	max   float64
+	trust float64
+	rate  float64
+	out   [4]float64
 }
 
 func NewTrustWeight() core.Primitive {
 	return &TrustWeight{
 		PrimitiveError: core.NewPrimitiveError(),
 		span:           statistic.NewResidualSpan(),
-		mix:            calculus.NewMix(),
-		abs:            calculus.NewAbsolute(),
-		adapter:        data.NewAdapter(nil, data.NewState(data.NewMap())),
-		publish:        data.NewOutputMap(),
-		absolute:       data.NewMap("absolute", "absolute"),
-		mixed:          data.NewMap("mix", "mix"),
 		trust:          1,
 	}
 }
@@ -70,7 +57,7 @@ func (op *TrustWeight) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			residual := actual - predicted
 			var span [4]float64
 
-			for out := range op.span.Next(data.NewValue([4]float64{op.count, op.min, op.max, residual})) {
+			for out := range op.span.Next(data.NewValue([4]float64{op.count, op.min, op.max, residual}).Next(nil)) {
 				span = *(*[4]float64)(out)
 			}
 
@@ -89,55 +76,20 @@ func (op *TrustWeight) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 					return
 				}
 
-				op.publish.Values["value"] = residual
-
-				for range op.adapter.Next(data.NewValue(op.publish)) {
-				}
-
-				for range op.abs.Next(data.NewValue(op.adapter)) {
-				}
-
-				if err := op.abs.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				magnitude := 0.0
-
-				for pointer := range op.adapter.Next(data.NewValue(op.absolute)) {
-					magnitude = (*data.Map[float64])(pointer).Values["absolute"]
-				}
-
+				magnitude := math.Abs(residual)
 				op.rate = magnitude / span[3]
-				op.publish.Values["left"] = op.trust
-				op.publish.Values["right"] = math.Max(0, 1-op.rate)
-				op.publish.Values["weight"] = op.rate
-
-				for range op.adapter.Next(data.NewValue(op.publish)) {
-				}
-
-				for range op.mix.Next(data.NewValue(op.adapter)) {
-				}
-
-				if err := op.mix.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				for pointer := range op.adapter.Next(data.NewValue(op.mixed)) {
-					op.trust = (*data.Map[float64])(pointer).Values["mix"]
-				}
-
-				if err := op.adapter.Error(); err != nil {
-					op.Error(err)
-					return
-				}
+				left := op.trust
+				right := math.Max(0, 1-op.rate)
+				weight := op.rate
+				op.trust = (1-weight)*left + weight*right
 			}
 
 			op.out = [4]float64{op.trust, op.trust, op.rate, op.count}
 
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
+			for value := range data.NewValue(op.out).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

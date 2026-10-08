@@ -88,8 +88,8 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 
 		centerBuilder.Append(entry.Metric.center)
 		scaleBuilder.Append(entry.Metric.scale)
-		unitBuilder.Append(string(entry.Metric.unit))
-		timescaleBuilder.Append(string(entry.Metric.timescale))
+		unitBuilder.Append(string(entry.Metric.Unit()))
+		timescaleBuilder.Append(string(entry.Metric.Timescale()))
 	}
 
 	metadataKey := metadataBuilder.KeyBuilder().(*array.StringBuilder)

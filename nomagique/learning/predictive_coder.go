@@ -150,7 +150,7 @@ func (coder *PredictiveCoder) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 			var settled [10][]float64
 			coder.command = [3][]float64{{ManifoldBatch, learnFlag, advance}, features, nil}
 
-			for out := range coder.manifold.Next(data.NewValue(coder.command)) {
+			for out := range coder.manifold.Next(data.NewValue(coder.command).Next(nil)) {
 				settled = *(*[10][]float64)(out)
 			}
 
@@ -162,7 +162,7 @@ func (coder *PredictiveCoder) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 			// The pace controller reads how badly the manifold is reconstructing
 			// its own input and sets the learning rate from it, so the rate is
 			// derived rather than configured.
-			for out := range coder.pace.Next(data.NewValue(settled[0][3])) {
+			for out := range coder.pace.Next(data.NewValue(settled[0][3]).Next(nil)) {
 				coder.alpha = (*(*[4]float64)(out))[0]
 			}
 
@@ -173,7 +173,7 @@ func (coder *PredictiveCoder) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 
 			coder.command = [3][]float64{{ManifoldAlpha, coder.alpha}, nil, nil}
 
-			for out := range coder.manifold.Next(data.NewValue(coder.command)) {
+			for out := range coder.manifold.Next(data.NewValue(coder.command).Next(nil)) {
 				settled = *(*[10][]float64)(out)
 			}
 
@@ -186,7 +186,7 @@ func (coder *PredictiveCoder) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 				if coder.learn {
 					coder.command = [3][]float64{{LedgerResolve, step, reference}, nil, nil}
 
-					for out := range coder.ledger.Next(data.NewValue(coder.command)) {
+					for out := range coder.ledger.Next(data.NewValue(coder.command).Next(nil)) {
 						coder.ledgerAt = *(*[9]float64)(out)
 					}
 
@@ -201,7 +201,7 @@ func (coder *PredictiveCoder) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 
 				coder.command = [3][]float64{{ManifoldReading}, nil, nil}
 
-				for out := range coder.manifold.Next(data.NewValue(coder.command)) {
+				for out := range coder.manifold.Next(data.NewValue(coder.command).Next(nil)) {
 					settled = *(*[10][]float64)(out)
 				}
 
@@ -217,7 +217,7 @@ func (coder *PredictiveCoder) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 						settled[3],
 					}
 
-					for out := range coder.ledger.Next(data.NewValue(coder.command)) {
+					for out := range coder.ledger.Next(data.NewValue(coder.command).Next(nil)) {
 						coder.ledgerAt = *(*[9]float64)(out)
 					}
 
@@ -268,7 +268,7 @@ func (coder *PredictiveCoder) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 			copy(coder.out[:8], settled[:8])
 			coder.command = [3][]float64{{ManifoldForecast, float64(max(supported, 1))}, nil, nil}
 
-			for out := range coder.manifold.Next(data.NewValue(coder.command)) {
+			for out := range coder.manifold.Next(data.NewValue(coder.command).Next(nil)) {
 				coder.out[8] = (*(*[10][]float64)(out))[8]
 			}
 
@@ -286,7 +286,7 @@ func (coder *PredictiveCoder) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.
 
 				coder.command = [3][]float64{{ManifoldRetention, float64(supported)}, nil, nil}
 
-				for out := range coder.manifold.Next(data.NewValue(coder.command)) {
+				for out := range coder.manifold.Next(data.NewValue(coder.command).Next(nil)) {
 					coder.out[9] = (*(*[10][]float64)(out))[9]
 				}
 

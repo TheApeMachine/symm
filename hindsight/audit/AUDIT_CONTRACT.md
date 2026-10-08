@@ -28,8 +28,8 @@ Contracts come from declared metadata and explicit producer contracts, never fro
 Examples:
 - `UnitCorrelation`: finite and in [-1, 1].
 - `UnitProbability`, `UnitConfidence`: finite and in [0, 1].
-- intrinsically non-negative physical units such as count, quantity, volume, notional, duration and variance: finite and >= 0.
-- `UnitZScore`, `UnitLogReturn`, velocity/acceleration and other signed coordinates: finite, otherwise unbounded unless their producer explicitly declares a tighter domain.
+- intrinsically non-negative physical units such as count, volume, duration, distance, and variance: finite and >= 0.
+- `UnitZScore`, `UnitLogReturn`, velocity/acceleration, `UnitCovariance`, and signed flows/offsets (`UnitQuantity`, `UnitNotional`, `UnitSecond`): finite, otherwise unbounded unless their producer explicitly declares a tighter domain.
 
 Never clamp an observed breach. Report the declared contract and the observation. Root-cause diagnosis is a separate investigation unless proven directly by the audit.
 
@@ -90,6 +90,31 @@ Background populations exclude the event intervals being tested.
 Report observation counts, not merely the number of distinct token labels.
 
 No evidence is `INSUFFICIENT_DATA`, never success.
+
+## Stage 6 — cognitive engine & associative memory
+
+Stage 6 audits the associative memory and Radix Trie (`nomagique/cognition/associate.go` and `strategy/model.go`).
+
+1. **Prequential Evaluation Protocol**:
+   - Each phase context is evaluated via `Recall(context, stance)` strictly *before* it is taught (`Teach(context, class, feedback)`).
+   - Ground truth actions:
+     - Profitable `up` precursor: `enter`.
+     - Profitable `up` holding: `exit`.
+     - Controls/losing (`up_friction`, `down`, `chop`, `flat`): `wait` (abstention / do not enter; dampens `enter`).
+   - Abstention (`call.Winner == ""`) is the correct stance on controls, not a terminal action.
+
+2. **Null and Baseline Comparisons**:
+   - Prequential hits and accuracy must be compared against the **best constant policy baseline** (`always_enter`, `always_exit`, `always_abstain`).
+   - Compare against an empirical **label-shuffled null** across sequence fragments with fixed random seed.
+   - Prequential predictive skill is `SUPPORTED` only when it separates from both the best constant policy baseline and the 95th percentile of the empirical null distribution. Otherwise, it is `NOT_SUPPORTED`.
+
+3. **Memory Retention & Topology**:
+   - Evaluate post-teach memory retention across all taught contexts to detect catastrophic interference or over-pruning.
+   - Report Radix tree topology (total nodes, max depth, mean depth, branching factor) and basin geometry (records, span, active enter basins, active exit basins).
+   - Evaluate false-alarm trigger rates on continuous unseen background tape.
+
+4. **Zero Storage Side-Effects**:
+   - All models in Stage 6 must run entirely in memory. The audit must never write to Iceberg tables, SeaweedFS, S3, or SQLite.
 
 ## Reproducibility
 

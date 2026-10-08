@@ -67,7 +67,7 @@ func (op *Joint) Next(
 				estimator := op.estimators[index]
 				var reading [10]float64
 
-				for pointer := range estimator.Next(data.NewValue(value)) {
+				for pointer := range estimator.Next(data.NewValue(value).Next(nil)) {
 					reading = *(*[10]float64)(pointer)
 				}
 

@@ -19,7 +19,7 @@ func TestTemporalLedgerNestedHorizonResolution(t *testing.T) {
 		observe := func(ledger *TemporalLedger, reference float64, callerStep int64) [9]float64 {
 			data.Read[[9]float64](ledger.Next(data.NewValue(
 				[3][]float64{{LedgerResolve, float64(callerStep), reference}, nil, nil},
-			)))
+			).Next(nil)))
 			So(ledger.Error(), ShouldBeNil)
 
 			reading := data.Read[[9]float64](ledger.Next(data.NewValue(
@@ -28,7 +28,7 @@ func TestTemporalLedgerNestedHorizonResolution(t *testing.T) {
 					make([]float64, 12),
 					{0, 0, 0, 0},
 				},
-			)))
+			).Next(nil)))
 			So(ledger.Error(), ShouldBeNil)
 
 			return reading

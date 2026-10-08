@@ -50,10 +50,10 @@ func (op *FisherEstimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poi
 				var reading [10]float64
 				var res [8]float64
 
-				for pointer := range op.moments.Next(data.NewValue(z)) {
+				for pointer := range op.moments.Next(data.NewValue(z).Next(nil)) {
 					reading = *(*[10]float64)(pointer)
 
-					for out := range op.residual.Next(data.NewValue(reading)) {
+					for out := range op.residual.Next(data.NewValue(reading).Next(nil)) {
 						res = *(*[8]float64)(out)
 					}
 				}

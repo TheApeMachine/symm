@@ -1,5 +1,7 @@
 package data
 
+import "strings"
+
 /*
 Unit describes the physical dimension of a measured value. It grounds numbers
 in their honest physical reality: currency, price, size, time, rate, or information.
@@ -47,6 +49,7 @@ const (
 	UnitVelocity     Unit = "velocity"
 	UnitAcceleration Unit = "acceleration"
 	UnitVariance     Unit = "variance"
+	UnitCovariance   Unit = "covariance"
 
 	// Time & Duration
 	UnitDuration    Unit = "duration"
@@ -89,3 +92,38 @@ const (
 	TimescaleDay         Timescale = "day"
 	TimescalePerDay      Timescale = "per_day"
 )
+
+/*
+CanonicalUnit maps a metric label and its recorded unit to the canonical
+physical unit. This resolves historical Parquet encodings and ensures that
+asynchronous covariation ratios (Hayashi-Yoshida), signed lags, signed
+covariances, and multiple-testing scale factors carry their honest physical
+dimensions.
+*/
+func CanonicalUnit(label string, unit Unit) Unit {
+	base := label
+	if atIdx := strings.IndexByte(base, '@'); atIdx != -1 {
+		base = base[:atIdx]
+	}
+
+	switch base {
+	case "covariance", "best_lag_covariance":
+		return UnitCovariance
+	case "best_lag_index", "lag_search_scale", "absolute_correlation_gain", "lag_peak_prominence":
+		return UnitDimensionless
+	case "signed_correlation",
+		"absolute_correlation",
+		"best_lag_correlation",
+		"contemporaneous_correlation",
+		"cohort_signed_correlation",
+		"cohort_absolute_correlation",
+		"correlation_baseline",
+		"best_lag_correlation_baseline",
+		"correlation_gain_baseline":
+		if unit == UnitCorrelation || unit == "" {
+			return UnitDimensionless
+		}
+	}
+
+	return unit
+}

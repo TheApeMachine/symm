@@ -137,7 +137,7 @@ func TestChannelsFrom_CollapsesPeerQualifiedFacts(t *testing.T) {
 func TestChannelsFrom_CarriesMeasurementConfidence(t *testing.T) {
 	Convey("Given a trusted and an immature Measurement in one pass", t, func() {
 		at := time.Now().UTC()
-		write := func(source string, measurement *data.Measurement, metrics ...*data.Metric) *data.Measurement {
+		write := func(_ string, measurement *data.Measurement, metrics ...*data.Metric) *data.Measurement {
 			measurement.At = at
 			measurement.From = at
 			return measurement.Write(metrics...)
@@ -149,10 +149,12 @@ func TestChannelsFrom_CarriesMeasurementConfidence(t *testing.T) {
 		)
 		So(priorM.Error(), ShouldBeNil)
 
-		trusted := write("liquidity", priorM.Next("liquidity"),
-			data.NewMetric("spread", 1.1, data.UnitCount, data.TimescaleTick),
-			data.NewMetric("depth", 2.1, data.UnitCount, data.TimescaleTick),
-		)
+		trusted := priorM.Next("liquidity", map[string]float64{
+			"spread": 1.1,
+			"depth":  2.1,
+		})
+		trusted.At = at
+		trusted.From = at
 		So(trusted.Confidence(), ShouldBeGreaterThan, 0)
 
 		immature := write("cvd", data.NewMeasurement(1, "BTC/USD", "cvd", 1, 1),

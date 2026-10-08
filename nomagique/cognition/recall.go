@@ -13,23 +13,7 @@ import (
 )
 
 /*
-Recall reads the class associated with a context. An exact basin hit wins.
-Failing that, the longest stored prefix is tried, then the longest stored
-suffix. Equal leading masses abstain. Wait is not an action — legacy wait
-basins are ignored, so abstention is the precursor stance when no enter
-or exit leads.
-
-Stance names the one action the asker can take (enter while flat, exit
-while holding); an empty stance lets every class compete. Enter and exit
-are never alternatives at the same moment, so under a stance the other
-class is not evidence and its basins are skipped — otherwise exit, taught
-on the same region spans with the larger gross feedback, outweighs enter on
-every shared context. A stance admits a single class, so there is no
-runner-up to contrast against: that class leads only while its
-reinforcement holds it above the graded start, the policy choice Export
-draws, and abstains once losing feedback has pushed it below. Contrast is the log ratio of the leading share to the next
-share. Surprisal is the information of the sensory count against the
-observation clock, and is published only when that sensory record exists.
+Recall reads the class associated with a context.
 */
 type Recall struct {
 	*core.PrimitiveError
@@ -51,9 +35,9 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
+			query := (*RecallQuery)(arriving)
 
-			if adapter == nil {
+			if query == nil {
 				op.Error(core.ErrShape)
 				return
 			}
@@ -65,24 +49,8 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			var text data.Map[string]
-
-			for pointer := range adapter.Next(data.NewValue(data.NewLiteral("context", "stance"))) {
-				text = *(*data.Map[string])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			context, contextOK := text.Values["context"]
-			stance, stanceOK := text.Values["stance"]
-
-			if !contextOK || !stanceOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
+			context := query.Context
+			stance := query.Stance
 
 			if context == "" {
 				op.Error(core.ErrDomain)
@@ -191,13 +159,14 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			var supports []float64
 			var strengths []float64
 
-			for _, query := range queries {
+			for _, candidateQuery := range queries {
 				before := len(names)
-				prefix := make([]byte, 2+len(query)+1)
+				prefix := make([]byte, 2+len(candidateQuery)+1)
 				prefix[0] = 'b'
 				prefix[1] = '/'
-				copy(prefix[2:], query)
+				copy(prefix[2:], candidateQuery)
 				prefix[len(prefix)-1] = '/'
+
 				iterator := root.Root().Iterator()
 				iterator.SeekPrefix(prefix)
 
@@ -224,8 +193,8 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					}
 
 					count := binary.LittleEndian.Uint64(value[0:8])
-					probability := math.Float64frombits(binary.LittleEndian.Uint64(value[8:16]))
-					mass := float64(count) * probability
+					probabilityVal := math.Float64frombits(binary.LittleEndian.Uint64(value[8:16]))
+					mass := float64(count) * probabilityVal
 					placed := false
 
 					for index := range names {
@@ -236,7 +205,7 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 						if mass > masses[index] {
 							masses[index] = mass
 							supports[index] = float64(count)
-							strengths[index] = probability
+							strengths[index] = probabilityVal
 						}
 
 						placed = true
@@ -247,7 +216,7 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 						names = append(names, className)
 						masses = append(masses, mass)
 						supports = append(supports, float64(count))
-						strengths = append(strengths, probability)
+						strengths = append(strengths, probabilityVal)
 					}
 				}
 
@@ -270,48 +239,25 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			ambiguity := 0.0
 			winnerIndex := -1
 			runnerIndex := -1
-			bridgeState := data.NewState(data.NewMap())
-			bridge := data.NewAdapter(nil, bridgeState)
-			issued := data.NewOutputMap()
 
 			if total > 0 {
 				argmax := probability.NewArgmax()
+				var argmaxVals [2]float64
+				argmaxIdx := 0
 
-				for _, mass := range masses {
-					issued.Values["value"] = mass
-
-					for range bridge.Next(data.NewValue(issued)) {
-					}
-
-					if err := bridge.Error(); err != nil {
-						op.Error(err)
-						return
-					}
-
-					for range argmax.Next(data.NewValue(bridge)) {
-					}
-
-					if err := argmax.Error(); err != nil {
-						op.Error(err)
-						return
+				for pointer := range argmax.Next(data.NewValue(masses...).Next(nil)) {
+					if argmaxIdx < 2 {
+						argmaxVals[argmaxIdx] = *(*float64)(pointer)
+						argmaxIdx++
 					}
 				}
 
-				var chosen data.Map[float64]
-
-				for pointer := range bridge.Next(data.NewValue(data.NewMap(
-					"winner_index", "winner_index",
-					"winner_value", "winner_value",
-				))) {
-					chosen = *(*data.Map[float64])(pointer)
-				}
-
-				if err := bridge.Error(); err != nil {
+				if err := argmax.Error(); err != nil {
 					op.Error(err)
 					return
 				}
 
-				winnerIndex = int(chosen.Values["winner_index"])
+				winnerIndex = int(argmaxVals[0])
 
 				if winnerIndex < 0 || winnerIndex >= len(names) {
 					op.Error(core.ErrShape)
@@ -334,37 +280,15 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 
 				normalize := probability.NewNormalize()
-				issued.Values["value"] = masses[winnerIndex]
-				issued.Values["total"] = total
 
-				for range bridge.Next(data.NewValue(issued)) {
-				}
-
-				if err := bridge.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				for range normalize.Next(data.NewValue(bridge)) {
+				for pointer := range normalize.Next(data.NewValue(masses[winnerIndex], total).Next(nil)) {
+					confidence = *(*float64)(pointer)
 				}
 
 				if err := normalize.Error(); err != nil {
 					op.Error(err)
 					return
 				}
-
-				var share data.Map[float64]
-
-				for pointer := range bridge.Next(data.NewValue(data.NewMap("normalized", "normalized"))) {
-					share = *(*data.Map[float64])(pointer)
-				}
-
-				if err := bridge.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				confidence = share.Values["normalized"]
 
 				if stance != "" && strengths[winnerIndex] <= core.Unit/2 {
 					winner = ""
@@ -373,38 +297,17 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if total > 0 && runnerIndex >= 0 {
 				runner = names[runnerIndex]
-				issued.Values["value"] = masses[runnerIndex]
-				issued.Values["total"] = total
 				normalize := probability.NewNormalize()
+				runnerShare := 0.0
 
-				for range bridge.Next(data.NewValue(issued)) {
-				}
-
-				if err := bridge.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				for range normalize.Next(data.NewValue(bridge)) {
+				for pointer := range normalize.Next(data.NewValue(masses[runnerIndex], total).Next(nil)) {
+					runnerShare = *(*float64)(pointer)
 				}
 
 				if err := normalize.Error(); err != nil {
 					op.Error(err)
 					return
 				}
-
-				var share data.Map[float64]
-
-				for pointer := range bridge.Next(data.NewValue(data.NewMap("normalized", "normalized"))) {
-					share = *(*data.Map[float64])(pointer)
-				}
-
-				if err := bridge.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				runnerShare := share.Values["normalized"]
 
 				if confidence > 0 && runnerShare > 0 {
 					contrast = math.Log2(confidence / runnerShare)
@@ -419,38 +322,14 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			if total > 0 {
 				entropy := probability.NewAmbiguity()
 
-				for _, mass := range masses {
-					issued.Values["value"] = mass
-
-					for range bridge.Next(data.NewValue(issued)) {
-					}
-
-					if err := bridge.Error(); err != nil {
-						op.Error(err)
-						return
-					}
-
-					for range entropy.Next(data.NewValue(bridge)) {
-					}
-
-					if err := entropy.Error(); err != nil {
-						op.Error(err)
-						return
-					}
+				for pointer := range entropy.Next(data.NewValue(masses...).Next(nil)) {
+					ambiguity = *(*float64)(pointer)
 				}
 
-				var ambiguityValues data.Map[float64]
-
-				for pointer := range bridge.Next(data.NewValue(data.NewMap("ambiguity", "ambiguity"))) {
-					ambiguityValues = *(*data.Map[float64])(pointer)
-				}
-
-				if err := bridge.Error(); err != nil {
+				if err := entropy.Error(); err != nil {
 					op.Error(err)
 					return
 				}
-
-				ambiguity = ambiguityValues.Values["ambiguity"]
 			}
 
 			surprisalHeld := false
@@ -476,38 +355,21 @@ func (op *Recall) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 			}
 
-			published := data.NewOutputMap()
-			published.Values["confidence"] = confidence
-			published.Values["contrast"] = contrast
-			published.Values["support"] = support
-			published.Values["ambiguity"] = ambiguity
-
-			if surprisalHeld {
-				published.Values["surprisal"] = surprisal
+			result := &RecallResult{
+				Winner:       winner,
+				RunnerUp:     runner,
+				Confidence:   confidence,
+				Contrast:     contrast,
+				Support:      support,
+				Ambiguity:    ambiguity,
+				Surprisal:    surprisal,
+				HasSurprisal: surprisalHeld,
 			}
 
-			for range adapter.Next(data.NewValue(published)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			label := data.NewTextMap()
-			label.Values["winner"] = winner
-			label.Values["runner_up"] = runner
-
-			for range adapter.Next(data.NewValue(label)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
-				return
+			for value := range data.NewValue(unsafe.Pointer(result)).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

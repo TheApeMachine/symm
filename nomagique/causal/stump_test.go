@@ -21,25 +21,15 @@ func TestStumpNext(t *testing.T) {
 		node := causal.NewStump(rows, 2, 1, []int{0})
 		So(node.Error(), ShouldBeNil)
 
-		state := data.NewState(data.NewMap("level", "level"))
-		adapter := data.NewAdapter(nil, state)
-		input := data.NewOutputMap()
-		input.Values["level"] = 1.0
+		var results []float64
 
-		for range adapter.Next(data.NewValue(input)) {
+		for pointer := range node.Next(data.NewValue(1.0).Next(nil)) {
+			results = append(results, *(*float64)(pointer))
 		}
 
-		data.Read[*data.Adapter](node.Next(data.NewValue(adapter)))
 		So(node.Error(), ShouldBeNil)
-
-		outputState := data.NewMap("expectation", "expectation", "defined", "defined")
-		var result data.Map[float64]
-
-		for pointer := range adapter.Next(data.NewValue(outputState)) {
-			result = *(*data.Map[float64])(pointer)
-		}
-
-		So(result.Values["defined"], ShouldEqual, 1.0)
-		So(result.Values["expectation"], ShouldAlmostEqual, 2+3*1)
+		So(len(results), ShouldEqual, 2)
+		So(results[0], ShouldAlmostEqual, 2+3*1)
+		So(results[1], ShouldEqual, 1.0)
 	})
 }

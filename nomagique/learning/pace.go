@@ -5,7 +5,6 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/collection"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -32,13 +31,6 @@ type Pace struct {
 	band       float64
 	window     float64
 	calibrator core.Primitive
-	mix        core.Primitive
-	bound      core.Primitive
-	adapter    *data.Adapter
-	publish    data.Map[float64]
-	calibrated data.Map[string]
-	mixed      data.Map[string]
-	bounded    data.Map[string]
 	logAlpha   float64
 	alpha      float64
 	seeded     bool
@@ -54,13 +46,6 @@ func NewPace(rest, lower, upper, gain, band, window float64) core.Primitive {
 		gain:           gain,
 		band:           band,
 		window:         window,
-		mix:            calculus.NewMix(),
-		bound:          calculus.NewBound(),
-		adapter:        data.NewAdapter(nil, data.NewState(data.NewMap())),
-		publish:        data.NewOutputMap(),
-		calibrated:     data.NewMap("value", "value", "prior_count", "prior_count"),
-		mixed:          data.NewMap("mix", "mix"),
-		bounded:        data.NewMap("bound", "bound"),
 	}
 
 	for _, value := range []float64{rest, lower, upper, gain, band, window} {
@@ -77,7 +62,6 @@ func NewPace(rest, lower, upper, gain, band, window float64) core.Primitive {
 	}
 
 	pace.calibrator = probability.NewCalibrator(collection.NewTail[float64](int(window)))
-
 	return pace
 }
 
@@ -106,28 +90,27 @@ func (op *Pace) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.seeded = true
 			}
 
-			op.publish.Values["value"] = val
+			score := 0.0
+			priorCount := 0.0
+			index := 0
 
-			for range op.adapter.Next(data.NewValue(op.publish)) {
-			}
+			for out := range op.calibrator.Next(data.NewValue(val).Next(nil)) {
+				if out == nil {
+					continue
+				}
 
-			for range op.calibrator.Next(data.NewValue(op.adapter)) {
+				if index == 0 {
+					score = *(*float64)(out)
+				}
+
+				if index == 2 {
+					priorCount = *(*float64)(out)
+				}
+
+				index++
 			}
 
 			if err := op.calibrator.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			score, priorCount := 0.0, 0.0
-
-			for pointer := range op.adapter.Next(data.NewValue(op.calibrated)) {
-				values := (*data.Map[float64])(pointer).Values
-				score = values["value"]
-				priorCount = values["prior_count"]
-			}
-
-			if err := op.adapter.Error(); err != nil {
 				op.Error(err)
 				return
 			}
@@ -150,72 +133,36 @@ func (op *Pace) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					target = logMin
 				}
 
-				op.publish.Values["left"] = op.logAlpha
-				op.publish.Values["right"] = target
-				op.publish.Values["weight"] = op.gain
-
-				for range op.adapter.Next(data.NewValue(op.publish)) {
+				op.logAlpha = (1-op.gain)*op.logAlpha + op.gain*target
+				if op.logAlpha < logMin {
+					op.logAlpha = logMin
 				}
 
-				for range op.mix.Next(data.NewValue(op.adapter)) {
+				if op.logAlpha > logMax {
+					op.logAlpha = logMax
 				}
 
-				if err := op.mix.Error(); err != nil {
-					op.Error(err)
-					return
+				op.alpha = math.Exp(op.logAlpha)
+				if op.alpha < op.lower {
+					op.alpha = op.lower
 				}
 
-				for pointer := range op.adapter.Next(data.NewValue(op.mixed)) {
-					op.publish.Values["value"] = (*data.Map[float64])(pointer).Values["mix"]
-				}
-
-				for stage, limits := range [2][2]float64{{logMin, logMax}, {op.lower, op.upper}} {
-					if stage == 1 {
-						op.publish.Values["value"] = math.Exp(op.publish.Values["value"])
-					}
-
-					op.publish.Values["lower"] = limits[0]
-					op.publish.Values["upper"] = limits[1]
-
-					for range op.adapter.Next(data.NewValue(op.publish)) {
-					}
-
-					for range op.bound.Next(data.NewValue(op.adapter)) {
-					}
-
-					if err := op.bound.Error(); err != nil {
-						op.Error(err)
-						return
-					}
-
-					for pointer := range op.adapter.Next(data.NewValue(op.bounded)) {
-						op.publish.Values["value"] = (*data.Map[float64])(pointer).Values["bound"]
-					}
-
-					if err := op.adapter.Error(); err != nil {
-						op.Error(err)
-						return
-					}
-
-					if stage == 0 {
-						op.logAlpha = op.publish.Values["value"]
-						continue
-					}
-
-					op.alpha = op.publish.Values["value"]
+				if op.alpha > op.upper {
+					op.alpha = op.upper
 				}
 			}
 
 			readyFlag := 0.0
-
 			if ready {
-				readyFlag = 1
+				readyFlag = 1.0
 			}
 
 			op.out = [4]float64{op.alpha, rank, readyFlag, count}
 
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
+			for value := range data.NewValue(op.out).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

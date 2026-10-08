@@ -9,89 +9,44 @@ import (
 )
 
 /*
-Divide owns one field operation, left / right. It reads the native operands "left"
-and "right" through the arriving data.Adapter and publishes the result as
-both "value" and "divide". A zero divisor has no quotient, so the primitive
-publishes nothing rather than an infinity; undefined stays unwritten and the
-arrival is handed on. Each arrival maps independently, so the primitive holds
-no state.
+Divide owns one field operation, left / right.
 */
 type Divide struct {
 	*core.PrimitiveError
-	input  data.Map[string]
-	output data.Map[float64]
 }
 
 /*
 NewDivide creates the binary division primitive.
 */
 func NewDivide() core.Primitive {
-	output := data.NewOutputMap()
-	output.Values["value"] = 0
-	output.Values["divide"] = 0
-
 	return &Divide{
 		PrimitiveError: core.NewPrimitiveError(),
-		input:          data.NewMap("left", "left", "right", "right"),
-		output:         output,
 	}
 }
 
 func (op *Divide) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var values [2]float64
+		idx := 0
+
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
+			if idx < 2 {
+				values[idx] = *(*float64)(arriving)
+				idx++
 			}
+		}
 
-			adapter := *(**data.Adapter)(arriving)
+		if idx < 2 {
+			return
+		}
 
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
-			}
+		res := 0.0
+		if values[1] != 0 {
+			res = values[0] / values[1]
+		}
 
-			var values data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			left, leftOK := values.Values["left"]
-			right, rightOK := values.Values["right"]
-
-			if !leftOK || !rightOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			if right == 0 {
-				if !yield(arriving) {
-					return
-				}
-
-				continue
-			}
-
-			out := left / right
-			op.output.Values["value"] = out
-			op.output.Values["divide"] = out
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+		for value := range data.NewValue(res).Next(nil) {
+			if !yield(value) {
 				return
 			}
 		}

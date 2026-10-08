@@ -3,7 +3,6 @@ package tables
 import (
 	"context"
 	"sync"
-	"unsafe"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -57,7 +56,7 @@ func (writer *Writer) Add(channel string, measurement *data.Measurement) {
 	defer writer.unlock()
 
 	writer.measurements = append(writer.measurements, measurement)
-	writer.bufferedBytes += int64(unsafe.Sizeof(*measurement))
+	writer.bufferedBytes += measurement.ApproximateBytes()
 }
 
 /*

@@ -13,71 +13,44 @@ LinearPrediction evaluates linear combination of inputs and weights.
 */
 type LinearPrediction struct {
 	*core.PrimitiveError
-	input  data.Map[string]
-	output data.Map[float64]
 }
 
-func NewLinearPrediction() *LinearPrediction {
-	output := data.NewOutputMap()
-	output.Values["prediction"] = 0
-
+func NewLinearPrediction() core.Primitive {
 	return &LinearPrediction{
 		PrimitiveError: core.NewPrimitiveError(),
-		input: data.NewMap(
-			"intercept", "intercept",
-			"weight", "weight",
-			"feature", "feature",
-		),
-		output: output,
 	}
 }
 
 func (op *LinearPrediction) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var values [3]float64
+		index := 0
+
 		for arriving := range in {
 			if arriving == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
+			if index < 3 {
+				values[index] = *(*float64)(arriving)
+				index++
 			}
+		}
 
-			var values data.Map[float64]
+		if index < 3 {
+			op.Error(core.ErrShape)
+			return
+		}
 
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
+		intercept := values[0]
+		weight := values[1]
+		feature := values[2]
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
+		prediction := intercept + weight*feature
 
-			intercept, interceptOK := values.Values["intercept"]
-			weight, weightOK := values.Values["weight"]
-			feature, featureOK := values.Values["feature"]
-
-			if !interceptOK || !weightOK || !featureOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			op.output.Values["prediction"] = intercept + weight*feature
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+		for value := range data.NewValue(prediction).Next(nil) {
+			if !yield(value) {
 				return
 			}
 		}

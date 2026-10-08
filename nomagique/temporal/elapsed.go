@@ -12,72 +12,44 @@ import (
 /*
 Elapsed subtracts int64 nanoseconds before conversion to seconds so epoch
 magnitude cannot erase a small interval by cancellation.
+Operands arrive in order: [from, to]. Output is (to - from) in seconds.
 */
 type Elapsed struct {
 	*core.PrimitiveError
-	input  data.Map[string]
-	output data.Map[float64]
 }
 
-func NewElapsed() *Elapsed {
-	output := data.NewOutputMap()
-	output.Values["elapsed"] = 0
-
+func NewElapsed() core.Primitive {
 	return &Elapsed{
 		PrimitiveError: core.NewPrimitiveError(),
-		input: data.NewMap(
-			"from", "from",
-			"to", "to",
-		),
-		output: output,
 	}
 }
 
 func (op *Elapsed) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var values [2]*float64
+
 		for arriving := range in {
 			if arriving == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
+			if values[0] == nil {
+				values[0] = (*float64)(arriving)
+				continue
 			}
 
-			var values data.Map[float64]
+			values[1] = (*float64)(arriving)
+		}
 
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
+		if values[0] == nil || values[1] == nil {
+			return
+		}
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
+		out := (*values[1] - *values[0]) / float64(time.Second)
 
-			from, fromOK := values.Values["from"]
-			to, toOK := values.Values["to"]
-
-			if !fromOK || !toOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			op.output.Values["elapsed"] = (to - from) / float64(time.Second)
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+		for value := range data.NewValue(out).Next(nil) {
+			if !yield(value) {
 				return
 			}
 		}

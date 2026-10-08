@@ -104,7 +104,7 @@ func (op *SquareRootRLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			op.predict = append(append(op.predict[:0], design, op.unit), op.posterior...)
 			var forecast []float64
 
-			for pointer := range op.prediction.Next(data.NewValue(op.predict)) {
+			for pointer := range op.prediction.Next(data.NewValue(op.predict).Next(nil)) {
 				forecast = *(*[]float64)(pointer)
 			}
 
@@ -126,7 +126,7 @@ func (op *SquareRootRLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 				op.train = append(append(op.train[:0], op.control, forecast[5:]), op.posterior...)
 				var posterior [][]float64
 
-				for pointer := range op.update.Next(data.NewValue(op.train)) {
+				for pointer := range op.update.Next(data.NewValue(op.train).Next(nil)) {
 					posterior = *(*[][]float64)(pointer)
 				}
 

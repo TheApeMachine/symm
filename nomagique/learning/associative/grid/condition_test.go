@@ -7,29 +7,17 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
-/* tokenOf drives the Condition primitive for one input tuple via Adapter. */
+/* tokenOf drives the Condition primitive for one input tuple. */
 func tokenOf(t testing.TB, quantity uint64, level, change float64) uint64 {
 	t.Helper()
 	op := NewCondition()
-	state := data.NewState(
-		data.NewMap("quantity", "quantity", "level", "level", "change", "change"),
-	)
-	adapter := data.NewAdapter(nil, state)
-	inputValues := data.NewOutputMap()
-	inputValues.Values["quantity"] = float64(quantity)
-	inputValues.Values["level"] = level
-	inputValues.Values["change"] = change
-
-	for range adapter.Next(data.NewValue(inputValues)) {
-	}
-
-	data.Read[*data.Adapter](op.Next(data.NewValue(adapter)))
+	token := data.Read[float64](op.Next(data.NewValue(float64(quantity), level, change).Next(nil)))
 
 	if op.Error() != nil {
 		t.Fatal(op.Error())
 	}
 
-	return uint64(op.output.Values["token"])
+	return uint64(token)
 }
 
 func TestCondition(t *testing.T) {
@@ -49,41 +37,18 @@ func TestCondition(t *testing.T) {
 
 	Convey("Invalid quantity returns domain error", t, func() {
 		op := NewCondition()
-		state := data.NewState(
-			data.NewMap("quantity", "quantity", "level", "level", "change", "change"),
-		)
-		adapter := data.NewAdapter(nil, state)
-		inputValues := data.NewOutputMap()
-		inputValues.Values["quantity"] = 0
-		inputValues.Values["level"] = 1
-		inputValues.Values["change"] = 1
-
-		for range adapter.Next(data.NewValue(inputValues)) {
-		}
-
-		data.Read[*data.Adapter](op.Next(data.NewValue(adapter)))
+		data.Read[float64](op.Next(data.NewValue(0.0, 1.0, 1.0).Next(nil)))
 		So(op.Error(), ShouldNotBeNil)
 	})
 }
 
 func BenchmarkCondition(b *testing.B) {
 	op := NewCondition()
-	state := data.NewState(
-		data.NewMap("quantity", "quantity", "level", "level", "change", "change"),
-	)
-	adapter := data.NewAdapter(nil, state)
-	inputValues := data.NewOutputMap()
-	inputValues.Values["quantity"] = 1
-	inputValues.Values["level"] = -1
-	inputValues.Values["change"] = 1
-
-	for range adapter.Next(data.NewValue(inputValues)) {
-	}
 
 	for b.Loop() {
-		data.Read[*data.Adapter](op.Next(data.NewValue(adapter)))
+		token := data.Read[float64](op.Next(data.NewValue(1.0, -1.0, 1.0).Next(nil)))
 
-		if op.output.Values["token"] == 0 {
+		if token == 0 {
 			b.Fatal("condition produced zero token")
 		}
 	}

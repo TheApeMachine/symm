@@ -17,8 +17,7 @@ import (
 )
 
 /*
-Restore replaces an empty association trie with a snapshot read from the
-text key "model". A populated trie is left untouched.
+Restore replaces an empty association trie with a snapshot.
 */
 type Restore struct {
 	*core.PrimitiveError
@@ -40,12 +39,7 @@ func (op *Restore) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
-			}
+			model := *(*string)(arriving)
 
 			current := op.memory.root.Load()
 
@@ -54,20 +48,7 @@ func (op *Restore) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			var text data.Map[string]
-
-			for pointer := range adapter.Next(data.NewValue(data.NewLiteral("model"))) {
-				text = *(*data.Map[string])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			model, held := text.Values["model"]
-
-			if !held || model == "" {
+			if model == "" {
 				op.Error(core.ErrNotHeld)
 				return
 			}
@@ -99,26 +80,26 @@ func (op *Restore) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			transaction := iradix.New[[]byte]().Txn()
 
 			for range count {
-				var key, value []byte
+				var key, val []byte
 
 				if err := decoder.Decode(&key); err != nil {
 					op.Error(err)
 					return
 				}
 
-				if err := decoder.Decode(&value); err != nil {
+				if err := decoder.Decode(&val); err != nil {
 					op.Error(err)
 					return
 				}
 
 				book := len(key) == 1 && (key[0] == 0 || key[0] == 1)
 
-				if book && len(value) != 8 {
+				if book && len(val) != 8 {
 					op.Error(core.ErrShape)
 					return
 				}
 
-				if !book && len(value) != 24 {
+				if !book && len(val) != 24 {
 					op.Error(core.ErrShape)
 					return
 				}
@@ -138,16 +119,16 @@ func (op *Restore) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 
 				if !book {
-					weightCount := binary.LittleEndian.Uint64(value[0:8])
-					probability := math.Float64frombits(binary.LittleEndian.Uint64(value[8:16]))
+					weightCount := binary.LittleEndian.Uint64(val[0:8])
+					probabilityVal := math.Float64frombits(binary.LittleEndian.Uint64(val[8:16]))
 
-					if weightCount == 0 || probability < 0 || probability > 1 {
+					if weightCount == 0 || probabilityVal < 0 || probabilityVal > 1 {
 						op.Error(core.ErrDomain)
 						return
 					}
 				}
 
-				if _, replaced := transaction.Insert(key, value); replaced {
+				if _, replaced := transaction.Insert(key, val); replaced {
 					op.Error(core.ErrShape)
 					return
 				}
@@ -191,8 +172,10 @@ func (op *Restore) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 			}
 
-			if !yield(arriving) {
-				return
+			for value := range data.NewValue(float64(loaded.Len())).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

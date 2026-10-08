@@ -27,69 +27,45 @@ func NewReinforce() *Reinforce {
 
 func (op *Reinforce) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var values [4]float64
+		index := 0
+
 		for arriving := range in {
 			if arriving == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
+			if index < 4 {
+				values[index] = *(*float64)(arriving)
+				index++
 			}
+		}
 
-			var numbers data.Map[float64]
+		if index < 4 {
+			op.Error(core.ErrShape)
+			return
+		}
 
-			for pointer := range adapter.Next(data.NewValue(data.NewMap(
-				"probability", "probability",
-				"count", "count",
-				"feedback", "feedback",
-				"graded", "graded",
-			))) {
-				numbers = *(*data.Map[float64])(pointer)
+		probability := values[0]
+		count := values[1]
+		feedback := values[2]
+		graded := values[3]
+
+		if graded == 0 {
+			probability += (core.Unit - probability) / (count + core.Unit)
+		}
+
+		if graded != 0 {
+			probability /= core.Unit + math.Abs(feedback)
+
+			if feedback > 0 {
+				probability += feedback / (core.Unit + feedback)
 			}
+		}
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			probability, probabilityOK := numbers.Values["probability"]
-			count, countOK := numbers.Values["count"]
-			feedback, feedbackOK := numbers.Values["feedback"]
-			graded, gradedOK := numbers.Values["graded"]
-
-			if !probabilityOK || !countOK || !feedbackOK || !gradedOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			if graded == 0 {
-				probability += (core.Unit - probability) / (count + core.Unit)
-			}
-
-			if graded != 0 {
-				probability /= core.Unit + math.Abs(feedback)
-
-				if feedback > 0 {
-					probability += feedback / (core.Unit + feedback)
-				}
-			}
-
-			issued := data.NewOutputMap()
-			issued.Values["probability"] = probability
-
-			for range adapter.Next(data.NewValue(issued)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+		for value := range data.NewValue(probability).Next(nil) {
+			if !yield(value) {
 				return
 			}
 		}

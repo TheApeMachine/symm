@@ -21,7 +21,7 @@ func TestSampleRatioNext(t *testing.T) {
 				residual = 0.4 * math.Sin(float64(index)*0.17)
 			}
 
-			got := data.Read[[3]float64](node.Next(data.NewValue([2]float64{predicted, predicted + residual})))
+			got := data.Read[[3]float64](node.Next(data.NewValue([2]float64{predicted, predicted + residual}).Next(nil)))
 
 			So(node.Error(), ShouldBeNil)
 			So(got[1], ShouldBeGreaterThanOrEqualTo, got[0])

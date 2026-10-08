@@ -14,97 +14,71 @@ and change into a 64-bit token.
 */
 type Condition struct {
 	*core.PrimitiveError
-	input  data.Map[string]
-	output data.Map[float64]
+	Token float64
 }
 
 func NewCondition() *Condition {
-	output := data.NewOutputMap()
-	output.Values["token"] = 0
-
 	return &Condition{
 		PrimitiveError: core.NewPrimitiveError(),
-		input: data.NewMap(
-			"quantity", "quantity",
-			"level", "level",
-			"change", "change",
-		),
-		output: output,
 	}
 }
 
 func (op *Condition) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var values [3]float64
+		index := 0
+
 		for arriving := range in {
 			if arriving == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
+			if index < 3 {
+				values[index] = *(*float64)(arriving)
+				index++
 			}
+		}
 
-			var values data.Map[float64]
+		if index < 3 {
+			op.Error(core.ErrShape)
+			return
+		}
 
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
+		quantityVal := values[0]
+		level := values[1]
+		change := values[2]
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
+		quantity := uint64(quantityVal)
 
-			quantityVal, quantityOK := values.Values["quantity"]
-			level, levelOK := values.Values["level"]
-			change, changeOK := values.Values["change"]
+		if quantity == 0 || quantity >= 1<<48 {
+			op.Error(core.ErrDomain)
+			return
+		}
 
-			if !quantityOK || !levelOK || !changeOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
+		state := uint64(0)
 
-			quantity := uint64(quantityVal)
+		if level > 0 {
+			state |= 1
+		}
 
-			if quantity == 0 || quantity >= 1<<48 {
-				op.Error(core.ErrDomain)
-				return
-			}
+		if level < 0 {
+			state |= 2
+		}
 
-			state := uint64(0)
+		if change > 0 {
+			state |= 1 << 2
+		}
 
-			if level > 0 {
-				state |= 1
-			}
+		if change < 0 {
+			state |= 2 << 2
+		}
 
-			if level < 0 {
-				state |= 2
-			}
+		out := uint64(1<<52 | quantity<<4 | state)
+		op.Token = float64(out)
 
-			if change > 0 {
-				state |= 1 << 2
-			}
-
-			if change < 0 {
-				state |= 2 << 2
-			}
-
-			out := uint64(1<<52 | quantity<<4 | state)
-			op.output.Values["token"] = float64(out)
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+		for value := range data.NewValue(op.Token).Next(nil) {
+			if !yield(value) {
 				return
 			}
 		}

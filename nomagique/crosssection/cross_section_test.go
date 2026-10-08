@@ -2,48 +2,28 @@ package crosssection_test
 
 import (
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/crosssection"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/store"
 )
 
 func TestCrossSection(t *testing.T) {
 	Convey("Given a cross-section pipeline over a shared member store", t, func() {
-		members := store.NewKV[string, float64](nil)
+		members := crosssection.NewMemberStore()
 		update := crosssection.NewUpdateMember("price", members)
 		counts := crosssection.NewChangeCounts(members)
 		median := crosssection.NewChangeMedian(members)
 		baseline := crosssection.NewChangeBaseline()
-		stages := []core.Primitive{update, counts, median, baseline}
-
-		var last *data.Adapter
 
 		tick := func(member string, price float64) {
-			state := data.NewState(data.NewMap())
-			adapter := data.NewAdapter(nil, state)
+			item := &crosssection.MemberUpdate{Member: member, Price: price}
 
-			text := data.NewTextMap()
-			text.Values["member"] = member
-			issued := data.NewOutputMap()
-			issued.Values["price"] = price
-
-			for range adapter.Next(data.NewValue(text)) {
+			for range update.Next(data.NewValue(unsafe.Pointer(item)).Next(nil)) {
 			}
 
-			for range adapter.Next(data.NewValue(issued)) {
-			}
-
-			for _, stage := range stages {
-				for range stage.Next(data.NewValue(adapter)) {
-				}
-
-				So(stage.Error(), ShouldBeNil)
-			}
-
-			last = adapter
+			So(update.Error(), ShouldBeNil)
 		}
 
 		Convey("It derives member changes and reduces the cross-section", func() {
@@ -54,32 +34,39 @@ func TestCrossSection(t *testing.T) {
 			tick("B", 45)
 			tick("C", 10)
 
-			var got data.Map[float64]
+			var countVals []float64
 
-			for pointer := range last.Next(data.NewValue(data.NewMap(
-				"valid_member_count", "", "positive_count", "", "negative_count", "",
-				"zero_count", "", "signed_fraction", "", "signed_median", "",
-				"signed_fraction_baseline", "", "signed_fraction_divergence", "",
-			))) {
-				got = *(*data.Map[float64])(pointer)
+			for ptr := range counts.Next(nil) {
+				countVals = append(countVals, *(*float64)(ptr))
 			}
 
-			So(last.Error(), ShouldBeNil)
-			So(got.Values["valid_member_count"], ShouldEqual, 3)
-			So(got.Values["positive_count"], ShouldEqual, 1)
-			So(got.Values["negative_count"], ShouldEqual, 1)
-			So(got.Values["zero_count"], ShouldEqual, 1)
-			So(got.Values["signed_fraction"], ShouldEqual, 0)
-			So(got.Values["signed_median"], ShouldEqual, 0)
+			So(counts.Error(), ShouldBeNil)
+			So(len(countVals), ShouldEqual, 5)
+			So(countVals[0], ShouldEqual, 3)
+			So(countVals[1], ShouldEqual, 1)
+			So(countVals[2], ShouldEqual, 1)
+			So(countVals[3], ShouldEqual, 1)
+			So(countVals[4], ShouldEqual, 0)
+			So(counts.ExtremeKey(), ShouldEqual, "A")
 
-			var text data.Map[string]
+			var medianVal float64
 
-			for pointer := range last.Next(data.NewValue(data.NewLiteral("extreme_key"))) {
-				text = *(*data.Map[string])(pointer)
+			for ptr := range median.Next(nil) {
+				medianVal = *(*float64)(ptr)
 			}
 
-			So(last.Error(), ShouldBeNil)
-			So(text.Values["extreme_key"], ShouldEqual, "A")
+			So(median.Error(), ShouldBeNil)
+			So(medianVal, ShouldEqual, 0)
+
+			var baselineVals []float64
+			signedFraction := countVals[4]
+
+			for ptr := range baseline.Next(data.NewValue(signedFraction).Next(nil)) {
+				baselineVals = append(baselineVals, *(*float64)(ptr))
+			}
+
+			So(baseline.Error(), ShouldBeNil)
+			So(len(baselineVals), ShouldEqual, 3)
 		})
 	})
 }

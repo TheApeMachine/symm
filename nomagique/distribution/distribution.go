@@ -142,11 +142,11 @@ func (op *Wasserstein1) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointe
 
 			var left, right [2][]float64
 
-			for pointer := range op.left.Next(data.NewValue(input[1])) {
+			for pointer := range op.left.Next(data.NewValue(input[1]).Next(nil)) {
 				left = *(*[2][]float64)(pointer)
 			}
 
-			for pointer := range op.right.Next(data.NewValue(input[2])) {
+			for pointer := range op.right.Next(data.NewValue(input[2]).Next(nil)) {
 				right = *(*[2][]float64)(pointer)
 			}
 
@@ -228,11 +228,11 @@ func (op *KolmogorovSmirnov) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.P
 
 			var left, right [2][]float64
 
-			for pointer := range op.left.Next(data.NewValue(input[1])) {
+			for pointer := range op.left.Next(data.NewValue(input[1]).Next(nil)) {
 				left = *(*[2][]float64)(pointer)
 			}
 
-			for pointer := range op.right.Next(data.NewValue(input[2])) {
+			for pointer := range op.right.Next(data.NewValue(input[2]).Next(nil)) {
 				right = *(*[2][]float64)(pointer)
 			}
 

@@ -17,7 +17,8 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		report.Sympathy.Status == "INSUFFICIENT_DATA" ||
 		report.GridStability.Status == "INSUFFICIENT_DATA" ||
 		report.TokenDynamics.Status == "INSUFFICIENT_DATA" ||
-		report.Precursor.IgnitionHypothesis.Status == "INSUFFICIENT_DATA" {
+		report.Precursor.IgnitionHypothesis.Status == "INSUFFICIENT_DATA" ||
+		report.CognitiveTrie.Status == "INSUFFICIENT_DATA" {
 		overall = "INCOMPLETE EVIDENCE"
 	}
 
@@ -67,7 +68,7 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		report.TokenDynamics.NullTransitionEntropy,
 	))
 	sb.WriteString(fmt.Sprintf(
-		"| **5. Precursors** | Are A->B and B->C populations measurable? | **A->B %s / B->C %s** | A->B N=%d/%d, JSD %.3f vs null95 %.3f; B->C N=%d/%d |\n\n",
+		"| **5. Precursors** | Are A->B and B->C populations measurable? | **A->B %s / B->C %s** | A->B N=%d/%d, JSD %.3f vs null95 %.3f; B->C N=%d/%d |\n",
 		report.Precursor.IgnitionHypothesis.Status,
 		report.Precursor.ExhaustionHypothesis.Status,
 		report.Precursor.IgnitionHypothesis.EventTokenCount,
@@ -76,6 +77,18 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		report.Precursor.IgnitionHypothesis.NullDivergence95,
 		report.Precursor.ExhaustionHypothesis.EventTokenCount,
 		report.Precursor.ExhaustionHypothesis.ControlTokenCount,
+	))
+	sb.WriteString(fmt.Sprintf(
+		"| **6. Cognitive Trie** | Does prequential recall beat baselines and retain memory? | **%s** | %d phases; hits %d/%d (%.1f%%) vs baseline %d/%d (%.1f%%); retention %.1f%% |\n\n",
+		report.CognitiveTrie.Status,
+		report.CognitiveTrie.PhasesFormed,
+		report.CognitiveTrie.Skill.Hits,
+		report.CognitiveTrie.Skill.TotalCalls,
+		report.CognitiveTrie.Skill.HitRate*100,
+		report.CognitiveTrie.Skill.BaselineHits,
+		report.CognitiveTrie.Skill.TotalCalls,
+		report.CognitiveTrie.Skill.BaselineHitRate*100,
+		report.CognitiveTrie.Retention.RetentionRate*100,
 	))
 
 	sb.WriteString("---\n\n")
@@ -149,14 +162,19 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 	sb.WriteString("> Balanced region sizes are enforced by the partitioner and are not presented as empirical evidence. No ARI health cutoff is applied.\n\n")
 	sb.WriteString("![Stage 3](plots/stage3_region_partitioning.png)\n\n")
 
-	sb.WriteString("### Stage 4: Held-out token dynamics\n\n")
+	sb.WriteString("### Stage 4: Held-out token dynamics & excitation strength\n\n")
 	sb.WriteString(fmt.Sprintf(
 		"- Held-out emissions: `%d` across `%d` regions\n"+
+			"- Excitation strength: mean `%.3f`, peak `%.3f`, runner-up margin `%.3f`\n"+
+			"- Active cell coverage: `%.1f%%` mean\n"+
 			"- Maximum observed token share: `%.1f%%`\n"+
 			"- Real transition entropy: `%.3f` bits\n"+
 			"- Empirical dwell-block null mean: `%.3f` bits\n"+
 			"- Difference (null - real): `%.3f` bits\n\n",
 		report.TokenDynamics.TotalEmissions, report.TokenDynamics.UniqueTokens,
+		report.TokenDynamics.MeanExcitationStrength, report.TokenDynamics.PeakExcitationStrength,
+		report.TokenDynamics.MeanRunnerUpMargin,
+		report.TokenDynamics.MeanActiveCoverage*100,
 		report.TokenDynamics.MaxTokenDominance*100,
 		report.TokenDynamics.TransitionEntropy,
 		report.TokenDynamics.NullTransitionEntropy,
@@ -190,5 +208,55 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 	sb.WriteString("> Current trading semantics are long-only: only profitable `up` excursions populate the positive A->B set. Event windows are loaded directly from the archive rather than requiring them to occur inside the first-N audit sample.\n\n")
 	sb.WriteString("![Stage 5](plots/stage5_precursor_separation.png)\n\n")
 
+	sb.WriteString("### Stage 6: Cognitive Engine & Radix Trie Learning Dynamics\n\n")
+	sb.WriteString(fmt.Sprintf(
+		"- Evaluated excursions: `%d` forming `%d` sequential phases (enter: `%d`, exit: `%d`, wait: `%d`)\n"+
+			"- Prequential accuracy: `%d/%d` (`%.1f%%`) vs best constant policy (`%s`): `%d/%d` (`%.1f%%`)\n"+
+			"- Label-shuffled empirical null: mean `%.1f` hits, std `%.1f`, 95th percentile `%.1f` hits (empirical p-value: `%.3f`)\n"+
+			"- Separates from null: `%t`\n"+
+			"- Post-teach memory retention: `%d/%d` (`%.1f%%`)\n"+
+			"- Trie topology: `%d` nodes, max depth `%d`, mean depth `%.1f`, branching factor `%.2f`\n"+
+			"- Basin geometry: records `%.0f`, span `%.0f`, active enter basins `%.0f`, active exit basins `%.0f` (total: `%d`)\n"+
+			"- Decisiveness: abstention rate `%.1f%%`, mean confidence `%.3f`, mean contrast `%.3f`\n"+
+			"- Unseen background false-alarm rate: `%.2f%%` spurious triggers on continuous tape\n\n",
+		report.CognitiveTrie.DetectionsEvaluated,
+		report.CognitiveTrie.PhasesFormed,
+		report.CognitiveTrie.ActionCounts["enter"],
+		report.CognitiveTrie.ActionCounts["exit"],
+		report.CognitiveTrie.ActionCounts["wait"],
+		report.CognitiveTrie.Skill.Hits,
+		report.CognitiveTrie.Skill.TotalCalls,
+		report.CognitiveTrie.Skill.HitRate*100,
+		report.CognitiveTrie.Skill.BestBaselinePolicy,
+		report.CognitiveTrie.Skill.BaselineHits,
+		report.CognitiveTrie.Skill.TotalCalls,
+		report.CognitiveTrie.Skill.BaselineHitRate*100,
+		report.CognitiveTrie.Skill.NullMeanHits,
+		report.CognitiveTrie.Skill.NullStdHits,
+		report.CognitiveTrie.Skill.Null95thPercentileHits,
+		report.CognitiveTrie.Skill.EmpiricalPValue,
+		report.CognitiveTrie.Skill.SeparatesFromNull,
+		report.CognitiveTrie.Retention.RetainedCount,
+		report.CognitiveTrie.Retention.TotalTaught,
+		report.CognitiveTrie.Retention.RetentionRate*100,
+		report.CognitiveTrie.Topology.NodeStats.TotalNodes,
+		report.CognitiveTrie.Topology.NodeStats.MaxDepth,
+		report.CognitiveTrie.Topology.NodeStats.MeanDepth,
+		report.CognitiveTrie.Topology.NodeStats.BranchingFactor,
+		report.CognitiveTrie.Topology.RecordsCount,
+		report.CognitiveTrie.Topology.SpanCount,
+		report.CognitiveTrie.Topology.EnterBasins,
+		report.CognitiveTrie.Topology.ExitBasins,
+		report.CognitiveTrie.Topology.TotalBasins,
+		report.CognitiveTrie.AbstentionRate*100,
+		report.CognitiveTrie.MeanConfidence,
+		report.CognitiveTrie.MeanContrast,
+		report.CognitiveTrie.SpuriousTriggerRate*100,
+	))
+	sb.WriteString("> Prequential recall evaluates the trie strictly before learning each phase. Abstention is the appropriate stance on controls, not a terminal action. Shuffled null tests whether sequential prefix structure holds predictive edge over class priors.\n\n")
+	sb.WriteString("![Stage 6 Skill](plots/stage6_trie_skill.png)\n\n")
+	sb.WriteString("![Stage 6 Structure](plots/stage6_trie_structure.png)\n\n")
+
 	return sb.String()
 }
+

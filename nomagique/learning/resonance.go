@@ -1014,7 +1014,7 @@ func (rm *ResonanceManifold) taskReading(
 	row := append(append(make([]float64, 0, len(features)+1), features...), target)
 	var reading [][]float64
 
-	for out := range learner.Next(data.NewValue(row)) {
+	for out := range learner.Next(data.NewValue(row).Next(nil)) {
 		reading = *(*[][]float64)(out)
 	}
 
@@ -1581,7 +1581,7 @@ func (rm *ResonanceManifold) rolloutTaskForecast(steps int) ([]float64, error) {
 		learner := rm.taskLearners[horizonIndex]
 		var reading [][]float64
 
-		for out := range learner.Next(data.NewValue(query)) {
+		for out := range learner.Next(data.NewValue(query).Next(nil)) {
 			reading = *(*[][]float64)(out)
 		}
 

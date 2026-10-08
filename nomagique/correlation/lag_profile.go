@@ -47,7 +47,7 @@ func (op *LagProfile) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			input := (*[2][][2]float64)(arriving)
 			var left, right [2][]float64
 
-			for pointer := range op.leftReturns.Next(data.NewValue(input[0])) {
+			for pointer := range op.leftReturns.Next(data.NewValue(input[0]).Next(nil)) {
 				left = *(*[2][]float64)(pointer)
 			}
 
@@ -56,7 +56,7 @@ func (op *LagProfile) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				return
 			}
 
-			for pointer := range op.rightReturns.Next(data.NewValue(input[1])) {
+			for pointer := range op.rightReturns.Next(data.NewValue(input[1]).Next(nil)) {
 				right = *(*[2][]float64)(pointer)
 			}
 
@@ -88,7 +88,7 @@ func (op *LagProfile) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 
 				var reading [6]float64
 
-				for pointer := range op.estimator.Next(data.NewValue(op.query)) {
+				for pointer := range op.estimator.Next(data.NewValue(op.query).Next(nil)) {
 					reading = *(*[6]float64)(pointer)
 				}
 

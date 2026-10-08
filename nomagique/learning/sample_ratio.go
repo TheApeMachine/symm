@@ -5,7 +5,6 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -22,10 +21,6 @@ Each arrival is *[2]float64{predicted, actual}; it yields *[3]float64
 type SampleRatio struct {
 	*core.PrimitiveError
 	span      core.Primitive
-	abs       core.Primitive
-	adapter   *data.Adapter
-	publish   data.Map[float64]
-	request   data.Map[string]
 	count     float64
 	min       float64
 	max       float64
@@ -38,10 +33,6 @@ func NewSampleRatio() core.Primitive {
 	return &SampleRatio{
 		PrimitiveError: core.NewPrimitiveError(),
 		span:           statistic.NewResidualSpan(),
-		abs:            calculus.NewAbsolute(),
-		adapter:        data.NewAdapter(nil, data.NewState(data.NewMap())),
-		publish:        data.NewOutputMap(),
-		request:        data.NewMap("absolute", "absolute"),
 	}
 }
 
@@ -65,7 +56,7 @@ func (op *SampleRatio) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			residual := actual - predicted
 			var span [4]float64
 
-			for out := range op.span.Next(data.NewValue([4]float64{op.count, op.min, op.max, residual})) {
+			for out := range op.span.Next(data.NewValue([4]float64{op.count, op.min, op.max, residual}).Next(nil)) {
 				span = *(*[4]float64)(out)
 			}
 
@@ -95,30 +86,7 @@ func (op *SampleRatio) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			}
 
 			if !(span[3] > 0) {
-				op.publish.Values["value"] = op.prev
-
-				for range op.adapter.Next(data.NewValue(op.publish)) {
-				}
-
-				for range op.abs.Next(data.NewValue(op.adapter)) {
-				}
-
-				if err := op.abs.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				prevAbs := 0.0
-
-				for pointer := range op.adapter.Next(data.NewValue(op.request)) {
-					prevAbs = (*data.Map[float64])(pointer).Values["absolute"]
-				}
-
-				if err := op.adapter.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
+				prevAbs := math.Abs(op.prev)
 				ceiling = 1 + 1/prevAbs
 			}
 
@@ -133,8 +101,10 @@ func (op *SampleRatio) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			op.prev = predicted
 			op.out = [3]float64{ratio, op.peakRatio, op.count}
 
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
+			for value := range data.NewValue(op.out).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

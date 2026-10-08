@@ -134,12 +134,6 @@ func handleLevel3(
 				measurement.From = measurement.At
 
 				measurement.Write(
-					data.NewMetric(
-						"checksum",
-						float64(level3Data.Checksum),
-						data.UnitDimensionless,
-						data.TimescaleInstantaneous,
-					),
 					data.NewExactMetric(
 						"limit_price",
 						order.LimitPrice,

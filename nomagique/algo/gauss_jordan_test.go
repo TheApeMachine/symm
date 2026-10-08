@@ -50,7 +50,7 @@ func TestGaussJordanNext(t *testing.T) {
 				right[row][row+1] = 1
 			}
 
-			out := tests.CollectSeq[[][]float64](node.Next(data.NewValue([2][][]float64{left, right})))
+			out := tests.CollectSeq[[][]float64](node.Next(data.NewValue([2][][]float64{left, right}).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
 			So(out[0][0], ShouldResemble, []float64{1, float64(size)})
@@ -83,14 +83,14 @@ func TestGaussJordanNext(t *testing.T) {
 			outSingular := tests.CollectSeq[[][]float64](node.Next(data.NewValue([2][][]float64{
 				{{1, 2}, {2, 4}},
 				{{1}, {2}},
-			})))
+			}).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(outSingular[0], ShouldResemble, [][]float64{{0, 1}})
 
 			outSol := tests.CollectSeq[[][]float64](node.Next(data.NewValue([2][][]float64{
 				{{2, 0}, {0, 3}},
 				{{4}, {9}},
-			})))
+			}).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(outSol[0][0], ShouldResemble, []float64{1, 2})
 			So(outSol[0][1][0], ShouldEqual, 2)
@@ -99,10 +99,10 @@ func TestGaussJordanNext(t *testing.T) {
 
 		Convey("A non-square system is a shape error", func() {
 			errNode := algo.NewGaussJordan(1e-15)
-			_ = tests.CollectSeq[[][]float64](errNode.Next(data.NewValue([2][][]float64{
+			tests.CollectSeq[[][]float64](errNode.Next(data.NewValue([2][][]float64{
 				{{1, 2, 3}, {4, 5, 6}},
 				{{1}, {2}},
-			})))
+			}).Next(nil)))
 			So(errors.Is(errNode.Error(), core.ErrShape), ShouldBeTrue)
 		})
 	})

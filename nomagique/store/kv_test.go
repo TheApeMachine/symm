@@ -5,33 +5,43 @@ import (
 	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/tests"
 )
 
 func TestKVNext(t *testing.T) {
-	Convey("A fresh KV merges arrivals without mutating the configured source", t, func() {
-		seed := map[string]float64{"existing": 7}
-		op := store.NewKV(seed)
+	Convey("Given a KV store", t, func() {
+		op := store.NewKV()
+		val := 42.0
+		storedVal := data.NewValue(unsafe.Pointer(&val))
 
-		m1 := map[string]float64{"mean": 10}
-		m2 := map[string]float64{"count": 3}
-		m3 := map[string]float64{"mean": -5}
-		m4 := map[string]float64{"existing": 12}
+		Convey("When writing a message", func() {
+			writeMsg := data.NewMessage(data.WRITE, "store", "BTC", storedVal)
+			var writeYields []float64
 
-		in := func(yield func(unsafe.Pointer) bool) {
-			for _, m := range []map[string]float64{m1, m2, m3, m4} {
-				if !yield(unsafe.Pointer(&m)) {
-					return
-				}
+			for ptr := range op.Next(writeMsg.Next(nil)) {
+				writeYields = append(writeYields, *(*float64)(ptr))
 			}
-		}
 
-		first := tests.CollectSeq[map[string]float64](op.Next(in))
+			So(len(writeYields), ShouldEqual, 1)
+			So(writeYields[0], ShouldEqual, 42.0)
 
-		So(first[len(first)-1]["mean"], ShouldEqual, -5)
-		So(first[len(first)-1]["count"], ShouldEqual, 3)
-		So(first[len(first)-1]["existing"], ShouldEqual, 12)
-		So(seed["existing"], ShouldEqual, 7)
+			Convey("When reading back the message", func() {
+				readMsg := data.NewMessage(data.READ, "store", "BTC", nil)
+				var readYields []float64
+
+				for ptr := range op.Next(readMsg.Next(nil)) {
+					prim := *(*core.Primitive)(ptr)
+
+					for entryPtr := range prim.Next(nil) {
+						readYields = append(readYields, *(*float64)(entryPtr))
+					}
+				}
+
+				So(len(readYields), ShouldEqual, 1)
+				So(readYields[0], ShouldEqual, 42.0)
+			})
+		})
 	})
 }

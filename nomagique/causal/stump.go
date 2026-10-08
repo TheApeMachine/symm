@@ -23,8 +23,6 @@ type Stump struct {
 	thresholds []float64
 	belows     []float64
 	aboves     []float64
-	input      data.Map[string]
-	output     data.Map[float64]
 }
 
 /*
@@ -36,18 +34,10 @@ func NewStump(
 	treatment int,
 	features []int,
 ) *Stump {
-	output := data.NewOutputMap()
-	output.Values["expectation"] = 0
-	output.Values["defined"] = 0
-
 	prim := &Stump{
 		PrimitiveError: core.NewPrimitiveError(),
 		target:         target,
 		treatment:      treatment,
-		input: data.NewMap(
-			"level", "level",
-		),
-		output: output,
 	}
 
 	if len(rows) == 0 {
@@ -173,30 +163,7 @@ func (op *Stump) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			var values data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			level, levelOK := values.Values["level"]
-
-			if !levelOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
+			level := *(*float64)(arriving)
 
 			if len(op.rows) == 0 {
 				op.Error(core.ErrDomain)
@@ -226,19 +193,13 @@ func (op *Stump) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				total += prediction
 			}
 
-			op.output.Values["expectation"] = total / float64(len(op.rows))
-			op.output.Values["defined"] = 1.0
+			expectation := total / float64(len(op.rows))
+			defined := 1.0
 
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
-				return
+			for value := range data.NewValue(expectation, defined).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

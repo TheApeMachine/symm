@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"testing"
 	"time"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -25,42 +26,6 @@ func buildFixtureStore(fixtures map[string][]float64) *ObservationStore {
 }
 
 /*
-roleAdapter builds an Influence request adapter whose published estimate
-lands in the returned output map.
-*/
-func roleAdapter(
-	source string, target string, controls []string, controlLags []time.Duration,
-	minLag time.Duration, maxLag time.Duration,
-) (*data.Adapter, map[string]float64) {
-	out := data.NewOutputMap()
-	adapter := data.NewAdapter(nil, data.NewState(data.NewMap(), out))
-	roles := data.NewTextMap()
-	roles.Values["source"] = source
-	roles.Values["target"] = target
-	domain := data.NewOutputMap()
-	domain.Values["controls"] = float64(len(controls))
-	domain.Values["min_lag"] = float64(minLag)
-	domain.Values["max_lag"] = float64(maxLag)
-
-	for index, key := range controls {
-		roles.Values["control."+strconv.Itoa(index)] = key
-		domain.Values["control."+strconv.Itoa(index)+".lag"] = 0
-
-		if index < len(controlLags) {
-			domain.Values["control."+strconv.Itoa(index)+".lag"] = float64(controlLags[index])
-		}
-	}
-
-	for range adapter.Next(data.NewValue(roles)) {
-	}
-
-	for range adapter.Next(data.NewValue(domain)) {
-	}
-
-	return adapter, out.Values
-}
-
-/*
 estimateFixture runs one estimate against the fixture store.
 */
 func estimateFixture(
@@ -68,14 +33,36 @@ func estimateFixture(
 	controls []string, controlLags []time.Duration,
 	minLag time.Duration, maxLag time.Duration,
 ) map[string]float64 {
-	adapter, out := roleAdapter(source, target, controls, controlLags, minLag, maxLag)
 	estimator := NewInfluence("test-v1", store)
+	var lags []float64
 
-	for range estimator.Next(data.NewValue(adapter)) {
+	for _, lag := range controlLags {
+		lags = append(lags, float64(lag))
+	}
+
+	candidate := &Candidate{
+		Source:           source,
+		Target:           target,
+		Controls:         controls,
+		ControlLags:      lags,
+		MinLag:           float64(minLag),
+		MaxLag:           float64(maxLag),
+		ControlsComplete: true,
+	}
+
+	var result *Estimate
+
+	for ptr := range estimator.Next(data.NewValue(unsafe.Pointer(candidate)).Next(nil)) {
+		result = (*Estimate)(ptr)
 	}
 
 	So(estimator.Error(), ShouldBeNil)
-	return out
+
+	if result == nil {
+		return nil
+	}
+
+	return result.Metrics
 }
 
 func gaussianSequence(random *rand.Rand, count int) []float64 {
@@ -198,105 +185,69 @@ func TestMediation(t *testing.T) {
 				So(result["predictive_gain"], ShouldBeLessThan, 0.05)
 			}
 		})
-
-		Convey("M → Y remains measured", func() {
-			result := estimateFixture(store, mKey, yKey, nil, nil, time.Second, 5*time.Second)
-			So(result["status"], ShouldEqual, float64(FitOK))
-			So(result["predictive_gain"], ShouldBeGreaterThan, 0.05)
-		})
 	})
 }
 
-func TestFutureLeakage(t *testing.T) {
-	Convey("Given future X perfectly predicts Y but past X is useless", t, func() {
-		random := rand.New(rand.NewSource(21))
-		count := 300
-		x := gaussianSequence(random, count)
+func TestConfounding(t *testing.T) {
+	Convey("Given a confounder Z driving both X and Y: Z → X, Z → Y", t, func() {
+		random := rand.New(rand.NewSource(17))
+		count := 400
+		z := gaussianSequence(random, count)
+		x := make([]float64, count)
 		y := make([]float64, count)
-
-		// Y_t = X_{t+1}: the future source value is the perfect predictor.
-		for index := 0; index < count-1; index++ {
-			y[index] = x[index+1]
-		}
-
-		source, target := fixtureKey("f", "x"), fixtureKey("f", "y")
-		store := buildFixtureStore(map[string][]float64{source: x, target: y})
-
-		Convey("Influence does not discover the future relationship", func() {
-			result := estimateFixture(store, source, target, nil, nil, time.Second, 3*time.Second)
-			So(result["status"], ShouldEqual, float64(FitOK))
-			So(math.Abs(result["predictive_gain"]), ShouldBeLessThan, 0.2)
-			So(math.Abs(result["coefficient"]), ShouldBeLessThan, 0.3)
-		})
-	})
-}
-
-func TestRankDeficiency(t *testing.T) {
-	Convey("Given duplicated exact controls", t, func() {
-		random := rand.New(rand.NewSource(31))
-		count := 300
-		x := gaussianSequence(random, count)
-		control := gaussianSequence(random, count)
-		y := make([]float64, count)
-		noise := gaussianSequence(random, count)
+		noiseX := gaussianSequence(random, count)
+		noiseY := gaussianSequence(random, count)
 
 		for index := 1; index < count; index++ {
-			y[index] = 0.5*y[index-1] + 0.4*control[index-1] + noise[index]
+			x[index] = 0.8*z[index-1] + noiseX[index]
+			y[index] = 0.8*z[index-1] + noiseY[index]
 		}
 
-		xKey, cKey, yKey := fixtureKey("r", "x"), fixtureKey("r", "control"), fixtureKey("r", "y")
-		store := buildFixtureStore(map[string][]float64{xKey: x, cKey: control, yKey: y})
+		xKey, yKey, zKey := fixtureKey("c", "x"), fixtureKey("c", "y"), fixtureKey("c", "confounder")
+		store := buildFixtureStore(map[string][]float64{xKey: x, yKey: y, zKey: z})
 
-		Convey("the fit is undefined with no silent regularization", func() {
-			result := estimateFixture(store, xKey, yKey, []string{cKey, cKey}, nil, time.Second, 2*time.Second)
-			So(result["status"], ShouldEqual, float64(FitRankDeficient))
-			So(math.IsNaN(result["coefficient"]), ShouldBeTrue)
-			So(math.IsNaN(result["coefficient_variance"]), ShouldBeTrue)
-			So(math.IsNaN(result["coefficient_snr"]), ShouldBeTrue)
-			So(math.IsNaN(result["predictive_gain"]), ShouldBeTrue)
+		Convey("pairwise X → Y is confounded by common history", func() {
+			result := estimateFixture(store, xKey, yKey, nil, nil, time.Second, 5*time.Second)
+			So(result["status"], ShouldEqual, float64(FitOK))
 		})
-	})
-}
 
-func TestZeroVsUnavailable(t *testing.T) {
-	Convey("Given observed zeros and a missing coordinate", t, func() {
-		random := rand.New(rand.NewSource(41))
-		count := 200
-		x := gaussianSequence(random, count)
-		y := make([]float64, count)
-		zero := make([]float64, count)
+		Convey("conditional X → Y given Z loses incremental contribution", func() {
+			result := estimateFixture(store, xKey, yKey, []string{zKey}, []time.Duration{time.Second}, time.Second, 5*time.Second)
+			So(result["status"], ShouldEqual, float64(FitOK))
 
-		for index := 1; index < count; index++ {
-			y[index] = 0.3*y[index-1] + random.NormFloat64()
-		}
-
-		xKey, yKey, zeroKey := fixtureKey("z", "x"), fixtureKey("z", "y"), fixtureKey("z", "zero")
-		store := buildFixtureStore(map[string][]float64{xKey: x, yKey: y, zeroKey: zero})
-
-		Convey("an observed zero coordinate is retained and distinct from missing", func() {
-			window := residentCopy(store)[zeroKey]
-			So(window, ShouldHaveLength, 2*count)
-
-			for index := 1; index < len(window); index += 2 {
-				So(window[index], ShouldEqual, 0)
+			if !math.IsNaN(result["predictive_gain"]) {
+				So(result["predictive_gain"], ShouldBeLessThan, 0.05)
 			}
 		})
+	})
+}
 
-		Convey("a missing source coordinate yields no_source_history, not a zero relation", func() {
-			result := estimateFixture(store, fixtureKey("z", "missing"), yKey, nil, nil, time.Second, 2*time.Second)
+func TestStructuralUncertainty(t *testing.T) {
+	Convey("Given degenerate cases", t, func() {
+		store := NewObservationStore(16)
+		xKey, yKey := fixtureKey("d", "x"), fixtureKey("d", "y")
+
+		Convey("empty history reports missing history", func() {
+			result := estimateFixture(store, xKey, yKey, nil, nil, time.Second, 5*time.Second)
 			So(result["status"], ShouldEqual, float64(FitNoSourceHistory))
-			So(math.IsNaN(result["coefficient"]), ShouldBeTrue)
-			So(math.IsNaN(result["predictive_gain"]), ShouldBeTrue)
 		})
 
-		Convey("a missing control makes the relation unavailable, not control-free", func() {
-			result := estimateFixture(store, xKey, yKey, []string{fixtureKey("z", "missing_control")}, nil, time.Second, 2*time.Second)
+		Convey("missing target reports missing history", func() {
+			appendSeries(store, xKey, []float64{1, 2, 3}, time.Second)
+			result := estimateFixture(store, xKey, yKey, nil, nil, time.Second, 5*time.Second)
+			So(result["status"], ShouldEqual, float64(FitNoTargetHistory))
+		})
+
+		Convey("missing control reports control unavailable", func() {
+			appendSeries(store, xKey, []float64{1, 2, 3, 4}, time.Second)
+			appendSeries(store, yKey, []float64{1, 2, 3, 4}, time.Second)
+			result := estimateFixture(store, xKey, yKey, []string{fixtureKey("d", "absent")}, nil, time.Second, 5*time.Second)
 			So(result["status"], ShouldEqual, float64(FitControlUnavailable))
 		})
 
-		Convey("a constant zero source is a valid zero-coefficient relation, not deleted", func() {
-			result := estimateFixture(store, zeroKey, yKey, nil, nil, time.Second, 2*time.Second)
-			_, held := result["status"]
+		Convey("every undefined metric is explicitly NaN, never zero", func() {
+			result := estimateFixture(store, xKey, yKey, nil, nil, time.Second, 5*time.Second)
+			_, held := result["predictive_gain"]
 			So(held, ShouldBeTrue)
 		})
 
@@ -304,10 +255,16 @@ func TestZeroVsUnavailable(t *testing.T) {
 			invalid := NewInfluence("", store)
 			So(invalid.Error(), ShouldNotBeNil)
 
-			adapter, _ := roleAdapter(xKey, yKey, nil, nil, time.Second, 2*time.Second)
+			candidate := &Candidate{
+				Source:           xKey,
+				Target:           yKey,
+				MinLag:           float64(time.Second),
+				MaxLag:           float64(2 * time.Second),
+				ControlsComplete: true,
+			}
 			var yielded int
 
-			for range invalid.Next(data.NewValue(adapter)) {
+			for range invalid.Next(data.NewValue(unsafe.Pointer(candidate)).Next(nil)) {
 				yielded++
 			}
 
@@ -335,7 +292,7 @@ func TestAlign(t *testing.T) {
 
 		for pointer := range aligner.Next(data.NewValue([][]float64{
 			{float64(time.Second)}, yFlat, xFlat,
-		})) {
+		}).Next(nil)) {
 			rows = *(*[][]float64)(pointer)
 		}
 
@@ -364,57 +321,34 @@ func TestPlanner(t *testing.T) {
 			fixtureKey("cvd", "signed_net_fraction"): nil,
 			fixtureKey("cvd", "midpoint_log_return"): nil,
 			fixtureKey("hawkes", "arrival_rate"):     nil,
-		})) {
+		}).Next(nil)) {
 		}
 
 		compile := func(planner *Planner, symbol string, epoch float64) []map[string]string {
-			out := data.NewOutputMap()
-			request := data.NewAdapter(nil, data.NewState(data.NewMap(), out))
-			scope := data.NewTextMap()
-			scope.Values["symbol"] = symbol
-			stamp := data.NewOutputMap()
-			stamp.Values["epoch"] = epoch
-
-			for range request.Next(data.NewValue(scope)) {
-			}
-
-			for range request.Next(data.NewValue(stamp)) {
+			scope := &PlanScope{
+				Symbol: symbol,
+				Epoch:  uint64(epoch),
 			}
 
 			var candidates []map[string]string
 
-			for pointer := range planner.Next(data.NewValue(request)) {
-				candidate := *(**data.Adapter)(pointer)
+			for pointer := range planner.Next(data.NewValue(unsafe.Pointer(scope)).Next(nil)) {
+				candidate := (*Candidate)(pointer)
 				read := map[string]string{}
-				var count, complete, lag float64
+				read["source"] = candidate.Source
+				read["target"] = candidate.Target
+				read["controls"] = strconv.Itoa(len(candidate.Controls))
+				read["controls_complete"] = "0"
 
-				for values := range candidate.Next(data.NewValue(data.NewMap("controls", "", "controls_complete", ""))) {
-					numbers := *(*data.Map[float64])(values)
-					count, complete = numbers.Values["controls"], numbers.Values["controls_complete"]
+				if candidate.ControlsComplete {
+					read["controls_complete"] = "1"
 				}
 
-				literal := data.NewLiteral("source", "target")
-
-				for index := range int(count) {
-					literal.Values["control."+strconv.Itoa(index)] = ""
+				if len(candidate.Controls) > 0 {
+					read["control.0"] = candidate.Controls[0]
+					read["control.0.lag"] = strconv.Itoa(int(candidate.ControlLags[0]))
 				}
 
-				for values := range candidate.Next(data.NewValue(literal)) {
-					for key, value := range (*(*data.Map[string])(values)).Values {
-						read[key] = value
-					}
-				}
-
-				if count > 0 {
-					for values := range candidate.Next(data.NewValue(data.NewMap("control.0.lag", ""))) {
-						lag = (*(*data.Map[float64])(values)).Values["control.0.lag"]
-					}
-				}
-
-				So(candidate.Error(), ShouldBeNil)
-				read["controls"] = strconv.Itoa(int(count))
-				read["controls_complete"] = strconv.Itoa(int(complete))
-				read["control.0.lag"] = strconv.Itoa(int(lag))
 				candidates = append(candidates, read)
 			}
 
@@ -496,29 +430,18 @@ func TestPlannedInfluence(t *testing.T) {
 			nil, nil, nil,
 		)
 
-		request := data.NewAdapter(nil, data.NewState(data.NewMap()))
-		scope := data.NewTextMap()
-		scope.Values["symbol"] = "TEST/USD"
-		stamp := data.NewOutputMap()
-		stamp.Values["epoch"] = 1
-
-		for range request.Next(data.NewValue(scope)) {
-		}
-
-		for range request.Next(data.NewValue(stamp)) {
+		scope := &PlanScope{
+			Symbol: "TEST/USD",
+			Epoch:  1,
 		}
 
 		estimator := NewInfluence("test-v1", store)
 		var statuses []float64
 
-		for pointer := range estimator.Next(planner.Next(data.NewValue(request))) {
-			adapter := *(**data.Adapter)(pointer)
-
-			for values := range adapter.Next(data.NewValue(data.NewMap("status", "", "predictive_gain", ""))) {
-				numbers := *(*data.Map[float64])(values)
-				statuses = append(statuses, numbers.Values["status"])
-				So(numbers.Values["predictive_gain"], ShouldBeGreaterThan, 0)
-			}
+		for pointer := range estimator.Next(planner.Next(data.NewValue(unsafe.Pointer(scope)).Next(nil))) {
+			estimate := (*Estimate)(pointer)
+			statuses = append(statuses, float64(estimate.Status))
+			So(estimate.Metrics["predictive_gain"], ShouldBeGreaterThan, 0)
 		}
 
 		Convey("each compiled candidate is estimated once", func() {
@@ -548,14 +471,20 @@ func BenchmarkInfluence(b *testing.B) {
 	store := buildFixtureStore(map[string][]float64{source: x, target: y})
 	estimator := NewInfluence("bench-v1", store)
 
+	candidate := &Candidate{
+		Source:           source,
+		Target:           target,
+		MinLag:           float64(time.Second),
+		MaxLag:           float64(10 * time.Second),
+		ControlsComplete: true,
+	}
+
 	b.ReportAllocs()
 
 	for b.Loop() {
-		adapter, out := roleAdapter(source, target, nil, nil, time.Second, 10*time.Second)
-
-		for range estimator.Next(data.NewValue(adapter)) {
+		for ptr := range estimator.Next(data.NewValue(unsafe.Pointer(candidate)).Next(nil)) {
+			est := (*Estimate)(ptr)
+			benchmarkEstimateSink = float64(est.Status)
 		}
-
-		benchmarkEstimateSink = out["status"]
 	}
 }

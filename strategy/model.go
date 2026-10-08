@@ -2,9 +2,9 @@ package strategy
 
 import (
 	"encoding/json"
-	"errors"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/cognition"
@@ -17,9 +17,8 @@ var _ ui.CognitionSource = (*Model)(nil)
 
 /*
 Model is the predictive trie of region-token contexts. It owns the cognition
-memory and every primitive that reads or writes it, and hides the adapter
-protocol those primitives speak: callers ask for a call, teach an action, or
-take a checkpoint in one operation.
+memory and every primitive that reads or writes it: callers ask for a call,
+teach an action, or take a checkpoint in one operation.
 */
 type Model struct {
 	recall        *cognition.Recall
@@ -56,34 +55,32 @@ func NewModel() *Model {
 }
 
 /*
-Recall answers the action the trie takes on context. Stance is the one
-action the asker can take — enter while flat, exit while holding — and
-keeps the other action from outweighing it on a shared context; under a
-stance the action leads only while reinforced above its graded start. An
-empty stance lets enter and exit compete (cognition.Recall).
+Recall answers the action the trie takes on context.
 */
 func (model *Model) Recall(context, stance string) (Call, error) {
-	reading, err := ask(model.recall, map[string]string{"context": context, "stance": stance}, nil)
+	query := &cognition.RecallQuery{
+		Context: context,
+		Stance:  stance,
+	}
+	var res *cognition.RecallResult
 
-	if err != nil {
+	for ptr := range model.recall.Next(data.NewValue(unsafe.Pointer(query)).Next(nil)) {
+		res = (*cognition.RecallResult)(ptr)
+	}
+
+	if err := model.recall.Error(); err != nil {
 		return Call{}, errnie.Error(err)
 	}
 
-	var call Call
-
-	if call.Winner, _, err = readText(reading, "winner"); err != nil {
-		return Call{}, errnie.Error(err)
+	if res == nil {
+		return Call{}, nil
 	}
 
-	if call.Confidence, _, err = readNumber(reading, "confidence"); err != nil {
-		return Call{}, errnie.Error(err)
-	}
-
-	if call.Contrast, _, err = readNumber(reading, "contrast"); err != nil {
-		return Call{}, errnie.Error(err)
-	}
-
-	return call, nil
+	return Call{
+		Winner:     res.Winner,
+		Confidence: res.Confidence,
+		Contrast:   res.Contrast,
+	}, nil
 }
 
 /*
@@ -110,50 +107,67 @@ func (model *Model) Teach(context, class string, feedback float64) error {
 
 	model.version.Add(1)
 
-	_, err := ask(model.trainer, map[string]string{
-		"context": context,
-		"class":   class,
-	}, map[string]float64{
-		"feedback": feedback,
-		"graded":   core.Unit,
-	})
+	record := &cognition.TrainRecord{
+		Context:  context,
+		Class:    class,
+		Feedback: feedback,
+		Graded:   core.Unit,
+	}
 
-	return errnie.Error(err)
+	for range model.trainer.Next(data.NewValue(unsafe.Pointer(record)).Next(nil)) {
+	}
+
+	if err := model.trainer.Error(); err != nil {
+		return errnie.Error(err)
+	}
+
+	return nil
 }
 
 /*
-Count answers one census figure: "records", "span", or a class name. The
-census only publishes classes that introduced a key, so an absent class has
-introduced none and counts zero.
+Count answers one census figure: "records", "span", or a class name.
 */
 func (model *Model) Count(key string) (float64, error) {
-	reading, err := ask(model.census, nil, nil)
+	var census *cognition.CensusResult
 
-	if err != nil {
+	for ptr := range model.census.Next(nil) {
+		census = (*cognition.CensusResult)(ptr)
+	}
+
+	if err := model.census.Error(); err != nil {
 		return 0, errnie.Error(err)
 	}
 
-	value, _, err := readNumber(reading, key)
-	return value, errnie.Error(err)
+	if census == nil {
+		return 0, nil
+	}
+
+	if key == "records" {
+		return census.Records, nil
+	}
+
+	if key == "span" {
+		return census.Span, nil
+	}
+
+	return census.Classes[key], nil
 }
 
 /*
 Checkpoint answers the serialized trie.
 */
 func (model *Model) Checkpoint() ([]byte, error) {
-	reading, err := ask(model.snapshot, nil, nil)
+	var encoded string
 
-	if err != nil {
+	for ptr := range model.snapshot.Next(nil) {
+		encoded = *(*string)(ptr)
+	}
+
+	if err := model.snapshot.Error(); err != nil {
 		return nil, errnie.Error(err)
 	}
 
-	encoded, ok, err := readText(reading, "model")
-
-	if err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	if !ok {
+	if encoded == "" {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"[model] cognition snapshot holds no model",
@@ -165,8 +179,7 @@ func (model *Model) Checkpoint() ([]byte, error) {
 }
 
 /*
-CognitionTree exports the trie topology for the UI. A failed export is logged
-and shows an empty tree; it never feeds trading.
+CognitionTree exports the trie topology for the UI.
 */
 func (model *Model) CognitionTree() ui.CognitionTreeExport {
 	currentVersion := model.version.Load()
@@ -179,27 +192,24 @@ func (model *Model) CognitionTree() ui.CognitionTreeExport {
 	}
 	model.treeMu.RUnlock()
 
-	reading, err := ask(model.tree, nil, nil)
+	var raw string
 
-	if err != nil {
+	for ptr := range model.tree.Next(nil) {
+		raw = *(*string)(ptr)
+	}
+
+	if err := model.tree.Error(); err != nil {
 		errnie.Error(err)
 		return ui.CognitionTreeExport{}
 	}
 
-	raw, ok, err := readText(reading, "tree")
-
-	if err != nil {
-		errnie.Error(err)
-		return ui.CognitionTreeExport{}
-	}
-
-	if !ok {
+	if raw == "" {
 		return ui.CognitionTreeExport{}
 	}
 
 	var export ui.CognitionTreeExport
 
-	if err = json.Unmarshal([]byte(raw), &export); err != nil {
+	if err := json.Unmarshal([]byte(raw), &export); err != nil {
 		errnie.Error(errnie.Err(errnie.Validation, "[model] cognition tree", err))
 		return ui.CognitionTreeExport{}
 	}
@@ -211,113 +221,4 @@ func (model *Model) CognitionTree() ui.CognitionTreeExport {
 	model.treeMu.Unlock()
 
 	return export
-}
-
-/*
-ask issues text and numbers to a cognition primitive through one adapter and
-answers that adapter for reading.
-*/
-func ask(
-	primitive core.Primitive,
-	text map[string]string,
-	numbers map[string]float64,
-) (*data.Adapter, error) {
-	adapter := data.NewAdapter(nil, data.NewState(data.NewMap()))
-
-	if len(text) > 0 {
-		issued := data.NewTextMap()
-
-		for key, value := range text {
-			issued.Values[key] = value
-		}
-
-		for range adapter.Next(data.NewValue(issued)) {
-		}
-
-		if err := adapter.Error(); err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.Validation, "[model] cognition text", err))
-		}
-	}
-
-	if len(numbers) > 0 {
-		issued := data.NewOutputMap()
-
-		for key, value := range numbers {
-			issued.Values[key] = value
-		}
-
-		for range adapter.Next(data.NewValue(issued)) {
-		}
-
-		if err := adapter.Error(); err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.Validation, "[model] cognition numbers", err))
-		}
-	}
-
-	for range primitive.Next(data.NewValue(adapter)) {
-	}
-
-	if err := primitive.Error(); err != nil {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "[model] cognition", err))
-	}
-
-	if err := adapter.Error(); err != nil {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "[model] cognition", err))
-	}
-
-	return adapter, nil
-}
-
-/*
-readNumber reads key from an answered adapter. A key the primitive did not
-publish is absent (false, nil); the adapter's error state is sticky, so a
-published value is taken whenever it arrived, and any other failure is an
-error.
-*/
-func readNumber(adapter *data.Adapter, key string) (float64, bool, error) {
-	var values data.Map[float64]
-
-	for pointer := range adapter.Next(data.NewValue(data.NewMap(key, key))) {
-		values = *(*data.Map[float64])(pointer)
-	}
-
-	value, ok := values.Values[key]
-
-	if err := absence(adapter.Error(), ok); err != nil {
-		return 0, false, errnie.Error(errnie.Err(errnie.Validation, "[model] cognition number "+key, err))
-	}
-
-	return value, ok, nil
-}
-
-func readText(adapter *data.Adapter, key string) (string, bool, error) {
-	var values data.Map[string]
-
-	for pointer := range adapter.Next(data.NewValue(data.NewLiteral(key))) {
-		values = *(*data.Map[string])(pointer)
-	}
-
-	value, ok := values.Values[key]
-
-	if err := absence(adapter.Error(), ok); err != nil {
-		return "", false, errnie.Error(errnie.Err(errnie.Validation, "[model] cognition text "+key, err))
-	}
-
-	return value, ok, nil
-}
-
-/*
-absence answers the adapter error that remains a failure: none when the key
-arrived, none when the only failure is that the key was never published.
-*/
-func absence(err error, arrived bool) error {
-	if err == nil || arrived {
-		return nil
-	}
-
-	if errors.Is(err, core.ErrNotHeld) {
-		return nil
-	}
-
-	return err
 }

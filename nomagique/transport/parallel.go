@@ -1,10 +1,13 @@
 package transport
 
 import (
+	"context"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -14,40 +17,57 @@ are streamed downstream.
 */
 type Parallel struct {
 	*core.PrimitiveError
-	branches []core.Primitive
+	Branches []core.Primitive
 }
 
 func NewParallel(branches ...core.Primitive) core.Primitive {
 	return &Parallel{
 		PrimitiveError: core.NewPrimitiveError(),
-		branches:       branches,
+		Branches:       branches,
 	}
 }
 
 func (op *Parallel) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		numBranches := len(op.branches)
-
-		if numBranches == 0 {
-			return
-		}
-
 		index := 0
+		out := make([]iter.Seq[unsafe.Pointer], len(op.Branches))
+
+		group, ctx := errgroup.WithContext(context.Background())
 
 		for arriving := range in {
-			branch := op.branches[index%numBranches]
-			once := func(forward func(unsafe.Pointer) bool) {
-				forward(arriving)
+			i := index
+			arr := arriving
+			index++
+
+			group.Go(func() error {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+
+				out[i] = op.Branches[i].Next(
+					data.NewValue(arr).Next(nil),
+				)
+
+				return nil
+			})
+		}
+
+		if err := group.Wait(); err != nil {
+			op.Error(err)
+		}
+
+		for _, seq := range out {
+			if seq == nil {
+				continue
 			}
 
-			for out := range branch.Next(once) {
-				if !yield(out) {
+			for o := range seq {
+				if !yield(o) {
 					return
 				}
 			}
-
-			op.Error(branch.Error())
-			index++
 		}
 	}
 }

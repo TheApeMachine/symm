@@ -155,20 +155,41 @@ type Stage3GridStability struct {
 }
 
 /*
-Stage4TokenDynamics records region token emissions and state transition structure on unseen data.
+RegionStrengthStat records excitation magnitude, active cell support, and margin
+over runner-up regions when a specific region lights up.
+*/
+type RegionStrengthStat struct {
+	Region       string  `json:"region"`
+	Emissions    int     `json:"emissions"`
+	MeanScore    float64 `json:"mean_score"`
+	MinScore     float64 `json:"min_score"`
+	MaxScore     float64 `json:"max_score"`
+	MeanActive   float64 `json:"mean_active"`
+	MeanMembers  float64 `json:"mean_members"`
+	MeanCoverage float64 `json:"mean_coverage"`
+	MeanMargin   float64 `json:"mean_margin"` // separation margin over runner-up region
+}
+
+/*
+Stage4TokenDynamics records region token emissions, excitation strengths, and state transition structure on unseen data.
 */
 type Stage4TokenDynamics struct {
-	TotalEmissions        int                       `json:"total_emissions"`
-	UniqueTokens          int                       `json:"unique_tokens"`
-	TokenFrequencies      map[string]int            `json:"token_frequencies"`
-	MaxTokenDominance     float64                   `json:"max_token_dominance"`
-	TransitionEntropy     float64                   `json:"transition_entropy"`
-	NullTransitionEntropy float64                   `json:"null_transition_entropy"`
-	EntropyReductionBits  float64                   `json:"entropy_reduction_bits"`
-	Transitions           map[string]map[string]int `json:"transitions"`
-	SummaryText           string                    `json:"summary_text"`
-	Status                string                    `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
-	Passed                bool                      `json:"passed"` // compatibility: true when experiment executed with sufficient data
+	TotalEmissions         int                           `json:"total_emissions"`
+	UniqueTokens           int                           `json:"unique_tokens"`
+	TokenFrequencies       map[string]int                `json:"token_frequencies"`
+	MaxTokenDominance      float64                       `json:"max_token_dominance"`
+	MeanExcitationStrength float64                       `json:"mean_excitation_strength"`
+	PeakExcitationStrength float64                       `json:"peak_excitation_strength"`
+	MeanActiveCoverage     float64                       `json:"mean_active_coverage"`
+	MeanRunnerUpMargin     float64                       `json:"mean_runner_up_margin"`
+	RegionStrengths        map[string]RegionStrengthStat `json:"region_strengths,omitempty"`
+	TransitionEntropy      float64                       `json:"transition_entropy"`
+	NullTransitionEntropy  float64                       `json:"null_transition_entropy"`
+	EntropyReductionBits   float64                       `json:"entropy_reduction_bits"`
+	Transitions            map[string]map[string]int     `json:"transitions"`
+	SummaryText            string                        `json:"summary_text"`
+	Status                 string                        `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed                 bool                          `json:"passed"` // compatibility: true when experiment executed with sufficient data
 }
 
 /*
@@ -203,6 +224,75 @@ type Stage5PrecursorSeparation struct {
 }
 
 /*
+TrieNodeMetrics details the structural graph metrics of the association trie.
+*/
+type TrieNodeMetrics struct {
+	TotalNodes      int     `json:"total_nodes"`
+	MaxDepth        int     `json:"max_depth"`
+	MeanDepth       float64 `json:"mean_depth"`
+	BranchingFactor float64 `json:"branching_factor"`
+}
+
+/*
+TrieSkillMetrics records prequential recall predictive performance versus baselines and nulls.
+*/
+type TrieSkillMetrics struct {
+	TotalCalls            int     `json:"total_calls"`
+	Hits                  int     `json:"hits"`
+	HitRate               float64 `json:"hit_rate"`
+	BaselineHits          int     `json:"baseline_hits"`
+	BaselineHitRate       float64 `json:"baseline_hit_rate"`
+	BestBaselinePolicy    string  `json:"best_baseline_policy"`
+	NullMeanHits          float64 `json:"null_mean_hits"`
+	NullStdHits           float64 `json:"null_std_hits"`
+	Null95thPercentileHits float64 `json:"null_95th_percentile_hits"`
+	SeparatesFromNull     bool    `json:"separates_from_null"`
+	EmpiricalPValue       float64 `json:"empirical_p_value"`
+}
+
+/*
+TrieRetentionMetrics measures catastrophic interference / memory preservation after sequential updates.
+*/
+type TrieRetentionMetrics struct {
+	TotalTaught   int     `json:"total_taught"`
+	RetainedCount int     `json:"retained_count"`
+	RetentionRate float64 `json:"retention_rate"`
+}
+
+/*
+TrieTopologyMetrics contains census counts and node depth geometry from the trie export.
+*/
+type TrieTopologyMetrics struct {
+	RecordsCount float64         `json:"records_count"`
+	SpanCount    float64         `json:"span_count"`
+	EnterBasins  float64         `json:"enter_basins"`
+	ExitBasins   float64         `json:"exit_basins"`
+	TotalBasins  int             `json:"total_basins"`
+	NodeStats    TrieNodeMetrics `json:"node_stats"`
+}
+
+/*
+Stage6CognitiveTrie audits the associative memory and Radix Trie learning dynamics:
+prequential predictive skill vs constant policy and shuffled null, memory retention,
+basin structure, and background false-alarm rates.
+*/
+type Stage6CognitiveTrie struct {
+	DetectionsEvaluated int                  `json:"detections_evaluated"`
+	PhasesFormed        int                  `json:"phases_formed"`
+	ActionCounts        map[string]int       `json:"action_counts"`
+	Skill               TrieSkillMetrics     `json:"skill"`
+	Retention           TrieRetentionMetrics `json:"retention"`
+	Topology            TrieTopologyMetrics  `json:"topology"`
+	AbstentionRate      float64              `json:"abstention_rate"`
+	MeanConfidence      float64              `json:"mean_confidence"`
+	MeanContrast        float64              `json:"mean_contrast"`
+	SpuriousTriggerRate float64              `json:"spurious_trigger_rate"`
+	SummaryText         string               `json:"summary_text"`
+	Status              string               `json:"status"` // "MEASURED", "INSUFFICIENT_DATA", "CONTRACT_BREACH"
+	Passed              bool                 `json:"passed"`
+}
+
+/*
 AuditReport is the consolidated top-level payload written to audit_results.json.
 */
 type AuditReport struct {
@@ -216,6 +306,8 @@ type AuditReport struct {
 	GridStability   Stage3GridStability       `json:"grid_stability"`
 	TokenDynamics   Stage4TokenDynamics       `json:"token_dynamics"`
 	Precursor       Stage5PrecursorSeparation `json:"precursor"`
+	CognitiveTrie   Stage6CognitiveTrie       `json:"cognitive_trie"`
 	OverallHealthy  bool                      `json:"overall_healthy"`
 	SummaryMarkdown string                    `json:"summary_markdown"`
 }
+

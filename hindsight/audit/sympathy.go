@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"runtime"
 	"sort"
+	"sync"
 
 	"github.com/theapemachine/symm/nomagique/store"
 )
@@ -114,22 +116,61 @@ func AnalyzeSympathy(
 	realMean, realVariance := meanAndVar(realConcordances)
 	realBins, realCounts := histogram(realConcordances, 25, -1, 1)
 
-	rng := rand.New(rand.NewSource(1791))
-	nullValues := make([]float64, 0, len(realConcordances)*permutations)
-	shuffled := make([]observedVector, len(vectors))
-	for index, vector := range vectors {
-		shuffled[index] = observedVector{
-			values:  make([]float64, len(vector.values)),
-			present: append([]bool(nil), vector.present...),
-		}
+	workers := runtime.NumCPU()
+	if workers < 1 {
+		workers = 1
 	}
 
-	for iteration := 0; iteration < permutations; iteration++ {
-		for index, vector := range vectors {
-			copy(shuffled[index].values, vector.values)
-			shuffleObservedValues(rng, shuffled[index].values, vector.present)
+	results := make([][]float64, workers)
+	var wg sync.WaitGroup
+
+	iterationsPerWorker := (permutations + workers - 1) / workers
+
+	for worker := 0; worker < workers; worker++ {
+		startIter := worker * iterationsPerWorker
+		endIter := startIter + iterationsPerWorker
+
+		if endIter > permutations {
+			endIter = permutations
 		}
-		nullValues = append(nullValues, pairCorrelations(shuffled)...)
+
+		if startIter >= endIter {
+			continue
+		}
+
+		wg.Add(1)
+		go func(workerID, startI, endI int) {
+			defer wg.Done()
+			rng := rand.New(rand.NewSource(int64(1791 + workerID*997)))
+			localShuffled := make([]observedVector, len(vectors))
+
+			for idx, vec := range vectors {
+				localShuffled[idx] = observedVector{
+					values:  make([]float64, len(vec.values)),
+					present: append([]bool(nil), vec.present...),
+				}
+			}
+
+			localNull := make([]float64, 0, len(realConcordances)*(endI-startI))
+
+			for iteration := startI; iteration < endI; iteration++ {
+				for idx, vec := range vectors {
+					copy(localShuffled[idx].values, vec.values)
+					shuffleObservedValues(rng, localShuffled[idx].values, vec.present)
+				}
+
+				localNull = append(localNull, pairCorrelations(localShuffled)...)
+			}
+
+			results[workerID] = localNull
+		}(worker, startIter, endIter)
+	}
+
+	wg.Wait()
+
+	nullValues := make([]float64, 0, len(realConcordances)*permutations)
+	for _, chunk := range results {
+		nullValues = append(nullValues, chunk...)
 	}
 
 	if len(nullValues) == 0 {
@@ -245,9 +286,6 @@ func maskedCorrelation(left, right observedVector) (float64, bool) {
 	}
 
 	value := covariance / math.Sqrt(varianceLeft*varianceRight)
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0, false
-	}
 	return math.Max(-1, math.Min(1, value)), true
 }
 

@@ -17,18 +17,11 @@ type Ambiguity struct {
 	*core.PrimitiveError
 	values []float64
 	total  float64
-	input  data.Map[string]
-	output data.Map[float64]
 }
 
-func NewAmbiguity() *Ambiguity {
-	output := data.NewOutputMap()
-	output.Values["ambiguity"] = 0
-
+func NewAmbiguity() core.Primitive {
 	return &Ambiguity{
 		PrimitiveError: core.NewPrimitiveError(),
-		input:          data.NewMap("value", "value"),
-		output:         output,
 	}
 }
 
@@ -40,61 +33,29 @@ func (op *Ambiguity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			var values data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			val, ok := values.Values["value"]
-
-			if !ok {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
+			val := *(*float64)(arriving)
 			op.values = append(op.values, val)
 			op.total += val
+		}
 
-			ambiguityVal := 0.0
+		ambiguityVal := 0.0
 
-			if len(op.values) > 1 && op.total > 0 {
-				entropy := 0.0
+		if len(op.values) > 1 && op.total > 0 {
+			entropy := 0.0
 
-				for _, elem := range op.values {
-					probabilityVal := elem / op.total
+			for _, elem := range op.values {
+				probabilityVal := elem / op.total
 
-					if probabilityVal > 0 {
-						entropy -= probabilityVal * math.Log(probabilityVal)
-					}
+				if probabilityVal > 0 {
+					entropy -= probabilityVal * math.Log(probabilityVal)
 				}
-
-				ambiguityVal = entropy / math.Log(float64(len(op.values)))
 			}
 
-			op.output.Values["ambiguity"] = ambiguityVal
+			ambiguityVal = entropy / math.Log(float64(len(op.values)))
+		}
 
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+		for value := range data.NewValue(ambiguityVal).Next(nil) {
+			if !yield(value) {
 				return
 			}
 		}

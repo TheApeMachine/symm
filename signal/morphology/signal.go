@@ -2,68 +2,63 @@ package morphology
 
 import (
 	"context"
-	"errors"
 	"math"
 	"sync"
-
-	"github.com/theapemachine/errnie"
+	"unsafe"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/distribution"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Signal is the book-morphology measuring instrument. It holds no logic of its
-own: its entire behavior is one set of nomagique/distribution primitives per
-symbol over a shared output map. The order-book levels are the only envelope
-translation — folded into point streams the adapter cannot carry as maps —
-then Wasserstein-1, Kolmogorov-Smirnov, concentration, and entropy score the
-shape. Facts accumulate in the output map and are written once.
-*/
-type Signal struct {
-	*runtime.System
-	books     broker.BookSource
-	pipelines sync.Map
-	metrics   [][4]string
+var outputKeys = []string{
+	"book_shape_distance",
+	"book_shape_ks",
+	"concentration:bid",
+	"concentration:ask",
+	"entropy:bid",
+	"entropy:ask",
+	"morphology_change",
 }
 
-type symbolPipeline struct {
-	output   data.Map[float64]
-	bids     [][2]float64
-	asks     [][2]float64
-	pairs    [2][][2]float64
+type Signal struct {
+	*runtime.System
+	books    broker.BookSource
+	pipeline *nomagique.Number
+	history  sync.Map
+}
+
+type symbolHistory struct {
+	hasPrev  bool
+	prevDist float64
 	w1       core.Primitive
 	ks       core.Primitive
 	concBid  core.Primitive
 	concAsk  core.Primitive
 	entBid   core.Primitive
 	entAsk   core.Primitive
-	hasPrev  bool
-	prevDist float64
 }
 
-/*
-NewSignal composes the book-morphology instrument. The BookSource supplies the
-aggregated levels whose notional shapes are measured.
-*/
 func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	signal := &Signal{
 		books: books,
-		// {published label, output key, unit, timescale}
-		metrics: [][4]string{
-			{"book_shape_distance", "book_shape_distance", string(data.UnitDistance), string(data.TimescaleInstantaneous)},
-			{"book_shape_ks", "book_shape_ks", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"concentration:bid", "concentration:bid", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"concentration:ask", "concentration:ask", string(data.UnitRatio), string(data.TimescaleInstantaneous)},
-			{"entropy:bid", "entropy:bid", string(data.UnitNat), string(data.TimescaleInstantaneous)},
-			{"entropy:ask", "entropy:ask", string(data.UnitNat), string(data.TimescaleInstantaneous)},
-			{"morphology_change", "morphology_change", string(data.UnitDistance), string(data.TimescaleInstantaneous)},
-		},
+		pipeline: nomagique.NewNumber(
+			transport.NewAddressable(
+				"symbolstore", store.NewKV(),
+				nomagique.NewNumber(
+					data.NewSelect(0, 1, 2, 3, 4, 5, 6),
+				),
+				data.NewMessage(data.WRITE, "symbolstore", "morphology_state", data.NewValue[core.Primitive]()),
+			),
+		),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "morphology", signal)
@@ -75,13 +70,13 @@ func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	return signal
 }
 
-func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
-	if existing, ok := signal.pipelines.Load(symbol); ok {
-		return existing.(*symbolPipeline)
+func (signal *Signal) getHistory(symbol string) *symbolHistory {
+	val, ok := signal.history.Load(symbol)
+	if ok {
+		return val.(*symbolHistory)
 	}
 
-	pipe := &symbolPipeline{
-		output:  data.NewOutputMap(),
+	hist := &symbolHistory{
 		w1:      distribution.NewWasserstein1Pairs(),
 		ks:      distribution.NewKolmogorovSmirnovPairs(),
 		concBid: distribution.NewConcentrationPoints(),
@@ -89,20 +84,10 @@ func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
 		entBid:  distribution.NewEntropyPoints(),
 		entAsk:  distribution.NewEntropyPoints(),
 	}
-
-	actual, _ := signal.pipelines.LoadOrStore(symbol, pipe)
-	return actual.(*symbolPipeline)
+	actual, _ := signal.history.LoadOrStore(symbol, hist)
+	return actual.(*symbolHistory)
 }
 
-/*
-Step folds the shared book's levels into dimensionless distance-from-midpoint
-point streams, drives the symbol's distribution primitives, and writes the
-published morphology facts into a fresh Measurement allocated from the
-signal's own arena. An absent or empty book yields no measurement: invalid
-geometry is never fabricated into zero distance. A crossed or locked book is
-corrupt state and halts the signal (broker.CrossedTouch). morphology_change is
-omitted on a symbol's first observation.
-*/
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY {
 		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
@@ -118,12 +103,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	pipe := signal.pipelineFor(prior.Label)
-
-	clear(pipe.output.Values)
-	pipe.bids = pipe.bids[:0]
-	pipe.asks = pipe.asks[:0]
-
+	var bids, asks [][2]float64
 	var bidPrice, askPrice float64
 	ok := false
 	crossed := false
@@ -167,7 +147,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 				continue
 			}
 
-			pipe.bids = append(pipe.bids, [2]float64{(mid - price) / spread, price * qty})
+			bids = append(bids, [2]float64{(mid - price) / spread, price * qty})
 		}
 
 		for cursor, count := ask, 0; cursor != nil && count < 100; cursor, count = cursor.Higher, count+1 {
@@ -182,14 +162,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 				continue
 			}
 
-			pipe.asks = append(pipe.asks, [2]float64{(price - mid) / spread, price * qty})
+			asks = append(asks, [2]float64{(price - mid) / spread, price * qty})
 		}
 
-		ok = len(pipe.bids) > 0 && len(pipe.asks) > 0
+		ok = len(bids) > 0 && len(asks) > 0
 	})
 
-	// Raised outside the book read lock. Book withholds pending and
-	// checksum-diverging books, so a crossed touch is corrupt state: halt.
 	if crossed {
 		signal.Error(broker.CrossedTouch("morphology", prior.Label, bidPrice, askPrice))
 		return nil
@@ -199,83 +177,78 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	pipe.pairs = [2][][2]float64{pipe.bids, pipe.asks}
+	hist := signal.getHistory(prior.Label)
+	pairs := [2][][2]float64{bids, asks}
 
 	var distance, ks, concBid, concAsk, entBid, entAsk float64
 
-	for pointer := range pipe.w1.Next(data.NewValue(pipe.pairs)) {
+	for pointer := range hist.w1.Next(data.NewValue(unsafe.Pointer(&pairs)).Next(nil)) {
 		distance = *(*float64)(pointer)
 	}
 
-	for pointer := range pipe.ks.Next(data.NewValue(pipe.pairs)) {
+	for pointer := range hist.ks.Next(data.NewValue(unsafe.Pointer(&pairs)).Next(nil)) {
 		ks = *(*float64)(pointer)
 	}
 
-	for pointer := range pipe.concBid.Next(data.NewValue(pipe.bids)) {
+	for pointer := range hist.concBid.Next(data.NewValue(unsafe.Pointer(&bids)).Next(nil)) {
 		concBid = *(*float64)(pointer)
 	}
 
-	for pointer := range pipe.concAsk.Next(data.NewValue(pipe.asks)) {
+	for pointer := range hist.concAsk.Next(data.NewValue(unsafe.Pointer(&asks)).Next(nil)) {
 		concAsk = *(*float64)(pointer)
 	}
 
-	for pointer := range pipe.entBid.Next(data.NewValue(pipe.bids)) {
+	for pointer := range hist.entBid.Next(data.NewValue(unsafe.Pointer(&bids)).Next(nil)) {
 		entBid = *(*float64)(pointer)
 	}
 
-	for pointer := range pipe.entAsk.Next(data.NewValue(pipe.asks)) {
+	for pointer := range hist.entAsk.Next(data.NewValue(unsafe.Pointer(&asks)).Next(nil)) {
 		entAsk = *(*float64)(pointer)
-	}
-
-	if err := errors.Join(
-		pipe.w1.Error(), pipe.ks.Error(),
-		pipe.concBid.Error(), pipe.concAsk.Error(),
-		pipe.entBid.Error(), pipe.entAsk.Error(),
-	); err != nil {
-		signal.Error(err)
-		return nil
 	}
 
 	if math.IsInf(distance, 0) || math.IsInf(ks, 0) {
 		return nil
 	}
 
-	pipe.output.Values["book_shape_distance"] = distance
-	pipe.output.Values["book_shape_ks"] = ks
-	pipe.output.Values["concentration:bid"] = concBid
-	pipe.output.Values["concentration:ask"] = concAsk
-	pipe.output.Values["entropy:bid"] = entBid
-	pipe.output.Values["entropy:ask"] = entAsk
-	pipe.output.Values["morphology_change"] = 0
+	var morphChange float64
+	if hist.hasPrev {
+		morphChange = math.Abs(distance - hist.prevDist)
+	}
+	hist.prevDist = distance
+	hist.hasPrev = true
 
-	if pipe.hasPrev {
-		pipe.output.Values["morphology_change"] = math.Abs(distance - pipe.prevDist)
+	rawMetrics := []float64{
+		distance,
+		ks,
+		concBid,
+		concAsk,
+		entBid,
+		entAsk,
+		morphChange,
 	}
 
-	pipe.prevDist = distance
-	pipe.hasPrev = true
+	output := make(map[string]float64)
 
-	out := data.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick,
-	)
-	out.Peers(prior)
-	out.Epoch = prior.Epoch
-	out.Label = prior.Label
-	out.Source = signal.Name()
-	out.SeqIdx = prior.SeqIdx
-	out.Tick = prior.Tick
-	out.At = prior.At
-	out.From = prior.At
-
-	metrics := make([]*data.Metric, 0, len(signal.metrics))
-
-	for _, metric := range signal.metrics {
-		value := pipe.output.Values[metric[1]]
-
-		metrics = append(metrics, data.NewMetric(
-			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),
-		))
+	for ptr := range signal.pipeline.Next(
+		data.NewMessage(
+			data.WRITE,
+			"symbolstore",
+			prior.Label,
+			data.NewValue(
+				unsafe.Pointer(&rawMetrics),
+			),
+		).Next(nil),
+	) {
+		if ptr == nil {
+			continue
+		}
 	}
 
-	return out.Write(metrics...)
+	for i, key := range outputKeys {
+		if i < len(rawMetrics) {
+			output[key] = rawMetrics[i]
+		}
+	}
+
+	return prior.Next(signal.Name(), output)
 }

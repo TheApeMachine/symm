@@ -159,7 +159,7 @@ func (measurement *Measurement) Decode(batch arrow.RecordBatch, rowIdx int) erro
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
 				metricKey := keyArray.Value(itemIdx)
 				rawVal := rawCol.Value(itemIdx)
-				unitVal := Unit(unitCol.Value(itemIdx))
+				unitVal := CanonicalUnit(metricKey, Unit(unitCol.Value(itemIdx)))
 				timeVal := Timescale(timeCol.Value(itemIdx))
 
 				metric := NewMetric(metricKey, rawVal, unitVal, timeVal)

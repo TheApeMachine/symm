@@ -5,7 +5,6 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -22,10 +21,6 @@ Each arrival is *[2]float64{predicted, actual}; it yields *[6]float64
 type Forecast struct {
 	*core.PrimitiveError
 	moments core.Primitive
-	mix     core.Primitive
-	adapter *data.Adapter
-	publish data.Map[float64]
-	request data.Map[string]
 	trust   float64
 	scale   float64
 	rate    float64
@@ -36,10 +31,6 @@ func NewForecast() core.Primitive {
 	return &Forecast{
 		PrimitiveError: core.NewPrimitiveError(),
 		moments:        statistic.NewEstimator(),
-		mix:            calculus.NewMix(),
-		adapter:        data.NewAdapter(nil, data.NewState(data.NewMap())),
-		publish:        data.NewOutputMap(),
-		request:        data.NewMap("mix", "mix"),
 		trust:          1,
 		scale:          1,
 	}
@@ -65,7 +56,7 @@ func (op *Forecast) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			residual := actual - predicted
 			var moments [10]float64
 
-			for out := range op.moments.Next(data.NewValue(residual)) {
+			for out := range op.moments.Next(data.NewValue(residual).Next(nil)) {
 				moments = *(*[10]float64)(out)
 			}
 
@@ -91,31 +82,7 @@ func (op *Forecast) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 						mix[2] = op.rate * (1 - op.trust)
 					}
 
-					op.publish.Values["left"] = mix[0]
-					op.publish.Values["right"] = mix[1]
-					op.publish.Values["weight"] = mix[2]
-
-					for range op.adapter.Next(data.NewValue(op.publish)) {
-					}
-
-					for range op.mix.Next(data.NewValue(op.adapter)) {
-					}
-
-					if err := op.mix.Error(); err != nil {
-						op.Error(err)
-						return
-					}
-
-					mixed := 0.0
-
-					for pointer := range op.adapter.Next(data.NewValue(op.request)) {
-						mixed = (*data.Map[float64])(pointer).Values["mix"]
-					}
-
-					if err := op.adapter.Error(); err != nil {
-						op.Error(err)
-						return
-					}
+					mixed := (1-mix[2])*mix[0] + mix[2]*mix[1]
 
 					if index == 0 {
 						op.trust = mixed
@@ -128,8 +95,10 @@ func (op *Forecast) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			op.out = [6]float64{op.scale, op.scale, op.trust, op.rate, moments[0], moments[0]}
 
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
+			for value := range data.NewValue(op.out).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

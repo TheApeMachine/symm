@@ -178,9 +178,9 @@ func buildGrid(
 	ticks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
 ) *store.Grid {
-	stream := store.NewStream()
+	streams := make(map[string]*store.Stream)
 	grid := store.NewGrid()
-	feedGridFaithful(grid, stream, ticks, tickMeasurements)
+	feedGridFaithful(grid, streams, ticks, tickMeasurements)
 	grid.Partition()
 	return grid
 }
@@ -223,20 +223,39 @@ func randomizedPartitionARIMean(
 
 func feedGridFaithful(
 	grid *store.Grid,
-	stream *store.Stream,
+	streams map[string]*store.Stream,
 	ticks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
 ) {
+	if streams == nil {
+		streams = make(map[string]*store.Stream)
+	}
+
 	for _, tick := range ticks {
 		measGroup := tickMeasurements[tick]
 		if len(measGroup) == 0 {
 			continue
 		}
 
-		observed := strategy.ChannelsFrom(measGroup...)
-		deformations := stream.Deform(observed.Raw)
-		if len(deformations) > 0 {
-			grid.Update(tick, deformations)
+		bySymbol := make(map[string][]*data.Measurement)
+		for _, m := range measGroup {
+			if m != nil {
+				bySymbol[m.Label] = append(bySymbol[m.Label], m)
+			}
+		}
+
+		for sym, symMeas := range bySymbol {
+			st, ok := streams[sym]
+			if !ok {
+				st = store.NewStream()
+				streams[sym] = st
+			}
+
+			observed := strategy.ChannelsFrom(symMeas...)
+			deformations := st.Deform(observed.Raw)
+			if len(deformations) > 0 {
+				grid.Update(tick, deformations)
+			}
 		}
 	}
 }

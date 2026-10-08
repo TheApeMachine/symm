@@ -172,7 +172,7 @@ func (op *RegressionAccumulator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsa
 				// at the first non-singular design.
 				var inverse []float64
 
-				for pointer := range op.invert.Next(data.NewValue(op.xtx)) {
+				for pointer := range op.invert.Next(data.NewValue(op.xtx).Next(nil)) {
 					inverse = *(*[]float64)(pointer)
 				}
 
@@ -186,7 +186,7 @@ func (op *RegressionAccumulator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsa
 				if len(inverse) == p*p {
 					copy(op.rlsP, inverse)
 
-					for pointer := range op.solve.Next(data.NewValue([2][]float64{op.xtx, op.xty})) {
+					for pointer := range op.solve.Next(data.NewValue([2][]float64{op.xtx, op.xty}).Next(nil)) {
 						weights = *(*[]float64)(pointer)
 					}
 
@@ -203,7 +203,7 @@ func (op *RegressionAccumulator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsa
 			var coefficients []float64
 
 			if op.rows > p {
-				for pointer := range op.solve.Next(data.NewValue([2][]float64{op.xtx, op.xty})) {
+				for pointer := range op.solve.Next(data.NewValue([2][]float64{op.xtx, op.xty}).Next(nil)) {
 					coefficients = *(*[]float64)(pointer)
 				}
 
@@ -233,7 +233,7 @@ func (op *RegressionAccumulator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsa
 				var inverse []float64
 
 				if !math.IsNaN(residualVariance) && residualVariance >= 0 {
-					for pointer := range op.invert.Next(data.NewValue(op.xtx)) {
+					for pointer := range op.invert.Next(data.NewValue(op.xtx).Next(nil)) {
 						inverse = *(*[]float64)(pointer)
 					}
 

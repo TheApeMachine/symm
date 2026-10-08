@@ -407,6 +407,17 @@ func (rehearsal *Rehearsal) learn(
 	}
 
 	class := move.class
+
+	switch class {
+	case excursionUp, excursionUpShort, excursionDown, excursionChop, excursionFlat:
+	default:
+		return nil, 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[rehearsal] detection has unknown excursion class: \""+class+"\"",
+			nil,
+		))
+	}
+
 	lo, hi, err := move.window()
 
 	if err != nil {

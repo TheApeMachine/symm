@@ -12,7 +12,6 @@ Spread presents collection members as individual yields.
 */
 type Spread[T any] struct {
 	*core.PrimitiveError
-	out T
 }
 
 func NewSpread[T any]() core.Primitive {
@@ -23,11 +22,10 @@ func (op *Spread[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 	return func(yield func(unsafe.Pointer) bool) {
 		for collection := range in {
 			slice := *(*[]T)(collection)
-
 			for _, member := range slice {
-				op.out = member
+				m := member
 
-				if !yield(unsafe.Pointer(&op.out)) {
+				if !yield(unsafe.Pointer(&m)) {
 					return
 				}
 			}

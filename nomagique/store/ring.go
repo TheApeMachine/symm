@@ -32,23 +32,19 @@ func NewRing(n int) *Ring {
 
 func (op *Ring) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		op.store = op.store.Next()
+		if in == nil {
+			op.store.Do(func(value any) {
+				if !yield(value.(unsafe.Pointer)) {
+					return
+				}
+			})
 
-		if in != nil {
-			op.store.Value = in
-		}
-
-		played, held := op.store.Value.(iter.Seq[unsafe.Pointer])
-
-		if !held {
-			op.Error(core.ErrNotHeld)
 			return
 		}
 
-		for arriving := range played {
-			if !yield(arriving) {
-				return
-			}
+		for arriving := range in {
+			op.store.Value = arriving
+			op.store = op.store.Next()
 		}
 	}
 }

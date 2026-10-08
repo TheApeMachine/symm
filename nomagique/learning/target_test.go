@@ -38,7 +38,7 @@ func TestTargetsNext(t *testing.T) {
 		} {
 			Convey(test.name, func() {
 				for _, pair := range [][2]float64{{2, 1}, {-1, 2}, {0, 2}, {2, 2}, {2.5, 2}, {-2, -3}} {
-					got := data.Read[float64](test.node.Next(data.NewValue(pair)))
+					got := data.Read[float64](test.node.Next(data.NewValue(pair).Next(nil)))
 
 					So(test.node.Error(), ShouldBeNil)
 					So(got, ShouldEqual, test.want(pair[0], pair[1]))
@@ -53,7 +53,7 @@ func TestTargetInvalidInput(t *testing.T) {
 		for _, poison := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
 			node := learning.NewDeltaTarget()
 
-			for range node.Next(data.NewValue([2]float64{poison, 1})) {
+			for range node.Next(data.NewValue([2]float64{poison, 1}).Next(nil)) {
 			}
 
 			So(node.Error(), ShouldNotBeNil)
@@ -61,7 +61,7 @@ func TestTargetInvalidInput(t *testing.T) {
 
 		node := learning.NewRatioTarget()
 
-		for range node.Next(data.NewValue([2]float64{1, 0})) {
+		for range node.Next(data.NewValue([2]float64{1, 0}).Next(nil)) {
 		}
 
 		So(node.Error(), ShouldNotBeNil)
@@ -71,19 +71,19 @@ func TestTargetInvalidInput(t *testing.T) {
 func TestTargetConfiguredConnection(t *testing.T) {
 	Convey("A live deadband is configuration of the same target", t, func() {
 		node := learning.NewDirectionalTarget(0.5).(*learning.DirectionalTarget)
-		got := data.Read[float64](node.Next(data.NewValue([2]float64{2, 1})))
+		got := data.Read[float64](node.Next(data.NewValue([2]float64{2, 1}).Next(nil)))
 
 		So(node.Error(), ShouldBeNil)
 		So(got, ShouldEqual, 1)
 		node.Deadband = 2
-		got = data.Read[float64](node.Next(data.NewValue([2]float64{2, 1})))
+		got = data.Read[float64](node.Next(data.NewValue([2]float64{2, 1}).Next(nil)))
 
 		So(node.Error(), ShouldBeNil)
 		So(got, ShouldEqual, 0)
 		collected := tests.CollectSeq[float64](node.Next(data.NewValue(
 			[2]float64{2, 1},
 			[2]float64{2, 1},
-		)))
+		).Next(nil)))
 		So(len(collected), ShouldEqual, 2)
 	})
 }
@@ -93,7 +93,7 @@ func TestDirectionalTargetInvalidConfiguration(t *testing.T) {
 		for _, band := range []float64{-1, math.NaN(), math.Inf(1)} {
 			node := learning.NewDirectionalTarget(band)
 
-			for range node.Next(data.NewValue([2]float64{2, 1})) {
+			for range node.Next(data.NewValue([2]float64{2, 1}).Next(nil)) {
 			}
 
 			So(node.Error(), ShouldNotBeNil)

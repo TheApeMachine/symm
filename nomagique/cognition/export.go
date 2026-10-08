@@ -15,12 +15,7 @@ import (
 )
 
 /*
-Export publishes the dashboard tree for the association trie as JSON text
-under "tree". Region frames are the slash-separated context (edges). The
-terminal class is the leaf — enter or exit only; wait is never a leaf
-(legacy wait basins are skipped). A class whose strength sits above the
-graded start, the center of the unit interval, is the policy choice.
-Internal region nodes are the precursor stance before an enter/exit leaf.
+Export publishes the dashboard tree for the association trie as JSON text.
 */
 type Export struct {
 	*core.PrimitiveError
@@ -36,24 +31,17 @@ func NewExport(memory *Associate) *Export {
 
 func (op *Export) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			if arriving == nil || op.memory == nil {
+		compute := func() bool {
+			if op.memory == nil {
 				op.Error(core.ErrShape)
-				return
-			}
-
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
+				return false
 			}
 
 			rootTree := op.memory.root.Load()
 
 			if rootTree == nil {
 				op.Error(core.ErrShape)
-				return
+				return false
 			}
 
 			var classes []string
@@ -296,21 +284,30 @@ func (op *Export) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if err != nil {
 				op.Error(err)
+				return false
+			}
+
+			for value := range data.NewValue(string(encoded)).Next(nil) {
+				if !yield(value) {
+					return false
+				}
+			}
+
+			return true
+		}
+
+		if in == nil {
+			compute()
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
 				return
 			}
 
-			published := data.NewTextMap()
-			published.Values["tree"] = string(encoded)
-
-			for range adapter.Next(data.NewValue(published)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+			if !compute() {
 				return
 			}
 		}

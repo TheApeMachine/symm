@@ -72,7 +72,7 @@ def add_figure_header(fig, main_title, meaning, good_criteria, higher_lower):
 
 def plot_stage0_contract(report, out_dir):
     contract = report.get('contract', {})
-    breaches = contract.get('breaches', [])
+    breaches = contract.get('breaches') or []
     total_checked = contract.get('total_metrics_checked', 0)
     
     fig, ax = plt.subplots(figsize=(14, 8))
@@ -311,8 +311,8 @@ def plot_stage3_grid_stability(report, out_dir):
     add_header(
         fig, ax,
         f'Stage 3: Cross-Period Grid Stability (Adjusted Rand Index = {ari:.3f})',
-        'Tests whether independent grids trained on disjoint chronological periods form reproducible partitions.',
-        f'ARI = {ari:.3f} on {shared_u} shared cells ({overlap:.1f}% universe overlap). Region sizes (~5%) are structural.',
+        f'ARI = {ari:.3f} on {shared_u} shared cells ({overlap:.1f}% universe overlap). Equal region sizes are constrained by balanced capacities.',
+        'ARI > 0.40 indicates structural temporal reproducibility of learned spectral regions.',
         'HIGHER ARI IS BETTER (1.0 = identical cluster memberships across disjoint time windows).'
     )
 
@@ -323,33 +323,54 @@ def plot_stage3_grid_stability(report, out_dir):
 def plot_stage4_token_dynamics(report, out_dir):
     dynamics = report.get('token_dynamics', {})
     freqs = dynamics.get('token_frequencies', {})
+    region_strengths = dynamics.get('region_strengths', {})
     total = max(1, dynamics.get('total_emissions', 0))
 
     sorted_tokens = sorted(freqs.keys(), key=lambda t: freqs[t], reverse=True)
     counts = [freqs[t] for t in sorted_tokens]
     shares = [c / total * 100 for c in counts]
+    scores = [region_strengths.get(t, {}).get('mean_score', 0) for t in sorted_tokens]
+    margins = [region_strengths.get(t, {}).get('mean_margin', 0) for t in sorted_tokens]
 
-    fig, ax = plt.subplots(figsize=(13, 7))
-    bars = ax.bar(sorted_tokens, shares, color='#58a6ff', width=0.55, edgecolor='#22272e')
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7.5))
 
+    # Left Panel: Emission Share (%)
+    bars = ax1.bar(sorted_tokens, shares, color='#58a6ff', width=0.55, edgecolor='#22272e')
     for bar, pct in zip(bars, shares):
-        ax.text(bar.get_x() + bar.get_width()/2, pct + 0.8, f"{pct:.1f}%", ha='center', va='bottom', fontsize=8, color='#adbac7')
+        ax1.text(bar.get_x() + bar.get_width()/2, pct + 0.8, f"{pct:.1f}%", ha='center', va='bottom', fontsize=8, color='#adbac7')
 
-    ax.axhline(80, color='#f85149', linestyle='--', label='Max Dominance Cap (80%)')
-    ax.set_ylabel('Emission Frequency (%)', fontsize=10, color='#adbac7')
-    ax.set_xlabel('Region Token', fontsize=10, color='#adbac7')
-    ax.legend(loc='upper right', frameon=True, facecolor='#161b22', edgecolor='#30363d', fontsize=8.5)
-    ax.grid(axis='y')
+    ax1.axhline(80, color='#f85149', linestyle='--', label='Max Dominance Cap (80%)')
+    ax1.set_ylabel('Emission Frequency (%)', fontsize=10, color='#adbac7')
+    ax1.set_xlabel('Region Token', fontsize=10, color='#adbac7')
+    ax1.set_title('Token Emission Share on Held-Out Tape', fontsize=11, fontweight='bold')
+    ax1.legend(loc='upper right', frameon=True, facecolor='#161b22', edgecolor='#30363d', fontsize=8.5)
+    ax1.grid(axis='y')
 
-    add_header(
-        fig, ax,
-        f'Stage 4: Out-of-Sample Token Emissions ({total} Emissions across {len(freqs)} Regions)',
-        'Frequency of region emissions when replaying unseen market tape through the frozen grid.',
-        'Distributed activity across multiple active regions with no single region monopolizing (>80%).',
-        'EVEN/MODERATE DOMINANCE IS BETTER (Confirms the state space actively differentiates regimes).'
+    # Right Panel: Region Excitation Strength & Runner-Up Margin
+    x_indices = np.arange(len(sorted_tokens))
+    bar_width = 0.35
+    ax2.bar(x_indices - bar_width/2, scores, bar_width, label='Mean Excitation Strength (Score)', color='#2ea043', edgecolor='#22272e')
+    ax2.bar(x_indices + bar_width/2, margins, bar_width, label='Runner-Up Margin (Separation)', color='#d29922', edgecolor='#22272e')
+    ax2.set_xticks(x_indices)
+    ax2.set_xticklabels(sorted_tokens, fontsize=8.5)
+    ax2.set_xlabel('Region Token', fontsize=10, color='#adbac7')
+    ax2.set_ylabel('Excitation Magnitude / Margin', fontsize=10, color='#adbac7')
+    ax2.set_title('Region Lighting Strength & Contrast Separation', fontsize=11, fontweight='bold')
+    ax2.legend(loc='upper right', frameon=True, facecolor='#161b22', edgecolor='#30363d', fontsize=8.5)
+    ax2.grid(axis='y')
+
+    mean_strength = dynamics.get('mean_excitation_strength', 0)
+    peak_strength = dynamics.get('peak_excitation_strength', 0)
+    mean_margin = dynamics.get('mean_runner_up_margin', 0)
+
+    add_figure_header(
+        fig,
+        f'Stage 4: Out-of-Sample Token Emissions & Region Excitation ({total} Emissions across {len(freqs)} Regions)',
+        'Evaluates frequency, excitation score, and contrast separation when replaying unseen tape through frozen grid.',
+        f'Mean strength = {mean_strength:.3f} (peak = {peak_strength:.3f}), mean margin over runner-up = {mean_margin:.3f}.',
+        'MODERATE DOMINANCE & STRONG MARGINS (Clear separation indicates unambiguous state detection).'
     )
 
-    fig.tight_layout()
     fig.savefig(os.path.join(out_dir, 'stage4_token_dynamics.png'), dpi=180, bbox_inches='tight')
     plt.close(fig)
 
@@ -471,6 +492,120 @@ def plot_stage5_precursor(report, out_dir):
     fig.savefig(os.path.join(out_dir, 'stage5_precursor_separation.png'), dpi=180, bbox_inches='tight')
     plt.close(fig)
 
+def plot_stage6_trie_skill(report, out_dir):
+    cog = report.get('cognitive_trie', {})
+    skill = cog.get('skill', {})
+    ret = cog.get('retention', {})
+    status = cog.get('status', 'INSUFFICIENT_DATA')
+    phases = cog.get('phases_formed', 0)
+    
+    hits = skill.get('hits', 0)
+    total_calls = skill.get('total_calls', 0)
+    baseline_hits = skill.get('baseline_hits', 0)
+    baseline_policy = skill.get('best_baseline_policy', 'none')
+    null_mean = skill.get('null_mean_hits', 0)
+    null_p95 = skill.get('null_95th_percentile_hits', 0)
+    p_val = skill.get('empirical_p_value', 1.0)
+    separates = skill.get('separates_from_null', False)
+    
+    ret_rate = ret.get('retention_rate', 0) * 100
+    spurious_rate = cog.get('spurious_trigger_rate', 0) * 100
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7.5))
+    
+    # Panel 1: Predictive Skill vs Baseline and Null
+    categories = ['Prequential Model', f'Best Baseline\n({baseline_policy})', 'Null Mean', 'Null 95th Pct']
+    values = [hits, baseline_hits, null_mean, null_p95]
+    colors = ['#2ea043' if separates else '#58a6ff', '#8b949e', '#d29922', '#f0883e']
+    
+    bars = ax1.bar(categories, values, color=colors, width=0.45)
+    ax1.set_ylabel('Hit Count (Phases)', fontsize=10, color='#adbac7')
+    ax1.set_title(f'Prequential Accuracy vs Null: p={p_val:.3f} (N={total_calls})', fontsize=11, fontweight='bold')
+    ax1.grid(axis='y')
+    for bar in bars:
+        h = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., h + 0.05, f"{h:.1f}", ha='center', va='bottom', fontsize=9, color='#f0f6fc')
+        
+    # Panel 2: Memory Retention & Background Specificity
+    m_labels = ['Post-Teach Retention', 'Background False Alarm']
+    m_values = [ret_rate, spurious_rate]
+    m_colors = ['#388bfd', '#f85149' if spurious_rate > 5 else '#2ea043']
+    
+    m_bars = ax2.bar(m_labels, m_values, color=m_colors, width=0.4)
+    ax2.set_ylabel('Percentage (%)', fontsize=10, color='#adbac7')
+    ax2.set_title(f'Memory Dynamics: Retention={ret_rate:.1f}%, False Alarm={spurious_rate:.2f}%', fontsize=11, fontweight='bold')
+    ax2.set_ylim(0, max(100, max(m_values)*1.15) if m_values else 100)
+    ax2.grid(axis='y')
+    for bar in m_bars:
+        h = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., h + 1, f"{h:.1f}%", ha='center', va='bottom', fontsize=9, color='#f0f6fc')
+        
+    add_figure_header(
+        fig,
+        f'Stage 6: Cognitive Engine Prequential Skill & Memory Dynamics (Status: {status})',
+        'Tests whether sequence prefix recall beats constant policies & shuffled nulls, and measures memory retention.',
+        f'Separates from Null: {separates} (p={p_val:.3f}). Phases evaluated: {phases}. Retention: {ret_rate:.1f}%.',
+        'HIGHER MODEL HITS & RETENTION ARE BETTER (Prequential separation proves genuine predictive structure).'
+    )
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, 'stage6_trie_skill.png'), dpi=180, bbox_inches='tight')
+    plt.close(fig)
+
+def plot_stage6_trie_structure(report, out_dir):
+    cog = report.get('cognitive_trie', {})
+    topo = cog.get('topology', {})
+    node_stats = topo.get('node_stats', {})
+    status = cog.get('status', 'INSUFFICIENT_DATA')
+    
+    enter_basins = topo.get('enter_basins', 0)
+    exit_basins = topo.get('exit_basins', 0)
+    records = topo.get('records_count', 0)
+    span = topo.get('span_count', 0)
+    
+    total_nodes = node_stats.get('total_nodes', 0)
+    max_depth = node_stats.get('max_depth', 0)
+    mean_depth = node_stats.get('mean_depth', 0)
+    branching = node_stats.get('branching_factor', 0)
+    
+    abstention = cog.get('abstention_rate', 0) * 100
+    mean_conf = cog.get('mean_confidence', 0)
+    mean_cont = cog.get('mean_contrast', 0)
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7.5))
+    
+    # Panel 1: Basin Composition
+    b_labels = ['Total Records', 'Longest Span', 'Enter Basins', 'Exit Basins']
+    b_values = [records, span, enter_basins, exit_basins]
+    b_bars = ax1.bar(b_labels, b_values, color=['#58a6ff', '#bc8cff', '#2ea043', '#f0883e'], width=0.45)
+    ax1.set_ylabel('Count', fontsize=10, color='#adbac7')
+    ax1.set_title(f'Trie Basins & Geometry (Records: {records:.0f}, Max Span: {span:.0f})', fontsize=11, fontweight='bold')
+    ax1.grid(axis='y')
+    for bar in b_bars:
+        h = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., h + 0.05, f"{h:.0f}", ha='center', va='bottom', fontsize=9, color='#f0f6fc')
+        
+    # Panel 2: Node Topology & Decisiveness
+    t_labels = ['Total Nodes', 'Max Depth', 'Mean Depth', 'Branching']
+    t_values = [total_nodes, max_depth, mean_depth, branching]
+    t_bars = ax2.bar(t_labels, t_values, color=['#79c0ff', '#d2a8ff', '#ff7b72', '#ffa657'], width=0.45)
+    ax2.set_ylabel('Metric Value', fontsize=10, color='#adbac7')
+    ax2.set_title(f'Graph Hierarchy & Decisiveness (Abstention: {abstention:.1f}%, Conf: {mean_conf:.3f}, Contrast: {mean_cont:.3f})', fontsize=11, fontweight='bold')
+    ax2.grid(axis='y')
+    for bar in t_bars:
+        h = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., h + 0.05, f"{h:.1f}", ha='center', va='bottom', fontsize=9, color='#f0f6fc')
+        
+    add_figure_header(
+        fig,
+        f'Stage 6: Radix Trie Graph Topology & Decisiveness (Status: {status})',
+        'Structural audit of the prefix tree nodes, longest token spans, active basins, and decider contrast.',
+        f'Nodes: {total_nodes}. Depth: max={max_depth}, mean={mean_depth:.1f}. Abstention: {abstention:.1f}%.',
+        'DESCRIPTIVE AUDIT (Monitors tree growth, branching efficiency, and basin proliferation).'
+    )
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, 'stage6_trie_structure.png'), dpi=180, bbox_inches='tight')
+    plt.close(fig)
+
 def main():
     parser = argparse.ArgumentParser(description="Render SYMM Audit Charts")
     parser.add_argument('positional_input', nargs='?', help="Path to audit_results.json")
@@ -497,8 +632,10 @@ def main():
     plot_stage4_transition_matrix(report, plots_dir)
     plot_stage4_entropy(report, plots_dir)
     plot_stage5_precursor(report, plots_dir)
+    plot_stage6_trie_skill(report, plots_dir)
+    plot_stage6_trie_structure(report, plots_dir)
 
-    print(f"✅ Generated 10 publication-quality diagnostic charts in {plots_dir}")
+    print(f"✅ Generated 12 publication-quality diagnostic charts in {plots_dir}")
 
 if __name__ == '__main__':
     main()

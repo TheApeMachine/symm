@@ -171,16 +171,25 @@ func sensor(writer *tables.Writer, epoch int64, source string, scale float64, ph
 	var prior *data.Measurement
 
 	write := func(tick int64, value float64) {
-		measurement := data.NewMeasurement(epoch, "BTC/USD", source, tick*10, tick)
+		metricName := source + "_value"
+
+		var measurement *data.Measurement
+
+		if prior == nil {
+			measurement = data.NewMeasurement(epoch, "BTC/USD", source, tick*10, tick)
+			measurement.At = time.Now().UTC()
+			measurement.From = measurement.At
+			measurement.Write(data.NewMetric(metricName, value, data.UnitCount, data.TimescaleTick))
+		}
 
 		if prior != nil {
-			measurement = prior.Next(source, map[string]float64{})
+			measurement = prior.Next(source, map[string]float64{metricName: value})
 			measurement.SeqIdx = tick * 10
 			measurement.Tick = tick
+			measurement.At = time.Now().UTC()
+			measurement.From = measurement.At
 		}
-		measurement.At = time.Now().UTC()
-		measurement.From = measurement.At
-		measurement.Write(data.NewMetric(source+"_value", value, data.UnitCount, data.TimescaleTick))
+
 		prior = measurement
 		writer.Add("measurements", measurement)
 	}

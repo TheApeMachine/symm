@@ -76,7 +76,7 @@ func (op *RLSSum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				posterior...,
 			)
 
-			for out := range op.prediction.Next(data.NewValue(op.state)) {
+			for out := range op.prediction.Next(data.NewValue(op.state).Next(nil)) {
 				op.out = *(*[]float64)(out)
 			}
 

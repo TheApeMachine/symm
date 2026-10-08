@@ -11,85 +11,54 @@ import (
 
 /*
 Normalize scales coordinate pairs to unit energy.
+Yields normalized x, normalized y, and norm.
 */
 type Normalize struct {
 	*core.PrimitiveError
-	input  data.Map[string]
-	output data.Map[float64]
 }
 
 func NewNormalize() *Normalize {
-	output := data.NewOutputMap()
-	output.Values["x"] = 0
-	output.Values["y"] = 0
-	output.Values["norm"] = 0
-
 	return &Normalize{
 		PrimitiveError: core.NewPrimitiveError(),
-		input: data.NewMap(
-			"x", "x",
-			"y", "y",
-		),
-		output: output,
 	}
 }
 
 func (op *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var values [2]float64
+		index := 0
+
 		for arriving := range in {
 			if arriving == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
+			if index < 2 {
+				values[index] = *(*float64)(arriving)
+				index++
 			}
+		}
 
-			var values data.Map[float64]
+		if index < 2 {
+			op.Error(core.ErrShape)
+			return
+		}
 
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
+		coordinateX := values[0]
+		coordinateY := values[1]
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
+		norm := math.Hypot(coordinateX, coordinateY)
+		normalizedX := coordinateX
+		normalizedY := coordinateY
 
-			coordinateX, xOK := values.Values["x"]
-			coordinateY, yOK := values.Values["y"]
+		if norm > 0 {
+			normalizedX = coordinateX / norm
+			normalizedY = coordinateY / norm
+		}
 
-			if !xOK || !yOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			norm := math.Hypot(coordinateX, coordinateY)
-			normalizedX := coordinateX
-			normalizedY := coordinateY
-
-			if norm > 0 {
-				normalizedX = coordinateX / norm
-				normalizedY = coordinateY / norm
-			}
-
-			op.output.Values["x"] = normalizedX
-			op.output.Values["y"] = normalizedY
-			op.output.Values["norm"] = norm
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+		for value := range data.NewValue(normalizedX, normalizedY, norm).Next(nil) {
+			if !yield(value) {
 				return
 			}
 		}

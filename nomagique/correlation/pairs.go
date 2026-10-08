@@ -31,7 +31,6 @@ type Pairs struct {
 	fisher     map[string]core.Primitive
 	request    map[string][][2]float64
 	rows       [][3]float64
-	output     data.Map[float64]
 }
 
 func NewPairs(label string, paths core.Primitive, estimator core.Primitive) core.Primitive {
@@ -43,7 +42,6 @@ func NewPairs(label string, paths core.Primitive, estimator core.Primitive) core
 		cohort:         NewCohort(),
 		fisher:         make(map[string]core.Primitive),
 		request:        make(map[string][][2]float64),
-		output:         data.NewOutputMap(),
 	}
 }
 
@@ -54,173 +52,171 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.Error(core.ErrShape)
 				return
 			}
-
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			var held map[string][][2]float64
-
-			for pointer := range op.paths.Next(data.NewValue(op.request)) {
-				held = *(*map[string][][2]float64)(pointer)
-			}
-
-			if err := op.paths.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			measured, ok := held[op.label]
-
-			if !ok {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			peers := make([]string, 0, len(held))
-
-			for peer := range held {
-				if peer != op.label {
-					peers = append(peers, peer)
-				}
-			}
-
-			slices.Sort(peers)
-			clear(op.output.Values)
-			op.rows = op.rows[:0]
-			focalRate := math.NaN()
-
-			for _, peer := range peers {
-				var dependence [13]float64
-
-				for pointer := range op.dependence.Next(data.NewValue([2][][2]float64{held[peer], measured})) {
-					dependence = *(*[13]float64)(pointer)
-				}
-
-				if err := op.dependence.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				if dependence[5] != 1 {
-					continue
-				}
-
-				suffix := "@" + peer
-				correlation := dependence[0]
-
-				op.output.Values["signed_correlation"+suffix] = correlation
-				op.output.Values["absolute_correlation"+suffix] = math.Abs(correlation)
-				op.output.Values["covariance"+suffix] = dependence[1]
-				op.output.Values["overlap_pair_count"+suffix] = dependence[2]
-				op.output.Values["return_energy:reference"+suffix] = dependence[3]
-				op.output.Values["return_energy:measured"+suffix] = dependence[4]
-				op.output.Values["return_count:reference"+suffix] = dependence[6]
-				op.output.Values["return_count:measured"+suffix] = dependence[7]
-				op.output.Values["return_energy_rate:reference"+suffix] = dependence[8]
-				op.output.Values["return_energy_rate:measured"+suffix] = dependence[9]
-				op.output.Values["shared_time"+suffix] = dependence[11]
-				op.output.Values["overlap_density"+suffix] = dependence[12]
-
-				if dependence[8] > 0 && dependence[9] > 0 {
-					op.output.Values["relative_return_energy"+suffix] = dependence[9] / dependence[8]
-				}
-
-				fisher, known := op.fisher[peer]
-
-				if !known {
-					fisher = NewFisherEstimator()
-					op.fisher[peer] = fisher
-				}
-
-				var history [10]float64
-
-				for pointer := range fisher.Next(data.NewValue(correlation)) {
-					history = *(*[10]float64)(pointer)
-				}
-
-				if err := fisher.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				op.output.Values["correlation_baseline"+suffix] = history[2]
-				op.output.Values["correlation_divergence"+suffix] = history[3]
-				op.output.Values["correlation_zscore"+suffix] = history[6]
-
-				focalRate = dependence[9]
-				op.rows = append(op.rows, [3]float64{correlation, dependence[2], dependence[8]})
-			}
-
-			if len(op.rows) > 0 {
-				var cohort [11]float64
-
-				for pointer := range op.cohort.Next(data.NewValue(op.rows...)) {
-					cohort = *(*[11]float64)(pointer)
-				}
-
-				if err := op.cohort.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				op.output.Values["cohort_peer_count"] = cohort[1]
-
-				if cohort[9] == 1 {
-					op.output.Values["cohort_effective_peer_count"] = cohort[4]
-					op.output.Values["cohort_signed_correlation"] = cohort[5]
-					op.output.Values["cohort_absolute_correlation"] = cohort[6]
-					op.output.Values["peer_return_energy_rate"] = cohort[7]
-					op.output.Values["focal_return_energy_rate"] = focalRate
-
-					if cohort[7] > 0 && focalRate > 0 {
-						op.output.Values["relative_cohort_return_energy"] = focalRate / cohort[7]
-					}
-				}
-
-				if cohort[10] == 1 {
-					op.output.Values["cohort_correlation_dispersion"] = cohort[8]
-				}
-			}
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
 			if !yield(arriving) {
 				return
 			}
 		}
-	}
-}
 
-/*
-Relations retains measured pair facts. Pending Measurement-store migration it
-pass-through yields arrivals unchanged.
-*/
-type Relations struct {
-	*core.PrimitiveError
-}
+		var held map[string][][2]float64
 
-func NewRelations() core.Primitive {
-	return &Relations{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
-}
+		for pointer := range op.paths.Next(data.NewValue(unsafe.Pointer(&op.request)).Next(nil)) {
+			held = *(*map[string][][2]float64)(pointer)
+		}
 
-func (op *Relations) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			if !yield(arriving) {
-				return
+		if err := op.paths.Error(); err != nil {
+			op.Error(err)
+			return
+		}
+
+		measured, ok := held[op.label]
+
+		if !ok {
+			op.Error(core.ErrNotHeld)
+			return
+		}
+
+		peers := make([]string, 0, len(held))
+
+		for peer := range held {
+			if peer != op.label {
+				peers = append(peers, peer)
 			}
 		}
+
+		slices.Sort(peers)
+		op.rows = op.rows[:0]
+		focalRate := 0.0
+
+		for _, peer := range peers {
+			var dependence [13]float64
+
+			payload := [2][][2]float64{held[peer], measured}
+			for pointer := range op.dependence.Next(data.NewValue(unsafe.Pointer(&payload)).Next(nil)) {
+				dependence = *(*[13]float64)(pointer)
+			}
+
+			if err := op.dependence.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			if dependence[5] != 1 {
+				zero := 0.0
+				for i := 0; i < 16; i++ {
+					if !yield(unsafe.Pointer(&zero)) { return }
+				}
+				continue
+			}
+
+			correlation := dependence[0]
+			abs_correlation := math.Abs(correlation)
+			covariance := dependence[1]
+			overlap_pair_count := dependence[2]
+			return_energy_reference := dependence[3]
+			return_energy_measured := dependence[4]
+			return_count_reference := dependence[6]
+			return_count_measured := dependence[7]
+			return_energy_rate_reference := dependence[8]
+			return_energy_rate_measured := dependence[9]
+			shared_time := dependence[11]
+			overlap_density := dependence[12]
+			
+			relative_return_energy := 0.0
+			if dependence[8] > 0 && dependence[9] > 0 {
+				relative_return_energy = dependence[9] / dependence[8]
+			}
+
+			fisher, known := op.fisher[peer]
+			if !known {
+				fisher = NewFisherEstimator()
+				op.fisher[peer] = fisher
+			}
+
+			var history [10]float64
+			for pointer := range fisher.Next(data.NewValue(unsafe.Pointer(&correlation)).Next(nil)) {
+				history = *(*[10]float64)(pointer)
+			}
+
+			if err := fisher.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			correlation_baseline := history[2]
+			correlation_divergence := history[3]
+			correlation_zscore := history[6]
+
+			focalRate = dependence[9]
+			op.rows = append(op.rows, [3]float64{correlation, dependence[2], dependence[8]})
+
+			if !yield(unsafe.Pointer(&correlation)) { return }
+			if !yield(unsafe.Pointer(&abs_correlation)) { return }
+			if !yield(unsafe.Pointer(&covariance)) { return }
+			if !yield(unsafe.Pointer(&overlap_pair_count)) { return }
+			if !yield(unsafe.Pointer(&return_energy_reference)) { return }
+			if !yield(unsafe.Pointer(&return_energy_measured)) { return }
+			if !yield(unsafe.Pointer(&return_count_reference)) { return }
+			if !yield(unsafe.Pointer(&return_count_measured)) { return }
+			if !yield(unsafe.Pointer(&return_energy_rate_reference)) { return }
+			if !yield(unsafe.Pointer(&return_energy_rate_measured)) { return }
+			if !yield(unsafe.Pointer(&shared_time)) { return }
+			if !yield(unsafe.Pointer(&overlap_density)) { return }
+			if !yield(unsafe.Pointer(&relative_return_energy)) { return }
+			if !yield(unsafe.Pointer(&correlation_baseline)) { return }
+			if !yield(unsafe.Pointer(&correlation_divergence)) { return }
+			if !yield(unsafe.Pointer(&correlation_zscore)) { return }
+		}
+
+		zero := 0.0
+		if len(op.rows) == 0 {
+			for i := 0; i < 8; i++ {
+				if !yield(unsafe.Pointer(&zero)) { return }
+			}
+			return
+		}
+
+		var cohort [11]float64
+		for pointer := range op.cohort.Next(data.NewValue(unsafe.Pointer(&op.rows)).Next(nil)) {
+			cohort = *(*[11]float64)(pointer)
+		}
+
+		if err := op.cohort.Error(); err != nil {
+			op.Error(err)
+			return
+		}
+
+		cohort_peer_count := cohort[1]
+		cohort_effective_peer_count := 0.0
+		cohort_signed_correlation := 0.0
+		cohort_absolute_correlation := 0.0
+		peer_return_energy_rate := 0.0
+		focal_return_energy_rate := 0.0
+		relative_cohort_return_energy := 0.0
+		cohort_correlation_dispersion := 0.0
+
+		if cohort[9] == 1 {
+			cohort_effective_peer_count = cohort[4]
+			cohort_signed_correlation = cohort[5]
+			cohort_absolute_correlation = cohort[6]
+			peer_return_energy_rate = cohort[7]
+			focal_return_energy_rate = focalRate
+
+			if cohort[7] > 0 && focalRate > 0 {
+				relative_cohort_return_energy = focalRate / cohort[7]
+			}
+		}
+
+		if cohort[10] == 1 {
+			cohort_correlation_dispersion = cohort[8]
+		}
+
+		if !yield(unsafe.Pointer(&cohort_peer_count)) { return }
+		if !yield(unsafe.Pointer(&cohort_effective_peer_count)) { return }
+		if !yield(unsafe.Pointer(&cohort_signed_correlation)) { return }
+		if !yield(unsafe.Pointer(&cohort_absolute_correlation)) { return }
+		if !yield(unsafe.Pointer(&peer_return_energy_rate)) { return }
+		if !yield(unsafe.Pointer(&focal_return_energy_rate)) { return }
+		if !yield(unsafe.Pointer(&relative_cohort_return_energy)) { return }
+		if !yield(unsafe.Pointer(&cohort_correlation_dispersion)) { return }
 	}
 }

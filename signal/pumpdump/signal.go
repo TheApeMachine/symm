@@ -2,123 +2,218 @@ package pumpdump
 
 import (
 	"context"
-	"errors"
-	"math"
-	"sync"
 	"time"
-
-	"github.com/theapemachine/errnie"
+	"unsafe"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Signal is the volume-clocked tape activity instrument (legacy name pumpdump).
-It holds no logic of its own: its entire behavior is five nomagique pipelines
-per symbol, each a transport.Parallel of stage groups over one shared output
-map. The tape pipeline runs on every valid trade and accumulates the open
-volume bar against a target fixed from the causal quantity baseline when the
-bar opens. The interval pipeline runs once a previous trade exists; the touch
-pipeline whenever an executable, uncrossed touch is available; the bar
-pipeline when the bar closes; the response pipeline when a closed bar has a
-valid touch at both ends. The pipeline is driven by trade frames only: the
-trade supplies price and quantity, and the touch is read exclusively from the
-injected BookSource. The trade, the touch, and the open bar's running totals
-are the only envelope translation.
-Facts accumulate in the output map and are written once.
-*/
+var outputKeys = []string{
+	"trade_price",
+	"trade_quantity",
+	"trade_notional",
+	"trade_interval_seconds",
+	"volume_bar_target_quantity",
+	"volume_bar_quantity",
+	"volume_bar_notional",
+	"volume_bar_trade_count",
+	"volume_bar_duration",
+	"volume_rate",
+	"notional_rate",
+	"trade_rate",
+	"completed_bars",
+	"notional_rate_baseline",
+	"notional_rate_ratio",
+	"notional_rate_divergence",
+	"notional_rate_zscore",
+	"notional_rate_velocity",
+	"best_bid",
+	"best_ask",
+	"midpoint",
+	"spread",
+	"relative_spread",
+	"relative_spread_baseline",
+	"spread_ratio",
+	"spread_divergence",
+	"spread_zscore",
+	"spread_divergence_velocity",
+	"midpoint:from",
+	"midpoint:at",
+	"midpoint_log_return",
+	"midpoint_return_rate",
+	"positive_midpoint_return",
+	"negative_midpoint_return",
+	"midpoint_return_baseline",
+	"midpoint_return_divergence",
+	"midpoint_return_zscore",
+	"midpoint_return_velocity",
+	"historical_path_distance",
+	"historical_path_percentile",
+}
+
 type Signal struct {
 	*runtime.System
-	books     broker.BookSource
-	pipelines sync.Map
-	metrics   [][4]string
+	books    broker.BookSource
+	pipeline *nomagique.Number
 }
 
-type symbolPipeline struct {
-	output         data.Map[float64]
-	envelope       data.Map[float64]
-	tapeStates     []*data.State
-	tape           core.Primitive
-	intervalStates []*data.State
-	interval       core.Primitive
-	touchStates    []*data.State
-	touch          core.Primitive
-	barStates      []*data.State
-	bar            core.Primitive
-	responseStates []*data.State
-	response       core.Primitive
-	hasPrev        bool
-	prevAt         time.Time
-	barStart       time.Time
-	barQuantity    float64
-	barNotional    float64
-	barTradeCount  float64
-	barTarget      float64
-	barFromMid     float64
-}
-
-/*
-NewSignal composes the volume-clocked activity instrument. The BookSource is
-required: it is the sole authority for the touch. A missing BookSource is a
-wiring fault and halts the instrument.
-*/
 func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	signal := &Signal{
 		books: books,
-		// {published label, output key, unit, timescale}
-		metrics: [][4]string{
-			{"trade_price", "price", string(data.UnitPrice), string(data.TimescaleTick)},
-			{"trade_quantity", "qty", string(data.UnitQuantity), string(data.TimescaleTick)},
-			{"trade_notional", "trade_notional", string(data.UnitNotional), string(data.TimescaleTick)},
-			{"trade_interval_seconds", "trade_interval_seconds", string(data.UnitSecond), string(data.TimescaleTick)},
-			{"volume_bar_target_quantity", "volume_bar_target_quantity", string(data.UnitQuantity), string(data.TimescaleVolumeBar)},
-			{"volume_bar_quantity", "volume_bar_quantity", string(data.UnitQuantity), string(data.TimescaleVolumeBar)},
-			{"volume_bar_notional", "volume_bar_notional", string(data.UnitNotional), string(data.TimescaleVolumeBar)},
-			{"volume_bar_trade_count", "volume_bar_trade_count", string(data.UnitCount), string(data.TimescaleVolumeBar)},
-			{"volume_bar_duration", "volume_bar_duration", string(data.UnitDuration), string(data.TimescaleVolumeBar)},
-			{"volume_rate", "volume_rate", string(data.UnitVolumeRate), string(data.TimescalePerSecond)},
-			{"notional_rate", "notional_rate", string(data.UnitNotionalRate), string(data.TimescalePerSecond)},
-			{"trade_rate", "trade_rate", string(data.UnitTradeRate), string(data.TimescalePerSecond)},
-			{"completed_bars", "completed_bars", string(data.UnitCount), string(data.TimescaleSession)},
-			{"notional_rate_baseline", "notional_rate_baseline", string(data.UnitNotionalRate), string(data.TimescaleRollingWindow)},
-			{"notional_rate_ratio", "notional_rate_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"notional_rate_divergence", "notional_rate_divergence", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
-			{"notional_rate_zscore", "notional_rate_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"notional_rate_velocity", "notional_rate_velocity", string(data.UnitVelocity), string(data.TimescalePerSecond)},
-			{"best_bid", "bid", string(data.UnitPrice), string(data.TimescaleTick)},
-			{"best_ask", "ask", string(data.UnitPrice), string(data.TimescaleTick)},
-			{"midpoint", "midpoint", string(data.UnitPrice), string(data.TimescaleTick)},
-			{"spread", "spread", string(data.UnitSpread), string(data.TimescaleTick)},
-			{"relative_spread", "relative_spread", string(data.UnitRelativeSpread), string(data.TimescaleTick)},
-			{"relative_spread_baseline", "relative_spread_baseline", string(data.UnitRelativeSpread), string(data.TimescaleRollingWindow)},
-			{"spread_ratio", "spread_ratio", string(data.UnitRatio), string(data.TimescaleRollingWindow)},
-			{"spread_divergence", "spread_divergence", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
-			{"spread_zscore", "spread_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"spread_divergence_velocity", "spread_divergence_velocity", string(data.UnitVelocity), string(data.TimescalePerSecond)},
-			{"midpoint:from", "midpoint:from", string(data.UnitPrice), string(data.TimescaleVolumeBar)},
-			{"midpoint:at", "midpoint", string(data.UnitPrice), string(data.TimescaleVolumeBar)},
-			{"midpoint_log_return", "midpoint_log_return", string(data.UnitLogReturn), string(data.TimescaleVolumeBar)},
-			{"midpoint_return_rate", "midpoint_return_rate", string(data.UnitVelocity), string(data.TimescalePerSecond)},
-			{"positive_midpoint_return", "positive_midpoint_return", string(data.UnitLogReturn), string(data.TimescaleVolumeBar)},
-			{"negative_midpoint_return", "negative_midpoint_return", string(data.UnitLogReturn), string(data.TimescaleVolumeBar)},
-			{"midpoint_return_baseline", "midpoint_return_baseline", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
-			{"midpoint_return_divergence", "midpoint_return_divergence", string(data.UnitLogReturn), string(data.TimescaleRollingWindow)},
-			{"midpoint_return_zscore", "midpoint_return_zscore", string(data.UnitZScore), string(data.TimescaleRollingWindow)},
-			{"midpoint_return_velocity", "midpoint_return_velocity", string(data.UnitVelocity), string(data.TimescalePerSecond)},
-			{"historical_path_distance", "historical_path_distance", string(data.UnitDistance), string(data.TimescaleRollingWindow)},
-			{"historical_path_percentile", "historical_path_percentile", string(data.UnitPercent), string(data.TimescaleRollingWindow)},
-		},
+		pipeline: nomagique.NewNumber(
+			transport.NewAddressable(
+				"symbolstore", store.NewKV(),
+				nomagique.NewNumber(
+					// Stage 1: VolumeBar & Touch routing
+					// Input slices: [0: raws (price, qty, atNanos, midpoint), 1: touch (bid, ask, midpoint, spread, relativeSpread), 2: price, 3: qty]
+					data.NewValue[core.Primitive](
+						nomagique.NewNumber(
+							data.NewSlice(0, 3),
+							transport.NewParallel(
+								nomagique.NewNumber(
+									transport.NewSpread[float64](),
+									temporal.NewVolumeBar(1.0),
+								),
+								nomagique.NewNumber(
+									transport.NewSpread[float64](),
+									transport.NewPass(),
+								),
+								nomagique.NewNumber(
+									transport.NewSpread[float64](),
+									transport.NewPass(),
+								),
+							),
+						),
+						// Yields 18 (volumebar) + 5 (touch) + 2 (price, qty) = 25 values
+					),
+					// Stage 2: Baselines & Velocities
+					data.NewValue[core.Primitive](
+						data.NewSlice(0, 25),
+						nomagique.NewNumber(
+							data.NewSelect(
+								8, 8, // notional_rate -> baseline
+								22, 22, // relative_spread -> baseline
+								13, 13, // midpoint_log_return -> baseline
+								8, 8, // notional_rate -> velocity
+								22, 22, // relative_spread -> velocity
+								13, 13, // midpoint_log_return -> velocity
+								0, 0, // historical_path_distance (0)
+								0, 0, // historical_path_percentile (0)
+							),
+							data.NewBatch(2, 2),
+							transport.NewParallel(
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
+								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+							),
+						),
+						// Yields 25 + 11 = 36 values
+					),
+					// Stage 3: Ratios and Divergences
+					data.NewValue[core.Primitive](
+						data.NewSlice(0, 36),
+						nomagique.NewNumber(
+							data.NewSelect(
+								8, 25, // notional_rate_ratio = notional_rate / baseline
+								8, 25, // notional_rate_divergence = notional_rate - baseline
+								22, 27, // spread_ratio = relative_spread / baseline
+								22, 27, // spread_divergence = relative_spread - baseline
+								13, 29, // midpoint_return_divergence = midpoint_log_return - baseline
+							),
+							data.NewBatch(2, 2),
+							transport.NewParallel(
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewSubtract()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewSubtract()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewSubtract()),
+							),
+						),
+						// Yields 36 + 5 = 41 values
+					),
+					// Stage 4: Z-scores
+					data.NewValue[core.Primitive](
+						data.NewSlice(0, 41),
+						nomagique.NewNumber(
+							data.NewSelect(
+								37, 26, // notional_rate_zscore = divergence / scale
+								39, 28, // spread_zscore = divergence / scale
+								40, 30, // midpoint_return_zscore = divergence / scale
+							),
+							data.NewBatch(2, 2),
+							transport.NewParallel(
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+							),
+						),
+						// Yields 41 + 3 = 44 values
+					),
+					// Stage 5: Select exact outputKeys (40 values) + outBarStartNanos (1 value)
+					data.NewSelect(
+						23, // trade_price
+						24, // trade_quantity
+						0,  // trade_notional
+						1,  // trade_interval_seconds
+						2,  // volume_bar_target_quantity
+						3,  // volume_bar_quantity
+						4,  // volume_bar_notional
+						5,  // volume_bar_trade_count
+						6,  // volume_bar_duration
+						7,  // volume_rate
+						8,  // notional_rate
+						9,  // trade_rate
+						10, // completed_bars
+						25, // notional_rate_baseline
+						36, // notional_rate_ratio
+						37, // notional_rate_divergence
+						41, // notional_rate_zscore
+						31, // notional_rate_velocity
+						18, // best_bid
+						19, // best_ask
+						20, // midpoint
+						21, // spread
+						22, // relative_spread
+						27, // relative_spread_baseline
+						38, // spread_ratio
+						39, // spread_divergence
+						42, // spread_zscore
+						32, // spread_divergence_velocity
+						11, // midpoint:from
+						12, // midpoint:at
+						13, // midpoint_log_return
+						14, // midpoint_return_rate
+						15, // positive_midpoint_return
+						16, // negative_midpoint_return
+						29, // midpoint_return_baseline
+						40, // midpoint_return_divergence
+						43, // midpoint_return_zscore
+						33, // midpoint_return_velocity
+						34, // historical_path_distance
+						35, // historical_path_percentile
+						17, // outBarStartNanos
+					),
+				),
+				data.NewMessage(data.WRITE, "symbolstore", "pumpdump_state", data.NewValue[core.Primitive]()),
+			),
+		),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "pumpdump", signal)
@@ -130,183 +225,8 @@ func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	return signal
 }
 
-func (signal *Signal) pipelineFor(symbol string) *symbolPipeline {
-	if existing, ok := signal.pipelines.Load(symbol); ok {
-		return existing.(*symbolPipeline)
-	}
-
-	output := data.NewOutputMap()
-
-	pipe := &symbolPipeline{
-		output:   output,
-		envelope: data.NewOutputMap(),
-		tapeStates: []*data.State{
-			// 0: Trade notional.
-			data.NewState(data.NewMap("left", "price", "right", "qty", "multiply", "trade_notional"), output),
-			// 1-4: Open bar running totals, closing trade included.
-			data.NewState(data.NewMap("left", "bar_quantity:prior", "right", "qty", "add", "volume_bar_quantity"), output),
-			data.NewState(data.NewMap("left", "bar_notional:prior", "right", "trade_notional", "add", "volume_bar_notional"), output),
-			data.NewState(data.NewMap("left", "bar_trade_count:prior", "right", "one", "add", "volume_bar_trade_count"), output),
-			data.NewState(data.NewMap("from", "bar_start", "to", "at", "elapsed", "volume_bar_duration"), output),
-			// 5: Causal trade-quantity baseline (prior mean; the first trade bootstraps itself).
-			data.NewState(data.NewMap("value", "qty", "center", "trade_quantity_baseline", "scale", "trade_quantity_noise_scale"), output),
-			// 6-10: Target fixed when the bar opens: bar_open = 1 - sign(prior count)².
-			data.NewState(data.NewMap("left", "bar_trade_count:prior", "right", "one", "multiply", "bar_occupied"), output),
-			data.NewState(data.NewMap("value", "bar_occupied", "sign", "bar_occupied"), output),
-			data.NewState(data.NewMap("left", "bar_occupied", "right", "bar_occupied", "multiply", "bar_occupied:square"), output),
-			data.NewState(data.NewMap("left", "one", "right", "bar_occupied:square", "subtract", "bar_open"), output),
-			data.NewState(data.NewMap("left", "bar_target:prior", "right", "trade_quantity_baseline", "weight", "bar_open", "mix", "volume_bar_target_quantity"), output),
-		},
-		tape: transport.NewParallel(
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(temporal.NewElapsed()),
-			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(calculus.NewSign()),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(calculus.NewMix()),
-		),
-		intervalStates: []*data.State{
-			// 0: Venue time since the previous trade.
-			data.NewState(data.NewMap("from", "prev_at", "to", "at", "elapsed", "trade_interval_seconds"), output),
-		},
-		interval: transport.NewParallel(
-			transport.NewStages(temporal.NewElapsed()),
-		),
-		touchStates: []*data.State{
-			// 0-2: Touch geometry, relative spread = spread / midpoint.
-			data.NewState(data.NewMap("left", "ask", "right", "bid", "subtract", "spread"), output),
-			data.NewState(data.NewMap("left", "bid", "right", "ask", "weight", "half", "mix", "midpoint"), output),
-			data.NewState(data.NewMap("left", "spread", "right", "midpoint", "divide", "relative_spread"), output),
-			// 3-10: Log relative spread against its own causal baseline.
-			// Unary primitives answer in place, so each operand is copied (x · 1) first.
-			data.NewState(data.NewMap("left", "relative_spread", "right", "one", "multiply", "log_relative_spread"), output),
-			data.NewState(data.NewMap("value", "log_relative_spread", "log", "log_relative_spread"), output),
-			data.NewState(data.NewMap("value", "log_relative_spread", "center", "log_relative_spread_baseline", "scale", "spread_noise_scale"), output),
-			data.NewState(data.NewMap("left", "log_relative_spread_baseline", "right", "one", "multiply", "relative_spread_baseline"), output),
-			data.NewState(data.NewMap("value", "relative_spread_baseline", "exp", "relative_spread_baseline"), output),
-			data.NewState(data.NewMap("left", "log_relative_spread", "right", "log_relative_spread_baseline", "subtract", "spread_divergence"), output),
-			data.NewState(data.NewMap("left", "relative_spread", "right", "relative_spread_baseline", "divide", "spread_ratio"), output),
-			data.NewState(data.NewMap("left", "spread_divergence", "right", "spread_noise_scale", "divide", "spread_zscore"), output),
-			// 11: Spread divergence velocity.
-			data.NewState(data.NewMap("value", "spread_divergence", "rate", "spread_divergence_velocity", "defined", "spread_divergence_velocity:defined"), output),
-		},
-		touch: transport.NewParallel(
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(calculus.NewMix()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(calculus.NewLog()),
-			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(calculus.NewExp()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(temporal.NewVelocity()),
-		),
-		barStates: []*data.State{
-			// 0-2: Completed-bar activity rates.
-			data.NewState(data.NewMap("left", "volume_bar_quantity", "right", "volume_bar_duration", "divide", "volume_rate"), output),
-			data.NewState(data.NewMap("left", "volume_bar_notional", "right", "volume_bar_duration", "divide", "notional_rate"), output),
-			data.NewState(data.NewMap("left", "volume_bar_trade_count", "right", "volume_bar_duration", "divide", "trade_rate"), output),
-			// 3-10: Log notional rate against its own causal baseline.
-			data.NewState(data.NewMap("left", "notional_rate", "right", "one", "multiply", "log_notional_rate"), output),
-			data.NewState(data.NewMap("value", "log_notional_rate", "log", "log_notional_rate"), output),
-			data.NewState(data.NewMap("value", "log_notional_rate", "center", "log_notional_rate_baseline", "scale", "notional_rate_noise_scale"), output),
-			data.NewState(data.NewMap("left", "log_notional_rate_baseline", "right", "one", "multiply", "notional_rate_baseline"), output),
-			data.NewState(data.NewMap("value", "notional_rate_baseline", "exp", "notional_rate_baseline"), output),
-			data.NewState(data.NewMap("left", "log_notional_rate", "right", "log_notional_rate_baseline", "subtract", "notional_rate_divergence"), output),
-			data.NewState(data.NewMap("left", "notional_rate", "right", "notional_rate_baseline", "divide", "notional_rate_ratio"), output),
-			data.NewState(data.NewMap("left", "notional_rate_divergence", "right", "notional_rate_noise_scale", "divide", "notional_rate_zscore"), output),
-			// 11: Log notional rate velocity.
-			data.NewState(data.NewMap("value", "log_notional_rate", "rate", "notional_rate_velocity", "defined", "notional_rate_velocity:defined"), output),
-			// 12: Completed bar count.
-			data.NewState(data.NewMap("value", "one", "sum", "completed_bars"), output),
-		},
-		bar: transport.NewParallel(
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(calculus.NewLog()),
-			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(calculus.NewExp()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(temporal.NewVelocity()),
-			transport.NewStages(statistic.NewSum()),
-		),
-		responseStates: []*data.State{
-			// 0-3: Midpoint log return over the bar and its rate.
-			data.NewState(data.NewMap("left", "midpoint", "right", "midpoint:from", "divide", "midpoint_ratio"), output),
-			data.NewState(data.NewMap("left", "midpoint_ratio", "right", "one", "multiply", "midpoint_log_return"), output),
-			data.NewState(data.NewMap("value", "midpoint_log_return", "log", "midpoint_log_return"), output),
-			data.NewState(data.NewMap("left", "midpoint_log_return", "right", "volume_bar_duration", "divide", "midpoint_return_rate"), output),
-			// 4-9: Exact decomposition r = r⁺ - r⁻, r⁺ = (|r| + r) / 2, r⁻ = (|r| - r) / 2.
-			data.NewState(data.NewMap("left", "midpoint_log_return", "right", "one", "multiply", "midpoint_log_return:absolute"), output),
-			data.NewState(data.NewMap("value", "midpoint_log_return:absolute", "absolute", "midpoint_log_return:absolute"), output),
-			data.NewState(data.NewMap("left", "midpoint_log_return:absolute", "right", "midpoint_log_return", "add", "positive_midpoint_return:double"), output),
-			data.NewState(data.NewMap("left", "positive_midpoint_return:double", "right", "half", "multiply", "positive_midpoint_return"), output),
-			data.NewState(data.NewMap("left", "midpoint_log_return:absolute", "right", "midpoint_log_return", "subtract", "negative_midpoint_return:double"), output),
-			data.NewState(data.NewMap("left", "negative_midpoint_return:double", "right", "half", "multiply", "negative_midpoint_return"), output),
-			// 10-12: Signed return against its own additive causal baseline.
-			data.NewState(data.NewMap("value", "midpoint_log_return", "center", "midpoint_return_baseline", "scale", "midpoint_return_noise_scale"), output),
-			data.NewState(data.NewMap("left", "midpoint_log_return", "right", "midpoint_return_baseline", "subtract", "midpoint_return_divergence"), output),
-			data.NewState(data.NewMap("left", "midpoint_return_divergence", "right", "midpoint_return_noise_scale", "divide", "midpoint_return_zscore"), output),
-			// 13: Midpoint return velocity.
-			data.NewState(data.NewMap("value", "midpoint_log_return", "rate", "midpoint_return_velocity", "defined", "midpoint_return_velocity:defined"), output),
-		},
-		response: transport.NewParallel(
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(calculus.NewLog()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(calculus.NewAbsolute()),
-			transport.NewStages(arithmetic.NewAdd()),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewMultiply()),
-			transport.NewStages(adaptive.NewBaseline(adaptive.NewWindow())),
-			transport.NewStages(arithmetic.NewSubtract()),
-			transport.NewStages(arithmetic.NewDivide()),
-			transport.NewStages(temporal.NewVelocity()),
-		),
-	}
-
-	actual, _ := signal.pipelines.LoadOrStore(symbol, pipe)
-	return actual.(*symbolPipeline)
-}
-
-/*
-Step binds the prior trade, the active touch, and the open bar's running
-totals to the symbol's pipelines and writes the published activity facts into
-a fresh Measurement allocated from the signal's own arena. A trade frame that
-cannot be read, or that lacks price or qty, is an error; one without a
-positive, finite price and quantity yields no measurement. The touch comes
-only from the BookSource. While the book is momentarily absent or one-sided
-the trade still advances tape accounting, but every touch-dependent fact is
-omitted. A present touch with a non-finite or non-positive price
-(broker.InvalidTouch) or a crossed or locked touch (broker.CrossedTouch) is
-corrupt book state and halts the signal; no touch is ever inferred from the trade. Bar facts are published only on the trade
-that closes a bar (accumulated quantity at or above the target, positive
-duration); an open bar is never reported as a zero-rate bar. Baseline-relative
-facts are omitted until their causal noise scale is defined and positive.
-*/
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY {
-		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
-		return nil
-	}
-
-	if prior == nil || prior.Label == "" {
+	if signal.Status() != runtime.READY || prior == nil || prior.Label == "" {
 		return nil
 	}
 
@@ -315,224 +235,100 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	pipe := signal.pipelineFor(prior.Label)
-
-	clear(pipe.output.Values)
-	clear(pipe.envelope.Values)
-
-	for _, key := range []string{"price", "qty"} {
-		value, err := tradeValue(prior, key)
-
-		if err != nil {
-			signal.Error(err)
-			return nil
-		}
-
-		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-			return nil
-		}
-
-		pipe.envelope.Values[key] = value
+	priceEntry := data.Pull(prior.Read("price"))
+	if priceEntry == nil || priceEntry.Metric == nil {
+		signal.Error(errnie.Err(errnie.Validation, "[pumpdump] price is required", nil))
+		return nil
 	}
+	price := priceEntry.Metric.Raw
+
+	qtyEntry := data.Pull(prior.Read("qty"))
+	if qtyEntry == nil || qtyEntry.Metric == nil || qtyEntry.Metric.Raw <= 0 {
+		return nil
+	}
+	qty := qtyEntry.Metric.Raw
+
+	var bid, ask float64
+	var hasBook bool
 
 	signal.books.Book(prior.Label, func(book *spotbook.Book) {
 		if book == nil {
 			return
 		}
 
-		bid := book.BestBid()
-		ask := book.BestAsk()
+		b := book.BestBid()
+		a := book.BestAsk()
 
-		if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
+		if b == nil || a == nil || b.Price == nil || a.Price == nil ||
+			b.Quantity == nil || a.Quantity == nil {
 			return
 		}
 
-		pipe.envelope.Values["bid"] = kraken.Float64(bid.Price)
-		pipe.envelope.Values["ask"] = kraken.Float64(ask.Price)
+		bid = kraken.Float64(b.Price)
+		ask = kraken.Float64(a.Price)
+		hasBook = true
 	})
 
-	bid, bidHeld := pipe.envelope.Values["bid"]
-	ask, askHeld := pipe.envelope.Values["ask"]
-	touchValid := bidHeld && askHeld
-
-	if touchValid && (!broker.ValidTouchValue(bid) || !broker.ValidTouchValue(ask)) {
-		// Both sides are present, so impossible values are corrupt book
-		// state, not a momentary absence: halt like a crossed touch.
-		signal.Error(broker.InvalidTouch("pumpdump", prior.Label, map[string]float64{"bid": bid, "ask": ask}))
-		return nil
-	}
-
-	if touchValid && ask <= bid {
-		// BookSource withholds pending and checksum-diverging books, so a
-		// crossed or locked touch is corrupt book state: halt, distinct from a
-		// missing BookSource (see broker.CrossedTouch).
-		signal.Error(broker.CrossedTouch("pumpdump", prior.Label, bid, ask))
-		return nil
-	}
-
-	hadPrev := pipe.hasPrev
-	prevAt := pipe.prevAt
-
-	if !hadPrev {
-		pipe.barStart = prior.At
-	}
-
-	barStart := pipe.barStart
-
-	pipe.envelope.Values["at"] = float64(prior.At.UnixNano())
-	pipe.envelope.Values["bar_start"] = float64(barStart.UnixNano())
-	pipe.envelope.Values["bar_quantity:prior"] = pipe.barQuantity
-	pipe.envelope.Values["bar_notional:prior"] = pipe.barNotional
-	pipe.envelope.Values["bar_trade_count:prior"] = pipe.barTradeCount
-	pipe.envelope.Values["bar_target:prior"] = pipe.barTarget
-	pipe.envelope.Values["one"] = 1
-	pipe.envelope.Values["half"] = 0.5
-
-	if hadPrev {
-		pipe.envelope.Values["prev_at"] = float64(prevAt.UnixNano())
-	}
-
-	if pipe.barFromMid > 0 {
-		pipe.envelope.Values["midpoint:from"] = pipe.barFromMid
-	}
-
-	publisher := data.NewAdapter(prior, data.NewState(data.NewMap(), pipe.output))
-
-	for range publisher.Next(data.NewValue(pipe.envelope)) {
-	}
-
-	tapeAdapters := make([]*data.Adapter, len(pipe.tapeStates))
-
-	for index, state := range pipe.tapeStates {
-		tapeAdapters[index] = data.NewAdapter(prior, state)
-	}
-
-	for range pipe.tape.Next(data.NewValue(tapeAdapters...)) {
-	}
-
-	if hadPrev {
-		intervalAdapters := make([]*data.Adapter, len(pipe.intervalStates))
-
-		for index, state := range pipe.intervalStates {
-			intervalAdapters[index] = data.NewAdapter(prior, state)
+	var midpoint, spread, relativeSpread float64
+	if hasBook {
+		touch := map[string]float64{
+			"bid": bid,
+			"ask": ask,
 		}
 
-		for range pipe.interval.Next(data.NewValue(intervalAdapters...)) {
+		for _, value := range touch {
+			if !broker.ValidTouchValue(value) {
+				signal.Error(broker.InvalidTouch("pumpdump", prior.Label, touch))
+				return nil
+			}
+		}
+
+		if ask <= bid {
+			signal.Error(broker.CrossedTouch("pumpdump", prior.Label, bid, ask))
+			return nil
+		}
+
+		midpoint = (bid + ask) / 2.0
+		spread = ask - bid
+		if midpoint > 0 {
+			relativeSpread = spread / midpoint
 		}
 	}
 
-	if touchValid {
-		touchAdapters := make([]*data.Adapter, len(pipe.touchStates))
+	atNanos := float64(prior.At.UnixNano())
+	raws := []float64{price, qty, atNanos, midpoint}
+	touchFacts := []float64{bid, ask, midpoint, spread, relativeSpread}
+	tradeFacts := []float64{price, qty}
 
-		for index, state := range pipe.touchStates {
-			touchAdapters[index] = data.NewAdapter(prior, state)
+	output := make(map[string]float64)
+	index := 0
+
+	for ptr := range signal.pipeline.Next(
+		data.NewMessage(
+			data.WRITE,
+			"symbolstore",
+			prior.Label,
+			data.NewValue(
+				unsafe.Pointer(&raws),
+				unsafe.Pointer(&touchFacts),
+				unsafe.Pointer(&tradeFacts),
+			),
+		).Next(nil),
+	) {
+		if ptr == nil {
+			continue
 		}
 
-		for range pipe.touch.Next(data.NewValue(touchAdapters...)) {
+		if index < len(outputKeys) {
+			output[outputKeys[index]] = *(*float64)(ptr)
+		} else if index == len(outputKeys) {
+			outBarStart := *(*float64)(ptr)
+			if outBarStart > 0 {
+				prior.From = time.Unix(0, int64(outBarStart))
+			}
 		}
+		index++
 	}
 
-	closed := pipe.output.Values["volume_bar_duration"] > 0 &&
-		pipe.output.Values["volume_bar_quantity"] >= pipe.output.Values["volume_bar_target_quantity"]
-
-	if closed {
-		barAdapters := make([]*data.Adapter, len(pipe.barStates))
-
-		for index, state := range pipe.barStates {
-			barAdapters[index] = data.NewAdapter(prior, state)
-		}
-
-		for range pipe.bar.Next(data.NewValue(barAdapters...)) {
-		}
-	}
-
-	if closed && touchValid && pipe.barFromMid > 0 {
-		responseAdapters := make([]*data.Adapter, len(pipe.responseStates))
-
-		for index, state := range pipe.responseStates {
-			responseAdapters[index] = data.NewAdapter(prior, state)
-		}
-
-		for range pipe.response.Next(data.NewValue(responseAdapters...)) {
-		}
-	}
-
-	if err := errors.Join(
-		publisher.Error(), pipe.tape.Error(), pipe.interval.Error(),
-		pipe.touch.Error(), pipe.bar.Error(), pipe.response.Error(),
-	); err != nil {
-		signal.Error(err)
-		return nil
-	}
-
-	midpoint := pipe.output.Values["midpoint"]
-
-	if closed {
-		pipe.barQuantity = 0
-		pipe.barNotional = 0
-		pipe.barTradeCount = 0
-		pipe.barStart = prior.At
-		pipe.barFromMid = midpoint
-	} else {
-		pipe.barQuantity = pipe.output.Values["volume_bar_quantity"]
-		pipe.barNotional = pipe.output.Values["volume_bar_notional"]
-		pipe.barTradeCount = pipe.output.Values["volume_bar_trade_count"]
-
-		if pipe.barFromMid <= 0 {
-			pipe.barFromMid = midpoint
-		}
-	}
-
-	pipe.barTarget = pipe.output.Values["volume_bar_target_quantity"]
-	pipe.prevAt = prior.At
-	pipe.hasPrev = true
-
-	out := data.NewMeasurement(
-		prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick,
-	)
-	out.Peers(prior)
-	out.Epoch = prior.Epoch
-	out.Label = prior.Label
-	out.Source = signal.Name()
-	out.SeqIdx = prior.SeqIdx
-	out.Tick = prior.Tick
-	out.At = prior.At
-	out.From = prior.At
-
-	if closed {
-		out.From = barStart
-	}
-
-	metrics := make([]*data.Metric, 0, len(signal.metrics))
-
-	for _, metric := range signal.metrics {
-		value := pipe.output.Values[metric[1]]
-
-		metrics = append(metrics, data.NewMetric(
-			metric[0], value, data.Unit(metric[2]), data.Timescale(metric[3]),
-		))
-	}
-
-	return out.Write(metrics...)
-}
-
-/*
-tradeValue reads one required trade field from a trade frame. A read failure
-or an absent field is an error: every trade frame carries price and qty, so a
-frame without them is broken upstream and must not be silently skipped.
-*/
-func tradeValue(prior *data.Measurement, key string) (float64, error) {
-	entry := data.Pull(prior.Read(key))
-
-	if entry != nil && entry.Err != nil {
-		return 0, entry.Err
-	}
-
-	if entry == nil || entry.Metric == nil || entry.Metric.Label != key {
-		return 0, errnie.Err(
-			errnie.NotAcceptable, "[pumpdump] trade frame is missing "+key, nil,
-		)
-	}
-
-	return entry.Metric.Raw, nil
+	return prior.Next(signal.Name(), output)
 }

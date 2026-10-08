@@ -24,7 +24,7 @@ func TestProject(t *testing.T) {
 
 		var yielded int
 
-		for range project.Next(data.NewValue(measurement)) {
+		for range project.Next(data.NewValue(measurement).Next(nil)) {
 			yielded++
 		}
 
@@ -42,7 +42,7 @@ func TestProject(t *testing.T) {
 		Convey("A metric the measurement does not carry rejects it as a whole", func() {
 			missing := NewProject(store, 7, [4]string{"absent", "", "", ""})
 
-			for range missing.Next(data.NewValue(measurement)) {
+			for range missing.Next(data.NewValue(measurement).Next(nil)) {
 			}
 
 			So(missing.Error(), ShouldNotBeNil)

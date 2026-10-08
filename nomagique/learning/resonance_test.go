@@ -20,7 +20,7 @@ func TestOvercompleteMultiTimescaleManifold(t *testing.T) {
 		Convey("Settling should compute multi-layer readouts with innovations", func() {
 			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(
 				[3][]float64{{ManifoldSettle, 1}, {0.5, -0.5}, nil},
-			)))
+			).Next(nil)))
 			So(manifold.Error(), ShouldBeNil)
 
 			// [z1(8) + z2(3)] + [e0(2) + e1(8)] = 21 dimensions
@@ -31,12 +31,12 @@ func TestOvercompleteMultiTimescaleManifold(t *testing.T) {
 		Convey("Learn should update all multi-timescale temporal matrices and the RLS head", func() {
 			data.Read[[10][]float64](manifold.Next(data.NewValue(
 				[3][]float64{{ManifoldSettle}, {0.5, -0.5}, nil},
-			)))
+			).Next(nil)))
 			So(manifold.Error(), ShouldBeNil)
 
 			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(
 				[3][]float64{{ManifoldLearn}, {0.02}, nil},
-			)))
+			).Next(nil)))
 			So(manifold.Error(), ShouldBeNil)
 			So(reading[3], ShouldHaveLength, 1)
 		})
@@ -52,39 +52,39 @@ func TestPerHorizonTaskHead(t *testing.T) {
 		Convey("The task head holds one row per horizon", func() {
 			So(manifold.taskRows, ShouldEqual, 4)
 
-			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(read)))
+			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(read).Next(nil)))
 			So(reading[3], ShouldHaveLength, 4)
 		})
 
 		Convey("A task observation trains only the addressed horizon row", func() {
-			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(settle)))
+			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(settle).Next(nil)))
 			So(manifold.Error(), ShouldBeNil)
 
 			data.Read[[10][]float64](manifold.Next(data.NewValue(
 				[3][]float64{{ManifoldTask, 4, 0.1, 1.0}, reading[1], nil},
-			)))
+			).Next(nil)))
 			So(manifold.Error(), ShouldBeNil)
 
-			snapshot := data.Read[[10][]float64](manifold.Next(data.NewValue(read)))
+			snapshot := data.Read[[10][]float64](manifold.Next(data.NewValue(read).Next(nil)))
 			So(snapshot[5][3], ShouldEqual, 1)
 			So(snapshot[4][3], ShouldBeGreaterThan, 0)
 			So(snapshot[5][0], ShouldEqual, 0)
 		})
 
 		Convey("A forecast returns one cumulative forecast per horizon from the current readout", func() {
-			data.Read[[10][]float64](manifold.Next(data.NewValue(settle)))
+			data.Read[[10][]float64](manifold.Next(data.NewValue(settle).Next(nil)))
 			So(manifold.Error(), ShouldBeNil)
 
 			reading := data.Read[[10][]float64](manifold.Next(data.NewValue(
 				[3][]float64{{ManifoldForecast, 4}, nil, nil},
-			)))
+			).Next(nil)))
 			So(manifold.Error(), ShouldBeNil)
 			So(reading[8], ShouldHaveLength, 4*6)
 
 			// Clamping: a request beyond the head's rows yields the head's rows.
 			clamped := data.Read[[10][]float64](manifold.Next(data.NewValue(
 				[3][]float64{{ManifoldForecast, 9}, nil, nil},
-			)))
+			).Next(nil)))
 			So(manifold.Error(), ShouldBeNil)
 			So(clamped[8], ShouldHaveLength, 4*6)
 		})
@@ -92,7 +92,7 @@ func TestPerHorizonTaskHead(t *testing.T) {
 		Convey("An out-of-range task horizon is rejected", func() {
 			for range manifold.Next(data.NewValue(
 				[3][]float64{{ManifoldTask, 5, 0, 1}, make([]float64, 21), nil},
-			)) {
+			).Next(nil)) {
 			}
 
 			So(manifold.Error(), ShouldNotBeNil)
@@ -114,7 +114,7 @@ func TestManifoldPrimitiveWire(t *testing.T) {
 
 			for out := range manifold.Next(data.NewValue(
 				[3][]float64{{ManifoldSettle}, {0.5, -0.5}, nil},
-			)) {
+			).Next(nil)) {
 				reading = *(*[10][]float64)(out)
 				readings++
 			}
@@ -131,7 +131,7 @@ func TestManifoldPrimitiveWire(t *testing.T) {
 
 			for range rejected.Next(data.NewValue(
 				[3][]float64{{ManifoldSettle}, {0.5}, nil},
-			)) {
+			).Next(nil)) {
 				t.Fatal("rejected manifold must yield nothing")
 			}
 

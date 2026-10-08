@@ -15,82 +15,49 @@ Counterfactual composes abduction, intervention and prediction.
 type Counterfactual struct {
 	*core.PrimitiveError
 	tolerance float64
-	input     data.Map[string]
-	output    data.Map[float64]
 }
 
-func NewCounterfactual(tolerance float64) *Counterfactual {
-	output := data.NewOutputMap()
-	output.Values["counterfactual"] = 0
-	output.Values["noise"] = 0
-	output.Values["precision"] = 0
-	output.Values["defined"] = 0
-
+func NewCounterfactual(tolerance float64) core.Primitive {
 	return &Counterfactual{
 		PrimitiveError: core.NewPrimitiveError(),
 		tolerance:      tolerance,
-		input: data.NewMap(
-			"level", "level",
-			"actual", "actual",
-			"factual", "factual",
-			"predicted", "predicted",
-		),
-		output: output,
 	}
 }
 
 func (op *Counterfactual) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var values [4]float64
+		index := 0
+
 		for arriving := range in {
 			if arriving == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
+			if index < 4 {
+				values[index] = *(*float64)(arriving)
+				index++
 			}
+		}
 
-			var values data.Map[float64]
+		if index < 4 {
+			op.Error(core.ErrShape)
+			return
+		}
 
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
+		actual := values[1]
+		factual := values[2]
+		predicted := values[3]
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
+		noise := actual - factual
+		absNoise := math.Abs(noise)
+		counterfactual := predicted + noise
+		precision := 1.0 / (1.0 + absNoise)
+		defined := 1.0
 
-			actual, actualOK := values.Values["actual"]
-			factual, factualOK := values.Values["factual"]
-			predicted, predictedOK := values.Values["predicted"]
-
-			if !actualOK || !factualOK || !predictedOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			noise := actual - factual
-			absNoise := math.Abs(noise)
-
-			op.output.Values["noise"] = noise
-			op.output.Values["counterfactual"] = predicted + noise
-			op.output.Values["precision"] = 1.0 / (1.0 + absNoise)
-			op.output.Values["defined"] = 1.0
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+		for value := range data.NewValue(counterfactual, noise, precision, defined).Next(nil) {
+			if !yield(value) {
 				return
 			}
 		}

@@ -23,26 +23,16 @@ func TestTableNext(t *testing.T) {
 		So(node.Error(), ShouldBeNil)
 
 		for _, level := range []float64{1, 0, 2, -1} {
-			state := data.NewState(data.NewMap("level", "level"))
-			adapter := data.NewAdapter(nil, state)
-			input := data.NewOutputMap()
-			input.Values["level"] = level
+			var results []float64
 
-			for range adapter.Next(data.NewValue(input)) {
+			for pointer := range node.Next(data.NewValue(level).Next(nil)) {
+				results = append(results, *(*float64)(pointer))
 			}
 
-			data.Read[*data.Adapter](node.Next(data.NewValue(adapter)))
 			So(node.Error(), ShouldBeNil)
-
-			outputState := data.NewMap("expectation", "expectation", "defined", "defined")
-			var result data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(outputState)) {
-				result = *(*data.Map[float64])(pointer)
-			}
-
-			So(result.Values["defined"], ShouldEqual, 1.0)
-			So(result.Values["expectation"], ShouldAlmostEqual, 2+3*level)
+			So(len(results), ShouldEqual, 2)
+			So(results[0], ShouldAlmostEqual, 2+3*level)
+			So(results[1], ShouldEqual, 1.0)
 		}
 	})
 
@@ -58,26 +48,16 @@ func TestTableNext(t *testing.T) {
 		node := causal.NewTable(4, rows, 2, 1, []int{0}, false)
 		So(node.Error(), ShouldBeNil)
 
-		state := data.NewState(data.NewMap("level", "level"))
-		adapter := data.NewAdapter(nil, state)
-		input := data.NewOutputMap()
-		input.Values["level"] = 1.0
+		var results []float64
 
-		for range adapter.Next(data.NewValue(input)) {
+		for pointer := range node.Next(data.NewValue(1.0).Next(nil)) {
+			results = append(results, *(*float64)(pointer))
 		}
 
-		data.Read[*data.Adapter](node.Next(data.NewValue(adapter)))
 		So(node.Error(), ShouldBeNil)
-
-		outputState := data.NewMap("expectation", "expectation", "defined", "defined")
-		var result data.Map[float64]
-
-		for pointer := range adapter.Next(data.NewValue(outputState)) {
-			result = *(*data.Map[float64])(pointer)
-		}
-
-		So(result.Values["defined"], ShouldEqual, 1.0)
-		So(result.Values["expectation"], ShouldAlmostEqual, 2+3*1)
+		So(len(results), ShouldEqual, 2)
+		So(results[0], ShouldAlmostEqual, 2+3*1)
+		So(results[1], ShouldEqual, 1.0)
 	})
 
 	Convey("Evidence short of the minimum is refused", t, func() {
@@ -101,41 +81,18 @@ func TestTableAbductive(t *testing.T) {
 
 		for _, level := range []float64{1, 0, 2, -1} {
 			for _, noise := range []float64{0, 0.25, -0.5} {
-				state := data.NewState(data.NewMap(
-					"level", "level",
-					"actual_0", "actual_0",
-					"actual_1", "actual_1",
-					"actual_2", "actual_2",
-				))
-				adapter := data.NewAdapter(nil, state)
-				input := data.NewOutputMap()
-				input.Values["level"] = level
-				input.Values["actual_0"] = 0
-				input.Values["actual_1"] = 0
-				input.Values["actual_2"] = 1 + noise
+				var results []float64
 
-				for range adapter.Next(data.NewValue(input)) {
+				for pointer := range node.Next(data.NewValue(level, 0.0, 0.0, 1.0+noise).Next(nil)) {
+					results = append(results, *(*float64)(pointer))
 				}
 
-				data.Read[*data.Adapter](node.Next(data.NewValue(adapter)))
 				So(node.Error(), ShouldBeNil)
-
-				outputState := data.NewMap(
-					"counterfactual", "counterfactual",
-					"noise", "noise",
-					"precision", "precision",
-					"defined", "defined",
-				)
-				var result data.Map[float64]
-
-				for pointer := range adapter.Next(data.NewValue(outputState)) {
-					result = *(*data.Map[float64])(pointer)
-				}
-
-				So(result.Values["defined"], ShouldEqual, 1.0)
-				So(result.Values["noise"], ShouldAlmostEqual, noise)
-				So(result.Values["counterfactual"], ShouldAlmostEqual, 1+3*level+noise)
-				So(result.Values["precision"], ShouldAlmostEqual, 1/(1+math.Abs(noise)))
+				So(len(results), ShouldEqual, 4)
+				So(results[0], ShouldAlmostEqual, 1+3*level+noise)
+				So(results[1], ShouldAlmostEqual, noise)
+				So(results[2], ShouldAlmostEqual, 1/(1+math.Abs(noise)))
+				So(results[3], ShouldEqual, 1.0)
 			}
 		}
 	})

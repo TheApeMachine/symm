@@ -10,6 +10,7 @@ import (
 
 /*
 Watershed finds density peaks and assigns basin membership.
+Yields basin and peak.
 */
 type Watershed struct {
 	*core.PrimitiveError
@@ -17,93 +18,62 @@ type Watershed struct {
 	peakX        float64
 	peakY        float64
 	seen         bool
-	input        data.Map[string]
-	output       data.Map[float64]
 }
 
 func NewWatershed() *Watershed {
-	output := data.NewOutputMap()
-	output.Values["basin"] = 0
-	output.Values["peak"] = 0
-
 	return &Watershed{
 		PrimitiveError: core.NewPrimitiveError(),
-		input: data.NewMap(
-			"x", "x",
-			"y", "y",
-			"authority", "authority",
-		),
-		output: output,
 	}
 }
 
 func (op *Watershed) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var values [3]float64
+		index := 0
+
 		for arriving := range in {
 			if arriving == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
+			if index < 3 {
+				values[index] = *(*float64)(arriving)
+				index++
 			}
+		}
 
-			var values data.Map[float64]
+		if index < 3 {
+			op.Error(core.ErrShape)
+			return
+		}
 
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
+		coordX := values[0]
+		coordY := values[1]
+		authority := values[2]
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
+		peak := 0.0
 
-			coordX, xOK := values.Values["x"]
-			coordY, yOK := values.Values["y"]
-			authority, authOK := values.Values["authority"]
+		if !op.seen || authority > op.maxAuthority {
+			op.maxAuthority = authority
+			op.peakX = coordX
+			op.peakY = coordY
+			op.seen = true
+			peak = 1.0
+		}
 
-			if !xOK || !yOK || !authOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
+		quadrant := 0.0
 
-			peak := 0.0
+		if coordX >= 0.5 {
+			quadrant += 1.0
+		}
 
-			if !op.seen || authority > op.maxAuthority {
-				op.maxAuthority = authority
-				op.peakX = coordX
-				op.peakY = coordY
-				op.seen = true
-				peak = 1.0
-			}
+		if coordY >= 0.5 {
+			quadrant += 2.0
+		}
 
-			quadrant := 0.0
-
-			if coordX >= 0.5 {
-				quadrant += 1.0
-			}
-
-			if coordY >= 0.5 {
-				quadrant += 2.0
-			}
-
-			op.output.Values["basin"] = quadrant
-			op.output.Values["peak"] = peak
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+		for value := range data.NewValue(quadrant, peak).Next(nil) {
+			if !yield(value) {
 				return
 			}
 		}

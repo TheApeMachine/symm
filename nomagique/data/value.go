@@ -3,16 +3,67 @@ package data
 import (
 	"iter"
 	"unsafe"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
-/*
-NewValue lifts values into a run; the run yields pointers to the values, so a
-store receives an addressable payload and answers into the same memory.
-*/
-func NewValue[T any](value ...T) iter.Seq[unsafe.Pointer] {
+type Value[T any] struct {
+	*core.PrimitiveError
+	Values []T
+}
+
+func NewValue[T any](values ...T) *Value[T] {
+	return &Value[T]{
+		PrimitiveError: core.NewPrimitiveError(),
+		Values:         values,
+	}
+}
+
+func (op *Value[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for index := range value {
-			if !yield(unsafe.Pointer(&value[index])) {
+		var (
+			items    []unsafe.Pointer
+			buffered iter.Seq[unsafe.Pointer]
+		)
+
+		if in != nil {
+			for arriving := range in {
+				items = append(items, arriving)
+			}
+
+			buffered = func(subYield func(unsafe.Pointer) bool) {
+				for _, item := range items {
+					if !subYield(item) {
+						return
+					}
+				}
+			}
+		}
+
+		for _, value := range op.Values {
+			if buffered != nil {
+				if p, ok := any(value).(core.Primitive); ok && p != nil {
+					for out := range p.Next(buffered) {
+						if !yield(out) {
+							return
+						}
+					}
+
+					continue
+				}
+			}
+
+			if ptr, ok := any(value).(unsafe.Pointer); ok {
+				if !yield(ptr) {
+					return
+				}
+				continue
+			}
+
+			val := new(T)
+			*val = value
+
+			if !yield(unsafe.Pointer(val)) {
 				return
 			}
 		}

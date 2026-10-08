@@ -53,8 +53,8 @@ func (op *AdaptiveZScore) Next(
 
 			logValue := math.Log(value)
 
-			for reading := range op.moments.Next(data.NewValue(logValue)) {
-				for pointer := range op.residual.Next(data.NewValue(*(*[10]float64)(reading))) {
+			for reading := range op.moments.Next(data.NewValue(logValue).Next(nil)) {
+				for pointer := range op.residual.Next(data.NewValue(*(*[10]float64)(reading)).Next(nil)) {
 					op.out = *(*[8]float64)(pointer)
 				}
 			}

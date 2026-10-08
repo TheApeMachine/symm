@@ -9,23 +9,15 @@ import (
 )
 
 /*
-Square owns square transformation of an arrival.
+Square computes x * x for each arrival.
 */
 type Square struct {
 	*core.PrimitiveError
-	input  data.Map[string]
-	output data.Map[float64]
 }
 
-func NewSquare() *Square {
-	output := data.NewOutputMap()
-	output.Values["value"] = 0
-	output.Values["square"] = 0
-
+func NewSquare() core.Primitive {
 	return &Square{
 		PrimitiveError: core.NewPrimitiveError(),
-		input:          data.NewMap("value", "value"),
-		output:         output,
 	}
 }
 
@@ -37,45 +29,12 @@ func (op *Square) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
+			val := *(*float64)(arriving)
 
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			var values data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			val, ok := values.Values["value"]
-
-			if !ok {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			result := val * val
-			op.output.Values["value"] = result
-			op.output.Values["square"] = result
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
-				return
+			for value := range data.NewValue(val * val).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

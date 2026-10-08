@@ -14,23 +14,12 @@ import (
 /*
 Project splits one data.Measurement into the named per-coordinate
 observations and writes them to an ObservationStore under one model epoch.
-
-The caller names the coordinates it projects as [4]string{metric, side,
-unit, timescale}; the metric is read from the Measurement through a
-data.Adapter as "metric" or "metric:side". Symbol, source, and peer (metadata
-"peer") are stamped from the Measurement. Every requested metric becomes an
-independent observational fact; nothing is collapsed into a signal-level
-scalar. A metric that cannot be read rejects the Measurement as a whole: the
-error is recorded and nothing is written.
-
-Each arrival is **data.Measurement; it is yielded back once written.
 */
 type Project struct {
 	*core.PrimitiveError
 	store       core.Primitive
 	epoch       string
 	coordinates [][4]string
-	request     data.Map[string]
 	batch       map[string][]float64
 	pairs       []float64
 }
@@ -39,24 +28,11 @@ type Project struct {
 NewProject builds a projector writing into store under the given model epoch.
 */
 func NewProject(store core.Primitive, epoch uint64, coordinates ...[4]string) *Project {
-	request := data.NewMap()
-
-	for _, coordinate := range coordinates {
-		label := coordinate[0]
-
-		if coordinate[1] != "" {
-			label += ":" + coordinate[1]
-		}
-
-		request.Values[label] = label
-	}
-
 	op := &Project{
 		PrimitiveError: core.NewPrimitiveError(),
 		store:          store,
 		epoch:          strconv.FormatUint(epoch, 10),
 		coordinates:    coordinates,
-		request:        request,
 		batch:          make(map[string][]float64, len(coordinates)),
 		pairs:          make([]float64, 2*len(coordinates)),
 	}
@@ -87,18 +63,6 @@ func (op *Project) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			adapter := data.NewAdapter(measurement, data.NewState(data.NewMap()))
-			var values data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(op.request)) {
-				values = *(*data.Map[float64])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(fmt.Errorf("%w: relation: measurement unreadable: %w", core.ErrDomain, err))
-				return
-			}
-
 			clear(op.batch)
 			at := float64(measurement.At.UnixNano())
 			peer := measurement.Meta("peer")
@@ -110,12 +74,14 @@ func (op *Project) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					label += ":" + coordinate[1]
 				}
 
-				raw, held := values.Values[label]
+				entry := data.Pull(measurement.Read(label))
 
-				if !held {
+				if entry == nil || entry.Metric == nil {
 					op.Error(fmt.Errorf("%w: relation: metric %q not held", core.ErrNotHeld, label))
 					return
 				}
+
+				raw := entry.Metric.Raw
 
 				key := strings.Join([]string{
 					measurement.Label, measurement.Source, coordinate[0], coordinate[1],
@@ -127,7 +93,7 @@ func (op *Project) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.batch[key] = op.pairs[2*index : 2*index+2]
 			}
 
-			for range op.store.Next(data.NewValue(op.batch)) {
+			for range op.store.Next(data.NewValue(op.batch).Next(nil)) {
 			}
 
 			if err := op.store.Error(); err != nil {

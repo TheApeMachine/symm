@@ -39,7 +39,7 @@ func NewMetric(
 	return &Metric{
 		Label:     label,
 		Raw:       raw,
-		unit:      unit,
+		unit:      CanonicalUnit(label, unit),
 		timescale: timescale,
 	}
 }
@@ -55,7 +55,7 @@ func NewExactMetric(
 		Label:     label,
 		Raw:       exact.Float64(),
 		Exact:     exact,
-		unit:      unit,
+		unit:      CanonicalUnit(label, unit),
 		timescale: timescale,
 	}
 }
@@ -65,14 +65,10 @@ func (metric *Metric) Unit() Unit {
 		return ""
 	}
 
-	return metric.unit
+	return CanonicalUnit(metric.Label, metric.unit)
 }
 
 func (metric *Metric) Timescale() Timescale {
-	if metric == nil {
-		return ""
-	}
-
 	return metric.timescale
 }
 
@@ -82,11 +78,10 @@ center, scale, normalized, and standardized values. An invalid observation
 is rejected before the Welford update.
 */
 func (metric *Metric) finalize(n float64) error {
-	// The observation is checked before it touches the Welford state: a
-	// producer that computed an undefined Raw fails this Measurement here,
-	// and the center/scale it would have poisoned stay as they were.
-	if err := metric.valid("label", "raw", "unit", "timescale"); err != nil {
-		return err
+	if err := errnie.Require(map[string]any{
+		"raw": metric.Raw,
+	}); err != nil {
+		return errnie.Error(err)
 	}
 
 	delta := metric.Raw - metric.center
@@ -104,44 +99,7 @@ func (metric *Metric) finalize(n float64) error {
 /*
 valid checks if the Measurement is valid.
 */
-func (metric *Metric) valid(fields ...string) error {
-	if len(fields) > 0 {
-		mapped := make(map[string]any)
-
-		for _, field := range fields {
-			switch field {
-			case "label":
-				mapped[field] = metric.Label
-			case "raw":
-				mapped[field] = metric.Raw
-			case "normalized":
-				mapped[field] = metric.Normalized
-			case "standardized":
-				mapped[field] = metric.Standardized
-			case "exact":
-				mapped[field] = metric.Exact
-			case "center":
-				mapped[field] = metric.center
-			case "scale":
-				mapped[field] = metric.scale
-			case "unit":
-				mapped[field] = metric.unit
-			case "timescale":
-				mapped[field] = metric.timescale
-			case "updated":
-				mapped[field] = true
-			}
-		}
-
-		return errnie.Error(
-			errnie.Require(mapped),
-			"metric", metric.Label,
-			"raw", metric.Raw,
-			"center", metric.center,
-			"scale", metric.scale,
-		)
-	}
-
+func (metric *Metric) valid() error {
 	// Exact is optional by contract: only venue-printed observations carry
 	// it, derived facts leave it nil.
 	return errnie.Error(errnie.Require(map[string]any{

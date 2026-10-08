@@ -28,24 +28,17 @@ func NewCensus(memory *Associate) *Census {
 
 func (op *Census) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			if arriving == nil || op.memory == nil {
+		compute := func() bool {
+			if op.memory == nil {
 				op.Error(core.ErrShape)
-				return
-			}
-
-			adapter := *(**data.Adapter)(arriving)
-
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
+				return false
 			}
 
 			root := op.memory.root.Load()
 
 			if root == nil {
 				op.Error(core.ErrShape)
-				return
+				return false
 			}
 
 			records := root.Len()
@@ -65,29 +58,44 @@ func (op *Census) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				span = float64(binary.BigEndian.Uint64(raw))
 			}
 
-			published := data.NewOutputMap()
-			published.Values["records"] = float64(records)
-			published.Values["span"] = span
+			censusResult := &CensusResult{
+				Records: float64(records),
+				Span:    span,
+				Classes: make(map[string]float64),
+			}
+
 			op.memory.classes.Range(func(key, value any) bool {
 				name, nameOK := key.(string)
 				count, countOK := value.(*atomic.Int32)
 
 				if nameOK && countOK {
-					published.Values[name] = float64(count.Load())
+					censusResult.Classes[name] = float64(count.Load())
 				}
 
 				return true
 			})
 
-			for range adapter.Next(data.NewValue(published)) {
+			for value := range data.NewValue(unsafe.Pointer(censusResult)).Next(nil) {
+				if !yield(value) {
+					return false
+				}
 			}
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
+			return true
+		}
+
+		if in == nil {
+			compute()
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
 				return
 			}
 
-			if !yield(arriving) {
+			if !compute() {
 				return
 			}
 		}

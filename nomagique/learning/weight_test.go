@@ -21,7 +21,7 @@ func TestTrustWeightNext(t *testing.T) {
 				residual = 0.4 * math.Sin(float64(index)*0.17)
 			}
 
-			got := data.Read[[4]float64](node.Next(data.NewValue([2]float64{predicted, predicted + residual})))
+			got := data.Read[[4]float64](node.Next(data.NewValue([2]float64{predicted, predicted + residual}).Next(nil)))
 
 			So(node.Error(), ShouldBeNil)
 			So(got[0], ShouldEqual, got[1])

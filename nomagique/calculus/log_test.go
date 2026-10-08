@@ -1,40 +1,37 @@
 package calculus
 
 import (
+	"errors"
 	"math"
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestLog(t *testing.T) {
-	Convey("Log computes natural logarithm", t, func() {
+	Convey("Given a Log primitive", t, func() {
 		op := NewLog()
-		state := data.NewState(data.NewMap("value", "value"))
-		adapter := data.NewAdapter(nil, state)
-		input := data.NewOutputMap()
-		input.Values["value"] = math.E
 
-		for range adapter.Next(data.NewValue(input)) {
-		}
-
-		data.Read[*data.Adapter](op.Next(data.NewValue(adapter)))
-		So(op.Error(), ShouldBeNil)
-		So(op.output.Values["value"], ShouldAlmostEqual, 1.0, 1e-9)
+		Convey("Log computes natural logarithm", func() {
+			got := data.Read[float64](op.Next(data.NewValue(math.E).Next(nil)))
+			So(op.Error(), ShouldBeNil)
+			So(got, ShouldAlmostEqual, 1.0, 1e-9)
+		})
 
 		Convey("Non-positive value records domain error", func() {
-			errOp := NewLog()
-			errState := data.NewState(data.NewMap("value", "value"))
-			errAdapter := data.NewAdapter(nil, errState)
-			errInput := data.NewOutputMap()
-			errInput.Values["value"] = -1.0
+			data.Read[float64](op.Next(data.NewValue(-1.0).Next(nil)))
+			So(errors.Is(op.Error(), core.ErrDomain), ShouldBeTrue)
+		})
 
-			for range errAdapter.Next(data.NewValue(errInput)) {
+		Convey("Nil arrival records ErrShape", func() {
+			nilSeq := func(yield func(unsafe.Pointer) bool) {
+				yield(nil)
 			}
-
-			data.Read[*data.Adapter](errOp.Next(data.NewValue(errAdapter)))
-			So(errOp.Error(), ShouldNotBeNil)
+			data.Read[float64](op.Next(nilSeq))
+			So(errors.Is(op.Error(), core.ErrShape), ShouldBeTrue)
 		})
 	})
 }

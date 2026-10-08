@@ -1,11 +1,3 @@
-/*
-Package cognition is associative memory as primitives.
-
-Associate records one context against one class. Recall reads that class
-back. Train records every contiguous token span of a context so a later
-suffix can match it. Census, Snapshot, Restore, and Export read the same
-memory. Text and numbers cross the boundary through a data.Adapter.
-*/
 package cognition
 
 import (
@@ -27,16 +19,7 @@ import (
 const basinFloor = core.Unit / 16
 
 /*
-Associate owns the association trie. Key 0 in that trie is the observation
-clock and key 1 is the longest stored token span, written in the same
-transaction as the association they describe. Basin keys are
-b/<context>/<class>. Sensory keys are s/<context>. Terminal basin classes
-are enter and exit only — wait is not an action and is rejected. A graded
-association starts at the center of the unit interval. An ungraded
-association starts at one. A graded observation whose feedback is zero
-records the sensory transition and does not reinforce the basin. Negative
-feedback that drives a basin below basinFloor deletes that sequence
-(prune) instead of storing a useless leaf.
+Associate owns the association trie.
 */
 type Associate struct {
 	*core.PrimitiveError
@@ -63,66 +46,28 @@ func (op *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
+			rec := (*Record)(arriving)
 
-			if adapter == nil || op.root.Load() == nil {
+			if rec == nil || op.root.Load() == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			var text data.Map[string]
-
-			for pointer := range adapter.Next(data.NewValue(data.NewLiteral("context", "class"))) {
-				text = *(*data.Map[string])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			context, contextOK := text.Values["context"]
-			class, classOK := text.Values["class"]
-
-			if !contextOK || !classOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
+			context := rec.Context
+			class := rec.Class
 
 			if context == "" {
 				op.Error(core.ErrDomain)
 				return
 			}
 
-			// Wait is precursor stance (abstention / internal prefix), never a
-			// terminal basin class. Edges are region tokens; leaves are enter/exit.
 			if class == "wait" {
 				op.Error(core.ErrDomain)
 				return
 			}
 
-			var numbers data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(data.NewMap(
-				"feedback", "feedback",
-				"graded", "graded",
-			))) {
-				numbers = *(*data.Map[float64])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			feedback, feedbackOK := numbers.Values["feedback"]
-			graded, gradedOK := numbers.Values["graded"]
-
-			if !feedbackOK || !gradedOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
+			feedback := rec.Feedback
+			graded := rec.Graded
 			gradedFlag := 0.0
 
 			if graded != 0 {
@@ -188,23 +133,10 @@ func (op *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 						isNew = true
 					}
 
-					basinState := data.NewState(data.NewMap())
-					basinBridge := data.NewAdapter(nil, basinState)
-					basinIssued := data.NewOutputMap()
-					basinIssued.Values["probability"] = probability
-					basinIssued.Values["count"] = float64(count)
-					basinIssued.Values["feedback"] = feedback
-					basinIssued.Values["graded"] = gradedFlag
+					var updated float64
 
-					for range basinBridge.Next(data.NewValue(basinIssued)) {
-					}
-
-					if err := basinBridge.Error(); err != nil {
-						op.Error(err)
-						return
-					}
-
-					for range op.reinforce.Next(data.NewValue(basinBridge)) {
+					for pointer := range op.reinforce.Next(data.NewValue(probability, float64(count), feedback, gradedFlag).Next(nil)) {
+						updated = *(*float64)(pointer)
 					}
 
 					if err := op.reinforce.Error(); err != nil {
@@ -212,26 +144,6 @@ func (op *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 						return
 					}
 
-					var basinUpdated data.Map[float64]
-
-					for pointer := range basinBridge.Next(data.NewValue(data.NewMap("probability", "probability"))) {
-						basinUpdated = *(*data.Map[float64])(pointer)
-					}
-
-					if err := basinBridge.Error(); err != nil {
-						op.Error(err)
-						return
-					}
-
-					updated, held := basinUpdated.Values["probability"]
-
-					if !held {
-						op.Error(core.ErrNotHeld)
-						return
-					}
-
-					// Losing / wrong sequences dampen. Once strength is useless,
-					// prune the basin so a branch never keeps a dead leaf.
 					pruned := gradedFlag != 0 && feedback < 0 && updated < basinFloor
 
 					if pruned {
@@ -241,7 +153,9 @@ func (op *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 						}
 
 						isNew = false
-					} else {
+					}
+
+					if !pruned {
 						var packed [24]byte
 						binary.LittleEndian.PutUint64(packed[0:8], count)
 						binary.LittleEndian.PutUint64(packed[8:16], math.Float64bits(updated))
@@ -263,23 +177,10 @@ func (op *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					probability = math.Float64frombits(binary.LittleEndian.Uint64(existing[8:16]))
 				}
 
-				sensoryState := data.NewState(data.NewMap())
-				sensoryBridge := data.NewAdapter(nil, sensoryState)
-				sensoryIssued := data.NewOutputMap()
-				sensoryIssued.Values["probability"] = probability
-				sensoryIssued.Values["count"] = float64(count)
-				sensoryIssued.Values["feedback"] = 0
-				sensoryIssued.Values["graded"] = 0
+				var sensoryUpdated float64
 
-				for range sensoryBridge.Next(data.NewValue(sensoryIssued)) {
-				}
-
-				if err := sensoryBridge.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				for range op.reinforce.Next(data.NewValue(sensoryBridge)) {
+				for pointer := range op.reinforce.Next(data.NewValue(probability, float64(count), 0.0, 0.0).Next(nil)) {
+					sensoryUpdated = *(*float64)(pointer)
 				}
 
 				if err := op.reinforce.Error(); err != nil {
@@ -287,27 +188,9 @@ func (op *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					return
 				}
 
-				var sensoryUpdated data.Map[float64]
-
-				for pointer := range sensoryBridge.Next(data.NewValue(data.NewMap("probability", "probability"))) {
-					sensoryUpdated = *(*data.Map[float64])(pointer)
-				}
-
-				if err := sensoryBridge.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				updated, held := sensoryUpdated.Values["probability"]
-
-				if !held {
-					op.Error(core.ErrNotHeld)
-					return
-				}
-
 				var packed [24]byte
 				binary.LittleEndian.PutUint64(packed[0:8], count)
-				binary.LittleEndian.PutUint64(packed[8:16], math.Float64bits(updated))
+				binary.LittleEndian.PutUint64(packed[8:16], math.Float64bits(sensoryUpdated))
 				binary.LittleEndian.PutUint64(packed[16:24], clock)
 				transaction.Insert(sensory, bytes.Clone(packed[:]))
 
@@ -375,20 +258,10 @@ func (op *Associate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 				span = float64(binary.BigEndian.Uint64(spanRaw))
 			}
 
-			issued := data.NewOutputMap()
-			issued.Values["records"] = float64(records)
-			issued.Values["span"] = span
-
-			for range adapter.Next(data.NewValue(issued)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
-				return
+			for value := range data.NewValue(float64(records), span).Next(nil) {
+				if !yield(value) {
+					return
+				}
 			}
 		}
 	}

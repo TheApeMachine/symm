@@ -9,19 +9,16 @@ import (
 )
 
 func TestLinearFitNext(t *testing.T) {
-	Convey("LinearFit estimates parameters from adapter", t, func() {
+	Convey("LinearFit estimates parameters from stream", t, func() {
 		node := causal.NewLinearFit(1e-15)
 
-		state := data.NewState(data.NewMap("target", "target", "feature", "feature"))
-		adapter := data.NewAdapter(nil, state)
-		input := data.NewOutputMap()
-		input.Values["target"] = 5.0
-		input.Values["feature"] = 1.0
+		var results []float64
 
-		for range adapter.Next(data.NewValue(input)) {
+		for pointer := range node.Next(data.NewValue(5.0, 1.0).Next(nil)) {
+			results = append(results, *(*float64)(pointer))
 		}
 
-		data.Read[*data.Adapter](node.Next(data.NewValue(adapter)))
 		So(node.Error(), ShouldBeNil)
+		So(len(results), ShouldEqual, 3)
 	})
 }

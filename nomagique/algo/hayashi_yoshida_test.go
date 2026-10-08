@@ -57,7 +57,7 @@ func TestHayashiYoshidaNext(t *testing.T) {
 		node := algo.NewHayashiYoshida()
 
 		for range 3 {
-			out := tests.CollectSeq[[6]float64](node.Next(data.NewValue(query)))
+			out := tests.CollectSeq[[6]float64](node.Next(data.NewValue(query).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
 			So(out[0][1], ShouldEqual, 2)
@@ -76,13 +76,13 @@ func TestHayashiEmptyAndTouch(t *testing.T) {
 			prices([]int64{0, 1}, []float64{1, 2}),
 			prices([]int64{1, 2}, []float64{1, 2}),
 			0,
-		))))
+		)).Next(nil)))
 		So(fields[0][2], ShouldEqual, 0)
 		So(fields[0][0], ShouldEqual, 0)
 		So(fields[0][5], ShouldEqual, 0)
 
 		node = algo.NewHayashiYoshida()
-		empty := tests.CollectSeq[[6]float64](node.Next(data.NewValue(pathQuery(nil, nil, 0))))
+		empty := tests.CollectSeq[[6]float64](node.Next(data.NewValue(pathQuery(nil, nil, 0)).Next(nil)))
 		So(math.IsNaN(empty[0][0]), ShouldBeTrue)
 		So(empty[0][5], ShouldEqual, 0)
 	})
@@ -123,7 +123,7 @@ func TestHayashiReference(t *testing.T) {
 			}
 
 			node := algo.NewHayashiYoshida()
-			out := tests.CollectSeq[[6]float64](node.Next(data.NewValue(pathQuery(prices(lt, lp), prices(rt, rp), 0))))
+			out := tests.CollectSeq[[6]float64](node.Next(data.NewValue(pathQuery(prices(lt, lp), prices(rt, rp), 0)).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(out[0][1], ShouldEqual, covariance)
 			So(out[0][2], ShouldEqual, support)
@@ -149,7 +149,7 @@ func BenchmarkNewHayashiYoshida(b *testing.B) {
 	for b.Loop() {
 		count := 0
 
-		for range graph.Next(data.NewValue(input)) {
+		for range graph.Next(data.NewValue(input).Next(nil)) {
 			count++
 		}
 
@@ -195,7 +195,7 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 		estimate := func(lag float64) ([6]float64, error) {
 			out := tests.CollectSeq[[6]float64](estimator.Next(data.NewValue(
 				[3][]float64{leftReturns, rightReturns, {leftEnergy, rightEnergy, lag}},
-			)))
+			).Next(nil)))
 
 			if len(out) == 0 {
 				return [6]float64{}, estimator.Error()

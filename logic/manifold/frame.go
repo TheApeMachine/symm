@@ -36,7 +36,7 @@ func newAxis(span float64) *axis {
 func (axis *axis) observe(value float64) (position, zscore float64, moments [3]float64, err error) {
 	var reading *[10]float64
 
-	for out := range axis.moments.Next(data.NewValue(value)) {
+	for out := range axis.moments.Next(data.NewValue(value).Next(nil)) {
 		reading = (*[10]float64)(out)
 	}
 
@@ -115,7 +115,7 @@ func evaluateCausalResidual(
 ) ([8]float64, error) {
 	var result [8]float64
 
-	for out := range residual.Next(data.NewValue(*reading)) {
+	for out := range residual.Next(data.NewValue(*reading).Next(nil)) {
 		result = *(*[8]float64)(out)
 	}
 

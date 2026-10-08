@@ -12,30 +12,14 @@ func TestLinearPredictionNext(t *testing.T) {
 	Convey("LinearPrediction evaluates combination of intercept, weight and feature", t, func() {
 		node := causal.NewLinearPrediction()
 
-		state := data.NewState(data.NewMap(
-			"intercept", "intercept",
-			"weight", "weight",
-			"feature", "feature",
-		))
-		adapter := data.NewAdapter(nil, state)
-		input := data.NewOutputMap()
-		input.Values["intercept"] = 2.0
-		input.Values["weight"] = 3.0
-		input.Values["feature"] = 4.0
+		var results []float64
 
-		for range adapter.Next(data.NewValue(input)) {
+		for pointer := range node.Next(data.NewValue(2.0, 3.0, 4.0).Next(nil)) {
+			results = append(results, *(*float64)(pointer))
 		}
 
-		data.Read[*data.Adapter](node.Next(data.NewValue(adapter)))
 		So(node.Error(), ShouldBeNil)
-
-		outputState := data.NewMap("prediction", "prediction")
-		var result data.Map[float64]
-
-		for pointer := range adapter.Next(data.NewValue(outputState)) {
-			result = *(*data.Map[float64])(pointer)
-		}
-
-		So(result.Values["prediction"], ShouldEqual, 2.0+3.0*4.0)
+		So(len(results), ShouldEqual, 1)
+		So(results[0], ShouldEqual, 2.0+3.0*4.0)
 	})
 }

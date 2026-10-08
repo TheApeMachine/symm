@@ -42,7 +42,7 @@ func TestClassifierWeightsScores(testingTB *testing.T) {
 			"rvol":        2.0,
 			"precursor":   0.1,
 			"compression": 1.5,
-		})))
+		}).Next(nil)))
 
 		Convey("It should produce configured logits", func() {
 			So(scores, ShouldHaveLength, 4)
@@ -60,12 +60,12 @@ func TestClassifierWeightsNegativeFeatures(testingTB *testing.T) {
 			"rvol":        -2.0,
 			"precursor":   -0.1,
 			"compression": -1.5,
-		})))
+		}).Next(nil)))
 		zero := data.Read[[]float64](node.Next(data.NewValue(map[string]float64{
 			"rvol":        0,
 			"precursor":   0,
 			"compression": 0,
-		})))
+		}).Next(nil)))
 
 		Convey("It should preserve negative contribution instead of squashing to zero", func() {
 			So(negative[0], ShouldBeLessThan, 0)
@@ -81,7 +81,7 @@ func TestNewClassifierWeightsInvalidScale(testingTB *testing.T) {
 		Convey("It should record the failure and yield nothing", func() {
 			So(node.Error(), ShouldNotBeNil)
 
-			for range node.Next(data.NewValue(map[string]float64{})) {
+			for range node.Next(data.NewValue(map[string]float64{}).Next(nil)) {
 				testingTB.Fatal("invalid classifier weights must yield nothing")
 			}
 		})

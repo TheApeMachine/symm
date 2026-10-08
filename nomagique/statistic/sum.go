@@ -9,73 +9,37 @@ import (
 )
 
 /*
-Sum owns the running arithmetic sum. It reads the native "value" through the
-arriving data.Adapter and publishes the running total as "sum". The arriving
-value is left untouched, so the increment and the total stay separate facts.
+Sum owns the running arithmetic sum. Arriving values are added to the running
+total in stream order and the updated sum is yielded through the output run.
 */
 type Sum struct {
 	*core.PrimitiveError
-	total  float64
-	input  data.Map[string]
-	output data.Map[float64]
 }
 
-func NewSum() *Sum {
-	output := data.NewOutputMap()
-	output.Values["sum"] = 0
-
+/*
+NewSum creates the running arithmetic sum primitive.
+*/
+func NewSum() core.Primitive {
 	return &Sum{
 		PrimitiveError: core.NewPrimitiveError(),
-		input:          data.NewMap("value", "value"),
-		output:         output,
 	}
 }
 
 func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var out float64
+
 		for arriving := range in {
 			if arriving == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
+			out += *(*float64)(arriving)
+		}
 
-			if adapter == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			var values data.Map[float64]
-
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			value, ok := values.Values["value"]
-
-			if !ok {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			op.total += value
-			op.output.Values["sum"] = op.total
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+		for value := range data.NewValue(out).Next(nil) {
+			if !yield(value) {
 				return
 			}
 		}

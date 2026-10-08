@@ -1,7 +1,6 @@
 package causal
 
 import (
-	"fmt"
 	"iter"
 	"math"
 	"slices"
@@ -28,12 +27,9 @@ type Table struct {
 	coefficients []float64
 	baseline     float64
 	effect       float64
-	stump        *Stump
-	backdoor     *Backdoor
-	abductive    *Counterfactual
-	input        data.Map[string]
-	actuals      data.Map[string]
-	output       data.Map[float64]
+	stump        core.Primitive
+	backdoor     core.Primitive
+	abductive    core.Primitive
 }
 
 /*
@@ -47,23 +43,12 @@ func NewTable(
 	features []int,
 	linear bool,
 ) *Table {
-	output := data.NewOutputMap()
-	output.Values["expectation"] = 0
-	output.Values["counterfactual"] = 0
-	output.Values["noise"] = 0
-	output.Values["precision"] = 0
-	output.Values["defined"] = 0
-
 	prim := &Table{
 		PrimitiveError: core.NewPrimitiveError(),
 		minimum:        minimum,
 		target:         target,
 		treatment:      treatment,
 		linear:         linear,
-		input: data.NewMap(
-			"level", "level",
-		),
-		output: output,
 	}
 
 	if minimum < 1 {
@@ -126,12 +111,6 @@ func NewTable(
 	prim.rows = observations
 	prim.features = featureCols
 
-	actualKeys := make([]string, 0, columnCount*2)
-	for colIndex := 0; colIndex < columnCount; colIndex++ {
-		key := fmt.Sprintf("actual_%d", colIndex)
-		actualKeys = append(actualKeys, key, key)
-	}
-	prim.actuals = data.NewMap(actualKeys...)
 
 	if !linear {
 		prim.stump = NewStump(observations, target, treatment, features)
@@ -204,138 +183,82 @@ Next evaluates interventional expectation or counterfactual queries.
 */
 func (op *Table) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		if !op.linear {
+			for out := range op.stump.Next(in) {
+				if !yield(out) {
+					return
+				}
+			}
+
+			if err := op.stump.Error(); err != nil {
+				op.Error(err)
+				return
+			}
+
+			return
+		}
+
+		var values []float64
+
 		for arriving := range in {
 			if arriving == nil {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			adapter := *(**data.Adapter)(arriving)
+			values = append(values, *(*float64)(arriving))
+		}
 
-			if adapter == nil {
+		if len(values) == 0 {
+			op.Error(core.ErrShape)
+			return
+		}
+
+		level := values[0]
+
+		if len(values) > 1 {
+			actualRow := values[1:]
+			columnCount := len(op.rows[0])
+
+			if len(actualRow) != columnCount {
 				op.Error(core.ErrShape)
 				return
 			}
 
-			if !op.linear {
-				once := func(forward func(unsafe.Pointer) bool) {
-					forward(arriving)
+			factualPrediction := op.intercept
+			interventionalPrediction := op.intercept
+
+			for featureIndex, column := range op.features {
+				factualVal := actualRow[column]
+				interventionalVal := actualRow[column]
+
+				if column == op.treatment {
+					interventionalVal = level
 				}
 
-				for out := range op.stump.Next(once) {
-					if !yield(out) {
-						return
-					}
-				}
+				factualPrediction += op.coefficients[featureIndex] * factualVal
+				interventionalPrediction += op.coefficients[featureIndex] * interventionalVal
+			}
 
-				if err := op.stump.Error(); err != nil {
-					op.Error(err)
+			noise := actualRow[op.target] - factualPrediction
+			counterfactual := interventionalPrediction + noise
+			precision := 1.0 / (1.0 + math.Abs(noise))
+			defined := 1.0
+
+			for value := range data.NewValue(counterfactual, noise, precision, defined).Next(nil) {
+				if !yield(value) {
 					return
 				}
-
-				continue
 			}
 
-			var values data.Map[float64]
+			return
+		}
 
-			for pointer := range adapter.Next(data.NewValue(op.input)) {
-				values = *(*data.Map[float64])(pointer)
-			}
+		expectation := op.baseline + op.effect*level
+		defined := 1.0
 
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			level, levelOK := values.Values["level"]
-
-			if !levelOK {
-				op.Error(core.ErrNotHeld)
-				return
-			}
-
-			var actualValues data.Map[float64]
-			hasActual := false
-
-			for pointer := range adapter.Next(data.NewValue(op.actuals)) {
-				actualValues = *(*data.Map[float64])(pointer)
-				hasActual = true
-			}
-
-			if !hasActual {
-				if err := adapter.Error(); err != nil {
-					adapter.PrimitiveError = core.NewPrimitiveError()
-				}
-			}
-
-			if hasActual {
-				columnCount := len(op.rows[0])
-				actualRow := make([]float64, columnCount)
-
-				for colIndex := 0; colIndex < columnCount; colIndex++ {
-					key := fmt.Sprintf("actual_%d", colIndex)
-					actualVal, ok := actualValues.Values[key]
-
-					if !ok {
-						op.Error(core.ErrShape)
-						return
-					}
-
-					actualRow[colIndex] = actualVal
-				}
-
-				factualPrediction := op.intercept
-				interventionalPrediction := op.intercept
-
-				for featureIndex, column := range op.features {
-					factualVal := actualRow[column]
-					interventionalVal := actualRow[column]
-
-					if column == op.treatment {
-						interventionalVal = level
-					}
-
-					factualPrediction += op.coefficients[featureIndex] * factualVal
-					interventionalPrediction += op.coefficients[featureIndex] * interventionalVal
-				}
-
-				noise := actualRow[op.target] - factualPrediction
-				counterfactual := interventionalPrediction + noise
-				precision := 1.0 / (1.0 + math.Abs(noise))
-
-				op.output.Values["counterfactual"] = counterfactual
-				op.output.Values["noise"] = noise
-				op.output.Values["precision"] = precision
-				op.output.Values["defined"] = 1.0
-
-				for range adapter.Next(data.NewValue(op.output)) {
-				}
-
-				if err := adapter.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				if !yield(arriving) {
-					return
-				}
-
-				continue
-			}
-
-			expectation := op.baseline + op.effect*level
-			op.output.Values["expectation"] = expectation
-			op.output.Values["defined"] = 1.0
-
-			for range adapter.Next(data.NewValue(op.output)) {
-			}
-
-			if err := adapter.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if !yield(arriving) {
+		for value := range data.NewValue(expectation, defined).Next(nil) {
+			if !yield(value) {
 				return
 			}
 		}

@@ -41,7 +41,7 @@ func newDriver(coder *PredictiveCoder) func(steps int) [12][]float64 {
 			out = data.Read[[12][]float64](coder.Next(data.NewValue([2][]float64{
 				{reference, step, math.Sin(step)},
 				{reference, hasReference, step, step},
-			})))
+			}).Next(nil)))
 			So(coder.Error(), ShouldBeNil)
 		}
 
@@ -140,7 +140,7 @@ func TestPredictiveCoderStep(t *testing.T) {
 				out = data.Read[[12][]float64](coder.Next(data.NewValue([2][]float64{
 					{reference, step, 1},
 					{reference, hasReference, step, step},
-				})))
+				}).Next(nil)))
 				So(coder.Error(), ShouldBeNil)
 			}
 
@@ -156,7 +156,7 @@ func TestPredictiveCoderStep(t *testing.T) {
 			out := data.Read[[12][]float64](coder.Next(data.NewValue([2][]float64{
 				{1, 2, 3},
 				{100, 0, 1, 0},
-			})))
+			}).Next(nil)))
 
 			So(coder.Error(), ShouldBeNil)
 			So(out[10][2], ShouldEqual, 0)
@@ -169,7 +169,7 @@ func TestPredictiveCoderStep(t *testing.T) {
 		Convey("an absent architecture is refused rather than panicking", func() {
 			coder := NewPredictiveCoder(nil, 4, nil, nil, 0, false, ReadoutAll)
 
-			for range coder.Next(data.NewValue([2][]float64{{1}, nil})) {
+			for range coder.Next(data.NewValue([2][]float64{{1}, nil}).Next(nil)) {
 				t.Fatal("a coder without a manifold must yield nothing")
 			}
 
@@ -179,7 +179,7 @@ func TestPredictiveCoderStep(t *testing.T) {
 		Convey("an empty feature vector is refused", func() {
 			coder := coderFixture(4)
 
-			for range coder.Next(data.NewValue([2][]float64{nil, nil})) {
+			for range coder.Next(data.NewValue([2][]float64{nil, nil}).Next(nil)) {
 				t.Fatal("an empty feature vector must yield nothing")
 			}
 
@@ -256,7 +256,7 @@ func BenchmarkPredictiveCoderStep(b *testing.B) {
 		step++
 		input[1][2] = step
 
-		for range coder.Next(data.NewValue(input)) {
+		for range coder.Next(data.NewValue(input).Next(nil)) {
 		}
 	}
 
@@ -268,7 +268,7 @@ func BenchmarkPredictiveCoderStep(b *testing.B) {
 		input[1][0] = 100 + math.Mod(step, 7)
 		input[1][2] = step
 
-		for range coder.Next(data.NewValue(input)) {
+		for range coder.Next(data.NewValue(input).Next(nil)) {
 		}
 	}
 }

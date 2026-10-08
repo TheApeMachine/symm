@@ -25,7 +25,7 @@ func (catalog *Catalog) Drain(
 	// These are storage batching cadences, not market observation horizons.
 	flushTicker := time.NewTicker(50 * time.Millisecond)
 	defer flushTicker.Stop()
-	commitTicker := time.NewTicker(30 * time.Second)
+	commitTicker := time.NewTicker(10 * time.Minute)
 	defer commitTicker.Stop()
 
 	drain := func() error {
