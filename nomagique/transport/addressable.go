@@ -39,9 +39,9 @@ func (addr *Addressable) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 				continue
 			}
 
-			if _, ok := any(primitive).(*data.Message); ok {
+			if msg, ok := primitive.(*data.Message); ok {
 				if addr.conn != nil {
-					flow = addr.conn.Next(primitive.Next(nil))
+					flow = addr.conn.Next(msg.Next(nil))
 				}
 				continue
 			}

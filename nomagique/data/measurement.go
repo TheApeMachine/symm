@@ -221,6 +221,7 @@ func (measurement *Measurement) Write(
 
 	for _, metric := range metrics {
 		var found *MetricEntry
+
 		for _, entry := range measurement.metrics {
 			if entry != nil && entry.Key == metric.Label {
 				found = entry

@@ -4,6 +4,7 @@ import (
 	"iter"
 	"unsafe"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
@@ -40,6 +41,12 @@ func (op *Add) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		}
 
 		if idx < 2 {
+			op.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[arithmetic.add] insufficient inputs",
+				nil,
+			))
+
 			return
 		}
 

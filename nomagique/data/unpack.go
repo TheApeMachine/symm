@@ -20,7 +20,7 @@ func (op *Unpack) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			val := (*Value[unsafe.Pointer])(arriving)
 			for ptr := range val.Next(nil) {
-				if !yield(ptr) {
+				if !yield(To[unsafe.Pointer](ptr)) {
 					return
 				}
 			}

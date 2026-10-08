@@ -2,8 +2,6 @@ package morphology
 
 import (
 	"context"
-	"math"
-	"sync"
 	"unsafe"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -11,11 +9,13 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/distribution"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -32,19 +32,7 @@ var outputKeys = []string{
 type Signal struct {
 	*runtime.System
 	books    broker.BookSource
-	pipeline *nomagique.Number
-	history  sync.Map
-}
-
-type symbolHistory struct {
-	hasPrev  bool
-	prevDist float64
-	w1       core.Primitive
-	ks       core.Primitive
-	concBid  core.Primitive
-	concAsk  core.Primitive
-	entBid   core.Primitive
-	entAsk   core.Primitive
+	pipeline core.Primitive
 }
 
 func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
@@ -52,11 +40,40 @@ func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 		books: books,
 		pipeline: nomagique.NewNumber(
 			transport.NewAddressable(
-				"symbolstore", store.NewKV(),
+				"symbolstore",
+				store.NewKV(),
 				nomagique.NewNumber(
-					data.NewSelect(0, 1, 2, 3, 4, 5, 6),
+					// Stage 1: Select inputs for the 6 distribution primitives
+					// 0: pairs -> Wasserstein1
+					// 1: pairs -> KolmogorovSmirnov
+					// 2: bids  -> ConcentrationPoints (bid)
+					// 3: asks  -> ConcentrationPoints (ask)
+					// 4: bids  -> EntropyPoints (bid)
+					// 5: asks  -> EntropyPoints (ask)
+					data.NewSelect(0, 0, 1, 2, 1, 2),
+					transport.NewParallel(
+						distribution.NewWasserstein1Pairs(),
+						distribution.NewKolmogorovSmirnovPairs(),
+						distribution.NewConcentrationPoints(),
+						distribution.NewConcentrationPoints(),
+						distribution.NewEntropyPoints(),
+						distribution.NewEntropyPoints(),
+					),
+					// Stage 2: Select 0..5 and repeat distance at 6, then pass 0..5 and compute morphology_change at 6
+					data.NewSelect(0, 1, 2, 3, 4, 5, 0),
+					transport.NewParallel(
+						transport.NewPass(),
+						transport.NewPass(),
+						transport.NewPass(),
+						transport.NewPass(),
+						transport.NewPass(),
+						transport.NewPass(),
+						nomagique.NewNumber(
+							temporal.NewDelta(),
+							calculus.NewAbsolute(),
+						),
+					),
 				),
-				data.NewMessage(data.WRITE, "symbolstore", "morphology_state", data.NewValue[core.Primitive]()),
 			),
 		),
 	}
@@ -68,24 +85,6 @@ func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	}
 
 	return signal
-}
-
-func (signal *Signal) getHistory(symbol string) *symbolHistory {
-	val, ok := signal.history.Load(symbol)
-	if ok {
-		return val.(*symbolHistory)
-	}
-
-	hist := &symbolHistory{
-		w1:      distribution.NewWasserstein1Pairs(),
-		ks:      distribution.NewKolmogorovSmirnovPairs(),
-		concBid: distribution.NewConcentrationPoints(),
-		concAsk: distribution.NewConcentrationPoints(),
-		entBid:  distribution.NewEntropyPoints(),
-		entAsk:  distribution.NewEntropyPoints(),
-	}
-	actual, _ := signal.history.LoadOrStore(symbol, hist)
-	return actual.(*symbolHistory)
 }
 
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
@@ -104,7 +103,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	var bids, asks [][2]float64
-	var bidPrice, askPrice float64
+	var crossedBid, crossedAsk float64
 	ok := false
 	crossed := false
 
@@ -120,34 +119,34 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			return
 		}
 
-		bidPrice = kraken.Float64(bid.Price)
-		askPrice = kraken.Float64(ask.Price)
-		spread := askPrice - bidPrice
+		bidPrice := kraken.Float64(bid.Price)
+		askPrice := kraken.Float64(ask.Price)
 
-		if spread <= 0 && !math.IsNaN(spread) {
+		if askPrice <= bidPrice {
 			crossed = true
+			crossedBid = bidPrice
+			crossedAsk = askPrice
 			return
 		}
 
-		if math.IsNaN(spread) || math.IsInf(spread, 0) {
-			return
-		}
-
-		mid := (bidPrice + askPrice) / 2.0
+		spread := askPrice - bidPrice
+		mid := (askPrice + bidPrice) / 2.0
 
 		for cursor, count := bid, 0; cursor != nil && count < 100; cursor, count = cursor.Lower, count+1 {
 			if cursor.Price == nil || cursor.Quantity == nil {
 				continue
 			}
 
-			price := kraken.Float64(cursor.Price)
-			qty := kraken.Float64(cursor.Quantity)
+			p := kraken.Float64(cursor.Price)
+			q := kraken.Float64(cursor.Quantity)
 
-			if price <= 0 || qty <= 0 || math.IsNaN(price) || math.IsNaN(qty) {
+			if p <= 0 || q <= 0 {
 				continue
 			}
 
-			bids = append(bids, [2]float64{(mid - price) / spread, price * qty})
+			rBid := (mid - p) / spread
+			w := p * q
+			bids = append(bids, [2]float64{rBid, w})
 		}
 
 		for cursor, count := ask, 0; cursor != nil && count < 100; cursor, count = cursor.Higher, count+1 {
@@ -155,21 +154,23 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 				continue
 			}
 
-			price := kraken.Float64(cursor.Price)
-			qty := kraken.Float64(cursor.Quantity)
+			p := kraken.Float64(cursor.Price)
+			q := kraken.Float64(cursor.Quantity)
 
-			if price <= 0 || qty <= 0 || math.IsNaN(price) || math.IsNaN(qty) {
+			if p <= 0 || q <= 0 {
 				continue
 			}
 
-			asks = append(asks, [2]float64{(price - mid) / spread, price * qty})
+			rAsk := (p - mid) / spread
+			w := p * q
+			asks = append(asks, [2]float64{rAsk, w})
 		}
 
 		ok = len(bids) > 0 && len(asks) > 0
 	})
 
 	if crossed {
-		signal.Error(broker.CrossedTouch("morphology", prior.Label, bidPrice, askPrice))
+		signal.Error(broker.CrossedTouch("morphology", prior.Label, crossedBid, crossedAsk))
 		return nil
 	}
 
@@ -177,57 +178,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	hist := signal.getHistory(prior.Label)
 	pairs := [2][][2]float64{bids, asks}
 
-	var distance, ks, concBid, concAsk, entBid, entAsk float64
-
-	for pointer := range hist.w1.Next(data.NewValue(unsafe.Pointer(&pairs)).Next(nil)) {
-		distance = *(*float64)(pointer)
-	}
-
-	for pointer := range hist.ks.Next(data.NewValue(unsafe.Pointer(&pairs)).Next(nil)) {
-		ks = *(*float64)(pointer)
-	}
-
-	for pointer := range hist.concBid.Next(data.NewValue(unsafe.Pointer(&bids)).Next(nil)) {
-		concBid = *(*float64)(pointer)
-	}
-
-	for pointer := range hist.concAsk.Next(data.NewValue(unsafe.Pointer(&asks)).Next(nil)) {
-		concAsk = *(*float64)(pointer)
-	}
-
-	for pointer := range hist.entBid.Next(data.NewValue(unsafe.Pointer(&bids)).Next(nil)) {
-		entBid = *(*float64)(pointer)
-	}
-
-	for pointer := range hist.entAsk.Next(data.NewValue(unsafe.Pointer(&asks)).Next(nil)) {
-		entAsk = *(*float64)(pointer)
-	}
-
-	if math.IsInf(distance, 0) || math.IsInf(ks, 0) {
-		return nil
-	}
-
-	var morphChange float64
-	if hist.hasPrev {
-		morphChange = math.Abs(distance - hist.prevDist)
-	}
-	hist.prevDist = distance
-	hist.hasPrev = true
-
-	rawMetrics := []float64{
-		distance,
-		ks,
-		concBid,
-		concAsk,
-		entBid,
-		entAsk,
-		morphChange,
-	}
-
 	output := make(map[string]float64)
+	index := 0
 
 	for ptr := range signal.pipeline.Next(
 		data.NewMessage(
@@ -235,19 +189,27 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			"symbolstore",
 			prior.Label,
 			data.NewValue(
-				unsafe.Pointer(&rawMetrics),
+				unsafe.Pointer(&pairs),
+				unsafe.Pointer(&bids),
+				unsafe.Pointer(&asks),
 			),
 		).Next(nil),
 	) {
+		if index >= len(outputKeys) {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[signal.morphology] overflow",
+				nil,
+			))
+			return nil
+		}
+
 		if ptr == nil {
 			continue
 		}
-	}
 
-	for i, key := range outputKeys {
-		if i < len(rawMetrics) {
-			output[key] = rawMetrics[i]
-		}
+		output[outputKeys[index]] = *(*float64)(ptr)
+		index++
 	}
 
 	return prior.Next(signal.Name(), output)

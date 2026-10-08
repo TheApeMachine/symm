@@ -2,7 +2,6 @@ package cvd
 
 import (
 	"context"
-	"unsafe"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
@@ -83,7 +82,7 @@ func NewSignal(ctx context.Context) *Signal {
 										transport.NewPass(),
 										arithmetic.NewAdd(),
 										nomagique.NewNumber(
-											data.NewValue[core.Primitive](
+											data.NewValue(
 												arithmetic.NewSubtract(),
 												arithmetic.NewAdd(),
 											),
@@ -93,7 +92,7 @@ func NewSignal(ctx context.Context) *Signal {
 								),
 								nomagique.NewNumber(
 									transport.NewSpread[float64](),
-									data.NewValue[core.Primitive](
+									data.NewValue(
 										transport.NewPass(),
 										arithmetic.NewAdd(),
 										arithmetic.NewSubtract(),
@@ -109,13 +108,12 @@ func NewSignal(ctx context.Context) *Signal {
 										arithmetic.NewSubtract(),
 										arithmetic.NewSubtract(),
 										nomagique.NewNumber(
-											data.NewValue[core.Primitive](
+											data.NewValue(
 												arithmetic.NewSubtract(),
 												arithmetic.NewAdd(),
 											),
 											arithmetic.NewDivide(),
 										),
-										arithmetic.NewAdd(),
 									),
 								),
 							),
@@ -123,16 +121,21 @@ func NewSignal(ctx context.Context) *Signal {
 						data.NewSlice(3, 8),
 					),
 					data.NewValue[core.Primitive](
-						data.NewSlice(0, 21),
+						data.NewSlice(0, 19),
 						nomagique.NewNumber(
 							data.NewSelect(
-								2, 16,
-								11, 16,
-								12, 16,
-								9, 16,
-								10, 16,
-								17, 17,
-								20, 16,
+								11, 2,
+								2, 14,
+								11, 14,
+								12, 14,
+								9, 14,
+								10, 14,
+								17, 14,
+								18, 12,
+								0, 0,
+								1, 1,
+								2, 2,
+								3, 3,
 							),
 							data.NewBatch(2, 2),
 							transport.NewParallel(
@@ -141,67 +144,75 @@ func NewSignal(ctx context.Context) *Signal {
 								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
 								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
 								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
 								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
 							),
 						),
-						data.NewSlice(16, 21),
 					),
 					data.NewValue[core.Primitive](
-						data.NewSlice(0, 33),
+						data.NewSlice(0, 31),
 						nomagique.NewNumber(
 							data.NewSelect(
-								28, 28,
-								29, 29,
-								30, 30,
-								30, 14,
-								30, 12,
-								17, 17,
-								14, 14,
+								21, 21,
+								13, 13,
+								25, 25,
+								21, 21,
 								22, 22,
-								18, 27,
-								17, 27,
-								27, 27,
-								27, 27,
+								0, 0,
+								1, 1,
+								2, 2,
+								3, 3,
+								4, 4,
+								5, 5,
+								6, 6,
+								7, 7,
+								8, 8,
 							),
 							data.NewBatch(2, 2),
 							transport.NewParallel(
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewMultiply()),
-								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
 								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
 								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
 								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
 								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
 								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
 								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
 								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
 							),
 						),
 					),
 					data.NewValue[core.Primitive](
-						data.NewSlice(0, 48),
+						data.NewSlice(0, 45),
 						nomagique.NewNumber(
 							data.NewSelect(
-								17, 38, 38,
-								17, 38, 38,
-								17, 38, 39,
-								14, 40, 40,
-								14, 40, 41,
-								22, 42, 42,
-								22, 42, 43,
+								21, 31,
+								21, 31,
+								21, 31, 32,
+								13, 33,
+								13, 33, 34,
+								25, 35,
+								25, 35, 36,
 							),
-							data.NewBatch(3, 3),
+							data.NewBatch(4, 2),
 							transport.NewParallel(
 								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewDivide()),
 								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewSubtract()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewValue[core.Primitive](arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewValue(arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
 								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewSubtract()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewValue[core.Primitive](arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewValue(arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
 								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewSubtract()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewValue[core.Primitive](arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
+								nomagique.NewNumber(data.NewUnpack(), data.NewValue(arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
 							),
 						),
 					),
@@ -256,9 +267,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	notionals := [2][]float64{quantities, {price}}
 
 	timeDelta := float64(prior.At.Sub(prior.From).Seconds())
+
 	if timeDelta == 0 {
 		timeDelta = 1
 	}
+
 	epochFrom := float64(prior.From.UnixNano())
 	midpointFrom := 0.0
 	midpointAt := 0.0
@@ -273,14 +286,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			"symbolstore",
 			prior.Label,
 			data.NewValue(
-				unsafe.Pointer(&counts),
-				unsafe.Pointer(&quantities),
-				unsafe.Pointer(&notionals),
-				unsafe.Pointer(&timeDelta),
-				unsafe.Pointer(&epochFrom),
-				unsafe.Pointer(&midpointFrom),
-				unsafe.Pointer(&midpointAt),
-				unsafe.Pointer(&midpointLogReturn),
+				counts,
+				quantities,
+				notionals,
+				timeDelta,
+				epochFrom,
+				midpointFrom,
+				midpointAt,
+				midpointLogReturn,
 			),
 		).Next(nil),
 	) {
@@ -295,7 +308,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 
 		if ptr == nil {
-			continue
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[signal.cvd] pipeline returned nil",
+				nil,
+			))
+
+			return nil
 		}
 
 		output[outputKeys[index]] = *(*float64)(ptr)

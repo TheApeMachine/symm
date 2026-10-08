@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"testing"
-	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -14,7 +13,7 @@ func TestKVNext(t *testing.T) {
 	Convey("Given a KV store", t, func() {
 		op := store.NewKV()
 		val := 42.0
-		storedVal := data.NewValue(unsafe.Pointer(&val))
+		storedVal := data.NewValue(val)
 
 		Convey("When writing a message", func() {
 			writeMsg := data.NewMessage(data.WRITE, "store", "BTC", storedVal)

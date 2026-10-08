@@ -89,7 +89,6 @@ func TestLeadLagSignalMetrics(t *testing.T) {
 				}
 
 				best, ok := metric(resETH, "best_lag_correlation@BTC/USD")
-
 				if !ok {
 					continue
 				}
@@ -101,9 +100,9 @@ func TestLeadLagSignalMetrics(t *testing.T) {
 				So(held, ShouldBeTrue)
 				So(lag, ShouldBeGreaterThan, 0)
 
-				leads, held := metric(resETH, "leads@BTC/USD")
+				ref, held := metric(resETH, "reference_symbol@BTC/USD")
 				So(held, ShouldBeTrue)
-				So(leads, ShouldEqual, 1)
+				So(ref, ShouldEqual, 1.0)
 
 				gain, held := metric(resETH, "absolute_correlation_gain@BTC/USD")
 				So(held, ShouldBeTrue)

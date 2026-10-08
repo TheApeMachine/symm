@@ -1,35 +1,41 @@
 package temporal
 
 import (
+	"errors"
 	"iter"
 	"time"
 	"unsafe"
 
+	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Velocity owns the previous observation and computes the finite difference rate.
-The first observation and non-advancing time have zero rate.
+Velocity computes the finite difference rate dValue / dt.
+Composes Delta for value change, Delta for elapsed time, and Divide for the rate.
 Operands arrive in order: [value, at], where at is in nanoseconds.
 */
 type Velocity struct {
 	*core.PrimitiveError
-	seen      bool
-	prevValue float64
-	prevAt    float64
+	deltaVal core.Primitive
+	deltaAt  core.Primitive
+	divide   core.Primitive
 }
 
 func NewVelocity() core.Primitive {
 	return &Velocity{
 		PrimitiveError: core.NewPrimitiveError(),
+		deltaVal:       NewDelta(),
+		deltaAt:        NewDelta(),
+		divide:         arithmetic.NewDivide(),
 	}
 }
 
 func (op *Velocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		var values [2]*float64
+		var values [2]float64
+		idx := 0
 
 		for arriving := range in {
 			if arriving == nil {
@@ -37,47 +43,35 @@ func (op *Velocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			if values[0] == nil {
-				values[0] = (*float64)(arriving)
-				continue
+			if idx < 2 {
+				values[idx] = *(*float64)(arriving)
+				idx++
 			}
-
-			values[1] = (*float64)(arriving)
 		}
 
-		if values[0] == nil || values[1] == nil {
+		if idx < 2 {
+			op.Error(core.ErrShape)
 			return
 		}
 
-		value := *values[0]
-		at := *values[1]
+		dVal := data.Read[float64](op.deltaVal.Next(data.NewValue(values[0]).Next(nil)))
+		dAtNanos := data.Read[float64](op.deltaAt.Next(data.NewValue(values[1]).Next(nil)))
 
-		if !op.seen {
-			op.seen = true
-			op.prevValue = value
-			op.prevAt = at
-
-			for out := range data.NewValue(0.0).Next(nil) {
-				if !yield(out) {
-					return
-				}
-			}
+		if err := errors.Join(op.deltaVal.Error(), op.deltaAt.Error()); err != nil {
+			op.Error(err)
 			return
 		}
 
-		rate := 0.0
-		diffTime := (at - op.prevAt) / float64(time.Second)
-		if diffTime > 0 {
-			rate = (value - op.prevValue) / diffTime
-		}
+		dAtSeconds := dAtNanos / float64(time.Second)
 
-		op.prevValue = value
-		op.prevAt = at
-
-		for out := range data.NewValue(rate).Next(nil) {
+		for out := range op.divide.Next(data.NewValue(dVal, dAtSeconds).Next(nil)) {
 			if !yield(out) {
 				return
 			}
+		}
+
+		if err := op.divide.Error(); err != nil {
+			op.Error(err)
 		}
 	}
 }

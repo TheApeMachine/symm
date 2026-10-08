@@ -6,7 +6,6 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -17,28 +16,27 @@ are streamed downstream.
 */
 type Parallel struct {
 	*core.PrimitiveError
-	Branches []core.Primitive
+	branches []core.Primitive
 }
 
 func NewParallel(branches ...core.Primitive) core.Primitive {
 	return &Parallel{
 		PrimitiveError: core.NewPrimitiveError(),
-		Branches:       branches,
+		branches:       branches,
 	}
 }
 
 func (op *Parallel) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		index := 0
-		out := make([]iter.Seq[unsafe.Pointer], len(op.Branches))
-
+		values := make([]core.Primitive, 0, len(op.branches))
+		out := make([]iter.Seq[unsafe.Pointer], len(op.branches))
 		group, ctx := errgroup.WithContext(context.Background())
 
 		for arriving := range in {
-			i := index
-			arr := arriving
-			index++
+			values = append(values, *(*core.Primitive)(arriving))
+		}
 
+		for index, branch := range op.branches {
 			group.Go(func() error {
 				select {
 				case <-ctx.Done():
@@ -46,10 +44,7 @@ func (op *Parallel) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				default:
 				}
 
-				out[i] = op.Branches[i].Next(
-					data.NewValue(arr).Next(nil),
-				)
-
+				out[index] = branch.Next(values[index].Next(nil))
 				return nil
 			})
 		}
@@ -59,12 +54,8 @@ func (op *Parallel) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		}
 
 		for _, seq := range out {
-			if seq == nil {
-				continue
-			}
-
-			for o := range seq {
-				if !yield(o) {
+			for val := range seq {
+				if !yield(val) {
 					return
 				}
 			}

@@ -3,7 +3,6 @@ package hawkes
 import (
 	"context"
 	"time"
-	"unsafe"
 
 	"github.com/theapemachine/errnie"
 
@@ -82,7 +81,7 @@ var outputKeys = []string{
 
 type Signal struct {
 	*runtime.System
-	pipeline *nomagique.Number
+	pipeline core.Primitive
 }
 
 func NewSignal(ctx context.Context) *Signal {
@@ -92,19 +91,11 @@ func NewSignal(ctx context.Context) *Signal {
 	}
 
 	signal := &Signal{
-		pipeline: nomagique.NewNumber(
-			transport.NewAddressable(
-				"symbolstore", store.NewKV(),
-				nomagique.NewNumber(
-					data.NewValue[core.Primitive](
-						nomagique.NewNumber(
-							transport.NewSpread[float64](),
-							nmhawkes.NewHawkes(),
-						),
-					),
-					data.NewSelect(indices...),
-				),
-				data.NewMessage(data.WRITE, "symbolstore", "hawkes_state", data.NewValue[core.Primitive]()),
+		pipeline: transport.NewAddressable(
+			"symbolstore", store.NewKV(),
+			nomagique.NewNumber(
+				nmhawkes.NewHawkes(),
+				data.NewSelect(indices...),
 			),
 		),
 	}
@@ -126,8 +117,16 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	for _, key := range []string{"price", "qty"} {
-		if _, err := tradeValue(prior, key); err != nil {
-			signal.Error(err)
+		found := false
+		for entry := range prior.Read(key) {
+			if entry != nil && entry.Metric != nil {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			signal.Error(errnie.Err(errnie.Validation, "[hawkes] trade frame missing "+key, nil))
 			return nil
 		}
 	}
@@ -149,7 +148,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	atSec := float64(prior.At.UnixNano()) * 1e-9
-	raws := []float64{mark, atSec}
 
 	output := make(map[string]float64)
 	index := 0
@@ -159,9 +157,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			data.WRITE,
 			"symbolstore",
 			prior.Label,
-			data.NewValue(
-				unsafe.Pointer(&raws),
-			),
+			data.NewValue(mark, atSec),
 		).Next(nil),
 	) {
 		if ptr == nil {
@@ -183,20 +179,4 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	return prior.Next(signal.Name(), output)
-}
-
-func tradeValue(prior *data.Measurement, key string) (float64, error) {
-	entry := data.Pull(prior.Read(key))
-
-	if entry != nil && entry.Err != nil {
-		return 0, entry.Err
-	}
-
-	if entry == nil || entry.Metric == nil || entry.Metric.Label != key {
-		return 0, errnie.Err(
-			errnie.NotAcceptable, "[hawkes] trade frame is missing "+key, nil,
-		)
-	}
-
-	return entry.Metric.Raw, nil
 }
