@@ -1,251 +1,168 @@
 package distribution_test
 
 import (
+	"errors"
 	"math"
+	"math/rand"
+	"sort"
 	"testing"
+	"unsafe"
 
-	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/distribution"
-	"github.com/theapemachine/symm/nomagique/tests"
 )
 
-func TestNormalizeNext(t *testing.T) {
-	Convey("Given a set of non-negative weights", t, func() {
-		Convey("Normalize scales them to a unit sum and reports the total", func() {
-			node := distribution.NewNormalize()
-			out := tests.CollectSeq[[2][]float64](node.Next(data.NewValue([]float64{1, 1, 2}).Next(nil)))
-
-			So(node.Error(), ShouldBeNil)
-			So(len(out), ShouldEqual, 1)
-			So(out[0][1][0], ShouldEqual, 4)
-			So(out[0][0][0], ShouldAlmostEqual, 0.25)
-			So(out[0][0][1], ShouldAlmostEqual, 0.25)
-			So(out[0][0][2], ShouldAlmostEqual, 0.5)
-		})
-
-		Convey("negative weights are treated as zero", func() {
-			node := distribution.NewNormalize()
-			out := tests.CollectSeq[[2][]float64](node.Next(data.NewValue([]float64{-1, 1}).Next(nil)))
-
-			So(out[0][1][0], ShouldEqual, 1)
-			So(out[0][0], ShouldResemble, []float64{0, 1})
-		})
-
-		Convey("a zero total returns an all-zero slice and total 0", func() {
-			node := distribution.NewNormalize()
-			out := tests.CollectSeq[[2][]float64](node.Next(data.NewValue([]float64{0, 0}).Next(nil)))
-
-			So(out[0][1][0], ShouldEqual, 0)
-			So(out[0][0], ShouldResemble, []float64{0, 0})
-		})
-	})
+func collect(op core.Primitive, values ...float64) []float64 {
+	var out []float64
+	for pointer := range op.Next(data.NewValue(values...).Next(nil)) {
+		out = append(out, *(*float64)(pointer))
+	}
+	return out
+}
+func compare(op core.Primitive, left, right []float64) []float64 {
+	var out []float64
+	for pointer := range op.Next(data.NewValue[core.Primitive](data.NewValue(left...), data.NewValue(right...)).Next(nil)) {
+		out = append(out, *(*float64)(pointer))
+	}
+	return out
+}
+func equal(t *testing.T, got, want []float64) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for index := range want {
+		if math.IsNaN(got[index]) || math.Abs(got[index]-want[index]) > 1e-10 {
+			t.Fatalf("at %d: got %.17g, want %.17g", index, got[index], want[index])
+		}
+	}
+}
+func TestNormalize(t *testing.T) {
+	equal(t, collect(distribution.NewNormalize(), 1, 2, 1), []float64{.25, .5, .25})
+	equal(t, collect(distribution.NewNormalize(2, 1), -2, 1, 3, 3), []float64{-2, .25, 3, .75})
+	for _, values := range [][]float64{nil, {0, 0}} {
+		op := distribution.NewNormalize()
+		equal(t, collect(op, values...), nil)
+		if op.Error() != nil {
+			t.Fatal(op.Error())
+		}
+	}
+	op := distribution.NewNormalize()
+	equal(t, collect(op, 1, -1), nil)
+	if !errors.Is(op.Error(), core.ErrDomain) {
+		t.Fatal(op.Error())
+	}
+	op = distribution.NewNormalize(2, 1)
+	equal(t, collect(op, 0, 1, 2), nil)
+	if !errors.Is(op.Error(), core.ErrShape) {
+		t.Fatal(op.Error())
+	}
+}
+func TestSortedPositions(t *testing.T) {
+	equal(t, collect(distribution.NewSortedPositions(), 3, 4, -1, 2, 3, 5), []float64{-1, 2, 3, 4, 3, 5})
+	op := distribution.NewSortedPositions()
+	equal(t, collect(op, 0), nil)
+	if !errors.Is(op.Error(), core.ErrShape) {
+		t.Fatal(op.Error())
+	}
+}
+func TestMergedWalk(t *testing.T) {
+	equal(t, compare(distribution.NewMergedWalk(), []float64{0, 1}, []float64{2, 1}), []float64{1, 2, 2})
+	equal(t, compare(distribution.NewMergedWalk(), []float64{0, 1, 0, 1, 2, 2}, []float64{0, 1, 2, 1}), []float64{0, 0, 2})
+	equal(t, compare(distribution.NewMergedWalk(), []float64{-3, 1, 0, 1}, []float64{-3, 3, 1, 1}), []float64{.25, 1, 3})
+	for _, sides := range [][2][]float64{{nil, {0, 1}}, {{0, 0}, {0, 1}}} {
+		op := distribution.NewMergedWalk()
+		equal(t, compare(op, sides[0], sides[1]), nil)
+		if op.Error() != nil {
+			t.Fatal(op.Error())
+		}
+	}
+	for _, bad := range [][]float64{{2, 1, 1, 1}, {0, -1}, {0}} {
+		op := distribution.NewMergedWalk()
+		equal(t, compare(op, bad, []float64{0, 1}), nil)
+		if op.Error() == nil {
+			t.Fatalf("accepted %v", bad)
+		}
+	}
+}
+func TestDistanceSelectors(t *testing.T) {
+	left, right := []float64{0, 1, 2, 1}, []float64{1, 1, 3, 1}
+	equal(t, compare(distribution.NewWasserstein1Pairs(), left, right), []float64{1})
+	equal(t, compare(distribution.NewKolmogorovSmirnovPairs(), left, right), []float64{.5})
+	equal(t, collect(distribution.NewWasserstein1(), 0, 1, 0, 1, 0, 1, 2, 1, 0, 3, 0, 1), []float64{1})
+	equal(t, collect(distribution.NewKolmogorovSmirnov(), 0, 1, 0, 1, 0, 1, 2, 1, 0, 3, 0, 1), []float64{.5})
+}
+func TestEntropyAndConcentration(t *testing.T) {
+	equal(t, collect(distribution.NewEntropy(), .25, .25, .25, .25), []float64{math.Log(4)})
+	equal(t, collect(distribution.NewConcentration(), .25, .25, .25, .25), []float64{.25})
+	equal(t, collect(distribution.NewEntropyPoints(), 0, 2, 5, 2), []float64{math.Log(2)})
+	equal(t, collect(distribution.NewConcentrationPoints(), 0, 2, 5, 2), []float64{.5})
+	equal(t, collect(distribution.NewEntropyPoints(), 0, 0), nil)
+	equal(t, collect(distribution.NewConcentrationPoints(), 0, 0), nil)
+	equal(t, collect(distribution.NewEntropy(), 1), []float64{0})
 }
 
-func TestWasserstein1Next(t *testing.T) {
-	Convey("Given two distributions over the same sorted support", t, func() {
-		positions := []float64{0, 1, 2, 3}
-
-		Convey("identical shapes have distance zero", func() {
-			node := distribution.NewWasserstein1()
-			out := tests.CollectSeq[float64](node.Next(data.NewValue([3][]float64{positions, {1, 2, 1, 0}, {1, 2, 1, 0}}).Next(nil)))
-			So(node.Error(), ShouldBeNil)
-			So(out[0], ShouldAlmostEqual, 0)
-		})
-
-		Convey("the distance is the cumulative-mass discrepancy integrated over support", func() {
-			node := distribution.NewWasserstein1()
-			out := tests.CollectSeq[float64](node.Next(data.NewValue([3][]float64{positions, {1, 0, 0, 0}, {0, 0, 0, 1}}).Next(nil)))
-			So(out[0], ShouldAlmostEqual, 3)
-		})
-
-		Convey("an empty or mismatched support returns +Inf", func() {
-			node := distribution.NewWasserstein1()
-			out := tests.CollectSeq[float64](node.Next(data.NewValue(
-				[3][]float64{},
-				[3][]float64{{0, 1}, {1}, {1}},
-			).Next(nil)))
-			So(len(out), ShouldEqual, 2)
-			So(math.IsInf(out[0], 1), ShouldBeTrue)
-			So(math.IsInf(out[1], 1), ShouldBeTrue)
-		})
-
-		Convey("a zero-total distribution returns +Inf rather than fabricating a distance", func() {
-			node := distribution.NewWasserstein1()
-			out := tests.CollectSeq[float64](node.Next(data.NewValue([3][]float64{positions, {0, 0, 0, 0}, {1, 1, 1, 1}}).Next(nil)))
-			So(math.IsInf(out[0], 1), ShouldBeTrue)
-		})
-	})
+// Independent reference: explicit union CDF, deliberately unlike the production
+// two-stream merged walk. Only test code materializes the union support.
+func reference(left, right []float64) (float64, float64) {
+	mass := map[float64][2]float64{}
+	totals := [2]float64{}
+	for side, values := range [2][]float64{left, right} {
+		for index := 0; index < len(values); index += 2 {
+			point := mass[values[index]]
+			point[side] += values[index+1]
+			mass[values[index]] = point
+			totals[side] += values[index+1]
+		}
+	}
+	support := make([]float64, 0, len(mass))
+	for position := range mass {
+		support = append(support, position)
+	}
+	sort.Float64s(support)
+	cumulative := [2]float64{}
+	distance, ks := 0.0, 0.0
+	for index, position := range support {
+		point := mass[position]
+		cumulative[0] += point[0] / totals[0]
+		cumulative[1] += point[1] / totals[1]
+		gap := math.Abs(cumulative[0] - cumulative[1])
+		ks = math.Max(ks, gap)
+		if index+1 < len(support) {
+			distance += gap * (support[index+1] - position)
+		}
+	}
+	return ks, distance
 }
-
-func TestKolmogorovSmirnovNext(t *testing.T) {
-	Convey("Given two distributions over the same sorted support", t, func() {
-		positions := []float64{0, 1, 2, 3}
-
-		Convey("identical shapes have statistic zero", func() {
-			node := distribution.NewKolmogorovSmirnov()
-			out := tests.CollectSeq[float64](node.Next(data.NewValue([3][]float64{positions, {1, 2, 1, 0}, {1, 2, 1, 0}}).Next(nil)))
-			So(node.Error(), ShouldBeNil)
-			So(out[0], ShouldAlmostEqual, 0)
-		})
-
-		Convey("disjointly supported shapes have statistic one", func() {
-			node := distribution.NewKolmogorovSmirnov()
-			out := tests.CollectSeq[float64](node.Next(data.NewValue([3][]float64{positions, {4, 0, 0, 0}, {0, 0, 0, 4}}).Next(nil)))
-			So(out[0], ShouldAlmostEqual, 1)
-		})
-
-		Convey("the statistic is the supremum of cumulative disagreement", func() {
-			// CDF A: [.5,.5,1,1]; CDF B: [0,.5,.5,1]. Max |A-B| = .5.
-			node := distribution.NewKolmogorovSmirnov()
-			out := tests.CollectSeq[float64](node.Next(data.NewValue([3][]float64{positions, {2, 0, 2, 0}, {0, 2, 0, 2}}).Next(nil)))
-			So(out[0], ShouldAlmostEqual, 0.5)
-		})
-
-		Convey("an empty support returns +Inf", func() {
-			node := distribution.NewKolmogorovSmirnov()
-			out := tests.CollectSeq[float64](node.Next(data.NewValue([3][]float64{}).Next(nil)))
-			So(math.IsInf(out[0], 1), ShouldBeTrue)
-		})
-	})
+func TestMergedWalkAgainstIndependentCDF(t *testing.T) {
+	random := rand.New(rand.NewSource(4189))
+	for trial := 0; trial < 1000; trial++ {
+		var sides [2][]float64
+		for side := range sides {
+			count := 1 + random.Intn(30)
+			positions := make([]float64, count)
+			for index := range positions {
+				positions[index] = float64(random.Intn(21) - 10)
+			}
+			sort.Float64s(positions)
+			for _, position := range positions {
+				sides[side] = append(sides[side], position, float64(1+random.Intn(10)))
+			}
+		}
+		ks, distance := reference(sides[0], sides[1])
+		got := compare(distribution.NewMergedWalk(), sides[0], sides[1])
+		equal(t, got[:2], []float64{ks, distance})
+		reverse := compare(distribution.NewMergedWalk(), sides[1], sides[0])
+		equal(t, reverse[:2], got[:2])
+	}
 }
-
-func TestEntropyNext(t *testing.T) {
-	Convey("Given normalized weights", t, func() {
-		node := distribution.NewEntropy()
-		out := tests.CollectSeq[float64](node.Next(data.NewValue(
-			[]float64{1},
-			[]float64{0.5, 0.5},
-			[]float64{0.25, 0.25, 0.25, 0.25},
-			[]float64{},
-		).Next(nil)))
-
-		So(node.Error(), ShouldBeNil)
-		So(len(out), ShouldEqual, 4)
-		So(out[0], ShouldAlmostEqual, 0)
-		So(out[1], ShouldAlmostEqual, math.Log(2))
-		So(out[2], ShouldAlmostEqual, math.Log(4))
-		So(out[3], ShouldAlmostEqual, 0)
-	})
-}
-
-func TestConcentrationNext(t *testing.T) {
-	Convey("Given normalized weights", t, func() {
-		node := distribution.NewConcentration()
-		out := tests.CollectSeq[float64](node.Next(data.NewValue(
-			[]float64{1},
-			[]float64{0.5, 0.5},
-			[]float64{0.25, 0.25, 0.25, 0.25},
-		).Next(nil)))
-
-		So(node.Error(), ShouldBeNil)
-		So(out[0], ShouldAlmostEqual, 1)
-		So(out[1], ShouldAlmostEqual, 0.5)
-		So(out[2], ShouldAlmostEqual, 0.25)
-	})
-}
-
-func TestSortedPositionsNext(t *testing.T) {
-	Convey("Given unsorted positions paired with weights", t, func() {
-		Convey("SortedPositions returns both sorted by position", func() {
-			node := distribution.NewSortedPositions()
-			out := tests.CollectSeq[[2][]float64](node.Next(data.NewValue([2][]float64{{3, 1, 2}, {30, 10, 20}}).Next(nil)))
-
-			So(node.Error(), ShouldBeNil)
-			So(out[0][0], ShouldResemble, []float64{1, 2, 3})
-			So(out[0][1], ShouldResemble, []float64{10, 20, 30})
-		})
-
-		Convey("a mismatched length returns empty slices", func() {
-			node := distribution.NewSortedPositions()
-			out := tests.CollectSeq[[2][]float64](node.Next(data.NewValue([2][]float64{{1, 2}, {1}}).Next(nil)))
-
-			So(out[0][0], ShouldBeNil)
-			So(out[0][1], ShouldBeNil)
-		})
-	})
-}
-
-func TestMergedWalkNext(t *testing.T) {
-	Convey("MergedWalk reports KS, W1, and distinct positions in one pass", t, func() {
-		node := distribution.NewMergedWalk()
-		out := tests.CollectSeq[[3]float64](node.Next(data.NewValue([2][][2]float64{
-			{{0, 1}, {2, 1}},
-			{{1, 1}, {2, 1}},
-		}).Next(nil)))
-
-		So(node.Error(), ShouldBeNil)
-		So(out[0][0], ShouldAlmostEqual, 0.5)
-		So(out[0][1], ShouldAlmostEqual, 0.5)
-		So(out[0][2], ShouldEqual, 3)
-	})
-}
-
-func TestWasserstein1PairsNext(t *testing.T) {
-	Convey("Given two sorted point streams on different supports", t, func() {
-		node := distribution.NewWasserstein1Pairs()
-		out := tests.CollectSeq[float64](node.Next(data.NewValue(
-			[2][][2]float64{{{0.5, 1}}, {{0.5, 1}}},
-			[2][][2]float64{{{0.5, 2}, {1.5, 1}}, {{0.5, 2}, {1.5, 1}}},
-			[2][][2]float64{{{0, 1}}, {{3, 1}}},
-			[2][][2]float64{{{1, 100}}, {{1, 1}}},
-			[2][][2]float64{{{0, 0}}, {{0, 1}}},
-		).Next(nil)))
-
-		So(node.Error(), ShouldBeNil)
-		So(len(out), ShouldEqual, 5)
-		So(out[0], ShouldAlmostEqual, 0)
-		So(out[1], ShouldAlmostEqual, 0)
-		So(out[2], ShouldAlmostEqual, 3)
-		So(out[3], ShouldAlmostEqual, 0)
-		So(math.IsInf(out[4], 1), ShouldBeTrue)
-	})
-}
-
-func TestKolmogorovSmirnovPairsNext(t *testing.T) {
-	Convey("Given two sorted point streams", t, func() {
-		node := distribution.NewKolmogorovSmirnovPairs()
-		out := tests.CollectSeq[float64](node.Next(data.NewValue(
-			[2][][2]float64{{{0.5, 1}, {1, 1}}, {{0.5, 1}, {1, 1}}},
-			[2][][2]float64{{{0, 1}}, {{3, 1}}},
-			[2][][2]float64{{{0, 0}}, {{0, 1}}},
-		).Next(nil)))
-
-		So(node.Error(), ShouldBeNil)
-		So(out[0], ShouldAlmostEqual, 0)
-		So(out[1], ShouldAlmostEqual, 1)
-		So(math.IsInf(out[2], 1), ShouldBeTrue)
-	})
-}
-
-func TestConcentrationPointsNext(t *testing.T) {
-	Convey("Given a point stream", t, func() {
-		node := distribution.NewConcentrationPoints()
-		out := tests.CollectSeq[float64](node.Next(data.NewValue(
-			[][2]float64{{1, 5}},
-			[][2]float64{{1, 3}, {2, 3}},
-			[][2]float64{{1, 0}},
-		).Next(nil)))
-
-		So(node.Error(), ShouldBeNil)
-		So(out[0], ShouldAlmostEqual, 1)
-		So(out[1], ShouldAlmostEqual, 0.5)
-		So(out[2], ShouldAlmostEqual, 0)
-	})
-}
-
-func TestEntropyPointsNext(t *testing.T) {
-	Convey("Given a point stream", t, func() {
-		node := distribution.NewEntropyPoints()
-		out := tests.CollectSeq[float64](node.Next(data.NewValue(
-			[][2]float64{{1, 5}},
-			[][2]float64{{1, 3}, {2, 3}},
-			[][2]float64{{1, 0}},
-		).Next(nil)))
-
-		So(node.Error(), ShouldBeNil)
-		So(out[0], ShouldAlmostEqual, 0)
-		So(out[1], ShouldAlmostEqual, math.Log(2))
-		So(out[2], ShouldAlmostEqual, 0)
-	})
+func TestMergedWalkCancellation(t *testing.T) {
+	op := distribution.NewMergedWalk()
+	calls := 0
+	run := op.Next(data.NewValue[core.Primitive](data.NewValue(0.0, 1.0), data.NewValue(1.0, 1.0)).Next(nil))
+	run(func(pointer unsafe.Pointer) bool { calls++; return false })
+	if calls != 1 {
+		t.Fatalf("yielded after stop: %d", calls)
+	}
 }
