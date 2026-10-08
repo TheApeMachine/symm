@@ -2,6 +2,7 @@ package cvd
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique"
@@ -10,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
@@ -70,355 +72,356 @@ func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		pipeline: nomagique.NewNumber(
 			transport.NewAddressable(
-				"symbolstore", store.NewKV(),
-				nomagique.NewNumber(
-					transport.NewParallel(
-						// 0: trade_count:buy
-						vector.NewScale(1.0),
-						// 1: trade_count:sell
-						vector.NewScale(1.0),
-						// 2: trade_count
-						arithmetic.NewAdd(),
-						// 3: signed_count_fraction
-						nomagique.NewNumber(
-							data.NewBatch(2, 2),
-							transport.NewParallel(
-								arithmetic.NewSubtract(),
-								arithmetic.NewAdd(),
+				"symbolstore", store.NewKV(func() core.Primitive {
+					return nomagique.NewNumber(
+						transport.NewParallel(
+							// 0: trade_count:buy
+							vector.NewScale(1.0),
+							// 1: trade_count:sell
+							vector.NewScale(1.0),
+							// 2: trade_count
+							arithmetic.NewAdd(),
+							// 3: signed_count_fraction
+							nomagique.NewNumber(
+								data.NewBatch(2, 2),
+								transport.NewParallel(
+									arithmetic.NewSubtract(),
+									arithmetic.NewAdd(),
+								),
+								arithmetic.NewDivide(),
 							),
-							arithmetic.NewDivide(),
-						),
-						// 4: executed_quantity:buy
-						vector.NewScale(1.0),
-						// 5: executed_quantity:sell
-						vector.NewScale(1.0),
-						// 6: gross_executed_quantity
-						arithmetic.NewAdd(),
-						// 7: net_executed_quantity
-						arithmetic.NewSubtract(),
-						// 8: cumulative_volume_delta
-						arithmetic.NewSubtract(),
-						// 9: aggressive_notional:buy
-						vector.NewScale(),
-						// 10: aggressive_notional:sell
-						vector.NewScale(),
-						// 11: gross_notional
-						nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
-						// 12: net_notional
-						nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
-						// 13: cumulative_notional_delta
-						nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
-						// 14: signed_net_fraction
-						nomagique.NewNumber(
+							// 4: executed_quantity:buy
+							vector.NewScale(1.0),
+							// 5: executed_quantity:sell
+							vector.NewScale(1.0),
+							// 6: gross_executed_quantity
+							arithmetic.NewAdd(),
+							// 7: net_executed_quantity
+							arithmetic.NewSubtract(),
+							// 8: cumulative_volume_delta
+							nomagique.NewNumber(arithmetic.NewSubtract(), statistic.NewSum()),
+							// 9: aggressive_notional:buy
 							vector.NewScale(),
-							data.NewBatch(2, 2),
-							transport.NewParallel(
-								arithmetic.NewSubtract(),
-								arithmetic.NewAdd(),
-							),
-							arithmetic.NewDivide(),
-						),
-						// 15: mean_trade_notional
-						nomagique.NewNumber(
-							data.NewBatch(4, 2),
-							transport.NewParallel(
-								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
-								arithmetic.NewAdd(),
-							),
-							arithmetic.NewDivide(),
-						),
-						// 16: trade_rate
-						nomagique.NewNumber(
-							data.NewBatch(2, 1),
-							transport.NewParallel(
-								arithmetic.NewAdd(),
-								vector.NewScale(1.0),
-							),
-							arithmetic.NewDivide(),
-						),
-						// 17: gross_notional_rate
-						nomagique.NewNumber(
-							data.NewBatch(4, 1),
-							transport.NewParallel(
-								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
-								vector.NewScale(1.0),
-							),
-							arithmetic.NewDivide(),
-						),
-						// 18: net_notional_rate
-						nomagique.NewNumber(
-							data.NewBatch(4, 1),
-							transport.NewParallel(
-								nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
-								vector.NewScale(1.0),
-							),
-							arithmetic.NewDivide(),
-						),
-						// 19: buy_notional_rate
-						nomagique.NewNumber(
-							data.NewBatch(2, 1),
-							transport.NewParallel(
+							// 10: aggressive_notional:sell
+							vector.NewScale(),
+							// 11: gross_notional
+							nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+							// 12: net_notional
+							nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
+							// 13: cumulative_notional_delta
+							nomagique.NewNumber(nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()), statistic.NewSum()),
+							// 14: signed_net_fraction
+							nomagique.NewNumber(
 								vector.NewScale(),
-								vector.NewScale(1.0),
+								data.NewBatch(2, 2),
+								transport.NewParallel(
+									arithmetic.NewSubtract(),
+									arithmetic.NewAdd(),
+								),
+								arithmetic.NewDivide(),
 							),
+							// 15: mean_trade_notional
+							nomagique.NewNumber(
+								data.NewBatch(4, 2),
+								transport.NewParallel(
+									nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+									arithmetic.NewAdd(),
+								),
+								arithmetic.NewDivide(),
+							),
+							// 16: trade_rate
+							nomagique.NewNumber(
+								data.NewBatch(2, 1),
+								transport.NewParallel(
+									arithmetic.NewAdd(),
+									vector.NewScale(1.0),
+								),
+								arithmetic.NewDivide(),
+							),
+							// 17: gross_notional_rate
+							nomagique.NewNumber(
+								data.NewBatch(4, 1),
+								transport.NewParallel(
+									nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+									vector.NewScale(1.0),
+								),
+								arithmetic.NewDivide(),
+							),
+							// 18: net_notional_rate
+							nomagique.NewNumber(
+								data.NewBatch(4, 1),
+								transport.NewParallel(
+									nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
+									vector.NewScale(1.0),
+								),
+								arithmetic.NewDivide(),
+							),
+							// 19: buy_notional_rate
+							nomagique.NewNumber(
+								data.NewBatch(2, 1),
+								transport.NewParallel(
+									vector.NewScale(),
+									vector.NewScale(1.0),
+								),
+								arithmetic.NewDivide(),
+							),
+							// 20: sell_notional_rate
+							nomagique.NewNumber(
+								data.NewBatch(2, 1),
+								transport.NewParallel(
+									vector.NewScale(),
+									vector.NewScale(1.0),
+								),
+								arithmetic.NewDivide(),
+							),
+							// 21: cvd_epoch_from
+							store.NewConstant[float64](),
+							// 22: response_midpoint:from
+							vector.NewScale(1.0),
+							// 23: response_midpoint:at
+							vector.NewScale(1.0),
+							// 24: midpoint_log_return
+							vector.NewScale(1.0),
+							// 25: midpoint_return_rate
 							arithmetic.NewDivide(),
-						),
-						// 20: sell_notional_rate
-						nomagique.NewNumber(
-							data.NewBatch(2, 1),
-							transport.NewParallel(
+							// 26: flow_aligned_midpoint_return
+							vector.NewScale(1.0),
+							// 27: midpoint_response_per_net_notional
+							nomagique.NewNumber(
+								data.NewBatch(1, 4),
+								transport.NewParallel(
+									vector.NewScale(1.0),
+									nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
+								),
+								arithmetic.NewDivide(),
+							),
+							// 28: gross_notional_rate_baseline
+							nomagique.NewNumber(
+								data.NewBatch(4, 1),
+								transport.NewParallel(
+									nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+									vector.NewScale(1.0),
+								),
+								arithmetic.NewDivide(),
+								adaptive.NewBaseline(adaptive.NewWindow()),
+								data.NewBatch(1, 1),
+								transport.NewParallel(
+									vector.NewScale(1.0),
+									transport.NewDiscard(),
+								),
+							),
+							// 29: gross_notional_rate_ratio
+							nomagique.NewNumber(
+								data.NewBatch(4, 1),
+								transport.NewParallel(
+									nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+									vector.NewScale(1.0),
+								),
+								arithmetic.NewDivide(),
+								data.NewRepeat(2),
+								data.NewBatch(1, 1),
+								transport.NewParallel(
+									vector.NewScale(1.0),
+									nomagique.NewNumber(
+										adaptive.NewBaseline(adaptive.NewWindow()),
+										data.NewBatch(1, 1),
+										transport.NewParallel(
+											vector.NewScale(1.0),
+											transport.NewDiscard(),
+										),
+									),
+								),
+								arithmetic.NewDivide(),
+							),
+							// 30: gross_notional_rate_divergence
+							nomagique.NewNumber(
+								data.NewBatch(4, 1),
+								transport.NewParallel(
+									nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+									vector.NewScale(1.0),
+								),
+								arithmetic.NewDivide(),
+								data.NewRepeat(2),
+								data.NewBatch(1, 1),
+								transport.NewParallel(
+									vector.NewScale(1.0),
+									nomagique.NewNumber(
+										adaptive.NewBaseline(adaptive.NewWindow()),
+										data.NewBatch(1, 1),
+										transport.NewParallel(
+											vector.NewScale(1.0),
+											transport.NewDiscard(),
+										),
+									),
+								),
+								arithmetic.NewSubtract(),
+							),
+							// 31: gross_notional_rate_zscore
+							nomagique.NewNumber(
+								data.NewBatch(4, 1),
+								transport.NewParallel(
+									nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+									vector.NewScale(1.0),
+								),
+								arithmetic.NewDivide(),
+								data.NewRepeat(2),
+								data.NewBatch(1, 1),
+								transport.NewParallel(
+									vector.NewScale(1.0),
+									adaptive.NewBaseline(adaptive.NewWindow()),
+								),
+								data.NewBatch(2, 1),
+								transport.NewParallel(
+									arithmetic.NewSubtract(),
+									vector.NewScale(1.0),
+								),
+								arithmetic.NewDivide(),
+							),
+							// 32: signed_net_fraction_baseline
+							nomagique.NewNumber(
 								vector.NewScale(),
-								vector.NewScale(1.0),
-							),
-							arithmetic.NewDivide(),
-						),
-						// 21: cvd_epoch_from
-						vector.NewScale(1.0),
-						// 22: response_midpoint:from
-						vector.NewScale(1.0),
-						// 23: response_midpoint:at
-						vector.NewScale(1.0),
-						// 24: midpoint_log_return
-						vector.NewScale(1.0),
-						// 25: midpoint_return_rate
-						arithmetic.NewDivide(),
-						// 26: flow_aligned_midpoint_return
-						vector.NewScale(1.0),
-						// 27: midpoint_response_per_net_notional
-						nomagique.NewNumber(
-							data.NewBatch(1, 4),
-							transport.NewParallel(
-								vector.NewScale(1.0),
-								nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
-							),
-							arithmetic.NewDivide(),
-						),
-						// 28: gross_notional_rate_baseline
-						nomagique.NewNumber(
-							data.NewBatch(4, 1),
-							transport.NewParallel(
-								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
-								vector.NewScale(1.0),
-							),
-							arithmetic.NewDivide(),
-							adaptive.NewBaseline(adaptive.NewWindow()),
-							data.NewBatch(1, 1),
-							transport.NewParallel(
-								vector.NewScale(1.0),
-								transport.NewDiscard(),
-							),
-						),
-						// 29: gross_notional_rate_ratio
-						nomagique.NewNumber(
-							data.NewBatch(4, 1),
-							transport.NewParallel(
-								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
-								vector.NewScale(1.0),
-							),
-							arithmetic.NewDivide(),
-							data.NewRepeat(2),
-							data.NewBatch(1, 1),
-							transport.NewParallel(
-								vector.NewScale(1.0),
-								nomagique.NewNumber(
-									adaptive.NewBaseline(adaptive.NewWindow()),
-									data.NewBatch(1, 1),
-									transport.NewParallel(
-										vector.NewScale(1.0),
-										transport.NewDiscard(),
-									),
+								data.NewBatch(2, 2),
+								transport.NewParallel(
+									arithmetic.NewSubtract(),
+									arithmetic.NewAdd(),
 								),
-							),
-							arithmetic.NewDivide(),
-						),
-						// 30: gross_notional_rate_divergence
-						nomagique.NewNumber(
-							data.NewBatch(4, 1),
-							transport.NewParallel(
-								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
-								vector.NewScale(1.0),
-							),
-							arithmetic.NewDivide(),
-							data.NewRepeat(2),
-							data.NewBatch(1, 1),
-							transport.NewParallel(
-								vector.NewScale(1.0),
-								nomagique.NewNumber(
-									adaptive.NewBaseline(adaptive.NewWindow()),
-									data.NewBatch(1, 1),
-									transport.NewParallel(
-										vector.NewScale(1.0),
-										transport.NewDiscard(),
-									),
-								),
-							),
-							arithmetic.NewSubtract(),
-						),
-						// 31: gross_notional_rate_zscore
-						nomagique.NewNumber(
-							data.NewBatch(4, 1),
-							transport.NewParallel(
-								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
-								vector.NewScale(1.0),
-							),
-							arithmetic.NewDivide(),
-							data.NewRepeat(2),
-							data.NewBatch(1, 1),
-							transport.NewParallel(
-								vector.NewScale(1.0),
+								arithmetic.NewDivide(),
 								adaptive.NewBaseline(adaptive.NewWindow()),
+								data.NewBatch(1, 1),
+								transport.NewParallel(
+									vector.NewScale(1.0),
+									transport.NewDiscard(),
+								),
 							),
-							data.NewBatch(2, 1),
-							transport.NewParallel(
+							// 33: signed_net_fraction_divergence
+							nomagique.NewNumber(
+								vector.NewScale(),
+								data.NewBatch(2, 2),
+								transport.NewParallel(
+									arithmetic.NewSubtract(),
+									arithmetic.NewAdd(),
+								),
+								arithmetic.NewDivide(),
+								data.NewRepeat(2),
+								data.NewBatch(1, 1),
+								transport.NewParallel(
+									vector.NewScale(1.0),
+									nomagique.NewNumber(
+										adaptive.NewBaseline(adaptive.NewWindow()),
+										data.NewBatch(1, 1),
+										transport.NewParallel(
+											vector.NewScale(1.0),
+											transport.NewDiscard(),
+										),
+									),
+								),
 								arithmetic.NewSubtract(),
-								vector.NewScale(1.0),
 							),
-							arithmetic.NewDivide(),
-						),
-						// 32: signed_net_fraction_baseline
-						nomagique.NewNumber(
-							vector.NewScale(),
-							data.NewBatch(2, 2),
-							transport.NewParallel(
-								arithmetic.NewSubtract(),
-								arithmetic.NewAdd(),
-							),
-							arithmetic.NewDivide(),
-							adaptive.NewBaseline(adaptive.NewWindow()),
-							data.NewBatch(1, 1),
-							transport.NewParallel(
-								vector.NewScale(1.0),
-								transport.NewDiscard(),
-							),
-						),
-						// 33: signed_net_fraction_divergence
-						nomagique.NewNumber(
-							vector.NewScale(),
-							data.NewBatch(2, 2),
-							transport.NewParallel(
-								arithmetic.NewSubtract(),
-								arithmetic.NewAdd(),
-							),
-							arithmetic.NewDivide(),
-							data.NewRepeat(2),
-							data.NewBatch(1, 1),
-							transport.NewParallel(
-								vector.NewScale(1.0),
-								nomagique.NewNumber(
+							// 34: signed_net_fraction_zscore
+							nomagique.NewNumber(
+								vector.NewScale(),
+								data.NewBatch(2, 2),
+								transport.NewParallel(
+									arithmetic.NewSubtract(),
+									arithmetic.NewAdd(),
+								),
+								arithmetic.NewDivide(),
+								data.NewRepeat(2),
+								data.NewBatch(1, 1),
+								transport.NewParallel(
+									vector.NewScale(1.0),
 									adaptive.NewBaseline(adaptive.NewWindow()),
-									data.NewBatch(1, 1),
-									transport.NewParallel(
-										vector.NewScale(1.0),
-										transport.NewDiscard(),
-									),
+								),
+								data.NewBatch(2, 1),
+								transport.NewParallel(
+									arithmetic.NewSubtract(),
+									vector.NewScale(1.0),
+								),
+								arithmetic.NewDivide(),
+							),
+							// 35: midpoint_return_rate_baseline
+							nomagique.NewNumber(
+								arithmetic.NewDivide(),
+								adaptive.NewBaseline(adaptive.NewWindow()),
+								data.NewBatch(1, 1),
+								transport.NewParallel(
+									vector.NewScale(1.0),
+									transport.NewDiscard(),
 								),
 							),
-							arithmetic.NewSubtract(),
-						),
-						// 34: signed_net_fraction_zscore
-						nomagique.NewNumber(
-							vector.NewScale(),
-							data.NewBatch(2, 2),
-							transport.NewParallel(
+							// 36: midpoint_return_rate_divergence
+							nomagique.NewNumber(
+								arithmetic.NewDivide(),
+								data.NewRepeat(2),
+								data.NewBatch(1, 1),
+								transport.NewParallel(
+									vector.NewScale(1.0),
+									nomagique.NewNumber(
+										adaptive.NewBaseline(adaptive.NewWindow()),
+										data.NewBatch(1, 1),
+										transport.NewParallel(
+											vector.NewScale(1.0),
+											transport.NewDiscard(),
+										),
+									),
+								),
 								arithmetic.NewSubtract(),
-								arithmetic.NewAdd(),
 							),
-							arithmetic.NewDivide(),
-							data.NewRepeat(2),
-							data.NewBatch(1, 1),
-							transport.NewParallel(
-								vector.NewScale(1.0),
-								adaptive.NewBaseline(adaptive.NewWindow()),
-							),
-							data.NewBatch(2, 1),
-							transport.NewParallel(
-								arithmetic.NewSubtract(),
-								vector.NewScale(1.0),
-							),
-							arithmetic.NewDivide(),
-						),
-						// 35: midpoint_return_rate_baseline
-						nomagique.NewNumber(
-							arithmetic.NewDivide(),
-							adaptive.NewBaseline(adaptive.NewWindow()),
-							data.NewBatch(1, 1),
-							transport.NewParallel(
-								vector.NewScale(1.0),
-								transport.NewDiscard(),
-							),
-						),
-						// 36: midpoint_return_rate_divergence
-						nomagique.NewNumber(
-							arithmetic.NewDivide(),
-							data.NewRepeat(2),
-							data.NewBatch(1, 1),
-							transport.NewParallel(
-								vector.NewScale(1.0),
-								nomagique.NewNumber(
+							// 37: midpoint_return_rate_zscore
+							nomagique.NewNumber(
+								arithmetic.NewDivide(),
+								data.NewRepeat(2),
+								data.NewBatch(1, 1),
+								transport.NewParallel(
+									vector.NewScale(1.0),
 									adaptive.NewBaseline(adaptive.NewWindow()),
-									data.NewBatch(1, 1),
-									transport.NewParallel(
-										vector.NewScale(1.0),
-										transport.NewDiscard(),
-									),
 								),
-							),
-							arithmetic.NewSubtract(),
-						),
-						// 37: midpoint_return_rate_zscore
-						nomagique.NewNumber(
-							arithmetic.NewDivide(),
-							data.NewRepeat(2),
-							data.NewBatch(1, 1),
-							transport.NewParallel(
-								vector.NewScale(1.0),
-								adaptive.NewBaseline(adaptive.NewWindow()),
-							),
-							data.NewBatch(2, 1),
-							transport.NewParallel(
-								arithmetic.NewSubtract(),
-								vector.NewScale(1.0),
-							),
-							arithmetic.NewDivide(),
-						),
-						// 38: net_notional_rate_velocity
-						nomagique.NewNumber(
-							data.NewBatch(5, 1),
-							transport.NewParallel(
-								nomagique.NewNumber(
-									data.NewBatch(4, 1),
-									transport.NewParallel(
-										nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
-										vector.NewScale(1.0),
-									),
-									arithmetic.NewDivide(),
+								data.NewBatch(2, 1),
+								transport.NewParallel(
+									arithmetic.NewSubtract(),
+									vector.NewScale(1.0),
 								),
-								vector.NewScale(1.0),
+								arithmetic.NewDivide(),
 							),
-							temporal.NewVelocity(),
-						),
-						// 39: gross_notional_rate_velocity
-						nomagique.NewNumber(
-							data.NewBatch(5, 1),
-							transport.NewParallel(
-								nomagique.NewNumber(
-									data.NewBatch(4, 1),
-									transport.NewParallel(
-										nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
-										vector.NewScale(1.0),
+							// 38: net_notional_rate_velocity
+							nomagique.NewNumber(
+								data.NewBatch(5, 1),
+								transport.NewParallel(
+									nomagique.NewNumber(
+										data.NewBatch(4, 1),
+										transport.NewParallel(
+											nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
+											vector.NewScale(1.0),
+										),
+										arithmetic.NewDivide(),
 									),
-									arithmetic.NewDivide(),
+									vector.NewScale(1.0),
 								),
-								vector.NewScale(1.0),
+								temporal.NewVelocity(),
 							),
-							temporal.NewVelocity(),
+							// 39: gross_notional_rate_velocity
+							nomagique.NewNumber(
+								data.NewBatch(5, 1),
+								transport.NewParallel(
+									nomagique.NewNumber(
+										data.NewBatch(4, 1),
+										transport.NewParallel(
+											nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+											vector.NewScale(1.0),
+										),
+										arithmetic.NewDivide(),
+									),
+									vector.NewScale(1.0),
+								),
+								temporal.NewVelocity(),
+							),
+							// 40: historical_path_distance
+							vector.NewScale(1.0),
+							// 41: historical_path_percentile
+							vector.NewScale(1.0),
 						),
-						// 40: historical_path_distance
-						vector.NewScale(1.0),
-						// 41: historical_path_percentile
-						vector.NewScale(1.0),
-					),
-				),
+					)
+				}),
 			),
 		),
 	}
@@ -468,7 +471,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		timeDelta = 1
 	}
 
-	epochFrom := float64(prior.From.UnixNano())
+	epochFrom := float64(prior.At.UnixNano())
 	midpointFrom := 0.0
 	midpointAt := 0.0
 	midpointLogReturn := 0.0
@@ -479,9 +482,9 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	for ptr := range signal.pipeline.Next(
 		data.NewMessage(
-			data.WRITE,
+			data.EVALUATE,
 			"symbolstore",
-			prior.Label,
+			prior.Label+"/epoch:"+strconv.FormatInt(prior.Epoch, 10),
 			data.NewValue[core.Primitive](
 				// 0: trade_count:buy
 				data.NewValue(buyCount),
@@ -592,6 +595,16 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 		output[outputKeys[index]] = *(*float64)(ptr)
 		index++
+	}
+
+	if err := signal.pipeline.Error(); err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[signal.cvd] pipeline failed", err))
+		return nil
+	}
+
+	if index != len(outputKeys) {
+		signal.Error(errnie.Err(errnie.UnprocessableContent, "[signal.cvd] incomplete output", core.ErrShape))
+		return nil
 	}
 
 	return prior.Next(signal.Name(), output)

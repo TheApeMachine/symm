@@ -13,6 +13,8 @@ const (
 	NOOP ActionType = iota
 	READ
 	WRITE
+	// EVALUATE runs the stored per-key primitive against Value without replacing it.
+	EVALUATE
 )
 
 type Message struct {

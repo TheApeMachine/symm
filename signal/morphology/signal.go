@@ -51,6 +51,7 @@ func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 					// 4: bids  -> EntropyPoints (bid)
 					// 5: asks  -> EntropyPoints (ask)
 					data.NewSelect(0, 0, 1, 2, 1, 2),
+					data.NewBatch(1, 1, 1, 1, 1, 1),
 					transport.NewParallel(
 						distribution.NewWasserstein1Pairs(),
 						distribution.NewKolmogorovSmirnovPairs(),
@@ -61,6 +62,7 @@ func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 					),
 					// Stage 2: Select 0..5 and repeat distance at 6, then pass 0..5 and compute morphology_change at 6
 					data.NewSelect(0, 1, 2, 3, 4, 5, 0),
+					data.NewBatch(1, 1, 1, 1, 1, 1, 1),
 					transport.NewParallel(
 						transport.NewPass(),
 						transport.NewPass(),
@@ -188,7 +190,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			data.WRITE,
 			"symbolstore",
 			prior.Label,
-			data.NewValue(
+			data.NewPointers(
 				unsafe.Pointer(&pairs),
 				unsafe.Pointer(&bids),
 				unsafe.Pointer(&asks),

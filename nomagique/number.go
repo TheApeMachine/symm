@@ -31,23 +31,44 @@ func NewNumber(stages ...core.Primitive) *Number {
 }
 
 func (number *Number) Next(input iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	curr := input
-
-	if curr == nil {
-		curr = func(yield func(unsafe.Pointer) bool) {}
-	}
-
-	for _, stage := range number.Stages {
-		if curr == nil {
-			break
+	return func(yield func(unsafe.Pointer) bool) {
+		if number.Error() != nil {
+			return
 		}
 
-		curr = stage.Next(curr)
-	}
+		curr := input
 
-	if curr == nil {
-		return func(yield func(unsafe.Pointer) bool) {}
-	}
+		if curr == nil {
+			curr = func(yield func(unsafe.Pointer) bool) {}
+		}
 
-	return curr
+		for _, stage := range number.Stages {
+			if stage == nil {
+				number.Error(core.ErrShape)
+				return
+			}
+
+			if err := stage.Error(); err != nil {
+				number.Error(err)
+				return
+			}
+
+			curr = stage.Next(curr)
+
+			if curr == nil {
+				number.Error(core.ErrShape)
+				return
+			}
+		}
+
+		for ptr := range curr {
+			if !yield(ptr) {
+				return
+			}
+		}
+
+		for _, stage := range number.Stages {
+			number.Error(stage.Error())
+		}
+	}
 }

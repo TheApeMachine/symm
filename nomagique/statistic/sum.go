@@ -8,26 +8,26 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
-/*
-Sum owns the running arithmetic sum. Arriving values are added to the running
-total in stream order and the updated sum is yielded through the output run.
-*/
+// Sum retains an arithmetic total across Next calls. Each non-empty run
+// contributes its scalar arrivals and yields exactly one updated total.
+// A malformed run does not commit a partial update.
 type Sum struct {
 	*core.PrimitiveError
+	total float64
 }
 
-/*
-NewSum creates the running arithmetic sum primitive.
-*/
 func NewSum() core.Primitive {
-	return &Sum{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Sum{PrimitiveError: core.NewPrimitiveError()}
 }
 
 func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		var out float64
+		if op.Error() != nil || in == nil {
+			return
+		}
+
+		total := op.total
+		observed := false
 
 		for arriving := range in {
 			if arriving == nil {
@@ -35,10 +35,17 @@ func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
-			out += *(*float64)(arriving)
+			total += *(*float64)(arriving)
+			observed = true
 		}
 
-		for value := range data.NewValue(out).Next(nil) {
+		if !observed {
+			return
+		}
+
+		op.total = total
+
+		for value := range data.NewValue(total).Next(nil) {
 			if !yield(value) {
 				return
 			}

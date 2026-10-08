@@ -15,13 +15,20 @@ type Value[T any] struct {
 func NewValue[T any](values ...T) *Value[T] {
 	wrapped := make([]unsafe.Pointer, len(values))
 
-	for i, v := range values {
-		wrapped[i] = unsafe.Pointer(&v)
+	for i := range values {
+		wrapped[i] = unsafe.Pointer(&values[i])
 	}
 
 	return &Value[T]{
 		PrimitiveError: core.NewPrimitiveError(),
 		Values:         wrapped,
+	}
+}
+
+func NewPointers(values ...unsafe.Pointer) *Value[unsafe.Pointer] {
+	return &Value[unsafe.Pointer]{
+		PrimitiveError: core.NewPrimitiveError(),
+		Values:         values,
 	}
 }
 

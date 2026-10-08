@@ -7,26 +7,51 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-/*
-Constant replaces each arrival with a configured value. The arrival is the
-clock; the payload is ignored.
-*/
+// Constant replaces each arrival with a retained value. With one constructor
+// operand it is fixed immediately. With no operand, its first scalar arrival
+// establishes the value; later arrivals are clocks and never replace it.
 type Constant[T any] struct {
 	*core.PrimitiveError
-	out T
+	out  T
+	held bool
 }
 
-func NewConstant[T any](current T) core.Primitive {
-	return &Constant[T]{
-		PrimitiveError: core.NewPrimitiveError(),
-		out:            current,
+func NewConstant[T any](current ...T) core.Primitive {
+	op := &Constant[T]{PrimitiveError: core.NewPrimitiveError()}
+
+	if len(current) > 1 {
+		op.Error(core.ErrShape)
+		return op
 	}
+
+	if len(current) == 1 {
+		op.out = current[0]
+		op.held = true
+	}
+
+	return op
 }
 
 func (op *Constant[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for range in {
-			if !yield(unsafe.Pointer(&op.out)) {
+		if op.Error() != nil || in == nil {
+			return
+		}
+
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
+			if !op.held {
+				op.out = *(*T)(arriving)
+				op.held = true
+			}
+
+			value := op.out
+
+			if !yield(unsafe.Pointer(&value)) {
 				return
 			}
 		}

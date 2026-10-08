@@ -126,7 +126,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	output := make(map[string]float64)
+	output["last"] = price
 	atNano := float64(prior.At.UnixNano())
+	signal.paths.SetCurrent(prior.Label)
+	peers := signal.paths.Peers(prior.Label)
 	index := 0
 
 	for ptr := range signal.pipeline.Next(
@@ -147,7 +150,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			return nil
 		}
 
-		output[leadLagPeerFactKeys[index]] = *(*float64)(ptr)
+		peerIdx := index / len(leadLagPeerFactKeys)
+		keyIdx := index % len(leadLagPeerFactKeys)
+		if peerIdx < len(peers) {
+			output[leadLagPeerFactKeys[keyIdx]+"@"+peers[peerIdx]] = *(*float64)(ptr)
+		}
 		index++
 	}
 
