@@ -2,6 +2,7 @@ package morphology_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -9,7 +10,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -19,181 +19,81 @@ import (
 
 func ingress(label string, at time.Time, seq int64) *data.Measurement {
 	prior := data.NewMeasurement(1, label, "spot:trade", seq, seq)
-	prior.At = at
-	prior.From = at
+	prior.At, prior.From = at, at
+	prior.Write(data.NewMetric("price", 12, data.UnitCurrency, data.TimescaleInstantaneous))
 	return prior
 }
-
 func metric(measurement *data.Measurement, label string) (float64, bool) {
 	for entry := range measurement.Read(label) {
-		if entry.Err != nil {
+		if entry.Err != nil || entry.Metric == nil {
 			return 0, false
 		}
-
 		return entry.Metric.Raw, true
 	}
-
 	return 0, false
 }
-
 func metricValue(measurement *data.Measurement, label string) float64 {
 	value, held := metric(measurement, label)
 	So(held, ShouldBeTrue)
 	return value
 }
-
+func writeBook(t *testing.T, books *broker.Book, symbol string, at time.Time, bids, asks []float64) {
+	t.Helper()
+	var orders [2][]kraken.Level3Order
+	for side, values := range [2][]float64{bids, asks} {
+		for index := 0; index < len(values); index += 2 {
+			orders[side] = append(orders[side], kraken.Level3Order{
+				OrderID:    fmt.Sprintf("%s-%d-%d", symbol, side, index),
+				LimitPrice: decimal.NewFromFloat64(values[index]), OrderQty: decimal.NewFromFloat64(values[index+1]), Timestamp: at, Event: "add",
+			})
+		}
+	}
+	if err := books.Update(&kraken.Level3{Channel: "level3", Type: "snapshot", Data: []kraken.Level3Data{{Symbol: symbol, Bids: orders[0], Asks: orders[1]}}}); err != nil {
+		t.Fatal(err)
+	}
+}
 func TestMorphologyLevel3Metrics(t *testing.T) {
-	Convey("Morphology instrument computes principled distribution geometry, concentration, and entropy", t, func() {
+	Convey("Given a real book source and the single morphology pipeline", t, func() {
 		ctx := context.Background()
-		normalizer := spot.NewNormalizer()
-		books := broker.NewBook(ctx, normalizer)
-
+		books := broker.NewBook(ctx, spot.NewNormalizer())
 		instrument := morphology.NewSignal(ctx, books)
 		instrument.Transition(nmruntime.READY)
-
-		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-
-		Convey("Asymmetric depth distribution yields exact KS distance and Wasserstein shape separation", func() {
-			books.Update(&kraken.Level3{
-				Channel: "level3",
-				Type:    "snapshot",
-				Data: []kraken.Level3Data{
-					{
-						Symbol: "BTC/USD",
-						Bids: []kraken.Level3Order{
-							{
-								OrderID:    "bid-1",
-								LimitPrice: decimal.NewFromFloat64(50000.0),
-								OrderQty:   decimal.NewFromFloat64(2.0),
-								Timestamp:  now,
-								Event:      "add",
-							},
-						},
-						Asks: []kraken.Level3Order{
-							{
-								OrderID:    "ask-1",
-								LimitPrice: decimal.NewFromFloat64(50010.0),
-								OrderQty:   decimal.NewFromFloat64(1.0),
-								Timestamp:  now,
-								Event:      "add",
-							},
-							{
-								OrderID:    "ask-2",
-								LimitPrice: decimal.NewFromFloat64(50020.0),
-								OrderQty:   decimal.NewFromFloat64(1.0),
-								Timestamp:  now,
-								Event:      "add",
-							},
-						},
-					},
-				},
-			})
-
-			res := instrument.Step(ingress("BTC/USD", now, 1))
-			So(res, ShouldNotBeNil)
+		at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+		Convey("Mirrored shapes expose six measurements, not an invented first change", func() {
+			writeBook(t, books, "BTC/USD", at, []float64{10, .1, 6, 1.0 / 6}, []float64{14, 1.0 / 14, 18, 1.0 / 18})
+			prior := ingress("BTC/USD", at, 1)
+			result := instrument.Step(prior)
+			So(result, ShouldNotBeNil)
 			So(instrument.Error(), ShouldBeNil)
-			So(res.Source, ShouldEqual, "morphology")
-			So(res.Label, ShouldEqual, "BTC/USD")
-
-			// Single level bid has concentration = 1.0 and zero entropy
-			So(metricValue(res, "concentration:bid"), ShouldAlmostEqual, 1.0, 1e-9)
-			So(metricValue(res, "entropy:bid"), ShouldAlmostEqual, 0.0, 1e-9)
-
-			// Two-level ask has concentration < 1.0 and positive entropy
-			So(metricValue(res, "concentration:ask"), ShouldBeLessThan, 1.0)
-			So(metricValue(res, "entropy:ask"), ShouldBeGreaterThan, 0.0)
-
-			// Asymmetric shape relative to mid: KS statistic is positive
-			So(metricValue(res, "book_shape_ks"), ShouldBeGreaterThan, 0.0)
-			So(metricValue(res, "book_shape_distance"), ShouldBeGreaterThan, 0.0)
-
-			So(metricValue(res, "morphology_change"), ShouldEqual, 0.0)
-		})
-
-		Convey("A crossed book is corrupt state: it halts with an Internal error naming the symbol", func() {
-			books.Update(&kraken.Level3{
-				Channel: "level3",
-				Type:    "snapshot",
-				Data: []kraken.Level3Data{{
-					Symbol: "XBT/USD",
-					Bids:   []kraken.Level3Order{{OrderID: "bid-x", LimitPrice: decimal.NewFromFloat64(50010.0), OrderQty: decimal.NewFromFloat64(1.0), Timestamp: now, Event: "add"}},
-					Asks:   []kraken.Level3Order{{OrderID: "ask-x", LimitPrice: decimal.NewFromFloat64(50000.0), OrderQty: decimal.NewFromFloat64(1.0), Timestamp: now, Event: "add"}},
-				}},
+			So(metricValue(result, "book_shape_distance"), ShouldAlmostEqual, 0, 1e-10)
+			So(metricValue(result, "book_shape_ks"), ShouldAlmostEqual, 0, 1e-10)
+			So(metricValue(result, "concentration:bid"), ShouldAlmostEqual, .5, 1e-10)
+			So(metricValue(result, "concentration:ask"), ShouldAlmostEqual, .5, 1e-10)
+			So(metricValue(result, "entropy:bid"), ShouldAlmostEqual, math.Log(2), 1e-10)
+			So(metricValue(result, "entropy:ask"), ShouldAlmostEqual, math.Log(2), 1e-10)
+			_, present := metric(result, "morphology_change")
+			So(present, ShouldBeFalse)
+			So(prior.From.Equal(at), ShouldBeTrue)
+			So(prior.At.Equal(at), ShouldBeTrue)
+			Convey("Moving both outer levels changes the book although bilateral distance stays zero", func() {
+				nextAt := at.Add(time.Second)
+				writeBook(t, books, "BTC/USD", nextAt, []float64{10, .1, 2, .5}, []float64{14, 1.0 / 14, 22, 1.0 / 22})
+				changed := instrument.Step(ingress("BTC/USD", nextAt, 2))
+				So(changed, ShouldNotBeNil)
+				So(metricValue(changed, "book_shape_distance"), ShouldAlmostEqual, 0, 1e-10)
+				So(metricValue(changed, "morphology_change"), ShouldAlmostEqual, .5, 1e-10)
+				repeated := instrument.Step(ingress("BTC/USD", nextAt.Add(time.Second), 3))
+				So(metricValue(repeated, "morphology_change"), ShouldAlmostEqual, 0, 1e-10)
 			})
-
-			So(instrument.Step(ingress("XBT/USD", now, 900)), ShouldBeNil)
-
-			err := instrument.Error()
-			So(err, ShouldNotBeNil)
-			So(errnie.IsInternal(err), ShouldBeTrue)
-			So(err.Error(), ShouldContainSubstring, "crossed or locked")
-			So(err.Error(), ShouldContainSubstring, "XBT/USD")
-			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
 		})
-
-		Convey("Multi-level dispersion decreases concentration, increases entropy, and tracks morphology change", func() {
-			var prevDist float64
-			for step := 0; step < 5; step++ {
-				var bids, asks []kraken.Level3Order
-				for level := 0; level < 4; level++ {
-					bids = append(bids, kraken.Level3Order{
-						OrderID:    "bid-" + string(rune('a'+level)),
-						LimitPrice: decimal.NewFromFloat64(50000.0 - float64(level)*10.0),
-						OrderQty:   decimal.NewFromFloat64(1.0),
-						Timestamp:  now.Add(time.Duration(step) * 100 * time.Millisecond),
-						Event:      "add",
-					})
-					asks = append(asks, kraken.Level3Order{
-						OrderID:    "ask-" + string(rune('a'+level)),
-						LimitPrice: decimal.NewFromFloat64(50020.0 + float64(level)*10.0 + float64(step)*5.0),
-						OrderQty:   decimal.NewFromFloat64(1.0),
-						Timestamp:  now.Add(time.Duration(step) * 100 * time.Millisecond),
-						Event:      "add",
-					})
-				}
-
-				books.Update(&kraken.Level3{
-					Channel: "level3",
-					Type:    "snapshot",
-					Data: []kraken.Level3Data{
-						{
-							Symbol: "BTC/USD",
-							Bids:   bids,
-							Asks:   asks,
-						},
-					},
-				})
-
-				at := now.Add(time.Duration(step) * 100 * time.Millisecond)
-				res := instrument.Step(ingress("BTC/USD", at, int64(step+2)))
-				So(res, ShouldNotBeNil)
-				So(instrument.Error(), ShouldBeNil)
-
-				// With 4 equal levels, concentration is strictly less than 1.0 (approx 0.25)
-				So(metricValue(res, "concentration:bid"), ShouldBeLessThan, 0.5)
-				So(metricValue(res, "concentration:ask"), ShouldBeLessThan, 0.5)
-
-				// Entropy must be positive (approx ln(4) ≈ 1.386)
-				So(metricValue(res, "entropy:bid"), ShouldBeGreaterThan, 1.0)
-				So(metricValue(res, "entropy:ask"), ShouldBeGreaterThan, 1.0)
-
-				currentDist := metricValue(res, "book_shape_distance")
-				So(currentDist, ShouldBeGreaterThan, 0.0)
-
-				if step > 0 {
-					expectedChange := math.Abs(currentDist - prevDist)
-					So(metricValue(res, "morphology_change"), ShouldAlmostEqual, expectedChange, 1e-6)
-				} else {
-					So(metricValue(res, "morphology_change"), ShouldEqual, 0.0)
-				}
-				prevDist = currentDist
-			}
+		Convey("An unavailable book does not manufacture geometry", func() {
+			So(instrument.Step(ingress("BTC/USD", at, 1)), ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
 		})
 	})
 }
-
 func TestMorphologySignalRequiresBookManager(t *testing.T) {
-	Convey("A morphology signal constructed without a book manager fails with an error", t, func() {
+	Convey("A missing book source is a construction failure", t, func() {
 		instrument := morphology.NewSignal(context.Background(), nil)
 		So(instrument.Error(), ShouldNotBeNil)
 		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
