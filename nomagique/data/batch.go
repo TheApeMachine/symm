@@ -8,61 +8,59 @@ import (
 )
 
 /*
-Batch partitions an inbound sequence of arrivals into windows of width 'size'
-advancing by 'stride'. It yields each batch as a data.Value primitive holding
-that batch's items.
+Batch partitions an inbound sequence of arrivals into discrete groups of sizes
+specified by `sizes`. It yields each group as a data.Value primitive.
 */
 type Batch struct {
 	*core.PrimitiveError
-	Size       int
-	Stride     int
-	Primitives []core.Primitive
+	sizes []int
 }
 
-func NewBatch(size int, stride int, primitives ...core.Primitive) core.Primitive {
+func NewBatch(sizes ...int) core.Primitive {
 	return &Batch{
 		PrimitiveError: core.NewPrimitiveError(),
-		Size:           size,
-		Stride:         stride,
-		Primitives:     primitives,
+		sizes:          sizes,
 	}
 }
 
 func (op *Batch) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if op.Size <= 0 || op.Stride <= 0 {
+		groups := make([][]unsafe.Pointer, len(op.sizes))
+
+		for index, size := range op.sizes {
+			groups[index] = make([]unsafe.Pointer, 0, size)
+		}
+
+		groupIdx := 0
+
+		for arriving := range in {
+			if arriving == nil {
+				continue
+			}
+
+			if groupIdx >= len(op.sizes) {
+				break
+			}
+
+			groups[groupIdx] = append(groups[groupIdx], arriving)
+
+			if len(groups[groupIdx]) == op.sizes[groupIdx] {
+				groupIdx++
+			}
+		}
+
+		if groupIdx < len(op.sizes) {
 			op.Error(core.ErrShape)
 			return
 		}
 
-		source := in
-		for _, primitive := range op.Primitives {
-			if primitive != nil {
-				source = primitive.Next(source)
+		for _, groupItems := range groups {
+			var group core.Primitive = &Value[unsafe.Pointer]{
+				PrimitiveError: core.NewPrimitiveError(),
+				Values:         groupItems,
 			}
-		}
 
-		var items []unsafe.Pointer
-
-		for arriving := range source {
-			items = append(items, arriving)
-		}
-
-		if len(op.Primitives) > 0 {
-			for i := 0; i+op.Size <= len(items); i += op.Stride {
-				for _, item := range items[i : i+op.Size] {
-					if !yield(item) {
-						return
-					}
-				}
-			}
-			return
-		}
-
-		for i := 0; i+op.Size <= len(items); i += op.Stride {
-			chunk := NewValue(items[i : i+op.Size]...)
-
-			if !yield(unsafe.Pointer(chunk)) {
+			if !yield(unsafe.Pointer(&group)) {
 				return
 			}
 		}

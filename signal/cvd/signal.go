@@ -72,153 +72,353 @@ func NewSignal(ctx context.Context) *Signal {
 			transport.NewAddressable(
 				"symbolstore", store.NewKV(),
 				nomagique.NewNumber(
-					data.NewValue[core.Primitive](
+					transport.NewParallel(
+						// 0: trade_count:buy
+						vector.NewScale(1.0),
+						// 1: trade_count:sell
+						vector.NewScale(1.0),
+						// 2: trade_count
+						arithmetic.NewAdd(),
+						// 3: signed_count_fraction
 						nomagique.NewNumber(
-							data.NewSlice(0, 3),
-							transport.NewParallel(
-								nomagique.NewNumber(
-									transport.NewSpread[float64](),
-									data.NewValue[core.Primitive](
-										transport.NewPass(),
-										arithmetic.NewAdd(),
-										nomagique.NewNumber(
-											data.NewValue(
-												arithmetic.NewSubtract(),
-												arithmetic.NewAdd(),
-											),
-											arithmetic.NewDivide(),
-										),
-									),
-								),
-								nomagique.NewNumber(
-									transport.NewSpread[float64](),
-									data.NewValue(
-										transport.NewPass(),
-										arithmetic.NewAdd(),
-										arithmetic.NewSubtract(),
-										arithmetic.NewSubtract(),
-									),
-								),
-								nomagique.NewNumber(
-									vector.NewScale(),
-									transport.NewSpread[float64](),
-									data.NewValue[core.Primitive](
-										transport.NewPass(),
-										arithmetic.NewAdd(),
-										arithmetic.NewSubtract(),
-										arithmetic.NewSubtract(),
-										nomagique.NewNumber(
-											data.NewValue(
-												arithmetic.NewSubtract(),
-												arithmetic.NewAdd(),
-											),
-											arithmetic.NewDivide(),
-										),
-									),
-								),
-							),
-						),
-						data.NewSlice(3, 8),
-					),
-					data.NewValue[core.Primitive](
-						data.NewSlice(0, 19),
-						nomagique.NewNumber(
-							data.NewSelect(
-								11, 2,
-								2, 14,
-								11, 14,
-								12, 14,
-								9, 14,
-								10, 14,
-								17, 14,
-								18, 12,
-								0, 0,
-								1, 1,
-								2, 2,
-								3, 3,
-							),
 							data.NewBatch(2, 2),
 							transport.NewParallel(
-								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								arithmetic.NewSubtract(),
+								arithmetic.NewAdd(),
 							),
+							arithmetic.NewDivide(),
 						),
-					),
-					data.NewValue[core.Primitive](
-						data.NewSlice(0, 31),
+						// 4: executed_quantity:buy
+						vector.NewScale(1.0),
+						// 5: executed_quantity:sell
+						vector.NewScale(1.0),
+						// 6: gross_executed_quantity
+						arithmetic.NewAdd(),
+						// 7: net_executed_quantity
+						arithmetic.NewSubtract(),
+						// 8: cumulative_volume_delta
+						arithmetic.NewSubtract(),
+						// 9: aggressive_notional:buy
+						vector.NewScale(),
+						// 10: aggressive_notional:sell
+						vector.NewScale(),
+						// 11: gross_notional
+						nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+						// 12: net_notional
+						nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
+						// 13: cumulative_notional_delta
+						nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
+						// 14: signed_net_fraction
 						nomagique.NewNumber(
-							data.NewSelect(
-								21, 21,
-								13, 13,
-								25, 25,
-								21, 21,
-								22, 22,
-								0, 0,
-								1, 1,
-								2, 2,
-								3, 3,
-								4, 4,
-								5, 5,
-								6, 6,
-								7, 7,
-								8, 8,
-							),
+							vector.NewScale(),
 							data.NewBatch(2, 2),
 							transport.NewParallel(
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), adaptive.NewBaseline(adaptive.NewWindow())),
-								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
-								nomagique.NewNumber(data.NewUnpack(), temporal.NewVelocity()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 1), transport.NewPass()),
+								arithmetic.NewSubtract(),
+								arithmetic.NewAdd(),
 							),
+							arithmetic.NewDivide(),
 						),
-					),
-					data.NewValue[core.Primitive](
-						data.NewSlice(0, 45),
+						// 15: mean_trade_notional
 						nomagique.NewNumber(
-							data.NewSelect(
-								21, 31,
-								21, 31,
-								21, 31, 32,
-								13, 33,
-								13, 33, 34,
-								25, 35,
-								25, 35, 36,
-							),
 							data.NewBatch(4, 2),
 							transport.NewParallel(
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewSubtract()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewValue(arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewSubtract()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewValue(arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewSlice(0, 2), arithmetic.NewSubtract()),
-								nomagique.NewNumber(data.NewUnpack(), data.NewValue(arithmetic.NewSubtract(), transport.NewPass()), arithmetic.NewDivide()),
+								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+								arithmetic.NewAdd(),
+							),
+							arithmetic.NewDivide(),
+						),
+						// 16: trade_rate
+						nomagique.NewNumber(
+							data.NewBatch(2, 1),
+							transport.NewParallel(
+								arithmetic.NewAdd(),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+						),
+						// 17: gross_notional_rate
+						nomagique.NewNumber(
+							data.NewBatch(4, 1),
+							transport.NewParallel(
+								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+						),
+						// 18: net_notional_rate
+						nomagique.NewNumber(
+							data.NewBatch(4, 1),
+							transport.NewParallel(
+								nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+						),
+						// 19: buy_notional_rate
+						nomagique.NewNumber(
+							data.NewBatch(2, 1),
+							transport.NewParallel(
+								vector.NewScale(),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+						),
+						// 20: sell_notional_rate
+						nomagique.NewNumber(
+							data.NewBatch(2, 1),
+							transport.NewParallel(
+								vector.NewScale(),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+						),
+						// 21: cvd_epoch_from
+						vector.NewScale(1.0),
+						// 22: response_midpoint:from
+						vector.NewScale(1.0),
+						// 23: response_midpoint:at
+						vector.NewScale(1.0),
+						// 24: midpoint_log_return
+						vector.NewScale(1.0),
+						// 25: midpoint_return_rate
+						arithmetic.NewDivide(),
+						// 26: flow_aligned_midpoint_return
+						vector.NewScale(1.0),
+						// 27: midpoint_response_per_net_notional
+						nomagique.NewNumber(
+							data.NewBatch(1, 4),
+							transport.NewParallel(
+								vector.NewScale(1.0),
+								nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
+							),
+							arithmetic.NewDivide(),
+						),
+						// 28: gross_notional_rate_baseline
+						nomagique.NewNumber(
+							data.NewBatch(4, 1),
+							transport.NewParallel(
+								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+							adaptive.NewBaseline(adaptive.NewWindow()),
+							data.NewBatch(1, 1),
+							transport.NewParallel(
+								vector.NewScale(1.0),
+								transport.NewDiscard(),
 							),
 						),
+						// 29: gross_notional_rate_ratio
+						nomagique.NewNumber(
+							data.NewBatch(4, 1),
+							transport.NewParallel(
+								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+							data.NewRepeat(2),
+							data.NewBatch(1, 1),
+							transport.NewParallel(
+								vector.NewScale(1.0),
+								nomagique.NewNumber(
+									adaptive.NewBaseline(adaptive.NewWindow()),
+									data.NewBatch(1, 1),
+									transport.NewParallel(
+										vector.NewScale(1.0),
+										transport.NewDiscard(),
+									),
+								),
+							),
+							arithmetic.NewDivide(),
+						),
+						// 30: gross_notional_rate_divergence
+						nomagique.NewNumber(
+							data.NewBatch(4, 1),
+							transport.NewParallel(
+								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+							data.NewRepeat(2),
+							data.NewBatch(1, 1),
+							transport.NewParallel(
+								vector.NewScale(1.0),
+								nomagique.NewNumber(
+									adaptive.NewBaseline(adaptive.NewWindow()),
+									data.NewBatch(1, 1),
+									transport.NewParallel(
+										vector.NewScale(1.0),
+										transport.NewDiscard(),
+									),
+								),
+							),
+							arithmetic.NewSubtract(),
+						),
+						// 31: gross_notional_rate_zscore
+						nomagique.NewNumber(
+							data.NewBatch(4, 1),
+							transport.NewParallel(
+								nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+							data.NewRepeat(2),
+							data.NewBatch(1, 1),
+							transport.NewParallel(
+								vector.NewScale(1.0),
+								adaptive.NewBaseline(adaptive.NewWindow()),
+							),
+							data.NewBatch(2, 1),
+							transport.NewParallel(
+								arithmetic.NewSubtract(),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+						),
+						// 32: signed_net_fraction_baseline
+						nomagique.NewNumber(
+							vector.NewScale(),
+							data.NewBatch(2, 2),
+							transport.NewParallel(
+								arithmetic.NewSubtract(),
+								arithmetic.NewAdd(),
+							),
+							arithmetic.NewDivide(),
+							adaptive.NewBaseline(adaptive.NewWindow()),
+							data.NewBatch(1, 1),
+							transport.NewParallel(
+								vector.NewScale(1.0),
+								transport.NewDiscard(),
+							),
+						),
+						// 33: signed_net_fraction_divergence
+						nomagique.NewNumber(
+							vector.NewScale(),
+							data.NewBatch(2, 2),
+							transport.NewParallel(
+								arithmetic.NewSubtract(),
+								arithmetic.NewAdd(),
+							),
+							arithmetic.NewDivide(),
+							data.NewRepeat(2),
+							data.NewBatch(1, 1),
+							transport.NewParallel(
+								vector.NewScale(1.0),
+								nomagique.NewNumber(
+									adaptive.NewBaseline(adaptive.NewWindow()),
+									data.NewBatch(1, 1),
+									transport.NewParallel(
+										vector.NewScale(1.0),
+										transport.NewDiscard(),
+									),
+								),
+							),
+							arithmetic.NewSubtract(),
+						),
+						// 34: signed_net_fraction_zscore
+						nomagique.NewNumber(
+							vector.NewScale(),
+							data.NewBatch(2, 2),
+							transport.NewParallel(
+								arithmetic.NewSubtract(),
+								arithmetic.NewAdd(),
+							),
+							arithmetic.NewDivide(),
+							data.NewRepeat(2),
+							data.NewBatch(1, 1),
+							transport.NewParallel(
+								vector.NewScale(1.0),
+								adaptive.NewBaseline(adaptive.NewWindow()),
+							),
+							data.NewBatch(2, 1),
+							transport.NewParallel(
+								arithmetic.NewSubtract(),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+						),
+						// 35: midpoint_return_rate_baseline
+						nomagique.NewNumber(
+							arithmetic.NewDivide(),
+							adaptive.NewBaseline(adaptive.NewWindow()),
+							data.NewBatch(1, 1),
+							transport.NewParallel(
+								vector.NewScale(1.0),
+								transport.NewDiscard(),
+							),
+						),
+						// 36: midpoint_return_rate_divergence
+						nomagique.NewNumber(
+							arithmetic.NewDivide(),
+							data.NewRepeat(2),
+							data.NewBatch(1, 1),
+							transport.NewParallel(
+								vector.NewScale(1.0),
+								nomagique.NewNumber(
+									adaptive.NewBaseline(adaptive.NewWindow()),
+									data.NewBatch(1, 1),
+									transport.NewParallel(
+										vector.NewScale(1.0),
+										transport.NewDiscard(),
+									),
+								),
+							),
+							arithmetic.NewSubtract(),
+						),
+						// 37: midpoint_return_rate_zscore
+						nomagique.NewNumber(
+							arithmetic.NewDivide(),
+							data.NewRepeat(2),
+							data.NewBatch(1, 1),
+							transport.NewParallel(
+								vector.NewScale(1.0),
+								adaptive.NewBaseline(adaptive.NewWindow()),
+							),
+							data.NewBatch(2, 1),
+							transport.NewParallel(
+								arithmetic.NewSubtract(),
+								vector.NewScale(1.0),
+							),
+							arithmetic.NewDivide(),
+						),
+						// 38: net_notional_rate_velocity
+						nomagique.NewNumber(
+							data.NewBatch(5, 1),
+							transport.NewParallel(
+								nomagique.NewNumber(
+									data.NewBatch(4, 1),
+									transport.NewParallel(
+										nomagique.NewNumber(vector.NewScale(), arithmetic.NewSubtract()),
+										vector.NewScale(1.0),
+									),
+									arithmetic.NewDivide(),
+								),
+								vector.NewScale(1.0),
+							),
+							temporal.NewVelocity(),
+						),
+						// 39: gross_notional_rate_velocity
+						nomagique.NewNumber(
+							data.NewBatch(5, 1),
+							transport.NewParallel(
+								nomagique.NewNumber(
+									data.NewBatch(4, 1),
+									transport.NewParallel(
+										nomagique.NewNumber(vector.NewScale(), arithmetic.NewAdd()),
+										vector.NewScale(1.0),
+									),
+									arithmetic.NewDivide(),
+								),
+								vector.NewScale(1.0),
+							),
+							temporal.NewVelocity(),
+						),
+						// 40: historical_path_distance
+						vector.NewScale(1.0),
+						// 41: historical_path_percentile
+						vector.NewScale(1.0),
 					),
-					data.NewSelect(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 33, 34, 35, 22, 36, 37, 38, 48, 49, 50, 40, 51, 52, 42, 53, 54, 44, 45, 46, 47),
 				),
-				data.NewMessage(data.WRITE, "symbolstore", "cvd_state", data.NewValue[core.Primitive]()),
 			),
 		),
 	}
@@ -262,10 +462,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		sellQty = qty
 	}
 
-	counts := []float64{buyCount, sellCount}
-	quantities := []float64{buyQty, sellQty}
-	notionals := [2][]float64{quantities, {price}}
-
 	timeDelta := float64(prior.At.Sub(prior.From).Seconds())
 
 	if timeDelta == 0 {
@@ -276,6 +472,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	midpointFrom := 0.0
 	midpointAt := 0.0
 	midpointLogReturn := 0.0
+	atNanos := float64(prior.At.UnixNano())
 
 	output := make(map[string]float64)
 	index := 0
@@ -285,15 +482,91 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			data.WRITE,
 			"symbolstore",
 			prior.Label,
-			data.NewValue(
-				counts,
-				quantities,
-				notionals,
-				timeDelta,
-				epochFrom,
-				midpointFrom,
-				midpointAt,
-				midpointLogReturn,
+			data.NewValue[core.Primitive](
+				// 0: trade_count:buy
+				data.NewValue(buyCount),
+				// 1: trade_count:sell
+				data.NewValue(sellCount),
+				// 2: trade_count
+				data.NewValue(buyCount, sellCount),
+				// 3: signed_count_fraction
+				data.NewValue(buyCount, sellCount, buyCount, sellCount),
+				// 4: executed_quantity:buy
+				data.NewValue(buyQty),
+				// 5: executed_quantity:sell
+				data.NewValue(sellQty),
+				// 6: gross_executed_quantity
+				data.NewValue(buyQty, sellQty),
+				// 7: net_executed_quantity
+				data.NewValue(buyQty, sellQty),
+				// 8: cumulative_volume_delta
+				data.NewValue(buyQty, sellQty),
+				// 9: aggressive_notional:buy
+				data.NewValue(buyQty, price),
+				// 10: aggressive_notional:sell
+				data.NewValue(sellQty, price),
+				// 11: gross_notional
+				data.NewValue(buyQty, price, sellQty, price),
+				// 12: net_notional
+				data.NewValue(buyQty, price, sellQty, price),
+				// 13: cumulative_notional_delta
+				data.NewValue(buyQty, price, sellQty, price),
+				// 14: signed_net_fraction
+				data.NewValue(buyQty, price, sellQty, price, buyQty, price, sellQty, price),
+				// 15: mean_trade_notional
+				data.NewValue(buyQty, price, sellQty, price, buyCount, sellCount),
+				// 16: trade_rate
+				data.NewValue(buyCount, sellCount, timeDelta),
+				// 17: gross_notional_rate
+				data.NewValue(buyQty, price, sellQty, price, timeDelta),
+				// 18: net_notional_rate
+				data.NewValue(buyQty, price, sellQty, price, timeDelta),
+				// 19: buy_notional_rate
+				data.NewValue(buyQty, price, timeDelta),
+				// 20: sell_notional_rate
+				data.NewValue(sellQty, price, timeDelta),
+				// 21: cvd_epoch_from
+				data.NewValue(epochFrom),
+				// 22: response_midpoint:from
+				data.NewValue(midpointFrom),
+				// 23: response_midpoint:at
+				data.NewValue(midpointAt),
+				// 24: midpoint_log_return
+				data.NewValue(midpointLogReturn),
+				// 25: midpoint_return_rate
+				data.NewValue(midpointLogReturn, timeDelta),
+				// 26: flow_aligned_midpoint_return
+				data.NewValue(midpointLogReturn),
+				// 27: midpoint_response_per_net_notional
+				data.NewValue(midpointLogReturn, buyQty, price, sellQty, price),
+				// 28: gross_notional_rate_baseline
+				data.NewValue(buyQty, price, sellQty, price, timeDelta),
+				// 29: gross_notional_rate_ratio
+				data.NewValue(buyQty, price, sellQty, price, timeDelta),
+				// 30: gross_notional_rate_divergence
+				data.NewValue(buyQty, price, sellQty, price, timeDelta),
+				// 31: gross_notional_rate_zscore
+				data.NewValue(buyQty, price, sellQty, price, timeDelta),
+				// 32: signed_net_fraction_baseline
+				data.NewValue(buyQty, price, sellQty, price, buyQty, price, sellQty, price),
+				// 33: signed_net_fraction_divergence
+				data.NewValue(buyQty, price, sellQty, price, buyQty, price, sellQty, price),
+				// 34: signed_net_fraction_zscore
+				data.NewValue(buyQty, price, sellQty, price, buyQty, price, sellQty, price),
+				// 35: midpoint_return_rate_baseline
+				data.NewValue(midpointLogReturn, timeDelta),
+				// 36: midpoint_return_rate_divergence
+				data.NewValue(midpointLogReturn, timeDelta),
+				// 37: midpoint_return_rate_zscore
+				data.NewValue(midpointLogReturn, timeDelta),
+				// 38: net_notional_rate_velocity
+				data.NewValue(buyQty, price, sellQty, price, timeDelta, atNanos),
+				// 39: gross_notional_rate_velocity
+				data.NewValue(buyQty, price, sellQty, price, timeDelta, atNanos),
+				// 40: historical_path_distance
+				data.NewValue(0.0),
+				// 41: historical_path_percentile
+				data.NewValue(0.0),
 			),
 		).Next(nil),
 	) {

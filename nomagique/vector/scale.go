@@ -14,7 +14,7 @@ type Scale struct {
 	*core.PrimitiveError
 	factor float64
 	fixed  bool
-	out    []float64
+	tick   int64
 }
 
 /*
@@ -38,38 +38,31 @@ func NewScale(factor ...float64) core.Primitive {
 
 func (op *Scale) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var out [2]float64
+
 		for arriving := range in {
 			if arriving == nil {
 				op.Error(core.ErrShape)
-				return
+				continue
 			}
-
-			factor := op.factor
-			var values []float64
 
 			if op.fixed {
-				values = *(*[]float64)(arriving)
-			} else {
-				input := (*[2][]float64)(arriving)
-
-				if len(input[1]) != 1 {
-					op.Error(core.ErrShape)
+				res := *(*float64)(arriving) * op.factor
+				if !yield(unsafe.Pointer(&res)) {
 					return
 				}
-
-				values, factor = input[0], input[1][0]
+				continue
 			}
 
-			if len(op.out) != len(values) {
-				op.out = make([]float64, len(values))
-			}
+			current := op.tick % 2
+			out[current] = *(*float64)(arriving)
+			op.tick++
 
-			for index, value := range values {
-				op.out[index] = value * factor
-			}
-
-			if !yield(unsafe.Pointer(&op.out)) {
-				return
+			if current == 1 {
+				res := out[0] * out[1]
+				if !yield(unsafe.Pointer(&res)) {
+					return
+				}
 			}
 		}
 	}

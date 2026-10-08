@@ -48,24 +48,29 @@ func TestVectorOperations(t *testing.T) {
 
 	Convey("Vector Scale", t, func() {
 		scale := vector.NewScale()
-		input := [2][]float64{{2.0, 4.0, 6.0}, {2.5}}
+		input := []float64{2.0, 2.5, 4.0, 2.5, 6.0, 2.5}
 		in := func(yield func(unsafe.Pointer) bool) {
-			yield(unsafe.Pointer(&input))
+			for _, v := range input {
+				val := v
+				yield(unsafe.Pointer(&val))
+			}
 		}
-		out := tests.CollectSeq[[]float64](scale.Next(in))
-		So(len(out), ShouldEqual, 1)
-		So(out[0], ShouldResemble, []float64{5.0, 10.0, 15.0})
+		out := tests.CollectSeq[float64](scale.Next(in))
+		So(out, ShouldResemble, []float64{5.0, 10.0, 15.0})
 		So(scale.Error(), ShouldBeNil)
 	})
 
 	Convey("Vector Scale with a constructor factor", t, func() {
 		scale := vector.NewScale(-2)
-		v := []float64{1.0, -3.0}
+		input := []float64{1.0, -3.0}
 		in := func(yield func(unsafe.Pointer) bool) {
-			yield(unsafe.Pointer(&v))
+			for _, v := range input {
+				val := v
+				yield(unsafe.Pointer(&val))
+			}
 		}
-		out := tests.CollectSeq[[]float64](scale.Next(in))
-		So(out[0], ShouldResemble, []float64{-2.0, 6.0})
+		out := tests.CollectSeq[float64](scale.Next(in))
+		So(out, ShouldResemble, []float64{-2.0, 6.0})
 		So(scale.Error(), ShouldBeNil)
 	})
 

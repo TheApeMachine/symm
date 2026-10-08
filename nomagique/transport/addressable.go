@@ -34,6 +34,16 @@ func (addr *Addressable) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 			flow = addr.conn.Next(in)
 		}
 
+		if len(addr.space) == 0 {
+			for ptr := range flow {
+				if !yield(ptr) {
+					return
+				}
+			}
+
+			return
+		}
+
 		for _, primitive := range addr.space {
 			if primitive == nil {
 				continue

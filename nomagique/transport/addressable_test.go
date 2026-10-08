@@ -11,7 +11,7 @@ import (
 
 func TestAddressable(t *testing.T) {
 	Convey("Addressable passes data through space", t, func() {
-		addr := transport.NewAddressable("test", store.NewKV(), transport.NewPass())
+		addr := transport.NewAddressable("test", store.NewKV())
 
 		val := 42.0
 		msg := data.NewMessage(data.WRITE, "test", "key", data.NewValue(val))
