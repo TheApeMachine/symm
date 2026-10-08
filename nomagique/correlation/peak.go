@@ -9,37 +9,47 @@ import (
 )
 
 /*
+Point is an ordinate in a profile. x coordinates determine units.
+*/
+type Point struct {
+	X float64
+	Y float64
+}
+
+/*
+PeakResult is the first absolute maximum and where it occurred.
+*/
+type PeakResult struct {
+	Index int
+	Point Point
+}
+
+/*
 Peak owns one delivery's maximum absolute ordinate and its original point.
-Each point arrival is [2]float64{x, y}; after the run it yields
-[3]float64{index, x, y}. An empty run yields nothing.
 */
 type Peak struct {
-	*core.PrimitiveError
-	out [3]float64
+	err error
+	out PeakResult
 }
 
 func NewPeak() core.Primitive {
-	return &Peak{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Peak{}
 }
 
-func (op *Peak) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *Peak) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var best PeakResult
 		seen := false
-		index := 0.0
+		index := 0
 
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
+			point := (*Point)(arriving)
+			magnitude := math.Abs(point.Y)
 
-			point := *(*[2]float64)(arriving)
-			magnitude := math.Abs(point[1])
-
-			if !seen || magnitude > math.Abs(op.out[2]) {
-				op.out = [3]float64{index, point[0], point[1]}
+			if !seen || magnitude > math.Abs(best.Point.Y) {
+				best = PeakResult{Index: index, Point: *point}
 				seen = true
 			}
 
@@ -50,8 +60,21 @@ func (op *Peak) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			return
 		}
 
+		op.out = best
+
 		if !yield(unsafe.Pointer(&op.out)) {
 			return
 		}
 	}
+}
+
+func (op *Peak) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

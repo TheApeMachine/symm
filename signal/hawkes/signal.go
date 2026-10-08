@@ -5,14 +5,9 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 var outputKeys = []string{
@@ -81,23 +76,12 @@ var outputKeys = []string{
 
 type Signal struct {
 	*runtime.System
-	pipeline core.Primitive
+	models map[string]*nmhawkes.Hawkes
 }
 
 func NewSignal(ctx context.Context) *Signal {
-	indices := make([]int, len(outputKeys)+1)
-	for i := range indices {
-		indices[i] = i
-	}
-
 	signal := &Signal{
-		pipeline: transport.NewAddressable(
-			"symbolstore", store.NewKV(),
-			nomagique.NewNumber(
-				nmhawkes.NewHawkes(),
-				data.NewSelect(indices...),
-			),
-		),
+		models: make(map[string]*nmhawkes.Hawkes),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "hawkes", signal)
@@ -105,19 +89,23 @@ func NewSignal(ctx context.Context) *Signal {
 }
 
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY || prior == nil || prior.Label == "" {
+	if signal.Status() != runtime.READY {
 		return nil
 	}
 
 	if prior.Source != "spot:trade" {
 		signal.Error(errnie.Err(
-			errnie.NotAcceptable, "[hawkes] non-trade frame "+prior.Source+" reached a trade-only signal", nil,
+			errnie.NotAcceptable,
+			"[hawkes] non-trade frame "+prior.Source+" reached a trade-only signal",
+			nil,
 		))
+
 		return nil
 	}
 
 	for _, key := range []string{"price", "qty"} {
 		found := false
+
 		for entry := range prior.Read(key) {
 			if entry != nil && entry.Metric != nil {
 				found = true
@@ -126,7 +114,9 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 
 		if !found {
-			signal.Error(errnie.Err(errnie.Validation, "[hawkes] trade frame missing "+key, nil))
+			signal.Error(errnie.Err(
+				errnie.Validation, "[hawkes] trade frame missing "+key, nil,
+			))
 			return nil
 		}
 	}
@@ -149,33 +139,39 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	atSec := float64(prior.At.UnixNano()) * 1e-9
 
-	output := make(map[string]float64)
-	index := 0
+	model, exists := signal.models[prior.Label]
 
-	for ptr := range signal.pipeline.Next(
-		data.NewMessage(
-			data.WRITE,
-			"symbolstore",
-			prior.Label,
-			data.NewValue(mark, atSec),
-		).Next(nil),
-	) {
-		if ptr == nil {
-			continue
+	if !exists {
+		model = nmhawkes.NewHawkes()
+		signal.models[prior.Label] = model
+	}
+
+	res, err := model.Step(mark, atSec)
+
+	if err != nil {
+		signal.Error(errnie.Err(
+			errnie.Internal,
+			"[hawkes] "+prior.Label+": step failed",
+			err,
+		))
+
+		return nil
+	}
+
+	output := make(map[string]float64, len(outputKeys))
+
+	for i, key := range outputKeys {
+		if i < len(res) {
+			output[key] = res[i]
 		}
+	}
 
-		if index < len(outputKeys) {
-			output[outputKeys[index]] = *(*float64)(ptr)
+	if len(res) > len(outputKeys) {
+		fromSec := res[len(outputKeys)]
+
+		if fromSec > 0 {
+			prior.From = time.Unix(0, int64(fromSec*1e9))
 		}
-
-		if index == len(outputKeys) {
-			fromSec := *(*float64)(ptr)
-			if fromSec > 0 {
-				prior.From = time.Unix(0, int64(fromSec*1e9))
-			}
-		}
-
-		index++
 	}
 
 	return prior.Next(signal.Name(), output)

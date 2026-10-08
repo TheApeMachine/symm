@@ -7,6 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestFisherNext(t *testing.T) {
@@ -15,22 +16,26 @@ func TestFisherNext(t *testing.T) {
 
 		for _, test := range []struct {
 			correlation, support float64
-			defined              float64
+			defined              bool
 		}{
-			{0, 103, 1}, {.8, 103, 1}, {-.8, 103, 1}, {1, 103, 1}, {-1, 103, 1},
-			{1.2, 103, 0}, {.8, 3, 0}, {.8, 0, 0}, {.5, 103, 1},
+			{0, 103, true}, {.8, 103, true}, {-.8, 103, true}, {1, 103, true}, {-1, 103, true},
+			{1.2, 103, false}, {.8, 3, false}, {.8, 0, false}, {.5, 103, true},
 		} {
-			sample := [3]float64{test.correlation, test.support, 20}
-			out := tests.CollectSeq[[6]float64](node.Next(tests.SliceToSeq([][3]float64{sample})))
+			sample := correlation.FisherSample{
+				Correlation: test.correlation,
+				Support:     test.support,
+				SearchCount: 20,
+			}
+			out := tests.CollectSeq[correlation.FisherReading](node.Next(transport.NewValues(sample).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
-			So(out[0][0], ShouldEqual, test.defined)
+			So(out[0].Defined, ShouldEqual, test.defined)
 
-			if test.defined == 1 {
+			if test.defined {
 				expected := math.Erfc(math.Abs(math.Atanh(test.correlation)*math.Sqrt(test.support-3)) / math.Sqrt2)
 				adjusted := math.Min(1, 20*expected)
-				So(out[0][1], ShouldAlmostEqual, expected)
-				So(out[0][4], ShouldAlmostEqual, adjusted)
+				So(out[0].PValue, ShouldAlmostEqual, expected)
+				So(out[0].SearchAdjustedPValue, ShouldAlmostEqual, adjusted)
 			}
 		}
 	})

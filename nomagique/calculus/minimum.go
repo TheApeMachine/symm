@@ -1,53 +1,50 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Minimum tracks the running minimum after every arrival.
+Minimum owns one field operation. Configuration supplies the value a run starts
+from. What it hands over is the running minimum after every arrival, operating in-place
+on the wire pointer.
 */
 type Minimum struct {
-	*core.PrimitiveError
+	err error
+	acc float64
 }
 
-func NewMinimum() core.Primitive {
+func NewMinimum(current float64) core.Primitive {
 	return &Minimum{
-		PrimitiveError: core.NewPrimitiveError(),
+		acc: current,
 	}
 }
 
 func (op *Minimum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		seen := false
-		minVal := math.MaxFloat64
-
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
+			in := (*float64)(arriving)
+			op.acc = math.Min(op.acc, *in)
+			*in = op.acc
 
-			val := *(*float64)(arriving)
-			if !seen || val < minVal {
-				minVal = val
-				seen = true
-			}
-		}
-
-		if !seen {
-			return
-		}
-
-		for value := range data.NewValue(minVal).Next(nil) {
-			if !yield(value) {
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Minimum) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

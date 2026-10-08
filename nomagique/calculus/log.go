@@ -1,48 +1,45 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Log owns natural logarithm transformation of an arrival.
+Log owns one field operation. What it hands over is the natural logarithm of each
+arrival, operating in-place on the wire pointer.
 */
 type Log struct {
-	*core.PrimitiveError
+	err error
 }
 
 func NewLog() core.Primitive {
-	return &Log{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Log{}
 }
 
 func (op *Log) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
+			in := (*float64)(arriving)
+			*in = math.Log(*in)
+
+			if !yield(arriving) {
 				return
-			}
-
-			val := *(*float64)(arriving)
-			if val <= 0 {
-				op.Error(core.ErrDomain)
-				return
-			}
-
-			out := math.Log(val)
-
-			for value := range data.NewValue(out).Next(nil) {
-				if !yield(value) {
-					return
-				}
 			}
 		}
 	}
+}
+
+func (op *Log) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

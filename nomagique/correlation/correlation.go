@@ -9,35 +9,50 @@ import (
 )
 
 /*
-Correlation owns covariance / sqrt(left energy * right energy). Each arrival is
-[3]float64{covariance, leftEnergy, rightEnergy}; it yields *float64. Empty or
-zero-energy normalization is undefined (NaN/Inf from the division).
+CorrelationInput is a covariance and the two energies that normalize it.
+*/
+type CorrelationInput struct {
+	Covariance  float64
+	LeftEnergy  float64
+	RightEnergy float64
+}
+
+/*
+Correlation owns covariance / sqrt(left energy * right energy). Empty or
+zero-energy normalization is undefined.
 */
 type Correlation struct {
-	*core.PrimitiveError
+	err error
 	out float64
 }
 
 func NewCorrelation() core.Primitive {
-	return &Correlation{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Correlation{}
 }
 
-func (op *Correlation) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *Correlation) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			input := *(*[3]float64)(arriving)
-			op.out = input[0] / math.Sqrt(input[1]*input[2])
+			input := (*CorrelationInput)(arriving)
+			scale := math.Sqrt(input.LeftEnergy * input.RightEnergy)
+			op.out = input.Covariance / scale
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Correlation) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

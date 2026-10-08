@@ -9,42 +9,32 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/correlation"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/tests/market"
 )
 
-func prices(at []int64, values []float64) [][2]float64 {
-	out := make([][2]float64, len(values))
+func prices(at []int64, values []float64) []temporal.Price {
+	out := make([]temporal.Price, len(values))
 
 	for index, value := range values {
-		out[index] = [2]float64{float64(at[index]), value}
+		out[index] = temporal.Price{At: at[index], Value: value}
 	}
 
 	return out
 }
 
-/*
-returns decodes a [][2]float64{at, price} path into flat log returns
-{value, from, to, ...} and their energy.
-*/
-func returns(path [][2]float64) ([]float64, float64) {
-	flat := make([]float64, 0, max(0, len(path)-1)*3)
-	energy := 0.0
-
-	for index := 1; index < len(path); index++ {
-		value := math.Log(path[index][1]) - math.Log(path[index-1][1])
-		flat = append(flat, value, path[index-1][0], path[index][0])
-		energy += value * value
+func pathQuery(left, right []temporal.Price) correlation.EstimateInput {
+	leftReturns := makeReturns(left)
+	rightReturns := makeReturns(right)
+	return correlation.EstimateInput{
+		Left:        leftReturns,
+		Right:       rightReturns,
+		LeftEnergy:  calcEnergy(leftReturns),
+		RightEnergy: calcEnergy(rightReturns),
 	}
-
-	return flat, energy
-}
-
-func pathQuery(left, right [][2]float64, lag float64) [3][]float64 {
-	leftReturns, leftEnergy := returns(left)
-	rightReturns, rightEnergy := returns(right)
-
-	return [3][]float64{leftReturns, rightReturns, {leftEnergy, rightEnergy, lag}}
 }
 
 func TestHayashiYoshidaNext(t *testing.T) {
@@ -52,19 +42,18 @@ func TestHayashiYoshidaNext(t *testing.T) {
 		query := pathQuery(
 			prices([]int64{0, 2}, []float64{1, math.Exp(1)}),
 			prices([]int64{0, 1, 2}, []float64{1, math.Exp(1), math.Exp(2)}),
-			0,
 		)
 		node := algo.NewHayashiYoshida()
 
 		for range 3 {
-			out := tests.CollectSeq[[6]float64](node.Next(data.NewValue(query).Next(nil)))
+			out := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(query).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
-			So(out[0][1], ShouldEqual, 2)
-			So(out[0][3], ShouldEqual, 1)
-			So(out[0][4], ShouldEqual, 2)
-			So(out[0][2], ShouldEqual, 2)
-			So(out[0][0], ShouldAlmostEqual, math.Sqrt2)
+			So(out[0].Covariance, ShouldEqual, 2)
+			So(out[0].LeftEnergy, ShouldEqual, 1)
+			So(out[0].RightEnergy, ShouldEqual, 2)
+			So(out[0].Support, ShouldEqual, 2)
+			So(out[0].Correlation, ShouldAlmostEqual, math.Sqrt2)
 		}
 	})
 }
@@ -72,19 +61,16 @@ func TestHayashiYoshidaNext(t *testing.T) {
 func TestHayashiEmptyAndTouch(t *testing.T) {
 	Convey("Touching intervals contribute no overlap, and empty paths stay undefined", t, func() {
 		node := algo.NewHayashiYoshida()
-		fields := tests.CollectSeq[[6]float64](node.Next(data.NewValue(pathQuery(
+		fields := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(pathQuery(
 			prices([]int64{0, 1}, []float64{1, 2}),
 			prices([]int64{1, 2}, []float64{1, 2}),
-			0,
 		)).Next(nil)))
-		So(fields[0][2], ShouldEqual, 0)
-		So(fields[0][0], ShouldEqual, 0)
-		So(fields[0][5], ShouldEqual, 0)
+		So(fields[0].Support, ShouldEqual, 0)
+		So(fields[0].Correlation, ShouldEqual, 0)
 
 		node = algo.NewHayashiYoshida()
-		empty := tests.CollectSeq[[6]float64](node.Next(data.NewValue(pathQuery(nil, nil, 0)).Next(nil)))
-		So(math.IsNaN(empty[0][0]), ShouldBeTrue)
-		So(empty[0][5], ShouldEqual, 0)
+		empty := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(pathQuery(nil, nil)).Next(nil)))
+		So(math.IsNaN(empty[0].Correlation), ShouldBeTrue)
 	})
 }
 
@@ -123,11 +109,11 @@ func TestHayashiReference(t *testing.T) {
 			}
 
 			node := algo.NewHayashiYoshida()
-			out := tests.CollectSeq[[6]float64](node.Next(data.NewValue(pathQuery(prices(lt, lp), prices(rt, rp), 0)).Next(nil)))
+			out := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(pathQuery(prices(lt, lp), prices(rt, rp))).Next(nil)))
 			So(node.Error(), ShouldBeNil)
-			So(out[0][1], ShouldEqual, covariance)
-			So(out[0][2], ShouldEqual, support)
-			So(out[0][0], ShouldAlmostEqual, covariance/math.Sqrt(leftEnergy*rightEnergy))
+			So(out[0].Covariance, ShouldEqual, covariance)
+			So(out[0].Support, ShouldEqual, support)
+			So(out[0].Correlation, ShouldAlmostEqual, covariance/math.Sqrt(leftEnergy*rightEnergy))
 		}
 	})
 }
@@ -142,14 +128,14 @@ func BenchmarkNewHayashiYoshida(b *testing.B) {
 		values[index] = 100 * math.Exp(0.01*math.Sin(float64(index)))
 	}
 
-	input := pathQuery(prices(times, values), prices(shifted, values), 0)
+	input := pathQuery(prices(times, values), prices(shifted, values))
 	graph := algo.NewHayashiYoshida()
 	b.ReportAllocs()
 
 	for b.Loop() {
 		count := 0
 
-		for range graph.Next(data.NewValue(input).Next(nil)) {
+		for range graph.Next(transport.NewValues(input).Next(nil)) {
 			count++
 		}
 
@@ -161,57 +147,44 @@ func BenchmarkNewHayashiYoshida(b *testing.B) {
 
 func TestHayashiYoshidaEstimate(t *testing.T) {
 	Convey("Prepared multi-leg paths preserve exact lagged overlap economics", t, func() {
-		// Alternating three-observation legs at epoch-scale nanoseconds with
-		// irregular event gaps, the shape of the market opportunity tape.
-		gaps := []time.Duration{170 * time.Millisecond, 230 * time.Millisecond, 310 * time.Millisecond}
-		start := time.Unix(1700000000, 0)
-		count := 8*3 + 3
-		times, shifted, values := make([]int64, count), make([]int64, count), make([]float64, count)
-		eventTime := start
+		tape := market.NewOpportunityTape("BTC/USD", time.Unix(1700000000, 0), 8)
+		times, shifted, values := make([]int64, len(tape.Steps)), make([]int64, len(tape.Steps)), make([]float64, len(tape.Steps))
 
-		for index := range count {
-			eventTime = eventTime.Add(gaps[index%len(gaps)])
-			times[index] = eventTime.UnixNano()
+		for index, step := range tape.Steps {
+			times[index], values[index] = step.EventTime.UnixNano(), step.ExecutableBid
 			shifted[index] = times[index] + int64(43*time.Millisecond)
-			values[index] = 100
-
-			if index >= 3 {
-				sign := 1.0
-
-				if (index-3)/3%2 != 0 {
-					sign = -1
-				}
-
-				values[index] = values[index-3] * math.Exp(0.02*sign)
-			}
 		}
 
-		left, right := prices(times, values), prices(shifted, values)
-		leftReturns, leftEnergy := returns(left)
-		rightReturns, rightEnergy := returns(right)
+		leftReturns := makeReturns(prices(times, values))
+		rightReturns := makeReturns(prices(shifted, values))
+		leftEnergy := calcEnergy(leftReturns)
+		rightEnergy := calcEnergy(rightReturns)
 		original := slices.Clone(leftReturns)
 		estimator := algo.NewHayashiYoshida()
 
-		estimate := func(lag float64) ([6]float64, error) {
-			out := tests.CollectSeq[[6]float64](estimator.Next(data.NewValue(
-				[3][]float64{leftReturns, rightReturns, {leftEnergy, rightEnergy, lag}},
-			).Next(nil)))
+		estimate := func(lag int64) (correlation.LagEstimate, error) {
+			out := tests.CollectSeq[correlation.LagEstimate](estimator.Next(transport.NewValues(correlation.EstimateInput{
+				Left:        leftReturns,
+				Right:       rightReturns,
+				LeftEnergy:  leftEnergy,
+				RightEnergy: rightEnergy,
+				Lag:         lag,
+			}).Next(nil)))
 
 			if len(out) == 0 {
-				return [6]float64{}, estimator.Error()
+				return correlation.LagEstimate{}, estimator.Error()
 			}
 
 			return out[0], estimator.Error()
 		}
 
-		for _, lag := range []float64{-float64(time.Second), 0, float64(43 * time.Millisecond), float64(time.Second)} {
+		for _, lag := range []int64{-int64(time.Second), 0, int64(43 * time.Millisecond), int64(time.Second)} {
 			covariance, support := 0.0, 0.0
 
-			for leftIndex := 0; leftIndex < len(leftReturns); leftIndex += 3 {
-				for rightIndex := 0; rightIndex < len(rightReturns); rightIndex += 3 {
-					if leftReturns[leftIndex+1]+lag < rightReturns[rightIndex+2] &&
-						rightReturns[rightIndex+1] < leftReturns[leftIndex+2]+lag {
-						covariance += leftReturns[leftIndex] * rightReturns[rightIndex]
+			for _, leftReturn := range leftReturns {
+				for _, rightReturn := range rightReturns {
+					if leftReturn.From+lag < rightReturn.To && rightReturn.From < leftReturn.To+lag {
+						covariance += leftReturn.Value * rightReturn.Value
 						support++
 					}
 				}
@@ -219,19 +192,19 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 
 			fields, err := estimate(lag)
 			So(err, ShouldBeNil)
-			So(fields[2], ShouldEqual, support)
-			So(fields[1], ShouldAlmostEqual, covariance)
-			So(fields[0], ShouldAlmostEqual, covariance/math.Sqrt(leftEnergy*rightEnergy))
+			So(fields.Support, ShouldEqual, support)
+			So(fields.Covariance, ShouldAlmostEqual, covariance)
+			So(fields.Correlation, ShouldAlmostEqual, covariance/math.Sqrt(leftEnergy*rightEnergy))
 			So(leftReturns, ShouldResemble, original)
 		}
 
 		Convey("Later evaluations do not overwrite an earlier result", func() {
 			first, err := estimate(0)
 			So(err, ShouldBeNil)
-			covariance := first[1]
-			_, err = estimate(float64(time.Hour))
+			covariance := first.Covariance
+			_, err = estimate(int64(time.Hour))
 			So(err, ShouldBeNil)
-			So(first[1], ShouldEqual, covariance)
+			So(first.Covariance, ShouldEqual, covariance)
 		})
 
 		Convey("Unrepresentable timestamp offsets fail explicitly", func() {
@@ -239,4 +212,28 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 	})
+}
+
+func makeReturns(prices []temporal.Price) []temporal.LogReturn {
+	returns := make([]temporal.LogReturn, 0, max(0, len(prices)-1))
+
+	for i := 1; i < len(prices); i++ {
+		returns = append(returns, temporal.LogReturn{
+			From:  prices[i-1].At,
+			To:    prices[i].At,
+			Value: math.Log(prices[i].Value) - math.Log(prices[i-1].Value),
+		})
+	}
+
+	return returns
+}
+
+func calcEnergy(returns []temporal.LogReturn) float64 {
+	energy := 0.0
+
+	for _, r := range returns {
+		energy += r.Value * r.Value
+	}
+
+	return energy
 }

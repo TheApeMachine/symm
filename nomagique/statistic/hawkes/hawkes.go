@@ -1,382 +1,265 @@
 package hawkes
 
 import (
-	"fmt"
-	"iter"
 	"math"
-	"slices"
-	"unsafe"
+	"time"
 
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/errnie"
 )
 
 /*
-Hawkes implements a streaming bivariate mutually exciting point process as
-a Primitive. It estimates joint background rates, cross-excitation amplitudes,
-decay timescales, branching ratios, compensator innovations, and empirical SNR
-directly from honest market arrival dynamics.
-
-Operands arrive in order: [mark, atSec] (or [buy, sell, atSec]).
-Yields 62 values matching outputKeys, plus fromSec.
+Hawkes wraps the streaming bivariate Hawkes process state and estimators.
 */
 type Hawkes struct {
-	*core.PrimitiveError
-	hasLast       bool
-	lastAt        float64
-	originSec     float64
-	stream0       []float64
-	stream1       []float64
-	events        [][2]float64
-	modelReady    bool
-	muX           float64
-	muY           float64
-	alphaXX       float64
-	alphaXY       float64
-	alphaYX       float64
-	alphaYY       float64
-	beta          float64
-	selfOnlyReady bool
-	selfMuX       float64
-	selfMuY       float64
-	selfAlphaXX   float64
-	selfAlphaYY   float64
-	selfBeta      float64
-	paramMetrics  [29]float64
-	hasSNR        bool
-	snr           float64
-	fit           core.Primitive
-	parameters    core.Primitive
-	cached        [62]float64
+	path *path
 }
 
-func NewHawkes() core.Primitive {
+/*
+NewHawkes creates a new Hawkes estimator instance.
+*/
+func NewHawkes() *Hawkes {
 	return &Hawkes{
-		PrimitiveError: core.NewPrimitiveError(),
-		fit:            NewFit(),
-		parameters:     NewParameters(),
+		path: &path{samples: make([]sample, 0, MaxArrivalSamples)},
 	}
 }
 
-func (op *Hawkes) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		var values [3]float64
-		idx := 0
+/*
+Step incorporates one arrival event and returns all Hawkes metrics.
+*/
+func (h *Hawkes) Step(mark, atSec float64) ([]float64, error) {
+	p := h.path
+	at := time.Unix(0, int64(atSec*1e9))
 
-		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
+	if p.hasLast && at.Before(p.lastAt) {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"hawkes: regressing event time",
+			nil,
+		))
+	}
+
+	p.lastAt = at
+	p.hasLast = true
+
+	buyArrivals, sellArrivals := p.sides()
+	countBuy := float64(len(buyArrivals))
+	countSell := float64(len(sellArrivals))
+
+	if mark > 0 {
+		countBuy++
+	}
+
+	if mark <= 0 {
+		countSell++
+	}
+
+	totalCount := countBuy + countSell
+	fromSec := atSec
+
+	if len(p.samples) > 0 {
+		fromSec = float64(p.origin().UnixNano()) * 1e-9
+	}
+
+	span := atSec - fromSec
+
+	res := make([]float64, 62)
+	res[0] = totalCount
+	res[1] = countBuy
+	res[2] = countSell
+
+	if totalCount > 0 {
+		res[3] = countBuy / totalCount
+		res[4] = countSell / totalCount
+	}
+
+	if span > 0 {
+		res[5] = countBuy / span
+		res[6] = countSell / span
+		res[7] = totalCount / span
+	}
+
+	if p.modelReady {
+		model := p.model
+		muX, muY := model.muX, model.muY
+		alphaXX, alphaXY := model.alphaXX, model.alphaXY
+		alphaYX, alphaYY := model.alphaYX, model.alphaYY
+		beta := model.beta
+
+		lambdaBuy := intensityAt(buyArrivals, sellArrivals, atSec, muX, alphaXX, alphaXY, beta)
+		lambdaSell := intensityAt(buyArrivals, sellArrivals, atSec, muY, alphaYX, alphaYY, beta)
+		excessBuy := lambdaBuy - muX
+		excessSell := lambdaSell - muY
+
+		res[8] = lambdaBuy
+		res[9] = lambdaSell
+		res[10] = lambdaBuy + lambdaSell
+		res[11] = muX
+		res[12] = muY
+		res[13] = muX + muY
+		res[14] = excessBuy
+		res[15] = excessSell
+
+		if lambdaBuy > 0 {
+			res[16] = excessBuy / lambdaBuy
+		}
+
+		if lambdaSell > 0 {
+			res[17] = excessSell / lambdaSell
+		}
+
+		res[18] = alphaXX
+		res[19] = alphaXY
+		res[20] = alphaYX
+		res[21] = alphaYY
+
+		if beta > 0 {
+			timescale := 1.0 / beta
+			res[22] = beta
+			res[23] = beta
+			res[24] = beta
+			res[25] = beta
+			res[26] = beta
+			res[27] = timescale
+			res[28] = timescale
+			res[29] = timescale
+			res[30] = timescale
+			res[31] = timescale
+		}
+
+		matrix := branchingMatrix(alphaXX, alphaXY, alphaYX, alphaYY, beta)
+		res[32] = matrix[0][0]
+		res[33] = matrix[0][1]
+		res[34] = matrix[1][0]
+		res[35] = matrix[1][1]
+		res[36] = spectralRadius(matrix)
+
+		buyParent, sellParent, hasDesc := totalDescendants(alphaXX, alphaXY, alphaYX, alphaYY, beta)
+
+		if hasDesc {
+			res[37] = buyParent
+			res[38] = sellParent
+		}
+
+		streamPrior := newArrivalStream(buyArrivals, sellArrivals)
+		spanPrior := streamPrior.span(atSec)
+
+		if spanPrior > 0 {
+			streamWindow := currentWindowStream(buyArrivals, sellArrivals, atSec, mark)
+			markedCount := float64(len(streamWindow.marked))
+
+			hawkesLL, hawkesOK := model.logLikelihood(streamWindow, atSec)
+
+			if hawkesOK {
+				res[39] = hawkesLL
+
+				if markedCount > 0 {
+					res[40] = hawkesLL / markedCount
+				}
 			}
 
-			if idx < 3 {
-				values[idx] = *(*float64)(arriving)
-				idx++
-			}
-		}
+			poisson := bivariateFit{muX: muX, muY: muY, beta: beta}
+			poissonLL, poissonOK := poisson.logLikelihood(streamWindow, atSec)
 
-		if idx < 2 {
-			op.Error(core.ErrShape)
-			return
-		}
-
-		var mark, atSec float64
-
-		if idx == 2 {
-			mark = values[0]
-			atSec = values[1]
-		}
-
-		if idx == 3 {
-			buy := values[0]
-			sell := values[1]
-			atSec = values[2]
-
-			if buy == 1 && sell == 0 {
-				mark = 1.0
+			if poissonOK {
+				res[41] = poissonLL
 			}
 
-			if buy == 0 && sell == 1 {
-				mark = -1.0
+			if hawkesOK && poissonOK {
+				gainPoisson := hawkesLL - poissonLL
+				res[42] = gainPoisson
+
+				if markedCount > 0 {
+					res[43] = gainPoisson / markedCount
+				}
 			}
 
-			if (buy != 1 && buy != 0) || (sell != 1 && sell != 0) || (buy == sell) {
-				op.Error(fmt.Errorf("%w: hawkes: trade side carries no excitation mark", core.ErrDomain))
-				return
-			}
-		}
+			if hawkesOK && p.selfOnlyReady {
+				selfLL, selfOK := p.selfOnlyModel.logLikelihood(streamWindow, atSec)
 
-		if op.hasLast && atSec < op.lastAt {
-			op.Error(fmt.Errorf("%w: hawkes: regressing event time", core.ErrDomain))
-			return
-		}
+				if selfOK {
+					gainSelf := hawkesLL - selfLL
+					res[44] = selfLL
+					res[45] = gainSelf
 
-		op.lastAt = atSec
-		op.hasLast = true
-
-		if len(op.events) == 0 {
-			op.originSec = atSec
-		}
-
-		fromSec := op.originSec
-		span := atSec - fromSec
-
-		count0 := float64(len(op.stream0))
-		count1 := float64(len(op.stream1))
-
-		if mark > 0 {
-			count0++
-		}
-
-		if mark <= 0 {
-			count1++
-		}
-
-		totalCount := count0 + count1
-		frac0 := count0 / totalCount
-		frac1 := count1 / totalCount
-
-		var rate0, rate1, rate float64
-
-		if span > 0 {
-			rate0 = count0 / span
-			rate1 = count1 / span
-			rate = totalCount / span
-		}
-
-		clear(op.cached[:])
-		op.cached[0] = totalCount
-		op.cached[1] = count0
-		op.cached[2] = count1
-		op.cached[3] = frac0
-		op.cached[4] = frac1
-		op.cached[5] = rate0
-		op.cached[6] = rate1
-		op.cached[7] = rate
-
-		if op.modelReady {
-			muX := op.muX
-			muY := op.muY
-			alphaXX := op.alphaXX
-			alphaXY := op.alphaXY
-			alphaYX := op.alphaYX
-			alphaYY := op.alphaYY
-			beta := op.beta
-
-			sum0 := 0.0
-
-			for _, eventTime := range op.stream0 {
-				if eventTime <= atSec {
-					age := atSec - eventTime
-
-					if age > 0 {
-						sum0 += math.Exp(-beta * age)
+					if markedCount > 0 {
+						res[46] = gainSelf / markedCount
 					}
 				}
 			}
 
-			sum1 := 0.0
+			buySupport, sellSupport := streamPrior.kernelIntegralSupport(atSec, beta)
+			compBuy := muX*spanPrior + (alphaXX/beta)*buySupport + (alphaXY/beta)*sellSupport
+			compSell := muY*spanPrior + (alphaYX/beta)*buySupport + (alphaYY/beta)*sellSupport
 
-			for _, eventTime := range op.stream1 {
-				if eventTime <= atSec {
-					age := atSec - eventTime
+			priorCountBuy := float64(len(buyArrivals))
+			priorCountSell := float64(len(sellArrivals))
+			innoBuy := priorCountBuy - compBuy
+			innoSell := priorCountSell - compSell
 
-					if age > 0 {
-						sum1 += math.Exp(-beta * age)
-					}
-				}
+			res[47] = compBuy
+			res[48] = compSell
+			res[49] = innoBuy
+			res[50] = innoSell
+
+			if compBuy > 0 {
+				res[51] = innoBuy / math.Sqrt(compBuy)
 			}
 
-			lambda0 := muX + alphaXX*sum0 + alphaXY*sum1
-			lambda1 := muY + alphaYX*sum0 + alphaYY*sum1
-			excess0 := lambda0 - muX
-			excess1 := lambda1 - muY
-
-			op.cached[8] = lambda0
-			op.cached[9] = lambda1
-			op.cached[10] = lambda0 + lambda1
-			op.cached[11] = muX
-			op.cached[12] = muY
-			op.cached[13] = muX + muY
-			op.cached[14] = excess0
-			op.cached[15] = excess1
-
-			if lambda0 > 0 {
-				op.cached[16] = excess0 / lambda0
+			if compSell > 0 {
+				res[52] = innoSell / math.Sqrt(compSell)
 			}
 
-			if lambda1 > 0 {
-				op.cached[17] = excess1 / lambda1
+			excessBuyMass := compBuy - muX*spanPrior
+			excessSellMass := compSell - muY*spanPrior
+
+			res[53] = excessBuyMass
+			res[54] = excessSellMass
+
+			if compBuy > 0 {
+				res[55] = excessBuyMass / compBuy
 			}
 
-			// Parameter block from parameters primitive:
-			// op.paramMetrics indices:
-			// 0..3: alphaXX, alphaXY, alphaYX, alphaYY
-			// 4..8: beta, beta, beta, beta, beta
-			// 9..13: timescale, timescale, timescale, timescale, timescale
-			// 14..17: p00, p01, p10, p11
-			// 18: spectralRadius
-			// 19..20: desc0, desc1
-			// 21..28: hawkesLL, hawkesPerEventLL, poissonLL, poissonGain, poissonGainPerEvent, selfLL, selfGain, selfGainPerEvent
-			copy(op.cached[18:39], op.paramMetrics[0:21])
-			copy(op.cached[39:47], op.paramMetrics[21:29])
-
-			if span > 0 {
-				buySupport := 0.0
-
-				for _, eventTime := range op.stream0 {
-					if eventTime <= atSec {
-						lowerAge := op.originSec - eventTime
-
-						if lowerAge < 0 {
-							lowerAge = 0
-						}
-
-						upperAge := atSec - eventTime
-
-						if upperAge > lowerAge {
-							buySupport += math.Exp(-beta*lowerAge) - math.Exp(-beta*upperAge)
-						}
-					}
-				}
-
-				sellSupport := 0.0
-
-				for _, eventTime := range op.stream1 {
-					if eventTime <= atSec {
-						lowerAge := op.originSec - eventTime
-
-						if lowerAge < 0 {
-							lowerAge = 0
-						}
-
-						upperAge := atSec - eventTime
-
-						if upperAge > lowerAge {
-							sellSupport += math.Exp(-beta*lowerAge) - math.Exp(-beta*upperAge)
-						}
-					}
-				}
-
-				compBuy := muX*span + (alphaXX/beta)*buySupport + (alphaXY/beta)*sellSupport
-				compSell := muY*span + (alphaYX/beta)*buySupport + (alphaYY/beta)*sellSupport
-				totalCompensator := compBuy + compSell
-
-				priorCountBuy := float64(len(op.stream0))
-				priorCountSell := float64(len(op.stream1))
-				innoBuy := priorCountBuy - compBuy
-				innoSell := priorCountSell - compSell
-
-				op.cached[47] = compBuy
-				op.cached[48] = compSell
-				op.cached[49] = innoBuy
-				op.cached[50] = innoSell
-
-				if compBuy > 0 {
-					op.cached[51] = innoBuy / math.Sqrt(compBuy)
-				}
-
-				if compSell > 0 {
-					op.cached[52] = innoSell / math.Sqrt(compSell)
-				}
-
-				excessBuyMass := compBuy - muX*span
-				excessSellMass := compSell - muY*span
-
-				op.cached[53] = excessBuyMass
-				op.cached[54] = excessSellMass
-
-				if compBuy > 0 {
-					op.cached[55] = excessBuyMass / compBuy
-				}
-
-				if compSell > 0 {
-					op.cached[56] = excessSellMass / compSell
-				}
-
-				if totalCompensator > 0 {
-					op.cached[57] = (excessBuyMass + excessSellMass) / totalCompensator
-				}
-
-				snrSum := 0.0
-				snrSides := 0
-
-				if compBuy > 0 {
-					snrSum += (excessBuyMass * excessBuyMass) / compBuy
-					snrSides++
-				}
-
-				if compSell > 0 {
-					snrSum += (excessSellMass * excessSellMass) / compSell
-					snrSides++
-				}
-
-				if snrSides > 0 {
-					op.snr = snrSum / float64(snrSides)
-					op.hasSNR = true
-					op.cached[58] = op.snr
-				}
-			}
-		}
-
-		op.cached[61] = fromSec
-
-		if mark > 0 {
-			op.stream0 = append(op.stream0, atSec)
-			op.events = append(op.events, [2]float64{atSec, 0})
-		}
-
-		if mark <= 0 {
-			op.stream1 = append(op.stream1, atSec)
-			op.events = append(op.events, [2]float64{atSec, 1})
-		}
-
-		if len(op.events) >= 10 && span > 0 {
-			eventsClone := slices.Clone(op.events)
-			spanVal := span
-			originVal := op.originSec
-
-			fitIn := data.NewValue(
-				unsafe.Pointer(&eventsClone),
-				unsafe.Pointer(&spanVal),
-				unsafe.Pointer(&originVal),
-			)
-
-			paramIndex := 0
-
-			for paramPtr := range op.parameters.Next(op.fit.Next(fitIn.Next(nil))) {
-				if paramPtr != nil && paramIndex < len(op.paramMetrics) {
-					op.paramMetrics[paramIndex] = *(*float64)(paramPtr)
-					paramIndex++
-				}
+			if compSell > 0 {
+				res[56] = excessSellMass / compSell
 			}
 
-			if paramIndex == len(op.paramMetrics) {
-				p := op.parameters.(*Parameters)
-				op.muX = p.muX
-				op.muY = p.muY
-				op.beta = p.beta
-				op.alphaXX = p.alphaXX
-				op.alphaXY = p.alphaXY
-				op.alphaYX = p.alphaYX
-				op.alphaYY = p.alphaYY
-				op.modelReady = p.ready
-
-				op.selfMuX = p.selfMuX
-				op.selfMuY = p.selfMuY
-				op.selfBeta = p.selfBeta
-				op.selfAlphaXX = p.selfAlphaXX
-				op.selfAlphaYY = p.selfAlphaYY
-				op.selfOnlyReady = p.selfReady
+			if compTotal := compBuy + compSell; compTotal > 0 {
+				res[57] = (excessBuyMass + excessSellMass) / compTotal
 			}
-		}
 
-		for _, val := range op.cached {
-			v := val
+			snrSum := 0.0
+			snrSides := 0
 
-			if !yield(unsafe.Pointer(&v)) {
-				return
+			if compBuy > 0 {
+				snrSum += (excessBuyMass * excessBuyMass) / compBuy
+				snrSides++
+			}
+
+			if compSell > 0 {
+				snrSum += (excessSellMass * excessSellMass) / compSell
+				snrSides++
+			}
+
+			if snrSides > 0 {
+				p.snr = snrSum / float64(snrSides)
+				p.hasSNR = true
+				res[58] = p.snr
 			}
 		}
 	}
+
+	res[61] = fromSec
+
+	p.remember(at, atSec, mark)
+	p.refit(atSec)
+
+	return res, nil
+}
+
+func currentWindowStream(buy, sell []float64, horizonSec, mark float64) arrivalStream {
+	if mark > 0 {
+		return newArrivalStream(append(sortedCopy(buy), horizonSec), sortedCopy(sell))
+	}
+
+	return newArrivalStream(sortedCopy(buy), append(sortedCopy(sell), horizonSec))
 }

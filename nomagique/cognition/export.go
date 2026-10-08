@@ -1,315 +1,243 @@
 package cognition
 
 import (
-	"bytes"
+	"cmp"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
-	"iter"
-	"math"
+	"slices"
 	"strings"
-	"unsafe"
-
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Export publishes the dashboard tree for the association trie as JSON text.
+TrieNodeJSON represents one node in the interactive cognitive radix tree.
 */
-type Export struct {
-	*core.PrimitiveError
-	memory *Associate
+type TrieNodeJSON struct {
+	ID              string          `json:"id"`
+	TokenPrefix     string          `json:"prefix"`
+	Probability     float64         `json:"probability"`
+	StepProbability float64         `json:"stepProbability,omitempty"`
+	Count           uint64          `json:"count"`
+	Tokens          []string        `json:"tokens,omitempty"`
+	State           string          `json:"state,omitempty"` // EVALUATED | POLICY CHOICE | ESTIMATED
+	Children        []*TrieNodeJSON `json:"children,omitempty"`
 }
 
-func NewExport(memory *Associate) *Export {
-	return &Export{
-		PrimitiveError: core.NewPrimitiveError(),
-		memory:         memory,
+/*
+TrieBranchJSON represents one active branch in the radix trie memory.
+*/
+type TrieBranchJSON struct {
+	Hash       string  `json:"hash"`
+	Depth      int     `json:"depth"`
+	Visits     uint64  `json:"visits"`
+	MeanEdge   float64 `json:"meanEdge"`
+	Confidence float64 `json:"confidence"`
+	Policy     string  `json:"policy"`
+}
+
+/*
+FeasibleActionJSON represents one candidate action at the evaluated impulse.
+*/
+type FeasibleActionJSON struct {
+	Rank        int     `json:"rank"`
+	Action      string  `json:"action"`
+	TokenPrefix string  `json:"prefix"`
+	Probability float64 `json:"probability"`
+	State       string  `json:"state"`
+}
+
+/*
+CognitionTreeExport is the wire structure consumed by the learning dashboard.
+*/
+type CognitionTreeExport struct {
+	Root     *TrieNodeJSON        `json:"root"`
+	Branches []TrieBranchJSON     `json:"branches"`
+	Feasible []FeasibleActionJSON `json:"feasible"`
+}
+
+/*
+TreeExport traverses the immutable radix trie and produces a hierarchical tree
+and active branch roster for UI visualization without synthesizing fake data.
+*/
+func (op *Engine) TreeExport() CognitionTreeExport {
+	state := op.state.Load()
+
+	if state == nil || state.root == nil || state.root.Len() == 0 {
+		return CognitionTreeExport{
+			Root: &TrieNodeJSON{
+				ID:          "root",
+				TokenPrefix: "ROOT",
+				Probability: 1.0,
+				State:       "ESTIMATED",
+			},
+			Branches: []TrieBranchJSON{},
+			Feasible: []FeasibleActionJSON{},
+		}
+	}
+
+	rootTree := state.root
+	currentStep := state.step
+	iterator := rootTree.Root().Iterator()
+
+	rootNode := &TrieNodeJSON{
+		ID:          "root",
+		TokenPrefix: "ROOT",
+		Probability: 1.0,
+		State:       "EVALUATED",
+	}
+
+	nodeIndex := make(map[string]*TrieNodeJSON)
+	nodeIndex["root"] = rootNode
+
+	type scoredBranch struct {
+		branch   TrieBranchJSON
+		feasible FeasibleActionJSON
+	}
+
+	var collectedBranches []scoredBranch
+
+	for keyBytes, valBytes, found := iterator.Next(); found; keyBytes, valBytes, found = iterator.Next() {
+		if len(valBytes) != WeightSize {
+			continue
+		}
+
+		classBytes, contextBytes, validBasin := parseBasinKey(keyBytes)
+
+		if !validBasin {
+			continue
+		}
+
+		className := string(classBytes)
+		weight := decodeWeight(valBytes).effective(currentStep, op.decayFactor)
+
+		tokens := extractTokens(contextBytes)
+		tokenNames := make([]string, len(tokens))
+
+		for idx, tokenVal := range tokens {
+			tokenNames[idx] = fmt.Sprintf("0x%04x", tokenVal&0xffff)
+		}
+
+		currentPath := "root"
+		currentNode := rootNode
+
+		for level, tokenVal := range tokens {
+			stepID := fmt.Sprintf("%s:%04x", currentPath, tokenVal&0xffff)
+			childNode, exists := nodeIndex[stepID]
+
+			if !exists {
+				stepPrefix := fmt.Sprintf("t-%04x", tokenVal&0xffff)
+
+				if level == 0 {
+					stepPrefix = fmt.Sprintf("scope-%04x", tokenVal&0xffff)
+				}
+
+				childNode = &TrieNodeJSON{
+					ID:              stepID,
+					TokenPrefix:     stepPrefix,
+					Probability:     weight.Probability,
+					StepProbability: weight.Probability,
+					Count:           weight.Count,
+					Tokens:          tokenNames[:level+1],
+					State:           "EVALUATED",
+				}
+				nodeIndex[stepID] = childNode
+				currentNode.Children = append(currentNode.Children, childNode)
+			}
+
+			if exists {
+				childNode.Count += weight.Count
+
+				if weight.Probability > childNode.Probability {
+					childNode.Probability = weight.Probability
+				}
+			}
+
+			currentPath = stepID
+			currentNode = childNode
+		}
+
+		leafID := fmt.Sprintf("%s:%s", currentPath, className)
+		policyState := "EVALUATED"
+
+		if weight.Probability > 0.5 {
+			policyState = "POLICY CHOICE"
+		}
+
+		leafNode := &TrieNodeJSON{
+			ID:              leafID,
+			TokenPrefix:     className,
+			Probability:     weight.Probability,
+			StepProbability: weight.Probability,
+			Count:           weight.Count,
+			Tokens:          append(tokenNames, className),
+			State:           policyState,
+		}
+		currentNode.Children = append(currentNode.Children, leafNode)
+
+		hash := fmt.Sprintf("0x%x:%s", keyBytes, className)
+
+		policyStr := "WAIT"
+
+		if className == "enter" {
+			policyStr = "ENTER"
+		}
+
+		if className == "exit" {
+			policyStr = "EXIT"
+		}
+
+		associationBias := weight.Probability - 0.5
+
+		collectedBranches = append(collectedBranches, scoredBranch{
+			branch: TrieBranchJSON{
+				Hash:       hash,
+				Depth:      len(tokens) + 1,
+				Visits:     weight.Count,
+				MeanEdge:   associationBias,
+				Confidence: weight.Probability * 100.0,
+				Policy:     policyStr,
+			},
+			feasible: FeasibleActionJSON{
+				Action:      className,
+				TokenPrefix: fmt.Sprintf("ROOT / %s / %s", strings.Join(tokenNames, " / "), className),
+				Probability: weight.Probability,
+				State:       policyState,
+			},
+		})
+	}
+
+	slices.SortFunc(collectedBranches, func(left, right scoredBranch) int {
+		return cmp.Compare(right.branch.Visits, left.branch.Visits)
+	})
+
+	maxBranches := min(len(collectedBranches), 16)
+	branches := make([]TrieBranchJSON, maxBranches)
+	feasible := make([]FeasibleActionJSON, maxBranches)
+
+	for idx := 0; idx < maxBranches; idx++ {
+		branches[idx] = collectedBranches[idx].branch
+		feasible[idx] = collectedBranches[idx].feasible
+		feasible[idx].Rank = idx + 1
+	}
+
+	return CognitionTreeExport{
+		Root:     rootNode,
+		Branches: branches,
+		Feasible: feasible,
 	}
 }
 
-func (op *Export) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
-	return func(yield func(unsafe.Pointer) bool) {
-		compute := func() bool {
-			if op.memory == nil {
-				op.Error(core.ErrShape)
-				return false
-			}
+func extractTokens(contextBytes []byte) []uint64 {
+	tokenCount := len(contextBytes) / 8
 
-			rootTree := op.memory.root.Load()
-
-			if rootTree == nil {
-				op.Error(core.ErrShape)
-				return false
-			}
-
-			var classes []string
-			var contexts [][]byte
-			var probabilities []float64
-			var counts []uint64
-			var keys [][]byte
-			iterator := rootTree.Root().Iterator()
-
-			for key, value, found := iterator.Next(); found; key, value, found = iterator.Next() {
-				if len(key) < 4 || key[0] != 'b' || key[1] != '/' || len(value) != 24 {
-					continue
-				}
-
-				rest := key[2:]
-				slash := bytes.LastIndexByte(rest, '/')
-
-				if slash <= 0 || slash == len(rest)-1 {
-					continue
-				}
-
-				count := binary.LittleEndian.Uint64(value[0:8])
-
-				if count == 0 {
-					continue
-				}
-
-				classes = append(classes, string(rest[slash+1:]))
-				contexts = append(contexts, append([]byte{}, rest[:slash]...))
-				probabilities = append(probabilities, math.Float64frombits(binary.LittleEndian.Uint64(value[8:16])))
-				counts = append(counts, count)
-				keys = append(keys, append([]byte{}, key...))
-			}
-
-			root := map[string]any{
-				"id":          "root",
-				"prefix":      "ROOT",
-				"probability": core.Unit,
-				"count":       uint64(0),
-				"state":       "ESTIMATED",
-			}
-			branches := make([]any, 0)
-			feasible := make([]any, 0)
-
-			if len(classes) > 0 {
-				root["state"] = "EVALUATED"
-			}
-
-			for index := range classes {
-				if classes[index] == "wait" {
-					continue
-				}
-
-				parts := bytes.Split(contexts[index], []byte{'/'})
-				var frames []string
-				previous := ""
-
-				for _, part := range parts {
-					if len(part) == 0 {
-						continue
-					}
-
-					frame := string(part)
-
-					if part[0] < 32 {
-						var builder strings.Builder
-
-						for itemIndex, item := range part {
-							if itemIndex > 0 {
-								builder.WriteByte('_')
-							}
-
-							builder.WriteString(fmt.Sprintf("R%d", item))
-						}
-
-						frame = builder.String()
-					}
-
-					if frame == "" || frame == previous {
-						continue
-					}
-
-					previous = frame
-					frames = append(frames, frame)
-				}
-
-				parent := root
-				var path strings.Builder
-				path.WriteString("root")
-				probability := probabilities[index]
-				count := counts[index]
-
-				for _, frame := range frames {
-					path.WriteByte('/')
-					path.WriteString(frame)
-					children, _ := parent["children"].([]any)
-					var found map[string]any
-
-					for _, child := range children {
-						node, _ := child.(map[string]any)
-
-						if node == nil {
-							continue
-						}
-
-						if leaf, _ := node["leaf"].(bool); leaf {
-							continue
-						}
-
-						if node["prefix"] == frame {
-							found = node
-							break
-						}
-					}
-
-					if found == nil {
-						found = map[string]any{
-							"id":              path.String(),
-							"prefix":          frame,
-							"probability":     probability,
-							"stepProbability": probability,
-							"count":           uint64(0),
-							"tokens":          []string{frame},
-							"state":           "EVALUATED",
-						}
-						children = append(children, found)
-						parent["children"] = children
-					}
-
-					found["count"] = found["count"].(uint64) + count
-					current, _ := found["probability"].(float64)
-
-					if probability > current {
-						found["probability"] = probability
-						found["stepProbability"] = probability
-					}
-
-					parent = found
-				}
-
-				actionName := strings.ToUpper(classes[index])
-				path.WriteByte('/')
-				path.WriteString(actionName)
-				policy := "EVALUATED"
-
-				if probability > core.Unit/2 {
-					policy = "POLICY CHOICE"
-				}
-
-				children, _ := parent["children"].([]any)
-				var action map[string]any
-
-				for _, child := range children {
-					node, _ := child.(map[string]any)
-
-					if node == nil {
-						continue
-					}
-
-					if leaf, _ := node["leaf"].(bool); leaf && node["prefix"] == actionName {
-						action = node
-						break
-					}
-				}
-
-				if action == nil {
-					action = map[string]any{
-						"id":              path.String(),
-						"prefix":          actionName,
-						"probability":     probability,
-						"stepProbability": probability,
-						"count":           uint64(0),
-						"tokens":          []string{classes[index]},
-						"state":           policy,
-						"leaf":            true,
-					}
-					children = append(children, action)
-					parent["children"] = children
-				}
-
-				action["count"] = action["count"].(uint64) + count
-				current, _ := action["probability"].(float64)
-
-				if probability >= current {
-					action["probability"] = probability
-					action["stepProbability"] = probability
-					action["state"] = policy
-				}
-
-				branches = append(branches, map[string]any{
-					"hash":       fmt.Sprintf("0x%x:%s", keys[index], classes[index]),
-					"depth":      len(frames) + 1,
-					"visits":     count,
-					"meanEdge":   probability - core.Unit/2,
-					"confidence": probability * 100,
-					"policy":     actionName,
-				})
-				feasible = append(feasible, map[string]any{
-					"action":      classes[index],
-					"prefix":      fmt.Sprintf("ROOT / [%s] -> %s", strings.Join(frames, ", "), classes[index]),
-					"probability": probability,
-					"state":       policy,
-				})
-			}
-
-			for index := range feasible {
-				node, _ := feasible[index].(map[string]any)
-
-				if node == nil {
-					continue
-				}
-
-				node["rank"] = index + 1
-			}
-
-			stack := []map[string]any{root}
-
-			for len(stack) > 0 {
-				node := stack[len(stack)-1]
-				stack = stack[:len(stack)-1]
-				delete(node, "leaf")
-				children, _ := node["children"].([]any)
-
-				for _, child := range children {
-					next, _ := child.(map[string]any)
-
-					if next == nil {
-						continue
-					}
-
-					stack = append(stack, next)
-				}
-			}
-
-			encoded, err := json.Marshal(map[string]any{
-				"root":     root,
-				"branches": branches,
-				"feasible": feasible,
-			})
-
-			if err != nil {
-				op.Error(err)
-				return false
-			}
-
-			for value := range data.NewValue(string(encoded)).Next(nil) {
-				if !yield(value) {
-					return false
-				}
-			}
-
-			return true
-		}
-
-		if in == nil {
-			compute()
-			return
-		}
-
-		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			if !compute() {
-				return
-			}
-		}
+	if tokenCount == 0 {
+		return nil
 	}
+
+	tokens := make([]uint64, tokenCount)
+
+	for idx := 0; idx < tokenCount; idx++ {
+		tokens[idx] = binary.BigEndian.Uint64(contextBytes[idx*8 : (idx+1)*8])
+	}
+
+	return tokens
 }

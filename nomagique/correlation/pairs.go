@@ -1,272 +1,311 @@
 package correlation
 
 import (
+	"errors"
 	"iter"
 	"math"
+	"sort"
+	"strconv"
+	"time"
 	"unsafe"
 
+	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-Pairs runs bivariate Hayashi-Yoshida cross-correlation against peer paths
-in the PathStore, computing cohort aggregation, Fisher coordinates, relative
-energy, causal baselines, and historical recurrence.
-Yields 36 float64 values matching the correlation signal output contract.
+Relation is the measured pair before cohort folding. Support counts overlapping
+return pairs, not independent samples. EffectiveSupport and Authority are explicitly unavailable (nil):
+the Hayashi estimator does not estimate independence-adjusted sample size.
+FisherDefined and PValue retain the existing independent-return approximation;
+consumers must not mistake that approximation for calibrated authority.
+At is the older endpoint of the two paths, so stale peers remain visible.
 */
-type Pairs struct {
-	*core.PrimitiveError
-	symbol          string
-	store           *PathStore
-	estimator       core.Primitive
-	dependence      core.Primitive
-	fisher          core.Primitive
-	cohort          core.Primitive
-	relative        core.Primitive
-	fisherEstimator core.Primitive
-	history         core.Primitive
-	hasPrevCorr     bool
-	prevCorr        float64
-	hasPrevRel      bool
-	prevRel         float64
-	out             [36]float64
+type Relation struct {
+	EffectiveSupport, Authority *float64
+	Left, Right                 string
+	Signed, Absolute, Support   float64
+	PValue, StandardError       float64
+	Defined, FisherDefined      bool
+	At                          time.Time
 }
 
-func NewPairs(symbol string, store *PathStore, estimator core.Primitive) core.Primitive {
+/*
+Relations retains measured pair measurements. It stores data and answers
+nothing else; consumers query it like any other store.
+*/
+type Relations struct {
+	err   error
+	pairs map[[2]string]Relation
+}
+
+func NewRelations() core.Primitive {
+	return &Relations{}
+}
+
+/*
+Next receives *Relation payloads and retains each under its ordered symbol
+pair.
+*/
+func (op *Relations) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			relation := (*Relation)(arriving)
+
+			if op.pairs == nil {
+				op.pairs = make(map[[2]string]Relation)
+			}
+
+			op.pairs[[2]string{relation.Left, relation.Right}] = *relation
+
+			if !yield(arriving) {
+				return
+			}
+		}
+	}
+}
+
+func (op *Relations) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+Pairs owns every symbol's price path and measures the arrival's path against
+every retained peer: one dependence estimate and one Fisher significance per
+pair, every measured pair retained, and every defined pair with support
+admitted to the measurement's Peers. When several peers qualify, the
+lexicographically last one is the selected pair, so selection is
+deterministic. All selected-pair facts are written where they are computed.
+*/
+type Pairs struct {
+	err       error
+	paths     map[string]core.Primitive
+	window    func() core.Primitive
+	retained  map[string]PathReading
+	pairwise  core.Primitive
+	fisher    core.Primitive
+	relations core.Primitive
+}
+
+/*
+NewPairs composes the pair stage over the supplied causal estimator, so the
+algo dependency is injected at composition instead of imported here.
+*/
+func NewPairs(estimator core.Primitive) core.Primitive {
 	return &Pairs{
-		PrimitiveError:  core.NewPrimitiveError(),
-		symbol:          symbol,
-		store:           store,
-		estimator:       estimator,
-		dependence:      NewDependence(estimator),
-		fisher:          NewFisher(),
-		cohort:          NewCohort(),
-		relative:        NewRelative(),
-		fisherEstimator: NewFisherEstimator(),
-		history:         NewHistory(),
+		paths:     make(map[string]core.Primitive),
+		window:    adaptive.NewWindow,
+		retained:  make(map[string]PathReading),
+		pairwise:  NewDependence(estimator),
+		fisher:    NewFisher(),
+		relations: NewRelations(),
 	}
 }
 
 func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		var vals [2]float64
-		idx := 0
-
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
+			m := *(**data.Measurement)(arriving)
 
-			if idx < 2 {
-				vals[idx] = *(*float64)(arriving)
-				idx++
-			}
-		}
-
-		price := vals[0]
-
-		symbol := op.symbol
-		if symbol == "" && op.store != nil {
-			symbol = op.store.Current()
-		}
-
-		var focalPath [][2]float64
-		if op.store != nil && symbol != "" {
-			focalPath = op.store.paths[symbol]
-		}
-
-		clear(op.out[:])
-		op.out[0] = price
-		op.out[1] = float64(len(focalPath))
-
-		peers := []string{}
-		if op.store != nil && symbol != "" {
-			peers = op.store.Peers(symbol)
-		}
-
-		if len(peers) == 0 || len(focalPath) < 2 {
-			for i := range op.out {
-				if !yield(unsafe.Pointer(&op.out[i])) {
+			if m.Error() != nil {
+				if !yield(arriving) {
 					return
 				}
-			}
-			return
-		}
 
-		// Evaluate dependence across all peers
-		var peerInputs [][3]float64
-		var lastDep [13]float64
-		var validPeerCount float64
-
-		for _, peer := range peers {
-			peerPath := op.store.paths[peer]
-			if len(peerPath) < 2 {
 				continue
 			}
 
-			pair := [2][][2]float64{peerPath, focalPath}
-			for ptr := range op.dependence.Next(data.NewValue(pair).Next(nil)) {
-				lastDep = *(*[13]float64)(ptr)
-			}
+			last := m.Value("last_price")
 
-			corr := lastDep[0]
-			supp := lastDep[2]
-			peerEnergy := lastDep[8] // leftEnergyRate is reference (peer) rate
+			if last == 0 {
+				m.Put("observation_count", 0)
 
-			peerInputs = append(peerInputs, [3]float64{corr, supp, peerEnergy})
-			validPeerCount++
-		}
-
-		if validPeerCount == 0 {
-			for i := range op.out {
-				if !yield(unsafe.Pointer(&op.out[i])) {
+				if !yield(arriving) {
 					return
 				}
+
+				continue
 			}
-			return
-		}
 
-		// Cohort summary across peers
-		var cohortRes [11]float64
-		for ptr := range op.cohort.Next(data.NewValue(peerInputs...).Next(nil)) {
-			cohortRes = *(*[11]float64)(ptr)
-		}
+			path := op.paths[m.Label]
 
-		signedCorr := lastDep[0]
-		absCorr := math.Abs(signedCorr)
-		cov := lastDep[1]
-		refEnergy := lastDep[3]
-		measEnergy := lastDep[4]
-		refEnergyRate := lastDep[8]
-		measEnergyRate := lastDep[9]
-		focalEnergyRate := measEnergyRate
-		peerEnergyRate := refEnergyRate
-		measReturns := lastDep[7]
-		refReturns := lastDep[6]
-		sharedTime := lastDep[11]
-		overlapDensity := lastDep[12]
-		overlapPairCount := lastDep[2]
-
-		cohortPeerCount := cohortRes[1]
-		cohortEffPeers := cohortRes[4]
-		cohortSignedCorr := cohortRes[5]
-		cohortAbsCorr := cohortRes[6]
-		cohortDispersion := cohortRes[8]
-
-		effSampleCount := overlapPairCount
-		if cohortEffPeers > 0 {
-			effSampleCount = cohortEffPeers
-		}
-
-		// Fisher p-value and standard error
-		var fisherRes [6]float64
-		for ptr := range op.fisher.Next(data.NewValue([3]float64{signedCorr, overlapPairCount, 1.0}).Next(nil)) {
-			fisherRes = *(*[6]float64)(ptr)
-		}
-		corrPVal := fisherRes[1]
-		corrSE := fisherRes[3]
-
-		// Relative return energy
-		relEnergy := 0.0
-		if peerEnergyRate > 0 {
-			relEnergy = focalEnergyRate / peerEnergyRate
-		}
-		relCohortEnergy := 0.0
-		if cohortRes[7] > 0 {
-			relCohortEnergy = focalEnergyRate / cohortRes[7]
-		}
-
-		// Correlation causal baseline
-		var fisherEstRes [10]float64
-		for ptr := range op.fisherEstimator.Next(data.NewValue(signedCorr).Next(nil)) {
-			fisherEstRes = *(*[10]float64)(ptr)
-		}
-		corrBaseline := fisherEstRes[2]
-		corrDivergence := fisherEstRes[3]
-		corrZScore := fisherEstRes[6]
-
-		corrVelocity := 0.0
-		if op.hasPrevCorr {
-			corrVelocity = signedCorr - op.prevCorr
-		}
-		op.prevCorr = signedCorr
-		op.hasPrevCorr = true
-
-		// Relative energy baseline
-		var relRes [4]float64
-		idxRel := 0
-		for ptr := range op.relative.Next(data.NewValue(relEnergy).Next(nil)) {
-			if idxRel < 4 {
-				relRes[idxRel] = *(*float64)(ptr)
-				idxRel++
+			if path == nil {
+				path = NewPath(op.window())
+				op.paths[m.Label] = path
 			}
-		}
-		relBaseline := relRes[0]
-		relDivergence := relRes[1]
-		relZScore := relRes[2]
 
-		relVelocity := 0.0
-		if op.hasPrevRel {
-			relVelocity = relEnergy - op.prevRel
-		}
-		op.prevRel = relEnergy
-		op.hasPrevRel = true
+			price := temporal.Price{At: m.At.UnixNano(), Value: last}
+			focal := drive[temporal.Price, PathReading](path, &price)
 
-		// Historical path distance and percentile
-		var histRes [2]float64
-		idxHist := 0
-		for ptr := range op.history.Next(data.NewValue(corrZScore, relZScore).Next(nil)) {
-			if idxHist < 2 {
-				histRes[idxHist] = *(*float64)(ptr)
-				idxHist++
+			if err := path.Error(); err != nil {
+				m.SetError(err)
+				op.Error(err)
+
+				if !yield(arriving) {
+					return
+				}
+
+				continue
 			}
-		}
-		histDistance := histRes[0]
-		histPercentile := histRes[1]
 
-		op.out[0] = price
-		op.out[1] = float64(len(focalPath))
-		op.out[2] = signedCorr
-		op.out[3] = absCorr
-		op.out[4] = cohortSignedCorr
-		op.out[5] = cohortAbsCorr
-		op.out[6] = cov
-		op.out[7] = refEnergy
-		op.out[8] = measEnergy
-		op.out[9] = refEnergyRate
-		op.out[10] = measEnergyRate
-		op.out[11] = peerEnergyRate
-		op.out[12] = focalEnergyRate
-		op.out[13] = measReturns
-		op.out[14] = refReturns
-		op.out[15] = sharedTime
-		op.out[16] = overlapDensity
-		op.out[17] = overlapPairCount
-		op.out[18] = effSampleCount
-		op.out[19] = corrPVal
-		op.out[20] = corrSE
-		op.out[21] = cohortPeerCount
-		op.out[22] = cohortDispersion
-		op.out[23] = cohortEffPeers
-		op.out[24] = relEnergy
-		op.out[25] = relCohortEnergy
-		op.out[26] = corrBaseline
-		op.out[27] = corrDivergence
-		op.out[28] = corrZScore
-		op.out[29] = corrVelocity
-		op.out[30] = relBaseline
-		op.out[31] = relDivergence
-		op.out[32] = relZScore
-		op.out[33] = relVelocity
-		op.out[34] = histDistance
-		op.out[35] = histPercentile
+			m.Put("observation_count", focal.Count)
 
-		for i := range op.out {
-			if !yield(unsafe.Pointer(&op.out[i])) {
+			if !focal.Accepted {
+				m.SetMeta("event_time_state", "regressed")
+
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
+			op.retained[m.Label] = focal
+
+			var (
+				selected     DependenceReading
+				significance FisherReading
+				selection    string
+			)
+
+			m.ClearPeers()
+
+			for _, symbol := range peers(op.retained, m.Label) {
+				peer := op.retained[symbol]
+
+				input := LagProfileInput{Left: focal.Observations, Right: peer.Observations}
+				dependence := drive[LagProfileInput, DependenceReading](op.pairwise, &input)
+
+				if err := op.pairwise.Error(); err != nil {
+					m.SetError(err)
+					op.Error(err)
+
+					break
+				}
+
+				sample := FisherSample{Correlation: dependence.Correlation, Support: dependence.Support}
+				significanceOfPair := drive[FisherSample, FisherReading](op.fisher, &sample)
+
+				retain(op, m.Label, symbol, dependence, significanceOfPair,
+					time.Unix(0, min(price.At, peer.To)))
+
+				if !dependence.Defined || dependence.Support < 2 {
+					continue
+				}
+
+				peerMeas := data.NewMeasurement(
+					m.Epoch, symbol, m.Source, m.SeqIdx, m.Tick,
+					&data.StringEntry{Key: "support", Value: strconv.FormatFloat(dependence.Support, 'f', -1, 64)},
+					&data.StringEntry{Key: "peer_energy_rate", Value: strconv.FormatFloat(dependence.RightEnergyRate, 'f', -1, 64)},
+				)
+				peerMeas.Put("signed_correlation", dependence.Correlation)
+				m.AddPeer(peerMeas)
+
+				selected, significance, selection = dependence, significanceOfPair, symbol
+			}
+
+			if len(m.Peers()) > 0 {
+				m.SetMeta("peer", selection)
+				m.SetMeta("pair_diagnostics_selection", "last_defined_peer_lexicographic")
+
+				m.Put("signed_correlation", selected.Correlation)
+				m.Put("absolute_correlation", math.Abs(selected.Correlation))
+				m.Put("covariance", selected.Covariance)
+				m.Put("return_energy:reference", selected.RightEnergy)
+				m.Put("return_energy:measured", selected.LeftEnergy)
+				m.Put("return_energy_rate:reference", selected.RightEnergyRate)
+				m.Put("return_energy_rate:measured", selected.LeftEnergyRate)
+				m.Put("overlap_density", selected.OverlapDensity)
+				m.Put("supported_return_count:measured", selected.LeftReturns)
+				m.Put("supported_return_count:reference", selected.RightReturns)
+				m.Put("overlap_pair_count", selected.Support)
+				m.Put("shared_time", selected.SharedTime)
+
+				if significance.Defined {
+					m.Put("correlation_p_value", significance.PValue)
+					m.Put("correlation_standard_error_fisher", significance.StandardError)
+				}
+			}
+
+			if !yield(arriving) {
 				return
 			}
 		}
 	}
+}
+
+/*
+peers lists the retained symbols other than the focal one in lexicographic
+order, so pair selection stays deterministic.
+*/
+func peers(retained map[string]PathReading, focal string) []string {
+	symbols := make([]string, 0, len(retained))
+
+	for symbol := range retained {
+		if symbol != focal {
+			symbols = append(symbols, symbol)
+		}
+	}
+
+	sort.Strings(symbols)
+
+	return symbols
+}
+
+/*
+retain records one measured pair, whether or not it is defined. Undefined
+Fisher fields remain explicitly unavailable; NaN is not serialized as though
+it were a p-value.
+*/
+func retain(
+	op *Pairs, leftSymbol, rightSymbol string,
+	dependence DependenceReading, fisher FisherReading, at time.Time,
+) {
+	left, right := leftSymbol, rightSymbol
+
+	if right < left {
+		left, right = right, left
+	}
+
+	relation := Relation{
+		Left:    left,
+		Right:   right,
+		Support: dependence.Support,
+		Defined: dependence.Defined,
+		At:      at,
+	}
+
+	if relation.Defined {
+		relation.Signed = dependence.Correlation
+		relation.Absolute = math.Abs(relation.Signed)
+	}
+
+	relation.FisherDefined = fisher.Defined
+
+	if relation.FisherDefined {
+		relation.PValue = fisher.PValue
+		relation.StandardError = fisher.StandardError
+	}
+
+	for range op.relations.Next(transport.NewOne(unsafe.Pointer(&relation)).Next(nil)) {
+	}
+}
+
+func (op *Pairs) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

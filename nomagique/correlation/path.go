@@ -6,32 +6,39 @@ import (
 	"slices"
 	"unsafe"
 
+	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/temporal"
 )
 
 /*
-Path owns timestamp acceptance and the retained observation sequence. Each
-arrival is [2]float64{at, value}; it yields *[2][]float64 where
-[0] is {at, value, priorCount, count, accepted, restated, hasSpan, from, to}
-and [1] is the flattened retained observations {at0, value0, at1, value1, ...}.
-Optional retention is an adapter-native Primitive (e.g. adaptive.Window) that
-publishes shed_ratio.
+PathReading is one accepted, restated, or rejected timestamped observation
+together with the retained history.
+*/
+type PathReading struct {
+	temporal.Price
+	Observations []temporal.Price
+	PriorCount   float64
+	Count        float64
+	Accepted     bool
+	Restated     bool
+	HasSpan      bool
+	From         int64
+	To           int64
+}
+
+/*
+Path owns timestamp acceptance and the retained observation sequence.
 */
 type Path struct {
-	*core.PrimitiveError
+	err          error
 	retention    core.Primitive
-	observations [][2]float64
-	out          [2][]float64
-	flags        []float64
-	flat         []float64
+	observations []temporal.Price
+	out          PathReading
 }
 
 func NewPath(retention ...core.Primitive) core.Primitive {
-	path := &Path{
-		PrimitiveError: core.NewPrimitiveError(),
-		flags:          make([]float64, 9),
-	}
+	path := &Path{}
 
 	if len(retention) > 0 {
 		path.retention = retention[0]
@@ -40,24 +47,21 @@ func NewPath(retention ...core.Primitive) core.Primitive {
 	return path
 }
 
-func (op *Path) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *Path) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			sample := *(*[2]float64)(arriving)
+			sample := *(*temporal.Price)(arriving)
 			priorCount := len(op.observations)
-			last := 0.0
+			last := int64(0)
 
 			if priorCount > 0 {
-				last = op.observations[priorCount-1][0]
+				last = op.observations[priorCount-1].At
 			}
 
-			accepted := priorCount == 0 || sample[0] >= last
-			restated := priorCount > 0 && sample[0] == last
+			accepted := priorCount == 0 || sample.At >= last
+			restated := priorCount > 0 && sample.At == last
 
 			if accepted {
 				observations := op.observations
@@ -65,24 +69,23 @@ func (op *Path) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				if restated {
 					observations = slices.Clone(observations)
 					observations[priorCount-1] = sample
-				} else {
+				}
+
+				if !restated {
 					observations = append(observations, sample)
 				}
 
 				if op.retention != nil {
-					shedRatio := 1.0
-
-					for pointer := range op.retention.Next(data.NewValue(unsafe.Pointer(&sample[1])).Next(nil)) {
-						shedRatio = *(*float64)(pointer)
-					}
+					value := sample.Value
+					reading := drive[float64, adaptive.WindowReading](op.retention, &value)
 
 					if err := op.retention.Error(); err != nil {
-						op.Error(err)
+						op.err = err
 						return
 					}
 
-					if shedRatio < 1 && len(observations) > 2 {
-						retained := int(math.Max(2, math.Floor(float64(len(observations))*shedRatio)))
+					if reading.ShedRatio < 1 && len(observations) > 2 {
+						retained := int(math.Max(2, math.Floor(float64(len(observations))*reading.ShedRatio)))
 						observations = slices.Clone(observations[len(observations)-retained:])
 					}
 				}
@@ -90,52 +93,39 @@ func (op *Path) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.observations = observations
 			}
 
-			from, through := 0.0, 0.0
-			hasSpan := 0.0
+			from, through := int64(0), int64(0)
 
 			if len(op.observations) > 0 {
-				from = op.observations[0][0]
-				through = op.observations[len(op.observations)-1][0]
-				hasSpan = 1
+				from = op.observations[0].At
+				through = op.observations[len(op.observations)-1].At
 			}
 
-			acceptedFlag, restatedFlag := 0.0, 0.0
-
-			if accepted {
-				acceptedFlag = 1
+			op.out = PathReading{
+				Price:        sample,
+				Observations: op.observations[:len(op.observations):len(op.observations)],
+				PriorCount:   float64(priorCount),
+				Count:        float64(len(op.observations)),
+				Accepted:     accepted,
+				Restated:     restated,
+				HasSpan:      len(op.observations) != 0,
+				From:         from,
+				To:           through,
 			}
-
-			if restated {
-				restatedFlag = 1
-			}
-
-			op.flags[0] = sample[0]
-			op.flags[1] = sample[1]
-			op.flags[2] = float64(priorCount)
-			op.flags[3] = float64(len(op.observations))
-			op.flags[4] = acceptedFlag
-			op.flags[5] = restatedFlag
-			op.flags[6] = hasSpan
-			op.flags[7] = from
-			op.flags[8] = through
-
-			if cap(op.flat) < len(op.observations)*2 {
-				op.flat = make([]float64, len(op.observations)*2)
-			} else {
-				op.flat = op.flat[:len(op.observations)*2]
-			}
-
-			for index, observation := range op.observations {
-				op.flat[index*2] = observation[0]
-				op.flat[index*2+1] = observation[1]
-			}
-
-			op.out[0] = append([]float64(nil), op.flags...)
-			op.out[1] = append([]float64(nil), op.flat...)
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Path) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

@@ -32,12 +32,6 @@ func NewValue[T any](values ...T) *Value[T] {
 	}
 }
 
-func NewPointers(values ...unsafe.Pointer) *Value[unsafe.Pointer] {
-	return &Value[unsafe.Pointer]{
-		PrimitiveError: core.NewPrimitiveError(),
-		Values:         values,
-	}
-}
 
 func (op *Value[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
@@ -90,22 +84,3 @@ func Pull[T any](value iter.Seq[T]) T {
 	return zero
 }
 
-/*
-ReadSeq walks all values of a run out of the wire as typed values.
-*/
-func ReadSeq[T any](value iter.Seq[unsafe.Pointer]) iter.Seq[T] {
-	if value == nil {
-		return func(yield func(T) bool) {}
-	}
-
-	return func(yield func(T) bool) {
-		for val := range value {
-			if val == nil {
-				continue
-			}
-			if !yield(*(*T)(val)) {
-				return
-			}
-		}
-	}
-}

@@ -1,40 +1,45 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Exp computes e^x for each arrival.
+Exp owns one field operation. What it hands over is the exponential of each
+arrival, operating in-place on the wire pointer.
 */
 type Exp struct {
-	*core.PrimitiveError
+	err error
 }
 
 func NewExp() core.Primitive {
-	return &Exp{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Exp{}
 }
 
 func (op *Exp) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
+			in := (*float64)(arriving)
+			*in = math.Exp(*in)
 
-			for value := range data.NewValue(math.Exp(*(*float64)(arriving))).Next(nil) {
-				if !yield(value) {
-					return
-				}
+			if !yield(arriving) {
+				return
 			}
 		}
 	}
+}
+
+func (op *Exp) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

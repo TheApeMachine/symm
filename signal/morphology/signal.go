@@ -2,23 +2,18 @@ package morphology
 
 import (
 	"context"
+	"math"
+	"sort"
 	"strconv"
+	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/distribution"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/temporal"
-	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/nomagique/vector"
 )
 
 var outputKeys = []string{
@@ -31,84 +26,27 @@ var outputKeys = []string{
 	"morphology_change",
 }
 
+type point struct {
+	pos    float64
+	weight float64
+}
+
+type symbolState struct {
+	hasPrev  bool
+	prevBook []point
+}
+
 type Signal struct {
 	*runtime.System
-	books    broker.BookSource
-	pipeline *nomagique.Number
+	books  broker.BookSource
+	mu     sync.Mutex
+	states map[string]*symbolState
 }
 
 func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	signal := &Signal{
-		books: books,
-		pipeline: nomagique.NewNumber(
-			transport.NewAddressable("symbolstore", store.NewKV(func() core.Primitive {
-				// Both sides use the same stateless projection. Parallel consumes
-				// branches in deterministic order; only Previous retains a book.
-				projection := nomagique.NewNumber(
-					// Input: bid, ask, then individual price/quantity operands.
-					transport.NewFanout[float64](
-						nomagique.NewNumber(data.NewSelect(0, 1), calculus.NewPositive(), transport.NewDiscard()),
-						nomagique.NewNumber(data.NewSelect(0, 1), arithmetic.NewAdd(), vector.NewScale(0.5)),
-						nomagique.NewNumber(data.NewSelect(1, 0), arithmetic.NewSubtract(), calculus.NewPositive()),
-						data.NewSlice(2),
-					),
-					// Per level: signed spread coordinate and displayed notional.
-					transport.NewMap(2, transport.NewFanout[float64](
-						nomagique.NewNumber(
-							transport.NewFanout[float64](
-								nomagique.NewNumber(data.NewSelect(2, 0), arithmetic.NewSubtract()),
-								data.NewSelect(1),
-							), arithmetic.NewDivide(),
-						),
-						nomagique.NewNumber(
-							transport.NewFanout[float64](
-								nomagique.NewNumber(data.NewSelect(2), calculus.NewPositive()),
-								data.NewSelect(3),
-							), vector.NewScale(),
-						),
-					), 2),
-					distribution.NewSortedPositions(),
-					distribution.NewNormalize(2, 1),
-					data.NewPack[float64](),
-				)
-
-				return nomagique.NewNumber(
-					transport.NewParallel(projection, projection),
-					// A whole book requires both normalized side distributions.
-					data.NewPack[core.Primitive](2), data.NewUnpack(),
-					transport.NewFanout[core.Primitive](
-						// Fold each normalized side only for bilateral comparisons.
-						nomagique.NewNumber(
-							transport.NewParallel(
-								nomagique.NewNumber(
-									transport.NewMap(2, transport.NewFanout[float64](
-										nomagique.NewNumber(data.NewSelect(0), calculus.NewAbsolute()),
-										data.NewSelect(1),
-									)), distribution.NewSortedPositions(), data.NewPack[float64](),
-								),
-								data.NewPack[float64](),
-							), distribution.NewMergedWalk(), data.NewSelect(1, 0),
-						),
-						// Moments use the same side masses, not recomputed price data.
-						nomagique.NewNumber(
-							data.NewSelect(0, 1, 0, 1),
-							transport.NewParallel(
-								distribution.NewConcentrationPoints(), distribution.NewConcentrationPoints(),
-								distribution.NewEntropyPoints(), distribution.NewEntropyPoints(),
-							),
-						),
-						// Keep signed positions. Each side contributes half the mass.
-						nomagique.NewNumber(
-							data.NewUnpack(),
-							transport.NewMap(2, transport.NewFanout[float64](
-								data.NewSelect(0),
-								nomagique.NewNumber(data.NewSelect(1), vector.NewScale(0.5)),
-							)), temporal.NewPrevious(), distribution.NewWasserstein1Pairs(),
-						),
-					),
-				)
-			})),
-		),
+		books:  books,
+		states: make(map[string]*symbolState),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "morphology", signal)
@@ -125,20 +63,31 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
+	if signal.books == nil {
+		signal.Error(errnie.Err(errnie.Internal, "[morphology] book manager is required", nil))
+		return nil
+	}
+
 	var bids, asks []float64
+	var found bool
 	var inputErr error
 
 	signal.books.Book(prior.Label, func(book *spotbook.Book) {
 		if book == nil {
 			return
 		}
-		bid, ask := book.BestBid(), book.BestAsk()
 
+		bid, ask := book.BestBid(), book.BestAsk()
 		if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
 			return
 		}
-		bids = append(bids, kraken.Float64(bid.Price), kraken.Float64(ask.Price))
-		asks = append(asks, kraken.Float64(bid.Price), kraken.Float64(ask.Price))
+
+		bestBidPrice := kraken.Float64(bid.Price)
+		bestAskPrice := kraken.Float64(ask.Price)
+		found = true
+
+		bids = append(bids, bestBidPrice, bestAskPrice)
+		asks = append(asks, bestBidPrice, bestAskPrice)
 
 		for cursor := bid; cursor != nil; cursor = cursor.Lower {
 			if cursor.Price == nil || cursor.Quantity == nil {
@@ -164,35 +113,218 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	if len(bids) == 0 || len(asks) == 0 {
+	if !found || len(bids) <= 2 || len(asks) <= 2 {
 		return nil
 	}
 
-	output := make(map[string]float64)
-	index := 0
-
-	for pointer := range signal.pipeline.Next(data.NewMessage(
-		data.EVALUATE, "symbolstore", strconv.FormatInt(prior.Epoch, 10)+"/"+prior.Label,
-		data.NewValue[core.Primitive](data.NewValue(bids...), data.NewValue(asks...)),
-	).Next(nil)) {
-		if pointer == nil || index >= len(outputKeys) {
-			signal.Error(errnie.Err(errnie.Validation, "[morphology] invalid pipeline output", core.ErrShape))
-			return nil
-		}
-
-		output[outputKeys[index]] = *(*float64)(pointer)
-		index++
-	}
-
-	if err := signal.pipeline.Error(); err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[morphology] "+prior.Label+": invalid book or pipeline state", err))
+	stateKey := strconv.FormatInt(prior.Epoch, 10) + "/" + prior.Label
+	res, err := signal.Calculate(stateKey, bids, asks)
+	if err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[morphology] "+prior.Label+": calculation failed", err))
 		return nil
 	}
 
-	// Only the final metric is optional: a first book has no prior comparison.
-	if index != len(outputKeys)-1 && index != len(outputKeys) {
+	if len(res) == 0 {
 		return nil
+	}
+
+	output := map[string]float64{
+		outputKeys[0]: res[0],
+		outputKeys[1]: res[1],
+		outputKeys[2]: res[2],
+		outputKeys[3]: res[3],
+		outputKeys[4]: res[4],
+		outputKeys[5]: res[5],
+	}
+
+	if len(res) > 6 {
+		output[outputKeys[6]] = res[6]
 	}
 
 	return prior.Next(signal.Name(), output)
+}
+
+func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float64, error) {
+	if len(bids) < 2 || len(asks) < 2 {
+		return nil, core.ErrShape
+	}
+
+	bestBidPrice := bids[0]
+	bestAskPrice := bids[1]
+
+	if bestAskPrice <= bestBidPrice {
+		return nil, core.ErrDomain
+	}
+
+	spread := bestAskPrice - bestBidPrice
+	midPrice := (bestBidPrice + bestAskPrice) * 0.5
+
+	numBids := (len(bids) - 2) / 2
+	bidPoints := make([]point, 0, numBids)
+	var totalBidNotional float64
+
+	for index := 2; index < len(bids); index += 2 {
+		price := bids[index]
+		qty := bids[index+1]
+		if price <= 0 || qty < 0 {
+			return nil, core.ErrDomain
+		}
+		coord := (price - midPrice) / spread
+		notional := price * qty
+		totalBidNotional += notional
+		bidPoints = append(bidPoints, point{pos: coord, weight: notional})
+	}
+
+	numAsks := (len(asks) - 2) / 2
+	askPoints := make([]point, 0, numAsks)
+	var totalAskNotional float64
+
+	for index := 2; index < len(asks); index += 2 {
+		price := asks[index]
+		qty := asks[index+1]
+		if price <= 0 || qty < 0 {
+			return nil, core.ErrDomain
+		}
+		coord := (price - midPrice) / spread
+		notional := price * qty
+		totalAskNotional += notional
+		askPoints = append(askPoints, point{pos: coord, weight: notional})
+	}
+
+	if totalBidNotional == 0 || totalAskNotional == 0 {
+		return nil, nil
+	}
+
+	sort.SliceStable(bidPoints, func(left, right int) bool {
+		return bidPoints[left].pos < bidPoints[right].pos
+	})
+
+	sort.SliceStable(askPoints, func(left, right int) bool {
+		return askPoints[left].pos < askPoints[right].pos
+	})
+
+	var concBid, entropyBid float64
+	for index := range bidPoints {
+		bidPoints[index].weight /= totalBidNotional
+		weight := bidPoints[index].weight
+		concBid += weight * weight
+		if weight > 0 {
+			entropyBid -= weight * math.Log(weight)
+		}
+	}
+
+	var concAsk, entropyAsk float64
+	for index := range askPoints {
+		askPoints[index].weight /= totalAskNotional
+		weight := askPoints[index].weight
+		concAsk += weight * weight
+		if weight > 0 {
+			entropyAsk -= weight * math.Log(weight)
+		}
+	}
+
+	foldedBids := make([]point, len(bidPoints))
+	for index, pt := range bidPoints {
+		foldedBids[index] = point{pos: math.Abs(pt.pos), weight: pt.weight}
+	}
+
+	sort.SliceStable(foldedBids, func(left, right int) bool {
+		return foldedBids[left].pos < foldedBids[right].pos
+	})
+
+	ks, shapeDist := mergedWalk(foldedBids, askPoints)
+
+	currentBook := make([]point, 0, len(bidPoints)+len(askPoints))
+	for _, pt := range bidPoints {
+		currentBook = append(currentBook, point{pos: pt.pos, weight: pt.weight * 0.5})
+	}
+	for _, pt := range askPoints {
+		currentBook = append(currentBook, point{pos: pt.pos, weight: pt.weight * 0.5})
+	}
+
+	signal.mu.Lock()
+	state, exists := signal.states[stateKey]
+	if !exists {
+		state = &symbolState{}
+		signal.states[stateKey] = state
+	}
+
+	var morphChange float64
+	hasMorphChange := state.hasPrev
+	if hasMorphChange {
+		_, morphChange = mergedWalk(state.prevBook, currentBook)
+	}
+
+	state.hasPrev = true
+	state.prevBook = currentBook
+	signal.mu.Unlock()
+
+	res := []float64{shapeDist, ks, concBid, concAsk, entropyBid, entropyAsk}
+	if hasMorphChange {
+		res = append(res, morphChange)
+	}
+
+	return res, nil
+}
+
+func mergedWalk(streamA, streamB []point) (float64, float64) {
+	if len(streamA) == 0 || len(streamB) == 0 {
+		return 0.0, 0.0
+	}
+
+	var totalA, totalB float64
+	for _, pt := range streamA {
+		totalA += pt.weight
+	}
+	for _, pt := range streamB {
+		totalB += pt.weight
+	}
+
+	if totalA == 0 || totalB == 0 {
+		return 0.0, 0.0
+	}
+
+	var idxA, idxB int
+	var cumA, cumB float64
+	var prevPos, ks, distance float64
+	first := true
+
+	for idxA < len(streamA) || idxB < len(streamB) {
+		pos := 0.0
+		if idxA < len(streamA) && idxB < len(streamB) {
+			pos = streamA[idxA].pos
+			if streamB[idxB].pos < pos {
+				pos = streamB[idxB].pos
+			}
+		}
+		if idxA < len(streamA) && idxB >= len(streamB) {
+			pos = streamA[idxA].pos
+		}
+		if idxB < len(streamB) && idxA >= len(streamA) {
+			pos = streamB[idxB].pos
+		}
+
+		if !first {
+			distance += math.Abs(cumA-cumB) * (pos - prevPos)
+		}
+		first = false
+
+		for idxA < len(streamA) && streamA[idxA].pos == pos {
+			cumA += streamA[idxA].weight / totalA
+			idxA++
+		}
+
+		for idxB < len(streamB) && streamB[idxB].pos == pos {
+			cumB += streamB[idxB].weight / totalB
+			idxB++
+		}
+
+		diff := math.Abs(cumA - cumB)
+		if diff > ks {
+			ks = diff
+		}
+		prevPos = pos
+	}
+
+	return ks, distance
 }

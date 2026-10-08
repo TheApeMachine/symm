@@ -3,7 +3,6 @@ package pumpdump_test
 import (
 	"context"
 	"math"
-	"strings"
 	"testing"
 	"time"
 
@@ -163,18 +162,12 @@ func TestPumpDumpSignal(t *testing.T) {
 			So(metricValue(dumpRes, "negative_midpoint_return"), ShouldAlmostEqual, -logReturn, 1e-12)
 		})
 
-		Convey("A crossed touch is corrupt book state: it halts with an Internal error naming the symbol", func() {
+		Convey("A crossed touch is dropped with a warning without halting the system", func() {
 			touch(books, now, "bid-crossed", 50010.0, 1.0, "ask-crossed", 50000.0, 1.0)
 
 			So(instrument.Step(trade(now, 50, "buy", 50005.0, 1.0)), ShouldBeNil)
-
-			err := instrument.Error()
-			So(err, ShouldNotBeNil)
-			So(errnie.IsInternal(err), ShouldBeTrue)
-			So(err.Error(), ShouldContainSubstring, "crossed or locked")
-			So(err.Error(), ShouldContainSubstring, "BTC/USD")
-			So(strings.Contains(err.Error(), "book manager is required"), ShouldBeFalse)
-			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
+			So(instrument.Error(), ShouldBeNil)
+			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 		})
 
 		Convey("A present touch with a non-positive price is corrupt book state and halts", func() {

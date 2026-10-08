@@ -8,8 +8,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestGaussJordanNext(t *testing.T) {
@@ -50,14 +50,14 @@ func TestGaussJordanNext(t *testing.T) {
 				right[row][row+1] = 1
 			}
 
-			out := tests.CollectSeq[[][]float64](node.Next(data.NewValue([2][][]float64{left, right}).Next(nil)))
+			out := tests.CollectSeq[algo.Solution](node.Next(transport.NewValues(algo.System{Left: left, Right: right}).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
-			So(out[0][0], ShouldResemble, []float64{1, float64(size)})
-			solution := out[0][1:]
+			solution := out[0]
+			So(solution.Defined, ShouldBeTrue)
 
 			for row := range size {
-				So(solution[row][0], ShouldAlmostEqual, expected[row])
+				So(solution.Solution[row][0], ShouldAlmostEqual, expected[row])
 			}
 
 			for row := range size {
@@ -65,7 +65,7 @@ func TestGaussJordanNext(t *testing.T) {
 					product := 0.0
 
 					for inner := range size {
-						product += left[row][inner] * solution[inner][column+1]
+						product += left[row][inner] * solution.Solution[inner][column+1]
 					}
 
 					target := 0.0
@@ -80,28 +80,29 @@ func TestGaussJordanNext(t *testing.T) {
 		}
 
 		Convey("A singular system is undefined, and a later solve is independent", func() {
-			outSingular := tests.CollectSeq[[][]float64](node.Next(data.NewValue([2][][]float64{
-				{{1, 2}, {2, 4}},
-				{{1}, {2}},
+			outSingular := tests.CollectSeq[algo.Solution](node.Next(transport.NewValues(algo.System{
+				Left:  [][]float64{{1, 2}, {2, 4}},
+				Right: [][]float64{{1}, {2}},
 			}).Next(nil)))
 			So(node.Error(), ShouldBeNil)
-			So(outSingular[0], ShouldResemble, [][]float64{{0, 1}})
+			So(outSingular[0].Defined, ShouldBeFalse)
+			So(len(outSingular[0].Solution), ShouldEqual, 0)
 
-			outSol := tests.CollectSeq[[][]float64](node.Next(data.NewValue([2][][]float64{
-				{{2, 0}, {0, 3}},
-				{{4}, {9}},
+			outSol := tests.CollectSeq[algo.Solution](node.Next(transport.NewValues(algo.System{
+				Left:  [][]float64{{2, 0}, {0, 3}},
+				Right: [][]float64{{4}, {9}},
 			}).Next(nil)))
 			So(node.Error(), ShouldBeNil)
-			So(outSol[0][0], ShouldResemble, []float64{1, 2})
-			So(outSol[0][1][0], ShouldEqual, 2)
-			So(outSol[0][2][0], ShouldEqual, 3)
+			So(outSol[0].Defined, ShouldBeTrue)
+			So(outSol[0].Solution[0][0], ShouldEqual, 2)
+			So(outSol[0].Solution[1][0], ShouldEqual, 3)
 		})
 
 		Convey("A non-square system is a shape error", func() {
 			errNode := algo.NewGaussJordan(1e-15)
-			tests.CollectSeq[[][]float64](errNode.Next(data.NewValue([2][][]float64{
-				{{1, 2, 3}, {4, 5, 6}},
-				{{1}, {2}},
+			_ = tests.CollectSeq[algo.Solution](errNode.Next(transport.NewValues(algo.System{
+				Left:  [][]float64{{1, 2, 3}, {4, 5, 6}},
+				Right: [][]float64{{1}, {2}},
 			}).Next(nil)))
 			So(errors.Is(errNode.Error(), core.ErrShape), ShouldBeTrue)
 		})

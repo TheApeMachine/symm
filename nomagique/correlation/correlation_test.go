@@ -9,14 +9,16 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/correlation"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func prices(at []int64, values []float64) [][2]float64 {
-	out := make([][2]float64, len(values))
+func prices(at []int64, values []float64) []temporal.Price {
+	out := make([]temporal.Price, len(values))
 
 	for index, value := range values {
-		out[index] = [2]float64{float64(at[index]), value}
+		out[index] = temporal.Price{At: at[index], Value: value}
 	}
 
 	return out
@@ -33,9 +35,8 @@ func TestDependenceNext(t *testing.T) {
 			{[]int64{0, 1e9}, []int64{2e9, 3e9}, []float64{1, 2}, []float64{1, 2}},
 			{nil, nil, nil, nil},
 			{[]int64{1}, []int64{1}, []float64{1}, []float64{2}},
-			// Epoch-scale nanoseconds travel as float64, whose spacing at 1.7e18 is 256ns.
-			{[]int64{1700000000000000000, 1700000000000001792},
-				[]int64{1700000000000000768, 1700000000000002560}, []float64{1, 2}, []float64{1, 3}},
+			{[]int64{1700000000000000000, 1700000000000000007},
+				[]int64{1700000000000000003, 1700000000000000010}, []float64{1, 2}, []float64{1, 3}},
 		}
 		random := rand.New(rand.NewSource(1701))
 
@@ -93,29 +94,25 @@ func TestDependenceNext(t *testing.T) {
 				density = support / shared
 			}
 
-			pair := [2][][2]float64{prices(test.lt, test.lp), prices(test.rt, test.rp)}
-			out := tests.CollectSeq[[13]float64](node.Next(tests.SliceToSeq([][2][][2]float64{pair})))
+			out := tests.CollectSeq[correlation.DependenceReading](node.Next(transport.NewValues(correlation.LagProfileInput{
+				Left:  prices(test.lt, test.lp),
+				Right: prices(test.rt, test.rp),
+			}).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
 			got := out[0]
-			So(got[1], ShouldAlmostEqual, covariance)
-			So(got[2], ShouldEqual, support)
-			So(got[3], ShouldAlmostEqual, leftEnergy)
-			So(got[4], ShouldAlmostEqual, rightEnergy)
-			So(got[11], ShouldAlmostEqual, shared)
-			So(got[12], ShouldAlmostEqual, density)
-			So(got[6], ShouldEqual, float64(max(0, len(test.lp)-1)))
-			So(got[7], ShouldEqual, float64(max(0, len(test.rp)-1)))
-			defined := 0.0
-
-			if support > 0 && leftEnergy > 0 && rightEnergy > 0 {
-				defined = 1
-			}
-
-			So(got[5], ShouldEqual, defined)
-			sameFloat(got[0], covariance/math.Sqrt(leftEnergy*rightEnergy))
-			sameFloat(got[8], medianRate(leftRates))
-			sameFloat(got[9], medianRate(rightRates))
+			So(got.Covariance, ShouldAlmostEqual, covariance)
+			So(got.Support, ShouldEqual, support)
+			So(got.LeftEnergy, ShouldAlmostEqual, leftEnergy)
+			So(got.RightEnergy, ShouldAlmostEqual, rightEnergy)
+			So(got.SharedTime, ShouldAlmostEqual, shared)
+			So(got.OverlapDensity, ShouldAlmostEqual, density)
+			So(got.LeftReturns, ShouldEqual, float64(max(0, len(test.lp)-1)))
+			So(got.RightReturns, ShouldEqual, float64(max(0, len(test.rp)-1)))
+			So(got.Defined, ShouldEqual, support > 0 && leftEnergy > 0 && rightEnergy > 0)
+			sameFloat(got.Correlation, covariance/math.Sqrt(leftEnergy*rightEnergy))
+			sameFloat(got.LeftEnergyRate, medianRate(leftRates))
+			sameFloat(got.RightEnergyRate, medianRate(rightRates))
 		}
 	})
 }

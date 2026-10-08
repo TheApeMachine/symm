@@ -160,7 +160,7 @@ func (measurement *Measurement) Decode(batch arrow.RecordBatch, rowIdx int) erro
 				metricKey := keyArray.Value(itemIdx)
 				rawVal := rawCol.Value(itemIdx)
 				unitVal := CanonicalUnit(metricKey, Unit(unitCol.Value(itemIdx)))
-				timeVal := Timescale(timeCol.Value(itemIdx))
+				timeVal := CanonicalTimescale(metricKey, Timescale(timeCol.Value(itemIdx)))
 
 				metric := NewMetric(metricKey, rawVal, unitVal, timeVal)
 				metric.Normalized = normCol.Value(itemIdx)

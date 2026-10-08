@@ -29,6 +29,22 @@ type StringEntry struct {
 	Value string `json:"value"`
 }
 
+const (
+	MetadataSupport       = "support"
+	MetadataDivergence    = "divergence"
+	MetadataNoiseVariance = "noise_variance"
+)
+
+/*
+CrossMember is one peer member state used in cross-sectional calculations.
+*/
+type CrossMember struct {
+	Label  string
+	Change float64
+	At     time.Time
+	From   time.Time
+}
+
 /*
 Measurement is the native data type in nomagique.
 
@@ -148,7 +164,7 @@ func (measurement *Measurement) Next(source string, values ...map[string]float64
 		if !seen[key] {
 			next.metrics = append(next.metrics, &MetricEntry{
 				Key:    key,
-				Metric: NewMetric(key, val, UnitDimensionless, TimescaleInstantaneous),
+				Metric: NewMetric(key, val, "", ""),
 			})
 		}
 	}
@@ -326,6 +342,91 @@ func (measurement *Measurement) Peers(peers ...*Measurement) []*Measurement {
 	}
 
 	return measurement.peers
+}
+
+/*
+SetError joins an error to the measurement error.
+*/
+func (measurement *Measurement) SetError(err error) {
+	if err != nil {
+		measurement.err = errors.Join(measurement.err, err)
+	}
+}
+
+/*
+SetMeta sets or updates a metadata entry on the measurement.
+*/
+func (measurement *Measurement) SetMeta(key string, value string) {
+	for _, entry := range measurement.metadata {
+		if entry != nil && entry.Key == key {
+			entry.Value = value
+			return
+		}
+	}
+
+	measurement.metadata = append(measurement.metadata, &StringEntry{
+		Key:   key,
+		Value: value,
+	})
+}
+
+/*
+ClearPeers empties the peers of the measurement.
+*/
+func (measurement *Measurement) ClearPeers() {
+	measurement.peers = measurement.peers[:0]
+}
+
+/*
+AddPeer appends one peer to the measurement.
+*/
+func (measurement *Measurement) AddPeer(peer *Measurement) {
+	if peer != nil {
+		measurement.peers = append(measurement.peers, peer)
+	}
+}
+
+/*
+Metric returns the Metric pointer for the given label, or nil.
+*/
+func (measurement *Measurement) Metric(label string) *Metric {
+	for _, entry := range measurement.metrics {
+		if entry != nil && entry.Key == label {
+			return entry.Metric
+		}
+	}
+
+	return nil
+}
+
+/*
+Value returns the raw float64 value of the metric with the given label, or 0.
+*/
+func (measurement *Measurement) Value(label string) float64 {
+	metric := measurement.Metric(label)
+
+	if metric != nil {
+		return metric.Raw
+	}
+
+	return 0
+}
+
+/*
+Put sets or creates a metric with the given label and raw value.
+*/
+func (measurement *Measurement) Put(label string, raw float64) {
+	for _, entry := range measurement.metrics {
+		if entry != nil && entry.Key == label && entry.Metric != nil {
+			entry.Metric.Raw = raw
+			return
+		}
+	}
+
+	measurement.metrics = append(measurement.metrics, &MetricEntry{
+		Key:    label,
+		Metric: NewMetric(label, raw, UnitDimensionless, TimescaleInstantaneous),
+	})
 }
 
 /*

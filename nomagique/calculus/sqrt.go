@@ -1,47 +1,45 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Sqrt computes the square root of each arrival.
+Sqrt owns one field operation. What it hands over is the square root of each
+arrival, operating in-place on the wire pointer.
 */
 type Sqrt struct {
-	*core.PrimitiveError
+	err error
 }
 
 func NewSqrt() core.Primitive {
-	return &Sqrt{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Sqrt{}
 }
 
 func (op *Sqrt) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
+			in := (*float64)(arriving)
+			*in = math.Sqrt(*in)
+
+			if !yield(arriving) {
 				return
-			}
-
-			val := *(*float64)(arriving)
-
-			if val < 0 {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			for value := range data.NewValue(math.Sqrt(val)).Next(nil) {
-				if !yield(value) {
-					return
-				}
 			}
 		}
 	}
+}
+
+func (op *Sqrt) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

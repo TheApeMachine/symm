@@ -6,72 +6,86 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Velocity computes the finite difference rate dValue / dt.
-Composes Delta for value change, Delta for elapsed time, and Divide for the rate.
-Operands arrive in order: [value, at], where at is in nanoseconds.
+Observation is a value at its nanosecond coordinate. Pairing of source and
+clock is external: Velocity sees one observation.
+*/
+type Observation struct {
+	Value float64
+	At    int64
+}
+
+/*
+VelocityPoint retains a value at its exact nanosecond coordinate.
+*/
+type VelocityPoint struct {
+	Value float64
+	At    int64
+}
+
+/*
+VelocityReading fixes a finite difference, including its definedness.
+*/
+type VelocityReading struct {
+	From, Through             VelocityPoint
+	Elapsed, Difference, Rate float64
+	HasPrior, Defined         bool
+	observed                  bool
+}
+
+/*
+Velocity owns the previous observation. The first observation and
+non-advancing time have zero rate with explicit definedness. The latest point
+is always retained, including when its clock does not advance.
 */
 type Velocity struct {
-	*core.PrimitiveError
-	deltaVal core.Primitive
-	deltaAt  core.Primitive
-	divide   core.Primitive
+	err     error
+	reading VelocityReading
 }
 
 func NewVelocity() core.Primitive {
-	return &Velocity{
-		PrimitiveError: core.NewPrimitiveError(),
-		deltaVal:       NewDelta(),
-		deltaAt:        NewDelta(),
-		divide:         arithmetic.NewDivide(),
-	}
+	return &Velocity{}
 }
 
 func (op *Velocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		var values [2]float64
-		idx := 0
-
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
+			point := (*Observation)(arriving)
+			reading := VelocityReading{
+				Through:  VelocityPoint{Value: point.Value, At: point.At},
+				HasPrior: op.reading.observed,
+				observed: true,
+			}
+
+			if reading.HasPrior {
+				reading.From = op.reading.Through
+				reading.Elapsed = float64(point.At-reading.From.At) / float64(time.Second)
+				reading.Difference = point.Value - reading.From.Value
+				reading.Defined = reading.Elapsed > 0
+			}
+
+			if reading.Defined {
+				reading.Rate = reading.Difference / reading.Elapsed
+			}
+
+			op.reading = reading
+
+			if !yield(unsafe.Pointer(&op.reading)) {
 				return
 			}
-
-			if idx < 2 {
-				values[idx] = *(*float64)(arriving)
-				idx++
-			}
-		}
-
-		if idx < 2 {
-			op.Error(core.ErrShape)
-			return
-		}
-
-		dVal := data.Read[float64](op.deltaVal.Next(data.NewValue(values[0]).Next(nil)))
-		dAtNanos := data.Read[float64](op.deltaAt.Next(data.NewValue(values[1]).Next(nil)))
-
-		if err := errors.Join(op.deltaVal.Error(), op.deltaAt.Error()); err != nil {
-			op.Error(err)
-			return
-		}
-
-		dAtSeconds := dAtNanos / float64(time.Second)
-
-		for out := range op.divide.Next(data.NewValue(dVal, dAtSeconds).Next(nil)) {
-			if !yield(out) {
-				return
-			}
-		}
-
-		if err := op.divide.Error(); err != nil {
-			op.Error(err)
 		}
 	}
+}
+
+func (op *Velocity) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

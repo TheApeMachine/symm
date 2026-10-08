@@ -1,60 +1,57 @@
 package probability
 
 import (
+	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Normalize divides an arriving value by a run total.
+Normalize divides each arrival by the run's total.
 */
 type Normalize struct {
-	*core.PrimitiveError
+	err error
+	out float64
 }
 
 func NewNormalize() core.Primitive {
-	return &Normalize{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Normalize{}
 }
 
 func (op *Normalize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		var values [2]float64
-		index := 0
+		var values []float64
+		var total float64
 
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			if index < 2 {
-				values[index] = *(*float64)(arriving)
-				index++
-			}
+			val := *(*float64)(arriving)
+			values = append(values, val)
+			total += val
 		}
-
-		if index < 2 {
-			op.Error(core.ErrShape)
-			return
-		}
-
-		val := values[0]
-		total := values[1]
 
 		if total == 0 {
-			op.Error(core.ErrDomain)
+			op.err = errors.Join(op.err, core.ErrShape)
 			return
 		}
 
-		for value := range data.NewValue(val / total).Next(nil) {
-			if !yield(value) {
+		for _, val := range values {
+			op.out = val / total
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Normalize) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

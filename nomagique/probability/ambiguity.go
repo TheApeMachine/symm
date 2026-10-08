@@ -1,12 +1,12 @@
 package probability
 
 import (
+	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
@@ -14,50 +14,58 @@ Ambiguity divides entropy by the entropy of an equal-mass distribution.
 A one-member distribution has zero ambiguity by definition.
 */
 type Ambiguity struct {
-	*core.PrimitiveError
-	values []float64
-	total  float64
+	err error
+	out float64
 }
 
 func NewAmbiguity() core.Primitive {
-	return &Ambiguity{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Ambiguity{}
 }
 
 func (op *Ambiguity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
+		var values []float64
+		var total float64
+
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
 			val := *(*float64)(arriving)
-			op.values = append(op.values, val)
-			op.total += val
+			values = append(values, val)
+			total += val
 		}
 
-		ambiguityVal := 0.0
-
-		if len(op.values) > 1 && op.total > 0 {
-			entropy := 0.0
-
-			for _, elem := range op.values {
-				probabilityVal := elem / op.total
-
-				if probabilityVal > 0 {
-					entropy -= probabilityVal * math.Log(probabilityVal)
-				}
-			}
-
-			ambiguityVal = entropy / math.Log(float64(len(op.values)))
+		if len(values) <= 1 {
+			op.out = 0
+			yield(unsafe.Pointer(&op.out))
+			return
 		}
 
-		for value := range data.NewValue(ambiguityVal).Next(nil) {
-			if !yield(value) {
-				return
+		if total == 0 {
+			op.out = 0
+			yield(unsafe.Pointer(&op.out))
+			return
+		}
+
+		entropy := 0.0
+
+		for _, val := range values {
+			p := val / total
+
+			if p > 0 {
+				entropy -= p * math.Log(p)
 			}
+		}
+
+		op.out = entropy / math.Log(float64(len(values)))
+		yield(unsafe.Pointer(&op.out))
+	}
+}
+
+func (op *Ambiguity) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
 		}
 	}
+
+	return op.err
 }

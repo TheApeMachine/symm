@@ -3,14 +3,12 @@ package toxicity_test
 import (
 	"context"
 	"math"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -236,18 +234,12 @@ func TestToxicitySignal(t *testing.T) {
 			So(instrument.Error(), ShouldBeNil)
 		})
 
-		Convey("A crossed touch is corrupt book state: it halts with an Internal error naming the symbol", func() {
+		Convey("A crossed touch is dropped with a warning without halting the system", func() {
 			touch(books, now, "bid-x", 50010.0, 1.0, "ask-x", 50000.0, 1.0)
 
 			So(instrument.Step(trade(now, 150, "buy", 50005.0, 1.0)), ShouldBeNil)
-
-			err := instrument.Error()
-			So(err, ShouldNotBeNil)
-			So(errnie.IsInternal(err), ShouldBeTrue)
-			So(err.Error(), ShouldContainSubstring, "crossed or locked")
-			So(err.Error(), ShouldContainSubstring, "BTC/USD")
-			So(strings.Contains(err.Error(), "book manager is required"), ShouldBeFalse)
-			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
+			So(instrument.Error(), ShouldBeNil)
+			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 		})
 
 		Convey("A trade frame without qty is an error, not a silent drop", func() {

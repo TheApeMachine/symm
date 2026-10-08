@@ -9,7 +9,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -173,7 +172,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 			So(metricValue(res, "flow_activity_imbalance"), ShouldAlmostEqual, -1.0, 1e-9)
 		})
 
-		Convey("A crossed book is corrupt state: it halts with an Internal error naming the symbol", func() {
+		Convey("A crossed book is dropped with a warning without halting the system", func() {
 			books.Update(&kraken.Level3{
 				Channel: "level3",
 				Type:    "snapshot",
@@ -185,13 +184,8 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 			})
 
 			So(instrument.Step(ingress("XBT/USD", now, 900)), ShouldBeNil)
-
-			err := instrument.Error()
-			So(err, ShouldNotBeNil)
-			So(errnie.IsInternal(err), ShouldBeTrue)
-			So(err.Error(), ShouldContainSubstring, "crossed or locked")
-			So(err.Error(), ShouldContainSubstring, "XBT/USD")
-			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
+			So(instrument.Error(), ShouldBeNil)
+			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 		})
 
 		Convey("An absent book yields no measurement", func() {

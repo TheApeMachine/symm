@@ -10,98 +10,118 @@ import (
 )
 
 /*
-RLSPrediction projects a square-root RLS posterior through a design before any
-model update.
+RLSState is the posterior and the query design used to forecast.
+*/
+type RLSState struct {
+	Beta         []float64
+	Design       []float64
+	Root         [][]float64
+	NoiseShape   float64
+	NoiseScale   float64
+	Observations float64
+}
 
-Each arrival is *[][]float64{design, {observations}, beta, {noiseShape,
-noiseScale}, root row 0, root row 1, ...}; rows [2:] are the posterior layout
-shared by every RLS Primitive. Observations counts the independent noise draws
-the design carries. It yields *[]float64:
+/*
+RLSForecast is the projection of a posterior through a design.
+*/
+type RLSForecast struct {
+	RLSState
+	Prediction         float64
+	Factor             []float64
+	Scale              float64
+	DegreesOfFreedom   float64
+	PredictiveVariance float64
+	Ready              bool
+}
 
-	[0] prediction  [1] scale  [2] degrees of freedom
-	[3] predictive variance    [4] ready (1 or 0)
-	[5:] factor = root · design
+/*
+RLSObservation is a forecast plus the target and forgetting that close the update.
+*/
+type RLSObservation struct {
+	RLSForecast
+	Lambda float64
+	Target float64
+}
 
-Scale, degrees of freedom and predictive variance stay 0 with ready=0 until
-the noise posterior is identified.
+/*
+RLSPosterior is the symmetric square-root rank-one update.
+*/
+type RLSPosterior struct {
+	RLSForecast
+	Alpha            float64
+	Innovation       float64
+	RootLambda       float64
+	GammaDenominator float64
+	Gain             []float64
+}
+
+/*
+RLSPrediction forecasts from the supplied posterior before any model update.
 */
 type RLSPrediction struct {
-	*core.PrimitiveError
-	out []float64
+	err error
+	out RLSForecast
 }
 
 func NewRLSPrediction() core.Primitive {
-	return &RLSPrediction{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &RLSPrediction{}
 }
 
-func (op *RLSPrediction) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *RLSPrediction) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
+			state := (*RLSState)(arriving)
+
+			if len(state.Beta) != len(state.Design) || len(state.Root) != len(state.Design) {
+				op.err = fmt.Errorf("%w: RLS prediction coefficient, root and design dimensions differ", core.ErrShape)
 				return
 			}
 
-			rows := *(*[][]float64)(arriving)
-
-			if len(rows) < 4 || len(rows[1]) != 1 || len(rows[3]) != 2 {
-				op.Error(fmt.Errorf("%w: RLS prediction requires {design, {observations}, beta, {shape, scale}, root...}", core.ErrShape))
-				return
-			}
-
-			design, beta, root := rows[0], rows[2], rows[4:]
-			observations, noiseShape, noiseScale := rows[1][0], rows[3][0], rows[3][1]
-
-			if len(beta) != len(design) || len(root) != len(design) {
-				op.Error(fmt.Errorf("%w: RLS prediction coefficient, root and design dimensions differ", core.ErrShape))
-				return
-			}
-
-			op.out = append(op.out[:0], 0, 0, 0, 0, 0)
-
-			for range design {
-				op.out = append(op.out, 0)
-			}
-
-			factor := op.out[5:]
+			factor := make([]float64, len(state.Design))
 			value := 0.0
 
-			for row, feature := range design {
-				if len(root[row]) != len(design) {
-					op.Error(fmt.Errorf("%w: RLS root must be square", core.ErrShape))
+			for row, feature := range state.Design {
+				if len(state.Root[row]) != len(state.Design) {
+					op.err = fmt.Errorf("%w: RLS root must be square", core.ErrShape)
 					return
 				}
 
-				value += beta[row] * feature
+				value += state.Beta[row] * feature
 
-				for column, coefficient := range root[row] {
+				for column, coefficient := range state.Root[row] {
 					factor[column] += coefficient * feature
 				}
 			}
 
-			op.out[0] = value
+			forecast := RLSForecast{
+				RLSState:   *state,
+				Prediction: value,
+				Factor:     factor,
+			}
 
-			if noiseShape > 0 && noiseScale > 0 {
+			if state.NoiseShape > 0 && state.NoiseScale > 0 {
 				energy := 0.0
 
 				for _, member := range factor {
 					energy += member * member
 				}
 
-				variance := (noiseScale / noiseShape) * (observations + energy)
+				variance := (state.NoiseScale / state.NoiseShape) * (state.Observations + energy)
 
 				if !(variance > 0) {
-					op.Error(fmt.Errorf("%w: RLS predictive variance %g", core.ErrDomain, variance))
+					op.err = fmt.Errorf("%w: RLS predictive variance %g", core.ErrDomain, variance)
 					return
 				}
 
-				op.out[1] = math.Sqrt(variance)
-				op.out[2] = 2 * noiseShape
-				op.out[3] = variance
-				op.out[4] = 1
+				forecast.PredictiveVariance = variance
+				forecast.Scale = math.Sqrt(variance)
+				forecast.DegreesOfFreedom = 2 * state.NoiseShape
+				forecast.Ready = true
 			}
+
+			op.out = forecast
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
@@ -110,56 +130,43 @@ func (op *RLSPrediction) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Point
 	}
 }
 
-/*
-RLSUpdate owns the symmetric square-root rank-one posterior update.
+func (op *RLSPrediction) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
 
-Each arrival is *[][]float64{{lambda, target, prediction}, factor, beta,
-{noiseShape, noiseScale}, root row 0, ...}, where factor and prediction come
-from RLSPrediction on the same posterior. It yields *[][]float64{{alpha,
-innovation, rootLambda, gammaDenominator}, gain, beta, {noiseShape,
-noiseScale}, root row 0, ...}; rows [2:] are the updated posterior in the
-arriving layout. The yielded rows are owned by this Primitive and are reused
-by the next arrival.
+	return op.err
+}
+
+/*
+RLSUpdate owns symmetric square-root rank-one update delivery.
 */
 type RLSUpdate struct {
-	*core.PrimitiveError
-	header  []float64
-	gain    []float64
-	beta    []float64
-	noise   []float64
-	storage []float64
-	out     [][]float64
+	err error
+	out RLSPosterior
 }
 
 func NewRLSUpdate() core.Primitive {
-	return &RLSUpdate{
-		PrimitiveError: core.NewPrimitiveError(),
-		header:         make([]float64, 4),
-		noise:          make([]float64, 2),
-	}
+	return &RLSUpdate{}
 }
 
-func (op *RLSUpdate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *RLSUpdate) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
+			obs := (*RLSObservation)(arriving)
+			beta := obs.Beta
+			root := obs.Root
+			factor := obs.Factor
+			lambda := obs.Lambda
+			innovation := obs.Target - obs.Prediction
 
-			rows := *(*[][]float64)(arriving)
-
-			if len(rows) < 4 || len(rows[0]) != 3 || len(rows[3]) != 2 {
-				op.Error(fmt.Errorf("%w: RLS update requires {{lambda, target, prediction}, factor, beta, {shape, scale}, root...}", core.ErrShape))
-				return
-			}
-
-			lambda, target, prediction := rows[0][0], rows[0][1], rows[0][2]
-			factor, beta, root := rows[1], rows[2], rows[4:]
-			size := len(beta)
-
-			if len(root) != size || len(factor) != size {
-				op.Error(fmt.Errorf("%w: RLS update dimensions differ", core.ErrShape))
+			if len(root) != len(beta) || len(factor) != len(beta) {
+				op.err = fmt.Errorf("%w: RLS update dimensions differ", core.ErrShape)
 				return
 			}
 
@@ -171,55 +178,67 @@ func (op *RLSUpdate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 
 			alpha := lambda + energy
 
-			if !(lambda > 0) || !(alpha > 0) {
-				op.Error(fmt.Errorf("%w: invalid RLS information", core.ErrDomain))
+			if !(alpha > 0) {
+				op.err = fmt.Errorf("%w: invalid RLS information", core.ErrDomain)
 				return
 			}
 
-			innovation := target - prediction
 			rootLambda := math.Sqrt(lambda)
 			denominator := alpha + rootLambda*math.Sqrt(alpha)
-
-			if len(op.gain) != size {
-				op.gain = make([]float64, size)
-				op.beta = make([]float64, size)
-				op.storage = make([]float64, size*size)
-				op.out = make([][]float64, 4+size)
-
-				for row := range size {
-					op.out[4+row] = op.storage[row*size : (row+1)*size]
-				}
-			}
-
-			clear(op.gain)
+			gain := make([]float64, len(beta))
+			coefficients := make([]float64, len(beta))
+			posterior := make([][]float64, len(root))
+			storage := make([]float64, len(root)*len(root))
 
 			for row := range root {
-				if len(root[row]) != size {
-					op.Error(fmt.Errorf("%w: RLS root must be square", core.ErrShape))
+				if len(root[row]) != len(beta) {
+					op.err = fmt.Errorf("%w: RLS root must be square", core.ErrShape)
 					return
 				}
 
 				for column, coefficient := range root[row] {
-					op.gain[row] += coefficient * factor[column]
+					gain[row] += coefficient * factor[column]
 				}
 
-				op.gain[row] /= alpha
-				op.beta[row] = beta[row] + op.gain[row]*innovation
-				posterior := op.out[4+row]
+				gain[row] /= alpha
+				coefficients[row] = beta[row] + gain[row]*innovation
+				posterior[row] = storage[row*len(root) : (row+1)*len(root)]
 
 				for column, coefficient := range root[row] {
-					posterior[column] = (coefficient - op.gain[row]*(alpha/denominator)*factor[column]) / rootLambda
+					posterior[row][column] = (coefficient - gain[row]*(alpha/denominator)*factor[column]) / rootLambda
 				}
 			}
 
-			op.header[0], op.header[1], op.header[2], op.header[3] = alpha, innovation, rootLambda, denominator
-			op.noise[0] = lambda*rows[3][0] + 0.5
-			op.noise[1] = lambda*rows[3][1] + 0.5*innovation*innovation/alpha
-			op.out[0], op.out[1], op.out[2], op.out[3] = op.header, op.gain, op.beta, op.noise
+			noise := lambda*obs.NoiseScale + 0.5*innovation*innovation/alpha
+			result := obs.RLSForecast
+			result.Beta = coefficients
+			result.Root = posterior
+			result.NoiseShape = lambda*obs.NoiseShape + 0.5
+			result.NoiseScale = noise
+
+			op.out = RLSPosterior{
+				RLSForecast:      result,
+				Alpha:            alpha,
+				Innovation:       innovation,
+				RootLambda:       rootLambda,
+				GammaDenominator: denominator,
+				Gain:             gain,
+			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *RLSUpdate) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

@@ -3,30 +3,33 @@ package morphology
 import (
 	"context"
 	"errors"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/theapemachine/symm/broker"
 	"math"
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
-// Test the actual constructor graph, not a separately maintained formula.
-func newPipeline() core.Primitive {
-	ctx := context.Background()
-	return NewSignal(ctx, broker.NewBook(ctx, spot.NewNormalizer())).pipeline
+type pipelineWrapper struct {
+	signal *Signal
+	err    error
 }
 
-func observe(t *testing.T, pipeline core.Primitive, key string, bids, asks []float64) []float64 {
+func newPipeline() *pipelineWrapper {
+	ctx := context.Background()
+	return &pipelineWrapper{signal: NewSignal(ctx, broker.NewBook(ctx, spot.NewNormalizer()))}
+}
+
+func (p *pipelineWrapper) Error() error {
+	return p.err
+}
+
+func observe(t *testing.T, p *pipelineWrapper, key string, bids, asks []float64) []float64 {
 	t.Helper()
-	var output []float64
-	for pointer := range pipeline.Next(data.NewMessage(data.EVALUATE, "symbolstore", key,
-		data.NewValue[core.Primitive](data.NewValue(bids...), data.NewValue(asks...)),
-	).Next(nil)) {
-		output = append(output, *(*float64)(pointer))
-	}
-	return output
+	res, err := p.signal.Calculate(key, bids, asks)
+	p.err = err
+	return res
 }
 
 func mirrored(outerBid, outerAsk float64) ([]float64, []float64) {

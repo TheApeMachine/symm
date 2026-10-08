@@ -1,50 +1,47 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
+	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Sign returns -1, 0, or 1 based on the sign of the arrival.
+Sign owns one field operation. What it hands over is the unit sign of each
+arrival, operating in-place on the wire pointer. Zero keeps its own value.
 */
 type Sign struct {
-	*core.PrimitiveError
+	err error
 }
 
 func NewSign() core.Primitive {
-	return &Sign{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Sign{}
 }
 
 func (op *Sign) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
+			in := (*float64)(arriving)
+			if *in != 0 {
+				*in = math.Copysign(1, *in)
+			}
+
+			if !yield(arriving) {
 				return
-			}
-
-			val := *(*float64)(arriving)
-			var sgn float64
-
-			if val > 0 {
-				sgn = 1.0
-			}
-
-			if val < 0 {
-				sgn = -1.0
-			}
-
-			for value := range data.NewValue(sgn).Next(nil) {
-				if !yield(value) {
-					return
-				}
 			}
 		}
 	}
+}
+
+func (op *Sign) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

@@ -7,72 +7,74 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
+
+/*
+evaluateOLS drives one design through the OLS primitive.
+*/
+func evaluateOLS(node core.Primitive, design algo.Design) (algo.Fit, error) {
+	var fit algo.Fit
+
+	evaluation := transport.NewEvaluate(node)
+
+	for out := range evaluation.Next(transport.NewValues(design).Next(nil)) {
+		fit = *(*algo.Fit)(out)
+	}
+
+	return fit, evaluation.Error()
+}
 
 func TestOLSNext(t *testing.T) {
 	Convey("Ordinary least squares recovers known coefficients", t, func() {
-		node := algo.NewOLS()
+		node := algo.NewOLS(1e-15)
 		random := rand.New(rand.NewSource(471))
 
 		for trial := 0; trial < 35; trial++ {
 			parameters := 1 + trial%4
 			observations := parameters + 2 + trial%11
-			rows := make([][]float64, observations)
+			x := make([][]float64, observations)
+			y := make([]float64, observations)
 
 			for row := range observations {
-				rows[row] = make([]float64, parameters+1)
+				x[row] = make([]float64, parameters)
 
 				for column := range parameters {
-					rows[row][column] = random.NormFloat64()
+					x[row][column] = random.NormFloat64()
 
 					if column == 0 {
-						rows[row][column] = 1
+						x[row][column] = 1
 					}
 
-					rows[row][parameters] += float64(column+1) * rows[row][column]
+					y[row] += float64(column+1) * x[row][column]
 				}
 
-				rows[row][parameters] += 0.2 * random.NormFloat64()
+				y[row] += 0.2 * random.NormFloat64()
 			}
 
-			out := tests.CollectSeq[[]float64](node.Next(data.NewValue(rows).Next(nil)))
-			So(node.Error(), ShouldBeNil)
-			So(len(out), ShouldEqual, 1)
-			fit := out[0]
-			So(fit[0], ShouldEqual, 1)
-			So(fit[3], ShouldEqual, parameters)
-			So(len(fit), ShouldBeGreaterThanOrEqualTo, 7+parameters)
+			fit, err := evaluateOLS(node, algo.Design{X: x, Y: y})
+			So(err, ShouldBeNil)
+			So(fit.Defined, ShouldBeTrue)
+			So(len(fit.Coefficients), ShouldEqual, parameters)
 
 			for column := range parameters {
-				So(fit[7+column], ShouldAlmostEqual, float64(column+1), 0.6)
+				So(fit.Coefficients[column], ShouldAlmostEqual, float64(column+1), 0.6)
 			}
 		}
 
 		Convey("rank-deficient and empty designs are undefined, not fabricated", func() {
-			for _, rows := range [][][]float64{
-				{{1, 1, 1}, {1, 1, 2}, {1, 1, 3}},
-				{{1, 0, 1}, {1, 1, 2}},
-				{},
+			for _, design := range []algo.Design{
+				{X: [][]float64{{1, 1}, {1, 1}, {1, 1}}, Y: []float64{1, 2, 3}},
+				{X: [][]float64{{1, 0}, {1, 1}}, Y: []float64{1, 2}},
+				{X: [][]float64{}, Y: []float64{}},
 			} {
-				out := tests.CollectSeq[[]float64](node.Next(data.NewValue(rows).Next(nil)))
-				So(node.Error(), ShouldBeNil)
-				So(len(out), ShouldEqual, 1)
-				So(out[0][0], ShouldEqual, 0)
-				So(len(out[0]), ShouldEqual, 7)
-				So(math.IsNaN(out[0][5]), ShouldBeTrue)
+				fit, err := evaluateOLS(node, design)
+				So(err, ShouldBeNil)
+				So(fit.Defined, ShouldBeFalse)
+				So(len(fit.Coefficients), ShouldEqual, 0)
+				So(math.IsNaN(fit.ResidualVariance), ShouldBeTrue)
 			}
-		})
-
-		Convey("ragged observation rows are a shape error", func() {
-			errNode := algo.NewOLS()
-
-			for range errNode.Next(data.NewValue([][]float64{{1, 2, 3}, {1, 2}}).Next(nil)) {
-				t.Fatal("a ragged design must yield nothing")
-			}
-
-			So(errNode.Error(), ShouldNotBeNil)
 		})
 	})
 }

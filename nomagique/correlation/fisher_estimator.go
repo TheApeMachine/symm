@@ -1,99 +1,124 @@
 package correlation
 
 import (
-	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
+FisherView is one correlation mapped through atanh, scored against the
+configured causal estimator, then mapped back with tanh. Invalid observations
+do not advance the estimator.
+*/
+type FisherView struct {
+	Correlation     float64
+	Defined         bool
+	Baseline        float64
+	Divergence      float64
+	PriorCount      float64
+	Count           float64
+	ZScore          float64
+	Variance        float64
+	VarianceDefined bool
+	HasPrior        bool
+}
+
+/*
 FisherEstimator transforms admissible scalar correlations through atanh,
-tracks online moments, and computes causal residuals. Each arrival is
-*float64; it yields
-[10]float64{correlation, defined, baseline, divergence, priorCount, count,
-zScore, variance, varianceDefined, hasPrior}. Invalid observations do not
-advance the estimator.
+tracks online moments, and computes causal residuals.
 */
 type FisherEstimator struct {
-	*core.PrimitiveError
-	moments  core.Primitive
-	residual core.Primitive
-	out      [10]float64
+	err     error
+	moments statistic.Moments
+	out     FisherView
 }
 
 func NewFisherEstimator() core.Primitive {
-	return &FisherEstimator{
-		PrimitiveError: core.NewPrimitiveError(),
-		moments:        statistic.NewEstimator(),
-		residual:       statistic.NewCausalResidual(),
-	}
+	return &FisherEstimator{}
 }
 
-func (op *FisherEstimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *FisherEstimator) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
 			value := *(*float64)(arriving)
-			op.out = [10]float64{value}
+			view := FisherView{Correlation: value}
 
 			if value > -1.0 && value < 1.0 {
 				z := math.Atanh(value)
-				var reading [10]float64
-				var res [8]float64
+				priorMean := op.moments.Mean
+				priorCount := op.moments.Count
+				priorM2 := op.moments.M2
 
-				for pointer := range op.moments.Next(data.NewValue(z).Next(nil)) {
-					reading = *(*[10]float64)(pointer)
+				reading := op.moments.Update(z)
 
-					for out := range op.residual.Next(data.NewValue(reading).Next(nil)) {
-						res = *(*[8]float64)(out)
+				baseline := z
+
+				if priorCount > 0 {
+					baseline = priorMean
+				}
+
+				res := statistic.CausalResidualResult{
+					MomentReading: reading,
+					HasPrior:      priorCount > 0,
+					Baseline:      baseline,
+					Residual:      0,
+				}
+
+				if priorCount > 0 {
+					res.Residual = z - priorMean
+				}
+
+				if priorCount > 1 {
+					res.PriorVariance = priorM2 / (priorCount - 1)
+				}
+
+				res.ScoreScale = math.Abs(res.Residual)
+
+				if res.PriorVariance > 0 {
+					disp := math.Sqrt(res.PriorVariance)
+
+					if disp > 2.220446049250313e-16 {
+						res.ScoreScale = disp
 					}
 				}
 
-				if err := errors.Join(op.moments.Error(), op.residual.Error()); err != nil {
-					op.Error(err)
-					return
+				if res.ScoreScale > 0 {
+					res.ZScore = res.Residual / res.ScoreScale
 				}
 
-				priorCount := reading[3]
-
-				op.out[1] = 1
-				op.out[2] = math.Tanh(res[1])
-				op.out[3] = res[4]
-				op.out[4] = priorCount
-				op.out[5] = reading[0]
-				op.out[6] = res[6]
-
-				if priorCount > 1 && res[2] > 0 {
-					disp := math.Sqrt(res[2])
-					ref := math.Abs(res[4])
-
-					if ref < 1 {
-						ref = 1
-					}
-
-					if disp > math.Sqrt(2.220446049250313e-16)*ref {
-						op.out[7] = res[2]
-						op.out[8] = 1
-					}
-				}
-
-				if res[0] == 1 {
-					op.out[9] = 1
-				}
+				view.Defined = true
+				view.Baseline = math.Tanh(res.Baseline)
+				view.Divergence = res.Residual
+				view.PriorCount = priorCount
+				view.Count = reading.Count
+				view.ZScore = res.ZScore
+				view.Variance = reading.Variance
+				view.VarianceDefined = reading.VarianceDefined
+				view.HasPrior = res.HasPrior
 			}
+
+			op.out = view
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *FisherEstimator) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

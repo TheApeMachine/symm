@@ -1,67 +1,99 @@
 package statistic
 
 import (
-	"errors"
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-func TestRegressionAccumulatorNext(t *testing.T) {
-	Convey("Given a RegressionAccumulator primitive", t, func() {
-		op := NewRegressionAccumulator(2)
+func TestNewRegressionAccumulator(t *testing.T) {
+	Convey("Given a stream of y = 1 + 2x rows with an intercept column", t, func() {
+		rows := make([]RegressionRow, 0, 20)
 
-		Convey("scores prequentially and matches the batch fit", func() {
-			rows := [][]float64{
-				{1, 0, 1.1},
-				{1, 1, 2.9},
-				{1, 2, 5.2},
-				{1, 3, 6.8},
-				{1, 4, 9.1},
-			}
-			var readings [][]float64
+		for index := 0; index < 20; index++ {
+			x := float64(index) / 5
+			rows = append(rows, RegressionRow{Predictors: []float64{1, x}, Target: 1 + 2*x})
+		}
 
-			for _, row := range rows {
-				for _, reading := range tests.CollectSeq[[]float64](op.Next(tests.SliceToSeq([][]float64{row}))) {
-					readings = append(readings, append([]float64(nil), reading...))
-				}
-			}
+		readings := collectReadings[RegressionRow, RegressionReading](t, NewRegressionAccumulator(2), rows)
 
-			So(op.Error(), ShouldBeNil)
-			So(len(readings), ShouldEqual, 5)
-			So(readings[0][1], ShouldEqual, 0)
-			So(readings[1][2], ShouldEqual, 0)
-			So(readings[2][2], ShouldEqual, 1)
-			So(readings[3][1], ShouldEqual, 1)
-
-			last := readings[4]
-			batch := tests.CollectSeq[[]float64](NewFitOLS().Next(tests.SliceToSeq([][2][]float64{{
-				{1, 0, 1, 1, 1, 2, 1, 3, 1, 4},
-				{1.1, 2.9, 5.2, 6.8, 9.1},
-			}})))[0]
-
-			So(last[3], ShouldEqual, 5)
-			So(last[5], ShouldAlmostEqual, batch[4], 1e-9)
-			So(last[8], ShouldAlmostEqual, batch[7], 1e-9)
-			So(last[9], ShouldAlmostEqual, batch[8], 1e-9)
-			So(last[7], ShouldEqual, 1)
-			So(last[10], ShouldAlmostEqual, batch[9], 1e-9)
+		Convey("every row yields exactly one reading", func() {
+			So(len(readings), ShouldEqual, 20)
 		})
 
-		Convey("a wrong row length records ErrShape", func() {
-			fresh := NewRegressionAccumulator(2)
-			out := tests.CollectSeq[[]float64](fresh.Next(tests.SliceToSeq([][]float64{{1, 2}})))
-
-			So(len(out), ShouldEqual, 0)
-			So(errors.Is(fresh.Error(), core.ErrShape), ShouldBeTrue)
+		Convey("warm-up rows are undefined and not predicted", func() {
+			So(readings[0].PredictionDefined, ShouldBeFalse)
+			So(readings[1].PredictionDefined, ShouldBeFalse)
+			So(readings[1].Fit.Defined, ShouldBeFalse)
 		})
 
-		Convey("a non-positive parameter count records ErrDomain", func() {
-			fresh := NewRegressionAccumulator(0)
+		Convey("prequential prediction starts one row after the RLS seed", func() {
+			So(readings[2].PredictionDefined, ShouldBeFalse)
+			So(readings[3].PredictionDefined, ShouldBeTrue)
+			So(readings[3].Prediction, ShouldAlmostEqual, 1+2*(3.0/5.0), 1e-9)
+		})
 
-			So(errors.Is(fresh.Error(), core.ErrDomain), ShouldBeTrue)
+		Convey("the final fit recovers the true line exactly", func() {
+			final := readings[len(readings)-1].Fit
+			So(final.Defined, ShouldBeTrue)
+			So(final.Observations, ShouldEqual, 20)
+			So(final.Parameters, ShouldEqual, 2)
+			So(final.Coefficients[0], ShouldAlmostEqual, 1, 1e-9)
+			So(final.Coefficients[1], ShouldAlmostEqual, 2, 1e-9)
+			So(final.ResidualSSE, ShouldAlmostEqual, 0, 1e-9)
+			So(len(final.CoefficientVariance), ShouldEqual, 2)
+		})
+	})
+}
+
+func TestNewRegressionAccumulatorDomain(t *testing.T) {
+	Convey("Given a non-positive parameter count", t, func() {
+		operation := NewRegressionAccumulator(0)
+		yielded := 0
+
+		for range operation.Next(transport.NewValues(RegressionRow{Predictors: []float64{1}, Target: 1}).Next(nil)) {
+			yielded++
+		}
+
+		Convey("the run is empty and the domain violation is recorded", func() {
+			So(yielded, ShouldEqual, 0)
+			So(operation.Error(), ShouldNotBeNil)
+		})
+	})
+}
+
+func TestNewRegressionAccumulatorShape(t *testing.T) {
+	Convey("Given a row whose length differs from the parameter count", t, func() {
+		operation := NewRegressionAccumulator(2)
+		yielded := 0
+
+		for range operation.Next(transport.NewValues(RegressionRow{Predictors: []float64{1}, Target: 1}).Next(nil)) {
+			yielded++
+		}
+
+		Convey("the run stops and records the shape violation", func() {
+			So(yielded, ShouldEqual, 0)
+			So(operation.Error(), ShouldNotBeNil)
+		})
+	})
+}
+
+func TestNewRegressionAccumulatorRankDeficient(t *testing.T) {
+	Convey("Given duplicate design columns", t, func() {
+		rows := make([]RegressionRow, 0, 10)
+
+		for index := 0; index < 10; index++ {
+			x := float64(index)
+			rows = append(rows, RegressionRow{Predictors: []float64{1, x, x}, Target: x})
+		}
+
+		readings := collectReadings[RegressionRow, RegressionReading](t, NewRegressionAccumulator(3), rows)
+
+		Convey("the fit stays undefined rather than regularized", func() {
+			So(math.IsNaN(readings[len(readings)-1].Fit.ResidualVariance), ShouldBeTrue)
+			So(readings[len(readings)-1].Fit.Defined, ShouldBeFalse)
 		})
 	})
 }

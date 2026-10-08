@@ -91,14 +91,22 @@ func (catalog *Catalog) scan(
 			_, batches, err := tbl.Scan(options...).ReadTasks(ctx, tasks[taskIndex:endIndex])
 
 			if err != nil {
-				errnie.Warn(fmt.Sprintf("[iceberg] failed to read tasks for %s (chunk %d-%d): %s", tableName, taskIndex, endIndex, err))
-				continue
+				yield(nil, errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("[iceberg] failed to read tasks for %s", tableName),
+					err,
+				)))
+				return
 			}
 
 			for batch, batchErr := range batches {
 				if batchErr != nil {
-					errnie.Warn(fmt.Sprintf("[iceberg] skipping corrupted batch in %s: %s", tableName, batchErr))
-					continue
+					yield(nil, errnie.Error(errnie.Err(
+						errnie.IO,
+						fmt.Sprintf("[iceberg] failed to read batch in %s", tableName),
+						batchErr,
+					)))
+					return
 				}
 
 				if batch == nil {
@@ -109,8 +117,12 @@ func (catalog *Catalog) scan(
 				batch.Release()
 
 				if readErr != nil {
-					errnie.Warn(fmt.Sprintf("[iceberg] skipping unreadable measurements in %s: %s", tableName, readErr))
-					continue
+					yield(nil, errnie.Error(errnie.Err(
+						errnie.IO,
+						fmt.Sprintf("[iceberg] failed to decode measurements in %s", tableName),
+						readErr,
+					)))
+					return
 				}
 
 				for _, measurement := range batchMeasurements {

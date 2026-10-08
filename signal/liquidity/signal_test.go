@@ -3,7 +3,6 @@ package liquidity_test
 import (
 	"context"
 	"math"
-	"strings"
 	"testing"
 	"time"
 
@@ -190,25 +189,20 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 			So(otherVel, ShouldEqual, 0.0)
 		})
 
-		Convey("A crossed touch is corrupt book state: it halts with an Internal error naming the symbol", func() {
+		Convey("A crossed touch is dropped with a warning without halting the system", func() {
 			So(stepTouch(instrument, books, "ETH/USD", origin, 100, 3005, 3000, 1, 1), ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
+			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 
-			err := instrument.Error()
-			So(err, ShouldNotBeNil)
-			So(errnie.IsInternal(err), ShouldBeTrue)
-			So(err.Error(), ShouldContainSubstring, "crossed or locked")
-			So(err.Error(), ShouldContainSubstring, "ETH/USD")
-			So(strings.Contains(err.Error(), "book manager is required"), ShouldBeFalse)
-			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
-
-			// A halted signal never resumes on a later healthy touch.
-			So(stepTouch(instrument, books, "ETH/USD", origin.Add(time.Second), 101, 3000, 3004, 1, 1), ShouldBeNil)
+			// The signal continues to process later healthy touches.
+			healthyRes := stepTouch(instrument, books, "ETH/USD", origin.Add(time.Second), 101, 3000, 3004, 1, 1)
+			So(healthyRes, ShouldNotBeNil)
 		})
 
-		Convey("A locked touch (ask equal to bid) halts the same way", func() {
+		Convey("A locked touch (ask equal to bid) is dropped without halting the system", func() {
 			So(stepTouch(instrument, books, "ETH/USD", origin, 110, 3000, 3000, 1, 1), ShouldBeNil)
-			So(errnie.IsInternal(instrument.Error()), ShouldBeTrue)
-			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
+			So(instrument.Error(), ShouldBeNil)
+			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 		})
 
 		Convey("A present touch with a non-positive price is corrupt book state and halts", func() {

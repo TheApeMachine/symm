@@ -1,6 +1,7 @@
 package statistic
 
 import (
+	"errors"
 	"iter"
 	"unsafe"
 
@@ -8,10 +9,19 @@ import (
 )
 
 /*
+StandardizeInput is a value and the center/scale that locate it.
+*/
+type StandardizeInput struct {
+	Value  float64
+	Center float64
+	Scale  float64
+}
+
+/*
 Standardize owns (value - center) / scale.
 */
 type Standardize struct {
-	*core.PrimitiveError
+	err    error
 	center float64
 	scale  float64
 	fixed  bool
@@ -21,54 +31,38 @@ type Standardize struct {
 /*
 NewStandardize constructs a Standardize primitive.
 If center and scale are provided, it centers and scales arriving *float64 values.
-Otherwise, arriving values are *[3]float64 {value, center, scale}.
+Otherwise, arriving values are *StandardizeInput.
 */
-func NewStandardize(params ...float64) *Standardize {
-	op := &Standardize{
-		PrimitiveError: core.NewPrimitiveError(),
-		scale:          1,
-	}
-
-	if len(params) >= 1 {
+func NewStandardize(params ...float64) core.Primitive {
+	op := &Standardize{scale: 1}
+	if len(params) >= 2 {
+		op.center = params[0]
+		op.scale = params[1]
+		op.fixed = true
+	} else if len(params) == 1 {
 		op.center = params[0]
 		op.fixed = true
 	}
-
-	if len(params) >= 2 {
-		op.scale = params[1]
-	}
-
 	return op
 }
 
 func (op *Standardize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
 			if op.fixed {
 				val := *(*float64)(arriving)
-				op.out = 0
-
-				if op.scale != 0 {
+				if op.scale == 0 {
+					op.out = 0
+				} else {
 					op.out = (val - op.center) / op.scale
 				}
-
-				if !yield(unsafe.Pointer(&op.out)) {
-					return
+			} else {
+				input := *(*StandardizeInput)(arriving)
+				if input.Scale == 0 {
+					op.out = 0
+				} else {
+					op.out = (input.Value - input.Center) / input.Scale
 				}
-
-				continue
-			}
-
-			input := (*[3]float64)(arriving)
-			op.out = 0
-
-			if input[2] != 0 {
-				op.out = (input[0] - input[1]) / input[2]
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -76,4 +70,14 @@ func (op *Standardize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 			}
 		}
 	}
+}
+
+func (op *Standardize) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

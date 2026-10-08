@@ -6,39 +6,47 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Joint applies moment tracking and residual analysis per channel coordinate,
-composing one Estimator per channel.
+JointInput is an observation vector with one coordinate per channel.
+*/
+type JointInput struct {
+	Values []float64
+}
 
-Each arrival is an observation vector as *[]float64 with one coordinate per
-channel. It yields one *[]float64 reading, reused by the next arrival:
+/*
+JointReading is per-channel log-moment views and the average standardized energy SNR.
+*/
+type JointReading struct {
+	Channels   []CausalResidualResult
+	Energies   []float64
+	SNR        float64
+	SNRDefined bool
+}
 
-	[0] SNR, the average standardized energy over channels with energy
-	[1] SNR defined (1 or 0)
-	[2+8*c : 10+8*c] channel c: count, has prior (1 or 0), baseline (exp of
-	    the prior log mean), prior variance, residual, score scale, z-score,
-	    energy (z squared, NaN when the noise scale is indistinguishable)
+/*
+Joint applies moment tracking and residual analysis per channel coordinate.
 */
 type Joint struct {
-	*core.PrimitiveError
-	estimators []core.Primitive
-	out        []float64
+	err      error
+	moments  []*Moments
+	channels []CausalResidualResult
+	energies []float64
+	out      JointReading
 }
 
 func NewJoint(dimension int) core.Primitive {
-	estimators := make([]core.Primitive, dimension)
+	moments := make([]*Moments, dimension)
 
-	for index := range estimators {
-		estimators[index] = NewEstimator()
+	for i := range moments {
+		moments[i] = &Moments{}
 	}
 
 	return &Joint{
-		PrimitiveError: core.NewPrimitiveError(),
-		estimators:     estimators,
-		out:            make([]float64, 2+8*dimension),
+		moments:  moments,
+		channels: make([]CausalResidualResult, dimension),
+		energies: make([]float64, 0, dimension),
 	}
 }
 
@@ -47,70 +55,47 @@ func (op *Joint) Next(
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
+			input := (*JointInput)(arriving)
+
+			if len(input.Values) != len(op.moments) {
+				op.err = core.ErrShape
 				return
 			}
 
-			values := *(*[]float64)(arriving)
-
-			if len(values) != len(op.estimators) {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			clear(op.out)
-			energies := 0.0
+			op.energies = op.energies[:0]
 			totalEnergy := 0.0
 
-			for index, value := range values {
-				estimator := op.estimators[index]
-				var reading [10]float64
+			for i, val := range input.Values {
+				m := op.moments[i]
+				reading := m.Update(val)
 
-				for pointer := range estimator.Next(data.NewValue(value).Next(nil)) {
-					reading = *(*[10]float64)(pointer)
+				res := CausalResidualResult{
+					MomentReading: reading,
+					HasPrior:      reading.Prior.Count > 0,
+					Baseline:      math.Exp(reading.Prior.Mean),
+					Residual:      val - reading.Prior.Mean,
 				}
 
-				if err := estimator.Error(); err != nil {
-					op.Error(err)
-					return
+				if reading.Prior.Count > 1 && reading.Prior.M2 > 0 {
+					res.PriorVariance = reading.Prior.M2 / (reading.Prior.Count - 1)
+					res.ScoreScale = math.Sqrt(res.PriorVariance)
+					res.ZScore = res.Residual / res.ScoreScale
+					energy := res.ZScore * res.ZScore
+					op.energies = append(op.energies, energy)
+					totalEnergy += energy
 				}
 
-				channel := op.out[2+8*index : 10+8*index]
-				priorCount, priorMean, priorM2 := reading[3], reading[4], reading[5]
-				channel[0] = reading[0]
-				channel[2] = math.Exp(priorMean)
-				channel[4] = value - priorMean
-				channel[7] = math.NaN()
-
-				if priorCount > 0 {
-					channel[1] = 1
-				}
-
-				if priorCount > 1 && priorM2 > 0 {
-					channel[3] = priorM2 / (priorCount - 1)
-					channel[5] = math.Sqrt(channel[3])
-					// Relative distinguishability: refuse energies when the noise
-					// scale is below sqrt(eps)*max(1, |val|, |baseline|). Absolute
-					// eps alone still admits billion-scale Z squared from
-					// collapsed floors.
-					ref := math.Max(1, math.Max(math.Abs(value), math.Abs(channel[2])))
-
-					if channel[5] > math.Sqrt(2.220446049250313e-16)*ref {
-						channel[6] = channel[4] / channel[5]
-
-						if !math.IsInf(channel[6], 0) && !math.IsNaN(channel[6]) {
-							channel[7] = channel[6] * channel[6]
-							energies++
-							totalEnergy += channel[7]
-						}
-					}
-				}
+				op.channels[i] = res
 			}
 
-			if energies > 0 {
-				op.out[0] = totalEnergy / energies
-				op.out[1] = 1
+			op.out = JointReading{
+				Channels: op.channels,
+				Energies: op.energies,
+			}
+
+			if len(op.energies) > 0 {
+				op.out.SNR = totalEnergy / float64(len(op.energies))
+				op.out.SNRDefined = true
 			}
 
 			if !yield(unsafe.Pointer(&op.out)) {
@@ -118,4 +103,15 @@ func (op *Joint) Next(
 			}
 		}
 	}
+}
+
+func (op *Joint) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

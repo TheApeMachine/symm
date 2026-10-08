@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"errors"
 	"iter"
 	"unsafe"
 
@@ -8,24 +9,27 @@ import (
 )
 
 /*
+Pair is corresponding values from two runs.
+*/
+type Pair[T, U any] struct {
+	Left  T
+	Right U
+}
+
+/*
 Zip pairs corresponding yields from the inbound left run and the right run
-held at construction. Each yield is *[2]any{left, right}. It stops when
-either run ends.
+held at construction. It stops when either run ends.
 */
 type Zip[T, U any] struct {
-	*core.PrimitiveError
+	err   error
 	right iter.Seq[unsafe.Pointer]
-	out   [2]any
 }
 
 /*
 NewZip instantiates a Zip Primitive holding the right run.
 */
 func NewZip[T, U any](right iter.Seq[unsafe.Pointer]) core.Primitive {
-	return &Zip[T, U]{
-		PrimitiveError: core.NewPrimitiveError(),
-		right:          right,
-	}
+	return &Zip[T, U]{right: right}
 }
 
 func (op *Zip[T, U]) Next(left iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -40,11 +44,24 @@ func (op *Zip[T, U]) Next(left iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer
 				return
 			}
 
-			op.out = [2]any{*(*T)(arriving), *(*U)(other)}
+			pair := Pair[T, U]{
+				Left:  *(*T)(arriving),
+				Right: *(*U)(other),
+			}
 
-			if !yield(unsafe.Pointer(&op.out)) {
+			if !yield(unsafe.Pointer(&pair)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Zip[T, U]) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

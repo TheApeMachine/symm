@@ -1,14 +1,47 @@
 package statistic
 
 import (
+	"errors"
 	"fmt"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
+
+/*
+RegressionFit is the result of one accumulator fit.
+*/
+type RegressionFit struct {
+	Coefficients        []float64
+	CoefficientVariance []float64
+	ResidualSSE         float64
+	ResidualVariance    float64
+	Observations        int
+	Parameters          int
+	Defined             bool
+}
+
+/*
+RegressionRow is one design row (length p, row-major with the intercept first)
+and its target value.
+*/
+type RegressionRow struct {
+	Predictors []float64
+	Target     float64
+}
+
+/*
+RegressionReading fixes the facts of one incorporated row: the prequential
+prediction made by the model fitted strictly on earlier rows, and the fit over
+every row including this one.
+*/
+type RegressionReading struct {
+	Prediction        float64
+	PredictionDefined bool
+	Fit               RegressionFit
+}
 
 /*
 RegressionAccumulator owns the normal-equation moments (X'X, X'y, y'y) of a
@@ -22,35 +55,28 @@ dropped coordinate, or fabricated zero is substituted. Normal equations are
 less numerically robust than a full SVD refit for ill-conditioned designs,
 which is why rank is checked by the singularity of X'X; the mathematical
 results match ordinary least squares for well-conditioned designs.
-
-Each arrival is one design row as *[]float64 of length p+1: the p predictors
-(row-major, intercept first) followed by the target value. The row is scored
-prequentially by the recursive least-squares model fitted strictly on earlier
-rows, then incorporated. It yields one *[]float64 reading:
-
-	[0] prediction        [1] prediction defined (1 or 0)
-	[2] fit defined       [3] observations      [4] parameters
-	[5] residual SSE      [6] residual variance (NaN while undefined)
-	[7] coefficient variance defined (1 or 0)
-	[8 : 8+p]    coefficients, when the fit is defined
-	[8+p : 8+2p] diagonal of sigma² (X'X)⁻¹, when [7] is 1
-
-The yielded slice is reused by the next arrival.
 */
 type RegressionAccumulator struct {
-	*core.PrimitiveError
+	err        error
 	parameters int
-	xtx        []float64
-	xty        []float64
+	xtx        []float64 // p×p row-major
+	xty        []float64 // p
 	yty        float64
 	rows       int
-	solve      core.Primitive
-	invert     core.Primitive
+
+	fitCoefficients []float64
+	fitInverse      []float64
+
+	luScratch  []float64
+	pvtScratch []int
+	colScratch []float64
+
 	rlsP       []float64
 	rlsW       []float64
 	rlsScratch []float64
 	rlsReady   bool
-	out        []float64
+
+	out RegressionReading
 }
 
 /*
@@ -58,26 +84,25 @@ NewRegressionAccumulator builds an empty accumulator Primitive for a model
 with the given parameter count (including the intercept column).
 */
 func NewRegressionAccumulator(parameters int) core.Primitive {
-	op := &RegressionAccumulator{
-		PrimitiveError: core.NewPrimitiveError(),
-		solve:          NewSolveLU(),
-		invert:         NewInvertLU(),
-	}
-
 	if parameters < 1 {
-		op.Error(fmt.Errorf("%w: parameter count must be at least one", core.ErrDomain))
+		op := &RegressionAccumulator{}
+		op.err = fmt.Errorf("%w: parameter count must be at least one", core.ErrDomain)
 		return op
 	}
 
-	op.parameters = parameters
-	op.xtx = make([]float64, parameters*parameters)
-	op.xty = make([]float64, parameters)
-	op.rlsP = make([]float64, parameters*parameters)
-	op.rlsW = make([]float64, parameters)
-	op.rlsScratch = make([]float64, parameters)
-	op.out = make([]float64, 0, 8+2*parameters)
-
-	return op
+	return &RegressionAccumulator{
+		parameters:      parameters,
+		xtx:             make([]float64, parameters*parameters),
+		xty:             make([]float64, parameters),
+		fitCoefficients: make([]float64, parameters),
+		fitInverse:      make([]float64, parameters*parameters),
+		luScratch:       make([]float64, parameters*parameters),
+		pvtScratch:      make([]int, parameters),
+		colScratch:      make([]float64, parameters),
+		rlsP:            make([]float64, parameters*parameters),
+		rlsW:            make([]float64, parameters),
+		rlsScratch:      make([]float64, parameters),
+	}
 }
 
 /*
@@ -87,181 +112,229 @@ fit.
 */
 func (op *RegressionAccumulator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if op.Error() != nil || op.xtx == nil {
+		if op.err != nil || op.xtx == nil {
 			return
 		}
 
-		p := op.parameters
-
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
+			row := (*RegressionRow)(arriving)
+
+			if len(row.Predictors) != op.parameters {
+				op.err = fmt.Errorf("%w: design row length %d does not match parameter count %d", core.ErrShape, len(row.Predictors), op.parameters)
 				return
 			}
 
-			row := *(*[]float64)(arriving)
-
-			if len(row) != p+1 {
-				op.Error(fmt.Errorf("%w: design row length %d does not match parameter count %d", core.ErrShape, len(row)-1, p))
-				return
-			}
-
-			predictors, target := row[:p], row[p]
-			op.out = append(op.out[:0], 0, 0, 0, float64(0), float64(p), 0, math.NaN(), 0)
-
-			if op.rlsReady {
-				prediction := 0.0
-
-				for column := 0; column < p; column++ {
-					prediction += op.rlsW[column] * predictors[column]
-				}
-
-				op.out[0] = prediction
-				op.out[1] = 1
-			}
-
-			for column := 0; column < p; column++ {
-				op.xty[column] += predictors[column] * target
-
-				for index := 0; index < p; index++ {
-					op.xtx[index*p+column] += predictors[index] * predictors[column]
-				}
-			}
-
-			op.yty += target * target
-			op.rows++
-			op.out[3] = float64(op.rows)
-
-			if op.rlsReady {
-				denominator := 1.0
-
-				for index := 0; index < p; index++ {
-					sum := 0.0
-
-					for column := 0; column < p; column++ {
-						sum += op.rlsP[index*p+column] * predictors[column]
-					}
-
-					op.rlsScratch[index] = sum
-					denominator += predictors[index] * sum
-				}
-
-				if denominator == 0 || math.IsNaN(denominator) {
-					op.rlsReady = false
-				}
-
-				if op.rlsReady {
-					invDenominator := 1 / denominator
-					errorTerm := target
-
-					for column := 0; column < p; column++ {
-						errorTerm -= op.rlsW[column] * predictors[column]
-					}
-
-					for index := 0; index < p; index++ {
-						gain := op.rlsScratch[index] * invDenominator
-						op.rlsW[index] += gain * errorTerm
-
-						for column := 0; column < p; column++ {
-							op.rlsP[index*p+column] -= gain * op.rlsScratch[column]
-						}
-					}
-				}
-			} else if op.rows > p {
-				// Seed recursive least squares from the exact normal equations
-				// at the first non-singular design.
-				var inverse []float64
-
-				for pointer := range op.invert.Next(data.NewValue(op.xtx).Next(nil)) {
-					inverse = *(*[]float64)(pointer)
-				}
-
-				if err := op.invert.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				var weights []float64
-
-				if len(inverse) == p*p {
-					copy(op.rlsP, inverse)
-
-					for pointer := range op.solve.Next(data.NewValue([2][]float64{op.xtx, op.xty}).Next(nil)) {
-						weights = *(*[]float64)(pointer)
-					}
-
-					if err := op.solve.Error(); err != nil {
-						op.Error(err)
-						return
-					}
-				}
-
-				op.rlsReady = len(weights) == p
-				copy(op.rlsW, weights)
-			}
-
-			var coefficients []float64
-
-			if op.rows > p {
-				for pointer := range op.solve.Next(data.NewValue([2][]float64{op.xtx, op.xty}).Next(nil)) {
-					coefficients = *(*[]float64)(pointer)
-				}
-
-				if err := op.solve.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-			}
-
-			if len(coefficients) == p {
-				sse := op.yty
-
-				for column := 0; column < p; column++ {
-					sse -= coefficients[column] * op.xty[column]
-				}
-
-				if sse < 0 {
-					sse = 0
-				}
-
-				residualVariance := sse / float64(op.rows-p)
-				op.out[2] = 1
-				op.out[5] = sse
-				op.out[6] = residualVariance
-				op.out = append(op.out, coefficients...)
-
-				var inverse []float64
-
-				if !math.IsNaN(residualVariance) && residualVariance >= 0 {
-					for pointer := range op.invert.Next(data.NewValue(op.xtx).Next(nil)) {
-						inverse = *(*[]float64)(pointer)
-					}
-
-					if err := op.invert.Error(); err != nil {
-						op.Error(err)
-						return
-					}
-				}
-
-				identifiable := len(inverse) == p*p
-
-				for index := 0; identifiable && index < p; index++ {
-					variance := residualVariance * inverse[index*p+index]
-					identifiable = variance >= 0 && !math.IsNaN(variance)
-				}
-
-				for index := 0; identifiable && index < p; index++ {
-					op.out = append(op.out, residualVariance*inverse[index*p+index])
-				}
-
-				if identifiable {
-					op.out[7] = 1
-				}
-			}
+			prediction, defined := op.prequentialPredict(row.Predictors)
+			op.prequentialAdd(row.Predictors, row.Target)
+			op.out = RegressionReading{Prediction: prediction, PredictionDefined: defined, Fit: op.fit()}
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *RegressionAccumulator) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+add incorporates one design row and its target value into the moments.
+*/
+func (op *RegressionAccumulator) add(predictors []float64, target float64) {
+	for column := 0; column < op.parameters; column++ {
+		op.xty[column] += predictors[column] * target
+
+		for row := 0; row < op.parameters; row++ {
+			op.xtx[row*op.parameters+column] += predictors[row] * predictors[column]
+		}
+	}
+
+	op.yty += target * target
+	op.rows++
+}
+
+/*
+prequentialPredict returns the model's prediction for one design row using the
+model fit on every previously incorporated row, without allocating.
+*/
+func (op *RegressionAccumulator) prequentialPredict(predictors []float64) (float64, bool) {
+	if !op.rlsReady {
+		return 0, false
+	}
+
+	prediction := 0.0
+
+	for column := 0; column < op.parameters; column++ {
+		prediction += op.rlsW[column] * predictors[column]
+	}
+
+	return prediction, true
+}
+
+/*
+prequentialAdd incorporates one design row after it has been scored by
+prequentialPredict.
+*/
+func (op *RegressionAccumulator) prequentialAdd(predictors []float64, target float64) {
+	op.add(predictors, target)
+
+	if !op.rlsReady {
+		if op.rows <= op.parameters {
+			return
+		}
+
+		if !op.initializeRLS() {
+			return
+		}
+
+		return
+	}
+
+	denominator := 1.0
+
+	for row := 0; row < op.parameters; row++ {
+		sum := 0.0
+
+		for column := 0; column < op.parameters; column++ {
+			sum += op.rlsP[row*op.parameters+column] * predictors[column]
+		}
+
+		op.rlsScratch[row] = sum
+		denominator += predictors[row] * sum
+	}
+
+	if denominator == 0 || math.IsNaN(denominator) {
+		op.rlsReady = false
+
+		return
+	}
+
+	invDenominator := 1 / denominator
+	errorTerm := target
+
+	for column := 0; column < op.parameters; column++ {
+		errorTerm -= op.rlsW[column] * predictors[column]
+	}
+
+	for row := 0; row < op.parameters; row++ {
+		gain := op.rlsScratch[row] * invDenominator
+		op.rlsW[row] += gain * errorTerm
+
+		for column := 0; column < op.parameters; column++ {
+			op.rlsP[row*op.parameters+column] -= gain * op.rlsScratch[column]
+		}
+	}
+}
+
+/*
+initializeRLS seeds the recursive least-squares state from the exact normal
+equations at the first non-singular design.
+*/
+func (op *RegressionAccumulator) initializeRLS() bool {
+	if !invertLU(
+		op.xtx, op.rlsP, op.parameters,
+		op.luScratch, op.pvtScratch, op.colScratch,
+	) {
+		op.rlsReady = false
+
+		return false
+	}
+
+	if !solveLU(
+		op.xtx, op.xty, op.rlsW, op.parameters,
+		op.luScratch, op.pvtScratch,
+	) {
+		op.rlsReady = false
+
+		return false
+	}
+
+	op.rlsReady = true
+
+	return true
+}
+
+/*
+fit solves the normal equations over the incorporated rows.
+*/
+func (op *RegressionAccumulator) fit() RegressionFit {
+	fit := RegressionFit{
+		Observations:     op.rows,
+		Parameters:       op.parameters,
+		ResidualVariance: math.NaN(),
+		Defined:          false,
+	}
+
+	if op.rows <= op.parameters {
+		return fit
+	}
+
+	if !solveLU(
+		op.xtx, op.xty, op.fitCoefficients, op.parameters,
+		op.luScratch, op.pvtScratch,
+	) {
+		return fit
+	}
+
+	fit.Coefficients = append(fit.Coefficients[:0], op.fitCoefficients...)
+
+	sse := op.yty
+
+	for column := 0; column < op.parameters; column++ {
+		sse -= fit.Coefficients[column] * op.xty[column]
+	}
+
+	if sse < 0 {
+		sse = 0
+	}
+
+	fit.ResidualSSE = sse
+	fit.ResidualVariance = sse / float64(op.rows-op.parameters)
+	fit.CoefficientVariance = op.coefficientVarianceFromCrossProduct(fit.ResidualVariance)
+	fit.Defined = true
+
+	return fit
+}
+
+/*
+coefficientVarianceFromCrossProduct scales the diagonal of (X'X)⁻¹ by the
+residual variance, reporting nil when the covariance is not identifiable.
+*/
+func (op *RegressionAccumulator) coefficientVarianceFromCrossProduct(residualVariance float64) []float64 {
+	if math.IsNaN(residualVariance) || residualVariance < 0 {
+		return nil
+	}
+
+	if !invertLU(
+		op.xtx, op.fitInverse, op.parameters,
+		op.luScratch, op.pvtScratch, op.colScratch,
+	) {
+		return nil
+	}
+
+	variances := make([]float64, op.parameters)
+
+	for index := 0; index < op.parameters; index++ {
+		diag := op.fitInverse[index*op.parameters+index]
+		variance := residualVariance * diag
+
+		if variance < 0 || math.IsNaN(variance) {
+			return nil
+		}
+
+		variances[index] = variance
+	}
+
+	return variances
 }

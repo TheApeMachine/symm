@@ -36,11 +36,13 @@ center and scale its values are standardized against.
 func NewMetric(
 	label string, raw float64, unit Unit, timescale Timescale,
 ) *Metric {
+	canonicalUnit, canonicalTimescale := CanonicalDimensions(label, unit, timescale)
+
 	return &Metric{
 		Label:     label,
 		Raw:       raw,
-		unit:      CanonicalUnit(label, unit),
-		timescale: timescale,
+		unit:      canonicalUnit,
+		timescale: canonicalTimescale,
 	}
 }
 
@@ -51,12 +53,14 @@ exact value of the metric.
 func NewExactMetric(
 	label string, exact *decimal.Decimal, unit Unit, timescale Timescale,
 ) *Metric {
+	canonicalUnit, canonicalTimescale := CanonicalDimensions(label, unit, timescale)
+
 	return &Metric{
 		Label:     label,
 		Raw:       exact.Float64(),
 		Exact:     exact,
-		unit:      CanonicalUnit(label, unit),
-		timescale: timescale,
+		unit:      canonicalUnit,
+		timescale: canonicalTimescale,
 	}
 }
 
@@ -69,7 +73,11 @@ func (metric *Metric) Unit() Unit {
 }
 
 func (metric *Metric) Timescale() Timescale {
-	return metric.timescale
+	if metric == nil {
+		return ""
+	}
+
+	return CanonicalTimescale(metric.Label, metric.timescale)
 }
 
 /*

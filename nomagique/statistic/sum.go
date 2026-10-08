@@ -1,54 +1,46 @@
 package statistic
 
 import (
+	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
-// Sum retains an arithmetic total across Next calls. Each non-empty run
-// contributes its scalar arrivals and yields exactly one updated total.
-// A malformed run does not commit a partial update.
+/*
+Sum owns the running arithmetic sum.
+*/
 type Sum struct {
-	*core.PrimitiveError
+	err   error
 	total float64
+	out   float64
 }
 
 func NewSum() core.Primitive {
-	return &Sum{PrimitiveError: core.NewPrimitiveError()}
+	return &Sum{}
 }
 
 func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		if op.Error() != nil || in == nil {
-			return
-		}
-
-		total := op.total
-		observed := false
-
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
+			val := *(*float64)(arriving)
+			op.total += val
+			op.out = op.total
 
-			total += *(*float64)(arriving)
-			observed = true
-		}
-
-		if !observed {
-			return
-		}
-
-		op.total = total
-
-		for value := range data.NewValue(total).Next(nil) {
-			if !yield(value) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Sum) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

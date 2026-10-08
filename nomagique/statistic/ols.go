@@ -1,177 +1,254 @@
 package statistic
 
 import (
+	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
+
+/*
+OLSFit is the result of one ordinary least squares fit. Rank deficiency is an
+explicit state: when the design matrix does not have full column rank the fit
+is Undefined, and no ridge, dropped coordinate, or fabricated zero is
+substituted. Undefined is not zero.
+*/
+type OLSFit struct {
+	// Coefficients are the fitted parameters, one per design column in order.
+	Coefficients []float64
+	// CoefficientVariance is the diagonal of cov(beta) = sigma² (X'X)⁻¹.
+	// It is nil when the covariance is not identifiable.
+	CoefficientVariance []float64
+	// Rank is the numerical rank of the design matrix.
+	Rank int
+	// Observations is the number of fitted rows.
+	Observations int
+	// Parameters is the number of fitted parameters (design columns).
+	Parameters int
+	// ResidualSSE is the sum of squared residuals.
+	ResidualSSE float64
+	// ResidualVariance is the unbiased residual variance SSE/(n-p) when
+	// n > p, otherwise NaN.
+	ResidualVariance float64
+	// Defined reports whether the fit is mathematically identifiable.
+	Defined bool
+}
+
+/*
+OLSRequest is one ordinary least squares fit request: the row-major n×p design
+matrix, the n targets, and the parameter count.
+*/
+type OLSRequest struct {
+	X []float64
+	Y []float64
+	P int
+}
 
 /*
 OLS owns one ordinary least squares fit as a Primitive. The caller owns the
 design: an intercept column of ones is included only when the model requires
-it. Rank deficiency is an explicit state: when the design matrix does not have
-full column rank the fit is undefined, and no ridge, dropped coordinate, or
-fabricated zero is substituted. Undefined is not zero.
-
-Each arrival is *[2][]float64 {x, y}: x is the row-major n×p design matrix and
-y holds the n targets, so p = len(x) / len(y). It yields one *[]float64 fit:
-
-	[0] defined (1 or 0)  [1] rank         [2] observations
-	[3] parameters        [4] residual SSE [5] residual variance
-	[6] coefficient variance defined (1 or 0)
-	[7 : 7+p]    coefficients, one per design column, when defined
-	[7+p : 7+2p] diagonal of cov(beta) = sigma² (X'X)⁻¹, when [6] is 1
-
-Residual variance is SSE/(n-p) when the fit is defined, otherwise NaN when
-n <= p or the design is singular.
+it. When rank < p the fit is undefined; no regularization is applied.
 */
 type OLS struct {
-	*core.PrimitiveError
-	solve  core.Primitive
-	invert core.Primitive
-	xtx    []float64
-	xty    []float64
-	out    []float64
+	err error
+	out OLSFit
 }
 
 /*
 NewFitOLS instantiates the ordinary least squares Primitive.
 */
-func NewFitOLS() *OLS {
-	return &OLS{
-		PrimitiveError: core.NewPrimitiveError(),
-		solve:          NewSolveLU(),
-		invert:         NewInvertLU(),
-	}
+func NewFitOLS() core.Primitive {
+	return &OLS{}
 }
 
 /*
-Next fits every arriving design and hands over the resulting fit.
+Next fits every arriving request and hands over the resulting fit.
 */
 func (op *OLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			request := (*[2][]float64)(arriving)
-			x, y := request[0], request[1]
-			n := len(y)
-			p := 0
-
-			if n > 0 {
-				p = len(x) / n
-			}
-
-			if n > 0 && len(x) != n*p {
-				op.Error(core.ErrShape)
-				return
-			}
-
-			op.out = append(op.out[:0], 0, 0, 0, 0, 0, 0, 0)
-
-			if p > 0 {
-				op.out[2] = float64(n)
-				op.out[3] = float64(p)
-				op.out[5] = math.NaN()
-			}
-
-			if p < 1 || n <= p {
-				if !yield(unsafe.Pointer(&op.out)) {
-					return
-				}
-
-				continue
-			}
-
-			if cap(op.xtx) < p*p {
-				op.xtx = make([]float64, p*p)
-				op.xty = make([]float64, p)
-			}
-
-			op.xtx = op.xtx[:p*p]
-			op.xty = op.xty[:p]
-			clear(op.xtx)
-			clear(op.xty)
-			yty := 0.0
-
-			for row := 0; row < n; row++ {
-				rowOffset := row * p
-				yVal := y[row]
-				yty += yVal * yVal
-
-				for column := 0; column < p; column++ {
-					op.xty[column] += x[rowOffset+column] * yVal
-
-					for k := 0; k <= column; k++ {
-						op.xtx[column*p+k] += x[rowOffset+column] * x[rowOffset+k]
-					}
-				}
-			}
-
-			for column := 0; column < p; column++ {
-				for k := 0; k < column; k++ {
-					op.xtx[k*p+column] = op.xtx[column*p+k]
-				}
-			}
-
-			var coefficients []float64
-
-			for pointer := range op.solve.Next(data.NewValue([2][]float64{op.xtx, op.xty}).Next(nil)) {
-				coefficients = *(*[]float64)(pointer)
-			}
-
-			if err := op.solve.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			if len(coefficients) == p {
-				sse := yty
-
-				for column := 0; column < p; column++ {
-					sse -= coefficients[column] * op.xty[column]
-				}
-
-				if sse < 0 {
-					sse = 0
-				}
-
-				residualVariance := sse / float64(n-p)
-				op.out[0] = 1
-				op.out[1] = float64(p)
-				op.out[4] = sse
-				op.out[5] = residualVariance
-				op.out = append(op.out, coefficients...)
-
-				var inverse []float64
-
-				for pointer := range op.invert.Next(data.NewValue(op.xtx).Next(nil)) {
-					inverse = *(*[]float64)(pointer)
-				}
-
-				if err := op.invert.Error(); err != nil {
-					op.Error(err)
-					return
-				}
-
-				if len(inverse) == p*p {
-					op.out[6] = 1
-
-					for index := 0; index < p; index++ {
-						op.out = append(op.out, residualVariance*inverse[index*p+index])
-					}
-				}
-			}
+			request := (*OLSRequest)(arriving)
+			op.out = fitOLS(request.X, request.Y, request.P)
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *OLS) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+fitOLS fits y (length n) on the design matrix x (n×p, row-major). When
+rank < p the fit is undefined; no regularization is applied.
+*/
+func fitOLS(x []float64, y []float64, p int) OLSFit {
+	n := len(y)
+
+	if p < 1 || n < 1 || len(x) < n*p {
+		return OLSFit{Defined: false}
+	}
+
+	if n <= p {
+		return OLSFit{
+			Observations:     n,
+			Parameters:       p,
+			ResidualVariance: math.NaN(),
+			Defined:          false,
+		}
+	}
+
+	xtx := make([]float64, p*p)
+	xty := make([]float64, p)
+	yty := 0.0
+
+	for row := 0; row < n; row++ {
+		rowOffset := row * p
+		yVal := y[row]
+		yty += yVal * yVal
+
+		for column := 0; column < p; column++ {
+			xty[column] += x[rowOffset+column] * yVal
+
+			for k := 0; k <= column; k++ {
+				xtx[column*p+k] += x[rowOffset+column] * x[rowOffset+k]
+			}
+		}
+	}
+
+	for column := 0; column < p; column++ {
+		for k := 0; k < column; k++ {
+			xtx[k*p+column] = xtx[column*p+k]
+		}
+	}
+
+	coefficients := make([]float64, p)
+	luScratch := make([]float64, p*p)
+	pvtScratch := make([]int, p)
+
+	if !solveLU(xtx, xty, coefficients, p, luScratch, pvtScratch) {
+		return OLSFit{
+			Observations:     n,
+			Parameters:       p,
+			ResidualVariance: math.NaN(),
+			Defined:          false,
+		}
+	}
+
+	sse := yty
+
+	for column := 0; column < p; column++ {
+		sse -= coefficients[column] * xty[column]
+	}
+
+	if sse < 0 {
+		sse = 0
+	}
+
+	residualVariance := sse / float64(n-p)
+
+	invScratch := make([]float64, p*p)
+	colScratch := make([]float64, p)
+
+	var variance []float64
+	if invertLU(xtx, invScratch, p, luScratch, pvtScratch, colScratch) {
+		variance = make([]float64, p)
+
+		for index := 0; index < p; index++ {
+			variance[index] = residualVariance * invScratch[index*p+index]
+		}
+	}
+
+	return OLSFit{
+		Coefficients:        coefficients,
+		CoefficientVariance: variance,
+		Rank:                p,
+		Observations:        n,
+		Parameters:          p,
+		ResidualSSE:         sse,
+		ResidualVariance:    residualVariance,
+		Defined:             true,
+	}
+}
+
+/*
+CoefficientSNRPair carries one coefficient and the variance it must be judged
+against.
+*/
+type CoefficientSNRPair struct {
+	Coefficient float64
+	Variance    float64
+}
+
+/*
+CoefficientSNR owns the primary coefficient SNR, Coefficient² / Variance, as a
+Primitive. It is non-negative and unbounded. It is not probability or
+confidence, and it is undefined (NaN) when the coefficient variance is
+unavailable or zero.
+*/
+type CoefficientSNR struct {
+	err error
+	out float64
+}
+
+/*
+NewCoefficientSNR instantiates the coefficient signal-to-noise Primitive.
+*/
+func NewCoefficientSNR() core.Primitive {
+	return &CoefficientSNR{}
+}
+
+/*
+Next scores every arriving coefficient/variance pair and hands over the SNR.
+*/
+func (op *CoefficientSNR) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+	return func(yield func(unsafe.Pointer) bool) {
+		for arriving := range in {
+			pair := (*CoefficientSNRPair)(arriving)
+			op.out = coefficientSNR(pair.Coefficient, pair.Variance)
+
+			if !yield(unsafe.Pointer(&op.out)) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Error records the first error it sees and joins any subsequent errors to it.
+*/
+func (op *CoefficientSNR) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+coefficientSNR returns Coefficient² / Variance, undefined (NaN) when the
+coefficient variance is unavailable or zero.
+*/
+func coefficientSNR(coefficient float64, variance float64) float64 {
+	if math.IsNaN(variance) || math.IsInf(variance, 0) || variance <= 0 {
+		return math.NaN()
+	}
+
+	return coefficient * coefficient / variance
 }

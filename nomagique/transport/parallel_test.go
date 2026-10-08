@@ -2,15 +2,15 @@ package transport_test
 
 import (
 	"errors"
-	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"testing"
+
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"testing"
 )
 
 func TestParallel(t *testing.T) {
-	op := transport.NewParallel(arithmetic.NewAdd(), arithmetic.NewSubtract())
+	op := transport.NewParallel(newTestAdd(), newTestSub())
 	want := []float64{3, 5}
 	index := 0
 	for pointer := range op.Next(data.NewValue[core.Primitive](data.NewValue(1.0, 2.0), data.NewValue(9.0, 4.0)).Next(nil)) {
@@ -25,7 +25,7 @@ func TestParallel(t *testing.T) {
 }
 func TestParallelRejectsBranchArity(t *testing.T) {
 	for _, count := range []int{0, 1, 3} {
-		op := transport.NewParallel(arithmetic.NewAdd(), arithmetic.NewAdd())
+		op := transport.NewParallel(newTestAdd(), newTestAdd())
 		groups := make([]core.Primitive, count)
 		for index := range groups {
 			groups[index] = data.NewValue(1.0, 2.0)

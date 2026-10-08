@@ -1,41 +1,44 @@
 package calculus
 
 import (
+	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Negate computes -x for each arrival.
+Negate owns one field operation. What it hands over is the additive inverse
+of each arrival, operating in-place on the wire pointer.
 */
 type Negate struct {
-	*core.PrimitiveError
+	err error
 }
 
 func NewNegate() core.Primitive {
-	return &Negate{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Negate{}
 }
 
 func (op *Negate) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
+			in := (*float64)(arriving)
+			*in = -*in
+
+			if !yield(arriving) {
 				return
-			}
-
-			val := *(*float64)(arriving)
-
-			for value := range data.NewValue(-val).Next(nil) {
-				if !yield(value) {
-					return
-				}
 			}
 		}
 	}
+}
+
+func (op *Negate) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

@@ -1,53 +1,54 @@
 package probability
 
 import (
+	"errors"
 	"iter"
 	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Entropy owns -sum(p log p). Zero mass contributes zero;
-negative inputs produce a domain error.
+Entropy owns -sum(p log p). Zero mass contributes its limiting value zero;
+negative inputs retain the logarithm's undefined-domain result.
 */
 type Entropy struct {
-	*core.PrimitiveError
+	err error
 	acc float64
+	out float64
 }
 
 func NewEntropy() core.Primitive {
-	return &Entropy{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Entropy{}
 }
 
 func (op *Entropy) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
-
 			mass := *(*float64)(arriving)
+			contribution := 0.0
 
-			if mass < 0 {
-				op.Error(core.ErrDomain)
-				return
+			if mass != 0 {
+				contribution = -mass * math.Log(mass)
 			}
 
-			if mass > 0 {
-				op.acc -= mass * math.Log(mass)
-			}
-		}
+			op.acc += contribution
+			op.out = op.acc
 
-		for value := range data.NewValue(op.acc).Next(nil) {
-			if !yield(value) {
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *Entropy) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

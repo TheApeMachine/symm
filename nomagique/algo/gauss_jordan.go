@@ -1,6 +1,7 @@
 package algo
 
 import (
+	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -10,134 +11,162 @@ import (
 )
 
 /*
-GaussJordan owns partial-pivot Gauss-Jordan elimination. Tolerance is the
-absolute pivot floor of this solver.
+System is a square left-hand matrix and its right-hand sides.
+*/
+type System struct {
+	Left  [][]float64
+	Right [][]float64
+}
 
-Each arrival is *[2][][]float64{left, right}: left is a square n×n matrix and
-right holds its n right-hand-side rows. It yields *[][]float64 whose row [0]
-is {defined (1 or 0), rank} and whose rows [1:] are the reduced right-hand
-side. A singular system is defined=0 with no solution rows; an empty system is
-defined=0 with rank 0. Every yield owns fresh rows, so a held solution is
-never overwritten by a later arrival.
+/*
+Solution is the reduced right-hand side, or an explicit rank-deficient state.
+A singular system is Defined=false with an empty Solution.
+*/
+type Solution struct {
+	Solution [][]float64
+	Rank     int
+	Defined  bool
+}
+
+/*
+GaussJordan owns partial-pivot elimination. Tolerance is the absolute pivot
+floor of this solver.
 */
 type GaussJordan struct {
-	*core.PrimitiveError
+	err       error
 	tolerance float64
-	out       [][]float64
+	out       Solution
 }
 
 func NewGaussJordan(tolerance float64) core.Primitive {
-	return &GaussJordan{
-		PrimitiveError: core.NewPrimitiveError(),
-		tolerance:      tolerance,
-	}
+	return &GaussJordan{tolerance: tolerance}
 }
 
-func (op *GaussJordan) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
+func (op *GaussJordan) Next(
+	in iter.Seq[unsafe.Pointer],
+) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
+			system := (*System)(arriving)
+			sol, err := op.solve(*system)
+
+			if err != nil {
+				op.err = errors.Join(op.err, err)
 				return
 			}
 
-			system := (*[2][][]float64)(arriving)
-			left, right := system[0], system[1]
-			rows := len(left)
-
-			for _, row := range left {
-				if len(row) != rows {
-					op.Error(fmt.Errorf("%w: Gauss-Jordan left-hand side must be square", core.ErrShape))
-					return
-				}
-			}
-
-			if len(right) != rows {
-				op.Error(fmt.Errorf("%w: Gauss-Jordan right-hand row count differs from left", core.ErrShape))
-				return
-			}
-
-			columns := 0
-
-			if rows > 0 {
-				columns = len(right[0])
-			}
-
-			for _, row := range right {
-				if len(row) != columns {
-					op.Error(fmt.Errorf("%w: Gauss-Jordan right-hand side is ragged", core.ErrShape))
-					return
-				}
-			}
-
-			a := make([][]float64, rows)
-			b := make([][]float64, rows)
-
-			for row := range rows {
-				a[row] = append([]float64(nil), left[row]...)
-				b[row] = append([]float64(nil), right[row]...)
-			}
-
-			rank := 0
-			defined := rows > 0
-
-			for col := 0; col < rows; col++ {
-				pivotRow := col
-				maxVal := math.Abs(a[col][col])
-
-				for r := col + 1; r < rows; r++ {
-					if val := math.Abs(a[r][col]); val > maxVal {
-						maxVal = val
-						pivotRow = r
-					}
-				}
-
-				if maxVal <= op.tolerance {
-					defined = false
-					break
-				}
-
-				a[col], a[pivotRow] = a[pivotRow], a[col]
-				b[col], b[pivotRow] = b[pivotRow], b[col]
-				pivot := a[col][col]
-
-				for c := col; c < rows; c++ {
-					a[col][c] /= pivot
-				}
-
-				for c := 0; c < columns; c++ {
-					b[col][c] /= pivot
-				}
-
-				for r := 0; r < rows; r++ {
-					if r == col {
-						continue
-					}
-
-					factor := a[r][col]
-
-					for c := col; c < rows; c++ {
-						a[r][c] -= factor * a[col][c]
-					}
-
-					for c := 0; c < columns; c++ {
-						b[r][c] -= factor * b[col][c]
-					}
-				}
-
-				rank++
-			}
-
-			op.out = [][]float64{{0, float64(rank)}}
-
-			if defined {
-				op.out[0][0] = 1
-				op.out = append(op.out, b...)
-			}
+			op.out = sol
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *GaussJordan) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
+}
+
+/*
+solve performs row reduction with partial pivoting.
+*/
+func (op *GaussJordan) solve(system System) (Solution, error) {
+	rows := len(system.Left)
+
+	if rows == 0 {
+		return Solution{Solution: [][]float64{}, Defined: false}, nil
+	}
+
+	for _, row := range system.Left {
+		if len(row) != rows {
+			return Solution{}, fmt.Errorf("%w: Gauss-Jordan left-hand side must be square", core.ErrShape)
+		}
+	}
+
+	if len(system.Right) != rows {
+		return Solution{}, fmt.Errorf("%w: Gauss-Jordan right-hand row count differs from left", core.ErrShape)
+	}
+
+	rightCols := 0
+
+	if rows > 0 {
+		rightCols = len(system.Right[0])
+	}
+
+	for _, row := range system.Right {
+		if len(row) != rightCols {
+			return Solution{}, fmt.Errorf("%w: Gauss-Jordan right-hand side is ragged", core.ErrShape)
+		}
+	}
+
+	// Clone matrices
+	a := make([][]float64, rows)
+	b := make([][]float64, rows)
+
+	for i := range rows {
+		a[i] = make([]float64, rows)
+		copy(a[i], system.Left[i])
+		b[i] = make([]float64, rightCols)
+		copy(b[i], system.Right[i])
+	}
+
+	rank := 0
+
+	for col := 0; col < rows; col++ {
+		pivotRow := col
+		maxVal := math.Abs(a[col][col])
+
+		for r := col + 1; r < rows; r++ {
+			val := math.Abs(a[r][col])
+
+			if val > maxVal {
+				maxVal = val
+				pivotRow = r
+			}
+		}
+
+		if maxVal <= op.tolerance {
+			return Solution{Solution: [][]float64{}, Rank: rank, Defined: false}, nil
+		}
+
+		if pivotRow != col {
+			a[col], a[pivotRow] = a[pivotRow], a[col]
+			b[col], b[pivotRow] = b[pivotRow], b[col]
+		}
+
+		pivot := a[col][col]
+
+		for c := col; c < rows; c++ {
+			a[col][c] /= pivot
+		}
+
+		for c := 0; c < rightCols; c++ {
+			b[col][c] /= pivot
+		}
+
+		for r := 0; r < rows; r++ {
+			if r != col {
+				factor := a[r][col]
+
+				for c := col; c < rows; c++ {
+					a[r][c] -= factor * a[col][c]
+				}
+
+				for c := 0; c < rightCols; c++ {
+					b[r][c] -= factor * b[col][c]
+				}
+			}
+		}
+
+		rank++
+	}
+
+	return Solution{Solution: b, Rank: rank, Defined: true}, nil
 }

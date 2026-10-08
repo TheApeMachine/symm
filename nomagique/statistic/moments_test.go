@@ -68,36 +68,3 @@ func TestMomentsNext(t *testing.T) {
 	})
 }
 
-func TestShedNext(t *testing.T) {
-	Convey("Given a Shed primitive over an Estimator", t, func() {
-		est := NewEstimator()
-
-		for range est.Next(tests.SliceToSeq([]float64{2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0})) {
-		}
-
-		shed := NewShed(est)
-
-		Convey("halves support while preserving the Bessel-corrected variance", func() {
-			out := tests.CollectSeq[[3]float64](shed.Next(tests.SliceToSeq([]float64{0.5})))
-
-			So(shed.Error(), ShouldBeNil)
-			So(len(out), ShouldEqual, 1)
-			So(out[0][0], ShouldEqual, 4)
-			So(out[0][1], ShouldEqual, 5.0)
-			So(out[0][2]/(out[0][0]-1), ShouldAlmostEqual, 32.0/7.0, 1e-12)
-		})
-
-		Convey("ignores ratios outside (0, 1)", func() {
-			out := tests.CollectSeq[[3]float64](shed.Next(tests.SliceToSeq([]float64{1.0, 0.0})))
-
-			So(len(out), ShouldEqual, 2)
-			So(out[1][0], ShouldEqual, 8)
-		})
-
-		Convey("floors support at two samples", func() {
-			out := tests.CollectSeq[[3]float64](shed.Next(tests.SliceToSeq([]float64{0.01})))
-
-			So(out[0][0], ShouldEqual, 2)
-		})
-	})
-}

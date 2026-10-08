@@ -5,42 +5,43 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/correlation"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestPathNext(t *testing.T) {
 	Convey("Acceptance, restatement and regression keep prior observations intact", t, func() {
 		path := correlation.NewPath()
-		var earliest [2][]float64
+		var earliest correlation.PathReading
 
 		for index, test := range []struct {
-			at                 float64
+			at                 int64
 			value, count       float64
-			accepted, restated float64
+			accepted, restated bool
 		}{
-			{10, 100, 1, 1, 0}, {12, 105, 2, 1, 0}, {12, 106, 2, 1, 1},
-			{11, 999, 2, 0, 0}, {13, 107, 3, 1, 0},
+			{10, 100, 1, true, false}, {12, 105, 2, true, false}, {12, 106, 2, true, true},
+			{11, 999, 2, false, false}, {13, 107, 3, true, false},
 		} {
-			out := tests.CollectSeq[[2][]float64](path.Next(tests.SliceToSeq([][2]float64{{test.at, test.value}})))
+			out := tests.CollectSeq[correlation.PathReading](path.Next(transport.NewValues(temporal.Price{At: test.at, Value: test.value}).Next(nil)))
 			So(path.Error(), ShouldBeNil)
 			So(len(out), ShouldEqual, 1)
-			So(out[0][0][3], ShouldEqual, test.count)
-			So(out[0][0][4], ShouldEqual, test.accepted)
-			So(out[0][0][5], ShouldEqual, test.restated)
+			So(out[0].Count, ShouldEqual, test.count)
+			So(out[0].Accepted, ShouldEqual, test.accepted)
+			So(out[0].Restated, ShouldEqual, test.restated)
 			wanted := test.value
 
-			if test.accepted == 0 {
+			if !test.accepted {
 				wanted = 106
 			}
 
-			flat := out[0][1]
-			So(flat[len(flat)-1], ShouldEqual, wanted)
+			So(out[0].Observations[len(out[0].Observations)-1].Value, ShouldEqual, wanted)
 
 			if index == 1 {
 				earliest = out[0]
 			}
 		}
 
-		So(earliest[1][3], ShouldEqual, 105)
+		So(earliest.Observations[1].Value, ShouldEqual, 105)
 	})
 }

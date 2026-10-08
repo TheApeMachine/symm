@@ -4,12 +4,9 @@ import (
 	"encoding/json"
 	"sync"
 	"sync/atomic"
-	"unsafe"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/cognition"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -21,11 +18,7 @@ memory and every primitive that reads or writes it: callers ask for a call,
 teach an action, or take a checkpoint in one operation.
 */
 type Model struct {
-	recall        *cognition.Recall
-	trainer       *cognition.Train
-	census        *cognition.Census
-	snapshot      *cognition.Snapshot
-	tree          *cognition.Export
+	engine        *cognition.Engine
 	version       atomic.Uint64
 	cachedVersion uint64
 	cachedTree    ui.CognitionTreeExport
@@ -43,14 +36,8 @@ type Call struct {
 }
 
 func NewModel() *Model {
-	memory := cognition.NewAssociate()
-
 	return &Model{
-		recall:   cognition.NewRecall(memory),
-		trainer:  cognition.NewTrain(memory),
-		census:   cognition.NewCensus(memory),
-		snapshot: cognition.NewSnapshot(memory),
-		tree:     cognition.NewExport(memory),
+		engine: cognition.NewEngine(cognition.Config{}),
 	}
 }
 
@@ -58,28 +45,36 @@ func NewModel() *Model {
 Recall answers the action the trie takes on context.
 */
 func (model *Model) Recall(context, stance string) (Call, error) {
-	query := &cognition.RecallQuery{
-		Context: context,
-		Stance:  stance,
-	}
-	var res *cognition.RecallResult
+	res, err := model.engine.Evaluate([]byte(context))
 
-	for ptr := range model.recall.Next(data.NewValue(unsafe.Pointer(query)).Next(nil)) {
-		res = (*cognition.RecallResult)(ptr)
-	}
-
-	if err := model.recall.Error(); err != nil {
+	if err != nil {
 		return Call{}, errnie.Error(err)
 	}
 
-	if res == nil {
+	if stance != "" {
+		for _, candidate := range res.Evaluation.Candidates {
+			if candidate.Name == stance && candidate.Support > 0 {
+				contrast := 0.0
+
+				if res.Evaluation.WinnerClass == stance {
+					contrast = res.Evaluation.Contrast
+				}
+
+				return Call{
+					Winner:     candidate.Name,
+					Confidence: candidate.Probability,
+					Contrast:   contrast,
+				}, nil
+			}
+		}
+
 		return Call{}, nil
 	}
 
 	return Call{
-		Winner:     res.Winner,
-		Confidence: res.Confidence,
-		Contrast:   res.Contrast,
+		Winner:     res.Evaluation.WinnerClass,
+		Confidence: res.Evaluation.Confidence,
+		Contrast:   res.Evaluation.Contrast,
 	}, nil
 }
 
@@ -107,17 +102,9 @@ func (model *Model) Teach(context, class string, feedback float64) error {
 
 	model.version.Add(1)
 
-	record := &cognition.TrainRecord{
-		Context:  context,
-		Class:    class,
-		Feedback: feedback,
-		Graded:   core.Unit,
-	}
+	_, err := model.engine.Train([]byte(context), []byte(class), feedback)
 
-	for range model.trainer.Next(data.NewValue(unsafe.Pointer(record)).Next(nil)) {
-	}
-
-	if err := model.trainer.Error(); err != nil {
+	if err != nil {
 		return errnie.Error(err)
 	}
 
@@ -128,46 +115,29 @@ func (model *Model) Teach(context, class string, feedback float64) error {
 Count answers one census figure: "records", "span", or a class name.
 */
 func (model *Model) Count(key string) (float64, error) {
-	var census *cognition.CensusResult
-
-	for ptr := range model.census.Next(nil) {
-		census = (*cognition.CensusResult)(ptr)
-	}
-
-	if err := model.census.Error(); err != nil {
-		return 0, errnie.Error(err)
-	}
-
-	if census == nil {
-		return 0, nil
-	}
-
 	if key == "records" {
-		return census.Records, nil
+		return float64(model.engine.Len()), nil
 	}
 
 	if key == "span" {
-		return census.Span, nil
+		return float64(model.engine.Span()), nil
 	}
 
-	return census.Classes[key], nil
+	classes := model.engine.Census()
+	return float64(classes[key]), nil
 }
 
 /*
 Checkpoint answers the serialized trie.
 */
 func (model *Model) Checkpoint() ([]byte, error) {
-	var encoded string
+	res, err := model.engine.Snapshot()
 
-	for ptr := range model.snapshot.Next(nil) {
-		encoded = *(*string)(ptr)
-	}
-
-	if err := model.snapshot.Error(); err != nil {
+	if err != nil {
 		return nil, errnie.Error(err)
 	}
 
-	if encoded == "" {
+	if len(res.Model) == 0 {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"[model] cognition snapshot holds no model",
@@ -175,7 +145,7 @@ func (model *Model) Checkpoint() ([]byte, error) {
 		))
 	}
 
-	return []byte(encoded), nil
+	return res.Model, nil
 }
 
 /*
@@ -185,6 +155,7 @@ func (model *Model) CognitionTree() ui.CognitionTreeExport {
 	currentVersion := model.version.Load()
 
 	model.treeMu.RLock()
+
 	if model.hasCache && model.cachedVersion == currentVersion {
 		cached := model.cachedTree
 		model.treeMu.RUnlock()
@@ -192,25 +163,18 @@ func (model *Model) CognitionTree() ui.CognitionTreeExport {
 	}
 	model.treeMu.RUnlock()
 
-	var raw string
+	tree := model.engine.TreeExport()
+	raw, err := json.Marshal(tree)
 
-	for ptr := range model.tree.Next(nil) {
-		raw = *(*string)(ptr)
-	}
-
-	if err := model.tree.Error(); err != nil {
-		errnie.Error(err)
-		return ui.CognitionTreeExport{}
-	}
-
-	if raw == "" {
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "[model] cognition tree marshal", err))
 		return ui.CognitionTreeExport{}
 	}
 
 	var export ui.CognitionTreeExport
 
-	if err := json.Unmarshal([]byte(raw), &export); err != nil {
-		errnie.Error(errnie.Err(errnie.Validation, "[model] cognition tree", err))
+	if err := json.Unmarshal(raw, &export); err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "[model] cognition tree unmarshal", err))
 		return ui.CognitionTreeExport{}
 	}
 

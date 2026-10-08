@@ -9,18 +9,27 @@ import (
 )
 
 /*
+SamplingVarianceInput is specificity debt: matched depth, context length,
+support and variance.
+*/
+type SamplingVarianceInput struct {
+	Depth         float64
+	ContextLength float64
+	Support       float64
+	Variance      float64
+}
+
+/*
 SamplingVariance applies specificity debt, with one observation as the sampling
-floor. Each arrival is *[4]float64 {depth, context length, support, variance}.
+floor.
 */
 type SamplingVariance struct {
-	*core.PrimitiveError
+	err error
 	out float64
 }
 
-func NewSamplingVariance() *SamplingVariance {
-	return &SamplingVariance{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+func NewSamplingVariance() core.Primitive {
+	return &SamplingVariance{}
 }
 
 func (op *SamplingVariance) Next(
@@ -28,30 +37,35 @@ func (op *SamplingVariance) Next(
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
+			input := (*SamplingVarianceInput)(arriving)
+
+			if input.Depth > input.ContextLength {
+				op.err = fmt.Errorf("%w: matched depth exceeds context length", core.ErrDomain)
 				return
 			}
 
-			input := (*[4]float64)(arriving)
-			depth, contextLength, support, variance := input[0], input[1], input[2], input[3]
-
-			if depth > contextLength {
-				op.Error(fmt.Errorf("%w: matched depth exceeds context length", core.ErrDomain))
-				return
-			}
-
-			floor := support / (1.0 + (contextLength - depth))
+			floor := input.Support / (1.0 + (input.ContextLength - input.Depth))
 
 			if floor < 1.0 {
 				floor = 1.0
 			}
 
-			op.out = variance / floor
+			op.out = input.Variance / floor
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
 	}
+}
+
+func (op *SamplingVariance) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = err
+			break
+		}
+	}
+
+	return op.err
 }

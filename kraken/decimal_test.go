@@ -36,18 +36,18 @@ func TestFloat64Fast(t *testing.T) {
 
 func BenchmarkFloat64SDK(b *testing.B) {
 	d, _ := decimal.NewFromString("67890.12345678")
-	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = d.Float64()
 	}
 }
 
 func BenchmarkFloat64Fast(b *testing.B) {
 	d, _ := decimal.NewFromString("67890.12345678")
-	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = Float64(d)
 	}
 }

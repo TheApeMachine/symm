@@ -1,75 +1,88 @@
 package adaptive
 
 import (
+	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-Baseline owns causal moments and observation-driven baseline tracking.
-Arriving values are folded into running moments.
-Yields center (baseline) and scale (dispersion).
+BaselineReading fixes causal scores and the post-observation moments.
 */
-type Baseline struct {
-	*core.PrimitiveError
-	window  core.Primitive
-	moments *statistic.Estimator
-	shed    *statistic.Shed
+type BaselineReading struct {
+	statistic.MomentReading
+	HasPrior                                                                      bool
+	Baseline, PriorVariance, ScoreScale, Residual, ZScore, Maturity, Retain, Span float64
 }
 
-func NewBaseline(window ...core.Primitive) core.Primitive {
-	var w core.Primitive
-	if len(window) > 0 && window[0] != nil {
-		w = window[0]
-	}
+/*
+Baseline owns causal moments and the configured observation-driven window.
+*/
+type Baseline struct {
+	err     error
+	window  core.Primitive
+	moments statistic.Moments
+	out     BaselineReading
+}
 
-	moments := statistic.NewEstimator()
-
-	return &Baseline{
-		PrimitiveError: core.NewPrimitiveError(),
-		window:         w,
-		moments:        moments,
-		shed:           statistic.NewShed(moments),
-	}
+func NewBaseline(window core.Primitive) core.Primitive {
+	return &Baseline{window: window}
 }
 
 func (op *Baseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
+			val := *(*float64)(arriving)
+			reading := BaselineReading{MomentReading: op.moments.Update(val)}
+
+			for wPtr := range op.window.Next(transport.NewOne(arriving).Next(nil)) {
+				w := *(*WindowReading)(wPtr)
+				reading.Retain = w.ShedRatio
+				reading.Span = w.Capacity
+			}
+
+			op.moments.Shed(reading.Retain)
+			reading.Summarize(op.moments)
+			reading.HasPrior = reading.Prior.Count > 0
+			reading.Baseline = val
+
+			if reading.HasPrior {
+				reading.Baseline = reading.Prior.Mean
+			}
+
+			reading.ScoreScale = reading.Dispersion
+			reading.Residual = val - reading.Baseline
+
+			if reading.ScoreScale > 0 {
+				reading.ZScore = reading.Residual / reading.ScoreScale
+			}
+
+			reading.Maturity = 1 - 1/(reading.Prior.Count+1)
+			op.out = reading
+
+			if !yield(unsafe.Pointer(&op.out)) {
 				return
-			}
-
-			value := *(*float64)(arriving)
-
-			var reading [10]float64
-			for pointer := range op.moments.Next(data.NewValue(value).Next(nil)) {
-				reading = *(*[10]float64)(pointer)
-			}
-
-			if err := op.moments.Error(); err != nil {
-				op.Error(err)
-				return
-			}
-
-			center := value
-
-			if reading[3] > 0 {
-				center = reading[4]
-			}
-
-			scale := reading[9]
-
-			for val := range data.NewValue(center, scale).Next(nil) {
-				if !yield(val) {
-					return
-				}
 			}
 		}
 	}
+}
+
+func (op *Baseline) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	if op.window != nil {
+		if err := op.window.Error(); err != nil {
+			op.err = errors.Join(op.err, err)
+		}
+	}
+
+	return op.err
 }

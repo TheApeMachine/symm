@@ -1,57 +1,65 @@
 package probability
 
 import (
+	"errors"
 	"iter"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
-Argmax preserves a winning value's ordinal and value through comparison.
+ArgmaxResult is a winning value and the first index at which it occurred.
+*/
+type ArgmaxResult struct {
+	Index int
+	Value float64
+}
+
+/*
+Argmax preserves a winning value's ordinal through comparison.
 */
 type Argmax struct {
-	*core.PrimitiveError
-	bestValue    float64
-	bestIndex    float64
-	currentIndex float64
-	seen         bool
+	err error
+	out ArgmaxResult
 }
 
 func NewArgmax() core.Primitive {
-	return &Argmax{
-		PrimitiveError: core.NewPrimitiveError(),
-	}
+	return &Argmax{}
 }
 
 func (op *Argmax) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			if arriving == nil {
-				op.Error(core.ErrShape)
-				return
-			}
+		var best ArgmaxResult
+		seen := false
+		index := 0
 
+		for arriving := range in {
 			val := *(*float64)(arriving)
 
-			if !op.seen || val > op.bestValue {
-				op.bestValue = val
-				op.bestIndex = op.currentIndex
-				op.seen = true
+			if !seen || val > best.Value {
+				best = ArgmaxResult{Index: index, Value: val}
+				seen = true
 			}
 
-			op.currentIndex++
+			index++
 		}
 
-		if !op.seen {
+		if !seen {
 			return
 		}
 
-		for value := range data.NewValue(op.bestIndex, op.bestValue).Next(nil) {
-			if !yield(value) {
-				return
-			}
+		op.out = best
+		yield(unsafe.Pointer(&op.out))
+	}
+}
+
+func (op *Argmax) Error(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			op.err = errors.Join(op.err, err)
 		}
 	}
+
+	return op.err
 }
