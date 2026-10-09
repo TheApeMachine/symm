@@ -49,6 +49,11 @@ func NewStandardize(params ...float64) core.Primitive {
 func (op *Standardize) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			if op.fixed {
 				val := *(*float64)(arriving)
 				if op.scale == 0 {

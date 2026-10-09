@@ -239,17 +239,11 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				frame.Metrics["return_energy:measured"] = selected.LeftEnergy
 				frame.Metrics["return_energy_rate:reference"] = selected.RightEnergyRate
 				frame.Metrics["return_energy_rate:measured"] = selected.LeftEnergyRate
-				frame.Metrics["focal_return_energy_rate"] = selected.LeftEnergyRate
-
-				if selected.RightEnergyRate > 0 {
-					frame.Metrics["relative_return_energy"] = selected.LeftEnergyRate / selected.RightEnergyRate
-				}
 
 				frame.Metrics["overlap_density"] = selected.OverlapDensity
 				frame.Metrics["supported_return_count:measured"] = selected.LeftReturns
 				frame.Metrics["supported_return_count:reference"] = selected.RightReturns
 				frame.Metrics["overlap_pair_count"] = selected.Support
-				frame.Metrics["effective_sample_count"] = selected.Support
 				frame.Metrics["shared_time"] = selected.SharedTime
 
 				if significance.Defined {

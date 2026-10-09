@@ -40,6 +40,11 @@ func NewCausalResidual() core.Primitive {
 func (op *CausalResidual) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			reading := *(*MomentReading)(arriving)
 			result := CausalResidualResult{
 				MomentReading: reading,
@@ -58,17 +63,11 @@ func (op *CausalResidual) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 			}
 
 			result.Residual = reading.Value - result.Baseline
-			result.ScoreScale = math.Abs(result.Residual)
 
+			// The z-score needs a positive prior dispersion; a lone residual is
+			// not its own scale. ScoreScale stays 0 while it is undefined.
 			if result.PriorVariance > 0 {
-				dispersion := math.Sqrt(result.PriorVariance)
-
-				if dispersion > 2.220446049250313e-16 {
-					result.ScoreScale = dispersion
-				}
-			}
-
-			if result.ScoreScale > 0 {
+				result.ScoreScale = math.Sqrt(result.PriorVariance)
 				result.ZScore = result.Residual / result.ScoreScale
 			}
 

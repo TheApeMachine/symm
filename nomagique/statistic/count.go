@@ -22,7 +22,12 @@ func NewCount() core.Primitive {
 
 func (op *Count) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for range in {
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			op.out++
 
 			if !yield(unsafe.Pointer(&op.out)) {

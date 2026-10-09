@@ -15,7 +15,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/grafana/pyroscope-go v1.4.2
-	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
 	github.com/klauspost/compress v1.19.2
 	github.com/krakenfx/api-go/v2 v2.0.0
 	github.com/marcboeker/go-duckdb/v2 v2.4.3

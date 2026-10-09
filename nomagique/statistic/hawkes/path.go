@@ -1,6 +1,10 @@
 package hawkes
 
-import "time"
+import (
+	"time"
+
+	"github.com/theapemachine/errnie"
+)
 
 /*
 MaxArrivalSamples is the retained arrival history's capacity per symbol: past
@@ -35,10 +39,9 @@ type path struct {
 	selfOnlyReady  bool
 	eventsSinceFit int
 	modelSupport   float64
-	snr            float64
-	hasSNR         bool
+	fitAtSec       float64
+	fitSpanSec     float64
 }
-
 
 /*
 sides splits the retained history into per-side seconds positions.
@@ -80,14 +83,19 @@ func (p *path) remember(at time.Time, atSec float64, mark float64) {
 
 /*
 refit re-estimates the bivariate model (and its self-only restriction) from
-the retained history, keeping the previous model when the data cannot
-identify a new one. Every bound, grid, and cadence gate comes from the
-observed events through the fit context.
+the retained history. Between refits the published model is the last one
+fitted, on the cadence the fit context derives from the observed events, but
+never once more time has passed since the fit than the span it was fitted on:
+past that the retained window describes a period the model never saw, and its
+rates would be stretched over it. When the retained history can no longer
+identify a model, or the fit itself fails, the stale model is dropped rather
+than kept: model outputs are then undefined until a fit succeeds again, and
+the returned error says why the model went.
 */
-func (p *path) refit(atSec float64) {
+func (p *path) refit(atSec float64) error {
 	if len(p.samples) >= 2 {
 		if p.samples[len(p.samples)-1].at.Equal(p.samples[len(p.samples)-2].at) {
-			return
+			return nil
 		}
 	}
 
@@ -97,13 +105,15 @@ func (p *path) refit(atSec float64) {
 	context, ok := newFitContext(stream, atSec)
 
 	if !ok || !context.enoughEvents(stream) {
-		return
+		return p.drop("hawkes: retained arrivals no longer identify a model")
 	}
 
 	p.eventsSinceFit++
 
-	if p.modelReady && p.eventsSinceFit < context.minFitEvents {
-		return
+	if p.modelReady &&
+		p.eventsSinceFit < context.minFitEvents &&
+		atSec-p.fitAtSec < p.fitSpanSec {
+		return nil
 	}
 
 	prior := bivariateFit{}
@@ -116,18 +126,40 @@ func (p *path) refit(atSec float64) {
 	fitted := estimator.fit(stream, atSec)
 
 	if !fitted.valid() {
-		return
+		return p.drop("hawkes: refit produced no valid model")
 	}
 
 	p.model = fitted
 	p.modelReady = true
 	p.modelSupport = float64(context.totalEvents)
 	p.eventsSinceFit = 0
+	p.fitAtSec = atSec
+	p.fitSpanSec = context.spanSec
 
 	selfOnly := estimator.fitSelfOnly(stream, atSec)
+	p.selfOnlyModel = selfOnly
+	p.selfOnlyReady = selfOnly.valid()
 
-	if selfOnly.valid() {
-		p.selfOnlyModel = selfOnly
-		p.selfOnlyReady = true
+	return nil
+}
+
+/*
+drop discards the published model. It reports the reason only when a model
+was actually discarded, so warm-up and a still-unidentifiable history do not
+repeat the same report on every arrival. The caller decides how to log it.
+*/
+func (p *path) drop(reason string) error {
+	if !p.modelReady {
+		return nil
 	}
+
+	p.model = bivariateFit{}
+	p.modelReady = false
+	p.selfOnlyModel = bivariateFit{}
+	p.selfOnlyReady = false
+	p.eventsSinceFit = 0
+	p.fitAtSec = 0
+	p.fitSpanSec = 0
+
+	return errnie.Err(errnie.Validation, reason, nil)
 }

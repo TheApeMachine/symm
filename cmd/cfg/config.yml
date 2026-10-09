@@ -287,6 +287,12 @@ learning:
   rehearsal_dropout: false
   # Precursor horizon: maximum transitions leading up to ignition B taught as context.
   precursor_horizon: 8
+  # Live matching acts only once every stored path under the live token path
+  # ends in the same action AND that path is at least this many tokens long.
+  # Short prefixes are shared by almost every stored path (early on nearly all
+  # of them read "enter"), so a 1-2 token agreement is coincidence, not a match.
+  # Required: there is no default in code.
+  minimum_path_confidence: 3
 
 cognition:
   # A binary confidence of 0.5 is exactly indifferent. Cognition must exceed

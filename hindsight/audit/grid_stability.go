@@ -2,6 +2,7 @@ package audit
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
 
@@ -97,12 +98,10 @@ func AnalyzeGridStability(
 	})
 
 	summary := fmt.Sprintf(
-		"Grid reproducibility measured across %d disjoint comparisons. "+
-			"Largest half-vs-half: %d/%d cells, shared=%d (%.1f%%), ARI=%.3f, randomized mean ARI=%.3f.",
-		len(curve),
-		primary.gridA.CellCount, primary.gridB.CellCount,
-		primary.sharedCells, primary.overlap*100,
-		primary.ari, primary.nullMean,
+		"Grid mapping reproducibility: %d/%d shared cells (%.1f%% overlap), deterministic partition ARI=%.3f. "+
+			"Cross-period excitation stationarity: JSD=%.3f bits, TVD=%.3f (stationary: %t).",
+		primary.sharedCells, primary.gridA.CellCount, primary.overlap*100, primary.ari,
+		primary.jsd, primary.tvd, primary.jsd < 0.15,
 	)
 
 	return Stage3GridStability{
@@ -113,6 +112,9 @@ func AnalyzeGridStability(
 		RandIndex:            primary.rand,
 		AdjustedRandIdx:      primary.ari,
 		NullAdjustedRandMean: primary.nullMean,
+		DistributionJSD:      primary.jsd,
+		DistributionTVD:      primary.tvd,
+		IsStationary:         primary.jsd < 0.15,
 		StabilityCurve:       curve,
 		SummaryText:          summary,
 		Status:               "MEASURED",
@@ -128,6 +130,8 @@ type gridComparison struct {
 	rand        float64
 	ari         float64
 	nullMean    float64
+	jsd         float64
+	tvd         float64
 }
 
 func compareGridWindows(
@@ -162,6 +166,10 @@ func compareGridWindows(
 		partitionsA, partitionsB, sharedKeys, permutations, seed,
 	)
 
+	distA := extractRegionDistribution(grid, ticksA, tickMeasurements)
+	distB := extractRegionDistribution(grid, ticksB, tickMeasurements)
+	jsd, tvd := computeDistributionDivergence(distA, distB)
+
 	return gridComparison{
 		gridA: statA, gridB: statB,
 		sharedCells: len(sharedKeys),
@@ -169,6 +177,8 @@ func compareGridWindows(
 		rand:        rawRand,
 		ari:         ari,
 		nullMean:    nullMean,
+		jsd:         jsd,
+		tvd:         tvd,
 	}
 }
 
@@ -269,6 +279,91 @@ func extractPartitions(
 	}
 
 	return result
+}
+
+func extractRegionDistribution(
+	grid *store.Grid,
+	ticks []int64,
+	tickMeasurements map[int64][]*data.Measurement,
+) [13]float64 {
+	var counts [13]float64
+	total := 0.0
+
+	for _, tick := range ticks {
+		measGroup := tickMeasurements[tick]
+		if len(measGroup) == 0 {
+			continue
+		}
+
+		bySymbol := make(map[string][]*data.Measurement)
+		for _, m := range measGroup {
+			if m != nil {
+				bySymbol[m.Label] = append(bySymbol[m.Label], m)
+			}
+		}
+
+		for sym, symMeas := range bySymbol {
+			if len(symMeas) == 0 {
+				continue
+			}
+			frame := data.NewMeasurement(
+				symMeas[0].Epoch,
+				sym,
+				"stability",
+				symMeas[0].SeqIdx,
+				tick,
+			)
+			frame.At = symMeas[0].At
+			frame.From = symMeas[0].From
+			frame.Peers(symMeas...)
+			frame.Write()
+			tokenBytes := grid.Observe(frame)
+			if len(tokenBytes) >= 3 && tokenBytes[0] == 'R' {
+				var reg uint8
+				if tokenBytes[1] == '0' {
+					reg = tokenBytes[2] - '0'
+				} else {
+					reg = 10 + (tokenBytes[2] - '0')
+				}
+				if reg >= 1 && reg <= 12 {
+					counts[reg]++
+					total++
+				}
+			}
+		}
+	}
+
+	if total > 0 {
+		for r := 1; r <= 12; r++ {
+			counts[r] /= total
+		}
+	}
+
+	return counts
+}
+
+func computeDistributionDivergence(distA, distB [13]float64) (float64, float64) {
+	jsd := 0.0
+	tvd := 0.0
+
+	for r := 1; r <= 12; r++ {
+		p := distA[r]
+		q := distB[r]
+		tvd += math.Abs(p - q)
+
+		m := 0.5 * (p + q)
+		if m > 0 {
+			if p > 0 {
+				jsd += 0.5 * p * math.Log2(p/m)
+			}
+			if q > 0 {
+				jsd += 0.5 * q * math.Log2(q/m)
+			}
+		}
+	}
+
+	tvd *= 0.5
+	return jsd, tvd
 }
 
 /*

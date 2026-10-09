@@ -118,14 +118,21 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	return prior.Next(signal.Name(), map[string]float64{
+	out := map[string]float64{
 		"book_shape_distance": res[0],
 		"book_shape_ks":       res[1],
 		"concentration:bid":   res[2],
 		"concentration:ask":   res[3],
 		"entropy:bid":         res[4],
 		"entropy:ask":         res[5],
-	})
+	}
+
+	// Calculate appends the change only once a prior shape exists.
+	if len(res) > 6 {
+		out["morphology_change"] = res[6]
+	}
+
+	return prior.Next(signal.Name(), out)
 }
 
 func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float64, error) {

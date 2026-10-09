@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/signal/sentiment"
 )
 
@@ -56,17 +57,28 @@ func TestSentimentSignalMetrics(t *testing.T) {
 					So(res.Source, ShouldEqual, "sentiment")
 					So(res.Label, ShouldEqual, symbol)
 
+					// No member has a cadence yet, so there is no common
+					// horizon: only the membership is a fact.
 					if step == 0 {
-						count, held := metric(res, "valid_member_count")
+						count, held := metric(res, "cohort_member_count")
 						So(held, ShouldBeTrue)
-						So(count, ShouldEqual, 0)
+						So(count, ShouldEqual, idx+1)
 
-						b, held := metric(res, "breadth")
+						for _, label := range []string{
+							"cohort_horizon_seconds", "valid_member_count", "breadth", "median_return",
+						} {
+							_, held := metric(res, label)
+							So(held, ShouldBeFalse)
+						}
+					}
+
+					// Every member trades every 500ms: the horizon is that
+					// cadence, and the cut spans it.
+					if step > 1 {
+						horizon, held := metric(res, "cohort_horizon_seconds")
 						So(held, ShouldBeTrue)
-						So(b, ShouldEqual, 0)
-						m, held := metric(res, "median_return")
-						So(held, ShouldBeTrue)
-						So(m, ShouldEqual, 0)
+						So(horizon, ShouldAlmostEqual, 0.5, 1e-9)
+						So(res.From, ShouldEqual, at.Add(-500*time.Millisecond))
 					}
 
 					if step > 1 && idx == len(symbols)-1 {
@@ -136,6 +148,38 @@ func TestSentimentSignalMetrics(t *testing.T) {
 						median, held := metric(res, "median_return")
 						So(held, ShouldBeTrue)
 						So(median, ShouldBeGreaterThan, 0)
+
+						_, held = metric(res, "directional_consensus")
+						So(held, ShouldBeTrue)
+						So(store.NewGrid().PinRegion("sentiment", "directional_consensus"), ShouldEqual, uint8(10))
+
+						_, held = metric(res, "asof_age_seconds")
+						So(held, ShouldBeFalse)
+					}
+				}
+			}
+		})
+
+		Convey("A member without a fresh as-of price is excluded, not counted as unchanged", func() {
+			for step := range 4 {
+				for idx, symbol := range symbols {
+					// SOL/USD stops trading after the first round.
+					if symbol == "SOL/USD" && step > 0 {
+						continue
+					}
+
+					seq := int64(step*len(symbols) + idx + 200)
+					at := origin.Add(time.Duration(seq) * 100 * time.Millisecond)
+					res := instrument.Step(trade(symbol, at, seq, 100.0*(1.0+float64(step)*0.01)))
+					So(res, ShouldNotBeNil)
+
+					if step == 3 && idx == len(symbols)-1 {
+						valid, _ := metric(res, "valid_member_count")
+						excluded, _ := metric(res, "excluded_member_count")
+						unchanged, _ := metric(res, "unchanged_count")
+						So(valid, ShouldEqual, 4)
+						So(excluded, ShouldEqual, 1)
+						So(unchanged, ShouldEqual, 0)
 					}
 				}
 			}

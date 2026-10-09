@@ -402,23 +402,6 @@ func (desk *Desk) PositionsVersion() uint64 {
 }
 
 /*
-DecisionsVersion reports the monotonic revision of the strategy decisions.
-*/
-func (desk *Desk) DecisionsVersion() uint64 {
-	return 0
-}
-
-/*
-DecisionsWire exports recent strategy decisions for streaming to the UI.
-*/
-func (desk *Desk) DecisionsWire() *wire.StrategyFrameT {
-	return &wire.StrategyFrameT{
-		Evaluated: false,
-		Decisions: []*wire.DecisionT{},
-	}
-}
-
-/*
 PositionsWire returns the active open positions and spot holdings formatted
 for the telemetry websocket feed.
 */

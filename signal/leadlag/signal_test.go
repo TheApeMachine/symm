@@ -41,6 +41,18 @@ func metric(measurement *data.Measurement, label string) (float64, bool) {
 	return 0, false
 }
 
+/*
+summaryKeys are the cross-peer summaries leadlag emits once a peer is defined.
+*/
+var summaryKeys = []string{
+	"defined_peer_count",
+	"best_lag_seconds_median",
+	"best_lag_seconds_mad",
+	"led_peer_share",
+	"correlation_gain_mean",
+	"correlation_gain_median",
+}
+
 func TestLeadLagSignalMetrics(t *testing.T) {
 	Convey("Leadlag instrument computes principled asynchronous Hayashi-Yoshida cross lead-lag", t, func() {
 		ctx := context.Background()
@@ -84,36 +96,52 @@ func TestLeadLagSignalMetrics(t *testing.T) {
 				So(held, ShouldBeTrue)
 				So(lastETH, ShouldEqual, ethPrice)
 
+				for _, res := range []*data.Measurement{resBTC, resETH} {
+					for entry := range res.Read() {
+						So(entry.Key, ShouldNotContainSubstring, "@")
+					}
+				}
+
+				if step == 0 {
+					// BTC arrives before any peer path exists: no defined peer,
+					// so no summary is emitted at all.
+					for _, key := range summaryKeys {
+						_, held := metric(resBTC, key)
+						So(held, ShouldBeFalse)
+					}
+				}
+
 				if step < 30 {
 					continue
 				}
 
-				best, ok := metric(resETH, "best_lag_correlation@BTC/USD")
+				peers, ok := metric(resETH, "defined_peer_count")
 				if !ok {
 					continue
 				}
 
 				measured++
-				So(best, ShouldBeGreaterThan, 0.5)
+				So(peers, ShouldEqual, 1)
 
-				lag, held := metric(resETH, "best_lag_seconds@BTC/USD")
+				lag, held := metric(resETH, "best_lag_seconds_median")
 				So(held, ShouldBeTrue)
 				So(lag, ShouldBeGreaterThan, 0)
 
-				ref, held := metric(resETH, "reference_symbol@BTC/USD")
+				spread, held := metric(resETH, "best_lag_seconds_mad")
 				So(held, ShouldBeTrue)
-				So(ref, ShouldEqual, 1.0)
+				So(spread, ShouldEqual, 0)
 
-				gain, held := metric(resETH, "absolute_correlation_gain@BTC/USD")
+				gain, held := metric(resETH, "correlation_gain_median")
 				So(held, ShouldBeTrue)
 				So(gain, ShouldBeGreaterThan, 0)
 
-				fraction, held := metric(resETH, "lag_fraction@BTC/USD")
+				share, held := metric(resETH, "led_peer_share")
 				So(held, ShouldBeTrue)
-				So(fraction, ShouldBeBetweenOrEqual, 0.0, 1.0)
+				So(share, ShouldEqual, 0)
 
-				_, held = metric(resETH, "contemporaneous_correlation@BTC/USD")
+				leaderLag, held := metric(resBTC, "best_lag_seconds_median")
 				So(held, ShouldBeTrue)
+				So(leaderLag, ShouldBeLessThan, 0)
 			}
 
 			So(measured, ShouldBeGreaterThan, 0)

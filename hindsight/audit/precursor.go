@@ -31,6 +31,8 @@ type excursionInterval struct {
 	startTick int64
 	bTick     int64
 	cTick     int64
+	bPrice    float64
+	cPrice    float64
 }
 
 /*
@@ -55,21 +57,20 @@ func AnalyzePrecursorSeparation(
 	detections []*data.Measurement,
 	takerFee ...float64,
 ) Stage5PrecursorSeparation {
-	if catalog == nil || grid == nil {
-		return insufficientPrecursor("Catalog/grid unavailable.")
+	if grid == nil {
+		return insufficientPrecursor("Grid unavailable.")
 	}
 
-	if permutations <= 0 {
-		permutations = 50
+	if len(takerFee) == 0 || takerFee[0] <= 0 {
+		return insufficientPrecursor("Taker fee must be strictly positive and declared with explicit provenance.")
 	}
 
-	fee := 0.008
-
-	if len(takerFee) > 0 && takerFee[0] > 0 {
-		fee = takerFee[0]
-	}
+	fee := takerFee[0]
 
 	if detections == nil {
+		if catalog == nil {
+			return insufficientPrecursor("Catalog unavailable.")
+		}
 		var minTick, maxTick int64
 		if len(ticks) > 0 {
 			minTick = ticks[0]
@@ -116,8 +117,17 @@ func AnalyzePrecursorSeparation(
 			continue
 		}
 
+		bPrice := getMeasurementMetric(det, "b_price")
+		cPrice := getMeasurementMetric(det, "c_price")
+
 		excursions = append(excursions, excursionInterval{
-			symbol: det.Label, class: class, startTick: startTick, bTick: bTick, cTick: cTick,
+			symbol:    det.Label,
+			class:     class,
+			startTick: startTick,
+			bTick:     bTick,
+			cTick:     cTick,
+			bPrice:    bPrice,
+			cPrice:    cPrice,
 		})
 	}
 
@@ -211,6 +221,9 @@ func AnalyzePrecursorSeparation(
 		permutations,
 	)
 
+	skill := evaluatePredictiveSkill(ignitionTokens, ignitionControls)
+	economic := evaluateEconomicRelevance(excursions, fee)
+
 	measured := ignition.Status == "MEASURED"
 
 	return Stage5PrecursorSeparation{
@@ -218,15 +231,20 @@ func AnalyzePrecursorSeparation(
 		ExcursionsFound:      classList,
 		IgnitionHypothesis:   ignition,
 		ExhaustionHypothesis: exhaustion,
+		PredictiveSkill:      skill,
+		EconomicRelevance:    economic,
 		BackgroundTokens:     backgroundTokens,
 		SummaryText: fmt.Sprintf(
 			"Precursor: %d detections (%s). A->B: %s, JSD %.3f vs |null| p95 %.3f, N=%d/%d. "+
-				"B->C: %s, JSD %.3f vs |null| p95 %.3f, N=%d/%d. Background observations=%d.",
+				"B->C: %s, JSD %.3f vs |null| p95 %.3f, N=%d/%d. Skill: BalAcc %.1f%%, MCC %.3f, Gain %.3fb. "+
+				"Friction: Clearance %.1f%% (N=%d, fee=%.2fbps, net=%.2f%%). Background=%d.",
 			len(detections), strings.Join(classList, "/"),
 			ignition.Status, ignition.DivergenceBits, ignition.NullDivergence95,
 			ignition.EventTokenCount, ignition.ControlTokenCount,
 			exhaustion.Status, exhaustion.DivergenceBits, exhaustion.NullDivergence95,
 			exhaustion.EventTokenCount, exhaustion.ControlTokenCount,
+			skill.BalancedAccuracy*100.0, skill.MCC, skill.PredictiveGainBits,
+			economic.FrictionClearanceRate*100.0, economic.EvaluatedExcursions, economic.RoundTripFeeRate*10000.0, economic.NetMeanReturn*100.0,
 			totalTokenCount(backgroundTokens),
 		),
 		Passed: measured,
@@ -244,6 +262,12 @@ func insufficientPrecursor(reason string) Stage5PrecursorSeparation {
 			Name:        "B -> C Holding Deterioration",
 			Description: "Late versus early holding state inside profitable up excursions",
 			Status:      "INSUFFICIENT_DATA",
+		},
+		PredictiveSkill: PrecursorPredictiveSkill{
+			Status: "INSUFFICIENT_DATA",
+		},
+		EconomicRelevance: PrecursorEconomicRelevance{
+			Status: "INSUFFICIENT_DATA",
 		},
 		SummaryText: "Precursor Separation: INSUFFICIENT_DATA (" + reason + ")",
 		Passed:      false,
@@ -281,8 +305,10 @@ func sampledBackgroundTokens(
 				symMeas[0].SeqIdx,
 				tick,
 			)
+			train.At = symMeas[0].At
+			train.From = symMeas[0].From
 			train.Peers(symMeas...)
-			train.Write()
+			train = train.Write()
 
 			tokenBytes := grid.Observe(train)
 
@@ -365,8 +391,10 @@ func archivedIntervalTokens(
 			signals[0].SeqIdx,
 			tick,
 		)
+		train.At = signals[0].At
+		train.From = signals[0].From
 		train.Peers(signals...)
-		train.Write()
+		train = train.Write()
 
 		tokenBytes := grid.Observe(train)
 
@@ -465,13 +493,237 @@ func evaluateHypothesis(
 	}
 }
 
+func evaluatePredictiveSkill(
+	eventTokens map[string]int,
+	controlTokens map[string]int,
+) PrecursorPredictiveSkill {
+	eventCount := totalTokenCount(eventTokens)
+	controlCount := totalTokenCount(controlTokens)
+	totalSamples := eventCount + controlCount
+
+	if eventCount < 5 || controlCount < 5 {
+		return PrecursorPredictiveSkill{
+			EvaluatedSamples: totalSamples,
+			Status:           "INSUFFICIENT_DATA",
+			Passed:           false,
+		}
+	}
+
+	allTokens := make(map[string]struct{})
+
+	for token := range eventTokens {
+		allTokens[token] = struct{}{}
+	}
+
+	for token := range controlTokens {
+		allTokens[token] = struct{}{}
+	}
+
+	predictsEvent := make(map[string]bool)
+
+	type tokenScore struct {
+		token string
+		ratio float64
+	}
+	var scoredTokens []tokenScore
+
+	for token := range allTokens {
+		probEvent := float64(eventTokens[token]) / float64(eventCount)
+		probControl := float64(controlTokens[token]) / float64(controlCount)
+
+		if probEvent > probControl {
+			predictsEvent[token] = true
+			likelihoodRatio := 1000.0
+
+			if probControl > 0 {
+				likelihoodRatio = probEvent / probControl
+			}
+
+			scoredTokens = append(scoredTokens, tokenScore{token: token, ratio: likelihoodRatio})
+		}
+	}
+
+	sort.Slice(scoredTokens, func(firstIndex, secondIndex int) bool {
+		return scoredTokens[firstIndex].ratio > scoredTokens[secondIndex].ratio
+	})
+
+	var topTokens []string
+
+	for scoreIndex := 0; scoreIndex < len(scoredTokens) && scoreIndex < 5; scoreIndex++ {
+		topTokens = append(topTokens, scoredTokens[scoreIndex].token)
+	}
+
+	truePositives := 0
+	falsePositives := 0
+	falseNegatives := 0
+	trueNegatives := 0
+
+	for token, count := range eventTokens {
+		if predictsEvent[token] {
+			truePositives += count
+			continue
+		}
+
+		falseNegatives += count
+	}
+
+	for token, count := range controlTokens {
+		if predictsEvent[token] {
+			falsePositives += count
+			continue
+		}
+
+		trueNegatives += count
+	}
+
+	precision := 0.0
+
+	if truePositives+falsePositives > 0 {
+		precision = float64(truePositives) / float64(truePositives+falsePositives)
+	}
+
+	recall := 0.0
+
+	if truePositives+falseNegatives > 0 {
+		recall = float64(truePositives) / float64(truePositives+falseNegatives)
+	}
+
+	specificity := 0.0
+
+	if trueNegatives+falsePositives > 0 {
+		specificity = float64(trueNegatives) / float64(trueNegatives+falsePositives)
+	}
+
+	balancedAcc := (recall + specificity) / 2.0
+
+	numeratorMCC := float64(truePositives*trueNegatives - falsePositives*falseNegatives)
+	denominatorMCC := math.Sqrt(
+		float64(truePositives+falsePositives) *
+			float64(truePositives+falseNegatives) *
+			float64(trueNegatives+falsePositives) *
+			float64(trueNegatives+falseNegatives),
+	)
+
+	mcc := 0.0
+
+	if denominatorMCC > 0 {
+		mcc = numeratorMCC / denominatorMCC
+	}
+
+	priorBaseRate := float64(eventCount) / float64(totalSamples)
+
+	// Mutual information I(Token; Excursion)
+	mutualInfo := 0.0
+	priorEvent := float64(eventCount) / float64(totalSamples)
+	priorControl := float64(controlCount) / float64(totalSamples)
+
+	for token := range allTokens {
+		countEvent := eventTokens[token]
+		countControl := controlTokens[token]
+		totalTokenObs := countEvent + countControl
+		probToken := float64(totalTokenObs) / float64(totalSamples)
+
+		if countEvent > 0 {
+			jointProbEvent := float64(countEvent) / float64(totalSamples)
+			mutualInfo += jointProbEvent * math.Log2(jointProbEvent/(probToken*priorEvent))
+		}
+
+		if countControl > 0 {
+			jointProbControl := float64(countControl) / float64(totalSamples)
+			mutualInfo += jointProbControl * math.Log2(jointProbControl/(probToken*priorControl))
+		}
+	}
+
+	if mutualInfo < 0 {
+		mutualInfo = 0
+	}
+
+	return PrecursorPredictiveSkill{
+		EvaluatedSamples:   totalSamples,
+		TopPrecursorTokens: topTokens,
+		Precision:          precision,
+		Recall:             recall,
+		BalancedAccuracy:   balancedAcc,
+		MCC:                mcc,
+		PriorBaseRate:      priorBaseRate,
+		PredictiveGainBits: mutualInfo,
+		Status:             "MEASURED",
+		Passed:             balancedAcc > 0.50 && mcc > 0.0,
+	}
+}
+
+func evaluateEconomicRelevance(
+	excursions []excursionInterval,
+	takerFee float64,
+) PrecursorEconomicRelevance {
+	roundTripFee := 2.0 * takerFee
+	evaluated := 0
+	grossSum := 0.0
+	netSum := 0.0
+	profitable := 0
+	unprofitable := 0
+
+	for _, excursion := range excursions {
+		if excursion.bPrice <= 0 || excursion.cPrice <= 0 {
+			continue
+		}
+
+		if excursion.class != "up" && excursion.class != "up_friction" {
+			continue
+		}
+
+		evaluated++
+		grossReturn := (excursion.cPrice - excursion.bPrice) / excursion.bPrice
+		netReturn := grossReturn - roundTripFee
+		grossSum += grossReturn
+		netSum += netReturn
+
+		if netReturn > 0 {
+			profitable++
+			continue
+		}
+
+		unprofitable++
+	}
+
+	if evaluated == 0 {
+		return PrecursorEconomicRelevance{
+			TakerFeeRate:     takerFee,
+			RoundTripFeeRate: roundTripFee,
+			Status:           "INSUFFICIENT_DATA",
+			Passed:           false,
+		}
+	}
+
+	meanGross := grossSum / float64(evaluated)
+	meanNet := netSum / float64(evaluated)
+	clearanceRate := float64(profitable) / float64(evaluated)
+
+	return PrecursorEconomicRelevance{
+		TakerFeeRate:           takerFee,
+		RoundTripFeeRate:       roundTripFee,
+		EvaluatedExcursions:    evaluated,
+		GrossMeanReturn:        meanGross,
+		NetMeanReturn:          meanNet,
+		FrictionClearanceRate:  clearanceRate,
+		ProfitableExcursions:   profitable,
+		UnprofitableExcursions: unprofitable,
+		Status:                 "MEASURED",
+		Passed:                 clearanceRate > 0.50,
+	}
+}
+
 /*
 offlinePrice constructs an in-memory Price system with offline instrument rules and
 configured fee schedules without dialing exchange WebSockets or REST endpoints.
 */
-func offlinePrice(ctx context.Context, takerFee float64, symbols ...string) *broker.Price {
+func offlinePrice(ctx context.Context, takerFee float64, symbols ...string) (*broker.Price, error) {
 	if takerFee <= 0 {
-		takerFee = 0.008
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[audit] taker fee must be strictly positive",
+			nil,
+		))
 	}
 
 	normalizer := spot.NewNormalizer()
@@ -532,14 +784,16 @@ func offlinePrice(ctx context.Context, takerFee float64, symbols ...string) *bro
 			continue
 		}
 
+		// takerFee is a fraction (0.0026); Kraken's TradeVolumeFee.Fee, which
+		// Price.WithFee reads, is in percent (0.26).
 		price.SetFee(sym, kraken.TradeVolumeFee{
-			Fee: decimal.NewFromFloat64(takerFee),
+			Fee: decimal.NewFromFloat64(takerFee * 100),
 		})
 	}
 
 	price.SetReferenceCash(decimal.NewFromFloat64(10000))
 	price.Transition(runtime.READY)
-	return price
+	return price, nil
 }
 
 func detectInMemory(
@@ -633,7 +887,11 @@ func detectInMemory(
 	}
 	slices.Sort(symbols)
 
-	price := offlinePrice(ctx, takerFee, symbols...)
+	price, err := offlinePrice(ctx, takerFee, symbols...)
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
 	storeTee := hindsight.NewStoreTee(ctx, "auditDetectorTee")
 	storeTee.Transition(runtime.READY)
 
@@ -697,48 +955,52 @@ func getMeasurementMetric(m *data.Measurement, key string) float64 {
 /*
 computeJSD calculates the Jensen-Shannon Divergence in bits between two token distributions.
 */
-func computeJSD(pCounts, qCounts map[string]int) float64 {
-	totalP := 0
-	for _, c := range pCounts {
-		totalP += c
-	}
-	totalQ := 0
-	for _, c := range qCounts {
-		totalQ += c
+func computeJSD(distributionP, distributionQ map[string]int) float64 {
+	totalObservationsP := 0
+	for _, count := range distributionP {
+		totalObservationsP += count
 	}
 
-	if totalP == 0 || totalQ == 0 {
+	totalObservationsQ := 0
+	for _, count := range distributionQ {
+		totalObservationsQ += count
+	}
+
+	if totalObservationsP == 0 || totalObservationsQ == 0 {
 		return 0.0
 	}
 
 	allKeys := make(map[string]struct{})
-	for k := range pCounts {
-		allKeys[k] = struct{}{}
+	for key := range distributionP {
+		allKeys[key] = struct{}{}
 	}
-	for k := range qCounts {
-		allKeys[k] = struct{}{}
+	for key := range distributionQ {
+		allKeys[key] = struct{}{}
 	}
 
-	klPM := 0.0
-	klQM := 0.0
+	divergencePM := 0.0
+	divergenceQM := 0.0
 
-	for k := range allKeys {
-		p := float64(pCounts[k]) / float64(totalP)
-		q := float64(qCounts[k]) / float64(totalQ)
-		m := 0.5 * (p + q)
+	for key := range allKeys {
+		probP := float64(distributionP[key]) / float64(totalObservationsP)
+		probQ := float64(distributionQ[key]) / float64(totalObservationsQ)
+		probMid := 0.5 * (probP + probQ)
 
-		if p > 0 && m > 0 {
-			klPM += p * math.Log2(p/m)
+		if probP > 0 && probMid > 0 {
+			divergencePM += probP * math.Log2(probP/probMid)
 		}
-		if q > 0 && m > 0 {
-			klQM += q * math.Log2(q/m)
+
+		if probQ > 0 && probMid > 0 {
+			divergenceQM += probQ * math.Log2(probQ/probMid)
 		}
 	}
 
-	jsd := 0.5*klPM + 0.5*klQM
+	jsd := 0.5*divergencePM + 0.5*divergenceQM
+
 	if jsd < 0 {
 		return 0.0
 	}
+
 	return jsd
 }
 
@@ -750,9 +1012,12 @@ func loadOrDetectExcursions(
 	takerFee float64,
 	bounds ...int64,
 ) ([]*data.Measurement, error) {
-	fee := takerFee
-	if fee <= 0 {
-		fee = 0.008
+	if takerFee <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[audit] taker fee must be strictly positive",
+			nil,
+		))
 	}
 
 	var minTick, maxTick int64
@@ -782,7 +1047,7 @@ func loadOrDetectExcursions(
 	}
 
 	if len(detections) == 0 {
-		inMemory, err := detectInMemory(ctx, catalog, epoch, symbol, fee, minTick, maxTick)
+		inMemory, err := detectInMemory(ctx, catalog, epoch, symbol, takerFee, minTick, maxTick)
 
 		if err != nil {
 			return nil, errnie.Error(err)

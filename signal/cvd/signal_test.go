@@ -1,6 +1,9 @@
 package cvd
 
 import (
+	"fmt"
+	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -8,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/tests/market"
 )
 
 func TestCVDSignalMetrics(t *testing.T) {
@@ -44,8 +48,204 @@ func TestCVDSignalMetrics(t *testing.T) {
 				metrics = append(metrics, m.Metric.Raw)
 			}
 
-			// We expect the 42 output keys + the 2 original metrics (price, qty) from the prior measurement
-			So(len(metrics), ShouldEqual, 41+2)
+			// A symbol's first trade defines only its accounting: 17 values.
+			// Rates, responses, and baselines need an earlier trade; the
+			// trade's own price and qty stay on the trade frame.
+			So(len(metrics), ShouldEqual, 17)
+
+			for _, label := range []string{
+				"trade_rate", "gross_notional_rate", "midpoint_log_return",
+				"signed_net_fraction_baseline", "gross_notional_rate_ratio",
+			} {
+				entry := data.Pull(result.Read(label))
+				So(entry == nil || entry.Err != nil || entry.Metric == nil, ShouldBeTrue)
+			}
+		})
+	})
+}
+
+/*
+stepSymbols hands every execution of the TestSignalStep setup its own symbols:
+standardization moments live per (epoch, source, symbol, metric) for the life
+of the process, so reusing a symbol would continue an earlier execution's
+streams instead of starting them cold.
+*/
+var stepSymbols atomic.Int64
+
+func TestSignalStep(t *testing.T) {
+	Convey("Given CVD stepping a multi-leg trade tape through the real Step boundary", t, func() {
+		const precursor = 4
+
+		run := stepSymbols.Add(1)
+		symbol := func(name string) string {
+			return fmt.Sprintf("%s%d/USD", name, run)
+		}
+
+		replay := func(tape []*data.Measurement) []map[string]float64 {
+			signal := NewSignal(t.Context())
+			signal.Transition(runtime.READY)
+			outputs := make([]map[string]float64, 0, len(tape))
+
+			for _, trade := range tape {
+				result := signal.Step(trade)
+				So(result, ShouldNotBeNil)
+				So(result.Error(), ShouldBeNil)
+
+				zscores := make(map[string]float64)
+
+				for entry := range result.Read() {
+					zscores[entry.Key] = entry.Metric.Standardized
+				}
+
+				outputs = append(outputs, zscores)
+			}
+
+			return outputs
+		}
+
+		tape := market.NewProfitableUpperTape(symbol("AAA"), 100, 0.1)
+		altered := append(
+			market.NewProfitableUpperTape(symbol("BBB"), 100, 0.1)[:precursor],
+			market.NewFastPumpTape(symbol("BBB"), 100, 0.1, 0.15)[precursor:]...,
+		)
+
+		var raws []map[string]float64
+		signal := NewSignal(t.Context())
+		signal.Transition(runtime.READY)
+
+		for _, trade := range market.NewProfitableUpperTape(symbol("CCC"), 100, 0.1) {
+			result := signal.Step(trade)
+			values := make(map[string]float64)
+
+			for entry := range result.Read() {
+				values[entry.Key] = entry.Metric.Raw
+			}
+
+			raws = append(raws, values)
+		}
+
+		observed := replay(tape)
+		divergent := replay(altered)
+
+		Convey("The output carries only CVD's own metrics, not the trade's price and qty", func() {
+			for _, zscores := range observed {
+				_, price := zscores["price"]
+				_, qty := zscores["qty"]
+				So(price, ShouldBeFalse)
+				So(qty, ShouldBeFalse)
+			}
+		})
+
+		Convey("Every z-score is the observation against its own stream's earlier values only", func() {
+			for step, zscores := range observed {
+				for key, zscore := range zscores {
+					history := make([]float64, 0, step)
+
+					// A stream only sees the steps that defined its metric.
+					for _, earlier := range raws[:step] {
+						if value, defined := earlier[key]; defined {
+							history = append(history, value)
+						}
+					}
+
+					mean, deviation := 0.0, 0.0
+
+					for _, value := range history {
+						mean += value
+					}
+
+					mean /= float64(max(len(history), 1))
+
+					for _, value := range history {
+						deviation += (value - mean) * (value - mean)
+					}
+
+					if len(history) < 2 || deviation == 0 {
+						So(zscore, ShouldEqual, 0)
+						continue
+					}
+
+					deviation = math.Sqrt(deviation / float64(len(history)-1))
+					want := (raws[step][key] - mean) / deviation
+					So(zscore, ShouldAlmostEqual, want, 1e-9*math.Max(1, math.Abs(want)))
+				}
+			}
+		})
+
+		Convey("Standardized magnitudes are measured, so a z-score can exceed one", func() {
+			largest := 0.0
+
+			for _, zscores := range observed {
+				for _, zscore := range zscores {
+					largest = math.Max(largest, math.Abs(zscore))
+				}
+			}
+
+			So(largest, ShouldBeGreaterThan, 1)
+		})
+
+		Convey("A different future leaves every earlier z-score unchanged", func() {
+			So(observed[precursor], ShouldNotResemble, divergent[precursor])
+
+			for step := range precursor {
+				So(divergent[step], ShouldResemble, observed[step])
+			}
+		})
+	})
+}
+
+func TestCVDUndefinedRates(t *testing.T) {
+	Convey("Given CVD stepping trades with and without elapsed time", t, func() {
+		signal := NewSignal(t.Context())
+		signal.Transition(runtime.READY)
+		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+		step := func(at time.Time, qty float64) map[string]float64 {
+			measurement := data.NewMeasurement(
+				1, "RATE/USD", "spot:trade", system.SeqIdx.Add(1), system.Tick.Add(1),
+				&data.StringEntry{Key: "side", Value: "buy"},
+			)
+			measurement.At = at
+			measurement.From = at
+			measurement.Write(
+				data.NewMetric("price", 100, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
+			)
+
+			result := signal.Step(measurement)
+			So(result, ShouldNotBeNil)
+			values := make(map[string]float64)
+
+			for entry := range result.Read() {
+				values[entry.Key] = entry.Metric.Raw
+			}
+
+			return values
+		}
+
+		Convey("A rate needs a strictly earlier trade, never an assumed second", func() {
+			first := step(origin, 1)
+			same := step(origin, 2)
+			later := step(origin.Add(2*time.Second), 3)
+
+			for _, values := range []map[string]float64{first, same} {
+				_, rated := values["gross_notional_rate"]
+				So(rated, ShouldBeFalse)
+			}
+
+			So(later["gross_notional_rate"], ShouldAlmostEqual, 300.0/2.0, 1e-9)
+			So(later["trade_rate"], ShouldAlmostEqual, 0.5, 1e-12)
+
+			// One prior rate is a baseline but not yet a dispersion.
+			_, ratio := later["gross_notional_rate_ratio"]
+			_, zscore := later["gross_notional_rate_zscore"]
+			So(ratio, ShouldBeFalse)
+			So(zscore, ShouldBeFalse)
+
+			after := step(origin.Add(3*time.Second), 1)
+			So(after["gross_notional_rate_ratio"], ShouldAlmostEqual, 100.0/150.0, 1e-9)
+			_, zscore = after["gross_notional_rate_zscore"]
+			So(zscore, ShouldBeFalse)
 		})
 	})
 }

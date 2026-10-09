@@ -320,6 +320,7 @@ var (
 			hub.SetStoreTee(ingressStoreTee)
 			hub.SetEquitySource(balance)
 			hub.SetPositionSource(desk)
+			hub.SetDecisionSource(training)
 			hub.SetExitHandler(func(symbol string) {
 				if err := desk.Exit(symbol); err != nil {
 					errnie.Error(err)

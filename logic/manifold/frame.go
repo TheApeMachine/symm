@@ -34,10 +34,10 @@ func newAxis(span float64) *axis {
 }
 
 func (axis *axis) observe(value float64) (position, zscore float64, moments [3]float64, err error) {
-	var reading *[10]float64
+	var reading *statistic.MomentReading
 
 	for out := range axis.moments.Next(data.NewValue(value).Next(nil)) {
-		reading = (*[10]float64)(out)
+		reading = (*statistic.MomentReading)(out)
 	}
 
 	if err := axis.moments.Error(); err != nil {
@@ -53,25 +53,23 @@ func (axis *axis) observe(value float64) (position, zscore float64, moments [3]f
 		return 0, 0, [3]float64{}, err
 	}
 
-	moments = [3]float64{reading[0], reading[1], reading[2]}
-	return 0.5 * (1 + math.Tanh(result[6]/axis.span)), result[6], moments, nil
+	moments = [3]float64{reading.Count, reading.Mean, reading.M2}
+	return 0.5 * (1 + math.Tanh(result.ZScore/axis.span)), result.ZScore, moments, nil
 }
 
 func (axis *axis) probe(prior [3]float64, value float64) (position, zscore float64, err error) {
 	// Synthesize an Estimator-shaped reading so CausalResidual can score the
 	// probe against the last observed prior without training the estimator.
-	reading := [10]float64{
-		3: prior[0],
-		4: prior[1],
-		5: prior[2],
-		6: value,
+	reading := statistic.MomentReading{
+		Prior: statistic.Moments{Count: prior[0], Mean: prior[1], M2: prior[2]},
+		Value: value,
 	}
 	result, err := evaluateCausalResidual(axis.residual, &reading)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	return 0.5 * (1 + math.Tanh(result[6]/axis.span)), result[6], nil
+	return 0.5 * (1 + math.Tanh(result.ZScore/axis.span)), result.ZScore, nil
 }
 
 func (owner *frames) frame(symbol string) *coordinateFrame {
@@ -107,20 +105,20 @@ func (owner *frames) placePrice(symbol string, price float64) (position, deviati
 
 /*
 evaluateCausalResidual drives one Estimator reading through the causal residual
-primitive and returns the residual's *[8]float64 facts.
+primitive and returns the residual's facts.
 */
 func evaluateCausalResidual(
 	residual core.Primitive,
-	reading *[10]float64,
-) ([8]float64, error) {
-	var result [8]float64
+	reading *statistic.MomentReading,
+) (statistic.CausalResidualResult, error) {
+	var result statistic.CausalResidualResult
 
 	for out := range residual.Next(data.NewValue(*reading).Next(nil)) {
-		result = *(*[8]float64)(out)
+		result = *(*statistic.CausalResidualResult)(out)
 	}
 
 	if err := residual.Error(); err != nil {
-		return [8]float64{}, err
+		return statistic.CausalResidualResult{}, err
 	}
 
 	return result, nil

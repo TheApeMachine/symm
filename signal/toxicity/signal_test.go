@@ -91,17 +91,17 @@ func TestToxicitySignal(t *testing.T) {
 			So(metricValue(res1, "touch_quantity:bid"), ShouldEqual, touchQty)
 			So(metricValue(res1, "touch_quantity:ask"), ShouldEqual, touchQty)
 
-			So(metricValue(res1, "bracket_trade_quantity"), ShouldAlmostEqual, trade1Qty, 1e-9)
-			So(metricValue(res1, "matched_touch_trade_quantity:ask"), ShouldAlmostEqual, trade1Qty, 1e-9)
-			So(metricValue(res1, "touch_fill_quantity:ask"), ShouldAlmostEqual, trade1Qty, 1e-9)
-			So(metricValue(res1, "touch_fill_fraction:ask"), ShouldAlmostEqual, trade1Qty/touchQty, 1e-9)
+			// The first observation opens the first bracket: nothing is
+			// attributed to a touch that was not observed before the trade.
+			for _, label := range []string{
+				"bracket_trade_quantity", "touch_fill_quantity:ask", "touch_fill_fraction:ask",
+				"previous_best_price:bid", "touch_fill_rate:ask", "unfilled_residual_quantity:ask",
+			} {
+				_, held := metric(res1, label)
+				So(held, ShouldBeFalse)
+			}
 
-			So(metricValue(res1, "matched_touch_trade_quantity:bid"), ShouldAlmostEqual, 0.0, 1e-9)
-			So(metricValue(res1, "touch_fill_quantity:bid"), ShouldAlmostEqual, 0.0, 1e-9)
-			So(metricValue(res1, "touch_fill_fraction:bid"), ShouldAlmostEqual, 0.0, 1e-9)
-
-			So(metricValue(res1, "previous_best_price:bid"), ShouldEqual, 0.0)
-			So(metricValue(res1, "touch_fill_rate:ask"), ShouldEqual, 0.0)
+			So(res1.From, ShouldEqual, now)
 
 			trade2Qty := 2.5
 			trade2At := now.Add(100 * time.Millisecond)
@@ -109,18 +109,61 @@ func TestToxicitySignal(t *testing.T) {
 			So(res2, ShouldNotBeNil)
 			So(instrument.Error(), ShouldBeNil)
 
-			expectedCumQty := trade1Qty + trade2Qty
-			So(metricValue(res2, "touch_fill_quantity:ask"), ShouldAlmostEqual, expectedCumQty, 1e-9)
-			So(metricValue(res2, "touch_fill_fraction:ask"), ShouldAlmostEqual, expectedCumQty/touchQty, 1e-9)
-			So(metricValue(res2, "touch_fill_rate:ask"), ShouldAlmostEqual, expectedCumQty/0.1, 1e-6)
+			// Bracket (now, now+100ms]: one buy executed the previous ask.
+			So(metricValue(res2, "bracket_trade_quantity"), ShouldAlmostEqual, trade2Qty, 1e-9)
+			So(metricValue(res2, "matched_touch_trade_quantity:ask"), ShouldAlmostEqual, trade2Qty, 1e-9)
+			So(metricValue(res2, "touch_fill_quantity:ask"), ShouldAlmostEqual, trade2Qty, 1e-9)
+			So(metricValue(res2, "touch_fill_fraction:ask"), ShouldAlmostEqual, trade2Qty/touchQty, 1e-9)
+			So(metricValue(res2, "touch_fill_rate:ask"), ShouldAlmostEqual, trade2Qty/0.1, 1e-6)
+			So(metricValue(res2, "unfilled_residual_quantity:ask"), ShouldAlmostEqual, touchQty-trade2Qty, 1e-9)
+			So(metricValue(res2, "net_replenished_quantity:ask"), ShouldAlmostEqual, trade2Qty, 1e-9)
+			So(metricValue(res2, "touch_fill_quantity:bid"), ShouldAlmostEqual, 0.0, 1e-9)
 			So(res2.From, ShouldEqual, now)
 
-			// A trade outside the bracket neither brackets nor matches.
+			// A trade away from the touch is bracket activity, not a fill.
 			res3 := instrument.Step(trade(trade2At.Add(100*time.Millisecond), 3, "buy", askPrice+5, 1.0))
 			So(res3, ShouldNotBeNil)
-			So(metricValue(res3, "bracket_trade_quantity"), ShouldAlmostEqual, expectedCumQty, 1e-9)
-			So(metricValue(res3, "touch_fill_quantity:ask"), ShouldAlmostEqual, expectedCumQty, 1e-9)
+			So(metricValue(res3, "bracket_trade_quantity"), ShouldAlmostEqual, 1.0, 1e-9)
+			So(metricValue(res3, "touch_fill_quantity:ask"), ShouldAlmostEqual, 0.0, 1e-9)
 			So(metricValue(res3, "touch_fill_fraction:ask"), ShouldAlmostEqual, 0.0, 1e-9)
+			So(res3.From, ShouldEqual, trade2At)
+		})
+
+		Convey("Trades sharing the previous observation's timestamp accrue to the next bracket", func() {
+			touch(books, now, "bid-ts", 50000.0, 10.0, "ask-ts", 50002.0, 10.0)
+			So(instrument.Step(trade(now, 30, "buy", 50002.0, 1.0)), ShouldNotBeNil)
+
+			same := instrument.Step(trade(now, 31, "buy", 50002.0, 1.0))
+			So(same, ShouldNotBeNil)
+			_, held := metric(same, "touch_fill_quantity:ask")
+			So(held, ShouldBeFalse)
+
+			res := instrument.Step(trade(now.Add(time.Second), 32, "buy", 50002.0, 2.0))
+			So(res, ShouldNotBeNil)
+			So(metricValue(res, "bracket_trade_quantity"), ShouldAlmostEqual, 3.0, 1e-9)
+			So(metricValue(res, "touch_fill_quantity:ask"), ShouldAlmostEqual, 3.0, 1e-9)
+		})
+
+		Convey("A retreat removes only the unfilled residual, and fills are capped by display", func() {
+			touch(books, now, "bid-r-1", 50000.0, 10.0, "ask-r-1", 50002.0, 2.0)
+			So(instrument.Step(trade(now, 40, "buy", 50001.0, 1.0)), ShouldNotBeNil)
+
+			So(instrument.Step(trade(now, 41, "sell", 50000.0, 4.0)), ShouldNotBeNil)
+
+			later := now.Add(200 * time.Millisecond)
+			touch(books, later, "bid-r-2", 49990.0, 8.0, "ask-r-2", 50003.0, 1.0)
+
+			res := instrument.Step(trade(later, 42, "buy", 50002.0, 5.0))
+			So(res, ShouldNotBeNil)
+
+			// Bid: E = 4 of Q0 = 10, so R = U = 6. Ask: E* = 5 but only 2
+			// were displayed, so E = 2 and nothing retreated.
+			So(metricValue(res, "retreated_quantity:bid"), ShouldAlmostEqual, 6.0, 1e-9)
+			So(metricValue(res, "retreat_fraction:bid"), ShouldAlmostEqual, 0.6, 1e-9)
+			So(metricValue(res, "matched_touch_trade_quantity:ask"), ShouldAlmostEqual, 5.0, 1e-9)
+			So(metricValue(res, "touch_fill_quantity:ask"), ShouldAlmostEqual, 2.0, 1e-9)
+			So(metricValue(res, "unfilled_residual_quantity:ask"), ShouldAlmostEqual, 0.0, 1e-9)
+			So(metricValue(res, "retreat_fraction:ask"), ShouldAlmostEqual, 0.0, 1e-9)
 		})
 
 		Convey("Touch disposition detects adverse price retreat", func() {
@@ -146,9 +189,13 @@ func TestToxicitySignal(t *testing.T) {
 			So(metricValue(res2, "retreated_quantity:bid"), ShouldAlmostEqual, 10.0, 1e-9)
 			So(metricValue(res2, "retreat_rate:bid"), ShouldAlmostEqual, 10.0/0.2, 1e-6)
 
-			// A retreating bid is not a withdrawal; the unchanged ask neither retreats nor withdraws.
+			// A retreating bid has no same-price disposition.
+			_, held := metric(res2, "net_withdrawn_quantity:bid")
+			So(held, ShouldBeFalse)
+
+			// The unchanged ask neither retreats nor withdraws.
 			for _, label := range []string{
-				"net_withdrawn_quantity:bid", "retreat_fraction:ask", "retreated_quantity:ask",
+				"retreat_fraction:ask", "retreated_quantity:ask",
 				"net_withdrawn_quantity:ask", "net_replenished_quantity:ask",
 			} {
 				val, held := metric(res2, label)
@@ -259,29 +306,19 @@ func TestToxicitySignal(t *testing.T) {
 			So(instrument.Error(), ShouldNotBeNil)
 		})
 
-		Convey("Historical recurrence calculates trajectory distance and empirical percentile", func() {
-			bidPrice, askPrice, touchQty := 50000.0, 50002.0, 10.0
-			touch(books, now, "bid-hist-1", bidPrice, touchQty, "ask-hist-1", askPrice, touchQty)
+		Convey("Historical recurrence is undefined until every disposition z-score is", func() {
+			touch(books, now, "bid-hist-1", 50000.0, 10.0, "ask-hist-1", 50002.0, 10.0)
 
-			res1 := instrument.Step(trade(now, 201, "buy", askPrice, 1.0))
-			So(res1, ShouldNotBeNil)
-			So(metricValue(res1, "historical_path_distance"), ShouldEqual, 0.0)
-			So(metricValue(res1, "historical_path_percentile"), ShouldEqual, 0.0)
+			for step := range 3 {
+				at := now.Add(time.Duration(step) * 100 * time.Millisecond)
+				res := instrument.Step(trade(at, int64(201+step), "buy", 50002.0, float64(step+1)))
+				So(res, ShouldNotBeNil)
 
-			step2At := now.Add(100 * time.Millisecond)
-			res2 := instrument.Step(trade(step2At, 202, "buy", askPrice, 3.0))
-			So(res2, ShouldNotBeNil)
-			So(metricValue(res2, "historical_path_distance"), ShouldBeGreaterThan, 0.0)
-			So(metricValue(res2, "historical_path_percentile"), ShouldEqual, 0.0)
-
-			step3At := step2At.Add(100 * time.Millisecond)
-			res3 := instrument.Step(trade(step3At, 203, "buy", askPrice, 3.0))
-			So(res3, ShouldNotBeNil)
-			dist3 := metricValue(res3, "historical_path_distance")
-			perc3 := metricValue(res3, "historical_path_percentile")
-			So(dist3, ShouldBeGreaterThanOrEqualTo, 0.0)
-			So(perc3, ShouldBeGreaterThanOrEqualTo, 0.0)
-			So(perc3, ShouldBeLessThanOrEqualTo, 1.0)
+				for _, label := range []string{"historical_path_distance", "historical_path_percentile"} {
+					_, held := metric(res, label)
+					So(held, ShouldBeFalse)
+				}
+			}
 		})
 	})
 

@@ -24,14 +24,17 @@ func NewHawkes() *Hawkes {
 }
 
 /*
-Step incorporates one arrival event and returns all Hawkes metrics.
+Step incorporates one arrival event and returns the Hawkes metrics that are
+defined for it, keyed by output name, plus the observation window's origin.
+A metric that is undefined for this event (no fitted model yet, zero span,
+an unscorable likelihood) is absent, never zero.
 */
-func (h *Hawkes) Step(mark, atSec float64) ([]float64, error) {
+func (h *Hawkes) Step(mark, atSec float64) (map[string]float64, time.Time, error) {
 	p := h.path
 	at := time.Unix(0, int64(atSec*1e9))
 
 	if p.hasLast && at.Before(p.lastAt) {
-		return nil, errnie.Error(errnie.Err(
+		return nil, time.Time{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"hawkes: regressing event time",
 			nil,
@@ -54,28 +57,28 @@ func (h *Hawkes) Step(mark, atSec float64) ([]float64, error) {
 	}
 
 	totalCount := countBuy + countSell
+	from := at
 	fromSec := atSec
 
 	if len(p.samples) > 0 {
-		fromSec = float64(p.origin().UnixNano()) * 1e-9
+		from = p.origin()
+		fromSec = p.samples[0].atSec
 	}
 
 	span := atSec - fromSec
 
-	res := make([]float64, 62)
-	res[0] = totalCount
-	res[1] = countBuy
-	res[2] = countSell
-
-	if totalCount > 0 {
-		res[3] = countBuy / totalCount
-		res[4] = countSell / totalCount
+	res := map[string]float64{
+		"event_count":         totalCount,
+		"event_count:buy":     countBuy,
+		"event_count:sell":    countSell,
+		"event_fraction:buy":  countBuy / totalCount,
+		"event_fraction:sell": countSell / totalCount,
 	}
 
 	if span > 0 {
-		res[5] = countBuy / span
-		res[6] = countSell / span
-		res[7] = totalCount / span
+		res["arrival_rate:buy"] = countBuy / span
+		res["arrival_rate:sell"] = countSell / span
+		res["arrival_rate"] = totalCount / span
 	}
 
 	if p.modelReady {
@@ -90,54 +93,45 @@ func (h *Hawkes) Step(mark, atSec float64) ([]float64, error) {
 		excessBuy := lambdaBuy - muX
 		excessSell := lambdaSell - muY
 
-		res[8] = lambdaBuy
-		res[9] = lambdaSell
-		res[10] = lambdaBuy + lambdaSell
-		res[11] = muX
-		res[12] = muY
-		res[13] = muX + muY
-		res[14] = excessBuy
-		res[15] = excessSell
+		res["conditional_intensity:buy"] = lambdaBuy
+		res["conditional_intensity:sell"] = lambdaSell
+		res["conditional_intensity"] = lambdaBuy + lambdaSell
+		res["background_rate:buy"] = muX
+		res["background_rate:sell"] = muY
+		res["background_rate"] = muX + muY
+		res["excitation_intensity:buy"] = excessBuy
+		res["excitation_intensity:sell"] = excessSell
 
 		if lambdaBuy > 0 {
-			res[16] = excessBuy / lambdaBuy
+			res["excitation_fraction:buy"] = excessBuy / lambdaBuy
 		}
 
 		if lambdaSell > 0 {
-			res[17] = excessSell / lambdaSell
+			res["excitation_fraction:sell"] = excessSell / lambdaSell
 		}
 
-		res[18] = alphaXX
-		res[19] = alphaXY
-		res[20] = alphaYX
-		res[21] = alphaYY
+		res["excitation_amplitude:buy_from_buy"] = alphaXX
+		res["excitation_amplitude:buy_from_sell"] = alphaXY
+		res["excitation_amplitude:sell_from_buy"] = alphaYX
+		res["excitation_amplitude:sell_from_sell"] = alphaYY
 
 		if beta > 0 {
-			timescale := 1.0 / beta
-			res[22] = beta
-			res[23] = beta
-			res[24] = beta
-			res[25] = beta
-			res[26] = beta
-			res[27] = timescale
-			res[28] = timescale
-			res[29] = timescale
-			res[30] = timescale
-			res[31] = timescale
+			res["excitation_decay"] = beta
+			res["excitation_timescale"] = 1.0 / beta
 		}
 
 		matrix := branchingMatrix(alphaXX, alphaXY, alphaYX, alphaYY, beta)
-		res[32] = matrix[0][0]
-		res[33] = matrix[0][1]
-		res[34] = matrix[1][0]
-		res[35] = matrix[1][1]
-		res[36] = spectralRadius(matrix)
+		res["offspring:buy_from_buy"] = matrix[0][0]
+		res["offspring:buy_from_sell"] = matrix[0][1]
+		res["offspring:sell_from_buy"] = matrix[1][0]
+		res["offspring:sell_from_sell"] = matrix[1][1]
+		res["branching_spectral_radius"] = spectralRadius(matrix)
 
 		buyParent, sellParent, hasDesc := totalDescendants(alphaXX, alphaXY, alphaYX, alphaYY, beta)
 
 		if hasDesc {
-			res[37] = buyParent
-			res[38] = sellParent
+			res["expected_descendants_from_buy"] = buyParent
+			res["expected_descendants_from_sell"] = sellParent
 		}
 
 		streamPrior := newArrivalStream(buyArrivals, sellArrivals)
@@ -150,26 +144,25 @@ func (h *Hawkes) Step(mark, atSec float64) ([]float64, error) {
 			hawkesLL, hawkesOK := model.logLikelihood(streamWindow, atSec)
 
 			if hawkesOK {
-				res[39] = hawkesLL
+				res["log_likelihood:hawkes"] = hawkesLL
 
 				if markedCount > 0 {
-					res[40] = hawkesLL / markedCount
+					res["log_likelihood_per_event:hawkes"] = hawkesLL / markedCount
 				}
 			}
 
-			poisson := bivariateFit{muX: muX, muY: muY, beta: beta}
-			poissonLL, poissonOK := poisson.logLikelihood(streamWindow, atSec)
+			poissonLL, poissonOK := poissonLogLikelihood(streamWindow, atSec)
 
 			if poissonOK {
-				res[41] = poissonLL
+				res["log_likelihood:poisson"] = poissonLL
 			}
 
 			if hawkesOK && poissonOK {
 				gainPoisson := hawkesLL - poissonLL
-				res[42] = gainPoisson
+				res["log_likelihood_gain_vs_poisson"] = gainPoisson
 
 				if markedCount > 0 {
-					res[43] = gainPoisson / markedCount
+					res["log_likelihood_gain_per_event_vs_poisson"] = gainPoisson / markedCount
 				}
 			}
 
@@ -178,11 +171,11 @@ func (h *Hawkes) Step(mark, atSec float64) ([]float64, error) {
 
 				if selfOK {
 					gainSelf := hawkesLL - selfLL
-					res[44] = selfLL
-					res[45] = gainSelf
+					res["log_likelihood:self_only"] = selfLL
+					res["log_likelihood_gain_vs_self_only"] = gainSelf
 
 					if markedCount > 0 {
-						res[46] = gainSelf / markedCount
+						res["log_likelihood_gain_per_event_vs_self_only"] = gainSelf / markedCount
 					}
 				}
 			}
@@ -191,69 +184,74 @@ func (h *Hawkes) Step(mark, atSec float64) ([]float64, error) {
 			compBuy := muX*spanPrior + (alphaXX/beta)*buySupport + (alphaXY/beta)*sellSupport
 			compSell := muY*spanPrior + (alphaYX/beta)*buySupport + (alphaYY/beta)*sellSupport
 
-			priorCountBuy := float64(len(buyArrivals))
-			priorCountSell := float64(len(sellArrivals))
-			innoBuy := priorCountBuy - compBuy
-			innoSell := priorCountSell - compSell
+			// The compensator integrates over (origin, at]; arrivals at the
+			// origin are prehistory there, so they are not observations here.
+			observedBuy, observedSell := streamPrior.observationCounts(atSec)
+			innoBuy := float64(observedBuy) - compBuy
+			innoSell := float64(observedSell) - compSell
 
-			res[47] = compBuy
-			res[48] = compSell
-			res[49] = innoBuy
-			res[50] = innoSell
+			res["compensator:buy"] = compBuy
+			res["compensator:sell"] = compSell
+			res["count_innovation:buy"] = innoBuy
+			res["count_innovation:sell"] = innoSell
 
 			if compBuy > 0 {
-				res[51] = innoBuy / math.Sqrt(compBuy)
+				res["standardized_innovation:buy"] = innoBuy / math.Sqrt(compBuy)
 			}
 
 			if compSell > 0 {
-				res[52] = innoSell / math.Sqrt(compSell)
+				res["standardized_innovation:sell"] = innoSell / math.Sqrt(compSell)
 			}
 
 			excessBuyMass := compBuy - muX*spanPrior
 			excessSellMass := compSell - muY*spanPrior
 
-			res[53] = excessBuyMass
-			res[54] = excessSellMass
+			res["excitation_mass:buy"] = excessBuyMass
+			res["excitation_mass:sell"] = excessSellMass
 
 			if compBuy > 0 {
-				res[55] = excessBuyMass / compBuy
+				res["excitation_share:buy"] = excessBuyMass / compBuy
 			}
 
 			if compSell > 0 {
-				res[56] = excessSellMass / compSell
+				res["excitation_share:sell"] = excessSellMass / compSell
 			}
 
 			if compTotal := compBuy + compSell; compTotal > 0 {
-				res[57] = (excessBuyMass + excessSellMass) / compTotal
-			}
-
-			snrSum := 0.0
-			snrSides := 0
-
-			if compBuy > 0 {
-				snrSum += (excessBuyMass * excessBuyMass) / compBuy
-				snrSides++
-			}
-
-			if compSell > 0 {
-				snrSum += (excessSellMass * excessSellMass) / compSell
-				snrSides++
-			}
-
-			if snrSides > 0 {
-				p.snr = snrSum / float64(snrSides)
-				p.hasSNR = true
-				res[58] = p.snr
+				res["excitation_share"] = (excessBuyMass + excessSellMass) / compTotal
 			}
 		}
 	}
 
-	res[61] = fromSec
-
 	p.remember(at, atSec, mark)
-	p.refit(atSec)
 
-	return res, nil
+	if err := p.refit(atSec); err != nil {
+		errnie.Warn(err.Error())
+	}
+
+	return res, from, nil
+}
+
+/*
+poissonLogLikelihood scores the stream under its own homogeneous Poisson
+maximum-likelihood fit, mu_side = N_side / T over the observation interval
+(origin, horizon], which gives N_buy*log(N_buy/T) - N_buy + N_sell*log(N_sell/T)
+- N_sell. It is undefined when either side has no counted arrival.
+*/
+func poissonLogLikelihood(stream arrivalStream, horizonSec float64) (float64, bool) {
+	context, ok := newObservationContext(stream, horizonSec)
+
+	if !ok {
+		return 0, false
+	}
+
+	poisson := context.poissonFit()
+
+	if !poisson.valid() {
+		return 0, false
+	}
+
+	return poisson.logLikelihood(stream, horizonSec)
 }
 
 func currentWindowStream(buy, sell []float64, horizonSec, mark float64) arrivalStream {

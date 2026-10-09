@@ -13,16 +13,17 @@ import (
 )
 
 /*
-Trades efficiently retrieves measurements from the measurements table where
-source = "spot:trade", grouped by label, and sorted within each label by epoch
-ascending and tick ascending (with seqIdx as tie-breaker).
+Trades retrieves spot:trade measurements, optionally restricted to labels,
+grouped by label (sorted), and ordered within each label by epoch, tick and
+seqIdx. An epoch of zero reads every epoch.
 
 A read failure (including a failed validation of the arguments) is yielded as
 a non-nil error and ends the sequence; it is never reported as end-of-stream.
 */
 func (catalog *Catalog) Trades(
 	ctx context.Context,
-	epoch ...int64,
+	epoch int64,
+	labels ...string,
 ) iter.Seq2[*data.Measurement, error] {
 	return func(yield func(*data.Measurement, error) bool) {
 		if catalog == nil {
@@ -34,19 +35,36 @@ func (catalog *Catalog) Trades(
 			return
 		}
 
-		targetEpoch := int64(0)
-
-		if len(epoch) > 0 && epoch[0] > 0 {
-			targetEpoch = epoch[0]
+		if epoch < 0 {
+			yield(nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[catalog] epoch cannot be negative",
+				nil,
+			)))
+			return
 		}
 
 		filter := iceberg.BooleanExpression(
 			iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
 		)
 
+		if len(labels) == 1 {
+			filter = iceberg.NewAnd(filter, iceberg.EqualTo(iceberg.Reference("label"), labels[0]))
+		}
+
+		if len(labels) > 1 {
+			filter = iceberg.NewAnd(filter, iceberg.IsIn(iceberg.Reference("label"), labels...))
+		}
+
+		wanted := make(map[string]struct{}, len(labels))
+
+		for _, label := range labels {
+			wanted[label] = struct{}{}
+		}
+
 		grouped := make(map[string][]*data.Measurement)
 
-		for measurement, err := range catalog.scan(ctx, Measurements, targetEpoch, filter, 0) {
+		for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0) {
 			if err != nil {
 				yield(nil, err)
 				return
@@ -56,18 +74,24 @@ func (catalog *Catalog) Trades(
 				continue
 			}
 
+			if len(wanted) > 0 {
+				if _, ok := wanted[measurement.Label]; !ok {
+					continue
+				}
+			}
+
 			grouped[measurement.Label] = append(grouped[measurement.Label], measurement)
 		}
 
-		labels := make([]string, 0, len(grouped))
+		ordered := make([]string, 0, len(grouped))
 
 		for label := range grouped {
-			labels = append(labels, label)
+			ordered = append(ordered, label)
 		}
 
-		slices.Sort(labels)
+		slices.Sort(ordered)
 
-		for _, label := range labels {
+		for _, label := range ordered {
 			items := grouped[label]
 
 			slices.SortFunc(items, func(left, right *data.Measurement) int {
@@ -92,68 +116,50 @@ func (catalog *Catalog) Trades(
 }
 
 /*
-TradesForSymbol retrieves trades strictly filtered to a single symbol and epoch,
-enabling partition and metadata pruning.
+TradeCounts counts spot:trade rows per label in one epoch, reading only the
+label column. It is the observed-liquidity census used to choose symbols.
 */
-func (catalog *Catalog) TradesForSymbol(
-	ctx context.Context,
-	symbol string,
-	epoch ...int64,
-) iter.Seq2[*data.Measurement, error] {
-	return func(yield func(*data.Measurement, error) bool) {
-		if catalog == nil {
-			yield(nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[catalog] catalog is required",
-				nil,
-			)))
-			return
-		}
-
-		targetEpoch := int64(0)
-		if len(epoch) > 0 && epoch[0] > 0 {
-			targetEpoch = epoch[0]
-		}
-
-		filter := iceberg.BooleanExpression(
-			iceberg.NewAnd(
-				iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
-				iceberg.EqualTo(iceberg.Reference("label"), symbol),
-			),
-		)
-
-		var trades []*data.Measurement
-		for measurement, err := range catalog.scan(ctx, Measurements, targetEpoch, filter, 0) {
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			if measurement != nil {
-				trades = append(trades, measurement)
-			}
-		}
-
-		slices.SortFunc(trades, func(left, right *data.Measurement) int {
-			if cmpResult := cmp.Compare(left.Epoch, right.Epoch); cmpResult != 0 {
-				return cmpResult
-			}
-			if cmpResult := cmp.Compare(left.Tick, right.Tick); cmpResult != 0 {
-				return cmpResult
-			}
-			return cmp.Compare(left.SeqIdx, right.SeqIdx)
-		})
-
-		for _, measurement := range trades {
-			if !yield(measurement, nil) {
-				return
-			}
-		}
+func (catalog *Catalog) TradeCounts(ctx context.Context, epoch int64) (map[string]int, error) {
+	if catalog == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[catalog] catalog is required",
+			nil,
+		))
 	}
+
+	if epoch <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[catalog] valid positive epoch is required",
+			nil,
+		))
+	}
+
+	filter := iceberg.BooleanExpression(
+		iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
+	)
+
+	counts := make(map[string]int)
+
+	for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0, "epoch", "label", "source", "at", "from", "id", "coherence", "maturity") {
+		if err != nil {
+			return nil, err
+		}
+
+		if measurement == nil || measurement.Source != "spot:trade" {
+			continue
+		}
+
+		counts[measurement.Label]++
+	}
+
+	return counts, nil
 }
 
 /*
-Detections efficiently retrieves measurements from the measurements table where
-source = "detector", optionally filtered by epoch, grouped by label, and sorted
+Detections retrieves the excursion labels from the detections table (never
+the measurements table) where source = "detector", optionally filtered by epoch, grouped by label, and sorted
 within each label by epoch ascending and tick ascending (with seqIdx as tie-breaker).
 
 A read failure (including a failed validation of the arguments) is yielded as
@@ -185,7 +191,7 @@ func (catalog *Catalog) Detections(
 
 		grouped := make(map[string][]*data.Measurement)
 
-		for measurement, err := range catalog.scan(ctx, Measurements, targetEpoch, filter, 0) {
+		for measurement, err := range catalog.scan(ctx, Detections, targetEpoch, filter, 0) {
 			if err != nil {
 				yield(nil, err)
 				return

@@ -93,6 +93,8 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		signal.paths[prior.Label] = currentPath
 	}
 
+	readings := make([]nmcorrelation.LeadLagReading, 0, len(signal.paths))
+
 	for peerSymbol, peerPath := range signal.paths {
 		if peerSymbol == prior.Label || len(peerPath) < 3 || len(currentPath) < 3 {
 			continue
@@ -101,23 +103,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		input := nmcorrelation.LagProfileInput{Left: peerPath, Right: currentPath}
 		reading := drive[nmcorrelation.LagProfileInput, nmcorrelation.LeadLagReading](signal.leadlag, &input)
 
-		if !reading.Defined {
-			continue
+		if reading.Defined {
+			readings = append(readings, reading)
 		}
+	}
 
-		output["reference_symbol@"+peerSymbol] = 1.0
-		output["contemporaneous_correlation@"+peerSymbol] = reading.Contemporaneous
-		output["best_lag_correlation@"+peerSymbol] = reading.Y
-		output["best_lag_seconds@"+peerSymbol] = reading.X
-		output["best_lag_index@"+peerSymbol] = reading.LagIndex
-		output["absolute_correlation_gain@"+peerSymbol] = reading.AbsoluteGain
-		output["lag_search_resolution_seconds@"+peerSymbol] = reading.Spacing * 1e-9
-		output["lag_search_span@"+peerSymbol] = reading.Span
-		output["lag_fraction@"+peerSymbol] = reading.LagFraction
-		output["overlap_pair_count@"+peerSymbol] = reading.Support
-		output["search_count@"+peerSymbol] = reading.SearchCount
-		output["lag_peak_prominence@"+peerSymbol] = reading.Prominence
-		output["lag_peak_curvature@"+peerSymbol] = reading.Curvature
+	for key, value := range summarize(readings) {
+		output[key] = value
 	}
 
 	if err := signal.leadlag.Error(); err != nil {

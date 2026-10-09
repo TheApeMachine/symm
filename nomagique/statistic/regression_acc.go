@@ -117,6 +117,11 @@ func (op *RegressionAccumulator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsa
 		}
 
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			row := (*RegressionRow)(arriving)
 
 			if len(row.Predictors) != op.parameters {

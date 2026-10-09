@@ -64,38 +64,58 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		report.Sympathy.SeparationRatio*100, report.Sympathy.KSStatistic,
 	))
 	sb.WriteString(fmt.Sprintf(
-		"| **3. Grid reproducibility** | Do disjoint periods recover the same co-memberships? | **%s** | ARI %.3f; %.1f%% universe overlap (%d shared cells) |\n",
+		"| **3. Grid reproducibility** | Do disjoint periods recover the same co-memberships and stationary excitation? | **%s** | ARI %.3f (deterministic); Overlap %.1f%%; JSD %.3f bits (stationary: %t) |\n",
 		report.GridStability.Status, report.GridStability.AdjustedRandIdx,
-		report.GridStability.OverlapFraction*100, report.GridStability.SharedUniverse,
+		report.GridStability.OverlapFraction*100, report.GridStability.DistributionJSD, report.GridStability.IsStationary,
 	))
 	sb.WriteString(fmt.Sprintf(
-		"| **4. Token dynamics** | What does a frozen grid emit on unseen tape? | **%s** | %d emissions; %d regions; H=%.3f vs null mean %.3f |\n",
+		"| **4. Token dynamics** | What does a frozen grid emit on unseen tape? | **%s** | %d raw (%d compressed, stay %.1f%%); Raw H=%.3f; Comp H=%.3f |\n",
 		report.TokenDynamics.Status, report.TokenDynamics.TotalEmissions,
-		report.TokenDynamics.UniqueTokens, report.TokenDynamics.TransitionEntropy,
-		report.TokenDynamics.NullTransitionEntropy,
+		report.TokenDynamics.CompressedEmissions, report.TokenDynamics.AlwaysStayAccuracy*100,
+		report.TokenDynamics.TransitionEntropy, report.TokenDynamics.CompressedTransitionEntropy,
 	))
 	sb.WriteString(fmt.Sprintf(
-		"| **5. Precursors** | Are A->B and B->C populations measurable? | **A->B %s / B->C %s** | A->B N=%d/%d, JSD %.3f vs null95 %.3f; B->C N=%d/%d |\n",
+		"| **5. Precursors** | Statistical separation, predictive skill & economic friction clearance | **%s** | JSD %.3fb; BalAcc %.1f%% (MCC %.3f); Friction Clearance %.1f%% (N=%d) |\n",
 		report.Precursor.IgnitionHypothesis.Status,
-		report.Precursor.ExhaustionHypothesis.Status,
-		report.Precursor.IgnitionHypothesis.EventTokenCount,
-		report.Precursor.IgnitionHypothesis.ControlTokenCount,
 		report.Precursor.IgnitionHypothesis.DivergenceBits,
-		report.Precursor.IgnitionHypothesis.NullDivergence95,
-		report.Precursor.ExhaustionHypothesis.EventTokenCount,
-		report.Precursor.ExhaustionHypothesis.ControlTokenCount,
+		report.Precursor.PredictiveSkill.BalancedAccuracy*100,
+		report.Precursor.PredictiveSkill.MCC,
+		report.Precursor.EconomicRelevance.FrictionClearanceRate*100,
+		report.Precursor.EconomicRelevance.EvaluatedExcursions,
 	))
 	sb.WriteString(fmt.Sprintf(
-		"| **6. Cognitive Trie** | Does prequential recall beat baselines and retain memory? | **%s** | Balanced Acc %.1f%% (vs baseline %.1f%%, null95 %.1f%%); MCC %.3f; Enter Prec/Rec %.1f%%/%.1f%%; retention %.1f%% |\n\n",
+		"| **6. Cognitive Trie & S3 Memory** | Does associative memory disambiguate and beat baselines? | **%s** | Balanced Acc %.1f%% (vs baseline %.1f%%); S3 keys %d, collisions %d, disambiguation %d tokens |\n",
 		report.CognitiveTrie.Status,
 		report.CognitiveTrie.Skill.BalancedAccuracy*100,
 		report.CognitiveTrie.Skill.BaselineBalancedAccuracy*100,
-		report.CognitiveTrie.Skill.Null95thBalancedAccuracy*100,
-		report.CognitiveTrie.Skill.MCC,
-		report.CognitiveTrie.Skill.EnterPrecision*100,
-		report.CognitiveTrie.Skill.EnterRecall*100,
-		report.CognitiveTrie.Retention.RetentionRate*100,
+		report.CognitiveTrie.S3Memory.TotalPrefixKeys,
+		report.CognitiveTrie.S3Memory.PrefixCollisions,
+		report.CognitiveTrie.S3Memory.TimeToDisambiguation,
 	))
+	if report.Equivalence != nil {
+		sb.WriteString(fmt.Sprintf(
+			"| **V1. Equivalence** | Does audit execution match production paths bit-for-bit? | **%t** | Mismatches: tokens=%d, metrics=%d across %d ticks |\n",
+			report.Equivalence.Passed, report.Equivalence.TokenMismatches, report.Equivalence.MetricMismatches, report.Equivalence.TotalTicksReplayed,
+		))
+	}
+	if report.Truthfulness != nil {
+		sb.WriteString(fmt.Sprintf(
+			"| **V2. Truthfulness** | Do published metrics truthfully reflect raw tape events? | **%t** | Violations: %d, zero-filled midpoints=%d, synthetic time=%d |\n",
+			report.Truthfulness.Passed, report.Truthfulness.ViolationsCount, report.Truthfulness.ZeroFilledMidpoints, report.Truthfulness.SyntheticTimeSteps,
+		))
+	}
+	if report.Causality != nil {
+		sb.WriteString(fmt.Sprintf(
+			"| **V3. Causality** | Are emissions causally isolated from future and other symbols? | **%t** | Future leakage=%t, cross-symbol contamination=%t |\n",
+			report.Causality.Passed, report.Causality.LeakageDetected, report.Causality.CrossSymbolLeakage,
+		))
+	}
+	if report.Sensitivity != nil {
+		sb.WriteString(fmt.Sprintf(
+			"| **V4. Sensitivity** | Does grid resist dominance and retain balanced confluence? | **%t** | Families tested: %d, duplication-resistant=%t |\n\n",
+			report.Sensitivity.Passed, len(report.Sensitivity.FamiliesTested), report.Sensitivity.DuplicationResistant,
+		))
+	}
 
 	sb.WriteString("---\n\n")
 	sb.WriteString("### Stage 0: Declared mathematical contracts\n\n")
@@ -255,10 +275,20 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 
 	sb.WriteString("### Stage 5: Event-centred precursor populations\n\n")
 	sb.WriteString(fmt.Sprintf(
-		"- Detections: `%d` (%s)\n"+
-			"- A->B: `%s`, event/control `%d/%d`, JSD `%.3f`, null95 `%.3f`\n"+
-			"- B->C: `%s`, event/control `%d/%d`, JSD `%.3f`, null95 `%.3f`\n"+
-			"- Supplemental non-excursion background observations: `%d`\n\n",
+		"#### 1. Statistical Separation\n"+
+			"- Detections: `%d` (%s)\n"+
+			"- A->B Ignition: `%s`, event/control `%d/%d`, JSD `%.3f` vs null95 `%.3f`\n"+
+			"- B->C Exhaustion: `%s`, event/control `%d/%d`, JSD `%.3f` vs null95 `%.3f`\n"+
+			"- Supplemental non-excursion background observations: `%d`\n\n"+
+			"#### 2. Predictive Skill (Anticipation)\n"+
+			"- Balanced Accuracy: `%.1f%%` | MCC: `%.3f`\n"+
+			"- Precision / Recall: `%.1f%%` / `%.1f%%`\n"+
+			"- Mutual Information (Predictive Gain): `%.3f` bits\n"+
+			"- Prior Base Rate: `%.1f%%` | Top Precursor Tokens: `%s`\n\n"+
+			"#### 3. Economic Relevance (Friction Clearance)\n"+
+			"- Evaluated Excursions: `%d` | Round-Trip Taker Fee: `%.2f` bps\n"+
+			"- Friction Clearance Rate: `%.1f%%` (`%d` profitable / `%d` unprofitable)\n"+
+			"- Gross Mean Return: `%.2f%%` | Net Mean Return after Fees: `%.2f%%`\n\n",
 		report.Precursor.DetectionsFound,
 		strings.Join(report.Precursor.ExcursionsFound, ", "),
 		report.Precursor.IgnitionHypothesis.Status,
@@ -272,6 +302,20 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		report.Precursor.ExhaustionHypothesis.DivergenceBits,
 		report.Precursor.ExhaustionHypothesis.NullDivergence95,
 		totalTokenCount(report.Precursor.BackgroundTokens),
+		report.Precursor.PredictiveSkill.BalancedAccuracy*100,
+		report.Precursor.PredictiveSkill.MCC,
+		report.Precursor.PredictiveSkill.Precision*100,
+		report.Precursor.PredictiveSkill.Recall*100,
+		report.Precursor.PredictiveSkill.PredictiveGainBits,
+		report.Precursor.PredictiveSkill.PriorBaseRate*100,
+		strings.Join(report.Precursor.PredictiveSkill.TopPrecursorTokens, ", "),
+		report.Precursor.EconomicRelevance.EvaluatedExcursions,
+		report.Precursor.EconomicRelevance.RoundTripFeeRate*10000,
+		report.Precursor.EconomicRelevance.FrictionClearanceRate*100,
+		report.Precursor.EconomicRelevance.ProfitableExcursions,
+		report.Precursor.EconomicRelevance.UnprofitableExcursions,
+		report.Precursor.EconomicRelevance.GrossMeanReturn*100,
+		report.Precursor.EconomicRelevance.NetMeanReturn*100,
 	))
 	sb.WriteString("> Current trading semantics are long-only: only profitable `up` excursions populate the positive A->B set. Event windows are loaded directly from the archive rather than requiring them to occur inside the first-N audit sample.\n\n")
 	sb.WriteString("![Stage 5](plots/stage5_precursor_separation.png)\n\n")
@@ -333,6 +377,76 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 	sb.WriteString("> Prequential recall evaluates the trie strictly before learning each phase. Abstention is the appropriate stance on controls, not a terminal action. Shuffled null tests whether sequential prefix structure holds predictive edge over class priors.\n\n")
 	sb.WriteString("![Stage 6 Skill](plots/stage6_trie_skill.png)\n\n")
 	sb.WriteString("![Stage 6 Structure](plots/stage6_trie_structure.png)\n\n")
+
+	if report.Equivalence != nil {
+		sb.WriteString("### Validation 1: Production-vs-Audit Equivalence\n\n")
+		sb.WriteString(fmt.Sprintf(
+			"- Replayed ticks: `%d`\n"+
+				"- Tokens verified: `%d`\n"+
+				"- Token mismatches: `%d`\n"+
+				"- Metric/brightness mismatches: `%d`\n"+
+				"- Executable path: `%s`\n"+
+				"- Equivalence passed: `%t`\n\n",
+			report.Equivalence.TotalTicksReplayed,
+			report.Equivalence.TotalTokensChecked,
+			report.Equivalence.TokenMismatches,
+			report.Equivalence.MetricMismatches,
+			report.Equivalence.ExecutablePath,
+			report.Equivalence.Passed,
+		))
+	}
+
+	if report.Truthfulness != nil {
+		sb.WriteString("### Validation 2: Metric Truthfulness\n\n")
+		sb.WriteString(fmt.Sprintf(
+			"- Measurements audited: `%d`\n"+
+				"- Physical invariant violations: `%d`\n"+
+				"- Zero-filled midpoints/microprices: `%d`\n"+
+				"- Synthetic constant time-steps: `%d`\n"+
+				"- Truthfulness passed: `%t`\n\n",
+			report.Truthfulness.TotalChecked,
+			report.Truthfulness.ViolationsCount,
+			report.Truthfulness.ZeroFilledMidpoints,
+			report.Truthfulness.SyntheticTimeSteps,
+			report.Truthfulness.Passed,
+		))
+	}
+
+	if report.Causality != nil {
+		sb.WriteString("### Validation 3: Causality & State Isolation\n\n")
+		sb.WriteString(fmt.Sprintf(
+			"- Future perturbation ticks: `%d`\n"+
+				"- Lookahead leakage detected: `%t` (first divergence tick: `%d`, contaminated: `%d`)\n"+
+				"- Cross-symbol contamination: `%t`\n"+
+				"- Epoch isolation passed: `%t`\n"+
+				"- Causality passed: `%t`\n\n",
+			report.Causality.FuturePerturbationTicks,
+			report.Causality.LeakageDetected,
+			report.Causality.FirstDivergenceTick,
+			report.Causality.ContaminatedCount,
+			report.Causality.CrossSymbolLeakage,
+			report.Causality.EpochIsolationPassed,
+			report.Causality.Passed,
+		))
+	}
+
+	if report.Sensitivity != nil {
+		sb.WriteString("### Validation 4: Grid Dependence & Sensitivity\n\n")
+		sb.WriteString(fmt.Sprintf(
+			"- Families evaluated (LOFO): `%d`\n"+
+				"- Duplication resistant: `%t`\n"+
+				"- Shuffling noise resilient: `%t`\n"+
+				"- Sensitivity passed: `%t`\n\n",
+			len(report.Sensitivity.FamiliesTested),
+			report.Sensitivity.DuplicationResistant,
+			report.Sensitivity.ShuffledNoiseResilient,
+			report.Sensitivity.Passed,
+		))
+		for _, f := range report.Sensitivity.FamiliesTested {
+			sb.WriteString(fmt.Sprintf("  - Family `%s`: Removed JSD = `%.3f` bits (dominant: `%t`)\n", f.Family, f.RemovedJSD, f.IsDominant))
+		}
+		sb.WriteString("\n")
+	}
 
 	return sb.String()
 }

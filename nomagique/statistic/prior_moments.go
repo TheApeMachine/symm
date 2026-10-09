@@ -108,6 +108,11 @@ hands over the resulting summary.
 func (op *PriorMomentsEstimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			observation := (*PriorObservation)(arriving)
 
 			if observation.AgeOnly {

@@ -58,10 +58,14 @@ func TestAuditStages(t *testing.T) {
 				data.NewMetric("signal_to_noise", -3.5, data.UnitSNR, data.TimescaleTick),
 				// Negative Entropy violating [0, +inf)
 				data.NewMetric("shannon_entropy", -0.4, data.UnitEntropy, data.TimescaleTick),
+				// A log-likelihood in nats and an observed-minus-expected count
+				// residual are signed: negative values are not breaches.
+				data.NewMetric("log_likelihood:hawkes", -12.5, data.UnitNat, data.TimescaleTick),
+				data.NewMetric("count_innovation:buy", -3, data.UnitCountResidual, data.TimescaleTick),
 			)
 
 			contract := AnalyzeContract([]*data.Measurement{meas})
-			So(contract.TotalMetricsChecked, ShouldEqual, 7)
+			So(contract.TotalMetricsChecked, ShouldEqual, 9)
 			So(contract.BreachingMetricsCount, ShouldEqual, 5)
 			So(contract.Passed, ShouldBeFalse)
 		})
@@ -180,14 +184,19 @@ func TestAuditStages(t *testing.T) {
 		})
 
 		Convey("When initializing offline price and friction for excursion detection (Stage 5)", func() {
-			testPrice := offlinePrice(context.Background(), 0.008, "BTC/USD", "ETH/USD")
+			testPrice, err := offlinePrice(context.Background(), 0.0026, "BTC/USD", "ETH/USD")
+			So(err, ShouldBeNil)
 			So(testPrice, ShouldNotBeNil)
 			So(testPrice.Status(), ShouldEqual, runtime.READY)
+
+			invalidPrice, invalidErr := offlinePrice(context.Background(), 0.0, "BTC/USD")
+			So(invalidErr, ShouldNotBeNil)
+			So(invalidPrice, ShouldBeNil)
 
 			fee := testPrice.Fee("BTC/USD")
 			So(fee, ShouldNotBeNil)
 			feeFloat := fee.Fee.Float64()
-			So(feeFloat, ShouldAlmostEqual, 0.008, 1e-6)
+			So(feeFloat, ShouldAlmostEqual, 0.26, 1e-9)
 
 			entry := decimal.NewFromFloat64(50000)
 			exit := decimal.NewFromFloat64(51000)
@@ -195,6 +204,8 @@ func TestAuditStages(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(pnl, ShouldNotBeNil)
 			So(total, ShouldNotBeNil)
+			// 0.26% per side: net return = 51000*(1-0.0026) / (50000*(1+0.0026)) - 1.
+			So(pnl.Float64()/total.Float64(), ShouldAlmostEqual, 51000*0.9974/(50000*1.0026)-1, 1e-4)
 		})
 
 		Convey("When computing classification metrics under heavy class imbalance (Stage 6)", func() {

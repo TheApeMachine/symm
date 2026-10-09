@@ -69,6 +69,11 @@ Next fits every arriving request and hands over the resulting fit.
 func (op *OLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			request := (*OLSRequest)(arriving)
 			op.out = fitOLS(request.X, request.Y, request.P)
 
@@ -218,6 +223,11 @@ Next scores every arriving coefficient/variance pair and hands over the SNR.
 func (op *CoefficientSNR) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			pair := (*CoefficientSNRPair)(arriving)
 			op.out = coefficientSNR(pair.Coefficient, pair.Variance)
 

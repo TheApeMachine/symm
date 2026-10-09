@@ -27,14 +27,15 @@ func TestMeasurementFinalize(t *testing.T) {
 			So(errnie.IsKind(entries[0].Err, errnie.Forbidden), ShouldBeTrue)
 		})
 
-		Convey("Write counts the observation before metric Welford updates", func() {
+		Convey("Write leaves a stream's first observation unstandardized", func() {
 			metric := NewMetric("price", 42.5, UnitCurrency, TimescaleInstantaneous)
 			measurement.Write(metric)
 
 			So(measurement.locked(), ShouldBeTrue)
 			So(measurement.samples, ShouldEqual, 1)
-			So(math.IsNaN(metric.center) || math.IsInf(metric.center, 0), ShouldBeFalse)
-			So(metric.center, ShouldEqual, 42.5)
+			So(metric.Standardizable(), ShouldBeFalse)
+			So(metric.Standardized, ShouldEqual, 0)
+			So(metric.Normalized, ShouldEqual, 0)
 			So(math.IsNaN(measurement.Maturity()), ShouldBeFalse)
 
 			var read []*MetricEntry

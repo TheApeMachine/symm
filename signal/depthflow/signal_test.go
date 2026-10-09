@@ -2,6 +2,7 @@ package depthflow_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -106,18 +107,24 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 				So(metricValue(res, "book_notional:bid"), ShouldAlmostEqual, obsBid, 1e-6)
 				So(metricValue(res, "book_notional:ask"), ShouldAlmostEqual, obsAsk, 1e-6)
 				So(metricValue(res, "book_notional"), ShouldAlmostEqual, total, 1e-6)
-				So(metricValue(res, "observed_notional"), ShouldAlmostEqual, total, 1e-6)
+				_, duplicated := metric(res, "observed_notional")
+				So(duplicated, ShouldBeFalse)
 
 				So(metricValue(res, "book_imbalance"), ShouldAlmostEqual, bookImb, 1e-9)
 				So(metricValue(res, "touch_imbalance"), ShouldAlmostEqual, touchImb, 1e-9)
 				So(metricValue(res, "imbalance_resolution_gap"), ShouldAlmostEqual, gap, 1e-9)
 				So(metricValue(res, "imbalance_resolution_distance"), ShouldAlmostEqual, math.Abs(gap), 1e-9)
 
+				// Without a prior book there is no flow, no rate, no baseline.
 				if step == 0 {
-					So(metricValue(res, "added_notional:bid"), ShouldEqual, 0.0)
-					So(metricValue(res, "book_turnover_rate"), ShouldEqual, 0.0)
-					So(metricValue(res, "historical_path_distance"), ShouldEqual, 0.0)
-					So(metricValue(res, "historical_path_percentile"), ShouldEqual, 0.0)
+					for _, key := range []string{
+						"added_notional:bid", "book_turnover_rate", "book_imbalance_baseline",
+						"book_imbalance_zscore", "turnover_ratio", "historical_path_distance",
+					} {
+						_, held := metric(res, key)
+						So(held, ShouldBeFalse)
+					}
+
 					So(res.From, ShouldEqual, at)
 				} else {
 					// Every level only grows, so added equals the notional growth and nothing is removed.
@@ -136,8 +143,79 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 					So(res.From, ShouldEqual, at.Add(-100*time.Millisecond))
 				}
 
+				// A z-score needs a positive prior dispersion: two samples.
+				_, scored := metric(res, "book_imbalance_zscore")
+				So(scored, ShouldEqual, step >= 2)
+
 				prevBid, prevAsk, prevTotal = obsBid, obsAsk, total
 			}
+		})
+
+		Convey("A same-timestamp frame has flow but no rate", func() {
+			snapshot := func(qty float64) {
+				books.Update(&kraken.Level3{
+					Channel: "level3",
+					Type:    "snapshot",
+					Data: []kraken.Level3Data{{
+						Symbol: "SOL/USD",
+						Bids:   []kraken.Level3Order{order("b1", 100, qty, now)},
+						Asks:   []kraken.Level3Order{order("a1", 101, 1, now)},
+					}},
+				})
+			}
+
+			snapshot(1)
+			So(instrument.Step(ingress("SOL/USD", now, 1)), ShouldNotBeNil)
+			snapshot(2)
+			res := instrument.Step(ingress("SOL/USD", now, 2))
+			So(res, ShouldNotBeNil)
+			So(metricValue(res, "added_notional:bid"), ShouldAlmostEqual, 100.0, 1e-9)
+
+			for _, key := range []string{"added_notional_rate:bid", "book_turnover_rate", "turnover_zscore"} {
+				_, held := metric(res, key)
+				So(held, ShouldBeFalse)
+			}
+		})
+
+		Convey("A level pushed out of a full window is not counted as removed", func() {
+			levels := func(best float64, at time.Time) []kraken.Level3Order {
+				bids := make([]kraken.Level3Order, 0, 10)
+
+				for index := range 10 {
+					price := best - float64(index)
+					bids = append(bids, order(fmt.Sprintf("b%v", price), price, 1, at))
+				}
+
+				return bids
+			}
+
+			books.Update(&kraken.Level3{
+				Channel: "level3",
+				Type:    "snapshot",
+				Data: []kraken.Level3Data{{
+					Symbol: "ADA/USD",
+					Bids:   levels(100, now),
+					Asks:   []kraken.Level3Order{order("a1", 102, 1, now)},
+				}},
+			})
+			So(instrument.Step(ingress("ADA/USD", now, 1)), ShouldNotBeNil)
+
+			// A new best bid at 101 pushes the level at 91 beyond the depth.
+			later := now.Add(time.Second)
+			books.Update(&kraken.Level3{
+				Channel: "level3",
+				Type:    "snapshot",
+				Data: []kraken.Level3Data{{
+					Symbol: "ADA/USD",
+					Bids:   levels(101, later),
+					Asks:   []kraken.Level3Order{order("a1", 102, 1, later)},
+				}},
+			})
+
+			res := instrument.Step(ingress("ADA/USD", later, 2))
+			So(res, ShouldNotBeNil)
+			So(metricValue(res, "added_notional:bid"), ShouldAlmostEqual, 101.0, 1e-9)
+			So(metricValue(res, "removed_notional:bid"), ShouldAlmostEqual, 0.0, 1e-9)
 		})
 
 		Convey("A vanished level counts as removed notional", func() {

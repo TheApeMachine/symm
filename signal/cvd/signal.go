@@ -11,50 +11,67 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
+/*
+onlineTracker is a causal baseline: Score reports value against the state
+before it, then incorporates it. The baseline is defined from the second
+value, the z-score once the prior dispersion is positive.
+*/
 type onlineTracker struct {
 	count float64
 	mean  float64
 	m2    float64
-	std   float64
 }
 
-func (tracker *onlineTracker) Step(value float64) {
+type trackerScore struct {
+	hasBaseline bool
+	baseline    float64
+	hasZ        bool
+	zScore      float64
+}
+
+func (tracker *onlineTracker) Score(value float64) trackerScore {
+	priorCount := tracker.count
+	priorMean := tracker.mean
+	priorM2 := tracker.m2
+
 	tracker.count++
 	delta := value - tracker.mean
 	tracker.mean += delta / tracker.count
-	delta2 := value - tracker.mean
-	tracker.m2 += delta * delta2
+	tracker.m2 += delta * (value - tracker.mean)
 
-	if tracker.count > 1 {
-		variance := tracker.m2 / (tracker.count - 1)
-		if variance > 0 {
-			tracker.std = math.Sqrt(variance)
-		}
-	}
-}
-
-func (tracker *onlineTracker) Baseline() float64 {
-	return tracker.mean
-}
-
-func (tracker *onlineTracker) Divergence(value float64) float64 {
-	return value - tracker.mean
-}
-
-func (tracker *onlineTracker) Ratio(value float64) float64 {
-	if tracker.mean == 0 {
-		return 1.0
+	if priorCount == 0 {
+		return trackerScore{}
 	}
 
-	return value / tracker.mean
-}
+	score := trackerScore{hasBaseline: true, baseline: priorMean}
 
-func (tracker *onlineTracker) ZScore(value float64) float64 {
-	if tracker.std <= 0 {
-		return 0.0
+	if priorCount > 1 && priorM2 > 0 {
+		score.hasZ = true
+		score.zScore = (value - priorMean) / math.Sqrt(priorM2/(priorCount-1))
 	}
 
-	return (value - tracker.mean) / tracker.std
+	return score
+}
+
+/*
+emit writes name's baseline, divergence, and z-score as far as they are
+defined; the ratio to the baseline only where the baseline is positive.
+*/
+func (score trackerScore) emit(out map[string]float64, name string, value float64, ratio bool) {
+	if !score.hasBaseline {
+		return
+	}
+
+	out[name+"_baseline"] = score.baseline
+	out[name+"_divergence"] = value - score.baseline
+
+	if ratio && score.baseline > 0 {
+		out[name+"_ratio"] = value / score.baseline
+	}
+
+	if score.hasZ {
+		out[name+"_zscore"] = score.zScore
+	}
 }
 
 type symbolState struct {
@@ -70,6 +87,7 @@ type symbolState struct {
 	prevPrice             float64
 	prevNetNotionalRate   float64
 	prevGrossNotionalRate float64
+	hasPrevRates          bool
 	grossRateTracker      onlineTracker
 	signedNetTracker      onlineTracker
 	midpointReturnTracker onlineTracker
@@ -133,18 +151,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		signal.states[key] = state
 	}
 
+	// Rates need elapsed time since the symbol's previous trade; the first
+	// trade and same-timestamp trades leave them undefined.
 	var timeDelta float64
+	hasDelta := !state.lastAt.IsZero() && prior.At.After(state.lastAt)
 
-	if !prior.At.Equal(prior.From) && prior.At.After(prior.From) {
-		timeDelta = prior.At.Sub(prior.From).Seconds()
-	}
-
-	if timeDelta <= 0 && !state.lastAt.IsZero() && prior.At.After(state.lastAt) {
+	if hasDelta {
 		timeDelta = prior.At.Sub(state.lastAt).Seconds()
-	}
-
-	if timeDelta <= 0 {
-		timeDelta = 1.0
 	}
 
 	var tradeBuyQty, tradeSellQty float64
@@ -182,113 +195,119 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	netNotional := state.buyNotional - state.sellNotional
 	cumulativeNotionalDelta := netNotional
 
-	var signedCountFraction float64
+	signedNetFraction := netNotional / grossNotional
 
-	if state.totalCount > 0 {
-		signedCountFraction = (state.buyCount - state.sellCount) / state.totalCount
+	out := map[string]float64{
+		"trade_count:buy":           state.buyCount,
+		"trade_count:sell":          state.sellCount,
+		"trade_count":               state.totalCount,
+		"signed_count_fraction":     (state.buyCount - state.sellCount) / state.totalCount,
+		"executed_quantity:buy":     state.buyQty,
+		"executed_quantity:sell":    state.sellQty,
+		"gross_executed_quantity":   grossExecutedQty,
+		"net_executed_quantity":     netExecutedQty,
+		"cumulative_volume_delta":   cumulativeVolumeDelta,
+		"aggressive_notional:buy":   state.buyNotional,
+		"aggressive_notional:sell":  state.sellNotional,
+		"gross_notional":            grossNotional,
+		"net_notional":              netNotional,
+		"cumulative_notional_delta": cumulativeNotionalDelta,
+		"signed_net_fraction":       signedNetFraction,
+		"mean_trade_notional":       grossNotional / state.totalCount,
+		"cvd_epoch_from":            state.firstAtNano,
 	}
 
-	var signedNetFraction float64
+	signedNet := state.signedNetTracker.Score(signedNetFraction)
+	signedNet.emit(out, "signed_net_fraction", signedNetFraction, false)
 
-	if grossNotional > 0 {
-		signedNetFraction = netNotional / grossNotional
-	}
+	var gross trackerScore
+	hasRates := hasDelta
 
-	var meanTradeNotional float64
+	if hasRates {
+		grossNotionalRate := tradeGrossNotional / timeDelta
+		netNotionalRate := tradeNetNotional / timeDelta
 
-	if state.totalCount > 0 {
-		meanTradeNotional = grossNotional / state.totalCount
-	}
+		out["trade_rate"] = 1.0 / timeDelta
+		out["gross_notional_rate"] = grossNotionalRate
+		out["net_notional_rate"] = netNotionalRate
+		out["buy_notional_rate"] = tradeBuyNotional / timeDelta
+		out["sell_notional_rate"] = tradeSellNotional / timeDelta
 
-	tradeRate := 1.0 / timeDelta
-	grossNotionalRate := tradeGrossNotional / timeDelta
-	netNotionalRate := tradeNetNotional / timeDelta
-	buyNotionalRate := tradeBuyNotional / timeDelta
-	sellNotionalRate := tradeSellNotional / timeDelta
+		gross = state.grossRateTracker.Score(grossNotionalRate)
+		gross.emit(out, "gross_notional_rate", grossNotionalRate, true)
 
-	midpointFrom := price
-
-	if state.prevPrice > 0 {
-		midpointFrom = state.prevPrice
-	}
-
-	midpointAt := price
-
-	var midpointLogReturn float64
-
-	if state.prevPrice > 0 && price > 0 {
-		midpointLogReturn = math.Log(price / state.prevPrice)
-	}
-
-	midpointReturnRate := midpointLogReturn / timeDelta
-
-	flowAlignedMidpointReturn := midpointLogReturn
-
-	if side == "sell" {
-		flowAlignedMidpointReturn = -midpointLogReturn
-	}
-
-	var midpointResponsePerNetNotional float64
-
-	if tradeNetNotional != 0 {
-		midpointResponsePerNetNotional = midpointLogReturn / tradeNetNotional
-	}
-
-	state.grossRateTracker.Step(grossNotionalRate)
-	grossNotionalRateBaseline := state.grossRateTracker.Baseline()
-	grossNotionalRateRatio := state.grossRateTracker.Ratio(grossNotionalRate)
-	grossNotionalRateDivergence := state.grossRateTracker.Divergence(grossNotionalRate)
-	grossNotionalRateZScore := state.grossRateTracker.ZScore(grossNotionalRate)
-
-	state.signedNetTracker.Step(signedNetFraction)
-	signedNetFractionBaseline := state.signedNetTracker.Baseline()
-	signedNetFractionDivergence := state.signedNetTracker.Divergence(signedNetFraction)
-	signedNetFractionZScore := state.signedNetTracker.ZScore(signedNetFraction)
-
-	state.midpointReturnTracker.Step(midpointReturnRate)
-	midpointReturnRateBaseline := state.midpointReturnTracker.Baseline()
-	midpointReturnRateDivergence := state.midpointReturnTracker.Divergence(midpointReturnRate)
-	midpointReturnRateZScore := state.midpointReturnTracker.ZScore(midpointReturnRate)
-
-	var netNotionalRateVelocity, grossNotionalRateVelocity float64
-
-	if !state.lastAt.IsZero() && timeDelta > 0 {
-		netNotionalRateVelocity = (netNotionalRate - state.prevNetNotionalRate) / timeDelta
-		grossNotionalRateVelocity = (grossNotionalRate - state.prevGrossNotionalRate) / timeDelta
-	}
-
-	target := [2]float64{signedNetFractionZScore, grossNotionalRateZScore}
-	histDist := 0.0
-	histPerc := 0.0
-
-	if len(state.historyPoints) > 0 {
-		diffX := target[0] - state.historyPoints[0][0]
-		diffY := target[1] - state.historyPoints[0][1]
-		minDist := math.Sqrt(diffX*diffX + diffY*diffY)
-
-		for idx := 1; idx < len(state.historyPoints); idx++ {
-			dx := target[0] - state.historyPoints[idx][0]
-			dy := target[1] - state.historyPoints[idx][1]
-			distance := math.Sqrt(dx*dx + dy*dy)
-
-			if distance < minDist {
-				minDist = distance
-			}
+		if state.hasPrevRates {
+			out["net_notional_rate_velocity"] = (netNotionalRate - state.prevNetNotionalRate) / timeDelta
+			out["gross_notional_rate_velocity"] = (grossNotionalRate - state.prevGrossNotionalRate) / timeDelta
 		}
 
-		if len(state.historyDistances) > 0 {
-			belowCount := 0
+		state.prevNetNotionalRate = netNotionalRate
+		state.prevGrossNotionalRate = grossNotionalRate
+		state.hasPrevRates = true
+	}
 
-			for _, pastDist := range state.historyDistances {
-				if pastDist <= minDist {
-					belowCount++
+	if state.prevPrice > 0 {
+		midpointLogReturn := math.Log(price / state.prevPrice)
+		flowAligned := midpointLogReturn
+
+		if side == "sell" {
+			flowAligned = -midpointLogReturn
+		}
+
+		out["response_midpoint:from"] = state.prevPrice
+		out["response_midpoint:at"] = price
+		out["midpoint_log_return"] = midpointLogReturn
+		out["flow_aligned_midpoint_return"] = flowAligned
+		out["midpoint_response_per_net_notional"] = midpointLogReturn / tradeNetNotional
+
+		if hasDelta {
+			midpointReturnRate := midpointLogReturn / timeDelta
+			out["midpoint_return_rate"] = midpointReturnRate
+			state.midpointReturnTracker.Score(midpointReturnRate).emit(
+				out, "midpoint_return_rate", midpointReturnRate, false,
+			)
+		}
+	}
+
+	if signedNet.hasZ && gross.hasZ {
+		state.historyPath(out, [2]float64{signedNet.zScore, gross.zScore})
+	}
+
+	state.lastAt = prior.At
+	state.prevPrice = price
+
+	return prior.Next(signal.Name(), out)
+}
+
+/*
+historyPath scores how far this trade's (signed-net-fraction, gross-rate)
+z-score point lies from the nearest retained one, and that distance's rank
+among past nearest distances.
+*/
+func (state *symbolState) historyPath(out map[string]float64, target [2]float64) {
+	if len(state.historyPoints) > 0 {
+		minDist := math.Inf(1)
+
+		for _, point := range state.historyPoints {
+			dx := target[0] - point[0]
+			dy := target[1] - point[1]
+			minDist = math.Min(minDist, math.Sqrt(dx*dx+dy*dy))
+		}
+
+		out["historical_path_distance"] = minDist
+
+		if len(state.historyDistances) > 0 {
+			below := 0
+
+			for _, past := range state.historyDistances {
+				if past <= minDist {
+					below++
 				}
 			}
 
-			histPerc = float64(belowCount) / float64(len(state.historyDistances))
+			out["historical_path_percentile"] = float64(below) / float64(len(state.historyDistances))
 		}
 
-		histDist = minDist
 		state.historyDistances = append(state.historyDistances, minDist)
 
 		if len(state.historyDistances) > 256 {
@@ -301,54 +320,4 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if len(state.historyPoints) > 256 {
 		state.historyPoints = state.historyPoints[len(state.historyPoints)-256:]
 	}
-
-	state.lastAt = prior.At
-	state.prevPrice = price
-	state.prevNetNotionalRate = netNotionalRate
-	state.prevGrossNotionalRate = grossNotionalRate
-
-	return prior.Next(signal.Name(), map[string]float64{
-		"trade_count:buy":                    state.buyCount,
-		"trade_count:sell":                   state.sellCount,
-		"trade_count":                        state.totalCount,
-		"signed_count_fraction":              signedCountFraction,
-		"executed_quantity:buy":              state.buyQty,
-		"executed_quantity:sell":             state.sellQty,
-		"gross_executed_quantity":            grossExecutedQty,
-		"net_executed_quantity":              netExecutedQty,
-		"cumulative_volume_delta":            cumulativeVolumeDelta,
-		"aggressive_notional:buy":            state.buyNotional,
-		"aggressive_notional:sell":           state.sellNotional,
-		"gross_notional":                     grossNotional,
-		"net_notional":                       netNotional,
-		"cumulative_notional_delta":          cumulativeNotionalDelta,
-		"signed_net_fraction":                signedNetFraction,
-		"mean_trade_notional":                meanTradeNotional,
-		"trade_rate":                         tradeRate,
-		"gross_notional_rate":                grossNotionalRate,
-		"net_notional_rate":                  netNotionalRate,
-		"buy_notional_rate":                  buyNotionalRate,
-		"sell_notional_rate":                 sellNotionalRate,
-		"cvd_epoch_from":                     state.firstAtNano,
-		"response_midpoint:from":             midpointFrom,
-		"response_midpoint:at":               midpointAt,
-		"midpoint_log_return":                midpointLogReturn,
-		"midpoint_return_rate":               midpointReturnRate,
-		"flow_aligned_midpoint_return":       flowAlignedMidpointReturn,
-		"midpoint_response_per_net_notional": midpointResponsePerNetNotional,
-		"gross_notional_rate_baseline":       grossNotionalRateBaseline,
-		"gross_notional_rate_ratio":          grossNotionalRateRatio,
-		"gross_notional_rate_divergence":     grossNotionalRateDivergence,
-		"gross_notional_rate_zscore":         grossNotionalRateZScore,
-		"signed_net_fraction_baseline":       signedNetFractionBaseline,
-		"signed_net_fraction_divergence":     signedNetFractionDivergence,
-		"signed_net_fraction_zscore":         signedNetFractionZScore,
-		"midpoint_return_rate_baseline":      midpointReturnRateBaseline,
-		"midpoint_return_rate_divergence":    midpointReturnRateDivergence,
-		"midpoint_return_rate_zscore":        midpointReturnRateZScore,
-		"net_notional_rate_velocity":         netNotionalRateVelocity,
-		"gross_notional_rate_velocity":       grossNotionalRateVelocity,
-		"historical_path_distance":           histDist,
-		"historical_path_percentile":         histPerc,
-	})
 }

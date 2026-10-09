@@ -55,6 +55,11 @@ func (op *Joint) Next(
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			input := (*JointInput)(arriving)
 
 			if len(input.Values) != len(op.moments) {

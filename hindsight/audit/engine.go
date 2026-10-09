@@ -50,7 +50,11 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	}
 
 	if opts.TakerFee <= 0 {
-		opts.TakerFee = 0.008
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[audit] taker fee is required and must be strictly positive (specify via --taker-fee with explicit provenance)",
+			nil,
+		))
 	}
 
 	if opts.OutputDir == "" {
@@ -178,8 +182,33 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	)
 	errnie.Info(fmt.Sprintf("[audit] [Bonus Stage 6] Completed in %s: %s", time.Since(stage6Start).Round(time.Millisecond), cognitive.SummaryText))
 
+	// Validation 1: Production-vs-Audit Equivalence
+	eqStart := time.Now()
+	errnie.Info("[audit] [Validation 1/4] Auditing Production-vs-Audit Equivalence...")
+	equivalence := AnalyzeEquivalence(ctx, fullGrid, orderedTicks, tickMeasurements)
+	errnie.Info(fmt.Sprintf("[audit] [Validation 1/4] Completed in %s: %s", time.Since(eqStart).Round(time.Millisecond), equivalence.SummaryText))
+
+	// Validation 2: Metric Truthfulness
+	truthStart := time.Now()
+	errnie.Info("[audit] [Validation 2/4] Auditing Metric Truthfulness...")
+	truthfulness := AnalyzeTruthfulness(allMeasurements)
+	errnie.Info(fmt.Sprintf("[audit] [Validation 2/4] Completed in %s: %s", time.Since(truthStart).Round(time.Millisecond), truthfulness.SummaryText))
+
+	// Validation 3: Causality & State Isolation
+	causStart := time.Now()
+	errnie.Info("[audit] [Validation 3/4] Auditing Causality & State Isolation...")
+	causality := AnalyzeCausality(fullGrid, orderedTicks, tickMeasurements)
+	errnie.Info(fmt.Sprintf("[audit] [Validation 3/4] Completed in %s: %s", time.Since(causStart).Round(time.Millisecond), causality.SummaryText))
+
+	// Validation 4: Grid Sensitivity & Family Dependence
+	sensStart := time.Now()
+	errnie.Info("[audit] [Validation 4/4] Auditing Grid Sensitivity & Family Dependence...")
+	sensitivity := AnalyzeGridSensitivity(fullGrid, orderedTicks, tickMeasurements)
+	errnie.Info(fmt.Sprintf("[audit] [Validation 4/4] Completed in %s: %s", time.Since(sensStart).Round(time.Millisecond), sensitivity.SummaryText))
+
 	overallHealthy := contract.Passed && timing.Passed && vitality.Passed && sympathy.Passed &&
-		stability.Passed && dynamics.Passed && precursor.Passed && cognitive.Passed
+		stability.Passed && dynamics.Passed && precursor.Passed && cognitive.Passed &&
+		equivalence.Passed && truthfulness.Passed && causality.Passed && sensitivity.Passed
 
 	reportSymbol := opts.Symbol
 	if reportSymbol == "" {
@@ -199,6 +228,10 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 		TokenDynamics:  dynamics,
 		Precursor:      precursor,
 		CognitiveTrie:  cognitive,
+		Equivalence:    &equivalence,
+		Truthfulness:   &truthfulness,
+		Causality:      &causality,
+		Sensitivity:    &sensitivity,
 		OverallHealthy: overallHealthy,
 	}
 

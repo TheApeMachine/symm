@@ -268,10 +268,12 @@ func AnalyzeCognitiveTrie(
 		permutations = 50
 	}
 
-	fee := 0.008
-
+	var fee float64
 	if len(takerFee) > 0 && takerFee[0] > 0 {
 		fee = takerFee[0]
+	}
+	if fee <= 0 {
+		return insufficientCognitiveTrie("Taker fee is required and must be strictly positive.")
 	}
 
 	if detections == nil {
@@ -627,14 +629,18 @@ func AnalyzeCognitiveTrie(
 		abstentionRate = float64(abstentions) / float64(totalCalls)
 	}
 
+	s3Audit := auditS3PrefixMemory(phases)
+
 	summaryText := fmt.Sprintf(
-		"Cognitive Trie: %d phases (%d enter, %d exit, %d wait). Prequential hits=%d/%d (%.1f%%) [Balanced Acc: %.1f%%, MCC: %.3f, Enter Prec/Rec: %.1f%%/%.1f%%] vs best baseline (%s) %d/%d (%.1f%%, Balanced Acc: %.1f%%). Null p95=%.1f hits, Balanced Acc p95=%.1f%% (p=%.3f). Retention=%.1f%%. Spurious bg rate=%.2f%%.",
+		"Cognitive Trie: %d phases (%d enter, %d exit, %d wait). Prequential hits=%d/%d (%.1f%%) [Balanced Acc: %.1f%%, MCC: %.3f, Enter Prec/Rec: %.1f%%/%.1f%%] vs best baseline (%s) %d/%d (%.1f%%, Balanced Acc: %.1f%%). Null p95=%.1f hits, Balanced Acc p95=%.1f%% (p=%.3f). S3 Memory: %d keys, %d collisions, time-to-disambiguation=%d tokens. Retention=%.1f%%. Spurious bg rate=%.2f%%.",
 		len(phases), actionCounts["enter"], actionCounts["exit"], actionCounts["wait"],
 		hits, totalCalls, hitRate*100,
 		balancedAcc*100, mcc, enterPrec*100, enterRec*100,
 		bestBaselinePolicy, bestBaselineHits, totalCalls, baselineHitRate*100,
 		baselineBalancedAcc*100,
-		nullP95, nullP95BalAcc*100, empiricalPVal, retentionRate*100, spuriousRate*100,
+		nullP95, nullP95BalAcc*100, empiricalPVal,
+		s3Audit.TotalPrefixKeys, s3Audit.PrefixCollisions, s3Audit.TimeToDisambiguation,
+		retentionRate*100, spuriousRate*100,
 	)
 
 	return Stage6CognitiveTrie{
@@ -678,9 +684,138 @@ func AnalyzeCognitiveTrie(
 		MeanConfidence:      meanConf,
 		MeanContrast:        meanCont,
 		SpuriousTriggerRate: spuriousRate,
+		S3Memory:            s3Audit,
 		SummaryText:         summaryText,
 		Status:              "MEASURED",
 		Passed:              true,
+	}
+}
+
+func auditS3PrefixMemory(phases []triePhase) S3MemoryAudit {
+	if len(phases) == 0 {
+		return S3MemoryAudit{
+			SummaryText: "No phases available to audit S3 prefix memory.",
+			Passed:      false,
+		}
+	}
+
+	uniqueKeys := make(map[string]struct{})
+	contextActionMap := make(map[string]map[string]int)
+	prefixByDepth := make(map[int]map[string]map[string]int)
+	maxDepth := 0
+	totalDepth := 0
+
+	prequentialHits := 0
+	prequentialCalls := 0
+	storedPrefixes := make(map[string]string)
+
+	for _, ph := range phases {
+		if ph.context == "" {
+			continue
+		}
+
+		key := ph.context + "/" + ph.targetAction + ".json"
+		uniqueKeys[key] = struct{}{}
+
+		tokens := strings.Split(ph.context, "/")
+		depth := len(tokens)
+		if depth > maxDepth {
+			maxDepth = depth
+		}
+		totalDepth += depth
+
+		if contextActionMap[ph.context] == nil {
+			contextActionMap[ph.context] = make(map[string]int)
+		}
+		contextActionMap[ph.context][ph.targetAction]++
+
+		for k := 1; k <= depth; k++ {
+			subPrefix := strings.Join(tokens[:k], "/")
+			if prefixByDepth[k] == nil {
+				prefixByDepth[k] = make(map[string]map[string]int)
+			}
+			if prefixByDepth[k][subPrefix] == nil {
+				prefixByDepth[k][subPrefix] = make(map[string]int)
+			}
+			prefixByDepth[k][subPrefix][ph.targetAction]++
+		}
+
+		if storedAct, ok := storedPrefixes[ph.context]; ok {
+			prequentialCalls++
+			if storedAct == ph.targetAction {
+				prequentialHits++
+			}
+		}
+
+		storedPrefixes[ph.context] = ph.targetAction
+	}
+
+	prefixCollisions := 0
+	conflictingContinuations := 0
+
+	for _, actions := range contextActionMap {
+		if actions["enter"] > 0 && actions["wait"] > 0 {
+			prefixCollisions++
+		}
+		if actions["enter"] > 0 && actions["exit"] > 0 {
+			conflictingContinuations++
+		}
+	}
+
+	meanDepth := 0.0
+	if len(phases) > 0 {
+		meanDepth = float64(totalDepth) / float64(len(phases))
+	}
+
+	timeToDisambiguation := maxDepth
+	for k := 1; k <= maxDepth; k++ {
+		depthCollisions := 0
+		totalPrefixesAtK := len(prefixByDepth[k])
+		if totalPrefixesAtK == 0 {
+			continue
+		}
+		for _, actions := range prefixByDepth[k] {
+			if actions["enter"] > 0 && (actions["wait"] > 0 || actions["exit"] > 0) {
+				depthCollisions++
+			}
+		}
+		collisionRate := float64(depthCollisions) / float64(totalPrefixesAtK)
+		if collisionRate <= 0.05 {
+			timeToDisambiguation = k
+			break
+		}
+	}
+
+	prequentialAcc := 0.0
+	if prequentialCalls > 0 {
+		prequentialAcc = float64(prequentialHits) / float64(prequentialCalls)
+	}
+
+	var storageBytes int64
+	for k := range uniqueKeys {
+		storageBytes += int64(128 + len(k))
+	}
+
+	summary := fmt.Sprintf(
+		"S3 Prefix Memory: %d keys across %d unique prefixes (mean depth=%.1f, max=%d). "+
+			"Prefix collisions (enter vs wait)=%d, conflicting continuations (enter vs exit)=%d. "+
+			"Time-to-disambiguation=%d tokens. Prequential retrieval accuracy=%.1f%% (%d/%d calls). Storage=%d bytes.",
+		len(uniqueKeys), len(contextActionMap), meanDepth, maxDepth,
+		prefixCollisions, conflictingContinuations,
+		timeToDisambiguation, prequentialAcc*100, prequentialHits, prequentialCalls, storageBytes,
+	)
+
+	return S3MemoryAudit{
+		TotalPrefixKeys:          len(uniqueKeys),
+		PrefixCollisions:         prefixCollisions,
+		ConflictingContinuations: conflictingContinuations,
+		MeanPrefixDepth:          meanDepth,
+		MaxPrefixDepth:           maxDepth,
+		TimeToDisambiguation:     timeToDisambiguation,
+		PrequentialRetrievalAcc:  prequentialAcc,
+		StorageBytes:             storageBytes,
+		SummaryText:              summary,
+		Passed:                   prefixCollisions == 0,
 	}
 }
 

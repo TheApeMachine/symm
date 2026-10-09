@@ -89,29 +89,80 @@ func TestPumpDumpSignal(t *testing.T) {
 			So(metricValue(res1, "spread"), ShouldEqual, 2.0)
 			So(metricValue(res1, "relative_spread"), ShouldAlmostEqual, 2.0/50001.0, 1e-12)
 
-			So(metricValue(res1, "volume_rate"), ShouldEqual, 0)
-			So(metricValue(res1, "trade_interval_seconds"), ShouldEqual, 0)
+			// The first trade only seeds the quantity distribution: no
+			// interval, no bar, no rates.
+			for _, label := range []string{
+				"trade_interval_seconds", "volume_bar_quantity", "volume_rate", "notional_rate",
+			} {
+				_, held := metric(res1, label)
+				So(held, ShouldBeFalse)
+			}
 
-			res2 := instrument.Step(trade(now.Add(200*time.Millisecond), 2, "buy", 50002.0, 1.0))
+			// The bar opens here on Q* = median{1}; it cannot close at zero
+			// duration.
+			at2 := now.Add(200 * time.Millisecond)
+			res2 := instrument.Step(trade(at2, 2, "buy", 50002.0, 1.0))
 			So(res2, ShouldNotBeNil)
-			So(res2.From, ShouldEqual, now)
 			So(instrument.Error(), ShouldBeNil)
-
 			So(metricValue(res2, "trade_interval_seconds"), ShouldAlmostEqual, 0.2, 1e-9)
-			So(metricValue(res2, "volume_bar_target_quantity"), ShouldAlmostEqual, 1.0, 1e-9)
-			So(metricValue(res2, "volume_bar_quantity"), ShouldAlmostEqual, 2.0, 1e-9)
-			So(metricValue(res2, "volume_bar_notional"), ShouldAlmostEqual, 50001.0+50002.0, 1e-6)
-			So(metricValue(res2, "volume_bar_trade_count"), ShouldEqual, 2)
-			So(metricValue(res2, "volume_bar_duration"), ShouldAlmostEqual, 0.2, 1e-9)
-			So(metricValue(res2, "volume_rate"), ShouldAlmostEqual, 2.0/0.2, 1e-6)
-			So(metricValue(res2, "notional_rate"), ShouldAlmostEqual, 100003.0/0.2, 1e-6)
-			So(metricValue(res2, "trade_rate"), ShouldAlmostEqual, 2.0/0.2, 1e-6)
-			So(metricValue(res2, "completed_bars"), ShouldEqual, 1)
+			_, open := metric(res2, "volume_bar_quantity")
+			So(open, ShouldBeFalse)
+			So(res2.From, ShouldEqual, at2)
+
+			input3 := trade(now.Add(500*time.Millisecond), 3, "buy", 50003.0, 1.0)
+			res3 := instrument.Step(input3)
+			So(res3, ShouldNotBeNil)
+			So(res3.From, ShouldEqual, at2)
+
+			// The shared input frame is never re-dated.
+			So(input3.From, ShouldEqual, input3.At)
+
+			// A constant spread has no dispersion, so no z-score.
+			_, scored := metric(res3, "spread_zscore")
+			So(scored, ShouldBeFalse)
+			So(metricValue(res3, "volume_bar_quantity"), ShouldAlmostEqual, 2.0, 1e-9)
+			So(metricValue(res3, "volume_bar_notional"), ShouldAlmostEqual, 50002.0+50003.0, 1e-6)
+			So(metricValue(res3, "volume_bar_trade_count"), ShouldEqual, 2)
+			So(metricValue(res3, "volume_bar_duration"), ShouldAlmostEqual, 0.3, 1e-9)
+			So(metricValue(res3, "volume_rate"), ShouldAlmostEqual, 2.0/0.3, 1e-6)
+			So(metricValue(res3, "notional_rate"), ShouldAlmostEqual, 100005.0/0.3, 1e-6)
+			So(metricValue(res3, "trade_rate"), ShouldAlmostEqual, 2.0/0.3, 1e-6)
+			So(metricValue(res3, "completed_bars"), ShouldEqual, 1)
 
 			// Unchanged touch: a valid zero midpoint return.
-			So(metricValue(res2, "midpoint:from"), ShouldEqual, 50001.0)
-			So(metricValue(res2, "midpoint:at"), ShouldEqual, 50001.0)
-			So(metricValue(res2, "midpoint_log_return"), ShouldEqual, 0.0)
+			So(metricValue(res3, "midpoint:from"), ShouldEqual, 50001.0)
+			So(metricValue(res3, "midpoint:at"), ShouldEqual, 50001.0)
+			So(metricValue(res3, "midpoint_log_return"), ShouldEqual, 0.0)
+		})
+
+		Convey("The bar target is the prior median trade quantity, fixed at open", func() {
+			touch(books, now, "bid-1", 50000.0, 5.0, "ask-1", 50002.0, 5.0)
+			So(instrument.Step(trade(now, 1, "buy", 50001.0, 3.0)), ShouldNotBeNil)
+
+			var res *data.Measurement
+
+			for step := 1; step <= 2; step++ {
+				res = instrument.Step(trade(now.Add(time.Duration(step)*time.Second), int64(step+1), "buy", 50001.0, 1.0))
+				So(res, ShouldNotBeNil)
+				_, closed := metric(res, "volume_bar_quantity")
+				So(closed, ShouldBeFalse)
+			}
+
+			res = instrument.Step(trade(now.Add(3*time.Second), 4, "buy", 50001.0, 1.0))
+			So(metricValue(res, "volume_bar_quantity"), ShouldAlmostEqual, 3.0, 1e-9)
+		})
+
+		Convey("Trades sharing a timestamp all count toward the bar", func() {
+			touch(books, now, "bid-1", 50000.0, 5.0, "ask-1", 50002.0, 5.0)
+			So(instrument.Step(trade(now, 1, "buy", 50001.0, 1.0)), ShouldNotBeNil)
+
+			at := now.Add(time.Second)
+			So(instrument.Step(trade(at, 2, "buy", 50001.0, 1.0)), ShouldNotBeNil)
+			So(instrument.Step(trade(at, 3, "buy", 50001.0, 1.0)), ShouldNotBeNil)
+
+			res := instrument.Step(trade(at.Add(time.Second), 4, "buy", 50001.0, 0.5))
+			So(metricValue(res, "volume_bar_quantity"), ShouldAlmostEqual, 2.5, 1e-9)
+			So(metricValue(res, "volume_bar_trade_count"), ShouldEqual, 3)
 		})
 
 		Convey("Pump: activity surge and spread blowout yield positive divergences and an outlier z-score", func() {
@@ -119,7 +170,9 @@ func TestPumpDumpSignal(t *testing.T) {
 
 			for step := 0; step < 12; step++ {
 				at := now.Add(time.Duration(step*100) * time.Millisecond)
-				touch(books, at, "bid-calm", basePrice-1.0, 5.0, "ask-calm", basePrice+1.0, 5.0)
+				// A slightly alternating spread gives the baseline a dispersion.
+				half := 1.0 + 0.1*float64(step%2)
+				touch(books, at, "bid-calm", basePrice-half, 5.0, "ask-calm", basePrice+half, 5.0)
 				So(instrument.Step(trade(at, int64(step+10), "buy", basePrice, 0.5)), ShouldNotBeNil)
 			}
 
@@ -230,7 +283,8 @@ func TestPumpDumpSignal(t *testing.T) {
 			So(metricValue(res, "trade_notional"), ShouldEqual, 300.0)
 
 			for _, label := range []string{"best_bid", "best_ask", "midpoint", "spread", "relative_spread"} {
-				So(metricValue(res, label), ShouldEqual, 0)
+				_, held := metric(res, label)
+				So(held, ShouldBeFalse)
 			}
 		})
 

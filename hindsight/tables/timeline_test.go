@@ -31,11 +31,12 @@ func drainSeq(seq iter.Seq2[*data.Measurement, error]) ([]*data.Measurement, err
 }
 
 func TestCatalog_TimelineReadFailure(t *testing.T) {
-	Convey("Given a catalog holding trade, detector, and signal rows for one run", t, func() {
+	Convey("Given a catalog holding trade and signal rows, and detector rows in the detections table, for one run", t, func() {
 		ctx := context.Background()
 		catalog := tablestest.New(t)
 		epoch := int64(100)
 		writer := tables.NewWriter(catalog, epoch)
+		detections := make([]*data.Measurement, 0, 4)
 
 		for tick := int64(1); tick <= 4; tick++ {
 			for _, source := range []string{"spot:trade", "detector", "cvd"} {
@@ -43,11 +44,18 @@ func TestCatalog_TimelineReadFailure(t *testing.T) {
 				measurement.At = time.Now().UTC()
 				measurement.From = measurement.At
 				measurement.Write(data.NewMetric("value", float64(tick), data.UnitCount, data.TimescaleTick))
+
+				if source == "detector" {
+					detections = append(detections, measurement)
+					continue
+				}
+
 				writer.Add(tables.Measurements, measurement)
 			}
 		}
 
 		So(writer.CommitReady(ctx, true), ShouldBeNil)
+		So(catalog.Append(ctx, tables.Detections, epoch, detections), ShouldBeNil)
 
 		reads := map[string]func() iter.Seq2[*data.Measurement, error]{
 			"Trades":      func() iter.Seq2[*data.Measurement, error] { return catalog.Trades(ctx, epoch) },
@@ -55,8 +63,8 @@ func TestCatalog_TimelineReadFailure(t *testing.T) {
 			"SignalLogic": func() iter.Seq2[*data.Measurement, error] { return catalog.SignalLogic(ctx, epoch, "BTC/USD", 0, 0) },
 		}
 
-		// Scan and Timeline return every source for the run/label, so a
-		// healthy read holds all 12 rows.
+		// Scan and Timeline return every measurements-table source for the
+		// run/label (trade and cvd), so a healthy read holds 8 rows.
 		displayReads := map[string]func() iter.Seq2[*data.Measurement, error]{
 			"Scan": func() iter.Seq2[*data.Measurement, error] {
 				return catalog.Scan(ctx, tables.Measurements, epoch, nil, 0)
@@ -74,7 +82,7 @@ func TestCatalog_TimelineReadFailure(t *testing.T) {
 			for name, read := range displayReads {
 				rows, err := drainSeq(read())
 				So(name+": "+errString(err), ShouldEqual, name+": <nil>")
-				So(len(rows), ShouldEqual, 12)
+				So(len(rows), ShouldEqual, 8)
 			}
 
 			labels, err := catalog.Labels(ctx, epoch)
@@ -84,6 +92,7 @@ func TestCatalog_TimelineReadFailure(t *testing.T) {
 
 		Convey("When the table's data files fail to read", func() {
 			tablestest.DropDataFiles(t, catalog, tables.Measurements)
+			tablestest.DropDataFiles(t, catalog, tables.Detections)
 
 			Convey("Every read yields the storage error instead of ending as an empty stream", func() {
 				for name, read := range reads {

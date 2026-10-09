@@ -41,8 +41,9 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 				metrics = append(metrics, metricEntry.Metric.Raw)
 			}
 
-			// Single-asset initial tick produces last_price and observation_count + prior price
-			So(len(metrics), ShouldEqual, 3)
+			// Single-asset initial tick produces last_price and observation_count;
+			// the trade's own price stays on the trade frame.
+			So(len(metrics), ShouldEqual, 2)
 			So(result.Maturity(), ShouldBeLessThan, 0.1)
 		})
 
@@ -71,7 +72,7 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 				secondMetrics = append(secondMetrics, metricEntry.Metric.Raw)
 			}
 
-			So(len(secondMetrics), ShouldEqual, 3)
+			So(len(secondMetrics), ShouldEqual, 2)
 		})
 
 		Convey("When repeated observations arrive with zero return energy, no NaN metrics surface", func() {
@@ -160,21 +161,48 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 			So(movingBtcResult.Error(), ShouldBeNil)
 
 			movingMetrics := make([]float64, 0)
+			movingKeys := make(map[string]bool)
 
 			for metricEntry := range movingBtcResult.Read() {
 				movingMetrics = append(movingMetrics, metricEntry.Metric.Raw)
+				movingKeys[metricEntry.Key] = true
 			}
 
-			So(len(movingMetrics), ShouldBeGreaterThanOrEqualTo, 30)
+			// effective_sample_count, focal_return_energy_rate, and
+			// relative_cohort_return_energy were duplicates and are not emitted.
+			So(len(movingMetrics), ShouldBeGreaterThanOrEqualTo, 21)
+
+			for _, duplicate := range []string{
+				"effective_sample_count", "focal_return_energy_rate", "relative_cohort_return_energy",
+			} {
+				So(movingKeys[duplicate], ShouldBeFalse)
+			}
 
 			signedCorr := data.Pull(movingBtcResult.Read("signed_correlation")).Metric.Raw
 			So(signedCorr, ShouldBeBetweenOrEqual, -1.0, 1.0)
 			absCorr := data.Pull(movingBtcResult.Read("absolute_correlation")).Metric.Raw
 			So(absCorr, ShouldBeBetweenOrEqual, 0.0, 1.0)
-			histDist := data.Pull(movingBtcResult.Read("historical_path_distance")).Metric.Raw
-			So(histDist, ShouldBeGreaterThanOrEqualTo, 0.0)
-			histPerc := data.Pull(movingBtcResult.Read("historical_path_percentile")).Metric.Raw
-			So(histPerc, ShouldBeBetweenOrEqual, 0.0, 1.0)
+			// Too little history for a dispersion: no z-score, so no path
+			// point either, rather than zeros standing in for them.
+			for _, undefined := range []string{
+				"correlation_zscore", "relative_return_energy_zscore",
+				"historical_path_distance", "historical_path_percentile",
+			} {
+				So(movingKeys[undefined], ShouldBeFalse)
+			}
 		})
+	})
+}
+
+func TestCorrelationSignalWithoutPrice(t *testing.T) {
+	Convey("A frame without a price yields no measurement instead of a panic", t, func() {
+		signal := NewSignal(t.Context())
+		signal.Transition(runtime.READY)
+
+		frame := data.NewMeasurement(1, "BTC/USD", "spot:trade", system.SeqIdx.Add(1), system.Tick.Add(1))
+		frame.At = time.Now()
+		frame.From = frame.At
+
+		So(func() { So(signal.Step(frame.Write()), ShouldBeNil) }, ShouldNotPanic)
 	})
 }

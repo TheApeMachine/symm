@@ -22,7 +22,7 @@ const (
 	UnitProbability       Unit = "probability"
 	UnitConfidence        Unit = "confidence"
 	UnitEntropy           Unit = "entropy"
-	UnitNat               Unit = "nat"
+	UnitNat               Unit = "nat" // signed: log-likelihoods; non-negative information is UnitEntropy
 
 	// Market Prices & Cash Flows
 	UnitPrice                    Unit = "price"
@@ -40,6 +40,8 @@ const (
 
 	// Discrete Counts
 	UnitCount Unit = "count"
+	// UnitCountResidual is an observed-minus-expected event count: signed.
+	UnitCountResidual Unit = "count_residual"
 
 	// Rates & Dynamics
 	UnitRate         Unit = "rate"
@@ -136,8 +138,6 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"correlation_velocity":              {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"correlation_zscore":                {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"covariance":                        {Unit: UnitCovariance, Timescale: TimescaleRollingWindow},
-		"effective_sample_count":            {Unit: UnitCount, Timescale: TimescaleRollingWindow},
-		"focal_return_energy_rate":          {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"historical_path_distance":          {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
 		"historical_path_percentile":        {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 		"last_price":                        {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
@@ -145,7 +145,6 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"overlap_density":                   {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"overlap_pair_count":                {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"peer_return_energy_rate":           {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"relative_cohort_return_energy":     {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"relative_return_energy":            {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"relative_return_energy_baseline":   {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"relative_return_energy_divergence": {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
@@ -244,11 +243,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"net_displayed_flow:bid":                    {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"net_displayed_flow_rate:ask":               {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
 		"net_displayed_flow_rate:bid":               {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"observed_notional":                         {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
-		"observed_notional:ask":                     {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
-		"observed_notional:bid":                     {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"observed_notional_diff":                    {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
-		"observed_notional_imbalance":               {Unit: UnitRatio, Timescale: TimescaleInstantaneous},
 		"observed_notional_imbalance_baseline":      {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"observed_notional_imbalance_divergence":    {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"observed_notional_imbalance_mean":          {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
@@ -290,8 +285,8 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"conditional_intensity:buy":                  {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"conditional_intensity:sell":                 {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"conditional_intensity_velocity":             {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
-		"count_innovation:buy":                       {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"count_innovation:sell":                      {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"count_innovation:buy":                       {Unit: UnitCountResidual, Timescale: TimescaleInstantaneous},
+		"count_innovation:sell":                      {Unit: UnitCountResidual, Timescale: TimescaleInstantaneous},
 		"event_count":                                {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"event_count:buy":                            {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"event_count:sell":                           {Unit: UnitCount, Timescale: TimescaleInstantaneous},
@@ -302,10 +297,6 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"excitation_amplitude:sell_from_buy":         {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"excitation_amplitude:sell_from_sell":        {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"excitation_decay":                           {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"excitation_decay:buy_from_buy":              {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"excitation_decay:buy_from_sell":             {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"excitation_decay:sell_from_buy":             {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"excitation_decay:sell_from_sell":            {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"excitation_fraction:buy":                    {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"excitation_fraction:sell":                   {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"excitation_intensity:buy":                   {Unit: UnitRate, Timescale: TimescaleRollingWindow},
@@ -316,14 +307,8 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"excitation_share:buy":                       {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"excitation_share:sell":                      {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"excitation_timescale":                       {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
-		"excitation_timescale:buy_from_buy":          {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
-		"excitation_timescale:buy_from_sell":         {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
-		"excitation_timescale:sell_from_buy":         {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
-		"excitation_timescale:sell_from_sell":        {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
 		"expected_descendants_from_buy":              {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"expected_descendants_from_sell":             {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"historical_path_distance":                   {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
-		"historical_path_percentile":                 {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 		"log_likelihood:hawkes":                      {Unit: UnitNat, Timescale: TimescaleRollingWindow},
 		"log_likelihood:poisson":                     {Unit: UnitNat, Timescale: TimescaleRollingWindow},
 		"log_likelihood:self_only":                   {Unit: UnitNat, Timescale: TimescaleRollingWindow},
@@ -341,38 +326,31 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"standardized_innovation:sell":               {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
 	},
 	"leadlag": {
-		"absolute_correlation_gain":     {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
-		"best_lag_correlation":          {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
 		"best_lag_correlation_baseline": {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
 		"best_lag_correlation_zscore":   {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
-		"best_lag_index":                {Unit: UnitDimensionless, Timescale: TimescaleRollingWindow},
-		"best_lag_seconds":              {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
-		"contemporaneous_correlation":   {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
+		"best_lag_seconds_mad":          {Unit: UnitDuration, Timescale: TimescaleRollingWindow},
+		"best_lag_seconds_median":       {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
 		"correlation_gain_baseline":     {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
+		"correlation_gain_mean":         {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
+		"correlation_gain_median":       {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
 		"correlation_gain_velocity":     {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"correlation_gain_zscore":       {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"correlation_p_value":           {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
+		"defined_peer_count":            {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"effective_sample_count":        {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"historical_path_distance":      {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
 		"historical_path_percentile":    {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 		"lag_baseline_seconds":          {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
 		"lag_divergence_seconds":        {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
-		"lag_fraction":                  {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"lag_noise_scale_seconds":       {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
-		"lag_peak_curvature":            {Unit: UnitDimensionless, Timescale: TimescaleRollingWindow},
-		"lag_peak_prominence":           {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
-		"lag_search_resolution_seconds": {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
-		"lag_search_span":               {Unit: UnitDimensionless, Timescale: TimescaleRollingWindow},
 		"lag_velocity":                  {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"lag_zscore":                    {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"last_price":                    {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"led_peer_share":                {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 		"measured_return_count":         {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"observation_count":             {Unit: UnitCount, Timescale: TimescaleRollingWindow},
-		"overlap_pair_count":            {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"reference_return_count":        {Unit: UnitCount, Timescale: TimescaleRollingWindow},
-		"reference_symbol":              {Unit: UnitDimensionless, Timescale: TimescaleRollingWindow},
 		"search_adjusted_p_value":       {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
-		"search_count":                  {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 	},
 	"liquidity": {
 		"best_ask_price":                 {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
@@ -461,7 +439,6 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"volume_bar_duration":             {Unit: UnitSecond, Timescale: TimescaleVolumeBar},
 		"volume_bar_notional":             {Unit: UnitNotional, Timescale: TimescaleVolumeBar},
 		"volume_bar_quantity":             {Unit: UnitQuantity, Timescale: TimescaleVolumeBar},
-		"volume_bar_target_quantity":      {Unit: UnitQuantity, Timescale: TimescaleVolumeBar},
 		"volume_bar_trade_count":          {Unit: UnitCount, Timescale: TimescaleVolumeBar},
 		"volume_rate":                     {Unit: UnitVolumeRate, Timescale: TimescaleVolumeBar},
 	},
@@ -469,7 +446,6 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"absolute_return":                  {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
 		"advance_count":                    {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"advance_fraction":                 {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"asof_age_seconds":                 {Unit: UnitSecond, Timescale: TimescaleInstantaneous},
 		"breadth":                          {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"breadth_baseline":                 {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"breadth_divergence":               {Unit: UnitRatio, Timescale: TimescaleRollingWindow},

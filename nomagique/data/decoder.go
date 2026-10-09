@@ -168,13 +168,18 @@ func (measurement *Measurement) Decode(batch arrow.RecordBatch, rowIdx int) erro
 				metric.center = centerCol.Value(itemIdx)
 				metric.scale = scaleCol.Value(itemIdx)
 
-				if exactCol != nil && !exactCol.IsNull(itemIdx) {
-					exactStr := exactCol.Value(itemIdx)
-					if exactStr != "" {
-						if exactDec, err := decimal.NewFromString(exactStr); err == nil {
-							metric.Exact = exactDec
-						}
+				if exactCol != nil && !exactCol.IsNull(itemIdx) && exactCol.Value(itemIdx) != "" {
+					exactDec, err := decimal.NewFromString(exactCol.Value(itemIdx))
+
+					if err != nil {
+						return errnie.Error(errnie.Err(
+							errnie.Validation,
+							fmt.Sprintf("iceberg: measurement row %d metric %s has an unparseable exact value", rowIdx, metricKey),
+							err,
+						))
 					}
+
+					metric.Exact = exactDec
 				}
 
 				measurement.metrics = append(measurement.metrics, &MetricEntry{

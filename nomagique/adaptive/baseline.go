@@ -3,6 +3,7 @@ package adaptive
 import (
 	"errors"
 	"iter"
+	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -54,10 +55,12 @@ func (op *Baseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				reading.Baseline = reading.Prior.Mean
 			}
 
-			reading.ScoreScale = reading.Dispersion
 			reading.Residual = val - reading.Baseline
 
-			if reading.ScoreScale > 0 {
+			// The value is scored against the dispersion before it, never one
+			// that already includes it.
+			if prior := reading.Prior; prior.Count > 1 && prior.M2 > 0 {
+				reading.ScoreScale = math.Sqrt(prior.M2 / (prior.Count - 1))
 				reading.ZScore = reading.Residual / reading.ScoreScale
 			}
 

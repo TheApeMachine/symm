@@ -22,6 +22,7 @@ type FisherView struct {
 	PriorCount      float64
 	Count           float64
 	ZScore          float64
+	ZDefined        bool
 	Variance        float64
 	VarianceDefined bool
 	HasPrior        bool
@@ -78,18 +79,12 @@ func (op *FisherEstimator) Next(
 					res.PriorVariance = priorM2 / (priorCount - 1)
 				}
 
-				res.ScoreScale = math.Abs(res.Residual)
-
+				// The z-score needs a positive prior dispersion; a lone
+				// residual is not its own scale.
 				if res.PriorVariance > 0 {
-					disp := math.Sqrt(res.PriorVariance)
-
-					if disp > 2.220446049250313e-16 {
-						res.ScoreScale = disp
-					}
-				}
-
-				if res.ScoreScale > 0 {
+					res.ScoreScale = math.Sqrt(res.PriorVariance)
 					res.ZScore = res.Residual / res.ScoreScale
+					view.ZDefined = true
 				}
 
 				view.Defined = true

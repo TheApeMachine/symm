@@ -66,34 +66,35 @@ A single ARI value must not be converted into a health threshold.
 
 ## Stage 4 — token dynamics
 
-A grid is developed only on the training period and evaluated on later unseen tape.
+A grid is developed only on the training period and evaluated on later unseen tape by invoking the production `Grid.Observe()` and `Grid.RegionScores()` path directly.
 
 The `Stream` state is continuous across the train/holdout boundary: carrying past observations forward is causal and matches live operation.
 
 Temporal nulls must preserve the local persistence that is not the hypothesis under test. Any block/persistence scale must be derived from the observed sequence or reported as a sensitivity sweep, not hard-coded because it appears reasonable.
 
-Report the complete null distribution/rank rather than a magic entropy-reduction cutoff.
+Raw temporal transitions are heavily dominated by diagonal dwell time (market autocorrelation). To isolate genuine state-change dynamics, the audit must compute and report run-length compressed transition matrices alongside raw matrices, comparing compressed entropy against temporal block nulls.
 
 ## Stage 5 — precursor hypotheses
 
 Stage 5 is event-centred, not dependent on whether an arbitrary first-N-ticks sample happens to contain a detection.
+
+Statistical separation, predictive skill, and economic relevance must be strictly decoupled and reported independently:
+1. **Statistical Separation**: Jensen-Shannon Divergence in bits of precursor token distributions ($A \to B$ ignition and $B \to C$ exhaustion) versus mask-preserving shuffled null distributions.
+2. **Predictive Skill**: Out-of-sample classification performance of precursor tokens anticipating excursions (Balanced Accuracy, MCC, Precision, Recall, and Mutual Information bits) versus marginal baselines.
+3. **Economic Relevance**: Net return and friction clearance rate evaluated against explicit, declared taker fee schedules ($2 \times \text{takerFee}$) and slippage. No arbitrary fee fallbacks are permitted.
 
 For the current long-only Desk semantics:
 - A->B positive examples: profitable `up` excursions.
 - Controls: `up_friction`, `down`, `chop`, `flat`, plus matched non-excursion background.
 - B->C is evaluated only after a valid profitable entry episode.
 
-Retrieve the actual causal sensory windows around each detected event and tokenize event/control populations through the same production representation path.
-
-Background populations exclude the event intervals being tested.
-
-Report observation counts, not merely the number of distinct token labels.
+Retrieve the actual causal sensory windows around each detected event and tokenize event/control populations through the same production representation path. Background populations exclude the event intervals being tested.
 
 No evidence is `INSUFFICIENT_DATA`, never success.
 
 ## Stage 6 — cognitive engine & associative memory
 
-Stage 6 audits the associative memory and Radix Trie (`nomagique/cognition/associate.go` and `strategy/model.go`).
+Stage 6 audits the cognitive engine, associative Radix Trie, and S3-compatible prefix memory (`nomagique/cognition/associate.go`, `strategy/model.go`, and `strategy/training.go`).
 
 1. **Prequential Evaluation Protocol**:
    - Each phase context is evaluated via `Recall(context, stance)` strictly *before* it is taught (`Teach(context, class, feedback)`).
@@ -108,13 +109,20 @@ Stage 6 audits the associative memory and Radix Trie (`nomagique/cognition/assoc
    - Compare against an empirical **label-shuffled null** across sequence fragments with fixed random seed.
    - Prequential predictive skill is `SUPPORTED` only when it separates from both the best constant policy baseline and the 95th percentile of the empirical null distribution. Otherwise, it is `NOT_SUPPORTED`.
 
-3. **Memory Retention & Topology**:
-   - Evaluate post-teach memory retention across all taught contexts to detect catastrophic interference or over-pruning.
-   - Report Radix tree topology (total nodes, max depth, mean depth, branching factor) and basin geometry (records, span, active enter basins, active exit basins).
-   - Evaluate false-alarm trigger rates on continuous unseen background tape.
+3. **S3-Compatible Prefix Memory Audit**:
+   - Audits the genuine S3 prefix-memory mechanism (`R04/R01/enter.json`) rather than an isolated in-memory trie stand-in.
+   - Measures prefix collisions (`enter` vs `wait`), conflicting continuations (`enter` vs `exit`), time-to-disambiguation token depth, and prequential retrieval accuracy.
+   - Enforces explicit taker fee provenance on all economic evaluations.
 
 4. **Zero Storage Side-Effects**:
    - All models in Stage 6 must run entirely in memory. The audit must never write to Iceberg tables, SeaweedFS, S3, or SQLite.
+
+## Adversarial Validations (V1–V4)
+
+- **V1: Production-vs-Audit Equivalence**: Verifies that replaying tape through the audit harness produces bit-for-bit identical region token emissions and brightness scores compared to the production execution pipeline.
+- **V2: Metric Truthfulness**: Verifies that sensory metrics faithfully reflect raw exchange trade measurements without non-positive prices, non-positive volumes, fake zero-filled midpoints, or synthetic time steps.
+- **V3: Causality & State Isolation**: Verifies that perturbing future ticks does not alter past token emissions (zero forward leakage), and that processing multi-symbol tape preserves strict state isolation between currency pairs.
+- **V4: Grid Dependence & Sensitivity**: Performs Leave-One-Family-Out (LOFO) ablation across all feature families and tests family duplication invariance to guarantee that the grid resists domination by single sensors and retains confluence.
 
 ## Reproducibility
 

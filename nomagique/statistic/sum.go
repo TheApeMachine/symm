@@ -21,17 +21,33 @@ func NewSum() core.Primitive {
 	return &Sum{}
 }
 
+/*
+Next consumes one run whole: the run commits to the running total only when
+every arrival is a value, and then yields that total once. A malformed run
+records ErrShape and commits nothing.
+*/
 func (op *Sum) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		for arriving := range in {
-			val := *(*float64)(arriving)
-			op.total += val
-			op.out = op.total
+		total := op.total
+		observed := false
 
-			if !yield(unsafe.Pointer(&op.out)) {
+		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
 				return
 			}
+
+			total += *(*float64)(arriving)
+			observed = true
 		}
+
+		if !observed {
+			return
+		}
+
+		op.total = total
+		op.out = total
+		yield(unsafe.Pointer(&op.out))
 	}
 }
 

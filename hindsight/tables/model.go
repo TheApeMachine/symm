@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"iter"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -87,6 +88,51 @@ func (catalog *Catalog) GetBlob(ctx context.Context, key string) ([]byte, error)
 	}
 
 	return body, nil
+}
+
+/*
+ListBlobs yields every object key under prefix, following continuation
+tokens to the end. A listing failure is yielded as an error and ends the
+sequence; it is never reported as end-of-listing.
+*/
+func (catalog *Catalog) ListBlobs(ctx context.Context, prefix string) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		client, bucket, err := catalog.blobs()
+
+		if err != nil {
+			yield("", err)
+			return
+		}
+
+		paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
+			Bucket: aws.String(bucket),
+			Prefix: aws.String(prefix),
+		})
+
+		for paginator.HasMorePages() {
+			page, err := paginator.NextPage(ctx)
+
+			if err != nil {
+				yield("", errnie.Error(errnie.Err(
+					errnie.IO,
+					"catalog: failed to list "+prefix,
+					err,
+				)))
+
+				return
+			}
+
+			for _, object := range page.Contents {
+				if object.Key == nil {
+					continue
+				}
+
+				if !yield(*object.Key, nil) {
+					return
+				}
+			}
+		}
+	}
 }
 
 func (catalog *Catalog) blobs() (*s3.Client, string, error) {

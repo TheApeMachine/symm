@@ -45,6 +45,11 @@ func (op *ResidualSpan) Next(
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			input := (*ResidualSpanInput)(arriving)
 			result := ResidualSpanResult{
 				Count:   input.Count,

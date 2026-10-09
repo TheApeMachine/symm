@@ -34,12 +34,18 @@ type TradeJournalSource interface {
 }
 
 /*
-PositionSource supplies active open positions and recent decisions for streaming to the UI.
+PositionSource supplies active open positions for streaming to the UI.
 */
 type PositionSource interface {
 	PositionsWire() *wire.PositionsFrameT
-	DecisionsWire() *wire.StrategyFrameT
 	PositionsVersion() uint64
+}
+
+/*
+DecisionSource supplies the latest strategy decisions for streaming to the UI.
+*/
+type DecisionSource interface {
+	DecisionsWire() *wire.StrategyFrameT
 	DecisionsVersion() uint64
 }
 
@@ -107,6 +113,7 @@ type Hub struct {
 	frontend         atomic.Pointer[websocket.Conn]
 	store            *tables.Catalog
 	positionSource   PositionSource
+	decisionSource   DecisionSource
 	equitySource     EquitySource
 	cognitionSource  CognitionSource
 	fragmentsSource  FragmentsSource
@@ -263,16 +270,16 @@ func NewHub(
 		var lastDecisionsVersion uint64
 
 		sendDecisions := func() error {
-			if hub.positionSource == nil {
+			if hub.decisionSource == nil {
 				return nil
 			}
 
-			ver := hub.positionSource.DecisionsVersion()
+			ver := hub.decisionSource.DecisionsVersion()
 			if ver != 0 && ver == lastDecisionsVersion {
 				return nil
 			}
 
-			wireFrame := hub.positionSource.DecisionsWire()
+			wireFrame := hub.decisionSource.DecisionsWire()
 
 			if wireFrame == nil || len(wireFrame.Decisions) == 0 {
 				return nil
@@ -516,7 +523,7 @@ func (hub *Hub) SetStoreTee(source *hindsight.StoreTee) {
 }
 
 /*
-SetPositionSource attaches the source for active open positions and decisions.
+SetPositionSource attaches the source for active open positions.
 */
 func (hub *Hub) SetPositionSource(source PositionSource) {
 	if hub == nil {
@@ -524,6 +531,17 @@ func (hub *Hub) SetPositionSource(source PositionSource) {
 	}
 
 	hub.positionSource = source
+}
+
+/*
+SetDecisionSource attaches the source for strategy decisions.
+*/
+func (hub *Hub) SetDecisionSource(source DecisionSource) {
+	if hub == nil {
+		return
+	}
+
+	hub.decisionSource = source
 }
 
 /*

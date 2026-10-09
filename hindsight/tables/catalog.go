@@ -21,6 +21,7 @@ import (
 	"github.com/apache/iceberg-go/table"
 	"github.com/apache/iceberg-go/utils"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -139,8 +140,20 @@ func Open(ctx context.Context) *Catalog {
 		clientTransport.IdleConnTimeout = 90 * time.Second
 	})
 
+	maxAttempts := 10
+
+	if icebergConfig.CommitRetries > 0 {
+		maxAttempts = max(10, icebergConfig.CommitRetries*3)
+	}
+
 	awsOpts := []func(*config.LoadOptions) error{
 		config.WithHTTPClient(httpClient),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(options *retry.StandardOptions) {
+				options.MaxAttempts = maxAttempts
+				options.MaxBackoff = 5 * time.Second
+			})
+		}),
 	}
 
 	if s3Config.Region != "" {
@@ -231,20 +244,79 @@ func (catalog *Catalog) Ensure(ctx context.Context) error {
 		}
 	}
 
-	families := []struct {
-		name         string
-		schema       *iceberg.Schema
-		partitioning iceberg.PartitionSpec
-	}{
-		{Measurements, MeasurementSchema(), MeasurementPartitioning()},
-		{Runs, RunsSchema(), RunsPartitioning()},
-	}
-
-	for _, family := range families {
+	for _, family := range tableFamilies() {
 		if err := catalog.ensureTable(
 			ctx, family.name, family.schema, family.partitioning, properties,
 		); err != nil {
 			return err
+		}
+	}
+
+	return nil
+}
+
+type tableFamily struct {
+	name         string
+	schema       *iceberg.Schema
+	partitioning iceberg.PartitionSpec
+}
+
+func tableFamilies() []tableFamily {
+	return []tableFamily{
+		{Measurements, MeasurementSchema(), MeasurementPartitioning()},
+		{Runs, RunsSchema(), RunsPartitioning()},
+		{Detections, MeasurementSchema(), MeasurementPartitioning()},
+	}
+}
+
+/*
+EnsureTable creates (or evolves) exactly one canonical table and touches no
+other, so a batch writer can prepare its own table without committing to the
+others.
+*/
+func (catalog *Catalog) EnsureTable(ctx context.Context, name string) error {
+	for _, family := range tableFamilies() {
+		if family.name != name {
+			continue
+		}
+
+		if err := catalog.ensureNamespace(ctx); err != nil {
+			return err
+		}
+
+		return catalog.ensureTable(ctx, family.name, family.schema, family.partitioning, iceberg.Properties{
+			table.MetadataDeleteAfterCommitEnabledKey: "true",
+			table.MetadataPreviousVersionsMaxKey:      "5",
+			table.ManifestMergeEnabledKey:             "true",
+		})
+	}
+
+	return errnie.Error(errnie.Err(
+		errnie.Validation, "[iceberg] no canonical table named "+name, nil,
+	))
+}
+
+/*
+HasTable answers whether a canonical table exists in the catalog.
+*/
+func (catalog *Catalog) HasTable(ctx context.Context, name string) (bool, error) {
+	exists, err := catalog.underlying.CheckTableExists(catalog.context(ctx), table.Identifier{Namespace, name})
+
+	if err != nil {
+		return false, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] failed to check table "+name, err))
+	}
+
+	return exists, nil
+}
+
+func (catalog *Catalog) ensureNamespace(ctx context.Context) error {
+	if err := catalog.underlying.CreateNamespace(ctx, table.Identifier{Namespace}, nil); err != nil {
+		if !errors.Is(err, icecat.ErrNamespaceAlreadyExists) {
+			return errnie.Error(errnie.Err(
+				errnie.BadGateway,
+				"[iceberg] failed to create namespace "+Namespace,
+				err,
+			))
 		}
 	}
 

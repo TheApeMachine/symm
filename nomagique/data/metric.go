@@ -5,7 +5,6 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -81,27 +80,39 @@ func (metric *Metric) Timescale() Timescale {
 }
 
 /*
-finalize is called from the Measurement to set the derived values, like
-center, scale, normalized, and standardized values. An invalid observation
-is rejected before the Welford update.
+finalize is called from the Measurement to standardize the observation against
+its stream's causal moments: center and scale are the stream's mean and sample
+standard deviation before this observation, and Standardized is
+(Raw - center) / scale. While the prior scale is zero the z-score is undefined:
+Standardized and Normalized stay zero and Standardizable reports false. An
+invalid observation is rejected before it reaches the stream.
 */
-func (metric *Metric) finalize(n float64) error {
+func (metric *Metric) finalize(state *standardizer) error {
 	if err := errnie.Require(map[string]any{
 		"raw": metric.Raw,
 	}); err != nil {
 		return errnie.Error(err)
 	}
 
-	delta := metric.Raw - metric.center
-	metric.center += delta / n
+	metric.center, metric.scale = state.step(metric.Raw)
+	metric.Standardized = 0
+	metric.Normalized = 0
 
-	if variance := (metric.scale*metric.scale*(n-core.Unit) + delta*(metric.Raw-metric.center)) / n; variance > 0 {
-		metric.scale = math.Sqrt(variance)
+	if metric.Standardizable() {
 		metric.Standardized = (metric.Raw - metric.center) / metric.scale
 		metric.Normalized = math.Tanh(metric.Standardized)
 	}
 
 	return metric.valid()
+}
+
+/*
+Standardizable reports whether Standardized holds a z-score. It is false until
+the metric's stream has a positive causal scale; an undefined z-score is
+missing evidence, not a zero deformation.
+*/
+func (metric *Metric) Standardizable() bool {
+	return metric.scale > 0
 }
 
 /*

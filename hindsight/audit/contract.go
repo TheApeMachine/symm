@@ -414,7 +414,6 @@ func declaredDomain(unit data.Unit, name ...string) string {
 		data.UnitDuration,
 		data.UnitDistance,
 		data.UnitEntropy,
-		data.UnitNat,
 		data.UnitSNR:
 		return "[0, +inf)"
 	default:
@@ -449,7 +448,6 @@ func contractViolation(unit data.Unit, value float64, name ...string) string {
 		data.UnitDuration,
 		data.UnitDistance,
 		data.UnitEntropy,
-		data.UnitNat,
 		data.UnitSNR:
 		if value < 0.0 {
 			return "negative_value_for_non_negative_unit"

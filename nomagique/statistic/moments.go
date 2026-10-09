@@ -71,8 +71,15 @@ Summarize refreshes the post-policy sample moments without rewriting the prior.
 func (reading *MomentReading) Summarize(moments Moments) {
 	reading.Moments = moments
 	reading.VarianceDefined = moments.Count > 1
-	reading.Variance = moments.M2 / (moments.Count - 1)
-	reading.Dispersion = math.Sqrt(reading.Variance)
+	reading.Variance = 0
+	reading.Dispersion = 0
+
+	// One observation has no sample variance; it stays undefined (zero with
+	// VarianceDefined false), never 0/0.
+	if reading.VarianceDefined {
+		reading.Variance = moments.M2 / (moments.Count - 1)
+		reading.Dispersion = math.Sqrt(reading.Variance)
+	}
 }
 
 /*
@@ -91,6 +98,11 @@ func NewEstimator() core.Primitive {
 func (op *Estimator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			val := *(*float64)(arriving)
 			op.reading = op.moments.Update(val)
 

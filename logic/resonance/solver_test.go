@@ -62,11 +62,11 @@ func TestSignalFeatureIngestion(t *testing.T) {
 		at := time.Unix(10, 0).UTC()
 		peers := []*data.Measurement{
 			signalPeer("correlation", "BTC/USD", "relative_return_energy", 1.2, at),
-			signalPeer("leadlag", "BTC/USD", "best_lag_correlation", 0.75, at),
+			signalPeer("leadlag", "BTC/USD", "correlation_gain_median", 0.75, at),
 			signalPeer("liquidity", "BTC/USD", "relative_spread", 0.0002, at),
 			signalPeer("sentiment", "BTC/USD", "advance_fraction", 0.6, at),
 			signalPeer("cvd", "BTC/USD", "signed_net_fraction", 0.4, at),
-			signalPeer("depthflow", "BTC/USD", "observed_notional_imbalance", 0.3, at),
+			signalPeer("depthflow", "BTC/USD", "book_imbalance", 0.3, at),
 			signalPeer("morphology", "BTC/USD", "book_shape_distance", 0.05, at),
 			signalPeer("hawkes", "BTC/USD", "excitation_fraction:buy", 0.45, at),
 			signalPeer("pumpdump", "BTC/USD", "spread_ratio", 1.05, at),
@@ -126,11 +126,11 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 			at := time.Unix(sec, 0).UTC()
 			peers := []*data.Measurement{
 				signalPeer("correlation", "ETH/USD", "relative_return_energy", 1.0, at),
-				signalPeer("leadlag", "ETH/USD", "best_lag_correlation", 0.5, at),
+				signalPeer("leadlag", "ETH/USD", "correlation_gain_median", 0.5, at),
 				signalPeer("liquidity", "ETH/USD", "relative_spread", 0.0003, at),
 				signalPeer("sentiment", "ETH/USD", "advance_fraction", 0.5, at),
 				signalPeer("cvd", "ETH/USD", "signed_net_fraction", cvdVal, at),
-				signalPeer("depthflow", "ETH/USD", "observed_notional_imbalance", 0.1, at),
+				signalPeer("depthflow", "ETH/USD", "book_imbalance", 0.1, at),
 				signalPeer("morphology", "ETH/USD", "book_shape_distance", 0.02, at),
 				signalPeer("hawkes", "ETH/USD", "excitation_fraction:buy", 0.2, at),
 				signalPeer("pumpdump", "ETH/USD", "spread_ratio", 1.0, at),

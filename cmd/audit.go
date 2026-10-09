@@ -114,7 +114,7 @@ func init() {
 	auditCmd.Flags().StringVar(&auditSymbol, "symbol", "", "Market symbol to audit (empty = all symbols across market tape)")
 	auditCmd.Flags().IntVar(&auditTicks, "ticks", 1000, "Maximum number of ticks to sample (0 = all available ticks in epoch)")
 	auditCmd.Flags().IntVar(&auditPermutations, "permutations", 50, "Number of permutation iterations for null hypothesis testing")
-	auditCmd.Flags().Float64Var(&auditTakerFee, "taker-fee", 0.008, "Offline taker fee fraction for friction-aware excursion detection (default: 0.008 = 0.8% / 80 bps)")
+	auditCmd.Flags().Float64Var(&auditTakerFee, "taker-fee", 0.0026, "Offline taker fee fraction for friction-aware excursion detection (default: 0.0026 = 0.26% / 26 bps Kraken base taker fee)")
 	auditCmd.Flags().StringVar(&auditOutputDir, "out", "audit_results", "Output directory for audit reports and plots")
 	auditCmd.Flags().BoolVar(&auditNoPlots, "no-plots", false, "Skip generating Python/matplotlib visualization charts")
 

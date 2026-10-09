@@ -2,9 +2,19 @@ package tables
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
+)
+
+const (
+	maxDrainConsecutiveFailures = 10
+	maxDrainBufferedBytes       = 256 * 1024 * 1024
+	minDrainBackoff             = time.Second
+	maxDrainBackoff             = 30 * time.Second
+	shutdownFlushTimeout        = 12 * time.Second
 )
 
 // Drain persists owned observations. Complete training publications feed the
@@ -47,6 +57,59 @@ func (catalog *Catalog) Drain(
 		return nil
 	}
 
+	var consecutiveFailures int
+	var backoff time.Duration = minDrainBackoff
+	var nextRetry time.Time
+
+	commit := func(forceAll bool) error {
+		if !nextRetry.IsZero() && time.Now().Before(nextRetry) {
+			return nil
+		}
+
+		err := writer.CommitReady(ctx, forceAll)
+
+		if err != nil {
+			consecutiveFailures++
+			errnie.Warn(fmt.Sprintf(
+				"[drain] catalog commit deferred (attempt %d): %s; %d rows (%d bytes) retained",
+				consecutiveFailures,
+				err,
+				writer.BufferedRows(),
+				writer.BufferedBytes(),
+			))
+
+			if consecutiveFailures >= maxDrainConsecutiveFailures || writer.BufferedBytes() >= maxDrainBufferedBytes {
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"[drain] catalog persistence buffer capacity exceeded",
+					err,
+				))
+			}
+
+			if backoff < minDrainBackoff {
+				backoff = minDrainBackoff
+			}
+
+			backoff = min(backoff*2, maxDrainBackoff)
+			nextRetry = time.Now().Add(backoff)
+
+			return nil
+		}
+
+		if consecutiveFailures > 0 {
+			errnie.Info(fmt.Sprintf(
+				"[drain] catalog commit recovered after %d deferred attempts; buffer flushed",
+				consecutiveFailures,
+			))
+		}
+
+		consecutiveFailures = 0
+		backoff = minDrainBackoff
+		nextRetry = time.Time{}
+
+		return nil
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -54,17 +117,22 @@ func (catalog *Catalog) Drain(
 				return err
 			}
 
-			return writer.CommitReady(context.WithoutCancel(ctx), true)
+			shutdownCtx, cancel := context.WithTimeout(
+				context.WithoutCancel(ctx), shutdownFlushTimeout,
+			)
+			defer cancel()
+
+			return writer.CommitReady(shutdownCtx, true)
 		case <-flushTicker.C:
 			if err := drain(); err != nil {
 				return err
 			}
 
-			if err := writer.CommitReady(ctx, false); err != nil {
+			if err := commit(false); err != nil {
 				return err
 			}
 		case <-commitTicker.C:
-			if err := writer.CommitReady(ctx, true); err != nil {
+			if err := commit(true); err != nil {
 				return err
 			}
 		}

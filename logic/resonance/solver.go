@@ -45,11 +45,11 @@ THE 11 CANONICAL HEADLINE FEATURES (ORTHOGONAL MICROSTRUCTURE DIMENSIONS):
 Resonance ingests exactly one defensible, scale-free headline metric from each of the 11 signal
 families, capturing independent microstructural facets without high cross-collinearity:
  0. Correlation (relative_return_energy): Focal asset return variance relative to cohort average (volatility excitation).
- 1. LeadLag     (best_lag_correlation): Peak cross-correlation with leading peer (information transmission latency).
+ 1. LeadLag     (correlation_gain_median): Median gain in |correlation| from lag alignment across defined peers.
  2. Liquidity   (relative_spread): Top-of-book bid-ask spread divided by midpoint (instantaneous immediacy cost).
  3. Sentiment   (advance_fraction): Cross-sectional universe breadth (fraction of advancing assets; systemic consensus).
  4. CVD         (signed_net_fraction): Aggressor flow ratio: net notional divided by gross notional in [-1, 1] (taker flow).
- 5. DepthFlow   (observed_notional_imbalance): Mutation activity imbalance in [-1, 1] (maker queue injection vs pull).
+ 5. DepthFlow   (book_imbalance): Displayed book notional imbalance in [-1, 1] (maker queue injection vs pull).
  6. Morphology  (book_shape_distance): Wasserstein-1 distance between folded bid/ask depth distributions (book geometry).
  7. Hawkes      (excitation_fraction:buy): Endogenous self-exciting arrival cascade share (momentum feedback / clustering).
  8. PumpDump    (spread_ratio): Relative spread expansion ratio against its adaptive baseline (volume-clock velocity).
@@ -306,8 +306,7 @@ func extractHeadlineMetric(index int, measurement *data.Measurement) (float64, b
 		}
 	case 1: // LeadLag
 		candidates = []string{
-			"best_lag_correlation", "contemporaneous_correlation",
-			"absolute_correlation_gain", "lag_fraction",
+			"correlation_gain_median", "led_peer_share",
 		}
 	case 2: // Liquidity
 		candidates = []string{
@@ -325,9 +324,7 @@ func extractHeadlineMetric(index int, measurement *data.Measurement) (float64, b
 		}
 	case 5: // DepthFlow
 		candidates = []string{
-			"observed_notional_imbalance_zscore", "observed_notional_imbalance",
-			"observed_notional_rate_zscore", "observed_notional_rate",
-			"mutation_activity_imbalance",
+			"book_imbalance_zscore", "book_imbalance",
 		}
 	case 6: // Morphology
 		candidates = []string{
@@ -469,23 +466,23 @@ func (scorer *featureScorer) Step(measurements [11]*data.Measurement) []float64 
 			continue
 		}
 
-		var reading *[10]float64
+		var reading *statistic.MomentReading
 		for out := range scorer.moments[index].Next(data.NewValue(val).Next(nil)) {
-			reading = (*[10]float64)(out)
+			reading = (*statistic.MomentReading)(out)
 		}
 		if err := scorer.moments[index].Error(); err != nil || reading == nil {
 			continue
 		}
 
-		var residual [8]float64
+		var residual statistic.CausalResidualResult
 		for out := range scorer.residuals[index].Next(data.NewValue(*reading).Next(nil)) {
-			residual = *(*[8]float64)(out)
+			residual = *(*statistic.CausalResidualResult)(out)
 		}
 		if err := scorer.residuals[index].Error(); err != nil {
 			continue
 		}
 
-		scorer.standardized[index] = residual[6]
+		scorer.standardized[index] = residual.ZScore
 	}
 
 	features := make([]float64, 11)

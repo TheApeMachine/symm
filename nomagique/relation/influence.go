@@ -32,7 +32,7 @@ type Influence struct {
 	gaps      []float64
 	full      []float64
 	restrict  []float64
-	fit       []float64
+	fit       statistic.RegressionFit
 	residuals [2][]float64
 	keys      []string
 	candidate map[string]float64
@@ -266,6 +266,7 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 					full := statistic.NewRegressionAccumulator(fullParameters)
 					op.residuals[0], op.residuals[1] = op.residuals[0][:0], op.residuals[1][:0]
 					rankDeficient := false
+					op.fit = statistic.RegressionFit{}
 
 					for _, row := range rows {
 						op.full = append(op.full[:0], 1, row[3])
@@ -274,13 +275,13 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 							op.full = append(op.full, row[5+2*index])
 						}
 
-						op.restrict = append(append(op.restrict[:0], op.full...), row[1])
-						op.full = append(op.full, row[len(row)-1], row[1])
+						op.restrict = append(op.restrict[:0], op.full...)
+						op.full = append(op.full, row[len(row)-1])
 
-						var restrictedReading, fullReading []float64
+						var restrictedReading, fullReading statistic.RegressionReading
 
-						for pointer := range restricted.Next(data.NewValue(op.restrict).Next(nil)) {
-							restrictedReading = *(*[]float64)(pointer)
+						for pointer := range restricted.Next(data.NewValue(statistic.RegressionRow{Predictors: op.restrict, Target: row[1]}).Next(nil)) {
+							restrictedReading = *(*statistic.RegressionReading)(pointer)
 						}
 
 						if err := restricted.Error(); err != nil {
@@ -288,8 +289,8 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 							return
 						}
 
-						for pointer := range full.Next(data.NewValue(op.full).Next(nil)) {
-							fullReading = *(*[]float64)(pointer)
+						for pointer := range full.Next(data.NewValue(statistic.RegressionRow{Predictors: op.full, Target: row[1]}).Next(nil)) {
+							fullReading = *(*statistic.RegressionReading)(pointer)
 						}
 
 						if err := full.Error(); err != nil {
@@ -297,20 +298,20 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 							return
 						}
 
-						if int(restrictedReading[3])-1 > restrictedParameters && restrictedReading[1] != 1 {
+						if restrictedReading.Fit.Observations-1 > restrictedParameters && !restrictedReading.PredictionDefined {
 							rankDeficient = true
 						}
 
-						if int(fullReading[3])-1 > fullParameters && fullReading[1] != 1 {
+						if fullReading.Fit.Observations-1 > fullParameters && !fullReading.PredictionDefined {
 							rankDeficient = true
 						}
 
-						if restrictedReading[1] == 1 && fullReading[1] == 1 {
-							op.residuals[0] = append(op.residuals[0], row[1]-restrictedReading[0])
-							op.residuals[1] = append(op.residuals[1], row[1]-fullReading[0])
+						if restrictedReading.PredictionDefined && fullReading.PredictionDefined {
+							op.residuals[0] = append(op.residuals[0], row[1]-restrictedReading.Prediction)
+							op.residuals[1] = append(op.residuals[1], row[1]-fullReading.Prediction)
 						}
 
-						op.fit = append(op.fit[:0], fullReading...)
+						op.fit = fullReading.Fit
 					}
 
 					clear(op.candidate)
@@ -371,7 +372,7 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 							op.candidate["maturity"] = 1 - 1/effective
 						}
 
-						if len(op.fit) < 8 || op.fit[2] != 1 {
+						if !op.fit.Defined {
 							op.candidate["status"] = FitRankDeficient
 
 							if len(rows) <= restrictedParameters {
@@ -382,12 +383,12 @@ func (op *Influence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] 
 						}
 
 						column := restrictedParameters
-						parameters := int(op.fit[4])
-						coefficient := op.fit[8+column]
+						parameters := op.fit.Parameters
+						coefficient := op.fit.Coefficients[column]
 						op.candidate["coefficient"] = coefficient
 
-						if column < parameters && op.fit[7] == 1 {
-							variance := op.fit[8+parameters+column]
+						if column < parameters && len(op.fit.CoefficientVariance) == parameters {
+							variance := op.fit.CoefficientVariance[column]
 
 							if !math.IsNaN(variance) && variance > 0 {
 								op.candidate["coefficient_variance"] = variance

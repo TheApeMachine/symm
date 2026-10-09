@@ -24,13 +24,16 @@ func NewMean() core.Primitive {
 
 func (op *Mean) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
-		count, mean := 0.0, 0.0
-
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			val := *(*float64)(arriving)
-			count++
-			mean += (val - mean) / count
-			op.out = mean
+			op.count++
+			op.mean += (val - op.mean) / op.count
+			op.out = op.mean
 
 			if !yield(unsafe.Pointer(&op.out)) {
 				return

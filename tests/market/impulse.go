@@ -37,7 +37,6 @@ func ImpulseTape(symbol string, legs int) []*data.Measurement {
 				data.UnitPrice,
 				data.TimescaleInstantaneous,
 			)
-			valueMetric.Standardized = value
 			metrics = append(metrics, valueMetric)
 
 			if name == "public" {
@@ -55,7 +54,6 @@ func ImpulseTape(symbol string, legs int) []*data.Measurement {
 					data.UnitQuantity,
 					data.TimescaleInstantaneous,
 				)
-				qtyMetric.Standardized = quantity.Float64()
 				metrics = append(metrics, qtyMetric)
 			}
 

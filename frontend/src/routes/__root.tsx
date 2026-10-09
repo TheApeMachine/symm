@@ -30,7 +30,6 @@ const SURFACE_VALUES = new Set<TerminalSurface>([
 	"journal",
 	"xray",
 	"cortex",
-	"allocation",
 	"diagnostics",
 	"hindsight",
 	"workbench",
@@ -39,7 +38,6 @@ const SURFACE_VALUES = new Set<TerminalSurface>([
 
 const SURFACE_ALIASES: Record<string, TerminalSurface> = {
 	insight: "signals",
-	alloc: "allocation",
 	trade: "journal",
 	diag: "diagnostics",
 };
@@ -54,7 +52,6 @@ const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	journal: "/journal",
 	xray: "/xray",
 	cortex: "/cortex",
-	allocation: "/allocation",
 	diagnostics: "/diagnostics",
 	hindsight: "/hindsight",
 	workbench: "/workbench",

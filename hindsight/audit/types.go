@@ -190,6 +190,9 @@ type Stage3GridStability struct {
 	RandIndex            float64                    `json:"rand_index"`
 	AdjustedRandIdx      float64                    `json:"adjusted_rand_idx"`
 	NullAdjustedRandMean float64                    `json:"null_adjusted_rand_mean"`
+	DistributionJSD      float64                    `json:"distribution_jsd"`
+	DistributionTVD      float64                    `json:"distribution_tvd"`
+	IsStationary         bool                       `json:"is_stationary"`
 	StabilityCurve       []GridStabilityObservation `json:"stability_curve"`
 	SummaryText          string                     `json:"summary_text"`
 	Status               string                     `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
@@ -234,23 +237,31 @@ type GridDampeningAudit struct {
 Stage4TokenDynamics records region token emissions, excitation strengths, and state transition structure on unseen data.
 */
 type Stage4TokenDynamics struct {
-	TotalEmissions         int                           `json:"total_emissions"`
-	UniqueTokens           int                           `json:"unique_tokens"`
-	TokenFrequencies       map[string]int                `json:"token_frequencies"`
-	MaxTokenDominance      float64                       `json:"max_token_dominance"`
-	MeanExcitationStrength float64                       `json:"mean_excitation_strength"`
-	PeakExcitationStrength float64                       `json:"peak_excitation_strength"`
-	MeanActiveCoverage     float64                       `json:"mean_active_coverage"`
-	MeanRunnerUpMargin     float64                       `json:"mean_runner_up_margin"`
-	RegionStrengths        map[string]RegionStrengthStat `json:"region_strengths,omitempty"`
-	Dampening              GridDampeningAudit            `json:"dampening"`
-	TransitionEntropy      float64                       `json:"transition_entropy"`
-	NullTransitionEntropy  float64                       `json:"null_transition_entropy"`
-	EntropyReductionBits   float64                       `json:"entropy_reduction_bits"`
-	Transitions            map[string]map[string]int     `json:"transitions"`
-	SummaryText            string                        `json:"summary_text"`
-	Status                 string                        `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
-	Passed                 bool                          `json:"passed"` // compatibility: true when experiment executed with sufficient data
+	TotalEmissions                 int                           `json:"total_emissions"`
+	UniqueTokens                   int                           `json:"unique_tokens"`
+	TokenFrequencies               map[string]int                `json:"token_frequencies"`
+	MaxTokenDominance              float64                       `json:"max_token_dominance"`
+	MeanExcitationStrength         float64                       `json:"mean_excitation_strength"`
+	PeakExcitationStrength         float64                       `json:"peak_excitation_strength"`
+	MeanActiveCoverage             float64                       `json:"mean_active_coverage"`
+	MeanRunnerUpMargin             float64                       `json:"mean_runner_up_margin"`
+	RegionStrengths                map[string]RegionStrengthStat `json:"region_strengths,omitempty"`
+	Dampening                      GridDampeningAudit            `json:"dampening"`
+	TransitionEntropy              float64                       `json:"transition_entropy"`
+	NullTransitionEntropy          float64                       `json:"null_transition_entropy"`
+	EntropyReductionBits           float64                       `json:"entropy_reduction_bits"`
+	Transitions                    map[string]map[string]int     `json:"transitions"`
+	CompressedEmissions            int                           `json:"compressed_emissions"`
+	CompressedUniqueTokens         int                           `json:"compressed_unique_tokens"`
+	CompressedTransitions          map[string]map[string]int     `json:"compressed_transitions,omitempty"`
+	CompressedTransitionEntropy    float64                       `json:"compressed_transition_entropy"`
+	CompressedNullEntropy          float64                       `json:"compressed_null_entropy"`
+	CompressedEntropyReductionBits float64                       `json:"compressed_entropy_reduction_bits"`
+	AlwaysStayAccuracy             float64                       `json:"always_stay_accuracy"`
+	MarginalAccuracy               float64                       `json:"marginal_accuracy"`
+	SummaryText                    string                        `json:"summary_text"`
+	Status                         string                        `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed                         bool                          `json:"passed"` // compatibility: true when experiment executed with sufficient data
 }
 
 /*
@@ -271,17 +282,51 @@ type PrecursorHypothesis struct {
 }
 
 /*
+PrecursorPredictiveSkill records held-out classification capability of precursor tokens anticipating excursions.
+*/
+type PrecursorPredictiveSkill struct {
+	EvaluatedSamples   int      `json:"evaluated_samples"`
+	TopPrecursorTokens []string `json:"top_precursor_tokens,omitempty"`
+	Precision          float64  `json:"precision"`
+	Recall             float64  `json:"recall"`
+	BalancedAccuracy   float64  `json:"balanced_accuracy"`
+	MCC                float64  `json:"mcc"`
+	PriorBaseRate      float64  `json:"prior_base_rate"`
+	PredictiveGainBits float64  `json:"predictive_gain_bits"` // Mutual information I(Token; Excursion)
+	Status             string   `json:"status"`               // "MEASURED", "INSUFFICIENT_DATA"
+	Passed             bool     `json:"passed"`
+}
+
+/*
+PrecursorEconomicRelevance measures whether detected excursions yield returns clearing explicit taker frictions.
+*/
+type PrecursorEconomicRelevance struct {
+	TakerFeeRate           float64 `json:"taker_fee_rate"`
+	RoundTripFeeRate       float64 `json:"round_trip_fee_rate"`
+	EvaluatedExcursions    int     `json:"evaluated_excursions"`
+	GrossMeanReturn        float64 `json:"gross_mean_return"`
+	NetMeanReturn          float64 `json:"net_mean_return"`
+	FrictionClearanceRate  float64 `json:"friction_clearance_rate"` // fraction of excursions with NetReturn > 0
+	ProfitableExcursions   int     `json:"profitable_excursions"`
+	UnprofitableExcursions int     `json:"unprofitable_excursions"`
+	Status                 string  `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed                 bool    `json:"passed"`
+}
+
+/*
 Stage5PrecursorSeparation tests whether token sequences preceding B (ignition) and C (exhaustion)
-are distinct from negative controls and pure background tape.
+are distinct from negative controls and pure background tape, and evaluates predictive skill and economic relevance.
 */
 type Stage5PrecursorSeparation struct {
-	DetectionsFound      int                 `json:"detections_found"`
-	ExcursionsFound      []string            `json:"excursions_found,omitempty"`
-	IgnitionHypothesis   PrecursorHypothesis `json:"ignition_hypothesis"`   // A -> B
-	ExhaustionHypothesis PrecursorHypothesis `json:"exhaustion_hypothesis"` // B -> C
-	BackgroundTokens     map[string]int      `json:"background_tokens,omitempty"`
-	SummaryText          string              `json:"summary_text"`
-	Passed               bool                `json:"passed"`
+	DetectionsFound      int                        `json:"detections_found"`
+	ExcursionsFound      []string                   `json:"excursions_found,omitempty"`
+	IgnitionHypothesis   PrecursorHypothesis        `json:"ignition_hypothesis"`   // A -> B
+	ExhaustionHypothesis PrecursorHypothesis        `json:"exhaustion_hypothesis"` // B -> C
+	PredictiveSkill      PrecursorPredictiveSkill   `json:"predictive_skill"`      // Anticipation & Classification
+	EconomicRelevance    PrecursorEconomicRelevance `json:"economic_relevance"`    // Friction Clearance
+	BackgroundTokens     map[string]int             `json:"background_tokens,omitempty"`
+	SummaryText          string                     `json:"summary_text"`
+	Passed               bool                       `json:"passed"`
 }
 
 /*
@@ -371,9 +416,119 @@ type Stage6CognitiveTrie struct {
 	MeanConfidence      float64              `json:"mean_confidence"`
 	MeanContrast        float64              `json:"mean_contrast"`
 	SpuriousTriggerRate float64              `json:"spurious_trigger_rate"`
+	S3Memory            S3MemoryAudit        `json:"s3_memory"`
 	SummaryText         string               `json:"summary_text"`
 	Status              string               `json:"status"` // "MEASURED", "INSUFFICIENT_DATA", "CONTRACT_BREACH"
 	Passed              bool                 `json:"passed"`
+}
+
+/*
+S3MemoryAudit audits the S3-compatible prefix-memory key tree:
+prefix collisions, enter vs exit continuation conflicts, support counts,
+time-to-disambiguation, prequential retrieval accuracy, and key growth.
+*/
+type S3MemoryAudit struct {
+	TotalPrefixKeys          int     `json:"total_prefix_keys"`
+	PrefixCollisions         int     `json:"prefix_collisions"`
+	ConflictingContinuations int     `json:"conflicting_continuations"`
+	MeanPrefixDepth          float64 `json:"mean_prefix_depth"`
+	MaxPrefixDepth           int     `json:"max_prefix_depth"`
+	TimeToDisambiguation     int     `json:"time_to_disambiguation"`
+	PrequentialRetrievalAcc  float64 `json:"prequential_retrieval_acc"`
+	StorageBytes             int64   `json:"storage_bytes"`
+	SummaryText              string  `json:"summary_text"`
+	Passed                   bool    `json:"passed"`
+}
+
+/*
+EquivalenceDiscrepancy records a single difference between production and audit pipelines.
+*/
+type EquivalenceDiscrepancy struct {
+	Tick       int64   `json:"tick"`
+	Symbol     string  `json:"symbol"`
+	Source     string  `json:"source"`
+	Metric     string  `json:"metric"`
+	AuditVal   float64 `json:"audit_val"`
+	ProdVal    float64 `json:"prod_val"`
+	Difference float64 `json:"difference"`
+}
+
+/*
+EquivalenceAudit verifies that audit execution produces identical metrics,
+tokens, and excursion boundaries when compared to production paths.
+*/
+type EquivalenceAudit struct {
+	CommitHash         string                   `json:"commit_hash"`
+	ExecutablePath     string                   `json:"executable_path"`
+	TotalTicksReplayed int                      `json:"total_ticks_replayed"`
+	TotalTokensChecked int                      `json:"total_tokens_checked"`
+	TokenMismatches    int                      `json:"token_mismatches"`
+	MetricMismatches   int                      `json:"metric_mismatches"`
+	Discrepancies      []EquivalenceDiscrepancy `json:"discrepancies,omitempty"`
+	SummaryText        string                   `json:"summary_text"`
+	Passed             bool                     `json:"passed"`
+}
+
+/*
+MetricDiscrepancy records an inconsistency between raw market events and computed signal metrics.
+*/
+type MetricDiscrepancy struct {
+	Signal      string  `json:"signal"`
+	Metric      string  `json:"metric"`
+	ObservedVal float64 `json:"observed_val"`
+	ExpectedVal float64 `json:"expected_val"`
+	Error       float64 `json:"error"`
+}
+
+/*
+TruthfulnessAudit verifies that published metrics truthfully reflect raw market events
+according to their mathematical specification.
+*/
+type TruthfulnessAudit struct {
+	TotalChecked        int                 `json:"total_checked"`
+	ViolationsCount     int                 `json:"violations_count"`
+	ZeroFilledMidpoints int                 `json:"zero_filled_midpoints"`
+	SyntheticTimeSteps  int                 `json:"synthetic_time_steps"`
+	Discrepancies       []MetricDiscrepancy `json:"discrepancies,omitempty"`
+	SummaryText         string              `json:"summary_text"`
+	Passed              bool                `json:"passed"`
+}
+
+/*
+CausalityAudit verifies temporal isolation (no future information leakage) and
+cross-symbol state independence.
+*/
+type CausalityAudit struct {
+	FuturePerturbationTicks int    `json:"future_perturbation_ticks"`
+	LeakageDetected         bool   `json:"leakage_detected"`
+	FirstDivergenceTick     int64  `json:"first_divergence_tick"`
+	ContaminatedCount       int    `json:"contaminated_count"`
+	CrossSymbolLeakage      bool   `json:"cross_symbol_leakage"`
+	EpochIsolationPassed    bool   `json:"epoch_isolation_passed"`
+	SummaryText             string `json:"summary_text"`
+	Passed                  bool   `json:"passed"`
+}
+
+/*
+FamilySensitivityStat records how removing a single signal family impacts the grid.
+*/
+type FamilySensitivityStat struct {
+	Family            string  `json:"family"`
+	RemovedJSD        float64 `json:"removed_jsd"`
+	PrecursorSurvived bool    `json:"precursor_survived"`
+	IsDominant        bool    `json:"is_dominant"`
+}
+
+/*
+SensitivityAudit tests grid dependence on individual signal families,
+resistance to family duplication, and resilience to temporal shuffling.
+*/
+type SensitivityAudit struct {
+	FamiliesTested         []FamilySensitivityStat `json:"families_tested"`
+	DuplicationResistant   bool                    `json:"duplication_resistant"`
+	ShuffledNoiseResilient bool                    `json:"shuffled_noise_resilient"`
+	SummaryText            string                  `json:"summary_text"`
+	Passed                 bool                    `json:"passed"`
 }
 
 /*
@@ -392,6 +547,10 @@ type AuditReport struct {
 	TokenDynamics   Stage4TokenDynamics       `json:"token_dynamics"`
 	Precursor       Stage5PrecursorSeparation `json:"precursor"`
 	CognitiveTrie   Stage6CognitiveTrie       `json:"cognitive_trie"`
+	Equivalence     *EquivalenceAudit         `json:"equivalence,omitempty"`
+	Truthfulness    *TruthfulnessAudit        `json:"truthfulness,omitempty"`
+	Causality       *CausalityAudit           `json:"causality,omitempty"`
+	Sensitivity     *SensitivityAudit         `json:"sensitivity,omitempty"`
 	OverallHealthy  bool                      `json:"overall_healthy"`
 	SummaryMarkdown string                    `json:"summary_markdown"`
 }

@@ -14,63 +14,142 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
+/*
+welfordBaseline is a causal baseline: each value is scored against the state
+before it. The center is defined from the second value, the scale once the
+prior dispersion is positive.
+*/
 type welfordBaseline struct {
 	count float64
 	mean  float64
 	m2    float64
 }
 
-func (wb *welfordBaseline) Step(value float64) (float64, float64) {
+func (wb *welfordBaseline) Step(value float64) (
+	hasCenter bool, center float64, hasScale bool, scale float64,
+) {
 	priorCount := wb.count
 	priorMean := wb.mean
+	priorM2 := wb.m2
 
 	wb.count++
 	delta := value - wb.mean
 	wb.mean += delta / wb.count
 	wb.m2 += delta * (value - wb.mean)
 
-	center := value
-
-	if priorCount > 0 {
-		center = priorMean
+	if priorCount == 0 {
+		return false, 0, false, 0
 	}
 
-	var scale float64
-
-	if wb.count > 1 {
-		variance := wb.m2 / (wb.count - 1)
-		if variance > 0 {
-			scale = math.Sqrt(variance)
-		}
+	if priorCount < 2 || priorM2 <= 0 {
+		return true, priorMean, false, 0
 	}
 
-	return center, scale
+	return true, priorMean, true, math.Sqrt(priorM2 / (priorCount - 1))
 }
 
+/*
+emit writes name's baseline, divergence, and z-score for value as far as the
+baseline defines them, and returns the z-score with its definedness.
+*/
+func (wb *welfordBaseline) emit(
+	out map[string]float64, baseline, divergence, zscore string, value float64,
+) (float64, bool) {
+	hasCenter, center, hasScale, scale := wb.Step(value)
+
+	if !hasCenter {
+		return 0, false
+	}
+
+	out[baseline] = center
+
+	if divergence != "" {
+		out[divergence] = value - center
+	}
+
+	if !hasScale || zscore == "" {
+		return 0, false
+	}
+
+	z := (value - center) / scale
+	out[zscore] = z
+
+	return z, true
+}
+
+/*
+velocityTracker differentiates successive defined values over venue time; the
+velocity is undefined for the first value and for a non-advancing clock.
+*/
 type velocityTracker struct {
 	hasPrev   bool
 	prevVal   float64
 	prevAtSec float64
 }
 
-func (vt *velocityTracker) Step(value float64, atSec float64) float64 {
-	if !vt.hasPrev {
-		vt.hasPrev = true
-		vt.prevVal = value
-		vt.prevAtSec = atSec
-		return 0.0
-	}
-
-	dt := atSec - vt.prevAtSec
-	vt.prevAtSec = atSec
-	diff := value - vt.prevVal
+func (vt *velocityTracker) Step(value float64, atSec float64) (float64, bool) {
+	hadPrev, prevVal, prevAtSec := vt.hasPrev, vt.prevVal, vt.prevAtSec
+	vt.hasPrev = true
 	vt.prevVal = value
+	vt.prevAtSec = atSec
 
-	if dt <= 0 {
-		return 0.0
+	if !hadPrev || atSec <= prevAtSec {
+		return 0, false
 	}
 
-	return diff / dt
+	return (value - prevVal) / (atSec - prevAtSec), true
+}
+
+/*
+sideBracket is one touch side's attribution over the bracket (t0, t1]: the
+previous touch (P0, Q0), the current touch (P1, Q1), and the raw quantity E*
+that aggressive trades executed at P0.
+*/
+type sideBracket struct {
+	prevPrice, prevQty float64
+	price, qty         float64
+	matched            float64
+	improves           func(price, prevPrice float64) bool
+}
+
+/*
+dispose writes the side's attribution, per the specification: E = min(E*, Q0),
+U = Q0 - E; at an unchanged price W = max(U - Q1, 0) and A = max(Q1 - U, 0)
+with zero retreat; on a retreat R = U with no same-price disposition; on an
+improvement the previous level's disposition is unresolved and left undefined.
+*/
+func (side sideBracket) dispose(out map[string]float64, suffix string, dt float64) {
+	fill := math.Min(side.matched, side.prevQty)
+	unfilled := side.prevQty - fill
+
+	out["previous_best_price"+suffix] = side.prevPrice
+	out["previous_touch_quantity"+suffix] = side.prevQty
+	out["touch_price_log_change"+suffix] = math.Log(side.price / side.prevPrice)
+	out["matched_touch_trade_quantity"+suffix] = side.matched
+	out["touch_fill_quantity"+suffix] = fill
+	out["touch_fill_fraction"+suffix] = fill / side.prevQty
+	out["touch_fill_rate"+suffix] = fill / dt
+	out["unfilled_residual_quantity"+suffix] = unfilled
+
+	switch {
+	case side.price == side.prevPrice:
+		withdrawn := math.Max(unfilled-side.qty, 0)
+		replenished := math.Max(side.qty-unfilled, 0)
+
+		out["net_withdrawn_quantity"+suffix] = withdrawn
+		out["net_withdrawal_fraction"+suffix] = withdrawn / side.prevQty
+		out["net_withdrawal_rate"+suffix] = withdrawn / dt
+		out["net_replenished_quantity"+suffix] = replenished
+		out["net_replenishment_fraction"+suffix] = replenished / side.prevQty
+		out["net_replenishment_rate"+suffix] = replenished / dt
+		out["retreated_quantity"+suffix] = 0
+		out["retreat_fraction"+suffix] = 0
+		out["retreat_rate"+suffix] = 0
+	case !side.improves(side.price, side.prevPrice):
+		out["retreated_quantity"+suffix] = unfilled
+		out["retreat_fraction"+suffix] = unfilled / side.prevQty
+		out["retreat_rate"+suffix] = unfilled / dt
+	}
 }
 
 type symbolState struct {
@@ -80,10 +159,10 @@ type symbolState struct {
 	prevBidQty                   float64
 	prevAskQty                   float64
 	prevAtNano                   float64
-	cumBracketTradeQty           float64
-	cumFillBid                   float64
-	cumFillAsk                   float64
-	bracketStartAtNano           float64
+	prevAt                       time.Time
+	pendingTradeQty              float64
+	pendingMatchedBid            float64
+	pendingMatchedAsk            float64
 	fillFracBidBaseline          welfordBaseline
 	fillFracAskBaseline          welfordBaseline
 	withdrawalFracBidBaseline    welfordBaseline
@@ -223,257 +302,184 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		signal.states[prior.Label] = state
 	}
 
-	inBracket := price >= bid && price <= ask
-	var matchedBid, matchedAsk float64
-
-	if price == ask && sideIndicator > 0 {
-		matchedAsk = qty
+	out := map[string]float64{
+		"best_price:bid":     bid,
+		"best_price:ask":     ask,
+		"touch_quantity:bid": bidQty,
+		"touch_quantity:ask": askQty,
 	}
 
-	if price == bid && sideIndicator < 0 {
-		matchedBid = qty
+	// The first observation opens the first bracket: its trade executed at or
+	// before t0 and is not attributed.
+	if !state.hasPrev {
+		state.observe(bid, ask, bidQty, askQty, atNano, prior.At)
+		return prior.Next(signal.Name(), out)
 	}
 
-	if inBracket {
-		state.cumBracketTradeQty += qty
-		state.cumFillBid += matchedBid
-		state.cumFillAsk += matchedAsk
+	// Aggressive buys execute the previous ask, aggressive sells the
+	// previous bid. Trades sharing the previous observation's timestamp cannot
+	// close a bracket, so they accrue to the next one.
+	state.pendingTradeQty += qty
 
-		if state.bracketStartAtNano == 0 {
-			state.bracketStartAtNano = atNano
-		}
+	if sideIndicator > 0 && price == state.prevAsk {
+		state.pendingMatchedAsk += qty
 	}
 
-	var touchFillFracBid, touchFillFracAsk float64
-
-	if inBracket {
-		if bidQty > 0 {
-			touchFillFracBid = state.cumFillBid / bidQty
-		}
-
-		if askQty > 0 {
-			touchFillFracAsk = state.cumFillAsk / askQty
-		}
+	if sideIndicator < 0 && price == state.prevBid {
+		state.pendingMatchedBid += qty
 	}
 
-	var bracketTimeDeltaSec float64
-
-	if state.bracketStartAtNano > 0 && atNano > state.bracketStartAtNano {
-		bracketTimeDeltaSec = (atNano - state.bracketStartAtNano) / 1e9
+	if atNano <= state.prevAtNano {
+		return prior.Next(signal.Name(), out)
 	}
 
-	var touchFillRateBid, touchFillRateAsk float64
+	dt := (atNano - state.prevAtNano) / 1e9
+	out["bracket_trade_quantity"] = state.pendingTradeQty
 
-	if bracketTimeDeltaSec > 0 {
-		touchFillRateBid = state.cumFillBid / bracketTimeDeltaSec
-		touchFillRateAsk = state.cumFillAsk / bracketTimeDeltaSec
+	sideBracket{
+		prevPrice: state.prevBid, prevQty: state.prevBidQty,
+		price: bid, qty: bidQty, matched: state.pendingMatchedBid,
+		improves: func(price, prevPrice float64) bool { return price > prevPrice },
+	}.dispose(out, ":bid", dt)
+	sideBracket{
+		prevPrice: state.prevAsk, prevQty: state.prevAskQty,
+		price: ask, qty: askQty, matched: state.pendingMatchedAsk,
+		improves: func(price, prevPrice float64) bool { return price < prevPrice },
+	}.dispose(out, ":ask", dt)
+
+	from := state.prevAt
+	state.observe(bid, ask, bidQty, askQty, atNano, prior.At)
+
+	fillBidZ, hasFillBidZ := state.fillFracBidBaseline.emit(
+		out, "fill_fraction_baseline:bid", "fill_fraction_divergence:bid",
+		"fill_fraction_zscore:bid", out["touch_fill_fraction:bid"],
+	)
+	fillAskZ, hasFillAskZ := state.fillFracAskBaseline.emit(
+		out, "fill_fraction_baseline:ask", "fill_fraction_divergence:ask",
+		"fill_fraction_zscore:ask", out["touch_fill_fraction:ask"],
+	)
+
+	if velocity, ok := state.fillFracBidVel.Step(out["touch_fill_fraction:bid"], atSec); ok {
+		out["fill_fraction_velocity:bid"] = velocity
 	}
 
-	unfilledBid := bidQty
-	unfilledAsk := askQty
-
-	if state.hasPrev {
-		unfilledBid = math.Max(state.prevBidQty-matchedBid, 0.0)
-		unfilledAsk = math.Max(state.prevAskQty-matchedAsk, 0.0)
+	if velocity, ok := state.fillFracAskVel.Step(out["touch_fill_fraction:ask"], atSec); ok {
+		out["fill_fraction_velocity:ask"] = velocity
 	}
 
-	var prevBid, prevAsk, prevBidQty, prevAskQty float64
-	var retreatedBid, retreatedAsk, retreatFracBid, retreatFracAsk, retreatRateBid, retreatRateAsk float64
-	var netWithdrawnBid, netWithdrawnAsk, netWithdrawalFracBid, netWithdrawalFracAsk, netWithdrawalRateBid, netWithdrawalRateAsk float64
-	var netReplenishedBid, netReplenishedAsk, netReplenishmentFracBid, netReplenishmentFracAsk, netReplenishmentRateBid, netReplenishmentRateAsk float64
-	var logChangeBid, logChangeAsk float64
+	var withdrawBidZ, withdrawAskZ, retreatBidZ, retreatAskZ float64
+	var hasWithdrawBidZ, hasWithdrawAskZ, hasRetreatBidZ, hasRetreatAskZ bool
 
-	if state.hasPrev {
-		prevBid = state.prevBid
-		prevAsk = state.prevAsk
-		prevBidQty = state.prevBidQty
-		prevAskQty = state.prevAskQty
+	if fraction, ok := out["net_withdrawal_fraction:bid"]; ok {
+		withdrawBidZ, hasWithdrawBidZ = state.withdrawalFracBidBaseline.emit(
+			out, "withdrawal_fraction_baseline:bid", "withdrawal_fraction_divergence:bid",
+			"withdrawal_fraction_zscore:bid", fraction,
+		)
 
-		var stepDeltaSec float64
-
-		if atNano > state.prevAtNano {
-			stepDeltaSec = (atNano - state.prevAtNano) / 1e9
+		if velocity, defined := state.withdrawalFracBidVel.Step(fraction, atSec); defined {
+			out["withdrawal_fraction_velocity:bid"] = velocity
 		}
 
-		if prevBid > 0 && bid > 0 {
-			logChangeBid = math.Log(bid / prevBid)
-		}
-
-		if prevAsk > 0 && ask > 0 {
-			logChangeAsk = math.Log(ask / prevAsk)
-		}
-
-		if bid < prevBid {
-			retreatedBid = state.prevBidQty
-			retreatFracBid = 1.0
-
-			if stepDeltaSec > 0 {
-				retreatRateBid = retreatedBid / stepDeltaSec
-			}
-		}
-
-		if bid == prevBid {
-			if bidQty < unfilledBid {
-				netWithdrawnBid = unfilledBid - bidQty
-
-				if state.prevBidQty > 0 {
-					netWithdrawalFracBid = netWithdrawnBid / state.prevBidQty
-				}
-
-				if stepDeltaSec > 0 {
-					netWithdrawalRateBid = netWithdrawnBid / stepDeltaSec
-				}
-			}
-
-			if bidQty > unfilledBid {
-				netReplenishedBid = bidQty - unfilledBid
-
-				if state.prevBidQty > 0 {
-					netReplenishmentFracBid = netReplenishedBid / state.prevBidQty
-				}
-
-				if stepDeltaSec > 0 {
-					netReplenishmentRateBid = netReplenishedBid / stepDeltaSec
-				}
-			}
-		}
-
-		if ask > prevAsk {
-			retreatedAsk = state.prevAskQty
-			retreatFracAsk = 1.0
-
-			if stepDeltaSec > 0 {
-				retreatRateAsk = retreatedAsk / stepDeltaSec
-			}
-		}
-
-		if ask == prevAsk {
-			if askQty < unfilledAsk {
-				netWithdrawnAsk = unfilledAsk - askQty
-
-				if state.prevAskQty > 0 {
-					netWithdrawalFracAsk = netWithdrawnAsk / state.prevAskQty
-				}
-
-				if stepDeltaSec > 0 {
-					netWithdrawalRateAsk = netWithdrawnAsk / stepDeltaSec
-				}
-			}
-
-			if askQty > unfilledAsk {
-				netReplenishedAsk = askQty - unfilledAsk
-
-				if state.prevAskQty > 0 {
-					netReplenishmentFracAsk = netReplenishedAsk / state.prevAskQty
-				}
-
-				if stepDeltaSec > 0 {
-					netReplenishmentRateAsk = netReplenishedAsk / stepDeltaSec
-				}
-			}
-		}
+		state.replenishmentFracBidBaseline.emit(
+			out, "replenishment_fraction_baseline:bid", "", "", out["net_replenishment_fraction:bid"],
+		)
 	}
 
+	if fraction, ok := out["net_withdrawal_fraction:ask"]; ok {
+		withdrawAskZ, hasWithdrawAskZ = state.withdrawalFracAskBaseline.emit(
+			out, "withdrawal_fraction_baseline:ask", "withdrawal_fraction_divergence:ask",
+			"withdrawal_fraction_zscore:ask", fraction,
+		)
+
+		if velocity, defined := state.withdrawalFracAskVel.Step(fraction, atSec); defined {
+			out["withdrawal_fraction_velocity:ask"] = velocity
+		}
+
+		state.replenishmentFracAskBaseline.emit(
+			out, "replenishment_fraction_baseline:ask", "", "", out["net_replenishment_fraction:ask"],
+		)
+	}
+
+	if fraction, ok := out["retreat_fraction:bid"]; ok {
+		retreatBidZ, hasRetreatBidZ = state.retreatFracBidBaseline.emit(
+			out, "retreat_fraction_baseline:bid", "", "retreat_fraction_zscore:bid", fraction,
+		)
+	}
+
+	if fraction, ok := out["retreat_fraction:ask"]; ok {
+		retreatAskZ, hasRetreatAskZ = state.retreatFracAskBaseline.emit(
+			out, "retreat_fraction_baseline:ask", "", "retreat_fraction_zscore:ask", fraction,
+		)
+	}
+
+	if hasFillBidZ && hasFillAskZ && hasWithdrawBidZ && hasWithdrawAskZ &&
+		hasRetreatBidZ && hasRetreatAskZ {
+		state.historyPath(out, [6]float64{
+			fillBidZ, fillAskZ, withdrawBidZ, withdrawAskZ, retreatBidZ, retreatAskZ,
+		})
+	}
+
+	res := prior.Next(signal.Name(), out)
+
+	// The attributed bracket is (t0, t1].
+	res.From = from
+
+	return res
+}
+
+/*
+observe closes the bracket at the current touch: it becomes the previous
+touch the next bracket attributes against.
+*/
+func (state *symbolState) observe(
+	bid, ask, bidQty, askQty, atNano float64, at time.Time,
+) {
 	state.hasPrev = true
 	state.prevBid = bid
 	state.prevAsk = ask
 	state.prevBidQty = bidQty
 	state.prevAskQty = askQty
 	state.prevAtNano = atNano
+	state.prevAt = at
+	state.pendingTradeQty = 0
+	state.pendingMatchedBid = 0
+	state.pendingMatchedAsk = 0
+}
 
-	fillFracBidCenter, fillFracBidScale := state.fillFracBidBaseline.Step(touchFillFracBid)
-	fillFracAskCenter, fillFracAskScale := state.fillFracAskBaseline.Step(touchFillFracAsk)
-	withdrawalFracBidCenter, withdrawalFracBidScale := state.withdrawalFracBidBaseline.Step(netWithdrawalFracBid)
-	withdrawalFracAskCenter, withdrawalFracAskScale := state.withdrawalFracAskBaseline.Step(netWithdrawalFracAsk)
-	retreatFracBidCenter, retreatFracBidScale := state.retreatFracBidBaseline.Step(retreatFracBid)
-	retreatFracAskCenter, retreatFracAskScale := state.retreatFracAskBaseline.Step(retreatFracAsk)
-	replenishmentFracBidCenter, _ := state.replenishmentFracBidBaseline.Step(netReplenishmentFracBid)
-	replenishmentFracAskCenter, _ := state.replenishmentFracAskBaseline.Step(netReplenishmentFracAsk)
-
-	fillFracBidDiv := touchFillFracBid - fillFracBidCenter
-	fillFracAskDiv := touchFillFracAsk - fillFracAskCenter
-	withdrawalFracBidDiv := netWithdrawalFracBid - withdrawalFracBidCenter
-	withdrawalFracAskDiv := netWithdrawalFracAsk - withdrawalFracAskCenter
-
-	var fillFracBidZ, fillFracAskZ, withdrawalFracBidZ, withdrawalFracAskZ, retreatFracBidZ, retreatFracAskZ float64
-
-	if fillFracBidScale > 0 {
-		fillFracBidZ = fillFracBidDiv / fillFracBidScale
-	}
-
-	if fillFracAskScale > 0 {
-		fillFracAskZ = fillFracAskDiv / fillFracAskScale
-	}
-
-	if withdrawalFracBidScale > 0 {
-		withdrawalFracBidZ = withdrawalFracBidDiv / withdrawalFracBidScale
-	}
-
-	if withdrawalFracAskScale > 0 {
-		withdrawalFracAskZ = withdrawalFracAskDiv / withdrawalFracAskScale
-	}
-
-	if retreatFracBidScale > 0 {
-		retreatFracBidZ = retreatFracBid / retreatFracBidScale
-	}
-
-	if retreatFracAskScale > 0 {
-		retreatFracAskZ = retreatFracAsk / retreatFracAskScale
-	}
-
-	fillFracBidVelVal := state.fillFracBidVel.Step(touchFillFracBid, atSec)
-	fillFracAskVelVal := state.fillFracAskVel.Step(touchFillFracAsk, atSec)
-	withdrawalFracBidVelVal := state.withdrawalFracBidVel.Step(netWithdrawalFracBid, atSec)
-	withdrawalFracAskVelVal := state.withdrawalFracAskVel.Step(netWithdrawalFracAsk, atSec)
-
-	target := [6]float64{
-		fillFracBidZ,
-		fillFracAskZ,
-		withdrawalFracBidZ,
-		withdrawalFracAskZ,
-		retreatFracBidZ,
-		retreatFracAskZ,
-	}
-	var histDist, histPerc float64
-
+/*
+historyPath scores how far this bracket's six disposition z-scores lie from
+the nearest retained point, and that distance's rank among past nearest
+distances.
+*/
+func (state *symbolState) historyPath(out map[string]float64, target [6]float64) {
 	if len(state.historyPoints) > 0 {
-		var firstSumSq float64
+		minDist := math.Inf(1)
 
-		for dim := 0; dim < len(target); dim++ {
-			diff := target[dim] - state.historyPoints[0][dim]
-			firstSumSq += diff * diff
-		}
-
-		minDist := math.Sqrt(firstSumSq)
-
-		for idx := 1; idx < len(state.historyPoints); idx++ {
+		for _, point := range state.historyPoints {
 			var sumSq float64
 
-			for dim := 0; dim < len(target); dim++ {
-				diff := target[dim] - state.historyPoints[idx][dim]
+			for dim := range target {
+				diff := target[dim] - point[dim]
 				sumSq += diff * diff
 			}
 
-			distance := math.Sqrt(sumSq)
-
-			if distance < minDist {
-				minDist = distance
-			}
+			minDist = math.Min(minDist, math.Sqrt(sumSq))
 		}
 
-		var belowCount int
-
-		for _, pastDist := range state.historyDistances {
-			if pastDist <= minDist {
-				belowCount++
-			}
-		}
+		out["historical_path_distance"] = minDist
 
 		if len(state.historyDistances) > 0 {
-			histPerc = float64(belowCount) / float64(len(state.historyDistances))
+			below := 0
+
+			for _, past := range state.historyDistances {
+				if past <= minDist {
+					below++
+				}
+			}
+
+			out["historical_path_percentile"] = float64(below) / float64(len(state.historyDistances))
 		}
 
-		histDist = minDist
 		state.historyDistances = append(state.historyDistances, minDist)
 
 		if len(state.historyDistances) > 256 {
@@ -486,80 +492,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if len(state.historyPoints) > 256 {
 		state.historyPoints = state.historyPoints[len(state.historyPoints)-256:]
 	}
-
-	bracketStart := state.bracketStartAtNano
-
-	out := prior.Next(signal.Name(), map[string]float64{
-		"best_price:bid":                      bid,
-		"best_price:ask":                      ask,
-		"touch_quantity:bid":                  bidQty,
-		"touch_quantity:ask":                  askQty,
-		"unfilled_residual_quantity:bid":      unfilledBid,
-		"unfilled_residual_quantity:ask":      unfilledAsk,
-		"bracket_trade_quantity":              state.cumBracketTradeQty,
-		"matched_touch_trade_quantity:bid":    matchedBid,
-		"matched_touch_trade_quantity:ask":    matchedAsk,
-		"touch_fill_quantity:bid":             state.cumFillBid,
-		"touch_fill_quantity:ask":             state.cumFillAsk,
-		"touch_fill_fraction:bid":             touchFillFracBid,
-		"touch_fill_fraction:ask":             touchFillFracAsk,
-		"fill_fraction_baseline:bid":          fillFracBidCenter,
-		"fill_fraction_baseline:ask":          fillFracAskCenter,
-		"fill_fraction_divergence:bid":        fillFracBidDiv,
-		"fill_fraction_divergence:ask":        fillFracAskDiv,
-		"fill_fraction_zscore:bid":            fillFracBidZ,
-		"fill_fraction_zscore:ask":            fillFracAskZ,
-		"fill_fraction_velocity:bid":          fillFracBidVelVal,
-		"fill_fraction_velocity:ask":          fillFracAskVelVal,
-		"previous_best_price:bid":             prevBid,
-		"previous_best_price:ask":             prevAsk,
-		"previous_touch_quantity:bid":         prevBidQty,
-		"previous_touch_quantity:ask":         prevAskQty,
-		"touch_price_log_change:bid":          logChangeBid,
-		"touch_price_log_change:ask":          logChangeAsk,
-		"retreated_quantity:bid":              retreatedBid,
-		"retreated_quantity:ask":              retreatedAsk,
-		"retreat_fraction:bid":                retreatFracBid,
-		"retreat_fraction:ask":                retreatFracAsk,
-		"retreat_rate:bid":                    retreatRateBid,
-		"retreat_rate:ask":                    retreatRateAsk,
-		"net_withdrawn_quantity:bid":          netWithdrawnBid,
-		"net_withdrawn_quantity:ask":          netWithdrawnAsk,
-		"net_withdrawal_fraction:bid":         netWithdrawalFracBid,
-		"net_withdrawal_fraction:ask":         netWithdrawalFracAsk,
-		"net_withdrawal_rate:bid":             netWithdrawalRateBid,
-		"net_withdrawal_rate:ask":             netWithdrawalRateAsk,
-		"net_replenished_quantity:bid":        netReplenishedBid,
-		"net_replenished_quantity:ask":        netReplenishedAsk,
-		"net_replenishment_fraction:bid":      netReplenishmentFracBid,
-		"net_replenishment_fraction:ask":      netReplenishmentFracAsk,
-		"net_replenishment_rate:bid":          netReplenishmentRateBid,
-		"net_replenishment_rate:ask":          netReplenishmentRateAsk,
-		"touch_fill_rate:bid":                 touchFillRateBid,
-		"touch_fill_rate:ask":                 touchFillRateAsk,
-		"withdrawal_fraction_baseline:bid":    withdrawalFracBidCenter,
-		"withdrawal_fraction_baseline:ask":    withdrawalFracAskCenter,
-		"withdrawal_fraction_divergence:bid":  withdrawalFracBidDiv,
-		"withdrawal_fraction_divergence:ask":  withdrawalFracAskDiv,
-		"withdrawal_fraction_zscore:bid":      withdrawalFracBidZ,
-		"withdrawal_fraction_zscore:ask":      withdrawalFracAskZ,
-		"withdrawal_fraction_velocity:bid":    withdrawalFracBidVelVal,
-		"withdrawal_fraction_velocity:ask":    withdrawalFracAskVelVal,
-		"retreat_fraction_baseline:bid":       retreatFracBidCenter,
-		"retreat_fraction_baseline:ask":       retreatFracAskCenter,
-		"retreat_fraction_zscore:bid":         retreatFracBidZ,
-		"retreat_fraction_zscore:ask":         retreatFracAskZ,
-		"replenishment_fraction_baseline:bid": replenishmentFracBidCenter,
-		"replenishment_fraction_baseline:ask": replenishmentFracAskCenter,
-		"historical_path_distance":            histDist,
-		"historical_path_percentile":          histPerc,
-	})
-
-	if bracketStart > 0 {
-		out.From = time.Unix(0, int64(bracketStart))
-	}
-
-	return out
 }
 
 func tradeValue(prior *data.Measurement, key string) (float64, error) {

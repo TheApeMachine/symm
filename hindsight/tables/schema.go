@@ -6,6 +6,9 @@ const (
 	Namespace    = "hindsight"
 	Measurements = "measurements"
 	Runs         = "runs"
+	// Detections holds source=detector excursion labels apart from the
+	// observation tape, with the measurement schema and partitioning.
+	Detections = "detections"
 )
 
 /*

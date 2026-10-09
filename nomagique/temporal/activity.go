@@ -135,22 +135,22 @@ func (op *Activity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		notionalDivergence := 0.0
 		notionalZScore := 0.0
 
-		var notionalReading [10]float64
-		var notionalRes [8]float64
+		var notionalReading statistic.MomentReading
+		var notionalRes statistic.CausalResidualResult
 		for ptr := range op.notionalMoments.Next(data.NewValue(notionalRate).Next(nil)) {
-			notionalReading = *(*[10]float64)(ptr)
+			notionalReading = *(*statistic.MomentReading)(ptr)
 			for rPtr := range op.notionalResidual.Next(data.NewValue(notionalReading).Next(nil)) {
-				notionalRes = *(*[8]float64)(rPtr)
+				notionalRes = *(*statistic.CausalResidualResult)(rPtr)
 			}
 		}
 
-		if notionalRes[0] == 1 {
-			notionalBaseline = notionalRes[1]
+		if notionalRes.HasPrior {
+			notionalBaseline = notionalRes.Baseline
 			if notionalBaseline > 0 && notionalRate > 0 {
 				notionalRatio = notionalRate / notionalBaseline
 				notionalDivergence = math.Log(notionalRatio)
 			}
-			notionalZScore = notionalRes[6]
+			notionalZScore = notionalRes.ZScore
 		}
 
 		notionalVelocity := 0.0
@@ -169,24 +169,24 @@ func (op *Activity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 		if hasTouch && spread > 0 {
 			spreadRatio = 1.0
-			var spreadReading [10]float64
-			var spreadRes [8]float64
+			var spreadReading statistic.MomentReading
+			var spreadRes statistic.CausalResidualResult
 			for ptr := range op.spreadMoments.Next(data.NewValue(spread).Next(nil)) {
-				spreadReading = *(*[10]float64)(ptr)
+				spreadReading = *(*statistic.MomentReading)(ptr)
 				for rPtr := range op.spreadResidual.Next(data.NewValue(spreadReading).Next(nil)) {
-					spreadRes = *(*[8]float64)(rPtr)
+					spreadRes = *(*statistic.CausalResidualResult)(rPtr)
 				}
 			}
 
-			if spreadRes[0] == 1 {
-				spreadBaseline = spreadRes[1]
+			if spreadRes.HasPrior {
+				spreadBaseline = spreadRes.Baseline
 				if spreadBaseline > 0 {
 					spreadRatio = spread / spreadBaseline
 					spreadDivergence = math.Log(spreadRatio)
 				}
 				disp := 0.0
-				if spreadRes[2] > 0 {
-					disp = math.Sqrt(spreadRes[2])
+				if spreadRes.PriorVariance > 0 {
+					disp = math.Sqrt(spreadRes.PriorVariance)
 				}
 				if disp > 0 {
 					spreadZScore = (spread - spreadBaseline) / disp
@@ -212,19 +212,19 @@ func (op *Activity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		midReturnZScore := 0.0
 
 		if hasTouch {
-			var midReading [10]float64
-			var midRes [8]float64
+			var midReading statistic.MomentReading
+			var midRes statistic.CausalResidualResult
 			for ptr := range op.midReturnMoments.Next(data.NewValue(midReturn).Next(nil)) {
-				midReading = *(*[10]float64)(ptr)
+				midReading = *(*statistic.MomentReading)(ptr)
 				for rPtr := range op.midReturnResidual.Next(data.NewValue(midReading).Next(nil)) {
-					midRes = *(*[8]float64)(rPtr)
+					midRes = *(*statistic.CausalResidualResult)(rPtr)
 				}
 			}
 
-			if midRes[0] == 1 {
-				midReturnBaseline = midRes[1]
-				midReturnDivergence = midRes[4]
-				midReturnZScore = midRes[6]
+			if midRes.HasPrior {
+				midReturnBaseline = midRes.Baseline
+				midReturnDivergence = midRes.Residual
+				midReturnZScore = midRes.ZScore
 			}
 		}
 

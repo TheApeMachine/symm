@@ -97,8 +97,9 @@ func NewMeasurement(
 }
 
 /*
-Next instantiates a new Measurement, using the current instance
-as its prior, copying over the center and scale of all metrics.
+Next instantiates the source's Measurement derived from the current instance.
+It carries over identity, timing, metadata, and peers, and holds exactly the
+values the source produced: the prior's own metrics belong to the prior.
 */
 func (measurement *Measurement) Next(
 	source string, values ...map[string]float64,
@@ -126,39 +127,8 @@ func (measurement *Measurement) Next(
 	next.prediction = measurement.prediction
 	next.peers = append(next.peers, measurement.peers...)
 
-	var valMap map[string]float64
-
 	if len(values) > 0 {
-		valMap = values[0]
-	}
-
-	seen := make(map[string]bool)
-
-	for entry := range measurement.Read() {
-		if entry == nil || entry.Metric == nil {
-			continue
-		}
-
-		out := *entry.Metric
-
-		if valMap != nil {
-			if val, ok := valMap[entry.Key]; ok {
-				out.Raw = val
-			}
-		}
-		out.Exact = nil
-		out.Normalized = 0
-		out.Standardized = 0
-
-		next.metrics = append(next.metrics, &MetricEntry{
-			Key:    entry.Key,
-			Metric: &out,
-		})
-		seen[entry.Key] = true
-	}
-
-	for key, val := range valMap {
-		if !seen[key] {
+		for key, val := range values[0] {
 			next.metrics = append(next.metrics, &MetricEntry{
 				Key:    key,
 				Metric: NewMetric(key, val, "", ""),
@@ -400,14 +370,17 @@ func (measurement *Measurement) finalize() *Measurement {
 		return measurement
 	}
 
-	// Count this observation before any Welford update, so metric and
-	// Measurement statistics agree on n and never divide by zero.
 	measurement.samples++
 
 	for _, metric := range measurement.metrics {
 		measurement.err = errors.Join(
 			measurement.err,
-			metric.Metric.finalize(float64(measurement.samples)),
+			metric.Metric.finalize(standardizerFor(standardizerKey{
+				epoch:  measurement.Epoch,
+				source: measurement.Source,
+				label:  measurement.Label,
+				metric: metric.Key,
+			})),
 		)
 	}
 

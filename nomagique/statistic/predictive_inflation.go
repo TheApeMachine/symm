@@ -25,7 +25,18 @@ func (op *PredictiveInflation) Next(
 ) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for arriving := range in {
+			if arriving == nil {
+				op.Error(core.ErrShape)
+				return
+			}
+
 			count := *(*float64)(arriving)
+
+			if count <= 0 {
+				op.Error(core.ErrDomain)
+				return
+			}
+
 			op.out = math.Sqrt(1.0 + 1.0/count)
 
 			if !yield(unsafe.Pointer(&op.out)) {

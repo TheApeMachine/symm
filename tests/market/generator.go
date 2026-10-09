@@ -46,10 +46,7 @@ func tradeFrame(symbol, phase string, seq int64, at time.Time, price float64, si
 	priceMetric := data.NewExactMetric(
 		"price", decimal.NewFromFloat64(price), data.UnitPrice, data.TimescaleInstantaneous,
 	)
-	priceMetric.Standardized = price
-
 	qtyMetric := data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous)
-	qtyMetric.Standardized = 1
 
 	return measurement.Write(priceMetric, qtyMetric)
 }

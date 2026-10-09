@@ -66,7 +66,6 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				frame.Metrics["peer_return_energy_rate"] = summary.PeerEnergyRate
 				measuredRate := frame.Metrics["return_energy_rate:measured"]
 				frame.Metrics["relative_return_energy"] = measuredRate / summary.PeerEnergyRate
-				frame.Metrics["relative_cohort_return_energy"] = measuredRate / summary.PeerEnergyRate
 			}
 
 			if !yield(arriving) {
@@ -112,12 +111,26 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			signed := frame.Metrics["cohort_signed_correlation"]
+			signed, defined := frame.Metrics["cohort_signed_correlation"]
+
+			if !defined {
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
 			view := data.To[float64, FisherView](op.estimator, &signed)
 
-			frame.Metrics["correlation_baseline"] = view.Baseline
-			frame.Metrics["correlation_divergence"] = view.Divergence
-			frame.Metrics["correlation_zscore"] = view.ZScore
+			if view.Defined && view.HasPrior {
+				frame.Metrics["correlation_baseline"] = view.Baseline
+				frame.Metrics["correlation_divergence"] = view.Divergence
+			}
+
+			if view.ZDefined {
+				frame.Metrics["correlation_zscore"] = view.ZScore
+			}
 
 			if !yield(arriving) {
 				return
@@ -154,7 +167,9 @@ func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 		for arriving := range in {
 			frame := (*Frame)(arriving)
 
-			if len(frame.Peers) == 0 || frame.Metrics["cohort_peer_count"] == 0 {
+			relative, defined := frame.Metrics["relative_return_energy"]
+
+			if !defined {
 				if !yield(arriving) {
 					return
 				}
@@ -162,12 +177,16 @@ func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			relative := frame.Metrics["relative_return_energy"]
 			reading := data.To[float64, adaptive.BaselineReading](op.baseline, &relative)
 
-			frame.Metrics["relative_return_energy_baseline"] = reading.Baseline
-			frame.Metrics["relative_return_energy_divergence"] = reading.Residual
-			frame.Metrics["relative_return_energy_zscore"] = reading.ZScore
+			if reading.HasPrior {
+				frame.Metrics["relative_return_energy_baseline"] = reading.Baseline
+				frame.Metrics["relative_return_energy_divergence"] = reading.Residual
+			}
+
+			if reading.ScoreScale > 0 {
+				frame.Metrics["relative_return_energy_zscore"] = reading.ZScore
+			}
 
 			if !yield(arriving) {
 				return
@@ -211,8 +230,18 @@ func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 				continue
 			}
 
+			signed, defined := frame.Metrics["cohort_signed_correlation"]
+
+			if !defined {
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
 			observation := temporal.Observation{
-				Value: frame.Metrics["cohort_signed_correlation"],
+				Value: signed,
 				At:    frame.At,
 			}
 
@@ -258,7 +287,9 @@ func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 		for arriving := range in {
 			frame := (*Frame)(arriving)
 
-			if len(frame.Peers) == 0 || frame.Metrics["cohort_peer_count"] == 0 {
+			relative, defined := frame.Metrics["relative_return_energy"]
+
+			if !defined {
 				if !yield(arriving) {
 					return
 				}
@@ -267,7 +298,7 @@ func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 			}
 
 			observation := temporal.Observation{
-				Value: frame.Metrics["relative_return_energy"],
+				Value: relative,
 				At:    frame.At,
 			}
 
@@ -327,12 +358,19 @@ func (op *Recurrence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				continue
 			}
 
-			correlationZScore := frame.Metrics["correlation_zscore"]
-			energyZScore := frame.Metrics["relative_return_energy_zscore"]
-			target := [2]float64{correlationZScore, energyZScore}
+			// The path point needs both z-scores; an undefined one is not 0.
+			correlationZScore, hasCorrelationZ := frame.Metrics["correlation_zscore"]
+			energyZScore, hasEnergyZ := frame.Metrics["relative_return_energy_zscore"]
 
-			histDist := 0.0
-			histPerc := 0.0
+			if !hasCorrelationZ || !hasEnergyZ {
+				if !yield(arriving) {
+					return
+				}
+
+				continue
+			}
+
+			target := [2]float64{correlationZScore, energyZScore}
 
 			if len(op.historyPoints) > 0 {
 				diffX := target[0] - op.historyPoints[0][0]
@@ -358,10 +396,10 @@ func (op *Recurrence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 						}
 					}
 
-					histPerc = float64(belowCount) / float64(len(op.historyDistances))
+					frame.Metrics["historical_path_percentile"] = float64(belowCount) / float64(len(op.historyDistances))
 				}
 
-				histDist = minDist
+				frame.Metrics["historical_path_distance"] = minDist
 				op.historyDistances = append(op.historyDistances, minDist)
 
 				if len(op.historyDistances) > 256 {
@@ -374,9 +412,6 @@ func (op *Recurrence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			if len(op.historyPoints) > 256 {
 				op.historyPoints = op.historyPoints[len(op.historyPoints)-256:]
 			}
-
-			frame.Metrics["historical_path_distance"] = histDist
-			frame.Metrics["historical_path_percentile"] = histPerc
 
 			if !yield(arriving) {
 				return

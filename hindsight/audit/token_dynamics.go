@@ -61,6 +61,12 @@ func AnalyzeTokenDynamics(
 	sumMargin := 0.0
 
 	prevTokens := make(map[string]string)
+	var compressedTokens []string
+	compressedTokensBySymbol := make(map[string][]string)
+	compressedTokenFreqs := make(map[string]int)
+	compressedTransitions := make(map[string]map[string]int)
+	stayCount := 0
+	totalTransitions := 0
 
 	for _, tick := range unseenTicks {
 		measGroup := tickMeasurements[tick]
@@ -78,59 +84,66 @@ func AnalyzeTokenDynamics(
 		}
 
 		for sym, symMeas := range bySymbol {
-			var regScores [13]float64
-			var regCounts [13]int
-
-			for _, m := range symMeas {
-				source := m.Source
-
-				for entry := range m.Read() {
-					if entry == nil || entry.Metric == nil {
-						continue
-					}
-
-					region := frozenGrid.PinRegion(source, entry.Key)
-					regScores[region] += math.Abs(entry.Metric.Standardized)
-					regCounts[region]++
-				}
-			}
-
-			winningRegion := uint8(2)
-			maxBrightness := 0.0
-			runnerUpBrightness := 0.0
-
-			for r := uint8(1); r <= 12; r++ {
-				if regCounts[r] == 0 {
-					continue
-				}
-
-				brightness := regScores[r] / math.Sqrt(float64(regCounts[r]))
-
-				if brightness > maxBrightness {
-					runnerUpBrightness = maxBrightness
-					maxBrightness = brightness
-					winningRegion = r
-					continue
-				}
-
-				if brightness > runnerUpBrightness {
-					runnerUpBrightness = brightness
-				}
-			}
-
-			if maxBrightness <= 0 {
+			if len(symMeas) == 0 {
 				continue
 			}
 
-			token := fmt.Sprintf("R%02d", winningRegion)
+			// Assemble unified frame with peers, exactly mirroring production strategy.Training:
+			frame := data.NewMeasurement(
+				symMeas[0].Epoch,
+				sym,
+				"dynamics",
+				symMeas[0].SeqIdx,
+				tick,
+			)
+			frame.At = symMeas[0].At
+			frame.From = symMeas[0].From
+			frame.Peers(symMeas...)
+			frame.Write()
+
+			tokenBytes := frozenGrid.Observe(frame)
+			token := string(tokenBytes)
+
+			regions := frozenGrid.RegionScores(frame)
+
+			// A frame in which no region holds a metric is not an emission.
+			if regions.Winner == 0 {
+				continue
+			}
+
+			winningRegion := regions.Winner
+			maxBrightness := regions.Brightness[winningRegion]
+			// Without a contending region the margin is measured against the
+			// null expectation, which is brightness 0 for every region.
+			runnerUpBrightness := 0.0
+
+			if regions.RunnerUp != 0 {
+				runnerUpBrightness = regions.Brightness[regions.RunnerUp]
+			}
+
 			tokens = append(tokens, token)
 			tokensBySymbol[sym] = append(tokensBySymbol[sym], token)
 			tokenFreqs[token]++
 
+			// Track run-length compressed tokens (mirroring S3 sequence storage in training.Train):
+			symComp := compressedTokensBySymbol[sym]
+			if len(symComp) == 0 || symComp[len(symComp)-1] != token {
+				if len(symComp) > 0 {
+					prevComp := symComp[len(symComp)-1]
+					if compressedTransitions[prevComp] == nil {
+						compressedTransitions[prevComp] = make(map[string]int)
+					}
+					compressedTransitions[prevComp][token]++
+				}
+				compressedTokensBySymbol[sym] = append(compressedTokensBySymbol[sym], token)
+				compressedTokens = append(compressedTokens, token)
+				compressedTokenFreqs[token]++
+			}
+
 			margin := maxBrightness - runnerUpBrightness
 			winningScore := maxBrightness
-			active := float64(regCounts[winningRegion])
-			members := float64(regCounts[winningRegion])
+			active := float64(regions.Counts[winningRegion])
+			members := float64(regions.Counts[winningRegion])
 			coverage := 1.0
 
 			accum := regionAccums[token]
@@ -160,7 +173,9 @@ func AnalyzeTokenDynamics(
 
 			sumScore += winningScore
 
-			if winningScore > peakScore {
+			// Brightness is negative for a frame quieter than the null, so the
+			// first emission seeds the peak rather than a zero floor.
+			if len(tokens) == 1 || winningScore > peakScore {
 				peakScore = winningScore
 			}
 
@@ -170,6 +185,10 @@ func AnalyzeTokenDynamics(
 			prevToken := prevTokens[sym]
 
 			if prevToken != "" {
+				totalTransitions++
+				if prevToken == token {
+					stayCount++
+				}
 				if transitions[prevToken] == nil {
 					transitions[prevToken] = make(map[string]int)
 				}
@@ -195,6 +214,13 @@ func AnalyzeTokenDynamics(
 			maxDominance = share
 		}
 	}
+
+	alwaysStayAccuracy := 0.0
+	if totalTransitions > 0 {
+		alwaysStayAccuracy = float64(stayCount) / float64(totalTransitions)
+	}
+
+	marginalAccuracy := maxDominance
 
 	regionStrengths := make(map[string]RegionStrengthStat, len(regionAccums))
 	for token, accum := range regionAccums {
@@ -245,6 +271,22 @@ func AnalyzeTokenDynamics(
 	}
 	entropyReduction := nullMean - realEntropy
 
+	// Compute compressed sequence transition entropy and null:
+	compEntropy := 0.0
+	compNullMean := 0.0
+	compReduction := 0.0
+	if len(compressedTokens) > 0 {
+		compEntropy = computeTransitionEntropy(compressedTransitions, compressedTokenFreqs, len(compressedTokens))
+		compNullEntropies := computeBlockNullTransitionEntropies(compressedTokensBySymbol, 1, permutations)
+		for _, value := range compNullEntropies {
+			compNullMean += value
+		}
+		if len(compNullEntropies) > 0 {
+			compNullMean /= float64(len(compNullEntropies))
+		}
+		compReduction = compNullMean - compEntropy
+	}
+
 	nullRank := 0.0
 	if len(nullEntropies) > 0 {
 		greaterOrEqual := 0
@@ -257,27 +299,34 @@ func AnalyzeTokenDynamics(
 	}
 
 	return Stage4TokenDynamics{
-		TotalEmissions:         len(tokens),
-		UniqueTokens:           len(tokenFreqs),
-		TokenFrequencies:       tokenFreqs,
-		MaxTokenDominance:      maxDominance,
-		MeanExcitationStrength: meanStrength,
-		PeakExcitationStrength: peakScore,
-		MeanActiveCoverage:     meanActiveCov,
-		MeanRunnerUpMargin:     meanMargin,
-		RegionStrengths:        regionStrengths,
-		TransitionEntropy:      realEntropy,
-		NullTransitionEntropy:  nullMean,
-		EntropyReductionBits:   entropyReduction,
-		Transitions:            transitions,
+		TotalEmissions:                 len(tokens),
+		UniqueTokens:                   len(tokenFreqs),
+		TokenFrequencies:               tokenFreqs,
+		MaxTokenDominance:              maxDominance,
+		MeanExcitationStrength:         meanStrength,
+		PeakExcitationStrength:         peakScore,
+		MeanActiveCoverage:             meanActiveCov,
+		MeanRunnerUpMargin:             meanMargin,
+		RegionStrengths:                regionStrengths,
+		TransitionEntropy:              realEntropy,
+		NullTransitionEntropy:          nullMean,
+		EntropyReductionBits:           entropyReduction,
+		Transitions:                    transitions,
+		CompressedEmissions:            len(compressedTokens),
+		CompressedUniqueTokens:         len(compressedTokenFreqs),
+		CompressedTransitions:          compressedTransitions,
+		CompressedTransitionEntropy:    compEntropy,
+		CompressedNullEntropy:          compNullMean,
+		CompressedEntropyReductionBits: compReduction,
+		AlwaysStayAccuracy:             alwaysStayAccuracy,
+		MarginalAccuracy:               marginalAccuracy,
 		SummaryText: fmt.Sprintf(
-			"Token Dynamics (held out): %d emissions across %d regions. "+
-				"Mean excitation strength = %.3f (peak = %.3f; runner-up margin = %.3f). "+
-				"Max dominance = %.1f%%. Transition entropy = %.3f bits vs empirical dwell-block null mean %.3f "+
-				"(difference %.3f bits; block=%d; real entropy <= %.1f%% of null draws).",
-			len(tokens), len(tokenFreqs), meanStrength, peakScore, meanMargin,
-			maxDominance*100, realEntropy, nullMean,
-			entropyReduction, blockSize, nullRank*100,
+			"Token Dynamics (held out): %d raw emissions (%d compressed changes, dwell stay=%.1f%%). "+
+				"Raw entropy = %.3f vs null %.3f (gain=%.3f bits; block=%d; null-rank=%.1f%%; stay-baseline=%.1f%%, marginal-baseline=%.1f%%). "+
+				"Compressed transition entropy = %.3f vs shuffled null %.3f (gain=%.3f bits).",
+			len(tokens), len(compressedTokens), alwaysStayAccuracy*100,
+			realEntropy, nullMean, entropyReduction, blockSize, nullRank*100, alwaysStayAccuracy*100, marginalAccuracy*100,
+			compEntropy, compNullMean, compReduction,
 		),
 		Status: "MEASURED",
 		Passed: true,

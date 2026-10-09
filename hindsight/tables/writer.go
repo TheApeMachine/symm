@@ -19,6 +19,7 @@ Writer buffers incoming measurements and commits them to Iceberg.
 */
 type Writer struct {
 	catalog *Catalog
+	table   string
 	epoch   int64
 
 	mu            sync.Mutex
@@ -40,6 +41,7 @@ NewWriter constructs a Writer writing into the given catalog for a stable run ep
 func NewWriter(catalog *Catalog, epoch int64) *Writer {
 	return &Writer{
 		catalog: catalog,
+		table:   Measurements,
 		epoch:   epoch,
 	}
 }
@@ -75,7 +77,7 @@ func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
 		threshold = viper.GetInt("hindsight.capture.commit_rows")
 	}
 
-	if err := writer.commitFamily(ctx, Measurements, targetBytes, threshold, forceAll, func() ([]*data.Measurement, int64) {
+	if err := writer.commitFamily(ctx, writer.table, targetBytes, threshold, forceAll, func() ([]*data.Measurement, int64) {
 		rows := writer.measurements
 		bytes := writer.bufferedBytes
 		writer.measurements = nil
@@ -169,4 +171,71 @@ func (writer *Writer) ReleaseRemaining() {
 
 	writer.measurements = nil
 	writer.bufferedBytes = 0
+}
+
+/*
+BufferedRows returns the current count of buffered measurements waiting to be committed.
+*/
+func (writer *Writer) BufferedRows() int {
+	writer.lock()
+	defer writer.unlock()
+
+	return len(writer.measurements)
+}
+
+/*
+BufferedBytes returns the approximate memory footprint in bytes of buffered measurements.
+*/
+func (writer *Writer) BufferedBytes() int64 {
+	writer.lock()
+	defer writer.unlock()
+
+	return writer.bufferedBytes
+}
+
+/*
+Append commits measurements for one epoch to the named table as a single
+snapshot. Nothing is retained on success; on failure the error is returned and
+the rows are not committed.
+*/
+func (catalog *Catalog) Append(
+	ctx context.Context, tableName string, epoch int64, measurements []*data.Measurement,
+) error {
+	if catalog == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "[catalog] catalog is required", nil,
+		))
+	}
+
+	if epoch <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "[catalog] valid positive epoch is required", nil,
+		))
+	}
+
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	writer := NewWriter(catalog, epoch)
+	writer.table = tableName
+	defer writer.ReleaseRemaining()
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation, "[catalog] cannot append a nil measurement", nil,
+			))
+		}
+
+		if measurement.Epoch != epoch {
+			return errnie.Error(errnie.Err(
+				errnie.Validation, "[catalog] measurement epoch does not match append epoch", nil,
+			))
+		}
+
+		writer.Add(tableName, measurement)
+	}
+
+	return errnie.Error(writer.CommitReady(ctx, true))
 }

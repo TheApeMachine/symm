@@ -35,11 +35,17 @@ func NewSignal(ctx context.Context) *Signal {
 }
 
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY {
+	if signal.Status() != runtime.READY || prior == nil {
 		return nil
 	}
 
-	price := data.Pull(prior.Read("price")).Metric.Raw
+	entry := data.Pull(prior.Read("price"))
+
+	if entry == nil || entry.Err != nil || entry.Metric == nil {
+		return nil
+	}
+
+	price := entry.Metric.Raw
 
 	frame := &nmcorrelation.Frame{
 		Symbol:  prior.Label,

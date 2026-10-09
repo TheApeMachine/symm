@@ -83,7 +83,7 @@ func TestCanonicalDimensions(t *testing.T) {
 		})
 
 		Convey("time and duration metrics resolve to UnitSecond or UnitNanosecond", func() {
-			unit, timescale := CanonicalDimensions("best_lag_seconds@BTC/USD", "", "")
+			unit, timescale := CanonicalDimensions("best_lag_seconds_median", "", "")
 			So(unit, ShouldEqual, UnitSecond)
 			So(timescale, ShouldEqual, TimescaleRollingWindow)
 
