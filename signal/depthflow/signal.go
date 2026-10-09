@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sync"
-	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
@@ -14,56 +12,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
-
-var outputKeys = []string{
-	"book_notional:bid",
-	"book_notional:ask",
-	"book_notional",
-	"observed_notional:bid",
-	"observed_notional:ask",
-	"observed_notional",
-	"book_imbalance",
-	"observed_notional_imbalance",
-	"touch_imbalance",
-	"imbalance_resolution_gap",
-	"imbalance_resolution_distance",
-	"added_notional:bid",
-	"removed_notional:bid",
-	"net_displayed_flow:bid",
-	"added_notional:ask",
-	"removed_notional:ask",
-	"net_displayed_flow:ask",
-	"flow_activity_imbalance",
-	"book_imbalance_baseline",
-	"book_imbalance_divergence",
-	"book_imbalance_zscore",
-	"resolution_gap_baseline",
-	"resolution_gap_divergence",
-	"resolution_gap_zscore",
-	"book_imbalance_velocity",
-	"resolution_gap_velocity",
-	"added_notional_rate:bid",
-	"added_notional_rate:ask",
-	"removed_notional_rate:bid",
-	"removed_notional_rate:ask",
-	"net_displayed_flow_rate:bid",
-	"net_displayed_flow_rate:ask",
-	"book_turnover_rate",
-	"net_book_change_rate",
-	"signed_net_displayed_flow_rate",
-	"turnover_baseline",
-	"turnover_divergence",
-	"turnover_zscore",
-	"turnover_ratio",
-	"net_book_change_rate_baseline",
-	"net_book_change_rate_divergence",
-	"net_book_change_rate_zscore",
-	"signed_net_displayed_flow_rate_baseline",
-	"signed_net_displayed_flow_rate_divergence",
-	"signed_net_displayed_flow_rate_zscore",
-	"historical_path_distance",
-	"historical_path_percentile",
-}
 
 type causalEstimator struct {
 	count float64
@@ -135,7 +83,6 @@ type symbolState struct {
 type Signal struct {
 	*runtime.System
 	books  broker.BookSource
-	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
@@ -238,6 +185,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	obsBid := 0.0
 	currentBids := make(map[float64]float64, len(bids))
+
 	for _, b := range bids {
 		notional := b[0] * b[1]
 		obsBid += notional
@@ -246,6 +194,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	obsAsk := 0.0
 	currentAsks := make(map[float64]float64, len(asks))
+
 	for _, a := range asks {
 		notional := a[0] * a[1]
 		obsAsk += notional
@@ -259,9 +208,8 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	gapDist := math.Abs(gap)
 
 	atNano := float64(prior.At.UnixNano())
-
-	signal.mu.Lock()
 	state, found := signal.states[prior.Label]
+
 	if !found {
 		state = &symbolState{
 			prevBids: make(map[float64]float64),
@@ -273,8 +221,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	addedBid, removedBid := 0.0, 0.0
 	addedAsk, removedAsk := 0.0, 0.0
 	timeDelta := 0.1
-	outPrevAt := 0.0
-
 	bookTurnoverRate := 0.0
 	netBookChangeRate := 0.0
 	signedNetFlowRate := 0.0
@@ -291,7 +237,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	flowActivityImbalance := 0.0
 
 	if state.hasPrev {
-		outPrevAt = state.prevAtNano
 		if atNano > state.prevAtNano {
 			timeDelta = (atNano - state.prevAtNano) * 1e-9
 		}
@@ -486,9 +431,8 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	state.prevTotal = total
 	state.prevAtNano = atNano
 	state.hasPrev = true
-	signal.mu.Unlock()
 
-	output := map[string]float64{
+	return prior.Next(signal.Name(), map[string]float64{
 		"book_notional:bid":                         obsBid,
 		"book_notional:ask":                         obsAsk,
 		"book_notional":                             total,
@@ -536,12 +480,5 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		"signed_net_displayed_flow_rate_zscore":     signedFlowZScore,
 		"historical_path_distance":                  histDist,
 		"historical_path_percentile":                histPerc,
-	}
-
-	out := prior.Next(signal.Name(), output)
-	if outPrevAt > 0 {
-		out.From = time.Unix(0, int64(outPrevAt))
-	}
-
-	return out
+	})
 }

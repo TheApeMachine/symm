@@ -17,7 +17,6 @@ import (
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/strategy"
 )
 
 /*
@@ -30,6 +29,7 @@ type AuditOptions struct {
 	Permutations int
 	OutputDir    string
 	NoPlots      bool
+	TakerFee     float64
 }
 
 /*
@@ -47,6 +47,10 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 
 	if opts.Permutations <= 0 {
 		opts.Permutations = 50
+	}
+
+	if opts.TakerFee <= 0 {
+		opts.TakerFee = 0.008
 	}
 
 	if opts.OutputDir == "" {
@@ -106,6 +110,12 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	contract := AnalyzeContract(allMeasurements)
 	errnie.Info(fmt.Sprintf("[audit] [2/7 Stage 0] Completed in %s: %s", time.Since(stage0Start).Round(time.Millisecond), contract.SummaryText))
 
+	// Stage 0.5: Microstructure Timing & Synchronization
+	stage05Start := time.Now()
+	errnie.Info("[audit] [2.5/7 Stage 0.5] Evaluating Microstructure Timing & Ingress Sequencing...")
+	timing := AnalyzeTiming(allMeasurements)
+	errnie.Info(fmt.Sprintf("[audit] [2.5/7 Stage 0.5] Completed in %s: %s", time.Since(stage05Start).Round(time.Millisecond), timing.SummaryText))
+
 	// Stage 1: Metric Vitality & Redundancy
 	stage1Start := time.Now()
 	errnie.Info(fmt.Sprintf("[audit] [3/7 Stage 1] Evaluating Metric Vitality & Subspace Redundancy across %d series...", len(rawSeries)))
@@ -130,36 +140,33 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	if splitIdx < 20 {
 		splitIdx = len(orderedTicks) / 2
 	}
-	trainTicks := orderedTicks[:splitIdx]
 	unseenTicks := orderedTicks[splitIdx:]
 
 	errnie.Info(fmt.Sprintf("[audit] [6/7 Stage 4] Replaying Held-Out Tape (%d unseen ticks): Token Dynamics & Region Excitation...", len(unseenTicks)))
-	trainStreams := make(map[string]*store.Stream)
 	frozenGrid := store.NewGrid()
-	feedGridFaithful(frozenGrid, trainStreams, trainTicks, tickMeasurements)
-	frozenGrid.Partition()
-	frozenGrid.Settle()
 
-	dynamics := AnalyzeTokenDynamics(frozenGrid, trainStreams, unseenTicks, tickMeasurements, opts.Permutations)
+	dynamics := AnalyzeTokenDynamics(frozenGrid, unseenTicks, tickMeasurements, opts.Permutations)
 	errnie.Info(fmt.Sprintf("[audit] [6/7 Stage 4] Completed in %s: %s", time.Since(stage4Start).Round(time.Millisecond), dynamics.SummaryText))
 
 	// Stage 5: Precursor Informativeness (A->B Ignition and B->C Exhaustion)
 	stage5Start := time.Now()
 	errnie.Info("[audit] [7/7 Stage 5] Evaluating Precursor Divergence (Ignition & Exhaustion Separation)...")
-	fullStreams := make(map[string]*store.Stream)
 	fullGrid := store.NewGrid()
-	feedGridFaithful(fullGrid, fullStreams, orderedTicks, tickMeasurements)
-	fullGrid.Partition()
-	fullGrid.Settle()
 
-	detections, detErr := loadOrDetectExcursions(ctx, catalog, targetEpoch, opts.Symbol)
+	var minTick, maxTick int64
+	if len(orderedTicks) > 0 {
+		minTick = orderedTicks[0]
+		maxTick = orderedTicks[len(orderedTicks)-1]
+	}
+
+	detections, detErr := loadOrDetectExcursions(ctx, catalog, targetEpoch, opts.Symbol, opts.TakerFee, minTick, maxTick)
 
 	if detErr != nil {
 		errnie.Warn("[audit] excursion detection retrieval: " + detErr.Error())
 	}
 
 	precursor := AnalyzePrecursorSeparation(
-		ctx, catalog, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, detections,
+		ctx, catalog, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, detections, opts.TakerFee,
 	)
 	errnie.Info(fmt.Sprintf("[audit] [7/7 Stage 5] Completed in %s: %s", time.Since(stage5Start).Round(time.Millisecond), precursor.SummaryText))
 
@@ -167,11 +174,11 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	stage6Start := time.Now()
 	errnie.Info(fmt.Sprintf("[audit] [Bonus Stage 6] Auditing Cognitive Engine & Radix Trie Dynamics (%d detections, %d permutations)...", len(detections), opts.Permutations))
 	cognitive := AnalyzeCognitiveTrie(
-		ctx, catalog, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, detections,
+		ctx, catalog, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, detections, opts.TakerFee,
 	)
 	errnie.Info(fmt.Sprintf("[audit] [Bonus Stage 6] Completed in %s: %s", time.Since(stage6Start).Round(time.Millisecond), cognitive.SummaryText))
 
-	overallHealthy := contract.Passed && vitality.Passed && sympathy.Passed &&
+	overallHealthy := contract.Passed && timing.Passed && vitality.Passed && sympathy.Passed &&
 		stability.Passed && dynamics.Passed && precursor.Passed && cognitive.Passed
 
 	reportSymbol := opts.Symbol
@@ -185,6 +192,7 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 		Symbol:         reportSymbol,
 		TotalTicks:     len(orderedTicks),
 		Contract:       contract,
+		Timing:         timing,
 		Vitality:       vitality,
 		Sympathy:       sympathy,
 		GridStability:  stability,
@@ -318,7 +326,6 @@ func ingestMetrics(
 
 				for _, meas := range measurements {
 					if meas != nil {
-						meas.PurgeMetric("checksum")
 						tickMeasurements[meas.Tick] = append(tickMeasurements[meas.Tick], meas)
 						seenTicks[meas.Tick] = struct{}{}
 					}
@@ -406,24 +413,32 @@ func ingestMetrics(
 		}
 	}
 
-	// Extract canonical grid cells using production ChannelsFrom aggregation
+	// Extract canonical grid cells directly from observed measurements
 	canonicalSeries := make(map[string]map[int64]float64)
 	for _, tick := range tickOrder {
 		group := tickMeasurements[tick]
+
 		if len(group) == 0 {
 			continue
 		}
 
-		channels := strategy.ChannelsFrom(group...)
-		for cellKey, val := range channels.Raw {
-			if cellKey == "checksum" {
+		for _, m := range group {
+			if m == nil {
 				continue
 			}
 
-			if canonicalSeries[cellKey] == nil {
-				canonicalSeries[cellKey] = make(map[int64]float64)
+			for entry := range m.Read() {
+				if entry == nil || entry.Metric == nil {
+					continue
+				}
+
+				key := fmt.Sprintf("%s:%s", m.Source, entry.Key)
+
+				if canonicalSeries[key] == nil {
+					canonicalSeries[key] = make(map[int64]float64)
+				}
+				canonicalSeries[key][tick] = entry.Metric.Standardized
 			}
-			canonicalSeries[cellKey][tick] = val
 		}
 	}
 

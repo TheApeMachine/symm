@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -14,72 +13,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
-
-var outputKeys = []string{
-	"best_price:bid",
-	"best_price:ask",
-	"touch_quantity:bid",
-	"touch_quantity:ask",
-	"unfilled_residual_quantity:bid",
-	"unfilled_residual_quantity:ask",
-	"bracket_trade_quantity",
-	"matched_touch_trade_quantity:bid",
-	"matched_touch_trade_quantity:ask",
-	"touch_fill_quantity:bid",
-	"touch_fill_quantity:ask",
-	"touch_fill_fraction:bid",
-	"touch_fill_fraction:ask",
-	"fill_fraction_baseline:bid",
-	"fill_fraction_baseline:ask",
-	"fill_fraction_divergence:bid",
-	"fill_fraction_divergence:ask",
-	"fill_fraction_zscore:bid",
-	"fill_fraction_zscore:ask",
-	"fill_fraction_velocity:bid",
-	"fill_fraction_velocity:ask",
-	"previous_best_price:bid",
-	"previous_best_price:ask",
-	"previous_touch_quantity:bid",
-	"previous_touch_quantity:ask",
-	"touch_price_log_change:bid",
-	"touch_price_log_change:ask",
-	"retreated_quantity:bid",
-	"retreated_quantity:ask",
-	"retreat_fraction:bid",
-	"retreat_fraction:ask",
-	"retreat_rate:bid",
-	"retreat_rate:ask",
-	"net_withdrawn_quantity:bid",
-	"net_withdrawn_quantity:ask",
-	"net_withdrawal_fraction:bid",
-	"net_withdrawal_fraction:ask",
-	"net_withdrawal_rate:bid",
-	"net_withdrawal_rate:ask",
-	"net_replenished_quantity:bid",
-	"net_replenished_quantity:ask",
-	"net_replenishment_fraction:bid",
-	"net_replenishment_fraction:ask",
-	"net_replenishment_rate:bid",
-	"net_replenishment_rate:ask",
-	"touch_fill_rate:bid",
-	"touch_fill_rate:ask",
-	"withdrawal_fraction_baseline:bid",
-	"withdrawal_fraction_baseline:ask",
-	"withdrawal_fraction_divergence:bid",
-	"withdrawal_fraction_divergence:ask",
-	"withdrawal_fraction_zscore:bid",
-	"withdrawal_fraction_zscore:ask",
-	"withdrawal_fraction_velocity:bid",
-	"withdrawal_fraction_velocity:ask",
-	"retreat_fraction_baseline:bid",
-	"retreat_fraction_baseline:ask",
-	"retreat_fraction_zscore:bid",
-	"retreat_fraction_zscore:ask",
-	"replenishment_fraction_baseline:bid",
-	"replenishment_fraction_baseline:ask",
-	"historical_path_distance",
-	"historical_path_percentile",
-}
 
 type welfordBaseline struct {
 	count float64
@@ -97,11 +30,13 @@ func (wb *welfordBaseline) Step(value float64) (float64, float64) {
 	wb.m2 += delta * (value - wb.mean)
 
 	center := value
+
 	if priorCount > 0 {
 		center = priorMean
 	}
 
 	var scale float64
+
 	if wb.count > 1 {
 		variance := wb.m2 / (wb.count - 1)
 		if variance > 0 {
@@ -161,12 +96,13 @@ type symbolState struct {
 	fillFracAskVel               velocityTracker
 	withdrawalFracBidVel         velocityTracker
 	withdrawalFracAskVel         velocityTracker
+	historyPoints                [][6]float64
+	historyDistances             []float64
 }
 
 type Signal struct {
 	*runtime.System
 	books  broker.BookSource
-	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
@@ -258,7 +194,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if ask <= bid {
-		errnie.Warn(fmt.Sprintf("[toxicity] dropping frame for %s with crossed book: bid=%v ask=%v", prior.Label, bid, ask))
+		errnie.Warn(fmt.Sprintf(
+			"[toxicity] dropping frame for %s with crossed book: bid=%v ask=%v",
+			prior.Label, bid, ask,
+		))
+
 		return nil
 	}
 
@@ -276,8 +216,8 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	atNano := float64(prior.At.UnixNano())
 	atSec := atNano / 1e9
 
-	signal.mu.Lock()
 	state, exists := signal.states[prior.Label]
+
 	if !exists {
 		state = &symbolState{}
 		signal.states[prior.Label] = state
@@ -486,10 +426,70 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	withdrawalFracBidVelVal := state.withdrawalFracBidVel.Step(netWithdrawalFracBid, atSec)
 	withdrawalFracAskVelVal := state.withdrawalFracAskVel.Step(netWithdrawalFracAsk, atSec)
 
-	bracketStart := state.bracketStartAtNano
-	signal.mu.Unlock()
+	target := [6]float64{
+		fillFracBidZ,
+		fillFracAskZ,
+		withdrawalFracBidZ,
+		withdrawalFracAskZ,
+		retreatFracBidZ,
+		retreatFracAskZ,
+	}
+	var histDist, histPerc float64
 
-	output := map[string]float64{
+	if len(state.historyPoints) > 0 {
+		var firstSumSq float64
+
+		for dim := 0; dim < len(target); dim++ {
+			diff := target[dim] - state.historyPoints[0][dim]
+			firstSumSq += diff * diff
+		}
+
+		minDist := math.Sqrt(firstSumSq)
+
+		for idx := 1; idx < len(state.historyPoints); idx++ {
+			var sumSq float64
+
+			for dim := 0; dim < len(target); dim++ {
+				diff := target[dim] - state.historyPoints[idx][dim]
+				sumSq += diff * diff
+			}
+
+			distance := math.Sqrt(sumSq)
+
+			if distance < minDist {
+				minDist = distance
+			}
+		}
+
+		var belowCount int
+
+		for _, pastDist := range state.historyDistances {
+			if pastDist <= minDist {
+				belowCount++
+			}
+		}
+
+		if len(state.historyDistances) > 0 {
+			histPerc = float64(belowCount) / float64(len(state.historyDistances))
+		}
+
+		histDist = minDist
+		state.historyDistances = append(state.historyDistances, minDist)
+
+		if len(state.historyDistances) > 256 {
+			state.historyDistances = state.historyDistances[len(state.historyDistances)-256:]
+		}
+	}
+
+	state.historyPoints = append(state.historyPoints, target)
+
+	if len(state.historyPoints) > 256 {
+		state.historyPoints = state.historyPoints[len(state.historyPoints)-256:]
+	}
+
+	bracketStart := state.bracketStartAtNano
+
+	out := prior.Next(signal.Name(), map[string]float64{
 		"best_price:bid":                      bid,
 		"best_price:ask":                      ask,
 		"touch_quantity:bid":                  bidQty,
@@ -551,11 +551,9 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		"retreat_fraction_zscore:ask":         retreatFracAskZ,
 		"replenishment_fraction_baseline:bid": replenishmentFracBidCenter,
 		"replenishment_fraction_baseline:ask": replenishmentFracAskCenter,
-		"historical_path_distance":            0.0,
-		"historical_path_percentile":          0.0,
-	}
-
-	out := prior.Next(signal.Name(), output)
+		"historical_path_distance":            histDist,
+		"historical_path_percentile":          histPerc,
+	})
 
 	if bracketStart > 0 {
 		out.From = time.Unix(0, int64(bracketStart))

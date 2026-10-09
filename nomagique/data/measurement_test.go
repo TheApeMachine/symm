@@ -66,9 +66,16 @@ func TestMeasurement_Confidence(t *testing.T) {
 		measurement.coherence = 0.8
 		measurement.maturity = 0.5
 		measurement.ID = 1
+		measurement.metrics = []*MetricEntry{
+			{Metric: NewMetric("price", 42.5, UnitCurrency, TimescaleInstantaneous)},
+		}
 
 		Convey("Confidence is temporal maturity times cross-metric coherence", func() {
 			So(measurement.Confidence(), ShouldAlmostEqual, 0.5*0.8, 1e-12)
+
+			dampened := measurement.Dampen("price")
+			So(len(dampened), ShouldEqual, 1)
+			So(dampened[0].Raw, ShouldAlmostEqual, 42.5*0.4, 1e-12)
 		})
 	})
 

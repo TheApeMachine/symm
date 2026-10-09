@@ -429,7 +429,7 @@ func (t *tape) padded(excursion span) (start, end tapePoint, ok bool) {
 }
 
 /*
-padWindow is the tick window rehearsal/chart read around B→C when a stored
+PadWindow is the tick window rehearsal/chart read around B→C when a stored
 detection's start is tight or missing end (TRAINING.md left/right pad). The
 pad equals the move width so long moves keep a proportional precursor; short
 B→C spans get a minimum left pad so ignition is not the first lit token
@@ -438,28 +438,14 @@ The left pad never goes before tick 0: when B is near the epoch start, lo is
 clamped to 0 and hi is kept >= lo so SignalLogic/Timeline never see a negative
 lowTick.
 */
-func padWindow(b, c int64) (lo, hi int64) {
-	width := c - b
-	if width < 1 {
-		width = 1
-	}
-
-	left := width
-	if left < minPrecursorPad {
-		left = minPrecursorPad
-	}
+func PadWindow(b, c int64) (lo, hi int64) {
+	width := max(c-b, 1)
+	left := max(width, minPrecursorPad)
 
 	// Tick 0 is the earliest stored frame; never ask the catalog for a
 	// negative lowTick (SignalLogic rejects it and halted training).
-	lo = b - left
-	if lo < 0 {
-		lo = 0
-	}
-
-	hi = c + max(width/2, 1)
-	if hi < lo {
-		hi = lo
-	}
+	lo = max(b-left, 0)
+	hi = max(c+max(width/2, 1), lo)
 
 	return lo, hi
 }
@@ -528,24 +514,24 @@ func (detector *Detector) Scan(
 			}
 		}
 
-		metric, err := readMetric(measurement, "price")
-
-		if err != nil || metric == nil || metric.Exact == nil || metric.Exact.Sign() <= 0 {
-			return detector.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf(
-					"[detector] spot:trade without a positive exact price: %s epoch=%d tick=%d",
-					measurement.Label, measurement.Epoch, measurement.Tick,
-				),
-				err,
-			))
-		}
+		metric := data.Pull(measurement.Read("price")).Metric
 
 		if measurement.At.IsZero() {
 			return detector.Error(errnie.Err(
 				errnie.Validation,
 				fmt.Sprintf(
 					"[detector] spot:trade without venue time (At): %s epoch=%d tick=%d",
+					measurement.Label, measurement.Epoch, measurement.Tick,
+				),
+				nil,
+			))
+		}
+
+		if metric == nil || metric.Exact == nil {
+			return detector.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"[detector] spot:trade without exact price: %s epoch=%d tick=%d",
 					measurement.Label, measurement.Epoch, measurement.Tick,
 				),
 				nil,

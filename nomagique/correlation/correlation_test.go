@@ -60,7 +60,9 @@ func TestDependenceNext(t *testing.T) {
 		node := correlation.NewDependence(algo.NewHayashiYoshida())
 
 		for _, test := range cases {
-			covariance, support, leftEnergy, rightEnergy := 0.0, 0.0, 0.0, 0.0
+			covariance, support := 0.0, 0.0
+			leftOverlapEnergy, rightOverlapEnergy := 0.0, 0.0
+			leftEnergy, rightEnergy := 0.0, 0.0
 			leftRates, rightRates := []float64{}, []float64{}
 
 			for index := 1; index < len(test.lp); index++ {
@@ -70,7 +72,10 @@ func TestDependenceNext(t *testing.T) {
 
 				for other := 1; other < len(test.rp); other++ {
 					if test.lt[index-1] < test.rt[other] && test.rt[other-1] < test.lt[index] {
-						covariance += increment * (math.Log(test.rp[other]) - math.Log(test.rp[other-1]))
+						otherIncrement := math.Log(test.rp[other]) - math.Log(test.rp[other-1])
+						covariance += increment * otherIncrement
+						leftOverlapEnergy += increment * increment
+						rightOverlapEnergy += otherIncrement * otherIncrement
 						support++
 					}
 				}
@@ -110,7 +115,12 @@ func TestDependenceNext(t *testing.T) {
 			So(got.LeftReturns, ShouldEqual, float64(max(0, len(test.lp)-1)))
 			So(got.RightReturns, ShouldEqual, float64(max(0, len(test.rp)-1)))
 			So(got.Defined, ShouldEqual, support > 0 && leftEnergy > 0 && rightEnergy > 0)
-			sameFloat(got.Correlation, covariance/math.Sqrt(leftEnergy*rightEnergy))
+			expectedCorr := 0.0
+			scale := math.Sqrt(math.Max(leftEnergy, leftOverlapEnergy) * math.Max(rightEnergy, rightOverlapEnergy))
+			if scale > 0 {
+				expectedCorr = covariance / scale
+			}
+			sameFloat(got.Correlation, expectedCorr)
 			sameFloat(got.LeftEnergyRate, medianRate(leftRates))
 			sameFloat(got.RightEnergyRate, medianRate(rightRates))
 		}

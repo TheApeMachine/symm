@@ -100,13 +100,10 @@ func NewMeasurement(
 Next instantiates a new Measurement, using the current instance
 as its prior, copying over the center and scale of all metrics.
 */
-func (measurement *Measurement) Next(source string, values ...map[string]float64) *Measurement {
+func (measurement *Measurement) Next(
+	source string, values ...map[string]float64,
+) *Measurement {
 	seqIdx := system.SeqIdx.Add(1)
-
-	if seqIdx <= 0 {
-		seqIdx = measurement.SeqIdx + 1
-	}
-
 	tick := system.Tick.Load()
 
 	if tick <= 0 {
@@ -186,6 +183,7 @@ func (measurement *Measurement) Read(keys ...string) iter.Seq[*MetricEntry] {
 				"[data.measurement] not finalized",
 				nil,
 			))
+
 			measurement.err = errors.Join(measurement.err, err)
 
 			yield(&MetricEntry{
@@ -215,6 +213,36 @@ func (measurement *Measurement) Read(keys ...string) iter.Seq[*MetricEntry] {
 			}
 		}
 	}
+}
+
+/*
+Dampen returns copies of the metrics matching keys (or all metrics if no keys
+are specified), scaled by the Measurement's Confidence.
+*/
+func (measurement *Measurement) Dampen(keys ...string) []*Metric {
+	confidence := measurement.Confidence()
+	metrics := make([]*Metric, 0)
+
+	for entry := range measurement.Read(keys...) {
+		if entry == nil || entry.Metric == nil {
+			continue
+		}
+
+		clone := *entry.Metric
+		clone.Raw *= confidence
+		clone.Normalized *= confidence
+		clone.Standardized *= confidence
+		metrics = append(metrics, &clone)
+	}
+
+	return metrics
+}
+
+/*
+Dampened returns copies of the metrics matching keys, scaled by the Measurement's Confidence.
+*/
+func (measurement *Measurement) Dampened(keys ...string) []*Metric {
+	return measurement.Dampen(keys...)
 }
 
 /*
@@ -260,19 +288,7 @@ func (measurement *Measurement) Write(
 	}
 
 	measurement.finalize()
-	return measurement
-}
-
-/*
-PurgeMetric removes a metric by its key from the Measurement.
-*/
-func (measurement *Measurement) PurgeMetric(key string) {
-	for index, entry := range measurement.metrics {
-		if entry != nil && entry.Key == key {
-			measurement.metrics = append(measurement.metrics[:index], measurement.metrics[index+1:]...)
-			return
-		}
-	}
+	return measurement.valid()
 }
 
 /*
@@ -367,65 +383,6 @@ func (measurement *Measurement) SetMeta(key string, value string) {
 	measurement.metadata = append(measurement.metadata, &StringEntry{
 		Key:   key,
 		Value: value,
-	})
-}
-
-/*
-ClearPeers empties the peers of the measurement.
-*/
-func (measurement *Measurement) ClearPeers() {
-	measurement.peers = measurement.peers[:0]
-}
-
-/*
-AddPeer appends one peer to the measurement.
-*/
-func (measurement *Measurement) AddPeer(peer *Measurement) {
-	if peer != nil {
-		measurement.peers = append(measurement.peers, peer)
-	}
-}
-
-/*
-Metric returns the Metric pointer for the given label, or nil.
-*/
-func (measurement *Measurement) Metric(label string) *Metric {
-	for _, entry := range measurement.metrics {
-		if entry != nil && entry.Key == label {
-			return entry.Metric
-		}
-	}
-
-	return nil
-}
-
-/*
-Value returns the raw float64 value of the metric with the given label, or 0.
-*/
-func (measurement *Measurement) Value(label string) float64 {
-	metric := measurement.Metric(label)
-
-	if metric != nil {
-		return metric.Raw
-	}
-
-	return 0
-}
-
-/*
-Put sets or creates a metric with the given label and raw value.
-*/
-func (measurement *Measurement) Put(label string, raw float64) {
-	for _, entry := range measurement.metrics {
-		if entry != nil && entry.Key == label && entry.Metric != nil {
-			entry.Metric.Raw = raw
-			return
-		}
-	}
-
-	measurement.metrics = append(measurement.metrics, &MetricEntry{
-		Key:    label,
-		Metric: NewMetric(label, raw, UnitDimensionless, TimescaleInstantaneous),
 	})
 }
 
@@ -561,15 +518,15 @@ func (measurement *Measurement) setCoherence() *Measurement {
 			continue
 		}
 
-		z := entry.Metric.Standardized
-		sumAbs += math.Abs(z)
-		measurement.energy += z * z
+		standardized := entry.Metric.Standardized
+		sumAbs += math.Abs(standardized)
+		measurement.energy += standardized * standardized
 	}
+
+	measurement.coherence = 0
 
 	if count > 0 && measurement.energy > 0 {
 		measurement.coherence = (sumAbs * sumAbs) / (count * measurement.energy)
-	} else {
-		measurement.coherence = 0
 	}
 
 	return measurement
@@ -591,15 +548,23 @@ func (measurement *Measurement) setMaturity() *Measurement {
 		return measurement
 	}
 
-	n := float64(measurement.samples)
+	samplesCount := float64(measurement.samples)
 
 	// 1. Calculate maturity against PRIOR prediction (surprise)
-	measurement.maturity = (core.Unit - core.Unit/n) / (core.Unit + math.Abs(
+	measurement.maturity = (core.Unit - core.Unit/samplesCount) / (core.Unit + math.Abs(
 		measurement.energy-measurement.prediction,
 	))
 
+	if expected := float64(len(SignalMetrics[measurement.Source])); expected > 0 {
+		actual := float64(len(measurement.metrics))
+
+		if actual < expected {
+			measurement.maturity *= actual / expected
+		}
+	}
+
 	// 2. Update prediction for next time
-	measurement.prediction += (core.Unit / n) * (measurement.energy - measurement.prediction)
+	measurement.prediction += (core.Unit / samplesCount) * (measurement.energy - measurement.prediction)
 
 	return measurement
 }

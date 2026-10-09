@@ -30,6 +30,218 @@ type taughtRecord struct {
 	feedback float64
 }
 
+type modelCall struct {
+	Winner     string
+	Confidence float64
+	Contrast   float64
+}
+
+type trieNode struct {
+	id         string
+	token      string
+	prefix     string
+	count      uint64
+	enterScore float64
+	exitScore  float64
+	children   map[string]*trieNode
+}
+
+type cognitiveModel struct {
+	root     *trieNode
+	records  int
+	maxDepth int
+}
+
+func newCognitiveModel() *cognitiveModel {
+	return &cognitiveModel{
+		root: &trieNode{
+			id:       "root",
+			children: make(map[string]*trieNode),
+		},
+	}
+}
+
+func (model *cognitiveModel) Teach(context, action string, feedback float64) error {
+	if action != "enter" && action != "exit" {
+		return nil
+	}
+
+	parts := strings.Split(context, "/")
+	current := model.root
+	depth := 0
+
+	for _, token := range parts {
+		if token == "" {
+			continue
+		}
+
+		depth++
+		child, ok := current.children[token]
+
+		if !ok {
+			prefix := token
+
+			if current.prefix != "" {
+				prefix = current.prefix + "/" + token
+			}
+
+			child = &trieNode{
+				id:       prefix,
+				token:    token,
+				prefix:   prefix,
+				children: make(map[string]*trieNode),
+			}
+			current.children[token] = child
+			model.records++
+		}
+
+		current = child
+	}
+
+	current.count++
+
+	if depth > model.maxDepth {
+		model.maxDepth = depth
+	}
+
+	if action == "enter" {
+		current.enterScore += feedback
+	}
+
+	if action == "exit" {
+		current.exitScore += feedback
+	}
+
+	return nil
+}
+
+func (model *cognitiveModel) Recall(context, stance string) (modelCall, error) {
+	if context == "" {
+		return modelCall{}, nil
+	}
+
+	parts := strings.Split(context, "/")
+	current := model.root
+
+	for _, token := range parts {
+		if token == "" {
+			continue
+		}
+
+		child, ok := current.children[token]
+
+		if !ok {
+			break
+		}
+
+		current = child
+	}
+
+	if current == model.root {
+		return modelCall{}, nil
+	}
+
+	enter := current.enterScore
+	exit := current.exitScore
+
+	if stance == "enter" {
+		exit = -1.0
+	}
+
+	if stance == "exit" {
+		enter = -1.0
+	}
+
+	if enter <= 0 && exit <= 0 {
+		return modelCall{}, nil
+	}
+
+	winner := "enter"
+	winningScore := enter
+	otherScore := exit
+
+	if exit > enter {
+		winner = "exit"
+		winningScore = exit
+		otherScore = enter
+	}
+
+	denom := math.Abs(enter) + math.Abs(exit)
+	confidence := 1.0
+
+	if denom > 0 {
+		confidence = winningScore / denom
+	}
+
+	contrast := winningScore - otherScore
+
+	return modelCall{
+		Winner:     winner,
+		Confidence: confidence,
+		Contrast:   contrast,
+	}, nil
+}
+
+func (model *cognitiveModel) Count(key string) (float64, error) {
+	if key == "records" {
+		return float64(model.records), nil
+	}
+
+	if key == "span" {
+		return float64(model.maxDepth), nil
+	}
+
+	count := 0.0
+	var countNodes func(node *trieNode)
+	countNodes = func(node *trieNode) {
+		if node != model.root {
+			if key == "enter" && node.enterScore > 0 && node.enterScore > node.exitScore {
+				count++
+			}
+
+			if key == "exit" && node.exitScore > 0 && node.exitScore > node.enterScore {
+				count++
+			}
+		}
+
+		for _, child := range node.children {
+			countNodes(child)
+		}
+	}
+
+	countNodes(model.root)
+	return count, nil
+}
+
+func (model *cognitiveModel) CognitionTree() ui.CognitionTreeExport {
+	var convert func(node *trieNode) *ui.TrieNodeJSON
+	convert = func(node *trieNode) *ui.TrieNodeJSON {
+		if node == nil {
+			return nil
+		}
+
+		jsonNode := &ui.TrieNodeJSON{
+			ID:          node.id,
+			TokenPrefix: node.prefix,
+			Count:       node.count,
+		}
+
+		if len(node.children) > 0 {
+			jsonNode.Children = make([]*ui.TrieNodeJSON, 0, len(node.children))
+
+			for _, child := range node.children {
+				jsonNode.Children = append(jsonNode.Children, convert(child))
+			}
+		}
+
+		return jsonNode
+	}
+
+	return ui.CognitionTreeExport{
+		Root: convert(model.root),
+	}
+}
+
 /*
 AnalyzeCognitiveTrie evaluates the associative memory and Radix Trie learning dynamics:
 prequential predictive skill against constant policy baselines and an empirical label-permuted null,
@@ -46,8 +258,9 @@ func AnalyzeCognitiveTrie(
 	tickMeasurements map[int64][]*data.Measurement,
 	permutations int,
 	detections []*data.Measurement,
+	takerFee ...float64,
 ) Stage6CognitiveTrie {
-	if catalog == nil || grid == nil || grid.RegionsFormed() == 0 {
+	if catalog == nil || grid == nil {
 		return insufficientCognitiveTrie("Catalog or grid unavailable.")
 	}
 
@@ -55,8 +268,20 @@ func AnalyzeCognitiveTrie(
 		permutations = 50
 	}
 
+	fee := 0.008
+
+	if len(takerFee) > 0 && takerFee[0] > 0 {
+		fee = takerFee[0]
+	}
+
 	if detections == nil {
-		loaded, loadErr := loadOrDetectExcursions(ctx, catalog, epoch, symbol)
+		var minTick, maxTick int64
+		if len(orderedTicks) > 0 {
+			minTick = orderedTicks[0]
+			maxTick = orderedTicks[len(orderedTicks)-1]
+		}
+
+		loaded, loadErr := loadOrDetectExcursions(ctx, catalog, epoch, symbol, fee, minTick, maxTick)
 
 		if loadErr != nil {
 			return insufficientCognitiveTrie("Excursion detection failed: " + loadErr.Error())
@@ -75,10 +300,12 @@ func AnalyzeCognitiveTrie(
 		return insufficientCognitiveTrie("No valid sequential token contexts formed from excursions.")
 	}
 
-	model := strategy.NewModel()
+	model := newCognitiveModel()
 	totalCalls := len(phases)
 	hits := 0
 	actionCounts := map[string]int{"enter": 0, "exit": 0, "wait": 0}
+	actuals := make([]string, 0, totalCalls)
+	preds := make([]string, 0, totalCalls)
 	abstentions := 0
 	confidences := make([]float64, 0, totalCalls)
 	contrasts := make([]float64, 0, totalCalls)
@@ -86,6 +313,7 @@ func AnalyzeCognitiveTrie(
 
 	for _, phaseItem := range phases {
 		actionCounts[phaseItem.targetAction]++
+		actuals = append(actuals, phaseItem.targetAction)
 
 		call, callErr := model.Recall(phaseItem.context, "")
 
@@ -96,25 +324,16 @@ func AnalyzeCognitiveTrie(
 		confidences = append(confidences, call.Confidence)
 		contrasts = append(contrasts, call.Contrast)
 
-		if call.Winner == "" {
+		predAction := call.Winner
+
+		if predAction == "" {
+			predAction = "wait"
 			abstentions++
 		}
 
-		isHit := false
+		preds = append(preds, predAction)
 
-		if phaseItem.targetAction == "enter" && call.Winner == "enter" {
-			isHit = true
-		}
-
-		if phaseItem.targetAction == "exit" && call.Winner == "exit" {
-			isHit = true
-		}
-
-		if phaseItem.targetAction == "wait" && call.Winner == "" {
-			isHit = true
-		}
-
-		if isHit {
+		if phaseItem.targetAction == predAction {
 			hits++
 		}
 
@@ -143,6 +362,8 @@ func AnalyzeCognitiveTrie(
 		}
 	}
 
+	balancedAcc, mcc, enterPrec, enterRec := computeClassificationMetrics(actuals, preds, actionCounts)
+
 	bestBaselineHits := actionCounts["wait"]
 	bestBaselinePolicy := "always_abstain"
 
@@ -164,11 +385,20 @@ func AnalyzeCognitiveTrie(
 		hitRate = float64(hits) / float64(totalCalls)
 	}
 
+	abstainPreds := make([]string, totalCalls)
+
+	for idx := range abstainPreds {
+		abstainPreds[idx] = "wait"
+	}
+
+	baselineBalancedAcc, _, _, _ := computeClassificationMetrics(actuals, abstainPreds, actionCounts)
+
 	nullHits := make([]float64, permutations)
+	nullBalancedAccs := make([]float64, permutations)
 	rng := rand.New(rand.NewPCG(uint64(epoch), 12345))
 
 	for permIndex := 0; permIndex < permutations; permIndex++ {
-		permModel := strategy.NewModel()
+		permModel := newCognitiveModel()
 		permActions := make([]string, len(phases))
 		permFeedbacks := make([]float64, len(phases))
 
@@ -183,10 +413,13 @@ func AnalyzeCognitiveTrie(
 		})
 
 		permHitCount := 0
+		permPreds := make([]string, totalCalls)
+		permCounts := map[string]int{"enter": 0, "exit": 0, "wait": 0}
 
 		for phaseIndex, ph := range phases {
 			act := permActions[phaseIndex]
 			fb := permFeedbacks[phaseIndex]
+			permCounts[act]++
 
 			pCall, pErr := permModel.Recall(ph.context, "")
 
@@ -194,40 +427,48 @@ func AnalyzeCognitiveTrie(
 				errnie.Error(pErr)
 			}
 
-			hit := false
+			predAct := pCall.Winner
 
-			if act == "enter" && pCall.Winner == "enter" {
-				hit = true
+			if predAct == "" {
+				predAct = "wait"
 			}
 
-			if act == "exit" && pCall.Winner == "exit" {
-				hit = true
-			}
+			permPreds[phaseIndex] = predAct
 
-			if act == "wait" && pCall.Winner == "" {
-				hit = true
-			}
-
-			if hit {
+			if act == predAct {
 				permHitCount++
 			}
 
 			if act == "enter" || act == "exit" {
-				_ = permModel.Teach(ph.context, act, fb)
+				teachErr := permModel.Teach(ph.context, act, fb)
+
+				if teachErr != nil {
+					errnie.Error(teachErr)
+				}
 			}
 
 			if act == "wait" {
-				_ = permModel.Teach(ph.context, "enter", fb)
+				teachErr := permModel.Teach(ph.context, "enter", fb)
+
+				if teachErr != nil {
+					errnie.Error(teachErr)
+				}
 			}
 		}
 
 		nullHits[permIndex] = float64(permHitCount)
+		permBalAcc, _, _, _ := computeClassificationMetrics(permActions, permPreds, permCounts)
+		nullBalancedAccs[permIndex] = permBalAcc
 	}
 
 	sort.Float64s(nullHits)
 	nullMean := computeMean(nullHits)
 	nullStd := computeStdDev(nullHits, nullMean)
 	nullP95 := nullHits[int(float64(permutations)*0.95)]
+
+	sort.Float64s(nullBalancedAccs)
+	nullMeanBalAcc := computeMean(nullBalancedAccs)
+	nullP95BalAcc := nullBalancedAccs[int(float64(permutations)*0.95)]
 
 	betterCount := 0
 
@@ -238,12 +479,18 @@ func AnalyzeCognitiveTrie(
 	}
 
 	empiricalPVal := float64(betterCount) / float64(permutations)
-	separatesFromNull := hits > bestBaselineHits && float64(hits) >= nullP95
+	separatesFromNull := balancedAcc > baselineBalancedAcc &&
+		balancedAcc >= nullP95BalAcc &&
+		(actionCounts["enter"] == 0 || enterRec > 0)
 
 	retainedCount := 0
 
 	for _, item := range taughtList {
-		postCall, _ := model.Recall(item.context, "")
+		postCall, postErr := model.Recall(item.context, "")
+
+		if postErr != nil {
+			errnie.Error(postErr)
+		}
 
 		if item.action == "enter" && postCall.Winner == "enter" {
 			retainedCount++
@@ -264,10 +511,29 @@ func AnalyzeCognitiveTrie(
 		retentionRate = float64(retainedCount) / float64(len(taughtList))
 	}
 
-	recordsCount, _ := model.Count("records")
-	spanCount, _ := model.Count("span")
-	enterBasins, _ := model.Count("enter")
-	exitBasins, _ := model.Count("exit")
+	recordsCount, countErr := model.Count("records")
+
+	if countErr != nil {
+		errnie.Error(countErr)
+	}
+
+	spanCount, countErr := model.Count("span")
+
+	if countErr != nil {
+		errnie.Error(countErr)
+	}
+
+	enterBasins, countErr := model.Count("enter")
+
+	if countErr != nil {
+		errnie.Error(countErr)
+	}
+
+	exitBasins, countErr := model.Count("exit")
+
+	if countErr != nil {
+		errnie.Error(countErr)
+	}
 
 	export := model.CognitionTree()
 	nodeStats := computeNodeMetrics(export.Root)
@@ -280,8 +546,7 @@ func AnalyzeCognitiveTrie(
 		unseenTicks := orderedTicks[splitIdx:]
 		evaluatedTicks = len(unseenTicks)
 
-		heldOutStreams := make(map[string]*store.Stream)
-		var windowTokens []string
+		windowTokens := make(map[string][]string)
 
 		for _, tickVal := range unseenTicks {
 			measurements := tickMeasurements[tickVal]
@@ -291,6 +556,7 @@ func AnalyzeCognitiveTrie(
 			}
 
 			bySymbol := make(map[string][]*data.Measurement)
+
 			for _, m := range measurements {
 				if m != nil {
 					bySymbol[m.Label] = append(bySymbol[m.Label], m)
@@ -298,33 +564,41 @@ func AnalyzeCognitiveTrie(
 			}
 
 			for sym, symMeas := range bySymbol {
-				st, ok := heldOutStreams[sym]
-				if !ok {
-					st = store.NewStream()
-					heldOutStreams[sym] = st
-				}
+				train := data.NewMeasurement(
+					symMeas[0].Epoch,
+					sym,
+					"audit",
+					symMeas[0].SeqIdx,
+					tickVal,
+				)
+				train.Peers(symMeas...)
+				train.Write()
 
-				observed := strategy.ChannelsFrom(symMeas...)
-				deformations := st.Deform(observed.Raw)
-				excited := observed.Excite(deformations)
-				lit := grid.LitRegion(excited)
+				tokenBytes := grid.Observe(train)
 
-				if len(lit) == 0 {
+				if len(tokenBytes) == 0 {
 					continue
 				}
 
-				tok := fmt.Sprintf("R%d", lit[0])
+				tok := string(tokenBytes)
+				symWindow := windowTokens[sym]
 
-				if len(windowTokens) == 0 || windowTokens[len(windowTokens)-1] != tok {
-					windowTokens = append(windowTokens, tok)
+				if len(symWindow) == 0 || symWindow[len(symWindow)-1] != tok {
+					symWindow = append(symWindow, tok)
 				}
 
-				if limit := int(spanCount); limit >= 1 && len(windowTokens) > limit {
-					windowTokens = windowTokens[len(windowTokens)-limit:]
+				if limit := int(spanCount); limit >= 1 && len(symWindow) > limit {
+					symWindow = symWindow[len(symWindow)-limit:]
 				}
 
-				qCtx := strings.Join(windowTokens, "/")
-				bgCall, _ := model.Recall(qCtx, "")
+				windowTokens[sym] = symWindow
+
+				qCtx := strings.Join(symWindow, "/")
+				bgCall, bgErr := model.Recall(qCtx, "")
+
+				if bgErr != nil {
+					errnie.Error(bgErr)
+				}
 
 				if bgCall.Winner != "" {
 					spuriousCount++
@@ -354,11 +628,13 @@ func AnalyzeCognitiveTrie(
 	}
 
 	summaryText := fmt.Sprintf(
-		"Cognitive Trie: %d phases (%d enter, %d exit, %d wait). Prequential hits=%d/%d (%.1f%%) vs best baseline (%s) %d/%d (%.1f%%). Null p95=%.1f hits (p=%.3f). Retention=%.1f%%. Spurious bg rate=%.2f%%.",
+		"Cognitive Trie: %d phases (%d enter, %d exit, %d wait). Prequential hits=%d/%d (%.1f%%) [Balanced Acc: %.1f%%, MCC: %.3f, Enter Prec/Rec: %.1f%%/%.1f%%] vs best baseline (%s) %d/%d (%.1f%%, Balanced Acc: %.1f%%). Null p95=%.1f hits, Balanced Acc p95=%.1f%% (p=%.3f). Retention=%.1f%%. Spurious bg rate=%.2f%%.",
 		len(phases), actionCounts["enter"], actionCounts["exit"], actionCounts["wait"],
 		hits, totalCalls, hitRate*100,
+		balancedAcc*100, mcc, enterPrec*100, enterRec*100,
 		bestBaselinePolicy, bestBaselineHits, totalCalls, baselineHitRate*100,
-		nullP95, empiricalPVal, retentionRate*100, spuriousRate*100,
+		baselineBalancedAcc*100,
+		nullP95, nullP95BalAcc*100, empiricalPVal, retentionRate*100, spuriousRate*100,
 	)
 
 	return Stage6CognitiveTrie{
@@ -366,17 +642,24 @@ func AnalyzeCognitiveTrie(
 		PhasesFormed:        len(phases),
 		ActionCounts:        actionCounts,
 		Skill: TrieSkillMetrics{
-			TotalCalls:            totalCalls,
-			Hits:                  hits,
-			HitRate:               hitRate,
-			BaselineHits:          bestBaselineHits,
-			BaselineHitRate:       baselineHitRate,
-			BestBaselinePolicy:    bestBaselinePolicy,
-			NullMeanHits:          nullMean,
-			NullStdHits:           nullStd,
-			Null95thPercentileHits: nullP95,
-			SeparatesFromNull:     separatesFromNull,
-			EmpiricalPValue:       empiricalPVal,
+			TotalCalls:               totalCalls,
+			Hits:                     hits,
+			HitRate:                  hitRate,
+			BalancedAccuracy:         balancedAcc,
+			MCC:                      mcc,
+			EnterPrecision:           enterPrec,
+			EnterRecall:              enterRec,
+			BaselineHits:             bestBaselineHits,
+			BaselineHitRate:          baselineHitRate,
+			BestBaselinePolicy:       bestBaselinePolicy,
+			BaselineBalancedAccuracy: baselineBalancedAcc,
+			NullMeanHits:             nullMean,
+			NullStdHits:              nullStd,
+			Null95thPercentileHits:   nullP95,
+			NullMeanBalancedAccuracy: nullMeanBalAcc,
+			Null95thBalancedAccuracy: nullP95BalAcc,
+			SeparatesFromNull:        separatesFromNull,
+			EmpiricalPValue:          empiricalPVal,
 		},
 		Retention: TrieRetentionMetrics{
 			TotalTaught:   len(taughtList),
@@ -399,6 +682,92 @@ func AnalyzeCognitiveTrie(
 		Status:              "MEASURED",
 		Passed:              true,
 	}
+}
+
+func computeClassificationMetrics(
+	actuals []string,
+	preds []string,
+	actionCounts map[string]int,
+) (float64, float64, float64, float64) {
+	if len(actuals) == 0 || len(actuals) != len(preds) {
+		return 0.0, 0.0, 0.0, 0.0
+	}
+
+	recalls := make([]float64, 0, 3)
+
+	for class, count := range actionCounts {
+		if count <= 0 {
+			continue
+		}
+
+		tp := 0
+
+		for idx := range actuals {
+			if actuals[idx] == class && preds[idx] == class {
+				tp++
+			}
+		}
+
+		recalls = append(recalls, float64(tp)/float64(count))
+	}
+
+	balancedAcc := 0.0
+
+	for _, rec := range recalls {
+		balancedAcc += rec
+	}
+
+	if len(recalls) > 0 {
+		balancedAcc /= float64(len(recalls))
+	}
+
+	tpEnter := 0
+	fpEnter := 0
+	fnEnter := 0
+	tnEnter := 0
+
+	for idx := range actuals {
+		isActualEnter := actuals[idx] == "enter"
+		isPredEnter := preds[idx] == "enter"
+
+		if isActualEnter && isPredEnter {
+			tpEnter++
+		}
+
+		if !isActualEnter && isPredEnter {
+			fpEnter++
+		}
+
+		if isActualEnter && !isPredEnter {
+			fnEnter++
+		}
+
+		if !isActualEnter && !isPredEnter {
+			tnEnter++
+		}
+	}
+
+	enterPrec := 0.0
+
+	if tpEnter+fpEnter > 0 {
+		enterPrec = float64(tpEnter) / float64(tpEnter+fpEnter)
+	}
+
+	enterRec := 0.0
+
+	if tpEnter+fnEnter > 0 {
+		enterRec = float64(tpEnter) / float64(tpEnter+fnEnter)
+	}
+
+	mccNumerator := float64(tpEnter*tnEnter - fpEnter*fnEnter)
+	mccDenom := math.Sqrt(float64(tpEnter+fpEnter) * float64(tpEnter+fnEnter) * float64(tnEnter+fpEnter) * float64(tnEnter+fnEnter))
+	mcc := 0.0
+
+	if mccDenom > 0 {
+		mcc = mccNumerator / mccDenom
+	}
+
+	return balancedAcc, mcc, enterPrec, enterRec
 }
 
 func extractTriePhases(
@@ -427,7 +796,17 @@ func extractTriePhases(
 		bTick := int64(getMeasurementMetric(det, "b_tick"))
 		cTick := int64(getMeasurementMetric(det, "c_tick"))
 
-		if bTick <= startTick || cTick <= bTick {
+		if bTick <= 0 || cTick <= bTick {
+			continue
+		}
+
+		lo, _ := strategy.PadWindow(bTick, cTick)
+		if startTick > 0 && startTick < lo {
+			lo = startTick
+		}
+		startTick = lo
+
+		if bTick <= startTick {
 			continue
 		}
 

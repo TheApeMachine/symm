@@ -53,7 +53,7 @@ func TestHayashiYoshidaNext(t *testing.T) {
 			So(out[0].LeftEnergy, ShouldEqual, 1)
 			So(out[0].RightEnergy, ShouldEqual, 2)
 			So(out[0].Support, ShouldEqual, 2)
-			So(out[0].Correlation, ShouldAlmostEqual, math.Sqrt2)
+			So(out[0].Correlation, ShouldAlmostEqual, 1.0)
 		}
 	})
 }
@@ -70,7 +70,8 @@ func TestHayashiEmptyAndTouch(t *testing.T) {
 
 		node = algo.NewHayashiYoshida()
 		empty := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(pathQuery(nil, nil)).Next(nil)))
-		So(math.IsNaN(empty[0].Correlation), ShouldBeTrue)
+		So(empty[0].Defined, ShouldBeFalse)
+		So(empty[0].Correlation, ShouldEqual, 0)
 	})
 }
 
@@ -89,7 +90,9 @@ func TestHayashiReference(t *testing.T) {
 				rp = append(rp, rp[len(rp)-1]*math.Exp(random.NormFloat64()*0.1))
 			}
 
-			covariance, support, leftEnergy, rightEnergy := 0.0, 0.0, 0.0, 0.0
+			covariance, support := 0.0, 0.0
+			leftOverlapEnergy, rightOverlapEnergy := 0.0, 0.0
+			leftEnergy, rightEnergy := 0.0, 0.0
 
 			for index := 1; index < len(lp); index++ {
 				increment := math.Log(lp[index]) - math.Log(lp[index-1])
@@ -97,7 +100,10 @@ func TestHayashiReference(t *testing.T) {
 
 				for other := 1; other < len(rp); other++ {
 					if lt[index-1] < rt[other] && rt[other-1] < lt[index] {
-						covariance += increment * (math.Log(rp[other]) - math.Log(rp[other-1]))
+						otherIncrement := math.Log(rp[other]) - math.Log(rp[other-1])
+						covariance += increment * otherIncrement
+						leftOverlapEnergy += increment * increment
+						rightOverlapEnergy += otherIncrement * otherIncrement
 						support++
 					}
 				}
@@ -113,7 +119,13 @@ func TestHayashiReference(t *testing.T) {
 			So(node.Error(), ShouldBeNil)
 			So(out[0].Covariance, ShouldEqual, covariance)
 			So(out[0].Support, ShouldEqual, support)
-			So(out[0].Correlation, ShouldAlmostEqual, covariance/math.Sqrt(leftEnergy*rightEnergy))
+			expectedCorr := 0.0
+			scale := math.Sqrt(math.Max(leftEnergy, leftOverlapEnergy) * math.Max(rightEnergy, rightOverlapEnergy))
+			if scale > 0 {
+				expectedCorr = covariance / scale
+			}
+			So(out[0].Correlation, ShouldAlmostEqual, expectedCorr)
+			So(out[0].Correlation, ShouldBeBetweenOrEqual, -1.0, 1.0)
 		}
 	})
 }
@@ -180,11 +192,14 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 
 		for _, lag := range []int64{-int64(time.Second), 0, int64(43 * time.Millisecond), int64(time.Second)} {
 			covariance, support := 0.0, 0.0
+			leftOverlapEnergy, rightOverlapEnergy := 0.0, 0.0
 
 			for _, leftReturn := range leftReturns {
 				for _, rightReturn := range rightReturns {
 					if leftReturn.From+lag < rightReturn.To && rightReturn.From < leftReturn.To+lag {
 						covariance += leftReturn.Value * rightReturn.Value
+						leftOverlapEnergy += leftReturn.Value * leftReturn.Value
+						rightOverlapEnergy += rightReturn.Value * rightReturn.Value
 						support++
 					}
 				}
@@ -194,7 +209,13 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(fields.Support, ShouldEqual, support)
 			So(fields.Covariance, ShouldAlmostEqual, covariance)
-			So(fields.Correlation, ShouldAlmostEqual, covariance/math.Sqrt(leftEnergy*rightEnergy))
+			expectedCorr := 0.0
+			scale := math.Sqrt(math.Max(leftEnergy, leftOverlapEnergy) * math.Max(rightEnergy, rightOverlapEnergy))
+			if scale > 0 {
+				expectedCorr = covariance / scale
+			}
+			So(fields.Correlation, ShouldAlmostEqual, expectedCorr)
+			So(fields.Correlation, ShouldBeBetweenOrEqual, -1.0, 1.0)
 			So(leftReturns, ShouldResemble, original)
 		}
 

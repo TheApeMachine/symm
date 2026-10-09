@@ -17,16 +17,58 @@ type ContractBreach struct {
 }
 
 /*
+MetricNormAudit audits normalization and standardization invariants across all metrics.
+*/
+type MetricNormAudit struct {
+	TotalMetricsAudited     int     `json:"total_metrics_audited"`
+	NormalizationBreaches   int     `json:"normalization_breaches"`
+	StandardizationBreaches int     `json:"standardization_breaches"`
+	MeanZScore              float64 `json:"mean_z_score"`
+	VarianceZScore          float64 `json:"variance_z_score"`
+	MaxAbsoluteZ            float64 `json:"max_absolute_z"`
+	SaturatedNormFraction   float64 `json:"saturated_norm_fraction"`
+	SummaryText             string  `json:"summary_text"`
+	Passed                  bool    `json:"passed"`
+}
+
+/*
+MeasurementStateAudit audits Coherence, Maturity, Confidence, and WORM invariants across all measurements.
+*/
+type MeasurementStateAudit struct {
+	TotalMeasurementsAudited int     `json:"total_measurements_audited"`
+	UnlockedBreaches         int     `json:"unlocked_breaches"`
+	CoherenceBreaches        int     `json:"coherence_breaches"`
+	MaturityBreaches         int     `json:"maturity_breaches"`
+	ConfidenceBreaches       int     `json:"confidence_breaches"`
+	IdentityBreaches         int     `json:"identity_breaches"`
+	MeanCoherence            float64 `json:"mean_coherence"`
+	MedianCoherence          float64 `json:"median_coherence"`
+	P95Coherence             float64 `json:"p95_coherence"`
+	MeanMaturity             float64 `json:"mean_maturity"`
+	MedianMaturity           float64 `json:"median_maturity"`
+	P95Maturity              float64 `json:"p95_maturity"`
+	MeanConfidence           float64 `json:"mean_confidence"`
+	MedianConfidence         float64 `json:"median_confidence"`
+	P95Confidence            float64 `json:"p95_confidence"`
+	ColdStartFraction        float64 `json:"cold_start_fraction"`
+	SettledFraction          float64 `json:"settled_fraction"`
+	SummaryText              string  `json:"summary_text"`
+	Passed                   bool    `json:"passed"`
+}
+
+/*
 Stage0Contract contains the mathematical contract audit of all ingested metrics.
 */
 type Stage0Contract struct {
-	TotalMetricsChecked   int              `json:"total_metrics_checked"`
-	BreachingMetricsCount int              `json:"breaching_metrics_count"`
-	TotalBreaches         int              `json:"total_breaches"`
-	Breaches              []ContractBreach `json:"breaches"`
-	DiagnosisText         string           `json:"diagnosis_text"`
-	SummaryText           string           `json:"summary_text"`
-	Passed                bool             `json:"passed"`
+	TotalMetricsChecked   int                   `json:"total_metrics_checked"`
+	BreachingMetricsCount int                   `json:"breaching_metrics_count"`
+	TotalBreaches         int                   `json:"total_breaches"`
+	Breaches              []ContractBreach      `json:"breaches"`
+	MetricNorm            MetricNormAudit       `json:"metric_norm"`
+	MeasurementState      MeasurementStateAudit `json:"measurement_state"`
+	DiagnosisText         string                `json:"diagnosis_text"`
+	SummaryText           string                `json:"summary_text"`
+	Passed                bool                  `json:"passed"`
 }
 
 /*
@@ -141,17 +183,17 @@ The primary fields retain the largest half-vs-half comparison; StabilityCurve
 contains repeated disjoint comparisons at multiple evidence sizes.
 */
 type Stage3GridStability struct {
-	GridA           GridPartitionStat `json:"grid_a"`
-	GridB           GridPartitionStat `json:"grid_b"`
-	SharedUniverse  int               `json:"shared_universe"`
-	OverlapFraction float64           `json:"overlap_fraction"`
-	RandIndex       float64           `json:"rand_index"`
-	AdjustedRandIdx float64           `json:"adjusted_rand_idx"`
-	NullAdjustedRandMean float64     `json:"null_adjusted_rand_mean"`
-	StabilityCurve  []GridStabilityObservation `json:"stability_curve"`
-	SummaryText     string            `json:"summary_text"`
-	Status          string            `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
-	Passed          bool              `json:"passed"` // compatibility: true when experiment executed with sufficient data
+	GridA                GridPartitionStat          `json:"grid_a"`
+	GridB                GridPartitionStat          `json:"grid_b"`
+	SharedUniverse       int                        `json:"shared_universe"`
+	OverlapFraction      float64                    `json:"overlap_fraction"`
+	RandIndex            float64                    `json:"rand_index"`
+	AdjustedRandIdx      float64                    `json:"adjusted_rand_idx"`
+	NullAdjustedRandMean float64                    `json:"null_adjusted_rand_mean"`
+	StabilityCurve       []GridStabilityObservation `json:"stability_curve"`
+	SummaryText          string                     `json:"summary_text"`
+	Status               string                     `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed               bool                       `json:"passed"` // compatibility: true when experiment executed with sufficient data
 }
 
 /*
@@ -171,6 +213,24 @@ type RegionStrengthStat struct {
 }
 
 /*
+GridDampeningAudit audits attenuation across regions caused by Coherence, Maturity, and Confidence.
+*/
+type GridDampeningAudit struct {
+	AuditedPasses         int     `json:"audited_passes"`
+	MeanDampeningRatio    float64 `json:"mean_dampening_ratio"`
+	MedianDampeningRatio  float64 `json:"median_dampening_ratio"`
+	MinDampeningRatio     float64 `json:"min_dampening_ratio"`
+	MaxDampeningRatio     float64 `json:"max_dampening_ratio"`
+	TokenDisplacements    int     `json:"token_displacements"`
+	DisplacementRate      float64 `json:"displacement_rate"`
+	SuppressedActivations int     `json:"suppressed_activations"`
+	MeanWinnerConfidence  float64 `json:"mean_winner_confidence"`
+	SummaryText           string  `json:"summary_text"`
+	Status                string  `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed                bool    `json:"passed"`
+}
+
+/*
 Stage4TokenDynamics records region token emissions, excitation strengths, and state transition structure on unseen data.
 */
 type Stage4TokenDynamics struct {
@@ -183,6 +243,7 @@ type Stage4TokenDynamics struct {
 	MeanActiveCoverage     float64                       `json:"mean_active_coverage"`
 	MeanRunnerUpMargin     float64                       `json:"mean_runner_up_margin"`
 	RegionStrengths        map[string]RegionStrengthStat `json:"region_strengths,omitempty"`
+	Dampening              GridDampeningAudit            `json:"dampening"`
 	TransitionEntropy      float64                       `json:"transition_entropy"`
 	NullTransitionEntropy  float64                       `json:"null_transition_entropy"`
 	EntropyReductionBits   float64                       `json:"entropy_reduction_bits"`
@@ -237,17 +298,40 @@ type TrieNodeMetrics struct {
 TrieSkillMetrics records prequential recall predictive performance versus baselines and nulls.
 */
 type TrieSkillMetrics struct {
-	TotalCalls            int     `json:"total_calls"`
-	Hits                  int     `json:"hits"`
-	HitRate               float64 `json:"hit_rate"`
-	BaselineHits          int     `json:"baseline_hits"`
-	BaselineHitRate       float64 `json:"baseline_hit_rate"`
-	BestBaselinePolicy    string  `json:"best_baseline_policy"`
-	NullMeanHits          float64 `json:"null_mean_hits"`
-	NullStdHits           float64 `json:"null_std_hits"`
-	Null95thPercentileHits float64 `json:"null_95th_percentile_hits"`
-	SeparatesFromNull     bool    `json:"separates_from_null"`
-	EmpiricalPValue       float64 `json:"empirical_p_value"`
+	TotalCalls               int     `json:"total_calls"`
+	Hits                     int     `json:"hits"`
+	HitRate                  float64 `json:"hit_rate"`
+	BalancedAccuracy         float64 `json:"balanced_accuracy"`
+	MCC                      float64 `json:"mcc"`
+	EnterPrecision           float64 `json:"enter_precision"`
+	EnterRecall              float64 `json:"enter_recall"`
+	BaselineHits             int     `json:"baseline_hits"`
+	BaselineHitRate          float64 `json:"baseline_hit_rate"`
+	BestBaselinePolicy       string  `json:"best_baseline_policy"`
+	BaselineBalancedAccuracy float64 `json:"baseline_balanced_accuracy"`
+	NullMeanHits             float64 `json:"null_mean_hits"`
+	NullStdHits              float64 `json:"null_std_hits"`
+	Null95thPercentileHits   float64 `json:"null_95th_percentile_hits"`
+	NullMeanBalancedAccuracy float64 `json:"null_mean_balanced_accuracy"`
+	Null95thBalancedAccuracy float64 `json:"null_95th_balanced_accuracy"`
+	SeparatesFromNull        bool    `json:"separates_from_null"`
+	EmpiricalPValue          float64 `json:"empirical_p_value"`
+}
+
+/*
+Stage0Timing contains the microstructure timing and clock synchronization audit.
+Verifies exchange-to-local clock drift, latency jitter, and ingress monotonicity.
+*/
+type Stage0Timing struct {
+	TotalChecked       int     `json:"total_checked"`
+	MeanDriftMs        float64 `json:"mean_drift_ms"`
+	MaxDriftMs         float64 `json:"max_drift_ms"`
+	P95DriftMs         float64 `json:"p95_drift_ms"`
+	LatencySpikes      int     `json:"latency_spikes"`
+	SequenceInversions int     `json:"sequence_inversions"`
+	SummaryText        string  `json:"summary_text"`
+	Status             string  `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed             bool    `json:"passed"`
 }
 
 /*
@@ -301,6 +385,7 @@ type AuditReport struct {
 	Symbol          string                    `json:"symbol"`
 	TotalTicks      int                       `json:"total_ticks"`
 	Contract        Stage0Contract            `json:"contract"`
+	Timing          Stage0Timing              `json:"timing"`
 	Vitality        Stage1Vitality            `json:"vitality"`
 	Sympathy        Stage2Sympathy            `json:"sympathy"`
 	GridStability   Stage3GridStability       `json:"grid_stability"`
@@ -310,4 +395,3 @@ type AuditReport struct {
 	OverallHealthy  bool                      `json:"overall_healthy"`
 	SummaryMarkdown string                    `json:"summary_markdown"`
 }
-

@@ -15,49 +15,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
-var outputKeys = []string{
-	"trade_price",
-	"trade_quantity",
-	"trade_notional",
-	"trade_interval_seconds",
-	"volume_bar_target_quantity",
-	"volume_bar_quantity",
-	"volume_bar_notional",
-	"volume_bar_trade_count",
-	"volume_bar_duration",
-	"volume_rate",
-	"notional_rate",
-	"trade_rate",
-	"completed_bars",
-	"notional_rate_baseline",
-	"notional_rate_ratio",
-	"notional_rate_divergence",
-	"notional_rate_zscore",
-	"notional_rate_velocity",
-	"best_bid",
-	"best_ask",
-	"midpoint",
-	"spread",
-	"relative_spread",
-	"relative_spread_baseline",
-	"spread_ratio",
-	"spread_divergence",
-	"spread_zscore",
-	"spread_divergence_velocity",
-	"midpoint:from",
-	"midpoint:at",
-	"midpoint_log_return",
-	"midpoint_return_rate",
-	"positive_midpoint_return",
-	"negative_midpoint_return",
-	"midpoint_return_baseline",
-	"midpoint_return_divergence",
-	"midpoint_return_zscore",
-	"midpoint_return_velocity",
-	"historical_path_distance",
-	"historical_path_percentile",
-}
-
 type causalEstimator struct {
 	count float64
 	mean  float64
@@ -99,6 +56,7 @@ func (ce *causalEstimator) Step(value float64) (bool, float64, float64, float64,
 	}
 
 	var zScore float64
+
 	if scale > 0 {
 		zScore = residual / scale
 	}
@@ -135,6 +93,7 @@ func (vb *volumeBarState) Step(price, qty, atNanos, midpoint float64) [18]float6
 	if vb.hasPrev {
 		timeDelta = (atNanos - vb.prevAt) / 1e9
 	}
+
 	vb.hasPrev = true
 	vb.prevAt = atNanos
 
@@ -491,7 +450,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		prior.From = time.Unix(0, int64(outBarStart))
 	}
 
-	output := map[string]float64{
+	return prior.Next(signal.Name(), map[string]float64{
 		"trade_price":                price,
 		"trade_quantity":             qty,
 		"trade_notional":             tradeNotional,
@@ -532,7 +491,5 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		"midpoint_return_velocity":   midReturnVelocity,
 		"historical_path_distance":   histDist,
 		"historical_path_percentile": histPerc,
-	}
-
-	return prior.Next(signal.Name(), output)
+	})
 }

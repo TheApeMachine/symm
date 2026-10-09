@@ -54,16 +54,16 @@ func (op *Fisher) Next(
 
 			if sample.Support > 3 && math.Abs(sample.Correlation) <= 1 {
 				degrees := math.Sqrt(sample.Support - 3)
-				z := math.Atanh(sample.Correlation) * degrees
-				p := math.Erfc(math.Abs(z) / math.Sqrt2)
+				zScore := math.Atanh(sample.Correlation) * degrees
+				pValue := math.Erfc(math.Abs(zScore) / math.Sqrt2)
 
 				reading.Defined = true
-				reading.PValue = p
-				reading.Z = z
+				reading.PValue = pValue
+				reading.Z = zScore
 				reading.StandardError = 1.0 / degrees
 
 				if reading.HasSearch {
-					adj := p * sample.SearchCount
+					adj := pValue * sample.SearchCount
 
 					if adj > 1.0 {
 						adj = 1.0

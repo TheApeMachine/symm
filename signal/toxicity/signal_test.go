@@ -258,6 +258,31 @@ func TestToxicitySignal(t *testing.T) {
 			)), ShouldBeNil)
 			So(instrument.Error(), ShouldNotBeNil)
 		})
+
+		Convey("Historical recurrence calculates trajectory distance and empirical percentile", func() {
+			bidPrice, askPrice, touchQty := 50000.0, 50002.0, 10.0
+			touch(books, now, "bid-hist-1", bidPrice, touchQty, "ask-hist-1", askPrice, touchQty)
+
+			res1 := instrument.Step(trade(now, 201, "buy", askPrice, 1.0))
+			So(res1, ShouldNotBeNil)
+			So(metricValue(res1, "historical_path_distance"), ShouldEqual, 0.0)
+			So(metricValue(res1, "historical_path_percentile"), ShouldEqual, 0.0)
+
+			step2At := now.Add(100 * time.Millisecond)
+			res2 := instrument.Step(trade(step2At, 202, "buy", askPrice, 3.0))
+			So(res2, ShouldNotBeNil)
+			So(metricValue(res2, "historical_path_distance"), ShouldBeGreaterThan, 0.0)
+			So(metricValue(res2, "historical_path_percentile"), ShouldEqual, 0.0)
+
+			step3At := step2At.Add(100 * time.Millisecond)
+			res3 := instrument.Step(trade(step3At, 203, "buy", askPrice, 3.0))
+			So(res3, ShouldNotBeNil)
+			dist3 := metricValue(res3, "historical_path_distance")
+			perc3 := metricValue(res3, "historical_path_percentile")
+			So(dist3, ShouldBeGreaterThanOrEqualTo, 0.0)
+			So(perc3, ShouldBeGreaterThanOrEqualTo, 0.0)
+			So(perc3, ShouldBeLessThanOrEqualTo, 1.0)
+		})
 	})
 
 	Convey("A toxicity signal constructed without a book manager fails with an error", t, func() {

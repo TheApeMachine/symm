@@ -32,7 +32,6 @@ func NewValue[T any](values ...T) *Value[T] {
 	}
 }
 
-
 func (op *Value[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	return func(yield func(unsafe.Pointer) bool) {
 		for _, value := range op.Values {
@@ -43,8 +42,13 @@ func (op *Value[T]) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 	}
 }
 
-func To[T any](value unsafe.Pointer) T {
-	return *(*T)(value)
+func To[From, To any](op core.Primitive, payload *From) To {
+	for out := range op.Next(NewValue(*payload).Next(nil)) {
+		return *(*To)(out)
+	}
+
+	var zero To
+	return zero
 }
 
 /*
@@ -83,4 +87,3 @@ func Pull[T any](value iter.Seq[T]) T {
 
 	return zero
 }
-

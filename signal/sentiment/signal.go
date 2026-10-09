@@ -226,14 +226,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	excludedCount := cohortMemberCount - validCount
 
 	output := make(map[string]float64, len(outputKeys))
+
 	for _, key := range outputKeys {
 		output[key] = 0.0
 	}
-
-	output["cohort_member_count"] = cohortMemberCount
-	output["valid_member_count"] = validCount
-	output["excluded_member_count"] = excludedCount
-	output["cohort_horizon_seconds"] = horizon
 
 	if validCount == 0 {
 		return prior.Next(signal.Name(), output)
@@ -242,6 +238,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	focalRet := 0.0
 	focalAsofAge := 0.0
 	focalFromAge := 0.0
+
 	for _, vr := range valid {
 		if vr.symbol == symbol {
 			focalRet = vr.ret
@@ -254,6 +251,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	advanceCount := 0.0
 	declineCount := 0.0
 	unchangedCount := 0.0
+
 	var returns []float64
 	var absReturns []float64
 
@@ -283,6 +281,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	dirMoving := advanceCount + declineCount
 	dirAgree := 0.0
 	dirConsensus := 0.0
+
 	if dirMoving > 0 {
 		dirAgree = math.Max(advanceCount, declineCount) / dirMoving
 		dirConsensus = math.Abs(advanceCount-declineCount) / dirMoving
@@ -296,19 +295,23 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	sumAbs := 0.0
 	sumSq := 0.0
+
 	for _, r := range returns {
 		sumAbs += math.Abs(r)
 		sumSq += r * r
 	}
+
 	meanAbsRet := sumAbs / validCount
 	rmsRet := math.Sqrt(sumSq / validCount)
 
 	var retDevs []float64
 	var magDevs []float64
+
 	for _, r := range returns {
 		retDevs = append(retDevs, math.Abs(r-medRet))
 		magDevs = append(magDevs, math.Abs(math.Abs(r)-medAbsRet))
 	}
+
 	slices.Sort(retDevs)
 	slices.Sort(magDevs)
 	retMAD := retDevs[len(retDevs)/2]
@@ -332,6 +335,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	largestShare := 0.0
+
 	if sumAbs > 0 {
 		largestShare = largestAbs / sumAbs
 	}
@@ -345,6 +349,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		if vr.symbol == largestSymbol {
 			continue
 		}
+
 		peerAbsReturns = append(peerAbsReturns, math.Abs(vr.ret))
 
 		if vr.ret == 0 {
@@ -382,9 +387,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		peerMagMAD = peerDevs[len(peerDevs)/2]
 
 		largestExcess = largestAbs - peerMedAbs
+
 		if peerMedAbs > 0 {
 			largestRatio = largestAbs / peerMedAbs
 		}
+
 		if peerMagMAD > 0 {
 			largestMADExcess = largestExcess / peerMagMAD
 		}
@@ -398,6 +405,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	bDiv := 0.0
 	bZScore := 0.0
 	hasBPrior, bb, _, bRes, bZ := signal.breadthEstimator.Step(breadth)
+
 	if hasBPrior {
 		bBaseline = bb
 		bDiv = bRes
@@ -405,9 +413,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	bVelocity := 0.0
+
 	if signal.hasPrevBreadth {
 		bVelocity = breadth - signal.prevBreadth
 	}
+
 	signal.prevBreadth = breadth
 	signal.hasPrevBreadth = true
 
@@ -415,6 +425,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	mDiv := 0.0
 	mZScore := 0.0
 	hasMPrior, mb, _, mRes, mZ := signal.medianEstimator.Step(medRet)
+
 	if hasMPrior {
 		mBaseline = mb
 		mDiv = mRes
@@ -422,9 +433,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	mVelocity := 0.0
+
 	if signal.hasPrevMedian {
 		mVelocity = medRet - signal.prevMedian
 	}
+
 	signal.prevMedian = medRet
 	signal.hasPrevMedian = true
 
@@ -441,6 +454,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			dx := target[0] - signal.historyPoints[i][0]
 			dy := target[1] - signal.historyPoints[i][1]
 			d := math.Sqrt(dx*dx + dy*dy)
+
 			if d < minDist {
 				minDist = d
 			}
@@ -448,76 +462,80 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 		if len(signal.historyDistances) > 0 {
 			below := 0
+
 			for _, pd := range signal.historyDistances {
 				if pd <= minDist {
 					below++
 				}
 			}
+
 			histPerc = float64(below) / float64(len(signal.historyDistances))
 		}
 
 		histDist = minDist
 		signal.historyDistances = append(signal.historyDistances, minDist)
+
 		if len(signal.historyDistances) > 256 {
 			signal.historyDistances = signal.historyDistances[len(signal.historyDistances)-256:]
 		}
 	}
 
 	signal.historyPoints = append(signal.historyPoints, target)
+
 	if len(signal.historyPoints) > 256 {
 		signal.historyPoints = signal.historyPoints[len(signal.historyPoints)-256:]
 	}
 
-	output["cohort_member_count"] = cohortMemberCount
-	output["valid_member_count"] = validCount
-	output["excluded_member_count"] = excludedCount
-	output["cohort_horizon_seconds"] = horizon
-	output["return"] = focalRet
-	output["absolute_return"] = math.Abs(focalRet)
-	output["asof_age_seconds"] = focalAsofAge
-	output["from_age_seconds"] = focalFromAge
-	output["advance_count"] = advanceCount
-	output["decline_count"] = declineCount
-	output["unchanged_count"] = unchangedCount
-	output["advance_fraction"] = advFrac
-	output["decline_fraction"] = decFrac
-	output["unchanged_fraction"] = unchFrac
-	output["directional_participation"] = dirPart
-	output["breadth"] = breadth
-	output["directional_agreement"] = dirAgree
-	output["directional_consensus"] = dirConsensus
-	output["median_return"] = medRet
-	output["median_absolute_return"] = medAbsRet
-	output["mean_absolute_return"] = meanAbsRet
-	output["rms_return"] = rmsRet
-	output["return_mad"] = retMAD
-	output["magnitude_mad"] = magMAD
-	output["return_interquartile_range"] = iqr
-	output["largest_move_tie_count"] = tieCount
-	output["largest_absolute_return"] = largestAbs
-	output["largest_signed_return"] = largestSigned
-	output["largest_move_share"] = largestShare
-	output["peer_median_absolute_return"] = peerMedAbs
-	output["peer_magnitude_mad"] = peerMagMAD
-	output["largest_move_excess"] = largestExcess
-	output["largest_move_ratio"] = largestRatio
-	output["largest_move_mad_excess"] = largestMADExcess
-	output["same_direction_peer_count"] = sameDirPeer
-	output["opposite_direction_peer_count"] = oppDirPeer
-	output["zero_return_peer_count"] = zeroDirPeer
-	output["same_direction_peer_fraction"] = sameDirFrac
-	output["opposite_direction_peer_fraction"] = oppDirFrac
-	output["zero_return_peer_fraction"] = zeroDirFrac
-	output["breadth_baseline"] = bBaseline
-	output["breadth_divergence"] = bDiv
-	output["breadth_zscore"] = bZScore
-	output["median_return_baseline"] = mBaseline
-	output["median_return_divergence"] = mDiv
-	output["median_return_zscore"] = mZScore
-	output["median_return_velocity"] = mVelocity
-	output["breadth_velocity"] = bVelocity
-	output["historical_path_distance"] = histDist
-	output["historical_path_percentile"] = histPerc
-
-	return prior.Next(signal.Name(), output)
+	return prior.Next(signal.Name(), map[string]float64{
+		"cohort_member_count":              cohortMemberCount,
+		"valid_member_count":               validCount,
+		"excluded_member_count":            excludedCount,
+		"cohort_horizon_seconds":           horizon,
+		"return":                           focalRet,
+		"absolute_return":                  math.Abs(focalRet),
+		"asof_age_seconds":                 focalAsofAge,
+		"from_age_seconds":                 focalFromAge,
+		"advance_count":                    advanceCount,
+		"decline_count":                    declineCount,
+		"unchanged_count":                  unchangedCount,
+		"advance_fraction":                 advFrac,
+		"decline_fraction":                 decFrac,
+		"unchanged_fraction":               unchFrac,
+		"directional_participation":        dirPart,
+		"breadth":                          breadth,
+		"directional_agreement":            dirAgree,
+		"directional_conse	nsus":           dirConsensus,
+		"median_return":                    medRet,
+		"median_absolute_return":           medAbsRet,
+		"mean_absolute_return":             meanAbsRet,
+		"rms_return":                       rmsRet,
+		"return_mad":                       retMAD,
+		"magnitude_mad":                    magMAD,
+		"return_interquartile_range":       iqr,
+		"largest_move_tie_count":           tieCount,
+		"largest_absolute_return":          largestAbs,
+		"largest_signed_return":            largestSigned,
+		"largest_move_share":               largestShare,
+		"peer_median_absolute_return":      peerMedAbs,
+		"peer_magnitude_mad":               peerMagMAD,
+		"largest_move_excess":              largestExcess,
+		"largest_move_ratio":               largestRatio,
+		"largest_move_mad_excess":          largestMADExcess,
+		"same_direction_peer_count":        sameDirPeer,
+		"opposite_direction_peer_count":    oppDirPeer,
+		"zero_return_peer_count":           zeroDirPeer,
+		"same_direction_peer_fraction":     sameDirFrac,
+		"opposite_direction_peer_fraction": oppDirFrac,
+		"zero_return_peer_fraction":        zeroDirFrac,
+		"breadth_baseline":                 bBaseline,
+		"breadth_divergence":               bDiv,
+		"breadth_zscore":                   bZScore,
+		"median_return_baseline":           mBaseline,
+		"median_return_divergence":         mDiv,
+		"median_return_zscore":             mZScore,
+		"median_return_velocity":           mVelocity,
+		"breadth_velocity":                 bVelocity,
+		"historical_path_distance":         histDist,
+		"historical_path_percentile":       histPerc,
+	})
 }

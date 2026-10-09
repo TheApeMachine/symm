@@ -142,6 +142,38 @@ func NewInstrument(
 	return instrument
 }
 
+/*
+NewOfflineInstrument creates a purely in-memory market-instrument registry
+without dialing exchange WebSockets.
+*/
+func NewOfflineInstrument(
+	ctx context.Context,
+	quote string,
+	pairs ...kraken.InstrumentPair,
+) *Instrument {
+	if quote == "" {
+		quote = "USD"
+	}
+
+	instrument := &Instrument{
+		Level3:           &sync.Map{},
+		cache:            &sync.Map{},
+		symbols:          []string{},
+		quote:            quote,
+		products:         make(map[string]string),
+		symbolsByProduct: make(map[string]string),
+	}
+
+	instrument.System = runtime.NewSystem(ctx, "instrument", instrument)
+
+	if len(pairs) > 0 {
+		instrument.Cache(pairs)
+	}
+
+	instrument.Transition(runtime.READY)
+	return instrument
+}
+
 func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {
 	for _, pair := range pairs {
 		if pair.Quote != instrument.quote ||

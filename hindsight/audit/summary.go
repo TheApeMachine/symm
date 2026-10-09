@@ -13,7 +13,8 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 	var sb strings.Builder
 
 	overall := "AUDIT MEASURED"
-	if report.Vitality.Status == "INSUFFICIENT_DATA" ||
+	if report.Timing.Status == "INSUFFICIENT_DATA" ||
+		report.Vitality.Status == "INSUFFICIENT_DATA" ||
 		report.Sympathy.Status == "INSUFFICIENT_DATA" ||
 		report.GridStability.Status == "INSUFFICIENT_DATA" ||
 		report.TokenDynamics.Status == "INSUFFICIENT_DATA" ||
@@ -44,6 +45,12 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		"| **0. Contracts** | Do declared hard domains hold? | **%s** | %d/%d series breached (%d observations) |\n",
 		contractStatus, report.Contract.BreachingMetricsCount,
 		report.Contract.TotalMetricsChecked, report.Contract.TotalBreaches,
+	))
+	sb.WriteString(fmt.Sprintf(
+		"| **0.5 Timing** | Is ingestion clock synchronized and monotonic? | **%s** | Mean drift %.1fms (p95 %.1fms); %d spikes; %d sequence inversions |\n",
+		report.Timing.Status, report.Timing.MeanDriftMs,
+		report.Timing.P95DriftMs, report.Timing.LatencySpikes,
+		report.Timing.SequenceInversions,
 	))
 	sb.WriteString(fmt.Sprintf(
 		"| **1. Vitality** | What raw/canonical evidence actually exists? | **%s** | %d raw series; %d canonical cells; %d constant canonical cells |\n",
@@ -79,15 +86,14 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		report.Precursor.ExhaustionHypothesis.ControlTokenCount,
 	))
 	sb.WriteString(fmt.Sprintf(
-		"| **6. Cognitive Trie** | Does prequential recall beat baselines and retain memory? | **%s** | %d phases; hits %d/%d (%.1f%%) vs baseline %d/%d (%.1f%%); retention %.1f%% |\n\n",
+		"| **6. Cognitive Trie** | Does prequential recall beat baselines and retain memory? | **%s** | Balanced Acc %.1f%% (vs baseline %.1f%%, null95 %.1f%%); MCC %.3f; Enter Prec/Rec %.1f%%/%.1f%%; retention %.1f%% |\n\n",
 		report.CognitiveTrie.Status,
-		report.CognitiveTrie.PhasesFormed,
-		report.CognitiveTrie.Skill.Hits,
-		report.CognitiveTrie.Skill.TotalCalls,
-		report.CognitiveTrie.Skill.HitRate*100,
-		report.CognitiveTrie.Skill.BaselineHits,
-		report.CognitiveTrie.Skill.TotalCalls,
-		report.CognitiveTrie.Skill.BaselineHitRate*100,
+		report.CognitiveTrie.Skill.BalancedAccuracy*100,
+		report.CognitiveTrie.Skill.BaselineBalancedAccuracy*100,
+		report.CognitiveTrie.Skill.Null95thBalancedAccuracy*100,
+		report.CognitiveTrie.Skill.MCC,
+		report.CognitiveTrie.Skill.EnterPrecision*100,
+		report.CognitiveTrie.Skill.EnterRecall*100,
 		report.CognitiveTrie.Retention.RetentionRate*100,
 	))
 
@@ -116,6 +122,23 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 	sb.WriteString("> The audit reports the disagreement only. It does not infer a root cause or clamp the observation to fit the contract.\n\n")
 	sb.WriteString("![Stage 0](plots/stage0_metric_contracts.png)\n\n")
 
+	sb.WriteString("### Stage 0.5: Ingestion clock timing & synchronization\n\n")
+	sb.WriteString(fmt.Sprintf(
+		"- Observations checked: `%d`\n"+
+			"- Ingestion latency (Timestamp - At): mean `%.1fms`, p95 `%.1fms`, max `%.1fms`\n"+
+			"- Latency spikes (>200ms or 5x median): `%d`\n"+
+			"- Sequence inversions (timestamp regressions): `%d`\n"+
+			"- Feed status: `%s`\n\n",
+		report.Timing.TotalChecked,
+		report.Timing.MeanDriftMs,
+		report.Timing.P95DriftMs,
+		report.Timing.MaxDriftMs,
+		report.Timing.LatencySpikes,
+		report.Timing.SequenceInversions,
+		report.Timing.Status,
+	))
+	sb.WriteString("> Drift measures local ingest latency relative to venue event time. Sequence inversions indicate out-of-order ingress.\n\n")
+
 	sb.WriteString("### Stage 1: Observed metric population\n\n")
 	sb.WriteString(fmt.Sprintf(
 		"- Raw named series: `%d` (varying `%d`, constant `%d`)\n"+
@@ -126,6 +149,51 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		report.Vitality.CanonicalHealthyCells, report.Vitality.CanonicalDeadCells,
 		len(report.Vitality.RedundantPairs),
 	))
+
+	deadCanon := make([]MetricStat, 0)
+	for _, cell := range report.Vitality.CanonicalCells {
+		if cell.Status == "DEAD" || cell.Status == "ZERO" || cell.IsConstant {
+			deadCanon = append(deadCanon, cell)
+		}
+	}
+
+	if len(deadCanon) > 0 {
+		sb.WriteString("#### Constant / Dead Canonical Grid Cells\n\n")
+		sb.WriteString("| Canonical Cell | Coverage | Zero Fraction | Range | Status |\n")
+		sb.WriteString("| :--- | :---: | :---: | :---: | :---: |\n")
+		for _, cell := range deadCanon {
+			sb.WriteString(fmt.Sprintf(
+				"| `%s` | `%.1f%%` | `%.1f%%` | `[%.3f, %.3f]` | `%s` |\n",
+				cell.Name, cell.Coverage*100, cell.ZeroFraction*100, cell.Min, cell.Max, cell.Status,
+			))
+		}
+		sb.WriteString("\n")
+	}
+
+	starvingCanon := make([]MetricStat, 0)
+	for _, cell := range report.Vitality.CanonicalCells {
+		if cell.Status == "HEALTHY" && cell.ZeroFraction >= 0.8 {
+			starvingCanon = append(starvingCanon, cell)
+		}
+	}
+
+	if len(starvingCanon) > 0 {
+		sb.WriteString("#### Stagnant / Cold-Start Canonical Cells (>=80% Zero)\n\n")
+		sb.WriteString("| Canonical Cell | Coverage | Zero Fraction | Mean | Status |\n")
+		sb.WriteString("| :--- | :---: | :---: | :---: | :---: |\n")
+		for index, cell := range starvingCanon {
+			if index >= 15 {
+				sb.WriteString(fmt.Sprintf("| ... and %d more stagnant cells | | | | |\n", len(starvingCanon)-15))
+				break
+			}
+			sb.WriteString(fmt.Sprintf(
+				"| `%s` | `%.1f%%` | `%.1f%%` | `%.4f` | `COLD_START` |\n",
+				cell.Name, cell.Coverage*100, cell.ZeroFraction*100, cell.Mean,
+			))
+		}
+		sb.WriteString("\n")
+	}
+
 	sb.WriteString("> Coverage is reported per metric but is not itself a health threshold. High pairwise correlation is not treated as proof that a metric can be removed.\n\n")
 	sb.WriteString("![Stage 1 Vitality](plots/stage1_metric_vitality.png)\n\n")
 	sb.WriteString("![Stage 1 Pair Correlation](plots/stage1_metric_redundancy.png)\n\n")
@@ -211,8 +279,10 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 	sb.WriteString("### Stage 6: Cognitive Engine & Radix Trie Learning Dynamics\n\n")
 	sb.WriteString(fmt.Sprintf(
 		"- Evaluated excursions: `%d` forming `%d` sequential phases (enter: `%d`, exit: `%d`, wait: `%d`)\n"+
-			"- Prequential accuracy: `%d/%d` (`%.1f%%`) vs best constant policy (`%s`): `%d/%d` (`%.1f%%`)\n"+
-			"- Label-shuffled empirical null: mean `%.1f` hits, std `%.1f`, 95th percentile `%.1f` hits (empirical p-value: `%.3f`)\n"+
+			"- Balanced accuracy: `%.1f%%` vs best baseline (`%s`): `%.1f%%` (Raw hit rate: `%d/%d` `%.1f%%`)\n"+
+			"- Matthews Correlation Coefficient (MCC): `%.3f`\n"+
+			"- Enter action precision / recall: `%.1f%%` / `%.1f%%`\n"+
+			"- Label-shuffled empirical null balanced accuracy: mean `%.1f%%`, 95th percentile `%.1f%%` (empirical p-value: `%.3f`)\n"+
 			"- Separates from null: `%t`\n"+
 			"- Post-teach memory retention: `%d/%d` (`%.1f%%`)\n"+
 			"- Trie topology: `%d` nodes, max depth `%d`, mean depth `%.1f`, branching factor `%.2f`\n"+
@@ -224,16 +294,17 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		report.CognitiveTrie.ActionCounts["enter"],
 		report.CognitiveTrie.ActionCounts["exit"],
 		report.CognitiveTrie.ActionCounts["wait"],
+		report.CognitiveTrie.Skill.BalancedAccuracy*100,
+		report.CognitiveTrie.Skill.BestBaselinePolicy,
+		report.CognitiveTrie.Skill.BaselineBalancedAccuracy*100,
 		report.CognitiveTrie.Skill.Hits,
 		report.CognitiveTrie.Skill.TotalCalls,
 		report.CognitiveTrie.Skill.HitRate*100,
-		report.CognitiveTrie.Skill.BestBaselinePolicy,
-		report.CognitiveTrie.Skill.BaselineHits,
-		report.CognitiveTrie.Skill.TotalCalls,
-		report.CognitiveTrie.Skill.BaselineHitRate*100,
-		report.CognitiveTrie.Skill.NullMeanHits,
-		report.CognitiveTrie.Skill.NullStdHits,
-		report.CognitiveTrie.Skill.Null95thPercentileHits,
+		report.CognitiveTrie.Skill.MCC,
+		report.CognitiveTrie.Skill.EnterPrecision*100,
+		report.CognitiveTrie.Skill.EnterRecall*100,
+		report.CognitiveTrie.Skill.NullMeanBalancedAccuracy*100,
+		report.CognitiveTrie.Skill.Null95thBalancedAccuracy*100,
 		report.CognitiveTrie.Skill.EmpiricalPValue,
 		report.CognitiveTrie.Skill.SeparatesFromNull,
 		report.CognitiveTrie.Retention.RetainedCount,
@@ -253,10 +324,15 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		report.CognitiveTrie.MeanContrast,
 		report.CognitiveTrie.SpuriousTriggerRate*100,
 	))
+	if report.CognitiveTrie.Skill.TotalCalls > 0 && report.CognitiveTrie.Skill.BalancedAccuracy < report.CognitiveTrie.Skill.BaselineBalancedAccuracy {
+		sb.WriteString(fmt.Sprintf(
+			"> ⚠️ **LEARNING DEFICIT:** Prequential balanced accuracy (%.1f%%) trails baseline policy (%.1f%%). Memory retention is at %.1f%%.\n\n",
+			report.CognitiveTrie.Skill.BalancedAccuracy*100, report.CognitiveTrie.Skill.BaselineBalancedAccuracy*100, report.CognitiveTrie.Retention.RetentionRate*100,
+		))
+	}
 	sb.WriteString("> Prequential recall evaluates the trie strictly before learning each phase. Abstention is the appropriate stance on controls, not a terminal action. Shuffled null tests whether sequential prefix structure holds predictive edge over class priors.\n\n")
 	sb.WriteString("![Stage 6 Skill](plots/stage6_trie_skill.png)\n\n")
 	sb.WriteString("![Stage 6 Structure](plots/stage6_trie_structure.png)\n\n")
 
 	return sb.String()
 }
-

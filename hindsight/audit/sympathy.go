@@ -7,8 +7,6 @@ import (
 	"runtime"
 	"sort"
 	"sync"
-
-	"github.com/theapemachine/symm/nomagique/store"
 )
 
 type observedVector struct {
@@ -54,29 +52,15 @@ func AnalyzeSympathy(
 		permutations = 50
 	}
 
-	stream := store.NewStream()
 	deformationSeries := make(map[string]map[int64]float64, len(activeNames))
-	activeSet := make(map[string]struct{}, len(activeNames))
 	for _, name := range activeNames {
 		deformationSeries[name] = make(map[int64]float64)
-		activeSet[name] = struct{}{}
-	}
-
-	for _, tick := range ticks {
-		pass := make(map[string]float64)
-		for name, tickMap := range canonicalSeries {
-			if _, active := activeSet[name]; !active {
-				continue
+		if tickMap, ok := canonicalSeries[name]; ok {
+			for _, tick := range ticks {
+				if value, present := tickMap[tick]; present {
+					deformationSeries[name][tick] = value
+				}
 			}
-			if value, ok := tickMap[tick]; ok {
-				pass[name] = value
-			}
-		}
-		if len(pass) == 0 {
-			continue
-		}
-		for name, value := range stream.Deform(pass) {
-			deformationSeries[name][tick] = value
 		}
 	}
 
@@ -108,7 +92,9 @@ func AnalyzeSympathy(
 	for _, value := range realConcordances {
 		if value > 0 {
 			positiveCount++
-		} else if value < 0 {
+		}
+
+		if value < 0 {
 			inverseCount++
 		}
 	}
@@ -289,22 +275,141 @@ func maskedCorrelation(left, right observedVector) (float64, bool) {
 	return math.Max(-1, math.Min(1, value)), true
 }
 
+/*
+shuffleObservedValues applies circular block permutation to the observed values
+of a series, preserving the temporal persistence and autocorrelation of each
+individual channel while destroying cross-channel alignment under the null hypothesis.
+The block size is derived empirically from the autocorrelation decay horizon of the series.
+*/
 func shuffleObservedValues(rng *rand.Rand, values []float64, present []bool) {
-	indices := make([]int, 0)
-	observed := make([]float64, 0)
+	indices := make([]int, 0, len(values))
+	observed := make([]float64, 0, len(values))
+
 	for index, ok := range present {
 		if !ok {
 			continue
 		}
+
 		indices = append(indices, index)
 		observed = append(observed, values[index])
 	}
-	rng.Shuffle(len(observed), func(first, second int) {
-		observed[first], observed[second] = observed[second], observed[first]
-	})
-	for index, position := range indices {
-		values[position] = observed[index]
+
+	if len(observed) < 4 {
+		return
 	}
+
+	blockSize := empiricalAutocorrelationBlockSize(observed)
+	permuted := blockPermute(rng, observed, blockSize)
+
+	for index, position := range indices {
+		values[position] = permuted[index]
+	}
+}
+
+/*
+empiricalAutocorrelationBlockSize calculates the empirical decorrelation horizon
+as the lag where autocorrelation decays to or below 1/e (approx 0.368) or crosses zero,
+grounding the block length in honest measured persistence rather than an arbitrary constant.
+*/
+func empiricalAutocorrelationBlockSize(values []float64) int {
+	sampleCount := len(values)
+
+	if sampleCount < 8 {
+		return 2
+	}
+
+	sumVal := 0.0
+
+	for _, val := range values {
+		sumVal += val
+	}
+
+	meanVal := sumVal / float64(sampleCount)
+	varianceVal := 0.0
+
+	for _, val := range values {
+		diff := val - meanVal
+		varianceVal += diff * diff
+	}
+
+	if varianceVal <= 0.0 {
+		return 2
+	}
+
+	maxLag := sampleCount / 4
+
+	if maxLag < 2 {
+		maxLag = 2
+	}
+
+	if maxLag > 64 {
+		maxLag = 64
+	}
+
+	threshold := 1.0 / math.E
+
+	for lag := 1; lag <= maxLag; lag++ {
+		covar := 0.0
+
+		for idx := 0; idx < sampleCount-lag; idx++ {
+			covar += (values[idx] - meanVal) * (values[idx+lag] - meanVal)
+		}
+
+		autoCorr := covar / varianceVal
+
+		if autoCorr <= threshold || autoCorr <= 0.0 {
+			if lag < 2 {
+				return 2
+			}
+
+			return lag
+		}
+	}
+
+	return maxLag
+}
+
+func blockPermute(rng *rand.Rand, values []float64, blockSize int) []float64 {
+	totalLen := len(values)
+
+	if blockSize < 1 {
+		blockSize = 1
+	}
+
+	if blockSize > totalLen {
+		blockSize = totalLen
+	}
+
+	phaseShift := rng.Intn(blockSize)
+	shifted := make([]float64, totalLen)
+
+	for idx := 0; idx < totalLen; idx++ {
+		shifted[idx] = values[(idx+phaseShift)%totalLen]
+	}
+
+	blocks := make([][]float64, 0, (totalLen+blockSize-1)/blockSize)
+
+	for start := 0; start < totalLen; start += blockSize {
+		end := start + blockSize
+
+		if end > totalLen {
+			end = totalLen
+		}
+
+		blocks = append(blocks, append([]float64(nil), shifted[start:end]...))
+	}
+
+	rng.Shuffle(len(blocks), func(idxA, idxB int) {
+		blocks[idxA], blocks[idxB] = blocks[idxB], blocks[idxA]
+	})
+
+	result := make([]float64, 0, totalLen)
+
+	for _, blk := range blocks {
+		result = append(result, blk...)
+	}
+
+	return result
 }
 
 func absoluteValues(values []float64) []float64 {

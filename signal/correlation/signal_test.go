@@ -1,10 +1,10 @@
 package correlation
 
 import (
-	"math"
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -23,8 +23,9 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 		)
 		measurement.At = now
 		measurement.From = now
+		btcPrice := decimal.NewFromFloat64(50000)
 		measurement.Write(
-			data.NewMetric("price", 50000, data.UnitPrice, data.TimescaleInstantaneous),
+			data.NewExactMetric("price", btcPrice, data.UnitCurrency, data.TimescaleInstantaneous),
 		)
 
 		signal := NewSignal(t.Context())
@@ -36,100 +37,144 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 
 			metrics := make([]float64, 0)
 
-			for m := range result.Read() {
-				metrics = append(metrics, m.Metric.Raw)
+			for metricEntry := range result.Read() {
+				metrics = append(metrics, metricEntry.Metric.Raw)
 			}
 
-			// We expect the 34 output keys + 1 original metric (price) from prior measurement
-			So(len(metrics), ShouldEqual, len(outputKeys)+1)
+			// Single-asset initial tick produces last_price and observation_count + prior price
+			So(len(metrics), ShouldEqual, 3)
+			So(result.Maturity(), ShouldBeLessThan, 0.1)
 		})
 
 		Convey("When a second peer symbol arrives, it correlates against the first", func() {
-			m2 := data.NewMeasurement(
+			secondMeasurement := data.NewMeasurement(
 				now.Add(time.Second).UnixNano(),
 				"ETH/USD",
 				"spot:trade",
 				system.SeqIdx.Add(1),
 				system.Tick.Add(1),
 			)
-			m2.At = now.Add(time.Second)
-			m2.From = now.Add(time.Second)
-			m2.Write(
-				data.NewMetric("price", 3000, data.UnitPrice, data.TimescaleInstantaneous),
+			secondMeasurement.At = now.Add(time.Second)
+			secondMeasurement.From = now.Add(time.Second)
+			ethPrice := decimal.NewFromFloat64(3000)
+			secondMeasurement.Write(
+				data.NewExactMetric("price", ethPrice, data.UnitCurrency, data.TimescaleInstantaneous),
 			)
 
-			r2 := signal.Step(m2)
-			So(r2, ShouldNotBeNil)
-			So(r2.Error(), ShouldBeNil)
+			secondResult := signal.Step(secondMeasurement)
+			So(secondResult, ShouldNotBeNil)
+			So(secondResult.Error(), ShouldBeNil)
 
-			metrics2 := make([]float64, 0)
-			for m := range r2.Read() {
-				metrics2 = append(metrics2, m.Metric.Raw)
+			secondMetrics := make([]float64, 0)
+
+			for metricEntry := range secondResult.Read() {
+				secondMetrics = append(secondMetrics, metricEntry.Metric.Raw)
 			}
-			So(len(metrics2), ShouldEqual, len(outputKeys)+1)
+
+			So(len(secondMetrics), ShouldEqual, 3)
 		})
 
 		Convey("When repeated observations arrive with zero return energy, no NaN metrics surface", func() {
-			mBTC2 := data.NewMeasurement(
+			repeatBtcMeasurement := data.NewMeasurement(
 				now.Add(2*time.Second).UnixNano(),
 				"BTC/USD",
 				"spot:trade",
 				system.SeqIdx.Add(1),
 				system.Tick.Add(1),
 			)
-			mBTC2.At = now.Add(2 * time.Second)
-			mBTC2.From = now.Add(2 * time.Second)
-			mBTC2.Write(
-				data.NewMetric("price", 50000, data.UnitPrice, data.TimescaleInstantaneous),
+			repeatBtcMeasurement.At = now.Add(2 * time.Second)
+			repeatBtcMeasurement.From = now.Add(2 * time.Second)
+			repeatBtcPrice := decimal.NewFromFloat64(50000)
+			repeatBtcMeasurement.Write(
+				data.NewExactMetric("price", repeatBtcPrice, data.UnitCurrency, data.TimescaleInstantaneous),
 			)
 
-			rBTC2 := signal.Step(mBTC2)
-			So(rBTC2, ShouldNotBeNil)
-			So(rBTC2.Error(), ShouldBeNil)
+			repeatBtcResult := signal.Step(repeatBtcMeasurement)
+			So(repeatBtcResult, ShouldNotBeNil)
+			So(repeatBtcResult.Error(), ShouldBeNil)
 
-			for m := range rBTC2.Read() {
-				So(math.IsNaN(m.Metric.Raw), ShouldBeFalse)
-			}
+			obsCount := data.Pull(repeatBtcResult.Read("observation_count")).Metric.Raw
+			So(obsCount, ShouldEqual, 2)
+			lastPrice := data.Pull(repeatBtcResult.Read("last_price")).Metric.Raw
+			So(lastPrice, ShouldEqual, 50000)
 		})
 
 		Convey("When prices move and return energy is valid, correlation is defined", func() {
-			mETH2 := data.NewMeasurement(
-				now.Add(2*time.Second).UnixNano(),
+			eth1 := data.NewMeasurement(
+				now.Add(500*time.Millisecond).UnixNano(),
 				"ETH/USD",
 				"spot:trade",
 				system.SeqIdx.Add(1),
 				system.Tick.Add(1),
 			)
-			mETH2.At = now.Add(2 * time.Second)
-			mETH2.From = now.Add(2 * time.Second)
-			mETH2.Write(
-				data.NewMetric("price", 3100, data.UnitPrice, data.TimescaleInstantaneous),
+			eth1.At = now.Add(500 * time.Millisecond)
+			eth1.From = eth1.At
+			eth1.Write(
+				data.NewExactMetric("price", decimal.NewFromFloat64(3000), data.UnitCurrency, data.TimescaleInstantaneous),
 			)
+			So(signal.Step(eth1), ShouldNotBeNil)
 
-			rETH2 := signal.Step(mETH2)
-			So(rETH2, ShouldNotBeNil)
-			So(rETH2.Error(), ShouldBeNil)
-
-			mBTC3 := data.NewMeasurement(
-				now.Add(3*time.Second).UnixNano(),
+			btc2 := data.NewMeasurement(
+				now.Add(1500*time.Millisecond).UnixNano(),
 				"BTC/USD",
 				"spot:trade",
 				system.SeqIdx.Add(1),
 				system.Tick.Add(1),
 			)
-			mBTC3.At = now.Add(3 * time.Second)
-			mBTC3.From = now.Add(3 * time.Second)
-			mBTC3.Write(
-				data.NewMetric("price", 51000, data.UnitPrice, data.TimescaleInstantaneous),
+			btc2.At = now.Add(1500 * time.Millisecond)
+			btc2.From = btc2.At
+			btc2.Write(
+				data.NewExactMetric("price", decimal.NewFromFloat64(50500), data.UnitCurrency, data.TimescaleInstantaneous),
+			)
+			So(signal.Step(btc2), ShouldNotBeNil)
+
+			eth2 := data.NewMeasurement(
+				now.Add(2000*time.Millisecond).UnixNano(),
+				"ETH/USD",
+				"spot:trade",
+				system.SeqIdx.Add(1),
+				system.Tick.Add(1),
+			)
+			eth2.At = now.Add(2000 * time.Millisecond)
+			eth2.From = eth2.At
+			eth2.Write(
+				data.NewExactMetric("price", decimal.NewFromFloat64(3100), data.UnitCurrency, data.TimescaleInstantaneous),
+			)
+			So(signal.Step(eth2), ShouldNotBeNil)
+
+			btc3 := data.NewMeasurement(
+				now.Add(3000*time.Millisecond).UnixNano(),
+				"BTC/USD",
+				"spot:trade",
+				system.SeqIdx.Add(1),
+				system.Tick.Add(1),
+			)
+			btc3.At = now.Add(3000 * time.Millisecond)
+			btc3.From = btc3.At
+			btc3.Write(
+				data.NewExactMetric("price", decimal.NewFromFloat64(51000), data.UnitCurrency, data.TimescaleInstantaneous),
 			)
 
-			rBTC3 := signal.Step(mBTC3)
-			So(rBTC3, ShouldNotBeNil)
-			So(rBTC3.Error(), ShouldBeNil)
+			movingBtcResult := signal.Step(btc3)
+			So(movingBtcResult, ShouldNotBeNil)
+			So(movingBtcResult.Error(), ShouldBeNil)
 
-			for m := range rBTC3.Read() {
-				So(math.IsNaN(m.Metric.Raw), ShouldBeFalse)
+			movingMetrics := make([]float64, 0)
+
+			for metricEntry := range movingBtcResult.Read() {
+				movingMetrics = append(movingMetrics, metricEntry.Metric.Raw)
 			}
+
+			So(len(movingMetrics), ShouldBeGreaterThanOrEqualTo, 30)
+
+			signedCorr := data.Pull(movingBtcResult.Read("signed_correlation")).Metric.Raw
+			So(signedCorr, ShouldBeBetweenOrEqual, -1.0, 1.0)
+			absCorr := data.Pull(movingBtcResult.Read("absolute_correlation")).Metric.Raw
+			So(absCorr, ShouldBeBetweenOrEqual, 0.0, 1.0)
+			histDist := data.Pull(movingBtcResult.Read("historical_path_distance")).Metric.Raw
+			So(histDist, ShouldBeGreaterThanOrEqualTo, 0.0)
+			histPerc := data.Pull(movingBtcResult.Read("historical_path_percentile")).Metric.Raw
+			So(histPerc, ShouldBeBetweenOrEqual, 0.0, 1.0)
 		})
 	})
 }

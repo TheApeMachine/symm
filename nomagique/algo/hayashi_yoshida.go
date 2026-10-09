@@ -86,10 +86,18 @@ func (op *HayashiYoshida) estimate(
 		}
 	}
 
-	covariance, support := op.overlap(query.Left, query.Right, query.Lag)
-	scale := math.Sqrt(query.LeftEnergy * query.RightEnergy)
+	covariance, support, leftOverlapEnergy, rightOverlapEnergy := op.overlap(query.Left, query.Right, query.Lag)
+	leftScale := math.Max(query.LeftEnergy, leftOverlapEnergy)
+	rightScale := math.Max(query.RightEnergy, rightOverlapEnergy)
+	scale := math.Sqrt(leftScale * rightScale)
+
+	var corr float64
+	if scale > 0 {
+		corr = covariance / scale
+	}
+
 	reading := correlation.LagEstimate{
-		Correlation: covariance / scale,
+		Correlation: corr,
 		Covariance:  covariance,
 		Support:     support,
 		LeftEnergy:  query.LeftEnergy,
@@ -104,7 +112,7 @@ overlap traverses borrowed, ordered return intervals without shifted copies.
 */
 func (op *HayashiYoshida) overlap(
 	left, right []temporal.LogReturn, lag int64,
-) (covariance, support float64) {
+) (covariance, support, leftOverlapEnergy, rightOverlapEnergy float64) {
 	leftIndex, rightIndex := 0, 0
 
 	for leftIndex < len(left) && rightIndex < len(right) {
@@ -114,6 +122,8 @@ func (op *HayashiYoshida) overlap(
 
 		if leftFrom < rightReturn.To && rightReturn.From < leftTo {
 			covariance += leftReturn.Value * rightReturn.Value
+			leftOverlapEnergy += leftReturn.Value * leftReturn.Value
+			rightOverlapEnergy += rightReturn.Value * rightReturn.Value
 			support++
 		}
 
@@ -125,5 +135,5 @@ func (op *HayashiYoshida) overlap(
 		rightIndex++
 	}
 
-	return covariance, support
+	return covariance, support, leftOverlapEnergy, rightOverlapEnergy
 }

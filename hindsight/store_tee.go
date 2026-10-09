@@ -43,7 +43,7 @@ func (tee *StoreTee) Push(measurement *data.Measurement) {
 	tee.queue.Enqueue(measurement)
 }
 
-func (tee *StoreTee) Next() unsafe.Pointer {
+func (tee *StoreTee) Pop() *data.Measurement {
 	if tee.Status() != runtime.READY {
 		errnie.Warn(
 			"[storeTee] pulling from a non-ready system may have unintended consequences",
@@ -52,13 +52,23 @@ func (tee *StoreTee) Next() unsafe.Pointer {
 		return nil
 	}
 
-	pub, ok := tee.queue.Dequeue()
+	measurement, ok := tee.queue.Dequeue()
 
 	if !ok {
 		return nil
 	}
 
-	return unsafe.Pointer(&pub)
+	return measurement
+}
+
+func (tee *StoreTee) Next() unsafe.Pointer {
+	measurement := tee.Pop()
+
+	if measurement == nil {
+		return nil
+	}
+
+	return unsafe.Pointer(&measurement)
 }
 
 func (tee *StoreTee) Pending() int {

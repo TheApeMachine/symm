@@ -86,16 +86,22 @@ func (op *Cohort) Next(
 		sumZ := 0.0
 		sumZ2 := 0.0
 
-		for _, p := range admitted {
-			w := p.Support
-			totalWeight += w
-			sumWeightSq += w * w
-			sumSigned += w * p.Correlation
-			sumAbsolute += w * math.Abs(p.Correlation)
-			sumEnergy += w * p.PeerEnergy
-			z := math.Atanh(p.Correlation)
-			sumZ += w * z
-			sumZ2 += w * z * z
+		totalFisherWeight := 0.0
+
+		for _, item := range admitted {
+			weight := item.Support
+			totalWeight += weight
+			sumWeightSq += weight * weight
+			sumSigned += weight * item.Correlation
+			sumAbsolute += weight * math.Abs(item.Correlation)
+			sumEnergy += weight * item.PeerEnergy
+
+			if math.Abs(item.Correlation) < 1.0 {
+				zValue := math.Atanh(item.Correlation)
+				sumZ += weight * zValue
+				sumZ2 += weight * zValue * zValue
+				totalFisherWeight += weight
+			}
 		}
 
 		signedMean := sumSigned / totalWeight
@@ -103,13 +109,17 @@ func (op *Cohort) Next(
 		energyMean := sumEnergy / totalWeight
 		kish := (totalWeight * totalWeight) / sumWeightSq
 
-		zMean := sumZ / totalWeight
-		weightedVariance := (sumZ2 / totalWeight) - (zMean * zMean)
 		dispersion := 0.0
 		fisherDefined := false
-		if weightedVariance >= 0 {
-			dispersion = math.Sqrt(weightedVariance)
-			fisherDefined = true
+
+		if totalFisherWeight > 0 {
+			zMean := sumZ / totalFisherWeight
+			weightedVariance := (sumZ2 / totalFisherWeight) - (zMean * zMean)
+
+			if weightedVariance >= 0 {
+				dispersion = math.Sqrt(weightedVariance)
+				fisherDefined = true
+			}
 		}
 
 		summary.TotalSupport = totalWeight

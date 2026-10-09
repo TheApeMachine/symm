@@ -14,40 +14,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
-var outputKeys = []string{
-	"best_bid_price",
-	"best_ask_price",
-	"touch_quantity:bid",
-	"touch_quantity:ask",
-	"touch_notional:bid",
-	"touch_notional:ask",
-	"midpoint",
-	"spread",
-	"relative_spread",
-	"two_sided_touch_notional",
-	"touch_notional_imbalance",
-	"touch_notional_baseline:bid",
-	"touch_notional_baseline:ask",
-	"relative_spread_baseline",
-	"depth_ratio:bid",
-	"depth_ratio:ask",
-	"spread_ratio",
-	"depth_divergence:bid",
-	"depth_divergence:ask",
-	"spread_divergence",
-	"depth_noise_scale:bid",
-	"depth_noise_scale:ask",
-	"spread_noise_scale",
-	"depth_zscore:bid",
-	"depth_zscore:ask",
-	"spread_zscore",
-	"divergence_velocity:bid",
-	"divergence_velocity:ask",
-	"spread_divergence_velocity",
-	"historical_path_distance",
-	"historical_path_percentile",
-}
-
 type welfordBaseline struct {
 	count float64
 	mean  float64
@@ -301,7 +267,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		state.historyPoints = state.historyPoints[len(state.historyPoints)-256:]
 	}
 
-	output := map[string]float64{
+	return prior.Next(signal.Name(), map[string]float64{
 		"best_bid_price":              bid,
 		"best_ask_price":              ask,
 		"touch_quantity:bid":          bidQty,
@@ -333,7 +299,5 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		"spread_divergence_velocity":  spreadVelVal,
 		"historical_path_distance":    histDist,
 		"historical_path_percentile":  histPerc,
-	}
-
-	return prior.Next(signal.Name(), output)
+	})
 }

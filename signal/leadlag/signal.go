@@ -16,7 +16,6 @@ import (
 
 const maxLeadLagSamples = 64
 
-
 /*
 Signal is the asynchronous price-path lead-lag instrument.
 */
@@ -72,12 +71,27 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	currentPath := signal.paths[prior.Label]
 
-	if len(currentPath) >= maxLeadLagSamples {
-		currentPath = currentPath[1:]
+	if len(currentPath) > 0 {
+		last := currentPath[len(currentPath)-1].At
+
+		if atNano < last {
+			return nil
+		}
+
+		if atNano == last {
+			currentPath[len(currentPath)-1] = temporal.Price{At: atNano, Value: price}
+			signal.paths[prior.Label] = currentPath
+		}
 	}
 
-	currentPath = append(currentPath, temporal.Price{At: atNano, Value: price})
-	signal.paths[prior.Label] = currentPath
+	if len(currentPath) == 0 || atNano > currentPath[len(currentPath)-1].At {
+		if len(currentPath) >= maxLeadLagSamples {
+			currentPath = currentPath[1:]
+		}
+
+		currentPath = append(currentPath, temporal.Price{At: atNano, Value: price})
+		signal.paths[prior.Label] = currentPath
+	}
 
 	for peerSymbol, peerPath := range signal.paths {
 		if peerSymbol == prior.Label || len(peerPath) < 3 || len(currentPath) < 3 {

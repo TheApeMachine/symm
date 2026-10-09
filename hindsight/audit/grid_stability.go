@@ -7,7 +7,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/strategy"
 )
 
 /*
@@ -138,13 +137,12 @@ func compareGridWindows(
 	permutations int,
 	seed int64,
 ) gridComparison {
-	gridA := buildGrid(ticksA, tickMeasurements)
-	gridB := buildGrid(ticksB, tickMeasurements)
-	statA := evaluateGridPartition("Period A", gridA)
-	statB := evaluateGridPartition("Period B", gridB)
+	grid := store.NewGrid()
+	partitionsA := extractPartitions(grid, ticksA, tickMeasurements)
+	partitionsB := extractPartitions(grid, ticksB, tickMeasurements)
+	statA := evaluateGridPartition("Period A", partitionsA)
+	statB := evaluateGridPartition("Period B", partitionsB)
 
-	partitionsA := extractPartitions(gridA)
-	partitionsB := extractPartitions(gridB)
 	sharedKeys := make([]string, 0)
 	for key := range partitionsA {
 		if _, ok := partitionsB[key]; ok {
@@ -167,22 +165,11 @@ func compareGridWindows(
 	return gridComparison{
 		gridA: statA, gridB: statB,
 		sharedCells: len(sharedKeys),
-		overlap: overlap,
-		rand: rawRand,
-		ari: ari,
-		nullMean: nullMean,
+		overlap:     overlap,
+		rand:        rawRand,
+		ari:         ari,
+		nullMean:    nullMean,
 	}
-}
-
-func buildGrid(
-	ticks []int64,
-	tickMeasurements map[int64][]*data.Measurement,
-) *store.Grid {
-	streams := make(map[string]*store.Stream)
-	grid := store.NewGrid()
-	feedGridFaithful(grid, streams, ticks, tickMeasurements)
-	grid.Partition()
-	return grid
 }
 
 func randomizedPartitionARIMean(
@@ -221,48 +208,9 @@ func randomizedPartitionARIMean(
 	return total / float64(permutations)
 }
 
-func feedGridFaithful(
-	grid *store.Grid,
-	streams map[string]*store.Stream,
-	ticks []int64,
-	tickMeasurements map[int64][]*data.Measurement,
-) {
-	if streams == nil {
-		streams = make(map[string]*store.Stream)
-	}
+func evaluateGridPartition(name string, partitions map[string]uint8) GridPartitionStat {
+	cellCount := len(partitions)
 
-	for _, tick := range ticks {
-		measGroup := tickMeasurements[tick]
-		if len(measGroup) == 0 {
-			continue
-		}
-
-		bySymbol := make(map[string][]*data.Measurement)
-		for _, m := range measGroup {
-			if m != nil {
-				bySymbol[m.Label] = append(bySymbol[m.Label], m)
-			}
-		}
-
-		for sym, symMeas := range bySymbol {
-			st, ok := streams[sym]
-			if !ok {
-				st = store.NewStream()
-				streams[sym] = st
-			}
-
-			observed := strategy.ChannelsFrom(symMeas...)
-			deformations := st.Deform(observed.Raw)
-			if len(deformations) > 0 {
-				grid.Update(tick, deformations)
-			}
-		}
-	}
-}
-
-func evaluateGridPartition(name string, grid *store.Grid) GridPartitionStat {
-	cells := grid.CellsSnapshot()
-	cellCount := len(cells)
 	if cellCount == 0 {
 		return GridPartitionStat{
 			PeriodName:   name,
@@ -271,15 +219,16 @@ func evaluateGridPartition(name string, grid *store.Grid) GridPartitionStat {
 	}
 
 	regionSizes := make(map[string]int)
-	for _, cell := range cells {
-		if cell != nil {
-			regionSizes[fmt.Sprintf("R%d", cell.Region)]++
-		}
+
+	for _, region := range partitions {
+		regionSizes[fmt.Sprintf("R%02d", region)]++
 	}
 
 	maxShare := 0.0
+
 	for _, size := range regionSizes {
 		share := float64(size) / float64(cellCount)
+
 		if share > maxShare {
 			maxShare = share
 		}
@@ -295,13 +244,30 @@ func evaluateGridPartition(name string, grid *store.Grid) GridPartitionStat {
 	}
 }
 
-func extractPartitions(grid *store.Grid) map[string]uint8 {
+func extractPartitions(
+	grid *store.Grid,
+	ticks []int64,
+	tickMeasurements map[int64][]*data.Measurement,
+) map[string]uint8 {
 	result := make(map[string]uint8)
-	for _, cell := range grid.CellsSnapshot() {
-		if cell != nil {
-			result[cell.Key] = cell.Region
+
+	for _, tick := range ticks {
+		for _, m := range tickMeasurements[tick] {
+			if m == nil {
+				continue
+			}
+
+			for entry := range m.Read() {
+				if entry == nil || entry.Metric == nil {
+					continue
+				}
+
+				key := fmt.Sprintf("%s:%s", m.Source, entry.Key)
+				result[key] = grid.PinRegion(m.Source, entry.Key)
+			}
 		}
 	}
+
 	return result
 }
 

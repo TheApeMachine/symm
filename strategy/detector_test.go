@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"fmt"
 	"iter"
 	"strconv"
 	"strings"
@@ -22,12 +21,26 @@ import (
 	"github.com/theapemachine/symm/tests/market"
 )
 
+/*
+Ooh, baby, I like it raw
+Yeah, baby, I like it raw (Yeah)
+
+Shimmy, shimmy, ya, shimmy, yam, shimmy, yay
+Give me the mic', so I can take it away
+Off on a natural charge, bon voyage
+Yeah, from the home of the Dodger Brooklyn squad
+Wu-Tang killer bees on a swarm
+Rain on your college-ass disco dorm
+For you to even touch my skill
+You gotta go through one killer bee and he aim for the kill
+Now chop that down, pass it all around
+Lyrics get hard quick, cement to the ground
+For any MC in any fifty-two states
+I get psycho killer, Norman Bates
+My producer slam, my flow is like, "Bam"
+*/
 func metricRaw(measurement *data.Measurement, key string) float64 {
-	metric, err := readMetric(measurement, key)
-	if err != nil || metric == nil {
-		panic(fmt.Sprintf("metricRaw: %s missing (err=%v)", key, err))
-	}
-	return metric.Raw
+	return data.Pull(measurement.Read(key)).Metric.Raw
 }
 
 func tradeWithPrice(epoch int64, label string, tick int64, exact *decimal.Decimal) *data.Measurement {
@@ -139,11 +152,11 @@ func testPrice(ctx context.Context, symbols ...string) *broker.Price {
 }
 
 func popMeasurement(storeTee *hindsight.StoreTee) *data.Measurement {
-	ptr := storeTee.Next()
-	if ptr == nil {
+	if storeTee == nil {
 		return nil
 	}
-	return data.To[*data.Measurement](ptr)
+
+	return storeTee.Pop()
 }
 
 /*

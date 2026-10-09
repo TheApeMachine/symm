@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 // Drain persists owned observations. Complete training publications feed the
@@ -32,13 +31,11 @@ func (catalog *Catalog) Drain(
 		// Bound each batch by the observations already waiting, so continuous
 		// ingress cannot postpone commits indefinitely.
 		for remaining := tee.Pending(); remaining > 0; remaining-- {
-			ptr := tee.Next()
+			measurement := tee.Pop()
 
-			if ptr == nil {
+			if measurement == nil {
 				continue
 			}
-
-			measurement := data.To[*data.Measurement](ptr)
 
 			if measurement.Error() != nil {
 				continue

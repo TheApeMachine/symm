@@ -18,12 +18,11 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/strategy"
-	"github.com/theapemachine/symm/system"
 )
 
 type excursionInterval struct {
@@ -54,8 +53,9 @@ func AnalyzePrecursorSeparation(
 	tickMeasurements map[int64][]*data.Measurement,
 	permutations int,
 	detections []*data.Measurement,
+	takerFee ...float64,
 ) Stage5PrecursorSeparation {
-	if catalog == nil || grid == nil || grid.RegionsFormed() == 0 {
+	if catalog == nil || grid == nil {
 		return insufficientPrecursor("Catalog/grid unavailable.")
 	}
 
@@ -63,8 +63,20 @@ func AnalyzePrecursorSeparation(
 		permutations = 50
 	}
 
+	fee := 0.008
+
+	if len(takerFee) > 0 && takerFee[0] > 0 {
+		fee = takerFee[0]
+	}
+
 	if detections == nil {
-		loaded, err := loadOrDetectExcursions(ctx, catalog, epoch, symbol)
+		var minTick, maxTick int64
+		if len(ticks) > 0 {
+			minTick = ticks[0]
+			maxTick = ticks[len(ticks)-1]
+		}
+
+		loaded, err := loadOrDetectExcursions(ctx, catalog, epoch, symbol, fee, minTick, maxTick)
 
 		if err != nil {
 			return insufficientPrecursor("Detection retrieval failed: " + err.Error())
@@ -89,9 +101,21 @@ func AnalyzePrecursorSeparation(
 		startTick := int64(getMeasurementMetric(det, "start_tick"))
 		bTick := int64(getMeasurementMetric(det, "b_tick"))
 		cTick := int64(getMeasurementMetric(det, "c_tick"))
-		if bTick <= startTick || cTick <= bTick {
+
+		if bTick <= 0 || cTick <= bTick {
 			continue
 		}
+
+		lo, _ := strategy.PadWindow(bTick, cTick)
+		if startTick > 0 && startTick < lo {
+			lo = startTick
+		}
+		startTick = lo
+
+		if bTick <= startTick {
+			continue
+		}
+
 		excursions = append(excursions, excursionInterval{
 			symbol: det.Label, class: class, startTick: startTick, bTick: bTick, cTick: cTick,
 		})
@@ -233,15 +257,16 @@ func sampledBackgroundTokens(
 	excursions []excursionInterval,
 ) map[string]int {
 	result := make(map[string]int)
-	streams := make(map[string]*store.Stream)
 
 	for _, tick := range ticks {
 		group := tickMeasurements[tick]
+
 		if len(group) == 0 {
 			continue
 		}
 
 		bySymbol := make(map[string][]*data.Measurement)
+
 		for _, m := range group {
 			if m != nil {
 				bySymbol[m.Label] = append(bySymbol[m.Label], m)
@@ -249,29 +274,33 @@ func sampledBackgroundTokens(
 		}
 
 		for sym, symMeas := range bySymbol {
-			st, ok := streams[sym]
-			if !ok {
-				st = store.NewStream()
-				streams[sym] = st
-			}
+			train := data.NewMeasurement(
+				symMeas[0].Epoch,
+				sym,
+				"audit",
+				symMeas[0].SeqIdx,
+				tick,
+			)
+			train.Peers(symMeas...)
+			train.Write()
 
-			observed := strategy.ChannelsFrom(symMeas...)
-			deformations := st.Deform(observed.Raw)
-			excited := observed.Excite(deformations)
-			lit := grid.LitRegion(excited)
-			if len(lit) == 0 {
+			tokenBytes := grid.Observe(train)
+
+			if len(tokenBytes) == 0 {
 				continue
 			}
 
 			inExcursion := false
+
 			for _, excursion := range excursions {
 				if excursion.symbol == sym && tick >= excursion.startTick && tick <= excursion.cTick {
 					inExcursion = true
 					break
 				}
 			}
+
 			if !inExcursion {
-				result[fmt.Sprintf("R%d", lit[0])]++
+				result[string(tokenBytes)]++
 			}
 		}
 	}
@@ -295,26 +324,16 @@ func archivedIntervalTokens(
 
 	tickMap := make(map[int64][]*data.Measurement)
 
-	if catalog != nil {
-		for m, err := range catalog.ExcursionTape(ctx, epoch, symbol, startTick, endTick) {
-			if err != nil {
-				return nil, err
-			}
+	for tick := startTick; tick <= endTick; tick++ {
+		list, exists := tickMeasurements[tick]
 
-			if m != nil && m.Label == symbol {
-				tickMap[m.Tick] = append(tickMap[m.Tick], m)
-			}
+		if !exists {
+			continue
 		}
-	}
 
-	if len(tickMap) == 0 && len(tickMeasurements) > 0 {
-		for tick, list := range tickMeasurements {
-			if tick >= startTick && tick <= endTick {
-				for _, m := range list {
-					if m != nil && m.Label == symbol {
-						tickMap[tick] = append(tickMap[tick], m)
-					}
-				}
+		for _, m := range list {
+			if m != nil && (symbol == "" || m.Label == symbol) {
+				tickMap[tick] = append(tickMap[tick], m)
 			}
 		}
 	}
@@ -324,22 +343,35 @@ func archivedIntervalTokens(
 	}
 
 	matchingTicks := make([]int64, 0, len(tickMap))
+
 	for tick := range tickMap {
 		matchingTicks = append(matchingTicks, tick)
 	}
 
 	slices.Sort(matchingTicks)
-	stream := store.NewStream()
-	result := make(map[int64]string)
+	result := make(map[int64]string, len(matchingTicks))
 
 	for _, tick := range matchingTicks {
-		observed := strategy.ChannelsFrom(tickMap[tick]...)
-		deformations := stream.Deform(observed.Raw)
-		excited := observed.Excite(deformations)
-		lit := grid.LitRegion(excited)
+		signals := tickMap[tick]
 
-		if len(lit) > 0 {
-			result[tick] = fmt.Sprintf("R%d", lit[0])
+		if len(signals) == 0 {
+			continue
+		}
+
+		train := data.NewMeasurement(
+			signals[0].Epoch,
+			symbol,
+			"audit",
+			signals[0].SeqIdx,
+			tick,
+		)
+		train.Peers(signals...)
+		train.Write()
+
+		tokenBytes := grid.Observe(train)
+
+		if len(tokenBytes) > 0 {
+			result[tick] = string(tokenBytes)
 		}
 	}
 
@@ -433,177 +465,218 @@ func evaluateHypothesis(
 	}
 }
 
+/*
+offlinePrice constructs an in-memory Price system with offline instrument rules and
+configured fee schedules without dialing exchange WebSockets or REST endpoints.
+*/
+func offlinePrice(ctx context.Context, takerFee float64, symbols ...string) *broker.Price {
+	if takerFee <= 0 {
+		takerFee = 0.008
+	}
+
+	normalizer := spot.NewNormalizer()
+	assets := make(map[string]spot.AssetInfo)
+	pairs := make(map[string]spot.AssetPair)
+
+	for _, sym := range symbols {
+		if sym == "" {
+			continue
+		}
+
+		parts := strings.Split(sym, "/")
+		base := sym
+		quote := "USD"
+
+		if len(parts) == 2 {
+			base = parts[0]
+			quote = parts[1]
+		}
+
+		assets[base] = spot.AssetInfo{AltName: base}
+		assets[quote] = spot.AssetInfo{AltName: quote}
+		pairs[sym] = spot.AssetPair{
+			WSName:        sym,
+			Base:          base,
+			Quote:         quote,
+			LotDecimals:   8,
+			LotMultiplier: 1,
+		}
+	}
+
+	normalizer.Update(&spot.AssetsManagerUpdate{
+		NewAssets: assets,
+		NewPairs:  pairs,
+	})
+
+	instPairs := make([]kraken.InstrumentPair, 0, len(symbols))
+	for _, sym := range symbols {
+		if sym == "" {
+			continue
+		}
+		instPairs = append(instPairs, kraken.InstrumentPair{
+			Symbol:  sym,
+			Quote:   "USD",
+			CostMin: decimal.NewFromFloat64(0.01),
+			Status:  "online",
+		})
+	}
+
+	inst := broker.NewOfflineInstrument(ctx, "USD", instPairs...)
+	paper := broker.NewPaper(ctx)
+	paper.Transition(runtime.READY)
+
+	price := broker.NewPrice(ctx, nil, paper, inst, normalizer)
+
+	for _, sym := range symbols {
+		if sym == "" {
+			continue
+		}
+
+		price.SetFee(sym, kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(takerFee),
+		})
+	}
+
+	price.SetReferenceCash(decimal.NewFromFloat64(10000))
+	price.Transition(runtime.READY)
+	return price
+}
+
 func detectInMemory(
 	ctx context.Context,
 	catalog *tables.Catalog,
 	epoch int64,
 	symbol string,
+	takerFee float64,
+	minTick, maxTick int64,
 ) ([]*data.Measurement, error) {
-	public := network.NewWebsocketClient(ctx)
-
-	if err := public.Open(system.Cfg.WebSocket.Endpoints.Public); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.IO,
-			"[audit] public websocket open failed",
-			err,
-		))
-	}
-
-	defer public.Close()
-
-	instrument := broker.NewInstrument(public)
-
-	if err := instrument.Error(); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.IO,
-			"[audit] instrument registry failed during construction",
-			err,
-		))
-	}
-
-	normalizer := spot.NewNormalizer()
-
-	if err := broker.SeedNormalizer(normalizer); err != nil {
-		return nil, err
-	}
-
-	paper := broker.NewPaper(ctx)
-	paper.Transition(runtime.READY)
-
-	price := broker.NewPrice(ctx, nil, paper, instrument, normalizer)
-
-	if err := price.Error(); err != nil {
+	tbl, err := catalog.Load(ctx, tables.Measurements)
+	if err != nil {
 		return nil, errnie.Error(err)
 	}
 
-	if err := price.GetFees(instrument.Symbols()); err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"[audit] initial fees are not available",
-			err,
-		))
+	s3Ctx := catalog.Context(ctx)
+	filter := iceberg.NewAnd(
+		iceberg.EqualTo(iceberg.Reference("epoch"), epoch),
+		iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
+	)
+
+	if symbol != "" {
+		filter = iceberg.NewAnd(filter, iceberg.EqualTo(iceberg.Reference("label"), symbol))
 	}
 
-	price.SetReferenceCash(decimal.NewFromFloat64(10000))
+	if minTick > 0 {
+		filter = iceberg.NewAnd(filter, iceberg.GreaterThanEqual(iceberg.Reference("tick"), minTick))
+	}
 
+	if maxTick > 0 && maxTick >= minTick {
+		filter = iceberg.NewAnd(filter, iceberg.LessThanEqual(iceberg.Reference("tick"), maxTick))
+	}
+
+	tasks, err := tbl.Scan(icetable.WithRowFilter(filter)).PlanFiles(s3Ctx)
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+
+	chunkSize := 250
+	grouped := make(map[string][]*data.Measurement)
+
+	for taskIndex := 0; taskIndex < len(tasks); taskIndex += chunkSize {
+		endIndex := min(taskIndex+chunkSize, len(tasks))
+
+		scanOpts := []icetable.ScanOption{
+			icetable.WithRowFilter(filter),
+			icetable.WitMaxConcurrency(16),
+		}
+
+		_, batches, readErr := tbl.Scan(scanOpts...).ReadTasks(s3Ctx, tasks[taskIndex:endIndex])
+		if readErr != nil {
+			errnie.Warn(fmt.Sprintf("[audit] failed to read tasks chunk %d-%d: %s", taskIndex, endIndex, readErr))
+			continue
+		}
+
+		for batch, batchErr := range batches {
+			if batchErr != nil {
+				continue
+			}
+
+			if batch == nil {
+				continue
+			}
+
+			measurements, mErr := tables.ReadMeasurements(batch)
+			batch.Release()
+
+			if mErr != nil {
+				continue
+			}
+
+			for _, measurement := range measurements {
+				if measurement != nil {
+					grouped[measurement.Label] = append(grouped[measurement.Label], measurement)
+				}
+			}
+		}
+	}
+
+	if len(grouped) == 0 {
+		return nil, nil
+	}
+
+	symbols := make([]string, 0, len(grouped))
+	for sym := range grouped {
+		symbols = append(symbols, sym)
+	}
+	slices.Sort(symbols)
+
+	price := offlinePrice(ctx, takerFee, symbols...)
 	storeTee := hindsight.NewStoreTee(ctx, "auditDetectorTee")
 	storeTee.Transition(runtime.READY)
 
 	detector := strategy.NewDetector(ctx, storeTee, price)
-
 	if detector.Status() == runtime.ERROR {
 		return nil, errnie.Error(detector.Error())
 	}
 
-	if symbol != "" {
-		tradesSeq := catalog.TradesForSymbol(ctx, symbol, epoch)
-		if err := detector.Scan(tradesSeq); err != nil {
+	for _, sym := range symbols {
+		trades := grouped[sym]
+		slices.SortFunc(trades, func(left, right *data.Measurement) int {
+			if cmpResult := cmp.Compare(left.Epoch, right.Epoch); cmpResult != 0 {
+				return cmpResult
+			}
+			if cmpResult := cmp.Compare(left.Tick, right.Tick); cmpResult != 0 {
+				return cmpResult
+			}
+			return cmp.Compare(left.SeqIdx, right.SeqIdx)
+		})
+
+		seq := func(yield func(*data.Measurement, error) bool) {
+			for _, m := range trades {
+				if !yield(m, nil) {
+					return
+				}
+			}
+		}
+
+		if err := detector.Scan(seq); err != nil {
 			return nil, err
-		}
-	} else {
-		tbl, err := catalog.Load(ctx, tables.Measurements)
-		if err != nil {
-			return nil, errnie.Error(err)
-		}
-
-		s3Ctx := catalog.Context(ctx)
-		filter := iceberg.NewAnd(
-			iceberg.EqualTo(iceberg.Reference("epoch"), epoch),
-			iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
-		)
-
-		tasks, err := tbl.Scan(icetable.WithRowFilter(filter)).PlanFiles(s3Ctx)
-		if err != nil {
-			return nil, errnie.Error(err)
-		}
-
-		chunkSize := 250
-		grouped := make(map[string][]*data.Measurement)
-
-		for taskIndex := 0; taskIndex < len(tasks); taskIndex += chunkSize {
-			endIndex := taskIndex + chunkSize
-
-			if endIndex > len(tasks) {
-				endIndex = len(tasks)
-			}
-
-			scanOpts := []icetable.ScanOption{
-				icetable.WithRowFilter(filter),
-				icetable.WitMaxConcurrency(16),
-			}
-
-			_, batches, err := tbl.Scan(scanOpts...).ReadTasks(s3Ctx, tasks[taskIndex:endIndex])
-
-			if err != nil {
-				errnie.Warn(fmt.Sprintf("[audit] failed to read tasks chunk %d-%d: %s", taskIndex, endIndex, err))
-				continue
-			}
-
-			for batch, batchErr := range batches {
-				if batchErr != nil {
-					errnie.Warn(fmt.Sprintf("[audit] skipping corrupted batch in detectInMemory: %s", batchErr))
-					continue
-				}
-
-				if batch == nil {
-					continue
-				}
-
-				measurements, readErr := tables.ReadMeasurements(batch)
-				batch.Release()
-
-				if readErr != nil {
-					errnie.Warn(fmt.Sprintf("[audit] skipping unreadable batch in detectInMemory: %s", readErr))
-					continue
-				}
-
-				for _, measurement := range measurements {
-					if measurement != nil {
-						grouped[measurement.Label] = append(grouped[measurement.Label], measurement)
-					}
-				}
-			}
-		}
-
-		for _, trades := range grouped {
-			slices.SortFunc(trades, func(left, right *data.Measurement) int {
-				if cmpResult := cmp.Compare(left.Epoch, right.Epoch); cmpResult != 0 {
-					return cmpResult
-				}
-				if cmpResult := cmp.Compare(left.Tick, right.Tick); cmpResult != 0 {
-					return cmpResult
-				}
-				return cmp.Compare(left.SeqIdx, right.SeqIdx)
-			})
-
-			seq := func(yield func(*data.Measurement, error) bool) {
-				for _, m := range trades {
-					if !yield(m, nil) {
-						return
-					}
-				}
-			}
-
-			if err := detector.Scan(seq); err != nil {
-				return nil, err
-			}
 		}
 	}
 
 	var detections []*data.Measurement
 
 	for {
-		ptr := storeTee.Next()
+		measurement := storeTee.Pop()
 
-		if ptr == nil {
+		if measurement == nil {
 			break
 		}
 
-		measurement := data.To[*data.Measurement](ptr)
-
-		if measurement != nil {
-			detections = append(detections, measurement)
-		}
+		detections = append(detections, measurement)
 	}
 
 	return detections, nil
@@ -674,7 +747,20 @@ func loadOrDetectExcursions(
 	catalog *tables.Catalog,
 	epoch int64,
 	symbol string,
+	takerFee float64,
+	bounds ...int64,
 ) ([]*data.Measurement, error) {
+	fee := takerFee
+	if fee <= 0 {
+		fee = 0.008
+	}
+
+	var minTick, maxTick int64
+	if len(bounds) >= 2 {
+		minTick = bounds[0]
+		maxTick = bounds[1]
+	}
+
 	var detections []*data.Measurement
 
 	for det, err := range catalog.Detections(ctx, epoch) {
@@ -683,12 +769,20 @@ func loadOrDetectExcursions(
 		}
 
 		if det != nil && (symbol == "" || det.Label == symbol) {
+			bTick := int64(getMeasurementMetric(det, "b_tick"))
+			if minTick > 0 && bTick < minTick {
+				continue
+			}
+			if maxTick > 0 && bTick > maxTick {
+				continue
+			}
+
 			detections = append(detections, det)
 		}
 	}
 
 	if len(detections) == 0 {
-		inMemory, err := detectInMemory(ctx, catalog, epoch, symbol)
+		inMemory, err := detectInMemory(ctx, catalog, epoch, symbol, fee, minTick, maxTick)
 
 		if err != nil {
 			return nil, errnie.Error(err)

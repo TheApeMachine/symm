@@ -38,7 +38,7 @@ func TestLagProfileSupportAndUnits(t *testing.T) {
 
 func TestProfileCurvatureSeconds(t *testing.T) {
 	Convey("Curvature and prominence use the neighbouring ordinates around the peak", t, func() {
-		points := []correlation.Point{{-1, 0.1}, {0, 0.9}, {1, 0.3}}
+		points := []correlation.Point{{X: -1, Y: 0.1}, {X: 0, Y: 0.9}, {X: 1, Y: 0.3}}
 		curvNode := correlation.NewCurvature()
 		curvature := tests.CollectSeq[float64](curvNode.Next(transport.NewValues(points...).Next(nil)))
 		So(curvNode.Error(), ShouldBeNil)

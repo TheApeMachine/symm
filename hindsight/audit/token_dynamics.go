@@ -8,7 +8,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/strategy"
 )
 
 /*
@@ -24,21 +23,16 @@ No entropy-reduction threshold is converted into a health verdict.
 */
 func AnalyzeTokenDynamics(
 	frozenGrid *store.Grid,
-	streams map[string]*store.Stream,
 	unseenTicks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
 	permutations int,
 ) Stage4TokenDynamics {
-	if frozenGrid == nil || frozenGrid.RegionsFormed() == 0 {
+	if frozenGrid == nil {
 		return Stage4TokenDynamics{
-			SummaryText: "Grid/streams unavailable for held-out token dynamics.",
+			SummaryText: "Grid unavailable for held-out token dynamics.",
 			Status:      "INSUFFICIENT_DATA",
 			Passed:      false,
 		}
-	}
-
-	if streams == nil {
-		streams = make(map[string]*store.Stream)
 	}
 
 	if permutations <= 0 {
@@ -46,6 +40,7 @@ func AnalyzeTokenDynamics(
 	}
 
 	var tokens []string
+	tokensBySymbol := make(map[string][]string)
 	tokenFreqs := make(map[string]int)
 	transitions := make(map[string]map[string]int)
 
@@ -69,11 +64,13 @@ func AnalyzeTokenDynamics(
 
 	for _, tick := range unseenTicks {
 		measGroup := tickMeasurements[tick]
+
 		if len(measGroup) == 0 {
 			continue
 		}
 
 		bySymbol := make(map[string][]*data.Measurement)
+
 		for _, m := range measGroup {
 			if m != nil {
 				bySymbol[m.Label] = append(bySymbol[m.Label], m)
@@ -81,65 +78,97 @@ func AnalyzeTokenDynamics(
 		}
 
 		for sym, symMeas := range bySymbol {
-			st, ok := streams[sym]
-			if !ok {
-				st = store.NewStream()
-				streams[sym] = st
+			var regScores [13]float64
+			var regCounts [13]int
+
+			for _, m := range symMeas {
+				source := m.Source
+
+				for entry := range m.Read() {
+					if entry == nil || entry.Metric == nil {
+						continue
+					}
+
+					region := frozenGrid.PinRegion(source, entry.Key)
+					regScores[region] += math.Abs(entry.Metric.Standardized)
+					regCounts[region]++
+				}
 			}
 
-			observed := strategy.ChannelsFrom(symMeas...)
-			deforms := st.Deform(observed.Raw)
-			excited := observed.Excite(deforms)
+			winningRegion := uint8(2)
+			maxBrightness := 0.0
+			runnerUpBrightness := 0.0
 
-			scores := frozenGrid.RegionScores(excited)
-			if len(scores) == 0 || scores[0].Score <= 0 {
+			for r := uint8(1); r <= 12; r++ {
+				if regCounts[r] == 0 {
+					continue
+				}
+
+				brightness := regScores[r] / math.Sqrt(float64(regCounts[r]))
+
+				if brightness > maxBrightness {
+					runnerUpBrightness = maxBrightness
+					maxBrightness = brightness
+					winningRegion = r
+					continue
+				}
+
+				if brightness > runnerUpBrightness {
+					runnerUpBrightness = brightness
+				}
+			}
+
+			if maxBrightness <= 0 {
 				continue
 			}
 
-			winning := scores[0]
-			token := fmt.Sprintf("R%d", winning.Region)
+			token := fmt.Sprintf("R%02d", winningRegion)
 			tokens = append(tokens, token)
+			tokensBySymbol[sym] = append(tokensBySymbol[sym], token)
 			tokenFreqs[token]++
 
-			margin := winning.Score
-			if len(scores) > 1 {
-				margin = winning.Score - scores[1].Score
-			}
+			margin := maxBrightness - runnerUpBrightness
+			winningScore := maxBrightness
+			active := float64(regCounts[winningRegion])
+			members := float64(regCounts[winningRegion])
+			coverage := 1.0
 
 			accum := regionAccums[token]
+
 			if accum == nil {
 				accum = &regionAccumulator{
-					minScore: winning.Score,
-					maxScore: winning.Score,
+					minScore: winningScore,
+					maxScore: winningScore,
 				}
 				regionAccums[token] = accum
 			}
 
 			accum.emissions++
-			accum.totalScore += winning.Score
+			accum.totalScore += winningScore
 
-			if winning.Score < accum.minScore {
-				accum.minScore = winning.Score
+			if winningScore < accum.minScore {
+				accum.minScore = winningScore
 			}
 
-			if winning.Score > accum.maxScore {
-				accum.maxScore = winning.Score
+			if winningScore > accum.maxScore {
+				accum.maxScore = winningScore
 			}
 
-			accum.totalActive += float64(winning.Contributors)
-			accum.totalMembers += float64(winning.Members)
+			accum.totalActive += active
+			accum.totalMembers += members
 			accum.totalMargin += margin
 
-			sumScore += winning.Score
+			sumScore += winningScore
 
-			if winning.Score > peakScore {
-				peakScore = winning.Score
+			if winningScore > peakScore {
+				peakScore = winningScore
 			}
 
-			sumCoverage += winning.Coverage
+			sumCoverage += coverage
 			sumMargin += margin
 
 			prevToken := prevTokens[sym]
+
 			if prevToken != "" {
 				if transitions[prevToken] == nil {
 					transitions[prevToken] = make(map[string]int)
@@ -205,7 +234,7 @@ func AnalyzeTokenDynamics(
 
 	realEntropy := computeTransitionEntropy(transitions, tokenFreqs, len(tokens))
 	blockSize := empiricalDwellBlockSize(tokens)
-	nullEntropies := computeBlockNullTransitionEntropies(tokens, blockSize, permutations)
+	nullEntropies := computeBlockNullTransitionEntropies(tokensBySymbol, blockSize, permutations)
 
 	nullMean := 0.0
 	for _, value := range nullEntropies {
@@ -322,52 +351,92 @@ func empiricalDwellBlockSize(tokens []string) int {
 	return median
 }
 
-func computeBlockNullTransitionEntropies(tokens []string, blockSize, iterations int) []float64 {
-	if len(tokens) < 2 || iterations <= 0 {
+func computeBlockNullTransitionEntropies(
+	tokensBySymbol map[string][]string,
+	blockSize int,
+	iterations int,
+) []float64 {
+	if iterations <= 0 || len(tokensBySymbol) == 0 {
 		return nil
 	}
+
+	totalTokens := 0
+
+	for _, symTokens := range tokensBySymbol {
+		totalTokens += len(symTokens)
+	}
+
+	if totalTokens < 2 {
+		return nil
+	}
+
 	if blockSize < 1 {
 		blockSize = 1
 	}
 
-	blocks := make([][]string, 0, (len(tokens)+blockSize-1)/blockSize)
-	for start := 0; start < len(tokens); start += blockSize {
-		end := min(start+blockSize, len(tokens))
-		blocks = append(blocks, append([]string(nil), tokens[start:end]...))
+	blocksBySymbol := make(map[string][][]string, len(tokensBySymbol))
+
+	for sym, symTokens := range tokensBySymbol {
+		if len(symTokens) == 0 {
+			continue
+		}
+
+		symBlocks := make([][]string, 0, (len(symTokens)+blockSize-1)/blockSize)
+
+		for start := 0; start < len(symTokens); start += blockSize {
+			end := min(start+blockSize, len(symTokens))
+			symBlocks = append(symBlocks, append([]string(nil), symTokens[start:end]...))
+		}
+
+		blocksBySymbol[sym] = symBlocks
 	}
 
 	rng := rand.New(rand.NewSource(1791))
 	entropies := make([]float64, 0, iterations)
 
 	for iteration := 0; iteration < iterations; iteration++ {
-		shuffledBlocks := append([][]string(nil), blocks...)
-		rng.Shuffle(len(shuffledBlocks), func(first, second int) {
-			shuffledBlocks[first], shuffledBlocks[second] =
-				shuffledBlocks[second], shuffledBlocks[first]
-		})
-
-		shuffled := make([]string, 0, len(tokens))
-		for _, block := range shuffledBlocks {
-			shuffled = append(shuffled, block...)
-		}
-
 		frequencies := make(map[string]int)
 		transitions := make(map[string]map[string]int)
-		for index, token := range shuffled {
-			frequencies[token]++
-			if index == 0 {
+		totalNullTokens := 0
+
+		for _, symBlocks := range blocksBySymbol {
+			if len(symBlocks) == 0 {
 				continue
 			}
-			previous := shuffled[index-1]
-			if transitions[previous] == nil {
-				transitions[previous] = make(map[string]int)
+
+			shuffledBlocks := append([][]string(nil), symBlocks...)
+			rng.Shuffle(len(shuffledBlocks), func(first, second int) {
+				shuffledBlocks[first], shuffledBlocks[second] =
+					shuffledBlocks[second], shuffledBlocks[first]
+			})
+
+			shuffledSym := make([]string, 0)
+
+			for _, blk := range shuffledBlocks {
+				shuffledSym = append(shuffledSym, blk...)
 			}
-			transitions[previous][token]++
+
+			for idx, tok := range shuffledSym {
+				frequencies[tok]++
+				totalNullTokens++
+
+				if idx == 0 {
+					continue
+				}
+
+				previous := shuffledSym[idx-1]
+
+				if transitions[previous] == nil {
+					transitions[previous] = make(map[string]int)
+				}
+
+				transitions[previous][tok]++
+			}
 		}
 
 		entropies = append(
 			entropies,
-			computeTransitionEntropy(transitions, frequencies, len(shuffled)),
+			computeTransitionEntropy(transitions, frequencies, totalNullTokens),
 		)
 	}
 

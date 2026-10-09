@@ -16,16 +16,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
-var outputKeys = []string{
-	"book_shape_distance",
-	"book_shape_ks",
-	"concentration:bid",
-	"concentration:ask",
-	"entropy:bid",
-	"entropy:ask",
-	"morphology_change",
-}
-
 type point struct {
 	pos    float64
 	weight float64
@@ -128,20 +118,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	output := map[string]float64{
-		outputKeys[0]: res[0],
-		outputKeys[1]: res[1],
-		outputKeys[2]: res[2],
-		outputKeys[3]: res[3],
-		outputKeys[4]: res[4],
-		outputKeys[5]: res[5],
-	}
-
-	if len(res) > 6 {
-		output[outputKeys[6]] = res[6]
-	}
-
-	return prior.Next(signal.Name(), output)
+	return prior.Next(signal.Name(), map[string]float64{
+		"book_shape_distance": res[0],
+		"book_shape_ks":       res[1],
+		"concentration:bid":   res[2],
+		"concentration:ask":   res[3],
+		"entropy:bid":         res[4],
+		"entropy:ask":         res[5],
+	})
 }
 
 func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float64, error) {

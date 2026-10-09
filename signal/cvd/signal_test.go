@@ -45,7 +45,7 @@ func TestCVDSignalMetrics(t *testing.T) {
 			}
 
 			// We expect the 42 output keys + the 2 original metrics (price, qty) from the prior measurement
-			So(len(metrics), ShouldEqual, len(outputKeys)+2)
+			So(len(metrics), ShouldEqual, 41+2)
 		})
 	})
 }

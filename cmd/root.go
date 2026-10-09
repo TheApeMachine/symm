@@ -223,7 +223,6 @@ var (
 				desk,
 				catalog,
 				detectorTee,
-				epoch,
 			)
 
 			if training.Status() == nmruntime.ERROR {
@@ -233,9 +232,6 @@ var (
 					training.Error(),
 				))
 			}
-
-			training.Reporter.SetTee(uiTee)
-			defer training.Reporter.Close()
 
 			uiTee.Transition(nmruntime.READY)
 
@@ -322,9 +318,6 @@ var (
 
 			hub := ui.NewHub(ctx, catalog, uiTee, workspace)
 			hub.SetStoreTee(ingressStoreTee)
-			hub.SetCognitionSource(training.Model)
-			hub.SetFragmentsSource(training.Rehearsal.Chart)
-			hub.SetLearningSource(training)
 			hub.SetEquitySource(balance)
 			hub.SetPositionSource(desk)
 			hub.SetExitHandler(func(symbol string) {
@@ -604,9 +597,6 @@ var (
 			if err := subscribePrivate(token); err != nil {
 				return err
 			}
-
-			// The store tee is READY, so historical detections can be stored.
-			training.Train()
 
 			startIngress(public, "public")
 

@@ -468,6 +468,10 @@ def plot_stage5_precursor(report, out_dir):
     ax1.set_ylabel('Divergence vs Control (Bits)', fontsize=10, color='#adbac7')
     ax1.set_title(f'Hypothesis A->B (Ignition): {ign_status} (N={ign_n})', fontsize=11, fontweight='bold')
     ax1.grid(axis='y')
+    if ign_status == 'INSUFFICIENT_DATA':
+        ax1.text(0.5, 0.5, f'INSUFFICIENT EVIDENCE (N={ign_n})\n(Requires ≥5 profitable up-ignition events)',
+                 ha='center', va='center', transform=ax1.transAxes, fontsize=10, color='#e3b341',
+                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#1c2128', edgecolor='#d29922', alpha=0.9))
 
     # Panel 2: Hypothesis B -> C Exhaustion Precursor
     exh_jsd = exh.get('divergence_bits', 0)
@@ -480,6 +484,10 @@ def plot_stage5_precursor(report, out_dir):
     ax2.set_ylabel('Divergence vs Holding (Bits)', fontsize=10, color='#adbac7')
     ax2.set_title(f'Hypothesis B->C (Exhaustion): {exh_status} (N={exh_n})', fontsize=11, fontweight='bold')
     ax2.grid(axis='y')
+    if exh_status == 'INSUFFICIENT_DATA':
+        ax2.text(0.5, 0.5, f'INSUFFICIENT EVIDENCE (N={exh_n})\n(Requires ≥5 holding-exhaustion events)',
+                 ha='center', va='center', transform=ax2.transAxes, fontsize=10, color='#e3b341',
+                 bbox=dict(boxstyle='round,pad=0.5', facecolor='#1c2128', edgecolor='#d29922', alpha=0.9))
 
     add_figure_header(
         fig,

@@ -1,11 +1,16 @@
 package audit
 
 import (
+	"context"
 	"math"
+	"math/rand"
 	"testing"
+	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 func TestAuditStages(t *testing.T) {
@@ -45,14 +50,74 @@ func TestAuditStages(t *testing.T) {
 				// The label contains "correlation", but the declared coordinate is a
 				// z-score and is therefore not bounded to [-1,1].
 				data.NewMetric("correlation_zscore@PEER", 6.2, data.UnitZScore, data.TimescaleTick),
+				// Dimensionless metric named signed_correlation violating [-1, 1]
+				data.NewMetric("signed_correlation", 1.85, data.UnitDimensionless, data.TimescaleTick),
+				// Dimensionless metric named absolute_correlation violating [0, 1]
+				data.NewMetric("absolute_correlation", 1.2, data.UnitDimensionless, data.TimescaleTick),
+				// Negative SNR violating [0, +inf)
+				data.NewMetric("signal_to_noise", -3.5, data.UnitSNR, data.TimescaleTick),
+				// Negative Entropy violating [0, +inf)
+				data.NewMetric("shannon_entropy", -0.4, data.UnitEntropy, data.TimescaleTick),
 			)
 
 			contract := AnalyzeContract([]*data.Measurement{meas})
-			So(contract.TotalMetricsChecked, ShouldEqual, 3)
-			So(contract.BreachingMetricsCount, ShouldEqual, 1)
-			So(contract.Breaches[0].Metric, ShouldEqual, "bad_corr")
-			So(contract.Breaches[0].MaxVal, ShouldAlmostEqual, 1.45, 1e-6)
+			So(contract.TotalMetricsChecked, ShouldEqual, 7)
+			So(contract.BreachingMetricsCount, ShouldEqual, 5)
 			So(contract.Passed, ShouldBeFalse)
+		})
+
+		Convey("When analyzing timing and clock synchronization (Stage 0.5)", func() {
+			Convey("with well-synchronized monotonic timestamps", func() {
+				now := time.Now().UnixNano()
+				measurements := make([]*data.Measurement, 0, 10)
+				for idx := int64(0); idx < 10; idx++ {
+					meas := data.NewMeasurement(1, "BTC/USD", "test", idx+1, idx+1)
+					meas.At = time.Unix(0, now+idx*1_000_000-25_000_000)
+					meas.Timestamp = now + idx*1_000_000
+					measurements = append(measurements, meas)
+				}
+				timing := AnalyzeTiming(measurements)
+				So(timing.TotalChecked, ShouldEqual, 10)
+				So(timing.SequenceInversions, ShouldEqual, 0)
+				So(timing.LatencySpikes, ShouldEqual, 0)
+				So(timing.Status, ShouldEqual, "MEASURED")
+				So(timing.Passed, ShouldBeTrue)
+			})
+
+			Convey("with latency jitter spikes and sequence inversions", func() {
+				now := time.Now().UnixNano()
+				measurements := make([]*data.Measurement, 0, 10)
+				for idx := int64(0); idx < 6; idx++ {
+					meas := data.NewMeasurement(1, "BTC/USD", "test", idx+1, idx+1)
+					meas.At = time.Unix(0, now+idx*100_000_000)
+					meas.Timestamp = now + idx*100_000_000 + 10_000_000
+					measurements = append(measurements, meas)
+				}
+
+				// Latency spike: latency is 700ms
+				spikeMeas := data.NewMeasurement(1, "BTC/USD", "test", 7, 7)
+				spikeMeas.At = time.Unix(0, now+600_000_000)
+				spikeMeas.Timestamp = now + 600_000_000 + 700_000_000
+				measurements = append(measurements, spikeMeas)
+
+				// Sequence inversion: At goes backwards
+				invMeas := data.NewMeasurement(1, "BTC/USD", "test", 8, 8)
+				invMeas.At = time.Unix(0, now+500_000_000)
+				invMeas.Timestamp = now + 700_000_000
+				measurements = append(measurements, invMeas)
+
+				for idx := int64(8); idx < 10; idx++ {
+					meas := data.NewMeasurement(1, "BTC/USD", "test", idx+1, idx+1)
+					meas.At = time.Unix(0, now+idx*100_000_000)
+					meas.Timestamp = now + idx*100_000_000 + 10_000_000
+					measurements = append(measurements, meas)
+				}
+
+				timing := AnalyzeTiming(measurements)
+				So(timing.LatencySpikes, ShouldBeGreaterThanOrEqualTo, 1)
+				So(timing.SequenceInversions, ShouldBeGreaterThanOrEqualTo, 1)
+				So(timing.Passed, ShouldBeFalse)
+			})
 		})
 
 		Convey("When analyzing metric vitality (Stage 1)", func() {
@@ -75,6 +140,76 @@ func TestAuditStages(t *testing.T) {
 			So(sympathy.PositivePairs, ShouldBeGreaterThan, 0)
 			So(sympathy.InversePairs, ShouldBeGreaterThan, 0)
 			So(math.IsNaN(sympathy.NullDistribution.MeanConcordance), ShouldBeFalse)
+		})
+
+		Convey("When testing autocorrelation block size and circular block permutation (Stage 2)", func() {
+			persistentSeries := make([]float64, 100)
+			for idx := range persistentSeries {
+				persistentSeries[idx] = math.Sin(float64(idx) * 0.1)
+			}
+			blockSize := empiricalAutocorrelationBlockSize(persistentSeries)
+			So(blockSize, ShouldBeGreaterThan, 2)
+
+			rng := rand.New(rand.NewSource(42))
+			permuted := blockPermute(rng, persistentSeries, blockSize)
+			So(len(permuted), ShouldEqual, len(persistentSeries))
+
+			noiseSeries := make([]float64, 100)
+			for idx := range noiseSeries {
+				if idx%2 == 0 {
+					noiseSeries[idx] = 1.0
+				}
+				if idx%2 != 0 {
+					noiseSeries[idx] = -1.0
+				}
+			}
+			noiseBlock := empiricalAutocorrelationBlockSize(noiseSeries)
+			So(noiseBlock, ShouldEqual, 2)
+		})
+
+		Convey("When testing multi-symbol token dynamics isolation (Stage 4)", func() {
+			tokensBySymbol := map[string][]string{
+				"BTC/USD": {"R1", "R2", "R1", "R2", "R1"},
+				"ETH/USD": {"R10", "R20", "R10", "R20", "R10"},
+			}
+			nullEntropies := computeBlockNullTransitionEntropies(tokensBySymbol, 2, 10)
+			So(len(nullEntropies), ShouldEqual, 10)
+			for _, entropyVal := range nullEntropies {
+				So(entropyVal, ShouldBeGreaterThan, 0.0)
+			}
+		})
+
+		Convey("When initializing offline price and friction for excursion detection (Stage 5)", func() {
+			testPrice := offlinePrice(context.Background(), 0.008, "BTC/USD", "ETH/USD")
+			So(testPrice, ShouldNotBeNil)
+			So(testPrice.Status(), ShouldEqual, runtime.READY)
+
+			fee := testPrice.Fee("BTC/USD")
+			So(fee, ShouldNotBeNil)
+			feeFloat := fee.Fee.Float64()
+			So(feeFloat, ShouldAlmostEqual, 0.008, 1e-6)
+
+			entry := decimal.NewFromFloat64(50000)
+			exit := decimal.NewFromFloat64(51000)
+			pnl, total, err := testPrice.RoundTrip("BTC/USD", entry, exit)
+			So(err, ShouldBeNil)
+			So(pnl, ShouldNotBeNil)
+			So(total, ShouldNotBeNil)
+		})
+
+		Convey("When computing classification metrics under heavy class imbalance (Stage 6)", func() {
+			actuals := []string{"wait", "wait", "wait", "wait", "enter"}
+			preds := []string{"wait", "wait", "wait", "wait", "wait"}
+			counts := map[string]int{"wait": 4, "enter": 1}
+
+			balancedAcc, mcc, enterPrec, enterRec := computeClassificationMetrics(actuals, preds, counts)
+			// Balanced Accuracy evaluates wait recall (1.0) and enter recall (0.0) = 50%
+			So(balancedAcc, ShouldAlmostEqual, 0.5, 1e-6)
+			// MCC is 0 because enter predictions are absent
+			So(mcc, ShouldAlmostEqual, 0.0, 1e-6)
+			// Enter precision and recall are zero
+			So(enterPrec, ShouldAlmostEqual, 0.0, 1e-6)
+			So(enterRec, ShouldAlmostEqual, 0.0, 1e-6)
 		})
 
 		Convey("When analyzing cognitive trie with insufficient evidence (Stage 6)", func() {
