@@ -12,15 +12,11 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as XrayRouteImport } from './routes/xray'
 import { Route as WorkbenchRouteImport } from './routes/workbench'
 import { Route as SignalsRouteImport } from './routes/signals'
-import { Route as PipelineRouteImport } from './routes/pipeline'
-import { Route as LineageRouteImport } from './routes/lineage'
 import { Route as LearningRouteImport } from './routes/learning'
-import { Route as JournalRouteImport } from './routes/journal'
 import { Route as InfluenceRouteImport } from './routes/influence'
 import { Route as HindsightRouteImport } from './routes/hindsight'
 import { Route as FluidRouteImport } from './routes/fluid'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
-import { Route as CortexRouteImport } from './routes/cortex'
 import { Route as IndexRouteImport } from './routes/index'
 
 const XrayRoute = XrayRouteImport.update({
@@ -38,24 +34,9 @@ const SignalsRoute = SignalsRouteImport.update({
   path: '/signals',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PipelineRoute = PipelineRouteImport.update({
-  id: '/pipeline',
-  path: '/pipeline',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LineageRoute = LineageRouteImport.update({
-  id: '/lineage',
-  path: '/lineage',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const LearningRoute = LearningRouteImport.update({
   id: '/learning',
   path: '/learning',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const JournalRoute = JournalRouteImport.update({
-  id: '/journal',
-  path: '/journal',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InfluenceRoute = InfluenceRouteImport.update({
@@ -78,11 +59,6 @@ const DiagnosticsRoute = DiagnosticsRouteImport.update({
   path: '/diagnostics',
   getParentRoute: () => rootRouteImport,
 } as any)
-const CortexRoute = CortexRouteImport.update({
-  id: '/cortex',
-  path: '/cortex',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -91,30 +67,22 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
-  '/journal': typeof JournalRoute
   '/learning': typeof LearningRoute
-  '/lineage': typeof LineageRoute
-  '/pipeline': typeof PipelineRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
-  '/journal': typeof JournalRoute
   '/learning': typeof LearningRoute
-  '/lineage': typeof LineageRoute
-  '/pipeline': typeof PipelineRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
@@ -122,15 +90,11 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/cortex': typeof CortexRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
-  '/journal': typeof JournalRoute
   '/learning': typeof LearningRoute
-  '/lineage': typeof LineageRoute
-  '/pipeline': typeof PipelineRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
@@ -139,45 +103,33 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/cortex'
     | '/diagnostics'
     | '/fluid'
     | '/hindsight'
     | '/influence'
-    | '/journal'
     | '/learning'
-    | '/lineage'
-    | '/pipeline'
     | '/signals'
     | '/workbench'
     | '/xray'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/cortex'
     | '/diagnostics'
     | '/fluid'
     | '/hindsight'
     | '/influence'
-    | '/journal'
     | '/learning'
-    | '/lineage'
-    | '/pipeline'
     | '/signals'
     | '/workbench'
     | '/xray'
   id:
     | '__root__'
     | '/'
-    | '/cortex'
     | '/diagnostics'
     | '/fluid'
     | '/hindsight'
     | '/influence'
-    | '/journal'
     | '/learning'
-    | '/lineage'
-    | '/pipeline'
     | '/signals'
     | '/workbench'
     | '/xray'
@@ -185,15 +137,11 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  CortexRoute: typeof CortexRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
   FluidRoute: typeof FluidRoute
   HindsightRoute: typeof HindsightRoute
   InfluenceRoute: typeof InfluenceRoute
-  JournalRoute: typeof JournalRoute
   LearningRoute: typeof LearningRoute
-  LineageRoute: typeof LineageRoute
-  PipelineRoute: typeof PipelineRoute
   SignalsRoute: typeof SignalsRoute
   WorkbenchRoute: typeof WorkbenchRoute
   XrayRoute: typeof XrayRoute
@@ -222,32 +170,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignalsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/pipeline': {
-      id: '/pipeline'
-      path: '/pipeline'
-      fullPath: '/pipeline'
-      preLoaderRoute: typeof PipelineRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/lineage': {
-      id: '/lineage'
-      path: '/lineage'
-      fullPath: '/lineage'
-      preLoaderRoute: typeof LineageRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/learning': {
       id: '/learning'
       path: '/learning'
       fullPath: '/learning'
       preLoaderRoute: typeof LearningRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/journal': {
-      id: '/journal'
-      path: '/journal'
-      fullPath: '/journal'
-      preLoaderRoute: typeof JournalRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/influence': {
@@ -278,13 +205,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DiagnosticsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/cortex': {
-      id: '/cortex'
-      path: '/cortex'
-      fullPath: '/cortex'
-      preLoaderRoute: typeof CortexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -297,15 +217,11 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  CortexRoute: CortexRoute,
   DiagnosticsRoute: DiagnosticsRoute,
   FluidRoute: FluidRoute,
   HindsightRoute: HindsightRoute,
   InfluenceRoute: InfluenceRoute,
-  JournalRoute: JournalRoute,
   LearningRoute: LearningRoute,
-  LineageRoute: LineageRoute,
-  PipelineRoute: PipelineRoute,
   SignalsRoute: SignalsRoute,
   WorkbenchRoute: WorkbenchRoute,
   XrayRoute: XrayRoute,

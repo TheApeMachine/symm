@@ -359,17 +359,17 @@ Grid.Smart = ({
 
 // Common 2-column layouts
 Grid.Halves = (props: Omit<GridProps, "cols">) => (
-	<Grid cols={2} gap={props.gap || 4} {...props} />
+	<Grid cols={2} gap={props.gap ?? 4} {...props} />
 );
 
 // Common 3-column layouts
 Grid.Thirds = (props: Omit<GridProps, "cols">) => (
-	<Grid cols={3} gap={props.gap || 4} {...props} />
+	<Grid cols={3} gap={props.gap ?? 4} {...props} />
 );
 
 // Common 4-column layouts
 Grid.Quarters = (props: Omit<GridProps, "cols">) => (
-	<Grid cols={4} gap={props.gap || 4} {...props} />
+	<Grid cols={4} gap={props.gap ?? 4} {...props} />
 );
 
 // Sidebar + main content layout
@@ -396,7 +396,7 @@ Grid.Cards = (props: Omit<GridProps, "cols">) => (
 			"grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4",
 			props.className,
 		)}
-		gap={props.gap || 4}
+		gap={props.gap ?? 4}
 		{...props}
 	/>
 );
@@ -405,7 +405,7 @@ Grid.Cards = (props: Omit<GridProps, "cols">) => (
 Grid.Form = (props: Omit<GridProps, "cols" | "align">) => (
 	<Grid
 		cols={1}
-		gap={props.gap || 4}
+		gap={props.gap ?? 4}
 		className={cn("max-w-2xl", props.className)}
 		{...props}
 	/>
@@ -419,14 +419,14 @@ Grid.Gallery = (props: Omit<GridProps, "cols">) => (
 			"*:aspect-square",
 			props.className,
 		)}
-		gap={props.gap || 2}
+		gap={props.gap ?? 2}
 		{...props}
 	/>
 );
 
 // Masonry-like layout (with dense packing)
 Grid.Masonry = (props: Omit<GridProps, "flow">) => (
-	<Grid flow="row-dense" gap={props.gap || 4} {...props} />
+	<Grid flow="row-dense" gap={props.gap ?? 4} {...props} />
 );
 
 // Dashboard grid with defined areas
@@ -438,7 +438,7 @@ Grid.Dashboard = (props: GridProps) => (
 			"min-h-screen",
 			props.className,
 		)}
-		gap={props.gap || 4}
+		gap={props.gap ?? 4}
 		{...props}
 	/>
 );

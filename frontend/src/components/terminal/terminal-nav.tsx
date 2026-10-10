@@ -11,16 +11,12 @@ type TerminalRoutePath =
 	| "/"
 	| "/learning"
 	| "/influence"
-	| "/lineage"
 	| "/fluid"
 	| "/signals"
-	| "/journal"
 	| "/xray"
-	| "/cortex"
 	| "/diagnostics"
 	| "/hindsight"
-	| "/workbench"
-	| "/pipeline";
+	| "/workbench";
 
 export const SURFACE_ITEMS: Array<{
 	key: TerminalSurface;
@@ -42,17 +38,9 @@ export const SURFACE_ITEMS: Array<{
 		icon: "spark",
 		to: "/influence",
 	},
-	{
-		key: "lineage",
-		label: "Metric lineage",
-		icon: "target",
-		to: "/lineage",
-	},
 	{ key: "fluid", label: "Fluid manifold", icon: "scan", to: "/fluid" },
 	{ key: "signals", label: "Signal insight", icon: "signal", to: "/signals" },
-	{ key: "journal", label: "Trade journal", icon: "journal", to: "/journal" },
 	{ key: "xray", label: "Latent x-ray", icon: "scan", to: "/xray" },
-	{ key: "cortex", label: "Cognitive tree", icon: "cortex", to: "/cortex" },
 	{ key: "hindsight", label: "Hindsight", icon: "lanes", to: "/hindsight" },
 	{
 		key: "workbench",
@@ -60,7 +48,6 @@ export const SURFACE_ITEMS: Array<{
 		icon: "grid",
 		to: "/workbench",
 	},
-	{ key: "pipeline", label: "Pipeline editor", icon: "spark", to: "/pipeline" },
 ];
 
 export const TerminalNav = ({ active }: { active: TerminalSurface }) => {

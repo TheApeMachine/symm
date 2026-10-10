@@ -5,16 +5,12 @@ export type TerminalSurface =
 	| "dashboard"
 	| "learning"
 	| "influence"
-	| "lineage"
 	| "fluid"
 	| "signals"
-	| "journal"
 	| "xray"
-	| "cortex"
 	| "diagnostics"
 	| "hindsight"
-	| "workbench"
-	| "pipeline";
+	| "workbench";
 
 export { DEFAULT_FOCUS_SYMBOL };
 
@@ -34,7 +30,6 @@ export const terminalStore = createStore(
 		paletteQuery: "",
 		paletteIndex: 0,
 		focusSymbol: DEFAULT_FOCUS_SYMBOL,
-		thesisSymbol: null as string | null,
 	},
 	({ setState }) => ({
 		toggleScanlines: () =>
@@ -94,16 +89,6 @@ export const terminalStore = createStore(
 			setState((prev) => ({
 				...prev,
 				focusSymbol,
-			})),
-		openThesis: (thesisSymbol: string) =>
-			setState((prev) => ({
-				...prev,
-				thesisSymbol,
-			})),
-		closeThesis: () =>
-			setState((prev) => ({
-				...prev,
-				thesisSymbol: null,
 			})),
 	}),
 );

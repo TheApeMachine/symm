@@ -184,10 +184,7 @@ var (
 			}
 			book := broker.NewBook(ctx, normalizer)
 			price := broker.NewPrice(ctx, book, privateTransport, instrument, normalizer)
-			balance := broker.NewBalance(ctx, privateTransport)
-			if balance.Cash() != nil {
-				price.SetReferenceCash(balance.Cash())
-			}
+			balance := broker.NewBalance(ctx, privateTransport, uiTee0)
 
 			if err := instrument.Error(); err != nil {
 				return errnie.Error(errnie.Err(
@@ -233,9 +230,7 @@ var (
 
 			// Every trade's signed volume feeds the participation limit, and
 			// the desk sizes, monitors and shadow-fills against book history.
-			price.Flow = broker.NewFlow()
 			desk := broker.NewDesk(ctx, privateTransport, price, balance)
-			desk.UseDepth(book)
 
 			training := strategy.NewTraining(
 				ctx,
@@ -257,10 +252,6 @@ var (
 			uiTee1.Transition(nmruntime.READY)
 
 			manifoldSolver := manifold.NewSolver(ctx, book)
-			book.SetNotify(func(symbol string, _ time.Time) {
-				manifoldSolver.Wake(symbol)
-				desk.Wake(symbol)
-			})
 			correlationSignal := correlation.NewSignal(ctx)
 			cvdSignal := cvd.NewSignal(ctx)
 			depthflowSignal := depthflow.NewSignal(ctx, book)
@@ -339,16 +330,15 @@ var (
 			)
 
 			hub := ui.NewHub(
-				ctx, catalog, workspace,
-				ingressStoreTee, balance, desk,
-				training, desk,
-				func(symbol string) {
-					if err := desk.ExitBy(symbol, broker.TriggerManual); err != nil {
-						errnie.Error(err)
-					}
-				},
+				ctx,
 				uiTee0, uiTee1,
 			)
+
+			brokerService := broker.NewService(desk)
+			brokerService.Register(hub.App())
+
+			hindsightService := hindsight.NewService(ctx, catalog)
+			hindsightService.Register(hub.App())
 
 			hub.Run()
 			hub.Transition(nmruntime.READY)
@@ -527,32 +517,14 @@ var (
 							}
 
 							desk.Apply(execution)
-							balance.Invalidate()
 						case "balances":
-							wallet, err := kraken.NewBalance(buf)
-
-							if err == nil {
-								err = balance.UpdateWallet(wallet)
-							}
-
-							if err != nil {
-								halt(errnie.Err(
-									errnie.UnprocessableContent,
-									fmt.Sprintf("symm: %s balances frame rejected", name),
-									err,
-								))
-
-								return
-							}
-
-							balance.Invalidate()
 						case "level3":
 							if err := handleLevel3(buf, epoch, book, ingressTee, name); err != nil {
 								halt(err)
 								return
 							}
 						case "trade":
-							if err := handleTrade(buf, epoch, price, workspace, ingressTee, name, balance.Invalidate); err != nil {
+							if err := handleTrade(buf, epoch, price, workspace, ingressTee, name, nil); err != nil {
 								halt(err)
 								return
 							}

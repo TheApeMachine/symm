@@ -11,11 +11,28 @@ class-variance-authority, motion, and tailwind-merge/clsx.
 */
 
 export { Alert, type AlertProps, alertVariants } from "./alert";
-export { Badge, type BadgeProps, badgeVariants, setBadge, type BadgeVariant, type BadgeSize } from "./badge";
+export {
+	Badge,
+	type BadgeProps,
+	type BadgeSize,
+	type BadgeVariant,
+	badgeVariants,
+	setBadge,
+} from "./badge";
 export { Button, type ButtonProps, buttonVariants } from "./button";
 export { Canvas, type CanvasProps } from "./canvas";
 export { Chip, type ChipProps, chipVariants } from "./chip";
+export { Component, type ComponentProps } from "./component";
 export { Divider, type DividerProps, dividerVariants } from "./divider";
+export {
+	formatValue,
+	memoizedQuery,
+	memoizedQueryAll,
+	renderValue,
+	resetValue,
+	setText,
+	type ValueFormat,
+} from "./dom";
 export { DOT_SIZE_FOR, Dot, type DotProps, dotVariants } from "./dot";
 export { AnimatePresence, Flex, flexVariants } from "./flex";
 export {
@@ -47,12 +64,13 @@ export {
 export {
 	Meter,
 	type MeterProps,
+	type MeterSize,
+	type MeterVariant,
 	meterTrackVariants,
 	meterVariants,
 	setMeter,
-	type MeterVariant,
-	type MeterSize,
 } from "./meter";
+export { Metric } from "./metric";
 export {
 	Modal,
 	type ModalProps,
@@ -87,8 +105,8 @@ export {
 	computeSparklinePath,
 	computeSparklinePaths,
 	Sparkline,
-	type SparklineProps,
 	type SparklinePaths,
+	type SparklineProps,
 	setSparkline,
 } from "./sparkline";
 export { Spinner, type SpinnerProps } from "./spinner";

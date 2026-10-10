@@ -69,9 +69,6 @@ type Price struct {
 	quotes        *sync.Map
 	normalizer    *spot.Normalizer
 	referenceCash atomic.Pointer[decimal.Decimal]
-	// Flow, when set, records every trade's signed volume for the
-	// participation limit of position sizing.
-	Flow *Flow
 }
 
 // BookSource is the resident book boundary shared by live and captured tapes.
@@ -196,7 +193,6 @@ func (price *Price) Update(trade *kraken.TradeData) {
 
 	normalized := price.normalize(trade.Symbol)
 	price.trades.Store(normalized, &trade.Price)
-	price.Flow.Record(normalized, trade.Timestamp, trade.Side, trade.Qty)
 }
 
 func (price *Price) SetQuote(symbol string, bid, ask *decimal.Decimal) {

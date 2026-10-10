@@ -1,7 +1,11 @@
-import type { HTMLAttributes, ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
+import { Flex } from "#/components/ui/flex";
 import { cn } from "#/lib/utils";
 
-export type ReadoutProps = HTMLAttributes<HTMLDivElement> & {
+export type ReadoutProps = Omit<
+	ComponentProps<typeof Flex.Column>,
+	"children"
+> & {
 	label: string;
 	value?: ReactNode;
 	dataKey?: string;
@@ -25,22 +29,24 @@ export const Readout = ({
 	const keyAttr = dataKey ? { "data-k": dataKey } : {};
 
 	return (
-		<div
+		<Flex.Column
+			justify="between"
+			gap={1}
 			className={cn(
-				"flex flex-col justify-between gap-1 rounded-sm border border-(--line) bg-[#0a0907] px-2.5 py-2",
+				"rounded-sm border border-(--line) bg-[#0a0907] px-2.5 py-2",
 				className,
 			)}
 			{...props}
 		>
-			<div className="flex items-center justify-between">
+			<Flex.Row align="center" justify="between">
 				<span className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					{label}
 				</span>
 				{meta ? (
 					<span className="font-mono text-[8px] text-(--f4)">{meta}</span>
 				) : null}
-			</div>
-			<div className="flex items-baseline gap-2">
+			</Flex.Row>
+			<Flex.Row align="baseline" gap={2}>
 				{dot ? (
 					<span
 						data-k={dataKey ? `${dataKey}-dot` : "dot"}
@@ -56,8 +62,8 @@ export const Readout = ({
 				>
 					{value}
 				</span>
-			</div>
+			</Flex.Row>
 			{children}
-		</div>
+		</Flex.Column>
 	);
 };

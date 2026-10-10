@@ -5,23 +5,22 @@ import { Positions } from "#/components/dashboard/positions";
 import { KernelInspector } from "#/components/kernel/inspector";
 import { Pulse } from "#/components/pulse";
 import { TerminalPredictionChart } from "#/components/terminal/charts";
-import { KernelList } from "#/components/terminal/kernel-list";
 import { LiveResonanceTitle } from "#/components/terminal/live-resonance-title";
-import { ThesisModal } from "#/components/terminal/thesis-modal";
-import { Canvas } from "#/components/ui/canvas";
-import { Flex } from "@/components/ui/flex";
-import { Grid } from "@/components/ui/grid";
-import { Section } from "@/components/ui/section";
+import {
+	Canvas,
+	Flex,
+	Grid,
+	Metric,
+	Section,
+	Typography,
+} from "#/components/ui";
 
 const RouteComponent = () => {
-	const kernels = DEFAULT_KERNELS;
-
 	return (
 		<Flex.Column fullWidth className="h-full min-w-280">
 			<Pulse />
 			<Flex fullWidth className="relative min-h-0 flex-1">
 				<KernelInspector />
-				<ThesisModal />
 				<Grid
 					fullWidth
 					responsive={false}
@@ -31,9 +30,11 @@ const RouteComponent = () => {
 						<Section.Header
 							sticky
 							title="Signal kernels"
-							meta={`${kernels.length} kernels`}
+							meta={`${DEFAULT_KERNELS.length} kernels`}
 						/>
-						<KernelList sources={kernels} />
+						{DEFAULT_KERNELS.map((kernel) => (
+							<Metric key={kernel} name={kernel} />
+						))}
 					</Section>
 
 					<Flex.Column className="min-h-0 border-(--line) border-r bg-(--sunken)">
@@ -45,20 +46,20 @@ const RouteComponent = () => {
 							}
 							meta="settled latent state · adaptive horizon · strict-prior direction head"
 							topRight={
-								<div className="flex gap-3 text-left">
-									<span className="inline-flex items-center gap-1.5">
-										<span className="inline-block h-px w-3 bg-(--acc)" />
-										forward curve
-									</span>
-									<span className="inline-flex items-center gap-1.5">
-										<span className="inline-block h-px w-3 bg-info" />
-										latent state
-									</span>
-									<span className="inline-flex items-center gap-1.5">
-										<span className="inline-block h-px w-3 bg-(--line2)" />
-										zero
-									</span>
-								</div>
+								<Flex.Row gap={3} className="text-left">
+									<Flex.Row align="center" gap={1}>
+										<Flex className="h-px w-3 bg-(--acc)" />
+										<Typography.Span>forward curve</Typography.Span>
+									</Flex.Row>
+									<Flex.Row align="center" gap={1}>
+										<Flex className="h-px w-3 bg-info" />
+										<Typography.Span>latent state</Typography.Span>
+									</Flex.Row>
+									<Flex.Row align="center" gap={1}>
+										<Flex className="h-px w-3 bg-(--line2)" />
+										<Typography.Span>zero</Typography.Span>
+									</Flex.Row>
+								</Flex.Row>
 							}
 							className="flex-1"
 						>
@@ -67,9 +68,9 @@ const RouteComponent = () => {
 					</Flex.Column>
 
 					<Flex.Column className="min-h-0 overflow-hidden bg-(--surface)">
-						<div className="min-h-0 flex-[1.15] border-(--line) border-b">
+						<Flex.Column className="min-h-0 flex-[1.15] border-(--line) border-b">
 							<Decisions />
-						</div>
+						</Flex.Column>
 						<Section className="min-h-0 flex-1 overflow-auto border-(--line) border-b">
 							<Section.Header title="Open positions" />
 							<Positions />

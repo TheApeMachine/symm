@@ -118,6 +118,7 @@ export const setBadge = (
 				el.appendChild(document.createTextNode(label));
 			}
 		} else {
+			el.textContent = label;
 			el.innerText = label;
 		}
 	}

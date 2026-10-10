@@ -98,7 +98,9 @@ const sellMarkers = (sells: SellEventT[] | undefined): SellMarker[] =>
 const numeric = (value: unknown): number =>
 	typeof value === "number"
 		? value
-		: typeof value === "string" && value !== "" && Number.isFinite(Number(value))
+		: typeof value === "string" &&
+				value !== "" &&
+				Number.isFinite(Number(value))
 			? Number(value)
 			: 0;
 
@@ -127,8 +129,7 @@ const selectPositions = (rows: PositionT[]): PositionCardData[] => {
 		if (!currentSymbol) continue;
 
 		const rawStatus = currentHolding.status ?? currentPosition.status;
-		const positionStatus =
-			typeof rawStatus === "string" ? rawStatus : "—";
+		const positionStatus = typeof rawStatus === "string" ? rawStatus : "—";
 		if (positionStatus === "closed") continue;
 
 		const pnlNum = numeric(currentHolding.pnl);
@@ -284,7 +285,9 @@ export const Positions = () => {
 							data-pos={pos.symbol}
 							data-position-card
 							key={pos.symbol}
-							onClick={() => terminalStore.actions.openThesis(pos.symbol)}
+							onClick={() =>
+								terminalStore.actions.selectFocusSymbol(pos.symbol)
+							}
 							title="Inspect this lot"
 							className="mb-1.25 block w-full cursor-pointer rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]"
 						>
@@ -301,11 +304,13 @@ export const Positions = () => {
 											<Typography.Span className="rounded-xs bg-(--down)/15 border border-(--down)/40 px-1 py-px text-[7.5px] font-bold text-(--down) uppercase tracking-wide">
 												SHORTFALL
 											</Typography.Span>
-										) : pos.capacityRatioNum !== undefined && pos.capacityRatioNum < 2 ? (
+										) : pos.capacityRatioNum !== undefined &&
+											pos.capacityRatioNum < 2 ? (
 											<Typography.Span className="rounded-xs bg-(--warn)/15 border border-(--warn)/40 px-1 py-px text-[7.5px] font-bold text-(--warn) uppercase tracking-wide">
 												TIGHT
 											</Typography.Span>
-										) : pos.capacityRatioNum !== undefined && pos.capacityRatioNum >= 2 ? (
+										) : pos.capacityRatioNum !== undefined &&
+											pos.capacityRatioNum >= 2 ? (
 											<Typography.Span className="rounded-xs bg-(--up)/15 border border-(--up)/40 px-1 py-px text-[7.5px] font-bold text-(--up) uppercase tracking-wide">
 												LIQUID
 											</Typography.Span>
@@ -343,7 +348,9 @@ export const Positions = () => {
 									<Typography.Span
 										data-capacity
 										title="exit capacity within the slippage budget / open quantity (+ = lower bound)"
-										className={cn(pos.capacityShort && "font-semibold text-(--down)")}
+										className={cn(
+											pos.capacityShort && "font-semibold text-(--down)",
+										)}
 									>
 										capacity {pos.capacity}
 									</Typography.Span>

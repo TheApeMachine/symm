@@ -1,8 +1,25 @@
 import { useSelector } from "@tanstack/react-store";
+import {
+	Activity,
+	ArrowRight,
+	CheckCircle2,
+	ChevronDown,
+	ChevronRight,
+	Compass,
+	Flag,
+	Layers,
+	Lock,
+	Radio,
+	Scale,
+	ShieldAlert,
+	ShieldCheck,
+	Zap,
+} from "lucide-react";
 import { useState } from "react";
 import { decisionsAtom } from "#/collections/app";
 import { Badge, type BadgeVariant } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
+import { Grid } from "#/components/ui/grid";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
 import {
@@ -18,9 +35,76 @@ import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
 import { Explain } from "./explain";
 
 /*
-KIND names each lifecycle event kind and its tone: learned decisions in the
-accent, the risk layer in warning, orders and fills neutral, the outcome by
-its sign.
+Confluence region taxonomy mapped to human-readable names and visual color tones.
+*/
+const REGION_INFO: Record<
+	string,
+	{ name: string; tone: "up" | "down" | "acc" | "info" | "neutral" }
+> = {
+	R01: { name: "Buy Cascade", tone: "up" },
+	R02: { name: "Clock Accel", tone: "acc" },
+	R03: { name: "Sell Cascade", tone: "down" },
+	R04: { name: "Taker Buy Inflow", tone: "up" },
+	R05: { name: "Gross Churn", tone: "neutral" },
+	R06: { name: "Taker Sell Outflow", tone: "down" },
+	R07: { name: "Ask Void", tone: "info" },
+	R08: { name: "Friction / Spread", tone: "neutral" },
+	R09: { name: "Bid Pulling", tone: "down" },
+	R10: { name: "Cohort Advance", tone: "up" },
+	R11: { name: "Iceberg Wall", tone: "info" },
+	R12: { name: "Cohort Decline", tone: "down" },
+};
+
+const TONE_STYLES = {
+	up: "bg-(--up)/15 border-(--up)/30 text-(--up)",
+	down: "bg-(--down)/15 border-(--down)/30 text-(--down)",
+	acc: "bg-(--acc)/15 border-(--acc)/30 text-(--acc)",
+	info: "bg-(--info)/15 border-(--info)/30 text-(--info)",
+	neutral: "bg-(--surface) border-(--line) text-(--f2)",
+};
+
+/*
+PathChain turns raw prefix strings ("R02/R12/R02") into visual confluence token tiles.
+*/
+const PathChain = ({ path }: { path: string }) => {
+	const tokens = path.split("/").filter(Boolean);
+	if (tokens.length === 0) return <span>{path}</span>;
+
+	return (
+		<Flex.Row align="center" gap={1} wrap="wrap">
+			{tokens.map((tok, i) => {
+				const info = REGION_INFO[tok];
+				const style = info ? TONE_STYLES[info.tone] : TONE_STYLES.neutral;
+				return (
+					// biome-ignore lint/suspicious/noArrayIndexKey: tokens in path sequence have deterministic position order
+					<Flex.Row key={`${tok}-${i}`} align="center" gap={1}>
+						{i > 0 && (
+							<ArrowRight className="w-3 h-3 text-(--f4) shrink-0 select-none" />
+						)}
+						<Flex.Row
+							align="center"
+							gap={1}
+							className={cn(
+								"px-2 py-0.5 rounded border text-[10px] font-bold tracking-wide shadow-xs",
+								style,
+							)}
+						>
+							<span className="font-mono">{tok}</span>
+							{info && (
+								<span className="text-[9px] font-normal opacity-85 font-sans">
+									{info.name}
+								</span>
+							)}
+						</Flex.Row>
+					</Flex.Row>
+				);
+			})}
+		</Flex.Row>
+	);
+};
+
+/*
+KIND names each lifecycle event kind and its tone.
 */
 const KIND: Record<string, { label: string; variant: BadgeVariant }> = {
 	entry_match: { label: "ENTRY MATCH", variant: "brand" },
@@ -74,18 +158,245 @@ const fieldValue = (value: unknown): string => {
 const tone = (value: number) =>
 	value > 0 ? "text-(--up)" : value < 0 ? "text-(--down)" : "text-(--f3)";
 
-import {
-	Activity,
-	CheckCircle2,
-	ChevronDown,
-	ChevronRight,
-	Clock,
-	Compass,
-	Flag,
-	Layers,
-	Scale,
-	ShieldAlert,
-} from "lucide-react";
+/*
+Visual Sizing Breakdown: Replaces wall of 17 numbers with comparative constraint bars.
+*/
+const SizingVisualWidget = ({
+	fields,
+}: {
+	fields: Record<string, unknown>;
+}) => {
+	const binding = String(fields.binding ?? "cash");
+	const cashAlloc = Number(fields.cash) || 0;
+	const cashQty = Number(fields.cash_quantity) || 0;
+	const exitCap = Number(fields.exit_capacity) || 0;
+	const partLimit = Number(fields.participation) || 0;
+	const targetQty = Number(fields.quantity) || cashQty || 0;
+	const limitPrice = Number(fields.entry_limit_price) || 0;
+	const refPrice = Number(fields.reference) || 0;
+	const fee = Number(fields.fee) || 0;
+	const budget = Number(fields.budget) || 0;
+
+	const exitCushion = targetQty > 0 ? exitCap / targetQty : 1;
+	const partCushion = targetQty > 0 ? partLimit / targetQty : 1;
+
+	return (
+		<Flex.Column
+			gap={2}
+			className="p-3 bg-(--surface)/80 rounded border border-(--line) font-mono text-[11px]"
+		>
+			<Flex.Row
+				align="center"
+				justify="between"
+				className="border-b border-(--line)/40 pb-1.5"
+			>
+				<Flex.Row align="center" gap={1}>
+					<Scale className="w-3.5 h-3.5 text-(--info)" />
+					<span className="font-bold text-(--f1) uppercase text-[10px]">
+						Liquidity & Capital Boundaries
+					</span>
+				</Flex.Row>
+				<span
+					className={cn(
+						"px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border",
+						binding === "cash"
+							? "bg-(--acc)/15 text-(--acc) border-(--acc)/30"
+							: "bg-(--warn)/15 text-(--warn) border-(--warn)/30",
+					)}
+				>
+					Active Bottleneck: Bound by {binding.replace("_", " ")}
+				</span>
+			</Flex.Row>
+
+			{/* 3 Comparative Constraint Bars */}
+			<Grid cols={3} gap={2} responsive={false}>
+				{/* Cash Budget */}
+				<Flex.Column
+					gap={1}
+					className={cn(
+						"p-2 rounded border transition-colors",
+						binding === "cash"
+							? "bg-(--acc)/10 border-(--acc)/40"
+							: "bg-(--sunken) border-(--line)",
+					)}
+				>
+					<Flex.Row align="center" justify="between" className="text-[10px]">
+						<Flex.Row align="center" gap={1} className="text-(--f4)">
+							{binding === "cash" && (
+								<Lock className="w-2.5 h-2.5 text-(--acc)" />
+							)}
+							<span>Cash Allocation</span>
+						</Flex.Row>
+						<span className="font-bold text-(--acc)">
+							{cashAlloc.toFixed(2)} USD
+						</span>
+					</Flex.Row>
+					<div className="w-full bg-(--line)/40 h-1.5 rounded-full overflow-hidden mt-0.5">
+						<div
+							className={cn(
+								"h-full rounded-full",
+								binding === "cash" ? "bg-(--acc)" : "bg-(--f3)",
+							)}
+							style={{ width: "100%" }}
+						/>
+					</div>
+					<span className="text-[9px] text-(--f3) mt-0.5">
+						{binding === "cash"
+							? "100% Capital Deployed (Limiter)"
+							: "Budget Allocated"}
+					</span>
+				</Flex.Column>
+
+				{/* Order Book Exit Capacity */}
+				<Flex.Column
+					gap={1}
+					className={cn(
+						"p-2 rounded border transition-colors",
+						binding === "exit_capacity"
+							? "bg-(--warn)/10 border-(--warn)/40"
+							: "bg-(--sunken) border-(--line)",
+					)}
+				>
+					<Flex.Row align="center" justify="between" className="text-[10px]">
+						<span className="text-(--f4)">Book Exit Depth</span>
+						<span className="font-bold text-(--up)">
+							{exitCap.toFixed(2)} units
+						</span>
+					</Flex.Row>
+					<div className="w-full bg-(--line)/40 h-1.5 rounded-full overflow-hidden mt-0.5">
+						<div
+							className="h-full rounded-full bg-(--up)"
+							style={{
+								width: `${Math.min(100, Math.max(10, (1 / Math.max(1, exitCushion)) * 100))}%`,
+							}}
+						/>
+					</div>
+					<span className="text-[9px] text-(--up) mt-0.5">
+						{exitCushion > 1
+							? `${exitCushion.toFixed(0)}x Exit Cushion Available`
+							: "Tight Exit Cushion"}
+					</span>
+				</Flex.Column>
+
+				{/* Market Participation Limit */}
+				<Flex.Column
+					gap={1}
+					className={cn(
+						"p-2 rounded border transition-colors",
+						binding === "participation"
+							? "bg-(--warn)/10 border-(--warn)/40"
+							: "bg-(--sunken) border-(--line)",
+					)}
+				>
+					<Flex.Row align="center" justify="between" className="text-[10px]">
+						<span className="text-(--f4)">Flow Participation</span>
+						<span className="font-bold text-(--info)">
+							{partLimit.toFixed(2)} units
+						</span>
+					</Flex.Row>
+					<div className="w-full bg-(--line)/40 h-1.5 rounded-full overflow-hidden mt-0.5">
+						<div
+							className="h-full rounded-full bg-(--info)"
+							style={{
+								width: `${Math.min(100, Math.max(10, (1 / Math.max(1, partCushion)) * 100))}%`,
+							}}
+						/>
+					</div>
+					<span className="text-[9px] text-(--info) mt-0.5">
+						{partCushion > 1
+							? `${partCushion.toFixed(0)}x Impact Cushion`
+							: "At Participation Cap"}
+					</span>
+				</Flex.Column>
+			</Grid>
+
+			{/* Pricing & Execution Economics */}
+			<Grid
+				cols={4}
+				gap={2}
+				responsive={false}
+				className="text-[10px] pt-1 border-t border-(--line)/30"
+			>
+				<Flex.Column>
+					<span className="text-(--f4) block text-[9px]">Sized Target:</span>
+					<span className="font-bold text-(--f1)">{fieldValue(targetQty)}</span>
+				</Flex.Column>
+				<Flex.Column>
+					<span className="text-(--f4) block text-[9px]">Limit Price:</span>
+					<span className="font-bold text-(--f2)">
+						{limitPrice > 0 ? `$${limitPrice.toFixed(2)}` : "—"}
+					</span>
+				</Flex.Column>
+				<Flex.Column>
+					<span className="text-(--f4) block text-[9px]">
+						Market Reference:
+					</span>
+					<span className="font-bold text-(--f2)">
+						{refPrice > 0 ? `$${refPrice.toFixed(2)}` : "—"}
+					</span>
+				</Flex.Column>
+				<Flex.Column>
+					<span className="text-(--f4) block text-[9px]">Slippage vs Fee:</span>
+					<span
+						className={cn(
+							"font-bold",
+							budget >= fee ? "text-(--up)" : "text-(--warn)",
+						)}
+					>
+						{budget > 0 ? `${(budget * 10000).toFixed(0)} bp budget` : "—"} /{" "}
+						{(fee * 10000).toFixed(0)} bp fee
+					</span>
+				</Flex.Column>
+			</Grid>
+		</Flex.Column>
+	);
+};
+
+/*
+Visual Fill Widget: Replaces raw fill numbers with execution clarity.
+*/
+const FillVisualWidget = ({ fields }: { fields: Record<string, unknown> }) => {
+	const qty = fieldValue(fields.quantity ?? fields.submitted ?? 0);
+	const venuePrice = Number(fields.venue_price ?? fields.shadow_price) || 0;
+	const venueCost = Number(fields.venue_cost) || 0;
+	const venueFee = Number(fields.venue_fee) || 0;
+
+	return (
+		<Flex.Row
+			align="center"
+			justify="between"
+			gap={3}
+			wrap="wrap"
+			className="p-2.5 bg-(--up)/5 rounded border border-(--up)/25 text-[11px] font-mono"
+		>
+			<Flex.Row align="center" gap={1}>
+				<CheckCircle2 className="w-4 h-4 text-(--up) shrink-0" />
+				<span className="font-bold text-(--up)">100% FILLED</span>
+				<span className="text-(--f1) font-bold ml-1">{qty} units</span>
+			</Flex.Row>
+			<Flex.Row align="center" gap={3} className="text-[10px]">
+				<div>
+					<span className="text-(--f4) mr-1">Execution Price:</span>
+					<span className="font-bold text-(--f1)">
+						{venuePrice > 0 ? `$${venuePrice.toFixed(2)}` : "—"}
+					</span>
+				</div>
+				<div>
+					<span className="text-(--f4) mr-1">Total Cost:</span>
+					<span className="font-bold text-(--f2)">
+						{venueCost > 0 ? `$${venueCost.toFixed(2)}` : "—"}
+					</span>
+				</div>
+				<div>
+					<span className="text-(--f4) mr-1">Fee:</span>
+					<span className="text-(--f3)">
+						{venueFee > 0 ? `$${venueFee.toFixed(2)}` : "—"}
+					</span>
+				</div>
+			</Flex.Row>
+		</Flex.Row>
+	);
+};
 
 const EventRow = ({ event }: { event: LifeEvent }) => {
 	const [expanded, setExpanded] = useState(false);
@@ -93,7 +404,8 @@ const EventRow = ({ event }: { event: LifeEvent }) => {
 		label: event.kind,
 		variant: "disabled" as const,
 	};
-	const fields = Object.entries(event.fields ?? {}).sort(([a], [b]) =>
+	const eventFields = event.fields ?? {};
+	const fields = Object.entries(eventFields).sort(([a], [b]) =>
 		a.localeCompare(b),
 	);
 
@@ -119,7 +431,7 @@ const EventRow = ({ event }: { event: LifeEvent }) => {
 	})();
 
 	return (
-		<div
+		<Flex.Column
 			data-lifecycle-event={event.kind}
 			className="border-(--line) border-b px-3 py-2 font-mono text-[11px] transition-colors hover:bg-(--surface)/40"
 		>
@@ -147,35 +459,70 @@ const EventRow = ({ event }: { event: LifeEvent }) => {
 					<button
 						type="button"
 						onClick={() => setExpanded(!expanded)}
-						className="shrink-0 text-[9px] text-(--f4) hover:text-(--f2) flex items-center gap-0.5 border border-(--line) px-1 rounded bg-(--sunken)"
+						className="shrink-0 text-[9px] text-(--f4) hover:text-(--f2) border border-(--line) px-1.5 py-0.5 rounded bg-(--sunken)"
 					>
-						<span>{fields.length} params</span>
-						{expanded ? (
-							<ChevronDown className="w-2.5 h-2.5" />
-						) : (
-							<ChevronRight className="w-2.5 h-2.5" />
-						)}
+						<Flex.Row align="center" gap={1}>
+							<span>{fields.length} params</span>
+							{expanded ? (
+								<ChevronDown className="w-2.5 h-2.5" />
+							) : (
+								<ChevronRight className="w-2.5 h-2.5" />
+							)}
+						</Flex.Row>
 					</button>
 				)}
 			</Flex.Row>
-			{fields.length > 0 ? (
-				<div
-					className={cn(
-						"mt-1.5 ml-6 grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-x-4 gap-y-1 rounded bg-(--sunken)/80 border border-(--line)/40 p-2 text-[10px]",
-						!expanded && "hidden",
+
+			{expanded && (
+				<Flex.Column gap={2} className="mt-2 ml-6">
+					{/* Specialized Visual Widgets for key events */}
+					{event.kind === "entry_match" &&
+						typeof eventFields.path === "string" && (
+							<Flex.Column
+								gap={1}
+								className="p-2.5 bg-(--sunken) rounded border border-(--line)"
+							>
+								<span className="text-[10px] text-(--f4) block uppercase font-bold tracking-wider">
+									Matched S3 Prefix Chain
+								</span>
+								<PathChain path={eventFields.path} />
+							</Flex.Column>
+						)}
+
+					{event.kind === "sizing" && (
+						<SizingVisualWidget fields={eventFields} />
 					)}
-				>
-					{fields.map(([key, value]) => (
-						<div key={key} className="flex min-w-0 justify-between gap-2">
-							<span className="text-(--f4)">{key}</span>
-							<span className="truncate text-(--f2)" title={fieldValue(value)}>
-								{fieldValue(value)}
-							</span>
-						</div>
-					))}
-				</div>
-			) : null}
-		</div>
+
+					{event.kind === "fill" && <FillVisualWidget fields={eventFields} />}
+
+					{/* Clean, Sorted Attribute Grid for all parameters */}
+					<Grid.Auto
+						minWidth="11rem"
+						gapX={4}
+						gapY={1}
+						className="rounded bg-(--sunken)/80 border border-(--line)/40 p-2 text-[10px]"
+					>
+						{fields.map(([key, value]) => (
+							<Flex.Row
+								key={key}
+								justify="between"
+								align="center"
+								gap={2}
+								className="min-w-0"
+							>
+								<span className="text-(--f4)">{key}</span>
+								<span
+									className="truncate text-(--f2)"
+									title={fieldValue(value)}
+								>
+									{fieldValue(value)}
+								</span>
+							</Flex.Row>
+						))}
+					</Grid.Auto>
+				</Flex.Column>
+			)}
+		</Flex.Column>
 	);
 };
 
@@ -208,9 +555,13 @@ const LifecycleStepper = ({ life }: { life: Lifecycle }) => {
 	];
 
 	return (
-		<div className="flex items-center gap-1.5 px-3 py-2 bg-(--surface) border-b border-(--line) overflow-x-auto text-[10px] font-mono">
+		<Flex.Row
+			align="center"
+			gap={1}
+			className="px-3 py-1.5 bg-(--surface) border-b border-(--line) overflow-x-auto text-[10px] font-mono shrink-0"
+		>
 			{stages.map((st, idx) => (
-				<div key={st.label} className="flex items-center gap-1.5 shrink-0">
+				<Flex.Row key={st.label} align="center" gap={1} className="shrink-0">
 					{idx > 0 && <span className="text-(--f4) select-none">→</span>}
 					<span
 						className={cn(
@@ -224,12 +575,17 @@ const LifecycleStepper = ({ life }: { life: Lifecycle }) => {
 					>
 						{st.label}
 					</span>
-				</div>
+				</Flex.Row>
 			))}
-		</div>
+		</Flex.Row>
 	);
 };
 
+/*
+StrategyIntelligenceCard:
+Transforms the top summary into visual strategy recognition, liquidity constraints,
+and real-time trie exit signal monitoring (replacing the bogus "Hold Horizon" timer).
+*/
 const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 	const events = life.events ?? [];
 	const entryMatch = events.find((e) => e.kind === "entry_match");
@@ -243,111 +599,202 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 	const binding = sizing?.fields?.binding as string | undefined;
 	const exitCapacity = sizing?.fields?.exit_capacity as number | undefined;
 	const cash = sizing?.fields?.cash as number | undefined;
-	const expectedHoldS = sizing?.fields?.expected_hold_s as number | undefined;
 
-	const elapsedS = outcome
-		? outcome.hold_ns / 1e9
-		: Math.max(0, (Date.now() - new Date(life.opened_at).getTime()) / 1000);
-	const targetS = outcome
-		? outcome.expected_hold_ns / 1e9
-		: (expectedHoldS ?? 60);
-	const holdPct = Math.min(
-		100,
-		Math.max(5, (elapsedS / Math.max(1, targetS)) * 100),
-	);
+	const isClosed = life.status === "closed";
+	const isExiting = life.status === "exiting";
+	const isHolding = life.status === "holding";
 
 	return (
-		<div className="border-(--line) border-b bg-(--surface) p-3 font-mono text-[11px]">
-			<div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-				{/* Strategy Pattern Recognition */}
-				<div className="rounded border border-(--line) bg-(--sunken) p-2.5 flex flex-col gap-1.5">
-					<div className="flex items-center justify-between text-[10px] text-(--f4) uppercase font-bold tracking-wider">
-						<span className="flex items-center gap-1.5">
-							<Compass className="w-3.5 h-3.5 text-(--acc)" />
-							Strategy Pattern
+		<Grid
+			cols={3}
+			gap={0}
+			responsive={false}
+			className="border-b border-(--line) bg-(--surface) font-mono text-[11px]"
+		>
+			{/* 1. Strategy Pattern Visual Chain */}
+			<Flex.Column className="border-r border-(--line) min-h-0 bg-(--surface)">
+				<Flex.Row
+					align="center"
+					justify="between"
+					className="h-7 px-3 bg-(--sunken) border-b border-(--line) text-[10px] text-(--f3) font-bold uppercase tracking-wider"
+				>
+					<Flex.Row align="center" gap={1}>
+						<Compass className="w-3.5 h-3.5 text-(--acc)" />
+						<span>Strategy Pattern</span>
+					</Flex.Row>
+					{confidence !== undefined && (
+						<span className="text-(--up) font-bold">
+							{confidence} tokens matched
 						</span>
-						{confidence !== undefined && (
-							<span className="text-(--up) font-bold">
-								{confidence} matched
+					)}
+				</Flex.Row>
+
+				<Flex.Column className="p-3 flex-1 justify-between gap-2">
+					<div>
+						{path ? (
+							<PathChain path={path} />
+						) : (
+							<span className="text-[11px] text-(--f3) font-bold">
+								Direct / Unmatched Entry
 							</span>
 						)}
 					</div>
-					<div className="text-[12px] font-bold text-(--acc) truncate">
-						{path || "Direct / Unmatched Entry"}
-					</div>
-					<div className="text-[9.5px] text-(--f3) flex justify-between mt-auto pt-1 border-t border-(--line)/40">
-						<span>Trie Candidates:</span>
-						<span className="text-(--f1)">
-							{candidates !== undefined ? candidates : "—"}
-						</span>
-					</div>
-				</div>
 
-				{/* Liquidity & Capacity Health */}
-				<div className="rounded border border-(--line) bg-(--sunken) p-2.5 flex flex-col gap-1.5">
-					<div className="flex items-center justify-between text-[10px] text-(--f4) uppercase font-bold tracking-wider">
-						<span className="flex items-center gap-1.5">
-							<Scale className="w-3.5 h-3.5 text-(--info)" />
-							Liquidity & Sizing
+					<Flex.Row
+						justify="between"
+						className="text-[9.5px] text-(--f3) pt-1.5 border-t border-(--line)/40"
+					>
+						<span>S3 Trie Candidates:</span>
+						<span className="text-(--f1) font-bold">
+							{candidates !== undefined
+								? `${candidates} matching path(s)`
+								: "—"}
 						</span>
-						<span
-							className={cn(
-								"px-1 py-0.2 rounded text-[8px] uppercase font-bold",
-								binding === "exit_capacity"
-									? "bg-(--warn)/15 text-(--warn) border border-(--warn)/30"
-									: "bg-(--acc)/15 text-(--acc) border border-(--acc)/30",
-							)}
-						>
-							{binding ? `Bound by ${binding}` : "Sized"}
-						</span>
-					</div>
-					<div className="flex items-baseline justify-between">
+					</Flex.Row>
+				</Flex.Column>
+			</Flex.Column>
+
+			{/* 2. Liquidity & Sizing Constraints */}
+			<Flex.Column className="border-r border-(--line) min-h-0 bg-(--surface)">
+				<Flex.Row
+					align="center"
+					justify="between"
+					className="h-7 px-3 bg-(--sunken) border-b border-(--line) text-[10px] text-(--f3) font-bold uppercase tracking-wider"
+				>
+					<Flex.Row align="center" gap={1}>
+						<Scale className="w-3.5 h-3.5 text-(--info)" />
+						<span>Liquidity & Sizing</span>
+					</Flex.Row>
+					<span
+						className={cn(
+							"px-1.5 py-0.5 rounded text-[8px] uppercase font-bold border",
+							binding === "exit_capacity"
+								? "bg-(--warn)/15 text-(--warn) border-(--warn)/30"
+								: "bg-(--acc)/15 text-(--acc) border-(--acc)/30",
+						)}
+					>
+						{binding ? `Bound by ${binding}` : "Sized"}
+					</span>
+				</Flex.Row>
+
+				<Flex.Column className="p-3 flex-1 justify-between gap-1.5">
+					<Flex.Row justify="between" align="baseline" className="text-[11px]">
 						<span className="text-[9.5px] text-(--f4)">
 							Book Exit Capacity:
 						</span>
-						<span className="text-[12px] font-bold text-(--up)">
-							{exitCapacity !== undefined ? exitCapacity.toFixed(2) : "—"}
+						<span className="font-bold text-(--up)">
+							{exitCapacity !== undefined
+								? `${exitCapacity.toFixed(2)} units`
+								: "—"}
 						</span>
-					</div>
-					<div className="text-[9.5px] text-(--f3) flex justify-between mt-auto pt-1 border-t border-(--line)/40">
-						<span>Cash Allocation:</span>
-						<span className="text-(--f1)">
+					</Flex.Row>
+
+					<Flex.Row justify="between" align="baseline" className="text-[11px]">
+						<span className="text-[9.5px] text-(--f4)">Cash Allocation:</span>
+						<span className="font-bold text-(--f1)">
 							{cash !== undefined ? `${cash.toFixed(2)} USD` : "—"}
 						</span>
-					</div>
-				</div>
+					</Flex.Row>
 
-				{/* Hold Horizon Progress */}
-				<div className="rounded border border-(--line) bg-(--sunken) p-2.5 flex flex-col gap-1.5">
-					<div className="flex items-center justify-between text-[10px] text-(--f4) uppercase font-bold tracking-wider">
-						<span className="flex items-center gap-1.5">
-							<Clock className="w-3.5 h-3.5 text-(--acc)" />
-							Hold Horizon
-						</span>
-						<span className="text-(--f2)">
-							{elapsedS.toFixed(0)}s / {targetS.toFixed(0)}s
-						</span>
-					</div>
-					<div className="w-full bg-(--surface) border border-(--line) rounded-full h-2 overflow-hidden mt-1">
-						<div
+					<Flex.Row
+						align="center"
+						gap={1}
+						className="text-[9px] text-(--up) pt-1.5 border-t border-(--line)/40"
+					>
+						<ShieldCheck className="w-3 h-3 text-(--up) shrink-0" />
+						<span>Order book exit depth verified before entry</span>
+					</Flex.Row>
+				</Flex.Column>
+			</Flex.Column>
+
+			{/* 3. Trie Exit Signal Monitor */}
+			<Flex.Column className="min-h-0 bg-(--surface)">
+				<Flex.Row
+					align="center"
+					justify="between"
+					className="h-7 px-3 bg-(--sunken) border-b border-(--line) text-[10px] text-(--f3) font-bold uppercase tracking-wider"
+				>
+					<Flex.Row align="center" gap={1}>
+						<Radio
 							className={cn(
-								"h-full transition-all duration-300",
-								holdPct >= 100 ? "bg-(--warn)" : "bg-(--acc)",
+								"w-3.5 h-3.5",
+								isHolding ? "text-(--acc) animate-pulse" : "text-(--f4)",
 							)}
-							style={{ width: `${holdPct}%` }}
 						/>
+						<span>Trie Exit Monitor</span>
+					</Flex.Row>
+					<span
+						className={cn(
+							"px-1.5 py-0.5 rounded text-[8px] uppercase font-bold border",
+							isClosed
+								? "bg-(--up)/15 text-(--up) border-(--up)/30"
+								: isExiting
+									? "bg-(--warn)/15 text-(--warn) border-(--warn)/30 animate-pulse"
+									: "bg-(--acc)/15 text-(--acc) border-(--acc)/30",
+						)}
+					>
+						{isClosed
+							? "Position Closed"
+							: isExiting
+								? "Exit Triggered"
+								: "Scanning Trie"}
+					</span>
+				</Flex.Row>
+
+				<Flex.Column className="p-3 flex-1 justify-between gap-1.5">
+					<div className="py-1">
+						{isClosed ? (
+							<Flex.Row align="center" gap={2}>
+								<span
+									className={cn(
+										"px-2 py-0.5 rounded text-[10px] font-bold uppercase",
+										(outcome?.venue_realized ?? 0) >= 0
+											? "bg-(--up)/20 text-(--up) border border-(--up)/30"
+											: "bg-(--down)/20 text-(--down) border border-(--down)/30",
+									)}
+								>
+									{(outcome?.venue_realized ?? 0) >= 0 ? "WIN" : "LOSS"}
+								</span>
+								<span
+									className={cn(
+										"font-bold text-[12px]",
+										tone(outcome?.venue_realized ?? 0),
+									)}
+								>
+									{signedMoney(outcome?.venue_realized ?? 0)} USD Realized
+								</span>
+							</Flex.Row>
+						) : (
+							<Flex.Column gap={1}>
+								<Flex.Row
+									align="center"
+									gap={1}
+									className="text-[10px] text-(--f2)"
+								>
+									<Zap className="w-3 h-3 text-(--acc) shrink-0" />
+									<span>Monitoring live tokens for exit prefix</span>
+								</Flex.Row>
+								<span className="text-[9px] text-(--f4)">
+									Exit rule: S3 learned exit match or capacity trim
+								</span>
+							</Flex.Column>
+						)}
 					</div>
-					<div className="text-[9.5px] text-(--f4) flex justify-between mt-auto pt-1 border-t border-(--line)/40">
-						<span>Progress:</span>
+
+					<Flex.Row
+						justify="between"
+						className="text-[9.5px] text-(--f3) pt-1.5 border-t border-(--line)/40"
+					>
+						<span>Exit Protocol:</span>
 						<span className="text-(--f2)">
-							{holdPct >= 100
-								? "Horizon Reached"
-								: `${holdPct.toFixed(0)}% elapsed`}
+							{isClosed
+								? `Triggers: ${(outcome?.triggers ?? []).join(", ") || "resolved"}`
+								: "Cognition Prefix Engine Active"}
 						</span>
-					</div>
-				</div>
-			</div>
-		</div>
+					</Flex.Row>
+				</Flex.Column>
+			</Flex.Column>
+		</Grid>
 	);
 };
 
@@ -383,10 +830,7 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 			"fees venue / shadow",
 			`${outcome.venue_fees.toFixed(4)} / ${outcome.shadow_fees.toFixed(4)}`,
 		],
-		[
-			"hold vs expected",
-			`${seconds(outcome.hold_ns)} / ${seconds(outcome.expected_hold_ns)}`,
-		],
+		["hold duration", seconds(outcome.hold_ns)],
 		["triggers", (outcome.triggers ?? []).join(", ") || "—"],
 	];
 
@@ -398,12 +842,16 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 	}
 
 	return (
-		<div
+		<Flex.Column
 			data-l="lifecycle-outcome"
 			className="border-(--line) border-b bg-(--sunken) px-3 py-2.5 font-mono text-[11px]"
 		>
-			<div className="flex items-center justify-between pb-2 mb-2 border-b border-(--line)/40">
-				<div className="flex items-center gap-2">
+			<Flex.Row
+				align="center"
+				justify="between"
+				className="pb-2 mb-2 border-b border-(--line)/40"
+			>
+				<Flex.Row align="center" gap={2}>
 					<span
 						className={cn(
 							"px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
@@ -417,26 +865,26 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 					<span className={cn("text-[13px] font-bold", tone(pnl))}>
 						{signedMoney(pnl)} USD Realized
 					</span>
-				</div>
+				</Flex.Row>
 				<div className="text-[10px] text-(--f4)">
 					Triggers:{" "}
 					<span className="text-(--f2)">
 						{(outcome.triggers ?? []).join(", ") || "—"}
 					</span>
 				</div>
-			</div>
+			</Flex.Row>
 
-			<div className="grid grid-cols-2 gap-x-6 gap-y-1">
+			<Grid cols={2} gapX={6} gapY={1} responsive={false}>
 				{rows.map(([label, value, sign]) => (
-					<div key={label} className="flex justify-between gap-2">
+					<Flex.Row key={label} justify="between" gap={2}>
 						<span className="text-(--f4)">{label}</span>
 						<span className={sign === undefined ? "text-(--f2)" : tone(sign)}>
 							{value}
 						</span>
-					</div>
+					</Flex.Row>
 				))}
-			</div>
-		</div>
+			</Grid>
+		</Flex.Column>
 	);
 };
 
@@ -464,7 +912,7 @@ const DecisionFeed = () => {
 					</Typography.Mono>
 				) : (
 					decisions.map((decision) => (
-						<div
+						<Flex.Column
 							key={String(decision.id ?? decision.symbol)}
 							data-l="engine-decision"
 							className="border-(--line) border-b px-3 py-1.5 font-mono text-[10px]"
@@ -504,7 +952,7 @@ const DecisionFeed = () => {
 							>
 								{String(decision.reason ?? "")}
 							</div>
-						</div>
+						</Flex.Column>
 					))
 				)}
 			</Section.Body>
@@ -516,8 +964,7 @@ const DecisionFeed = () => {
 LifecycleView follows every paper position through its life: the match that
 opened it, the desk's sizing inputs, every child order and fill (venue beside
 shadow), each risk-layer sell with the capacity it saw, the learned exit match
-and the outcome. The timeline is the Desk's append-only record, read from
-/positions/lifecycle.
+and the outcome.
 */
 export const LifecycleView = () => {
 	const { report, online } = useLifecycles();
@@ -529,9 +976,12 @@ export const LifecycleView = () => {
 
 	return (
 		<Flex.Column className="min-h-0 flex-1">
-			<div
+			<Flex.Row
 				data-l="lifecycle-performance"
-				className="flex shrink-0 flex-wrap items-center gap-4 border-(--line) border-b bg-(--surface) px-3 py-1.5 font-mono text-[10px] text-(--f3)"
+				align="center"
+				gap={4}
+				wrap="wrap"
+				className="shrink-0 border-(--line) border-b bg-(--surface) px-3 py-1.5 font-mono text-[10px] text-(--f3)"
 			>
 				<span className="font-bold uppercase tracking-wider text-(--f4)">
 					Paper outcome
@@ -554,7 +1004,7 @@ export const LifecycleView = () => {
 				{!online ? (
 					<span className="text-(--down)">lifecycle source offline</span>
 				) : null}
-			</div>
+			</Flex.Row>
 
 			<Flex className="min-h-0 flex-1 max-lg:flex-col">
 				<Flex.Column className="w-64 shrink-0 overflow-auto border-(--line) border-r max-lg:w-full">

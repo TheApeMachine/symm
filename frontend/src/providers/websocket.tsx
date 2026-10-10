@@ -127,6 +127,48 @@ export function dispatchMeasurements(frame: MeasurementsFrame) {
 			observeSymbols([symbol]);
 		}
 
+		if (source === "balance") {
+			let cash = "";
+			let unrealized = "";
+			let equity = "";
+
+			const metricsCount = row.metricsLength();
+			for (let mIdx = 0; mIdx < metricsCount; mIdx++) {
+				const m = row.metrics(mIdx);
+				if (!m) continue;
+				const name = m.name() ?? "";
+				const val = String(m.raw());
+				if (name === "cash") cash = val;
+				if (name === "unrealized") unrealized = val;
+				if (name === "equity") equity = val;
+			}
+
+			const provCount = row.provenanceLength();
+			for (let pIdx = 0; pIdx < provCount; pIdx++) {
+				const p = row.provenance(pIdx);
+				if (!p) continue;
+				const name = p.name() ?? "";
+				const val = p.value() ?? "";
+				if (name === "cash" || name === "symm:exact:cash") cash = val;
+				if (name === "unrealized" || name === "symm:exact:unrealized") unrealized = val;
+				if (name === "equity" || name === "symm:exact:equity") equity = val;
+			}
+
+			const metaCount = row.metadataLength();
+			for (let mIdx = 0; mIdx < metaCount; mIdx++) {
+				const m = row.metadata(mIdx);
+				if (!m) continue;
+				const name = m.name() ?? "";
+				const val = String(m.value());
+				if (name === "cash" && !cash) cash = val;
+				if (name === "unrealized" && !unrealized) unrealized = val;
+				if (name === "equity" && !equity) equity = val;
+			}
+
+			updateEquity(cash, unrealized, equity);
+			continue;
+		}
+
 		const signalStore = signals[source];
 
 		if (!signalStore) {

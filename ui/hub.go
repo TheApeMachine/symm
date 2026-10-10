@@ -3,157 +3,49 @@ package ui
 import (
 	"context"
 	"fmt"
-	"io"
 	neturl "net/url"
-	"strconv"
-	"strings"
-	"sync/atomic"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
-	flatbuffers "github.com/google/flatbuffers/go"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-TradeJournalSource supplies the persisted trade journal. It is the narrow slice
-of the broker PositionStore the hub needs to serve GET /trades, kept as an
-interface so the UI layer never depends on the broker package's concrete type.
-*/
-type TradeJournalSource interface {
-	RecentTrades(limit int) ([]*wire.PositionT, error)
-}
-
-/*
-PositionSource supplies active open positions for streaming to the UI.
-*/
-type PositionSource interface {
-	PositionsWire() *wire.PositionsFrameT
-	PositionsVersion() uint64
-}
-
-/*
-EquitySource supplies the venue-reported cash, unrealized PnL, and equity.
-*/
-type EquitySource interface {
-	EquityWire() *wire.EquityFrameT
-}
-
-type CognitionSource interface {
-	CognitionTree() CognitionTreeExport
-}
-
-/*
-LifecycleSource supplies the per-position event timelines of the paper desk
-and the performance of the closed positions, as a JSON-ready report.
-*/
-type LifecycleSource interface {
-	LifecyclesReport() any
-}
-
-type LearningSource interface {
-	LearningSummary() string
-	LearningReport() any
-}
-
 type Hub struct {
 	*runtime.System
-	uiTees           []*UITee
-	storeTee         *hindsight.StoreTee
-	workspace        *runtime.Workspace
-	physics          sensorium.PhysicsMonitor
-	app              *fiber.App
-	listenAddr       string
-	frontend         atomic.Pointer[websocket.Conn]
-	store            *tables.Catalog
-	positionSource   PositionSource
-	equitySource     EquitySource
-	cognitionSource  CognitionSource
-	learningSource   LearningSource
-	lifecycleSource  LifecycleSource
-	exitHandler      func(symbol string)
-	routes           *Routes
-	learningInterval time.Duration
-	lastLearning     time.Time
-}
-
-func (hub *Hub) teeForShard(shard int) *UITee {
-	if shard >= 0 && shard < len(hub.uiTees) {
-		return hub.uiTees[shard]
-	}
-
-	if len(hub.uiTees) > 0 {
-		return hub.uiTees[0]
-	}
-
-	return nil
+	ctx        context.Context
+	uiTees     []*UITee
+	app        *fiber.App
+	listenAddr string
+	routes     *Routes
 }
 
 /*
 NewHub constructs the dashboard hub from its queue-backed system boundaries.
-The workspace supplies live ingress progress, streamed as TickFrames at display
-cadence independently of the route filters applied to the tee.
 */
 func NewHub(
 	ctx context.Context,
-	hindsightStore *tables.Catalog,
-	workspace *runtime.Workspace,
-	storeTee *hindsight.StoreTee,
-	equitySource EquitySource,
-	positionSource PositionSource,
-	cognitionSource CognitionSource,
-	lifecycleSource LifecycleSource,
-	exitHandler func(symbol string),
 	uiTees ...*UITee,
 ) *Hub {
-	viper.SetDefault("ui.addr", "127.0.0.1:8765")
-	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
-
-	workbenchURL := viper.GetString("workbench.url")
-
-	if workbenchURL == "" {
-		workbenchURL = "http://127.0.0.1:8081/workbench/query"
-	}
-
 	hub := &Hub{
-		learningInterval: viper.GetDuration("ui.websocket.learning_interval"),
-		uiTees:           uiTees,
-		workspace:        workspace,
-		storeTee:         storeTee,
-		equitySource:     equitySource,
-		positionSource:   positionSource,
-		cognitionSource:  cognitionSource,
-		lifecycleSource:  lifecycleSource,
-		exitHandler:      exitHandler,
-		listenAddr:       viper.GetString("ui.addr"),
+		ctx:        ctx,
+		uiTees:     uiTees,
+		listenAddr: system.Cfg.UI.Addr,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
 			StrictRouting:   true,
-			ReadBufferSize:  4194304,
-			WriteBufferSize: 4194304,
+			ReadBufferSize:  system.Cfg.UI.WebSocket.MaxMessageBytes,
+			WriteBufferSize: system.Cfg.UI.WebSocket.MaxMessageBytes,
 		}),
-		store: hindsightStore,
 	}
 
 	hub.routes = NewRoutes(hub)
-
-	closers := make([]io.Closer, 0, len(uiTees))
-	for _, tee := range uiTees {
-		closers = append(closers, tee)
-	}
-
-	hub.System = runtime.NewSystem(ctx, "hub", closers...)
+	hub.System = runtime.NewSystem(ctx, "hub")
 
 	// The dashboard is a separate origin from the hub (vite dev server on
 	// :3000 vs. the hub on :8765). Permit loopback origins on any port
@@ -178,322 +70,67 @@ func NewHub(
 
 	hub.routes.Register()
 
-	wsHandler := func(shard int) fiber.Handler {
-		return websocket.New(func(conn *websocket.Conn) {
-			if shard == 0 {
-				hub.frontend.Store(conn)
-			}
-			errnie.Info(fmt.Sprintf("[hub] frontend websocket shard %d connected", shard))
-
-			defer func() {
-				if shard == 0 {
-					hub.frontend.CompareAndSwap(conn, nil)
-				}
-				errnie.Info(fmt.Sprintf("[hub] frontend websocket shard %d disconnected", shard))
-				conn.Conn.Close()
-			}()
-
-			go func() {
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-
-					_, payload, err := conn.Conn.ReadMessage()
-
-					if err != nil {
-						return
-					}
-
-					hub.handleCommand(payload)
-				}
-			}()
-
-			var lastPositionsPush time.Time
-			var lastPositionsVersion uint64
-			var lastPositionsSummary string
-			hadPositions := false
-
-			sendPositions := func() error {
-				if hub.positionSource == nil {
-					return nil
-				}
-
-				ver := hub.positionSource.PositionsVersion()
-				wireFrame := hub.positionSource.PositionsWire()
-
-				if wireFrame == nil {
-					return nil
-				}
-
-				hasNow := len(wireFrame.Rows) > 0
-
-				if !hasNow && !hadPositions {
-					return nil
-				}
-
-				summary := positionsSummary(wireFrame.Rows)
-
-				if ver != 0 && ver == lastPositionsVersion && summary == lastPositionsSummary {
-					return nil
-				}
-
-				hadPositions = hasNow
-				lastPositionsVersion = ver
-				lastPositionsSummary = summary
-
-				message := &wire.MessageT{
-					Sequence: uint64(time.Now().UnixNano()),
-					Frame: &wire.FrameT{
-						Type:  wire.FramePositionsFrame,
-						Value: wireFrame,
-					},
-				}
-
-				builder := flatbuffers.NewBuilder(4096)
-				offset := message.Pack(builder)
-				builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
-				payload := builder.FinishedBytes()
-
-				lastPositionsPush = time.Now()
-				return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
-			}
-
-			var lastEquityPush time.Time
-			var lastCash, lastUnrealized, lastEquity string
-
-			sendEquity := func() error {
-				if hub.equitySource == nil {
-					return nil
-				}
-
-				wireFrame := hub.equitySource.EquityWire()
-
-				if wireFrame == nil {
-					return nil
-				}
-
-				if wireFrame.Cash == lastCash && wireFrame.Unrealized == lastUnrealized && wireFrame.Equity == lastEquity {
-					return nil
-				}
-
-				lastCash = wireFrame.Cash
-				lastUnrealized = wireFrame.Unrealized
-				lastEquity = wireFrame.Equity
-
-				message := &wire.MessageT{
-					Sequence: uint64(time.Now().UnixNano()),
-					Frame: &wire.FrameT{
-						Type:  wire.FrameEquityFrame,
-						Value: wireFrame,
-					},
-				}
-
-				builder := flatbuffers.NewBuilder(1024)
-				offset := message.Pack(builder)
-				builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
-				payload := builder.FinishedBytes()
-
-				lastEquityPush = time.Now()
-				return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
-			}
-
-			var lastTick int64
-
-			sendTick := func() error {
-				tick, at := hub.workspace.Progress()
-
-				if tick == lastTick {
-					return nil
-				}
-
-				lastTick = tick
-
-				message := &wire.MessageT{
-					Sequence: uint64(time.Now().UnixNano()),
-					Frame: &wire.FrameT{
-						Type:  wire.FrameTickFrame,
-						Value: &wire.TickFrameT{Count: tick, At: at},
-					},
-				}
-
-				builder := flatbuffers.NewBuilder(64)
-				offset := message.Pack(builder)
-				builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
-
-				return conn.Conn.WriteMessage(websocket.BinaryMessage, builder.FinishedBytes())
-			}
-
-			var lastDiagnosticsPush time.Time
-
-			sendDiagnostics := func() error {
-				now := time.Now()
-				nowNs := now.UnixNano()
-				var rows []*wire.MeasurementT
-
-				var uiPending, uiIngress, uiEgress int
-				for _, tee := range hub.uiTees {
-					if tee != nil {
-						uiPending += tee.Pending()
-						uiIngress += tee.IngressLength()
-						uiEgress += tee.EgressLength()
-					}
-				}
-
-				rows = append(rows, &wire.MeasurementT{
-					Source: "ui_tee",
-					At:     nowNs,
-					Metrics: []*wire.MetricT{
-						{Name: "backlog", Raw: float64(uiPending)},
-						{Name: "ingress", Raw: float64(uiIngress)},
-						{Name: "egress", Raw: float64(uiEgress)},
-					},
-					Metadata: []*wire.NamedNumberT{
-						{Name: "stage", Value: 4},
-					},
-				})
-
-				if hub.storeTee != nil {
-					storePending := hub.storeTee.Pending()
-					rows = append(rows, &wire.MeasurementT{
-						Source: "store_tee",
-						At:     nowNs,
-						Metrics: []*wire.MetricT{
-							{Name: "backlog", Raw: float64(storePending)},
-						},
-						Metadata: []*wire.NamedNumberT{
-							{Name: "stage", Value: 4},
-						},
-					})
-				}
-
-				if len(rows) == 0 {
-					return nil
-				}
-
-				payload := types.PackMeasurementsFrame(rows)
-
-				if len(payload) == 0 {
-					return nil
-				}
-
-				lastDiagnosticsPush = now
-				return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
-			}
-
-			if shard == 0 {
-				if err := sendPositions(); err != nil {
-					return
-				}
-
-				if err := sendEquity(); err != nil {
-					return
-				}
-
-				if err := sendTick(); err != nil {
-					return
-				}
-
-				if err := sendDiagnostics(); err != nil {
-					return
-				}
-			}
-
-			tee := hub.teeForShard(shard)
-			frameTicker := time.NewTicker(16666 * time.Microsecond)
-			defer frameTicker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-frameTicker.C:
-					if shard == 0 {
-						if err := sendTick(); err != nil {
-							return
-						}
-					}
-				}
-
-				if shard == 0 {
-					if time.Since(lastPositionsPush) >= 200*time.Millisecond {
-						if err := sendPositions(); err != nil {
-							return
-						}
-					}
-
-					if time.Since(lastEquityPush) >= 500*time.Millisecond {
-						if err := sendEquity(); err != nil {
-							return
-						}
-					}
-
-					if time.Since(lastDiagnosticsPush) >= 100*time.Millisecond {
-						if err := sendDiagnostics(); err != nil {
-							return
-						}
-					}
-				}
-
-				if hub.Status() != runtime.READY || tee == nil {
-					continue
-				}
-
-				for {
-					frame := tee.Next()
-
-					if frame == nil {
-						break
-					}
-
-					payload := *(*[]byte)(frame)
-
-					if len(payload) == 0 {
-						continue
-					}
-
-					if err := conn.Conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
-						return
-					}
-				}
-			}
-		}, websocket.Config{
-			Origins: []string{"*"},
-		})
-	}
-
-	hub.app.Get("/ws", wsHandler(0))
-	hub.app.Get("/ws/0", wsHandler(0))
-	hub.app.Get("/ws/1", wsHandler(1))
-
 	return hub
 }
 
-/*
-parseUintQuery parses a uint64 query parameter, returning 0 on absence or
-malformation so a missing selector reads as "no match" rather than crashing the
-handler.
-*/
-func parseUintQuery(raw string) uint64 {
-	value, err := strconv.ParseUint(raw, 10, 64)
+func (hub *Hub) wsHandler(shard int) fiber.Handler {
+	return websocket.New(func(conn *websocket.Conn) {
+		errnie.Info(fmt.Sprintf("[hub] frontend websocket shard %d connected", shard))
 
-	if err != nil {
-		return 0
-	}
+		defer func() {
+			errnie.Info(fmt.Sprintf("[hub] frontend websocket shard %d disconnected", shard))
 
-	return value
-}
+			if err := conn.Conn.Close(); err != nil {
+				errnie.Error(err)
+			}
+		}()
 
-func parseInt64Query(raw string) int64 {
-	value, err := strconv.ParseInt(raw, 10, 64)
+		go func() {
+			for {
+				select {
+				case <-hub.ctx.Done():
+					return
+				default:
+				}
 
-	if err != nil {
-		return 0
-	}
+				_, payload, err := conn.Conn.ReadMessage()
 
-	return value
+				if err != nil {
+					return
+				}
+
+				hub.handleCommand(payload)
+			}
+		}()
+
+		for {
+			select {
+			case <-hub.ctx.Done():
+				return
+			default:
+			}
+
+			if hub.Status() != runtime.READY {
+				continue
+			}
+
+			for {
+				payload := *(*[]byte)(hub.uiTees[shard].Next())
+
+				if len(payload) == 0 {
+					continue
+				}
+
+				if err := conn.Conn.WriteMessage(
+					websocket.BinaryMessage, payload,
+				); err != nil {
+					return
+				}
+			}
+		}
+	}, websocket.Config{
+		Origins: []string{"*"},
+	})
 }
 
 /*
@@ -517,11 +154,14 @@ func (hub *Hub) handleCommand(payload []byte) {
 		types.SetFocus(request.Symbol)
 	case "route":
 		types.SetRoute(request.Route)
-	case "position.exit":
-		if hub.exitHandler != nil {
-			hub.exitHandler(request.Symbol)
-		}
 	}
+}
+
+/*
+App exposes the underlying Fiber application for registering domain services.
+*/
+func (hub *Hub) App() *fiber.App {
+	return hub.app
 }
 
 /*
@@ -537,28 +177,4 @@ func (hub *Hub) Run() {
 
 		hub.app.Listen(address)
 	}()
-}
-
-func positionsSummary(rows []*wire.PositionT) string {
-	if len(rows) == 0 {
-		return ""
-	}
-
-	var b strings.Builder
-
-	for _, row := range rows {
-		if row == nil || row.Holding == nil {
-			continue
-		}
-
-		b.WriteString(row.Holding.Symbol)
-		b.WriteString(row.Holding.Status)
-		b.WriteString(row.Holding.Qty)
-		b.WriteString(row.Holding.Mark)
-		b.WriteString(row.Holding.Pnl)
-		b.WriteString(row.Holding.VenuePnl)
-		b.WriteString(row.Holding.ShadowPnl)
-	}
-
-	return b.String()
 }

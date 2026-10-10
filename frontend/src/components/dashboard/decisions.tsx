@@ -1,6 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
 import { decisionsAtom } from "#/collections/app";
-import { terminalStore } from "#/collections/terminal";
 import {
 	setDecisionsPendingFocus,
 	setDecisionsScopeSymbol,
@@ -44,7 +43,6 @@ export const Decisions = () => {
 	const inspectDecision = (symbol: string) => {
 		setDecisionsScopeSymbol(symbol);
 		setDecisionsPendingFocus(symbol);
-		terminalStore.actions.openThesis(symbol);
 	};
 
 	return (

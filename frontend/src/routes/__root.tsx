@@ -24,21 +24,16 @@ const SURFACE_VALUES = new Set<TerminalSurface>([
 	"dashboard",
 	"learning",
 	"influence",
-	"lineage",
 	"fluid",
 	"signals",
-	"journal",
 	"xray",
-	"cortex",
 	"diagnostics",
 	"hindsight",
 	"workbench",
-	"pipeline",
 ]);
 
 const SURFACE_ALIASES: Record<string, TerminalSurface> = {
 	insight: "signals",
-	trade: "journal",
 	diag: "diagnostics",
 };
 
@@ -46,16 +41,12 @@ const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	dashboard: "/",
 	learning: "/learning",
 	influence: "/influence",
-	lineage: "/lineage",
 	fluid: "/fluid",
 	signals: "/signals",
-	journal: "/journal",
 	xray: "/xray",
-	cortex: "/cortex",
 	diagnostics: "/diagnostics",
 	hindsight: "/hindsight",
 	workbench: "/workbench",
-	pipeline: "/pipeline",
 };
 
 export const parseSurface = (path: unknown): TerminalSurface => {
@@ -155,6 +146,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 						{scanlines ? <Scanlines variant="screen" className="z-60" /> : null}
 						<SymbolFocusLayer>
 							<TerminalTopBar />
+							<Dialog />
 							<Flex.Row className="min-h-0 flex-1">
 								<TerminalNav active={surface} />
 								<main className="min-w-0 flex-1 overflow-auto bg-(--bg)">
@@ -163,7 +155,6 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 							</Flex.Row>
 						</SymbolFocusLayer>
 						<CommandPalette activeSurface={surface} onRun={runPalette} />
-						<Dialog />
 					</Flex.Column>
 				</ClientOnly>
 				<Scripts />

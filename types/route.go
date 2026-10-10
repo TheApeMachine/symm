@@ -60,6 +60,10 @@ func Filters(measurement *data.Measurement) bool {
 		return false
 	}
 
+	if kernelSource(measurement.Source) == "balance" {
+		return true
+	}
+
 	switch Route() {
 	case "dashboard":
 		return isFocus(measurement) && (isSignal(measurement) || isLogic(measurement, "resonance") || isStrategy(measurement, "training"))
@@ -88,9 +92,26 @@ func Shard(source string) int {
 	clean := kernelSource(source)
 
 	switch clean {
-	case "correlation", "depthflow", "hawkes", "liquidity", "pumpdump", "resonance", "training", "websocket":
+	case
+		"balance",
+		"correlation",
+		"depthflow",
+		"hawkes",
+		"liquidity",
+		"pumpdump",
+		"resonance",
+		"training",
+		"websocket":
 		return 0
-	case "cvd", "derivatives", "leadlag", "morphology", "sentiment", "toxicity", "manifold", "cognition":
+	case
+		"cvd",
+		"derivatives",
+		"leadlag",
+		"morphology",
+		"sentiment",
+		"toxicity",
+		"manifold",
+		"cognition":
 		return 1
 	default:
 		var hash uint32 = 2166136261

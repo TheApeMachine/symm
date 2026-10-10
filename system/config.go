@@ -26,6 +26,8 @@ type Config struct {
 	Market    *Market
 	Learning  *Learning
 	Storage   *Storage
+	UI        *UI
+	Workbench *Workbench
 }
 
 func NewConfig() *Config {
@@ -41,5 +43,7 @@ func NewConfig() *Config {
 		Market:    NewMarket(),
 		Learning:  NewLearning(),
 		Storage:   NewStorage(),
+		UI:        NewUI(),
+		Workbench: NewWorkbench(),
 	}
 }

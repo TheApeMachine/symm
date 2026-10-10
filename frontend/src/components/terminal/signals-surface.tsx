@@ -2,9 +2,9 @@ import { DEFAULT_KERNELS } from "#/collections/app";
 import { SignalDetail } from "#/components/kernel/detail";
 import { CrossSectionPanel } from "#/components/terminal/cross-section-panel";
 import { HealthPanel } from "#/components/terminal/health";
-import { KernelList } from "#/components/terminal/kernel-list";
 import { orderedKernelSources } from "#/components/terminal/kernel-meta";
 import { RadarPanel } from "#/components/terminal/regime-radar";
+import { Metric } from "#/components/ui";
 
 /*
 signalsSurfaceSources merges configured kernels with discovered backend sources
@@ -36,7 +36,9 @@ export const SignalsSurface = () => {
 				<div className="shrink-0 border-(--line) border-b bg-(--surface) px-3 py-2.5 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 					Kernels
 				</div>
-				<KernelList sources={kernels} compact />
+				{kernels.map((kernel) => (
+					<Metric key={kernel} name={kernel} compact />
+				))}
 			</div>
 			<div className="min-h-0 overflow-auto bg-(--bg)">
 				<SignalDetail />

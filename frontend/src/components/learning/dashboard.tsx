@@ -8,12 +8,13 @@ import {
 	signals,
 } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
+import { memoizedQuery, renderValue } from "#/components/ui/dom";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
 import { hubBaseUrl } from "#/lib/hub";
-import { cn, memoizedQuery, renderValue } from "#/lib/utils";
+import { cn } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { CandidatePanel, ImpulsePanel, InfluencePanel } from "./decision-panel";
 import { Explain } from "./explain";
@@ -1119,21 +1120,21 @@ export const LearningDashboard = () => {
 					</span>
 				</Flex.Row>
 				<Flex.Row align="center" gap={3}>
-					<Flex.Row align="center" className="gap-1.5">
+					<Flex.Row align="center" gap={1}>
 						<span className="text-(--f4)">Boundaries:</span>
 						<span data-l="abc-markers" className="text-(--f2)">
 							A: {abcMarkers.a} · B: {abcMarkers.b} · C: {abcMarkers.c}
 						</span>
 					</Flex.Row>
 					<div className="h-2.5 w-px bg-(--line)" />
-					<Flex.Row align="center" className="gap-1.5">
+					<Flex.Row align="center" gap={1}>
 						<span className="text-(--f4)">Pre-Outcome Prediction:</span>
 						<span data-l="frozen-prediction" className="text-(--acc) font-bold">
 							{frozenPrediction}
 						</span>
 					</Flex.Row>
 					<div className="h-2.5 w-px bg-(--line)" />
-					<Flex.Row align="center" className="gap-1.5">
+					<Flex.Row align="center" gap={1}>
 						<span className="text-(--f4)">Delayed Label:</span>
 						<span data-l="delayed-label" className="text-(--f1) font-bold">
 							{delayedOutcome}

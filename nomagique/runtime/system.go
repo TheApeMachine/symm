@@ -28,7 +28,6 @@ type System struct {
 	closers []io.Closer
 }
 
-
 func NewSystem(
 	ctx context.Context,
 	name string,

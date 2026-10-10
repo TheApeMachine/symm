@@ -6,8 +6,13 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/nomagique/data"
 )
+
+type DrainSource interface {
+	Pending() int
+	Pop() *data.Measurement
+}
 
 const (
 	maxDrainConsecutiveFailures = 10
@@ -22,7 +27,7 @@ const (
 func (catalog *Catalog) Drain(
 	ctx context.Context,
 	epoch int64,
-	tee *hindsight.StoreTee,
+	tee DrainSource,
 ) error {
 	if catalog == nil || tee == nil {
 		return nil
