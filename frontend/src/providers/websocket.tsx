@@ -18,16 +18,15 @@ import {
 	updateClock,
 	updateEquity,
 } from "#/collections/app";
-
+import { topologyStore } from "#/collections/topology";
+import { DecisionT } from "#/providers/telemetry/telemetry/decision";
 import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 import { Frame } from "#/providers/telemetry/telemetry/frame";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
 import { Message } from "#/providers/telemetry/telemetry/message";
 import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
-import { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
 import { TickFrame } from "#/providers/telemetry/telemetry/tick-frame";
-import { topologyStore } from "#/collections/topology";
 
 let globalWsWorkers: Worker[] = [];
 
@@ -57,10 +56,7 @@ const defaultWsUrls = (): string[] => {
 	}
 	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 	const host = window.location.hostname || "127.0.0.1";
-	return [
-		`${protocol}//${host}:8765/ws/0`,
-		`${protocol}//${host}:8765/ws/1`,
-	];
+	return [`${protocol}//${host}:8765/ws/0`, `${protocol}//${host}:8765/ws/1`];
 };
 
 /*
@@ -150,6 +146,49 @@ export function dispatchMeasurements(frame: MeasurementsFrame) {
 
 		ring.add(row.unpack());
 		pendingSources.add(source);
+
+		if (source === "training" && symbol) {
+			let decisionAction = "";
+			let decisionReason = "";
+			let decisionConfidence = 0;
+			let tokenPath = "";
+
+			const provCount = row.provenanceLength();
+			for (let pIdx = 0; pIdx < provCount; pIdx++) {
+				const p = row.provenance(pIdx);
+				if (!p) continue;
+				const name = p.name();
+				const val = p.value() ?? "";
+				if (name === "decision_action") decisionAction = val;
+				if (name === "decision_reason") decisionReason = val;
+				if (name === "token_path") tokenPath = val;
+			}
+
+			const metaCount = row.metadataLength();
+			for (let mIdx = 0; mIdx < metaCount; mIdx++) {
+				const m = row.metadata(mIdx);
+				if (!m) continue;
+				const name = m.name();
+				const val = m.value();
+				if (name === "decision_confidence") decisionConfidence = val;
+			}
+
+			if (decisionAction) {
+				const decision = new DecisionT();
+				decision.id = `dec-${symbol}`;
+				decision.symbol = symbol;
+				decision.action = decisionAction;
+				decision.reason = decisionReason;
+				decision.confidence = decisionConfidence;
+				decision.at = row.at();
+				decision.cause = tokenPath;
+
+				const current = decisionsAtom.get();
+				const next = current.filter((d) => d.symbol !== symbol);
+				next.push(decision);
+				decisionsAtom.set(next);
+			}
+		}
 	}
 
 	if (pendingSources.size > 0) {
@@ -238,7 +277,9 @@ export const WsFeed = () => {
 							const frameType = message.frameType();
 
 							if (frameType === Frame.MeasurementsFrame) {
-								const measurementsFrame = message.frame(new MeasurementsFrame());
+								const measurementsFrame = message.frame(
+									new MeasurementsFrame(),
+								);
 								if (measurementsFrame) {
 									dispatchMeasurements(measurementsFrame);
 								}
@@ -272,15 +313,6 @@ export const WsFeed = () => {
 									positionsAtom.set(unpacked.rows);
 									closedPositionsAtom.set(unpacked.closed);
 									positionCountAtom.set(unpacked.rows.length);
-								}
-								return;
-							}
-
-							if (frameType === Frame.StrategyFrame) {
-								const strategyFrame = message.frame(new StrategyFrame());
-								if (strategyFrame) {
-									const decisions = strategyFrame.unpack().decisions;
-									decisionsAtom.set(decisions);
 								}
 								return;
 							}

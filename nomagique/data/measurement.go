@@ -322,6 +322,23 @@ func (measurement *Measurement) Meta(key string) string {
 }
 
 /*
+Metadata returns the metadata entries of the Measurement.
+*/
+func (measurement *Measurement) Metadata() []*StringEntry {
+	if !measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		)))
+
+		return nil
+	}
+
+	return measurement.metadata
+}
+
+/*
 Peers returns the peers of the Measurement.
 */
 func (measurement *Measurement) Peers(peers ...*Measurement) []*Measurement {

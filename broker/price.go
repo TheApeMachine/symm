@@ -101,17 +101,12 @@ func NewPrice(
 		quotes:     &sync.Map{},
 	}
 
-	price.Transition(runtime.READY)
-
-	if err := errnie.Require(map[string]any{
-		"private":    private,
-		"instrument": instrument,
-	}); err != nil {
-		price.Error(err)
+	if private != nil && instrument != nil {
+		price.Transition(runtime.WAITING)
 		return price
 	}
 
-	price.Transition(runtime.WAITING)
+	price.Transition(runtime.READY)
 	return price
 }
 
@@ -1057,6 +1052,10 @@ func (price *Price) SellQuote(
 Tradable checks the instrument's actual quantity and notional minimums.
 */
 func (price *Price) Tradable(symbol string, quantity, unit *decimal.Decimal) bool {
+	if price == nil || price.Instrument == nil {
+		return true
+	}
+
 	pair := price.Instrument.Pair(symbol)
 
 	if pair.QtyMin == nil || pair.CostMin == nil {

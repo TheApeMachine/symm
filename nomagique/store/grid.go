@@ -29,11 +29,13 @@ var (
 )
 
 /*
-noEvidence is the region index of a frame in which no region received a
-single metric. Index 0 is never a pinned region, so the token "R00" states
-the absence explicitly instead of crediting a real region.
+NoEvidence is the region index of a frame in which no region received an
+evidenced metric (Metric.Standardizable() is true). Index 0 is never a
+pinned region, so the token "R00" states the absence explicitly instead of
+crediting a real region.
 */
-const noEvidence uint8 = 0
+const NoEvidence uint8 = 0
+const noEvidence = NoEvidence
 
 /*
 unpinned is what PinRegion answers for a (source, metric) that belongs to no

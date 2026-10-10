@@ -819,6 +819,7 @@ export const ForwardLearningViz = ({
 
 				if (
 					!tapePinned &&
+					!pinnedFragmentRef.current &&
 					(kind || hasMarks || entryIdx !== null || exitIdx !== null)
 				) {
 					setExcursionEvent({

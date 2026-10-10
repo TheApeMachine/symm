@@ -30,6 +30,7 @@ func storedTrades(tape []tapeTrade) []*data.Measurement {
 		m := data.NewMeasurement(1, "BTC/USD", "spot:trade", int64(index+1), int64(index+1),
 			&data.StringEntry{Key: "side", Value: trade.side})
 		m.At = trade.at
+		m.From = trade.at
 		out = append(out, m.Write(
 			data.NewMetric("price", trade.price, data.UnitPrice, data.TimescaleInstantaneous),
 			data.NewMetric("qty", trade.qty, data.UnitQuantity, data.TimescaleInstantaneous),
@@ -71,6 +72,7 @@ func honestCVD(tape []tapeTrade, corrupt func(index int, values map[string]float
 
 		m := data.NewMeasurement(1, "BTC/USD", "cvd", int64(100+index), int64(100+index))
 		m.At = trade.at
+		m.From = trade.at
 		metrics := make([]*data.Metric, 0, len(values))
 
 		for key, value := range values {

@@ -41,6 +41,8 @@ func TestAuditStages(t *testing.T) {
 
 		Convey("When analyzing contract integrity (Stage 0)", func() {
 			meas := data.NewMeasurement(1, "BTC/USD", "test", 1, 1)
+			meas.At = time.Now().UTC()
+			meas.From = meas.At
 			meas = meas.Write(
 				data.NewMetric("good_corr", 0.5, data.UnitCorrelation, data.TimescaleTick),
 				data.NewMetric("bad_corr", 1.45, data.UnitCorrelation, data.TimescaleTick),

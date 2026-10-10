@@ -43,14 +43,6 @@ type PositionSource interface {
 }
 
 /*
-DecisionSource supplies the latest strategy decisions for streaming to the UI.
-*/
-type DecisionSource interface {
-	DecisionsWire() *wire.StrategyFrameT
-	DecisionsVersion() uint64
-}
-
-/*
 EquitySource supplies the venue-reported cash, unrealized PnL, and equity.
 */
 type EquitySource interface {
@@ -59,11 +51,6 @@ type EquitySource interface {
 
 type CognitionSource interface {
 	CognitionTree() CognitionTreeExport
-}
-
-type FragmentsSource interface {
-	Fragments() []TrainedFragment
-	FragmentPoints(id int) ([]FragmentPoint, error)
 }
 
 /*
@@ -79,39 +66,6 @@ type LearningSource interface {
 	LearningReport() any
 }
 
-type TrainedFragment struct {
-	ID                int             `json:"id"`
-	Symbol            string          `json:"symbol"`
-	Epoch             int64           `json:"epoch"`
-	MarkA             int64           `json:"mark_a"`
-	MarkB             int64           `json:"mark_b"`
-	MarkC             int64           `json:"mark_c"`
-	EntryPrice        float64         `json:"entry_price"`
-	ExitPrice         float64         `json:"exit_price"`
-	Magnitude         float64         `json:"magnitude"`
-	Direction         string          `json:"direction"`
-	Class             string          `json:"class"`
-	Tokens            []string        `json:"tokens"`
-	Points            []FragmentPoint `json:"points"`
-	EntryIdx          int             `json:"entry_idx"`
-	ExitIdx           int             `json:"exit_idx"`
-	PredictedEntryIdx int             `json:"predicted_entry_idx"`
-	PredictedExitIdx  int             `json:"predicted_exit_idx"`
-	LearnedAt         time.Time       `json:"learned_at"`
-}
-
-/*
-FragmentPoint is one chart point of a trained fragment. Tick is the trade's
-market tick (not its sequence index); the wire name stays "seq" for the
-frontend contract.
-*/
-type FragmentPoint struct {
-	X    int     `json:"x"`
-	Y    float64 `json:"y"`
-	Tick int64   `json:"seq"`
-	Time int64   `json:"time"`
-}
-
 type Hub struct {
 	*runtime.System
 	uiTees           []*UITee
@@ -123,10 +77,8 @@ type Hub struct {
 	frontend         atomic.Pointer[websocket.Conn]
 	store            *tables.Catalog
 	positionSource   PositionSource
-	decisionSource   DecisionSource
 	equitySource     EquitySource
 	cognitionSource  CognitionSource
-	fragmentsSource  FragmentsSource
 	learningSource   LearningSource
 	lifecycleSource  LifecycleSource
 	exitHandler      func(symbol string)
@@ -159,9 +111,7 @@ func NewHub(
 	storeTee *hindsight.StoreTee,
 	equitySource EquitySource,
 	positionSource PositionSource,
-	decisionSource DecisionSource,
 	cognitionSource CognitionSource,
-	fragmentsSource FragmentsSource,
 	lifecycleSource LifecycleSource,
 	exitHandler func(symbol string),
 	uiTees ...*UITee,
@@ -182,9 +132,7 @@ func NewHub(
 		storeTee:         storeTee,
 		equitySource:     equitySource,
 		positionSource:   positionSource,
-		decisionSource:   decisionSource,
 		cognitionSource:  cognitionSource,
-		fragmentsSource:  fragmentsSource,
 		lifecycleSource:  lifecycleSource,
 		exitHandler:      exitHandler,
 		listenAddr:       viper.GetString("ui.addr"),
@@ -310,44 +258,6 @@ func NewHub(
 				payload := builder.FinishedBytes()
 
 				lastPositionsPush = time.Now()
-				return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
-			}
-
-			var lastDecisionsPush time.Time
-			var lastDecisionsVersion uint64
-
-			sendDecisions := func() error {
-				if hub.decisionSource == nil {
-					return nil
-				}
-
-				ver := hub.decisionSource.DecisionsVersion()
-				if ver != 0 && ver == lastDecisionsVersion {
-					return nil
-				}
-
-				wireFrame := hub.decisionSource.DecisionsWire()
-
-				if wireFrame == nil || len(wireFrame.Decisions) == 0 {
-					return nil
-				}
-
-				lastDecisionsVersion = ver
-
-				message := &wire.MessageT{
-					Sequence: uint64(time.Now().UnixNano()),
-					Frame: &wire.FrameT{
-						Type:  wire.FrameStrategyFrame,
-						Value: wireFrame,
-					},
-				}
-
-				builder := flatbuffers.NewBuilder(4096)
-				offset := message.Pack(builder)
-				builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
-				payload := builder.FinishedBytes()
-
-				lastDecisionsPush = time.Now()
 				return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
 			}
 
@@ -478,10 +388,6 @@ func NewHub(
 					return
 				}
 
-				if err := sendDecisions(); err != nil {
-					return
-				}
-
 				if err := sendEquity(); err != nil {
 					return
 				}
@@ -514,12 +420,6 @@ func NewHub(
 				if shard == 0 {
 					if time.Since(lastPositionsPush) >= 200*time.Millisecond {
 						if err := sendPositions(); err != nil {
-							return
-						}
-					}
-
-					if time.Since(lastDecisionsPush) >= 1000*time.Millisecond {
-						if err := sendDecisions(); err != nil {
 							return
 						}
 					}

@@ -7,12 +7,11 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
@@ -21,6 +20,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/store"
 	symm "github.com/theapemachine/symm/system"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"github.com/theapemachine/symm/ui"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -42,14 +42,9 @@ type Training struct {
 	keys             []string
 	confidence       int
 	paths            map[string]*livePath
-	mu               sync.Mutex
-	decisions        map[string]*wire.DecisionT
-	decisionsVersion atomic.Uint64
 	blobs            blobReader
 	statsMu          sync.Mutex
 	stats            map[string]*pathStats
-	tree             treeCache
-	fragments        fragmentLog
 }
 
 /*
@@ -75,6 +70,7 @@ Stored path actions: the final segment of every key.
 const (
 	actionEnter = "enter.json"
 	actionExit  = "exit.json"
+	actionNoop  = "noop.json"
 )
 
 /*
@@ -139,7 +135,6 @@ func NewTraining(
 		storeTee:  storeTee,
 		grid:      store.NewGrid(),
 		paths:     make(map[string]*livePath),
-		decisions: make(map[string]*wire.DecisionT),
 		stats:     make(map[string]*pathStats),
 	}
 
@@ -199,14 +194,40 @@ func NewTraining(
 }
 
 /*
+CognitionTree exports the stored S3 token prefixes for the learning dashboard.
+*/
+func (training *Training) CognitionTree() ui.CognitionTreeExport {
+	return ui.CognitionTreeExport{
+		Keys: training.keys,
+	}
+}
+
+/*
 Step receives the live market Measurement, turns it into the symbol's region
 token, and advances that symbol's live token path.
 */
 func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	regions := training.grid.RegionScores(prior)
-	training.advance(prior.Label, string(regions.Token()), prior.At)
+	next := prior.Next(training.Name(), regionMetrics(regions))
 
-	return prior.Next(training.Name(), regionMetrics(regions))
+	if regions.Winner == store.NoEvidence {
+		return next
+	}
+
+	action, reason, path, depth := training.advance(prior.Label, string(regions.Token()), prior.At)
+
+	if path != "" {
+		next.SetMeta("token_path", path)
+		next.SetMeta("token_depth", strconv.Itoa(depth))
+	}
+
+	if action != "" {
+		next.SetMeta("decision_action", action)
+		next.SetMeta("decision_reason", fmt.Sprintf("path=%s depth=%d %s", path, depth, reason))
+		next.SetMeta("decision_confidence", strconv.Itoa(depth))
+	}
+
+	return next
 }
 
 /*
@@ -241,7 +262,7 @@ paths. No match restarts the path from token. Matches that all end in one action
 on a path of at least the minimum confidence take that action and reset the
 path. Matches that disagree, or agree on a shorter path, keep accumulating.
 */
-func (training *Training) advance(symbol, token string, at time.Time) {
+func (training *Training) advance(symbol, token string, at time.Time) (string, string, string, int) {
 	live, ok := training.paths[symbol]
 
 	if !ok {
@@ -250,7 +271,7 @@ func (training *Training) advance(symbol, token string, at time.Time) {
 	}
 
 	if live.last == token {
-		return
+		return "", "", strings.Join(live.tokens, "/"), len(live.tokens)
 	}
 
 	live.last = token
@@ -262,7 +283,7 @@ func (training *Training) advance(symbol, token string, at time.Time) {
 	live.tokens = append(live.tokens, token)
 	// A path longer than any stored key can be a prefix of matches nothing;
 	// it keeps its most recent tokens, the same rule Train stores by.
-	live.tokens = live.tokens[fitFrom(live.tokens, min(len(actionEnter), len(actionExit))):]
+	live.tokens = live.tokens[fitFrom(live.tokens, min(len(actionEnter), len(actionExit), len(actionNoop))):]
 	candidates := training.match(live.tokens)
 
 	if len(candidates) == 0 && len(live.tokens) > 1 {
@@ -271,34 +292,33 @@ func (training *Training) advance(symbol, token string, at time.Time) {
 		candidates = training.match(live.tokens)
 	}
 
-	path := strings.Join(live.tokens, "/")
-
 	if len(candidates) == 0 {
+		failed := strings.Join(live.tokens, "/")
 		live.tokens = nil
-		training.decide(symbol, "reset", path, candidates, at, "no stored path starts with "+path)
-		return
+		return "reset", "no stored path starts with " + failed, "", 0
 	}
+
+	path := strings.Join(live.tokens, "/")
+	depth := len(live.tokens)
 
 	actions := keyActions(candidates)
 
 	if len(actions) > 1 {
-		training.decide(symbol, "accumulate", path, candidates, at, "stored paths disagree on the action")
-		return
+		return "accumulate", "stored paths disagree on the action", path, depth
 	}
 
 	if len(live.tokens) < training.confidence {
-		training.decide(symbol, "accumulate", path, candidates, at, fmt.Sprintf(
+		return "accumulate", fmt.Sprintf(
 			"stored paths agree on %s below minimum confidence %d", actions[0].Name, training.confidence,
-		))
-
-		return
+		), path, depth
 	}
 
 	match := training.matched(actions, path, len(live.tokens), candidates, at, at.Sub(live.since))
 	live.tokens = nil
-	training.decide(symbol, actions[0].Name, path, candidates, at, training.act(
-		symbol, actions[0].Name, path, candidates, at, at.Sub(live.since), match,
-	))
+	action := actions[0].Name
+	reason := training.act(symbol, action, candidates, match)
+
+	return action, reason, path, depth
 }
 
 /*
@@ -315,7 +335,9 @@ blobs, so it is sized off the market path and its outcome replaces this
 decision's reason when it is known.
 */
 func (training *Training) act(
-	symbol, action, path string, candidates []string, at time.Time, span time.Duration, match broker.Match,
+	symbol, action string,
+	candidates []string,
+	match broker.Match,
 ) string {
 	state := training.desk.State(symbol)
 
@@ -328,12 +350,10 @@ func (training *Training) act(
 		go func() {
 			edge := training.edge(candidates)
 			edge.Match = &match
-			result := outcome(training.desk.Enter(symbol, edge))
 
-			training.decide(symbol, action, path, candidates, at, fmt.Sprintf(
-				"%s (sized from %d matched gains, %d durations, path span %s)",
-				result, len(edge.Gains), len(edge.Holds), span,
-			))
+			if err := training.desk.Enter(symbol, edge); err != nil {
+				errnie.Error(err)
+			}
 		}()
 
 		return "sizing entry"
@@ -348,6 +368,8 @@ func (training *Training) act(
 		}
 
 		return "ignored: no filled position to exit"
+	case "noop":
+		return "noop: matched unpromising precursor"
 	}
 
 	errnie.Error(errnie.Err(
@@ -363,7 +385,12 @@ lifecycle: the confidence is the path length in tokens, the threshold the
 configured minimum.
 */
 func (training *Training) matched(
-	actions []*wire.NamedNumberT, path string, tokens int, candidates []string, at time.Time, span time.Duration,
+	actions []*wire.NamedNumberT,
+	path string,
+	tokens int,
+	candidates []string,
+	at time.Time,
+	span time.Duration,
 ) broker.Match {
 	counts := make(map[string]int, len(actions))
 
@@ -472,6 +499,12 @@ func excursionStats(excursion *data.Measurement) []byte {
 	body, err := json.Marshal(stats)
 
 	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"[training] failed to marshal path statistics",
+			err,
+		))
+
 		return []byte("{}")
 	}
 
@@ -537,56 +570,7 @@ func sortedKeys(listing iter.Seq2[string, error]) ([]string, error) {
 	return keys, nil
 }
 
-/*
-decide publishes the symbol's latest matching decision for the UI.
-*/
-func (training *Training) decide(
-	symbol, action, path string, candidates []string, at time.Time, reason string,
-) {
-	decision := &wire.DecisionT{
-		Id:           uuid.NewString(),
-		Action:       action,
-		Symbol:       symbol,
-		At:           at.UnixNano(),
-		Alternatives: keyActions(candidates),
-		Confidence:   float64(strings.Count(path, "/") + 1),
-		Cause:        path,
-		Reason:       fmt.Sprintf("path=%s candidates=%d %s", path, len(candidates), reason),
-	}
 
-	training.mu.Lock()
-	training.decisions[symbol] = decision
-	training.mu.Unlock()
-
-	training.decisionsVersion.Add(1)
-}
-
-/*
-DecisionsVersion reports the monotonic revision of the matching decisions.
-*/
-func (training *Training) DecisionsVersion() uint64 {
-	return training.decisionsVersion.Load()
-}
-
-/*
-DecisionsWire exports the latest matching decision per symbol for the UI.
-*/
-func (training *Training) DecisionsWire() *wire.StrategyFrameT {
-	training.mu.Lock()
-	defer training.mu.Unlock()
-
-	decisions := make([]*wire.DecisionT, 0, len(training.decisions))
-
-	for _, decision := range training.decisions {
-		decisions = append(decisions, decision)
-	}
-
-	slices.SortFunc(decisions, func(left, right *wire.DecisionT) int {
-		return strings.Compare(left.Symbol, right.Symbol)
-	})
-
-	return &wire.StrategyFrameT{Decisions: decisions}
-}
 
 /*
 Train rehearses the stored excursions of past runs on the frozen grid in the background.
@@ -606,7 +590,7 @@ func (training *Training) Train() error {
 		trained := 0
 
 		defer func() {
-			errnie.Info(fmt.Sprintf("[training] Train finished: %d up excursions processed into token paths", trained))
+			errnie.Info(fmt.Sprintf("[training] Train finished: %d excursions processed into token paths", trained))
 		}()
 
 		for excursion := range training.catalog.Excursions(training.Context()) {
@@ -614,11 +598,21 @@ func (training *Training) Train() error {
 				continue
 			}
 
-			if excursion.Meta("type") != excursionUp {
-				training.fragments.add(excursion, nil)
-				continue
+			class := excursion.Meta("type")
+			if class == "" {
+				class = excursion.Meta("class")
 			}
-			trained++
+			if class == "" {
+				class = excursion.Meta("direction")
+			}
+			isUp := strings.EqualFold(class, excursionUp)
+			fragments := [][]string{{"start_tick", "b_tick"}}
+			actions := [][]byte{[]byte(actionNoop)}
+
+			if isUp {
+				fragments = [][]string{{"start_tick", "b_tick"}, {"b_tick", "c_tick"}}
+				actions = [][]byte{[]byte(actionEnter), []byte(actionExit)}
+			}
 
 			group, ctx := errgroup.WithContext(training.Context())
 
@@ -629,9 +623,9 @@ func (training *Training) Train() error {
 				default:
 				}
 
-				tokens := [2][][]byte{}
+				tokens := make([][][]byte, len(fragments))
 
-				for idx, fragment := range [][]string{{"start_tick", "b_tick"}, {"b_tick", "c_tick"}} {
+				for idx, fragment := range fragments {
 					ticks := make(map[int64][]*data.Measurement)
 
 					// A fragment is the tape strictly before its end: the
@@ -714,15 +708,15 @@ func (training *Training) Train() error {
 					}
 				}
 
-				precursor := make([]string, 0, len(tokens[0]))
+				precursor := make([]string, 0)
 
-				for _, token := range tokens[0][fitFrom(tokens[0], len(actionEnter)):] {
-					precursor = append(precursor, string(token))
+				if len(tokens[0]) > 0 {
+					for _, token := range tokens[0][fitFrom(tokens[0], len(actions[0])):] {
+						precursor = append(precursor, string(token))
+					}
 				}
 
-				training.fragments.add(excursion, precursor)
-
-				for idx, action := range [][]byte{[]byte(actionEnter), []byte(actionExit)} {
+				for idx, action := range actions {
 					// Only the most recent tokens before the fragment end
 					// that fit one object key are stored, as Step keeps.
 					tokens[idx] = tokens[idx][fitFrom(tokens[idx], len(action)):]
@@ -750,6 +744,8 @@ func (training *Training) Train() error {
 					err,
 				))
 			}
+
+			trained++
 		}
 	}()
 

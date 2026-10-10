@@ -576,6 +576,8 @@ func AnalyzeCognitiveTrie(
 					symMeas[0].SeqIdx,
 					tickVal,
 				)
+				train.At = symMeas[0].At
+				train.From = symMeas[0].From
 				train.Peers(symMeas...)
 				train.Write()
 

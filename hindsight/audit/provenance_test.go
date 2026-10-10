@@ -2,13 +2,17 @@ package audit
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func storedDetection(class string, b, c float64) *data.Measurement {
-	return data.NewMeasurement(1, "BTC/USD", "detector", 1, 1, &data.StringEntry{Key: "type", Value: class}).Write(
+	m := data.NewMeasurement(1, "BTC/USD", "detector", 1, 1, &data.StringEntry{Key: "type", Value: class})
+	m.At = time.Unix(100, 0).UTC()
+	m.From = m.At
+	return m.Write(
 		data.NewMetric("b_price", b, data.UnitPrice, data.TimescaleTick),
 		data.NewMetric("c_price", c, data.UnitPrice, data.TimescaleTick),
 	)

@@ -58,22 +58,42 @@ before anything is written.
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		if len(detectEpochs) == 0 {
-			return errnie.Error(errnie.Err(errnie.Validation, "[detect] at least one --epoch is required", nil))
-		}
-
 		catalog := tables.Open(ctx)
 
 		if catalog == nil {
 			return errnie.Error(errnie.Err(errnie.Validation, "[detect] unable to open iceberg catalog", nil))
 		}
 
-		if detectCensus {
-			return detectCensusReport(ctx, catalog)
+		if len(detectEpochs) == 0 {
+			runs, err := catalog.Runs(ctx)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"[detect] failed to read recorded runs from catalog",
+					err,
+				))
+			}
+
+			for _, run := range runs {
+				if run.Epoch > 0 && !slices.Contains(detectEpochs, run.Epoch) {
+					detectEpochs = append(detectEpochs, run.Epoch)
+				}
+			}
+
+			if len(detectEpochs) == 0 {
+				return errnie.Error(errnie.Err(
+					errnie.NotFound,
+					"[detect] no completed epochs found in catalog",
+					nil,
+				))
+			}
+
+			slices.Sort(detectEpochs)
 		}
 
-		if len(detectSymbols) == 0 {
-			return errnie.Error(errnie.Err(errnie.Validation, "[detect] --symbols is required", nil))
+		if detectCensus {
+			return detectCensusReport(ctx, catalog)
 		}
 
 		if !cmd.Flags().Changed("min-move-duration") || detectMinMove < 0 {
@@ -82,6 +102,43 @@ before anything is written.
 				"[detect] --min-move-duration is required (e.g. 1s; 0s keeps every detection)",
 				nil,
 			))
+		}
+
+		if len(detectSymbols) == 0 {
+			symbolSet := make(map[string]struct{})
+			epochsWithTrades := make([]int64, 0, len(detectEpochs))
+
+			for _, epoch := range detectEpochs {
+				counts, err := catalog.TradeCounts(ctx, epoch)
+
+				if err != nil {
+					return errnie.Error(err)
+				}
+
+				if len(counts) > 0 {
+					epochsWithTrades = append(epochsWithTrades, epoch)
+
+					for symbol := range counts {
+						symbolSet[symbol] = struct{}{}
+					}
+				}
+			}
+
+			for symbol := range symbolSet {
+				detectSymbols = append(detectSymbols, symbol)
+			}
+
+			slices.Sort(detectSymbols)
+
+			if len(detectSymbols) == 0 {
+				return errnie.Error(errnie.Err(
+					errnie.NotFound,
+					"[detect] no symbols found with stored trades in the specified epochs",
+					nil,
+				))
+			}
+
+			detectEpochs = epochsWithTrades
 		}
 
 		price, err := offlinePrice(ctx, detectFeePct, detectSymbols)
@@ -205,6 +262,11 @@ func detectEpoch(ctx context.Context, catalog *tables.Catalog, price *broker.Pri
 
 	if err := detector.Scan(counting); err != nil {
 		return errnie.Error(err)
+	}
+
+	if trades == 0 {
+		fmt.Printf("epoch=%d trades_scanned=0 (no trades to detect)\n", epoch)
+		return nil
 	}
 
 	if dropped := tee.Dropped(); dropped != 0 {
@@ -368,8 +430,8 @@ func detectCensusReport(ctx context.Context, catalog *tables.Catalog) error {
 }
 
 func init() {
-	detectCmd.Flags().Int64SliceVar(&detectEpochs, "epoch", nil, "Run epoch to label (repeatable)")
-	detectCmd.Flags().StringSliceVar(&detectSymbols, "symbols", nil, "Symbols to label, e.g. BTC/USD,ETH/USD")
+	detectCmd.Flags().Int64SliceVar(&detectEpochs, "epoch", nil, "Run epoch to label (repeatable; default: all completed epochs)")
+	detectCmd.Flags().StringSliceVar(&detectSymbols, "symbols", nil, "Symbols to label, e.g. BTC/USD,ETH/USD (default: all symbols observed in epochs)")
 	detectCmd.Flags().StringVar(&detectFeePct, "taker-fee-percent", "", "Taker fee in percent per side that defines friction, e.g. 0.26 (required)")
 	detectCmd.Flags().BoolVar(&detectCensus, "census", false, "Only print spot:trade counts per symbol for the epochs")
 	detectCmd.Flags().IntVar(&detectCensusTop, "top", 0, "With --census, print only the N symbols with most trades (0 = all)")

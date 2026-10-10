@@ -1,3 +1,5 @@
+import { useSelector } from "@tanstack/react-store";
+import { useEffect, useRef, useState } from "react";
 import {
 	DEFAULT_FOCUS_SYMBOL,
 	focusAtom,
@@ -13,21 +15,23 @@ import { Typography } from "#/components/ui/typography";
 import { hubBaseUrl } from "#/lib/hub";
 import { cn, memoizedQuery, renderValue } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef, useState } from "react";
 import { CandidatePanel, ImpulsePanel, InfluencePanel } from "./decision-panel";
 import { Explain } from "./explain";
 import { action, basis, clock, outcome, percent, prediction } from "./format";
 import { ForwardLearningViz } from "./forward-learning-viz";
 import { ImpulseMapViz } from "./impulse-map-viz";
 import { KnowledgePanel } from "./knowledge-panel";
-import { ImpulseMap, type Point, type Region } from "./map";
 import { LifecycleView } from "./lifecycle-view";
+import { ImpulseMap, type Point, type Region } from "./map";
 import { LearningPerformanceBanner } from "./performance-banner";
 import { RadixTreeViz } from "./radix-tree-viz";
 import { RecognitionPanel } from "./recognition-panel";
 import { SkillPanel } from "./skill-panel";
-import type { CognitionTreeResponse, ImpulseNode } from "./types";
+import type {
+	CognitionTreeResponse,
+	ImpulseNode,
+	SymbolProgress,
+} from "./types";
 import { LearningVisualizer } from "./visualizer";
 
 export type Tab =
@@ -45,20 +49,6 @@ const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "cognitive", label: "Cognitive tree" },
 	{ key: "impulse", label: "Impulse map" },
 ];
-
-const getTrainingRing = (
-	records: Record<string, RingBuffer<MeasurementT>> | undefined,
-	focus: string,
-): RingBuffer<MeasurementT> | null => {
-	if (!records) return null;
-	return (
-		records[focus] ??
-		records.learner ??
-		records[""] ??
-		Object.values(records)[0] ??
-		null
-	);
-};
 
 export const LearningDashboard = () => {
 	const focusSymbol = useSelector(focusAtom, (state) => state);
@@ -97,6 +87,9 @@ export const LearningDashboard = () => {
 	// Real Radix Tree data from backend
 	const [treeResponse, setTreeResponse] =
 		useState<CognitionTreeResponse | null>(null);
+	const [symbolPaths, setSymbolPaths] = useState<
+		Record<string, SymbolProgress>
+	>({});
 
 	// Listen to open positions count
 	useEffect(() => {
@@ -334,6 +327,8 @@ export const LearningDashboard = () => {
 
 				let parsedTokens: string[] = [];
 				let direction = "";
+				let liveTokenPath = "";
+				let liveTokenDepth = 0;
 				if (measurement.provenance) {
 					for (const p of measurement.provenance) {
 						if (p?.name === "precursor_tokens" && p.value) {
@@ -341,6 +336,9 @@ export const LearningDashboard = () => {
 						}
 						if (p?.name === "excursion_direction" && p.value) {
 							direction = String(p.value);
+						}
+						if (p?.name === "token_path" && p.value) {
+							liveTokenPath = String(p.value);
 						}
 					}
 				}
@@ -356,7 +354,34 @@ export const LearningDashboard = () => {
 						if (m?.name === "excursion_direction" && m.value) {
 							direction = String(m.value);
 						}
+						if (m?.name === "token_path" && m.value) {
+							liveTokenPath = String(m.value);
+						}
+						if (m?.name === "token_depth" && m.value !== undefined) {
+							liveTokenDepth = Number(m.value) || 0;
+						}
 					}
+				}
+
+				const sym = String(measurement.symbol ?? "");
+				if (sym && liveTokenPath) {
+					setSymbolPaths((prev) => {
+						if (
+							prev[sym]?.path === liveTokenPath &&
+							prev[sym]?.depth === liveTokenDepth
+						) {
+							return prev;
+						}
+						return {
+							...prev,
+							[sym]: {
+								symbol: sym,
+								path: liveTokenPath,
+								depth: liveTokenDepth || liveTokenPath.split("/").length,
+								tokens: liveTokenPath.split("/"),
+							},
+						};
+					});
 				}
 
 				const namedOutcome = outcome(direction, extVal);
@@ -529,7 +554,10 @@ export const LearningDashboard = () => {
 					}
 				}
 
-				if (metricMap.grid_cells !== undefined || metricMap.grid_regions !== undefined) {
+				if (
+					metricMap.grid_cells !== undefined ||
+					metricMap.grid_regions !== undefined
+				) {
 					const cells = metricMap.grid_cells;
 					const regions = metricMap.grid_regions;
 					setGridTotals((held) =>
@@ -724,7 +752,10 @@ export const LearningDashboard = () => {
 
 					let litRegions = [...activeRegionIds].map((id) => {
 						const known = regionById.get(id);
-						const peakStrength = regionStrengthMap.get(id) ?? known?.strength ?? (litFromTokens.has(id) ? 1.0 : 0);
+						const peakStrength =
+							regionStrengthMap.get(id) ??
+							known?.strength ??
+							(litFromTokens.has(id) ? 1.0 : 0);
 						return {
 							id,
 							strength: peakStrength,
@@ -964,13 +995,77 @@ export const LearningDashboard = () => {
 			root.dataset.dropped = String(cursor.dropped);
 		};
 
-		const initial = getTrainingRing(signals.training?.state, focusSymbol);
+		const initial = signals.training?.state?.[focusSymbol];
 		if (initial) {
 			update(initial);
 		}
 
 		const unsubTraining = signals.training.subscribe((state) => {
-			const activeRing = getTrainingRing(state, focusSymbol);
+			for (const [sym, ring] of Object.entries(state)) {
+				if (
+					ring &&
+					typeof ring.getBufferLength === "function" &&
+					ring.getBufferLength() > 0
+				) {
+					const latest = ring.get(ring.getBufferLength() - 1);
+					if (latest) {
+						let path = "";
+						let depth = 0;
+						let action = "";
+
+						if (latest.provenance) {
+							for (const p of latest.provenance) {
+								if (p?.name === "token_path" && p.value) {
+									path = String(p.value);
+								}
+
+								if (p?.name === "decision_action" && p.value) {
+									action = String(p.value);
+								}
+							}
+						}
+
+						if (latest.metadata) {
+							for (const m of latest.metadata) {
+								if (m?.name === "token_depth" && m.value !== undefined) {
+									depth = Number(m.value) || 0;
+								}
+							}
+						}
+
+						if (action === "reset" || !path || depth === 0) {
+							setSymbolPaths((prev) => {
+								if (!prev[sym]) {
+									return prev;
+								}
+
+								const next = { ...prev };
+								delete next[sym];
+								return next;
+							});
+							continue;
+						}
+
+						setSymbolPaths((prev) => {
+							if (prev[sym]?.path === path && prev[sym]?.depth === depth) {
+								return prev;
+							}
+
+							return {
+								...prev,
+								[sym]: {
+									symbol: sym,
+									path,
+									depth,
+									tokens: path.split("/"),
+								},
+							};
+						});
+					}
+				}
+			}
+
+			const activeRing = state[focusSymbol];
 			if (activeRing) {
 				update(activeRing);
 			}
@@ -986,7 +1081,11 @@ export const LearningDashboard = () => {
 			ref={containerRef}
 			className="h-full min-h-0 w-full bg-(--bg) text-(--f2) font-mono"
 		>
-			<div className="border-(--line) border-b bg-(--surface) px-3 py-1 flex items-center justify-between shrink-0">
+			<Flex.Row
+				align="center"
+				justify="between"
+				className="border-(--line) border-b bg-(--surface) px-3 py-1 shrink-0"
+			>
 				<Tabs size="m" className="flex-wrap">
 					{TABS.map((entry) => (
 						<Tabs.Tab
@@ -1003,66 +1102,72 @@ export const LearningDashboard = () => {
 				<div className="text-[10px] text-(--f4) font-mono max-md:hidden">
 					<span data-l="header-meta">Connecting to the workspace</span>
 				</div>
-			</div>
+			</Flex.Row>
 
 			{/* Temporal Precursor & Boundary Bar (Section 36) */}
-			<div className="border-(--line) border-b bg-(--sunken) px-3 py-1 flex items-center justify-between text-[10px] text-(--f3) shrink-0 font-mono">
-				<div className="flex items-center gap-2">
+			<Flex.Row
+				align="center"
+				justify="between"
+				className="border-(--line) border-b bg-(--sunken) px-3 py-1 text-[10px] text-(--f3) shrink-0 font-mono"
+			>
+				<Flex.Row align="center" gap={2}>
 					<span className="text-(--f4) uppercase font-bold tracking-wider">
 						Temporal Precursor:
 					</span>
 					<span data-l="temporal-precursor" className="text-(--acc) font-bold">
 						{precursorTokens.join(" → ")}
 					</span>
-				</div>
-				<div className="flex items-center gap-3">
-					<div className="flex items-center gap-1.5">
+				</Flex.Row>
+				<Flex.Row align="center" gap={3}>
+					<Flex.Row align="center" className="gap-1.5">
 						<span className="text-(--f4)">Boundaries:</span>
 						<span data-l="abc-markers" className="text-(--f2)">
 							A: {abcMarkers.a} · B: {abcMarkers.b} · C: {abcMarkers.c}
 						</span>
-					</div>
+					</Flex.Row>
 					<div className="h-2.5 w-px bg-(--line)" />
-					<div className="flex items-center gap-1.5">
+					<Flex.Row align="center" className="gap-1.5">
 						<span className="text-(--f4)">Pre-Outcome Prediction:</span>
 						<span data-l="frozen-prediction" className="text-(--acc) font-bold">
 							{frozenPrediction}
 						</span>
-					</div>
+					</Flex.Row>
 					<div className="h-2.5 w-px bg-(--line)" />
-					<div className="flex items-center gap-1.5">
+					<Flex.Row align="center" className="gap-1.5">
 						<span className="text-(--f4)">Delayed Label:</span>
 						<span data-l="delayed-label" className="text-(--f1) font-bold">
 							{delayedOutcome}
 						</span>
-					</div>
-				</div>
-			</div>
+					</Flex.Row>
+				</Flex.Row>
+			</Flex.Row>
 
 			{/* View Panels */}
 			{tab === "forward" && (
-				<div className="flex-1 min-h-0 flex flex-col">
+				<Flex.Column className="flex-1 min-h-0">
 					<LifecycleView />
-				</div>
+				</Flex.Column>
 			)}
 
 			{tab === "historical" && (
-				<div className="flex-1 min-h-0 flex flex-col">
+				<Flex.Column className="flex-1 min-h-0">
 					<ForwardLearningViz tapeSource="historical" />
-				</div>
+				</Flex.Column>
 			)}
 
 			{tab === "cognitive" && (
-				<div className="flex-1 min-h-0 flex flex-col">
+				<Flex.Column className="flex-1 min-h-0">
 					<RadixTreeViz
 						data={treeResponse?.root}
+						keys={treeResponse?.keys}
+						symbols={symbolPaths}
 						feasible={treeResponse?.feasible ?? []}
 					/>
-				</div>
+				</Flex.Column>
 			)}
 
 			{tab === "impulse" && (
-				<div className="flex-1 min-h-0 flex flex-col">
+				<Flex.Column className="flex-1 min-h-0">
 					<ImpulseMapViz
 						data={impulseNodes}
 						regions={impulseRegions}
@@ -1070,13 +1175,13 @@ export const LearningDashboard = () => {
 						gridCells={gridTotals.cells}
 						gridRegions={gridTotals.regions}
 					/>
-				</div>
+				</Flex.Column>
 			)}
 
 			{/* Classic Views container: Always rendered in the DOM for test element querying */}
-			<div
+			<Flex.Column
 				className={cn(
-					"min-h-0 flex-1 flex flex-col",
+					"min-h-0 flex-1",
 					tab === "recognition" || tab === "decision" || tab === "influence"
 						? "flex"
 						: "hidden",
@@ -1090,14 +1195,14 @@ export const LearningDashboard = () => {
 							meta={<span data-l="status-meta">learning</span>}
 						/>
 
-						<div className="flex h-100 max-h-[80vh] min-h-40 shrink-0 resize-y overflow-hidden border-(--line) border-b max-2xl:h-auto max-2xl:resize-none max-2xl:flex-col">
+						<Flex.Row className="h-100 max-h-[80vh] min-h-40 shrink-0 resize-y overflow-hidden border-(--line) border-b max-2xl:h-auto max-2xl:resize-none max-2xl:flex-col">
 							<div className="w-100 shrink-0 border-(--line) border-r max-2xl:h-85 max-2xl:w-full max-2xl:border-r-0 max-2xl:border-b">
 								<ImpulseMap className="h-full w-full" />
 							</div>
 							<div className="min-w-0 flex-1 bg-(--surface) max-2xl:h-85">
 								<LearningVisualizer className="h-full w-full" />
 							</div>
-						</div>
+						</Flex.Row>
 
 						<div className={tab === "decision" ? "" : "hidden"}>
 							<ImpulsePanel />
@@ -1132,12 +1237,12 @@ export const LearningDashboard = () => {
 								<Explain>One row per recorded moment, newest last.</Explain>
 							</Section.Header>
 							<Section.Body scroll={false}>
-								<div data-l="activity-list" className="flex flex-col" />
+								<Flex.Column data-l="activity-list" />
 							</Section.Body>
 						</Section>
 					</Flex.Column>
 				</Flex>
-			</div>
+			</Flex.Column>
 		</Flex.Column>
 	);
 };

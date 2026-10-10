@@ -3,11 +3,13 @@ import type * as d3 from "d3";
 export interface TrieNodeData {
 	id: string;
 	prefix: string;
-	probability: number;
+	token?: string;
+	action?: string;
+	probability?: number;
 	stepProbability?: number;
 	tokens?: string[];
-	state?: "EVALUATED" | "POLICY CHOICE" | "ESTIMATED";
 	isEnd?: boolean;
+	isTerminal?: boolean;
 	children?: TrieNodeData[];
 	_children?: TrieNodeData[];
 }
@@ -51,6 +53,7 @@ export interface FeasibleAction {
 }
 
 export interface CognitionTreeResponse {
+	keys?: string[];
 	root: TrieNodeData | null;
 	branches: TrieBranch[];
 	feasible: FeasibleAction[];
@@ -76,4 +79,11 @@ export interface LearningActivityEntry {
 	message: string;
 	pnl: number;
 	action: string;
+}
+
+export interface SymbolProgress {
+	symbol: string;
+	path: string;
+	depth: number;
+	tokens: string[];
 }

@@ -35,9 +35,15 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 	sb.WriteString("---\n\n")
 	sb.WriteString("### Stage 0: Declared mathematical contracts\n\n")
 	sb.WriteString(fmt.Sprintf(
-		"- Series checked: `%d`\n- Series with hard-domain breaches: `%d`\n- Breach observations: `%d`\n\n",
+		"- Series checked: `%d`\n"+
+			"- Hard-domain breaches: `%d` series (`%d` observations)\n"+
+			"- Standardized z-score bound breaches: `%d` observations beyond Chebyshev bound |z| <= sqrt(N/%.2f) (max |z|=`%.2f`, saturated=`%.1f%%`)\n"+
+			"- Normalization breaches: `%d`, Standardization breaches: `%d`\n\n",
 		report.Contract.TotalMetricsChecked, report.Contract.BreachingMetricsCount,
 		report.Contract.TotalBreaches,
+		report.Contract.MetricNorm.ZMagnitudeBreaches, report.Thresholds.Significance,
+		report.Contract.MetricNorm.MaxAbsoluteZ, report.Contract.MetricNorm.SaturatedNormFraction*100,
+		report.Contract.MetricNorm.NormalizationBreaches, report.Contract.MetricNorm.StandardizationBreaches,
 	))
 	if len(report.Contract.Breaches) > 0 {
 		sb.WriteString("| Metric | Unit | Declared domain | Observed range | Breaches |\n")

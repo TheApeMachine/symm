@@ -100,28 +100,25 @@ func measurementToWire(
 		provenance = data.AppendA(provenance, namedString, alloc)
 	}
 
-	for _, key := range []string{"type", "order_id", "side", "event", "checksum", "ord_type", "trade_id", "status", "peer"} {
-		val := measurement.Meta(key)
-
-		if val == "" {
+	for _, entry := range measurement.Metadata() {
+		if entry == nil || entry.Key == "" {
 			continue
 		}
 
-		floatVal, err := strconv.ParseFloat(val, 64)
+		floatVal, parseErr := strconv.ParseFloat(entry.Value, 64)
 
-		if err == nil {
+		if parseErr == nil {
 			namedNumber := data.New[wire.NamedNumberT](alloc)
-			namedNumber.Name = key
+			namedNumber.Name = entry.Key
 			namedNumber.Value = floatVal
 			metadata = data.AppendA(metadata, namedNumber, alloc)
+			continue
 		}
 
-		if err != nil {
-			namedString := data.New[wire.NamedStringT](alloc)
-			namedString.Name = key
-			namedString.Value = val
-			provenance = data.AppendA(provenance, namedString, alloc)
-		}
+		namedString := data.New[wire.NamedStringT](alloc)
+		namedString.Name = entry.Key
+		namedString.Value = entry.Value
+		provenance = data.AppendA(provenance, namedString, alloc)
 	}
 
 	var peers []*wire.MeasurementT
@@ -220,4 +217,3 @@ func PackMeasurementsFrame(rows []*wire.MeasurementT) []byte {
 
 	return append([]byte{}, builder.FinishedBytes()...)
 }
-

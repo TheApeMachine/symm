@@ -1,14 +1,15 @@
 import * as d3 from "d3";
-import { SlidersHorizontal, Zap } from "lucide-react";
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "#/lib/utils";
-import type { FeasibleAction, TrieNodeData } from "./types";
+import type { FeasibleAction, SymbolProgress, TrieNodeData } from "./types";
 
 type TreeNode = d3.HierarchyPointNode<TrieNodeData>;
 type TreeLink = d3.HierarchyPointLink<TrieNodeData>;
 
 interface RadixTreeVizProps {
 	data?: TrieNodeData | null;
+	keys?: string[] | null;
+	symbols?: Record<string, SymbolProgress> | null;
 	feasible?: FeasibleAction[] | null;
 	minProbability?: number;
 	colorMode?: "threshold" | "gradient";
@@ -19,42 +20,128 @@ interface RadixTreeVizProps {
 	className?: string;
 }
 
-const filterTree = (
-	node: TrieNodeData,
-	minProb: number,
-): TrieNodeData | null => {
-	if (node.probability < minProb) return null;
-	const filteredNode = { ...node };
+const INBETWEEN_HEIGHT = 24;
+const INBETWEEN_WIDTH = INBETWEEN_HEIGHT;
+const TERMINAL_WIDTH = 64;
+const TERMINAL_HEIGHT = 26;
+const ROOT_WIDTH = 44;
+const ROOT_HEIGHT = 24;
 
-	if (filteredNode.children) {
-		filteredNode.children = filteredNode.children
-			.map((child) => filterTree(child, minProb))
-			.filter((child): child is TrieNodeData => child !== null);
+const isNodeRoot = (node: TreeNode) => node.data.id === "root";
+const isNodeTerminal = (node: TreeNode) =>
+	!node.data.children?.length && !node.data._children?.length;
+
+const getPorts = (
+	node: TreeNode,
+	projection: "horizontal" | "vertical" | "radial",
+) => {
+	const isRoot = isNodeRoot(node);
+	const isTerminal = isNodeTerminal(node);
+
+	if (projection === "vertical") {
+		const halfH = isRoot
+			? ROOT_HEIGHT / 2
+			: isTerminal
+				? TERMINAL_HEIGHT / 2
+				: INBETWEEN_HEIGHT / 2;
+		return {
+			parentPort: isRoot ? null : { cx: 0, cy: -halfH },
+			childPort: isTerminal ? null : { cx: 0, cy: halfH },
+		};
 	}
 
-	if (filteredNode._children) {
-		filteredNode._children = filteredNode._children
-			.map((child) => filterTree(child, minProb))
-			.filter((child): child is TrieNodeData => child !== null);
-	}
-
-	return filteredNode;
+	// horizontal
+	const halfW = isRoot
+		? ROOT_WIDTH / 2
+		: isTerminal
+			? TERMINAL_WIDTH / 2
+			: INBETWEEN_WIDTH / 2;
+	return {
+		parentPort: isRoot ? null : { cx: -halfW, cy: 0 },
+		childPort: isTerminal ? null : { cx: halfW, cy: 0 },
+	};
 };
+
+function buildTreeFromPrefixes(prefixes: string[]): TrieNodeData | null {
+	if (!prefixes || prefixes.length === 0) return null;
+
+	const root: TrieNodeData = {
+		id: "root",
+		prefix: "root",
+		token: "",
+		children: [],
+	};
+
+	let nextId = 1;
+
+	for (const key of prefixes) {
+		const parts = key.split("/").filter(Boolean);
+		if (parts.length === 0) continue;
+
+		const lastPart = parts[parts.length - 1];
+		const isAction = lastPart.endsWith(".json");
+		const action = isAction
+			? lastPart.replace(/\.json$/i, "").toUpperCase()
+			: null;
+		const regionTokens = isAction ? parts.slice(0, -1) : parts;
+		if (regionTokens.length === 0) continue;
+
+		let current = root;
+		let prefix = "";
+
+		for (const token of regionTokens) {
+			prefix = prefix ? `${prefix}/${token}` : token;
+			if (!current.children) current.children = [];
+			let child = current.children.find((c) => c.token === token);
+			if (!child) {
+				child = {
+					id: String(nextId++),
+					prefix,
+					token,
+					children: [],
+				};
+				current.children.push(child);
+			}
+			current = child;
+		}
+
+		if (action) {
+			if (!current.action || current.action === "NOOP") {
+				current.action = action;
+			}
+		}
+	}
+
+	return root;
+}
+
+function extractPrefixes(data?: TrieNodeData | null): string[] {
+	if (!data) return [];
+	const paths: string[] = [];
+
+	const walk = (node: TrieNodeData, currentPath: string[]) => {
+		const nextPath = node.token ? [...currentPath, node.token] : currentPath;
+		if (node.action && nextPath.length > 0) {
+			paths.push(`${nextPath.join("/")}/${node.action.toLowerCase()}.json`);
+		}
+		const children = [...(node.children || []), ...(node._children || [])];
+		for (const child of children) {
+			walk(child, nextPath);
+		}
+	};
+
+	walk(data, []);
+	return paths;
+}
 
 export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	data,
-	feasible: feasibleProp,
-	minProbability: externalMinProb,
-	colorMode: externalColorMode,
+	keys,
+	symbols,
 	projection: externalProjection,
-	onProbabilityChange,
 	onProjectionChange,
-	onColorModeChange,
 	className,
 }) => {
-	// A default parameter only replaces undefined; the hub serializes an
-	// empty Go slice as null.
-	const feasible = feasibleProp ?? [];
 	const svgRef = useRef<SVGSVGElement>(null);
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const zoomBehavior = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(
@@ -62,37 +149,68 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	);
 	const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
 	const [transform, setTransform] = useState<d3.ZoomTransform>(d3.zoomIdentity);
-
-	const [internalMinProb, setInternalMinProb] = useState(0.0);
-	const [internalColorMode, setInternalColorMode] = useState<
-		"threshold" | "gradient"
-	>("threshold");
 	const [internalProjection, setInternalProjection] = useState<
 		"horizontal" | "vertical" | "radial"
 	>("horizontal");
 
-	const minProbability = externalMinProb ?? internalMinProb;
-	const colorMode = externalColorMode ?? internalColorMode;
 	const projection = externalProjection ?? internalProjection;
-
 	const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-	const [tooltip, setTooltip] = useState<{
-		data: TrieNodeData;
-		x: number;
-		y: number;
-	} | null>(null);
+	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 
-	const [treeData, setTreeData] = useState<TrieNodeData | null>(() =>
-		data ? JSON.parse(JSON.stringify(data)) : null,
-	);
+	const activeSymbolList = useMemo(() => {
+		if (!symbols) return [];
+		return Object.values(symbols).filter(
+			(s): s is SymbolProgress => !!s && !!s.path && s.depth > 0,
+		);
+	}, [symbols]);
 
-	useEffect(() => {
-		if (data) {
-			setTreeData(JSON.parse(JSON.stringify(data)));
-		} else {
-			setTreeData(null);
+	// Set of all prefix paths traversed by active symbols
+	const activePathPrefixes = useMemo(() => {
+		const set = new Set<string>();
+		const list = selectedSymbol
+			? activeSymbolList.filter((s) => s.symbol === selectedSymbol)
+			: activeSymbolList;
+
+		for (const item of list) {
+			let prefix = "";
+			for (const tok of item.tokens) {
+				prefix = prefix ? `${prefix}/${tok}` : tok;
+				set.add(prefix);
+			}
 		}
-	}, [data]);
+		return set;
+	}, [activeSymbolList, selectedSymbol]);
+
+	// Map of exact prefix to symbols currently located at that node
+	const symbolPositions = useMemo(() => {
+		const map = new Map<string, SymbolProgress[]>();
+		const list = selectedSymbol
+			? activeSymbolList.filter((s) => s.symbol === selectedSymbol)
+			: activeSymbolList;
+
+		for (const item of list) {
+			const existing = map.get(item.path) || [];
+			existing.push(item);
+			map.set(item.path, existing);
+		}
+		return map;
+	}, [activeSymbolList, selectedSymbol]);
+
+	const treeData = useMemo(() => {
+		if (keys && keys.length > 0) {
+			return buildTreeFromPrefixes(keys);
+		}
+		if (data) {
+			const extracted = extractPrefixes(data);
+			if (extracted.length > 0) {
+				return buildTreeFromPrefixes(extracted);
+			}
+			return data;
+		}
+		return null;
+	}, [data, keys]);
+
+	const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
 
 	useEffect(() => {
 		const observeTarget = wrapperRef.current;
@@ -109,11 +227,6 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		resizeObserver.observe(observeTarget);
 		return () => resizeObserver.unobserve(observeTarget);
 	}, []);
-
-	const filteredTreeData = useMemo(() => {
-		if (!treeData) return null;
-		return filterTree(treeData, minProbability);
-	}, [treeData, minProbability]);
 
 	// Setup D3 Zoom
 	useEffect(() => {
@@ -132,86 +245,43 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		svg.call(zoom);
 
 		const initialTransform = d3.zoomIdentity
-			.translate(60, dimensions.height / 2)
-			.scale(0.9);
+			.translate(80, dimensions.height / 2)
+			.scale(0.85);
 		svg.call(zoom.transform, initialTransform);
 	}, [dimensions.width, dimensions.height]);
 
 	const handleNodeClick = (nodeData: TrieNodeData) => {
-		if (!treeData) return;
-
-		const toggleNode = (n: TrieNodeData): boolean => {
-			if (n.id === nodeData.id) {
-				if (n.children) {
-					n._children = n.children;
-					n.children = undefined;
-				} else if (n._children) {
-					n.children = n._children;
-					n._children = undefined;
-				}
-				return true;
+		setCollapsedIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(nodeData.id)) {
+				next.delete(nodeData.id);
+			} else {
+				next.add(nodeData.id);
 			}
-
-			let found = false;
-			if (n.children) {
-				for (let i = 0; i < n.children.length; i++) {
-					if (toggleNode(n.children[i])) found = true;
-				}
-			}
-			if (n._children && !found) {
-				for (let i = 0; i < n._children.length; i++) {
-					if (toggleNode(n._children[i])) found = true;
-				}
-			}
-			return found;
-		};
-
-		const newData = JSON.parse(JSON.stringify(treeData));
-		toggleNode(newData);
-		setTreeData(newData);
-	};
-
-	const focusBestPath = () => {
-		if (!data) return;
-		const newData: TrieNodeData = JSON.parse(JSON.stringify(data));
-
-		const expandGreedyPath = (node: TrieNodeData) => {
-			const allChildren = [...(node.children || []), ...(node._children || [])];
-			if (allChildren.length === 0) {
-				node.children = undefined;
-				node._children = undefined;
-				return;
-			}
-
-			const bestChild = allChildren.reduce(
-				(max, child) => (child.probability > max.probability ? child : max),
-				allChildren[0],
-			);
-
-			node.children = allChildren;
-			node._children = undefined;
-
-			for (const child of node.children) {
-				if (child.id === bestChild.id) {
-					expandGreedyPath(child);
-				} else {
-					const cAll = [...(child.children || []), ...(child._children || [])];
-					if (cAll.length > 0) {
-						child._children = cAll;
-						child.children = undefined;
-					}
-				}
-			}
-		};
-
-		expandGreedyPath(newData);
-		setTreeData(newData);
+			return next;
+		});
 	};
 
 	const { nodes, links } = useMemo(() => {
-		if (!filteredTreeData) return { nodes: [], links: [] };
+		if (!treeData) return { nodes: [], links: [] };
 
-		const root = d3.hierarchy<TrieNodeData>(filteredTreeData);
+		// Clone and apply collapsing
+		const prepareHierarchy = (n: TrieNodeData): TrieNodeData => {
+			const isCollapsed = collapsedIds.has(n.id);
+			const copy: TrieNodeData = { ...n };
+			if (n.children && n.children.length > 0) {
+				if (isCollapsed) {
+					copy._children = n.children;
+					copy.children = undefined;
+				} else {
+					copy.children = n.children.map(prepareHierarchy);
+				}
+			}
+			return copy;
+		};
+
+		const displayTree = prepareHierarchy(treeData);
+		const root = d3.hierarchy<TrieNodeData>(displayTree);
 		const treeLayout = d3.tree<TrieNodeData>();
 
 		if (projection === "radial") {
@@ -219,16 +289,13 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			root.each((d) => {
 				if (d.depth > maxDepth) maxDepth = d.depth;
 			});
-			const radius = Math.max(300, maxDepth * 180);
+			const radius = Math.max(300, maxDepth * 160);
 			treeLayout.size([2 * Math.PI, radius]);
 		} else if (projection === "vertical") {
-			const nodeWidth = 120;
-			const nodeHeight = 80;
-			treeLayout.nodeSize([nodeWidth * 1.2, nodeHeight * 2]);
+			treeLayout.nodeSize([80, 110]);
 		} else {
-			const nodeWidth = 140;
-			const nodeHeight = 60;
-			treeLayout.nodeSize([nodeHeight * 1.5, nodeWidth * 2.2]);
+			// Horizontal: x is vertical step, y is horizontal step
+			treeLayout.nodeSize([44, 140]);
 		}
 
 		const pointRoot = treeLayout(root);
@@ -237,7 +304,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			nodes: pointRoot.descendants(),
 			links: pointRoot.links(),
 		};
-	}, [filteredTreeData, projection]);
+	}, [treeData, collapsedIds, projection]);
 
 	const activePathIds = useMemo(() => {
 		if (!hoveredNodeId) return null;
@@ -251,62 +318,6 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		}
 		return ids;
 	}, [hoveredNodeId, nodes]);
-
-	const getStateColor = (state?: string) => {
-		if (state === "POLICY CHOICE") return "var(--up)";
-		if (state === "EVALUATED") return "var(--acc)";
-		if (state === "ESTIMATED") return "var(--info)";
-		return "var(--f4)";
-	};
-
-
-	const isRootNode = (node: TrieNodeData) =>
-		node.id === "root" || (node.prefix ?? "").toUpperCase() === "ROOT";
-
-	const getNodeAction = (prefix?: string) => {
-		if (!prefix) return null;
-		const parts = prefix.split("/");
-		const last = parts[parts.length - 1]?.toUpperCase();
-		if (last === "ENTER" || last === "EXIT" || last === "WAIT") {
-			return last;
-		}
-		return null;
-	};
-
-	const nodeLabel = (node: TrieNodeData) => {
-		if (isRootNode(node)) return "ROOT";
-		const action = getNodeAction(node.prefix);
-		if (action) return action;
-		if (node.tokens && node.tokens.length > 0) {
-			if (node.tokens.length === 1) return node.tokens[0];
-			return `${node.tokens[0]}/…`;
-		}
-		return "·";
-	};
-
-	// Split by "/" to get the region token for the edge
-	const getEdgeLabel = (source: TrieNodeData, target: TrieNodeData) => {
-		const targetParts = (target.prefix ?? "").split("/").filter(Boolean);
-		if (isRootNode(source)) {
-			return targetParts.join("/") || null;
-		}
-		const sourceParts = (source.prefix ?? "").split("/").filter(Boolean);
-		const diff = targetParts.slice(sourceParts.length);
-		if (diff.length > 0) {
-			return diff.join("/");
-		}
-		return targetParts[targetParts.length - 1] ?? null;
-	};
-
-	const getEdgeColor = (prob: number) => {
-
-		if (colorMode === "gradient") {
-			return d3.interpolateRgb("#3a342b", "#e8a33d")(prob) || "var(--line)";
-		}
-		if (prob > 0.3) return "var(--acc)";
-		if (prob > 0.1) return "var(--warn)";
-		return "var(--line2)";
-	};
 
 	const getNodePos = (node: TreeNode) => {
 		const nx = node.x;
@@ -324,6 +335,38 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		return { x: ny, y: nx };
 	};
 
+	const getLinkPorts = (source: TreeNode, target: TreeNode) => {
+		const sPos = getNodePos(source);
+		const tPos = getNodePos(target);
+		const sPorts = getPorts(source, projection);
+		const tPorts = getPorts(target, projection);
+
+		if (projection === "vertical") {
+			return {
+				s: {
+					x: sPos.x + (sPorts.childPort?.cx ?? 0),
+					y: sPos.y + (sPorts.childPort?.cy ?? INBETWEEN_HEIGHT / 2),
+				},
+				t: {
+					x: tPos.x + (tPorts.parentPort?.cx ?? 0),
+					y: tPos.y + (tPorts.parentPort?.cy ?? -INBETWEEN_HEIGHT / 2),
+				},
+			};
+		}
+
+		// Horizontal projection
+		return {
+			s: {
+				x: sPos.x + (sPorts.childPort?.cx ?? INBETWEEN_WIDTH / 2),
+				y: sPos.y + (sPorts.childPort?.cy ?? 0),
+			},
+			t: {
+				x: tPos.x + (tPorts.parentPort?.cx ?? -INBETWEEN_WIDTH / 2),
+				y: tPos.y + (tPorts.parentPort?.cy ?? 0),
+			},
+		};
+	};
+
 	const getPath = (source: TreeNode, target: TreeNode) => {
 		if (projection === "radial") {
 			return (
@@ -333,29 +376,26 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 					.radius((d: TreeNode) => d.y)({ source, target }) ?? undefined
 			);
 		}
+
+		const { s, t } = getLinkPorts(source, target);
+
 		if (projection === "vertical") {
-			// Offset to connect exactly at the port boundaries
-			const s = { x: source.x + 40, y: source.y + 15 };
-			const t = { x: target.x + 40, y: target.y - 15 };
 			return (
 				d3
-					// biome-ignore lint/suspicious/noExplicitAny: Because I'm Batman
+					// biome-ignore lint/suspicious/noExplicitAny: d3 vertical link typing
 					.linkVertical<any, { x: number; y: number }>()
 					.x((d) => d.x)
 					.y((d) => d.y)({ source: s, target: t }) ?? undefined
 			);
 		}
 
-		// Horizontal projection: d.y is x-axis, d.x is y-axis
-		// Source port is at cx: 90. Target port is at cx: -10
-		const s = { x: source.x, y: source.y + 90 };
-		const t = { x: target.x, y: target.y - 10 };
+		// Horizontal projection
 		return (
 			d3
-				// biome-ignore lint/suspicious/noExplicitAny: Because I'm Batman
+				// biome-ignore lint/suspicious/noExplicitAny: d3 horizontal link typing
 				.linkHorizontal<any, { x: number; y: number }>()
-				.x((d) => d.y)
-				.y((d) => d.x)({ source: s, target: t }) ?? undefined
+				.x((d) => d.x)
+				.y((d) => d.y)({ source: s, target: t }) ?? undefined
 		);
 	};
 
@@ -366,87 +406,97 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 				className,
 			)}
 		>
-			{/* Top Bar with Projection & Probability Controls */}
-			<div className="h-8 border-(--line) border-b flex items-center justify-between px-3 text-xs bg-(--surface) shrink-0">
-				<div className="flex gap-4 items-center">
-					<span className="text-(--acc) border-(--acc) border-b py-1 text-[11px] font-bold tracking-wider">
-						RADIX TRIE
-					</span>
-					<span className="text-(--f3) text-[11px]">
-						{nodes.length} nodes · beam search topology
-					</span>
-				</div>
-
-				<div className="flex items-center gap-3">
-					{/* Projection selector */}
-					<div className="flex items-center gap-1 bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px]">
-						{(["horizontal", "vertical", "radial"] as const).map((mode) => (
-							<button
-								key={mode}
-								type="button"
-								onClick={() => {
-									onProjectionChange
-										? onProjectionChange(mode)
-										: setInternalProjection(mode);
-								}}
-								className={cn(
-									"px-2 py-0.5 rounded transition-colors capitalize",
-									projection === mode
-										? "bg-(--raised) text-(--acc) font-bold"
-										: "text-(--f3) hover:text-(--f1)",
-								)}
-							>
-								{mode}
-							</button>
-						))}
-					</div>
-
-					{/* Color mode selector */}
-					<div className="flex items-center gap-1 bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px]">
-						{(["threshold", "gradient"] as const).map((mode) => (
-							<button
-								key={mode}
-								type="button"
-								onClick={() => {
-									onColorModeChange
-										? onColorModeChange(mode)
-										: setInternalColorMode(mode);
-								}}
-								className={cn(
-									"px-2 py-0.5 rounded transition-colors capitalize",
-									colorMode === mode
-										? "bg-(--raised) text-(--acc) font-bold"
-										: "text-(--f3) hover:text-(--f1)",
-								)}
-							>
-								{mode}
-							</button>
-						))}
-					</div>
-
-					{/* Probability slider */}
-					<div className="flex items-center gap-2 bg-(--sunken) border-(--line) border px-2 py-0.5 rounded text-[11px]">
-						<SlidersHorizontal className="w-3 h-3 text-(--f3)" />
-						<span className="text-(--f3)">Threshold:</span>
-						<span className="text-(--acc) w-8 text-right font-bold">
-							{(minProbability * 100).toFixed(0)}%
+			{/* Top Bar with Projection Controls and Active Symbol Depth Ticker */}
+			<div className="border-(--line) border-b flex flex-col bg-(--surface) shrink-0">
+				<div className="h-8 flex items-center justify-between px-3 text-xs">
+					<div className="flex gap-4 items-center">
+						<span className="text-(--acc) border-(--acc) border-b py-1 text-[11px] font-bold tracking-wider">
+							TRIE
 						</span>
-						<input
-							type="range"
-							min="0"
-							max="0.5"
-							step="0.01"
-							value={minProbability}
-							onChange={(e) => {
-								const val = parseFloat(e.target.value);
-								onProbabilityChange
-									? onProbabilityChange(val)
-									: setInternalMinProb(val);
-							}}
-							className="w-16 accent-(--acc) bg-(--line) h-1 rounded appearance-none outline-none cursor-pointer"
-						/>
+						<span className="text-(--f3) text-[11px]">
+							{nodes.length} nodes
+						</span>
+						{activeSymbolList.length > 0 && (
+							<span className="text-[#38bdf8] text-[11px] font-medium flex items-center gap-1.5">
+								<span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8] animate-pulse" />
+								{activeSymbolList.length} symbols active in Step
+							</span>
+						)}
+					</div>
+
+					<div className="flex items-center gap-3">
+						<div className="flex items-center gap-1 bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px]">
+							{(["horizontal", "vertical", "radial"] as const).map((mode) => (
+								<button
+									key={mode}
+									type="button"
+									onClick={() => {
+										onProjectionChange
+											? onProjectionChange(mode)
+											: setInternalProjection(mode);
+									}}
+									className={cn(
+										"px-2 py-0.5 rounded transition-colors capitalize",
+										projection === mode
+											? "bg-(--raised) text-(--acc) font-bold"
+											: "text-(--f3) hover:text-(--f1)",
+									)}
+								>
+									{mode}
+								</button>
+							))}
+						</div>
 					</div>
 				</div>
+
+				{/* Live Symbols Traversal Depth Strip */}
+				{activeSymbolList.length > 0 && (
+					<div className="flex items-center gap-1.5 px-3 py-1.5 border-t border-(--line)/50 overflow-x-auto text-[10px]">
+						<span className="text-(--f4) uppercase tracking-wider text-[9px] font-semibold shrink-0">
+							Depth:
+						</span>
+						{activeSymbolList.map((s) => {
+							const isSelected = selectedSymbol === s.symbol;
+							return (
+								<button
+									key={s.symbol}
+									type="button"
+									onClick={() =>
+										setSelectedSymbol((prev) =>
+											prev === s.symbol ? null : s.symbol,
+										)
+									}
+									className={cn(
+										"flex items-center gap-1.5 px-2 py-0.5 rounded border transition-all cursor-pointer font-mono shrink-0",
+										isSelected
+											? "bg-[#0284c7]/25 border-[#38bdf8] text-[#38bdf8] shadow"
+											: "bg-(--sunken) border-(--line) text-(--f2) hover:border-[#38bdf8]/50",
+									)}
+								>
+									<span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8]" />
+									<span className="font-bold">
+										{s.symbol.replace("/USD", "")}
+									</span>
+									<span className="px-1 py-0.2 rounded bg-(--raised) text-[#38bdf8] font-bold text-[9px]">
+										D{s.depth}
+									</span>
+									<span className="text-(--f3) text-[9px]">
+										{s.tokens.join("→")}
+									</span>
+								</button>
+							);
+						})}
+						{selectedSymbol && (
+							<button
+								type="button"
+								onClick={() => setSelectedSymbol(null)}
+								className="text-[9px] text-(--f4) hover:text-(--f2) underline px-1 cursor-pointer shrink-0"
+							>
+								Clear focus
+							</button>
+						)}
+					</div>
+				)}
 			</div>
 
 			{/* Center Visualizer Canvas */}
@@ -454,7 +504,6 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 				ref={wrapperRef}
 				className="flex-1 relative bg-(--sunken) overflow-hidden"
 			>
-				{/* Background Grid Pattern */}
 				<div
 					className="absolute inset-0 pointer-events-none opacity-[0.12]"
 					style={{
@@ -466,9 +515,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 					}}
 				/>
 
-				{!filteredTreeData && (
+				{!treeData && (
 					<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-xs tracking-wider">
-						Loading immutable radix trie state...
+						Loading trie...
 					</div>
 				)}
 
@@ -476,22 +525,28 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 					ref={svgRef}
 					className="w-full h-full absolute inset-0 cursor-grab active:cursor-grabbing"
 					role="img"
-					aria-label="Radix trie graph visualization"
+					aria-label="Trie visualization"
 				>
-					<title>Radix Trie Graph Visualization</title>
+					<title>Trie Graph Visualization</title>
 					<g transform={transform.toString()}>
-						{/* Links Layer */}
+						{/* Links Layer: Edges are strictly region tokens */}
 						<g className="links">
 							{links.map((link) => {
 								const d = getPath(link.source, link.target);
-								const sPos = getNodePos(link.source);
-								const tPos = getNodePos(link.target);
-								const midX = (sPos.x + tPos.x) / 2;
-								const midY = (sPos.y + tPos.y) / 2;
+								const { s, t } = getLinkPorts(link.source, link.target);
+								const midX = (s.x + t.x) / 2;
+								const midY = (s.y + t.y) / 2;
 
+								const isSymbolLink = activePathPrefixes.has(
+									link.target.data.prefix,
+								);
 								const isLinkActive = activePathIds
 									? activePathIds.has(link.target.data.id)
-									: true;
+									: selectedSymbol
+										? isSymbolLink
+										: true;
+
+								const token = link.target.data.token;
 
 								return (
 									<g
@@ -504,84 +559,82 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 										<path
 											d={d}
 											fill="none"
-											stroke={getEdgeColor(link.target.data.probability)}
-											strokeWidth={Math.max(
-												1.5,
-												link.target.data.probability * 6,
-											)}
-											strokeOpacity={0.7}
+											stroke={isSymbolLink ? "#38bdf8" : "var(--acc)"}
+											strokeWidth={isSymbolLink ? 2.5 : 2}
+											strokeOpacity={isSymbolLink ? 1 : 0.7}
 											style={{
-												transition: "d 0.3s ease-in-out",
+												transition: "all 0.3s ease-in-out",
+												filter: isSymbolLink
+													? "drop-shadow(0 0 3px rgba(56, 189, 248, 0.5))"
+													: undefined,
 											}}
 										/>
-										{(() => {
-											const label = getEdgeLabel(link.source.data, link.target.data);
-											if (!label) return null;
-											const pillWidth = Math.max(24, label.length * 6.5 + 10);
-											return (
-												<g
-													transform={`translate(${midX}, ${projection === "vertical" ? midY - 6 : midY - 8})`}
-													className="pointer-events-none select-none font-mono"
-													style={{
-														transition: "transform 0.3s ease-in-out",
-													}}
+										{token && (
+											<g
+												transform={`translate(${midX}, ${projection === "vertical" ? midY - 6 : midY - 8})`}
+												className="pointer-events-none select-none font-mono"
+												style={{
+													transition: "transform 0.3s ease-in-out",
+												}}
+											>
+												<rect
+													x={-18}
+													y={-7}
+													width={36}
+													height={14}
+													rx={2}
+													fill="var(--surface)"
+													stroke={
+														isSymbolLink ? "#38bdf8" : "var(--line2)"
+													}
+													strokeWidth={isSymbolLink ? 1.5 : 1}
+													opacity={0.95}
+												/>
+												<text
+													x={0}
+													y={3.5}
+													fill={
+														isSymbolLink ? "#38bdf8" : "var(--acc)"
+													}
+													fontSize="9px"
+													textAnchor="middle"
+													fontWeight="600"
+													className="font-mono tracking-wider"
 												>
-													<rect
-														x={-pillWidth / 2}
-														y={-7}
-														width={pillWidth}
-														height={14}
-														rx={2}
-														fill="var(--surface)"
-														stroke="var(--line2)"
-														strokeWidth={1}
-														opacity={0.95}
-													/>
-													<text
-														x={0}
-														y={3.5}
-														fill="var(--acc)"
-														fontSize="9px"
-														textAnchor="middle"
-														fontWeight="600"
-														className="font-mono tracking-wider"
-													>
-														{label}
-													</text>
-												</g>
-											);
-										})()}
+													{token}
+												</text>
+											</g>
+										)}
 									</g>
 								);
 							})}
 						</g>
 
-						{/* Nodes Layer */}
+						{/* Nodes Layer: In-between nodes are empty, terminal nodes are actions */}
 						<g className="nodes">
 							{nodes.map((node) => {
 								const nodeData = node.data;
+								const isRoot = isNodeRoot(node);
+								const isTerminal = isNodeTerminal(node);
 								const hasChildren = !!(nodeData.children || nodeData._children);
 								const isCollapsed = !!nodeData._children;
-								const probColor = getEdgeColor(nodeData.probability);
-								const isHighProb = nodeData.probability > 0.2;
+								const action = nodeData.action;
 
-								const parent = node.parent;
 								const pos = getNodePos(node);
+								const ports = getPorts(node, projection);
+								const symbolsAtNode = symbolPositions.get(nodeData.prefix);
+								const isSymbolOnPath = activePathPrefixes.has(
+									nodeData.prefix,
+								);
+
 								const isNodeActive = activePathIds
 									? activePathIds.has(nodeData.id)
-									: true;
-
-								const parentPort =
-									projection === "vertical"
-										? { cx: 40, cy: -15 }
-										: { cx: -10, cy: 0 };
-								const childPort =
-									projection === "vertical"
-										? { cx: 40, cy: 15 }
-										: { cx: 90, cy: 0 };
+									: selectedSymbol
+										? isSymbolOnPath
+										: true;
 
 								return (
-									// biome-ignore lint/a11y/noStaticElementInteractions: Because I'm Batman
+									// biome-ignore lint/a11y/noStaticElementInteractions: node interactivity
 									<g
 										key={`node-${nodeData.id}`}
 										style={{
@@ -602,318 +655,182 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 											e.stopPropagation();
 											if (hasChildren) handleNodeClick(nodeData);
 										}}
-										onMouseEnter={(e: MouseEvent) => {
-											setHoveredNodeId(nodeData.id);
-											setTooltip({
-												data: nodeData,
-												x: e.clientX,
-												y: e.clientY,
-											});
-										}}
-										onMouseMove={(e: MouseEvent) => {
-											setTooltip({
-												data: nodeData,
-												x: e.clientX,
-												y: e.clientY,
-											});
-										}}
-										onMouseLeave={() => {
-											setHoveredNodeId(null);
-											setTooltip(null);
-										}}
+										onMouseEnter={() => setHoveredNodeId(nodeData.id)}
+										onMouseLeave={() => setHoveredNodeId(null)}
 										className={
 											hasChildren ? "cursor-pointer" : "cursor-default"
 										}
 									>
-										<g
-											style={{
-												transform:
-													projection === "radial"
-														? `rotate(${(node.x * 180) / Math.PI - 90}deg)`
-														: "rotate(0deg)",
-												transition: "transform 0.3s ease-in-out",
-											}}
-											className="origin-center"
-										>
-											<rect
-												x={-10}
-												y={-14}
-												width={100}
-												height={28}
-												rx={3}
-												fill={
-													nodeData.prefix.toUpperCase() === "ENTER"
-														? "rgba(115, 190, 104, 0.15)"
-														: nodeData.prefix.toUpperCase() === "WAIT"
-															? "rgba(232, 163, 61, 0.15)"
-															: nodeData.prefix.toUpperCase() === "EXIT"
-																? "rgba(240, 84, 79, 0.15)"
-																: "var(--surface)"
-												}
-												stroke={
-													nodeData.prefix.toUpperCase() === "ENTER"
-														? "var(--up)"
-														: nodeData.prefix.toUpperCase() === "WAIT"
-															? "var(--warn)"
-															: nodeData.prefix.toUpperCase() === "EXIT"
-																? "var(--down)"
-																: colorMode === "gradient"
-																	? probColor
-																	: isHighProb
-																		? "var(--acc)"
-																		: "var(--line2)"
-												}
-												strokeWidth={1.5}
-												className={cn(
-													"transition-colors",
-													hasChildren && "hover:stroke-(--acc)",
-												)}
-											/>
-
-											{parent && (
-												<circle
-													cx={parentPort.cx}
-													cy={parentPort.cy}
-													r={2.5}
+										{isRoot ? (
+											/* Root Node: Clean minimal junction */
+											<g>
+												<rect
+													x={-ROOT_WIDTH / 2}
+													y={-ROOT_HEIGHT / 2}
+													width={ROOT_WIDTH}
+													height={ROOT_HEIGHT}
+													rx={3}
 													fill="var(--surface)"
-													stroke="var(--f4)"
+													stroke="var(--acc)"
 													strokeWidth={1.5}
 												/>
-											)}
-
-											{(hasChildren || isCollapsed) && (
-												<circle
-													cx={childPort.cx}
-													cy={childPort.cy}
-													r={isCollapsed ? 3.5 : 2.5}
-													fill={isCollapsed ? "var(--acc)" : "var(--surface)"}
-													stroke={isCollapsed ? "var(--acc)" : "var(--f4)"}
-													strokeWidth={1.5}
-												/>
-											)}
-
-											<text
-												x={0}
-												y={0}
-												dy="0.32em"
-												fill={
-													nodeData.prefix.toUpperCase() === "ENTER"
-														? "var(--up)"
-														: nodeData.prefix.toUpperCase() === "WAIT"
-															? "var(--warn)"
-															: nodeData.prefix.toUpperCase() === "EXIT"
-																? "var(--down)"
-																: "var(--f1)"
-												}
-												fontSize="11px"
-												fontWeight="700"
-												className="select-none pointer-events-none font-mono tracking-wider"
-											>
-												{nodeLabel(nodeData)}
-											</text>
-
-											<text
-												x={80}
-												y={-18}
-												fill="var(--f4)"
-												fontSize="9px"
-												textAnchor="end"
-												className="select-none pointer-events-none font-mono"
-											>
-												{(nodeData.probability * 100).toFixed(1)}%
-											</text>
-
-											{nodeData.state && (
 												<text
 													x={0}
-													y={-18}
-													fill={getStateColor(nodeData.state)}
-													fontSize="8px"
-													className="font-mono tracking-widest pointer-events-none select-none uppercase font-bold"
+													y={0}
+													dy="0.32em"
+													textAnchor="middle"
+													fill="var(--acc)"
+													fontSize="9px"
+													fontWeight="700"
+													className="select-none pointer-events-none font-mono tracking-wider"
 												>
-													{nodeData.state}
+													ROOT
 												</text>
-											)}
-										</g>
+											</g>
+										) : isTerminal ? (
+											/* Terminal Node: Action badge */
+											<g>
+												<rect
+													x={-TERMINAL_WIDTH / 2}
+													y={-TERMINAL_HEIGHT / 2}
+													width={TERMINAL_WIDTH}
+													height={TERMINAL_HEIGHT}
+													rx={4}
+													fill={
+														action === "ENTER"
+															? "rgba(115, 190, 104, 0.15)"
+															: action === "EXIT"
+																? "rgba(240, 84, 79, 0.15)"
+																: "rgba(232, 163, 61, 0.15)"
+													}
+													stroke={
+														action === "ENTER"
+															? "var(--up)"
+															: action === "EXIT"
+																? "var(--down)"
+																: "var(--warn)"
+													}
+													strokeWidth={1.5}
+												/>
+												<text
+													x={0}
+													y={0}
+													dy="0.32em"
+													textAnchor="middle"
+													fill={
+														action === "ENTER"
+															? "var(--up)"
+															: action === "EXIT"
+																? "var(--down)"
+																: "var(--warn)"
+													}
+													fontSize="11px"
+													fontWeight="700"
+													className="select-none pointer-events-none font-mono tracking-wider uppercase"
+												>
+													{action || "NOOP"}
+												</text>
+											</g>
+										) : (
+											/* In-Between Node: Empty junction box */
+											<rect
+												x={-INBETWEEN_WIDTH / 2}
+												y={-INBETWEEN_HEIGHT / 2}
+												width={INBETWEEN_WIDTH}
+												height={INBETWEEN_HEIGHT}
+												rx={3}
+												fill="var(--surface)"
+												stroke={
+													isSymbolOnPath
+														? "#38bdf8"
+														: isCollapsed
+															? "var(--acc)"
+															: "var(--line2)"
+												}
+												strokeWidth={
+													isSymbolOnPath || isCollapsed ? 2 : 1
+												}
+												className="transition-colors hover:stroke-(--acc)"
+											/>
+										)}
+
+										{/* Input / Parent Port Circle */}
+										{ports.parentPort && (
+											<circle
+												cx={ports.parentPort.cx}
+												cy={ports.parentPort.cy}
+												r={3}
+												fill="var(--surface)"
+												stroke="var(--f4)"
+												strokeWidth={1.5}
+											/>
+										)}
+
+										{/* Output / Child Port Circle */}
+										{ports.childPort && (
+											<circle
+												cx={ports.childPort.cx}
+												cy={ports.childPort.cy}
+												r={isCollapsed ? 4 : 3}
+												fill={
+													isCollapsed
+														? "var(--acc)"
+														: "var(--surface)"
+												}
+												stroke={
+													isCollapsed
+														? "var(--acc)"
+														: "var(--f4)"
+												}
+												strokeWidth={1.5}
+											/>
+										)}
+
+										{/* Floating Live Symbol Marker on Current Node */}
+										{symbolsAtNode && symbolsAtNode.length > 0 && (
+											<g
+												transform={`translate(0, ${projection === "vertical" ? -24 : -22})`}
+												className="pointer-events-none select-none font-mono"
+											>
+												<rect
+													x={-Math.max(26, symbolsAtNode.length * 15)}
+													y={-8}
+													width={Math.max(52, symbolsAtNode.length * 30)}
+													height={16}
+													rx={4}
+													fill="rgba(2, 132, 199, 0.3)"
+													stroke="#38bdf8"
+													strokeWidth={1.5}
+												/>
+												<circle
+													cx={-Math.max(26, symbolsAtNode.length * 15) + 6}
+													cy={0}
+													r={2.5}
+													fill="#38bdf8"
+													className="animate-pulse"
+												/>
+												<text
+													x={-Math.max(26, symbolsAtNode.length * 15) + 12}
+													y={0}
+													dy="0.32em"
+													fill="#38bdf8"
+													fontSize="8px"
+													fontWeight="700"
+													className="font-mono tracking-wider"
+												>
+													{symbolsAtNode
+														.map((s) => s.symbol.replace("/USD", ""))
+														.join(", ")}
+												</text>
+											</g>
+										)}
 									</g>
 								);
 							})}
 						</g>
 					</g>
 				</svg>
-
-				{/* Floating Tooltip */}
-				{tooltip && (
-					<div
-						className="fixed z-50 bg-(--surface) border-(--line2) border rounded shadow-2xl p-2.5 text-[11px] pointer-events-none flex flex-col gap-1.5 font-mono"
-						style={{
-							left: tooltip.x + 15,
-							top: tooltip.y + 15,
-							minWidth: 200,
-						}}
-					>
-						<div className="flex items-center gap-2 border-(--line) border-b pb-1.5 font-bold">
-							<span className="text-(--acc)">{tooltip.data.prefix}</span>
-							{tooltip.data.state && (
-								<span
-									className="ml-auto text-[8px] border border-current px-1 py-0.5 rounded uppercase tracking-wider"
-									style={{ color: getStateColor(tooltip.data.state) }}
-								>
-									{tooltip.data.state}
-								</span>
-							)}
-						</div>
-						<div className="flex justify-between text-(--f3)">
-							<span>Sequence Prob:</span>
-							<span className="text-(--f1) font-bold">
-								{(tooltip.data.probability * 100).toFixed(2)}%
-							</span>
-						</div>
-						{tooltip.data.stepProbability !== undefined && (
-							<div className="flex justify-between text-(--f3)">
-								<span>Step Prob:</span>
-								<span className="text-(--f1)">
-									{(tooltip.data.stepProbability * 100).toFixed(2)}%
-								</span>
-							</div>
-						)}
-						{tooltip.data.tokens && tooltip.data.tokens.length > 0 && (
-							<div className="flex justify-between mt-1 pt-1 border-(--line) border-t items-center text-(--f3)">
-								<span>Tokens:</span>
-								<span className="text-(--acc) bg-(--sunken) px-1 py-0.5 rounded font-bold">
-									[{tooltip.data.tokens.join(", ")}]
-								</span>
-							</div>
-						)}
-					</div>
-				)}
-
-				{/* Canvas Controls */}
-				<div className="absolute bottom-3 right-3 flex gap-2">
-					<button
-						type="button"
-						onClick={focusBestPath}
-						title="Expand Greedy Policy Beam"
-						className="bg-(--surface) border-(--line) border text-(--acc) hover:bg-(--raised) px-2.5 py-1 rounded transition-colors text-[10px] font-bold tracking-wider flex items-center gap-1 shadow-lg"
-					>
-						<Zap className="w-3 h-3" />
-						BEST BEAM
-					</button>
-					<button
-						type="button"
-						onClick={() => {
-							if (svgRef.current && zoomBehavior.current) {
-								d3.select(svgRef.current)
-									.transition()
-									.duration(300)
-									.call(zoomBehavior.current.scaleBy, 1.25);
-							}
-						}}
-						className="bg-(--surface) border-(--line) border text-(--f2) hover:text-(--acc) p-1 rounded transition-colors shadow-lg"
-						title="Zoom in"
-					>
-						<svg
-							width="14"
-							height="14"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							role="img"
-							aria-label="Zoom in"
-						>
-							<title>Zoom in</title>
-							<path d="M12 5v14M5 12h14" />
-						</svg>
-					</button>
-					<button
-						type="button"
-						onClick={() => {
-							if (svgRef.current && zoomBehavior.current) {
-								d3.select(svgRef.current)
-									.transition()
-									.duration(300)
-									.call(zoomBehavior.current.scaleBy, 0.8);
-							}
-						}}
-						className="bg-(--surface) border-(--line) border text-(--f2) hover:text-(--acc) p-1 rounded transition-colors shadow-lg"
-						title="Zoom out"
-					>
-						<svg
-							width="14"
-							height="14"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							role="img"
-							aria-label="Zoom out"
-						>
-							<title>Zoom out</title>
-							<path d="M5 12h14" />
-						</svg>
-					</button>
-				</div>
 			</div>
-
-			{/* Feasible Actions Bottom Table */}
-			{feasible.length > 0 && (
-				<div className="h-44 shrink-0 bg-(--surface) border-(--line) border-t flex flex-col">
-					<div className="h-7 border-(--line) border-b flex items-center px-3 text-[10px] text-(--f3) uppercase tracking-widest font-bold bg-(--sunken)/40">
-						Feasible actions at current impulse
-					</div>
-					<div className="flex-1 overflow-auto">
-						<table className="w-full text-left text-[11px]">
-							<thead className="text-(--f4) border-(--line) border-b bg-(--surface)">
-								<tr>
-									<th className="font-normal px-3 py-1.5 w-12">Rank</th>
-									<th className="font-normal px-3 py-1.5 w-32">Action</th>
-									<th className="font-normal px-3 py-1.5">Prefix Sequence</th>
-									<th className="font-normal px-3 py-1.5 text-right">
-										Probability
-									</th>
-									<th className="font-normal px-3 py-1.5 text-right">State</th>
-								</tr>
-							</thead>
-							<tbody className="divide-y divide-(--line)">
-								{feasible.map((act) => (
-									<tr
-										key={`${act.rank}-${act.prefix}`}
-										className="hover:bg-(--raised) transition-colors cursor-default"
-									>
-										<td className="px-3 py-1.5 text-(--acc) font-bold">
-											{act.rank}
-										</td>
-										<td className="px-3 py-1.5 text-(--f1) font-semibold">
-											{act.action}
-										</td>
-										<td className="px-3 py-1.5 text-(--f3) font-mono">
-											{act.prefix}
-										</td>
-										<td className="px-3 py-1.5 text-right text-(--f1) font-bold">
-											{(act.probability * 100).toFixed(1)}%
-										</td>
-										<td className="px-3 py-1.5 text-right">
-											<span
-												className={cn(
-													"border px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-bold",
-													act.state === "POLICY CHOICE"
-														? "border-(--up)/40 text-(--up)"
-														: act.state === "EVALUATED"
-															? "border-(--acc)/40 text-(--acc)"
-															: "border-(--line2) text-(--f4)",
-												)}
-											>
-												{act.state}
-											</span>
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
-				</div>
-			)}
 		</div>
 	);
 };

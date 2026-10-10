@@ -16,7 +16,9 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/store"
 )
 
 /*
@@ -165,45 +167,23 @@ func matchingTraining(desk *broker.Desk, confidence int, keys ...string) *Traini
 	So(err, ShouldBeNil)
 
 	return &Training{
+		System:     runtime.NewSystem(context.Background(), "training", nil),
 		desk:       desk,
 		blobs:      statBlobs{},
 		stats:      make(map[string]*pathStats),
 		keys:       sorted,
 		confidence: confidence,
 		paths:      make(map[string]*livePath),
-		decisions:  make(map[string]*wire.DecisionT),
+		grid:       store.NewGrid(),
 	}
 }
 
-func latest(training *Training) *wire.DecisionT {
-	frame := training.DecisionsWire()
-
-	So(frame.Decisions, ShouldHaveLength, 1)
-	return frame.Decisions[0]
-}
-
-func advanceAll(training *Training, tokens ...string) {
+func advanceAll(training *Training, tokens ...string) (action, reason, path string, depth int) {
 	for _, token := range tokens {
-		training.advance("BTC/USD", token, tokenStart)
-	}
-}
-
-/*
-eventually polls condition until it holds or a deadline passes: an entry's
-sizing outcome replaces its decision reason off the market path.
-*/
-func eventually(condition func() bool) bool {
-	deadline := time.Now().Add(3 * time.Second)
-
-	for time.Now().Before(deadline) {
-		if condition() {
-			return true
-		}
-
-		time.Sleep(5 * time.Millisecond)
+		action, reason, path, depth = training.advance("BTC/USD", token, tokenStart)
 	}
 
-	return condition()
+	return action, reason, path, depth
 }
 
 func TestTraining_advance(t *testing.T) {
@@ -216,58 +196,87 @@ func TestTraining_advance(t *testing.T) {
 		)
 
 		Convey("The shared prefix is ambiguous and takes no action", func() {
-			advanceAll(training, "R01", "R02", "R03")
+			action, _, path, depth := advanceAll(training, "R01", "R02", "R03")
 
-			decision := latest(training)
-			So(decision.Action, ShouldEqual, "accumulate")
-			So(decision.Cause, ShouldEqual, "R01/R02/R03")
-			So(decision.Confidence, ShouldEqual, 3)
-			So(decision.Alternatives, ShouldHaveLength, 2)
+			So(action, ShouldEqual, "accumulate")
+			So(path, ShouldEqual, "R01/R02/R03")
+			So(depth, ShouldEqual, 3)
 			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.FLAT)
 			So(training.paths["BTC/USD"].tokens, ShouldResemble, []string{"R01", "R02", "R03"})
 		})
 
 		Convey("The divergent token makes the match unique and enters through the Desk", func() {
-			advanceAll(training, "R01", "R02", "R03", "R04")
+			action, _, path, depth := advanceAll(training, "R01", "R02", "R03", "R04")
 
 			So(<-filling.writes, ShouldEqual, "buy")
 			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.HOLDING)
 
-			decision := latest(training)
-			So(decision.Action, ShouldEqual, "enter")
-			So(decision.Cause, ShouldEqual, "R01/R02/R03/R04")
-			So(decision.Confidence, ShouldEqual, 4)
-			So(decision.Alternatives, ShouldResemble, []*wire.NamedNumberT{{Name: "enter", Value: 1}})
-			So(eventually(func() bool {
-				return strings.Contains(latest(training).Reason, "submitted (sized from 1 matched gains, 1 durations")
-			}), ShouldBeTrue)
+			So(action, ShouldEqual, "enter")
+			So(path, ShouldEqual, "R01/R02/R03/R04")
+			So(depth, ShouldEqual, 4)
 			So(training.paths["BTC/USD"].tokens, ShouldBeEmpty)
 		})
 
 		Convey("Repeated tokens collapse and do not advance the path", func() {
-			advanceAll(training, "R01", "R01", "R02", "R02", "R02")
+			action, _, path, depth := advanceAll(training, "R01", "R01", "R02", "R02", "R02")
 
 			So(training.paths["BTC/USD"].tokens, ShouldResemble, []string{"R01", "R02"})
-			So(training.DecisionsVersion(), ShouldEqual, 2)
+			So(path, ShouldEqual, "R01/R02")
+			So(depth, ShouldEqual, 2)
+			So(action, ShouldEqual, "")
 		})
 
 		Convey("A token no stored path continues resets the path", func() {
-			advanceAll(training, "R01", "R02", "R09")
+			action, _, path, depth := advanceAll(training, "R01", "R02", "R09")
 
-			decision := latest(training)
-			So(decision.Action, ShouldEqual, "reset")
-			So(decision.Cause, ShouldEqual, "R09")
+			So(action, ShouldEqual, "reset")
+			So(path, ShouldEqual, "")
+			So(depth, ShouldEqual, 0)
 			So(training.paths["BTC/USD"].tokens, ShouldBeEmpty)
 			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.FLAT)
 		})
 
 		Convey("A reset restarts from the current token when a stored path starts with it", func() {
-			advanceAll(training, "R01", "R02", "R01")
+			action, _, path, _ := advanceAll(training, "R01", "R02", "R01")
 
-			decision := latest(training)
-			So(decision.Action, ShouldEqual, "accumulate")
-			So(decision.Cause, ShouldEqual, "R01")
+			So(action, ShouldEqual, "accumulate")
+			So(path, ShouldEqual, "R01")
 			So(training.paths["BTC/USD"].tokens, ShouldResemble, []string{"R01"})
+		})
+	})
+
+	Convey("Given stored paths with enter and noop precursors", t, func() {
+		filling := newFillingDesk()
+		training := matchingTraining(
+			filling.desk, 3,
+			"R01/R02/R03/R04/enter.json",
+			"R01/R02/R03/R05/noop.json",
+		)
+
+		Convey("The shared prefix between enter and noop accumulates without entering", func() {
+			action, _, _, _ := advanceAll(training, "R01", "R02", "R03")
+
+			So(action, ShouldEqual, "accumulate")
+			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.FLAT)
+		})
+
+		Convey("A path matching ONLY noop.json does not enter and resets the path", func() {
+			action, reason, _, _ := advanceAll(training, "R01", "R02", "R03", "R05")
+
+			So(action, ShouldEqual, "noop")
+			So(reason, ShouldContainSubstring, "noop: matched unpromising precursor")
+			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.FLAT)
+			So(training.paths["BTC/USD"].tokens, ShouldBeEmpty)
+			So(filling.writes, ShouldHaveLength, 0)
+		})
+
+		Convey("A path matching ONLY enter.json signals entry and enters", func() {
+			action, _, _, _ := advanceAll(training, "R01", "R02", "R03", "R04")
+
+			So(<-filling.writes, ShouldEqual, "buy")
+			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.HOLDING)
+
+			So(action, ShouldEqual, "enter")
 		})
 	})
 
@@ -280,25 +289,22 @@ func TestTraining_advance(t *testing.T) {
 		)
 
 		Convey("A unanimous match shorter than the minimum confidence takes no action", func() {
-			advanceAll(training, "R06", "R07")
+			action, reason, _, depth := advanceAll(training, "R06", "R07")
 
-			decision := latest(training)
-			So(decision.Action, ShouldEqual, "accumulate")
-			So(decision.Confidence, ShouldEqual, 2)
-			So(decision.Reason, ShouldContainSubstring, "below minimum confidence 3")
+			So(action, ShouldEqual, "accumulate")
+			So(depth, ShouldEqual, 2)
+			So(reason, ShouldContainSubstring, "below minimum confidence 3")
 			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.FLAT)
 		})
 
 		Convey("A unanimous match at the minimum confidence takes the action", func() {
-			advanceAll(training, "R06", "R07", "R08")
+			action, _, _, depth := advanceAll(training, "R06", "R07", "R08")
 
 			So(<-filling.writes, ShouldEqual, "buy")
 			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.HOLDING)
 
-			decision := latest(training)
-			So(decision.Action, ShouldEqual, "enter")
-			So(decision.Confidence, ShouldEqual, 3)
-			So(decision.Alternatives, ShouldResemble, []*wire.NamedNumberT{{Name: "enter", Value: 2}})
+			So(action, ShouldEqual, "enter")
+			So(depth, ShouldEqual, 3)
 		})
 	})
 
@@ -311,11 +317,10 @@ func TestTraining_advance(t *testing.T) {
 		)
 
 		Convey("An exit match on a flat symbol is ignored by the Desk gate", func() {
-			advanceAll(training, "R02")
+			action, reason, _, _ := advanceAll(training, "R02")
 
-			decision := latest(training)
-			So(decision.Action, ShouldEqual, "exit")
-			So(decision.Reason, ShouldContainSubstring, "ignored: no filled position to exit")
+			So(action, ShouldEqual, "exit")
+			So(reason, ShouldContainSubstring, "ignored: no filled position to exit")
 			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.FLAT)
 		})
 
@@ -324,15 +329,15 @@ func TestTraining_advance(t *testing.T) {
 			So(<-filling.writes, ShouldEqual, "buy")
 			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.HOLDING)
 
-			advanceAll(training, "R03", "R01")
-			So(latest(training).Reason, ShouldContainSubstring, "ignored: position is not flat")
+			_, reason, _, _ := advanceAll(training, "R03", "R01")
+			So(reason, ShouldContainSubstring, "ignored: position is not flat")
 			So(filling.writes, ShouldHaveLength, 0)
 
-			advanceAll(training, "R02")
+			action, reason, _, _ := advanceAll(training, "R02")
 			So(<-filling.writes, ShouldEqual, "sell")
 			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.FLAT)
-			So(latest(training).Action, ShouldEqual, "exit")
-			So(latest(training).Reason, ShouldContainSubstring, "learned_exit submitted")
+			So(action, ShouldEqual, "exit")
+			So(reason, ShouldContainSubstring, "learned_exit submitted")
 		})
 
 		Convey("A learned exit while the capacity monitor is fully exiting is recorded beside it", func() {
@@ -344,8 +349,8 @@ func TestTraining_advance(t *testing.T) {
 			So(<-filling.writes, ShouldEqual, "sell")
 			So(filling.desk.State("BTC/USD"), ShouldEqual, broker.EXITING)
 
-			advanceAll(training, "R02")
-			So(latest(training).Reason, ShouldContainSubstring, "learned_exit recorded beside the exit already in progress")
+			_, reason, _, _ := advanceAll(training, "R02")
+			So(reason, ShouldContainSubstring, "learned_exit recorded beside the exit already in progress")
 			So(filling.writes, ShouldHaveLength, 0)
 
 			sells := filling.desk.PositionsWire().Rows[0].Holding.Sells
@@ -411,7 +416,7 @@ func TestFitFrom(t *testing.T) {
 	Convey("Given a fragment of 300 three-byte tokens", t, func() {
 		tape := cycleTape(300)
 
-		for _, action := range []string{actionEnter, actionExit} {
+		for _, action := range []string{actionEnter, actionExit, actionNoop} {
 			from := fitFrom(tape, len(action))
 			key := strings.Join(append(slices.Clone(tape[from:]), action), "/")
 
@@ -457,23 +462,91 @@ func TestTraining_advanceLongPath(t *testing.T) {
 		training := matchingTraining(filling.desk, len(kept), key)
 
 		Convey("Step replaying the whole precursor matches it at full length, never holding more than a key can", func() {
-			var entered *wire.DecisionT
+			var enteredAction string
+			var enteredDepth int
 
 			for _, token := range tape {
-				training.advance("BTC/USD", token, tokenStart)
+				action, _, _, depth := training.advance("BTC/USD", token, tokenStart)
 
 				if live := training.paths["BTC/USD"]; live != nil {
 					So(len(strings.Join(live.tokens, "/"))+1+len(actionExit), ShouldBeLessThanOrEqualTo, maxKeyBytes)
 				}
 
-				if decision := latest(training); decision.Action == "enter" {
-					entered = decision
+				if action == "enter" {
+					enteredAction = action
+					enteredDepth = depth
 					break
 				}
 			}
 
-			So(entered, ShouldNotBeNil)
-			So(entered.Confidence, ShouldEqual, len(kept))
+			So(enteredAction, ShouldEqual, "enter")
+			So(enteredDepth, ShouldEqual, len(kept))
 		})
+	})
+}
+
+func TestTraining_Step(t *testing.T) {
+	Convey("Given training with a cold measurement (no evidence / warming up)", t, func() {
+		filling := newFillingDesk()
+		prior := data.NewMeasurement(9999, "COLD/USD", "unpinned", 1, 1)
+		prior.At = tokenStart
+		prior.From = tokenStart
+		prior = prior.Write(data.NewMetric("raw_metric", 100.0, data.UnitPrice, data.TimescaleInstantaneous))
+
+		grid := store.NewGrid()
+		So(grid.RegionScores(prior).Winner, ShouldEqual, store.NoEvidence)
+
+		training := matchingTraining(
+			filling.desk, 1,
+			"R01/enter.json",
+		)
+		training.grid = grid
+
+		result := training.Step(prior)
+
+		So(result, ShouldNotBeNil)
+		So(result.Source, ShouldEqual, "training")
+		So(result.Label, ShouldEqual, "COLD/USD")
+		So(result.Meta("token_path"), ShouldEqual, "")
+		So(result.Meta("token_depth"), ShouldEqual, "")
+	})
+
+	Convey("Given training with a warmed measurement possessing evidenced confluence", t, func() {
+		filling := newFillingDesk()
+		grid := store.NewGrid()
+
+		var warmFrame *data.Measurement
+		for stepIdx := range 10 {
+			raw := float64(2 * (stepIdx % 2))
+			frame := data.NewMeasurement(2, "BTC/USD", "spot:trade", 1, 1)
+			frame.At, frame.From = tokenStart, tokenStart
+
+			peer := data.NewMeasurement(2, "BTC/USD", "hawkes", 1, 1)
+			peer.At, peer.From = tokenStart, tokenStart
+			peer.Write(data.NewMetric("buy_from_buy", raw, data.UnitDimensionless, data.TimescaleTick))
+
+			frame.Peers(peer)
+			frame.Write()
+			warmFrame = frame
+		}
+
+		scores := grid.RegionScores(warmFrame)
+		token := string(scores.Token())
+		So(scores.Winner, ShouldEqual, uint8(1))
+		So(token, ShouldEqual, "R01")
+
+		training := matchingTraining(
+			filling.desk, 1,
+			token+"/enter.json",
+		)
+		training.grid = grid
+
+		result := training.Step(warmFrame)
+
+		So(result, ShouldNotBeNil)
+		So(result.Source, ShouldEqual, "training")
+		So(result.Label, ShouldEqual, "BTC/USD")
+		So(result.Meta("token_path"), ShouldEqual, token)
+		So(result.Meta("token_depth"), ShouldEqual, "1")
 	})
 }

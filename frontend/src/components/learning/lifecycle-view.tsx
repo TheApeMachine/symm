@@ -64,6 +64,7 @@ const fieldValue = (value: unknown): string => {
 	if (typeof value === "boolean") return value ? "yes" : "no";
 	if (value && typeof value === "object") {
 		return Object.entries(value as Record<string, unknown>)
+			.sort(([a], [b]) => a.localeCompare(b))
 			.map(([key, inner]) => `${key}:${fieldValue(inner)}`)
 			.join(" ");
 	}
@@ -92,7 +93,9 @@ const EventRow = ({ event }: { event: LifeEvent }) => {
 		label: event.kind,
 		variant: "disabled" as const,
 	};
-	const fields = Object.entries(event.fields ?? {});
+	const fields = Object.entries(event.fields ?? {}).sort(([a], [b]) =>
+		a.localeCompare(b),
+	);
 
 	const icon = (() => {
 		switch (event.kind) {
@@ -247,7 +250,7 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 		: Math.max(0, (Date.now() - new Date(life.opened_at).getTime()) / 1000);
 	const targetS = outcome
 		? outcome.expected_hold_ns / 1e9
-		: expectedHoldS ?? 60;
+		: (expectedHoldS ?? 60);
 	const holdPct = Math.min(
 		100,
 		Math.max(5, (elapsedS / Math.max(1, targetS)) * 100),
@@ -264,7 +267,9 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 							Strategy Pattern
 						</span>
 						{confidence !== undefined && (
-							<span className="text-(--up) font-bold">{confidence} matched</span>
+							<span className="text-(--up) font-bold">
+								{confidence} matched
+							</span>
 						)}
 					</div>
 					<div className="text-[12px] font-bold text-(--acc) truncate">
@@ -297,7 +302,9 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 						</span>
 					</div>
 					<div className="flex items-baseline justify-between">
-						<span className="text-[9.5px] text-(--f4)">Book Exit Capacity:</span>
+						<span className="text-[9.5px] text-(--f4)">
+							Book Exit Capacity:
+						</span>
 						<span className="text-[12px] font-bold text-(--up)">
 							{exitCapacity !== undefined ? exitCapacity.toFixed(2) : "—"}
 						</span>

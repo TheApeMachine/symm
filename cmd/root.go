@@ -341,7 +341,7 @@ var (
 			hub := ui.NewHub(
 				ctx, catalog, workspace,
 				ingressStoreTee, balance, desk,
-				training, training, training, desk,
+				training, desk,
 				func(symbol string) {
 					if err := desk.ExitBy(symbol, broker.TriggerManual); err != nil {
 						errnie.Error(err)

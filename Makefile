@@ -27,7 +27,7 @@ ADVISOR_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run collect audit workbench optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map goodindahood build-cuda
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run collect detect audit workbench dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map build-cuda
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
@@ -76,6 +76,11 @@ collect:
 # --taker-fee-percent); the audit checks it against the stored detections.
 # Override: make audit TAKER_FEE_PERCENT=0.26 ARGS="--epoch 1791596128450467000"
 TAKER_FEE_PERCENT ?= 0.8
+MIN_MOVE_DURATION ?= 1s
+
+detect:
+	@echo "Labeling spot:trade tape with excursion detections (taker fee $(TAKER_FEE_PERCENT)%, min move $(MIN_MOVE_DURATION))..."
+	go run $(LDFLAGS) main.go detect $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) --min-move-duration $(MIN_MOVE_DURATION) $(ARGS)
 
 audit:
 	@echo "Running SYMM sensory & representation health audit (taker fee $(TAKER_FEE_PERCENT)%)..."
@@ -146,12 +151,3 @@ build-cuda:
 	cmake --build "$p/cuda/build" --parallel
 	ctest --test-dir "$p/cuda/build" --output-on-failure
 	go test -tags cuda ./nomagique/physics/sensorium
-
-optimize: goodindahood
-
-goodindahood:
-	.venv/bin/python3 scripts/optimize_advisor_features.py \
-		--config $(ADVISOR_CONFIG) \
-		--out $(ADVISOR_OUT) \
-		$(if $(ADVISOR_RUN),--run $(ADVISOR_RUN),) \
-		$(ADVISOR_FLAGS)
