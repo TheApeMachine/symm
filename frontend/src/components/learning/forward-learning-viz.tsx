@@ -58,8 +58,18 @@ function parseTimestamp(
 	return Date.now();
 }
 
+function toTimestampMs(time: number | undefined | null): number | undefined {
+	if (!time || time <= 0) return undefined;
+	if (time > 1e16) return Math.floor(time / 1e6); // nanoseconds -> ms
+	if (time > 1e13) return Math.floor(time / 1e3); // microseconds -> ms
+	if (time > 1e10) return Math.floor(time);       // milliseconds
+	if (time > 1e6) return Math.floor(time * 1000); // seconds -> ms
+	return undefined;
+}
+
 function formatDurationSpan(ms: number): string {
 	if (!Number.isFinite(ms) || ms <= 0) return "";
+	if (ms < 1000) return `${(ms / 1000).toFixed(2)}s`;
 	const totalSec = Math.round(ms / 1000);
 	if (totalSec < 60) return `${totalSec}s`;
 	const mins = Math.floor(totalSec / 60);
@@ -315,7 +325,7 @@ export const ForwardLearningViz = ({
 			x: i,
 			y: pt.y,
 			seq: pt.seq,
-			time: pt.time,
+			time: toTimestampMs(pt.time),
 		}));
 		setPoints(mappedPoints);
 		// The list carries no points: a fragment's stored trades are read from
@@ -327,7 +337,12 @@ export const ForwardLearningViz = ({
 				.then((tape: TrainedFragmentResponse["points"]) => {
 					if (!pinnedFragmentRef.current || openFragmentRef.current !== frag.id) return;
 					setPoints(
-						(tape ?? []).map((pt, i) => ({ x: i, y: pt.y, seq: pt.seq, time: pt.time })),
+						(tape ?? []).map((pt, i) => ({
+							x: i,
+							y: pt.y,
+							seq: pt.seq,
+							time: toTimestampMs(pt.time),
+						})),
 					);
 				})
 				.catch(() => {});
@@ -956,8 +971,23 @@ export const ForwardLearningViz = ({
 			for (let i = 0; i < numTicks; i++) {
 				const ptIdx = tickIndices[i];
 				const px = xs(points[ptIdx].x);
-				const label = formatClockTime(times[i], needsSeconds);
+				const clock = formatClockTime(times[i], needsSeconds);
+				const relSec = ((times[i] - tStart) / 1000).toFixed(spanMs < 10_000 ? 1 : 0);
+				const label = i === 0 ? clock : `${clock} (+${relSec}s)`;
 				timeTicks.push({ x: px, label });
+			}
+		} else if (points.length >= 2 && tapeDim.width > 0) {
+			const seqs = points.map((p) => p.seq).filter((s): s is number => typeof s === "number" && s > 0);
+			if (seqs.length >= 2) {
+				const numTicks = Math.max(2, Math.min(5, Math.floor(tapeDim.width / 140)));
+				for (let i = 0; i < numTicks; i++) {
+					const idx = Math.min(
+						points.length - 1,
+						Math.round((i / Math.max(1, numTicks - 1)) * (points.length - 1)),
+					);
+					const px = xs(points[idx].x);
+					timeTicks.push({ x: px, label: `tick #${points[idx].seq ?? idx}` });
+				}
 			}
 		}
 
@@ -1634,7 +1664,7 @@ export const ForwardLearningViz = ({
 											opacity="0.6"
 										/>
 										{timeTicks.map((tick, idx) => (
-											<g key={`time-tick-${tick.x}-${tick.label}`}>
+											<g key={`time-tick-${idx}-${tick.x}-${tick.label}`}>
 												<line
 													x1={tick.x}
 													y1={24}

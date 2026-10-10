@@ -695,7 +695,7 @@ export const LearningDashboard = () => {
 
 					setImpulseRegions(normalizedRegions);
 
-					// LitRegions publishes precursor_tokens — authoritative lit set.
+					// LitRegions publishes live active regions and precursor tokens.
 					const litFromTokens = new Set<number>();
 					for (const tok of parsedTokens) {
 						const n = Number(tok.replace(/^R/i, ""));
@@ -706,36 +706,57 @@ export const LearningDashboard = () => {
 						normalizedRegions.map((r) => [Number(r.id), r] as const),
 					);
 
-					let litRegions =
-						litFromTokens.size > 0
-							? [...litFromTokens].map((id) => {
-									const known = regionById.get(id);
-									return {
-										id,
-										strength: known?.strength ?? 0,
-										authority: known?.authority ?? 1,
-										members:
-											known?.members ??
-											currentNodes.filter((c) => Number(c.cluster) === id)
-												.length,
-									};
-								})
-							: [...normalizedRegions].filter((r) => (r.strength || 0) > 0);
+					const regionStrengthMap = new Map<number, number>();
+					for (const r of normalizedRegions) {
+						if ((r.strength || 0) > 0) {
+							regionStrengthMap.set(Number(r.id), r.strength);
+						}
+					}
+
+					// Combine live active regions with positive activity and precursor tokens
+					const activeRegionIds = new Set<number>();
+					for (const r of normalizedRegions) {
+						if ((r.strength || 0) > 0) activeRegionIds.add(Number(r.id));
+					}
+					for (const id of litFromTokens) {
+						activeRegionIds.add(id);
+					}
+
+					let litRegions = [...activeRegionIds].map((id) => {
+						const known = regionById.get(id);
+						const peakStrength = regionStrengthMap.get(id) ?? known?.strength ?? (litFromTokens.has(id) ? 1.0 : 0);
+						return {
+							id,
+							strength: peakStrength,
+							authority: known?.authority ?? 1,
+							members:
+								known?.members ??
+								currentNodes.filter((c) => Number(c.cluster) === id).length,
+						};
+					});
 
 					litRegions = litRegions.sort(
 						(a, b) => (b.strength || 0) - (a.strength || 0),
 					);
 
-					const litSet = new Set(litRegions.map((r) => Number(r.id)));
-
 					const displayNodes = currentNodes.map((node) => {
-						const lit = litSet.size === 0 || litSet.has(Number(node.cluster));
+						const clusterId = Number(node.cluster);
+						const clusterStrength = regionStrengthMap.get(clusterId) ?? 0;
+						const isPrecursor = litFromTokens.has(clusterId);
 						const base = node.activation || 0;
+
+						let activation = base;
+						if (clusterStrength > 0) {
+							activation = Math.min(1.0, Math.max(base, clusterStrength));
+						} else if (isPrecursor) {
+							activation = Math.max(base, 0.75);
+						} else {
+							activation = Math.max(0.05, base);
+						}
+
 						return {
 							...node,
-							activation: lit
-								? Math.max(base, litSet.size > 0 ? 0.85 : base)
-								: base * 0.15,
+							activation,
 						};
 					});
 					setImpulseNodes(displayNodes);

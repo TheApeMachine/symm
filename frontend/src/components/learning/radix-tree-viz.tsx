@@ -259,44 +259,43 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		return "var(--f4)";
 	};
 
-	// Terminal leaves are enter/exit only. Wait is precursor stance on
-	// internal region nodes (abstention), never a terminating action leaf.
-	const isActionPrefix = (prefix?: string) => {
-		switch ((prefix ?? "").toUpperCase()) {
-			case "ENTER":
-			case "EXIT":
-				return true;
-			default:
-				return false;
-		}
-	};
 
 	const isRootNode = (node: TrieNodeData) =>
 		node.id === "root" || (node.prefix ?? "").toUpperCase() === "ROOT";
 
-	// Edges carry region tokens; nodes carry actions (and ROOT). Region path
-	// junctions stay structural dots — their token already labels the inbound edge.
+	const getNodeAction = (prefix?: string) => {
+		if (!prefix) return null;
+		const parts = prefix.split("/");
+		const last = parts[parts.length - 1]?.toUpperCase();
+		if (last === "ENTER" || last === "EXIT" || last === "WAIT") {
+			return last;
+		}
+		return null;
+	};
+
 	const nodeLabel = (node: TrieNodeData) => {
-		if (isRootNode(node) || isActionPrefix(node.prefix)) {
-			return node.prefix;
+		if (isRootNode(node)) return "ROOT";
+		const action = getNodeAction(node.prefix);
+		if (action) return action;
+		if (node.tokens && node.tokens.length > 0) {
+			if (node.tokens.length === 1) return node.tokens[0];
+			return `${node.tokens[0]}/…`;
 		}
 		return "·";
 	};
 
-	const edgeTokenLabel = (target: TrieNodeData) => {
-		const tokens = target.tokens ?? [];
-		if (tokens.length === 0) {
-			if (target.prefix && !isRootNode(target)) {
-				return target.prefix;
-			}
-			return null;
+	// Split by "/" to get the region token for the edge
+	const getEdgeLabel = (source: TrieNodeData, target: TrieNodeData) => {
+		const targetParts = (target.prefix ?? "").split("/").filter(Boolean);
+		if (isRootNode(source)) {
+			return targetParts.join("/") || null;
 		}
-		// Frames arrive already as [id,...]; do not wrap again.
-		const joined = tokens.join(", ");
-		if (joined.startsWith("[") && joined.endsWith("]")) {
-			return joined;
+		const sourceParts = (source.prefix ?? "").split("/").filter(Boolean);
+		const diff = targetParts.slice(sourceParts.length);
+		if (diff.length > 0) {
+			return diff.join("/");
 		}
-		return `[${joined}]`;
+		return targetParts[targetParts.length - 1] ?? null;
 	};
 
 	const getEdgeColor = (prob: number) => {
@@ -516,8 +515,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 											}}
 										/>
 										{(() => {
-											const label = edgeTokenLabel(link.target.data);
+											const label = getEdgeLabel(link.source.data, link.target.data);
 											if (!label) return null;
+											const pillWidth = Math.max(24, label.length * 6.5 + 10);
 											return (
 												<g
 													transform={`translate(${midX}, ${projection === "vertical" ? midY - 6 : midY - 8})`}
@@ -527,9 +527,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 													}}
 												>
 													<rect
-														x={-Math.max(28, label.length * 5.5 + 8) / 2}
+														x={-pillWidth / 2}
 														y={-7}
-														width={Math.max(28, label.length * 5.5 + 8)}
+														width={pillWidth}
 														height={14}
 														rx={2}
 														fill="var(--surface)"

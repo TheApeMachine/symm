@@ -105,7 +105,7 @@ const subscribe = (listener: () => void) => {
 };
 
 export const useLifecycles = (): Snapshot =>
-	useSyncExternalStore(subscribe, () => snapshot);
+	useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
 
 export const signedMoney = (value: number) =>
 	`${value >= 0 ? "+" : ""}${value.toFixed(2)}`;

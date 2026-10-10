@@ -70,9 +70,13 @@ const TickCounter = () => {
 		}
 
 		for (const metric of latest.metrics ?? []) {
-			if (metric.name === "steps") {
+			if (metric.name === "steps" || metric.name === "tick" || metric.name === "ticks") {
 				return Math.floor(metric.raw ?? 0);
 			}
+		}
+
+		if (latest.tick && latest.tick > 0n) {
+			return Number(latest.tick);
 		}
 
 		return null;

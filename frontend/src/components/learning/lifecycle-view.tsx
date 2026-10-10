@@ -73,25 +73,61 @@ const fieldValue = (value: unknown): string => {
 const tone = (value: number) =>
 	value > 0 ? "text-(--up)" : value < 0 ? "text-(--down)" : "text-(--f3)";
 
+import {
+	Activity,
+	CheckCircle2,
+	ChevronDown,
+	ChevronRight,
+	Clock,
+	Compass,
+	Flag,
+	Layers,
+	Scale,
+	ShieldAlert,
+} from "lucide-react";
+
 const EventRow = ({ event }: { event: LifeEvent }) => {
+	const [expanded, setExpanded] = useState(false);
 	const kind = KIND[event.kind] ?? {
 		label: event.kind,
 		variant: "disabled" as const,
 	};
 	const fields = Object.entries(event.fields ?? {});
 
+	const icon = (() => {
+		switch (event.kind) {
+			case "entry_match":
+				return <Compass className="w-3.5 h-3.5 text-(--acc) shrink-0" />;
+			case "sizing":
+				return <Scale className="w-3.5 h-3.5 text-(--info) shrink-0" />;
+			case "order_submitted":
+			case "child_order":
+				return <Activity className="w-3.5 h-3.5 text-(--f3) shrink-0" />;
+			case "fill":
+				return <CheckCircle2 className="w-3.5 h-3.5 text-(--up) shrink-0" />;
+			case "risk_sell":
+				return <ShieldAlert className="w-3.5 h-3.5 text-(--warn) shrink-0" />;
+			case "exit_match":
+			case "exit":
+				return <Flag className="w-3.5 h-3.5 text-(--acc) shrink-0" />;
+			default:
+				return <Layers className="w-3.5 h-3.5 text-(--f4) shrink-0" />;
+		}
+	})();
+
 	return (
 		<div
 			data-lifecycle-event={event.kind}
-			className="border-(--line) border-b px-3 py-2 font-mono text-[11px]"
+			className="border-(--line) border-b px-3 py-2 font-mono text-[11px] transition-colors hover:bg-(--surface)/40"
 		>
 			<Flex.Row align="center" gap={2} className="min-w-0">
 				<span className="w-16 shrink-0 text-(--f4)" title={event.at}>
 					{time(event.at)}
 				</span>
+				{icon}
 				<Badge size="xs" variant={kind.variant} label={kind.label} />
 				<span
-					className="min-w-0 flex-1 truncate text-(--f2)"
+					className="min-w-0 flex-1 truncate text-(--f1) font-medium"
 					title={event.detail}
 				>
 					{event.detail}
@@ -104,9 +140,28 @@ const EventRow = ({ event }: { event: LifeEvent }) => {
 						venue {time(event.venue_at)}
 					</span>
 				) : null}
+				{fields.length > 0 && (
+					<button
+						type="button"
+						onClick={() => setExpanded(!expanded)}
+						className="shrink-0 text-[9px] text-(--f4) hover:text-(--f2) flex items-center gap-0.5 border border-(--line) px-1 rounded bg-(--sunken)"
+					>
+						<span>{fields.length} params</span>
+						{expanded ? (
+							<ChevronDown className="w-2.5 h-2.5" />
+						) : (
+							<ChevronRight className="w-2.5 h-2.5" />
+						)}
+					</button>
+				)}
 			</Flex.Row>
 			{fields.length > 0 ? (
-				<div className="mt-1 ml-18 grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-x-4 gap-y-0.5 text-[10px]">
+				<div
+					className={cn(
+						"mt-1.5 ml-6 grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-x-4 gap-y-1 rounded bg-(--sunken)/80 border border-(--line)/40 p-2 text-[10px]",
+						!expanded && "hidden",
+					)}
+				>
 					{fields.map(([key, value]) => (
 						<div key={key} className="flex min-w-0 justify-between gap-2">
 							<span className="text-(--f4)">{key}</span>
@@ -121,9 +176,184 @@ const EventRow = ({ event }: { event: LifeEvent }) => {
 	);
 };
 
+const LifecycleStepper = ({ life }: { life: Lifecycle }) => {
+	const events = life.events ?? [];
+	const hasMatch = events.some((e) => e.kind === "entry_match");
+	const hasSizing = events.some((e) => e.kind === "sizing");
+	const hasFill = events.some((e) => e.kind === "fill");
+	const isHolding =
+		life.status === "holding" ||
+		life.status === "exiting" ||
+		life.status === "closed";
+	const hasExit = events.some(
+		(e) =>
+			e.kind === "exit" || e.kind === "exit_match" || e.kind === "risk_sell",
+	);
+	const isClosed = life.status === "closed";
+
+	const stages = [
+		{ label: "1. Match", done: hasMatch, active: !hasSizing },
+		{ label: "2. Sizing", done: hasSizing, active: hasSizing && !hasFill },
+		{ label: "3. Fill", done: hasFill, active: hasFill && !isHolding },
+		{ label: "4. Hold", done: isHolding, active: life.status === "holding" },
+		{
+			label: "5. Exit",
+			done: hasExit || isClosed,
+			active: life.status === "exiting",
+		},
+		{ label: "6. Outcome", done: isClosed, active: isClosed },
+	];
+
+	return (
+		<div className="flex items-center gap-1.5 px-3 py-2 bg-(--surface) border-b border-(--line) overflow-x-auto text-[10px] font-mono">
+			{stages.map((st, idx) => (
+				<div key={st.label} className="flex items-center gap-1.5 shrink-0">
+					{idx > 0 && <span className="text-(--f4) select-none">→</span>}
+					<span
+						className={cn(
+							"px-2 py-0.5 rounded border text-[9.5px] transition-colors",
+							st.done
+								? "border-(--acc)/40 bg-(--acc)/10 text-(--acc) font-bold"
+								: st.active
+									? "border-(--up) bg-(--up)/15 text-(--up) font-bold animate-pulse"
+									: "border-(--line) text-(--f4) bg-(--sunken)",
+						)}
+					>
+						{st.label}
+					</span>
+				</div>
+			))}
+		</div>
+	);
+};
+
+const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
+	const events = life.events ?? [];
+	const entryMatch = events.find((e) => e.kind === "entry_match");
+	const sizing = events.find((e) => e.kind === "sizing");
+	const outcome = life.outcome;
+
+	const path = entryMatch?.fields?.path as string | undefined;
+	const confidence = entryMatch?.fields?.confidence as number | undefined;
+	const candidates = entryMatch?.fields?.candidates as number | undefined;
+
+	const binding = sizing?.fields?.binding as string | undefined;
+	const exitCapacity = sizing?.fields?.exit_capacity as number | undefined;
+	const cash = sizing?.fields?.cash as number | undefined;
+	const expectedHoldS = sizing?.fields?.expected_hold_s as number | undefined;
+
+	const elapsedS = outcome
+		? outcome.hold_ns / 1e9
+		: Math.max(0, (Date.now() - new Date(life.opened_at).getTime()) / 1000);
+	const targetS = outcome
+		? outcome.expected_hold_ns / 1e9
+		: expectedHoldS ?? 60;
+	const holdPct = Math.min(
+		100,
+		Math.max(5, (elapsedS / Math.max(1, targetS)) * 100),
+	);
+
+	return (
+		<div className="border-(--line) border-b bg-(--surface) p-3 font-mono text-[11px]">
+			<div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+				{/* Strategy Pattern Recognition */}
+				<div className="rounded border border-(--line) bg-(--sunken) p-2.5 flex flex-col gap-1.5">
+					<div className="flex items-center justify-between text-[10px] text-(--f4) uppercase font-bold tracking-wider">
+						<span className="flex items-center gap-1.5">
+							<Compass className="w-3.5 h-3.5 text-(--acc)" />
+							Strategy Pattern
+						</span>
+						{confidence !== undefined && (
+							<span className="text-(--up) font-bold">{confidence} matched</span>
+						)}
+					</div>
+					<div className="text-[12px] font-bold text-(--acc) truncate">
+						{path || "Direct / Unmatched Entry"}
+					</div>
+					<div className="text-[9.5px] text-(--f3) flex justify-between mt-auto pt-1 border-t border-(--line)/40">
+						<span>Trie Candidates:</span>
+						<span className="text-(--f1)">
+							{candidates !== undefined ? candidates : "—"}
+						</span>
+					</div>
+				</div>
+
+				{/* Liquidity & Capacity Health */}
+				<div className="rounded border border-(--line) bg-(--sunken) p-2.5 flex flex-col gap-1.5">
+					<div className="flex items-center justify-between text-[10px] text-(--f4) uppercase font-bold tracking-wider">
+						<span className="flex items-center gap-1.5">
+							<Scale className="w-3.5 h-3.5 text-(--info)" />
+							Liquidity & Sizing
+						</span>
+						<span
+							className={cn(
+								"px-1 py-0.2 rounded text-[8px] uppercase font-bold",
+								binding === "exit_capacity"
+									? "bg-(--warn)/15 text-(--warn) border border-(--warn)/30"
+									: "bg-(--acc)/15 text-(--acc) border border-(--acc)/30",
+							)}
+						>
+							{binding ? `Bound by ${binding}` : "Sized"}
+						</span>
+					</div>
+					<div className="flex items-baseline justify-between">
+						<span className="text-[9.5px] text-(--f4)">Book Exit Capacity:</span>
+						<span className="text-[12px] font-bold text-(--up)">
+							{exitCapacity !== undefined ? exitCapacity.toFixed(2) : "—"}
+						</span>
+					</div>
+					<div className="text-[9.5px] text-(--f3) flex justify-between mt-auto pt-1 border-t border-(--line)/40">
+						<span>Cash Allocation:</span>
+						<span className="text-(--f1)">
+							{cash !== undefined ? `${cash.toFixed(2)} USD` : "—"}
+						</span>
+					</div>
+				</div>
+
+				{/* Hold Horizon Progress */}
+				<div className="rounded border border-(--line) bg-(--sunken) p-2.5 flex flex-col gap-1.5">
+					<div className="flex items-center justify-between text-[10px] text-(--f4) uppercase font-bold tracking-wider">
+						<span className="flex items-center gap-1.5">
+							<Clock className="w-3.5 h-3.5 text-(--acc)" />
+							Hold Horizon
+						</span>
+						<span className="text-(--f2)">
+							{elapsedS.toFixed(0)}s / {targetS.toFixed(0)}s
+						</span>
+					</div>
+					<div className="w-full bg-(--surface) border border-(--line) rounded-full h-2 overflow-hidden mt-1">
+						<div
+							className={cn(
+								"h-full transition-all duration-300",
+								holdPct >= 100 ? "bg-(--warn)" : "bg-(--acc)",
+							)}
+							style={{ width: `${holdPct}%` }}
+						/>
+					</div>
+					<div className="text-[9.5px] text-(--f4) flex justify-between mt-auto pt-1 border-t border-(--line)/40">
+						<span>Progress:</span>
+						<span className="text-(--f2)">
+							{holdPct >= 100
+								? "Horizon Reached"
+								: `${holdPct.toFixed(0)}% elapsed`}
+						</span>
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+};
+
 const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 	const outcome = life.outcome;
 	if (!outcome) return null;
+
+	const isWin = outcome.shadow_defined
+		? outcome.shadow_realized > 0
+		: outcome.venue_realized > 0;
+	const pnl = outcome.shadow_defined
+		? outcome.shadow_realized
+		: outcome.venue_realized;
 
 	const rows: Array<[string, string, number?]> = [
 		["venue P&L", signedMoney(outcome.venue_realized), outcome.venue_realized],
@@ -163,12 +393,33 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 	return (
 		<div
 			data-l="lifecycle-outcome"
-			className="border-(--line) border-b bg-(--sunken) px-3 py-2 font-mono text-[11px]"
+			className="border-(--line) border-b bg-(--sunken) px-3 py-2.5 font-mono text-[11px]"
 		>
-			<Typography.Label size="s" tone="f3" weight="normal">
-				OUTCOME
-			</Typography.Label>
-			<div className="mt-1 grid grid-cols-2 gap-x-6 gap-y-0.5">
+			<div className="flex items-center justify-between pb-2 mb-2 border-b border-(--line)/40">
+				<div className="flex items-center gap-2">
+					<span
+						className={cn(
+							"px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
+							isWin
+								? "bg-(--up)/20 text-(--up) border border-(--up)/40"
+								: "bg-(--down)/20 text-(--down) border border-(--down)/40",
+						)}
+					>
+						{isWin ? "WIN" : "LOSS"}
+					</span>
+					<span className={cn("text-[13px] font-bold", tone(pnl))}>
+						{signedMoney(pnl)} USD Realized
+					</span>
+				</div>
+				<div className="text-[10px] text-(--f4)">
+					Triggers:{" "}
+					<span className="text-(--f2)">
+						{(outcome.triggers ?? []).join(", ") || "—"}
+					</span>
+				</div>
+			</div>
+
+			<div className="grid grid-cols-2 gap-x-6 gap-y-1">
 				{rows.map(([label, value, sign]) => (
 					<div key={label} className="flex justify-between gap-2">
 						<span className="text-(--f4)">{label}</span>
@@ -359,6 +610,8 @@ export const LifecycleView = () => {
 								title={`${active.symbol} · ${active.status}`}
 								meta={`opened ${time(active.opened_at)}${active.closed_at ? ` · ended ${time(active.closed_at)}` : ""}`}
 							/>
+							<LifecycleStepper life={active} />
+							<StrategyIntelligenceCard life={active} />
 							<OutcomeCard life={active} />
 							{(active.events ?? []).map((event, index) => (
 								// biome-ignore lint/suspicious/noArrayIndexKey: events are append-only

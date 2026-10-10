@@ -53,6 +53,7 @@ type PositionCardData = {
 	returnPct: string;
 	capacity: string;
 	capacityShort: boolean;
+	capacityRatioNum?: number;
 	budget: string;
 	venuePnl: string;
 	shadowPnl: string;
@@ -138,6 +139,7 @@ const selectPositions = (rows: PositionT[]): PositionCardData[] => {
 				? `${formatValue(ratio, 2)}×${currentHolding.capacityBounded ? "+" : ""}`
 				: "—",
 			capacityShort: Boolean(currentHolding.capacityDefined) && ratio < 1,
+			capacityRatioNum: currentHolding.capacityDefined ? ratio : undefined,
 			budget: currentHolding.budgetSource
 				? `${formatValue(Number(currentHolding.slippageBudget ?? 0) * 100, 3)}% ${currentHolding.budgetSource}`
 				: "—",
@@ -176,6 +178,7 @@ const positionsEqual = (
 			l.mark !== r.mark ||
 			l.returnPct !== r.returnPct ||
 			l.capacity !== r.capacity ||
+			l.capacityRatioNum !== r.capacityRatioNum ||
 			l.budget !== r.budget ||
 			l.venuePnl !== r.venuePnl ||
 			l.shadowPnl !== r.shadowPnl ||
@@ -294,6 +297,19 @@ export const Positions = () => {
 										<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide">
 											{pos.status}
 										</Typography.Span>
+										{pos.capacityShort ? (
+											<Typography.Span className="rounded-xs bg-(--down)/15 border border-(--down)/40 px-1 py-px text-[7.5px] font-bold text-(--down) uppercase tracking-wide">
+												SHORTFALL
+											</Typography.Span>
+										) : pos.capacityRatioNum !== undefined && pos.capacityRatioNum < 2 ? (
+											<Typography.Span className="rounded-xs bg-(--warn)/15 border border-(--warn)/40 px-1 py-px text-[7.5px] font-bold text-(--warn) uppercase tracking-wide">
+												TIGHT
+											</Typography.Span>
+										) : pos.capacityRatioNum !== undefined && pos.capacityRatioNum >= 2 ? (
+											<Typography.Span className="rounded-xs bg-(--up)/15 border border-(--up)/40 px-1 py-px text-[7.5px] font-bold text-(--up) uppercase tracking-wide">
+												LIQUID
+											</Typography.Span>
+										) : null}
 									</Flex.Row>
 									<Typography.Span
 										className={cn(
@@ -335,6 +351,27 @@ export const Positions = () => {
 										budget {pos.budget}
 									</Typography.Span>
 								</Flex.Row>
+
+								{pos.capacityRatioNum !== undefined && (
+									<div
+										className="mt-1 w-full bg-(--surface) border border-(--line)/40 rounded-full h-1 overflow-hidden"
+										title={`Liquidity capacity: ${pos.capacityRatioNum.toFixed(2)}x open position`}
+									>
+										<div
+											className={cn(
+												"h-full transition-all duration-300",
+												pos.capacityShort
+													? "bg-(--down)"
+													: pos.capacityRatioNum < 2
+														? "bg-(--warn)"
+														: "bg-(--up)",
+											)}
+											style={{
+												width: `${Math.min(100, Math.max(8, (pos.capacityRatioNum / 3) * 100))}%`,
+											}}
+										/>
+									</div>
+								)}
 
 								<Flex.Row className="mt-0.75 items-center justify-between gap-3 text-[9.5px] text-(--f4)">
 									<PnlPair
