@@ -12,8 +12,8 @@ func main() {
 	client := network.NewWebsocketClient(context.Background())
 	msg, _ := sonic.Marshal(kraken.NewInstrumentSubscription())
 	client.Write(msg)
-	
-	for i := 0; i < 5; i++ {
+
+	for range 5 {
 		buf, err := client.Read()
 		if err != nil {
 			fmt.Println("Error:", err)

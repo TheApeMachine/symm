@@ -67,7 +67,7 @@ func AnalyzeGridStability(
 	// Two independent quarter-vs-quarter comparisons when the sample supports them.
 	quarter := totalTicks / 4
 	if quarter >= 20 {
-		for pair := 0; pair < 2; pair++ {
+		for pair := range 2 {
 			start := pair * quarter * 2
 			mid := start + quarter
 			end := min(mid+quarter, totalTicks)
@@ -226,7 +226,7 @@ func randomizedPartitionARIMean(
 
 	rng := rand.New(rand.NewSource(seed))
 	total := 0.0
-	for iteration := 0; iteration < permutations; iteration++ {
+	for range permutations {
 		shuffled := append([]uint8(nil), labels...)
 		rng.Shuffle(len(shuffled), func(first, second int) {
 			shuffled[first], shuffled[second] = shuffled[second], shuffled[first]
@@ -475,7 +475,7 @@ func computeRandIndices(
 	}
 
 	agreements, allPairs := 0, 0
-	for first := 0; first < numCells; first++ {
+	for first := range numCells {
 		for second := first + 1; second < numCells; second++ {
 			keyA := sharedKeys[first]
 			keyB := sharedKeys[second]

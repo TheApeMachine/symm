@@ -9,7 +9,7 @@ func TestLogLikelihoodGradientMatchesFiniteDifference(testingT *testing.T) {
 	buy := make([]float64, 0, 20)
 	sell := make([]float64, 0, 20)
 
-	for index := 0; index < 20; index++ {
+	for index := range 20 {
 		base := float64(index) * 0.6
 		buy = append(buy, base)
 		sell = append(sell, base+0.25)

@@ -163,7 +163,7 @@ func TestWaveStep(t *testing.T) {
 
 		norm := 0.0
 
-		for head := 0; head < spectralHeads; head++ {
+		for head := range spectralHeads {
 			real := fluid.psiRealHeads[head].Float32Slice()
 			imaginary := fluid.psiImagHeads[head].Float32Slice()
 

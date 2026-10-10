@@ -61,14 +61,14 @@ For each sequence S, the architecture is:
 */
 type Workspace struct {
 	*System
-	channel    disruptor.Disruptor
-	buffer     []*data.Measurement
-	mask       int64
-	capacity   int
-	sequence   atomic.Int64
-	at         atomic.Int64
-	stages     [][]*Consumer
-	joins      [][]*data.Measurement // [stageIdx][slot]
+	channel  disruptor.Disruptor
+	buffer   []*data.Measurement
+	mask     int64
+	capacity int
+	sequence atomic.Int64
+	at       atomic.Int64
+	stages   [][]*Consumer
+	joins    [][]*data.Measurement // [stageIdx][slot]
 }
 
 func NewWorkspace(
@@ -87,14 +87,14 @@ func NewWorkspace(
 	numJoins := max(len(stages)-1, 0)
 
 	workspace := &Workspace{
-		buffer:     make([]*data.Measurement, capacity),
-		mask:       mask,
-		capacity:   capacity,
-		stages:     make([][]*Consumer, len(stages)),
-		joins:      make([][]*data.Measurement, numJoins),
+		buffer:   make([]*data.Measurement, capacity),
+		mask:     mask,
+		capacity: capacity,
+		stages:   make([][]*Consumer, len(stages)),
+		joins:    make([][]*data.Measurement, numJoins),
 	}
 
-	for joinIdx := 0; joinIdx < numJoins; joinIdx++ {
+	for joinIdx := range numJoins {
 		workspace.joins[joinIdx] = make([]*data.Measurement, capacity)
 	}
 

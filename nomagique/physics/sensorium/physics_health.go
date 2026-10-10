@@ -85,8 +85,8 @@ func finiteHealthValue(value reflect.Value) bool {
 	case reflect.Float64, reflect.Float32:
 		return finite(value.Float())
 	case reflect.Struct:
-		for i := 0; i < value.NumField(); i++ {
-			if !finiteHealthValue(value.Field(i)) {
+		for _, field := range value.Fields() {
+			if !finiteHealthValue(field) {
 				return false
 			}
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -42,6 +43,18 @@ func NewDesk(
 	return desk
 }
 
+func (desk *Desk) Cash(asset string) *decimal.Decimal {
+	if desk.balance == nil {
+		if desk.price != nil {
+			return desk.price.ReferenceCash()
+		}
+
+		return nil
+	}
+
+	return desk.balance.cash(asset)
+}
+
 /*
 Enter sizes an entry from the book and the matched edge and starts working it
 in child market orders. The size is the smallest of: the exit capacity within
@@ -54,9 +67,26 @@ func (desk *Desk) Enter(symbol string, qty *decimal.Decimal) error {
 	position := NewPosition()
 	position.Enter(symbol, qty)
 
-	untyped, _ := desk.positions.LoadOrStore(symbol, []*Position{position})
-	positions := untyped.([]*Position)
-	desk.positions.Store(symbol, append(positions, position))
+	untyped, loaded := desk.positions.LoadOrStore(symbol, []*Position{position})
+	if loaded {
+		positions := untyped.([]*Position)
+		desk.positions.Store(symbol, append(positions, position))
+	}
+
+	if desk.transport != nil && len(position.entryOrders) > 0 {
+		order := position.entryOrders[len(position.entryOrders)-1]
+		msg := kraken.NewAddOrderMessage("", &kraken.AddOrderRequest{
+			Pair:    symbol,
+			Type:    "buy",
+			Volume:  qty.String(),
+			ClOrdId: order.ClOrdId,
+		})
+		buf, err := sonic.Marshal(msg)
+
+		if err == nil {
+			desk.transport.Write(buf)
+		}
+	}
 
 	return nil
 }
@@ -68,14 +98,51 @@ rest. When the position is already exiting (the monitor's full exit came
 first) it records that it also fired, so both are visible.
 */
 func (desk *Desk) Exit(symbol string) error {
-	untyped, _ := desk.positions.Load(symbol)
+	untyped, exists := desk.positions.Load(symbol)
+	if !exists || untyped == nil {
+		return nil
+	}
+
 	positions := untyped.([]*Position)
 
 	for _, position := range positions {
 		position.Exit(symbol)
+
+		if desk.transport != nil && position.qty != nil && len(position.exitOrders) > 0 {
+			order := position.exitOrders[len(position.exitOrders)-1]
+			msg := kraken.NewAddOrderMessage("", &kraken.AddOrderRequest{
+				Pair:    symbol,
+				Type:    "sell",
+				Volume:  position.qty.String(),
+				ClOrdId: order.ClOrdId,
+			})
+			buf, err := sonic.Marshal(msg)
+
+			if err == nil {
+				desk.transport.Write(buf)
+			}
+		}
 	}
 
+	desk.positions.Delete(symbol)
 	return nil
+}
+
+/*
+Has reports whether there are open positions for symbol.
+*/
+func (desk *Desk) Has(symbol string) bool {
+	if desk == nil || desk.positions == nil {
+		return false
+	}
+
+	untyped, exists := desk.positions.Load(symbol)
+	if !exists || untyped == nil {
+		return false
+	}
+
+	positions, ok := untyped.([]*Position)
+	return ok && len(positions) > 0
 }
 
 func (desk *Desk) Apply(execution *kraken.Execution) {

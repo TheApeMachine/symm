@@ -38,8 +38,7 @@ func TestWebsocketSoftDownDoesNotErrorFlood(t *testing.T) {
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	client := NewWebsocketClient(ctx)
 	client.backoff = 10 * time.Millisecond
@@ -96,8 +95,7 @@ func TestWebsocketOnReconnectHook(t *testing.T) {
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	client := NewWebsocketClient(ctx)
 	client.OnReconnect(func() error {
@@ -148,8 +146,7 @@ func TestWebsocketOnReconnectHookFailureRedials(t *testing.T) {
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	client := NewWebsocketClient(ctx)
 
@@ -221,8 +218,7 @@ func TestWebsocketOnDisconnectHook(t *testing.T) {
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	client := NewWebsocketClient(ctx)
 	var drops atomic.Int32

@@ -862,11 +862,7 @@ func (rm *ResonanceManifold) learn(target []float64) error {
 	trainedRows := 0
 
 	if target != nil && rm.taskWeights != nil {
-		trainedRows = len(target)
-
-		if trainedRows > rm.taskRows {
-			trainedRows = rm.taskRows
-		}
+		trainedRows = min(len(target), rm.taskRows)
 
 		targetCol = rm.workspace.yCol
 		copy(targetCol.RawVector().Data, target)

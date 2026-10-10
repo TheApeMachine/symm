@@ -303,7 +303,7 @@ func (fluid *workspace) allocateGrid() {
 	fluid.psiRealHeads = make([]*Buffer, spectralHeads)
 	fluid.psiImagHeads = make([]*Buffer, spectralHeads)
 
-	for head := 0; head < spectralHeads; head++ {
+	for head := range spectralHeads {
 		fluid.psiRealHeads[head] = fluid.gpu(modes * 4)
 		fluid.psiImagHeads[head] = fluid.gpu(modes * 4)
 	}
@@ -331,7 +331,7 @@ func (fluid *workspace) seedLattice() {
 	params := fluid.binParams.Float32Slice()
 	domega := float32(fluid.domain.binWidth())
 
-	for mode := 0; mode < modes; mode++ {
+	for mode := range modes {
 		omega[mode] = float32(fluid.domain.OmegaMin) + float32(mode)*domega
 		width[mode] = domega
 		index[mode] = int32(mode)
@@ -475,11 +475,7 @@ func (fluid *workspace) allocateParticles(count int) {
 		return
 	}
 
-	capacity := count
-
-	if capacity < 1024 {
-		capacity = 1024
-	}
+	capacity := max(count, 1024)
 
 	fluid.particles = count
 	fluid.particleCapacity = capacity

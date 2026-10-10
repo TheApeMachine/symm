@@ -73,7 +73,7 @@ func TestAuditStages(t *testing.T) {
 			Convey("with well-synchronized monotonic timestamps", func() {
 				now := time.Now().UnixNano()
 				measurements := make([]*data.Measurement, 0, 10)
-				for idx := int64(0); idx < 10; idx++ {
+				for idx := range int64(10) {
 					meas := data.NewMeasurement(1, "BTC/USD", "test", idx+1, idx+1)
 					meas.At = time.Unix(0, now+idx*1_000_000-25_000_000)
 					meas.Timestamp = now + idx*1_000_000
@@ -90,7 +90,7 @@ func TestAuditStages(t *testing.T) {
 			Convey("with latency jitter spikes and sequence inversions", func() {
 				now := time.Now().UnixNano()
 				measurements := make([]*data.Measurement, 0, 10)
-				for idx := int64(0); idx < 6; idx++ {
+				for idx := range int64(6) {
 					meas := data.NewMeasurement(1, "BTC/USD", "test", idx+1, idx+1)
 					meas.At = time.Unix(0, now+idx*100_000_000)
 					meas.Timestamp = now + idx*100_000_000 + 10_000_000

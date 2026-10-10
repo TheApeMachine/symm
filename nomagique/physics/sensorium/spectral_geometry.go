@@ -59,8 +59,8 @@ func (m *Manifold) SetSpectralGeometry(potential, metricVolume []float32) error 
 		f.spectralMetric.Close()
 	}
 	f.spectralPotential, f.spectralMetric = p, w
-	for h := 0; h < spectralHeads; h++ {
-		for i := 0; i < n; i++ {
+	for h := range spectralHeads {
+		for i := range n {
 			f.previousPotential[h*n+i] = 0
 			if p != nil {
 				f.previousPotential[h*n+i] = potential[i]

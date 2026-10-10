@@ -252,7 +252,7 @@ func TestDetector_EveryEpisodeMatchesOracle(t *testing.T) {
 		seen := make(map[string]int)
 		mismatches := 0
 
-		for trial := 0; trial < 400; trial++ {
+		for range 400 {
 			tape := randomTape(t, rng, 2+rng.Intn(24))
 			So(detector.Scan(tapeSeq(tape)), ShouldBeNil)
 
@@ -343,7 +343,7 @@ func TestDetector_GrowingEpochReproducesEarlierRuns(t *testing.T) {
 		rng := rand.New(rand.NewSource(11))
 		lost := 0
 
-		for trial := 0; trial < 300; trial++ {
+		for range 300 {
 			tape := randomTape(t, rng, 2+rng.Intn(30))
 			cut := 1 + rng.Intn(len(tape))
 

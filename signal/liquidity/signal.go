@@ -6,6 +6,7 @@ import (
 	"math"
 	"sync"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -83,12 +84,12 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookHistory
+	books  broker.BookSource
 	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookHistory) *Signal {
+func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: make(map[string]*symbolState),
@@ -121,15 +122,15 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	var bid, ask, bidQty, askQty float64
 	var found bool
 
-	// The book as of this frame, not as the live book stands when the frame
-	// is processed.
-	signal.books.BookAt(prior.Label, prior.At, func(book *broker.BookView) {
-		if !book.Complete || len(book.Bids) == 0 || len(book.Asks) == 0 {
+	signal.books.Book(prior.Label, func(book *spotbook.Book) {
+		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
 			return
 		}
 
-		bid, bidQty = book.Bids[0].Price, book.Bids[0].Quantity
-		ask, askQty = book.Asks[0].Price, book.Asks[0].Quantity
+		bid = book.BestBid().Price.Float64()
+		bidQty = book.BestBid().Quantity.Float64()
+		ask = book.BestAsk().Price.Float64()
+		askQty = book.BestAsk().Quantity.Float64()
 		found = true
 	})
 
@@ -137,18 +138,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	touch := map[string]float64{
-		"bid":     bid,
-		"ask":     ask,
-		"bid_qty": bidQty,
-		"ask_qty": askQty,
-	}
-
-	for _, value := range touch {
-		if !broker.ValidTouchValue(value) {
-			signal.Error(broker.InvalidTouch("liquidity", prior.Label, touch))
-			return nil
-		}
+	if bid <= 0 || ask <= 0 || math.IsNaN(bid) || math.IsNaN(ask) || math.IsInf(bid, 0) || math.IsInf(ask, 0) {
+		signal.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("[%s] %s: non-finite or non-positive book touch: bid=%v ask=%v", signal.Name(), prior.Label, bid, ask),
+			nil,
+		))
+		return nil
 	}
 
 	if ask <= bid {

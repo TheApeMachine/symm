@@ -229,11 +229,7 @@ func expandLevel3Decimal(text string) (string, error) {
 		fractionDigits = len(mantissa) - decimalAt - 1
 	}
 
-	scale := fractionDigits - exponent
-
-	if scale < 0 {
-		scale = 0
-	}
+	scale := max(fractionDigits-exponent, 0)
 
 	rational, valid := new(big.Rat).SetString(text)
 

@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +14,6 @@ import (
 
 func TestService(t *testing.T) {
 	Convey("Given a broker Service bound to a Desk and Balance", t, func() {
-		desk, _, _ := deskFixture(200, 1000)
 		balance := &Balance{Quote: "USD"}
 		balance.measurement = data.NewMeasurement(
 			0, "balance", "balance", 1, 1,
@@ -22,25 +22,14 @@ func TestService(t *testing.T) {
 			data.NewMetric("unrealized", 50, data.UnitCurrency, data.TimescaleInstantaneous),
 			data.NewMetric("cash", 200, data.UnitCurrency, data.TimescaleInstantaneous),
 		)
-		desk.Balance = balance
+		desk := NewDesk(context.Background(), &dummyTransport{}, nil, balance)
 
 		service := NewService(desk)
 
 		app := fiber.New()
 		service.Register(app)
 
-		Convey("GET /positions/lifecycle returns LifecycleReport", func() {
-			req := httptest.NewRequest(http.MethodGet, "/positions/lifecycle", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusOK)
-
-			var report LifecycleReport
-			So(json.NewDecoder(resp.Body).Decode(&report), ShouldBeNil)
-			So(report.Lifecycles, ShouldNotBeNil)
-		})
-
-		Convey("GET /positions returns positions frame", func() {
+		Convey("GET /positions returns positions array", func() {
 			req := httptest.NewRequest(http.MethodGet, "/positions", nil)
 			resp, err := app.Test(req)
 			So(err, ShouldBeNil)

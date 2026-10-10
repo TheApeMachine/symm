@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -71,12 +72,12 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookHistory
+	books  broker.BookSource
 	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookHistory) *Signal {
+func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: make(map[string]*symbolState),
@@ -117,29 +118,24 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	var bid, ask float64
 	var hasBook bool
 
-	// The book as of this frame, not as the live book stands when the frame
-	// is processed.
-	signal.books.BookAt(prior.Label, prior.At, func(book *broker.BookView) {
-		if !book.Complete || len(book.Bids) == 0 || len(book.Asks) == 0 {
+	signal.books.Book(prior.Label, func(book *spotbook.Book) {
+		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
 			return
 		}
 
-		bid = book.Bids[0].Price
-		ask = book.Asks[0].Price
+		bid = book.BestBid().Price.Float64()
+		ask = book.BestAsk().Price.Float64()
 		hasBook = true
 	})
 
 	if hasBook {
-		touch := map[string]float64{
-			"bid": bid,
-			"ask": ask,
-		}
-
-		for _, value := range touch {
-			if !broker.ValidTouchValue(value) {
-				signal.Error(broker.InvalidTouch("pumpdump", prior.Label, touch))
-				return nil
-			}
+		if bid <= 0 || ask <= 0 || math.IsNaN(bid) || math.IsNaN(ask) || math.IsInf(bid, 0) || math.IsInf(ask, 0) {
+			signal.Error(errnie.Err(
+				errnie.Internal,
+				fmt.Sprintf("[%s] %s: non-finite or non-positive book touch: bid=%v ask=%v", signal.Name(), prior.Label, bid, ask),
+				nil,
+			))
+			return nil
 		}
 
 		if ask <= bid {

@@ -402,11 +402,7 @@ func ingestMetrics(
 	ingestStart := time.Now()
 
 	for taskIndex := 0; taskIndex < len(tasks); taskIndex += chunkSize {
-		endIndex := taskIndex + chunkSize
-
-		if endIndex > len(tasks) {
-			endIndex = len(tasks)
-		}
+		endIndex := min(taskIndex+chunkSize, len(tasks))
 
 		scanOpts := []icetable.ScanOption{
 			icetable.WithRowFilter(filter),

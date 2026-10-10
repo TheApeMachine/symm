@@ -5,15 +5,13 @@ import (
 	"math"
 )
 
-
-
 func (fluid *workspace) accountWaveHead(head int, oldRe, oldIm []float32) error {
 	n := int(fluid.domain.MaxModes)
 	acc := fluid.accums.Float32Slice()
 	ledger := fluid.waveLedger.Float32Slice()
 	potential := make([]float32, n)
-	for i := 0; i < n; i++ {
-		for j := 0; j < 6; j++ {
+	for i := range n {
+		for j := range 6 {
 			if !finite(float64(acc[8*i+j])) {
 				return &CoupledStepError{"coherence accumulation", i, true, "nonfinite accumulator"}
 			}
@@ -42,8 +40,8 @@ func (fluid *workspace) accountWaveHead(head int, oldRe, oldIm []float32) error 
 	}
 	stages := make([]waveEnergy, 3)
 	re, im := make([]float32, n), make([]float32, n)
-	for stage := 0; stage < 3; stage++ {
-		for i := 0; i < n; i++ {
+	for stage := range 3 {
+		for i := range n {
 			re[i] = ledger[6*i+2*stage]
 			im[i] = ledger[6*i+2*stage+1]
 		}
@@ -145,11 +143,11 @@ func (fluid *workspace) measureHealth() error {
 				var grad [3][3]float64
 				c := [3]int{x, y, z}
 				dims := [3]int{d.GridX, d.GridY, d.GridZ}
-				for a := 0; a < 3; a++ {
+				for a := range 3 {
 					left, right := c, c
 					left[a] = wrapIndex(c[a]-1, dims[a])
 					right[a] = wrapIndex(c[a]+1, dims[a])
-					for b := 0; b < 3; b++ {
+					for b := range 3 {
 						li := left[0] + d.GridX*(left[1]+d.GridY*left[2])
 						ri := right[0] + d.GridX*(right[1]+d.GridY*right[2])
 						lv := cellVelocity(rho, mom, left[0], left[1], left[2], d.GridX, d.GridY, b)
@@ -169,9 +167,9 @@ func (fluid *workspace) measureHealth() error {
 				}
 				div := grad[0][0] + grad[1][1] + grad[2][2]
 				strain2, power := 0.0, 0.0
-				for a := 0; a < 3; a++ {
+				for a := range 3 {
 					h.Momentum[a] += float64(mom[3*j+a]) * vol
-					for b := 0; b < 3; b++ {
+					for b := range 3 {
 						strain := .5 * (grad[a][b] + grad[b][a])
 						strain2 += strain * strain
 						dev := strain
@@ -197,7 +195,7 @@ func (fluid *workspace) measureHealth() error {
 	fluid.health.ParticleEnergyDisagreement = fluid.health.ParticleMaterialTotal - fluid.health.ParticleThermal - fluid.health.ParticleKinetic
 	re, im := fluid.psiRe.Float32Slice(), fluid.psiIm.Float32Slice()
 	norm := 0.0
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if !finite(float64(re[i])) || !finite(float64(im[i])) {
 			return &CoupledStepError{"spatial projection", i, true, "nonfinite wave"}
 		}

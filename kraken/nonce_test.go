@@ -63,17 +63,15 @@ func TestAuthNonce(t *testing.T) {
 			var shared atomic.Int32
 
 			for range 8 {
-				group.Add(1)
 
-				go func() {
-					defer group.Done()
+				group.Go(func() {
 
 					for range 500 {
 						if _, loaded := seen.LoadOrStore(nonce.Next(), struct{}{}); loaded {
 							shared.Add(1)
 						}
 					}
-				}()
+				})
 			}
 
 			group.Wait()

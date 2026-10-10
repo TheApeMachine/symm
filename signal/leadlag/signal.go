@@ -2,6 +2,7 @@ package leadlag
 
 import (
 	"context"
+	"maps"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -108,9 +109,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 	}
 
-	for key, value := range summarize(readings) {
-		output[key] = value
-	}
+	maps.Copy(output, summarize(readings))
 
 	if err := signal.leadlag.Error(); err != nil {
 		signal.Error(err)

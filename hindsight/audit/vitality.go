@@ -246,15 +246,12 @@ func findCanonicalRedundantPairs(
 		}
 	}
 
-	workers := runtime.NumCPU()
-	if workers < 1 {
-		workers = 1
-	}
+	workers := max(runtime.NumCPU(), 1)
 
 	results := make([][]RedundantPair, workers)
 	var wg sync.WaitGroup
 
-	for worker := 0; worker < workers; worker++ {
+	for worker := range workers {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
@@ -432,20 +429,20 @@ func seriesKey(source, symbol, metric string) string {
 seriesSymbol returns the symbol of a seriesKey, or "" for any other name.
 */
 func seriesSymbol(key string) string {
-	first := strings.IndexByte(key, '|')
+	_, after, ok := strings.Cut(key, "|")
 
-	if first == -1 {
+	if !ok {
 		return ""
 	}
 
-	rest := key[first+1:]
-	second := strings.IndexByte(rest, '|')
+	rest := after
+	before, _, ok := strings.Cut(rest, "|")
 
-	if second == -1 {
+	if !ok {
 		return ""
 	}
 
-	return rest[:second]
+	return before
 }
 
 /*

@@ -267,13 +267,7 @@ func (client *WebsocketClient) ensureReady() error {
 		))
 	}
 
-	wait := max(client.backoff, client.hookBackoff)
-	if wait < time.Second {
-		wait = time.Second
-	}
-	if wait > 30*time.Second {
-		wait = 30 * time.Second
-	}
+	wait := min(max(max(client.backoff, client.hookBackoff), time.Second), 30*time.Second)
 
 	client.mu.Unlock()
 

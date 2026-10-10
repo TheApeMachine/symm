@@ -3,10 +3,10 @@ package manifold
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	goruntime "runtime"
 	"slices"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -499,9 +499,7 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 	}
 
 	seen := make(map[int64]string, len(solver.loaded))
-	for contentID, symbol := range solver.loaded {
-		seen[contentID] = symbol
-	}
+	maps.Copy(seen, solver.loaded)
 	states := make([]*sensorium.State, 0, len(solver.loaded))
 
 	dirtySymbols := make([]string, 0)
@@ -571,9 +569,7 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 
 	// The physics domain removes by identity, but a sorted list keeps one
 	// advance's eviction order reproducible across runs.
-	sort.Slice(departures, func(left, right int) bool {
-		return departures[left] < departures[right]
-	})
+	slices.Sort(departures)
 
 	batch = collectStates(states)
 	solver.loaded = seen

@@ -450,7 +450,7 @@ func computeBlockNullTransitionEntropies(
 	rng := rand.New(rand.NewSource(1791))
 	entropies := make([]float64, 0, iterations)
 
-	for iteration := 0; iteration < iterations; iteration++ {
+	for range iterations {
 		frequencies := make(map[string]int)
 		transitions := make(map[string]map[string]int)
 		totalNullTokens := 0

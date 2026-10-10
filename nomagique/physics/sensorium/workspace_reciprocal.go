@@ -11,7 +11,7 @@ func (fluid *workspace) applyCoherenceImpulse(dt float32) error {
 	force, velocity, mass := fluid.reciprocalForce.Float32Slice(), fluid.vel.Float32Slice(), fluid.mass.Float32Slice()
 	for i := 0; i < fluid.particles; i++ {
 		f2 := 0.0
-		for a := 0; a < 3; a++ {
+		for a := range 3 {
 			f := float64(force[3*i+a])
 			if !finite(f) {
 				return &CoupledStepError{"coherence force", i, true, "nonfinite force"}
@@ -25,7 +25,7 @@ func (fluid *workspace) applyCoherenceImpulse(dt float32) error {
 	}
 	for i := 0; i < fluid.particles; i++ {
 		work := 0.0
-		for a := 0; a < 3; a++ {
+		for a := range 3 {
 			j := 3*i + a
 			old := float64(velocity[j])
 			next := float32(old + float64(dt)*float64(force[j])/float64(mass[i]))

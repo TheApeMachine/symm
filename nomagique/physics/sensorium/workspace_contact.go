@@ -77,7 +77,7 @@ func (f *workspace) contactKick(dt float32) error {
 	for i := 0; i < f.particles; i++ {
 		deltaQ := float64(qo[i]) - float64(q[i])
 		kinetic := 0.
-		for a := 0; a < 3; a++ {
+		for a := range 3 {
 			j := 3*i + a
 			kinetic += .5 * float64(m[i]) * (float64(vo[j]) - float64(v[j])) * (float64(vo[j]) + float64(v[j]))
 		}

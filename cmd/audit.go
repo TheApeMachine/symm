@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
@@ -88,11 +89,11 @@ var auditCmd = &cobra.Command{
 }
 
 func stringsRepeat(s string, count int) string {
-	var result string
-	for i := 0; i < count; i++ {
-		result += s
+	var result strings.Builder
+	for range count {
+		result.WriteString(s)
 	}
-	return result
+	return result.String()
 }
 
 func init() {

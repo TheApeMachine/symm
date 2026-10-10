@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"slices"
 	"sort"
 	"strings"
 
@@ -964,9 +965,7 @@ func extractTriePhases(
 			intervalTicks = append(intervalTicks, tickVal)
 		}
 
-		sort.Slice(intervalTicks, func(idxA, idxB int) bool {
-			return intervalTicks[idxA] < intervalTicks[idxB]
-		})
+		slices.Sort(intervalTicks)
 
 		var precursorTokens []string
 		var holdingTokens []string

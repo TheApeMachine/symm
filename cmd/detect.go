@@ -159,6 +159,14 @@ before anything is written.
 			}
 		}
 
+		if !detectDryRun {
+			trainer := strategy.NewTrainer(ctx, catalog)
+
+			if err := trainer.Generate(); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	},
 }

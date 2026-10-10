@@ -140,7 +140,7 @@ func TestPipelineEverySuppliedLevel(t *testing.T) {
 	pipeline := newPipeline()
 	bids := []float64{1000, 1002}
 	asks := []float64{1000, 1002}
-	for index := 0; index < 150; index++ {
+	for index := range 150 {
 		bid := 1000 - float64(index)*2
 		ask := 1002 + float64(index)*2
 		bids = append(bids, bid, 1/bid)

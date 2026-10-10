@@ -66,7 +66,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 		Convey("Level notionals, imbalances, resolution gap, and level-diff flow are exact", func() {
 			var prevBid, prevAsk, prevTotal float64
 
-			for step := 0; step < 14; step++ {
+			for step := range 14 {
 				at := now.Add(time.Duration(step) * 100 * time.Millisecond)
 
 				bid1Price, bid1Qty := 50000.0, 2.0+float64(step)*0.1

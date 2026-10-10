@@ -145,7 +145,7 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 			continue
 		}
 
-		for index := 0; index < len(signals); index++ {
+		for index := range len(signals) {
 			if signals[index] != nil {
 				continue
 			}

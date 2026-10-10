@@ -82,11 +82,7 @@ func (catalog *Catalog) scan(
 		var count int
 
 		for taskIndex := 0; taskIndex < len(tasks); taskIndex += chunkSize {
-			endIndex := taskIndex + chunkSize
-
-			if endIndex > len(tasks) {
-				endIndex = len(tasks)
-			}
+			endIndex := min(taskIndex+chunkSize, len(tasks))
 
 			_, batches, err := tbl.Scan(options...).ReadTasks(ctx, tasks[taskIndex:endIndex])
 

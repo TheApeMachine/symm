@@ -6,6 +6,7 @@ import (
 	"math"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -79,11 +80,11 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookHistory
+	books  broker.BookSource
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookHistory) *Signal {
+func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: make(map[string]*symbolState),
@@ -114,15 +115,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	ok := false
 	crossed := false
 
-	// The book as of this frame, not as the live book stands when the frame
-	// is processed.
-	signal.books.BookAt(prior.Label, prior.At, func(book *broker.BookView) {
-		if len(book.Bids) == 0 || len(book.Asks) == 0 {
+	signal.books.Book(prior.Label, func(book *spotbook.Book) {
+		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
 			return
 		}
 
-		bidPrice := book.Bids[0].Price
-		askPrice := book.Asks[0].Price
+		bidPrice := book.BestBid().Price.Float64()
+		askPrice := book.BestAsk().Price.Float64()
 
 		if askPrice <= bidPrice {
 			crossed = true
@@ -131,25 +130,27 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			return
 		}
 
-		// The book keeps MaxDepth levels per side. A full side hides whatever
-		// lies beyond its worst level, so a price crossing that edge is a
-		// window change, not displayed flow.
-		fullBid = book.FullBid
-		fullAsk = book.FullAsk
+		for level := book.BestBid(); level != nil; level = level.Lower {
+			price := level.Price.Float64()
+			qty := level.Quantity.Float64()
 
-		for _, level := range book.Bids {
-			if level.Price > 0 && level.Quantity > 0 {
-				bids = append(bids, [2]float64{level.Price, level.Quantity})
+			if price > 0 && qty > 0 {
+				bids = append(bids, [2]float64{price, qty})
 			}
 		}
 
-		for _, level := range book.Asks {
-			if level.Price > 0 && level.Quantity > 0 {
-				asks = append(asks, [2]float64{level.Price, level.Quantity})
+		for level := book.BestAsk(); level != nil; level = level.Higher {
+			price := level.Price.Float64()
+			qty := level.Quantity.Float64()
+
+			if price > 0 && qty > 0 {
+				asks = append(asks, [2]float64{price, qty})
 			}
 		}
 
 		ok = len(bids) > 0 && len(asks) > 0
+		fullBid = len(bids) >= 10
+		fullAsk = len(asks) >= 10
 	})
 
 	if crossed {

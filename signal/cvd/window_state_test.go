@@ -79,7 +79,7 @@ func TestSignalStepVolumeBarWindows(t *testing.T) {
 		}
 
 		Convey("No frame before a bar closes carries flow totals", func() {
-			for index := 0; index < 6; index++ {
+			for index := range 6 {
 				for _, label := range []string{"trade_count", "cumulative_volume_delta", "signed_net_fraction", "cvd_epoch_from"} {
 					_, held := read(results[index], label)
 					So(held, ShouldBeFalse)

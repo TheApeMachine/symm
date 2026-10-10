@@ -22,8 +22,6 @@ type waveEnergy struct{ Norm, Kinetic, Potential, Nonlinear, Chemical float64 }
 
 func (w waveEnergy) total() float64 { return w.Kinetic + w.Potential + w.Nonlinear + w.Chemical }
 
-
-
 func spectralGeometryEnergy(real, imag, potential, metric []float32, dw, hbar, inertia, g, mu float64) (waveEnergy, error) {
 	h := waveEnergy{}
 	n := len(real)
@@ -31,7 +29,7 @@ func spectralGeometryEnergy(real, imag, potential, metric []float32, dw, hbar, i
 		return h, fmt.Errorf("invalid spectral Hamiltonian contract")
 	}
 	coefficient := hbar * hbar / (2 * inertia * dw * dw)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		re, im, v := float64(real[i]), float64(imag[i]), float64(potential[i])
 		if !finite(re) || !finite(im) || !finite(v) {
 			return h, fmt.Errorf("nonfinite spectral state %d", i)

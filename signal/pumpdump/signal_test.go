@@ -169,7 +169,7 @@ func TestPumpDumpSignal(t *testing.T) {
 		Convey("Pump: activity surge and spread blowout yield positive divergences and an outlier z-score", func() {
 			basePrice := 50000.0
 
-			for step := 0; step < 12; step++ {
+			for step := range 12 {
 				at := now.Add(time.Duration(step*100) * time.Millisecond)
 				// A slightly alternating spread gives the baseline a dispersion.
 				half := 1.0 + 0.1*float64(step%2)
@@ -196,7 +196,7 @@ func TestPumpDumpSignal(t *testing.T) {
 		Convey("Dump: a midpoint crash yields a negative return decomposed into r⁺ - r⁻", func() {
 			basePrice := 50000.0
 
-			for step := 0; step < 5; step++ {
+			for step := range 5 {
 				at := now.Add(time.Duration(step*100) * time.Millisecond)
 				touch(books, at, "bid-calm", basePrice-2.0, 5.0, "ask-calm", basePrice+2.0, 5.0)
 				So(instrument.Step(trade(at, int64(step+30), "sell", basePrice, 1.0)), ShouldNotBeNil)

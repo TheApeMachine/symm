@@ -131,9 +131,9 @@ func (fluid *workspace) gatherPilotWave() error {
 	x, v, guide, old, m, report := fluid.pos.Float32Slice(), fluid.vel.Float32Slice(), fluid.velOut.Float32Slice(), fluid.pilotPrevious.Float32Slice(), fluid.mass.Float32Slice(), fluid.pilotReport.Float32Slice()
 	h := PilotHealth{MinDensity: math.MaxFloat64}
 	density := make([]float64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		var work, speed2 float64
-		for a := 0; a < 3; a++ {
+		for a := range 3 {
 			j := 3*i + a
 			before := float64(v[j])
 			next := float32(before + float64(guide[j]) - float64(old[j]))
@@ -254,17 +254,17 @@ func (fluid *workspace) meanHeads() {
 	heads := make([][]float32, spectralHeads)
 	headImag := make([][]float32, spectralHeads)
 
-	for head := 0; head < spectralHeads; head++ {
+	for head := range spectralHeads {
 		heads[head] = fluid.psiRealHeads[head].Float32Slice()
 		headImag[head] = fluid.psiImagHeads[head].Float32Slice()
 	}
 
 	scale := float32(spectralHeads)
 
-	for mode := 0; mode < modes; mode++ {
+	for mode := range modes {
 		var sumRe, sumIm float32
 
-		for head := 0; head < spectralHeads; head++ {
+		for head := range spectralHeads {
 			sumRe += heads[head][mode]
 			sumIm += headImag[head][mode]
 		}
@@ -295,11 +295,7 @@ func (fluid *workspace) seedModeAnchors() {
 	buckets := make([][]int, modes)
 
 	for particle := 0; particle < fluid.particles; particle++ {
-		bin := int(math.Round((float64(omega[particle]) - omegaMin) / domega))
-
-		if bin < 0 {
-			bin = 0
-		}
+		bin := max(int(math.Round((float64(omega[particle])-omegaMin)/domega)), 0)
 
 		if bin >= modes {
 			bin = modes - 1
@@ -393,7 +389,7 @@ func (fluid *workspace) waveStep() error {
 	}
 
 	// Step each spectral head independently under the GPE
-	for head := 0; head < spectralHeads; head++ {
+	for head := range spectralHeads {
 		offset := float64(head) * (2 * math.Pi) / float64(spectralHeads)
 		fluid.accums.Zero()
 
@@ -659,7 +655,7 @@ func (fluid *workspace) observe() Reading {
 	count := float64(cells)
 	var coherence float64
 
-	for head := 0; head < spectralHeads; head++ {
+	for head := range spectralHeads {
 		real := fluid.psiRealHeads[head].Float32Slice()
 		imag := fluid.psiImagHeads[head].Float32Slice()
 

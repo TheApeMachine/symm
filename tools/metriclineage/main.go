@@ -99,9 +99,9 @@ type consumerEdge struct {
 func splitMetricIdentity(source, metric string) metricID {
 	identity := metricID{Source: source, Metric: metric}
 
-	if index := strings.IndexByte(metric, ':'); index >= 0 {
-		identity.Metric = metric[:index]
-		identity.Side = metric[index+1:]
+	if before, after, ok := strings.Cut(metric, ":"); ok {
+		identity.Metric = before
+		identity.Side = after
 	}
 
 	return identity
@@ -677,8 +677,8 @@ newProducer splits a wire name into its metric and side halves.
 func newProducer(name, unit, relFile string, line int) producer {
 	metric, side := name, ""
 
-	if index := strings.IndexByte(name, ':'); index >= 0 {
-		metric, side = name[:index], name[index+1:]
+	if before, after, ok := strings.Cut(name, ":"); ok {
+		metric, side = before, after
 	}
 
 	return producer{
@@ -1142,8 +1142,8 @@ func classifyParam(paramType string) (kind string, kernel string) {
 	// go/ast's own selector formatting gives the short form
 	// "data.Measurement". Reduce both to (lastPkgSegment, typeName).
 	base := inner
-	if idx := strings.IndexByte(inner, '['); idx >= 0 {
-		base = inner[:idx]
+	if before, _, ok := strings.Cut(inner, "["); ok {
+		base = before
 	}
 
 	dot := strings.LastIndexByte(base, '.')

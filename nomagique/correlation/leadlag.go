@@ -106,7 +106,7 @@ func (op *LeadLag) Next(
 			candidates := make([]LagCandidate, 0, limit)
 			nonzero := make([]LagCandidate, 0, limit)
 
-			for index := 0; index < limit; index++ {
+			for index := range limit {
 				lagIndex := float64(index) - span
 				lag := int64(lagIndex * spacing)
 				reading, err := estimateAt(op.estimator, left, right, lag)

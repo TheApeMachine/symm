@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -26,12 +27,12 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookHistory
+	books  broker.BookSource
 	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookHistory) *Signal {
+func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: make(map[string]*symbolState),
@@ -58,40 +59,27 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	var bids, asks []float64
 	var found bool
-	var inputErr error
 
-	// The book as of this frame, not as the live book stands when the frame
-	// is processed.
-	signal.books.BookAt(prior.Label, prior.At, func(book *broker.BookView) {
-		if len(book.Bids) == 0 || len(book.Asks) == 0 {
+	signal.books.Book(prior.Label, func(book *spotbook.Book) {
+		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
 			return
 		}
 
-		if !book.Complete {
-			inputErr = core.ErrShape
-			return
-		}
-
-		bestBidPrice := book.Bids[0].Price
-		bestAskPrice := book.Asks[0].Price
+		bestBidPrice := book.BestBid().Price.Float64()
+		bestAskPrice := book.BestAsk().Price.Float64()
 		found = true
 
 		bids = append(bids, bestBidPrice, bestAskPrice)
 		asks = append(asks, bestBidPrice, bestAskPrice)
 
-		for _, level := range book.Bids {
-			bids = append(bids, level.Price, level.Quantity)
+		for level := book.BestBid(); level != nil; level = level.Lower {
+			bids = append(bids, level.Price.Float64(), level.Quantity.Float64())
 		}
 
-		for _, level := range book.Asks {
-			asks = append(asks, level.Price, level.Quantity)
+		for level := book.BestAsk(); level != nil; level = level.Higher {
+			asks = append(asks, level.Price.Float64(), level.Quantity.Float64())
 		}
 	})
-
-	if inputErr != nil {
-		signal.Error(errnie.Err(errnie.Validation, "[morphology] incomplete book level", inputErr))
-		return nil
-	}
 
 	if !found || len(bids) <= 2 || len(asks) <= 2 {
 		return nil

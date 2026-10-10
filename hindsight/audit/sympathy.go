@@ -259,10 +259,7 @@ func AnalyzeSympathy(
 }
 
 func pairCorrelations(vectors []observedVector, groups [][]int) []float64 {
-	workers := runtime.NumCPU()
-	if workers < 1 {
-		workers = 1
-	}
+	workers := max(runtime.NumCPU(), 1)
 
 	type pairTask struct {
 		left   int
@@ -313,7 +310,7 @@ func pairCorrelations(vectors []observedVector, groups [][]int) []float64 {
 	results := make([][]float64, workers)
 	var waitGroup sync.WaitGroup
 
-	for worker := 0; worker < workers; worker++ {
+	for worker := range workers {
 		waitGroup.Add(1)
 		go func(workerID int) {
 			defer waitGroup.Done()
@@ -452,15 +449,7 @@ func empiricalAutocorrelationBlockSize(values []float64) int {
 		return 2
 	}
 
-	maxLag := sampleCount / 4
-
-	if maxLag < 2 {
-		maxLag = 2
-	}
-
-	if maxLag > 64 {
-		maxLag = 64
-	}
+	maxLag := min(max(sampleCount/4, 2), 64)
 
 	threshold := 1.0 / math.E
 
@@ -499,7 +488,7 @@ func blockPermute(rng *rand.Rand, values []float64, blockSize int) []float64 {
 	phaseShift := rng.Intn(blockSize)
 	shifted := make([]float64, totalLen)
 
-	for idx := 0; idx < totalLen; idx++ {
+	for idx := range totalLen {
 		shifted[idx] = values[(idx+phaseShift)%totalLen]
 	}
 
@@ -518,10 +507,7 @@ func blockPermute(rng *rand.Rand, values []float64, blockSize int) []float64 {
 
 	for _, blockIdx := range order {
 		startPos := blockIdx * blockSize
-		endPos := startPos + blockSize
-		if endPos > totalLen {
-			endPos = totalLen
-		}
+		endPos := min(startPos+blockSize, totalLen)
 
 		copy(result[destPos:], shifted[startPos:endPos])
 		destPos += endPos - startPos
@@ -551,10 +537,7 @@ func empiricalQuantile(sorted []float64, quantile float64) float64 {
 		return sorted[len(sorted)-1]
 	}
 
-	index := int(math.Ceil(quantile*float64(len(sorted)))) - 1
-	if index < 0 {
-		index = 0
-	}
+	index := max(int(math.Ceil(quantile*float64(len(sorted))))-1, 0)
 
 	if index >= len(sorted) {
 		index = len(sorted) - 1
