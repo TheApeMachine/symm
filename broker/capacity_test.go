@@ -172,3 +172,59 @@ func TestSlippageBudget(t *testing.T) {
 		So(ok, ShouldBeFalse)
 	})
 }
+
+func TestFlowNoiseWarmup(t *testing.T) {
+	Convey("Given signed flow observed for less than nine expected holds", t, func() {
+		now := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
+		hold := 9 * time.Minute
+
+		Convey("with no trade, participation is undefined", func() {
+			_, _, ok := NewFlow().Noise("X/USD", now, hold)
+			So(ok, ShouldBeFalse)
+		})
+
+		Convey("nine minutes of alternating one-minute flow scale by sqrt(hold/window)", func() {
+			flow := NewFlow()
+			// A negligible first trade makes the span exactly nine minutes;
+			// it sits on the oldest window's open boundary, outside it.
+			flow.Record("X/USD", now.Add(-9*time.Minute), "buy", 0.0000001)
+
+			// One trade per minute window, +1/-1 alternating, oldest first.
+			for k := 8; k >= 0; k-- {
+				side := "buy"
+				if k%2 == 1 {
+					side = "sell"
+				}
+				flow.Record("X/USD", now.Add(-time.Duration(k)*time.Minute-30*time.Second), side, 1)
+			}
+			noise, windows, ok := flow.Noise("X/USD", now, hold)
+			So(ok, ShouldBeTrue)
+			So(windows, ShouldEqual, 9)
+
+			// Window sums, one-minute windows scaled to the nine-minute hold.
+			sums := []float64{1, -1, 1, -1, 1, -1, 1, -1, 1}
+			mean := 1.0 / 9
+			variance := 0.0
+			for _, sum := range sums {
+				variance += (sum - mean) * (sum - mean)
+			}
+			expected := math.Sqrt(variance/8) * math.Sqrt(9)
+			So(noise, ShouldAlmostEqual, expected, 1e-9)
+		})
+
+		Convey("with nine complete holds it is the unscaled hold-window deviation", func() {
+			flow := NewFlow()
+			for k := 9; k >= 0; k-- {
+				side := "buy"
+				if k%2 == 1 {
+					side = "sell"
+				}
+				flow.Record("X/USD", now.Add(-time.Duration(k)*hold-time.Second), side, 2)
+			}
+			// Ten trades span nine holds and a second: nine complete holds.
+			_, windows, ok := flow.Noise("X/USD", now, hold)
+			So(ok, ShouldBeTrue)
+			So(windows, ShouldEqual, 9)
+		})
+	})
+}

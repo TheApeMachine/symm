@@ -20,6 +20,13 @@ func TestSubscribeRejection(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, "level3")
 		})
 
+		Convey("a level3 snapshot rate-limit rejection (venue frame, top-level channel) is an error", func() {
+			err := subscribeRejection([]byte(`{"channel":"level3","error":"Rate limit for snapshot requests exceeded, when trying to subscribe to YFI/USD level3 snapshot","method":"subscribe","status":"error","success":false,"time_in":"2026-10-10T06:06:44.517923Z","time_out":"2026-10-10T06:06:44.525929Z"}`))
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "Rate limit for snapshot requests exceeded")
+			So(err.Error(), ShouldContainSubstring, `channel="level3"`)
+		})
+
 		Convey("an accepted subscribe is not", func() {
 			So(subscribeRejection([]byte(`{"method":"subscribe","success":true,"result":{"channel":"trade","symbol":"BTC/USD"}}`)), ShouldBeNil)
 		})

@@ -62,6 +62,15 @@ type CognitionSource interface {
 
 type FragmentsSource interface {
 	Fragments() []TrainedFragment
+	FragmentPoints(id int) ([]FragmentPoint, error)
+}
+
+/*
+LifecycleSource supplies the per-position event timelines of the paper desk
+and the performance of the closed positions, as a JSON-ready report.
+*/
+type LifecycleSource interface {
+	LifecyclesReport() any
 }
 
 type LearningSource interface {
@@ -118,6 +127,7 @@ type Hub struct {
 	cognitionSource  CognitionSource
 	fragmentsSource  FragmentsSource
 	learningSource   LearningSource
+	lifecycleSource  LifecycleSource
 	exitHandler      func(symbol string)
 	routes           *Routes
 	learningInterval time.Duration
@@ -580,6 +590,14 @@ func (hub *Hub) SetFragmentsSource(source FragmentsSource) {
 /*
 SetLearningSource attaches the source for active learning system telemetry and reports.
 */
+/*
+SetLifecycleSource wires the position lifecycle timelines served at
+/positions/lifecycle.
+*/
+func (hub *Hub) SetLifecycleSource(source LifecycleSource) {
+	hub.lifecycleSource = source
+}
+
 func (hub *Hub) SetLearningSource(source LearningSource) {
 	if hub == nil {
 		return

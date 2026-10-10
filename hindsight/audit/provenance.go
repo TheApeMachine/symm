@@ -20,10 +20,11 @@ made at. Inside the interval is consistent, not proven.
 type FeeProvenance struct {
 	DeclaredFee float64 `json:"declared_fee"`
 	Lower       float64 `json:"lower"`
-	Upper       float64 `json:"upper"`
-	Bounding    int     `json:"bounding_detections"`
-	Consistent  bool    `json:"consistent"`
-	SummaryText string  `json:"summary_text"`
+	// Upper is nil when no up/down leg bounds the fee from above.
+	Upper       *float64 `json:"upper"`
+	Bounding    int      `json:"bounding_detections"`
+	Consistent  bool     `json:"consistent"`
+	SummaryText string   `json:"summary_text"`
 }
 
 func breakEvenFee(low, high float64) float64 {
@@ -35,7 +36,8 @@ checkFeeProvenance bounds the detect fee from detections and compares it
 with declared.
 */
 func checkFeeProvenance(detections []*data.Measurement, declared float64) FeeProvenance {
-	report := FeeProvenance{DeclaredFee: declared, Lower: 0, Upper: math.Inf(1)}
+	report := FeeProvenance{DeclaredFee: declared}
+	upper := math.Inf(1)
 
 	for _, det := range detections {
 		if det == nil {
@@ -52,7 +54,7 @@ func checkFeeProvenance(detections []*data.Measurement, declared float64) FeePro
 
 		switch det.Meta("type") {
 		case "up", "down":
-			report.Upper = math.Min(report.Upper, breakEvenFee(low, high))
+			upper = math.Min(upper, breakEvenFee(low, high))
 			report.Bounding++
 		case "up_friction":
 			report.Lower = math.Max(report.Lower, breakEvenFee(low, high))
@@ -60,10 +62,14 @@ func checkFeeProvenance(detections []*data.Measurement, declared float64) FeePro
 		}
 	}
 
-	report.Consistent = report.Bounding > 0 && declared >= report.Lower && declared < report.Upper
+	if !math.IsInf(upper, 1) {
+		report.Upper = &upper
+	}
+
+	report.Consistent = report.Bounding > 0 && declared >= report.Lower && declared < upper
 	report.SummaryText = fmt.Sprintf(
 		"declared fee %.5f; stored detections bound the detect fee to [%.5f, %.5f) from %d legs; consistent=%t",
-		declared, report.Lower, report.Upper, report.Bounding, report.Consistent,
+		declared, report.Lower, upper, report.Bounding, report.Consistent,
 	)
 
 	return report

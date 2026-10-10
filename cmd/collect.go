@@ -215,24 +215,6 @@ var collectCmd = &cobra.Command{
 			storeTee,
 		)
 
-		instrument.SetLevel3Stale(book.Stale)
-
-		if err := instrument.Subscribe(); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal,
-				"collect: subscribe to instrument universe",
-				err,
-			))
-		}
-
-		if instrument.Status() != nmruntime.READY {
-			return errnie.Error(errnie.Err(
-				errnie.NotAcceptable,
-				"collect: instrument universe is not seeded",
-				nil,
-			))
-		}
-
 		for _, runsys := range []nmruntime.RuntimeSystem{
 			storeTee,
 			correlationSignal,
@@ -301,19 +283,21 @@ var collectCmd = &cobra.Command{
 						continue
 					}
 
+					// Checked before channel dispatch: a level3 rejection
+					// carries "channel":"level3" (see root.go ingress).
+					if rejection := subscribeRejection(buf); rejection != nil {
+						halt(errnie.Err(
+							errnie.NotAcceptable,
+							fmt.Sprintf("collect: %s subscription rejected", name),
+							rejection,
+						))
+
+						return
+					}
+
 					channelNode, err := sonic.Get(buf, "channel")
 
 					if err != nil {
-						if rejection := subscribeRejection(buf); rejection != nil {
-							halt(errnie.Err(
-								errnie.NotAcceptable,
-								fmt.Sprintf("collect: %s subscription rejected", name),
-								rejection,
-							))
-
-							return
-						}
-
 						continue
 					}
 
@@ -341,14 +325,28 @@ var collectCmd = &cobra.Command{
 
 		startIngress(public, "public")
 
-		instrument.Level3.Range(func(key, value any) bool {
-			if client, ok := value.(*network.WebsocketClient); ok {
-				startIngress(client, "level3")
-			}
-
-			return true
+		// Every socket is read while it subscribes: Kraken rejects Level3
+		// snapshot requests on a socket whose earlier snapshots sit unread.
+		instrument.SetLevel3Stale(book.Stale)
+		instrument.SetLevel3Reader(func(client *network.WebsocketClient) {
+			startIngress(client, "level3")
 		})
 
+		if err := instrument.Subscribe(); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				"collect: subscribe to instrument universe",
+				err,
+			))
+		}
+
+		if instrument.Status() != nmruntime.READY {
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"collect: instrument universe is not seeded",
+				nil,
+			))
+		}
 		haltWatched := append(
 			[]nmruntime.RuntimeSystem{instrument}, pipelineNodes...,
 		)

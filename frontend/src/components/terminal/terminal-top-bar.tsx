@@ -7,6 +7,7 @@ import {
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
+import { PaperPerformance } from "#/components/paper-performance";
 import { Count } from "#/components/count";
 import { AgentSkill } from "#/components/learning/agent-skill";
 import { Badge } from "#/components/ui/badge";
@@ -196,6 +197,10 @@ export const TerminalTopBar = () => {
 				<Rule />
 
 				<Balance />
+
+				<Rule />
+
+				<PaperPerformance />
 			</Toolbar.Group>
 
 			<Rule />

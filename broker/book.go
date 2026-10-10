@@ -37,7 +37,10 @@ type Book struct {
 	lastTouch  sync.Map
 	locks      sync.Map
 	// versions holds each symbol's verified book history for BookAt.
-	versions       sync.Map
+	versions sync.Map
+	// verified marks symbols whose first checksum-verified version has been
+	// logged, so book readiness is visible once per symbol.
+	verified       sync.Map
 	historyMisses  atomic.Int64
 	historyHorizon atomic.Int64
 }
@@ -533,6 +536,10 @@ func (book *Book) apply(
 			// book is unknown until a timed frame follows.
 			if frameAt, timed := frameTime(data); timed {
 				book.history(data.Symbol).record(captureView(symbolBook, frameAt))
+
+				if _, logged := book.verified.LoadOrStore(data.Symbol, struct{}{}); !logged {
+					errnie.Info("[book] first verified version for " + data.Symbol)
+				}
 			} else {
 				book.history(data.Symbol).gap(time.Time{})
 			}

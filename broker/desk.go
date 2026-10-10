@@ -14,6 +14,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
@@ -153,6 +154,13 @@ type position struct {
 	capacity Capacity
 	sells    []Sell
 	shadow   ShadowLedger
+	// breachSince is the venue time exit capacity first fell short of the
+	// open quantity by a material margin in the current run of versions;
+	// zero while it does not, and reset by each monitor sell.
+	breachSince time.Time
+	life        *Lifecycle
+	sizing      map[string]any
+	firstFill   time.Time
 }
 
 func newPosition() *position {
@@ -193,9 +201,13 @@ type Desk struct {
 	books            Depth
 	shadow           *Shadow
 	closures         []Closure
+	lifecycles       []*Lifecycle
 	pendingMu        sync.Mutex
 	pending          map[string]struct{}
 	wake             chan struct{}
+	// shortBook marks symbols already reported as sized from a retained
+	// book shorter than the expected hold, so it is said once per symbol.
+	shortBook sync.Map
 }
 
 func NewDesk(
@@ -329,6 +341,18 @@ func (desk *Desk) Enter(symbol string, edge Edge) error {
 		))
 	}
 
+	held.life = newLifecycle(symbol)
+	desk.lifecycles = append(desk.lifecycles, held.life)
+
+	if edge.Match != nil {
+		held.life.record(EventEntryMatch, "learned enter matched on "+edge.Match.Path, edge.Match.At, matchFields(*edge.Match))
+	}
+
+	bookAt, _ := held.sizing["book_at"].(time.Time)
+	held.life.record(EventSizing, fmt.Sprintf(
+		"sized %v bound by %v", held.sizing["quantity"], held.sizing["binding"],
+	), bookAt, held.sizing)
+
 	desk.positions[symbol] = held
 	desk.positionsVersion.Add(1)
 	desk.Wake(symbol)
@@ -388,16 +412,20 @@ func (desk *Desk) plan(symbol string, edge Edge) (*position, error) {
 		return nil, errnie.Err(errnie.NotFound, "no book versions over the expected hold", nil)
 	}
 
+	// Retention grows from the first lookup, so after startup the book
+	// covers less than a hold until one hold has passed.
 	if !covered {
-		errnie.Warn(fmt.Sprintf("[desk] %s: exit capacity read over the retained book only, shorter than the expected hold %s", symbol, hold))
+		if _, said := desk.shortBook.LoadOrStore(symbol, struct{}{}); !said {
+			errnie.Info(fmt.Sprintf("[desk] %s: exit capacity read over the retained book only, shorter than the expected hold %s", symbol, hold))
+		}
+	} else {
+		desk.shortBook.Delete(symbol)
 	}
 
-	noise, windows, ok := desk.price.Flow.Noise(symbol, now, hold)
+	noise, _, ok := desk.price.Flow.Noise(symbol, now, hold)
 
 	if !ok {
-		return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
-			"participation undefined: %d complete flow windows of %s, two are needed", windows, hold,
-		), nil)
+		return nil, errnie.Err(errnie.Validation, "participation undefined: no signed flow observed yet", nil)
 	}
 
 	entry := EntryCapacity(latest, budget)
@@ -451,7 +479,25 @@ func (desk *Desk) plan(symbol string, edge Edge) (*position, error) {
 		expires:   now.Add(hold),
 		binding:   binding,
 	}
-
+	held.sizing = map[string]any{
+		"quantity":           quantity.String(),
+		"binding":            binding,
+		"exit_capacity":      limits[0].value,
+		"exit_book_versions": versions,
+		"exit_book_covered":  covered,
+		"participation":      limits[1].value,
+		"cash":               cash,
+		"cash_quantity":      limits[2].value,
+		"reference":          entry.Reference,
+		"entry_limit_price":  unit,
+		"fee":                fee,
+		"budget":             budget,
+		"budget_source":      source,
+		"expected_hold_s":    hold.Seconds(),
+		"matched_gains":      len(edge.Gains),
+		"matched_holds":      len(edge.Holds),
+		"book_at":            now,
+	}
 	return held, nil
 }
 
@@ -552,10 +598,15 @@ func (desk *Desk) step(symbol string) {
 
 /*
 monitor is the secondary risk mechanism. It reads the exit capacity of the
-newest version against the open quantity and only ever sells: below the open
-quantity it trims to capacity, and when capacity is below the instrument
-minimum it exits fully. A trim too small to trade waits. Any firing ends the
-entry plan. The caller holds the lock.
+newest version against the open quantity and only ever sells: it trims to
+capacity, and when capacity is below the instrument minimum it exits fully.
+
+A thin book flickers version to version, and each sell pays the taker fee and
+shows the position, so the monitor acts only on a material, persistent
+shortfall: open quantity above capacity by more than core.Tolerance of the
+open quantity and by at least a tradable trim, continuously for
+core.Tolerance of the expected hold. Each sell restarts the run, so two
+monitor sells on a symbol are always at least that far apart. Any firing ends the entry plan. The caller holds the lock.
 */
 func (desk *Desk) monitor(symbol string, held *position, view *BookView) (Direction, *decimal.Decimal, string) {
 	if held.exiting || held.bought.Sign() <= 0 || held.inflight.Sign() > 0 {
@@ -572,9 +623,30 @@ func (desk *Desk) monitor(symbol string, held *position, view *BookView) (Direct
 	open := held.open()
 
 	if !capacity.Defined || open.Sign() <= 0 || capacity.Quantity >= open.Float64() {
+		held.breachSince = time.Time{}
 		return "", nil, ""
 	}
 
+	keep := desk.floor(symbol, capacity.Quantity)
+	full := keep == nil || !desk.tradable(symbol, keep, capacity.Reference)
+	shortfall := open.Float64() - capacity.Quantity
+	material := shortfall > core.Tolerance*open.Float64() &&
+		(full || desk.tradable(symbol, open.Sub(keep), capacity.Reference))
+
+	if !material {
+		held.breachSince = time.Time{}
+		return "", nil, ""
+	}
+
+	if held.breachSince.IsZero() {
+		held.breachSince = view.At
+	}
+
+	persistence := time.Duration(core.Tolerance * float64(held.hold))
+
+	if view.At.Sub(held.breachSince) < persistence {
+		return "", nil, ""
+	}
 	sell := Sell{
 		At:       view.At,
 		Capacity: capacity,
@@ -582,21 +654,29 @@ func (desk *Desk) monitor(symbol string, held *position, view *BookView) (Direct
 		Budget:   held.budget,
 	}
 
-	keep := desk.floor(symbol, capacity.Quantity)
-
-	if keep == nil || !desk.tradable(symbol, keep, capacity.Reference) {
+	if full {
 		sell.Trigger, sell.Quantity = TriggerCapacityExit, open
 		held.exiting, held.trigger = true, TriggerCapacityExit
+		held.status("exiting")
 	} else {
-		trim := open.Sub(keep)
-
-		if !desk.tradable(symbol, trim, capacity.Reference) {
-			return "", nil, ""
-		}
-
-		sell.Trigger, sell.Quantity = TriggerCapacityTrim, trim
+		sell.Trigger, sell.Quantity = TriggerCapacityTrim, open.Sub(keep)
 	}
 
+	held.life.record(EventRiskSell, fmt.Sprintf(
+		"%s sells %s: exit capacity %g vs open %s held %s", sell.Trigger, sell.Quantity.String(),
+		capacity.Quantity, open.String(), view.At.Sub(held.breachSince),
+	), view.At, map[string]any{
+		"trigger":      sell.Trigger,
+		"quantity":     sell.Quantity.String(),
+		"capacity":     capacity.Quantity,
+		"reference":    capacity.Reference,
+		"open":         open.String(),
+		"ratio":        sell.Ratio,
+		"budget":       held.budget,
+		"breach_since": held.breachSince,
+		"persistence":  persistence.Seconds(),
+	})
+	held.breachSince = time.Time{}
 	held.plan = nil
 	held.inflight = held.inflight.Add(sell.Quantity)
 	held.sells = append(held.sells, sell)
@@ -627,8 +707,12 @@ func (desk *Desk) child(symbol string, held *position, view *BookView) (Directio
 			"[desk] %s: entry plan expired after one expected hold with %s of %s submitted",
 			symbol, plan.submitted.String(), plan.target.String(),
 		))
+		held.life.record(EventPlanEnded, "entry plan expired after one expected hold", view.At, map[string]any{
+			"submitted": plan.submitted.String(), "target": plan.target.String(),
+		})
 
 		if held.bought.Sign() <= 0 && held.buying.Sign() <= 0 {
+			held.life.end(EventAbandoned)
 			delete(desk.positions, symbol)
 		}
 
@@ -653,9 +737,14 @@ func (desk *Desk) child(symbol string, held *position, view *BookView) (Directio
 		return "", nil, ""
 	}
 
-	quantity := desk.floor(symbol, min(remaining.Float64(), entry.Quantity))
+	// Plans of other symbols spend the same cash: a child never asks for
+	// more than the cash left now buys at the budget's entry limit.
+	unit := entry.Reference * (1 + held.budget)
+	fee, _ := desk.price.FeeRate(symbol)
+	affordable := desk.cash() / (unit * (1 + fee))
+	quantity := desk.floor(symbol, min(remaining.Float64(), entry.Quantity, affordable))
 
-	if quantity == nil || !desk.tradable(symbol, quantity, entry.Reference*(1+held.budget)) {
+	if quantity == nil || !desk.tradable(symbol, quantity, unit) {
 		return "", nil, ""
 	}
 
@@ -663,7 +752,15 @@ func (desk *Desk) child(symbol string, held *position, view *BookView) (Directio
 	plan.lastBook = view.At
 	held.buying = held.buying.Add(quantity)
 	desk.positionsVersion.Add(1)
-
+	held.life.record(EventChildOrder, "child buy "+quantity.String()+" of the entry plan", view.At, map[string]any{
+		"quantity":       quantity.String(),
+		"entry_capacity": entry.Quantity,
+		"affordable":     affordable,
+		"reference":      entry.Reference,
+		"limit_price":    unit,
+		"submitted":      plan.submitted.String(),
+		"target":         plan.target.String(),
+	})
 	return BUY, quantity, ""
 }
 
@@ -690,6 +787,9 @@ func (desk *Desk) ExitBy(symbol, trigger string) error {
 			At: time.Now().UTC(), Trigger: trigger, Capacity: held.capacity, Budget: held.budget,
 			Note: "position already exiting under " + held.trigger,
 		})
+		held.life.record(EventExit, trigger+" also fired; already exiting under "+held.trigger, time.Time{}, map[string]any{
+			"trigger": trigger, "exiting_under": held.trigger,
+		})
 		desk.positionsVersion.Add(1)
 		desk.mu.Unlock()
 
@@ -699,8 +799,12 @@ func (desk *Desk) ExitBy(symbol, trigger string) error {
 
 	if ok && held.bought.Sign() <= 0 {
 		held.plan = nil
+		held.life.record(EventPlanEnded, trigger+" before any fill; remaining entry cancelled", time.Time{}, map[string]any{
+			"trigger": trigger,
+		})
 
 		if held.buying.Sign() <= 0 {
+			held.life.end(EventAbandoned)
 			delete(desk.positions, symbol)
 		}
 
@@ -734,8 +838,18 @@ func (desk *Desk) ExitBy(symbol, trigger string) error {
 		sell.Ratio = held.capacity.Quantity / held.bought.Sub(held.sold).Float64()
 	}
 
+	exitFields := map[string]any{
+		"trigger":  trigger,
+		"open":     open.String(),
+		"capacity": held.capacity.Quantity,
+		"defined":  held.capacity.Defined,
+		"ratio":    sell.Ratio,
+		"budget":   held.budget,
+	}
+
 	if open.Sign() <= 0 {
 		sell.Note = "nothing open beyond in-flight sells"
+		held.life.record(EventExit, trigger+": "+sell.Note, time.Time{}, exitFields)
 		held.sells = append(held.sells, sell)
 		desk.positionsVersion.Add(1)
 		desk.mu.Unlock()
@@ -743,6 +857,8 @@ func (desk *Desk) ExitBy(symbol, trigger string) error {
 	}
 
 	sell.Quantity = open
+	held.life.record(EventExit, trigger+" sells "+open.String(), time.Time{}, exitFields)
+	held.status("exiting")
 	held.inflight = held.inflight.Add(open)
 	held.sells = append(held.sells, sell)
 	desk.positionsVersion.Add(1)
@@ -786,6 +902,12 @@ func (desk *Desk) recover(symbol, trigger string) *decimal.Decimal {
 	held.sells = append(held.sells, Sell{
 		At: time.Now().UTC(), Trigger: trigger, Quantity: qty, Note: "adopted from venue balance",
 	})
+	held.life = newLifecycle(symbol)
+	held.life.Status = "exiting"
+	held.life.record(EventExit, trigger+" on a holding adopted from the venue balance", time.Time{}, map[string]any{
+		"trigger": trigger, "quantity": qty.String(),
+	})
+	desk.lifecycles = append(desk.lifecycles, held.life)
 	desk.positions[symbol] = held
 	desk.positionsVersion.Add(1)
 
@@ -898,9 +1020,46 @@ func (desk *Desk) fill(row kraken.ExecutionData) (Closure, bool, *followUp) {
 		held.fees = held.fees.Add(row.FeeUsdEquiv)
 	}
 
-	desk.shadowFill(row, held, submitted.side)
+	shadow, priced := desk.shadowFill(row, held, submitted.side)
 	desk.positionsVersion.Add(1)
 
+	if held.firstFill.IsZero() {
+		held.firstFill = time.Now().UTC()
+
+		if !row.Timestamp.IsZero() {
+			held.firstFill = row.Timestamp.UTC()
+		}
+
+		if !held.exiting {
+			held.status("holding")
+		}
+	}
+
+	fillFields := map[string]any{
+		"side":            string(submitted.side),
+		"trigger":         submitted.trigger,
+		"client_order_id": row.ClientOrderID,
+		"quantity":        row.LastQty.String(),
+		"venue_cost":      row.Cost.String(),
+		"venue_price":     row.Cost.Float64() / row.LastQty.Float64(),
+		"shadow_priced":   priced,
+	}
+
+	if row.FeeUsdEquiv != nil {
+		fillFields["venue_fee"] = row.FeeUsdEquiv.String()
+	}
+
+	if priced {
+		fillFields["shadow_gross"] = shadow.Gross
+		fillFields["shadow_quantity"] = shadow.Quantity
+		fillFields["shadow_short"] = shadow.Short
+
+		if shadow.Quantity > 0 {
+			fillFields["shadow_price"] = shadow.Gross / shadow.Quantity
+		}
+	}
+
+	held.life.record(EventFill, fmt.Sprintf("%s filled %s", submitted.side, row.LastQty.String()), row.Timestamp, fillFields)
 	if submitted.side == BUY {
 		held.bought = held.bought.Add(row.LastQty)
 		held.cost = held.cost.Add(row.Cost)
@@ -941,6 +1100,7 @@ func (desk *Desk) fill(row kraken.ExecutionData) (Closure, bool, *followUp) {
 	}
 
 	desk.closures = append(desk.closures, closure)
+	desk.conclude(held, closure)
 	return closure, true, nil
 }
 
@@ -949,7 +1109,7 @@ shadowFill walks one venue fill through the book version in effect at the
 venue's fill time (the newest version when the fill carries none). The caller
 holds the lock.
 */
-func (desk *Desk) shadowFill(row kraken.ExecutionData, held *position, side Direction) {
+func (desk *Desk) shadowFill(row kraken.ExecutionData, held *position, side Direction) (ShadowFill, bool) {
 	var view *BookView
 
 	if desk.books != nil {
@@ -964,7 +1124,7 @@ func (desk *Desk) shadowFill(row kraken.ExecutionData, held *position, side Dire
 
 	if view == nil {
 		held.shadow.Unpriced++
-		return
+		return ShadowFill{}, false
 	}
 
 	fee, _ := desk.price.FeeRate(row.Symbol)
@@ -975,11 +1135,64 @@ func (desk *Desk) shadowFill(row kraken.ExecutionData, held *position, side Dire
 	if side == BUY {
 		held.shadow.Cost += fill.Gross
 		held.shadow.Bought += fill.Quantity
-		return
+		return fill, true
 	}
 
 	held.shadow.Proceeds += fill.Gross
 	held.shadow.Sold += fill.Quantity
+	return fill, true
+}
+
+/*
+status moves the lifecycle's status. The caller holds the lock.
+*/
+func (held *position) status(status string) {
+	if held.life != nil && held.life.ClosedAt == nil {
+		held.life.Status = status
+	}
+}
+
+/*
+conclude records the closed position's outcome. The caller holds the lock.
+*/
+func (desk *Desk) conclude(held *position, closure Closure) {
+	if held.life == nil {
+		return
+	}
+
+	outcome := &Outcome{
+		VenueCost:      closure.Cost.Float64(),
+		VenueProceeds:  closure.Proceeds.Float64(),
+		VenueFees:      closure.Fees.Float64(),
+		VenueRealized:  closure.Realized.Float64(),
+		ShadowDefined:  closure.Shadow.Defined(),
+		ShadowCost:     closure.Shadow.Cost,
+		ShadowProceeds: closure.Shadow.Proceeds,
+		ShadowFees:     closure.Shadow.Fees,
+		ShadowShort:    closure.Shadow.Short,
+		ShadowUnpriced: closure.Shadow.Unpriced,
+		ExpectedHold:   held.hold,
+		Triggers:       make([]string, 0, len(closure.Sells)),
+	}
+
+	if outcome.ShadowDefined {
+		outcome.ShadowRealized = closure.Shadow.Realized()
+	}
+
+	if !held.firstFill.IsZero() {
+		outcome.Hold = closure.ClosedAt.Sub(held.firstFill)
+	}
+
+	for _, sell := range closure.Sells {
+		outcome.Triggers = append(outcome.Triggers, sell.Trigger)
+	}
+
+	held.life.Outcome = outcome
+	held.life.record(EventClosed, fmt.Sprintf(
+		"closed: venue %.4f, shadow %.4f, held %s of expected %s",
+		outcome.VenueRealized, outcome.ShadowRealized, outcome.Hold.Round(time.Second), held.hold.Round(time.Second),
+	), time.Time{}, nil)
+	held.life.end("closed")
 }
 
 func nonNegative(value *decimal.Decimal) *decimal.Decimal {
@@ -1003,6 +1216,9 @@ func (desk *Desk) submit(symbol string, side Direction, quantity *decimal.Decima
 
 	if held, ok := desk.positions[symbol]; ok {
 		held.orders[clientOrderID] = &order{side: side, quantity: quantity, trigger: trigger}
+		held.life.record(EventOrder, fmt.Sprintf("market %s %s", side, quantity.String()), time.Time{}, map[string]any{
+			"side": string(side), "quantity": quantity.String(), "trigger": trigger, "client_order_id": clientOrderID,
+		})
 	}
 
 	desk.mu.Unlock()
@@ -1040,12 +1256,15 @@ func (desk *Desk) submit(symbol string, side Direction, quantity *decimal.Decima
 
 	delete(held.orders, clientOrderID)
 	desk.positionsVersion.Add(1)
-
+	held.life.record(EventOrderFailed, "order submission failed: "+err.Error(), time.Time{}, map[string]any{
+		"side": string(side), "quantity": quantity.String(), "trigger": trigger, "client_order_id": clientOrderID,
+	})
 	if side == SELL {
 		held.inflight = nonNegative(held.inflight.Sub(quantity))
 
 		if held.exiting && held.trigger == trigger {
 			held.exiting, held.trigger = false, ""
+			held.status("holding")
 		}
 
 		return
@@ -1058,6 +1277,7 @@ func (desk *Desk) submit(symbol string, side Direction, quantity *decimal.Decima
 	}
 
 	if held.bought.Sign() <= 0 && held.buying.Sign() <= 0 && held.plan == nil {
+		held.life.end(EventAbandoned)
 		delete(desk.positions, symbol)
 	}
 }

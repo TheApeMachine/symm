@@ -74,18 +74,26 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 		return nil, errnie.Error(errnie.Err(errnie.IO, "[audit] failed to create output directory", err))
 	}
 
-	targetEpoch := opts.Epoch
+	// An explicit epoch is audited as given. Otherwise the newest run that
+	// has stored measurements is chosen: a run that just started (or whose
+	// commits never landed) has none, and auditing it says nothing.
+	candidates := []int64{opts.Epoch}
 
-	if targetEpoch <= 0 {
+	if opts.Epoch <= 0 {
 		runs, err := catalog.Runs(ctx)
 
 		if err != nil || len(runs) == 0 {
 			return nil, errnie.Error(errnie.Err(errnie.NotFound, "[audit] no recorded runs found to audit", err))
 		}
 
-		targetEpoch = runs[0].Epoch
+		candidates = candidates[:0]
+
+		for _, run := range runs {
+			candidates = append(candidates, run.Epoch)
+		}
 	}
 
+	targetEpoch := candidates[0]
 	ticksDesc := fmt.Sprintf("%d", opts.MaxTicks)
 
 	if opts.MaxTicks == 0 {
@@ -99,14 +107,39 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	}
 
 	auditStart := time.Now()
-	errnie.Info(fmt.Sprintf("[audit] starting audit for epoch %d on %s (ticks: %s)", targetEpoch, symbolDesc, ticksDesc))
+	errnie.Info(fmt.Sprintf("[audit] starting audit on %s (ticks: %s)", symbolDesc, ticksDesc))
 
 	// 1. Ingest observations from Iceberg with chronological ordering and strict error propagation
-	orderedTicks, tickMeasurements, rawSeries, canonicalSeries, allMeasurements, err := ingestMetrics(
-		ctx, catalog, targetEpoch, opts.Symbol, opts.MaxTicks,
+	var (
+		orderedTicks     []int64
+		tickMeasurements map[int64][]*data.Measurement
+		rawSeries        map[string]map[int64]float64
+		canonicalSeries  map[string]map[int64]float64
+		allMeasurements  []*data.Measurement
+		err              error
 	)
-	if err != nil {
-		return nil, errnie.Error(err)
+
+	for _, epoch := range candidates {
+		targetEpoch = epoch
+		orderedTicks, tickMeasurements, rawSeries, canonicalSeries, allMeasurements, err = ingestMetrics(
+			ctx, catalog, targetEpoch, opts.Symbol, opts.MaxTicks,
+		)
+
+		if err != nil {
+			return nil, errnie.Error(err)
+		}
+
+		if len(orderedTicks) > 0 {
+			break
+		}
+
+		if len(candidates) > 1 {
+			errnie.Warn(fmt.Sprintf("[audit] run %d has no stored measurements; trying the previous run", epoch))
+		}
+	}
+
+	if len(candidates) > 1 && len(orderedTicks) > 0 {
+		errnie.Info(fmt.Sprintf("[audit] auditing run %d: the newest run with stored measurements", targetEpoch))
 	}
 
 	if len(orderedTicks) == 0 {
@@ -219,13 +252,23 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	// Validation 2: Metric Truthfulness
 	truthStart := time.Now()
 	errnie.Info("[audit] [Validation 2/4] Auditing Metric Truthfulness...")
-	trades, tradeErr := loadSampleTrades(ctx, catalog, targetEpoch, orderedTicks, allMeasurements)
+	// The tick sample is whatever data files were read first, so it holds a
+	// scattered subset of cvd frames. Truthfulness needs complete streams:
+	// both the trade tape and cvd are read in full from the epoch start to
+	// the sample's last tick for every sampled symbol.
+	trades, tradeErr := loadSampleStream(ctx, catalog, targetEpoch, "spot:trade", orderedTicks, allMeasurements)
 
 	if tradeErr != nil {
 		return nil, errnie.Error(tradeErr)
 	}
 
-	truthfulness := AnalyzeTruthfulness(trades, allMeasurements)
+	cvdFrames, cvdErr := loadSampleStream(ctx, catalog, targetEpoch, "cvd", orderedTicks, allMeasurements)
+
+	if cvdErr != nil {
+		return nil, errnie.Error(cvdErr)
+	}
+
+	truthfulness := AnalyzeTruthfulness(trades, cvdFrames)
 	errnie.Info(fmt.Sprintf("[audit] [Validation 2/4] Completed in %s: %s", time.Since(truthStart).Round(time.Millisecond), truthfulness.SummaryText))
 
 	// Validation 3: Causality & State Isolation
@@ -538,14 +581,15 @@ func renderVisualizations(jsonPath, outputDir string) error {
 }
 
 /*
-loadSampleTrades reads the stored spot:trade tape of every symbol in the
+loadSampleStream reads one source's stored rows for every cvd symbol in the
 sample from the start of the epoch through the sample's last tick, so each
-sampled trade has its true predecessor. A read failure fails the audit.
+row has its true predecessor. A read failure fails the audit.
 */
-func loadSampleTrades(
+func loadSampleStream(
 	ctx context.Context,
 	catalog *tables.Catalog,
 	epoch int64,
+	source string,
 	ticks []int64,
 	measurements []*data.Measurement,
 ) ([]*data.Measurement, error) {
@@ -575,7 +619,7 @@ func loadSampleTrades(
 
 	filter := iceberg.NewAnd(
 		iceberg.NewAnd(
-			iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
+			iceberg.EqualTo(iceberg.Reference("source"), source),
 			iceberg.IsIn(iceberg.Reference("label"), symbols...),
 		),
 		iceberg.LessThanEqual(iceberg.Reference("tick"), ticks[len(ticks)-1]),
@@ -585,7 +629,7 @@ func loadSampleTrades(
 
 	for trade, err := range catalog.Scan(ctx, tables.Measurements, epoch, filter, 0) {
 		if err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[audit] failed to read the trade tape", err))
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[audit] failed to read the "+source+" stream", err))
 		}
 
 		trades = append(trades, trade)

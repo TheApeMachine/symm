@@ -80,7 +80,7 @@ const sellMarkers = (sells: SellEventT[] | undefined): SellMarker[] =>
 
 		return {
 			trigger,
-			label: `${TRIGGER_LABEL[trigger] ?? trigger}${qty ? ` ${formatValue(qty, 4)}` : ""}`,
+			label: `${TRIGGER_LABEL[trigger] ?? trigger}${qty ? ` ${formatValue(qty, 4)} qty` : ""}`,
 			title: [
 				trigger,
 				time,

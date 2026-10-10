@@ -72,9 +72,14 @@ collect:
 	@echo "symm collect running (Ctrl+C to stop)"
 	go run $(LDFLAGS) main.go collect $(CONFIG_FLAG)
 
+# The fee must be the one detect ran with (TAKER_FEE_PERCENT, same as detect
+# --taker-fee-percent); the audit checks it against the stored detections.
+# Override: make audit TAKER_FEE_PERCENT=0.26 ARGS="--epoch 1791596128450467000"
+TAKER_FEE_PERCENT ?= 0.8
+
 audit:
-	@echo "Running SYMM sensory & representation health audit..."
-	go run $(LDFLAGS) main.go audit $(CONFIG_FLAG) $(ARGS)
+	@echo "Running SYMM sensory & representation health audit (taker fee $(TAKER_FEE_PERCENT)%)..."
+	go run $(LDFLAGS) main.go audit $(CONFIG_FLAG) --ticks 40000 --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
 
 # Analytical Workbench is a separate process on purpose: DuckDB/cgo must not share
 # the trading binary. Hub proxies POST /workbench/query → workbench.url (default

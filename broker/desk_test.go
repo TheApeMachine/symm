@@ -12,6 +12,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -247,6 +248,23 @@ func thinBids(at time.Time) *BookView {
 	return view
 }
 
+/*
+persist shows the monitor a material shortfall that lasts its persistence
+window (core.Tolerance of the one-minute matched hold): view at at, which must
+not sell, then the same book a window later.
+*/
+func persist(desk *Desk, depth *fakeDepth, venue *venue, book func(time.Time) *BookView, at time.Time) *BookView {
+	depth.push(book(at))
+	desk.Wake("BTC/USD")
+	venue.none()
+
+	later := book(at.Add(time.Duration(core.Tolerance * float64(time.Minute))))
+	depth.push(later)
+	desk.Wake("BTC/USD")
+
+	return later
+}
+
 func TestDesk_EntrySizing(t *testing.T) {
 	Convey("Given a Desk sizing entries from a 1.7% budget", t, func() {
 		Convey("When cash is the smallest limit, the entry spends the cash at the budget's entry limit", func() {
@@ -364,10 +382,7 @@ func TestDesk_CapacityMonitor(t *testing.T) {
 		bought := venue.next().volume
 
 		Convey("When exit capacity falls below the open quantity, the monitor trims to capacity", func() {
-			thin := thinBids(deskNow.Add(time.Second))
-			depth.push(thin)
-			desk.Wake("BTC/USD")
-
+			thin := persist(desk, depth, venue, thinBids, deskNow.Add(time.Second))
 			order := venue.next()
 			capacity := ExitCapacity(thin, 0.017)
 			keep := floored(capacity.Quantity)
@@ -405,8 +420,7 @@ func TestDesk_CapacityMonitor(t *testing.T) {
 			var closures []Closure
 			desk.OnClose(func(closure Closure) { closures = append(closures, closure) })
 
-			depth.push(thinBids(deskNow.Add(time.Second)))
-			desk.Wake("BTC/USD")
+			persist(desk, depth, venue, thinBids, deskNow.Add(time.Second))
 
 			order := venue.next()
 			So(order.side, ShouldEqual, "sell")
@@ -431,8 +445,7 @@ func TestDesk_ExitPrecedence(t *testing.T) {
 		desk.OnClose(func(closure Closure) { closures = append(closures, closure) })
 
 		Convey("A learned exit during an in-flight capacity trim sells the rest under learned_exit", func() {
-			depth.push(thinBids(deskNow.Add(time.Second)))
-			desk.Wake("BTC/USD")
+			persist(desk, depth, venue, thinBids, deskNow.Add(time.Second))
 			trim := venue.next()
 
 			So(desk.Exit("BTC/USD"), ShouldBeNil)
@@ -454,8 +467,7 @@ func TestDesk_ExitPrecedence(t *testing.T) {
 				Symbol: "BTC/USD", Base: "BTC", Quote: "USD", Status: "online",
 				QtyMin: decimal.NewFromFloat64(1), CostMin: decimal.NewFromFloat64(1),
 			})
-			depth.push(thinBids(deskNow.Add(time.Second)))
-			desk.Wake("BTC/USD")
+			persist(desk, depth, venue, thinBids, deskNow.Add(time.Second))
 			full := venue.next()
 
 			So(desk.Exit("BTC/USD"), ShouldBeNil)
@@ -524,6 +536,95 @@ func TestDesk_PositionsWire(t *testing.T) {
 			So(closed, ShouldHaveLength, 1)
 			So(closed[0].Sells[0].Trigger, ShouldEqual, TriggerLearnedExit)
 			So(closed[0].ShadowDefined, ShouldBeTrue)
+		})
+	})
+}
+
+func TestDesk_CapacityHysteresis(t *testing.T) {
+	Convey("Given a filled position of the cash-bound size", t, func() {
+		desk, depth, venue := deskFixture(200, 1000)
+		So(desk.Enter("BTC/USD", matched), ShouldBeNil)
+		bought := venue.next().volume
+		window := time.Duration(core.Tolerance * float64(time.Minute))
+
+		Convey("A shortfall that flickers back to ample within the window never sells", func() {
+			for i, book := range []func(time.Time) *BookView{thinBids, handBookAt, thinBids, handBookAt, thinBids} {
+				depth.push(book(deskNow.Add(time.Second + time.Duration(i)*window/2)))
+				desk.Wake("BTC/USD")
+				venue.none()
+			}
+
+			So(sellsOf(desk, "BTC/USD"), ShouldBeEmpty)
+		})
+
+		Convey("A shortfall within core.Tolerance of the open quantity never sells, however long it lasts", func() {
+			slight := func(at time.Time) *BookView {
+				view := thinBids(at)
+				view.Bids = []BookLevel{{Price: 100, Quantity: 0.9 * bought.Float64()}, {Price: 50, Quantity: 100}}
+				return view
+			}
+
+			persist(desk, depth, venue, slight, deskNow.Add(time.Second))
+			venue.none()
+			depth.push(slight(deskNow.Add(time.Second + 4*window)))
+			desk.Wake("BTC/USD")
+			venue.none()
+
+			So(sellsOf(desk, "BTC/USD"), ShouldBeEmpty)
+		})
+
+		Convey("A material shortfall sells once the window has passed, and only once per window", func() {
+			persist(desk, depth, venue, thinBids, deskNow.Add(time.Second))
+			So(venue.next().side, ShouldEqual, "sell")
+
+			thinner := func(at time.Time) *BookView {
+				view := thinBids(at)
+				view.Bids = []BookLevel{{Price: 100, Quantity: 0.2}, {Price: 50, Quantity: 100}}
+				return view
+			}
+
+			// The first version after the trim starts a new run; it cannot sell.
+			depth.push(thinner(deskNow.Add(time.Second + window + time.Second)))
+			desk.Wake("BTC/USD")
+			venue.none()
+
+			So(sellsOf(desk, "BTC/USD"), ShouldHaveLength, 1)
+		})
+	})
+}
+
+func handBookAt(at time.Time) *BookView {
+	view := handBook()
+	view.At = at
+	return view
+}
+
+func TestDesk_NoRepeatEntry(t *testing.T) {
+	Convey("Given a Desk with a position being entered", t, func() {
+		desk, depth, venue := deskFixture(200, 1000)
+		So(desk.Enter("BTC/USD", matched), ShouldBeNil)
+		first := venue.next()
+
+		Convey("Another enter for the symbol is refused and places nothing", func() {
+			So(desk.Enter("BTC/USD", matched), ShouldNotBeNil)
+			venue.none()
+		})
+
+		Convey("Further book versions never buy past the sized target", func() {
+			for i := 1; i <= 5; i++ {
+				depth.push(handBookAt(deskNow.Add(time.Duration(i) * time.Second)))
+				desk.Wake("BTC/USD")
+			}
+
+			desk.mu.Lock()
+			held := desk.positions["BTC/USD"]
+			So(held.bought.Add(held.buying).Cmp(first.volume) >= 0, ShouldBeTrue)
+
+			if held.plan != nil {
+				So(held.plan.submitted.Cmp(held.plan.target) <= 0, ShouldBeTrue)
+			}
+
+			desk.mu.Unlock()
 		})
 	})
 }

@@ -156,7 +156,14 @@ Observe returns the token of the brightest region ("R01" ... "R12"), or
 path compatibility.
 */
 func (grid *Grid) Observe(measurement *data.Measurement) []byte {
-	return fmt.Appendf(nil, "R%02d", grid.RegionScores(measurement).Winner)
+	return grid.RegionScores(measurement).Token()
+}
+
+/*
+Token is the frame's token: its Winner, zero-padded ("R00" for no evidence).
+*/
+func (regions Regions) Token() []byte {
+	return fmt.Appendf(nil, "R%02d", regions.Winner)
 }
 
 /*

@@ -48,6 +48,8 @@ type Training struct {
 	blobs            blobReader
 	statsMu          sync.Mutex
 	stats            map[string]*pathStats
+	tree             treeCache
+	fragments        fragmentLog
 }
 
 /*
@@ -201,9 +203,36 @@ Step receives the live market Measurement, turns it into the symbol's region
 token, and advances that symbol's live token path.
 */
 func (training *Training) Step(prior *data.Measurement) *data.Measurement {
-	training.advance(prior.Label, string(training.grid.Observe(prior)), prior.At)
+	regions := training.grid.RegionScores(prior)
+	training.advance(prior.Label, string(regions.Token()), prior.At)
 
-	return prior.Next(training.Name())
+	return prior.Next(training.Name(), regionMetrics(regions))
+}
+
+/*
+regionMetrics reports the frame's region evidence for the impulse map:
+each evidenced region's brightness and metric count, the winning region (the
+token Step advanced on), and the pinned metrics left out as undefined and the
+unpinned ones. A region without evidence is absent, not zero.
+*/
+func regionMetrics(regions store.Regions) map[string]float64 {
+	metrics := map[string]float64{
+		"region_winner":    float64(regions.Winner),
+		"region_runner_up": float64(regions.RunnerUp),
+		"region_undefined": float64(regions.Undefined),
+		"region_unpinned":  float64(regions.Unpinned),
+	}
+
+	for region := 1; region < len(regions.Counts); region++ {
+		if regions.Counts[region] == 0 {
+			continue
+		}
+
+		metrics[fmt.Sprintf("region_brightness:R%02d", region)] = regions.Brightness[region]
+		metrics[fmt.Sprintf("region_members:R%02d", region)] = float64(regions.Counts[region])
+	}
+
+	return metrics
 }
 
 /*
@@ -265,9 +294,10 @@ func (training *Training) advance(symbol, token string, at time.Time) {
 		return
 	}
 
+	match := training.matched(actions, path, len(live.tokens), candidates, at, at.Sub(live.since))
 	live.tokens = nil
 	training.decide(symbol, actions[0].Name, path, candidates, at, training.act(
-		symbol, actions[0].Name, path, candidates, at, at.Sub(live.since),
+		symbol, actions[0].Name, path, candidates, at, at.Sub(live.since), match,
 	))
 }
 
@@ -285,7 +315,7 @@ blobs, so it is sized off the market path and its outcome replaces this
 decision's reason when it is known.
 */
 func (training *Training) act(
-	symbol, action, path string, candidates []string, at time.Time, span time.Duration,
+	symbol, action, path string, candidates []string, at time.Time, span time.Duration, match broker.Match,
 ) string {
 	state := training.desk.State(symbol)
 
@@ -297,6 +327,7 @@ func (training *Training) act(
 
 		go func() {
 			edge := training.edge(candidates)
+			edge.Match = &match
 			result := outcome(training.desk.Enter(symbol, edge))
 
 			training.decide(symbol, action, path, candidates, at, fmt.Sprintf(
@@ -309,8 +340,10 @@ func (training *Training) act(
 	case "exit":
 		switch state {
 		case broker.HOLDING:
+			training.desk.Matched(symbol, match)
 			return "learned_exit " + outcome(training.desk.Exit(symbol))
 		case broker.EXITING:
+			training.desk.Matched(symbol, match)
 			return "learned_exit recorded beside the exit already in progress: " + outcome(training.desk.Exit(symbol))
 		}
 
@@ -322,6 +355,39 @@ func (training *Training) act(
 	))
 
 	return "ignored: unknown action " + action
+}
+
+/*
+matched is the trie match an action is taken on, for the position's
+lifecycle: the confidence is the path length in tokens, the threshold the
+configured minimum.
+*/
+func (training *Training) matched(
+	actions []*wire.NamedNumberT, path string, tokens int, candidates []string, at time.Time, span time.Duration,
+) broker.Match {
+	counts := make(map[string]int, len(actions))
+
+	for _, action := range actions {
+		counts[action.Name] = int(action.Value)
+	}
+
+	name := ""
+
+	if len(actions) > 0 {
+		name = actions[0].Name
+	}
+
+	return broker.Match{
+		At:         at,
+		Action:     name,
+		Path:       path,
+		Tokens:     tokens,
+		Candidates: len(candidates),
+		Actions:    counts,
+		Confidence: tokens,
+		Threshold:  training.confidence,
+		Span:       span,
+	}
 }
 
 func outcome(err error) string {
@@ -544,10 +610,14 @@ func (training *Training) Train() error {
 		}()
 
 		for excursion := range training.catalog.Excursions(training.Context()) {
-			if excursion.Meta("type") != excursionUp {
+			if excursion == nil {
 				continue
 			}
 
+			if excursion.Meta("type") != excursionUp {
+				training.fragments.add(excursion, nil)
+				continue
+			}
 			trained++
 
 			group, ctx := errgroup.WithContext(training.Context())
@@ -643,6 +713,14 @@ func (training *Training) Train() error {
 						tokens[idx] = append(tokens[idx], token)
 					}
 				}
+
+				precursor := make([]string, 0, len(tokens[0]))
+
+				for _, token := range tokens[0][fitFrom(tokens[0], len(actionEnter)):] {
+					precursor = append(precursor, string(token))
+				}
+
+				training.fragments.add(excursion, precursor)
 
 				for idx, action := range [][]byte{[]byte(actionEnter), []byte(actionExit)} {
 					// Only the most recent tokens before the fragment end

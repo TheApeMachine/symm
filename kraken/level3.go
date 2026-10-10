@@ -316,15 +316,22 @@ type Level3Subscription struct {
 type Level3SubscriptionParams struct {
 	Channel string   `json:"channel"`
 	Symbol  []string `json:"symbol"`
+	Depth   int      `json:"depth,omitempty"`
 	Token   string   `json:"token,omitempty"`
 }
 
-func NewLevel3Subscription(symbols []string, token string) Level3Subscription {
+/*
+NewLevel3Subscription builds a Level3 subscribe frame. depth is sent
+explicitly so the venue's per-symbol snapshot cost matches the budget the
+caller paced for.
+*/
+func NewLevel3Subscription(symbols []string, token string, depth int) Level3Subscription {
 	return Level3Subscription{
 		Method: "subscribe",
 		Params: Level3SubscriptionParams{
 			Channel: "level3",
 			Symbol:  symbols,
+			Depth:   depth,
 			Token:   token,
 		},
 	}

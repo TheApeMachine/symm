@@ -303,6 +303,7 @@ export const ForwardLearningViz = ({
 	 * but must not rewrite points, symbol, or excursion markers on the chart.
 	 */
 	const pinnedFragmentRef = useRef(false);
+	const openFragmentRef = useRef<number | null>(null);
 
 	const loadFragment = useCallback((frag: TrainedFragmentResponse) => {
 		if (!frag) return;
@@ -317,6 +318,20 @@ export const ForwardLearningViz = ({
 			time: pt.time,
 		}));
 		setPoints(mappedPoints);
+		// The list carries no points: a fragment's stored trades are read from
+		// the tape when it is opened.
+		openFragmentRef.current = frag.id ?? null;
+		if (mappedPoints.length === 0 && frag.id !== undefined) {
+			void fetch(`${hubBaseUrl()}/training/fragments/${frag.id}/points`)
+				.then((res) => (res.ok ? res.json() : []))
+				.then((tape: TrainedFragmentResponse["points"]) => {
+					if (!pinnedFragmentRef.current || openFragmentRef.current !== frag.id) return;
+					setPoints(
+						(tape ?? []).map((pt, i) => ({ x: i, y: pt.y, seq: pt.seq, time: pt.time })),
+					);
+				})
+				.catch(() => {});
+		}
 		setExcursionEvent({
 			type: fragmentClass(frag.class, frag.direction),
 			magnitude: frag.magnitude,
@@ -991,8 +1006,8 @@ export const ForwardLearningViz = ({
 						<div className="flex-1 overflow-y-auto min-h-0">
 							{trainedFragments.length === 0 ? (
 								<div className="p-3 text-(--f4) text-[10px] leading-relaxed">
-									No published fragments yet. Rehearsal writes them to Chart →
-									/training/fragments.
+									No detections read yet. Train lists every stored detection at
+									startup (/training/fragments).
 								</div>
 							) : (
 								trainedFragments

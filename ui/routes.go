@@ -33,12 +33,45 @@ func (routes *Routes) Register() {
 	})
 
 	routes.hub.app.Get("/cognition/tree", func(c fiber.Ctx) error {
-		if routes.hub.cognitionSource == nil {
-			return c.JSON(CognitionTreeExport{})
+		var export CognitionTreeExport
+
+		if routes.hub.cognitionSource != nil {
+			export = routes.hub.cognitionSource.CognitionTree()
 		}
 
-		export := routes.hub.cognitionSource.CognitionTree()
-		return c.JSON(export)
+		return c.JSON(export.normalized())
+	})
+
+	routes.hub.app.Get("/training/fragments/:id/points", func(c fiber.Ctx) error {
+		if routes.hub.fragmentsSource == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "fragments source unavailable"})
+		}
+
+		id, err := strconv.Atoi(c.Params("id"))
+
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "fragment id must be an integer"})
+		}
+
+		points, err := routes.hub.fragmentsSource.FragmentPoints(id)
+
+		if err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		if points == nil {
+			points = []FragmentPoint{}
+		}
+
+		return c.JSON(points)
+	})
+
+	routes.hub.app.Get("/positions/lifecycle", func(c fiber.Ctx) error {
+		if routes.hub.lifecycleSource == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "lifecycle source unavailable"})
+		}
+
+		return c.JSON(routes.hub.lifecycleSource.LifecyclesReport())
 	})
 
 	routes.hub.app.Get("/training/fragments", func(c fiber.Ctx) error {

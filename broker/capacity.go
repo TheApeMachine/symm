@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -158,6 +159,9 @@ c/b-1 and B->C duration of each readable one.
 type Edge struct {
 	Gains []float64
 	Holds []time.Duration
+	// Match is the trie match the entry came from, recorded as the first
+	// event of the position's lifecycle; nil when the caller has none.
+	Match *Match
 }
 
 func median(values []float64) float64 {
@@ -217,9 +221,17 @@ func (flow *Flow) Record(symbol string, at time.Time, side string, qty float64) 
 }
 
 /*
-Noise is the sample standard deviation of signed volume over the complete
-windows (now-(k+1)*hold, now-k*hold] observed since the first trade. ok is
-false with fewer than two complete windows: one window has no dispersion.
+Noise is the standard deviation of signed volume over one expected hold, and
+the number of windows it was measured from.
+
+With at least core.MinimumPrior (9) complete hold windows (now-(k+1)*hold,
+now-k*hold] since the first trade, it is their sample standard deviation, as
+before. With less history, the span observed so far is cut into MinimumPrior
+equal windows w and the standard deviation of their sums is scaled by
+sqrt(hold/w), the square-root-of-time rule for independent increments. Net
+order flow is persistent (positively autocorrelated), so the true noise over a
+hold is at least the scaled one and the participation limit errs small. ok is
+false with no trade yet, or a window below the venue's clock resolution.
 */
 func (flow *Flow) Noise(symbol string, now time.Time, hold time.Duration) (float64, int, bool) {
 	if flow == nil || hold <= 0 {
@@ -235,10 +247,17 @@ func (flow *Flow) Noise(symbol string, now time.Time, hold time.Duration) (float
 		return 0, 0, false
 	}
 
-	windows := int(now.Sub(trades[0].at) / hold)
+	span := now.Sub(trades[0].at)
+	windows, width := int(core.MinimumPrior), hold
 
-	if windows < 2 {
-		return 0, windows, false
+	if complete := int(span / hold); complete >= windows {
+		windows = complete
+	} else {
+		width = span / time.Duration(windows)
+	}
+
+	if width < core.ClockResolution {
+		return 0, 0, false
 	}
 
 	sums := make([]float64, windows)
@@ -248,8 +267,8 @@ func (flow *Flow) Noise(symbol string, now time.Time, hold time.Duration) (float
 			break
 		}
 
-		// Window k is (now-(k+1)*hold, now-k*hold]: now-at in [k, k+1) holds.
-		if k := int(now.Sub(trade.at) / hold); k < windows {
+		// Window k is (now-(k+1)*width, now-k*width].
+		if k := int(now.Sub(trade.at) / width); k < windows {
 			sums[k] += trade.qty
 		}
 	}
@@ -267,5 +286,7 @@ func (flow *Flow) Noise(symbol string, now time.Time, hold time.Duration) (float
 		variance += (sum - mean) * (sum - mean)
 	}
 
-	return math.Sqrt(variance / float64(windows-1)), windows, true
+	scale := math.Sqrt(float64(hold) / float64(width))
+
+	return math.Sqrt(variance/float64(windows-1)) * scale, windows, true
 }

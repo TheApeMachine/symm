@@ -45,3 +45,19 @@ type CognitionTreeExport struct {
 	Branches []TrieBranchJSON     `json:"branches"`
 	Feasible []FeasibleActionJSON `json:"feasible"`
 }
+
+/*
+normalized returns the export with empty lists instead of nil, so the wire
+carries [] rather than null for a tree that has not grown yet.
+*/
+func (export CognitionTreeExport) normalized() CognitionTreeExport {
+	if export.Branches == nil {
+		export.Branches = []TrieBranchJSON{}
+	}
+
+	if export.Feasible == nil {
+		export.Feasible = []FeasibleActionJSON{}
+	}
+
+	return export
+}

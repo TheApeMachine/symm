@@ -18,6 +18,7 @@ subscribeAck is the venue's acknowledgement of a subscribe request.
 */
 type subscribeAck struct {
 	Method  string `json:"method"`
+	Channel string `json:"channel"`
 	Success *bool  `json:"success"`
 	Error   string `json:"error"`
 	Result  struct {
@@ -40,6 +41,12 @@ func subscribeRejection(buf []byte) error {
 
 	if ack.Method != "subscribe" || ack.Success == nil || *ack.Success {
 		return nil
+	}
+
+	// A rate-limit rejection names its channel at the top level and has no
+	// result object.
+	if ack.Result.Channel == "" {
+		ack.Result.Channel = ack.Channel
 	}
 
 	return errnie.Err(

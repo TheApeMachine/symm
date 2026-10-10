@@ -85,7 +85,7 @@ describe("Positions", () => {
 			expect(markup).toContain("venue 1.2500");
 			expect(markup).toContain("shadow -0.7500");
 			expect(markup).toContain('data-trigger="capacity_trim"');
-			expect(markup).toContain("TRIM 2.5000");
+			expect(markup).toContain("TRIM 2.5000 qty");
 			expect(markup).toContain("closed this session");
 			expect(markup).toContain('data-trigger="learned_exit"');
 			expect(markup).toContain("shadow —");

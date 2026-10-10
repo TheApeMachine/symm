@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
@@ -48,6 +49,25 @@ type Instrument struct {
 	// level3Stale receives a batch's symbols when its Level3 socket drops,
 	// so the book stops serving state that no longer tracks the venue.
 	level3Stale func([]string)
+
+	// paceMu serializes Level3 subscribe frames across every socket and
+	// reconnect hook; pacedAt is when the last frame went out. The venue's
+	// snapshot rate counter is per client, not per socket.
+	paceMu  sync.Mutex
+	pacedAt time.Time
+
+	// level3Reader starts reading a Level3 socket. Subscribe calls it as soon
+	// as the socket opens, before any subscribe frame: the venue rejects
+	// snapshot requests on a socket whose earlier snapshots sit unread.
+	level3Reader func(*network.WebsocketClient)
+}
+
+/*
+SetLevel3Reader connects each Level3 socket to its ingress reader. It is
+required before Subscribe.
+*/
+func (instrument *Instrument) SetLevel3Reader(read func(*network.WebsocketClient)) {
+	instrument.level3Reader = read
 }
 
 /*
@@ -385,27 +405,119 @@ func restLevel3Token() (string, error) {
 }
 
 /*
-level3Subscription builds the Level3 subscribe frame for one batch with a
-currently valid token.
+level3RateWindow is the pause between Level3 subscribe frames, and
+level3SnapshotCost is the counter increase per symbol at each subscribable
+depth, from the venue's Level3 documentation. A subscribe over the budget is
+rejected per symbol ("Rate limit for snapshot requests exceeded") and that
+symbol never gets a book. The documentation states the budget "per second",
+but a full budget every second was measured to fail (40 symbols at depth 10
+each second: second frame onward partly rejected, 400 of 600 accepted), while
+every two seconds was accepted in full (400 of 400). So the pause is two of
+the documented windows.
 */
-func (instrument *Instrument) level3Subscription(batch []string) ([]byte, error) {
-	token, err := instrument.level3Token()
+const level3RateWindow = 2 * time.Second
 
-	if err != nil {
-		return nil, err
+var level3SnapshotCost = map[int]int{10: 5, 100: 25, 1000: 100}
+
+/*
+level3Depth is the depth subscribed and maintained: market.l3_depth, with the
+venue's default of 10 when unset (the same default the book enforces).
+*/
+func level3Depth() int {
+	if depth := viper.GetInt("market.l3_depth"); depth > 0 {
+		return depth
 	}
 
-	msg, err := sonic.Marshal(kraken.NewLevel3Subscription(batch, token))
+	return 10
+}
 
-	if err != nil {
-		return nil, errnie.Err(
-			errnie.IO,
-			"[instrument] level3 subscribe marshal failed",
-			err,
+/*
+level3FrameSize is how many symbols one subscribe frame may carry so its
+snapshots fit one rate window: market.l3_rate_limit (the account tier's
+counter budget) divided by the per-symbol cost at the subscribed depth.
+*/
+func level3FrameSize() (int, error) {
+	depth := level3Depth()
+	cost, ok := level3SnapshotCost[depth]
+
+	if !ok {
+		return 0, errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[instrument] market.l3_depth %d is not a Kraken level3 depth (10, 100, 1000)", depth),
+			nil,
 		)
 	}
 
-	return msg, nil
+	size := viper.GetInt("market.l3_rate_limit") / cost
+
+	if size < 1 {
+		return 0, errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[instrument] market.l3_rate_limit must cover one symbol at depth %d (cost %d)", depth, cost),
+			nil,
+		)
+	}
+
+	return size, nil
+}
+
+/*
+subscribeLevel3 writes the Level3 subscription for one batch with a currently
+valid token, split into frames that each fit the venue's snapshot rate
+budget, one frame per rate window across all sockets.
+*/
+func (instrument *Instrument) subscribeLevel3(write func([]byte) error, batch []string) error {
+	size, err := level3FrameSize()
+
+	if err != nil {
+		return err
+	}
+
+	token, err := instrument.level3Token()
+
+	if err != nil {
+		return err
+	}
+
+	for frame := range slices.Chunk(batch, size) {
+		msg, err := sonic.Marshal(kraken.NewLevel3Subscription(frame, token, level3Depth()))
+
+		if err != nil {
+			return errnie.Err(
+				errnie.IO,
+				"[instrument] level3 subscribe marshal failed",
+				err,
+			)
+		}
+
+		if err := instrument.paceLevel3(func() error { return write(msg) }); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+/*
+paceLevel3 runs write once a full rate window has passed since the previous
+Level3 subscribe frame, or returns when the instrument closes.
+*/
+func (instrument *Instrument) paceLevel3(write func() error) error {
+	instrument.paceMu.Lock()
+	defer instrument.paceMu.Unlock()
+
+	if wait := time.Until(instrument.pacedAt.Add(level3RateWindow)); wait > 0 {
+		select {
+		case <-instrument.System.Context().Done():
+			return instrument.System.Context().Err()
+		case <-time.After(wait):
+		}
+	}
+
+	err := write()
+	instrument.pacedAt = time.Now()
+
+	return err
 }
 
 /*
@@ -430,6 +542,13 @@ func (instrument *Instrument) Subscribe() error {
 
 	stale := instrument.level3Stale
 
+	if instrument.level3Reader == nil {
+		return instrument.Error(errnie.Err(
+			errnie.Validation,
+			"[instrument] level3 reader is required before subscribe",
+			nil,
+		))
+	}
 	var tradeSubs [][]byte
 
 	for chunk := range slices.Chunk(
@@ -456,12 +575,6 @@ func (instrument *Instrument) Subscribe() error {
 			))
 		}
 
-		l3Msg, err := instrument.level3Subscription(batch)
-
-		if err != nil {
-			return instrument.Error(err)
-		}
-
 		l3Client := network.NewWebsocketClient(instrument.System.Context())
 
 		if err := l3Client.Open(system.Cfg.WebSocket.Endpoints.Level3); err != nil {
@@ -472,7 +585,12 @@ func (instrument *Instrument) Subscribe() error {
 			))
 		}
 
-		if err := l3Client.Write(l3Msg); err != nil {
+		// Read before subscribing: unread snapshots make the venue reject
+		// later snapshot requests (measured: 120 of 621 rejected with readers
+		// started after all subscribes, 0 of 621 with readers running).
+		instrument.level3Reader(l3Client)
+
+		if err := instrument.subscribeLevel3(l3Client.Write, batch); err != nil {
 			return instrument.Error(errnie.Err(
 				errnie.IO,
 				"[instrument] level3 subscribe failed for "+batchKey,
@@ -492,13 +610,7 @@ func (instrument *Instrument) Subscribe() error {
 		l3Client.OnReconnect(func() error {
 			errnie.Info("[instrument] level3 resubscribe after reconnect for " + batchKey)
 
-			msg, err := instrument.level3Subscription(batch)
-
-			if err == nil {
-				err = l3Client.Write(msg)
-			}
-
-			if err != nil {
+			if err := instrument.subscribeLevel3(l3Client.Write, batch); err != nil {
 				// The books of this batch were marked stale on disconnect
 				// and stay so until a resubscribe snapshot lands.
 				stale(batch)

@@ -9,7 +9,7 @@ type TreeLink = d3.HierarchyPointLink<TrieNodeData>;
 
 interface RadixTreeVizProps {
 	data?: TrieNodeData | null;
-	feasible?: FeasibleAction[];
+	feasible?: FeasibleAction[] | null;
 	minProbability?: number;
 	colorMode?: "threshold" | "gradient";
 	projection?: "horizontal" | "vertical" | "radial";
@@ -43,7 +43,7 @@ const filterTree = (
 
 export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	data,
-	feasible = [],
+	feasible: feasibleProp,
 	minProbability: externalMinProb,
 	colorMode: externalColorMode,
 	projection: externalProjection,
@@ -52,6 +52,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	onColorModeChange,
 	className,
 }) => {
+	// A default parameter only replaces undefined; the hub serializes an
+	// empty Go slice as null.
+	const feasible = feasibleProp ?? [];
 	const svgRef = useRef<SVGSVGElement>(null);
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const zoomBehavior = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(

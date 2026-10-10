@@ -335,6 +335,9 @@ var (
 			hub.SetEquitySource(balance)
 			hub.SetPositionSource(desk)
 			hub.SetDecisionSource(training)
+			hub.SetCognitionSource(training)
+			hub.SetFragmentsSource(training)
+			hub.SetLifecycleSource(desk)
 			hub.SetExitHandler(func(symbol string) {
 				if err := desk.ExitBy(symbol, broker.TriggerManual); err != nil {
 					errnie.Error(err)
@@ -343,26 +346,6 @@ var (
 
 			hub.Run()
 			hub.Transition(nmruntime.READY)
-
-			// Subscribe and seed while transports remain BUSY. Only a complete
-			// instrument universe and restored learner may open the workspace.
-			instrument.SetLevel3Stale(book.Stale)
-
-			if err := instrument.Subscribe(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: subscribe to instrument universe",
-					err,
-				))
-			}
-
-			if instrument.Status() != nmruntime.READY {
-				return errnie.Error(errnie.Err(
-					errnie.NotAcceptable,
-					"symm: instrument universe is not seeded",
-					nil,
-				))
-			}
 
 			// Start consumers before opening any ingress. All construction and
 			// seeding have completed at this point.
@@ -478,22 +461,25 @@ var (
 							continue
 						}
 
+						// A rejected subscribe leaves that stream dark (stale
+						// token, unknown symbol, snapshot rate limit), so it
+						// halts rather than being dropped. It is checked before
+						// channel dispatch: a level3 rejection carries
+						// "channel":"level3" and would otherwise pass as an
+						// empty book frame.
+						if rejection := subscribeRejection(buf); rejection != nil {
+							halt(errnie.Err(
+								errnie.NotAcceptable,
+								fmt.Sprintf("symm: %s subscription rejected", name),
+								rejection,
+							))
+
+							return
+						}
+
 						channelNode, err := sonic.Get(buf, "channel")
 
 						if err != nil {
-							// Method acks carry no channel. A rejected subscribe
-							// leaves that stream dark (stale token, unknown
-							// symbol), so it halts rather than being dropped.
-							if rejection := subscribeRejection(buf); rejection != nil {
-								halt(errnie.Err(
-									errnie.NotAcceptable,
-									fmt.Sprintf("symm: %s subscription rejected", name),
-									rejection,
-								))
-
-								return
-							}
-
 							continue
 						}
 
@@ -615,14 +601,28 @@ var (
 
 			startIngress(public, "public")
 
-			instrument.Level3.Range(func(key, value any) bool {
-				if client, ok := value.(*network.WebsocketClient); ok {
-					startIngress(client, "level3")
-				}
-
-				return true
+			// Every socket is read while it subscribes: Kraken rejects Level3
+			// snapshot requests on a socket whose earlier snapshots sit unread.
+			instrument.SetLevel3Stale(book.Stale)
+			instrument.SetLevel3Reader(func(client *network.WebsocketClient) {
+				startIngress(client, "level3")
 			})
 
+			if err := instrument.Subscribe(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: subscribe to instrument universe",
+					err,
+				))
+			}
+
+			if instrument.Status() != nmruntime.READY {
+				return errnie.Error(errnie.Err(
+					errnie.NotAcceptable,
+					"symm: instrument universe is not seeded",
+					nil,
+				))
+			}
 			for ctx.Err() == nil {
 				select {
 				case <-ctx.Done():

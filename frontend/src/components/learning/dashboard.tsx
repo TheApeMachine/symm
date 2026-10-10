@@ -22,6 +22,7 @@ import { ForwardLearningViz } from "./forward-learning-viz";
 import { ImpulseMapViz } from "./impulse-map-viz";
 import { KnowledgePanel } from "./knowledge-panel";
 import { ImpulseMap, type Point, type Region } from "./map";
+import { LifecycleView } from "./lifecycle-view";
 import { LearningPerformanceBanner } from "./performance-banner";
 import { RadixTreeViz } from "./radix-tree-viz";
 import { RecognitionPanel } from "./recognition-panel";
@@ -39,7 +40,7 @@ export type Tab =
 	| "influence";
 
 const TABS: Array<{ key: Tab; label: string }> = [
-	{ key: "forward", label: "Model training" },
+	{ key: "forward", label: "Position life-cycle" },
 	{ key: "historical", label: "Historical runs" },
 	{ key: "cognitive", label: "Cognitive tree" },
 	{ key: "impulse", label: "Impulse map" },
@@ -560,6 +561,25 @@ export const LearningDashboard = () => {
 							}))
 						: [];
 
+				// Training reports the grid's own region scores for the frame Step
+				// tokenized: brightness is the standardized excess deformation
+				// (0 under the null), members the scored metrics. They replace any
+				// client-side estimate; a region without evidence is absent.
+				const regionEvidence = (measurement.metrics ?? []).filter((m) =>
+					String(m?.name ?? "").startsWith("region_brightness:"),
+				);
+				if (isGridSymbolMatch && regionEvidence.length > 0) {
+					normalizedRegions = regionEvidence.map((m) => {
+						const tag = String(m.name).slice("region_brightness:".length);
+						return {
+							id: Number(tag.replace(/^R/i, "")),
+							strength: m.raw ?? 0,
+							authority: 1.0,
+							members: metricMap[`region_members:${tag}`] ?? 0,
+						};
+					});
+				}
+
 				let mappedNodes: ImpulseNode[] = [];
 				if (quantities.length > 0) {
 					mappedNodes = quantities.map((cell, index) => ({
@@ -1001,7 +1021,7 @@ export const LearningDashboard = () => {
 			{/* View Panels */}
 			{tab === "forward" && (
 				<div className="flex-1 min-h-0 flex flex-col">
-					<ForwardLearningViz symbol={focusSymbol} tapeSource="live" />
+					<LifecycleView />
 				</div>
 			)}
 
@@ -1015,7 +1035,7 @@ export const LearningDashboard = () => {
 				<div className="flex-1 min-h-0 flex flex-col">
 					<RadixTreeViz
 						data={treeResponse?.root}
-						feasible={treeResponse?.feasible}
+						feasible={treeResponse?.feasible ?? []}
 					/>
 				</div>
 			)}

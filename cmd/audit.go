@@ -96,7 +96,7 @@ func stringsRepeat(s string, count int) string {
 }
 
 func init() {
-	auditCmd.Flags().Int64Var(&auditEpoch, "epoch", 0, "Specific run epoch to audit (0 = latest run)")
+	auditCmd.Flags().Int64Var(&auditEpoch, "epoch", 0, "Specific run epoch to audit (0 = newest run that has stored measurements)")
 	auditCmd.Flags().StringVar(&auditSymbol, "symbol", "", "Market symbol to audit (empty = all symbols across market tape)")
 	auditCmd.Flags().IntVar(&auditTicks, "ticks", 1000, "Maximum number of ticks to sample (0 = all available ticks in epoch)")
 	auditCmd.Flags().IntVar(&auditPermutations, "permutations", 50, "Number of permutation iterations for null hypothesis testing")
