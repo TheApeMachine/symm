@@ -92,22 +92,11 @@ func (op *Pace) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			score := 0.0
 			priorCount := 0.0
-			index := 0
 
 			for out := range op.calibrator.Next(data.NewValue(val).Next(nil)) {
-				if out == nil {
-					continue
-				}
-
-				if index == 0 {
-					score = *(*float64)(out)
-				}
-
-				if index == 2 {
-					priorCount = *(*float64)(out)
-				}
-
-				index++
+				reading := (*probability.CalibratorReading)(out)
+				score = reading.Value
+				priorCount = reading.PriorCount
 			}
 
 			if err := op.calibrator.Error(); err != nil {

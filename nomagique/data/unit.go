@@ -19,10 +19,13 @@ const (
 	UnitSNR               Unit = "snr"
 	UnitZScore            Unit = "zscore"
 	UnitCorrelation       Unit = "correlation"
-	UnitProbability       Unit = "probability"
-	UnitConfidence        Unit = "confidence"
-	UnitEntropy           Unit = "entropy"
-	UnitNat               Unit = "nat" // signed: log-likelihoods; non-negative information is UnitEntropy
+	// UnitCovarianceScore is a covariance divided by its null standard error:
+	// signed, unbounded, standard normal under no co-movement.
+	UnitCovarianceScore Unit = "covariance_score"
+	UnitProbability     Unit = "probability"
+	UnitConfidence      Unit = "confidence"
+	UnitEntropy         Unit = "entropy"
+	UnitNat             Unit = "nat" // signed: log-likelihoods; non-negative information is UnitEntropy
 
 	// Market Prices & Cash Flows
 	UnitPrice                    Unit = "price"
@@ -125,39 +128,39 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"checksum":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 	},
 	"correlation": {
-		"absolute_correlation":              {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
-		"cohort_absolute_correlation":       {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
-		"cohort_correlation_dispersion":     {Unit: UnitStandardDeviation, Timescale: TimescaleRollingWindow},
-		"cohort_effective_peer_count":       {Unit: UnitCount, Timescale: TimescaleRollingWindow},
-		"cohort_peer_count":                 {Unit: UnitCount, Timescale: TimescaleRollingWindow},
-		"cohort_signed_correlation":         {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
-		"correlation_baseline":              {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
-		"correlation_divergence":            {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
-		"correlation_p_value":               {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
-		"correlation_standard_error_fisher": {Unit: UnitStandardDeviation, Timescale: TimescaleRollingWindow},
-		"correlation_velocity":              {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
-		"correlation_zscore":                {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
-		"covariance":                        {Unit: UnitCovariance, Timescale: TimescaleRollingWindow},
-		"historical_path_distance":          {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
-		"historical_path_percentile":        {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
-		"last_price":                        {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"observation_count":                 {Unit: UnitCount, Timescale: TimescaleRollingWindow},
-		"overlap_density":                   {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"overlap_pair_count":                {Unit: UnitCount, Timescale: TimescaleRollingWindow},
-		"peer_return_energy_rate":           {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"relative_return_energy":            {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"relative_return_energy_baseline":   {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"relative_return_energy_divergence": {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"relative_return_energy_velocity":   {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
-		"relative_return_energy_zscore":     {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
-		"return_energy:measured":            {Unit: UnitVariance, Timescale: TimescaleRollingWindow},
-		"return_energy:reference":           {Unit: UnitVariance, Timescale: TimescaleRollingWindow},
-		"return_energy_rate:measured":       {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"return_energy_rate:reference":      {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"shared_time":                       {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
-		"signed_correlation":                {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
-		"supported_return_count:measured":   {Unit: UnitCount, Timescale: TimescaleRollingWindow},
-		"supported_return_count:reference":  {Unit: UnitCount, Timescale: TimescaleRollingWindow},
+		"cohort_effective_peer_count":        {Unit: UnitCount, Timescale: TimescaleRollingWindow},
+		"cohort_peer_count":                  {Unit: UnitCount, Timescale: TimescaleRollingWindow},
+		"covariance":                         {Unit: UnitCovariance, Timescale: TimescaleRollingWindow},
+		"historical_path_distance":           {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
+		"historical_path_percentile":         {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
+		"last_price":                         {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"observation_count":                  {Unit: UnitCount, Timescale: TimescaleRollingWindow},
+		"overlap_density":                    {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"overlap_pair_count":                 {Unit: UnitCount, Timescale: TimescaleRollingWindow},
+		"peer_return_energy_rate":            {Unit: UnitRate, Timescale: TimescaleRollingWindow},
+		"relative_return_energy":             {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"relative_return_energy_baseline":    {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"relative_return_energy_divergence":  {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"relative_return_energy_velocity":    {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
+		"relative_return_energy_zscore":      {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
+		"return_energy:measured":             {Unit: UnitVariance, Timescale: TimescaleRollingWindow},
+		"return_energy:reference":            {Unit: UnitVariance, Timescale: TimescaleRollingWindow},
+		"return_energy_rate:measured":        {Unit: UnitRate, Timescale: TimescaleRollingWindow},
+		"return_energy_rate:reference":       {Unit: UnitRate, Timescale: TimescaleRollingWindow},
+		"shared_time":                        {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
+		"supported_return_count:measured":    {Unit: UnitCount, Timescale: TimescaleRollingWindow},
+		"supported_return_count:reference":   {Unit: UnitCount, Timescale: TimescaleRollingWindow},
+		"absolute_covariance_score":          {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
+		"cohort_absolute_covariance_score":   {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
+		"cohort_covariance_score":            {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
+		"cohort_covariance_score_dispersion": {Unit: UnitStandardDeviation, Timescale: TimescaleRollingWindow},
+		"covariance_p_value":                 {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
+		"covariance_score":                   {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
+		"covariance_score_baseline":          {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
+		"covariance_score_divergence":        {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
+		"covariance_score_velocity":          {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
+		"covariance_score_zscore":            {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
+		"covariance_standard_error":          {Unit: UnitCovariance, Timescale: TimescaleRollingWindow},
 	},
 	"cvd": {
 		"aggressive_notional:buy":            {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
@@ -165,7 +168,6 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"buy_notional_rate":                  {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
 		"cumulative_notional_delta":          {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"cumulative_volume_delta":            {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"cvd_epoch_from":                     {Unit: UnitNanosecond, Timescale: TimescaleInstantaneous},
 		"executed_quantity:buy":              {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 		"executed_quantity:sell":             {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 		"flow_aligned_midpoint_return":       {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
@@ -331,8 +333,8 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"best_lag_seconds_mad":          {Unit: UnitDuration, Timescale: TimescaleRollingWindow},
 		"best_lag_seconds_median":       {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
 		"correlation_gain_baseline":     {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
-		"correlation_gain_mean":         {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
-		"correlation_gain_median":       {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
+		"covariance_score_gain_mean":    {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
+		"covariance_score_gain_median":  {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
 		"correlation_gain_velocity":     {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"correlation_gain_zscore":       {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"correlation_p_value":           {Unit: UnitProbability, Timescale: TimescaleRollingWindow},

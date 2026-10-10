@@ -93,6 +93,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
+	if dropped := model.Dropped(); dropped != nil {
+		errnie.Warn("[hawkes] " + prior.Label + ": model dropped: " + dropped.Error())
+	}
+
 	out := prior.Next(signal.Name(), res)
 	out.From = from
 

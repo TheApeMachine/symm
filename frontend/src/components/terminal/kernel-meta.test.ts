@@ -10,7 +10,7 @@ describe("sourceHeadline", () => {
 	it("names the metric each signal kernel leads with", () => {
 		expect(sourceHeadline("depthflow")).toBe("book_imbalance");
 		expect(sourceHeadline("hawkes")).toBe("branching_spectral_radius");
-		expect(sourceHeadline("correlation")).toBe("signed_correlation");
+		expect(sourceHeadline("correlation")).toBe("covariance_score");
 		expect(sourceHeadline("cvd")).toBe("signed_net_fraction_zscore");
 		expect(sourceHeadline("toxicity")).toBe("fill_fraction_zscore:bid");
 	});
@@ -37,9 +37,9 @@ describe("sourceHeadlineMetric", () => {
 
 	it("uses the live correlation hypothesis as its headline", () => {
 		expect(sourceHeadlineMetric("correlation")).toBe(
-			"metrics.signed_correlation",
+			"metrics.covariance_score",
 		);
-		expect(sourceMetrics("correlation")).toContain("signed_correlation");
+		expect(sourceMetrics("correlation")).toContain("covariance_score");
 		expect(sourceMetrics("correlation")[0]).toBe("snr");
 	});
 

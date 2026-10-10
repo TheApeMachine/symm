@@ -18,11 +18,12 @@ import (
 var OutputKeys = []string{
 	"last_price",
 	"observation_count",
-	"signed_correlation",
-	"absolute_correlation",
-	"cohort_signed_correlation",
-	"cohort_absolute_correlation",
+	"covariance_score",
+	"absolute_covariance_score",
+	"cohort_covariance_score",
+	"cohort_absolute_covariance_score",
 	"covariance",
+	"covariance_standard_error",
 	"return_energy:reference",
 	"return_energy:measured",
 	"return_energy_rate:reference",
@@ -35,17 +36,16 @@ var OutputKeys = []string{
 	"overlap_density",
 	"overlap_pair_count",
 	"effective_sample_count",
-	"correlation_p_value",
-	"correlation_standard_error_fisher",
+	"covariance_p_value",
 	"cohort_peer_count",
-	"cohort_correlation_dispersion",
+	"cohort_covariance_score_dispersion",
 	"cohort_effective_peer_count",
 	"relative_return_energy",
 	"relative_cohort_return_energy",
-	"correlation_baseline",
-	"correlation_divergence",
-	"correlation_zscore",
-	"correlation_velocity",
+	"covariance_score_baseline",
+	"covariance_score_divergence",
+	"covariance_score_zscore",
+	"covariance_score_velocity",
 	"relative_return_energy_baseline",
 	"relative_return_energy_divergence",
 	"relative_return_energy_zscore",
@@ -56,23 +56,29 @@ var OutputKeys = []string{
 
 /*
 Frame carries calculation context and metrics across correlation primitives.
+Reference is the peer the single-pair metrics describe: the admitted peer with
+the most overlapping returns (support), ties going to the first symbol in
+sorted order. It is empty when no peer is admitted.
 */
 type Frame struct {
-	Symbol  string
-	At      int64
-	Peers   []Peer
-	Metrics map[string]float64
+	Symbol    string
+	At        int64
+	Peers     []Peer
+	Reference string
+	Metrics   map[string]float64
 }
 
 /*
-Relation is one retained pairwise correlation fact.
+Relation is one retained pairwise dependence fact: the Hayashi-Yoshida
+covariance, its standard error, and their score.
 */
 type Relation struct {
-	Left, Right               string
-	Signed, Absolute, Support float64
-	PValue, StandardError     float64
-	Defined, FisherDefined    bool
-	At                        time.Time
+	Left, Right                   string
+	Covariance, StandardError     float64
+	Score, AbsoluteScore, Support float64
+	PValue                        float64
+	Defined, ScoreDefined         bool
+	At                            time.Time
 }
 
 /*
@@ -124,7 +130,6 @@ type Pairs struct {
 	window    func() core.Primitive
 	retained  map[string]PathReading
 	pairwise  core.Primitive
-	fisher    core.Primitive
 	relations core.Primitive
 }
 
@@ -134,7 +139,6 @@ func NewPairs(estimator core.Primitive) core.Primitive {
 		window:    adaptive.NewWindow,
 		retained:  make(map[string]PathReading),
 		pairwise:  NewDependence(estimator),
-		fisher:    NewFisher(),
 		relations: NewRelations(),
 	}
 }
@@ -189,12 +193,10 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			op.retained[frame.Symbol] = focal
 
-			var (
-				selected     DependenceReading
-				significance FisherReading
-			)
+			var selected DependenceReading
 
 			frame.Peers = frame.Peers[:0]
+			frame.Reference = ""
 
 			for _, peerSymbol := range peers(op.retained, frame.Symbol) {
 				peer := op.retained[peerSymbol]
@@ -211,30 +213,33 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 					break
 				}
 
-				sample := FisherSample{Correlation: dependence.Correlation, Support: dependence.Support}
-				significanceOfPair := data.To[FisherSample, FisherReading](op.fisher, &sample)
-
-				retain(op, frame.Symbol, peerSymbol, dependence, significanceOfPair,
+				retain(op, frame.Symbol, peerSymbol, dependence,
 					time.Unix(0, min(price.At, peer.To)))
 
-				if !dependence.Defined || dependence.Support < 2 {
+				if !dependence.Defined || !dependence.ScoreDefined || dependence.Support < 2 {
 					continue
 				}
 
 				frame.Peers = append(frame.Peers, Peer{
-					Correlation: dependence.Correlation,
-					Support:     dependence.Support,
-					PeerEnergy:  dependence.RightEnergyRate,
+					Score:      dependence.Score,
+					Support:    dependence.Support,
+					PeerEnergy: dependence.RightEnergyRate,
 				})
 
-				selected = dependence
-				significance = significanceOfPair
+				// The reference is the peer with the most overlapping data;
+				// peers arrive in sorted order, so a tie keeps the first.
+				if frame.Reference == "" || dependence.Support > selected.Support {
+					selected = dependence
+					frame.Reference = peerSymbol
+				}
 			}
 
 			if len(frame.Peers) > 0 {
-				frame.Metrics["signed_correlation"] = selected.Correlation
-				frame.Metrics["absolute_correlation"] = math.Abs(selected.Correlation)
+				frame.Metrics["covariance_score"] = selected.Score
+				frame.Metrics["absolute_covariance_score"] = math.Abs(selected.Score)
 				frame.Metrics["covariance"] = selected.Covariance
+				frame.Metrics["covariance_standard_error"] = selected.StandardError
+				frame.Metrics["covariance_p_value"] = scorePValue(selected.Score)
 				frame.Metrics["return_energy:reference"] = selected.RightEnergy
 				frame.Metrics["return_energy:measured"] = selected.LeftEnergy
 				frame.Metrics["return_energy_rate:reference"] = selected.RightEnergyRate
@@ -245,11 +250,6 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				frame.Metrics["supported_return_count:reference"] = selected.RightReturns
 				frame.Metrics["overlap_pair_count"] = selected.Support
 				frame.Metrics["shared_time"] = selected.SharedTime
-
-				if significance.Defined {
-					frame.Metrics["correlation_p_value"] = significance.PValue
-					frame.Metrics["correlation_standard_error_fisher"] = significance.StandardError
-				}
 			}
 
 			if !yield(arriving) {
@@ -282,9 +282,17 @@ func peers(retained map[string]PathReading, focal string) []string {
 	return symbols
 }
 
+/*
+scorePValue is the two-sided normal p-value of a covariance score under the
+null of no co-movement that defines its standard error.
+*/
+func scorePValue(score float64) float64 {
+	return math.Erfc(math.Abs(score) / math.Sqrt2)
+}
+
 func retain(
 	op *Pairs, leftSymbol, rightSymbol string,
-	dependence DependenceReading, fisher FisherReading, at time.Time,
+	dependence DependenceReading, at time.Time,
 ) {
 	left, right := leftSymbol, rightSymbol
 
@@ -301,15 +309,16 @@ func retain(
 	}
 
 	if relation.Defined {
-		relation.Signed = dependence.Correlation
-		relation.Absolute = math.Abs(relation.Signed)
+		relation.Covariance = dependence.Covariance
 	}
 
-	relation.FisherDefined = fisher.Defined
+	relation.ScoreDefined = relation.Defined && dependence.ScoreDefined
 
-	if relation.FisherDefined {
-		relation.PValue = fisher.PValue
-		relation.StandardError = fisher.StandardError
+	if relation.ScoreDefined {
+		relation.StandardError = dependence.StandardError
+		relation.Score = dependence.Score
+		relation.AbsoluteScore = math.Abs(dependence.Score)
+		relation.PValue = scorePValue(dependence.Score)
 	}
 
 	for range op.relations.Next(transport.NewOne(unsafe.Pointer(&relation)).Next(nil)) {

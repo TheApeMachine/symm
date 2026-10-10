@@ -36,6 +36,10 @@ type Book struct {
 	diverging  sync.Map
 	lastTouch  sync.Map
 	locks      sync.Map
+	// versions holds each symbol's verified book history for BookAt.
+	versions       sync.Map
+	historyMisses  atomic.Int64
+	historyHorizon atomic.Int64
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
@@ -138,6 +142,7 @@ requested: the reconnecting transport resubscribes on its own.
 func (book *Book) Stale(symbols []string) {
 	for _, symbol := range symbols {
 		book.diverging.Store(symbol, struct{}{})
+		book.history(symbol).gap(time.Time{})
 	}
 }
 
@@ -450,6 +455,8 @@ func (book *Book) apply(
 					if quantity.Sign() <= 0 && symbolSide.Levels[order.LimitPrice.String()] == nil {
 						book.manager.CreateBook(data.Symbol, depth)
 						book.diverging.Store(data.Symbol, struct{}{})
+						frameAt, _ := frameTime(data)
+						book.history(data.Symbol).gap(frameAt)
 						book.Transition(runtime.ERROR)
 						resynced = append(resynced, data.Symbol)
 
@@ -501,6 +508,8 @@ func (book *Book) apply(
 					// level. Only a fresh snapshot restores trust.
 					book.manager.CreateBook(data.Symbol, depth)
 					book.Transition(runtime.ERROR)
+					frameAt, _ := frameTime(data)
+					book.history(data.Symbol).gap(frameAt)
 
 					if _, marked := book.diverging.LoadOrStore(data.Symbol, struct{}{}); !marked {
 						resynced = append(resynced, data.Symbol)
@@ -517,6 +526,15 @@ func (book *Book) apply(
 						nil,
 					))
 				}
+			}
+
+			// The verified state becomes the version in effect from the
+			// frame's venue time. An untimed frame cannot be placed, so the
+			// book is unknown until a timed frame follows.
+			if frameAt, timed := frameTime(data); timed {
+				book.history(data.Symbol).record(captureView(symbolBook, frameAt))
+			} else {
+				book.history(data.Symbol).gap(time.Time{})
 			}
 
 			return nil

@@ -190,3 +190,44 @@ func TestRefitDueOnceTheFitSpanHasPassed(testingT *testing.T) {
 		}
 	}
 }
+
+func TestDroppedReportsOncePerTransition(testingT *testing.T) {
+	model := NewHawkes()
+	marks, times := mixedArrivals(60)
+
+	for index := range marks {
+		if _, _, err := model.Step(marks[index], times[index]); err != nil {
+			testingT.Fatal(err)
+		}
+
+		if err := model.Dropped(); err != nil {
+			testingT.Fatalf("no model was dropped on the mixed tape, got %v", err)
+		}
+	}
+
+	if !model.path.modelReady {
+		testingT.Fatal("expected a fitted model from the mixed tape")
+	}
+
+	at := times[len(times)-1]
+
+	for index := range model.path.samples {
+		model.path.samples[index].mark = 1
+	}
+
+	reports := 0
+
+	for step := 1; step <= 20; step++ {
+		if _, _, err := model.Step(1, at+float64(step)*0.05); err != nil {
+			testingT.Fatal(err)
+		}
+
+		if model.Dropped() != nil {
+			reports++
+		}
+	}
+
+	if reports != 1 {
+		testingT.Fatalf("expected one drop report for one transition, got %d", reports)
+	}
+}

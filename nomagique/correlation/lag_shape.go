@@ -53,7 +53,7 @@ func (op *LagShape) Next(
 				lower := input.Profile[index-1]
 				upper := input.Profile[index+1]
 
-				if lower.Defined && upper.Defined {
+				if lower.Defined && lower.ScoreDefined && upper.Defined && upper.ScoreDefined {
 					leftVal := math.Abs(lower.Y)
 					centerVal := math.Abs(input.Profile[index].Y)
 					rightVal := math.Abs(upper.Y)

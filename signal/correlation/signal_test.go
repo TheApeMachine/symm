@@ -1,6 +1,8 @@
 package correlation
 
 import (
+	"math"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -178,14 +180,27 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 				So(movingKeys[duplicate], ShouldBeFalse)
 			}
 
-			signedCorr := data.Pull(movingBtcResult.Read("signed_correlation")).Metric.Raw
-			So(signedCorr, ShouldBeBetweenOrEqual, -1.0, 1.0)
-			absCorr := data.Pull(movingBtcResult.Read("absolute_correlation")).Metric.Raw
-			So(absCorr, ShouldBeBetweenOrEqual, 0.0, 1.0)
+			// Dependence is the covariance with its standard error, not a
+			// correlation forced into [-1, 1].
+			for _, gone := range []string{
+				"signed_correlation", "absolute_correlation", "correlation_standard_error_fisher",
+			} {
+				So(movingKeys[gone], ShouldBeFalse)
+			}
+
+			covariance := data.Pull(movingBtcResult.Read("covariance")).Metric.Raw
+			standardError := data.Pull(movingBtcResult.Read("covariance_standard_error")).Metric.Raw
+			score := data.Pull(movingBtcResult.Read("covariance_score")).Metric.Raw
+			So(standardError, ShouldBeGreaterThan, 0)
+			So(score, ShouldAlmostEqual, covariance/standardError, 1e-12)
+			So(data.Pull(movingBtcResult.Read("absolute_covariance_score")).Metric.Raw, ShouldAlmostEqual, math.Abs(score), 1e-12)
+			pValue := data.Pull(movingBtcResult.Read("covariance_p_value")).Metric.Raw
+			So(pValue, ShouldBeBetweenOrEqual, 0.0, 1.0)
+			So(movingBtcResult.Meta(data.MetadataReferencePeer), ShouldEqual, "ETH/USD")
 			// Too little history for a dispersion: no z-score, so no path
 			// point either, rather than zeros standing in for them.
 			for _, undefined := range []string{
-				"correlation_zscore", "relative_return_energy_zscore",
+				"covariance_score_zscore", "relative_return_energy_zscore",
 				"historical_path_distance", "historical_path_percentile",
 			} {
 				So(movingKeys[undefined], ShouldBeFalse)
@@ -204,5 +219,46 @@ func TestCorrelationSignalWithoutPrice(t *testing.T) {
 		frame.From = frame.At
 
 		So(func() { So(signal.Step(frame.Write()), ShouldBeNil) }, ShouldNotPanic)
+	})
+}
+
+func TestCorrelationReferencePeerHasMostOverlap(t *testing.T) {
+	Convey("The single-pair metrics describe the peer with the most overlapping data", t, func() {
+		signal := NewSignal(t.Context())
+		signal.Transition(runtime.READY)
+		origin := time.Unix(1700000000, 0).UTC()
+		random := rand.New(rand.NewSource(17))
+		walk := map[string]float64{"AAA/USD": 100, "BTC/USD": 50000, "ZZZ/USD": 10}
+
+		step := func(symbol string, offset time.Duration) *data.Measurement {
+			walk[symbol] *= math.Exp(random.NormFloat64() * 0.01)
+			frame := data.NewMeasurement(origin.Add(offset).UnixNano(), symbol, "spot:trade", system.SeqIdx.Add(1), system.Tick.Add(1))
+			frame.At = origin.Add(offset)
+			frame.From = frame.At
+			frame.Write(data.NewExactMetric("price", decimal.NewFromFloat64(walk[symbol]), data.UnitCurrency, data.TimescaleInstantaneous))
+			return signal.Step(frame)
+		}
+
+		var last *data.Measurement
+
+		// AAA trades between every BTC trade, so each AAA return overlaps two
+		// BTC returns; ZZZ trades every five seconds. AAA sorts first, so the
+		// old last-alphabetical choice would have taken ZZZ.
+		for second := 0; second <= 12; second++ {
+			at := time.Duration(second) * time.Second
+
+			if second%5 == 0 {
+				step("ZZZ/USD", at+100*time.Millisecond)
+			}
+
+			step("AAA/USD", at+500*time.Millisecond)
+			last = step("BTC/USD", at+900*time.Millisecond)
+		}
+
+		So(last, ShouldNotBeNil)
+		So(last.Error(), ShouldBeNil)
+		So(last.Meta(data.MetadataReferencePeer), ShouldEqual, "AAA/USD")
+		So(data.Pull(last.Read("cohort_peer_count")).Metric.Raw, ShouldEqual, 2)
+		So(data.Pull(last.Read("overlap_pair_count")).Metric.Raw, ShouldBeGreaterThan, 2)
 	})
 }

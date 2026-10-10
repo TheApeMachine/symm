@@ -1,6 +1,7 @@
 package algo_test
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -32,7 +33,22 @@ func TestLagProfileSupportAndUnits(t *testing.T) {
 		So(peakNode.Error(), ShouldBeNil)
 		So(len(peakOut), ShouldEqual, 1)
 		So(peakOut[0].Point.X, ShouldEqual, 1)
-		So(peakOut[0].Point.Y, ShouldEqual, 1)
+
+		// At the aligning lag every overlap pairs a return with itself, so
+		// the covariance is sum(r^2) and the score sum(r^2) / sqrt(sum(r^4)).
+		energy, quartic := 0.0, 0.0
+		values := []float64{1, 2, 1.5, 3, 2.2, 4}
+
+		for index := 1; index < len(values); index++ {
+			r := math.Log(values[index]) - math.Log(values[index-1])
+			energy += r * r
+			quartic += r * r * r * r
+		}
+
+		So(peakOut[0].Point.Y, ShouldAlmostEqual, energy, 1e-12)
+		aligned := profile[peakOut[0].Index]
+		So(aligned.ScoreDefined, ShouldBeTrue)
+		So(aligned.Score, ShouldAlmostEqual, energy/math.Sqrt(quartic), 1e-12)
 	})
 }
 

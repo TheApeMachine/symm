@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/signal/volumeclock"
 )
 
 /*
@@ -74,16 +75,27 @@ func (score trackerScore) emit(out map[string]float64, name string, value float6
 	}
 }
 
+/*
+window is the executed flow of the open volume bar, split by aggressor side.
+*/
+type window struct {
+	buyCount     float64
+	sellCount    float64
+	buyQty       float64
+	sellQty      float64
+	buyNotional  float64
+	sellNotional float64
+}
+
+/*
+symbolState windows its flow totals on the same volume clock as pumpdump: a
+bar's target is the median prior trade quantity, fixed when it opens. Totals
+are reported once per closed bar, never accumulated since an epoch.
+*/
 type symbolState struct {
-	buyCount              float64
-	sellCount             float64
-	totalCount            float64
-	buyQty                float64
-	sellQty               float64
-	buyNotional           float64
-	sellNotional          float64
+	clock                 volumeclock.Clock
+	window                window
 	lastAt                time.Time
-	firstAtNano           float64
 	prevPrice             float64
 	prevNetNotionalRate   float64
 	prevGrossNotionalRate float64
@@ -145,9 +157,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	state, found := signal.states[key]
 
 	if !found {
-		state = &symbolState{
-			firstAtNano: float64(prior.At.UnixNano()),
-		}
+		state = &symbolState{}
 		signal.states[key] = state
 	}
 
@@ -161,64 +171,41 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	var tradeBuyQty, tradeSellQty float64
-	var tradeBuyCount, tradeSellCount float64
 
 	if side == "buy" {
-		tradeBuyCount = 1
 		tradeBuyQty = qty
 	}
 
 	if side == "sell" {
-		tradeSellCount = 1
 		tradeSellQty = qty
 	}
-
-	state.buyCount += tradeBuyCount
-	state.sellCount += tradeSellCount
-	state.totalCount += 1
-	state.buyQty += tradeBuyQty
-	state.sellQty += tradeSellQty
 
 	tradeBuyNotional := tradeBuyQty * price
 	tradeSellNotional := tradeSellQty * price
 	tradeGrossNotional := tradeBuyNotional + tradeSellNotional
 	tradeNetNotional := tradeBuyNotional - tradeSellNotional
 
-	state.buyNotional += tradeBuyNotional
-	state.sellNotional += tradeSellNotional
+	out := map[string]float64{}
+	tick := state.clock.Step(price, qty, float64(prior.At.UnixNano()), price)
 
-	grossExecutedQty := state.buyQty + state.sellQty
-	netExecutedQty := state.buyQty - state.sellQty
-	cumulativeVolumeDelta := netExecutedQty
+	if tick.Counted {
+		if side == "buy" {
+			state.window.buyCount++
+		} else {
+			state.window.sellCount++
+		}
 
-	grossNotional := state.buyNotional + state.sellNotional
-	netNotional := state.buyNotional - state.sellNotional
-	cumulativeNotionalDelta := netNotional
-
-	signedNetFraction := netNotional / grossNotional
-
-	out := map[string]float64{
-		"trade_count:buy":           state.buyCount,
-		"trade_count:sell":          state.sellCount,
-		"trade_count":               state.totalCount,
-		"signed_count_fraction":     (state.buyCount - state.sellCount) / state.totalCount,
-		"executed_quantity:buy":     state.buyQty,
-		"executed_quantity:sell":    state.sellQty,
-		"gross_executed_quantity":   grossExecutedQty,
-		"net_executed_quantity":     netExecutedQty,
-		"cumulative_volume_delta":   cumulativeVolumeDelta,
-		"aggressive_notional:buy":   state.buyNotional,
-		"aggressive_notional:sell":  state.sellNotional,
-		"gross_notional":            grossNotional,
-		"net_notional":              netNotional,
-		"cumulative_notional_delta": cumulativeNotionalDelta,
-		"signed_net_fraction":       signedNetFraction,
-		"mean_trade_notional":       grossNotional / state.totalCount,
-		"cvd_epoch_from":            state.firstAtNano,
+		state.window.buyQty += tradeBuyQty
+		state.window.sellQty += tradeSellQty
+		state.window.buyNotional += tradeBuyNotional
+		state.window.sellNotional += tradeSellNotional
 	}
 
-	signedNet := state.signedNetTracker.Score(signedNetFraction)
-	signedNet.emit(out, "signed_net_fraction", signedNetFraction, false)
+	var signedNet trackerScore
+
+	if tick.Closed {
+		signedNet = state.closeWindow(out)
+	}
 
 	var gross trackerScore
 	hasRates := hasDelta
@@ -276,7 +263,52 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	state.lastAt = prior.At
 	state.prevPrice = price
 
-	return prior.Next(signal.Name(), out)
+	res := prior.Next(signal.Name(), out)
+
+	// Window totals are measured over the closed bar.
+	if tick.Closed {
+		res.From = time.Unix(0, int64(tick.Bar.StartNanos)).UTC()
+	}
+
+	return res
+}
+
+/*
+closeWindow writes the closed bar's flow totals and scores its signed net
+fraction against earlier bars, then starts the next bar empty.
+*/
+func (state *symbolState) closeWindow(out map[string]float64) trackerScore {
+	flow := state.window
+	state.window = window{}
+
+	count := flow.buyCount + flow.sellCount
+	grossQty := flow.buyQty + flow.sellQty
+	netQty := flow.buyQty - flow.sellQty
+	grossNotional := flow.buyNotional + flow.sellNotional
+	netNotional := flow.buyNotional - flow.sellNotional
+	signedNetFraction := netNotional / grossNotional
+
+	out["trade_count:buy"] = flow.buyCount
+	out["trade_count:sell"] = flow.sellCount
+	out["trade_count"] = count
+	out["signed_count_fraction"] = (flow.buyCount - flow.sellCount) / count
+	out["executed_quantity:buy"] = flow.buyQty
+	out["executed_quantity:sell"] = flow.sellQty
+	out["gross_executed_quantity"] = grossQty
+	out["net_executed_quantity"] = netQty
+	out["cumulative_volume_delta"] = netQty
+	out["aggressive_notional:buy"] = flow.buyNotional
+	out["aggressive_notional:sell"] = flow.sellNotional
+	out["gross_notional"] = grossNotional
+	out["net_notional"] = netNotional
+	out["cumulative_notional_delta"] = netNotional
+	out["signed_net_fraction"] = signedNetFraction
+	out["mean_trade_notional"] = grossNotional / count
+
+	signedNet := state.signedNetTracker.Score(signedNetFraction)
+	signedNet.emit(out, "signed_net_fraction", signedNetFraction, false)
+
+	return signedNet
 }
 
 /*

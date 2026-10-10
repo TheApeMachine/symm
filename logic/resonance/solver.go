@@ -45,7 +45,7 @@ THE 11 CANONICAL HEADLINE FEATURES (ORTHOGONAL MICROSTRUCTURE DIMENSIONS):
 Resonance ingests exactly one defensible, scale-free headline metric from each of the 11 signal
 families, capturing independent microstructural facets without high cross-collinearity:
  0. Correlation (relative_return_energy): Focal asset return variance relative to cohort average (volatility excitation).
- 1. LeadLag     (correlation_gain_median): Median gain in |correlation| from lag alignment across defined peers.
+ 1. LeadLag     (covariance_score_gain_median): Median gain in |covariance score| from lag alignment across defined peers.
  2. Liquidity   (relative_spread): Top-of-book bid-ask spread divided by midpoint (instantaneous immediacy cost).
  3. Sentiment   (advance_fraction): Cross-sectional universe breadth (fraction of advancing assets; systemic consensus).
  4. CVD         (signed_net_fraction): Aggressor flow ratio: net notional divided by gross notional in [-1, 1] (taker flow).
@@ -301,12 +301,12 @@ func extractHeadlineMetric(index int, measurement *data.Measurement) (float64, b
 	switch index {
 	case 0: // Correlation
 		candidates = []string{
-			"signed_correlation", "cohort_signed_correlation", "covariance",
-			"absolute_correlation", "relative_return_energy",
+			"covariance_score", "cohort_covariance_score", "covariance",
+			"absolute_covariance_score", "relative_return_energy",
 		}
 	case 1: // LeadLag
 		candidates = []string{
-			"correlation_gain_median", "led_peer_share",
+			"covariance_score_gain_median", "led_peer_share",
 		}
 	case 2: // Liquidity
 		candidates = []string{

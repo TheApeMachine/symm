@@ -6,10 +6,8 @@ import (
 	"math"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -84,12 +82,12 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookSource
+	books  broker.BookHistory
 	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
+func NewSignal(ctx context.Context, books broker.BookHistory) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: make(map[string]*symbolState),
@@ -122,23 +120,15 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	var bid, ask, bidQty, askQty float64
 	var found bool
 
-	signal.books.Book(prior.Label, func(book *spotbook.Book) {
-		if book == nil {
+	// The book as of this frame, not as the live book stands when the frame
+	// is processed.
+	signal.books.BookAt(prior.Label, prior.At, func(book *broker.BookView) {
+		if !book.Complete || len(book.Bids) == 0 || len(book.Asks) == 0 {
 			return
 		}
 
-		b := book.BestBid()
-		a := book.BestAsk()
-
-		if b == nil || a == nil || b.Price == nil || a.Price == nil ||
-			b.Quantity == nil || a.Quantity == nil {
-			return
-		}
-
-		bid = kraken.Float64(b.Price)
-		bidQty = kraken.Float64(b.Quantity)
-		ask = kraken.Float64(a.Price)
-		askQty = kraken.Float64(a.Quantity)
+		bid, bidQty = book.Bids[0].Price, book.Bids[0].Quantity
+		ask, askQty = book.Asks[0].Price, book.Asks[0].Quantity
 		found = true
 	})
 

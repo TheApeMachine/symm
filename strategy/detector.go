@@ -19,33 +19,41 @@ Excursion classes (TRAINING.md "Excursion Detection"). Each detection is
 stored with its class under the "type" metadata key.
 */
 const (
-	// excursionUp is the largest causal rise that clears round-trip friction.
+	// excursionUp is one friction-clearing rise: a zigzag up leg.
 	excursionUp = "up"
-	// excursionUpShort is the largest causal rise that falls short of
-	// round-trip friction: the near miss that looks like ignition but loses.
+	// excursionUpShort is one rise that failed before clearing round-trip
+	// friction: the near miss that looks like ignition but loses.
 	excursionUpShort = "up_friction"
-	// excursionDown is the largest causal fall whose magnitude clears
-	// round-trip friction.
+	// excursionDown is one fall whose magnitude clears friction: a zigzag
+	// down leg.
 	excursionDown = "down"
-	// excursionChop is the longest stretch whose whole price range stays
-	// inside the friction deadband without being a flat line.
+	// excursionChop is one stretch whose whole price range stays inside the
+	// friction deadband without being a flat line.
 	excursionChop = "chop"
-	// excursionFlat is the longest run of trades at one unchanged price.
+	// excursionFlat is one run of consecutive trades at one unchanged price.
 	excursionFlat = "flat"
 )
 
 /*
-Detector scans market tape from beginning to end.
-Given raw spot trade measurements, the detector finds, for each symbol and
-epoch, one representative fragment of every excursion class:
+Detector scans market tape from beginning to end and emits every excursion
+of every class it finds in a symbol/epoch tape, so one long collection run
+yields all of its episodes. Episode boundaries come from the friction
+deadband itself (the round-trip taker fee), never from a tuned constant:
 
-  - up: the best friction-clearing low -> high move;
-  - up_friction: the best low -> high move that does not clear friction;
-  - down: the best high -> low move whose magnitude clears friction;
-  - chop: the longest deadband stretch (range never clears friction);
-  - flat: the longest run of one unchanged price.
+  - up/down are the legs of a zigzag on the deadband. A leg from an anchor
+    (B) runs while it makes new extremes (C) and ends on the first trade that
+    retraces from C by a move that would itself clear friction; that trade
+    starts the opposite leg. A new low below an up leg's B is such a retrace,
+    so it also ends the leg. Every emitted leg clears friction.
+  - up_friction is a rise from the running low of a falling (or not yet
+    directed) tape that never cleared friction and failed: it ends when price
+    makes a new low below its B. A rise that clears instead becomes an up leg.
+  - chop is every maximal stretch whose price range does not clear friction
+    (and is not a single price); the trade that would clear starts the next.
+  - flat is every maximal run of two or more trades at one price.
 
-The scan is streaming and O(1) in memory per symbol/epoch tape.
+Only episodes whose end a later trade confirms are published (see flush).
+The scan is streaming; it keeps the tape's trades for padding.
 */
 type Detector struct {
 	*runtime.System
@@ -85,11 +93,13 @@ func NewDetector(
 }
 
 /*
-tapePoint is one priced trade coordinate on the tape.
+tapePoint is one priced trade coordinate on the tape. pos is its index in
+the tape's retained points.
 */
 type tapePoint struct {
 	idx   int64
 	tick  int64
+	pos   int
 	at    time.Time
 	price *decimal.Decimal
 }
@@ -115,22 +125,64 @@ func (s span) width() int64 {
 }
 
 /*
-improves reports whether a candidate ratio beats the best ratio so far.
-Equal ratios prefer the wider fragment.
+friction answers whether buying at low and selling at high clears round-trip
+taker friction. The sign of the round trip depends only on high/low against
+the fee, so the tightest ratios known to clear and to fail bound every later
+question under the same fee without pricing it again; a fee change (tier
+refresh) drops both bounds.
 */
-func improves(ratio *big.Rat, candidate span, best *big.Rat, held span) bool {
-	if best == nil {
-		return true
-	}
-
-	cmp := ratio.Cmp(best)
-
-	if cmp != 0 {
-		return cmp > 0
-	}
-
-	return candidate.width() > held.width()
+type friction struct {
+	detector *Detector
+	symbol   string
+	fee      *decimal.Decimal
+	clears   *big.Rat
+	fails    *big.Rat
 }
+
+func (f *friction) clear(low, high *decimal.Decimal) (bool, error) {
+	if high.Cmp(low) <= 0 {
+		return false, nil
+	}
+
+	fee := f.detector.feeRate(f.symbol)
+
+	if fee == nil || f.fee == nil || fee.Cmp(f.fee) != 0 {
+		f.fee, f.clears, f.fails = fee, nil, nil
+	}
+
+	ratio := new(big.Rat).Quo(high.Rat(), low.Rat())
+
+	if f.clears != nil && ratio.Cmp(f.clears) >= 0 {
+		return true, nil
+	}
+
+	if f.fails != nil && ratio.Cmp(f.fails) <= 0 {
+		return false, nil
+	}
+
+	clears, err := f.detector.clearFriction(low, high, f.symbol)
+
+	if err != nil {
+		return false, err
+	}
+
+	if clears {
+		f.clears = ratio
+	} else {
+		f.fails = ratio
+	}
+
+	return clears, nil
+}
+
+/*
+leg directions of the zigzag.
+*/
+const (
+	legNone = iota
+	legUp
+	legDown
+)
 
 /*
 tape is the streaming state for one contiguous symbol/epoch tape.
@@ -140,59 +192,62 @@ type tape struct {
 	epoch    int64
 	symbol   string
 	start    tapePoint
-	// points keeps every observed trade so Flush can pad precursor left of B
+	// points keeps every observed trade so flush can pad precursor left of B
 	// and tape right of C (TRAINING.md) without re-reading storage.
-	points []tapePoint
+	points   []tapePoint
+	friction friction
+	// found holds every completed episode in completion order.
+	found []episode
 
-	// Running extremes. Equal prices never replace an extreme, so the
-	// earliest occurrence gives the widest interval.
-	trough tapePoint
-	peak   tapePoint
-
-	// Best completed excursions. They are independent of later changes to
-	// the running extremes, so a late wick cannot erase an earlier move.
-	up       span
-	upGain   *big.Rat
-	near     span
-	nearGain *big.Rat
-	down     span
-	downDrop *big.Rat
-
-	// clearGain is the smallest gross gain observed to clear friction.
-	// Round-trip PnL sign depends only on the exit/entry ratio against the
-	// fee, so any larger gain clears as well and need not be priced again.
-	// The ratio threshold is fee-specific: clearFee is the fee rate it was
-	// priced under, and a fee change (tier refresh) drops the cache.
-	clearGain *big.Rat
-	clearFee  *decimal.Decimal
+	// Zigzag. In an up leg, low is its B and high its running maximum; in a
+	// down leg, high is its B and low its running minimum; before the first
+	// leg, both are the tape's running extremes. bounce is the highest trade
+	// since low, the C of a rise that has not yet cleared. Equal prices never
+	// replace an extreme, so the earliest occurrence is kept.
+	leg    int
+	low    tapePoint
+	high   tapePoint
+	bounce tapePoint
 
 	// Current deadband stretch and its price range.
 	quiet    span
 	quietMin *decimal.Decimal
 	quietMax *decimal.Decimal
-	chop     span
 
 	// Current run of one unchanged price.
-	run  span
-	flat span
+	run span
+}
+
+/*
+episode is one completed excursion and its class.
+*/
+type episode struct {
+	class     string
+	excursion span
+}
+
+func (t *tape) emit(class string, excursion span) {
+	if excursion.held() {
+		t.found = append(t.found, episode{class: class, excursion: excursion})
+	}
 }
 
 func (t *tape) observe(p tapePoint) error {
+	p.pos = len(t.points)
 	t.points = append(t.points, p)
 
-	if t.trough.price == nil {
-		t.trough, t.peak = p, p
+	if t.low.price == nil {
+		t.friction = friction{detector: t.detector, symbol: t.symbol}
+		t.low, t.high, t.bounce = p, p, p
 		t.quiet = span{b: p, c: p}
 		t.quietMin, t.quietMax = p.price, p.price
 		t.run = span{b: p, c: p}
 		return nil
 	}
 
-	if err := t.rise(p); err != nil {
+	if err := t.zigzag(p); err != nil {
 		return err
 	}
-
-	t.fall(p)
 
 	if err := t.settle(p); err != nil {
 		return err
@@ -203,72 +258,72 @@ func (t *tape) observe(p tapePoint) error {
 }
 
 /*
-rise tracks the best low -> high move from the running trough, and the best
-low -> high move that does not clear friction.
+zigzag advances the legs by one trade.
 */
-func (t *tape) rise(p tapePoint) error {
-	if p.price.Cmp(t.trough.price) < 0 {
-		t.trough = p
+func (t *tape) zigzag(p tapePoint) error {
+	switch t.leg {
+	case legUp:
+		if p.price.Cmp(t.high.price) > 0 {
+			t.high = p
+			return nil
+		}
+
+		clears, err := t.friction.clear(p.price, t.high.price)
+
+		if err != nil || !clears {
+			return err
+		}
+
+		// The retrace from C clears friction: the up leg is over and this
+		// trade opens the down leg from C.
+		t.emit(excursionUp, span{b: t.low, c: t.high})
+		t.leg = legDown
+		t.low, t.bounce = p, p
 		return nil
-	}
 
-	if p.tick <= t.trough.tick || p.price.Cmp(t.trough.price) == 0 {
+	default:
+		if t.leg == legNone && p.price.Cmp(t.high.price) > 0 {
+			t.high = p
+		}
+
+		if p.price.Cmp(t.low.price) < 0 {
+			// A new low ends the rise from the old one: it never cleared, or
+			// it would already have become an up leg.
+			t.emit(excursionUpShort, span{b: t.low, c: t.bounce})
+			t.low, t.bounce = p, p
+
+			if t.leg == legNone {
+				clears, err := t.friction.clear(p.price, t.high.price)
+
+				if err != nil || !clears {
+					return err
+				}
+
+				t.leg = legDown
+			}
+
+			return nil
+		}
+
+		if p.price.Cmp(t.bounce.price) > 0 {
+			t.bounce = p
+		}
+
+		clears, err := t.friction.clear(t.low.price, p.price)
+
+		if err != nil || !clears {
+			return err
+		}
+
+		// The rise from the running low clears friction: the down leg (if
+		// any) ends at that low and this trade opens the up leg from it.
+		if t.leg == legDown {
+			t.emit(excursionDown, span{b: t.high, c: t.low})
+		}
+
+		t.leg = legUp
+		t.high = p
 		return nil
-	}
-
-	gain := new(big.Rat).Quo(p.price.Rat(), t.trough.price.Rat())
-	candidate := span{b: t.trough, c: p}
-
-	if improves(gain, candidate, t.upGain, t.up) {
-		t.upGain, t.up = gain, candidate
-	}
-
-	fee := t.detector.feeRate(t.symbol)
-
-	if t.clearGain != nil && (fee == nil || t.clearFee == nil || fee.Cmp(t.clearFee) != 0) {
-		t.clearGain, t.clearFee = nil, nil
-	}
-
-	if t.clearGain != nil && gain.Cmp(t.clearGain) >= 0 {
-		return nil
-	}
-
-	if !improves(gain, candidate, t.nearGain, t.near) {
-		return nil
-	}
-
-	clears, err := t.detector.clearFriction(t.trough.price, p.price, t.symbol)
-	if err != nil {
-		return err
-	}
-
-	if clears {
-		t.clearGain, t.clearFee = gain, fee
-		return nil
-	}
-
-	t.nearGain, t.near = gain, candidate
-	return nil
-}
-
-/*
-fall tracks the best high -> low move from the running peak.
-*/
-func (t *tape) fall(p tapePoint) {
-	if p.price.Cmp(t.peak.price) > 0 {
-		t.peak = p
-		return
-	}
-
-	if p.tick <= t.peak.tick || p.price.Cmp(t.peak.price) == 0 {
-		return
-	}
-
-	drop := new(big.Rat).Quo(t.peak.price.Rat(), p.price.Rat())
-	candidate := span{b: t.peak, c: p}
-
-	if improves(drop, candidate, t.downDrop, t.down) {
-		t.downDrop, t.down = drop, candidate
 	}
 }
 
@@ -289,7 +344,7 @@ func (t *tape) settle(p tapePoint) error {
 	}
 
 	if widened {
-		clears, err := t.detector.clearFriction(low, high, t.symbol)
+		clears, err := t.friction.clear(low, high)
 		if err != nil {
 			return err
 		}
@@ -312,9 +367,7 @@ func (t *tape) closeQuiet() {
 		return
 	}
 
-	if t.quiet.width() > t.chop.width() {
-		t.chop = t.quiet
-	}
+	t.emit(excursionChop, t.quiet)
 }
 
 /*
@@ -331,62 +384,30 @@ func (t *tape) hold(p tapePoint) {
 }
 
 func (t *tape) closeFlat() {
-	if t.run.width() > t.flat.width() {
-		t.flat = t.run
-	}
+	t.emit(excursionFlat, t.run)
 }
 
 /*
-flush publishes one detection per class found on the completed tape.
-Fragments without a precursor before B, or whose B→C run is too short to
-leave enter/exit sweet spots, are dropped (TRAINING.md: pad left of B).
+flush publishes every episode of the completed tape whose end is confirmed by
+a later trade: a leg ended by a friction-clearing retrace, a failed rise ended
+by a new low, a chop stretch ended by the trade that cleared friction, a flat
+run ended by a price change. Episodes still open at the end of the tape are
+not published, so a detect run over an epoch that is still being collected
+publishes only episodes the rest of the tape can never change, and a later run
+over the longer tape reproduces every one of them.
 */
 func (t *tape) flush() error {
-	t.closeQuiet()
-	t.closeFlat()
+	for _, found := range t.found {
+		start, end, ok := t.padded(found.excursion)
 
-	publish := func(class string, excursion span) {
-		start, end, ok := t.padded(excursion)
 		if !ok {
-			return
-		}
-		t.detector.Flush(class, t.symbol, t.epoch, start, end, excursion)
-	}
-
-	if t.up.held() {
-		clears, err := t.detector.clearFriction(t.up.b.price, t.up.c.price, t.symbol)
-		if err != nil {
-			return err
+			continue
 		}
 
-		if clears {
-			publish(excursionUp, t.up)
-		}
+		t.detector.Flush(found.class, t.symbol, t.epoch, start, end, found.excursion)
 	}
 
-	if t.near.held() {
-		publish(excursionUpShort, t.near)
-	}
-
-	if t.down.held() {
-		clears, err := t.detector.clearFriction(t.down.c.price, t.down.b.price, t.symbol)
-		if err != nil {
-			return err
-		}
-
-		if clears {
-			publish(excursionDown, t.down)
-		}
-	}
-
-	if t.chop.held() {
-		publish(excursionChop, t.chop)
-	}
-
-	if t.flat.held() {
-		publish(excursionFlat, t.flat)
-	}
-
+	t.found = nil
 	return nil
 }
 
@@ -401,17 +422,9 @@ func (t *tape) padded(excursion span) (start, end tapePoint, ok bool) {
 		return tapePoint{}, tapePoint{}, false
 	}
 
-	bIdx, cIdx := -1, -1
-	for i, p := range t.points {
-		if p.tick == excursion.b.tick && p.idx == excursion.b.idx {
-			bIdx = i
-		}
-		if p.tick == excursion.c.tick && p.idx == excursion.c.idx {
-			cIdx = i
-		}
-	}
+	bIdx, cIdx := excursion.b.pos, excursion.c.pos
 
-	if bIdx < 0 || cIdx <= bIdx {
+	if bIdx < 0 || cIdx <= bIdx || cIdx >= len(t.points) {
 		return tapePoint{}, tapePoint{}, false
 	}
 

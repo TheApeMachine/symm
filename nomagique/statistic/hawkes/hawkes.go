@@ -11,7 +11,8 @@ import (
 Hawkes wraps the streaming bivariate Hawkes process state and estimators.
 */
 type Hawkes struct {
-	path *path
+	path    *path
+	dropped error
 }
 
 /*
@@ -225,11 +226,23 @@ func (h *Hawkes) Step(mark, atSec float64) (map[string]float64, time.Time, error
 
 	p.remember(at, atSec, mark)
 
+	// refit reports only the transition from a published model to none, so
+	// the caller, which knows the symbol, logs it once per transition.
 	if err := p.refit(atSec); err != nil {
-		errnie.Warn(err.Error())
+		h.dropped = err
 	}
 
 	return res, from, nil
+}
+
+/*
+Dropped returns, once, why the last Step discarded the published model, or
+nil when no model was discarded since the previous call.
+*/
+func (h *Hawkes) Dropped() error {
+	err := h.dropped
+	h.dropped = nil
+	return err
 }
 
 /*

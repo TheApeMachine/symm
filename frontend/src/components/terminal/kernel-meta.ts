@@ -53,7 +53,7 @@ rather than assumed. The binding must name a metric that the live producer
 actually emits; otherwise the row can be live while its trace remains empty.
 
 Headlines are the actual emitted metric names, verified against the signal
-bindings: signed_correlation (correlation), signed_net_fraction_zscore (cvd),
+bindings: covariance_score (correlation), signed_net_fraction_zscore (cvd),
 book_imbalance (depthflow), open_interest_growth_zscore (derivatives),
 book_imbalance_zscore (exhaustion), branching_spectral_radius (hawkes),
 best_lag_correlation (leadlag), touch_notional_imbalance (liquidity),
@@ -61,7 +61,7 @@ morphology_change (morphology), spread_zscore (pumpdump), breadth
 (sentiment), fill_fraction_zscore:bid (toxicity), confidence (training).
 */
 const SOURCE_HEADLINE: Record<string, string> = {
-	correlation: "signed_correlation",
+	correlation: "covariance_score",
 	cvd: "signed_net_fraction_zscore",
 	depthflow: "book_imbalance",
 	derivatives: "open_interest_growth_zscore",
@@ -109,17 +109,17 @@ zero, so the panel understates rather than invents.
 const SOURCE_METRICS: Record<string, string[]> = {
 	correlation: [
 		"last_price",
-		"signed_correlation",
-		"absolute_correlation",
-		"cohort_signed_correlation",
-		"correlation_zscore",
-		"correlation_p_value",
+		"covariance_score",
+		"absolute_covariance_score",
+		"cohort_covariance_score",
+		"covariance_score_zscore",
+		"covariance_p_value",
 		"overlap_density",
 		"cohort_effective_peer_count",
 		"relative_return_energy_zscore",
 		"relative_return_energy_divergence",
-		"correlation_divergence",
-		"cohort_correlation_dispersion",
+		"covariance_score_divergence",
+		"cohort_covariance_score_dispersion",
 	],
 	cvd: [
 		"trade_count",

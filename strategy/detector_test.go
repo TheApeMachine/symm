@@ -117,6 +117,23 @@ func drawUp(tape []*data.Measurement) (int64, int64) {
 	return low, high
 }
 
+/*
+confirmed appends one trade at price after the tape, the later trade that
+confirms the end of whatever episode the tape finishes inside.
+*/
+func confirmed(tape []*data.Measurement, price string) []*data.Measurement {
+	last := tape[len(tape)-1]
+	exact, err := decimal.NewFromString(price)
+	So(err, ShouldBeNil)
+
+	trade := tradeWithPrice(last.Epoch, last.Label, last.Tick+1, exact)
+	trade.SeqIdx = last.SeqIdx + 1
+	trade.At = last.At.Add(time.Second)
+	trade.From = trade.At
+
+	return append(append([]*data.Measurement{}, tape...), trade)
+}
+
 func testPrice(ctx context.Context, symbols ...string) *broker.Price {
 	normalizer := spot.NewNormalizer()
 	assets := make(map[string]spot.AssetInfo)
@@ -244,22 +261,30 @@ func TestDetector_Scan(t *testing.T) {
 
 			byClass := scan(detector, storeTee, tape)
 
-			Convey("Its up excursion is the exact maximum low-before-high move confirmed by the brute-force oracle", func() {
-				So(byClass[excursionUp], ShouldHaveLength, 1)
-
-				detection := byClass[excursionUp][0]
-				low, high := drawUp(tape)
-				So(metricRaw(detection, "b_tick"), ShouldEqual, float64(low))
-				So(metricRaw(detection, "c_tick"), ShouldEqual, float64(high))
-				So(metricRaw(detection, "c_price"), ShouldBeGreaterThan, metricRaw(detection, "b_price"))
+			Convey("Every episode of every class matches the brute-force oracle", func() {
+				So(episodes(byClass), ShouldResemble, oracleEpisodes(tape))
+				So(byClass[excursionUp], ShouldNotBeEmpty)
+				So(byClass[excursionDown], ShouldNotBeEmpty)
 			})
 
-			Convey("Its down excursion falls from an earlier top to a later bottom", func() {
-				So(byClass[excursionDown], ShouldHaveLength, 1)
+			Convey("The low of the widest low-before-high move opens an up leg", func() {
+				low, high := drawUp(tape)
+				So(low, ShouldBeLessThan, high)
 
-				detection := byClass[excursionDown][0]
-				So(metricRaw(detection, "b_tick"), ShouldBeLessThan, metricRaw(detection, "c_tick"))
-				So(metricRaw(detection, "c_price"), ShouldBeLessThan, metricRaw(detection, "b_price"))
+				opens := false
+
+				for _, detection := range byClass[excursionUp] {
+					opens = opens || metricRaw(detection, "b_tick") == float64(low)
+				}
+
+				So(opens, ShouldBeTrue)
+			})
+
+			Convey("Every down leg falls from an earlier top to a later bottom", func() {
+				for _, detection := range byClass[excursionDown] {
+					So(metricRaw(detection, "b_tick"), ShouldBeLessThan, metricRaw(detection, "c_tick"))
+					So(metricRaw(detection, "c_price"), ShouldBeLessThan, metricRaw(detection, "b_price"))
+				}
 			})
 		})
 
@@ -273,7 +298,11 @@ func TestDetector_Scan(t *testing.T) {
 			))
 
 			Convey("The earlier +150% macro excursion is preserved and NOT destroyed by the stop-loss hunt", func() {
-				So(byClass[excursionUp], ShouldHaveLength, 1)
+				// Up legs: 100 -> 250, then the 40 -> 50 recovery, which the
+				// 49 retrace (-2%, clears 0.52% friction) closes as its own leg.
+				So(byClass[excursionUp], ShouldHaveLength, 2)
+				So(metricRaw(byClass[excursionUp][1], "b_price"), ShouldEqual, 40)
+				So(metricRaw(byClass[excursionUp][1], "c_price"), ShouldEqual, 50)
 
 				detection := byClass[excursionUp][0]
 				// Must choose the 100 -> 250 run, NOT the 40 -> 50 bounce!
@@ -284,6 +313,8 @@ func TestDetector_Scan(t *testing.T) {
 			})
 
 			Convey("The stop-loss hunt itself is the down excursion, from the 250 top to the 40 wick", func() {
+				// The tape ends inside the 50 -> 49 down leg, which no later
+				// trade confirms, so it is not published.
 				So(byClass[excursionDown], ShouldHaveLength, 1)
 
 				detection := byClass[excursionDown][0]
@@ -300,13 +331,17 @@ func TestDetector_Scan(t *testing.T) {
 			// Then stop-loss wick drops to 50 (new trough).
 			// Then massive macro run from that wick: 50 -> 250 (+400%)!
 			byClass := scan(detector, storeTee, priceTape(t, "BTC/USD",
-				"100", "110", "120", "90", "70", "50", "80", "120", "180", "250",
+				"100", "110", "120", "90", "70", "50", "80", "120", "180", "250", "200",
 			))
 
 			Convey("The +400% run starting from the trough is correctly detected", func() {
-				So(byClass[excursionUp], ShouldHaveLength, 1)
+				// The early 100 -> 120 run is its own up leg, ended by the
+				// 120 -> 90 retrace.
+				So(byClass[excursionUp], ShouldHaveLength, 2)
+				So(metricRaw(byClass[excursionUp][0], "b_price"), ShouldEqual, 100)
+				So(metricRaw(byClass[excursionUp][0], "c_price"), ShouldEqual, 120)
 
-				detection := byClass[excursionUp][0]
+				detection := byClass[excursionUp][1]
 				So(metricRaw(detection, "b_price"), ShouldEqual, 50)
 				So(metricRaw(detection, "c_price"), ShouldEqual, 250)
 				So(metricRaw(detection, "b_tick"), ShouldEqual, 6)
@@ -325,15 +360,28 @@ func TestDetector_Scan(t *testing.T) {
 				"0.00092", "0.00078", "0.00065",
 			))
 
-			Convey("The full multi-candle excursion from 0.00042 to 0.00105 is captured", func() {
-				So(byClass[excursionUp], ShouldHaveLength, 1)
+			Convey("Each pullback that clears friction splits the run into its own legs", func() {
+				// Pullbacks of 18% and more clear 0.52% round-trip friction,
+				// so each one ends an up leg and opens a down leg.
+				So(byClass[excursionUp], ShouldHaveLength, 3)
 
-				detection := byClass[excursionUp][0]
-				So(detection.Label, ShouldEqual, "SWEAT/USD")
-				So(metricRaw(detection, "b_price"), ShouldEqual, 0.00042)
-				So(metricRaw(detection, "c_price"), ShouldEqual, 0.00105)
-				So(metricRaw(detection, "b_tick"), ShouldEqual, 1)
-				So(metricRaw(detection, "c_tick"), ShouldEqual, 12)
+				legs := [][4]float64{
+					{0.00042, 0.00085, 1, 4},
+					{0.00063, 0.00095, 6, 8},
+					{0.00075, 0.00105, 10, 12},
+				}
+
+				for i, leg := range legs {
+					detection := byClass[excursionUp][i]
+					So(detection.Label, ShouldEqual, "SWEAT/USD")
+					So(metricRaw(detection, "b_price"), ShouldEqual, leg[0])
+					So(metricRaw(detection, "c_price"), ShouldEqual, leg[1])
+					So(metricRaw(detection, "b_tick"), ShouldEqual, leg[2])
+					So(metricRaw(detection, "c_tick"), ShouldEqual, leg[3])
+				}
+
+				// The final 0.00105 -> 0.00065 fall is still open at the end.
+				So(byClass[excursionDown], ShouldHaveLength, 2)
 			})
 		})
 
@@ -357,7 +405,9 @@ func TestDetector_Scan(t *testing.T) {
 
 			byClass := scan(detector, storeTee, multiTape)
 
-			Convey("All 4 independent symbol-epoch up and down excursions are flushed", func() {
+			Convey("Every independent symbol-epoch tape flushes its own confirmed legs", func() {
+				// Per tape: down 60 -> 50 and up 50 -> 100 are confirmed; the
+				// 100 -> 80 fall is still open when each tape ends.
 				So(byClass[excursionUp], ShouldHaveLength, 4)
 				So(byClass[excursionDown], ShouldHaveLength, 4)
 
@@ -367,15 +417,15 @@ func TestDetector_Scan(t *testing.T) {
 				}
 
 				for _, det := range byClass[excursionDown] {
-					So(metricRaw(det, "b_price"), ShouldEqual, 100)
-					So(metricRaw(det, "c_price"), ShouldEqual, 80)
+					So(metricRaw(det, "b_price"), ShouldEqual, 60)
+					So(metricRaw(det, "c_price"), ShouldEqual, 50)
 				}
 			})
 		})
 
 		Convey("When a tape is monotonically downward with no rallies", func() {
 			byClass := scan(detector, storeTee, priceTape(t, "BTC/USD",
-				"100", "95", "90", "85", "80", "70", "60",
+				"100", "95", "90", "85", "80", "70", "60", "70",
 			))
 
 			Convey("Zero false up excursions are flushed", func() {
@@ -383,7 +433,7 @@ func TestDetector_Scan(t *testing.T) {
 				So(byClass[excursionUpShort], ShouldBeEmpty)
 			})
 
-			Convey("The whole fall is the down excursion", func() {
+			Convey("The whole fall, confirmed by the rebound, is the down excursion", func() {
 				So(byClass[excursionDown], ShouldHaveLength, 1)
 
 				detection := byClass[excursionDown][0]
@@ -541,7 +591,11 @@ func TestDetector_FrictionGating(t *testing.T) {
 			))
 
 			Convey("The excursion comfortably clears roundtrip friction and is flushed as up", func() {
-				So(byClass[excursionUp], ShouldHaveLength, 1)
+				So(byClass[excursionUp], ShouldNotBeEmpty)
+
+				for _, detection := range byClass[excursionUp] {
+					So(roundTrip(detection).Sign(), ShouldBeGreaterThan, 0)
+				}
 
 				detection := byClass[excursionUp][0]
 				So(detection.Label, ShouldEqual, "BTC/USD")
@@ -563,6 +617,8 @@ func TestDetector_FrictionGating(t *testing.T) {
 				100,
 				market.NewChopWhipsawTape("BTC/USD", 60000, 10, 50),
 			)
+			chop := tape
+			tape = confirmed(tape, "66000")
 			byClass := scan(detector, storeTee, tape)
 
 			Convey("Chop within the friction deadband is never flushed as an up or down excursion", func() {
@@ -574,8 +630,8 @@ func TestDetector_FrictionGating(t *testing.T) {
 				So(byClass[excursionChop], ShouldHaveLength, 1)
 
 				detection := byClass[excursionChop][0]
-				So(metricRaw(detection, "b_tick"), ShouldEqual, float64(tape[0].Tick))
-				So(metricRaw(detection, "c_tick"), ShouldEqual, float64(tape[len(tape)-1].Tick))
+				So(metricRaw(detection, "b_tick"), ShouldEqual, float64(chop[0].Tick))
+				So(metricRaw(detection, "c_tick"), ShouldEqual, float64(chop[len(chop)-1].Tick))
 				So(metricRaw(detection, "start_tick"), ShouldBeLessThanOrEqualTo, metricRaw(detection, "b_tick"))
 				So(metricRaw(detection, "end_tick"), ShouldBeGreaterThanOrEqualTo, metricRaw(detection, "c_tick"))
 			})
@@ -587,6 +643,8 @@ func TestDetector_FrictionGating(t *testing.T) {
 				100,
 				market.NewFlatQuiescentTape("BTC/USD", 60000, 10, 20),
 			)
+			flat := tape
+			tape = confirmed(tape, "66000")
 			byClass := scan(detector, storeTee, tape)
 
 			Convey("It is stored as one flat run and nothing else", func() {
@@ -594,8 +652,8 @@ func TestDetector_FrictionGating(t *testing.T) {
 				So(byClass[excursionFlat], ShouldHaveLength, 1)
 
 				detection := byClass[excursionFlat][0]
-				So(metricRaw(detection, "b_tick"), ShouldEqual, float64(tape[0].Tick))
-				So(metricRaw(detection, "c_tick"), ShouldEqual, float64(tape[len(tape)-1].Tick))
+				So(metricRaw(detection, "b_tick"), ShouldEqual, float64(flat[0].Tick))
+				So(metricRaw(detection, "c_tick"), ShouldEqual, float64(flat[len(flat)-1].Tick))
 				So(metricRaw(detection, "b_price"), ShouldEqual, metricRaw(detection, "c_price"))
 			})
 		})
@@ -604,7 +662,7 @@ func TestDetector_FrictionGating(t *testing.T) {
 			byClass := scan(detector, storeTee, priceTape(t, "BTC/USD",
 				"60000", "60010", "59995", "60005", "60000", "60008",
 				"60500", "61200", "62000", "62500",
-				"61500", "60500", "59800",
+				"61500", "60500", "59800", "60500",
 			))
 
 			Convey("It stores the chop stretch, the rally as up, and the collapse as down", func() {
@@ -624,8 +682,8 @@ func TestDetector_FrictionGating(t *testing.T) {
 	})
 }
 
-func TestDetector_ClearGainCacheIsFeeKeyed(t *testing.T) {
-	Convey("Given a tape whose trough-to-102 move clears a 0.26% taker fee", t, func() {
+func TestDetector_FrictionCacheIsFeeKeyed(t *testing.T) {
+	Convey("Given a friction cache that has priced 100 -> 102 under a 0.26% taker fee", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -633,31 +691,27 @@ func TestDetector_ClearGainCacheIsFeeKeyed(t *testing.T) {
 		storeTee := hindsight.NewStoreTee(ctx, "storeTee")
 		storeTee.Transition(runtime.READY)
 		detector := NewDetector(ctx, storeTee, priceMgr)
+		cache := friction{detector: detector, symbol: "BTC/USD"}
 
-		point := func(tick int64, p float64) tapePoint {
-			return tapePoint{idx: tick, tick: tick, price: decimal.NewFromFloat64(p)}
-		}
+		clears, err := cache.clear(decimal.NewFromFloat64(100), decimal.NewFromFloat64(102))
+		So(err, ShouldBeNil)
+		So(clears, ShouldBeTrue)
+		So(cache.clears, ShouldNotBeNil)
 
-		tp := &tape{detector: detector, symbol: "BTC/USD"}
-		tp.trough, tp.peak = point(1, 100), point(1, 100)
-
-		So(tp.rise(point(2, 102)), ShouldBeNil)
-		So(tp.clearGain, ShouldNotBeNil)
-		So(tp.near.c.price, ShouldBeNil)
-
-		Convey("With the fee unchanged, a larger gain is not re-priced and is not a near miss", func() {
-			So(tp.rise(point(3, 103)), ShouldBeNil)
-			So(tp.clearGain, ShouldNotBeNil)
-			So(tp.near.c.price, ShouldBeNil)
+		Convey("With the fee unchanged, a larger ratio clears from the cached bound", func() {
+			clears, err := cache.clear(decimal.NewFromFloat64(100), decimal.NewFromFloat64(103))
+			So(err, ShouldBeNil)
+			So(clears, ShouldBeTrue)
 		})
 
-		Convey("After a fee rise to 1.5%, the cached threshold is dropped and 103 is re-priced", func() {
+		Convey("After a fee rise to 1.5%, the cached bounds are dropped and 103 is re-priced", func() {
 			priceMgr.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(1.5)})
 
-			So(tp.rise(point(3, 103)), ShouldBeNil)
-			So(tp.clearGain, ShouldBeNil)
-			So(tp.near.c.price, ShouldNotBeNil)
-			So(tp.near.c.price.Cmp(decimal.NewFromFloat64(103)), ShouldEqual, 0)
+			clears, err := cache.clear(decimal.NewFromFloat64(100), decimal.NewFromFloat64(103))
+			So(err, ShouldBeNil)
+			So(clears, ShouldBeFalse)
+			So(cache.clears, ShouldBeNil)
+			So(cache.fails, ShouldNotBeNil)
 		})
 	})
 }

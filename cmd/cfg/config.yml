@@ -230,6 +230,14 @@ market:
   # ponytail: fixed capacity is an intentional simplification with memory and
   # burst limits; telemetry-driven or adaptive sizing is the upgrade path.
   l3_ring_capacity: 8192
+  # Book signals read the verified book version in effect at each frame's
+  # venue time, not the live book. Retention is sized from the data: the book
+  # keeps every version back to the largest lag a lookup has asked for, so a
+  # frame never reads a book newer than itself; a lookup older than what is
+  # retained reads no book (missing evidence, counted by Book.HistoryMisses).
+  # This optional per-symbol version cap bounds memory only; 0 leaves
+  # retention to the learned lag.
+  book_history_limit: 0
   # High-liquidity run: deeper L2 book and faster subscription pacing.
   subscribe:
     pace: 1s

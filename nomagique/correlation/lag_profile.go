@@ -11,15 +11,19 @@ import (
 )
 
 /*
-LagEstimate is what an estimator publishes for one timestamp offset.
+LagEstimate is what an estimator publishes for one timestamp offset: the
+covariance, its standard error, and their ratio (Score). Score is only
+meaningful when ScoreDefined.
 */
 type LagEstimate struct {
-	Correlation float64
-	Covariance  float64
-	Support     float64
-	LeftEnergy  float64
-	RightEnergy float64
-	Defined     bool
+	Covariance    float64
+	StandardError float64
+	Score         float64
+	Support       float64
+	LeftEnergy    float64
+	RightEnergy   float64
+	Defined       bool
+	ScoreDefined  bool
 }
 
 /*
@@ -43,7 +47,9 @@ type LagProfileInput struct {
 }
 
 /*
-LagCandidate retains the complete estimator record and its own support.
+LagCandidate retains the complete estimator record and its own support. Y is
+the covariance at the candidate's lag: the profile the lead-lag search
+maximizes in absolute value.
 */
 type LagCandidate struct {
 	LagEstimate
@@ -114,7 +120,7 @@ func (op *LagProfile) Next(
 					Index:       float64(index),
 					LagIndex:    lagIndex,
 					X:           float64(lag) * 1e-9,
-					Y:           reading.Correlation,
+					Y:           reading.Covariance,
 				}
 
 				if !yield(unsafe.Pointer(&op.out)) {

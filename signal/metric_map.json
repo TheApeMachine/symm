@@ -33,63 +33,63 @@
     },
     {
       "source": "correlation",
-      "metric": "signed_correlation",
-      "identity": "correlation/signed_correlation",
+      "metric": "covariance_score",
+      "identity": "correlation/covariance_score",
       "metric_class": "derived_dimensionless",
       "semantic_role": "RELATIONSHIP_STATE",
-      "purpose": "Direction and strength of contemporaneous return dependence for the evaluated relation/cohort.",
+      "purpose": "Signed covariance score (covariance / standard error) of contemporaneous return dependence to the reference peer (the admitted peer with the most overlapping returns, named in frame metadata reference_peer). Hayashi-Yoshida covariance divided by its null standard error (sqrt of the sum over overlapping return pairs of r_i^2 s_j^2); standard normal under no co-movement with independent increments; unbounded, not a correlation.",
       "quality_definedness": "Requires temporally valid path overlap/support appropriate to the statistic; missing support is not zero relationship.",
       "current_named_use": "Category:SystemicHerd",
       "normative_destinations": "Category(current; review semantics); Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence.",
       "review_note": "",
       "normative_status": "KEEP_NAMED_USE",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "correlation",
-      "metric": "absolute_correlation",
-      "identity": "correlation/absolute_correlation",
+      "metric": "absolute_covariance_score",
+      "identity": "correlation/absolute_covariance_score",
       "metric_class": "derived_dimensionless",
       "semantic_role": "RELATIONSHIP_STATE",
-      "purpose": "Magnitude of contemporaneous return dependence independent of sign.",
+      "purpose": "Magnitude of the reference-peer covariance score independent of sign; in [0, +inf).",
       "quality_definedness": "Requires temporally valid path overlap/support appropriate to the statistic; missing support is not zero relationship.",
       "current_named_use": "",
       "normative_destinations": "Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "correlation",
-      "metric": "cohort_signed_correlation",
-      "identity": "correlation/cohort_signed_correlation",
+      "metric": "cohort_covariance_score",
+      "identity": "correlation/cohort_covariance_score",
       "metric_class": "derived_dimensionless",
       "semantic_role": "RELATIONSHIP_STATE",
-      "purpose": "Focal symbol's aggregate signed dependence to its explicit peer cohort.",
+      "purpose": "Support-weighted mean of the focal symbol's covariance scores to its admitted peers.",
       "quality_definedness": "Requires temporally valid path overlap/support appropriate to the statistic; missing support is not zero relationship.",
       "current_named_use": "Category:SystemicHerd",
       "normative_destinations": "Category(current; review semantics); Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence.",
       "review_note": "",
       "normative_status": "KEEP_NAMED_USE",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "correlation",
-      "metric": "cohort_absolute_correlation",
-      "identity": "correlation/cohort_absolute_correlation",
+      "metric": "cohort_absolute_covariance_score",
+      "identity": "correlation/cohort_absolute_covariance_score",
       "metric_class": "derived_dimensionless",
       "semantic_role": "RELATIONSHIP_STATE",
-      "purpose": "Focal symbol's aggregate dependence magnitude to its explicit peer cohort.",
+      "purpose": "Support-weighted mean of the absolute covariance scores to the admitted peers; in [0, +inf).",
       "quality_definedness": "Requires temporally valid path overlap/support appropriate to the statistic; missing support is not zero relationship.",
       "current_named_use": "",
       "normative_destinations": "Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "correlation",
@@ -105,6 +105,21 @@
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
       "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+    },
+    {
+      "source": "correlation",
+      "metric": "covariance_standard_error",
+      "identity": "correlation/covariance_standard_error",
+      "metric_class": "support_or_inference",
+      "semantic_role": "ESTIMABILITY",
+      "purpose": "Null standard error of the reference-peer Hayashi-Yoshida covariance: sqrt of the sum over overlapping return pairs of r_i^2 s_j^2 (exact under independent increments and no co-movement).",
+      "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
+      "current_named_use": "",
+      "normative_destinations": "Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",
+      "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence.",
+      "review_note": "",
+      "normative_status": "UNMAPPED_REVIEW",
+      "baseline_commit": "current"
     },
     {
       "source": "correlation",
@@ -258,33 +273,18 @@
     },
     {
       "source": "correlation",
-      "metric": "correlation_p_value",
-      "identity": "correlation/correlation_p_value",
+      "metric": "covariance_p_value",
+      "identity": "correlation/covariance_p_value",
       "metric_class": "support_or_inference",
       "semantic_role": "ESTIMABILITY",
-      "purpose": "Inferential p-value for the measured correlation under its stated assumptions; reliability evidence, not trading probability.",
+      "purpose": "Two-sided normal p-value of the reference-peer covariance score under the no-co-movement null that defines its standard error; reliability evidence, not trading probability.",
       "quality_definedness": "Controls estimability/uncertainty of an inference. Never directional evidence and never a hand-tuned weight.",
       "current_named_use": "",
       "normative_destinations": "Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight; Estimator/valuation definedness and uncertainty",
       "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence. Do not use support/p-value/SE/sample count as directional evidence or multiply it into the observed value.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
-    },
-    {
-      "source": "correlation",
-      "metric": "correlation_standard_error_fisher",
-      "identity": "correlation/correlation_standard_error_fisher",
-      "metric_class": "support_or_inference",
-      "semantic_role": "ESTIMABILITY",
-      "purpose": "Fisher-space standard error of correlation; uncertainty of the estimate.",
-      "quality_definedness": "Controls estimability/uncertainty of an inference. Never directional evidence and never a hand-tuned weight.",
-      "current_named_use": "",
-      "normative_destinations": "Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight; Estimator/valuation definedness and uncertainty",
-      "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence. Do not use support/p-value/SE/sample count as directional evidence or multiply it into the observed value.",
-      "review_note": "",
-      "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "correlation",
@@ -303,18 +303,18 @@
     },
     {
       "source": "correlation",
-      "metric": "cohort_correlation_dispersion",
-      "identity": "correlation/cohort_correlation_dispersion",
+      "metric": "cohort_covariance_score_dispersion",
+      "identity": "correlation/cohort_covariance_score_dispersion",
       "metric_class": "derived_dimensionless",
       "semantic_role": "RELATIONSHIP_STATE",
-      "purpose": "Heterogeneity of focal correlations across peers; distinguishes one common relationship from mixed peer coupling.",
+      "purpose": "Support-weighted standard deviation of covariance scores across admitted peers; defined from two peers.",
       "quality_definedness": "Requires temporally valid path overlap/support appropriate to the statistic; missing support is not zero relationship.",
       "current_named_use": "Category:DivergentStress",
       "normative_destinations": "Category(current; review semantics); Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence.",
       "review_note": "",
       "normative_status": "KEEP_NAMED_USE",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "correlation",
@@ -348,63 +348,63 @@
     },
     {
       "source": "correlation",
-      "metric": "correlation_baseline",
-      "identity": "correlation/correlation_baseline",
+      "metric": "covariance_score_baseline",
+      "identity": "correlation/covariance_score_baseline",
       "metric_class": "historical_reference",
       "semantic_role": "CONTEXT_OR_MODEL_FEATURE",
-      "purpose": "Causal historical reference level of correlation for this relation.",
+      "purpose": "Causal historical reference level of the cohort covariance score.",
       "quality_definedness": "Requires prior causal estimator/state appropriate to the metric; undefined until that prerequisite exists.",
       "current_named_use": "",
       "normative_destinations": "Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence. Baseline is reference state, not a trading signal.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "correlation",
-      "metric": "correlation_divergence",
-      "identity": "correlation/correlation_divergence",
+      "metric": "covariance_score_divergence",
+      "identity": "correlation/covariance_score_divergence",
       "metric_class": "historical_comparison",
       "semantic_role": "CONTEXT_OR_MODEL_FEATURE",
-      "purpose": "Current correlation departure from its causal historical reference.",
+      "purpose": "Current cohort covariance score departure from its causal historical reference.",
       "quality_definedness": "Requires prior causal estimator/state appropriate to the metric; undefined until that prerequisite exists.",
       "current_named_use": "Category:DivergentStress",
       "normative_destinations": "Category(current; review semantics); Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence.",
       "review_note": "",
       "normative_status": "KEEP_NAMED_USE",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "correlation",
-      "metric": "correlation_zscore",
-      "identity": "correlation/correlation_zscore",
+      "metric": "covariance_score_zscore",
+      "identity": "correlation/covariance_score_zscore",
       "metric_class": "standardized_historical_comparison",
       "semantic_role": "CONTEXT_OR_MODEL_FEATURE",
-      "purpose": "Standardized unusualness of current correlation relative to its own history.",
+      "purpose": "Standardized unusualness of the current cohort covariance score relative to its own history.",
       "quality_definedness": "Requires a causal baseline/noise model. Definedness and estimator support matter; magnitude is unusualness, not probability.",
       "current_named_use": "Category:StochasticNoise",
       "normative_destinations": "Category(current; review semantics); Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence. Z-score is standardized unusualness, not probability/confidence and not a universal [0,1] weight.",
       "review_note": "",
       "normative_status": "KEEP_NAMED_USE",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "correlation",
-      "metric": "correlation_velocity",
-      "identity": "correlation/correlation_velocity",
+      "metric": "covariance_score_velocity",
+      "identity": "correlation/covariance_score_velocity",
       "metric_class": "temporal_dynamic_or_rate",
       "semantic_role": "CONTEXT_OR_MODEL_FEATURE",
-      "purpose": "Rate at which the current correlation state is changing.",
+      "purpose": "Rate at which the cohort covariance score is changing.",
       "quality_definedness": "Requires prior causal estimator/state appropriate to the metric; undefined until that prerequisite exists.",
       "current_named_use": "",
       "normative_destinations": "Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not infer causality, leadership, common operator, or exploitability from dependence.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "correlation",
@@ -472,14 +472,14 @@
       "identity": "cvd/trade_count",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Executed trade-event count over the retained interval.",
+      "purpose": "Executed trade-event count in the last closed volume bar. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -487,14 +487,14 @@
       "identity": "cvd/trade_count:buy",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Executed trade-event count on the buy aggressor side.",
+      "purpose": "Executed trade-event count on the buy aggressor side. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -502,14 +502,14 @@
       "identity": "cvd/trade_count:sell",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Executed trade-event count on the sell aggressor side.",
+      "purpose": "Executed trade-event count on the sell aggressor side. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -517,14 +517,14 @@
       "identity": "cvd/signed_count_fraction",
       "metric_class": "derived_dimensionless",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Aggressor-side imbalance by event count; separates event-frequency imbalance from economic-size imbalance.",
+      "purpose": "Aggressor-side imbalance by event count; separates event-frequency imbalance from economic-size imbalance. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -532,14 +532,14 @@
       "identity": "cvd/executed_quantity:buy",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Executed base quantity on the buy aggressor side.",
+      "purpose": "Executed base quantity on the buy aggressor side. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -547,14 +547,14 @@
       "identity": "cvd/executed_quantity:sell",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Executed base quantity on the sell aggressor side.",
+      "purpose": "Executed base quantity on the sell aggressor side. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -562,14 +562,14 @@
       "identity": "cvd/gross_executed_quantity",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Total executed base quantity independent of side.",
+      "purpose": "Total executed base quantity independent of side. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -577,14 +577,14 @@
       "identity": "cvd/net_executed_quantity",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Signed executed base-quantity imbalance.",
+      "purpose": "Signed executed base-quantity imbalance. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -592,14 +592,14 @@
       "identity": "cvd/aggressive_notional:buy",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Executed quote-currency notional initiated on the buy side.",
+      "purpose": "Executed quote-currency notional initiated on the buy side. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -607,14 +607,14 @@
       "identity": "cvd/aggressive_notional:sell",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Executed quote-currency notional initiated on the sell side.",
+      "purpose": "Executed quote-currency notional initiated on the sell side. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -622,14 +622,14 @@
       "identity": "cvd/gross_notional",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Total executed economic notional independent of side.",
+      "purpose": "Total executed economic notional independent of side. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -637,14 +637,14 @@
       "identity": "cvd/net_notional",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Signed aggressive executed notional.",
+      "purpose": "Signed aggressive executed notional. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -652,14 +652,14 @@
       "identity": "cvd/signed_net_fraction",
       "metric_class": "derived_dimensionless",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Scale-free signed share of gross aggressive notional; primary directional executed-flow state.",
+      "purpose": "Scale-free signed share of gross aggressive notional; primary directional executed-flow state. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -667,14 +667,14 @@
       "identity": "cvd/mean_trade_notional",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Mean economic size per execution; separates many-small from few-large trade activity.",
+      "purpose": "Mean economic size per execution; separates many-small from few-large trade activity. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -757,14 +757,14 @@
       "identity": "cvd/cumulative_volume_delta",
       "metric_class": "derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Epoch-anchored cumulative signed base quantity; use interval differences, never compare arbitrary epochs.",
+      "purpose": "Signed base quantity (buy minus sell) over the last closed volume bar; equals net_executed_quantity. Not an epoch-anchored running total. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -772,29 +772,14 @@
       "identity": "cvd/cumulative_notional_delta",
       "metric_class": "direct_or_derived_measurement",
       "semantic_role": "FLOW_STATE",
-      "purpose": "Epoch-anchored cumulative signed notional; use interval differences, never compare arbitrary epochs.",
+      "purpose": "Signed aggressive notional over the last closed volume bar; equals net_notional. Not an epoch-anchored running total. Windowed on the closed volume bar (target = median prior trade quantity, fixed at bar open; the clock pumpdump uses); emitted only on the trade that closes the bar.",
       "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
       "current_named_use": "",
       "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
       "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
       "review_note": "",
       "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
-    },
-    {
-      "source": "cvd",
-      "metric": "cvd_epoch_from",
-      "identity": "cvd/cvd_epoch_from",
-      "metric_class": "derived_measurement",
-      "semantic_role": "FLOW_STATE",
-      "purpose": "Origin/provenance of cumulative CVD state.",
-      "quality_definedness": "Direct/derived fact remains valid when its stated source observations are valid; historical Maturity is not required unless the metric itself depends on history.",
-      "current_named_use": "",
-      "normative_destinations": "Flow context; Causal relations; Opportunity/Valuation; Hindsight",
-      "forbidden_use": "Do not label aggressive flow as pressure/confirmation/absorption or forecast direction from it alone.",
-      "review_note": "",
-      "normative_status": "UNMAPPED_REVIEW",
-      "baseline_commit": "993c147ea9a3eb371c5b51d3210088bd8aec708a"
+      "baseline_commit": "current"
     },
     {
       "source": "cvd",
@@ -3108,11 +3093,11 @@
     },
     {
       "source": "leadlag",
-      "metric": "correlation_gain_mean",
-      "identity": "leadlag/correlation_gain_mean",
+      "metric": "covariance_score_gain_mean",
+      "identity": "leadlag/covariance_score_gain_mean",
       "metric_class": "derived_dimensionless",
       "semantic_role": "RELATIONSHIP_STATE",
-      "purpose": "Mean over defined peers of |best-lag correlation| minus |zero-lag correlation|; in [-1, 1].",
+      "purpose": "Mean over peers with a defined zero-lag score of |covariance score at the selected lag| minus |covariance score at zero lag|; the lag is selected by largest |Hayashi-Yoshida covariance|. Unbounded.",
       "quality_definedness": "Defined only over peers with a defined pair search; absent (not zero) when no peer is defined.",
       "current_named_use": "",
       "normative_destinations": "Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",
@@ -3123,11 +3108,11 @@
     },
     {
       "source": "leadlag",
-      "metric": "correlation_gain_median",
-      "identity": "leadlag/correlation_gain_median",
+      "metric": "covariance_score_gain_median",
+      "identity": "leadlag/covariance_score_gain_median",
       "metric_class": "derived_dimensionless",
       "semantic_role": "RELATIONSHIP_STATE",
-      "purpose": "Median over defined peers of |best-lag correlation| minus |zero-lag correlation|; in [-1, 1].",
+      "purpose": "Median over peers with a defined zero-lag score of |covariance score at the selected lag| minus |covariance score at zero lag|; the lag is selected by largest |Hayashi-Yoshida covariance|. Unbounded.",
       "quality_definedness": "Defined only over peers with a defined pair search; absent (not zero) when no peer is defined.",
       "current_named_use": "",
       "normative_destinations": "Coordination/Coattail context; Causal relations; Opportunity/Valuation; Hindsight",

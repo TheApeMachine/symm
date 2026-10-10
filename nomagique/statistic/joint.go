@@ -83,11 +83,24 @@ func (op *Joint) Next(
 
 				if reading.Prior.Count > 1 && reading.Prior.M2 > 0 {
 					res.PriorVariance = reading.Prior.M2 / (reading.Prior.Count - 1)
-					res.ScoreScale = math.Sqrt(res.PriorVariance)
-					res.ZScore = res.Residual / res.ScoreScale
-					energy := res.ZScore * res.ZScore
-					op.energies = append(op.energies, energy)
-					totalEnergy += energy
+					scale := math.Sqrt(res.PriorVariance)
+
+					// Relative distinguishability: refuse the z-score when the
+					// noise scale is below sqrt(eps)*max(1, |val|, |baseline|).
+					// Absolute eps alone still admits billion-scale z squared
+					// from collapsed floors.
+					ref := math.Max(1, math.Max(math.Abs(val), math.Abs(res.Baseline)))
+
+					if scale > math.Sqrt(2.220446049250313e-16)*ref {
+						res.ScoreScale = scale
+						res.ZScore = res.Residual / res.ScoreScale
+
+						if !math.IsInf(res.ZScore, 0) && !math.IsNaN(res.ZScore) {
+							energy := res.ZScore * res.ZScore
+							op.energies = append(op.energies, energy)
+							totalEnergy += energy
+						}
+					}
 				}
 
 				op.channels[i] = res

@@ -16,6 +16,15 @@ import (
 HayashiYoshida owns asynchronous covariance of two already-decoded return
 paths. Each return contributes once to its energy and to every strictly
 overlapping cross-product. Support counts overlaps, not independent samples.
+
+It reports the covariance with its standard error, never a correlation: the
+covariance normalized by the full-path energies is not bounded by one on
+asynchronous grids (one return can overlap several), and forcing it into
+[-1, 1] would hide that. The standard error is the plug-in null scale,
+sqrt(sum over overlapping pairs of r_i^2 s_j^2), which is the standard
+deviation of the Hayashi-Yoshida sum when the two paths have independent
+increments. Score is covariance / standard error, defined when that scale is
+positive.
 */
 type HayashiYoshida struct {
 	err error
@@ -86,33 +95,32 @@ func (op *HayashiYoshida) estimate(
 		}
 	}
 
-	covariance, support, leftOverlapEnergy, rightOverlapEnergy := op.overlap(query.Left, query.Right, query.Lag)
-	leftScale := math.Max(query.LeftEnergy, leftOverlapEnergy)
-	rightScale := math.Max(query.RightEnergy, rightOverlapEnergy)
-	scale := math.Sqrt(leftScale * rightScale)
-
-	var corr float64
-	if scale > 0 {
-		corr = covariance / scale
-	}
+	covariance, support, nullVariance := op.overlap(query.Left, query.Right, query.Lag)
 
 	reading := correlation.LagEstimate{
-		Correlation: corr,
 		Covariance:  covariance,
 		Support:     support,
 		LeftEnergy:  query.LeftEnergy,
 		RightEnergy: query.RightEnergy,
 	}
 	reading.Defined = support > 0 && query.LeftEnergy > 0 && query.RightEnergy > 0
+
+	if reading.Defined && nullVariance > 0 {
+		reading.StandardError = math.Sqrt(nullVariance)
+		reading.Score = covariance / reading.StandardError
+		reading.ScoreDefined = true
+	}
+
 	return reading, nil
 }
 
 /*
-overlap traverses borrowed, ordered return intervals without shifted copies.
+overlap traverses borrowed, ordered return intervals without shifted copies,
+accumulating the cross-products and their squared terms.
 */
 func (op *HayashiYoshida) overlap(
 	left, right []temporal.LogReturn, lag int64,
-) (covariance, support, leftOverlapEnergy, rightOverlapEnergy float64) {
+) (covariance, support, nullVariance float64) {
 	leftIndex, rightIndex := 0, 0
 
 	for leftIndex < len(left) && rightIndex < len(right) {
@@ -121,9 +129,9 @@ func (op *HayashiYoshida) overlap(
 		leftTo := leftReturn.To + lag
 
 		if leftFrom < rightReturn.To && rightReturn.From < leftTo {
-			covariance += leftReturn.Value * rightReturn.Value
-			leftOverlapEnergy += leftReturn.Value * leftReturn.Value
-			rightOverlapEnergy += rightReturn.Value * rightReturn.Value
+			product := leftReturn.Value * rightReturn.Value
+			covariance += product
+			nullVariance += product * product
 			support++
 		}
 
@@ -135,5 +143,5 @@ func (op *HayashiYoshida) overlap(
 		rightIndex++
 	}
 
-	return covariance, support, leftOverlapEnergy, rightOverlapEnergy
+	return covariance, support, nullVariance
 }

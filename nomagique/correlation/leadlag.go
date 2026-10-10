@@ -12,13 +12,19 @@ import (
 )
 
 /*
-LeadLagReading is one lead/lag search. Empty searches are explicit undefined
-records.
+LeadLagReading is one lead/lag search. The lag is selected as the nonzero
+lag of largest absolute Hayashi-Yoshida covariance (the profile Y); its
+significance is read from the covariance scores (covariance / standard error,
+see LagEstimate), which are comparable across peers: AbsoluteGain is
+|score at the selected lag| - |score at zero lag|, and Contemporaneous is the
+zero-lag score. Those need a defined zero-lag score and are only meaningful
+when GainDefined. Empty searches are explicit undefined records.
 */
 type LeadLagReading struct {
 	LagCandidate
 	Profile         []LagCandidate
 	Defined         bool
+	GainDefined     bool
 	Leads           bool
 	ShapeDefined    bool
 	Contemporaneous float64
@@ -115,11 +121,11 @@ func (op *LeadLag) Next(
 					Index:       float64(index),
 					LagIndex:    lagIndex,
 					X:           float64(lag) * 1e-9,
-					Y:           reading.Correlation,
+					Y:           reading.Covariance,
 				}
 				candidates = append(candidates, current)
 
-				if current.Defined && current.X != 0 {
+				if current.Defined && current.ScoreDefined && current.X != 0 {
 					nonzero = append(nonzero, current)
 				}
 			}
@@ -147,9 +153,19 @@ func (op *LeadLag) Next(
 
 			selected := nonzero[bestIdx]
 			zero := candidates[int(span)]
-			searchScale := math.Sqrt(2.0 * math.Log(float64(len(nonzero)+1)) / (observations - 1))
-			absoluteGain := math.Abs(selected.Correlation) - math.Abs(zero.Correlation)
-			leads := math.Abs(selected.Correlation) > searchScale && absoluteGain > 0
+			// Scores are standard-normal under no co-movement, so the
+			// universal threshold for the largest of N searched scores is
+			// sqrt(2 log N).
+			searchScale := math.Sqrt(2.0 * math.Log(float64(len(nonzero)+1)))
+			gainDefined := zero.Defined && zero.ScoreDefined
+			absoluteGain, contemporaneous := 0.0, 0.0
+
+			if gainDefined {
+				contemporaneous = zero.Score
+				absoluteGain = math.Abs(selected.Score) - math.Abs(zero.Score)
+			}
+
+			leads := gainDefined && math.Abs(selected.Score) > searchScale && absoluteGain > 0
 			lagFraction := 0.0
 
 			if leads {
@@ -165,7 +181,7 @@ func (op *LeadLag) Next(
 				lower := candidates[shapeIdx-1]
 				upper := candidates[shapeIdx+1]
 
-				if lower.Defined && upper.Defined {
+				if lower.Defined && lower.ScoreDefined && upper.Defined && upper.ScoreDefined {
 					leftVal := math.Abs(lower.Y)
 					centerVal := math.Abs(candidates[shapeIdx].Y)
 					rightVal := math.Abs(upper.Y)
@@ -182,9 +198,10 @@ func (op *LeadLag) Next(
 				LagCandidate:    selected,
 				Profile:         candidates,
 				Defined:         true,
+				GainDefined:     gainDefined,
 				Leads:           leads,
 				ShapeDefined:    shapeDefined,
-				Contemporaneous: zero.Correlation,
+				Contemporaneous: contemporaneous,
 				SearchCount:     float64(len(nonzero)),
 				Spacing:         spacing,
 				Span:            span,

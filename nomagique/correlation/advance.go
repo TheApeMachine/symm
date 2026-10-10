@@ -52,14 +52,14 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			if summary.Defined {
-				frame.Metrics["cohort_signed_correlation"] = summary.SignedCorrelation
-				frame.Metrics["cohort_absolute_correlation"] = summary.AbsoluteCorrelation
+				frame.Metrics["cohort_covariance_score"] = summary.SignedScore
+				frame.Metrics["cohort_absolute_covariance_score"] = summary.AbsoluteScore
 				frame.Metrics["cohort_effective_peer_count"] = summary.EffectivePeers
 			}
 			frame.Metrics["cohort_peer_count"] = summary.Peers
 
-			if summary.FisherDefined {
-				frame.Metrics["cohort_correlation_dispersion"] = summary.Dispersion
+			if summary.DispersionDefined {
+				frame.Metrics["cohort_covariance_score_dispersion"] = summary.Dispersion
 			}
 
 			if summary.PeerEnergyRate > 0 {
@@ -86,16 +86,17 @@ func (op *Fold) Error(errs ...error) error {
 }
 
 /*
-History feeds the cohort's signed correlation to the Fisher-space causal
-estimator, giving the measurement its baseline, divergence, and z-score.
+History scores the cohort's covariance score against its own adaptive
+baseline, giving the measurement its baseline, divergence, and z-score. The
+score is unbounded, so it is tracked directly rather than through atanh.
 */
 type History struct {
-	err       error
-	estimator core.Primitive
+	err      error
+	baseline core.Primitive
 }
 
 func NewHistory() core.Primitive {
-	return &History{estimator: NewFisherEstimator()}
+	return &History{baseline: adaptive.NewBaseline(adaptive.NewWindow())}
 }
 
 func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -111,7 +112,7 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			signed, defined := frame.Metrics["cohort_signed_correlation"]
+			signed, defined := frame.Metrics["cohort_covariance_score"]
 
 			if !defined {
 				if !yield(arriving) {
@@ -121,15 +122,15 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			view := data.To[float64, FisherView](op.estimator, &signed)
+			reading := data.To[float64, adaptive.BaselineReading](op.baseline, &signed)
 
-			if view.Defined && view.HasPrior {
-				frame.Metrics["correlation_baseline"] = view.Baseline
-				frame.Metrics["correlation_divergence"] = view.Divergence
+			if reading.HasPrior {
+				frame.Metrics["covariance_score_baseline"] = reading.Baseline
+				frame.Metrics["covariance_score_divergence"] = reading.Residual
 			}
 
-			if view.ZDefined {
-				frame.Metrics["correlation_zscore"] = view.ZScore
+			if reading.ScoreScale > 0 {
+				frame.Metrics["covariance_score_zscore"] = reading.ZScore
 			}
 
 			if !yield(arriving) {
@@ -206,7 +207,7 @@ func (op *Relative) Error(errs ...error) error {
 }
 
 /*
-CorrelationVelocity measures how fast the cohort's signed correlation moves.
+CorrelationVelocity measures how fast the cohort's covariance score moves.
 */
 type CorrelationVelocity struct {
 	err      error
@@ -230,7 +231,7 @@ func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 				continue
 			}
 
-			signed, defined := frame.Metrics["cohort_signed_correlation"]
+			signed, defined := frame.Metrics["cohort_covariance_score"]
 
 			if !defined {
 				if !yield(arriving) {
@@ -250,7 +251,7 @@ func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 			)
 
 			if reading.Defined {
-				frame.Metrics["correlation_velocity"] = reading.Rate
+				frame.Metrics["covariance_score_velocity"] = reading.Rate
 			}
 
 			if !yield(arriving) {
@@ -328,7 +329,7 @@ func (op *EnergyVelocity) Error(errs ...error) error {
 }
 
 /*
-Recurrence measures standardized (correlation_zscore, relative_return_energy_zscore)
+Recurrence measures standardized (covariance_score_zscore, relative_return_energy_zscore)
 trajectory recurrence against retained trajectory history, emitting historical path
 distance and empirical percentile.
 */
@@ -359,7 +360,7 @@ func (op *Recurrence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			}
 
 			// The path point needs both z-scores; an undefined one is not 0.
-			correlationZScore, hasCorrelationZ := frame.Metrics["correlation_zscore"]
+			correlationZScore, hasCorrelationZ := frame.Metrics["covariance_score_zscore"]
 			energyZScore, hasEnergyZ := frame.Metrics["relative_return_energy_zscore"]
 
 			if !hasCorrelationZ || !hasEnergyZ {

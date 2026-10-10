@@ -62,7 +62,7 @@ func TestSignalFeatureIngestion(t *testing.T) {
 		at := time.Unix(10, 0).UTC()
 		peers := []*data.Measurement{
 			signalPeer("correlation", "BTC/USD", "relative_return_energy", 1.2, at),
-			signalPeer("leadlag", "BTC/USD", "correlation_gain_median", 0.75, at),
+			signalPeer("leadlag", "BTC/USD", "covariance_score_gain_median", 0.75, at),
 			signalPeer("liquidity", "BTC/USD", "relative_spread", 0.0002, at),
 			signalPeer("sentiment", "BTC/USD", "advance_fraction", 0.6, at),
 			signalPeer("cvd", "BTC/USD", "signed_net_fraction", 0.4, at),
@@ -126,7 +126,7 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 			at := time.Unix(sec, 0).UTC()
 			peers := []*data.Measurement{
 				signalPeer("correlation", "ETH/USD", "relative_return_energy", 1.0, at),
-				signalPeer("leadlag", "ETH/USD", "correlation_gain_median", 0.5, at),
+				signalPeer("leadlag", "ETH/USD", "covariance_score_gain_median", 0.5, at),
 				signalPeer("liquidity", "ETH/USD", "relative_spread", 0.0003, at),
 				signalPeer("sentiment", "ETH/USD", "advance_fraction", 0.5, at),
 				signalPeer("cvd", "ETH/USD", "signed_net_fraction", cvdVal, at),
@@ -198,7 +198,7 @@ func TestPeerSuffixedHeadlineMetrics(t *testing.T) {
 		peer.At = at
 		peer.From = at
 		peer = peer.Write(data.NewMetric(
-			"signed_correlation@BTC/USD", 0.82, data.UnitCorrelation, data.TimescaleRollingWindow,
+			"covariance_score@BTC/USD", 0.82, data.UnitCovarianceScore, data.TimescaleRollingWindow,
 		))
 
 		value, ok := extractHeadlineMetric(0, peer)

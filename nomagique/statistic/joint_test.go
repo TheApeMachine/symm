@@ -54,6 +54,26 @@ func TestJointNext(t *testing.T) {
 			So(last.SNR, ShouldAlmostEqual, last.Energies[0], 1e-12)
 		})
 
+		Convey("a negligible noise scale relative to the values refuses the z-score", func() {
+			fresh := NewJoint(1)
+			// Log-values near 1e6 whose prior spread is ~1e-6: the dispersion
+			// is below sqrt(eps)*|value| and carries no distinguishable signal.
+			var last JointReading
+
+			for _, value := range []float64{1e6, 1e6 + 1e-6, 1e6 + 3e-6} {
+				for _, reading := range tests.CollectSeq[JointReading](fresh.Next(tests.SliceToSeq([]JointInput{{Values: []float64{value}}}))) {
+					last = reading
+				}
+			}
+
+			So(fresh.Error(), ShouldBeNil)
+			So(last.Channels[0].PriorVariance, ShouldBeGreaterThan, 0)
+			So(last.Channels[0].ScoreScale, ShouldEqual, 0)
+			So(last.Channels[0].ZScore, ShouldEqual, 0)
+			So(len(last.Energies), ShouldEqual, 0)
+			So(last.SNRDefined, ShouldBeFalse)
+		})
+
 		Convey("a mismatched dimension records ErrShape", func() {
 			fresh := NewJoint(2)
 			out := tests.CollectSeq[JointReading](fresh.Next(tests.SliceToSeq([]JointInput{{Values: []float64{1}}})))

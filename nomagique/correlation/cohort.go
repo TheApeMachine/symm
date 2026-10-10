@@ -9,33 +9,37 @@ import (
 )
 
 /*
-Peer is one neighbour's correlation, overlap support, and optional energy rate.
+Peer is one neighbour's covariance score, overlap support, and optional energy
+rate.
 */
 type Peer struct {
-	Correlation float64
-	Support     float64
-	PeerEnergy  float64
+	Score      float64
+	Support    float64
+	PeerEnergy float64
 }
 
 /*
 CohortSummary is one delivery's admitted-peer reductions.
 */
 type CohortSummary struct {
-	PeersSeen           float64
-	Peers               float64
-	RejectedPeers       float64
-	TotalSupport        float64
-	EffectivePeers      float64
-	SignedCorrelation   float64
-	AbsoluteCorrelation float64
-	PeerEnergyRate      float64
-	Dispersion          float64
-	Defined             bool
-	FisherDefined       bool
+	PeersSeen         float64
+	Peers             float64
+	RejectedPeers     float64
+	TotalSupport      float64
+	EffectivePeers    float64
+	SignedScore       float64
+	AbsoluteScore     float64
+	PeerEnergyRate    float64
+	Dispersion        float64
+	Defined           bool
+	DispersionDefined bool
 }
 
 /*
-Cohort summarizes one peer run. Support below two is excluded.
+Cohort summarizes one peer run with support-weighted means of the peers'
+covariance scores. Support below two is excluded. Dispersion is the
+support-weighted standard deviation of the scores, defined from two admitted
+peers.
 */
 type Cohort struct {
 	err error
@@ -83,25 +87,14 @@ func (op *Cohort) Next(
 		sumSigned := 0.0
 		sumAbsolute := 0.0
 		sumEnergy := 0.0
-		sumZ := 0.0
-		sumZ2 := 0.0
-
-		totalFisherWeight := 0.0
 
 		for _, item := range admitted {
 			weight := item.Support
 			totalWeight += weight
 			sumWeightSq += weight * weight
-			sumSigned += weight * item.Correlation
-			sumAbsolute += weight * math.Abs(item.Correlation)
+			sumSigned += weight * item.Score
+			sumAbsolute += weight * math.Abs(item.Score)
 			sumEnergy += weight * item.PeerEnergy
-
-			if math.Abs(item.Correlation) < 1.0 {
-				zValue := math.Atanh(item.Correlation)
-				sumZ += weight * zValue
-				sumZ2 += weight * zValue * zValue
-				totalFisherWeight += weight
-			}
 		}
 
 		signedMean := sumSigned / totalWeight
@@ -110,26 +103,28 @@ func (op *Cohort) Next(
 		kish := (totalWeight * totalWeight) / sumWeightSq
 
 		dispersion := 0.0
-		fisherDefined := false
+		dispersionDefined := false
 
-		if totalFisherWeight > 0 {
-			zMean := sumZ / totalFisherWeight
-			weightedVariance := (sumZ2 / totalFisherWeight) - (zMean * zMean)
+		if len(admitted) > 1 {
+			squared := 0.0
 
-			if weightedVariance >= 0 {
-				dispersion = math.Sqrt(weightedVariance)
-				fisherDefined = true
+			for _, item := range admitted {
+				deviation := item.Score - signedMean
+				squared += item.Support * deviation * deviation
 			}
+
+			dispersion = math.Sqrt(squared / totalWeight)
+			dispersionDefined = true
 		}
 
 		summary.TotalSupport = totalWeight
 		summary.EffectivePeers = kish
-		summary.SignedCorrelation = signedMean
-		summary.AbsoluteCorrelation = absoluteMean
+		summary.SignedScore = signedMean
+		summary.AbsoluteScore = absoluteMean
 		summary.PeerEnergyRate = energyMean
 		summary.Dispersion = dispersion
 		summary.Defined = totalWeight > 0
-		summary.FisherDefined = fisherDefined
+		summary.DispersionDefined = dispersionDefined
 
 		op.out = summary
 

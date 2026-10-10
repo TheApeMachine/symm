@@ -44,6 +44,12 @@ func TestLeadLagNext(t *testing.T) {
 			So(len(got.Profile), ShouldEqual, 29)
 			So(got.Profile[int(got.Index)].Support, ShouldEqual, got.Support)
 			So(got.Support, ShouldBeGreaterThan, 0)
+			So(got.ScoreDefined, ShouldBeTrue)
+			So(got.Y, ShouldEqual, got.Covariance)
+			So(got.GainDefined, ShouldBeTrue)
+			So(got.Contemporaneous, ShouldEqual, got.Profile[int(got.Span)].Score)
+			So(got.AbsoluteGain, ShouldAlmostEqual, math.Abs(got.Score)-math.Abs(got.Contemporaneous), 1e-12)
+			So(got.SearchScale, ShouldAlmostEqual, math.Sqrt(2*math.Log(got.SearchCount+1)), 1e-12)
 
 			if original == nil {
 				original = got.Profile
@@ -64,7 +70,7 @@ func TestLagShapeUsesSelectedIndex(t *testing.T) {
 
 		for index, y := range []float64{.1, .2, 1, .8, .2} {
 			profile[index] = correlation.LagCandidate{
-				LagEstimate: correlation.LagEstimate{Support: 1, LeftEnergy: 1, RightEnergy: 1, Correlation: y, Defined: true},
+				LagEstimate: correlation.LagEstimate{Support: 1, LeftEnergy: 1, RightEnergy: 1, Score: y, Defined: true, ScoreDefined: true},
 				Index:       float64(index),
 				X:           float64(index - 2),
 				Y:           y,

@@ -7,10 +7,8 @@ import (
 	"strconv"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -28,12 +26,12 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookSource
+	books  broker.BookHistory
 	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
+func NewSignal(ctx context.Context, books broker.BookHistory) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: make(map[string]*symbolState),
@@ -62,39 +60,31 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	var found bool
 	var inputErr error
 
-	signal.books.Book(prior.Label, func(book *spotbook.Book) {
-		if book == nil {
+	// The book as of this frame, not as the live book stands when the frame
+	// is processed.
+	signal.books.BookAt(prior.Label, prior.At, func(book *broker.BookView) {
+		if len(book.Bids) == 0 || len(book.Asks) == 0 {
 			return
 		}
 
-		bid, ask := book.BestBid(), book.BestAsk()
-		if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
+		if !book.Complete {
+			inputErr = core.ErrShape
 			return
 		}
 
-		bestBidPrice := kraken.Float64(bid.Price)
-		bestAskPrice := kraken.Float64(ask.Price)
+		bestBidPrice := book.Bids[0].Price
+		bestAskPrice := book.Asks[0].Price
 		found = true
 
 		bids = append(bids, bestBidPrice, bestAskPrice)
 		asks = append(asks, bestBidPrice, bestAskPrice)
 
-		for cursor := bid; cursor != nil; cursor = cursor.Lower {
-			if cursor.Price == nil || cursor.Quantity == nil {
-				inputErr = core.ErrShape
-				return
-			}
-
-			bids = append(bids, kraken.Float64(cursor.Price), kraken.Float64(cursor.Quantity))
+		for _, level := range book.Bids {
+			bids = append(bids, level.Price, level.Quantity)
 		}
 
-		for cursor := ask; cursor != nil; cursor = cursor.Higher {
-			if cursor.Price == nil || cursor.Quantity == nil {
-				inputErr = core.ErrShape
-				return
-			}
-
-			asks = append(asks, kraken.Float64(cursor.Price), kraken.Float64(cursor.Quantity))
+		for _, level := range book.Asks {
+			asks = append(asks, level.Price, level.Quantity)
 		}
 	})
 

@@ -53,7 +53,12 @@ func TestHayashiYoshidaNext(t *testing.T) {
 			So(out[0].LeftEnergy, ShouldEqual, 1)
 			So(out[0].RightEnergy, ShouldEqual, 2)
 			So(out[0].Support, ShouldEqual, 2)
-			So(out[0].Correlation, ShouldAlmostEqual, 1.0)
+			// Normalizing by the full-path energies would give 2/sqrt(2) > 1;
+			// the estimator reports the covariance and its null standard
+			// error instead: sqrt(1*1 + 1*1).
+			So(out[0].StandardError, ShouldAlmostEqual, math.Sqrt2)
+			So(out[0].ScoreDefined, ShouldBeTrue)
+			So(out[0].Score, ShouldAlmostEqual, math.Sqrt2)
 		}
 	})
 }
@@ -66,12 +71,13 @@ func TestHayashiEmptyAndTouch(t *testing.T) {
 			prices([]int64{1, 2}, []float64{1, 2}),
 		)).Next(nil)))
 		So(fields[0].Support, ShouldEqual, 0)
-		So(fields[0].Correlation, ShouldEqual, 0)
+		So(fields[0].ScoreDefined, ShouldBeFalse)
+		So(fields[0].Score, ShouldEqual, 0)
 
 		node = algo.NewHayashiYoshida()
 		empty := tests.CollectSeq[correlation.LagEstimate](node.Next(transport.NewValues(pathQuery(nil, nil)).Next(nil)))
 		So(empty[0].Defined, ShouldBeFalse)
-		So(empty[0].Correlation, ShouldEqual, 0)
+		So(empty[0].ScoreDefined, ShouldBeFalse)
 	})
 }
 
@@ -90,28 +96,19 @@ func TestHayashiReference(t *testing.T) {
 				rp = append(rp, rp[len(rp)-1]*math.Exp(random.NormFloat64()*0.1))
 			}
 
-			covariance, support := 0.0, 0.0
-			leftOverlapEnergy, rightOverlapEnergy := 0.0, 0.0
-			leftEnergy, rightEnergy := 0.0, 0.0
+			covariance, support, nullVariance := 0.0, 0.0, 0.0
 
 			for index := 1; index < len(lp); index++ {
 				increment := math.Log(lp[index]) - math.Log(lp[index-1])
-				leftEnergy += increment * increment
 
 				for other := 1; other < len(rp); other++ {
 					if lt[index-1] < rt[other] && rt[other-1] < lt[index] {
 						otherIncrement := math.Log(rp[other]) - math.Log(rp[other-1])
 						covariance += increment * otherIncrement
-						leftOverlapEnergy += increment * increment
-						rightOverlapEnergy += otherIncrement * otherIncrement
+						nullVariance += math.Pow(increment*otherIncrement, 2)
 						support++
 					}
 				}
-			}
-
-			for other := 1; other < len(rp); other++ {
-				increment := math.Log(rp[other]) - math.Log(rp[other-1])
-				rightEnergy += increment * increment
 			}
 
 			node := algo.NewHayashiYoshida()
@@ -119,13 +116,12 @@ func TestHayashiReference(t *testing.T) {
 			So(node.Error(), ShouldBeNil)
 			So(out[0].Covariance, ShouldEqual, covariance)
 			So(out[0].Support, ShouldEqual, support)
-			expectedCorr := 0.0
-			scale := math.Sqrt(math.Max(leftEnergy, leftOverlapEnergy) * math.Max(rightEnergy, rightOverlapEnergy))
-			if scale > 0 {
-				expectedCorr = covariance / scale
+			So(out[0].ScoreDefined, ShouldEqual, nullVariance > 0)
+
+			if nullVariance > 0 {
+				So(out[0].StandardError, ShouldAlmostEqual, math.Sqrt(nullVariance))
+				So(out[0].Score, ShouldAlmostEqual, covariance/math.Sqrt(nullVariance))
 			}
-			So(out[0].Correlation, ShouldAlmostEqual, expectedCorr)
-			So(out[0].Correlation, ShouldBeBetweenOrEqual, -1.0, 1.0)
 		}
 	})
 }
@@ -191,15 +187,13 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 		}
 
 		for _, lag := range []int64{-int64(time.Second), 0, int64(43 * time.Millisecond), int64(time.Second)} {
-			covariance, support := 0.0, 0.0
-			leftOverlapEnergy, rightOverlapEnergy := 0.0, 0.0
+			covariance, support, nullVariance := 0.0, 0.0, 0.0
 
 			for _, leftReturn := range leftReturns {
 				for _, rightReturn := range rightReturns {
 					if leftReturn.From+lag < rightReturn.To && rightReturn.From < leftReturn.To+lag {
 						covariance += leftReturn.Value * rightReturn.Value
-						leftOverlapEnergy += leftReturn.Value * leftReturn.Value
-						rightOverlapEnergy += rightReturn.Value * rightReturn.Value
+						nullVariance += math.Pow(leftReturn.Value*rightReturn.Value, 2)
 						support++
 					}
 				}
@@ -209,13 +203,12 @@ func TestHayashiYoshidaEstimate(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(fields.Support, ShouldEqual, support)
 			So(fields.Covariance, ShouldAlmostEqual, covariance)
-			expectedCorr := 0.0
-			scale := math.Sqrt(math.Max(leftEnergy, leftOverlapEnergy) * math.Max(rightEnergy, rightOverlapEnergy))
-			if scale > 0 {
-				expectedCorr = covariance / scale
+			So(fields.ScoreDefined, ShouldEqual, nullVariance > 0)
+
+			if nullVariance > 0 {
+				So(fields.StandardError, ShouldAlmostEqual, math.Sqrt(nullVariance))
+				So(fields.Score, ShouldAlmostEqual, covariance/math.Sqrt(nullVariance))
 			}
-			So(fields.Correlation, ShouldAlmostEqual, expectedCorr)
-			So(fields.Correlation, ShouldBeBetweenOrEqual, -1.0, 1.0)
 			So(leftReturns, ShouldResemble, original)
 		}
 

@@ -1,19 +1,19 @@
 # SYMM Pipeline Empirical Audit
 
-**State:** CONTRACT_BREACHES PRESENT | **Epoch:** `1791494698631035000` | **Symbol:** `ALL` | **Ticks:** `10000` | **Generated:** `2026-10-09T18:56:28Z`
+**State:** CONTRACT_BREACHES PRESENT | **Epoch:** `1791494698631035000` | **Symbol:** `ALL` | **Ticks:** `10000` | **Generated:** `2026-10-09T23:41:02Z`
 
 This report follows [the empirical audit contract](../hindsight/audit/AUDIT_CONTRACT.md): hard mathematical contracts may fail; descriptive stages report measurements; missing evidence is explicit.
 
 | Stage | Question | Experiment state | Observation |
 | :--- | :--- | :---: | :--- |
-| **0. Contracts** | Do declared hard domains hold? | **CONTRACT_BREACH** | 1299/7646 series breached (252702 observations) |
+| **0. Contracts** | Do declared hard domains hold? | **CONTRACT_BREACH** | 1289/7646 series breached (161191 observations) |
 | **0.5 Timing** | Is ingestion clock synchronized and monotonic? | **MEASURED** | Mean drift 34.8ms (p95 153.6ms); 4056 spikes; 6110 sequence inversions |
 | **1. Vitality** | What raw/canonical evidence actually exists? | **MEASURED** | 7646 raw series; 7935 canonical cells; 3235 constant canonical cells |
 | **2. Sympathy** | Do observed deformations relate beyond a mask-preserving shuffled null? | **MEASURED** | 10954325 pairs; |null| p95 0.055; 50.1% real |r| above it; KS 0.510 |
 | **3. Grid reproducibility** | Do disjoint periods recover the same co-memberships and stationary excitation? | **MEASURED** | ARI 1.000 (deterministic); Overlap 97.7%; JSD 0.002 bits (stationary: true) |
-| **4. Token dynamics** | What does a frozen grid emit on unseen tape? | **MEASURED** | 5746 raw (3332 compressed, stay 43.9%); Raw H=1.849; Comp H=2.008 |
-| **5. Precursors** | Statistical separation, predictive skill & economic friction clearance | **MEASURED** | JSD 0.012b; BalAcc 54.4% (MCC 0.089); Friction Clearance 49.0% (N=239) |
-| **6. Cognitive Trie & S3 Memory** | Does associative memory disambiguate and beat baselines? | **MEASURED** | Balanced Acc 31.7% (vs baseline 33.3%); S3 keys 372, collisions 16, disambiguation 8 tokens |
+| **4. Token dynamics** | What does a frozen grid emit on unseen tape? | **MEASURED** | 5746 raw (2330 compressed, stay 62.2%); Raw H=1.146; Comp H=1.322 |
+| **5. Precursors** | Statistical separation, predictive skill & economic friction clearance | **INSUFFICIENT_DATA** | JSD 0.000b; BalAcc 0.0% (MCC 0.000); Friction Clearance 0.0% (N=0) |
+| **6. Cognitive Trie & S3 Memory** | Does associative memory disambiguate and beat baselines? | **INSUFFICIENT_DATA** | Balanced Acc 0.0% (vs baseline 0.0%); S3 keys 0, collisions 0, disambiguation 0 tokens |
 | **V1. Equivalence** | Does audit execution match production paths bit-for-bit? | **true** | Mismatches: tokens=0, metrics=0 across 10000 ticks |
 | **V2. Truthfulness** | Do published metrics truthfully reflect raw tape events? | **true** | Violations: 0, zero-filled midpoints=0, synthetic time=0 |
 | **V3. Causality** | Are emissions causally isolated from future and other symbols? | **false** | Future leakage=true, cross-symbol contamination=true |
@@ -24,23 +24,23 @@ This report follows [the empirical audit contract](../hindsight/audit/AUDIT_CONT
 ### Stage 0: Declared mathematical contracts
 
 - Series checked: `7646`
-- Series with hard-domain breaches: `1299`
-- Breach observations: `252702`
+- Series with hard-domain breaches: `1289`
+- Breach observations: `161191`
 
 | Metric | Unit | Declared domain | Observed range | Breaches |
 | :--- | :---: | :---: | :---: | ---: |
-| `log_likelihood:poisson` | `nat` | `[0, +inf)` | `[-1346129.355, 141.999]` | 15836/15952 |
-| `log_likelihood:self_only` | `nat` | `[0, +inf)` | `[-1346111.155, 271.993]` | 14707/15952 |
-| `log_likelihood:hawkes` | `nat` | `[0, +inf)` | `[-1346111.156, 277.202]` | 14705/15952 |
-| `log_likelihood_per_event:hawkes` | `nat` | `[0, +inf)` | `[-20709.402, 4.265]` | 14705/15952 |
-| `count_innovation:sell` | `count` | `[0, +inf)` | `[-168248.432, 57.647]` | 8364/15952 |
-| `log_likelihood_gain_vs_self_only` | `nat` | `[0, +inf)` | `[-185.716, 264.693]` | 7305/15952 |
-| `log_likelihood_gain_per_event_vs_self_only` | `nat` | `[0, +inf)` | `[-2.857, 4.072]` | 7305/15952 |
-| `count_innovation:buy` | `count` | `[0, +inf)` | `[-1178132.992, 61.374]` | 6776/15952 |
 | `best_lag_correlation@COW/USD` | `correlation` | `[-1, 1]` | `[-2.251, 2.649]` | 1424/4592 |
 | `contemporaneous_correlation@COW/USD` | `correlation` | `[-1, 1]` | `[-2.251, 2.649]` | 1373/4592 |
 | `best_lag_correlation@LAPTOP/USD` | `correlation` | `[-1, 1]` | `[-2.876, 2.265]` | 1777/8542 |
 | `best_lag_correlation@HPOS10I/USD` | `correlation` | `[-1, 1]` | `[-2.040, 2.711]` | 1636/8114 |
+| `contemporaneous_correlation@HPOS10I/USD` | `correlation` | `[-1, 1]` | `[-2.027, 2.711]` | 1471/8114 |
+| `best_lag_correlation@ONE/USD` | `correlation` | `[-1, 1]` | `[-1.853, 1.969]` | 475/3048 |
+| `best_lag_correlation@SWARMS/USD` | `correlation` | `[-1, 1]` | `[-2.117, 2.510]` | 791/5700 |
+| `contemporaneous_correlation@SWARMS/USD` | `correlation` | `[-1, 1]` | `[-2.117, 2.510]` | 720/5700 |
+| `best_lag_correlation@BTC/USD` | `correlation` | `[-1, 1]` | `[-2.182, 3.427]` | 1701/14270 |
+| `best_lag_correlation@UNI/USD` | `correlation` | `[-1, 1]` | `[-1.255, 2.175]` | 1708/15583 |
+| `best_lag_correlation@GFI/USD` | `correlation` | `[-1, 1]` | `[-1.706, 2.376]` | 1238/11636 |
+| `best_lag_correlation@AVAX/USD` | `correlation` | `[-1, 1]` | `[-1.652, 2.282]` | 1590/15597 |
 
 > The audit reports the disagreement only. It does not infer a root cause or clamp the observation to fit the contract.
 
@@ -3357,12 +3357,12 @@ This report follows [the empirical audit contract](../hindsight/audit/AUDIT_CONT
 
 ### Stage 4: Held-out token dynamics & excitation strength
 
-- Held-out emissions: `5746` across `11` regions
-- Excitation strength: mean `7.314`, peak `58.204`, runner-up margin `6.467`
+- Held-out emissions: `5746` across `6` regions
+- Excitation strength: mean `16.487`, peak `111.313`, runner-up margin `14.409`
 - Active cell coverage: `100.0%` mean
-- Maximum observed token share: `62.0%`
-- Real transition entropy: `1.849` bits
-- Empirical dwell-block null mean: `1.899` bits
+- Maximum observed token share: `75.6%`
+- Real transition entropy: `1.146` bits
+- Empirical dwell-block null mean: `1.196` bits
 - Difference (null - real): `0.050` bits
 
 > The same causal Stream continues across the train/holdout boundary. The report does not turn an entropy difference into a PASS/FAIL cutoff.
@@ -3376,21 +3376,21 @@ This report follows [the empirical audit contract](../hindsight/audit/AUDIT_CONT
 ### Stage 5: Event-centred precursor populations
 
 #### 1. Statistical Separation
-- Detections: `731` (chop, down, flat, up, up_friction)
-- A->B Ignition: `MEASURED`, event/control `1309/3547`, JSD `0.012` vs null95 `0.004`
-- B->C Exhaustion: `MEASURED`, event/control `4110/4091`, JSD `0.002` vs null95 `0.001`
-- Supplemental non-excursion background observations: `1358`
+- Detections: `0` ()
+- A->B Ignition: `INSUFFICIENT_DATA`, event/control `0/0`, JSD `0.000` vs null95 `0.000`
+- B->C Exhaustion: `INSUFFICIENT_DATA`, event/control `0/0`, JSD `0.000` vs null95 `0.000`
+- Supplemental non-excursion background observations: `0`
 
 #### 2. Predictive Skill (Anticipation)
-- Balanced Accuracy: `54.4%` | MCC: `0.089`
-- Precision / Recall: `29.3%` / `80.0%`
-- Mutual Information (Predictive Gain): `0.009` bits
-- Prior Base Rate: `27.0%` | Top Precursor Tokens: `R09, R03, R11, R05`
+- Balanced Accuracy: `0.0%` | MCC: `0.000`
+- Precision / Recall: `0.0%` / `0.0%`
+- Mutual Information (Predictive Gain): `0.000` bits
+- Prior Base Rate: `0.0%` | Top Precursor Tokens: ``
 
 #### 3. Economic Relevance (Friction Clearance)
-- Evaluated Excursions: `239` | Round-Trip Taker Fee: `52.00` bps
-- Friction Clearance Rate: `49.0%` (`117` profitable / `122` unprofitable)
-- Gross Mean Return: `1.94%` | Net Mean Return after Fees: `1.42%`
+- Evaluated Excursions: `0` | Round-Trip Taker Fee: `0.00` bps
+- Friction Clearance Rate: `0.0%` (`0` profitable / `0` unprofitable)
+- Gross Mean Return: `0.00%` | Net Mean Return after Fees: `0.00%`
 
 > Current trading semantics are long-only: only profitable `up` excursions populate the positive A->B set. Event windows are loaded directly from the archive rather than requiring them to occur inside the first-N audit sample.
 
@@ -3398,19 +3398,17 @@ This report follows [the empirical audit contract](../hindsight/audit/AUDIT_CONT
 
 ### Stage 6: Cognitive Engine & Radix Trie Learning Dynamics
 
-- Evaluated excursions: `731` forming `675` sequential phases (enter: `105`, exit: `226`, wait: `344`)
-- Balanced accuracy: `31.7%` vs best baseline (`always_abstain`): `33.3%` (Raw hit rate: `253/675` `37.5%`)
-- Matthews Correlation Coefficient (MCC): `0.050`
-- Enter action precision / recall: `22.0%` / `10.5%`
-- Label-shuffled empirical null balanced accuracy: mean `32.8%`, 95th percentile `34.7%` (empirical p-value: `0.820`)
+- Evaluated excursions: `0` forming `0` sequential phases (enter: `0`, exit: `0`, wait: `0`)
+- Balanced accuracy: `0.0%` vs best baseline (``): `0.0%` (Raw hit rate: `0/0` `0.0%`)
+- Matthews Correlation Coefficient (MCC): `0.000`
+- Enter action precision / recall: `0.0%` / `0.0%`
+- Label-shuffled empirical null balanced accuracy: mean `0.0%`, 95th percentile `0.0%` (empirical p-value: `0.000`)
 - Separates from null: `false`
-- Post-teach memory retention: `406/675` (`60.1%`)
-- Trie topology: `5290` nodes, max depth `401`, mean depth `49.8`, branching factor `1.05`
-- Basin geometry: records `5289`, span `401`, active enter basins `38`, active exit basins `156` (total: `194`)
-- Decisiveness: abstention rate `47.9%`, mean confidence `0.269`, mean contrast `14.799`
-- Unseen background false-alarm rate: `41.75%` spurious triggers on continuous tape
-
-> ⚠️ **LEARNING DEFICIT:** Prequential balanced accuracy (31.7%) trails baseline policy (33.3%). Memory retention is at 60.1%.
+- Post-teach memory retention: `0/0` (`0.0%`)
+- Trie topology: `0` nodes, max depth `0`, mean depth `0.0`, branching factor `0.00`
+- Basin geometry: records `0`, span `0`, active enter basins `0`, active exit basins `0` (total: `0`)
+- Decisiveness: abstention rate `0.0%`, mean confidence `0.000`, mean contrast `0.000`
+- Unseen background false-alarm rate: `0.00%` spurious triggers on continuous tape
 
 > Prequential recall evaluates the trie strictly before learning each phase. Abstention is the appropriate stance on controls, not a terminal action. Shuffled null tests whether sequential prefix structure holds predictive edge over class priors.
 
@@ -3424,7 +3422,7 @@ This report follows [the empirical audit contract](../hindsight/audit/AUDIT_CONT
 - Tokens verified: `13703`
 - Token mismatches: `0`
 - Metric/brightness mismatches: `0`
-- Executable path: `/var/folders/30/bdbpd0hj5wddgkxyx8pbc0mc0000gn/T/go-build1744903866/b001/exe/main`
+- Executable path: `/var/folders/30/bdbpd0hj5wddgkxyx8pbc0mc0000gn/T/go-build3853982748/b001/exe/main`
 - Equivalence passed: `true`
 
 ### Validation 2: Metric Truthfulness
@@ -3438,7 +3436,7 @@ This report follows [the empirical audit contract](../hindsight/audit/AUDIT_CONT
 ### Validation 3: Causality & State Isolation
 
 - Future perturbation ticks: `5000`
-- Lookahead leakage detected: `true` (first divergence tick: `310457`, contaminated: `36706`)
+- Lookahead leakage detected: `true` (first divergence tick: `310457`, contaminated: `30355`)
 - Cross-symbol contamination: `true`
 - Epoch isolation passed: `true`
 - Causality passed: `false`
@@ -3450,14 +3448,14 @@ This report follows [the empirical audit contract](../hindsight/audit/AUDIT_CONT
 - Shuffling noise resilient: `true`
 - Sensitivity passed: `true`
 
-  - Family `liquidity`: Removed JSD = `0.002` bits (dominant: `false`)
-  - Family `leadlag`: Removed JSD = `0.313` bits (dominant: `false`)
-  - Family `pumpdump`: Removed JSD = `0.012` bits (dominant: `false`)
-  - Family `cvd`: Removed JSD = `0.086` bits (dominant: `false`)
-  - Family `hawkes`: Removed JSD = `0.043` bits (dominant: `false`)
-  - Family `morphology`: Removed JSD = `0.000` bits (dominant: `false`)
   - Family `correlation`: Removed JSD = `0.001` bits (dominant: `false`)
-  - Family `sentiment`: Removed JSD = `0.002` bits (dominant: `false`)
-  - Family `toxicity`: Removed JSD = `0.014` bits (dominant: `false`)
-  - Family `depthflow`: Removed JSD = `0.001` bits (dominant: `false`)
+  - Family `cvd`: Removed JSD = `0.026` bits (dominant: `false`)
+  - Family `morphology`: Removed JSD = `0.000` bits (dominant: `false`)
+  - Family `liquidity`: Removed JSD = `0.003` bits (dominant: `false`)
+  - Family `leadlag`: Removed JSD = `0.048` bits (dominant: `false`)
+  - Family `pumpdump`: Removed JSD = `0.020` bits (dominant: `false`)
+  - Family `hawkes`: Removed JSD = `0.007` bits (dominant: `false`)
+  - Family `sentiment`: Removed JSD = `0.016` bits (dominant: `false`)
+  - Family `toxicity`: Removed JSD = `0.006` bits (dominant: `false`)
+  - Family `depthflow`: Removed JSD = `0.007` bits (dominant: `false`)
 

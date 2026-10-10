@@ -17,7 +17,7 @@ Prediction is prior to the optional target's update, as owned by SquareRootRLS.
 Each arrival is *[]float64. A row of exactly dimension features is a query and
 never trains; a row of dimension+1 values carries the observed target as its
 last element. Prediction and update share one arrival path: each arrival
-yields SquareRootRLS's *[][]float64, whose row [0] {prediction, scale, degrees
+yields *[][]float64 projected from SquareRootRLS's Reading, whose row [0] {prediction, scale, degrees
 of freedom, predictive variance, ready, innovation, observed} is the
 prequential prediction prior to that row's optional update, and whose rows
 [1:] {beta, {noiseShape, noiseScale}, root...} are the committed posterior.
@@ -30,8 +30,6 @@ type RLS struct {
 	learner   core.Primitive
 	out       [][]float64
 	design    []float64
-	control   []float64
-	query     [2][]float64
 }
 
 /*
@@ -44,7 +42,6 @@ func NewRLS(dimension int, variance, lambda float64) core.Primitive {
 		dimension:      dimension,
 		lambda:         lambda,
 		learner:        algo.NewSquareRootRLS(variance),
-		control:        make([]float64, 2),
 	}
 
 	if dimension > 0 {
@@ -79,17 +76,16 @@ func (op *RLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			copy(op.design[1:], row[:op.dimension])
 
-			op.control[0] = op.lambda
-			op.query[0] = op.design
-			op.query[1] = op.control[:1]
+			query := algo.Query{Design: op.design, Lambda: op.lambda, Observed: observed}
 
 			if observed {
-				op.control[1] = row[op.dimension]
-				op.query[1] = op.control[:2]
+				query.Target = row[op.dimension]
 			}
 
-			for out := range op.learner.Next(data.NewValue(op.query).Next(nil)) {
-				op.out = *(*[][]float64)(out)
+			var reading *algo.Reading
+
+			for out := range op.learner.Next(data.NewValue(query).Next(nil)) {
+				reading = (*algo.Reading)(out)
 			}
 
 			if err := op.learner.Error(); err != nil {
@@ -97,9 +93,45 @@ func (op *RLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				return
 			}
 
+			if reading == nil {
+				op.Error(fmt.Errorf("%w: RLS learner yielded no reading", core.ErrShape))
+				return
+			}
+
+			op.project(reading)
+
 			if !yield(unsafe.Pointer(&op.out)) {
 				return
 			}
 		}
+	}
+}
+
+/*
+project lays one SquareRootRLS Reading out as the documented *[][]float64:
+the prior forecast in row [0], then beta, the noise posterior, and the root.
+*/
+func (op *RLS) project(reading *algo.Reading) {
+	ready, observed := 0.0, 0.0
+
+	if reading.Ready {
+		ready = 1
+	}
+
+	if reading.Observed {
+		observed = 1
+	}
+
+	op.out = append(op.out[:0],
+		[]float64{
+			reading.Prediction, reading.Scale, reading.DegreesOfFreedom,
+			reading.PredictiveVariance, ready, reading.Innovation, observed,
+		},
+		append([]float64(nil), reading.Beta...),
+		[]float64{reading.NoiseShape, reading.NoiseScale},
+	)
+
+	for _, row := range reading.Root {
+		op.out = append(op.out, append([]float64(nil), row...))
 	}
 }

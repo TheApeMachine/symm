@@ -48,12 +48,13 @@ func TestCVDSignalMetrics(t *testing.T) {
 				metrics = append(metrics, m.Metric.Raw)
 			}
 
-			// A symbol's first trade defines only its accounting: 17 values.
-			// Rates, responses, and baselines need an earlier trade; the
-			// trade's own price and qty stay on the trade frame.
-			So(len(metrics), ShouldEqual, 17)
+			// A symbol's first trade only seeds its volume clock: flow
+			// totals wait for a closed bar, and rates, responses, and
+			// baselines need an earlier trade. Nothing is defined yet.
+			So(len(metrics), ShouldEqual, 0)
 
 			for _, label := range []string{
+				"trade_count", "cumulative_volume_delta", "signed_net_fraction",
 				"trade_rate", "gross_notional_rate", "midpoint_log_return",
 				"signed_net_fraction_baseline", "gross_notional_rate_ratio",
 			} {

@@ -87,9 +87,6 @@ func TestCanonicalDimensions(t *testing.T) {
 			So(unit, ShouldEqual, UnitSecond)
 			So(timescale, ShouldEqual, TimescaleRollingWindow)
 
-			unit, timescale = CanonicalDimensions("cvd_epoch_from", "", "")
-			So(unit, ShouldEqual, UnitNanosecond)
-			So(timescale, ShouldEqual, TimescaleInstantaneous)
 		})
 
 		Convey("pattern fallbacks resolve unknown metrics by standard suffix", func() {
@@ -151,8 +148,8 @@ func TestSignalMetrics(t *testing.T) {
 
 			correlation, exists := SignalMetrics["correlation"]
 			So(exists, ShouldBeTrue)
-			So(correlation["signed_correlation"].Unit, ShouldEqual, UnitCorrelation)
-			So(correlation["signed_correlation"].Timescale, ShouldEqual, TimescaleRollingWindow)
+			So(correlation["covariance_score"].Unit, ShouldEqual, UnitCovarianceScore)
+			So(correlation["covariance_score"].Timescale, ShouldEqual, TimescaleRollingWindow)
 
 			cvd, exists := SignalMetrics["cvd"]
 			So(exists, ShouldBeTrue)

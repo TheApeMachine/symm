@@ -64,5 +64,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	return prior.Next(signal.Name(), frame.Metrics)
+	out := prior.Next(signal.Name(), frame.Metrics)
+
+	// The single-pair metrics describe the peer with the most overlapping
+	// data; the frame names it so they can be read against that peer.
+	if frame.Reference != "" {
+		out.SetMeta(data.MetadataReferencePeer, frame.Reference)
+	}
+
+	return out
 }

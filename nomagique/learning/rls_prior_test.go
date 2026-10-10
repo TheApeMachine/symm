@@ -12,21 +12,21 @@ import (
 func TestRlsPriorNext(t *testing.T) {
 	Convey("Given an affine design and a configured coefficient variance", t, func() {
 		node := algo.NewSquareRootRLS(9)
-		output := data.Read[[][]float64](node.Next(data.NewValue([2][]float64{
-			{1, 2, -3},
-			{1},
+		output := data.Read[algo.Reading](node.Next(data.NewValue(algo.Query{
+			Design: []float64{1, 2, -3},
+			Lambda: 1,
 		}).Next(nil)))
 
 		So(node.Error(), ShouldBeNil)
-		So(output[1], ShouldResemble, []float64{0, 0, 0})
-		So(output[3:], ShouldResemble, [][]float64{{3, 0, 0}, {0, 3, 0}, {0, 0, 3}})
+		So(output.Beta, ShouldResemble, []float64{0, 0, 0})
+		So(output.Root, ShouldResemble, [][]float64{{3, 0, 0}, {0, 3, 0}, {0, 0, 3}})
 
 		Convey("An invalid prior variance cannot create a model", func() {
 			rejected := algo.NewSquareRootRLS(-1)
 
-			for range rejected.Next(data.NewValue([2][]float64{
-				{1, 2, -3},
-				{1},
+			for range rejected.Next(data.NewValue(algo.Query{
+				Design: []float64{1, 2, -3},
+				Lambda: 1,
 			}).Next(nil)) {
 			}
 

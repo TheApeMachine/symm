@@ -387,6 +387,21 @@ func resolveImpliedUnit(name string, unit data.Unit) data.Unit {
 	return unit
 }
 
+/*
+isAbsoluteScore reports whether a metric is the magnitude of a covariance
+score, which is non-negative but unbounded above.
+*/
+func isAbsoluteScore(name string) bool {
+	base := name
+
+	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
+		base = base[:atIndex]
+	}
+
+	return strings.HasPrefix(base, "absolute_covariance_score") ||
+		strings.HasPrefix(base, "cohort_absolute_covariance_score")
+}
+
 func isAbsoluteCorrelation(name string) bool {
 	base := name
 
@@ -401,6 +416,10 @@ func isAbsoluteCorrelation(name string) bool {
 func declaredDomain(unit data.Unit, name ...string) string {
 	if len(name) > 0 && isAbsoluteCorrelation(name[0]) {
 		return "[0, 1]"
+	}
+
+	if len(name) > 0 && isAbsoluteScore(name[0]) {
+		return "[0, +inf)"
 	}
 
 	switch unit {
@@ -429,6 +448,13 @@ func contractViolation(unit data.Unit, value float64, name ...string) string {
 	if len(name) > 0 && isAbsoluteCorrelation(name[0]) {
 		if value < 0.0 || value > 1.0 {
 			return "domain_exceeded_[0,1]"
+		}
+		return ""
+	}
+
+	if len(name) > 0 && isAbsoluteScore(name[0]) {
+		if value < 0.0 {
+			return "negative_value_for_non_negative_unit"
 		}
 		return ""
 	}

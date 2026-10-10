@@ -6,10 +6,8 @@ import (
 	"math"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -77,11 +75,11 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookSource
+	books  broker.BookHistory
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
+func NewSignal(ctx context.Context, books broker.BookHistory) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: make(map[string]*symbolState),
@@ -112,20 +110,15 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	ok := false
 	crossed := false
 
-	signal.books.Book(prior.Label, func(book *spotbook.Book) {
-		if book == nil {
+	// The book as of this frame, not as the live book stands when the frame
+	// is processed.
+	signal.books.BookAt(prior.Label, prior.At, func(book *broker.BookView) {
+		if len(book.Bids) == 0 || len(book.Asks) == 0 {
 			return
 		}
 
-		bid := book.BestBid()
-		ask := book.BestAsk()
-
-		if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
-			return
-		}
-
-		bidPrice := kraken.Float64(bid.Price)
-		askPrice := kraken.Float64(ask.Price)
+		bidPrice := book.Bids[0].Price
+		askPrice := book.Asks[0].Price
 
 		if askPrice <= bidPrice {
 			crossed = true
@@ -137,37 +130,19 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		// The book keeps MaxDepth levels per side. A full side hides whatever
 		// lies beyond its worst level, so a price crossing that edge is a
 		// window change, not displayed flow.
-		fullBid = len(book.Bids.Levels) >= book.MaxDepth
-		fullAsk = len(book.Asks.Levels) >= book.MaxDepth
+		fullBid = book.FullBid
+		fullAsk = book.FullAsk
 
-		for cursor := bid; cursor != nil; cursor = cursor.Lower {
-			if cursor.Price == nil || cursor.Quantity == nil {
-				continue
+		for _, level := range book.Bids {
+			if level.Price > 0 && level.Quantity > 0 {
+				bids = append(bids, [2]float64{level.Price, level.Quantity})
 			}
-
-			price := kraken.Float64(cursor.Price)
-			qty := kraken.Float64(cursor.Quantity)
-
-			if price <= 0 || qty <= 0 {
-				continue
-			}
-
-			bids = append(bids, [2]float64{price, qty})
 		}
 
-		for cursor := ask; cursor != nil; cursor = cursor.Higher {
-			if cursor.Price == nil || cursor.Quantity == nil {
-				continue
+		for _, level := range book.Asks {
+			if level.Price > 0 && level.Quantity > 0 {
+				asks = append(asks, [2]float64{level.Price, level.Quantity})
 			}
-
-			price := kraken.Float64(cursor.Price)
-			qty := kraken.Float64(cursor.Quantity)
-
-			if price <= 0 || qty <= 0 {
-				continue
-			}
-
-			asks = append(asks, [2]float64{price, qty})
 		}
 
 		ok = len(bids) > 0 && len(asks) > 0

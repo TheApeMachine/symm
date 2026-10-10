@@ -33,6 +33,7 @@ const (
 	MetadataSupport       = "support"
 	MetadataDivergence    = "divergence"
 	MetadataNoiseVariance = "noise_variance"
+	MetadataReferencePeer = "reference_peer"
 )
 
 /*
@@ -111,13 +112,24 @@ func (measurement *Measurement) Next(
 		tick = measurement.Tick
 	}
 
+	// Each successor owns copies of the metadata entries, so SetMeta on one
+	// never rewrites its prior or a sibling built from the same prior.
+	metadata := make([]*StringEntry, 0, len(measurement.metadata)+1)
+
+	for _, entry := range measurement.metadata {
+		if entry != nil {
+			owned := *entry
+			metadata = append(metadata, &owned)
+		}
+	}
+
 	next := NewMeasurement(
 		measurement.Epoch,
 		measurement.Label,
 		source,
 		seqIdx,
 		tick,
-		measurement.metadata...,
+		metadata...,
 	)
 
 	next.At = measurement.At

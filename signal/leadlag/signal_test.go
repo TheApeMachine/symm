@@ -49,8 +49,8 @@ var summaryKeys = []string{
 	"best_lag_seconds_median",
 	"best_lag_seconds_mad",
 	"led_peer_share",
-	"correlation_gain_mean",
-	"correlation_gain_median",
+	"covariance_score_gain_mean",
+	"covariance_score_gain_median",
 }
 
 func TestLeadLagSignalMetrics(t *testing.T) {
@@ -131,7 +131,7 @@ func TestLeadLagSignalMetrics(t *testing.T) {
 				So(held, ShouldBeTrue)
 				So(spread, ShouldEqual, 0)
 
-				gain, held := metric(resETH, "correlation_gain_median")
+				gain, held := metric(resETH, "covariance_score_gain_median")
 				So(held, ShouldBeTrue)
 				So(gain, ShouldBeGreaterThan, 0)
 

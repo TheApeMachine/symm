@@ -4,16 +4,14 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"sync"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/signal/volumeclock"
 )
 
 type causalEstimator struct {
@@ -52,130 +50,8 @@ func (ce *causalEstimator) Step(value float64) (
 	return true, priorMean, residual, true, residual / math.Sqrt(priorM2/(priorCount-1))
 }
 
-/*
-retainedQuantities bounds the prior trade-quantity distribution the volume
-clock takes its median from, matching the retention of the other histories.
-*/
-const retainedQuantities = 256
-
-/*
-volumeBar is the open bar of the volume clock: its target Q* is fixed when it
-opens, from the median of the prior retained trade quantities.
-*/
-type volumeBar struct {
-	open       bool
-	target     float64
-	startNanos float64
-	fromMid    float64
-	quantity   float64
-	notional   float64
-	trades     float64
-}
-
-/*
-completedBar is one closed volume bar.
-*/
-type completedBar struct {
-	target, quantity, notional, trades float64
-	startNanos, duration               float64
-	fromMid, atMid                     float64
-}
-
-type volumeClock struct {
-	quantities    []float64
-	bar           volumeBar
-	completedBars float64
-	hasPrev       bool
-	prevAtNanos   float64
-}
-
-/*
-Step adds one trade to the clock and returns the bar it closed, if any.
-Every trade counts, including trades sharing a timestamp; a bar only closes
-once it has reached its target with positive elapsed duration. Without a prior
-quantity distribution no bar opens: the first trade only seeds it.
-*/
-func (clock *volumeClock) Step(price, qty, atNanos, midpoint float64) (
-	interval float64, hasInterval bool, closed completedBar, hasClosed bool,
-) {
-	if clock.hasPrev && atNanos > clock.prevAtNanos {
-		interval = (atNanos - clock.prevAtNanos) / 1e9
-		hasInterval = true
-	}
-
-	clock.hasPrev = true
-	clock.prevAtNanos = atNanos
-
-	if !clock.bar.open && len(clock.quantities) > 0 {
-		clock.bar = volumeBar{
-			open:       true,
-			target:     median(clock.quantities),
-			startNanos: atNanos,
-			fromMid:    midpoint,
-		}
-	}
-
-	if clock.bar.open {
-		clock.bar.quantity += qty
-		clock.bar.notional += price * qty
-		clock.bar.trades++
-
-		if clock.bar.quantity >= clock.bar.target && atNanos > clock.bar.startNanos {
-			bar := clock.bar
-			closed = completedBar{
-				target:     bar.target,
-				quantity:   bar.quantity,
-				notional:   bar.notional,
-				trades:     bar.trades,
-				startNanos: bar.startNanos,
-				duration:   (atNanos - bar.startNanos) / 1e9,
-				fromMid:    bar.fromMid,
-				atMid:      midpoint,
-			}
-			hasClosed = true
-			clock.completedBars++
-
-			// The next bar opens where this one closed, on the
-			// distribution that now includes this trade.
-			clock.quantities = append(clock.quantities, qty)
-			clock.bar = volumeBar{
-				open:       true,
-				target:     median(clock.quantities),
-				startNanos: atNanos,
-				fromMid:    midpoint,
-			}
-			clock.retain()
-
-			return interval, hasInterval, closed, hasClosed
-		}
-	}
-
-	clock.quantities = append(clock.quantities, qty)
-	clock.retain()
-
-	return interval, hasInterval, closed, hasClosed
-}
-
-func (clock *volumeClock) retain() {
-	if len(clock.quantities) > retainedQuantities {
-		clock.quantities = clock.quantities[len(clock.quantities)-retainedQuantities:]
-	}
-}
-
-func median(values []float64) float64 {
-	sorted := append([]float64(nil), values...)
-	sort.Float64s(sorted)
-	mid := len(sorted) / 2
-
-	if len(sorted)%2 == 1 {
-		return sorted[mid]
-	}
-
-	return (sorted[mid-1] + sorted[mid]) / 2
-}
-
 type symbolState struct {
-	clock              volumeClock
+	clock              volumeclock.Clock
 	notionalEstimator  causalEstimator
 	spreadEstimator    causalEstimator
 	midReturnEstimator causalEstimator
@@ -191,12 +67,12 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookSource
+	books  broker.BookHistory
 	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
+func NewSignal(ctx context.Context, books broker.BookHistory) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: make(map[string]*symbolState),
@@ -237,21 +113,15 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	var bid, ask float64
 	var hasBook bool
 
-	signal.books.Book(prior.Label, func(book *spotbook.Book) {
-		if book == nil {
+	// The book as of this frame, not as the live book stands when the frame
+	// is processed.
+	signal.books.BookAt(prior.Label, prior.At, func(book *broker.BookView) {
+		if !book.Complete || len(book.Bids) == 0 || len(book.Asks) == 0 {
 			return
 		}
 
-		b := book.BestBid()
-		a := book.BestAsk()
-
-		if b == nil || a == nil || b.Price == nil || a.Price == nil ||
-			b.Quantity == nil || a.Quantity == nil {
-			return
-		}
-
-		bid = kraken.Float64(b.Price)
-		ask = kraken.Float64(a.Price)
+		bid = book.Bids[0].Price
+		ask = book.Asks[0].Price
 		hasBook = true
 	})
 
@@ -330,8 +200,9 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 	}
 
-	interval, hasInterval, bar, closed := state.clock.Step(price, qty, atNanos, midpoint)
-	out["completed_bars"] = state.clock.completedBars
+	tick := state.clock.Step(price, qty, atNanos, midpoint)
+	interval, hasInterval, bar, closed := tick.Interval, tick.HasInterval, tick.Bar, tick.Closed
+	out["completed_bars"] = state.clock.CompletedBars
 
 	if hasInterval {
 		out["trade_interval_seconds"] = interval
@@ -341,15 +212,15 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	var hasNotionalZ bool
 
 	if closed {
-		notionalRate := bar.notional / bar.duration
+		notionalRate := bar.Notional / bar.Duration
 
-		out["volume_bar_quantity"] = bar.quantity
-		out["volume_bar_notional"] = bar.notional
-		out["volume_bar_trade_count"] = bar.trades
-		out["volume_bar_duration"] = bar.duration
-		out["volume_rate"] = bar.quantity / bar.duration
+		out["volume_bar_quantity"] = bar.Quantity
+		out["volume_bar_notional"] = bar.Notional
+		out["volume_bar_trade_count"] = bar.Trades
+		out["volume_bar_duration"] = bar.Duration
+		out["volume_rate"] = bar.Quantity / bar.Duration
 		out["notional_rate"] = notionalRate
-		out["trade_rate"] = bar.trades / bar.duration
+		out["trade_rate"] = bar.Trades / bar.Duration
 
 		// Positive rates are modeled multiplicatively: the baseline is the
 		// causal mean of the log rate.
@@ -373,13 +244,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		state.prevNotionalRate = notionalRate
 		state.hasPrevNotional = true
 
-		if bar.fromMid > 0 && bar.atMid > 0 {
-			midReturn := math.Log(bar.atMid / bar.fromMid)
+		if bar.FromMid > 0 && bar.AtMid > 0 {
+			midReturn := math.Log(bar.AtMid / bar.FromMid)
 
-			out["midpoint:from"] = bar.fromMid
-			out["midpoint:at"] = bar.atMid
+			out["midpoint:from"] = bar.FromMid
+			out["midpoint:at"] = bar.AtMid
 			out["midpoint_log_return"] = midReturn
-			out["midpoint_return_rate"] = midReturn / bar.duration
+			out["midpoint_return_rate"] = midReturn / bar.Duration
 			out["positive_midpoint_return"] = math.Max(midReturn, 0)
 			out["negative_midpoint_return"] = math.Max(-midReturn, 0)
 
@@ -411,7 +282,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	// A completed bar's metrics describe (bar open, this trade].
 	if closed {
-		res.From = time.Unix(0, int64(bar.startNanos)).UTC()
+		res.From = time.Unix(0, int64(bar.StartNanos)).UTC()
 	}
 
 	return res
