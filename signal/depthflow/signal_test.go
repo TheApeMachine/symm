@@ -12,6 +12,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -65,7 +66,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 		Convey("Level notionals, imbalances, resolution gap, and level-diff flow are exact", func() {
 			var prevBid, prevAsk, prevTotal float64
 
-			for step := 0; step < 10; step++ {
+			for step := 0; step < 14; step++ {
 				at := now.Add(time.Duration(step) * 100 * time.Millisecond)
 
 				bid1Price, bid1Qty := 50000.0, 2.0+float64(step)*0.1
@@ -143,9 +144,10 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 					So(res.From, ShouldEqual, at.Add(-100*time.Millisecond))
 				}
 
-				// A z-score needs a positive prior dispersion: two samples.
+				// A z-score needs core.MinimumPrior prior samples with
+				// positive dispersion.
 				_, scored := metric(res, "book_imbalance_zscore")
-				So(scored, ShouldEqual, step >= 2)
+				So(scored, ShouldEqual, float64(step) >= core.MinimumPrior)
 
 				prevBid, prevAsk, prevTotal = obsBid, obsAsk, total
 			}

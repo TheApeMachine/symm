@@ -12,110 +12,25 @@ descriptive statistics into arbitrary health verdicts.
 func GenerateSummaryMarkdown(report *AuditReport) string {
 	var sb strings.Builder
 
-	overall := "AUDIT MEASURED"
-	if report.Timing.Status == "INSUFFICIENT_DATA" ||
-		report.Vitality.Status == "INSUFFICIENT_DATA" ||
-		report.Sympathy.Status == "INSUFFICIENT_DATA" ||
-		report.GridStability.Status == "INSUFFICIENT_DATA" ||
-		report.TokenDynamics.Status == "INSUFFICIENT_DATA" ||
-		report.Precursor.IgnitionHypothesis.Status == "INSUFFICIENT_DATA" ||
-		report.CognitiveTrie.Status == "INSUFFICIENT_DATA" {
-		overall = "INCOMPLETE EVIDENCE"
-	}
-
-	if !report.Contract.Passed {
-		overall = "CONTRACT_BREACHES PRESENT"
-	}
-
 	sb.WriteString("# SYMM Pipeline Empirical Audit\n\n")
 	sb.WriteString(fmt.Sprintf(
 		"**State:** %s | **Epoch:** `%d` | **Symbol:** `%s` | **Ticks:** `%d` | **Generated:** `%s`\n\n",
-		overall, report.Epoch, report.Symbol, report.TotalTicks, report.Timestamp,
+		report.Overall, report.Epoch, report.Symbol, report.TotalTicks, report.Timestamp,
 	))
-	sb.WriteString("This report follows [the empirical audit contract](../hindsight/audit/AUDIT_CONTRACT.md): hard mathematical contracts may fail; descriptive stages report measurements; missing evidence is explicit.\n\n")
+	sb.WriteString("Only VALID and SUPPORTED are passes. MEASURED is descriptive, NOT_A_TEST cannot fail by construction, INSUFFICIENT_DATA means not evaluated.\n\n")
+	sb.WriteString(fmt.Sprintf(
+		"Thresholds: significance `%.2f`, latency spike `%.0fms` on at most `%.0f%%`, dominance `%.2f` bits, duplication `%.2f` bits.\n\n",
+		report.Thresholds.Significance, report.Thresholds.SpikeLatencyMs, report.Thresholds.SpikeFraction*100,
+		report.Thresholds.DominanceJSD, report.Thresholds.DuplicationJSD,
+	))
+	sb.WriteString("| Stage | Verdict | Criterion | Evidence |\n")
+	sb.WriteString("| :--- | :---: | :--- | :--- |\n")
 
-	sb.WriteString("| Stage | Question | Experiment state | Observation |\n")
-	sb.WriteString("| :--- | :--- | :---: | :--- |\n")
+	for _, row := range report.Verdicts {
+		sb.WriteString(fmt.Sprintf("| **%s** | **%s** | %s | %s |\n", row.Stage, row.Verdict, row.Criterion, row.Evidence))
+	}
 
-	contractStatus := "VALID"
-	if !report.Contract.Passed {
-		contractStatus = "CONTRACT_BREACH"
-	}
-	sb.WriteString(fmt.Sprintf(
-		"| **0. Contracts** | Do declared hard domains hold? | **%s** | %d/%d series breached (%d observations) |\n",
-		contractStatus, report.Contract.BreachingMetricsCount,
-		report.Contract.TotalMetricsChecked, report.Contract.TotalBreaches,
-	))
-	sb.WriteString(fmt.Sprintf(
-		"| **0.5 Timing** | Is ingestion clock synchronized and monotonic? | **%s** | Mean drift %.1fms (p95 %.1fms); %d spikes; %d sequence inversions |\n",
-		report.Timing.Status, report.Timing.MeanDriftMs,
-		report.Timing.P95DriftMs, report.Timing.LatencySpikes,
-		report.Timing.SequenceInversions,
-	))
-	sb.WriteString(fmt.Sprintf(
-		"| **1. Vitality** | What raw/canonical evidence actually exists? | **%s** | %d raw series; %d canonical cells; %d constant canonical cells |\n",
-		report.Vitality.Status, report.Vitality.RawProducerMetrics,
-		report.Vitality.CanonicalGridCells, report.Vitality.CanonicalDeadCells,
-	))
-	sb.WriteString(fmt.Sprintf(
-		"| **2. Sympathy** | Do observed deformations relate beyond a mask-preserving shuffled null? | **%s** | %d pairs; |null| p95 %.3f; %.1f%% real |r| above it; KS %.3f |\n",
-		report.Sympathy.Status, report.Sympathy.TotalPairs,
-		report.Sympathy.NullDistribution.Percentile95,
-		report.Sympathy.SeparationRatio*100, report.Sympathy.KSStatistic,
-	))
-	sb.WriteString(fmt.Sprintf(
-		"| **3. Grid reproducibility** | Do disjoint periods recover the same co-memberships and stationary excitation? | **%s** | ARI %.3f (deterministic); Overlap %.1f%%; JSD %.3f bits (stationary: %t) |\n",
-		report.GridStability.Status, report.GridStability.AdjustedRandIdx,
-		report.GridStability.OverlapFraction*100, report.GridStability.DistributionJSD, report.GridStability.IsStationary,
-	))
-	sb.WriteString(fmt.Sprintf(
-		"| **4. Token dynamics** | What does a frozen grid emit on unseen tape? | **%s** | %d raw (%d compressed, stay %.1f%%); Raw H=%.3f; Comp H=%.3f |\n",
-		report.TokenDynamics.Status, report.TokenDynamics.TotalEmissions,
-		report.TokenDynamics.CompressedEmissions, report.TokenDynamics.AlwaysStayAccuracy*100,
-		report.TokenDynamics.TransitionEntropy, report.TokenDynamics.CompressedTransitionEntropy,
-	))
-	sb.WriteString(fmt.Sprintf(
-		"| **5. Precursors** | Statistical separation, predictive skill & economic friction clearance | **%s** | JSD %.3fb; BalAcc %.1f%% (MCC %.3f); Friction Clearance %.1f%% (N=%d) |\n",
-		report.Precursor.IgnitionHypothesis.Status,
-		report.Precursor.IgnitionHypothesis.DivergenceBits,
-		report.Precursor.PredictiveSkill.BalancedAccuracy*100,
-		report.Precursor.PredictiveSkill.MCC,
-		report.Precursor.EconomicRelevance.FrictionClearanceRate*100,
-		report.Precursor.EconomicRelevance.EvaluatedExcursions,
-	))
-	sb.WriteString(fmt.Sprintf(
-		"| **6. Cognitive Trie & S3 Memory** | Does associative memory disambiguate and beat baselines? | **%s** | Balanced Acc %.1f%% (vs baseline %.1f%%); S3 keys %d, collisions %d, disambiguation %d tokens |\n",
-		report.CognitiveTrie.Status,
-		report.CognitiveTrie.Skill.BalancedAccuracy*100,
-		report.CognitiveTrie.Skill.BaselineBalancedAccuracy*100,
-		report.CognitiveTrie.S3Memory.TotalPrefixKeys,
-		report.CognitiveTrie.S3Memory.PrefixCollisions,
-		report.CognitiveTrie.S3Memory.TimeToDisambiguation,
-	))
-	if report.Equivalence != nil {
-		sb.WriteString(fmt.Sprintf(
-			"| **V1. Equivalence** | Does audit execution match production paths bit-for-bit? | **%t** | Mismatches: tokens=%d, metrics=%d across %d ticks |\n",
-			report.Equivalence.Passed, report.Equivalence.TokenMismatches, report.Equivalence.MetricMismatches, report.Equivalence.TotalTicksReplayed,
-		))
-	}
-	if report.Truthfulness != nil {
-		sb.WriteString(fmt.Sprintf(
-			"| **V2. Truthfulness** | Do published metrics truthfully reflect raw tape events? | **%t** | Violations: %d, zero-filled midpoints=%d, synthetic time=%d |\n",
-			report.Truthfulness.Passed, report.Truthfulness.ViolationsCount, report.Truthfulness.ZeroFilledMidpoints, report.Truthfulness.SyntheticTimeSteps,
-		))
-	}
-	if report.Causality != nil {
-		sb.WriteString(fmt.Sprintf(
-			"| **V3. Causality** | Are emissions causally isolated from future and other symbols? | **%t** | Future leakage=%t, cross-symbol contamination=%t |\n",
-			report.Causality.Passed, report.Causality.LeakageDetected, report.Causality.CrossSymbolLeakage,
-		))
-	}
-	if report.Sensitivity != nil {
-		sb.WriteString(fmt.Sprintf(
-			"| **V4. Sensitivity** | Does grid resist dominance and retain balanced confluence? | **%t** | Families tested: %d, duplication-resistant=%t |\n\n",
-			report.Sensitivity.Passed, len(report.Sensitivity.FamiliesTested), report.Sensitivity.DuplicationResistant,
-		))
-	}
+	sb.WriteString("\n")
 
 	sb.WriteString("---\n\n")
 	sb.WriteString("### Stage 0: Declared mathematical contracts\n\n")
@@ -146,7 +61,7 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 	sb.WriteString(fmt.Sprintf(
 		"- Observations checked: `%d`\n"+
 			"- Ingestion latency (Timestamp - At): mean `%.1fms`, p95 `%.1fms`, max `%.1fms`\n"+
-			"- Latency spikes (>200ms or 5x median): `%d`\n"+
+			"- Latency spikes: `%d`\n"+
 			"- Sequence inversions (timestamp regressions): `%d`\n"+
 			"- Feed status: `%s`\n\n",
 		report.Timing.TotalChecked,
@@ -386,13 +301,13 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 				"- Token mismatches: `%d`\n"+
 				"- Metric/brightness mismatches: `%d`\n"+
 				"- Executable path: `%s`\n"+
-				"- Equivalence passed: `%t`\n\n",
+				"- Verdict: `%s` (one code path compared with itself)\n\n",
 			report.Equivalence.TotalTicksReplayed,
 			report.Equivalence.TotalTokensChecked,
 			report.Equivalence.TokenMismatches,
 			report.Equivalence.MetricMismatches,
 			report.Equivalence.ExecutablePath,
-			report.Equivalence.Passed,
+			report.Equivalence.Status,
 		))
 	}
 
@@ -401,14 +316,18 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		sb.WriteString(fmt.Sprintf(
 			"- Measurements audited: `%d`\n"+
 				"- Physical invariant violations: `%d`\n"+
-				"- Zero-filled midpoints/microprices: `%d`\n"+
-				"- Synthetic constant time-steps: `%d`\n"+
-				"- Truthfulness passed: `%t`\n\n",
+				"- Same-time ambiguous trades skipped: `%d`\n"+
+				"- Comparisons per check: `%v`\n"+
+				"- Violations per check: `%v`\n"+
+				"- Unexercised checks: `%v`\n"+
+				"- Verdict: `%s`\n\n",
 			report.Truthfulness.TotalChecked,
 			report.Truthfulness.ViolationsCount,
-			report.Truthfulness.ZeroFilledMidpoints,
-			report.Truthfulness.SyntheticTimeSteps,
-			report.Truthfulness.Passed,
+			report.Truthfulness.AmbiguousTrades,
+			report.Truthfulness.Comparisons,
+			report.Truthfulness.ViolationsByCheck,
+			report.Truthfulness.UnexercisedChecks,
+			report.Truthfulness.Status,
 		))
 	}
 
@@ -416,17 +335,17 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		sb.WriteString("### Validation 3: Causality & State Isolation\n\n")
 		sb.WriteString(fmt.Sprintf(
 			"- Future perturbation ticks: `%d`\n"+
-				"- Lookahead leakage detected: `%t` (first divergence tick: `%d`, contaminated: `%d`)\n"+
+				"- Lookahead leakage detected: `%t` (compared: `%d`, contaminated: `%d`)\n"+
 				"- Cross-symbol contamination: `%t`\n"+
 				"- Epoch isolation passed: `%t`\n"+
-				"- Causality passed: `%t`\n\n",
+				"- Verdict: `%s`\n\n",
 			report.Causality.FuturePerturbationTicks,
 			report.Causality.LeakageDetected,
-			report.Causality.FirstDivergenceTick,
+			report.Causality.ComparedObservations,
 			report.Causality.ContaminatedCount,
 			report.Causality.CrossSymbolLeakage,
 			report.Causality.EpochIsolationPassed,
-			report.Causality.Passed,
+			report.Causality.Status,
 		))
 	}
 
@@ -435,12 +354,10 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		sb.WriteString(fmt.Sprintf(
 			"- Families evaluated (LOFO): `%d`\n"+
 				"- Duplication resistant: `%t`\n"+
-				"- Shuffling noise resilient: `%t`\n"+
-				"- Sensitivity passed: `%t`\n\n",
+				"- Verdict: `%s`\n\n",
 			len(report.Sensitivity.FamiliesTested),
 			report.Sensitivity.DuplicationResistant,
-			report.Sensitivity.ShuffledNoiseResilient,
-			report.Sensitivity.Passed,
+			report.Sensitivity.Status,
 		))
 		for _, f := range report.Sensitivity.FamiliesTested {
 			sb.WriteString(fmt.Sprintf("  - Family `%s`: Removed JSD = `%.3f` bits (dominant: `%t`)\n", f.Family, f.RemovedJSD, f.IsDominant))

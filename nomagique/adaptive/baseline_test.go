@@ -5,6 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -21,6 +22,20 @@ func TestBaseline(t *testing.T) {
 
 		more := tests.CollectSeq[adaptive.BaselineReading](baseline.Next(transport.NewValues(7.0).Next(nil)))
 		So(more[0].Mean, ShouldEqual, 4)
+	})
+
+	Convey("A z-score waits for core.MinimumPrior prior samples", t, func() {
+		baseline := adaptive.NewBaseline(adaptive.NewWindow())
+		readings := tests.CollectSeq[adaptive.BaselineReading](baseline.Next(
+			transport.NewValues(0.0, 2.0, 0.0, 2.0, 0.0, 2.0, 0.0, 2.0, 0.0, 2.0, 1.0).Next(nil),
+		))
+
+		So(baseline.Error(), ShouldBeNil)
+		So(readings, ShouldHaveLength, 11)
+
+		for idx, reading := range readings {
+			So(reading.ScoreScale > 0, ShouldEqual, float64(idx) >= core.MinimumPrior)
+		}
 	})
 
 	Convey("A baseline starts with span 1 and expands adaptively", t, func() {

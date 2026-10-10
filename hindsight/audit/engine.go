@@ -30,6 +30,9 @@ type AuditOptions struct {
 	OutputDir    string
 	NoPlots      bool
 	TakerFee     float64
+	// Thresholds are the named decision parameters; the zero value means
+	// DefaultThresholds.
+	Thresholds Thresholds
 }
 
 /*
@@ -60,6 +63,12 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	if opts.OutputDir == "" {
 		opts.OutputDir = "audit_results"
 	}
+
+	if opts.Thresholds == (Thresholds{}) {
+		opts.Thresholds = DefaultThresholds()
+	}
+
+	alpha := opts.Thresholds.Significance
 
 	if err := os.MkdirAll(opts.OutputDir, 0755); err != nil {
 		return nil, errnie.Error(errnie.Err(errnie.IO, "[audit] failed to create output directory", err))
@@ -111,13 +120,13 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	// Stage 0: Metric Contract Integrity
 	stage0Start := time.Now()
 	errnie.Info("[audit] [2/7 Stage 0] Evaluating Metric Contract Integrity...")
-	contract := AnalyzeContract(allMeasurements)
+	contract := AnalyzeContract(allMeasurements, alpha)
 	errnie.Info(fmt.Sprintf("[audit] [2/7 Stage 0] Completed in %s: %s", time.Since(stage0Start).Round(time.Millisecond), contract.SummaryText))
 
 	// Stage 0.5: Microstructure Timing & Synchronization
 	stage05Start := time.Now()
 	errnie.Info("[audit] [2.5/7 Stage 0.5] Evaluating Microstructure Timing & Ingress Sequencing...")
-	timing := AnalyzeTiming(allMeasurements)
+	timing := AnalyzeTiming(allMeasurements, opts.Thresholds)
 	errnie.Info(fmt.Sprintf("[audit] [2.5/7 Stage 0.5] Completed in %s: %s", time.Since(stage05Start).Round(time.Millisecond), timing.SummaryText))
 
 	// Stage 1: Metric Vitality & Redundancy
@@ -129,13 +138,13 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	// Stage 2: Pair Sympathy & Permutation Null (evaluated on zero-centered deformations)
 	stage2Start := time.Now()
 	errnie.Info(fmt.Sprintf("[audit] [4/7 Stage 2] Evaluating Pair Sympathy vs %d-iteration Permutation Null...", opts.Permutations))
-	sympathy := AnalyzeSympathy(orderedTicks, canonicalSeries, vitality.CanonicalCells, opts.Permutations)
+	sympathy := AnalyzeSympathy(orderedTicks, canonicalSeries, vitality.CanonicalCells, opts.Permutations, alpha)
 	errnie.Info(fmt.Sprintf("[audit] [4/7 Stage 2] Completed in %s: %s", time.Since(stage2Start).Round(time.Millisecond), sympathy.SummaryText))
 
 	// Stage 3: Grid Partitioning & Temporal Stability (cross-chronological split)
 	stage3Start := time.Now()
 	errnie.Info(fmt.Sprintf("[audit] [5/7 Stage 3] Developing Disjoint Grids & Measuring Temporal Partition Stability across %d ticks...", len(orderedTicks)))
-	stability := AnalyzeGridStability(orderedTicks, tickMeasurements, vitality.CanonicalCells, opts.Permutations)
+	stability := AnalyzeGridStability(orderedTicks, tickMeasurements, vitality.CanonicalCells, opts.Permutations, alpha)
 	errnie.Info(fmt.Sprintf("[audit] [5/7 Stage 3] Completed in %s: %s", time.Since(stage3Start).Round(time.Millisecond), stability.SummaryText))
 
 	// Stage 4: Token Dynamics on Unseen Data (train 60%, evaluate on held-out 40%)
@@ -149,7 +158,7 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	errnie.Info(fmt.Sprintf("[audit] [6/7 Stage 4] Replaying Held-Out Tape (%d unseen ticks): Token Dynamics & Region Excitation...", len(unseenTicks)))
 	frozenGrid := store.NewGrid()
 
-	dynamics := AnalyzeTokenDynamics(frozenGrid, unseenTicks, tickMeasurements, opts.Permutations)
+	dynamics := AnalyzeTokenDynamics(frozenGrid, unseenTicks, tickMeasurements, opts.Permutations, alpha)
 	errnie.Info(fmt.Sprintf("[audit] [6/7 Stage 4] Completed in %s: %s", time.Since(stage4Start).Round(time.Millisecond), dynamics.SummaryText))
 
 	// Stage 5: Precursor Informativeness (A->B Ignition and B->C Exhaustion)
@@ -170,15 +179,34 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	}
 
 	precursor := AnalyzePrecursorSeparation(
-		ctx, catalog, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, detections, opts.TakerFee,
+		ctx, catalog, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, alpha, detections, opts.TakerFee,
 	)
+	// Hypothesis tests on detections made at another fee than declared test
+	// other excursions than the report claims.
+	precursor.FeeProvenance = checkFeeProvenance(detections, opts.TakerFee)
+
+	if !precursor.FeeProvenance.Consistent && len(detections) > 0 {
+		for _, status := range []*string{
+			&precursor.Status, &precursor.IgnitionHypothesis.Status,
+			&precursor.ExhaustionHypothesis.Status, &precursor.PredictiveSkill.Status,
+		} {
+			*status = VerdictInvalid
+		}
+
+		precursor.Passed = false
+		precursor.IgnitionHypothesis.Passed = false
+		precursor.ExhaustionHypothesis.Passed = false
+		precursor.PredictiveSkill.Passed = false
+	}
+
+	precursor.SummaryText += " Fee provenance: " + precursor.FeeProvenance.SummaryText + "."
 	errnie.Info(fmt.Sprintf("[audit] [7/7 Stage 5] Completed in %s: %s", time.Since(stage5Start).Round(time.Millisecond), precursor.SummaryText))
 
 	// Stage 6: Cognitive Engine & Radix Trie Learning Dynamics
 	stage6Start := time.Now()
 	errnie.Info(fmt.Sprintf("[audit] [Bonus Stage 6] Auditing Cognitive Engine & Radix Trie Dynamics (%d detections, %d permutations)...", len(detections), opts.Permutations))
 	cognitive := AnalyzeCognitiveTrie(
-		ctx, catalog, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, detections, opts.TakerFee,
+		ctx, catalog, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, alpha, detections, opts.TakerFee,
 	)
 	errnie.Info(fmt.Sprintf("[audit] [Bonus Stage 6] Completed in %s: %s", time.Since(stage6Start).Round(time.Millisecond), cognitive.SummaryText))
 
@@ -191,7 +219,13 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	// Validation 2: Metric Truthfulness
 	truthStart := time.Now()
 	errnie.Info("[audit] [Validation 2/4] Auditing Metric Truthfulness...")
-	truthfulness := AnalyzeTruthfulness(allMeasurements)
+	trades, tradeErr := loadSampleTrades(ctx, catalog, targetEpoch, orderedTicks, allMeasurements)
+
+	if tradeErr != nil {
+		return nil, errnie.Error(tradeErr)
+	}
+
+	truthfulness := AnalyzeTruthfulness(trades, allMeasurements)
 	errnie.Info(fmt.Sprintf("[audit] [Validation 2/4] Completed in %s: %s", time.Since(truthStart).Round(time.Millisecond), truthfulness.SummaryText))
 
 	// Validation 3: Causality & State Isolation
@@ -203,12 +237,8 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	// Validation 4: Grid Sensitivity & Family Dependence
 	sensStart := time.Now()
 	errnie.Info("[audit] [Validation 4/4] Auditing Grid Sensitivity & Family Dependence...")
-	sensitivity := AnalyzeGridSensitivity(fullGrid, orderedTicks, tickMeasurements)
+	sensitivity := AnalyzeGridSensitivity(fullGrid, orderedTicks, tickMeasurements, opts.Thresholds)
 	errnie.Info(fmt.Sprintf("[audit] [Validation 4/4] Completed in %s: %s", time.Since(sensStart).Round(time.Millisecond), sensitivity.SummaryText))
-
-	overallHealthy := contract.Passed && timing.Passed && vitality.Passed && sympathy.Passed &&
-		stability.Passed && dynamics.Passed && precursor.Passed && cognitive.Passed &&
-		equivalence.Passed && truthfulness.Passed && causality.Passed && sensitivity.Passed
 
 	reportSymbol := opts.Symbol
 	if reportSymbol == "" {
@@ -216,24 +246,28 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	}
 
 	report := &AuditReport{
-		Timestamp:      time.Now().UTC().Format(time.RFC3339),
-		Epoch:          targetEpoch,
-		Symbol:         reportSymbol,
-		TotalTicks:     len(orderedTicks),
-		Contract:       contract,
-		Timing:         timing,
-		Vitality:       vitality,
-		Sympathy:       sympathy,
-		GridStability:  stability,
-		TokenDynamics:  dynamics,
-		Precursor:      precursor,
-		CognitiveTrie:  cognitive,
-		Equivalence:    &equivalence,
-		Truthfulness:   &truthfulness,
-		Causality:      &causality,
-		Sensitivity:    &sensitivity,
-		OverallHealthy: overallHealthy,
+		Timestamp:     time.Now().UTC().Format(time.RFC3339),
+		Epoch:         targetEpoch,
+		Symbol:        reportSymbol,
+		TotalTicks:    len(orderedTicks),
+		Contract:      contract,
+		Timing:        timing,
+		Vitality:      vitality,
+		Sympathy:      sympathy,
+		GridStability: stability,
+		TokenDynamics: dynamics,
+		Precursor:     precursor,
+		CognitiveTrie: cognitive,
+		Equivalence:   &equivalence,
+		Truthfulness:  &truthfulness,
+		Causality:     &causality,
+		Sensitivity:   &sensitivity,
+		Thresholds:    opts.Thresholds,
 	}
+
+	report.Verdicts = BuildVerdicts(report)
+	report.Overall = OverallState(report.Verdicts)
+	report.OverallHealthy = report.Overall == "ALL TESTS PASSED"
 
 	errnie.Info(fmt.Sprintf("[audit] All stages computed in %s. Saving artifacts...", time.Since(auditStart).Round(time.Second)))
 
@@ -337,15 +371,19 @@ func ingestMetrics(
 
 		_, batches, err := tbl.Scan(scanOpts...).ReadTasks(s3Ctx, tasks[taskIndex:endIndex])
 
+		// A dropped chunk would silently thin the sample every later stage
+		// measures, so any read failure ends the audit.
 		if err != nil {
-			errnie.Warn(fmt.Sprintf("[audit] failed to read tasks chunk %d-%d: %s", taskIndex, endIndex, err))
-			continue
+			return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(
+				errnie.BadGateway, fmt.Sprintf("[audit] failed to read tasks chunk %d-%d", taskIndex, endIndex), err,
+			))
 		}
 
 		for batch, batchErr := range batches {
 			if batchErr != nil {
-				errnie.Warn(fmt.Sprintf("[audit] skipping corrupted batch in measurements: %s", batchErr))
-				continue
+				return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(
+					errnie.BadGateway, "[audit] corrupted measurement batch", batchErr,
+				))
 			}
 
 			if batch != nil {
@@ -353,8 +391,9 @@ func ingestMetrics(
 				batch.Release()
 
 				if readErr != nil {
-					errnie.Warn(fmt.Sprintf("[audit] skipping unreadable measurement batch: %s", readErr))
-					continue
+					return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(
+						errnie.BadGateway, "[audit] unreadable measurement batch", readErr,
+					))
 				}
 
 				for _, meas := range measurements {
@@ -433,10 +472,11 @@ func ingestMetrics(
 					continue
 				}
 
-				name := entry.Metric.Label
-				if name == "checksum" {
+				if entry.Metric.Label == "checksum" {
 					continue
 				}
+
+				name := seriesKey(meas.Source, meas.Label, entry.Metric.Label)
 
 				if rawSeries[name] == nil {
 					rawSeries[name] = make(map[int64]float64)
@@ -465,7 +505,7 @@ func ingestMetrics(
 					continue
 				}
 
-				key := fmt.Sprintf("%s:%s", m.Source, entry.Key)
+				key := seriesKey(m.Source, m.Label, entry.Key)
 
 				if canonicalSeries[key] == nil {
 					canonicalSeries[key] = make(map[int64]float64)
@@ -495,4 +535,61 @@ func renderVisualizations(jsonPath, outputDir string) error {
 	cmd.Stderr = os.Stderr
 
 	return cmd.Run()
+}
+
+/*
+loadSampleTrades reads the stored spot:trade tape of every symbol in the
+sample from the start of the epoch through the sample's last tick, so each
+sampled trade has its true predecessor. A read failure fails the audit.
+*/
+func loadSampleTrades(
+	ctx context.Context,
+	catalog *tables.Catalog,
+	epoch int64,
+	ticks []int64,
+	measurements []*data.Measurement,
+) ([]*data.Measurement, error) {
+	if len(ticks) == 0 {
+		return nil, nil
+	}
+
+	symbolSet := make(map[string]struct{})
+
+	for _, m := range measurements {
+		if m != nil && m.Source == "cvd" {
+			symbolSet[m.Label] = struct{}{}
+		}
+	}
+
+	if len(symbolSet) == 0 {
+		return nil, nil
+	}
+
+	symbols := make([]string, 0, len(symbolSet))
+
+	for symbol := range symbolSet {
+		symbols = append(symbols, symbol)
+	}
+
+	slices.Sort(symbols)
+
+	filter := iceberg.NewAnd(
+		iceberg.NewAnd(
+			iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
+			iceberg.IsIn(iceberg.Reference("label"), symbols...),
+		),
+		iceberg.LessThanEqual(iceberg.Reference("tick"), ticks[len(ticks)-1]),
+	)
+
+	var trades []*data.Measurement
+
+	for trade, err := range catalog.Scan(ctx, tables.Measurements, epoch, filter, 0) {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[audit] failed to read the trade tape", err))
+		}
+
+		trades = append(trades, trade)
+	}
+
+	return trades, nil
 }

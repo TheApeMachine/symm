@@ -5,6 +5,7 @@ import (
 	"math"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -57,8 +58,10 @@ func AnalyzeVitality(
 		CanonicalCells:         canonicalStats,
 		RedundantPairs:         redundantPairs,
 		SummaryText:            summary,
-		Status:                 "MEASURED",
-		Passed:                 len(canonicalStats) > 0,
+		// Coverage and redundancy are observations (AUDIT_CONTRACT.md); this
+		// stage reports them and claims nothing.
+		Status: VerdictMeasured,
+		Passed: false,
 	}
 }
 
@@ -185,6 +188,10 @@ func findCanonicalRedundantPairs(
 		return nil
 	}
 
+	// Redundancy is a question about one instrument's metrics; series of two
+	// symbols are compared only by the correlation signal itself.
+	groups := symbolGroups(healthyNames)
+
 	dense := make([]denseVector, totalHealthy)
 	for index, name := range healthyNames {
 		ser := series[name]
@@ -219,23 +226,25 @@ func findCanonicalRedundantPairs(
 			defer wg.Done()
 			local := make([]RedundantPair, 0)
 
-			for first := workerID; first < totalHealthy; first += workers {
-				vecA := dense[first]
+			for groupIndex := workerID; groupIndex < len(groups); groupIndex += workers {
+				for firstAt, first := range groups[groupIndex] {
+					vecA := dense[first]
 
-				for second := first + 1; second < totalHealthy; second++ {
-					vecB := dense[second]
-					corr, ok := denseCorrelation(vecA.values, vecA.present, vecB.values, vecB.present)
+					for _, second := range groups[groupIndex][firstAt+1:] {
+						vecB := dense[second]
+						corr, ok := denseCorrelation(vecA.values, vecA.present, vecB.values, vecB.present)
 
-					if !ok {
-						continue
-					}
+						if !ok {
+							continue
+						}
 
-					if math.Abs(corr) >= 0.95 {
-						local = append(local, RedundantPair{
-							MetricA:     vecA.name,
-							MetricB:     vecB.name,
-							Correlation: corr,
-						})
+						if math.Abs(corr) >= 0.95 {
+							local = append(local, RedundantPair{
+								MetricA:     vecA.name,
+								MetricB:     vecB.name,
+								Correlation: corr,
+							})
+						}
 					}
 				}
 			}
@@ -339,4 +348,56 @@ func meanAndVar(values []float64) (float64, float64) {
 	}
 
 	return mean, variance
+}
+
+/*
+seriesKey names one stored series: a producer's metric for one symbol.
+Series of different symbols never share a key, so a tick that carries two
+symbols' values keeps both rather than the last one written.
+*/
+func seriesKey(source, symbol, metric string) string {
+	return source + "|" + symbol + "|" + metric
+}
+
+/*
+seriesSymbol returns the symbol of a seriesKey, or "" for any other name.
+*/
+func seriesSymbol(key string) string {
+	first := strings.IndexByte(key, '|')
+
+	if first == -1 {
+		return ""
+	}
+
+	rest := key[first+1:]
+	second := strings.IndexByte(rest, '|')
+
+	if second == -1 {
+		return ""
+	}
+
+	return rest[:second]
+}
+
+/*
+symbolGroups partitions the indexes of names by seriesSymbol, in order.
+*/
+func symbolGroups(names []string) [][]int {
+	index := make(map[string]int)
+	var groups [][]int
+
+	for position, name := range names {
+		symbol := seriesSymbol(name)
+		group, found := index[symbol]
+
+		if !found {
+			group = len(groups)
+			index[symbol] = group
+			groups = append(groups, nil)
+		}
+
+		groups[group] = append(groups[group], position)
+	}
+
+	return groups
 }

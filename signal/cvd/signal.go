@@ -77,6 +77,27 @@ func (score trackerScore) emit(out map[string]float64, name string, value float6
 }
 
 /*
+emitLog writes name's baseline, divergence, ratio, and z-score for a positive
+multiplicative value the tracker scored as logValue = ln(value): the baseline
+is the geometric mean exp(prior mean of ln), the divergence the log residual,
+the ratio exp(residual). This is pumpdump's notional-rate treatment.
+*/
+func (score trackerScore) emitLog(out map[string]float64, name string, logValue float64) {
+	if !score.hasBaseline {
+		return
+	}
+
+	residual := logValue - score.baseline
+	out[name+"_baseline"] = math.Exp(score.baseline)
+	out[name+"_divergence"] = residual
+	out[name+"_ratio"] = math.Exp(residual)
+
+	if score.hasZ {
+		out[name+"_zscore"] = score.zScore
+	}
+}
+
+/*
 window is the executed flow of the open volume bar, split by aggressor side.
 */
 type window struct {
@@ -94,18 +115,20 @@ bar's target is the median prior trade quantity, fixed when it opens. Totals
 are reported once per closed bar, never accumulated since an epoch.
 */
 type symbolState struct {
-	clock                 volumeclock.Clock
-	window                window
-	lastAt                time.Time
-	prevPrice             float64
-	prevNetNotionalRate   float64
-	prevGrossNotionalRate float64
-	hasPrevRates          bool
-	grossRateTracker      onlineTracker
-	signedNetTracker      onlineTracker
-	midpointReturnTracker onlineTracker
-	historyPoints         [][2]float64
-	historyDistances      []float64
+	clock                  volumeclock.Clock
+	window                 window
+	lastAt                 time.Time
+	prevPrice              float64
+	prevNetNotionalRate    float64
+	prevGrossNotionalRate  float64
+	hasPrevRates           bool
+	grossRateTracker       onlineTracker
+	signedNetTracker       onlineTracker
+	midpointReturnTracker  onlineTracker
+	midpointModulus        core.LogModulus
+	midpointModulusTracker onlineTracker
+	historyPoints          [][2]float64
+	historyDistances       []float64
 }
 
 type Signal struct {
@@ -223,8 +246,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		out["buy_notional_rate"] = tradeBuyNotional / timeDelta
 		out["sell_notional_rate"] = tradeSellNotional / timeDelta
 
-		gross = state.grossRateTracker.Score(grossNotionalRate)
-		gross.emit(out, "gross_notional_rate", grossNotionalRate, true)
+		// A per-trade rate is multiplicative and spans orders of magnitude, so
+		// it is scored on ln(rate), as pumpdump scores its notional rate.
+		gross = state.grossRateTracker.Score(math.Log(grossNotionalRate))
+		gross.emitLog(out, "gross_notional_rate", math.Log(grossNotionalRate))
 
 		if state.hasPrevRates {
 			out["net_notional_rate_velocity"] = (netNotionalRate - state.prevNetNotionalRate) / timeDelta
@@ -253,9 +278,19 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		if hasDelta {
 			midpointReturnRate := midpointLogReturn / timeDelta
 			out["midpoint_return_rate"] = midpointReturnRate
-			state.midpointReturnTracker.Score(midpointReturnRate).emit(
-				out, "midpoint_return_rate", midpointReturnRate, false,
-			)
+
+			// The baseline and divergence stay in rate units; the z-score is
+			// taken on the signed log-modulus scale, since the rate inherits
+			// the interval's orders-of-magnitude spread.
+			score := state.midpointReturnTracker.Score(midpointReturnRate)
+			score.hasZ = false
+			score.emit(out, "midpoint_return_rate", midpointReturnRate, false)
+
+			if compressed, defined := state.midpointModulus.Step(midpointReturnRate); defined {
+				if modulusScore := state.midpointModulusTracker.Score(compressed); modulusScore.hasZ {
+					out["midpoint_return_rate_zscore"] = modulusScore.zScore
+				}
+			}
 		}
 	}
 

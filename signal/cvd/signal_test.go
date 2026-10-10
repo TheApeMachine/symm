@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
@@ -75,7 +76,9 @@ var stepSymbols atomic.Int64
 
 func TestSignalStep(t *testing.T) {
 	Convey("Given CVD stepping a multi-leg trade tape through the real Step boundary", t, func() {
-		const precursor = 4
+		// The futures diverge only once the streams hold enough prior
+		// samples to define z-scores at the divergence.
+		precursor := int(core.MinimumPrior) + 1
 
 		run := stepSymbols.Add(1)
 		symbol := func(name string) string {
@@ -140,15 +143,47 @@ func TestSignalStep(t *testing.T) {
 		Convey("Every z-score is the observation against its own stream's earlier values only", func() {
 			for step, zscores := range observed {
 				for key, zscore := range zscores {
+					// Replay the stream in its standardization space: raw,
+					// ln(raw) for positive rates, or the signed log-modulus.
+					space := data.CanonicalScale(key)
+					var modulus core.LogModulus
 					history := make([]float64, 0, step)
+					current, currentDefined := 0.0, false
 
 					// A stream only sees the steps that defined its metric.
-					for _, earlier := range raws[:step] {
-						if value, defined := earlier[key]; defined {
+					for _, earlier := range raws[:step+1] {
+						raw, defined := earlier[key]
+
+						if !defined {
+							continue
+						}
+
+						value, inSpace := raw, true
+
+						switch space {
+						case data.ScaleLog:
+							inSpace = raw > 0
+
+							if inSpace {
+								value = math.Log(raw)
+							}
+						case data.ScaleLogModulus:
+							value, inSpace = modulus.Step(raw)
+						}
+
+						current, currentDefined = value, inSpace
+
+						if inSpace {
 							history = append(history, value)
 						}
 					}
 
+					if !currentDefined {
+						So(zscore, ShouldEqual, 0)
+						continue
+					}
+
+					history = history[:len(history)-1]
 					mean, deviation := 0.0, 0.0
 
 					for _, value := range history {
@@ -161,13 +196,19 @@ func TestSignalStep(t *testing.T) {
 						deviation += (value - mean) * (value - mean)
 					}
 
-					if len(history) < 2 || deviation == 0 {
+					if float64(len(history)) < core.MinimumPrior || deviation == 0 {
 						So(zscore, ShouldEqual, 0)
 						continue
 					}
 
 					deviation = math.Sqrt(deviation / float64(len(history)-1))
-					want := (raws[step][key] - mean) / deviation
+
+					if core.Negligible(deviation, current, mean) {
+						So(zscore, ShouldEqual, 0)
+						continue
+					}
+
+					want := (current - mean) / deviation
 					So(zscore, ShouldAlmostEqual, want, 1e-9*math.Max(1, math.Abs(want)))
 				}
 			}
@@ -245,8 +286,34 @@ func TestCVDUndefinedRates(t *testing.T) {
 
 			after := step(origin.Add(3*time.Second), 1)
 			So(after["gross_notional_rate_ratio"], ShouldAlmostEqual, 100.0/150.0, 1e-9)
+			// Scored on ln(rate): the divergence is the log residual and the
+			// baseline the geometric mean of the earlier rates.
+			So(after["gross_notional_rate_divergence"], ShouldAlmostEqual, math.Log(100.0/150.0), 1e-12)
+			So(after["gross_notional_rate_baseline"], ShouldAlmostEqual, 150.0, 1e-9)
 			_, zscore = after["gross_notional_rate_zscore"]
 			So(zscore, ShouldBeFalse)
+		})
+
+		Convey("An interval within the venue clock's grain has no rate or velocity", func() {
+			step(origin, 1)
+			step(origin.Add(2*time.Second), 3)
+
+			// One microsecond is the venue's timestamp resolution: the stored
+			// tape had such pairs, and their trade_rate was 1e6 per second.
+			tick := step(origin.Add(2*time.Second+core.ClockResolution), 2)
+
+			for _, label := range []string{
+				"trade_rate", "gross_notional_rate", "net_notional_rate",
+				"buy_notional_rate", "gross_notional_rate_velocity", "net_notional_rate_velocity",
+			} {
+				_, rated := tick[label]
+				So(rated, ShouldBeFalse)
+			}
+
+			// Four grains is the shortest interval the clock resolves to
+			// core.Tolerance.
+			resolved := step(origin.Add(2*time.Second+5*core.ClockResolution), 2)
+			So(resolved["trade_rate"], ShouldAlmostEqual, 1/(4*core.ClockResolution.Seconds()), 1e-6)
 		})
 	})
 }

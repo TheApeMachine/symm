@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/system"
 )
@@ -27,7 +28,7 @@ func (w *welford) step(value float64, guarded bool) (float64, float64) {
 		scale = math.Sqrt(w.m2 / (w.count - 1))
 	}
 
-	if guarded && (w.count < 9 || scale <= math.Sqrt(2.220446049250313e-16)*math.Max(math.Abs(value), math.Abs(center))) {
+	if guarded && (w.count < core.MinimumPrior || core.Negligible(scale, value, center)) {
 		scale = 0
 	}
 
@@ -60,14 +61,39 @@ func main() {
 	catalog := tables.Open(ctx)
 	epoch, _ := strconv.ParseInt(os.Args[1], 10, 64)
 	streams := map[string][]row{}
+	droppedAtSource := map[string]int{}
 
 	for m, err := range catalog.Timeline(ctx, epoch, "", 0, 0, tables.SensorySources...) {
 		if err != nil {
 			panic(err)
 		}
 
+		// Approximate the source-side fixes that stored frames can show:
+		// cvd per-trade rates and pumpdump bar rates over an interval the
+		// venue clock does not resolve are no longer emitted.
+		unresolved := false
+
 		for entry := range m.Read() {
 			if entry == nil || entry.Metric == nil {
+				continue
+			}
+
+			if m.Source == "cvd" && entry.Key == "trade_rate" && !core.Resolvable(1/entry.Metric.Raw) {
+				unresolved = true
+			}
+
+			if m.Source == "pumpdump" && entry.Key == "volume_bar_duration" && !core.Resolvable(entry.Metric.Raw) {
+				unresolved = true
+			}
+		}
+
+		for entry := range m.Read() {
+			if entry == nil || entry.Metric == nil {
+				continue
+			}
+
+			if unresolved && rateFamily(m.Source, entry.Key) {
+				droppedAtSource[m.Source]++
 				continue
 			}
 
@@ -109,6 +135,8 @@ func main() {
 		})
 
 		old, guarded := &welford{}, &welford{}
+		space := data.CanonicalScale(rows[0].metric)
+		var modulus core.LogModulus
 		a := bySource[rows[0].source]
 
 		if a == nil {
@@ -118,7 +146,26 @@ func main() {
 
 		for idx, r := range rows {
 			oc, oscale := old.step(r.raw, false)
-			gc, gs := guarded.step(r.raw, true)
+			// The new rule: standardize in the metric's declared space.
+			value, inSpace := r.raw, true
+
+			switch space {
+			case data.ScaleLog:
+				inSpace = r.raw > 0
+
+				if inSpace {
+					value = math.Log(r.raw)
+				}
+			case data.ScaleLogModulus:
+				value, inSpace = modulus.Step(r.raw)
+			}
+
+			gc, gs := 0.0, 0.0
+
+			if inSpace {
+				gc, gs = guarded.step(value, true)
+			}
+
 			oz, gz := 0.0, 0.0
 
 			if oscale > 0 {
@@ -126,7 +173,7 @@ func main() {
 			}
 
 			if gs > 0 {
-				gz = (r.raw - gc) / gs
+				gz = (value - gc) / gs
 			}
 
 			if oscale > 0 && gs == 0 {
@@ -199,6 +246,7 @@ func main() {
 	fmt.Printf("streams=%d entries=%d old-rule recompute matches stored z: %d (%.4f%%)\n", len(streams), total, matched, 100*float64(matched)/float64(total))
 
 	fmt.Printf("entries newly undefined (stored had a z, new rule refuses): %d\n", undefinedNew)
+	fmt.Printf("entries no longer emitted at source (unresolvable interval): %v\n", droppedAtSource)
 
 	type mc struct {
 		k string
@@ -235,4 +283,26 @@ func main() {
 			s, a.n, a.oldMatch, a.storedMax, a.storedOver, a.newMax, a.newOver, a.newOverEarly, a.refused)
 		fmt.Printf("            stored max at %s\n            guarded max at %s\n", a.storedWhere, a.newWhere)
 	}
+}
+
+func rateFamily(source, key string) bool {
+	switch source {
+	case "cvd":
+		for _, stem := range []string{
+			"trade_rate", "gross_notional_rate", "net_notional_rate", "buy_notional_rate",
+			"sell_notional_rate", "midpoint_return_rate",
+		} {
+			if strings.HasPrefix(key, stem) {
+				return true
+			}
+		}
+	case "pumpdump":
+		for _, stem := range []string{"volume_rate", "notional_rate", "trade_rate", "midpoint_return_rate"} {
+			if strings.HasPrefix(key, stem) {
+				return true
+			}
+		}
+	}
+
+	return false
 }

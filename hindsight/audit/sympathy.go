@@ -31,6 +31,7 @@ func AnalyzeSympathy(
 	canonicalSeries map[string]map[int64]float64,
 	healthyCells []MetricStat,
 	permutations int,
+	significance float64,
 ) Stage2Sympathy {
 	activeNames := make([]string, 0)
 	for _, stat := range healthyCells {
@@ -79,7 +80,9 @@ func AnalyzeSympathy(
 		vectors[index] = vector
 	}
 
-	realConcordances := pairCorrelations(vectors)
+	// Pairs are formed within one symbol (see symbolGroups).
+	groups := symbolGroups(activeNames)
+	realConcordances := pairCorrelations(vectors, groups)
 	if len(realConcordances) == 0 {
 		return Stage2Sympathy{
 			SummaryText: "No canonical cell pairs had sufficient simultaneous deformation support.",
@@ -107,7 +110,7 @@ func AnalyzeSympathy(
 		workers = 1
 	}
 
-	results := make([][]float64, workers)
+	results := make([][][]float64, workers)
 	var wg sync.WaitGroup
 
 	iterationsPerWorker := (permutations + workers - 1) / workers
@@ -137,7 +140,7 @@ func AnalyzeSympathy(
 				}
 			}
 
-			localNull := make([]float64, 0, len(realConcordances)*(endI-startI))
+			localNull := make([][]float64, 0, endI-startI)
 
 			for iteration := startI; iteration < endI; iteration++ {
 				for idx, vec := range vectors {
@@ -145,7 +148,7 @@ func AnalyzeSympathy(
 					shuffleObservedValues(rng, localShuffled[idx].values, vec.present)
 				}
 
-				localNull = append(localNull, pairCorrelations(localShuffled)...)
+				localNull = append(localNull, pairCorrelations(localShuffled, groups))
 			}
 
 			results[workerID] = localNull
@@ -155,8 +158,13 @@ func AnalyzeSympathy(
 	wg.Wait()
 
 	nullValues := make([]float64, 0, len(realConcordances)*permutations)
+	var nullIterations [][]float64
+
 	for _, chunk := range results {
-		nullValues = append(nullValues, chunk...)
+		for _, iteration := range chunk {
+			nullValues = append(nullValues, iteration...)
+			nullIterations = append(nullIterations, iteration)
+		}
 	}
 
 	if len(nullValues) == 0 {
@@ -189,6 +197,31 @@ func AnalyzeSympathy(
 	separationRatio := float64(exceeding) / float64(len(absReal))
 	ksStat := computeKolmogorovSmirnov(absReal, absNull)
 
+	// The null for the exceedance fraction is the same fraction in each
+	// shuffled iteration against the same pooled p95. Its spread carries the
+	// dependence between pairs that share a channel, which a binomial on
+	// independent pairs would ignore.
+	nullFractions := make([]float64, 0, len(nullIterations))
+
+	for _, iteration := range nullIterations {
+		if len(iteration) == 0 {
+			continue
+		}
+
+		above := 0
+
+		for _, value := range iteration {
+			if math.Abs(value) > p95Abs {
+				above++
+			}
+		}
+
+		nullFractions = append(nullFractions, float64(above)/float64(len(iteration)))
+	}
+
+	pValue := upperPValue(separationRatio, nullFractions)
+	verdict := hypothesisVerdict(pValue, len(nullFractions), significance)
+
 	return Stage2Sympathy{
 		TotalPairs:      len(realConcordances),
 		PositivePairs:   positiveCount,
@@ -213,21 +246,26 @@ func AnalyzeSympathy(
 				"%.1f%% of real |r| exceed |null| p95; |r| KS = %.3f. Direct: %d, inverse: %d.",
 			len(realConcordances), realMean, nullMean, p95Abs,
 			separationRatio*100, ksStat, positiveCount, inverseCount,
-		),
-		Status: "MEASURED",
-		Passed: true,
+		) + fmt.Sprintf(" Exceedance vs %d shuffled iterations: p=%.3f.", len(nullFractions), pValue),
+		PValue: pValue,
+		Status: verdict,
+		Passed: passed(verdict),
 	}
 }
 
-func pairCorrelations(vectors []observedVector) []float64 {
-	results := make([]float64, 0, len(vectors)*(len(vectors)-1)/2)
-	for left := 0; left < len(vectors); left++ {
-		for right := left + 1; right < len(vectors); right++ {
-			if correlation, ok := maskedCorrelation(vectors[left], vectors[right]); ok {
-				results = append(results, correlation)
+func pairCorrelations(vectors []observedVector, groups [][]int) []float64 {
+	results := make([]float64, 0)
+
+	for _, group := range groups {
+		for leftAt, left := range group {
+			for _, right := range group[leftAt+1:] {
+				if correlation, ok := maskedCorrelation(vectors[left], vectors[right]); ok {
+					results = append(results, correlation)
+				}
 			}
 		}
 	}
+
 	return results
 }
 

@@ -10,17 +10,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/apache/iceberg-go"
-	icetable "github.com/apache/iceberg-go/table"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/strategy"
 )
@@ -42,8 +34,14 @@ AnalyzePrecursorSeparation measures two causal populations:
 
 Excursion windows are loaded directly from the archive rather than requiring them
 to fall inside the audit's arbitrary first-N tick sample. Event and control tape
-use the same ChannelsFrom -> Stream.Deform -> LitRegion path. Sufficient evidence
-is reported as MEASURED; no arbitrary separation ratio is promoted to PASS.
+use the same ChannelsFrom -> Stream.Deform -> LitRegion path.
+
+Every null permutes whole excursions, never single tokens: the tokens of one
+excursion are consecutive ticks of one symbol and strongly dependent, so a
+token-level shuffle would understate the null spread and pass noise. Skill is
+learned on the earlier 60% of excursions (by B tick) and scored on the rest.
+Friction clearance is NOT_A_TEST: the up class is defined by clearing the
+round-trip fee, so its clearance rate restates the detector's construction.
 */
 func AnalyzePrecursorSeparation(
 	ctx context.Context,
@@ -54,6 +52,7 @@ func AnalyzePrecursorSeparation(
 	ticks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
 	permutations int,
+	significance float64,
 	detections []*data.Measurement,
 	takerFee ...float64,
 ) Stage5PrecursorSeparation {
@@ -151,10 +150,12 @@ func AnalyzePrecursorSeparation(
 		grid, ticks, tickMeasurements, excursions,
 	)
 
-	ignitionTokens := make(map[string]int)
-	ignitionControls := make(map[string]int)
-	holdingTokens := make(map[string]int)
-	exhaustionTokens := make(map[string]int)
+	// Per-excursion token counts, ordered by B tick for the held-out split.
+	slices.SortFunc(excursions, func(left, right excursionInterval) int {
+		return cmp.Compare(left.bTick, right.bTick)
+	})
+
+	var ignitionEvents, ignitionControls, earlyHolds, lateHolds []map[string]int
 
 	for _, excursion := range excursions {
 		eventTokens, err := archivedIntervalTokens(
@@ -167,64 +168,48 @@ func AnalyzePrecursorSeparation(
 			return result
 		}
 
-		// Current Desk semantics are long-only: only profitable "up" excursions
-		// are positive A->B/holding examples. down/up_friction/chop/flat are controls.
-		if excursion.class == "up" {
-			for tick, token := range eventTokens {
-				switch {
-				case tick >= excursion.startTick && tick < excursion.bTick:
-					ignitionTokens[token]++
-				case tick >= excursion.bTick && tick <= excursion.cTick:
-					// Split the realized holding interval in half only to form a
-					// within-episode early-vs-late comparison. This is descriptive;
-					// the audit does not call the late half "exhaustion truth".
-					mid := excursion.bTick + (excursion.cTick-excursion.bTick)/2
-					if tick <= mid {
-						holdingTokens[token]++
-					} else {
-						exhaustionTokens[token]++
-					}
-				}
+		ignition := make(map[string]int)
+		early := make(map[string]int)
+		late := make(map[string]int)
+		mid := excursion.bTick + (excursion.cTick-excursion.bTick)/2
+
+		for tick, token := range eventTokens {
+			switch {
+			case tick >= excursion.startTick && tick < excursion.bTick:
+				ignition[token]++
+			case tick >= excursion.bTick && tick <= mid:
+				early[token]++
+			case tick > mid && tick <= excursion.cTick:
+				late[token]++
 			}
+		}
+
+		// Desk semantics are long-only: profitable "up" excursions are the
+		// positive A->B examples; down/up_friction/chop/flat are controls.
+		if excursion.class == "up" {
+			ignitionEvents = append(ignitionEvents, ignition)
+			earlyHolds = append(earlyHolds, early)
+			lateHolds = append(lateHolds, late)
 			continue
 		}
 
-		for tick, token := range eventTokens {
-			if tick >= excursion.startTick && tick < excursion.bTick {
-				ignitionControls[token]++
-			}
-		}
+		ignitionControls = append(ignitionControls, ignition)
 	}
 
-	if totalTokenCount(ignitionControls) < 5 {
-		for token, count := range backgroundTokens {
-			ignitionControls[token] += count
-		}
-	}
-
-	ignition := evaluateHypothesis(
+	ignition := evaluateGroupHypothesis(
 		"A -> B Ignition Precursor",
-		"Long-only profitable up precursor versus losing/ordinary controls",
-		ignitionTokens,
-		ignitionControls,
-		totalTokenCount(ignitionTokens),
-		totalTokenCount(ignitionControls),
-		permutations,
+		"Long-only profitable up precursor versus losing/ordinary controls (excursion-label null)",
+		ignitionEvents, ignitionControls, permutations, significance,
 	)
-	exhaustion := evaluateHypothesis(
+	exhaustion := evaluatePairedHypothesis(
 		"B -> C Holding Deterioration",
-		"Late versus early holding state inside profitable up excursions",
-		exhaustionTokens,
-		holdingTokens,
-		totalTokenCount(exhaustionTokens),
-		totalTokenCount(holdingTokens),
-		permutations,
+		"Late versus early holding state inside profitable up excursions (half-swap null)",
+		lateHolds, earlyHolds, permutations, significance,
 	)
 
-	skill := evaluatePredictiveSkill(ignitionTokens, ignitionControls)
+	skill := evaluateHeldOutSkill(ignitionEvents, ignitionControls, excursions, permutations, significance)
 	economic := evaluateEconomicRelevance(excursions, fee)
-
-	measured := ignition.Status == "MEASURED"
+	verdict := ignition.Status
 
 	return Stage5PrecursorSeparation{
 		DetectionsFound:      len(detections),
@@ -235,19 +220,19 @@ func AnalyzePrecursorSeparation(
 		EconomicRelevance:    economic,
 		BackgroundTokens:     backgroundTokens,
 		SummaryText: fmt.Sprintf(
-			"Precursor: %d detections (%s). A->B: %s, JSD %.3f vs |null| p95 %.3f, N=%d/%d. "+
-				"B->C: %s, JSD %.3f vs |null| p95 %.3f, N=%d/%d. Skill: BalAcc %.1f%%, MCC %.3f, Gain %.3fb. "+
-				"Friction: Clearance %.1f%% (N=%d, fee=%.2fbps, net=%.2f%%). Background=%d.",
+			"Precursor: %d detections (%s). A->B: %s, JSD %.3f, p=%.3f, N=%d/%d excursions. "+
+				"B->C: %s, JSD %.3f, p=%.3f. Held-out skill: %s, MCC %.3f, p=%.3f. "+
+				"Friction clearance %.1f%% (N=%d, fee=%.2fbps) is NOT_A_TEST. Background=%d.",
 			len(detections), strings.Join(classList, "/"),
-			ignition.Status, ignition.DivergenceBits, ignition.NullDivergence95,
-			ignition.EventTokenCount, ignition.ControlTokenCount,
-			exhaustion.Status, exhaustion.DivergenceBits, exhaustion.NullDivergence95,
-			exhaustion.EventTokenCount, exhaustion.ControlTokenCount,
-			skill.BalancedAccuracy*100.0, skill.MCC, skill.PredictiveGainBits,
-			economic.FrictionClearanceRate*100.0, economic.EvaluatedExcursions, economic.RoundTripFeeRate*10000.0, economic.NetMeanReturn*100.0,
+			ignition.Status, ignition.DivergenceBits, ignition.PValue,
+			len(ignitionEvents), len(ignitionControls),
+			exhaustion.Status, exhaustion.DivergenceBits, exhaustion.PValue,
+			skill.Status, skill.MCC, skill.PValue,
+			economic.FrictionClearanceRate*100.0, economic.EvaluatedExcursions, economic.RoundTripFeeRate*10000.0,
 			totalTokenCount(backgroundTokens),
 		),
-		Passed: measured,
+		Status: verdict,
+		Passed: passed(verdict),
 	}
 }
 
@@ -270,6 +255,7 @@ func insufficientPrecursor(reason string) Stage5PrecursorSeparation {
 			Status: "INSUFFICIENT_DATA",
 		},
 		SummaryText: "Precursor Separation: INSUFFICIENT_DATA (" + reason + ")",
+		Status:      VerdictInsufficient,
 		Passed:      false,
 	}
 }
@@ -414,242 +400,285 @@ func totalTokenCount(tokens map[string]int) int {
 	return total
 }
 
-func evaluateHypothesis(
+func mergeTokens(groups ...[]map[string]int) map[string]int {
+	merged := make(map[string]int)
+
+	for _, group := range groups {
+		for _, tokens := range group {
+			for token, count := range tokens {
+				merged[token] += count
+			}
+		}
+	}
+
+	return merged
+}
+
+/*
+evaluateGroupHypothesis compares the pooled tokens of event excursions with
+those of control excursions. The null reassigns the event/control label among
+whole excursions, keeping the number of each.
+*/
+func evaluateGroupHypothesis(
 	name string,
 	description string,
-	eventTokens map[string]int,
-	controlTokens map[string]int,
-	eventCount int,
-	controlCount int,
+	events []map[string]int,
+	controls []map[string]int,
 	permutations int,
+	significance float64,
 ) PrecursorHypothesis {
-	if eventCount < 5 || controlCount < 5 {
-		return PrecursorHypothesis{
-			Name:              name,
-			Description:       description,
-			EventTokens:       eventTokens,
-			ControlTokens:     controlTokens,
-			EventTokenCount:   eventCount,
-			ControlTokenCount: controlCount,
-			Status:            "INSUFFICIENT_DATA",
-			Passed:            false,
-		}
-	}
-
-	realJSD := computeJSD(eventTokens, controlTokens)
-	pool := make([]string, 0, eventCount+controlCount)
-	for token, count := range eventTokens {
-		for index := 0; index < count; index++ {
-			pool = append(pool, token)
-		}
-	}
-	for token, count := range controlTokens {
-		for index := 0; index < count; index++ {
-			pool = append(pool, token)
-		}
-	}
-
-	rng := rand.New(rand.NewSource(1791))
-	nullDivergences := make([]float64, 0, permutations)
-	for iteration := 0; iteration < permutations; iteration++ {
-		shuffled := append([]string(nil), pool...)
-		rng.Shuffle(len(shuffled), func(first, second int) {
-			shuffled[first], shuffled[second] = shuffled[second], shuffled[first]
-		})
-
-		nullEvent := make(map[string]int)
-		nullControl := make(map[string]int)
-		for index := 0; index < eventCount; index++ {
-			nullEvent[shuffled[index]]++
-		}
-		for index := eventCount; index < len(shuffled); index++ {
-			nullControl[shuffled[index]]++
-		}
-		nullDivergences = append(
-			nullDivergences,
-			computeJSD(nullEvent, nullControl),
-		)
-	}
-
-	sort.Float64s(nullDivergences)
-	null95 := empiricalQuantile(nullDivergences, 0.95)
-	ratio := 0.0
-	if null95 > 0 {
-		ratio = realJSD / null95
-	}
-
-	return PrecursorHypothesis{
+	eventTokens := mergeTokens(events)
+	controlTokens := mergeTokens(controls)
+	result := PrecursorHypothesis{
 		Name:              name,
 		Description:       description,
 		EventTokens:       eventTokens,
 		ControlTokens:     controlTokens,
-		EventTokenCount:   eventCount,
-		ControlTokenCount: controlCount,
-		DivergenceBits:    realJSD,
-		NullDivergence95:  null95,
-		SeparationRatio:   ratio,
-		Status:            "MEASURED",
-		Passed:            true,
+		EventTokenCount:   totalTokenCount(eventTokens),
+		ControlTokenCount: totalTokenCount(controlTokens),
+		Status:            VerdictInsufficient,
 	}
+
+	if len(events) == 0 || len(controls) == 0 || result.EventTokenCount == 0 || result.ControlTokenCount == 0 {
+		return result
+	}
+
+	real := computeJSD(eventTokens, controlTokens)
+	pool := append(append([]map[string]int(nil), events...), controls...)
+	rng := rand.New(rand.NewSource(1791))
+	null := make([]float64, 0, permutations)
+
+	for range permutations {
+		rng.Shuffle(len(pool), func(first, second int) { pool[first], pool[second] = pool[second], pool[first] })
+		null = append(null, computeJSD(mergeTokens(pool[:len(events)]), mergeTokens(pool[len(events):])))
+	}
+
+	return finishHypothesis(result, real, null, permutations, significance)
 }
 
-func evaluatePredictiveSkill(
-	eventTokens map[string]int,
-	controlTokens map[string]int,
-) PrecursorPredictiveSkill {
-	eventCount := totalTokenCount(eventTokens)
-	controlCount := totalTokenCount(controlTokens)
-	totalSamples := eventCount + controlCount
-
-	if eventCount < 5 || controlCount < 5 {
-		return PrecursorPredictiveSkill{
-			EvaluatedSamples: totalSamples,
-			Status:           "INSUFFICIENT_DATA",
-			Passed:           false,
-		}
+/*
+evaluatePairedHypothesis compares late with early halves of the same
+excursions. The null swaps the two halves of each excursion independently
+with probability one half, which keeps every excursion's own tokens.
+*/
+func evaluatePairedHypothesis(
+	name string,
+	description string,
+	late []map[string]int,
+	early []map[string]int,
+	permutations int,
+	significance float64,
+) PrecursorHypothesis {
+	lateTokens := mergeTokens(late)
+	earlyTokens := mergeTokens(early)
+	result := PrecursorHypothesis{
+		Name:              name,
+		Description:       description,
+		EventTokens:       lateTokens,
+		ControlTokens:     earlyTokens,
+		EventTokenCount:   totalTokenCount(lateTokens),
+		ControlTokenCount: totalTokenCount(earlyTokens),
+		Status:            VerdictInsufficient,
 	}
 
-	allTokens := make(map[string]struct{})
-
-	for token := range eventTokens {
-		allTokens[token] = struct{}{}
+	if len(late) == 0 || len(late) != len(early) || result.EventTokenCount == 0 || result.ControlTokenCount == 0 {
+		return result
 	}
 
-	for token := range controlTokens {
-		allTokens[token] = struct{}{}
-	}
+	real := computeJSD(lateTokens, earlyTokens)
+	rng := rand.New(rand.NewSource(1791))
+	null := make([]float64, 0, permutations)
 
-	predictsEvent := make(map[string]bool)
+	for range permutations {
+		var nullLate, nullEarly []map[string]int
 
-	type tokenScore struct {
-		token string
-		ratio float64
-	}
-	var scoredTokens []tokenScore
-
-	for token := range allTokens {
-		probEvent := float64(eventTokens[token]) / float64(eventCount)
-		probControl := float64(controlTokens[token]) / float64(controlCount)
-
-		if probEvent > probControl {
-			predictsEvent[token] = true
-			likelihoodRatio := 1000.0
-
-			if probControl > 0 {
-				likelihoodRatio = probEvent / probControl
+		for index := range late {
+			if rng.Intn(2) == 0 {
+				nullLate, nullEarly = append(nullLate, late[index]), append(nullEarly, early[index])
+				continue
 			}
 
-			scoredTokens = append(scoredTokens, tokenScore{token: token, ratio: likelihoodRatio})
+			nullLate, nullEarly = append(nullLate, early[index]), append(nullEarly, late[index])
 		}
+
+		null = append(null, computeJSD(mergeTokens(nullLate), mergeTokens(nullEarly)))
 	}
 
-	sort.Slice(scoredTokens, func(firstIndex, secondIndex int) bool {
-		return scoredTokens[firstIndex].ratio > scoredTokens[secondIndex].ratio
-	})
+	return finishHypothesis(result, real, null, permutations, significance)
+}
 
-	var topTokens []string
+func finishHypothesis(
+	result PrecursorHypothesis,
+	real float64,
+	null []float64,
+	permutations int,
+	significance float64,
+) PrecursorHypothesis {
+	null95 := quantileOf(null, 0.95)
+	result.DivergenceBits = real
+	result.NullDivergence95 = null95
 
-	for scoreIndex := 0; scoreIndex < len(scoredTokens) && scoreIndex < 5; scoreIndex++ {
-		topTokens = append(topTokens, scoredTokens[scoreIndex].token)
+	if null95 > 0 {
+		result.SeparationRatio = real / null95
 	}
 
-	truePositives := 0
-	falsePositives := 0
-	falseNegatives := 0
-	trueNegatives := 0
+	result.PValue = upperPValue(real, null)
+	result.Status = hypothesisVerdict(result.PValue, permutations, significance)
+	result.Passed = passed(result.Status)
 
-	for token, count := range eventTokens {
-		if predictsEvent[token] {
-			truePositives += count
+	return result
+}
+
+/*
+evaluateHeldOutSkill learns which tokens predict an up excursion from the
+earlier 60% of excursions (by B tick) and scores that rule on the later 40%.
+Its null reassigns the event/control label among the held-out excursions.
+*/
+func evaluateHeldOutSkill(
+	events []map[string]int,
+	controls []map[string]int,
+	excursions []excursionInterval,
+	permutations int,
+	significance float64,
+) PrecursorPredictiveSkill {
+	// Rebuild the chronological order of the per-excursion maps.
+	type labelled struct {
+		tokens map[string]int
+		event  bool
+	}
+
+	ordered := make([]labelled, 0, len(events)+len(controls))
+	eventAt, controlAt := 0, 0
+
+	for _, excursion := range excursions {
+		if excursion.class == "up" && eventAt < len(events) {
+			ordered = append(ordered, labelled{events[eventAt], true})
+			eventAt++
 			continue
 		}
 
-		falseNegatives += count
+		if excursion.class != "up" && controlAt < len(controls) {
+			ordered = append(ordered, labelled{controls[controlAt], false})
+			controlAt++
+		}
+	}
+
+	split := len(ordered) * 3 / 5
+	var trainEvents, trainControls, testEvents, testControls []map[string]int
+
+	for index, item := range ordered {
+		switch {
+		case index < split && item.event:
+			trainEvents = append(trainEvents, item.tokens)
+		case index < split:
+			trainControls = append(trainControls, item.tokens)
+		case item.event:
+			testEvents = append(testEvents, item.tokens)
+		default:
+			testControls = append(testControls, item.tokens)
+		}
+	}
+
+	if len(trainEvents) == 0 || len(trainControls) == 0 || len(testEvents) == 0 || len(testControls) == 0 {
+		return PrecursorPredictiveSkill{
+			EvaluatedSamples: totalTokenCount(mergeTokens(testEvents, testControls)),
+			Status:           VerdictInsufficient,
+		}
+	}
+
+	rule := precursorRule(mergeTokens(trainEvents), mergeTokens(trainControls))
+	skill := scorePrecursorRule(rule, mergeTokens(testEvents), mergeTokens(testControls))
+
+	pool := append(append([]map[string]int(nil), testEvents...), testControls...)
+	rng := rand.New(rand.NewSource(1791))
+	null := make([]float64, 0, permutations)
+
+	for range permutations {
+		rng.Shuffle(len(pool), func(first, second int) { pool[first], pool[second] = pool[second], pool[first] })
+		shuffled := scorePrecursorRule(rule, mergeTokens(pool[:len(testEvents)]), mergeTokens(pool[len(testEvents):]))
+		null = append(null, shuffled.MCC)
+	}
+
+	skill.PValue = upperPValue(skill.MCC, null)
+	skill.Status = hypothesisVerdict(skill.PValue, permutations, significance)
+	skill.Passed = passed(skill.Status)
+
+	return skill
+}
+
+/*
+precursorRule marks the tokens more frequent among event than control tokens.
+*/
+func precursorRule(eventTokens, controlTokens map[string]int) map[string]bool {
+	eventCount := totalTokenCount(eventTokens)
+	controlCount := totalTokenCount(controlTokens)
+	rule := make(map[string]bool)
+
+	for token, count := range eventTokens {
+		if float64(count)/float64(eventCount) > float64(controlTokens[token])/float64(max(controlCount, 1)) {
+			rule[token] = true
+		}
+	}
+
+	return rule
+}
+
+/*
+scorePrecursorRule classifies every token as event when the rule marks it and
+reports the confusion statistics.
+*/
+func scorePrecursorRule(rule map[string]bool, eventTokens, controlTokens map[string]int) PrecursorPredictiveSkill {
+	var tp, fp, fn, tn float64
+
+	for token, count := range eventTokens {
+		if rule[token] {
+			tp += float64(count)
+		} else {
+			fn += float64(count)
+		}
 	}
 
 	for token, count := range controlTokens {
-		if predictsEvent[token] {
-			falsePositives += count
-			continue
+		if rule[token] {
+			fp += float64(count)
+		} else {
+			tn += float64(count)
 		}
-
-		trueNegatives += count
 	}
 
-	precision := 0.0
+	skill := PrecursorPredictiveSkill{EvaluatedSamples: int(tp + fp + fn + tn)}
 
-	if truePositives+falsePositives > 0 {
-		precision = float64(truePositives) / float64(truePositives+falsePositives)
+	if tp+fp > 0 {
+		skill.Precision = tp / (tp + fp)
 	}
 
-	recall := 0.0
-
-	if truePositives+falseNegatives > 0 {
-		recall = float64(truePositives) / float64(truePositives+falseNegatives)
+	if tp+fn > 0 {
+		skill.Recall = tp / (tp + fn)
 	}
 
 	specificity := 0.0
 
-	if trueNegatives+falsePositives > 0 {
-		specificity = float64(trueNegatives) / float64(trueNegatives+falsePositives)
+	if tn+fp > 0 {
+		specificity = tn / (tn + fp)
 	}
 
-	balancedAcc := (recall + specificity) / 2.0
+	skill.BalancedAccuracy = (skill.Recall + specificity) / 2
 
-	numeratorMCC := float64(truePositives*trueNegatives - falsePositives*falseNegatives)
-	denominatorMCC := math.Sqrt(
-		float64(truePositives+falsePositives) *
-			float64(truePositives+falseNegatives) *
-			float64(trueNegatives+falsePositives) *
-			float64(trueNegatives+falseNegatives),
-	)
-
-	mcc := 0.0
-
-	if denominatorMCC > 0 {
-		mcc = numeratorMCC / denominatorMCC
+	if denominator := math.Sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)); denominator > 0 {
+		skill.MCC = (tp*tn - fp*fn) / denominator
 	}
 
-	priorBaseRate := float64(eventCount) / float64(totalSamples)
-
-	// Mutual information I(Token; Excursion)
-	mutualInfo := 0.0
-	priorEvent := float64(eventCount) / float64(totalSamples)
-	priorControl := float64(controlCount) / float64(totalSamples)
-
-	for token := range allTokens {
-		countEvent := eventTokens[token]
-		countControl := controlTokens[token]
-		totalTokenObs := countEvent + countControl
-		probToken := float64(totalTokenObs) / float64(totalSamples)
-
-		if countEvent > 0 {
-			jointProbEvent := float64(countEvent) / float64(totalSamples)
-			mutualInfo += jointProbEvent * math.Log2(jointProbEvent/(probToken*priorEvent))
-		}
-
-		if countControl > 0 {
-			jointProbControl := float64(countControl) / float64(totalSamples)
-			mutualInfo += jointProbControl * math.Log2(jointProbControl/(probToken*priorControl))
-		}
+	if total := tp + fp + fn + tn; total > 0 {
+		skill.PriorBaseRate = (tp + fn) / total
 	}
 
-	if mutualInfo < 0 {
-		mutualInfo = 0
+	for token := range rule {
+		skill.TopPrecursorTokens = append(skill.TopPrecursorTokens, token)
 	}
 
-	return PrecursorPredictiveSkill{
-		EvaluatedSamples:   totalSamples,
-		TopPrecursorTokens: topTokens,
-		Precision:          precision,
-		Recall:             recall,
-		BalancedAccuracy:   balancedAcc,
-		MCC:                mcc,
-		PriorBaseRate:      priorBaseRate,
-		PredictiveGainBits: mutualInfo,
-		Status:             "MEASURED",
-		Passed:             balancedAcc > 0.50 && mcc > 0.0,
-	}
+	sort.Strings(skill.TopPrecursorTokens)
+
+	return skill
 }
 
 func evaluateEconomicRelevance(
@@ -708,236 +737,11 @@ func evaluateEconomicRelevance(
 		FrictionClearanceRate:  clearanceRate,
 		ProfitableExcursions:   profitable,
 		UnprofitableExcursions: unprofitable,
-		Status:                 "MEASURED",
-		Passed:                 clearanceRate > 0.50,
+		// The up class is defined by clearing the round-trip fee, so this
+		// rate restates the detector's construction and cannot fail.
+		Status: VerdictNotATest,
+		Passed: false,
 	}
-}
-
-/*
-offlinePrice constructs an in-memory Price system with offline instrument rules and
-configured fee schedules without dialing exchange WebSockets or REST endpoints.
-*/
-func offlinePrice(ctx context.Context, takerFee float64, symbols ...string) (*broker.Price, error) {
-	if takerFee <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[audit] taker fee must be strictly positive",
-			nil,
-		))
-	}
-
-	normalizer := spot.NewNormalizer()
-	assets := make(map[string]spot.AssetInfo)
-	pairs := make(map[string]spot.AssetPair)
-
-	for _, sym := range symbols {
-		if sym == "" {
-			continue
-		}
-
-		parts := strings.Split(sym, "/")
-		base := sym
-		quote := "USD"
-
-		if len(parts) == 2 {
-			base = parts[0]
-			quote = parts[1]
-		}
-
-		assets[base] = spot.AssetInfo{AltName: base}
-		assets[quote] = spot.AssetInfo{AltName: quote}
-		pairs[sym] = spot.AssetPair{
-			WSName:        sym,
-			Base:          base,
-			Quote:         quote,
-			LotDecimals:   8,
-			LotMultiplier: 1,
-		}
-	}
-
-	normalizer.Update(&spot.AssetsManagerUpdate{
-		NewAssets: assets,
-		NewPairs:  pairs,
-	})
-
-	instPairs := make([]kraken.InstrumentPair, 0, len(symbols))
-	for _, sym := range symbols {
-		if sym == "" {
-			continue
-		}
-		instPairs = append(instPairs, kraken.InstrumentPair{
-			Symbol:  sym,
-			Quote:   "USD",
-			CostMin: decimal.NewFromFloat64(0.01),
-			Status:  "online",
-		})
-	}
-
-	inst := broker.NewOfflineInstrument(ctx, "USD", instPairs...)
-	paper := broker.NewPaper(ctx)
-	paper.Transition(runtime.READY)
-
-	price := broker.NewPrice(ctx, nil, paper, inst, normalizer)
-
-	for _, sym := range symbols {
-		if sym == "" {
-			continue
-		}
-
-		// takerFee is a fraction (0.0026); Kraken's TradeVolumeFee.Fee, which
-		// Price.WithFee reads, is in percent (0.26).
-		price.SetFee(sym, kraken.TradeVolumeFee{
-			Fee: decimal.NewFromFloat64(takerFee * 100),
-		})
-	}
-
-	price.SetReferenceCash(decimal.NewFromFloat64(10000))
-	price.Transition(runtime.READY)
-	return price, nil
-}
-
-func detectInMemory(
-	ctx context.Context,
-	catalog *tables.Catalog,
-	epoch int64,
-	symbol string,
-	takerFee float64,
-	minTick, maxTick int64,
-) ([]*data.Measurement, error) {
-	tbl, err := catalog.Load(ctx, tables.Measurements)
-	if err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	s3Ctx := catalog.Context(ctx)
-	filter := iceberg.NewAnd(
-		iceberg.EqualTo(iceberg.Reference("epoch"), epoch),
-		iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
-	)
-
-	if symbol != "" {
-		filter = iceberg.NewAnd(filter, iceberg.EqualTo(iceberg.Reference("label"), symbol))
-	}
-
-	if minTick > 0 {
-		filter = iceberg.NewAnd(filter, iceberg.GreaterThanEqual(iceberg.Reference("tick"), minTick))
-	}
-
-	if maxTick > 0 && maxTick >= minTick {
-		filter = iceberg.NewAnd(filter, iceberg.LessThanEqual(iceberg.Reference("tick"), maxTick))
-	}
-
-	tasks, err := tbl.Scan(icetable.WithRowFilter(filter)).PlanFiles(s3Ctx)
-	if err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	if len(tasks) == 0 {
-		return nil, nil
-	}
-
-	chunkSize := 250
-	grouped := make(map[string][]*data.Measurement)
-
-	for taskIndex := 0; taskIndex < len(tasks); taskIndex += chunkSize {
-		endIndex := min(taskIndex+chunkSize, len(tasks))
-
-		scanOpts := []icetable.ScanOption{
-			icetable.WithRowFilter(filter),
-			icetable.WitMaxConcurrency(16),
-		}
-
-		_, batches, readErr := tbl.Scan(scanOpts...).ReadTasks(s3Ctx, tasks[taskIndex:endIndex])
-		if readErr != nil {
-			errnie.Warn(fmt.Sprintf("[audit] failed to read tasks chunk %d-%d: %s", taskIndex, endIndex, readErr))
-			continue
-		}
-
-		for batch, batchErr := range batches {
-			if batchErr != nil {
-				continue
-			}
-
-			if batch == nil {
-				continue
-			}
-
-			measurements, mErr := tables.ReadMeasurements(batch)
-			batch.Release()
-
-			if mErr != nil {
-				continue
-			}
-
-			for _, measurement := range measurements {
-				if measurement != nil {
-					grouped[measurement.Label] = append(grouped[measurement.Label], measurement)
-				}
-			}
-		}
-	}
-
-	if len(grouped) == 0 {
-		return nil, nil
-	}
-
-	symbols := make([]string, 0, len(grouped))
-	for sym := range grouped {
-		symbols = append(symbols, sym)
-	}
-	slices.Sort(symbols)
-
-	price, err := offlinePrice(ctx, takerFee, symbols...)
-	if err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	storeTee := hindsight.NewStoreTee(ctx, "auditDetectorTee")
-	storeTee.Transition(runtime.READY)
-
-	detector := strategy.NewDetector(ctx, storeTee, price)
-	if detector.Status() == runtime.ERROR {
-		return nil, errnie.Error(detector.Error())
-	}
-
-	for _, sym := range symbols {
-		trades := grouped[sym]
-		slices.SortFunc(trades, func(left, right *data.Measurement) int {
-			if cmpResult := cmp.Compare(left.Epoch, right.Epoch); cmpResult != 0 {
-				return cmpResult
-			}
-			if cmpResult := cmp.Compare(left.Tick, right.Tick); cmpResult != 0 {
-				return cmpResult
-			}
-			return cmp.Compare(left.SeqIdx, right.SeqIdx)
-		})
-
-		seq := func(yield func(*data.Measurement, error) bool) {
-			for _, m := range trades {
-				if !yield(m, nil) {
-					return
-				}
-			}
-		}
-
-		if err := detector.Scan(seq); err != nil {
-			return nil, err
-		}
-	}
-
-	var detections []*data.Measurement
-
-	for {
-		measurement := storeTee.Pop()
-
-		if measurement == nil {
-			break
-		}
-
-		detections = append(detections, measurement)
-	}
-
-	return detections, nil
 }
 
 func getMeasurementMetric(m *data.Measurement, key string) float64 {
@@ -1046,15 +850,9 @@ func loadOrDetectExcursions(
 		}
 	}
 
-	if len(detections) == 0 {
-		inMemory, err := detectInMemory(ctx, catalog, epoch, symbol, takerFee, minTick, maxTick)
-
-		if err != nil {
-			return nil, errnie.Error(err)
-		}
-
-		detections = inMemory
-	}
-
+	// Stored detections only. They were produced by `symm detect` at the fee
+	// it was run with; detections do not record that fee, so the caller must
+	// declare it and the report states it as unverified provenance. There is
+	// no in-memory re-detection at a different fee.
 	return detections, nil
 }

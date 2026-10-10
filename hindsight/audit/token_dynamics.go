@@ -19,13 +19,16 @@ developing the grid, so the holdout boundary does not invent a market-memory
 reset that live operation would never experience.
 
 The temporal null block length is derived from the observed token dwell lengths.
-No entropy-reduction threshold is converted into a health verdict.
+The verdict is SUPPORTED when the held-out transition entropy is lower than
+the block-shuffled null at the significance level (add-one empirical p),
+i.e. the token sequence carries order beyond its dwell structure.
 */
 func AnalyzeTokenDynamics(
 	frozenGrid *store.Grid,
 	unseenTicks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
 	permutations int,
+	significance float64,
 ) Stage4TokenDynamics {
 	if frozenGrid == nil {
 		return Stage4TokenDynamics{
@@ -298,6 +301,9 @@ func AnalyzeTokenDynamics(
 		nullRank = float64(greaterOrEqual) / float64(len(nullEntropies))
 	}
 
+	pValue := lowerPValue(realEntropy, nullEntropies)
+	verdict := hypothesisVerdict(pValue, len(nullEntropies), significance)
+
 	return Stage4TokenDynamics{
 		TotalEmissions:                 len(tokens),
 		UniqueTokens:                   len(tokenFreqs),
@@ -328,8 +334,9 @@ func AnalyzeTokenDynamics(
 			realEntropy, nullMean, entropyReduction, blockSize, nullRank*100, alwaysStayAccuracy*100, marginalAccuracy*100,
 			compEntropy, compNullMean, compReduction,
 		),
-		Status: "MEASURED",
-		Passed: true,
+		PValue: pValue,
+		Status: verdict,
+		Passed: passed(verdict),
 	}
 }
 

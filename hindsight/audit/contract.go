@@ -18,6 +18,7 @@ and variance/counts/entropy/SNR strictly non-negative).
 */
 func AnalyzeContract(
 	measurements []*data.Measurement,
+	significance float64,
 ) Stage0Contract {
 	type accumulator struct {
 		unit      data.Unit
@@ -49,7 +50,10 @@ func AnalyzeContract(
 
 			unit = resolveImpliedUnit(name, unit)
 
-			acc, exists := stats[name]
+			// One contract series per producer: the same label from two
+			// sources is two series with two owners.
+			key := meas.Source + ":" + name
+			acc, exists := stats[key]
 			if !exists {
 				acc = &accumulator{
 					unit:   unit,
@@ -57,7 +61,7 @@ func AnalyzeContract(
 					minVal: math.MaxFloat64,
 					maxVal: -math.MaxFloat64,
 				}
-				stats[name] = acc
+				stats[key] = acc
 			}
 
 			acc.count++
@@ -114,7 +118,7 @@ func AnalyzeContract(
 		return breaches[first].MaxVal > breaches[second].MaxVal
 	})
 
-	normAudit := auditMetricNormalization(measurements)
+	normAudit := auditMetricNormalization(measurements, significance)
 	stateAudit := auditMeasurementState(measurements)
 
 	diagnosis := "All examined metrics comply with the hard domains declared by their units."
@@ -130,8 +134,9 @@ func AnalyzeContract(
 	passed := len(breaches) == 0 && normAudit.Passed && stateAudit.Passed
 
 	summaryText := fmt.Sprintf(
-		"Contract Integrity: %d metrics evaluated (%d breached domains). Norm/Std: %d audited (%d breaches). Measurements: %d audited (WORM/State passed: %t).",
+		"Contract Integrity: %d source:metric series evaluated (%d breached domains). Norm/Std: %d audited (%d breaches, %d z beyond the Chebyshev bound). Measurements: %d audited (WORM/State passed: %t).",
 		len(stats), len(breaches), normAudit.TotalMetricsAudited, normAudit.NormalizationBreaches+normAudit.StandardizationBreaches,
+		normAudit.ZMagnitudeBreaches,
 		stateAudit.TotalMeasurementsAudited, stateAudit.Passed,
 	)
 
@@ -148,7 +153,28 @@ func AnalyzeContract(
 	}
 }
 
-func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit {
+func auditMetricNormalization(measurements []*data.Measurement, significance float64) MetricNormAudit {
+	// Defined z-scores per stream (source, symbol, metric), for the
+	// magnitude bound: a stream of n z-scores may not exceed zBound(n).
+	type streamKey struct{ source, label, metric string }
+	streamCounts := make(map[streamKey]int)
+
+	for _, meas := range measurements {
+		if meas == nil {
+			continue
+		}
+
+		for entry := range meas.Read() {
+			if entry != nil && entry.Metric != nil && entry.Metric.Standardizable() {
+				streamCounts[streamKey{meas.Source, meas.Label, entry.Metric.Label}]++
+			}
+		}
+	}
+
+	zBreaches := 0
+	zBreachesBySource := make(map[string]int)
+	maxAbsZBySource := make(map[string]float64)
+
 	totalAudited := 0
 	normBreaches := 0
 	stdBreaches := 0
@@ -182,6 +208,15 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 				maxAbsZ = absZ
 			}
 
+			if metric.Standardizable() {
+				maxAbsZBySource[meas.Source] = math.Max(maxAbsZBySource[meas.Source], absZ)
+
+				if absZ > zBound(streamCounts[streamKey{meas.Source, meas.Label, metric.Label}], significance) {
+					zBreaches++
+					zBreachesBySource[meas.Source]++
+				}
+			}
+
 			sumZ += std
 			sumZSq += std * std
 
@@ -212,8 +247,8 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 	}
 
 	summary := fmt.Sprintf(
-		"Metrics Norm/Std: %d audited. Mean z=%.3f (var=%.3f, max|z|=%.2f). Saturated: %.1f%%. Breaches: norm=%d, std=%d.",
-		totalAudited, meanZ, varZ, maxAbsZ, satFraction*100, normBreaches, stdBreaches,
+		"Metrics Norm/Std: %d audited. Mean z=%.3f (var=%.3f, max|z|=%.3g). Saturated: %.1f%%. Breaches: norm=%d, std=%d, z beyond sqrt(n/%.2f)=%d.",
+		totalAudited, meanZ, varZ, maxAbsZ, satFraction*100, normBreaches, stdBreaches, significance, zBreaches,
 	)
 
 	return MetricNormAudit{
@@ -224,8 +259,11 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 		VarianceZScore:          varZ,
 		MaxAbsoluteZ:            maxAbsZ,
 		SaturatedNormFraction:   satFraction,
+		ZMagnitudeBreaches:      zBreaches,
+		ZBreachesBySource:       zBreachesBySource,
+		MaxAbsZBySource:         maxAbsZBySource,
 		SummaryText:             summary,
-		Passed:                  normBreaches == 0 && stdBreaches == 0,
+		Passed:                  normBreaches == 0 && stdBreaches == 0 && zBreaches == 0,
 	}
 }
 

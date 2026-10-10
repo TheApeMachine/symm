@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/pumpdump"
@@ -308,5 +309,39 @@ func TestPumpDumpSignal(t *testing.T) {
 		instrument := pumpdump.NewSignal(context.Background(), nil)
 		So(instrument.Error(), ShouldNotBeNil)
 		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
+	})
+}
+
+func TestPumpDumpBarWithinClockGrain(t *testing.T) {
+	Convey("Given a volume bar that closes one clock grain after it opened", t, func() {
+		ctx := context.Background()
+		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+		books := broker.NewBook(ctx, spot.NewNormalizer())
+		instrument := pumpdump.NewSignal(ctx, books)
+		instrument.Transition(nmruntime.READY)
+		touch(books, now, "bid-1", 100.0, 5.0, "ask-1", 100.2, 5.0)
+
+		// The first trade seeds the bar target (1); the second opens a bar at
+		// its own timestamp, the third closes it one microsecond later.
+		instrument.Step(trade(now, 1, "buy", 100.1, 1.0))
+		instrument.Step(trade(now.Add(time.Second), 2, "buy", 100.1, 0.5))
+		closed := instrument.Step(trade(now.Add(time.Second+core.ClockResolution), 3, "buy", 100.1, 0.5))
+		So(closed, ShouldNotBeNil)
+
+		Convey("the bar is reported but its rates are undefined", func() {
+			duration, held := metric(closed, "volume_bar_duration")
+			So(held, ShouldBeTrue)
+			// The clock carries nanoseconds as float64, which near 2026 resolves
+			// 256 ns, so the duration is one grain to within that.
+			So(duration, ShouldAlmostEqual, core.ClockResolution.Seconds(), 256e-9)
+
+			for _, label := range []string{"volume_rate", "notional_rate", "trade_rate", "midpoint_return_rate"} {
+				_, held := metric(closed, label)
+				So(held, ShouldBeFalse)
+			}
+
+			_, held = metric(closed, "midpoint_log_return")
+			So(held, ShouldBeTrue)
+		})
 	})
 }

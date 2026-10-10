@@ -11,6 +11,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/toxicity"
@@ -326,5 +327,43 @@ func TestToxicitySignal(t *testing.T) {
 		instrument := toxicity.NewSignal(context.Background(), nil)
 		So(instrument.Error(), ShouldNotBeNil)
 		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
+	})
+}
+
+func TestToxicityWithinClockGrain(t *testing.T) {
+	Convey("Given brackets one venue clock grain long", t, func() {
+		ctx := context.Background()
+		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+		books := broker.NewBook(ctx, spot.NewNormalizer())
+		instrument := toxicity.NewSignal(ctx, books)
+		instrument.Transition(nmruntime.READY)
+		touch(books, now, "bid-1", 50000.0, 10.0, "ask-1", 50002.0, 10.0)
+
+		instrument.Step(trade(now, 1, "buy", 50002.0, 1.0))
+		resolved := instrument.Step(trade(now.Add(time.Second), 2, "buy", 50002.0, 1.0))
+		grain := instrument.Step(trade(now.Add(time.Second+core.ClockResolution), 3, "buy", 50002.0, 1.0))
+		So(resolved, ShouldNotBeNil)
+		So(grain, ShouldNotBeNil)
+
+		Convey("quantities and fractions stand, rates and velocities are undefined", func() {
+			_, held := metric(grain, "touch_fill_fraction:ask")
+			So(held, ShouldBeTrue)
+
+			for _, label := range []string{
+				"touch_fill_rate:ask", "net_withdrawal_rate:ask", "net_replenishment_rate:ask",
+				"fill_fraction_velocity:ask",
+			} {
+				_, held := metric(grain, label)
+				So(held, ShouldBeFalse)
+			}
+
+			_, held = metric(resolved, "touch_fill_rate:ask")
+			So(held, ShouldBeTrue)
+		})
+
+		Convey("a fill-fraction z-score waits for core.MinimumPrior prior fractions", func() {
+			_, held := metric(grain, "fill_fraction_zscore:ask")
+			So(held, ShouldBeFalse)
+		})
 	})
 }

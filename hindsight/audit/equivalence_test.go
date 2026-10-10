@@ -38,7 +38,11 @@ func TestEquivalenceAudit(t *testing.T) {
 			So(report.TotalTokensChecked, ShouldEqual, 5)
 			So(report.TokenMismatches, ShouldEqual, 0)
 			So(report.MetricMismatches, ShouldEqual, 0)
-			So(report.Passed, ShouldBeTrue)
+			// One code path compared with itself cannot fail; it is reported
+			// as a determinism observation, never as a pass.
+			So(report.Deterministic, ShouldBeTrue)
+			So(report.Status, ShouldEqual, VerdictNotATest)
+			So(report.Passed, ShouldBeFalse)
 			So(len(report.Discrepancies), ShouldEqual, 0)
 		})
 	})

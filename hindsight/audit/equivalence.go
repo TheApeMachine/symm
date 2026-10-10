@@ -17,6 +17,11 @@ through both the production runtime path (Grid.Observe, peer assembly, and state
 and the audit inspection path, verifying bit-for-bit fidelity.
 
 Any discrepancy between production and audit constitutes a measurement fidelity breach.
+
+This is NOT_A_TEST: both "paths" build the same frame from the same stored
+measurements and call the same Grid.Observe and Grid.RegionScores, so they can
+only differ if those functions are nondeterministic. Its mismatch counts are
+kept as a determinism observation, not reported as a pass.
 */
 func AnalyzeEquivalence(
 	ctx context.Context,
@@ -127,13 +132,13 @@ func AnalyzeEquivalence(
 		}
 	}
 
-	passed := tokenMismatches == 0 && metricMismatches == 0
+	deterministic := tokenMismatches == 0 && metricMismatches == 0
 
 	summary := fmt.Sprintf(
-		"Production-vs-Audit Equivalence: %d ticks replayed (%d tokens verified across %s runtime). "+
+		"NOT_A_TEST (one code path compared with itself). Determinism replay: %d ticks replayed (%d tokens verified across %s runtime). "+
 			"Token mismatches=%d, Metric/brightness mismatches=%d. Divergence=%t.",
 		len(ticks), totalTokensChecked, runtime.Version(),
-		tokenMismatches, metricMismatches, !passed,
+		tokenMismatches, metricMismatches, !deterministic,
 	)
 
 	return EquivalenceAudit{
@@ -144,6 +149,8 @@ func AnalyzeEquivalence(
 		MetricMismatches:   metricMismatches,
 		Discrepancies:      discrepancies,
 		SummaryText:        summary,
-		Passed:             passed,
+		Deterministic:      deterministic,
+		Status:             VerdictNotATest,
+		Passed:             false,
 	}
 }

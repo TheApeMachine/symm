@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/liquidity"
@@ -86,7 +87,7 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
 		Convey("It measures exact touch geometry, notional depth, and imbalance", func() {
-			for step := range 10 {
+			for step := range 14 {
 				at := origin.Add(time.Duration(step) * 100 * time.Millisecond)
 				bid := 3000.0 + float64(step)*2.0
 				ask := bid + 4.0
@@ -101,18 +102,35 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 				So(res.Label, ShouldEqual, "ETH/USD")
 				So(res.At, ShouldEqual, at)
 
-				if step == 0 {
-					for _, label := range []string{
-						"depth_noise_scale:bid", "depth_noise_scale:ask", "spread_noise_scale",
-						"depth_zscore:bid", "depth_zscore:ask", "spread_zscore",
-						"divergence_velocity:bid", "divergence_velocity:ask", "spread_divergence_velocity",
-						"historical_path_distance", "historical_path_percentile",
-					} {
-						val, held := metric(res, label)
-						So(held, ShouldBeTrue)
-						So(val, ShouldEqual, 0.0)
-					}
+				// Without a prior touch there is no baseline, ratio, or
+				// divergence; without core.MinimumPrior prior samples no noise
+				// scale or z-score; without a spread z-score no path point.
+				// Undefined is absent, never zero.
+				for _, label := range []string{
+					"touch_notional_baseline:bid", "depth_ratio:bid", "depth_divergence:bid",
+				} {
+					_, held := metric(res, label)
+					So(held, ShouldEqual, step > 0)
 				}
+
+				// A divergence velocity needs two divergences.
+				for _, label := range []string{
+					"divergence_velocity:bid", "divergence_velocity:ask", "spread_divergence_velocity",
+				} {
+					_, held := metric(res, label)
+					So(held, ShouldEqual, step > 1)
+				}
+
+				for _, label := range []string{
+					"depth_noise_scale:bid", "depth_noise_scale:ask", "spread_noise_scale",
+					"depth_zscore:bid", "depth_zscore:ask", "spread_zscore",
+				} {
+					_, held := metric(res, label)
+					So(held, ShouldEqual, float64(step) >= core.MinimumPrior)
+				}
+
+				_, held := metric(res, "historical_path_distance")
+				So(held, ShouldEqual, float64(step) > core.MinimumPrior)
 
 				midpoint := (bid + ask) / 2.0
 				spread := ask - bid
@@ -140,6 +158,10 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 					So(got, ShouldAlmostEqual, want, 1e-9*math.Max(1, math.Abs(want)))
 				}
 
+				if step == 0 {
+					continue
+				}
+
 				for _, channel := range [][3]string{
 					{"touch_notional:bid", "touch_notional_baseline:bid", "depth_divergence:bid"},
 					{"touch_notional:ask", "touch_notional_baseline:ask", "depth_divergence:ask"},
@@ -158,12 +180,7 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 				baseline, _ := metric(res, "touch_notional_baseline:bid")
 				So(ratio, ShouldAlmostEqual, bidNotional/baseline, 1e-9)
 
-				_, held = metric(res, "divergence_velocity:bid")
-				So(held, ShouldBeTrue)
-				_, held = metric(res, "spread_divergence_velocity")
-				So(held, ShouldBeTrue)
-
-				if step > 1 {
+				if float64(step) >= core.MinimumPrior {
 					zscore, held := metric(res, "depth_zscore:bid")
 					So(held, ShouldBeTrue)
 					scale, held := metric(res, "depth_noise_scale:bid")
@@ -180,13 +197,13 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 			other := stepTouch(instrument, books, "BTC/USD", origin, 2, 50000, 50010, 1, 1)
 			So(other, ShouldNotBeNil)
 
-			baseline, held := metric(other, "touch_notional_baseline:bid")
-			So(held, ShouldBeTrue)
-			So(baseline, ShouldAlmostEqual, 50000.0, 1e-9)
+			// BTC/USD's first touch has no baseline or velocity of its own,
+			// whatever ETH/USD has seen.
+			_, held := metric(other, "touch_notional_baseline:bid")
+			So(held, ShouldBeFalse)
 
-			otherVel, held := metric(other, "divergence_velocity:bid")
-			So(held, ShouldBeTrue)
-			So(otherVel, ShouldEqual, 0.0)
+			_, held = metric(other, "divergence_velocity:bid")
+			So(held, ShouldBeFalse)
 		})
 
 		Convey("A crossed touch is dropped with a warning without halting the system", func() {
@@ -266,6 +283,34 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 		Convey("It fails construction with an error instead of running blind", func() {
 			So(instrument.Error(), ShouldNotBeNil)
 			So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
+		})
+	})
+}
+
+func TestLiquidityWithinClockGrain(t *testing.T) {
+	Convey("Given touches one venue clock grain apart", t, func() {
+		ctx := context.Background()
+		books := broker.NewBook(ctx, spot.NewNormalizer())
+		instrument := liquidity.NewSignal(ctx, books)
+		instrument.Transition(nmruntime.READY)
+		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+		stepTouch(instrument, books, "GRAIN/USD", origin, 1, 100, 100.2, 5, 5)
+		stepTouch(instrument, books, "GRAIN/USD", origin.Add(time.Second), 2, 100, 100.2, 6, 5)
+		resolved := stepTouch(instrument, books, "GRAIN/USD", origin.Add(2*time.Second), 3, 100, 100.2, 7, 5)
+		grain := stepTouch(instrument, books, "GRAIN/USD", origin.Add(2*time.Second+core.ClockResolution), 4, 100, 100.1, 9, 5)
+
+		Convey("the divergence is defined but its velocity is not", func() {
+			_, held := metric(resolved, "divergence_velocity:bid")
+			So(held, ShouldBeTrue)
+
+			_, held = metric(grain, "depth_divergence:bid")
+			So(held, ShouldBeTrue)
+
+			for _, label := range []string{"divergence_velocity:bid", "divergence_velocity:ask", "spread_divergence_velocity"} {
+				_, held := metric(grain, label)
+				So(held, ShouldBeFalse)
+			}
 		})
 	})
 }

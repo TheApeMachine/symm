@@ -17,7 +17,7 @@ func TestPrecursorSeparation(t *testing.T) {
 
 		Convey("When invoked with invalid or non-positive taker fee", func() {
 			result := AnalyzePrecursorSeparation(
-				ctx, nil, 1, "BTC/USD", store.NewGrid(), nil, nil, 10, nil, 0.0,
+				ctx, nil, 1, "BTC/USD", store.NewGrid(), nil, nil, 10, 0.05, nil, 0.0,
 			)
 			So(result.Passed, ShouldBeFalse)
 			So(result.SummaryText, ShouldContainSubstring, "strictly positive")
@@ -25,7 +25,7 @@ func TestPrecursorSeparation(t *testing.T) {
 
 		Convey("When invoked with nil catalog or grid", func() {
 			result := AnalyzePrecursorSeparation(
-				ctx, nil, 1, "BTC/USD", nil, nil, nil, 10, nil, 0.0026,
+				ctx, nil, 1, "BTC/USD", nil, nil, nil, 10, 0.05, nil, 0.0026,
 			)
 			So(result.Passed, ShouldBeFalse)
 			So(result.SummaryText, ShouldContainSubstring, "Grid unavailable")
@@ -45,32 +45,71 @@ func TestPrecursorSeparation(t *testing.T) {
 			So(jsdEmpty, ShouldEqual, 0.0)
 		})
 
-		Convey("When evaluating predictive skill with discriminating precursor tokens", func() {
-			eventTokens := map[string]int{
-				"R01": 40,
-				"R02": 10,
-			}
-			controlTokens := map[string]int{
-				"R01": 5,
-				"R02": 45,
+		repeat := func(count int, tokens map[string]int) []map[string]int {
+			out := make([]map[string]int, count)
+
+			for index := range out {
+				out[index] = tokens
 			}
 
-			skill := evaluatePredictiveSkill(eventTokens, controlTokens)
-			So(skill.Status, ShouldEqual, "MEASURED")
-			So(skill.EvaluatedSamples, ShouldEqual, 100)
-			So(skill.BalancedAccuracy, ShouldBeGreaterThan, 0.70)
-			So(skill.MCC, ShouldBeGreaterThan, 0.50)
-			So(skill.PredictiveGainBits, ShouldBeGreaterThan, 0.20)
-			So(skill.TopPrecursorTokens, ShouldContain, "R01")
-			So(skill.Passed, ShouldBeTrue)
+			return out
+		}
+
+		Convey("When event and control excursions use different tokens", func() {
+			result := evaluateGroupHypothesis("g", "", repeat(10, map[string]int{"R01": 9, "R02": 1}),
+				repeat(10, map[string]int{"R01": 1, "R02": 9}), 200, 0.05)
+			So(result.Status, ShouldEqual, VerdictSupported)
+			So(result.Passed, ShouldBeTrue)
 		})
 
-		Convey("When evaluating predictive skill with insufficient samples", func() {
-			eventTokens := map[string]int{"R01": 2}
-			controlTokens := map[string]int{"R02": 2}
-			skill := evaluatePredictiveSkill(eventTokens, controlTokens)
-			So(skill.Status, ShouldEqual, "INSUFFICIENT_DATA")
-			So(skill.Passed, ShouldBeFalse)
+		Convey("When event and control excursions are drawn alike, the hypothesis fails", func() {
+			same := map[string]int{"R01": 5, "R02": 5}
+			result := evaluateGroupHypothesis("g", "", repeat(10, same), repeat(10, same), 200, 0.05)
+			So(result.Status, ShouldEqual, VerdictNotSupported)
+			So(result.Passed, ShouldBeFalse)
+		})
+
+		Convey("When one long event excursion faces one control, many tokens do not make evidence", func() {
+			// A token-level shuffle of these 200 tokens would call this
+			// separated; with two excursions the label null has two outcomes.
+			result := evaluateGroupHypothesis("g", "", repeat(1, map[string]int{"R01": 100}),
+				repeat(1, map[string]int{"R02": 100}), 200, 0.05)
+			So(result.Status, ShouldEqual, VerdictNotSupported)
+		})
+
+		Convey("When late halves differ from early halves in every excursion", func() {
+			result := evaluatePairedHypothesis("p", "", repeat(10, map[string]int{"R03": 5}),
+				repeat(10, map[string]int{"R01": 5}), 200, 0.05)
+			So(result.Status, ShouldEqual, VerdictSupported)
+
+			same := evaluatePairedHypothesis("p", "", repeat(10, map[string]int{"R01": 5}),
+				repeat(10, map[string]int{"R01": 5}), 200, 0.05)
+			So(same.Status, ShouldEqual, VerdictNotSupported)
+		})
+
+		Convey("When held-out skill is scored on excursions the rule never saw", func() {
+			var excursions []excursionInterval
+
+			for index := range 20 {
+				class := "down"
+
+				if index%2 == 0 {
+					class = "up"
+				}
+
+				excursions = append(excursions, excursionInterval{class: class, bTick: int64(index)})
+			}
+
+			skill := evaluateHeldOutSkill(repeat(10, map[string]int{"R01": 5}),
+				repeat(10, map[string]int{"R02": 5}), excursions, 200, 0.05)
+			So(skill.Status, ShouldEqual, VerdictSupported)
+			So(skill.MCC, ShouldAlmostEqual, 1.0, 1e-9)
+
+			// Tokens unrelated to the label: the rule learned on the first
+			// 60% cannot beat the label null on the rest.
+			mixed := map[string]int{"R01": 5, "R02": 5}
+			chance := evaluateHeldOutSkill(repeat(10, mixed), repeat(10, mixed), excursions, 200, 0.05)
+			So(chance.Status, ShouldEqual, VerdictNotSupported)
 		})
 
 		Convey("When evaluating economic relevance (friction clearance)", func() {
@@ -98,14 +137,14 @@ func TestPrecursorSeparation(t *testing.T) {
 			}
 
 			economic := evaluateEconomicRelevance(excursions, takerFee)
-			So(economic.Status, ShouldEqual, "MEASURED")
+			So(economic.Status, ShouldEqual, VerdictNotATest)
 			So(economic.EvaluatedExcursions, ShouldEqual, 3)
 			So(economic.ProfitableExcursions, ShouldEqual, 2)
 			So(economic.UnprofitableExcursions, ShouldEqual, 1)
 			So(economic.FrictionClearanceRate, ShouldAlmostEqual, 2.0/3.0, 1e-4)
 			So(economic.GrossMeanReturn, ShouldBeGreaterThan, economic.RoundTripFeeRate)
 			So(economic.NetMeanReturn, ShouldBeGreaterThan, 0.0)
-			So(economic.Passed, ShouldBeTrue)
+			So(economic.Passed, ShouldBeFalse)
 		})
 
 		Convey("When evaluating end-to-end precursor separation with synthetic detections", func() {
@@ -149,11 +188,11 @@ func TestPrecursorSeparation(t *testing.T) {
 			}
 
 			result := AnalyzePrecursorSeparation(
-				ctx, nil, 1, "BTC/USD", grid, ticks, tickMeasurements, 20, detections, 0.0026,
+				ctx, nil, 1, "BTC/USD", grid, ticks, tickMeasurements, 20, 0.05, detections, 0.0026,
 			)
 
 			So(result.DetectionsFound, ShouldEqual, 2)
-			So(result.EconomicRelevance.Status, ShouldEqual, "MEASURED")
+			So(result.EconomicRelevance.Status, ShouldEqual, VerdictNotATest)
 			So(result.EconomicRelevance.EvaluatedExcursions, ShouldEqual, 1)
 			So(result.EconomicRelevance.FrictionClearanceRate, ShouldEqual, 1.0)
 			So(result.SummaryText, ShouldContainSubstring, "Precursor: 2 detections")

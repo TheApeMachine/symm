@@ -243,7 +243,11 @@ func (model *cognitiveModel) CognitionTree() ui.CognitionTreeExport {
 }
 
 /*
-AnalyzeCognitiveTrie evaluates the associative memory and Radix Trie learning dynamics:
+AnalyzeCognitiveTrie evaluates a SIMULATED trie: cognitiveModel, an in-memory
+prefix model built inside the audit. It is not the production memory (the S3
+symm bucket read by strategy.Step), and nothing here reads that bucket, so its
+verdict says nothing about the keys paper trading would match. It measures the
+simulated associative memory and Radix Trie learning dynamics:
 prequential predictive skill against constant policy baselines and an empirical label-permuted null,
 post-teach memory retention (catastrophic interference), trie graph topology and basin geometry,
 and false-alarm trigger rates on unseen continuous background tape.
@@ -257,6 +261,7 @@ func AnalyzeCognitiveTrie(
 	orderedTicks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
 	permutations int,
+	significance float64,
 	detections []*data.Measurement,
 	takerFee ...float64,
 ) Stage6CognitiveTrie {
@@ -466,24 +471,22 @@ func AnalyzeCognitiveTrie(
 	sort.Float64s(nullHits)
 	nullMean := computeMean(nullHits)
 	nullStd := computeStdDev(nullHits, nullMean)
-	nullP95 := nullHits[int(float64(permutations)*0.95)]
+	nullP95 := quantileOf(nullHits, 0.95)
 
 	sort.Float64s(nullBalancedAccs)
 	nullMeanBalAcc := computeMean(nullBalancedAccs)
-	nullP95BalAcc := nullBalancedAccs[int(float64(permutations)*0.95)]
+	nullP95BalAcc := quantileOf(nullBalancedAccs, 0.95)
 
-	betterCount := 0
+	// Add-one p of the balanced accuracy against the label-permuted null; it
+	// must also beat the best constant policy.
+	empiricalPVal := upperPValue(balancedAcc, nullBalancedAccs)
+	verdict := hypothesisVerdict(empiricalPVal, len(nullBalancedAccs), significance)
 
-	for _, nh := range nullHits {
-		if nh >= float64(hits) {
-			betterCount++
-		}
+	if verdict == VerdictSupported && balancedAcc <= baselineBalancedAcc {
+		verdict = VerdictNotSupported
 	}
 
-	empiricalPVal := float64(betterCount) / float64(permutations)
-	separatesFromNull := balancedAcc > baselineBalancedAcc &&
-		balancedAcc >= nullP95BalAcc &&
-		(actionCounts["enter"] == 0 || enterRec > 0)
+	separatesFromNull := verdict == VerdictSupported
 
 	retainedCount := 0
 
@@ -632,7 +635,7 @@ func AnalyzeCognitiveTrie(
 	s3Audit := auditS3PrefixMemory(phases)
 
 	summaryText := fmt.Sprintf(
-		"Cognitive Trie: %d phases (%d enter, %d exit, %d wait). Prequential hits=%d/%d (%.1f%%) [Balanced Acc: %.1f%%, MCC: %.3f, Enter Prec/Rec: %.1f%%/%.1f%%] vs best baseline (%s) %d/%d (%.1f%%, Balanced Acc: %.1f%%). Null p95=%.1f hits, Balanced Acc p95=%.1f%% (p=%.3f). S3 Memory: %d keys, %d collisions, time-to-disambiguation=%d tokens. Retention=%.1f%%. Spurious bg rate=%.2f%%.",
+		"SIMULATED trie (in-memory model, not the production S3 memory): %d phases (%d enter, %d exit, %d wait). Prequential hits=%d/%d (%.1f%%) [Balanced Acc: %.1f%%, MCC: %.3f, Enter Prec/Rec: %.1f%%/%.1f%%] vs best baseline (%s) %d/%d (%.1f%%, Balanced Acc: %.1f%%). Null p95=%.1f hits, Balanced Acc p95=%.1f%% (p=%.3f). S3 Memory: %d keys, %d collisions, time-to-disambiguation=%d tokens. Retention=%.1f%%. Spurious bg rate=%.2f%%.",
 		len(phases), actionCounts["enter"], actionCounts["exit"], actionCounts["wait"],
 		hits, totalCalls, hitRate*100,
 		balancedAcc*100, mcc, enterPrec*100, enterRec*100,
@@ -686,8 +689,8 @@ func AnalyzeCognitiveTrie(
 		SpuriousTriggerRate: spuriousRate,
 		S3Memory:            s3Audit,
 		SummaryText:         summaryText,
-		Status:              "MEASURED",
-		Passed:              true,
+		Status:              verdict,
+		Passed:              passed(verdict),
 	}
 }
 
@@ -797,7 +800,7 @@ func auditS3PrefixMemory(phases []triePhase) S3MemoryAudit {
 	}
 
 	summary := fmt.Sprintf(
-		"S3 Prefix Memory: %d keys across %d unique prefixes (mean depth=%.1f, max=%d). "+
+		"Simulated prefix memory (keys the audit would write, not the S3 bucket): %d keys across %d unique prefixes (mean depth=%.1f, max=%d). "+
 			"Prefix collisions (enter vs wait)=%d, conflicting continuations (enter vs exit)=%d. "+
 			"Time-to-disambiguation=%d tokens. Prequential retrieval accuracy=%.1f%% (%d/%d calls). Storage=%d bytes.",
 		len(uniqueKeys), len(contextActionMap), meanDepth, maxDepth,

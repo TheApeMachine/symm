@@ -46,7 +46,7 @@ var auditCmd = &cobra.Command{
 			Symbol:       auditSymbol,
 			MaxTicks:     auditTicks,
 			Permutations: auditPermutations,
-			TakerFee:     auditTakerFee,
+			TakerFee:     auditTakerFee / 100,
 			OutputDir:    auditOutputDir,
 			NoPlots:      auditNoPlots,
 		}
@@ -62,7 +62,13 @@ var auditCmd = &cobra.Command{
 		fmt.Printf("%s", stringsRepeat("=", 70)+"\n\n")
 		fmt.Printf("Target Run Epoch: %d\n", report.Epoch)
 		fmt.Printf("Symbol Audited:   %s (%d ticks)\n", report.Symbol, report.TotalTicks)
-		fmt.Printf("Audit State:      %s\n\n", formatAuditState(report))
+		fmt.Printf("Audit State:      %s\n\n", report.Overall)
+
+		for _, row := range report.Verdicts {
+			fmt.Printf("%-30s %-18s %s\n", row.Stage, row.Verdict, row.Evidence)
+		}
+
+		fmt.Println()
 		fmt.Printf("Stage 0 (Contract):   %s\n", report.Contract.SummaryText)
 		fmt.Printf("Stage 0.5 (Timing):   %s\n", report.Timing.SummaryText)
 		fmt.Printf("Stage 1 (Vitality):   %s\n", report.Vitality.SummaryText)
@@ -81,26 +87,6 @@ var auditCmd = &cobra.Command{
 	},
 }
 
-func formatAuditState(report *audit.AuditReport) string {
-	if report == nil {
-		return "INVALID_EXPERIMENT"
-	}
-	if !report.Contract.Passed {
-		return "CONTRACT_BREACH"
-	}
-	if report.Timing.Status == "INSUFFICIENT_DATA" ||
-		report.Vitality.Status == "INSUFFICIENT_DATA" ||
-		report.Sympathy.Status == "INSUFFICIENT_DATA" ||
-		report.GridStability.Status == "INSUFFICIENT_DATA" ||
-		report.TokenDynamics.Status == "INSUFFICIENT_DATA" ||
-		report.Precursor.IgnitionHypothesis.Status == "INSUFFICIENT_DATA" ||
-		report.Precursor.ExhaustionHypothesis.Status == "INSUFFICIENT_DATA" ||
-		report.CognitiveTrie.Status == "INSUFFICIENT_DATA" {
-		return "INCOMPLETE_EVIDENCE"
-	}
-	return "MEASURED"
-}
-
 func stringsRepeat(s string, count int) string {
 	var result string
 	for i := 0; i < count; i++ {
@@ -114,7 +100,7 @@ func init() {
 	auditCmd.Flags().StringVar(&auditSymbol, "symbol", "", "Market symbol to audit (empty = all symbols across market tape)")
 	auditCmd.Flags().IntVar(&auditTicks, "ticks", 1000, "Maximum number of ticks to sample (0 = all available ticks in epoch)")
 	auditCmd.Flags().IntVar(&auditPermutations, "permutations", 50, "Number of permutation iterations for null hypothesis testing")
-	auditCmd.Flags().Float64Var(&auditTakerFee, "taker-fee", 0.0026, "Offline taker fee fraction for friction-aware excursion detection (default: 0.0026 = 0.26% / 26 bps Kraken base taker fee)")
+	auditCmd.Flags().Float64Var(&auditTakerFee, "taker-fee-percent", 0, "Taker fee percent the stored detections were made at (as given to detect --taker-fee-percent); required, checked against the detections")
 	auditCmd.Flags().StringVar(&auditOutputDir, "out", "audit_results", "Output directory for audit reports and plots")
 	auditCmd.Flags().BoolVar(&auditNoPlots, "no-plots", false, "Skip generating Python/matplotlib visualization charts")
 
@@ -128,10 +114,11 @@ Inspects seven decoupled boundaries without model checkpointing or paper trading
   0.5. Ingestion Clock Timing & Synchronization (Latency, Spikes, Inversions)
   1. Metric Vitality & Redundancy (Variance, Coverage, Collinear Clones)
   2. Pair Relationships & Sympathy vs. Shuffled Null (Permutation Test)
-  3. Grid Partitioning & Temporal Stability across Disjoint Time Periods (Adjusted Rand Index)
+  3. Grid Region Stationarity across Disjoint Time Periods (JSD vs tick-shuffled null; ARI reported as NOT_A_TEST)
   4. Token Compression, Region Excitation & State Transitions (Dominance, Strength & Conditional Entropy)
   5. Precursor Separation (B/C Token Divergence vs. Background Noise)
-  6. Cognitive Engine & Radix Trie Learning Dynamics (Balanced Accuracy, MCC, Enter Precision/Recall)
+  6. SIMULATED in-memory trie (not the production S3 memory): balanced accuracy vs label-shuffled null
+  V1-V4. Equivalence (NOT_A_TEST), truthfulness vs stored trades, causality replay probe, family sensitivity
 
 Outputs a comprehensive machine-readable JSON report, an executive AUDIT_SUMMARY.md, and visual plots.
 `

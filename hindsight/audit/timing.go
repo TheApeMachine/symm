@@ -14,7 +14,7 @@ AnalyzeTiming audits market clock synchronization and feed sequencing:
  1. Exchange-to-local clock drift (Timestamp - At) and jitter spikes.
  2. Ingress monotonicity (detects feed timestamp inversions).
 */
-func AnalyzeTiming(measurements []*data.Measurement) Stage0Timing {
+func AnalyzeTiming(measurements []*data.Measurement, thresholds Thresholds) Stage0Timing {
 	if len(measurements) < 10 {
 		return Stage0Timing{
 			TotalChecked: len(measurements),
@@ -25,7 +25,10 @@ func AnalyzeTiming(measurements []*data.Measurement) Stage0Timing {
 	}
 
 	drifts := make([]float64, 0, len(measurements))
-	lastAtBySymbol := make(map[string]time.Time)
+	// Event time must be monotonic within one producer's stream for one
+	// symbol. Sources stamp different events (a book update and a trade), so
+	// interleaving two sources' times is not an inversion.
+	lastAtByStream := make(map[string]time.Time)
 	inversions := 0
 
 	for _, meas := range measurements {
@@ -41,13 +44,14 @@ func AnalyzeTiming(measurements []*data.Measurement) Stage0Timing {
 		}
 
 		if !meas.At.IsZero() && meas.Label != "" {
-			lastAt, exists := lastAtBySymbol[meas.Label]
+			stream := meas.Source + "|" + meas.Label
+			lastAt, exists := lastAtByStream[stream]
 
 			if exists && meas.At.Before(lastAt) {
 				inversions++
 			}
 
-			lastAtBySymbol[meas.Label] = meas.At
+			lastAtByStream[stream] = meas.At
 		}
 	}
 
@@ -70,13 +74,7 @@ func AnalyzeTiming(measurements []*data.Measurement) Stage0Timing {
 
 	meanDrift := sumDrift / float64(len(drifts))
 	p95Drift := empiricalQuantile(drifts, 0.95)
-	medianDrift := drifts[len(drifts)/2]
-
-	spikeThreshold := 200.0
-	if medianMultiplier := math.Abs(medianDrift) * 5.0; medianMultiplier > spikeThreshold {
-		spikeThreshold = medianMultiplier
-	}
-
+	spikeThreshold := thresholds.SpikeLatencyMs
 	spikes := 0
 
 	for _, d := range drifts {
@@ -85,7 +83,12 @@ func AnalyzeTiming(measurements []*data.Measurement) Stage0Timing {
 		}
 	}
 
-	passed := inversions == 0 && (len(drifts) == 0 || float64(spikes)/float64(len(drifts)) <= 0.05)
+	passed := inversions == 0 && float64(spikes)/float64(len(drifts)) <= thresholds.SpikeFraction
+	verdict := VerdictBreach
+
+	if passed {
+		verdict = VerdictValid
+	}
 
 	summaryText := fmt.Sprintf(
 		"Timing & Sync: %d observations. Mean clock drift = %.1fms (p95 = %.1fms, max = %.1fms). Latency spikes (>%.0fms): %d. Sequence inversions: %d.",
@@ -100,7 +103,7 @@ func AnalyzeTiming(measurements []*data.Measurement) Stage0Timing {
 		LatencySpikes:      spikes,
 		SequenceInversions: inversions,
 		SummaryText:        summaryText,
-		Status:             "MEASURED",
+		Status:             verdict,
 		Passed:             passed,
 	}
 }

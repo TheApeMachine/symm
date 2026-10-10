@@ -2,6 +2,7 @@ package audit
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
@@ -10,23 +11,29 @@ import (
 /*
 AnalyzeGridSensitivity tests the grid's dependence on individual signal families.
 It evaluates:
-1. Leave-One-Family-Out (LOFO): measures distribution shift (JSD) when each signal family is removed.
-2. Duplication Resistance: tests whether duplicating a family's metrics artificially dominates the grid.
-3. Shuffling Resilience: tests whether permuting one family across time destroys or preserves confluence.
+ 1. Leave-One-Family-Out (LOFO): the region-distribution shift (JSD, bits)
+    when each signal family is removed; above thresholds.DominanceJSD the
+    family dominates the grid.
+ 2. Duplication: the largest shift caused by duplicating any one family;
+    above thresholds.DuplicationJSD the grid is not duplication resistant.
+
+Both limits are named configuration, not derived from a null: there is no
+sampling distribution for "how much one family may move the grid", so the
+report states the values it used.
 */
 func AnalyzeGridSensitivity(
 	grid *store.Grid,
 	ticks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
+	thresholds Thresholds,
 ) SensitivityAudit {
 	if grid == nil || len(ticks) == 0 || len(tickMeasurements) == 0 {
 		return SensitivityAudit{
 			SummaryText: "Insufficient data for grid sensitivity audit.",
-			Passed:      false,
+			Status:      VerdictInsufficient,
 		}
 	}
 
-	// 1. Identify present signal families
 	familySet := make(map[string]struct{})
 	for _, tick := range ticks {
 		for _, m := range tickMeasurements[tick] {
@@ -41,62 +48,90 @@ func AnalyzeGridSensitivity(
 		families = append(families, f)
 	}
 
-	// 2. Compute baseline token distribution across all ticks
-	baseDist := computeSampleRegionDistribution(grid, ticks, tickMeasurements, "")
+	slices.Sort(families)
 
-	// 3. Leave-One-Family-Out (LOFO) evaluation
+	baseDist := computeSampleRegionDistribution(grid, ticks, tickMeasurements, "")
 	testedStats := make([]FamilySensitivityStat, 0, len(families))
-	dominantFamilyCount := 0
+	maxDuplicationJSD := 0.0
+	duplicatedFamily := ""
 
 	for _, fam := range families {
 		lofoDist := computeSampleRegionDistribution(grid, ticks, tickMeasurements, fam)
 		jsd, _ := computeDistributionDivergence(baseDist, lofoDist)
+		dupDist := computeDuplicatedRegionDistribution(grid, ticks, tickMeasurements, fam)
+		dupJSD, _ := computeDistributionDivergence(baseDist, dupDist)
 
-		isDominant := jsd > 0.40
-		if isDominant {
-			dominantFamilyCount++
+		if dupJSD > maxDuplicationJSD || duplicatedFamily == "" {
+			maxDuplicationJSD, duplicatedFamily = dupJSD, fam
 		}
 
 		testedStats = append(testedStats, FamilySensitivityStat{
-			Family:            fam,
-			RemovedJSD:        jsd,
-			PrecursorSurvived: jsd < 0.50,
-			IsDominant:        isDominant,
+			Family:        fam,
+			RemovedJSD:    jsd,
+			DuplicatedJSD: dupJSD,
+			IsDominant:    jsd > thresholds.DominanceJSD,
 		})
 	}
 
-	// 4. Family Duplication resistance check
-	// Duplicate the first family and measure how far the token distribution
-	// moves. No per-region normalization cancels duplication: the grid's null
-	// assumes independent metrics, and copies are perfectly correlated, so
-	// duplicating every metric in a region multiplies its brightness by
-	// sqrt(2) (both the old sum|z|/sqrt(N) and the current standardized
-	// excess scale this way). This check measures that shift; it does not
-	// assume the normalization neutralizes it.
-	duplicationResistant := true
-	if len(families) > 0 {
-		dupDist := computeDuplicatedRegionDistribution(grid, ticks, tickMeasurements, families[0])
-		dupJSD, _ := computeDistributionDivergence(baseDist, dupDist)
-		if dupJSD > 0.45 {
-			duplicationResistant = false
+	return sensitivityReport(testedStats, regionMass(baseDist), maxDuplicationJSD, duplicatedFamily, thresholds)
+}
+
+/*
+regionMass is 1 when the grid lit any region on the sample, 0 otherwise.
+*/
+func regionMass(dist [13]float64) float64 {
+	total := 0.0
+
+	for _, value := range dist {
+		total += value
+	}
+
+	return total
+}
+
+/*
+sensitivityReport turns the per-family shifts into the verdict. A sample on
+which the grid lit nothing cannot show dependence either way.
+*/
+func sensitivityReport(
+	stats []FamilySensitivityStat,
+	baseMass float64,
+	maxDuplicationJSD float64,
+	duplicatedFamily string,
+	thresholds Thresholds,
+) SensitivityAudit {
+	dominant := 0
+
+	for _, stat := range stats {
+		if stat.IsDominant {
+			dominant++
 		}
 	}
 
-	passed := len(testedStats) > 0 && dominantFamilyCount < len(families)
+	resistant := maxDuplicationJSD <= thresholds.DuplicationJSD
+	verdict := VerdictSupported
 
-	summary := fmt.Sprintf(
-		"Grid Sensitivity & Dependence: %d signal families evaluated (LOFO). "+
-			"Dominant families=%d/%d. Duplication resistance=%t. Balanced confluence=%t.",
-		len(testedStats), dominantFamilyCount, len(testedStats),
-		duplicationResistant, passed,
-	)
+	switch {
+	case len(stats) < 2 || baseMass == 0:
+		verdict = VerdictInsufficient
+	case dominant > 0 || !resistant:
+		verdict = VerdictNotSupported
+	}
 
 	return SensitivityAudit{
-		FamiliesTested:         testedStats,
-		DuplicationResistant:   duplicationResistant,
-		ShuffledNoiseResilient: true,
-		SummaryText:            summary,
-		Passed:                 passed,
+		FamiliesTested:       stats,
+		DominantFamilies:     dominant,
+		MaxDuplicationJSD:    maxDuplicationJSD,
+		MaxDuplicationFamily: duplicatedFamily,
+		DuplicationResistant: resistant,
+		Status:               verdict,
+		Passed:               passed(verdict),
+		SummaryText: fmt.Sprintf(
+			"Grid Sensitivity: %d families evaluated. Dominant (removal shifts regions by > %.2f bits): %d. "+
+				"Largest duplication shift %.3f bits (%s; limit %.2f). Verdict %s.",
+			len(stats), thresholds.DominanceJSD, dominant, maxDuplicationJSD, duplicatedFamily,
+			thresholds.DuplicationJSD, verdict,
+		),
 	}
 }
 

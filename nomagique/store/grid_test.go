@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -45,8 +46,8 @@ var regionEpoch atomic.Int64
 regionFrame builds a finalized frame whose peers hold sizes[region] metrics
 pinned to each region, and returns the frame with every metric entry so a
 test can assign standardized deformations directly. When warm is true each
-metric stream first observes two differing values through the real
-finalization path, so the returned metrics have a defined z-score; when warm
+metric stream first observes core.MinimumPrior differing values through
+the real finalization path, so the returned metrics have a defined z-score; when warm
 is false every returned metric is its stream's first observation.
 */
 func regionFrame(grid *Grid, sizes [13]int, warm bool) (*data.Measurement, [13][]*data.MetricEntry) {
@@ -65,7 +66,13 @@ func regionFrame(grid *Grid, sizes [13]int, warm bool) (*data.Measurement, [13][
 		history := []float64{1}
 
 		if warm {
-			history = []float64{0, 2, 1}
+			history = nil
+
+			for idx := range int(core.MinimumPrior) {
+				history = append(history, float64(2*(idx%2)))
+			}
+
+			history = append(history, 1)
 		}
 
 		var peer *data.Measurement

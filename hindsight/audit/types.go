@@ -27,8 +27,13 @@ type MetricNormAudit struct {
 	VarianceZScore          float64 `json:"variance_z_score"`
 	MaxAbsoluteZ            float64 `json:"max_absolute_z"`
 	SaturatedNormFraction   float64 `json:"saturated_norm_fraction"`
-	SummaryText             string  `json:"summary_text"`
-	Passed                  bool    `json:"passed"`
+	// ZMagnitudeBreaches counts defined z-scores beyond zBound for their
+	// stream's length: scales that cannot be a dispersion estimate.
+	ZMagnitudeBreaches int                `json:"z_magnitude_breaches"`
+	ZBreachesBySource  map[string]int     `json:"z_breaches_by_source"`
+	MaxAbsZBySource    map[string]float64 `json:"max_abs_z_by_source"`
+	SummaryText        string             `json:"summary_text"`
+	Passed             bool               `json:"passed"`
 }
 
 /*
@@ -147,6 +152,7 @@ type Stage2Sympathy struct {
 	NullDistribution SympathyNullDistribution `json:"null_distribution"`
 	SeparationRatio  float64                  `json:"separation_ratio"` // Fraction of pairs exceeding 95th percentile null
 	KSStatistic      float64                  `json:"ks_statistic"`     // Kolmogorov-Smirnov distance vs null
+	PValue           float64                  `json:"p_value"`          // add-one p of SeparationRatio vs per-iteration null fractions
 	SummaryText      string                   `json:"summary_text"`
 	Status           string                   `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
 	Passed           bool                     `json:"passed"` // compatibility: true when experiment executed with sufficient data
@@ -192,7 +198,9 @@ type Stage3GridStability struct {
 	NullAdjustedRandMean float64                    `json:"null_adjusted_rand_mean"`
 	DistributionJSD      float64                    `json:"distribution_jsd"`
 	DistributionTVD      float64                    `json:"distribution_tvd"`
+	StationarityPValue   float64                    `json:"stationarity_p_value"`
 	IsStationary         bool                       `json:"is_stationary"`
+	ARIVerdict           string                     `json:"ari_verdict"`
 	StabilityCurve       []GridStabilityObservation `json:"stability_curve"`
 	SummaryText          string                     `json:"summary_text"`
 	Status               string                     `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
@@ -259,6 +267,7 @@ type Stage4TokenDynamics struct {
 	CompressedEntropyReductionBits float64                       `json:"compressed_entropy_reduction_bits"`
 	AlwaysStayAccuracy             float64                       `json:"always_stay_accuracy"`
 	MarginalAccuracy               float64                       `json:"marginal_accuracy"`
+	PValue                         float64                       `json:"p_value"` // add-one p of raw transition entropy vs block null
 	SummaryText                    string                        `json:"summary_text"`
 	Status                         string                        `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
 	Passed                         bool                          `json:"passed"` // compatibility: true when experiment executed with sufficient data
@@ -277,6 +286,7 @@ type PrecursorHypothesis struct {
 	DivergenceBits    float64        `json:"divergence_bits"`
 	NullDivergence95  float64        `json:"null_divergence_95"`
 	SeparationRatio   float64        `json:"separation_ratio"`
+	PValue            float64        `json:"p_value"`
 	Status            string         `json:"status"` // "PASS", "FAIL", "INSUFFICIENT_DATA"
 	Passed            bool           `json:"passed"`
 }
@@ -293,6 +303,7 @@ type PrecursorPredictiveSkill struct {
 	MCC                float64  `json:"mcc"`
 	PriorBaseRate      float64  `json:"prior_base_rate"`
 	PredictiveGainBits float64  `json:"predictive_gain_bits"` // Mutual information I(Token; Excursion)
+	PValue             float64  `json:"p_value"`              // held-out MCC vs excursion-label null
 	Status             string   `json:"status"`               // "MEASURED", "INSUFFICIENT_DATA"
 	Passed             bool     `json:"passed"`
 }
@@ -325,7 +336,9 @@ type Stage5PrecursorSeparation struct {
 	PredictiveSkill      PrecursorPredictiveSkill   `json:"predictive_skill"`      // Anticipation & Classification
 	EconomicRelevance    PrecursorEconomicRelevance `json:"economic_relevance"`    // Friction Clearance
 	BackgroundTokens     map[string]int             `json:"background_tokens,omitempty"`
+	FeeProvenance        FeeProvenance              `json:"fee_provenance"`
 	SummaryText          string                     `json:"summary_text"`
+	Status               string                     `json:"status"`
 	Passed               bool                       `json:"passed"`
 }
 
@@ -466,6 +479,8 @@ type EquivalenceAudit struct {
 	MetricMismatches   int                      `json:"metric_mismatches"`
 	Discrepancies      []EquivalenceDiscrepancy `json:"discrepancies,omitempty"`
 	SummaryText        string                   `json:"summary_text"`
+	Deterministic      bool                     `json:"deterministic"`
+	Status             string                   `json:"status"`
 	Passed             bool                     `json:"passed"`
 }
 
@@ -485,13 +500,17 @@ TruthfulnessAudit verifies that published metrics truthfully reflect raw market 
 according to their mathematical specification.
 */
 type TruthfulnessAudit struct {
-	TotalChecked        int                 `json:"total_checked"`
-	ViolationsCount     int                 `json:"violations_count"`
-	ZeroFilledMidpoints int                 `json:"zero_filled_midpoints"`
-	SyntheticTimeSteps  int                 `json:"synthetic_time_steps"`
-	Discrepancies       []MetricDiscrepancy `json:"discrepancies,omitempty"`
-	SummaryText         string              `json:"summary_text"`
-	Passed              bool                `json:"passed"`
+	TotalChecked       int                 `json:"total_checked"`
+	ViolationsCount    int                 `json:"violations_count"`
+	SyntheticTimeSteps int                 `json:"synthetic_time_steps"`
+	Comparisons        map[string]int      `json:"comparisons"`
+	ViolationsByCheck  map[string]int      `json:"violations_by_check"`
+	AmbiguousTrades    int                 `json:"ambiguous_trades"`
+	UnexercisedChecks  []string            `json:"unexercised_checks"`
+	Discrepancies      []MetricDiscrepancy `json:"discrepancies,omitempty"`
+	SummaryText        string              `json:"summary_text"`
+	Status             string              `json:"status"`
+	Passed             bool                `json:"passed"`
 }
 
 /*
@@ -499,13 +518,17 @@ CausalityAudit verifies temporal isolation (no future information leakage) and
 cross-symbol state independence.
 */
 type CausalityAudit struct {
-	FuturePerturbationTicks int    `json:"future_perturbation_ticks"`
+	FuturePerturbationTicks int    `json:"future_perturbation_measurements"`
+	ComparedObservations    int    `json:"compared_observations"`
 	LeakageDetected         bool   `json:"leakage_detected"`
-	FirstDivergenceTick     int64  `json:"first_divergence_tick"`
 	ContaminatedCount       int    `json:"contaminated_count"`
+	SymbolsTested           int    `json:"symbols_tested"`
+	CrossSymbolContaminated int    `json:"cross_symbol_contaminated"`
 	CrossSymbolLeakage      bool   `json:"cross_symbol_leakage"`
+	EpochContaminated       int    `json:"epoch_contaminated"`
 	EpochIsolationPassed    bool   `json:"epoch_isolation_passed"`
 	SummaryText             string `json:"summary_text"`
+	Status                  string `json:"status"`
 	Passed                  bool   `json:"passed"`
 }
 
@@ -513,10 +536,10 @@ type CausalityAudit struct {
 FamilySensitivityStat records how removing a single signal family impacts the grid.
 */
 type FamilySensitivityStat struct {
-	Family            string  `json:"family"`
-	RemovedJSD        float64 `json:"removed_jsd"`
-	PrecursorSurvived bool    `json:"precursor_survived"`
-	IsDominant        bool    `json:"is_dominant"`
+	Family        string  `json:"family"`
+	RemovedJSD    float64 `json:"removed_jsd"`
+	DuplicatedJSD float64 `json:"duplicated_jsd"`
+	IsDominant    bool    `json:"is_dominant"`
 }
 
 /*
@@ -524,11 +547,14 @@ SensitivityAudit tests grid dependence on individual signal families,
 resistance to family duplication, and resilience to temporal shuffling.
 */
 type SensitivityAudit struct {
-	FamiliesTested         []FamilySensitivityStat `json:"families_tested"`
-	DuplicationResistant   bool                    `json:"duplication_resistant"`
-	ShuffledNoiseResilient bool                    `json:"shuffled_noise_resilient"`
-	SummaryText            string                  `json:"summary_text"`
-	Passed                 bool                    `json:"passed"`
+	FamiliesTested       []FamilySensitivityStat `json:"families_tested"`
+	DominantFamilies     int                     `json:"dominant_families"`
+	MaxDuplicationJSD    float64                 `json:"max_duplication_jsd"`
+	MaxDuplicationFamily string                  `json:"max_duplication_family"`
+	DuplicationResistant bool                    `json:"duplication_resistant"`
+	SummaryText          string                  `json:"summary_text"`
+	Status               string                  `json:"status"`
+	Passed               bool                    `json:"passed"`
 }
 
 /*
@@ -551,6 +577,9 @@ type AuditReport struct {
 	Truthfulness    *TruthfulnessAudit        `json:"truthfulness,omitempty"`
 	Causality       *CausalityAudit           `json:"causality,omitempty"`
 	Sensitivity     *SensitivityAudit         `json:"sensitivity,omitempty"`
+	Thresholds      Thresholds                `json:"thresholds"`
+	Verdicts        []StageVerdict            `json:"verdicts"`
+	Overall         string                    `json:"overall"`
 	OverallHealthy  bool                      `json:"overall_healthy"`
 	SummaryMarkdown string                    `json:"summary_markdown"`
 }

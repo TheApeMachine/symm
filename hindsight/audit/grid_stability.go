@@ -18,12 +18,19 @@ It reports the largest half-vs-half comparison plus repeated comparisons using
 quarter-length windows. Every observed ARI is accompanied by a random
 co-membership baseline that preserves the compared partition's region-size
 multiset. No ARI value is converted into a health threshold.
+
+The ARI is NOT_A_TEST: the grid pins each metric to its region from the
+label alone (store.PinRegion), so two periods sharing a cell assign it the
+same region by construction and the ARI on shared cells is 1 whatever the
+market did. Stationarity of the region excitation distribution is compared
+with a null that reassigns ticks to the two periods at random.
 */
 func AnalyzeGridStability(
 	ticks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
 	healthyCells []MetricStat,
 	permutations int,
+	significance float64,
 ) Stage3GridStability {
 	_ = healthyCells // Population description belongs to Stage 1; production replay uses arrivals as observed.
 
@@ -99,9 +106,10 @@ func AnalyzeGridStability(
 
 	summary := fmt.Sprintf(
 		"Grid mapping reproducibility: %d/%d shared cells (%.1f%% overlap), deterministic partition ARI=%.3f. "+
-			"Cross-period excitation stationarity: JSD=%.3f bits, TVD=%.3f (stationary: %t).",
+			"Cross-period excitation stationarity: JSD=%.3f bits, TVD=%.3f, p=%.3f vs random tick reassignment (stationary: %t). "+
+			"ARI is NOT_A_TEST (partition is fixed by labels).",
 		primary.sharedCells, primary.gridA.CellCount, primary.overlap*100, primary.ari,
-		primary.jsd, primary.tvd, primary.jsd < 0.15,
+		primary.jsd, primary.tvd, primary.jsdP, primary.jsdP > significance,
 	)
 
 	return Stage3GridStability{
@@ -114,11 +122,15 @@ func AnalyzeGridStability(
 		NullAdjustedRandMean: primary.nullMean,
 		DistributionJSD:      primary.jsd,
 		DistributionTVD:      primary.tvd,
-		IsStationary:         primary.jsd < 0.15,
+		StationarityPValue:   primary.jsdP,
+		IsStationary:         primary.jsdP > significance,
+		ARIVerdict:           VerdictNotATest,
 		StabilityCurve:       curve,
 		SummaryText:          summary,
-		Status:               "MEASURED",
-		Passed:               true,
+		// Stationarity of the market is an observation, not a property the
+		// pipeline must have, so the stage claims nothing.
+		Status: VerdictMeasured,
+		Passed: false,
 	}
 }
 
@@ -132,6 +144,7 @@ type gridComparison struct {
 	nullMean    float64
 	jsd         float64
 	tvd         float64
+	jsdP        float64
 }
 
 func compareGridWindows(
@@ -166,9 +179,21 @@ func compareGridWindows(
 		partitionsA, partitionsB, sharedKeys, permutations, seed,
 	)
 
-	distA := extractRegionDistribution(grid, ticksA, tickMeasurements)
-	distB := extractRegionDistribution(grid, ticksB, tickMeasurements)
-	jsd, tvd := computeDistributionDivergence(distA, distB)
+	regionsA := tickRegions(grid, ticksA, tickMeasurements)
+	regionsB := tickRegions(grid, ticksB, tickMeasurements)
+	jsd, tvd := computeDistributionDivergence(regionDistribution(regionsA), regionDistribution(regionsB))
+
+	pool := append(append([][]uint8(nil), regionsA...), regionsB...)
+	rng := rand.New(rand.NewSource(seed))
+	nullJSD := make([]float64, 0, permutations)
+
+	for range permutations {
+		rng.Shuffle(len(pool), func(left, right int) { pool[left], pool[right] = pool[right], pool[left] })
+		value, _ := computeDistributionDivergence(
+			regionDistribution(pool[:len(regionsA)]), regionDistribution(pool[len(regionsA):]),
+		)
+		nullJSD = append(nullJSD, value)
+	}
 
 	return gridComparison{
 		gridA: statA, gridB: statB,
@@ -179,6 +204,7 @@ func compareGridWindows(
 		nullMean:    nullMean,
 		jsd:         jsd,
 		tvd:         tvd,
+		jsdP:        upperPValue(jsd, nullJSD),
 	}
 }
 
@@ -281,55 +307,74 @@ func extractPartitions(
 	return result
 }
 
-func extractRegionDistribution(
+/*
+tickRegions returns, per tick, the regions the grid lit for each symbol's
+frame at that tick, so distributions over any subset of ticks can be formed
+without replaying the grid again.
+*/
+func tickRegions(
 	grid *store.Grid,
 	ticks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
-) [13]float64 {
-	var counts [13]float64
-	total := 0.0
+) [][]uint8 {
+	result := make([][]uint8, 0, len(ticks))
 
 	for _, tick := range ticks {
-		measGroup := tickMeasurements[tick]
-		if len(measGroup) == 0 {
-			continue
-		}
-
+		var lit []uint8
 		bySymbol := make(map[string][]*data.Measurement)
-		for _, m := range measGroup {
+
+		for _, m := range tickMeasurements[tick] {
 			if m != nil {
 				bySymbol[m.Label] = append(bySymbol[m.Label], m)
 			}
 		}
 
 		for sym, symMeas := range bySymbol {
-			if len(symMeas) == 0 {
-				continue
-			}
-			frame := data.NewMeasurement(
-				symMeas[0].Epoch,
-				sym,
-				"stability",
-				symMeas[0].SeqIdx,
-				tick,
-			)
+			frame := data.NewMeasurement(symMeas[0].Epoch, sym, "stability", symMeas[0].SeqIdx, tick)
 			frame.At = symMeas[0].At
 			frame.From = symMeas[0].From
 			frame.Peers(symMeas...)
 			frame.Write()
-			tokenBytes := grid.Observe(frame)
-			if len(tokenBytes) >= 3 && tokenBytes[0] == 'R' {
-				var reg uint8
-				if tokenBytes[1] == '0' {
-					reg = tokenBytes[2] - '0'
-				} else {
-					reg = 10 + (tokenBytes[2] - '0')
-				}
-				if reg >= 1 && reg <= 12 {
-					counts[reg]++
-					total++
-				}
+
+			if reg, ok := tokenRegion(grid.Observe(frame)); ok {
+				lit = append(lit, reg)
 			}
+		}
+
+		result = append(result, lit)
+	}
+
+	return result
+}
+
+/*
+tokenRegion parses a region token "Rnn" into its region number 1..12.
+*/
+func tokenRegion(token []byte) (uint8, bool) {
+	if len(token) < 3 || token[0] != 'R' {
+		return 0, false
+	}
+
+	reg := token[2] - '0'
+
+	if token[1] != '0' {
+		reg += 10
+	}
+
+	return reg, reg >= 1 && reg <= 12
+}
+
+/*
+regionDistribution is the normalized region histogram of the given ticks.
+*/
+func regionDistribution(regions [][]uint8) [13]float64 {
+	var counts [13]float64
+	total := 0.0
+
+	for _, lit := range regions {
+		for _, reg := range lit {
+			counts[reg]++
+			total++
 		}
 	}
 

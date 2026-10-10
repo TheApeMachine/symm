@@ -1,6 +1,7 @@
 package data
 
 import (
+	"math"
 	"sync"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -13,10 +14,11 @@ is standardized against the moments as they stood before it arrived and only
 then folded in, so a z-score never contains its own value or any later one.
 */
 type standardizer struct {
-	mu    sync.Mutex
-	count float64
-	mean  float64
-	m2    float64
+	mu      sync.Mutex
+	count   float64
+	mean    float64
+	m2      float64
+	modulus core.LogModulus
 }
 
 /*
@@ -71,6 +73,42 @@ func (state *standardizer) step(value float64) (center float64, scale float64) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
+	return state.stepLocked(value)
+}
+
+/*
+observe moves raw into the stream's standardization space (see Scale), then
+steps it. It reports false, leaving the stream untouched, when raw has no
+value in that space: a non-positive raw on a log scale, or any raw before a
+log-modulus stream has seen a magnitude (that raw still sets the unit).
+*/
+func (state *standardizer) observe(raw float64, space Scale) (
+	value float64, center float64, scale float64, defined bool,
+) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	switch space {
+	case ScaleLog:
+		if raw <= 0 {
+			return 0, 0, 0, false
+		}
+
+		value = math.Log(raw)
+	case ScaleLogModulus:
+		if value, defined = state.modulus.Step(raw); !defined {
+			return 0, 0, 0, false
+		}
+	default:
+		value = raw
+	}
+
+	center, scale = state.stepLocked(value)
+
+	return value, center, scale, true
+}
+
+func (state *standardizer) stepLocked(value float64) (center float64, scale float64) {
 	center = state.mean
 	scale, _ = core.PriorScale(state.count, state.m2, value, center)
 

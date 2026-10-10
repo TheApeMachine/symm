@@ -1,16 +1,13 @@
 package audit
 
 import (
-	"context"
 	"math"
 	"math/rand"
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 func TestAuditStages(t *testing.T) {
@@ -64,7 +61,7 @@ func TestAuditStages(t *testing.T) {
 				data.NewMetric("count_innovation:buy", -3, data.UnitCountResidual, data.TimescaleTick),
 			)
 
-			contract := AnalyzeContract([]*data.Measurement{meas})
+			contract := AnalyzeContract([]*data.Measurement{meas}, 0.05)
 			So(contract.TotalMetricsChecked, ShouldEqual, 9)
 			So(contract.BreachingMetricsCount, ShouldEqual, 5)
 			So(contract.Passed, ShouldBeFalse)
@@ -80,11 +77,11 @@ func TestAuditStages(t *testing.T) {
 					meas.Timestamp = now + idx*1_000_000
 					measurements = append(measurements, meas)
 				}
-				timing := AnalyzeTiming(measurements)
+				timing := AnalyzeTiming(measurements, DefaultThresholds())
 				So(timing.TotalChecked, ShouldEqual, 10)
 				So(timing.SequenceInversions, ShouldEqual, 0)
 				So(timing.LatencySpikes, ShouldEqual, 0)
-				So(timing.Status, ShouldEqual, "MEASURED")
+				So(timing.Status, ShouldEqual, VerdictValid)
 				So(timing.Passed, ShouldBeTrue)
 			})
 
@@ -117,7 +114,7 @@ func TestAuditStages(t *testing.T) {
 					measurements = append(measurements, meas)
 				}
 
-				timing := AnalyzeTiming(measurements)
+				timing := AnalyzeTiming(measurements, DefaultThresholds())
 				So(timing.LatencySpikes, ShouldBeGreaterThanOrEqualTo, 1)
 				So(timing.SequenceInversions, ShouldBeGreaterThanOrEqualTo, 1)
 				So(timing.Passed, ShouldBeFalse)
@@ -138,7 +135,7 @@ func TestAuditStages(t *testing.T) {
 
 		Convey("When analyzing pair sympathy against shuffled null (Stage 2)", func() {
 			vitality := AnalyzeVitality(ticks, rawSeries, canonicalSeries)
-			sympathy := AnalyzeSympathy(ticks, canonicalSeries, vitality.CanonicalCells, 20)
+			sympathy := AnalyzeSympathy(ticks, canonicalSeries, vitality.CanonicalCells, 20, 0.05)
 
 			So(sympathy.TotalPairs, ShouldBeGreaterThan, 0)
 			So(sympathy.PositivePairs, ShouldBeGreaterThan, 0)
@@ -183,31 +180,6 @@ func TestAuditStages(t *testing.T) {
 			}
 		})
 
-		Convey("When initializing offline price and friction for excursion detection (Stage 5)", func() {
-			testPrice, err := offlinePrice(context.Background(), 0.0026, "BTC/USD", "ETH/USD")
-			So(err, ShouldBeNil)
-			So(testPrice, ShouldNotBeNil)
-			So(testPrice.Status(), ShouldEqual, runtime.READY)
-
-			invalidPrice, invalidErr := offlinePrice(context.Background(), 0.0, "BTC/USD")
-			So(invalidErr, ShouldNotBeNil)
-			So(invalidPrice, ShouldBeNil)
-
-			fee := testPrice.Fee("BTC/USD")
-			So(fee, ShouldNotBeNil)
-			feeFloat := fee.Fee.Float64()
-			So(feeFloat, ShouldAlmostEqual, 0.26, 1e-9)
-
-			entry := decimal.NewFromFloat64(50000)
-			exit := decimal.NewFromFloat64(51000)
-			pnl, total, err := testPrice.RoundTrip("BTC/USD", entry, exit)
-			So(err, ShouldBeNil)
-			So(pnl, ShouldNotBeNil)
-			So(total, ShouldNotBeNil)
-			// 0.26% per side: net return = 51000*(1-0.0026) / (50000*(1+0.0026)) - 1.
-			So(pnl.Float64()/total.Float64(), ShouldAlmostEqual, 51000*0.9974/(50000*1.0026)-1, 1e-4)
-		})
-
 		Convey("When computing classification metrics under heavy class imbalance (Stage 6)", func() {
 			actuals := []string{"wait", "wait", "wait", "wait", "enter"}
 			preds := []string{"wait", "wait", "wait", "wait", "wait"}
@@ -224,7 +196,7 @@ func TestAuditStages(t *testing.T) {
 		})
 
 		Convey("When analyzing cognitive trie with insufficient evidence (Stage 6)", func() {
-			cognitive := AnalyzeCognitiveTrie(t.Context(), nil, 1, "BTC/USD", nil, nil, nil, 10, nil)
+			cognitive := AnalyzeCognitiveTrie(t.Context(), nil, 1, "BTC/USD", nil, nil, nil, 10, 0.05, nil)
 
 			So(cognitive.Status, ShouldEqual, "INSUFFICIENT_DATA")
 			So(cognitive.Passed, ShouldBeFalse)
