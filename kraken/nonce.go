@@ -33,6 +33,8 @@ type AuthNonce struct {
 	// once the on-disk high-water cannot be trusted, NewAuthenticatedREST
 	// refuses to sign new clients instead of continuing on unpersisted state.
 	persistErr atomic.Pointer[error]
+	// clock is the wall clock in nanoseconds; tests replace it.
+	clock func() int64
 }
 
 /*
@@ -54,20 +56,30 @@ func NewAuthNonce(pathDir string) (*AuthNonce, error) {
 		seed = highWater + 1
 	}
 
-	nonce := &AuthNonce{path: path}
+	nonce := &AuthNonce{path: path, clock: func() int64 { return time.Now().UnixNano() }}
 	nonce.highWater.Store(seed - 1)
 
 	return nonce, nil
 }
 
 /*
-Next returns the next monotonic nonce string and persists the high-water mark.
+Next returns the next nonce, max(now, last+1) in nanoseconds, and persists the
+high-water mark. Tracking the clock, not only counting up from the seed, keeps
+a long-running process ahead of any other process that signed with the same
+API key since it started: Kraken accepts a nonce only above the last one it
+saw for the key, whichever process sent it.
 */
 func (nonce *AuthNonce) Next() string {
-	next := nonce.highWater.Add(1)
-	nonce.persistValue(next, false)
+	for {
+		last := nonce.highWater.Load()
+		next := max(nonce.clock(), last+1)
 
-	return strconv.FormatInt(next, 10)
+		if nonce.highWater.CompareAndSwap(last, next) {
+			nonce.persistValue(next, false)
+
+			return strconv.FormatInt(next, 10)
+		}
+	}
 }
 
 /*

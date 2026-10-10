@@ -857,13 +857,19 @@ def plot_stage6_trie_structure(report, out_dir):
 def plot_stage6_s3_memory(report, out_dir):
     cog = report.get('cognitive_trie', {})
     s3_mem = cog.get('s3_memory', {})
-    status = s3_mem.get('status', 'INSUFFICIENT_DATA')
 
     total_keys = s3_mem.get('total_prefix_keys', 0)
     collisions = s3_mem.get('prefix_collisions', 0)
     conflicts = s3_mem.get('conflicting_continuations', 0)
-    disambig = s3_mem.get('mean_disambiguation_ticks', 0)
-    acc = s3_mem.get('prequential_recall_accuracy', 0.0) * 100
+    disambig = s3_mem.get('time_to_disambiguation', s3_mem.get('mean_disambiguation_ticks', 0))
+    acc = s3_mem.get('prequential_retrieval_acc', s3_mem.get('prequential_recall_accuracy', 0.0)) * 100
+
+    if 'status' in s3_mem:
+        status = s3_mem['status']
+    elif total_keys > 0:
+        status = "PASS" if s3_mem.get('passed', False) else "WARN"
+    else:
+        status = "INSUFFICIENT_DATA"
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7.0))
 
@@ -873,28 +879,38 @@ def plot_stage6_s3_memory(report, out_dir):
     k_bars = ax1.bar(k_labels, k_vals, color=['#58a6ff', '#d29922', '#f85149'], width=0.45)
     ax1.set_ylabel('Count', fontsize=10, color='#adbac7')
     ax1.set_title(f'S3 Prefix Keys & Collision Integrity ({status})', fontsize=11, fontweight='bold')
+    ax1.set_ylim(0, max(10, max(k_vals) * 1.15))
     ax1.grid(axis='y')
     for bar in k_bars:
         h = bar.get_height()
-        ax1.text(bar.get_x() + bar.get_width()/2., h + 0.1, f"{h:.0f}", ha='center', va='bottom', fontsize=9, color='#f0f6fc')
+        ax1.text(bar.get_x() + bar.get_width()/2., h + ax1.get_ylim()[1]*0.02, f"{h:.0f}", ha='center', va='bottom', fontsize=9, color='#f0f6fc', clip_on=True)
 
-    # Panel 2: Disambiguation & Prequential Recall
+    # Panel 2: Disambiguation (left axis) & Accuracy (right axis)
     d_labels = ['Disambiguation Tokens', 'Prequential Recall (%)']
-    d_vals = [disambig, acc]
-    d_bars = ax2.bar(d_labels, d_vals, color=['#bc8cff', '#3fb950'], width=0.40)
-    ax2.set_ylabel('Metric Value', fontsize=10, color='#adbac7')
+    ax2.set_ylabel('Disambiguation Depth (Tokens)', fontsize=10, color='#bc8cff')
+    ax2.bar(0, disambig, color='#bc8cff', width=0.35)
+    ax2.set_ylim(0, max(6, disambig * 1.3))
+    ax2.text(0, disambig + ax2.get_ylim()[1]*0.02, f"{disambig:.1f} tokens", ha='center', va='bottom', fontsize=9, color='#f0f6fc', clip_on=True)
+
+    ax2_r = ax2.twinx()
+    ax2_r.set_ylabel('Prequential Recall (%)', fontsize=10, color='#3fb950')
+    ax2_r.bar(1, acc, color='#3fb950', width=0.35)
+    ax2_r.set_ylim(0, 110)
+    ax2_r.text(1, acc + 110*0.02, f"{acc:.1f}%", ha='center', va='bottom', fontsize=9, color='#f0f6fc', clip_on=True)
+
+    ax2.set_xticks([0, 1])
+    ax2.set_xticklabels(d_labels)
     ax2.set_title('Memory Disambiguation Depth & Recall Accuracy', fontsize=11, fontweight='bold')
     ax2.grid(axis='y')
-    for bar in d_bars:
-        h = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width()/2., h + 0.5, f"{h:.1f}", ha='center', va='bottom', fontsize=9, color='#f0f6fc')
+
+    health_score = 0.90 if status in ["PASS", "MEASURED"] else (0.60 if status == "WARN" else 0.0)
 
     render_health_header(
         fig,
         'Stage 6: S3-Compatible Prefix-Memory Mechanism Audit',
         'Audits real persistent S3 prefix-memory keys (R04/R01/enter.json), prefix collisions, and disambiguation speed.',
         status=status,
-        health_score=0.85 if status == "MEASURED" else 0.0,
+        health_score=health_score,
         readout=f"Total Keys: {total_keys}, Collisions: {collisions}, Disambiguation: {disambig} tokens, Recall: {acc:.1f}%",
         target_pct=None
     )
@@ -924,10 +940,11 @@ def plot_validations_sensitivity(report, out_dir):
     ax1.set_ylabel('JSD Divergence vs Full Grid (Bits)', fontsize=10, color='#adbac7')
     ax1.set_title('Leave-One-Family-Out (LOFO) Sensitivity', fontsize=11, fontweight='bold')
     ax1.set_xticklabels(families, rotation=30, ha='right', fontsize=9)
+    ax1.set_ylim(0, max(0.05, max(lofo_vals) * 1.18))
     ax1.grid(axis='y')
     for bar in bars1:
         h = bar.get_height()
-        ax1.text(bar.get_x() + bar.get_width()/2., h + 0.005, f"{h:.3f}b", ha='center', va='bottom', fontsize=8, color='#f0f6fc')
+        ax1.text(bar.get_x() + bar.get_width()/2., h + ax1.get_ylim()[1]*0.02, f"{h:.3f}b", ha='center', va='bottom', fontsize=8, color='#f0f6fc', clip_on=True)
 
     # Panel 2: Duplication JSD
     bars2 = ax2.bar(families, dupl_vals, color='#bc8cff', width=0.45)
@@ -935,11 +952,12 @@ def plot_validations_sensitivity(report, out_dir):
     ax2.set_title('Family Duplication Invariance (< 0.05b target)', fontsize=11, fontweight='bold')
     ax2.axhline(0.05, color='#ff7b72', linestyle=':', label='Max Invariance Threshold (0.05b)')
     ax2.set_xticklabels(families, rotation=30, ha='right', fontsize=9)
+    ax2.set_ylim(0, max(0.06, max(dupl_vals) * 1.18))
     ax2.grid(axis='y')
     ax2.legend(loc='upper right', fontsize=8)
     for bar in bars2:
         h = bar.get_height()
-        ax2.text(bar.get_x() + bar.get_width()/2., h + 0.005, f"{h:.3f}b", ha='center', va='bottom', fontsize=8, color='#f0f6fc')
+        ax2.text(bar.get_x() + bar.get_width()/2., h + ax2.get_ylim()[1]*0.02, f"{h:.3f}b", ha='center', va='bottom', fontsize=8, color='#f0f6fc', clip_on=True)
 
     render_health_header(
         fig,

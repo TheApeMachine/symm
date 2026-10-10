@@ -173,3 +173,33 @@ func TestHandleLevel3(t *testing.T) {
 		})
 	})
 }
+
+func TestTeeOf(t *testing.T) {
+	Convey("Given capture disabled, so no ingress StoreTee exists", t, func() {
+		ctx := context.Background()
+		normalizer := spot.NewNormalizer()
+		book := broker.NewBook(ctx, normalizer)
+		price := broker.NewPrice(ctx, book, broker.NewPaper(ctx), nil, normalizer)
+		trade := []byte(`{"channel":"trade","type":"update","data":[{"symbol":"BTC/USD","side":"buy",` +
+			`"price":"65000.50","qty":0.5,"ord_type":"limit","trade_id":1,"timestamp":"2026-10-07T14:00:00.000000Z"}]}`)
+		level3 := []byte(`{"channel":"level3","type":"snapshot","data":[{"symbol":"BTC/USD","type":"snapshot",` +
+			`"timestamp":"2026-10-07T14:00:00.000000Z","checksum":3427670378,"bids":[{"order_id":"O1",` +
+			`"limit_price":64999.0,"order_qty":1.5,"timestamp":"2026-10-07T14:00:00.000000Z"}],"asks":[]}]}`)
+
+		var missing *hindsight.StoreTee
+
+		Convey("teeOf returns a true nil interface", func() {
+			So(teeOf(missing) == nil, ShouldBeTrue)
+			So(teeOf(hindsight.NewStoreTee(ctx, "present")), ShouldNotBeNil)
+		})
+
+		Convey("the ingress handlers skip it instead of pushing into a nil tee", func() {
+			So(func() { _ = handleTrade(trade, 100, price, nil, teeOf(missing), "public", nil) }, ShouldNotPanic)
+			So(func() { _ = handleLevel3(level3, 100, book, teeOf(missing), "public") }, ShouldNotPanic)
+		})
+
+		Convey("passing the nil pointer directly is the crash teeOf prevents", func() {
+			So(func() { _ = handleTrade(trade, 101, price, nil, missing, "public", nil) }, ShouldPanic)
+		})
+	})
+}

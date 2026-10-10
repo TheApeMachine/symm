@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -18,55 +19,55 @@ type welfordBaseline struct {
 	m2    float64
 }
 
-func (wb *welfordBaseline) Step(value float64) (float64, float64) {
+/*
+Step reports value against the baseline's state before it, then incorporates
+it. The center is defined from the second value; the scale only once
+core.PriorScale admits the prior dispersion (enough prior samples, a scale not
+negligible next to the values).
+*/
+func (wb *welfordBaseline) Step(value float64) (
+	hasCenter bool, center float64, hasScale bool, scale float64,
+) {
 	priorCount := wb.count
 	priorMean := wb.mean
+	priorM2 := wb.m2
 
 	wb.count++
 	delta := value - wb.mean
 	wb.mean += delta / wb.count
 	wb.m2 += delta * (value - wb.mean)
 
-	center := value
-	if priorCount > 0 {
-		center = priorMean
+	if priorCount == 0 {
+		return false, 0, false, 0
 	}
 
-	var scale float64
-	if wb.count > 1 {
-		variance := wb.m2 / (wb.count - 1)
-		if variance > 0 {
-			scale = math.Sqrt(variance)
-		}
-	}
+	scale, hasScale = core.PriorScale(priorCount, priorM2, value, priorMean)
 
-	return center, scale
+	return true, priorMean, hasScale, scale
 }
 
+/*
+velocityTracker differentiates successive defined values over venue time; the
+velocity is undefined for the first value and for an interval the venue clock
+does not resolve (core.Resolvable).
+*/
 type velocityTracker struct {
 	hasPrev   bool
 	prevVal   float64
 	prevAtSec float64
 }
 
-func (vt *velocityTracker) Step(value float64, atSec float64) float64 {
-	if !vt.hasPrev {
-		vt.hasPrev = true
-		vt.prevVal = value
-		vt.prevAtSec = atSec
-		return 0.0
-	}
-
-	dt := atSec - vt.prevAtSec
-	vt.prevAtSec = atSec
-	diff := value - vt.prevVal
+func (vt *velocityTracker) Step(value float64, atSec float64) (float64, bool) {
+	hadPrev, prevVal, prevAtSec := vt.hasPrev, vt.prevVal, vt.prevAtSec
+	vt.hasPrev = true
 	vt.prevVal = value
+	vt.prevAtSec = atSec
 
-	if dt <= 0 {
-		return 0.0
+	if !hadPrev || !core.Resolvable(atSec-prevAtSec) {
+		return 0, false
 	}
 
-	return diff / dt
+	return (value - prevVal) / (atSec - prevAtSec), true
 }
 
 type symbolState struct {
@@ -179,115 +180,121 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	total := bidNotional + askNotional
 	imbalance := (bidNotional - askNotional) / total
 
-	bidCenter, bidScale := state.bidBaseline.Step(bidNotional)
-	askCenter, askScale := state.askBaseline.Step(askNotional)
-	spreadCenter, spreadScale := state.spreadBaseline.Step(relativeSpread)
-
-	bidDiv := bidNotional - bidCenter
-	askDiv := askNotional - askCenter
-	spreadDiv := relativeSpread - spreadCenter
-
-	var bidRatio, askRatio, spreadRatio float64
-	if bidCenter > 0 {
-		bidRatio = bidNotional / bidCenter
+	out := map[string]float64{
+		"best_bid_price":           bid,
+		"best_ask_price":           ask,
+		"touch_quantity:bid":       bidQty,
+		"touch_quantity:ask":       askQty,
+		"touch_notional:bid":       bidNotional,
+		"touch_notional:ask":       askNotional,
+		"midpoint":                 midpoint,
+		"spread":                   spread,
+		"relative_spread":          relativeSpread,
+		"two_sided_touch_notional": twoSidedNotional,
+		"touch_notional_imbalance": imbalance,
 	}
 
-	if askCenter > 0 {
-		askRatio = askNotional / askCenter
+	// Each channel's baseline, ratio, divergence, noise scale, z-score, and
+	// divergence velocity are written only where defined: the baseline from
+	// the second value, the ratio while the baseline is not negligible next
+	// to the value, the z-score once the prior scale is admitted, and the
+	// velocity over a resolvable interval. Undefined is absent, never zero.
+	channel := func(
+		baseline *welfordBaseline, velocity *velocityTracker, value float64,
+		center, ratio, divergence, scale, zscore, rate string,
+	) (float64, bool) {
+		hasCenter, priorCenter, hasScale, priorScale := baseline.Step(value)
+
+		if !hasCenter {
+			return 0, false
+		}
+
+		div := value - priorCenter
+		out[center] = priorCenter
+		out[divergence] = div
+
+		if priorCenter > 0 && !core.Negligible(priorCenter, value) {
+			out[ratio] = value / priorCenter
+		}
+
+		if vel, ok := velocity.Step(div, atSec); ok {
+			out[rate] = vel
+		}
+
+		if !hasScale {
+			return 0, false
+		}
+
+		z := div / priorScale
+		out[scale] = priorScale
+		out[zscore] = z
+
+		return z, true
 	}
 
-	if spreadCenter > 0 {
-		spreadRatio = relativeSpread / spreadCenter
+	channel(
+		&state.bidBaseline, &state.bidVel, bidNotional, "touch_notional_baseline:bid",
+		"depth_ratio:bid", "depth_divergence:bid", "depth_noise_scale:bid",
+		"depth_zscore:bid", "divergence_velocity:bid",
+	)
+	channel(
+		&state.askBaseline, &state.askVel, askNotional, "touch_notional_baseline:ask",
+		"depth_ratio:ask", "depth_divergence:ask", "depth_noise_scale:ask",
+		"depth_zscore:ask", "divergence_velocity:ask",
+	)
+	spreadZ, hasSpreadZ := channel(
+		&state.spreadBaseline, &state.spreadVel, relativeSpread, "relative_spread_baseline",
+		"spread_ratio", "spread_divergence", "spread_noise_scale",
+		"spread_zscore", "spread_divergence_velocity",
+	)
+
+	// The historical path lives in (spread z-score, imbalance) space, so a
+	// frame without a spread z-score has no point on it.
+	if hasSpreadZ {
+		state.historyPath(out, [2]float64{spreadZ, imbalance})
 	}
 
-	var bidZ, askZ, spreadZ float64
-	if bidScale > 0 {
-		bidZ = bidDiv / bidScale
-	}
+	return prior.Next(signal.Name(), out)
+}
 
-	if askScale > 0 {
-		askZ = askDiv / askScale
-	}
-
-	if spreadScale > 0 {
-		spreadZ = spreadDiv / spreadScale
-	}
-
-	bidVelVal := state.bidVel.Step(bidDiv, atSec)
-	askVelVal := state.askVel.Step(askDiv, atSec)
-	spreadVelVal := state.spreadVel.Step(spreadDiv, atSec)
-
-	target := [2]float64{spreadZ, imbalance}
-	histDist := 0.0
-	histPerc := 0.0
-
+/*
+historyPath writes the distance from target to the nearest retained path point
+and that distance's percentile among the retained distances, each once it is
+defined, then retains target.
+*/
+func (state *symbolState) historyPath(out map[string]float64, target [2]float64) {
 	if len(state.historyPoints) > 0 {
-		diffX := target[0] - state.historyPoints[0][0]
-		diffY := target[1] - state.historyPoints[0][1]
-		minDist := math.Sqrt(diffX*diffX + diffY*diffY)
+		minDist := math.Inf(1)
 
-		for idx := 1; idx < len(state.historyPoints); idx++ {
-			dx := target[0] - state.historyPoints[idx][0]
-			dy := target[1] - state.historyPoints[idx][1]
-			distance := math.Sqrt(dx*dx + dy*dy)
-			if distance < minDist {
-				minDist = distance
-			}
+		for _, point := range state.historyPoints {
+			dx := target[0] - point[0]
+			dy := target[1] - point[1]
+			minDist = math.Min(minDist, math.Sqrt(dx*dx+dy*dy))
 		}
 
 		if len(state.historyDistances) > 0 {
 			belowCount := 0
+
 			for _, pastDist := range state.historyDistances {
 				if pastDist <= minDist {
 					belowCount++
 				}
 			}
-			histPerc = float64(belowCount) / float64(len(state.historyDistances))
+
+			out["historical_path_percentile"] = float64(belowCount) / float64(len(state.historyDistances))
 		}
 
-		histDist = minDist
+		out["historical_path_distance"] = minDist
 		state.historyDistances = append(state.historyDistances, minDist)
+
 		if len(state.historyDistances) > 256 {
 			state.historyDistances = state.historyDistances[len(state.historyDistances)-256:]
 		}
 	}
 
 	state.historyPoints = append(state.historyPoints, target)
+
 	if len(state.historyPoints) > 256 {
 		state.historyPoints = state.historyPoints[len(state.historyPoints)-256:]
 	}
-
-	return prior.Next(signal.Name(), map[string]float64{
-		"best_bid_price":              bid,
-		"best_ask_price":              ask,
-		"touch_quantity:bid":          bidQty,
-		"touch_quantity:ask":          askQty,
-		"touch_notional:bid":          bidNotional,
-		"touch_notional:ask":          askNotional,
-		"midpoint":                    midpoint,
-		"spread":                      spread,
-		"relative_spread":             relativeSpread,
-		"two_sided_touch_notional":    twoSidedNotional,
-		"touch_notional_imbalance":    imbalance,
-		"touch_notional_baseline:bid": bidCenter,
-		"touch_notional_baseline:ask": askCenter,
-		"relative_spread_baseline":    spreadCenter,
-		"depth_ratio:bid":             bidRatio,
-		"depth_ratio:ask":             askRatio,
-		"spread_ratio":                spreadRatio,
-		"depth_divergence:bid":        bidDiv,
-		"depth_divergence:ask":        askDiv,
-		"spread_divergence":           spreadDiv,
-		"depth_noise_scale:bid":       bidScale,
-		"depth_noise_scale:ask":       askScale,
-		"spread_noise_scale":          spreadScale,
-		"depth_zscore:bid":            bidZ,
-		"depth_zscore:ask":            askZ,
-		"spread_zscore":               spreadZ,
-		"divergence_velocity:bid":     bidVelVal,
-		"divergence_velocity:ask":     askVelVal,
-		"spread_divergence_velocity":  spreadVelVal,
-		"historical_path_distance":    histDist,
-		"historical_path_percentile":  histPerc,
-	})
 }

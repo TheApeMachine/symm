@@ -8,6 +8,7 @@ import (
 
 type PositionsFrameT struct {
 	Rows []*PositionT `json:"rows"`
+	Closed []*HoldingT `json:"closed"`
 }
 
 func (t *PositionsFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -27,8 +28,22 @@ func (t *PositionsFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffset
 		}
 		rowsOffset = builder.EndVector(rowsLength)
 	}
+	closedOffset := flatbuffers.UOffsetT(0)
+	if t.Closed != nil {
+		closedLength := len(t.Closed)
+		closedOffsets := make([]flatbuffers.UOffsetT, closedLength)
+		for j := 0; j < closedLength; j++ {
+			closedOffsets[j] = t.Closed[j].Pack(builder)
+		}
+		PositionsFrameStartClosedVector(builder, closedLength)
+		for j := closedLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(closedOffsets[j])
+		}
+		closedOffset = builder.EndVector(closedLength)
+	}
 	PositionsFrameStart(builder)
 	PositionsFrameAddRows(builder, rowsOffset)
+	PositionsFrameAddClosed(builder, closedOffset)
 	return PositionsFrameEnd(builder)
 }
 
@@ -39,6 +54,13 @@ func (rcv *PositionsFrame) UnPackTo(t *PositionsFrameT) {
 		x := Position{}
 		rcv.Rows(&x, j)
 		t.Rows[j] = x.UnPack()
+	}
+	closedLength := rcv.ClosedLength()
+	t.Closed = make([]*HoldingT, closedLength)
+	for j := 0; j < closedLength; j++ {
+		x := Holding{}
+		rcv.Closed(&x, j)
+		t.Closed[j] = x.UnPack()
 	}
 }
 
@@ -106,13 +128,39 @@ func (rcv *PositionsFrame) RowsLength() int {
 	return 0
 }
 
+func (rcv *PositionsFrame) Closed(obj *Holding, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *PositionsFrame) ClosedLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func PositionsFrameStart(builder *flatbuffers.Builder) {
-	builder.StartObject(1)
+	builder.StartObject(2)
 }
 func PositionsFrameAddRows(builder *flatbuffers.Builder, rows flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(rows), 0)
 }
 func PositionsFrameStartRowsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func PositionsFrameAddClosed(builder *flatbuffers.Builder, closed flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(closed), 0)
+}
+func PositionsFrameStartClosedVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func PositionsFrameEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

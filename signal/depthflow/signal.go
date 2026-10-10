@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -21,7 +22,8 @@ type causalEstimator struct {
 /*
 Step scores value against the estimator's state before it, then incorporates
 it. The baseline (and residual against it) is defined from the second sample;
-the z-score only once the prior dispersion is positive. Undefined is reported,
+the z-score only once core.PriorScale admits the prior dispersion
+(enough prior samples, a scale not negligible next to the values). Undefined is reported,
 never substituted.
 */
 func (ce *causalEstimator) Step(value float64) (
@@ -42,11 +44,13 @@ func (ce *causalEstimator) Step(value float64) (
 
 	residual = value - priorMean
 
-	if priorCount < 2 || priorM2 <= 0 {
+	scale, scorable := core.PriorScale(priorCount, priorM2, value, priorMean)
+
+	if !scorable {
 		return true, priorMean, residual, false, 0
 	}
 
-	return true, priorMean, residual, true, residual / math.Sqrt(priorM2/(priorCount-1))
+	return true, priorMean, residual, true, residual / scale
 }
 
 type symbolState struct {
@@ -205,8 +209,9 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		"imbalance_resolution_distance": gapDist,
 	}
 
-	// Flow needs a prior book; rates also need elapsed time. A first frame
-	// or a same-timestamp frame leaves them undefined.
+	// Flow needs a prior book; rates also need elapsed time the venue clock
+	// resolves (core.Resolvable). A first frame, a same-timestamp frame, or
+	// one closer than that leaves them undefined.
 	timeDelta := 0.0
 	hasRate := false
 	bookTurnoverRate := 0.0
@@ -216,7 +221,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if state.hasPrev {
 		if atNano > state.prevAtNano {
 			timeDelta = (atNano - state.prevAtNano) * 1e-9
-			hasRate = true
+			hasRate = core.Resolvable(timeDelta)
 		}
 
 		bidWorst := bids[len(bids)-1][0]
@@ -286,7 +291,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if hasRate {
 		turnoverZ, hasTurnoverZ := emitEstimate(out, "turnover", &state.turnoverEstimator, bookTurnoverRate)
 
-		if baseline, ok := out["turnover_baseline"]; ok && baseline > 0 {
+		if baseline, ok := out["turnover_baseline"]; ok && baseline > 0 && !core.Negligible(baseline, bookTurnoverRate) {
 			out["turnover_ratio"] = bookTurnoverRate / baseline
 		}
 

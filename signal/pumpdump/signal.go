@@ -9,6 +9,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/volumeclock"
@@ -23,7 +24,8 @@ type causalEstimator struct {
 /*
 Step scores value against the estimator's state before it, then incorporates
 it. The baseline (and residual against it) is defined from the second sample;
-the z-score only once the prior dispersion is positive.
+the z-score only once core.PriorScale admits the prior dispersion
+(enough prior samples, a scale not negligible next to the values).
 */
 func (ce *causalEstimator) Step(value float64) (
 	hasBaseline bool, baseline, residual float64, hasZ bool, zScore float64,
@@ -43,11 +45,13 @@ func (ce *causalEstimator) Step(value float64) (
 
 	residual = value - priorMean
 
-	if priorCount < 2 || priorM2 <= 0 {
+	scale, scorable := core.PriorScale(priorCount, priorM2, value, priorMean)
+
+	if !scorable {
 		return true, priorMean, residual, false, 0
 	}
 
-	return true, priorMean, residual, true, residual / math.Sqrt(priorM2/(priorCount-1))
+	return true, priorMean, residual, true, residual / scale
 }
 
 type symbolState struct {
@@ -180,7 +184,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 		hasBaseline, baseline, _, hasZ, zScore := state.spreadEstimator.Step(spread)
 
-		if hasBaseline && baseline > 0 {
+		if hasBaseline && baseline > 0 && !core.Negligible(baseline, spread) {
 			divergence := math.Log(spread / baseline)
 			out["spread_ratio"] = spread / baseline
 			out["spread_divergence"] = divergence
@@ -211,13 +215,18 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	var notionalZ float64
 	var hasNotionalZ bool
 
+	// A bar's rates need a duration the venue clock resolves
+	// (core.Resolvable); a bar closed within that grain leaves them undefined.
 	if closed {
-		notionalRate := bar.Notional / bar.Duration
-
 		out["volume_bar_quantity"] = bar.Quantity
 		out["volume_bar_notional"] = bar.Notional
 		out["volume_bar_trade_count"] = bar.Trades
 		out["volume_bar_duration"] = bar.Duration
+	}
+
+	if closed && core.Resolvable(bar.Duration) {
+		notionalRate := bar.Notional / bar.Duration
+
 		out["volume_rate"] = bar.Quantity / bar.Duration
 		out["notional_rate"] = notionalRate
 		out["trade_rate"] = bar.Trades / bar.Duration
@@ -243,35 +252,39 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 		state.prevNotionalRate = notionalRate
 		state.hasPrevNotional = true
+	}
 
-		if bar.FromMid > 0 && bar.AtMid > 0 {
-			midReturn := math.Log(bar.AtMid / bar.FromMid)
+	if closed && bar.FromMid > 0 && bar.AtMid > 0 {
+		midReturn := math.Log(bar.AtMid / bar.FromMid)
 
-			out["midpoint:from"] = bar.FromMid
-			out["midpoint:at"] = bar.AtMid
-			out["midpoint_log_return"] = midReturn
+		out["midpoint:from"] = bar.FromMid
+		out["midpoint:at"] = bar.AtMid
+		out["midpoint_log_return"] = midReturn
+
+		if core.Resolvable(bar.Duration) {
 			out["midpoint_return_rate"] = midReturn / bar.Duration
-			out["positive_midpoint_return"] = math.Max(midReturn, 0)
-			out["negative_midpoint_return"] = math.Max(-midReturn, 0)
-
-			hasMidBaseline, midBaseline, midResidual, hasMidZ, midZ := state.midReturnEstimator.Step(midReturn)
-
-			if hasMidBaseline {
-				out["midpoint_return_baseline"] = midBaseline
-				out["midpoint_return_divergence"] = midResidual
-			}
-
-			if hasMidZ {
-				out["midpoint_return_zscore"] = midZ
-			}
-
-			if state.hasPrevMidReturn {
-				out["midpoint_return_velocity"] = midReturn - state.prevMidReturn
-			}
-
-			state.prevMidReturn = midReturn
-			state.hasPrevMidReturn = true
 		}
+
+		out["positive_midpoint_return"] = math.Max(midReturn, 0)
+		out["negative_midpoint_return"] = math.Max(-midReturn, 0)
+
+		hasMidBaseline, midBaseline, midResidual, hasMidZ, midZ := state.midReturnEstimator.Step(midReturn)
+
+		if hasMidBaseline {
+			out["midpoint_return_baseline"] = midBaseline
+			out["midpoint_return_divergence"] = midResidual
+		}
+
+		if hasMidZ {
+			out["midpoint_return_zscore"] = midZ
+		}
+
+		if state.hasPrevMidReturn {
+			out["midpoint_return_velocity"] = midReturn - state.prevMidReturn
+		}
+
+		state.prevMidReturn = midReturn
+		state.hasPrevMidReturn = true
 	}
 
 	if hasSpreadZ && hasNotionalZ {

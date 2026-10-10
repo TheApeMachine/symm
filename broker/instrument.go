@@ -41,6 +41,10 @@ type Instrument struct {
 	token   string
 	tokenAt time.Time
 
+	// fetchToken asks the venue for a websockets token; nil is the
+	// authenticated process REST client. Tests replace it.
+	fetchToken func() (string, error)
+
 	// level3Stale receives a batch's symbols when its Level3 socket drops,
 	// so the book stops serving state that no longer tracks the venue.
 	level3Stale func([]string)
@@ -319,8 +323,12 @@ const level3TokenReuse = 10 * time.Minute
 
 /*
 level3Token returns a websockets token young enough to subscribe with,
-fetching a fresh one through the authenticated process REST client when the
-cached token is missing or past level3TokenReuse.
+fetching a fresh one when the cached token is missing or past
+level3TokenReuse. A transient fetch failure (an invalid nonce after another
+process signed with the same key, a rate limit, a network error) is retried
+with backoff until it succeeds or the instrument closes; only a permanent
+credential error is returned. Other batches wait on tokenMu and then share the
+fetched token.
 */
 func (instrument *Instrument) level3Token() (string, error) {
 	instrument.tokenMu.Lock()
@@ -330,6 +338,33 @@ func (instrument *Instrument) level3Token() (string, error) {
 		return instrument.token, nil
 	}
 
+	fetch := instrument.fetchToken
+
+	if fetch == nil {
+		fetch = restLevel3Token
+	}
+
+	token, err := kraken.RetryToken(instrument.System.Context(), "level3", fetch)
+
+	if err != nil {
+		return "", errnie.Err(
+			errnie.IO,
+			"[instrument] level3 websocket token unavailable",
+			err,
+		)
+	}
+
+	instrument.token = token
+	instrument.tokenAt = time.Now()
+
+	return instrument.token, nil
+}
+
+/*
+restLevel3Token fetches one websockets token through the authenticated
+process REST client.
+*/
+func restLevel3Token() (string, error) {
 	restClient, err := kraken.NewAuthenticatedREST()
 
 	if err != nil {
@@ -341,23 +376,12 @@ func (instrument *Instrument) level3Token() (string, error) {
 	if err != nil || tokenRes == nil {
 		return "", errnie.Err(
 			errnie.IO,
-			"[instrument] level3 websocket token unavailable",
+			"[instrument] level3 websocket token request failed",
 			err,
 		)
 	}
 
-	if tokenRes.Result.Token == "" {
-		return "", errnie.Err(
-			errnie.IO,
-			"[instrument] level3 websocket token empty",
-			nil,
-		)
-	}
-
-	instrument.token = tokenRes.Result.Token
-	instrument.tokenAt = time.Now()
-
-	return instrument.token, nil
+	return tokenRes.Result.Token, nil
 }
 
 /*
@@ -385,23 +409,13 @@ func (instrument *Instrument) level3Subscription(batch []string) ([]byte, error)
 }
 
 /*
-halt records a market-data fault the instrument cannot continue past and
-closes the instrument. Root watches the instrument context, so the process
-stops with this error instead of running on a stream that silently went dark.
-*/
-func (instrument *Instrument) halt(cause error) error {
-	err := instrument.Error(cause)
-	instrument.Close()
-
-	return err
-}
-
-/*
 Subscribe issues paced market-data batches for the online quote universe. The
 public socket carries trades only, the sole frame type the workspace pipeline
 consumes. Level3 runs on its own authenticated socket per batch and feeds the
-BookManager only. A failed resubscribe after a reconnect halts the instrument,
-exactly like a failed initial subscribe.
+BookManager only. A failed resubscribe after a reconnect is logged and
+returned to the socket, which drops the connection and redials with backoff
+until a resubscribe succeeds; the batch's books stay stale meanwhile. It never
+halts the instrument.
 */
 func (instrument *Instrument) Subscribe() error {
 	errnie.Info("[instrument] subscribing to symbol pairs")
@@ -485,9 +499,13 @@ func (instrument *Instrument) Subscribe() error {
 			}
 
 			if err != nil {
-				return instrument.halt(errnie.Err(
+				// The books of this batch were marked stale on disconnect
+				// and stay so until a resubscribe snapshot lands.
+				stale(batch)
+
+				return errnie.Error(errnie.Err(
 					errnie.IO,
-					"[instrument] level3 resubscribe failed for "+batchKey,
+					"[instrument] level3 resubscribe failed, books stale, redialing for "+batchKey,
 					err,
 				))
 			}
@@ -506,9 +524,9 @@ func (instrument *Instrument) Subscribe() error {
 
 		for _, msg := range tradeSubs {
 			if err := instrument.public.Write(msg); err != nil {
-				return instrument.halt(errnie.Err(
+				return errnie.Error(errnie.Err(
 					errnie.IO,
-					"[instrument] trade resubscribe failed",
+					"[instrument] trade resubscribe failed, redialing",
 					err,
 				))
 			}

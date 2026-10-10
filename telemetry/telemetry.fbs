@@ -598,9 +598,42 @@ table Holding {
   isOpportunity:bool;
   reservationId:string;
   stoploss:Stoploss (deprecated);
+  // Exit capacity (base quantity the bids absorb within the slippage budget)
+  // of the newest book version, and its ratio to the open quantity.
+  capacityQty:double;
+  capacityRatio:double;
+  capacityDefined:bool;
+  capacityBounded:bool;
+  capacityAt:long;
+  // Per-side slippage budget and where it came from (matched_edge or
+  // fee_fallback), and the expected hold it was sized over.
+  slippageBudget:double;
+  budgetSource:string;
+  holdSeconds:double;
+  // Venue P&L (paper fills, open quantity marked at the best bid) beside the
+  // shadow P&L (every fill walked through the as-of book), which is the
+  // evaluation truth. shadowDefined is false when a fill had no as-of book.
+  venuePnl:string;
+  shadowPnl:string;
+  shadowDefined:bool;
+  // Every sell decision with the trigger that fired it.
+  sells:[SellEvent];
+  closedAt:long;
+}
+// One sell decision: learned_exit, capacity_trim, capacity_exit or manual,
+// with the exit capacity snapshot it read. qty is empty for a trigger that
+// fired while the position was already exiting (see note).
+table SellEvent {
+  at:long;
+  trigger:string;
+  qty:string;
+  capacityQty:double;
+  capacityRatio:double;
+  budget:double;
+  note:string;
 }
 table Position { status:string; decision:Decision; holding:Holding; }
-table PositionsFrame { rows:[Position]; }
+table PositionsFrame { rows:[Position]; closed:[Holding]; }
 
 table Subsystem {
   name:string;

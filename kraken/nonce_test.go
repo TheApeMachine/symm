@@ -5,7 +5,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -34,6 +37,47 @@ func TestAuthNonce(t *testing.T) {
 				next, _ := strconv.ParseInt(restarted.Next(), 10, 64)
 				So(next, ShouldBeGreaterThan, persisted)
 			})
+		})
+
+		Convey("nonces follow the clock so a long-running process stays ahead of a later one", func() {
+			clock := time.Now().UnixNano()
+			nonce.clock = func() int64 { return clock }
+			first, _ := strconv.ParseInt(nonce.Next(), 10, 64)
+
+			// Another process with the same key signs an hour later.
+			clock += int64(time.Hour)
+			later, _ := strconv.ParseInt(nonce.Next(), 10, 64)
+			So(later, ShouldEqual, clock)
+			So(later, ShouldBeGreaterThan, first)
+
+			Convey("and stay strictly increasing when the clock stalls or steps back", func() {
+				clock -= int64(time.Minute)
+				stalled, _ := strconv.ParseInt(nonce.Next(), 10, 64)
+				So(stalled, ShouldEqual, later+1)
+			})
+		})
+
+		Convey("concurrent callers never share a nonce", func() {
+			seen := sync.Map{}
+			var group sync.WaitGroup
+			var shared atomic.Int32
+
+			for range 8 {
+				group.Add(1)
+
+				go func() {
+					defer group.Done()
+
+					for range 500 {
+						if _, loaded := seen.LoadOrStore(nonce.Next(), struct{}{}); loaded {
+							shared.Add(1)
+						}
+					}
+				}()
+			}
+
+			group.Wait()
+			So(shared.Load(), ShouldEqual, 0)
 		})
 
 		Convey("a persist failure is recorded and sticky", func() {

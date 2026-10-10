@@ -181,9 +181,16 @@ func (h *Hawkes) Step(mark, atSec float64) (map[string]float64, time.Time, error
 				}
 			}
 
+			// The excitation mass is the kernel part of the compensator, taken
+			// from the kernel terms themselves. Recovering it as compensator
+			// minus mu*span cancels two nearly equal numbers, and with the
+			// product fused into the sum on one side only, an empty kernel
+			// came out a few ulps below zero.
 			buySupport, sellSupport := streamPrior.kernelIntegralSupport(atSec, beta)
-			compBuy := muX*spanPrior + (alphaXX/beta)*buySupport + (alphaXY/beta)*sellSupport
-			compSell := muY*spanPrior + (alphaYX/beta)*buySupport + (alphaYY/beta)*sellSupport
+			excessBuyMass := (alphaXX/beta)*buySupport + (alphaXY/beta)*sellSupport
+			excessSellMass := (alphaYX/beta)*buySupport + (alphaYY/beta)*sellSupport
+			compBuy := muX*spanPrior + excessBuyMass
+			compSell := muY*spanPrior + excessSellMass
 
 			// The compensator integrates over (origin, at]; arrivals at the
 			// origin are prehistory there, so they are not observations here.
@@ -203,9 +210,6 @@ func (h *Hawkes) Step(mark, atSec float64) (map[string]float64, time.Time, error
 			if compSell > 0 {
 				res["standardized_innovation:sell"] = innoSell / math.Sqrt(compSell)
 			}
-
-			excessBuyMass := compBuy - muX*spanPrior
-			excessSellMass := compSell - muY*spanPrior
 
 			res["excitation_mass:buy"] = excessBuyMass
 			res["excitation_mass:sell"] = excessSellMass

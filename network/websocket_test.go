@@ -122,7 +122,7 @@ func TestWebsocketOnReconnectHook(t *testing.T) {
 	}
 }
 
-func TestWebsocketOnReconnectHookFailureHalts(t *testing.T) {
+func TestWebsocketOnReconnectHookFailureRedials(t *testing.T) {
 	if system.Cfg == nil {
 		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
 	}
@@ -158,8 +158,13 @@ func TestWebsocketOnReconnectHookFailureHalts(t *testing.T) {
 	}
 
 	resubscribe := errors.New("resubscribe rejected")
+	var hooks atomic.Int32
 	client.OnReconnect(func() error {
-		return resubscribe
+		if hooks.Add(1) == 1 {
+			return resubscribe
+		}
+
+		return nil
 	})
 
 	_ = client.softDown(context.Canceled)
@@ -169,14 +174,24 @@ func TestWebsocketOnReconnectHookFailureHalts(t *testing.T) {
 	if err == nil || !errors.Is(err, resubscribe) {
 		t.Fatalf("ensureReady must return the hook failure, got %v", err)
 	}
-	if client.Context().Err() == nil {
-		t.Fatalf("a failed reconnect hook must close the client")
+	if client.Context().Err() != nil {
+		t.Fatalf("a failed reconnect hook must not close the client")
 	}
-	if client.Error() == nil {
-		t.Fatalf("a failed reconnect hook must be recorded on the client")
+	if client.Status() != runtime.WAITING {
+		t.Fatalf("a failed reconnect hook must leave the client waiting to redial, got %v", client.Status())
 	}
-	if _, readErr := client.Read(); readErr == nil {
-		t.Fatalf("read after a failed reconnect hook must fail")
+	if client.hookBackoff < time.Second {
+		t.Fatalf("a failed reconnect hook must back off before redialing, got %v", client.hookBackoff)
+	}
+
+	if err := client.ensureReady(); err != nil {
+		t.Fatalf("the next attempt must redial and resubscribe, got %v", err)
+	}
+	if hooks.Load() != 2 || client.Status() != runtime.READY {
+		t.Fatalf("expected a second, successful hook on READY, got %d hooks, %v", hooks.Load(), client.Status())
+	}
+	if client.hookBackoff != 0 {
+		t.Fatalf("a successful hook must clear its backoff, got %v", client.hookBackoff)
 	}
 }
 

@@ -2,6 +2,7 @@ import { batch as storeBatch } from "@tanstack/react-store";
 import * as flatbuffers from "flatbuffers";
 import { useEffect } from "react";
 import {
+	closedPositionsAtom,
 	decisionsAtom,
 	focusAtom,
 	observeSymbols,
@@ -269,9 +270,10 @@ export const WsFeed = () => {
 						if (frameType === Frame.PositionsFrame) {
 							const positionsFrame = message.frame(new PositionsFrame());
 							if (positionsFrame) {
-								const rows = positionsFrame.unpack().rows;
-								positionsAtom.set(rows);
-								positionCountAtom.set(rows.length);
+								const unpacked = positionsFrame.unpack();
+								positionsAtom.set(unpacked.rows);
+								closedPositionsAtom.set(unpacked.closed);
+								positionCountAtom.set(unpacked.rows.length);
 							}
 							return;
 						}

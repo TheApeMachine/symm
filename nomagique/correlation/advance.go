@@ -64,8 +64,13 @@ func (op *Fold) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			if summary.PeerEnergyRate > 0 {
 				frame.Metrics["peer_return_energy_rate"] = summary.PeerEnergyRate
-				measuredRate := frame.Metrics["return_energy_rate:measured"]
-				frame.Metrics["relative_return_energy"] = measuredRate / summary.PeerEnergyRate
+
+				// The ratio is undefined when the peer rate is negligible next
+				// to the measured one.
+				if measuredRate, ok := frame.Metrics["return_energy_rate:measured"]; ok &&
+					!core.Negligible(summary.PeerEnergyRate, measuredRate) {
+					frame.Metrics["relative_return_energy"] = measuredRate / summary.PeerEnergyRate
+				}
 			}
 
 			if !yield(arriving) {

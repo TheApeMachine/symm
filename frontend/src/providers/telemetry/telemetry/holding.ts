@@ -4,6 +4,7 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { SellEvent, SellEventT } from '../telemetry/sell-event.js';
 
 
 export class Holding implements flatbuffers.IUnpackableObject<HoldingT> {
@@ -135,8 +136,84 @@ reservationId(optionalEncoding?:any):string|Uint8Array|null {
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
+capacityQty():number {
+  const offset = this.bb!.__offset(this.bb_pos, 40);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+capacityRatio():number {
+  const offset = this.bb!.__offset(this.bb_pos, 42);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+capacityDefined():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 44);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+capacityBounded():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 46);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+capacityAt():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 48);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+slippageBudget():number {
+  const offset = this.bb!.__offset(this.bb_pos, 50);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+budgetSource():string|null
+budgetSource(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+budgetSource(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 52);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+holdSeconds():number {
+  const offset = this.bb!.__offset(this.bb_pos, 54);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+venuePnl():string|null
+venuePnl(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+venuePnl(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 56);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+shadowPnl():string|null
+shadowPnl(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+shadowPnl(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 58);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+shadowDefined():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 60);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+sells(index: number, obj?:SellEvent):SellEvent|null {
+  const offset = this.bb!.__offset(this.bb_pos, 62);
+  return offset ? (obj || new SellEvent()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+sellsLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 62);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+closedAt():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 64);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
 static startHolding(builder:flatbuffers.Builder) {
-  builder.startObject(18);
+  builder.startObject(31);
 }
 
 static addStatus(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset) {
@@ -207,6 +284,70 @@ static addReservationId(builder:flatbuffers.Builder, reservationIdOffset:flatbuf
   builder.addFieldOffset(16, reservationIdOffset, 0);
 }
 
+static addCapacityQty(builder:flatbuffers.Builder, capacityQty:number) {
+  builder.addFieldFloat64(18, capacityQty, 0.0);
+}
+
+static addCapacityRatio(builder:flatbuffers.Builder, capacityRatio:number) {
+  builder.addFieldFloat64(19, capacityRatio, 0.0);
+}
+
+static addCapacityDefined(builder:flatbuffers.Builder, capacityDefined:boolean) {
+  builder.addFieldInt8(20, +capacityDefined, +false);
+}
+
+static addCapacityBounded(builder:flatbuffers.Builder, capacityBounded:boolean) {
+  builder.addFieldInt8(21, +capacityBounded, +false);
+}
+
+static addCapacityAt(builder:flatbuffers.Builder, capacityAt:bigint) {
+  builder.addFieldInt64(22, capacityAt, BigInt('0'));
+}
+
+static addSlippageBudget(builder:flatbuffers.Builder, slippageBudget:number) {
+  builder.addFieldFloat64(23, slippageBudget, 0.0);
+}
+
+static addBudgetSource(builder:flatbuffers.Builder, budgetSourceOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(24, budgetSourceOffset, 0);
+}
+
+static addHoldSeconds(builder:flatbuffers.Builder, holdSeconds:number) {
+  builder.addFieldFloat64(25, holdSeconds, 0.0);
+}
+
+static addVenuePnl(builder:flatbuffers.Builder, venuePnlOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(26, venuePnlOffset, 0);
+}
+
+static addShadowPnl(builder:flatbuffers.Builder, shadowPnlOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(27, shadowPnlOffset, 0);
+}
+
+static addShadowDefined(builder:flatbuffers.Builder, shadowDefined:boolean) {
+  builder.addFieldInt8(28, +shadowDefined, +false);
+}
+
+static addSells(builder:flatbuffers.Builder, sellsOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(29, sellsOffset, 0);
+}
+
+static createSellsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startSellsVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static addClosedAt(builder:flatbuffers.Builder, closedAt:bigint) {
+  builder.addFieldInt64(30, closedAt, BigInt('0'));
+}
+
 static endHolding(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
@@ -232,7 +373,20 @@ unpack(): HoldingT {
     this.mark(),
     this.isOpportunity(),
     this.reservationId(),
-);
+    this.capacityQty(),
+    this.capacityRatio(),
+    this.capacityDefined(),
+    this.capacityBounded(),
+    this.capacityAt(),
+    this.slippageBudget(),
+    this.budgetSource(),
+    this.holdSeconds(),
+    this.venuePnl(),
+    this.shadowPnl(),
+    this.shadowDefined(),
+    this.bb!.createObjList<SellEvent, SellEventT>(this.sells.bind(this), this.sellsLength()),
+    this.closedAt()
+  );
 }
 
 
@@ -254,6 +408,19 @@ unpackTo(_o: HoldingT): void {
   _o.mark = this.mark();
   _o.isOpportunity = this.isOpportunity();
   _o.reservationId = this.reservationId();
+  _o.capacityQty = this.capacityQty();
+  _o.capacityRatio = this.capacityRatio();
+  _o.capacityDefined = this.capacityDefined();
+  _o.capacityBounded = this.capacityBounded();
+  _o.capacityAt = this.capacityAt();
+  _o.slippageBudget = this.slippageBudget();
+  _o.budgetSource = this.budgetSource();
+  _o.holdSeconds = this.holdSeconds();
+  _o.venuePnl = this.venuePnl();
+  _o.shadowPnl = this.shadowPnl();
+  _o.shadowDefined = this.shadowDefined();
+  _o.sells = this.bb!.createObjList<SellEvent, SellEventT>(this.sells.bind(this), this.sellsLength());
+  _o.closedAt = this.closedAt();
 }
 }
 
@@ -276,6 +443,19 @@ constructor(
   public mark: string|Uint8Array|null = null,
   public isOpportunity: boolean = false,
   public reservationId: string|Uint8Array|null = null,
+  public capacityQty: number = 0.0,
+  public capacityRatio: number = 0.0,
+  public capacityDefined: boolean = false,
+  public capacityBounded: boolean = false,
+  public capacityAt: bigint = BigInt('0'),
+  public slippageBudget: number = 0.0,
+  public budgetSource: string|Uint8Array|null = null,
+  public holdSeconds: number = 0.0,
+  public venuePnl: string|Uint8Array|null = null,
+  public shadowPnl: string|Uint8Array|null = null,
+  public shadowDefined: boolean = false,
+  public sells: (SellEventT)[] = [],
+  public closedAt: bigint = BigInt('0')
 ){}
 
 
@@ -293,6 +473,11 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const profitThreshold = (this.profitThreshold !== null ? builder.createString(this.profitThreshold!) : 0);
   const mark = (this.mark !== null ? builder.createString(this.mark!) : 0);
   const reservationId = (this.reservationId !== null ? builder.createString(this.reservationId!) : 0);
+  const budgetSource = (this.budgetSource !== null ? builder.createString(this.budgetSource!) : 0);
+  const venuePnl = (this.venuePnl !== null ? builder.createString(this.venuePnl!) : 0);
+  const shadowPnl = (this.shadowPnl !== null ? builder.createString(this.shadowPnl!) : 0);
+  const sells = Holding.createSellsVector(builder, builder.createObjectOffsetList(this.sells));
+
   Holding.startHolding(builder);
   Holding.addStatus(builder, status);
   Holding.addSymbol(builder, symbol);
@@ -311,6 +496,20 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   Holding.addMark(builder, mark);
   Holding.addIsOpportunity(builder, this.isOpportunity);
   Holding.addReservationId(builder, reservationId);
-return Holding.endHolding(builder);
+  Holding.addCapacityQty(builder, this.capacityQty);
+  Holding.addCapacityRatio(builder, this.capacityRatio);
+  Holding.addCapacityDefined(builder, this.capacityDefined);
+  Holding.addCapacityBounded(builder, this.capacityBounded);
+  Holding.addCapacityAt(builder, this.capacityAt);
+  Holding.addSlippageBudget(builder, this.slippageBudget);
+  Holding.addBudgetSource(builder, budgetSource);
+  Holding.addHoldSeconds(builder, this.holdSeconds);
+  Holding.addVenuePnl(builder, venuePnl);
+  Holding.addShadowPnl(builder, shadowPnl);
+  Holding.addShadowDefined(builder, this.shadowDefined);
+  Holding.addSells(builder, sells);
+  Holding.addClosedAt(builder, this.closedAt);
+
+  return Holding.endHolding(builder);
 }
 }

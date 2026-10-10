@@ -3,6 +3,7 @@ package strategy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"iter"
 	"slices"
@@ -44,6 +45,68 @@ type Training struct {
 	mu               sync.Mutex
 	decisions        map[string]*wire.DecisionT
 	decisionsVersion atomic.Uint64
+	blobs            blobReader
+	statsMu          sync.Mutex
+	stats            map[string]*pathStats
+}
+
+/*
+blobReader reads a token path's blob; the catalog in production.
+*/
+type blobReader interface {
+	GetBlob(ctx context.Context, key string) ([]byte, error)
+}
+
+/*
+pathStats is what Train stores in a token path's blob: the gain c/b-1 and the
+B->C duration of the excursion the path was cut from. Blobs written before
+these statistics existed hold "{}" and carry none.
+*/
+type pathStats struct {
+	Gain        *float64 `json:"gain,omitempty"`
+	HoldSeconds *float64 `json:"hold_seconds,omitempty"`
+}
+
+/*
+Stored path actions: the final segment of every key.
+*/
+const (
+	actionEnter = "enter.json"
+	actionExit  = "exit.json"
+)
+
+/*
+maxKeyBytes is the S3 object key limit: 1024 bytes of UTF-8. A key is its
+tokens and its action joined by "/".
+*/
+const maxKeyBytes = 1024
+
+/*
+fitFrom is the index of the oldest token kept so that the tokens from it on,
+joined by "/" and followed by "/" and an action of actionBytes bytes, fit one
+object key. Train stores tokens[fitFrom:]; Step keeps its live path to what
+fits beside the shortest action, the longest prefix any stored key can have.
+*/
+func fitFrom[T ~string | ~[]byte](tokens []T, actionBytes int) int {
+	size := actionBytes
+
+	for idx := len(tokens) - 1; idx >= 0; idx-- {
+		size += len(tokens[idx]) + 1
+
+		if size > maxKeyBytes {
+			return idx + 1
+		}
+	}
+
+	return 0
+}
+
+/*
+fragmentTicks is the tick range Train reads for a fragment from low to its
+endpoint: low through the tick before the endpoint.
+*/
+func fragmentTicks(low, endpoint int64) (int64, int64) {
+	return low, endpoint - 1
 }
 
 /*
@@ -54,6 +117,7 @@ exactly as Train collapses them.
 type livePath struct {
 	last   string
 	tokens []string
+	since  time.Time
 }
 
 func NewTraining(
@@ -74,6 +138,11 @@ func NewTraining(
 		grid:      store.NewGrid(),
 		paths:     make(map[string]*livePath),
 		decisions: make(map[string]*wire.DecisionT),
+		stats:     make(map[string]*pathStats),
+	}
+
+	if catalog != nil {
+		training.blobs = catalog
 	}
 
 	// The detector labels every excursion against friction. Without it the
@@ -156,11 +225,20 @@ func (training *Training) advance(symbol, token string, at time.Time) {
 	}
 
 	live.last = token
+
+	if len(live.tokens) == 0 {
+		live.since = at
+	}
+
 	live.tokens = append(live.tokens, token)
+	// A path longer than any stored key can be a prefix of matches nothing;
+	// it keeps its most recent tokens, the same rule Train stores by.
+	live.tokens = live.tokens[fitFrom(live.tokens, min(len(actionEnter), len(actionExit))):]
 	candidates := training.match(live.tokens)
 
 	if len(candidates) == 0 && len(live.tokens) > 1 {
 		live.tokens = []string{token}
+		live.since = at
 		candidates = training.match(live.tokens)
 	}
 
@@ -188,14 +266,27 @@ func (training *Training) advance(symbol, token string, at time.Time) {
 	}
 
 	live.tokens = nil
-	training.decide(symbol, actions[0].Name, path, candidates, at, training.act(symbol, actions[0].Name))
+	training.decide(symbol, actions[0].Name, path, candidates, at, training.act(
+		symbol, actions[0].Name, path, candidates, at, at.Sub(live.since),
+	))
 }
 
 /*
 act takes the matched action through the Desk when the position state admits
 it, and reports what happened.
+
+The learned exit is the primary exit and always wins: it sells everything
+still open, ends an entry still being worked, and on a position the capacity
+monitor is already fully exiting it is recorded beside that exit so both
+triggers show. The monitor (in the Desk) only ever reduces exposure.
+
+An entry is sized from the matched paths' statistics, which live in their
+blobs, so it is sized off the market path and its outcome replaces this
+decision's reason when it is known.
 */
-func (training *Training) act(symbol, action string) string {
+func (training *Training) act(
+	symbol, action, path string, candidates []string, at time.Time, span time.Duration,
+) string {
 	state := training.desk.State(symbol)
 
 	switch action {
@@ -204,13 +295,26 @@ func (training *Training) act(symbol, action string) string {
 			return "ignored: position is not flat"
 		}
 
-		return outcome(training.desk.Enter(symbol))
+		go func() {
+			edge := training.edge(candidates)
+			result := outcome(training.desk.Enter(symbol, edge))
+
+			training.decide(symbol, action, path, candidates, at, fmt.Sprintf(
+				"%s (sized from %d matched gains, %d durations, path span %s)",
+				result, len(edge.Gains), len(edge.Holds), span,
+			))
+		}()
+
+		return "sizing entry"
 	case "exit":
-		if state != broker.HOLDING {
-			return "ignored: no filled position to exit"
+		switch state {
+		case broker.HOLDING:
+			return "learned_exit " + outcome(training.desk.Exit(symbol))
+		case broker.EXITING:
+			return "learned_exit recorded beside the exit already in progress: " + outcome(training.desk.Exit(symbol))
 		}
 
-		return outcome(training.desk.Exit(symbol))
+		return "ignored: no filled position to exit"
 	}
 
 	errnie.Error(errnie.Err(
@@ -227,6 +331,85 @@ func outcome(err error) string {
 	}
 
 	return "submitted"
+}
+
+/*
+edge gathers the statistics of the matched paths from their blobs, cached per
+key. A blob without statistics, or one that cannot be read, contributes none;
+read failures are logged.
+*/
+func (training *Training) edge(candidates []string) broker.Edge {
+	edge := broker.Edge{}
+
+	if training.blobs == nil {
+		return edge
+	}
+
+	ctx := context.Background()
+
+	if training.System != nil {
+		ctx = training.Context()
+	}
+
+	for _, key := range candidates {
+		training.statsMu.Lock()
+		stats, ok := training.stats[key]
+		training.statsMu.Unlock()
+
+		if !ok {
+			stats = &pathStats{}
+			body, err := training.blobs.GetBlob(ctx, key)
+
+			if err == nil {
+				err = json.Unmarshal(body, stats)
+			}
+
+			if err != nil {
+				errnie.Warn("[training] path statistics unreadable for " + key + ": " + err.Error())
+				continue
+			}
+
+			training.statsMu.Lock()
+			training.stats[key] = stats
+			training.statsMu.Unlock()
+		}
+
+		if stats.Gain != nil {
+			edge.Gains = append(edge.Gains, *stats.Gain)
+		}
+
+		if stats.HoldSeconds != nil {
+			edge.Holds = append(edge.Holds, time.Duration(*stats.HoldSeconds*float64(time.Second)))
+		}
+	}
+
+	return edge
+}
+
+/*
+excursionStats is the blob Train stores under both token paths of one
+excursion.
+*/
+func excursionStats(excursion *data.Measurement) []byte {
+	stats := pathStats{}
+
+	if b, c, err := tables.DetectionPrices(excursion); err == nil && b.Sign() > 0 {
+		gain := c.Float64()/b.Float64() - 1
+		stats.Gain = &gain
+	}
+
+	if !excursion.At.IsZero() && !excursion.From.IsZero() && excursion.At.After(excursion.From) {
+		hold := excursion.At.Sub(excursion.From).Seconds()
+		stats.HoldSeconds = &hold
+	}
+
+	body, err := json.Marshal(stats)
+
+	if err != nil {
+		return []byte("{}")
+	}
+
+	return body
 }
 
 /*
@@ -354,10 +537,18 @@ func (training *Training) Train() error {
 	}
 
 	go func() {
+		trained := 0
+
+		defer func() {
+			errnie.Info(fmt.Sprintf("[training] Train finished: %d up excursions processed into token paths", trained))
+		}()
+
 		for excursion := range training.catalog.Excursions(training.Context()) {
 			if excursion.Meta("type") != excursionUp {
 				continue
 			}
+
+			trained++
 
 			group, ctx := errgroup.WithContext(training.Context())
 
@@ -373,12 +564,28 @@ func (training *Training) Train() error {
 				for idx, fragment := range [][]string{{"start_tick", "b_tick"}, {"b_tick", "c_tick"}} {
 					ticks := make(map[int64][]*data.Measurement)
 
+					// A fragment is the tape strictly before its end: the
+					// precursor stops before B's own trade and the move
+					// before C's. Signals carry the tick current when they
+					// were produced, never earlier than their trade's, so
+					// [low, end-1] holds nothing derived from the endpoint.
+					low, end := fragmentTicks(
+						int64(data.Pull(excursion.Read(fragment[0])).Metric.Raw),
+						int64(data.Pull(excursion.Read(fragment[1])).Metric.Raw),
+					)
+
+					if end < low {
+						// B is the first trade of the scanned tape: there
+						// is no precursor to store.
+						continue
+					}
+
 					for tape, err := range training.catalog.ExcursionTape(
 						training.Context(),
 						excursion.Epoch,
 						excursion.Label,
-						int64(data.Pull(excursion.Read(fragment[0])).Metric.Raw),
-						int64(data.Pull(excursion.Read(fragment[1])).Metric.Raw)-2,
+						low,
+						end,
 					) {
 						if err != nil {
 							training.Error(errnie.Err(
@@ -395,11 +602,7 @@ func (training *Training) Train() error {
 						}
 					}
 
-					for tick := int64(data.Pull(excursion.Read(
-						fragment[0],
-					)).Metric.Raw); tick <= int64(data.Pull(excursion.Read(
-						fragment[1],
-					)).Metric.Raw); tick++ {
+					for tick := low; tick <= end; tick++ {
 						signals := ticks[tick]
 
 						if len(signals) == 0 {
@@ -413,6 +616,18 @@ func (training *Training) Train() error {
 							int64(data.Pull(excursion.Read("start_idx")).Metric.Raw),
 							tick,
 						)
+
+						// The tick's frame spans the venue time its signals
+						// cover: from the earliest window start to the latest.
+						for _, signal := range signals {
+							if signal.At.After(train.At) {
+								train.At = signal.At
+							}
+
+							if !signal.From.IsZero() && (train.From.IsZero() || signal.From.Before(train.From)) {
+								train.From = signal.From
+							}
+						}
 
 						train.Peers(signals...)
 						train.Write()
@@ -429,7 +644,11 @@ func (training *Training) Train() error {
 					}
 				}
 
-				for idx, action := range [][]byte{[]byte("enter.json"), []byte("exit.json")} {
+				for idx, action := range [][]byte{[]byte(actionEnter), []byte(actionExit)} {
+					// Only the most recent tokens before the fragment end
+					// that fit one object key are stored, as Step keeps.
+					tokens[idx] = tokens[idx][fitFrom(tokens[idx], len(action)):]
+
 					if len(tokens[idx]) == 0 {
 						continue
 					}
@@ -439,7 +658,7 @@ func (training *Training) Train() error {
 					training.catalog.PutBlob(
 						training.Context(),
 						string(bytes.Join(tokens[idx], []byte("/"))),
-						[]byte("{}"),
+						excursionStats(excursion),
 					)
 				}
 

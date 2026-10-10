@@ -24,6 +24,19 @@ type HoldingT struct {
 	Mark string `json:"mark"`
 	IsOpportunity bool `json:"isOpportunity"`
 	ReservationId string `json:"reservationId"`
+	CapacityQty float64 `json:"capacityQty"`
+	CapacityRatio float64 `json:"capacityRatio"`
+	CapacityDefined bool `json:"capacityDefined"`
+	CapacityBounded bool `json:"capacityBounded"`
+	CapacityAt int64 `json:"capacityAt"`
+	SlippageBudget float64 `json:"slippageBudget"`
+	BudgetSource string `json:"budgetSource"`
+	HoldSeconds float64 `json:"holdSeconds"`
+	VenuePnl string `json:"venuePnl"`
+	ShadowPnl string `json:"shadowPnl"`
+	ShadowDefined bool `json:"shadowDefined"`
+	Sells []*SellEventT `json:"sells"`
+	ClosedAt int64 `json:"closedAt"`
 }
 
 func (t *HoldingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -82,6 +95,31 @@ func (t *HoldingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t.ReservationId != "" {
 		reservationIdOffset = builder.CreateString(t.ReservationId)
 	}
+	budgetSourceOffset := flatbuffers.UOffsetT(0)
+	if t.BudgetSource != "" {
+		budgetSourceOffset = builder.CreateString(t.BudgetSource)
+	}
+	venuePnlOffset := flatbuffers.UOffsetT(0)
+	if t.VenuePnl != "" {
+		venuePnlOffset = builder.CreateString(t.VenuePnl)
+	}
+	shadowPnlOffset := flatbuffers.UOffsetT(0)
+	if t.ShadowPnl != "" {
+		shadowPnlOffset = builder.CreateString(t.ShadowPnl)
+	}
+	sellsOffset := flatbuffers.UOffsetT(0)
+	if t.Sells != nil {
+		sellsLength := len(t.Sells)
+		sellsOffsets := make([]flatbuffers.UOffsetT, sellsLength)
+		for j := 0; j < sellsLength; j++ {
+			sellsOffsets[j] = t.Sells[j].Pack(builder)
+		}
+		HoldingStartSellsVector(builder, sellsLength)
+		for j := sellsLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(sellsOffsets[j])
+		}
+		sellsOffset = builder.EndVector(sellsLength)
+	}
 	HoldingStart(builder)
 	HoldingAddStatus(builder, statusOffset)
 	HoldingAddSymbol(builder, symbolOffset)
@@ -100,6 +138,19 @@ func (t *HoldingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	HoldingAddMark(builder, markOffset)
 	HoldingAddIsOpportunity(builder, t.IsOpportunity)
 	HoldingAddReservationId(builder, reservationIdOffset)
+	HoldingAddCapacityQty(builder, t.CapacityQty)
+	HoldingAddCapacityRatio(builder, t.CapacityRatio)
+	HoldingAddCapacityDefined(builder, t.CapacityDefined)
+	HoldingAddCapacityBounded(builder, t.CapacityBounded)
+	HoldingAddCapacityAt(builder, t.CapacityAt)
+	HoldingAddSlippageBudget(builder, t.SlippageBudget)
+	HoldingAddBudgetSource(builder, budgetSourceOffset)
+	HoldingAddHoldSeconds(builder, t.HoldSeconds)
+	HoldingAddVenuePnl(builder, venuePnlOffset)
+	HoldingAddShadowPnl(builder, shadowPnlOffset)
+	HoldingAddShadowDefined(builder, t.ShadowDefined)
+	HoldingAddSells(builder, sellsOffset)
+	HoldingAddClosedAt(builder, t.ClosedAt)
 	return HoldingEnd(builder)
 }
 
@@ -121,6 +172,25 @@ func (rcv *Holding) UnPackTo(t *HoldingT) {
 	t.Mark = string(rcv.Mark())
 	t.IsOpportunity = rcv.IsOpportunity()
 	t.ReservationId = string(rcv.ReservationId())
+	t.CapacityQty = rcv.CapacityQty()
+	t.CapacityRatio = rcv.CapacityRatio()
+	t.CapacityDefined = rcv.CapacityDefined()
+	t.CapacityBounded = rcv.CapacityBounded()
+	t.CapacityAt = rcv.CapacityAt()
+	t.SlippageBudget = rcv.SlippageBudget()
+	t.BudgetSource = string(rcv.BudgetSource())
+	t.HoldSeconds = rcv.HoldSeconds()
+	t.VenuePnl = string(rcv.VenuePnl())
+	t.ShadowPnl = string(rcv.ShadowPnl())
+	t.ShadowDefined = rcv.ShadowDefined()
+	sellsLength := rcv.SellsLength()
+	t.Sells = make([]*SellEventT, sellsLength)
+	for j := 0; j < sellsLength; j++ {
+		x := SellEvent{}
+		rcv.Sells(&x, j)
+		t.Sells[j] = x.UnPack()
+	}
+	t.ClosedAt = rcv.ClosedAt()
 }
 
 func (rcv *Holding) UnPack() *HoldingT {
@@ -319,8 +389,160 @@ func (rcv *Holding) ReservationId() []byte {
 	return nil
 }
 
+func (rcv *Holding) CapacityQty() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Holding) MutateCapacityQty(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(40, n)
+}
+
+func (rcv *Holding) CapacityRatio() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Holding) MutateCapacityRatio(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(42, n)
+}
+
+func (rcv *Holding) CapacityDefined() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *Holding) MutateCapacityDefined(n bool) bool {
+	return rcv._tab.MutateBoolSlot(44, n)
+}
+
+func (rcv *Holding) CapacityBounded() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *Holding) MutateCapacityBounded(n bool) bool {
+	return rcv._tab.MutateBoolSlot(46, n)
+}
+
+func (rcv *Holding) CapacityAt() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *Holding) MutateCapacityAt(n int64) bool {
+	return rcv._tab.MutateInt64Slot(48, n)
+}
+
+func (rcv *Holding) SlippageBudget() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Holding) MutateSlippageBudget(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(50, n)
+}
+
+func (rcv *Holding) BudgetSource() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *Holding) HoldSeconds() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *Holding) MutateHoldSeconds(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(54, n)
+}
+
+func (rcv *Holding) VenuePnl() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *Holding) ShadowPnl() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *Holding) ShadowDefined() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *Holding) MutateShadowDefined(n bool) bool {
+	return rcv._tab.MutateBoolSlot(60, n)
+}
+
+func (rcv *Holding) Sells(obj *SellEvent, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *Holding) SellsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *Holding) ClosedAt() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *Holding) MutateClosedAt(n int64) bool {
+	return rcv._tab.MutateInt64Slot(64, n)
+}
+
 func HoldingStart(builder *flatbuffers.Builder) {
-	builder.StartObject(18)
+	builder.StartObject(31)
 }
 func HoldingAddStatus(builder *flatbuffers.Builder, status flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(status), 0)
@@ -372,6 +594,48 @@ func HoldingAddIsOpportunity(builder *flatbuffers.Builder, isOpportunity bool) {
 }
 func HoldingAddReservationId(builder *flatbuffers.Builder, reservationId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(reservationId), 0)
+}
+func HoldingAddCapacityQty(builder *flatbuffers.Builder, capacityQty float64) {
+	builder.PrependFloat64Slot(18, capacityQty, 0.0)
+}
+func HoldingAddCapacityRatio(builder *flatbuffers.Builder, capacityRatio float64) {
+	builder.PrependFloat64Slot(19, capacityRatio, 0.0)
+}
+func HoldingAddCapacityDefined(builder *flatbuffers.Builder, capacityDefined bool) {
+	builder.PrependBoolSlot(20, capacityDefined, false)
+}
+func HoldingAddCapacityBounded(builder *flatbuffers.Builder, capacityBounded bool) {
+	builder.PrependBoolSlot(21, capacityBounded, false)
+}
+func HoldingAddCapacityAt(builder *flatbuffers.Builder, capacityAt int64) {
+	builder.PrependInt64Slot(22, capacityAt, 0)
+}
+func HoldingAddSlippageBudget(builder *flatbuffers.Builder, slippageBudget float64) {
+	builder.PrependFloat64Slot(23, slippageBudget, 0.0)
+}
+func HoldingAddBudgetSource(builder *flatbuffers.Builder, budgetSource flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(budgetSource), 0)
+}
+func HoldingAddHoldSeconds(builder *flatbuffers.Builder, holdSeconds float64) {
+	builder.PrependFloat64Slot(25, holdSeconds, 0.0)
+}
+func HoldingAddVenuePnl(builder *flatbuffers.Builder, venuePnl flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(26, flatbuffers.UOffsetT(venuePnl), 0)
+}
+func HoldingAddShadowPnl(builder *flatbuffers.Builder, shadowPnl flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(27, flatbuffers.UOffsetT(shadowPnl), 0)
+}
+func HoldingAddShadowDefined(builder *flatbuffers.Builder, shadowDefined bool) {
+	builder.PrependBoolSlot(28, shadowDefined, false)
+}
+func HoldingAddSells(builder *flatbuffers.Builder, sells flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(29, flatbuffers.UOffsetT(sells), 0)
+}
+func HoldingStartSellsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func HoldingAddClosedAt(builder *flatbuffers.Builder, closedAt int64) {
+	builder.PrependInt64Slot(30, closedAt, 0)
 }
 func HoldingEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

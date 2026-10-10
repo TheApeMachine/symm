@@ -9,11 +9,14 @@ import (
 )
 
 func TestMetricFinalize(t *testing.T) {
-	Convey("Given a metric whose stream has seen 2 and 2+3*sqrt(2)", t, func() {
+	Convey("Given a metric whose stream has seen nine values with mean 2 and sample sigma 3", t, func() {
 		metric := NewMetric("depth_zscore:bid", 1, UnitZScore, TimescaleRollingWindow)
 		state := &standardizer{}
-		state.step(2)
-		state.step(2 + 3*math.Sqrt(2))
+
+		for _, value := range []float64{-1, 5, -1, 5, 2, -1, 5, -1, 5} {
+			state.step(value)
+		}
+
 		priorMean := state.mean
 
 		Convey("a finite Raw is standardized against the prior moments, then folded in", func() {
@@ -23,7 +26,7 @@ func TestMetricFinalize(t *testing.T) {
 			So(metric.Standardizable(), ShouldBeTrue)
 			So(metric.Standardized, ShouldAlmostEqual, (1-priorMean)/3, 1e-12)
 			So(metric.Normalized, ShouldAlmostEqual, math.Tanh((1-priorMean)/3), 1e-12)
-			So(state.count, ShouldEqual, 3)
+			So(state.count, ShouldEqual, 10)
 		})
 
 		Convey("an undefined Raw fails before it can poison the stream", func() {
@@ -32,7 +35,7 @@ func TestMetricFinalize(t *testing.T) {
 			err := metric.finalize(state)
 			So(err, ShouldNotBeNil)
 			So(strings.Contains(err.Error(), "raw is required"), ShouldBeTrue)
-			So(state.count, ShouldEqual, 2)
+			So(state.count, ShouldEqual, 9)
 			So(state.mean, ShouldEqual, priorMean)
 		})
 
@@ -40,7 +43,7 @@ func TestMetricFinalize(t *testing.T) {
 			metric.Raw = math.Inf(1)
 
 			So(metric.finalize(state), ShouldNotBeNil)
-			So(state.count, ShouldEqual, 2)
+			So(state.count, ShouldEqual, 9)
 			So(state.mean, ShouldEqual, priorMean)
 		})
 	})

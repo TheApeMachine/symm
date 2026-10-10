@@ -1,7 +1,6 @@
 package data
 
 import (
-	"math"
 	"sync"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -57,18 +56,23 @@ func standardizerFor(key standardizerKey) *standardizer {
 /*
 step returns the center and scale of the observations seen before value, then
 incorporates value. The scale is the sample standard deviation of those prior
-observations; it stays zero, meaning undefined, until at least two prior
-observations differ.
+observations, and it stays zero, meaning undefined, while core.PriorScale
+refuses it: fewer than core.MinimumPrior prior observations (the sigma's own
+relative standard error, about 1/sqrt(2(n-1)), still above core.Tolerance), no
+dispersion, or a scale negligible next to max(|value|, |center|), the same
+relative rule Joint applies. A scale that small is rounding residue of values
+at that magnitude (a flat stream whose mean drifted by an ulp, or decayed
+near-zero remnants), and dividing by it reports float noise as a deviation of
+up to 1e19 sigma. The rule is relative only: an absolute floor would refuse
+genuine dispersion in streams whose unit makes every value small, such as
+micro-cap prices.
 */
 func (state *standardizer) step(value float64) (center float64, scale float64) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
 	center = state.mean
-
-	if state.count > core.Unit {
-		scale = math.Sqrt(state.m2 / (state.count - core.Unit))
-	}
+	scale, _ = core.PriorScale(state.count, state.m2, value, center)
 
 	state.count++
 	delta := value - state.mean

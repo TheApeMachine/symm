@@ -137,6 +137,19 @@ cognitive:
   # next run. No-op when in_memory is set.
   reset_on_boot: true
 
+kraken:
+  credentials:
+    # Environment variable NAMES (never values) holding each process role's
+    # Kraken API key pair. Kraken checks nonces per API key, so processes
+    # that run at the same time sign with different keys. A role whose
+    # variables are unset is a startup error; no role falls back to another.
+    collector:
+      key_env: L3_API_KEY
+      secret_env: L3_API_SECRET
+    main:
+      key_env: KRAKEN_API_KEY
+      secret_env: KRAKEN_API_SECRET
+
 market:
   model: paper
   quote_currency: USD

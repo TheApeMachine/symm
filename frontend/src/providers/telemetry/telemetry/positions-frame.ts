@@ -4,6 +4,7 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { Holding, HoldingT } from '../telemetry/holding.js';
 import { Position, PositionT } from '../telemetry/position.js';
 
 
@@ -35,8 +36,18 @@ rowsLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
+closed(index: number, obj?:Holding):Holding|null {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? (obj || new Holding()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+closedLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
 static startPositionsFrame(builder:flatbuffers.Builder) {
-  builder.startObject(1);
+  builder.startObject(2);
 }
 
 static addRows(builder:flatbuffers.Builder, rowsOffset:flatbuffers.Offset) {
@@ -55,40 +66,62 @@ static startRowsVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addClosed(builder:flatbuffers.Builder, closedOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(1, closedOffset, 0);
+}
+
+static createClosedVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startClosedVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static endPositionsFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createPositionsFrame(builder:flatbuffers.Builder, rowsOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createPositionsFrame(builder:flatbuffers.Builder, rowsOffset:flatbuffers.Offset, closedOffset:flatbuffers.Offset):flatbuffers.Offset {
   PositionsFrame.startPositionsFrame(builder);
   PositionsFrame.addRows(builder, rowsOffset);
+  PositionsFrame.addClosed(builder, closedOffset);
   return PositionsFrame.endPositionsFrame(builder);
 }
 
 unpack(): PositionsFrameT {
   return new PositionsFrameT(
-    this.bb!.createObjList<Position, PositionT>(this.rows.bind(this), this.rowsLength())
+    this.bb!.createObjList<Position, PositionT>(this.rows.bind(this), this.rowsLength()),
+    this.bb!.createObjList<Holding, HoldingT>(this.closed.bind(this), this.closedLength())
   );
 }
 
 
 unpackTo(_o: PositionsFrameT): void {
   _o.rows = this.bb!.createObjList<Position, PositionT>(this.rows.bind(this), this.rowsLength());
+  _o.closed = this.bb!.createObjList<Holding, HoldingT>(this.closed.bind(this), this.closedLength());
 }
 }
 
 export class PositionsFrameT implements flatbuffers.IGeneratedObject {
 constructor(
-  public rows: (PositionT)[] = []
+  public rows: (PositionT)[] = [],
+  public closed: (HoldingT)[] = []
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const rows = PositionsFrame.createRowsVector(builder, builder.createObjectOffsetList(this.rows));
+  const closed = PositionsFrame.createClosedVector(builder, builder.createObjectOffsetList(this.closed));
 
   return PositionsFrame.createPositionsFrame(builder,
-    rows
+    rows,
+    closed
   );
 }
 }

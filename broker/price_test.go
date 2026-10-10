@@ -150,9 +150,9 @@ func TestPrice_AllocateEntryAndLiquidate(t *testing.T) {
 		err := book.Update(payload)
 		So(err, ShouldBeNil)
 
-		Convey("AllocateEntry enforces 20% virtual cash budget via depth walk", func() {
-			referenceCash := decimal.NewFromFloat64(5000.0) // 20% budget = 1,000
-			budget := referenceCash.SetScale(decimal.DefaultScale).Div(decimal.NewFromInt64(5))
+		Convey("AllocateEntry spends at most the reference cash via depth walk", func() {
+			referenceCash := decimal.NewFromFloat64(1000.0)
+			budget := referenceCash.SetScale(decimal.DefaultScale)
 
 			cost, allocErr := price.AllocateEntry(symbol, referenceCash)
 			So(allocErr, ShouldBeNil)
@@ -161,7 +161,7 @@ func TestPrice_AllocateEntryAndLiquidate(t *testing.T) {
 			So(cost.Quantity.Sign(), ShouldBeGreaterThan, 0)
 			So(cost.Total, ShouldNotBeNil)
 
-			// Total entry cost (gross + taker entry fee) must NOT exceed the 20% budget (1,000).
+			// Total entry cost (gross + taker entry fee) must NOT exceed the reference cash (1,000).
 			So(cost.Total.Cmp(budget), ShouldBeLessThanOrEqualTo, 0)
 
 			// The entry must walk past level 1 (500) into level 2: quantity > 0.01
@@ -205,8 +205,8 @@ func TestPrice_AllocateEntryAndLiquidate(t *testing.T) {
 			decimal.NewFromFloat64(2500.0),
 		)
 
-		referenceCash := decimal.NewFromFloat64(1000.0) // 20% budget = 200
-		budget := referenceCash.SetScale(decimal.DefaultScale).Div(decimal.NewFromInt64(5))
+		referenceCash := decimal.NewFromFloat64(200.0)
+		budget := referenceCash.SetScale(decimal.DefaultScale)
 
 		cost, err := price.AllocateEntry(symbol, referenceCash)
 		So(err, ShouldBeNil)

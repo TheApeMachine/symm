@@ -684,6 +684,8 @@ func positionsSummary(rows []*wire.PositionT) string {
 		b.WriteString(row.Holding.Qty)
 		b.WriteString(row.Holding.Mark)
 		b.WriteString(row.Holding.Pnl)
+		b.WriteString(row.Holding.VenuePnl)
+		b.WriteString(row.Holding.ShadowPnl)
 	}
 
 	return b.String()

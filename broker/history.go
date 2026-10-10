@@ -147,6 +147,66 @@ func (history *versions) lookup(at time.Time) (view *BookView, missed bool) {
 }
 
 /*
+window hands read every verified version in effect during [from, to], oldest
+first: the one in effect at from, then each later one stamped at or before to.
+Asking for from teaches the shared horizon that lag, exactly as lookup does,
+so the next window is retained. covered is false when from is older than
+everything retained, so the versions read start later than from.
+*/
+func (history *versions) window(from, to time.Time, read func(*BookView)) (covered bool) {
+	history.mu.Lock()
+	defer history.mu.Unlock()
+
+	count := len(history.views)
+
+	if count == 0 {
+		return false
+	}
+
+	lag := int64(history.views[count-1].At.Sub(from))
+
+	for current := history.horizon.Load(); lag > current; current = history.horizon.Load() {
+		if history.horizon.CompareAndSwap(current, lag) {
+			break
+		}
+	}
+
+	first := sort.Search(count, func(i int) bool {
+		return history.views[i].At.After(from)
+	}) - 1
+
+	covered = first >= 0
+	first = max(first, 0)
+
+	for _, view := range history.views[first:] {
+		if view.At.After(to) {
+			break
+		}
+
+		if !view.gap {
+			read(view)
+		}
+	}
+
+	return covered
+}
+
+/*
+latest returns the newest version, or nil while the book is unknown (no
+snapshot yet, or a gap since the last one).
+*/
+func (history *versions) latest() *BookView {
+	history.mu.Lock()
+	defer history.mu.Unlock()
+
+	if count := len(history.views); count > 0 && !history.views[count-1].gap {
+		return history.views[count-1]
+	}
+
+	return nil
+}
+
+/*
 history returns the symbol's version store, creating it on first use.
 */
 func (book *Book) history(symbol string) *versions {
@@ -182,6 +242,36 @@ func (book *Book) BookAt(symbol string, at time.Time, read func(*BookView)) {
 	}
 
 	if view != nil {
+		read(view)
+	}
+}
+
+/*
+BookWindow hands read every verified version of symbol's book in effect during
+[from, to]. covered is false when from is older than the retained history.
+*/
+func (book *Book) BookWindow(symbol string, from, to time.Time, read func(*BookView)) bool {
+	val, ok := book.versions.Load(symbol)
+
+	if !ok {
+		return false
+	}
+
+	return val.(*versions).window(from, to, read)
+}
+
+/*
+Latest hands read the newest verified version of symbol's book, and reads
+nothing while the book is unknown.
+*/
+func (book *Book) Latest(symbol string, read func(*BookView)) {
+	val, ok := book.versions.Load(symbol)
+
+	if !ok {
+		return
+	}
+
+	if view := val.(*versions).latest(); view != nil {
 		read(view)
 	}
 }

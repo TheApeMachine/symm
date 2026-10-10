@@ -5,6 +5,7 @@ export { RingBuffer };
 
 import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import type { HoldingT } from "#/providers/telemetry/telemetry/holding";
 import type { PositionT } from "#/providers/telemetry/telemetry/position";
 
 export const DEFAULT_KERNELS = [
@@ -92,6 +93,8 @@ export const measurementSourcesAtom = createAtom<string[]>(DEFAULT_KERNELS);
 export const kernelDetailAtom = createAtom<string>("cvd");
 
 export const positionsAtom = createAtom<PositionT[]>([]);
+// Round trips closed this session, each with the triggers of its sells.
+export const closedPositionsAtom = createAtom<HoldingT[]>([]);
 export const decisionsAtom = createAtom<DecisionT[]>([]);
 export const resonanceStore = createStore<Record<string, RingBuffer<MeasurementT>>>({});
 

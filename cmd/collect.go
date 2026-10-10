@@ -19,6 +19,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -43,6 +44,13 @@ var collectCmd = &cobra.Command{
 		errnie.Apply(&errnie.Config{
 			Level: viper.GetString("system.log.level"),
 		})
+
+		// This process signs Kraken REST calls with its own role's key pair.
+		if err := kraken.UseCredentials(kraken.RoleCollector); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation, "collect: kraken credentials unavailable", err,
+			))
+		}
 
 		_, err := pyroscope.Start(pyroscope.Config{
 			ApplicationName: "symm.collect.theapemachine.app",

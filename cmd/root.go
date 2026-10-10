@@ -68,6 +68,13 @@ var (
 				Level: viper.GetString("system.log.level"),
 			})
 
+			// This process signs Kraken REST calls with its own role's key pair.
+			if err := kraken.UseCredentials(kraken.RoleMain); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Validation, "symm: kraken credentials unavailable", err,
+				))
+			}
+
 			_, err := pyroscope.Start(pyroscope.Config{
 				ApplicationName: "symm.theapemachine.app",
 				ServerAddress:   "http://localhost:4040",
@@ -215,7 +222,13 @@ var (
 				ingressStoreTee = hindsight.NewStoreTee(ctx, "storeTee")
 			}
 
+			ingressTee := teeOf(ingressStoreTee)
+
+			// Every trade's signed volume feeds the participation limit, and
+			// the desk sizes, monitors and shadow-fills against book history.
+			price.Flow = broker.NewFlow()
 			desk := broker.NewDesk(ctx, privateTransport, price, balance)
+			desk.UseDepth(book)
 
 			training := strategy.NewTraining(
 				ctx,
@@ -238,6 +251,7 @@ var (
 			manifoldSolver := manifold.NewSolver(ctx, book)
 			book.SetNotify(func(symbol string, _ time.Time) {
 				manifoldSolver.Wake(symbol)
+				desk.Wake(symbol)
 			})
 			correlationSignal := correlation.NewSignal(ctx)
 			cvdSignal := cvd.NewSignal(ctx)
@@ -322,7 +336,7 @@ var (
 			hub.SetPositionSource(desk)
 			hub.SetDecisionSource(training)
 			hub.SetExitHandler(func(symbol string) {
-				if err := desk.Exit(symbol); err != nil {
+				if err := desk.ExitBy(symbol, broker.TriggerManual); err != nil {
 					errnie.Error(err)
 				}
 			})
@@ -526,12 +540,12 @@ var (
 
 							balance.Invalidate()
 						case "level3":
-							if err := handleLevel3(buf, epoch, book, ingressStoreTee, name); err != nil {
+							if err := handleLevel3(buf, epoch, book, ingressTee, name); err != nil {
 								halt(err)
 								return
 							}
 						case "trade":
-							if err := handleTrade(buf, epoch, price, workspace, ingressStoreTee, name, balance.Invalidate); err != nil {
+							if err := handleTrade(buf, epoch, price, workspace, ingressTee, name, balance.Invalidate); err != nil {
 								halt(err)
 								return
 							}
@@ -651,6 +665,19 @@ var (
 		},
 	}
 )
+
+/*
+teeOf is tee as the Tee interface the ingress handlers skip when nil. A nil
+*StoreTee converted to the interface is not nil, so it is returned as a true
+nil interface.
+*/
+func teeOf(tee *hindsight.StoreTee) nmruntime.Tee {
+	if tee == nil {
+		return nil
+	}
+
+	return tee
+}
 
 func Execute() {
 	err := rootCmd.Execute()

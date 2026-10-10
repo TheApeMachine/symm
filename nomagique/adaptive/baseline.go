@@ -3,7 +3,6 @@ package adaptive
 import (
 	"errors"
 	"iter"
-	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -59,8 +58,9 @@ func (op *Baseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			// The value is scored against the dispersion before it, never one
 			// that already includes it.
-			if prior := reading.Prior; prior.Count > 1 && prior.M2 > 0 {
-				reading.ScoreScale = math.Sqrt(prior.M2 / (prior.Count - 1))
+			// core.PriorScale refuses too few samples and a negligible scale.
+			if scale, scorable := core.PriorScale(reading.Prior.Count, reading.Prior.M2, val, reading.Baseline); scorable {
+				reading.ScoreScale = scale
 				reading.ZScore = reading.Residual / reading.ScoreScale
 			}
 

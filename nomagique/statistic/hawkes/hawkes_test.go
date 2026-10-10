@@ -231,3 +231,50 @@ func TestDroppedReportsOncePerTransition(testingT *testing.T) {
 		testingT.Fatalf("expected one drop report for one transition, got %d", reports)
 	}
 }
+
+func TestExcitationMassNonNegativeWithNearZeroKernel(testingT *testing.T) {
+	model := NewHawkes()
+	marks, times := mixedArrivals(60)
+
+	for index := range marks {
+		if _, _, err := model.Step(marks[index], times[index]); err != nil {
+			testingT.Fatal(err)
+		}
+	}
+
+	if !model.path.modelReady {
+		testingT.Fatal("expected a fitted model from the mixed tape")
+	}
+
+	// Sparse arrivals half a second apart leave almost no kernel mass in the
+	// compensator; the mass recovered as compensator minus mu*span came out
+	// a few ulps below zero here.
+	at := times[len(times)-1]
+	scored := 0
+
+	for step := 1; step <= 40; step++ {
+		res, _, err := model.Step(float64(1-2*(step%2)), at+0.5*float64(step))
+
+		if err != nil {
+			testingT.Fatal(err)
+		}
+
+		for _, key := range []string{"excitation_mass:buy", "excitation_mass:sell"} {
+			mass, ok := res[key]
+
+			if !ok {
+				continue
+			}
+
+			scored++
+
+			if mass < 0 {
+				testingT.Fatalf("step %d: %s = %g, want >= 0", step, key, mass)
+			}
+		}
+	}
+
+	if scored == 0 {
+		testingT.Fatal("expected excitation_mass to be scored")
+	}
+}

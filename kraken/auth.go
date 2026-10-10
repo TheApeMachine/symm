@@ -1,7 +1,6 @@
 package kraken
 
 import (
-	"os"
 	"sync"
 	"time"
 
@@ -31,13 +30,19 @@ func NewAuth() *Auth {
 }
 
 /*
-NewAuthenticatedREST returns a spot REST client signed with the process API
-keys and the process-wide nonce generator. A generator that cannot be built
+NewAuthenticatedREST returns a spot REST client signed with the API keys of
+the process's credential role (UseCredentials) and the process-wide nonce generator. A generator that cannot be built
 (unreadable or corrupt high-water file) is an error, never a fall back to the
 SDK's own nonce: that would race the shared generator, and every private call
 and Level3 token fetch depends on nonces staying strictly increasing.
 */
 func NewAuthenticatedREST() (*spot.REST, error) {
+	keys, err := processKeys()
+
+	if err != nil {
+		return nil, err
+	}
+
 	nonce, err := ProcessAuthNonce()
 
 	if err != nil {
@@ -65,8 +70,8 @@ func NewAuthenticatedREST() (*spot.REST, error) {
 	}
 
 	restClient := spot.NewREST()
-	restClient.PublicKey = os.Getenv("KRAKEN_API_KEY")
-	restClient.PrivateKey = os.Getenv("KRAKEN_API_SECRET")
+	restClient.PublicKey = keys.key
+	restClient.PrivateKey = keys.secret
 	restClient.Nonce = nonce.Next
 
 	return restClient, nil

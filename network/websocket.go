@@ -26,6 +26,10 @@ type WebsocketClient struct {
 	onReconnect  func() error
 	onDisconnect func()
 	backoff      time.Duration
+	// hookBackoff grows with consecutive reconnect hook failures and is
+	// cleared by a hook that succeeds. A dial that succeeds resets backoff,
+	// so a hook that keeps failing behind good dials needs its own.
+	hookBackoff time.Duration
 	lastWarn     time.Time
 	dial         func(url string) (*gorilla.Conn, *http.Response, error)
 }
@@ -46,11 +50,12 @@ func NewWebsocketClient(ctx context.Context) *WebsocketClient {
 OnReconnect registers a hook invoked after a successful redial (level3
 resubscribe). Nil clears the hook.
 
-A hook failure is fatal for the client: a redialed socket whose resubscribe
+A hook failure drops the connection: a redialed socket whose resubscribe
 failed carries no data and would otherwise look healthy while the stream is
-dark. The client records the error, closes itself (cancelling its context),
-and returns the error from Open/Read/Write; ingress sees the closed context
-and halts with Error().
+dark. The failure is logged and returned from Open/Read/Write, the client
+waits in WAITING, and the next Read or Write redials with the doubled backoff
+and runs the hook again, so a resubscribe that fails for a while (a token the
+venue refuses until a nonce recovers) does not end the stream for good.
 */
 func (client *WebsocketClient) OnReconnect(hook func() error) {
 	client.mu.Lock()
@@ -85,9 +90,9 @@ func (client *WebsocketClient) Open(url string) error {
 }
 
 /*
-runHook runs the reconnect hook outside the client lock. A failure halts the
-client (see OnReconnect); there is no retry on a socket that redialed but
-could not resubscribe.
+runHook runs the reconnect hook outside the client lock. A failure drops the
+connection and grows the backoff so the next Read or Write redials and retries
+the hook (see OnReconnect).
 */
 func (client *WebsocketClient) runHook(hook func() error) error {
 	if hook == nil {
@@ -97,6 +102,10 @@ func (client *WebsocketClient) runHook(hook func() error) error {
 	hookErr := hook()
 
 	if hookErr == nil {
+		client.mu.Lock()
+		client.hookBackoff = 0
+		client.mu.Unlock()
+
 		return nil
 	}
 
@@ -108,10 +117,16 @@ func (client *WebsocketClient) runHook(hook func() error) error {
 
 	client.mu.Lock()
 	client.closeConnLocked()
+
+	switch client.Status() {
+	case runtime.READY, runtime.ERROR, runtime.BUSY:
+		client.Transition(runtime.WAITING)
+	}
+
+	client.hookBackoff = min(max(2*client.hookBackoff, time.Second), 30*time.Second)
 	client.mu.Unlock()
 
-	client.System.Error(cause)
-	client.System.Close()
+	errnie.Error(cause)
 
 	return cause
 }
@@ -252,7 +267,7 @@ func (client *WebsocketClient) ensureReady() error {
 		))
 	}
 
-	wait := client.backoff
+	wait := max(client.backoff, client.hookBackoff)
 	if wait < time.Second {
 		wait = time.Second
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -39,11 +40,9 @@ func (wb *welfordBaseline) Step(value float64) (
 		return false, 0, false, 0
 	}
 
-	if priorCount < 2 || priorM2 <= 0 {
-		return true, priorMean, false, 0
-	}
+	scale, scorable := core.PriorScale(priorCount, priorM2, value, priorMean)
 
-	return true, priorMean, true, math.Sqrt(priorM2 / (priorCount - 1))
+	return true, priorMean, scorable, scale
 }
 
 /*
@@ -77,7 +76,8 @@ func (wb *welfordBaseline) emit(
 
 /*
 velocityTracker differentiates successive defined values over venue time; the
-velocity is undefined for the first value and for a non-advancing clock.
+velocity is undefined for the first value and for an interval the venue clock
+does not resolve (core.Resolvable).
 */
 type velocityTracker struct {
 	hasPrev   bool
@@ -91,7 +91,7 @@ func (vt *velocityTracker) Step(value float64, atSec float64) (float64, bool) {
 	vt.prevVal = value
 	vt.prevAtSec = atSec
 
-	if !hadPrev || atSec <= prevAtSec {
+	if !hadPrev || !core.Resolvable(atSec-prevAtSec) {
 		return 0, false
 	}
 
@@ -115,8 +115,11 @@ dispose writes the side's attribution, per the specification: E = min(E*, Q0),
 U = Q0 - E; at an unchanged price W = max(U - Q1, 0) and A = max(Q1 - U, 0)
 with zero retreat; on a retreat R = U with no same-price disposition; on an
 improvement the previous level's disposition is unresolved and left undefined.
+Rates divide by the bracket's duration dt and are undefined when the venue
+clock does not resolve it (core.Resolvable).
 */
 func (side sideBracket) dispose(out map[string]float64, suffix string, dt float64) {
+	rated := core.Resolvable(dt)
 	fill := math.Min(side.matched, side.prevQty)
 	unfilled := side.prevQty - fill
 
@@ -126,7 +129,11 @@ func (side sideBracket) dispose(out map[string]float64, suffix string, dt float6
 	out["matched_touch_trade_quantity"+suffix] = side.matched
 	out["touch_fill_quantity"+suffix] = fill
 	out["touch_fill_fraction"+suffix] = fill / side.prevQty
-	out["touch_fill_rate"+suffix] = fill / dt
+
+	if rated {
+		out["touch_fill_rate"+suffix] = fill / dt
+	}
+
 	out["unfilled_residual_quantity"+suffix] = unfilled
 
 	switch {
@@ -136,17 +143,23 @@ func (side sideBracket) dispose(out map[string]float64, suffix string, dt float6
 
 		out["net_withdrawn_quantity"+suffix] = withdrawn
 		out["net_withdrawal_fraction"+suffix] = withdrawn / side.prevQty
-		out["net_withdrawal_rate"+suffix] = withdrawn / dt
 		out["net_replenished_quantity"+suffix] = replenished
 		out["net_replenishment_fraction"+suffix] = replenished / side.prevQty
-		out["net_replenishment_rate"+suffix] = replenished / dt
 		out["retreated_quantity"+suffix] = 0
 		out["retreat_fraction"+suffix] = 0
-		out["retreat_rate"+suffix] = 0
+
+		if rated {
+			out["net_withdrawal_rate"+suffix] = withdrawn / dt
+			out["net_replenishment_rate"+suffix] = replenished / dt
+			out["retreat_rate"+suffix] = 0
+		}
 	case !side.improves(side.price, side.prevPrice):
 		out["retreated_quantity"+suffix] = unfilled
 		out["retreat_fraction"+suffix] = unfilled / side.prevQty
-		out["retreat_rate"+suffix] = unfilled / dt
+
+		if rated {
+			out["retreat_rate"+suffix] = unfilled / dt
+		}
 	}
 }
 

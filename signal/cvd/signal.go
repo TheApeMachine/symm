@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/volumeclock"
@@ -15,7 +16,7 @@ import (
 /*
 onlineTracker is a causal baseline: Score reports value against the state
 before it, then incorporates it. The baseline is defined from the second
-value, the z-score once the prior dispersion is positive.
+value, the z-score once core.PriorScale admits the prior dispersion.
 */
 type onlineTracker struct {
 	count float64
@@ -46,9 +47,9 @@ func (tracker *onlineTracker) Score(value float64) trackerScore {
 
 	score := trackerScore{hasBaseline: true, baseline: priorMean}
 
-	if priorCount > 1 && priorM2 > 0 {
+	if scale, scorable := core.PriorScale(priorCount, priorM2, value, priorMean); scorable {
 		score.hasZ = true
-		score.zScore = (value - priorMean) / math.Sqrt(priorM2/(priorCount-1))
+		score.zScore = (value - priorMean) / scale
 	}
 
 	return score
@@ -66,7 +67,7 @@ func (score trackerScore) emit(out map[string]float64, name string, value float6
 	out[name+"_baseline"] = score.baseline
 	out[name+"_divergence"] = value - score.baseline
 
-	if ratio && score.baseline > 0 {
+	if ratio && score.baseline > 0 && !core.Negligible(score.baseline, value) {
 		out[name+"_ratio"] = value / score.baseline
 	}
 
@@ -161,14 +162,16 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		signal.states[key] = state
 	}
 
-	// Rates need elapsed time since the symbol's previous trade; the first
-	// trade and same-timestamp trades leave them undefined.
+	// Rates need elapsed time since the symbol's previous trade that the venue
+	// clock resolves (core.Resolvable); the first trade, same-timestamp
+	// trades, and trades closer than that leave them undefined.
 	var timeDelta float64
-	hasDelta := !state.lastAt.IsZero() && prior.At.After(state.lastAt)
 
-	if hasDelta {
+	if !state.lastAt.IsZero() && prior.At.After(state.lastAt) {
 		timeDelta = prior.At.Sub(state.lastAt).Seconds()
 	}
+
+	hasDelta := core.Resolvable(timeDelta)
 
 	var tradeBuyQty, tradeSellQty float64
 

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -20,7 +21,8 @@ type causalEstimator struct {
 /*
 Step scores value against the estimator's state before it, then incorporates
 it. The baseline (and residual against it) is defined from the second sample;
-the z-score only once the prior dispersion is positive.
+the z-score only once core.PriorScale admits the prior dispersion
+(enough prior samples, a scale not negligible next to the values).
 */
 func (ce *causalEstimator) Step(value float64) (
 	hasBaseline bool, baseline, residual float64, hasZ bool, zScore float64,
@@ -40,11 +42,13 @@ func (ce *causalEstimator) Step(value float64) (
 
 	residual = value - priorMean
 
-	if priorCount < 2 || priorM2 <= 0 {
+	scale, scorable := core.PriorScale(priorCount, priorM2, value, priorMean)
+
+	if !scorable {
 		return true, priorMean, residual, false, 0
 	}
 
-	return true, priorMean, residual, true, residual / math.Sqrt(priorM2/(priorCount-1))
+	return true, priorMean, residual, true, residual / scale
 }
 
 /*

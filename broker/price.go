@@ -69,6 +69,9 @@ type Price struct {
 	quotes        *sync.Map
 	normalizer    *spot.Normalizer
 	referenceCash atomic.Pointer[decimal.Decimal]
+	// Flow, when set, records every trade's signed volume for the
+	// participation limit of position sizing.
+	Flow *Flow
 }
 
 // BookSource is the resident book boundary shared by live and captured tapes.
@@ -198,6 +201,7 @@ func (price *Price) Update(trade *kraken.TradeData) {
 
 	normalized := price.normalize(trade.Symbol)
 	price.trades.Store(normalized, &trade.Price)
+	price.Flow.Record(normalized, trade.Timestamp, trade.Side, trade.Qty)
 }
 
 func (price *Price) SetQuote(symbol string, bid, ask *decimal.Decimal) {
@@ -564,8 +568,9 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 }
 
 /*
-budget is the 20% virtual position allocation of reference cash. It is the
-single owner of the allocation rule for live entries and historical pricing.
+budget is the reference cash an allocation may spend. There is no fixed
+fraction: live entries are sized by the Desk from exit capacity, flow noise
+and this cash, never by a constant share of it.
 */
 func (price *Price) budget(referenceCash ...*decimal.Decimal) (*decimal.Decimal, error) {
 	var cash *decimal.Decimal
@@ -586,7 +591,7 @@ func (price *Price) budget(referenceCash ...*decimal.Decimal) (*decimal.Decimal,
 		))
 	}
 
-	return cash.SetScale(decimal.DefaultScale).Div(decimal.NewFromInt64(5)), nil
+	return cash.SetScale(decimal.DefaultScale), nil
 }
 
 /*
@@ -1059,6 +1064,20 @@ func (price *Price) Tradable(symbol string, quantity, unit *decimal.Decimal) boo
 	}
 
 	return quantity.Cmp(pair.QtyMin) >= 0 && notional(unit, quantity).Cmp(pair.CostMin) >= 0
+}
+
+/*
+FeeRate is the symbol's taker fee as a fraction, and false when no fee is
+known.
+*/
+func (price *Price) FeeRate(symbol string) (float64, bool) {
+	fee := price.Fee(symbol)
+
+	if fee == nil || fee.Fee == nil {
+		return 0, false
+	}
+
+	return fee.Fee.Float64() / 100, true
 }
 
 /*

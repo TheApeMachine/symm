@@ -94,6 +94,7 @@ export { ResonanceFrame, ResonanceFrameT } from './telemetry/resonance-frame.js'
 export { ResonanceLayer, ResonanceLayerT } from './telemetry/resonance-layer.js';
 export { ResonanceVerdict, ResonanceVerdictT } from './telemetry/resonance-verdict.js';
 export { RiskPlan, RiskPlanT } from './telemetry/risk-plan.js';
+export { SellEvent, SellEventT } from './telemetry/sell-event.js';
 export { SourceLedger, SourceLedgerT } from './telemetry/source-ledger.js';
 export { Stoploss, StoplossT } from './telemetry/stoploss.js';
 export { StrategyFrame, StrategyFrameT } from './telemetry/strategy-frame.js';
