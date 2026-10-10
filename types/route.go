@@ -72,11 +72,33 @@ func Filters(measurement *data.Measurement) bool {
 
 		return isLogic(measurement, "resonance")
 	case "fluid":
-		return false
+		return isLogic(measurement, "manifold")
 	case "diagnostics":
 		return isFocus(measurement)
 	default:
 		return false
+	}
+}
+
+/*
+Shard partitions measurement sources deterministically across the dual UI tees.
+It divides load equally across both queues, encoding workers, and websockets.
+*/
+func Shard(source string) int {
+	clean := kernelSource(source)
+
+	switch clean {
+	case "correlation", "depthflow", "hawkes", "liquidity", "pumpdump", "resonance", "training", "websocket":
+		return 0
+	case "cvd", "derivatives", "leadlag", "morphology", "sentiment", "toxicity", "manifold", "cognition":
+		return 1
+	default:
+		var hash uint32 = 2166136261
+		for i := 0; i < len(clean); i++ {
+			hash ^= uint32(clean[i])
+			hash *= 16777619
+		}
+		return int(hash % 2)
 	}
 }
 

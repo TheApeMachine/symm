@@ -171,31 +171,30 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 
 	symbol := prior.Label
 
-	var priors []*data.Measurement
+	priors := append([]*data.Measurement{prior}, prior.Peers()...)
+
 	if prior.Source == "runtime:join" {
 		priors = prior.Peers()
-	} else {
-		priors = append([]*data.Measurement{prior}, prior.Peers()...)
 	}
 
 	// Process hawkes forcing from prior-stage outputs.
-	for _, p := range priors {
-		if p == nil {
+	for _, priorItem := range priors {
+		if priorItem == nil {
 			continue
 		}
 
-		if p.Source == "hawkes:trade" || p.Source == "hawkes" {
-			solver.recordForcing(p.Label, p)
+		if priorItem.Source == "hawkes:trade" || priorItem.Source == "hawkes" {
+			solver.recordForcing(priorItem.Label, priorItem)
 		}
 
-		if p.Label == "" {
+		if priorItem.Label == "" {
 			continue
 		}
 
-		solver.markDirty(p.Label)
+		solver.markDirty(priorItem.Label)
 
 		if symbol == "" {
-			symbol = p.Label
+			symbol = priorItem.Label
 		}
 	}
 
@@ -205,9 +204,10 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	reading := solver.Reading()
-	metrics := make([]*data.Metric, 0, 16)
+	metrics := make([]*data.Metric, 0, 64)
 
 	if reading != nil {
+		health := reading.Reading.Health
 		metrics = append(metrics,
 			data.NewMetric("divergence", reading.Reading.Divergence, data.UnitRate, data.TimescaleInstantaneous),
 			data.NewMetric("guidance_speed", reading.Reading.GuidanceSpeed, data.UnitVelocity, data.TimescaleInstantaneous),
@@ -216,20 +216,178 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 			data.NewMetric("viscosity_proxy", reading.Reading.ViscosityProxy, data.UnitDimensionless, data.TimescaleInstantaneous),
 			data.NewMetric("kuramoto_r", reading.Reading.KuramotoR, data.UnitDimensionless, data.TimescaleInstantaneous),
 			data.NewMetric("kuramoto_psi", reading.Reading.KuramotoPsi, data.UnitDimensionless, data.TimescaleInstantaneous),
-			data.NewMetric("gas_kinetic", reading.Reading.Health.Gas.Kinetic, data.UnitDimensionless, data.TimescaleInstantaneous),
-			data.NewMetric("gas_internal", reading.Reading.Health.Gas.Internal, data.UnitDimensionless, data.TimescaleInstantaneous),
-			data.NewMetric("wave_norm", reading.Reading.Health.Wave.Norm, data.UnitDimensionless, data.TimescaleInstantaneous),
-			data.NewMetric("vorticity_rms", reading.Reading.Health.Gas.VorticityRMS, data.UnitRate, data.TimescaleInstantaneous),
-			data.NewMetric("strain_rms", reading.Reading.Health.Gas.StrainRMS, data.UnitRate, data.TimescaleInstantaneous),
-			data.NewMetric("max_mach", reading.Reading.Health.Gas.MaxMach, data.UnitDimensionless, data.TimescaleInstantaneous),
-			data.NewMetric("particle_thermal", reading.Reading.Health.ParticleThermal, data.UnitDimensionless, data.TimescaleInstantaneous),
-			data.NewMetric("particle_kinetic", reading.Reading.Health.ParticleKinetic, data.UnitDimensionless, data.TimescaleInstantaneous),
+
+			// IntegratorHealth
+			data.NewMetric("integrator:contact_dt", health.Integrator.ContactDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:requested_dt", health.Integrator.RequestedDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:target_dt", health.Integrator.TargetDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:accepted_dt", health.Integrator.AcceptedDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:last_dt", health.Integrator.LastDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:min_dt", health.Integrator.MinDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:time", health.Integrator.Time, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:hyperbolic_dt", health.Integrator.HyperbolicDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:viscous_dt", health.Integrator.ViscousDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:thermal_dt", health.Integrator.ThermalDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:particle_dt", health.Integrator.ParticleDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:phase_dt", health.Integrator.PhaseDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:combined_dt", health.Integrator.CombinedDT, data.UnitDuration, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:substeps", float64(health.Integrator.Substeps), data.UnitCount, data.TimescaleInstantaneous),
+			data.NewMetric("integrator:rejections", float64(health.Integrator.Rejections), data.UnitCount, data.TimescaleInstantaneous),
+
+			// GasHealth
+			data.NewMetric("gas:mass", health.Gas.Mass, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("gas:internal", health.Gas.Internal, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("gas:kinetic", health.Gas.Kinetic, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("gas:total", health.Gas.Total, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("gas:min_density", health.Gas.MinDensity, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("gas:min_pressure", health.Gas.MinPressure, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("gas:min_temperature", health.Gas.MinTemperature, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("gas:max_speed", health.Gas.MaxSpeed, data.UnitVelocity, data.TimescaleInstantaneous),
+			data.NewMetric("gas:max_sound", health.Gas.MaxSound, data.UnitVelocity, data.TimescaleInstantaneous),
+			data.NewMetric("gas:max_mach", health.Gas.MaxMach, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("gas:vorticity_rms", health.Gas.VorticityRMS, data.UnitRate, data.TimescaleInstantaneous),
+			data.NewMetric("gas:vorticity_max", health.Gas.VorticityMax, data.UnitRate, data.TimescaleInstantaneous),
+			data.NewMetric("gas:strain_rms", health.Gas.StrainRMS, data.UnitRate, data.TimescaleInstantaneous),
+			data.NewMetric("gas:strain_max", health.Gas.StrainMax, data.UnitRate, data.TimescaleInstantaneous),
+			data.NewMetric("gas:viscous_power", health.Gas.ViscousPower, data.UnitDimensionless, data.TimescaleInstantaneous),
+
+			// WaveHealth
+			data.NewMetric("wave:norm", health.Wave.Norm, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("wave:kinetic", health.Wave.Kinetic, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("wave:potential", health.Wave.Potential, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("wave:nonlinear", health.Wave.Nonlinear, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("wave:chemical", health.Wave.Chemical, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("wave:projected_norm", health.Wave.ProjectedNorm, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("wave:phase_potential", health.Wave.PhasePotential, data.UnitDimensionless, data.TimescaleInstantaneous),
+
+			// PilotHealth
+			data.NewMetric("pilot:density_p01", health.Pilot.DensityP01, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("pilot:density_p10", health.Pilot.DensityP10, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("pilot:density_median", health.Pilot.DensityMedian, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("pilot:integration_error_max", health.Pilot.IntegrationErrorMax, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("pilot:speed_rms", health.Pilot.SpeedRMS, data.UnitVelocity, data.TimescaleInstantaneous),
+			data.NewMetric("pilot:speed_max", health.Pilot.SpeedMax, data.UnitVelocity, data.TimescaleInstantaneous),
+			data.NewMetric("pilot:displacement_rms", health.Pilot.DisplacementRMS, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("pilot:displacement_max", health.Pilot.DisplacementMax, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("pilot:min_density", health.Pilot.MinDensity, data.UnitDimensionless, data.TimescaleInstantaneous),
+
+			// SourceLedger
+			data.NewMetric("sources:gas_energy_residual", health.Sources.GasEnergyResidual, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("sources:conservative_wave_error", health.Sources.ConservativeWaveError, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("sources:pic_deposit_energy_residual", health.Sources.PICDepositEnergyResidual, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("sources:particle_balance_residual", health.Sources.ParticleBalanceResidual, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("sources:gravity_balance_residual", health.Sources.GravityBalanceResidual, data.UnitDimensionless, data.TimescaleInstantaneous),
+
+			// Scalar Health Fields
+			data.NewMetric("particle_thermal", health.ParticleThermal, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("particle_oscillator", health.ParticleOscillator, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("particle_kinetic", health.ParticleKinetic, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("particle_material_total", health.ParticleMaterialTotal, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("spatial_sigma_raw", health.SpatialSigmaRaw, data.UnitDimensionless, data.TimescaleInstantaneous),
+			data.NewMetric("spatial_sigma_used", health.SpatialSigmaUsed, data.UnitDimensionless, data.TimescaleInstantaneous),
 		)
+
+		if health.SigmaUniformLimit {
+			metrics = append(metrics, data.NewMetric("sigma_uniform_limit", 1.0, data.UnitDimensionless, data.TimescaleInstantaneous))
+		}
+
+		if !health.SigmaUniformLimit {
+			metrics = append(metrics, data.NewMetric("sigma_uniform_limit", 0.0, data.UnitDimensionless, data.TimescaleInstantaneous))
+		}
 
 		if reading.State != nil {
 			metrics = append(metrics, data.NewMetric(
 				"particle_count", float64(reading.State.N), data.UnitCount, data.TimescaleInstantaneous,
 			))
+
+			for idx := 0; idx < reading.State.N; idx++ {
+				posIndex := idx * 3
+				side := 0.0
+				if len(reading.State.TokenIDs) > idx && (reading.State.TokenIDs[idx]&1) != 0 {
+					side = 1.0
+				}
+
+				if len(reading.State.Phase) > idx {
+					metrics = append(metrics, data.NewMetric(fmt.Sprintf("osc:%d:phase", idx), float64(reading.State.Phase[idx]), data.UnitDimensionless, data.TimescaleInstantaneous))
+				}
+
+				if len(reading.State.Omega) > idx {
+					metrics = append(metrics, data.NewMetric(fmt.Sprintf("osc:%d:omega", idx), float64(reading.State.Omega[idx]), data.UnitRate, data.TimescaleInstantaneous))
+				}
+
+				if len(reading.State.Amp) > idx {
+					metrics = append(metrics, data.NewMetric(fmt.Sprintf("osc:%d:amp", idx), float64(reading.State.Amp[idx]), data.UnitDimensionless, data.TimescaleInstantaneous))
+				}
+
+				if len(reading.State.Heat) > idx {
+					metrics = append(metrics, data.NewMetric(fmt.Sprintf("osc:%d:heat", idx), float64(reading.State.Heat[idx]), data.UnitDimensionless, data.TimescaleInstantaneous))
+				}
+
+				metrics = append(metrics, data.NewMetric(fmt.Sprintf("osc:%d:side", idx), side, data.UnitDimensionless, data.TimescaleInstantaneous))
+
+				if len(reading.State.Pos) > posIndex+2 {
+					metrics = append(metrics,
+						data.NewMetric(fmt.Sprintf("osc:%d:pos_x", idx), float64(reading.State.Pos[posIndex]), data.UnitDimensionless, data.TimescaleInstantaneous),
+						data.NewMetric(fmt.Sprintf("osc:%d:pos_y", idx), float64(reading.State.Pos[posIndex+1]), data.UnitDimensionless, data.TimescaleInstantaneous),
+						data.NewMetric(fmt.Sprintf("osc:%d:pos_z", idx), float64(reading.State.Pos[posIndex+2]), data.UnitDimensionless, data.TimescaleInstantaneous),
+					)
+				}
+
+				if len(reading.State.Vel) > posIndex+2 {
+					metrics = append(metrics,
+						data.NewMetric(fmt.Sprintf("osc:%d:vel_x", idx), float64(reading.State.Vel[posIndex]), data.UnitVelocity, data.TimescaleInstantaneous),
+						data.NewMetric(fmt.Sprintf("osc:%d:vel_y", idx), float64(reading.State.Vel[posIndex+1]), data.UnitVelocity, data.TimescaleInstantaneous),
+						data.NewMetric(fmt.Sprintf("osc:%d:vel_z", idx), float64(reading.State.Vel[posIndex+2]), data.UnitVelocity, data.TimescaleInstantaneous),
+					)
+				}
+
+				if len(reading.State.PilotVel) > posIndex+2 {
+					metrics = append(metrics,
+						data.NewMetric(fmt.Sprintf("osc:%d:pilot_vx", idx), float64(reading.State.PilotVel[posIndex]), data.UnitVelocity, data.TimescaleInstantaneous),
+						data.NewMetric(fmt.Sprintf("osc:%d:pilot_vy", idx), float64(reading.State.PilotVel[posIndex+1]), data.UnitVelocity, data.TimescaleInstantaneous),
+						data.NewMetric(fmt.Sprintf("osc:%d:pilot_vz", idx), float64(reading.State.PilotVel[posIndex+2]), data.UnitVelocity, data.TimescaleInstantaneous),
+					)
+				}
+
+				if len(reading.State.Mass) > idx {
+					metrics = append(metrics, data.NewMetric(fmt.Sprintf("osc:%d:mass", idx), float64(reading.State.Mass[idx]), data.UnitDimensionless, data.TimescaleInstantaneous))
+				}
+
+				if len(reading.State.Energy) > idx {
+					metrics = append(metrics, data.NewMetric(fmt.Sprintf("osc:%d:energy", idx), float64(reading.State.Energy[idx]), data.UnitDimensionless, data.TimescaleInstantaneous))
+				}
+			}
+		}
+
+		if reading.GridX > 0 {
+			metrics = append(metrics,
+				data.NewMetric("grid_x", float64(reading.GridX), data.UnitCount, data.TimescaleInstantaneous),
+				data.NewMetric("grid_y", float64(reading.GridY), data.UnitCount, data.TimescaleInstantaneous),
+				data.NewMetric("grid_z", float64(reading.GridZ), data.UnitCount, data.TimescaleInstantaneous),
+				data.NewMetric("grid_spacing", reading.GridSpacing, data.UnitDimensionless, data.TimescaleInstantaneous),
+				data.NewMetric("density_scale", float64(reading.DensityScale), data.UnitDimensionless, data.TimescaleInstantaneous),
+				data.NewMetric("momentum_scale", float64(reading.MomentumScale), data.UnitDimensionless, data.TimescaleInstantaneous),
+				data.NewMetric("energy_scale", float64(reading.EnergyScale), data.UnitDimensionless, data.TimescaleInstantaneous),
+				data.NewMetric("wave_scale", float64(reading.WaveScale), data.UnitDimensionless, data.TimescaleInstantaneous),
+			)
+		}
+
+		for _, res := range reading.Resultants {
+			metrics = append(metrics,
+				data.NewMetric("resultant:"+res.Side+":count", float64(res.Count), data.UnitCount, data.TimescaleInstantaneous),
+				data.NewMetric("resultant:"+res.Side+":amplitude", res.TotalAmplitude, data.UnitDimensionless, data.TimescaleInstantaneous),
+				data.NewMetric("resultant:"+res.Side+":coherence", res.Coherence, data.UnitDimensionless, data.TimescaleInstantaneous),
+				data.NewMetric("resultant:"+res.Side+":phase", res.Phase, data.UnitDimensionless, data.TimescaleInstantaneous),
+			)
+		}
+
+		for idx, mode := range reading.Modes {
+			metrics = append(metrics,
+				data.NewMetric(fmt.Sprintf("mode:%d:omega", idx), float64(mode.Omega), data.UnitRate, data.TimescaleInstantaneous),
+				data.NewMetric(fmt.Sprintf("mode:%d:real", idx), float64(mode.Real), data.UnitDimensionless, data.TimescaleInstantaneous),
+				data.NewMetric(fmt.Sprintf("mode:%d:imag", idx), float64(mode.Imag), data.UnitDimensionless, data.TimescaleInstantaneous),
+				data.NewMetric(fmt.Sprintf("mode:%d:linewidth", idx), float64(mode.Linewidth), data.UnitRate, data.TimescaleInstantaneous),
+			)
 		}
 	}
 

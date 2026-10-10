@@ -101,10 +101,17 @@ var (
 			// thus no need to call a deferred Close method for anything.
 			epoch := processStartedAt.UnixNano()
 
-			uiTee := ui.NewUITee(
-				ctx, "uiTee",
+			uiTee0 := ui.NewUITee(
+				ctx, "uiTee0",
 				func(measurement *data.Measurement) bool {
-					return types.Filters(measurement)
+					return types.Filters(measurement) && types.Shard(measurement.Source) == 0
+				},
+			)
+
+			uiTee1 := ui.NewUITee(
+				ctx, "uiTee1",
+				func(measurement *data.Measurement) bool {
+					return types.Filters(measurement) && types.Shard(measurement.Source) == 1
 				},
 			)
 
@@ -246,7 +253,8 @@ var (
 				))
 			}
 
-			uiTee.Transition(nmruntime.READY)
+			uiTee0.Transition(nmruntime.READY)
+			uiTee1.Transition(nmruntime.READY)
 
 			manifoldSolver := manifold.NewSolver(ctx, book)
 			book.SetNotify(func(symbol string, _ time.Time) {
@@ -296,7 +304,7 @@ var (
 				}
 			}
 
-			workspaceTees := []nmruntime.Tee{uiTee}
+			workspaceTees := []nmruntime.Tee{uiTee0, uiTee1}
 
 			if ingressStoreTee != nil {
 				workspaceTees = append(workspaceTees, ingressStoreTee)
@@ -330,19 +338,17 @@ var (
 				workspaceTees...,
 			)
 
-			hub := ui.NewHub(ctx, catalog, uiTee, workspace)
-			hub.SetStoreTee(ingressStoreTee)
-			hub.SetEquitySource(balance)
-			hub.SetPositionSource(desk)
-			hub.SetDecisionSource(training)
-			hub.SetCognitionSource(training)
-			hub.SetFragmentsSource(training)
-			hub.SetLifecycleSource(desk)
-			hub.SetExitHandler(func(symbol string) {
-				if err := desk.ExitBy(symbol, broker.TriggerManual); err != nil {
-					errnie.Error(err)
-				}
-			})
+			hub := ui.NewHub(
+				ctx, catalog, workspace,
+				ingressStoreTee, balance, desk,
+				training, training, training, desk,
+				func(symbol string) {
+					if err := desk.ExitBy(symbol, broker.TriggerManual); err != nil {
+						errnie.Error(err)
+					}
+				},
+				uiTee0, uiTee1,
+			)
 
 			hub.Run()
 			hub.Transition(nmruntime.READY)
@@ -350,7 +356,8 @@ var (
 			// Start consumers before opening any ingress. All construction and
 			// seeding have completed at this point.
 			runsystems := []nmruntime.RuntimeSystem{
-				uiTee,
+				uiTee0,
+				uiTee1,
 				detectorTee,
 				hub,
 				manifoldSolver,
@@ -466,8 +473,22 @@ var (
 						// halts rather than being dropped. It is checked before
 						// channel dispatch: a level3 rejection carries
 						// "channel":"level3" and would otherwise pass as an
-						// empty book frame.
+						// empty book frame. Level3 is non-fatal: it soft-downs
+						// and redials with backoff while books stay stale.
 						if rejection := subscribeRejection(buf); rejection != nil {
+							softer, isSoft := client.(interface{ SoftDown(error) error })
+
+							if isSoft && name == "level3" {
+								errnie.Warn(fmt.Sprintf(
+									"[root] %s subscription rejected, backing off and redialing: %s",
+									name, rejection,
+								))
+
+								err := softer.SoftDown(rejection)
+								errnie.Error(err)
+								continue
+							}
+
 							halt(errnie.Err(
 								errnie.NotAcceptable,
 								fmt.Sprintf("symm: %s subscription rejected", name),

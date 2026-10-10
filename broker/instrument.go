@@ -166,38 +166,6 @@ func NewInstrument(
 	return instrument
 }
 
-/*
-NewOfflineInstrument creates a purely in-memory market-instrument registry
-without dialing exchange WebSockets.
-*/
-func NewOfflineInstrument(
-	ctx context.Context,
-	quote string,
-	pairs ...kraken.InstrumentPair,
-) *Instrument {
-	if quote == "" {
-		quote = "USD"
-	}
-
-	instrument := &Instrument{
-		Level3:           &sync.Map{},
-		cache:            &sync.Map{},
-		symbols:          []string{},
-		quote:            quote,
-		products:         make(map[string]string),
-		symbolsByProduct: make(map[string]string),
-	}
-
-	instrument.System = runtime.NewSystem(ctx, "instrument", instrument)
-
-	if len(pairs) > 0 {
-		instrument.Cache(pairs)
-	}
-
-	instrument.Transition(runtime.READY)
-	return instrument
-}
-
 func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {
 	for _, pair := range pairs {
 		if pair.Quote != instrument.quote ||
@@ -404,20 +372,30 @@ func restLevel3Token() (string, error) {
 	return tokenRes.Result.Token, nil
 }
 
-/*
-level3RateWindow is the pause between Level3 subscribe frames, and
-level3SnapshotCost is the counter increase per symbol at each subscribable
-depth, from the venue's Level3 documentation. A subscribe over the budget is
-rejected per symbol ("Rate limit for snapshot requests exceeded") and that
-symbol never gets a book. The documentation states the budget "per second",
-but a full budget every second was measured to fail (40 symbols at depth 10
-each second: second frame onward partly rejected, 400 of 600 accepted), while
-every two seconds was accepted in full (400 of 400). So the pause is two of
-the documented windows.
-*/
-const level3RateWindow = 2 * time.Second
-
 var level3SnapshotCost = map[int]int{10: 5, 100: 25, 1000: 100}
+
+/*
+level3RateWindow returns the pause between Level3 subscribe frames. The venue's
+snapshot rate counter budget is market.l3_rate_limit (default 200), and its
+sustained drain rate is 50 counter units per second. A frame carrying cost
+size*cost requires at least (size*cost)/50 seconds to drain, with a minimum
+pause of 2 seconds to absorb venue clock jitter and discrete sampling.
+*/
+func level3RateWindow() time.Duration {
+	if window := viper.GetDuration("market.l3_rate_window"); window > 0 {
+		return window
+	}
+
+	size, err := level3FrameSize()
+
+	if err != nil {
+		return 2 * time.Second
+	}
+
+	return time.Duration(max(
+		((size*level3SnapshotCost[level3Depth()])+49)/50, 2,
+	)) * time.Second
+}
 
 /*
 level3Depth is the depth subscribed and maintained: market.l3_depth, with the
@@ -443,7 +421,10 @@ func level3FrameSize() (int, error) {
 	if !ok {
 		return 0, errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf("[instrument] market.l3_depth %d is not a Kraken level3 depth (10, 100, 1000)", depth),
+			fmt.Sprintf(
+				"[instrument] market.l3_depth %d is not a Kraken level3 depth (10, 100, 1000)",
+				depth,
+			),
 			nil,
 		)
 	}
@@ -453,7 +434,10 @@ func level3FrameSize() (int, error) {
 	if size < 1 {
 		return 0, errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf("[instrument] market.l3_rate_limit must cover one symbol at depth %d (cost %d)", depth, cost),
+			fmt.Sprintf(
+				"[instrument] market.l3_rate_limit must cover one symbol at depth %d (cost %d)",
+				depth, cost,
+			),
 			nil,
 		)
 	}
@@ -506,7 +490,7 @@ func (instrument *Instrument) paceLevel3(write func() error) error {
 	instrument.paceMu.Lock()
 	defer instrument.paceMu.Unlock()
 
-	if wait := time.Until(instrument.pacedAt.Add(level3RateWindow)); wait > 0 {
+	if wait := time.Until(instrument.pacedAt.Add(level3RateWindow())); wait > 0 {
 		select {
 		case <-instrument.System.Context().Done():
 			return instrument.System.Context().Err()

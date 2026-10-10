@@ -87,7 +87,7 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 
 	deadCanon := make([]MetricStat, 0)
 	for _, cell := range report.Vitality.CanonicalCells {
-		if cell.Status == "DEAD" || cell.Status == "ZERO" || cell.IsConstant {
+		if cell.Status == "DEAD" || cell.Status == "ZERO" {
 			deadCanon = append(deadCanon, cell)
 		}
 	}
@@ -96,12 +96,19 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		sb.WriteString("#### Constant / Dead Canonical Grid Cells\n\n")
 		sb.WriteString("| Canonical Cell | Coverage | Zero Fraction | Range | Status |\n")
 		sb.WriteString("| :--- | :---: | :---: | :---: | :---: |\n")
-		for _, cell := range deadCanon {
+
+		for index, cell := range deadCanon {
+			if index >= 50 {
+				sb.WriteString(fmt.Sprintf("| ... and %d more dead cells | | | | |\n", len(deadCanon)-50))
+				break
+			}
+
 			sb.WriteString(fmt.Sprintf(
 				"| `%s` | `%.1f%%` | `%.1f%%` | `[%.3f, %.3f]` | `%s` |\n",
 				cell.Name, cell.Coverage*100, cell.ZeroFraction*100, cell.Min, cell.Max, cell.Status,
 			))
 		}
+
 		sb.WriteString("\n")
 	}
 

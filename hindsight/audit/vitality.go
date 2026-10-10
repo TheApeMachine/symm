@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -72,14 +74,38 @@ func computeMetricStats(
 	totalTicks := len(ticks)
 	stats := make([]MetricStat, 0, len(series))
 
+	symbolTicks := make(map[string]map[int64]struct{})
+	for name, tickMap := range series {
+		symbol := seriesSymbol(name)
+
+		if symbol == "" {
+			continue
+		}
+
+		if symbolTicks[symbol] == nil {
+			symbolTicks[symbol] = make(map[int64]struct{})
+		}
+
+		for tick := range tickMap {
+			symbolTicks[symbol][tick] = struct{}{}
+		}
+	}
+
 	for name, tickMap := range series {
 		count := len(tickMap)
-		coverage := float64(count) / float64(totalTicks)
+		symbol := seriesSymbol(name)
+		denominator := totalTicks
+
+		if symbol != "" && len(symbolTicks[symbol]) > 0 {
+			denominator = len(symbolTicks[symbol])
+		}
+
+		coverage := float64(count) / float64(denominator)
 
 		if count == 0 {
 			stats = append(stats, MetricStat{
 				Name:       name,
-				TotalTicks: totalTicks,
+				TotalTicks: denominator,
 				Coverage:   0,
 				IsConstant: true,
 				Status:     "DEAD",
@@ -103,15 +129,18 @@ func computeMetricStats(
 			if val < minVal {
 				minVal = val
 			}
+
 			if val > maxVal {
 				maxVal = val
 			}
+
 			if val == 0 {
 				zeroCount++
 			}
 		}
 
 		variance := 0.0
+
 		if count > 1 {
 			variance = m2 / float64(count-1)
 		}
@@ -120,8 +149,13 @@ func computeMetricStats(
 		isConstant := (maxVal == minVal) || (variance == 0 && count > 1)
 
 		status := "HEALTHY"
+
 		if isConstant {
 			status = "DEAD"
+
+			if count < int(core.MinimumPrior) {
+				status = "SPORADIC"
+			}
 		}
 
 		if !isConstant && zeroFraction == 1.0 {
@@ -131,7 +165,7 @@ func computeMetricStats(
 		stats = append(stats, MetricStat{
 			Name:         name,
 			Count:        count,
-			TotalTicks:   totalTicks,
+			TotalTicks:   denominator,
 			Coverage:     coverage,
 			Mean:         mean,
 			Variance:     variance,

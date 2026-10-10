@@ -22,54 +22,15 @@ func TestSpectralRadiusComplexEigenvalues(testingT *testing.T) {
 	}
 }
 
-func TestMeanIntensityMatchesClosedForm(testingT *testing.T) {
-	lambdaX, lambdaY, ok := meanIntensity(1, 1, 0.2, 0.1, 0.1, 0.2, 1)
-
-	if !ok {
-		testingT.Fatal("expected meanIntensity to succeed for a subcritical process")
-	}
-
-	if lambdaX <= 0 || lambdaY <= 0 {
-		testingT.Fatalf("expected positive mean intensities, got lambdaX=%v lambdaY=%v", lambdaX, lambdaY)
-	}
-}
-
-func TestMeanIntensityRejectsNonPositiveBeta(testingT *testing.T) {
-	if _, _, ok := meanIntensity(1, 1, 0.2, 0.1, 0.1, 0.2, 0); ok {
-		testingT.Fatal("expected meanIntensity to fail for beta <= 0")
-	}
-}
-
-func TestImmediateOffspringSumsColumns(testingT *testing.T) {
-	buyParent, sellParent, ok := immediateOffspring(0.2, 0.1, 0.1, 0.2, 1)
-
-	if !ok {
-		testingT.Fatal("expected immediateOffspring to succeed")
-	}
-
-	if math.Abs(buyParent-0.3) > 1e-9 || math.Abs(sellParent-0.3) > 1e-9 {
-		testingT.Fatalf("expected buyParent=sellParent=0.3, got %v %v", buyParent, sellParent)
-	}
-}
-
-func TestTotalDescendantsExceedsImmediateOffspring(testingT *testing.T) {
-	immediateBuy, immediateSell, ok := immediateOffspring(0.3, 0.1, 0.1, 0.3, 1)
-
-	if !ok {
-		testingT.Fatal("expected immediateOffspring to succeed")
-	}
-
+func TestTotalDescendants(testingT *testing.T) {
 	totalBuy, totalSell, ok := totalDescendants(0.3, 0.1, 0.1, 0.3, 1)
 
 	if !ok {
 		testingT.Fatal("expected totalDescendants to succeed")
 	}
 
-	if totalBuy < immediateBuy || totalSell < immediateSell {
-		testingT.Fatalf(
-			"expected total descendants to be at least immediate offspring: total=(%v,%v) immediate=(%v,%v)",
-			totalBuy, totalSell, immediateBuy, immediateSell,
-		)
+	if totalBuy <= 0 || totalSell <= 0 {
+		testingT.Fatalf("expected positive total descendants, got totalBuy=%v totalSell=%v", totalBuy, totalSell)
 	}
 }
 

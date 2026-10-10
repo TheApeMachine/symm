@@ -47,57 +47,11 @@ func spectralRadius(matrix [2][2]float64) float64 {
 }
 
 /*
-meanIntensity returns the stationary mean intensities implied by a bivariate
-branching matrix and baseline rates, solving (I-G)*lambda = mu.
-*/
-func meanIntensity(
-	muX, muY, alphaXX, alphaXY, alphaYX, alphaYY, beta float64,
-) (lambdaX float64, lambdaY float64, ok bool) {
-	if beta <= 0 {
-		return 0, 0, false
-	}
-
-	branching := branchingMatrix(alphaXX, alphaXY, alphaYX, alphaYY, beta)
-	determinant := (1-branching[0][0])*(1-branching[1][1]) - branching[0][1]*branching[1][0]
-
-	if determinant <= 0 {
-		return 0, 0, false
-	}
-
-	lambdaX = ((1-branching[1][1])*muX + branching[0][1]*muY) / determinant
-	lambdaY = (branching[1][0]*muX + (1-branching[0][0])*muY) / determinant
-
-	if lambdaX < 0 || lambdaY < 0 || math.IsNaN(lambdaX) || math.IsNaN(lambdaY) {
-		return 0, 0, false
-	}
-
-	return lambdaX, lambdaY, true
-}
-
-/*
 finiteNonNegative reports whether a value is finite and non-negative, the
 validity requirement for an expected-offspring count.
 */
 func finiteNonNegative(value float64) bool {
 	return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
-}
-
-/*
-immediateOffspring returns the expected first-generation children caused by
-one buy parent and one sell parent, using column sums of the branching matrix
-(columns identify the parent stream).
-*/
-func immediateOffspring(
-	alphaXX, alphaXY, alphaYX, alphaYY, beta float64,
-) (buyParent float64, sellParent float64, ok bool) {
-	buyParent = (alphaXX + alphaYX) / beta
-	sellParent = (alphaXY + alphaYY) / beta
-
-	if !finiteNonNegative(buyParent) || !finiteNonNegative(sellParent) {
-		return 0, 0, false
-	}
-
-	return buyParent, sellParent, true
 }
 
 /*

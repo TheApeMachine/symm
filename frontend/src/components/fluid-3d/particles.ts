@@ -145,21 +145,67 @@ export class FluidParticles {
 		const stride = PARTICLE_STRIDE_BYTES / Float32Array.BYTES_PER_ELEMENT;
 		const instances = new Float32Array(frame.count * stride);
 
+		if (
+			frame.pos.length < frame.count * 3 ||
+			frame.vel.length < frame.count * 3 ||
+			frame.mass.length < frame.count ||
+			frame.heat.length < frame.count ||
+			frame.energy.length < frame.count ||
+			frame.phase.length < frame.count ||
+			frame.omega.length < frame.count ||
+			frame.amp.length < frame.count
+		) {
+			throw new Error(
+				"fluid particle buffer length does not match particle count",
+			);
+		}
+
 		for (let index = 0; index < frame.count; index += 1) {
 			const p = index * 3;
 			const o = index * stride;
-			instances[o + 0] = frame.pos[p + 0] ?? 0;
-			instances[o + 1] = frame.pos[p + 1] ?? 0;
-			instances[o + 2] = frame.pos[p + 2] ?? 0;
-			instances[o + 3] = frame.vel[p + 0] ?? 0;
-			instances[o + 4] = frame.vel[p + 1] ?? 0;
-			instances[o + 5] = frame.vel[p + 2] ?? 0;
-			instances[o + 6] = frame.mass[index] ?? 0;
-			instances[o + 7] = frame.heat[index] ?? 0;
-			instances[o + 8] = frame.energy[index] ?? 0;
-			instances[o + 9] = frame.phase[index] ?? 0;
-			instances[o + 10] = frame.omega[index] ?? 0;
-			instances[o + 11] = frame.amp[index] ?? 0;
+
+			const posX = frame.pos[p + 0];
+			const posY = frame.pos[p + 1];
+			const posZ = frame.pos[p + 2];
+			const velX = frame.vel[p + 0];
+			const velY = frame.vel[p + 1];
+			const velZ = frame.vel[p + 2];
+			const mass = frame.mass[index];
+			const heat = frame.heat[index];
+			const energy = frame.energy[index];
+			const phase = frame.phase[index];
+			const omega = frame.omega[index];
+			const amp = frame.amp[index];
+
+			if (
+				posX === undefined ||
+				posY === undefined ||
+				posZ === undefined ||
+				velX === undefined ||
+				velY === undefined ||
+				velZ === undefined ||
+				mass === undefined ||
+				heat === undefined ||
+				energy === undefined ||
+				phase === undefined ||
+				omega === undefined ||
+				amp === undefined
+			) {
+				throw new Error(`missing particle data at index ${index}`);
+			}
+
+			instances[o + 0] = posX;
+			instances[o + 1] = posY;
+			instances[o + 2] = posZ;
+			instances[o + 3] = velX;
+			instances[o + 4] = velY;
+			instances[o + 5] = velZ;
+			instances[o + 6] = mass;
+			instances[o + 7] = heat;
+			instances[o + 8] = energy;
+			instances[o + 9] = phase;
+			instances[o + 10] = omega;
+			instances[o + 11] = amp;
 		}
 
 		this.gpu.device.queue.writeBuffer(this.instanceBuffer, 0, instances);

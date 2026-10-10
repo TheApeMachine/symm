@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	neturl "net/url"
 	"strconv"
@@ -113,7 +114,7 @@ type FragmentPoint struct {
 
 type Hub struct {
 	*runtime.System
-	uiTee            *UITee
+	uiTees           []*UITee
 	storeTee         *hindsight.StoreTee
 	workspace        *runtime.Workspace
 	physics          sensorium.PhysicsMonitor
@@ -134,6 +135,18 @@ type Hub struct {
 	lastLearning     time.Time
 }
 
+func (hub *Hub) teeForShard(shard int) *UITee {
+	if shard >= 0 && shard < len(hub.uiTees) {
+		return hub.uiTees[shard]
+	}
+
+	if len(hub.uiTees) > 0 {
+		return hub.uiTees[0]
+	}
+
+	return nil
+}
+
 /*
 NewHub constructs the dashboard hub from its queue-backed system boundaries.
 The workspace supplies live ingress progress, streamed as TickFrames at display
@@ -142,8 +155,16 @@ cadence independently of the route filters applied to the tee.
 func NewHub(
 	ctx context.Context,
 	hindsightStore *tables.Catalog,
-	uiTee *UITee,
 	workspace *runtime.Workspace,
+	storeTee *hindsight.StoreTee,
+	equitySource EquitySource,
+	positionSource PositionSource,
+	decisionSource DecisionSource,
+	cognitionSource CognitionSource,
+	fragmentsSource FragmentsSource,
+	lifecycleSource LifecycleSource,
+	exitHandler func(symbol string),
+	uiTees ...*UITee,
 ) *Hub {
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
@@ -156,8 +177,16 @@ func NewHub(
 
 	hub := &Hub{
 		learningInterval: viper.GetDuration("ui.websocket.learning_interval"),
-		uiTee:            uiTee,
+		uiTees:           uiTees,
 		workspace:        workspace,
+		storeTee:         storeTee,
+		equitySource:     equitySource,
+		positionSource:   positionSource,
+		decisionSource:   decisionSource,
+		cognitionSource:  cognitionSource,
+		fragmentsSource:  fragmentsSource,
+		lifecycleSource:  lifecycleSource,
+		exitHandler:      exitHandler,
 		listenAddr:       viper.GetString("ui.addr"),
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
@@ -171,7 +200,10 @@ func NewHub(
 
 	hub.routes = NewRoutes(hub)
 
-	closers := []io.Closer{uiTee}
+	closers := make([]io.Closer, 0, len(uiTees))
+	for _, tee := range uiTees {
+		closers = append(closers, tee)
+	}
 
 	hub.System = runtime.NewSystem(ctx, "hub", closers...)
 
@@ -198,198 +230,207 @@ func NewHub(
 
 	hub.routes.Register()
 
-	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		hub.frontend.Store(conn)
-		errnie.Info("[hub] frontend websocket connected")
+	wsHandler := func(shard int) fiber.Handler {
+		return websocket.New(func(conn *websocket.Conn) {
+			if shard == 0 {
+				hub.frontend.Store(conn)
+			}
+			errnie.Info(fmt.Sprintf("[hub] frontend websocket shard %d connected", shard))
 
-		defer func() {
-			hub.frontend.CompareAndSwap(conn, nil)
-			errnie.Info("[hub] frontend websocket disconnected")
-			conn.Conn.Close()
-		}()
+			defer func() {
+				if shard == 0 {
+					hub.frontend.CompareAndSwap(conn, nil)
+				}
+				errnie.Info(fmt.Sprintf("[hub] frontend websocket shard %d disconnected", shard))
+				conn.Conn.Close()
+			}()
 
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					_, payload, err := conn.Conn.ReadMessage()
+
+					if err != nil {
+						return
+					}
+
+					hub.handleCommand(payload)
+				}
+			}()
+
+			var lastPositionsPush time.Time
+			var lastPositionsVersion uint64
+			var lastPositionsSummary string
+			hadPositions := false
+
+			sendPositions := func() error {
+				if hub.positionSource == nil {
+					return nil
 				}
 
-				_, payload, err := conn.Conn.ReadMessage()
+				ver := hub.positionSource.PositionsVersion()
+				wireFrame := hub.positionSource.PositionsWire()
 
-				if err != nil {
-					return
+				if wireFrame == nil {
+					return nil
 				}
 
-				hub.handleCommand(payload)
-			}
-		}()
+				hasNow := len(wireFrame.Rows) > 0
 
-		var lastPositionsPush time.Time
-		var lastPositionsVersion uint64
-		var lastPositionsSummary string
-		hadPositions := false
+				if !hasNow && !hadPositions {
+					return nil
+				}
 
-		sendPositions := func() error {
-			if hub.positionSource == nil {
-				return nil
-			}
+				summary := positionsSummary(wireFrame.Rows)
 
-			ver := hub.positionSource.PositionsVersion()
-			wireFrame := hub.positionSource.PositionsWire()
+				if ver != 0 && ver == lastPositionsVersion && summary == lastPositionsSummary {
+					return nil
+				}
 
-			if wireFrame == nil {
-				return nil
-			}
+				hadPositions = hasNow
+				lastPositionsVersion = ver
+				lastPositionsSummary = summary
 
-			hasNow := len(wireFrame.Rows) > 0
+				message := &wire.MessageT{
+					Sequence: uint64(time.Now().UnixNano()),
+					Frame: &wire.FrameT{
+						Type:  wire.FramePositionsFrame,
+						Value: wireFrame,
+					},
+				}
 
-			if !hasNow && !hadPositions {
-				return nil
-			}
+				builder := flatbuffers.NewBuilder(4096)
+				offset := message.Pack(builder)
+				builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
+				payload := builder.FinishedBytes()
 
-			summary := positionsSummary(wireFrame.Rows)
-			
-			if ver != 0 && ver == lastPositionsVersion && summary == lastPositionsSummary {
-				return nil
-			}
-
-			hadPositions = hasNow
-			lastPositionsVersion = ver
-			lastPositionsSummary = summary
-
-			message := &wire.MessageT{
-				Sequence: uint64(time.Now().UnixNano()),
-				Frame: &wire.FrameT{
-					Type:  wire.FramePositionsFrame,
-					Value: wireFrame,
-				},
+				lastPositionsPush = time.Now()
+				return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
 			}
 
-			builder := flatbuffers.NewBuilder(4096)
-			offset := message.Pack(builder)
-			builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
-			payload := builder.FinishedBytes()
+			var lastDecisionsPush time.Time
+			var lastDecisionsVersion uint64
 
-			lastPositionsPush = time.Now()
-			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
-		}
+			sendDecisions := func() error {
+				if hub.decisionSource == nil {
+					return nil
+				}
 
-		var lastDecisionsPush time.Time
-		var lastDecisionsVersion uint64
+				ver := hub.decisionSource.DecisionsVersion()
+				if ver != 0 && ver == lastDecisionsVersion {
+					return nil
+				}
 
-		sendDecisions := func() error {
-			if hub.decisionSource == nil {
-				return nil
+				wireFrame := hub.decisionSource.DecisionsWire()
+
+				if wireFrame == nil || len(wireFrame.Decisions) == 0 {
+					return nil
+				}
+
+				lastDecisionsVersion = ver
+
+				message := &wire.MessageT{
+					Sequence: uint64(time.Now().UnixNano()),
+					Frame: &wire.FrameT{
+						Type:  wire.FrameStrategyFrame,
+						Value: wireFrame,
+					},
+				}
+
+				builder := flatbuffers.NewBuilder(4096)
+				offset := message.Pack(builder)
+				builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
+				payload := builder.FinishedBytes()
+
+				lastDecisionsPush = time.Now()
+				return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
 			}
 
-			ver := hub.decisionSource.DecisionsVersion()
-			if ver != 0 && ver == lastDecisionsVersion {
-				return nil
+			var lastEquityPush time.Time
+			var lastCash, lastUnrealized, lastEquity string
+
+			sendEquity := func() error {
+				if hub.equitySource == nil {
+					return nil
+				}
+
+				wireFrame := hub.equitySource.EquityWire()
+
+				if wireFrame == nil {
+					return nil
+				}
+
+				if wireFrame.Cash == lastCash && wireFrame.Unrealized == lastUnrealized && wireFrame.Equity == lastEquity {
+					return nil
+				}
+
+				lastCash = wireFrame.Cash
+				lastUnrealized = wireFrame.Unrealized
+				lastEquity = wireFrame.Equity
+
+				message := &wire.MessageT{
+					Sequence: uint64(time.Now().UnixNano()),
+					Frame: &wire.FrameT{
+						Type:  wire.FrameEquityFrame,
+						Value: wireFrame,
+					},
+				}
+
+				builder := flatbuffers.NewBuilder(1024)
+				offset := message.Pack(builder)
+				builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
+				payload := builder.FinishedBytes()
+
+				lastEquityPush = time.Now()
+				return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
 			}
 
-			wireFrame := hub.decisionSource.DecisionsWire()
+			var lastTick int64
 
-			if wireFrame == nil || len(wireFrame.Decisions) == 0 {
-				return nil
+			sendTick := func() error {
+				tick, at := hub.workspace.Progress()
+
+				if tick == lastTick {
+					return nil
+				}
+
+				lastTick = tick
+
+				message := &wire.MessageT{
+					Sequence: uint64(time.Now().UnixNano()),
+					Frame: &wire.FrameT{
+						Type:  wire.FrameTickFrame,
+						Value: &wire.TickFrameT{Count: tick, At: at},
+					},
+				}
+
+				builder := flatbuffers.NewBuilder(64)
+				offset := message.Pack(builder)
+				builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
+
+				return conn.Conn.WriteMessage(websocket.BinaryMessage, builder.FinishedBytes())
 			}
 
-			lastDecisionsVersion = ver
+			var lastDiagnosticsPush time.Time
 
-			message := &wire.MessageT{
-				Sequence: uint64(time.Now().UnixNano()),
-				Frame: &wire.FrameT{
-					Type:  wire.FrameStrategyFrame,
-					Value: wireFrame,
-				},
-			}
+			sendDiagnostics := func() error {
+				now := time.Now()
+				nowNs := now.UnixNano()
+				var rows []*wire.MeasurementT
 
-			builder := flatbuffers.NewBuilder(4096)
-			offset := message.Pack(builder)
-			builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
-			payload := builder.FinishedBytes()
-
-			lastDecisionsPush = time.Now()
-			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
-		}
-
-		var lastEquityPush time.Time
-		var lastCash, lastUnrealized, lastEquity string
-
-		sendEquity := func() error {
-			if hub.equitySource == nil {
-				return nil
-			}
-
-			wireFrame := hub.equitySource.EquityWire()
-
-			if wireFrame == nil {
-				return nil
-			}
-
-			if wireFrame.Cash == lastCash && wireFrame.Unrealized == lastUnrealized && wireFrame.Equity == lastEquity {
-				return nil
-			}
-
-			lastCash = wireFrame.Cash
-			lastUnrealized = wireFrame.Unrealized
-			lastEquity = wireFrame.Equity
-
-			message := &wire.MessageT{
-				Sequence: uint64(time.Now().UnixNano()),
-				Frame: &wire.FrameT{
-					Type:  wire.FrameEquityFrame,
-					Value: wireFrame,
-				},
-			}
-
-			builder := flatbuffers.NewBuilder(1024)
-			offset := message.Pack(builder)
-			builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
-			payload := builder.FinishedBytes()
-
-			lastEquityPush = time.Now()
-			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
-		}
-
-		var lastTick int64
-
-		sendTick := func() error {
-			tick, at := hub.workspace.Progress()
-
-			if tick == lastTick {
-				return nil
-			}
-
-			lastTick = tick
-
-			message := &wire.MessageT{
-				Sequence: uint64(time.Now().UnixNano()),
-				Frame: &wire.FrameT{
-					Type:  wire.FrameTickFrame,
-					Value: &wire.TickFrameT{Count: tick, At: at},
-				},
-			}
-
-			builder := flatbuffers.NewBuilder(64)
-			offset := message.Pack(builder)
-			builder.FinishWithFileIdentifier(offset, []byte("SYMM"))
-
-			return conn.Conn.WriteMessage(websocket.BinaryMessage, builder.FinishedBytes())
-		}
-
-		var lastDiagnosticsPush time.Time
-
-		sendDiagnostics := func() error {
-			now := time.Now()
-			nowNs := now.UnixNano()
-			var rows []*wire.MeasurementT
-
-			if hub.uiTee != nil {
-				uiPending := hub.uiTee.Pending()
-				uiIngress := hub.uiTee.IngressLength()
-				uiEgress := hub.uiTee.EgressLength()
+				var uiPending, uiIngress, uiEgress int
+				for _, tee := range hub.uiTees {
+					if tee != nil {
+						uiPending += tee.Pending()
+						uiIngress += tee.IngressLength()
+						uiEgress += tee.EgressLength()
+					}
+				}
 
 				rows = append(rows, &wire.MeasurementT{
 					Source: "ui_tee",
@@ -403,218 +444,131 @@ func NewHub(
 						{Name: "stage", Value: 4},
 					},
 				})
-			}
 
-			if hub.storeTee != nil {
-				storePending := hub.storeTee.Pending()
-				rows = append(rows, &wire.MeasurementT{
-					Source: "store_tee",
-					At:     nowNs,
-					Metrics: []*wire.MetricT{
-						{Name: "backlog", Raw: float64(storePending)},
-					},
-					Metadata: []*wire.NamedNumberT{
-						{Name: "stage", Value: 4},
-					},
-				})
-			}
-
-			if len(rows) == 0 {
-				return nil
-			}
-
-			payload := types.PackMeasurementsFrame(rows)
-
-			if len(payload) == 0 {
-				return nil
-			}
-
-			lastDiagnosticsPush = now
-			return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
-		}
-
-
-		if err := sendPositions(); err != nil {
-			return
-		}
-
-		if err := sendDecisions(); err != nil {
-			return
-		}
-
-		if err := sendEquity(); err != nil {
-			return
-		}
-
-		if err := sendTick(); err != nil {
-			return
-		}
-
-		if err := sendDiagnostics(); err != nil {
-			return
-		}
-
-		frameTicker := time.NewTicker(16666 * time.Microsecond)
-		defer frameTicker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-frameTicker.C:
-				if err := sendTick(); err != nil {
-					return
+				if hub.storeTee != nil {
+					storePending := hub.storeTee.Pending()
+					rows = append(rows, &wire.MeasurementT{
+						Source: "store_tee",
+						At:     nowNs,
+						Metrics: []*wire.MetricT{
+							{Name: "backlog", Raw: float64(storePending)},
+						},
+						Metadata: []*wire.NamedNumberT{
+							{Name: "stage", Value: 4},
+						},
+					})
 				}
+
+				if len(rows) == 0 {
+					return nil
+				}
+
+				payload := types.PackMeasurementsFrame(rows)
+
+				if len(payload) == 0 {
+					return nil
+				}
+
+				lastDiagnosticsPush = now
+				return conn.Conn.WriteMessage(websocket.BinaryMessage, payload)
 			}
 
-			if time.Since(lastPositionsPush) >= 200*time.Millisecond {
+			if shard == 0 {
 				if err := sendPositions(); err != nil {
 					return
 				}
-			}
 
-			if time.Since(lastDecisionsPush) >= 1000*time.Millisecond {
 				if err := sendDecisions(); err != nil {
 					return
 				}
-			}
 
-			if time.Since(lastEquityPush) >= 500*time.Millisecond {
 				if err := sendEquity(); err != nil {
 					return
 				}
-			}
 
-			if time.Since(lastDiagnosticsPush) >= 100*time.Millisecond {
+				if err := sendTick(); err != nil {
+					return
+				}
+
 				if err := sendDiagnostics(); err != nil {
 					return
 				}
 			}
 
-			if hub.Status() != runtime.READY {
-				continue
-			}
+			tee := hub.teeForShard(shard)
+			frameTicker := time.NewTicker(16666 * time.Microsecond)
+			defer frameTicker.Stop()
 
 			for {
-				frame := hub.uiTee.Next()
-
-				if frame == nil {
-					break
+				select {
+				case <-ctx.Done():
+					return
+				case <-frameTicker.C:
+					if shard == 0 {
+						if err := sendTick(); err != nil {
+							return
+						}
+					}
 				}
 
-				payload := *(*[]byte)(frame)
+				if shard == 0 {
+					if time.Since(lastPositionsPush) >= 200*time.Millisecond {
+						if err := sendPositions(); err != nil {
+							return
+						}
+					}
 
-				if len(payload) == 0 {
+					if time.Since(lastDecisionsPush) >= 1000*time.Millisecond {
+						if err := sendDecisions(); err != nil {
+							return
+						}
+					}
+
+					if time.Since(lastEquityPush) >= 500*time.Millisecond {
+						if err := sendEquity(); err != nil {
+							return
+						}
+					}
+
+					if time.Since(lastDiagnosticsPush) >= 100*time.Millisecond {
+						if err := sendDiagnostics(); err != nil {
+							return
+						}
+					}
+				}
+
+				if hub.Status() != runtime.READY || tee == nil {
 					continue
 				}
 
-				if err := conn.Conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
-					return
+				for {
+					frame := tee.Next()
+
+					if frame == nil {
+						break
+					}
+
+					payload := *(*[]byte)(frame)
+
+					if len(payload) == 0 {
+						continue
+					}
+
+					if err := conn.Conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+						return
+					}
 				}
 			}
-		}
-	}, websocket.Config{
-		Origins: []string{"*"},
-	}))
+		}, websocket.Config{
+			Origins: []string{"*"},
+		})
+	}
+
+	hub.app.Get("/ws", wsHandler(0))
+	hub.app.Get("/ws/0", wsHandler(0))
+	hub.app.Get("/ws/1", wsHandler(1))
 
 	return hub
-}
-
-/*
-SetStoreTee attaches the persistence StoreTee so its queue depth
-can be surfaced for diagnostics and backpressure detection.
-*/
-func (hub *Hub) SetStoreTee(source *hindsight.StoreTee) {
-	if hub == nil {
-		return
-	}
-
-	hub.storeTee = source
-}
-
-/*
-SetPositionSource attaches the source for active open positions.
-*/
-func (hub *Hub) SetPositionSource(source PositionSource) {
-	if hub == nil {
-		return
-	}
-
-	hub.positionSource = source
-}
-
-/*
-SetDecisionSource attaches the source for strategy decisions.
-*/
-func (hub *Hub) SetDecisionSource(source DecisionSource) {
-	if hub == nil {
-		return
-	}
-
-	hub.decisionSource = source
-}
-
-/*
-SetEquitySource attaches the venue account state shown in the top bar.
-*/
-func (hub *Hub) SetEquitySource(source EquitySource) {
-	if hub == nil {
-		return
-	}
-
-	hub.equitySource = source
-}
-
-/*
-SetCognitionSource attaches the source for active cognitive memory and trie topology.
-*/
-func (hub *Hub) SetCognitionSource(source CognitionSource) {
-	if hub == nil {
-		return
-	}
-
-	hub.cognitionSource = source
-}
-
-/*
-SetFragmentsSource attaches the source for already trained fragments.
-*/
-func (hub *Hub) SetFragmentsSource(source FragmentsSource) {
-	if hub == nil {
-		return
-	}
-
-	hub.fragmentsSource = source
-}
-
-/*
-SetLearningSource attaches the source for active learning system telemetry and reports.
-*/
-/*
-SetLifecycleSource wires the position lifecycle timelines served at
-/positions/lifecycle.
-*/
-func (hub *Hub) SetLifecycleSource(source LifecycleSource) {
-	hub.lifecycleSource = source
-}
-
-func (hub *Hub) SetLearningSource(source LearningSource) {
-	if hub == nil {
-		return
-	}
-
-	hub.learningSource = source
-}
-
-/*
-SetExitHandler attaches the handler for manual position exit commands from the UI.
-*/
-func (hub *Hub) SetExitHandler(handler func(symbol string)) {
-	if hub == nil {
-		return
-	}
-
-	hub.exitHandler = handler
 }
 
 /*

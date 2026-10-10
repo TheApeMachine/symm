@@ -15,6 +15,7 @@ import (
 	icetable "github.com/apache/iceberg-go/table"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
 )
@@ -490,16 +491,62 @@ func ingestMetrics(
 		}
 	}
 
-	totalRetained := 0
+	// Count occurrences of each symbol across ticks to determine which symbols
+	// were actually seen with sufficient empirical support (core.MinimumPrior observations).
+	symbolTickCounts := make(map[string]int)
 	for _, tick := range tickOrder {
-		group := tickMeasurements[tick]
-
-		slices.SortFunc(group, func(left, right *data.Measurement) int {
-			return cmp.Compare(left.SeqIdx, right.SeqIdx)
-		})
-
-		totalRetained += len(group)
+		seenInTick := make(map[string]struct{})
+		for _, meas := range tickMeasurements[tick] {
+			if meas != nil && meas.Label != "" {
+				seenInTick[meas.Label] = struct{}{}
+			}
+		}
+		for sym := range seenInTick {
+			symbolTickCounts[sym]++
+		}
 	}
+
+	activeSymbols := make(map[string]struct{})
+	for sym, count := range symbolTickCounts {
+		if count >= int(core.MinimumPrior) || (symbol != "" && sym == symbol) {
+			activeSymbols[sym] = struct{}{}
+		}
+	}
+
+	if len(activeSymbols) == 0 {
+		for sym := range symbolTickCounts {
+			activeSymbols[sym] = struct{}{}
+		}
+	}
+
+	prunedTickMeasurements := make(map[int64][]*data.Measurement)
+	activeTickOrder := make([]int64, 0, len(tickOrder))
+	totalRetained := 0
+
+	for _, tick := range tickOrder {
+		var activeGroup []*data.Measurement
+		for _, meas := range tickMeasurements[tick] {
+			if meas == nil {
+				continue
+			}
+
+			if _, ok := activeSymbols[meas.Label]; ok || meas.Label == "" {
+				activeGroup = append(activeGroup, meas)
+			}
+		}
+
+		if len(activeGroup) > 0 {
+			slices.SortFunc(activeGroup, func(left, right *data.Measurement) int {
+				return cmp.Compare(left.SeqIdx, right.SeqIdx)
+			})
+			prunedTickMeasurements[tick] = activeGroup
+			activeTickOrder = append(activeTickOrder, tick)
+			totalRetained += len(activeGroup)
+		}
+	}
+
+	tickMeasurements = prunedTickMeasurements
+	tickOrder = activeTickOrder
 
 	filteredMeasurements := make([]*data.Measurement, 0, totalRetained)
 	for _, tick := range tickOrder {
@@ -538,17 +585,17 @@ func ingestMetrics(
 			continue
 		}
 
-		for _, m := range group {
-			if m == nil {
+		for _, meas := range group {
+			if meas == nil {
 				continue
 			}
 
-			for entry := range m.Read() {
+			for entry := range meas.Read() {
 				if entry == nil || entry.Metric == nil {
 					continue
 				}
 
-				key := seriesKey(m.Source, m.Label, entry.Key)
+				key := seriesKey(meas.Source, meas.Label, entry.Key)
 
 				if canonicalSeries[key] == nil {
 					canonicalSeries[key] = make(map[int64]float64)
@@ -559,8 +606,8 @@ func ingestMetrics(
 	}
 
 	errnie.Info(fmt.Sprintf(
-		"[audit] [1/7 Ingest] Ingestion complete in %s: %d ticks across %d raw series (%d canonical grid cells)",
-		time.Since(ingestStart).Round(time.Second), len(tickOrder), len(rawSeries), len(canonicalSeries),
+		"[audit] [1/7 Ingest] Ingestion complete in %s: %d ticks across %d active symbols (%d raw series, %d canonical grid cells)",
+		time.Since(ingestStart).Round(time.Second), len(tickOrder), len(activeSymbols), len(rawSeries), len(canonicalSeries),
 	))
 
 	return tickOrder, tickMeasurements, rawSeries, canonicalSeries, filteredMeasurements, nil

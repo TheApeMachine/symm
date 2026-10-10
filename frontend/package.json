@@ -68,6 +68,7 @@
     "@types/react-dom": "^19.2.0",
     "@types/three": "^0.185.1",
     "@vitejs/plugin-react": "^6.0.1",
+    "@webgpu/types": "^0.1.74",
     "esbuild": "^0.28.1",
     "jsdom": "^30.0.1",
     "typescript": "^6.0.2",

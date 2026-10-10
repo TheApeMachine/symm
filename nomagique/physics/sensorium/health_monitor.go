@@ -20,13 +20,6 @@ type PhysicsSnapshot struct {
 	Population int     `json:"population"`
 	Reading    Reading `json:"reading"`
 }
-
-func NewPhysicsSnapshot(version uint64, at time.Time, population int, reading Reading) (PhysicsSnapshot, error) {
-	if population < 0 || !reading.IsFinite() {
-		return PhysicsSnapshot{}, fmt.Errorf("refuse invalid physics snapshot")
-	}
-	return PhysicsSnapshot{"sensorium-physics-health/v1", version, at.UnixNano(), population, reading}, nil
-}
 func (s PhysicsSnapshot) Marshal() ([]byte, error) {
 	if s.Schema != "sensorium-physics-health/v1" || s.Population < 0 || !s.Reading.IsFinite() {
 		return nil, fmt.Errorf("invalid physics snapshot contract")

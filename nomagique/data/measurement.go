@@ -574,6 +574,12 @@ func (measurement *Measurement) valid() *Measurement {
 		}
 	}
 
+	for _, peer := range measurement.peers {
+		if peer != nil && peer.valid() != nil {
+			measurement.err = errors.Join(measurement.err, peer.Error())
+		}
+	}
+
 	if measurement.ID == 0 {
 		measurement.ID = uuid.New().ID()
 	}

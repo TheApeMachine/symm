@@ -14,10 +14,5 @@ type Price = temporal.Price
 type Moments = statistic.Moments
 type MomentReading = statistic.MomentReading
 type CausalResidualResult = statistic.CausalResidualResult
-type LocalRegressionReading = statistic.LocalRegressionReading
-type PriorMoments = statistic.PriorMoments
-type PriorSummary = statistic.PriorSummary
 
-type Interval = temporal.Interval
-type IntervalPair = temporal.IntervalPair
 type LogReturn = temporal.LogReturn

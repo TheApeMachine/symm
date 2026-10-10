@@ -28,15 +28,6 @@ type System struct {
 	closers []io.Closer
 }
 
-type Closer func() error
-
-func (closer Closer) Close() error {
-	if closer == nil {
-		return nil
-	}
-
-	return closer()
-}
 
 func NewSystem(
 	ctx context.Context,

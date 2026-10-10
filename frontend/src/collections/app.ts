@@ -114,8 +114,9 @@ export const signals: Record<
 	morphology: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	pumpdump: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	sentiment: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	resonance: resonanceStore,
+	resonance: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	toxicity: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 	training: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
+	manifold: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
 };
 

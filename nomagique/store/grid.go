@@ -78,18 +78,15 @@ and production share this one path.
 */
 func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
 	var regions Regions
-	var deformation [13]float64
 
 	if measurement == nil {
 		return regions
 	}
 
+	var deformation [13]float64
+
 	pin := func(source string, frame *data.Measurement) {
 		for metric := range frame.Read() {
-			if metric == nil || metric.Metric == nil {
-				continue
-			}
-
 			region := grid.PinRegion(source, metric.Key)
 
 			if region == unpinned {
@@ -110,10 +107,6 @@ func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
 	pin(measurement.Source, measurement)
 
 	for _, peer := range measurement.Peers() {
-		if peer == nil {
-			continue
-		}
-
 		pin(peer.Source, peer)
 	}
 

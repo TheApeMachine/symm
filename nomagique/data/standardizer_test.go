@@ -8,21 +8,26 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
+func stepLinear(s *standardizer, val float64) (float64, float64) {
+	_, center, scale, _ := s.observe(val, ScaleLinear)
+	return center, scale
+}
+
 func TestStandardizerStep(t *testing.T) {
 	Convey("Given a fresh standardizer", t, func() {
 		state := &standardizer{}
 
 		Convey("the scale stays undefined until two prior observations differ", func() {
 			for range int(core.MinimumPrior) {
-				_, scale := state.step(4)
+				_, scale := stepLinear(state, 4)
 				So(scale, ShouldEqual, 0)
 			}
 
-			center, scale := state.step(10)
+			center, scale := stepLinear(state, 10)
 			So(center, ShouldEqual, 4)
 			So(scale, ShouldEqual, 0)
 
-			_, scale = state.step(4)
+			_, scale = stepLinear(state, 4)
 			So(scale, ShouldBeGreaterThan, 0)
 		})
 
@@ -31,7 +36,7 @@ func TestStandardizerStep(t *testing.T) {
 			So(core.MinimumPrior, ShouldEqual, 9)
 
 			for idx, value := range []float64{3, -1, 7, 2, 2, 11, -4, 5, 0, 6} {
-				_, scale := state.step(value)
+				_, scale := stepLinear(state, value)
 				So(scale > 0, ShouldEqual, float64(idx) >= core.MinimumPrior)
 			}
 		})
@@ -40,7 +45,7 @@ func TestStandardizerStep(t *testing.T) {
 			values := []float64{3, -1, 7, 2, 2, 11, -4, 5, 0, 6, 9, -2}
 
 			for idx, value := range values {
-				center, scale := state.step(value)
+				center, scale := stepLinear(state, value)
 
 				if float64(idx) < core.MinimumPrior {
 					continue
@@ -83,7 +88,7 @@ func TestStandardizerStep(t *testing.T) {
 				value = 0.07007130582850786
 			}
 
-			state.step(value)
+			stepLinear(state, value)
 		}
 
 		Convey("the z-score is undefined rather than float noise in sigma", func() {
@@ -104,11 +109,11 @@ func TestStandardizerStep(t *testing.T) {
 			1e-6, 1.001e-6, 0.999e-6, 1.002e-6, 0.998e-6,
 			1e-6, 1.001e-6, 0.999e-6, 1.002e-6, 0.998e-6,
 		} {
-			state.step(value)
+			stepLinear(state, value)
 		}
 
 		Convey("the relative guard keeps the z-score", func() {
-			center, scale := state.step(1.01e-6)
+			center, scale := stepLinear(state, 1.01e-6)
 			So(scale, ShouldBeGreaterThan, 0)
 			So((1.01e-6-center)/scale, ShouldAlmostEqual, 6.708, 0.001)
 		})
@@ -118,15 +123,17 @@ func TestStandardizerStep(t *testing.T) {
 		key := standardizerKey{epoch: 7, source: "cvd", label: "BTC/USD", metric: "trade_rate"}
 
 		Convey("the same key resolves to one stream and any differing part to another", func() {
-			So(standardizerFor(key) == standardizerFor(key), ShouldBeTrue)
+			first := standardizerFor(key)
+			second := standardizerFor(key)
+			So(second, ShouldPointTo, first)
 
-			other := key
-			other.epoch = 8
-			So(standardizerFor(other) == standardizerFor(key), ShouldBeFalse)
+			differentEpoch := key
+			differentEpoch.epoch = 8
+			So(standardizerFor(differentEpoch), ShouldNotPointTo, first)
 
-			other = key
-			other.label = "ETH/USD"
-			So(standardizerFor(other) == standardizerFor(key), ShouldBeFalse)
+			differentLabel := key
+			differentLabel.label = "ETH/USD"
+			So(standardizerFor(differentLabel), ShouldNotPointTo, first)
 		})
 	})
 }

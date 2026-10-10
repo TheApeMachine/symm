@@ -182,10 +182,10 @@ func (h *Hawkes) Step(mark, atSec float64) (map[string]float64, time.Time, error
 			}
 
 			// The excitation mass is the kernel part of the compensator, taken
-			// from the kernel terms themselves. Recovering it as compensator
-			// minus mu*span cancels two nearly equal numbers, and with the
-			// product fused into the sum on one side only, an empty kernel
-			// came out a few ulps below zero.
+			// directly from the closed-form kernel integral terms. Because alpha >= 0,
+			// beta > 0, and the exponential decay kernel integral support is strictly
+			// non-negative, the excitation mass is non-negative by construction without
+			// relying on backward subtraction from the total compensator.
 			buySupport, sellSupport := streamPrior.kernelIntegralSupport(atSec, beta)
 			excessBuyMass := (alphaXX/beta)*buySupport + (alphaXY/beta)*sellSupport
 			excessSellMass := (alphaYX/beta)*buySupport + (alphaYY/beta)*sellSupport

@@ -10,10 +10,13 @@ import (
 
 func TestRouteFilters(t *testing.T) {
 	Convey("Given route filtering logic", t, func() {
-		Convey("Fluid route rejects raw manifold measurements to prevent websocket buffer flooding", func() {
+		Convey("Fluid route admits manifold measurements", func() {
 			types.SetRoute("fluid")
 			measurement := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
-			So(types.Filters(measurement), ShouldBeFalse)
+			So(types.Filters(measurement), ShouldBeTrue)
+
+			hawkes := data.NewMeasurement(1, "BTC/USD", "hawkes", 1, 1)
+			So(types.Filters(hawkes), ShouldBeFalse)
 		})
 
 		Convey("Dashboard route filters by focus and analytical sources", func() {

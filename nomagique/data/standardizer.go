@@ -69,19 +69,6 @@ up to 1e19 sigma. The rule is relative only: an absolute floor would refuse
 genuine dispersion in streams whose unit makes every value small, such as
 micro-cap prices.
 */
-func (state *standardizer) step(value float64) (center float64, scale float64) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	return state.stepLocked(value)
-}
-
-/*
-observe moves raw into the stream's standardization space (see Scale), then
-steps it. It reports false, leaving the stream untouched, when raw has no
-value in that space: a non-positive raw on a log scale, or any raw before a
-log-modulus stream has seen a magnitude (that raw still sets the unit).
-*/
 func (state *standardizer) observe(raw float64, space Scale) (
 	value float64, center float64, scale float64, defined bool,
 ) {

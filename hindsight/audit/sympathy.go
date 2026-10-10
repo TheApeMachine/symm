@@ -423,37 +423,6 @@ func maskedCorrelation(left, right observedVector) (float64, bool) {
 }
 
 /*
-shuffleObservedValues applies circular block permutation to the observed values
-of a series, preserving the temporal persistence and autocorrelation of each
-individual channel while destroying cross-channel alignment under the null hypothesis.
-The block size is derived empirically from the autocorrelation decay horizon of the series.
-*/
-func shuffleObservedValues(rng *rand.Rand, values []float64, present []bool) {
-	indices := make([]int, 0, len(values))
-	observed := make([]float64, 0, len(values))
-
-	for index, ok := range present {
-		if !ok {
-			continue
-		}
-
-		indices = append(indices, index)
-		observed = append(observed, values[index])
-	}
-
-	if len(observed) < 4 {
-		return
-	}
-
-	blockSize := empiricalAutocorrelationBlockSize(observed)
-	permuted := blockPermute(rng, observed, blockSize)
-
-	for index, position := range indices {
-		values[position] = permuted[index]
-	}
-}
-
-/*
 empiricalAutocorrelationBlockSize calculates the empirical decorrelation horizon
 as the lag where autocorrelation decays to or below 1/e (approx 0.368) or crosses zero,
 grounding the block length in honest measured persistence rather than an arbitrary constant.
@@ -592,19 +561,6 @@ func empiricalQuantile(sorted []float64, quantile float64) float64 {
 	}
 
 	return sorted[index]
-}
-
-func computeKolmogorovSmirnov(real, null []float64) float64 {
-	if len(real) == 0 || len(null) == 0 {
-		return 0
-	}
-
-	sortedReal := append([]float64(nil), real...)
-	sortedNull := append([]float64(nil), null...)
-	sort.Float64s(sortedReal)
-	sort.Float64s(sortedNull)
-
-	return computeKolmogorovSmirnovSorted(sortedReal, sortedNull)
 }
 
 func computeKolmogorovSmirnovSorted(sortedReal, sortedNull []float64) float64 {

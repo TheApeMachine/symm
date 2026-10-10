@@ -30,8 +30,8 @@ type WebsocketClient struct {
 	// cleared by a hook that succeeds. A dial that succeeds resets backoff,
 	// so a hook that keeps failing behind good dials needs its own.
 	hookBackoff time.Duration
-	lastWarn     time.Time
-	dial         func(url string) (*gorilla.Conn, *http.Response, error)
+	lastWarn    time.Time
+	dial        func(url string) (*gorilla.Conn, *http.Response, error)
 }
 
 func NewWebsocketClient(ctx context.Context) *WebsocketClient {
@@ -309,7 +309,12 @@ func (client *WebsocketClient) ensureReady() error {
 	return client.runHook(hook)
 }
 
-func (client *WebsocketClient) softDown(cause error) error {
+/*
+SoftDown drops the active connection and places the client in WAITING state
+without canceling its context, so subsequent Read operations trigger redial
+with backoff. It invokes the OnDisconnect hook if the connection was live.
+*/
+func (client *WebsocketClient) SoftDown(cause error) error {
 	client.mu.Lock()
 
 	wasLive := client.conn != nil
@@ -322,6 +327,7 @@ func (client *WebsocketClient) softDown(cause error) error {
 		client.Transition(runtime.WAITING)
 	}
 
+	client.hookBackoff = min(max(2*client.hookBackoff, time.Second), 30*time.Second)
 	client.warnOnce("disconnected: " + cause.Error())
 	client.mu.Unlock()
 
@@ -330,6 +336,10 @@ func (client *WebsocketClient) softDown(cause error) error {
 	}
 
 	return cause
+}
+
+func (client *WebsocketClient) softDown(cause error) error {
+	return client.SoftDown(cause)
 }
 
 func (client *WebsocketClient) closeConnLocked() {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { errorAtom } from "#/collections/app";
 import { paintPhaseDial } from "#/components/charts/phase-dial";
 import { TerminalPhaseDialChart } from "#/components/terminal/charts";
 import { Badge } from "#/components/ui/badge";
@@ -16,7 +17,7 @@ import {
 } from "./phase-portrait";
 import { PhysicsDiagnosticsHUD } from "./physics-diagnostics";
 import { FluidScene, type FluidSceneOptions } from "./scene";
-import { FluidManifoldFeed, type FluidFeedState } from "./transport";
+import { type FluidFeedState, FluidManifoldFeed } from "./transport";
 import type { FluidGrid, FluidParticle, FluidPhaseReading } from "./wire";
 
 const initialOptions: FluidSceneOptions = {
@@ -154,11 +155,22 @@ export const FluidInspector = () => {
 			scene = new FluidScene(
 				viewportRef.current,
 				setSelected,
-				(cause) => setError(cause.message),
+				(cause) => {
+					setError(cause.message);
+					errorAtom.set({
+						error: cause.message,
+						source: "FluidScene WebGPU",
+					});
+				},
 				setCurrentPeak,
 			);
 		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : String(cause));
+			const msg = cause instanceof Error ? cause.message : String(cause);
+			setError(msg);
+			errorAtom.set({
+				error: msg,
+				source: "FluidScene WebGPU Initialization",
+			});
 			return;
 		}
 

@@ -14,7 +14,7 @@ func TestMetricFinalize(t *testing.T) {
 		state := &standardizer{}
 
 		for _, value := range []float64{-1, 5, -1, 5, 2, -1, 5, -1, 5} {
-			state.step(value)
+			state.observe(value, ScaleLinear)
 		}
 
 		priorMean := state.mean
@@ -51,7 +51,7 @@ func TestMetricFinalize(t *testing.T) {
 	Convey("Given a metric whose stream has a single prior observation", t, func() {
 		metric := NewMetric("depth_zscore:bid", 5, UnitZScore, TimescaleRollingWindow)
 		state := &standardizer{}
-		state.step(1)
+		state.observe(1, ScaleLinear)
 
 		Convey("its z-score is undefined rather than zero evidence", func() {
 			So(metric.finalize(state), ShouldBeNil)

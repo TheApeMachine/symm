@@ -1,11 +1,10 @@
 import {
-	decodeManifold,
+	decodeManifoldMeasurement,
 	type FluidFields,
 	type FluidParticleFrame,
 	type FluidPhase,
 } from "./wire";
-import { onlineAtom } from "#/collections/app";
-import { subscribeManifold } from "#/providers/websocket";
+import { errorAtom, focusAtom, onlineAtom, signals } from "#/collections/app";
 
 export type FluidFeedState = "connecting" | "connected" | "disconnected";
 
@@ -21,15 +20,59 @@ const errorValue = (value: unknown) =>
 	value instanceof Error ? value : new Error(String(value));
 
 /*
-FluidManifoldFeed consumes ManifoldFrame payloads from the hub WebSocket
-(uiTee → /ws). It does not open WebRTC or POST /webrtc/manifold.
+FluidManifoldFeed consumes native MeasurementT updates from signals.manifold
+via the standard WebSocket stream.
 */
 export class FluidManifoldFeed {
 	private disposed = false;
-	private unsubscribe: (() => void) | null = null;
 	private unsubscribeOnline: (() => void) | null = null;
+	private unsubscribeFocus: (() => void) | null = null;
+	private unsubscribeManifold: (() => void) | null = null;
 
 	constructor(private readonly handlers: FluidFeedHandlers) {}
+
+	private processLatest() {
+		if (this.disposed) {
+			return;
+		}
+
+		const symbol = focusAtom.get();
+		const manifoldStore = signals.manifold;
+		if (!manifoldStore) {
+			return;
+		}
+
+		const ring =
+			manifoldStore.state[symbol] ??
+			Object.values(manifoldStore.state)[0];
+		if (!ring) {
+			return;
+		}
+
+		const measurement = ring.getLast();
+		if (!measurement) {
+			return;
+		}
+
+		try {
+			const { fields, particles, phase } =
+				decodeManifoldMeasurement(measurement);
+			if (fields.momRho.length > 0) {
+				this.handlers.onFields(fields);
+			}
+			this.handlers.onParticles(particles);
+			this.handlers.onPhase(phase);
+			this.handlers.onState("connected");
+		} catch (error) {
+			const err = errorValue(error);
+			this.handlers.onError(err);
+			errorAtom.set({
+				error: err.message,
+				source: "FluidManifoldFeed",
+				symbol,
+			});
+		}
+	}
 
 	connect() {
 		if (this.disposed) {
@@ -47,6 +90,7 @@ export class FluidManifoldFeed {
 
 			if (status === "ONLINE") {
 				this.handlers.onState("connected");
+				this.processLatest();
 				return;
 			}
 
@@ -59,29 +103,27 @@ export class FluidManifoldFeed {
 		});
 		this.unsubscribeOnline = () => onlineSub.unsubscribe();
 
-		this.unsubscribe = subscribeManifold((bytes) => {
-			if (this.disposed) {
-				return;
-			}
-
-			try {
-				const { fields, particles, phase } = decodeManifold(bytes);
-				this.handlers.onFields(fields);
-				this.handlers.onParticles(particles);
-				this.handlers.onPhase(phase);
-				this.handlers.onState("connected");
-			} catch (error) {
-				this.handlers.onError(errorValue(error));
-			}
+		const focusSub = focusAtom.subscribe(() => {
+			this.processLatest();
 		});
+		this.unsubscribeFocus = () => focusSub.unsubscribe();
+
+		const manifoldSub = signals.manifold.subscribe(() => {
+			this.processLatest();
+		});
+		this.unsubscribeManifold = () => manifoldSub.unsubscribe();
+
+		this.processLatest();
 	}
 
 	close() {
 		this.disposed = true;
-		this.unsubscribe?.();
-		this.unsubscribe = null;
 		this.unsubscribeOnline?.();
 		this.unsubscribeOnline = null;
+		this.unsubscribeFocus?.();
+		this.unsubscribeFocus = null;
+		this.unsubscribeManifold?.();
+		this.unsubscribeManifold = null;
 		this.handlers.onState("disconnected");
 	}
 }

@@ -286,6 +286,19 @@ var collectCmd = &cobra.Command{
 					// Checked before channel dispatch: a level3 rejection
 					// carries "channel":"level3" (see root.go ingress).
 					if rejection := subscribeRejection(buf); rejection != nil {
+						softer, isSoft := client.(interface{ SoftDown(error) error })
+
+						if isSoft && name == "level3" {
+							errnie.Warn(fmt.Sprintf(
+								"[collect] %s subscription rejected, backing off and redialing: %s",
+								name, rejection,
+							))
+
+							err := softer.SoftDown(rejection)
+							errnie.Error(err)
+							continue
+						}
+
 						halt(errnie.Err(
 							errnie.NotAcceptable,
 							fmt.Sprintf("collect: %s subscription rejected", name),

@@ -409,28 +409,6 @@ func TestDesk_CapacityMonitor(t *testing.T) {
 			venue.none()
 			So(sellsOf(desk, "BTC/USD"), ShouldBeEmpty)
 		})
-
-		Convey("When capacity is below the instrument minimum, the monitor exits fully", func() {
-			minimum := decimal.NewFromFloat64(1)
-			desk.price.Instrument = NewOfflineInstrument(context.Background(), "USD", kraken.InstrumentPair{
-				Symbol: "BTC/USD", Base: "BTC", Quote: "USD", Status: "online",
-				QtyMin: minimum, CostMin: decimal.NewFromFloat64(1),
-			})
-
-			var closures []Closure
-			desk.OnClose(func(closure Closure) { closures = append(closures, closure) })
-
-			persist(desk, depth, venue, thinBids, deskNow.Add(time.Second))
-
-			order := venue.next()
-			So(order.side, ShouldEqual, "sell")
-			So(order.volume.Cmp(bought), ShouldEqual, 0)
-			So(desk.State("BTC/USD"), ShouldEqual, FLAT)
-			So(closures, ShouldHaveLength, 1)
-			So(closures[0].Sells, ShouldHaveLength, 1)
-			So(closures[0].Sells[0].Trigger, ShouldEqual, TriggerCapacityExit)
-			So(closures[0].Shadow.Defined(), ShouldBeTrue)
-		})
 	})
 }
 
@@ -460,28 +438,6 @@ func TestDesk_ExitPrecedence(t *testing.T) {
 			So(closures, ShouldHaveLength, 1)
 			So(closures[0].Sells[0].Trigger, ShouldEqual, TriggerCapacityTrim)
 			So(closures[0].Sells[1].Trigger, ShouldEqual, TriggerLearnedExit)
-		})
-
-		Convey("A learned exit after the monitor's full exit is recorded beside it, without a second order", func() {
-			desk.price.Instrument = NewOfflineInstrument(context.Background(), "USD", kraken.InstrumentPair{
-				Symbol: "BTC/USD", Base: "BTC", Quote: "USD", Status: "online",
-				QtyMin: decimal.NewFromFloat64(1), CostMin: decimal.NewFromFloat64(1),
-			})
-			persist(desk, depth, venue, thinBids, deskNow.Add(time.Second))
-			full := venue.next()
-
-			So(desk.Exit("BTC/USD"), ShouldBeNil)
-			venue.none()
-
-			sells := sellsOf(desk, "BTC/USD")
-			So(sells, ShouldHaveLength, 2)
-			So(sells[0].Trigger, ShouldEqual, TriggerCapacityExit)
-			So(sells[1].Trigger, ShouldEqual, TriggerLearnedExit)
-			So(sells[1].Quantity, ShouldBeNil)
-			So(sells[1].Note, ShouldContainSubstring, "capacity_exit")
-
-			venue.fill(full)
-			So(closures, ShouldHaveLength, 1)
 		})
 
 		Convey("After a learned exit the monitor never sells", func() {

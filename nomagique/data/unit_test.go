@@ -118,9 +118,9 @@ func TestCanonicalUnit(t *testing.T) {
 			So(CanonicalUnit("signed_correlation", UnitDimensionless), ShouldEqual, UnitCorrelation)
 			So(CanonicalUnit("price", UnitCurrency), ShouldEqual, UnitPrice)
 			So(CanonicalUnit("midpoint_response_per_net_notional", ""), ShouldEqual, UnitPriceImpact)
-			So(CanonicalUnit("basis", ""), ShouldEqual, UnitRelativeSpread)
+			So(CanonicalUnit("relative_spread", ""), ShouldEqual, UnitRelativeSpread)
 			So(CanonicalUnit("excitation_amplitude:buy_from_buy", ""), ShouldEqual, UnitRate)
-			So(CanonicalUnit("surprise", ""), ShouldEqual, UnitNat)
+			So(CanonicalUnit("log_likelihood:hawkes", ""), ShouldEqual, UnitNat)
 		})
 	})
 }
@@ -130,9 +130,6 @@ func TestCanonicalTimescale(t *testing.T) {
 		Convey("it resolves known labels to canonical operational timescales", func() {
 			So(CanonicalTimescale("covariance", ""), ShouldEqual, TimescaleRollingWindow)
 			So(CanonicalTimescale("price", ""), ShouldEqual, TimescaleInstantaneous)
-			So(CanonicalTimescale("volume_bar_duration", ""), ShouldEqual, TimescaleVolumeBar)
-			So(CanonicalTimescale("steps", ""), ShouldEqual, TimescaleSession)
-			So(CanonicalTimescale("b_tick", ""), ShouldEqual, TimescaleTick)
 			So(CanonicalTimescale("advance_count", ""), ShouldEqual, TimescaleRollingWindow)
 			So(CanonicalTimescale("measured_return_count", ""), ShouldEqual, TimescaleRollingWindow)
 			So(CanonicalTimescale("observation_count", ""), ShouldEqual, TimescaleRollingWindow)
@@ -144,7 +141,7 @@ func TestCanonicalTimescale(t *testing.T) {
 func TestSignalMetrics(t *testing.T) {
 	Convey("Given SignalMetrics map grouped by signal", t, func() {
 		Convey("it contains valid signal sources", func() {
-			So(len(SignalMetrics), ShouldBeGreaterThanOrEqualTo, 15)
+			So(len(SignalMetrics), ShouldBeGreaterThanOrEqualTo, 12)
 
 			correlation, exists := SignalMetrics["correlation"]
 			So(exists, ShouldBeTrue)

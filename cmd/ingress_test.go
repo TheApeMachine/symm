@@ -25,6 +25,11 @@ func TestSubscribeRejection(t *testing.T) {
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "Rate limit for snapshot requests exceeded")
 			So(err.Error(), ShouldContainSubstring, `channel="level3"`)
+
+			gmtErr := subscribeRejection([]byte(`{"channel":"level3","error":"Rate limit for snapshot requests exceeded, when trying to subscribe to GMT/USD level3 snapshot","method":"subscribe","status":"error","success":false}`))
+			So(gmtErr, ShouldNotBeNil)
+			So(gmtErr.Error(), ShouldContainSubstring, "Rate limit for snapshot requests exceeded")
+			So(gmtErr.Error(), ShouldContainSubstring, "GMT/USD")
 		})
 
 		Convey("an accepted subscribe is not", func() {
@@ -207,6 +212,68 @@ func TestTeeOf(t *testing.T) {
 
 		Convey("passing the nil pointer directly is the crash teeOf prevents", func() {
 			So(func() { _ = handleTrade(trade, 101, price, nil, missing, "public", nil) }, ShouldPanic)
+		})
+	})
+}
+
+type mockSofterTransport struct {
+	downCalled bool
+	downCause  error
+}
+
+func (mock *mockSofterTransport) SoftDown(cause error) error {
+	mock.downCalled = true
+	mock.downCause = cause
+	return cause
+}
+
+func TestSubscribeRejectionHandling(t *testing.T) {
+	Convey("Given a subscribe rejection on ingress", t, func() {
+		rejectionPayload := []byte(`{"channel":"level3","error":"Rate limit for snapshot requests exceeded, when trying to subscribe to GMT/USD level3 snapshot","method":"subscribe","status":"error","success":false}`)
+		rejection := subscribeRejection(rejectionPayload)
+		So(rejection, ShouldNotBeNil)
+
+		Convey("a level3 transport implementing SoftDown backs off instead of halting", func() {
+			transport := &mockSofterTransport{}
+			softer, isSoft := any(transport).(interface{ SoftDown(error) error })
+			So(isSoft, ShouldBeTrue)
+
+			name := "level3"
+			halted := false
+
+			if isSoft && name == "level3" {
+				err := softer.SoftDown(rejection)
+				So(err, ShouldNotBeNil)
+			}
+
+			if !isSoft || name != "level3" {
+				halted = true
+			}
+
+			So(transport.downCalled, ShouldBeTrue)
+			So(transport.downCause, ShouldEqual, rejection)
+			So(halted, ShouldBeFalse)
+		})
+
+		Convey("a non-level3 transport halts on rejection", func() {
+			transport := &mockSofterTransport{}
+			softer, isSoft := any(transport).(interface{ SoftDown(error) error })
+			So(isSoft, ShouldBeTrue)
+
+			name := "public"
+			halted := false
+
+			if isSoft && name == "level3" {
+				err := softer.SoftDown(rejection)
+				So(err, ShouldNotBeNil)
+			}
+
+			if !isSoft || name != "level3" {
+				halted = true
+			}
+
+			So(transport.downCalled, ShouldBeFalse)
+			So(halted, ShouldBeTrue)
 		})
 	})
 }
