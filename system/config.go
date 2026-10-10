@@ -2,8 +2,6 @@ package system
 
 import (
 	"sync/atomic"
-
-	"github.com/theapemachine/errnie"
 )
 
 var (
@@ -44,36 +42,4 @@ func NewConfig() *Config {
 		Learning:  NewLearning(),
 		Storage:   NewStorage(),
 	}
-}
-
-/* PlannerPolicy returns the small live policy value without allocating. */
-func (config *Config) PlannerPolicy() (PlannerConfig, error) {
-	if config == nil {
-		return PlannerConfig{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"system: configuration required",
-			nil,
-		))
-	}
-
-	if config.Planner == nil {
-		return PlannerConfig{}, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"system: planner configuration required",
-			nil,
-		))
-	}
-
-	return *config.Planner, nil
-}
-
-/* CognitionSwitchConfidence returns cognition's configured state-switch policy. */
-func (config *Config) CognitionSwitchConfidence() (float64, error) {
-	policy, err := config.PlannerPolicy()
-
-	if err != nil {
-		return 0, err
-	}
-
-	return policy.CognitionSwitchConfidence, nil
 }

@@ -1031,18 +1031,6 @@ func declaredSelector(
 	}, true
 }
 
-
-
-func namesIdentifier(names []*ast.Ident, target string) bool {
-	for _, name := range names {
-		if name.Name == target {
-			return true
-		}
-	}
-
-	return false
-}
-
 func typedString(pkg *packages.Package, expression ast.Expr) string {
 	if literal := stringLiteral(expression); literal != "" {
 		return literal
@@ -1059,17 +1047,6 @@ func typedString(pkg *packages.Package, expression ast.Expr) string {
 	}
 
 	return constant.StringVal(value)
-}
-
-func expressionName(expression ast.Expr) string {
-	switch value := expression.(type) {
-	case *ast.Ident:
-		return value.Name
-	case *ast.SelectorExpr:
-		return value.Sel.Name
-	default:
-		return ""
-	}
 }
 
 /*

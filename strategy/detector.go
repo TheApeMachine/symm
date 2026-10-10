@@ -116,14 +116,6 @@ func (s span) held() bool {
 	return s.b.price != nil && s.c.price != nil && s.b.tick < s.c.tick
 }
 
-func (s span) width() int64 {
-	if !s.held() {
-		return 0
-	}
-
-	return s.c.tick - s.b.tick
-}
-
 /*
 friction answers whether buying at low and selling at high clears round-trip
 taker friction. The sign of the round trip depends only on high/low against

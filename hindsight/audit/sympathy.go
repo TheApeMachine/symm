@@ -10,8 +10,8 @@ import (
 )
 
 type observedVector struct {
-	values  []float64
-	present []bool
+	ticks  []int32
+	values []float64
 }
 
 /*
@@ -33,11 +33,17 @@ func AnalyzeSympathy(
 	permutations int,
 	significance float64,
 ) Stage2Sympathy {
-	activeNames := make([]string, 0)
+	activeNames := make([]string, 0, len(healthyCells))
 	for _, stat := range healthyCells {
-		if stat.IsConstant {
+		if stat.IsConstant || stat.Status == "DEAD" {
 			continue
 		}
+
+		tickMap, ok := canonicalSeries[stat.Name]
+		if !ok || len(tickMap) < 10 {
+			continue
+		}
+
 		activeNames = append(activeNames, stat.Name)
 	}
 	sort.Strings(activeNames)
@@ -49,40 +55,49 @@ func AnalyzeSympathy(
 			Passed:      false,
 		}
 	}
+
 	if permutations <= 0 {
 		permutations = 50
 	}
 
-	deformationSeries := make(map[string]map[int64]float64, len(activeNames))
+	vectors := make([]observedVector, 0, len(activeNames))
+	retainedNames := make([]string, 0, len(activeNames))
+
 	for _, name := range activeNames {
-		deformationSeries[name] = make(map[int64]float64)
-		if tickMap, ok := canonicalSeries[name]; ok {
-			for _, tick := range ticks {
-				if value, present := tickMap[tick]; present {
-					deformationSeries[name][tick] = value
-				}
+		tickMap := canonicalSeries[name]
+		vecTicks := make([]int32, 0, min(len(tickMap), len(ticks)))
+		vecVals := make([]float64, 0, len(vecTicks))
+
+		for tickIndex, tick := range ticks {
+			if val, ok := tickMap[tick]; ok {
+				vecTicks = append(vecTicks, int32(tickIndex))
+				vecVals = append(vecVals, val)
 			}
 		}
+
+		if len(vecTicks) < 10 {
+			continue
+		}
+
+		vectors = append(vectors, observedVector{
+			ticks:  vecTicks,
+			values: vecVals,
+		})
+		retainedNames = append(retainedNames, name)
 	}
 
-	vectors := make([]observedVector, len(activeNames))
-	for index, name := range activeNames {
-		vector := observedVector{
-			values:  make([]float64, len(ticks)),
-			present: make([]bool, len(ticks)),
+	if len(vectors) < 2 {
+		return Stage2Sympathy{
+			SummaryText: "Insufficient observed canonical cells for sympathy analysis.",
+			Status:      "INSUFFICIENT_DATA",
+			Passed:      false,
 		}
-		for tickIndex, tick := range ticks {
-			if value, ok := deformationSeries[name][tick]; ok {
-				vector.values[tickIndex] = value
-				vector.present[tickIndex] = true
-			}
-		}
-		vectors[index] = vector
 	}
 
 	// Pairs are formed within one symbol (see symbolGroups).
-	groups := symbolGroups(activeNames)
+	groups := symbolGroups(retainedNames)
 	realConcordances := pairCorrelations(vectors, groups)
+
 	if len(realConcordances) == 0 {
 		return Stage2Sympathy{
 			SummaryText: "No canonical cell pairs had sufficient simultaneous deformation support.",
@@ -105,69 +120,54 @@ func AnalyzeSympathy(
 	realMean, realVariance := meanAndVar(realConcordances)
 	realBins, realCounts := histogram(realConcordances, 25, -1, 1)
 
-	workers := runtime.NumCPU()
-	if workers < 1 {
-		workers = 1
+	// Precalculate empirical autocorrelation block size once per vector.
+	blockSizes := make([]int, len(vectors))
+	for vecIndex, vec := range vectors {
+		blockSizes[vecIndex] = empiricalAutocorrelationBlockSize(vec.values)
 	}
 
-	results := make([][][]float64, workers)
-	var wg sync.WaitGroup
+	rng := rand.New(rand.NewSource(1791))
 
-	iterationsPerWorker := (permutations + workers - 1) / workers
-
-	for worker := 0; worker < workers; worker++ {
-		startIter := worker * iterationsPerWorker
-		endIter := startIter + iterationsPerWorker
-
-		if endIter > permutations {
-			endIter = permutations
-		}
-
-		if startIter >= endIter {
-			continue
-		}
-
-		wg.Add(1)
-		go func(workerID, startI, endI int) {
-			defer wg.Done()
-			rng := rand.New(rand.NewSource(int64(1791 + workerID*997)))
-			localShuffled := make([]observedVector, len(vectors))
-
-			for idx, vec := range vectors {
-				localShuffled[idx] = observedVector{
-					values:  make([]float64, len(vec.values)),
-					present: append([]bool(nil), vec.present...),
-				}
-			}
-
-			localNull := make([][]float64, 0, endI-startI)
-
-			for iteration := startI; iteration < endI; iteration++ {
-				for idx, vec := range vectors {
-					copy(localShuffled[idx].values, vec.values)
-					shuffleObservedValues(rng, localShuffled[idx].values, vec.present)
-				}
-
-				localNull = append(localNull, pairCorrelations(localShuffled, groups))
-			}
-
-			results[workerID] = localNull
-		}(worker, startIter, endIter)
-	}
-
-	wg.Wait()
-
-	nullValues := make([]float64, 0, len(realConcordances)*permutations)
-	var nullIterations [][]float64
-
-	for _, chunk := range results {
-		for _, iteration := range chunk {
-			nullValues = append(nullValues, iteration...)
-			nullIterations = append(nullIterations, iteration)
+	// Reusable permuted vector holder for the permutation iterations
+	permutedVectors := make([]observedVector, len(vectors))
+	for vecIndex, vec := range vectors {
+		permutedVectors[vecIndex] = observedVector{
+			ticks:  vec.ticks,
+			values: make([]float64, len(vec.values)),
 		}
 	}
 
-	if len(nullValues) == 0 {
+	nullIterations := make([][]float64, permutations)
+	totalNullPairs := 0
+
+	nullMean := 0.0
+	nullM2 := 0.0
+	nullCount := 0
+	nullBins, nullCounts, step := createHistogramBins(25, -1, 1)
+
+	for iter := 0; iter < permutations; iter++ {
+		for vecIndex, vec := range vectors {
+			permuted := blockPermute(rng, vec.values, blockSizes[vecIndex])
+			permutedVectors[vecIndex].values = permuted
+		}
+
+		iterCorrs := pairCorrelations(permutedVectors, groups)
+		iterAbs := make([]float64, len(iterCorrs))
+
+		for idx, val := range iterCorrs {
+			iterAbs[idx] = math.Abs(val)
+			nullCount++
+			delta := val - nullMean
+			nullMean += delta / float64(nullCount)
+			nullM2 += delta * (val - nullMean)
+			addToHistogram(nullCounts, val, -1, 1, step)
+		}
+
+		nullIterations[iter] = iterAbs
+		totalNullPairs += len(iterAbs)
+	}
+
+	if totalNullPairs == 0 {
 		return Stage2Sympathy{
 			TotalPairs:    len(realConcordances),
 			PositivePairs: positiveCount,
@@ -178,14 +178,22 @@ func AnalyzeSympathy(
 		}
 	}
 
-	nullMean, nullVariance := meanAndVar(nullValues)
-	nullBins, nullCounts := histogram(nullValues, 25, -1, 1)
+	nullVariance := 0.0
+	if nullCount > 1 {
+		nullVariance = nullM2 / float64(nullCount-1)
+	}
 
-	absReal := absoluteValues(realConcordances)
-	absNull := absoluteValues(nullValues)
+	absNull := make([]float64, 0, totalNullPairs)
+	for _, iterAbs := range nullIterations {
+		absNull = append(absNull, iterAbs...)
+	}
+
 	sort.Float64s(absNull)
 	p95Abs := empiricalQuantile(absNull, 0.95)
 	p99Abs := empiricalQuantile(absNull, 0.99)
+
+	absReal := absoluteValues(realConcordances)
+	sort.Float64s(absReal)
 
 	exceeding := 0
 	for _, value := range absReal {
@@ -195,28 +203,25 @@ func AnalyzeSympathy(
 	}
 
 	separationRatio := float64(exceeding) / float64(len(absReal))
-	ksStat := computeKolmogorovSmirnov(absReal, absNull)
+	ksStat := computeKolmogorovSmirnovSorted(absReal, absNull)
 
 	// The null for the exceedance fraction is the same fraction in each
-	// shuffled iteration against the same pooled p95. Its spread carries the
-	// dependence between pairs that share a channel, which a binomial on
-	// independent pairs would ignore.
+	// shuffled iteration against the same pooled p95.
 	nullFractions := make([]float64, 0, len(nullIterations))
 
-	for _, iteration := range nullIterations {
-		if len(iteration) == 0 {
+	for _, iterAbs := range nullIterations {
+		if len(iterAbs) == 0 {
 			continue
 		}
 
 		above := 0
-
-		for _, value := range iteration {
-			if math.Abs(value) > p95Abs {
+		for _, val := range iterAbs {
+			if val > p95Abs {
 				above++
 			}
 		}
 
-		nullFractions = append(nullFractions, float64(above)/float64(len(iteration)))
+		nullFractions = append(nullFractions, float64(above)/float64(len(iterAbs)))
 	}
 
 	pValue := upperPValue(separationRatio, nullFractions)
@@ -254,62 +259,166 @@ func AnalyzeSympathy(
 }
 
 func pairCorrelations(vectors []observedVector, groups [][]int) []float64 {
-	results := make([]float64, 0)
+	workers := runtime.NumCPU()
+	if workers < 1 {
+		workers = 1
+	}
 
+	type pairTask struct {
+		left   int
+		rights []int
+	}
+
+	totalTasks := 0
 	for _, group := range groups {
+		if len(group) < 2 {
+			continue
+		}
+
+		totalTasks += len(group) - 1
+	}
+
+	if totalTasks == 0 {
+		return nil
+	}
+
+	tasks := make([]pairTask, 0, totalTasks)
+	for _, group := range groups {
+		if len(group) < 2 {
+			continue
+		}
+
 		for leftAt, left := range group {
-			for _, right := range group[leftAt+1:] {
-				if correlation, ok := maskedCorrelation(vectors[left], vectors[right]); ok {
-					results = append(results, correlation)
-				}
+			rights := group[leftAt+1:]
+			if len(rights) > 0 {
+				tasks = append(tasks, pairTask{left: left, rights: rights})
 			}
 		}
 	}
 
-	return results
+	if workers == 1 || len(tasks) < workers {
+		results := make([]float64, 0)
+		for _, task := range tasks {
+			vecLeft := vectors[task.left]
+			for _, right := range task.rights {
+				if correlation, ok := maskedCorrelation(vecLeft, vectors[right]); ok {
+					results = append(results, correlation)
+				}
+			}
+		}
+
+		return results
+	}
+
+	results := make([][]float64, workers)
+	var waitGroup sync.WaitGroup
+
+	for worker := 0; worker < workers; worker++ {
+		waitGroup.Add(1)
+		go func(workerID int) {
+			defer waitGroup.Done()
+			localResults := make([]float64, 0)
+
+			for taskIdx := workerID; taskIdx < len(tasks); taskIdx += workers {
+				task := tasks[taskIdx]
+				vecLeft := vectors[task.left]
+
+				for _, right := range task.rights {
+					if correlation, ok := maskedCorrelation(vecLeft, vectors[right]); ok {
+						localResults = append(localResults, correlation)
+					}
+				}
+			}
+
+			results[workerID] = localResults
+		}(worker)
+	}
+
+	waitGroup.Wait()
+
+	totalCorrelations := 0
+	for _, chunk := range results {
+		totalCorrelations += len(chunk)
+	}
+
+	merged := make([]float64, 0, totalCorrelations)
+	for _, chunk := range results {
+		merged = append(merged, chunk...)
+	}
+
+	return merged
 }
 
 func maskedCorrelation(left, right observedVector) (float64, bool) {
-	if len(left.values) != len(right.values) ||
-		len(left.present) != len(left.values) ||
-		len(right.present) != len(right.values) {
+	lenLeft := len(left.ticks)
+	lenRight := len(right.ticks)
+
+	if lenLeft < 10 || lenRight < 10 {
 		return 0, false
 	}
 
 	count := 0
 	sumLeft, sumRight := 0.0, 0.0
-	for index := range left.values {
-		if !left.present[index] || !right.present[index] {
+	idxLeft, idxRight := 0, 0
+
+	for idxLeft < lenLeft && idxRight < lenRight {
+		tickLeft := left.ticks[idxLeft]
+		tickRight := right.ticks[idxRight]
+
+		if tickLeft == tickRight {
+			count++
+			sumLeft += left.values[idxLeft]
+			sumRight += right.values[idxRight]
+			idxLeft++
+			idxRight++
 			continue
 		}
-		count++
-		sumLeft += left.values[index]
-		sumRight += right.values[index]
+
+		if tickLeft < tickRight {
+			idxLeft++
+			continue
+		}
+
+		idxRight++
 	}
+
 	if count < 10 {
 		return 0, false
 	}
 
 	meanLeft := sumLeft / float64(count)
 	meanRight := sumRight / float64(count)
-	covariance, varianceLeft, varianceRight := 0.0, 0.0, 0.0
+	covariance, varLeft, varRight := 0.0, 0.0, 0.0
 
-	for index := range left.values {
-		if !left.present[index] || !right.present[index] {
+	idxLeft, idxRight = 0, 0
+	for idxLeft < lenLeft && idxRight < lenRight {
+		tickLeft := left.ticks[idxLeft]
+		tickRight := right.ticks[idxRight]
+
+		if tickLeft == tickRight {
+			deltaLeft := left.values[idxLeft] - meanLeft
+			deltaRight := right.values[idxRight] - meanRight
+			covariance += deltaLeft * deltaRight
+			varLeft += deltaLeft * deltaLeft
+			varRight += deltaRight * deltaRight
+			idxLeft++
+			idxRight++
 			continue
 		}
-		deltaLeft := left.values[index] - meanLeft
-		deltaRight := right.values[index] - meanRight
-		covariance += deltaLeft * deltaRight
-		varianceLeft += deltaLeft * deltaLeft
-		varianceRight += deltaRight * deltaRight
+
+		if tickLeft < tickRight {
+			idxLeft++
+			continue
+		}
+
+		idxRight++
 	}
 
-	if varianceLeft <= 0 || varianceRight <= 0 {
+	if varLeft <= 0 || varRight <= 0 {
 		return 0, false
 	}
 
-	value := covariance / math.Sqrt(varianceLeft*varianceRight)
+	value := covariance / math.Sqrt(varLeft*varRight)
 	return math.Max(-1, math.Min(1, value)), true
 }
 
@@ -425,26 +534,28 @@ func blockPermute(rng *rand.Rand, values []float64, blockSize int) []float64 {
 		shifted[idx] = values[(idx+phaseShift)%totalLen]
 	}
 
-	blocks := make([][]float64, 0, (totalLen+blockSize-1)/blockSize)
-
-	for start := 0; start < totalLen; start += blockSize {
-		end := start + blockSize
-
-		if end > totalLen {
-			end = totalLen
-		}
-
-		blocks = append(blocks, append([]float64(nil), shifted[start:end]...))
+	numBlocks := (totalLen + blockSize - 1) / blockSize
+	order := make([]int, numBlocks)
+	for idx := range order {
+		order[idx] = idx
 	}
 
-	rng.Shuffle(len(blocks), func(idxA, idxB int) {
-		blocks[idxA], blocks[idxB] = blocks[idxB], blocks[idxA]
+	rng.Shuffle(numBlocks, func(idxA, idxB int) {
+		order[idxA], order[idxB] = order[idxB], order[idxA]
 	})
 
-	result := make([]float64, 0, totalLen)
+	result := make([]float64, totalLen)
+	destPos := 0
 
-	for _, blk := range blocks {
-		result = append(result, blk...)
+	for _, blockIdx := range order {
+		startPos := blockIdx * blockSize
+		endPos := startPos + blockSize
+		if endPos > totalLen {
+			endPos = totalLen
+		}
+
+		copy(result[destPos:], shifted[startPos:endPos])
+		destPos += endPos - startPos
 	}
 
 	return result
@@ -462,19 +573,24 @@ func empiricalQuantile(sorted []float64, quantile float64) float64 {
 	if len(sorted) == 0 {
 		return 0
 	}
+
 	if quantile <= 0 {
 		return sorted[0]
 	}
+
 	if quantile >= 1 {
 		return sorted[len(sorted)-1]
 	}
+
 	index := int(math.Ceil(quantile*float64(len(sorted)))) - 1
 	if index < 0 {
 		index = 0
 	}
+
 	if index >= len(sorted) {
 		index = len(sorted) - 1
 	}
+
 	return sorted[index]
 }
 
@@ -488,32 +604,51 @@ func computeKolmogorovSmirnov(real, null []float64) float64 {
 	sort.Float64s(sortedReal)
 	sort.Float64s(sortedNull)
 
+	return computeKolmogorovSmirnovSorted(sortedReal, sortedNull)
+}
+
+func computeKolmogorovSmirnovSorted(sortedReal, sortedNull []float64) float64 {
+	lenReal := len(sortedReal)
+	lenNull := len(sortedNull)
+
+	if lenReal == 0 || lenNull == 0 {
+		return 0
+	}
+
 	maxDistance := 0.0
 	realIndex, nullIndex := 0, 0
-	for realIndex < len(sortedReal) || nullIndex < len(sortedNull) {
-		var value float64
-		switch {
-		case realIndex >= len(sortedReal):
-			value = sortedNull[nullIndex]
-		case nullIndex >= len(sortedNull):
-			value = sortedReal[realIndex]
-		case sortedReal[realIndex] <= sortedNull[nullIndex]:
-			value = sortedReal[realIndex]
-		default:
-			value = sortedNull[nullIndex]
+
+	for realIndex < lenReal || nullIndex < lenNull {
+		var currentValue float64
+
+		if realIndex >= lenReal {
+			currentValue = sortedNull[nullIndex]
 		}
 
-		for realIndex < len(sortedReal) && sortedReal[realIndex] <= value {
+		if realIndex < lenReal && nullIndex >= lenNull {
+			currentValue = sortedReal[realIndex]
+		}
+
+		if realIndex < lenReal && nullIndex < lenNull {
+			currentValue = sortedReal[realIndex]
+			if sortedNull[nullIndex] < sortedReal[realIndex] {
+				currentValue = sortedNull[nullIndex]
+			}
+		}
+
+		for realIndex < lenReal && sortedReal[realIndex] <= currentValue {
 			realIndex++
 		}
-		for nullIndex < len(sortedNull) && sortedNull[nullIndex] <= value {
+
+		for nullIndex < lenNull && sortedNull[nullIndex] <= currentValue {
 			nullIndex++
 		}
 
 		distance := math.Abs(
-			float64(realIndex)/float64(len(sortedReal)) -
-				float64(nullIndex)/float64(len(sortedNull)),
+			float64(realIndex)/float64(lenReal) -
+				float64(nullIndex)/float64(lenNull),
 		)
+
 		if distance > maxDistance {
 			maxDistance = distance
 		}
@@ -522,25 +657,41 @@ func computeKolmogorovSmirnov(real, null []float64) float64 {
 	return maxDistance
 }
 
-func histogram(values []float64, bins int, minValue, maxValue float64) ([]float64, []int) {
+func createHistogramBins(bins int, minValue, maxValue float64) ([]float64, []int, float64) {
 	if bins <= 0 {
 		bins = 20
 	}
+
 	step := (maxValue - minValue) / float64(bins)
 	edges := make([]float64, bins+1)
 	counts := make([]int, bins)
+
 	for index := range edges {
 		edges[index] = minValue + float64(index)*step
 	}
-	for _, value := range values {
-		if value < minValue || value > maxValue {
-			continue
-		}
-		index := int((value - minValue) / step)
-		if index >= bins {
-			index = bins - 1
-		}
-		counts[index]++
+
+	return edges, counts, step
+}
+
+func addToHistogram(counts []int, value, minValue, maxValue, step float64) {
+	if value < minValue || value > maxValue {
+		return
 	}
+
+	index := int((value - minValue) / step)
+	if index >= len(counts) {
+		index = len(counts) - 1
+	}
+
+	counts[index]++
+}
+
+func histogram(values []float64, bins int, minValue, maxValue float64) ([]float64, []int) {
+	edges, counts, step := createHistogramBins(bins, minValue, maxValue)
+
+	for _, value := range values {
+		addToHistogram(counts, value, minValue, maxValue, step)
+	}
+
 	return edges, counts
 }

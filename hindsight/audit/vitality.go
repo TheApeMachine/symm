@@ -195,20 +195,20 @@ func findCanonicalRedundantPairs(
 	dense := make([]denseVector, totalHealthy)
 	for index, name := range healthyNames {
 		ser := series[name]
-		vals := make([]float64, len(ticks))
-		pres := make([]bool, len(ticks))
+		vecTicks := make([]int32, 0, min(len(ser), len(ticks)))
+		vecVals := make([]float64, 0, len(vecTicks))
 
-		for tIdx, tick := range ticks {
+		for tickIndex, tick := range ticks {
 			if val, ok := ser[tick]; ok {
-				vals[tIdx] = val
-				pres[tIdx] = true
+				vecTicks = append(vecTicks, int32(tickIndex))
+				vecVals = append(vecVals, val)
 			}
 		}
 
 		dense[index] = denseVector{
-			name:    name,
-			values:  vals,
-			present: pres,
+			name:   name,
+			ticks:  vecTicks,
+			values: vecVals,
 		}
 	}
 
@@ -232,7 +232,7 @@ func findCanonicalRedundantPairs(
 
 					for _, second := range groups[groupIndex][firstAt+1:] {
 						vecB := dense[second]
-						corr, ok := denseCorrelation(vecA.values, vecA.present, vecB.values, vecB.present)
+						corr, ok := denseCorrelation(vecA.ticks, vecA.values, vecB.ticks, vecB.values)
 
 						if !ok {
 							continue
@@ -276,27 +276,48 @@ func findCanonicalRedundantPairs(
 }
 
 type denseVector struct {
-	name    string
-	values  []float64
-	present []bool
+	name   string
+	ticks  []int32
+	values []float64
 }
 
 func denseCorrelation(
+	ticksA []int32,
 	valsA []float64,
-	presA []bool,
+	ticksB []int32,
 	valsB []float64,
-	presB []bool,
 ) (float64, bool) {
+	lenA := len(ticksA)
+	lenB := len(ticksB)
+
+	if lenA < 10 || lenB < 10 {
+		return 0, false
+	}
+
 	count := 0
 	sumA := 0.0
 	sumB := 0.0
+	idxA, idxB := 0, 0
 
-	for idx := range presA {
-		if presA[idx] && presB[idx] {
+	for idxA < lenA && idxB < lenB {
+		tickA := ticksA[idxA]
+		tickB := ticksB[idxB]
+
+		if tickA == tickB {
 			count++
-			sumA += valsA[idx]
-			sumB += valsB[idx]
+			sumA += valsA[idxA]
+			sumB += valsB[idxB]
+			idxA++
+			idxB++
+			continue
 		}
+
+		if tickA < tickB {
+			idxA++
+			continue
+		}
+
+		idxB++
 	}
 
 	if count < 10 {
@@ -310,14 +331,28 @@ func denseCorrelation(
 	m2B := 0.0
 	cov := 0.0
 
-	for idx := range presA {
-		if presA[idx] && presB[idx] {
-			diffA := valsA[idx] - meanA
-			diffB := valsB[idx] - meanB
+	idxA, idxB = 0, 0
+	for idxA < lenA && idxB < lenB {
+		tickA := ticksA[idxA]
+		tickB := ticksB[idxB]
+
+		if tickA == tickB {
+			diffA := valsA[idxA] - meanA
+			diffB := valsB[idxB] - meanB
 			m2A += diffA * diffA
 			m2B += diffB * diffB
 			cov += diffA * diffB
+			idxA++
+			idxB++
+			continue
 		}
+
+		if tickA < tickB {
+			idxA++
+			continue
+		}
+
+		idxB++
 	}
 
 	if m2A <= 0 || m2B <= 0 {

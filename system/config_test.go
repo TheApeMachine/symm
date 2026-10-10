@@ -25,27 +25,3 @@ func TestNewConfig(t *testing.T) {
 		})
 	})
 }
-
-func TestPlannerPolicy(t *testing.T) {
-	Convey("Given a populated system configuration", t, func() {
-		config := NewConfig()
-		policy, err := config.PlannerPolicy()
-
-		Convey("It should return the planner policy by value", func() {
-			So(err, ShouldBeNil)
-			So(policy, ShouldResemble, *config.Planner)
-		})
-	})
-}
-
-func TestCognitionSwitchConfidence(t *testing.T) {
-	Convey("Given a configured cognition switch boundary", t, func() {
-		config := NewConfig()
-		confidence, err := config.CognitionSwitchConfidence()
-
-		Convey("It should read the scalar without allocating a configuration graph", func() {
-			So(err, ShouldBeNil)
-			So(confidence, ShouldEqual, config.Planner.CognitionSwitchConfidence)
-		})
-	})
-}
