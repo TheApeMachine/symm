@@ -67,6 +67,79 @@ func TestAuditStages(t *testing.T) {
 			So(contract.TotalMetricsChecked, ShouldEqual, 9)
 			So(contract.BreachingMetricsCount, ShouldEqual, 5)
 			So(contract.Passed, ShouldBeFalse)
+
+			Convey("with physical market quantities violating non-negativity and bounds", func() {
+				physMeas := data.NewMeasurement(1, "BTC/USD", "market", 2, 2)
+				physMeas.At = time.Now().UTC()
+				physMeas.From = physMeas.At
+				physMeas = physMeas.Write(
+					data.NewMetric("bad_price", -100.0, data.UnitPrice, data.TimescaleInstantaneous),
+					data.NewMetric("bad_qty", -5.0, data.UnitQuantity, data.TimescaleInstantaneous),
+					data.NewMetric("bad_vol", -1.0, data.UnitVolume, data.TimescaleInstantaneous),
+					data.NewMetric("bad_std", -0.5, data.UnitStandardDeviation, data.TimescaleRollingWindow),
+					data.NewMetric("bad_rate", -2.0, data.UnitTradeRate, data.TimescaleRollingWindow),
+					data.NewMetric("bad_duration", -10.0, data.UnitDuration, data.TimescaleInstantaneous),
+					data.NewMetric("bad_spread", -0.25, data.UnitSpread, data.TimescaleInstantaneous),
+					data.NewMetric("bad_imbalance", 1.8, data.UnitRatio, data.TimescaleInstantaneous),
+					data.NewMetric("bad_percentile", 1.5, data.UnitProbability, data.TimescaleRollingWindow),
+					data.NewMetric("undeclared_metric", 10.0, data.Unit("fabricated_unit"), data.TimescaleInstantaneous),
+				)
+
+				physContract := AnalyzeContract([]*data.Measurement{physMeas}, 0.05)
+				So(physContract.TotalMetricsChecked, ShouldEqual, 10)
+				So(physContract.BreachingMetricsCount, ShouldEqual, 10)
+				So(physContract.Passed, ShouldBeFalse)
+			})
+
+			Convey("with measurement state invariant violations", func() {
+				badMeas := data.NewMeasurement(0, "", "", 3, 3)
+				badMeas.ID = 0
+				badContract := AnalyzeContract([]*data.Measurement{badMeas}, 0.05)
+				So(badContract.MeasurementState.UnlockedBreaches, ShouldEqual, 1)
+				So(badContract.MeasurementState.EpochBreaches, ShouldEqual, 1)
+				So(badContract.MeasurementState.LabelBreaches, ShouldEqual, 1)
+				So(badContract.MeasurementState.SourceBreaches, ShouldEqual, 1)
+				So(badContract.MeasurementState.TimingBreaches, ShouldEqual, 1)
+				So(badContract.MeasurementState.Passed, ShouldBeFalse)
+				So(badContract.Passed, ShouldBeFalse)
+			})
+
+			Convey("with compliant physical metrics complying with all contracts", func() {
+				cleanMeas := data.NewMeasurement(1, "BTC/USD", "market", 4, 4)
+				cleanMeas.At = time.Now().UTC()
+				cleanMeas.From = cleanMeas.At
+				cleanMeas = cleanMeas.Write(
+					data.NewMetric("price", 60000.0, data.UnitPrice, data.TimescaleInstantaneous),
+					data.NewMetric("qty", 1.5, data.UnitQuantity, data.TimescaleInstantaneous),
+					data.NewMetric("volume", 90000.0, data.UnitVolume, data.TimescaleInstantaneous),
+					data.NewMetric("spread", 0.5, data.UnitSpread, data.TimescaleInstantaneous),
+					data.NewMetric("trade_rate", 25.0, data.UnitTradeRate, data.TimescaleRollingWindow),
+					data.NewMetric("duration", 100.0, data.UnitDuration, data.TimescaleInstantaneous),
+					data.NewMetric("book_imbalance", 0.35, data.UnitRatio, data.TimescaleInstantaneous),
+				)
+
+				cleanContract := AnalyzeContract([]*data.Measurement{cleanMeas}, 0.05)
+				So(cleanContract.TotalMetricsChecked, ShouldEqual, 7)
+				So(cleanContract.BreachingMetricsCount, ShouldEqual, 0)
+				So(cleanContract.MeasurementState.CoherenceBreaches, ShouldEqual, 0)
+				So(cleanContract.MeasurementState.CoherenceRecomputeBreaches, ShouldEqual, 0)
+				So(cleanContract.MeasurementState.EnergyBreaches, ShouldEqual, 0)
+				So(cleanContract.MeasurementState.ConfidenceBreaches, ShouldEqual, 0)
+				So(cleanContract.MeasurementState.IdentityBreaches, ShouldEqual, 0)
+				So(cleanContract.MeasurementState.DampenBreaches, ShouldEqual, 0)
+				So(cleanContract.MeasurementState.Passed, ShouldBeTrue)
+				So(cleanContract.Passed, ShouldBeTrue)
+
+				// Verify Dampen behavior on cleanMeas
+				dampened := cleanMeas.Dampen()
+				So(len(dampened), ShouldEqual, 7)
+				for _, dm := range dampened {
+					orig := data.Pull(cleanMeas.Read(dm.Label))
+					So(orig, ShouldNotBeNil)
+					So(dm.Standardized, ShouldAlmostEqual, orig.Metric.Standardized*cleanMeas.Confidence(), 1e-6)
+					So(math.Abs(dm.Standardized), ShouldBeLessThanOrEqualTo, math.Abs(orig.Metric.Standardized)+1e-9)
+				}
+			})
 		})
 
 		Convey("When analyzing timing and clock synchronization (Stage 0.5)", func() {

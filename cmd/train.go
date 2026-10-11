@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
@@ -25,6 +26,20 @@ over historical excursions and continuous sensory tape, constructing an unpruned
 action tree published to S3 storage.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		system.NewConfig()
+
+		_, err := pyroscope.Start(pyroscope.Config{
+			ApplicationName: "symm.train.theapemachine.app",
+			ServerAddress:   "http://localhost:4040",
+			Logger:          nil,
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"[train] error starting pyroscope profiler",
+				err,
+			))
+		}
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -68,7 +83,11 @@ action tree published to S3 storage.`,
 		}
 
 		if trainFeePct == "" {
-			trainFeePct = "0.26"
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[train] --taker-fee-percent is required and must be specified",
+				nil,
+			))
 		}
 
 		price, err := offlinePrice(ctx, trainFeePct, trainSymbols)
@@ -90,6 +109,6 @@ action tree published to S3 storage.`,
 func init() {
 	trainCmd.Flags().Int64SliceVar(&trainEpochs, "epoch", nil, "Run epoch to train on (repeatable; default: all completed epochs)")
 	trainCmd.Flags().StringSliceVar(&trainSymbols, "symbols", nil, "Symbols to evaluate, e.g. BTC/USD,ETH/USD")
-	trainCmd.Flags().StringVar(&trainFeePct, "taker-fee-percent", "0.26", "Taker fee in percent per side that defines friction")
+	trainCmd.Flags().StringVar(&trainFeePct, "taker-fee-percent", "0.8", "Taker fee in percent per side that defines friction")
 	rootCmd.AddCommand(trainCmd)
 }

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -33,7 +34,21 @@ func AnalyzeTiming(measurements []*data.Measurement, thresholds Thresholds) Stag
 
 	for _, meas := range measurements {
 		if meas == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.timing] nil measurement in audit stream",
+				nil,
+			))
+
 			continue
+		}
+
+		if meas.At.IsZero() {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.timing] measurement timestamp At is zero",
+				nil,
+			), "label", meas.Label, "source", meas.Source)
 		}
 
 		if !meas.At.IsZero() && meas.Timestamp > 0 {
@@ -48,6 +63,12 @@ func AnalyzeTiming(measurements []*data.Measurement, thresholds Thresholds) Stag
 			lastAt, exists := lastAtByStream[stream]
 
 			if exists && meas.At.Before(lastAt) {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.timing] sequence inversion detected in stream",
+					nil,
+				), "stream", stream, "currentAt", meas.At, "lastAt", lastAt)
+
 				inversions++
 			}
 

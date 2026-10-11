@@ -54,37 +54,85 @@ func newBatchCols(batch arrow.RecordBatch) (*batchCols, error) {
 
 		switch batch.ColumnName(colIdx) {
 		case "epoch":
-			cols.epochCol, _ = col.(*array.Int64)
+			var ok bool
+			if cols.epochCol, ok = col.(*array.Int64); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column epoch is not *array.Int64", nil))
+			}
 		case "seqIdx":
-			cols.seqIdxCol, _ = col.(*array.Int64)
+			var ok bool
+			if cols.seqIdxCol, ok = col.(*array.Int64); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column seqIdx is not *array.Int64", nil))
+			}
 		case "source":
-			cols.sourceCol, _ = col.(*array.String)
+			var ok bool
+			if cols.sourceCol, ok = col.(*array.String); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column source is not *array.String", nil))
+			}
 		case "label":
-			cols.labelCol, _ = col.(*array.String)
+			var ok bool
+			if cols.labelCol, ok = col.(*array.String); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column label is not *array.String", nil))
+			}
 		case "tick":
-			cols.tickCol, _ = col.(*array.Int64)
+			var ok bool
+			if cols.tickCol, ok = col.(*array.Int64); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column tick is not *array.Int64", nil))
+			}
 		case "at":
-			cols.atCol, _ = col.(*array.Timestamp)
+			var ok bool
+			if cols.atCol, ok = col.(*array.Timestamp); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column at is not *array.Timestamp", nil))
+			}
 		case "from":
-			cols.fromCol, _ = col.(*array.Timestamp)
+			var ok bool
+			if cols.fromCol, ok = col.(*array.Timestamp); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column from is not *array.Timestamp", nil))
+			}
 		case "timestamp":
-			cols.timestampCol, _ = col.(*array.Int64)
+			var ok bool
+			if cols.timestampCol, ok = col.(*array.Int64); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column timestamp is not *array.Int64", nil))
+			}
 		case "id":
-			cols.idCol, _ = col.(*array.Int64)
+			var ok bool
+			if cols.idCol, ok = col.(*array.Int64); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column id is not *array.Int64", nil))
+			}
 		case "coherence":
-			cols.coherenceCol, _ = col.(*array.Float64)
+			var ok bool
+			if cols.coherenceCol, ok = col.(*array.Float64); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column coherence is not *array.Float64", nil))
+			}
 		case "maturity":
-			cols.maturityCol, _ = col.(*array.Float64)
+			var ok bool
+			if cols.maturityCol, ok = col.(*array.Float64); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column maturity is not *array.Float64", nil))
+			}
 		case "samples":
-			cols.samplesCol, _ = col.(*array.Int64)
+			var ok bool
+			if cols.samplesCol, ok = col.(*array.Int64); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column samples is not *array.Int64", nil))
+			}
 		case "energy":
-			cols.energyCol, _ = col.(*array.Float64)
+			var ok bool
+			if cols.energyCol, ok = col.(*array.Float64); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column energy is not *array.Float64", nil))
+			}
 		case "prediction":
-			cols.predictionCol, _ = col.(*array.Float64)
+			var ok bool
+			if cols.predictionCol, ok = col.(*array.Float64); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column prediction is not *array.Float64", nil))
+			}
 		case "metrics":
-			cols.metricsCol, _ = col.(*array.Map)
+			var ok bool
+			if cols.metricsCol, ok = col.(*array.Map); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column metrics is not *array.Map", nil))
+			}
 		case "metadata":
-			cols.metadataCol, _ = col.(*array.Map)
+			var ok bool
+			if cols.metadataCol, ok = col.(*array.Map); !ok {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column metadata is not *array.Map", nil))
+			}
 		}
 	}
 
@@ -99,13 +147,21 @@ func newBatchCols(batch arrow.RecordBatch) (*batchCols, error) {
 	}
 
 	if cols.metadataCol != nil {
-		cols.metaKeyArray, _ = cols.metadataCol.Keys().(*array.String)
-		cols.metaValArray, _ = cols.metadataCol.Items().(*array.String)
+		var ok bool
+		if cols.metaKeyArray, ok = cols.metadataCol.Keys().(*array.String); !ok {
+			return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: metadata keys is not *array.String", nil))
+		}
+		if cols.metaValArray, ok = cols.metadataCol.Items().(*array.String); !ok {
+			return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: metadata items is not *array.String", nil))
+		}
 		cols.metaOffsets = cols.metadataCol.Offsets()
 	}
 
 	if cols.metricsCol != nil {
-		cols.metricsKeyArray, _ = cols.metricsCol.Keys().(*array.String)
+		var ok bool
+		if cols.metricsKeyArray, ok = cols.metricsCol.Keys().(*array.String); !ok {
+			return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: metrics keys is not *array.String", nil))
+		}
 		cols.metricsOffsets = cols.metricsCol.Offsets()
 
 		if itemStruct, ok := cols.metricsCol.Items().(*array.Struct); ok {
@@ -117,10 +173,10 @@ func newBatchCols(batch arrow.RecordBatch) (*batchCols, error) {
 			cols.scaleCol, _ = itemStruct.Field(5).(*array.Float64)
 			cols.unitCol, _ = itemStruct.Field(6).(*array.String)
 			cols.timeCol, _ = itemStruct.Field(7).(*array.String)
-		}
-
-		if floatItems, ok := cols.metricsCol.Items().(*array.Float64); ok {
+		} else if floatItems, ok := cols.metricsCol.Items().(*array.Float64); ok {
 			cols.floatItems = floatItems
+		} else {
+			return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: metrics items is neither *array.Struct nor *array.Float64", nil))
 		}
 	}
 
@@ -266,7 +322,7 @@ func (cols *batchCols) decodeRow(measurement *Measurement, rowIdx int) error {
 
 	measurement.valid()
 
-	if err := measurement.Error(); cols.confident && err != nil {
+	if err := measurement.Error(); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf(

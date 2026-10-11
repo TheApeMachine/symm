@@ -24,6 +24,14 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 		recEpoch = epoch[0]
 	}
 
+	if recEpoch <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[data.encoder] measurement epoch is non-positive",
+			nil,
+		), "label", measurement.Label, "source", measurement.Source)
+	}
+
 	epochBuilder := recordBuilder.Field(0).(*array.Int64Builder)
 	seqIdxBuilder := recordBuilder.Field(1).(*array.Int64Builder)
 	sourceBuilder := recordBuilder.Field(2).(*array.StringBuilder)

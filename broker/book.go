@@ -455,7 +455,7 @@ func (book *Book) apply(
 							}
 						}
 
-						if movedOldPrice != nil {
+						if movedOldPrice != nil && symbolSide.Levels != nil && symbolSide.Levels[movedOldPrice.String()] != nil {
 							symbolBook.Update(&spotbook.UpdateOptions{
 								Direction: direction,
 								ID:        order.OrderID,

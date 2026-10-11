@@ -3,10 +3,7 @@
 # export GOFLAGS so make targets and nested go/cgo subprocesses inherit the flag.
 # Outside Make, run: export GOFLAGS=-ldflags=-checklinkname=0
 # No inner quotes: a single shell layer passes the flag through unambiguously.
-export GOFLAGS := -ldflags=-checklinkname=0
 export GOEXPERIMENT := arenas
-
-LDFLAGS := $(GOFLAGS)
 
 # Metal pipeline compilation is XPC-global, so package binaries must not
 # initialize independent domains concurrently. The full-replay packages drive
@@ -37,21 +34,21 @@ generate-telemetry:
 test: test-go test-race test-frontend
 
 test-go:
-	go test $(LDFLAGS) $(GO_TEST_FLAGS) ./...
+	go test $(GO_TEST_FLAGS) ./...
 
 test-race:
-	go test $(LDFLAGS) $(GO_TEST_FLAGS) -race ./...
+	go test $(GO_TEST_FLAGS) -race ./...
 
 test-cover:
 	@mkdir -p runs
-	go test $(LDFLAGS) $(GO_TEST_FLAGS) -coverprofile=runs/coverage.out ./...
+	go test $(GO_TEST_FLAGS) -coverprofile=runs/coverage.out ./...
 	go tool cover -func=runs/coverage.out | tail -1
 
 test-frontend:
 	cd frontend && pnpm build
 
 bench:
-	go test $(LDFLAGS) $(GO_TEST_FLAGS) -bench=. -benchmem ./...
+	go test $(GO_TEST_FLAGS) -bench=. -benchmem ./...
 
 kill:
 	-lsof -t -i:8765 | xargs kill -9 || true
@@ -70,7 +67,7 @@ run:
 
 collect:
 	@echo "symm collect running (Ctrl+C to stop)"
-	go run $(LDFLAGS) main.go collect $(CONFIG_FLAG)
+	go run main.go collect $(CONFIG_FLAG)
 
 # The fee must be the one detect ran with (TAKER_FEE_PERCENT, same as detect
 # --taker-fee-percent); the audit checks it against the stored detections.
@@ -80,15 +77,15 @@ MIN_MOVE_DURATION ?= 1s
 
 detect:
 	@echo "Labeling spot:trade tape with excursion detections (taker fee $(TAKER_FEE_PERCENT)%, min move $(MIN_MOVE_DURATION))..."
-	go run $(LDFLAGS) main.go detect $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) --min-move-duration $(MIN_MOVE_DURATION) $(ARGS)
+	go run main.go detect $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) --min-move-duration $(MIN_MOVE_DURATION) $(ARGS)
 
 train:
 	@echo "Training action tree with MCTS over detected excursions and sensory tape..."
-	go run $(LDFLAGS) main.go train $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
+	go run main.go train $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
 
 audit:
 	@echo "Running SYMM sensory & representation health audit (taker fee $(TAKER_FEE_PERCENT)%)..."
-	go run $(LDFLAGS) main.go audit $(CONFIG_FLAG) --ticks 40000 --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
+	go run main.go audit $(CONFIG_FLAG) --ticks 40000 --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
 
 # Analytical Workbench is a separate process on purpose: DuckDB/cgo must not share
 # the trading binary. Hub proxies POST /workbench/query → workbench.url (default
@@ -96,32 +93,32 @@ audit:
 # for /workbench and Hindsight research timelines; trading stays up if it dies.
 workbench:
 	@echo "symm-workbench on :8081 (Ctrl+C to stop) — hub proxies /workbench/query here"
-	go run $(LDFLAGS) ./cmd/workbench
+	go run ./cmd/workbench
 
 experimental:
 	@echo "symm running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
 	@echo "Analytical workbench (separate): make workbench"
-	go run $(LDFLAGS) main.go experimental
+	go run main.go experimental
 
 backtest:
 	@echo "symm running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	go run $(LDFLAGS) main.go backtest
+	go run main.go backtest
 
 debug:
 	@echo "symm debug running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	export DATURA_INSPECT=1 && go run $(LDFLAGS) main.go
+	export DATURA_INSPECT=1 && go run main.go
 
 debug-inspect:
 	@echo "symm debug (DATURA_INSPECT) running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	export DATURA_INSPECT=1 && go run $(LDFLAGS) main.go
+	export DATURA_INSPECT=1 && go run main.go
 
 run-profile:
 	@echo "pprof http://127.0.0.1:6060/debug/pprof/"
-	SYMM_PPROF=1 go run $(LDFLAGS) main.go
+	SYMM_PPROF=1 go run main.go
 
 profile:
 	curl -o profile http://127.0.0.1:6060/debug/pprof/profile?seconds=30
@@ -145,7 +142,7 @@ physics-manifold-metallib:
 
 build: physics-metallib
 	@mkdir -p bin
-	go build $(LDFLAGS) -race -o $(SYMM_BIN) .
+	go build -race -o $(SYMM_BIN) .
 
 build-cuda:
 	p=nomagique/physics/sensorium

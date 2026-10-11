@@ -29,12 +29,9 @@ with a null that reassigns ticks to the two periods at random.
 func AnalyzeGridStability(
 	ticks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
-	healthyCells []MetricStat,
 	permutations int,
 	significance float64,
 ) Stage3GridStability {
-	_ = healthyCells // Population description belongs to Stage 1; production replay uses arrivals as observed.
-
 	totalTicks := len(ticks)
 	if totalTicks < 40 {
 		return Stage3GridStability{
@@ -44,7 +41,11 @@ func AnalyzeGridStability(
 		}
 	}
 	if permutations <= 0 {
-		permutations = 50
+		return Stage3GridStability{
+			SummaryText: "permutations must be strictly positive",
+			Status:      "INVALID_PARAMETER",
+			Passed:      false,
+		}
 	}
 
 	half := totalTicks / 2

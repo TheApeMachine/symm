@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/audit"
@@ -29,6 +30,20 @@ var auditCmd = &cobra.Command{
 	Long:  auditLong,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		system.NewConfig()
+
+		_, err := pyroscope.Start(pyroscope.Config{
+			ApplicationName: "symm.audit.theapemachine.app",
+			ServerAddress:   "http://localhost:4040",
+			Logger:          nil,
+		})
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"[audit] error starting pyroscope profiler",
+				err,
+			))
+		}
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()

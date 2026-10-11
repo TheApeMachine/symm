@@ -75,6 +75,10 @@ func AnalyzePrecursorSeparation(
 		return insufficientPrecursor("Taker fee must be strictly positive and declared with explicit provenance.")
 	}
 
+	if permutations <= 0 {
+		return insufficientPrecursor("Permutations must be strictly positive.")
+	}
+
 	fee := takerFee[0]
 
 	if detections == nil {
@@ -103,10 +107,28 @@ func AnalyzePrecursorSeparation(
 	excursions := make([]excursionInterval, 0, len(detections))
 	classSet := make(map[string]struct{})
 	for _, det := range detections {
-		class := det.Meta("type")
-		if class == "" {
-			class = "unknown"
+		if det == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.precursor] nil detection in detections slice",
+				nil,
+			))
+
+			continue
 		}
+
+		class := det.Meta("type")
+
+		if class == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.precursor] detection missing 'type' metadata",
+				nil,
+			), "label", det.Label)
+
+			continue
+		}
+
 		classSet[class] = struct{}{}
 
 		startTick := int64(getMeasurementMetric(det, "start_tick"))
@@ -114,6 +136,12 @@ func AnalyzePrecursorSeparation(
 		cTick := int64(getMeasurementMetric(det, "c_tick"))
 
 		if bTick <= 0 || cTick <= bTick {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.precursor] invalid excursion tick sequence",
+				nil,
+			), "bTick", bTick, "cTick", cTick, "label", det.Label)
+
 			continue
 		}
 
@@ -124,6 +152,12 @@ func AnalyzePrecursorSeparation(
 		startTick = lo
 
 		if bTick <= startTick {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.precursor] invalid startTick relative to bTick",
+				nil,
+			), "startTick", startTick, "bTick", bTick, "label", det.Label)
+
 			continue
 		}
 
@@ -864,6 +898,12 @@ func evaluateEconomicRelevance(
 
 	for _, excursion := range excursions {
 		if excursion.bPrice <= 0 || excursion.cPrice <= 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.precursor] excursion has non-positive bPrice or cPrice",
+				nil,
+			), "bPrice", excursion.bPrice, "cPrice", excursion.cPrice, "symbol", excursion.symbol)
+
 			continue
 		}
 

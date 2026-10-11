@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -35,11 +36,33 @@ func AnalyzeContract(
 
 	for _, meas := range measurements {
 		if meas == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.contract] nil measurement in audit slice",
+				nil,
+			))
+
+			continue
+		}
+
+		if meas.ID == 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.contract] unfinalized measurement (ID == 0)",
+				nil,
+			), "epoch", meas.Epoch, "label", meas.Label, "source", meas.Source)
+
 			continue
 		}
 
 		for entry := range meas.Read() {
 			if entry == nil || entry.Metric == nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.contract] nil metric entry in measurement",
+					nil,
+				), "label", meas.Label, "source", meas.Source)
+
 				continue
 			}
 
@@ -48,7 +71,9 @@ func AnalyzeContract(
 			val := metric.Raw
 			unit := metric.Unit()
 
-			unit = resolveImpliedUnit(name, unit)
+			if unit == "" || unit == data.UnitDimensionless {
+				unit = data.CanonicalUnit(name, unit)
+			}
 
 			// One contract series per producer: the same label from two
 			// sources is two series with two owners.
@@ -76,6 +101,12 @@ func AnalyzeContract(
 			}
 
 			if violation := contractViolation(unit, val, name); violation != "" {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					fmt.Sprintf("[audit.contract] metric contract violation: %s", violation),
+					nil,
+				), "series", key, "value", val, "unit", string(unit), "domain", acc.domain)
+
 				acc.breaches++
 				acc.violation = violation
 			}
@@ -161,11 +192,37 @@ func auditMetricNormalization(measurements []*data.Measurement, significance flo
 
 	for _, meas := range measurements {
 		if meas == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.metric_norm] nil measurement encountered in audit stream",
+				nil,
+			))
+
+			continue
+		}
+
+		if meas.ID == 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.metric_norm] measurement with unassigned ID (zero) encountered in audit stream",
+				nil,
+			), "source", meas.Source, "label", meas.Label, "epoch", meas.Epoch)
+
 			continue
 		}
 
 		for entry := range meas.Read() {
-			if entry != nil && entry.Metric != nil && entry.Metric.Standardizable() {
+			if entry == nil || entry.Metric == nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.metric_norm] nil metric entry in measurement",
+					nil,
+				), "label", meas.Label, "source", meas.Source)
+
+				continue
+			}
+
+			if entry.Metric.Standardizable() {
 				streamCounts[streamKey{meas.Source, meas.Label, entry.Metric.Label}]++
 			}
 		}
@@ -185,11 +242,33 @@ func auditMetricNormalization(measurements []*data.Measurement, significance flo
 
 	for _, meas := range measurements {
 		if meas == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.metric_norm] nil measurement encountered in audit stream",
+				nil,
+			))
+
+			continue
+		}
+
+		if meas.ID == 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.metric_norm] measurement with unassigned ID (zero) encountered in audit stream",
+				nil,
+			), "source", meas.Source, "label", meas.Label, "epoch", meas.Epoch)
+
 			continue
 		}
 
 		for entry := range meas.Read() {
 			if entry == nil || entry.Metric == nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.metric_norm] nil metric entry in measurement",
+					nil,
+				), "label", meas.Label, "source", meas.Source)
+
 				continue
 			}
 
@@ -199,6 +278,12 @@ func auditMetricNormalization(measurements []*data.Measurement, significance flo
 			norm := metric.Normalized
 
 			if math.IsNaN(std) || math.IsInf(std, 0) {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.metric_norm] standardized z-score is NaN or Inf",
+					nil,
+				), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "z", std)
+
 				stdBreaches++
 				continue
 			}
@@ -212,6 +297,12 @@ func auditMetricNormalization(measurements []*data.Measurement, significance flo
 				maxAbsZBySource[meas.Source] = math.Max(maxAbsZBySource[meas.Source], absZ)
 
 				if absZ > zBound(streamCounts[streamKey{meas.Source, meas.Label, metric.Label}], significance) {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"[audit.metric_norm] standardized z-score exceeded Chebyshev scale bound",
+						nil,
+					), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "z", std)
+
 					zBreaches++
 					zBreachesBySource[meas.Source]++
 				}
@@ -221,12 +312,24 @@ func auditMetricNormalization(measurements []*data.Measurement, significance flo
 			sumZSq += std * std
 
 			if math.IsNaN(norm) || math.IsInf(norm, 0) || norm < -1.0 || norm > 1.0 {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.metric_norm] normalized value out of bounds [-1, 1] or NaN/Inf",
+					nil,
+				), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "norm", norm)
+
 				normBreaches++
 				continue
 			}
 
 			expectedNorm := math.Tanh(std)
 			if math.Abs(norm-expectedNorm) > 1e-4 {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.metric_norm] normalized activation mismatch (|norm - tanh(std)| > 1e-4)",
+					nil,
+				), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "norm", norm, "expected", expectedNorm)
+
 				normBreaches++
 			}
 
@@ -270,10 +373,17 @@ func auditMetricNormalization(measurements []*data.Measurement, significance flo
 func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAudit {
 	totalAudited := 0
 	unlockedBreaches := 0
+	epochBreaches := 0
+	labelBreaches := 0
+	sourceBreaches := 0
+	timingBreaches := 0
 	coherenceBreaches := 0
+	coherenceRecomputeBreaches := 0
 	maturityBreaches := 0
 	confidenceBreaches := 0
+	energyBreaches := 0
 	identityBreaches := 0
+	dampenBreaches := 0
 
 	coherences := make([]float64, 0, len(measurements))
 	maturities := make([]float64, 0, len(measurements))
@@ -284,6 +394,12 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 
 	for _, meas := range measurements {
 		if meas == nil {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"[audit] measurement is nil",
+				nil,
+			))
+
 			continue
 		}
 
@@ -293,39 +409,220 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			unlockedBreaches++
 		}
 
+		if meas.Epoch <= 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] measurement epoch <= 0",
+				nil,
+			), "epoch", meas.Epoch, "label", meas.Label, "source", meas.Source)
+
+			epochBreaches++
+		}
+
+		if meas.Label == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] measurement label is empty",
+				nil,
+			), "source", meas.Source)
+
+			labelBreaches++
+		}
+
+		if meas.Source == "" {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] measurement source is empty",
+				nil,
+			), "label", meas.Label)
+
+			sourceBreaches++
+		}
+
+		if meas.At.IsZero() {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] measurement timestamp At is zero",
+				nil,
+			), "label", meas.Label, "source", meas.Source)
+
+			timingBreaches++
+		}
+
+		if meas.ID == 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] measurement is not finalized (ID == 0)",
+				nil,
+			), "epoch", meas.Epoch, "label", meas.Label, "source", meas.Source)
+
+			continue
+		}
+
 		c := meas.Coherence()
 		m := meas.Maturity()
 		conf := meas.Confidence()
 
 		if math.IsNaN(c) || math.IsInf(c, 0) || c < 0.0 || c > 1.0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] coherence out of bounds [0, 1]",
+				nil,
+			), "coherence", c, "label", meas.Label, "source", meas.Source)
+
 			coherenceBreaches++
 		}
+
 		if !math.IsNaN(c) && !math.IsInf(c, 0) && c >= 0.0 && c <= 1.0 {
 			coherences = append(coherences, c)
 		}
 
+		var sumAbs float64
+		var sumSq float64
+		metricCount := 0
+
+		for entry := range meas.Read() {
+			if entry != nil && entry.Metric != nil {
+				metricCount++
+				stdVal := entry.Metric.Standardized
+				sumAbs += math.Abs(stdVal)
+				sumSq += stdVal * stdVal
+			}
+		}
+
+		expectedCoherence := 0.0
+		if metricCount > 0 && sumSq > 0 {
+			expectedCoherence = (sumAbs * sumAbs) / (float64(metricCount) * sumSq)
+		}
+
+		if math.Abs(c-expectedCoherence) > 1e-5 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] coherence recomputation mismatch",
+				nil,
+			), "storedCoherence", c, "recomputedCoherence", expectedCoherence, "label", meas.Label, "source", meas.Source)
+
+			coherenceRecomputeBreaches++
+		}
+
+		energy := meas.Energy()
+		if math.IsNaN(energy) || math.IsInf(energy, 0) || energy < 0.0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] energy out of bounds [0, +inf)",
+				nil,
+			), "energy", energy, "label", meas.Label, "source", meas.Source)
+
+			energyBreaches++
+		}
+
+		if energy > 0 && metricCount > 0 && math.Abs(energy-sumSq) > 1e-5 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] energy recomputation mismatch (energy != sum z_i^2)",
+				nil,
+			), "storedEnergy", energy, "sumSq", sumSq, "label", meas.Label, "source", meas.Source)
+
+			energyBreaches++
+		}
+
+		dampened := meas.Dampen()
+		if len(dampened) != metricCount {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] dampen metric count mismatch",
+				nil,
+			), "dampenedCount", len(dampened), "metricCount", metricCount, "label", meas.Label)
+
+			dampenBreaches++
+		}
+
+		for _, dMetric := range dampened {
+			if dMetric == nil {
+				continue
+			}
+
+			origEntry := data.Pull(meas.Read(dMetric.Label))
+			if origEntry == nil || origEntry.Metric == nil {
+				continue
+			}
+
+			expectedStd := origEntry.Metric.Standardized * conf
+			if math.Abs(dMetric.Standardized-expectedStd) > 1e-5 {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.measurement_state] dampened standardized value mismatch",
+					nil,
+				), "dampened", dMetric.Standardized, "expected", expectedStd, "metric", dMetric.Label)
+
+				dampenBreaches++
+			}
+
+			if math.Abs(dMetric.Standardized) > math.Abs(origEntry.Metric.Standardized)+1e-9 {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.measurement_state] dampened standardized magnitude exceeded original",
+					nil,
+				), "dampened", dMetric.Standardized, "original", origEntry.Metric.Standardized, "metric", dMetric.Label)
+
+				dampenBreaches++
+			}
+
+			if conf == 0 && (dMetric.Standardized != 0 || dMetric.Normalized != 0 || dMetric.Raw != 0) {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.measurement_state] dampened metric non-zero when confidence is zero",
+					nil,
+				), "raw", dMetric.Raw, "metric", dMetric.Label)
+
+				dampenBreaches++
+			}
+		}
+
 		if math.IsNaN(m) || math.IsInf(m, 0) || m < 0.0 || m > 1.0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] maturity out of bounds [0, 1]",
+				nil,
+			), "maturity", m, "label", meas.Label, "source", meas.Source)
+
 			maturityBreaches++
 		}
+
 		if !math.IsNaN(m) && !math.IsInf(m, 0) && m >= 0.0 && m <= 1.0 {
 			maturities = append(maturities, m)
 		}
 
 		if math.IsNaN(conf) || math.IsInf(conf, 0) || conf < 0.0 || conf > 1.0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] confidence out of bounds [0, 1]",
+				nil,
+			), "confidence", conf, "label", meas.Label, "source", meas.Source)
+
 			confidenceBreaches++
 		}
+
 		if !math.IsNaN(conf) && !math.IsInf(conf, 0) && conf >= 0.0 && conf <= 1.0 {
 			confidences = append(confidences, conf)
 		}
 
 		expectedConf := m * c
+
 		if math.Abs(conf-expectedConf) > 1e-5 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.measurement_state] confidence identity mismatch (|conf - m*c| > 1e-5)",
+				nil,
+			), "confidence", conf, "expected", expectedConf, "label", meas.Label, "source", meas.Source)
+
 			identityBreaches++
 		}
 
 		if conf < 0.2 {
 			coldStartCount++
 		}
+
 		if conf >= 0.5 {
 			settledCount++
 		}
@@ -344,33 +641,43 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 	}
 
 	summary := fmt.Sprintf(
-		"Measurements State: %d audited. Coherence mean=%.3f. Maturity mean=%.3f. Confidence mean=%.3f (settled=%.1f%%, cold=%.1f%%). Breaches: unlocked=%d, coh=%d, mat=%d, conf=%d, id=%d.",
+		"Measurements State: %d audited. Coherence mean=%.3f. Maturity mean=%.3f. Confidence mean=%.3f (settled=%.1f%%, cold=%.1f%%). Breaches: unlocked=%d, epoch=%d, label=%d, source=%d, timing=%d, coh=%d, coh_rec=%d, mat=%d, conf=%d, id=%d, energy=%d, dampen=%d.",
 		totalAudited, meanC, meanM, meanConf, settledFraction*100, coldFraction*100,
-		unlockedBreaches, coherenceBreaches, maturityBreaches, confidenceBreaches, identityBreaches,
+		unlockedBreaches, epochBreaches, labelBreaches, sourceBreaches, timingBreaches, coherenceBreaches, coherenceRecomputeBreaches, maturityBreaches, confidenceBreaches, identityBreaches, energyBreaches, dampenBreaches,
 	)
 
-	passed := unlockedBreaches == 0 && coherenceBreaches == 0 && maturityBreaches == 0 && confidenceBreaches == 0 && identityBreaches == 0
+	passed := unlockedBreaches == 0 && epochBreaches == 0 && labelBreaches == 0 &&
+		sourceBreaches == 0 && timingBreaches == 0 && coherenceBreaches == 0 &&
+		coherenceRecomputeBreaches == 0 && maturityBreaches == 0 && confidenceBreaches == 0 &&
+		identityBreaches == 0 && energyBreaches == 0 && dampenBreaches == 0
 
 	return MeasurementStateAudit{
-		TotalMeasurementsAudited: totalAudited,
-		UnlockedBreaches:         unlockedBreaches,
-		CoherenceBreaches:        coherenceBreaches,
-		MaturityBreaches:         maturityBreaches,
-		ConfidenceBreaches:       confidenceBreaches,
-		IdentityBreaches:         identityBreaches,
-		MeanCoherence:            meanC,
-		MedianCoherence:          medianC,
-		P95Coherence:             p95C,
-		MeanMaturity:             meanM,
-		MedianMaturity:           medianM,
-		P95Maturity:              p95M,
-		MeanConfidence:           meanConf,
-		MedianConfidence:         medianConf,
-		P95Confidence:            p95Conf,
-		ColdStartFraction:        coldFraction,
-		SettledFraction:          settledFraction,
-		SummaryText:              summary,
-		Passed:                   passed,
+		TotalMeasurementsAudited:   totalAudited,
+		UnlockedBreaches:           unlockedBreaches,
+		EpochBreaches:              epochBreaches,
+		LabelBreaches:              labelBreaches,
+		SourceBreaches:             sourceBreaches,
+		TimingBreaches:             timingBreaches,
+		CoherenceBreaches:          coherenceBreaches,
+		CoherenceRecomputeBreaches: coherenceRecomputeBreaches,
+		MaturityBreaches:           maturityBreaches,
+		ConfidenceBreaches:         confidenceBreaches,
+		EnergyBreaches:             energyBreaches,
+		IdentityBreaches:           identityBreaches,
+		DampenBreaches:             dampenBreaches,
+		MeanCoherence:              meanC,
+		MedianCoherence:            medianC,
+		P95Coherence:               p95C,
+		MeanMaturity:               meanM,
+		MedianMaturity:             medianM,
+		P95Maturity:                p95M,
+		MeanConfidence:             meanConf,
+		MedianConfidence:           medianConf,
+		P95Confidence:              p95Conf,
+		ColdStartFraction:          coldFraction,
+		SettledFraction:            settledFraction,
+		SummaryText:                summary,
+		Passed:                     passed,
 	}
 }
 
@@ -394,35 +701,42 @@ func distributionSummary(values []float64) (float64, float64, float64) {
 	return mean, median, p95
 }
 
-func resolveImpliedUnit(name string, unit data.Unit) data.Unit {
-	if unit != "" && unit != data.UnitDimensionless {
-		return unit
-	}
-
+func isPercentile(name string) bool {
 	base := name
 
 	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
 		base = base[:atIndex]
 	}
 
-	if strings.HasSuffix(base, "_correlation") ||
-		base == "signed_correlation" ||
-		base == "absolute_correlation" ||
-		base == "cohort_signed_correlation" ||
-		base == "cohort_absolute_correlation" ||
-		base == "correlation" {
-		return data.UnitCorrelation
+	return strings.HasSuffix(base, "_percentile")
+}
+
+func isSignedFraction(name string) bool {
+	base := name
+
+	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
+		base = base[:atIndex]
 	}
 
-	if strings.HasSuffix(base, "_snr") || base == "snr" {
-		return data.UnitSNR
+	return strings.HasSuffix(base, "_fraction") ||
+		strings.Contains(base, "imbalance") ||
+		strings.HasSuffix(base, "_correlation") ||
+		strings.Contains(base, "signed_correlation")
+}
+
+func isSignedDelta(name string) bool {
+	base := name
+
+	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
+		base = base[:atIndex]
 	}
 
-	if strings.HasSuffix(base, "_entropy") || base == "entropy" {
-		return data.UnitEntropy
-	}
-
-	return unit
+	return strings.HasPrefix(base, "net_") ||
+		strings.HasPrefix(base, "cumulative_") ||
+		strings.Contains(base, "_delta") ||
+		strings.Contains(base, "diff") ||
+		strings.HasSuffix(base, "_divergence") ||
+		strings.HasSuffix(base, "_residual")
 }
 
 /*
@@ -452,11 +766,25 @@ func isAbsoluteCorrelation(name string) bool {
 }
 
 func declaredDomain(unit data.Unit, name ...string) string {
-	if len(name) > 0 && isAbsoluteCorrelation(name[0]) {
+	metricName := ""
+
+	if len(name) > 0 {
+		metricName = name[0]
+	}
+
+	if isAbsoluteCorrelation(metricName) || isPercentile(metricName) {
 		return "[0, 1]"
 	}
 
-	if len(name) > 0 && isAbsoluteScore(name[0]) {
+	if isSignedFraction(metricName) {
+		return "[-1, 1]"
+	}
+
+	if isSignedDelta(metricName) {
+		return "finite"
+	}
+
+	if isAbsoluteScore(metricName) {
 		return "[0, +inf)"
 	}
 
@@ -465,16 +793,46 @@ func declaredDomain(unit data.Unit, name ...string) string {
 		return "[-1, 1]"
 	case data.UnitProbability, data.UnitConfidence:
 		return "[0, 1]"
-	case data.UnitVariance,
-		data.UnitCount,
+	case data.UnitPrice,
+		data.UnitQuantity,
 		data.UnitVolume,
-		data.UnitDuration,
-		data.UnitDistance,
+		data.UnitNotional,
+		data.UnitSpread,
+		data.UnitRelativeSpread,
+		data.UnitQuoteCurrencyPerBaseUnit,
+		data.UnitBaseCurrency,
+		data.UnitQuoteCurrency,
+		data.UnitCount,
+		data.UnitVariance,
+		data.UnitStandardDeviation,
+		data.UnitSNR,
 		data.UnitEntropy,
-		data.UnitSNR:
+		data.UnitDistance,
+		data.UnitRate,
+		data.UnitPerSecond,
+		data.UnitTradeRate,
+		data.UnitVolumeRate,
+		data.UnitNotionalRate,
+		data.UnitDuration,
+		data.UnitNanosecond,
+		data.UnitMicrosecond,
+		data.UnitMillisecond,
+		data.UnitSecond,
+		data.UnitMinute,
+		data.UnitHour:
 		return "[0, +inf)"
-	default:
+	case data.UnitZScore,
+		data.UnitCovarianceScore,
+		data.UnitCovariance,
+		data.UnitLogReturn,
+		data.UnitVelocity,
+		data.UnitAcceleration,
+		data.UnitCountResidual,
+		data.UnitNat,
+		data.UnitPriceImpact:
 		return "finite"
+	default:
+		return "undeclared"
 	}
 }
 
@@ -483,17 +841,37 @@ func contractViolation(unit data.Unit, value float64, name ...string) string {
 		return "nan_or_inf"
 	}
 
-	if len(name) > 0 && isAbsoluteCorrelation(name[0]) {
+	metricName := ""
+
+	if len(name) > 0 {
+		metricName = name[0]
+	}
+
+	if isAbsoluteCorrelation(metricName) || isPercentile(metricName) {
 		if value < 0.0 || value > 1.0 {
 			return "domain_exceeded_[0,1]"
 		}
+
 		return ""
 	}
 
-	if len(name) > 0 && isAbsoluteScore(name[0]) {
+	if isSignedFraction(metricName) {
+		if value < -1.0 || value > 1.0 {
+			return "domain_exceeded_[-1,1]"
+		}
+
+		return ""
+	}
+
+	if isSignedDelta(metricName) {
+		return ""
+	}
+
+	if isAbsoluteScore(metricName) {
 		if value < 0.0 {
 			return "negative_value_for_non_negative_unit"
 		}
+
 		return ""
 	}
 
@@ -506,16 +884,48 @@ func contractViolation(unit data.Unit, value float64, name ...string) string {
 		if value < 0.0 || value > 1.0 {
 			return "domain_exceeded_[0,1]"
 		}
-	case data.UnitVariance,
-		data.UnitCount,
+	case data.UnitPrice,
+		data.UnitQuantity,
 		data.UnitVolume,
-		data.UnitDuration,
-		data.UnitDistance,
+		data.UnitNotional,
+		data.UnitSpread,
+		data.UnitRelativeSpread,
+		data.UnitQuoteCurrencyPerBaseUnit,
+		data.UnitBaseCurrency,
+		data.UnitQuoteCurrency,
+		data.UnitCount,
+		data.UnitVariance,
+		data.UnitStandardDeviation,
+		data.UnitSNR,
 		data.UnitEntropy,
-		data.UnitSNR:
+		data.UnitDistance,
+		data.UnitRate,
+		data.UnitPerSecond,
+		data.UnitTradeRate,
+		data.UnitVolumeRate,
+		data.UnitNotionalRate,
+		data.UnitDuration,
+		data.UnitNanosecond,
+		data.UnitMicrosecond,
+		data.UnitMillisecond,
+		data.UnitSecond,
+		data.UnitMinute,
+		data.UnitHour:
 		if value < 0.0 {
 			return "negative_value_for_non_negative_unit"
 		}
+	case data.UnitZScore,
+		data.UnitCovarianceScore,
+		data.UnitCovariance,
+		data.UnitLogReturn,
+		data.UnitVelocity,
+		data.UnitAcceleration,
+		data.UnitCountResidual,
+		data.UnitNat,
+		data.UnitPriceImpact:
+		return ""
+	default:
+		return "undeclared_or_unknown_physical_dimension"
 	}
 
 	return ""

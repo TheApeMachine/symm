@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -231,6 +232,12 @@ func (grid *Grid) PinRegion(source, metric string) uint8 {
 
 		return 11 // R11
 	}
+
+	errnie.Error(errnie.Err(
+		errnie.Validation,
+		"[grid.PinRegion] metric not mapped to region",
+		nil,
+	), "source", source, "metric", metric)
 
 	return unpinned
 }

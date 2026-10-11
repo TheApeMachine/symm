@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -41,12 +42,24 @@ func checkFeeProvenance(detections []*data.Measurement, declared float64) FeePro
 
 	for _, det := range detections {
 		if det == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.provenance] nil detection in detections slice",
+				nil,
+			))
+
 			continue
 		}
 
 		b, c := getMeasurementMetric(det, "b_price"), getMeasurementMetric(det, "c_price")
 
 		if b <= 0 || c <= 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.provenance] detection has non-positive b_price or c_price",
+				nil,
+			), "b_price", b, "c_price", c, "label", det.Label)
+
 			continue
 		}
 

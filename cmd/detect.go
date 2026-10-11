@@ -184,7 +184,7 @@ func offlinePrice(ctx context.Context, feePercent string, symbols []string) (*br
 	if err != nil || fee == nil || fee.Sign() <= 0 {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"--taker-fee-percent must be a positive decimal percent per side (e.g. 0.26)",
+			"--taker-fee-percent must be a positive decimal percent per side (e.g. 0.8)",
 			err,
 		))
 	}
@@ -442,7 +442,7 @@ func detectCensusReport(ctx context.Context, catalog *tables.Catalog) error {
 func init() {
 	detectCmd.Flags().Int64SliceVar(&detectEpochs, "epoch", nil, "Run epoch to label (repeatable; default: all completed epochs)")
 	detectCmd.Flags().StringSliceVar(&detectSymbols, "symbols", nil, "Symbols to label, e.g. BTC/USD,ETH/USD (default: all symbols observed in epochs)")
-	detectCmd.Flags().StringVar(&detectFeePct, "taker-fee-percent", "", "Taker fee in percent per side that defines friction, e.g. 0.26 (required)")
+	detectCmd.Flags().StringVar(&detectFeePct, "taker-fee-percent", "", "Taker fee in percent per side that defines friction, e.g. 0.8 (required)")
 	detectCmd.Flags().BoolVar(&detectCensus, "census", false, "Only print spot:trade counts per symbol for the epochs")
 	detectCmd.Flags().IntVar(&detectCensusTop, "top", 0, "With --census, print only the N symbols with most trades (0 = all)")
 	detectCmd.Flags().BoolVar(&detectDryRun, "dry-run", false, "Detect and print, but append nothing")

@@ -6,6 +6,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -47,6 +48,12 @@ func AnalyzeTruthfulness(trades []*data.Measurement, measurements []*data.Measur
 			return
 		}
 
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[audit.truthfulness] discrepancy on %s: observed=%v expected=%v", check, observed, expected),
+			nil,
+		))
+
 		violations[check]++
 
 		if len(discrepancies) < 200 {
@@ -67,13 +74,33 @@ func AnalyzeTruthfulness(trades []*data.Measurement, measurements []*data.Measur
 	lastCVD := make(map[string]int64)
 
 	for _, m := range measurements {
-		if m != nil && m.Source == "cvd" {
+		if m == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.truthfulness] nil measurement in audit stream",
+				nil,
+			))
+
+			continue
+		}
+
+		if m.Source == "cvd" {
 			lastCVD[m.Label] = max(lastCVD[m.Label], m.At.UnixNano())
 			key := fmt.Sprintf("%s|%d", m.Label, m.At.UnixNano())
 			cvdByKey[key] = append(cvdByKey[key], m)
 
 			for entry := range m.Read() {
-				if entry != nil && entry.Metric != nil && entry.Key == "signed_net_fraction" {
+				if entry == nil || entry.Metric == nil {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"[audit.truthfulness] nil metric entry in cvd measurement",
+						nil,
+					), "label", m.Label)
+
+					continue
+				}
+
+				if entry.Key == "signed_net_fraction" {
 					value := entry.Metric.Raw
 					record("signed_net_fraction_bounded", value, 1, value >= -1 && value <= 1)
 				}
@@ -84,7 +111,17 @@ func AnalyzeTruthfulness(trades []*data.Measurement, measurements []*data.Measur
 	bySymbol := make(map[string][]*data.Measurement)
 
 	for _, trade := range trades {
-		if trade != nil && trade.Source == "spot:trade" {
+		if trade == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.truthfulness] nil trade in audit stream",
+				nil,
+			))
+
+			continue
+		}
+
+		if trade.Source == "spot:trade" {
 			bySymbol[trade.Label] = append(bySymbol[trade.Label], trade)
 		}
 	}

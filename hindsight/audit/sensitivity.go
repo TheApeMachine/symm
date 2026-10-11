@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
 )
@@ -152,12 +153,20 @@ func computeSampleRegionDistribution(
 
 		bySymbol := make(map[string][]*data.Measurement)
 		for _, m := range measGroup {
-			if m != nil {
-				if excludeFamily != "" && m.Source == excludeFamily {
-					continue
-				}
-				bySymbol[m.Label] = append(bySymbol[m.Label], m)
+			if m == nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.sensitivity] nil measurement in measurement group",
+					nil,
+				), "tick", tick)
+
+				continue
 			}
+
+			if excludeFamily != "" && m.Source == excludeFamily {
+				continue
+			}
+			bySymbol[m.Label] = append(bySymbol[m.Label], m)
 		}
 
 		for sym, symMeas := range bySymbol {
@@ -217,12 +226,20 @@ func computeDuplicatedRegionDistribution(
 
 		bySymbol := make(map[string][]*data.Measurement)
 		for _, m := range measGroup {
-			if m != nil {
+			if m == nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.sensitivity] nil measurement in measurement group",
+					nil,
+				), "tick", tick)
+
+				continue
+			}
+
+			bySymbol[m.Label] = append(bySymbol[m.Label], m)
+			if m.Source == duplicateFamily {
+				// Duplicate this measurement to simulate metric spam
 				bySymbol[m.Label] = append(bySymbol[m.Label], m)
-				if m.Source == duplicateFamily {
-					// Duplicate this measurement to simulate metric spam
-					bySymbol[m.Label] = append(bySymbol[m.Label], m)
-				}
 			}
 		}
 

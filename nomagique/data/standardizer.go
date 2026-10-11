@@ -97,7 +97,11 @@ func (state *standardizer) observe(raw float64, space Scale) (
 
 func (state *standardizer) stepLocked(value float64) (center float64, scale float64) {
 	center = state.mean
-	scale, _ = core.PriorScale(state.count, state.m2, value, center)
+	scale, ok := core.PriorScale(state.count, state.m2, value, center)
+
+	if !ok {
+		scale = 0
+	}
 
 	state.count++
 	delta := value - state.mean

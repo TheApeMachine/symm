@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"sort"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
 )
@@ -39,7 +40,11 @@ func AnalyzeTokenDynamics(
 	}
 
 	if permutations <= 0 {
-		permutations = 50
+		return Stage4TokenDynamics{
+			SummaryText: "permutations must be strictly positive",
+			Status:      "INVALID_PARAMETER",
+			Passed:      false,
+		}
 	}
 
 	var tokens []string
@@ -75,15 +80,29 @@ func AnalyzeTokenDynamics(
 		measGroup := tickMeasurements[tick]
 
 		if len(measGroup) == 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.token_dynamics] no measurement found for tick",
+				nil,
+			), "tick", tick)
+
 			continue
 		}
 
 		bySymbol := make(map[string][]*data.Measurement)
 
 		for _, m := range measGroup {
-			if m != nil {
-				bySymbol[m.Label] = append(bySymbol[m.Label], m)
+			if m == nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit.token_dynamics] nil measurement in measurement group",
+					nil,
+				), "tick", tick)
+
+				continue
 			}
+
+			bySymbol[m.Label] = append(bySymbol[m.Label], m)
 		}
 
 		for sym, symMeas := range bySymbol {

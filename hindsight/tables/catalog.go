@@ -210,6 +210,29 @@ func Open(ctx context.Context) *Catalog {
 	return cat
 }
 
+func canonicalProperties() iceberg.Properties {
+	targetCommitBytes := TargetCommitBytes()
+
+	properties := iceberg.Properties{
+		table.MetadataDeleteAfterCommitEnabledKey: "true",
+		table.MetadataPreviousVersionsMaxKey:      "5",
+		table.ManifestMergeEnabledKey:             "true",
+		"write.target-file-size-bytes":            strconv.FormatInt(targetCommitBytes, 10),
+		"write.parquet.compression-codec":         "zstd",
+		"commit.manifest.min-count-to-merge":      "5",
+	}
+
+	if system.Cfg != nil && system.Cfg.Storage != nil && system.Cfg.Storage.Iceberg != nil {
+		retries := system.Cfg.Storage.Iceberg.CommitRetries
+
+		if retries > 0 {
+			properties[table.CommitNumRetriesKey] = strconv.Itoa(retries)
+		}
+	}
+
+	return properties
+}
+
 /*
 Ensure creates missing canonical tables and applies configured properties to existing tables.
 */
@@ -218,19 +241,7 @@ func (catalog *Catalog) Ensure(ctx context.Context) error {
 		return err
 	}
 
-	properties := iceberg.Properties{
-		table.MetadataDeleteAfterCommitEnabledKey: "true",
-		table.MetadataPreviousVersionsMaxKey:      "5",
-		table.ManifestMergeEnabledKey:             "true",
-	}
-
-	if system.Cfg.Storage != nil && system.Cfg.Storage.Iceberg != nil {
-		retries := system.Cfg.Storage.Iceberg.CommitRetries
-
-		if retries > 0 {
-			properties[table.CommitNumRetriesKey] = strconv.Itoa(retries)
-		}
-	}
+	properties := canonicalProperties()
 
 	namespace := table.Identifier{Namespace}
 
@@ -284,11 +295,7 @@ func (catalog *Catalog) EnsureTable(ctx context.Context, name string) error {
 			return err
 		}
 
-		return catalog.ensureTable(ctx, family.name, family.schema, family.partitioning, iceberg.Properties{
-			table.MetadataDeleteAfterCommitEnabledKey: "true",
-			table.MetadataPreviousVersionsMaxKey:      "5",
-			table.ManifestMergeEnabledKey:             "true",
-		})
+		return catalog.ensureTable(ctx, family.name, family.schema, family.partitioning, canonicalProperties())
 	}
 
 	return errnie.Error(errnie.Err(

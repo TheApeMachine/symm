@@ -121,22 +121,17 @@ func (metric *Metric) Standardizable() bool {
 valid checks if the Measurement is valid.
 */
 func (metric *Metric) valid() error {
-	// Exact is optional by contract: only venue-printed observations carry
-	// it, derived facts leave it nil.
-	return errnie.Error(errnie.Require(map[string]any{
-		"label":        metric.Label,
-		"raw":          metric.Raw,
-		"normalized":   metric.Normalized,
-		"standardized": metric.Standardized,
-		"center":       metric.center,
-		"scale":        metric.scale,
-		"unit":         metric.unit,
-		"timescale":    metric.timescale,
-		"updated":      true,
-	}),
-		"metric", metric.Label,
-		"raw", metric.Raw,
-		"center", metric.center,
-		"scale", metric.scale,
-	)
+	if metric.Label == "" {
+		return errnie.Error(errnie.Err(errnie.Validation, "label is required", nil))
+	}
+
+	if metric.unit == "" {
+		return errnie.Error(errnie.Err(errnie.Validation, "unit is required", nil))
+	}
+
+	if metric.timescale == "" {
+		return errnie.Error(errnie.Err(errnie.Validation, "timescale is required", nil))
+	}
+
+	return nil
 }

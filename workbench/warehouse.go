@@ -107,6 +107,13 @@ func (warehouse *Warehouse) Close() error {
 }
 
 /*
+DB returns the underlying database handle with the Iceberg warehouse attached.
+*/
+func (warehouse *Warehouse) DB(ctx context.Context) (*sql.DB, error) {
+	return warehouse.connect(ctx)
+}
+
+/*
 connect opens DuckDB and attaches the Iceberg warehouse, once.
 
 Extensions, secrets, and attachments belong to the database instance rather

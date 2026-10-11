@@ -153,6 +153,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if bidQty <= 0 || askQty <= 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[liquidity] dropping frame for %s with non-positive book quantity: bidQty=%v askQty=%v", prior.Label, bidQty, askQty),
+			nil,
+		))
 		return nil
 	}
 

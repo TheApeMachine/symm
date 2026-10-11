@@ -42,10 +42,17 @@ MeasurementStateAudit audits Coherence, Maturity, Confidence, and WORM invariant
 type MeasurementStateAudit struct {
 	TotalMeasurementsAudited int     `json:"total_measurements_audited"`
 	UnlockedBreaches         int     `json:"unlocked_breaches"`
-	CoherenceBreaches        int     `json:"coherence_breaches"`
-	MaturityBreaches         int     `json:"maturity_breaches"`
-	ConfidenceBreaches       int     `json:"confidence_breaches"`
-	IdentityBreaches         int     `json:"identity_breaches"`
+	EpochBreaches            int     `json:"epoch_breaches"`
+	LabelBreaches            int     `json:"label_breaches"`
+	SourceBreaches           int     `json:"source_breaches"`
+	TimingBreaches           int     `json:"timing_breaches"`
+	CoherenceBreaches          int     `json:"coherence_breaches"`
+	CoherenceRecomputeBreaches int     `json:"coherence_recompute_breaches"`
+	MaturityBreaches           int     `json:"maturity_breaches"`
+	ConfidenceBreaches         int     `json:"confidence_breaches"`
+	EnergyBreaches             int     `json:"energy_breaches"`
+	IdentityBreaches           int     `json:"identity_breaches"`
+	DampenBreaches             int     `json:"dampen_breaches"`
 	MeanCoherence            float64 `json:"mean_coherence"`
 	MedianCoherence          float64 `json:"median_coherence"`
 	P95Coherence             float64 `json:"p95_coherence"`

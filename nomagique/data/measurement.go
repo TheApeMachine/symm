@@ -477,6 +477,57 @@ func (measurement *Measurement) Confidence() float64 {
 }
 
 /*
+Energy returns the sum of squared standardized metric values for the Measurement.
+*/
+func (measurement *Measurement) Energy() float64 {
+	if !measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		)))
+
+		return 0
+	}
+
+	return measurement.energy
+}
+
+/*
+Samples returns the cumulative count of observations seen by this stream.
+*/
+func (measurement *Measurement) Samples() int64 {
+	if !measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		)))
+
+		return 0
+	}
+
+	return measurement.samples
+}
+
+/*
+Prediction returns the online exponential moving average of total metric energy.
+*/
+func (measurement *Measurement) Prediction() float64 {
+	if !measurement.locked() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		)))
+
+		return 0
+	}
+
+	return measurement.prediction
+}
+
+/*
 Error returns the Measurement error.
 */
 func (measurement *Measurement) Error() error {
@@ -550,6 +601,11 @@ func (measurement *Measurement) setMaturity() *Measurement {
 		return measurement
 	}
 
+	if measurement.samples <= 0 {
+		measurement.maturity = 0
+		return measurement
+	}
+
 	samplesCount := float64(measurement.samples)
 
 	// 1. Calculate maturity against PRIOR prediction (surprise)
@@ -601,32 +657,40 @@ func (measurement *Measurement) valid() *Measurement {
 		measurement.ID = uuid.New().ID()
 	}
 
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"ID":        measurement.ID,
-		"epoch":     measurement.Epoch,
-		"label":     measurement.Label,
-		"source":    measurement.Source,
-		"at":        measurement.At,
-		"from":      measurement.From,
-		"maturity":  measurement.maturity,
-		"coherence": measurement.coherence,
-	}),
-		"source", measurement.Source,
-		"label", measurement.Label,
-	); err != nil {
-		measurement.err = errors.Join(measurement.err, err)
+	if measurement.Epoch <= 0 {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Validation, "epoch is required", nil,
+		), "label", measurement.Label, "source", measurement.Source))
+	}
+
+	if measurement.Label == "" {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Validation, "label is required", nil,
+		), "label", measurement.Label, "source", measurement.Source))
+	}
+
+	if measurement.Source == "" {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Validation, "source is required", nil,
+		), "label", measurement.Label, "source", measurement.Source))
+	}
+
+	if measurement.At.IsZero() {
+		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+			errnie.Validation, "at is required", nil,
+		), "label", measurement.Label, "source", measurement.Source))
 	}
 
 	if measurement.Tick < 0 {
 		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
 			errnie.Validation, "tick must be non-negative", nil,
-		)))
+		), "label", measurement.Label, "source", measurement.Source))
 	}
 
 	if measurement.SeqIdx < 0 {
 		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
 			errnie.Validation, "seqIdx must be non-negative", nil,
-		)))
+		), "label", measurement.Label, "source", measurement.Source))
 	}
 
 	return measurement

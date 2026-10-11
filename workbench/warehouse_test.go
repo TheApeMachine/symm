@@ -1,6 +1,11 @@
 package workbench
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/system"
+)
 
 func TestCatalogName(t *testing.T) {
 	t.Parallel()
@@ -94,4 +99,28 @@ func TestNewDefaults(t *testing.T) {
 	if err := warehouse.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
+}
+
+func TestWarehouse_ConnectAndQuery(t *testing.T) {
+	viper.SetConfigFile("../cmd/cfg/config.yml")
+	if err := viper.ReadInConfig(); err != nil {
+		t.Skipf("Skipping live Iceberg test, could not read config: %v", err)
+	}
+	system.NewConfig()
+
+	warehouse := New()
+	defer warehouse.Close()
+
+	ctx := t.Context()
+	db, err := warehouse.DB(ctx)
+	if err != nil {
+		t.Skipf("Skipping live Iceberg test: %v", err)
+	}
+
+	row := db.QueryRowContext(ctx, "SELECT count(*) FROM symmwarehouse.hindsight.measurements")
+	var count int64
+	if err := row.Scan(&count); err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	t.Logf("Total measurements via DuckDB: %d", count)
 }

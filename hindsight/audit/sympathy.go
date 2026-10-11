@@ -58,7 +58,11 @@ func AnalyzeSympathy(
 	}
 
 	if permutations <= 0 {
-		permutations = 50
+		return Stage2Sympathy{
+			SummaryText: "permutations must be strictly positive",
+			Status:      "INVALID_PARAMETER",
+			Passed:      false,
+		}
 	}
 
 	vectors := make([]observedVector, 0, len(activeNames))

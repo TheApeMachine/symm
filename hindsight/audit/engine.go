@@ -50,7 +50,11 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	}
 
 	if opts.Permutations <= 0 {
-		opts.Permutations = 50
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[audit] permutations is required and must be strictly positive",
+			nil,
+		))
 	}
 
 	if opts.TakerFee <= 0 {
@@ -178,7 +182,7 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	// Stage 3: Grid Partitioning & Temporal Stability (cross-chronological split)
 	stage3Start := time.Now()
 	errnie.Info(fmt.Sprintf("[audit] [5/7 Stage 3] Developing Disjoint Grids & Measuring Temporal Partition Stability across %d ticks...", len(orderedTicks)))
-	stability := AnalyzeGridStability(orderedTicks, tickMeasurements, vitality.CanonicalCells, opts.Permutations, alpha)
+	stability := AnalyzeGridStability(orderedTicks, tickMeasurements, opts.Permutations, alpha)
 	errnie.Info(fmt.Sprintf("[audit] [5/7 Stage 3] Completed in %s: %s", time.Since(stage3Start).Round(time.Millisecond), stability.SummaryText))
 
 	// Stage 4: Token Dynamics on Unseen Data (train 60%, evaluate on held-out 40%)
@@ -534,6 +538,12 @@ func ingestMetrics(
 		var activeGroup []*data.Measurement
 		for _, meas := range tickMeasurements[tick] {
 			if meas == nil {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"[audit] nil measurement in tick measurements",
+					nil,
+				), "tick", tick)
+
 				continue
 			}
 
@@ -566,10 +576,22 @@ func ingestMetrics(
 		for _, meas := range tickMeasurements[tick] {
 			for entry := range meas.Read() {
 				if entry == nil || entry.Metric == nil {
+					errnie.Error(errnie.Err(
+						errnie.NotFound,
+						"[audit] nil metric entry in measurement",
+						nil,
+					))
+
 					continue
 				}
 
 				if entry.Metric.Label == "checksum" {
+					errnie.Error(errnie.Err(
+						errnie.NotFound,
+						"[audit] checksum metric in measurement",
+						nil,
+					))
+
 					continue
 				}
 
@@ -589,16 +611,34 @@ func ingestMetrics(
 		group := tickMeasurements[tick]
 
 		if len(group) == 0 {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"[audit] group is empty",
+				nil,
+			))
+
 			continue
 		}
 
 		for _, meas := range group {
 			if meas == nil {
+				errnie.Error(errnie.Err(
+					errnie.NotFound,
+					"[audit] nil measurement in audit slice",
+					nil,
+				))
+
 				continue
 			}
 
 			for entry := range meas.Read() {
 				if entry == nil || entry.Metric == nil {
+					errnie.Error(errnie.Err(
+						errnie.NotFound,
+						"[audit] nil metric entry in measurement",
+						nil,
+					))
+
 					continue
 				}
 

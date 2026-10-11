@@ -2,20 +2,37 @@ package audit
 
 import (
 	"fmt"
-	"math"
 	"math/rand"
 	"sync/atomic"
+	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
 /*
-replayEpoch hands out synthetic, negative epochs. The standardizer keys its
-streams by epoch, so each replay starts from empty moments and never touches
-the stored epoch's or another replay's streams.
+replayEpoch hands out monotonically increasing, strictly positive timestamps.
+The standardizer keys its streams by epoch, so each replay starts from empty
+moments and never touches the stored epoch's or another replay's streams.
 */
 var replayEpoch atomic.Int64
+
+func nextReplayEpoch() int64 {
+	for {
+		current := replayEpoch.Load()
+		now := time.Now().UnixNano()
+		next := now
+
+		if next <= current {
+			next = current + 1
+		}
+
+		if replayEpoch.CompareAndSwap(current, next) {
+			return next
+		}
+	}
+}
 
 /*
 replayPipeline turns an ordered list of stored measurements into one output
@@ -46,6 +63,12 @@ func productionReplay(measurements []*data.Measurement, epoch int64, grid *store
 
 	for _, stored := range measurements {
 		if stored == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.causality] nil measurement in audit slice",
+				nil,
+			))
+
 			continue
 		}
 
@@ -106,6 +129,12 @@ func perturbFuture(future []*data.Measurement, seed int64) []*data.Measurement {
 
 	for _, stored := range future {
 		if stored == nil {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"[audit.causality] nil measurement in audit slice",
+				nil,
+			))
+
 			continue
 		}
 
@@ -128,8 +157,7 @@ func perturbFuture(future []*data.Measurement, seed int64) []*data.Measurement {
 }
 
 /*
-differing counts the keys of reference whose value in other differs (both
-undefined-as-zero and NaN compare equal to themselves).
+differing counts the keys of reference whose value in other differs.
 */
 func differing(reference, other map[string]float64) int {
 	count := 0
@@ -137,7 +165,7 @@ func differing(reference, other map[string]float64) int {
 	for key, value := range reference {
 		got, ok := other[key]
 
-		if !ok || (got != value && !(math.IsNaN(got) && math.IsNaN(value))) {
+		if !ok || got != value {
 			count++
 		}
 	}
@@ -157,9 +185,9 @@ observation:
 */
 func causalityProbe(pipeline replayPipeline, grid *store.Grid, past, future []*data.Measurement, seed int64) CausalityAudit {
 	report := CausalityAudit{FuturePerturbationTicks: len(future)}
-	alone := pipeline(past, replayEpoch.Add(-1), grid)
+	alone := pipeline(past, nextReplayEpoch(), grid)
 	extended := pipeline(append(append([]*data.Measurement(nil), past...), perturbFuture(future, seed)...),
-		replayEpoch.Add(-1), grid)
+		nextReplayEpoch(), grid)
 
 	report.ComparedObservations = len(alone)
 	report.ContaminatedCount = differing(alone, extended)
@@ -180,6 +208,12 @@ func causalityProbe(pipeline replayPipeline, grid *store.Grid, past, future []*d
 
 	for _, m := range all {
 		if m == nil {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"[audit.causality] nil measurement in audit slice",
+				nil,
+			))
+
 			continue
 		}
 
@@ -193,13 +227,13 @@ func causalityProbe(pipeline replayPipeline, grid *store.Grid, past, future []*d
 	report.SymbolsTested = len(symbols)
 
 	if len(symbols) >= 2 {
-		isolated := pipeline(only, replayEpoch.Add(-1), grid)
-		interleaved := pipeline(all, replayEpoch.Add(-1), grid)
+		isolated := pipeline(only, nextReplayEpoch(), grid)
+		interleaved := pipeline(all, nextReplayEpoch(), grid)
 		report.CrossSymbolContaminated = differing(isolated, interleaved)
 		report.CrossSymbolLeakage = report.CrossSymbolContaminated > 0
 	}
 
-	again := pipeline(past, replayEpoch.Add(-1), grid)
+	again := pipeline(past, nextReplayEpoch(), grid)
 	report.EpochContaminated = differing(alone, again)
 	report.EpochIsolationPassed = report.EpochContaminated == 0
 

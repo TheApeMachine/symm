@@ -68,7 +68,11 @@ func newCognitiveModel() *cognitiveModel {
 
 func (model *cognitiveModel) Teach(context, action string, feedback float64) error {
 	if action != "enter" && action != "exit" {
-		return nil
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[cognitive] invalid action '%s', expected 'enter' or 'exit'", action),
+			nil,
+		))
 	}
 
 	parts := strings.Split(context, "/")
@@ -275,7 +279,7 @@ func AnalyzeCognitiveTrie(
 	}
 
 	if permutations <= 0 {
-		permutations = 50
+		return insufficientCognitiveTrie("Permutations is required and must be strictly positive.")
 	}
 
 	var fee float64
@@ -940,6 +944,12 @@ func extractTriePhases(
 
 	for detIndex, det := range detections {
 		if det == nil {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.cognitive] nil detection in detections slice",
+				nil,
+			))
+
 			tracker.Step(int64(detIndex + 1))
 			continue
 		}
@@ -947,7 +957,14 @@ func extractTriePhases(
 		class := det.Meta("type")
 
 		if class == "" {
-			class = "unknown"
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.cognitive] detection missing 'type' metadata",
+				nil,
+			), "label", det.Label)
+
+			tracker.Step(int64(detIndex + 1))
+			continue
 		}
 
 		startTick := int64(getMeasurementMetric(det, "start_tick"))
@@ -955,6 +972,12 @@ func extractTriePhases(
 		cTick := int64(getMeasurementMetric(det, "c_tick"))
 
 		if bTick <= 0 || cTick <= bTick {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.cognitive] invalid excursion tick sequence",
+				nil,
+			), "bTick", bTick, "cTick", cTick, "label", det.Label)
+
 			tracker.Step(int64(detIndex + 1))
 			continue
 		}
@@ -966,6 +989,12 @@ func extractTriePhases(
 		startTick = lo
 
 		if bTick <= startTick {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.cognitive] invalid startTick relative to bTick",
+				nil,
+			), "startTick", startTick, "bTick", bTick, "label", det.Label)
+
 			tracker.Step(int64(detIndex + 1))
 			continue
 		}
@@ -988,7 +1017,25 @@ func extractTriePhases(
 			ctx, catalog, epoch, det.Label, grid, startTick, cTick, tickMeasurements,
 		)
 
-		if err != nil || len(eventTokens) == 0 {
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"[audit.cognitive] failed to retrieve archived interval tokens",
+				err,
+			), "epoch", epoch, "symbol", det.Label, "startTick", startTick, "cTick", cTick)
+
+			tracker.Step(int64(detIndex + 1))
+			continue
+		}
+
+		if len(eventTokens) == 0 {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"[audit.cognitive] zero event tokens for interval",
+				nil,
+			), "epoch", epoch, "symbol", det.Label, "startTick", startTick, "cTick", cTick)
+
+			tracker.Step(int64(detIndex + 1))
 			continue
 		}
 

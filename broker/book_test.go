@@ -66,3 +66,34 @@ func TestBook_StaleUntilSnapshot(t *testing.T) {
 		})
 	})
 }
+
+func TestBook_MovedOrderAbsentLevel(t *testing.T) {
+	Convey("Given a seeded Level3 book", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		book := broker.NewBook(ctx, spot.NewNormalizer())
+		So(book.Update(level3Frame("snapshot", "BTC/USD", 100, 101)), ShouldBeNil)
+
+		Convey("When an order moves from a price level that is absent in the book side", func() {
+			now := time.Now().UTC()
+			// Update order with new price 102 (order was previously cached or absent from old level)
+			frame := &kraken.Level3{
+				Channel: "level3",
+				Type:    "update",
+				Data: []kraken.Level3Data{{
+					Symbol:    "BTC/USD",
+					Timestamp: now,
+					Bids: []kraken.Level3Order{{
+						OrderID:    "b-nonexistent",
+						LimitPrice: decimal.NewFromFloat64(99),
+						OrderQty:   decimal.NewFromFloat64(1),
+						Timestamp:  now,
+						Event:      "modify",
+					}},
+				}},
+			}
+			So(func() { _ = book.Update(frame) }, ShouldNotPanic)
+		})
+	})
+}
