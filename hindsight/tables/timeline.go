@@ -64,7 +64,9 @@ func (catalog *Catalog) Trades(
 
 		grouped := make(map[string][]*data.Measurement)
 
-		for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0) {
+		for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0,
+			"epoch", "seqIdx", "source", "label", "tick", "at", "from", "id", "coherence", "maturity", "metrics",
+		) {
 			if err != nil {
 				yield(nil, err)
 				return
@@ -179,10 +181,10 @@ func (catalog *Catalog) Detections(
 			return
 		}
 
-		targetEpoch := int64(0)
+		targetEpochs := epoch
 
-		if len(epoch) > 0 && epoch[0] > 0 {
-			targetEpoch = epoch[0]
+		if len(targetEpochs) == 0 {
+			targetEpochs = []int64{0}
 		}
 
 		filter := iceberg.BooleanExpression(
@@ -191,21 +193,23 @@ func (catalog *Catalog) Detections(
 
 		grouped := make(map[string][]*data.Measurement)
 
-		for measurement, err := range catalog.scan(ctx, Detections, targetEpoch, filter, 0) {
-			if err != nil {
-				yield(nil, err)
-				return
-			}
+		for _, targetEpoch := range targetEpochs {
+			for measurement, err := range catalog.scan(ctx, Detections, targetEpoch, filter, 0) {
+				if err != nil {
+					yield(nil, err)
+					return
+				}
 
-			if measurement == nil {
-				continue
-			}
+				if measurement == nil {
+					continue
+				}
 
-			if measurement.Source != "detector" {
-				continue
-			}
+				if measurement.Source != "detector" {
+					continue
+				}
 
-			grouped[measurement.Label] = append(grouped[measurement.Label], measurement)
+				grouped[measurement.Label] = append(grouped[measurement.Label], measurement)
+			}
 		}
 
 		labels := make([]string, 0, len(grouped))

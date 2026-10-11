@@ -37,6 +37,74 @@ func NewService(desk *Desk) *Service {
 }
 
 /*
+LifeEvent records an order, fill, or risk adjustment event on a position.
+*/
+type LifeEvent struct {
+	At      string         `json:"at"`
+	VenueAt string         `json:"venue_at,omitempty"`
+	Kind    string         `json:"kind"`
+	Detail  string         `json:"detail"`
+	Fields  map[string]any `json:"fields,omitempty"`
+}
+
+/*
+LifeOutcome summarizes the economic results and duration of a closed or evaluated position.
+*/
+type LifeOutcome struct {
+	VenueCost      float64  `json:"venue_cost"`
+	VenueProceeds  float64  `json:"venue_proceeds"`
+	VenueFees      float64  `json:"venue_fees"`
+	VenueRealized  float64  `json:"venue_realized"`
+	ShadowDefined  bool     `json:"shadow_defined"`
+	ShadowCost     float64  `json:"shadow_cost"`
+	ShadowProceeds float64  `json:"shadow_proceeds"`
+	ShadowFees     float64  `json:"shadow_fees"`
+	ShadowRealized float64  `json:"shadow_realized"`
+	ShadowShort    float64  `json:"shadow_short"`
+	ShadowUnpriced float64  `json:"shadow_unpriced"`
+	HoldNs         int64    `json:"hold_ns"`
+	ExpectedHoldNs int64    `json:"expected_hold_ns"`
+	Triggers       []string `json:"triggers"`
+}
+
+/*
+Lifecycle represents a complete or active position history.
+*/
+type Lifecycle struct {
+	Id       string       `json:"id"`
+	Symbol   string       `json:"symbol"`
+	Status   string       `json:"status"`
+	OpenedAt string       `json:"opened_at"`
+	ClosedAt string       `json:"closed_at,omitempty"`
+	Events   []LifeEvent  `json:"events"`
+	Outcome  *LifeOutcome `json:"outcome,omitempty"`
+}
+
+/*
+Performance summarizes aggregate trading performance across positions.
+*/
+type Performance struct {
+	Closed           int      `json:"closed"`
+	ShadowTrades     int      `json:"shadow_trades"`
+	ShadowWins       int      `json:"shadow_wins"`
+	ShadowWinRate    *float64 `json:"shadow_win_rate"`
+	ShadowMeanReturn *float64 `json:"shadow_mean_return"`
+	ShadowPnl        float64  `json:"shadow_pnl"`
+	VenueWins        int      `json:"venue_wins"`
+	VenueWinRate     *float64 `json:"venue_win_rate"`
+	VenueMeanReturn  *float64 `json:"venue_mean_return"`
+	VenuePnl         float64  `json:"venue_pnl"`
+}
+
+/*
+LifecycleReport provides the unified position lifecycle and performance snapshot.
+*/
+type LifecycleReport struct {
+	Lifecycles  []Lifecycle `json:"lifecycles"`
+	Performance Performance `json:"performance"`
+}
+
+/*
 Register mounts the broker endpoints onto router.
 */
 func (service *Service) Register(router fiber.Router) {
@@ -45,6 +113,7 @@ func (service *Service) Register(router fiber.Router) {
 	}
 
 	router.Get("/positions", service.positions)
+	router.Get("/positions/lifecycle", service.lifecycle)
 	router.Get("/balance", service.balanceReport)
 	router.Get("/equity", service.balanceReport)
 }
@@ -53,11 +122,65 @@ func (service *Service) positions(reqCtx fiber.Ctx) error {
 	positions := make([]*Position, 0)
 
 	service.desk.positions.Range(func(key, value any) bool {
-		positions = append(positions, value.(*Position))
+		if list, ok := value.([]*Position); ok {
+			positions = append(positions, list...)
+		}
+
 		return true
 	})
 
 	return reqCtx.JSON(positions)
+}
+
+func (service *Service) lifecycle(reqCtx fiber.Ctx) error {
+	lifecycles := make([]Lifecycle, 0)
+	var closedCount int
+	var venueWins int
+	var totalVenuePnl float64
+
+	if service.desk != nil && service.desk.positions != nil {
+		service.desk.positions.Range(func(key, value any) bool {
+			if list, ok := value.([]*Position); ok {
+				for _, pos := range list {
+					lc := pos.Lifecycle()
+					lifecycles = append(lifecycles, lc)
+
+					if lc.Status == "closed" && lc.Outcome != nil {
+						closedCount++
+						totalVenuePnl += lc.Outcome.VenueRealized
+
+						if lc.Outcome.VenueRealized > 0 {
+							venueWins++
+						}
+					}
+				}
+			}
+
+			return true
+		})
+	}
+
+	var venueWinRate *float64
+	var venueMeanReturn *float64
+
+	if closedCount > 0 {
+		rate := float64(venueWins) / float64(closedCount)
+		venueWinRate = &rate
+
+		mean := totalVenuePnl / float64(closedCount)
+		venueMeanReturn = &mean
+	}
+
+	return reqCtx.JSON(LifecycleReport{
+		Lifecycles: lifecycles,
+		Performance: Performance{
+			Closed:          closedCount,
+			VenueWins:       venueWins,
+			VenueWinRate:    venueWinRate,
+			VenueMeanReturn: venueMeanReturn,
+			VenuePnl:        totalVenuePnl,
+		},
+	})
 }
 
 func (service *Service) balanceReport(reqCtx fiber.Ctx) error {

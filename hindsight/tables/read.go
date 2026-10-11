@@ -56,7 +56,7 @@ func (catalog *Catalog) scan(
 			predicate = filter
 		}
 
-		options := []icetable.ScanOption{icetable.WitMaxConcurrency(16)}
+		options := []icetable.ScanOption{icetable.WitMaxConcurrency(64)}
 
 		if predicate != nil {
 			options = append(options, icetable.WithRowFilter(predicate))
@@ -78,7 +78,7 @@ func (catalog *Catalog) scan(
 			return
 		}
 
-		chunkSize := 250
+		chunkSize := 1000
 		var count int
 
 		for taskIndex := 0; taskIndex < len(tasks); taskIndex += chunkSize {

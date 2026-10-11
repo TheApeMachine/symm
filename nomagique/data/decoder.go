@@ -10,105 +10,175 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
-/*
-Decode populates the Measurement from row rowIdx of the Arrow RecordBatch.
-*/
-func (measurement *Measurement) Decode(batch arrow.RecordBatch, rowIdx int) error {
-	if measurement == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[data.decoder] measurement is nil",
-			nil,
-		))
-	}
+type batchCols struct {
+	epochCol      *array.Int64
+	seqIdxCol     *array.Int64
+	sourceCol     *array.String
+	labelCol      *array.String
+	tickCol       *array.Int64
+	atCol         *array.Timestamp
+	fromCol       *array.Timestamp
+	timestampCol  *array.Int64
+	idCol         *array.Int64
+	coherenceCol  *array.Float64
+	maturityCol   *array.Float64
+	samplesCol    *array.Int64
+	energyCol     *array.Float64
+	predictionCol *array.Float64
+	metricsCol    *array.Map
+	metadataCol   *array.Map
+	confident     bool
 
-	cols := make(map[string]arrow.Array, batch.NumCols())
+	metaKeyArray *array.String
+	metaValArray *array.String
+	metaOffsets  []int32
+
+	metricsKeyArray *array.String
+	metricsOffsets  []int32
+	rawCol          *array.Float64
+	normCol         *array.Float64
+	stdCol          *array.Float64
+	exactCol        *array.String
+	centerCol       *array.Float64
+	scaleCol        *array.Float64
+	unitCol         *array.String
+	timeCol         *array.String
+	floatItems      *array.Float64
+}
+
+func newBatchCols(batch arrow.RecordBatch) (*batchCols, error) {
+	cols := &batchCols{}
 
 	for colIdx := range int(batch.NumCols()) {
-		cols[batch.ColumnName(colIdx)] = batch.Column(colIdx)
+		col := batch.Column(colIdx)
+
+		switch batch.ColumnName(colIdx) {
+		case "epoch":
+			cols.epochCol, _ = col.(*array.Int64)
+		case "seqIdx":
+			cols.seqIdxCol, _ = col.(*array.Int64)
+		case "source":
+			cols.sourceCol, _ = col.(*array.String)
+		case "label":
+			cols.labelCol, _ = col.(*array.String)
+		case "tick":
+			cols.tickCol, _ = col.(*array.Int64)
+		case "at":
+			cols.atCol, _ = col.(*array.Timestamp)
+		case "from":
+			cols.fromCol, _ = col.(*array.Timestamp)
+		case "timestamp":
+			cols.timestampCol, _ = col.(*array.Int64)
+		case "id":
+			cols.idCol, _ = col.(*array.Int64)
+		case "coherence":
+			cols.coherenceCol, _ = col.(*array.Float64)
+		case "maturity":
+			cols.maturityCol, _ = col.(*array.Float64)
+		case "samples":
+			cols.samplesCol, _ = col.(*array.Int64)
+		case "energy":
+			cols.energyCol, _ = col.(*array.Float64)
+		case "prediction":
+			cols.predictionCol, _ = col.(*array.Float64)
+		case "metrics":
+			cols.metricsCol, _ = col.(*array.Map)
+		case "metadata":
+			cols.metadataCol, _ = col.(*array.Map)
+		}
 	}
 
-	epochCol, _ := cols["epoch"].(*array.Int64)
-	seqIdxCol, _ := cols["seqIdx"].(*array.Int64)
-	sourceCol, _ := cols["source"].(*array.String)
-	labelCol, _ := cols["label"].(*array.String)
-	tickCol, _ := cols["tick"].(*array.Int64)
-	atCol, _ := cols["at"].(*array.Timestamp)
-	fromCol, _ := cols["from"].(*array.Timestamp)
-	timestampCol, _ := cols["timestamp"].(*array.Int64)
-	idCol, _ := cols["id"].(*array.Int64)
-	coherenceCol, _ := cols["coherence"].(*array.Float64)
-	maturityCol, _ := cols["maturity"].(*array.Float64)
-	samplesCol, _ := cols["samples"].(*array.Int64)
-	energyCol, _ := cols["energy"].(*array.Float64)
-	predictionCol, _ := cols["prediction"].(*array.Float64)
-	metricsCol, _ := cols["metrics"].(*array.Map)
-	metadataCol, _ := cols["metadata"].(*array.Map)
+	cols.confident = cols.maturityCol != nil && cols.coherenceCol != nil
 
-	confident := maturityCol != nil && coherenceCol != nil
-
-	if !confident && (maturityCol != nil || coherenceCol != nil) {
-		return errnie.Error(errnie.Err(
+	if !cols.confident && (cols.maturityCol != nil || cols.coherenceCol != nil) {
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"iceberg: measurement batch carries only one of maturity/coherence",
 			nil,
 		))
 	}
 
-	if epochCol != nil && !epochCol.IsNull(rowIdx) {
-		measurement.Epoch = epochCol.Value(rowIdx)
+	if cols.metadataCol != nil {
+		cols.metaKeyArray, _ = cols.metadataCol.Keys().(*array.String)
+		cols.metaValArray, _ = cols.metadataCol.Items().(*array.String)
+		cols.metaOffsets = cols.metadataCol.Offsets()
 	}
 
-	if seqIdxCol != nil && !seqIdxCol.IsNull(rowIdx) {
-		measurement.SeqIdx = seqIdxCol.Value(rowIdx)
+	if cols.metricsCol != nil {
+		cols.metricsKeyArray, _ = cols.metricsCol.Keys().(*array.String)
+		cols.metricsOffsets = cols.metricsCol.Offsets()
+
+		if itemStruct, ok := cols.metricsCol.Items().(*array.Struct); ok {
+			cols.rawCol, _ = itemStruct.Field(0).(*array.Float64)
+			cols.normCol, _ = itemStruct.Field(1).(*array.Float64)
+			cols.stdCol, _ = itemStruct.Field(2).(*array.Float64)
+			cols.exactCol, _ = itemStruct.Field(3).(*array.String)
+			cols.centerCol, _ = itemStruct.Field(4).(*array.Float64)
+			cols.scaleCol, _ = itemStruct.Field(5).(*array.Float64)
+			cols.unitCol, _ = itemStruct.Field(6).(*array.String)
+			cols.timeCol, _ = itemStruct.Field(7).(*array.String)
+		}
+
+		if floatItems, ok := cols.metricsCol.Items().(*array.Float64); ok {
+			cols.floatItems = floatItems
+		}
 	}
 
-	if tickCol != nil && !tickCol.IsNull(rowIdx) {
-		measurement.Tick = tickCol.Value(rowIdx)
+	return cols, nil
+}
+
+func (cols *batchCols) decodeRow(measurement *Measurement, rowIdx int) error {
+	if cols.epochCol != nil && !cols.epochCol.IsNull(rowIdx) {
+		measurement.Epoch = cols.epochCol.Value(rowIdx)
 	}
 
-	if sourceCol != nil && !sourceCol.IsNull(rowIdx) {
-		measurement.Source = sourceCol.Value(rowIdx)
+	if cols.seqIdxCol != nil && !cols.seqIdxCol.IsNull(rowIdx) {
+		measurement.SeqIdx = cols.seqIdxCol.Value(rowIdx)
 	}
 
-	if labelCol != nil && !labelCol.IsNull(rowIdx) {
-		measurement.Label = labelCol.Value(rowIdx)
+	if cols.tickCol != nil && !cols.tickCol.IsNull(rowIdx) {
+		measurement.Tick = cols.tickCol.Value(rowIdx)
 	}
 
-	if idCol != nil && !idCol.IsNull(rowIdx) {
-		measurement.ID = uint32(idCol.Value(rowIdx))
+	if cols.sourceCol != nil && !cols.sourceCol.IsNull(rowIdx) {
+		measurement.Source = cols.sourceCol.Value(rowIdx)
 	}
 
-	if samplesCol != nil && !samplesCol.IsNull(rowIdx) {
-		measurement.samples = samplesCol.Value(rowIdx)
+	if cols.labelCol != nil && !cols.labelCol.IsNull(rowIdx) {
+		measurement.Label = cols.labelCol.Value(rowIdx)
 	}
 
-	if energyCol != nil && !energyCol.IsNull(rowIdx) {
-		measurement.energy = energyCol.Value(rowIdx)
+	if cols.idCol != nil && !cols.idCol.IsNull(rowIdx) {
+		measurement.ID = uint32(cols.idCol.Value(rowIdx))
 	}
 
-	if predictionCol != nil && !predictionCol.IsNull(rowIdx) {
-		measurement.prediction = predictionCol.Value(rowIdx)
+	if cols.samplesCol != nil && !cols.samplesCol.IsNull(rowIdx) {
+		measurement.samples = cols.samplesCol.Value(rowIdx)
 	}
 
-	if metadataCol != nil && !metadataCol.IsNull(rowIdx) {
-		keyArray := metadataCol.Keys().(*array.String)
-		valArray := metadataCol.Items().(*array.String)
-		offsets := metadataCol.Offsets()
-		startOffset := int(offsets[rowIdx])
-		endOffset := int(offsets[rowIdx+1])
+	if cols.energyCol != nil && !cols.energyCol.IsNull(rowIdx) {
+		measurement.energy = cols.energyCol.Value(rowIdx)
+	}
+
+	if cols.predictionCol != nil && !cols.predictionCol.IsNull(rowIdx) {
+		measurement.prediction = cols.predictionCol.Value(rowIdx)
+	}
+
+	if cols.metaOffsets != nil && cols.metaKeyArray != nil && cols.metaValArray != nil && !cols.metadataCol.IsNull(rowIdx) {
+		startOffset := int(cols.metaOffsets[rowIdx])
+		endOffset := int(cols.metaOffsets[rowIdx+1])
 
 		measurement.metadata = make([]*StringEntry, 0, endOffset-startOffset)
 
 		for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
 			measurement.metadata = append(measurement.metadata, &StringEntry{
-				Key:   keyArray.Value(itemIdx),
-				Value: valArray.Value(itemIdx),
+				Key:   cols.metaKeyArray.Value(itemIdx),
+				Value: cols.metaValArray.Value(itemIdx),
 			})
 		}
 	}
 
-	if confident && (maturityCol.IsNull(rowIdx) || coherenceCol.IsNull(rowIdx)) {
+	if cols.confident && (cols.maturityCol.IsNull(rowIdx) || cols.coherenceCol.IsNull(rowIdx)) {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf("iceberg: measurement row %d has no maturity/coherence", rowIdx),
@@ -116,60 +186,49 @@ func (measurement *Measurement) Decode(batch arrow.RecordBatch, rowIdx int) erro
 		))
 	}
 
-	if confident {
-		measurement.coherence = coherenceCol.Value(rowIdx)
-		measurement.maturity = maturityCol.Value(rowIdx)
+	if cols.confident {
+		measurement.coherence = cols.coherenceCol.Value(rowIdx)
+		measurement.maturity = cols.maturityCol.Value(rowIdx)
 	}
 
-	if atCol != nil && !atCol.IsNull(rowIdx) {
-		measurement.At = time.UnixMicro(int64(atCol.Value(rowIdx))).UTC()
-		measurement.Timestamp = int64(atCol.Value(rowIdx)) * 1000
+	if cols.atCol != nil && !cols.atCol.IsNull(rowIdx) {
+		measurement.At = time.UnixMicro(int64(cols.atCol.Value(rowIdx))).UTC()
+		measurement.Timestamp = int64(cols.atCol.Value(rowIdx)) * 1000
 	}
 
-	if fromCol != nil && !fromCol.IsNull(rowIdx) {
-		measurement.From = time.UnixMicro(int64(fromCol.Value(rowIdx))).UTC()
+	if cols.fromCol != nil && !cols.fromCol.IsNull(rowIdx) {
+		measurement.From = time.UnixMicro(int64(cols.fromCol.Value(rowIdx))).UTC()
 	}
 
-	if fromCol == nil && atCol != nil && !atCol.IsNull(rowIdx) {
+	if cols.fromCol == nil && cols.atCol != nil && !cols.atCol.IsNull(rowIdx) {
 		measurement.From = measurement.At
 	}
 
-	if timestampCol != nil && !timestampCol.IsNull(rowIdx) {
-		measurement.Timestamp = timestampCol.Value(rowIdx)
+	if cols.timestampCol != nil && !cols.timestampCol.IsNull(rowIdx) {
+		measurement.Timestamp = cols.timestampCol.Value(rowIdx)
 	}
 
-	if metricsCol != nil && !metricsCol.IsNull(rowIdx) {
-		keyArray := metricsCol.Keys().(*array.String)
-		offsets := metricsCol.Offsets()
-		startOffset := int(offsets[rowIdx])
-		endOffset := int(offsets[rowIdx+1])
+	if cols.metricsOffsets != nil && cols.metricsKeyArray != nil && !cols.metricsCol.IsNull(rowIdx) {
+		startOffset := int(cols.metricsOffsets[rowIdx])
+		endOffset := int(cols.metricsOffsets[rowIdx+1])
 
 		measurement.metrics = make([]*MetricEntry, 0, endOffset-startOffset)
 
-		if itemStruct, ok := metricsCol.Items().(*array.Struct); ok {
-			rawCol := itemStruct.Field(0).(*array.Float64)
-			normCol := itemStruct.Field(1).(*array.Float64)
-			stdCol := itemStruct.Field(2).(*array.Float64)
-			exactCol := itemStruct.Field(3).(*array.String)
-			centerCol := itemStruct.Field(4).(*array.Float64)
-			scaleCol := itemStruct.Field(5).(*array.Float64)
-			unitCol := itemStruct.Field(6).(*array.String)
-			timeCol := itemStruct.Field(7).(*array.String)
-
+		if cols.rawCol != nil {
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
-				metricKey := keyArray.Value(itemIdx)
-				rawVal := rawCol.Value(itemIdx)
-				unitVal := CanonicalUnit(metricKey, Unit(unitCol.Value(itemIdx)))
-				timeVal := CanonicalTimescale(metricKey, Timescale(timeCol.Value(itemIdx)))
+				metricKey := cols.metricsKeyArray.Value(itemIdx)
+				rawVal := cols.rawCol.Value(itemIdx)
+				unitVal := CanonicalUnit(metricKey, Unit(cols.unitCol.Value(itemIdx)))
+				timeVal := CanonicalTimescale(metricKey, Timescale(cols.timeCol.Value(itemIdx)))
 
 				metric := NewMetric(metricKey, rawVal, unitVal, timeVal)
-				metric.Normalized = normCol.Value(itemIdx)
-				metric.Standardized = stdCol.Value(itemIdx)
-				metric.center = centerCol.Value(itemIdx)
-				metric.scale = scaleCol.Value(itemIdx)
+				metric.Normalized = cols.normCol.Value(itemIdx)
+				metric.Standardized = cols.stdCol.Value(itemIdx)
+				metric.center = cols.centerCol.Value(itemIdx)
+				metric.scale = cols.scaleCol.Value(itemIdx)
 
-				if exactCol != nil && !exactCol.IsNull(itemIdx) && exactCol.Value(itemIdx) != "" {
-					exactDec, err := decimal.NewFromString(exactCol.Value(itemIdx))
+				if cols.exactCol != nil && !cols.exactCol.IsNull(itemIdx) && cols.exactCol.Value(itemIdx) != "" {
+					exactDec, err := decimal.NewFromString(cols.exactCol.Value(itemIdx))
 
 					if err != nil {
 						return errnie.Error(errnie.Err(
@@ -187,10 +246,12 @@ func (measurement *Measurement) Decode(batch arrow.RecordBatch, rowIdx int) erro
 					Metric: metric,
 				})
 			}
-		} else if floatItems, ok := metricsCol.Items().(*array.Float64); ok {
+		}
+
+		if cols.floatItems != nil {
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
-				metricKey := keyArray.Value(itemIdx)
-				rawVal := floatItems.Value(itemIdx)
+				metricKey := cols.metricsKeyArray.Value(itemIdx)
+				rawVal := cols.floatItems.Value(itemIdx)
 
 				metric := NewMetric(metricKey, rawVal, UnitDimensionless, TimescaleInstantaneous)
 				metric.center = rawVal
@@ -205,7 +266,7 @@ func (measurement *Measurement) Decode(batch arrow.RecordBatch, rowIdx int) erro
 
 	measurement.valid()
 
-	if err := measurement.Error(); confident && err != nil {
+	if err := measurement.Error(); cols.confident && err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf(
@@ -217,6 +278,27 @@ func (measurement *Measurement) Decode(batch arrow.RecordBatch, rowIdx int) erro
 	}
 
 	return nil
+}
+
+/*
+Decode populates the Measurement from row rowIdx of the Arrow RecordBatch.
+*/
+func (measurement *Measurement) Decode(batch arrow.RecordBatch, rowIdx int) error {
+	if measurement == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[data.decoder] measurement is nil",
+			nil,
+		))
+	}
+
+	cols, err := newBatchCols(batch)
+
+	if err != nil {
+		return err
+	}
+
+	return cols.decodeRow(measurement, rowIdx)
 }
 
 /*
@@ -236,13 +318,19 @@ func DecodeMeasurement(batch arrow.RecordBatch, rowIdx int) (*Measurement, error
 DecodeBatch decodes an entire Arrow RecordBatch into a slice of Measurements.
 */
 func DecodeBatch(batch arrow.RecordBatch) ([]*Measurement, error) {
+	cols, err := newBatchCols(batch)
+
+	if err != nil {
+		return nil, err
+	}
+
 	totalRows := int(batch.NumRows())
 	measurements := make([]*Measurement, 0, totalRows)
 
 	for rowIdx := range totalRows {
-		measurement, err := DecodeMeasurement(batch, rowIdx)
+		measurement := NewMeasurement(0, "", "", 0, 0)
 
-		if err != nil {
+		if err := cols.decodeRow(measurement, rowIdx); err != nil {
 			return nil, err
 		}
 

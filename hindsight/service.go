@@ -63,6 +63,9 @@ func (service *Service) Register(router fiber.Router) {
 	router.Get("/hindsight/captures", service.captures)
 	router.Get("/hindsight/envelope", service.envelope)
 
+	router.Get("/training/fragments", service.trainingFragments)
+	router.Get("/training/fragments/:id/points", service.trainingFragmentPoints)
+
 	// Honest empties: these witness streams are not persisted in Iceberg yet.
 	router.Get("/hindsight/gaps", service.gaps)
 	router.Get("/hindsight/lifecycle", service.lifecycle)
@@ -464,4 +467,242 @@ func parseInt64Query(raw string) int64 {
 	}
 
 	return value
+}
+
+/*
+FragmentPoint is one point along the sequential trade tape for an excursion fragment.
+*/
+type FragmentPoint struct {
+	X    int     `json:"x"`
+	Y    float64 `json:"y"`
+	Seq  int64   `json:"seq"`
+	Time int64   `json:"time"`
+}
+
+/*
+TrainedFragmentResponse represents a trained fragment returned to the training visualization.
+*/
+type TrainedFragmentResponse struct {
+	Id                int64           `json:"id"`
+	Symbol            string          `json:"symbol"`
+	Epoch             int64           `json:"epoch"`
+	MarkA             int64           `json:"mark_a"`
+	MarkB             int64           `json:"mark_b"`
+	MarkC             int64           `json:"mark_c"`
+	EntryPrice        float64         `json:"entry_price"`
+	ExitPrice         float64         `json:"exit_price"`
+	Magnitude         float64         `json:"magnitude"`
+	Direction         string          `json:"direction"`
+	Class             string          `json:"class,omitempty"`
+	Tokens            []string        `json:"tokens"`
+	Points            []FragmentPoint `json:"points"`
+	EntryIdx          int64           `json:"entry_idx"`
+	ExitIdx           int64           `json:"exit_idx"`
+	PredictedEntryIdx int64           `json:"predicted_entry_idx"`
+	PredictedExitIdx  int64           `json:"predicted_exit_idx"`
+	LearnedAt         string          `json:"learned_at"`
+}
+
+func (service *Service) trainingFragments(ctx fiber.Ctx) error {
+	if service.store == nil {
+		return ctx.JSON([]TrainedFragmentResponse{})
+	}
+
+	epoch := parseInt64Query(ctx.Query("epoch"))
+	fragments := make([]TrainedFragmentResponse, 0)
+	var autoID int64 = 1
+
+	for det, err := range service.store.Detections(service.context(ctx), epoch) {
+		if err != nil {
+			return readFailure(err)
+		}
+
+		if det == nil {
+			continue
+		}
+
+		id := autoID
+		autoID++
+
+		if det.ID > 0 {
+			id = int64(det.ID)
+		}
+
+		startTick, bTick, cTick, _ := tables.DetectionTicks(det)
+		bPriceDec, cPriceDec, _ := tables.DetectionPrices(det)
+
+		var entryPrice float64
+		var exitPrice float64
+
+		if bPriceDec != nil {
+			entryPrice = bPriceDec.Float64()
+		}
+
+		if cPriceDec != nil {
+			exitPrice = cPriceDec.Float64()
+		}
+
+		var magnitude float64
+
+		if entryPrice > 0 {
+			magnitude = (exitPrice - entryPrice) / entryPrice
+		}
+
+		direction := "up"
+
+		if exitPrice < entryPrice {
+			direction = "down"
+		}
+
+		class := det.Meta("type")
+
+		if class == "" {
+			class = direction
+		}
+
+		learnedAt := ""
+
+		if !det.At.IsZero() {
+			learnedAt = det.At.UTC().Format("2006-01-02T15:04:05Z07:00")
+		}
+
+		var startIdx int64
+		var bIdx int64
+		var cIdx int64
+
+		if entry := data.Pull(det.Read("start_idx")); entry != nil && entry.Metric != nil {
+			startIdx = int64(entry.Metric.Raw)
+		}
+
+		if entry := data.Pull(det.Read("b_idx")); entry != nil && entry.Metric != nil {
+			bIdx = int64(entry.Metric.Raw)
+		}
+
+		if entry := data.Pull(det.Read("c_idx")); entry != nil && entry.Metric != nil {
+			cIdx = int64(entry.Metric.Raw)
+		}
+
+		entryIdx := bIdx - startIdx
+
+		if entryIdx < 0 {
+			entryIdx = 0
+		}
+
+		exitIdx := cIdx - startIdx
+
+		if exitIdx < entryIdx {
+			exitIdx = entryIdx
+		}
+
+		fragments = append(fragments, TrainedFragmentResponse{
+			Id:                id,
+			Symbol:            det.Label,
+			Epoch:             det.Epoch,
+			MarkA:             startTick,
+			MarkB:             bTick,
+			MarkC:             cTick,
+			EntryPrice:        entryPrice,
+			ExitPrice:         exitPrice,
+			Magnitude:         magnitude,
+			Direction:         direction,
+			Class:             class,
+			Tokens:            []string{},
+			Points:            []FragmentPoint{},
+			EntryIdx:          entryIdx,
+			ExitIdx:           exitIdx,
+			PredictedEntryIdx: entryIdx,
+			PredictedExitIdx:  exitIdx,
+			LearnedAt:         learnedAt,
+		})
+	}
+
+	return ctx.JSON(fragments)
+}
+
+func (service *Service) trainingFragmentPoints(ctx fiber.Ctx) error {
+	if service.store == nil {
+		return ctx.JSON([]FragmentPoint{})
+	}
+
+	targetID := parseInt64Query(ctx.Params("id"))
+	epoch := parseInt64Query(ctx.Query("epoch"))
+
+	var targetDet *data.Measurement
+	var autoID int64 = 1
+
+	for det, err := range service.store.Detections(service.context(ctx), epoch) {
+		if err != nil {
+			return readFailure(err)
+		}
+
+		if det == nil {
+			continue
+		}
+
+		id := autoID
+		autoID++
+
+		if det.ID > 0 {
+			id = int64(det.ID)
+		}
+
+		if id == targetID {
+			targetDet = det
+			break
+		}
+	}
+
+	if targetDet == nil {
+		return ctx.JSON([]FragmentPoint{})
+	}
+
+	startTick, _, cTick, _ := tables.DetectionTicks(targetDet)
+
+	if startTick <= 0 && targetDet.Tick > 0 {
+		startTick = targetDet.Tick
+	}
+
+	if cTick <= 0 && targetDet.SeqIdx > 0 {
+		cTick = targetDet.SeqIdx
+	}
+
+	points := make([]FragmentPoint, 0)
+	var x int
+
+	for m, err := range service.store.Timeline(service.context(ctx), targetDet.Epoch, targetDet.Label, startTick, cTick) {
+		if err != nil {
+			return readFailure(err)
+		}
+
+		if m == nil {
+			continue
+		}
+
+		var price float64
+
+		if pEntry := data.Pull(m.Read("price")); pEntry != nil && pEntry.Metric != nil {
+			price = pEntry.Metric.Raw
+		}
+
+		if price <= 0 {
+			continue
+		}
+
+		var timeMs int64
+
+		if !m.At.IsZero() {
+			timeMs = m.At.UnixMilli()
+		}
+
+		points = append(points, FragmentPoint{
+			X:    x,
+			Y:    price,
+			Seq:  m.Tick,
+			Time: timeMs,
+		})
+
+		x++
+	}
+
+	return ctx.JSON(points)
 }

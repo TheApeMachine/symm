@@ -94,11 +94,18 @@ func TestService(t *testing.T) {
 			So(resp.StatusCode, ShouldEqual, http.StatusOK)
 		})
 
-		Convey("GET /hindsight/state returns not found", func() {
-			req := httptest.NewRequest(http.MethodGet, "/hindsight/state", nil)
+		Convey("GET /training/fragments returns empty list when store is nil", func() {
+			req := httptest.NewRequest(http.MethodGet, "/training/fragments", nil)
 			resp, err := app.Test(req)
 			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusNotFound)
+			So(resp.StatusCode, ShouldEqual, http.StatusOK)
+		})
+
+		Convey("GET /training/fragments/:id/points returns empty list when store is nil", func() {
+			req := httptest.NewRequest(http.MethodGet, "/training/fragments/1/points", nil)
+			resp, err := app.Test(req)
+			So(err, ShouldBeNil)
+			So(resp.StatusCode, ShouldEqual, http.StatusOK)
 		})
 	})
 }

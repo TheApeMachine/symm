@@ -25,7 +25,7 @@ jitter from the consumer fast path and immediately release retained publications
 type UITee struct {
 	*nmruntime.System
 	ingress *lf.Queue[*data.Measurement]
-	egress  *lf.Queue[[]byte]
+	egress  *lf.Queue[*[]byte]
 	filters []func(
 		measurement *data.Measurement,
 	) bool
@@ -51,7 +51,7 @@ func NewUITee(
 
 	tee := &UITee{
 		ingress:   lf.NewQueue[*data.Measurement](),
-		egress:    lf.NewQueue[[]byte](),
+		egress:    lf.NewQueue[*[]byte](),
 		filters:   filters,
 		route:     types.Route(),
 		symbol:    types.Focus(),
@@ -110,11 +110,11 @@ func (tee *UITee) Next() unsafe.Pointer {
 
 	payload, ok := tee.egress.Dequeue()
 
-	if !ok || len(payload) == 0 {
+	if !ok || payload == nil || len(*payload) == 0 {
 		return nil
 	}
 
-	return unsafe.Pointer(&payload)
+	return unsafe.Pointer(payload)
 }
 
 /*
@@ -196,7 +196,8 @@ func (tee *UITee) worker(ctx context.Context) {
 				continue
 			}
 
-			tee.egress.Enqueue(payload)
+			buf := payload
+			tee.egress.Enqueue(&buf)
 		}
 	}
 }
@@ -215,7 +216,7 @@ func (tee *UITee) switcheroo() {
 
 		// They're FRESH! Exciting, they're so exciting to me!
 		tee.ingress = lf.NewQueue[*data.Measurement]()
-		tee.egress = lf.NewQueue[[]byte]()
+		tee.egress = lf.NewQueue[*[]byte]()
 
 		tee.switching.Store(false)
 		errnie.Info("[tee] I does that shit.")

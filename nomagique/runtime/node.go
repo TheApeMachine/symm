@@ -58,12 +58,19 @@ func NewConsumer(
 func (consumer *Consumer) Step(prior *data.Measurement, seq int64) *data.Measurement {
 	slot := seq & consumer.mask
 
-	consumer.published[slot] = consumer.node.Step(prior)
+	returned := consumer.node.Step(prior)
+	consumer.published[slot] = returned
 
 	if len(consumer.tees) > 0 {
 		for _, tee := range consumer.tees {
 			if tee != nil {
-				tee.Push(consumer.published[slot])
+				if returned != nil && len(returned.Peers()) > 0 {
+					for _, peer := range consumer.published[slot].Peers() {
+						tee.Push(peer)
+					}
+				} else {
+					tee.Push(returned)
+				}
 			}
 		}
 	}

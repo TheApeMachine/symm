@@ -73,11 +73,12 @@ func NewWorkspace(
 	tees ...Tee,
 ) *Workspace {
 	capacity := 1024
+
 	if system.Cfg.Runtime.Workspace.Buffer > 0 {
 		capacity = int(system.Cfg.Runtime.Workspace.Buffer)
 	}
-	mask := int64(capacity - 1)
 
+	mask := int64(capacity - 1)
 	numJoins := max(len(stages)-1, 0)
 
 	workspace := &Workspace{
@@ -123,6 +124,7 @@ func NewWorkspace(
 				workspace: workspace,
 				stageIdx:  stageIdx,
 			}
+
 			opts = append(opts, disruptor.Options.NewHandlerGroup(jh))
 		}
 	}
@@ -178,18 +180,6 @@ func (workspace *Workspace) Step(payload *data.Measurement) *data.Measurement {
 	workspace.buffer[seq&workspace.mask] = payload
 	workspace.channel.Commit(seq, seq)
 	return payload
-}
-
-/*
-Sequence allocates and returns the next strictly monotone sequence index for
-observations that bypass the LMAX Disruptor stage pipeline (e.g. raw Level-3 orders).
-*/
-func (workspace *Workspace) Sequence() int64 {
-	if workspace == nil {
-		return 1
-	}
-
-	return workspace.sequence.Add(1)
 }
 
 /*

@@ -49,6 +49,18 @@ func TestService(t *testing.T) {
 			So(report.Unrealized, ShouldEqual, "50")
 		})
 
+		Convey("GET /positions/lifecycle returns LifecycleReport", func() {
+			req := httptest.NewRequest(http.MethodGet, "/positions/lifecycle", nil)
+			resp, err := app.Test(req)
+			So(err, ShouldBeNil)
+			So(resp.StatusCode, ShouldEqual, http.StatusOK)
+
+			var report LifecycleReport
+			So(json.NewDecoder(resp.Body).Decode(&report), ShouldBeNil)
+			So(len(report.Lifecycles), ShouldEqual, 0)
+			So(report.Performance.Closed, ShouldEqual, 0)
+		})
+
 		Convey("GET /equity hits the same unified balance route", func() {
 			req := httptest.NewRequest(http.MethodGet, "/equity", nil)
 			resp, err := app.Test(req)

@@ -72,15 +72,15 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 	}
 
 	grid := store.NewGrid()
+	tokensByTick := buildTokenMap(grid, tapeByTick)
 	trainExcursions, evalExcursions, evalTicks := splitChronologically(excursions, tapeTicks)
 
 	minSearchTicks, maxSearchTicks := deriveSearchRange(excursions)
-	selectedTicks, bestPnL := trainer.optimizePrecursorTicks(
+	selectedTicks, bestPnL := trainer.optimizePrecursorTicksWithTokens(
 		trainExcursions,
-		tapeByTick,
+		tokensByTick,
 		evalExcursions,
 		evalTicks,
-		grid,
 		minSearchTicks,
 		maxSearchTicks,
 	)
@@ -90,7 +90,7 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 		selectedTicks, bestPnL, minSearchTicks, maxSearchTicks,
 	))
 
-	finalTrie := trainer.buildCandidateTrie(excursions, grid, tapeByTick, selectedTicks)
+	finalTrie := trainer.buildCandidateTrie(excursions, tokensByTick, selectedTicks)
 	storedCount, validKeys, err := finalTrie.Publish(trainer.Context(), trainer.catalog)
 
 	if err != nil {
@@ -153,44 +153,38 @@ func (trainer *Trainer) loadTrainingData(
 
 	for _, epoch := range targetEpochs {
 		epochExcursions := byEpoch[epoch]
-		bySymbol := groupExcursionsBySymbol(epochExcursions)
-		symbols := sortedSymbolKeys(bySymbol)
+		minTick, maxTick := excursionTickSpan(epochExcursions)
 
-		for _, symbol := range symbols {
-			symbolExcursions := bySymbol[symbol]
-			minTick, maxTick := excursionTickSpan(symbolExcursions)
-
-			for measurement, tapeErr := range trainer.catalog.SignalLogic(
-				trainer.Context(),
-				epoch,
-				symbol,
-				minTick,
-				maxTick,
-				tables.SensorySources...,
-			) {
-				if tapeErr != nil {
-					return nil, nil, nil, errnie.Error(errnie.Err(
-						errnie.IO,
-						fmt.Sprintf("[training] tape read error for %s in epoch %d", symbol, epoch),
-						tapeErr,
-					))
-				}
-
-				if measurement != nil {
-					tapeByTick[measurement.Tick] = append(tapeByTick[measurement.Tick], measurement)
-				}
+		for measurement, tapeErr := range trainer.catalog.SignalLogic(
+			trainer.Context(),
+			epoch,
+			"",
+			minTick,
+			maxTick,
+			tables.SensorySources...,
+		) {
+			if tapeErr != nil {
+				return nil, nil, nil, errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("[training] tape read error in epoch %d", epoch),
+					tapeErr,
+				))
 			}
 
-			for _, excursion := range symbolExcursions {
-				record, evalErr := trainer.parseExcursionData(excursion)
+			if measurement != nil {
+				tapeByTick[measurement.Tick] = append(tapeByTick[measurement.Tick], measurement)
+			}
+		}
 
-				if evalErr != nil {
-					return nil, nil, nil, errnie.Error(evalErr)
-				}
+		for _, excursion := range epochExcursions {
+			record, evalErr := trainer.parseExcursionData(excursion)
 
-				if record != nil {
-					allExcursions = append(allExcursions, record)
-				}
+			if evalErr != nil {
+				return nil, nil, nil, errnie.Error(evalErr)
+			}
+
+			if record != nil {
+				allExcursions = append(allExcursions, record)
 			}
 		}
 	}
@@ -359,8 +353,7 @@ func deriveSearchRange(excursions []*excursionData) (int64, int64) {
 
 func (trainer *Trainer) buildCandidateTrie(
 	records []*excursionData,
-	grid *store.Grid,
-	tapeByTick map[int64][]*data.Measurement,
+	tokensByTick map[int64]string,
 	precursorTicks int64,
 ) *precursorTrie {
 	trie := newPrecursorTrie()
@@ -372,14 +365,10 @@ func (trainer *Trainer) buildCandidateTrie(
 			windowStart = 0
 		}
 
-		entryTokens := tokenizeTape(
-			grid,
-			tapeByTick,
+		entryTokens := sliceTokens(
+			tokensByTick,
 			windowStart,
 			record.bTick,
-			record.epoch,
-			record.symbol,
-			record.startIdx,
 			false,
 		)
 
@@ -402,14 +391,10 @@ func (trainer *Trainer) buildCandidateTrie(
 		)
 
 		if record.isUp && record.cTick > record.bTick {
-			exitTokens := tokenizeTape(
-				grid,
-				tapeByTick,
+			exitTokens := sliceTokens(
+				tokensByTick,
 				record.bTick,
 				record.cTick,
-				record.epoch,
-				record.symbol,
-				record.startIdx,
 				true,
 			)
 
@@ -428,6 +413,60 @@ func (trainer *Trainer) buildCandidateTrie(
 	return trie
 }
 
+func sliceTokens(
+	tokensByTick map[int64]string,
+	startTick, endTick int64,
+	endInclusive bool,
+) []string {
+	tokens := make([]string, 0)
+	limit := endTick
+
+	if endInclusive {
+		limit = endTick + 1
+	}
+
+	for tick := startTick; tick < limit; tick++ {
+		token, exists := tokensByTick[tick]
+
+		if !exists || token == "" {
+			continue
+		}
+
+		if len(tokens) == 0 || tokens[len(tokens)-1] != token {
+			tokens = append(tokens, token)
+		}
+	}
+
+	return tokens
+}
+
+func buildTokenMap(
+	grid *store.Grid,
+	tapeByTick map[int64][]*data.Measurement,
+) map[int64]string {
+	tokensByTick := make(map[int64]string, len(tapeByTick))
+
+	for tick, signals := range tapeByTick {
+		if len(signals) == 0 {
+			continue
+		}
+
+		frame := data.NewMeasurement(signals[0].Epoch, signals[0].Label, "training", 0, tick)
+		frame.At = signals[0].At
+		frame.From = signals[0].From
+
+		if frame.From.IsZero() && !frame.At.IsZero() {
+			frame.From = frame.At
+		}
+
+		frame.Peers(signals...)
+		frame.Write()
+		tokensByTick[tick] = string(grid.Observe(frame))
+	}
+
+	return tokensByTick
+}
+
 /*
 tokenizeTape scans ticks in [startTick, endTick), evaluates each frame via grid,
 and collapses consecutive duplicate region tokens into single transitions.
@@ -441,42 +480,8 @@ func tokenizeTape(
 	startIdx int64,
 	endInclusive bool,
 ) []string {
-	tokens := make([]string, 0)
-	limit := endTick
-
-	if endInclusive {
-		limit = endTick + 1
-	}
-
-	for tick := startTick; tick < limit; tick++ {
-		signals := tapeByTick[tick]
-
-		if len(signals) == 0 {
-			continue
-		}
-
-		frame := data.NewMeasurement(epoch, symbol, "training", startIdx, tick)
-
-		for _, signal := range signals {
-			if signal.At.After(frame.At) {
-				frame.At = signal.At
-			}
-
-			if !signal.From.IsZero() && (frame.From.IsZero() || signal.From.Before(frame.From)) {
-				frame.From = signal.From
-			}
-		}
-
-		frame.Peers(signals...)
-		frame.Write()
-		token := string(grid.Observe(frame))
-
-		if len(tokens) == 0 || tokens[len(tokens)-1] != token {
-			tokens = append(tokens, token)
-		}
-	}
-
-	return tokens
+	tokensByTick := buildTokenMap(grid, tapeByTick)
+	return sliceTokens(tokensByTick, startTick, endTick, endInclusive)
 }
 
 /*
@@ -497,8 +502,7 @@ type replayOutcome struct {
 
 func (trainer *Trainer) evaluateReplay(
 	candidateTrie *precursorTrie,
-	grid *store.Grid,
-	evalTapeByTick map[int64][]*data.Measurement,
+	tokensByTick map[int64]string,
 	evalTicks []int64,
 	evalExcursions []*excursionData,
 	candidateTicks int64,
@@ -513,31 +517,11 @@ func (trainer *Trainer) evaluateReplay(
 	runningTokens := make([]string, 0)
 
 	for _, tick := range evalTicks {
-		signals := evalTapeByTick[tick]
+		token, exists := tokensByTick[tick]
 
-		if len(signals) == 0 {
+		if !exists || token == "" {
 			continue
 		}
-
-		frame := data.NewMeasurement(signals[0].Epoch, signals[0].Label, "training", 0, tick)
-
-		for _, signal := range signals {
-			if signal.At.After(frame.At) {
-				frame.At = signal.At
-			}
-
-			if !signal.From.IsZero() && (frame.From.IsZero() || signal.From.Before(frame.From)) {
-				frame.From = signal.From
-			}
-		}
-
-		if frame.From.IsZero() && !frame.At.IsZero() {
-			frame.From = frame.At
-		}
-
-		frame.Peers(signals...)
-		frame.Write()
-		token := string(grid.Observe(frame))
 
 		if len(runningTokens) == 0 || runningTokens[len(runningTokens)-1] != token {
 			runningTokens = append(runningTokens, token)
@@ -594,17 +578,9 @@ func (trainer *Trainer) evaluateReplay(
 				inPosition = false
 
 				if activeExcursion != nil && activeExcursion.isUp {
-					pnl, cost, err := trainer.price.RoundTrip(
-						activeExcursion.symbol,
-						activeExcursion.bPrice,
-						activeExcursion.cPrice,
-					)
-
-					if err == nil && cost.Sign() > 0 {
-						ret := pnl.Div(cost).Float64()
-						outcome.netPnL += ret
-						outcome.grossProfit += ret
-					}
+					ret := activeExcursion.netReturn
+					outcome.netPnL += ret
+					outcome.grossProfit += ret
 				}
 
 				activeExcursion = nil
@@ -744,6 +720,25 @@ func (trainer *Trainer) optimizePrecursorTicks(
 	grid *store.Grid,
 	minSearchTicks, maxSearchTicks int64,
 ) (int64, float64) {
+	tokensByTick := buildTokenMap(grid, tapeByTick)
+
+	return trainer.optimizePrecursorTicksWithTokens(
+		trainExcursions,
+		tokensByTick,
+		evalExcursions,
+		evalTicks,
+		minSearchTicks,
+		maxSearchTicks,
+	)
+}
+
+func (trainer *Trainer) optimizePrecursorTicksWithTokens(
+	trainExcursions []*excursionData,
+	tokensByTick map[int64]string,
+	evalExcursions []*excursionData,
+	evalTicks []int64,
+	minSearchTicks, maxSearchTicks int64,
+) (int64, float64) {
 	root := newMCTSNode(minSearchTicks, maxSearchTicks, nil)
 	iterations := int(maxSearchTicks-minSearchTicks+1) * 4
 
@@ -770,17 +765,17 @@ func (trainer *Trainer) optimizePrecursorTicks(
 		}
 
 		candidateTicks := (current.minTicks + current.maxTicks) / 2
-		candidateTrie := trainer.buildCandidateTrie(trainExcursions, grid, tapeByTick, candidateTicks)
-		outcome := trainer.evaluateReplay(candidateTrie, grid, tapeByTick, evalTicks, evalExcursions, candidateTicks)
+		candidateTrie := trainer.buildCandidateTrie(trainExcursions, tokensByTick, candidateTicks)
+		outcome := trainer.evaluateReplay(candidateTrie, tokensByTick, evalTicks, evalExcursions, candidateTicks)
 
 		reward := outcome.netPnL
 
-		for p := current; p != nil; p = p.parent {
-			p.visits++
-			p.totalPnL += reward
+		for node := current; node != nil; node = node.parent {
+			node.visits++
+			node.totalPnL += reward
 
-			if reward > p.bestPnL {
-				p.bestPnL = reward
+			if reward > node.bestPnL {
+				node.bestPnL = reward
 			}
 		}
 	}
@@ -1051,16 +1046,6 @@ func excursionHoldSeconds(excursion *data.Measurement) float64 {
 	return 0.0
 }
 
-func groupExcursionsBySymbol(excursions []*data.Measurement) map[string][]*data.Measurement {
-	bySymbol := make(map[string][]*data.Measurement)
-
-	for _, excursion := range excursions {
-		bySymbol[excursion.Label] = append(bySymbol[excursion.Label], excursion)
-	}
-
-	return bySymbol
-}
-
 func sortedEpochKeys(byEpoch map[int64][]*data.Measurement) []int64 {
 	keys := make([]int64, 0, len(byEpoch))
 
@@ -1070,17 +1055,6 @@ func sortedEpochKeys(byEpoch map[int64][]*data.Measurement) []int64 {
 
 	slices.Sort(keys)
 	return keys
-}
-
-func sortedSymbolKeys(bySymbol map[string][]*data.Measurement) []string {
-	symbols := make([]string, 0, len(bySymbol))
-
-	for symbol := range bySymbol {
-		symbols = append(symbols, symbol)
-	}
-
-	slices.Sort(symbols)
-	return symbols
 }
 
 func (trainer *Trainer) cleanupStaleBlobs(validKeys map[string]struct{}) error {
