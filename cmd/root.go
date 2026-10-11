@@ -187,6 +187,15 @@ var (
 				return err
 			}
 			book := broker.NewBook(ctx, normalizer)
+			book.SetResync(func(symbol string) {
+				if resyncErr := instrument.Resync(symbol); resyncErr != nil {
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						"[symm] book resync failed for "+symbol,
+						resyncErr,
+					))
+				}
+			})
 			price := broker.NewPrice(ctx, book, privateTransport, instrument, normalizer)
 			balance := broker.NewBalance(ctx, privateTransport, uiTee0)
 
@@ -483,6 +492,7 @@ var (
 									name, rejection,
 								))
 
+								time.Sleep(5 * time.Second)
 								err := softer.SoftDown(rejection)
 								errnie.Error(err)
 								continue

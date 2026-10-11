@@ -215,19 +215,11 @@ func (catalog *Catalog) ListBlobs(ctx context.Context, prefix string) iter.Seq2[
 }
 
 func (catalog *Catalog) blobs() (*s3.Client, string, error) {
-	if catalog == nil || catalog.awsConfig == nil {
+	if catalog == nil || catalog.awsConfig == nil || system.Cfg == nil || system.Cfg.Storage == nil || system.Cfg.Storage.S3 == nil || system.Cfg.Storage.S3.Bucket == "" {
 		return nil, "", errnie.Error(errnie.Err(
 			errnie.Validation,
 			"catalog: object storage is not configured",
 			ErrBlobStorageUnconfigured,
-		))
-	}
-
-	if system.Cfg == nil || system.Cfg.Storage == nil || system.Cfg.Storage.S3 == nil || system.Cfg.Storage.S3.Bucket == "" {
-		return nil, "", errnie.Error(errnie.Err(
-			errnie.Validation,
-			"catalog: storage.s3 bucket is required",
-			nil,
 		))
 	}
 

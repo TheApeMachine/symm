@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -229,18 +230,78 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 
 /*
 advance extends the symbol's path with token and matches its candidate suffixes against
-the stored paths. An exact leaf action executes when confidence and position state admit it.
+the stored paths in memory. An exact leaf action executes when confidence and position state admit it.
 */
 func (training *Training) advance(symbol, token string) (string, string, string, int) {
-	found, ok := training.paths.LoadOrStore(symbol, token)
-	prefix := found.(string)
+	var tokens []string
 
-	if ok {
-		prefix = prefix + "/" + token
+	if found, ok := training.paths.Load(symbol); ok && found != nil {
+		switch value := found.(type) {
+		case []string:
+			tokens = slices.Clone(value)
+		case string:
+			if value != "" {
+				tokens = strings.Split(value, "/")
+			}
+		}
 	}
 
-	action := training.catalog.GetAction(training.Context(), prefix)
-	return action, "", prefix, len(strings.Split(prefix, "/"))
+	if len(tokens) == 0 || tokens[len(tokens)-1] != token {
+		tokens = append(tokens, token)
+	}
+
+	if training.maxDepth > 0 && len(tokens) > training.maxDepth {
+		tokens = tokens[len(tokens)-training.maxDepth:]
+	}
+
+	training.paths.Store(symbol, tokens)
+
+	prefix := strings.Join(tokens, "/")
+	action := training.actionForPrefix(prefix)
+	return action, "", prefix, len(tokens)
+}
+
+/*
+actionForPrefix checks stored keys in memory for exact prefix action consensus,
+avoiding synchronous S3 ListObjectsV2 calls on the critical Disruptor path.
+*/
+func (training *Training) actionForPrefix(prefix string) string {
+	if len(training.keys) == 0 {
+		return ""
+	}
+
+	searchPrefix := prefix
+	if !strings.HasSuffix(searchPrefix, "/") {
+		searchPrefix += "/"
+	}
+
+	start, _ := slices.BinarySearch(training.keys, searchPrefix)
+	end := start
+
+	for end < len(training.keys) && strings.HasPrefix(training.keys[end], searchPrefix) {
+		end++
+	}
+
+	if start == end {
+		return ""
+	}
+
+	var currentAction string
+
+	for _, key := range training.keys[start:end] {
+		action := strings.TrimSuffix(path.Base(key), ".json")
+
+		if currentAction == "" {
+			currentAction = action
+			continue
+		}
+
+		if currentAction != action {
+			return ""
+		}
+	}
+
+	return currentAction
 }
 
 /*
@@ -253,8 +314,19 @@ Exits sell everything currently open.
 func (training *Training) act(symbol, action string) string {
 	switch action {
 	case "enter":
+		cash := training.desk.Cash(system.Cfg.Market.QuoteCurrency)
+		if cash == nil {
+			training.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"[training] cash is unavailable for quote currency "+system.Cfg.Market.QuoteCurrency,
+				nil,
+			))
+
+			return ""
+		}
+
 		qty, err := training.price.Quantity(
-			symbol, training.desk.Cash(system.Cfg.Market.QuoteCurrency).Mul(
+			symbol, cash.Mul(
 				system.Cfg.Risk.MaxFraction,
 			),
 		)

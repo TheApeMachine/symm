@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -18,6 +19,7 @@ fills beside their shadow fills, and reports each completed round trip.
 */
 type Desk struct {
 	*runtime.System
+	mu        sync.Mutex
 	transport Transport
 	price     *Price
 	balance   *Balance
@@ -67,11 +69,17 @@ func (desk *Desk) Enter(symbol string, qty *decimal.Decimal) error {
 	position := NewPosition()
 	position.Enter(symbol, qty)
 
-	untyped, loaded := desk.positions.LoadOrStore(symbol, []*Position{position})
-	if loaded {
+	desk.mu.Lock()
+	untyped, loaded := desk.positions.Load(symbol)
+	if loaded && untyped != nil {
 		positions := untyped.([]*Position)
 		desk.positions.Store(symbol, append(positions, position))
 	}
+
+	if !loaded || untyped == nil {
+		desk.positions.Store(symbol, []*Position{position})
+	}
+	desk.mu.Unlock()
 
 	if desk.transport != nil && len(position.entryOrders) > 0 {
 		order := position.entryOrders[len(position.entryOrders)-1]
@@ -98,14 +106,18 @@ rest. When the position is already exiting (the monitor's full exit came
 first) it records that it also fired, so both are visible.
 */
 func (desk *Desk) Exit(symbol string) error {
+	desk.mu.Lock()
 	untyped, exists := desk.positions.Load(symbol)
 	if !exists || untyped == nil {
+		desk.mu.Unlock()
 		return nil
 	}
 
 	positions := untyped.([]*Position)
+	posList := slices.Clone(positions)
+	desk.mu.Unlock()
 
-	for _, position := range positions {
+	for _, position := range posList {
 		position.Exit(symbol)
 
 		if desk.transport != nil && position.qty != nil && len(position.exitOrders) > 0 {
@@ -124,15 +136,16 @@ func (desk *Desk) Exit(symbol string) error {
 		}
 	}
 
-	desk.positions.Delete(symbol)
 	return nil
 }
 
 func (desk *Desk) Apply(execution *kraken.Execution) {
 	for _, data := range execution.Data {
+		desk.mu.Lock()
 		untyped, exists := desk.positions.Load(data.Symbol)
 
 		if !exists {
+			desk.mu.Unlock()
 			continue
 		}
 
@@ -150,5 +163,6 @@ func (desk *Desk) Apply(execution *kraken.Execution) {
 		if allClosed {
 			desk.positions.Delete(data.Symbol)
 		}
+		desk.mu.Unlock()
 	}
 }

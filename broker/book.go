@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"hash/crc32"
-	"math/big"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -31,11 +29,12 @@ type Book struct {
 	normalizer *spot.Normalizer
 	notify     atomic.Pointer[func(string, time.Time)]
 	resync     atomic.Pointer[func(string)]
-	touch      atomic.Pointer[func([]kraken.Level3Touch)]
-	mutations  atomic.Pointer[func([]kraken.Level3Data)]
-	diverging sync.Map
-	lastTouch sync.Map
-	locks     sync.Map
+	touch       atomic.Pointer[func([]kraken.Level3Touch)]
+	mutations   atomic.Pointer[func([]kraken.Level3Data)]
+	diverging   sync.Map
+	lastTouch   sync.Map
+	locks       sync.Map
+	orderPrices sync.Map
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
@@ -375,11 +374,14 @@ func (book *Book) apply(
 
 			if payload.Type == "snapshot" {
 				book.diverging.Delete(data.Symbol)
+				book.orderPrices.Store(data.Symbol, &sync.Map{})
 				symbolBook = book.manager.CreateBook(
 					data.Symbol,
 					depth,
 				)
 			}
+
+			orderMap := book.getOrderPrices(data.Symbol)
 
 			for sideIndex, level3data := range []*[]kraken.Level3Order{
 				&data.Bids, &data.Asks,
@@ -396,20 +398,26 @@ func (book *Book) apply(
 
 				for _, order := range *level3data {
 					if order.Event == "delete" && order.LimitPrice == nil {
-						for _, level := range symbolSide.Levels {
-							if level == nil {
-								continue
-							}
+						if val, ok := orderMap.Load(order.OrderID); ok && val != nil {
+							order.LimitPrice = val.(*decimal.Decimal)
+						}
 
-							for _, queued := range level.Queue() {
-								if queued.ID == order.OrderID {
-									order.LimitPrice = level.Price
+						if order.LimitPrice == nil {
+							for _, level := range symbolSide.Levels {
+								if level == nil {
+									continue
+								}
+
+								for _, queued := range level.Queue() {
+									if queued.ID == order.OrderID {
+										order.LimitPrice = level.Price
+										break
+									}
+								}
+
+								if order.LimitPrice != nil {
 									break
 								}
-							}
-
-							if order.LimitPrice != nil {
-								break
 							}
 						}
 					}
@@ -419,23 +427,42 @@ func (book *Book) apply(
 					}
 
 					if order.OrderID != "" {
-						for _, level := range symbolSide.Levels {
-							if level == nil || level.Price == nil || level.Price.Cmp(order.LimitPrice) == 0 {
-								continue
-							}
+						var movedOldPrice *decimal.Decimal
 
-							for _, queued := range level.Queue() {
-								if queued.ID == order.OrderID {
-									symbolBook.Update(&spotbook.UpdateOptions{
-										Direction: direction,
-										ID:        order.OrderID,
-										Price:     level.Price,
-										Quantity:  decimal.NewFromInt64(0),
-										Silent:    true,
-									})
+						if val, ok := orderMap.Load(order.OrderID); ok && val != nil {
+							cachedPrice := val.(*decimal.Decimal)
+							if cachedPrice.Cmp(order.LimitPrice) != 0 {
+								movedOldPrice = cachedPrice
+							}
+						}
+
+						if movedOldPrice == nil {
+							for _, level := range symbolSide.Levels {
+								if level == nil || level.Price == nil || level.Price.Cmp(order.LimitPrice) == 0 {
+									continue
+								}
+
+								for _, queued := range level.Queue() {
+									if queued.ID == order.OrderID {
+										movedOldPrice = level.Price
+										break
+									}
+								}
+
+								if movedOldPrice != nil {
 									break
 								}
 							}
+						}
+
+						if movedOldPrice != nil {
+							symbolBook.Update(&spotbook.UpdateOptions{
+								Direction: direction,
+								ID:        order.OrderID,
+								Price:     movedOldPrice,
+								Quantity:  decimal.NewFromInt64(0),
+								Silent:    true,
+							})
 						}
 					}
 
@@ -469,6 +496,14 @@ func (book *Book) apply(
 						Timestamp: order.Timestamp,
 						Silent:    true,
 					})
+
+					if order.Event == "delete" {
+						orderMap.Delete(order.OrderID)
+					}
+
+					if order.Event != "delete" && order.LimitPrice != nil {
+						orderMap.Store(order.OrderID, order.LimitPrice)
+					}
 
 					filtered = append(filtered, order)
 				}
@@ -699,22 +734,31 @@ func (book *Book) SnapshotInto(out *sync.Map) {
 	}
 }
 
-type decimalLayout struct {
-	integer *big.Int
+func (book *Book) getOrderPrices(symbol string) *sync.Map {
+	val, ok := book.orderPrices.Load(symbol)
+	if ok && val != nil {
+		return val.(*sync.Map)
+	}
+
+	newMap := &sync.Map{}
+	actual, _ := book.orderPrices.LoadOrStore(symbol, newMap)
+	return actual.(*sync.Map)
 }
 
 func appendDecimalDigits(buf []byte, d *decimal.Decimal) []byte {
-	if d == nil {
+	if d == nil || d.Sign() == 0 {
 		return buf
 	}
 
-	raw := (*decimalLayout)(unsafe.Pointer(d)).integer
+	str := d.String()
 
-	if raw == nil || raw.Sign() == 0 {
-		return buf
+	for idx := 0; idx < len(str); idx++ {
+		if str[idx] != '.' {
+			buf = append(buf, str[idx])
+		}
 	}
 
-	return raw.Append(buf, 10)
+	return buf
 }
 
 func fastL3Checksum(managedBook *spotbook.Book, expected uint32) bool {

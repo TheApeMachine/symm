@@ -15,7 +15,10 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-const maxLeadLagSamples = 64
+const (
+	maxLeadLagSamples = 64
+	maxLeadLagPeers   = 16
+)
 
 /*
 Signal is the asynchronous price-path lead-lag instrument.
@@ -94,9 +97,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		signal.paths[prior.Label] = currentPath
 	}
 
-	readings := make([]nmcorrelation.LeadLagReading, 0, len(signal.paths))
+	readings := make([]nmcorrelation.LeadLagReading, 0, maxLeadLagPeers)
+	peerCount := 0
 
 	for peerSymbol, peerPath := range signal.paths {
+		if peerCount >= maxLeadLagPeers {
+			break
+		}
+
 		if peerSymbol == prior.Label || len(peerPath) < 3 || len(currentPath) < 3 {
 			continue
 		}
@@ -106,6 +114,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 		if reading.Defined {
 			readings = append(readings, reading)
+			peerCount++
 		}
 	}
 

@@ -84,6 +84,10 @@ func handleLevel3(
 		)
 	}
 
+	if storeTee == nil {
+		return nil
+	}
+
 	for _, level3Data := range level3Msg.Data {
 		for sideIdx, orders := range [][]kraken.Level3Order{level3Data.Bids, level3Data.Asks} {
 			side := "bid"

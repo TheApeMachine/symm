@@ -159,12 +159,18 @@ func (f *friction) clear(low, high *decimal.Decimal) (bool, error) {
 	}
 
 	if clears {
-		f.clears = ratio
-	} else {
+		if f.clears == nil || ratio.Cmp(f.clears) < 0 {
+			f.clears = ratio
+		}
+
+		return true, nil
+	}
+
+	if f.fails == nil || ratio.Cmp(f.fails) > 0 {
 		f.fails = ratio
 	}
 
-	return clears, nil
+	return false, nil
 }
 
 /*

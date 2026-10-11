@@ -125,12 +125,35 @@ func (dataset *Dataset) step(
 
 		symbolIndex := symbolToken(symbol)
 
-		for sidePositive, side := range []*book.Side{bids, asks} {
-			if side == nil {
-				continue
-			}
+		bidOrders := collectSideOrders(bids)
+		askOrders := collectSideOrders(asks)
 
-			orders := collectSideOrders(side)
+		var sumPrice float64
+		var sumQty float64
+		var orderCount int
+
+		for _, order := range bidOrders {
+			sumPrice += math.Log(order.LimitPrice.Float64())
+			sumQty += math.Log(order.Quantity.Float64())
+			orderCount++
+		}
+
+		for _, order := range askOrders {
+			sumPrice += math.Log(order.LimitPrice.Float64())
+			sumQty += math.Log(order.Quantity.Float64())
+			orderCount++
+		}
+
+		if orderCount > 0 {
+			if err := dataset.frames.observeSnapshot(symbol, sumPrice/float64(orderCount), sumQty/float64(orderCount)); err != nil {
+				dataset.err = err
+				return
+			}
+		}
+
+		sideOrders := [][]*book.Order{bidOrders, askOrders}
+
+		for sidePositive, orders := range sideOrders {
 			total := len(orders)
 
 			if total == 0 {
@@ -141,7 +164,7 @@ func (dataset *Dataset) step(
 
 			for _, order := range orders {
 				token := packToken(symbolIndex, sidePositive)
-				positionX, positionY, priceDeviation, quantityDeviation, err := dataset.frames.place(
+				positionX, positionY, priceDeviation, quantityDeviation, err := dataset.frames.probe(
 					symbol,
 					math.Log(order.LimitPrice.Float64()),
 					math.Log(order.Quantity.Float64()),

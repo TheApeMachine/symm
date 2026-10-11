@@ -280,17 +280,11 @@ func (tune arrivalTune) minFitEvents() int {
 }
 
 func (tune arrivalTune) minEventsPerSide() int {
-	if tune.totalEvents <= 0 {
+	if tune.totalEvents < 4 {
 		return 2
 	}
 
-	perSide := int(math.Ceil(float64(tune.totalEvents) / 4))
-
-	if perSide < 2 {
-		return 2
-	}
-
-	return perSide
+	return 4
 }
 
 func (tune arrivalTune) scanSteps() int {

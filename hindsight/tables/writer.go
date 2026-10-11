@@ -2,17 +2,33 @@ package tables
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
+	"github.com/apache/iceberg-go"
+	icetable "github.com/apache/iceberg-go/table"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
-const (
-	defaultTargetCommitBytes  = 16 * 1024 * 1024 // 16 MB on-disk batch target
-	measurementBatchThreshold = 20000
-)
+const defaultTargetCommitBytes = 16 * 1024 * 1024 // 16 MB on-disk batch target
+
+/*
+TargetCommitBytes returns the configured target size in bytes for Iceberg data files,
+falling back to defaultTargetCommitBytes (16 MB).
+*/
+func TargetCommitBytes() int64 {
+	if configured := viper.GetInt64("storage.iceberg.append_bytes"); configured > 0 {
+		return configured
+	}
+
+	if configured := viper.GetInt64("hindsight.capture.commit_bytes"); configured > 0 {
+		return configured
+	}
+
+	return defaultTargetCommitBytes
+}
 
 /*
 Writer buffers incoming measurements and commits them to Iceberg.
@@ -62,85 +78,103 @@ func (writer *Writer) Add(channel string, measurement *data.Measurement) {
 }
 
 /*
-CommitReady commits any family whose buffer meets its volume or size threshold, or all families if forceAll is true.
+CommitReady commits buffered measurements to Iceberg once the buffer reaches
+the target byte size estimated via measurement.ApproximateBytes(), or flushes
+all buffered measurements if forceAll is true.
 */
 func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
-	targetBytes := int64(defaultTargetCommitBytes)
+	targetBytes := TargetCommitBytes()
 
-	if configured := viper.GetInt64("hindsight.capture.commit_bytes"); configured > 0 {
-		targetBytes = configured
+	writer.lock()
+
+	if !forceAll && writer.bufferedBytes < targetBytes {
+		writer.unlock()
+
+		return nil
 	}
 
-	threshold := measurementBatchThreshold
+	if len(writer.measurements) == 0 {
+		writer.unlock()
 
-	if viper.GetInt("hindsight.capture.commit_rows") > 0 {
-		threshold = viper.GetInt("hindsight.capture.commit_rows")
+		return nil
 	}
 
-	if err := writer.commitFamily(ctx, writer.table, targetBytes, threshold, forceAll, func() ([]*data.Measurement, int64) {
-		rows := writer.measurements
-		bytes := writer.bufferedBytes
-		writer.measurements = nil
-		writer.bufferedBytes = 0
+	var batches [][]*data.Measurement
+	var currentBatch []*data.Measurement
+	var currentBatchBytes int64
 
-		return rows, bytes
-	}, func(remaining []*data.Measurement, remainingBytes int64) {
-		writer.measurements = append(remaining, writer.measurements...)
-		writer.bufferedBytes += remainingBytes
-	}); err != nil {
-		return err
+	measurements := writer.measurements
+	writer.measurements = nil
+	writer.bufferedBytes = 0
+
+	for _, measurement := range measurements {
+		measBytes := measurement.ApproximateBytes()
+
+		if len(currentBatch) > 0 && currentBatchBytes+measBytes > targetBytes {
+			batches = append(batches, currentBatch)
+			currentBatch = nil
+			currentBatchBytes = 0
+		}
+
+		currentBatch = append(currentBatch, measurement)
+		currentBatchBytes += measBytes
+	}
+
+	if len(currentBatch) > 0 {
+		if !forceAll && currentBatchBytes < targetBytes {
+			writer.measurements = currentBatch
+			writer.bufferedBytes = currentBatchBytes
+		}
+
+		if forceAll || currentBatchBytes >= targetBytes {
+			batches = append(batches, currentBatch)
+		}
+	}
+
+	writer.unlock()
+
+	for batchIndex, batch := range batches {
+		if err := writer.commitBatch(ctx, writer.table, batch); err != nil {
+			writer.lock()
+			var uncommitted []*data.Measurement
+			var uncommittedBytes int64
+
+			for remainingIndex := batchIndex; remainingIndex < len(batches); remainingIndex++ {
+				for _, meas := range batches[remainingIndex] {
+					uncommitted = append(uncommitted, meas)
+					uncommittedBytes += meas.ApproximateBytes()
+				}
+			}
+
+			writer.measurements = append(uncommitted, writer.measurements...)
+			writer.bufferedBytes += uncommittedBytes
+			writer.unlock()
+
+			return err
+		}
 	}
 
 	return nil
 }
 
-func (writer *Writer) commitFamily(
+func (writer *Writer) commitBatch(
 	ctx context.Context,
 	tableName string,
-	targetBytes int64,
-	thresholdRows int,
-	forceAll bool,
-	takeRows func() ([]*data.Measurement, int64),
-	putRows func([]*data.Measurement, int64),
+	batch []*data.Measurement,
 ) error {
-	writer.lock()
-
-	rowsToCommit, totalBytes := takeRows()
-
-	if len(rowsToCommit) == 0 {
-		writer.unlock()
-
+	if len(batch) == 0 {
 		return nil
 	}
-
-	if !forceAll && totalBytes < targetBytes && len(rowsToCommit) < thresholdRows {
-		putRows(rowsToCommit, totalBytes)
-		writer.unlock()
-
-		return nil
-	}
-
-	writer.unlock()
 
 	tbl, err := writer.catalog.Load(ctx, tableName)
 
 	if err != nil {
-		writer.lock()
-		putRows(rowsToCommit, totalBytes)
-		writer.unlock()
-
 		return err
 	}
 
-	measList := make([]*data.Measurement, len(rowsToCommit))
-	copy(measList, rowsToCommit)
+	reader, err := measurementRecords(tbl.Schema(), batch, writer.epoch)
 
-	reader, err := measurementRecords(tbl.Schema(), measList, writer.epoch)
 	if err != nil {
-		writer.lock()
-		putRows(rowsToCommit, totalBytes)
-		writer.unlock()
-
 		return err
 	}
 
@@ -151,10 +185,6 @@ func (writer *Writer) commitFamily(
 		_, appendErr = tbl.Append(writer.catalog.context(ctx), reader, nil)
 		return appendErr
 	}); err != nil {
-		writer.lock()
-		putRows(rowsToCommit, totalBytes)
-		writer.unlock()
-
 		return errnie.Error(errnie.Err(
 			errnie.BadGateway,
 			"[iceberg] failed to append to "+tableName,
@@ -194,9 +224,9 @@ func (writer *Writer) BufferedBytes() int64 {
 }
 
 /*
-Append commits measurements for one epoch to the named table as a single
-snapshot. Nothing is retained on success; on failure the error is returned and
-the rows are not committed.
+Append commits measurements for one epoch to the named table as snapshots
+sized to TargetCommitBytes() estimated via measurement.ApproximateBytes().
+Nothing is retained on success; on failure the error is returned.
 */
 func (catalog *Catalog) Append(
 	ctx context.Context, tableName string, epoch int64, measurements []*data.Measurement,
@@ -238,4 +268,181 @@ func (catalog *Catalog) Append(
 	}
 
 	return errnie.Error(writer.CommitReady(ctx, true))
+}
+
+/*
+Compact consolidates fragmented Parquet data files for the given epoch in tableName
+into properly sized Parquet files based on targetBytes estimated via
+measurement.ApproximateBytes().
+If epoch <= 0, it compacts all historical epochs found in the table.
+*/
+func (catalog *Catalog) Compact(
+	ctx context.Context,
+	tableName string,
+	epoch int64,
+) error {
+	if catalog == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "[catalog] catalog is required", nil,
+		))
+	}
+
+	ctx = catalog.context(ctx)
+
+	tbl, err := catalog.Load(ctx, tableName)
+
+	if err != nil {
+		return err
+	}
+
+	var targetEpochs []int64
+
+	if epoch > 0 {
+		targetEpochs = []int64{epoch}
+	}
+
+	if epoch <= 0 {
+		runs, runErr := catalog.Runs(ctx)
+
+		if runErr != nil {
+			return runErr
+		}
+
+		for _, run := range runs {
+			if run.Epoch > 0 {
+				targetEpochs = append(targetEpochs, run.Epoch)
+			}
+		}
+	}
+
+	targetBytes := TargetCommitBytes()
+
+	for _, currentEpoch := range targetEpochs {
+		if err := catalog.compactEpoch(ctx, tbl, tableName, currentEpoch, targetBytes); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (catalog *Catalog) compactEpoch(
+	ctx context.Context,
+	tbl *icetable.Table,
+	tableName string,
+	epoch int64,
+	targetBytes int64,
+) error {
+	predicate := iceberg.EqualTo(iceberg.Reference("epoch"), epoch)
+	tasks, err := tbl.Scan(icetable.WithRowFilter(predicate)).PlanFiles(ctx)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			fmt.Sprintf("[iceberg] failed to plan files for compaction in %s epoch %d", tableName, epoch),
+			err,
+		))
+	}
+
+	if len(tasks) <= 1 {
+		return nil
+	}
+
+	errnie.Info(fmt.Sprintf(
+		"[iceberg] compacting %s epoch %d: %d files into target size (~%d MB)",
+		tableName, epoch, len(tasks), targetBytes/(1024*1024),
+	))
+
+	var measurements []*data.Measurement
+
+	for measurement, scanErr := range catalog.scan(ctx, tableName, epoch, nil, 0) {
+		if scanErr != nil {
+			return scanErr
+		}
+
+		measurements = append(measurements, measurement)
+	}
+
+	if len(measurements) == 0 {
+		return nil
+	}
+
+	var batches [][]*data.Measurement
+	var currentBatch []*data.Measurement
+	var currentBatchBytes int64
+
+	for _, measurement := range measurements {
+		measBytes := measurement.ApproximateBytes()
+
+		if len(currentBatch) > 0 && currentBatchBytes+measBytes > targetBytes {
+			batches = append(batches, currentBatch)
+			currentBatch = nil
+			currentBatchBytes = 0
+		}
+
+		currentBatch = append(currentBatch, measurement)
+		currentBatchBytes += measBytes
+	}
+
+	if len(currentBatch) > 0 {
+		batches = append(batches, currentBatch)
+	}
+
+	firstReader, err := measurementRecords(tbl.Schema(), batches[0], epoch)
+
+	if err != nil {
+		return err
+	}
+
+	defer firstReader.Release()
+
+	var overwriteErr error
+	err = catalog.WithCommit(ctx, func() error {
+		tbl, overwriteErr = tbl.Overwrite(
+			catalog.context(ctx),
+			firstReader,
+			nil,
+			icetable.WithOverwriteFilter(predicate),
+		)
+		return overwriteErr
+	})
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			fmt.Sprintf("[iceberg] failed to overwrite during compaction in %s epoch %d", tableName, epoch),
+			err,
+		))
+	}
+
+	for batchIndex := 1; batchIndex < len(batches); batchIndex++ {
+		batchReader, batchErr := measurementRecords(tbl.Schema(), batches[batchIndex], epoch)
+
+		if batchErr != nil {
+			return batchErr
+		}
+
+		var appendErr error
+		err = catalog.WithCommit(ctx, func() error {
+			tbl, appendErr = tbl.Append(catalog.context(ctx), batchReader, nil)
+			return appendErr
+		})
+
+		batchReader.Release()
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.BadGateway,
+				fmt.Sprintf("[iceberg] failed to append batch %d during compaction in %s epoch %d", batchIndex, tableName, epoch),
+				err,
+			))
+		}
+	}
+
+	errnie.Info(fmt.Sprintf(
+		"[iceberg] compacted %s epoch %d: %d files replaced by %d files (%d measurements)",
+		tableName, epoch, len(tasks), len(batches), len(measurements),
+	))
+
+	return nil
 }

@@ -30,6 +30,7 @@ var (
 	detectCensusTop int
 	detectDryRun    bool
 	detectMinMove   time.Duration
+	detectTrain     bool
 )
 
 var detectCmd = &cobra.Command{
@@ -159,7 +160,7 @@ before anything is written.
 			}
 		}
 
-		if !detectDryRun {
+		if detectTrain && !detectDryRun {
 			trainer := strategy.NewTrainer(ctx, catalog, price)
 
 			if err := trainer.Generate(detectEpochs...); err != nil {
@@ -445,5 +446,6 @@ func init() {
 	detectCmd.Flags().IntVar(&detectCensusTop, "top", 0, "With --census, print only the N symbols with most trades (0 = all)")
 	detectCmd.Flags().BoolVar(&detectDryRun, "dry-run", false, "Detect and print, but append nothing")
 	detectCmd.Flags().DurationVar(&detectMinMove, "min-move-duration", 0, "Drop detections whose B->C venue time is shorter (sweep artifacts); required")
+	detectCmd.Flags().BoolVar(&detectTrain, "train", false, "Train action tree on the detected excursions and continuous sensory tape")
 	rootCmd.AddCommand(detectCmd)
 }

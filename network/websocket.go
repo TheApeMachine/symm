@@ -20,6 +20,7 @@ while status != READY ("client is not ready").
 type WebsocketClient struct {
 	*runtime.System
 	mu           sync.Mutex
+	writeMu      sync.Mutex
 	conn         *gorilla.Conn
 	url          string
 	pinger       *Pinger
@@ -198,6 +199,9 @@ func (client *WebsocketClient) Write(message []byte) error {
 		return err
 	}
 
+	client.writeMu.Lock()
+	defer client.writeMu.Unlock()
+
 	client.mu.Lock()
 	conn := client.conn
 	client.mu.Unlock()
@@ -220,6 +224,9 @@ func (client *WebsocketClient) Write(message []byte) error {
 }
 
 func (client *WebsocketClient) writePing() error {
+	client.writeMu.Lock()
+	defer client.writeMu.Unlock()
+
 	client.mu.Lock()
 	conn := client.conn
 	ready := client.Status() == runtime.READY

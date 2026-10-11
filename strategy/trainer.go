@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	stdruntime "runtime"
 	"slices"
 	"strings"
 
@@ -57,7 +58,8 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 		))
 	}
 
-	excursions, tapeByTick, tapeTicks, err := trainer.loadTrainingData(epochs...)
+	grid := store.NewGrid()
+	excursions, tokensByTick, tapeTicks, err := trainer.loadTrainingData(grid, epochs...)
 
 	if err != nil {
 		return errnie.Error(err)
@@ -71,8 +73,6 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 		))
 	}
 
-	grid := store.NewGrid()
-	tokensByTick := buildTokenMap(grid, tapeByTick)
 	trainExcursions, evalExcursions, evalTicks := splitChronologically(excursions, tapeTicks)
 
 	minSearchTicks, maxSearchTicks := deriveSearchRange(excursions)
@@ -132,9 +132,48 @@ type excursionData struct {
 	holdSeconds float64
 }
 
+type tickAccumulator struct {
+	deformation [13]float64
+	counts      [13]int
+}
+
+func computeToken(acc *tickAccumulator) string {
+	halfNormalMean := math.Sqrt(2.0 / math.Pi)
+	halfNormalVariance := 1.0 - 2.0/math.Pi
+
+	var winner uint8
+	var runnerUp uint8
+	var brightness [13]float64
+
+	for regionIdx := uint8(1); regionIdx <= 12; regionIdx++ {
+		countVal := float64(acc.counts[regionIdx])
+
+		if countVal == 0 {
+			continue
+		}
+
+		score := (acc.deformation[regionIdx] - countVal*halfNormalMean) /
+			math.Sqrt(countVal*halfNormalVariance)
+		brightness[regionIdx] = score
+
+		if winner == 0 || score > brightness[winner] {
+			runnerUp = winner
+			winner = regionIdx
+			continue
+		}
+
+		if runnerUp == 0 || score > brightness[runnerUp] {
+			runnerUp = regionIdx
+		}
+	}
+
+	return fmt.Sprintf("R%02d", winner)
+}
+
 func (trainer *Trainer) loadTrainingData(
+	grid *store.Grid,
 	epochs ...int64,
-) ([]*excursionData, map[int64][]*data.Measurement, []int64, error) {
+) ([]*excursionData, map[int64]string, []int64, error) {
 	byEpoch := make(map[int64][]*data.Measurement)
 
 	for excursion, err := range trainer.catalog.Excursions(trainer.Context(), epochs...) {
@@ -148,12 +187,21 @@ func (trainer *Trainer) loadTrainingData(
 	}
 
 	targetEpochs := sortedEpochKeys(byEpoch)
-	tapeByTick := make(map[int64][]*data.Measurement)
+	tokensByTick := make(map[int64]string)
 	allExcursions := make([]*excursionData, 0)
+	tapeTicks := make([]int64, 0)
+	tickOffset := int64(0)
 
 	for _, epoch := range targetEpochs {
 		epochExcursions := byEpoch[epoch]
 		minTick, maxTick := excursionTickSpan(epochExcursions)
+
+		errnie.Info(fmt.Sprintf(
+			"[training] reading tape for epoch %d (%d excursions, tick span [%d, %d])",
+			epoch, len(epochExcursions), minTick, maxTick,
+		))
+
+		accumulators := make(map[int64]*tickAccumulator)
 
 		for measurement, tapeErr := range trainer.catalog.SignalLogic(
 			trainer.Context(),
@@ -171,10 +219,41 @@ func (trainer *Trainer) loadTrainingData(
 				))
 			}
 
-			if measurement != nil {
-				tapeByTick[measurement.Tick] = append(tapeByTick[measurement.Tick], measurement)
+			if measurement == nil {
+				continue
+			}
+
+			acc, exists := accumulators[measurement.Tick]
+
+			if !exists {
+				acc = &tickAccumulator{}
+				accumulators[measurement.Tick] = acc
+			}
+
+			for metric := range measurement.Read() {
+				region := grid.PinRegion(measurement.Source, metric.Key)
+
+				if region == 0 {
+					continue
+				}
+
+				if !metric.Metric.Standardizable() {
+					continue
+				}
+
+				acc.deformation[region] += math.Abs(metric.Metric.Standardized)
+				acc.counts[region]++
 			}
 		}
+
+		for tick, acc := range accumulators {
+			globalTick := tick + tickOffset
+			tokensByTick[globalTick] = computeToken(acc)
+			tapeTicks = append(tapeTicks, globalTick)
+		}
+
+		accumulators = nil
+		stdruntime.GC()
 
 		for _, excursion := range epochExcursions {
 			record, evalErr := trainer.parseExcursionData(excursion)
@@ -184,18 +263,17 @@ func (trainer *Trainer) loadTrainingData(
 			}
 
 			if record != nil {
+				record.startTick += tickOffset
+				record.bTick += tickOffset
+				record.cTick += tickOffset
 				allExcursions = append(allExcursions, record)
 			}
 		}
+
+		tickOffset += maxTick + 1000
 	}
 
-	ticks := make([]int64, 0, len(tapeByTick))
-
-	for tick := range tapeByTick {
-		ticks = append(ticks, tick)
-	}
-
-	slices.Sort(ticks)
+	slices.Sort(tapeTicks)
 
 	slices.SortFunc(allExcursions, func(left, right *excursionData) int {
 		if left.bTick < right.bTick {
@@ -209,7 +287,7 @@ func (trainer *Trainer) loadTrainingData(
 		return 0
 	})
 
-	return allExcursions, tapeByTick, ticks, nil
+	return allExcursions, tokensByTick, tapeTicks, nil
 }
 
 func (trainer *Trainer) parseExcursionData(excursion *data.Measurement) (*excursionData, error) {
@@ -514,7 +592,7 @@ func (trainer *Trainer) evaluateReplay(
 	inPosition := false
 	entryTick := int64(0)
 	var activeExcursion *excursionData
-	runningTokens := make([]string, 0)
+	excIndex := 0
 
 	for _, tick := range evalTicks {
 		token, exists := tokensByTick[tick]
@@ -523,24 +601,22 @@ func (trainer *Trainer) evaluateReplay(
 			continue
 		}
 
-		if len(runningTokens) == 0 || runningTokens[len(runningTokens)-1] != token {
-			runningTokens = append(runningTokens, token)
-		}
-
-		action := candidateTrie.Consensus(runningTokens)
-
 		if !inPosition {
+			precursorTokens := sliceTokens(tokensByTick, tick-candidateTicks, tick, false)
+			action := candidateTrie.Consensus(precursorTokens)
+
 			if action == actionEnter {
 				inPosition = true
 				entryTick = tick
 
+				for excIndex < len(evalExcursions) && evalExcursions[excIndex].bTick < tick {
+					excIndex++
+				}
+
 				var target *excursionData
 
-				for _, exc := range evalExcursions {
-					if exc.bTick >= tick {
-						target = exc
-						break
-					}
+				if excIndex < len(evalExcursions) {
+					target = evalExcursions[excIndex]
 				}
 
 				if target != nil && target.isUp && target.cTick > tick {
@@ -561,30 +637,32 @@ func (trainer *Trainer) evaluateReplay(
 			if action != actionEnter {
 				outcome.abstentions++
 			}
+
+			continue
 		}
 
-		if inPosition {
-			shouldExit := action == actionExit
+		exitTokens := sliceTokens(tokensByTick, entryTick, tick, true)
+		action := candidateTrie.Consensus(exitTokens)
+		shouldExit := action == actionExit
 
-			if activeExcursion != nil && tick >= activeExcursion.cTick {
-				shouldExit = true
+		if activeExcursion != nil && tick >= activeExcursion.cTick {
+			shouldExit = true
+		}
+
+		if activeExcursion == nil && tick >= entryTick+candidateTicks {
+			shouldExit = true
+		}
+
+		if shouldExit {
+			inPosition = false
+
+			if activeExcursion != nil && activeExcursion.isUp {
+				ret := activeExcursion.netReturn
+				outcome.netPnL += ret
+				outcome.grossProfit += ret
 			}
 
-			if activeExcursion == nil && tick >= entryTick+candidateTicks {
-				shouldExit = true
-			}
-
-			if shouldExit {
-				inPosition = false
-
-				if activeExcursion != nil && activeExcursion.isUp {
-					ret := activeExcursion.netReturn
-					outcome.netPnL += ret
-					outcome.grossProfit += ret
-				}
-
-				activeExcursion = nil
-			}
+			activeExcursion = nil
 		}
 	}
 
@@ -778,6 +856,13 @@ func (trainer *Trainer) optimizePrecursorTicksWithTokens(
 				node.bestPnL = reward
 			}
 		}
+
+		if (iteration+1)%8 == 0 || iteration == iterations-1 {
+			errnie.Info(fmt.Sprintf(
+				"[training] MCTS iteration %d/%d (candidateTicks=%d reward=%.4f bestPnL=%.4f)",
+				iteration+1, iterations, candidateTicks, reward, root.bestPnL,
+			))
+		}
 	}
 
 	return root.bestCandidateTicks()
@@ -861,14 +946,26 @@ func (trie *precursorTrie) Consensus(tokens []string) string {
 }
 
 func collectSubtreeActions(node *precursorNode, actions map[string]struct{}) {
+	if len(actions) > 1 {
+		return
+	}
+
 	for actionKey, count := range node.actions {
 		if count > 0 {
 			actions[actionKey] = struct{}{}
 		}
 	}
 
+	if len(actions) > 1 {
+		return
+	}
+
 	for _, child := range node.children {
 		collectSubtreeActions(child, actions)
+
+		if len(actions) > 1 {
+			return
+		}
 	}
 }
 

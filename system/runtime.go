@@ -15,7 +15,7 @@ type Workspace struct {
 }
 
 func NewRuntime() *Runtime {
-	viper.SetDefault("runtime.workspace.buffer", 256)
+	viper.SetDefault("runtime.workspace.buffer", 8192)
 	buffer := uint32(viper.GetInt("runtime.workspace.buffer"))
 
 	runtime := &Runtime{

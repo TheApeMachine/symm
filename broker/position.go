@@ -3,6 +3,7 @@ package broker
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +13,7 @@ import (
 )
 
 type Position struct {
+	mu          sync.RWMutex
 	id          string
 	symbol      string
 	openedAt    time.Time
@@ -39,6 +41,9 @@ func NewPosition() *Position {
 }
 
 func (position *Position) Enter(symbol string, qty *decimal.Decimal) error {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
 	position.qty = qty
 	position.symbol = symbol
 
@@ -70,6 +75,9 @@ func (position *Position) Enter(symbol string, qty *decimal.Decimal) error {
 }
 
 func (position *Position) Exit(symbol string) error {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
 	volume := "0"
 
 	if position.qty != nil {
@@ -100,25 +108,44 @@ func (position *Position) Exit(symbol string) error {
 }
 
 func (position *Position) Qty() *decimal.Decimal {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
 	return position.qty
 }
 
 func (position *Position) EntryPrice() *decimal.Decimal {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
 	return position.entryPrice
 }
 
 func (position *Position) ExitPrice() *decimal.Decimal {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
 	return position.exitPrice
 }
 
-func (position *Position) Closed() bool {
+func (position *Position) closedLocked() bool {
 	return position.qty == nil || position.qty.Sign() <= 0
 }
 
+func (position *Position) Closed() bool {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	return position.closedLocked()
+}
+
 func (position *Position) Lifecycle() Lifecycle {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
 	status := "open"
 
-	if position.Closed() {
+	if position.closedLocked() {
 		status = "closed"
 	}
 
@@ -193,6 +220,9 @@ func (position *Position) Lifecycle() Lifecycle {
 }
 
 func (position *Position) Apply(execution kraken.ExecutionData) {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
 	position.fills = append(position.fills, &execution)
 
 	detail := fmt.Sprintf("%s fill", execution.Side)
@@ -287,7 +317,7 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 		}
 	}
 
-	if position.Closed() && position.closedAt == nil {
+	if position.closedLocked() && position.closedAt == nil {
 		now := time.Now().UTC()
 		position.closedAt = &now
 	}

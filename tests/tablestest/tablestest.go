@@ -42,6 +42,7 @@ func New(t testing.TB) *tables.Catalog {
 	if system.Cfg != nil && system.Cfg.Storage != nil && system.Cfg.Storage.S3 != nil {
 		s3Copy := *system.Cfg.Storage.S3
 		s3Copy.Endpoint = ""
+		s3Copy.Bucket = ""
 		storageCopy := *system.Cfg.Storage
 		storageCopy.S3 = &s3Copy
 		cfgCopy := *system.Cfg

@@ -46,7 +46,7 @@ runtime:
   workspace:
     # Disruptor slot count. Must be a power of two. Each sequence keeps its own
     # feed snapshot so signals see that event, not only the latest register slot.
-    buffer: 256
+    buffer: 8192
 
 system:
   data_path: ~/.symm/data
@@ -253,8 +253,8 @@ market:
   book_history_limit: 0
   # High-liquidity run: deeper L2 book and faster subscription pacing.
   subscribe:
-    pace: 1s
-    batch: 200
+    pace: 3s
+    batch: 25
   book:
     depth: 10
   forecast:

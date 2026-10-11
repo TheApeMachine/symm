@@ -671,3 +671,57 @@ func (instrument *Instrument) Unsubscribe() error {
 func (instrument *Instrument) Symbols() []string {
 	return slices.Clone(instrument.symbols)
 }
+
+/*
+Resync requests a fresh Level3 snapshot for a diverged symbol over its batch websocket.
+*/
+func (instrument *Instrument) Resync(symbol string) error {
+	token, err := instrument.level3Token()
+	if err != nil {
+		return err
+	}
+
+	msg, err := sonic.Marshal(kraken.NewLevel3Subscription([]string{symbol}, token, level3Depth()))
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[instrument] level3 resync marshal failed for "+symbol,
+			err,
+		))
+	}
+
+	var targetClient *network.WebsocketClient
+
+	instrument.Level3.Range(func(key, val any) bool {
+		batchKey, ok := key.(string)
+		if !ok {
+			return true
+		}
+
+		for _, part := range strings.Split(batchKey, "|") {
+			if part != symbol {
+				continue
+			}
+
+			client, isWS := val.(*network.WebsocketClient)
+			if isWS {
+				targetClient = client
+				return false
+			}
+		}
+
+		return true
+	})
+
+	if targetClient == nil {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[instrument] no level3 socket found for "+symbol,
+			nil,
+		))
+	}
+
+	return instrument.paceLevel3(func() error {
+		return targetClient.Write(msg)
+	})
+}

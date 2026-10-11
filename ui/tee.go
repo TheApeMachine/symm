@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"runtime"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -24,14 +23,13 @@ jitter from the consumer fast path and immediately release retained publications
 */
 type UITee struct {
 	*nmruntime.System
-	ingress *lf.Queue[*data.Measurement]
-	egress  *lf.Queue[*[]byte]
+	ingress atomic.Pointer[lf.Queue[*data.Measurement]]
+	egress  atomic.Pointer[lf.Queue[*[]byte]]
 	filters []func(
 		measurement *data.Measurement,
 	) bool
-	route     string
-	symbol    string
-	switching atomic.Bool
+	route  string
+	symbol string
 }
 
 /*
@@ -50,13 +48,13 @@ func NewUITee(
 	}
 
 	tee := &UITee{
-		ingress:   lf.NewQueue[*data.Measurement](),
-		egress:    lf.NewQueue[*[]byte](),
-		filters:   filters,
-		route:     types.Route(),
-		symbol:    types.Focus(),
-		switching: atomic.Bool{},
+		filters: filters,
+		route:   types.Route(),
+		symbol:  types.Focus(),
 	}
+
+	tee.ingress.Store(lf.NewQueue[*data.Measurement]())
+	tee.egress.Store(lf.NewQueue[*[]byte]())
 
 	tee.System = nmruntime.NewSystem(ctx, label, tee)
 	go tee.worker(tee.Context())
@@ -74,11 +72,6 @@ func (tee *UITee) Push(measurement *data.Measurement) {
 		return
 	}
 
-	// Spin-cycle, you're washed.
-	for tee.switching.Load() {
-		runtime.Gosched()
-	}
-
 	if measurement == nil {
 		return
 	}
@@ -89,7 +82,10 @@ func (tee *UITee) Push(measurement *data.Measurement) {
 		}
 	}
 
-	tee.ingress.Enqueue(measurement)
+	inQueue := tee.ingress.Load()
+	if inQueue != nil {
+		inQueue.Enqueue(measurement)
+	}
 }
 
 /*
@@ -103,12 +99,12 @@ func (tee *UITee) Next() unsafe.Pointer {
 		return nil
 	}
 
-	// Spin-cycle, you're washed.
-	for tee.switching.Load() {
-		runtime.Gosched()
+	outQueue := tee.egress.Load()
+	if outQueue == nil {
+		return nil
 	}
 
-	payload, ok := tee.egress.Dequeue()
+	payload, ok := outQueue.Dequeue()
 
 	if !ok || payload == nil || len(*payload) == 0 {
 		return nil
@@ -122,11 +118,16 @@ IngressLength reports how many measurements are waiting in the ingress queue
 to be encoded by the background worker.
 */
 func (tee *UITee) IngressLength() int {
-	if tee == nil || tee.ingress == nil {
+	if tee == nil {
 		return 0
 	}
 
-	return int(tee.ingress.Length())
+	inQueue := tee.ingress.Load()
+	if inQueue == nil {
+		return 0
+	}
+
+	return int(inQueue.Length())
 }
 
 /*
@@ -134,11 +135,16 @@ EgressLength reports how many encoded FlatBuffer frames are queued waiting for
 client transmission.
 */
 func (tee *UITee) EgressLength() int {
-	if tee == nil || tee.egress == nil {
+	if tee == nil {
 		return 0
 	}
 
-	return int(tee.egress.Length())
+	outQueue := tee.egress.Load()
+	if outQueue == nil {
+		return 0
+	}
+
+	return int(outQueue.Length())
 }
 
 /*
@@ -156,69 +162,65 @@ func (tee *UITee) worker(ctx context.Context) {
 		default:
 			tee.switcheroo()
 
-			if tee.ingress.Length() == 0 {
+			inQueue := tee.ingress.Load()
+			if inQueue == nil || inQueue.Length() == 0 {
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}
-		}
 
-		for tee.ingress.Length() > 0 {
-			measurement, ok := tee.ingress.Dequeue()
+			for inQueue.Length() > 0 {
+				measurement, ok := inQueue.Dequeue()
 
-			if !ok {
-				break
-			}
+				if !ok {
+					break
+				}
 
-			dropped := false
+				dropped := false
 
-			for _, filter := range tee.filters {
-				if !filter(measurement) {
-					// When the pimp's in the crib ma...
-					dropped = true
+				for _, filter := range tee.filters {
+					if !filter(measurement) {
+						dropped = true
+						break
+					}
+				}
+
+				if dropped {
+					continue
+				}
+
+				payload, err := types.EncodeMeasurements(
+					[]*data.Measurement{measurement},
+				)
+
+				if err != nil {
+					tee.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"[tee] Failed to encode measurement",
+						err,
+					))
+					continue
+				}
+
+				buf := payload
+				outQueue := tee.egress.Load()
+				if outQueue != nil {
+					outQueue.Enqueue(&buf)
 				}
 			}
-
-			if dropped {
-				// ...Drop it like it's hot.
-				continue
-			}
-
-			payload, err := types.EncodeMeasurements(
-				[]*data.Measurement{measurement},
-			)
-
-			if err != nil {
-				tee.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"[tee] Failed to encode measurement",
-					err,
-				))
-				continue
-			}
-
-			buf := payload
-			tee.egress.Enqueue(&buf)
 		}
 	}
 }
 
 func (tee *UITee) switcheroo() {
-	if types.Route() != tee.route || types.Focus() != tee.symbol {
-		errnie.Info("[tee] I do... The Switcheroo!")
-		tee.switching.Store(true)
+	currentRoute := types.Route()
+	currentFocus := types.Focus()
 
-		// Wait a minute...
-		time.Sleep(10 * time.Millisecond)
+	if currentRoute != tee.route || currentFocus != tee.symbol {
+		errnie.Info("[tee] swapping active queue routing for " + currentRoute + " / " + currentFocus)
+		tee.route = currentRoute
+		tee.symbol = currentFocus
 
-		// K, go!
-		tee.route = types.Route()
-		tee.symbol = types.Focus()
-
-		// They're FRESH! Exciting, they're so exciting to me!
-		tee.ingress = lf.NewQueue[*data.Measurement]()
-		tee.egress = lf.NewQueue[*[]byte]()
-
-		tee.switching.Store(false)
-		errnie.Info("[tee] I does that shit.")
+		tee.ingress.Store(lf.NewQueue[*data.Measurement]())
+		tee.egress.Store(lf.NewQueue[*[]byte]())
 	}
 }

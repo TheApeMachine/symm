@@ -386,6 +386,13 @@ func ingestMetrics(
 		)
 	}
 
+	if maxTicks > 0 {
+		filter = iceberg.NewAnd(
+			filter,
+			iceberg.LessThanEqual(iceberg.Reference("tick"), int64(maxTicks)),
+		)
+	}
+
 	tasks, err := tbl.Scan(icetable.WithRowFilter(filter)).PlanFiles(s3Ctx)
 	if err != nil {
 		return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(errnie.BadGateway, "[audit] failed to plan files", err))
@@ -438,6 +445,10 @@ func ingestMetrics(
 
 				for _, meas := range measurements {
 					if meas != nil {
+						if maxTicks > 0 && meas.Tick > int64(maxTicks) {
+							continue
+						}
+
 						tickMeasurements[meas.Tick] = append(tickMeasurements[meas.Tick], meas)
 						seenTicks[meas.Tick] = struct{}{}
 					}

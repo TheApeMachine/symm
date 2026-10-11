@@ -58,7 +58,7 @@ func AnalyzeTruthfulness(trades []*data.Measurement, measurements []*data.Measur
 	}
 
 	equal := func(observed, expected float64) bool {
-		return math.Abs(observed-expected) <= 1e-9*math.Max(math.Abs(expected), math.Abs(observed))
+		return math.Abs(observed-expected) <= 1e-12+1e-9*math.Max(math.Abs(expected), math.Abs(observed))
 	}
 
 	cvdByKey := make(map[string][]*data.Measurement)

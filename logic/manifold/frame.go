@@ -17,6 +17,7 @@ type frames struct {
 type coordinateFrame struct {
 	price, quantity *axis
 	lastPrice       [3]float64
+	lastQuantity    [3]float64
 }
 
 type axis struct {
@@ -81,17 +82,66 @@ func (owner *frames) frame(symbol string) *coordinateFrame {
 	return held
 }
 
+/*
+observeSnapshot advances the temporal Welford estimators exactly once per snapshot.
+*/
+func (owner *frames) observeSnapshot(symbol string, price, quantity float64) error {
+	held := owner.frame(symbol)
+	_, _, priceMoments, err := held.price.observe(price)
+	if err != nil {
+		return err
+	}
+
+	_, _, qtyMoments, err := held.quantity.observe(quantity)
+	if err != nil {
+		return err
+	}
+
+	held.lastPrice = priceMoments
+	held.lastQuantity = qtyMoments
+	return nil
+}
+
+/*
+place observes an event, updating the symbol's running temporal frame.
+*/
 func (owner *frames) place(symbol string, price, quantity float64) (x, y, priceDeviation, quantityDeviation float64, err error) {
 	held := owner.frame(symbol)
-	x, priceDeviation, moments, err := held.price.observe(price)
+	x, priceDeviation, priceMoments, err := held.price.observe(price)
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}
-	y, quantityDeviation, _, err = held.quantity.observe(quantity)
+
+	y, quantityDeviation, qtyMoments, err := held.quantity.observe(quantity)
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}
-	held.lastPrice = moments
+
+	held.lastPrice = priceMoments
+	held.lastQuantity = qtyMoments
+	return x, y, priceDeviation, quantityDeviation, nil
+}
+
+/*
+probe scores an individual resting order against the symbol's temporal frame without
+distorting the running Welford estimator with redundant resting orders.
+*/
+func (owner *frames) probe(symbol string, price, quantity float64) (x, y, priceDeviation, quantityDeviation float64, err error) {
+	held := owner.symbols[symbol]
+	if held == nil || held.lastPrice[0] == 0 {
+		return 0, 0, 0, 0, fmt.Errorf("manifold: no observed frame for %q", symbol)
+	}
+
+	x, priceDeviation, err = held.price.probe(held.lastPrice, price)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+
+	y, quantityDeviation, err = held.quantity.probe(held.lastQuantity, quantity)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+
 	return x, y, priceDeviation, quantityDeviation, nil
 }
 

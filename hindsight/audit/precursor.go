@@ -156,8 +156,23 @@ func AnalyzePrecursorSeparation(
 	})
 
 	var ignitionEvents, ignitionControls, earlyHolds, lateHolds []map[string]int
+	archiveFetches := 0
+	const maxArchiveFetches = 100
 
 	for _, excursion := range excursions {
+		inSample := false
+		if len(ticks) > 0 && excursion.startTick >= ticks[0] && excursion.cTick <= ticks[len(ticks)-1] {
+			inSample = true
+		}
+
+		if !inSample {
+			if archiveFetches >= maxArchiveFetches {
+				continue
+			}
+
+			archiveFetches++
+		}
+
 		eventTokens, err := archivedIntervalTokens(
 			ctx, catalog, epoch, excursion.symbol, grid, excursion.startTick, excursion.cTick, tickMeasurements,
 		)
@@ -346,6 +361,20 @@ func archivedIntervalTokens(
 		for _, m := range list {
 			if m != nil && (symbol == "" || m.Label == symbol) {
 				tickMap[tick] = append(tickMap[tick], m)
+			}
+		}
+	}
+
+	if len(tickMap) == 0 && catalog != nil && epoch > 0 {
+		for meas, tapeErr := range catalog.SignalLogic(
+			ctx, epoch, symbol, startTick, endTick, tables.SensorySources...,
+		) {
+			if tapeErr != nil {
+				return nil, errnie.Error(tapeErr)
+			}
+
+			if meas != nil && (symbol == "" || meas.Label == symbol) {
+				tickMap[meas.Tick] = append(tickMap[meas.Tick], meas)
 			}
 		}
 	}

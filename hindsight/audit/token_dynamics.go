@@ -262,7 +262,7 @@ func AnalyzeTokenDynamics(
 	}
 
 	realEntropy := computeTransitionEntropy(transitions, tokenFreqs, len(tokens))
-	blockSize := empiricalDwellBlockSize(tokens)
+	blockSize := empiricalDwellBlockSize(tokensBySymbol)
 	nullEntropies := computeBlockNullTransitionEntropies(tokensBySymbol, blockSize, permutations)
 
 	nullMean := 0.0
@@ -379,31 +379,43 @@ func computeTransitionEntropy(
 
 /*
 empiricalDwellBlockSize uses the median run length of identical consecutive
-tokens as the null's local-persistence scale. The value therefore comes from the
-observed sequence rather than a hand-picked constant.
+tokens within each symbol as the null's local-persistence scale. It evaluates
+dwell runs per-symbol to avoid collapsing block size across interleaved multi-symbol feeds.
 */
-func empiricalDwellBlockSize(tokens []string) int {
-	if len(tokens) == 0 {
+func empiricalDwellBlockSize(tokensBySymbol map[string][]string) int {
+	runs := make([]int, 0)
+
+	for _, symTokens := range tokensBySymbol {
+		if len(symTokens) == 0 {
+			continue
+		}
+
+		runLength := 1
+
+		for index := 1; index < len(symTokens); index++ {
+			if symTokens[index] == symTokens[index-1] {
+				runLength++
+				continue
+			}
+
+			runs = append(runs, runLength)
+			runLength = 1
+		}
+
+		runs = append(runs, runLength)
+	}
+
+	if len(runs) == 0 {
 		return 1
 	}
 
-	runs := make([]int, 0)
-	runLength := 1
-	for index := 1; index < len(tokens); index++ {
-		if tokens[index] == tokens[index-1] {
-			runLength++
-			continue
-		}
-		runs = append(runs, runLength)
-		runLength = 1
-	}
-	runs = append(runs, runLength)
 	sort.Ints(runs)
-
 	median := runs[len(runs)/2]
+
 	if median < 1 {
 		return 1
 	}
+
 	return median
 }
 

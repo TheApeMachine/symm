@@ -485,9 +485,9 @@ func (catalog *Catalog) SignalLogic(
 			sourceLookup[src] = struct{}{}
 		}
 
-		var results []*data.Measurement
-
-		for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0) {
+		for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0,
+			"epoch", "seqIdx", "source", "label", "tick", "at", "from", "id", "coherence", "maturity", "metrics",
+		) {
 			if err != nil {
 				if !yield(nil, err) {
 					return
@@ -516,22 +516,6 @@ func (catalog *Catalog) SignalLogic(
 				continue
 			}
 
-			results = append(results, measurement)
-		}
-
-		slices.SortFunc(results, func(left, right *data.Measurement) int {
-			if cmpResult := cmp.Compare(left.Tick, right.Tick); cmpResult != 0 {
-				return cmpResult
-			}
-
-			if cmpResult := cmp.Compare(left.SeqIdx, right.SeqIdx); cmpResult != 0 {
-				return cmpResult
-			}
-
-			return cmp.Compare(left.Source, right.Source)
-		})
-
-		for _, measurement := range results {
 			if !yield(measurement, nil) {
 				return
 			}

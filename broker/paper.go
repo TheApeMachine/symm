@@ -112,6 +112,30 @@ func (paper *Paper) Balances() (*kraken.Balance, error) {
 	return kraken.NewPaperBalance(raw), nil
 }
 
+type flexString string
+
+func (fs *flexString) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 {
+		return nil
+	}
+
+	if b[0] == '"' {
+		var str string
+		if err := sonic.Unmarshal(b, &str); err != nil {
+			return err
+		}
+		*fs = flexString(str)
+		return nil
+	}
+
+	*fs = flexString(string(b))
+	return nil
+}
+
+func (fs flexString) String() string {
+	return string(fs)
+}
+
 /*
 Write routes the same subscription and order envelopes used by live transports
 through the paper CLI under simulator latency.
@@ -123,13 +147,13 @@ func (paper *Paper) Write(
 		Method string `json:"method"`
 		ReqID  int64  `json:"req_id"`
 		Params struct {
-			Channel    string      `json:"channel"`
-			ClOrdID    string      `json:"cl_ord_id"`
-			OrderType  string      `json:"order_type"`
-			Side       string      `json:"side"`
-			Symbol     string      `json:"symbol"`
-			OrderQty   json.Number `json:"order_qty"`
-			LimitPrice json.Number `json:"limit_price"`
+			Channel    string     `json:"channel"`
+			ClOrdID    string     `json:"cl_ord_id"`
+			OrderType  string     `json:"order_type"`
+			Side       string     `json:"side"`
+			Symbol     string     `json:"symbol"`
+			OrderQty   flexString `json:"order_qty"`
+			LimitPrice flexString `json:"limit_price"`
 		} `json:"params"`
 	}{}
 

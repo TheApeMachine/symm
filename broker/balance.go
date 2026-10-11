@@ -103,7 +103,51 @@ func (balance *Balance) cash(asset string) *decimal.Decimal {
 		}
 	}
 
+	alias := krakenAssetAlias(asset)
+	if alias != "" {
+		for _, entry := range balance.wallet.Data {
+			if entry.Asset == alias {
+				return entry.Available
+			}
+		}
+	}
+
 	return nil
+}
+
+func krakenAssetAlias(asset string) string {
+	switch asset {
+	case "USD":
+		return "ZUSD"
+	case "ZUSD":
+		return "USD"
+	case "EUR":
+		return "ZEUR"
+	case "ZEUR":
+		return "EUR"
+	case "GBP":
+		return "ZGBP"
+	case "ZGBP":
+		return "GBP"
+	case "CAD":
+		return "ZCAD"
+	case "ZCAD":
+		return "CAD"
+	case "JPY":
+		return "ZJPY"
+	case "ZJPY":
+		return "JPY"
+	case "BTC", "XBT":
+		return "XXBT"
+	case "XXBT":
+		return "XBT"
+	case "ETH":
+		return "XETH"
+	case "XETH":
+		return "ETH"
+	}
+
+	return ""
 }
 
 func (balance *Balance) watch() {
