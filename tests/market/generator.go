@@ -43,10 +43,13 @@ func tradeFrame(symbol, phase string, seq int64, at time.Time, price float64, si
 	measurement.At = at
 	measurement.From = at
 
+	priceUnit, priceTime := data.GetDimension("ingress", "price")
+	qtyUnit, qtyTime := data.GetDimension("ingress", "qty")
+
 	priceMetric := data.NewExactMetric(
-		"price", decimal.NewFromFloat64(price), data.UnitPrice, data.TimescaleInstantaneous,
+		"price", decimal.NewFromFloat64(price), priceUnit, priceTime,
 	)
-	qtyMetric := data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous)
+	qtyMetric := data.NewMetric("qty", 1, qtyUnit, qtyTime)
 
 	return measurement.Write(priceMetric, qtyMetric)
 }

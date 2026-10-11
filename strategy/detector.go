@@ -657,16 +657,26 @@ func (detector *Detector) Flush(
 	measurement.At = excursion.c.at
 	measurement.From = excursion.b.at
 
+	startIdxUnit, startIdxTime := data.GetDimension(detector.Name(), "start_idx")
+	startTickUnit, startTickTime := data.GetDimension(detector.Name(), "start_tick")
+	bIdxUnit, bIdxTime := data.GetDimension(detector.Name(), "b_idx")
+	bTickUnit, bTickTime := data.GetDimension(detector.Name(), "b_tick")
+	cIdxUnit, cIdxTime := data.GetDimension(detector.Name(), "c_idx")
+	cTickUnit, cTickTime := data.GetDimension(detector.Name(), "c_tick")
+	endTickUnit, endTickTime := data.GetDimension(detector.Name(), "end_tick")
+	bPriceUnit, bPriceTime := data.GetDimension(detector.Name(), "b_price")
+	cPriceUnit, cPriceTime := data.GetDimension(detector.Name(), "c_price")
+
 	measurement.Write(
-		data.NewMetric("start_idx", float64(start.idx), data.UnitCount, data.TimescaleTick),
-		data.NewMetric("start_tick", float64(start.tick), data.UnitCount, data.TimescaleTick),
-		data.NewMetric("b_idx", float64(excursion.b.idx), data.UnitCount, data.TimescaleTick),
-		data.NewMetric("b_tick", float64(excursion.b.tick), data.UnitCount, data.TimescaleTick),
-		data.NewMetric("c_idx", float64(excursion.c.idx), data.UnitCount, data.TimescaleTick),
-		data.NewMetric("c_tick", float64(excursion.c.tick), data.UnitCount, data.TimescaleTick),
-		data.NewMetric("end_tick", float64(end.tick), data.UnitCount, data.TimescaleTick),
-		data.NewExactMetric("b_price", excursion.b.price, data.UnitPrice, data.TimescaleTick),
-		data.NewExactMetric("c_price", excursion.c.price, data.UnitPrice, data.TimescaleTick),
+		data.NewMetric("start_idx", float64(start.idx), startIdxUnit, startIdxTime),
+		data.NewMetric("start_tick", float64(start.tick), startTickUnit, startTickTime),
+		data.NewMetric("b_idx", float64(excursion.b.idx), bIdxUnit, bIdxTime),
+		data.NewMetric("b_tick", float64(excursion.b.tick), bTickUnit, bTickTime),
+		data.NewMetric("c_idx", float64(excursion.c.idx), cIdxUnit, cIdxTime),
+		data.NewMetric("c_tick", float64(excursion.c.tick), cTickUnit, cTickTime),
+		data.NewMetric("end_tick", float64(end.tick), endTickUnit, endTickTime),
+		data.NewExactMetric("b_price", excursion.b.price, bPriceUnit, bPriceTime),
+		data.NewExactMetric("c_price", excursion.c.price, cPriceUnit, cPriceTime),
 	)
 
 	detector.storeTee.Push(measurement)

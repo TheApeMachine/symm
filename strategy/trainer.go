@@ -230,37 +230,33 @@ type excursionData struct {
 }
 
 type tickAccumulator struct {
-	deformation [13]float64
-	counts      [13]int
+	deformation [12]float64
+	counts      [12]int
 }
 
 func computeToken(acc *tickAccumulator) string {
 	halfNormalMean := math.Sqrt(2.0 / math.Pi)
 	halfNormalVariance := 1.0 - 2.0/math.Pi
 
-	var winner uint8
-	var runnerUp uint8
-	var brightness [13]float64
-
-	for regionIdx := uint8(1); regionIdx <= 12; regionIdx++ {
-		countVal := float64(acc.counts[regionIdx])
-
-		if countVal == 0 {
-			continue
+	for region := range uint8(12) {
+		if acc.counts[region] == 0 {
+			return ""
 		}
+	}
 
-		score := (acc.deformation[regionIdx] - countVal*halfNormalMean) /
+	var brightness [12]float64
+
+	for region := range uint8(12) {
+		countVal := float64(acc.counts[region])
+		brightness[region] = (acc.deformation[region] - countVal*halfNormalMean) /
 			math.Sqrt(countVal*halfNormalVariance)
-		brightness[regionIdx] = score
+	}
 
-		if winner == 0 || score > brightness[winner] {
-			runnerUp = winner
-			winner = regionIdx
-			continue
-		}
+	winner := uint8(0)
 
-		if runnerUp == 0 || score > brightness[runnerUp] {
-			runnerUp = regionIdx
+	for region := uint8(1); region < 12; region++ {
+		if brightness[region] > brightness[winner] {
+			winner = region
 		}
 	}
 
@@ -327,9 +323,9 @@ func (trainer *Trainer) loadEpochDuckDB(
 			return nil, 0, err
 		}
 
-		region := grid.PinRegion(source, metricKey)
+		region, ok := grid.PinRegion(source, metricKey)
 
-		if region == 0 {
+		if !ok {
 			continue
 		}
 
@@ -434,9 +430,9 @@ func (trainer *Trainer) loadEpoch(
 			}
 
 			for metric := range measurement.Read() {
-				region := grid.PinRegion(measurement.Source, metric.Key)
+				region, ok := grid.PinRegion(measurement.Source, metric.Key)
 
-				if region == 0 {
+				if !ok {
 					continue
 				}
 
@@ -1126,7 +1122,7 @@ func (trainer *Trainer) optimizePrecursorTicksWithTokens(
 	memo := make(map[int64]float64)
 	mctsTracker := newProgressTracker("MCTS search", int64(iterations), 3*time.Second)
 
-	for iteration := 0; iteration < iterations; iteration++ {
+	for iteration := range iterations {
 		current := root
 
 		for len(current.children) > 0 {

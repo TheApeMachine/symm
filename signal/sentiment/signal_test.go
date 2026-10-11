@@ -151,7 +151,9 @@ func TestSentimentSignalMetrics(t *testing.T) {
 
 						_, held = metric(res, "directional_consensus")
 						So(held, ShouldBeTrue)
-						So(store.NewGrid().PinRegion("sentiment", "directional_consensus"), ShouldEqual, uint8(10))
+						reg, ok := store.NewGrid().PinRegion("sentiment", "directional_consensus")
+						So(ok, ShouldBeTrue)
+						So(reg, ShouldEqual, uint8(9))
 
 						_, held = metric(res, "asof_age_seconds")
 						So(held, ShouldBeFalse)

@@ -123,7 +123,7 @@ func AnalyzeEquivalence(
 				})
 			}
 
-			for reg := uint8(1); reg <= 12; reg++ {
+			for reg := range uint8(12) {
 				diff := math.Abs(prodBrightness[reg] - auditBrightness[reg])
 				if diff > 1e-9 {
 					metricMismatches++

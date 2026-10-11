@@ -141,9 +141,10 @@ func (measurement *Measurement) Next(
 
 	if len(values) > 0 {
 		for key, val := range values[0] {
+			unit, timescale := GetDimension(source, key)
 			next.metrics = append(next.metrics, &MetricEntry{
 				Key:    key,
-				Metric: NewMetric(key, val, "", ""),
+				Metric: NewMetric(key, val, unit, timescale),
 			})
 		}
 	}
@@ -336,6 +337,17 @@ func (measurement *Measurement) Metadata() []*StringEntry {
 	}
 
 	return measurement.metadata
+}
+
+/*
+Count returns the number of metrics held by the measurement.
+*/
+func (measurement *Measurement) Count() int {
+	if measurement == nil {
+		return 0
+	}
+
+	return len(measurement.metrics)
 }
 
 /*

@@ -1,6 +1,10 @@
 package data
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/theapemachine/errnie"
+)
 
 /*
 Unit describes the physical dimension of a measured value. It grounds numbers
@@ -10,6 +14,7 @@ type Unit string
 
 const (
 	// Dimensionless & Relative
+	UnitNone              Unit = "none"
 	UnitDimensionless     Unit = "dimensionless"
 	UnitRatio             Unit = "ratio"
 	UnitPercent           Unit = "percent"
@@ -74,6 +79,7 @@ or is statistically aggregated.
 type Timescale string
 
 const (
+	TimescaleNone Timescale = "none"
 	// Point-in-time / discrete events
 	TimescaleInstantaneous Timescale = "instantaneous"
 	TimescaleTick          Timescale = "tick"
@@ -577,7 +583,73 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"withdrawal_fraction_zscore:ask":      {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"withdrawal_fraction_zscore:bid":      {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 	},
+	"spot:trade": {
+		"price":       {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"qty":         {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+		"volume":      {Unit: UnitVolume, Timescale: TimescaleInstantaneous},
+		"bid":         {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"ask":         {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"bid_qty":     {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+		"ask_qty":     {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+		"limit_price": {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"order_qty":   {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+	},
+	"spot:level3": {
+		"limit_price": {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"order_qty":   {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+		"checksum":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+	},
+	"detector": {
+		"start_idx":  {Unit: UnitCount, Timescale: TimescaleTick},
+		"start_tick": {Unit: UnitCount, Timescale: TimescaleTick},
+		"b_idx":      {Unit: UnitCount, Timescale: TimescaleTick},
+		"b_tick":     {Unit: UnitCount, Timescale: TimescaleTick},
+		"c_idx":      {Unit: UnitCount, Timescale: TimescaleTick},
+		"c_tick":     {Unit: UnitCount, Timescale: TimescaleTick},
+		"end_tick":   {Unit: UnitCount, Timescale: TimescaleTick},
+		"b_price":    {Unit: UnitPrice, Timescale: TimescaleTick},
+		"c_price":    {Unit: UnitPrice, Timescale: TimescaleTick},
+	},
+	"training": {
+		"region_winner":          {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_runner_up":       {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_brightness:R00":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R01":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R02":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R03":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R04":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R05":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R06":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R07":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R08":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R09":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R10":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R11":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_members:R00":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R01":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R02":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R03":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R04":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R05":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R06":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R07":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R08":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R09":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R10":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R11":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+	},
 }
+
+/*
+Scale is the space a metric stream is standardized in.
+*/
+type Scale uint8
+
+const (
+	ScaleLinear Scale = iota
+	ScaleLog
+	ScaleLogModulus
+)
 
 var metricDimensions = make(map[string]Dimension, 600)
 
@@ -595,140 +667,45 @@ func init() {
 
 func stripScope(label string) string {
 	base := label
+
 	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
 		base = base[:atIndex]
-	}
-
-	if colonIndex := strings.IndexByte(base, ':'); colonIndex != -1 {
-		base = base[:colonIndex]
 	}
 
 	return base
 }
 
-func patternDimension(base string) (Dimension, bool) {
-	if strings.HasSuffix(base, "_zscore") {
-		return Dimension{Unit: UnitZScore, Timescale: TimescaleRollingWindow}, true
-	}
-
-	if strings.HasSuffix(base, "_velocity") {
-		return Dimension{Unit: UnitVelocity, Timescale: TimescaleRollingWindow}, true
-	}
-
-	if strings.HasSuffix(base, "_correlation") {
-		return Dimension{Unit: UnitCorrelation, Timescale: TimescaleRollingWindow}, true
-	}
-
-	if strings.HasSuffix(base, "_count") || strings.HasPrefix(base, "count_") {
-		return Dimension{Unit: UnitCount, Timescale: TimescaleInstantaneous}, true
-	}
-
-	if strings.HasSuffix(base, "_rate") {
-		return Dimension{Unit: UnitRate, Timescale: TimescaleRollingWindow}, true
-	}
-
-	if strings.HasSuffix(base, "_seconds") || strings.HasSuffix(base, "_duration") {
-		return Dimension{Unit: UnitSecond, Timescale: TimescaleInstantaneous}, true
-	}
-
-	if strings.HasSuffix(base, "_fraction") || strings.HasSuffix(base, "_ratio") || strings.HasSuffix(base, "_imbalance") {
-		return Dimension{Unit: UnitRatio, Timescale: TimescaleRollingWindow}, true
-	}
-
-	if strings.HasSuffix(base, "_price") {
-		return Dimension{Unit: UnitPrice, Timescale: TimescaleInstantaneous}, true
-	}
-
-	if strings.HasSuffix(base, "_quantity") || strings.HasSuffix(base, "_qty") {
-		return Dimension{Unit: UnitQuantity, Timescale: TimescaleInstantaneous}, true
-	}
-
-	if strings.HasSuffix(base, "_notional") {
-		return Dimension{Unit: UnitNotional, Timescale: TimescaleInstantaneous}, true
-	}
-
-	if strings.HasSuffix(base, "_p_value") || strings.HasSuffix(base, "_percentile") {
-		return Dimension{Unit: UnitProbability, Timescale: TimescaleRollingWindow}, true
-	}
-
-	if strings.HasSuffix(base, "_distance") {
-		return Dimension{Unit: UnitDistance, Timescale: TimescaleRollingWindow}, true
-	}
-
-	return Dimension{}, false
-}
-
 /*
-CanonicalDimensions maps a metric label and its candidate unit and timescale
-to its honest canonical physical unit and operational timescale.
+Dimension returns the canonical dimensions of a metric.
 */
-func CanonicalDimensions(label string, unit Unit, timescale Timescale) (Unit, Timescale) {
-	base := label
-	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
-		base = base[:atIndex]
+func GetDimension(source string, label string) (unit Unit, timescale Timescale) {
+	producer, ok := SignalMetrics[source]
+
+	if !ok {
+		errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[data.unit] producer not found",
+			nil,
+		), "source", source, "label", label)
+
+		return UnitNone, TimescaleNone
 	}
 
-	if dimension, found := metricDimensions[base]; found {
-		resolvedUnit := dimension.Unit
-		if resolvedUnit == "" {
-			resolvedUnit = unit
-		}
-		if resolvedUnit == "" {
-			resolvedUnit = UnitDimensionless
-		}
+	dimension, ok := producer[label]
 
-		resolvedTimescale := dimension.Timescale
-		if resolvedTimescale == "" {
-			resolvedTimescale = timescale
-		}
-		if resolvedTimescale == "" {
-			resolvedTimescale = TimescaleInstantaneous
-		}
-
-		return resolvedUnit, resolvedTimescale
+	if !ok {
+		dimension, ok = producer[stripScope(label)]
 	}
 
-	if patternDim, found := patternDimension(stripScope(base)); found {
-		resolvedUnit := unit
-		if resolvedUnit == "" || resolvedUnit == UnitDimensionless {
-			resolvedUnit = patternDim.Unit
-		}
+	if !ok {
+		errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[data.unit] dimension not found",
+			nil,
+		), "source", source, "label", label)
 
-		resolvedTimescale := timescale
-		if resolvedTimescale == "" || resolvedTimescale == TimescaleInstantaneous {
-			resolvedTimescale = patternDim.Timescale
-		}
-
-		return resolvedUnit, resolvedTimescale
+		return UnitNone, TimescaleNone
 	}
 
-	resolvedUnit := unit
-	if resolvedUnit == "" {
-		resolvedUnit = UnitDimensionless
-	}
-
-	resolvedTimescale := timescale
-	if resolvedTimescale == "" {
-		resolvedTimescale = TimescaleInstantaneous
-	}
-
-	return resolvedUnit, resolvedTimescale
-}
-
-/*
-CanonicalUnit maps a metric label and its candidate unit to the canonical
-physical unit.
-*/
-func CanonicalUnit(label string, unit Unit) Unit {
-	canonicalUnit, _ := CanonicalDimensions(label, unit, "")
-	return canonicalUnit
-}
-
-/*
-CanonicalTimescale maps a metric label and its candidate timescale to the
-canonical operational timescale.
-*/
-func CanonicalTimescale(label string, timescale Timescale) Timescale {
-	_, canonicalTimescale := CanonicalDimensions(label, "", timescale)
-	return canonicalTimescale
+	return dimension.Unit, dimension.Timescale
 }

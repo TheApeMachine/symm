@@ -80,7 +80,7 @@ func AnalyzeGridSensitivity(
 /*
 regionMass is 1 when the grid lit any region on the sample, 0 otherwise.
 */
-func regionMass(dist [13]float64) float64 {
+func regionMass(dist [12]float64) float64 {
 	total := 0.0
 
 	for _, value := range dist {
@@ -141,8 +141,8 @@ func computeSampleRegionDistribution(
 	ticks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
 	excludeFamily string,
-) [13]float64 {
-	var counts [13]float64
+) [12]float64 {
+	var counts [12]float64
 	total := 0.0
 
 	for _, tick := range ticks {
@@ -185,14 +185,9 @@ func computeSampleRegionDistribution(
 			frame.Peers(symMeas...)
 			frame.Write()
 			tokenBytes := grid.Observe(frame)
-			if len(tokenBytes) >= 3 && tokenBytes[0] == 'R' {
-				var reg uint8
-				if tokenBytes[1] == '0' {
-					reg = tokenBytes[2] - '0'
-				} else {
-					reg = 10 + (tokenBytes[2] - '0')
-				}
-				if reg >= 1 && reg <= 12 {
+			if len(tokenBytes) == 3 && tokenBytes[0] == 'R' {
+				reg := (tokenBytes[1]-'0')*10 + (tokenBytes[2] - '0')
+				if reg < 12 {
 					counts[reg]++
 					total++
 				}
@@ -201,7 +196,7 @@ func computeSampleRegionDistribution(
 	}
 
 	if total > 0 {
-		for r := 1; r <= 12; r++ {
+		for r := range 12 {
 			counts[r] /= total
 		}
 	}
@@ -214,8 +209,8 @@ func computeDuplicatedRegionDistribution(
 	ticks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
 	duplicateFamily string,
-) [13]float64 {
-	var counts [13]float64
+) [12]float64 {
+	var counts [12]float64
 	total := 0.0
 
 	for _, tick := range ticks {
@@ -259,14 +254,9 @@ func computeDuplicatedRegionDistribution(
 			frame.Peers(symMeas...)
 			frame.Write()
 			tokenBytes := grid.Observe(frame)
-			if len(tokenBytes) >= 3 && tokenBytes[0] == 'R' {
-				var reg uint8
-				if tokenBytes[1] == '0' {
-					reg = tokenBytes[2] - '0'
-				} else {
-					reg = 10 + (tokenBytes[2] - '0')
-				}
-				if reg >= 1 && reg <= 12 {
+			if len(tokenBytes) == 3 && tokenBytes[0] == 'R' {
+				reg := (tokenBytes[1]-'0')*10 + (tokenBytes[2] - '0')
+				if reg < 12 {
 					counts[reg]++
 					total++
 				}
@@ -275,7 +265,7 @@ func computeDuplicatedRegionDistribution(
 	}
 
 	if total > 0 {
-		for r := 1; r <= 12; r++ {
+		for r := range 12 {
 			counts[r] /= total
 		}
 	}

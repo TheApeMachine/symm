@@ -144,18 +144,21 @@ func handleLevel3(
 				measurement.At = order.Timestamp.UTC()
 				measurement.From = measurement.At
 
+				priceUnit, priceTime := data.GetDimension("spot:level3", "limit_price")
+				qtyUnit, qtyTime := data.GetDimension("spot:level3", "order_qty")
+
 				measurement.Write(
 					data.NewExactMetric(
 						"limit_price",
 						order.LimitPrice,
-						data.UnitCurrency,
-						data.TimescaleInstantaneous,
+						priceUnit,
+						priceTime,
 					),
 					data.NewExactMetric(
 						"order_qty",
 						order.OrderQty,
-						data.UnitVolume,
-						data.TimescaleInstantaneous,
+						qtyUnit,
+						qtyTime,
 					),
 				)
 
@@ -232,18 +235,21 @@ func handleTrade(
 		measurement.At = tradeItem.Timestamp.UTC()
 		measurement.From = measurement.At
 
+		priceUnit, priceTime := data.GetDimension("spot:trade", "price")
+		qtyUnit, qtyTime := data.GetDimension("spot:trade", "qty")
+
 		measurement.Write(
 			data.NewExactMetric(
 				"price",
 				&tradeItem.Price,
-				data.UnitCurrency,
-				data.TimescaleInstantaneous,
+				priceUnit,
+				priceTime,
 			),
 			data.NewMetric(
 				"qty",
 				tradeItem.Qty,
-				data.UnitVolume,
-				data.TimescaleInstantaneous,
+				qtyUnit,
+				qtyTime,
 			),
 		)
 

@@ -594,7 +594,7 @@ func evaluateGroupHypothesis(
 	var permGroup sync.WaitGroup
 	var permCount atomic.Int64
 
-	for workerIdx := 0; workerIdx < numWorkers; workerIdx++ {
+	for workerIdx := range numWorkers {
 		permGroup.Add(1)
 
 		go func(wID int) {
@@ -657,7 +657,7 @@ func evaluatePairedHypothesis(
 	var pairGroup sync.WaitGroup
 	var pairCount atomic.Int64
 
-	for workerIdx := 0; workerIdx < numWorkers; workerIdx++ {
+	for workerIdx := range numWorkers {
 		pairGroup.Add(1)
 
 		go func(wID int) {
@@ -779,7 +779,7 @@ func evaluateHeldOutSkill(
 	var skillGroup sync.WaitGroup
 	var skillCount atomic.Int64
 
-	for workerIdx := 0; workerIdx < numWorkers; workerIdx++ {
+	for workerIdx := range numWorkers {
 		skillGroup.Add(1)
 
 		go func(wID int) {

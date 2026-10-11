@@ -295,16 +295,30 @@ func extractPartitions(
 	for _, tick := range ticks {
 		for _, m := range tickMeasurements[tick] {
 			if m == nil {
+				errnie.Error(errnie.Err(
+					errnie.NotFound,
+					"[grid stability] missing_measurement",
+					nil,
+				))
+
 				continue
 			}
 
 			for entry := range m.Read() {
 				if entry == nil || entry.Metric == nil {
+					errnie.Error(errnie.Err(
+						errnie.NotFound,
+						"[grid stability] missing entry or metric",
+						nil,
+					))
+
 					continue
 				}
 
 				key := fmt.Sprintf("%s:%s", m.Source, entry.Key)
-				result[key] = grid.PinRegion(m.Source, entry.Key)
+				if reg, ok := grid.PinRegion(m.Source, entry.Key); ok {
+					result[key] = reg
+				}
 			}
 		}
 	}
@@ -353,38 +367,35 @@ func tickRegions(
 }
 
 /*
-tokenRegion parses a region token "Rnn" into its region number 1..12.
+tokenRegion parses a region token "Rnn" into its region number 0..11.
 */
 func tokenRegion(token []byte) (uint8, bool) {
-	if len(token) < 3 || token[0] != 'R' {
+	if len(token) != 3 || token[0] != 'R' {
 		return 0, false
 	}
 
-	reg := token[2] - '0'
-
-	if token[1] != '0' {
-		reg += 10
-	}
-
-	return reg, reg >= 1 && reg <= 12
+	reg := (token[1]-'0')*10 + (token[2] - '0')
+	return reg, reg < 12
 }
 
 /*
 regionDistribution is the normalized region histogram of the given ticks.
 */
-func regionDistribution(regions [][]uint8) [13]float64 {
-	var counts [13]float64
+func regionDistribution(regions [][]uint8) [12]float64 {
+	var counts [12]float64
 	total := 0.0
 
 	for _, lit := range regions {
 		for _, reg := range lit {
-			counts[reg]++
-			total++
+			if reg < 12 {
+				counts[reg]++
+				total++
+			}
 		}
 	}
 
 	if total > 0 {
-		for r := 1; r <= 12; r++ {
+		for r := range 12 {
 			counts[r] /= total
 		}
 	}
@@ -392,11 +403,11 @@ func regionDistribution(regions [][]uint8) [13]float64 {
 	return counts
 }
 
-func computeDistributionDivergence(distA, distB [13]float64) (float64, float64) {
+func computeDistributionDivergence(distA, distB [12]float64) (float64, float64) {
 	jsd := 0.0
 	tvd := 0.0
 
-	for r := 1; r <= 12; r++ {
+	for r := range 12 {
 		p := distA[r]
 		q := distB[r]
 		tvd += math.Abs(p - q)

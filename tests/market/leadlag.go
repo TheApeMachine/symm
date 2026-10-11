@@ -59,9 +59,12 @@ func LeadLagTape() []*data.Measurement {
 		)
 		frame.At = at
 		frame.From = at
+		priceUnit, priceTime := data.GetDimension("spot:trade", "price")
+		qtyUnit, qtyTime := data.GetDimension("spot:trade", "qty")
+
 		frames[index] = frame.Write(
-			data.NewExactMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
-			data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous),
+			data.NewExactMetric("price", price, priceUnit, priceTime),
+			data.NewMetric("qty", 1, qtyUnit, qtyTime),
 		)
 	}
 

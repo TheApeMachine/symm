@@ -418,7 +418,7 @@ func AnalyzeCognitiveTrie(
 	var permGroup sync.WaitGroup
 	var permCount atomic.Int64
 
-	for workerIdx := 0; workerIdx < numWorkers; workerIdx++ {
+	for workerIdx := range numWorkers {
 		permGroup.Add(1)
 
 		go func(wID int) {

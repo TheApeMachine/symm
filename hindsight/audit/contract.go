@@ -72,7 +72,9 @@ func AnalyzeContract(
 			unit := metric.Unit()
 
 			if unit == "" || unit == data.UnitDimensionless {
-				unit = data.CanonicalUnit(name, unit)
+				if canonicalUnit, _ := data.GetDimension(meas.Source, name); canonicalUnit != data.UnitNone {
+					unit = canonicalUnit
+				}
 			}
 
 			// One contract series per producer: the same label from two

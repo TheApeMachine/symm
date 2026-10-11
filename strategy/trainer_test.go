@@ -16,6 +16,24 @@ import (
 	"github.com/theapemachine/symm/tests/tablestest"
 )
 
+var testRegionPins = [12]struct {
+	source string
+	metric string
+}{
+	0:  {"hawkes", "buy_from_buy"},
+	1:  {"hawkes", "branching_ratio"},
+	2:  {"hawkes", "sell_from_sell"},
+	3:  {"cvd", "quantity:buy"},
+	4:  {"cvd", "churn"},
+	5:  {"cvd", "quantity:sell"},
+	6:  {"depthflow", "removed:ask"},
+	7:  {"depthflow", "spread"},
+	8:  {"depthflow", "removed:bid"},
+	9:  {"sentiment", "advance_fraction"},
+	10: {"morphology", "wasserstein"},
+	11: {"sentiment", "decline_fraction"},
+}
+
 func TestTrainer_MCTSPrecursorWindowOptimization(t *testing.T) {
 	Convey("1. Different precursor tick counts produce naturally varying token depths", t, func() {
 		grid := store.NewGrid()
@@ -24,26 +42,33 @@ func TestTrainer_MCTSPrecursorWindowOptimization(t *testing.T) {
 		symbol := "BTC/USD"
 		now := time.Now().UTC()
 
-		for tick := int64(1); tick <= 30; tick++ {
-			meas := data.NewMeasurement(epoch, symbol, "hawkes", tick, tick)
-			meas.At = now.Add(time.Duration(tick) * time.Second)
-			meas.From = meas.At
-
-			// Alter metrics every 3 ticks to cause natural region transitions
-			standardVal := float64((tick / 3) + 1)
-			metric := data.NewMetric("intensity:buy", standardVal, data.UnitCount, data.TimescaleTick)
-			metric.Standardized = standardVal
-			meas.Write(metric)
-			tapeByTick[tick] = []*data.Measurement{meas}
+		peers := make([]*data.Measurement, 12)
+		for tick := int64(1); tick <= 50; tick++ {
+			tickMeas := make([]*data.Measurement, 0, 12)
+			for idx, pin := range testRegionPins {
+				rawVal := float64(((tick + int64(idx)) / 3) + 1)
+				if peers[idx] == nil {
+					peers[idx] = data.NewMeasurement(epoch, symbol, pin.source, tick, tick)
+					peers[idx].At = now.Add(time.Duration(tick) * time.Second)
+					peers[idx].From = peers[idx].At
+					peers[idx].Write(data.NewMetric(pin.metric, rawVal, data.UnitCount, data.TimescaleTick))
+				} else {
+					peers[idx] = peers[idx].Next(pin.source, map[string]float64{pin.metric: rawVal})
+					peers[idx].At = now.Add(time.Duration(tick) * time.Second)
+					peers[idx].From = peers[idx].At
+				}
+				tickMeas = append(tickMeas, peers[idx])
+			}
+			tapeByTick[tick] = tickMeas
 		}
 
-		bTick := int64(25)
+		bTick := int64(45)
 
-		// Short window of 4 ticks (ticks 21..24)
+		// Short window of 4 ticks (ticks 41..44)
 		shortWindow := int64(4)
 		shortTokens := tokenizeTape(grid, tapeByTick, bTick-shortWindow, bTick, false)
 
-		// Longer window of 18 ticks (ticks 7..24)
+		// Longer window of 18 ticks (ticks 27..44)
 		longWindow := int64(18)
 		longTokens := tokenizeTape(grid, tapeByTick, bTick-longWindow, bTick, false)
 
@@ -58,18 +83,30 @@ func TestTrainer_MCTSPrecursorWindowOptimization(t *testing.T) {
 		symbol := "BTC/USD"
 		now := time.Now().UTC()
 
-		// 10 identical ticks producing the same token
-		for tick := int64(1); tick <= 10; tick++ {
-			meas := data.NewMeasurement(epoch, symbol, "hawkes", tick, tick)
-			meas.At = now.Add(time.Duration(tick) * time.Second)
-			meas.From = meas.At
-			metric := data.NewMetric("intensity:buy", 2.0, data.UnitCount, data.TimescaleTick)
-			metric.Standardized = 2.0
-			meas.Write(metric)
-			tapeByTick[tick] = []*data.Measurement{meas}
+		peers := make([]*data.Measurement, 12)
+		for tick := int64(1); tick <= 25; tick++ {
+			tickMeas := make([]*data.Measurement, 0, 12)
+			for idx, pin := range testRegionPins {
+				rawVal := float64(2 * (tick % 2))
+				if idx == 0 {
+					rawVal += 10.0
+				}
+				if peers[idx] == nil {
+					peers[idx] = data.NewMeasurement(epoch, symbol, pin.source, tick, tick)
+					peers[idx].At = now.Add(time.Duration(tick) * time.Second)
+					peers[idx].From = peers[idx].At
+					peers[idx].Write(data.NewMetric(pin.metric, rawVal, data.UnitCount, data.TimescaleTick))
+				} else {
+					peers[idx] = peers[idx].Next(pin.source, map[string]float64{pin.metric: rawVal})
+					peers[idx].At = now.Add(time.Duration(tick) * time.Second)
+					peers[idx].From = peers[idx].At
+				}
+				tickMeas = append(tickMeas, peers[idx])
+			}
+			tapeByTick[tick] = tickMeas
 		}
 
-		tokens := tokenizeTape(grid, tapeByTick, 1, 11, false)
+		tokens := tokenizeTape(grid, tapeByTick, 17, 25, false)
 		So(len(tokens), ShouldEqual, 1)
 	})
 
@@ -177,13 +214,17 @@ func TestTrainer_MCTSPrecursorWindowOptimization(t *testing.T) {
 		now := time.Now().UTC()
 
 		for tick := int64(1); tick <= 100; tick++ {
-			meas := data.NewMeasurement(epoch, symbol, "hawkes", tick, tick)
-			meas.At = now.Add(time.Duration(tick) * time.Second)
-			meas.From = meas.At
-			metric := data.NewMetric("intensity:buy", float64(tick%5), data.UnitCount, data.TimescaleTick)
-			metric.Standardized = float64(tick % 5)
-			meas.Write(metric)
-			tapeByTick[tick] = []*data.Measurement{meas}
+			tickMeas := make([]*data.Measurement, 0, 12)
+			for idx, pin := range testRegionPins {
+				meas := data.NewMeasurement(epoch, symbol, pin.source, tick, tick)
+				meas.At = now.Add(time.Duration(tick) * time.Second)
+				meas.From = meas.At
+				metric := data.NewMetric(pin.metric, float64(tick%5)+float64(idx), data.UnitCount, data.TimescaleTick)
+				metric.Standardized = float64(tick%5) + float64(idx)
+				meas.Write(metric)
+				tickMeas = append(tickMeas, meas)
+			}
+			tapeByTick[tick] = tickMeas
 		}
 
 		trainExcursions := []*excursionData{
@@ -263,13 +304,15 @@ func TestTrainer_MCTSPrecursorWindowOptimization(t *testing.T) {
 		now := time.Now().UTC()
 
 		for tick := int64(1); tick <= 60; tick++ {
-			measurement := data.NewMeasurement(epoch, "BTC/USD", "hawkes", tick, tick)
-			measurement.At = now.Add(time.Duration(tick) * time.Second)
-			measurement.From = measurement.At
-			metric := data.NewMetric("intensity:buy", 2.5, data.UnitCount, data.TimescaleTick)
-			metric.Standardized = 2.5
-			measurement.Write(metric)
-			writer.Add(tables.Measurements, measurement)
+			for idx, pin := range testRegionPins {
+				measurement := data.NewMeasurement(epoch, "BTC/USD", pin.source, tick, tick)
+				measurement.At = now.Add(time.Duration(tick) * time.Second)
+				measurement.From = measurement.At
+				metric := data.NewMetric(pin.metric, 2.5+float64(idx), data.UnitCount, data.TimescaleTick)
+				metric.Standardized = 2.5 + float64(idx)
+				measurement.Write(metric)
+				writer.Add(tables.Measurements, measurement)
+			}
 		}
 
 		So(writer.CommitReady(ctx, true), ShouldBeNil)

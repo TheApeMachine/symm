@@ -162,7 +162,7 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	regions := training.grid.RegionScores(prior)
 	next := prior.Next(training.Name(), regionMetrics(regions))
 
-	if regions.Winner == store.NoEvidence {
+	if !regions.HasEvidence {
 		return next
 	}
 
@@ -196,11 +196,9 @@ func regionMetrics(regions store.Regions) map[string]float64 {
 	metrics := map[string]float64{
 		"region_winner":    float64(regions.Winner),
 		"region_runner_up": float64(regions.RunnerUp),
-		"region_undefined": float64(regions.Undefined),
-		"region_unpinned":  float64(regions.Unpinned),
 	}
 
-	for region := 1; region < len(regions.Counts); region++ {
+	for region := range 12 {
 		if regions.Counts[region] == 0 {
 			continue
 		}

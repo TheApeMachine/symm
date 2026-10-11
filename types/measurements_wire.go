@@ -71,7 +71,9 @@ func measurementToWire(
 
 		wireMetric.Name = name
 		wireMetric.Raw = entry.Metric.Raw
-		wireMetric.Region = regions.PinRegion(measurement.Source, entry.Key)
+		if reg, ok := regions.PinRegion(measurement.Source, entry.Key); ok {
+			wireMetric.Region = reg
+		}
 		if entry.Metric.Normalized != 0 {
 			wireMetric.Normalized = entry.Metric.Normalized
 			wireMetric.HasNormalized = true

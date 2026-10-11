@@ -151,7 +151,7 @@ func AnalyzeSympathy(
 	nullBins, nullCounts, step := createHistogramBins(25, -1, 1)
 	tracker := newProgressTracker("4/7 Stage 2] [Permutation Null", int64(permutations), 5*time.Second)
 
-	for iter := 0; iter < permutations; iter++ {
+	for iter := range permutations {
 		for vecIndex, vec := range vectors {
 			permuted := blockPermute(rng, vec.values, blockSizes[vecIndex])
 			permutedVectors[vecIndex].values = permuted

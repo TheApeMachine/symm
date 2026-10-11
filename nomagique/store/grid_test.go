@@ -14,26 +14,26 @@ import (
 )
 
 /*
-regionPins names one (source, metric stem) pair per region. The fixture is
-verified against PinRegion before use, so a remapping cannot silently move a
+regionPins names one (source, metric stem) pair per region (indices 0..11 for regions 1..12).
+The fixture is verified against PinRegion before use, so a remapping cannot silently move a
 fixture metric into another region.
 */
-var regionPins = [13]struct {
+var regionPins = [12]struct {
 	source string
 	stem   string
 }{
-	1:  {"hawkes", "intensity:buy"},
-	2:  {"hawkes", "branching_ratio"},
-	3:  {"hawkes", "intensity:sell"},
-	4:  {"cvd", "quantity:buy"},
-	5:  {"cvd", "churn"},
-	6:  {"cvd", "quantity:sell"},
-	7:  {"depthflow", "removed:ask"},
-	8:  {"depthflow", "spread"},
-	9:  {"depthflow", "removed:bid"},
-	10: {"sentiment", "advance_fraction"},
-	11: {"morphology", "wasserstein"},
-	12: {"sentiment", "decline_fraction"},
+	0:  {"hawkes", "intensity:buy"},
+	1:  {"hawkes", "branching_ratio"},
+	2:  {"hawkes", "intensity:sell"},
+	3:  {"cvd", "quantity:buy"},
+	4:  {"cvd", "churn"},
+	5:  {"cvd", "quantity:sell"},
+	6:  {"depthflow", "removed:ask"},
+	7:  {"depthflow", "spread"},
+	8:  {"depthflow", "removed:bid"},
+	9:  {"sentiment", "advance_fraction"},
+	10: {"morphology", "wasserstein"},
+	11: {"sentiment", "decline_fraction"},
 }
 
 /*
@@ -43,33 +43,34 @@ streams start cold instead of inheriting moments from an earlier fixture.
 var regionEpoch atomic.Int64
 
 /*
-regionFrame builds a finalized frame whose peers hold sizes[region] metrics
+regionFrame builds a finalized frame whose peers hold sizes[idx] metrics
 pinned to each region, and returns the frame with every metric entry so a
 test can assign standardized deformations directly. When warm is true each
 metric stream first observes core.MinimumPrior differing values through
 the real finalization path, so the returned metrics have a defined z-score; when warm
 is false every returned metric is its stream's first observation.
 */
-func regionFrame(grid *Grid, sizes [13]int, warm bool) (*data.Measurement, [13][]*data.MetricEntry) {
-	var entries [13][]*data.MetricEntry
+func regionFrame(grid *Grid, sizes [12]int, warm bool) (*data.Measurement, [12][]*data.MetricEntry) {
+	var entries [12][]*data.MetricEntry
 	epoch := regionEpoch.Add(1)
 	at := time.Unix(1_700_000_000, 0).UTC()
 	frame := data.NewMeasurement(epoch, "BTC/USD", "frame", 1, 1)
 	frame.At, frame.From = at, at
 
-	for region := 1; region <= 12; region++ {
-		if sizes[region] == 0 {
+	for idx := range 12 {
+		if sizes[idx] == 0 {
 			continue
 		}
 
-		pin := regionPins[region]
+		pin := regionPins[idx]
+		region := uint8(idx)
 		history := []float64{1}
 
 		if warm {
 			history = nil
 
-			for idx := range int(core.MinimumPrior) {
-				history = append(history, float64(2*(idx%2)))
+			for hIdx := range int(core.MinimumPrior) {
+				history = append(history, float64(2*(hIdx%2)))
 			}
 
 			history = append(history, 1)
@@ -77,27 +78,37 @@ func regionFrame(grid *Grid, sizes [13]int, warm bool) (*data.Measurement, [13][
 
 		var peer *data.Measurement
 
-		for _, raw := range history {
-			peer = data.NewMeasurement(epoch, "BTC/USD", pin.source, 1, 1)
-			peer.At, peer.From = at, at
-			metrics := make([]*data.Metric, 0, sizes[region])
-
-			for idx := range sizes[region] {
-				label := fmt.Sprintf("%s_%d", pin.stem, idx)
-				So(grid.PinRegion(pin.source, label), ShouldEqual, uint8(region))
-				metrics = append(metrics, data.NewMetric(label, raw, data.UnitDimensionless, data.TimescaleTick))
+		for hIdx, raw := range history {
+			values := make(map[string]float64, sizes[idx])
+			for sIdx := range sizes[idx] {
+				label := fmt.Sprintf("%s_%d", pin.stem, sIdx)
+				reg, ok := grid.PinRegion(pin.source, label)
+				So(ok, ShouldBeTrue)
+				So(reg, ShouldEqual, region)
+				values[label] = raw
 			}
 
-			peer.Write(metrics...)
+			if peer == nil {
+				peer = data.NewMeasurement(epoch, "BTC/USD", pin.source, int64(hIdx+1), int64(hIdx+1))
+				peer.At, peer.From = at, at
+				metrics := make([]*data.Metric, 0, len(values))
+				for k, v := range values {
+					metrics = append(metrics, data.NewMetric(k, v, data.UnitDimensionless, data.TimescaleTick))
+				}
+				peer.Write(metrics...)
+			} else {
+				peer = peer.Next(pin.source, values)
+				peer.At, peer.From = at, at
+			}
 		}
 
 		for entry := range peer.Read() {
 			So(entry.Metric, ShouldNotBeNil)
 			So(entry.Metric.Standardizable(), ShouldEqual, warm)
-			entries[region] = append(entries[region], entry)
+			entries[idx] = append(entries[idx], entry)
 		}
 
-		So(entries[region], ShouldHaveLength, sizes[region])
+		So(entries[idx], ShouldHaveLength, sizes[idx])
 		frame.Peers(peer)
 	}
 
@@ -111,77 +122,84 @@ func TestGrid_RegionScores(t *testing.T) {
 		grid := NewGrid()
 
 		Convey("When one region's deformations are known exactly", func() {
-			frame, entries := regionFrame(grid, [13]int{4: 4}, true)
+			sizes := [12]int{1, 1, 1, 4, 1, 1, 1, 1, 1, 1, 1, 1}
+			frame, entries := regionFrame(grid, sizes, true)
 
 			for idx, value := range []float64{1, -2, 0, 1} {
-				entries[4][idx].Metric.Standardized = value
+				entries[3][idx].Metric.Standardized = value
 			}
 
 			regions := grid.RegionScores(frame)
 
 			Convey("Its brightness is the standardized half-normal excess of sum|z|", func() {
-				want := (4 - 4*math.Sqrt(2/math.Pi)) / math.Sqrt(4*(1-2/math.Pi))
+				want := (4.0 - 4*math.Sqrt(2/math.Pi)) / math.Sqrt(4*(1-2/math.Pi))
 
-				So(regions.Counts[4], ShouldEqual, 4)
-				So(regions.Brightness[4], ShouldAlmostEqual, want, 1e-12)
-				So(regions.Winner, ShouldEqual, uint8(4))
-				So(regions.RunnerUp, ShouldEqual, noEvidence)
+				So(regions.Counts[3], ShouldEqual, 4)
+				So(regions.Brightness[3], ShouldAlmostEqual, want, 1e-12)
+				So(regions.HasEvidence, ShouldBeTrue)
 			})
 		})
 
-		Convey("When the only evidenced region is quieter than the null", func() {
-			frame, entries := regionFrame(grid, [13]int{11: 3}, true)
+		Convey("When all evidenced regions are quieter than the null", func() {
+			sizes := [12]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 1}
+			frame, entries := regionFrame(grid, sizes, true)
 
-			for _, entry := range entries[11] {
-				entry.Metric.Standardized = 0
+			for region := range 12 {
+				for _, entry := range entries[region] {
+					entry.Metric.Standardized = 0
+				}
 			}
 
 			regions := grid.RegionScores(frame)
 
-			Convey("It still wins with negative brightness rather than yielding to a default region", func() {
-				So(regions.Brightness[11], ShouldBeLessThan, 0)
-				So(regions.Winner, ShouldEqual, uint8(11))
-				So(string(grid.Observe(frame)), ShouldEqual, "R11")
+			Convey("They win with negative brightness rather than yielding to a default region", func() {
+				for region := range 12 {
+					So(regions.Brightness[region], ShouldBeLessThan, 0)
+				}
+				So(regions.HasEvidence, ShouldBeTrue)
+				So(grid.Observe(frame), ShouldNotBeNil)
 			})
 		})
 
 		Convey("When every region's deformations are drawn from the null with very unequal metric counts", func() {
-			sizes := [13]int{0, 1, 2, 3, 5, 8, 13, 21, 34, 44, 9, 4, 6}
+			sizes := [12]int{1, 2, 3, 5, 8, 13, 21, 34, 44, 9, 4, 6}
 			frame, entries := regionFrame(grid, sizes, true)
 			source := rand.New(rand.NewPCG(20261009, 1))
 			trials := 20000
 
-			var wins [13]int
-			var uncorrectedWins [13]int
+			var wins [12]int
+			var uncorrectedWins [12]int
 
 			for range trials {
-				for region := 1; region <= 12; region++ {
-					for _, entry := range entries[region] {
+				for idx := range 12 {
+					for _, entry := range entries[idx] {
 						entry.Metric.Standardized = source.NormFloat64()
 					}
 				}
 
 				regions := grid.RegionScores(frame)
-				wins[regions.Winner]++
+				if regions.HasEvidence {
+					wins[regions.Winner]++
+				}
 
 				// The pre-fix statistic sum|z|/sqrt(N), recovered exactly from
 				// the same draws, shows the test can detect the size bias.
 				uncorrected, best := 0.0, uint8(0)
 
-				for region := uint8(1); region <= 12; region++ {
-					count := float64(regions.Counts[region])
-					sum := regions.Brightness[region]*math.Sqrt(count*halfNormalVariance) + count*halfNormalMean
+				for idx := range uint8(12) {
+					count := float64(regions.Counts[idx])
+					sum := regions.Brightness[idx]*math.Sqrt(count*halfNormalVariance) + count*halfNormalMean
 
-					if best == 0 || sum/math.Sqrt(count) > uncorrected {
-						uncorrected, best = sum/math.Sqrt(count), region
+					if idx == 0 || sum/math.Sqrt(count) > uncorrected {
+						uncorrected, best = sum/math.Sqrt(count), idx
 					}
 				}
 
 				uncorrectedWins[best]++
 			}
 
-			t.Logf("null argmax wins by region R01..R12 (sizes %v): corrected %v, uncorrected %v",
-				sizes[1:], wins[1:], uncorrectedWins[1:])
+			t.Logf("null argmax wins by region R00..R11 (sizes %v): corrected %v, uncorrected %v",
+				sizes, wins, uncorrectedWins)
 
 			Convey("Each region wins the argmax at roughly the uniform rate 1/12", func() {
 				// Tolerance: +/-25% of 1/12. The half-normal standardization is a
@@ -189,15 +207,13 @@ func TestGrid_RegionScores(t *testing.T) {
 				// excess, and binomial noise at 20000 trials is ~2.3% relative.
 				uniform := float64(trials) / 12
 
-				for region := 1; region <= 12; region++ {
-					So(float64(wins[region]), ShouldBeBetween, 0.75*uniform, 1.25*uniform)
+				for idx := range 12 {
+					So(float64(wins[idx]), ShouldBeBetween, 0.75*uniform, 1.25*uniform)
 				}
-
-				So(wins[noEvidence], ShouldEqual, 0)
 			})
 
 			Convey("Whereas the uncorrected statistic hands most frames to the largest region", func() {
-				So(float64(uncorrectedWins[9]), ShouldBeGreaterThan, 0.5*float64(trials))
+				So(float64(uncorrectedWins[8]), ShouldBeGreaterThan, 0.5*float64(trials))
 			})
 		})
 	})
@@ -208,45 +224,54 @@ func TestGrid_Observe(t *testing.T) {
 		grid := NewGrid()
 
 		Convey("When the frame and its peers carry no metric at all", func() {
-			frame, _ := regionFrame(grid, [13]int{}, true)
+			frame, _ := regionFrame(grid, [12]int{}, true)
 			regions := grid.RegionScores(frame)
 
-			Convey("No region holds evidence and the explicit no-evidence token R00 is emitted", func() {
-				So(regions.Counts, ShouldResemble, [13]int{})
-				So(regions.Winner, ShouldEqual, noEvidence)
-				So(regions.RunnerUp, ShouldEqual, noEvidence)
-				So(string(grid.Observe(frame)), ShouldEqual, "R00")
+			Convey("No region holds evidence and no token is emitted", func() {
+				So(regions.Counts, ShouldResemble, [12]int{})
+				So(regions.HasEvidence, ShouldBeFalse)
+				So(grid.Observe(frame), ShouldBeNil)
 			})
 		})
 
 		Convey("When a region's metrics have no defined z-score yet", func() {
-			frame, entries := regionFrame(grid, [13]int{5: 4, 8: 2}, false)
+			frame, entries := regionFrame(grid, [12]int{4: 4, 7: 2}, false)
 
-			for _, entry := range entries[5] {
+			for _, entry := range entries[4] {
 				entry.Metric.Standardized = 9
 			}
 
 			regions := grid.RegionScores(frame)
 
-			Convey("They are excluded from N and counted as undefined, not scored as quiet evidence", func() {
-				So(regions.Counts, ShouldResemble, [13]int{})
-				So(regions.Undefined, ShouldEqual, 6)
-				So(regions.Winner, ShouldEqual, noEvidence)
-				So(string(grid.Observe(frame)), ShouldEqual, "R00")
+			Convey("Scoring does not continue on warming frames with no confidence and emits no token", func() {
+				So(regions.Counts, ShouldResemble, [12]int{})
+				So(regions.HasEvidence, ShouldBeFalse)
+				So(grid.Observe(frame), ShouldBeNil)
 			})
 		})
 
 		Convey("When the frame is nil", func() {
-			Convey("The no-evidence token R00 is emitted", func() {
-				So(string(grid.Observe(nil)), ShouldEqual, "R00")
+			Convey("No token is emitted", func() {
+				So(grid.Observe(nil), ShouldBeNil)
 			})
 		})
 
-		Convey("When several regions hold evidence", func() {
-			frame, entries := regionFrame(grid, [13]int{2: 3, 7: 2, 10: 5}, true)
+		Convey("When any region is missing evidence", func() {
+			frame, _ := regionFrame(grid, [12]int{1: 3, 6: 2, 9: 5}, true)
+			regions := grid.RegionScores(frame)
 
-			for region, value := range map[int]float64{2: 0.5, 7: 3, 10: 1.5} {
-				for _, entry := range entries[region] {
+			Convey("Scoring stops and emits no token", func() {
+				So(regions.HasEvidence, ShouldBeFalse)
+				So(grid.Observe(frame), ShouldBeNil)
+			})
+		})
+
+		Convey("When all regions hold evidence", func() {
+			sizes := [12]int{1, 3, 1, 1, 1, 1, 2, 1, 1, 5, 1, 1}
+			frame, entries := regionFrame(grid, sizes, true)
+
+			for idx, value := range map[int]float64{1: 0.5, 6: 3, 9: 1.5} {
+				for _, entry := range entries[idx] {
 					entry.Metric.Standardized = value
 				}
 			}
@@ -255,8 +280,8 @@ func TestGrid_Observe(t *testing.T) {
 
 			Convey("Observe emits the RegionScores winner, and the runner-up is the second brightest", func() {
 				So(string(grid.Observe(frame)), ShouldEqual, fmt.Sprintf("R%02d", regions.Winner))
-				So(regions.Winner, ShouldEqual, uint8(7))
-				So(regions.RunnerUp, ShouldEqual, uint8(10))
+				So(regions.Winner, ShouldEqual, uint8(6))
+				So(regions.RunnerUp, ShouldEqual, uint8(9))
 			})
 		})
 	})
@@ -268,7 +293,8 @@ func TestGrid_Unpinned(t *testing.T) {
 
 		Convey("PinRegion leaves them unpinned", func() {
 			for _, source := range []string{"resonance", "manifold", "runtime:join", "unknown"} {
-				So(grid.PinRegion(source, "surprise"), ShouldEqual, unpinned)
+				_, ok := grid.PinRegion(source, "surprise")
+				So(ok, ShouldBeFalse)
 			}
 		})
 
@@ -277,9 +303,18 @@ func TestGrid_Unpinned(t *testing.T) {
 			peer := data.NewMeasurement(1, "BTC/USD", source, 1, 1)
 			peer.At, peer.From = at, at
 			peer.Write(
-				data.NewMetric("surprise", 1, data.UnitDimensionless, data.TimescaleTick),
-				data.NewMetric("curvature", 1, data.UnitDimensionless, data.TimescaleTick),
+				data.NewMetric("surprise", 0, data.UnitDimensionless, data.TimescaleTick),
+				data.NewMetric("curvature", 0, data.UnitDimensionless, data.TimescaleTick),
 			)
+
+			for hIdx := range int(core.MinimumPrior) {
+				values := map[string]float64{
+					"surprise":  float64(2 * (hIdx % 2)),
+					"curvature": float64(2 * (hIdx % 2)),
+				}
+				peer = peer.Next(source, values)
+				peer.At, peer.From = at, at
+			}
 
 			entries := make([]*data.MetricEntry, 0, 2)
 
@@ -290,7 +325,7 @@ func TestGrid_Unpinned(t *testing.T) {
 			return peer, entries
 		}
 
-		Convey("A frame holding only solver metrics has no evidence and counts them", func() {
+		Convey("A frame holding only solver metrics has no evidence and emits no token", func() {
 			frame := data.NewMeasurement(1, "BTC/USD", "frame", 1, 1)
 			frame.At, frame.From = at, at
 
@@ -307,32 +342,48 @@ func TestGrid_Unpinned(t *testing.T) {
 			frame.Write()
 
 			regions := grid.RegionScores(frame)
-			So(regions.Unpinned, ShouldEqual, 4)
-			So(regions.Winner, ShouldEqual, noEvidence)
-			So(string(grid.Observe(frame)), ShouldEqual, "R00")
+			So(regions.HasEvidence, ShouldBeFalse)
+			So(grid.Observe(frame), ShouldBeNil)
 		})
 
-		Convey("Solver deformation cannot move the winner chosen by sensory evidence", func() {
-			var sizes [13]int
-			sizes[1], sizes[2] = 3, 3
-			frame, entries := regionFrame(grid, sizes, true)
+		Convey("Solver metric leakage stops scoring immediately", func() {
+			sizes := [12]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+			frame, _ := regionFrame(grid, sizes, true)
 
-			for _, entry := range entries[1] {
-				entry.Metric.Standardized = 2
-			}
-
-			peer, solver := solverPeer("resonance")
-
-			for _, entry := range solver {
-				entry.Metric.Standardized = 50
-			}
-
+			peer, _ := solverPeer("resonance")
 			frame.Peers(peer)
 
 			regions := grid.RegionScores(frame)
-			So(regions.Unpinned, ShouldEqual, 2)
-			So(regions.Counts[2], ShouldEqual, 3)
-			So(regions.Winner, ShouldEqual, uint8(1))
+			So(regions.HasEvidence, ShouldBeFalse)
+			So(grid.Observe(frame), ShouldBeNil)
+		})
+	})
+}
+
+func TestGrid_Dampen(t *testing.T) {
+	Convey("Given a grid evaluating cross-measurement quality dampening", t, func() {
+		grid := NewGrid()
+
+		Convey("When all mature peers have positive confidence", func() {
+			sizes := [12]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+			frame, entries := regionFrame(grid, sizes, true)
+			entries[0][0].Metric.Standardized = 2.0
+
+			regions := grid.RegionScores(frame)
+			So(regions.Counts[0], ShouldEqual, 1)
+
+			want := (2.0 - halfNormalMean) / math.Sqrt(halfNormalVariance)
+			So(regions.Brightness[0], ShouldAlmostEqual, want, 1e-12)
+			So(regions.HasEvidence, ShouldBeTrue)
+		})
+
+		Convey("When a peer has zero confidence (warming up), scoring does not continue and emits no evidence", func() {
+			frame, entries := regionFrame(grid, [12]int{0: 1}, false)
+			entries[0][0].Metric.Standardized = 5.0
+
+			regions := grid.RegionScores(frame)
+			So(regions.HasEvidence, ShouldBeFalse)
+			So(grid.Observe(frame), ShouldBeNil)
 		})
 	})
 }

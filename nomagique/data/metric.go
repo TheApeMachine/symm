@@ -35,13 +35,11 @@ center and scale its values are standardized against.
 func NewMetric(
 	label string, raw float64, unit Unit, timescale Timescale,
 ) *Metric {
-	canonicalUnit, canonicalTimescale := CanonicalDimensions(label, unit, timescale)
-
 	return &Metric{
 		Label:     label,
 		Raw:       raw,
-		unit:      canonicalUnit,
-		timescale: canonicalTimescale,
+		unit:      unit,
+		timescale: timescale,
 	}
 }
 
@@ -52,31 +50,21 @@ exact value of the metric.
 func NewExactMetric(
 	label string, exact *decimal.Decimal, unit Unit, timescale Timescale,
 ) *Metric {
-	canonicalUnit, canonicalTimescale := CanonicalDimensions(label, unit, timescale)
-
 	return &Metric{
 		Label:     label,
 		Raw:       exact.Float64(),
 		Exact:     exact,
-		unit:      canonicalUnit,
-		timescale: canonicalTimescale,
+		unit:      unit,
+		timescale: timescale,
 	}
 }
 
 func (metric *Metric) Unit() Unit {
-	if metric == nil {
-		return ""
-	}
-
-	return CanonicalUnit(metric.Label, metric.unit)
+	return metric.unit
 }
 
 func (metric *Metric) Timescale() Timescale {
-	if metric == nil {
-		return ""
-	}
-
-	return CanonicalTimescale(metric.Label, metric.timescale)
+	return metric.timescale
 }
 
 /*
@@ -84,7 +72,8 @@ finalize is called from the Measurement to standardize the observation against
 its stream's causal moments: center and scale are the stream's mean and sample
 standard deviation before this observation, in the stream's standardization
 space (CanonicalScale: Raw itself, ln Raw, or its log-modulus), and
-Standardized is (value - center) / scale for Raw's value in that space. While the prior scale is zero the z-score is undefined:
+Standardized is (value - center) / scale for Raw's value in that space.
+While the prior scale is zero the z-score is undefined:
 Standardized and Normalized stay zero and Standardizable reports false. An
 invalid observation is rejected before it reaches the stream.
 */
@@ -95,7 +84,7 @@ func (metric *Metric) finalize(state *standardizer) error {
 		return errnie.Error(err)
 	}
 
-	value, center, scale, defined := state.observe(metric.Raw, CanonicalScale(metric.Label))
+	value, center, scale, defined := state.observe(metric.Raw, ScaleLinear)
 	metric.center, metric.scale = center, scale
 	metric.Standardized = 0
 	metric.Normalized = 0
@@ -122,15 +111,27 @@ valid checks if the Measurement is valid.
 */
 func (metric *Metric) valid() error {
 	if metric.Label == "" {
-		return errnie.Error(errnie.Err(errnie.Validation, "label is required", nil))
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "label is required", nil,
+		))
 	}
 
-	if metric.unit == "" {
-		return errnie.Error(errnie.Err(errnie.Validation, "unit is required", nil))
+	if metric.unit == "" || metric.unit == UnitNone {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "unit is required", nil,
+		))
 	}
 
-	if metric.timescale == "" {
-		return errnie.Error(errnie.Err(errnie.Validation, "timescale is required", nil))
+	if metric.timescale == "" || metric.timescale == TimescaleNone {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "timescale is required", nil,
+		))
+	}
+
+	if math.IsNaN(metric.Raw) || math.IsInf(metric.Raw, 0) {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "raw is not a finite number", nil,
+		))
 	}
 
 	return nil

@@ -258,7 +258,7 @@ func TestTraining_Step(t *testing.T) {
 		prior = prior.Write(data.NewMetric("raw_metric", 100.0, data.UnitPrice, data.TimescaleInstantaneous))
 
 		grid := store.NewGrid()
-		So(grid.RegionScores(prior).Winner, ShouldEqual, store.NoEvidence)
+		So(grid.RegionScores(prior).HasEvidence, ShouldBeFalse)
 
 		training := matchingTraining(
 			filling,
@@ -279,25 +279,58 @@ func TestTraining_Step(t *testing.T) {
 		filling := newFillingDesk()
 		grid := store.NewGrid()
 
+		pins := [12]struct {
+			source string
+			metric string
+		}{
+			0:  {"hawkes", "buy_from_buy"},
+			1:  {"hawkes", "branching_ratio"},
+			2:  {"hawkes", "sell_from_sell"},
+			3:  {"cvd", "quantity:buy"},
+			4:  {"cvd", "churn"},
+			5:  {"cvd", "quantity:sell"},
+			6:  {"depthflow", "removed:ask"},
+			7:  {"depthflow", "spread"},
+			8:  {"depthflow", "removed:bid"},
+			9:  {"sentiment", "advance_fraction"},
+			10: {"morphology", "wasserstein"},
+			11: {"sentiment", "decline_fraction"},
+		}
+
 		var warmFrame *data.Measurement
-		for stepIdx := range 10 {
-			raw := float64(2 * (stepIdx % 2))
-			frame := data.NewMeasurement(2, "BTC/USD", "spot:trade", 1, 1)
+		peers := make([]*data.Measurement, 12)
+
+		for stepIdx := range 20 {
+			frame := data.NewMeasurement(2, "BTC/USD", "spot:trade", int64(stepIdx+1), int64(stepIdx+1))
 			frame.At, frame.From = tokenStart, tokenStart
 
-			peer := data.NewMeasurement(2, "BTC/USD", "hawkes", 1, 1)
-			peer.At, peer.From = tokenStart, tokenStart
-			peer.Write(data.NewMetric("buy_from_buy", raw, data.UnitDimensionless, data.TimescaleTick))
+			for idx, pin := range pins {
+				raw := float64(2 * (stepIdx % 2))
+				if idx == 0 {
+					raw += 50.0
+				}
 
-			frame.Peers(peer)
+				if peers[idx] == nil {
+					peers[idx] = data.NewMeasurement(2, "BTC/USD", pin.source, int64(stepIdx+1), int64(stepIdx+1))
+					peers[idx].At, peers[idx].From = tokenStart, tokenStart
+					peers[idx].Write(data.NewMetric(pin.metric, raw, data.UnitDimensionless, data.TimescaleTick))
+				} else {
+					peers[idx] = peers[idx].Next(pin.source, map[string]float64{pin.metric: raw})
+					peers[idx].At, peers[idx].From = tokenStart, tokenStart
+				}
+
+				frame.Peers(peers[idx])
+			}
+
 			frame.Write()
 			warmFrame = frame
 		}
 
 		scores := grid.RegionScores(warmFrame)
 		token := string(scores.Token())
-		So(scores.Winner, ShouldEqual, uint8(1))
-		So(token, ShouldEqual, "R01")
+		So(scores.HasEvidence, ShouldBeTrue)
+		So(scores.Winner, ShouldEqual, uint8(0))
+		So(token, ShouldEqual, "R00")
 
 		training := matchingTraining(
 			filling,
