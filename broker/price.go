@@ -69,6 +69,7 @@ type Price struct {
 	quotes        *sync.Map
 	normalizer    *spot.Normalizer
 	referenceCash atomic.Pointer[decimal.Decimal]
+	defaultFee    atomic.Pointer[kraken.TradeVolumeFee]
 }
 
 // BookSource is the resident book boundary shared by live and captured tapes.
@@ -1076,22 +1077,37 @@ func (price *Price) FeeRate(symbol string) (float64, bool) {
 }
 
 /*
-Fee returns the taker fee for a symbol.
+SetDefaultFee declares a universal fallback fee when a symbol does not have a pair-specific fee override.
+*/
+func (price *Price) SetDefaultFee(fee kraken.TradeVolumeFee) {
+	if price == nil {
+		return
+	}
+
+	price.defaultFee.Store(&fee)
+}
+
+/*
+Fee returns the taker fee for a symbol, falling back to defaultFee if configured.
 */
 func (price *Price) Fee(symbol string) *kraken.TradeVolumeFee {
-	found, ok := price.fees.Load(price.normalizer.Name(symbol))
-
-	if !ok {
+	if price == nil {
 		return nil
 	}
 
-	fee, ok := found.(kraken.TradeVolumeFee)
+	if price.fees != nil {
+		found, ok := price.fees.Load(price.normalize(symbol))
 
-	if !ok {
-		return nil
+		if ok {
+			fee, ok := found.(kraken.TradeVolumeFee)
+
+			if ok {
+				return &fee
+			}
+		}
 	}
 
-	return &fee
+	return price.defaultFee.Load()
 }
 
 /* GetFees normalizes fee keys once and requires a complete batch for symbols. */

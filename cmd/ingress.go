@@ -159,9 +159,7 @@ func handleLevel3(
 					),
 				)
 
-				if storeTee != nil {
-					storeTee.Push(measurement)
-				}
+				storeTee.Push(measurement)
 			}
 		}
 	}

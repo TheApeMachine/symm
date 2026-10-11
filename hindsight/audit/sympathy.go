@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"time"
 )
 
 type observedVector struct {
@@ -144,6 +145,7 @@ func AnalyzeSympathy(
 	nullM2 := 0.0
 	nullCount := 0
 	nullBins, nullCounts, step := createHistogramBins(25, -1, 1)
+	tracker := newProgressTracker("4/7 Stage 2] [Permutation Null", int64(permutations), 5*time.Second)
 
 	for iter := 0; iter < permutations; iter++ {
 		for vecIndex, vec := range vectors {
@@ -165,6 +167,7 @@ func AnalyzeSympathy(
 
 		nullIterations[iter] = iterAbs
 		totalNullPairs += len(iterAbs)
+		tracker.Step(int64(iter + 1))
 	}
 
 	if totalNullPairs == 0 {

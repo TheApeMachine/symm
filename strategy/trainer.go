@@ -9,6 +9,9 @@ import (
 	stdruntime "runtime"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -28,6 +31,7 @@ type Trainer struct {
 	*runtime.System
 	catalog *tables.Catalog
 	price   *broker.Price
+	symbols map[string]struct{}
 }
 
 func NewTrainer(
@@ -42,6 +46,92 @@ func NewTrainer(
 
 	trainer.System = runtime.NewSystem(ctx, "trainer")
 	return trainer
+}
+
+type progressTracker struct {
+	label     string
+	total     int64
+	startTime time.Time
+	lastLog   time.Time
+	interval  time.Duration
+	completed bool
+	mutex     sync.Mutex
+}
+
+func newProgressTracker(label string, total int64, interval time.Duration) *progressTracker {
+	now := time.Now()
+	return &progressTracker{
+		label:     label,
+		total:     total,
+		startTime: now,
+		lastLog:   now,
+		interval:  interval,
+	}
+}
+
+func (tracker *progressTracker) Step(completed int64, extra ...string) {
+	if tracker == nil || tracker.total <= 0 {
+		return
+	}
+
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+
+	if tracker.completed {
+		return
+	}
+
+	now := time.Now()
+	if completed < tracker.total && now.Sub(tracker.lastLog) < tracker.interval {
+		return
+	}
+
+	if completed >= tracker.total {
+		tracker.completed = true
+		completed = tracker.total
+	}
+
+	tracker.lastLog = now
+	elapsed := now.Sub(tracker.startTime)
+	percent := float64(completed) / float64(tracker.total) * 100.0
+
+	var etaStr string
+	if completed > 0 && completed < tracker.total {
+		rate := float64(completed) / elapsed.Seconds()
+		if rate > 0 {
+			remainingSec := float64(tracker.total-completed) / rate
+			etaStr = fmt.Sprintf(" | ETA: %s", (time.Duration(remainingSec) * time.Second).Round(time.Second))
+		}
+	}
+
+	extraStr := ""
+	if len(extra) > 0 && extra[0] != "" {
+		extraStr = " | " + extra[0]
+	}
+
+	errnie.Info(fmt.Sprintf(
+		"[training] [%s] %d / %d (%.1f%%) | elapsed: %s%s%s",
+		tracker.label, completed, tracker.total, percent, elapsed.Round(time.Second), etaStr, extraStr,
+	))
+}
+
+func (trainer *Trainer) SetSymbols(symbols ...string) {
+	if trainer == nil {
+		return
+	}
+
+	if len(symbols) == 0 {
+		trainer.symbols = nil
+		return
+	}
+
+	trainer.symbols = make(map[string]struct{}, len(symbols))
+
+	for _, symbol := range symbols {
+		if symbol != "" {
+			trainer.symbols[symbol] = struct{}{}
+		}
+	}
 }
 
 /*
@@ -170,6 +260,176 @@ func computeToken(acc *tickAccumulator) string {
 	return fmt.Sprintf("R%02d", winner)
 }
 
+type epochResult struct {
+	epoch      int64
+	tokens     map[int64]string
+	ticks      []int64
+	excursions []*excursionData
+	maxTick    int64
+	err        error
+}
+
+func (trainer *Trainer) loadEpoch(
+	grid *store.Grid,
+	epoch int64,
+	epochExcursions []*data.Measurement,
+) epochResult {
+	minTick, maxTick := excursionTickSpan(epochExcursions)
+
+	errnie.Info(fmt.Sprintf(
+		"[training] reading tape for epoch %d (%d excursions, tick span [%d, %d])",
+		epoch, len(epochExcursions), minTick, maxTick,
+	))
+
+	accumulators := make(map[int64]*tickAccumulator)
+	loadStart := time.Now()
+	var measurementCount int64
+
+	lastLog := time.Now()
+
+	for measurement, tapeErr := range trainer.catalog.SignalLogic(
+		trainer.Context(),
+		epoch,
+		"",
+		minTick,
+		maxTick,
+		tables.SensorySources...,
+	) {
+		if tapeErr != nil {
+			return epochResult{
+				err: errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("[training] tape read error in epoch %d", epoch),
+					tapeErr,
+				)),
+			}
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		measurementCount++
+		now := time.Now()
+
+		if now.Sub(lastLog) >= 5*time.Second {
+			lastLog = now
+			elapsed := now.Sub(loadStart)
+			rate := float64(measurementCount) / elapsed.Seconds()
+			errnie.Info(fmt.Sprintf(
+				"[training] [epoch %d tape] %d measurements (%d unique ticks) | elapsed: %s (%.0f meas/s)",
+				epoch, measurementCount, len(accumulators), elapsed.Round(time.Second), rate,
+			))
+		}
+
+		acc, exists := accumulators[measurement.Tick]
+
+		if !exists {
+			acc = &tickAccumulator{}
+			accumulators[measurement.Tick] = acc
+		}
+
+		for metric := range measurement.Read() {
+			region := grid.PinRegion(measurement.Source, metric.Key)
+
+			if region == 0 {
+				continue
+			}
+
+			if !metric.Metric.Standardizable() {
+				continue
+			}
+
+			acc.deformation[region] += math.Abs(metric.Metric.Standardized)
+			acc.counts[region]++
+		}
+	}
+
+	elapsed := time.Since(loadStart)
+	errnie.Info(fmt.Sprintf(
+		"[training] [epoch %d tape] complete: %d measurements across %d unique ticks in %s",
+		epoch, measurementCount, len(accumulators), elapsed.Round(time.Second),
+	))
+
+	tokens := make(map[int64]string, len(accumulators))
+	ticks := make([]int64, 0, len(accumulators))
+
+	for tick, acc := range accumulators {
+		tokens[tick] = computeToken(acc)
+		ticks = append(ticks, tick)
+	}
+
+	slices.Sort(ticks)
+
+	excursions := make([]*excursionData, 0, len(epochExcursions))
+	numWorkers := max(stdruntime.GOMAXPROCS(0), 1)
+
+	if len(epochExcursions) <= 100 || numWorkers <= 1 {
+		for _, excursion := range epochExcursions {
+			record, evalErr := trainer.parseExcursionData(excursion)
+
+			if evalErr != nil {
+				return epochResult{err: errnie.Error(evalErr)}
+			}
+
+			if record != nil {
+				excursions = append(excursions, record)
+			}
+		}
+	}
+
+	if len(epochExcursions) > 100 && numWorkers > 1 {
+		excursionResults := make([]*excursionData, len(epochExcursions))
+		var parseGroup sync.WaitGroup
+		parseWorkers := min(numWorkers, 16)
+		var parseErr atomic.Pointer[error]
+
+		for workerIdx := range parseWorkers {
+			parseGroup.Add(1)
+
+			go func(wID int) {
+				defer parseGroup.Done()
+
+				for idx := wID; idx < len(epochExcursions); idx += parseWorkers {
+					if parseErr.Load() != nil {
+						return
+					}
+
+					exc := epochExcursions[idx]
+					record, evalErr := trainer.parseExcursionData(exc)
+
+					if evalErr != nil {
+						parseErr.Store(&evalErr)
+						return
+					}
+
+					excursionResults[idx] = record
+				}
+			}(workerIdx)
+		}
+
+		parseGroup.Wait()
+
+		if errPtr := parseErr.Load(); errPtr != nil {
+			return epochResult{err: errnie.Error(*errPtr)}
+		}
+
+		for _, record := range excursionResults {
+			if record != nil {
+				excursions = append(excursions, record)
+			}
+		}
+	}
+
+	return epochResult{
+		epoch:      epoch,
+		tokens:     tokens,
+		ticks:      ticks,
+		excursions: excursions,
+		maxTick:    maxTick,
+	}
+}
+
 func (trainer *Trainer) loadTrainingData(
 	grid *store.Grid,
 	epochs ...int64,
@@ -182,6 +442,12 @@ func (trainer *Trainer) loadTrainingData(
 		}
 
 		if excursion != nil {
+			if len(trainer.symbols) > 0 {
+				if _, ok := trainer.symbols[excursion.Label]; !ok {
+					continue
+				}
+			}
+
 			byEpoch[excursion.Epoch] = append(byEpoch[excursion.Epoch], excursion)
 		}
 	}
@@ -192,85 +458,31 @@ func (trainer *Trainer) loadTrainingData(
 	tapeTicks := make([]int64, 0)
 	tickOffset := int64(0)
 
-	for _, epoch := range targetEpochs {
-		epochExcursions := byEpoch[epoch]
-		minTick, maxTick := excursionTickSpan(epochExcursions)
+	results := make([]epochResult, len(targetEpochs))
 
-		errnie.Info(fmt.Sprintf(
-			"[training] reading tape for epoch %d (%d excursions, tick span [%d, %d])",
-			epoch, len(epochExcursions), minTick, maxTick,
-		))
+	for index, epoch := range targetEpochs {
+		results[index] = trainer.loadEpoch(grid, epoch, byEpoch[epoch])
+	}
 
-		accumulators := make(map[int64]*tickAccumulator)
-
-		for measurement, tapeErr := range trainer.catalog.SignalLogic(
-			trainer.Context(),
-			epoch,
-			"",
-			minTick,
-			maxTick,
-			tables.SensorySources...,
-		) {
-			if tapeErr != nil {
-				return nil, nil, nil, errnie.Error(errnie.Err(
-					errnie.IO,
-					fmt.Sprintf("[training] tape read error in epoch %d", epoch),
-					tapeErr,
-				))
-			}
-
-			if measurement == nil {
-				continue
-			}
-
-			acc, exists := accumulators[measurement.Tick]
-
-			if !exists {
-				acc = &tickAccumulator{}
-				accumulators[measurement.Tick] = acc
-			}
-
-			for metric := range measurement.Read() {
-				region := grid.PinRegion(measurement.Source, metric.Key)
-
-				if region == 0 {
-					continue
-				}
-
-				if !metric.Metric.Standardizable() {
-					continue
-				}
-
-				acc.deformation[region] += math.Abs(metric.Metric.Standardized)
-				acc.counts[region]++
-			}
+	for _, res := range results {
+		if res.err != nil {
+			return nil, nil, nil, res.err
 		}
 
-		for tick, acc := range accumulators {
-			globalTick := tick + tickOffset
-			tokensByTick[globalTick] = computeToken(acc)
+		for _, localTick := range res.ticks {
+			globalTick := localTick + tickOffset
+			tokensByTick[globalTick] = res.tokens[localTick]
 			tapeTicks = append(tapeTicks, globalTick)
 		}
 
-		accumulators = nil
-		stdruntime.GC()
-
-		for _, excursion := range epochExcursions {
-			record, evalErr := trainer.parseExcursionData(excursion)
-
-			if evalErr != nil {
-				return nil, nil, nil, errnie.Error(evalErr)
-			}
-
-			if record != nil {
-				record.startTick += tickOffset
-				record.bTick += tickOffset
-				record.cTick += tickOffset
-				allExcursions = append(allExcursions, record)
-			}
+		for _, exc := range res.excursions {
+			exc.startTick += tickOffset
+			exc.bTick += tickOffset
+			exc.cTick += tickOffset
+			allExcursions = append(allExcursions, exc)
 		}
 
-		tickOffset += maxTick + 1000
+		tickOffset += res.maxTick + 1000
 	}
 
 	slices.Sort(tapeTicks)
@@ -313,19 +525,15 @@ func (trainer *Trainer) parseExcursionData(excursion *data.Measurement) (*excurs
 	pnl, cost, roundTripErr := trainer.price.RoundTrip(symbol, bPrice, cPrice)
 
 	if roundTripErr != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("[training] round trip cannot be priced for %s: %s -> %s", symbol, bPrice, cPrice),
-			roundTripErr,
+		errnie.Warn(fmt.Sprintf(
+			"[training] skipping excursion for %s (%s -> %s): %s",
+			symbol, bPrice, cPrice, roundTripErr,
 		))
+		return nil, nil
 	}
 
 	if cost == nil || cost.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("[training] round-trip cost is non-positive for %s", symbol),
-			nil,
-		))
+		return nil, nil
 	}
 
 	startTick := int64(data.Pull(excursion.Read("start_tick")).Metric.Raw)
@@ -369,11 +577,7 @@ func splitChronologically(
 		return excursions, excursions, tapeTicks
 	}
 
-	splitIndex := int(float64(len(excursions)) * 0.70)
-
-	if splitIndex < 1 {
-		splitIndex = 1
-	}
+	splitIndex := max(int(float64(len(excursions))*0.70), 1)
 
 	if splitIndex >= len(excursions) {
 		splitIndex = len(excursions) - 1
@@ -437,11 +641,7 @@ func (trainer *Trainer) buildCandidateTrie(
 	trie := newPrecursorTrie()
 
 	for _, record := range records {
-		windowStart := record.bTick - precursorTicks
-
-		if windowStart < 0 {
-			windowStart = 0
-		}
+		windowStart := max(record.bTick-precursorTicks, 0)
 
 		entryTokens := sliceTokens(
 			tokensByTick,
@@ -553,9 +753,6 @@ func tokenizeTape(
 	grid *store.Grid,
 	tapeByTick map[int64][]*data.Measurement,
 	startTick, endTick int64,
-	epoch int64,
-	symbol string,
-	startIdx int64,
 	endInclusive bool,
 ) []string {
 	tokensByTick := buildTokenMap(grid, tapeByTick)
@@ -818,17 +1015,11 @@ func (trainer *Trainer) optimizePrecursorTicksWithTokens(
 	minSearchTicks, maxSearchTicks int64,
 ) (int64, float64) {
 	root := newMCTSNode(minSearchTicks, maxSearchTicks, nil)
-	iterations := int(maxSearchTicks-minSearchTicks+1) * 4
-
-	if iterations < 16 {
-		iterations = 16
-	}
-
-	if iterations > 64 {
-		iterations = 64
-	}
+	iterations := min(max(int(maxSearchTicks-minSearchTicks+1)*4, 16), 64)
 
 	explorationConstant := math.Sqrt(2)
+	memo := make(map[int64]float64)
+	mctsTracker := newProgressTracker("MCTS search", int64(iterations), 3*time.Second)
 
 	for iteration := 0; iteration < iterations; iteration++ {
 		current := root
@@ -843,10 +1034,14 @@ func (trainer *Trainer) optimizePrecursorTicksWithTokens(
 		}
 
 		candidateTicks := (current.minTicks + current.maxTicks) / 2
-		candidateTrie := trainer.buildCandidateTrie(trainExcursions, tokensByTick, candidateTicks)
-		outcome := trainer.evaluateReplay(candidateTrie, tokensByTick, evalTicks, evalExcursions, candidateTicks)
+		reward, evaluated := memo[candidateTicks]
 
-		reward := outcome.netPnL
+		if !evaluated {
+			candidateTrie := trainer.buildCandidateTrie(trainExcursions, tokensByTick, candidateTicks)
+			outcome := trainer.evaluateReplay(candidateTrie, tokensByTick, evalTicks, evalExcursions, candidateTicks)
+			reward = outcome.netPnL
+			memo[candidateTicks] = reward
+		}
 
 		for node := current; node != nil; node = node.parent {
 			node.visits++
@@ -857,12 +1052,10 @@ func (trainer *Trainer) optimizePrecursorTicksWithTokens(
 			}
 		}
 
-		if (iteration+1)%8 == 0 || iteration == iterations-1 {
-			errnie.Info(fmt.Sprintf(
-				"[training] MCTS iteration %d/%d (candidateTicks=%d reward=%.4f bestPnL=%.4f)",
-				iteration+1, iterations, candidateTicks, reward, root.bestPnL,
-			))
-		}
+		mctsTracker.Step(
+			int64(iteration+1),
+			fmt.Sprintf("candidateTicks=%d reward=%.4f bestPnL=%.4f", candidateTicks, reward, root.bestPnL),
+		)
 	}
 
 	return root.bestCandidateTicks()
@@ -992,12 +1185,17 @@ func (trie *precursorTrie) Publish(
 	ctx context.Context,
 	catalog *tables.Catalog,
 ) (int, map[string]struct{}, error) {
+	type publishTask struct {
+		key  string
+		body []byte
+	}
+
+	var tasks []publishTask
 	validKeys := make(map[string]struct{})
-	storedCount := 0
 
-	var storeAction func(node *precursorNode) error
+	var collectTasks func(node *precursorNode) error
 
-	storeAction = func(node *precursorNode) error {
+	collectTasks = func(node *precursorNode) error {
 		if node.path != "" {
 			for actionName, count := range node.actions {
 				if count == 0 {
@@ -1017,23 +1215,12 @@ func (trie *precursorTrie) Publish(
 
 				blobKey := node.path + "/" + actionName
 				validKeys[blobKey] = struct{}{}
-
-				putErr := catalog.PutBlob(ctx, blobKey, body)
-
-				if putErr != nil && !errors.Is(putErr, tables.ErrBlobStorageUnconfigured) {
-					return errnie.Error(errnie.Err(
-						errnie.IO,
-						"[training] failed to put blob: "+blobKey,
-						putErr,
-					))
-				}
-
-				storedCount++
+				tasks = append(tasks, publishTask{key: blobKey, body: body})
 			}
 		}
 
 		for _, child := range node.children {
-			if err := storeAction(child); err != nil {
+			if err := collectTasks(child); err != nil {
 				return err
 			}
 		}
@@ -1041,11 +1228,63 @@ func (trie *precursorTrie) Publish(
 		return nil
 	}
 
-	if err := storeAction(trie.root); err != nil {
+	if err := collectTasks(trie.root); err != nil {
 		return 0, nil, errnie.Error(err)
 	}
 
-	return storedCount, validKeys, nil
+	if len(tasks) == 0 {
+		return 0, validKeys, nil
+	}
+
+	workers := min(16, len(tasks))
+	totalTasks := int64(len(tasks))
+	var completedCount atomic.Int64
+	pubTracker := newProgressTracker("publish S3 blobs", totalTasks, 2*time.Second)
+	taskChan := make(chan publishTask, len(tasks))
+
+	for _, task := range tasks {
+		taskChan <- task
+	}
+
+	close(taskChan)
+
+	errChan := make(chan error, workers)
+	var group sync.WaitGroup
+
+	for range workers {
+
+		group.Go(func() {
+
+			for task := range taskChan {
+				putErr := catalog.PutBlob(ctx, task.key, task.body)
+
+				if putErr != nil && !errors.Is(putErr, tables.ErrBlobStorageUnconfigured) {
+					select {
+					case errChan <- errnie.Error(errnie.Err(
+						errnie.IO,
+						"[training] failed to put blob: "+task.key,
+						putErr,
+					)):
+					default:
+					}
+
+					return
+				}
+
+				done := completedCount.Add(1)
+				pubTracker.Step(done)
+			}
+		})
+	}
+
+	group.Wait()
+	close(errChan)
+
+	if err := <-errChan; err != nil {
+		return 0, nil, err
+	}
+
+	return len(tasks), validKeys, nil
 }
 
 type precursorNode struct {
@@ -1155,6 +1394,8 @@ func sortedEpochKeys(byEpoch map[int64][]*data.Measurement) []int64 {
 }
 
 func (trainer *Trainer) cleanupStaleBlobs(validKeys map[string]struct{}) error {
+	var staleKeys []string
+
 	for existingKey, listErr := range trainer.catalog.ListBlobs(trainer.Context(), "") {
 		if listErr != nil {
 			if errors.Is(listErr, tables.ErrBlobStorageUnconfigured) {
@@ -1175,16 +1416,60 @@ func (trainer *Trainer) cleanupStaleBlobs(validKeys map[string]struct{}) error {
 		}
 
 		if _, exists := validKeys[existingKey]; !exists {
-			deleteErr := trainer.catalog.DeleteBlob(trainer.Context(), existingKey)
-
-			if deleteErr != nil && !errors.Is(deleteErr, tables.ErrBlobStorageUnconfigured) {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"[training] failed to delete stale blob: "+existingKey,
-					deleteErr,
-				))
-			}
+			staleKeys = append(staleKeys, existingKey)
 		}
+	}
+
+	if len(staleKeys) == 0 {
+		return nil
+	}
+
+	workers := min(16, len(staleKeys))
+	totalStale := int64(len(staleKeys))
+	var deletedCount atomic.Int64
+	delTracker := newProgressTracker("cleanup stale S3 blobs", totalStale, 2*time.Second)
+	keyChan := make(chan string, len(staleKeys))
+
+	for _, key := range staleKeys {
+		keyChan <- key
+	}
+
+	close(keyChan)
+
+	errChan := make(chan error, workers)
+	var group sync.WaitGroup
+
+	for range workers {
+
+		group.Go(func() {
+
+			for key := range keyChan {
+				deleteErr := trainer.catalog.DeleteBlob(trainer.Context(), key)
+
+				if deleteErr != nil && !errors.Is(deleteErr, tables.ErrBlobStorageUnconfigured) {
+					select {
+					case errChan <- errnie.Error(errnie.Err(
+						errnie.IO,
+						"[training] failed to delete stale blob: "+key,
+						deleteErr,
+					)):
+					default:
+					}
+
+					return
+				}
+
+				done := deletedCount.Add(1)
+				delTracker.Step(done)
+			}
+		})
+	}
+
+	group.Wait()
+	close(errChan)
+
+	if err := <-errChan; err != nil {
+		return err
 	}
 
 	return nil

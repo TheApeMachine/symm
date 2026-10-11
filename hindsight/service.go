@@ -582,17 +582,9 @@ func (service *Service) trainingFragments(ctx fiber.Ctx) error {
 			cIdx = int64(entry.Metric.Raw)
 		}
 
-		entryIdx := bIdx - startIdx
+		entryIdx := max(bIdx-startIdx, 0)
 
-		if entryIdx < 0 {
-			entryIdx = 0
-		}
-
-		exitIdx := cIdx - startIdx
-
-		if exitIdx < entryIdx {
-			exitIdx = entryIdx
-		}
+		exitIdx := max(cIdx-startIdx, entryIdx)
 
 		fragments = append(fragments, TrainedFragmentResponse{
 			Id:                id,

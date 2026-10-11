@@ -41,11 +41,11 @@ func TestTrainer_MCTSPrecursorWindowOptimization(t *testing.T) {
 
 		// Short window of 4 ticks (ticks 21..24)
 		shortWindow := int64(4)
-		shortTokens := tokenizeTape(grid, tapeByTick, bTick-shortWindow, bTick, epoch, symbol, 0, false)
+		shortTokens := tokenizeTape(grid, tapeByTick, bTick-shortWindow, bTick, false)
 
 		// Longer window of 18 ticks (ticks 7..24)
 		longWindow := int64(18)
-		longTokens := tokenizeTape(grid, tapeByTick, bTick-longWindow, bTick, epoch, symbol, 0, false)
+		longTokens := tokenizeTape(grid, tapeByTick, bTick-longWindow, bTick, false)
 
 		So(len(shortTokens), ShouldBeGreaterThan, 0)
 		So(len(longTokens), ShouldBeGreaterThan, len(shortTokens))
@@ -69,7 +69,7 @@ func TestTrainer_MCTSPrecursorWindowOptimization(t *testing.T) {
 			tapeByTick[tick] = []*data.Measurement{meas}
 		}
 
-		tokens := tokenizeTape(grid, tapeByTick, 1, 11, epoch, symbol, 0, false)
+		tokens := tokenizeTape(grid, tapeByTick, 1, 11, false)
 		So(len(tokens), ShouldEqual, 1)
 	})
 

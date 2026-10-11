@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	stdruntime "runtime"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
@@ -16,6 +20,13 @@ import (
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/strategy"
 )
+
+type auditTokenKey struct {
+	symbol string
+	tick   int64
+}
+
+var auditTokenCache sync.Map
 
 type excursionInterval struct {
 	symbol    string
@@ -158,8 +169,10 @@ func AnalyzePrecursorSeparation(
 	var ignitionEvents, ignitionControls, earlyHolds, lateHolds []map[string]int
 	archiveFetches := 0
 	const maxArchiveFetches = 100
+	totalExcursions := len(excursions)
+	tracker := newProgressTracker("7/7 Stage 5] [Event Replay", int64(totalExcursions), 5*time.Second)
 
-	for _, excursion := range excursions {
+	for excursionIndex, excursion := range excursions {
 		inSample := false
 		if len(ticks) > 0 && excursion.startTick >= ticks[0] && excursion.cTick <= ticks[len(ticks)-1] {
 			inSample = true
@@ -182,6 +195,8 @@ func AnalyzePrecursorSeparation(
 			result.ExcursionsFound = classList
 			return result
 		}
+
+		tracker.Step(int64(excursionIndex+1), fmt.Sprintf("archive fetches: %d", archiveFetches))
 
 		ignition := make(map[string]int)
 		early := make(map[string]int)
@@ -275,6 +290,40 @@ func insufficientPrecursor(reason string) Stage5PrecursorSeparation {
 	}
 }
 
+func observeAuditToken(grid *store.Grid, sym string, tick int64, signals []*data.Measurement) string {
+	if len(signals) == 0 || grid == nil {
+		return ""
+	}
+
+	key := auditTokenKey{symbol: sym, tick: tick}
+
+	if cached, ok := auditTokenCache.Load(key); ok {
+		return cached.(string)
+	}
+
+	train := data.NewMeasurement(
+		signals[0].Epoch,
+		sym,
+		"audit",
+		signals[0].SeqIdx,
+		tick,
+	)
+	train.At = signals[0].At
+	train.From = signals[0].From
+	train.Peers(signals...)
+	train = train.Write()
+
+	tokenBytes := grid.Observe(train)
+
+	if len(tokenBytes) == 0 {
+		return ""
+	}
+
+	tok := string(tokenBytes)
+	auditTokenCache.Store(key, tok)
+	return tok
+}
+
 func sampledBackgroundTokens(
 	grid *store.Grid,
 	ticks []int64,
@@ -282,6 +331,53 @@ func sampledBackgroundTokens(
 	excursions []excursionInterval,
 ) map[string]int {
 	result := make(map[string]int)
+
+	if len(ticks) == 0 || len(tickMeasurements) == 0 {
+		return result
+	}
+
+	type tickSpan struct {
+		start int64
+		end   int64
+	}
+
+	spansBySymbol := make(map[string][]tickSpan)
+
+	for _, exc := range excursions {
+		spansBySymbol[exc.symbol] = append(spansBySymbol[exc.symbol], tickSpan{
+			start: exc.startTick,
+			end:   exc.cTick,
+		})
+	}
+
+	for sym, spans := range spansBySymbol {
+		if len(spans) <= 1 {
+			continue
+		}
+
+		slices.SortFunc(spans, func(a, b tickSpan) int {
+			return cmp.Compare(a.start, b.start)
+		})
+
+		merged := make([]tickSpan, 0, len(spans))
+		current := spans[0]
+
+		for _, sp := range spans[1:] {
+			if sp.start <= current.end {
+				if sp.end > current.end {
+					current.end = sp.end
+				}
+
+				continue
+			}
+
+			merged = append(merged, current)
+			current = sp
+		}
+
+		merged = append(merged, current)
+		spansBySymbol[sym] = merged
+	}
 
 	for _, tick := range ticks {
 		group := tickMeasurements[tick]
@@ -292,42 +388,38 @@ func sampledBackgroundTokens(
 
 		bySymbol := make(map[string][]*data.Measurement)
 
-		for _, m := range group {
-			if m != nil {
-				bySymbol[m.Label] = append(bySymbol[m.Label], m)
+		for _, item := range group {
+			if item != nil {
+				bySymbol[item.Label] = append(bySymbol[item.Label], item)
 			}
 		}
 
 		for sym, symMeas := range bySymbol {
-			train := data.NewMeasurement(
-				symMeas[0].Epoch,
-				sym,
-				"audit",
-				symMeas[0].SeqIdx,
-				tick,
-			)
-			train.At = symMeas[0].At
-			train.From = symMeas[0].From
-			train.Peers(symMeas...)
-			train = train.Write()
-
-			tokenBytes := grid.Observe(train)
-
-			if len(tokenBytes) == 0 {
+			if len(symMeas) == 0 {
 				continue
 			}
 
+			spans := spansBySymbol[sym]
 			inExcursion := false
 
-			for _, excursion := range excursions {
-				if excursion.symbol == sym && tick >= excursion.startTick && tick <= excursion.cTick {
+			if len(spans) > 0 {
+				idx := sort.Search(len(spans), func(i int) bool {
+					return spans[i].end >= tick
+				})
+
+				if idx < len(spans) && spans[idx].start <= tick {
 					inExcursion = true
-					break
 				}
 			}
 
-			if !inExcursion {
-				result[string(tokenBytes)]++
+			if inExcursion {
+				continue
+			}
+
+			tok := observeAuditToken(grid, sym, tick, symMeas)
+
+			if len(tok) > 0 {
+				result[tok]++
 			}
 		}
 	}
@@ -349,9 +441,27 @@ func archivedIntervalTokens(
 		return nil, nil
 	}
 
-	tickMap := make(map[int64][]*data.Measurement)
+	result := make(map[int64]string)
+	missingTicks := make([]int64, 0)
 
 	for tick := startTick; tick <= endTick; tick++ {
+		key := auditTokenKey{symbol: symbol, tick: tick}
+
+		if cached, ok := auditTokenCache.Load(key); ok {
+			result[tick] = cached.(string)
+			continue
+		}
+
+		missingTicks = append(missingTicks, tick)
+	}
+
+	if len(missingTicks) == 0 {
+		return result, nil
+	}
+
+	tickMap := make(map[int64][]*data.Measurement)
+
+	for _, tick := range missingTicks {
 		list, exists := tickMeasurements[tick]
 
 		if !exists {
@@ -379,42 +489,11 @@ func archivedIntervalTokens(
 		}
 	}
 
-	if len(tickMap) == 0 {
-		return nil, nil
-	}
+	for tick, signals := range tickMap {
+		tok := observeAuditToken(grid, symbol, tick, signals)
 
-	matchingTicks := make([]int64, 0, len(tickMap))
-
-	for tick := range tickMap {
-		matchingTicks = append(matchingTicks, tick)
-	}
-
-	slices.Sort(matchingTicks)
-	result := make(map[int64]string, len(matchingTicks))
-
-	for _, tick := range matchingTicks {
-		signals := tickMap[tick]
-
-		if len(signals) == 0 {
-			continue
-		}
-
-		train := data.NewMeasurement(
-			signals[0].Epoch,
-			symbol,
-			"audit",
-			signals[0].SeqIdx,
-			tick,
-		)
-		train.At = signals[0].At
-		train.From = signals[0].From
-		train.Peers(signals...)
-		train = train.Write()
-
-		tokenBytes := grid.Observe(train)
-
-		if len(tokenBytes) > 0 {
-			result[tick] = string(tokenBytes)
+		if len(tok) > 0 {
+			result[tick] = tok
 		}
 	}
 
@@ -474,13 +553,35 @@ func evaluateGroupHypothesis(
 
 	real := computeJSD(eventTokens, controlTokens)
 	pool := append(append([]map[string]int(nil), events...), controls...)
-	rng := rand.New(rand.NewSource(1791))
-	null := make([]float64, 0, permutations)
+	numWorkers := max(min(stdruntime.GOMAXPROCS(0), permutations), 1)
 
-	for range permutations {
-		rng.Shuffle(len(pool), func(first, second int) { pool[first], pool[second] = pool[second], pool[first] })
-		null = append(null, computeJSD(mergeTokens(pool[:len(events)]), mergeTokens(pool[len(events):])))
+	null := make([]float64, permutations)
+	groupTracker := newProgressTracker("7/7 Stage 5] [Ignition Permutations", int64(permutations), 5*time.Second)
+	var permGroup sync.WaitGroup
+	var permCount atomic.Int64
+
+	for workerIdx := 0; workerIdx < numWorkers; workerIdx++ {
+		permGroup.Add(1)
+
+		go func(wID int) {
+			defer permGroup.Done()
+
+			localRng := rand.New(rand.NewSource(1791 + int64(wID)*1000))
+			localPool := append([]map[string]int(nil), pool...)
+
+			for iter := wID; iter < permutations; iter += numWorkers {
+				localRng.Shuffle(len(localPool), func(first, second int) {
+					localPool[first], localPool[second] = localPool[second], localPool[first]
+				})
+
+				null[iter] = computeJSD(mergeTokens(localPool[:len(events)]), mergeTokens(localPool[len(events):]))
+				c := permCount.Add(1)
+				groupTracker.Step(c)
+			}
+		}(workerIdx)
 	}
+
+	permGroup.Wait()
 
 	return finishHypothesis(result, real, null, permutations, significance)
 }
@@ -515,23 +616,41 @@ func evaluatePairedHypothesis(
 	}
 
 	real := computeJSD(lateTokens, earlyTokens)
-	rng := rand.New(rand.NewSource(1791))
-	null := make([]float64, 0, permutations)
+	numWorkers := max(min(stdruntime.GOMAXPROCS(0), permutations), 1)
 
-	for range permutations {
-		var nullLate, nullEarly []map[string]int
+	null := make([]float64, permutations)
+	pairTracker := newProgressTracker("7/7 Stage 5] [Exhaustion Permutations", int64(permutations), 5*time.Second)
+	var pairGroup sync.WaitGroup
+	var pairCount atomic.Int64
 
-		for index := range late {
-			if rng.Intn(2) == 0 {
-				nullLate, nullEarly = append(nullLate, late[index]), append(nullEarly, early[index])
-				continue
+	for workerIdx := 0; workerIdx < numWorkers; workerIdx++ {
+		pairGroup.Add(1)
+
+		go func(wID int) {
+			defer pairGroup.Done()
+
+			localRng := rand.New(rand.NewSource(1791 + int64(wID)*1000))
+
+			for iter := wID; iter < permutations; iter += numWorkers {
+				var nullLate, nullEarly []map[string]int
+
+				for index := range late {
+					if localRng.Intn(2) == 0 {
+						nullLate, nullEarly = append(nullLate, late[index]), append(nullEarly, early[index])
+						continue
+					}
+
+					nullLate, nullEarly = append(nullLate, early[index]), append(nullEarly, late[index])
+				}
+
+				null[iter] = computeJSD(mergeTokens(nullLate), mergeTokens(nullEarly))
+				c := pairCount.Add(1)
+				pairTracker.Step(c)
 			}
-
-			nullLate, nullEarly = append(nullLate, early[index]), append(nullEarly, late[index])
-		}
-
-		null = append(null, computeJSD(mergeTokens(nullLate), mergeTokens(nullEarly)))
+		}(workerIdx)
 	}
+
+	pairGroup.Wait()
 
 	return finishHypothesis(result, real, null, permutations, significance)
 }
@@ -619,14 +738,36 @@ func evaluateHeldOutSkill(
 	skill := scorePrecursorRule(rule, mergeTokens(testEvents), mergeTokens(testControls))
 
 	pool := append(append([]map[string]int(nil), testEvents...), testControls...)
-	rng := rand.New(rand.NewSource(1791))
-	null := make([]float64, 0, permutations)
+	numWorkers := max(min(stdruntime.GOMAXPROCS(0), permutations), 1)
 
-	for range permutations {
-		rng.Shuffle(len(pool), func(first, second int) { pool[first], pool[second] = pool[second], pool[first] })
-		shuffled := scorePrecursorRule(rule, mergeTokens(pool[:len(testEvents)]), mergeTokens(pool[len(testEvents):]))
-		null = append(null, shuffled.MCC)
+	null := make([]float64, permutations)
+	skillTracker := newProgressTracker("7/7 Stage 5] [Held-Out Skill Permutations", int64(permutations), 5*time.Second)
+	var skillGroup sync.WaitGroup
+	var skillCount atomic.Int64
+
+	for workerIdx := 0; workerIdx < numWorkers; workerIdx++ {
+		skillGroup.Add(1)
+
+		go func(wID int) {
+			defer skillGroup.Done()
+
+			localRng := rand.New(rand.NewSource(1791 + int64(wID)*1000))
+			localPool := append([]map[string]int(nil), pool...)
+
+			for iter := wID; iter < permutations; iter += numWorkers {
+				localRng.Shuffle(len(localPool), func(first, second int) {
+					localPool[first], localPool[second] = localPool[second], localPool[first]
+				})
+
+				shuffled := scorePrecursorRule(rule, mergeTokens(localPool[:len(testEvents)]), mergeTokens(localPool[len(testEvents):]))
+				null[iter] = shuffled.MCC
+				c := skillCount.Add(1)
+				skillTracker.Step(c)
+			}
+		}(workerIdx)
 	}
+
+	skillGroup.Wait()
 
 	skill.PValue = upperPValue(skill.MCC, null)
 	skill.Status = hypothesisVerdict(skill.PValue, permutations, significance)

@@ -27,7 +27,7 @@ ADVISOR_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run collect detect audit workbench dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map build-cuda
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run collect detect train audit workbench dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map build-cuda
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
@@ -81,6 +81,10 @@ MIN_MOVE_DURATION ?= 1s
 detect:
 	@echo "Labeling spot:trade tape with excursion detections (taker fee $(TAKER_FEE_PERCENT)%, min move $(MIN_MOVE_DURATION))..."
 	go run $(LDFLAGS) main.go detect $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) --min-move-duration $(MIN_MOVE_DURATION) $(ARGS)
+
+train:
+	@echo "Training action tree with MCTS over detected excursions and sensory tape..."
+	go run $(LDFLAGS) main.go train $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
 
 audit:
 	@echo "Running SYMM sensory & representation health audit (taker fee $(TAKER_FEE_PERCENT)%)..."

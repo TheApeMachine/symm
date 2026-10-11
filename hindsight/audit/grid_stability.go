@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"sort"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
 )
@@ -47,6 +48,7 @@ func AnalyzeGridStability(
 	}
 
 	half := totalTicks / 2
+	errnie.Info("[audit] [5/7 Stage 3] Developing grid partition 1/3 (Half-vs-Half)...")
 	primary := compareGridWindows(
 		ticks[:half],
 		ticks[half:],
@@ -74,6 +76,8 @@ func AnalyzeGridStability(
 			if end-mid < 20 {
 				continue
 			}
+
+			errnie.Info(fmt.Sprintf("[audit] [5/7 Stage 3] Developing grid partition %d/3 (Quarter-vs-Quarter)...", pair+2))
 			comparison := compareGridWindows(
 				ticks[start:mid],
 				ticks[mid:end],

@@ -67,10 +67,6 @@ action tree published to S3 storage.`,
 			slices.Sort(trainEpochs)
 		}
 
-		if len(trainSymbols) == 0 {
-			trainSymbols = []string{"BTC/USD"}
-		}
-
 		if trainFeePct == "" {
 			trainFeePct = "0.26"
 		}
@@ -82,6 +78,11 @@ action tree published to S3 storage.`,
 		}
 
 		trainer := strategy.NewTrainer(ctx, catalog, price)
+
+		if len(trainSymbols) > 0 {
+			trainer.SetSymbols(trainSymbols...)
+		}
+
 		return trainer.Generate(trainEpochs...)
 	},
 }

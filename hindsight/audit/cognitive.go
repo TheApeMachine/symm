@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	stdruntime "runtime"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
@@ -302,7 +306,7 @@ func AnalyzeCognitiveTrie(
 		return insufficientCognitiveTrie("Zero excursions detected.")
 	}
 
-	phases := extractTriePhases(ctx, catalog, epoch, symbol, grid, detections, tickMeasurements)
+	phases := extractTriePhases(ctx, catalog, epoch, grid, detections, tickMeasurements)
 
 	if len(phases) == 0 {
 		return insufficientCognitiveTrie("No valid sequential token contexts formed from excursions.")
@@ -403,71 +407,90 @@ func AnalyzeCognitiveTrie(
 
 	nullHits := make([]float64, permutations)
 	nullBalancedAccs := make([]float64, permutations)
-	rng := rand.New(rand.NewPCG(uint64(epoch), 12345))
+	tracker := newProgressTracker("Bonus Stage 6] [Permutation Null", int64(permutations), 5*time.Second)
 
-	for permIndex := 0; permIndex < permutations; permIndex++ {
-		permModel := newCognitiveModel()
-		permActions := make([]string, len(phases))
-		permFeedbacks := make([]float64, len(phases))
+	numWorkers := max(min(stdruntime.GOMAXPROCS(0), permutations), 1)
 
-		for phaseIndex, ph := range phases {
-			permActions[phaseIndex] = ph.targetAction
-			permFeedbacks[phaseIndex] = ph.feedback
-		}
+	var permGroup sync.WaitGroup
+	var permCount atomic.Int64
 
-		rng.Shuffle(len(permActions), func(idxA, idxB int) {
-			permActions[idxA], permActions[idxB] = permActions[idxB], permActions[idxA]
-			permFeedbacks[idxA], permFeedbacks[idxB] = permFeedbacks[idxB], permFeedbacks[idxA]
-		})
+	for workerIdx := 0; workerIdx < numWorkers; workerIdx++ {
+		permGroup.Add(1)
 
-		permHitCount := 0
-		permPreds := make([]string, totalCalls)
-		permCounts := map[string]int{"enter": 0, "exit": 0, "wait": 0}
+		go func(wID int) {
+			defer permGroup.Done()
 
-		for phaseIndex, ph := range phases {
-			act := permActions[phaseIndex]
-			fb := permFeedbacks[phaseIndex]
-			permCounts[act]++
+			localRng := rand.New(rand.NewPCG(uint64(epoch)+uint64(wID)*1000, 12345))
 
-			pCall, pErr := permModel.Recall(ph.context, "")
+			for pIdx := wID; pIdx < permutations; pIdx += numWorkers {
+				permModel := newCognitiveModel()
+				permActions := make([]string, len(phases))
+				permFeedbacks := make([]float64, len(phases))
 
-			if pErr != nil {
-				errnie.Error(pErr)
-			}
-
-			predAct := pCall.Winner
-
-			if predAct == "" {
-				predAct = "wait"
-			}
-
-			permPreds[phaseIndex] = predAct
-
-			if act == predAct {
-				permHitCount++
-			}
-
-			if act == "enter" || act == "exit" {
-				teachErr := permModel.Teach(ph.context, act, fb)
-
-				if teachErr != nil {
-					errnie.Error(teachErr)
+				for phaseIndex, ph := range phases {
+					permActions[phaseIndex] = ph.targetAction
+					permFeedbacks[phaseIndex] = ph.feedback
 				}
-			}
 
-			if act == "wait" {
-				teachErr := permModel.Teach(ph.context, "enter", fb)
+				localRng.Shuffle(len(permActions), func(idxA, idxB int) {
+					permActions[idxA], permActions[idxB] = permActions[idxB], permActions[idxA]
+					permFeedbacks[idxA], permFeedbacks[idxB] = permFeedbacks[idxB], permFeedbacks[idxA]
+				})
 
-				if teachErr != nil {
-					errnie.Error(teachErr)
+				permHitCount := 0
+				permPreds := make([]string, totalCalls)
+				permCounts := map[string]int{"enter": 0, "exit": 0, "wait": 0}
+
+				for phaseIndex, ph := range phases {
+					act := permActions[phaseIndex]
+					fb := permFeedbacks[phaseIndex]
+					permCounts[act]++
+
+					pCall, pErr := permModel.Recall(ph.context, "")
+
+					if pErr != nil {
+						errnie.Error(pErr)
+					}
+
+					predAct := pCall.Winner
+
+					if predAct == "" {
+						predAct = "wait"
+					}
+
+					permPreds[phaseIndex] = predAct
+
+					if act == predAct {
+						permHitCount++
+					}
+
+					if act == "enter" || act == "exit" {
+						teachErr := permModel.Teach(ph.context, act, fb)
+
+						if teachErr != nil {
+							errnie.Error(teachErr)
+						}
+					}
+
+					if act == "wait" {
+						teachErr := permModel.Teach(ph.context, "enter", fb)
+
+						if teachErr != nil {
+							errnie.Error(teachErr)
+						}
+					}
 				}
-			}
-		}
 
-		nullHits[permIndex] = float64(permHitCount)
-		permBalAcc, _, _, _ := computeClassificationMetrics(permActions, permPreds, permCounts)
-		nullBalancedAccs[permIndex] = permBalAcc
+				nullHits[pIdx] = float64(permHitCount)
+				permBalAcc, _, _, _ := computeClassificationMetrics(permActions, permPreds, permCounts)
+				nullBalancedAccs[pIdx] = permBalAcc
+				c := permCount.Add(1)
+				tracker.Step(c)
+			}
+		}(workerIdx)
 	}
+
+	permGroup.Wait()
 
 	sort.Float64s(nullHits)
 	nullMean := computeMean(nullHits)
@@ -553,11 +576,13 @@ func AnalyzeCognitiveTrie(
 		evaluatedTicks = len(unseenTicks)
 
 		windowTokens := make(map[string][]string)
+		unseenTracker := newProgressTracker("Bonus Stage 6] [Tape Replay", int64(len(unseenTicks)), 5*time.Second)
 
-		for _, tickVal := range unseenTicks {
+		for tickIdx, tickVal := range unseenTicks {
 			measurements := tickMeasurements[tickVal]
 
 			if len(measurements) == 0 {
+				unseenTracker.Step(int64(tickIdx + 1))
 				continue
 			}
 
@@ -570,25 +595,12 @@ func AnalyzeCognitiveTrie(
 			}
 
 			for sym, symMeas := range bySymbol {
-				train := data.NewMeasurement(
-					symMeas[0].Epoch,
-					sym,
-					"audit",
-					symMeas[0].SeqIdx,
-					tickVal,
-				)
-				train.At = symMeas[0].At
-				train.From = symMeas[0].From
-				train.Peers(symMeas...)
-				train.Write()
+				tok := observeAuditToken(grid, sym, tickVal, symMeas)
 
-				tokenBytes := grid.Observe(train)
-
-				if len(tokenBytes) == 0 {
+				if len(tok) == 0 {
 					continue
 				}
 
-				tok := string(tokenBytes)
 				symWindow := windowTokens[sym]
 
 				if len(symWindow) == 0 || symWindow[len(symWindow)-1] != tok {
@@ -612,6 +624,8 @@ func AnalyzeCognitiveTrie(
 					spuriousCount++
 				}
 			}
+
+			unseenTracker.Step(int64(tickIdx + 1))
 		}
 	}
 
@@ -915,15 +929,18 @@ func extractTriePhases(
 	ctx context.Context,
 	catalog *tables.Catalog,
 	epoch int64,
-	symbol string,
 	grid *store.Grid,
 	detections []*data.Measurement,
 	tickMeasurements map[int64][]*data.Measurement,
 ) []triePhase {
 	var phases []triePhase
+	tracker := newProgressTracker("Bonus Stage 6] [Context Extraction", int64(len(detections)), 5*time.Second)
+	archiveFetches := 0
+	const maxArchiveFetches = 100
 
-	for _, det := range detections {
+	for detIndex, det := range detections {
 		if det == nil {
+			tracker.Step(int64(detIndex + 1))
 			continue
 		}
 
@@ -938,6 +955,7 @@ func extractTriePhases(
 		cTick := int64(getMeasurementMetric(det, "c_tick"))
 
 		if bTick <= 0 || cTick <= bTick {
+			tracker.Step(int64(detIndex + 1))
 			continue
 		}
 
@@ -948,7 +966,22 @@ func extractTriePhases(
 		startTick = lo
 
 		if bTick <= startTick {
+			tracker.Step(int64(detIndex + 1))
 			continue
+		}
+
+		inSample := false
+		if _, ok := tickMeasurements[startTick]; ok {
+			inSample = true
+		}
+
+		if !inSample {
+			if archiveFetches >= maxArchiveFetches {
+				tracker.Step(int64(detIndex + 1))
+				continue
+			}
+
+			archiveFetches++
 		}
 
 		eventTokens, err := archivedIntervalTokens(
@@ -1016,6 +1049,8 @@ func extractTriePhases(
 				})
 			}
 		}
+
+		tracker.Step(int64(detIndex + 1))
 	}
 
 	sort.Slice(phases, func(idxA, idxB int) bool {

@@ -200,6 +200,7 @@ func offlinePrice(ctx context.Context, feePercent string, symbols []string) (*br
 	}
 
 	price := broker.NewPrice(ctx, nil, nil, nil, normalizer)
+	price.SetDefaultFee(kraken.TradeVolumeFee{Fee: fee})
 
 	for _, symbol := range symbols {
 		price.SetFee(symbol, kraken.TradeVolumeFee{Fee: fee})

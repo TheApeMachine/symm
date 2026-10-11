@@ -698,7 +698,7 @@ func (instrument *Instrument) Resync(symbol string) error {
 			return true
 		}
 
-		for _, part := range strings.Split(batchKey, "|") {
+		for part := range strings.SplitSeq(batchKey, "|") {
 			if part != symbol {
 				continue
 			}
