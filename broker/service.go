@@ -121,13 +121,19 @@ func (service *Service) Register(router fiber.Router) {
 func (service *Service) positions(reqCtx fiber.Ctx) error {
 	positions := make([]*Position, 0)
 
-	service.desk.positions.Range(func(key, value any) bool {
-		if list, ok := value.([]*Position); ok {
-			positions = append(positions, list...)
-		}
+	if service.desk != nil && service.desk.positions != nil {
+		service.desk.positions.Range(func(key, value any) bool {
+			if list, ok := value.([]*Position); ok {
+				for _, pos := range list {
+					if !pos.Closed() {
+						positions = append(positions, pos)
+					}
+				}
+			}
 
-		return true
-	})
+			return true
+		})
+	}
 
 	return reqCtx.JSON(positions)
 }
@@ -140,18 +146,22 @@ func (service *Service) lifecycle(reqCtx fiber.Ctx) error {
 
 	if service.desk != nil && service.desk.positions != nil {
 		service.desk.positions.Range(func(key, value any) bool {
-			if list, ok := value.([]*Position); ok {
-				for _, pos := range list {
-					lc := pos.Lifecycle()
-					lifecycles = append(lifecycles, lc)
+			list, ok := value.([]*Position)
 
-					if lc.Status == "closed" && lc.Outcome != nil {
-						closedCount++
-						totalVenuePnl += lc.Outcome.VenueRealized
+			if !ok {
+				return true
+			}
 
-						if lc.Outcome.VenueRealized > 0 {
-							venueWins++
-						}
+			for _, pos := range list {
+				lc := pos.Lifecycle()
+				lifecycles = append(lifecycles, lc)
+
+				if lc.Status == "closed" && lc.Outcome != nil {
+					closedCount++
+					totalVenuePnl += lc.Outcome.VenueRealized
+
+					if lc.Outcome.VenueRealized > 0 {
+						venueWins++
 					}
 				}
 			}

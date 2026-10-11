@@ -17,10 +17,11 @@ RLSForecast is the projection of a posterior through a design.
 */
 type RLSForecast struct {
 	RLSState
-	Prediction         float64
-	Factor             []float64
-	Scale              float64
-	DegreesOfFreedom   float64
-	PredictiveVariance float64
-	Ready              bool
+	Prediction                float64
+	Factor                    []float64
+	Scale                     float64
+	DegreesOfFreedom          float64
+	PredictiveVariance        float64
+	PredictiveVarianceDefined bool
+	Ready                     bool
 }

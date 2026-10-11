@@ -3,7 +3,6 @@ package statistic
 import (
 	"errors"
 	"iter"
-	"math"
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -58,17 +57,15 @@ func (op *CausalResidual) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				result.Baseline = reading.Prior.Mean
 			}
 
-			if reading.Prior.Count > 1 {
-				result.PriorVariance = reading.Prior.M2 / (reading.Prior.Count - 1)
-			}
-
 			result.Residual = reading.Value - result.Baseline
 
-			// The z-score needs a positive prior dispersion; a lone residual is
-			// not its own scale. ScoreScale stays 0 while it is undefined.
-			if result.PriorVariance > 0 {
-				result.ScoreScale = math.Sqrt(result.PriorVariance)
-				result.ZScore = result.Residual / result.ScoreScale
+			// The z-score needs a verified prior dispersion (at least MinimumPrior
+			// observations, positive dispersion, and a scale not negligible next to
+			// baseline or value); ScoreScale stays 0 while it is undefined.
+			if scale, ok := core.PriorScale(reading.Prior.Count, reading.Prior.M2, reading.Value, result.Baseline); ok {
+				result.ScoreScale = scale
+				result.PriorVariance = scale * scale
+				result.ZScore = result.Residual / scale
 			}
 
 			op.out = result

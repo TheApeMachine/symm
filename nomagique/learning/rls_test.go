@@ -24,12 +24,16 @@ func TestRLSNext(t *testing.T) {
 
 			first := data.Read[[][]float64](node.Next(data.NewValue(append(append([]float64(nil), features...), 1)).Next(nil)))
 			So(node.Error(), ShouldBeNil)
+			So(len(first[0]), ShouldEqual, 8)
 			So(first[0][6], ShouldEqual, 1)
+			So(first[0][7], ShouldEqual, 0)
 			beta := append([]float64(nil), first[1]...)
 
 			query := data.Read[[][]float64](node.Next(data.NewValue(features).Next(nil)))
 			So(node.Error(), ShouldBeNil)
+			So(len(query[0]), ShouldEqual, 8)
 			So(query[0][6], ShouldEqual, 0)
+			So(query[0][7], ShouldEqual, 0)
 			So(query[1], ShouldResemble, beta)
 			prediction := beta[0]
 
@@ -38,6 +42,13 @@ func TestRLSNext(t *testing.T) {
 			}
 
 			So(query[0][0], ShouldAlmostEqual, prediction)
+
+			// Train two more observations so posterior has 3 updates (nu = 3 > 2)
+			_ = data.Read[[][]float64](node.Next(data.NewValue(append(append([]float64(nil), features...), 2)).Next(nil)))
+			_ = data.Read[[][]float64](node.Next(data.NewValue(append(append([]float64(nil), features...), 3)).Next(nil)))
+			fourth := data.Read[[][]float64](node.Next(data.NewValue(features).Next(nil)))
+			So(node.Error(), ShouldBeNil)
+			So(fourth[0][7], ShouldEqual, 1)
 		})
 	}
 

@@ -57,6 +57,10 @@ var auditCmd = &cobra.Command{
 			))
 		}
 
+		if err := catalog.Ensure(ctx); err != nil {
+			return errnie.Error(err)
+		}
+
 		opts := audit.AuditOptions{
 			Epoch:        auditEpoch,
 			Symbol:       auditSymbol,

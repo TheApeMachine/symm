@@ -284,6 +284,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"background_rate:buy":                        {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"background_rate:sell":                       {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"branching_spectral_radius":                  {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"buy_from_buy":                               {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"compensator:buy":                            {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"compensator:sell":                           {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"conditional_intensity":                      {Unit: UnitRate, Timescale: TimescaleRollingWindow},
@@ -334,6 +335,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"intensity:buy":                              {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"intensity:sell":                             {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"branching_ratio":                            {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"sell_from_sell":                             {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 	},
 	"leadlag": {
 		"best_lag_correlation_baseline": {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},

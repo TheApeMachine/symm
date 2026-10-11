@@ -751,11 +751,24 @@ func appendDecimalDigits(buf []byte, d *decimal.Decimal) []byte {
 	}
 
 	str := d.String()
+	seenNonZero := false
 
 	for idx := 0; idx < len(str); idx++ {
-		if str[idx] != '.' {
-			buf = append(buf, str[idx])
+		char := str[idx]
+
+		if char == '.' {
+			continue
 		}
+
+		if !seenNonZero {
+			if char == '0' {
+				continue
+			}
+
+			seenNonZero = true
+		}
+
+		buf = append(buf, char)
 	}
 
 	return buf

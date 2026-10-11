@@ -280,7 +280,7 @@ func AnalyzeTokenDynamics(
 		meanMargin = sumMargin / float64(len(tokens))
 	}
 
-	realEntropy := computeTransitionEntropy(transitions, tokenFreqs, len(tokens))
+	realEntropy := computeTransitionEntropy(transitions)
 	blockSize := empiricalDwellBlockSize(tokensBySymbol)
 	nullEntropies := computeBlockNullTransitionEntropies(tokensBySymbol, blockSize, permutations)
 
@@ -298,7 +298,7 @@ func AnalyzeTokenDynamics(
 	compNullMean := 0.0
 	compReduction := 0.0
 	if len(compressedTokens) > 0 {
-		compEntropy = computeTransitionEntropy(compressedTransitions, compressedTokenFreqs, len(compressedTokens))
+		compEntropy = computeTransitionEntropy(compressedTransitions)
 		compNullEntropies := computeBlockNullTransitionEntropies(compressedTokensBySymbol, 1, permutations)
 		for _, value := range compNullEntropies {
 			compNullMean += value
@@ -361,36 +361,47 @@ func AnalyzeTokenDynamics(
 
 func computeTransitionEntropy(
 	transitions map[string]map[string]int,
-	tokenFreqs map[string]int,
-	totalEmissions int,
 ) float64 {
-	conditionalEntropy := 0.0
+	totalTransitions := 0
+	rowTotals := make(map[string]int, len(transitions))
 
 	for fromToken, nextMap := range transitions {
-		fromCount := tokenFreqs[fromToken]
-		if fromCount == 0 {
-			continue
-		}
-
 		rowTotal := 0
+
 		for _, count := range nextMap {
 			rowTotal += count
 		}
+
+		rowTotals[fromToken] = rowTotal
+		totalTransitions += rowTotal
+	}
+
+	if totalTransitions == 0 {
+		return 0.0
+	}
+
+	conditionalEntropy := 0.0
+
+	for fromToken, nextMap := range transitions {
+		rowTotal := rowTotals[fromToken]
+
 		if rowTotal == 0 {
 			continue
 		}
 
 		rowEntropy := 0.0
+
 		for _, count := range nextMap {
 			if count == 0 {
 				continue
 			}
+
 			probability := float64(count) / float64(rowTotal)
 			rowEntropy -= probability * math.Log2(probability)
 		}
 
 		conditionalEntropy +=
-			(float64(fromCount) / float64(totalEmissions)) * rowEntropy
+			(float64(rowTotal) / float64(totalTransitions)) * rowEntropy
 	}
 
 	return conditionalEntropy
@@ -482,9 +493,7 @@ func computeBlockNullTransitionEntropies(
 	entropies := make([]float64, 0, iterations)
 
 	for range iterations {
-		frequencies := make(map[string]int)
 		transitions := make(map[string]map[string]int)
-		totalNullTokens := 0
 
 		for _, symBlocks := range blocksBySymbol {
 			if len(symBlocks) == 0 {
@@ -504,9 +513,6 @@ func computeBlockNullTransitionEntropies(
 			}
 
 			for idx, tok := range shuffledSym {
-				frequencies[tok]++
-				totalNullTokens++
-
 				if idx == 0 {
 					continue
 				}
@@ -523,7 +529,7 @@ func computeBlockNullTransitionEntropies(
 
 		entropies = append(
 			entropies,
-			computeTransitionEntropy(transitions, frequencies, totalNullTokens),
+			computeTransitionEntropy(transitions),
 		)
 	}
 

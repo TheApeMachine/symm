@@ -147,44 +147,54 @@ func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
 		return regions
 	}
 
-	for region := range uint8(12) {
-		if regions.Counts[region] == 0 || nullVariance[region] == 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[grid.RegionScores] region missing evidence",
-				nil,
-			), "region", region, "source", measurement.Source)
+	hasAny := false
 
-			regions.HasEvidence = false
-			return regions
+	for region := range uint8(12) {
+		if regions.Counts[region] > 0 && nullVariance[region] > 0 {
+			regions.Brightness[region] = (deformation[region] - nullMean[region]) /
+				math.Sqrt(nullVariance[region])
+			hasAny = true
 		}
 	}
 
+	if !hasAny {
+		regions.HasEvidence = false
+		return regions
+	}
+
+	var winner uint8
+	var runnerUp uint8
+	winnerFound := false
+	runnerUpFound := false
+
 	for region := range uint8(12) {
-		regions.Brightness[region] = (deformation[region] - nullMean[region]) /
-			math.Sqrt(nullVariance[region])
-	}
+		if regions.Counts[region] == 0 || nullVariance[region] == 0 {
+			continue
+		}
 
-	winner := uint8(0)
-	runnerUp := uint8(1)
+		if !winnerFound {
+			winner = region
+			winnerFound = true
+			continue
+		}
 
-	if regions.Brightness[1] > regions.Brightness[0] {
-		winner = 1
-		runnerUp = 0
-	}
-
-	for region := uint8(2); region < 12; region++ {
 		score := regions.Brightness[region]
 
 		if score > regions.Brightness[winner] {
 			runnerUp = winner
+			runnerUpFound = true
 			winner = region
 			continue
 		}
 
-		if score > regions.Brightness[runnerUp] {
+		if !runnerUpFound || score > regions.Brightness[runnerUp] {
 			runnerUp = region
+			runnerUpFound = true
 		}
+	}
+
+	if !runnerUpFound {
+		runnerUp = winner
 	}
 
 	regions.Winner = winner

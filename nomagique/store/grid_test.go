@@ -256,13 +256,22 @@ func TestGrid_Observe(t *testing.T) {
 			})
 		})
 
-		Convey("When any region is missing evidence", func() {
-			frame, _ := regionFrame(grid, [12]int{1: 3, 6: 2, 9: 5}, true)
+		Convey("When only a subset of regions hold evidence", func() {
+			frame, entries := regionFrame(grid, [12]int{1: 3, 6: 2, 9: 5}, true)
+
+			for idx, value := range map[int]float64{1: 0.5, 6: 3, 9: 1.5} {
+				for _, entry := range entries[idx] {
+					entry.Metric.Standardized = value
+				}
+			}
+
 			regions := grid.RegionScores(frame)
 
-			Convey("Scoring stops and emits no token", func() {
-				So(regions.HasEvidence, ShouldBeFalse)
-				So(grid.Observe(frame), ShouldBeNil)
+			Convey("Scoring evaluates evidenced regions and emits the brightest region token", func() {
+				So(regions.HasEvidence, ShouldBeTrue)
+				So(regions.Winner, ShouldEqual, uint8(6))
+				So(regions.RunnerUp, ShouldEqual, uint8(9))
+				So(string(grid.Observe(frame)), ShouldEqual, "R06")
 			})
 		})
 

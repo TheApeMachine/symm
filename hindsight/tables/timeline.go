@@ -632,7 +632,7 @@ Labels discovers distinct labels present in an epoch by reading only the label c
 func (catalog *Catalog) Labels(ctx context.Context, epoch int64) ([]string, error) {
 	labelSet := make(map[string]struct{})
 
-	for measurement, err := range catalog.scan(ctx, Measurements, epoch, nil, 0, "label") {
+	for measurement, err := range catalog.scan(ctx, Measurements, epoch, nil, 0, "epoch", "source", "label", "at", "tick", "seq_idx") {
 		if err != nil {
 			return nil, err
 		}

@@ -891,6 +891,7 @@ func (trainer *Trainer) evaluateReplay(
 	entryTick := int64(0)
 	var activeExcursion *excursionData
 	excIndex := 0
+	capturedExcursions := make(map[*excursionData]bool)
 
 	for _, tick := range evalTicks {
 		token, exists := tokensByTick[tick]
@@ -922,6 +923,7 @@ func (trainer *Trainer) evaluateReplay(
 					lead := target.bTick - tick
 					outcome.totalLeadTicks += lead
 					activeExcursion = target
+					capturedExcursions[target] = true
 				}
 
 				if target == nil || !target.isUp {
@@ -965,7 +967,7 @@ func (trainer *Trainer) evaluateReplay(
 	}
 
 	for _, exc := range evalExcursions {
-		if exc.isUp && exc.bTick > entryTick && !inPosition {
+		if exc.isUp && !capturedExcursions[exc] {
 			outcome.missedOpps++
 		}
 	}
@@ -1000,7 +1002,7 @@ func newMCTSNode(minTicks, maxTicks int64, parent *mctsNode) *mctsNode {
 	}
 }
 
-func (node *mctsNode) ucb1Score(explorationConstant float64) float64 {
+func (node *mctsNode) ucb1Score(explorationConstant, minReward, maxReward float64) float64 {
 	if node.visits == 0 {
 		return math.MaxFloat64
 	}
@@ -1011,17 +1013,23 @@ func (node *mctsNode) ucb1Score(explorationConstant float64) float64 {
 		parentVisits = float64(node.parent.visits)
 	}
 
-	exploitation := node.totalPnL / float64(node.visits)
+	meanReward := node.totalPnL / float64(node.visits)
+	exploitation := 0.5
+
+	if maxReward > minReward {
+		exploitation = (meanReward - minReward) / (maxReward - minReward)
+	}
+
 	exploration := explorationConstant * math.Sqrt(math.Log(parentVisits)/float64(node.visits))
 	return exploitation + exploration
 }
 
-func (node *mctsNode) selectChild(explorationConstant float64) *mctsNode {
+func (node *mctsNode) selectChild(explorationConstant, minReward, maxReward float64) *mctsNode {
 	var bestChild *mctsNode
 	bestScore := -math.MaxFloat64
 
 	for _, child := range node.children {
-		score := child.ucb1Score(explorationConstant)
+		score := child.ucb1Score(explorationConstant, minReward, maxReward)
 
 		if score > bestScore {
 			bestScore = score
@@ -1119,6 +1127,8 @@ func (trainer *Trainer) optimizePrecursorTicksWithTokens(
 	iterations := min(max(int(maxSearchTicks-minSearchTicks+1)*4, 16), 64)
 
 	explorationConstant := math.Sqrt(2)
+	minReward := math.MaxFloat64
+	maxReward := -math.MaxFloat64
 	memo := make(map[int64]float64)
 	mctsTracker := newProgressTracker("MCTS search", int64(iterations), 3*time.Second)
 
@@ -1126,7 +1136,7 @@ func (trainer *Trainer) optimizePrecursorTicksWithTokens(
 		current := root
 
 		for len(current.children) > 0 {
-			current = current.selectChild(explorationConstant)
+			current = current.selectChild(explorationConstant, minReward, maxReward)
 		}
 
 		if current.visits > 0 && current.maxTicks > current.minTicks {
@@ -1142,6 +1152,14 @@ func (trainer *Trainer) optimizePrecursorTicksWithTokens(
 			outcome := trainer.evaluateReplay(candidateTrie, tokensByTick, evalTicks, evalExcursions, candidateTicks)
 			reward = outcome.netPnL
 			memo[candidateTicks] = reward
+		}
+
+		if reward < minReward {
+			minReward = reward
+		}
+
+		if reward > maxReward {
+			maxReward = reward
 		}
 
 		for node := current; node != nil; node = node.parent {

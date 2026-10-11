@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -387,3 +388,41 @@ func TestTrainer_MCTSPrecursorWindowOptimization(t *testing.T) {
 		So(err, ShouldBeNil)
 	})
 }
+
+func TestMCTSNode_UCB1Score(t *testing.T) {
+	Convey("Given MCTS nodes evaluated under empirical reward normalization", t, func() {
+		parent := newMCTSNode(1, 10, nil)
+		parent.visits = 20
+
+		childA := newMCTSNode(1, 5, parent)
+		childA.visits = 10
+		childA.totalPnL = 0.50 // mean reward = +0.05
+
+		childB := newMCTSNode(6, 10, parent)
+		childB.visits = 10
+		childB.totalPnL = -0.50 // mean reward = -0.05
+
+		parent.children = []*mctsNode{childA, childB}
+
+		Convey("When rewards are normalized across empirical range [-0.05, 0.05]", func() {
+			minReward := -0.05
+			maxReward := 0.05
+			explorationConstant := math.Sqrt(2)
+
+			scoreA := childA.ucb1Score(explorationConstant, minReward, maxReward)
+			scoreB := childB.ucb1Score(explorationConstant, minReward, maxReward)
+
+			Convey("Exploitation properly prioritizes winning branches on unit scale", func() {
+				// Child A has normalized exploitation = 1.0
+				// Child B has normalized exploitation = 0.0
+				// Visits are equal, so scoreA - scoreB == 1.0 exactly
+				So(scoreA-scoreB, ShouldAlmostEqual, 1.0, 1e-12)
+				So(scoreA, ShouldBeGreaterThan, scoreB)
+
+				best := parent.selectChild(explorationConstant, minReward, maxReward)
+				So(best, ShouldEqual, childA)
+			})
+		})
+	})
+}
+

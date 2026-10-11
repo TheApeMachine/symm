@@ -7,7 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -313,6 +317,109 @@ func TestCVDUndefinedRates(t *testing.T) {
 			// core.Tolerance.
 			resolved := step(origin.Add(2*time.Second+5*core.ClockResolution), 2)
 			So(resolved["trade_rate"], ShouldAlmostEqual, 1/(4*core.ClockResolution.Seconds()), 1e-6)
+		})
+	})
+}
+
+func seedBookTouch(books *broker.Book, symbol string, at time.Time, bid, ask float64) {
+	books.Update(&kraken.Level3{
+		Channel: "level3",
+		Type:    "snapshot",
+		Data: []kraken.Level3Data{{
+			Symbol: symbol,
+			Bids: []kraken.Level3Order{{
+				OrderID: "bid-1", LimitPrice: decimal.NewFromFloat64(bid), OrderQty: decimal.NewFromFloat64(10),
+				Timestamp: at, Event: "add",
+			}},
+			Asks: []kraken.Level3Order{{
+				OrderID: "ask-1", LimitPrice: decimal.NewFromFloat64(ask), OrderQty: decimal.NewFromFloat64(10),
+				Timestamp: at, Event: "add",
+			}},
+		}},
+	})
+}
+
+func TestCVDSignal_BookMidpointResponse(t *testing.T) {
+	Convey("Given a CVD signal wired to order book touch", t, func() {
+		books := broker.NewBook(t.Context(), spot.NewNormalizer())
+		signal := NewSignal(t.Context(), books)
+		signal.Transition(runtime.READY)
+		now := time.Now()
+
+		makeTrade := func(side string, price, qty float64, at time.Time) *data.Measurement {
+			measurement := data.NewMeasurement(
+				now.UnixNano(),
+				"BTC/USD",
+				"spot:trade",
+				system.SeqIdx.Add(1),
+				system.Tick.Add(1),
+				&data.StringEntry{Key: "side", Value: side},
+			)
+			measurement.At = at
+			measurement.From = at
+			measurement.Write(
+				data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
+			)
+			return measurement
+		}
+
+		Convey("When trades bounce across the spread while quote midpoint does not move", func() {
+			seedBookTouch(books, "BTC/USD", now, 99.0, 101.0)
+
+			trade1 := makeTrade("buy", 101.0, 1.0, now)
+			res1 := signal.Step(trade1)
+			So(res1, ShouldNotBeNil)
+
+			trade2 := makeTrade("sell", 99.0, 1.0, now.Add(time.Second))
+			res2 := signal.Step(trade2)
+			So(res2, ShouldNotBeNil)
+
+			entry := data.Pull(res2.Read("midpoint_log_return"))
+			So(entry, ShouldNotBeNil)
+			So(entry.Metric, ShouldNotBeNil)
+			So(entry.Metric.Raw, ShouldEqual, 0.0)
+
+			fromEntry := data.Pull(res2.Read("response_midpoint:from"))
+			atEntry := data.Pull(res2.Read("response_midpoint:at"))
+			So(fromEntry.Metric.Raw, ShouldEqual, 100.0)
+			So(atEntry.Metric.Raw, ShouldEqual, 100.0)
+		})
+
+		Convey("When quote midpoint moves while trade execution price is identical", func() {
+			seedBookTouch(books, "ETH/USD", now, 99.0, 101.0)
+			signalEth := NewSignal(t.Context(), books)
+			signalEth.Transition(runtime.READY)
+
+			makeEthTrade := func(side string, price, qty float64, at time.Time) *data.Measurement {
+				m := data.NewMeasurement(
+					now.UnixNano(),
+					"ETH/USD",
+					"spot:trade",
+					system.SeqIdx.Add(1),
+					system.Tick.Add(1),
+					&data.StringEntry{Key: "side", Value: side},
+				)
+				m.At, m.From = at, at
+				m.Write(
+					data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
+					data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
+				)
+				return m
+			}
+
+			t1 := makeEthTrade("buy", 100.0, 1.0, now)
+			signalEth.Step(t1)
+
+			seedBookTouch(books, "ETH/USD", now.Add(time.Second), 101.0, 103.0)
+
+			t2 := makeEthTrade("buy", 100.0, 1.0, now.Add(time.Second))
+			res2 := signalEth.Step(t2)
+
+			entry := data.Pull(res2.Read("midpoint_log_return"))
+			So(entry, ShouldNotBeNil)
+			So(entry.Metric, ShouldNotBeNil)
+			So(entry.Metric.Raw, ShouldAlmostEqual, math.Log(102.0/100.0), 1e-12)
 		})
 	})
 }

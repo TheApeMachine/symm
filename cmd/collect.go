@@ -170,7 +170,7 @@ var collectCmd = &cobra.Command{
 		storeTee := hindsight.NewStoreTee(ctx, "storeTee")
 
 		correlationSignal := correlation.NewSignal(ctx)
-		cvdSignal := cvd.NewSignal(ctx)
+		cvdSignal := cvd.NewSignal(ctx, book)
 		depthflowSignal := depthflow.NewSignal(ctx, book)
 		hawkesSignal := hawkes.NewSignal(ctx)
 		leadlagSignal := leadlag.NewSignal(ctx)

@@ -913,7 +913,9 @@ func evaluateEconomicRelevance(
 
 		evaluated++
 		grossReturn := (excursion.cPrice - excursion.bPrice) / excursion.bPrice
-		netReturn := grossReturn - roundTripFee
+		costBasis := excursion.bPrice * (1.0 + takerFee)
+		proceeds := excursion.cPrice * (1.0 - takerFee)
+		netReturn := (proceeds - costBasis) / costBasis
 		grossSum += grossReturn
 		netSum += netReturn
 
@@ -956,13 +958,27 @@ func evaluateEconomicRelevance(
 
 func getMeasurementMetric(m *data.Measurement, key string) float64 {
 	if m == nil {
+		errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[audit.precursor] measurement is nil",
+			nil,
+		))
+
 		return 0
 	}
+
 	for entry := range m.Read() {
 		if entry != nil && entry.Key == key && entry.Metric != nil {
 			return entry.Metric.Raw
 		}
 	}
+
+	errnie.Error(errnie.Err(
+		errnie.NotFound,
+		"[audit.precursor] measurement is nil",
+		nil,
+	))
+
 	return 0
 }
 

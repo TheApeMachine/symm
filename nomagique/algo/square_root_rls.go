@@ -137,16 +137,20 @@ func (op *SquareRootRLS) step(query Query) (Reading, error) {
 			energy += member * member
 		}
 
-		variance := (op.state.NoiseScale / op.state.NoiseShape) * (op.state.Observations + energy)
+		scaleSquared := (op.state.NoiseScale / op.state.NoiseShape) * (op.state.Observations + energy)
 
-		if !(variance > 0) {
-			return Reading{}, fmt.Errorf("%w: RLS predictive variance %g", core.ErrDomain, variance)
+		if !(scaleSquared > 0) {
+			return Reading{}, fmt.Errorf("%w: RLS predictive scale squared %g", core.ErrDomain, scaleSquared)
 		}
 
-		forecast.PredictiveVariance = variance
-		forecast.Scale = math.Sqrt(variance)
+		forecast.Scale = math.Sqrt(scaleSquared)
 		forecast.DegreesOfFreedom = 2 * op.state.NoiseShape
 		forecast.Ready = true
+
+		if op.state.NoiseShape > 1 {
+			forecast.PredictiveVariance = (op.state.NoiseScale / (op.state.NoiseShape - 1)) * (op.state.Observations + energy)
+			forecast.PredictiveVarianceDefined = true
+		}
 	}
 
 	reading := Reading{RLSForecast: forecast}
@@ -193,7 +197,7 @@ func (op *SquareRootRLS) step(query Query) (Reading, error) {
 		}
 	}
 
-	noise := lambda*forecast.NoiseScale + 0.5*innovation*innovation/alpha
+	noise := lambda*forecast.NoiseScale + 0.5*lambda*innovation*innovation/alpha
 	op.state.Beta = coefficients
 	op.state.Root = posterior
 	op.state.NoiseShape = lambda*forecast.NoiseShape + 0.5

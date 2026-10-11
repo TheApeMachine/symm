@@ -6,7 +6,9 @@ import (
 	"strconv"
 	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -119,6 +121,7 @@ type symbolState struct {
 	window                 window
 	lastAt                 time.Time
 	prevPrice              float64
+	prevMidpoint           float64
 	prevNetNotionalRate    float64
 	prevGrossNotionalRate  float64
 	hasPrevRates           bool
@@ -133,12 +136,17 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
+	books  broker.BookSource
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal(ctx context.Context, books ...broker.BookSource) *Signal {
 	signal := &Signal{
 		states: make(map[string]*symbolState),
+	}
+
+	if len(books) > 0 {
+		signal.books = books[0]
 	}
 
 	signal.System = runtime.NewSystem(ctx, "cvd", signal)
@@ -211,8 +219,32 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	tradeGrossNotional := tradeBuyNotional + tradeSellNotional
 	tradeNetNotional := tradeBuyNotional - tradeSellNotional
 
+	var hasBook bool
+	var bestBid, bestAsk float64
+
+	if signal.books != nil {
+		signal.books.Book(prior.Label, func(book *spotbook.Book) {
+			if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
+				return
+			}
+
+			bestBid = book.BestBid().Price.Float64()
+			bestAsk = book.BestAsk().Price.Float64()
+
+			if bestBid > 0 && bestAsk > 0 {
+				hasBook = true
+			}
+		})
+	}
+
+	midpoint := 0.0
+
+	if hasBook {
+		midpoint = (bestBid + bestAsk) / 2.0
+	}
+
 	out := map[string]float64{}
-	tick := state.clock.Step(price, qty, float64(prior.At.UnixNano()), price)
+	tick := state.clock.Step(price, qty, float64(prior.At.UnixNano()), midpoint)
 
 	if tick.Counted {
 		if side == "buy" {
@@ -261,16 +293,16 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		state.hasPrevRates = true
 	}
 
-	if state.prevPrice > 0 {
-		midpointLogReturn := math.Log(price / state.prevPrice)
+	if hasBook && state.prevMidpoint > 0 {
+		midpointLogReturn := math.Log(midpoint / state.prevMidpoint)
 		flowAligned := midpointLogReturn
 
 		if side == "sell" {
 			flowAligned = -midpointLogReturn
 		}
 
-		out["response_midpoint:from"] = state.prevPrice
-		out["response_midpoint:at"] = price
+		out["response_midpoint:from"] = state.prevMidpoint
+		out["response_midpoint:at"] = midpoint
 		out["midpoint_log_return"] = midpointLogReturn
 		out["flow_aligned_midpoint_return"] = flowAligned
 		out["midpoint_response_per_net_notional"] = midpointLogReturn / tradeNetNotional
@@ -292,6 +324,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 				}
 			}
 		}
+	}
+
+	if hasBook {
+		state.prevMidpoint = midpoint
 	}
 
 	if signedNet.hasZ && gross.hasZ {

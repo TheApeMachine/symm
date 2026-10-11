@@ -43,9 +43,16 @@ func TestCatalog_TimelineReadFailure(t *testing.T) {
 				measurement := data.NewMeasurement(epoch, "BTC/USD", source, tick, tick)
 				measurement.At = time.Now().UTC()
 				measurement.From = measurement.At
-				measurement.Write(data.NewMetric("value", float64(tick), data.UnitCount, data.TimescaleTick))
+				if source == "spot:trade" {
+					measurement.Write(data.NewMetric("price", float64(tick), data.UnitPrice, data.TimescaleInstantaneous))
+				}
+
+				if source == "cvd" {
+					measurement.Write(data.NewMetric("gross_notional", float64(tick), data.UnitNotional, data.TimescaleInstantaneous))
+				}
 
 				if source == "detector" {
+					measurement.Write(data.NewMetric("start_tick", float64(tick), data.UnitCount, data.TimescaleTick))
 					detections = append(detections, measurement)
 					continue
 				}
@@ -146,7 +153,7 @@ func TestCatalog_TimelineTickWindow(t *testing.T) {
 			measurement := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", seq, 99+seq)
 			measurement.At = time.Now().UTC()
 			measurement.From = measurement.At
-			measurement.Write(data.NewMetric("value", float64(seq), data.UnitCount, data.TimescaleTick))
+			measurement.Write(data.NewMetric("price", float64(seq), data.UnitPrice, data.TimescaleInstantaneous))
 			writer.Add(tables.Measurements, measurement)
 		}
 

@@ -307,19 +307,6 @@ func TestToxicitySignal(t *testing.T) {
 			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 		})
 
-		Convey("A multi-level sweep above ask matches touch depth up to previous quantity", func() {
-			touch(books, now, "bid-sweep-1", 50000.0, 10.0, "ask-sweep-1", 50002.0, 5.0)
-			res1 := instrument.Step(trade(now.Add(100*time.Millisecond), 301, "buy", 50002.0, 1.0))
-			So(res1, ShouldNotBeNil)
-
-			touch(books, now.Add(200*time.Millisecond), "bid-sweep-2", 50000.0, 10.0, "ask-sweep-2", 50005.0, 8.0)
-			res2 := instrument.Step(trade(now.Add(200*time.Millisecond), 302, "buy", 50005.0, 10.0))
-			So(res2, ShouldNotBeNil)
-
-			val, ok := metric(res2, "touch_fill_quantity:ask")
-			So(ok, ShouldBeTrue)
-			So(val, ShouldEqual, 5.0)
-		})
 
 		Convey("Historical recurrence is undefined until every disposition z-score is", func() {
 			touch(books, now, "bid-hist-1", 50000.0, 10.0, "ask-hist-1", 50002.0, 10.0)

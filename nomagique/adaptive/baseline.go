@@ -54,6 +54,10 @@ func (op *Baseline) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				reading.Baseline = reading.Prior.Mean
 			}
 
+			if reading.Prior.Count > 1 {
+				reading.PriorVariance = reading.Prior.M2 / (reading.Prior.Count - 1)
+			}
+
 			reading.Residual = val - reading.Baseline
 
 			// The value is scored against the dispersion before it, never one

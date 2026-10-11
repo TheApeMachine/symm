@@ -18,7 +18,7 @@ Each arrival is *[]float64. A row of exactly dimension features is a query and
 never trains; a row of dimension+1 values carries the observed target as its
 last element. Prediction and update share one arrival path: each arrival
 yields *[][]float64 projected from SquareRootRLS's Reading, whose row [0] {prediction, scale, degrees
-of freedom, predictive variance, ready, innovation, observed} is the
+of freedom, predictive variance, ready, innovation, observed, predictive variance defined} is the
 prequential prediction prior to that row's optional update, and whose rows
 [1:] {beta, {noiseShape, noiseScale}, root...} are the committed posterior.
 beta[0] is the intercept.
@@ -122,10 +122,17 @@ func (op *RLS) project(reading *algo.Reading) {
 		observed = 1
 	}
 
+	varianceDefined := 0.0
+
+	if reading.PredictiveVarianceDefined {
+		varianceDefined = 1
+	}
+
 	op.out = append(op.out[:0],
 		[]float64{
 			reading.Prediction, reading.Scale, reading.DegreesOfFreedom,
 			reading.PredictiveVariance, ready, reading.Innovation, observed,
+			varianceDefined,
 		},
 		append([]float64(nil), reading.Beta...),
 		[]float64{reading.NoiseShape, reading.NoiseScale},
