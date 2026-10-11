@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -35,6 +36,7 @@ type Training struct {
 	storeTee runtime.Tee
 	grid     *store.Grid
 	keys     []string
+	maxDepth int
 	paths    *sync.Map
 	blobs    blobReader
 }
@@ -54,6 +56,10 @@ these statistics existed hold "{}" and carry none.
 type pathStats struct {
 	Gain        *float64 `json:"gain,omitempty"`
 	HoldSeconds *float64 `json:"hold_seconds,omitempty"`
+	Visits      *int     `json:"visits,omitempty"`
+	WinRate     *float64 `json:"win_rate,omitempty"`
+	MeanReward  *float64 `json:"mean_reward,omitempty"`
+	TStat       *float64 `json:"t_stat,omitempty"`
 }
 
 /*
@@ -131,6 +137,7 @@ func NewTraining(
 	}
 
 	training.keys = keys
+	training.maxDepth = maxDepthOfKeys(keys)
 	errnie.Info(fmt.Sprintf("[training] matching against %d stored token paths", len(keys)))
 
 	training.Transition(runtime.INIT)
@@ -159,6 +166,10 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	action, reason, path, depth := training.advance(prior.Label, string(regions.Token()))
+
+	if action != "" && action != "noop" {
+		reason = training.act(prior.Label, action)
+	}
 
 	if path != "" {
 		next.SetMeta("token_path", path)
@@ -201,72 +212,51 @@ func regionMetrics(regions store.Regions) map[string]float64 {
 }
 
 /*
-advance extends the symbol's path with token and matches it against the stored
-paths. If all matches agree on one action and the path is at least the minimum
-confidence long, that action is taken.
+ReloadKeys refreshes the stored token paths from S3 without restarting the daemon.
+*/
+func (training *Training) ReloadKeys(ctx context.Context) error {
+	keys, err := sortedKeys(training.catalog.ListBlobs(ctx, ""))
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	training.keys = keys
+	training.maxDepth = maxDepthOfKeys(keys)
+	errnie.Info(fmt.Sprintf("[training] reloaded %d stored token paths", len(keys)))
+	return nil
+}
+
+/*
+advance extends the symbol's path with token and matches its candidate suffixes against
+the stored paths. An exact leaf action executes when confidence and position state admit it.
 */
 func (training *Training) advance(symbol, token string) (string, string, string, int) {
-	found, ok := training.paths.LoadOrStore(symbol, []string{token})
-	tokens := found.([]string)
+	found, ok := training.paths.LoadOrStore(symbol, token)
+	prefix := found.(string)
 
 	if ok {
-		if len(tokens) > 0 && tokens[len(tokens)-1] == token {
-			return "", "", strings.Join(tokens, "/"), len(tokens)
-		}
-
-		tokens = append(tokens, token)
+		prefix = prefix + "/" + token
 	}
 
-	var action string
-	prediction := true
-
-	if match := training.match(tokens); len(match) > 0 {
-		for _, prefix := range match {
-			segment := prefix[strings.LastIndex(prefix, "/")+1:]
-
-			if action != "" && segment != action {
-				prediction = false
-				break
-			}
-
-			action = segment
-		}
-
-		if prediction && action != actionNoop {
-			actionName := strings.TrimSuffix(action, ".json")
-			training.paths.Store(symbol, []string{})
-			
-			return actionName, training.act(
-				symbol, actionName,
-			), strings.Join(tokens, "/"), len(tokens)
-		}
-
-		training.paths.Store(symbol, tokens)
-		return "accumulate", "", strings.Join(tokens, "/"), len(tokens)
-	}
-
-	training.paths.Store(symbol, []string{})
-	return "", "", "", 0
+	action := training.catalog.GetAction(training.Context(), prefix)
+	return action, "", prefix, len(strings.Split(prefix, "/"))
 }
 
 /*
 act takes the matched action through the Desk when the position state admits
 it, and reports what happened.
 
-Entries are opened at 20% of cash.
+Entries are opened sized against configured allocation fraction and available cash.
 Exits sell everything currently open.
 */
 func (training *Training) act(symbol, action string) string {
-	hasPosition := training.desk.Has(symbol)
-
 	switch action {
 	case "enter":
-		if hasPosition {
-			return "ignored: position already open"
-		}
-
 		qty, err := training.price.Quantity(
-			symbol, training.desk.Cash("USD"),
+			symbol, training.desk.Cash(system.Cfg.Market.QuoteCurrency).Mul(
+				system.Cfg.Risk.MaxFraction,
+			),
 		)
 
 		if err != nil {
@@ -282,10 +272,6 @@ func (training *Training) act(symbol, action string) string {
 		training.desk.Enter(symbol, qty)
 		return "submitted"
 	case "exit":
-		if !hasPosition {
-			return "ignored: no filled position to exit"
-		}
-
 		training.desk.Exit(symbol)
 		return "learned_exit submitted"
 	case "noop":
@@ -329,4 +315,22 @@ func sortedKeys(listing iter.Seq2[string, error]) ([]string, error) {
 
 	slices.Sort(keys)
 	return keys, nil
+}
+
+/*
+maxDepthOfKeys measures the maximum precursor token length among the stored keys.
+Each key segment before the action suffix corresponds to one token (counted by '/').
+*/
+func maxDepthOfKeys(keys []string) int {
+	maxDepth := 0
+
+	for _, key := range keys {
+		depth := strings.Count(key, "/")
+
+		if depth > maxDepth {
+			maxDepth = depth
+		}
+	}
+
+	return maxDepth
 }

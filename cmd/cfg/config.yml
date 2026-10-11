@@ -293,10 +293,9 @@ trading:
     # through this ordered, non-dropping queue.
     queue_depth: 1024
     batch_size: 128
-  allocation:
-    # Hard per-entry quote-notional ceiling. Every qualifying symbol is priced
-    # independently; there is no position-slot or winner arbitration policy.
-    max_fraction: 0.50
+
+risk:
+  max_fraction: 0.20
 
 learning:
   # Resource allocation, including the consolidated-model evaluator.

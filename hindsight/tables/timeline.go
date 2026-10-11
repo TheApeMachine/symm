@@ -377,9 +377,9 @@ func DetectionPrices(measurement *data.Measurement) (*decimal.Decimal, *decimal.
 }
 
 /*
-SignalLogic retrieves signal and logic measurements for a specific epoch, label,
-and tick range [lowTick, highTick], sorted chronologically by tick ascending,
-with seqIdx and source as tie-breakers.
+SignalLogic retrieves signal and logic measurements for a specific epoch, optionally
+restricted to a label, and tick range [lowTick, highTick], sorted chronologically by tick ascending,
+with seqIdx and source as tie-breakers. An empty label returns measurements across all labels.
 
 A read failure (including a failed validation of the arguments) is yielded as
 a non-nil error and ends the sequence; it is never reported as end-of-stream.
@@ -406,15 +406,6 @@ func (catalog *Catalog) SignalLogic(
 			yield(nil, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[catalog] valid positive epoch is required",
-				nil,
-			)))
-			return
-		}
-
-		if label == "" {
-			yield(nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[catalog] label is required",
 				nil,
 			)))
 			return
@@ -454,10 +445,20 @@ func (catalog *Catalog) SignalLogic(
 			sourceFilter = iceberg.IsIn(iceberg.Reference("source"), targetSources...)
 		}
 
-		filter := iceberg.BooleanExpression(iceberg.EqualTo(iceberg.Reference("label"), label))
+		var filter iceberg.BooleanExpression
+
+		if label != "" {
+			filter = iceberg.EqualTo(iceberg.Reference("label"), label)
+		}
 
 		if sourceFilter != nil {
-			filter = iceberg.NewAnd(filter, sourceFilter)
+			if filter == nil {
+				filter = sourceFilter
+			}
+
+			if filter != nil && filter != sourceFilter {
+				filter = iceberg.NewAnd(filter, sourceFilter)
+			}
 		}
 
 		if lowTick > 0 {
@@ -484,15 +485,18 @@ func (catalog *Catalog) SignalLogic(
 
 		for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0) {
 			if err != nil {
-				yield(nil, err)
-				return
+				if !yield(nil, err) {
+					return
+				}
+
+				continue
 			}
 
 			if measurement == nil {
 				continue
 			}
 
-			if measurement.Label != label {
+			if label != "" && measurement.Label != label {
 				continue
 			}
 

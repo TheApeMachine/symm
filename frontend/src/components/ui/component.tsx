@@ -17,6 +17,11 @@ import { Alert } from "./alert";
 walk the object and bind its values to the DOM.
 */
 const walk = (root: HTMLElement, measurement: MeasurementT) => {
+	renderValue(
+		memoizedQuery(root, '[data-metric-badge="status"], [data-metric="status"]'),
+		(measurement as unknown as { error?: string }).error ? "ERROR" : "HEALTHY",
+	);
+
 	Object.entries(measurement).forEach(([key, value]) => {
 		if (value === null || value === undefined) return;
 
@@ -24,9 +29,24 @@ const walk = (root: HTMLElement, measurement: MeasurementT) => {
 			value.forEach((item) => {
 				if (item === null || item === undefined) return;
 				if (typeof item === "object") {
+					if ("name" in item && typeof item.name === "string") {
+						renderValue(
+							memoizedQuery(
+								root,
+								`[data-metric="${item.name}"], [data-metric-meter="${item.name}"], [data-metric-badge="${item.name}"]`,
+							),
+							item,
+						);
+					}
 					walk(root, item);
 				} else {
-					renderValue(memoizedQuery(root, `[data-metric="${key}"]`), item);
+					renderValue(
+						memoizedQuery(
+							root,
+							`[data-metric="${key}"], [data-metric-meter="${key}"], [data-metric-badge="${key}"]`,
+						),
+						item,
+					);
 				}
 			});
 
@@ -38,7 +58,13 @@ const walk = (root: HTMLElement, measurement: MeasurementT) => {
 			return;
 		}
 
-		renderValue(memoizedQuery(root, `[data-metric="${key}"]`), value);
+		renderValue(
+			memoizedQuery(
+				root,
+				`[data-metric="${key}"], [data-metric-meter="${key}"], [data-metric-badge="${key}"]`,
+			),
+			value,
+		);
 	});
 };
 

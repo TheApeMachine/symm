@@ -137,12 +137,24 @@ func (desk *Desk) Has(symbol string) bool {
 	}
 
 	untyped, exists := desk.positions.Load(symbol)
+
 	if !exists || untyped == nil {
 		return false
 	}
 
 	positions, ok := untyped.([]*Position)
-	return ok && len(positions) > 0
+
+	if !ok || len(positions) == 0 {
+		return false
+	}
+
+	for _, position := range positions {
+		if !position.Closed() {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (desk *Desk) Apply(execution *kraken.Execution) {
@@ -154,9 +166,18 @@ func (desk *Desk) Apply(execution *kraken.Execution) {
 		}
 
 		positions := untyped.([]*Position)
+		allClosed := true
 
 		for _, position := range positions {
 			position.Apply(data)
+
+			if !position.Closed() {
+				allClosed = false
+			}
+		}
+
+		if allClosed {
+			desk.positions.Delete(data.Symbol)
 		}
 	}
 }

@@ -97,12 +97,15 @@ func (catalog *Catalog) scan(
 
 			for batch, batchErr := range batches {
 				if batchErr != nil {
-					yield(nil, errnie.Error(errnie.Err(
+					if !yield(nil, errnie.Error(errnie.Err(
 						errnie.IO,
 						fmt.Sprintf("[iceberg] failed to read batch in %s", tableName),
 						batchErr,
-					)))
-					return
+					))) {
+						return
+					}
+
+					continue
 				}
 
 				if batch == nil {
@@ -113,12 +116,15 @@ func (catalog *Catalog) scan(
 				batch.Release()
 
 				if readErr != nil {
-					yield(nil, errnie.Error(errnie.Err(
+					if !yield(nil, errnie.Error(errnie.Err(
 						errnie.IO,
 						fmt.Sprintf("[iceberg] failed to decode measurements in %s", tableName),
 						readErr,
-					)))
-					return
+					))) {
+						return
+					}
+
+					continue
 				}
 
 				for _, measurement := range batchMeasurements {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	neturl "net/url"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
@@ -111,21 +112,32 @@ func (hub *Hub) wsHandler(shard int) fiber.Handler {
 			}
 
 			if hub.Status() != runtime.READY {
+				time.Sleep(10 * time.Millisecond)
 				continue
 			}
 
-			for {
-				payload := *(*[]byte)(hub.uiTees[shard].Next())
+			if shard >= len(hub.uiTees) || hub.uiTees[shard] == nil {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
 
-				if len(payload) == 0 {
-					continue
-				}
+			frame := hub.uiTees[shard].Next()
 
-				if err := conn.Conn.WriteMessage(
-					websocket.BinaryMessage, payload,
-				); err != nil {
-					return
-				}
+			if frame == nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+
+			payload := *(*[]byte)(frame)
+
+			if len(payload) == 0 {
+				continue
+			}
+
+			if err := conn.Conn.WriteMessage(
+				websocket.BinaryMessage, payload,
+			); err != nil {
+				return
 			}
 		}
 	}, websocket.Config{

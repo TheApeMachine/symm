@@ -7,6 +7,7 @@ import (
 var (
 	SeqIdx atomic.Int64
 	Tick   atomic.Int64
+	Epoch  atomic.Int64
 	Cfg    *Config
 )
 

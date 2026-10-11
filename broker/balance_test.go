@@ -2,6 +2,7 @@ package broker
 
 import (
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -58,9 +59,15 @@ func TestBalance(t *testing.T) {
 				))
 			}
 
+			now := time.Now()
 			measurement := data.NewMeasurement(
-				0, "balance", "balance", 1, 1,
-			).Write(metrics...)
+				1, "balance", "balance", 1, 1,
+			)
+			measurement.At = now
+			measurement.From = now
+			measurement.Write(metrics...)
+
+			So(measurement.Error(), ShouldBeNil)
 
 			balance.measurement = measurement
 			balance.uiTee.Push(balance.measurement)

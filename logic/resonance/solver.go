@@ -207,7 +207,13 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 	measurement := data.NewMeasurement(
 		prior.Epoch, prior.Label, solver.Name(), prior.SeqIdx, prior.Tick, metadata...,
 	)
-	measurement.Peers(prior)
+	if prior.Source == "runtime:join" {
+		measurement.Peers(prior.Peers()...)
+	}
+
+	if prior.Source != "runtime:join" {
+		measurement.Peers(prior)
+	}
 	measurement.At = prior.At
 	measurement.From = prior.From
 	if measurement.From.IsZero() {

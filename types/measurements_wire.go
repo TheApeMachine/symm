@@ -2,6 +2,7 @@ package types
 
 import (
 	"strconv"
+	"strings"
 	"sync"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -45,14 +46,19 @@ func measurementToWire(
 	alloc data.Allocator,
 	includePeers bool,
 ) *wire.MeasurementT {
-	if measurement == nil || measurement.Source == "cross-section" {
+	if measurement == nil || measurement.Source == "cross-section" || measurement.Source == "runtime:join" {
 		return nil
 	}
 
+	isFluid := Route() == "fluid"
 	metrics := data.MakeSlice[*wire.MetricT](alloc, 0, 8)
 
 	for entry := range measurement.Read() {
 		if entry.Err != nil {
+			continue
+		}
+
+		if !isFluid && strings.HasPrefix(entry.Key, "osc:") {
 			continue
 		}
 
@@ -128,7 +134,7 @@ func measurementToWire(
 		peers = data.MakeSlice[*wire.MeasurementT](alloc, 0, len(measurementPeers))
 
 		for _, peer := range measurementPeers {
-			if peer == nil || peer.Source == "cross-section" {
+			if peer == nil || peer.Source == "cross-section" || peer.Source == "runtime:join" {
 				continue
 			}
 

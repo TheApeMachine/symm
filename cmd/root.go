@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/gofiber/fiber/v3"
 	"github.com/grafana/pyroscope-go"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/cobra"
@@ -100,6 +101,7 @@ var (
 			// a variadic amount of closers, and everything passes itself to that. There is
 			// thus no need to call a deferred Close method for anything.
 			epoch := processStartedAt.UnixNano()
+			system.Epoch.Store(epoch)
 
 			uiTee0 := ui.NewUITee(
 				ctx, "uiTee0",
@@ -107,6 +109,7 @@ var (
 					return types.Filters(measurement) && types.Shard(measurement.Source) == 0
 				},
 			)
+			uiTee0.Transition(nmruntime.READY)
 
 			uiTee1 := ui.NewUITee(
 				ctx, "uiTee1",
@@ -114,6 +117,7 @@ var (
 					return types.Filters(measurement) && types.Shard(measurement.Source) == 1
 				},
 			)
+			uiTee1.Transition(nmruntime.READY)
 
 			// Hindsight's record families are Iceberg tables. The object store
 			// above keeps only genuine blobs, the model checkpoint chief among
@@ -248,9 +252,6 @@ var (
 				))
 			}
 
-			uiTee0.Transition(nmruntime.READY)
-			uiTee1.Transition(nmruntime.READY)
-
 			manifoldSolver := manifold.NewSolver(ctx, book)
 			correlationSignal := correlation.NewSignal(ctx)
 			cvdSignal := cvd.NewSignal(ctx)
@@ -339,6 +340,14 @@ var (
 
 			hindsightService := hindsight.NewService(ctx, catalog)
 			hindsightService.Register(hub.App())
+
+			hub.App().Get("/cognition/tree", func(reqCtx fiber.Ctx) error {
+				if reloadErr := training.ReloadKeys(reqCtx.Context()); reloadErr != nil {
+					errnie.Error(reloadErr)
+				}
+
+				return reqCtx.JSON(training.CognitionTree())
+			})
 
 			hub.Run()
 			hub.Transition(nmruntime.READY)

@@ -28,6 +28,7 @@ type fillingDesk struct {
 	desk      *broker.Desk
 	price     *broker.Price
 	writes    chan string
+	volumes   chan *decimal.Decimal
 	holdSells bool
 }
 
@@ -42,6 +43,10 @@ func (filling *fillingDesk) Write(buf []byte) error {
 
 	if err != nil {
 		return err
+	}
+
+	if filling.volumes != nil {
+		filling.volumes <- quantity
 	}
 
 	if filling.holdSells && message.Params.Type == "sell" {
@@ -95,7 +100,11 @@ func newFillingDesk() *fillingDesk {
 	price.SetReferenceCash(decimal.NewFromFloat64(200))
 	price.SetQuote("BTC/USD", decimal.NewFromFloat64(59990), decimal.NewFromFloat64(60000))
 
-	filling := &fillingDesk{price: price, writes: make(chan string, 4)}
+	filling := &fillingDesk{
+		price:   price,
+		writes:  make(chan string, 4),
+		volumes: make(chan *decimal.Decimal, 4),
+	}
 	filling.desk = broker.NewDesk(context.Background(), filling, price, nil)
 
 	return filling
@@ -124,11 +133,12 @@ func matchingTraining(filling *fillingDesk, keys ...string) *Training {
 	So(err, ShouldBeNil)
 
 	training := &Training{
-		System: runtime.NewSystem(context.Background(), "training", nil),
-		blobs:  statBlobs{},
-		keys:   sorted,
-		paths:  &sync.Map{},
-		grid:   store.NewGrid(),
+		System:   runtime.NewSystem(context.Background(), "training", nil),
+		blobs:    statBlobs{},
+		keys:     sorted,
+		maxDepth: maxDepthOfKeys(sorted),
+		paths:    &sync.Map{},
+		grid:     store.NewGrid(),
 	}
 
 	if filling != nil {
@@ -174,16 +184,36 @@ func TestTraining_advance(t *testing.T) {
 			So(pathTokens(training, "BTC/USD"), ShouldResemble, []string{"R01", "R02", "R03"})
 		})
 
-		Convey("The divergent token makes the match unique and enters through the Desk", func() {
+		Convey("The divergent token makes the match unique and enters through the Desk with 20% cash", func() {
 			action, _, path, depth := advanceAll(training, "R01", "R02", "R03", "R04")
 
 			So(<-filling.writes, ShouldEqual, "buy")
+			enteredQty := <-filling.volumes
+			// Available cash is $200, 20% allocation is $40. BTC ask is $60,000.
+			// Expected qty is 40 / 60000 = 0.00066666
+			So(enteredQty.Float64(), ShouldAlmostEqual, 40.0/60000.0, 0.0001)
 			So(filling.desk.Has("BTC/USD"), ShouldBeTrue)
 
 			So(action, ShouldEqual, "enter")
 			So(path, ShouldEqual, "R01/R02/R03/R04")
 			So(depth, ShouldEqual, 4)
 			So(pathTokens(training, "BTC/USD"), ShouldBeEmpty)
+		})
+
+		Convey("A precursor history exceeding maxDepth is dynamically trimmed to learned horizon", func() {
+			deepTraining := matchingTraining(
+				filling,
+				"R01/R02/R03/enter.json",
+			)
+			So(deepTraining.maxDepth, ShouldEqual, 3)
+
+			// Pre-populate path with tokens exceeding maxDepth (depth 3)
+			deepTraining.paths.Store("BTC/USD", []string{"R97", "R98", "R01", "R02"})
+
+			action, _, path, depth := deepTraining.advance("BTC/USD", "R03")
+			So(action, ShouldEqual, "enter")
+			So(path, ShouldEqual, "R01/R02/R03")
+			So(depth, ShouldEqual, 3)
 		})
 
 		Convey("Repeated tokens collapse and do not advance the path", func() {
@@ -222,9 +252,10 @@ func TestTraining_advance(t *testing.T) {
 		})
 
 		Convey("A path matching ONLY noop.json does not enter", func() {
-			action, _, _, _ := advanceAll(training, "R01", "R02", "R03", "R05")
+			action, reason, _, _ := advanceAll(training, "R01", "R02", "R03", "R05")
 
-			So(action, ShouldEqual, "accumulate")
+			So(action, ShouldEqual, "noop")
+			So(reason, ShouldContainSubstring, "unpromising precursor")
 			So(filling.desk.Has("BTC/USD"), ShouldBeFalse)
 			So(filling.writes, ShouldHaveLength, 0)
 		})
@@ -239,7 +270,7 @@ func TestTraining_advance(t *testing.T) {
 		})
 	})
 
-	Convey("Given stored paths that agree on the action from the first token", t, func() {
+	Convey("Given stored paths with deeper continuation rules", t, func() {
 		filling := newFillingDesk()
 		training := matchingTraining(
 			filling,
@@ -247,14 +278,20 @@ func TestTraining_advance(t *testing.T) {
 			"R06/R07/R08/R10/enter.json",
 		)
 
-		Convey("A unanimous match takes the action immediately", func() {
+		Convey("An incomplete prefix accumulates until full leaf depth is observed", func() {
 			action, _, _, depth := advanceAll(training, "R06")
+
+			So(action, ShouldEqual, "accumulate")
+			So(depth, ShouldEqual, 1)
+			So(filling.desk.Has("BTC/USD"), ShouldBeFalse)
+
+			action, _, path, depth := advanceAll(training, "R07", "R08")
 
 			So(<-filling.writes, ShouldEqual, "buy")
 			So(filling.desk.Has("BTC/USD"), ShouldBeTrue)
-
 			So(action, ShouldEqual, "enter")
-			So(depth, ShouldEqual, 1)
+			So(path, ShouldEqual, "R06/R07/R08")
+			So(depth, ShouldEqual, 3)
 		})
 	})
 

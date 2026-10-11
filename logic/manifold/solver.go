@@ -400,7 +400,14 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 	out := data.NewMeasurement(
 		prior.Epoch, symbol, solver.Name(), prior.SeqIdx, prior.Tick,
 	)
-	out.Peers(prior)
+	if prior.Source == "runtime:join" {
+		out.Peers(prior.Peers()...)
+	}
+
+	if prior.Source != "runtime:join" {
+		out.Peers(prior)
+	}
+
 	if prior.At.IsZero() {
 		solver.Error(errnie.Err(
 			errnie.Validation,

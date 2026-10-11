@@ -25,11 +25,3 @@ type CognitionTreeExport struct {
 	Root     *TrieNodeJSON    `json:"root,omitempty"`
 	Branches []TrieBranchJSON `json:"branches"`
 }
-
-func (export CognitionTreeExport) normalized() CognitionTreeExport {
-	if export.Branches == nil {
-		export.Branches = []TrieBranchJSON{}
-	}
-
-	return export
-}

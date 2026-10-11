@@ -164,7 +164,14 @@ export const renderValue = (
 ): void => {
 	if (element === null) return;
 
-	const componentType = element.dataset.component
+	const componentType =
+		element.dataset.component ??
+		(element.hasAttribute("data-metric-meter") || element.dataset.k === "bar"
+			? "meter"
+			: element.hasAttribute("data-metric-badge") ||
+					element.dataset.k === "badge"
+				? "badge"
+				: "text");
 	const value = extractValue(rawValue);
 
 	if (componentType === "meter") {

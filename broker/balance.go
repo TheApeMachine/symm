@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -92,9 +93,13 @@ func NewBalance(
 }
 
 func (balance *Balance) cash(asset string) *decimal.Decimal {
-	for _, wallet := range balance.wallet.Data {
-		if wallet.Asset == asset {
-			return wallet.Available
+	if balance.wallet == nil {
+		return nil
+	}
+
+	for _, entry := range balance.wallet.Data {
+		if entry.Asset == asset {
+			return entry.Available
 		}
 	}
 
@@ -126,10 +131,10 @@ func (balance *Balance) Update() (err error) {
 	var tradeBalance *kraken.TradeBalanceResult
 
 	if balance.paper != nil {
-		wallet, err := balance.paper.Balances()
+		wallet, paperErr := balance.paper.Balances()
 
-		if err != nil {
-			return errnie.Error(err)
+		if paperErr != nil {
+			return errnie.Error(paperErr)
 		}
 
 		if wallet == nil {
@@ -140,22 +145,25 @@ func (balance *Balance) Update() (err error) {
 			))
 		}
 
+		balance.wallet = wallet
 		tradeBalance, err = balance.paper.TradeBalance()
 
 		if err != nil {
 			return errnie.Error(err)
 		}
-	} else {
-		client, err := kraken.NewAuthenticatedREST()
+	}
 
-		if err != nil {
-			return errnie.Error(err)
+	if balance.paper == nil {
+		client, restErr := kraken.NewAuthenticatedREST()
+
+		if restErr != nil {
+			return errnie.Error(restErr)
 		}
 
-		resp, err := client.Balances()
+		resp, balanceErr := client.Balances()
 
-		if err != nil {
-			return errnie.Error(err)
+		if balanceErr != nil {
+			return errnie.Error(balanceErr)
 		}
 
 		if resp == nil || resp.Result == nil {
@@ -167,21 +175,28 @@ func (balance *Balance) Update() (err error) {
 		}
 
 		balance.wallet = kraken.NewBalanceFromMap(resp.Result)
-		var result *spot.Response[kraken.TradeBalanceResult]
 
 		// No asset parameter: Kraken values the trade balance in its documented
 		// default asset, ZUSD.
-		result, err = spot.Call[kraken.TradeBalanceResult](client, spot.RequestOptions{
+		result, callErr := spot.Call[kraken.TradeBalanceResult](client, spot.RequestOptions{
 			Auth:   true,
 			Method: "POST",
 			Path:   system.Cfg.WebSocket.Endpoints.TradeBalance,
 		})
 
-		if err != nil {
-			return errnie.Error(err)
+		if callErr != nil {
+			return errnie.Error(callErr)
 		}
 
 		tradeBalance = &result.Result
+	}
+
+	if tradeBalance == nil || balance.wallet == nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[balance] trade balance or wallet unavailable",
+			nil,
+		))
 	}
 
 	metrics := []*data.Metric{
@@ -199,24 +214,34 @@ func (balance *Balance) Update() (err error) {
 		),
 	}
 
-	for _, balance := range balance.wallet.Data {
+	for _, entry := range balance.wallet.Data {
 		metrics = append(metrics, data.NewMetric(
 			"cash",
-			balance.Available.Float64(),
+			entry.Available.Float64(),
 			data.UnitCurrency,
 			data.TimescaleInstantaneous,
 		))
 	}
 
-	balance.measurement = data.NewMeasurement(
-		0,
+	now := time.Now()
+	epoch := system.Epoch.Load()
+
+	if epoch <= 0 {
+		epoch = now.UnixNano()
+	}
+
+	measurement := data.NewMeasurement(
+		epoch,
 		"balance",
 		"balance",
 		system.SeqIdx.Add(1),
 		system.Tick.Load(),
-	).Write(metrics...)
+	)
+	measurement.At = now
+	measurement.From = now
+	measurement.Write(metrics...)
 
+	balance.measurement = measurement
 	balance.uiTee.Push(balance.measurement)
-
 	return nil
 }

@@ -160,9 +160,9 @@ before anything is written.
 		}
 
 		if !detectDryRun {
-			trainer := strategy.NewTrainer(ctx, catalog)
+			trainer := strategy.NewTrainer(ctx, catalog, price)
 
-			if err := trainer.Generate(); err != nil {
+			if err := trainer.Generate(detectEpochs...); err != nil {
 				return err
 			}
 		}

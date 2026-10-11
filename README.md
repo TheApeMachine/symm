@@ -1,4 +1,4 @@
-![Header image of S.Y.M.M.](header.png)
+![Header image of S.Y.M.M.](header.jpeg)
 
 # S.Y.M.M. — Shake Your Money Maker
 
@@ -410,14 +410,14 @@ mean the solver has published a state.
 
 [`ui.Hub`](ui/hub.go) serves on `127.0.0.1:8765`:
 
-| Endpoint                 | Purpose                                                                                   |
-|--------------------------|-------------------------------------------------------------------------------------------|
-| `ws://…/ws`              | Binary state and telemetry stream, plus focus-symbol commands.                            |
-| `GET …/learning`         | Coherent on-demand agent state for the selected symbol.                                   |
-| `GET …/learning/skill`   | Current skill reading and mode.                                                           |
-| `GET …/learning/events`  | The run's durable decision journal.                                                       |
-| `GET …/trades`           | Completed round trips.                                                                    |
-| `GET …/hindsight/*`      | Runs, captures, states, gaps, envelopes, lifecycle, timeline, resident state, metric map. |
+| Endpoint                | Purpose                                                                                   |
+|-------------------------|-------------------------------------------------------------------------------------------|
+| `ws://…/ws`             | Binary state and telemetry stream, plus focus-symbol commands.                            |
+| `GET …/learning`        | Coherent on-demand agent state for the selected symbol.                                   |
+| `GET …/learning/skill`  | Current skill reading and mode.                                                           |
+| `GET …/learning/events` | The run's durable decision journal.                                                       |
+| `GET …/trades`          | Completed round trips.                                                                    |
+| `GET …/hindsight/*`     | Runs, captures, states, gaps, envelopes, lifecycle, timeline, resident state, metric map. |
 
 The frontend is a React 19 / TanStack Start terminal on port 3000.
 
@@ -425,8 +425,8 @@ The frontend is a React 19 / TanStack Start terminal on port 3000.
 |--------------------------|--------------------------------------------------------------------------------------------------------------|
 | `/` Dashboard            | Equity, balances, positions, queue depths, system telemetry.                                                 |
 | `/learning`              | The learning coordinator: impulse map, regions, cognition predictions, training metrics, and live decisions. |
-| `/hindsight`             | Run browser + DuckDB-bucketed research timeline (needs `make workbench`); envelope/excursions stay typed.   |
-| `/fluid`                 | Live L3 manifold: particle fields, phase modes, and physics health over WebSocket.                                             |
+| `/hindsight`             | Run browser + DuckDB-bucketed research timeline (needs `make workbench`); envelope/excursions stay typed.    |
+| `/fluid`                 | Live L3 manifold: particle fields, phase modes, and physics health over WebSocket.                           |
 | `/signals`               | Per-signal metric timeseries and estimator state.                                                            |
 | `/xray`                  | Resonance hidden state and prequential skill history.                                                        |
 | `/cortex`                | DMT prefix-tree activations and episodic paths.                                                              |

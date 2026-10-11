@@ -70,7 +70,7 @@ func Filters(measurement *data.Measurement) bool {
 	case "learning":
 		return isStrategy(measurement, "training")
 	case "xray":
-		if isSignal(measurement, "hawkes") || isLogic(measurement, "cognition") {
+		if isSignal(measurement, "hawkes") {
 			return isFocus(measurement)
 		}
 

@@ -7,6 +7,8 @@ import (
 	"io"
 	"iter"
 	"net/http"
+	"path"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -46,6 +48,83 @@ func (catalog *Catalog) PutBlob(ctx context.Context, key string, body []byte) er
 	}
 
 	return nil
+}
+
+func (catalog *Catalog) DeleteBlob(ctx context.Context, key string) error {
+	client, bucket, err := catalog.blobs()
+
+	if err != nil {
+		return err
+	}
+
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"catalog: failed to delete "+key,
+			err,
+		))
+	}
+
+	return nil
+}
+
+func (catalog *Catalog) GetAction(ctx context.Context, key string) string {
+	client, bucket, err := catalog.blobs()
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"[catalog] failed to list "+key,
+			err,
+		))
+
+		return ""
+	}
+
+	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+		Prefix: aws.String(key),
+	})
+
+	var (
+		current string
+		action string
+	)
+
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"[catalog] failed to list "+key,
+				err,
+			))
+
+			return ""
+		}
+
+		for _, object := range page.Contents {
+			if object.Key == nil {
+				continue
+			}
+
+			action = strings.TrimSuffix(path.Base(*object.Key), ".json")
+
+			if current == "" {
+				current = action
+			} else if current != action {
+				return ""
+			}
+		}
+	}
+
+	return current
 }
 
 func (catalog *Catalog) GetBlob(ctx context.Context, key string) ([]byte, error) {
