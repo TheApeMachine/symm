@@ -9,7 +9,7 @@ import (
 func TestGetDimension(t *testing.T) {
 	Convey("Given GetDimension", t, func() {
 		Convey("it resolves known producer metrics", func() {
-			unit, timescale := GetDimension("ingress", "price")
+			unit, timescale := GetDimension("spot:trade", "price")
 			So(unit, ShouldEqual, UnitPrice)
 			So(timescale, ShouldEqual, TimescaleInstantaneous)
 
@@ -33,7 +33,11 @@ func TestGetDimension(t *testing.T) {
 			So(unit, ShouldEqual, UnitNone)
 			So(timescale, ShouldEqual, TimescaleNone)
 
-			unit, timescale = GetDimension("ingress", "unknown_metric")
+			unit, timescale = GetDimension("spot:trade", "unknown_metric")
+			So(unit, ShouldEqual, UnitNone)
+			So(timescale, ShouldEqual, TimescaleNone)
+
+			unit, timescale = GetDimension("ingress", "price")
 			So(unit, ShouldEqual, UnitNone)
 			So(timescale, ShouldEqual, TimescaleNone)
 		})
@@ -58,9 +62,19 @@ func TestSignalMetrics(t *testing.T) {
 			So(exists, ShouldBeTrue)
 			So(liquidity["spread"].Unit, ShouldEqual, UnitSpread)
 
-			ingress, exists := SignalMetrics["ingress"]
+			spotTrade, exists := SignalMetrics["spot:trade"]
 			So(exists, ShouldBeTrue)
-			So(ingress["price"].Unit, ShouldEqual, UnitPrice)
+			So(spotTrade["price"].Unit, ShouldEqual, UnitPrice)
+
+			spotLevel3, exists := SignalMetrics["spot:level3"]
+			So(exists, ShouldBeTrue)
+			So(spotLevel3["limit_price"].Unit, ShouldEqual, UnitPrice)
+
+			_, ingressExists := SignalMetrics["ingress"]
+			So(ingressExists, ShouldBeFalse)
+
+			_, level3Exists := SignalMetrics["level3"]
+			So(level3Exists, ShouldBeFalse)
 		})
 	})
 }

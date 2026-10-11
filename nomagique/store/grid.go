@@ -232,7 +232,7 @@ func (grid *Grid) PinRegion(source, metric string) (uint8, bool) {
 
 		return 0, false
 
-	case "hawkes", "level3", "spot:level3":
+	case "hawkes", "spot:level3":
 		if strings.Contains(m, ":buy") || strings.Contains(m, "buy_from_buy") {
 			return 0, true // R00: Buy Arrival Cascade
 		}

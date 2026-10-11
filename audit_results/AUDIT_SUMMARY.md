@@ -1,6 +1,6 @@
 # SYMM Pipeline Empirical Audit
 
-**State:** CONTRACT BREACHES PRESENT | **Epoch:** `1791747550263717000` | **Symbol:** `ALL` | **Ticks:** `12009` | **Generated:** `2026-10-11T20:15:34Z`
+**State:** CONTRACT BREACHES PRESENT | **Epoch:** `1791747550263717000` | **Symbol:** `ALL` | **Ticks:** `20536` | **Generated:** `2026-10-11T22:09:22Z`
 
 Only VALID and SUPPORTED are passes. MEASURED is descriptive, NOT_A_TEST cannot fail by construction, INSUFFICIENT_DATA means not evaluated.
 
@@ -8,12 +8,12 @@ Thresholds: significance `0.05`, latency spike `200ms` on at most `5%`, dominanc
 
 | Stage | Verdict | Criterion | Evidence |
 | :--- | :---: | :--- | :--- |
-| **0. Contracts** | **CONTRACT_BREACH** | declared hard domains on every observation; |z| <= sqrt(n/0.05) per stream | 68/362 series breach a domain (876913 observations); 3128 z beyond bound |
-| **0.5 Timing** | **CONTRACT_BREACH** | no At regression per (source, symbol); spikes > 200ms on at most 5% | 0 inversions, 21815 spikes of 227054 |
-| **1. Vitality** | **MEASURED** | descriptive | 55182 raw series, 55182 canonical cells, 2854 constant |
-| **2. Sympathy** | **SUPPORTED** | within-symbol |r| exceedance vs block-shuffled null, p <= 0.05 | 5585895 pairs, 14.0% above null p95, p=0.020 |
-| **3. Grid stationarity** | **MEASURED** | JSD between halves vs tick-shuffled null; stationary when p > 0.05 (ARI is NOT_A_TEST) | JSD 0.008 bits, p=0.020 |
-| **4. Token dynamics** | **SUPPORTED** | transition entropy below block null, p <= 0.05 | 5501 emissions, H=2.686, p=0.020 |
+| **0. Contracts** | **CONTRACT_BREACH** | declared hard domains on every observation; |z| <= sqrt(n/0.05) per stream | 5/362 series breach a domain (30357 observations); 4251 z beyond bound |
+| **0.5 Timing** | **CONTRACT_BREACH** | no At regression per (source, symbol); spikes > 200ms on at most 5% | 0 inversions, 22836 spikes of 388302 |
+| **1. Vitality** | **MEASURED** | descriptive | 71204 raw series, 71204 canonical cells, 3247 constant |
+| **2. Sympathy** | **SUPPORTED** | within-symbol |r| exceedance vs block-shuffled null, p <= 0.05 | 7488953 pairs, 13.8% above null p95, p=0.020 |
+| **3. Grid stationarity** | **MEASURED** | JSD between halves vs tick-shuffled null; stationary when p > 0.05 (ARI is NOT_A_TEST) | JSD 0.000 bits, p=1.000 |
+| **4. Token dynamics** | **INSUFFICIENT_DATA** | transition entropy below block null, p <= 0.05 | 0 emissions, H=0.000, p=0.000 |
 | **5a. Ignition precursors** | **INSUFFICIENT_DATA** | event vs control excursions, excursion-label null, p <= 0.05 | JSD 0.000 bits, p=0.000 |
 | **5b. Exhaustion precursors** | **INSUFFICIENT_DATA** | late vs early half within excursions, paired swap null, p <= 0.05 | JSD 0.000 bits, p=0.000 |
 | **5c. Held-out precursor skill** | **INSUFFICIENT_DATA** | chronological 60/40 split, held-out MCC vs label null, p <= 0.05 | 0 held-out, MCC 0.000, p=0.000 |
@@ -21,32 +21,25 @@ Thresholds: significance `0.05`, latency spike `200ms` on at most `5%`, dominanc
 | **6. Simulated trie** | **INSUFFICIENT_DATA** | in-memory trie (not S3) balanced accuracy vs label-shuffled null, p <= 0.05 | balanced accuracy 0.0% |
 | **V1. Equivalence** | **NOT_A_TEST** | one code path compared with itself | deterministic=true |
 | **V2. Truthfulness** | **VALID** | cvd frames recomputed from the stored trade tape; every check exercised | 0 violations; unexercised [] |
-| **V3. Causality** | **VALID** | replayed z-scores/tokens unchanged by perturbed future, other symbols, prior epochs | 2588664 compared; changed: future 0, cross-symbol 0, epoch 0 |
-| **V4. Sensitivity** | **SUPPORTED** | no family moves regions > 0.40 bits on removal or > 0.45 on duplication (named limits) | 0 dominant; max duplication 0.004 bits |
+| **V3. Causality** | **VALID** | replayed z-scores/tokens unchanged by perturbed future, other symbols, prior epochs | 4499671 compared; changed: future 0, cross-symbol 0, epoch 0 |
+| **V4. Sensitivity** | **INSUFFICIENT_DATA** | no family moves regions > 0.40 bits on removal or > 0.45 on duplication (named limits) | 0 dominant; max duplication 0.000 bits |
 
 ---
 
 ### Stage 0: Declared mathematical contracts
 
 - Series checked: `362`
-- Hard-domain breaches: `68` series (`876913` observations)
-- Standardized z-score bound breaches: `3128` observations beyond Chebyshev bound |z| <= sqrt(N/0.05) (max |z|=`64882165.12`, saturated=`3.3%`)
+- Hard-domain breaches: `5` series (`30357` observations)
+- Standardized z-score bound breaches: `4251` observations beyond Chebyshev bound |z| <= sqrt(N/0.05) (max |z|=`64882165.12`, saturated=`3.1%`)
 - Normalization breaches: `0`, Standardization breaches: `0`
 
 | Metric | Unit | Declared domain | Observed range | Breaches |
 | :--- | :---: | :---: | :---: | ---: |
-| `toxicity:replenishment_fraction_baseline:bid` | `ratio` | `undeclared` | `[0.000, 24860446428.573]` | 6714/6714 |
-| `correlation:relative_return_energy` | `ratio` | `undeclared` | `[0.000, 27643547.744]` | 22148/22148 |
-| `liquidity:depth_ratio:bid` | `ratio` | `undeclared` | `[0.000, 17143144.171]` | 22512/22512 |
-| `pumpdump:notional_rate_ratio` | `ratio` | `undeclared` | `[0.000, 13852593.431]` | 10111/10111 |
-| `cvd:gross_notional_rate_ratio` | `ratio` | `undeclared` | `[0.000, 5400214.988]` | 14188/14188 |
-| `depthflow:turnover_ratio` | `ratio` | `undeclared` | `[0.000, 1459446.051]` | 14150/14150 |
-| `toxicity:replenishment_fraction_baseline:ask` | `ratio` | `undeclared` | `[0.000, 402765.793]` | 6769/6769 |
-| `correlation:relative_return_energy_baseline` | `ratio` | `undeclared` | `[0.000, 212143.191]` | 22147/22147 |
-| `leadlag:last` | `dimensionless` | `undeclared` | `[0.000, 83655.000]` | 22719/22719 |
-| `liquidity:depth_ratio:ask` | `ratio` | `undeclared` | `[0.000, 9128.010]` | 22512/22512 |
-| `morphology:morphology_change` | `ratio` | `undeclared` | `[0.000, 1056.651]` | 22512/22512 |
-| `correlation:overlap_density` | `ratio` | `undeclared` | `[0.113, 873.744]` | 22156/22156 |
+| `leadlag:best_lag_seconds_median` | `second` | `[0, +inf)` | `[-254.602, 261.260]` | 23100/38054 |
+| `sentiment:breadth_baseline` | `ratio` | `[0, +inf)` | `[-1.000, 0.370]` | 1053/2422 |
+| `sentiment:breadth` | `ratio` | `[0, +inf)` | `[-1.000, 1.000]` | 835/2423 |
+| `depthflow:imbalance_resolution_gap` | `ratio` | `[-1, 1]` | `[-1.969, 1.821]` | 5231/38643 |
+| `depthflow:resolution_gap_baseline` | `ratio` | `[-1, 1]` | `[-1.532, 1.424]` | 138/38421 |
 
 > The audit reports the disagreement only. It does not infer a root cause or clamp the observation to fit the contract.
 
@@ -54,9 +47,9 @@ Thresholds: significance `0.05`, latency spike `200ms` on at most `5%`, dominanc
 
 ### Stage 0.5: Ingestion clock timing & synchronization
 
-- Observations checked: `227054`
-- Ingestion latency (Timestamp - At): mean `-157.2ms`, p95 `-51.5ms`, max `928.8ms`
-- Latency spikes: `21815`
+- Observations checked: `388302`
+- Ingestion latency (Timestamp - At): mean `-130.3ms`, p95 `-7.3ms`, max `928.8ms`
+- Latency spikes: `22836`
 - Sequence inversions (timestamp regressions): `0`
 - Feed status: `CONTRACT_BREACH`
 
@@ -64,86 +57,86 @@ Thresholds: significance `0.05`, latency spike `200ms` on at most `5%`, dominanc
 
 ### Stage 1: Observed metric population
 
-- Raw named series: `55182` (varying `50694`, constant `1275`)
-- Canonical grid cells: `55182` (varying `43939`, constant `2854`)
-- High-correlation canonical pairs shown by the current reference filter: `59622`
+- Raw named series: `71204` (varying `66099`, constant `1374`)
+- Canonical grid cells: `71204` (varying `57320`, constant `3247`)
+- High-correlation canonical pairs shown by the current reference filter: `78922`
 
 #### Constant / Dead Canonical Grid Cells
 
 | Canonical Cell | Coverage | Zero Fraction | Range | Status |
 | :--- | :---: | :---: | :---: | :---: |
-| `correlation|AB/USD|last_price` | `100.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|AB/USD|observation_count` | `100.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|APE/USD|relative_return_energy` | `64.3%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|APE/USD|return_energy_rate:measured` | `64.3%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|ARKM/USD|relative_return_energy_velocity` | `90.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|ATH/USD|relative_return_energy_velocity` | `76.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|BILL/USD|relative_return_energy` | `76.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|BILL/USD|return_energy_rate:measured` | `76.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|BIO/USD|covariance_score_velocity` | `81.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|BIO/USD|relative_return_energy_velocity` | `81.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|CVX/USD|relative_return_energy` | `71.4%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|ELIZAOS/USD|relative_return_energy_velocity` | `76.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|ETC/USD|relative_return_energy` | `92.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|APE/USD|relative_return_energy` | `76.2%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|APE/USD|return_energy_rate:measured` | `76.2%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|AZTEC/USD|relative_return_energy_velocity` | `56.2%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|BICO/USD|relative_return_energy_velocity` | `76.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|BILL/USD|relative_return_energy` | `80.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|BILL/USD|return_energy_rate:measured` | `80.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|BRL1/USD|relative_return_energy` | `93.3%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|CPOOL/USD|relative_return_energy_velocity` | `90.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|DAG/USD|relative_return_energy_velocity` | `90.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|ETC/USD|relative_return_energy` | `94.4%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
 | `correlation|EUL/USD|last_price` | `100.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
 | `correlation|EUL/USD|observation_count` | `100.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|EV/USD|relative_return_energy` | `94.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|EWT/USD|last_price` | `100.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|FOLD/USD|relative_return_energy_velocity` | `90.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|MINA/USD|relative_return_energy_velocity` | `90.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|NIL/USD|relative_return_energy` | `78.1%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|POPCAT/USD|relative_return_energy` | `66.7%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|POPCAT/USD|relative_return_energy_velocity` | `66.7%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|POPCAT/USD|return_energy_rate:measured` | `66.7%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|RLC/USD|relative_return_energy_velocity` | `90.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|SKY/USD|relative_return_energy_velocity` | `83.3%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|WBT/USD|relative_return_energy` | `68.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|WBT/USD|relative_return_energy_velocity` | `68.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|WEMIX/USD|relative_return_energy` | `91.7%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|XMN/USD|relative_return_energy` | `68.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `correlation|ZAMA/USD|relative_return_energy` | `95.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|AAVE/USD|sell_notional_rate` | `90.3%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|AKT/USD|historical_path_percentile` | `28.1%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|AKT/USD|sell_notional_rate` | `87.5%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ALTHEA/USD|sell_notional_rate` | `87.5%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|APE/USD|sell_notional_rate` | `78.6%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ARKM/USD|buy_notional_rate` | `90.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ARKM/USD|gross_notional_rate_baseline` | `81.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ARKM/USD|gross_notional_rate_divergence` | `81.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ARKM/USD|gross_notional_rate_ratio` | `81.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ARKM/USD|gross_notional_rate_velocity` | `81.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ARKM/USD|midpoint_return_rate` | `90.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ARKM/USD|midpoint_return_rate_baseline` | `81.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ARKM/USD|midpoint_return_rate_divergence` | `81.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ARKM/USD|net_notional_rate` | `90.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ARKM/USD|net_notional_rate_velocity` | `81.8%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ARKM/USD|sell_notional_rate` | `90.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ATH/USD|buy_notional_rate` | `76.9%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ATH/USD|gross_notional_rate_baseline` | `69.2%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ATH/USD|gross_notional_rate_divergence` | `69.2%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| `cvd|ATH/USD|gross_notional_rate_ratio` | `69.2%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
-| ... and 2804 more dead cells | | | | |
+| `correlation|EV/USD|relative_return_energy` | `96.1%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|GIGA/USD|covariance_score_velocity` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|GIGA/USD|relative_return_energy` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|GIGA/USD|relative_return_energy_velocity` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|HONEY/USD|covariance_score_velocity` | `90.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|HONEY/USD|relative_return_energy_velocity` | `90.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|ICNT/USD|last_price` | `100.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|ICNT/USD|observation_count` | `100.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|absolute_covariance_score` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|cohort_absolute_covariance_score` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|cohort_covariance_score` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|cohort_covariance_score_dispersion` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|cohort_effective_peer_count` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|cohort_peer_count` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|covariance` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|covariance_p_value` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|covariance_score` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|covariance_score_baseline` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|covariance_score_divergence` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|covariance_score_zscore` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|covariance_standard_error` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|historical_path_distance` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|historical_path_percentile` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|overlap_density` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|overlap_pair_count` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|peer_return_energy_rate` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|relative_return_energy` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|relative_return_energy_baseline` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|relative_return_energy_divergence` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|relative_return_energy_zscore` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|return_energy:measured` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|return_energy:reference` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|return_energy_rate:measured` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|return_energy_rate:reference` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|shared_time` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|supported_return_count:measured` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|JST/USD|supported_return_count:reference` | `75.0%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| `correlation|MASK/USD|relative_return_energy` | `86.7%` | `100.0%` | `[0.000, 0.000]` | `DEAD` |
+| ... and 3197 more dead cells | | | | |
 
 #### Stagnant / Cold-Start Canonical Cells (>=80% Zero)
 
 | Canonical Cell | Coverage | Zero Fraction | Mean | Status |
 | :--- | :---: | :---: | :---: | :---: |
-| `correlation|ARKM/USD|covariance_score_velocity` | `90.9%` | `90.0%` | `0.0325` | `COLD_START` |
-| `correlation|ATH/USD|covariance_score_velocity` | `76.9%` | `90.0%` | `-0.0426` | `COLD_START` |
-| `correlation|CAKE/USD|relative_return_energy_velocity` | `66.7%` | `87.5%` | `-0.0298` | `COLD_START` |
-| `correlation|CRO/USD|absolute_covariance_score` | `50.0%` | `80.0%` | `0.4165` | `COLD_START` |
-| `correlation|CRO/USD|cohort_absolute_covariance_score` | `50.0%` | `80.0%` | `0.1591` | `COLD_START` |
-| `correlation|CRO/USD|cohort_covariance_score` | `50.0%` | `80.0%` | `0.4395` | `COLD_START` |
-| `correlation|CRO/USD|cohort_covariance_score_dispersion` | `50.0%` | `80.0%` | `0.0151` | `COLD_START` |
-| `correlation|CRO/USD|cohort_effective_peer_count` | `50.0%` | `80.0%` | `0.4539` | `COLD_START` |
-| `correlation|CRO/USD|cohort_peer_count` | `50.0%` | `80.0%` | `0.2985` | `COLD_START` |
-| `correlation|CRO/USD|covariance` | `50.0%` | `80.0%` | `0.6198` | `COLD_START` |
-| `correlation|CRO/USD|covariance_p_value` | `50.0%` | `80.0%` | `-0.3954` | `COLD_START` |
-| `correlation|CRO/USD|covariance_score` | `50.0%` | `80.0%` | `0.4165` | `COLD_START` |
-| `correlation|CRO/USD|covariance_score_baseline` | `50.0%` | `80.0%` | `0.6782` | `COLD_START` |
-| `correlation|CRO/USD|covariance_score_divergence` | `50.0%` | `80.0%` | `0.1811` | `COLD_START` |
-| `correlation|CRO/USD|covariance_score_zscore` | `50.0%` | `80.0%` | `0.0736` | `COLD_START` |
-| ... and 2125 more stagnant cells | | | | |
+| `correlation|ALIGN/USD|absolute_covariance_score` | `55.6%` | `80.0%` | `0.6949` | `COLD_START` |
+| `correlation|ALIGN/USD|covariance_p_value` | `55.6%` | `80.0%` | `-0.6949` | `COLD_START` |
+| `correlation|ALIGN/USD|covariance_score` | `55.6%` | `80.0%` | `-0.6949` | `COLD_START` |
+| `correlation|ALIGN/USD|overlap_density` | `55.6%` | `80.0%` | `-0.6949` | `COLD_START` |
+| `correlation|ALIGN/USD|overlap_pair_count` | `55.6%` | `80.0%` | `0.6949` | `COLD_START` |
+| `correlation|ALIGN/USD|relative_return_energy` | `55.6%` | `80.0%` | `0.2459` | `COLD_START` |
+| `correlation|ALIGN/USD|return_energy:reference` | `55.6%` | `80.0%` | `0.6949` | `COLD_START` |
+| `correlation|ALIGN/USD|return_energy_rate:reference` | `55.6%` | `80.0%` | `0.6949` | `COLD_START` |
+| `correlation|ALIGN/USD|shared_time` | `55.6%` | `80.0%` | `0.6949` | `COLD_START` |
+| `correlation|ALIGN/USD|supported_return_count:reference` | `55.6%` | `80.0%` | `0.6949` | `COLD_START` |
+| `correlation|APR/USD|absolute_covariance_score` | `88.9%` | `87.5%` | `0.0430` | `COLD_START` |
+| `correlation|APR/USD|cohort_absolute_covariance_score` | `88.9%` | `87.5%` | `0.0992` | `COLD_START` |
+| `correlation|APR/USD|cohort_covariance_score` | `88.9%` | `87.5%` | `0.1737` | `COLD_START` |
+| `correlation|APR/USD|cohort_covariance_score_dispersion` | `88.9%` | `87.5%` | `0.0648` | `COLD_START` |
+| `correlation|APR/USD|cohort_effective_peer_count` | `88.9%` | `87.5%` | `0.1504` | `COLD_START` |
+| ... and 3299 more stagnant cells | | | | |
 
 > Coverage is reported per metric but is not itself a health threshold. High pairwise correlation is not treated as proof that a metric can be removed.
 
@@ -153,12 +146,12 @@ Thresholds: significance `0.05`, latency spike `200ms` on at most `5%`, dominanc
 
 ### Stage 2: Sympathy against an empirical null
 
-- Simultaneously observed pairs: `5585895`
-- Direct relationships: `2835292`; inverse relationships: `2750603`
-- Signed real mean: `0.016`; signed shuffled mean: `0.000`
-- 95th percentile of `|null r|`: `0.443`
-- Real `|r|` above that empirical bound: `14.0%`
-- KS distance in `|r|` space: `0.127`
+- Simultaneously observed pairs: `7488953`
+- Direct relationships: `3801065`; inverse relationships: `3687888`
+- Signed real mean: `0.016`; signed shuffled mean: `-0.000`
+- 95th percentile of `|null r|`: `0.422`
+- Real `|r|` above that empirical bound: `13.8%`
+- KS distance in `|r|` space: `0.130`
 
 > Missing deformations remain missing in both real and shuffled populations; the null preserves each channel's observation mask.
 
@@ -179,13 +172,13 @@ Thresholds: significance `0.05`, latency spike `200ms` on at most `5%`, dominanc
 
 ### Stage 4: Held-out token dynamics & excitation strength
 
-- Held-out emissions: `5501` across `12` regions
-- Excitation strength: mean `17155.816`, peak `19759538.384`, runner-up margin `17103.376`
-- Active cell coverage: `100.0%` mean
-- Maximum observed token share: `20.9%`
-- Real transition entropy: `2.686` bits
-- Empirical dwell-block null mean: `3.106` bits
-- Difference (null - real): `0.420` bits
+- Held-out emissions: `0` across `0` regions
+- Excitation strength: mean `0.000`, peak `0.000`, runner-up margin `0.000`
+- Active cell coverage: `0.0%` mean
+- Maximum observed token share: `0.0%`
+- Real transition entropy: `0.000` bits
+- Empirical dwell-block null mean: `0.000` bits
+- Difference (null - real): `0.000` bits
 
 > The same causal Stream continues across the train/holdout boundary. The report does not turn an entropy difference into a PASS/FAIL cutoff.
 
@@ -240,27 +233,27 @@ Thresholds: significance `0.05`, latency spike `200ms` on at most `5%`, dominanc
 
 ### Validation 1: Production-vs-Audit Equivalence
 
-- Replayed ticks: `12009`
-- Tokens verified: `13636`
+- Replayed ticks: `20536`
+- Tokens verified: `23442`
 - Token mismatches: `0`
 - Metric/brightness mismatches: `0`
-- Executable path: `/var/folders/30/bdbpd0hj5wddgkxyx8pbc0mc0000gn/T/go-build436659713/b001/exe/main`
+- Executable path: `/var/folders/30/bdbpd0hj5wddgkxyx8pbc0mc0000gn/T/go-build2222039555/b001/exe/main`
 - Verdict: `NOT_A_TEST` (one code path compared with itself)
 
 ### Validation 2: Metric Truthfulness
 
-- Measurements audited: `22720`
+- Measurements audited: `38955`
 - Physical invariant violations: `0`
-- Same-time ambiguous trades skipped: `11558`
-- Comparisons per check: `map[buy_notional_rate:11000 cvd_coverage:11162 midpoint_log_return:11038 rate_without_elapsed_time:3466 response_midpoint:at:11038 response_midpoint:from:11038 sell_notional_rate:11000 signed_net_fraction_bounded:10354 trade_fields:22720 trade_rate:11000]`
+- Same-time ambiguous trades skipped: `19636`
+- Comparisons per check: `map[buy_notional_rate:19089 cvd_coverage:19319 midpoint_log_return:19158 rate_without_elapsed_time:5883 response_midpoint:at:19158 response_midpoint:from:19158 sell_notional_rate:19089 signed_net_fraction_bounded:17782 trade_fields:38955 trade_rate:19089]`
 - Violations per check: `map[]`
 - Unexercised checks: `[]`
 - Verdict: `VALID`
 
 ### Validation 3: Causality & State Isolation
 
-- Future perturbation ticks: `113458`
-- Lookahead leakage detected: `false` (compared: `2588664`, contaminated: `0`)
+- Future perturbation ticks: `196094`
+- Lookahead leakage detected: `false` (compared: `4499671`, contaminated: `0`)
 - Cross-symbol contamination: `false`
 - Epoch isolation passed: `true`
 - Verdict: `VALID`
@@ -269,16 +262,16 @@ Thresholds: significance `0.05`, latency spike `200ms` on at most `5%`, dominanc
 
 - Families evaluated (LOFO): `10`
 - Duplication resistant: `true`
-- Verdict: `SUPPORTED`
+- Verdict: `INSUFFICIENT_DATA`
 
-  - Family `correlation`: Removed JSD = `0.044` bits (dominant: `false`)
-  - Family `cvd`: Removed JSD = `0.046` bits (dominant: `false`)
-  - Family `depthflow`: Removed JSD = `0.001` bits (dominant: `false`)
-  - Family `hawkes`: Removed JSD = `0.080` bits (dominant: `false`)
+  - Family `correlation`: Removed JSD = `0.000` bits (dominant: `false`)
+  - Family `cvd`: Removed JSD = `0.000` bits (dominant: `false`)
+  - Family `depthflow`: Removed JSD = `0.000` bits (dominant: `false`)
+  - Family `hawkes`: Removed JSD = `0.000` bits (dominant: `false`)
   - Family `leadlag`: Removed JSD = `0.000` bits (dominant: `false`)
-  - Family `liquidity`: Removed JSD = `0.002` bits (dominant: `false`)
+  - Family `liquidity`: Removed JSD = `0.000` bits (dominant: `false`)
   - Family `morphology`: Removed JSD = `0.000` bits (dominant: `false`)
-  - Family `pumpdump`: Removed JSD = `0.003` bits (dominant: `false`)
-  - Family `sentiment`: Removed JSD = `0.001` bits (dominant: `false`)
-  - Family `toxicity`: Removed JSD = `0.001` bits (dominant: `false`)
+  - Family `pumpdump`: Removed JSD = `0.000` bits (dominant: `false`)
+  - Family `sentiment`: Removed JSD = `0.000` bits (dominant: `false`)
+  - Family `toxicity`: Removed JSD = `0.000` bits (dominant: `false`)
 

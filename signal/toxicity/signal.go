@@ -187,8 +187,13 @@ type symbolState struct {
 	fillFracAskVel               velocityTracker
 	withdrawalFracBidVel         velocityTracker
 	withdrawalFracAskVel         velocityTracker
-	historyPoints                [][6]float64
+	historyPoints                []pathPoint
 	historyDistances             []float64
+}
+
+type pathPoint struct {
+	values [6]float64
+	valid  [6]bool
 }
 
 type Signal struct {
@@ -229,13 +234,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	price, err := tradeValue(prior, "price")
 	if err != nil {
-		signal.Error(err)
+		errnie.Warn(fmt.Sprintf("[%s] %s: dropping trade frame missing price: %v", signal.Name(), prior.Label, err))
 		return nil
 	}
 
 	qty, err := tradeValue(prior, "qty")
 	if err != nil {
-		signal.Error(err)
+		errnie.Warn(fmt.Sprintf("[%s] %s: dropping trade frame missing qty: %v", signal.Name(), prior.Label, err))
 		return nil
 	}
 
@@ -260,11 +265,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	if bid <= 0 || ask <= 0 || bidQty <= 0 || askQty <= 0 || math.IsNaN(bid) || math.IsNaN(ask) || math.IsNaN(bidQty) || math.IsNaN(askQty) || math.IsInf(bid, 0) || math.IsInf(ask, 0) || math.IsInf(bidQty, 0) || math.IsInf(askQty, 0) {
-		signal.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("[%s] %s: non-finite or non-positive book touch: bid=%v ask=%v bidQty=%v askQty=%v", signal.Name(), prior.Label, bid, ask, bidQty, askQty),
-			nil,
+	if bid <= 0 || ask <= 0 || bidQty <= 0 || askQty <= 0 {
+		errnie.Warn(fmt.Sprintf(
+			"[%s] %s: dropping frame with non-positive book touch: bid=%v ask=%v bidQty=%v askQty=%v",
+			signal.Name(), prior.Label, bid, ask, bidQty, askQty,
 		))
 		return nil
 	}
@@ -409,10 +413,16 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		)
 	}
 
-	if hasFillBidZ && hasFillAskZ && hasWithdrawBidZ && hasWithdrawAskZ &&
-		hasRetreatBidZ && hasRetreatAskZ {
-		state.historyPath(out, [6]float64{
-			fillBidZ, fillAskZ, withdrawBidZ, withdrawAskZ, retreatBidZ, retreatAskZ,
+	if hasFillBidZ || hasFillAskZ || hasWithdrawBidZ || hasWithdrawAskZ ||
+		hasRetreatBidZ || hasRetreatAskZ {
+		state.historyPath(out, pathPoint{
+			values: [6]float64{
+				fillBidZ, fillAskZ, withdrawBidZ, withdrawAskZ, retreatBidZ, retreatAskZ,
+			},
+			valid: [6]bool{
+				hasFillBidZ, hasFillAskZ, hasWithdrawBidZ, hasWithdrawAskZ,
+				hasRetreatBidZ, hasRetreatAskZ,
+			},
 		})
 	}
 
@@ -444,43 +454,56 @@ func (state *symbolState) observe(
 }
 
 /*
-historyPath scores how far this bracket's six disposition z-scores lie from
-the nearest retained point, and that distance's rank among past nearest
-distances.
+historyPath scores how far this bracket's disposition z-scores lie from
+the nearest retained point, using only dimensions defined over the compared
+intervals (per specification Section 15).
 */
-func (state *symbolState) historyPath(out map[string]float64, target [6]float64) {
+func (state *symbolState) historyPath(out map[string]float64, target pathPoint) {
 	if len(state.historyPoints) > 0 {
-		minDist := math.Inf(1)
+		var minDist float64
+		var found bool
 
 		for _, point := range state.historyPoints {
 			var sumSq float64
+			var shared int
 
-			for dim := range target {
-				diff := target[dim] - point[dim]
-				sumSq += diff * diff
-			}
-
-			minDist = math.Min(minDist, math.Sqrt(sumSq))
-		}
-
-		out["historical_path_distance"] = minDist
-
-		if len(state.historyDistances) > 0 {
-			below := 0
-
-			for _, past := range state.historyDistances {
-				if past <= minDist {
-					below++
+			for dim := range target.values {
+				if target.valid[dim] && point.valid[dim] {
+					diff := target.values[dim] - point.values[dim]
+					sumSq += diff * diff
+					shared++
 				}
 			}
 
-			out["historical_path_percentile"] = float64(below) / float64(len(state.historyDistances))
+			if shared > 0 {
+				dist := math.Sqrt(sumSq * (float64(len(target.values)) / float64(shared)))
+				if !found || dist < minDist {
+					minDist = dist
+					found = true
+				}
+			}
 		}
 
-		state.historyDistances = append(state.historyDistances, minDist)
+		if found {
+			out["historical_path_distance"] = minDist
 
-		if len(state.historyDistances) > 256 {
-			state.historyDistances = state.historyDistances[len(state.historyDistances)-256:]
+			if len(state.historyDistances) > 0 {
+				below := 0
+
+				for _, past := range state.historyDistances {
+					if past <= minDist {
+						below++
+					}
+				}
+
+				out["historical_path_percentile"] = float64(below) / float64(len(state.historyDistances))
+			}
+
+			state.historyDistances = append(state.historyDistances, minDist)
+
+			if len(state.historyDistances) > 256 {
+				state.historyDistances = state.historyDistances[len(state.historyDistances)-256:]
+			}
 		}
 	}
 

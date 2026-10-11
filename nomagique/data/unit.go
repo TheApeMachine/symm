@@ -31,6 +31,8 @@ const (
 	UnitConfidence      Unit = "confidence"
 	UnitEntropy         Unit = "entropy"
 	UnitNat             Unit = "nat" // signed: log-likelihoods; non-negative information is UnitEntropy
+	UnitImbalance       Unit = "imbalance"
+	UnitDivergence      Unit = "divergence"
 
 	// Market Prices & Cash Flows
 	UnitPrice                    Unit = "price"
@@ -45,6 +47,8 @@ const (
 	UnitNotional                 Unit = "notional"
 	UnitPriceImpact              Unit = "price_impact"
 	UnitDistance                 Unit = "distance"
+	UnitSignedQuantity           Unit = "signed_quantity"
+	UnitSignedNotional           Unit = "signed_notional"
 
 	// Discrete Counts
 	UnitCount Unit = "count"
@@ -52,18 +56,21 @@ const (
 	UnitCountResidual Unit = "count_residual"
 
 	// Rates & Dynamics
-	UnitRate         Unit = "rate"
-	UnitPerSecond    Unit = "per_second"
-	UnitTradeRate    Unit = "trades_per_second"
-	UnitVolumeRate   Unit = "volume_per_second"
-	UnitNotionalRate Unit = "notional_per_second"
-	UnitVelocity     Unit = "velocity"
-	UnitAcceleration Unit = "acceleration"
-	UnitVariance     Unit = "variance"
-	UnitCovariance   Unit = "covariance"
+	UnitRate               Unit = "rate"
+	UnitPerSecond          Unit = "per_second"
+	UnitTradeRate          Unit = "trades_per_second"
+	UnitVolumeRate         Unit = "volume_per_second"
+	UnitNotionalRate       Unit = "notional_per_second"
+	UnitSignedRate         Unit = "signed_rate"
+	UnitSignedNotionalRate Unit = "signed_notional_per_second"
+	UnitVelocity           Unit = "velocity"
+	UnitAcceleration       Unit = "acceleration"
+	UnitVariance           Unit = "variance"
+	UnitCovariance         Unit = "covariance"
 
 	// Time & Duration
 	UnitDuration    Unit = "duration"
+	UnitTimeOffset  Unit = "time_offset"
 	UnitNanosecond  Unit = "nanosecond"
 	UnitMicrosecond Unit = "microsecond"
 	UnitMillisecond Unit = "millisecond"
@@ -117,22 +124,6 @@ type Dimension struct {
 SignalMetrics maps each signal producer to its owned metrics and declared dimensions.
 */
 var SignalMetrics = map[string]map[string]Dimension{
-	"ingress": {
-		"ask":         {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"ask_qty":     {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"bid":         {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"bid_qty":     {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"limit_price": {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"order_qty":   {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"price":       {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"qty":         {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"volume":      {Unit: UnitVolume, Timescale: TimescaleInstantaneous},
-	},
-	"level3": {
-		"limit_price": {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"order_qty":   {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"checksum":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-	},
 	"correlation": {
 		"cohort_effective_peer_count":        {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"cohort_peer_count":                  {Unit: UnitCount, Timescale: TimescaleRollingWindow},
@@ -146,7 +137,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"peer_return_energy_rate":            {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 		"relative_return_energy":             {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"relative_return_energy_baseline":    {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"relative_return_energy_divergence":  {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"relative_return_energy_divergence":  {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"relative_return_energy_velocity":    {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"relative_return_energy_zscore":      {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"return_energy:measured":             {Unit: UnitVariance, Timescale: TimescaleRollingWindow},
@@ -163,7 +154,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"covariance_p_value":                 {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 		"covariance_score":                   {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
 		"covariance_score_baseline":          {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
-		"covariance_score_divergence":        {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
+		"covariance_score_divergence":        {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"covariance_score_velocity":          {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"covariance_score_zscore":            {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"covariance_standard_error":          {Unit: UnitCovariance, Timescale: TimescaleRollingWindow},
@@ -172,8 +163,8 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"aggressive_notional:buy":            {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"aggressive_notional:sell":           {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"buy_notional_rate":                  {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"cumulative_notional_delta":          {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
-		"cumulative_volume_delta":            {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+		"cumulative_notional_delta":          {Unit: UnitSignedNotional, Timescale: TimescaleInstantaneous},
+		"cumulative_volume_delta":            {Unit: UnitSignedQuantity, Timescale: TimescaleInstantaneous},
 		"executed_quantity:buy":              {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 		"executed_quantity:sell":             {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 		"flow_aligned_midpoint_return":       {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
@@ -181,7 +172,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"gross_notional":                     {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"gross_notional_rate":                {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
 		"gross_notional_rate_baseline":       {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"gross_notional_rate_divergence":     {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
+		"gross_notional_rate_divergence":     {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"gross_notional_rate_ratio":          {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"gross_notional_rate_velocity":       {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"gross_notional_rate_zscore":         {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
@@ -190,28 +181,31 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"mean_trade_notional":                {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"midpoint_log_return":                {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
 		"midpoint_response_per_net_notional": {Unit: UnitPriceImpact, Timescale: TimescaleRollingWindow},
-		"midpoint_return_rate":               {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"midpoint_return_rate_baseline":      {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"midpoint_return_rate_divergence":    {Unit: UnitRate, Timescale: TimescaleRollingWindow},
+		"midpoint_return_rate":               {Unit: UnitSignedRate, Timescale: TimescaleRollingWindow},
+		"midpoint_return_rate_baseline":      {Unit: UnitSignedRate, Timescale: TimescaleRollingWindow},
+		"midpoint_return_rate_divergence":    {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"midpoint_return_rate_zscore":        {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
-		"net_executed_quantity":              {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"net_notional":                       {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
-		"net_notional_rate":                  {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
+		"net_executed_quantity":              {Unit: UnitSignedQuantity, Timescale: TimescaleInstantaneous},
+		"net_notional":                       {Unit: UnitSignedNotional, Timescale: TimescaleInstantaneous},
+		"net_notional_rate":                  {Unit: UnitSignedNotionalRate, Timescale: TimescaleRollingWindow},
 		"net_notional_rate_velocity":         {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"response_midpoint:at":               {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"response_midpoint:from":             {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"sell_notional_rate":                 {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"signed_count_fraction":              {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"signed_net_fraction":                {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"signed_net_fraction:buy":            {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"signed_net_fraction_baseline":       {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"signed_net_fraction_divergence":     {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"signed_net_fraction_mean":           {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"signed_count_fraction":              {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
+		"signed_net_fraction":                {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
+		"signed_net_fraction:buy":            {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
+		"signed_net_fraction_baseline":       {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
+		"signed_net_fraction_divergence":     {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
+		"signed_net_fraction_mean":           {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
 		"signed_net_fraction_zscore":         {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"trade_count":                        {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"trade_count:buy":                    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"trade_count:sell":                   {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"trade_rate":                         {Unit: UnitTradeRate, Timescale: TimescaleRollingWindow},
+		"quantity:buy":                       {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+		"quantity:sell":                      {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+		"churn":                              {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 	},
 	"depthflow": {
 		"add_notional:ask":                          {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
@@ -220,9 +214,9 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"added_notional:bid":                        {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"added_notional_rate:ask":                   {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
 		"added_notional_rate:bid":                   {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"book_imbalance":                            {Unit: UnitRatio, Timescale: TimescaleInstantaneous},
-		"book_imbalance_baseline":                   {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"book_imbalance_divergence":                 {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"book_imbalance":                            {Unit: UnitImbalance, Timescale: TimescaleInstantaneous},
+		"book_imbalance_baseline":                   {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
+		"book_imbalance_divergence":                 {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"book_imbalance_velocity":                   {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"book_imbalance_zscore":                     {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"book_notional":                             {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
@@ -231,53 +225,56 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"book_turnover_rate":                        {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
 		"delete_count:ask":                          {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"delete_count:bid":                          {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"flow_activity_imbalance":                   {Unit: UnitRatio, Timescale: TimescaleInstantaneous},
+		"flow_activity_imbalance":                   {Unit: UnitImbalance, Timescale: TimescaleInstantaneous},
 		"historical_path_distance":                  {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
 		"historical_path_percentile":                {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 		"imbalance_resolution_distance":             {Unit: UnitDistance, Timescale: TimescaleInstantaneous},
-		"imbalance_resolution_gap":                  {Unit: UnitRatio, Timescale: TimescaleInstantaneous},
+		"imbalance_resolution_gap":                  {Unit: UnitDivergence, Timescale: TimescaleInstantaneous},
 		"modify_remaining_notional:ask":             {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"modify_remaining_notional:bid":             {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
-		"mutation_activity_imbalance":               {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"mutation_activity_imbalance":               {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
 		"mutation_count":                            {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"mutation_count:ask":                        {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"mutation_count:bid":                        {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"mutation_count_diff":                       {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"net_book_change_rate":                      {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"net_book_change_rate_baseline":             {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"net_book_change_rate_divergence":           {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
+		"mutation_count_diff":                       {Unit: UnitCountResidual, Timescale: TimescaleInstantaneous},
+		"net_book_change_rate":                      {Unit: UnitSignedNotionalRate, Timescale: TimescaleRollingWindow},
+		"net_book_change_rate_baseline":             {Unit: UnitSignedNotionalRate, Timescale: TimescaleRollingWindow},
+		"net_book_change_rate_divergence":           {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"net_book_change_rate_zscore":               {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
-		"net_displayed_flow:ask":                    {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
-		"net_displayed_flow:bid":                    {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
-		"net_displayed_flow_rate:ask":               {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"net_displayed_flow_rate:bid":               {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"observed_notional_diff":                    {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
-		"observed_notional_imbalance_baseline":      {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"observed_notional_imbalance_divergence":    {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"observed_notional_imbalance_mean":          {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"net_displayed_flow:ask":                    {Unit: UnitSignedNotional, Timescale: TimescaleInstantaneous},
+		"net_displayed_flow:bid":                    {Unit: UnitSignedNotional, Timescale: TimescaleInstantaneous},
+		"net_displayed_flow_rate:ask":               {Unit: UnitSignedNotionalRate, Timescale: TimescaleRollingWindow},
+		"net_displayed_flow_rate:bid":               {Unit: UnitSignedNotionalRate, Timescale: TimescaleRollingWindow},
+		"observed_notional_diff":                    {Unit: UnitSignedNotional, Timescale: TimescaleInstantaneous},
+		"observed_notional_imbalance_baseline":      {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
+		"observed_notional_imbalance_divergence":    {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
+		"observed_notional_imbalance_mean":          {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
 		"observed_notional_imbalance_zscore":        {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"observed_notional_rate":                    {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
 		"observed_notional_rate_baseline":           {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"observed_notional_rate_divergence":         {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
+		"observed_notional_rate_divergence":         {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"observed_notional_rate_mean":               {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
 		"observed_notional_rate_zscore":             {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"removed_notional:ask":                      {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"removed_notional:bid":                      {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"removed_notional_rate:ask":                 {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
 		"removed_notional_rate:bid":                 {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"resolution_gap_baseline":                   {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"resolution_gap_divergence":                 {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"resolution_gap_baseline":                   {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
+		"resolution_gap_divergence":                 {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"resolution_gap_velocity":                   {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"resolution_gap_zscore":                     {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
-		"signed_net_displayed_flow_rate":            {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"signed_net_displayed_flow_rate_baseline":   {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"signed_net_displayed_flow_rate_divergence": {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
+		"signed_net_displayed_flow_rate":            {Unit: UnitSignedNotionalRate, Timescale: TimescaleRollingWindow},
+		"signed_net_displayed_flow_rate_baseline":   {Unit: UnitSignedNotionalRate, Timescale: TimescaleRollingWindow},
+		"signed_net_displayed_flow_rate_divergence": {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"signed_net_displayed_flow_rate_zscore":     {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
-		"touch_imbalance":                           {Unit: UnitRatio, Timescale: TimescaleInstantaneous},
+		"touch_imbalance":                           {Unit: UnitImbalance, Timescale: TimescaleInstantaneous},
 		"turnover_baseline":                         {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"turnover_divergence":                       {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
+		"turnover_divergence":                       {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"turnover_ratio":                            {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"turnover_zscore":                           {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
+		"removed:ask":                               {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
+		"removed:bid":                               {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
+		"spread":                                    {Unit: UnitSpread, Timescale: TimescaleInstantaneous},
 	},
 	"hawkes": {
 		"arrival_rate":                               {Unit: UnitRate, Timescale: TimescaleRollingWindow},
@@ -332,12 +329,17 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"spectral_radius_velocity":                   {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"standardized_innovation:buy":                {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
 		"standardized_innovation:sell":               {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"historical_path_distance":                   {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
+		"historical_path_percentile":                 {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
+		"intensity:buy":                              {Unit: UnitRate, Timescale: TimescaleRollingWindow},
+		"intensity:sell":                             {Unit: UnitRate, Timescale: TimescaleRollingWindow},
+		"branching_ratio":                            {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 	},
 	"leadlag": {
 		"best_lag_correlation_baseline": {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
 		"best_lag_correlation_zscore":   {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"best_lag_seconds_mad":          {Unit: UnitDuration, Timescale: TimescaleRollingWindow},
-		"best_lag_seconds_median":       {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
+		"best_lag_seconds_median":       {Unit: UnitTimeOffset, Timescale: TimescaleRollingWindow},
 		"correlation_gain_baseline":     {Unit: UnitCorrelation, Timescale: TimescaleRollingWindow},
 		"covariance_score_gain_mean":    {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
 		"covariance_score_gain_median":  {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
@@ -348,11 +350,12 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"effective_sample_count":        {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"historical_path_distance":      {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
 		"historical_path_percentile":    {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
-		"lag_baseline_seconds":          {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
-		"lag_divergence_seconds":        {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
+		"lag_baseline_seconds":          {Unit: UnitTimeOffset, Timescale: TimescaleRollingWindow},
+		"lag_divergence_seconds":        {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"lag_noise_scale_seconds":       {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
 		"lag_velocity":                  {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"lag_zscore":                    {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
+		"last":                          {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"last_price":                    {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"led_peer_share":                {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 		"measured_return_count":         {Unit: UnitCount, Timescale: TimescaleRollingWindow},
@@ -363,8 +366,8 @@ var SignalMetrics = map[string]map[string]Dimension{
 	"liquidity": {
 		"best_ask_price":                 {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"best_bid_price":                 {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"depth_divergence:ask":           {Unit: UnitNotional, Timescale: TimescaleRollingWindow},
-		"depth_divergence:bid":           {Unit: UnitNotional, Timescale: TimescaleRollingWindow},
+		"depth_divergence:ask":           {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
+		"depth_divergence:bid":           {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"depth_noise_scale:ask":          {Unit: UnitNotional, Timescale: TimescaleRollingWindow},
 		"depth_noise_scale:bid":          {Unit: UnitNotional, Timescale: TimescaleRollingWindow},
 		"depth_ratio:ask":                {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
@@ -382,7 +385,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"relative_spread_baseline":       {Unit: UnitRelativeSpread, Timescale: TimescaleRollingWindow},
 		"spread":                         {Unit: UnitSpread, Timescale: TimescaleInstantaneous},
 		"spread_baseline":                {Unit: UnitSpread, Timescale: TimescaleRollingWindow},
-		"spread_divergence":              {Unit: UnitSpread, Timescale: TimescaleRollingWindow},
+		"spread_divergence":              {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"spread_divergence_velocity":     {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"spread_divergence_velocity_snr": {Unit: UnitSNR, Timescale: TimescaleRollingWindow},
 		"spread_noise_scale":             {Unit: UnitSpread, Timescale: TimescaleRollingWindow},
@@ -392,7 +395,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"touch_notional:bid":             {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"touch_notional_baseline:ask":    {Unit: UnitNotional, Timescale: TimescaleRollingWindow},
 		"touch_notional_baseline:bid":    {Unit: UnitNotional, Timescale: TimescaleRollingWindow},
-		"touch_notional_imbalance":       {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"touch_notional_imbalance":       {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
 		"touch_quantity:ask":             {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 		"touch_quantity:bid":             {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 		"two_sided_touch_notional":       {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
@@ -407,6 +410,9 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"morphology_change":          {Unit: UnitRatio, Timescale: TimescaleInstantaneous},
 		"morphology_change_baseline": {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"morphology_change_zscore":   {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
+		"historical_path_distance":   {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
+		"historical_path_percentile": {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
+		"wasserstein":                {Unit: UnitDistance, Timescale: TimescaleInstantaneous},
 	},
 	"pumpdump": {
 		"best_ask":                        {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
@@ -417,17 +423,17 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"midpoint:at":                     {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"midpoint:from":                   {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"midpoint_log_return":             {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
-		"midpoint_return_baseline":        {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"midpoint_return_divergence":      {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"midpoint_return_rate":            {Unit: UnitRate, Timescale: TimescaleRollingWindow},
-		"midpoint_return_rate_divergence": {Unit: UnitRate, Timescale: TimescaleRollingWindow},
+		"midpoint_return_baseline":        {Unit: UnitSignedRate, Timescale: TimescaleRollingWindow},
+		"midpoint_return_divergence":      {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
+		"midpoint_return_rate":            {Unit: UnitSignedRate, Timescale: TimescaleRollingWindow},
+		"midpoint_return_rate_divergence": {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"midpoint_return_rate_zscore":     {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"midpoint_return_velocity":        {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"midpoint_return_zscore":          {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"negative_midpoint_return":        {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
 		"notional_rate":                   {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
 		"notional_rate_baseline":          {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
-		"notional_rate_divergence":        {Unit: UnitNotionalRate, Timescale: TimescaleRollingWindow},
+		"notional_rate_divergence":        {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"notional_rate_ratio":             {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"notional_rate_velocity":          {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"notional_rate_zscore":            {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
@@ -435,7 +441,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"relative_spread":                 {Unit: UnitRelativeSpread, Timescale: TimescaleInstantaneous},
 		"relative_spread_baseline":        {Unit: UnitRelativeSpread, Timescale: TimescaleRollingWindow},
 		"spread":                          {Unit: UnitSpread, Timescale: TimescaleInstantaneous},
-		"spread_divergence":               {Unit: UnitSpread, Timescale: TimescaleRollingWindow},
+		"spread_divergence":               {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"spread_divergence_velocity":      {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"spread_ratio":                    {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"spread_zscore":                   {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
@@ -449,22 +455,24 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"volume_bar_quantity":             {Unit: UnitQuantity, Timescale: TimescaleVolumeBar},
 		"volume_bar_trade_count":          {Unit: UnitCount, Timescale: TimescaleVolumeBar},
 		"volume_rate":                     {Unit: UnitVolumeRate, Timescale: TimescaleVolumeBar},
+		"historical_path_distance":        {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
+		"historical_path_percentile":      {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 	},
 	"sentiment": {
 		"absolute_return":                  {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
 		"advance_count":                    {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"advance_fraction":                 {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"breadth":                          {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"breadth_baseline":                 {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"breadth_divergence":               {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"breadth":                          {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
+		"breadth_baseline":                 {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
+		"breadth_divergence":               {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"breadth_velocity":                 {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"breadth_zscore":                   {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"cohort_horizon_seconds":           {Unit: UnitSecond, Timescale: TimescaleRollingWindow},
 		"cohort_member_count":              {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"decline_count":                    {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"decline_fraction":                 {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"directional_agreement":            {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"directional_consensus":            {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"directional_agreement":            {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
+		"directional_consensus":            {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
 		"directional_participation":        {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"excluded_member_count":            {Unit: UnitCount, Timescale: TimescaleRollingWindow},
 		"from_age_seconds":                 {Unit: UnitSecond, Timescale: TimescaleInstantaneous},
@@ -493,7 +501,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"median_from_age_seconds":          {Unit: UnitSecond, Timescale: TimescaleInstantaneous},
 		"median_return":                    {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
 		"median_return_baseline":           {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
-		"median_return_divergence":         {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
+		"median_return_divergence":         {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"median_return_velocity":           {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"median_return_zscore":             {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"opposite_direction_peer_count":    {Unit: UnitCount, Timescale: TimescaleRollingWindow},
@@ -522,9 +530,8 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"bracket_trade_quantity":              {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 		"fill_fraction_baseline:ask":          {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"fill_fraction_baseline:bid":          {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"fill_fraction_divergence:ask":        {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"fill_fraction_divergence:bid":        {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"fill_fraction_mean":                  {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"fill_fraction_divergence:ask":        {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
+		"fill_fraction_divergence:bid":        {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"fill_fraction_velocity:ask":          {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"fill_fraction_velocity:bid":          {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"fill_fraction_zscore:ask":            {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
@@ -551,10 +558,8 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"replenishment_fraction_baseline:bid": {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"retreat_fraction:ask":                {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"retreat_fraction:bid":                {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"retreat_fraction_baseline":           {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"retreat_fraction_baseline:ask":       {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"retreat_fraction_baseline:bid":       {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"retreat_fraction_divergence":         {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"retreat_fraction_zscore:ask":         {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"retreat_fraction_zscore:bid":         {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"retreat_rate:ask":                    {Unit: UnitRate, Timescale: TimescaleRollingWindow},
@@ -573,31 +578,24 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"touch_quantity:bid":                  {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 		"unfilled_residual_quantity:ask":      {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 		"unfilled_residual_quantity:bid":      {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"withdrawal_fraction_baseline":        {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"withdrawal_fraction_baseline:ask":    {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"withdrawal_fraction_baseline:bid":    {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"withdrawal_fraction_divergence:ask":  {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
-		"withdrawal_fraction_divergence:bid":  {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"withdrawal_fraction_divergence:ask":  {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
+		"withdrawal_fraction_divergence:bid":  {Unit: UnitDivergence, Timescale: TimescaleRollingWindow},
 		"withdrawal_fraction_velocity:ask":    {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"withdrawal_fraction_velocity:bid":    {Unit: UnitVelocity, Timescale: TimescaleRollingWindow},
 		"withdrawal_fraction_zscore:ask":      {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"withdrawal_fraction_zscore:bid":      {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
+		"historical_path_distance":            {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
+		"historical_path_percentile":          {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 	},
 	"spot:trade": {
-		"price":       {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"qty":         {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"volume":      {Unit: UnitVolume, Timescale: TimescaleInstantaneous},
-		"bid":         {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"ask":         {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"bid_qty":     {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"ask_qty":     {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"limit_price": {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"order_qty":   {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+		"price": {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"qty":   {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 	},
 	"spot:level3": {
 		"limit_price": {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"order_qty":   {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"checksum":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 	},
 	"detector": {
 		"start_idx":  {Unit: UnitCount, Timescale: TimescaleTick},
@@ -611,32 +609,32 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"c_price":    {Unit: UnitPrice, Timescale: TimescaleTick},
 	},
 	"training": {
-		"region_winner":          {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_runner_up":       {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_brightness:R00":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R01":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R02":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R03":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R04":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R05":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R06":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R07":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R08":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R09":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R10":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R11":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_members:R00":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R01":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R02":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R03":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R04":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R05":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R06":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R07":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R08":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R09":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R10":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R11":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_winner":         {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_runner_up":      {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_brightness:R00": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R01": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R02": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R03": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R04": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R05": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R06": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R07": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R08": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R09": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R10": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R11": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_members:R00":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R01":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R02":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R03":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R04":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R05":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R06":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R07":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R08":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R09":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R10":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R11":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 	},
 }
 
@@ -651,25 +649,24 @@ const (
 	ScaleLogModulus
 )
 
-var metricDimensions = make(map[string]Dimension, 600)
-
-func init() {
-	for producer, metrics := range SignalMetrics {
-		for name, dimension := range metrics {
-			if existing, exists := metricDimensions[name]; exists && existing != dimension {
-				panic("conflicting dimension definition for metric: " + name + " in producer: " + producer)
-			}
-
-			metricDimensions[name] = dimension
-		}
-	}
-}
-
 func stripScope(label string) string {
 	base := label
 
 	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
 		base = base[:atIndex]
+	}
+
+	if lastUnder := strings.LastIndexByte(base, '_'); lastUnder != -1 && lastUnder < len(base)-1 {
+		allDigits := true
+		for i := lastUnder + 1; i < len(base); i++ {
+			if base[i] < '0' || base[i] > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			base = base[:lastUnder]
+		}
 	}
 
 	return base

@@ -143,9 +143,8 @@ func TestSignalStep(t *testing.T) {
 		Convey("Every z-score is the observation against its own stream's earlier values only", func() {
 			for step, zscores := range observed {
 				for key, zscore := range zscores {
-					// Replay the stream in its standardization space: raw,
-					// ln(raw) for positive rates, or the signed log-modulus.
-					space := data.CanonicalScale(key)
+					// Replay the stream in its standardization space (linear).
+					space := data.ScaleLinear
 					var modulus core.LogModulus
 					history := make([]float64, 0, step)
 					current, currentDefined := 0.0, false

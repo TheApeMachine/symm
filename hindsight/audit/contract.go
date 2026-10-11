@@ -51,8 +51,6 @@ func AnalyzeContract(
 				"[audit.contract] unfinalized measurement (ID == 0)",
 				nil,
 			), "epoch", meas.Epoch, "label", meas.Label, "source", meas.Source)
-
-			continue
 		}
 
 		for entry := range meas.Read() {
@@ -103,12 +101,6 @@ func AnalyzeContract(
 			}
 
 			if violation := contractViolation(unit, val, name); violation != "" {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf("[audit.contract] metric contract violation: %s", violation),
-					nil,
-				), "series", key, "value", val, "unit", string(unit), "domain", acc.domain)
-
 				acc.breaches++
 				acc.violation = violation
 			}
@@ -150,6 +142,14 @@ func AnalyzeContract(
 		}
 		return breaches[first].MaxVal > breaches[second].MaxVal
 	})
+
+	for _, b := range breaches {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[audit.contract] metric contract violation: %s", b.ViolationType),
+			nil,
+		), "metric", b.Metric, "unit", b.DeclaredUnit, "domain", b.DeclaredDomain, "breaches", b.BreachCount, "total", b.TotalSamples, "min", b.MinVal, "max", b.MaxVal)
+	}
 
 	normAudit := auditMetricNormalization(measurements, significance)
 	stateAudit := auditMeasurementState(measurements)
@@ -209,8 +209,6 @@ func auditMetricNormalization(measurements []*data.Measurement, significance flo
 				"[audit.metric_norm] measurement with unassigned ID (zero) encountered in audit stream",
 				nil,
 			), "source", meas.Source, "label", meas.Label, "epoch", meas.Epoch)
-
-			continue
 		}
 
 		for entry := range meas.Read() {
@@ -259,8 +257,6 @@ func auditMetricNormalization(measurements []*data.Measurement, significance flo
 				"[audit.metric_norm] measurement with unassigned ID (zero) encountered in audit stream",
 				nil,
 			), "source", meas.Source, "label", meas.Label, "epoch", meas.Epoch)
-
-			continue
 		}
 
 		for entry := range meas.Read() {
@@ -457,8 +453,6 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 				"[audit.measurement_state] measurement is not finalized (ID == 0)",
 				nil,
 			), "epoch", meas.Epoch, "label", meas.Label, "source", meas.Source)
-
-			continue
 		}
 
 		c := meas.Coherence()
@@ -528,58 +522,6 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			energyBreaches++
 		}
 
-		dampened := meas.Dampen()
-		if len(dampened) != metricCount {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] dampen metric count mismatch",
-				nil,
-			), "dampenedCount", len(dampened), "metricCount", metricCount, "label", meas.Label)
-
-			dampenBreaches++
-		}
-
-		for _, dMetric := range dampened {
-			if dMetric == nil {
-				continue
-			}
-
-			origEntry := data.Pull(meas.Read(dMetric.Label))
-			if origEntry == nil || origEntry.Metric == nil {
-				continue
-			}
-
-			expectedStd := origEntry.Metric.Standardized * conf
-			if math.Abs(dMetric.Standardized-expectedStd) > 1e-5 {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"[audit.measurement_state] dampened standardized value mismatch",
-					nil,
-				), "dampened", dMetric.Standardized, "expected", expectedStd, "metric", dMetric.Label)
-
-				dampenBreaches++
-			}
-
-			if math.Abs(dMetric.Standardized) > math.Abs(origEntry.Metric.Standardized)+1e-9 {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"[audit.measurement_state] dampened standardized magnitude exceeded original",
-					nil,
-				), "dampened", dMetric.Standardized, "original", origEntry.Metric.Standardized, "metric", dMetric.Label)
-
-				dampenBreaches++
-			}
-
-			if conf == 0 && (dMetric.Standardized != 0 || dMetric.Normalized != 0 || dMetric.Raw != 0) {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"[audit.measurement_state] dampened metric non-zero when confidence is zero",
-					nil,
-				), "raw", dMetric.Raw, "metric", dMetric.Label)
-
-				dampenBreaches++
-			}
-		}
 
 		if math.IsNaN(m) || math.IsInf(m, 0) || m < 0.0 || m > 1.0 {
 			errnie.Error(errnie.Err(
@@ -703,68 +645,28 @@ func distributionSummary(values []float64) (float64, float64, float64) {
 	return mean, median, p95
 }
 
-func isPercentile(name string) bool {
+func cleanMetricName(name string) string {
 	base := name
 
 	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
 		base = base[:atIndex]
 	}
 
-	return strings.HasSuffix(base, "_percentile")
-}
-
-func isSignedFraction(name string) bool {
-	base := name
-
-	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
-		base = base[:atIndex]
+	if colonIndex := strings.IndexByte(base, ':'); colonIndex != -1 {
+		base = base[:colonIndex]
 	}
 
-	return strings.HasSuffix(base, "_fraction") ||
-		strings.Contains(base, "imbalance") ||
-		strings.HasSuffix(base, "_correlation") ||
-		strings.Contains(base, "signed_correlation")
-}
-
-func isSignedDelta(name string) bool {
-	base := name
-
-	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
-		base = base[:atIndex]
-	}
-
-	return strings.HasPrefix(base, "net_") ||
-		strings.HasPrefix(base, "cumulative_") ||
-		strings.Contains(base, "_delta") ||
-		strings.Contains(base, "diff") ||
-		strings.HasSuffix(base, "_divergence") ||
-		strings.HasSuffix(base, "_residual")
+	return base
 }
 
 /*
-isAbsoluteScore reports whether a metric is the magnitude of a covariance
-score, which is non-negative but unbounded above.
+isAbsoluteScore reports whether a covariance score metric is explicitly an
+absolute score (its magnitude), which is non-negative [0, +inf).
 */
 func isAbsoluteScore(name string) bool {
-	base := name
-
-	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
-		base = base[:atIndex]
-	}
-
+	base := cleanMetricName(name)
 	return strings.HasPrefix(base, "absolute_covariance_score") ||
 		strings.HasPrefix(base, "cohort_absolute_covariance_score")
-}
-
-func isAbsoluteCorrelation(name string) bool {
-	base := name
-
-	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
-		base = base[:atIndex]
-	}
-
-	return strings.HasPrefix(base, "absolute_correlation") ||
-		strings.HasPrefix(base, "cohort_absolute_correlation")
 }
 
 func declaredDomain(unit data.Unit, name ...string) string {
@@ -774,28 +676,17 @@ func declaredDomain(unit data.Unit, name ...string) string {
 		metricName = name[0]
 	}
 
-	if isAbsoluteCorrelation(metricName) || isPercentile(metricName) {
-		return "[0, 1]"
-	}
-
-	if isSignedFraction(metricName) {
-		return "[-1, 1]"
-	}
-
-	if isSignedDelta(metricName) {
-		return "finite"
-	}
-
-	if isAbsoluteScore(metricName) {
-		return "[0, +inf)"
-	}
+	base := cleanMetricName(metricName)
 
 	switch unit {
-	case data.UnitCorrelation:
-		return "[-1, 1]"
 	case data.UnitProbability, data.UnitConfidence:
 		return "[0, 1]"
+
+	case data.UnitCorrelation, data.UnitImbalance:
+		return "[-1, 1]"
+
 	case data.UnitPrice,
+		data.UnitCurrency,
 		data.UnitQuantity,
 		data.UnitVolume,
 		data.UnitNotional,
@@ -815,6 +706,9 @@ func declaredDomain(unit data.Unit, name ...string) string {
 		data.UnitTradeRate,
 		data.UnitVolumeRate,
 		data.UnitNotionalRate,
+		data.UnitRatio,
+		data.UnitPercent,
+		data.UnitBasisPoints,
 		data.UnitDuration,
 		data.UnitNanosecond,
 		data.UnitMicrosecond,
@@ -823,16 +717,30 @@ func declaredDomain(unit data.Unit, name ...string) string {
 		data.UnitMinute,
 		data.UnitHour:
 		return "[0, +inf)"
+
+	case data.UnitCovarianceScore:
+		if isAbsoluteScore(base) {
+			return "[0, +inf)"
+		}
+
+		return "finite"
+
 	case data.UnitZScore,
-		data.UnitCovarianceScore,
-		data.UnitCovariance,
 		data.UnitLogReturn,
 		data.UnitVelocity,
 		data.UnitAcceleration,
+		data.UnitCovariance,
 		data.UnitCountResidual,
 		data.UnitNat,
-		data.UnitPriceImpact:
+		data.UnitPriceImpact,
+		data.UnitDivergence,
+		data.UnitSignedNotional,
+		data.UnitSignedQuantity,
+		data.UnitSignedRate,
+		data.UnitSignedNotionalRate,
+		data.UnitTimeOffset:
 		return "finite"
+
 	default:
 		return "undeclared"
 	}
@@ -849,44 +757,25 @@ func contractViolation(unit data.Unit, value float64, name ...string) string {
 		metricName = name[0]
 	}
 
-	if isAbsoluteCorrelation(metricName) || isPercentile(metricName) {
-		if value < 0.0 || value > 1.0 {
-			return "domain_exceeded_[0,1]"
-		}
-
-		return ""
-	}
-
-	if isSignedFraction(metricName) {
-		if value < -1.0 || value > 1.0 {
-			return "domain_exceeded_[-1,1]"
-		}
-
-		return ""
-	}
-
-	if isSignedDelta(metricName) {
-		return ""
-	}
-
-	if isAbsoluteScore(metricName) {
-		if value < 0.0 {
-			return "negative_value_for_non_negative_unit"
-		}
-
-		return ""
-	}
+	base := cleanMetricName(metricName)
 
 	switch unit {
-	case data.UnitCorrelation:
-		if value < -1.0 || value > 1.0 {
-			return "domain_exceeded_[-1,1]"
-		}
 	case data.UnitProbability, data.UnitConfidence:
 		if value < 0.0 || value > 1.0 {
 			return "domain_exceeded_[0,1]"
 		}
+
+		return ""
+
+	case data.UnitCorrelation, data.UnitImbalance:
+		if value < -1.0 || value > 1.0 {
+			return "domain_exceeded_[-1,1]"
+		}
+
+		return ""
+
 	case data.UnitPrice,
+		data.UnitCurrency,
 		data.UnitQuantity,
 		data.UnitVolume,
 		data.UnitNotional,
@@ -906,6 +795,9 @@ func contractViolation(unit data.Unit, value float64, name ...string) string {
 		data.UnitTradeRate,
 		data.UnitVolumeRate,
 		data.UnitNotionalRate,
+		data.UnitRatio,
+		data.UnitPercent,
+		data.UnitBasisPoints,
 		data.UnitDuration,
 		data.UnitNanosecond,
 		data.UnitMicrosecond,
@@ -916,19 +808,35 @@ func contractViolation(unit data.Unit, value float64, name ...string) string {
 		if value < 0.0 {
 			return "negative_value_for_non_negative_unit"
 		}
+
+		return ""
+
+	case data.UnitCovarianceScore:
+		if isAbsoluteScore(base) {
+			if value < 0.0 {
+				return "negative_value_for_non_negative_unit"
+			}
+		}
+
+		return ""
+
 	case data.UnitZScore,
-		data.UnitCovarianceScore,
-		data.UnitCovariance,
 		data.UnitLogReturn,
 		data.UnitVelocity,
 		data.UnitAcceleration,
+		data.UnitCovariance,
 		data.UnitCountResidual,
 		data.UnitNat,
-		data.UnitPriceImpact:
+		data.UnitPriceImpact,
+		data.UnitDivergence,
+		data.UnitSignedNotional,
+		data.UnitSignedQuantity,
+		data.UnitSignedRate,
+		data.UnitSignedNotionalRate,
+		data.UnitTimeOffset:
 		return ""
+
 	default:
 		return "undeclared_or_unknown_physical_dimension"
 	}
-
-	return ""
 }

@@ -1184,9 +1184,5 @@ A valid toxicity implementation SHOULD minimally publish:
 - `withdrawal_fraction_velocity:ask`;
 - `historical_path_distance`;
 - `historical_path_percentile`;
-- `From`;
-- `At`;
-- `Maturity`;
-- `SNR`.
 
 Metrics whose prerequisites are not satisfied are explicitly undefined rather than emitted as fabricated zeros.

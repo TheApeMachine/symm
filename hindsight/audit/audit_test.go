@@ -80,7 +80,7 @@ func TestAuditStages(t *testing.T) {
 					data.NewMetric("bad_rate", -2.0, data.UnitTradeRate, data.TimescaleRollingWindow),
 					data.NewMetric("bad_duration", -10.0, data.UnitDuration, data.TimescaleInstantaneous),
 					data.NewMetric("bad_spread", -0.25, data.UnitSpread, data.TimescaleInstantaneous),
-					data.NewMetric("bad_imbalance", 1.8, data.UnitRatio, data.TimescaleInstantaneous),
+					data.NewMetric("bad_imbalance", 1.8, data.UnitImbalance, data.TimescaleInstantaneous),
 					data.NewMetric("bad_percentile", 1.5, data.UnitProbability, data.TimescaleRollingWindow),
 					data.NewMetric("undeclared_metric", 10.0, data.Unit("fabricated_unit"), data.TimescaleInstantaneous),
 				)
@@ -115,7 +115,7 @@ func TestAuditStages(t *testing.T) {
 					data.NewMetric("spread", 0.5, data.UnitSpread, data.TimescaleInstantaneous),
 					data.NewMetric("trade_rate", 25.0, data.UnitTradeRate, data.TimescaleRollingWindow),
 					data.NewMetric("duration", 100.0, data.UnitDuration, data.TimescaleInstantaneous),
-					data.NewMetric("book_imbalance", 0.35, data.UnitRatio, data.TimescaleInstantaneous),
+					data.NewMetric("book_imbalance", 0.35, data.UnitImbalance, data.TimescaleInstantaneous),
 				)
 
 				cleanContract := AnalyzeContract([]*data.Measurement{cleanMeas}, 0.05)
