@@ -263,7 +263,7 @@ var (
 
 			manifoldSolver := manifold.NewSolver(ctx, book)
 			correlationSignal := correlation.NewSignal(ctx)
-			cvdSignal := cvd.NewSignal(ctx, book)
+			cvdSignal := cvd.NewSignal(ctx)
 			depthflowSignal := depthflow.NewSignal(ctx, book)
 			hawkesSignal := hawkes.NewSignal(ctx)
 			leadlagSignal := leadlag.NewSignal(ctx)
@@ -543,7 +543,7 @@ var (
 								return
 							}
 						case "trade":
-							if err := handleTrade(buf, epoch, price, workspace, ingressTee, name, nil); err != nil {
+							if err := handleTrade(buf, epoch, price, book, workspace, ingressTee, name, nil); err != nil {
 								halt(err)
 								return
 							}

@@ -71,7 +71,7 @@ func (metric *Metric) Timescale() Timescale {
 finalize is called from the Measurement to standardize the observation against
 its stream's causal moments: center and scale are the stream's mean and sample
 standard deviation before this observation, in the stream's standardization
-space (CanonicalScale: Raw itself, ln Raw, or its log-modulus), and
+space (Unit.Scale: Raw itself or its log-modulus), and
 Standardized is (value - center) / scale for Raw's value in that space.
 While the prior scale is zero the z-score is undefined:
 Standardized and Normalized stay zero and Standardizable reports false. An
@@ -84,7 +84,7 @@ func (metric *Metric) finalize(state *standardizer) error {
 		return errnie.Error(err)
 	}
 
-	value, center, scale, defined := state.observe(metric.Raw, ScaleLinear)
+	value, center, scale, defined := state.observe(metric.Raw, metric.unit.Scale())
 	metric.center, metric.scale = center, scale
 	metric.Standardized = 0
 	metric.Normalized = 0

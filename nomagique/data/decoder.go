@@ -274,7 +274,29 @@ func (cols *batchCols) decodeRow(measurement *Measurement, rowIdx int) error {
 			for itemIdx := startOffset; itemIdx < endOffset; itemIdx++ {
 				metricKey := cols.metricsKeyArray.Value(itemIdx)
 				rawVal := cols.rawCol.Value(itemIdx)
-				unitVal, timeVal := GetDimension(measurement.Source, metricKey)
+				var unitVal Unit
+				var timeVal Timescale
+
+				if cols.unitCol != nil && !cols.unitCol.IsNull(itemIdx) {
+					unitVal = Unit(cols.unitCol.Value(itemIdx))
+				}
+
+				if cols.timeCol != nil && !cols.timeCol.IsNull(itemIdx) {
+					timeVal = Timescale(cols.timeCol.Value(itemIdx))
+				}
+
+				if unitVal == "" || timeVal == "" {
+					u, t := GetDimension(measurement.Source, metricKey)
+
+					if unitVal == "" {
+						unitVal = u
+					}
+
+					if timeVal == "" {
+						timeVal = t
+					}
+				}
+
 				metric := NewMetric(metricKey, rawVal, unitVal, timeVal)
 				metric.Normalized = cols.normCol.Value(itemIdx)
 				metric.Standardized = cols.stdCol.Value(itemIdx)

@@ -60,8 +60,12 @@ func subscribeRejection(buf []byte) error {
 }
 
 /*
-handleLevel3 decodes a Kraken Level3 frame, updates the book, and pushes individual
-order event measurements to the store tee.
+handleLevel3 decodes a Kraken Level3 frame, applies it to the book, and pushes
+the orders of every entry the book accepted to the store tee, numbered with the
+sequence the book took while it held the entry's write lock. An entry the book
+did not accept never became live book state and is not stored, and accepted
+entries are stored even when a later entry of the frame fails, so the stored
+tape replays in SeqIdx order to exactly the live book.
 */
 func handleLevel3(
 	buf []byte,
@@ -72,36 +76,57 @@ func handleLevel3(
 ) error {
 	level3Msg, err := kraken.NewLevel3(buf)
 
-	if err == nil {
-		err = book.Update(level3Msg)
-	}
-
 	if err != nil {
 		return errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("symm: %s level3 book update failed", name),
+			errnie.UnprocessableContent,
+			fmt.Sprintf("symm: %s level3 frame undecodable", name),
 			err,
 		)
 	}
 
-	if storeTee == nil {
-		return nil
+	updateErr := book.Update(level3Msg)
+
+	if storeTee != nil {
+		if err := storeLevel3(level3Msg, epoch, storeTee, name); err != nil {
+			return err
+		}
+	}
+
+	if updateErr != nil {
+		return errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("symm: %s level3 book update failed", name),
+			updateErr,
+		)
+	}
+
+	return nil
+}
+
+/*
+storeLevel3 pushes one measurement per order of each accepted entry, bids then
+asks, under consecutive sequence numbers from the entry's Sequence.
+*/
+func storeLevel3(level3Msg *kraken.Level3, epoch int64, storeTee nmruntime.Tee, name string) error {
+	tick := system.Tick.Load()
+
+	if tick <= 0 {
+		tick = 1
 	}
 
 	for _, level3Data := range level3Msg.Data {
+		if level3Data.Sequence == 0 {
+			continue
+		}
+
+		sequence := level3Data.Sequence
+		checksumStr := strconv.FormatInt(int64(level3Data.Checksum), 10)
+
 		for sideIdx, orders := range [][]kraken.Level3Order{level3Data.Bids, level3Data.Asks} {
 			side := "bid"
 
 			if sideIdx == 1 {
 				side = "ask"
-			}
-
-			checksumStr := strconv.FormatInt(int64(level3Data.Checksum), 10)
-
-			tick := system.Tick.Load()
-
-			if tick <= 0 {
-				tick = 1
 			}
 
 			for _, order := range orders {
@@ -117,7 +142,7 @@ func handleLevel3(
 					epoch,
 					level3Data.Symbol,
 					"spot:level3",
-					system.SeqIdx.Add(1),
+					sequence,
 					tick,
 					&data.StringEntry{
 						Key:   "type",
@@ -163,6 +188,7 @@ func handleLevel3(
 				)
 
 				storeTee.Push(measurement)
+				sequence++
 			}
 		}
 	}
@@ -171,13 +197,18 @@ func handleLevel3(
 }
 
 /*
-handleTrade decodes a Kraken trade frame, updates price, steps the workspace pipeline,
-and pushes the trade measurement to the store tee.
+handleTrade decodes a Kraken trade frame, updates price, stamps each trade with
+its ingress sequence number and the book's executable touch at that number,
+steps the workspace pipeline, and pushes the trade measurement to the store tee.
+The touch travels on the trade, so every consumer reads the book as it stood at
+the trade's SeqIdx rather than whatever the live book holds when a pipeline
+consumer gets to it.
 */
 func handleTrade(
 	buf []byte,
 	epoch int64,
 	price *broker.Price,
+	book *broker.Book,
 	workspace *nmruntime.Workspace,
 	storeTee nmruntime.Tee,
 	name string,
@@ -208,11 +239,13 @@ func handleTrade(
 			)
 		}
 
+		sequence, touchBid, touchAsk := book.Stamp(tradeItem.Symbol)
+
 		measurement := data.NewMeasurement(
 			epoch,
 			tradeItem.Symbol,
 			"spot:trade",
-			system.SeqIdx.Add(1),
+			sequence,
 			system.Tick.Add(1),
 			&data.StringEntry{
 				Key:   "type",
@@ -238,7 +271,7 @@ func handleTrade(
 		priceUnit, priceTime := data.GetDimension("spot:trade", "price")
 		qtyUnit, qtyTime := data.GetDimension("spot:trade", "qty")
 
-		measurement.Write(
+		metrics := []*data.Metric{
 			data.NewExactMetric(
 				"price",
 				&tradeItem.Price,
@@ -251,7 +284,19 @@ func handleTrade(
 				qtyUnit,
 				qtyTime,
 			),
-		)
+		}
+
+		if touchBid != nil {
+			bidUnit, bidTime := data.GetDimension("spot:trade", "touch_bid")
+			askUnit, askTime := data.GetDimension("spot:trade", "touch_ask")
+
+			metrics = append(metrics,
+				data.NewExactMetric("touch_bid", touchBid, bidUnit, bidTime),
+				data.NewExactMetric("touch_ask", touchAsk, askUnit, askTime),
+			)
+		}
+
+		measurement.Write(metrics...)
 
 		if workspace != nil {
 			workspace.Step(measurement)

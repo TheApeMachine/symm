@@ -170,7 +170,7 @@ var collectCmd = &cobra.Command{
 		storeTee := hindsight.NewStoreTee(ctx, "storeTee")
 
 		correlationSignal := correlation.NewSignal(ctx)
-		cvdSignal := cvd.NewSignal(ctx, book)
+		cvdSignal := cvd.NewSignal(ctx)
 		depthflowSignal := depthflow.NewSignal(ctx, book)
 		hawkesSignal := hawkes.NewSignal(ctx)
 		leadlagSignal := leadlag.NewSignal(ctx)
@@ -337,7 +337,7 @@ var collectCmd = &cobra.Command{
 							return
 						}
 					case "trade":
-						if err := handleTrade(buf, epoch, price, workspace, storeTee, name, nil); err != nil {
+						if err := handleTrade(buf, epoch, price, book, workspace, storeTee, name, nil); err != nil {
 							halt(err)
 							return
 						}

@@ -90,6 +90,11 @@ func AnalyzeEquivalence(
 			prodFrame.From = symMeas[0].From
 			prodFrame.Peers(symMeas...)
 			prodFrame.Write()
+
+			if !grid.Ready(prodFrame) {
+				continue
+			}
+
 			prodToken := string(grid.Observe(prodFrame))
 			prodBrightness := grid.RegionScores(prodFrame).Brightness
 

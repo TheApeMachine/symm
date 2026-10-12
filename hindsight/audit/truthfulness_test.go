@@ -5,39 +5,98 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
+/*
+tapeTrade is one stored trade and the executable touch the book held at its
+sequence number. The touch's midpoint lies inside the spread, never on the
+trade price.
+*/
 type tapeTrade struct {
 	price, qty float64
 	side       string
 	at         time.Time
+	bid, ask   float64
+}
+
+func (trade tapeTrade) midpoint() float64 {
+	return (trade.bid + trade.ask) / 2
 }
 
 func truthTape(start time.Time) []tapeTrade {
 	return []tapeTrade{
-		{100, 1, "buy", start},
-		{101, 2, "sell", start.Add(500 * time.Millisecond)},
-		{102, 0.5, "buy", start.Add(2 * time.Second)},
+		{100, 1, "buy", start, 99.9, 100},
+		{101, 2, "sell", start.Add(500 * time.Millisecond), 101, 101.1},
+		{102, 0.5, "buy", start.Add(2 * time.Second), 101.8, 102},
 	}
 }
 
-func storedTrades(tape []tapeTrade) []*data.Measurement {
-	out := make([]*data.Measurement, 0, len(tape))
+/*
+storedTape is what ingress stores for the tape: before each trade, the level3
+entry that moves the book to that trade's touch (a snapshot first, then an
+update replacing both touch orders), numbered as the book numbers an applied
+entry; then the trade, stamped with the touch at the next sequence number.
+Checksum zero leaves the venue checksum unverified, since these books are not
+venue books.
+*/
+func storedTape(tape []tapeTrade) (trades []*data.Measurement, level3 []*data.Measurement) {
+	sequence := int64(0)
+
+	order := func(entryType, side, id, event string, price float64, at time.Time) *data.Measurement {
+		sequence++
+		measurement := data.NewMeasurement(1, "BTC/USD", "spot:level3", sequence, sequence,
+			&data.StringEntry{Key: "type", Value: entryType},
+			&data.StringEntry{Key: "order_id", Value: id},
+			&data.StringEntry{Key: "side", Value: side},
+			&data.StringEntry{Key: "event", Value: event},
+			&data.StringEntry{Key: "checksum", Value: "0"},
+		)
+		measurement.At = at
+		measurement.From = at
+
+		return measurement.Write(
+			data.NewExactMetric("limit_price", decimal.NewFromFloat64(price), data.UnitPrice, data.TimescaleInstantaneous),
+			data.NewExactMetric("order_qty", decimal.NewFromFloat64(1), data.UnitQuantity, data.TimescaleInstantaneous),
+		)
+	}
 
 	for index, trade := range tape {
-		m := data.NewMeasurement(1, "BTC/USD", "spot:trade", int64(index+1), int64(index+1),
+		bidID, askID := "B"+string(rune('0'+index)), "A"+string(rune('0'+index))
+
+		if index == 0 {
+			level3 = append(level3,
+				order("snapshot", "bid", bidID, "add", trade.bid, trade.at),
+				order("snapshot", "ask", askID, "add", trade.ask, trade.at),
+			)
+		}
+
+		if index > 0 {
+			prior := tape[index-1]
+			level3 = append(level3,
+				order("update", "bid", "B"+string(rune('0'+index-1)), "delete", prior.bid, trade.at),
+				order("update", "bid", bidID, "add", trade.bid, trade.at),
+				order("update", "ask", "A"+string(rune('0'+index-1)), "delete", prior.ask, trade.at),
+				order("update", "ask", askID, "add", trade.ask, trade.at),
+			)
+		}
+
+		sequence++
+		measurement := data.NewMeasurement(1, "BTC/USD", "spot:trade", sequence, sequence,
 			&data.StringEntry{Key: "side", Value: trade.side})
-		m.At = trade.at
-		m.From = trade.at
-		out = append(out, m.Write(
+		measurement.At = trade.at
+		measurement.From = trade.at
+		trades = append(trades, measurement.Write(
 			data.NewMetric("price", trade.price, data.UnitPrice, data.TimescaleInstantaneous),
 			data.NewMetric("qty", trade.qty, data.UnitQuantity, data.TimescaleInstantaneous),
+			data.NewExactMetric("touch_bid", decimal.NewFromFloat64(trade.bid), data.UnitPrice, data.TimescaleInstantaneous),
+			data.NewExactMetric("touch_ask", decimal.NewFromFloat64(trade.ask), data.UnitPrice, data.TimescaleInstantaneous),
 		))
 	}
 
-	return out
+	return trades, level3
 }
 
 /*
@@ -53,15 +112,17 @@ func honestCVD(tape []tapeTrade, corrupt func(index int, values map[string]float
 		if index > 0 {
 			prior := tape[index-1]
 			dt := trade.at.Sub(prior.at).Seconds()
-			values["response_midpoint:at"] = trade.price
-			values["response_midpoint:from"] = prior.price
-			values["midpoint_log_return"] = math.Log(trade.price / prior.price)
+			values["response_midpoint:at"] = trade.midpoint()
+			values["response_midpoint:from"] = prior.midpoint()
+			values["midpoint_log_return"] = math.Log(trade.midpoint() / prior.midpoint())
 			values["trade_rate"] = 1 / dt
 			values["buy_notional_rate"], values["sell_notional_rate"] = 0, 0
 
 			if trade.side == "buy" {
 				values["buy_notional_rate"] = trade.price * trade.qty / dt
-			} else {
+			}
+
+			if trade.side == "sell" {
 				values["sell_notional_rate"] = trade.price * trade.qty / dt
 			}
 		}
@@ -85,20 +146,46 @@ func honestCVD(tape []tapeTrade, corrupt func(index int, values map[string]float
 	return out
 }
 
-func TestTruthfulnessAudit(t *testing.T) {
-	Convey("Given a stored trade tape", t, func() {
+func TestAnalyzeTruthfulness(t *testing.T) {
+	Convey("Given a stored trade tape and the level3 tape its touches came from", t, func() {
 		tape := truthTape(time.Unix(1_800_000_000, 0))
-		trades := storedTrades(tape)
+		trades, level3 := storedTape(tape)
 
 		Convey("cvd frames that match the tape are VALID", func() {
-			report := AnalyzeTruthfulness(trades, honestCVD(tape, nil))
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, nil))
 			So(report.Status, ShouldEqual, VerdictValid)
 			So(report.ViolationsCount, ShouldEqual, 0)
+			So(report.Comparisons["level3_replay"], ShouldEqual, 3)
+			So(report.Comparisons["trade_touch"], ShouldEqual, 3)
 			So(report.Comparisons["trade_rate"], ShouldEqual, 2)
+			So(report.Comparisons["response_midpoint:at"], ShouldEqual, 2)
+			So(report.Comparisons["response_midpoint:from"], ShouldEqual, 1)
+			So(report.Comparisons["midpoint_log_return"], ShouldEqual, 2)
+		})
+
+		Convey("a touch the stored level3 tape does not rebuild is a breach", func() {
+			stamped := truthTape(time.Unix(1_800_000_000, 0))
+			stamped[1].bid = 100.5
+			stampedTrades, _ := storedTape(stamped)
+
+			report := AnalyzeTruthfulness(t.Context(), stampedTrades, level3, honestCVD(stamped, nil))
+			So(report.ViolationsByCheck["trade_touch"], ShouldEqual, 1)
+			So(report.Passed, ShouldBeFalse)
+		})
+
+		Convey("a response priced on the trade instead of the book midpoint is a breach", func() {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
+				if index == 1 {
+					values["response_midpoint:at"] = tape[1].price
+				}
+				return true
+			}))
+			So(report.ViolationsByCheck["response_midpoint:at"], ShouldEqual, 1)
+			So(report.Passed, ShouldBeFalse)
 		})
 
 		Convey("a rate over an invented one-second interval is a breach", func() {
-			report := AnalyzeTruthfulness(trades, honestCVD(tape, func(index int, values map[string]float64) bool {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
 				if index == 1 {
 					values["trade_rate"] = 1
 				}
@@ -108,19 +195,33 @@ func TestTruthfulnessAudit(t *testing.T) {
 			So(report.ViolationsByCheck["trade_rate"], ShouldEqual, 1)
 		})
 
-		Convey("a wrong previous price is a breach", func() {
-			report := AnalyzeTruthfulness(trades, honestCVD(tape, func(index int, values map[string]float64) bool {
+		Convey("a response that does not start at the previous frame's midpoint is a breach", func() {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
 				if index == 2 {
-					values["response_midpoint:from"] = 0
+					// A stale prior midpoint, internally consistent with its return.
+					values["response_midpoint:from"] = tape[0].midpoint()
+					values["midpoint_log_return"] = math.Log(tape[2].midpoint() / tape[0].midpoint())
 				}
 				return true
 			}))
 			So(report.ViolationsByCheck["response_midpoint:from"], ShouldEqual, 1)
+			So(report.ViolationsByCheck["midpoint_log_return"], ShouldEqual, 0)
+			So(report.Passed, ShouldBeFalse)
+		})
+
+		Convey("a log return that is not ln(at / from) is a breach", func() {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
+				if index == 1 {
+					values["midpoint_log_return"] = math.Log(tape[1].price / tape[0].price)
+				}
+				return true
+			}))
+			So(report.ViolationsByCheck["midpoint_log_return"], ShouldEqual, 1)
 			So(report.Passed, ShouldBeFalse)
 		})
 
 		Convey("a trade without its cvd frame is a breach", func() {
-			report := AnalyzeTruthfulness(trades, honestCVD(tape, func(index int, _ map[string]float64) bool {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, _ map[string]float64) bool {
 				return index != 1
 			}))
 			So(report.ViolationsByCheck["cvd_coverage"], ShouldEqual, 1)
@@ -129,6 +230,7 @@ func TestTruthfulnessAudit(t *testing.T) {
 		Convey("rates on more than one of several same-time trades are a breach", func() {
 			sameTime := truthTape(time.Unix(1_800_000_000, 0))
 			sameTime[2].at = sameTime[1].at
+			sameTrades, sameLevel3 := storedTape(sameTime)
 			frames := honestCVD(sameTime, nil)
 			// honestCVD priced the third trade over a zero interval (+Inf);
 			// an invented interval makes it finite, as a dt default would.
@@ -139,7 +241,7 @@ func TestTruthfulnessAudit(t *testing.T) {
 				return true
 			})
 			So(len(frames), ShouldEqual, 3)
-			report := AnalyzeTruthfulness(storedTrades(sameTime), fixed)
+			report := AnalyzeTruthfulness(t.Context(), sameTrades, sameLevel3, fixed)
 			So(report.AmbiguousTrades, ShouldEqual, 2)
 			So(report.ViolationsByCheck["rate_without_elapsed_time"], ShouldEqual, 1)
 
@@ -151,11 +253,11 @@ func TestTruthfulnessAudit(t *testing.T) {
 				}
 				return true
 			})
-			So(AnalyzeTruthfulness(storedTrades(sameTime), honest).ViolationsByCheck["rate_without_elapsed_time"], ShouldEqual, 0)
+			So(AnalyzeTruthfulness(t.Context(), sameTrades, sameLevel3, honest).ViolationsByCheck["rate_without_elapsed_time"], ShouldEqual, 0)
 		})
 
 		Convey("metric names no producer emits leave checks unexercised, not passed", func() {
-			report := AnalyzeTruthfulness(trades, honestCVD(tape, func(_ int, values map[string]float64) bool {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(_ int, values map[string]float64) bool {
 				delete(values, "trade_rate")
 				return true
 			}))
@@ -164,7 +266,7 @@ func TestTruthfulnessAudit(t *testing.T) {
 		})
 
 		Convey("an out-of-bound signed net fraction is a breach", func() {
-			report := AnalyzeTruthfulness(trades, honestCVD(tape, func(index int, values map[string]float64) bool {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
 				if index == 0 {
 					values["signed_net_fraction"] = 2.5
 				}
@@ -176,7 +278,8 @@ func TestTruthfulnessAudit(t *testing.T) {
 		Convey("an invalid trade is a breach", func() {
 			bad := truthTape(time.Unix(1_800_000_000, 0))
 			bad[0].side = "invalid_side"
-			report := AnalyzeTruthfulness(storedTrades(bad), honestCVD(bad, nil))
+			badTrades, badLevel3 := storedTape(bad)
+			report := AnalyzeTruthfulness(t.Context(), badTrades, badLevel3, honestCVD(bad, nil))
 			So(report.ViolationsByCheck["trade_fields"], ShouldEqual, 1)
 		})
 	})

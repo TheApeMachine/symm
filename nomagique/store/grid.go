@@ -75,13 +75,30 @@ func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
 	var failed bool
 
 	pin := func(source string, frame *data.Measurement) {
-		if failed || frame == nil {
+		if failed {
+			return
+		}
+
+		if frame == nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[grid.RegionScores] nil measurement provided",
 				nil,
 			))
 
+			failed = true
+			return
+		}
+
+		switch source {
+		case "resonance", "manifold", "runtime:join":
+			errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"[grid] metric leakage detected",
+				nil,
+			), "source", source)
+
+			failed = true
 			return
 		}
 
@@ -111,11 +128,10 @@ func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
 		}
 
 		for _, metric := range metrics {
-			region, ok := grid.PinRegion(source, metric.Label)
+			region, isPinned := grid.PinRegion(source, metric.Label)
 
-			if !ok {
-				failed = true
-				return
+			if !isPinned {
+				continue
 			}
 
 			if !metric.Standardizable() {
@@ -136,9 +152,11 @@ func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
 		}
 	}
 
-	pin(measurement.Source, measurement)
-
 	for _, peer := range measurement.Peers() {
+		if failed {
+			break
+		}
+
 		pin(peer.Source, peer)
 	}
 
@@ -204,10 +222,65 @@ func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
 }
 
 /*
+Ready reports whether a symbol's measurement frame (and its peers) has completed
+warmup and is ready for grid evaluation: all pinned metric streams carry positive
+confidence and valid causal standardization scales.
+*/
+func (grid *Grid) Ready(measurement *data.Measurement) bool {
+	if measurement == nil {
+		return false
+	}
+
+	frames := measurement.Peers()
+
+	if len(frames) == 0 {
+		frames = []*data.Measurement{measurement}
+	}
+
+	hasPinned := false
+
+	for _, frame := range frames {
+		if frame == nil {
+			return false
+		}
+
+		metrics := frame.Dampen()
+
+		if len(metrics) == 0 {
+			return false
+		}
+
+		if frame.Confidence() <= 0 {
+			return false
+		}
+
+		for _, metric := range metrics {
+			_, isPinned := grid.PinRegion(frame.Source, metric.Label)
+
+			if !isPinned {
+				continue
+			}
+
+			if !metric.Standardizable() {
+				return false
+			}
+
+			hasPinned = true
+		}
+	}
+
+	return hasPinned
+}
+
+/*
 Observe returns the token of the brightest region ("R00" ... "R11"), or
 nil when no region received any evidenced metric.
 */
 func (grid *Grid) Observe(measurement *data.Measurement) []byte {
+	if !grid.Ready(measurement) {
+		return nil
+	}
+
 	return grid.RegionScores(measurement).Token()
 }
 
@@ -226,13 +299,13 @@ func (regions Regions) Token() []byte {
 /*
 PinRegion maps (source, metric) to its 12 confluence regions 0..11, returning
 the region and true when mapped, or 0 and false for solver sources (resonance,
-manifold) and any source it does not name.
+manifold, runtime:join) and any metric not part of the confluence grid.
 */
 func (grid *Grid) PinRegion(source, metric string) (uint8, bool) {
-	m := strings.ToLower(metric)
-	s := strings.ToLower(source)
+	lowerSource := strings.ToLower(source)
+	lowerMetric := strings.ToLower(metric)
 
-	switch s {
+	switch lowerSource {
 	case "resonance", "manifold", "runtime:join":
 		errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
@@ -241,73 +314,26 @@ func (grid *Grid) PinRegion(source, metric string) (uint8, bool) {
 		), "source", source, "metric", metric)
 
 		return 0, false
-
-	case "hawkes", "spot:level3":
-		if strings.Contains(m, ":buy") || strings.Contains(m, "buy_from_buy") {
-			return 0, true // R00: Buy Arrival Cascade
-		}
-
-		if strings.Contains(m, ":sell") || strings.Contains(m, "sell_from_sell") {
-			return 2, true // R02: Sell Arrival Cascade
-		}
-
-		return 1, true // R01: Clock Acceleration / Branching
-
-	case "pumpdump":
-		if strings.Contains(m, "positive") {
-			return 0, true // R00
-		}
-
-		if strings.Contains(m, "negative") {
-			return 2, true // R02
-		}
-
-		return 1, true // R01
-
-	case "cvd", "spot:trade":
-		if strings.Contains(m, ":buy") || (strings.Contains(m, "signed_net_fraction") && !strings.Contains(m, "divergence")) {
-			return 3, true // R03: Aggressive Taker Buy Inflow
-		}
-
-		if strings.Contains(m, ":sell") {
-			return 5, true // R05: Aggressive Taker Sell Outflow
-		}
-
-		return 4, true // R04: Gross Churn / Two-Sided Volume
-
-	case "depthflow", "toxicity", "liquidity":
-		// Asks retreating = Offer vacuum
-		if strings.Contains(m, ":ask") && (strings.Contains(m, "retreat") || strings.Contains(m, "removed")) {
-			return 6, true // R06: Ask Void
-		}
-
-		// Bids retreating = Waterfall
-		if strings.Contains(m, ":bid") && (strings.Contains(m, "retreat") || strings.Contains(m, "removed")) {
-			return 8, true // R08: Bid Pulling
-		}
-
-		return 7, true // R07: Spread / Friction / Turnover
-
-	case "morphology":
-		return 10, true // R10: Iceberg Absorption Wall / Geometric Distortion
-
-	case "sentiment", "correlation", "leadlag":
-		if strings.Contains(m, "advance") || strings.Contains(m, "consensus") {
-			return 9, true // R09: Cohort Advance
-		}
-
-		if strings.Contains(m, "decline") || strings.Contains(m, "dispersion") {
-			return 11, true // R11: Cohort Decline
-		}
-
-		return 10, true // R10
 	}
 
-	errnie.Error(errnie.Err(
-		errnie.Validation,
-		"[grid.PinRegion] metric not mapped to region",
-		nil,
-	), "source", source, "metric", metric)
+	sourcePins, hasSource := regionMetricPins[lowerSource]
+
+	if !hasSource {
+		return 0, false
+	}
+
+	if region, isPinned := sourcePins[lowerMetric]; isPinned {
+		return region, true
+	}
+
+	// Support test fixtures with indexed stems: stem_0, stem_1, etc.
+	if separatorIndex := strings.LastIndex(lowerMetric, "_"); separatorIndex > 0 {
+		stem := lowerMetric[:separatorIndex]
+
+		if region, isPinned := sourcePins[stem]; isPinned {
+			return region, true
+		}
+	}
 
 	return 0, false
 }

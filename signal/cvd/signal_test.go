@@ -8,10 +8,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -147,8 +144,9 @@ func TestSignalStep(t *testing.T) {
 		Convey("Every z-score is the observation against its own stream's earlier values only", func() {
 			for step, zscores := range observed {
 				for key, zscore := range zscores {
-					// Replay the stream in its standardization space (linear).
-					space := data.ScaleLinear
+					// Replay the stream in its unit's standardization space.
+					unit, _ := data.GetDimension("cvd", key)
+					space := unit.Scale()
 					var modulus core.LogModulus
 					history := make([]float64, 0, step)
 					current, currentDefined := 0.0, false
@@ -164,12 +162,6 @@ func TestSignalStep(t *testing.T) {
 						value, inSpace := raw, true
 
 						switch space {
-						case data.ScaleLog:
-							inSpace = raw > 0
-
-							if inSpace {
-								value = math.Log(raw)
-							}
 						case data.ScaleLogModulus:
 							value, inSpace = modulus.Step(raw)
 						}
@@ -321,58 +313,49 @@ func TestCVDUndefinedRates(t *testing.T) {
 	})
 }
 
-func seedBookTouch(books *broker.Book, symbol string, at time.Time, bid, ask float64) {
-	books.Update(&kraken.Level3{
-		Channel: "level3",
-		Type:    "snapshot",
-		Data: []kraken.Level3Data{{
-			Symbol: symbol,
-			Bids: []kraken.Level3Order{{
-				OrderID: "bid-1", LimitPrice: decimal.NewFromFloat64(bid), OrderQty: decimal.NewFromFloat64(10),
-				Timestamp: at, Event: "add",
-			}},
-			Asks: []kraken.Level3Order{{
-				OrderID: "ask-1", LimitPrice: decimal.NewFromFloat64(ask), OrderQty: decimal.NewFromFloat64(10),
-				Timestamp: at, Event: "add",
-			}},
-		}},
-	})
+/*
+stampedTrade builds a stored trade carrying the touch ingress stamps onto it
+at its sequence number; a zero bid leaves it unstamped, as a trade on an
+unseeded or diverged book is.
+*/
+func stampedTrade(symbol, side string, price, qty float64, at time.Time, bid, ask float64) *data.Measurement {
+	measurement := data.NewMeasurement(
+		at.UnixNano(),
+		symbol,
+		"spot:trade",
+		system.SeqIdx.Add(1),
+		system.Tick.Add(1),
+		&data.StringEntry{Key: "side", Value: side},
+	)
+	measurement.At = at
+	measurement.From = at
+
+	metrics := []*data.Metric{
+		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
+		data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
+	}
+
+	if bid > 0 {
+		metrics = append(metrics,
+			data.NewExactMetric("touch_bid", decimal.NewFromFloat64(bid), data.UnitPrice, data.TimescaleInstantaneous),
+			data.NewExactMetric("touch_ask", decimal.NewFromFloat64(ask), data.UnitPrice, data.TimescaleInstantaneous),
+		)
+	}
+
+	return measurement.Write(metrics...)
 }
 
 func TestCVDSignal_BookMidpointResponse(t *testing.T) {
-	Convey("Given a CVD signal wired to order book touch", t, func() {
-		books := broker.NewBook(t.Context(), spot.NewNormalizer())
-		signal := NewSignal(t.Context(), books)
+	Convey("Given a CVD signal stepping trades stamped with the book touch", t, func() {
+		signal := NewSignal(t.Context())
 		signal.Transition(runtime.READY)
 		now := time.Now()
 
-		makeTrade := func(side string, price, qty float64, at time.Time) *data.Measurement {
-			measurement := data.NewMeasurement(
-				now.UnixNano(),
-				"BTC/USD",
-				"spot:trade",
-				system.SeqIdx.Add(1),
-				system.Tick.Add(1),
-				&data.StringEntry{Key: "side", Value: side},
-			)
-			measurement.At = at
-			measurement.From = at
-			measurement.Write(
-				data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
-				data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
-			)
-			return measurement
-		}
-
 		Convey("When trades bounce across the spread while quote midpoint does not move", func() {
-			seedBookTouch(books, "BTC/USD", now, 99.0, 101.0)
-
-			trade1 := makeTrade("buy", 101.0, 1.0, now)
-			res1 := signal.Step(trade1)
+			res1 := signal.Step(stampedTrade("BTC/USD", "buy", 101.0, 1.0, now, 99.0, 101.0))
 			So(res1, ShouldNotBeNil)
 
-			trade2 := makeTrade("sell", 99.0, 1.0, now.Add(time.Second))
-			res2 := signal.Step(trade2)
+			res2 := signal.Step(stampedTrade("BTC/USD", "sell", 99.0, 1.0, now.Add(time.Second), 99.0, 101.0))
 			So(res2, ShouldNotBeNil)
 
 			entry := data.Pull(res2.Read("midpoint_log_return"))
@@ -387,39 +370,21 @@ func TestCVDSignal_BookMidpointResponse(t *testing.T) {
 		})
 
 		Convey("When quote midpoint moves while trade execution price is identical", func() {
-			seedBookTouch(books, "ETH/USD", now, 99.0, 101.0)
-			signalEth := NewSignal(t.Context(), books)
-			signalEth.Transition(runtime.READY)
-
-			makeEthTrade := func(side string, price, qty float64, at time.Time) *data.Measurement {
-				m := data.NewMeasurement(
-					now.UnixNano(),
-					"ETH/USD",
-					"spot:trade",
-					system.SeqIdx.Add(1),
-					system.Tick.Add(1),
-					&data.StringEntry{Key: "side", Value: side},
-				)
-				m.At, m.From = at, at
-				m.Write(
-					data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
-					data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
-				)
-				return m
-			}
-
-			t1 := makeEthTrade("buy", 100.0, 1.0, now)
-			signalEth.Step(t1)
-
-			seedBookTouch(books, "ETH/USD", now.Add(time.Second), 101.0, 103.0)
-
-			t2 := makeEthTrade("buy", 100.0, 1.0, now.Add(time.Second))
-			res2 := signalEth.Step(t2)
+			signal.Step(stampedTrade("ETH/USD", "buy", 100.0, 1.0, now, 99.0, 101.0))
+			res2 := signal.Step(stampedTrade("ETH/USD", "buy", 100.0, 1.0, now.Add(time.Second), 101.0, 103.0))
 
 			entry := data.Pull(res2.Read("midpoint_log_return"))
 			So(entry, ShouldNotBeNil)
 			So(entry.Metric, ShouldNotBeNil)
 			So(entry.Metric.Raw, ShouldAlmostEqual, math.Log(102.0/100.0), 1e-12)
+		})
+
+		Convey("When a trade carries no touch, it has no midpoint response", func() {
+			signal.Step(stampedTrade("SOL/USD", "buy", 100.0, 1.0, now, 99.0, 101.0))
+			res2 := signal.Step(stampedTrade("SOL/USD", "buy", 100.0, 1.0, now.Add(time.Second), 0, 0))
+
+			So(data.Pull(res2.Read("response_midpoint:at")), ShouldBeNil)
+			So(data.Pull(res2.Read("midpoint_log_return")), ShouldBeNil)
 		})
 	})
 }

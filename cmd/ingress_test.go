@@ -78,7 +78,7 @@ func TestHandleTrade(t *testing.T) {
 			}`)
 
 			invoked := false
-			err := handleTrade(tradeJSON, 100, price, nil, storeTee, "public", func() {
+			err := handleTrade(tradeJSON, 100, price, book, nil, storeTee, "public", func() {
 				invoked = true
 			})
 
@@ -93,7 +93,7 @@ func TestHandleTrade(t *testing.T) {
 		})
 
 		Convey("an unprocessable trade frame returns an error", func() {
-			err := handleTrade([]byte(`invalid json`), 100, price, nil, storeTee, "public", nil)
+			err := handleTrade([]byte(`invalid json`), 100, price, book, nil, storeTee, "public", nil)
 			So(err, ShouldNotBeNil)
 		})
 
@@ -112,7 +112,7 @@ func TestHandleTrade(t *testing.T) {
 					}
 				]
 			}`)
-			err := handleTrade(badTrade, 100, price, nil, storeTee, "public", nil)
+			err := handleTrade(badTrade, 100, price, book, nil, storeTee, "public", nil)
 			So(err, ShouldNotBeNil)
 		})
 	})
@@ -206,12 +206,12 @@ func TestTeeOf(t *testing.T) {
 		})
 
 		Convey("the ingress handlers skip it instead of pushing into a nil tee", func() {
-			So(func() { _ = handleTrade(trade, 100, price, nil, teeOf(missing), "public", nil) }, ShouldNotPanic)
+			So(func() { _ = handleTrade(trade, 100, price, book, nil, teeOf(missing), "public", nil) }, ShouldNotPanic)
 			So(func() { _ = handleLevel3(level3, 100, book, teeOf(missing), "public") }, ShouldNotPanic)
 		})
 
 		Convey("passing the nil pointer directly is the crash teeOf prevents", func() {
-			So(func() { _ = handleTrade(trade, 101, price, nil, missing, "public", nil) }, ShouldPanic)
+			So(func() { _ = handleTrade(trade, 101, price, book, nil, missing, "public", nil) }, ShouldPanic)
 		})
 	})
 }

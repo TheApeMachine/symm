@@ -26,6 +26,10 @@ type Level3Data struct {
 	Checksum  uint32        `json:"checksum"`
 	Bids      []Level3Order `json:"bids"`
 	Asks      []Level3Order `json:"asks"`
+	// Sequence is the first ingress sequence number of this entry's orders,
+	// bids then asks, taken by the book once the entry is applied. Zero means
+	// the book did not accept the entry.
+	Sequence int64 `json:"-"`
 }
 
 type Level3Order struct {

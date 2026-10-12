@@ -273,7 +273,15 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 		return nil, errnie.Error(cvdErr)
 	}
 
-	truthfulness := AnalyzeTruthfulness(trades, cvdFrames)
+	// The level3 tape from the epoch start rebuilds the book every trade was
+	// stamped from, beginning at the subscription snapshot.
+	level3, level3Err := loadSampleStream(ctx, catalog, targetEpoch, "spot:level3", orderedTicks, allMeasurements)
+
+	if level3Err != nil {
+		return nil, errnie.Error(level3Err)
+	}
+
+	truthfulness := AnalyzeTruthfulness(ctx, trades, level3, cvdFrames)
 	errnie.Info(fmt.Sprintf("[audit] [Validation 2/4] Completed in %s: %s", time.Since(truthStart).Round(time.Millisecond), truthfulness.SummaryText))
 
 	// Validation 3: Causality & State Isolation

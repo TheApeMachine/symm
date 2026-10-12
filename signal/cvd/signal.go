@@ -6,9 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -120,7 +118,6 @@ type symbolState struct {
 	clock                  volumeclock.Clock
 	window                 window
 	lastAt                 time.Time
-	prevPrice              float64
 	prevMidpoint           float64
 	prevNetNotionalRate    float64
 	prevGrossNotionalRate  float64
@@ -136,17 +133,12 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookSource
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books ...broker.BookSource) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		states: make(map[string]*symbolState),
-	}
-
-	if len(books) > 0 {
-		signal.books = books[0]
 	}
 
 	signal.System = runtime.NewSystem(ctx, "cvd", signal)
@@ -219,28 +211,18 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	tradeGrossNotional := tradeBuyNotional + tradeSellNotional
 	tradeNetNotional := tradeBuyNotional - tradeSellNotional
 
-	var hasBook bool
-	var bestBid, bestAsk float64
+	// The response is priced on the book midpoint, (touch_bid + touch_ask) / 2,
+	// of the touch ingress stamped onto the trade at its sequence number: the
+	// book as it stood at this trade, not whatever the live book holds when
+	// this consumer runs. A trade stamped without a touch has no midpoint.
+	var midpoint float64
 
-	if signal.books != nil {
-		signal.books.Book(prior.Label, func(book *spotbook.Book) {
-			if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
-				return
-			}
-
-			bestBid = book.BestBid().Price.Float64()
-			bestAsk = book.BestAsk().Price.Float64()
-
-			if bestBid > 0 && bestAsk > 0 {
-				hasBook = true
-			}
-		})
-	}
-
-	midpoint := 0.0
+	bidEntry := data.Pull(prior.Read("touch_bid"))
+	askEntry := data.Pull(prior.Read("touch_ask"))
+	hasBook := bidEntry != nil && bidEntry.Metric != nil && askEntry != nil && askEntry.Metric != nil
 
 	if hasBook {
-		midpoint = (bestBid + bestAsk) / 2.0
+		midpoint = (bidEntry.Metric.Raw + askEntry.Metric.Raw) / 2.0
 	}
 
 	out := map[string]float64{}
@@ -335,7 +317,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	state.lastAt = prior.At
-	state.prevPrice = price
 
 	res := prior.Next(signal.Name(), out)
 

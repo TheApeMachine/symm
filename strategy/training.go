@@ -159,6 +159,10 @@ Step receives the live market Measurement, turns it into the symbol's region
 token, and advances that symbol's live token path.
 */
 func (training *Training) Step(prior *data.Measurement) *data.Measurement {
+	if !training.grid.Ready(prior) {
+		return prior.Next(training.Name(), nil)
+	}
+
 	regions := training.grid.RegionScores(prior)
 	next := prior.Next(training.Name(), regionMetrics(regions))
 

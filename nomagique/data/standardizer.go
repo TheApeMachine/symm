@@ -1,7 +1,6 @@
 package data
 
 import (
-	"math"
 	"sync"
 
 	"github.com/theapemachine/symm/nomagique/core"
@@ -76,12 +75,6 @@ func (state *standardizer) observe(raw float64, space Scale) (
 	defer state.mu.Unlock()
 
 	switch space {
-	case ScaleLog:
-		if raw <= 0 {
-			return 0, 0, 0, false
-		}
-
-		value = math.Log(raw)
 	case ScaleLogModulus:
 		if value, defined = state.modulus.Step(raw); !defined {
 			return 0, 0, 0, false

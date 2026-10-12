@@ -18,17 +18,18 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 	"golang.org/x/sync/errgroup"
 )
 
 type Book struct {
 	*runtime.System
-	pending    atomic.Pointer[map[string]struct{}]
-	seeded     chan struct{}
-	manager    *spot.BookManager
-	normalizer *spot.Normalizer
-	notify     atomic.Pointer[func(string, time.Time)]
-	resync     atomic.Pointer[func(string)]
+	pending     atomic.Pointer[map[string]struct{}]
+	seeded      chan struct{}
+	manager     *spot.BookManager
+	normalizer  *spot.Normalizer
+	notify      atomic.Pointer[func(string, time.Time)]
+	resync      atomic.Pointer[func(string)]
 	touch       atomic.Pointer[func([]kraken.Level3Touch)]
 	mutations   atomic.Pointer[func([]kraken.Level3Data)]
 	diverging   sync.Map
@@ -151,14 +152,24 @@ func (book *Book) symbolLock(symbol string) *sync.RWMutex {
 	return actual.(*sync.RWMutex)
 }
 
-func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
+/*
+readable reports whether symbol's local book may be read: seeded by its
+snapshot and not diverged from the venue.
+*/
+func (book *Book) readable(symbol string) bool {
 	if pendingPtr := book.pending.Load(); pendingPtr != nil {
 		if _, pending := (*pendingPtr)[symbol]; pending {
-			return
+			return false
 		}
 	}
 
-	if _, diverging := book.diverging.Load(symbol); diverging {
+	_, diverging := book.diverging.Load(symbol)
+
+	return !diverging
+}
+
+func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
+	if !book.readable(symbol) {
 		return
 	}
 
@@ -171,6 +182,58 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	if managed != nil {
 		read(managed)
 	}
+}
+
+/*
+Stamp takes the next ingress sequence number for an event on symbol under the
+symbol's book read lock and returns it with the executable touch the book held
+at that number. Level3 entries take their numbers under the same symbol's write
+lock once applied, so the touch is exactly the book built by every entry
+sequenced before the event: the book a SeqIdx-ordered replay of the stored tape
+rebuilds. An unseeded, diverged, missing, one-sided, or crossed book has no
+touch, and bid and ask are nil.
+*/
+func (book *Book) Stamp(symbol string) (sequence int64, bid *decimal.Decimal, ask *decimal.Decimal) {
+	symbolLock := book.symbolLock(symbol)
+	symbolLock.RLock()
+	defer symbolLock.RUnlock()
+
+	sequence = system.SeqIdx.Add(1)
+
+	if !book.readable(symbol) {
+		return sequence, nil, nil
+	}
+
+	bidLevel, askLevel, defined := Touch(book.manager.GetBook(symbol))
+
+	if !defined {
+		return sequence, nil, nil
+	}
+
+	return sequence, bidLevel.Price.Copy(), askLevel.Price.Copy()
+}
+
+/*
+Touch is a book's executable top: the best bid and best ask, both priced and
+the bid strictly below the ask. A one-sided or crossed book has no touch: there
+is no price at which both sides could trade.
+*/
+func Touch(managed *spotbook.Book) (bid *spotbook.Level, ask *spotbook.Level, defined bool) {
+	if managed == nil {
+		return nil, nil, false
+	}
+
+	bid, ask = managed.BestBid(), managed.BestAsk()
+
+	if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
+		return nil, nil, false
+	}
+
+	if bid.Price.Sign() <= 0 || ask.Price.Sign() <= 0 || bid.Price.Cmp(ask.Price) >= 0 {
+		return nil, nil, false
+	}
+
+	return bid, ask, true
 }
 
 func (book *Book) Create(symbol string, depth int) {
@@ -554,6 +617,15 @@ func (book *Book) apply(
 				}
 			}
 
+			// The entry's orders take their ingress sequence numbers while the
+			// write lock still holds the book they produced, so no event
+			// stamped under the read lock can fall between applying the entry
+			// and numbering it.
+			if orders := int64(len(data.Bids) + len(data.Asks)); orders > 0 {
+				data.Sequence = system.SeqIdx.Add(orders) - orders + 1
+				payload.Data[index].Sequence = data.Sequence
+			}
+
 			return nil
 		}()
 
@@ -583,100 +655,86 @@ func (book *Book) SetMutations(mutations func([]kraken.Level3Data)) {
 }
 
 /*
-ApplyMeasurement updates the book from a persisted Level-3 tape measurement.
-It decodes the order mutation and mutates the internal SDK book.
+ApplyFrame replays one stored Level3 entry: the order measurements ingress
+stored for one accepted venue entry of one symbol, type, and checksum. They are
+applied as one payload through Update, so the venue checksum is verified once,
+after the entry's last order, exactly as it was live. A stored tape that does
+not reproduce the venue checksum is an error.
 */
-func (book *Book) ApplyMeasurement(measurement *data.Measurement) error {
-	if book == nil || measurement == nil {
-		return nil
+func (book *Book) ApplyFrame(frame []*data.Measurement) error {
+	if len(frame) == 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "[book] empty level3 frame", nil,
+		))
 	}
 
-	orderID := measurement.Meta("order_id")
+	head := frame[0]
+	checksum, err := strconv.ParseUint(head.Meta("checksum"), 10, 32)
 
-	if orderID == "" {
-		return nil
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "[book] level3 frame checksum unreadable", err,
+		))
 	}
 
-	side := measurement.Meta("side")
-	event := measurement.Meta("event")
-	orderType := measurement.Meta("type")
-
-	if orderType == "" {
-		orderType = "update"
+	entry := kraken.Level3Data{
+		Symbol:    head.Label,
+		Type:      head.Meta("type"),
+		Timestamp: head.At,
+		Checksum:  uint32(checksum),
+		Bids:      []kraken.Level3Order{},
+		Asks:      []kraken.Level3Order{},
 	}
 
-	var priceDec *decimal.Decimal
-
-	if pMetric := data.Pull(measurement.Read("limit_price")); pMetric.Err == nil {
-		if pMetric.Metric.Exact != nil {
-			priceDec = pMetric.Metric.Exact
+	for _, measurement := range frame {
+		if measurement.Label != head.Label ||
+			measurement.Meta("type") != entry.Type ||
+			measurement.Meta("checksum") != head.Meta("checksum") {
+			return errnie.Error(errnie.Err(
+				errnie.Validation, "[book] level3 frame mixes symbols, types, or checksums", nil,
+			))
 		}
 
-		if priceDec == nil && pMetric.Metric.Raw > 0 {
-			priceDec = decimal.NewFromFloat64(pMetric.Metric.Raw)
-		}
-	}
-
-	var qtyDec *decimal.Decimal
-
-	if qMetric := data.Pull(measurement.Read("order_qty")); qMetric.Err == nil {
-		if qMetric.Metric.Exact != nil {
-			qtyDec = qMetric.Metric.Exact
+		order := kraken.Level3Order{
+			OrderID:    measurement.Meta("order_id"),
+			Event:      measurement.Meta("event"),
+			Timestamp:  measurement.At,
+			LimitPrice: storedExact(measurement, "limit_price"),
+			OrderQty:   storedExact(measurement, "order_qty"),
 		}
 
-		if qtyDec == nil && qMetric.Metric.Raw >= 0 {
-			qtyDec = decimal.NewFromFloat64(qMetric.Metric.Raw)
-		}
-	}
-
-	var checksum uint32
-
-	if cStr := measurement.Meta("checksum"); cStr != "" {
-		if val, err := strconv.ParseUint(cStr, 10, 32); err == nil {
-			checksum = uint32(val)
-		}
-	}
-
-	if checksum == 0 {
-		if cMetric := data.Pull(measurement.Read("checksum")); cMetric.Err == nil {
-			checksum = uint32(cMetric.Metric.Raw)
+		switch measurement.Meta("side") {
+		case "bid":
+			entry.Bids = append(entry.Bids, order)
+		case "ask":
+			entry.Asks = append(entry.Asks, order)
+		default:
+			return errnie.Error(errnie.Err(
+				errnie.Validation, "[book] stored level3 order has no side", nil,
+			))
 		}
 	}
 
-	order := kraken.Level3Order{
-		OrderID:    orderID,
-		LimitPrice: priceDec,
-		OrderQty:   qtyDec,
-		Timestamp:  measurement.At,
-		Event:      event,
-	}
-
-	bids := []kraken.Level3Order{}
-	asks := []kraken.Level3Order{}
-
-	if side == "bid" {
-		bids = append(bids, order)
-	}
-
-	if side == "ask" {
-		asks = append(asks, order)
-	}
-
-	payload := &kraken.Level3{
+	return book.Update(&kraken.Level3{
 		Channel: "level3",
-		Type:    orderType,
-		Data: []kraken.Level3Data{
-			{
-				Symbol:    measurement.Label,
-				Bids:      bids,
-				Asks:      asks,
-				Checksum:  checksum,
-				Timestamp: measurement.At,
-			},
-		},
+		Type:    entry.Type,
+		Data:    []kraken.Level3Data{entry},
+	})
+}
+
+/*
+storedExact returns the venue's exact decimal for key as ingress stored it. The
+checksum is computed over the venue's digits, so a float reconstruction would
+not reproduce it.
+*/
+func storedExact(measurement *data.Measurement, key string) *decimal.Decimal {
+	entry := data.Pull(measurement.Read(key))
+
+	if entry == nil || entry.Metric == nil {
+		return nil
 	}
 
-	return book.Update(payload)
+	return entry.Metric.Exact
 }
 
 /*
@@ -688,19 +746,13 @@ price at which both sides could trade, and reporting one would put a number
 into the price series that the market never offered.
 */
 func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data, touches *[]kraken.Level3Touch) {
-	if symbolBook == nil {
-		return
-	}
-	bid, ask := symbolBook.BestBid(), symbolBook.BestAsk()
+	bid, ask, defined := Touch(symbolBook)
 
-	if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
+	if !defined {
 		return
 	}
+
 	bidPrice, askPrice := bid.Price.Float64(), ask.Price.Float64()
-
-	if bidPrice <= 0 || askPrice <= 0 || bidPrice >= askPrice {
-		return
-	}
 
 	if val, seen := book.lastTouch.Load(data.Symbol); seen {
 		previous := val.([2]float64)
