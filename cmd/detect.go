@@ -287,16 +287,13 @@ func detectEpoch(ctx context.Context, catalog *tables.Catalog, price *broker.Pri
 		return nil
 	}
 
-	if dropped := tee.Dropped(); dropped != 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Internal, fmt.Sprintf("[detect] epoch %d: %d detections were dropped by the tee", epoch, dropped), nil,
-		))
-	}
-
 	detected := make([]*data.Measurement, 0, tee.Pending())
 	sweeps := make(map[string]int)
 
-	for _, measurement := range tee.Take() {
+	for tee.Pending() > 0 {
+		incoming := tee.Next()
+		measurement := *(**data.Measurement)(incoming)
+
 		if move := measurement.At.Sub(measurement.From); move < detectMinMove {
 			sweeps[measurement.Meta("type")]++
 

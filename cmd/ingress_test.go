@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -86,7 +87,7 @@ func TestHandleTrade(t *testing.T) {
 			So(invoked, ShouldBeTrue)
 			So(storeTee.Pending(), ShouldEqual, 1)
 
-			measurement := storeTee.Pop()
+			measurement := *(**data.Measurement)(storeTee.Next())
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Source, ShouldEqual, "spot:trade")
 			So(measurement.Label, ShouldEqual, "BTC/USD")
@@ -153,7 +154,7 @@ func TestHandleLevel3(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(storeTee.Pending(), ShouldEqual, 1)
 
-			measurement := storeTee.Pop()
+			measurement := *(**data.Measurement)(storeTee.Next())
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Source, ShouldEqual, "spot:level3")
 			So(measurement.Label, ShouldEqual, "BTC/USD")

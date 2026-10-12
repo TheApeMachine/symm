@@ -27,6 +27,10 @@ func (tee *testTee) Close() error {
 	return nil
 }
 
+func (tee *testTee) Pending() int {
+	return len(tee.pushed)
+}
+
 func TestBalance(t *testing.T) {
 	Convey("Given a Balance instance with a multi-asset wallet", t, func() {
 		tee := &testTee{}

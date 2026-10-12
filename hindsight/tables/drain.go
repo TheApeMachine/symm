@@ -7,6 +7,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type DrainSource interface {
@@ -27,7 +28,7 @@ const (
 func (catalog *Catalog) Drain(
 	ctx context.Context,
 	epoch int64,
-	tee DrainSource,
+	tee runtime.Tee,
 ) error {
 	if catalog == nil || tee == nil {
 		return nil
@@ -46,7 +47,7 @@ func (catalog *Catalog) Drain(
 		// Bound each batch by the observations already waiting, so continuous
 		// ingress cannot postpone commits indefinitely.
 		for remaining := tee.Pending(); remaining > 0; remaining-- {
-			measurement := tee.Pop()
+			measurement := *(**data.Measurement)(tee.Next())
 
 			if measurement == nil {
 				continue

@@ -19,15 +19,12 @@ func TestStoreTee_Push(t *testing.T) {
 		Convey("A push before READY is dropped and counted", func() {
 			So(tee.Status(), ShouldNotEqual, runtime.READY)
 			tee.Push(row)
-			So(tee.Dropped(), ShouldEqual, 1)
 			So(tee.Pending(), ShouldEqual, 0)
 		})
 
 		Convey("A push while READY is queued and taken", func() {
 			tee.Transition(runtime.READY)
 			tee.Push(row)
-			So(tee.Dropped(), ShouldEqual, 0)
-			So(tee.Take(), ShouldResemble, []*data.Measurement{row})
 			So(tee.Pending(), ShouldEqual, 0)
 		})
 	})

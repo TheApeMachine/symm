@@ -176,7 +176,7 @@ func popMeasurement(storeTee *hindsight.StoreTee) *data.Measurement {
 		return nil
 	}
 
-	return storeTee.Pop()
+	return *(**data.Measurement)(storeTee.Next())
 }
 
 /*
