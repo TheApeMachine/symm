@@ -82,12 +82,12 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 
 	sb.WriteString("### Stage 1: Observed metric population\n\n")
 	sb.WriteString(fmt.Sprintf(
-		"- Raw named series: `%d` (varying `%d`, constant `%d`)\n"+
-			"- Canonical grid cells: `%d` (varying `%d`, constant `%d`)\n"+
+		"- Raw named series: `%d` (varying `%d`, constant `%d`, warming `%d`)\n"+
+			"- Canonical grid cells: `%d` (varying `%d`, constant `%d`, warming `%d`)\n"+
 			"- High-correlation canonical pairs shown by the current reference filter: `%d`\n\n",
 		report.Vitality.RawProducerMetrics, report.Vitality.RawHealthyMetrics,
-		report.Vitality.RawDeadMetrics, report.Vitality.CanonicalGridCells,
-		report.Vitality.CanonicalHealthyCells, report.Vitality.CanonicalDeadCells,
+		report.Vitality.RawDeadMetrics, report.Vitality.RawWarmingMetrics, report.Vitality.CanonicalGridCells,
+		report.Vitality.CanonicalHealthyCells, report.Vitality.CanonicalDeadCells, report.Vitality.CanonicalWarmingCells,
 		len(report.Vitality.RedundantPairs),
 	))
 

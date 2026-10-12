@@ -348,12 +348,12 @@ func observeAuditToken(grid *store.Grid, sym string, tick int64, signals []*data
 	train = train.Write()
 
 	tokenBytes := grid.Observe(train)
+	tok := ""
 
-	if len(tokenBytes) == 0 {
-		return ""
+	if len(tokenBytes) > 0 {
+		tok = string(tokenBytes)
 	}
 
-	tok := string(tokenBytes)
 	auditTokenCache.Store(key, tok)
 	return tok
 }
@@ -482,7 +482,12 @@ func archivedIntervalTokens(
 		key := auditTokenKey{symbol: symbol, tick: tick}
 
 		if cached, ok := auditTokenCache.Load(key); ok {
-			result[tick] = cached.(string)
+			tok := cached.(string)
+
+			if len(tok) > 0 {
+				result[tick] = tok
+			}
+
 			continue
 		}
 

@@ -149,16 +149,34 @@ def plot_stage0_contract(report, out_dir):
     contract = report.get('contract', {})
     breaches = contract.get('breaches') or []
     total_checked = contract.get('total_metrics_checked', 0)
+    norm = contract.get('metric_norm', {})
+    state = contract.get('measurement_state', {})
+    is_passed = contract.get('passed', False)
+
+    unstandardized = norm.get('unstandardized_mature_breaches', 0)
+    z_breaches = norm.get('z_magnitude_breaches', 0)
+    norm_breaches = norm.get('normalization_breaches', 0)
+    std_breaches = norm.get('standardization_breaches', 0)
+    total_norm_breaches = unstandardized + z_breaches + norm_breaches + std_breaches
+
+    state_passed = state.get('passed', True)
+    worm_breaches = state.get('worm_id_breaches', 0)
+    coherence_breaches = state.get('coherence_breaches', 0)
+    maturity_breaches = state.get('maturity_breaches', 0)
+    energy_breaches = state.get('energy_breaches', 0)
+    total_state_breaches = worm_breaches + coherence_breaches + maturity_breaches + energy_breaches
+
+    total_failures = len(breaches) + total_norm_breaches + total_state_breaches
 
     fig, ax = plt.subplots(figsize=(14, 8))
 
-    if not breaches:
-        ax.text(0.5, 0.5, f"[OK] All {total_checked} Metrics Comply with Declared Contracts\nZero values emitted outside stated mathematical domains.",
+    if is_passed and total_failures == 0:
+        ax.text(0.5, 0.5, f"[OK] All {total_checked} Metrics Comply with Declared Contracts\nZero values emitted outside stated mathematical domains.\nAll mature streams standardized; WORM & measurement state verified.",
                 ha='center', va='center', fontsize=12, color='#2ea043', transform=ax.transAxes)
         status = "PASS"
         score = 1.0
         readout = f"0 Breaches across {total_checked} Metrics  |  Target: 0 Breaches (100% Compliant)"
-    else:
+    elif breaches:
         top_breaches = breaches[:15]
         labels = [f"{b['metric']} ({b['declared_domain']})" for b in top_breaches]
         mins = [b['min_val'] for b in top_breaches]
@@ -185,13 +203,31 @@ def plot_stage0_contract(report, out_dir):
         ax.legend(loc='lower right', frameon=True, facecolor='#161b22', edgecolor='#30363d', fontsize=8.5)
 
         status = "BREACH"
-        score = max(0.0, 1.0 - len(breaches) / max(1, total_checked))
-        readout = f"{len(breaches)} Breaches found across {total_checked} Metrics  |  Target: 0 Breaches"
+        score = max(0.0, 1.0 - total_failures / max(1, total_checked))
+        readout = f"{len(breaches)} Domain Breaches, {total_norm_breaches} Norm, {total_state_breaches} State  |  Target: 0 Breaches"
+    else:
+        # No raw domain breaches, but norm or state failed!
+        status = "BREACH"
+        score = 0.0
+        details = []
+        if unstandardized > 0:
+            details.append(f"• Unstandardized Mature Stream Breaches: {unstandardized}")
+        if z_breaches > 0:
+            details.append(f"• Chebyshev Bound Outliers (|z| > rankBound): {z_breaches}")
+        if norm_breaches > 0 or std_breaches > 0:
+            details.append(f"• Normalization / Standardization Invariant Breaches: {norm_breaches + std_breaches}")
+        if not state_passed or total_state_breaches > 0:
+            details.append(f"• Measurement State / WORM Breaches: {total_state_breaches} (Coherence: {coherence_breaches}, WORM: {worm_breaches})")
+
+        error_msg = f"[STAGE 0 CONTRACT BREACH]\nMetric contracts or standardizations violated:\n\n" + "\n".join(details)
+        ax.text(0.5, 0.5, error_msg, ha='center', va='center', fontsize=11, color='#f85149', transform=ax.transAxes,
+                bbox=dict(boxstyle='round,pad=1', facecolor='#22272e', edgecolor='#f85149', alpha=0.9))
+        readout = f"CONTRACT BREACH: {total_norm_breaches} Norm Breaches, {total_state_breaches} State Breaches  |  Target: 0 Breaches"
 
     render_health_header(
         fig,
-        f'Stage 0: Metric Contract Integrity ({len(breaches)} Breaches Found)',
-        'Audits whether sensors strictly adhere to declared mathematical domains without clamping.',
+        f'Stage 0: Metric Contract Integrity ({total_failures} Breaches Found)',
+        'Audits whether sensors strictly adhere to declared mathematical domains, causal standardization, and WORM state.',
         status=status,
         health_score=score,
         readout=readout,

@@ -269,11 +269,9 @@ func TestGrid_Observe(t *testing.T) {
 
 			regions := grid.RegionScores(frame)
 
-			Convey("Scoring evaluates evidenced regions and emits the brightest region token", func() {
-				So(regions.HasEvidence, ShouldBeTrue)
-				So(regions.Winner, ShouldEqual, uint8(6))
-				So(regions.RunnerUp, ShouldEqual, uint8(9))
-				So(string(grid.Observe(frame)), ShouldEqual, "R06")
+			Convey("Scoring rejects partial region evidence and emits no token", func() {
+				So(regions.HasEvidence, ShouldBeFalse)
+				So(grid.Observe(frame), ShouldBeNil)
 			})
 		})
 

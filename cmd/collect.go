@@ -241,6 +241,7 @@ var collectCmd = &cobra.Command{
 			runsys.Transition(nmruntime.READY)
 		}
 
+
 		drainErrors := make(chan error, 1)
 
 		go func() {

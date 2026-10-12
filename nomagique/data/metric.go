@@ -65,10 +65,6 @@ func (metric *Metric) CleanLabel() string {
 		base = base[:atIndex]
 	}
 
-	if colonIndex := strings.IndexByte(base, ':'); colonIndex != -1 {
-		base = base[:colonIndex]
-	}
-
 	return base
 }
 

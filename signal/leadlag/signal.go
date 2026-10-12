@@ -63,11 +63,22 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if !found {
-		signal.Error(errnie.Err(errnie.Validation, "[leadlag] missing price", nil))
+		if prev, ok := signal.last[prior.Label]; ok && prev != nil {
+			return prev
+		}
+
+		if prior.Source == "spot:trade" {
+			signal.Error(errnie.Err(errnie.Validation, "[leadlag] missing price", nil))
+		}
+
 		return nil
 	}
 
 	if price <= 0 {
+		if prev, ok := signal.last[prior.Label]; ok && prev != nil {
+			return prev
+		}
+
 		return nil
 	}
 

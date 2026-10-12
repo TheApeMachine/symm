@@ -304,5 +304,36 @@ func TestAnalyzeTruthfulness(t *testing.T) {
 			report := AnalyzeTruthfulness(t.Context(), badTrades, badLevel3, honestCVD(bad, nil))
 			So(report.ViolationsByCheck["trade_fields"], ShouldEqual, 1)
 		})
+
+		Convey("a symbol with trades but completely missing cvd stream is a breach", func() {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, nil)
+			So(report.Status, ShouldEqual, VerdictBreach)
+			So(report.ViolationsByCheck["cvd_coverage"], ShouldEqual, len(tape))
+			So(report.Passed, ShouldBeFalse)
+		})
+
+		Convey("a midpoint log return with zero or missing from midpoint is a breach", func() {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
+				if index == 1 {
+					values["response_midpoint:from"] = 0
+				}
+				return true
+			}))
+			So(report.Status, ShouldEqual, VerdictBreach)
+			So(report.ViolationsByCheck["midpoint_log_return"], ShouldEqual, 1)
+			So(report.Passed, ShouldBeFalse)
+		})
+
+		Convey("a finite metric compared to positive infinity is a breach", func() {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
+				if index == 1 {
+					values["midpoint_log_return"] = math.Inf(1)
+				}
+				return true
+			}))
+			So(report.Status, ShouldEqual, VerdictBreach)
+			So(report.ViolationsByCheck["midpoint_log_return"], ShouldEqual, 1)
+			So(report.Passed, ShouldBeFalse)
+		})
 	})
 }

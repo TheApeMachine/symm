@@ -118,6 +118,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if snapshot == nil {
+		signal.mu.Lock()
+		state, exists := signal.states[prior.Label]
+		signal.mu.Unlock()
+
+		if exists && state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
 		return nil
 	}
 

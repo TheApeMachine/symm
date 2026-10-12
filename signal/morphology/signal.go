@@ -46,6 +46,9 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
+	stateKey := strconv.FormatInt(prior.Epoch, 10) + "/" + prior.Label
+	state := signal.states[stateKey]
+
 	// The shape is measured on the snapshot ingress stamped onto the trade at
 	// its sequence number: the book this trade happened against.
 	snapshot, err := broker.ReadSnapshot(prior)
@@ -56,6 +59,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if snapshot == nil {
+		if state != nil && state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
 		return nil
 	}
 
@@ -72,7 +79,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		asks = append(asks, level.Price.Float64(), level.Quantity.Float64())
 	}
 
-	stateKey := strconv.FormatInt(prior.Epoch, 10) + "/" + prior.Label
 	res, err := signal.Calculate(stateKey, bids, asks)
 	if err != nil {
 		signal.Error(errnie.Err(errnie.Internal, "[morphology] "+prior.Label+": calculation failed", err))
@@ -97,7 +103,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		out["morphology_change"] = res[6]
 	}
 
-	state := signal.states[stateKey]
 	var outMeas *data.Measurement
 
 	if state != nil && state.lastMeasurement != nil {

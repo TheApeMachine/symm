@@ -180,10 +180,12 @@ func BuildVerdicts(report *AuditReport) []StageVerdict {
 	t := report.Thresholds
 	verdicts := []StageVerdict{
 		{"0. Contracts", contractVerdict(report.Contract),
-			"declared hard domains on every observation; |z| <= rankBound(support)",
-			fmt.Sprintf("%d/%d series breach a domain (%d observations); %d z beyond rank bound",
+			"declared hard domains on every observation; |z| <= rankBound(support); valid state & mature rank support",
+			fmt.Sprintf("%d/%d domain breaches; %d unstandardized mature; %d z beyond bound; state pass=%t",
 				report.Contract.BreachingMetricsCount, report.Contract.TotalMetricsChecked,
-				report.Contract.TotalBreaches, report.Contract.MetricNorm.ZMagnitudeBreaches)},
+				report.Contract.MetricNorm.UnstandardizedMatureBreaches,
+				report.Contract.MetricNorm.ZMagnitudeBreaches,
+				report.Contract.MeasurementState.Passed)},
 		{"0.5 Timing", report.Timing.Status,
 			fmt.Sprintf("no At regression per (source, symbol); spikes > %.0fms on at most %.0f%%", t.SpikeLatencyMs, t.SpikeFraction*100),
 			fmt.Sprintf("%d inversions, %d spikes of %d", report.Timing.SequenceInversions, report.Timing.LatencySpikes, report.Timing.TotalChecked)},

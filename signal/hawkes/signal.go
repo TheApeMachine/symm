@@ -70,7 +70,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if side != "buy" && side != "sell" {
-		errnie.Warn(signal.Name() + ": trade without an explicit aggressor side; dropping event")
+		if prev, ok := signal.last[prior.Label]; ok && prev != nil {
+			return prev
+		}
+
+		if prior.Source == "spot:trade" {
+			errnie.Warn(signal.Name() + ": trade without an explicit aggressor side; dropping event")
+		}
+
 		return nil
 	}
 

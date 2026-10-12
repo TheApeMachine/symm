@@ -2,8 +2,6 @@ package ui
 
 import (
 	"context"
-	"sync/atomic"
-	"time"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -23,8 +21,7 @@ jitter from the consumer fast path and immediately release retained publications
 */
 type UITee struct {
 	*nmruntime.System
-	ingress atomic.Pointer[lf.Queue[*data.Measurement]]
-	egress  atomic.Pointer[lf.Queue[*[]byte]]
+	egress  *lf.Queue[*data.Measurement]
 	filters []func(
 		measurement *data.Measurement,
 	) bool
@@ -49,15 +46,12 @@ func NewUITee(
 
 	tee := &UITee{
 		filters: filters,
+		egress:  lf.NewQueue[*data.Measurement](),
 		route:   types.Route(),
 		symbol:  types.Focus(),
 	}
 
-	tee.ingress.Store(lf.NewQueue[*data.Measurement]())
-	tee.egress.Store(lf.NewQueue[*[]byte]())
-
 	tee.System = nmruntime.NewSystem(ctx, label, tee)
-	go tee.worker(tee.Context())
 	return tee
 }
 
@@ -82,10 +76,7 @@ func (tee *UITee) Push(measurement *data.Measurement) {
 		}
 	}
 
-	inQueue := tee.ingress.Load()
-	if inQueue != nil {
-		inQueue.Enqueue(measurement)
-	}
+	tee.egress.Enqueue(measurement)
 }
 
 /*
@@ -99,128 +90,24 @@ func (tee *UITee) Next() unsafe.Pointer {
 		return nil
 	}
 
-	outQueue := tee.egress.Load()
-	if outQueue == nil {
+	payload, ok := tee.egress.Dequeue()
+
+	if !ok {
 		return nil
 	}
 
-	payload, ok := outQueue.Dequeue()
+	encoded, err := types.EncodeMeasurements([]*data.Measurement{payload})
 
-	if !ok || payload == nil || len(*payload) == 0 {
+	if err != nil {
 		return nil
 	}
 
-	return unsafe.Pointer(payload)
-}
-
-/*
-IngressLength reports how many measurements are waiting in the ingress queue
-to be encoded by the background worker.
-*/
-func (tee *UITee) IngressLength() int {
-	if tee == nil {
-		return 0
-	}
-
-	inQueue := tee.ingress.Load()
-	if inQueue == nil {
-		return 0
-	}
-
-	return int(inQueue.Length())
-}
-
-/*
-EgressLength reports how many encoded FlatBuffer frames are queued waiting for
-client transmission.
-*/
-func (tee *UITee) EgressLength() int {
-	if tee == nil {
-		return 0
-	}
-
-	outQueue := tee.egress.Load()
-	if outQueue == nil {
-		return 0
-	}
-
-	return int(outQueue.Length())
+	return unsafe.Pointer(&encoded)
 }
 
 /*
 Pending returns the total backlog of un-transmitted items across ingress and egress.
 */
 func (tee *UITee) Pending() int {
-	return tee.IngressLength() + tee.EgressLength()
-}
-
-func (tee *UITee) worker(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			tee.switcheroo()
-
-			inQueue := tee.ingress.Load()
-			if inQueue == nil || inQueue.Length() == 0 {
-				time.Sleep(10 * time.Millisecond)
-				continue
-			}
-
-			for inQueue.Length() > 0 {
-				measurement, ok := inQueue.Dequeue()
-
-				if !ok {
-					break
-				}
-
-				dropped := false
-
-				for _, filter := range tee.filters {
-					if !filter(measurement) {
-						dropped = true
-						break
-					}
-				}
-
-				if dropped {
-					continue
-				}
-
-				payload, err := types.EncodeMeasurements(
-					[]*data.Measurement{measurement},
-				)
-
-				if err != nil {
-					tee.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"[tee] Failed to encode measurement",
-						err,
-					))
-					continue
-				}
-
-				buf := payload
-				outQueue := tee.egress.Load()
-				if outQueue != nil {
-					outQueue.Enqueue(&buf)
-				}
-			}
-		}
-	}
-}
-
-func (tee *UITee) switcheroo() {
-	currentRoute := types.Route()
-	currentFocus := types.Focus()
-
-	if currentRoute != tee.route || currentFocus != tee.symbol {
-		errnie.Info("[tee] swapping active queue routing for " + currentRoute + " / " + currentFocus)
-		tee.route = currentRoute
-		tee.symbol = currentFocus
-
-		tee.ingress.Store(lf.NewQueue[*data.Measurement]())
-		tee.egress.Store(lf.NewQueue[*[]byte]())
-	}
+	return int(tee.egress.Length())
 }

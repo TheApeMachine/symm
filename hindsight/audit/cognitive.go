@@ -1029,12 +1029,6 @@ func extractTriePhases(
 		}
 
 		if len(eventTokens) == 0 {
-			errnie.Error(errnie.Err(
-				errnie.NotFound,
-				"[audit.cognitive] zero event tokens for interval",
-				nil,
-			), "epoch", epoch, "symbol", det.Label, "startTick", startTick, "cTick", cTick)
-
 			tracker.Step(int64(detIndex + 1))
 			continue
 		}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -167,8 +168,9 @@ func AnalyzeContract(
 	passed := len(breaches) == 0 && normAudit.Passed && stateAudit.Passed
 
 	summaryText := fmt.Sprintf(
-		"Contract Integrity: %d source:metric series evaluated (%d breached domains). Norm/Std: %d audited (%d breaches, %d z beyond the Chebyshev bound). Measurements: %d audited (WORM/State passed: %t).",
-		len(stats), len(breaches), normAudit.TotalMetricsAudited, normAudit.NormalizationBreaches+normAudit.StandardizationBreaches,
+		"Contract Integrity: %d source:metric series evaluated (%d breached domains). Norm/Std: %d audited (%d mature, %d breaches [%d unstandardized mature], %d z beyond the Chebyshev bound). Measurements: %d audited (WORM/State passed: %t).",
+		len(stats), len(breaches), normAudit.TotalMetricsAudited, normAudit.MatureMetricsAudited,
+		normAudit.NormalizationBreaches+normAudit.StandardizationBreaches, normAudit.UnstandardizedMatureBreaches,
 		normAudit.ZMagnitudeBreaches,
 		stateAudit.TotalMeasurementsAudited, stateAudit.Passed,
 	)
@@ -192,12 +194,16 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 	maxAbsZBySource := make(map[string]float64)
 
 	totalAudited := 0
+	matureAudited := 0
+	unstandardizedMatureBreaches := 0
 	normBreaches := 0
 	stdBreaches := 0
 	saturatedCount := 0
 	sumZ := 0.0
 	sumZSq := 0.0
 	maxAbsZ := 0.0
+
+	streamCounts := make(map[string]int)
 
 	for _, meas := range measurements {
 		if meas == nil {
@@ -233,6 +239,25 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 			metric := entry.Metric
 			std := metric.Standardized
 			norm := metric.Normalized
+
+			streamKey := meas.Source + "|" + meas.Label + "|" + entry.Key
+			streamCounts[streamKey]++
+			streamCount := streamCounts[streamKey]
+
+			if streamCount > int(core.MinimumRankPrior) {
+				matureAudited++
+
+				if !metric.Standardizable() || metric.Support() < core.MinimumRankPrior {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"[audit.metric_norm] mature metric stream is unstandardizable or missing required rank support",
+						nil,
+					), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "streamCount", streamCount, "support", metric.Support())
+
+					stdBreaches++
+					unstandardizedMatureBreaches++
+				}
+			}
 
 			if math.IsNaN(std) || math.IsInf(std, 0) {
 				errnie.Error(errnie.Err(
@@ -322,23 +347,25 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 	}
 
 	summary := fmt.Sprintf(
-		"Metrics Norm/Std: %d audited. Mean z=%.3f (var=%.3f, max|z|=%.3g). Saturated: %.1f%%. Breaches: norm=%d, std=%d, z beyond rank bound=%d.",
-		totalAudited, meanZ, varZ, maxAbsZ, satFraction*100, normBreaches, stdBreaches, zBreaches,
+		"Metrics Norm/Std: %d audited (%d mature). Mean z=%.3f (var=%.3f, max|z|=%.3g). Saturated: %.1f%%. Breaches: norm=%d, std=%d (unstandardized mature=%d), z beyond rank bound=%d.",
+		totalAudited, matureAudited, meanZ, varZ, maxAbsZ, satFraction*100, normBreaches, stdBreaches, unstandardizedMatureBreaches, zBreaches,
 	)
 
 	return MetricNormAudit{
-		TotalMetricsAudited:     totalAudited,
-		NormalizationBreaches:   normBreaches,
-		StandardizationBreaches: stdBreaches,
-		MeanZScore:              meanZ,
-		VarianceZScore:          varZ,
-		MaxAbsoluteZ:            maxAbsZ,
-		SaturatedNormFraction:   satFraction,
-		ZMagnitudeBreaches:      zBreaches,
-		ZBreachesBySource:       zBreachesBySource,
-		MaxAbsZBySource:         maxAbsZBySource,
-		SummaryText:             summary,
-		Passed:                  normBreaches == 0 && stdBreaches == 0 && zBreaches == 0,
+		TotalMetricsAudited:          totalAudited,
+		MatureMetricsAudited:         matureAudited,
+		UnstandardizedMatureBreaches: unstandardizedMatureBreaches,
+		NormalizationBreaches:        normBreaches,
+		StandardizationBreaches:      stdBreaches,
+		MeanZScore:                   meanZ,
+		VarianceZScore:               varZ,
+		MaxAbsoluteZ:                 maxAbsZ,
+		SaturatedNormFraction:        satFraction,
+		ZMagnitudeBreaches:           zBreaches,
+		ZBreachesBySource:            zBreachesBySource,
+		MaxAbsZBySource:              maxAbsZBySource,
+		SummaryText:                  summary,
+		Passed:                       normBreaches == 0 && stdBreaches == 0 && zBreaches == 0,
 	}
 }
 
@@ -433,7 +460,7 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 		m := meas.Maturity()
 		conf := meas.Confidence()
 
-		if math.IsNaN(c) || math.IsInf(c, 0) || c < 0.0 || c > 1.0 {
+		if math.IsNaN(c) || math.IsInf(c, 0) || c < -1e-9 || c > 1.0+1e-9 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[audit.measurement_state] coherence out of bounds [0, 1]",
@@ -443,7 +470,7 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			coherenceBreaches++
 		}
 
-		if !math.IsNaN(c) && !math.IsInf(c, 0) && c >= 0.0 && c <= 1.0 {
+		if !math.IsNaN(c) && !math.IsInf(c, 0) && c >= -1e-9 && c <= 1.0+1e-9 {
 			coherences = append(coherences, c)
 		}
 
@@ -496,7 +523,7 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			energyBreaches++
 		}
 
-		if math.IsNaN(m) || math.IsInf(m, 0) || m < 0.0 || m > 1.0 {
+		if math.IsNaN(m) || math.IsInf(m, 0) || m < -1e-9 || m > 1.0+1e-9 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[audit.measurement_state] maturity out of bounds [0, 1]",
@@ -506,11 +533,11 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			maturityBreaches++
 		}
 
-		if !math.IsNaN(m) && !math.IsInf(m, 0) && m >= 0.0 && m <= 1.0 {
+		if !math.IsNaN(m) && !math.IsInf(m, 0) && m >= -1e-9 && m <= 1.0+1e-9 {
 			maturities = append(maturities, m)
 		}
 
-		if math.IsNaN(conf) || math.IsInf(conf, 0) || conf < 0.0 || conf > 1.0 {
+		if math.IsNaN(conf) || math.IsInf(conf, 0) || conf < -1e-9 || conf > 1.0+1e-9 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[audit.measurement_state] confidence out of bounds [0, 1]",
@@ -520,7 +547,7 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			confidenceBreaches++
 		}
 
-		if !math.IsNaN(conf) && !math.IsInf(conf, 0) && conf >= 0.0 && conf <= 1.0 {
+		if !math.IsNaN(conf) && !math.IsInf(conf, 0) && conf >= -1e-9 && conf <= 1.0+1e-9 {
 			confidences = append(confidences, conf)
 		}
 

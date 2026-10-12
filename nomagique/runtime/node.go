@@ -27,7 +27,6 @@ No StageInput. No reusable published measurement. No reset. No clone. No detache
 */
 type Consumer struct {
 	node      Node
-	source    string
 	published []*data.Measurement
 	mask      int64
 	capacity  int
@@ -48,10 +47,6 @@ func NewConsumer(
 		tees:      tees,
 	}
 
-	if sys, ok := node.(interface{ Name() string }); ok {
-		consumer.source = sys.Name()
-	}
-
 	return consumer
 }
 
@@ -61,7 +56,7 @@ func (consumer *Consumer) Step(prior *data.Measurement, seq int64) *data.Measure
 	returned := consumer.node.Step(prior)
 	consumer.published[slot] = returned
 
-	if len(consumer.tees) > 0 {
+	if len(consumer.tees) > 0 && (prior == nil || prior.Source != "spot:touch") {
 		for _, tee := range consumer.tees {
 			if tee != nil {
 				if returned != nil && len(returned.Peers()) > 0 {

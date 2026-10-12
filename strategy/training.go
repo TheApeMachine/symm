@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"path"
@@ -328,6 +329,39 @@ func (training *Training) actionForPrefix(prefix string) string {
 }
 
 /*
+resetPaperAndReload resets the Kraken paper account to its default state ($200, 0.8% fee)
+and reloads all stored prefix keys into memory.
+*/
+func (training *Training) resetPaperAndReload() {
+	errnie.Info("[training] paper account exhausted or below minimum order; resetting paper account and reloading prefixes...")
+
+	if err := broker.ResetPaperAccount(training.Context()); err != nil {
+		training.Error(errnie.Err(
+			errnie.IO,
+			"[training] failed to reset paper account",
+			err,
+		))
+
+		return
+	}
+
+	if err := training.ReloadKeys(training.Context()); err != nil && !errors.Is(err, tables.ErrBlobStorageUnconfigured) {
+		training.Error(errnie.Err(
+			errnie.IO,
+			"[training] failed to reload stored prefix keys after paper reset",
+			err,
+		))
+
+		return
+	}
+
+	errnie.Info(fmt.Sprintf(
+		"[training] paper account reset to default ($200, 0.8%% fee); reloaded %d prefix paths into memory",
+		len(training.keys),
+	))
+}
+
+/*
 act takes the matched action through the Desk when the position state admits
 it, and reports what happened.
 
@@ -338,7 +372,13 @@ func (training *Training) act(symbol, action string) string {
 	switch action {
 	case "enter":
 		cash := training.desk.Cash(system.Cfg.Market.QuoteCurrency)
-		if cash == nil {
+
+		if cash == nil || cash.Sign() <= 0 {
+			training.resetPaperAndReload()
+			cash = training.desk.Cash(system.Cfg.Market.QuoteCurrency)
+		}
+
+		if cash == nil || cash.Sign() <= 0 {
 			training.Error(errnie.Err(
 				errnie.NotAcceptable,
 				"[training] cash is unavailable for quote currency "+system.Cfg.Market.QuoteCurrency,
@@ -353,6 +393,19 @@ func (training *Training) act(symbol, action string) string {
 				system.Cfg.Risk.MaxFraction,
 			),
 		)
+
+		if err != nil {
+			training.resetPaperAndReload()
+			cash = training.desk.Cash(system.Cfg.Market.QuoteCurrency)
+
+			if cash != nil && cash.Sign() > 0 {
+				qty, err = training.price.Quantity(
+					symbol, cash.Mul(
+						system.Cfg.Risk.MaxFraction,
+					),
+				)
+			}
+		}
 
 		if err != nil {
 			training.Error(errnie.Err(

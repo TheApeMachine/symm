@@ -527,7 +527,7 @@ func ingestMetrics(
 
 	activeSymbols := make(map[string]struct{})
 	for sym, count := range symbolTickCounts {
-		if count >= int(core.MinimumPrior) || (symbol != "" && sym == symbol) {
+		if count >= int(core.MinimumRankPrior) || (symbol != "" && sym == symbol) {
 			activeSymbols[sym] = struct{}{}
 		}
 	}

@@ -153,14 +153,28 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
+	key := prior.Label + "@" + strconv.FormatInt(prior.Epoch, 10)
+	state, found := signal.states[key]
+
+	if !found {
+		state = &symbolState{}
+		signal.states[key] = state
+	}
+
 	side := prior.Meta("side")
 
 	if side != "buy" && side != "sell" {
-		errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"[signal.cvd] no side",
-			nil,
-		))
+		if state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
+		if prior.Source == "spot:trade" {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"[signal.cvd] no side",
+				nil,
+			))
+		}
 
 		return nil
 	}
@@ -169,6 +183,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	qtyEntry := data.Pull(prior.Read("qty"))
 
 	if priceEntry == nil || priceEntry.Metric == nil || qtyEntry == nil || qtyEntry.Metric == nil {
+		if state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
 		return nil
 	}
 
@@ -176,15 +194,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	qty := qtyEntry.Metric.Raw
 
 	if price <= 0 || qty <= 0 {
+		if state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
 		return nil
-	}
-
-	key := prior.Label + "@" + strconv.FormatInt(prior.Epoch, 10)
-	state, found := signal.states[key]
-
-	if !found {
-		state = &symbolState{}
-		signal.states[key] = state
 	}
 
 	// Rates need elapsed time since the symbol's previous trade that the venue

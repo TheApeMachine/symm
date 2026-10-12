@@ -270,9 +270,8 @@ var (
 			pumpdumpSignal := pumpdump.NewSignal(ctx)
 			sentimentSignal := sentiment.NewSignal(ctx)
 			toxicitySignal := toxicity.NewSignal(ctx)
-			resonanceSolver := resonance.NewSolver(
-				ctx, system.Cfg.Resonance.LearningRate,
-			)
+			// resonance.NewSolver is retained and ready to be reintroduced as an action veto gate.
+			_ = resonance.NewSolver
 
 			// Pipeline nodes report construction faults by entering ERROR.
 			// ERROR -> READY is a legal transition, so the READY sweep below
@@ -289,7 +288,6 @@ var (
 				pumpdumpSignal,
 				sentimentSignal,
 				toxicitySignal,
-				resonanceSolver,
 			}
 
 			for _, node := range pipelineNodes {
@@ -324,9 +322,6 @@ var (
 						pumpdumpSignal,
 						sentimentSignal,
 						toxicitySignal,
-					},
-					{
-						resonanceSolver,
 					},
 					{
 						training,
@@ -364,7 +359,6 @@ var (
 				uiTee1,
 				detectorTee,
 				hub,
-				resonanceSolver,
 				correlationSignal,
 				cvdSignal,
 				depthflowSignal,
@@ -385,6 +379,39 @@ var (
 			for _, runsys := range runsystems {
 				runsys.Transition(nmruntime.READY)
 			}
+
+			book.SetTouch(func(touches []kraken.Level3Touch) {
+				if workspace == nil {
+					return
+				}
+
+				for _, touch := range touches {
+					sequence, snapshot := book.Stamp(touch.Symbol)
+
+					measurement := data.NewMeasurement(
+						epoch,
+						touch.Symbol,
+						"spot:touch",
+						sequence,
+						system.Tick.Add(1),
+						&data.StringEntry{
+							Key:   "type",
+							Value: "touch",
+						},
+					)
+
+					measurement.At = touch.Timestamp.UTC()
+					measurement.From = measurement.At
+
+					var metrics []*data.Metric
+					if snapshot != nil {
+						metrics = snapshot.Metrics()
+					}
+
+					measurement.Write(metrics...)
+					workspace.Step(measurement)
+				}
+			})
 
 			drainErrors := make(chan error, 1)
 

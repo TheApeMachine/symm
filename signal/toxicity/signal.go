@@ -223,17 +223,41 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	price, err := tradeValue(prior, "price")
 	if err != nil {
-		errnie.Warn(fmt.Sprintf("[%s] %s: dropping trade frame missing price: %v", signal.Name(), prior.Label, err))
+		state, exists := signal.states[prior.Label]
+
+		if exists && state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
+		if prior.Source == "spot:trade" {
+			errnie.Warn(fmt.Sprintf("[%s] %s: dropping trade frame missing price: %v", signal.Name(), prior.Label, err))
+		}
+
 		return nil
 	}
 
 	qty, err := tradeValue(prior, "qty")
 	if err != nil {
-		errnie.Warn(fmt.Sprintf("[%s] %s: dropping trade frame missing qty: %v", signal.Name(), prior.Label, err))
+		state, exists := signal.states[prior.Label]
+
+		if exists && state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
+		if prior.Source == "spot:trade" {
+			errnie.Warn(fmt.Sprintf("[%s] %s: dropping trade frame missing qty: %v", signal.Name(), prior.Label, err))
+		}
+
 		return nil
 	}
 
 	if price <= 0 || qty <= 0 {
+		state, exists := signal.states[prior.Label]
+
+		if exists && state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
 		return nil
 	}
 
@@ -247,6 +271,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if snapshot == nil {
+		state, exists := signal.states[prior.Label]
+
+		if exists && state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
 		return nil
 	}
 

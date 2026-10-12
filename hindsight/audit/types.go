@@ -20,13 +20,15 @@ type ContractBreach struct {
 MetricNormAudit audits normalization and standardization invariants across all metrics.
 */
 type MetricNormAudit struct {
-	TotalMetricsAudited     int     `json:"total_metrics_audited"`
-	NormalizationBreaches   int     `json:"normalization_breaches"`
-	StandardizationBreaches int     `json:"standardization_breaches"`
-	MeanZScore              float64 `json:"mean_z_score"`
-	VarianceZScore          float64 `json:"variance_z_score"`
-	MaxAbsoluteZ            float64 `json:"max_absolute_z"`
-	SaturatedNormFraction   float64 `json:"saturated_norm_fraction"`
+	TotalMetricsAudited          int     `json:"total_metrics_audited"`
+	MatureMetricsAudited         int     `json:"mature_metrics_audited"`
+	UnstandardizedMatureBreaches int     `json:"unstandardized_mature_breaches"`
+	NormalizationBreaches        int     `json:"normalization_breaches"`
+	StandardizationBreaches      int     `json:"standardization_breaches"`
+	MeanZScore                   float64 `json:"mean_z_score"`
+	VarianceZScore               float64 `json:"variance_z_score"`
+	MaxAbsoluteZ                 float64 `json:"max_absolute_z"`
+	SaturatedNormFraction        float64 `json:"saturated_norm_fraction"`
 	// ZMagnitudeBreaches counts defined z-scores beyond the rank bound for their
 	// support: values that cannot be an empirical mid-rank quantile.
 	ZMagnitudeBreaches int                `json:"z_magnitude_breaches"`
@@ -119,6 +121,7 @@ type Stage1Vitality struct {
 	RawHealthyMetrics  int          `json:"raw_healthy_metrics"`
 	RawDeadMetrics     int          `json:"raw_dead_metrics"`
 	RawSporadicMetrics int          `json:"raw_sporadic_metrics"`
+	RawWarmingMetrics  int          `json:"raw_warming_metrics"`
 	RawMetrics         []MetricStat `json:"raw_metrics"`
 
 	// Canonical grid cells (e.g. 377 canonical dimensions after peer aggregation)
@@ -126,6 +129,7 @@ type Stage1Vitality struct {
 	CanonicalHealthyCells  int             `json:"canonical_healthy_cells"`
 	CanonicalDeadCells     int             `json:"canonical_dead_cells"`
 	CanonicalSporadicCells int             `json:"canonical_sporadic_cells"`
+	CanonicalWarmingCells  int             `json:"canonical_warming_cells"`
 	CanonicalCells         []MetricStat    `json:"canonical_cells"`
 	RedundantPairs         []RedundantPair `json:"redundant_pairs"`
 	SummaryText            string          `json:"summary_text"`

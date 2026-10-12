@@ -102,32 +102,26 @@ func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
 			return
 		}
 
-		metrics := frame.Dampen()
-
-		if len(metrics) == 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[grid.RegionScores] no metrics available",
-				nil,
-			), "source", source)
-
-			return
-		}
-
-		confidence := frame.Confidence()
-
-		if confidence <= 0 {
+		if frame.Confidence() <= 0 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[grid.RegionScores] measurement confidence is not positive",
 				nil,
-			), "source", source, "confidence", confidence)
+			), "source", source, "confidence", frame.Confidence())
 
 			failed = true
 			return
 		}
 
-		for _, metric := range metrics {
+		hasMetrics := false
+
+		for entry := range frame.Read() {
+			if entry == nil || entry.Metric == nil {
+				continue
+			}
+
+			hasMetrics = true
+			metric := entry.Metric
 			region, isPinned := grid.PinRegion(source, metric.Label)
 
 			if !isPinned {
@@ -146,9 +140,19 @@ func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
 			}
 
 			deformation[region] += math.Abs(metric.Standardized)
-			nullMean[region] += confidence * halfNormalMean
-			nullVariance[region] += confidence * confidence * halfNormalVariance
+			nullMean[region] += halfNormalMean
+			nullVariance[region] += halfNormalVariance
 			regions.Counts[region]++
+		}
+
+		if !hasMetrics {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[grid.RegionScores] no metrics available",
+				nil,
+			), "source", source)
+
+			return
 		}
 	}
 
@@ -165,19 +169,14 @@ func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
 		return regions
 	}
 
-	hasAny := false
-
 	for region := range uint8(12) {
-		if regions.Counts[region] > 0 && nullVariance[region] > 0 {
-			regions.Brightness[region] = (deformation[region] - nullMean[region]) /
-				math.Sqrt(nullVariance[region])
-			hasAny = true
+		if regions.Counts[region] == 0 || nullVariance[region] == 0 {
+			regions.HasEvidence = false
+			return regions
 		}
-	}
 
-	if !hasAny {
-		regions.HasEvidence = false
-		return regions
+		regions.Brightness[region] = (deformation[region] - nullMean[region]) /
+			math.Sqrt(nullVariance[region])
 	}
 
 	var winner uint8
@@ -186,10 +185,6 @@ func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
 	runnerUpFound := false
 
 	for region := range uint8(12) {
-		if regions.Counts[region] == 0 || nullVariance[region] == 0 {
-			continue
-		}
-
 		if !winnerFound {
 			winner = region
 			winnerFound = true
@@ -237,16 +232,10 @@ func (grid *Grid) Ready(measurement *data.Measurement) bool {
 		frames = []*data.Measurement{measurement}
 	}
 
-	hasPinned := false
+	var evidencedRegions [12]bool
 
 	for _, frame := range frames {
 		if frame == nil {
-			return false
-		}
-
-		metrics := frame.Dampen()
-
-		if len(metrics) == 0 {
 			return false
 		}
 
@@ -254,8 +243,16 @@ func (grid *Grid) Ready(measurement *data.Measurement) bool {
 			return false
 		}
 
-		for _, metric := range metrics {
-			_, isPinned := grid.PinRegion(frame.Source, metric.Label)
+		hasMetrics := false
+
+		for entry := range frame.Read() {
+			if entry == nil || entry.Metric == nil {
+				continue
+			}
+
+			hasMetrics = true
+			metric := entry.Metric
+			region, isPinned := grid.PinRegion(frame.Source, metric.Label)
 
 			if !isPinned {
 				continue
@@ -265,11 +262,21 @@ func (grid *Grid) Ready(measurement *data.Measurement) bool {
 				return false
 			}
 
-			hasPinned = true
+			evidencedRegions[region] = true
+		}
+
+		if !hasMetrics {
+			return false
 		}
 	}
 
-	return hasPinned
+	for _, evidenced := range evidencedRegions {
+		if !evidenced {
+			return false
+		}
+	}
+
+	return true
 }
 
 /*

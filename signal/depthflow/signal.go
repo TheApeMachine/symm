@@ -97,6 +97,16 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
+	state, found := signal.states[prior.Label]
+
+	if !found {
+		state = &symbolState{
+			prevBids: make(map[float64]float64),
+			prevAsks: make(map[float64]float64),
+		}
+		signal.states[prior.Label] = state
+	}
+
 	// The book is the snapshot ingress stamped onto the trade at its sequence
 	// number: every level of the depth window as the trade found it. A side
 	// that fills the window may have levels resting beyond it.
@@ -108,6 +118,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if snapshot == nil {
+		if state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
 		return nil
 	}
 
@@ -144,15 +158,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	gapDist := math.Abs(gap)
 
 	atNano := float64(prior.At.UnixNano())
-	state, found := signal.states[prior.Label]
-
-	if !found {
-		state = &symbolState{
-			prevBids: make(map[float64]float64),
-			prevAsks: make(map[float64]float64),
-		}
-		signal.states[prior.Label] = state
-	}
 
 	out := map[string]float64{
 		"book_notional:bid":             obsBid,

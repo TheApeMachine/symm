@@ -149,7 +149,7 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 	}
 
 	grid := store.NewGrid()
-	excursions, tokensByTick, tapeTicks, err := trainer.loadTrainingData(grid, epochs...)
+	excursions, allAccumulators, tokensByTick, tapeTicks, err := trainer.loadTrainingDataWithAccumulators(grid, epochs...)
 
 	if err != nil {
 		return errnie.Error(err)
@@ -166,25 +166,42 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 	trainExcursions, evalExcursions, evalTicks := splitChronologically(excursions, tapeTicks)
 
 	minSearchTicks, maxSearchTicks := deriveSearchRange(excursions)
-	selectedTicks, bestPnL := trainer.optimizePrecursorTicksWithTokens(
+	selectedTicks, selectedK, bestPnL := trainer.optimizePrecursorWithMCTS(
 		trainExcursions,
-		tokensByTick,
+		allAccumulators,
 		evalExcursions,
 		evalTicks,
 		minSearchTicks,
 		maxSearchTicks,
+		4,
 	)
 
 	errnie.Info(fmt.Sprintf(
-		"[training] MCTS selected precursorTicks=%d (replay net return=%.4f) from range [%d, %d]",
-		selectedTicks, bestPnL, minSearchTicks, maxSearchTicks,
+		"[training] MCTS selected precursorTicks=%d, tokenCardinality K=%d (replay net return=%.4f) from range ticks [%d, %d] and K [1, 4]",
+		selectedTicks, selectedK, bestPnL, minSearchTicks, maxSearchTicks,
 	))
 
-	finalTrie := trainer.buildCandidateTrie(excursions, tokensByTick, selectedTicks)
-	storedCount, validKeys, err := finalTrie.Publish(trainer.Context(), trainer.catalog)
+	if selectedK > 1 {
+		tokensByTick = tokensForK(allAccumulators, selectedK)
+	}
 
-	if err != nil {
-		return errnie.Error(err)
+	finalTrie := newPrecursorTrie()
+	validKeys := make(map[string]struct{})
+	publishedCount := 0
+
+	for _, record := range excursions {
+		trainer.insertExcursion(finalTrie, record, tokensByTick, selectedTicks)
+		keys, pubErr := trainer.publishExcursionPaths(trainer.Context(), finalTrie, record, tokensByTick, selectedTicks)
+
+		if pubErr != nil {
+			return errnie.Error(pubErr)
+		}
+
+		for key := range keys {
+			validKeys[key] = struct{}{}
+		}
+
+		publishedCount++
 	}
 
 	if err := trainer.cleanupStaleBlobs(validKeys); err != nil {
@@ -192,8 +209,9 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 	}
 
 	errnie.Info(fmt.Sprintf(
-		"[training] Train complete: %d unpruned action paths published to S3 (enter=%d exit=%d noop=%d)",
-		storedCount,
+		"[training] Train complete: %d excursions published excursion-by-excursion (%d paths: enter=%d exit=%d noop=%d)",
+		publishedCount,
+		len(validKeys),
 		finalTrie.ActionCount(actionEnter),
 		finalTrie.ActionCount(actionExit),
 		finalTrie.ActionCount(actionNoop),
@@ -227,7 +245,11 @@ type tickAccumulator struct {
 	counts      [12]int
 }
 
-func computeToken(acc *tickAccumulator) string {
+func computeTokenK(acc *tickAccumulator, k int) string {
+	if acc == nil || k <= 0 {
+		return ""
+	}
+
 	halfNormalMean := math.Sqrt(2.0 / math.Pi)
 	halfNormalVariance := 1.0 - 2.0/math.Pi
 
@@ -245,24 +267,69 @@ func computeToken(acc *tickAccumulator) string {
 			math.Sqrt(countVal*halfNormalVariance)
 	}
 
-	winner := uint8(0)
-
-	for region := uint8(1); region < 12; region++ {
-		if brightness[region] > brightness[winner] {
-			winner = region
-		}
+	type regionScore struct {
+		region uint8
+		score  float64
 	}
 
-	return fmt.Sprintf("R%02d", winner)
+	scores := make([]regionScore, 12)
+	for region := uint8(0); region < 12; region++ {
+		scores[region] = regionScore{region: region, score: brightness[region]}
+	}
+
+	slices.SortFunc(scores, func(first, second regionScore) int {
+		if first.score > second.score {
+			return -1
+		}
+
+		if first.score < second.score {
+			return 1
+		}
+
+		return 0
+	})
+
+	if k > 12 {
+		k = 12
+	}
+
+	topRegions := make([]uint8, k)
+	for idx := 0; idx < k; idx++ {
+		topRegions[idx] = scores[idx].region
+	}
+
+	slices.Sort(topRegions)
+
+	parts := make([]string, k)
+	for idx, region := range topRegions {
+		parts[idx] = fmt.Sprintf("R%02d", region)
+	}
+
+	return strings.Join(parts, "-")
+}
+
+func computeToken(acc *tickAccumulator) string {
+	return computeTokenK(acc, 1)
+}
+
+func tokensForK(accumulators map[int64]*tickAccumulator, k int) map[int64]string {
+	tokens := make(map[int64]string, len(accumulators))
+
+	for tick, acc := range accumulators {
+		tokens[tick] = computeTokenK(acc, k)
+	}
+
+	return tokens
 }
 
 type epochResult struct {
-	epoch      int64
-	tokens     map[int64]string
-	ticks      []int64
-	excursions []*excursionData
-	maxTick    int64
-	err        error
+	epoch        int64
+	accumulators map[int64]*tickAccumulator
+	tokens       map[int64]string
+	ticks        []int64
+	excursions   []*excursionData
+	maxTick      int64
+	err          error
 }
 
 func (trainer *Trainer) loadEpoch(
@@ -417,23 +484,24 @@ func (trainer *Trainer) loadEpoch(
 	}
 
 	return epochResult{
-		epoch:      epoch,
-		tokens:     tokens,
-		ticks:      ticks,
-		excursions: excursions,
-		maxTick:    maxTick,
+		epoch:        epoch,
+		accumulators: accumulators,
+		tokens:       tokens,
+		ticks:        ticks,
+		excursions:   excursions,
+		maxTick:      maxTick,
 	}
 }
 
-func (trainer *Trainer) loadTrainingData(
+func (trainer *Trainer) loadTrainingDataWithAccumulators(
 	grid *store.Grid,
 	epochs ...int64,
-) ([]*excursionData, map[int64]string, []int64, error) {
+) ([]*excursionData, map[int64]*tickAccumulator, map[int64]string, []int64, error) {
 	byEpoch := make(map[int64][]*data.Measurement)
 
 	for excursion, err := range trainer.catalog.Excursions(trainer.Context(), epochs...) {
 		if err != nil {
-			return nil, nil, nil, errnie.Error(err)
+			return nil, nil, nil, nil, errnie.Error(err)
 		}
 
 		if excursion != nil {
@@ -449,6 +517,7 @@ func (trainer *Trainer) loadTrainingData(
 
 	targetEpochs := sortedEpochKeys(byEpoch)
 	tokensByTick := make(map[int64]string)
+	allAccumulators := make(map[int64]*tickAccumulator)
 	allExcursions := make([]*excursionData, 0)
 	tapeTicks := make([]int64, 0)
 	tickOffset := int64(0)
@@ -461,11 +530,16 @@ func (trainer *Trainer) loadTrainingData(
 
 	for _, res := range results {
 		if res.err != nil {
-			return nil, nil, nil, res.err
+			return nil, nil, nil, nil, res.err
 		}
 
 		for _, localTick := range res.ticks {
 			globalTick := localTick + tickOffset
+
+			if res.accumulators != nil {
+				allAccumulators[globalTick] = res.accumulators[localTick]
+			}
+
 			tokensByTick[globalTick] = res.tokens[localTick]
 			tapeTicks = append(tapeTicks, globalTick)
 		}
@@ -494,7 +568,15 @@ func (trainer *Trainer) loadTrainingData(
 		return 0
 	})
 
-	return allExcursions, tokensByTick, tapeTicks, nil
+	return allExcursions, allAccumulators, tokensByTick, tapeTicks, nil
+}
+
+func (trainer *Trainer) loadTrainingData(
+	grid *store.Grid,
+	epochs ...int64,
+) ([]*excursionData, map[int64]string, []int64, error) {
+	excursions, _, tokensByTick, tapeTicks, err := trainer.loadTrainingDataWithAccumulators(grid, epochs...)
+	return excursions, tokensByTick, tapeTicks, err
 }
 
 func (trainer *Trainer) parseExcursionData(excursion *data.Measurement) (*excursionData, error) {
@@ -628,6 +710,164 @@ func deriveSearchRange(excursions []*excursionData) (int64, int64) {
 	return minSpan, maxSpan
 }
 
+func (trainer *Trainer) insertExcursion(
+	trie *precursorTrie,
+	record *excursionData,
+	tokensByTick map[int64]string,
+	precursorTicks int64,
+) {
+	windowStart := max(record.bTick-precursorTicks, 0)
+
+	entryTokens := sliceTokens(
+		tokensByTick,
+		windowStart,
+		record.bTick,
+		false,
+	)
+
+	if len(entryTokens) == 0 {
+		return
+	}
+
+	entryAction := actionNoop
+
+	if record.isUp {
+		entryAction = actionEnter
+	}
+
+	trie.Insert(
+		entryTokens,
+		entryAction,
+		record.netReturn,
+		record.gain,
+		record.holdSeconds,
+	)
+
+	if record.isUp && record.cTick > record.bTick {
+		exitTokens := sliceTokens(
+			tokensByTick,
+			record.bTick,
+			record.cTick,
+			true,
+		)
+
+		if len(exitTokens) > 0 {
+			trie.Insert(
+				exitTokens,
+				actionExit,
+				record.netReturn,
+				record.gain,
+				record.holdSeconds,
+			)
+		}
+	}
+}
+
+func (trie *precursorTrie) FindNode(tokens []string) *precursorNode {
+	current := trie.root
+
+	for _, token := range tokens {
+		child, exists := current.children[token]
+
+		if !exists {
+			return nil
+		}
+
+		current = child
+	}
+
+	return current
+}
+
+func (trainer *Trainer) publishPath(
+	ctx context.Context,
+	trie *precursorTrie,
+	tokens []string,
+) (map[string]struct{}, error) {
+	published := make(map[string]struct{})
+	node := trie.FindNode(tokens)
+
+	if node == nil || node.path == "" {
+		return published, nil
+	}
+
+	for actionName, count := range node.actions {
+		if count == 0 {
+			continue
+		}
+
+		stats := node.stats()
+		body, err := json.Marshal(stats)
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"[training] failed to marshal pathStats for "+node.path,
+				err,
+			))
+		}
+
+		blobKey := node.path + "/" + actionName
+		published[blobKey] = struct{}{}
+
+		if trainer.catalog != nil {
+			err := trainer.catalog.PutBlob(ctx, blobKey, body)
+
+			if err != nil && !errors.Is(err, tables.ErrBlobStorageUnconfigured) {
+				return nil, errnie.Error(errnie.Err(
+					errnie.IO,
+					"[training] failed to put blob "+blobKey,
+					err,
+				))
+			}
+		}
+	}
+
+	return published, nil
+}
+
+func (trainer *Trainer) publishExcursionPaths(
+	ctx context.Context,
+	trie *precursorTrie,
+	record *excursionData,
+	tokensByTick map[int64]string,
+	precursorTicks int64,
+) (map[string]struct{}, error) {
+	allPublished := make(map[string]struct{})
+	windowStart := max(record.bTick-precursorTicks, 0)
+	entryTokens := sliceTokens(tokensByTick, windowStart, record.bTick, false)
+
+	if len(entryTokens) > 0 {
+		published, err := trainer.publishPath(ctx, trie, entryTokens)
+
+		if err != nil {
+			return nil, errnie.Error(err)
+		}
+
+		for key := range published {
+			allPublished[key] = struct{}{}
+		}
+	}
+
+	if record.isUp && record.cTick > record.bTick {
+		exitTokens := sliceTokens(tokensByTick, record.bTick, record.cTick, true)
+
+		if len(exitTokens) > 0 {
+			published, err := trainer.publishPath(ctx, trie, exitTokens)
+
+			if err != nil {
+				return nil, errnie.Error(err)
+			}
+
+			for key := range published {
+				allPublished[key] = struct{}{}
+			}
+		}
+	}
+
+	return allPublished, nil
+}
+
 func (trainer *Trainer) buildCandidateTrie(
 	records []*excursionData,
 	tokensByTick map[int64]string,
@@ -636,51 +876,7 @@ func (trainer *Trainer) buildCandidateTrie(
 	trie := newPrecursorTrie()
 
 	for _, record := range records {
-		windowStart := max(record.bTick-precursorTicks, 0)
-
-		entryTokens := sliceTokens(
-			tokensByTick,
-			windowStart,
-			record.bTick,
-			false,
-		)
-
-		if len(entryTokens) == 0 {
-			continue
-		}
-
-		entryAction := actionNoop
-
-		if record.isUp {
-			entryAction = actionEnter
-		}
-
-		trie.Insert(
-			entryTokens,
-			entryAction,
-			record.netReturn,
-			record.gain,
-			record.holdSeconds,
-		)
-
-		if record.isUp && record.cTick > record.bTick {
-			exitTokens := sliceTokens(
-				tokensByTick,
-				record.bTick,
-				record.cTick,
-				true,
-			)
-
-			if len(exitTokens) > 0 {
-				trie.Insert(
-					exitTokens,
-					actionExit,
-					record.netReturn,
-					record.gain,
-					record.holdSeconds,
-				)
-			}
-		}
+		trainer.insertExcursion(trie, record, tokensByTick, precursorTicks)
 	}
 
 	return trie
@@ -879,6 +1075,7 @@ mctsNode tracks a precursor tick interval explored during MCTS optimization.
 type mctsNode struct {
 	minTicks int64
 	maxTicks int64
+	k        int
 	visits   int
 	totalPnL float64
 	bestPnL  float64
@@ -887,13 +1084,34 @@ type mctsNode struct {
 }
 
 func newMCTSNode(minTicks, maxTicks int64, parent *mctsNode) *mctsNode {
+	return newMCTSNodeK(minTicks, maxTicks, 1, parent)
+}
+
+func newMCTSNodeK(minTicks, maxTicks int64, k int, parent *mctsNode) *mctsNode {
 	return &mctsNode{
 		minTicks: minTicks,
 		maxTicks: maxTicks,
+		k:        k,
 		parent:   parent,
 		children: make([]*mctsNode, 0),
 		bestPnL:  -math.MaxFloat64,
 	}
+}
+
+func newMCTSRoot(minTicks, maxTicks int64, maxK int) *mctsNode {
+	root := &mctsNode{
+		minTicks: minTicks,
+		maxTicks: maxTicks,
+		k:        0,
+		children: make([]*mctsNode, 0, maxK),
+		bestPnL:  -math.MaxFloat64,
+	}
+
+	for k := 1; k <= maxK; k++ {
+		root.children = append(root.children, newMCTSNodeK(minTicks, maxTicks, k, root))
+	}
+
+	return root
 }
 
 func (node *mctsNode) ucb1Score(explorationConstant, minReward, maxReward float64) float64 {
@@ -941,20 +1159,20 @@ func (node *mctsNode) expand() {
 
 	if node.maxTicks-node.minTicks == 1 {
 		node.children = append(node.children,
-			newMCTSNode(node.minTicks, node.minTicks, node),
-			newMCTSNode(node.maxTicks, node.maxTicks, node),
+			newMCTSNodeK(node.minTicks, node.minTicks, node.k, node),
+			newMCTSNodeK(node.maxTicks, node.maxTicks, node.k, node),
 		)
 		return
 	}
 
 	mid := (node.minTicks + node.maxTicks) / 2
 	node.children = append(node.children,
-		newMCTSNode(node.minTicks, mid, node),
-		newMCTSNode(mid+1, node.maxTicks, node),
+		newMCTSNodeK(node.minTicks, mid, node.k, node),
+		newMCTSNodeK(mid+1, node.maxTicks, node.k, node),
 	)
 }
 
-func (node *mctsNode) bestCandidateTicks() (int64, float64) {
+func (node *mctsNode) bestCandidate() (int64, int, float64) {
 	if len(node.children) == 0 {
 		avg := 0.0
 
@@ -962,7 +1180,13 @@ func (node *mctsNode) bestCandidateTicks() (int64, float64) {
 			avg = node.totalPnL / float64(node.visits)
 		}
 
-		return (node.minTicks + node.maxTicks) / 2, avg
+		k := node.k
+
+		if k <= 0 {
+			k = 1
+		}
+
+		return (node.minTicks + node.maxTicks) / 2, k, avg
 	}
 
 	var bestChild *mctsNode
@@ -984,10 +1208,21 @@ func (node *mctsNode) bestCandidateTicks() (int64, float64) {
 	}
 
 	if bestChild == nil {
-		return (node.minTicks + node.maxTicks) / 2, 0.0
+		k := node.k
+
+		if k <= 0 {
+			k = 1
+		}
+
+		return (node.minTicks + node.maxTicks) / 2, k, 0.0
 	}
 
-	return bestChild.bestCandidateTicks()
+	return bestChild.bestCandidate()
+}
+
+func (node *mctsNode) bestCandidateTicks() (int64, float64) {
+	ticks, _, pnl := node.bestCandidate()
+	return ticks, pnl
 }
 
 func (trainer *Trainer) optimizePrecursorTicks(
@@ -1072,6 +1307,94 @@ func (trainer *Trainer) optimizePrecursorTicksWithTokens(
 	}
 
 	return root.bestCandidateTicks()
+}
+
+/*
+optimizePrecursorWithMCTS explores the joint (W, K) search space where W is the
+precursor window length and K is the top-K region cardinality per token.
+*/
+func (trainer *Trainer) optimizePrecursorWithMCTS(
+	trainExcursions []*excursionData,
+	accumulators map[int64]*tickAccumulator,
+	evalExcursions []*excursionData,
+	evalTicks []int64,
+	minSearchTicks, maxSearchTicks int64,
+	maxK int,
+) (int64, int, float64) {
+	if maxK <= 0 {
+		maxK = 4
+	}
+
+	root := newMCTSRoot(minSearchTicks, maxSearchTicks, maxK)
+	iterations := min(max(int(maxSearchTicks-minSearchTicks+1)*maxK*2, 16), 64)
+
+	explorationConstant := math.Sqrt(2)
+	minReward := math.MaxFloat64
+	maxReward := -math.MaxFloat64
+	memo := make(map[string]float64)
+	tokensCache := make(map[int]map[int64]string)
+	mctsTracker := newProgressTracker("MCTS search (W, K)", int64(iterations), 3*time.Second)
+
+	for iteration := range iterations {
+		current := root
+
+		for len(current.children) > 0 {
+			current = current.selectChild(explorationConstant, minReward, maxReward)
+		}
+
+		if current.visits > 0 && current.maxTicks > current.minTicks {
+			current.expand()
+			current = current.children[0]
+		}
+
+		candidateTicks := (current.minTicks + current.maxTicks) / 2
+		candidateK := current.k
+
+		if candidateK <= 0 {
+			candidateK = 1
+		}
+
+		memoKey := fmt.Sprintf("%d_%d", candidateTicks, candidateK)
+		reward, evaluated := memo[memoKey]
+
+		if !evaluated {
+			tokensByTick, cached := tokensCache[candidateK]
+
+			if !cached {
+				tokensByTick = tokensForK(accumulators, candidateK)
+				tokensCache[candidateK] = tokensByTick
+			}
+
+			candidateTrie := trainer.buildCandidateTrie(trainExcursions, tokensByTick, candidateTicks)
+			outcome := trainer.evaluateReplay(candidateTrie, tokensByTick, evalTicks, evalExcursions, candidateTicks)
+			reward = outcome.netPnL
+			memo[memoKey] = reward
+		}
+
+		if reward < minReward {
+			minReward = reward
+		}
+
+		if reward > maxReward {
+			maxReward = reward
+		}
+
+		for node := current; node != nil; node = node.parent {
+			node.visits++
+			node.totalPnL += reward
+
+			if reward > node.bestPnL {
+				node.bestPnL = reward
+			}
+		}
+
+		mctsTracker.Step(
+			int64(iteration+1),
+			fmt.Sprintf("W=%d K=%d reward=%.4f bestPnL=%.4f", candidateTicks, candidateK, reward, root.bestPnL),
+		)
+	}
+
+	return root.bestCandidate()
 }
 
 /*

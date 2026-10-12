@@ -33,17 +33,17 @@ func AnalyzeVitality(
 	rawStats := computeMetricStats(ticks, rawSeries)
 	canonicalStats := computeMetricStats(ticks, canonicalSeries)
 
-	rawHealthy, rawDead, rawSporadic := countStatuses(rawStats)
-	canonHealthy, canonDead, canonSporadic := countStatuses(canonicalStats)
+	rawHealthy, rawDead, rawSporadic, rawWarming := countStatuses(rawStats)
+	canonHealthy, canonDead, canonSporadic, canonWarming := countStatuses(canonicalStats)
 
 	redundantPairs := findCanonicalRedundantPairs(ticks, canonicalSeries, canonicalStats)
 
 	summary := fmt.Sprintf(
-		"Vitality: Raw producers emit %d series (%d healthy, %d dead/constant, %d sporadic). "+
-			"Canonical grid universe aggregates to %d cells (%d healthy, %d dead, %d sporadic). "+
+		"Vitality: Raw producers emit %d series (%d healthy, %d dead/constant, %d warming up, %d sporadic). "+
+			"Canonical grid universe aggregates to %d cells (%d healthy, %d dead, %d warming up, %d sporadic). "+
 			"Canonical redundancy: %d cell pairs (|r| >= 0.95).",
-		len(rawStats), rawHealthy, rawDead, rawSporadic,
-		len(canonicalStats), canonHealthy, canonDead, canonSporadic,
+		len(rawStats), rawHealthy, rawDead, rawWarming, rawSporadic,
+		len(canonicalStats), canonHealthy, canonDead, canonWarming, canonSporadic,
 		len(redundantPairs),
 	)
 
@@ -52,11 +52,13 @@ func AnalyzeVitality(
 		RawHealthyMetrics:      rawHealthy,
 		RawDeadMetrics:         rawDead,
 		RawSporadicMetrics:     rawSporadic,
+		RawWarmingMetrics:      rawWarming,
 		RawMetrics:             rawStats,
 		CanonicalGridCells:     len(canonicalStats),
 		CanonicalHealthyCells:  canonHealthy,
 		CanonicalDeadCells:     canonDead,
 		CanonicalSporadicCells: canonSporadic,
+		CanonicalWarmingCells:  canonWarming,
 		CanonicalCells:         canonicalStats,
 		RedundantPairs:         redundantPairs,
 		SummaryText:            summary,
@@ -153,13 +155,17 @@ func computeMetricStats(
 		if isConstant {
 			status = "DEAD"
 
-			if count < int(core.MinimumPrior) {
-				status = "SPORADIC"
+			if count <= int(core.MinimumRankPrior) {
+				status = "WARMING_UP"
 			}
 		}
 
 		if !isConstant && zeroFraction == 1.0 {
 			status = "ZERO"
+
+			if count <= int(core.MinimumRankPrior) {
+				status = "WARMING_UP"
+			}
 		}
 
 		stats = append(stats, MetricStat{
@@ -184,8 +190,8 @@ func computeMetricStats(
 	return stats
 }
 
-func countStatuses(stats []MetricStat) (int, int, int) {
-	healthy, dead, sporadic := 0, 0, 0
+func countStatuses(stats []MetricStat) (int, int, int, int) {
+	healthy, dead, sporadic, warming := 0, 0, 0, 0
 	for _, s := range stats {
 		switch s.Status {
 		case "HEALTHY":
@@ -194,9 +200,11 @@ func countStatuses(stats []MetricStat) (int, int, int) {
 			dead++
 		case "SPORADIC":
 			sporadic++
+		case "WARMING_UP":
+			warming++
 		}
 	}
-	return healthy, dead, sporadic
+	return healthy, dead, sporadic, warming
 }
 
 /*

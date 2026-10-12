@@ -22,8 +22,18 @@ func TestAnalyzeEquivalence(t *testing.T) {
 		at := time.Unix(1_700_000_000, 0).UTC()
 
 		streams := []struct{ source, label string }{
+			{"hawkes", "intensity:buy_0"},
+			{"hawkes", "branching_ratio_0"},
+			{"hawkes", "intensity:sell_0"},
 			{"cvd", "quantity:buy_0"},
+			{"cvd", "churn_0"},
+			{"cvd", "quantity:sell_0"},
 			{"depthflow", "removed:ask_0"},
+			{"depthflow", "spread_0"},
+			{"depthflow", "removed:bid_0"},
+			{"sentiment", "advance_fraction_0"},
+			{"morphology", "wasserstein_0"},
+			{"sentiment", "decline_fraction_0"},
 		}
 
 		peers := make([]*data.Measurement, len(streams))

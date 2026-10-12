@@ -62,7 +62,7 @@ func AnalyzeTruthfulness(
 	violations := make(map[string]int, len(truthChecks))
 	discrepancies := make([]MetricDiscrepancy, 0)
 
-	record := func(check string, observed, expected float64, ok bool) {
+	record := func(signal, check string, observed, expected float64, ok bool) {
 		compared[check]++
 
 		if ok {
@@ -79,13 +79,17 @@ func AnalyzeTruthfulness(
 
 		if len(discrepancies) < 200 {
 			discrepancies = append(discrepancies, MetricDiscrepancy{
-				Signal: "cvd", Metric: check, ObservedVal: observed, ExpectedVal: expected,
+				Signal: signal, Metric: check, ObservedVal: observed, ExpectedVal: expected,
 				Error: math.Abs(observed - expected),
 			})
 		}
 	}
 
 	equal := func(observed, expected float64) bool {
+		if math.IsNaN(observed) || math.IsNaN(expected) || math.IsInf(observed, 0) || math.IsInf(expected, 0) {
+			return false
+		}
+
 		return math.Abs(observed-expected) <= 1e-12+1e-9*math.Max(math.Abs(expected), math.Abs(observed))
 	}
 
@@ -94,8 +98,8 @@ func AnalyzeTruthfulness(
 	// symbol's last loaded cvd frame lies past the audit sample, not missing.
 	lastCVD := make(map[string]int64)
 
-	for _, m := range measurements {
-		if m == nil {
+	for _, measurement := range measurements {
+		if measurement == nil {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[audit.truthfulness] nil measurement in audit stream",
@@ -105,25 +109,25 @@ func AnalyzeTruthfulness(
 			continue
 		}
 
-		if m.Source == "cvd" {
-			lastCVD[m.Label] = max(lastCVD[m.Label], m.At.UnixNano())
-			key := fmt.Sprintf("%s|%d", m.Label, m.At.UnixNano())
-			cvdByKey[key] = append(cvdByKey[key], m)
+		if measurement.Source == "cvd" {
+			lastCVD[measurement.Label] = max(lastCVD[measurement.Label], measurement.At.UnixNano())
+			key := fmt.Sprintf("%s|%d", measurement.Label, measurement.At.UnixNano())
+			cvdByKey[key] = append(cvdByKey[key], measurement)
 
-			for entry := range m.Read() {
+			for entry := range measurement.Read() {
 				if entry == nil || entry.Metric == nil {
 					errnie.Error(errnie.Err(
 						errnie.Validation,
 						"[audit.truthfulness] nil metric entry in cvd measurement",
 						nil,
-					), "label", m.Label)
+					), "label", measurement.Label)
 
 					continue
 				}
 
 				if entry.Key == "signed_net_fraction" {
 					value := entry.Metric.Raw
-					record("signed_net_fraction_bounded", value, 1, value >= -1 && value <= 1)
+					record("cvd", "signed_net_fraction_bounded", value, math.Max(-1, math.Min(1, value)), value >= -1 && value <= 1)
 				}
 			}
 		}
@@ -157,14 +161,38 @@ func AnalyzeTruthfulness(
 		frames := level3Entries[symbol]
 
 		for cursors[symbol] < len(frames) && frames[cursors[symbol]].first < before {
+			if ctx.Err() != nil {
+				return
+			}
+
 			frame := frames[cursors[symbol]]
 			err := book.ApplyFrame(frame.orders)
-			record("level3_replay", float64(frame.first), float64(frame.first), err == nil)
+			passVal := 1.0
+
+			if err != nil {
+				passVal = 0.0
+			}
+
+			record("book", "level3_replay", passVal, 1.0, err == nil)
 			cursors[symbol]++
 		}
 	}
 
-	for symbol, tape := range bySymbol {
+	symbols := make([]string, 0, len(bySymbol))
+
+	for sym := range bySymbol {
+		symbols = append(symbols, sym)
+	}
+
+	slices.Sort(symbols)
+
+	for _, symbol := range symbols {
+		if ctx.Err() != nil {
+			break
+		}
+
+		tape := bySymbol[symbol]
+
 		slices.SortStableFunc(tape, func(left, right *data.Measurement) int {
 			return cmp.Compare(left.SeqIdx, right.SeqIdx)
 		})
@@ -180,24 +208,41 @@ func AnalyzeTruthfulness(
 		checkedAt := make(map[int64]bool)
 
 		for _, trade := range tape {
+			if ctx.Err() != nil {
+				break
+			}
+
 			replay(symbol, trade.SeqIdx)
 
 			stamped, err := broker.ReadSnapshot(trade)
 
 			if err != nil {
 				errnie.Error(err, "symbol", symbol, "seq", trade.SeqIdx)
-				record("trade_book", float64(trade.SeqIdx), float64(trade.SeqIdx), false)
+				record("book", "trade_book", 0.0, 1.0, false)
 			}
 
-			if stamped != nil {
+			if err == nil && stamped != nil {
 				replayed := book.Snapshot(symbol)
-				record("trade_book", float64(trade.SeqIdx), float64(trade.SeqIdx), stamped.Equal(replayed))
+				isEqual := stamped.Equal(replayed)
+				obsVal := 0.0
+
+				if isEqual {
+					obsVal = 1.0
+				}
+
+				record("book", "trade_book", obsVal, 1.0, isEqual)
 			}
 
-			totalTrades++
 			price, qty := tradeField(trade, "price"), tradeField(trade, "qty")
 			side := trade.Meta("side")
-			record("trade_fields", price, qty, price > 0 && qty > 0 && (side == "buy" || side == "sell"))
+			validFields := price > 0 && qty > 0 && (side == "buy" || side == "sell")
+			fieldVal := 0.0
+
+			if validFields {
+				fieldVal = 1.0
+			}
+
+			record("trade", "trade_fields", fieldVal, 1.0, validFields)
 
 			at := trade.At.UnixNano()
 			prior := previous
@@ -205,9 +250,13 @@ func AnalyzeTruthfulness(
 			chain := previousPublished
 			previousPublished = nil
 
-			if at > lastCVD[symbol] {
+			last, hasCVD := lastCVD[symbol]
+
+			if hasCVD && at > last {
 				continue
 			}
+
+			totalTrades++
 
 			if sameAt[at] > 1 {
 				ambiguous++
@@ -227,14 +276,14 @@ func AnalyzeTruthfulness(
 						}
 					}
 
-					record("rate_without_elapsed_time", float64(rated), 1, rated <= 1)
+					record("cvd", "rate_without_elapsed_time", float64(rated), 1.0, rated <= 1)
 				}
 
 				continue
 			}
 
 			frames := cvdByKey[fmt.Sprintf("%s|%d", symbol, at)]
-			record("cvd_coverage", float64(len(frames)), 1, len(frames) == 1)
+			record("cvd", "cvd_coverage", float64(len(frames)), 1.0, len(frames) == 1)
 
 			if len(frames) != 1 {
 				continue
@@ -252,37 +301,51 @@ func AnalyzeTruthfulness(
 
 			if value, ok := published["response_midpoint:at"]; ok {
 				if stamped == nil {
-					record("response_midpoint:at", value, 0, false)
+					record("cvd", "response_midpoint:at", value, 0.0, false)
 				}
 
 				if stamped != nil {
 					bid, ask := stamped.Touch()
 					want := (bid.Price.Float64() + ask.Price.Float64()) / 2.0
-					record("response_midpoint:at", value, want, equal(value, want))
+					record("cvd", "response_midpoint:at", value, want, equal(value, want))
 				}
 			}
 
 			if value, ok := published["response_midpoint:from"]; ok {
 				if previousAt, chained := chain["response_midpoint:at"]; chained {
-					record("response_midpoint:from", value, previousAt, equal(value, previousAt))
+					record("cvd", "response_midpoint:from", value, previousAt, equal(value, previousAt))
 				}
 			}
 
 			if value, ok := published["midpoint_log_return"]; ok {
-				want := math.Log(published["response_midpoint:at"] / published["response_midpoint:from"])
-				record("midpoint_log_return", value, want, equal(value, want))
+				atMid, hasAt := published["response_midpoint:at"]
+				fromMid, hasFrom := published["response_midpoint:from"]
+
+				if !hasAt || !hasFrom || atMid <= 0 || fromMid <= 0 {
+					record("cvd", "midpoint_log_return", value, 0.0, false)
+				}
+
+				if hasAt && hasFrom && atMid > 0 && fromMid > 0 {
+					want := math.Log(atMid / fromMid)
+					record("cvd", "midpoint_log_return", value, want, equal(value, want))
+				}
 			}
 
 			if prior == nil {
 				continue
 			}
 
-			dt := trade.At.Sub(prior.At).Seconds()
+			timeDelta := trade.At.Sub(prior.At).Seconds()
+
+			if timeDelta <= 0 {
+				continue
+			}
+
 			notional := price * qty
 			rates := map[string]float64{
-				"trade_rate":         1,
-				"buy_notional_rate":  0,
-				"sell_notional_rate": 0,
+				"trade_rate":         1.0,
+				"buy_notional_rate":  0.0,
+				"sell_notional_rate": 0.0,
 			}
 			rates[side+"_notional_rate"] = notional
 
@@ -293,14 +356,26 @@ func AnalyzeTruthfulness(
 					continue
 				}
 
-				record(name, value, numerator/dt, equal(value, numerator/dt))
+				record("cvd", name, value, numerator/timeDelta, equal(value, numerator/timeDelta))
 			}
 		}
 	}
 
+	level3Symbols := make([]string, 0, len(level3Entries))
+
+	for sym := range level3Entries {
+		level3Symbols = append(level3Symbols, sym)
+	}
+
+	slices.Sort(level3Symbols)
+
 	// Entries after a symbol's last trade, and on symbols without trades,
 	// still replay against their venue checksums.
-	for symbol := range level3Entries {
+	for _, symbol := range level3Symbols {
+		if ctx.Err() != nil {
+			break
+		}
+
 		replay(symbol, math.MaxInt64)
 	}
 

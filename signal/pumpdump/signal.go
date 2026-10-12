@@ -92,13 +92,24 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	priceEntry := data.Pull(prior.Read("price"))
 	if priceEntry == nil || priceEntry.Metric == nil {
-		signal.Error(errnie.Err(errnie.Validation, "[pumpdump] price is required", nil))
+		if state, exists := signal.states[prior.Label]; exists && state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
+		if prior.Source == "spot:trade" {
+			signal.Error(errnie.Err(errnie.Validation, "[pumpdump] price is required", nil))
+		}
+
 		return nil
 	}
 	price := priceEntry.Metric.Raw
 
 	qtyEntry := data.Pull(prior.Read("qty"))
 	if qtyEntry == nil || qtyEntry.Metric == nil || qtyEntry.Metric.Raw <= 0 {
+		if state, exists := signal.states[prior.Label]; exists && state.lastMeasurement != nil {
+			return state.lastMeasurement
+		}
+
 		return nil
 	}
 	qty := qtyEntry.Metric.Raw
