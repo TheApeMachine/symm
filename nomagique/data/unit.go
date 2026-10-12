@@ -1,6 +1,7 @@
 package data
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/theapemachine/errnie"
@@ -616,30 +617,50 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"c_price":    {Unit: UnitPrice, Timescale: TimescaleTick},
 	},
 	"training": {
-		"region_brightness:R00": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R01": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R02": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R03": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R04": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R05": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R06": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R07": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R08": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R09": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R10": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_brightness:R11": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
-		"region_members:R00":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R01":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R02":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R03":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R04":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R05":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R06":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R07":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R08":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R09":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R10":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_members:R11":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_brightness:R00":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R01":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R02":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R03":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R04":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R05":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R06":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R07":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R08":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R09":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R10":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R11":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_members:R00":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R01":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R02":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R03":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R04":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R05":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R06":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R07":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R08":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R09":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R10":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R11":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"position_open":          {Unit: UnitDimensionless, Timescale: TimescaleInstantaneous},
+		"position_exiting":       {Unit: UnitDimensionless, Timescale: TimescaleInstantaneous},
+		"position_qty":           {Unit: UnitBaseCurrency, Timescale: TimescaleInstantaneous},
+		"position_bid_depth_qty": {Unit: UnitBaseCurrency, Timescale: TimescaleInstantaneous},
+		"position_held_s":        {Unit: UnitSecond, Timescale: TimescaleInstantaneous},
+		"position_entry":         {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"position_bid":           {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"position_ask":           {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"position_exit_vwap":     {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"position_cost":          {Unit: UnitQuoteCurrency, Timescale: TimescaleInstantaneous},
+		"position_entry_fee":     {Unit: UnitQuoteCurrency, Timescale: TimescaleInstantaneous},
+		"position_value":         {Unit: UnitQuoteCurrency, Timescale: TimescaleInstantaneous},
+		"position_pnl":           {Unit: UnitQuoteCurrency, Timescale: TimescaleInstantaneous},
+		"position_pnl_pct":       {Unit: UnitRatio, Timescale: TimescaleInstantaneous},
+		"position_exit_room":     {Unit: UnitRatio, Timescale: TimescaleInstantaneous},
+		"token_depth":            {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"token_capacity":         {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"token_strength":         {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"token_threshold":        {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"stored_paths":           {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 	},
 }
 
@@ -699,4 +720,34 @@ func GetDimension(source string, label string) (unit Unit, timescale Timescale) 
 	}
 
 	return dimension.Unit, dimension.Timescale
+}
+
+/*
+TrainingPathSlots bounds the indexed training labels registered below: token
+positions (path_token:IDX:PART, a region key) and prefix depths (match_*:k, a
+count of stored paths) up to this many tokens, with up to RegionSlots parts.
+*/
+const (
+	TrainingPathSlots = 64
+	MatchKeySlots     = 512
+	RegionSlots       = 12
+)
+
+func init() {
+	training := SignalMetrics["training"]
+	training["stored_paths_hash"] = Dimension{Unit: UnitDimensionless, Timescale: TimescaleInstantaneous}
+
+	for slot := 0; slot < MatchKeySlots; slot++ {
+		training[fmt.Sprintf("match_key:%03d", slot)] = Dimension{Unit: UnitDimensionless, Timescale: TimescaleInstantaneous}
+	}
+
+	for idx := 0; idx < TrainingPathSlots; idx++ {
+		for part := 0; part < RegionSlots; part++ {
+			training[fmt.Sprintf("path_token:%02d:%d", idx, part)] = Dimension{Unit: UnitDimensionless, Timescale: TimescaleInstantaneous}
+		}
+
+		for _, prefix := range []string{"match_candidates", "match_enter", "match_exit"} {
+			training[fmt.Sprintf("%s:%02d", prefix, idx+1)] = Dimension{Unit: UnitCount, Timescale: TimescaleInstantaneous}
+		}
+	}
 }

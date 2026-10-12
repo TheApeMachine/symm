@@ -3,10 +3,13 @@ package broker
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/tests/tablestest"
 )
 
 type dummyTransport struct{}
@@ -51,6 +54,67 @@ func TestDesk(t *testing.T) {
 					So(err, ShouldBeNil)
 				})
 			})
+		})
+
+		Convey("When initialized with pre-existing wallet holding", func() {
+			balance := &Balance{
+				Quote: "USD",
+				wallet: &kraken.Balance{
+					Data: []kraken.BalanceData{
+						{
+							Asset:   "USD",
+							Balance: decimal.NewFromFloat64(160.14),
+						},
+						{
+							Asset:   "ZAMA",
+							Balance: decimal.NewFromFloat64(517.71),
+						},
+					},
+				},
+			}
+
+			restoredDesk := NewDesk(ctx, &dummyTransport{}, nil, balance)
+			So(restoredDesk.Holds("ZAMA/USD"), ShouldBeTrue)
+
+			val, ok := restoredDesk.positions.Load("ZAMA/USD")
+			So(ok, ShouldBeTrue)
+			posList := val.([]*Position)
+			So(len(posList), ShouldEqual, 1)
+			So(posList[0].Qty().String(), ShouldEqual, "517.71")
+			So(posList[0].Closed(), ShouldBeFalse)
+		})
+
+		Convey("When initialized with catalog containing closed positions", func() {
+			cat := tablestest.New(t)
+			So(cat.Ensure(ctx), ShouldBeNil)
+
+			closedAt := time.Now().UTC().Truncate(time.Microsecond)
+			openedAt := closedAt.Add(-10 * time.Minute)
+			So(cat.RecordPosition(ctx, tables.PositionRecord{
+				ID:            "historical-1",
+				Symbol:        "ETH/USD",
+				Status:        "closed",
+				OpenedAt:      openedAt,
+				ClosedAt:      &closedAt,
+				Events:        `[{"kind":"entry_match"},{"kind":"exit"}]`,
+				VenueCost:     2000.0,
+				VenueProceeds: 2050.0,
+				VenueFees:     2.0,
+				VenueRealized: 48.0,
+				HoldNs:        600 * 1e9,
+				Outcome:       `{"venue_realized":48.0}`,
+			}), ShouldBeNil)
+
+			restoredDesk := NewDesk(ctx, &dummyTransport{}, nil, nil, cat)
+			So(len(restoredDesk.Closed()), ShouldEqual, 1)
+			So(restoredDesk.Closed()[0].ID(), ShouldEqual, "historical-1")
+			So(restoredDesk.Closed()[0].Symbol(), ShouldEqual, "ETH/USD")
+			So(restoredDesk.Closed()[0].Closed(), ShouldBeTrue)
+
+			lc := restoredDesk.Closed()[0].Lifecycle()
+			So(lc.Status, ShouldEqual, "closed")
+			So(lc.Outcome, ShouldNotBeNil)
+			So(lc.Outcome.VenueRealized, ShouldEqual, 48.0)
 		})
 	})
 }

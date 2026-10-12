@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
@@ -70,6 +72,60 @@ func TestService(t *testing.T) {
 			var report BalanceReport
 			So(json.NewDecoder(resp.Body).Decode(&report), ShouldBeNil)
 			So(report.Equity, ShouldEqual, "1000")
+		})
+
+		Convey("Positions lifecycle reflects exit status", func() {
+			qty := decimal.NewFromFloat64(0.2)
+			So(desk.Enter("BTC/USD", qty), ShouldBeNil)
+
+			reqOpen := httptest.NewRequest(http.MethodGet, "/positions", nil)
+			respOpen, err := app.Test(reqOpen)
+			So(err, ShouldBeNil)
+			var openList []*Position
+			So(json.NewDecoder(respOpen.Body).Decode(&openList), ShouldBeNil)
+			So(len(openList), ShouldEqual, 1)
+
+			reqLc := httptest.NewRequest(http.MethodGet, "/positions/lifecycle", nil)
+			respLc, err := app.Test(reqLc)
+			So(err, ShouldBeNil)
+			var reportOpen LifecycleReport
+			So(json.NewDecoder(respLc.Body).Decode(&reportOpen), ShouldBeNil)
+			So(len(reportOpen.Lifecycles), ShouldEqual, 0)
+			So(reportOpen.OpenCount, ShouldEqual, 1)
+
+			desk.Apply(&kraken.Execution{
+				Data: []kraken.ExecutionData{
+					{
+						Symbol:   "BTC/USD",
+						Side:     "buy",
+						ExecType: "trade",
+						LastQty:  qty,
+					},
+					{
+						Symbol:   "BTC/USD",
+						Side:     "sell",
+						ExecType: "trade",
+						LastQty:  qty,
+					},
+				},
+			})
+
+			reqClosedPos := httptest.NewRequest(http.MethodGet, "/positions", nil)
+			respClosedPos, err := app.Test(reqClosedPos)
+			So(err, ShouldBeNil)
+			var afterList []*Position
+			So(json.NewDecoder(respClosedPos.Body).Decode(&afterList), ShouldBeNil)
+			So(len(afterList), ShouldEqual, 0)
+
+			reqClosedLc := httptest.NewRequest(http.MethodGet, "/positions/lifecycle", nil)
+			respClosedLc, err := app.Test(reqClosedLc)
+			So(err, ShouldBeNil)
+			var reportClosed LifecycleReport
+			So(json.NewDecoder(respClosedLc.Body).Decode(&reportClosed), ShouldBeNil)
+			So(len(reportClosed.Lifecycles), ShouldEqual, 1)
+			So(reportClosed.Lifecycles[0].Status, ShouldEqual, "closed")
+			So(reportClosed.OpenCount, ShouldEqual, 0)
+			So(reportClosed.Performance.Closed, ShouldEqual, 1)
 		})
 	})
 }

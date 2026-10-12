@@ -37,11 +37,12 @@ export const RecognitionPanel = React.memo(() => (
 			<Section.Body scroll={false} className="p-3">
 				<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 					{/* Entry Recognition */}
-					<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-2">
-						<div className="text-(--f2) font-bold uppercase tracking-wider text-[10px]">
-							Held-Out Entry Recognition
+					<div className="border border-(--line) p-3 rounded bg-(--bg) flex flex-col gap-2.5">
+						<div className="text-(--f2) font-bold uppercase tracking-wider text-[10px] flex justify-between">
+							<span>Held-Out Entry Recognition</span>
+							<span className="text-(--up) font-bold">★ B-Mark</span>
 						</div>
-						<div className="flex flex-col gap-1 text-[11px]">
+						<div className="flex flex-col gap-1.5 text-[11px]">
 							<div className="flex justify-between">
 								<span className="text-(--f4)">Valid UP Opportunities:</span>
 								<span className="text-(--f1) font-bold" data-metric="hist_opportunities" data-format="integer">0</span>
@@ -66,11 +67,12 @@ export const RecognitionPanel = React.memo(() => (
 					</div>
 
 					{/* Exit Recognition */}
-					<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-2">
-						<div className="text-(--f2) font-bold uppercase tracking-wider text-[10px]">
-							Held-Out Exit Recognition
+					<div className="border border-(--line) p-3 rounded bg-(--bg) flex flex-col gap-2.5">
+						<div className="text-(--f2) font-bold uppercase tracking-wider text-[10px] flex justify-between">
+							<span>Held-Out Exit Recognition</span>
+							<span className="text-(--acc) font-bold">⚡ C-Mark</span>
 						</div>
-						<div className="flex flex-col gap-1 text-[11px]">
+						<div className="flex flex-col gap-1.5 text-[11px]">
 							<div className="flex justify-between">
 								<span className="text-(--up)">Correct EXIT at C:</span>
 								<span className="text-(--up) font-bold" data-metric="hist_correct_exit" data-format="integer">0</span>
@@ -91,11 +93,12 @@ export const RecognitionPanel = React.memo(() => (
 					</div>
 
 					{/* Historical Economics */}
-					<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-2">
-						<div className="text-(--f2) font-bold uppercase tracking-wider text-[10px]">
-							Held-Out Executable Economics
+					<div className="border border-(--line) p-3 rounded bg-(--bg) flex flex-col gap-2.5">
+						<div className="text-(--f2) font-bold uppercase tracking-wider text-[10px] flex justify-between">
+							<span>Held-Out Executable Economics</span>
+							<span className="text-(--f4)">Net of fees</span>
 						</div>
-						<div className="flex flex-col gap-1 text-[11px]">
+						<div className="flex flex-col gap-1.5 text-[11px]">
 							<div className="flex justify-between">
 								<span className="text-(--f4)">Mean Executable Return:</span>
 								<span className="text-(--acc) font-bold" data-metric="hist_mean_return" data-format="insufficient_if_zero">—</span>
@@ -108,7 +111,7 @@ export const RecognitionPanel = React.memo(() => (
 								<span className="text-(--f4)">Lower Bound (Mean - SE):</span>
 								<span className="text-(--f1) font-bold" data-metric="hist_lower_bound" data-format="insufficient_if_zero">—</span>
 							</div>
-							<div className="text-[10px] text-(--f4) mt-1">
+							<div className="text-[10px] text-(--f4) mt-1 pt-1 border-t border-(--line)">
 								Liquidated at causal C minus entry cost at B. Never substitutes peak profit.
 							</div>
 						</div>
@@ -125,45 +128,51 @@ export const RecognitionPanel = React.memo(() => (
 			/>
 			<Section.Body scroll={false} className="p-3">
 				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-					{/* Fragment Counts */}
-					<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-2">
+					{/* Fragment Counts with visual color bars */}
+					<div className="border border-(--line) p-3 rounded bg-(--bg) flex flex-col gap-2.5">
 						<div className="text-(--f2) font-bold uppercase tracking-wider text-[10px]">
 							Completed Tape Fragments
 						</div>
 						<div className="grid grid-cols-6 gap-2 text-center text-[10px]">
-							<div className="p-1.5 border border-(--line) rounded bg-(--surface)">
+							<div className="p-2 border border-(--line) rounded bg-(--surface) flex flex-col items-center">
 								<div className="text-(--up) font-bold">UP</div>
 								<div className="text-sm font-bold mt-1" data-metric="fragments_up" data-format="integer">0</div>
+								<div className="w-full h-1 rounded-full bg-(--up)/30 mt-1" />
 							</div>
-							<div className="p-1.5 border border-(--line) rounded bg-(--surface)">
+							<div className="p-2 border border-(--line) rounded bg-(--surface) flex flex-col items-center">
 								<div className="text-(--up) font-bold opacity-70">UP_F</div>
 								<div className="text-sm font-bold mt-1" data-metric="fragments_up_friction" data-format="integer">0</div>
+								<div className="w-full h-1 rounded-full bg-(--up)/20 mt-1" />
 							</div>
-							<div className="p-1.5 border border-(--line) rounded bg-(--surface)">
+							<div className="p-2 border border-(--line) rounded bg-(--surface) flex flex-col items-center">
 								<div className="text-(--down) font-bold">DOWN</div>
 								<div className="text-sm font-bold mt-1" data-metric="fragments_down" data-format="integer">0</div>
+								<div className="w-full h-1 rounded-full bg-(--down)/30 mt-1" />
 							</div>
-							<div className="p-1.5 border border-(--line) rounded bg-(--surface)">
+							<div className="p-2 border border-(--line) rounded bg-(--surface) flex flex-col items-center">
 								<div className="text-(--f3) font-bold">CHOP</div>
 								<div className="text-sm font-bold mt-1" data-metric="fragments_chop" data-format="integer">0</div>
+								<div className="w-full h-1 rounded-full bg-(--line) mt-1" />
 							</div>
-							<div className="p-1.5 border border-(--line) rounded bg-(--surface)">
+							<div className="p-2 border border-(--line) rounded bg-(--surface) flex flex-col items-center">
 								<div className="text-(--f4) font-bold">FLAT</div>
 								<div className="text-sm font-bold mt-1" data-metric="fragments_flat" data-format="integer">0</div>
+								<div className="w-full h-1 rounded-full bg-(--line) mt-1" />
 							</div>
-							<div className="p-1.5 border border-(--line) rounded bg-(--surface)">
+							<div className="p-2 border border-(--line) rounded bg-(--surface) flex flex-col items-center">
 								<div className="text-(--f4) font-bold">UNSUP</div>
 								<div className="text-sm font-bold mt-1" data-metric="fragments_unsupported" data-format="integer">0</div>
+								<div className="w-full h-1 rounded-full bg-(--line) mt-1" />
 							</div>
 						</div>
 					</div>
 
 					{/* Pre-Outcome Frozen Prediction */}
-					<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-2">
+					<div className="border border-(--line) p-3 rounded bg-(--bg) flex flex-col gap-2.5">
 						<div className="text-(--f2) font-bold uppercase tracking-wider text-[10px]">
 							Frozen Pre-Outcome Prediction vs Delayed Label
 						</div>
-						<div className="flex flex-col gap-1.5 text-[11px]">
+						<div className="flex flex-col gap-2 text-[11px]">
 							<div className="flex justify-between items-center">
 								<span className="text-(--f4)">Frozen Predicted Action:</span>
 								<span
@@ -182,7 +191,7 @@ export const RecognitionPanel = React.memo(() => (
 									RESOLVING
 								</span>
 							</div>
-							<div className="flex justify-between text-[10px] text-(--f4)">
+							<div className="flex justify-between text-[10px] text-(--f4) pt-1 border-t border-(--line)">
 								<span>Boundaries: A=<span data-metric="mark_a" data-format="integer">0</span> B=<span data-metric="mark_b" data-format="integer">0</span> C=<span data-metric="mark_c" data-format="integer">0</span></span>
 								<span>Excursion: <span data-metric="excursion_mag" data-format="percent">0.0%</span></span>
 							</div>

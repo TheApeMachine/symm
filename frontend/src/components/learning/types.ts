@@ -86,4 +86,6 @@ export interface SymbolProgress {
 	path: string;
 	depth: number;
 	tokens: string[];
+	/* Stored key dirs Step currently matches for this symbol; undefined when unknown. */
+	matched?: string[];
 }

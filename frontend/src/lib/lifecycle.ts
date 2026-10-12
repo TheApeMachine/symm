@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { positionCountAtom } from "#/collections/app";
 import { hubBaseUrl } from "#/lib/hub";
 
 /*
@@ -56,6 +57,7 @@ export type Performance = {
 export type LifecycleReport = {
 	lifecycles: Lifecycle[] | null;
 	performance: Performance;
+	open_count?: number;
 };
 
 /*
@@ -83,11 +85,15 @@ const poll = async () => {
 			return;
 		}
 		const report: LifecycleReport = await res.json();
+		if (typeof report.open_count === "number") {
+			positionCountAtom.set(report.open_count);
+		}
 		publish({ report, online: true });
 	} catch {
 		publish({ report: snapshot.report, online: false });
 	}
 };
+
 
 const subscribe = (listener: () => void) => {
 	listeners.add(listener);

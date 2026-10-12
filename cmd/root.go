@@ -242,7 +242,7 @@ var (
 
 			// Every trade's signed volume feeds the participation limit, and
 			// the desk sizes, monitors and shadow-fills against book history.
-			desk := broker.NewDesk(ctx, privateTransport, price, balance)
+			desk := broker.NewDesk(ctx, privateTransport, price, balance, catalog)
 
 			training := strategy.NewTraining(
 				ctx,

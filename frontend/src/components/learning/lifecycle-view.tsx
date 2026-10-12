@@ -16,7 +16,6 @@ import {
 	Zap,
 } from "lucide-react";
 import { useState } from "react";
-import { decisionsAtom } from "#/collections/app";
 import { Badge, type BadgeVariant } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
@@ -31,8 +30,10 @@ import {
 	useLifecycles,
 } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
-import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
-import { Explain } from "./explain";
+import {
+	ActivePositionHealthCard,
+	TradeRegionScores,
+} from "./position-health";
 
 /*
 Confluence region taxonomy mapped to human-readable names and visual color tones.
@@ -800,7 +801,7 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 
 const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 	const outcome = life.outcome;
-	if (!outcome) return null;
+	if (!outcome || life.status !== "closed") return null;
 
 	const isWin = outcome.shadow_defined
 		? outcome.shadow_realized > 0
@@ -888,77 +889,7 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 	);
 };
 
-const DecisionFeed = () => {
-	const decisions = useSelector(decisionsAtom, (list: DecisionT[]) =>
-		[...list].sort((left, right) => Number((right.at ?? 0n) - (left.at ?? 0n))),
-	);
 
-	return (
-		<Section>
-			<Section.Header
-				title="Engine decisions"
-				meta={`${decisions.length} symbols`}
-			>
-				<Explain>
-					The latest matching decision per symbol: enter, exit, accumulate
-					(paths disagree or the path is below the minimum confidence) or reset,
-					with the matched path and what the desk did with it.
-				</Explain>
-			</Section.Header>
-			<Section.Body>
-				{decisions.length === 0 ? (
-					<Typography.Mono size="s" tone="f3" className="p-3">
-						No decisions yet.
-					</Typography.Mono>
-				) : (
-					decisions.map((decision) => (
-						<Flex.Column
-							key={String(decision.id ?? decision.symbol)}
-							data-l="engine-decision"
-							className="border-(--line) border-b px-3 py-1.5 font-mono text-[10px]"
-						>
-							<Flex.Row align="center" gap={2}>
-								<span className="w-16 shrink-0 text-(--f4)">
-									{new Date(Number(decision.at ?? 0n) / 1e6).toLocaleTimeString(
-										undefined,
-										{
-											hour12: false,
-										},
-									)}
-								</span>
-								<span className="font-bold text-(--f1)">
-									{String(decision.symbol ?? "")}
-								</span>
-								<span
-									className={cn(
-										"uppercase",
-										decision.action === "enter" || decision.action === "exit"
-											? "text-(--acc)"
-											: "text-(--f3)",
-									)}
-								>
-									{String(decision.action ?? "")}
-								</span>
-								<span className="ml-auto text-(--f4)">
-									{decision.confidence ?? 0} tok ·{" "}
-									{(decision.alternatives ?? [])
-										.map((alt) => `${alt.name}:${alt.value}`)
-										.join(" ")}
-								</span>
-							</Flex.Row>
-							<div
-								className="mt-0.5 truncate text-(--f3)"
-								title={String(decision.reason ?? "")}
-							>
-								{String(decision.reason ?? "")}
-							</div>
-						</Flex.Column>
-					))
-				)}
-			</Section.Body>
-		</Section>
-	);
-};
 
 /*
 LifecycleView follows every paper position through its life: the match that
@@ -981,33 +912,57 @@ export const LifecycleView = () => {
 				align="center"
 				gap={4}
 				wrap="wrap"
-				className="shrink-0 border-(--line) border-b bg-(--surface) px-3 py-1.5 font-mono text-[10px] text-(--f3)"
+				className="shrink-0 border-(--line) border-b bg-(--surface) px-3.5 py-1.5 font-mono text-[10px] text-(--f3) shadow-xs"
 			>
-				<span className="font-bold uppercase tracking-wider text-(--f4)">
-					Paper outcome
-				</span>
-				<span>{perf?.closed ?? 0} closed</span>
-				<span>
-					shadow win {ratePercent(perf?.shadow_win_rate)} · edge{" "}
-					{ratePercent(perf?.shadow_mean_return)} · P&L{" "}
-					<span className={tone(perf?.shadow_pnl ?? 0)}>
-						{signedMoney(perf?.shadow_pnl ?? 0)}
+				<div className="flex items-center gap-1.5">
+					<span className="w-1.5 h-1.5 rounded-full bg-(--up) animate-pulse" />
+					<span className="font-bold uppercase tracking-wider text-(--f4)">
+						Paper outcome
 					</span>
+				</div>
+				<span className="px-2 py-0.5 rounded bg-(--sunken) border border-(--line)">
+					{perf?.closed ?? 0} closed
 				</span>
-				<span>
-					venue win {ratePercent(perf?.venue_win_rate)} · edge{" "}
-					{ratePercent(perf?.venue_mean_return)} · P&L{" "}
-					<span className={tone(perf?.venue_pnl ?? 0)}>
-						{signedMoney(perf?.venue_pnl ?? 0)}
+				<div className="flex items-center gap-2 px-2 py-0.5 rounded bg-(--sunken) border border-(--line)">
+					<div className="w-12 h-1.5 rounded-full bg-(--bg) overflow-hidden border border-(--line) hidden sm:block">
+						<div
+							style={{ width: `${Math.min(100, Math.max(0, (perf?.shadow_win_rate ?? 0) * 100))}%` }}
+							className="h-full bg-(--info)"
+						/>
+					</div>
+					<span>
+						shadow win {ratePercent(perf?.shadow_win_rate)} · edge{" "}
+						{ratePercent(perf?.shadow_mean_return)} · P&L{" "}
+						<span className={tone(perf?.shadow_pnl ?? 0)}>
+							{signedMoney(perf?.shadow_pnl ?? 0)}
+						</span>
 					</span>
-				</span>
+				</div>
+				<div className="flex items-center gap-2 px-2 py-0.5 rounded bg-(--sunken) border border-(--line)">
+					<div className="w-12 h-1.5 rounded-full bg-(--bg) overflow-hidden border border-(--line) hidden sm:block">
+						<div
+							style={{ width: `${Math.min(100, Math.max(0, (perf?.venue_win_rate ?? 0) * 100))}%` }}
+							className="h-full bg-(--up)"
+						/>
+					</div>
+					<span>
+						venue win {ratePercent(perf?.venue_win_rate)} · edge{" "}
+						{ratePercent(perf?.venue_mean_return)} · P&L{" "}
+						<span className={tone(perf?.venue_pnl ?? 0)}>
+							{signedMoney(perf?.venue_pnl ?? 0)}
+						</span>
+					</span>
+				</div>
 				{!online ? (
-					<span className="text-(--down)">lifecycle source offline</span>
+					<span className="text-(--down) font-bold flex items-center gap-1">
+						<span className="w-1.5 h-1.5 rounded-full bg-(--down)" />
+						lifecycle source offline
+					</span>
 				) : null}
 			</Flex.Row>
 
 			<Flex className="min-h-0 flex-1 max-lg:flex-col">
-				<Flex.Column className="w-64 shrink-0 overflow-auto border-(--line) border-r max-lg:w-full">
+				<Flex.Column className="w-64 shrink-0 overflow-auto border-(--line) border-r bg-(--surface)/40 max-lg:w-full">
 					{lifecycles.length === 0 ? (
 						<Typography.Mono size="s" tone="f3" className="p-3">
 							No positions this session yet.
@@ -1019,6 +974,7 @@ export const LifecycleView = () => {
 									? life.outcome.shadow_realized
 									: life.outcome.venue_realized
 								: undefined;
+							const isCurrent = active?.id === life.id;
 							return (
 								<button
 									key={life.id}
@@ -1026,10 +982,10 @@ export const LifecycleView = () => {
 									data-l="lifecycle-item"
 									onClick={() => setSelected(life.id)}
 									className={cn(
-										"w-full cursor-pointer border-(--line) border-b px-2.5 py-2 text-left font-mono",
-										active?.id === life.id
-											? "bg-(--acc)/10"
-											: "hover:bg-(--sunken)",
+										"w-full cursor-pointer border-(--line) border-b px-2.5 py-2 text-left font-mono transition-all border-l-2",
+										isCurrent
+											? "bg-(--acc)/10 border-l-(--acc)"
+											: "border-l-transparent hover:bg-(--sunken)",
 									)}
 								>
 									<Flex.Row align="center" justify="between" gap={2}>
@@ -1051,7 +1007,9 @@ export const LifecycleView = () => {
 											events
 										</span>
 										{pnl !== undefined ? (
-											<span className={tone(pnl)}>{signedMoney(pnl)}</span>
+											<span className={cn("font-bold px-1 rounded text-[9px]", tone(pnl))}>
+												{signedMoney(pnl)}
+											</span>
 										) : null}
 									</Flex.Row>
 								</button>
@@ -1069,7 +1027,11 @@ export const LifecycleView = () => {
 							/>
 							<LifecycleStepper life={active} />
 							<StrategyIntelligenceCard life={active} />
-							<OutcomeCard life={active} />
+							{active.status !== "closed" ? (
+								<ActivePositionHealthCard life={active} />
+							) : (
+								<OutcomeCard life={active} />
+							)}
 							{(active.events ?? []).map((event, index) => (
 								// biome-ignore lint/suspicious/noArrayIndexKey: events are append-only
 								<EventRow key={index} event={event} />
@@ -1082,8 +1044,8 @@ export const LifecycleView = () => {
 					)}
 				</Flex.Column>
 
-				<Flex.Column className="w-96 shrink-0 overflow-auto border-(--line) border-l max-lg:w-full">
-					<DecisionFeed />
+				<Flex.Column className="w-96 shrink-0 overflow-hidden border-(--line) border-l max-lg:w-full">
+					<TradeRegionScores life={active} />
 				</Flex.Column>
 			</Flex>
 		</Flex.Column>

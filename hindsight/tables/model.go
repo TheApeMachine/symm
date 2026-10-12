@@ -229,6 +229,7 @@ func (catalog *Catalog) blobs() (*s3.Client, string, error) {
 
 		if endpoint != "" {
 			options.BaseEndpoint = aws.String(endpoint)
+			options.EndpointOptions.DisableHTTPS = strings.HasPrefix(endpoint, "http://")
 		}
 	})
 

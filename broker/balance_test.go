@@ -28,8 +28,17 @@ func (tee *testTee) Close() error {
 }
 
 func TestBalance(t *testing.T) {
-	Convey("Given a Balance instance with a UI Tee", t, func() {
+	Convey("Given a Balance instance with a multi-asset wallet", t, func() {
 		tee := &testTee{}
+		usdAmount, errUSD := decimal.NewFromString("160.14")
+		So(errUSD, ShouldBeNil)
+		zamaAmount, errZAMA := decimal.NewFromString("517.71")
+		So(errZAMA, ShouldBeNil)
+		unrealizedAmount, errUnrealized := decimal.NewFromString("-0.32")
+		So(errUnrealized, ShouldBeNil)
+		equityAmount, errEquity := decimal.NewFromString("199.68")
+		So(errEquity, ShouldBeNil)
+
 		balance := &Balance{
 			Quote: "USD",
 			uiTee: tee,
@@ -37,27 +46,25 @@ func TestBalance(t *testing.T) {
 				Data: []kraken.BalanceData{
 					{
 						Asset:     "USD",
-						Balance:   decimal.NewFromFloat64(1000),
-						Available: decimal.NewFromFloat64(1000),
+						Balance:   usdAmount,
+						Available: usdAmount,
+					},
+					{
+						Asset:     "ZAMA",
+						Balance:   zamaAmount,
+						Available: zamaAmount,
 					},
 				},
 			},
 		}
 
-		Convey("When a measurement is constructed from balance state", func() {
-			metrics := []*data.Metric{
-				data.NewMetric("unrealized", 50, data.UnitCurrency, data.TimescaleInstantaneous),
-				data.NewMetric("equity", 1050, data.UnitCurrency, data.TimescaleInstantaneous),
-			}
+		tradeBalance := kraken.TradeBalanceResult{
+			UnrealizedPnL: unrealizedAmount,
+			Equity:        equityAmount,
+		}
 
-			for _, row := range balance.wallet.Data {
-				metrics = append(metrics, data.NewMetric(
-					"cash",
-					row.Available.Float64(),
-					data.UnitCurrency,
-					data.TimescaleInstantaneous,
-				))
-			}
+		Convey("When metrics are generated from balance state", func() {
+			metrics := balance.metrics(&tradeBalance)
 
 			now := time.Now()
 			measurement := data.NewMeasurement(
@@ -76,10 +83,15 @@ func TestBalance(t *testing.T) {
 			pushed := tee.pushed[0]
 			So(pushed.Source, ShouldEqual, "balance")
 
-			var cash, equity, unrealized float64
+			var cash, equity, unrealized, zama float64
+			var cashExact string
+
 			for entry := range pushed.Read("cash") {
 				if entry.Metric != nil {
 					cash = entry.Metric.Raw
+					if entry.Metric.Exact != nil {
+						cashExact = entry.Metric.Exact.String()
+					}
 				}
 			}
 			for entry := range pushed.Read("equity") {
@@ -92,10 +104,17 @@ func TestBalance(t *testing.T) {
 					unrealized = entry.Metric.Raw
 				}
 			}
+			for entry := range pushed.Read("balance:ZAMA") {
+				if entry.Metric != nil {
+					zama = entry.Metric.Raw
+				}
+			}
 
-			So(cash, ShouldEqual, 1000)
-			So(equity, ShouldEqual, 1050)
-			So(unrealized, ShouldEqual, 50)
+			So(cash, ShouldEqual, 160.14)
+			So(cashExact, ShouldEqual, "160.14")
+			So(zama, ShouldEqual, 517.71)
+			So(equity, ShouldEqual, 199.68)
+			So(unrealized, ShouldEqual, -0.32)
 		})
 	})
 }

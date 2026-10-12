@@ -1,7 +1,9 @@
 package strategy
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -89,10 +91,78 @@ func TestTrainer(t *testing.T) {
 			}
 
 			tok := &Tokenizer{Depth: 1, Regions: 1, Threshold: 0.5}
-			reward, matches, err := history.replay(price, tok, nil)
+			reward, matches, _, err := history.replay(price, tok, nil)
 			So(err, ShouldBeNil)
 			So(matches, ShouldEqual, 0)
-			So(reward, ShouldEqual, 0.0)
+			So(reward, ShouldEqual, inactionPenalty)
+		})
+
+		Convey("search converges on optimal candidate", func() {
+			trainer := NewTrainer(ctx, catalog, price)
+			history := &recording{
+				frames: make([]frame, 100),
+			}
+
+			for idx := range history.frames {
+				history.frames[idx] = frame{
+					epoch:  100,
+					at:     int64(idx * 1000),
+					symbol: "BTC/USD",
+					bid:    50000 + float64(idx),
+					ask:    50001 + float64(idx),
+				}
+
+				for reg := range store.RegionCount {
+					history.frames[idx].tokens[reg] = "R01"
+					history.frames[idx].strengths[reg] = float64(idx) / 100.0
+				}
+
+				history.events = append(history.events, event{
+					epoch: 100,
+					at:    int64(idx * 1000),
+					kind:  eventFrame,
+					index: idx,
+				})
+			}
+
+			for reg := range store.RegionCount {
+				history.strengths[reg] = make([]float64, 100)
+
+				for idx := range 100 {
+					history.strengths[reg][idx] = float64(idx) / 100.0
+				}
+			}
+
+			history.excursions = []excursion{{
+				epoch:       100,
+				symbol:      "BTC/USD",
+				b:           10000,
+				c:           30000,
+				up:          true,
+				gain:        0.1,
+				netReturn:   0.05,
+				holdSeconds: 20.0,
+			}}
+
+			history.events = append(history.events,
+				event{epoch: 100, at: 10000, kind: eventB, index: 0},
+				event{epoch: 100, at: 30000, kind: eventC, index: 0},
+			)
+
+			slices.SortFunc(history.events, func(left, right event) int {
+				return cmp.Or(
+					cmp.Compare(left.epoch, right.epoch),
+					cmp.Compare(left.at, right.at),
+					cmp.Compare(left.kind, right.kind),
+					cmp.Compare(left.index, right.index),
+				)
+			})
+
+			best, err := trainer.search(history)
+			So(err, ShouldBeNil)
+			So(best, ShouldNotBeNil)
+			So(best.Depth, ShouldBeGreaterThanOrEqualTo, 1)
+			So(best.Regions, ShouldBeGreaterThanOrEqualTo, 1)
 		})
 	})
 }

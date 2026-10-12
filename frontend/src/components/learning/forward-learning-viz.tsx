@@ -1482,6 +1482,62 @@ export const ForwardLearningViz = ({
 
 										return (
 											<g>
+												{/* Shaded Precursor Horizon (A → B) */}
+												{markAIdx !== null && markBIdx !== null && markBIdx > markAIdx && markAIdx < points.length && markBIdx <= points.length && (
+													<g className="precursor-horizon">
+														<rect
+															x={xScale(markAIdx)}
+															y={0}
+															width={Math.max(0, xScale(markBIdx) - xScale(markAIdx))}
+															height={tapeDim.height - 20}
+															fill="color-mix(in srgb, var(--acc) 6%, transparent)"
+															stroke="var(--acc)"
+															strokeWidth={1}
+															strokeDasharray="2 4"
+															strokeOpacity={0.35}
+														/>
+														<text
+															x={xScale(markAIdx) + 6}
+															y={16}
+															fill="var(--acc)"
+															fontSize="8px"
+															fontWeight="bold"
+															letterSpacing="0.08em"
+															className="select-none pointer-events-none font-mono opacity-80 uppercase"
+														>
+															Precursor Phase (A→B)
+														</text>
+													</g>
+												)}
+
+												{/* Shaded Excursion Target Horizon (B → C) */}
+												{markBIdx !== null && markCIdx !== null && markCIdx > markBIdx && markBIdx < points.length && markCIdx <= points.length && (
+													<g className="excursion-horizon">
+														<rect
+															x={xScale(markBIdx)}
+															y={0}
+															width={Math.max(0, xScale(markCIdx) - xScale(markBIdx))}
+															height={tapeDim.height - 20}
+															fill="color-mix(in srgb, var(--up) 7%, transparent)"
+															stroke="var(--up)"
+															strokeWidth={1}
+															strokeDasharray="2 4"
+															strokeOpacity={0.35}
+														/>
+														<text
+															x={xScale(markBIdx) + 6}
+															y={16}
+															fill="var(--up)"
+															fontSize="8px"
+															fontWeight="bold"
+															letterSpacing="0.08em"
+															className="select-none pointer-events-none font-mono opacity-80 uppercase"
+														>
+															Excursion Target (B→C)
+														</text>
+													</g>
+												)}
+
 												{marksList.map(({ name, idx }) => {
 													if (idx < 0 || idx >= points.length) return null;
 													const xPos = xScale(idx);
@@ -1492,25 +1548,26 @@ export const ForwardLearningViz = ({
 																y1={15}
 																x2={0}
 																y2={tapeDim.height}
-																stroke="#0ea5e9"
+																stroke="var(--info)"
 																strokeWidth="1"
 																strokeDasharray="2 4"
-																opacity="0.35"
+																opacity="0.5"
 															/>
 															<rect
 																x={-7}
 																y={8}
 																width={14}
 																height={14}
-																fill="#050505"
-																stroke="#0ea5e9"
+																fill="var(--sunken)"
+																stroke="var(--info)"
 																strokeWidth="1"
 															/>
 															<text
 																x={0}
 																y={18}
-																fill="#0ea5e9"
+																fill="var(--info)"
 																fontSize="9px"
+																fontWeight="bold"
 																textAnchor="middle"
 															>
 																{name}
@@ -1526,11 +1583,11 @@ export const ForwardLearningViz = ({
 														<g
 															transform={`translate(${xScale(entryPtIdx)}, ${yScale(points[entryPtIdx].y)})`}
 														>
-															<circle r={4} fill="#22c55e" />
+															<circle r={4} fill="var(--up)" />
 															<text
 																x={6}
 																y={-6}
-																fill="#22c55e"
+																fill="var(--up)"
 																fontSize="9px"
 																fontWeight="bold"
 															>
@@ -1538,7 +1595,7 @@ export const ForwardLearningViz = ({
 															</text>
 															<line
 																y2={tapeDim.height}
-																stroke="#22c55e"
+																stroke="var(--up)"
 																opacity="0.3"
 															/>
 														</g>
@@ -1554,14 +1611,14 @@ export const ForwardLearningViz = ({
 															<circle
 																r={6}
 																fill="none"
-																stroke="#4ade80"
+																stroke="var(--up)"
 																strokeWidth={2}
 																strokeDasharray="3 2"
 															/>
 															<text
 																x={8}
 																y={12}
-																fill="#4ade80"
+																fill="var(--up)"
 																fontSize="8px"
 																fontWeight="bold"
 															>
@@ -1584,14 +1641,14 @@ export const ForwardLearningViz = ({
 																y={-10}
 																width={90}
 																height={12}
-																fill="#050505"
-																stroke="#22c55e"
+																fill="var(--sunken)"
+																stroke="var(--up)"
 																strokeWidth={0.5}
 															/>
 															<text
 																x={6}
 																y={-1}
-																fill="#22c55e"
+																fill="var(--up)"
 																fontSize="8px"
 																fontWeight="bold"
 															>
@@ -1607,11 +1664,11 @@ export const ForwardLearningViz = ({
 														<g
 															transform={`translate(${xScale(exitPtIdx)}, ${yScale(points[exitPtIdx].y)})`}
 														>
-															<circle r={4} fill="#ef4444" />
+															<circle r={4} fill="var(--down)" />
 															<text
 																x={6}
 																y={-6}
-																fill="#ef4444"
+																fill="var(--down)"
 																fontSize="9px"
 																fontWeight="bold"
 															>
@@ -1619,7 +1676,7 @@ export const ForwardLearningViz = ({
 															</text>
 															<line
 																y2={tapeDim.height}
-																stroke="#ef4444"
+																stroke="var(--down)"
 																opacity="0.3"
 															/>
 														</g>
@@ -1634,14 +1691,14 @@ export const ForwardLearningViz = ({
 															<circle
 																r={6}
 																fill="none"
-																stroke="#f87171"
+																stroke="var(--down)"
 																strokeWidth={2}
 																strokeDasharray="3 2"
 															/>
 															<text
 																x={8}
 																y={12}
-																fill="#f87171"
+																fill="var(--down)"
 																fontSize="8px"
 																fontWeight="bold"
 															>
@@ -1761,11 +1818,64 @@ export const ForwardLearningViz = ({
 
 					<div className="p-3 flex-1 overflow-y-auto flex flex-col gap-3">
 						{/* Historical Held-Out Evidence Card */}
-						<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-1.5">
+						<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-2">
 							<div className="uppercase tracking-widest text-(--f4) text-[9px] font-bold flex justify-between">
 								<span>Historical Prediction Outcomes</span>
 								<span className="text-(--f2)">{histOpportunities} opps</span>
 							</div>
+
+							{/* Visual Stacked Outcome Distribution Bar for Number-Blind Inspection */}
+							{(() => {
+								const totalOutcomes = histCorrectEnter + histFalseEnter + histMissedEnter;
+								const correctPct = totalOutcomes > 0 ? (histCorrectEnter / totalOutcomes) * 100 : 0;
+								const falsePct = totalOutcomes > 0 ? (histFalseEnter / totalOutcomes) * 100 : 0;
+								const missedPct = totalOutcomes > 0 ? (histMissedEnter / totalOutcomes) * 100 : 0;
+								return (
+									<div className="flex flex-col gap-1">
+										<div className="h-2 w-full rounded-full bg-(--sunken) border border-(--line) flex overflow-hidden">
+											{correctPct > 0 && (
+												<div
+													style={{ width: `${correctPct}%` }}
+													className="bg-(--up) h-full transition-all duration-300"
+													title={`Correct: ${correctPct.toFixed(1)}%`}
+												/>
+											)}
+											{falsePct > 0 && (
+												<div
+													style={{ width: `${falsePct}%` }}
+													className="bg-(--down) h-full transition-all duration-300"
+													title={`False: ${falsePct.toFixed(1)}%`}
+												/>
+											)}
+											{missedPct > 0 && (
+												<div
+													style={{ width: `${missedPct}%` }}
+													className="bg-(--warn) h-full transition-all duration-300"
+													title={`Missed: ${missedPct.toFixed(1)}%`}
+												/>
+											)}
+											{totalOutcomes === 0 && (
+												<div className="w-full h-full bg-(--line)" />
+											)}
+										</div>
+										<div className="flex justify-between text-[9px] text-(--f4)">
+											<span className="flex items-center gap-1">
+												<span className="inline-block w-1.5 h-1.5 rounded-full bg-(--up)" />
+												Correct
+											</span>
+											<span className="flex items-center gap-1">
+												<span className="inline-block w-1.5 h-1.5 rounded-full bg-(--down)" />
+												False
+											</span>
+											<span className="flex items-center gap-1">
+												<span className="inline-block w-1.5 h-1.5 rounded-full bg-(--warn)" />
+												Missed
+											</span>
+										</div>
+									</div>
+								);
+							})()}
+
 							<div className="flex justify-between items-baseline text-[11px]">
 								<span className="text-(--f4)">Mean Quote Return:</span>
 								<span
@@ -1786,7 +1896,32 @@ export const ForwardLearningViz = ({
 									{histCorrectEnter + histFalseEnter > 1 ? basis(histLowerBound) : "—"}
 								</span>
 							</div>
-							<div className="flex justify-between items-baseline text-[10px] text-(--f3)">
+
+							{/* Statistical Lower Bound Visual Edge Meter */}
+							<div className="flex flex-col gap-0.5 pt-0.5">
+								<div className="flex justify-between text-[9px] text-(--f4)">
+									<span>Lower Bound Edge</span>
+									<span className={histLowerBound > 0 ? "text-(--up) font-bold" : "text-(--f3)"}>
+										{histLowerBound > 0 ? "SURVIVES 0 BP" : "NO EDGE"}
+									</span>
+								</div>
+								<div className="relative h-1.5 w-full bg-(--sunken) rounded-full overflow-hidden border border-(--line)">
+									<div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-(--line2) z-10" />
+									{histCorrectEnter + histFalseEnter > 1 && histLowerBound !== 0 && (
+										<div
+											style={{
+												left: histLowerBound > 0 ? "50%" : `${Math.max(0, 50 + histLowerBound * 500)}%`,
+												width: `${Math.min(50, Math.abs(histLowerBound) * 500)}%`,
+											}}
+											className={`absolute top-0 bottom-0 ${
+												histLowerBound > 0 ? "bg-(--up)" : "bg-(--down)"
+											}`}
+										/>
+									)}
+								</div>
+							</div>
+
+							<div className="flex justify-between items-baseline text-[10px] text-(--f3) pt-1 border-t border-(--line)">
 								<span>
 									Correct:{" "}
 									<strong
@@ -1818,7 +1953,7 @@ export const ForwardLearningViz = ({
 						</div>
 
 						{/* Forward Paper Evidence Card */}
-						<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-1.5">
+						<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-2">
 							<div className="uppercase tracking-widest text-(--f4) text-[9px] font-bold flex justify-between">
 								<span>Forward Paper Evidence</span>
 								<span
@@ -1829,6 +1964,31 @@ export const ForwardLearningViz = ({
 									{isForward ? "ACTIVE" : "GATED"}
 								</span>
 							</div>
+
+							{/* Visual Execution Fill Ratio Meter */}
+							<div className="flex flex-col gap-1">
+								<div className="h-1.5 w-full rounded-full bg-(--sunken) border border-(--line) overflow-hidden">
+									<div
+										style={{
+											width: `${
+												fwdPredictions > 0
+													? Math.min(100, (fwdPaperTrades / fwdPredictions) * 100)
+													: 0
+											}%`,
+										}}
+										className="h-full bg-(--info) transition-all duration-300"
+									/>
+								</div>
+								<div className="flex justify-between text-[9px] text-(--f4)">
+									<span>Execution Coverage</span>
+									<span>
+										{fwdPredictions > 0
+											? `${Math.round((fwdPaperTrades / fwdPredictions) * 100)}%`
+											: "0%"}
+									</span>
+								</div>
+							</div>
+
 							<div className="flex justify-between items-baseline text-[11px]">
 								<span className="text-(--f4)">Paper Mean Return:</span>
 								<span
@@ -1849,7 +2009,8 @@ export const ForwardLearningViz = ({
 									{fwdPaperTrades > 0 ? basis(fwdPaperLowerBound) : "—"}
 								</span>
 							</div>
-							<div className="flex justify-between items-baseline text-[10px] text-(--f3)">
+
+							<div className="flex justify-between items-baseline text-[10px] text-(--f3) pt-1 border-t border-(--line)">
 								<span>
 									Trades:{" "}
 									<strong

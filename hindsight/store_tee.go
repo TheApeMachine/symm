@@ -30,10 +30,14 @@ func NewStoreTee(ctx context.Context, label string) *StoreTee {
 	return tee
 }
 
+const maxStoreTeePending = 250_000
+
 /*
 Push queues a measurement for persistence. A tee that is not READY cannot
 accept it: the measurement is dropped, the drop is logged as an error naming
 the row, and Dropped counts it so batch callers can refuse a partial result.
+If the queue capacity is exceeded because downstream persistence is stalled,
+the measurement is dropped with an explicit error to prevent unbounded memory growth.
 */
 func (tee *StoreTee) Push(measurement *data.Measurement) {
 	if measurement == nil {
@@ -47,6 +51,20 @@ func (tee *StoreTee) Push(measurement *data.Measurement) {
 			fmt.Sprintf(
 				"[storeTee] dropped %s/%s epoch=%d tick=%d: tee is %v, not ready",
 				measurement.Source, measurement.Label, measurement.Epoch, measurement.Tick, status,
+			),
+			nil,
+		))
+
+		return
+	}
+
+	if tee.queue.Length() >= maxStoreTeePending {
+		tee.dropped.Add(1)
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			fmt.Sprintf(
+				"[storeTee] queue capacity exceeded (%d pending): dropped %s/%s epoch=%d tick=%d",
+				tee.queue.Length(), measurement.Source, measurement.Label, measurement.Epoch, measurement.Tick,
 			),
 			nil,
 		))

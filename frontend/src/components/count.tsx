@@ -2,6 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { positionCountAtom } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
+import { useLifecycles } from "#/lib/lifecycle";
 
 /*
 Count reads the account positions and states the open-lot tally in the same
@@ -9,6 +10,7 @@ label-over-value form the cash readings use, so the top bar's right-hand side is
 one row of readouts rather than a sentence sitting among them.
 */
 export const Count = () => {
+	useLifecycles();
 	const count = useSelector(positionCountAtom, (state) => state);
 
 	return (
@@ -22,3 +24,4 @@ export const Count = () => {
 		</Flex.Column>
 	);
 };
+

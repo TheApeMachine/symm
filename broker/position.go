@@ -2,6 +2,7 @@ package broker
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ type Position struct {
 	entryFee    *decimal.Decimal
 	exitFee     *decimal.Decimal
 	mark        *decimal.Decimal
+	outcome     *LifeOutcome
 }
 
 func NewPosition() *Position {
@@ -41,9 +43,33 @@ func NewPosition() *Position {
 }
 
 /*
+RestorePosition recreates a historically closed position loaded from Iceberg.
+*/
+func RestorePosition(
+	id string,
+	symbol string,
+	openedAt time.Time,
+	closedAt *time.Time,
+	events []LifeEvent,
+	outcome *LifeOutcome,
+) *Position {
+	return &Position{
+		id:          id,
+		symbol:      symbol,
+		openedAt:    openedAt,
+		closedAt:    closedAt,
+		events:      events,
+		outcome:     outcome,
+		entryOrders: make([]*spot.OrderRequest, 0),
+		exitOrders:  make([]*spot.OrderRequest, 0),
+		fills:       make([]*kraken.ExecutionData, 0),
+	}
+}
+
+/*
 Enter records a buy of qty and returns the order to submit.
 */
-func (position *Position) Enter(symbol string, qty *decimal.Decimal) *spot.OrderRequest {
+func (position *Position) Enter(symbol string, qty *decimal.Decimal, path ...string) *spot.OrderRequest {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
@@ -52,6 +78,18 @@ func (position *Position) Enter(symbol string, qty *decimal.Decimal) *spot.Order
 
 	if position.openedAt.IsZero() {
 		position.openedAt = time.Now().UTC()
+	}
+
+	if len(path) > 0 && path[0] != "" {
+		position.events = append(position.events, LifeEvent{
+			At:     position.openedAt.Format(time.RFC3339),
+			Kind:   "entry_match",
+			Detail: fmt.Sprintf("prefix match %s", path[0]),
+			Fields: map[string]any{
+				"path":   path[0],
+				"symbol": symbol,
+			},
+		})
 	}
 
 	clOrdId := uuid.NewString()
@@ -181,7 +219,12 @@ func (position *Position) Lifecycle() Lifecycle {
 		Events:   position.events,
 	}
 
-	if len(position.fills) > 0 || position.Closed() {
+	if position.outcome != nil {
+		lifecycle.Outcome = position.outcome
+		return lifecycle
+	}
+
+	if position.closedLocked() && len(position.fills) > 0 {
 		outcome := &LifeOutcome{
 			ShadowDefined: false,
 			Triggers:      []string{},
@@ -230,6 +273,34 @@ func (position *Position) Lifecycle() Lifecycle {
 	return lifecycle
 }
 
+func (position *Position) ID() string {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	return position.id
+}
+
+func (position *Position) Symbol() string {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	return position.symbol
+}
+
+func (position *Position) ClosedAt() *time.Time {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	return position.closedAt
+}
+
+func (position *Position) Events() []LifeEvent {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	return slices.Clone(position.events)
+}
+
 func (position *Position) Apply(execution kraken.ExecutionData) {
 	position.mu.Lock()
 	defer position.mu.Unlock()
@@ -242,14 +313,36 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 		detail = fmt.Sprintf("%s fill %s @ %s", execution.Side, execution.LastQty.String(), execution.LastPrice.String())
 	}
 
+	fields := map[string]any{
+		"side":      execution.Side,
+		"exec_type": execution.ExecType,
+	}
+
+	if execution.LastQty != nil {
+		fields["volume"] = execution.LastQty.String()
+	}
+
+	if execution.LastPrice != nil {
+		fields["price"] = execution.LastPrice.String()
+	}
+
+	if execution.LastQty != nil && execution.LastPrice != nil {
+		fields["cost"] = execution.LastQty.Mul(execution.LastPrice).String()
+	}
+
+	if execution.FeeUsdEquiv != nil {
+		fields["fee"] = execution.FeeUsdEquiv.String()
+	}
+
+	if execution.AvgPrice != nil {
+		fields["avg_price"] = execution.AvgPrice.String()
+	}
+
 	event := LifeEvent{
 		At:     time.Now().UTC().Format(time.RFC3339),
 		Kind:   "fill",
 		Detail: detail,
-		Fields: map[string]any{
-			"side":      execution.Side,
-			"exec_type": execution.ExecType,
-		},
+		Fields: fields,
 	}
 
 	if !execution.Timestamp.IsZero() {
@@ -332,4 +425,34 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 		now := time.Now().UTC()
 		position.closedAt = &now
 	}
+}
+
+/*
+OpenedAt returns when the position's first entry was recorded (zero if never).
+*/
+func (position *Position) OpenedAt() time.Time {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	return position.openedAt
+}
+
+/*
+EntryFee returns the venue fee paid on entry fills so far, nil before any.
+*/
+func (position *Position) EntryFee() *decimal.Decimal {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	return position.entryFee
+}
+
+/*
+Exiting reports whether a sell for the position has been submitted.
+*/
+func (position *Position) Exiting() bool {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	return len(position.exitOrders) > 0
 }

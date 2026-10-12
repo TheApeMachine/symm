@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -146,11 +147,11 @@ func storeLevel3(level3Msg *kraken.Level3, epoch int64, storeTee nmruntime.Tee, 
 					tick,
 					&data.StringEntry{
 						Key:   "type",
-						Value: level3Data.Type,
+						Value: strings.Clone(level3Data.Type),
 					},
 					&data.StringEntry{
 						Key:   "order_id",
-						Value: order.OrderID,
+						Value: strings.Clone(order.OrderID),
 					},
 					&data.StringEntry{
 						Key:   "side",
@@ -158,7 +159,7 @@ func storeLevel3(level3Msg *kraken.Level3, epoch int64, storeTee nmruntime.Tee, 
 					},
 					&data.StringEntry{
 						Key:   "event",
-						Value: order.Event,
+						Value: strings.Clone(order.Event),
 					},
 					&data.StringEntry{
 						Key:   "checksum",
@@ -253,7 +254,7 @@ func handleTrade(
 			},
 			&data.StringEntry{
 				Key:   "ord_type",
-				Value: tradeItem.OrderType,
+				Value: strings.Clone(tradeItem.OrderType),
 			},
 			&data.StringEntry{
 				Key:   "trade_id",
@@ -261,7 +262,7 @@ func handleTrade(
 			},
 			&data.StringEntry{
 				Key:   "side",
-				Value: tradeItem.Side,
+				Value: strings.Clone(tradeItem.Side),
 			},
 		)
 

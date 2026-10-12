@@ -428,3 +428,12 @@ For Go environments, do not guess formatting or modernization capabilities. Let 
 
 ### C. Structural Tree Inversion
 * When encountering multi-nested conditional loops written by inferior systems, you must invert the conditional logic into clean guard clauses immediately to reduce Cyclomatic Complexity before continuing feature development.
+
+
+## !WARNING!
+
+Lately we have observed behavior coming from you where you more often than not fake implementations, use silent fallbacks, or otherwise severely compromise our projects.
+You are to behave in a respectful manner, as a guest, being invited into a project, we expect you to behave yourself, and treat the project as you would want someone coming into one of your projects to behave.
+Do not forget that you are representing the company the user is a paying customer of.
+
+No fakery, no reward hacking, no silent fallbacks. If something is not as expected, log/throw an error so we can be aware of the things we need to fix.

@@ -81,8 +81,7 @@ action tree published to S3 storage.`,
 				}
 
 				if hasExcursions {
-					trainEpochs = []int64{run.Epoch}
-					break
+					trainEpochs = append(trainEpochs, run.Epoch)
 				}
 			}
 

@@ -30,10 +30,10 @@ type Balance struct {
 }
 
 /*
-The venue's own request budgets bound how often Update may run.
+The venue's own request budgets bound how often watch may run.
 
 Live: Kraken's private REST counter decays by 0.33 per second on the Starter
-tier, the lowest tier any account has, and Update spends two points (Balance
+tier, the lowest tier any account has, and each poll spends two points (Balance
 and TradeBalance).
 
 Paper: `kraken paper status` prices the wallet through one public Ticker call,
@@ -67,28 +67,8 @@ func NewBalance(
 		), 1)
 	}
 
-	// Startup needs the venue's account state, so the first read is retried
-	// until it succeeds, each attempt spaced by the venue's request budget.
-	for {
-		if err := balance.limiter.Wait(ctx); err != nil {
-			balance.Transition(runtime.ERROR)
-			return balance
-		}
-
-		err := balance.Update()
-
-		if err == nil {
-			break
-		}
-
-		errnie.Error(errnie.Err(
-			errnie.BadGateway, "[balance] initial account read failed, retrying", err,
-		))
-	}
-
-	go balance.watch()
-
 	balance.Transition(runtime.READY)
+	go balance.watch()
 	return balance
 }
 
@@ -99,15 +79,24 @@ func (balance *Balance) cash(asset string) *decimal.Decimal {
 
 	for _, entry := range balance.wallet.Data {
 		if entry.Asset == asset {
-			return entry.Available
+			if entry.Available != nil {
+				return entry.Available
+			}
+
+			return entry.Balance
 		}
 	}
 
 	alias := krakenAssetAlias(asset)
+
 	if alias != "" {
 		for _, entry := range balance.wallet.Data {
 			if entry.Asset == alias {
-				return entry.Available
+				if entry.Available != nil {
+					return entry.Available
+				}
+
+				return entry.Balance
 			}
 		}
 	}
@@ -162,16 +151,13 @@ func (balance *Balance) watch() {
 			return
 		}
 
-		if err := balance.Update(); err != nil {
+		if err := balance.poll(); err != nil {
 			errnie.Error(err)
 		}
 	}
 }
 
-/*
-Update refreshes the holistic account state atomically.
-*/
-func (balance *Balance) Update() (err error) {
+func (balance *Balance) poll() (err error) {
 	var tradeBalance *kraken.TradeBalanceResult
 
 	if balance.paper != nil {
@@ -243,30 +229,6 @@ func (balance *Balance) Update() (err error) {
 		))
 	}
 
-	metrics := []*data.Metric{
-		data.NewMetric(
-			"unrealized",
-			tradeBalance.UnrealizedPnL.Float64(),
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-		),
-		data.NewMetric(
-			"equity",
-			tradeBalance.Equity.Float64(),
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-		),
-	}
-
-	for _, entry := range balance.wallet.Data {
-		metrics = append(metrics, data.NewMetric(
-			"cash",
-			entry.Available.Float64(),
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-		))
-	}
-
 	now := time.Now()
 	epoch := system.Epoch.Load()
 
@@ -283,9 +245,75 @@ func (balance *Balance) Update() (err error) {
 	)
 	measurement.At = now
 	measurement.From = now
-	measurement.Write(metrics...)
+	measurement.Write(balance.metrics(tradeBalance)...)
 
 	balance.measurement = measurement
 	balance.uiTee.Push(balance.measurement)
 	return nil
+}
+
+func (balance *Balance) metrics(tradeBalance *kraken.TradeBalanceResult) []*data.Metric {
+	metrics := make([]*data.Metric, 0, len(balance.wallet.Data)+3)
+
+	if tradeBalance.UnrealizedPnL != nil {
+		metrics = append(metrics, data.NewExactMetric(
+			"unrealized",
+			tradeBalance.UnrealizedPnL,
+			data.UnitCurrency,
+			data.TimescaleInstantaneous,
+		))
+	}
+
+	if tradeBalance.Equity != nil {
+		metrics = append(metrics, data.NewExactMetric(
+			"equity",
+			tradeBalance.Equity,
+			data.UnitCurrency,
+			data.TimescaleInstantaneous,
+		))
+	}
+
+	quoteCash := balance.cash(balance.Quote)
+
+	if quoteCash == nil {
+		quoteCash = balance.cash("USD")
+	}
+
+	if quoteCash == nil && tradeBalance.AvailableCash != nil {
+		quoteCash = tradeBalance.AvailableCash
+	}
+
+	if quoteCash != nil {
+		metrics = append(metrics, data.NewExactMetric(
+			"cash",
+			quoteCash,
+			data.UnitCurrency,
+			data.TimescaleInstantaneous,
+		))
+	}
+
+	for _, entry := range balance.wallet.Data {
+		available := entry.Available
+
+		if available == nil {
+			available = entry.Balance
+		}
+
+		if available == nil {
+			continue
+		}
+
+		if entry.Asset == balance.Quote || entry.Asset == krakenAssetAlias(balance.Quote) {
+			continue
+		}
+
+		metrics = append(metrics, data.NewExactMetric(
+			"balance:"+entry.Asset,
+			available,
+			data.UnitCurrency,
+			data.TimescaleInstantaneous,
+		))
+	}
+
+	return metrics
 }

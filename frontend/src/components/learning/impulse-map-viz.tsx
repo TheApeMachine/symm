@@ -92,10 +92,10 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			const nodeLayer = svg.select<SVGGElement>(".nodes");
 			const badgeLayer = svg.select<SVGGElement>(".region-badges");
 
-			// Color Scale: panel stone -> sky blue -> emerald green -> radiant gold
+			// Color Scale: warm panel stone -> sky cyan -> sage green -> radiant amber
 			const colorScale = d3
 				.scaleSequential<string>((t) =>
-					d3.interpolateRgbBasis(["#111113", "#0ea5e9", "#22c55e", "#fbbf24"])(t),
+					d3.interpolateRgbBasis(["#17140f", "#7fbacb", "#9cc06e", "#e8a33d"])(t),
 				)
 				.domain([0, 1]);
 
@@ -120,11 +120,11 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					.merge(paths)
 					.attr("d", d3.geoPath())
 					.attr("fill", (_, i) => {
-						return d3.color("#fbbf24")?.copy({ opacity: i * 0.015 }).toString() || "none";
+						return d3.color("#e8a33d")?.copy({ opacity: i * 0.015 }).toString() || "none";
 					})
 					.attr("stroke", (_, i) => {
-						if (i === 6) return "rgba(34, 197, 94, 0.4)"; // Green boundary
-						if (i === 10) return "rgba(251, 191, 36, 0.8)"; // Gold Otsu split boundary
+						if (i === 6) return "rgba(156, 192, 110, 0.4)"; // Sage boundary (--up)
+						if (i === 10) return "rgba(232, 163, 61, 0.8)"; // Amber Otsu split boundary (--acc)
 						return "none";
 					})
 					.attr("stroke-width", (_, i) => (i === 10 ? 1.5 : i === 6 ? 1 : 0))
@@ -169,7 +169,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.attr("y1", (d) => d.source.y || 0)
 				.attr("x2", (d) => d.target.x || 0)
 				.attr("y2", (d) => d.target.y || 0)
-				.attr("stroke", "#fbbf24")
+				.attr("stroke", "var(--acc)")
 				.attr("stroke-opacity", (d) => Math.min(d.strength * 0.8, 0.8))
 				.attr("stroke-width", 1.5);
 
@@ -187,7 +187,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.attr("cy", (d) => d.y || 0)
 				.attr("r", (d) => Math.max(3.5, Math.min((d.snr || 1) * 1.5 + 2, 14)) * 1.8)
 				.attr("fill", "none")
-				.attr("stroke", "#fbbf24")
+				.attr("stroke", "var(--acc)")
 				.attr("stroke-width", 1.5)
 				.attr("stroke-opacity", (d) => Math.min((d.activation || 0) * 0.7, 0.8))
 				.style("filter", "url(#impulse-glow)");
@@ -201,14 +201,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.enter()
 				.append("circle")
 				.attr("r", (d) => Math.max(3.5, Math.min((d.snr || 1) * 1.5 + 2, 14)))
-				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "#050505"))
+				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "var(--sunken)"))
 				.attr("stroke-width", (d) => ((d.activation || 0) >= 0.5 ? 2 : 1.5))
 				.on("mouseover", function () {
 					d3.select(this).attr("stroke", "#fbbf24").attr("stroke-width", 2);
 				})
 				.on("mouseout", function (_, d) {
 					d3.select(this)
-						.attr("stroke", (d.activation || 0) >= 0.5 ? "#fbbf24" : "#050505")
+						.attr("stroke", (d.activation || 0) >= 0.5 ? "#fbbf24" : "var(--sunken)")
 						.attr("stroke-width", (d.activation || 0) >= 0.5 ? 2 : 1.5);
 				});
 
@@ -226,7 +226,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.attr("cy", (d) => d.y || 0)
 				.attr("r", (d) => Math.max(3.5, Math.min((d.snr || 1) * 1.5 + 2, 14)))
 				.attr("fill", (d) => colorScale(d.activation || 0))
-				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "#050505"))
+				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "var(--sunken)"))
 				.attr("stroke-width", (d) => ((d.activation || 0) >= 0.5 ? 2 : 1.5));
 
 			nodeMerged.select("title").text(
@@ -271,7 +271,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				badgeMerged
 					.attr("transform", (d) => `translate(${d.x}, ${d.y - 18})`)
 					.select("text")
-					.attr("fill", (d) => (d.maxAct >= 0.5 ? "#fbbf24" : "#71717a"))
+					.attr("fill", (d) => (d.maxAct >= 0.5 ? "var(--acc)" : "var(--f4)"))
 					.text((d) => `R${d.clusterId} (${d.count}m)`);
 
 				badges.exit().remove();
@@ -569,19 +569,19 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				: uniqueClusters.size;
 
 	return (
-		<div className={cn("flex flex-col w-full h-full", className)}>
-			{/* Top Bar matching mockup styling */}
-			<div className="h-8 border-b border-[#27272a] flex items-center justify-between px-4 text-xs bg-[#09090b] font-mono shrink-0">
+		<div className={cn("flex flex-col w-full h-full bg-(--bg)", className)}>
+			{/* Top Bar matching dashboard styling */}
+			<div className="h-8 border-b border-(--line) flex items-center justify-between px-3 text-xs bg-(--surface) font-mono shrink-0">
 				<div className="flex items-center gap-4">
 					<div className="flex gap-4">
 						<button
 							type="button"
 							onClick={() => setSubTab("map")}
 							className={cn(
-								"py-1.5 transition-colors cursor-pointer",
+								"py-1 px-1 transition-colors cursor-pointer text-[11px]",
 								subTab === "map"
-									? "text-[#fbbf24] border-b border-[#fbbf24] font-medium"
-									: "text-[#52525b] hover:text-[#a1a1aa]",
+									? "text-(--acc) border-b border-(--acc) font-bold"
+									: "text-(--f4) hover:text-(--f2)",
 							)}
 						>
 							Map
@@ -590,10 +590,10 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 							type="button"
 							onClick={() => setSubTab("topography")}
 							className={cn(
-								"py-1.5 transition-colors cursor-pointer",
+								"py-1 px-1 transition-colors cursor-pointer text-[11px]",
 								subTab === "topography"
-									? "text-[#fbbf24] border-b border-[#fbbf24] font-medium"
-									: "text-[#52525b] hover:text-[#a1a1aa]",
+									? "text-(--acc) border-b border-(--acc) font-bold"
+									: "text-(--f4) hover:text-(--f2)",
 							)}
 						>
 							Topography
@@ -602,45 +602,45 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 							type="button"
 							onClick={() => setSubTab("sympathy")}
 							className={cn(
-								"py-1.5 transition-colors cursor-pointer",
+								"py-1 px-1 transition-colors cursor-pointer text-[11px]",
 								subTab === "sympathy"
-									? "text-[#fbbf24] border-b border-[#fbbf24] font-medium"
-									: "text-[#52525b] hover:text-[#a1a1aa]",
+									? "text-(--acc) border-b border-(--acc) font-bold"
+									: "text-(--f4) hover:text-(--f2)",
 							)}
 						>
 							Sympathy Grid
 						</button>
 					</div>
 
-					<div className="h-3 w-px bg-[#27272a]" />
+					<div className="h-3 w-px bg-(--line)" />
 
 					{/* Metrics & Formed Regions telemetry counters */}
-					<div className="flex items-center gap-3 text-[11px]">
-						<div className="flex items-center gap-1.5 bg-[#111113] border border-[#27272a] px-2 py-0.5 rounded">
-							<span className="text-[#71717a] uppercase text-[10px]">Metrics</span>
-							<span data-l="grid-metric-count" className="text-white font-bold">{metricCount}</span>
+					<div className="flex items-center gap-2 text-[11px]">
+						<div className="flex items-center gap-1.5 bg-(--sunken) border border-(--line) px-2 py-0.5 rounded text-[10px]">
+							<span className="text-(--f4) uppercase">Metrics</span>
+							<span data-l="grid-metric-count" className="text-(--f1) font-bold">{metricCount}</span>
 						</div>
-						<div className="flex items-center gap-1.5 bg-[#111113] border border-[#27272a] px-2 py-0.5 rounded">
-							<span className="text-[#71717a] uppercase text-[10px]">Regions Formed</span>
-							<span data-l="grid-region-count" className="text-[#fbbf24] font-bold">{regionCount}</span>
+						<div className="flex items-center gap-1.5 bg-(--sunken) border border-(--line) px-2 py-0.5 rounded text-[10px]">
+							<span className="text-(--f4) uppercase">Regions Formed</span>
+							<span data-l="grid-region-count" className="text-(--acc) font-bold">{regionCount}</span>
 						</div>
 					</div>
 				</div>
 				<div className="flex items-center gap-3">
 					{/* Phase Toggle Controls */}
-					<div className="flex items-center gap-1 bg-[#111113] border border-[#27272a] p-1 rounded mr-2">
+					<div className="flex items-center gap-1 bg-(--sunken) border border-(--line) p-0.5 rounded mr-1">
 						<button
 							type="button"
 							data-l="view-initial-grid"
 							onClick={() => setLayoutMode("grid")}
 							className={cn(
-								"px-3 py-1 rounded transition-colors flex items-center gap-1.5 cursor-pointer text-xs",
+								"px-2.5 py-0.5 rounded transition-colors flex items-center gap-1.5 cursor-pointer text-[11px]",
 								layoutMode === "grid"
-									? "bg-[#27272a] text-[#fbbf24]"
-									: "text-[#71717a] hover:text-[#a1a1aa]",
+									? "bg-(--raised) text-(--acc) font-bold shadow-xs"
+									: "text-(--f3) hover:text-(--f1)",
 							)}
 						>
-							<Grid2X2 className="w-3.5 h-3.5" />
+							<Grid2X2 className="w-3 h-3" />
 							<span>Initial Grid</span>
 						</button>
 						<button
@@ -648,26 +648,26 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 							data-l="view-sympathy-regions"
 							onClick={() => setLayoutMode("regions")}
 							className={cn(
-								"px-3 py-1 rounded transition-colors flex items-center gap-1.5 cursor-pointer text-xs",
+								"px-2.5 py-0.5 rounded transition-colors flex items-center gap-1.5 cursor-pointer text-[11px]",
 								layoutMode === "regions"
-									? "bg-[#27272a] text-[#fbbf24]"
-									: "text-[#71717a] hover:text-[#a1a1aa]",
+									? "bg-(--raised) text-(--acc) font-bold shadow-xs"
+									: "text-(--f3) hover:text-(--f1)",
 							)}
 						>
-							<Waves className="w-3.5 h-3.5" />
+							<Waves className="w-3 h-3" />
 							<span>Sympathy Clustering</span>
 						</button>
 					</div>
 
-					<div className="flex items-center gap-1.5 text-[#52525b] text-[11px]">
-						<div className="w-2 h-2 rounded bg-[#fbbf24] opacity-80" />
-						<span>Agent Action Threshold (Otsu Split)</span>
+					<div className="flex items-center gap-1.5 text-(--f4) text-[11px]">
+						<div className="w-2 h-2 rounded-full bg-(--acc) opacity-80" />
+						<span>Otsu Split Action Threshold</span>
 					</div>
-					<div className="h-3 w-px bg-[#27272a]" />
+					<div className="h-3 w-px bg-(--line)" />
 					<button
 						type="button"
 						onClick={handleReset}
-						className="text-[#71717a] hover:text-white transition-colors cursor-pointer p-0.5"
+						className="text-(--f3) hover:text-(--f1) transition-colors cursor-pointer p-0.5"
 						title="Reset Map"
 					>
 						<RefreshCw className="w-3.5 h-3.5" />
@@ -675,7 +675,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					<button
 						type="button"
 						onClick={() => setIsPlaying(!isPlaying)}
-						className="text-[#fbbf24] hover:text-white transition-colors ml-1 p-0.5 cursor-pointer"
+						className="text-(--acc) hover:text-(--f1) transition-colors ml-1 p-0.5 cursor-pointer"
 						title={isPlaying ? "Pause Feed" : "Resume Feed"}
 					>
 						{isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
@@ -683,14 +683,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				</div>
 			</div>
 
-			<div ref={containerRef} className="flex-1 relative bg-[#050505] overflow-hidden">
+			<div ref={containerRef} className="flex-1 relative bg-(--sunken) overflow-hidden">
 				{/* Background Grid */}
 				<div
-					className="absolute inset-0 pointer-events-none opacity-[0.15]"
+					className="absolute inset-0 pointer-events-none opacity-[0.12]"
 					style={{
 						backgroundImage:
-							"linear-gradient(#27272a 1px, transparent 1px), linear-gradient(90deg, #27272a 1px, transparent 1px)",
-						backgroundSize: "40px 40px",
+							"linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px)",
+						backgroundSize: "36px 36px",
 					}}
 				/>
 
@@ -702,48 +702,58 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				</svg>
 
 				{/* Canvas HUD Pill: Metrics & Regions Indicator */}
-				<div className="absolute bottom-3 left-4 flex items-center gap-3 font-mono text-[11px] text-[#71717a] pointer-events-none bg-[#09090b]/80 backdrop-blur px-2.5 py-1 rounded border border-[#27272a] shadow-lg">
+				<div className="absolute bottom-3 left-4 flex items-center gap-3 font-mono text-[11px] text-(--f3) pointer-events-none bg-(--surface)/85 backdrop-blur px-2.5 py-1 rounded border border-(--line) shadow-lg">
 					<span className="flex items-center gap-1.5">
-						<span className="w-1.5 h-1.5 rounded-full bg-[#0ea5e9]" />
+						<span className="w-1.5 h-1.5 rounded-full bg-(--info)" />
 						<span>Metrics:</span>
-						<span data-l="hud-metric-count" className="text-white font-bold">{metricCount}</span>
+						<span data-l="hud-metric-count" className="text-(--f1) font-bold">{metricCount}</span>
 					</span>
-					<span className="text-[#27272a]">·</span>
+					<span className="text-(--line2)">·</span>
 					<span className="flex items-center gap-1.5">
-						<span className="w-1.5 h-1.5 rounded-full bg-[#fbbf24]" />
+						<span className="w-1.5 h-1.5 rounded-full bg-(--acc)" />
 						<span>Formed Regions:</span>
-						<span data-l="hud-region-count" className="text-[#fbbf24] font-bold">{regionCount}</span>
+						<span data-l="hud-region-count" className="text-(--acc) font-bold">{regionCount}</span>
 					</span>
 				</div>
 
 				{/* Market Tape / Active Regions Overlay */}
-				<div className="absolute top-4 left-4 w-64 bg-[#09090b]/80 backdrop-blur border border-[#27272a] rounded p-3 pointer-events-none shadow-xl font-mono">
-					<div className="text-[10px] uppercase tracking-widest text-[#52525b] mb-2 flex items-center justify-between">
+				<div className="absolute top-4 left-4 w-68 bg-(--surface)/85 backdrop-blur border border-(--line) rounded p-3 pointer-events-none shadow-xl font-mono">
+					<div className="text-[10px] uppercase tracking-widest text-(--f4) mb-2 flex items-center justify-between">
 						<span>{activeEvents.length > 0 ? `Active Regions (${activeEvents.length})` : "Market Tape Feed"}</span>
-						{isPlaying && <span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse" />}
+						{isPlaying && <span className="w-1.5 h-1.5 rounded-full bg-(--up) animate-pulse" />}
 					</div>
 					<div className="space-y-1.5 text-xs max-h-60 overflow-y-auto">
 						{activeEvents.length > 0 ? (
 							activeEvents.map((evt, index) => (
 								<div
 									key={`${(evt as { id?: number }).id ?? "r"}:${evt.label}:${index}`}
-									className="flex justify-between items-center text-[#d4d4d4]"
+									className="flex flex-col gap-1 text-(--f2)"
 								>
-									<span className="truncate pr-2">{evt.label}</span>
-									<div className="flex items-center gap-1.5 shrink-0">
-										{evt.members != null && (
-											<span className="text-[10px] text-[#71717a]">
-												{evt.members}m
+									<div className="flex justify-between items-center text-[11px]">
+										<span className="truncate pr-2 font-medium">{evt.label}</span>
+										<div className="flex items-center gap-1.5 shrink-0">
+											{evt.members != null && (
+												<span className="text-[10px] text-(--f4)">
+													{evt.members}m
+												</span>
+											)}
+											<span className="text-(--acc) font-bold">
+												{evt.activity.toFixed(2)}
 											</span>
-										)}
-										<span className="text-[#fbbf24] font-bold">
-											{evt.activity.toFixed(2)}
-										</span>
+										</div>
+									</div>
+									<div className="w-full h-1 bg-(--sunken) rounded-full overflow-hidden">
+										<div
+											className="h-full bg-(--acc) rounded-full transition-all"
+											style={{
+												width: `${Math.min(100, Math.max(6, evt.activity * 100))}%`,
+											}}
+										/>
 									</div>
 								</div>
 							))
 						) : (
-							<div className="text-[#71717a] text-[11px] italic">
+							<div className="text-(--f4) text-[11px] italic">
 								Quiescent · Awaiting impulse
 							</div>
 						)}

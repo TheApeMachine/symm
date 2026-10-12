@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"hash/crc32"
+	"math/big"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -809,28 +811,13 @@ func appendDecimalDigits(buf []byte, d *decimal.Decimal) []byte {
 		return buf
 	}
 
-	str := d.String()
-	seenNonZero := false
+	bi := *(**big.Int)(unsafe.Pointer(d))
 
-	for idx := 0; idx < len(str); idx++ {
-		char := str[idx]
-
-		if char == '.' {
-			continue
-		}
-
-		if !seenNonZero {
-			if char == '0' {
-				continue
-			}
-
-			seenNonZero = true
-		}
-
-		buf = append(buf, char)
+	if bi == nil {
+		return buf
 	}
 
-	return buf
+	return bi.Append(buf, 10)
 }
 
 func fastL3Checksum(managedBook *spotbook.Book, expected uint32) bool {

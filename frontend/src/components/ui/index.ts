@@ -137,3 +137,10 @@ export {
 	type TypographyVariant,
 	typographyVariants,
 } from "./typography";
+export { DistanceBar, type DistanceBarProps, type DistanceMarker } from "./distance-bar";
+export { Funnel, type FunnelProps, type FunnelStage } from "./funnel";
+export { Gauge, type GaugeProps, type GaugeTone, toneColor } from "./gauge";
+export { type MeasurementStore, metricOf, metricsWithPrefix, useMeasurements } from "./measurement";
+export { RadialHistory, type RadialHistoryProps, sectorHue } from "./radial-history";
+export { TokenRibbon, type TokenRibbonProps } from "./token-ribbon";
+export { Trail, type TrailProps } from "./trail";

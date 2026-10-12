@@ -31,6 +31,8 @@ var (
 	detectDryRun    bool
 	detectMinMove   time.Duration
 	detectTrain     bool
+	detectReset     bool
+	detectBalance   bool
 )
 
 var detectCmd = &cobra.Command{
@@ -146,6 +148,12 @@ before anything is written.
 
 		if err != nil {
 			return err
+		}
+
+		if detectReset && !detectDryRun {
+			if err := catalog.DropTable(ctx, tables.Detections); err != nil {
+				return errnie.Error(err)
+			}
 		}
 
 		if !detectDryRun {
@@ -308,6 +316,12 @@ func detectEpoch(ctx context.Context, catalog *tables.Catalog, price *broker.Pri
 		detected = append(detected, measurement)
 	}
 
+	capped := make(map[string]int)
+
+	if detectBalance {
+		detected, capped = balanceDetections(detected)
+	}
+
 	reproduced := make(map[string]struct{}, len(detected))
 	fresh := make([]*data.Measurement, 0, len(detected))
 
@@ -339,6 +353,12 @@ func detectEpoch(ctx context.Context, catalog *tables.Catalog, price *broker.Pri
 		}
 	}
 
+	counts := make(map[string]int)
+
+	for _, measurement := range detected {
+		counts[measurement.Meta("type")]++
+	}
+
 	if detectDryRun {
 		for _, measurement := range detected {
 			key, err := detectionKey(measurement)
@@ -351,8 +371,8 @@ func detectEpoch(ctx context.Context, catalog *tables.Catalog, price *broker.Pri
 		}
 
 		fmt.Printf(
-			"epoch=%d trades_scanned=%d detections=%d sweeps_removed=%v already_stored=%d would_append=%d (dry run)\n",
-			epoch, trades, len(detected), sweeps, len(detected)-len(fresh), len(fresh),
+			"epoch=%d trades_scanned=%d detections=%d %v sweeps_removed=%v capped_removed=%v already_stored=%d would_append=%d (dry run)\n",
+			epoch, trades, len(detected), counts, sweeps, capped, len(detected)-len(fresh), len(fresh),
 		)
 
 		return nil
@@ -363,11 +383,70 @@ func detectEpoch(ctx context.Context, catalog *tables.Catalog, price *broker.Pri
 	}
 
 	fmt.Printf(
-		"epoch=%d trades_scanned=%d detections=%d sweeps_removed=%v already_stored=%d appended=%d\n",
-		epoch, trades, len(detected), sweeps, len(detected)-len(fresh), len(fresh),
+		"epoch=%d trades_scanned=%d detections=%d %v sweeps_removed=%v capped_removed=%v already_stored=%d appended=%d\n",
+		epoch, trades, len(detected), counts, sweeps, capped, len(detected)-len(fresh), len(fresh),
 	)
 
 	return nil
+}
+
+/*
+balanceDetections caps the count of flat, chop, and up_friction detections
+to at most the count of up excursions in the epoch, sampling uniformly across
+time so that no temporal bias is introduced. down excursions are uncapped.
+*/
+func balanceDetections(
+	detected []*data.Measurement,
+) ([]*data.Measurement, map[string]int) {
+	byClass := make(map[string][]*data.Measurement)
+	capped := make(map[string]int)
+
+	for _, measurement := range detected {
+		class := measurement.Meta("type")
+		byClass[class] = append(byClass[class], measurement)
+	}
+
+	upCount := len(byClass["up"])
+
+	for _, class := range []string{"flat", "chop", "up_friction"} {
+		total := len(byClass[class])
+
+		if total <= upCount {
+			continue
+		}
+
+		capped[class] = total - upCount
+
+		if upCount == 0 {
+			byClass[class] = nil
+			continue
+		}
+
+		sampled := make([]*data.Measurement, upCount)
+
+		for index := 0; index < upCount; index++ {
+			pos := (index * total) / upCount
+			sampled[index] = byClass[class][pos]
+		}
+
+		byClass[class] = sampled
+	}
+
+	balanced := make([]*data.Measurement, 0, len(detected))
+
+	for _, items := range byClass {
+		balanced = append(balanced, items...)
+	}
+
+	slices.SortFunc(balanced, func(left, right *data.Measurement) int {
+		if c := left.From.Compare(right.From); c != 0 {
+			return c
+		}
+
+		return left.At.Compare(right.At)
+	})
+
+	return balanced, capped
 }
 
 /*
@@ -448,5 +527,8 @@ func init() {
 	detectCmd.Flags().BoolVar(&detectDryRun, "dry-run", false, "Detect and print, but append nothing")
 	detectCmd.Flags().DurationVar(&detectMinMove, "min-move-duration", 0, "Drop detections whose B->C venue time is shorter (sweep artifacts); required")
 	detectCmd.Flags().BoolVar(&detectTrain, "train", false, "Train action tree on the detected excursions and continuous sensory tape")
+	detectCmd.Flags().BoolVar(&detectReset, "reset", false, "Drop and recreate the detections table before scanning")
+	detectCmd.Flags().BoolVar(&detectReset, "clean", false, "Alias for --reset")
+	detectCmd.Flags().BoolVar(&detectBalance, "balance", true, "Cap flat, chop, and up_friction detections to at most the count of up excursions")
 	rootCmd.AddCommand(detectCmd)
 }

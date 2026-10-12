@@ -127,21 +127,27 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 		metrics[fmt.Sprintf("region_members:R%02d", region.Key)] = float64(region.Counts)
 	}
 
-	var next *data.Measurement
+	training.inspectPosition(prior.Label, metrics)
 
-	if prev, ok := training.last[prior.Label]; ok {
-		next = prev.Next(prior, metrics)
+	emit := func() *data.Measurement {
+		var next *data.Measurement
+
+		if prev, ok := training.last[prior.Label]; ok {
+			next = prev.Next(prior, metrics)
+		}
+
+		if next == nil {
+			next = data.NewFromPrior(prior, training.Name(), metrics)
+		}
+
+		training.last[prior.Label] = next
+		return next
 	}
 
-	if next == nil {
-		next = data.NewFromPrior(prior, training.Name(), metrics)
-	}
-
-	training.last[prior.Label] = next
 	current := training.policy.Load()
 
 	if current.tokenizer == nil || regions == nil {
-		return next
+		return emit()
 	}
 
 	// Paths built under other Tokenizer parameters are not paths of this one.
@@ -154,6 +160,8 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	tokens, moved := current.tokenizer.Advance(training.paths[prior.Label], token, strength)
 	training.paths[prior.Label] = tokens
 	joined := strings.Join(tokens, "/")
+	inspectMatch(current, tokens, strength, metrics)
+	next := emit()
 
 	next.SetMeta("token_path", joined)
 	next.SetMeta("token_depth", strconv.Itoa(len(tokens)))
@@ -169,7 +177,7 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	next.SetMeta("decision_action", action)
-	next.SetMeta("decision_reason", fmt.Sprintf("path=%s %s", joined, training.act(prior.Label, action)))
+	next.SetMeta("decision_reason", fmt.Sprintf("path=%s %s", joined, training.act(prior.Label, action, joined)))
 	return next
 }
 
@@ -196,11 +204,10 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 
 		dir, file := path.Split(key)
 
-		if file != actionEnter && file != actionExit && file != actionNoop {
+		if file != actionEnter && file != actionExit {
 			continue
 		}
 
-		loaded.keys = append(loaded.keys, key)
 		dir = strings.TrimSuffix(dir, "/")
 		action := strings.TrimSuffix(file, ".json")
 
@@ -211,12 +218,35 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 		loaded.actions[dir] = action
 	}
 
+	for dir, action := range loaded.actions {
+		var file string
+
+		if action == "enter" {
+			file = actionEnter
+		}
+
+		if action == "exit" {
+			file = actionExit
+		}
+
+		if file == "" {
+			continue
+		}
+
+		loaded.keys = append(loaded.keys, dir+"/"+file)
+	}
+
 	slices.Sort(loaded.keys)
 	body, err := training.catalog.GetBlob(ctx, tokenizerKey)
 
 	if errors.Is(err, tables.ErrBlobMissing) {
 		training.policy.Store(loaded)
-		errnie.Info(fmt.Sprintf("[training] %d stored token paths but no %s yet: not trading", len(loaded.keys), tokenizerKey))
+
+		errnie.Info(fmt.Sprintf(
+			"[training] %d stored token paths but no %s yet: not trading",
+			len(loaded.keys), tokenizerKey,
+		))
+
 		return nil
 	}
 
@@ -286,10 +316,11 @@ needs it flat, exiting needs it held.
 Entries are opened sized against configured allocation fraction and available cash.
 Exits sell everything currently open.
 */
-func (training *Training) act(symbol, action string) string {
+func (training *Training) act(symbol, action string, path ...string) string {
 	switch action {
 	case "enter":
 		if training.desk.Holds(symbol) {
+			training.paths[symbol] = nil
 			return "holding: enter ignored"
 		}
 
@@ -307,25 +338,20 @@ func (training *Training) act(symbol, action string) string {
 				nil,
 			))
 
+			training.paths[symbol] = nil
 			return "enter failed: no cash"
 		}
 
-		qty, err := training.price.Quantity(
-			symbol, cash.Mul(
-				system.Cfg.Risk.MaxFraction,
-			),
-		)
+		allocated := cash.SetScale(4).Mul(system.Cfg.Risk.MaxFraction)
+		qty, err := training.price.Quantity(symbol, allocated)
 
 		if err != nil {
 			training.resetPaperAndReload()
 			cash = training.desk.Cash(system.Cfg.Market.QuoteCurrency)
 
 			if cash != nil && cash.Sign() > 0 {
-				qty, err = training.price.Quantity(
-					symbol, cash.Mul(
-						system.Cfg.Risk.MaxFraction,
-					),
-				)
+				allocated = cash.SetScale(4).Mul(system.Cfg.Risk.MaxFraction)
+				qty, err = training.price.Quantity(symbol, allocated)
 			}
 		}
 
@@ -336,27 +362,34 @@ func (training *Training) act(symbol, action string) string {
 				err,
 			))
 
+			training.paths[symbol] = nil
 			return "enter failed: no quantity"
 		}
 
-		if err := training.desk.Enter(symbol, qty); err != nil {
+		if err := training.desk.Enter(symbol, qty, path...); err != nil {
 			training.Error(errnie.Err(errnie.IO, "[training] enter failed for "+symbol, err))
+			training.paths[symbol] = nil
 			return "enter failed: " + err.Error()
 		}
 
+		training.paths[symbol] = nil
 		return "enter submitted"
 	case "exit":
 		if !training.desk.Holds(symbol) {
+			training.paths[symbol] = nil
 			return "flat: exit ignored"
 		}
 
 		if err := training.desk.Exit(symbol); err != nil {
 			training.Error(errnie.Err(errnie.IO, "[training] exit failed for "+symbol, err))
+			training.paths[symbol] = nil
 			return "exit failed: " + err.Error()
 		}
 
+		training.paths[symbol] = nil
 		return "exit submitted"
 	case "noop":
+		training.paths[symbol] = nil
 		return "noop: matched unpromising precursor"
 	}
 

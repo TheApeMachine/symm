@@ -132,6 +132,82 @@ func TestCatalog_RunsDeduplication(t *testing.T) {
 	})
 }
 
+func TestCatalog_DropTable(t *testing.T) {
+	Convey("Given a table in the catalog", t, func() {
+		catalog := tablestest.New(t)
+		ctx := context.Background()
+
+		exists, err := catalog.HasTable(ctx, tables.Detections)
+		So(err, ShouldBeNil)
+		So(exists, ShouldBeTrue)
+
+		Convey("DropTable removes the table and EnsureTable recreates it", func() {
+			err = catalog.DropTable(ctx, tables.Detections)
+			So(err, ShouldBeNil)
+
+			exists, err = catalog.HasTable(ctx, tables.Detections)
+			So(err, ShouldBeNil)
+			So(exists, ShouldBeFalse)
+
+			err = catalog.EnsureTable(ctx, tables.Detections)
+			So(err, ShouldBeNil)
+
+			exists, err = catalog.HasTable(ctx, tables.Detections)
+			So(err, ShouldBeNil)
+			So(exists, ShouldBeTrue)
+		})
+	})
+}
+
+func TestCatalog_Positions(t *testing.T) {
+	Convey("Given an Iceberg catalog with positions", t, func() {
+		catalog := tablestest.New(t)
+		ctx := t.Context()
+		So(catalog.Ensure(ctx), ShouldBeNil)
+
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		closedAt := now.Add(45 * time.Second)
+
+		openPos := tables.PositionRecord{
+			ID:        "pos-1",
+			Symbol:    "BTC/USD",
+			Status:    "open",
+			OpenedAt:  now,
+			Events:    `[{"kind":"entry_match"}]`,
+			VenueCost: 1000.0,
+		}
+
+		So(catalog.RecordPosition(ctx, openPos), ShouldBeNil)
+
+		closedPos := tables.PositionRecord{
+			ID:            "pos-1",
+			Symbol:        "BTC/USD",
+			Status:        "closed",
+			OpenedAt:      now,
+			ClosedAt:      &closedAt,
+			Events:        `[{"kind":"entry_match"},{"kind":"exit"}]`,
+			VenueCost:     1000.0,
+			VenueProceeds: 1020.0,
+			VenueFees:     1.5,
+			VenueRealized: 18.5,
+			HoldNs:        45 * 1e9,
+			Outcome:       `{"venue_realized":18.5}`,
+		}
+
+		So(catalog.RecordPosition(ctx, closedPos), ShouldBeNil)
+
+		positions, err := catalog.Positions(ctx)
+		So(err, ShouldBeNil)
+		So(len(positions), ShouldEqual, 1)
+		So(positions[0].ID, ShouldEqual, "pos-1")
+		So(positions[0].Status, ShouldEqual, "closed")
+		So(positions[0].VenueRealized, ShouldEqual, 18.5)
+		So(positions[0].HoldNs, ShouldEqual, 45*1e9)
+		So(positions[0].ClosedAt, ShouldNotBeNil)
+		So(positions[0].ClosedAt.Equal(closedAt), ShouldBeTrue)
+	})
+}
+
 func BenchmarkCatalog_Ensure(b *testing.B) {
 	savedConfig := system.Cfg
 	system.Cfg = &system.Config{Storage: &system.Storage{Iceberg: &system.Iceberg{CommitRetries: 4}}}

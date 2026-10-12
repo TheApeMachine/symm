@@ -32,3 +32,14 @@ func TestAppendDecimalDigits(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkAppendDecimalDigits(b *testing.B) {
+	dec, _ := decimal.NewFromString("100.50")
+	var buf [64]byte
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = appendDecimalDigits(buf[:0], dec)
+	}
+}

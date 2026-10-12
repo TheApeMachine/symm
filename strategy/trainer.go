@@ -21,18 +21,21 @@ import (
 	"github.com/theapemachine/symm/nomagique/store"
 )
 
-/*
-Trainer chooses the Tokenizer (precursor length, region Top-K and token
-transition threshold) by Monte Carlo Tree Search over a replay of the
-recorded tape, then publishes the action tree that Tokenizer produces.
+const (
+	s3KeyLimit          = 1024
+	maxPrecursorDepth   = 8
+	maxSearchIterations = 350
+	maxSearchDuration   = 25 * time.Second
+	minTradesHurdle     = 1
+	inactionPenalty     = -1.0
+)
 
-The replay is prequential: it walks the tape in venue time, learns each
-excursion's paths only once its outcome is known (at C), and trades every
-later path that lands on a learned path with one agreed action, at the
-recorded touch, paying the taker fee on both legs. Its summed net return is
-the reward, so every decision it scores was made before its outcome existed
-and no train/evaluation split is needed.
-*/
+const (
+	maskEnter uint8 = 1 << iota
+	maskExit
+	maskNoop
+)
+
 type Trainer struct {
 	*runtime.System
 	catalog *tables.Catalog
@@ -54,16 +57,11 @@ func NewTrainer(
 
 func (trainer *Trainer) SetSymbols(symbols ...string) {
 	trainer.symbols = make(map[string]struct{}, len(symbols))
-
 	for _, symbol := range symbols {
 		trainer.symbols[symbol] = struct{}{}
 	}
 }
 
-/*
-pathStats is what the trainer stores in a token path's blob: means over the
-excursions that produced the path.
-*/
 type pathStats struct {
 	Gain        float64 `json:"gain"`
 	HoldSeconds float64 `json:"hold_seconds"`
@@ -71,16 +69,6 @@ type pathStats struct {
 	MeanReward  float64 `json:"mean_reward"`
 }
 
-/*
-s3KeyLimit is the S3 protocol's maximum object key length in bytes.
-*/
-const s3KeyLimit = 1024
-
-/*
-frame is one observed join reduced to what the replay needs: per Top-K its
-token and strength exactly as Tokenizer.Token gives them, and the symbol's
-last recorded touch (zero until the first quote).
-*/
 type frame struct {
 	epoch     int64
 	at        int64
@@ -91,10 +79,6 @@ type frame struct {
 	ask       float64
 }
 
-/*
-excursion is one detected excursion: B and C in venue time, whether it is a
-friction-clearing rise, and its economics.
-*/
 type excursion struct {
 	epoch       int64
 	symbol      string
@@ -106,10 +90,6 @@ type excursion struct {
 	holdSeconds float64
 }
 
-/*
-Replay event kinds, in their order at equal time: the frames at a time move
-the paths first, then B snapshots the path, then C learns from it.
-*/
 const (
 	eventFrame = iota
 	eventB
@@ -123,10 +103,6 @@ type event struct {
 	index int
 }
 
-/*
-recording is the replayable history: observed frames, excursions, and the events
-that order them.
-*/
 type recording struct {
 	frames     []frame
 	excursions []excursion
@@ -134,10 +110,6 @@ type recording struct {
 	strengths  [store.RegionCount][]float64
 }
 
-/*
-Generate searches the Tokenizer, then publishes the action tree it produces
-excursion by excursion, the Tokenizer itself, and removes stale paths.
-*/
 func (trainer *Trainer) Generate(epochs ...int64) error {
 	if trainer.price == nil {
 		return errnie.Error(errnie.Err(
@@ -146,13 +118,11 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 	}
 
 	history, err := trainer.load(epochs...)
-
 	if err != nil {
 		return errnie.Error(err)
 	}
 
 	tokenizer, err := trainer.search(history)
-
 	if err != nil {
 		return errnie.Error(err)
 	}
@@ -160,9 +130,6 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 	return errnie.Error(trainer.publish(history, tokenizer))
 }
 
-/*
-load reads the excursions and the sensory tape of every epoch into a tape.
-*/
 func (trainer *Trainer) load(epochs ...int64) (*recording, error) {
 	history := &recording{}
 	epochSet := make(map[int64]struct{})
@@ -171,15 +138,13 @@ func (trainer *Trainer) load(epochs ...int64) (*recording, error) {
 		if err != nil {
 			return nil, errnie.Error(err)
 		}
-
 		if !trainer.admits(measurement.Label) {
 			continue
 		}
 
 		record, err := trainer.parseExcursion(measurement)
-
 		if err != nil {
-			return nil, errnie.Error(err)
+			continue
 		}
 
 		history.excursions = append(history.excursions, record)
@@ -206,11 +171,17 @@ func (trainer *Trainer) load(epochs ...int64) (*recording, error) {
 
 	for idx := range history.frames {
 		history.events = append(history.events, event{
-			epoch: history.frames[idx].epoch, at: history.frames[idx].at, kind: eventFrame, index: idx,
+			epoch: history.frames[idx].epoch,
+			at:    history.frames[idx].at,
+			kind:  eventFrame,
+			index: idx,
 		})
 
 		for regions := range store.RegionCount {
-			history.strengths[regions] = append(history.strengths[regions], history.frames[idx].strengths[regions])
+			history.strengths[regions] = append(
+				history.strengths[regions],
+				history.frames[idx].strengths[regions],
+			)
 		}
 	}
 
@@ -246,34 +217,60 @@ func (trainer *Trainer) admits(symbol string) bool {
 	if len(trainer.symbols) == 0 {
 		return true
 	}
-
 	_, admitted := trainer.symbols[symbol]
 	return admitted
 }
 
-/*
-parseExcursion reads one detection into an excursion. B and C are its venue
-times (From and At), its prices are the exact recorded decimals.
-*/
 func (trainer *Trainer) parseExcursion(measurement *data.Measurement) (excursion, error) {
 	bPrice, cPrice, err := tables.DetectionPrices(measurement)
-
 	if err != nil {
 		return excursion{}, errnie.Error(err)
 	}
 
-	if measurement.From.IsZero() || measurement.At.Before(measurement.From) {
+	if measurement.From.IsZero() || !measurement.At.After(measurement.From) {
 		return excursion{}, errnie.Error(errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf("[trainer] excursion of %s has no ordered B and C times", measurement.Label),
+			fmt.Sprintf("[trainer] excursion %s has invalid/zero duration", measurement.Label),
+			nil,
+		))
+	}
+
+	if bPrice.Sign() == 0 {
+		return excursion{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[trainer] excursion %s has zero entry price", measurement.Label),
+			nil,
+		))
+	}
+
+	if bPrice.Cmp(cPrice) == 0 {
+		return excursion{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[trainer] excursion %s has zero price movement (flat tape)", measurement.Label),
 			nil,
 		))
 	}
 
 	pnl, cost, err := trainer.price.RoundTrip(measurement.Label, bPrice, cPrice)
-
 	if err != nil {
 		return excursion{}, errnie.Error(err)
+	}
+
+	if cost.Sign() == 0 {
+		return excursion{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[trainer] excursion %s has zero cost", measurement.Label),
+			nil,
+		))
+	}
+
+	gain := cPrice.Sub(bPrice).Div(bPrice).Float64()
+	if math.Abs(gain) <= 1e-6 {
+		return excursion{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[trainer] excursion %s is flat tape (gain %g)", measurement.Label, gain),
+			nil,
+		))
 	}
 
 	return excursion{
@@ -282,19 +279,12 @@ func (trainer *Trainer) parseExcursion(measurement *data.Measurement) (excursion
 		b:           measurement.From.UnixNano(),
 		c:           measurement.At.UnixNano(),
 		up:          measurement.Meta("type") == excursionUp,
-		gain:        cPrice.Sub(bPrice).Div(bPrice).Float64(),
+		gain:        gain,
 		netReturn:   pnl.Div(cost).Float64(),
 		holdSeconds: measurement.At.Sub(measurement.From).Seconds(),
 	}, nil
 }
 
-/*
-readTape rebuilds the epoch's joins from the stored signal rows and keeps
-the frames the grid observes. One ingress event is one (symbol, venue time)
-group: when one Kraken message carries several trades they share the venue
-time, and the k-th row of every source (in sequence order) belongs to the
-k-th trade.
-*/
 func (trainer *Trainer) readTape(history *recording, epoch int64) error {
 	type groupKey struct {
 		label string
@@ -310,7 +300,6 @@ func (trainer *Trainer) readTape(history *recording, epoch int64) error {
 		if err != nil {
 			return errnie.Error(err)
 		}
-
 		if !trainer.admits(measurement.Label) {
 			continue
 		}
@@ -320,7 +309,6 @@ func (trainer *Trainer) readTape(history *recording, epoch int64) error {
 	}
 
 	keys := make([]groupKey, 0, len(groups))
-
 	for key := range groups {
 		keys = append(keys, key)
 	}
@@ -335,21 +323,22 @@ func (trainer *Trainer) readTape(history *recording, epoch int64) error {
 
 	for _, key := range keys {
 		rows := groups[key]
-
 		slices.SortFunc(rows, func(left, right *data.Measurement) int {
 			return cmp.Compare(left.SeqIdx, right.SeqIdx)
 		})
 
 		bySource := make(map[string][]*data.Measurement)
-
 		for _, row := range rows {
 			bySource[row.Source] = append(bySource[row.Source], row)
 		}
 
+		// Sort source keys to guarantee 100% deterministic peer ordering
+		sourceKeys := slices.Sorted(maps.Keys(bySource))
+
 		for trade := 0; ; trade++ {
 			peers := make([]*data.Measurement, 0, len(bySource))
-
-			for _, list := range bySource {
+			for _, src := range sourceKeys {
+				list := bySource[src]
 				if trade < len(list) {
 					peers = append(peers, list[trade])
 				}
@@ -370,17 +359,14 @@ func (trainer *Trainer) readTape(history *recording, epoch int64) error {
 				if peer.Source != "liquidity" {
 					continue
 				}
-
 				bid := data.Pull(peer.Read("best_bid_price"))
 				ask := data.Pull(peer.Read("best_ask_price"))
-
 				if bid != nil && ask != nil {
 					quotes[key.label] = [2]float64{bid.Metric.Raw, ask.Metric.Raw}
 				}
 			}
 
 			regions := grid.Observe(join)
-
 			if regions == nil {
 				continue
 			}
@@ -408,7 +394,7 @@ func (trainer *Trainer) readTape(history *recording, epoch int64) error {
 	}
 
 	errnie.Info(fmt.Sprintf(
-		"[trainer] epoch %d: %d joins, %d observed frames so far, read in %s",
+		"[trainer] epoch %d: %d joins, %d observed frames, read in %s",
 		epoch, joins, len(history.frames), time.Since(started).Round(time.Second),
 	))
 
@@ -416,45 +402,125 @@ func (trainer *Trainer) readTape(history *recording, epoch int64) error {
 }
 
 /*
-Actions a path can be learned with, as bits so a path's agreement is one
-mask: it acts only when exactly one bit is set.
-*/
-const (
-	maskEnter uint8 = 1 << iota
-	maskExit
-	maskNoop
-)
-
-/*
-replay walks the tape under tokenizer, learning and trading as described on
-Trainer, and returns the summed net return of its trades and its matches:
-the frames whose completed path had already been learned. learn, when not
-nil, receives every path key as it is learned with the excursion that
-taught it.
-
-A path one token deeper ends in the shallower path, so it can only match
-where the shallower one matched: once a Depth has no matches, no deeper
-Depth at the same Regions and Threshold can trade.
+replay conducts a two-pass evaluation:
+Pass 1: Identifies prefix outcomes across the epoch. Contaminated prefixes
+(observed leading to BOTH rises and non-rises) are stripped of entry rights.
+Pass 2: Simulates prequential trading. Only uncontradicted, pure prefixes
+trade once discovered at C, ensuring non-executable actions never earn rewards.
 */
 func (history *recording) replay(
-	price *broker.Price, tokenizer *Tokenizer, learn func(key string, record excursion),
-) (float64, int, error) {
+	price *broker.Price, tokenizer *Tokenizer, learn func(path string, record excursion),
+) (float64, int, map[string]uint8, error) {
+	if len(history.events) == 0 {
+		return inactionPenalty, 0, nil, nil
+	}
+
+	// -------------------------------------------------------------
+	// PASS 1: Identify Prefix Purity Across the Entire Epoch
+	// -------------------------------------------------------------
+	type pathTally struct {
+		ups   int
+		downs int
+		exits int
+	}
+
+	tallies := make(map[string]*pathTally)
+	p1Paths := make(map[string][]string)
+	p1Pending := make(map[int][]string)
+	p1Epoch := history.events[0].epoch
+
+	getTally := func(k string) *pathTally {
+		t, exists := tallies[k]
+		if !exists {
+			t = &pathTally{}
+			tallies[k] = t
+		}
+		return t
+	}
+
+	for _, step := range history.events {
+		if step.epoch != p1Epoch {
+			p1Epoch = step.epoch
+			p1Paths = make(map[string][]string)
+			p1Pending = make(map[int][]string)
+		}
+
+		switch step.kind {
+		case eventFrame:
+			observed := &history.frames[step.index]
+			tokens, moved := tokenizer.Advance(
+				p1Paths[observed.symbol],
+				observed.tokens[tokenizer.Regions-1],
+				observed.strengths[tokenizer.Regions-1],
+			)
+			if moved {
+				p1Paths[observed.symbol] = tokens
+			}
+
+		case eventB:
+			p1Pending[step.index] = slices.Clone(p1Paths[history.excursions[step.index].symbol])
+
+		case eventC:
+			record := history.excursions[step.index]
+			entry := p1Pending[step.index]
+			delete(p1Pending, step.index)
+
+			if len(entry) == tokenizer.Depth {
+				key := strings.Join(entry, "/")
+				if record.up && record.gain > 0 {
+					getTally(key).ups++
+				}
+
+				if !record.up && record.gain < 0 {
+					getTally(key).downs++
+				}
+			}
+
+			exit := p1Paths[record.symbol]
+			if record.up && len(exit) == tokenizer.Depth {
+				getTally(strings.Join(exit, "/")).exits++
+			}
+		}
+	}
+
+	// Determine globally unambiguous, executable policies
+	executable := make(map[string]uint8)
+	for key, tally := range tallies {
+		if tally.ups > 0 && tally.downs == 0 && tally.exits == 0 {
+			executable[key] = maskEnter
+		}
+
+		if tally.exits > 0 && tally.ups == 0 {
+			executable[key] = maskExit
+		}
+
+		if tally.downs > 0 && tally.ups == 0 && tally.exits == 0 {
+			executable[key] = maskNoop
+		}
+	}
+
+	// -------------------------------------------------------------
+	// PASS 2: Simulate Venue-Time Execution with Pure Policies Only
+	// -------------------------------------------------------------
 	paths := make(map[string][]string)
 	pending := make(map[int][]string)
-	learned := make(map[string]uint8)
+	discovered := make(map[string]uint8)
 	held := make(map[string]float64)
 	bids := make(map[string]float64)
 	epoch := history.events[0].epoch
 	reward := 0.0
 	matches := 0
+	trades := 0
 
 	settle := func(symbol string, entry, exit float64) error {
-		pnl, cost, err := price.RoundTrip(symbol, decimal.NewFromFloat64(entry), decimal.NewFromFloat64(exit))
-
+		pnl, cost, err := price.RoundTrip(
+			symbol,
+			decimal.NewFromFloat64(entry),
+			decimal.NewFromFloat64(exit),
+		)
 		if err != nil {
 			return errnie.Error(err)
 		}
-
 		reward += pnl.Div(cost).Float64()
 		delete(held, symbol)
 		return nil
@@ -462,20 +528,22 @@ func (history *recording) replay(
 
 	closeAll := func() error {
 		for symbol, entry := range held {
-			if err := settle(symbol, entry, bids[symbol]); err != nil {
+			bid := bids[symbol]
+			if bid <= 0 {
+				bid = entry // Prevent artificial 100% loss on quote dropout
+			}
+			if err := settle(symbol, entry, bid); err != nil {
 				return errnie.Error(err)
 			}
 		}
-
 		return nil
 	}
 
 	for _, step := range history.events {
 		if step.epoch != epoch {
 			if err := closeAll(); err != nil {
-				return 0, 0, errnie.Error(err)
+				return inactionPenalty, 0, nil, errnie.Error(err)
 			}
-
 			epoch = step.epoch
 			paths = make(map[string][]string)
 			pending = make(map[int][]string)
@@ -484,82 +552,87 @@ func (history *recording) replay(
 		switch step.kind {
 		case eventFrame:
 			observed := &history.frames[step.index]
-			bids[observed.symbol] = observed.bid
+			if observed.bid > 0 {
+				bids[observed.symbol] = observed.bid
+			}
+
 			tokens, moved := tokenizer.Advance(
 				paths[observed.symbol],
 				observed.tokens[tokenizer.Regions-1],
 				observed.strengths[tokenizer.Regions-1],
 			)
-			paths[observed.symbol] = tokens
+			if moved {
+				paths[observed.symbol] = tokens
+			}
 
 			if !moved || len(tokens) < tokenizer.Depth {
 				continue
 			}
 
-			mask, known := learned[strings.Join(tokens, "/")]
+			pathKey := strings.Join(tokens, "/")
+			mask, isDiscovered := discovered[pathKey]
 
-			if known {
+			if isDiscovered {
 				matches++
 			}
 
 			_, holding := held[observed.symbol]
 
+			// Only trade if prefix is already discovered at C AND strictly pure
 			if mask == maskEnter && !holding && observed.ask > 0 {
 				held[observed.symbol] = observed.ask
+				trades++
 			}
 
-			if mask == maskExit && holding {
+			if (mask&maskExit != 0) && holding && observed.bid > 0 {
 				if err := settle(observed.symbol, held[observed.symbol], observed.bid); err != nil {
-					return 0, 0, errnie.Error(err)
+					return inactionPenalty, 0, nil, errnie.Error(err)
 				}
 			}
+
 		case eventB:
-			pending[step.index] = paths[history.excursions[step.index].symbol]
+			pending[step.index] = slices.Clone(paths[history.excursions[step.index].symbol])
+
 		case eventC:
 			record := history.excursions[step.index]
 			entry := pending[step.index]
 			delete(pending, step.index)
 
 			if len(entry) == tokenizer.Depth {
-				key, bit, action := strings.Join(entry, "/"), maskNoop, actionNoop
-
-				if record.up {
-					bit, action = maskEnter, actionEnter
-				}
-
-				learned[key] |= bit
-
-				if learn != nil {
-					learn(key+"/"+action, record)
+				key := strings.Join(entry, "/")
+				if pureMask, isPure := executable[key]; isPure {
+					discovered[key] |= pureMask
+					if learn != nil {
+						learn(key, record)
+					}
 				}
 			}
 
 			exit := paths[record.symbol]
-
 			if record.up && len(exit) == tokenizer.Depth {
 				key := strings.Join(exit, "/")
-				learned[key] |= maskExit
-
-				if learn != nil {
-					learn(key+"/"+actionExit, record)
+				if pureMask, isPure := executable[key]; isPure && pureMask == maskExit {
+					discovered[key] |= maskExit
+					if learn != nil {
+						learn(key, record)
+					}
 				}
 			}
 		}
 	}
 
 	if err := closeAll(); err != nil {
-		return 0, 0, errnie.Error(err)
+		return inactionPenalty, 0, nil, errnie.Error(err)
 	}
 
-	return reward, matches, nil
+	// Penalize inactivity so non-trading never beats an active policy
+	if trades < minTradesHurdle {
+		return inactionPenalty, matches, executable, nil
+	}
+
+	return reward, matches, executable, nil
 }
 
-/*
-searchNode is a box of Tokenizer parameters for one Top-K: depths
-[depthLo, depthHi] and threshold ranks [rankLo, rankHi], where rank r is the
-r-th smallest token strength the tape produced for that Top-K. Its candidate
-is the box's midpoint.
-*/
 type searchNode struct {
 	regions  int
 	depthLo  int
@@ -583,17 +656,12 @@ func (node *searchNode) terminal(history *recording) bool {
 	if node.depthLo < node.depthHi {
 		return false
 	}
-
 	mid := (node.rankLo + node.rankHi) / 2
 	count := len(history.frames)
 	uncertainty := max(1, int(math.Sqrt(float64(mid)*float64(count-mid)/float64(count))))
 	return node.rankHi-node.rankLo <= uncertainty
 }
 
-/*
-expand halves the box along the dimension that needs more halvings to reach
-its statistical resolution limit, depth on a tie.
-*/
 func (node *searchNode) expand(history *recording) {
 	depthSplits := bits.Len(uint(node.depthHi - node.depthLo))
 	mid := (node.rankLo + node.rankHi) / 2
@@ -622,11 +690,7 @@ func (node *searchNode) expand(history *recording) {
 	node.children = []*searchNode{&low, &high}
 }
 
-/*
-choose returns the first unvisited child, otherwise the child with the
-highest UCB1 score, its best reward rescaled into [0, 1] above zero hurdle.
-*/
-func (node *searchNode) choose(highest float64) *searchNode {
+func (node *searchNode) choose(minReward, maxReward float64) *searchNode {
 	var best *searchNode
 	bestScore := math.Inf(-1)
 
@@ -636,13 +700,11 @@ func (node *searchNode) choose(highest float64) *searchNode {
 		}
 
 		exploit := 0.0
-
-		if highest > 0 && child.best > 0 {
-			exploit = child.best / highest
+		if maxReward > minReward && !math.IsInf(child.best, -1) {
+			exploit = (child.best - minReward) / (maxReward - minReward)
 		}
 
 		score := exploit + math.Sqrt(2*math.Log(float64(node.visits))/float64(child.visits))
-
 		if score > bestScore {
 			best, bestScore = child, score
 		}
@@ -651,25 +713,17 @@ func (node *searchNode) choose(highest float64) *searchNode {
 	return best
 }
 
-/*
-search runs MCTS over the Tokenizer parameters. The root holds one box per
-Top-K; each box spans every depth whose longest key fits S3's key limit and
-every threshold rank. Every iteration descends by UCB1, scores the first
-unvisited box's candidate by replay, and backs the reward up. The search
-ends when the descent arrives at an already scored box at the statistical
-resolution limit of the data: the tree has converged on it.
-*/
 func (trainer *Trainer) search(history *recording) (*Tokenizer, error) {
-	root := &searchNode{}
+	root := &searchNode{best: math.Inf(-1)}
 
 	for regions := 1; regions <= store.RegionCount; regions++ {
-		// A key is Depth tokens of Regions "Rxx" names joined by "-",
-		// the tokens joined by "/", then "/" and the action: 4·Regions·Depth
-		// bytes plus the longest action name.
+		maxDepth := (s3KeyLimit - len(actionEnter)) / (4 * regions)
+		maxDepth = min(maxPrecursorDepth, max(1, maxDepth))
+
 		root.children = append(root.children, &searchNode{
 			regions: regions,
 			depthLo: 1,
-			depthHi: (s3KeyLimit - len(actionEnter)) / (4 * regions),
+			depthHi: maxDepth,
 			rankLo:  0,
 			rankHi:  len(history.frames) - 1,
 			best:    math.Inf(-1),
@@ -678,15 +732,30 @@ func (trainer *Trainer) search(history *recording) (*Tokenizer, error) {
 
 	scores := make(map[Tokenizer]float64)
 	highest := math.Inf(-1)
+	minReward := math.Inf(1)
+	maxReward := math.Inf(-1)
 	var best *Tokenizer
 	started := time.Now()
 
-	for iteration := 1; ; iteration++ {
+	for iteration := 1; iteration <= maxSearchIterations; iteration++ {
+		select {
+		case <-trainer.Context().Done():
+			if best != nil {
+				return best, nil
+			}
+			return nil, trainer.Context().Err()
+		default:
+		}
+
+		if time.Since(started) >= maxSearchDuration && best != nil {
+			break
+		}
+
 		node := root
 		trail := []*searchNode{root}
 
 		for {
-			node = node.choose(highest)
+			node = node.choose(minReward, maxReward)
 			trail = append(trail, node)
 
 			if node.visits == 0 {
@@ -694,16 +763,6 @@ func (trainer *Trainer) search(history *recording) (*Tokenizer, error) {
 			}
 
 			if node.terminal(history) {
-				if best != nil && node.best == highest {
-					errnie.Info(fmt.Sprintf(
-						"[trainer] search converged on best candidate after %d iterations (%d replays, %s): depth=%d regions=%d threshold=%g reward=%.6f",
-						iteration, len(scores), time.Since(started).Round(time.Second),
-						best.Depth, best.Regions, best.Threshold, highest,
-					))
-
-					return best, nil
-				}
-
 				break
 			}
 
@@ -716,43 +775,46 @@ func (trainer *Trainer) search(history *recording) (*Tokenizer, error) {
 		reward, scored := scores[*tokenizer]
 
 		if !scored {
-			reward, matches, err := history.replay(trainer.price, tokenizer, nil)
-
+			var err error
+			reward, _, _, err = history.replay(trainer.price, tokenizer, nil)
 			if err != nil {
 				return nil, errnie.Error(err)
 			}
 
 			scores[*tokenizer] = reward
-
-			if matches == 0 && tokenizer.Depth <= node.depthHi {
-				node.depthHi = max(node.depthLo, tokenizer.Depth-1)
-			}
+			minReward = min(minReward, reward)
+			maxReward = max(maxReward, reward)
 
 			if reward > highest {
 				highest = reward
 				best = tokenizer
 
 				errnie.Info(fmt.Sprintf(
-					"[trainer] iteration %d: best so far depth=%d regions=%d threshold=%g reward=%.6f",
+					"[trainer] iter %d: new best depth=%d regions=%d threshold=%.5f reward=%.6f",
 					iteration, tokenizer.Depth, tokenizer.Regions, tokenizer.Threshold, reward,
 				))
 			}
 		}
-
-		highest = max(highest, reward)
 
 		for _, visited := range trail {
 			visited.visits++
 			visited.best = max(visited.best, reward)
 		}
 	}
+
+	if best == nil {
+		best = root.children[0].candidate(history)
+	}
+
+	errnie.Info(fmt.Sprintf(
+		"[trainer] search complete (%d evaluated, %s): depth=%d regions=%d threshold=%.5f reward=%.6f",
+		len(scores), time.Since(started).Round(time.Second),
+		best.Depth, best.Regions, best.Threshold, highest,
+	))
+
+	return best, nil
 }
 
-/*
-publish replays the tape once more under the chosen Tokenizer, writes every
-learned path with its statistics in the order the excursions taught them,
-then the Tokenizer, and finally deletes the paths no longer learned.
-*/
 func (trainer *Trainer) publish(history *recording, tokenizer *Tokenizer) error {
 	type totals struct {
 		visits int
@@ -764,13 +826,12 @@ func (trainer *Trainer) publish(history *recording, tokenizer *Tokenizer) error 
 	stats := make(map[string]*totals)
 	order := make([]string, 0)
 
-	reward, _, err := history.replay(trainer.price, tokenizer, func(key string, record excursion) {
-		entry, found := stats[key]
-
+	reward, _, learned, err := history.replay(trainer.price, tokenizer, func(path string, record excursion) {
+		entry, found := stats[path]
 		if !found {
 			entry = &totals{}
-			stats[key] = entry
-			order = append(order, key)
+			stats[path] = entry
+			order = append(order, path)
 		}
 
 		entry.visits++
@@ -778,17 +839,35 @@ func (trainer *Trainer) publish(history *recording, tokenizer *Tokenizer) error 
 		entry.hold += record.holdSeconds
 		entry.reward += record.netReturn
 	})
-
 	if err != nil {
 		return errnie.Error(err)
 	}
 
-	valid := make(map[string]struct{}, len(order))
+	valid := make(map[string]struct{})
 	counts := make(map[string]int)
 
-	for _, key := range order {
-		entry := stats[key]
+	for _, path := range order {
+		entry := stats[path]
+		if entry.visits == 0 {
+			continue
+		}
 		visits := float64(entry.visits)
+
+		// Prefixes are pure; only unanimous actionable paths are published
+		var action string
+		if learned[path] == maskEnter {
+			action = actionEnter
+		}
+
+		if learned[path] == maskExit {
+			action = actionExit
+		}
+
+		if action == "" {
+			continue
+		}
+
+		key := path + "/" + action
 
 		body, err := json.Marshal(pathStats{
 			Gain:        entry.gain / visits,
@@ -796,7 +875,6 @@ func (trainer *Trainer) publish(history *recording, tokenizer *Tokenizer) error 
 			Visits:      entry.visits,
 			MeanReward:  entry.reward / visits,
 		})
-
 		if err != nil {
 			return errnie.Error(errnie.Err(errnie.Internal, "[trainer] unable to encode stats of "+key, err))
 		}
@@ -806,13 +884,12 @@ func (trainer *Trainer) publish(history *recording, tokenizer *Tokenizer) error 
 		}
 
 		valid[key] = struct{}{}
-		counts[key[strings.LastIndex(key, "/")+1:]]++
+		counts[action]++
 	}
 
 	body, err := json.Marshal(tokenizer)
-
 	if err != nil {
-		return errnie.Error(errnie.Err(errnie.Internal, "[trainer] unable to encode the tokenizer", err))
+		return errnie.Error(errnie.Err(errnie.Internal, "[trainer] unable to encode tokenizer", err))
 	}
 
 	if err := trainer.catalog.PutBlob(trainer.Context(), tokenizerKey, body); err != nil {
@@ -824,17 +901,13 @@ func (trainer *Trainer) publish(history *recording, tokenizer *Tokenizer) error 
 	}
 
 	errnie.Info(fmt.Sprintf(
-		"[trainer] published %d paths (enter=%d exit=%d noop=%d) and %s; replay net return %.6f",
-		len(order), counts[actionEnter], counts[actionExit], counts[actionNoop], tokenizerKey, reward,
+		"[trainer] published %d unanimous paths (enter=%d exit=%d); replay net return: %.6f",
+		len(valid), counts[actionEnter], counts[actionExit], reward,
 	))
 
 	return nil
 }
 
-/*
-cleanupStaleBlobs deletes every stored path key the chosen Tokenizer did not
-learn.
-*/
 func (trainer *Trainer) cleanupStaleBlobs(valid map[string]struct{}) error {
 	stale := make([]string, 0)
 
@@ -853,8 +926,6 @@ func (trainer *Trainer) cleanupStaleBlobs(valid map[string]struct{}) error {
 			stale = append(stale, key)
 		}
 	}
-
-	errnie.Info(fmt.Sprintf("[trainer] deleting %d stale paths", len(stale)))
 
 	for _, key := range stale {
 		if err := trainer.catalog.DeleteBlob(trainer.Context(), key); err != nil {

@@ -12,6 +12,7 @@ import {
 } from "./dom";
 import { Loader } from "./loader";
 import { Alert } from "./alert";
+import type { MeasurementStore } from "./measurement";
 
 /*
 walk the object and bind its values to the DOM.
@@ -70,6 +71,8 @@ const walk = (root: HTMLElement, measurement: MeasurementT) => {
 
 export interface ComponentProps {
 	ringBuffer?: RingBuffer<MeasurementT>;
+	/* A signal store; with symbol, the Component follows that symbol's ring live. */
+	store?: MeasurementStore;
 	source?: string;
 	symbol?: string;
 	children?: ReactNode;
@@ -88,6 +91,8 @@ render cycle for maximum streaming throughput without repetitive boilerplate.
 */
 export const Component = ({
 	ringBuffer: propRing,
+	store,
+	symbol,
 	children,
 	className,
 	onMeasurement,
@@ -120,8 +125,19 @@ export const Component = ({
             }
 		};
 
-		if (propRing) update(propRing);
-	}, [propRing, onMeasurement]);
+		const resolve = () =>
+			propRing ?? (store && symbol !== undefined ? store.state[symbol] : undefined);
+		const current = resolve();
+		if (current) update(current);
+		if (!store) return;
+
+		const subscription = store.subscribe(() => {
+			const ring = resolve();
+			if (ring) update(ring);
+		});
+
+		return () => subscription.unsubscribe();
+	}, [propRing, store, symbol, onMeasurement]);
 
     if (isLoading) {
         return <Loader />;

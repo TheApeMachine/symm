@@ -102,6 +102,7 @@ LifecycleReport provides the unified position lifecycle and performance snapshot
 type LifecycleReport struct {
 	Lifecycles  []Lifecycle `json:"lifecycles"`
 	Performance Performance `json:"performance"`
+	OpenCount   int         `json:"open_count"`
 }
 
 /*
@@ -143,31 +144,47 @@ func (service *Service) lifecycle(reqCtx fiber.Ctx) error {
 	var closedCount int
 	var venueWins int
 	var totalVenuePnl float64
+	var openCount int
 
-	if service.desk != nil && service.desk.positions != nil {
-		service.desk.positions.Range(func(key, value any) bool {
-			list, ok := value.([]*Position)
+	if service.desk != nil {
+		closedPositions := service.desk.Closed()
 
-			if !ok {
-				return true
+		for _, pos := range closedPositions {
+			lc := pos.Lifecycle()
+
+			if lc.Status != "closed" {
+				continue
 			}
 
-			for _, pos := range list {
-				lc := pos.Lifecycle()
-				lifecycles = append(lifecycles, lc)
+			lifecycles = append(lifecycles, lc)
 
-				if lc.Status == "closed" && lc.Outcome != nil {
-					closedCount++
-					totalVenuePnl += lc.Outcome.VenueRealized
+			if lc.Outcome != nil {
+				closedCount++
+				totalVenuePnl += lc.Outcome.VenueRealized
 
-					if lc.Outcome.VenueRealized > 0 {
-						venueWins++
-					}
+				if lc.Outcome.VenueRealized > 0 {
+					venueWins++
 				}
 			}
+		}
 
-			return true
-		})
+		if service.desk.positions != nil {
+			service.desk.positions.Range(func(key, value any) bool {
+				list, ok := value.([]*Position)
+
+				if !ok {
+					return true
+				}
+
+				for _, pos := range list {
+					if !pos.Closed() {
+						openCount++
+					}
+				}
+
+				return true
+			})
+		}
 	}
 
 	var venueWinRate *float64
@@ -190,6 +207,7 @@ func (service *Service) lifecycle(reqCtx fiber.Ctx) error {
 			VenueMeanReturn: venueMeanReturn,
 			VenuePnl:        totalVenuePnl,
 		},
+		OpenCount: openCount,
 	})
 }
 

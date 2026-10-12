@@ -277,6 +277,7 @@ func tableFamilies() []tableFamily {
 		{Measurements, MeasurementSchema(), MeasurementPartitioning()},
 		{Runs, RunsSchema(), RunsPartitioning()},
 		{Detections, MeasurementSchema(), MeasurementPartitioning()},
+		{Positions, PositionsSchema(), PositionsPartitioning()},
 	}
 }
 
@@ -314,6 +315,31 @@ func (catalog *Catalog) HasTable(ctx context.Context, name string) (bool, error)
 	}
 
 	return exists, nil
+}
+
+/*
+DropTable drops a canonical table from the catalog.
+*/
+func (catalog *Catalog) DropTable(ctx context.Context, name string) error {
+	if catalog == nil || catalog.underlying == nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "[iceberg] catalog required to drop table", nil))
+	}
+
+	exists, err := catalog.HasTable(ctx, name)
+
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		return nil
+	}
+
+	if err := catalog.underlying.DropTable(catalog.context(ctx), table.Identifier{Namespace, name}); err != nil {
+		return errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] failed to drop table "+name, err))
+	}
+
+	return nil
 }
 
 func (catalog *Catalog) ensureNamespace(ctx context.Context) error {
@@ -802,4 +828,132 @@ func (catalog *Catalog) Runs(ctx context.Context) ([]Run, error) {
 	}
 
 	return runs, nil
+}
+
+/*
+RecordPosition appends one position record to the canonical positions table.
+*/
+func (catalog *Catalog) RecordPosition(ctx context.Context, pos PositionRecord) error {
+	if catalog == nil {
+		return nil
+	}
+
+	tbl, err := catalog.Load(ctx, Positions)
+
+	if err != nil {
+		return err
+	}
+
+	reader, err := positionRecords(tbl.Schema(), []PositionRecord{pos})
+
+	if err != nil {
+		return err
+	}
+
+	defer reader.Release()
+
+	var appendErr error
+	err = catalog.WithCommit(ctx, func() error {
+		_, appendErr = tbl.Append(catalog.context(ctx), reader, nil)
+		return appendErr
+	})
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] failed to record position",
+			err,
+		))
+	}
+
+	return nil
+}
+
+/*
+Positions reads all positions from the positions table, ordered newest first by opened_at.
+Deduplicates by ID, keeping the latest state.
+*/
+func (catalog *Catalog) Positions(ctx context.Context) ([]PositionRecord, error) {
+	if catalog == nil {
+		return nil, nil
+	}
+
+	if catalog.awsConfig != nil {
+		ctx = utils.WithAwsConfig(ctx, catalog.awsConfig)
+	}
+
+	tbl, err := catalog.Load(ctx, Positions)
+
+	if err != nil {
+		return nil, err
+	}
+
+	tasks, err := tbl.Scan().PlanFiles(ctx)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] failed to plan positions scan",
+			err,
+		))
+	}
+
+	_, batches, err := tbl.Scan().ReadTasks(ctx, tasks)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] failed to read positions tasks",
+			err,
+		))
+	}
+
+	var allPositions []PositionRecord
+
+	for batch, batchErr := range batches {
+		if batchErr != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.BadGateway,
+				"[iceberg] positions batch decode failure",
+				batchErr,
+			))
+		}
+
+		if batch != nil {
+			allPositions = append(allPositions, readPositions(batch)...)
+			batch.Release()
+		}
+	}
+
+	latestByID := make(map[string]PositionRecord, len(allPositions))
+
+	for _, pos := range allPositions {
+		existing, found := latestByID[pos.ID]
+
+		if !found {
+			latestByID[pos.ID] = pos
+			continue
+		}
+
+		if existing.Status != "closed" && pos.Status == "closed" {
+			latestByID[pos.ID] = pos
+			continue
+		}
+
+		if pos.ClosedAt != nil && (existing.ClosedAt == nil || pos.ClosedAt.After(*existing.ClosedAt)) {
+			latestByID[pos.ID] = pos
+		}
+	}
+
+	positions := make([]PositionRecord, 0, len(latestByID))
+
+	for _, pos := range latestByID {
+		positions = append(positions, pos)
+	}
+
+	sort.Slice(positions, func(leftIndex, rightIndex int) bool {
+		return positions[leftIndex].OpenedAt.After(positions[rightIndex].OpenedAt)
+	})
+
+	return positions, nil
 }

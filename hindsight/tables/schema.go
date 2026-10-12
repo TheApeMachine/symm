@@ -9,6 +9,7 @@ const (
 	// Detections holds source=detector excursion labels apart from the
 	// observation tape, with the measurement schema and partitioning.
 	Detections = "detections"
+	Positions  = "positions"
 )
 
 /*
@@ -97,5 +98,32 @@ func RunsSchema() *iceberg.Schema {
 RunsPartitioning leaves the small runs metadata table unpartitioned.
 */
 func RunsPartitioning() iceberg.PartitionSpec {
+	return iceberg.NewPartitionSpec()
+}
+
+/*
+PositionsSchema defines the canonical table schema for entered and closed positions.
+*/
+func PositionsSchema() *iceberg.Schema {
+	return iceberg.NewSchema(0,
+		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.String, Required: true},
+		iceberg.NestedField{ID: 2, Name: "symbol", Type: iceberg.PrimitiveTypes.String, Required: true},
+		iceberg.NestedField{ID: 3, Name: "status", Type: iceberg.PrimitiveTypes.String, Required: true},
+		iceberg.NestedField{ID: 4, Name: "opened_at", Type: iceberg.PrimitiveTypes.TimestampTz, Required: true},
+		iceberg.NestedField{ID: 5, Name: "closed_at", Type: iceberg.PrimitiveTypes.TimestampTz, Required: false},
+		iceberg.NestedField{ID: 6, Name: "events", Type: iceberg.PrimitiveTypes.String, Required: true},
+		iceberg.NestedField{ID: 7, Name: "venue_cost", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+		iceberg.NestedField{ID: 8, Name: "venue_proceeds", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+		iceberg.NestedField{ID: 9, Name: "venue_fees", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+		iceberg.NestedField{ID: 10, Name: "venue_realized", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+		iceberg.NestedField{ID: 11, Name: "hold_ns", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 12, Name: "outcome", Type: iceberg.PrimitiveTypes.String, Required: false},
+	)
+}
+
+/*
+PositionsPartitioning leaves the positions table unpartitioned.
+*/
+func PositionsPartitioning() iceberg.PartitionSpec {
 	return iceberg.NewPartitionSpec()
 }
