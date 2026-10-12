@@ -249,7 +249,6 @@ var (
 				price,
 				desk,
 				catalog,
-				detectorTee,
 			)
 
 			if training.Status() == nmruntime.ERROR {

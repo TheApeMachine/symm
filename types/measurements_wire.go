@@ -7,15 +7,8 @@ import (
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/store"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
-
-/*
-regions pins each wire metric to the confluence region the grid scores it
-in, so the impulse map groups cells exactly as Step's tokens do.
-*/
-var regions = store.NewGrid()
 
 var measurementsBuilderPool = sync.Pool{
 	New: func() any {
@@ -71,9 +64,6 @@ func measurementToWire(
 
 		wireMetric.Name = name
 		wireMetric.Raw = entry.Metric.Raw
-		if reg, ok := regions.PinRegion(measurement.Source, entry.Key); ok {
-			wireMetric.Region = reg
-		}
 		if entry.Metric.Normalized != 0 {
 			wireMetric.Normalized = entry.Metric.Normalized
 			wireMetric.HasNormalized = true

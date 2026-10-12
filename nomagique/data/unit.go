@@ -616,8 +616,6 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"c_price":    {Unit: UnitPrice, Timescale: TimescaleTick},
 	},
 	"training": {
-		"region_winner":         {Unit: UnitCount, Timescale: TimescaleInstantaneous},
-		"region_runner_up":      {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"region_brightness:R00": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
 		"region_brightness:R01": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
 		"region_brightness:R02": {Unit: UnitZScore, Timescale: TimescaleInstantaneous},

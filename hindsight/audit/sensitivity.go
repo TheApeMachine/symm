@@ -184,13 +184,9 @@ func computeSampleRegionDistribution(
 			frame.From = symMeas[0].From
 			frame.Peers(symMeas...)
 			frame.Write()
-			tokenBytes := grid.Observe(frame)
-			if len(tokenBytes) == 3 && tokenBytes[0] == 'R' {
-				reg := (tokenBytes[1]-'0')*10 + (tokenBytes[2] - '0')
-				if reg < 12 {
-					counts[reg]++
-					total++
-				}
+			if regions := grid.Observe(frame); regions != nil {
+				counts[regions[0].Key]++
+				total++
 			}
 		}
 	}
@@ -253,13 +249,9 @@ func computeDuplicatedRegionDistribution(
 			frame.From = symMeas[0].From
 			frame.Peers(symMeas...)
 			frame.Write()
-			tokenBytes := grid.Observe(frame)
-			if len(tokenBytes) == 3 && tokenBytes[0] == 'R' {
-				reg := (tokenBytes[1]-'0')*10 + (tokenBytes[2] - '0')
-				if reg < 12 {
-					counts[reg]++
-					total++
-				}
+			if regions := grid.Observe(frame); regions != nil {
+				counts[regions[0].Key]++
+				total++
 			}
 		}
 	}

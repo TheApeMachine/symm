@@ -382,8 +382,9 @@ func DetectionPrices(measurement *data.Measurement) (*decimal.Decimal, *decimal.
 
 /*
 SignalLogic retrieves signal and logic measurements for a specific epoch, optionally
-restricted to a label, and tick range [lowTick, highTick], sorted chronologically by tick ascending,
-with seqIdx and source as tie-breakers. An empty label returns measurements across all labels.
+restricted to a label, and tick range [lowTick, highTick], in storage order: rows are
+not sorted, so a consumer that needs chronology orders them itself. An empty label
+returns measurements across all labels.
 
 A read failure (including a failed validation of the arguments) is yielded as
 a non-nil error and ends the sequence; it is never reported as end-of-stream.
@@ -486,7 +487,7 @@ func (catalog *Catalog) SignalLogic(
 		}
 
 		for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0,
-			"epoch", "seqIdx", "source", "label", "tick", "at", "from", "id", "coherence", "maturity", "metrics",
+			"epoch", "seqIdx", "source", "label", "tick", "at", "from", "id", "samples", "coherence", "maturity", "metrics",
 		) {
 			if err != nil {
 				if !yield(nil, err) {

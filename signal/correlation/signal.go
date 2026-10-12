@@ -72,7 +72,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	var out *data.Measurement
 	if prev, ok := signal.last[prior.Label]; ok {
-		out = prev.Next(prior.At, frame.Metrics)
+		out = prev.Next(prior, frame.Metrics)
 	}
 
 	if out == nil {

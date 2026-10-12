@@ -3,7 +3,6 @@ package data
 import (
 	"hash/crc64"
 	"math"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -52,7 +51,7 @@ stream replayed in the same order reproduces the same ranks.
 */
 func (key standardizerKey) seed() uint64 {
 	identity := strings.Join([]string{
-		strconv.FormatInt(key.epoch, 10), key.source, key.label, key.metric,
+		key.source, key.label, key.metric,
 	}, "\x00")
 
 	return crc64.Checksum([]byte(identity), seedTable)

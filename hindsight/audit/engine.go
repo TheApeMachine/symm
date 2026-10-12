@@ -179,11 +179,13 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	sympathy := AnalyzeSympathy(orderedTicks, canonicalSeries, vitality.CanonicalCells, opts.Permutations, alpha)
 	errnie.Info(fmt.Sprintf("[audit] [4/7 Stage 2] Completed in %s: %s", time.Since(stage2Start).Round(time.Millisecond), sympathy.SummaryText))
 
-	// Stage 3: Grid Partitioning & Temporal Stability (cross-chronological split)
+	// Stage 3: Grid Partitioning, Temporal Stability & Completeness
 	stage3Start := time.Now()
 	errnie.Info(fmt.Sprintf("[audit] [5/7 Stage 3] Developing Disjoint Grids & Measuring Temporal Partition Stability across %d ticks...", len(orderedTicks)))
-	stability := AnalyzeGridStability(orderedTicks, tickMeasurements, opts.Permutations, alpha)
-	errnie.Info(fmt.Sprintf("[audit] [5/7 Stage 3] Completed in %s: %s", time.Since(stage3Start).Round(time.Millisecond), stability.SummaryText))
+	stability := AnalyzeGridStability(store.NewGrid(ctx), orderedTicks, tickMeasurements, opts.Permutations, alpha)
+	completeness := AnalyzeGridCompleteness(store.NewGrid(ctx), orderedTicks, tickMeasurements)
+	stability.Completeness = completeness
+	errnie.Info(fmt.Sprintf("[audit] [5/7 Stage 3] Completed in %s: %s | %s", time.Since(stage3Start).Round(time.Millisecond), stability.SummaryText, completeness.SummaryText))
 
 	// Stage 4: Token Dynamics on Unseen Data (train 60%, evaluate on held-out 40%)
 	stage4Start := time.Now()
@@ -194,7 +196,7 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	unseenTicks := orderedTicks[splitIdx:]
 
 	errnie.Info(fmt.Sprintf("[audit] [6/7 Stage 4] Replaying Held-Out Tape (%d unseen ticks): Token Dynamics & Region Excitation...", len(unseenTicks)))
-	frozenGrid := store.NewGrid()
+	frozenGrid := store.NewGrid(ctx)
 
 	dynamics := AnalyzeTokenDynamics(frozenGrid, unseenTicks, tickMeasurements, opts.Permutations, alpha)
 	errnie.Info(fmt.Sprintf("[audit] [6/7 Stage 4] Completed in %s: %s", time.Since(stage4Start).Round(time.Millisecond), dynamics.SummaryText))
@@ -202,7 +204,7 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	// Stage 5: Precursor Informativeness (A->B Ignition and B->C Exhaustion)
 	stage5Start := time.Now()
 	errnie.Info("[audit] [7/7 Stage 5] Evaluating Precursor Divergence (Ignition & Exhaustion Separation)...")
-	fullGrid := store.NewGrid()
+	fullGrid := store.NewGrid(ctx)
 
 	var minTick, maxTick int64
 	if len(orderedTicks) > 0 {
@@ -247,6 +249,11 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 		ctx, catalog, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, alpha, detections, opts.TakerFee,
 	)
 	errnie.Info(fmt.Sprintf("[audit] [Bonus Stage 6] Completed in %s: %s", time.Since(stage6Start).Round(time.Millisecond), cognitive.SummaryText))
+
+	// Excursion Dynamic Transitions
+	traces := ExtractExcursionTraces(ctx, catalog, targetEpoch, fullGrid, detections, tickMeasurements, 5)
+	precursor.ExcursionTraces = traces
+
 
 	// Validation 1: Production-vs-Audit Equivalence
 	eqStart := time.Now()
@@ -309,16 +316,18 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 		Contract:      contract,
 		Timing:        timing,
 		Vitality:      vitality,
-		Sympathy:      sympathy,
-		GridStability: stability,
-		TokenDynamics: dynamics,
-		Precursor:     precursor,
-		CognitiveTrie: cognitive,
-		Equivalence:   &equivalence,
-		Truthfulness:  &truthfulness,
-		Causality:     &causality,
-		Sensitivity:   &sensitivity,
-		Thresholds:    opts.Thresholds,
+		Sympathy:         sympathy,
+		GridStability:    stability,
+		GridCompleteness: completeness,
+		TokenDynamics:    dynamics,
+		Precursor:        precursor,
+		CognitiveTrie:    cognitive,
+		ExcursionTraces:  traces,
+		Equivalence:      &equivalence,
+		Truthfulness:     &truthfulness,
+		Causality:        &causality,
+		Sensitivity:      &sensitivity,
+		Thresholds:       opts.Thresholds,
 	}
 
 	report.Verdicts = BuildVerdicts(report)
@@ -354,10 +363,10 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 
 	if err := os.WriteFile(summaryPath, []byte(summaryMd), 0644); err != nil {
 		errnie.Warn("[audit] failed to write AUDIT_SUMMARY.md: " + err.Error())
-	} else {
-		errnie.Info("[audit] executive summary document saved to: " + summaryPath)
+		return report, nil
 	}
 
+	errnie.Info("[audit] executive summary document saved to: " + summaryPath)
 	return report, nil
 }
 

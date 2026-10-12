@@ -214,7 +214,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 
 		if res == nil {
-			res = mem.lastMeasurement.Next(prior.At, output)
+			res = mem.lastMeasurement.Next(prior, output)
 		}
 
 		mem.lastMeasurement = res

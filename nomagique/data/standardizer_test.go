@@ -167,7 +167,7 @@ func TestStandardizerObserve(t *testing.T) {
 			differentEpoch := key
 			differentEpoch.epoch = 8
 			So(standardizerFor(differentEpoch), ShouldNotPointTo, first)
-			So(differentEpoch.seed(), ShouldNotEqual, key.seed())
+			So(differentEpoch.seed(), ShouldEqual, key.seed())
 
 			differentLabel := key
 			differentLabel.label = "ETH/USD"

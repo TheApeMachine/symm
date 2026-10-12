@@ -106,7 +106,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	var outMeas *data.Measurement
 
 	if state != nil && state.lastMeasurement != nil {
-		outMeas = state.lastMeasurement.Next(prior.At, out)
+		outMeas = state.lastMeasurement.Next(prior, out)
 	}
 
 	if outMeas == nil {

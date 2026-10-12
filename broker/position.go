@@ -40,7 +40,10 @@ func NewPosition() *Position {
 	}
 }
 
-func (position *Position) Enter(symbol string, qty *decimal.Decimal) error {
+/*
+Enter records a buy of qty and returns the order to submit.
+*/
+func (position *Position) Enter(symbol string, qty *decimal.Decimal) *spot.OrderRequest {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
@@ -53,12 +56,14 @@ func (position *Position) Enter(symbol string, qty *decimal.Decimal) error {
 
 	clOrdId := uuid.NewString()
 
-	position.entryOrders = append(position.entryOrders, &spot.OrderRequest{
+	order := &spot.OrderRequest{
 		ClOrdId:   clOrdId,
 		OrderType: "limit",
 		Type:      "buy",
 		Volume:    qty.String(),
-	})
+	}
+
+	position.entryOrders = append(position.entryOrders, order)
 
 	position.events = append(position.events, LifeEvent{
 		At:     position.openedAt.Format(time.RFC3339),
@@ -71,27 +76,33 @@ func (position *Position) Enter(symbol string, qty *decimal.Decimal) error {
 		},
 	})
 
-	return nil
+	return order
 }
 
-func (position *Position) Exit(symbol string) error {
+/*
+Exit records a sell of everything open and returns the order to submit. A
+position that is closed or already has its sell pending returns nil: selling
+it again would sell quantity it no longer holds.
+*/
+func (position *Position) Exit(symbol string) *spot.OrderRequest {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
-	volume := "0"
-
-	if position.qty != nil {
-		volume = position.qty.String()
+	if position.closedLocked() || len(position.exitOrders) > 0 {
+		return nil
 	}
 
+	volume := position.qty.String()
 	clOrdId := uuid.NewString()
 
-	position.exitOrders = append(position.exitOrders, &spot.OrderRequest{
+	order := &spot.OrderRequest{
 		ClOrdId:   clOrdId,
 		OrderType: "limit",
 		Type:      "sell",
 		Volume:    volume,
-	})
+	}
+
+	position.exitOrders = append(position.exitOrders, order)
 
 	position.events = append(position.events, LifeEvent{
 		At:     time.Now().UTC().Format(time.RFC3339),
@@ -104,7 +115,7 @@ func (position *Position) Exit(symbol string) error {
 		},
 	})
 
-	return nil
+	return order
 }
 
 func (position *Position) Qty() *decimal.Decimal {

@@ -11,7 +11,7 @@ import (
 
 func TestSensitivityAudit(t *testing.T) {
 	Convey("Given multi-family signal tape", t, func() {
-		grid := store.NewGrid()
+		grid := store.NewGrid(t.Context())
 		ticks := []int64{1, 2, 3, 4, 5}
 		tickMeasurements := make(map[int64][]*data.Measurement)
 

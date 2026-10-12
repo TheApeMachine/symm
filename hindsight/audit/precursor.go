@@ -24,6 +24,7 @@ import (
 type auditTokenKey struct {
 	symbol string
 	tick   int64
+	k      int
 }
 
 var auditTokenCache sync.Map
@@ -324,12 +325,17 @@ func insufficientPrecursor(reason string) Stage5PrecursorSeparation {
 	}
 }
 
-func observeAuditToken(grid *store.Grid, sym string, tick int64, signals []*data.Measurement) string {
+func observeAuditToken(grid *store.Grid, sym string, tick int64, signals []*data.Measurement, k ...int) string {
 	if len(signals) == 0 || grid == nil {
 		return ""
 	}
 
-	key := auditTokenKey{symbol: sym, tick: tick}
+	cardinality := 1
+	if len(k) > 0 && k[0] > 0 {
+		cardinality = k[0]
+	}
+
+	key := auditTokenKey{symbol: sym, tick: tick, k: cardinality}
 
 	if cached, ok := auditTokenCache.Load(key); ok {
 		return cached.(string)
@@ -347,11 +353,10 @@ func observeAuditToken(grid *store.Grid, sym string, tick int64, signals []*data
 	train.Peers(signals...)
 	train = train.Write()
 
-	tokenBytes := grid.Observe(train)
 	tok := ""
 
-	if len(tokenBytes) > 0 {
-		tok = string(tokenBytes)
+	if regions := grid.Observe(train); regions != nil {
+		tok, _ = (&strategy.Tokenizer{Regions: cardinality}).Token(regions)
 	}
 
 	auditTokenCache.Store(key, tok)
@@ -470,16 +475,22 @@ func archivedIntervalTokens(
 	startTick int64,
 	endTick int64,
 	tickMeasurements map[int64][]*data.Measurement,
+	k ...int,
 ) (map[int64]string, error) {
 	if grid == nil {
 		return nil, nil
+	}
+
+	cardinality := 1
+	if len(k) > 0 && k[0] > 0 {
+		cardinality = k[0]
 	}
 
 	result := make(map[int64]string)
 	missingTicks := make([]int64, 0)
 
 	for tick := startTick; tick <= endTick; tick++ {
-		key := auditTokenKey{symbol: symbol, tick: tick}
+		key := auditTokenKey{symbol: symbol, tick: tick, k: cardinality}
 
 		if cached, ok := auditTokenCache.Load(key); ok {
 			tok := cached.(string)
@@ -529,7 +540,7 @@ func archivedIntervalTokens(
 	}
 
 	for tick, signals := range tickMap {
-		tok := observeAuditToken(grid, symbol, tick, signals)
+		tok := observeAuditToken(grid, symbol, tick, signals, cardinality)
 
 		if len(tok) > 0 {
 			result[tick] = tok

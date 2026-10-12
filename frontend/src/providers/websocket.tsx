@@ -192,7 +192,6 @@ export function dispatchMeasurements(frame: MeasurementsFrame) {
 		if (source === "training" && symbol) {
 			let decisionAction = "";
 			let decisionReason = "";
-			let decisionConfidence = 0;
 			let tokenPath = "";
 
 			const provCount = row.provenanceLength();
@@ -206,22 +205,12 @@ export function dispatchMeasurements(frame: MeasurementsFrame) {
 				if (name === "token_path") tokenPath = val;
 			}
 
-			const metaCount = row.metadataLength();
-			for (let mIdx = 0; mIdx < metaCount; mIdx++) {
-				const m = row.metadata(mIdx);
-				if (!m) continue;
-				const name = m.name();
-				const val = m.value();
-				if (name === "decision_confidence") decisionConfidence = val;
-			}
-
 			if (decisionAction) {
 				const decision = new DecisionT();
 				decision.id = `dec-${symbol}`;
 				decision.symbol = symbol;
 				decision.action = decisionAction;
 				decision.reason = decisionReason;
-				decision.confidence = decisionConfidence;
 				decision.at = row.at();
 				decision.cause = tokenPath;
 

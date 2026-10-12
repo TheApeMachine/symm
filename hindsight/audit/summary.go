@@ -164,19 +164,16 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 	sb.WriteString("![Stage 2 Sympathy](plots/stage2_sympathy_null.png)\n\n")
 	sb.WriteString("![Stage 2 Orientation](plots/stage2_orientation_balance.png)\n\n")
 
-	sb.WriteString("### Stage 3: Grid reproducibility\n\n")
+	sb.WriteString("### Stage 3: Grid stationarity & completeness\n\n")
 	sb.WriteString(fmt.Sprintf(
-		"- Early grid: `%d` cells / `%d` regions\n"+
-			"- Late grid: `%d` cells / `%d` regions\n"+
-			"- Shared universe: `%d` cells (`%.1f%%`)\n"+
-			"- Adjusted Rand Index: `%.3f`\n\n",
-		report.GridStability.GridA.CellCount, report.GridStability.GridA.RegionCount,
-		report.GridStability.GridB.CellCount, report.GridStability.GridB.RegionCount,
-		report.GridStability.SharedUniverse, report.GridStability.OverlapFraction*100,
-		report.GridStability.AdjustedRandIdx,
+		"- Cross-half excitation JSD: `%.3f` bits (TVD `%.3f`, p=`%.3f`)\n"+
+			"- Frames observed by the grid: `%d` of `%d` (`%.1f%%`)\n\n",
+		report.GridStability.DistributionJSD, report.GridStability.DistributionTVD,
+		report.GridStability.StationarityPValue,
+		report.GridCompleteness.ObservedFrames, report.GridCompleteness.TotalFrames,
+		report.GridCompleteness.ObservedFraction*100,
 	))
-	sb.WriteString("> Balanced region sizes are enforced by the partitioner and are not presented as empirical evidence. No ARI health cutoff is applied.\n\n")
-	sb.WriteString("![Stage 3](plots/stage3_region_partitioning.png)\n\n")
+	sb.WriteString("![Grid Completeness](plots/stage3_grid_completeness.png)\n\n")
 
 	sb.WriteString("### Stage 4: Held-out token dynamics & excitation strength\n\n")
 	sb.WriteString(fmt.Sprintf(
@@ -248,6 +245,27 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 	sb.WriteString("> Current trading semantics are long-only: only profitable `up` excursions populate the positive A->B set. Event windows are loaded directly from the archive rather than requiring them to occur inside the first-N audit sample.\n\n")
 	sb.WriteString("![Stage 5](plots/stage5_precursor_separation.png)\n\n")
 
+	if len(report.ExcursionTraces) > 0 {
+		sb.WriteString("#### 4. Excursion Dynamic Resonance: Regional Transitions\n\n")
+		sb.WriteString(fmt.Sprintf(
+			"Captured `%d` representative market excursion transition profiles. Consecutive identical winning region tokens are run-length deduplicated into distinct directional transitions:\n\n",
+			len(report.ExcursionTraces),
+		))
+
+		for traceIdx, trace := range report.ExcursionTraces {
+			sb.WriteString(fmt.Sprintf(
+				"- **Excursion #%d (%s %s)**: `%d` transitions across ticks [%d .. %d] | Net Return: `%+.2f%%`\n"+
+					"  - Sequence: `%s`\n",
+				traceIdx+1, trace.Symbol, strings.ToUpper(trace.Class), len(trace.Transitions),
+				trace.StartTick, trace.CTick, trace.ReturnPct,
+				FormatTransitionSequence(trace),
+			))
+		}
+		sb.WriteString("\n")
+		sb.WriteString("![Excursion Dynamic Transitions Animation](plots/excursion_transitions.gif)\n\n")
+		sb.WriteString("![Excursion Dynamic Transitions Summary](plots/excursion_transitions_summary.png)\n\n")
+	}
+
 	sb.WriteString("### Stage 6: Cognitive Engine & Radix Trie Learning Dynamics\n\n")
 	sb.WriteString(fmt.Sprintf(
 		"- Evaluated excursions: `%d` forming `%d` sequential phases (enter: `%d`, exit: `%d`, wait: `%d`)\n"+
@@ -296,6 +314,31 @@ func GenerateSummaryMarkdown(report *AuditReport) string {
 		report.CognitiveTrie.MeanContrast,
 		report.CognitiveTrie.SpuriousTriggerRate*100,
 	))
+	cog := report.CognitiveTrie
+	if cog.Top1.K > 0 || cog.Top2.K > 0 || cog.Top3.K > 0 {
+		sb.WriteString("#### Multi-Trie Empirical Comparison (Top-1 vs Top-2 vs Top-3)\n\n")
+		sb.WriteString("| Configuration | Schema | Phases | Balanced Acc | Baseline Acc | MCC | Enter Prec / Rec | Retention | Nodes | Mean Depth | False Alarm | Null p-val |\n")
+		sb.WriteString("| :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+
+		tries := []CognitiveTrieEvaluation{cog.Top1, cog.Top2, cog.Top3}
+		for _, tr := range tries {
+			if tr.K == 0 {
+				continue
+			}
+			schema := fmt.Sprintf("K=%d", tr.K)
+			sb.WriteString(fmt.Sprintf(
+				"| **%s** | `%s` | %d | `%.1f%%` | `%.1f%%` | `%.3f` | `%.1f%%` / `%.1f%%` | `%.1f%%` | %d | `%.1f` | `%.2f%%` | `%.3f` |\n",
+				tr.TokenDescription, schema, tr.PhasesFormed,
+				tr.Skill.BalancedAccuracy*100, tr.Skill.BaselineBalancedAccuracy*100,
+				tr.Skill.MCC, tr.Skill.EnterPrecision*100, tr.Skill.EnterRecall*100,
+				tr.Retention.RetentionRate*100, tr.Topology.NodeStats.TotalNodes,
+				tr.Topology.NodeStats.MeanDepth, tr.SpuriousTriggerRate*100,
+				tr.Skill.EmpiricalPValue,
+			))
+		}
+		sb.WriteString("\n")
+	}
+
 	if report.CognitiveTrie.Skill.TotalCalls > 0 && report.CognitiveTrie.Skill.BalancedAccuracy < report.CognitiveTrie.Skill.BaselineBalancedAccuracy {
 		sb.WriteString(fmt.Sprintf(
 			"> ⚠️ **LEARNING DEFICIT:** Prequential balanced accuracy (%.1f%%) trails baseline policy (%.1f%%). Memory retention is at %.1f%%.\n\n",

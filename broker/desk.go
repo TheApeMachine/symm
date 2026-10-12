@@ -7,6 +7,8 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -57,6 +59,30 @@ func (desk *Desk) Cash(asset string) *decimal.Decimal {
 	return desk.balance.cash(asset)
 }
 
+func (desk *Desk) ResetPaper() error {
+	if paper, ok := desk.transport.(*Paper); ok {
+		if err := paper.Reset(); err != nil {
+			return errnie.Error(err)
+		}
+
+		if desk.balance != nil {
+			return desk.balance.Update()
+		}
+
+		return nil
+	}
+
+	if err := ResetPaperAccount(desk.Context()); err != nil {
+		return errnie.Error(err)
+	}
+
+	if desk.balance != nil {
+		return desk.balance.Update()
+	}
+
+	return nil
+}
+
 /*
 Enter sizes an entry from the book and the matched edge and starts working it
 in child market orders. The size is the smallest of: the exit capacity within
@@ -67,7 +93,7 @@ limit. Every refusal is an error naming its reason.
 */
 func (desk *Desk) Enter(symbol string, qty *decimal.Decimal) error {
 	position := NewPosition()
-	position.Enter(symbol, qty)
+	order := position.Enter(symbol, qty)
 
 	desk.mu.Lock()
 	untyped, loaded := desk.positions.Load(symbol)
@@ -81,29 +107,22 @@ func (desk *Desk) Enter(symbol string, qty *decimal.Decimal) error {
 	}
 	desk.mu.Unlock()
 
-	if desk.transport != nil && len(position.entryOrders) > 0 {
-		order := position.entryOrders[len(position.entryOrders)-1]
-		msg := kraken.NewAddOrderMessage("", &kraken.AddOrderRequest{
-			Pair:    symbol,
-			Type:    "buy",
-			Volume:  qty.String(),
-			ClOrdId: order.ClOrdId,
-		})
-		buf, err := sonic.Marshal(msg)
+	return desk.submit(symbol, order)
+}
 
-		if err == nil {
-			desk.transport.Write(buf)
-		}
-	}
-
-	return nil
+/*
+Holds reports whether the symbol has a position on the desk: open, entering,
+or with its exit still working.
+*/
+func (desk *Desk) Holds(symbol string) bool {
+	_, exists := desk.positions.Load(symbol)
+	return exists
 }
 
 /*
 Exit takes the learned exit: it sells everything still open. It always wins:
 it ends the entry plan, and when a capacity trim is in flight it sells the
-rest. When the position is already exiting (the monitor's full exit came
-first) it records that it also fired, so both are visible.
+rest. A position whose sell is already working is not sold twice.
 */
 func (desk *Desk) Exit(symbol string) error {
 	desk.mu.Lock()
@@ -118,22 +137,40 @@ func (desk *Desk) Exit(symbol string) error {
 	desk.mu.Unlock()
 
 	for _, position := range posList {
-		position.Exit(symbol)
-
-		if desk.transport != nil && position.qty != nil && len(position.exitOrders) > 0 {
-			order := position.exitOrders[len(position.exitOrders)-1]
-			msg := kraken.NewAddOrderMessage("", &kraken.AddOrderRequest{
-				Pair:    symbol,
-				Type:    "sell",
-				Volume:  position.qty.String(),
-				ClOrdId: order.ClOrdId,
-			})
-			buf, err := sonic.Marshal(msg)
-
-			if err == nil {
-				desk.transport.Write(buf)
-			}
+		if err := desk.submit(symbol, position.Exit(symbol)); err != nil {
+			return errnie.Error(err)
 		}
+	}
+
+	return nil
+}
+
+/*
+submit writes an order to the venue transport. A nil order (nothing to do)
+or an absent transport submits nothing.
+*/
+func (desk *Desk) submit(symbol string, order *spot.OrderRequest) error {
+	if desk.transport == nil || order == nil {
+		return nil
+	}
+
+	buf, err := sonic.Marshal(kraken.NewAddOrderMessage("", &kraken.AddOrderRequest{
+		Pair:    symbol,
+		Type:    order.Type,
+		Volume:  order.Volume,
+		ClOrdId: order.ClOrdId,
+	}))
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal, "[desk] unable to encode "+order.Type+" order for "+symbol, err,
+		))
+	}
+
+	if err := desk.transport.Write(buf); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO, "[desk] unable to submit "+order.Type+" order for "+symbol, err,
+		))
 	}
 
 	return nil

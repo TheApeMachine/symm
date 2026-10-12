@@ -123,27 +123,15 @@ func AnalyzeTokenDynamics(
 			frame.Peers(symMeas...)
 			frame.Write()
 
-			if !frozenGrid.Ready(frame) {
+			regions := frozenGrid.Observe(frame)
+
+			if regions == nil {
 				continue
 			}
 
-			regions := frozenGrid.RegionScores(frame)
-
-			// A frame in which no region holds a metric is not an emission.
-			if !regions.HasEvidence {
-				continue
-			}
-
-			token := fmt.Sprintf("R%02d", regions.Winner)
-			winningRegion := regions.Winner
-			maxBrightness := regions.Brightness[winningRegion]
-			// Without a contending region the margin is measured against the
-			// null expectation, which is brightness 0 for every region.
-			runnerUpBrightness := 0.0
-
-			if regions.RunnerUp != regions.Winner {
-				runnerUpBrightness = regions.Brightness[regions.RunnerUp]
-			}
+			token := fmt.Sprintf("R%02d", regions[0].Key)
+			maxBrightness := regions[0].Brightness
+			runnerUpBrightness := regions[1].Brightness
 
 			tokens = append(tokens, token)
 			tokensBySymbol[sym] = append(tokensBySymbol[sym], token)
@@ -166,8 +154,8 @@ func AnalyzeTokenDynamics(
 
 			margin := maxBrightness - runnerUpBrightness
 			winningScore := maxBrightness
-			active := float64(regions.Counts[winningRegion])
-			members := float64(regions.Counts[winningRegion])
+			active := float64(regions[0].Counts)
+			members := float64(regions[0].Counts)
 			coverage := 1.0
 
 			accum := regionAccums[token]

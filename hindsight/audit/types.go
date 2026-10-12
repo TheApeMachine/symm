@@ -170,52 +170,31 @@ type Stage2Sympathy struct {
 }
 
 /*
-GridPartitionStat holds information about one developed grid's partition.
-*/
-type GridPartitionStat struct {
-	PeriodName     string         `json:"period_name"`
-	CellCount      int            `json:"cell_count"`
-	RegionCount    int            `json:"region_count"`
-	RegionSizes    map[string]int `json:"region_sizes"`
-	MaxRegionShare float64        `json:"max_region_share"`
-	IsDegenerate   bool           `json:"is_degenerate"`
-}
-
-/*
-GridStabilityObservation is one independent comparison of two disjoint
-chronological grid-development windows.
-*/
-type GridStabilityObservation struct {
-	WindowTicks  int     `json:"window_ticks"`
-	PairIndex    int     `json:"pair_index"`
-	SharedCells  int     `json:"shared_cells"`
-	Overlap      float64 `json:"overlap"`
-	AdjustedRand float64 `json:"adjusted_rand"`
-	NullMeanARI  float64 `json:"null_mean_ari"`
-}
-
-/*
-Stage3GridStability compares grids developed from disjoint chronological market segments.
-The primary fields retain the largest half-vs-half comparison; StabilityCurve
-contains repeated disjoint comparisons at multiple evidence sizes.
+Stage3GridStability compares the region excitation of the tape's two halves.
 */
 type Stage3GridStability struct {
-	GridA                GridPartitionStat          `json:"grid_a"`
-	GridB                GridPartitionStat          `json:"grid_b"`
-	SharedUniverse       int                        `json:"shared_universe"`
-	OverlapFraction      float64                    `json:"overlap_fraction"`
-	RandIndex            float64                    `json:"rand_index"`
-	AdjustedRandIdx      float64                    `json:"adjusted_rand_idx"`
-	NullAdjustedRandMean float64                    `json:"null_adjusted_rand_mean"`
-	DistributionJSD      float64                    `json:"distribution_jsd"`
-	DistributionTVD      float64                    `json:"distribution_tvd"`
-	StationarityPValue   float64                    `json:"stationarity_p_value"`
-	IsStationary         bool                       `json:"is_stationary"`
-	ARIVerdict           string                     `json:"ari_verdict"`
-	StabilityCurve       []GridStabilityObservation `json:"stability_curve"`
-	SummaryText          string                     `json:"summary_text"`
-	Status               string                     `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
-	Passed               bool                       `json:"passed"` // compatibility: true when experiment executed with sufficient data
+	DistributionJSD    float64               `json:"distribution_jsd"`
+	DistributionTVD    float64               `json:"distribution_tvd"`
+	StationarityPValue float64               `json:"stationarity_p_value"`
+	IsStationary       bool                  `json:"is_stationary"`
+	Completeness       GridCompletenessAudit `json:"completeness"`
+	SummaryText        string                `json:"summary_text"`
+	Status             string                `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed             bool                  `json:"passed"`
+}
+
+/*
+GridCompletenessAudit records how many symbol-tick frames Grid.Observe turns
+into regions, and the mean number of metrics each region holds in them.
+*/
+type GridCompletenessAudit struct {
+	TotalFrames       int                `json:"total_frames"`
+	ObservedFrames    int                `json:"observed_frames"`
+	ObservedFraction  float64            `json:"observed_fraction"`
+	MeanRegionMembers map[string]float64 `json:"mean_region_members"`
+	SummaryText       string             `json:"summary_text"`
+	Status            string             `json:"status"` // "MEASURED", "INSUFFICIENT_DATA"
+	Passed            bool               `json:"passed"`
 }
 
 /*
@@ -348,9 +327,43 @@ type Stage5PrecursorSeparation struct {
 	EconomicRelevance    PrecursorEconomicRelevance `json:"economic_relevance"`    // Friction Clearance
 	BackgroundTokens     map[string]int             `json:"background_tokens,omitempty"`
 	FeeProvenance        FeeProvenance              `json:"fee_provenance"`
+	ExcursionTraces      []ExcursionTransitionTrace `json:"excursion_traces,omitempty"`
 	SummaryText          string                     `json:"summary_text"`
 	Status               string                     `json:"status"`
 	Passed               bool                       `json:"passed"`
+}
+
+/*
+ExcursionTransitionFrame captures the 12-region state and market context at a single deduplicated token transition.
+*/
+type ExcursionTransitionFrame struct {
+	Step       int         `json:"step"`
+	Tick       int64       `json:"tick"`
+	Phase      string      `json:"phase"` // "precursor", "excursion", "exhaustion"
+	Token      string      `json:"token"`
+	Top3Token  string      `json:"top3_token"`
+	Winner     uint8       `json:"winner"`
+	RunnerUp   uint8       `json:"runner_up"`
+	Brightness [12]float64 `json:"brightness"`
+	Counts     [12]int     `json:"counts"`
+	DwellTicks int         `json:"dwell_ticks"`
+	Price      float64     `json:"price"`
+	ReturnPct  float64     `json:"return_pct"`
+}
+
+/*
+ExcursionTransitionTrace tracks the sequential deduplicated token transitions across an excursion interval.
+*/
+type ExcursionTransitionTrace struct {
+	Symbol      string                     `json:"symbol"`
+	Class       string                     `json:"class"`
+	StartTick   int64                      `json:"start_tick"`
+	BTick       int64                      `json:"b_tick"`
+	CTick       int64                      `json:"c_tick"`
+	BPrice      float64                    `json:"b_price"`
+	CPrice      float64                    `json:"c_price"`
+	ReturnPct   float64                    `json:"return_pct"`
+	Transitions []ExcursionTransitionFrame `json:"transitions"`
 }
 
 /*
@@ -425,12 +438,12 @@ type TrieTopologyMetrics struct {
 }
 
 /*
-Stage6CognitiveTrie audits the associative memory and Radix Trie learning dynamics:
-prequential predictive skill vs constant policy and shuffled null, memory retention,
-basin structure, and background false-alarm rates.
+CognitiveTrieEvaluation records the prequential skill, retention, topology, and false-alarm metrics
+of a single in-memory Radix Trie configuration (e.g. Top-1, Top-2, or Top-3).
 */
-type Stage6CognitiveTrie struct {
-	DetectionsEvaluated int                  `json:"detections_evaluated"`
+type CognitiveTrieEvaluation struct {
+	K                   int                  `json:"k"`
+	TokenDescription    string               `json:"token_description"`
 	PhasesFormed        int                  `json:"phases_formed"`
 	ActionCounts        map[string]int       `json:"action_counts"`
 	Skill               TrieSkillMetrics     `json:"skill"`
@@ -440,10 +453,31 @@ type Stage6CognitiveTrie struct {
 	MeanConfidence      float64              `json:"mean_confidence"`
 	MeanContrast        float64              `json:"mean_contrast"`
 	SpuriousTriggerRate float64              `json:"spurious_trigger_rate"`
-	S3Memory            S3MemoryAudit        `json:"s3_memory"`
-	SummaryText         string               `json:"summary_text"`
-	Status              string               `json:"status"` // "MEASURED", "INSUFFICIENT_DATA", "CONTRACT_BREACH"
-	Passed              bool                 `json:"passed"`
+}
+
+/*
+Stage6CognitiveTrie audits the associative memory and Radix Trie learning dynamics:
+prequential predictive skill vs constant policy and shuffled null, memory retention,
+basin structure, and background false-alarm rates.
+*/
+type Stage6CognitiveTrie struct {
+	DetectionsEvaluated int                     `json:"detections_evaluated"`
+	PhasesFormed        int                     `json:"phases_formed"`
+	ActionCounts        map[string]int          `json:"action_counts"`
+	Skill               TrieSkillMetrics        `json:"skill"`
+	Retention           TrieRetentionMetrics    `json:"retention"`
+	Topology            TrieTopologyMetrics     `json:"topology"`
+	AbstentionRate      float64                 `json:"abstention_rate"`
+	MeanConfidence      float64                 `json:"mean_confidence"`
+	MeanContrast        float64                 `json:"mean_contrast"`
+	SpuriousTriggerRate float64                 `json:"spurious_trigger_rate"`
+	S3Memory            S3MemoryAudit           `json:"s3_memory"`
+	Top1                CognitiveTrieEvaluation `json:"top1"`
+	Top2                CognitiveTrieEvaluation `json:"top2"`
+	Top3                CognitiveTrieEvaluation `json:"top3"`
+	SummaryText         string                  `json:"summary_text"`
+	Status              string                  `json:"status"` // "MEASURED", "INSUFFICIENT_DATA", "CONTRACT_BREACH"
+	Passed              bool                    `json:"passed"`
 }
 
 /*
@@ -581,9 +615,11 @@ type AuditReport struct {
 	Vitality        Stage1Vitality            `json:"vitality"`
 	Sympathy        Stage2Sympathy            `json:"sympathy"`
 	GridStability   Stage3GridStability       `json:"grid_stability"`
+	GridCompleteness GridCompletenessAudit     `json:"grid_completeness"`
 	TokenDynamics   Stage4TokenDynamics       `json:"token_dynamics"`
 	Precursor       Stage5PrecursorSeparation `json:"precursor"`
 	CognitiveTrie   Stage6CognitiveTrie       `json:"cognitive_trie"`
+	ExcursionTraces []ExcursionTransitionTrace `json:"excursion_traces,omitempty"`
 	Equivalence     *EquivalenceAudit         `json:"equivalence,omitempty"`
 	Truthfulness    *TruthfulnessAudit        `json:"truthfulness,omitempty"`
 	Causality       *CausalityAudit           `json:"causality,omitempty"`

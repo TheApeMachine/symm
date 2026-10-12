@@ -427,54 +427,45 @@ def plot_stage2_orientation(report, out_dir):
     fig.savefig(os.path.join(out_dir, 'stage2_orientation_balance.png'), dpi=180, bbox_inches='tight')
     plt.close(fig)
 
-def plot_stage3_grid_stability(report, out_dir):
-    stab = report.get('grid_stability', {})
-    grid_a = stab.get('grid_a', {}).get('region_sizes', {})
-    grid_b = stab.get('grid_b', {}).get('region_sizes', {})
-    ari = stab.get('adjusted_rand_idx', 0)
-    overlap = stab.get('overlap_fraction', 0) * 100
-    shared_u = stab.get('shared_universe', 0)
+def plot_stage3_grid_completeness(report, out_dir):
+    comp = report['grid_completeness']
+    total_frames = comp['total_frames']
+    if total_frames == 0:
+        return
 
-    all_regions = sorted(list(set(list(grid_a.keys()) + list(grid_b.keys()))), key=lambda r: int(r.replace('R', '')) if r.replace('R', '').isdigit() else 999)
+    observed = comp['observed_frames']
+    observed_pct = comp['observed_fraction'] * 100
+    members = comp['mean_region_members']
 
-    sizes_a = [grid_a.get(r, 0) for r in all_regions]
-    sizes_b = [grid_b.get(r, 0) for r in all_regions]
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7.2))
 
-    x = np.arange(len(all_regions))
-    width = 0.38
+    # Panel 1: frames Grid.Observe turned into regions vs not.
+    ax1.bar(['Observed', 'Not observed'], [observed, total_frames - observed], color=['#3fb950', '#f85149'], width=0.55, edgecolor='#30363d')
+    ax1.set_ylabel('Frame Count', fontsize=10, color='#adbac7')
+    ax1.set_title(f'Frames observed by Grid.Observe: {observed_pct:.1f}%', fontsize=11, fontweight='bold')
+    ax1.grid(axis='y')
 
-    fig, ax = plt.subplots(figsize=(13, 7))
-    ax.bar(x - width/2, sizes_a, width, label='Early Period Grid', color='#58a6ff')
-    ax.bar(x + width/2, sizes_b, width, label='Late Period Grid', color='#3fb950')
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(all_regions, fontsize=8.5)
-    ax.set_xlabel('Learned Spectral Region', fontsize=10, color='#adbac7')
-    ax.set_ylabel('Number of Assigned Metric Cells', fontsize=10, color='#adbac7')
-    ax.legend(loc='upper right', frameon=True, facecolor='#161b22', edgecolor='#30363d', fontsize=9)
-    ax.grid(axis='y')
-
-    if ari >= 0.40:
-        status = "STABLE"
-        score = min(1.0, max(0.0, ari))
-        readout = f"ARI: {ari:.3f} on {shared_u} Shared Cells ({overlap:.1f}% Overlap)  |  Target: ARI > 0.40 (Temporal Stability)"
-    else:
-        status = "MARGINAL" if ari > 0.15 else "UNSTABLE"
-        score = max(0.05, ari)
-        readout = f"ARI: {ari:.3f} on {shared_u} Shared Cells  |  Target: ARI > 0.40 (Regime Drift Detected)"
+    # Panel 2: mean metrics per region in observed frames.
+    regions = [f'R{r:02d}' for r in range(12)]
+    ax2.bar(regions, [members[r] for r in regions], color='#58a6ff', width=0.6, edgecolor='#30363d')
+    ax2.set_xlabel('Grid Region', fontsize=10, color='#adbac7')
+    ax2.set_ylabel('Mean Metrics per Observed Frame', fontsize=10, color='#adbac7')
+    ax2.set_title('Region Membership', fontsize=11, fontweight='bold')
+    ax2.grid(axis='y')
 
     render_health_header(
         fig,
-        f'Stage 3: Cross-Period Grid Stability (Adjusted Rand Index = {ari:.3f})',
-        f'Evaluates multiset cluster reproducibility across disjoint time windows ({shared_u} shared cells).',
-        status=status,
-        health_score=score,
-        readout=readout,
-        target_pct=0.40
+        f'Stage 3: Grid Completeness (Observed: {observed_pct:.1f}%)',
+        'A frame is observed when every peer is warm and every region holds at least one metric.',
+        status=comp['status'],
+        health_score=observed_pct / 100.0,
+        readout=f"Observed {observed} of {total_frames} frames",
+        target_pct=None
     )
 
-    fig.savefig(os.path.join(out_dir, 'stage3_region_partitioning.png'), dpi=180, bbox_inches='tight')
+    fig.savefig(os.path.join(out_dir, 'stage3_grid_completeness.png'), dpi=180, bbox_inches='tight')
     plt.close(fig)
+
 
 def plot_stage4_token_dynamics(report, out_dir):
     dynamics = report.get('token_dynamics', {})
@@ -752,11 +743,82 @@ def plot_stage5_precursor(report, out_dir):
 
 def plot_stage6_trie_skill(report, out_dir):
     cog = report.get('cognitive_trie', {})
+    status = cog.get('status', 'INSUFFICIENT_DATA')
+    top1 = cog.get('top1', {})
+    top2 = cog.get('top2', {})
+    top3 = cog.get('top3', {})
+
+    has_multi = top1.get('k', 0) > 0 and (top2.get('k', 0) > 0 or top3.get('k', 0) > 0)
+
+    if has_multi:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7.5))
+
+        configs = [('Top-1\nWinner', top1), ('Top-2\nPair', top2), ('Top-3\nTriad', top3)]
+        labels = [c[0] for c in configs if c[1].get('k', 0) > 0]
+        sub_cogs = [c[1] for c in configs if c[1].get('k', 0) > 0]
+
+        x = np.arange(len(labels))
+        width = 0.35
+
+        bal_accs = [c.get('skill', {}).get('balanced_accuracy', 0) * 100 for c in sub_cogs]
+        base_accs = [c.get('skill', {}).get('baseline_balanced_accuracy', 0) * 100 for c in sub_cogs]
+
+        bars1 = ax1.bar(x - width/2, bal_accs, width, label='Model Balanced Acc', color='#58a6ff')
+        bars2 = ax1.bar(x + width/2, base_accs, width, label='Baseline Policy Acc', color='#8b949e')
+
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(labels, fontsize=9.5, fontweight='bold')
+        ax1.set_ylabel('Balanced Accuracy (%)', fontsize=10, color='#adbac7')
+        ax1.set_title('Multi-Trie Balanced Accuracy vs Baseline Policy', fontsize=11, fontweight='bold')
+        ax1.legend(loc='upper right', frameon=True, facecolor='#161b22', edgecolor='#30363d')
+        ax1.grid(axis='y')
+
+        for bar in bars1:
+            h = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2., h + 0.8, f"{h:.1f}%", ha='center', va='bottom', fontsize=8.5, color='#f0f6fc')
+        for bar in bars2:
+            h = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2., h + 0.8, f"{h:.1f}%", ha='center', va='bottom', fontsize=8.5, color='#8b949e')
+
+        mccs = [c.get('skill', {}).get('mcc', 0) for c in sub_cogs]
+        retentions = [c.get('retention', {}).get('retention_rate', 0) * 100 for c in sub_cogs]
+        nodes = [c.get('topology', {}).get('node_stats', {}).get('total_nodes', 0) for c in sub_cogs]
+
+        bars_mcc = ax2.bar(x, mccs, width=0.45, color=['#2ea043' if m > 0.05 else ('#58a6ff' if m >= 0 else '#f85149') for m in mccs])
+        ax2.set_xticks(x)
+        ax2.set_xticklabels(labels, fontsize=9.5, fontweight='bold')
+        ax2.set_ylabel('Matthews Correlation Coefficient (MCC)', fontsize=10, color='#adbac7')
+        ax2.set_title(f'Classification Skill: MCC & Memory Retention', fontsize=11, fontweight='bold')
+        ax2.axhline(0, color='#6e7681', linestyle='--', linewidth=0.8)
+        ax2.grid(axis='y')
+
+        for idx, bar in enumerate(bars_mcc):
+            h = bar.get_height()
+            ret_val = retentions[idx]
+            node_val = nodes[idx]
+            va = 'bottom' if h >= 0 else 'top'
+            offset = 0.01 if h >= 0 else -0.015
+            ax2.text(bar.get_x() + bar.get_width()/2., h + offset, f"MCC={h:.3f}\nRet={ret_val:.1f}%\nNodes={node_val}", ha='center', va=va, fontsize=8, color='#f0f6fc')
+
+        readout = f"Top-1: BalAcc={bal_accs[0]:.1f}% (MCC={mccs[0]:.3f}) | Top-2: BalAcc={bal_accs[1]:.1f}% (MCC={mccs[1]:.3f}) | Top-3: BalAcc={bal_accs[2]:.1f}% (MCC={mccs[2]:.3f})"
+        render_health_header(
+            fig,
+            f'Stage 6: Multi-Trie Cognitive Comparison (Top-1 vs Top-2 vs Top-3)',
+            'Empirical comparison of in-memory association tries built from K=1 (Winner), K=2 (Pair), and K=3 (Triad) tokens.',
+            status=status,
+            health_score=max(0.1, max(bal_accs)/100.0),
+            readout=readout,
+            target_pct=None
+        )
+
+        fig.savefig(os.path.join(out_dir, 'stage6_trie_skill.png'), dpi=180, bbox_inches='tight')
+        plt.close(fig)
+        return
+
+    # Fallback to single-trie plotting if multi-trie data is absent
     skill = cog.get('skill', {})
     ret = cog.get('retention', {})
-    status = cog.get('status', 'INSUFFICIENT_DATA')
     phases = cog.get('phases_formed', 0)
-
     hits = skill.get('hits', 0)
     total_calls = skill.get('total_calls', 0)
     baseline_hits = skill.get('baseline_hits', 0)
@@ -771,7 +833,6 @@ def plot_stage6_trie_skill(report, out_dir):
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7.5))
 
-    # Panel 1: Predictive Skill vs Baseline and Null
     categories = ['Prequential Model', f'Best Baseline\n({baseline_policy})', 'Null Mean', 'Null 95th Pct']
     values = [hits, baseline_hits, null_mean, null_p95]
     colors = ['#2ea043' if separates else '#58a6ff', '#8b949e', '#d29922', '#f0883e']
@@ -784,7 +845,6 @@ def plot_stage6_trie_skill(report, out_dir):
         h = bar.get_height()
         ax1.text(bar.get_x() + bar.get_width()/2., h + 0.05, f"{h:.1f}", ha='center', va='bottom', fontsize=9, color='#f0f6fc')
 
-    # Panel 2: Memory Retention & Background Specificity
     m_labels = ['Post-Teach Retention', 'Background False Alarm']
     m_values = [ret_rate, spurious_rate]
     m_colors = ['#388bfd', '#f85149' if spurious_rate > 5 else '#2ea043']
@@ -798,26 +858,13 @@ def plot_stage6_trie_skill(report, out_dir):
         h = bar.get_height()
         ax2.text(bar.get_x() + bar.get_width()/2., h + 1, f"{h:.1f}%", ha='center', va='bottom', fontsize=9, color='#f0f6fc')
 
-    if separates:
-        skill_status = "SKILLFUL"
-        skill_score = 0.90
-        skill_readout = f"Model Hits: {hits:.1f} vs Null-95: {null_p95:.1f} (p={p_val:.3f}), Retention: {ret_rate:.1f}%  |  Beats Shuffled Nulls"
-    elif status == 'INSUFFICIENT_DATA':
-        skill_status = "INSUFFICIENT_DATA"
-        skill_score = 0.0
-        skill_readout = f"Phases Evaluated: {phases}  |  Catalog & Grid Replay Required for Prequential Skill Scoring"
-    else:
-        skill_status = "NULL"
-        skill_score = 0.35
-        skill_readout = f"Model Hits: {hits:.1f} vs Null-95: {null_p95:.1f} (p={p_val:.3f})  |  Does Not Beat Shuffled Baseline"
-
     render_health_header(
         fig,
         f'Stage 6: Cognitive Engine Prequential Skill & Memory Dynamics (Status: {status})',
         'Tests whether sequence prefix recall beats constant policies & shuffled nulls, and measures memory retention.',
-        status=skill_status,
-        health_score=skill_score,
-        readout=skill_readout,
+        status="SKILLFUL" if separates else "NULL",
+        health_score=0.90 if separates else 0.35,
+        readout=f"Model Hits: {hits:.1f} vs Null-95: {null_p95:.1f} (p={p_val:.3f})",
         target_pct=None
     )
 
@@ -1008,6 +1055,207 @@ def plot_validations_sensitivity(report, out_dir):
     fig.savefig(os.path.join(out_dir, 'validation_sensitivity.png'), dpi=180, bbox_inches='tight')
     plt.close(fig)
 
+def animate_excursion_transitions(report, out_dir):
+    traces = report.get('excursion_traces') or report.get('precursor', {}).get('excursion_traces', [])
+    if not traces:
+        return
+
+    # Choose primary trace (longest or highest return)
+    trace = max(traces, key=lambda t: len(t.get('transitions', [])))
+    transitions = trace.get('transitions', [])
+    if len(transitions) < 3:
+        return
+
+    symbol = trace.get('symbol', 'ASSET')
+    ex_class = trace.get('class', 'UP').upper()
+    total_steps = len(transitions)
+
+    region_labels = [
+        "R00\nBuyArrival", "R01\nPacingVel", "R02\nSellCascade", "R03\nTakerSweep",
+        "R04\nCVDDelta", "R05\nTakerDump", "R06\nAskThin", "R07\nSpreadFrict",
+        "R08\nBidSupport", "R09\nLeaderCohort", "R10\nQuiescentCoil", "R11\nSystemicDrag"
+    ]
+
+    # Pre-extract arrays across all steps
+    steps = [tr.get('step', i) for i, tr in enumerate(transitions)]
+    prices = [tr.get('price', 0.0) for tr in transitions]
+    returns = [tr.get('return_pct', 0.0) for tr in transitions]
+    winners = [tr.get('winner', 0) for tr in transitions]
+    runner_ups = [tr.get('runner_up', 0) for tr in transitions]
+    brightness_matrix = np.array([tr.get('brightness', [0.0]*12) for tr in transitions]) # shape: (T, 12)
+
+    # Set up figure with modern grid layout
+    fig = plt.figure(figsize=(15.5, 8.8), facecolor='#0d1117')
+    gs = fig.add_gridspec(2, 2, height_ratios=[1.2, 0.8], hspace=0.34, wspace=0.22,
+                          left=0.06, right=0.96, top=0.84, bottom=0.08)
+
+    ax_bars = fig.add_subplot(gs[0, :])       # Top: 12 Region Activation Bars
+    ax_price = fig.add_subplot(gs[1, 0])      # Bottom-Left: Excursion Trajectory & Progress Head
+    ax_matrix = fig.add_subplot(gs[1, 1])     # Bottom-Right: Confluence Waterfall Spectrogram
+
+    # Fixed styling & limits
+    min_b = min(float(np.min(brightness_matrix)) - 0.5, -2.5)
+    max_b = max(float(np.max(brightness_matrix)) + 1.2, 4.5)
+
+    # 1. Static setup for ax_bars
+    ax_bars.set_facecolor('#161b22')
+    ax_bars.set_xlim(-0.8, 11.8)
+    ax_bars.set_ylim(min_b, max_b)
+    ax_bars.set_xticks(range(12))
+    ax_bars.set_xticklabels(region_labels, fontsize=8.5, fontweight='bold', color='#c9d1d9')
+    ax_bars.set_ylabel('Brightness Excess ($z$-Score)', fontsize=10, fontweight='bold', color='#c9d1d9')
+    ax_bars.axhline(0, color='#484f58', linestyle='--', linewidth=1.0, label='Null Expectation ($0\\sigma$)')
+    ax_bars.axhline(2.0, color='#d29922', linestyle=':', linewidth=1.2, label='Excitation Barrier ($+2\\sigma$)')
+    ax_bars.axhline(-2.0, color='#8957e5', linestyle=':', linewidth=1.0, label='Quiescent Barrier ($-2\\sigma$)')
+    ax_bars.legend(loc='upper right', fontsize=8, facecolor='#21262d', edgecolor='#30363d')
+    ax_bars.grid(axis='y', color='#30363d', linestyle='--', alpha=0.5)
+
+    bar_rects = ax_bars.bar(range(12), brightness_matrix[0], width=0.6, color='#1f6feb', edgecolor='#388bfd', linewidth=1.0)
+    bar_texts = [ax_bars.text(i, 0, '', ha='center', va='bottom', fontsize=8, fontweight='bold', color='#f0f6fc') for i in range(12)]
+
+    # 2. Static setup for ax_price
+    ax_price.set_facecolor('#161b22')
+    ax_price.set_title(f'Excursion Trajectory ({symbol} {ex_class})', fontsize=10.5, fontweight='bold', color='#f0f6fc', pad=8)
+    ax_price.set_xlabel('Transition Step', fontsize=9, color='#8b949e')
+    ax_price.set_ylabel('Net Return (%)', fontsize=9, color='#8b949e')
+    ax_price.set_xlim(0, max(1, total_steps - 1))
+    ret_min = min(returns) - 0.2
+    ret_max = max(returns) + 0.3
+    ax_price.set_ylim(ret_min, ret_max)
+    ax_price.grid(color='#30363d', linestyle='--', alpha=0.5)
+
+    # Shade precursor vs holding
+    precursor_steps = [i for i, tr in enumerate(transitions) if tr.get('phase') == 'precursor']
+    if precursor_steps:
+        ax_price.axvspan(0, max(precursor_steps), color='#388bfd', alpha=0.12, label='Precursor Phase')
+    if len(precursor_steps) < total_steps:
+        start_hold = max(precursor_steps) if precursor_steps else 0
+        ax_price.axvspan(start_hold, total_steps - 1, color='#3fb950', alpha=0.12, label='Excursion Holding')
+    ax_price.legend(loc='upper left', fontsize=7.5, facecolor='#21262d', edgecolor='#30363d')
+
+    full_line, = ax_price.plot(steps, returns, color='#6e7681', linestyle=':', linewidth=1.0, alpha=0.6)
+    trail_line, = ax_price.plot([], [], color='#58a6ff', linewidth=2.0)
+    head_dot, = ax_price.plot([], [], 'o', color='#3fb950', markersize=8, markeredgecolor='#ffffff', markeredgewidth=1.5)
+
+    # 3. Static setup for ax_matrix (Confluence Spectrogram)
+    ax_matrix.set_facecolor('#161b22')
+    ax_matrix.set_title('Confluence Waterfall: 12 Regions Across Transitions', fontsize=10.5, fontweight='bold', color='#f0f6fc', pad=8)
+    ax_matrix.set_xlabel('Transition Step', fontsize=9, color='#8b949e')
+    ax_matrix.set_ylabel('Region Index', fontsize=9, color='#8b949e')
+    ax_matrix.set_yticks(range(12))
+    ax_matrix.set_yticklabels([f"R{r:02d}" for r in range(12)], fontsize=8, color='#8b949e')
+
+    # Render waterfall image
+    im = ax_matrix.imshow(brightness_matrix.T, aspect='auto', cmap='plasma', origin='lower',
+                          extent=[0, max(1, total_steps-1), -0.5, 11.5], vmin=-2.0, vmax=4.0)
+    cbar = plt.colorbar(im, ax=ax_matrix, pad=0.02, fraction=0.046)
+    cbar.ax.tick_params(labelsize=7.5, colors='#8b949e')
+    cbar.set_label('Excitation z-Score', fontsize=8, color='#8b949e')
+    cursor_line = ax_matrix.axvline(0, color='#ffffff', linewidth=1.8, linestyle='--')
+
+    # Status readout text in header area
+    readout_text = fig.text(0.50, 0.88, '', fontsize=9.5, fontweight='bold', color='#f0f6fc', ha='center', va='center')
+
+    # Render base header
+    render_health_header(
+        fig,
+        f'Excursion Dynamic Resonance: Regional Transitions ({symbol})',
+        'Frame-by-frame deduplicated region transition replay during market excursion',
+        status="MEASURED",
+        health_score=0.95,
+        readout=f"Total Transitions: {total_steps} | Symbol: {symbol}",
+        target_pct=None
+    )
+
+    def init():
+        trail_line.set_data([], [])
+        head_dot.set_data([], [])
+        cursor_line.set_xdata([0, 0])
+        return list(bar_rects) + [trail_line, head_dot, cursor_line, readout_text]
+
+    def update(frame_idx):
+        tr = transitions[frame_idx]
+        b_vals = brightness_matrix[frame_idx]
+        w = winners[frame_idx]
+        ru = runner_ups[frame_idx]
+        tok = tr.get('token', f'R{w:02d}')
+        top3 = tr.get('top3_token', '')
+        phase = tr.get('phase', 'excursion')
+        dwell = tr.get('dwell_ticks', 1)
+        cur_ret = returns[frame_idx]
+
+        # Update bars
+        for r in range(12):
+            val = float(b_vals[r])
+            bar = bar_rects[r]
+            bar.set_height(val)
+            txt = bar_texts[r]
+            txt.set_text(f"{val:+.1f}σ")
+            txt.set_y(val + (0.15 if val >= 0 else -0.35))
+
+            if r == w:
+                bar.set_color('#3fb950')
+                bar.set_edgecolor('#ffffff')
+                bar.set_linewidth(2.0)
+                txt.set_color('#3fb950')
+                txt.set_fontweight('bold')
+            elif r == ru:
+                bar.set_color('#d29922')
+                bar.set_edgecolor('#e3b341')
+                bar.set_linewidth(1.2)
+                txt.set_color('#e3b341')
+                txt.set_fontweight('bold')
+            elif val > 0:
+                bar.set_color('#1f6feb')
+                bar.set_edgecolor('#388bfd')
+                bar.set_linewidth(0.8)
+                txt.set_color('#79c0ff')
+                txt.set_fontweight('normal')
+            else:
+                bar.set_color('#30363d')
+                bar.set_edgecolor('#484f58')
+                bar.set_linewidth(0.6)
+                txt.set_color('#8b949e')
+                txt.set_fontweight('normal')
+
+        # Update price trajectory
+        cur_steps = steps[:frame_idx+1]
+        cur_returns = returns[:frame_idx+1]
+        trail_line.set_data(cur_steps, cur_returns)
+        head_dot.set_data([steps[frame_idx]], [cur_returns[-1]])
+
+        # Update waterfall cursor
+        cursor_line.set_xdata([steps[frame_idx], steps[frame_idx]])
+
+        # Update dynamic header text
+        readout_text.set_text(
+            f"Step {frame_idx+1}/{total_steps}  |  Active: {tok} (Top-3: {top3})  |  Phase: {phase.upper()}  |  Dwell: {dwell} ticks  |  Return: {cur_ret:+.2f}%"
+        )
+
+        return list(bar_rects) + [trail_line, head_dot, cursor_line, readout_text]
+
+    import matplotlib.animation as anim
+    animation_obj = anim.FuncAnimation(fig, update, frames=total_steps, init_func=init, blit=False, interval=350)
+
+    # Save animated GIF via Pillow
+    gif_path = os.path.join(out_dir, 'excursion_transitions.gif')
+    animation_obj.save(gif_path, writer='pillow', fps=3)
+
+    # Save MP4 if ffmpeg is available
+    import shutil
+    if shutil.which('ffmpeg'):
+        try:
+            mp4_path = os.path.join(out_dir, 'excursion_transitions.mp4')
+            animation_obj.save(mp4_path, writer='ffmpeg', fps=3)
+        except Exception:
+            pass
+
+    # Save static companion milestone summary sheet
+    static_path = os.path.join(out_dir, 'excursion_transitions_summary.png')
+    update(min(total_steps - 1, max(0, int(total_steps * 0.6))))
+    fig.savefig(static_path, dpi=180, bbox_inches='tight')
+    plt.close(fig)
+
 def main():
     parser = argparse.ArgumentParser(description="Render SYMM Audit Charts")
     parser.add_argument('positional_input', nargs='?', help="Path to audit_results.json")
@@ -1029,11 +1277,12 @@ def main():
     plot_stage1_redundancy(report, plots_dir)
     plot_stage2_sympathy_null(report, plots_dir)
     plot_stage2_orientation(report, plots_dir)
-    plot_stage3_grid_stability(report, plots_dir)
+    plot_stage3_grid_completeness(report, plots_dir)
     plot_stage4_token_dynamics(report, plots_dir)
     plot_stage4_transition_matrix(report, plots_dir)
     plot_stage4_entropy(report, plots_dir)
     plot_stage5_precursor(report, plots_dir)
+    animate_excursion_transitions(report, plots_dir)
     plot_stage6_trie_skill(report, plots_dir)
     plot_stage6_trie_structure(report, plots_dir)
     plot_stage6_s3_memory(report, plots_dir)

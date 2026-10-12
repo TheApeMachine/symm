@@ -110,8 +110,8 @@ func productionReplay(measurements []*data.Measurement, epoch int64, grid *store
 		frame.Peers(peers...)
 		frame.Write()
 
-		if reg, ok := tokenRegion(grid.Observe(frame)); ok {
-			outputs[fmt.Sprintf("token|%s|%d", key.label, key.tick)] = float64(reg)
+		if regions := grid.Observe(frame); regions != nil {
+			outputs[fmt.Sprintf("token|%s|%d", key.label, key.tick)] = float64(regions[0].Key)
 		}
 	}
 

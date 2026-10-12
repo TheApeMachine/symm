@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"slices"
 
 	"github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
@@ -66,20 +65,34 @@ action tree published to S3 storage.`,
 			}
 
 			for _, run := range runs {
-				if run.Epoch > 0 && !slices.Contains(trainEpochs, run.Epoch) {
-					trainEpochs = append(trainEpochs, run.Epoch)
+				if run.Epoch <= 0 {
+					continue
+				}
+
+				hasExcursions := false
+
+				for _, detErr := range catalog.Excursions(ctx, run.Epoch) {
+					if detErr != nil {
+						break
+					}
+
+					hasExcursions = true
+					break
+				}
+
+				if hasExcursions {
+					trainEpochs = []int64{run.Epoch}
+					break
 				}
 			}
 
 			if len(trainEpochs) == 0 {
 				return errnie.Error(errnie.Err(
 					errnie.NotFound,
-					"[train] no completed epochs found in catalog",
+					"[train] no completed epochs with excursions found in catalog",
 					nil,
 				))
 			}
-
-			slices.Sort(trainEpochs)
 		}
 
 		if trainFeePct == "" {

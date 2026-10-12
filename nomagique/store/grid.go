@@ -1,346 +1,117 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"math"
-	"strings"
+	"slices"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
 Grid is not a grid at all, it is a "group by" over Measurement
 and Metric pins into 12 multi-signal confluence regions.
 */
-type Grid struct{}
-
-func NewGrid() *Grid {
-	return &Grid{}
+type Grid struct {
+	*runtime.System
 }
 
 /*
-Under the null hypothesis a standardized metric is z ~ N(0, 1), so its
-deformation |z| is half-normal with mean sqrt(2/pi) and variance 1 - 2/pi.
-These are exact identities of that distribution, not tuning constants.
+RegionCount is the number of confluence regions the pins map metrics into.
 */
-var (
-	halfNormalMean     = math.Sqrt(2 / math.Pi)
-	halfNormalVariance = 1 - 2/math.Pi
-)
+const RegionCount = 12
 
-/*
-Regions is one frame's region evidence. Brightness and Counts are indexed
-by region 0..11 directly.
-Winner and RunnerUp are the brightest and second-brightest regions holding
-evidence (0..11) when HasEvidence is true.
-*/
-type Regions struct {
-	Brightness  [12]float64
-	Counts      [12]int
-	HasEvidence bool
-	Winner      uint8
-	RunnerUp    uint8
-}
-
-/*
-RegionScores pins every metric of the frame and its peers to a region and
-scores each region by the standardized excess of its summed deformation:
-
-	brightness = (sum|z| - N*sqrt(2/pi)) / sqrt(N*(1 - 2/pi))
-
-Under the null every region's brightness has mean 0 and variance 1 whatever
-its metric count N, so the argmax is not biased toward the regions that
-happen to hold more metrics (sum|z|/sqrt(N) grows as sqrt(N) under the null
-and lets the largest region win almost every frame). Brightness is negative
-when a region is quieter than the null. Observe emits Winner, so the audit
-and production share this one path.
-*/
-func (grid *Grid) RegionScores(measurement *data.Measurement) Regions {
-	var regions Regions
-
-	if measurement == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[grid.RegionScores] nil measurement provided",
-			nil,
-		))
-
-		return regions
+func NewGrid(ctx context.Context) *Grid {
+	return &Grid{
+		System: runtime.NewSystem(ctx, "grid"),
 	}
+}
 
-	var deformation [12]float64
-	var nullMean [12]float64
-	var nullVariance [12]float64
-	var failed bool
+/*
+Region is one confluence region's evidence in a frame: Deformation is the sum
+of its quality-scaled metric magnitudes, Counts how many metrics it holds, and
+Brightness their average.
+*/
+type Region struct {
+	Key         uint8
+	Deformation float64
+	Brightness  float64
+	Counts      int
+}
 
-	pin := func(source string, frame *data.Measurement) {
-		if failed {
-			return
-		}
+/*
+Observe pins every metric of the frame's peers to its region and returns the
+12 regions sorted brightest first. A region's brightness is the average of its
+metrics' |z|, where Measurement.Dampen has already scaled each z by the
+Confidence of the Measurement carrying it: a low-quality Measurement still
+counts, only with less influence. Only the magnitude matters, never the
+direction, and an average does not grow with the number of metrics, so a
+large region has no edge over a small one.
 
-		if frame == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[grid.RegionScores] nil measurement provided",
-				nil,
-			))
-
-			failed = true
-			return
-		}
-
-		switch source {
-		case "resonance", "manifold", "runtime:join":
-			errnie.Error(errnie.Err(
-				errnie.NotAcceptable,
-				"[grid] metric leakage detected",
-				nil,
-			), "source", source)
-
-			failed = true
-			return
-		}
-
-		if frame.Confidence() <= 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[grid.RegionScores] measurement confidence is not positive",
-				nil,
-			), "source", source, "confidence", frame.Confidence())
-
-			failed = true
-			return
-		}
-
-		hasMetrics := false
-
-		for entry := range frame.Read() {
-			if entry == nil || entry.Metric == nil {
-				continue
-			}
-
-			hasMetrics = true
-			metric := entry.Metric
-			region, isPinned := grid.PinRegion(source, metric.Label)
-
-			if !isPinned {
-				continue
-			}
-
-			if !metric.Standardizable() {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"[grid.RegionScores] metric is not standardizable",
-					nil,
-				), "source", source, "metric", metric.Label)
-
-				failed = true
-				return
-			}
-
-			deformation[region] += math.Abs(metric.Standardized)
-			nullMean[region] += halfNormalMean
-			nullVariance[region] += halfNormalVariance
-			regions.Counts[region]++
-		}
-
-		if !hasMetrics {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[grid.RegionScores] no metrics available",
-				nil,
-			), "source", source)
-
-			return
-		}
+Observe returns nil while any peer is still warming up (core.MinimumRankPrior
+samples or fewer, so its metrics have no z-score yet), when a metric is not
+pinned to a region (a contract breach, reported once as an error, after which
+the grid observes nothing), or when a region holds no metric at all.
+*/
+func (grid *Grid) Observe(measurement *data.Measurement) []*Region {
+	if grid.Error() != nil {
+		return nil
 	}
 
 	for _, peer := range measurement.Peers() {
-		if failed {
-			break
-		}
-
-		pin(peer.Source, peer)
-	}
-
-	if failed {
-		regions.HasEvidence = false
-		return regions
-	}
-
-	for region := range uint8(12) {
-		if regions.Counts[region] == 0 || nullVariance[region] == 0 {
-			regions.HasEvidence = false
-			return regions
-		}
-
-		regions.Brightness[region] = (deformation[region] - nullMean[region]) /
-			math.Sqrt(nullVariance[region])
-	}
-
-	var winner uint8
-	var runnerUp uint8
-	winnerFound := false
-	runnerUpFound := false
-
-	for region := range uint8(12) {
-		if !winnerFound {
-			winner = region
-			winnerFound = true
-			continue
-		}
-
-		score := regions.Brightness[region]
-
-		if score > regions.Brightness[winner] {
-			runnerUp = winner
-			runnerUpFound = true
-			winner = region
-			continue
-		}
-
-		if !runnerUpFound || score > regions.Brightness[runnerUp] {
-			runnerUp = region
-			runnerUpFound = true
+		if float64(peer.Samples()) <= core.MinimumRankPrior {
+			return nil
 		}
 	}
 
-	if !runnerUpFound {
-		runnerUp = winner
+	regions := make([]*Region, RegionCount)
+
+	for idx := range regions {
+		regions[idx] = &Region{Key: uint8(idx)}
 	}
 
-	regions.Winner = winner
-	regions.RunnerUp = runnerUp
-	regions.HasEvidence = true
-	return regions
-}
-
-/*
-Ready reports whether a symbol's measurement frame (and its peers) has completed
-warmup and is ready for grid evaluation: all pinned metric streams carry positive
-confidence and valid causal standardization scales.
-*/
-func (grid *Grid) Ready(measurement *data.Measurement) bool {
-	if measurement == nil {
-		return false
-	}
-
-	frames := measurement.Peers()
-
-	if len(frames) == 0 {
-		frames = []*data.Measurement{measurement}
-	}
-
-	var evidencedRegions [12]bool
-
-	for _, frame := range frames {
-		if frame == nil {
-			return false
-		}
-
-		if frame.Confidence() <= 0 {
-			return false
-		}
-
-		hasMetrics := false
-
-		for entry := range frame.Read() {
-			if entry == nil || entry.Metric == nil {
-				continue
-			}
-
-			hasMetrics = true
-			metric := entry.Metric
-			region, isPinned := grid.PinRegion(frame.Source, metric.Label)
+	for _, peer := range measurement.Peers() {
+		for _, metric := range peer.Dampen() {
+			region, isPinned := regionMetricPins[peer.Source][metric.Label]
 
 			if !isPinned {
-				continue
+				grid.Error(errnie.Err(
+					errnie.NotAcceptable,
+					fmt.Sprintf("[grid] metric not pinned to a region: %s/%s", peer.Source, metric.Label),
+					nil,
+				))
+
+				return nil
 			}
 
-			if !metric.Standardizable() {
-				return false
-			}
-
-			evidencedRegions[region] = true
-		}
-
-		if !hasMetrics {
-			return false
+			regions[region].Deformation += math.Abs(metric.Standardized)
+			regions[region].Counts++
 		}
 	}
 
-	for _, evidenced := range evidencedRegions {
-		if !evidenced {
-			return false
+	for _, region := range regions {
+		if region.Counts == 0 {
+			return nil
 		}
+
+		region.Brightness = region.Deformation / float64(region.Counts)
 	}
 
-	return true
-}
-
-/*
-Observe returns the token of the brightest region ("R00" ... "R11"), or
-nil when no region received any evidenced metric.
-*/
-func (grid *Grid) Observe(measurement *data.Measurement) []byte {
-	if !grid.Ready(measurement) {
-		return nil
-	}
-
-	return grid.RegionScores(measurement).Token()
-}
-
-/*
-Token is the frame's token: its Winner, zero-padded ("R00" ... "R11"), or nil
-when no region held evidenced metrics.
-*/
-func (regions Regions) Token() []byte {
-	if !regions.HasEvidence {
-		return nil
-	}
-
-	return fmt.Appendf(nil, "R%02d", regions.Winner)
-}
-
-/*
-PinRegion maps (source, metric) to its 12 confluence regions 0..11, returning
-the region and true when mapped, or 0 and false for solver sources (resonance,
-manifold, runtime:join) and any metric not part of the confluence grid.
-*/
-func (grid *Grid) PinRegion(source, metric string) (uint8, bool) {
-	lowerSource := strings.ToLower(source)
-	lowerMetric := strings.ToLower(metric)
-
-	switch lowerSource {
-	case "resonance", "manifold", "runtime:join":
-		errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"[grid] metric leakage detected",
-			nil,
-		), "source", source, "metric", metric)
-
-		return 0, false
-	}
-
-	sourcePins, hasSource := regionMetricPins[lowerSource]
-
-	if !hasSource {
-		return 0, false
-	}
-
-	if region, isPinned := sourcePins[lowerMetric]; isPinned {
-		return region, true
-	}
-
-	// Support test fixtures with indexed stems: stem_0, stem_1, etc.
-	if separatorIndex := strings.LastIndex(lowerMetric, "_"); separatorIndex > 0 {
-		stem := lowerMetric[:separatorIndex]
-
-		if region, isPinned := sourcePins[stem]; isPinned {
-			return region, true
+	slices.SortFunc(regions, func(first, second *Region) int {
+		if first.Brightness > second.Brightness {
+			return -1
 		}
-	}
 
-	return 0, false
+		if first.Brightness < second.Brightness {
+			return 1
+		}
+
+		return 0
+	})
+
+	return regions
 }

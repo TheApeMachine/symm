@@ -20,9 +20,9 @@ and the audit inspection path, verifying bit-for-bit fidelity.
 Any discrepancy between production and audit constitutes a measurement fidelity breach.
 
 This is NOT_A_TEST: both "paths" build the same frame from the same stored
-measurements and call the same Grid.Observe and Grid.RegionScores, so they can
-only differ if those functions are nondeterministic. Its mismatch counts are
-kept as a determinism observation, not reported as a pass.
+measurements and call the same Grid.Observe, so they can only differ if it is
+nondeterministic. Its mismatch counts are kept as a determinism observation,
+not reported as a pass.
 */
 func AnalyzeEquivalence(
 	ctx context.Context,
@@ -91,12 +91,11 @@ func AnalyzeEquivalence(
 			prodFrame.Peers(symMeas...)
 			prodFrame.Write()
 
-			if !grid.Ready(prodFrame) {
+			prodRegions := grid.Observe(prodFrame)
+
+			if prodRegions == nil {
 				continue
 			}
-
-			prodToken := string(grid.Observe(prodFrame))
-			prodBrightness := grid.RegionScores(prodFrame).Brightness
 
 			// Audit inspection path (simulating independent re-evaluation):
 			auditFrame := data.NewMeasurement(
@@ -110,12 +109,11 @@ func AnalyzeEquivalence(
 			auditFrame.From = symMeas[0].From
 			auditFrame.Peers(symMeas...)
 			auditFrame.Write()
-			auditToken := string(grid.Observe(auditFrame))
-			auditBrightness := grid.RegionScores(auditFrame).Brightness
+			auditRegions := grid.Observe(auditFrame)
 
 			totalTokensChecked++
 
-			if prodToken != auditToken {
+			if auditRegions == nil || prodRegions[0].Key != auditRegions[0].Key {
 				tokenMismatches++
 				discrepancies = append(discrepancies, EquivalenceDiscrepancy{
 					Tick:       tick,
@@ -126,9 +124,18 @@ func AnalyzeEquivalence(
 					ProdVal:    0,
 					Difference: 1,
 				})
+
+				continue
 			}
 
-			for reg := range uint8(12) {
+			var prodBrightness, auditBrightness [store.RegionCount]float64
+
+			for idx := range prodRegions {
+				prodBrightness[prodRegions[idx].Key] = prodRegions[idx].Brightness
+				auditBrightness[auditRegions[idx].Key] = auditRegions[idx].Brightness
+			}
+
+			for reg := range store.RegionCount {
 				diff := math.Abs(prodBrightness[reg] - auditBrightness[reg])
 				if diff > 1e-9 {
 					metricMismatches++

@@ -310,10 +310,92 @@ func AnalyzeCognitiveTrie(
 		return insufficientCognitiveTrie("Zero excursions detected.")
 	}
 
-	phases := extractTriePhases(ctx, catalog, epoch, grid, detections, tickMeasurements)
+	var unseenTicks []int64
+	if len(orderedTicks) > 0 {
+		splitIdx := int(float64(len(orderedTicks)) * 0.60)
+		unseenTicks = orderedTicks[splitIdx:]
+	}
+
+	phases1 := extractTriePhases(ctx, catalog, epoch, grid, detections, tickMeasurements, 1)
+	if len(phases1) == 0 {
+		return insufficientCognitiveTrie("No valid sequential token contexts formed from excursions.")
+	}
+
+	evalTop1, _ := evaluateCognitiveTrieForK(1, phases1, permutations, epoch, significance, unseenTicks, tickMeasurements, grid)
+
+	phases2 := extractTriePhases(ctx, catalog, epoch, grid, detections, tickMeasurements, 2)
+	evalTop2, _ := evaluateCognitiveTrieForK(2, phases2, permutations, epoch, significance, unseenTicks, tickMeasurements, grid)
+
+	phases3 := extractTriePhases(ctx, catalog, epoch, grid, detections, tickMeasurements, 3)
+	evalTop3, _ := evaluateCognitiveTrieForK(3, phases3, permutations, epoch, significance, unseenTicks, tickMeasurements, grid)
+
+	s3Audit := auditS3PrefixMemory(phases1)
+
+	verdict := evalTop1.Skill.SeparatesFromNull
+	auditVerdict := VerdictNotSupported
+	if verdict {
+		auditVerdict = VerdictSupported
+	}
+
+	summaryText := fmt.Sprintf(
+		"Multi-Trie Cognitive Audit (in-memory): "+
+			"Top-1 [Balanced Acc: %.1f%%, MCC: %.3f, Retention: %.1f%%, Nodes: %d] | "+
+			"Top-2 [Balanced Acc: %.1f%%, MCC: %.3f, Retention: %.1f%%, Nodes: %d] | "+
+			"Top-3 [Balanced Acc: %.1f%%, MCC: %.3f, Retention: %.1f%%, Nodes: %d]. "+
+			"Separates from null: Top-1=%t (p=%.3f), Top-2=%t (p=%.3f), Top-3=%t (p=%.3f).",
+		evalTop1.Skill.BalancedAccuracy*100, evalTop1.Skill.MCC, evalTop1.Retention.RetentionRate*100, evalTop1.Topology.NodeStats.TotalNodes,
+		evalTop2.Skill.BalancedAccuracy*100, evalTop2.Skill.MCC, evalTop2.Retention.RetentionRate*100, evalTop2.Topology.NodeStats.TotalNodes,
+		evalTop3.Skill.BalancedAccuracy*100, evalTop3.Skill.MCC, evalTop3.Retention.RetentionRate*100, evalTop3.Topology.NodeStats.TotalNodes,
+		evalTop1.Skill.SeparatesFromNull, evalTop1.Skill.EmpiricalPValue,
+		evalTop2.Skill.SeparatesFromNull, evalTop2.Skill.EmpiricalPValue,
+		evalTop3.Skill.SeparatesFromNull, evalTop3.Skill.EmpiricalPValue,
+	)
+
+	return Stage6CognitiveTrie{
+		DetectionsEvaluated: len(detections),
+		PhasesFormed:        len(phases1),
+		ActionCounts:        evalTop1.ActionCounts,
+		Skill:               evalTop1.Skill,
+		Retention:           evalTop1.Retention,
+		Topology:            evalTop1.Topology,
+		AbstentionRate:      evalTop1.AbstentionRate,
+		MeanConfidence:      evalTop1.MeanConfidence,
+		MeanContrast:        evalTop1.MeanContrast,
+		SpuriousTriggerRate: evalTop1.SpuriousTriggerRate,
+		S3Memory:            s3Audit,
+		Top1:                evalTop1,
+		Top2:                evalTop2,
+		Top3:                evalTop3,
+		SummaryText:         summaryText,
+		Status:              auditVerdict,
+		Passed:              passed(auditVerdict),
+	}
+}
+
+func evaluateCognitiveTrieForK(
+	k int,
+	phases []triePhase,
+	permutations int,
+	epoch int64,
+	significance float64,
+	unseenTicks []int64,
+	tickMeasurements map[int64][]*data.Measurement,
+	grid *store.Grid,
+) (CognitiveTrieEvaluation, *cognitiveModel) {
+	desc := "Top-1 Winner (Rnn)"
+	if k == 2 {
+		desc = "Top-2 Pair (Rnn-Rmm)"
+	}
+
+	if k == 3 {
+		desc = "Top-3 Triad (Rnn-Rmm-Rpp)"
+	}
 
 	if len(phases) == 0 {
-		return insufficientCognitiveTrie("No valid sequential token contexts formed from excursions.")
+		return CognitiveTrieEvaluation{
+			K:                k,
+			TokenDescription: desc,
+		}, newCognitiveModel()
 	}
 
 	model := newCognitiveModel()
@@ -332,7 +414,6 @@ func AnalyzeCognitiveTrie(
 		actuals = append(actuals, phaseItem.targetAction)
 
 		call, callErr := model.Recall(phaseItem.context, "")
-
 		if callErr != nil {
 			errnie.Error(callErr)
 		}
@@ -341,7 +422,6 @@ func AnalyzeCognitiveTrie(
 		contrasts = append(contrasts, call.Contrast)
 
 		predAction := call.Winner
-
 		if predAction == "" {
 			predAction = "wait"
 			abstentions++
@@ -355,7 +435,6 @@ func AnalyzeCognitiveTrie(
 
 		if phaseItem.targetAction == "enter" || phaseItem.targetAction == "exit" {
 			teachErr := model.Teach(phaseItem.context, phaseItem.targetAction, phaseItem.feedback)
-
 			if teachErr != nil {
 				errnie.Error(teachErr)
 			}
@@ -367,7 +446,6 @@ func AnalyzeCognitiveTrie(
 
 		if phaseItem.targetAction == "wait" {
 			teachErr := model.Teach(phaseItem.context, "enter", phaseItem.feedback)
-
 			if teachErr != nil {
 				errnie.Error(teachErr)
 			}
@@ -402,7 +480,6 @@ func AnalyzeCognitiveTrie(
 	}
 
 	abstainPreds := make([]string, totalCalls)
-
 	for idx := range abstainPreds {
 		abstainPreds[idx] = "wait"
 	}
@@ -411,7 +488,7 @@ func AnalyzeCognitiveTrie(
 
 	nullHits := make([]float64, permutations)
 	nullBalancedAccs := make([]float64, permutations)
-	tracker := newProgressTracker("Bonus Stage 6] [Permutation Null", int64(permutations), 5*time.Second)
+	tracker := newProgressTracker(fmt.Sprintf("Bonus Stage 6] [Permutation Null K=%d", k), int64(permutations), 5*time.Second)
 
 	numWorkers := max(min(stdruntime.GOMAXPROCS(0), permutations), 1)
 
@@ -424,7 +501,7 @@ func AnalyzeCognitiveTrie(
 		go func(wID int) {
 			defer permGroup.Done()
 
-			localRng := rand.New(rand.NewPCG(uint64(epoch)+uint64(wID)*1000, 12345))
+			localRng := rand.New(rand.NewPCG(uint64(epoch)+uint64(wID)*1000+uint64(k)*777, 12345))
 
 			for pIdx := wID; pIdx < permutations; pIdx += numWorkers {
 				permModel := newCognitiveModel()
@@ -451,13 +528,11 @@ func AnalyzeCognitiveTrie(
 					permCounts[act]++
 
 					pCall, pErr := permModel.Recall(ph.context, "")
-
 					if pErr != nil {
 						errnie.Error(pErr)
 					}
 
 					predAct := pCall.Winner
-
 					if predAct == "" {
 						predAct = "wait"
 					}
@@ -470,7 +545,6 @@ func AnalyzeCognitiveTrie(
 
 					if act == "enter" || act == "exit" {
 						teachErr := permModel.Teach(ph.context, act, fb)
-
 						if teachErr != nil {
 							errnie.Error(teachErr)
 						}
@@ -478,7 +552,6 @@ func AnalyzeCognitiveTrie(
 
 					if act == "wait" {
 						teachErr := permModel.Teach(ph.context, "enter", fb)
-
 						if teachErr != nil {
 							errnie.Error(teachErr)
 						}
@@ -505,8 +578,6 @@ func AnalyzeCognitiveTrie(
 	nullMeanBalAcc := computeMean(nullBalancedAccs)
 	nullP95BalAcc := quantileOf(nullBalancedAccs, 0.95)
 
-	// Add-one p of the balanced accuracy against the label-permuted null; it
-	// must also beat the best constant policy.
 	empiricalPVal := upperPValue(balancedAcc, nullBalancedAccs)
 	verdict := hypothesisVerdict(empiricalPVal, len(nullBalancedAccs), significance)
 
@@ -517,10 +588,8 @@ func AnalyzeCognitiveTrie(
 	separatesFromNull := verdict == VerdictSupported
 
 	retainedCount := 0
-
 	for _, item := range taughtList {
 		postCall, postErr := model.Recall(item.context, "")
-
 		if postErr != nil {
 			errnie.Error(postErr)
 		}
@@ -539,31 +608,26 @@ func AnalyzeCognitiveTrie(
 	}
 
 	retentionRate := 0.0
-
 	if len(taughtList) > 0 {
 		retentionRate = float64(retainedCount) / float64(len(taughtList))
 	}
 
 	recordsCount, countErr := model.Count("records")
-
 	if countErr != nil {
 		errnie.Error(countErr)
 	}
 
 	spanCount, countErr := model.Count("span")
-
 	if countErr != nil {
 		errnie.Error(countErr)
 	}
 
 	enterBasins, countErr := model.Count("enter")
-
 	if countErr != nil {
 		errnie.Error(countErr)
 	}
 
 	exitBasins, countErr := model.Count("exit")
-
 	if countErr != nil {
 		errnie.Error(countErr)
 	}
@@ -572,15 +636,11 @@ func AnalyzeCognitiveTrie(
 	nodeStats := computeNodeMetrics(export.Root)
 
 	spuriousCount := 0
-	evaluatedTicks := 0
+	evaluatedTicks := len(unseenTicks)
 
-	if len(orderedTicks) > 0 {
-		splitIdx := int(float64(len(orderedTicks)) * 0.60)
-		unseenTicks := orderedTicks[splitIdx:]
-		evaluatedTicks = len(unseenTicks)
-
+	if evaluatedTicks > 0 {
 		windowTokens := make(map[string][]string)
-		unseenTracker := newProgressTracker("Bonus Stage 6] [Tape Replay", int64(len(unseenTicks)), 5*time.Second)
+		unseenTracker := newProgressTracker(fmt.Sprintf("Bonus Stage 6] [Tape Replay K=%d", k), int64(evaluatedTicks), 5*time.Second)
 
 		for tickIdx, tickVal := range unseenTicks {
 			measurements := tickMeasurements[tickVal]
@@ -591,7 +651,6 @@ func AnalyzeCognitiveTrie(
 			}
 
 			bySymbol := make(map[string][]*data.Measurement)
-
 			for _, m := range measurements {
 				if m != nil {
 					bySymbol[m.Label] = append(bySymbol[m.Label], m)
@@ -599,14 +658,12 @@ func AnalyzeCognitiveTrie(
 			}
 
 			for sym, symMeas := range bySymbol {
-				tok := observeAuditToken(grid, sym, tickVal, symMeas)
-
+				tok := observeAuditToken(grid, sym, tickVal, symMeas, k)
 				if len(tok) == 0 {
 					continue
 				}
 
 				symWindow := windowTokens[sym]
-
 				if len(symWindow) == 0 || symWindow[len(symWindow)-1] != tok {
 					symWindow = append(symWindow, tok)
 				}
@@ -619,7 +676,6 @@ func AnalyzeCognitiveTrie(
 
 				qCtx := strings.Join(symWindow, "/")
 				bgCall, bgErr := model.Recall(qCtx, "")
-
 				if bgErr != nil {
 					errnie.Error(bgErr)
 				}
@@ -634,41 +690,25 @@ func AnalyzeCognitiveTrie(
 	}
 
 	spuriousRate := 0.0
-
 	if evaluatedTicks > 0 {
 		spuriousRate = float64(spuriousCount) / float64(evaluatedTicks)
 	}
 
 	meanConf := 0.0
 	meanCont := 0.0
-
 	if len(confidences) > 0 {
 		meanConf = computeMean(confidences)
 		meanCont = computeMean(contrasts)
 	}
 
 	abstentionRate := 0.0
-
 	if totalCalls > 0 {
 		abstentionRate = float64(abstentions) / float64(totalCalls)
 	}
 
-	s3Audit := auditS3PrefixMemory(phases)
-
-	summaryText := fmt.Sprintf(
-		"SIMULATED trie (in-memory model, not the production S3 memory): %d phases (%d enter, %d exit, %d wait). Prequential hits=%d/%d (%.1f%%) [Balanced Acc: %.1f%%, MCC: %.3f, Enter Prec/Rec: %.1f%%/%.1f%%] vs best baseline (%s) %d/%d (%.1f%%, Balanced Acc: %.1f%%). Null p95=%.1f hits, Balanced Acc p95=%.1f%% (p=%.3f). S3 Memory: %d keys, %d collisions, time-to-disambiguation=%d tokens. Retention=%.1f%%. Spurious bg rate=%.2f%%.",
-		len(phases), actionCounts["enter"], actionCounts["exit"], actionCounts["wait"],
-		hits, totalCalls, hitRate*100,
-		balancedAcc*100, mcc, enterPrec*100, enterRec*100,
-		bestBaselinePolicy, bestBaselineHits, totalCalls, baselineHitRate*100,
-		baselineBalancedAcc*100,
-		nullP95, nullP95BalAcc*100, empiricalPVal,
-		s3Audit.TotalPrefixKeys, s3Audit.PrefixCollisions, s3Audit.TimeToDisambiguation,
-		retentionRate*100, spuriousRate*100,
-	)
-
-	return Stage6CognitiveTrie{
-		DetectionsEvaluated: len(detections),
+	eval := CognitiveTrieEvaluation{
+		K:                   k,
+		TokenDescription:    desc,
 		PhasesFormed:        len(phases),
 		ActionCounts:        actionCounts,
 		Skill: TrieSkillMetrics{
@@ -708,11 +748,9 @@ func AnalyzeCognitiveTrie(
 		MeanConfidence:      meanConf,
 		MeanContrast:        meanCont,
 		SpuriousTriggerRate: spuriousRate,
-		S3Memory:            s3Audit,
-		SummaryText:         summaryText,
-		Status:              verdict,
-		Passed:              passed(verdict),
 	}
+
+	return eval, model
 }
 
 func auditS3PrefixMemory(phases []triePhase) S3MemoryAudit {
@@ -936,9 +974,15 @@ func extractTriePhases(
 	grid *store.Grid,
 	detections []*data.Measurement,
 	tickMeasurements map[int64][]*data.Measurement,
+	k ...int,
 ) []triePhase {
 	var phases []triePhase
-	tracker := newProgressTracker("Bonus Stage 6] [Context Extraction", int64(len(detections)), 5*time.Second)
+	cardinality := 1
+	if len(k) > 0 && k[0] > 0 {
+		cardinality = k[0]
+	}
+
+	tracker := newProgressTracker(fmt.Sprintf("Bonus Stage 6] [Context Extraction K=%d", cardinality), int64(len(detections)), 5*time.Second)
 	archiveFetches := 0
 	const maxArchiveFetches = 100
 
@@ -1014,7 +1058,7 @@ func extractTriePhases(
 		}
 
 		eventTokens, err := archivedIntervalTokens(
-			ctx, catalog, epoch, det.Label, grid, startTick, cTick, tickMeasurements,
+			ctx, catalog, epoch, det.Label, grid, startTick, cTick, tickMeasurements, cardinality,
 		)
 
 		if err != nil {

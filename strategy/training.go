@@ -2,14 +2,14 @@ package strategy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"iter"
 	"path"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -22,47 +22,35 @@ import (
 )
 
 /*
-Training writes the token paths of stored excursions as S3 keys (Train) and
-paper trades the live market by matching each symbol's live token path against
-that key space (Step). The key space is the trie: a prefix listing returns every
-stored path that continues the live one. Once all of them end in the same
-action and the matched path is at least the configured minimum confidence long
-(one per token), that action is taken through the Desk.
+Training paper trades the live market against the action tree the Trainer
+published: every frame becomes a region token, the token advances the
+symbol's token path through the published Tokenizer, and once the path is
+Depth tokens long and moves onto a stored path whose actions all agree, that
+action is taken through the Desk.
 */
 type Training struct {
 	*runtime.System
-	price    *broker.Price
-	detector *Detector
-	desk     *broker.Desk
-	catalog  *tables.Catalog
-	storeTee runtime.Tee
-	grid     *store.Grid
-	keys     []string
-	maxDepth int
-	paths    *sync.Map
-	blobs    blobReader
-	last     map[string]*data.Measurement
+	price   *broker.Price
+	desk    *broker.Desk
+	catalog *tables.Catalog
+	grid    *store.Grid
+	policy  atomic.Pointer[policy]
+	seen    Tokenizer
+	paths   map[string][]string
+	last    map[string]*data.Measurement
 }
 
 /*
-blobReader reads a token path's blob; the catalog in production.
+policy is one loaded generation of the published action tree: its Tokenizer
+(nil while none is published, which means no trading), its keys, and the one
+action each stored path agrees on ("" where its actions disagree). It is
+swapped whole, so Step never pairs a Tokenizer with another generation's
+paths.
 */
-type blobReader interface {
-	GetBlob(ctx context.Context, key string) ([]byte, error)
-}
-
-/*
-pathStats is what Train stores in a token path's blob: the gain c/b-1 and the
-B->C duration of the excursion the path was cut from. Blobs written before
-these statistics existed hold "{}" and carry none.
-*/
-type pathStats struct {
-	Gain        *float64 `json:"gain,omitempty"`
-	HoldSeconds *float64 `json:"hold_seconds,omitempty"`
-	Visits      *int     `json:"visits,omitempty"`
-	WinRate     *float64 `json:"win_rate,omitempty"`
-	MeanReward  *float64 `json:"mean_reward,omitempty"`
-	TStat       *float64 `json:"t_stat,omitempty"`
+type policy struct {
+	tokenizer *Tokenizer
+	keys      []string
+	actions   map[string]string
 }
 
 /*
@@ -74,112 +62,75 @@ const (
 	actionNoop  = "noop.json"
 )
 
-/*
-fragmentTicks is the tick range Train reads for a fragment from low to its
-endpoint: low through the tick before the endpoint.
-*/
-func fragmentTicks(low, endpoint int64) (int64, int64) {
-	return low, endpoint - 1
-}
-
 func NewTraining(
 	ctx context.Context,
 	price *broker.Price,
 	desk *broker.Desk,
 	catalog *tables.Catalog,
-	storeTee runtime.Tee,
 ) *Training {
-	system := runtime.NewSystem(ctx, "training", price)
-
 	training := &Training{
-		System:   system,
-		price:    price,
-		detector: NewDetector(ctx, storeTee, price),
-		desk:     desk,
-		catalog:  catalog,
-		storeTee: storeTee,
-		grid:     store.NewGrid(),
-		paths:    &sync.Map{},
-		last:     make(map[string]*data.Measurement),
+		System:  runtime.NewSystem(ctx, "training", price),
+		price:   price,
+		desk:    desk,
+		catalog: catalog,
+		grid:    store.NewGrid(ctx),
+		paths:   make(map[string][]string),
+		last:    make(map[string]*data.Measurement),
 	}
 
-	if catalog != nil {
-		training.blobs = catalog
-	}
-
-	// The detector labels every excursion against friction. Without it the
-	// training system halts here instead of learning from mislabeled tape.
-	if err := training.detector.Error(); err != nil {
-		training.Error(errnie.Err(
-			errnie.Internal, "[training] detector is not usable", err,
-		))
-
-		return training
-	}
+	training.policy.Store(&policy{})
 
 	if err := errnie.Require(map[string]any{
+		"price":   price,
 		"desk":    desk,
 		"catalog": catalog,
 	}); err != nil {
 		training.Error(errnie.Err(
-			errnie.Validation, "[training] cannot paper trade without desk and catalog", err,
+			errnie.Validation, "[training] cannot paper trade without price, desk and catalog", err,
 		))
 
 		return training
 	}
 
-	// Step matches against the key space as it stands at startup. Keys that
-	// Train writes during this run become visible on the next start.
-	keys, err := sortedKeys(catalog.ListBlobs(ctx, ""))
-
-	if err != nil {
+	if err := training.ReloadKeys(ctx); err != nil {
 		training.Error(errnie.Err(
-			errnie.IO, "[training] unable to list the stored token paths", err,
+			errnie.IO, "[training] unable to load the published action tree", err,
 		))
 
 		return training
 	}
-
-	training.keys = keys
-	training.maxDepth = maxDepthOfKeys(keys)
-	errnie.Info(fmt.Sprintf("[training] matching against %d stored token paths", len(keys)))
 
 	training.Transition(runtime.INIT)
 	return training
 }
 
 /*
-CognitionTree exports the stored S3 token prefixes for the learning dashboard.
+CognitionTree exports the stored S3 token paths for the learning dashboard.
 */
 func (training *Training) CognitionTree() ui.CognitionTreeExport {
 	return ui.CognitionTreeExport{
-		Keys: training.keys,
+		Keys: training.policy.Load().keys,
 	}
 }
 
 /*
-Step receives the live market Measurement, turns it into the symbol's region
-token, and advances that symbol's live token path.
+Step receives the live market join, scores its regions through the grid,
+and advances the symbol's token path, acting when the path lands on a
+stored path with one agreed action.
 */
 func (training *Training) Step(prior *data.Measurement) *data.Measurement {
-	var metrics map[string]float64
-	var hasEvidence bool
-	var token string
+	regions := training.grid.Observe(prior)
+	metrics := make(map[string]float64, len(regions)*2)
 
-	if training.grid.Ready(prior) {
-		regions := training.grid.RegionScores(prior)
-		metrics = regionMetrics(regions)
-		hasEvidence = regions.HasEvidence
-		token = string(regions.Token())
-	}
-
-	if training.last == nil {
-		training.last = make(map[string]*data.Measurement)
+	for _, region := range regions {
+		metrics[fmt.Sprintf("region_brightness:R%02d", region.Key)] = region.Brightness
+		metrics[fmt.Sprintf("region_members:R%02d", region.Key)] = float64(region.Counts)
 	}
 
 	var next *data.Measurement
+
 	if prev, ok := training.last[prior.Label]; ok {
-		next = prev.Next(prior.At, metrics)
+		next = prev.Next(prior, metrics)
 	}
 
 	if next == nil {
@@ -187,155 +138,121 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	training.last[prior.Label] = next
+	current := training.policy.Load()
 
-	if !hasEvidence {
+	if current.tokenizer == nil || regions == nil {
 		return next
 	}
 
-	action, reason, path, depth := training.advance(prior.Label, token)
-
-	if action != "" && action != "noop" {
-		reason = training.act(prior.Label, action)
+	// Paths built under other Tokenizer parameters are not paths of this one.
+	if *current.tokenizer != training.seen {
+		training.seen = *current.tokenizer
+		training.paths = make(map[string][]string)
 	}
 
-	if path != "" {
-		next.SetMeta("token_path", path)
-		next.SetMeta("token_depth", strconv.Itoa(depth))
+	token, strength := current.tokenizer.Token(regions)
+	tokens, moved := current.tokenizer.Advance(training.paths[prior.Label], token, strength)
+	training.paths[prior.Label] = tokens
+	joined := strings.Join(tokens, "/")
+
+	next.SetMeta("token_path", joined)
+	next.SetMeta("token_depth", strconv.Itoa(len(tokens)))
+
+	if !moved || len(tokens) < current.tokenizer.Depth {
+		return next
 	}
 
-	if action != "" {
-		next.SetMeta("decision_action", action)
-		next.SetMeta("decision_reason", fmt.Sprintf("path=%s depth=%d %s", path, depth, reason))
-		next.SetMeta("decision_confidence", strconv.Itoa(depth))
+	action := current.actions[joined]
+
+	if action == "" {
+		return next
 	}
 
+	next.SetMeta("decision_action", action)
+	next.SetMeta("decision_reason", fmt.Sprintf("path=%s %s", joined, training.act(prior.Label, action)))
 	return next
 }
 
 /*
-regionMetrics reports the frame's region evidence for the impulse map:
-each evidenced region's brightness and metric count, the winning region (the
-token Step advanced on), and the pinned metrics left out as undefined and the
-unpinned ones. A region without evidence is absent, not zero.
+ReloadKeys loads the published action tree from S3 and swaps it in whole.
+Without a published Tokenizer the loaded policy holds the keys but never
+trades.
 */
-func regionMetrics(regions store.Regions) map[string]float64 {
-	metrics := map[string]float64{
-		"region_winner":    float64(regions.Winner),
-		"region_runner_up": float64(regions.RunnerUp),
+func (training *Training) ReloadKeys(ctx context.Context) error {
+	loaded := &policy{
+		keys:    make([]string, 0),
+		actions: make(map[string]string),
 	}
 
-	for region := range 12 {
-		if regions.Counts[region] == 0 {
+	for key, err := range training.catalog.ListBlobs(ctx, "") {
+		if errors.Is(err, tables.ErrBlobStorageUnconfigured) {
+			training.policy.Store(loaded)
+			return nil
+		}
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		dir, file := path.Split(key)
+
+		if file != actionEnter && file != actionExit && file != actionNoop {
 			continue
 		}
 
-		metrics[fmt.Sprintf("region_brightness:R%02d", region)] = regions.Brightness[region]
-		metrics[fmt.Sprintf("region_members:R%02d", region)] = float64(regions.Counts[region])
+		loaded.keys = append(loaded.keys, key)
+		dir = strings.TrimSuffix(dir, "/")
+		action := strings.TrimSuffix(file, ".json")
+
+		if existing, found := loaded.actions[dir]; found && existing != action {
+			action = ""
+		}
+
+		loaded.actions[dir] = action
 	}
 
-	return metrics
-}
+	slices.Sort(loaded.keys)
+	body, err := training.catalog.GetBlob(ctx, tokenizerKey)
 
-/*
-ReloadKeys refreshes the stored token paths from S3 without restarting the daemon.
-*/
-func (training *Training) ReloadKeys(ctx context.Context) error {
-	keys, err := sortedKeys(training.catalog.ListBlobs(ctx, ""))
+	if errors.Is(err, tables.ErrBlobMissing) {
+		training.policy.Store(loaded)
+		errnie.Info(fmt.Sprintf("[training] %d stored token paths but no %s yet: not trading", len(loaded.keys), tokenizerKey))
+		return nil
+	}
 
 	if err != nil {
 		return errnie.Error(err)
 	}
 
-	training.keys = keys
-	training.maxDepth = maxDepthOfKeys(keys)
-	errnie.Info(fmt.Sprintf("[training] reloaded %d stored token paths", len(keys)))
+	tokenizer := &Tokenizer{}
+
+	if err := json.Unmarshal(body, tokenizer); err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "[training] unreadable "+tokenizerKey, err))
+	}
+
+	if err := tokenizer.validate(); err != nil {
+		return errnie.Error(err)
+	}
+
+	loaded.tokenizer = tokenizer
+	training.policy.Store(loaded)
+
+	errnie.Info(fmt.Sprintf(
+		"[training] loaded %d stored token paths (depth=%d regions=%d threshold=%g)",
+		len(loaded.keys), tokenizer.Depth, tokenizer.Regions, tokenizer.Threshold,
+	))
+
 	return nil
 }
 
 /*
-advance extends the symbol's path with token and matches its candidate suffixes against
-the stored paths in memory. An exact leaf action executes when confidence and position state admit it.
-*/
-func (training *Training) advance(symbol, token string) (string, string, string, int) {
-	var tokens []string
-
-	if found, ok := training.paths.Load(symbol); ok && found != nil {
-		switch value := found.(type) {
-		case []string:
-			tokens = slices.Clone(value)
-		case string:
-			if value != "" {
-				tokens = strings.Split(value, "/")
-			}
-		}
-	}
-
-	if len(tokens) == 0 || tokens[len(tokens)-1] != token {
-		tokens = append(tokens, token)
-	}
-
-	if training.maxDepth > 0 && len(tokens) > training.maxDepth {
-		tokens = tokens[len(tokens)-training.maxDepth:]
-	}
-
-	training.paths.Store(symbol, tokens)
-
-	prefix := strings.Join(tokens, "/")
-	action := training.actionForPrefix(prefix)
-	return action, "", prefix, len(tokens)
-}
-
-/*
-actionForPrefix checks stored keys in memory for exact prefix action consensus,
-avoiding synchronous S3 ListObjectsV2 calls on the critical Disruptor path.
-*/
-func (training *Training) actionForPrefix(prefix string) string {
-	if len(training.keys) == 0 {
-		return ""
-	}
-
-	searchPrefix := prefix
-	if !strings.HasSuffix(searchPrefix, "/") {
-		searchPrefix += "/"
-	}
-
-	start, _ := slices.BinarySearch(training.keys, searchPrefix)
-	end := start
-
-	for end < len(training.keys) && strings.HasPrefix(training.keys[end], searchPrefix) {
-		end++
-	}
-
-	if start == end {
-		return ""
-	}
-
-	var currentAction string
-
-	for _, key := range training.keys[start:end] {
-		action := strings.TrimSuffix(path.Base(key), ".json")
-
-		if currentAction == "" {
-			currentAction = action
-			continue
-		}
-
-		if currentAction != action {
-			return ""
-		}
-	}
-
-	return currentAction
-}
-
-/*
 resetPaperAndReload resets the Kraken paper account to its default state ($200, 0.8% fee)
-and reloads all stored prefix keys into memory.
+and reloads the published action tree.
 */
 func (training *Training) resetPaperAndReload() {
 	errnie.Info("[training] paper account exhausted or below minimum order; resetting paper account and reloading prefixes...")
 
-	if err := broker.ResetPaperAccount(training.Context()); err != nil {
+	if err := training.desk.ResetPaper(); err != nil {
 		training.Error(errnie.Err(
 			errnie.IO,
 			"[training] failed to reset paper account",
@@ -357,13 +274,14 @@ func (training *Training) resetPaperAndReload() {
 
 	errnie.Info(fmt.Sprintf(
 		"[training] paper account reset to default ($200, 0.8%% fee); reloaded %d prefix paths into memory",
-		len(training.keys),
+		len(training.policy.Load().keys),
 	))
 }
 
 /*
 act takes the matched action through the Desk when the position state admits
-it, and reports what happened.
+it, and reports what happened. A symbol holds at most one position: entering
+needs it flat, exiting needs it held.
 
 Entries are opened sized against configured allocation fraction and available cash.
 Exits sell everything currently open.
@@ -371,6 +289,10 @@ Exits sell everything currently open.
 func (training *Training) act(symbol, action string) string {
 	switch action {
 	case "enter":
+		if training.desk.Holds(symbol) {
+			return "holding: enter ignored"
+		}
+
 		cash := training.desk.Cash(system.Cfg.Market.QuoteCurrency)
 
 		if cash == nil || cash.Sign() <= 0 {
@@ -385,7 +307,7 @@ func (training *Training) act(symbol, action string) string {
 				nil,
 			))
 
-			return ""
+			return "enter failed: no cash"
 		}
 
 		qty, err := training.price.Quantity(
@@ -414,71 +336,29 @@ func (training *Training) act(symbol, action string) string {
 				err,
 			))
 
-			return ""
+			return "enter failed: no quantity"
 		}
 
-		training.desk.Enter(symbol, qty)
-		return "submitted"
+		if err := training.desk.Enter(symbol, qty); err != nil {
+			training.Error(errnie.Err(errnie.IO, "[training] enter failed for "+symbol, err))
+			return "enter failed: " + err.Error()
+		}
+
+		return "enter submitted"
 	case "exit":
-		training.desk.Exit(symbol)
-		return "learned_exit submitted"
+		if !training.desk.Holds(symbol) {
+			return "flat: exit ignored"
+		}
+
+		if err := training.desk.Exit(symbol); err != nil {
+			training.Error(errnie.Err(errnie.IO, "[training] exit failed for "+symbol, err))
+			return "exit failed: " + err.Error()
+		}
+
+		return "exit submitted"
 	case "noop":
 		return "noop: matched unpromising precursor"
 	}
 
 	return "ignored: unknown action " + action
-}
-
-/*
-match returns the stored keys under the path, with exactly the semantics of an
-S3 ListObjectsV2 prefix listing over the startup snapshot: keys are sorted
-bytewise, so every key that starts with the prefix is one contiguous run.
-*/
-func (training *Training) match(tokens []string) []string {
-	prefix := strings.Join(tokens, "/") + "/"
-	start, _ := slices.BinarySearch(training.keys, prefix)
-	end := start
-
-	for end < len(training.keys) && strings.HasPrefix(training.keys[end], prefix) {
-		end++
-	}
-
-	return training.keys[start:end]
-}
-
-/*
-sortedKeys drains a key listing into bytewise order. A listing error is
-returned, never treated as an empty key space.
-*/
-func sortedKeys(listing iter.Seq2[string, error]) ([]string, error) {
-	keys := make([]string, 0)
-
-	for key, err := range listing {
-		if err != nil {
-			return nil, errnie.Error(err)
-		}
-
-		keys = append(keys, key)
-	}
-
-	slices.Sort(keys)
-	return keys, nil
-}
-
-/*
-maxDepthOfKeys measures the maximum precursor token length among the stored keys.
-Each key segment before the action suffix corresponds to one token (counted by '/').
-*/
-func maxDepthOfKeys(keys []string) int {
-	maxDepth := 0
-
-	for _, key := range keys {
-		depth := strings.Count(key, "/")
-
-		if depth > maxDepth {
-			maxDepth = depth
-		}
-	}
-
-	return maxDepth
 }

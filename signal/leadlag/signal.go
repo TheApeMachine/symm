@@ -140,7 +140,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	var res *data.Measurement
 	if prev, ok := signal.last[prior.Label]; ok {
-		res = prev.Next(prior.At, output)
+		res = prev.Next(prior, output)
 	}
 
 	if res == nil {

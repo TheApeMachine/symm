@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/signal/sentiment"
 )
 
@@ -151,9 +150,6 @@ func TestSentimentSignalMetrics(t *testing.T) {
 
 						_, held = metric(res, "directional_consensus")
 						So(held, ShouldBeTrue)
-						reg, ok := store.NewGrid().PinRegion("sentiment", "directional_consensus")
-						So(ok, ShouldBeTrue)
-						So(reg, ShouldEqual, uint8(9))
 
 						_, held = metric(res, "asof_age_seconds")
 						So(held, ShouldBeFalse)

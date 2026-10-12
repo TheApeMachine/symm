@@ -17,7 +17,7 @@ func TestPrecursorSeparation(t *testing.T) {
 
 		Convey("When invoked with invalid or non-positive taker fee", func() {
 			result := AnalyzePrecursorSeparation(
-				ctx, nil, 1, "BTC/USD", store.NewGrid(), nil, nil, 10, 0.05, nil, 0.0,
+				ctx, nil, 1, "BTC/USD", store.NewGrid(t.Context()), nil, nil, 10, 0.05, nil, 0.0,
 			)
 			So(result.Passed, ShouldBeFalse)
 			So(result.SummaryText, ShouldContainSubstring, "strictly positive")
@@ -148,7 +148,7 @@ func TestPrecursorSeparation(t *testing.T) {
 		})
 
 		Convey("When evaluating end-to-end precursor separation with synthetic detections", func() {
-			grid := store.NewGrid()
+			grid := store.NewGrid(t.Context())
 			now := time.Now()
 
 			det1 := data.NewMeasurement(1, "BTC/USD", "detector", 1, 100, &data.StringEntry{Key: "type", Value: "up"})

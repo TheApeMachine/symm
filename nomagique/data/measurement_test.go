@@ -64,10 +64,12 @@ func TestMeasurementFinalize(t *testing.T) {
 				event := NewMeasurement(2, "BTC/USD", "spot:trade", system.SeqIdx.Add(1), 2)
 				event.At = time.Unix(2, 0).UTC()
 				event.From = event.At
-				secondMeas := lockedMeas.Next(event.At, map[string]float64{"price": 3})
+				secondMeas := lockedMeas.Next(event, map[string]float64{"price": 3})
 
 				So(secondMeas.samples, ShouldEqual, 2)
 				So(secondMeas.SeqIdx, ShouldBeGreaterThan, lockedMeas.SeqIdx)
+				So(secondMeas.Tick, ShouldEqual, event.Tick)
+				So(secondMeas.At, ShouldEqual, event.At)
 			})
 		})
 	})

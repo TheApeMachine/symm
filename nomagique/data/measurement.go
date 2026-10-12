@@ -129,12 +129,13 @@ func NewFromPrior(
 }
 
 /*
-Next instantiates the source's Measurement derived from the current instance.
-It carries over identity, timing, metadata, and peers, and holds exactly the
-values the source produced: the prior's own metrics belong to the prior.
+Next instantiates the source's Measurement derived from the current instance
+for the event prior. It carries over identity, metadata, and peers, takes the
+event's venue time and ingress tick, and holds exactly the values the source
+produced: the prior's own metrics belong to the prior.
 */
 func (measurement *Measurement) Next(
-	at time.Time, values map[string]float64,
+	prior *Measurement, values map[string]float64,
 ) *Measurement {
 	// Each successor owns copies of the metadata entries, so SetMeta on one
 	// never rewrites its prior or a sibling built from the same prior.
@@ -152,11 +153,11 @@ func (measurement *Measurement) Next(
 		measurement.Label,
 		measurement.Source,
 		system.SeqIdx.Add(1),
-		system.Tick.Load(),
+		prior.Tick,
 		metadata...,
 	)
 
-	next.At = at
+	next.At = prior.At
 	next.From = measurement.At
 	next.Timestamp = time.Now().UnixNano()
 	next.peers = append(next.peers, measurement.peers...)
@@ -361,17 +362,6 @@ func (measurement *Measurement) Metadata() []*StringEntry {
 	}
 
 	return measurement.metadata
-}
-
-/*
-Count returns the number of metrics held by the measurement.
-*/
-func (measurement *Measurement) Count() int {
-	if measurement == nil {
-		return 0
-	}
-
-	return len(measurement.metrics)
 }
 
 /*
