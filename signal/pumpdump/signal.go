@@ -2,12 +2,10 @@ package pumpdump
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -56,6 +54,7 @@ func (ce *causalEstimator) Step(value float64) (
 }
 
 type symbolState struct {
+	lastMeasurement    *data.Measurement
 	clock              volumeclock.Clock
 	notionalEstimator  causalEstimator
 	spreadEstimator    causalEstimator
@@ -72,33 +71,22 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookSource
 	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		books:  books,
 		states: make(map[string]*symbolState),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "pumpdump", signal)
-
-	if err := errnie.Require(map[string]any{"books": books}); err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[pumpdump] book manager is required", err))
-	}
 
 	return signal
 }
 
 func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	if signal.Status() != runtime.READY || prior == nil || prior.Label == "" {
-		return nil
-	}
-
-	if signal.books == nil {
-		signal.Error(errnie.Err(errnie.Internal, "[pumpdump] book manager is required", nil))
 		return nil
 	}
 
@@ -115,37 +103,26 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 	qty := qtyEntry.Metric.Raw
 
+	// The touch is the one ingress stamped onto the trade at its sequence
+	// number. A trade stamped without a book still advances the volume clock;
+	// it only has no touch.
+	snapshot, err := broker.ReadSnapshot(prior)
+
+	if err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[pumpdump] stamped book unreadable", err))
+		return nil
+	}
+
 	var bid, ask float64
-	var hasBook bool
 
-	signal.books.Book(prior.Label, func(book *spotbook.Book) {
-		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
-			return
-		}
+	hasTouch := snapshot != nil
 
-		bid = book.BestBid().Price.Float64()
-		ask = book.BestAsk().Price.Float64()
-		hasBook = true
-	})
-
-	if hasBook {
-		if bid <= 0 || ask <= 0 || math.IsNaN(bid) || math.IsNaN(ask) || math.IsInf(bid, 0) || math.IsInf(ask, 0) {
-			signal.Error(errnie.Err(
-				errnie.Internal,
-				fmt.Sprintf("[%s] %s: non-finite or non-positive book touch: bid=%v ask=%v", signal.Name(), prior.Label, bid, ask),
-				nil,
-			))
-			return nil
-		}
-
-		if ask <= bid {
-			errnie.Warn(fmt.Sprintf("[pumpdump] dropping frame for %s with crossed book: bid=%v ask=%v", prior.Label, bid, ask))
-			return nil
-		}
+	if hasTouch {
+		bestBid, bestAsk := snapshot.Touch()
+		bid, ask = bestBid.Price.Float64(), bestAsk.Price.Float64()
 	}
 
 	atNanos := float64(prior.At.UnixNano())
-	hasTouch := bid > 0 && ask > 0
 
 	out := map[string]float64{
 		"trade_price":    price,
@@ -287,11 +264,26 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		state.historyPath(out, [2]float64{spreadZ, notionalZ})
 	}
 
-	res := prior.Next(signal.Name(), out)
+	var res *data.Measurement
 
-	// A completed bar's metrics describe (bar open, this trade].
+	if state.lastMeasurement == nil {
+		res = data.NewFromPrior(prior, signal.Name(), out)
+	}
+
+	if res == nil {
+		res = state.lastMeasurement.Next(prior.At, out)
+	}
+
+	state.lastMeasurement = res
+
 	if closed {
 		res.From = time.Unix(0, int64(bar.StartNanos)).UTC()
+	}
+
+	if !closed {
+		if activeBar, open := state.clock.ActiveBar(); open && activeBar.StartNanos > 0 {
+			res.From = time.Unix(0, int64(activeBar.StartNanos)).UTC()
+		}
 	}
 
 	return res

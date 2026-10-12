@@ -20,6 +20,7 @@ type PhysicsSnapshot struct {
 	Population int     `json:"population"`
 	Reading    Reading `json:"reading"`
 }
+
 func (s PhysicsSnapshot) Marshal() ([]byte, error) {
 	if s.Schema != "sensorium-physics-health/v1" || s.Population < 0 || !s.Reading.IsFinite() {
 		return nil, fmt.Errorf("invalid physics snapshot contract")

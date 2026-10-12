@@ -7,36 +7,36 @@ import (
 )
 
 type HoldingT struct {
-	Status string `json:"status"`
-	Symbol string `json:"symbol"`
-	Asset string `json:"asset"`
-	Qty string `json:"qty"`
-	SellableQty string `json:"sellableQty"`
-	EntryAt int64 `json:"entryAt"`
-	ExitAt int64 `json:"exitAt"`
-	EntryPrice string `json:"entryPrice"`
-	EntryFee string `json:"entryFee"`
-	ExitPrice string `json:"exitPrice"`
-	ExitFee string `json:"exitFee"`
-	Pnl string `json:"pnl"`
-	ProfitThreshold string `json:"profitThreshold"`
-	ReturnPct float64 `json:"returnPct"`
-	Mark string `json:"mark"`
-	IsOpportunity bool `json:"isOpportunity"`
-	ReservationId string `json:"reservationId"`
-	CapacityQty float64 `json:"capacityQty"`
-	CapacityRatio float64 `json:"capacityRatio"`
-	CapacityDefined bool `json:"capacityDefined"`
-	CapacityBounded bool `json:"capacityBounded"`
-	CapacityAt int64 `json:"capacityAt"`
-	SlippageBudget float64 `json:"slippageBudget"`
-	BudgetSource string `json:"budgetSource"`
-	HoldSeconds float64 `json:"holdSeconds"`
-	VenuePnl string `json:"venuePnl"`
-	ShadowPnl string `json:"shadowPnl"`
-	ShadowDefined bool `json:"shadowDefined"`
-	Sells []*SellEventT `json:"sells"`
-	ClosedAt int64 `json:"closedAt"`
+	Status          string        `json:"status"`
+	Symbol          string        `json:"symbol"`
+	Asset           string        `json:"asset"`
+	Qty             string        `json:"qty"`
+	SellableQty     string        `json:"sellableQty"`
+	EntryAt         int64         `json:"entryAt"`
+	ExitAt          int64         `json:"exitAt"`
+	EntryPrice      string        `json:"entryPrice"`
+	EntryFee        string        `json:"entryFee"`
+	ExitPrice       string        `json:"exitPrice"`
+	ExitFee         string        `json:"exitFee"`
+	Pnl             string        `json:"pnl"`
+	ProfitThreshold string        `json:"profitThreshold"`
+	ReturnPct       float64       `json:"returnPct"`
+	Mark            string        `json:"mark"`
+	IsOpportunity   bool          `json:"isOpportunity"`
+	ReservationId   string        `json:"reservationId"`
+	CapacityQty     float64       `json:"capacityQty"`
+	CapacityRatio   float64       `json:"capacityRatio"`
+	CapacityDefined bool          `json:"capacityDefined"`
+	CapacityBounded bool          `json:"capacityBounded"`
+	CapacityAt      int64         `json:"capacityAt"`
+	SlippageBudget  float64       `json:"slippageBudget"`
+	BudgetSource    string        `json:"budgetSource"`
+	HoldSeconds     float64       `json:"holdSeconds"`
+	VenuePnl        string        `json:"venuePnl"`
+	ShadowPnl       string        `json:"shadowPnl"`
+	ShadowDefined   bool          `json:"shadowDefined"`
+	Sells           []*SellEventT `json:"sells"`
+	ClosedAt        int64         `json:"closedAt"`
 }
 
 func (t *HoldingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

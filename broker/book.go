@@ -13,7 +13,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -186,31 +185,59 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 
 /*
 Stamp takes the next ingress sequence number for an event on symbol under the
-symbol's book read lock and returns it with the executable touch the book held
-at that number. Level3 entries take their numbers under the same symbol's write
-lock once applied, so the touch is exactly the book built by every entry
-sequenced before the event: the book a SeqIdx-ordered replay of the stored tape
-rebuilds. An unseeded, diverged, missing, one-sided, or crossed book has no
-touch, and bid and ask are nil.
+symbol's book read lock and returns it with the book's snapshot at that number.
+Level3 entries take their numbers under the same symbol's write lock once
+applied, so the snapshot is exactly the book built by every entry sequenced
+before the event: the book a SeqIdx-ordered replay of the stored tape rebuilds.
+A book without an executable touch has no snapshot.
 */
-func (book *Book) Stamp(symbol string) (sequence int64, bid *decimal.Decimal, ask *decimal.Decimal) {
+func (book *Book) Stamp(symbol string) (sequence int64, snapshot *Snapshot) {
 	symbolLock := book.symbolLock(symbol)
 	symbolLock.RLock()
 	defer symbolLock.RUnlock()
 
-	sequence = system.SeqIdx.Add(1)
+	return system.SeqIdx.Add(1), book.snapshot(symbol)
+}
 
+/*
+Snapshot returns symbol's current book snapshot, or nil when the book has no
+executable touch. Replays use it to rebuild what ingress stamped.
+*/
+func (book *Book) Snapshot(symbol string) *Snapshot {
+	symbolLock := book.symbolLock(symbol)
+	symbolLock.RLock()
+	defer symbolLock.RUnlock()
+
+	return book.snapshot(symbol)
+}
+
+/*
+snapshot copies every level of symbol's book, best first, while the caller holds
+the symbol's lock. An unseeded, diverged, missing, one-sided, or crossed book
+has no snapshot.
+*/
+func (book *Book) snapshot(symbol string) *Snapshot {
 	if !book.readable(symbol) {
-		return sequence, nil, nil
+		return nil
 	}
 
-	bidLevel, askLevel, defined := Touch(book.manager.GetBook(symbol))
+	managed := book.manager.GetBook(symbol)
 
-	if !defined {
-		return sequence, nil, nil
+	if _, _, defined := Touch(managed); !defined {
+		return nil
 	}
 
-	return sequence, bidLevel.Price.Copy(), askLevel.Price.Copy()
+	snapshot := &Snapshot{Depth: managed.MaxDepth}
+
+	for level := managed.BestBid(); level != nil; level = level.Lower {
+		snapshot.Bids = append(snapshot.Bids, Level{Price: level.Price.Copy(), Quantity: level.Quantity.Copy()})
+	}
+
+	for level := managed.BestAsk(); level != nil; level = level.Higher {
+		snapshot.Asks = append(snapshot.Asks, Level{Price: level.Price.Copy(), Quantity: level.Quantity.Copy()})
+	}
+
+	return snapshot
 }
 
 /*
@@ -234,22 +261,6 @@ func Touch(managed *spotbook.Book) (bid *spotbook.Level, ask *spotbook.Level, de
 	}
 
 	return bid, ask, true
-}
-
-func (book *Book) Create(symbol string, depth int) {
-	if depth <= 0 {
-		depth = viper.GetInt("market.l3_depth")
-
-		if depth <= 0 {
-			depth = 10
-		}
-	}
-
-	symbolLock := book.symbolLock(symbol)
-	symbolLock.Lock()
-	defer symbolLock.Unlock()
-
-	book.manager.CreateBook(symbol, depth)
 }
 
 /*
@@ -425,11 +436,7 @@ func (book *Book) apply(
 			data.Type = payload.Type
 			symbolBook = book.manager.GetBook(data.Symbol)
 
-			depth := viper.GetInt("market.l3_depth")
-
-			if depth <= 0 {
-				depth = 10
-			}
+			depth := level3Depth()
 
 			if symbolBook == nil {
 				symbolBook = book.manager.CreateBook(data.Symbol, depth)

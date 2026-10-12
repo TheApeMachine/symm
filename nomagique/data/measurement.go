@@ -98,20 +98,44 @@ func NewMeasurement(
 }
 
 /*
+NewFromPrior is used when we want to create a new Measurement from the incoming
+prior, when we do not have a stored Measurement for the source and label yet.
+*/
+func NewFromPrior(
+	prior *Measurement,
+	source string,
+	values map[string]float64,
+	peers ...*Measurement,
+) *Measurement {
+	meas := NewMeasurement(
+		prior.Epoch,
+		prior.Label,
+		source,
+		system.SeqIdx.Add(1),
+		prior.Tick,
+		prior.Metadata()...,
+	)
+
+	meas.At = prior.At
+	meas.From = prior.From
+
+	if len(peers) > 0 {
+		meas.Peers(peers...)
+	}
+
+	meas.copyMetrics(source, values)
+	meas.finalize()
+	return meas
+}
+
+/*
 Next instantiates the source's Measurement derived from the current instance.
 It carries over identity, timing, metadata, and peers, and holds exactly the
 values the source produced: the prior's own metrics belong to the prior.
 */
 func (measurement *Measurement) Next(
-	source string, values ...map[string]float64,
+	at time.Time, values map[string]float64,
 ) *Measurement {
-	seqIdx := system.SeqIdx.Add(1)
-	tick := system.Tick.Load()
-
-	if tick <= 0 {
-		tick = measurement.Tick
-	}
-
 	// Each successor owns copies of the metadata entries, so SetMeta on one
 	// never rewrites its prior or a sibling built from the same prior.
 	metadata := make([]*StringEntry, 0, len(measurement.metadata)+1)
@@ -126,31 +150,38 @@ func (measurement *Measurement) Next(
 	next := NewMeasurement(
 		measurement.Epoch,
 		measurement.Label,
-		source,
-		seqIdx,
-		tick,
+		measurement.Source,
+		system.SeqIdx.Add(1),
+		system.Tick.Load(),
 		metadata...,
 	)
 
-	next.At = measurement.At
-	next.From = measurement.From
+	next.At = at
+	next.From = measurement.At
 	next.Timestamp = time.Now().UnixNano()
-	next.samples = measurement.samples
-	next.prediction = measurement.prediction
 	next.peers = append(next.peers, measurement.peers...)
 
+	next.samples = measurement.samples + 1
+	next.prediction = measurement.prediction
+
+	next.copyMetrics(measurement.Source, values)
+
+	next.finalize()
+	return next
+}
+
+func (measurement *Measurement) copyMetrics(
+	source string, values map[string]float64,
+) {
 	if len(values) > 0 {
-		for key, val := range values[0] {
+		for key, val := range values {
 			unit, timescale := GetDimension(source, key)
-			next.metrics = append(next.metrics, &MetricEntry{
+			measurement.metrics = append(measurement.metrics, &MetricEntry{
 				Key:    key,
 				Metric: NewMetric(key, val, unit, timescale),
 			})
 		}
 	}
-
-	next.finalize()
-	return next
 }
 
 /*
@@ -219,13 +250,6 @@ func (measurement *Measurement) Dampen(keys ...string) []*Metric {
 	}
 
 	return metrics
-}
-
-/*
-Dampened returns copies of the metrics matching keys, scaled by the Measurement's Confidence.
-*/
-func (measurement *Measurement) Dampened(keys ...string) []*Metric {
-	return measurement.Dampen(keys...)
 }
 
 /*
@@ -411,7 +435,9 @@ func (measurement *Measurement) finalize() *Measurement {
 		return measurement
 	}
 
-	measurement.samples++
+	if measurement.samples <= 0 {
+		measurement.samples = 1
+	}
 
 	for _, metric := range measurement.metrics {
 		measurement.err = errors.Join(

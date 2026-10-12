@@ -10,20 +10,15 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/depthflow"
+	"github.com/theapemachine/symm/tests/market"
 )
-
-func ingress(label string, at time.Time, seq int64) *data.Measurement {
-	prior := data.NewMeasurement(1, label, "spot:trade", seq, seq)
-	prior.At = at
-	prior.From = at
-	return prior.Write()
-}
 
 func metric(measurement *data.Measurement, label string) (float64, bool) {
 	for entry := range measurement.Read(label) {
@@ -58,7 +53,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 		ctx := context.Background()
 		books := broker.NewBook(ctx, spot.NewNormalizer())
 
-		instrument := depthflow.NewSignal(ctx, books)
+		instrument := depthflow.NewSignal(ctx)
 		instrument.Transition(nmruntime.READY)
 
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -99,7 +94,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 					}},
 				})
 
-				res := instrument.Step(ingress("BTC/USD", at, int64(step+1)))
+				res := instrument.Step(market.Stamp(books, "BTC/USD", "buy", at, 1, 1))
 				So(res, ShouldNotBeNil)
 				So(instrument.Error(), ShouldBeNil)
 				So(res.Source, ShouldEqual, "depthflow")
@@ -167,9 +162,9 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 			}
 
 			snapshot(1)
-			So(instrument.Step(ingress("SOL/USD", now, 1)), ShouldNotBeNil)
+			So(instrument.Step(market.Stamp(books, "SOL/USD", "buy", now, 1, 1)), ShouldNotBeNil)
 			snapshot(2)
-			res := instrument.Step(ingress("SOL/USD", now, 2))
+			res := instrument.Step(market.Stamp(books, "SOL/USD", "buy", now, 1, 1))
 			So(res, ShouldNotBeNil)
 			So(metricValue(res, "added_notional:bid"), ShouldAlmostEqual, 100.0, 1e-9)
 
@@ -200,7 +195,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 					Asks:   []kraken.Level3Order{order("a1", 102, 1, now)},
 				}},
 			})
-			So(instrument.Step(ingress("ADA/USD", now, 1)), ShouldNotBeNil)
+			So(instrument.Step(market.Stamp(books, "ADA/USD", "buy", now, 1, 1)), ShouldNotBeNil)
 
 			// A new best bid at 101 pushes the level at 91 beyond the depth.
 			later := now.Add(time.Second)
@@ -214,7 +209,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 				}},
 			})
 
-			res := instrument.Step(ingress("ADA/USD", later, 2))
+			res := instrument.Step(market.Stamp(books, "ADA/USD", "buy", later, 1, 1))
 			So(res, ShouldNotBeNil)
 			So(metricValue(res, "added_notional:bid"), ShouldAlmostEqual, 101.0, 1e-9)
 			So(metricValue(res, "removed_notional:bid"), ShouldAlmostEqual, 0.0, 1e-9)
@@ -230,7 +225,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 					Asks:   []kraken.Level3Order{order("a1", 3001, 1, now)},
 				}},
 			})
-			So(instrument.Step(ingress("ETH/USD", now, 1)), ShouldNotBeNil)
+			So(instrument.Step(market.Stamp(books, "ETH/USD", "buy", now, 1, 1)), ShouldNotBeNil)
 
 			later := now.Add(time.Second)
 			books.Update(&kraken.Level3{
@@ -243,7 +238,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 				}},
 			})
 
-			res := instrument.Step(ingress("ETH/USD", later, 2))
+			res := instrument.Step(market.Stamp(books, "ETH/USD", "buy", later, 1, 1))
 			So(res, ShouldNotBeNil)
 			So(instrument.Error(), ShouldBeNil)
 			So(metricValue(res, "removed_notional:bid"), ShouldAlmostEqual, 2999.0*2, 1e-6)
@@ -263,22 +258,23 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 				}},
 			})
 
-			So(instrument.Step(ingress("XBT/USD", now, 900)), ShouldBeNil)
+			So(instrument.Step(market.Stamp(books, "XBT/USD", "buy", now, 1, 1)), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
 			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 		})
 
 		Convey("An absent book yields no measurement", func() {
-			So(instrument.Step(ingress("XRP/USD", now, 1)), ShouldBeNil)
+			So(instrument.Step(market.Stamp(books, "XRP/USD", "buy", now, 1, 1)), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
 		})
-	})
-}
+		Convey("A stamped book that cannot be decoded is corrupt ingress state and halts", func() {
+			So(instrument.Step(market.Unreadable("BTC/USD", "buy", now, 1, 1)), ShouldBeNil)
 
-func TestDepthflowSignalRequiresBookManager(t *testing.T) {
-	Convey("A depthflow signal constructed without a book manager fails with an error", t, func() {
-		instrument := depthflow.NewSignal(context.Background(), nil)
-		So(instrument.Error(), ShouldNotBeNil)
-		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
+			err := instrument.Error()
+			So(err, ShouldNotBeNil)
+			So(errnie.IsInternal(err), ShouldBeTrue)
+			So(err.Error(), ShouldContainSubstring, "stamped book unreadable")
+			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
+		})
 	})
 }

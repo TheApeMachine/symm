@@ -6,31 +6,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/tests/market"
 )
-
-func trade(at time.Time, seq int64, side string, price, qty float64) *data.Measurement {
-	prior := data.NewMeasurement(
-		1, "BTC/USD", "spot:trade", seq, seq,
-		&data.StringEntry{Key: "type", Value: "trade"},
-		&data.StringEntry{Key: "side", Value: side},
-	)
-	prior.At = at
-	prior.From = at
-
-	return prior.Write(
-		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
-		data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
-	)
-}
 
 func metric(measurement *data.Measurement, label string) (float64, bool) {
 	for entry := range measurement.Read(label) {
@@ -50,39 +35,21 @@ func metricValue(measurement *data.Measurement, label string) float64 {
 	return value
 }
 
-func touch(books *broker.Book, at time.Time, bidID string, bid, bidQty float64, askID string, ask, askQty float64) {
-	books.Update(&kraken.Level3{
-		Channel: "level3",
-		Type:    "snapshot",
-		Data: []kraken.Level3Data{{
-			Symbol: "BTC/USD",
-			Bids: []kraken.Level3Order{{
-				OrderID: bidID, LimitPrice: decimal.NewFromFloat64(bid), OrderQty: decimal.NewFromFloat64(bidQty),
-				Timestamp: at, Event: "add",
-			}},
-			Asks: []kraken.Level3Order{{
-				OrderID: askID, LimitPrice: decimal.NewFromFloat64(ask), OrderQty: decimal.NewFromFloat64(askQty),
-				Timestamp: at, Event: "add",
-			}},
-		}},
-	})
-}
-
 func TestToxicitySignal(t *testing.T) {
 	Convey("Toxicity instrument calculates exact touch dispositions and trade fill matching", t, func() {
 		ctx := context.Background()
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 		books := broker.NewBook(ctx, spot.NewNormalizer())
 
-		instrument := toxicity.NewSignal(ctx, books)
+		instrument := toxicity.NewSignal(ctx)
 		instrument.Transition(nmruntime.READY)
 
 		Convey("Trade matching at the touch calculates exact fill quantity, fraction, and fill rate", func() {
 			bidPrice, askPrice, touchQty := 50000.0, 50002.0, 10.0
-			touch(books, now, "bid-1", bidPrice, touchQty, "ask-1", askPrice, touchQty)
+			So(market.Quote(books, "BTC/USD", now, bidPrice, touchQty, askPrice, touchQty), ShouldBeNil)
 
 			trade1Qty := 1.5
-			res1 := instrument.Step(trade(now, 1, "buy", askPrice, trade1Qty))
+			res1 := instrument.Step(market.Stamp(books, "BTC/USD", "buy", now, askPrice, trade1Qty))
 			So(res1, ShouldNotBeNil)
 			So(instrument.Error(), ShouldBeNil)
 			So(res1.Source, ShouldEqual, "toxicity")
@@ -106,7 +73,7 @@ func TestToxicitySignal(t *testing.T) {
 
 			trade2Qty := 2.5
 			trade2At := now.Add(100 * time.Millisecond)
-			res2 := instrument.Step(trade(trade2At, 2, "buy", askPrice, trade2Qty))
+			res2 := instrument.Step(market.Stamp(books, "BTC/USD", "buy", trade2At, askPrice, trade2Qty))
 			So(res2, ShouldNotBeNil)
 			So(instrument.Error(), ShouldBeNil)
 
@@ -122,7 +89,7 @@ func TestToxicitySignal(t *testing.T) {
 			So(res2.From, ShouldEqual, now)
 
 			// A trade away from the touch is bracket activity, not a fill.
-			res3 := instrument.Step(trade(trade2At.Add(100*time.Millisecond), 3, "buy", askPrice+5, 1.0))
+			res3 := instrument.Step(market.Stamp(books, "BTC/USD", "buy", trade2At.Add(100*time.Millisecond), askPrice+5, 1.0))
 			So(res3, ShouldNotBeNil)
 			So(metricValue(res3, "bracket_trade_quantity"), ShouldAlmostEqual, 1.0, 1e-9)
 			So(metricValue(res3, "touch_fill_quantity:ask"), ShouldAlmostEqual, 0.0, 1e-9)
@@ -131,30 +98,30 @@ func TestToxicitySignal(t *testing.T) {
 		})
 
 		Convey("Trades sharing the previous observation's timestamp accrue to the next bracket", func() {
-			touch(books, now, "bid-ts", 50000.0, 10.0, "ask-ts", 50002.0, 10.0)
-			So(instrument.Step(trade(now, 30, "buy", 50002.0, 1.0)), ShouldNotBeNil)
+			So(market.Quote(books, "BTC/USD", now, 50000.0, 10.0, 50002.0, 10.0), ShouldBeNil)
+			So(instrument.Step(market.Stamp(books, "BTC/USD", "buy", now, 50002.0, 1.0)), ShouldNotBeNil)
 
-			same := instrument.Step(trade(now, 31, "buy", 50002.0, 1.0))
+			same := instrument.Step(market.Stamp(books, "BTC/USD", "buy", now, 50002.0, 1.0))
 			So(same, ShouldNotBeNil)
 			_, held := metric(same, "touch_fill_quantity:ask")
 			So(held, ShouldBeFalse)
 
-			res := instrument.Step(trade(now.Add(time.Second), 32, "buy", 50002.0, 2.0))
+			res := instrument.Step(market.Stamp(books, "BTC/USD", "buy", now.Add(time.Second), 50002.0, 2.0))
 			So(res, ShouldNotBeNil)
 			So(metricValue(res, "bracket_trade_quantity"), ShouldAlmostEqual, 3.0, 1e-9)
 			So(metricValue(res, "touch_fill_quantity:ask"), ShouldAlmostEqual, 3.0, 1e-9)
 		})
 
 		Convey("A retreat removes only the unfilled residual, and fills are capped by display", func() {
-			touch(books, now, "bid-r-1", 50000.0, 10.0, "ask-r-1", 50002.0, 2.0)
-			So(instrument.Step(trade(now, 40, "buy", 50001.0, 1.0)), ShouldNotBeNil)
+			So(market.Quote(books, "BTC/USD", now, 50000.0, 10.0, 50002.0, 2.0), ShouldBeNil)
+			So(instrument.Step(market.Stamp(books, "BTC/USD", "buy", now, 50001.0, 1.0)), ShouldNotBeNil)
 
-			So(instrument.Step(trade(now, 41, "sell", 50000.0, 4.0)), ShouldNotBeNil)
+			So(instrument.Step(market.Stamp(books, "BTC/USD", "sell", now, 50000.0, 4.0)), ShouldNotBeNil)
 
 			later := now.Add(200 * time.Millisecond)
-			touch(books, later, "bid-r-2", 49990.0, 8.0, "ask-r-2", 50003.0, 1.0)
+			So(market.Quote(books, "BTC/USD", later, 49990.0, 8.0, 50003.0, 1.0), ShouldBeNil)
 
-			res := instrument.Step(trade(later, 42, "buy", 50002.0, 5.0))
+			res := instrument.Step(market.Stamp(books, "BTC/USD", "buy", later, 50002.0, 5.0))
 			So(res, ShouldNotBeNil)
 
 			// Bid: E = 4 of Q0 = 10, so R = U = 6. Ask: E* = 5 but only 2
@@ -168,13 +135,13 @@ func TestToxicitySignal(t *testing.T) {
 		})
 
 		Convey("Touch disposition detects adverse price retreat", func() {
-			touch(books, now, "bid-disp-1", 50000.0, 10.0, "ask-disp-1", 50002.0, 10.0)
-			So(instrument.Step(trade(now, 10, "buy", 50001.0, 1.0)), ShouldNotBeNil)
+			So(market.Quote(books, "BTC/USD", now, 50000.0, 10.0, 50002.0, 10.0), ShouldBeNil)
+			So(instrument.Step(market.Stamp(books, "BTC/USD", "buy", now, 50001.0, 1.0)), ShouldNotBeNil)
 
 			step2At := now.Add(200 * time.Millisecond)
-			touch(books, step2At, "bid-disp-2", 49990.0, 8.0, "ask-disp-1", 50002.0, 10.0)
+			So(market.Quote(books, "BTC/USD", step2At, 49990.0, 8.0, 50002.0, 10.0), ShouldBeNil)
 
-			res2 := instrument.Step(trade(step2At, 11, "sell", 49995.0, 1.0))
+			res2 := instrument.Step(market.Stamp(books, "BTC/USD", "sell", step2At, 49995.0, 1.0))
 			So(res2, ShouldNotBeNil)
 			So(instrument.Error(), ShouldBeNil)
 
@@ -206,13 +173,13 @@ func TestToxicitySignal(t *testing.T) {
 		})
 
 		Convey("Touch disposition measures withdrawal and replenishment at a held price", func() {
-			touch(books, now, "bid-w-1", 50000.0, 10.0, "ask-w-1", 50002.0, 4.0)
-			So(instrument.Step(trade(now, 20, "buy", 50001.0, 1.0)), ShouldNotBeNil)
+			So(market.Quote(books, "BTC/USD", now, 50000.0, 10.0, 50002.0, 4.0), ShouldBeNil)
+			So(instrument.Step(market.Stamp(books, "BTC/USD", "buy", now, 50001.0, 1.0)), ShouldNotBeNil)
 
 			later := now.Add(500 * time.Millisecond)
-			touch(books, later, "bid-w-1", 50000.0, 6.0, "ask-w-1", 50002.0, 7.0)
+			So(market.Quote(books, "BTC/USD", later, 50000.0, 6.0, 50002.0, 7.0), ShouldBeNil)
 
-			res := instrument.Step(trade(later, 21, "buy", 50001.0, 1.0))
+			res := instrument.Step(market.Stamp(books, "BTC/USD", "buy", later, 50001.0, 1.0))
 			So(res, ShouldNotBeNil)
 			So(instrument.Error(), ShouldBeNil)
 
@@ -233,13 +200,14 @@ func TestToxicitySignal(t *testing.T) {
 		})
 
 		Convey("A non-positive trade price yields no measurement", func() {
-			touch(books, now, "bid-1", 50000.0, 10.0, "ask-1", 50002.0, 10.0)
-			So(instrument.Step(trade(now, 99, "buy", 0.0, 1.0)), ShouldBeNil)
+			So(market.Quote(books, "BTC/USD", now, 50000.0, 10.0, 50002.0, 10.0), ShouldBeNil)
+			So(instrument.Step(market.Stamp(books, "BTC/USD", "buy", now, 0.0, 1.0)), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
 		})
 
-		Convey("The touch comes only from the book manager, never from the trade frame", func() {
-			touch(books, now, "bid-src", 50000.0, 10.0, "ask-src", 50002.0, 4.0)
+		Convey("The touch comes only from the stamped book, never from other trade fields", func() {
+			So(market.Quote(books, "BTC/USD", now, 50000.0, 10.0, 50002.0, 4.0), ShouldBeNil)
+			_, snapshot := books.Stamp("BTC/USD")
 
 			prior := data.NewMeasurement(
 				1, "BTC/USD", "spot:trade", 120, 120,
@@ -248,14 +216,14 @@ func TestToxicitySignal(t *testing.T) {
 			)
 			prior.At = now
 			prior.From = now
-			prior = prior.Write(
+			prior = prior.Write(append([]*data.Metric{
 				data.NewMetric("price", 50002.0, data.UnitPrice, data.TimescaleInstantaneous),
 				data.NewMetric("qty", 1.0, data.UnitQuantity, data.TimescaleInstantaneous),
 				data.NewMetric("bid", 1.0, data.UnitPrice, data.TimescaleInstantaneous),
 				data.NewMetric("ask", 2.0, data.UnitPrice, data.TimescaleInstantaneous),
 				data.NewMetric("bid_qty", 99.0, data.UnitQuantity, data.TimescaleInstantaneous),
 				data.NewMetric("ask_qty", 99.0, data.UnitQuantity, data.TimescaleInstantaneous),
-			)
+			}, snapshot.Metrics()...)...)
 
 			res := instrument.Step(prior)
 			So(res, ShouldNotBeNil)
@@ -282,16 +250,25 @@ func TestToxicitySignal(t *testing.T) {
 			So(instrument.Error(), ShouldBeNil)
 		})
 
-		Convey("A crossed touch is dropped with a warning without halting the system", func() {
-			touch(books, now, "bid-x", 50010.0, 1.0, "ask-x", 50000.0, 1.0)
+		Convey("A crossed book leaves the trade unstamped and yields no measurement without halting", func() {
+			So(market.Quote(books, "BTC/USD", now, 50010.0, 1.0, 50000.0, 1.0), ShouldBeNil)
 
-			So(instrument.Step(trade(now, 150, "buy", 50005.0, 1.0)), ShouldBeNil)
+			So(instrument.Step(market.Stamp(books, "BTC/USD", "buy", now, 50005.0, 1.0)), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
 			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 		})
 
+		Convey("A stamped book that cannot be decoded is corrupt ingress state and halts", func() {
+			So(instrument.Step(market.Unreadable("BTC/USD", "buy", now, 50002.0, 1.0)), ShouldBeNil)
+
+			err := instrument.Error()
+			So(err, ShouldNotBeNil)
+			So(errnie.IsInternal(err), ShouldBeTrue)
+			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
+		})
+
 		Convey("A trade frame without qty is dropped with a warning without halting the system", func() {
-			touch(books, now, "bid-1", 50000.0, 10.0, "ask-1", 50002.0, 10.0)
+			So(market.Quote(books, "BTC/USD", now, 50000.0, 10.0, 50002.0, 10.0), ShouldBeNil)
 
 			prior := data.NewMeasurement(
 				1, "BTC/USD", "spot:trade", 140, 140,
@@ -307,13 +284,12 @@ func TestToxicitySignal(t *testing.T) {
 			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 		})
 
-
 		Convey("Historical recurrence is undefined until every disposition z-score is", func() {
-			touch(books, now, "bid-hist-1", 50000.0, 10.0, "ask-hist-1", 50002.0, 10.0)
+			So(market.Quote(books, "BTC/USD", now, 50000.0, 10.0, 50002.0, 10.0), ShouldBeNil)
 
 			for step := range 3 {
 				at := now.Add(time.Duration(step) * 100 * time.Millisecond)
-				res := instrument.Step(trade(at, int64(201+step), "buy", 50002.0, float64(step+1)))
+				res := instrument.Step(market.Stamp(books, "BTC/USD", "buy", at, 50002.0, float64(step+1)))
 				So(res, ShouldNotBeNil)
 
 				for _, label := range []string{"historical_path_distance", "historical_path_percentile"} {
@@ -323,12 +299,6 @@ func TestToxicitySignal(t *testing.T) {
 			}
 		})
 	})
-
-	Convey("A toxicity signal constructed without a book manager fails with an error", t, func() {
-		instrument := toxicity.NewSignal(context.Background(), nil)
-		So(instrument.Error(), ShouldNotBeNil)
-		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
-	})
 }
 
 func TestToxicityWithinClockGrain(t *testing.T) {
@@ -336,13 +306,13 @@ func TestToxicityWithinClockGrain(t *testing.T) {
 		ctx := context.Background()
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 		books := broker.NewBook(ctx, spot.NewNormalizer())
-		instrument := toxicity.NewSignal(ctx, books)
+		instrument := toxicity.NewSignal(ctx)
 		instrument.Transition(nmruntime.READY)
-		touch(books, now, "bid-1", 50000.0, 10.0, "ask-1", 50002.0, 10.0)
+		So(market.Quote(books, "BTC/USD", now, 50000.0, 10.0, 50002.0, 10.0), ShouldBeNil)
 
-		instrument.Step(trade(now, 1, "buy", 50002.0, 1.0))
-		resolved := instrument.Step(trade(now.Add(time.Second), 2, "buy", 50002.0, 1.0))
-		grain := instrument.Step(trade(now.Add(time.Second+core.ClockResolution), 3, "buy", 50002.0, 1.0))
+		instrument.Step(market.Stamp(books, "BTC/USD", "buy", now, 50002.0, 1.0))
+		resolved := instrument.Step(market.Stamp(books, "BTC/USD", "buy", now.Add(time.Second), 50002.0, 1.0))
+		grain := instrument.Step(market.Stamp(books, "BTC/USD", "buy", now.Add(time.Second+core.ClockResolution), 50002.0, 1.0))
 		So(resolved, ShouldNotBeNil)
 		So(grain, ShouldNotBeNil)
 

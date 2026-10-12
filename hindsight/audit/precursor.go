@@ -131,9 +131,9 @@ func AnalyzePrecursorSeparation(
 
 		classSet[class] = struct{}{}
 
-		startTick := int64(getMeasurementMetric(det, "start_tick"))
-		bTick := int64(getMeasurementMetric(det, "b_tick"))
-		cTick := int64(getMeasurementMetric(det, "c_tick"))
+		startTick := int64(data.Pull(det.Read("start_tick")).Metric.Raw)
+		bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw)
+		cTick := int64(data.Pull(det.Read("c_tick")).Metric.Raw)
 
 		if bTick <= 0 || cTick <= bTick {
 			errnie.Error(errnie.Err(
@@ -161,8 +161,8 @@ func AnalyzePrecursorSeparation(
 			continue
 		}
 
-		bPrice := getMeasurementMetric(det, "b_price")
-		cPrice := getMeasurementMetric(det, "c_price")
+		bPrice := data.Pull(det.Read("b_price")).Metric.Raw
+		cPrice := data.Pull(det.Read("c_price")).Metric.Raw
 
 		excursions = append(excursions, excursionInterval{
 			symbol:    det.Label,
@@ -956,32 +956,6 @@ func evaluateEconomicRelevance(
 	}
 }
 
-func getMeasurementMetric(m *data.Measurement, key string) float64 {
-	if m == nil {
-		errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"[audit.precursor] measurement is nil",
-			nil,
-		))
-
-		return 0
-	}
-
-	for entry := range m.Read() {
-		if entry != nil && entry.Key == key && entry.Metric != nil {
-			return entry.Metric.Raw
-		}
-	}
-
-	errnie.Error(errnie.Err(
-		errnie.NotFound,
-		"[audit.precursor] measurement is nil",
-		nil,
-	))
-
-	return 0
-}
-
 /*
 computeJSD calculates the Jensen-Shannon Divergence in bits between two token distributions.
 */
@@ -1064,7 +1038,7 @@ func loadOrDetectExcursions(
 		}
 
 		if det != nil && (symbol == "" || det.Label == symbol) {
-			bTick := int64(getMeasurementMetric(det, "b_tick"))
+			bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw)
 			if minTick > 0 && bTick < minTick {
 				continue
 			}

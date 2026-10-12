@@ -76,8 +76,9 @@ type observation struct {
 }
 
 type memberState struct {
-	observations []observation
-	spacings     []float64
+	lastMeasurement *data.Measurement
+	observations    []observation
+	spacings        []float64
 }
 
 /*
@@ -191,8 +192,28 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 	}
 
+	emit := func(from time.Time) *data.Measurement {
+		var res *data.Measurement
+
+		if mem.lastMeasurement == nil {
+			res = data.NewFromPrior(prior, signal.Name(), output)
+		}
+
+		if res == nil {
+			res = mem.lastMeasurement.Next(prior.At, output)
+		}
+
+		mem.lastMeasurement = res
+
+		if !from.IsZero() {
+			res.From = from
+		}
+
+		return res
+	}
+
 	if len(cadences) == 0 {
-		return prior.Next(signal.Name(), output)
+		return emit(time.Time{})
 	}
 
 	horizon := median(cadences)
@@ -232,9 +253,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	output["excluded_member_count"] = cohortMemberCount - validCount
 
 	if validCount == 0 {
-		res := prior.Next(signal.Name(), output)
-		res.From = time.Unix(0, int64(fromNano)).UTC()
-		return res
+		return emit(time.Unix(0, int64(fromNano)).UTC())
 	}
 
 	for _, vr := range valid {
@@ -418,10 +437,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		signal.historyPath(output, [2]float64{bZScore, mZScore})
 	}
 
-	res := prior.Next(signal.Name(), output)
-	res.From = time.Unix(0, int64(fromNano)).UTC()
-
-	return res
+	return emit(time.Unix(0, int64(fromNano)).UTC())
 }
 
 /*

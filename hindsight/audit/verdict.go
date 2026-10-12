@@ -136,15 +136,14 @@ func hypothesisVerdict(pValue float64, permutations int, significance float64) s
 }
 
 /*
-zBound is the largest |z| a stream of n standardized observations may show
-at family-wise level significance under any finite-variance distribution:
-Chebyshev bounds P(|z| >= k) by 1/k^2, so the union over n observations stays
-below significance at k = sqrt(n / significance). A causal z-score uses an
-estimated scale, so this is a bound on a well-behaved stream, not a test of
-normality; a z beyond it is not a tail event but a broken scale.
+rankBound is the largest |z| an empirical mid-rank z-score may show against
+support priors: a value beyond every prior.
 */
-func zBound(n int, significance float64) float64 {
-	return math.Sqrt(float64(max(n, 1)) / significance)
+func rankBound(support float64) float64 {
+	if support <= 0 {
+		return 0
+	}
+	return math.Sqrt2 * math.Erfinv(2*(support+0.5)/(support+1.0)-1.0)
 }
 
 /*
@@ -181,8 +180,8 @@ func BuildVerdicts(report *AuditReport) []StageVerdict {
 	t := report.Thresholds
 	verdicts := []StageVerdict{
 		{"0. Contracts", contractVerdict(report.Contract),
-			fmt.Sprintf("declared hard domains on every observation; |z| <= sqrt(n/%.2f) per stream", t.Significance),
-			fmt.Sprintf("%d/%d series breach a domain (%d observations); %d z beyond bound",
+			"declared hard domains on every observation; |z| <= rankBound(support)",
+			fmt.Sprintf("%d/%d series breach a domain (%d observations); %d z beyond rank bound",
 				report.Contract.BreachingMetricsCount, report.Contract.TotalMetricsChecked,
 				report.Contract.TotalBreaches, report.Contract.MetricNorm.ZMagnitudeBreaches)},
 		{"0.5 Timing", report.Timing.Status,

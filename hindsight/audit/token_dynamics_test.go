@@ -40,7 +40,7 @@ func TestComputeTransitionEntropy(t *testing.T) {
 		Convey("When row frequencies are asymmetric across the transition ensemble", func() {
 			transitions := map[string]map[string]int{
 				"R00": {"R01": 5, "R02": 5}, // 10 transitions, row entropy = 1.0 bit
-				"R01": {"R00": 90},           // 90 transitions, row entropy = 0.0 bit
+				"R01": {"R00": 90},          // 90 transitions, row entropy = 0.0 bit
 			}
 
 			// Total transitions = 100

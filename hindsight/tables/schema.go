@@ -23,10 +23,9 @@ func MeasurementSchema() *iceberg.Schema {
 			{ID: 19, Name: "normalized", Type: iceberg.PrimitiveTypes.Float64, Required: true},
 			{ID: 20, Name: "standardized", Type: iceberg.PrimitiveTypes.Float64, Required: true},
 			{ID: 21, Name: "exact", Type: iceberg.PrimitiveTypes.String, Required: false},
-			{ID: 22, Name: "center", Type: iceberg.PrimitiveTypes.Float64, Required: true},
-			{ID: 23, Name: "scale", Type: iceberg.PrimitiveTypes.Float64, Required: true},
-			{ID: 24, Name: "unit", Type: iceberg.PrimitiveTypes.String, Required: true},
-			{ID: 25, Name: "timescale", Type: iceberg.PrimitiveTypes.String, Required: true},
+			{ID: 22, Name: "support", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+			{ID: 23, Name: "unit", Type: iceberg.PrimitiveTypes.String, Required: true},
+			{ID: 24, Name: "timescale", Type: iceberg.PrimitiveTypes.String, Required: true},
 		},
 	}
 
@@ -51,10 +50,10 @@ func MeasurementSchema() *iceberg.Schema {
 				ValueID: 17, ValueType: metricStruct, ValueRequired: false,
 			},
 		},
-		iceberg.NestedField{ID: 26, Name: "metadata", Required: false,
+		iceberg.NestedField{ID: 25, Name: "metadata", Required: false,
 			Type: &iceberg.MapType{
-				KeyID: 27, KeyType: iceberg.PrimitiveTypes.String,
-				ValueID: 28, ValueType: iceberg.PrimitiveTypes.String, ValueRequired: false,
+				KeyID: 26, KeyType: iceberg.PrimitiveTypes.String,
+				ValueID: 27, ValueType: iceberg.PrimitiveTypes.String, ValueRequired: false,
 			},
 		},
 	)

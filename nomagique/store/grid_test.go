@@ -46,8 +46,8 @@ var regionEpoch atomic.Int64
 regionFrame builds a finalized frame whose peers hold sizes[idx] metrics
 pinned to each region, and returns the frame with every metric entry so a
 test can assign standardized deformations directly. When warm is true each
-metric stream first observes core.MinimumPrior differing values through
-the real finalization path, so the returned metrics have a defined z-score; when warm
+metric stream first observes core.MinimumRankPrior values through the real
+finalization path, so the returned metrics have a defined z-score; when warm
 is false every returned metric is its stream's first observation.
 */
 func regionFrame(grid *Grid, sizes [12]int, warm bool) (*data.Measurement, [12][]*data.MetricEntry) {
@@ -64,16 +64,19 @@ func regionFrame(grid *Grid, sizes [12]int, warm bool) (*data.Measurement, [12][
 
 		pin := regionPins[idx]
 		region := uint8(idx)
+		unit, timescale := data.GetDimension(pin.source, pin.stem)
 		history := []float64{1}
 
 		if warm {
 			history = nil
 
-			for hIdx := range int(core.MinimumPrior) {
+			for hIdx := range int(core.MinimumRankPrior) {
 				history = append(history, float64(2*(hIdx%2)))
 			}
 
-			history = append(history, 1)
+			// Beyond every prior, so its rank z-score is defined and
+			// nonzero; the median of the alternating priors would rank to 0.
+			history = append(history, 3)
 		}
 
 		var peer *data.Measurement
@@ -93,12 +96,11 @@ func regionFrame(grid *Grid, sizes [12]int, warm bool) (*data.Measurement, [12][
 				peer.At, peer.From = at, at
 				metrics := make([]*data.Metric, 0, len(values))
 				for k, v := range values {
-					metrics = append(metrics, data.NewMetric(k, v, data.UnitDimensionless, data.TimescaleTick))
+					metrics = append(metrics, data.NewMetric(k, v, unit, timescale))
 				}
 				peer.Write(metrics...)
 			} else {
-				peer = peer.Next(pin.source, values)
-				peer.At, peer.From = at, at
+				peer = peer.Next(at, values)
 			}
 		}
 
@@ -316,13 +318,12 @@ func TestGrid_Unpinned(t *testing.T) {
 				data.NewMetric("curvature", 0, data.UnitDimensionless, data.TimescaleTick),
 			)
 
-			for hIdx := range int(core.MinimumPrior) {
+			for hIdx := range int(core.MinimumRankPrior) {
 				values := map[string]float64{
 					"surprise":  float64(2 * (hIdx % 2)),
 					"curvature": float64(2 * (hIdx % 2)),
 				}
-				peer = peer.Next(source, values)
-				peer.At, peer.From = at, at
+				peer = peer.Next(at, values)
 			}
 
 			entries := make([]*data.MetricEntry, 0, 2)

@@ -15,6 +15,7 @@ import (
 type Signal struct {
 	*runtime.System
 	stages core.Primitive
+	last   map[string]*data.Measurement
 }
 
 func NewSignal(ctx context.Context) *Signal {
@@ -28,6 +29,7 @@ func NewSignal(ctx context.Context) *Signal {
 			nmcorrelation.NewEnergyVelocity(),
 			nmcorrelation.NewRecurrence(),
 		),
+		last: make(map[string]*data.Measurement),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "correlation", signal)
@@ -64,13 +66,19 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	out := prior.Next(signal.Name(), frame.Metrics)
+	var out *data.Measurement
+	if prev, ok := signal.last[prior.Label]; ok {
+		out = prev.Next(prior.At, frame.Metrics)
+	}
 
-	// The single-pair metrics describe the peer with the most overlapping
-	// data; the frame names it so they can be read against that peer.
+	if out == nil {
+		out = data.NewFromPrior(prior, signal.Name(), frame.Metrics)
+	}
+
 	if frame.Reference != "" {
 		out.SetMeta(data.MetadataReferencePeer, frame.Reference)
 	}
 
+	signal.last[prior.Label] = out
 	return out
 }

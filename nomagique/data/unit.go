@@ -592,10 +592,13 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"historical_path_percentile":          {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 	},
 	"spot:trade": {
-		"price":     {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"qty":       {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
-		"touch_bid": {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
-		"touch_ask": {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"price":      {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"qty":        {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+		"book_depth": {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"bid_price":  {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"bid_qty":    {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+		"ask_price":  {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
+		"ask_qty":    {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
 	},
 	"spot:level3": {
 		"limit_price": {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
@@ -640,43 +643,6 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"region_members:R10":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"region_members:R11":    {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 	},
-}
-
-/*
-Scale is the space a metric stream is standardized in.
-*/
-type Scale uint8
-
-const (
-	ScaleLinear Scale = iota
-	ScaleLogModulus
-)
-
-/*
-Scale returns the space a stream of this unit is standardized in. A quotient by
-elapsed venue time (a rate, velocity, or acceleration) divides by an interval
-whose support reaches down to core.ClockResolution, so its magnitude spans
-orders of magnitude and its population variance need not exist: a linear
-z-score against such a stream reports the interval's grain, not the market,
-and no Chebyshev bound holds for it. Those units are standardized on the signed
-log-modulus scale (core.LogModulus), which keeps sign, order, and zero. Every
-other unit is standardized as observed.
-*/
-func (unit Unit) Scale() Scale {
-	switch unit {
-	case UnitRate,
-		UnitPerSecond,
-		UnitTradeRate,
-		UnitVolumeRate,
-		UnitNotionalRate,
-		UnitSignedRate,
-		UnitSignedNotionalRate,
-		UnitVelocity,
-		UnitAcceleration:
-		return ScaleLogModulus
-	}
-
-	return ScaleLinear
 }
 
 func stripScope(label string) string {

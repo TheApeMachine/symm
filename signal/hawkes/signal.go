@@ -12,11 +12,13 @@ import (
 type Signal struct {
 	*runtime.System
 	models map[string]*nmhawkes.Hawkes
+	last   map[string]*data.Measurement
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		models: make(map[string]*nmhawkes.Hawkes),
+		last:   make(map[string]*data.Measurement),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "hawkes", signal)
@@ -97,8 +99,17 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		errnie.Warn("[hawkes] " + prior.Label + ": model dropped: " + dropped.Error())
 	}
 
-	out := prior.Next(signal.Name(), res)
-	out.From = from
+	var out *data.Measurement
+	if prev, ok := signal.last[prior.Label]; ok {
+		out = prev.Next(prior.At, res)
+	}
 
+	if out == nil {
+		out = data.NewFromPrior(prior, signal.Name(), res)
+	}
+
+	out.SetMeta("side", side)
+	out.From = from
+	signal.last[prior.Label] = out
 	return out
 }

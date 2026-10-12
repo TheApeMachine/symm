@@ -7,13 +7,13 @@ import (
 )
 
 type FluidPhaseFrameT struct {
-	Source string `json:"source"`
-	At int64 `json:"at"`
-	PhaseReady bool `json:"phaseReady"`
-	PhaseReason string `json:"phaseReason"`
-	Wave []*WaveModeT `json:"wave"`
-	Hydrodynamics *HydrodynamicsT `json:"hydrodynamics"`
-	PhaseScan []*PhaseResponseT `json:"phaseScan"`
+	Source        string            `json:"source"`
+	At            int64             `json:"at"`
+	PhaseReady    bool              `json:"phaseReady"`
+	PhaseReason   string            `json:"phaseReason"`
+	Wave          []*WaveModeT      `json:"wave"`
+	Hydrodynamics *HydrodynamicsT   `json:"hydrodynamics"`
+	PhaseScan     []*PhaseResponseT `json:"phaseScan"`
 }
 
 func (t *FluidPhaseFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

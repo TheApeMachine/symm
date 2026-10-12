@@ -24,7 +24,6 @@ func newGapSummaryFromGaps(gaps []float64) gapSummary {
 	return gapSummary{sorted: sorted}
 }
 
-
 func (summary gapSummary) finite() bool {
 	for _, value := range summary.sorted {
 		if math.IsNaN(value) || math.IsInf(value, 0) {

@@ -198,9 +198,9 @@ func storeLevel3(level3Msg *kraken.Level3, epoch int64, storeTee nmruntime.Tee, 
 
 /*
 handleTrade decodes a Kraken trade frame, updates price, stamps each trade with
-its ingress sequence number and the book's executable touch at that number,
-steps the workspace pipeline, and pushes the trade measurement to the store tee.
-The touch travels on the trade, so every consumer reads the book as it stood at
+its ingress sequence number and the book's snapshot at that number, steps the
+workspace pipeline, and pushes the trade measurement to the store tee. The
+snapshot travels on the trade, so every consumer reads the book as it stood at
 the trade's SeqIdx rather than whatever the live book holds when a pipeline
 consumer gets to it.
 */
@@ -239,7 +239,7 @@ func handleTrade(
 			)
 		}
 
-		sequence, touchBid, touchAsk := book.Stamp(tradeItem.Symbol)
+		sequence, snapshot := book.Stamp(tradeItem.Symbol)
 
 		measurement := data.NewMeasurement(
 			epoch,
@@ -286,14 +286,8 @@ func handleTrade(
 			),
 		}
 
-		if touchBid != nil {
-			bidUnit, bidTime := data.GetDimension("spot:trade", "touch_bid")
-			askUnit, askTime := data.GetDimension("spot:trade", "touch_ask")
-
-			metrics = append(metrics,
-				data.NewExactMetric("touch_bid", touchBid, bidUnit, bidTime),
-				data.NewExactMetric("touch_ask", touchAsk, askUnit, askTime),
-			)
+		if snapshot != nil {
+			metrics = append(metrics, snapshot.Metrics()...)
 		}
 
 		measurement.Write(metrics...)

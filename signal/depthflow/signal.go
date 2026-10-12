@@ -2,11 +2,9 @@ package depthflow
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -55,6 +53,7 @@ func (ce *causalEstimator) Step(value float64) (
 }
 
 type symbolState struct {
+	lastMeasurement     *data.Measurement
 	prevBids            map[float64]float64
 	prevAsks            map[float64]float64
 	prevFullBid         bool
@@ -80,21 +79,15 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookSource
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		books:  books,
 		states: make(map[string]*symbolState),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "depthflow", signal)
-
-	if err := errnie.Require(map[string]any{"books": books}); err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[depthflow] book manager is required", err))
-	}
 
 	return signal
 }
@@ -104,63 +97,24 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	if signal.books == nil {
-		signal.Error(errnie.Err(errnie.Internal, "[depthflow] book manager is required", nil))
+	// The book is the snapshot ingress stamped onto the trade at its sequence
+	// number: every level of the depth window as the trade found it. A side
+	// that fills the window may have levels resting beyond it.
+	snapshot, err := broker.ReadSnapshot(prior)
+
+	if err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[depthflow] stamped book unreadable", err))
 		return nil
 	}
 
-	var bids, asks [][2]float64
-	var crossedBid, crossedAsk float64
-	fullBid, fullAsk := false, false
-	ok := false
-	crossed := false
-
-	signal.books.Book(prior.Label, func(book *spotbook.Book) {
-		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
-			return
-		}
-
-		bidPrice := book.BestBid().Price.Float64()
-		askPrice := book.BestAsk().Price.Float64()
-
-		if askPrice <= bidPrice {
-			crossed = true
-			crossedBid = bidPrice
-			crossedAsk = askPrice
-			return
-		}
-
-		for level := book.BestBid(); level != nil; level = level.Lower {
-			price := level.Price.Float64()
-			qty := level.Quantity.Float64()
-
-			if price > 0 && qty > 0 {
-				bids = append(bids, [2]float64{price, qty})
-			}
-		}
-
-		for level := book.BestAsk(); level != nil; level = level.Higher {
-			price := level.Price.Float64()
-			qty := level.Quantity.Float64()
-
-			if price > 0 && qty > 0 {
-				asks = append(asks, [2]float64{price, qty})
-			}
-		}
-
-		ok = len(bids) > 0 && len(asks) > 0
-		fullBid = len(bids) >= 10
-		fullAsk = len(asks) >= 10
-	})
-
-	if crossed {
-		errnie.Warn(fmt.Sprintf("[depthflow] dropping frame for %s with crossed book: bid=%v ask=%v", prior.Label, crossedBid, crossedAsk))
+	if snapshot == nil {
 		return nil
 	}
 
-	if !ok {
-		return nil
-	}
+	bids := ladder(snapshot.Bids)
+	asks := ladder(snapshot.Asks)
+	fullBid := snapshot.Full(snapshot.Bids)
+	fullAsk := snapshot.Full(snapshot.Asks)
 
 	touchBid := bids[0][0] * bids[0][1]
 	touchAsk := asks[0][0] * asks[0][1]
@@ -321,9 +275,18 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	state.prevAt = prior.At
 	state.hasPrev = true
 
-	res := prior.Next(signal.Name(), out)
+	var res *data.Measurement
 
-	// Flow is measured over (previous frame, this frame].
+	if state.lastMeasurement == nil {
+		res = data.NewFromPrior(prior, signal.Name(), out)
+	}
+
+	if res == nil {
+		res = state.lastMeasurement.Next(prior.At, out)
+	}
+
+	state.lastMeasurement = res
+
 	if hadPrev {
 		res.From = prevAt
 	}
@@ -350,6 +313,19 @@ func emitEstimate(
 	}
 
 	return zScore, hasZ
+}
+
+/*
+ladder converts one stamped side, best first, to (price, quantity) pairs.
+*/
+func ladder(levels []broker.Level) [][2]float64 {
+	pairs := make([][2]float64, len(levels))
+
+	for index, level := range levels {
+		pairs[index] = [2]float64{level.Price.Float64(), level.Quantity.Float64()}
+	}
+
+	return pairs
 }
 
 /*

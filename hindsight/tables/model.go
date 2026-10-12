@@ -93,7 +93,7 @@ func (catalog *Catalog) GetAction(ctx context.Context, key string) string {
 
 	var (
 		current string
-		action string
+		action  string
 	)
 
 	for paginator.HasMorePages() {

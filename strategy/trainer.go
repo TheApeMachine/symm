@@ -20,7 +20,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/workbench"
 )
 
 /*
@@ -30,10 +29,9 @@ action tree whose decisions are governed by unanimous matching continuations.
 */
 type Trainer struct {
 	*runtime.System
-	catalog   *tables.Catalog
-	price     *broker.Price
-	symbols   map[string]struct{}
-	warehouse *workbench.Warehouse
+	catalog *tables.Catalog
+	price   *broker.Price
+	symbols map[string]struct{}
 }
 
 func NewTrainer(
@@ -42,9 +40,8 @@ func NewTrainer(
 	price *broker.Price,
 ) *Trainer {
 	trainer := &Trainer{
-		catalog:   catalog,
-		price:     price,
-		warehouse: workbench.New(),
+		catalog: catalog,
+		price:   price,
 	}
 
 	trainer.System = runtime.NewSystem(ctx, "trainer")
@@ -143,10 +140,6 @@ fits an unpruned action tree on historical evidence, and publishes the
 resulting consensus-governed decision paths to S3.
 */
 func (trainer *Trainer) Generate(epochs ...int64) error {
-	if trainer.warehouse != nil {
-		defer trainer.warehouse.Close()
-	}
-
 	if trainer.price == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -272,82 +265,6 @@ type epochResult struct {
 	err        error
 }
 
-func (trainer *Trainer) loadEpochDuckDB(
-	ctx context.Context,
-	grid *store.Grid,
-	epoch int64,
-	minTick, maxTick int64,
-) (map[int64]*tickAccumulator, int64, error) {
-	if trainer.warehouse == nil {
-		return nil, 0, errnie.Error(errnie.Err(errnie.Validation, "[training] warehouse is nil", nil))
-	}
-
-	db, err := trainer.warehouse.DB(ctx)
-
-	if err != nil {
-		return nil, 0, err
-	}
-
-	query := `
-		SELECT 
-			tick, 
-			source, 
-			entry.key AS metric_key, 
-			entry.value.standardized AS standardized
-		FROM (
-			SELECT tick, source, unnest(map_entries(metrics)) AS entry
-			FROM symmwarehouse.hindsight.measurements
-			WHERE epoch = ? AND tick >= ? AND tick <= ?
-			  AND source IN ('correlation', 'cvd', 'depthflow', 'hawkes', 'leadlag', 'liquidity', 'morphology', 'pumpdump', 'sentiment', 'toxicity')
-		)
-		WHERE entry.value.scale > 0
-	`
-
-	rows, err := db.QueryContext(ctx, query, epoch, minTick, maxTick)
-
-	if err != nil {
-		return nil, 0, err
-	}
-
-	defer rows.Close()
-
-	accumulators := make(map[int64]*tickAccumulator)
-	var measurementCount int64
-
-	for rows.Next() {
-		var tick int64
-		var source, metricKey string
-		var standardized float64
-
-		if err := rows.Scan(&tick, &source, &metricKey, &standardized); err != nil {
-			return nil, 0, err
-		}
-
-		region, ok := grid.PinRegion(source, metricKey)
-
-		if !ok {
-			continue
-		}
-
-		acc, exists := accumulators[tick]
-
-		if !exists {
-			acc = &tickAccumulator{}
-			accumulators[tick] = acc
-		}
-
-		acc.deformation[region] += math.Abs(standardized)
-		acc.counts[region]++
-		measurementCount++
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, 0, err
-	}
-
-	return accumulators, measurementCount, nil
-}
-
 func (trainer *Trainer) loadEpoch(
 	grid *store.Grid,
 	epoch int64,
@@ -362,95 +279,72 @@ func (trainer *Trainer) loadEpoch(
 
 	loadStart := time.Now()
 	var measurementCount int64
+	accumulators := make(map[int64]*tickAccumulator)
+	lastLog := time.Now()
 
-	accumulators, count, duckErr := trainer.loadEpochDuckDB(
-		trainer.Context(), grid, epoch, minTick, maxTick,
-	)
+	for measurement, tapeErr := range trainer.catalog.SignalLogic(
+		trainer.Context(),
+		epoch,
+		"",
+		minTick,
+		maxTick,
+		tables.SensorySources...,
+	) {
+		if tapeErr != nil {
+			return epochResult{
+				err: errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("[training] tape read error in epoch %d", epoch),
+					tapeErr,
+				)),
+			}
+		}
 
-	if duckErr == nil && len(accumulators) > 0 {
-		measurementCount = count
-		errnie.Info(fmt.Sprintf(
-			"[training] [epoch %d tape] DuckDB vectorized read complete: %d metric readings across %d unique ticks in %s",
-			epoch, measurementCount, len(accumulators), time.Since(loadStart).Round(time.Millisecond),
-		))
-	}
+		if measurement == nil {
+			continue
+		}
 
-	if duckErr != nil || len(accumulators) == 0 {
-		if duckErr != nil {
-			errnie.Warn(fmt.Sprintf(
-				"[training] [epoch %d tape] DuckDB query unavailable (%v); using SignalLogic reader",
-				epoch, duckErr,
+		measurementCount++
+		now := time.Now()
+
+		if now.Sub(lastLog) >= 5*time.Second {
+			lastLog = now
+			elapsed := now.Sub(loadStart)
+			rate := float64(measurementCount) / elapsed.Seconds()
+			errnie.Info(fmt.Sprintf(
+				"[training] [epoch %d tape] %d measurements (%d unique ticks) | elapsed: %s (%.0f meas/s)",
+				epoch, measurementCount, len(accumulators), elapsed.Round(time.Second), rate,
 			))
 		}
 
-		accumulators = make(map[int64]*tickAccumulator)
-		measurementCount = 0
-		lastLog := time.Now()
+		acc, exists := accumulators[measurement.Tick]
 
-		for measurement, tapeErr := range trainer.catalog.SignalLogic(
-			trainer.Context(),
-			epoch,
-			"",
-			minTick,
-			maxTick,
-			tables.SensorySources...,
-		) {
-			if tapeErr != nil {
-				return epochResult{
-					err: errnie.Error(errnie.Err(
-						errnie.IO,
-						fmt.Sprintf("[training] tape read error in epoch %d", epoch),
-						tapeErr,
-					)),
-				}
-			}
+		if !exists {
+			acc = &tickAccumulator{}
+			accumulators[measurement.Tick] = acc
+		}
 
-			if measurement == nil {
+		for metric := range measurement.Read() {
+			region, ok := grid.PinRegion(measurement.Source, metric.Key)
+
+			if !ok {
 				continue
 			}
 
-			measurementCount++
-			now := time.Now()
-
-			if now.Sub(lastLog) >= 5*time.Second {
-				lastLog = now
-				elapsed := now.Sub(loadStart)
-				rate := float64(measurementCount) / elapsed.Seconds()
-				errnie.Info(fmt.Sprintf(
-					"[training] [epoch %d tape] %d measurements (%d unique ticks) | elapsed: %s (%.0f meas/s)",
-					epoch, measurementCount, len(accumulators), elapsed.Round(time.Second), rate,
-				))
+			if !metric.Metric.Standardizable() {
+				continue
 			}
 
-			acc, exists := accumulators[measurement.Tick]
-
-			if !exists {
-				acc = &tickAccumulator{}
-				accumulators[measurement.Tick] = acc
-			}
-
-			for metric := range measurement.Read() {
-				region, ok := grid.PinRegion(measurement.Source, metric.Key)
-
-				if !ok {
-					continue
-				}
-
-				if !metric.Metric.Standardizable() {
-					continue
-				}
-
-				acc.deformation[region] += math.Abs(metric.Metric.Standardized)
-				acc.counts[region]++
-			}
+			acc.deformation[region] += math.Abs(metric.Metric.Standardized)
+			acc.counts[region]++
 		}
-
-		elapsed := time.Since(loadStart)
-		errnie.Info(fmt.Sprintf(
-			"[training] [epoch %d tape] complete: %d measurements across %d unique ticks in %s",
-			epoch, measurementCount, len(accumulators), elapsed.Round(time.Second),
-		))
 	}
+
+	elapsed := time.Since(loadStart)
+	errnie.Info(fmt.Sprintf(
+		"[training] [epoch %d tape] complete: %d measurements across %d unique ticks in %s",
+		epoch, measurementCount, len(accumulators), elapsed.Round(time.Second),
+	))
 
 	tokens := make(map[int64]string, len(accumulators))
 	ticks := make([]int64, 0, len(accumulators))

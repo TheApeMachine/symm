@@ -65,7 +65,7 @@ func AnalyzeContract(
 			}
 
 			metric := entry.Metric
-			name := metric.Label
+			name := metric.CleanLabel()
 			val := metric.Raw
 			unit := metric.Unit()
 
@@ -151,7 +151,7 @@ func AnalyzeContract(
 		), "metric", b.Metric, "unit", b.DeclaredUnit, "domain", b.DeclaredDomain, "breaches", b.BreachCount, "total", b.TotalSamples, "min", b.MinVal, "max", b.MaxVal)
 	}
 
-	normAudit := auditMetricNormalization(measurements, significance)
+	normAudit := auditMetricNormalization(measurements)
 	stateAudit := auditMeasurementState(measurements)
 
 	diagnosis := "All examined metrics comply with the hard domains declared by their units."
@@ -186,48 +186,7 @@ func AnalyzeContract(
 	}
 }
 
-func auditMetricNormalization(measurements []*data.Measurement, significance float64) MetricNormAudit {
-	// Defined z-scores per stream (source, symbol, metric), for the
-	// magnitude bound: a stream of n z-scores may not exceed zBound(n).
-	type streamKey struct{ source, label, metric string }
-	streamCounts := make(map[streamKey]int)
-
-	for _, meas := range measurements {
-		if meas == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.metric_norm] nil measurement encountered in audit stream",
-				nil,
-			))
-
-			continue
-		}
-
-		if meas.ID == 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.metric_norm] measurement with unassigned ID (zero) encountered in audit stream",
-				nil,
-			), "source", meas.Source, "label", meas.Label, "epoch", meas.Epoch)
-		}
-
-		for entry := range meas.Read() {
-			if entry == nil || entry.Metric == nil {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"[audit.metric_norm] nil metric entry in measurement",
-					nil,
-				), "label", meas.Label, "source", meas.Source)
-
-				continue
-			}
-
-			if entry.Metric.Standardizable() {
-				streamCounts[streamKey{meas.Source, meas.Label, entry.Metric.Label}]++
-			}
-		}
-	}
-
+func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit {
 	zBreaches := 0
 	zBreachesBySource := make(map[string]int)
 	maxAbsZBySource := make(map[string]float64)
@@ -291,15 +250,30 @@ func auditMetricNormalization(measurements []*data.Measurement, significance flo
 				maxAbsZ = absZ
 			}
 
+			if !metric.Standardizable() {
+				// Invariant: unstandardizable metric must have zero z-score and zero normalized value.
+				if std != 0 || norm != 0 {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"[audit.metric_norm] unstandardizable metric has non-zero standardized/normalized value",
+						nil,
+					), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "z", std, "norm", norm)
+
+					stdBreaches++
+				}
+			}
+
 			if metric.Standardizable() {
 				maxAbsZBySource[meas.Source] = math.Max(maxAbsZBySource[meas.Source], absZ)
 
-				if absZ > zBound(streamCounts[streamKey{meas.Source, meas.Label, metric.Label}], significance) {
+				support := metric.Support()
+				bound := rankBound(support)
+				if absZ > bound+1e-9 {
 					errnie.Error(errnie.Err(
 						errnie.Validation,
-						"[audit.metric_norm] standardized z-score exceeded Chebyshev scale bound",
+						"[audit.metric_norm] standardized z-score exceeded rank bound",
 						nil,
-					), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "z", std)
+					), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "z", std, "bound", bound, "support", support)
 
 					zBreaches++
 					zBreachesBySource[meas.Source]++
@@ -348,8 +322,8 @@ func auditMetricNormalization(measurements []*data.Measurement, significance flo
 	}
 
 	summary := fmt.Sprintf(
-		"Metrics Norm/Std: %d audited. Mean z=%.3f (var=%.3f, max|z|=%.3g). Saturated: %.1f%%. Breaches: norm=%d, std=%d, z beyond sqrt(n/%.2f)=%d.",
-		totalAudited, meanZ, varZ, maxAbsZ, satFraction*100, normBreaches, stdBreaches, significance, zBreaches,
+		"Metrics Norm/Std: %d audited. Mean z=%.3f (var=%.3f, max|z|=%.3g). Saturated: %.1f%%. Breaches: norm=%d, std=%d, z beyond rank bound=%d.",
+		totalAudited, meanZ, varZ, maxAbsZ, satFraction*100, normBreaches, stdBreaches, zBreaches,
 	)
 
 	return MetricNormAudit{
@@ -522,7 +496,6 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			energyBreaches++
 		}
 
-
 		if math.IsNaN(m) || math.IsInf(m, 0) || m < 0.0 || m > 1.0 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
@@ -645,28 +618,13 @@ func distributionSummary(values []float64) (float64, float64, float64) {
 	return mean, median, p95
 }
 
-func cleanMetricName(name string) string {
-	base := name
-
-	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
-		base = base[:atIndex]
-	}
-
-	if colonIndex := strings.IndexByte(base, ':'); colonIndex != -1 {
-		base = base[:colonIndex]
-	}
-
-	return base
-}
-
 /*
 isAbsoluteScore reports whether a covariance score metric is explicitly an
 absolute score (its magnitude), which is non-negative [0, +inf).
 */
 func isAbsoluteScore(name string) bool {
-	base := cleanMetricName(name)
-	return strings.HasPrefix(base, "absolute_covariance_score") ||
-		strings.HasPrefix(base, "cohort_absolute_covariance_score")
+	return strings.HasPrefix(name, "absolute_covariance_score") ||
+		strings.HasPrefix(name, "cohort_absolute_covariance_score")
 }
 
 func declaredDomain(unit data.Unit, name ...string) string {
@@ -675,8 +633,6 @@ func declaredDomain(unit data.Unit, name ...string) string {
 	if len(name) > 0 {
 		metricName = name[0]
 	}
-
-	base := cleanMetricName(metricName)
 
 	switch unit {
 	case data.UnitProbability, data.UnitConfidence:
@@ -719,7 +675,7 @@ func declaredDomain(unit data.Unit, name ...string) string {
 		return "[0, +inf)"
 
 	case data.UnitCovarianceScore:
-		if isAbsoluteScore(base) {
+		if isAbsoluteScore(metricName) {
 			return "[0, +inf)"
 		}
 
@@ -756,8 +712,6 @@ func contractViolation(unit data.Unit, value float64, name ...string) string {
 	if len(name) > 0 {
 		metricName = name[0]
 	}
-
-	base := cleanMetricName(metricName)
 
 	switch unit {
 	case data.UnitProbability, data.UnitConfidence:
@@ -812,7 +766,7 @@ func contractViolation(unit data.Unit, value float64, name ...string) string {
 		return ""
 
 	case data.UnitCovarianceScore:
-		if isAbsoluteScore(base) {
+		if isAbsoluteScore(metricName) {
 			if value < 0.0 {
 				return "negative_value_for_non_negative_unit"
 			}

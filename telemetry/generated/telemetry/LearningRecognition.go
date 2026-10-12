@@ -7,11 +7,11 @@ import (
 )
 
 type LearningRecognitionT struct {
-	AtNs int64 `json:"atNs"`
-	Fragments int32 `json:"fragments"`
-	Frames uint64 `json:"frames"`
-	Grid *LearningGridT `json:"grid"`
-	Learners []*LearningLearnerT `json:"learners"`
+	AtNs      int64               `json:"atNs"`
+	Fragments int32               `json:"fragments"`
+	Frames    uint64              `json:"frames"`
+	Grid      *LearningGridT      `json:"grid"`
+	Learners  []*LearningLearnerT `json:"learners"`
 }
 
 func (t *LearningRecognitionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

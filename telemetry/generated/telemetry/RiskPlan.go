@@ -7,17 +7,17 @@ import (
 )
 
 type RiskPlanT struct {
-	Present bool `json:"present"`
+	Present        bool   `json:"present"`
 	EntryNoiseBand string `json:"entryNoiseBand"`
-	NoiseBand string `json:"noiseBand"`
-	RiskDistance string `json:"riskDistance"`
-	TrailDistance string `json:"trailDistance"`
-	ArmBuffer string `json:"armBuffer"`
-	LockBuffer string `json:"lockBuffer"`
-	MinEdge string `json:"minEdge"`
-	MaxLoss string `json:"maxLoss"`
-	ExitFeeRate string `json:"exitFeeRate"`
-	EntryFeeRate string `json:"entryFeeRate"`
+	NoiseBand      string `json:"noiseBand"`
+	RiskDistance   string `json:"riskDistance"`
+	TrailDistance  string `json:"trailDistance"`
+	ArmBuffer      string `json:"armBuffer"`
+	LockBuffer     string `json:"lockBuffer"`
+	MinEdge        string `json:"minEdge"`
+	MaxLoss        string `json:"maxLoss"`
+	ExitFeeRate    string `json:"exitFeeRate"`
+	EntryFeeRate   string `json:"entryFeeRate"`
 }
 
 func (t *RiskPlanT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

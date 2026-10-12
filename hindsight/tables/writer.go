@@ -12,11 +12,11 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
-const defaultTargetCommitBytes = 16 * 1024 * 1024 // 16 MB on-disk batch target
+const defaultTargetCommitBytes = 128 * 1024 * 1024 // 128 MB on-disk batch target
 
 /*
 TargetCommitBytes returns the configured target size in bytes for Iceberg data files,
-falling back to defaultTargetCommitBytes (16 MB).
+falling back to defaultTargetCommitBytes (128 MB).
 */
 func TargetCommitBytes() int64 {
 	if configured := viper.GetInt64("storage.iceberg.append_bytes"); configured > 0 {
@@ -39,7 +39,9 @@ type Writer struct {
 	epoch   int64
 
 	mu            sync.Mutex
-	measurements  []*data.Measurement
+	bySource      map[string][]*data.Measurement
+	sourceBytes   map[string]int64
+	bufferedRows  int
 	bufferedBytes int64
 }
 
@@ -56,9 +58,11 @@ NewWriter constructs a Writer writing into the given catalog for a stable run ep
 */
 func NewWriter(catalog *Catalog, epoch int64) *Writer {
 	return &Writer{
-		catalog: catalog,
-		table:   Measurements,
-		epoch:   epoch,
+		catalog:     catalog,
+		table:       Measurements,
+		epoch:       epoch,
+		bySource:    make(map[string][]*data.Measurement),
+		sourceBytes: make(map[string]int64),
 	}
 }
 
@@ -73,12 +77,17 @@ func (writer *Writer) Add(channel string, measurement *data.Measurement) {
 	writer.lock()
 	defer writer.unlock()
 
-	writer.measurements = append(writer.measurements, measurement)
-	writer.bufferedBytes += measurement.ApproximateBytes()
+	source := measurement.Source
+	measBytes := measurement.ApproximateBytes()
+
+	writer.bySource[source] = append(writer.bySource[source], measurement)
+	writer.sourceBytes[source] += measBytes
+	writer.bufferedRows++
+	writer.bufferedBytes += measBytes
 }
 
 /*
-CommitReady commits buffered measurements to Iceberg once the buffer reaches
+CommitReady commits buffered measurements to Iceberg once a source partition buffer reaches
 the target byte size estimated via measurement.ApproximateBytes(), or flushes
 all buffered measurements if forceAll is true.
 */
@@ -87,69 +96,69 @@ func (writer *Writer) CommitReady(ctx context.Context, forceAll bool) error {
 
 	writer.lock()
 
-	if !forceAll && writer.bufferedBytes < targetBytes {
-		writer.unlock()
+	var toCommit [][]*data.Measurement
 
-		return nil
+	for source, list := range writer.bySource {
+		sourceByteCount := writer.sourceBytes[source]
+
+		if !forceAll && sourceByteCount < targetBytes {
+			continue
+		}
+
+		if len(list) == 0 {
+			continue
+		}
+
+		var currentBatch []*data.Measurement
+		var currentBytes int64
+
+		for _, meas := range list {
+			mBytes := meas.ApproximateBytes()
+			if len(currentBatch) > 0 && currentBytes+mBytes > targetBytes {
+				toCommit = append(toCommit, currentBatch)
+				currentBatch = nil
+				currentBytes = 0
+			}
+			currentBatch = append(currentBatch, meas)
+			currentBytes += mBytes
+		}
+
+		if len(currentBatch) > 0 {
+			if !forceAll && currentBytes < targetBytes {
+				writer.bySource[source] = currentBatch
+				writer.sourceBytes[source] = currentBytes
+				continue
+			}
+			toCommit = append(toCommit, currentBatch)
+		}
+
+		delete(writer.bySource, source)
+		delete(writer.sourceBytes, source)
 	}
 
-	if len(writer.measurements) == 0 {
-		writer.unlock()
-
-		return nil
-	}
-
-	var batches [][]*data.Measurement
-	var currentBatch []*data.Measurement
-	var currentBatchBytes int64
-
-	measurements := writer.measurements
-	writer.measurements = nil
+	writer.bufferedRows = 0
 	writer.bufferedBytes = 0
-
-	for _, measurement := range measurements {
-		measBytes := measurement.ApproximateBytes()
-
-		if len(currentBatch) > 0 && currentBatchBytes+measBytes > targetBytes {
-			batches = append(batches, currentBatch)
-			currentBatch = nil
-			currentBatchBytes = 0
-		}
-
-		currentBatch = append(currentBatch, measurement)
-		currentBatchBytes += measBytes
-	}
-
-	if len(currentBatch) > 0 {
-		if !forceAll && currentBatchBytes < targetBytes {
-			writer.measurements = currentBatch
-			writer.bufferedBytes = currentBatchBytes
-		}
-
-		if forceAll || currentBatchBytes >= targetBytes {
-			batches = append(batches, currentBatch)
-		}
+	for source, list := range writer.bySource {
+		writer.bufferedRows += len(list)
+		writer.bufferedBytes += writer.sourceBytes[source]
 	}
 
 	writer.unlock()
 
-	for batchIndex, batch := range batches {
+	for batchIndex, batch := range toCommit {
 		if err := writer.commitBatch(ctx, writer.table, batch); err != nil {
 			writer.lock()
-			var uncommitted []*data.Measurement
-			var uncommittedBytes int64
-
-			for remainingIndex := batchIndex; remainingIndex < len(batches); remainingIndex++ {
-				for _, meas := range batches[remainingIndex] {
-					uncommitted = append(uncommitted, meas)
-					uncommittedBytes += meas.ApproximateBytes()
+			for remaining := batchIndex; remaining < len(toCommit); remaining++ {
+				for _, meas := range toCommit[remaining] {
+					src := meas.Source
+					mBytes := meas.ApproximateBytes()
+					writer.bySource[src] = append(writer.bySource[src], meas)
+					writer.sourceBytes[src] += mBytes
+					writer.bufferedRows++
+					writer.bufferedBytes += mBytes
 				}
 			}
-
-			writer.measurements = append(uncommitted, writer.measurements...)
-			writer.bufferedBytes += uncommittedBytes
 			writer.unlock()
-
 			return err
 		}
 	}
@@ -199,7 +208,9 @@ func (writer *Writer) ReleaseRemaining() {
 	writer.lock()
 	defer writer.unlock()
 
-	writer.measurements = nil
+	writer.bySource = make(map[string][]*data.Measurement)
+	writer.sourceBytes = make(map[string]int64)
+	writer.bufferedRows = 0
 	writer.bufferedBytes = 0
 }
 
@@ -210,7 +221,7 @@ func (writer *Writer) BufferedRows() int {
 	writer.lock()
 	defer writer.unlock()
 
-	return len(writer.measurements)
+	return writer.bufferedRows
 }
 
 /*

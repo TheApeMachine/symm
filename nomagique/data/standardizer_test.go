@@ -8,114 +8,151 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
-func stepLinear(s *standardizer, val float64) (float64, float64) {
-	_, center, scale, _ := s.observe(val, ScaleLinear)
-	return center, scale
+/*
+midRankZ is the brute-force z-score of value among priors: the standard
+normal quantile of its mid-rank among the priors and itself.
+*/
+func midRankZ(priors []float64, value float64) float64 {
+	below, equal := 0.0, 0.0
+
+	for _, prior := range priors {
+		if prior < value {
+			below++
+		}
+
+		if prior == value {
+			equal++
+		}
+	}
+
+	count := float64(len(priors))
+	probability := (below + (equal+core.Unit)/2) / (count + core.Unit)
+
+	return math.Sqrt2 * math.Erfinv(2*probability-core.Unit)
 }
 
-func TestStandardizerStep(t *testing.T) {
+/*
+edgeZ is the largest z-score a stream with count priors can produce: a value
+beyond every prior.
+*/
+func edgeZ(count float64) float64 {
+	return math.Sqrt2 * math.Erfinv(2*(count+core.Unit/2)/(count+core.Unit)-core.Unit)
+}
+
+func TestStandardizerObserve(t *testing.T) {
 	Convey("Given a fresh standardizer", t, func() {
 		state := &standardizer{}
 
-		Convey("the scale stays undefined until two prior observations differ", func() {
-			for range int(core.MinimumPrior) {
-				_, scale := stepLinear(state, 4)
-				So(scale, ShouldEqual, 0)
+		Convey("the z-score stays undefined below the minimum rank prior", func() {
+			// 1/sqrt(n) <= 0.25 first holds at n = 16.
+			So(core.MinimumRankPrior, ShouldEqual, 16)
+
+			for index := range int(core.MinimumRankPrior) {
+				_, support, defined := state.observe(float64(index))
+				So(defined, ShouldBeFalse)
+				So(support, ShouldEqual, 0)
 			}
 
-			center, scale := stepLinear(state, 10)
-			So(center, ShouldEqual, 4)
-			So(scale, ShouldEqual, 0)
-
-			_, scale = stepLinear(state, 4)
-			So(scale, ShouldBeGreaterThan, 0)
+			_, support, defined := state.observe(0)
+			So(defined, ShouldBeTrue)
+			So(support, ShouldEqual, core.MinimumRankPrior)
 		})
 
-		Convey("the scale stays undefined below the minimum prior count", func() {
-			// 1/sqrt(2(n-1)) <= 0.25 first holds at n = 9.
-			So(core.MinimumPrior, ShouldEqual, 9)
-
-			for idx, value := range []float64{3, -1, 7, 2, 2, 11, -4, 5, 0, 6} {
-				_, scale := stepLinear(state, value)
-				So(scale > 0, ShouldEqual, float64(idx) >= core.MinimumPrior)
+		Convey("each answer is the mid-rank quantile among the earlier values only", func() {
+			values := []float64{
+				3, -1, 7, 2, 2, 11, -4, 5, 0, 6, 9, -2, 2, 2, 8, 1,
+				2, 30, -7, 2, 5, 5, 0, 11, 2, -1, 4, 4, 13, 2,
 			}
-		})
 
-		Convey("each answer is the sample moments of the earlier values only", func() {
-			values := []float64{3, -1, 7, 2, 2, 11, -4, 5, 0, 6, 9, -2}
+			for index, value := range values {
+				standardized, support, defined := state.observe(value)
 
-			for idx, value := range values {
-				center, scale := stepLinear(state, value)
+				if float64(index) < core.MinimumRankPrior {
+					So(defined, ShouldBeFalse)
 
-				if float64(idx) < core.MinimumPrior {
 					continue
 				}
 
-				prior := values[:idx]
-				mean := 0.0
-
-				for _, earlier := range prior {
-					mean += earlier
-				}
-
-				mean /= float64(len(prior))
-				sumSq := 0.0
-
-				for _, earlier := range prior {
-					sumSq += (earlier - mean) * (earlier - mean)
-				}
-
-				So(center, ShouldAlmostEqual, mean, 1e-12)
-				So(scale, ShouldAlmostEqual, math.Sqrt(sumSq/float64(len(prior)-1)), 1e-12)
+				So(defined, ShouldBeTrue)
+				So(support, ShouldEqual, float64(index))
+				So(standardized, ShouldAlmostEqual, midRankZ(values[:index], value), 1e-12)
 			}
 		})
 	})
 
-	Convey("Given a stream whose prior dispersion is rounding residue", t, func() {
+	Convey("Given a stream that sat on one value", t, func() {
 		state := &standardizer{}
 
-		// The stored hawkes:conditional_intensity stream for WLD/USD in epoch
-		// 1791596128450467000 was a flat baseline whose third value differs by
-		// one ulp, then the first excitation; the unguarded scale was 8e-18
-		// and the stored z-score 4.4e17. The flat run is extended to the
-		// minimum prior count so only the negligible-noise rule refuses it.
+		for range int(core.MinimumRankPrior) {
+			state.observe(4)
+		}
+
+		Convey("the plateau value standardizes to exactly zero", func() {
+			standardized, _, defined := state.observe(4)
+			So(defined, ShouldBeTrue)
+			So(standardized, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given the stored BTC/USD relative_spread: a plateau, then a 30x jump", t, func() {
+		state := &standardizer{}
+
+		// The mean/sigma z-score of this jump was stored as 4.137e6.
+		for range int(core.MinimumRankPrior) {
+			state.observe(1.2e-5)
+		}
+
+		Convey("the jump is placed at the edge of its priors", func() {
+			standardized, support, defined := state.observe(3.6e-4)
+			So(defined, ShouldBeTrue)
+			So(standardized, ShouldAlmostEqual, edgeZ(support), 1e-12)
+		})
+	})
+
+	Convey("Given the stored WLD/USD conditional_intensity: one-ulp residue, then excitation", t, func() {
+		state := &standardizer{}
+
+		// The mean/sigma scale of this stream was 8e-18 and the stored
+		// z-score 4.4e17.
 		flat := 0.070071305828507846
 
-		for idx := range int(core.MinimumPrior) {
+		for index := range int(core.MinimumRankPrior) {
 			value := flat
 
-			if idx == 2 {
+			if index == 2 {
 				value = 0.07007130582850786
 			}
 
-			stepLinear(state, value)
+			state.observe(value)
 		}
 
-		Convey("the z-score is undefined rather than float noise in sigma", func() {
+		Convey("the excitation is placed at the edge of its priors", func() {
 			metric := NewMetric("conditional_intensity", 3.5965164367079705, UnitPerSecond, TimescaleInstantaneous)
 			So(metric.finalize(state), ShouldBeNil)
-			So(metric.Standardizable(), ShouldBeFalse)
-			So(metric.Standardized, ShouldEqual, 0)
-			So(metric.Normalized, ShouldEqual, 0)
+			So(metric.Standardizable(), ShouldBeTrue)
+			So(metric.Standardized, ShouldAlmostEqual, edgeZ(core.MinimumRankPrior), 1e-12)
 		})
 	})
 
-	Convey("Given a stream in a unit that makes every value small", t, func() {
+	Convey("Given a micro-cap stream whose values are all near 1e-6", t, func() {
 		state := &standardizer{}
-
-		// Micro-cap prices near 1e-6 moving by 1e-9: real dispersion, far
-		// below any absolute floor of one.
-		for _, value := range []float64{
+		values := []float64{
 			1e-6, 1.001e-6, 0.999e-6, 1.002e-6, 0.998e-6,
 			1e-6, 1.001e-6, 0.999e-6, 1.002e-6, 0.998e-6,
-		} {
-			stepLinear(state, value)
+			1e-6, 1.001e-6, 0.999e-6, 1.002e-6, 0.998e-6,
+			1e-6,
 		}
 
-		Convey("the relative guard keeps the z-score", func() {
-			center, scale := stepLinear(state, 1.01e-6)
-			So(scale, ShouldBeGreaterThan, 0)
-			So((1.01e-6-center)/scale, ShouldAlmostEqual, 6.708, 0.001)
+		for _, value := range values {
+			state.observe(value)
+		}
+
+		Convey("the scale of the unit does not matter, only the order", func() {
+			standardized, _, defined := state.observe(1.0015e-6)
+			So(defined, ShouldBeTrue)
+			So(standardized, ShouldAlmostEqual, midRankZ(values, 1.0015e-6), 1e-12)
+			So(standardized, ShouldBeGreaterThan, 0)
+			So(standardized, ShouldBeLessThan, edgeZ(float64(len(values))))
 		})
 	})
 
@@ -130,10 +167,16 @@ func TestStandardizerStep(t *testing.T) {
 			differentEpoch := key
 			differentEpoch.epoch = 8
 			So(standardizerFor(differentEpoch), ShouldNotPointTo, first)
+			So(differentEpoch.seed(), ShouldNotEqual, key.seed())
 
 			differentLabel := key
 			differentLabel.label = "ETH/USD"
 			So(standardizerFor(differentLabel), ShouldNotPointTo, first)
+			So(differentLabel.seed(), ShouldNotEqual, key.seed())
+		})
+
+		Convey("the seed is a pure function of the identity", func() {
+			So(key.seed(), ShouldEqual, standardizerKey{epoch: 7, source: "cvd", label: "BTC/USD", metric: "trade_rate"}.seed())
 		})
 	})
 }

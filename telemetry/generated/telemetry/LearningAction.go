@@ -7,10 +7,10 @@ import (
 )
 
 type LearningActionT struct {
-	Kind string `json:"kind"`
-	Power int32 `json:"power"`
-	Reduce bool `json:"reduce"`
-	Prior *LearningPriorT `json:"prior"`
+	Kind   string          `json:"kind"`
+	Power  int32           `json:"power"`
+	Reduce bool            `json:"reduce"`
+	Prior  *LearningPriorT `json:"prior"`
 }
 
 func (t *LearningActionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -40,6 +40,7 @@ type Training struct {
 	maxDepth int
 	paths    *sync.Map
 	blobs    blobReader
+	last     map[string]*data.Measurement
 }
 
 /*
@@ -98,6 +99,7 @@ func NewTraining(
 		storeTee: storeTee,
 		grid:     store.NewGrid(),
 		paths:    &sync.Map{},
+		last:     make(map[string]*data.Measurement),
 	}
 
 	if catalog != nil {
@@ -159,18 +161,37 @@ Step receives the live market Measurement, turns it into the symbol's region
 token, and advances that symbol's live token path.
 */
 func (training *Training) Step(prior *data.Measurement) *data.Measurement {
-	if !training.grid.Ready(prior) {
-		return prior.Next(training.Name(), nil)
+	var metrics map[string]float64
+	var hasEvidence bool
+	var token string
+
+	if training.grid.Ready(prior) {
+		regions := training.grid.RegionScores(prior)
+		metrics = regionMetrics(regions)
+		hasEvidence = regions.HasEvidence
+		token = string(regions.Token())
 	}
 
-	regions := training.grid.RegionScores(prior)
-	next := prior.Next(training.Name(), regionMetrics(regions))
+	if training.last == nil {
+		training.last = make(map[string]*data.Measurement)
+	}
 
-	if !regions.HasEvidence {
+	var next *data.Measurement
+	if prev, ok := training.last[prior.Label]; ok {
+		next = prev.Next(prior.At, metrics)
+	}
+
+	if next == nil {
+		next = data.NewFromPrior(prior, training.Name(), metrics)
+	}
+
+	training.last[prior.Label] = next
+
+	if !hasEvidence {
 		return next
 	}
 
-	action, reason, path, depth := training.advance(prior.Label, string(regions.Token()))
+	action, reason, path, depth := training.advance(prior.Label, token)
 
 	if action != "" && action != "noop" {
 		reason = training.act(prior.Label, action)

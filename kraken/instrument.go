@@ -7,8 +7,8 @@ import (
 )
 
 type Instrument struct {
-	Channel string           `json:"channel"`
-	Type    string           `json:"type"`
+	Channel string `json:"channel"`
+	Type    string `json:"type"`
 	Data    struct {
 		Pairs []InstrumentPair `json:"pairs"`
 	} `json:"data"`

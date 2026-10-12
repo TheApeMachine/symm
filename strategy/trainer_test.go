@@ -54,9 +54,7 @@ func TestTrainer_MCTSPrecursorWindowOptimization(t *testing.T) {
 					peers[idx].From = peers[idx].At
 					peers[idx].Write(data.NewMetric(pin.metric, rawVal, data.UnitCount, data.TimescaleTick))
 				} else {
-					peers[idx] = peers[idx].Next(pin.source, map[string]float64{pin.metric: rawVal})
-					peers[idx].At = now.Add(time.Duration(tick) * time.Second)
-					peers[idx].From = peers[idx].At
+					peers[idx] = peers[idx].Next(now.Add(time.Duration(tick)*time.Second), map[string]float64{pin.metric: rawVal})
 				}
 				tickMeas = append(tickMeas, peers[idx])
 			}
@@ -88,9 +86,11 @@ func TestTrainer_MCTSPrecursorWindowOptimization(t *testing.T) {
 		for tick := int64(1); tick <= 25; tick++ {
 			tickMeas := make([]*data.Measurement, 0, 12)
 			for idx, pin := range testRegionPins {
+				// Region 0 rises every tick, so each tick lies beyond all of
+				// its priors; the other regions alternate inside theirs.
 				rawVal := float64(2 * (tick % 2))
 				if idx == 0 {
-					rawVal += 10.0
+					rawVal = float64(tick)
 				}
 				if peers[idx] == nil {
 					peers[idx] = data.NewMeasurement(epoch, symbol, pin.source, tick, tick)
@@ -98,9 +98,7 @@ func TestTrainer_MCTSPrecursorWindowOptimization(t *testing.T) {
 					peers[idx].From = peers[idx].At
 					peers[idx].Write(data.NewMetric(pin.metric, rawVal, data.UnitCount, data.TimescaleTick))
 				} else {
-					peers[idx] = peers[idx].Next(pin.source, map[string]float64{pin.metric: rawVal})
-					peers[idx].At = now.Add(time.Duration(tick) * time.Second)
-					peers[idx].From = peers[idx].At
+					peers[idx] = peers[idx].Next(now.Add(time.Duration(tick)*time.Second), map[string]float64{pin.metric: rawVal})
 				}
 				tickMeas = append(tickMeas, peers[idx])
 			}
@@ -425,4 +423,3 @@ func TestMCTSNode_UCB1Score(t *testing.T) {
 		})
 	})
 }
-

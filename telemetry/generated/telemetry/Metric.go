@@ -7,14 +7,14 @@ import (
 )
 
 type MetricT struct {
-	Name string `json:"name"`
-	Raw float64 `json:"raw"`
-	Normalized float64 `json:"normalized"`
-	HasNormalized bool `json:"hasNormalized"`
-	Unit string `json:"unit"`
-	X int64 `json:"x"`
-	Y int64 `json:"y"`
-	Region byte `json:"region"`
+	Name          string  `json:"name"`
+	Raw           float64 `json:"raw"`
+	Normalized    float64 `json:"normalized"`
+	HasNormalized bool    `json:"hasNormalized"`
+	Unit          string  `json:"unit"`
+	X             int64   `json:"x"`
+	Y             int64   `json:"y"`
+	Region        byte    `json:"region"`
 }
 
 func (t *MetricT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

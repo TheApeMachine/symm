@@ -7,20 +7,20 @@ import (
 )
 
 type AdvisorOpinionT struct {
-	Advisor string `json:"advisor"`
-	State string `json:"state"`
-	Probability float64 `json:"probability"`
-	Credibility float64 `json:"credibility"`
-	Weight float64 `json:"weight"`
-	Classes []*AdvisorClassT `json:"classes"`
-	Maturity float64 `json:"maturity"`
+	Advisor      string              `json:"advisor"`
+	State        string              `json:"state"`
+	Probability  float64             `json:"probability"`
+	Credibility  float64             `json:"credibility"`
+	Weight       float64             `json:"weight"`
+	Classes      []*AdvisorClassT    `json:"classes"`
+	Maturity     float64             `json:"maturity"`
 	Contribution []*AdvisorMoveMassT `json:"contribution"`
-	Unmapped []string `json:"unmapped"`
-	Unscored []string `json:"unscored"`
-	Clock string `json:"clock"`
-	LeaseFrom uint64 `json:"leaseFrom"`
-	LeaseUntil uint64 `json:"leaseUntil"`
-	ClockNow uint64 `json:"clockNow"`
+	Unmapped     []string            `json:"unmapped"`
+	Unscored     []string            `json:"unscored"`
+	Clock        string              `json:"clock"`
+	LeaseFrom    uint64              `json:"leaseFrom"`
+	LeaseUntil   uint64              `json:"leaseUntil"`
+	ClockNow     uint64              `json:"clockNow"`
 }
 
 func (t *AdvisorOpinionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

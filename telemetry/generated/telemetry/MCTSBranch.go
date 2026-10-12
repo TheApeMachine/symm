@@ -7,18 +7,18 @@ import (
 )
 
 type MCTSBranchT struct {
-	Action string `json:"action"`
-	Visits int64 `json:"visits"`
-	MeanReward float64 `json:"meanReward"`
-	BlendedValue float64 `json:"blendedValue"`
-	RewardStd float64 `json:"rewardStd"`
-	CounterfactualReward float64 `json:"counterfactualReward"`
-	CounterfactualMass float64 `json:"counterfactualMass"`
-	CounterfactualMean float64 `json:"counterfactualMean"`
-	EffectiveVisits float64 `json:"effectiveVisits"`
-	CausalExpectation float64 `json:"causalExpectation"`
-	CausalExpectationDefined bool `json:"causalExpectationDefined"`
-	Pruned bool `json:"pruned"`
+	Action                   string  `json:"action"`
+	Visits                   int64   `json:"visits"`
+	MeanReward               float64 `json:"meanReward"`
+	BlendedValue             float64 `json:"blendedValue"`
+	RewardStd                float64 `json:"rewardStd"`
+	CounterfactualReward     float64 `json:"counterfactualReward"`
+	CounterfactualMass       float64 `json:"counterfactualMass"`
+	CounterfactualMean       float64 `json:"counterfactualMean"`
+	EffectiveVisits          float64 `json:"effectiveVisits"`
+	CausalExpectation        float64 `json:"causalExpectation"`
+	CausalExpectationDefined bool    `json:"causalExpectationDefined"`
+	Pruned                   bool    `json:"pruned"`
 }
 
 func (t *MCTSBranchT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

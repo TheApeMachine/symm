@@ -7,8 +7,8 @@ import (
 )
 
 type StrategyFrameT struct {
-	Evaluated bool `json:"evaluated"`
-	Outcome string `json:"outcome"`
+	Evaluated bool         `json:"evaluated"`
+	Outcome   string       `json:"outcome"`
 	Decisions []*DecisionT `json:"decisions"`
 }
 

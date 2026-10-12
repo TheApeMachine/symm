@@ -7,11 +7,11 @@ import (
 )
 
 type SourceLedgerT struct {
-	GasEnergyResidual float64 `json:"gasEnergyResidual"`
-	ConservativeWaveError float64 `json:"conservativeWaveError"`
+	GasEnergyResidual        float64 `json:"gasEnergyResidual"`
+	ConservativeWaveError    float64 `json:"conservativeWaveError"`
 	PicDepositEnergyResidual float64 `json:"picDepositEnergyResidual"`
-	ParticleBalanceResidual float64 `json:"particleBalanceResidual"`
-	GravityBalanceResidual float64 `json:"gravityBalanceResidual"`
+	ParticleBalanceResidual  float64 `json:"particleBalanceResidual"`
+	GravityBalanceResidual   float64 `json:"gravityBalanceResidual"`
 }
 
 func (t *SourceLedgerT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

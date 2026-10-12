@@ -27,12 +27,14 @@ type Signal struct {
 	*runtime.System
 	paths   map[string][]temporal.Price
 	leadlag core.Primitive
+	last    map[string]*data.Measurement
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		paths:   make(map[string][]temporal.Price),
 		leadlag: nmcorrelation.NewLeadLag(algo.NewHayashiYoshida()),
+		last:    make(map[string]*data.Measurement),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "leadlag", signal)
@@ -125,7 +127,17 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	return prior.Next(signal.Name(), output)
+	var res *data.Measurement
+	if prev, ok := signal.last[prior.Label]; ok {
+		res = prev.Next(prior.At, output)
+	}
+
+	if res == nil {
+		res = data.NewFromPrior(prior, signal.Name(), output)
+	}
+
+	signal.last[prior.Label] = res
+	return res
 }
 
 func drive[From, To any](op core.Primitive, payload *From) To {

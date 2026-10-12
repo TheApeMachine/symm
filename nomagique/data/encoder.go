@@ -70,10 +70,9 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 	normBuilder := itemBuilder.FieldBuilder(1).(*array.Float64Builder)
 	stdBuilder := itemBuilder.FieldBuilder(2).(*array.Float64Builder)
 	exactBuilder := itemBuilder.FieldBuilder(3).(*array.StringBuilder)
-	centerBuilder := itemBuilder.FieldBuilder(4).(*array.Float64Builder)
-	scaleBuilder := itemBuilder.FieldBuilder(5).(*array.Float64Builder)
-	unitBuilder := itemBuilder.FieldBuilder(6).(*array.StringBuilder)
-	timescaleBuilder := itemBuilder.FieldBuilder(7).(*array.StringBuilder)
+	supportBuilder := itemBuilder.FieldBuilder(4).(*array.Float64Builder)
+	unitBuilder := itemBuilder.FieldBuilder(5).(*array.StringBuilder)
+	timescaleBuilder := itemBuilder.FieldBuilder(6).(*array.StringBuilder)
 
 	metricsBuilder.Append(true)
 
@@ -94,8 +93,7 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 			exactBuilder.AppendNull()
 		}
 
-		centerBuilder.Append(entry.Metric.center)
-		scaleBuilder.Append(entry.Metric.scale)
+		supportBuilder.Append(entry.Metric.support)
 		unitBuilder.Append(string(entry.Metric.Unit()))
 		timescaleBuilder.Append(string(entry.Metric.Timescale()))
 	}

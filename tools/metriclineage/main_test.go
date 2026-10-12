@@ -54,8 +54,6 @@ func TestBuildReport(t *testing.T) {
 	})
 }
 
-
-
 func TestScanFineConsumers(t *testing.T) {
 	Convey("Given Manifold's declared forcing selectors", t, func() {
 		loaded, err := packages.Load(&packages.Config{
@@ -94,8 +92,6 @@ func TestScanFineConsumers(t *testing.T) {
 	})
 }
 
-
-
 func shouldContainConsumerEdge(actual any, expected ...any) string {
 	edges := actual.([]consumerEdge)
 	target := expected[0].(consumerEdge)
@@ -127,7 +123,6 @@ func BenchmarkScanFineConsumers(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	
 
 	for b.Loop() {
 		count := 0

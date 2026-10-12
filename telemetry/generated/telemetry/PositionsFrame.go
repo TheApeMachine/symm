@@ -7,8 +7,8 @@ import (
 )
 
 type PositionsFrameT struct {
-	Rows []*PositionT `json:"rows"`
-	Closed []*HoldingT `json:"closed"`
+	Rows   []*PositionT `json:"rows"`
+	Closed []*HoldingT  `json:"closed"`
 }
 
 func (t *PositionsFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

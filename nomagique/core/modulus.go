@@ -18,20 +18,23 @@ type LogModulus struct {
 
 /*
 Step returns x on the log-modulus scale against the magnitudes before it, then
-incorporates |x|. It is undefined until a nonzero magnitude has been seen.
+incorporates |x|. Zero maps to zero whatever the unit, so it is always defined;
+a nonzero x is undefined until an earlier nonzero magnitude has fixed the unit.
 */
 func (modulus *LogModulus) Step(x float64) (float64, bool) {
+	if x == 0 {
+		return 0, true
+	}
+
 	var compressed float64
 	defined := modulus.count > 0
 
-	if defined && x != 0 {
+	if defined {
 		compressed = math.Copysign(math.Log1p(math.Abs(x)/math.Exp(modulus.mean)), x)
 	}
 
-	if x != 0 {
-		modulus.count++
-		modulus.mean += (math.Log(math.Abs(x)) - modulus.mean) / modulus.count
-	}
+	modulus.count++
+	modulus.mean += (math.Log(math.Abs(x)) - modulus.mean) / modulus.count
 
 	return compressed, defined
 }

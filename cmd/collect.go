@@ -171,14 +171,14 @@ var collectCmd = &cobra.Command{
 
 		correlationSignal := correlation.NewSignal(ctx)
 		cvdSignal := cvd.NewSignal(ctx)
-		depthflowSignal := depthflow.NewSignal(ctx, book)
+		depthflowSignal := depthflow.NewSignal(ctx)
 		hawkesSignal := hawkes.NewSignal(ctx)
 		leadlagSignal := leadlag.NewSignal(ctx)
-		liquiditySignal := liquidity.NewSignal(ctx, book)
-		morphologySignal := morphology.NewSignal(ctx, book)
-		pumpdumpSignal := pumpdump.NewSignal(ctx, book)
+		liquiditySignal := liquidity.NewSignal(ctx)
+		morphologySignal := morphology.NewSignal(ctx)
+		pumpdumpSignal := pumpdump.NewSignal(ctx)
 		sentimentSignal := sentiment.NewSignal(ctx)
-		toxicitySignal := toxicity.NewSignal(ctx, book)
+		toxicitySignal := toxicity.NewSignal(ctx)
 
 		pipelineNodes := []nmruntime.RuntimeSystem{
 			correlationSignal,

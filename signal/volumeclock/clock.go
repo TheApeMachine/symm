@@ -44,6 +44,10 @@ type Clock struct {
 	prevAtNanos   float64
 }
 
+func (clock *Clock) ActiveBar() (Bar, bool) {
+	return clock.bar, clock.open
+}
+
 /*
 Step adds one trade to the clock. Every trade counts, including trades
 sharing a timestamp; a bar only closes once it has reached its target with

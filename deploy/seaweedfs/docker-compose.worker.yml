@@ -1,0 +1,20 @@
+services:
+  iceberg-worker:
+    image: chrislusf/seaweedfs:latest
+    container_name: seaweedfs-iceberg-worker
+    restart: unless-stopped
+    command:
+      - "weed"
+      - "worker"
+      - "-admin=seaweedfs-admin:23646"
+      - "-jobType=iceberg"
+      - "-workingDir=/data/worker"
+      - "-maxExecute=4"
+    volumes:
+      - worker-cache:/data/worker
+    environment:
+      - WEED_LOG_LEVEL=info
+
+volumes:
+  worker-cache:
+    driver: local

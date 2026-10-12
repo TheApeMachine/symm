@@ -264,7 +264,6 @@ func NewAdversarialMultiWickTape(symbol string, basePrice, spread float64) []*da
 	}.GenerateTape(1)
 }
 
-
 /*
 NewFastPumpTape generates a sudden, violent upward breakout (+15% jump in 2 ticks)
 following a 16-tick precursor consolidation, holding the higher level with a confirmed
@@ -284,4 +283,3 @@ func NewFastPumpTape(symbol string, basePrice, spread, pumpPct float64) []*data.
 		MicroNoiseRatio: 0.1,
 	}.GenerateTape(1)
 }
-

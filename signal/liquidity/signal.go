@@ -2,11 +2,9 @@ package liquidity
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -72,6 +70,7 @@ func (vt *velocityTracker) Step(value float64, atSec float64) (float64, bool) {
 }
 
 type symbolState struct {
+	lastMeasurement *data.Measurement
 	bidBaseline      welfordBaseline
 	askBaseline      welfordBaseline
 	spreadBaseline   welfordBaseline
@@ -84,22 +83,16 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookSource
 	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		books:  books,
 		states: make(map[string]*symbolState),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "liquidity", signal)
-
-	if err := errnie.Require(map[string]any{"books": books}); err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[liquidity] book manager is required", err))
-	}
 
 	return signal
 }
@@ -114,52 +107,23 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	if signal.books == nil {
-		signal.Error(errnie.Err(errnie.Internal, "[liquidity] book manager is required", nil))
+	// The touch is the one ingress stamped onto the trade at its sequence
+	// number, so this consumer sees the book the trade happened against. A
+	// trade stamped without a book has no touch to measure.
+	snapshot, err := broker.ReadSnapshot(prior)
+
+	if err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[liquidity] stamped book unreadable", err))
 		return nil
 	}
 
-	var bid, ask, bidQty, askQty float64
-	var found bool
-
-	signal.books.Book(prior.Label, func(book *spotbook.Book) {
-		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
-			return
-		}
-
-		bid = book.BestBid().Price.Float64()
-		bidQty = book.BestBid().Quantity.Float64()
-		ask = book.BestAsk().Price.Float64()
-		askQty = book.BestAsk().Quantity.Float64()
-		found = true
-	})
-
-	if !found {
+	if snapshot == nil {
 		return nil
 	}
 
-	if bid <= 0 || ask <= 0 || math.IsNaN(bid) || math.IsNaN(ask) || math.IsInf(bid, 0) || math.IsInf(ask, 0) {
-		signal.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("[%s] %s: non-finite or non-positive book touch: bid=%v ask=%v", signal.Name(), prior.Label, bid, ask),
-			nil,
-		))
-		return nil
-	}
-
-	if ask <= bid {
-		errnie.Warn(fmt.Sprintf("[liquidity] dropping frame for %s with crossed book: bid=%v ask=%v", prior.Label, bid, ask))
-		return nil
-	}
-
-	if bidQty <= 0 || askQty <= 0 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("[liquidity] dropping frame for %s with non-positive book quantity: bidQty=%v askQty=%v", prior.Label, bidQty, askQty),
-			nil,
-		))
-		return nil
-	}
+	bestBid, bestAsk := snapshot.Touch()
+	bid, bidQty := bestBid.Price.Float64(), bestBid.Quantity.Float64()
+	ask, askQty := bestAsk.Price.Float64(), bestAsk.Quantity.Float64()
 
 	atSec := float64(prior.At.UnixNano()) * 1e-9
 
@@ -255,7 +219,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		state.historyPath(out, [2]float64{spreadZ, imbalance})
 	}
 
-	return prior.Next(signal.Name(), out)
+	if state.lastMeasurement == nil {
+		state.lastMeasurement = data.NewFromPrior(prior, signal.Name(), out)
+		return state.lastMeasurement
+	}
+
+	state.lastMeasurement = state.lastMeasurement.Next(prior.At, out)
+	return state.lastMeasurement
 }
 
 /*

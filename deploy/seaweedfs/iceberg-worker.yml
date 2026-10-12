@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seaweedfs-iceberg-worker
+  namespace: seaweedfs
+  labels:
+    app: seaweedfs-worker
+    type: iceberg
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seaweedfs-worker
+      type: iceberg
+  template:
+    metadata:
+      labels:
+        app: seaweedfs-worker
+        type: iceberg
+    spec:
+      containers:
+      - name: worker
+        image: chrislusf/seaweedfs:latest
+        command:
+        - "weed"
+        - "worker"
+        - "-admin=seaweedfs-admin-service.seaweedfs.svc.cluster.local:23646"
+        - "-jobType=iceberg"
+        - "-workingDir=/data/worker"
+        - "-maxExecute=4"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        volumeMounts:
+        - name: worker-cache
+          mountPath: /data/worker
+      volumes:
+      - name: worker-cache
+        emptyDir: {}
+        # For large table layers, replace emptyDir with a persistentVolumeClaim:
+        # persistentVolumeClaim:
+        #   claimName: seaweedfs-worker-cache-pvc

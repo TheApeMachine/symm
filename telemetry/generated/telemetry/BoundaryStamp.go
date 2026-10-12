@@ -7,14 +7,14 @@ import (
 )
 
 type BoundaryStampT struct {
-	Label string `json:"label"`
-	AtNs int64 `json:"atNs"`
-	SeqCount int64 `json:"seqCount"`
-	AvgGapNs int64 `json:"avgGapNs"`
-	LastGapNs int64 `json:"lastGapNs"`
-	Backlog int64 `json:"backlog"`
-	Group string `json:"group"`
-	Stage int32 `json:"stage"`
+	Label     string `json:"label"`
+	AtNs      int64  `json:"atNs"`
+	SeqCount  int64  `json:"seqCount"`
+	AvgGapNs  int64  `json:"avgGapNs"`
+	LastGapNs int64  `json:"lastGapNs"`
+	Backlog   int64  `json:"backlog"`
+	Group     string `json:"group"`
+	Stage     int32  `json:"stage"`
 }
 
 func (t *BoundaryStampT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

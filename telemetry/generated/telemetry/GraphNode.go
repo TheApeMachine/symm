@@ -7,29 +7,29 @@ import (
 )
 
 type GraphNodeT struct {
-	Id string `json:"id"`
-	Label string `json:"label"`
-	Symbol string `json:"symbol"`
-	Peer string `json:"peer"`
-	Source string `json:"source"`
-	MeasurementId string `json:"measurementId"`
-	Metric string `json:"metric"`
-	Side string `json:"side"`
-	Kind string `json:"kind"`
-	Value float64 `json:"value"`
-	Normalized float64 `json:"normalized"`
-	HasNormalized bool `json:"hasNormalized"`
-	Quality float64 `json:"quality"`
-	HasQuality bool `json:"hasQuality"`
-	Strength float64 `json:"strength"`
-	Confidence float64 `json:"confidence"`
-	Maturity float64 `json:"maturity"`
-	Unit string `json:"unit"`
-	ObservedFrom int64 `json:"observedFrom"`
-	Horizon int64 `json:"horizon"`
-	At int64 `json:"at"`
-	Metadata *GraphMetadataT `json:"metadata"`
-	Derived bool `json:"derived"`
+	Id            string          `json:"id"`
+	Label         string          `json:"label"`
+	Symbol        string          `json:"symbol"`
+	Peer          string          `json:"peer"`
+	Source        string          `json:"source"`
+	MeasurementId string          `json:"measurementId"`
+	Metric        string          `json:"metric"`
+	Side          string          `json:"side"`
+	Kind          string          `json:"kind"`
+	Value         float64         `json:"value"`
+	Normalized    float64         `json:"normalized"`
+	HasNormalized bool            `json:"hasNormalized"`
+	Quality       float64         `json:"quality"`
+	HasQuality    bool            `json:"hasQuality"`
+	Strength      float64         `json:"strength"`
+	Confidence    float64         `json:"confidence"`
+	Maturity      float64         `json:"maturity"`
+	Unit          string          `json:"unit"`
+	ObservedFrom  int64           `json:"observedFrom"`
+	Horizon       int64           `json:"horizon"`
+	At            int64           `json:"at"`
+	Metadata      *GraphMetadataT `json:"metadata"`
+	Derived       bool            `json:"derived"`
 }
 
 func (t *GraphNodeT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

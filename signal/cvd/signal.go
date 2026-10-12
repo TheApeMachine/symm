@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -115,6 +116,7 @@ bar's target is the median prior trade quantity, fixed when it opens. Totals
 are reported once per closed bar, never accumulated since an epoch.
 */
 type symbolState struct {
+	lastMeasurement        *data.Measurement
 	clock                  volumeclock.Clock
 	window                 window
 	lastAt                 time.Time
@@ -211,18 +213,24 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	tradeGrossNotional := tradeBuyNotional + tradeSellNotional
 	tradeNetNotional := tradeBuyNotional - tradeSellNotional
 
-	// The response is priced on the book midpoint, (touch_bid + touch_ask) / 2,
-	// of the touch ingress stamped onto the trade at its sequence number: the
-	// book as it stood at this trade, not whatever the live book holds when
-	// this consumer runs. A trade stamped without a touch has no midpoint.
+	// The response is priced on the book midpoint, (best bid + best ask) / 2,
+	// of the snapshot ingress stamped onto the trade at its sequence number:
+	// the book as it stood at this trade, not whatever the live book holds when
+	// this consumer runs. A trade stamped without a book has no midpoint.
+	snapshot, err := broker.ReadSnapshot(prior)
+
+	if err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[cvd] stamped book unreadable", err))
+		return nil
+	}
+
 	var midpoint float64
 
-	bidEntry := data.Pull(prior.Read("touch_bid"))
-	askEntry := data.Pull(prior.Read("touch_ask"))
-	hasBook := bidEntry != nil && bidEntry.Metric != nil && askEntry != nil && askEntry.Metric != nil
+	hasBook := snapshot != nil
 
 	if hasBook {
-		midpoint = (bidEntry.Metric.Raw + askEntry.Metric.Raw) / 2.0
+		bid, ask := snapshot.Touch()
+		midpoint = (bid.Price.Float64() + ask.Price.Float64()) / 2.0
 	}
 
 	out := map[string]float64{}
@@ -318,9 +326,18 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	state.lastAt = prior.At
 
-	res := prior.Next(signal.Name(), out)
+	var res *data.Measurement
 
-	// Window totals are measured over the closed bar.
+	if state.lastMeasurement == nil {
+		res = data.NewFromPrior(prior, signal.Name(), out)
+	}
+
+	if res == nil {
+		res = state.lastMeasurement.Next(prior.At, out)
+	}
+
+	state.lastMeasurement = res
+
 	if tick.Closed {
 		res.From = time.Unix(0, int64(tick.Bar.StartNanos)).UTC()
 	}

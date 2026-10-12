@@ -7,14 +7,14 @@ import (
 )
 
 type ManifoldReadingT struct {
-	Divergence float64 `json:"divergence"`
-	GuidanceSpeed float64 `json:"guidanceSpeed"`
-	CoherenceMag2 float64 `json:"coherenceMag2"`
-	PressureGradNorm float64 `json:"pressureGradNorm"`
-	ViscosityProxy float64 `json:"viscosityProxy"`
-	KuramotoR float64 `json:"kuramotoR"`
-	KuramotoPsi float64 `json:"kuramotoPsi"`
-	Health *PhysicsHealthT `json:"health"`
+	Divergence       float64         `json:"divergence"`
+	GuidanceSpeed    float64         `json:"guidanceSpeed"`
+	CoherenceMag2    float64         `json:"coherenceMag2"`
+	PressureGradNorm float64         `json:"pressureGradNorm"`
+	ViscosityProxy   float64         `json:"viscosityProxy"`
+	KuramotoR        float64         `json:"kuramotoR"`
+	KuramotoPsi      float64         `json:"kuramotoPsi"`
+	Health           *PhysicsHealthT `json:"health"`
 }
 
 func (t *ManifoldReadingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

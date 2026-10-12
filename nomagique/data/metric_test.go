@@ -6,27 +6,28 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 func TestMetricFinalize(t *testing.T) {
-	Convey("Given a metric whose stream has seen nine values with mean 2 and sample sigma 3", t, func() {
+	Convey("Given a metric whose stream has seen the minimum rank prior", t, func() {
 		metric := NewMetric("depth_zscore:bid", 1, UnitZScore, TimescaleRollingWindow)
 		state := &standardizer{}
+		priors := make([]float64, 0, int(core.MinimumRankPrior))
 
-		for _, value := range []float64{-1, 5, -1, 5, 2, -1, 5, -1, 5} {
-			state.observe(value, ScaleLinear)
+		for index := range int(core.MinimumRankPrior) {
+			value := float64(index%5) - 2
+			priors = append(priors, value)
+			state.observe(value)
 		}
 
-		priorMean := state.mean
-
-		Convey("a finite Raw is standardized against the prior moments, then folded in", func() {
+		Convey("a finite Raw is ranked against the priors, then folded in", func() {
 			So(metric.finalize(state), ShouldBeNil)
-			So(metric.center, ShouldAlmostEqual, priorMean, 1e-12)
-			So(metric.scale, ShouldAlmostEqual, 3, 1e-12)
+			So(metric.support, ShouldEqual, core.MinimumRankPrior)
 			So(metric.Standardizable(), ShouldBeTrue)
-			So(metric.Standardized, ShouldAlmostEqual, (1-priorMean)/3, 1e-12)
-			So(metric.Normalized, ShouldAlmostEqual, math.Tanh((1-priorMean)/3), 1e-12)
-			So(state.count, ShouldEqual, 10)
+			So(metric.Standardized, ShouldAlmostEqual, midRankZ(priors, 1), 1e-12)
+			So(metric.Normalized, ShouldAlmostEqual, math.Tanh(metric.Standardized), 1e-12)
+			So(state.ranks.Count(), ShouldEqual, core.MinimumRankPrior+1)
 		})
 
 		Convey("an undefined Raw fails before it can poison the stream", func() {
@@ -35,23 +36,21 @@ func TestMetricFinalize(t *testing.T) {
 			err := metric.finalize(state)
 			So(err, ShouldNotBeNil)
 			So(strings.Contains(err.Error(), "raw is required"), ShouldBeTrue)
-			So(state.count, ShouldEqual, 9)
-			So(state.mean, ShouldEqual, priorMean)
+			So(state.ranks.Count(), ShouldEqual, core.MinimumRankPrior)
 		})
 
 		Convey("an infinite Raw fails the same way", func() {
 			metric.Raw = math.Inf(1)
 
 			So(metric.finalize(state), ShouldNotBeNil)
-			So(state.count, ShouldEqual, 9)
-			So(state.mean, ShouldEqual, priorMean)
+			So(state.ranks.Count(), ShouldEqual, core.MinimumRankPrior)
 		})
 	})
 
 	Convey("Given a metric whose stream has a single prior observation", t, func() {
 		metric := NewMetric("depth_zscore:bid", 5, UnitZScore, TimescaleRollingWindow)
 		state := &standardizer{}
-		state.observe(1, ScaleLinear)
+		state.observe(1)
 
 		Convey("its z-score is undefined rather than zero evidence", func() {
 			So(metric.finalize(state), ShouldBeNil)

@@ -39,8 +39,7 @@ type batchCols struct {
 	normCol         *array.Float64
 	stdCol          *array.Float64
 	exactCol        *array.String
-	centerCol       *array.Float64
-	scaleCol        *array.Float64
+	supportCol      *array.Float64
 	unitCol         *array.String
 	timeCol         *array.String
 	floatItems      *array.Float64
@@ -169,10 +168,9 @@ func newBatchCols(batch arrow.RecordBatch) (*batchCols, error) {
 			cols.normCol, _ = itemStruct.Field(1).(*array.Float64)
 			cols.stdCol, _ = itemStruct.Field(2).(*array.Float64)
 			cols.exactCol, _ = itemStruct.Field(3).(*array.String)
-			cols.centerCol, _ = itemStruct.Field(4).(*array.Float64)
-			cols.scaleCol, _ = itemStruct.Field(5).(*array.Float64)
-			cols.unitCol, _ = itemStruct.Field(6).(*array.String)
-			cols.timeCol, _ = itemStruct.Field(7).(*array.String)
+			cols.supportCol, _ = itemStruct.Field(4).(*array.Float64)
+			cols.unitCol, _ = itemStruct.Field(5).(*array.String)
+			cols.timeCol, _ = itemStruct.Field(6).(*array.String)
 		} else if floatItems, ok := cols.metricsCol.Items().(*array.Float64); ok {
 			cols.floatItems = floatItems
 		} else {
@@ -300,8 +298,7 @@ func (cols *batchCols) decodeRow(measurement *Measurement, rowIdx int) error {
 				metric := NewMetric(metricKey, rawVal, unitVal, timeVal)
 				metric.Normalized = cols.normCol.Value(itemIdx)
 				metric.Standardized = cols.stdCol.Value(itemIdx)
-				metric.center = cols.centerCol.Value(itemIdx)
-				metric.scale = cols.scaleCol.Value(itemIdx)
+				metric.support = cols.supportCol.Value(itemIdx)
 
 				if cols.exactCol != nil && !cols.exactCol.IsNull(itemIdx) && cols.exactCol.Value(itemIdx) != "" {
 					exactDec, err := decimal.NewFromString(cols.exactCol.Value(itemIdx))
@@ -330,7 +327,6 @@ func (cols *batchCols) decodeRow(measurement *Measurement, rowIdx int) error {
 				rawVal := cols.floatItems.Value(itemIdx)
 
 				metric := NewMetric(metricKey, rawVal, UnitDimensionless, TimescaleInstantaneous)
-				metric.center = rawVal
 
 				measurement.metrics = append(measurement.metrics, &MetricEntry{
 					Key:    metricKey,

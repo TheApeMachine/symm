@@ -55,7 +55,6 @@ func newArrivalStream(buyTimesSec, sellTimesSec []float64) arrivalStream {
 	return stream
 }
 
-
 func sortedCopy(times []float64) []float64 {
 	if len(times) < 2 {
 		return times

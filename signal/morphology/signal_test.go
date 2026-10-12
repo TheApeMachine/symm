@@ -10,19 +10,15 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/morphology"
+	"github.com/theapemachine/symm/tests/market"
 )
 
-func ingress(label string, at time.Time, seq int64) *data.Measurement {
-	prior := data.NewMeasurement(1, label, "spot:trade", seq, seq)
-	prior.At, prior.From = at, at
-	prior.Write(data.NewMetric("price", 12, data.UnitCurrency, data.TimescaleInstantaneous))
-	return prior
-}
 func metric(measurement *data.Measurement, label string) (float64, bool) {
 	for entry := range measurement.Read(label) {
 		if entry.Err != nil || entry.Metric == nil {
@@ -56,12 +52,12 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 	Convey("Given a real book source and the single morphology pipeline", t, func() {
 		ctx := context.Background()
 		books := broker.NewBook(ctx, spot.NewNormalizer())
-		instrument := morphology.NewSignal(ctx, books)
+		instrument := morphology.NewSignal(ctx)
 		instrument.Transition(nmruntime.READY)
 		at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 		Convey("Mirrored shapes expose six measurements, not an invented first change", func() {
 			writeBook(t, books, "BTC/USD", at, []float64{10, .1, 6, 1.0 / 6}, []float64{14, 1.0 / 14, 18, 1.0 / 18})
-			prior := ingress("BTC/USD", at, 1)
+			prior := market.Stamp(books, "BTC/USD", "buy", at, 12, 1)
 			result := instrument.Step(prior)
 			So(result, ShouldNotBeNil)
 			So(instrument.Error(), ShouldBeNil)
@@ -78,24 +74,24 @@ func TestMorphologyLevel3Metrics(t *testing.T) {
 			Convey("Moving both outer levels changes the book although bilateral distance stays zero", func() {
 				nextAt := at.Add(time.Second)
 				writeBook(t, books, "BTC/USD", nextAt, []float64{10, .1, 2, .5}, []float64{14, 1.0 / 14, 22, 1.0 / 22})
-				changed := instrument.Step(ingress("BTC/USD", nextAt, 2))
+				changed := instrument.Step(market.Stamp(books, "BTC/USD", "buy", nextAt, 12, 1))
 				So(changed, ShouldNotBeNil)
 				So(metricValue(changed, "book_shape_distance"), ShouldAlmostEqual, 0, 1e-10)
 				So(metricValue(changed, "morphology_change"), ShouldAlmostEqual, .5, 1e-10)
-				repeated := instrument.Step(ingress("BTC/USD", nextAt.Add(time.Second), 3))
+				repeated := instrument.Step(market.Stamp(books, "BTC/USD", "buy", nextAt.Add(time.Second), 12, 1))
 				So(metricValue(repeated, "morphology_change"), ShouldAlmostEqual, 0, 1e-10)
 			})
 		})
 		Convey("An unavailable book does not manufacture geometry", func() {
-			So(instrument.Step(ingress("BTC/USD", at, 1)), ShouldBeNil)
+			So(instrument.Step(market.Stamp(books, "BTC/USD", "buy", at, 12, 1)), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
 		})
-	})
-}
-func TestMorphologySignalRequiresBookManager(t *testing.T) {
-	Convey("A missing book source is a construction failure", t, func() {
-		instrument := morphology.NewSignal(context.Background(), nil)
-		So(instrument.Error(), ShouldNotBeNil)
-		So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
+		Convey("A stamped book that cannot be decoded is corrupt ingress state and halts", func() {
+			So(instrument.Step(market.Unreadable("BTC/USD", "buy", at, 12, 1)), ShouldBeNil)
+			err := instrument.Error()
+			So(err, ShouldNotBeNil)
+			So(errnie.IsInternal(err), ShouldBeTrue)
+			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
+		})
 	})
 }

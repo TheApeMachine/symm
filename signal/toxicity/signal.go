@@ -6,7 +6,6 @@ import (
 	"math"
 	"time"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -165,6 +164,7 @@ func (side sideBracket) dispose(out map[string]float64, suffix string, dt float6
 }
 
 type symbolState struct {
+	lastMeasurement              *data.Measurement
 	hasPrev                      bool
 	prevBid                      float64
 	prevAsk                      float64
@@ -198,21 +198,15 @@ type pathPoint struct {
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookSource
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		books:  books,
 		states: make(map[string]*symbolState),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "toxicity", signal)
-
-	if err := errnie.Require(map[string]any{"books": books}); err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[toxicity] book manager is required", err))
-	}
 
 	return signal
 }
@@ -224,11 +218,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if prior == nil || prior.Label == "" {
-		return nil
-	}
-
-	if signal.books == nil {
-		signal.Error(errnie.Err(errnie.Internal, "[toxicity] book manager is required", nil))
 		return nil
 	}
 
@@ -248,39 +237,22 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	var bid, ask, bidQty, askQty float64
-	var found bool
+	// The touch is the one ingress stamped onto the trade at its sequence
+	// number: the book this trade happened against.
+	snapshot, err := broker.ReadSnapshot(prior)
 
-	signal.books.Book(prior.Label, func(book *spotbook.Book) {
-		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
-			return
-		}
-
-		bid, bidQty = book.BestBid().Price.Float64(), book.BestBid().Quantity.Float64()
-		ask, askQty = book.BestAsk().Price.Float64(), book.BestAsk().Quantity.Float64()
-		found = true
-	})
-
-	if !found {
+	if err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[toxicity] stamped book unreadable", err))
 		return nil
 	}
 
-	if bid <= 0 || ask <= 0 || bidQty <= 0 || askQty <= 0 {
-		errnie.Warn(fmt.Sprintf(
-			"[%s] %s: dropping frame with non-positive book touch: bid=%v ask=%v bidQty=%v askQty=%v",
-			signal.Name(), prior.Label, bid, ask, bidQty, askQty,
-		))
+	if snapshot == nil {
 		return nil
 	}
 
-	if ask <= bid {
-		errnie.Warn(fmt.Sprintf(
-			"[toxicity] dropping frame for %s with crossed book: bid=%v ask=%v",
-			prior.Label, bid, ask,
-		))
-
-		return nil
-	}
+	bestBid, bestAsk := snapshot.Touch()
+	bid, bidQty := bestBid.Price.Float64(), bestBid.Quantity.Float64()
+	ask, askQty := bestAsk.Price.Float64(), bestAsk.Quantity.Float64()
 
 	sideIndicator := 0.0
 	side := prior.Meta("side")
@@ -310,11 +282,31 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		"touch_quantity:ask": askQty,
 	}
 
+	emit := func(from time.Time) *data.Measurement {
+		var res *data.Measurement
+
+		if state.lastMeasurement == nil {
+			res = data.NewFromPrior(prior, signal.Name(), out)
+		}
+
+		if res == nil {
+			res = state.lastMeasurement.Next(prior.At, out)
+		}
+
+		state.lastMeasurement = res
+
+		if !from.IsZero() {
+			res.From = from
+		}
+
+		return res
+	}
+
 	// The first observation opens the first bracket: its trade executed at or
 	// before t0 and is not attributed.
 	if !state.hasPrev {
 		state.observe(bid, ask, bidQty, askQty, atNano, prior.At)
-		return prior.Next(signal.Name(), out)
+		return emit(time.Time{})
 	}
 
 	// Aggressive buys execute the previous ask, aggressive sells the
@@ -331,7 +323,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if atNano <= state.prevAtNano {
-		return prior.Next(signal.Name(), out)
+		return emit(time.Time{})
 	}
 
 	dt := (atNano - state.prevAtNano) / 1e9
@@ -426,12 +418,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		})
 	}
 
-	res := prior.Next(signal.Name(), out)
-
-	// The attributed bracket is (t0, t1].
-	res.From = from
-
-	return res
+	return emit(from)
 }
 
 /*

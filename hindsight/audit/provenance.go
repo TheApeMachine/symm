@@ -51,7 +51,7 @@ func checkFeeProvenance(detections []*data.Measurement, declared float64) FeePro
 			continue
 		}
 
-		b, c := getMeasurementMetric(det, "b_price"), getMeasurementMetric(det, "c_price")
+		b, c := data.Pull(det.Read("b_price")).Metric.Raw, data.Pull(det.Read("c_price")).Metric.Raw
 
 		if b <= 0 || c <= 0 {
 			errnie.Error(errnie.Err(

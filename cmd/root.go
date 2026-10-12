@@ -22,7 +22,6 @@ import (
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -261,25 +260,24 @@ var (
 				))
 			}
 
-			manifoldSolver := manifold.NewSolver(ctx, book)
 			correlationSignal := correlation.NewSignal(ctx)
 			cvdSignal := cvd.NewSignal(ctx)
-			depthflowSignal := depthflow.NewSignal(ctx, book)
+			depthflowSignal := depthflow.NewSignal(ctx)
 			hawkesSignal := hawkes.NewSignal(ctx)
 			leadlagSignal := leadlag.NewSignal(ctx)
-			liquiditySignal := liquidity.NewSignal(ctx, book)
-			morphologySignal := morphology.NewSignal(ctx, book)
-			pumpdumpSignal := pumpdump.NewSignal(ctx, book)
+			liquiditySignal := liquidity.NewSignal(ctx)
+			morphologySignal := morphology.NewSignal(ctx)
+			pumpdumpSignal := pumpdump.NewSignal(ctx)
 			sentimentSignal := sentiment.NewSignal(ctx)
-			toxicitySignal := toxicity.NewSignal(ctx, book)
+			toxicitySignal := toxicity.NewSignal(ctx)
 			resonanceSolver := resonance.NewSolver(
 				ctx, system.Cfg.Resonance.LearningRate,
 			)
 
-			// Pipeline nodes report construction faults (for example a missing
-			// BookSource) by entering ERROR. ERROR -> READY is a legal
-			// transition, so the READY sweep below would silently paper over
-			// it; halt here with the node's own error instead.
+			// Pipeline nodes report construction faults by entering ERROR.
+			// ERROR -> READY is a legal transition, so the READY sweep below
+			// would silently paper over it; halt here with the node's own
+			// error instead.
 			pipelineNodes := []nmruntime.RuntimeSystem{
 				correlationSignal,
 				cvdSignal,
@@ -292,7 +290,6 @@ var (
 				sentimentSignal,
 				toxicitySignal,
 				resonanceSolver,
-				manifoldSolver,
 			}
 
 			for _, node := range pipelineNodes {
@@ -330,7 +327,6 @@ var (
 					},
 					{
 						resonanceSolver,
-						manifoldSolver,
 					},
 					{
 						training,
@@ -368,7 +364,6 @@ var (
 				uiTee1,
 				detectorTee,
 				hub,
-				manifoldSolver,
 				resonanceSolver,
 				correlationSignal,
 				cvdSignal,
@@ -420,8 +415,6 @@ var (
 					drainErrors <- catalog.Drain(ctx, epoch, ingressStoreTee)
 				}()
 			}
-
-			manifoldSolver.Start()
 
 			// Ingress reports a fault it cannot continue past (a Level3 frame
 			// the book could not apply). The first fault halts the process.

@@ -21,6 +21,14 @@ gives n >= 1 + 1/(2*Tolerance^2), which is 9 at a tolerance of 0.25.
 var MinimumPrior = math.Ceil(Unit + Unit/(2*Tolerance*Tolerance))
 
 /*
+MinimumRankPrior is the number of prior observations an empirical rank needs
+before it may place an observation. At the median the empirical distribution
+of n observations has relative standard error 1/sqrt(n); holding that to
+Tolerance gives n >= 1/Tolerance^2, which is 16 at a tolerance of 0.25.
+*/
+var MinimumRankPrior = math.Ceil(Unit / (Tolerance * Tolerance))
+
+/*
 Resolution is the square root of the float64 machine epsilon. A variance below
 eps*magnitude^2 is smaller than the rounding error of squaring numbers of that
 magnitude, so a scale below Resolution*magnitude cannot be told apart from

@@ -6,57 +6,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/tests/market"
 )
-
-/*
-trade builds a spot trade frame, the only frame the pipeline carries. It holds
-trade fields only; the touch lives in the book manager.
-*/
-func trade(label string, at time.Time, seq int64, price, qty float64) *data.Measurement {
-	prior := data.NewMeasurement(
-		1, label, "spot:trade", seq, seq,
-		&data.StringEntry{Key: "type", Value: "trade"},
-		&data.StringEntry{Key: "side", Value: "buy"},
-	)
-	prior.At = at
-	prior.From = at
-
-	return prior.Write(
-		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
-		data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
-	)
-}
-
-/*
-touch seeds the book manager with a one-level-per-side Level3 snapshot.
-*/
-func touch(books *broker.Book, label string, at time.Time, bid, ask, bidQty, askQty float64) {
-	books.Update(&kraken.Level3{
-		Channel: "level3",
-		Type:    "snapshot",
-		Data: []kraken.Level3Data{{
-			Symbol: label,
-			Bids: []kraken.Level3Order{{
-				OrderID: label + "-bid", LimitPrice: decimal.NewFromFloat64(bid), OrderQty: decimal.NewFromFloat64(bidQty),
-				Timestamp: at, Event: "add",
-			}},
-			Asks: []kraken.Level3Order{{
-				OrderID: label + "-ask", LimitPrice: decimal.NewFromFloat64(ask), OrderQty: decimal.NewFromFloat64(askQty),
-				Timestamp: at, Event: "add",
-			}},
-		}},
-	})
-}
 
 /*
 stepTouch seeds the touch in the book manager, then drives the signal with a trade
@@ -64,10 +23,10 @@ frame at the midpoint.
 */
 func stepTouch(
 	instrument *liquidity.Signal, books *broker.Book,
-	label string, at time.Time, seq int64, bid, ask, bidQty, askQty float64,
+	label string, at time.Time, bid, ask, bidQty, askQty float64,
 ) *data.Measurement {
-	touch(books, label, at, bid, ask, bidQty, askQty)
-	return instrument.Step(trade(label, at, seq, (bid+ask)/2, 1))
+	So(market.Quote(books, label, at, bid, bidQty, ask, askQty), ShouldBeNil)
+	return instrument.Step(market.Stamp(books, label, "buy", at, (bid+ask)/2, 1))
 }
 
 func metric(measurement *data.Measurement, label string) (float64, bool) {
@@ -82,7 +41,7 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 	Convey("Given a READY liquidity signal", t, func() {
 		ctx := context.Background()
 		books := broker.NewBook(ctx, spot.NewNormalizer())
-		instrument := liquidity.NewSignal(ctx, books)
+		instrument := liquidity.NewSignal(ctx)
 		instrument.Transition(nmruntime.READY)
 		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
@@ -94,7 +53,7 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 				bidQty := 5.0 + float64(step)*0.5
 				askQty := 3.0 + float64(step)*0.2
 
-				res := stepTouch(instrument, books, "ETH/USD", at, int64(step+1), bid, ask, bidQty, askQty)
+				res := stepTouch(instrument, books, "ETH/USD", at, bid, ask, bidQty, askQty)
 				So(res, ShouldNotBeNil)
 				So(instrument.Error(), ShouldBeNil)
 				So(res.Error(), ShouldBeNil)
@@ -192,9 +151,9 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 		})
 
 		Convey("It keeps per-symbol baselines independent", func() {
-			first := stepTouch(instrument, books, "ETH/USD", origin, 1, 3000, 3004, 5, 3)
+			first := stepTouch(instrument, books, "ETH/USD", origin, 3000, 3004, 5, 3)
 			So(first, ShouldNotBeNil)
-			other := stepTouch(instrument, books, "BTC/USD", origin, 2, 50000, 50010, 1, 1)
+			other := stepTouch(instrument, books, "BTC/USD", origin, 50000, 50010, 1, 1)
 			So(other, ShouldNotBeNil)
 
 			// BTC/USD's first touch has no baseline or velocity of its own,
@@ -207,55 +166,56 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 		})
 
 		Convey("A crossed touch is dropped with a warning without halting the system", func() {
-			So(stepTouch(instrument, books, "ETH/USD", origin, 100, 3005, 3000, 1, 1), ShouldBeNil)
+			So(stepTouch(instrument, books, "ETH/USD", origin, 3005, 3000, 1, 1), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
 			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 
 			// The signal continues to process later healthy touches.
-			healthyRes := stepTouch(instrument, books, "ETH/USD", origin.Add(time.Second), 101, 3000, 3004, 1, 1)
+			healthyRes := stepTouch(instrument, books, "ETH/USD", origin.Add(time.Second), 3000, 3004, 1, 1)
 			So(healthyRes, ShouldNotBeNil)
 		})
 
 		Convey("A locked touch (ask equal to bid) is dropped without halting the system", func() {
-			So(stepTouch(instrument, books, "ETH/USD", origin, 110, 3000, 3000, 1, 1), ShouldBeNil)
+			So(stepTouch(instrument, books, "ETH/USD", origin, 3000, 3000, 1, 1), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
 			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 		})
 
-		Convey("A present touch with a non-positive price is corrupt book state and halts", func() {
-			So(stepTouch(instrument, books, "ETH/USD", origin, 120, -1, 3004, 1, 1), ShouldBeNil)
+		Convey("A stamped book that cannot be decoded is corrupt ingress state and halts", func() {
+			So(instrument.Step(market.Unreadable("ETH/USD", "buy", origin, 3000, 1)), ShouldBeNil)
 
 			err := instrument.Error()
 			So(err, ShouldNotBeNil)
 			So(errnie.IsInternal(err), ShouldBeTrue)
-			So(err.Error(), ShouldContainSubstring, "non-finite or non-positive book touch")
+			So(err.Error(), ShouldContainSubstring, "stamped book unreadable")
 			So(instrument.Status(), ShouldEqual, nmruntime.ERROR)
 		})
 
 		Convey("It yields no measurement for a non-positive displayed quantity", func() {
-			So(stepTouch(instrument, books, "ETH/USD", origin, 200, 3000, 3004, 0, 1), ShouldBeNil)
+			So(stepTouch(instrument, books, "ETH/USD", origin, 3000, 3004, 0, 1), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
 		})
 
 		Convey("It drops events before READY", func() {
-			cold := liquidity.NewSignal(ctx, books)
-			So(stepTouch(cold, books, "ETH/USD", origin, 1, 3000, 3004, 1, 1), ShouldBeNil)
+			cold := liquidity.NewSignal(ctx)
+			So(stepTouch(cold, books, "ETH/USD", origin, 3000, 3004, 1, 1), ShouldBeNil)
 		})
 
-		Convey("It reads the touch only from the book manager, never from the trade frame", func() {
-			touch(books, "ETH/USD", origin, 3000, 3004, 5, 3)
+		Convey("It reads the touch only from the stamped book, never from other trade fields", func() {
+			So(market.Quote(books, "ETH/USD", origin, 3000, 5, 3004, 3), ShouldBeNil)
+			_, snapshot := books.Stamp("ETH/USD")
 
 			prior := data.NewMeasurement(1, "ETH/USD", "spot:trade", 300, 300)
 			prior.At = origin
 			prior.From = origin
-			prior = prior.Write(
+			prior = prior.Write(append([]*data.Metric{
 				data.NewMetric("price", 3002, data.UnitPrice, data.TimescaleInstantaneous),
 				data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous),
 				data.NewMetric("bid", 1, data.UnitPrice, data.TimescaleInstantaneous),
 				data.NewMetric("ask", 2, data.UnitPrice, data.TimescaleInstantaneous),
 				data.NewMetric("bid_qty", 99, data.UnitQuantity, data.TimescaleInstantaneous),
 				data.NewMetric("ask_qty", 99, data.UnitQuantity, data.TimescaleInstantaneous),
-			)
+			}, snapshot.Metrics()...)...)
 
 			res := instrument.Step(prior)
 			So(res, ShouldNotBeNil)
@@ -272,17 +232,8 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 		})
 
 		Convey("It yields no measurement while the symbol has no book and stays healthy", func() {
-			So(instrument.Step(trade("SOL/USD", origin, 400, 150, 1)), ShouldBeNil)
+			So(instrument.Step(market.Stamp(books, "SOL/USD", "buy", origin, 150, 1)), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
-		})
-	})
-
-	Convey("Given a liquidity signal constructed without a book manager", t, func() {
-		instrument := liquidity.NewSignal(context.Background(), nil)
-
-		Convey("It fails construction with an error instead of running blind", func() {
-			So(instrument.Error(), ShouldNotBeNil)
-			So(instrument.Status(), ShouldNotEqual, nmruntime.READY)
 		})
 	})
 }
@@ -291,14 +242,14 @@ func TestLiquidityWithinClockGrain(t *testing.T) {
 	Convey("Given touches one venue clock grain apart", t, func() {
 		ctx := context.Background()
 		books := broker.NewBook(ctx, spot.NewNormalizer())
-		instrument := liquidity.NewSignal(ctx, books)
+		instrument := liquidity.NewSignal(ctx)
 		instrument.Transition(nmruntime.READY)
 		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-		stepTouch(instrument, books, "GRAIN/USD", origin, 1, 100, 100.2, 5, 5)
-		stepTouch(instrument, books, "GRAIN/USD", origin.Add(time.Second), 2, 100, 100.2, 6, 5)
-		resolved := stepTouch(instrument, books, "GRAIN/USD", origin.Add(2*time.Second), 3, 100, 100.2, 7, 5)
-		grain := stepTouch(instrument, books, "GRAIN/USD", origin.Add(2*time.Second+core.ClockResolution), 4, 100, 100.1, 9, 5)
+		stepTouch(instrument, books, "GRAIN/USD", origin, 100, 100.2, 5, 5)
+		stepTouch(instrument, books, "GRAIN/USD", origin.Add(time.Second), 100, 100.2, 6, 5)
+		resolved := stepTouch(instrument, books, "GRAIN/USD", origin.Add(2*time.Second), 100, 100.2, 7, 5)
+		grain := stepTouch(instrument, books, "GRAIN/USD", origin.Add(2*time.Second+core.ClockResolution), 100, 100.1, 9, 5)
 
 		Convey("the divergence is defined but its velocity is not", func() {
 			_, held := metric(resolved, "divergence_velocity:bid")

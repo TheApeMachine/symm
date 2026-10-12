@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -21,28 +20,23 @@ type point struct {
 }
 
 type symbolState struct {
-	hasPrev  bool
-	prevBook []point
+	lastMeasurement *data.Measurement
+	hasPrev         bool
+	prevBook        []point
 }
 
 type Signal struct {
 	*runtime.System
-	books  broker.BookSource
 	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
-func NewSignal(ctx context.Context, books broker.BookSource) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		books:  books,
 		states: make(map[string]*symbolState),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "morphology", signal)
-
-	if err := errnie.Require(map[string]any{"books": books}); err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[morphology] book manager is required", err))
-	}
 
 	return signal
 }
@@ -52,37 +46,30 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	if signal.books == nil {
-		signal.Error(errnie.Err(errnie.Internal, "[morphology] book manager is required", nil))
+	// The shape is measured on the snapshot ingress stamped onto the trade at
+	// its sequence number: the book this trade happened against.
+	snapshot, err := broker.ReadSnapshot(prior)
+
+	if err != nil {
+		signal.Error(errnie.Err(errnie.Internal, "[morphology] stamped book unreadable", err))
 		return nil
 	}
 
-	var bids, asks []float64
-	var found bool
-
-	signal.books.Book(prior.Label, func(book *spotbook.Book) {
-		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
-			return
-		}
-
-		bestBidPrice := book.BestBid().Price.Float64()
-		bestAskPrice := book.BestAsk().Price.Float64()
-		found = true
-
-		bids = append(bids, bestBidPrice, bestAskPrice)
-		asks = append(asks, bestBidPrice, bestAskPrice)
-
-		for level := book.BestBid(); level != nil; level = level.Lower {
-			bids = append(bids, level.Price.Float64(), level.Quantity.Float64())
-		}
-
-		for level := book.BestAsk(); level != nil; level = level.Higher {
-			asks = append(asks, level.Price.Float64(), level.Quantity.Float64())
-		}
-	})
-
-	if !found || len(bids) <= 2 || len(asks) <= 2 {
+	if snapshot == nil {
 		return nil
+	}
+
+	bestBid, bestAsk := snapshot.Touch()
+	bestBidPrice, bestAskPrice := bestBid.Price.Float64(), bestAsk.Price.Float64()
+	bids := []float64{bestBidPrice, bestAskPrice}
+	asks := []float64{bestBidPrice, bestAskPrice}
+
+	for _, level := range snapshot.Bids {
+		bids = append(bids, level.Price.Float64(), level.Quantity.Float64())
+	}
+
+	for _, level := range snapshot.Asks {
+		asks = append(asks, level.Price.Float64(), level.Quantity.Float64())
 	}
 
 	stateKey := strconv.FormatInt(prior.Epoch, 10) + "/" + prior.Label
@@ -110,7 +97,22 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		out["morphology_change"] = res[6]
 	}
 
-	return prior.Next(signal.Name(), out)
+	state := signal.states[stateKey]
+	var outMeas *data.Measurement
+
+	if state != nil && state.lastMeasurement != nil {
+		outMeas = state.lastMeasurement.Next(prior.At, out)
+	}
+
+	if outMeas == nil {
+		outMeas = data.NewFromPrior(prior, signal.Name(), out)
+	}
+
+	if state != nil {
+		state.lastMeasurement = outMeas
+	}
+
+	return outMeas
 }
 
 func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float64, error) {

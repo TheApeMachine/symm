@@ -6,8 +6,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
 )
 
@@ -18,7 +16,7 @@ type pipelineWrapper struct {
 
 func newPipeline() *pipelineWrapper {
 	ctx := context.Background()
-	return &pipelineWrapper{signal: NewSignal(ctx, broker.NewBook(ctx, spot.NewNormalizer()))}
+	return &pipelineWrapper{signal: NewSignal(ctx)}
 }
 
 func (p *pipelineWrapper) Error() error {

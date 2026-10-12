@@ -305,9 +305,11 @@ func TestTraining_Step(t *testing.T) {
 			frame.At, frame.From = tokenStart, tokenStart
 
 			for idx, pin := range pins {
+				// Region 0 rises every step, so each step lies beyond all of
+				// its priors; the other regions alternate inside theirs.
 				raw := float64(2 * (stepIdx % 2))
 				if idx == 0 {
-					raw += 50.0
+					raw = float64(stepIdx)
 				}
 
 				if peers[idx] == nil {
@@ -315,8 +317,7 @@ func TestTraining_Step(t *testing.T) {
 					peers[idx].At, peers[idx].From = tokenStart, tokenStart
 					peers[idx].Write(data.NewMetric(pin.metric, raw, data.UnitDimensionless, data.TimescaleTick))
 				} else {
-					peers[idx] = peers[idx].Next(pin.source, map[string]float64{pin.metric: raw})
-					peers[idx].At, peers[idx].From = tokenStart, tokenStart
+					peers[idx] = peers[idx].Next(tokenStart, map[string]float64{pin.metric: raw})
 				}
 
 				frame.Peers(peers[idx])

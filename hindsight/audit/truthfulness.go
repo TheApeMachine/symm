@@ -7,7 +7,6 @@ import (
 	"math"
 	"slices"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -23,8 +22,8 @@ var truthChecks = []string{
 	"trade_fields",                // price > 0, qty > 0, side buy|sell
 	"cvd_coverage",                // one cvd frame per stored trade
 	"level3_replay",               // every stored level3 entry replays and matches its venue checksum
-	"trade_touch",                 // touch stamped on the trade == replayed book touch at its SeqIdx
-	"response_midpoint:at",        // == (touch_bid + touch_ask) / 2 stamped on this trade
+	"trade_book",                  // book snapshot stamped on the trade == replayed book at its SeqIdx, every level exact
+	"response_midpoint:at",        // == (best bid + best ask) / 2 of the snapshot stamped on this trade
 	"response_midpoint:from",      // == response_midpoint:at of the previous trade's frame
 	"midpoint_log_return",         // == ln(response_midpoint:at / response_midpoint:from)
 	"trade_rate",                  // == 1 / (At - previous At)
@@ -43,12 +42,15 @@ event time; a time shared by several trades is ambiguous and skipped (counted).
 Trades are walked in SeqIdx order, cvd's processing order, so the previous
 trade is the one whose state cvd carried into this one. Ingress takes level3
 entry sequence numbers under the book's write lock and trade sequence numbers,
-with the touch it stamps onto the trade, under its read lock; replaying every
-stored entry sequenced before a trade through broker.Book therefore rebuilds
-exactly the book that trade was stamped from. The stamped touch is checked
-against that replay, cvd's response_midpoint:at against the stamped touch's
-midpoint, :from against the previous frame's :at, and the log return against
-ln(:at / :from).
+with the book snapshot it stamps onto the trade, under its read lock; replaying
+every stored entry sequenced before a trade through broker.Book therefore
+rebuilds exactly the book that trade was stamped from. The stamped snapshot is
+checked level by level, to the venue's exact digits, against that replay;
+cvd's response_midpoint:at against the stamped touch's midpoint, :from against
+the previous frame's :at, and the log return against ln(:at / :from).
+
+A trade stamped without a book is not compared: the live book was unseeded or
+stale at that event, a state the stored tape does not record.
 */
 func AnalyzeTruthfulness(
 	ctx context.Context,
@@ -149,6 +151,18 @@ func AnalyzeTruthfulness(
 	totalTrades := 0
 	level3Entries := level3Frames(level3)
 	book := broker.NewBook(ctx, spot.NewNormalizer())
+	cursors := make(map[string]int, len(level3Entries))
+
+	replay := func(symbol string, before int64) {
+		frames := level3Entries[symbol]
+
+		for cursors[symbol] < len(frames) && frames[cursors[symbol]].first < before {
+			frame := frames[cursors[symbol]]
+			err := book.ApplyFrame(frame.orders)
+			record("level3_replay", float64(frame.first), float64(frame.first), err == nil)
+			cursors[symbol]++
+		}
+	}
 
 	for symbol, tape := range bySymbol {
 		slices.SortStableFunc(tape, func(left, right *data.Measurement) int {
@@ -164,23 +178,20 @@ func AnalyzeTruthfulness(
 		var previous *data.Measurement
 		var previousPublished map[string]float64
 		checkedAt := make(map[int64]bool)
-		symbolFrames := level3Entries[symbol]
-		cursor := 0
 
 		for _, trade := range tape {
-			for cursor < len(symbolFrames) && symbolFrames[cursor].first < trade.SeqIdx {
-				frame := symbolFrames[cursor]
-				err := book.ApplyFrame(frame.orders)
-				record("level3_replay", float64(frame.first), float64(frame.first), err == nil)
-				cursor++
+			replay(symbol, trade.SeqIdx)
+
+			stamped, err := broker.ReadSnapshot(trade)
+
+			if err != nil {
+				errnie.Error(err, "symbol", symbol, "seq", trade.SeqIdx)
+				record("trade_book", float64(trade.SeqIdx), float64(trade.SeqIdx), false)
 			}
 
-			stampedBid, stampedAsk, stamped := stampedTouch(trade)
-			replayBid, replayAsk, replayed := replayedTouch(book, symbol)
-
-			if stamped {
-				record("trade_touch", stampedBid, replayBid,
-					replayed && equal(stampedBid, replayBid) && equal(stampedAsk, replayAsk))
+			if stamped != nil {
+				replayed := book.Snapshot(symbol)
+				record("trade_book", float64(trade.SeqIdx), float64(trade.SeqIdx), stamped.Equal(replayed))
 			}
 
 			totalTrades++
@@ -240,8 +251,15 @@ func AnalyzeTruthfulness(
 			previousPublished = published
 
 			if value, ok := published["response_midpoint:at"]; ok {
-				want := (stampedBid + stampedAsk) / 2.0
-				record("response_midpoint:at", value, want, stamped && equal(value, want))
+				if stamped == nil {
+					record("response_midpoint:at", value, 0, false)
+				}
+
+				if stamped != nil {
+					bid, ask := stamped.Touch()
+					want := (bid.Price.Float64() + ask.Price.Float64()) / 2.0
+					record("response_midpoint:at", value, want, equal(value, want))
+				}
 			}
 
 			if value, ok := published["response_midpoint:from"]; ok {
@@ -260,13 +278,13 @@ func AnalyzeTruthfulness(
 			}
 
 			dt := trade.At.Sub(prior.At).Seconds()
-			rates := map[string]float64{"trade_rate": 1}
-
-			if side == "buy" {
-				rates["buy_notional_rate"], rates["sell_notional_rate"] = price*qty, 0
-			} else {
-				rates["buy_notional_rate"], rates["sell_notional_rate"] = 0, price*qty
+			notional := price * qty
+			rates := map[string]float64{
+				"trade_rate":         1,
+				"buy_notional_rate":  0,
+				"sell_notional_rate": 0,
 			}
+			rates[side+"_notional_rate"] = notional
 
 			for name, numerator := range rates {
 				value, ok := published[name]
@@ -278,6 +296,12 @@ func AnalyzeTruthfulness(
 				record(name, value, numerator/dt, equal(value, numerator/dt))
 			}
 		}
+	}
+
+	// Entries after a symbol's last trade, and on symbols without trades,
+	// still replay against their venue checksums.
+	for symbol := range level3Entries {
+		replay(symbol, math.MaxInt64)
 	}
 
 	totalViolations := 0
@@ -395,35 +419,4 @@ func sameLevel3Entry(previous, next *data.Measurement) bool {
 	return next.SeqIdx == previous.SeqIdx+1 &&
 		next.Meta("checksum") == previous.Meta("checksum") &&
 		next.Meta("type") == previous.Meta("type")
-}
-
-/*
-stampedTouch returns the touch ingress stamped onto trade, if it stamped one.
-*/
-func stampedTouch(trade *data.Measurement) (bid float64, ask float64, stamped bool) {
-	bidEntry := data.Pull(trade.Read("touch_bid"))
-	askEntry := data.Pull(trade.Read("touch_ask"))
-
-	if bidEntry == nil || bidEntry.Metric == nil || askEntry == nil || askEntry.Metric == nil {
-		return 0, 0, false
-	}
-
-	return bidEntry.Metric.Raw, askEntry.Metric.Raw, true
-}
-
-/*
-replayedTouch returns the executable touch of symbol's replayed book.
-*/
-func replayedTouch(book *broker.Book, symbol string) (bid float64, ask float64, defined bool) {
-	book.Book(symbol, func(managed *spotbook.Book) {
-		bidLevel, askLevel, ok := broker.Touch(managed)
-
-		if !ok {
-			return
-		}
-
-		bid, ask, defined = bidLevel.Price.Float64(), askLevel.Price.Float64(), true
-	})
-
-	return bid, ask, defined
 }

@@ -2,6 +2,7 @@ package data
 
 import (
 	"math"
+	"strings"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -18,8 +19,7 @@ nil.
 */
 type Metric struct {
 	Label        string           // The name of the metric.
-	center       float64          // The center of the metric.
-	scale        float64          // The scale of the metric.
+	support      float64          // The prior observations Standardized was ranked against.
 	Raw          float64          // The raw value of the metric.
 	Normalized   float64          // The normalized value of the metric.
 	Standardized float64          // The standardized value of the metric.
@@ -29,8 +29,7 @@ type Metric struct {
 }
 
 /*
-NewMetric builds a metric declaring its label, unit, timescale, and the
-center and scale its values are standardized against.
+NewMetric builds a metric declaring its label, raw value, unit, and timescale.
 */
 func NewMetric(
 	label string, raw float64, unit Unit, timescale Timescale,
@@ -59,6 +58,20 @@ func NewExactMetric(
 	}
 }
 
+func (metric *Metric) CleanLabel() string {
+	base := metric.Label
+
+	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
+		base = base[:atIndex]
+	}
+
+	if colonIndex := strings.IndexByte(base, ':'); colonIndex != -1 {
+		base = base[:colonIndex]
+	}
+
+	return base
+}
+
 func (metric *Metric) Unit() Unit {
 	return metric.unit
 }
@@ -67,15 +80,17 @@ func (metric *Metric) Timescale() Timescale {
 	return metric.timescale
 }
 
+func (metric *Metric) Support() float64 {
+	return metric.support
+}
+
 /*
 finalize is called from the Measurement to standardize the observation against
-its stream's causal moments: center and scale are the stream's mean and sample
-standard deviation before this observation, in the stream's standardization
-space (Unit.Scale: Raw itself or its log-modulus), and
-Standardized is (value - center) / scale for Raw's value in that space.
-While the prior scale is zero the z-score is undefined:
-Standardized and Normalized stay zero and Standardizable reports false. An
-invalid observation is rejected before it reaches the stream.
+its stream: Standardized is the standard normal quantile of Raw's mid-rank
+among the stream's earlier observations, and support is how many there were.
+While the stream has too few of them the z-score is undefined: Standardized,
+Normalized, and support stay zero and Standardizable reports false. An invalid
+observation is rejected before it reaches the stream.
 */
 func (metric *Metric) finalize(state *standardizer) error {
 	if err := errnie.Require(map[string]any{
@@ -84,14 +99,14 @@ func (metric *Metric) finalize(state *standardizer) error {
 		return errnie.Error(err)
 	}
 
-	value, center, scale, defined := state.observe(metric.Raw, metric.unit.Scale())
-	metric.center, metric.scale = center, scale
+	standardized, support, defined := state.observe(metric.Raw)
+	metric.support = support
 	metric.Standardized = 0
 	metric.Normalized = 0
 
-	if defined && metric.Standardizable() {
-		metric.Standardized = (value - metric.center) / metric.scale
-		metric.Normalized = math.Tanh(metric.Standardized)
+	if defined {
+		metric.Standardized = standardized
+		metric.Normalized = math.Tanh(standardized)
 	}
 
 	return metric.valid()
@@ -99,11 +114,11 @@ func (metric *Metric) finalize(state *standardizer) error {
 
 /*
 Standardizable reports whether Standardized holds a z-score. It is false until
-the metric's stream has a positive causal scale; an undefined z-score is
-missing evidence, not a zero deformation.
+the metric's stream has enough prior observations to rank against; an
+undefined z-score is missing evidence, not a zero deformation.
 */
 func (metric *Metric) Standardizable() bool {
-	return metric.scale > 0
+	return metric.support > 0
 }
 
 /*

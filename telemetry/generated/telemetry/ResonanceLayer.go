@@ -7,10 +7,10 @@ import (
 )
 
 type ResonanceLayerT struct {
-	State []float64 `json:"state"`
+	State      []float64 `json:"state"`
 	Prediction []float64 `json:"prediction"`
-	ErrorNorm float64 `json:"errorNorm"`
-	Temporal bool `json:"temporal"`
+	ErrorNorm  float64   `json:"errorNorm"`
+	Temporal   bool      `json:"temporal"`
 }
 
 func (t *ResonanceLayerT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

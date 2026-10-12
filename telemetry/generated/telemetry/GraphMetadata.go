@@ -7,9 +7,9 @@ import (
 )
 
 type GraphMetadataT struct {
-	Numbers []*NamedNumberT `json:"numbers"`
-	Strings []*NamedStringT `json:"strings"`
-	Bools []*NamedBoolT `json:"bools"`
+	Numbers     []*NamedNumberT  `json:"numbers"`
+	Strings     []*NamedStringT  `json:"strings"`
+	Bools       []*NamedBoolT    `json:"bools"`
 	StringLists []*NamedStringsT `json:"stringLists"`
 }
 

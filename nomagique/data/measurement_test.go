@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/system"
 )
 
 func TestMeasurementFinalize(t *testing.T) {
@@ -50,11 +51,24 @@ func TestMeasurementFinalize(t *testing.T) {
 		})
 
 		Convey("A second Write is rejected by the WORM lock", func() {
-			measurement.Write(NewMetric("price", 1, UnitCurrency, TimescaleInstantaneous))
-			measurement.Write(NewMetric("price", 2, UnitCurrency, TimescaleInstantaneous))
+			lockedMeas := NewMeasurement(2, "BTC/USD", "spot:trade", system.SeqIdx.Add(1), 1)
+			lockedMeas.At = time.Unix(1, 0).UTC()
+			lockedMeas.From = lockedMeas.At
+			lockedMeas.Write(NewMetric("price", 1, UnitCurrency, TimescaleInstantaneous))
+			lockedMeas.Write(NewMetric("price", 2, UnitCurrency, TimescaleInstantaneous))
 
-			So(errnie.IsKind(measurement.Error(), errnie.Forbidden), ShouldBeTrue)
-			So(measurement.samples, ShouldEqual, 1)
+			So(errnie.IsKind(lockedMeas.Error(), errnie.Forbidden), ShouldBeTrue)
+			So(lockedMeas.samples, ShouldEqual, 1)
+
+			Convey("A succeeding measurement on the same stream accumulates samples", func() {
+				event := NewMeasurement(2, "BTC/USD", "spot:trade", system.SeqIdx.Add(1), 2)
+				event.At = time.Unix(2, 0).UTC()
+				event.From = event.At
+				secondMeas := lockedMeas.Next(event.At, map[string]float64{"price": 3})
+
+				So(secondMeas.samples, ShouldEqual, 2)
+				So(secondMeas.SeqIdx, ShouldBeGreaterThan, lockedMeas.SeqIdx)
+			})
 		})
 	})
 }

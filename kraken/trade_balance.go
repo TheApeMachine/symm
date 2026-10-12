@@ -29,4 +29,3 @@ type TradeBalance struct {
 	Error  []string           `json:"error"`
 	Result TradeBalanceResult `json:"result"`
 }
-

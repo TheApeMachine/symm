@@ -9,6 +9,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -78,8 +79,10 @@ var stepSymbols atomic.Int64
 func TestSignalStep(t *testing.T) {
 	Convey("Given CVD stepping a multi-leg trade tape through the real Step boundary", t, func() {
 		// The futures diverge only once the streams hold enough prior
-		// samples to define z-scores at the divergence.
-		precursor := int(core.MinimumPrior) + 1
+		// samples to define z-scores at the divergence. A symbol's first
+		// trade has no rate, so the rate streams hold MinimumRankPrior
+		// priors one trade after MinimumRankPrior.
+		precursor := int(core.MinimumRankPrior) + 1
 
 		run := stepSymbols.Add(1)
 		symbol := func(name string) string {
@@ -141,70 +144,40 @@ func TestSignalStep(t *testing.T) {
 			}
 		})
 
-		Convey("Every z-score is the observation against its own stream's earlier values only", func() {
+		Convey("Every z-score is the observation's mid-rank among its own stream's earlier values only", func() {
 			for step, zscores := range observed {
 				for key, zscore := range zscores {
-					// Replay the stream in its unit's standardization space.
-					unit, _ := data.GetDimension("cvd", key)
-					space := unit.Scale()
-					var modulus core.LogModulus
-					history := make([]float64, 0, step)
-					current, currentDefined := 0.0, false
+					current := raws[step][key]
+					below, equal, priors := 0.0, 0.0, 0.0
 
 					// A stream only sees the steps that defined its metric.
-					for _, earlier := range raws[:step+1] {
+					for _, earlier := range raws[:step] {
 						raw, defined := earlier[key]
 
 						if !defined {
 							continue
 						}
 
-						value, inSpace := raw, true
+						priors++
 
-						switch space {
-						case data.ScaleLogModulus:
-							value, inSpace = modulus.Step(raw)
+						if raw < current {
+							below++
 						}
 
-						current, currentDefined = value, inSpace
-
-						if inSpace {
-							history = append(history, value)
+						if raw == current {
+							equal++
 						}
 					}
 
-					if !currentDefined {
+					if priors < core.MinimumRankPrior {
 						So(zscore, ShouldEqual, 0)
+
 						continue
 					}
 
-					history = history[:len(history)-1]
-					mean, deviation := 0.0, 0.0
-
-					for _, value := range history {
-						mean += value
-					}
-
-					mean /= float64(max(len(history), 1))
-
-					for _, value := range history {
-						deviation += (value - mean) * (value - mean)
-					}
-
-					if float64(len(history)) < core.MinimumPrior || deviation == 0 {
-						So(zscore, ShouldEqual, 0)
-						continue
-					}
-
-					deviation = math.Sqrt(deviation / float64(len(history)-1))
-
-					if core.Negligible(deviation, current, mean) {
-						So(zscore, ShouldEqual, 0)
-						continue
-					}
-
-					want := (current - mean) / deviation
-					So(zscore, ShouldAlmostEqual, want, 1e-9*math.Max(1, math.Abs(want)))
+					probability := (below + (equal+core.Unit)/2) / (priors + core.Unit)
+					want := math.Sqrt2 * math.Erfinv(2*probability-core.Unit)
+					So(zscore, ShouldAlmostEqual, want, 1e-12)
 				}
 			}
 		})
@@ -314,13 +287,13 @@ func TestCVDUndefinedRates(t *testing.T) {
 }
 
 /*
-stampedTrade builds a stored trade carrying the touch ingress stamps onto it
-at its sequence number; a zero bid leaves it unstamped, as a trade on an
-unseeded or diverged book is.
+stampedTrade builds a stored trade of one epoch carrying the touch ingress
+stamps onto it at its sequence number; a zero bid leaves it unstamped, as a
+trade on an unseeded or diverged book is.
 */
 func stampedTrade(symbol, side string, price, qty float64, at time.Time, bid, ask float64) *data.Measurement {
 	measurement := data.NewMeasurement(
-		at.UnixNano(),
+		1,
 		symbol,
 		"spot:trade",
 		system.SeqIdx.Add(1),
@@ -336,10 +309,12 @@ func stampedTrade(symbol, side string, price, qty float64, at time.Time, bid, as
 	}
 
 	if bid > 0 {
-		metrics = append(metrics,
-			data.NewExactMetric("touch_bid", decimal.NewFromFloat64(bid), data.UnitPrice, data.TimescaleInstantaneous),
-			data.NewExactMetric("touch_ask", decimal.NewFromFloat64(ask), data.UnitPrice, data.TimescaleInstantaneous),
-		)
+		snapshot := &broker.Snapshot{
+			Depth: 1,
+			Bids:  []broker.Level{{Price: decimal.NewFromFloat64(bid), Quantity: decimal.NewFromFloat64(1)}},
+			Asks:  []broker.Level{{Price: decimal.NewFromFloat64(ask), Quantity: decimal.NewFromFloat64(1)}},
+		}
+		metrics = append(metrics, snapshot.Metrics()...)
 	}
 
 	return measurement.Write(metrics...)

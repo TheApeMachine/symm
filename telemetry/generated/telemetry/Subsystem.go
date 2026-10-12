@@ -7,13 +7,13 @@ import (
 )
 
 type SubsystemT struct {
-	Name string `json:"name"`
-	Label string `json:"label"`
-	Health string `json:"health"`
-	Direction string `json:"direction"`
-	ValueText string `json:"valueText"`
-	Explanation string `json:"explanation"`
-	Value float64 `json:"value"`
+	Name        string  `json:"name"`
+	Label       string  `json:"label"`
+	Health      string  `json:"health"`
+	Direction   string  `json:"direction"`
+	ValueText   string  `json:"valueText"`
+	Explanation string  `json:"explanation"`
+	Value       float64 `json:"value"`
 }
 
 func (t *SubsystemT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

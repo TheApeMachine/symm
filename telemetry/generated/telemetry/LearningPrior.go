@@ -7,20 +7,20 @@ import (
 )
 
 type LearningPriorT struct {
-	Defined bool `json:"defined"`
-	Mean float64 `json:"mean"`
-	Variance float64 `json:"variance"`
-	VarianceDefined bool `json:"varianceDefined"`
-	Samples uint64 `json:"samples"`
-	Support float64 `json:"support"`
-	Authority float64 `json:"authority"`
-	Provisional bool `json:"provisional"`
-	Maturity float64 `json:"maturity"`
+	Defined           bool    `json:"defined"`
+	Mean              float64 `json:"mean"`
+	Variance          float64 `json:"variance"`
+	VarianceDefined   bool    `json:"varianceDefined"`
+	Samples           uint64  `json:"samples"`
+	Support           float64 `json:"support"`
+	Authority         float64 `json:"authority"`
+	Provisional       bool    `json:"provisional"`
+	Maturity          float64 `json:"maturity"`
 	EvidenceAuthority float64 `json:"evidenceAuthority"`
-	Depth int32 `json:"depth"`
-	ContextLength int32 `json:"contextLength"`
-	Pending uint64 `json:"pending"`
-	Memory float64 `json:"memory"`
+	Depth             int32   `json:"depth"`
+	ContextLength     int32   `json:"contextLength"`
+	Pending           uint64  `json:"pending"`
+	Memory            float64 `json:"memory"`
 }
 
 func (t *LearningPriorT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

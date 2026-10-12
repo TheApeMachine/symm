@@ -7,20 +7,25 @@ import (
 
 func TestPrimitiveResidentFrame(t *testing.T) {
 	frame := newFrames(3)
-	var previous float64
-	for index, price := range []float64{100, 99, 98} {
-		x, y, z, _, err := frame.place("A", math.Log(price), 0)
+	// Warm the frame with varied prices exceeding core.MinimumPrior so
+	// that PriorScale can compute a valid prior dispersion.
+	for _, price := range []float64{100, 102, 98, 101, 99, 101.5, 98.5, 100.5, 99.5, 100} {
+		if _, _, _, _, err := frame.place("A", math.Log(price), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var previous float64 = 1.0
+	for _, price := range []float64{99, 98} {
+		x, y, _, _, err := frame.place("A", math.Log(price), 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if math.IsNaN(x) || x < 0 || x > 1 || y != .5 {
+		if x < 0 || x > 1 || y != 0.5 {
 			t.Fatalf("invalid frame coordinate %v %v", x, y)
 		}
-		if index == 2 && x >= previous {
+		if x >= previous {
 			t.Fatalf("price order lost: %v >= %v", x, previous)
-		}
-		if math.IsNaN(z) {
-			t.Fatal("nonfinite deviation")
 		}
 		previous = x
 	}

@@ -16,7 +16,7 @@ type DrainSource interface {
 
 const (
 	maxDrainConsecutiveFailures = 10
-	maxDrainBufferedBytes       = 256 * 1024 * 1024
+	maxDrainBufferedBytes       = 1024 * 1024 * 1024
 	minDrainBackoff             = time.Second
 	maxDrainBackoff             = 30 * time.Second
 	shutdownFlushTimeout        = 12 * time.Second
