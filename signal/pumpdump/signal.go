@@ -37,9 +37,10 @@ func (ce *causalEstimator) Step(value float64) (hasBaseline bool, baseline float
 }
 
 type symbolState struct {
-	lastMeasurement *data.Measurement
-	clock           volumeclock.Clock
-	spreadEstimator causalEstimator
+	lastMeasurement    *data.Measurement
+	lastBarMeasurement *data.Measurement
+	clock              volumeclock.Clock
+	spreadEstimator    causalEstimator
 }
 
 type Signal struct {
@@ -144,12 +145,26 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	var res *data.Measurement
 
-	if state.lastMeasurement == nil {
-		res = data.NewFromPrior(prior, signal.Name(), out)
+	if closed {
+		if state.lastBarMeasurement == nil {
+			res = data.NewFromPrior(prior, signal.Name(), out)
+		}
+
+		if res == nil {
+			res = state.lastBarMeasurement.Next(out)
+		}
+
+		state.lastBarMeasurement = res
 	}
 
-	if res == nil {
-		res = state.lastMeasurement.Next(out)
+	if !closed {
+		if state.lastMeasurement == nil {
+			res = data.NewFromPrior(prior, signal.Name(), out)
+		}
+
+		if res == nil {
+			res = state.lastMeasurement.Next(out)
+		}
 	}
 
 	res.At = prior.At

@@ -181,7 +181,7 @@ func (measurement *Measurement) copyMetrics(
 
 			if prior != nil {
 				for _, entry := range prior.metrics {
-					if entry != nil && entry.Key == key && entry.Metric != nil {
+					if entry != nil && (entry.Key == key || (entry.Metric != nil && entry.Metric.label == key)) && entry.Metric != nil {
 						metric.setSNM(entry.Metric.raw)
 						break
 					}
@@ -270,10 +270,18 @@ func (measurement *Measurement) Write(
 		}
 
 		if found != nil {
+			prior := found.Metric.raw
 			found.Metric.raw = metric.raw
 			found.Metric.exact = metric.exact
 			found.Metric.unit = metric.unit
 			found.Metric.timescale = metric.timescale
+
+			if metric.snm != 0 {
+				found.Metric.snm = metric.snm
+				continue
+			}
+
+			found.Metric.setSNM(prior)
 			continue
 		}
 

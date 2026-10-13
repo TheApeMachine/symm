@@ -27,11 +27,12 @@ bar's target is the median prior trade quantity, fixed when it opens. Totals
 are reported once per closed bar, never accumulated since an epoch.
 */
 type symbolState struct {
-	lastMeasurement *data.Measurement
-	clock           volumeclock.Clock
-	window          window
-	lastAt          time.Time
-	prevMidpoint    float64
+	lastMeasurement    *data.Measurement
+	lastBarMeasurement *data.Measurement
+	clock              volumeclock.Clock
+	window             window
+	lastAt             time.Time
+	prevMidpoint       float64
 }
 
 type Signal struct {
@@ -156,12 +157,26 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	var res *data.Measurement
 
-	if state.lastMeasurement == nil {
-		res = data.NewFromPrior(prior, signal.Name(), out)
+	if tick.Closed {
+		if state.lastBarMeasurement == nil {
+			res = data.NewFromPrior(prior, signal.Name(), out)
+		}
+
+		if res == nil {
+			res = state.lastBarMeasurement.Next(out)
+		}
+
+		state.lastBarMeasurement = res
 	}
 
-	if res == nil {
-		res = state.lastMeasurement.Next(out)
+	if !tick.Closed {
+		if state.lastMeasurement == nil {
+			res = data.NewFromPrior(prior, signal.Name(), out)
+		}
+
+		if res == nil {
+			res = state.lastMeasurement.Next(out)
+		}
 	}
 
 	res.At = prior.At
