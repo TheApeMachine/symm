@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"math"
 	"slices"
@@ -142,6 +143,29 @@ func TestGrid_Observe(t *testing.T) {
 				}
 			})
 
+			Convey("Every member is the original entry with its original provenance", func() {
+				seen := make(map[*data.MetricEntry]int)
+
+				for _, region := range regions {
+					So(region.Members, ShouldHaveLength, sizes[region.Key])
+
+					for _, member := range region.Members {
+						So(member.Measurement, ShouldEqual, peers[region.Key])
+						original := data.Pull(member.Measurement.Read(member.Entry.Key))
+						So(member.Entry, ShouldEqual, original)
+						seen[member.Entry]++
+						So(member.Entry.Metric.Unit(), ShouldEqual, original.Metric.Unit())
+						So(member.Entry.Metric.Timescale(), ShouldEqual, original.Metric.Timescale())
+					}
+				}
+
+				for _, peer := range peers {
+					for entry := range peer.Read() {
+						So(seen[entry], ShouldEqual, 1)
+					}
+				}
+			})
+
 			Convey("A region's brightness is the mean |SNM| of its metrics", func() {
 				for _, region := range regions {
 					sum := 0.0
@@ -162,12 +186,112 @@ func TestGrid_Observe(t *testing.T) {
 			})
 		})
 
+		Convey("When the frame is the first observation", func() {
+			frame, _ := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, false)
+			regions := grid.Observe(frame)
+			So(grid.Error(), ShouldBeNil)
+			So(regions, ShouldHaveLength, RegionCount)
+
+			Convey("Zero SNM is retained, not mistaken for missing evidence", func() {
+				for _, region := range regions {
+					So(region.Counts, ShouldEqual, 1)
+					So(region.Members, ShouldHaveLength, 1)
+					So(region.Members[0].Entry.Metric.Raw(), ShouldEqual, 1)
+					So(region.Members[0].Entry.Metric.SNM(), ShouldEqual, 0)
+					So(region.Brightness, ShouldEqual, 0)
+				}
+			})
+		})
+
+		Convey("When metric values fall", func() {
+			frame, peers := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, false)
+			first := grid.Observe(frame)
+			falling := data.NewMeasurement(frame.Epoch, frame.Label, "frame", 2, 2)
+			falling.At, falling.From = frame.At, frame.From
+
+			for _, peer := range peers {
+				entry := data.Pull(peer.Read())
+				raised := peer.Next(map[string]float64{entry.Key: 2})
+				falling.Peers(raised.Next(map[string]float64{entry.Key: 1}))
+			}
+
+			regions := grid.Observe(falling.Write())
+			So(grid.Error(), ShouldBeNil)
+			So(regions, ShouldHaveLength, RegionCount)
+
+			Convey("Members retain signed movement while brightness keeps its original magnitude calculation", func() {
+				for _, region := range regions {
+					So(region.Members[0].Entry.Metric.Raw(), ShouldEqual, 1)
+					So(region.Members[0].Entry.Metric.SNM(), ShouldAlmostEqual, -1.0/3.0)
+					So(region.Brightness, ShouldAlmostEqual, 1.0/3.0)
+				}
+			})
+
+			Convey("Observing a successor does not overwrite previously returned members", func() {
+				for _, region := range first {
+					So(region.Members[0].Measurement, ShouldEqual, peers[region.Key])
+					So(region.Members[0].Entry.Metric.Raw(), ShouldEqual, 1)
+					So(region.Members[0].Entry.Metric.SNM(), ShouldEqual, 0)
+				}
+			})
+		})
+
+		Convey("When the frame is nil", func() {
+			So(grid.Observe(nil), ShouldBeNil)
+			So(grid.Error(), ShouldNotBeNil)
+		})
+
+		Convey("When the frame is not finalized", func() {
+			frame := data.NewMeasurement(1, "BTC/USD", "frame", 1, 1)
+			So(grid.Observe(frame), ShouldBeNil)
+			So(grid.Error(), ShouldNotBeNil)
+		})
+
+		Convey("When a peer is nil", func() {
+			frame, _ := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, false)
+			frame.Peers(nil)
+			So(grid.Observe(frame), ShouldBeNil)
+			So(grid.Error(), ShouldNotBeNil)
+		})
+
+		Convey("When a producer already failed", func() {
+			frame, peers := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, false)
+			err := errors.New("producer failed")
+			peers[0].SetError(err)
+			So(grid.Observe(frame), ShouldBeNil)
+			So(grid.Error(), ShouldNotBeNil)
+			So(errors.Is(grid.Error(), err), ShouldBeTrue)
+		})
+
+		Convey("When a metric entry carries a read error", func() {
+			frame, peers := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, false)
+			err := errors.New("metric read failed")
+			entry := data.Pull(peers[0].Read())
+			entry.Err = err
+			So(grid.Observe(frame), ShouldBeNil)
+			So(grid.Error(), ShouldNotBeNil)
+			So(errors.Is(grid.Error(), err), ShouldBeTrue)
+		})
+
+		Convey("When a metric entry has no metric", func() {
+			frame, peers := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, false)
+			entry := data.Pull(peers[0].Read())
+			entry.Metric = nil
+			So(grid.Observe(frame), ShouldBeNil)
+			So(grid.Error(), ShouldNotBeNil)
+		})
+
 		Convey("When a region holds no metric", func() {
 			frame, _ := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1}, true)
 
-			Convey("No regions are returned", func() {
+			Convey("The missing region is an error, not an ordinary empty result", func() {
 				So(grid.Observe(frame), ShouldBeNil)
-				So(grid.Error(), ShouldBeNil)
+				So(grid.Error(), ShouldNotBeNil)
+				So(grid.Error().Error(), ShouldContainSubstring, "R05")
+				So(grid.Error().Error(), ShouldContainSubstring, "BTC/USD")
+
+				complete, _ := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, false)
+				So(grid.Observe(complete), ShouldBeNil)
 			})
 		})
 

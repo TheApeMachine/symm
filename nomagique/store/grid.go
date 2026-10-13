@@ -12,8 +12,9 @@ import (
 )
 
 /*
-Grid is not a grid at all, it is a "group by" over Measurement
-and Metric pins into 12 multi-signal confluence regions.
+Grid groups the frame's metric entries into the existing 12 confluence
+regions. Grouping retains the entries and their producing measurements;
+brightness remains a separate aggregate of their self-normalized movement.
 */
 type Grid struct {
 	*runtime.System
@@ -31,30 +32,59 @@ func NewGrid(ctx context.Context) *Grid {
 }
 
 /*
-Region is one confluence region's evidence in a frame: Deformation is the sum
-of its self-normalized metric magnitudes |SNM|, Counts how many metrics it holds,
-and Brightness their average in [0, 1].
+RegionMember refers to an original metric entry and its producing measurement.
+The entry retains its key, raw value, signed SNM, unit and timescale; the
+measurement retains the symbol, epoch, tick and observation interval. Neither
+is copied or rewritten by grouping.
+*/
+type RegionMember struct {
+	Measurement *data.Measurement
+	Entry       *data.MetricEntry
+}
+
+/*
+Region holds the individual members as well as the existing brightness
+aggregate: Deformation is the sum of |SNM|, Counts is the member count, and
+Brightness is their average. The aggregate does not replace member values.
 */
 type Region struct {
 	Key         uint8
 	Deformation float64
 	Brightness  float64
 	Counts      int
+	Members     []RegionMember
 }
 
 /*
-Observe pins every metric of the frame's peers to its region and returns the
-12 regions sorted brightest first. A region's brightness is the average of its
-metrics' |SNM| in [0, 1]. Only the magnitude matters, never the direction, and
-an average does not grow with the number of metrics, so a large region has no
-edge over a small one.
+Observe groups every metric of the frame's peers and returns all 12 regions,
+brightest first, using the existing mean-|SNM| calculation and pin mapping.
+A first observation with zero SNM is valid evidence and remains in the array.
 
-Observe returns nil when a metric is not pinned to a region (a contract breach,
-reported once as an error, after which the grid observes nothing), or when a
-region holds no metric at all.
+An invalid frame, unreadable member, unpinned metric or empty region is a
+contract error. No partial array is returned; the grid remains in error.
+This checks region coverage, not that each producer emitted every declared
+metric: that stronger source-level contract must not be inferred from Counts.
 */
 func (grid *Grid) Observe(measurement *data.Measurement) []*Region {
 	if grid.Error() != nil {
+		return nil
+	}
+
+	if measurement == nil {
+		grid.Error(errnie.Err(errnie.Validation, "[grid] nil signal frame", nil))
+		return nil
+	}
+
+	peers := measurement.Peers()
+
+	if err := measurement.Error(); err != nil {
+		grid.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[grid] invalid signal frame: symbol=%s epoch=%d tick=%d",
+				measurement.Label, measurement.Epoch, measurement.Tick),
+			err,
+		))
+
 		return nil
 	}
 
@@ -64,29 +94,28 @@ func (grid *Grid) Observe(measurement *data.Measurement) []*Region {
 		regions[idx] = &Region{Key: uint8(idx)}
 	}
 
-	for _, peer := range measurement.Peers() {
-		for entry := range peer.Read() {
-			region, isPinned := regionMetricPins[peer.Source][entry.Metric.Label()]
+	for _, peer := range peers {
+		if err := grid.group(peer, regions); err != nil {
+			grid.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("[grid] cannot group signal frame: symbol=%s epoch=%d tick=%d",
+					measurement.Label, measurement.Epoch, measurement.Tick),
+				err,
+			))
 
-			if !isPinned {
-				grid.Error(errnie.Err(
-					errnie.NotAcceptable,
-					fmt.Sprintf("[grid] metric not pinned to a region: %s/%s",
-						peer.Source, entry.Metric.Label(),
-					),
-					nil,
-				))
-
-				return nil
-			}
-
-			regions[region].Deformation += math.Abs(entry.Metric.SNM())
-			regions[region].Counts++
+			return nil
 		}
 	}
 
 	for _, region := range regions {
 		if region.Counts == 0 {
+			grid.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("[grid] empty region R%02d: symbol=%s epoch=%d tick=%d",
+					region.Key, measurement.Label, measurement.Epoch, measurement.Tick),
+				nil,
+			))
+
 			return nil
 		}
 
@@ -106,4 +135,58 @@ func (grid *Grid) Observe(measurement *data.Measurement) []*Region {
 	})
 
 	return regions
+}
+
+/*
+group assigns one producer's original entries to their pinned regions. Read
+errors are returned before any entry is dereferenced or used as evidence.
+*/
+func (grid *Grid) group(peer *data.Measurement, regions []*Region) error {
+	if peer == nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "[grid] nil signal peer", nil))
+	}
+
+	if err := peer.Error(); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "[grid] invalid signal peer: "+peer.Source, err,
+		))
+	}
+
+	for entry := range peer.Read() {
+		if entry == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation, "[grid] nil metric entry: "+peer.Source, nil,
+			))
+		}
+
+		if entry.Err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation, "[grid] unreadable metric: "+peer.Source+"/"+entry.Key, entry.Err,
+			))
+		}
+
+		if entry.Metric == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation, "[grid] nil metric: "+peer.Source+"/"+entry.Key, nil,
+			))
+		}
+
+		key, isPinned := regionMetricPins[peer.Source][entry.Metric.Label()]
+
+		if !isPinned {
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				fmt.Sprintf("[grid] metric not pinned to a region: %s/%s",
+					peer.Source, entry.Metric.Label()),
+				nil,
+			))
+		}
+
+		region := regions[key]
+		region.Members = append(region.Members, RegionMember{Measurement: peer, Entry: entry})
+		region.Deformation += math.Abs(entry.Metric.SNM())
+		region.Counts++
+	}
+
+	return nil
 }

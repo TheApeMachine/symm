@@ -119,7 +119,20 @@ and advances the symbol's token path, acting when the path lands on a
 stored path with one agreed action.
 */
 func (training *Training) Step(prior *data.Measurement) *data.Measurement {
+	if training.grid.Error() != nil {
+		return nil
+	}
+
 	regions := training.grid.Observe(prior)
+
+	if regions == nil {
+		training.Error(errnie.Err(
+			errnie.Validation, "[training] signal frame rejected", training.grid.Error(),
+		))
+
+		return nil
+	}
+
 	metrics := make(map[string]float64, len(regions)*2)
 
 	for _, region := range regions {
@@ -146,7 +159,7 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 
 	current := training.policy.Load()
 
-	if current.tokenizer == nil || regions == nil {
+	if current.tokenizer == nil {
 		return emit()
 	}
 
