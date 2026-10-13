@@ -61,6 +61,8 @@ func productionReplay(measurements []*data.Measurement, epoch int64, grid *store
 	byFrame := make(map[frameKey][]*data.Measurement)
 	var order []frameKey
 
+	priors := make(map[string]*data.Measurement)
+
 	for _, stored := range measurements {
 		if stored == nil {
 			errnie.Error(errnie.Err(
@@ -72,18 +74,25 @@ func productionReplay(measurements []*data.Measurement, epoch int64, grid *store
 			continue
 		}
 
-		replayed := data.NewMeasurement(epoch, stored.Label, stored.Source, stored.At, stored.From)
-		replayed.SeqIdx = stored.SeqIdx
-		replayed.Tick = stored.Tick
-		metrics := make([]*data.Metric, 0)
+		rawValues := make(map[string]float64)
 
 		for entry := range stored.Read() {
 			if entry != nil && entry.Metric != nil {
-				metrics = append(metrics, data.NewMetric(entry.Key, entry.Metric.Raw(), entry.Metric.Unit(), entry.Metric.Timescale()))
+				rawValues[entry.Key] = entry.Metric.Raw()
 			}
 		}
 
-		replayed = replayed.Write(metrics...)
+		replayedTrigger := data.NewMeasurement(epoch, stored.Label, stored.Source, stored.At, stored.From)
+		replayedTrigger.SeqIdx = stored.SeqIdx
+		replayedTrigger.Tick = stored.Tick
+		replayedTrigger.Write()
+
+		streamKey := stored.Source + "|" + stored.Label
+		priorMeas := priors[streamKey]
+		replayed := priorMeas.Next(replayedTrigger, rawValues)
+		replayed.SeqIdx = stored.SeqIdx
+		replayed.Tick = stored.Tick
+		priors[streamKey] = replayed
 
 		for entry := range replayed.Read() {
 			if entry != nil && entry.Metric != nil {

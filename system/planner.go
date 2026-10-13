@@ -1,6 +1,9 @@
 package system
 
-import "github.com/spf13/viper"
+import (
+	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
+)
 
 /* UninformativeDirectionConfidence is exact probability indifference. */
 const UninformativeDirectionConfidence = 0.5
@@ -25,13 +28,21 @@ func NewPlannerConfig() *PlannerConfig {
 	maxLoss := viper.GetFloat64("trading.allocation.max_loss_fraction")
 
 	if maxLoss <= 0 {
-		maxLoss = 0.02
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[planner] max_loss_fraction must be positive",
+			nil,
+		))
 	}
 
 	aggLoss := viper.GetFloat64("trading.allocation.aggregate_max_loss_fraction")
 
 	if aggLoss <= 0 {
-		aggLoss = 0.06
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[planner] aggregate_max_loss_fraction must be positive",
+			nil,
+		))
 	}
 
 	return &PlannerConfig{

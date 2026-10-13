@@ -36,6 +36,7 @@ func AnalyzeGridSensitivity(
 	}
 
 	familySet := make(map[string]struct{})
+	
 	for _, tick := range ticks {
 		for _, m := range tickMeasurements[tick] {
 			if m != nil && m.Source != "" {
@@ -45,6 +46,7 @@ func AnalyzeGridSensitivity(
 	}
 
 	families := make([]string, 0, len(familySet))
+
 	for f := range familySet {
 		families = append(families, f)
 	}
@@ -147,6 +149,7 @@ func computeSampleRegionDistribution(
 
 	for _, tick := range ticks {
 		measGroup := tickMeasurements[tick]
+
 		if len(measGroup) == 0 {
 			continue
 		}
@@ -166,6 +169,7 @@ func computeSampleRegionDistribution(
 			if excludeFamily != "" && m.Source == excludeFamily {
 				continue
 			}
+
 			bySymbol[m.Label] = append(bySymbol[m.Label], m)
 		}
 
@@ -173,6 +177,7 @@ func computeSampleRegionDistribution(
 			if len(symMeas) == 0 {
 				continue
 			}
+
 			frame := data.NewMeasurement(
 				symMeas[0].Epoch,
 				sym,
@@ -180,11 +185,13 @@ func computeSampleRegionDistribution(
 				symMeas[0].At,
 				symMeas[0].From,
 			)
+			
 			frame.SeqIdx = symMeas[0].SeqIdx
 			frame.Tick = tick
 			frame.Peers(symMeas...)
 			frame.Write()
-			if regions := grid.Observe(frame); regions != nil {
+			
+			if regions := grid.Observe(frame); regions != nil && regions[0].Brightness > 0 {
 				counts[regions[0].Key]++
 				total++
 			}
@@ -216,6 +223,7 @@ func computeDuplicatedRegionDistribution(
 		}
 
 		bySymbol := make(map[string][]*data.Measurement)
+
 		for _, m := range measGroup {
 			if m == nil {
 				errnie.Error(errnie.Err(
@@ -228,6 +236,7 @@ func computeDuplicatedRegionDistribution(
 			}
 
 			bySymbol[m.Label] = append(bySymbol[m.Label], m)
+		
 			if m.Source == duplicateFamily {
 				// Duplicate this measurement to simulate metric spam
 				bySymbol[m.Label] = append(bySymbol[m.Label], m)
@@ -238,6 +247,7 @@ func computeDuplicatedRegionDistribution(
 			if len(symMeas) == 0 {
 				continue
 			}
+		
 			frame := data.NewMeasurement(
 				symMeas[0].Epoch,
 				sym,
@@ -245,11 +255,13 @@ func computeDuplicatedRegionDistribution(
 				symMeas[0].At,
 				symMeas[0].From,
 			)
+		
 			frame.SeqIdx = symMeas[0].SeqIdx
 			frame.Tick = tick
 			frame.Peers(symMeas...)
 			frame.Write()
-			if regions := grid.Observe(frame); regions != nil {
+		
+			if regions := grid.Observe(frame); regions != nil && regions[0].Brightness > 0 {
 				counts[regions[0].Key]++
 				total++
 			}

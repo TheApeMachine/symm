@@ -91,6 +91,7 @@ func TestHandleTrade(t *testing.T) {
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Source, ShouldEqual, "spot:trade")
 			So(measurement.Label, ShouldEqual, "BTC/USD")
+			So(measurement.Tick, ShouldBeGreaterThan, 0)
 		})
 
 

@@ -85,12 +85,18 @@ func NewMeasurement(
 	at, from time.Time,
 	metadata ...*StringEntry,
 ) *Measurement {
+	tick := system.Tick.Load()
+
+	if source == "spot:trade" || source == "spot:touch" {
+		tick = system.Tick.Add(1)
+	}
+
 	return &Measurement{
 		Epoch:     epoch,
 		Label:     label,
 		Source:    source,
 		SeqIdx:    system.SeqIdx.Add(1),
-		Tick:      system.Tick.Load(),
+		Tick:      tick,
 		Timestamp: time.Now().UnixNano(),
 		At:        at,
 		From:      from,
@@ -155,8 +161,11 @@ func (measurement *Measurement) Next(
 
 	next.Timestamp = time.Now().UnixNano()
 
-	if prior != nil && !prior.At.IsZero() {
-		next.At = prior.At
+	if prior != nil {
+		if !prior.At.IsZero() {
+			next.At = prior.At
+		}
+
 		next.Tick = prior.Tick
 	}
 
@@ -198,12 +207,15 @@ func (measurement *Measurement) entry(key string) *MetricEntry {
 func (measurement *Measurement) copyMetrics(
 	source string, values map[string]float64, prior *Measurement, trigger *Measurement,
 ) {
-	if len(values) == 0 {
+	if len(values) == 0 && prior == nil {
 		return
 	}
 
+	written := make(map[string]struct{}, len(values))
+
 	for _, key := range slices.Sorted(maps.Keys(values)) {
 		val := values[key]
+		written[key] = struct{}{}
 		unit, timescale := GetDimension(source, key)
 		var priorEntry *MetricEntry
 
@@ -508,6 +520,82 @@ func (measurement *Measurement) Surprise() float64 {
 	}
 
 	return math.Abs(measurement.energy - measurement.prediction)
+}
+
+/*
+Maturity returns sensor readiness [0, 1] based on empirical sample history
+and completeness. Enforces locked WORM state.
+*/
+func (measurement *Measurement) Maturity() float64 {
+	if !measurement.locked() {
+		err := errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		))
+
+		measurement.err = errors.Join(measurement.err, err)
+		return 0
+	}
+
+	return measurement.maturity
+}
+
+/*
+Samples returns the cumulative count of observations accumulated into this
+measurement stream. Enforces locked WORM state.
+*/
+func (measurement *Measurement) Samples() int64 {
+	if !measurement.locked() {
+		err := errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		))
+
+		measurement.err = errors.Join(measurement.err, err)
+		return 0
+	}
+
+	return measurement.samples
+}
+
+/*
+Energy returns total squared SNM metric excitation across the measurement.
+Enforces locked WORM state.
+*/
+func (measurement *Measurement) Energy() float64 {
+	if !measurement.locked() {
+		err := errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		))
+
+		measurement.err = errors.Join(measurement.err, err)
+		return 0
+	}
+
+	return measurement.energy
+}
+
+/*
+Prediction returns expected energy based on empirical EMA history.
+Enforces locked WORM state.
+*/
+func (measurement *Measurement) Prediction() float64 {
+	if !measurement.locked() {
+		err := errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		))
+
+		measurement.err = errors.Join(measurement.err, err)
+		return 0
+	}
+
+	return measurement.prediction
 }
 
 /*

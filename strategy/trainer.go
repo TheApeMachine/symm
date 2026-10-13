@@ -22,7 +22,6 @@ import (
 )
 
 const (
-	s3KeyLimit          = 1024
 	maxPrecursorDepth   = 8
 	maxSearchIterations = 350
 	maxSearchDuration   = 25 * time.Second
@@ -157,7 +156,7 @@ func (trainer *Trainer) load(epochs ...int64) (*recording, error) {
 
 		record, err := trainer.parseExcursion(measurement)
 		if err != nil {
-			continue
+			return nil, errnie.Error(err)
 		}
 
 		history.excursions = append(history.excursions, record)
@@ -584,13 +583,20 @@ func (history *recording) replay(
 	closeAll := func() error {
 		for symbol, entry := range held {
 			bid := bids[symbol]
+
 			if bid <= 0 {
-				bid = entry // Prevent artificial 100% loss on quote dropout
+				return errnie.Error(errnie.Err(
+					errnie.NotFound,
+					fmt.Sprintf("[trainer] missing bid quote to settle position on %s", symbol),
+					nil,
+				))
 			}
+
 			if err := settle(symbol, entry, bid); err != nil {
 				return errnie.Error(err)
 			}
 		}
+
 		return nil
 	}
 
@@ -867,7 +873,11 @@ func (trainer *Trainer) search(history *recording) (*Tokenizer, error) {
 	}
 
 	if best == nil {
-		best = root.children[0].candidate(history)
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[trainer] search yielded no candidate",
+			nil,
+		))
 	}
 
 	errnie.Info(fmt.Sprintf(

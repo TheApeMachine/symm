@@ -40,6 +40,7 @@ func tradeFrame(symbol, phase string, seq int64, at time.Time, price float64, si
 		&data.StringEntry{Key: "side", Value: side},
 		&data.StringEntry{Key: "phase", Value: phase},
 	)
+	measurement.SeqIdx = seq
 
 	priceUnit, priceTime := data.GetDimension("spot:trade", "price")
 	qtyUnit, qtyTime := data.GetDimension("spot:trade", "qty")

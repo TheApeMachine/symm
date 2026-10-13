@@ -445,11 +445,6 @@ func evaluateCognitiveTrieForK(
 		}
 
 		if phaseItem.targetAction == "wait" {
-			teachErr := model.Teach(phaseItem.context, "enter", phaseItem.feedback)
-			if teachErr != nil {
-				errnie.Error(teachErr)
-			}
-
 			taughtList = append(taughtList, taughtRecord{
 				context: phaseItem.context, action: "wait", feedback: phaseItem.feedback,
 			})
@@ -812,36 +807,57 @@ func auditS3PrefixMemory(phases []triePhase) S3MemoryAudit {
 		storedPrefixes[ph.context] = ph.targetAction
 	}
 
+	purePrefixes := 0
+	impurePrefixes := 0
 	prefixCollisions := 0
 	conflictingContinuations := 0
 
 	for _, actions := range contextActionMap {
+		ups := actions["enter"]
+		downs := actions["wait"]
+		exits := actions["exit"]
+
+		if ups > 0 && downs == 0 && exits == 0 {
+			purePrefixes++
+		}
+
+		if ups > 0 && (downs > 0 || exits > 0) {
+			impurePrefixes++
+		}
+
 		if actions["enter"] > 0 && actions["wait"] > 0 {
 			prefixCollisions++
 		}
+
 		if actions["enter"] > 0 && actions["exit"] > 0 {
 			conflictingContinuations++
 		}
 	}
 
 	meanDepth := 0.0
+
 	if len(phases) > 0 {
 		meanDepth = float64(totalDepth) / float64(len(phases))
 	}
 
 	timeToDisambiguation := maxDepth
+
 	for k := 1; k <= maxDepth; k++ {
 		depthCollisions := 0
 		totalPrefixesAtK := len(prefixByDepth[k])
+
 		if totalPrefixesAtK == 0 {
 			continue
 		}
+
 		for _, actions := range prefixByDepth[k] {
 			if actions["enter"] > 0 && (actions["wait"] > 0 || actions["exit"] > 0) {
 				depthCollisions++
 			}
 		}
+
 		collisionRate := float64(depthCollisions) / float64(totalPrefixesAtK)
+
 		if collisionRate <= 0.05 {
 			timeToDisambiguation = k
 			break
@@ -849,22 +865,18 @@ func auditS3PrefixMemory(phases []triePhase) S3MemoryAudit {
 	}
 
 	prequentialAcc := 0.0
+
 	if prequentialCalls > 0 {
 		prequentialAcc = float64(prequentialHits) / float64(prequentialCalls)
 	}
 
-	var storageBytes int64
-	for k := range uniqueKeys {
-		storageBytes += int64(128 + len(k))
-	}
-
 	summary := fmt.Sprintf(
-		"Simulated prefix memory (keys the audit would write, not the S3 bucket): %d keys across %d unique prefixes (mean depth=%.1f, max=%d). "+
+		"Prefix memory evaluated for purity matching Trainer.replay (ups > 0 && downs == 0 && exits == 0): %d pure, %d impure prefixes across %d unique contexts (mean depth=%.1f, max=%d). "+
 			"Prefix collisions (enter vs wait)=%d, conflicting continuations (enter vs exit)=%d. "+
-			"Time-to-disambiguation=%d tokens. Prequential retrieval accuracy=%.1f%% (%d/%d calls). Storage=%d bytes.",
-		len(uniqueKeys), len(contextActionMap), meanDepth, maxDepth,
+			"Time-to-disambiguation=%d tokens. Prequential retrieval accuracy=%.1f%% (%d/%d calls).",
+		purePrefixes, impurePrefixes, len(contextActionMap), meanDepth, maxDepth,
 		prefixCollisions, conflictingContinuations,
-		timeToDisambiguation, prequentialAcc*100, prequentialHits, prequentialCalls, storageBytes,
+		timeToDisambiguation, prequentialAcc*100, prequentialHits, prequentialCalls,
 	)
 
 	return S3MemoryAudit{
@@ -875,7 +887,7 @@ func auditS3PrefixMemory(phases []triePhase) S3MemoryAudit {
 		MaxPrefixDepth:           maxDepth,
 		TimeToDisambiguation:     timeToDisambiguation,
 		PrequentialRetrievalAcc:  prequentialAcc,
-		StorageBytes:             storageBytes,
+		StorageBytes:             0,
 		SummaryText:              summary,
 		Passed:                   prefixCollisions == 0,
 	}
@@ -1150,6 +1162,31 @@ func extractTriePhases(
 }
 
 func contextOfTokens(tokens []string) string {
+	if len(tokens) == 0 {
+		return ""
+	}
+
+	grammar := strategy.NewGrammar()
+	tokenizer := &strategy.Tokenizer{Depth: 4}
+	var lastSymbol string
+	var latestPhrase []string
+
+	for _, tok := range tokens {
+		if len(tok) == 0 {
+			continue
+		}
+
+		parts := strings.Split(tok, "-")
+
+		if phrase, moved := tokenizer.StepGrammar(grammar, &lastSymbol, parts); moved {
+			latestPhrase = phrase
+		}
+	}
+
+	if len(latestPhrase) >= 2 {
+		return strings.Join(latestPhrase, "/")
+	}
+
 	var deduped []string
 
 	for _, tok := range tokens {

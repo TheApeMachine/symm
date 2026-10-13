@@ -273,10 +273,6 @@ func (balance *Balance) metrics(tradeBalance *kraken.TradeBalanceResult) []*data
 
 	quoteCash := balance.cash(balance.Quote)
 
-	if quoteCash == nil {
-		quoteCash = balance.cash("USD")
-	}
-
 	if quoteCash == nil && tradeBalance.AvailableCash != nil {
 		quoteCash = tradeBalance.AvailableCash
 	}
@@ -291,13 +287,7 @@ func (balance *Balance) metrics(tradeBalance *kraken.TradeBalanceResult) []*data
 	}
 
 	for _, entry := range balance.wallet.Data {
-		available := entry.Available
-
-		if available == nil {
-			available = entry.Balance
-		}
-
-		if available == nil {
+		if entry.Available == nil {
 			continue
 		}
 
@@ -307,7 +297,7 @@ func (balance *Balance) metrics(tradeBalance *kraken.TradeBalanceResult) []*data
 
 		metrics = append(metrics, data.NewExactMetric(
 			"balance:"+entry.Asset,
-			available,
+			entry.Available,
 			data.UnitCurrency,
 			data.TimescaleInstantaneous,
 		))

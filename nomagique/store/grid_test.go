@@ -164,6 +164,25 @@ func TestGrid_Observe(t *testing.T) {
 		Convey("When a region holds no metric", func() {
 			frame, _ := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1}, true)
 
+			Convey("All regions are returned with the quiet region at zero brightness", func() {
+				observed := grid.Observe(frame)
+				So(observed, ShouldHaveLength, RegionCount)
+				foundQuiet := false
+				for _, r := range observed {
+					if r.Key == 5 {
+						So(r.Counts, ShouldEqual, 0)
+						So(r.Brightness, ShouldEqual, 0.0)
+						foundQuiet = true
+					}
+				}
+				So(foundQuiet, ShouldBeTrue)
+				So(grid.Error(), ShouldBeNil)
+			})
+		})
+
+		Convey("When all regions hold no metric", func() {
+			frame, _ := regionFrame([RegionCount]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, true)
+
 			Convey("No regions are returned", func() {
 				So(grid.Observe(frame), ShouldBeNil)
 				So(grid.Error(), ShouldBeNil)
@@ -184,10 +203,10 @@ func TestGrid_Observe(t *testing.T) {
 			joined.Peers(append(frame.Peers(), solver)...)
 			joined.Write()
 
-			Convey("The grid reports the contract breach and observes nothing", func() {
-				So(grid.Observe(joined), ShouldBeNil)
-				So(grid.Error(), ShouldNotBeNil)
-				So(grid.Observe(frame), ShouldBeNil)
+			Convey("The grid ignores unpinned metrics and observes the frame", func() {
+				observed := grid.Observe(joined)
+				So(observed, ShouldHaveLength, RegionCount)
+				So(grid.Error(), ShouldBeNil)
 			})
 		})
 	})

@@ -37,10 +37,10 @@ func (ce *causalEstimator) Step(value float64) (hasBaseline bool, baseline float
 }
 
 type symbolState struct {
-	lastMeasurement    *data.Measurement
-	lastBarMeasurement *data.Measurement
-	clock              volumeclock.Clock
-	spreadEstimator    causalEstimator
+	lastMeasurement *data.Measurement
+	clock           volumeclock.Clock
+	spreadEstimator causalEstimator
+	barMetrics      map[string]float64
 }
 
 type Signal struct {
@@ -66,10 +66,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	priceEntry := data.Pull(prior.Read("price"))
 	if priceEntry == nil || priceEntry.Metric == nil {
-		if state, exists := signal.states[prior.Label]; exists && state.lastMeasurement != nil {
-			return state.lastMeasurement
-		}
-
 		if prior.Source == "spot:trade" {
 			signal.Error(errnie.Err(errnie.Validation, "[pumpdump] price is required", nil))
 		}
@@ -80,10 +76,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	qtyEntry := data.Pull(prior.Read("qty"))
 	if qtyEntry == nil || qtyEntry.Metric == nil || qtyEntry.Metric.Raw() <= 0 {
-		if state, exists := signal.states[prior.Label]; exists && state.lastMeasurement != nil {
-			return state.lastMeasurement
-		}
-
 		return nil
 	}
 	qty := qtyEntry.Metric.Raw()
@@ -132,36 +124,40 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	tick := state.clock.Step(price, qty, atNanos, midpoint)
 	bar, closed := tick.Bar, tick.Closed
 
-	if closed && core.Resolvable(bar.Duration) {
-		out["volume_rate"] = bar.Quantity / bar.Duration
-		out["trade_rate"] = bar.Trades / bar.Duration
-	}
-
-	if closed && bar.FromMid > 0 && bar.AtMid > 0 {
-		midReturn := math.Log(bar.AtMid / bar.FromMid)
-		out["positive_midpoint_return"] = math.Max(midReturn, 0)
-		out["negative_midpoint_return"] = math.Max(-midReturn, 0)
-	}
-
-	var res *data.Measurement
-
 	if closed {
-		if state.lastBarMeasurement == nil {
-			state.lastBarMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
+		state.barMetrics = make(map[string]float64)
+
+		if core.Resolvable(bar.Duration) {
+			volumeRate := bar.Quantity / bar.Duration
+			tradeRate := bar.Trades / bar.Duration
+			state.barMetrics["volume_rate"] = volumeRate
+			state.barMetrics["trade_rate"] = tradeRate
+			out["volume_rate"] = volumeRate
+			out["trade_rate"] = tradeRate
 		}
 
-		res = state.lastBarMeasurement.Next(prior, out)
-		state.lastBarMeasurement = res
-	}
-
-	if !closed {
-		if state.lastMeasurement == nil {
-			state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
+		if bar.FromMid > 0 && bar.AtMid > 0 {
+			midReturn := math.Log(bar.AtMid / bar.FromMid)
+			posReturn := math.Max(midReturn, 0)
+			negReturn := math.Max(-midReturn, 0)
+			state.barMetrics["positive_midpoint_return"] = posReturn
+			state.barMetrics["negative_midpoint_return"] = negReturn
+			out["positive_midpoint_return"] = posReturn
+			out["negative_midpoint_return"] = negReturn
 		}
-
-		res = state.lastMeasurement.Next(prior, out)
 	}
 
+	for key, value := range state.barMetrics {
+		if _, exists := out[key]; !exists {
+			out[key] = value
+		}
+	}
+
+	if state.lastMeasurement == nil {
+		state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
+	}
+
+	res := state.lastMeasurement.Next(prior, out)
 	state.lastMeasurement = res
 
 	if closed {

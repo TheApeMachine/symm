@@ -91,6 +91,17 @@ func NewSolver(
 		pace:          pace,
 	}
 
+	if pace <= 0 {
+		solver.Transition(runtime.ERROR)
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("resonance: pace must be positive, got %f", pace),
+			nil,
+		))
+
+		return solver
+	}
+
 	solver.Transition(runtime.READY)
 	return solver
 }
@@ -231,14 +242,18 @@ reading[7], so publishing decodes against this same stack.
 */
 func coderArch(featureDim int) []int {
 	if featureDim <= 0 {
-		featureDim = 11
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("resonance: featureDim must be positive, got %d", featureDim),
+			nil,
+		))
+		return nil
 	}
 
 	return []int{featureDim, featureDim * 4, featureDim * 2, featureDim}
 }
 
 func (solver *Solver) coder(symbol string, featureDim int) *learning.PredictiveCoder {
-
 	if loaded, found := solver.detectors.Load(symbol); found {
 		if coder, ok := loaded.(*learning.PredictiveCoder); ok {
 			return coder
@@ -246,8 +261,23 @@ func (solver *Solver) coder(symbol string, featureDim int) *learning.PredictiveC
 	}
 
 	arch := coderArch(featureDim)
+	if len(arch) == 0 {
+		return nil
+	}
+
+	if solver.pace <= 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("resonance: solver pace must be positive, got %f", solver.pace),
+			nil,
+		))
+
+		return nil
+	}
+
+	pacePrimitive := learning.NewPace(solver.pace, 0.005, 0.150, 0.1, 0.2, 256)
 	created := learning.NewPredictiveCoder(
-		arch, 8, learning.NewDirectionalTarget(0), nil, solver.pace, true, learning.ReadoutAll,
+		arch, 8, learning.NewDirectionalTarget(0), pacePrimitive, solver.pace, true, learning.ReadoutAll,
 	)
 	coder, ok := created.(*learning.PredictiveCoder)
 	if !ok {

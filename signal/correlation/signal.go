@@ -44,10 +44,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	entry := data.Pull(prior.Read("price"))
 
 	if entry == nil || entry.Err != nil || entry.Metric == nil {
-		if prev, ok := signal.last[prior.Label]; ok && prev != nil {
-			return prev
-		}
-
 		return nil
 	}
 

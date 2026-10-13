@@ -295,7 +295,7 @@ def plot_stage1_vitality(report, out_dir):
     plt.close(fig)
 
 def plot_stage1_redundancy(report, out_dir):
-    redundant = report.get('vitality', {}).get('redundant_pairs', [])
+    redundant = (report.get('vitality') or {}).get('redundant_pairs') or []
     pairs = [f"{p['metric_a']} <-> {p['metric_b']}" for p in redundant[:18]]
     corrs = [p['correlation'] for p in redundant[:18]]
 
@@ -468,10 +468,13 @@ def plot_stage3_grid_completeness(report, out_dir):
 
 
 def plot_stage4_token_dynamics(report, out_dir):
-    dynamics = report.get('token_dynamics', {})
-    freqs = dynamics.get('token_frequencies', {})
-    region_strengths = dynamics.get('region_strengths', {})
-    total = max(1, dynamics.get('total_emissions', 0))
+    dynamics = report.get('token_dynamics') or {}
+    freqs = dynamics.get('token_frequencies') or {}
+    region_strengths = dynamics.get('region_strengths') or {}
+    total = max(1, dynamics.get('total_emissions') or 0)
+
+    if not freqs:
+        return
 
     sorted_tokens = sorted(freqs.keys(), key=lambda t: freqs[t], reverse=True)
     counts = [freqs[t] for t in sorted_tokens]
@@ -532,12 +535,12 @@ def plot_stage4_token_dynamics(report, out_dir):
     plt.close(fig)
 
 def plot_stage4_transition_matrix(report, out_dir):
-    dynamics = report.get('token_dynamics', {})
-    transitions = dynamics.get('transitions', {})
-    compressed_transitions = dynamics.get('compressed_transitions', {})
-    stay_acc = dynamics.get('always_stay_accuracy', 0.0) * 100
-    raw_h = dynamics.get('transition_entropy', 0.0)
-    comp_h = dynamics.get('compressed_transition_entropy', 0.0)
+    dynamics = report.get('token_dynamics') or {}
+    transitions = dynamics.get('transitions') or {}
+    compressed_transitions = dynamics.get('compressed_transitions') or {}
+    stay_acc = (dynamics.get('always_stay_accuracy') or 0.0) * 100
+    raw_h = dynamics.get('transition_entropy') or 0.0
+    comp_h = dynamics.get('compressed_transition_entropy') or 0.0
 
     tokens = sorted(list(transitions.keys()), key=lambda r: int(r.replace('R', '')) if r.replace('R', '').isdigit() else 999)
     if not tokens:
@@ -622,10 +625,10 @@ def plot_stage4_transition_matrix(report, out_dir):
     plt.close(fig)
 
 def plot_stage4_entropy(report, out_dir):
-    dynamics = report.get('token_dynamics', {})
-    real_ent = dynamics.get('transition_entropy', 0)
-    null_ent = dynamics.get('null_transition_entropy', 0)
-    red_bits = dynamics.get('entropy_reduction_bits', 0)
+    dynamics = report.get('token_dynamics') or {}
+    real_ent = dynamics.get('transition_entropy') or 0
+    null_ent = dynamics.get('null_transition_entropy') or 0
+    red_bits = dynamics.get('entropy_reduction_bits') or 0
 
     fig, ax = plt.subplots(figsize=(9, 6.5))
     bars = ax.bar(['Real Observed Transitions', 'Block-Shuffled Temporal Null'],
@@ -1056,7 +1059,7 @@ def plot_validations_sensitivity(report, out_dir):
     plt.close(fig)
 
 def animate_excursion_transitions(report, out_dir):
-    traces = report.get('excursion_traces') or report.get('precursor', {}).get('excursion_traces', [])
+    traces = report.get('excursion_traces') or (report.get('precursor') or {}).get('excursion_traces') or []
     if not traces:
         return
 

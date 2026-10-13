@@ -33,7 +33,7 @@ func signalPeer(source, symbol, metricName string, value float64, at time.Time) 
 
 func TestStep(t *testing.T) {
 	Convey("Given a resonance solver", t, func() {
-		solver := NewSolver(context.Background(), 0)
+		solver := NewSolver(context.Background(), 0.03)
 		defer solver.Close()
 
 		at := time.Unix(1, 0).UTC()

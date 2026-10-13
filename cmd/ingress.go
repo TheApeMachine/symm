@@ -147,6 +147,10 @@ func storeLevel3(level3Msg *kraken.Level3, epoch int64, storeTee nmruntime.Tee, 
 					at,
 					at,
 					&data.StringEntry{
+						Key:   "frame_seq",
+						Value: strconv.FormatInt(level3Data.Sequence, 10),
+					},
+					&data.StringEntry{
 						Key:   "type",
 						Value: strings.Clone(level3Data.Type),
 					},

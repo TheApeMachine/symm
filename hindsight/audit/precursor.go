@@ -849,7 +849,7 @@ func precursorRule(eventTokens, controlTokens map[string]int) map[string]bool {
 
 /*
 scorePrecursorRule classifies every token as event when the rule marks it and
-reports the confusion statistics.
+reports the confusion statistics and mutual information gain in bits.
 */
 func scorePrecursorRule(rule map[string]bool, eventTokens, controlTokens map[string]int) PrecursorPredictiveSkill {
 	var tp, fp, fn, tn float64
@@ -857,17 +857,19 @@ func scorePrecursorRule(rule map[string]bool, eventTokens, controlTokens map[str
 	for token, count := range eventTokens {
 		if rule[token] {
 			tp += float64(count)
-		} else {
-			fn += float64(count)
+			continue
 		}
+
+		fn += float64(count)
 	}
 
 	for token, count := range controlTokens {
 		if rule[token] {
 			fp += float64(count)
-		} else {
-			tn += float64(count)
+			continue
 		}
+
+		tn += float64(count)
 	}
 
 	skill := PrecursorPredictiveSkill{EvaluatedSamples: int(tp + fp + fn + tn)}
@@ -892,8 +894,33 @@ func scorePrecursorRule(rule map[string]bool, eventTokens, controlTokens map[str
 		skill.MCC = (tp*tn - fp*fn) / denominator
 	}
 
-	if total := tp + fp + fn + tn; total > 0 {
+	total := tp + fp + fn + tn
+
+	if total > 0 {
 		skill.PriorBaseRate = (tp + fn) / total
+
+		pEvent := (tp + fn) / total
+		pNonEvent := (fp + tn) / total
+		pRule := (tp + fp) / total
+		pNonRule := (fn + tn) / total
+
+		var mutualInfo float64
+
+		addMI := func(count, pR, pE float64) {
+			if count <= 0 || pR <= 0 || pE <= 0 {
+				return
+			}
+
+			pRE := count / total
+			mutualInfo += pRE * math.Log2(pRE/(pR*pE))
+		}
+
+		addMI(tp, pRule, pEvent)
+		addMI(fp, pRule, pNonEvent)
+		addMI(fn, pNonRule, pEvent)
+		addMI(tn, pNonRule, pNonEvent)
+
+		skill.PredictiveGainBits = math.Max(0.0, mutualInfo)
 	}
 
 	for token := range rule {

@@ -131,6 +131,10 @@ func TestMeasurementWrite(t *testing.T) {
 			}
 
 			So(unlocked.Surprise(), ShouldEqual, 0.0)
+			So(unlocked.Maturity(), ShouldEqual, 0.0)
+			So(unlocked.Samples(), ShouldEqual, 0)
+			So(unlocked.Energy(), ShouldEqual, 0.0)
+			So(unlocked.Prediction(), ShouldEqual, 0.0)
 			So(unlocked.ApproximateBytes(), ShouldEqual, 0)
 			So(unlocked.Peers(), ShouldBeNil)
 		})

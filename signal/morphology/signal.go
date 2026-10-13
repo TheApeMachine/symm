@@ -45,7 +45,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	stateKey := strconv.FormatInt(prior.Epoch, 10) + "/" + prior.Label
-	state := signal.states[stateKey]
+	state, found := signal.states[stateKey]
+
+	if !found {
+		state = &symbolState{}
+		signal.states[stateKey] = state
+	}
 
 	// The shape is measured on the snapshot ingress stamped onto the trade at
 	// its sequence number: the book this trade happened against.
@@ -57,10 +62,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if snapshot == nil {
-		if state != nil && state.lastMeasurement != nil {
-			return state.lastMeasurement
-		}
-
 		return nil
 	}
 
@@ -102,8 +103,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	var prev *data.Measurement
-
-	if state != nil {
+	if state.lastMeasurement != nil {
 		prev = state.lastMeasurement
 	}
 
@@ -112,10 +112,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	outMeas := prev.Next(prior, out)
-
-	if state != nil {
-		state.lastMeasurement = outMeas
-	}
+	state.lastMeasurement = outMeas
 
 	return outMeas
 }

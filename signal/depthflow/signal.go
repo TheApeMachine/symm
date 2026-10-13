@@ -62,10 +62,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if snapshot == nil {
-		if state.lastMeasurement != nil {
-			return state.lastMeasurement
-		}
-
 		return nil
 	}
 

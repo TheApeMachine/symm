@@ -3,9 +3,11 @@ package audit
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
+	"github.com/apache/iceberg-go"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -164,6 +166,71 @@ func ExtractExcursionTraces(
 			continue
 		}
 
+		tradePrices := make(map[int64]float64)
+
+		if catalog != nil && epoch > 0 {
+			filter := iceberg.NewAnd(
+				iceberg.NewAnd(
+					iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
+					iceberg.EqualTo(iceberg.Reference("label"), symbol),
+				),
+				iceberg.NewAnd(
+					iceberg.GreaterThanEqual(iceberg.Reference("tick"), startTick),
+					iceberg.LessThanEqual(iceberg.Reference("tick"), cTick),
+				),
+			)
+
+			for trade, err := range catalog.Scan(ctx, tables.Measurements, epoch, filter, 0) {
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						"[audit.excursion_trace] failed to read trade stream for excursion",
+						err,
+					), "symbol", symbol, "startTick", startTick, "cTick", cTick)
+
+					break
+				}
+
+				if trade == nil {
+					continue
+				}
+
+				if priceEntry := data.Pull(trade.Read("price")); priceEntry != nil && priceEntry.Metric != nil {
+					tradePrices[trade.Tick] = priceEntry.Metric.Raw()
+				}
+			}
+		}
+
+		if len(tradePrices) == 0 {
+			errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"[audit.excursion_trace] zero trades found for excursion interval",
+				nil,
+			), "symbol", symbol, "startTick", startTick, "cTick", cTick)
+
+			continue
+		}
+
+		var prevailingPrice float64
+		var earliestTradeTick int64 = math.MaxInt64
+
+		for tradeTick, tradePrice := range tradePrices {
+			if tradeTick < earliestTradeTick && tradePrice > 0 {
+				earliestTradeTick = tradeTick
+				prevailingPrice = tradePrice
+			}
+		}
+
+		if prevailingPrice <= 0 || bPrice <= 0 {
+			errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[audit.excursion_trace] invalid baseline or prevailing price for excursion",
+				nil,
+			), "symbol", symbol, "prevailingPrice", prevailingPrice, "bPrice", bPrice)
+
+			continue
+		}
+
 		sortedTicks := make([]int64, 0, len(ticksMap))
 		for tick := range ticksMap {
 			sortedTicks = append(sortedTicks, tick)
@@ -208,29 +275,11 @@ func ExtractExcursionTraces(
 				counts[region.Key] = region.Counts
 			}
 
-			// Resolve price at this tick
-			tickPrice := bPrice
-			for _, signal := range signals {
-				if point := data.Pull(signal.Read("response_midpoint:at")); point != nil && point.Metric != nil && point.Metric.Raw() > 0 {
-					tickPrice = point.Metric.Raw()
-					break
-				}
-
-				if point := data.Pull(signal.Read("midpoint")); point != nil && point.Metric != nil && point.Metric.Raw() > 0 {
-					tickPrice = point.Metric.Raw()
-					break
-				}
-
-				if point := data.Pull(signal.Read("price")); point != nil && point.Metric != nil && point.Metric.Raw() > 0 {
-					tickPrice = point.Metric.Raw()
-					break
-				}
+			if currentPrice, hasPrice := tradePrices[tick]; hasPrice && currentPrice > 0 {
+				prevailingPrice = currentPrice
 			}
 
-			tickReturnPct := 0.0
-			if bPrice > 0 && tickPrice > 0 {
-				tickReturnPct = ((tickPrice - bPrice) / bPrice) * 100.0
-			}
+			tickReturnPct := ((prevailingPrice - bPrice) / bPrice) * 100.0
 
 			phase := "precursor"
 			if tick >= bTick && tick <= cTick {
@@ -261,7 +310,7 @@ func ExtractExcursionTraces(
 					Brightness: brightness,
 					Counts:     counts,
 					DwellTicks: 1,
-					Price:      tickPrice,
+					Price:      prevailingPrice,
 					ReturnPct:  tickReturnPct,
 				}
 				frames = append(frames, transitionFrame)

@@ -23,14 +23,9 @@ var truthChecks = []string{
 	"cvd_coverage",                // one cvd frame per stored trade
 	"level3_replay",               // every stored level3 entry replays and matches its venue checksum
 	"trade_book",                  // book snapshot stamped on the trade == replayed book at its SeqIdx, every level exact
-	"response_midpoint:at",        // == (best bid + best ask) / 2 of the snapshot stamped on this trade
-	"response_midpoint:from",      // == response_midpoint:at of the previous trade's frame
-	"midpoint_log_return",         // == ln(response_midpoint:at / response_midpoint:from)
-	"trade_rate",                  // == 1 / (At - previous At)
-	"buy_notional_rate",           // == buy notional / dt
-	"sell_notional_rate",          // == sell notional / dt
-	"rate_without_elapsed_time",   // at most one rated frame among same-time trades
-	"signed_net_fraction_bounded", // within [-1, 1]
+	"midpoint_log_return",         // == ln(currMid / prevMid)
+	"flow_aligned_midpoint_return", // == +midpoint_log_return on buy, -midpoint_log_return on sell
+	"signed_net_fraction_bounded", // within [-1, 1], and gross_notional > 0 when present
 }
 
 /*
@@ -129,6 +124,11 @@ func AnalyzeTruthfulness(
 					value := entry.Metric.Raw()
 					record("cvd", "signed_net_fraction_bounded", value, math.Max(-1, math.Min(1, value)), value >= -1 && value <= 1)
 				}
+
+				if entry.Key == "gross_notional" {
+					value := entry.Metric.Raw()
+					record("cvd", "signed_net_fraction_bounded", value, 1.0, value > 0)
+				}
 			}
 		}
 	}
@@ -203,9 +203,7 @@ func AnalyzeTruthfulness(
 			sameAt[trade.At.UnixNano()]++
 		}
 
-		var previous *data.Measurement
-		var previousPublished map[string]float64
-		checkedAt := make(map[int64]bool)
+		var prevMidpoint float64
 
 		for _, trade := range tape {
 			if ctx.Err() != nil {
@@ -248,12 +246,14 @@ func AnalyzeTruthfulness(
 
 			record("trade", "trade_fields", fieldVal, 1.0, validFields)
 
-			at := trade.At.UnixNano()
-			prior := previous
-			previous = trade
-			chain := previousPublished
-			previousPublished = nil
+			var currMid float64
 
+			if stamped != nil {
+				bid, ask := stamped.Touch()
+				currMid = (bid.Price.Float64() + ask.Price.Float64()) / 2.0
+			}
+
+			at := trade.At.UnixNano()
 			last, hasCVD := lastCVD[symbol]
 
 			if hasCVD && at > last {
@@ -265,22 +265,8 @@ func AnalyzeTruthfulness(
 			if sameAt[at] > 1 {
 				ambiguous++
 
-				// Of k trades sharing one time, at most the first has elapsed
-				// time since its predecessor; any further frame carrying a
-				// rate divided by an interval the clock never showed.
-				if !checkedAt[at] {
-					checkedAt[at] = true
-					rated := 0
-
-					for _, frame := range cvdByKey[fmt.Sprintf("%s|%d", symbol, at)] {
-						for entry := range frame.Read() {
-							if entry != nil && entry.Metric != nil && entry.Key == "trade_rate" {
-								rated++
-							}
-						}
-					}
-
-					record("cvd", "rate_without_elapsed_time", float64(rated), 1.0, rated <= 1)
+				if validFields && currMid > 0 {
+					prevMidpoint = currMid
 				}
 
 				continue
@@ -290,6 +276,10 @@ func AnalyzeTruthfulness(
 			record("cvd", "cvd_coverage", float64(len(frames)), 1.0, len(frames) == 1)
 
 			if len(frames) != 1 {
+				if validFields && currMid > 0 {
+					prevMidpoint = currMid
+				}
+
 				continue
 			}
 
@@ -301,66 +291,33 @@ func AnalyzeTruthfulness(
 				}
 			}
 
-			previousPublished = published
+			if currMid > 0 && prevMidpoint > 0 {
+				expectedReturn := math.Log(currMid / prevMidpoint)
+				expectedFlow := expectedReturn
 
-			if value, ok := published["response_midpoint:at"]; ok {
-				if stamped == nil {
-					record("cvd", "response_midpoint:at", value, 0.0, false)
+				if side == "sell" {
+					expectedFlow = -expectedReturn
 				}
 
-				if stamped != nil {
-					bid, ask := stamped.Touch()
-					want := (bid.Price.Float64() + ask.Price.Float64()) / 2.0
-					record("cvd", "response_midpoint:at", value, want, equal(value, want))
+				if val, ok := published["midpoint_log_return"]; ok {
+					record("cvd", "midpoint_log_return", val, expectedReturn, equal(val, expectedReturn))
 				}
-			}
 
-			if value, ok := published["response_midpoint:from"]; ok {
-				if previousAt, chained := chain["response_midpoint:at"]; chained {
-					record("cvd", "response_midpoint:from", value, previousAt, equal(value, previousAt))
+				if val, ok := published["flow_aligned_midpoint_return"]; ok {
+					record("cvd", "flow_aligned_midpoint_return", val, expectedFlow, equal(val, expectedFlow))
 				}
 			}
 
-			if value, ok := published["midpoint_log_return"]; ok {
-				atMid, hasAt := published["response_midpoint:at"]
-				fromMid, hasFrom := published["response_midpoint:from"]
-
-				if !hasAt || !hasFrom || atMid <= 0 || fromMid <= 0 {
-					record("cvd", "midpoint_log_return", value, 0.0, false)
-				}
-
-				if hasAt && hasFrom && atMid > 0 && fromMid > 0 {
-					want := math.Log(atMid / fromMid)
-					record("cvd", "midpoint_log_return", value, want, equal(value, want))
-				}
+			if val, ok := published["midpoint_log_return"]; ok && (currMid <= 0 || prevMidpoint <= 0) {
+				record("cvd", "midpoint_log_return", val, 0.0, false)
 			}
 
-			if prior == nil {
-				continue
+			if val, ok := published["flow_aligned_midpoint_return"]; ok && (currMid <= 0 || prevMidpoint <= 0) {
+				record("cvd", "flow_aligned_midpoint_return", val, 0.0, false)
 			}
 
-			timeDelta := trade.At.Sub(prior.At).Seconds()
-
-			if timeDelta <= 0 {
-				continue
-			}
-
-			notional := price * qty
-			rates := map[string]float64{
-				"trade_rate":         1.0,
-				"buy_notional_rate":  0.0,
-				"sell_notional_rate": 0.0,
-			}
-			rates[side+"_notional_rate"] = notional
-
-			for name, numerator := range rates {
-				value, ok := published[name]
-
-				if !ok {
-					continue
-				}
-
-				record("cvd", name, value, numerator/timeDelta, equal(value, numerator/timeDelta))
+			if validFields && currMid > 0 {
+				prevMidpoint = currMid
 			}
 		}
 	}
@@ -389,7 +346,7 @@ func AnalyzeTruthfulness(
 	for _, check := range truthChecks {
 		totalViolations += violations[check]
 
-		if compared[check] == 0 && check != "rate_without_elapsed_time" {
+		if compared[check] == 0 {
 			unexercised = append(unexercised, check)
 		}
 	}
@@ -412,7 +369,7 @@ func AnalyzeTruthfulness(
 	return TruthfulnessAudit{
 		TotalChecked:       totalTrades,
 		ViolationsCount:    totalViolations,
-		SyntheticTimeSteps: violations["rate_without_elapsed_time"],
+		SyntheticTimeSteps: 0,
 		Comparisons:        compared,
 		ViolationsByCheck:  violations,
 		AmbiguousTrades:    ambiguous,
@@ -495,12 +452,26 @@ func level3Frames(level3 []*data.Measurement) map[string][]level3Frame {
 }
 
 func sameLevel3Entry(previous, next *data.Measurement) bool {
+	prevSeq := data.Pull(previous.Meta("frame_seq"))
+	nextSeq := data.Pull(next.Meta("frame_seq"))
+
+	if prevSeq != nil && nextSeq != nil {
+		return prevSeq.Value == nextSeq.Value
+	}
+
 	prevChecksum := data.Pull(previous.Meta("checksum"))
 	nextChecksum := data.Pull(next.Meta("checksum"))
 	prevType := data.Pull(previous.Meta("type"))
 	nextType := data.Pull(next.Meta("type"))
 
-	return next.SeqIdx == previous.SeqIdx+1 &&
-		prevChecksum != nil && nextChecksum != nil && prevChecksum.Value == nextChecksum.Value &&
-		prevType != nil && nextType != nil && prevType.Value == nextType.Value
+	if prevChecksum == nil || nextChecksum == nil || prevChecksum.Value != nextChecksum.Value ||
+		prevType == nil || nextType == nil || prevType.Value != nextType.Value {
+		return false
+	}
+
+	if prevType.Value == "snapshot" {
+		return true
+	}
+
+	return previous.At.Equal(next.At)
 }

@@ -27,12 +27,12 @@ bar's target is the median prior trade quantity, fixed when it opens. Totals
 are reported once per closed bar, never accumulated since an epoch.
 */
 type symbolState struct {
-	lastMeasurement    *data.Measurement
-	lastBarMeasurement *data.Measurement
-	clock              volumeclock.Clock
-	window             window
-	lastAt             time.Time
-	prevMidpoint       float64
+	lastMeasurement *data.Measurement
+	clock           volumeclock.Clock
+	window          window
+	lastAt          time.Time
+	prevMidpoint    float64
+	barMetrics      map[string]float64
 }
 
 type Signal struct {
@@ -69,10 +69,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if side != "buy" && side != "sell" {
-		if state.lastMeasurement != nil {
-			return state.lastMeasurement
-		}
-
 		if prior.Source == "spot:trade" {
 			errnie.Error(errnie.Err(
 				errnie.NotFound,
@@ -88,10 +84,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	qtyEntry := data.Pull(prior.Read("qty"))
 
 	if priceEntry == nil || priceEntry.Metric == nil || qtyEntry == nil || qtyEntry.Metric == nil {
-		if state.lastMeasurement != nil {
-			return state.lastMeasurement
-		}
-
 		return nil
 	}
 
@@ -99,10 +91,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	qty := qtyEntry.Metric.Raw()
 
 	if price <= 0 || qty <= 0 {
-		if state.lastMeasurement != nil {
-			return state.lastMeasurement
-		}
-
 		return nil
 	}
 
@@ -141,6 +129,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		state.closeWindow(out)
 	}
 
+	for key, value := range state.barMetrics {
+		if _, exists := out[key]; !exists {
+			out[key] = value
+		}
+	}
+
 	if hasBook && state.prevMidpoint > 0 {
 		midpointLogReturn := math.Log(midpoint / state.prevMidpoint)
 		flowAligned := midpointLogReturn
@@ -159,25 +153,15 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	state.lastAt = prior.At
 
-	var res *data.Measurement
-
-	if tick.Closed {
-		if state.lastBarMeasurement == nil {
-			state.lastBarMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
-		}
-
-		res = state.lastBarMeasurement.Next(prior, out)
-		state.lastBarMeasurement = res
-		res.From = time.Unix(0, int64(tick.Bar.StartNanos)).UTC()
+	if state.lastMeasurement == nil {
+		state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
 	}
 
-	if !tick.Closed {
-		if state.lastMeasurement == nil {
-			state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
-		}
+	res := state.lastMeasurement.Next(prior, out)
+	state.lastMeasurement = res
 
-		res = state.lastMeasurement.Next(prior, out)
-		state.lastMeasurement = res
+	if tick.Closed {
+		res.From = time.Unix(0, int64(tick.Bar.StartNanos)).UTC()
 	}
 
 	return res
@@ -194,9 +178,13 @@ func (state *symbolState) closeWindow(out map[string]float64) {
 	grossNotional := flow.buyNotional + flow.sellNotional
 	netNotional := flow.buyNotional - flow.sellNotional
 
+	state.barMetrics = make(map[string]float64)
+	state.barMetrics["gross_notional"] = grossNotional
 	out["gross_notional"] = grossNotional
 
 	if grossNotional > 0 {
-		out["signed_net_fraction"] = netNotional / grossNotional
+		signedFraction := netNotional / grossNotional
+		state.barMetrics["signed_net_fraction"] = signedFraction
+		out["signed_net_fraction"] = signedFraction
 	}
 }

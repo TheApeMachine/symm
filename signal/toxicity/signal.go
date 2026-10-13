@@ -59,12 +59,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if snapshot == nil {
-		state, exists := signal.states[prior.Label]
-
-		if exists && state.lastMeasurement != nil {
-			return state.lastMeasurement
-		}
-
 		return nil
 	}
 

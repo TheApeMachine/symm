@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-
-	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -154,18 +152,18 @@ func computeMetricStats(
 
 		if isConstant {
 			status = "DEAD"
-
-			if count <= int(core.MinimumRankPrior) {
-				status = "WARMING_UP"
-			}
 		}
 
 		if !isConstant && zeroFraction == 1.0 {
 			status = "ZERO"
+		}
 
-			if count <= int(core.MinimumRankPrior) {
-				status = "WARMING_UP"
-			}
+		if count <= 1 {
+			status = "WARMING_UP"
+		}
+
+		if count > 1 && coverage < 0.10 {
+			status = "SPORADIC"
 		}
 
 		stats = append(stats, MetricStat{

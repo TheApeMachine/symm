@@ -38,7 +38,6 @@ var regionMetricPins = map[string]map[string]uint8{
 	},
 	"hawkes": {
 		"arrival_rate:buy":               0,
-		"branching_spectral_radius":      0,
 		"conditional_intensity_velocity": 1,
 		"arrival_rate:sell":              2,
 	},
@@ -50,8 +49,6 @@ var regionMetricPins = map[string]map[string]uint8{
 		"best_lag_seconds_mad":         11,
 	},
 	"liquidity": {
-		"best_ask_price":  6,
-		"best_bid_price":  8,
 		"relative_spread": 7,
 	},
 	"morphology": {

@@ -15,7 +15,6 @@ import (
 	icetable "github.com/apache/iceberg-go/table"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
 )
@@ -520,7 +519,7 @@ func ingestMetrics(
 	}
 
 	// Count occurrences of each symbol across ticks to determine which symbols
-	// were actually seen with sufficient empirical support (core.MinimumPrior observations).
+	// were actually seen with sufficient empirical support (>= 2 observations for SNM transition).
 	symbolTickCounts := make(map[string]int)
 	for _, tick := range tickOrder {
 		seenInTick := make(map[string]struct{})
@@ -536,7 +535,7 @@ func ingestMetrics(
 
 	activeSymbols := make(map[string]struct{})
 	for sym, count := range symbolTickCounts {
-		if count >= int(core.MinimumRankPrior) || (symbol != "" && sym == symbol) {
+		if count >= 2 || (symbol != "" && sym == symbol) {
 			activeSymbols[sym] = struct{}{}
 		}
 	}

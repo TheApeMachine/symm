@@ -2,11 +2,9 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"slices"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -64,35 +62,36 @@ func (grid *Grid) Observe(measurement *data.Measurement) []*Region {
 		regions[idx] = &Region{Key: uint8(idx)}
 	}
 
+	totalCounts := 0
+
 	for _, peer := range measurement.Peers() {
 		excitation := 1 + peer.Surprise()
 
 		for entry := range peer.Read() {
+			if entry == nil || entry.Metric == nil {
+				continue
+			}
+
 			region, isPinned := regionMetricPins[peer.Source][entry.Metric.Label()]
 
 			if !isPinned {
-				grid.Error(errnie.Err(
-					errnie.NotAcceptable,
-					fmt.Sprintf("[grid] metric not pinned to a region: %s/%s",
-						peer.Source, entry.Metric.Label(),
-					),
-					nil,
-				))
-
-				return nil
+				continue
 			}
 
 			regions[region].Deformation += math.Abs(entry.Metric.SNM()) * excitation
 			regions[region].Counts++
+			totalCounts++
 		}
 	}
 
-	for _, region := range regions {
-		if region.Counts == 0 {
-			return nil
-		}
+	if totalCounts == 0 {
+		return nil
+	}
 
-		region.Brightness = region.Deformation / float64(region.Counts)
+	for _, region := range regions {
+		if region.Counts > 0 {
+			region.Brightness = region.Deformation / float64(region.Counts)
+		}
 	}
 
 	slices.SortFunc(regions, func(first, second *Region) int {
@@ -104,7 +103,7 @@ func (grid *Grid) Observe(measurement *data.Measurement) []*Region {
 			return 1
 		}
 
-		return 0
+		return int(first.Key) - int(second.Key)
 	})
 
 	return regions

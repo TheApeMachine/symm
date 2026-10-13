@@ -72,7 +72,7 @@ func NewWorkspace(
 	stages [][]Node,
 	tees ...Tee,
 ) *Workspace {
-	capacity := 1024
+	capacity := 8192
 
 	if system.Cfg.Runtime.Workspace.Buffer > 0 {
 		capacity = int(system.Cfg.Runtime.Workspace.Buffer)
@@ -152,6 +152,15 @@ func (workspace *Workspace) Step(payload *data.Measurement) *data.Measurement {
 		return payload
 	}
 
+	if payload == nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[workspace] nil payload passed to Step",
+			nil,
+		))
+		return payload
+	}
+
 	select {
 	case <-workspace.Context().Done():
 		workspace.Error(workspace.Context().Err())
@@ -167,18 +176,11 @@ func (workspace *Workspace) Step(payload *data.Measurement) *data.Measurement {
 		}
 	}
 
-	if payload != nil {
-		if !payload.At.IsZero() {
-			workspace.at.Store(payload.At.UnixNano())
-		} else if payload.Epoch > 0 {
-			workspace.at.Store(payload.Epoch)
-		}
-	}
-
+	workspace.at.Store(payload.At.UnixNano())
 	seq := workspace.channel.Reserve(1)
-
 	workspace.buffer[seq&workspace.mask] = payload
 	workspace.channel.Commit(seq, seq)
+
 	return payload
 }
 
@@ -251,28 +253,14 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 			}
 		}
 
-		if ingress == nil || ingress.At.IsZero() {
-			jh.workspace.joins[jh.stageIdx][slot] = nil
-			jh.workspace.Error(errnie.Err(
-				errnie.Internal,
-				"[workspace] join without ingress venue time (At)",
-				nil,
-			))
-			continue
-		}
-
-		from := ingress.From
-		if from.IsZero() {
-			from = ingress.At
-		}
-
 		join := data.NewMeasurement(
 			ingress.Epoch,
 			ingress.Label,
 			"runtime:join",
 			ingress.At,
-			from,
+			ingress.From,
 		)
+		join.Tick = ingress.Tick
 		join.Peers(peers...)
 
 		// The join carries no metrics of its own; Write finalizes it so the

@@ -90,12 +90,14 @@ func NewPredictiveCoder(
 		horizon:        max(maxHorizon, 1),
 	}
 
-	if coder.alpha == 0 {
-		coder.alpha = 0.03
+	if coder.alpha <= 0 {
+		coder.Error(core.ErrDomain)
+		return coder
 	}
 
 	if coder.pace == nil {
-		coder.pace = NewPace(coder.alpha, 0.005, 0.150, 0.1, 0.2, 256)
+		coder.Error(core.ErrShape)
+		return coder
 	}
 
 	if len(arch) == 0 {

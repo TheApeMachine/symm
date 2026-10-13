@@ -114,24 +114,22 @@ func honestCVD(tape []tapeTrade, corrupt func(index int, values map[string]float
 	out := make([]*data.Measurement, 0, len(tape))
 
 	for index, trade := range tape {
-		values := map[string]float64{"signed_net_fraction": 0.5}
+		values := map[string]float64{
+			"signed_net_fraction": 0.5,
+			"gross_notional":      1000.0,
+		}
 
 		if index > 0 {
 			prior := tape[index-1]
-			dt := trade.at.Sub(prior.at).Seconds()
-			values["response_midpoint:at"] = trade.midpoint()
-			values["response_midpoint:from"] = prior.midpoint()
-			values["midpoint_log_return"] = math.Log(trade.midpoint() / prior.midpoint())
-			values["trade_rate"] = 1 / dt
-			values["buy_notional_rate"], values["sell_notional_rate"] = 0, 0
-
-			if trade.side == "buy" {
-				values["buy_notional_rate"] = trade.price * trade.qty / dt
-			}
+			logRet := math.Log(trade.midpoint() / prior.midpoint())
+			values["midpoint_log_return"] = logRet
+			flowRet := logRet
 
 			if trade.side == "sell" {
-				values["sell_notional_rate"] = trade.price * trade.qty / dt
+				flowRet = -logRet
 			}
+
+			values["flow_aligned_midpoint_return"] = flowRet
 		}
 
 		if corrupt != nil && !corrupt(index, values) {
@@ -164,10 +162,10 @@ func TestAnalyzeTruthfulness(t *testing.T) {
 			So(report.ViolationsCount, ShouldEqual, 0)
 			So(report.Comparisons["level3_replay"], ShouldEqual, 3)
 			So(report.Comparisons["trade_book"], ShouldEqual, 3)
-			So(report.Comparisons["trade_rate"], ShouldEqual, 2)
-			So(report.Comparisons["response_midpoint:at"], ShouldEqual, 2)
-			So(report.Comparisons["response_midpoint:from"], ShouldEqual, 1)
 			So(report.Comparisons["midpoint_log_return"], ShouldEqual, 2)
+			So(report.Comparisons["flow_aligned_midpoint_return"], ShouldEqual, 2)
+			So(report.Comparisons["trade_fields"], ShouldEqual, 3)
+			So(report.Comparisons["cvd_coverage"], ShouldEqual, 3)
 		})
 
 		Convey("a book the stored level3 tape does not rebuild is a breach", func() {
@@ -196,50 +194,25 @@ func TestAnalyzeTruthfulness(t *testing.T) {
 			So(report.Passed, ShouldBeFalse)
 		})
 
-		Convey("a response priced on the trade instead of the book midpoint is a breach", func() {
+		Convey("a log return that does not match touch midpoint return is a breach", func() {
 			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
 				if index == 1 {
-					values["response_midpoint:at"] = tape[1].price
-				}
-				return true
-			}))
-			So(report.ViolationsByCheck["response_midpoint:at"], ShouldEqual, 1)
-			So(report.Passed, ShouldBeFalse)
-		})
-
-		Convey("a rate over an invented one-second interval is a breach", func() {
-			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
-				if index == 1 {
-					values["trade_rate"] = 1
-				}
-				return true
-			}))
-			So(report.Status, ShouldEqual, VerdictBreach)
-			So(report.ViolationsByCheck["trade_rate"], ShouldEqual, 1)
-		})
-
-		Convey("a response that does not start at the previous frame's midpoint is a breach", func() {
-			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
-				if index == 2 {
-					// A stale prior midpoint, internally consistent with its return.
-					values["response_midpoint:from"] = tape[0].midpoint()
-					values["midpoint_log_return"] = math.Log(tape[2].midpoint() / tape[0].midpoint())
-				}
-				return true
-			}))
-			So(report.ViolationsByCheck["response_midpoint:from"], ShouldEqual, 1)
-			So(report.ViolationsByCheck["midpoint_log_return"], ShouldEqual, 0)
-			So(report.Passed, ShouldBeFalse)
-		})
-
-		Convey("a log return that is not ln(at / from) is a breach", func() {
-			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
-				if index == 1 {
-					values["midpoint_log_return"] = math.Log(tape[1].price / tape[0].price)
+					values["midpoint_log_return"] = 0.5
 				}
 				return true
 			}))
 			So(report.ViolationsByCheck["midpoint_log_return"], ShouldEqual, 1)
+			So(report.Passed, ShouldBeFalse)
+		})
+
+		Convey("a flow aligned return that does not match signed direction is a breach", func() {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
+				if index == 1 {
+					values["flow_aligned_midpoint_return"] = 99.0
+				}
+				return true
+			}))
+			So(report.ViolationsByCheck["flow_aligned_midpoint_return"], ShouldEqual, 1)
 			So(report.Passed, ShouldBeFalse)
 		})
 
@@ -250,48 +223,20 @@ func TestAnalyzeTruthfulness(t *testing.T) {
 			So(report.ViolationsByCheck["cvd_coverage"], ShouldEqual, 1)
 		})
 
-		Convey("rates on more than one of several same-time trades are a breach", func() {
-			sameTime := truthTape(time.Unix(1_800_000_000, 0))
-			sameTime[2].at = sameTime[1].at
-			sameTrades, sameLevel3 := storedTape(t, sameTime)
-			frames := honestCVD(sameTime, nil)
-			// honestCVD priced the third trade over a zero interval (+Inf);
-			// an invented interval makes it finite, as a dt default would.
-			fixed := honestCVD(sameTime, func(index int, values map[string]float64) bool {
-				if index == 2 {
-					values["trade_rate"] = 1
-				}
-				return true
-			})
-			So(len(frames), ShouldEqual, 3)
-			report := AnalyzeTruthfulness(t.Context(), sameTrades, sameLevel3, fixed)
-			So(report.AmbiguousTrades, ShouldEqual, 2)
-			So(report.ViolationsByCheck["rate_without_elapsed_time"], ShouldEqual, 1)
-
-			honest := honestCVD(sameTime, func(index int, values map[string]float64) bool {
-				if index == 2 {
-					delete(values, "trade_rate")
-					delete(values, "buy_notional_rate")
-					delete(values, "sell_notional_rate")
-				}
-				return true
-			})
-			So(AnalyzeTruthfulness(t.Context(), sameTrades, sameLevel3, honest).ViolationsByCheck["rate_without_elapsed_time"], ShouldEqual, 0)
-		})
-
-		Convey("metric names no producer emits leave checks unexercised, not passed", func() {
-			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(_ int, values map[string]float64) bool {
-				delete(values, "trade_rate")
-				return true
-			}))
-			So(report.Status, ShouldEqual, VerdictInsufficient)
-			So(report.UnexercisedChecks, ShouldContain, "trade_rate")
-		})
-
 		Convey("an out-of-bound signed net fraction is a breach", func() {
 			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
 				if index == 0 {
 					values["signed_net_fraction"] = 2.5
+				}
+				return true
+			}))
+			So(report.ViolationsByCheck["signed_net_fraction_bounded"], ShouldEqual, 1)
+		})
+
+		Convey("a negative gross notional is a breach", func() {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
+				if index == 0 {
+					values["gross_notional"] = -10.0
 				}
 				return true
 			}))
@@ -313,16 +258,13 @@ func TestAnalyzeTruthfulness(t *testing.T) {
 			So(report.Passed, ShouldBeFalse)
 		})
 
-		Convey("a midpoint log return with zero or missing from midpoint is a breach", func() {
-			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(index int, values map[string]float64) bool {
-				if index == 1 {
-					values["response_midpoint:from"] = 0
-				}
+		Convey("metric names no producer emits leave checks unexercised, not passed", func() {
+			report := AnalyzeTruthfulness(t.Context(), trades, level3, honestCVD(tape, func(_ int, values map[string]float64) bool {
+				delete(values, "flow_aligned_midpoint_return")
 				return true
 			}))
-			So(report.Status, ShouldEqual, VerdictBreach)
-			So(report.ViolationsByCheck["midpoint_log_return"], ShouldEqual, 1)
-			So(report.Passed, ShouldBeFalse)
+			So(report.Status, ShouldEqual, VerdictInsufficient)
+			So(report.UnexercisedChecks, ShouldContain, "flow_aligned_midpoint_return")
 		})
 
 		Convey("a finite metric compared to positive infinity is a breach", func() {

@@ -129,25 +129,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	priceEntry := data.Pull(prior.Read("price"))
 	if priceEntry == nil || priceEntry.Metric == nil {
-		signal.mu.Lock()
-		defer signal.mu.Unlock()
-
-		if mem, found := signal.members[prior.Label]; found && mem.lastMeasurement != nil {
-			return mem.lastMeasurement
-		}
-
 		return nil
 	}
 
 	price := priceEntry.Metric.Raw()
 	if price <= 0 {
-		signal.mu.Lock()
-		defer signal.mu.Unlock()
-
-		if mem, found := signal.members[prior.Label]; found && mem.lastMeasurement != nil {
-			return mem.lastMeasurement
-		}
-
 		return nil
 	}
 

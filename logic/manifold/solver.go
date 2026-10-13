@@ -882,7 +882,12 @@ func (solver *Solver) Crystallize(
 	}
 
 	if relaxationSteps <= 0 {
-		relaxationSteps = 1
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("manifold: relaxationSteps must be positive, got %d", relaxationSteps),
+			nil,
+		))
+		return nil
 	}
 
 	clampedSnapshot := snapshotClamped(batch)

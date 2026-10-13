@@ -243,20 +243,6 @@ func (price *Price) Touch(symbol string) (*decimal.Decimal, *decimal.Decimal) {
 		}
 	}
 
-	if (bid == nil || ask == nil) && price.trades != nil {
-		if val, ok := price.trades.Load(normalized); ok {
-			last := val.(*decimal.Decimal)
-
-			if bid == nil {
-				bid = last
-			}
-
-			if ask == nil {
-				ask = last
-			}
-		}
-	}
-
 	return bid, ask
 }
 
@@ -445,18 +431,15 @@ func (price *Price) Walk(
 		level = next
 	}
 
-	/*
-		A book thinner than the request is an answer, not a failure. Walk is
-		how a caller asks what the displayed book would actually fill, and the
-		usual caller is sizing an order against its own cash — so a request
-		that runs past the far side is the routine case, not the exceptional
-		one. The filled quantity and its cost are returned either way.
-
-		It is reported rather than logged for that reason. Logging it made a
-		normal reading about book shape indistinguishable from a fault, at a
-		rate of hundreds a second across the instrument universe, which buries
-		the faults that do matter.
-	*/
+	// A book thinner than the request is an answer, not a failure. Walk is
+	// how a caller asks what the displayed book would actually fill, and the
+	// usual caller is sizing an order against its own cash — so a request
+	// that runs past the far side is the routine case, not the exceptional
+	// one. The filled quantity and its cost are returned either way.
+	// It is reported rather than logged for that reason. Logging it made a
+	// normal reading about book shape indistinguishable from a fault, at a
+	// rate of hundreds a second across the instrument universe, which buries
+	// the faults that do matter.
 	if quantity.Cmp(requested) < 0 {
 		return quantity, gross, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent, "[price] insufficient book depth", nil,
@@ -491,14 +474,12 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 			return
 		}
 
-		/*
-			A touch whose sides meet or cross describes no executable entry.
-			Like a walk that runs past the far side, this is a reading about
-			book shape — the venue quoting both sides from instants that
-			disagree — and not a fault in this program. It is reported as
-			unprocessable so a caller sizes around it, exactly as it sizes
-			around insufficient depth.
-		*/
+		// A touch whose sides meet or cross describes no executable entry.
+		// Like a walk that runs past the far side, this is a reading about
+		// book shape — the venue quoting both sides from instants that
+		// disagree — and not a fault in this program. It is reported as
+		// unprocessable so a caller sizes around it, exactly as it sizes
+		// around insufficient depth.
 		if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
 			err = errnie.Error(errnie.Err(
 				errnie.UnprocessableContent, "entry cost: crossed book for "+symbol, nil,
@@ -883,7 +864,6 @@ It returns net proceeds (after exit fee), gross proceeds, and any execution erro
 func (price *Price) Liquidate(
 	symbol string,
 	quantity *decimal.Decimal,
-	fallbackBid ...*decimal.Decimal,
 ) (*decimal.Decimal, *decimal.Decimal, error) {
 	if price == nil {
 		return nil, nil, errnie.Error(errnie.Err(
@@ -907,6 +887,7 @@ func (price *Price) Liquidate(
 				err = errnie.Error(errnie.Err(
 					errnie.NotFound, "[price] book unavailable for "+symbol, nil,
 				))
+
 				return
 			}
 
@@ -914,6 +895,7 @@ func (price *Price) Liquidate(
 				err = errnie.Error(errnie.Err(
 					errnie.UnprocessableContent, "[price] crossed book for "+symbol, nil,
 				))
+				
 				return
 			}
 
@@ -923,6 +905,7 @@ func (price *Price) Liquidate(
 				errnie.Error(errnie.Err(
 					errnie.IO, "[price] liquidate failed for "+symbol, err,
 				))
+				
 				return
 			}
 
@@ -944,28 +927,26 @@ func (price *Price) Liquidate(
 	}
 
 	if err != nil && !errnie.IsNotFound(err) {
-		return nil, nil, errnie.Error(errnie.Err(errnie.IO, "[price] liquidate failed for "+symbol, err))
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.IO, "[price] liquidate failed for "+symbol, err,
+		))
 	}
 
-	var bidPrice *decimal.Decimal
-
-	if len(fallbackBid) > 0 && fallbackBid[0] != nil && fallbackBid[0].Sign() > 0 {
-		bidPrice = fallbackBid[0]
-	}
+	bidPrice, _ := price.Touch(symbol)
 
 	if bidPrice == nil {
-		bidPrice, _ = price.Touch(symbol)
-	}
-
-	if bidPrice == nil {
-		return nil, nil, errnie.Error(errnie.Err(errnie.NotFound, "[price] no book or bid price available for "+symbol, nil))
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "[price] no book or bid price available for "+symbol, nil,
+		))
 	}
 
 	gross = notional(bidPrice, quantity)
 	net = price.WithFee(symbol, gross, SELL)
 
 	if net == nil {
-		return nil, nil, errnie.Error(errnie.Err(errnie.NotFound, "[price] exit fee unavailable for "+symbol, nil))
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "[price] exit fee unavailable for "+symbol, nil,
+		))
 	}
 
 	return net, gross, nil

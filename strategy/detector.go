@@ -94,7 +94,8 @@ func NewDetector(
 
 /*
 tapePoint is one priced trade coordinate on the tape. pos is its index in
-the tape's retained points.
+the tape's retained points. bid and ask are the executable quotes from the
+trade measurement's stamped book, falling back to price when unstamped.
 */
 type tapePoint struct {
 	idx   int64
@@ -102,6 +103,8 @@ type tapePoint struct {
 	pos   int
 	at    time.Time
 	price *decimal.Decimal
+	bid   *decimal.Decimal
+	ask   *decimal.Decimal
 }
 
 /*
@@ -132,7 +135,7 @@ type friction struct {
 }
 
 func (f *friction) clear(low, high *decimal.Decimal) (bool, error) {
-	if high.Cmp(low) <= 0 {
+	if low == nil || high == nil || high.Cmp(low) <= 0 {
 		return false, nil
 	}
 
@@ -307,7 +310,7 @@ func (t *tape) zigzag(p tapePoint) error {
 			t.bounce = p
 		}
 
-		clears, err := t.friction.clear(t.low.price, p.price)
+		clears, err := t.friction.clear(t.low.ask, p.bid)
 
 		if err != nil || !clears {
 			return err
@@ -525,7 +528,7 @@ func (detector *Detector) Scan(
 			}
 		}
 
-		metric := data.Pull(measurement.Read("price")).Metric
+		priceEntry := data.Pull(measurement.Read("price"))
 
 		if measurement.At.IsZero() {
 			return detector.Error(errnie.Err(
@@ -538,7 +541,7 @@ func (detector *Detector) Scan(
 			))
 		}
 
-		if metric == nil || metric.Exact() == nil {
+		if priceEntry == nil || priceEntry.Metric == nil || priceEntry.Metric.Exact() == nil {
 			return detector.Error(errnie.Err(
 				errnie.Validation,
 				fmt.Sprintf(
@@ -549,13 +552,26 @@ func (detector *Detector) Scan(
 			))
 		}
 
-		price := metric.Exact()
+		price := priceEntry.Metric.Exact()
+		var bid *decimal.Decimal
+
+		if bidEntry := data.Pull(measurement.Read("bid_price_0")); bidEntry != nil && bidEntry.Metric != nil && bidEntry.Metric.Exact() != nil {
+			bid = bidEntry.Metric.Exact()
+		}
+
+		var ask *decimal.Decimal
+
+		if askEntry := data.Pull(measurement.Read("ask_price_0")); askEntry != nil && askEntry.Metric != nil && askEntry.Metric.Exact() != nil {
+			ask = askEntry.Metric.Exact()
+		}
 
 		if err := current.observe(tapePoint{
 			idx:   measurement.SeqIdx,
 			tick:  measurement.Tick,
 			at:    measurement.At,
 			price: price,
+			bid:   bid,
+			ask:   ask,
 		}); err != nil {
 			return detector.Error(err)
 		}
