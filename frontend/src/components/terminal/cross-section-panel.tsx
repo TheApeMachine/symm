@@ -37,7 +37,7 @@ export const CrossSectionPanel = () => {
 				if (el) el.textContent = value;
 			};
 
-			const metricsMap: Record<string, { raw: number; normalized: number }> =
+			const metricsMap: Record<string, { raw: number; snm: number }> =
 				{};
 			if (row) {
 				for (const m of row.metrics ?? []) {
@@ -45,7 +45,7 @@ export const CrossSectionPanel = () => {
 					if (name) {
 						metricsMap[name] = {
 							raw: m.raw,
-							normalized: m.normalized,
+							snm: m.snm,
 						};
 					}
 				}
@@ -65,7 +65,7 @@ export const CrossSectionPanel = () => {
 						: parsed.toISOString().slice(11, 19);
 				})(),
 			);
-			set("norm", fmt(metricsMap.executable_touch_depth?.normalized, 2));
+			set("norm", fmt(metricsMap.executable_touch_depth?.snm, 2));
 
 			for (const stat of STATS) {
 				set(stat.name, fmt(metricsMap[stat.name]?.raw, 0));

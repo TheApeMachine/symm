@@ -54,7 +54,7 @@ export const terminalHealthSummary = (
 		const metric = sourceHeadlineMetric(measurement.source).slice(
 			"metrics.".length,
 		);
-		const value = measurement.metrics?.[metric]?.normalized;
+		const value = measurement.metrics?.[metric]?.snm;
 
 		if (typeof value === "number" && Number.isFinite(value)) {
 			strengths.push(value);

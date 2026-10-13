@@ -7,36 +7,36 @@ import (
 )
 
 type HoldingT struct {
-	Status          string        `json:"status"`
-	Symbol          string        `json:"symbol"`
-	Asset           string        `json:"asset"`
-	Qty             string        `json:"qty"`
-	SellableQty     string        `json:"sellableQty"`
-	EntryAt         int64         `json:"entryAt"`
-	ExitAt          int64         `json:"exitAt"`
-	EntryPrice      string        `json:"entryPrice"`
-	EntryFee        string        `json:"entryFee"`
-	ExitPrice       string        `json:"exitPrice"`
-	ExitFee         string        `json:"exitFee"`
-	Pnl             string        `json:"pnl"`
-	ProfitThreshold string        `json:"profitThreshold"`
-	ReturnPct       float64       `json:"returnPct"`
-	Mark            string        `json:"mark"`
-	IsOpportunity   bool          `json:"isOpportunity"`
-	ReservationId   string        `json:"reservationId"`
-	CapacityQty     float64       `json:"capacityQty"`
-	CapacityRatio   float64       `json:"capacityRatio"`
-	CapacityDefined bool          `json:"capacityDefined"`
-	CapacityBounded bool          `json:"capacityBounded"`
-	CapacityAt      int64         `json:"capacityAt"`
-	SlippageBudget  float64       `json:"slippageBudget"`
-	BudgetSource    string        `json:"budgetSource"`
-	HoldSeconds     float64       `json:"holdSeconds"`
-	VenuePnl        string        `json:"venuePnl"`
-	ShadowPnl       string        `json:"shadowPnl"`
-	ShadowDefined   bool          `json:"shadowDefined"`
-	Sells           []*SellEventT `json:"sells"`
-	ClosedAt        int64         `json:"closedAt"`
+	Status string `json:"status"`
+	Symbol string `json:"symbol"`
+	Asset string `json:"asset"`
+	Qty string `json:"qty"`
+	SellableQty string `json:"sellableQty"`
+	EntryAt int64 `json:"entryAt"`
+	ExitAt int64 `json:"exitAt"`
+	EntryPrice string `json:"entryPrice"`
+	EntryFee string `json:"entryFee"`
+	ExitPrice string `json:"exitPrice"`
+	ExitFee string `json:"exitFee"`
+	Pnl string `json:"pnl"`
+	ProfitThreshold string `json:"profitThreshold"`
+	ReturnPct float64 `json:"returnPct"`
+	Mark string `json:"mark"`
+	IsOpportunity bool `json:"isOpportunity"`
+	ReservationId string `json:"reservationId"`
+	CapacityQty float64 `json:"capacityQty"`
+	CapacityRatio float64 `json:"capacityRatio"`
+	CapacityDefined bool `json:"capacityDefined"`
+	CapacityBounded bool `json:"capacityBounded"`
+	CapacityAt int64 `json:"capacityAt"`
+	SlippageBudget float64 `json:"slippageBudget"`
+	BudgetSource string `json:"budgetSource"`
+	HoldSeconds float64 `json:"holdSeconds"`
+	VenuePnl string `json:"venuePnl"`
+	ShadowPnl string `json:"shadowPnl"`
+	ShadowDefined bool `json:"shadowDefined"`
+	Sells []*SellEventT `json:"sells"`
+	ClosedAt int64 `json:"closedAt"`
 }
 
 func (t *HoldingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -390,7 +390,7 @@ func (rcv *Holding) ReservationId() []byte {
 }
 
 func (rcv *Holding) CapacityQty() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -398,11 +398,11 @@ func (rcv *Holding) CapacityQty() float64 {
 }
 
 func (rcv *Holding) MutateCapacityQty(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(40, n)
+	return rcv._tab.MutateFloat64Slot(38, n)
 }
 
 func (rcv *Holding) CapacityRatio() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -410,11 +410,11 @@ func (rcv *Holding) CapacityRatio() float64 {
 }
 
 func (rcv *Holding) MutateCapacityRatio(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(42, n)
+	return rcv._tab.MutateFloat64Slot(40, n)
 }
 
 func (rcv *Holding) CapacityDefined() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -422,11 +422,11 @@ func (rcv *Holding) CapacityDefined() bool {
 }
 
 func (rcv *Holding) MutateCapacityDefined(n bool) bool {
-	return rcv._tab.MutateBoolSlot(44, n)
+	return rcv._tab.MutateBoolSlot(42, n)
 }
 
 func (rcv *Holding) CapacityBounded() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -434,11 +434,11 @@ func (rcv *Holding) CapacityBounded() bool {
 }
 
 func (rcv *Holding) MutateCapacityBounded(n bool) bool {
-	return rcv._tab.MutateBoolSlot(46, n)
+	return rcv._tab.MutateBoolSlot(44, n)
 }
 
 func (rcv *Holding) CapacityAt() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -446,11 +446,11 @@ func (rcv *Holding) CapacityAt() int64 {
 }
 
 func (rcv *Holding) MutateCapacityAt(n int64) bool {
-	return rcv._tab.MutateInt64Slot(48, n)
+	return rcv._tab.MutateInt64Slot(46, n)
 }
 
 func (rcv *Holding) SlippageBudget() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -458,11 +458,11 @@ func (rcv *Holding) SlippageBudget() float64 {
 }
 
 func (rcv *Holding) MutateSlippageBudget(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(50, n)
+	return rcv._tab.MutateFloat64Slot(48, n)
 }
 
 func (rcv *Holding) BudgetSource() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -470,7 +470,7 @@ func (rcv *Holding) BudgetSource() []byte {
 }
 
 func (rcv *Holding) HoldSeconds() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -478,11 +478,11 @@ func (rcv *Holding) HoldSeconds() float64 {
 }
 
 func (rcv *Holding) MutateHoldSeconds(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(54, n)
+	return rcv._tab.MutateFloat64Slot(52, n)
 }
 
 func (rcv *Holding) VenuePnl() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -490,7 +490,7 @@ func (rcv *Holding) VenuePnl() []byte {
 }
 
 func (rcv *Holding) ShadowPnl() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -498,7 +498,7 @@ func (rcv *Holding) ShadowPnl() []byte {
 }
 
 func (rcv *Holding) ShadowDefined() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -506,11 +506,11 @@ func (rcv *Holding) ShadowDefined() bool {
 }
 
 func (rcv *Holding) MutateShadowDefined(n bool) bool {
-	return rcv._tab.MutateBoolSlot(60, n)
+	return rcv._tab.MutateBoolSlot(58, n)
 }
 
 func (rcv *Holding) Sells(obj *SellEvent, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -522,7 +522,7 @@ func (rcv *Holding) Sells(obj *SellEvent, j int) bool {
 }
 
 func (rcv *Holding) SellsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -530,7 +530,7 @@ func (rcv *Holding) SellsLength() int {
 }
 
 func (rcv *Holding) ClosedAt() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -538,11 +538,11 @@ func (rcv *Holding) ClosedAt() int64 {
 }
 
 func (rcv *Holding) MutateClosedAt(n int64) bool {
-	return rcv._tab.MutateInt64Slot(64, n)
+	return rcv._tab.MutateInt64Slot(62, n)
 }
 
 func HoldingStart(builder *flatbuffers.Builder) {
-	builder.StartObject(31)
+	builder.StartObject(30)
 }
 func HoldingAddStatus(builder *flatbuffers.Builder, status flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(status), 0)
@@ -596,46 +596,46 @@ func HoldingAddReservationId(builder *flatbuffers.Builder, reservationId flatbuf
 	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(reservationId), 0)
 }
 func HoldingAddCapacityQty(builder *flatbuffers.Builder, capacityQty float64) {
-	builder.PrependFloat64Slot(18, capacityQty, 0.0)
+	builder.PrependFloat64Slot(17, capacityQty, 0.0)
 }
 func HoldingAddCapacityRatio(builder *flatbuffers.Builder, capacityRatio float64) {
-	builder.PrependFloat64Slot(19, capacityRatio, 0.0)
+	builder.PrependFloat64Slot(18, capacityRatio, 0.0)
 }
 func HoldingAddCapacityDefined(builder *flatbuffers.Builder, capacityDefined bool) {
-	builder.PrependBoolSlot(20, capacityDefined, false)
+	builder.PrependBoolSlot(19, capacityDefined, false)
 }
 func HoldingAddCapacityBounded(builder *flatbuffers.Builder, capacityBounded bool) {
-	builder.PrependBoolSlot(21, capacityBounded, false)
+	builder.PrependBoolSlot(20, capacityBounded, false)
 }
 func HoldingAddCapacityAt(builder *flatbuffers.Builder, capacityAt int64) {
-	builder.PrependInt64Slot(22, capacityAt, 0)
+	builder.PrependInt64Slot(21, capacityAt, 0)
 }
 func HoldingAddSlippageBudget(builder *flatbuffers.Builder, slippageBudget float64) {
-	builder.PrependFloat64Slot(23, slippageBudget, 0.0)
+	builder.PrependFloat64Slot(22, slippageBudget, 0.0)
 }
 func HoldingAddBudgetSource(builder *flatbuffers.Builder, budgetSource flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(budgetSource), 0)
+	builder.PrependUOffsetTSlot(23, flatbuffers.UOffsetT(budgetSource), 0)
 }
 func HoldingAddHoldSeconds(builder *flatbuffers.Builder, holdSeconds float64) {
-	builder.PrependFloat64Slot(25, holdSeconds, 0.0)
+	builder.PrependFloat64Slot(24, holdSeconds, 0.0)
 }
 func HoldingAddVenuePnl(builder *flatbuffers.Builder, venuePnl flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(26, flatbuffers.UOffsetT(venuePnl), 0)
+	builder.PrependUOffsetTSlot(25, flatbuffers.UOffsetT(venuePnl), 0)
 }
 func HoldingAddShadowPnl(builder *flatbuffers.Builder, shadowPnl flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(27, flatbuffers.UOffsetT(shadowPnl), 0)
+	builder.PrependUOffsetTSlot(26, flatbuffers.UOffsetT(shadowPnl), 0)
 }
 func HoldingAddShadowDefined(builder *flatbuffers.Builder, shadowDefined bool) {
-	builder.PrependBoolSlot(28, shadowDefined, false)
+	builder.PrependBoolSlot(27, shadowDefined, false)
 }
 func HoldingAddSells(builder *flatbuffers.Builder, sells flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(29, flatbuffers.UOffsetT(sells), 0)
+	builder.PrependUOffsetTSlot(28, flatbuffers.UOffsetT(sells), 0)
 }
 func HoldingStartSellsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func HoldingAddClosedAt(builder *flatbuffers.Builder, closedAt int64) {
-	builder.PrependInt64Slot(30, closedAt, 0)
+	builder.PrependInt64Slot(29, closedAt, 0)
 }
 func HoldingEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

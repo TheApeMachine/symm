@@ -32,7 +32,7 @@ const formatNanosDate = (nanos: bigint | number): string => {
 			: Number(nanos) / 1_000_000;
 	if (!n || n <= 0) return "—";
 	const d = new Date(n);
-	if (isNaN(d.getTime())) return "—";
+	if (Number.isNaN(d.getTime())) return "—";
 	return d.toISOString().replace("T", " ").replace("Z", "");
 };
 
@@ -157,16 +157,15 @@ const MeasurementView = ({
 					<div className="font-mono text-[9px] text-(--f4)">No metrics attached</div>
 				) : (
 					<div className="space-y-1.5">
-						{metrics.map((m, idx) => {
-							const name = typeof m.name === "string" ? m.name : String(m.name ?? idx);
+						{metrics.map((m) => {
+							const name = typeof m.name === "string" ? m.name : String(m.name ?? "");
 							const rawVal = formatMetricVal(m.raw);
-							const hasNorm = m.hasNormalized && Number.isFinite(m.normalized);
-							const normVal = hasNorm ? Math.min(1, Math.max(0, m.normalized)) : 0;
+							const snmVal = m.snm;
 							const unit = typeof m.unit === "string" ? m.unit : "";
 
 							return (
 								<div
-									key={name + idx}
+									key={name}
 									className="rounded bg-(--sunken) p-1.5 font-mono text-[10px] border border-(--line)"
 								>
 									<div className="flex items-center justify-between">
@@ -175,19 +174,10 @@ const MeasurementView = ({
 											{rawVal} {unit ? <span className="text-(--f4) text-[9px]">{unit}</span> : null}
 										</span>
 									</div>
-									{hasNorm ? (
-										<div className="mt-1 flex items-center gap-2">
-											<div className="h-1 flex-1 rounded bg-(--line) overflow-hidden">
-												<div
-													className="h-full bg-(--acc) transition-all duration-300"
-													style={{ width: `${(normVal * 100).toFixed(0)}%` }}
-												/>
-											</div>
-											<span className="text-[8px] text-(--f4) tabular-nums">
-												{(normVal * 100).toFixed(0)}%
-											</span>
-										</div>
-									) : null}
+									<div className="mt-1 flex items-center justify-between text-[8px] text-(--f4)">
+										<span>snm</span>
+										<span className="text-(--f2) tabular-nums">{snmVal.toFixed(4)}</span>
+									</div>
 									{m.region > 0 ? (
 										<div className="mt-1 text-[8px] text-(--f4)">
 											region: <span className="text-(--f2)">{m.region}</span>
@@ -208,17 +198,17 @@ const MeasurementView = ({
 						Metadata & Provenance
 					</div>
 					<div className="flex flex-wrap gap-1">
-						{metadata.map((entry, idx) => (
+						{metadata.map((entry) => (
 							<span
-								key={idx}
+								key={`meta-${entry.name}`}
 								className="rounded border border-(--line) bg-(--sunken) px-1.5 py-0.5 font-mono text-[9px] text-(--f3)"
 							>
 								<span className="text-(--f4)">{entry.name}:</span> {entry.value}
 							</span>
 						))}
-						{provenance.map((entry, idx) => (
+						{provenance.map((entry) => (
 							<span
-								key={idx}
+								key={`prov-${entry.name}`}
 								className="rounded border border-(--line) bg-(--sunken) px-1.5 py-0.5 font-mono text-[9px] text-(--f3)"
 							>
 								<span className="text-(--f4)">{entry.name}:</span> {entry.value}
@@ -235,11 +225,12 @@ const MeasurementView = ({
 						Attached Peers ({peers.length})
 					</div>
 					<div className="flex flex-wrap gap-1">
-						{peers.map((peer, idx) => {
+						{peers.map((peer) => {
 							const peerSource = typeof peer.source === "string" ? peer.source : "";
+							const peerKey = (typeof peer.id === "string" && peer.id) || peerSource || "peer";
 							return (
 								<Button
-									key={idx}
+									key={peerKey}
 									variant="outline"
 									size="xxs"
 									onClick={() => peerSource && onSelectStage(peerSource)}

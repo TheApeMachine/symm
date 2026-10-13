@@ -364,8 +364,7 @@ type MetricReading = {
 	key: string;
 	label: string;
 	raw: number;
-	normalized: number | null;
-	standardized: number | null;
+	snm: number | null;
 	unit: string;
 	timescale: string;
 };
@@ -398,8 +397,7 @@ export const measurementToReading = (m: Measurement): MeasurementReading => {
 			key,
 			label: metric.label ?? key,
 			raw: metric.raw,
-			normalized: metric.normalized ?? null,
-			standardized: metric.standardized ?? null,
+			snm: metric.snm ?? null,
 			unit: String(metric.unit ?? ""),
 			timescale: String(metric.timescale ?? ""),
 		}),
@@ -744,6 +742,7 @@ const MeasurementPanel = ({
 					const expanded = open.has(measurement.signal);
 					const support = readSupport(measurement.maturity, measurement.snr);
 					const family = semantics?.signals?.[measurement.signal] ?? null;
+					const concurrentPeers = measurement.peers ?? measurement.Peers ?? [];
 
 					return (
 						<div
@@ -860,10 +859,7 @@ const MeasurementPanel = ({
 														raw
 													</th>
 													<th className="py-0.5 pr-2 text-right font-normal">
-														norm
-													</th>
-													<th className="py-0.5 pr-2 text-right font-normal">
-														std
+														snm
 													</th>
 													<th className="py-0.5 font-normal">
 														unit · timescale
@@ -917,10 +913,7 @@ const MeasurementPanel = ({
 																	<Quantity value={entry.raw} />
 																</td>
 																<td className="py-0.5 pr-2 text-right">
-																	<Quantity value={entry.normalized} />
-																</td>
-																<td className="py-0.5 pr-2 text-right">
-																	<Quantity value={entry.standardized} />
+																	<Quantity value={entry.snm} />
 																</td>
 																<td className="py-0.5 text-(--f4)">
 																	{entry.unit || "—"}
@@ -931,7 +924,7 @@ const MeasurementPanel = ({
 															</tr>
 															{selected ? (
 																<tr className="border-(--line) border-t">
-																	<td colSpan={5} className="px-2 py-1.5">
+																	<td colSpan={4} className="px-2 py-1.5">
 																		<MetricDetail
 																			identity={identity}
 																			declared={declared}
@@ -984,18 +977,15 @@ const MeasurementPanel = ({
 											))}
 										</div>
 									) : null}
-									{(measurement.peers ?? measurement.Peers) &&
-									(measurement.peers ?? measurement.Peers)!.length > 0 ? (
+									{concurrentPeers.length > 0 ? (
 										<div className="pt-2">
 											<div className="pb-1 font-mono text-[8px] text-(--f4) uppercase tracking-widest">
-												Concurrent Peers (
-												{(measurement.peers ?? measurement.Peers)!.length})
+												Concurrent Peers ({concurrentPeers.length})
 											</div>
 											<div className="space-y-1">
-												{(measurement.peers ?? measurement.Peers)!.map(
-													(peer, peerIdx) => (
+												{concurrentPeers.map((peer) => (
 													<div
-														key={peer.id || peerIdx}
+														key={peer.id || `${peer.source}:${peer.seqIdx}`}
 														className="rounded bg-(--sunken) p-1.5 font-mono text-[9px]"
 													>
 														<div className="flex items-center gap-2 text-(--f2)">

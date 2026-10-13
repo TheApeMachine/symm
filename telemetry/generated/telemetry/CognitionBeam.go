@@ -7,9 +7,9 @@ import (
 )
 
 type CognitionBeamT struct {
-	Sequence string  `json:"sequence"`
-	Key      string  `json:"key"`
-	Score    float64 `json:"score"`
+	Sequence string `json:"sequence"`
+	Key string `json:"key"`
+	Score float64 `json:"score"`
 }
 
 func (t *CognitionBeamT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

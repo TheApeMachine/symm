@@ -21,7 +21,7 @@ const metricMeasurement = (
 	snr: number,
 	key: string,
 	raw: number,
-	normalized: number,
+	snm: number,
 ): MeasurementT => {
 	const m = new MeasurementT();
 	m.source = "hawkes";
@@ -31,8 +31,7 @@ const metricMeasurement = (
 	const metric = new MetricT();
 	metric.name = key;
 	metric.raw = raw;
-	metric.normalized = normalized;
-	metric.hasNormalized = true;
+	metric.snm = snm;
 	m.metrics = [metric];
 	return m;
 };

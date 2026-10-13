@@ -65,13 +65,13 @@ const formatMetricValue = (val: number | null): string => {
 const metricValues = (
 	row: MeasurementT | null | undefined,
 	names: string[],
-): Record<string, { raw: number; normalized: number } | null> => {
-	const out: Record<string, { raw: number; normalized: number } | null> = {};
+): Record<string, { raw: number; snm: number } | null> => {
+	const out: Record<string, { raw: number; snm: number } | null> = {};
 	for (const name of names) out[name] = null;
 	if (!row) return out;
 
 	if (names.includes("snr") && row.snrDefined && Number.isFinite(row.snr)) {
-		out.snr = { raw: row.snr, normalized: Math.min(1, Math.max(0, row.snr)) };
+		out.snr = { raw: row.snr, snm: row.snr };
 	}
 
 	for (const m of row.metrics ?? []) {
@@ -80,7 +80,7 @@ const metricValues = (
 		if (!name || !names.includes(name)) continue;
 		out[name] = {
 			raw: m.raw,
-			normalized: m.normalized ?? 0,
+			snm: m.snm,
 		};
 	}
 
@@ -119,7 +119,7 @@ export const KernelInspector = () => {
 	const metrics = resonance ? [] : sourceMetrics(source);
 	const metricReadouts = metrics.map((name) => {
 		let raw: number | null = null;
-		let normalized = 0;
+		let snm = 0;
 
 		const count = measurementRing?.getBufferLength
 			? measurementRing.getBufferLength()
@@ -136,10 +136,10 @@ export const KernelInspector = () => {
 
 		if (value) {
 			raw = value.raw;
-			normalized = Math.min(1, Math.max(0, value.normalized));
+			snm = value.snm;
 		}
 
-		return { name, raw, normalized };
+		return { name, raw, snm };
 	});
 
 	const headline = resonance
@@ -249,7 +249,7 @@ export const KernelInspector = () => {
 							{metricReadouts.map((metric) => (
 								<Meter
 									key={metric.name}
-									percent={metric.raw === null ? 0 : metric.normalized * 100}
+									percent={metric.raw === null ? 0 : Math.abs(metric.snm) * 100}
 									label={metricLabel(metric.name)}
 									value={formatMetricValue(metric.raw)}
 									variant={metric.raw === null ? "disabled" : "warning"}

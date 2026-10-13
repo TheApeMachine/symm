@@ -316,17 +316,12 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 	labelBreaches := 0
 	sourceBreaches := 0
 	timingBreaches := 0
-	coherenceBreaches := 0
-	coherenceRecomputeBreaches := 0
 	maturityBreaches := 0
-	confidenceBreaches := 0
 	energyBreaches := 0
-	identityBreaches := 0
+	snmBreaches := 0
 	dampenBreaches := 0
 
-	coherences := make([]float64, 0, len(measurements))
 	maturities := make([]float64, 0, len(measurements))
-	confidences := make([]float64, 0, len(measurements))
 
 	coldStartCount := 0
 	settledCount := 0
@@ -396,23 +391,7 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			), "epoch", meas.Epoch, "label", meas.Label, "source", meas.Source)
 		}
 
-		coherence := meas.Coherence()
 		maturity := meas.Maturity()
-		confidence := meas.Confidence()
-
-		if math.IsNaN(coherence) || math.IsInf(coherence, 0) || coherence < -1e-9 || coherence > 1.0+1e-9 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] coherence out of bounds [0, 1]",
-				nil,
-			), "coherence", coherence, "label", meas.Label, "source", meas.Source)
-
-			coherenceBreaches++
-		}
-
-		if !math.IsNaN(coherence) && !math.IsInf(coherence, 0) && coherence >= -1e-9 && coherence <= 1.0+1e-9 {
-			coherences = append(coherences, coherence)
-		}
 
 		var sumAbs float64
 		var sumSq float64
@@ -422,24 +401,20 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			if entry != nil && entry.Metric != nil {
 				metricCount++
 				stdVal := entry.Metric.SNM()
+
+				if math.IsNaN(stdVal) || math.IsInf(stdVal, 0) || stdVal < -1.0 || stdVal > 1.0 {
+					errnie.Error(errnie.Err(
+						errnie.Validation,
+						"[audit.measurement_state] SNM out of bounds [-1, 1]",
+						nil,
+					), "snm", stdVal, "label", meas.Label, "source", meas.Source, "metric", entry.Key)
+
+					snmBreaches++
+				}
+
 				sumAbs += math.Abs(stdVal)
 				sumSq += stdVal * stdVal
 			}
-		}
-
-		expectedCoherence := 0.0
-		if metricCount > 0 && sumSq > 0 {
-			expectedCoherence = (sumAbs * sumAbs) / (float64(metricCount) * sumSq)
-		}
-
-		if math.Abs(coherence-expectedCoherence) > 1e-5 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] coherence recomputation mismatch",
-				nil,
-			), "storedCoherence", coherence, "recomputedCoherence", expectedCoherence, "label", meas.Label, "source", meas.Source)
-
-			coherenceRecomputeBreaches++
 		}
 
 		energy := meas.Energy()
@@ -477,44 +452,16 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			maturities = append(maturities, maturity)
 		}
 
-		if math.IsNaN(confidence) || math.IsInf(confidence, 0) || confidence < -1e-9 || confidence > 1.0+1e-9 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] confidence out of bounds [0, 1]",
-				nil,
-			), "confidence", confidence, "label", meas.Label, "source", meas.Source)
-
-			confidenceBreaches++
-		}
-
-		if !math.IsNaN(confidence) && !math.IsInf(confidence, 0) && confidence >= -1e-9 && confidence <= 1.0+1e-9 {
-			confidences = append(confidences, confidence)
-		}
-
-		expectedConf := maturity * coherence
-
-		if math.Abs(confidence-expectedConf) > 1e-5 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] confidence identity mismatch (|conf - m*c| > 1e-5)",
-				nil,
-			), "confidence", confidence, "expected", expectedConf, "label", meas.Label, "source", meas.Source)
-
-			identityBreaches++
-		}
-
-		if confidence < 0.2 {
+		if maturity < 0.2 {
 			coldStartCount++
 		}
 
-		if confidence >= 0.5 {
+		if maturity >= 0.5 {
 			settledCount++
 		}
 	}
 
-	meanC, medianC, p95C := distributionSummary(coherences)
 	meanM, medianM, p95M := distributionSummary(maturities)
-	meanConf, medianConf, p95Conf := distributionSummary(confidences)
 
 	coldFraction := 0.0
 	settledFraction := 0.0
@@ -525,43 +472,33 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 	}
 
 	summary := fmt.Sprintf(
-		"Measurements State: %d audited. Coherence mean=%.3f. Maturity mean=%.3f. Confidence mean=%.3f (settled=%.1f%%, cold=%.1f%%). Breaches: unlocked=%d, epoch=%d, label=%d, source=%d, timing=%d, coh=%d, coh_rec=%d, mat=%d, conf=%d, id=%d, energy=%d, dampen=%d.",
-		totalAudited, meanC, meanM, meanConf, settledFraction*100, coldFraction*100,
-		unlockedBreaches, epochBreaches, labelBreaches, sourceBreaches, timingBreaches, coherenceBreaches, coherenceRecomputeBreaches, maturityBreaches, confidenceBreaches, identityBreaches, energyBreaches, dampenBreaches,
+		"Measurements State: %d audited. Maturity mean=%.3f (settled=%.1f%%, cold=%.1f%%). Breaches: unlocked=%d, epoch=%d, label=%d, source=%d, timing=%d, mat=%d, energy=%d, snm=%d, dampen=%d.",
+		totalAudited, meanM, settledFraction*100, coldFraction*100,
+		unlockedBreaches, epochBreaches, labelBreaches, sourceBreaches, timingBreaches, maturityBreaches, energyBreaches, snmBreaches, dampenBreaches,
 	)
 
 	passed := unlockedBreaches == 0 && epochBreaches == 0 && labelBreaches == 0 &&
-		sourceBreaches == 0 && timingBreaches == 0 && coherenceBreaches == 0 &&
-		coherenceRecomputeBreaches == 0 && maturityBreaches == 0 && confidenceBreaches == 0 &&
-		identityBreaches == 0 && energyBreaches == 0 && dampenBreaches == 0
+		sourceBreaches == 0 && timingBreaches == 0 && maturityBreaches == 0 &&
+		energyBreaches == 0 && snmBreaches == 0 && dampenBreaches == 0
 
 	return MeasurementStateAudit{
-		TotalMeasurementsAudited:   totalAudited,
-		UnlockedBreaches:           unlockedBreaches,
-		EpochBreaches:              epochBreaches,
-		LabelBreaches:              labelBreaches,
-		SourceBreaches:             sourceBreaches,
-		TimingBreaches:             timingBreaches,
-		CoherenceBreaches:          coherenceBreaches,
-		CoherenceRecomputeBreaches: coherenceRecomputeBreaches,
-		MaturityBreaches:           maturityBreaches,
-		ConfidenceBreaches:         confidenceBreaches,
-		EnergyBreaches:             energyBreaches,
-		IdentityBreaches:           identityBreaches,
-		DampenBreaches:             dampenBreaches,
-		MeanCoherence:              meanC,
-		MedianCoherence:            medianC,
-		P95Coherence:               p95C,
-		MeanMaturity:               meanM,
-		MedianMaturity:             medianM,
-		P95Maturity:                p95M,
-		MeanConfidence:             meanConf,
-		MedianConfidence:           medianConf,
-		P95Confidence:              p95Conf,
-		ColdStartFraction:          coldFraction,
-		SettledFraction:            settledFraction,
-		SummaryText:                summary,
-		Passed:                     passed,
+		TotalMeasurementsAudited: totalAudited,
+		UnlockedBreaches:         unlockedBreaches,
+		EpochBreaches:            epochBreaches,
+		LabelBreaches:            labelBreaches,
+		SourceBreaches:           sourceBreaches,
+		TimingBreaches:           timingBreaches,
+		MaturityBreaches:         maturityBreaches,
+		EnergyBreaches:           energyBreaches,
+		SNMBreaches:              snmBreaches,
+		DampenBreaches:           dampenBreaches,
+		MeanMaturity:             meanM,
+		MedianMaturity:           medianM,
+		P95Maturity:              p95M,
+		ColdStartFraction:        coldFraction,
+		SettledFraction:          settledFraction,
+		SummaryText:              summary,
+		Passed:                   passed,
 	}
 }
 
@@ -574,8 +511,8 @@ func distributionSummary(values []float64) (float64, float64, float64) {
 	sort.Float64s(sorted)
 
 	sum := 0.0
-	for _, v := range sorted {
-		sum += v
+	for _, val := range sorted {
+		sum += val
 	}
 
 	mean := sum / float64(len(sorted))

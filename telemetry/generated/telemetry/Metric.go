@@ -7,14 +7,13 @@ import (
 )
 
 type MetricT struct {
-	Name          string  `json:"name"`
-	Raw           float64 `json:"raw"`
-	Normalized    float64 `json:"normalized"`
-	HasNormalized bool    `json:"hasNormalized"`
-	Unit          string  `json:"unit"`
-	X             int64   `json:"x"`
-	Y             int64   `json:"y"`
-	Region        byte    `json:"region"`
+	Name string `json:"name"`
+	Raw float64 `json:"raw"`
+	Snm float64 `json:"snm"`
+	Unit string `json:"unit"`
+	X int64 `json:"x"`
+	Y int64 `json:"y"`
+	Region byte `json:"region"`
 }
 
 func (t *MetricT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -29,8 +28,7 @@ func (t *MetricT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	MetricStart(builder)
 	MetricAddName(builder, nameOffset)
 	MetricAddRaw(builder, t.Raw)
-	MetricAddNormalized(builder, t.Normalized)
-	MetricAddHasNormalized(builder, t.HasNormalized)
+	MetricAddSnm(builder, t.Snm)
 	MetricAddUnit(builder, unitOffset)
 	MetricAddX(builder, t.X)
 	MetricAddY(builder, t.Y)
@@ -41,8 +39,7 @@ func (t *MetricT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 func (rcv *Metric) UnPackTo(t *MetricT) {
 	t.Name = string(rcv.Name())
 	t.Raw = rcv.Raw()
-	t.Normalized = rcv.Normalized()
-	t.HasNormalized = rcv.HasNormalized()
+	t.Snm = rcv.Snm()
 	t.Unit = string(rcv.Unit())
 	t.X = rcv.X()
 	t.Y = rcv.Y()
@@ -113,7 +110,7 @@ func (rcv *Metric) MutateRaw(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
 
-func (rcv *Metric) Normalized() float64 {
+func (rcv *Metric) Snm() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -121,24 +118,12 @@ func (rcv *Metric) Normalized() float64 {
 	return 0.0
 }
 
-func (rcv *Metric) MutateNormalized(n float64) bool {
+func (rcv *Metric) MutateSnm(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
 
-func (rcv *Metric) HasNormalized() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
-	if o != 0 {
-		return rcv._tab.GetBool(o + rcv._tab.Pos)
-	}
-	return false
-}
-
-func (rcv *Metric) MutateHasNormalized(n bool) bool {
-	return rcv._tab.MutateBoolSlot(10, n)
-}
-
 func (rcv *Metric) Unit() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -146,7 +131,7 @@ func (rcv *Metric) Unit() []byte {
 }
 
 func (rcv *Metric) X() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -154,11 +139,11 @@ func (rcv *Metric) X() int64 {
 }
 
 func (rcv *Metric) MutateX(n int64) bool {
-	return rcv._tab.MutateInt64Slot(14, n)
+	return rcv._tab.MutateInt64Slot(12, n)
 }
 
 func (rcv *Metric) Y() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -166,11 +151,11 @@ func (rcv *Metric) Y() int64 {
 }
 
 func (rcv *Metric) MutateY(n int64) bool {
-	return rcv._tab.MutateInt64Slot(16, n)
+	return rcv._tab.MutateInt64Slot(14, n)
 }
 
 func (rcv *Metric) Region() byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.GetByte(o + rcv._tab.Pos)
 	}
@@ -178,11 +163,11 @@ func (rcv *Metric) Region() byte {
 }
 
 func (rcv *Metric) MutateRegion(n byte) bool {
-	return rcv._tab.MutateByteSlot(18, n)
+	return rcv._tab.MutateByteSlot(16, n)
 }
 
 func MetricStart(builder *flatbuffers.Builder) {
-	builder.StartObject(8)
+	builder.StartObject(7)
 }
 func MetricAddName(builder *flatbuffers.Builder, name flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(name), 0)
@@ -190,23 +175,20 @@ func MetricAddName(builder *flatbuffers.Builder, name flatbuffers.UOffsetT) {
 func MetricAddRaw(builder *flatbuffers.Builder, raw float64) {
 	builder.PrependFloat64Slot(1, raw, 0.0)
 }
-func MetricAddNormalized(builder *flatbuffers.Builder, normalized float64) {
-	builder.PrependFloat64Slot(2, normalized, 0.0)
-}
-func MetricAddHasNormalized(builder *flatbuffers.Builder, hasNormalized bool) {
-	builder.PrependBoolSlot(3, hasNormalized, false)
+func MetricAddSnm(builder *flatbuffers.Builder, snm float64) {
+	builder.PrependFloat64Slot(2, snm, 0.0)
 }
 func MetricAddUnit(builder *flatbuffers.Builder, unit flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(unit), 0)
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(unit), 0)
 }
 func MetricAddX(builder *flatbuffers.Builder, x int64) {
-	builder.PrependInt64Slot(5, x, 0)
+	builder.PrependInt64Slot(4, x, 0)
 }
 func MetricAddY(builder *flatbuffers.Builder, y int64) {
-	builder.PrependInt64Slot(6, y, 0)
+	builder.PrependInt64Slot(5, y, 0)
 }
 func MetricAddRegion(builder *flatbuffers.Builder, region byte) {
-	builder.PrependByteSlot(7, region, 0)
+	builder.PrependByteSlot(6, region, 0)
 }
 func MetricEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

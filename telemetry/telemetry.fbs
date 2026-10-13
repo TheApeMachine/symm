@@ -8,8 +8,7 @@ table NamedStrings { name:string (required); values:[string]; }
 table Metric {
   name:string (required);
   raw:double;
-  normalized:double;
-  hasNormalized:bool;
+  snm:double;
   unit:string;
   x:long;
   y:long;
@@ -244,223 +243,6 @@ table Causal {
 }
 table CausalFrame { rows:[Causal] (required); }
 
-table GraphMetadata {
-  numbers:[NamedNumber];
-  strings:[NamedString];
-  bools:[NamedBool];
-  stringLists:[NamedStrings];
-}
-table GraphNode {
-  id:string (required);
-  label:string;
-  symbol:string;
-  peer:string;
-  source:string;
-  measurementId:string;
-  metric:string;
-  side:string;
-  kind:string;
-  value:double;
-  normalized:double;
-  hasNormalized:bool;
-  quality:double;
-  hasQuality:bool;
-  strength:double;
-  confidence:double;
-  maturity:double;
-  unit:string;
-  observedFrom:long;
-  horizon:long;
-  at:long;
-  metadata:GraphMetadata;
-  derived:bool;
-}
-table GraphEdge {
-  from:string (required);
-  to:string (required);
-  relation:string;
-  weight:double;
-  confidence:double;
-  quality:double;
-  hasQuality:bool;
-  evidence:[string];
-  observedFrom:long;
-  horizon:long;
-  at:long;
-  reason:string;
-  derived:bool;
-}
-table ReasoningNode {
-  id:string;
-  label:string;
-  symbol:string;
-  tier:string;
-  role:string;
-  source:string;
-  value:double;
-  confidence:double;
-  derived:bool;
-}
-table ReasoningLink {
-  from:string;
-  to:string;
-  relation:string;
-  weight:double;
-  confidence:double;
-  derived:bool;
-}
-table Reasoning {
-  symbol:string;
-  ready:bool;
-  reason:string;
-  observedRows:long;
-  maximumHorizon:long;
-  treatment:string;
-  mediator:string;
-  target:string;
-  controls:[string];
-  currentState:[NamedNumber];
-  nodes:[ReasoningNode];
-  links:[ReasoningLink];
-}
-table GraphFrame {
-  at:long;
-  forecastHorizon:long;
-  taskSkill:double;
-  taskSkillReady:bool;
-  decisionTarget:string;
-  nodes:[GraphNode];
-  edges:[GraphEdge];
-  reasoning:Reasoning;
-}
-
-// Retired with the advisor/planner/stoploss decision path. The slots stay
-// reserved and the tables stay declared because Hindsight decodes historical
-// captures that still carry them: deleting a field would shift every later
-// vtable slot and silently misread stored history. Nothing writes them.
-table MCTSBranch {
-  action:string;
-  visits:long;
-  meanReward:double;
-  blendedValue:double;
-  rewardStd:double;
-  counterfactualReward:double;
-  counterfactualMass:double;
-  counterfactualMean:double;
-  effectiveVisits:double;
-  causalExpectation:double;
-  causalExpectationDefined:bool;
-  pruned:bool;
-}
-table MCTSNode {
-  action:long;
-  actionName:string;
-  depth:long;
-  visits:long;
-  effectiveVisits:double;
-  observedReward:double;
-  counterfactualReward:double;
-  counterfactualMass:double;
-  counterfactualPrecision:double;
-  totalReward:double;
-  meanReward:double;
-  exploitation:double;
-  exploration:double;
-  causalExpectation:double;
-  selectionScore:double;
-  scmReady:bool;
-  scmReason:string;
-  selected:bool;
-  principal:bool;
-  blendedValue:double;
-  rewardStd:double;
-  causalExpectationDefined:bool;
-  pruned:bool;
-  state:[NamedNumber];
-  children:[MCTSNode];
-}
-// Retired with the advisor/planner/stoploss decision path. The slots stay
-// reserved and the tables stay declared because Hindsight decodes historical
-// captures that still carry them: deleting a field would shift every later
-// vtable slot and silently misread stored history. Nothing writes them.
-table AdvisorClass {
-  state:string;
-  probability:double;
-}
-table AdvisorMoveMass {
-  move:string;
-  mass:double;
-}
-table AdvisorOpinion {
-  advisor:string;
-  state:string;
-  probability:double;
-  credibility:double;
-  weight:double;
-  // The advisor's whole reading. A single top probability cannot say whether
-  // it was decisive or nearly split between two incompatible classes.
-  classes:[AdvisorClass];
-  maturity:double;
-  // The move mass this advisor alone placed, before normalization.
-  contribution:[AdvisorMoveMass];
-  // Classes of this advisor that no projection rule accepted, whose weight
-  // therefore never reached the consensus.
-  unmapped:[string];
-  // Classes this advisor declares but could not measure, whose evidence was
-  // incomplete. They took no part in the distribution.
-  unscored:[string];
-  // The clock window this reading is valid over, against the coordinate the
-  // council currently stands at.
-  clock:string;
-  leaseFrom:ulong;
-  leaseUntil:ulong;
-  clockNow:ulong;
-}
-// Why an advisor contributed nothing to a round. Silence had one rendering and
-// two entirely different causes: evidence that never completed, and a reading
-// that has since expired. Only the first is a fault.
-table AdvisorSilence {
-  advisor:string;
-  reason:string;
-  missing:[string];
-  declared:int;
-  leaseUntil:ulong;
-  clockNow:ulong;
-}
-// Retired with the advisor/planner/stoploss decision path. The slots stay
-// reserved and the tables stay declared because Hindsight decodes historical
-// captures that still carry them: deleting a field would shift every later
-// vtable slot and silently misread stored history. Nothing writes them.
-table DecisionTrace {
-  identificationStatus:string;
-  decisionUnavailable:bool;
-  expectedOutcome:double;
-  outcomeUncertainty:double;
-  horizon:long;
-  explorationConstant:double;
-  uncertaintyWeight:double;
-  transitionSource:string;
-  consensusDominantMove:string;
-  consensusConfidence:double;
-  consensusParticipants:long;
-  // The council's full move distribution, keyed by move name. The dominant
-  // move alone hides whether the winner led by a nose or a mile.
-  consensusProbabilities:[NamedNumber];
-  vetoes:[string];
-  synergies:[string];
-  iterations:long;
-  branches:[MCTSBranch];
-  recommendedAction:string;
-  tree:MCTSNode;
-  // How far and how wide the search actually got. Both are computed on every
-  // round; without them an operator cannot tell a deep considered search from
-  // one that fanned out twice and stopped.
-  maxDepth:long;
-  totalNodes:long;
-  advisors:[AdvisorOpinion];
-  advisorSilences:[AdvisorSilence];
-  consensusUnmappedClasses:[string];
-}
 table EntryCost {
   entryPrice:string;
   bestAsk:string;
@@ -474,45 +256,7 @@ table EntryCost {
   impact:string;
   breakEven:string;
 }
-// Retired with the advisor/planner/stoploss decision path. The slots stay
-// reserved and the tables stay declared because Hindsight decodes historical
-// captures that still carry them: deleting a field would shift every later
-// vtable slot and silently misread stored history. Nothing writes them.
-table RiskPlan {
-  present:bool;
-  entryNoiseBand:string;
-  noiseBand:string;
-  riskDistance:string;
-  trailDistance:string;
-  armBuffer:string;
-  lockBuffer:string;
-  minEdge:string;
-  maxLoss:string;
-  exitFeeRate:string;
-  entryFeeRate:string;
-}
-// Retired with the advisor/planner/stoploss decision path. The slots stay
-// reserved and the tables stay declared because Hindsight decodes historical
-// captures that still carry them: deleting a field would shift every later
-// vtable slot and silently misread stored history. Nothing writes them.
-table Stoploss {
-  status:string;
-  symbol:string;
-  floor:string;
-  mark:string;
-  peak:string;
-  profitLine:string;
-  armAt:string;
-  lockFloor:string;
-  locked:bool;
-  triggerReason:string;
-  triggerMark:string;
-  surgeArmed:bool;
-  lastMove:string;
-  surgeMove:string;
-  momentumFloor:string;
-  plan:RiskPlan;
-}
+
 table Decision {
   id:string;
   action:string;
@@ -552,31 +296,8 @@ table Decision {
   returnPct:double;
   mark:string;
   entryCost:EntryCost;
-  stoploss:Stoploss (deprecated);
-  risk:RiskPlan (deprecated);
-  trace:DecisionTrace (deprecated);
 }
 table StrategyFrame { evaluated:bool; outcome:string; decisions:[Decision]; }
-
-table PerspectiveReading {
-  metric:string (required);
-  value:double;
-  defined:bool;
-  observedAt:long;
-  from:long;
-  maturity:double;
-  snr:double;
-  snrDefined:bool;
-}
-
-table PerspectiveFrame {
-  symbol:string (required);
-  peer:string;
-  kind:ubyte;
-  at:long;
-  sequence:long;
-  readings:[PerspectiveReading];
-}
 
 
 table Holding {
@@ -597,7 +318,6 @@ table Holding {
   mark:string;
   isOpportunity:bool;
   reservationId:string;
-  stoploss:Stoploss (deprecated);
   // Exit capacity (base quantity the bids absorb within the slippage budget)
   // of the newest book version, and its ratio to the open quantity.
   capacityQty:double;
@@ -1039,11 +759,7 @@ table LearningRecognition {
 table LearningState {
  atNs:long; steps:ulong; decisions:ulong; resolved:ulong;
  status:string; agents:[LearningAgent]; markets:[LearningDevelopment]; restored:bool;
- // episodes totals the explorer wallet renewals across the swarm. forced counts
- // decisions released instead of trained because only one action was feasible.
- episodes:ulong (deprecated); forced:ulong (deprecated); rehearsal:LearningRehearsal;
- // What the precursor learners recognised. The wallet-shaped fields above
- // describe a model that no longer exists; this one describes the one that does.
+ rehearsal:LearningRehearsal;
  recognition:LearningRecognition;
 }
 
@@ -1055,7 +771,6 @@ union Frame {
   ResonanceFrame,
   CognitionFrame,
   CausalFrame,
-  GraphFrame,
   StrategyFrame,
   PositionsFrame,
   RegulatorFrame,

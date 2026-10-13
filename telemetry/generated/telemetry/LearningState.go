@@ -7,16 +7,16 @@ import (
 )
 
 type LearningStateT struct {
-	AtNs        int64                   `json:"atNs"`
-	Steps       uint64                  `json:"steps"`
-	Decisions   uint64                  `json:"decisions"`
-	Resolved    uint64                  `json:"resolved"`
-	Status      string                  `json:"status"`
-	Agents      []*LearningAgentT       `json:"agents"`
-	Markets     []*LearningDevelopmentT `json:"markets"`
-	Restored    bool                    `json:"restored"`
-	Rehearsal   *LearningRehearsalT     `json:"rehearsal"`
-	Recognition *LearningRecognitionT   `json:"recognition"`
+	AtNs int64 `json:"atNs"`
+	Steps uint64 `json:"steps"`
+	Decisions uint64 `json:"decisions"`
+	Resolved uint64 `json:"resolved"`
+	Status string `json:"status"`
+	Agents []*LearningAgentT `json:"agents"`
+	Markets []*LearningDevelopmentT `json:"markets"`
+	Restored bool `json:"restored"`
+	Rehearsal *LearningRehearsalT `json:"rehearsal"`
+	Recognition *LearningRecognitionT `json:"recognition"`
 }
 
 func (t *LearningStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -247,7 +247,7 @@ func (rcv *LearningState) MutateRestored(n bool) bool {
 }
 
 func (rcv *LearningState) Rehearsal(obj *LearningRehearsal) *LearningRehearsal {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -260,7 +260,7 @@ func (rcv *LearningState) Rehearsal(obj *LearningRehearsal) *LearningRehearsal {
 }
 
 func (rcv *LearningState) Recognition(obj *LearningRecognition) *LearningRecognition {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -273,7 +273,7 @@ func (rcv *LearningState) Recognition(obj *LearningRecognition) *LearningRecogni
 }
 
 func LearningStateStart(builder *flatbuffers.Builder) {
-	builder.StartObject(12)
+	builder.StartObject(10)
 }
 func LearningStateAddAtNs(builder *flatbuffers.Builder, atNs int64) {
 	builder.PrependInt64Slot(0, atNs, 0)
@@ -306,10 +306,10 @@ func LearningStateAddRestored(builder *flatbuffers.Builder, restored bool) {
 	builder.PrependBoolSlot(7, restored, false)
 }
 func LearningStateAddRehearsal(builder *flatbuffers.Builder, rehearsal flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(rehearsal), 0)
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(rehearsal), 0)
 }
 func LearningStateAddRecognition(builder *flatbuffers.Builder, recognition flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(recognition), 0)
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(recognition), 0)
 }
 func LearningStateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

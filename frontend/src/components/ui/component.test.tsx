@@ -17,7 +17,7 @@ describe("Component telemetry wrapper", () => {
 		initialMeasurement.snr = 2.4567;
 		initialMeasurement.maturity = 0.85;
 		initialMeasurement.metrics = [
-			new MetricT("volatility", 0.0425, 0, false, null, 0n, 0n, 0),
+			new MetricT("volatility", 0.0425, 0.0),
 		];
 		initialMeasurement.metadata = [new NamedNumberT("custom_meta", 99.5)];
 		ring.add(initialMeasurement);

@@ -7,9 +7,9 @@ import (
 )
 
 type EquityFrameT struct {
-	Cash       string `json:"cash"`
+	Cash string `json:"cash"`
 	Unrealized string `json:"unrealized"`
-	Equity     string `json:"equity"`
+	Equity string `json:"equity"`
 }
 
 func (t *EquityFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

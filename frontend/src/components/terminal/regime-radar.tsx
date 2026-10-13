@@ -38,12 +38,12 @@ export const RadarPanel = () => {
 				if (!ring || typeof ring.getLast !== "function") return;
 
 				const row = ring.getLast();
-				let normalized = 0;
+				let snm = 0;
 
 				if (row) {
 					for (const m of row.metrics ?? []) {
 						if (m?.name === axis.metric) {
-							normalized = m.normalized;
+							snm = m.snm;
 							break;
 						}
 					}
@@ -55,7 +55,7 @@ export const RadarPanel = () => {
 				if (arm instanceof SVGElement) {
 					arm.style.setProperty(
 						"--axis",
-						String(Math.min(1, Math.max(0, normalized))),
+						String(Math.min(1, Math.max(0, Math.abs(snm)))),
 					);
 				}
 			};
@@ -78,7 +78,7 @@ export const RadarPanel = () => {
 					Regime radar
 				</Flex>
 				<Flex className="mb-2 font-mono text-[9.5px] text-(--f4)">
-					{focusSymbol} · normalized axes
+					{focusSymbol} · SNM axes
 				</Flex>
 				<svg viewBox="0 0 220 210" className="block w-full">
 					<title>Regime radar</title>

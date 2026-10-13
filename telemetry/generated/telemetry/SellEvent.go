@@ -7,13 +7,13 @@ import (
 )
 
 type SellEventT struct {
-	At            int64   `json:"at"`
-	Trigger       string  `json:"trigger"`
-	Qty           string  `json:"qty"`
-	CapacityQty   float64 `json:"capacityQty"`
+	At int64 `json:"at"`
+	Trigger string `json:"trigger"`
+	Qty string `json:"qty"`
+	CapacityQty float64 `json:"capacityQty"`
 	CapacityRatio float64 `json:"capacityRatio"`
-	Budget        float64 `json:"budget"`
-	Note          string  `json:"note"`
+	Budget float64 `json:"budget"`
+	Note string `json:"note"`
 }
 
 func (t *SellEventT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

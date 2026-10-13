@@ -36,7 +36,7 @@ export const XrayFactsPanel = () => {
 				for (const m of targetRow.metrics) {
 					const name = typeof m.name === "string" ? m.name : "";
 					if (name) {
-						metricMap.set(name, m.hasNormalized ? m.normalized : m.raw);
+						metricMap.set(name, m.snm);
 					}
 				}
 

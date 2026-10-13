@@ -1,7 +1,6 @@
 package types
 
 import (
-	"strconv"
 	"strings"
 	"sync"
 
@@ -64,11 +63,7 @@ func measurementToWire(
 
 		wireMetric.Name = name
 		wireMetric.Raw = entry.Metric.Raw()
-
-		if entry.Metric.SNM() != 0 {
-			wireMetric.Normalized = entry.Metric.SNM()
-			wireMetric.HasNormalized = true
-		}
+		wireMetric.Snm = entry.Metric.SNM()
 
 		metrics = data.AppendA(metrics, wireMetric, alloc)
 	}
@@ -91,27 +86,6 @@ func measurementToWire(
 		namedString := data.New[wire.NamedStringT](alloc)
 		namedString.Name = "symm:exact:" + entry.Key
 		namedString.Value = entry.Metric.Exact().String()
-		provenance = data.AppendA(provenance, namedString, alloc)
-	}
-
-	for _, entry := range measurement.Metadata() {
-		if entry == nil || entry.Key == "" {
-			continue
-		}
-
-		floatVal, parseErr := strconv.ParseFloat(entry.Value, 64)
-
-		if parseErr == nil {
-			namedNumber := data.New[wire.NamedNumberT](alloc)
-			namedNumber.Name = entry.Key
-			namedNumber.Value = floatVal
-			metadata = data.AppendA(metadata, namedNumber, alloc)
-			continue
-		}
-
-		namedString := data.New[wire.NamedStringT](alloc)
-		namedString.Name = entry.Key
-		namedString.Value = entry.Value
 		provenance = data.AppendA(provenance, namedString, alloc)
 	}
 
@@ -140,11 +114,8 @@ func measurementToWire(
 	row.At = measurement.At.UnixNano()
 	row.ObservedFrom = measurement.From.UnixNano()
 	row.Maturity = measurement.Maturity()
-	row.Snr = measurement.Coherence()
-	row.SnrDefined = true
 	row.Metrics = metrics
 	row.Metadata = metadata
-	row.Provenance = provenance
 	row.Peers = peers
 
 	return row

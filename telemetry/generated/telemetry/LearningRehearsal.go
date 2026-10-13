@@ -7,31 +7,31 @@ import (
 )
 
 type LearningRehearsalT struct {
-	Status       string            `json:"status"`
-	Workers      int32             `json:"workers"`
-	Episodes     uint64            `json:"episodes"`
-	Profitable   uint64            `json:"profitable"`
-	Subfriction  uint64            `json:"subfriction"`
-	Declining    uint64            `json:"declining"`
-	Ungraded     uint64            `json:"ungraded"`
-	Unsupported  uint64            `json:"unsupported"`
-	PerWorker    uint64            `json:"perWorker"`
-	Decisions    uint64            `json:"decisions"`
-	Trained      uint64            `json:"trained"`
-	Passes       uint64            `json:"passes"`
-	LastSymbol   string            `json:"lastSymbol"`
-	LastAction   string            `json:"lastAction"`
-	LastReturn   float64           `json:"lastReturn"`
-	LastFailure  string            `json:"lastFailure"`
-	Illiquid     uint64            `json:"illiquid"`
-	Quiet        uint64            `json:"quiet"`
-	Warming      uint64            `json:"warming"`
-	Runs         int32             `json:"runs"`
-	Observations uint64            `json:"observations"`
-	Budget       uint64            `json:"budget"`
-	Skipped      int32             `json:"skipped"`
-	LastSkip     string            `json:"lastSkip"`
-	Tracks       []*LearningTrackT `json:"tracks"`
+	Status string `json:"status"`
+	Workers int32 `json:"workers"`
+	Episodes uint64 `json:"episodes"`
+	Profitable uint64 `json:"profitable"`
+	Subfriction uint64 `json:"subfriction"`
+	Declining uint64 `json:"declining"`
+	Ungraded uint64 `json:"ungraded"`
+	Unsupported uint64 `json:"unsupported"`
+	PerWorker uint64 `json:"perWorker"`
+	Decisions uint64 `json:"decisions"`
+	Trained uint64 `json:"trained"`
+	Passes uint64 `json:"passes"`
+	LastSymbol string `json:"lastSymbol"`
+	LastAction string `json:"lastAction"`
+	LastReturn float64 `json:"lastReturn"`
+	LastFailure string `json:"lastFailure"`
+	Illiquid uint64 `json:"illiquid"`
+	Quiet uint64 `json:"quiet"`
+	Warming uint64 `json:"warming"`
+	Runs int32 `json:"runs"`
+	Observations uint64 `json:"observations"`
+	Budget uint64 `json:"budget"`
+	Skipped int32 `json:"skipped"`
+	LastSkip string `json:"lastSkip"`
+	Tracks []*LearningTrackT `json:"tracks"`
 }
 
 func (t *LearningRehearsalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

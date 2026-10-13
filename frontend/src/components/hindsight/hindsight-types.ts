@@ -12,8 +12,7 @@ export type { Measurement };
 export type Metric<Value = number> = {
 	label?: string;
 	raw: Value;
-	normalized?: Value | null;
-	standardized?: Value | null;
+	snm?: Value | null;
 	exact?: string | null;
 	center?: number;
 	scale?: number;

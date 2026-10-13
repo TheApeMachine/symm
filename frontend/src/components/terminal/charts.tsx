@@ -7,17 +7,8 @@ import {
 } from "#/components/terminal/canvas";
 import { requirePositiveLength } from "#/lib/domain";
 
-export {
-	paintTerminalManifoldChart,
-	TerminalManifoldChart,
-} from "#/components/charts/manifold";
 export { TerminalPhaseDialChart } from "#/components/charts/phase-dial";
 export { TerminalPredictionChart } from "#/components/charts/prediction";
-export {
-	paintTerminalResonanceChart,
-	TerminalResonanceChart,
-} from "#/components/charts/resonance";
-export { TerminalSignalHeatmap } from "#/components/charts/signal-heatmap";
 export {
 	fluidGridDimensions,
 	phaseColumnsFromScan,

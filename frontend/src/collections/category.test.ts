@@ -29,8 +29,7 @@ describe("categoryStore", () => {
 		const m = new MetricT();
 		m.name = "loaded_imbalance";
 		m.raw = 0.85;
-		m.normalized = 0.85;
-		m.hasNormalized = true;
+		m.snm = 0.85;
 		measurement.metrics = [m];
 
 		categoryStore.state[symbol].add(measurement);

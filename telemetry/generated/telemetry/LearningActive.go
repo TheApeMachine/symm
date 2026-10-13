@@ -7,11 +7,11 @@ import (
 )
 
 type LearningActiveT struct {
-	Id        uint64  `json:"id"`
-	Condition uint64  `json:"condition"`
-	Strength  float64 `json:"strength"`
+	Id uint64 `json:"id"`
+	Condition uint64 `json:"condition"`
+	Strength float64 `json:"strength"`
 	Authority float64 `json:"authority"`
-	Members   int32   `json:"members"`
+	Members int32 `json:"members"`
 }
 
 func (t *LearningActiveT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

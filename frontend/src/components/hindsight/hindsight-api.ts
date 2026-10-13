@@ -41,17 +41,21 @@ export const fetchHindsightRuns = async (): Promise<HindsightRun[]> => {
 		throw new Error("Hindsight returned invalid run metadata");
 	}
 
-	const runs: HindsightRun[] = rawRuns.map((r: any) => {
-		if (r && typeof r.id === "string" && r.id !== "") {
-			return r as HindsightRun;
+	const runs: HindsightRun[] = rawRuns.map((r: unknown) => {
+		if (r && typeof r === "object") {
+			const entry = r as Record<string, unknown>;
+			if (typeof entry.id === "string" && entry.id !== "") {
+				return entry as unknown as HindsightRun;
+			}
+			if (typeof entry.epoch === "number" || typeof entry.epoch === "string") {
+				return {
+					...entry,
+					id: String(entry.epoch),
+				} as unknown as HindsightRun;
+			}
+			return entry as unknown as HindsightRun;
 		}
-		if (r && (typeof r.epoch === "number" || typeof r.epoch === "string")) {
-			return {
-				...r,
-				id: String(r.epoch),
-			} as HindsightRun;
-		}
-		return r as HindsightRun;
+		return r as unknown as HindsightRun;
 	});
 
 	for (const run of runs) {
@@ -873,7 +877,7 @@ export const flatbufferToMeasurement = (m: MeasurementT): Measurement => {
 		{
 			label?: string;
 			raw: number;
-			normalized?: number | null;
+			snm?: number | null;
 			unit?: string;
 		}
 	> = {};
@@ -886,7 +890,7 @@ export const flatbufferToMeasurement = (m: MeasurementT): Measurement => {
 				metricsRecord[name] = {
 					label: name,
 					raw: metric.raw,
-					normalized: metric.hasNormalized ? metric.normalized : null,
+					snm: metric.snm,
 					unit: toStr(metric.unit) || undefined,
 				};
 			}

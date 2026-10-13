@@ -63,14 +63,14 @@ export const SignalDetail = () => {
 					if (!m) continue;
 					const name = m.name ?? "";
 					const raw = m.raw;
-					const normalized = m.normalized;
+					const snm = m.snm;
 
 					set(`m:${name}`, raw.toFixed(4));
 					const bar = root.current?.querySelector<HTMLElement>(
 						`[data-mbar="${name}"]`,
 					);
 					if (bar instanceof HTMLElement) {
-						bar.style.width = `calc(clamp(0, ${Math.min(1, Math.max(0, normalized))}, 1) * 100%)`;
+						bar.style.width = `calc(clamp(0, ${Math.abs(snm)}, 1) * 100%)`;
 					}
 				}
 			}

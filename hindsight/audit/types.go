@@ -39,35 +39,26 @@ type MetricNormAudit struct {
 }
 
 /*
-MeasurementStateAudit audits Coherence, Maturity, Confidence, and WORM invariants across all measurements.
+MeasurementStateAudit audits Maturity and WORM invariants across all measurements.
 */
 type MeasurementStateAudit struct {
-	TotalMeasurementsAudited   int     `json:"total_measurements_audited"`
-	UnlockedBreaches           int     `json:"unlocked_breaches"`
-	EpochBreaches              int     `json:"epoch_breaches"`
-	LabelBreaches              int     `json:"label_breaches"`
-	SourceBreaches             int     `json:"source_breaches"`
-	TimingBreaches             int     `json:"timing_breaches"`
-	CoherenceBreaches          int     `json:"coherence_breaches"`
-	CoherenceRecomputeBreaches int     `json:"coherence_recompute_breaches"`
-	MaturityBreaches           int     `json:"maturity_breaches"`
-	ConfidenceBreaches         int     `json:"confidence_breaches"`
-	EnergyBreaches             int     `json:"energy_breaches"`
-	IdentityBreaches           int     `json:"identity_breaches"`
-	DampenBreaches             int     `json:"dampen_breaches"`
-	MeanCoherence              float64 `json:"mean_coherence"`
-	MedianCoherence            float64 `json:"median_coherence"`
-	P95Coherence               float64 `json:"p95_coherence"`
-	MeanMaturity               float64 `json:"mean_maturity"`
-	MedianMaturity             float64 `json:"median_maturity"`
-	P95Maturity                float64 `json:"p95_maturity"`
-	MeanConfidence             float64 `json:"mean_confidence"`
-	MedianConfidence           float64 `json:"median_confidence"`
-	P95Confidence              float64 `json:"p95_confidence"`
-	ColdStartFraction          float64 `json:"cold_start_fraction"`
-	SettledFraction            float64 `json:"settled_fraction"`
-	SummaryText                string  `json:"summary_text"`
-	Passed                     bool    `json:"passed"`
+	TotalMeasurementsAudited int     `json:"total_measurements_audited"`
+	UnlockedBreaches         int     `json:"unlocked_breaches"`
+	EpochBreaches            int     `json:"epoch_breaches"`
+	LabelBreaches            int     `json:"label_breaches"`
+	SourceBreaches           int     `json:"source_breaches"`
+	TimingBreaches           int     `json:"timing_breaches"`
+	MaturityBreaches         int     `json:"maturity_breaches"`
+	EnergyBreaches           int     `json:"energy_breaches"`
+	SNMBreaches              int     `json:"snm_breaches"`
+	DampenBreaches           int     `json:"dampen_breaches"`
+	MeanMaturity             float64 `json:"mean_maturity"`
+	MedianMaturity           float64 `json:"median_maturity"`
+	P95Maturity              float64 `json:"p95_maturity"`
+	ColdStartFraction        float64 `json:"cold_start_fraction"`
+	SettledFraction          float64 `json:"settled_fraction"`
+	SummaryText              string  `json:"summary_text"`
+	Passed                   bool    `json:"passed"`
 }
 
 /*

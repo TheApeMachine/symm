@@ -7,10 +7,10 @@ import (
 )
 
 type LearningLearnerT struct {
-	Id       int32               `json:"id"`
-	Links    int32               `json:"links"`
-	Moments  []*LearningMomentT  `json:"moments"`
-	Answers  []*LearningAnswerT  `json:"answers"`
+	Id int32 `json:"id"`
+	Links int32 `json:"links"`
+	Moments []*LearningMomentT `json:"moments"`
+	Answers []*LearningAnswerT `json:"answers"`
 	Branches []*CognitionBranchT `json:"branches"`
 }
 

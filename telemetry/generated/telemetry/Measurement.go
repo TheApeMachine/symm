@@ -7,24 +7,24 @@ import (
 )
 
 type MeasurementT struct {
-	Id               string                `json:"id"`
-	Source           string                `json:"source"`
-	Symbol           string                `json:"symbol"`
-	Tick             int64                 `json:"tick"`
-	Peer             string                `json:"peer"`
-	At               int64                 `json:"at"`
-	ObservedFrom     int64                 `json:"observedFrom"`
-	Horizon          int64                 `json:"horizon"`
-	PeerAt           int64                 `json:"peerAt"`
-	PeerObservedFrom int64                 `json:"peerObservedFrom"`
-	Maturity         float64               `json:"maturity"`
-	Snr              float64               `json:"snr"`
-	SnrDefined       bool                  `json:"snrDefined"`
-	Metrics          []*MetricT            `json:"metrics"`
-	Metadata         []*NamedNumberT       `json:"metadata"`
-	Provenance       []*NamedStringT       `json:"provenance"`
-	Peers            []*MeasurementT       `json:"peers"`
-	Grid             *LearningDevelopmentT `json:"grid"`
+	Id string `json:"id"`
+	Source string `json:"source"`
+	Symbol string `json:"symbol"`
+	Tick int64 `json:"tick"`
+	Peer string `json:"peer"`
+	At int64 `json:"at"`
+	ObservedFrom int64 `json:"observedFrom"`
+	Horizon int64 `json:"horizon"`
+	PeerAt int64 `json:"peerAt"`
+	PeerObservedFrom int64 `json:"peerObservedFrom"`
+	Maturity float64 `json:"maturity"`
+	Snr float64 `json:"snr"`
+	SnrDefined bool `json:"snrDefined"`
+	Metrics []*MetricT `json:"metrics"`
+	Metadata []*NamedNumberT `json:"metadata"`
+	Provenance []*NamedStringT `json:"provenance"`
+	Peers []*MeasurementT `json:"peers"`
+	Grid *LearningDevelopmentT `json:"grid"`
 }
 
 func (t *MeasurementT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

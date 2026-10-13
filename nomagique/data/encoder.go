@@ -45,13 +45,12 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 	timestampBuilder := recordBuilder.Field(6).(*array.Int64Builder)
 	atBuilder := recordBuilder.Field(7).(*array.TimestampBuilder)
 	fromBuilder := recordBuilder.Field(8).(*array.TimestampBuilder)
-	coherenceBuilder := recordBuilder.Field(9).(*array.Float64Builder)
-	maturityBuilder := recordBuilder.Field(10).(*array.Float64Builder)
-	samplesBuilder := recordBuilder.Field(11).(*array.Int64Builder)
-	energyBuilder := recordBuilder.Field(12).(*array.Float64Builder)
-	predictionBuilder := recordBuilder.Field(13).(*array.Float64Builder)
-	metricsBuilder := recordBuilder.Field(14).(*array.MapBuilder)
-	metadataBuilder := recordBuilder.Field(15).(*array.MapBuilder)
+	maturityBuilder := recordBuilder.Field(9).(*array.Float64Builder)
+	samplesBuilder := recordBuilder.Field(10).(*array.Int64Builder)
+	energyBuilder := recordBuilder.Field(11).(*array.Float64Builder)
+	predictionBuilder := recordBuilder.Field(12).(*array.Float64Builder)
+	metricsBuilder := recordBuilder.Field(13).(*array.MapBuilder)
+	metadataBuilder := recordBuilder.Field(14).(*array.MapBuilder)
 
 	idBuilder.Append(int64(measurement.ID))
 	epochBuilder.Append(recEpoch)
@@ -62,7 +61,6 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 	timestampBuilder.Append(measurement.Timestamp)
 	atBuilder.Append(arrow.Timestamp(measurement.At.UTC().UnixMicro()))
 	fromBuilder.Append(arrow.Timestamp(measurement.From.UTC().UnixMicro()))
-	coherenceBuilder.Append(measurement.coherence)
 	maturityBuilder.Append(measurement.maturity)
 	samplesBuilder.Append(measurement.samples)
 	energyBuilder.Append(measurement.energy)
@@ -71,12 +69,10 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 	metricsKey := metricsBuilder.KeyBuilder().(*array.StringBuilder)
 	itemBuilder := metricsBuilder.ItemBuilder().(*array.StructBuilder)
 	rawBuilder := itemBuilder.FieldBuilder(0).(*array.Float64Builder)
-	normBuilder := itemBuilder.FieldBuilder(1).(*array.Float64Builder)
-	stdBuilder := itemBuilder.FieldBuilder(2).(*array.Float64Builder)
-	exactBuilder := itemBuilder.FieldBuilder(3).(*array.StringBuilder)
-	supportBuilder := itemBuilder.FieldBuilder(4).(*array.Float64Builder)
-	unitBuilder := itemBuilder.FieldBuilder(5).(*array.StringBuilder)
-	timescaleBuilder := itemBuilder.FieldBuilder(6).(*array.StringBuilder)
+	snmBuilder := itemBuilder.FieldBuilder(1).(*array.Float64Builder)
+	exactBuilder := itemBuilder.FieldBuilder(2).(*array.StringBuilder)
+	unitBuilder := itemBuilder.FieldBuilder(3).(*array.StringBuilder)
+	timescaleBuilder := itemBuilder.FieldBuilder(4).(*array.StringBuilder)
 
 	metricsBuilder.Append(true)
 
@@ -88,8 +84,7 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 		metricsKey.Append(entry.Key)
 		itemBuilder.Append(true)
 		rawBuilder.Append(entry.Metric.raw)
-		normBuilder.Append(entry.Metric.snm)
-		stdBuilder.Append(entry.Metric.snm)
+		snmBuilder.Append(entry.Metric.snm)
 
 		if entry.Metric.exact != nil {
 			exactBuilder.Append(entry.Metric.exact.String())
@@ -99,7 +94,6 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 			exactBuilder.AppendNull()
 		}
 
-		supportBuilder.Append(1.0)
 		unitBuilder.Append(string(entry.Metric.Unit()))
 		timescaleBuilder.Append(string(entry.Metric.Timescale()))
 	}

@@ -115,7 +115,7 @@ func (client *Client[T]) Put(key string, data []byte) error {
 	})
 
 	if err != nil {
-		errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.IO, "[store.client] error", err,
 		))
 	}

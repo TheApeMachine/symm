@@ -62,7 +62,6 @@ type Measurement struct {
 	Timestamp  int64          // System nanosecond timestamp (UTC).
 	At         time.Time      // Venue timestamp (UTC).
 	From       time.Time      // Window from as venue timestamp (UTC).
-	coherence  float64        // Cross-metric coherence: Jain's fairness index of |z_i| in [0, 1].
 	maturity   float64        // Maturity of the Measurement.
 	samples    int64          // Observations accumulated in the current regime.
 	energy     float64        // Total metric excitation energy (sum of z^2).
@@ -161,6 +160,10 @@ func (measurement *Measurement) Next(values map[string]float64) *Measurement {
 
 	next.samples = measurement.samples + 1
 	next.prediction = measurement.prediction
+
+	if measurement.samples > 0 {
+		next.prediction = measurement.prediction + (1.0/float64(measurement.samples))*(measurement.energy-measurement.prediction)
+	}
 
 	next.copyMetrics(measurement.Source, values, measurement)
 
@@ -432,13 +435,6 @@ func (measurement *Measurement) finalize() *Measurement {
 		measurement.energy += snm * snm
 	}
 
-	metricCount := float64(len(measurement.metrics))
-	measurement.coherence = 0
-
-	if metricCount > 0 && measurement.energy > 0 {
-		measurement.coherence = (sumAbs * sumAbs) / (metricCount * measurement.energy)
-	}
-
 	for _, peer := range measurement.peers {
 		if peer != nil {
 			measurement.energy += peer.energy
@@ -467,28 +463,6 @@ func (measurement *Measurement) Surprise() float64 {
 	}
 
 	return math.Abs(measurement.energy - measurement.prediction)
-}
-
-/*
-Confidence returns temporal maturity times cross-metric coherence in [0, 1].
-*/
-func (measurement *Measurement) Confidence() float64 {
-	if !measurement.locked() {
-		return 0
-	}
-
-	return measurement.maturity * measurement.coherence
-}
-
-/*
-Coherence returns cross-metric coherence in [0, 1].
-*/
-func (measurement *Measurement) Coherence() float64 {
-	if !measurement.locked() {
-		return 0
-	}
-
-	return measurement.coherence
 }
 
 /*
@@ -536,6 +510,13 @@ func (measurement *Measurement) Samples() int64 {
 }
 
 /*
+MetricCount returns the number of metric entries owned by this Measurement.
+*/
+func (measurement *Measurement) MetricCount() int {
+	return len(measurement.metrics)
+}
+
+/*
 setMaturity calculates sensor readiness based strictly on
 empirical sample history and metric completeness (warm-up gate).
 */
@@ -562,9 +543,6 @@ func (measurement *Measurement) setMaturity() *Measurement {
 			measurement.maturity *= (actual / expected)
 		}
 	}
-
-	// Update the online prediction of energy for the NEXT tick
-	measurement.prediction += (1.0 / samplesCount) * (measurement.energy - measurement.prediction)
 
 	return measurement
 }

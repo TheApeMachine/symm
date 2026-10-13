@@ -7,14 +7,14 @@ import (
 )
 
 type LearningMarkT struct {
-	Id      uint64  `json:"id"`
-	Index   int32   `json:"index"`
-	Kind    string  `json:"kind"`
-	Power   int32   `json:"power"`
-	Reduce  bool    `json:"reduce"`
-	Value   float64 `json:"value"`
-	Graded  bool    `json:"graded"`
-	Verdict string  `json:"verdict"`
+	Id uint64 `json:"id"`
+	Index int32 `json:"index"`
+	Kind string `json:"kind"`
+	Power int32 `json:"power"`
+	Reduce bool `json:"reduce"`
+	Value float64 `json:"value"`
+	Graded bool `json:"graded"`
+	Verdict string `json:"verdict"`
 }
 
 func (t *LearningMarkT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

@@ -50,7 +50,7 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 			defer batch.Release()
 
 			So(batch.NumRows(), ShouldEqual, 1)
-			So(batch.NumCols(), ShouldEqual, 16)
+			So(batch.NumCols(), ShouldEqual, 15)
 
 			Convey("Then ReadMeasurements reconstructs the measurement faithfully 1:1", func() {
 				read, err := ReadMeasurements(batch)
@@ -68,7 +68,6 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 				So(reconstructed.From.Equal(at), ShouldBeTrue)
 				So(reconstructed.Meta("side"), ShouldEqual, "bid")
 				So(reconstructed.Meta("type"), ShouldEqual, "limit")
-				So(reconstructed.Coherence(), ShouldEqual, measurement.Coherence())
 				So(reconstructed.Maturity(), ShouldEqual, measurement.Maturity())
 
 				priceMetric := data.Pull(reconstructed.Read("price"))

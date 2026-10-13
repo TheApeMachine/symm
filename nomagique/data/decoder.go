@@ -20,14 +20,12 @@ type batchCols struct {
 	fromCol       *array.Timestamp
 	timestampCol  *array.Int64
 	idCol         *array.Int64
-	coherenceCol  *array.Float64
 	maturityCol   *array.Float64
 	samplesCol    *array.Int64
 	energyCol     *array.Float64
 	predictionCol *array.Float64
 	metricsCol    *array.Map
 	metadataCol   *array.Map
-	confident     bool
 
 	metaKeyArray *array.String
 	metaValArray *array.String
@@ -36,10 +34,8 @@ type batchCols struct {
 	metricsKeyArray *array.String
 	metricsOffsets  []int32
 	rawCol          *array.Float64
-	normCol         *array.Float64
-	stdCol          *array.Float64
+	snmCol          *array.Float64
 	exactCol        *array.String
-	supportCol      *array.Float64
 	unitCol         *array.String
 	timeCol         *array.String
 	floatItems      *array.Float64
@@ -97,11 +93,6 @@ func newBatchCols(batch arrow.RecordBatch) (*batchCols, error) {
 			if cols.idCol, ok = col.(*array.Int64); !ok {
 				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column id is not *array.Int64", nil))
 			}
-		case "coherence":
-			var ok bool
-			if cols.coherenceCol, ok = col.(*array.Float64); !ok {
-				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column coherence is not *array.Float64", nil))
-			}
 		case "maturity":
 			var ok bool
 			if cols.maturityCol, ok = col.(*array.Float64); !ok {
@@ -135,16 +126,6 @@ func newBatchCols(batch arrow.RecordBatch) (*batchCols, error) {
 		}
 	}
 
-	cols.confident = cols.maturityCol != nil && cols.coherenceCol != nil
-
-	if !cols.confident && (cols.maturityCol != nil || cols.coherenceCol != nil) {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"iceberg: measurement batch carries only one of maturity/coherence",
-			nil,
-		))
-	}
-
 	if cols.metadataCol != nil {
 		var ok bool
 		if cols.metaKeyArray, ok = cols.metadataCol.Keys().(*array.String); !ok {
@@ -165,12 +146,10 @@ func newBatchCols(batch arrow.RecordBatch) (*batchCols, error) {
 
 		if itemStruct, ok := cols.metricsCol.Items().(*array.Struct); ok {
 			cols.rawCol, _ = itemStruct.Field(0).(*array.Float64)
-			cols.normCol, _ = itemStruct.Field(1).(*array.Float64)
-			cols.stdCol, _ = itemStruct.Field(2).(*array.Float64)
-			cols.exactCol, _ = itemStruct.Field(3).(*array.String)
-			cols.supportCol, _ = itemStruct.Field(4).(*array.Float64)
-			cols.unitCol, _ = itemStruct.Field(5).(*array.String)
-			cols.timeCol, _ = itemStruct.Field(6).(*array.String)
+			cols.snmCol, _ = itemStruct.Field(1).(*array.Float64)
+			cols.exactCol, _ = itemStruct.Field(2).(*array.String)
+			cols.unitCol, _ = itemStruct.Field(3).(*array.String)
+			cols.timeCol, _ = itemStruct.Field(4).(*array.String)
 		} else if floatItems, ok := cols.metricsCol.Items().(*array.Float64); ok {
 			cols.floatItems = floatItems
 		} else {
@@ -232,16 +211,7 @@ func (cols *batchCols) decodeRow(measurement *Measurement, rowIdx int) error {
 		}
 	}
 
-	if cols.confident && (cols.maturityCol.IsNull(rowIdx) || cols.coherenceCol.IsNull(rowIdx)) {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("iceberg: measurement row %d has no maturity/coherence", rowIdx),
-			nil,
-		))
-	}
-
-	if cols.confident {
-		measurement.coherence = cols.coherenceCol.Value(rowIdx)
+	if cols.maturityCol != nil && !cols.maturityCol.IsNull(rowIdx) {
 		measurement.maturity = cols.maturityCol.Value(rowIdx)
 	}
 
@@ -297,8 +267,8 @@ func (cols *batchCols) decodeRow(measurement *Measurement, rowIdx int) error {
 
 				metric := NewMetric(metricKey, rawVal, unitVal, timeVal)
 
-				if cols.normCol != nil && !cols.normCol.IsNull(itemIdx) {
-					metric.snm = cols.normCol.Value(itemIdx)
+				if cols.snmCol != nil && !cols.snmCol.IsNull(itemIdx) {
+					metric.snm = cols.snmCol.Value(itemIdx)
 				}
 
 				if cols.exactCol != nil && !cols.exactCol.IsNull(itemIdx) && cols.exactCol.Value(itemIdx) != "" {

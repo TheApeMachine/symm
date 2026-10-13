@@ -65,7 +65,7 @@ func (catalog *Catalog) Trades(
 		grouped := make(map[string][]*data.Measurement)
 
 		for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0,
-			"epoch", "seq_idx", "source", "label", "tick", "at", "from", "id", "coherence", "maturity", "metrics",
+			"epoch", "seq_idx", "source", "label", "tick", "at", "from", "id", "maturity", "metrics",
 		) {
 			if err != nil {
 				yield(nil, err)
@@ -144,7 +144,7 @@ func (catalog *Catalog) TradeCounts(ctx context.Context, epoch int64) (map[strin
 
 	counts := make(map[string]int)
 
-	for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0, "epoch", "label", "source", "at", "from", "id", "coherence", "maturity") {
+	for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0, "epoch", "label", "source", "at", "from", "id", "maturity") {
 		if err != nil {
 			return nil, err
 		}
@@ -487,7 +487,7 @@ func (catalog *Catalog) SignalLogic(
 		}
 
 		for measurement, err := range catalog.scan(ctx, Measurements, epoch, filter, 0,
-			"epoch", "seq_idx", "source", "label", "tick", "at", "from", "id", "samples", "coherence", "maturity", "metrics",
+			"epoch", "seq_idx", "source", "label", "tick", "at", "from", "id", "samples", "maturity", "metrics",
 		) {
 			if err != nil {
 				if !yield(nil, err) {

@@ -8,7 +8,7 @@ import (
 
 type TickFrameT struct {
 	Count int64 `json:"count"`
-	At    int64 `json:"at"`
+	At int64 `json:"at"`
 }
 
 func (t *TickFrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

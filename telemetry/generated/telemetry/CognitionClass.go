@@ -7,7 +7,7 @@ import (
 )
 
 type CognitionClassT struct {
-	Name        string  `json:"name"`
+	Name string `json:"name"`
 	Probability float64 `json:"probability"`
 }
 

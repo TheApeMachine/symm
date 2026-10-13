@@ -7,21 +7,21 @@ import (
 )
 
 type IntegratorHealthT struct {
-	ContactDt    float64 `json:"contactDt"`
-	RequestedDt  float64 `json:"requestedDt"`
-	TargetDt     float64 `json:"targetDt"`
-	AcceptedDt   float64 `json:"acceptedDt"`
-	LastDt       float64 `json:"lastDt"`
-	MinDt        float64 `json:"minDt"`
-	Time         float64 `json:"time"`
+	ContactDt float64 `json:"contactDt"`
+	RequestedDt float64 `json:"requestedDt"`
+	TargetDt float64 `json:"targetDt"`
+	AcceptedDt float64 `json:"acceptedDt"`
+	LastDt float64 `json:"lastDt"`
+	MinDt float64 `json:"minDt"`
+	Time float64 `json:"time"`
 	HyperbolicDt float64 `json:"hyperbolicDt"`
-	ViscousDt    float64 `json:"viscousDt"`
-	ThermalDt    float64 `json:"thermalDt"`
-	ParticleDt   float64 `json:"particleDt"`
-	PhaseDt      float64 `json:"phaseDt"`
-	CombinedDt   float64 `json:"combinedDt"`
-	Substeps     int32   `json:"substeps"`
-	Rejections   int32   `json:"rejections"`
+	ViscousDt float64 `json:"viscousDt"`
+	ThermalDt float64 `json:"thermalDt"`
+	ParticleDt float64 `json:"particleDt"`
+	PhaseDt float64 `json:"phaseDt"`
+	CombinedDt float64 `json:"combinedDt"`
+	Substeps int32 `json:"substeps"`
+	Rejections int32 `json:"rejections"`
 }
 
 func (t *IntegratorHealthT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

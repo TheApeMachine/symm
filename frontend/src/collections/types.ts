@@ -458,8 +458,7 @@ export type Measurement = {
 		{
 			label?: string;
 			raw: number;
-			normalized?: number | null;
-			standardized?: number | null;
+			snm?: number | null;
 			exact?: string | null;
 			unit?: string | number;
 			timescale?: string | number;

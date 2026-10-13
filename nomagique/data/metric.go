@@ -44,7 +44,7 @@ func decimalFloat64(d *decimal.Decimal) float64 {
 
 /*
 Metric is one projected value of a measurement: a label, the raw observation,
-its normalized and standardized forms, and the physical unit and timescale.
+its SNM form, and the physical unit and timescale.
 
 Exact retains the venue's original decimal for observations the venue printed
 exactly (prices, sizes). Ingest writes it and capture/audit reads it; the
@@ -172,6 +172,12 @@ func (metric *Metric) valid() error {
 		return errnie.Error(errnie.Err(
 			errnie.Validation, "raw is not a finite number", nil,
 		))
+	}
+
+	if math.IsNaN(metric.snm) || math.IsInf(metric.snm, 0) || metric.snm < -1.0 || metric.snm > 1.0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "snm is not between -1 and 1", nil,
+		), "metric", metric.label, "snm", metric.snm)
 	}
 
 	return nil

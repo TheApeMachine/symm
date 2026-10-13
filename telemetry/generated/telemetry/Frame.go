@@ -18,14 +18,13 @@ const (
 	FrameResonanceFrame    Frame = 5
 	FrameCognitionFrame    Frame = 6
 	FrameCausalFrame       Frame = 7
-	FrameGraphFrame        Frame = 8
-	FrameStrategyFrame     Frame = 9
-	FramePositionsFrame    Frame = 10
-	FrameRegulatorFrame    Frame = 11
-	FrameErrorFrame        Frame = 12
-	FrameFluidPhaseFrame   Frame = 13
-	FrameDiagnosticsFrame  Frame = 14
-	FrameManifoldFrame     Frame = 15
+	FrameStrategyFrame     Frame = 8
+	FramePositionsFrame    Frame = 9
+	FrameRegulatorFrame    Frame = 10
+	FrameErrorFrame        Frame = 11
+	FrameFluidPhaseFrame   Frame = 12
+	FrameDiagnosticsFrame  Frame = 13
+	FrameManifoldFrame     Frame = 14
 )
 
 var EnumNamesFrame = map[Frame]string{
@@ -37,7 +36,6 @@ var EnumNamesFrame = map[Frame]string{
 	FrameResonanceFrame:    "ResonanceFrame",
 	FrameCognitionFrame:    "CognitionFrame",
 	FrameCausalFrame:       "CausalFrame",
-	FrameGraphFrame:        "GraphFrame",
 	FrameStrategyFrame:     "StrategyFrame",
 	FramePositionsFrame:    "PositionsFrame",
 	FrameRegulatorFrame:    "RegulatorFrame",
@@ -56,7 +54,6 @@ var EnumValuesFrame = map[string]Frame{
 	"ResonanceFrame":    FrameResonanceFrame,
 	"CognitionFrame":    FrameCognitionFrame,
 	"CausalFrame":       FrameCausalFrame,
-	"GraphFrame":        FrameGraphFrame,
 	"StrategyFrame":     FrameStrategyFrame,
 	"PositionsFrame":    FramePositionsFrame,
 	"RegulatorFrame":    FrameRegulatorFrame,
@@ -74,7 +71,7 @@ func (v Frame) String() string {
 }
 
 type FrameT struct {
-	Type  Frame
+	Type Frame
 	Value interface{}
 }
 
@@ -97,8 +94,6 @@ func (t *FrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 		return t.Value.(*CognitionFrameT).Pack(builder)
 	case FrameCausalFrame:
 		return t.Value.(*CausalFrameT).Pack(builder)
-	case FrameGraphFrame:
-		return t.Value.(*GraphFrameT).Pack(builder)
 	case FrameStrategyFrame:
 		return t.Value.(*StrategyFrameT).Pack(builder)
 	case FramePositionsFrame:
@@ -147,10 +142,6 @@ func (rcv Frame) UnPack(table flatbuffers.Table) *FrameT {
 		var x CausalFrame
 		x.Init(table.Bytes, table.Pos)
 		return &FrameT{Type: FrameCausalFrame, Value: x.UnPack()}
-	case FrameGraphFrame:
-		var x GraphFrame
-		x.Init(table.Bytes, table.Pos)
-		return &FrameT{Type: FrameGraphFrame, Value: x.UnPack()}
 	case FrameStrategyFrame:
 		var x StrategyFrame
 		x.Init(table.Bytes, table.Pos)

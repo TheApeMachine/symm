@@ -146,8 +146,9 @@ func TestGrid_Observe(t *testing.T) {
 				for _, region := range regions {
 					sum := 0.0
 					metricCount := 0
+					peer := peers[region.Key]
 
-					for entry := range peers[region.Key].Read() {
+					for entry := range peer.Read() {
 						if entry == nil || entry.Metric == nil {
 							continue
 						}
@@ -156,8 +157,16 @@ func TestGrid_Observe(t *testing.T) {
 						metricCount++
 					}
 
+					surprisePerMetric := 0.0
+
+					if peer.MetricCount() > 0 {
+						surprisePerMetric = peer.Surprise() / float64(peer.MetricCount())
+					}
+
+					excitation := 1.0 + surprisePerMetric
+
 					So(region.Counts, ShouldEqual, sizes[region.Key])
-					So(region.Brightness, ShouldAlmostEqual, sum/float64(metricCount), 1e-12)
+					So(region.Brightness, ShouldAlmostEqual, (sum*excitation)/float64(metricCount), 1e-12)
 				}
 			})
 		})

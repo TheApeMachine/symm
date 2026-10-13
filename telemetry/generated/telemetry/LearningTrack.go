@@ -7,17 +7,17 @@ import (
 )
 
 type LearningTrackT struct {
-	Id          int32            `json:"id"`
-	Symbol      string           `json:"symbol"`
-	Index       int32            `json:"index"`
-	Length      int32            `json:"length"`
-	Queued      int32            `json:"queued"`
-	Stride      int32            `json:"stride"`
-	Steps       []*LearningStepT `json:"steps"`
-	Marks       []*LearningMarkT `json:"marks"`
-	Entry       int32            `json:"entry"`
-	Exit        int32            `json:"exit"`
-	Opportunity string           `json:"opportunity"`
+	Id int32 `json:"id"`
+	Symbol string `json:"symbol"`
+	Index int32 `json:"index"`
+	Length int32 `json:"length"`
+	Queued int32 `json:"queued"`
+	Stride int32 `json:"stride"`
+	Steps []*LearningStepT `json:"steps"`
+	Marks []*LearningMarkT `json:"marks"`
+	Entry int32 `json:"entry"`
+	Exit int32 `json:"exit"`
+	Opportunity string `json:"opportunity"`
 }
 
 func (t *LearningTrackT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

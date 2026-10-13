@@ -126,26 +126,28 @@ export const formatValue = (val: number, format?: string | null): string => {
 import { setBadge } from "./badge";
 import { setMeter } from "./meter";
 
-const extractValue = (val: unknown): unknown => {
+const extractValue = (val: unknown, componentType?: string): unknown => {
 	if (val === null || val === undefined) return val;
 	if (typeof val === "object") {
-		if (
-			"normalized" in val &&
-			(val as { hasNormalized?: boolean }).hasNormalized &&
-			Number.isFinite((val as { normalized: number }).normalized)
-		) {
-			return (val as { normalized: number }).normalized;
+		if (componentType === "meter") {
+			if ("snm" in val && Number.isFinite((val as { snm: number }).snm)) {
+				return (val as { snm: number }).snm;
+			}
 		}
 
 		if ("raw" in val && typeof (val as { raw: unknown }).raw === "number") {
 			return (val as { raw: number }).raw;
 		}
-		
+
+		if ("snm" in val && Number.isFinite((val as { snm: number }).snm)) {
+			return (val as { snm: number }).snm;
+		}
+
 		if ("value" in val && (val as { value: unknown }).value !== undefined) {
 			return (val as { value: unknown }).value;
 		}
 	}
-	
+
 	return val;
 };
 
@@ -172,7 +174,7 @@ export const renderValue = (
 					element.dataset.k === "badge"
 				? "badge"
 				: "text");
-	const value = extractValue(rawValue);
+	const value = extractValue(rawValue, componentType);
 
 	if (componentType === "meter") {
 		const num = typeof value === "number" ? value : Number(value);

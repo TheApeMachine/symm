@@ -7,10 +7,10 @@ import (
 )
 
 type DiagnosticPassT struct {
-	State       string `json:"state"`
-	InFlightNs  int64  `json:"inFlightNs"`
-	LastPassNs  int64  `json:"lastPassNs"`
-	SinceLastNs int64  `json:"sinceLastNs"`
+	State string `json:"state"`
+	InFlightNs int64 `json:"inFlightNs"`
+	LastPassNs int64 `json:"lastPassNs"`
+	SinceLastNs int64 `json:"sinceLastNs"`
 }
 
 func (t *DiagnosticPassT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

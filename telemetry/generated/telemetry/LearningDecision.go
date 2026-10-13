@@ -7,16 +7,16 @@ import (
 )
 
 type LearningDecisionT struct {
-	Id        uint64           `json:"id"`
-	Agent     int32            `json:"agent"`
-	Symbol    string           `json:"symbol"`
-	AtNs      int64            `json:"atNs"`
-	ThroughNs int64            `json:"throughNs"`
-	Context   []string         `json:"context"`
-	Action    *LearningActionT `json:"action"`
-	Quantity  string           `json:"quantity"`
-	Tape      float64          `json:"tape"`
-	HasTape   bool             `json:"hasTape"`
+	Id uint64 `json:"id"`
+	Agent int32 `json:"agent"`
+	Symbol string `json:"symbol"`
+	AtNs int64 `json:"atNs"`
+	ThroughNs int64 `json:"throughNs"`
+	Context []string `json:"context"`
+	Action *LearningActionT `json:"action"`
+	Quantity string `json:"quantity"`
+	Tape float64 `json:"tape"`
+	HasTape bool `json:"hasTape"`
 }
 
 func (t *LearningDecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

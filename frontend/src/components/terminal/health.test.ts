@@ -7,13 +7,13 @@ const reading = (
 	symbol: string,
 	metric: string,
 	raw: number,
-	normalized: number | null = null,
+	snm: number | null = null,
 ): Measurement => ({
 	source,
 	symbol,
 	at: "2026-07-06T10:00:00Z",
 	metrics: {
-		[metric]: { raw, normalized: normalized ?? raw },
+		[metric]: { raw, snm: snm ?? raw },
 	},
 	uncertainty: null,
 });
