@@ -147,27 +147,21 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	if closed {
 		if state.lastBarMeasurement == nil {
-			res = data.NewFromPrior(prior, signal.Name(), out)
+			state.lastBarMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
 		}
 
-		if res == nil {
-			res = state.lastBarMeasurement.Next(out)
-		}
-
+		res = state.lastBarMeasurement.Next(prior, out)
 		state.lastBarMeasurement = res
 	}
 
 	if !closed {
 		if state.lastMeasurement == nil {
-			res = data.NewFromPrior(prior, signal.Name(), out)
+			state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
 		}
 
-		if res == nil {
-			res = state.lastMeasurement.Next(out)
-		}
+		res = state.lastMeasurement.Next(prior, out)
 	}
 
-	res.At = prior.At
 	state.lastMeasurement = res
 
 	if closed {

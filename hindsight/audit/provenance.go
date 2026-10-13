@@ -65,8 +65,13 @@ func checkFeeProvenance(detections []*data.Measurement, declared float64) FeePro
 		}
 
 		low, high := math.Min(bPrice, cPrice), math.Max(bPrice, cPrice)
+		typeStr := ""
 
-		switch det.Meta("type") {
+		if entry := data.Pull(det.Meta("type")); entry != nil {
+			typeStr = entry.Value
+		}
+
+		switch typeStr {
 		case "up", "down":
 			upper = math.Min(upper, breakEvenFee(low, high))
 			report.Bounding++

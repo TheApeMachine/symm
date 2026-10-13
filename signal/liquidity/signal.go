@@ -82,11 +82,9 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if state.lastMeasurement == nil {
-		state.lastMeasurement = data.NewFromPrior(prior, signal.Name(), out)
-		return state.lastMeasurement
+		state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
 	}
 
-	state.lastMeasurement = state.lastMeasurement.Next(out)
-	state.lastMeasurement.At = prior.At
+	state.lastMeasurement = state.lastMeasurement.Next(prior, out)
 	return state.lastMeasurement
 }

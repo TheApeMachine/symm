@@ -8,6 +8,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
 type batchCols struct {
@@ -382,3 +383,50 @@ func DecodeBatch(batch arrow.RecordBatch) ([]*Measurement, error) {
 
 	return measurements, nil
 }
+
+/*
+FromWire decodes a wire.MeasurementT into a domain Measurement.
+*/
+func FromWire(row *wire.MeasurementT) *Measurement {
+	if row == nil {
+		return nil
+	}
+
+	meas := NewMeasurement(
+		0,
+		row.Symbol,
+		row.Source,
+		row.Tick,
+		row.Tick,
+	)
+
+	meas.At = time.Unix(0, row.At).UTC()
+	meas.From = time.Unix(0, row.ObservedFrom).UTC()
+	meas.maturity = row.Maturity
+
+	for _, metric := range row.Metrics {
+		if metric == nil {
+			continue
+		}
+		unit, timescale := GetDimension(row.Source, metric.Name)
+		item := NewMetric(metric.Name, metric.Raw, unit, timescale)
+		item.snm = metric.Snm
+		meas.metrics = append(meas.metrics, &MetricEntry{
+			Key:    metric.Name,
+			Metric: item,
+		})
+	}
+
+	for _, peer := range row.Peers {
+		if peer == nil {
+			continue
+		}
+		if wirePeer := FromWire(peer); wirePeer != nil {
+			meas.peers = append(meas.peers, wirePeer)
+		}
+	}
+
+	meas.finalize()
+	return meas
+}
+

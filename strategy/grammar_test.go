@@ -183,7 +183,7 @@ func TestGrammar(t *testing.T) {
 			grammar := NewGrammar()
 
 			// Sequence: A B C D E A B C D E A B C D E
-			for idx := 0; idx < 3; idx++ {
+			for range 3 {
 				grammar.Append("A")
 				grammar.Append("B")
 				grammar.Append("C")

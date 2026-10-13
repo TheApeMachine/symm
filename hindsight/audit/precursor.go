@@ -118,7 +118,11 @@ func AnalyzePrecursorSeparation(
 			continue
 		}
 
-		class := det.Meta("type")
+		var class string
+
+		if typeEntry := data.Pull(det.Meta("type")); typeEntry != nil {
+			class = typeEntry.Value
+		}
 
 		if class == "" {
 			errnie.Error(errnie.Err(

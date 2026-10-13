@@ -738,12 +738,12 @@ func init() {
 	training := SignalMetrics["training"]
 	training["stored_paths_hash"] = Dimension{Unit: UnitDimensionless, Timescale: TimescaleInstantaneous}
 
-	for slot := 0; slot < MatchKeySlots; slot++ {
+	for slot := range MatchKeySlots {
 		training[fmt.Sprintf("match_key:%03d", slot)] = Dimension{Unit: UnitDimensionless, Timescale: TimescaleInstantaneous}
 	}
 
-	for idx := 0; idx < TrainingPathSlots; idx++ {
-		for part := 0; part < RegionSlots; part++ {
+	for idx := range TrainingPathSlots {
+		for part := range RegionSlots {
 			training[fmt.Sprintf("path_token:%02d:%d", idx, part)] = Dimension{Unit: UnitDimensionless, Timescale: TimescaleInstantaneous}
 		}
 

@@ -167,6 +167,6 @@ func TestCorrelationReferencePeerHasMostOverlap(t *testing.T) {
 
 		So(last, ShouldNotBeNil)
 		So(last.Error(), ShouldBeNil)
-		So(last.Meta(data.MetadataReferencePeer), ShouldEqual, "AAA/USD")
+		So(data.Pull(last.Meta(data.MetadataReferencePeer)).Value, ShouldEqual, "AAA/USD")
 	})
 }

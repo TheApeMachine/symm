@@ -96,7 +96,7 @@ func (tee *UITee) Next() unsafe.Pointer {
 		return nil
 	}
 
-	encoded, err := types.EncodeMeasurements([]*data.Measurement{payload})
+	encoded, err := data.EncodeMeasurements([]*data.Measurement{payload})
 
 	if err != nil {
 		return nil

@@ -82,21 +82,21 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 	}
 
-	var out *data.Measurement
-	if prev, ok := signal.last[prior.Label]; ok {
-		out = prev.Next(outMetrics)
-	}
-
-	if out == nil {
-		out = data.NewFromPrior(prior, signal.Name(), outMetrics)
-	}
-
-	out.At = prior.At
+	var meta []*data.StringEntry
 
 	if frame.Reference != "" {
-		out.SetMeta(data.MetadataReferencePeer, frame.Reference)
+		meta = append(meta, &data.StringEntry{
+			Key:   data.MetadataReferencePeer,
+			Value: frame.Reference,
+		})
 	}
 
+	prev := signal.last[prior.Label]
+	if prev == nil {
+		prev = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
+	}
+
+	out := prev.Next(prior, outMetrics, meta...)
 	signal.last[prior.Label] = out
 	return out
 }

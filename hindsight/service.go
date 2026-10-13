@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -148,7 +147,7 @@ func (service *Service) timeline(conn *websocket.Conn) {
 			continue
 		}
 
-		payload, err := types.EncodeMeasurements(batch)
+		payload, err := data.EncodeMeasurements(batch)
 
 		if err != nil {
 			errnie.Error(err)
@@ -164,7 +163,7 @@ func (service *Service) timeline(conn *websocket.Conn) {
 	}
 
 	if len(batch) > 0 {
-		payload, err := types.EncodeMeasurements(batch)
+		payload, err := data.EncodeMeasurements(batch)
 
 		if err != nil {
 			errnie.Error(err)
@@ -226,7 +225,9 @@ func (service *Service) excursions(ctx fiber.Ctx) error {
 			return readFailure(err)
 		}
 
-		if status := measurement.Meta("status"); status == "resolved" {
+		status := data.Pull(measurement.Meta("status"))
+
+		if status != nil && status.Value == "resolved" {
 			excursions = append(excursions, measurement)
 		}
 	}
@@ -554,10 +555,10 @@ func (service *Service) trainingFragments(ctx fiber.Ctx) error {
 			direction = "down"
 		}
 
-		class := det.Meta("type")
+		class := direction
 
-		if class == "" {
-			class = direction
+		if entry := data.Pull(det.Meta("type")); entry != nil && entry.Value != "" {
+			class = entry.Value
 		}
 
 		learnedAt := ""

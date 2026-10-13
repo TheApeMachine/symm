@@ -72,7 +72,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	bid, bidQty := bestBid.Price.Float64(), bestBid.Quantity.Float64()
 
 	sideIndicator := 0.0
-	side := prior.Meta("side")
+	var side string
+
+	if entry := data.Pull(prior.Meta("side")); entry != nil {
+		side = entry.Value
+	}
 
 	if side == "buy" {
 		sideIndicator = 1.0
@@ -94,17 +98,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	out := map[string]float64{}
 
 	emit := func(from time.Time) *data.Measurement {
-		var res *data.Measurement
-
 		if state.lastMeasurement == nil {
-			res = data.NewFromPrior(prior, signal.Name(), out)
+			state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
 		}
 
-		if res == nil {
-			res = state.lastMeasurement.Next(out)
-		}
-
-		res.At = prior.At
+		res := state.lastMeasurement.Next(prior, out)
 		state.lastMeasurement = res
 
 		if !from.IsZero() {

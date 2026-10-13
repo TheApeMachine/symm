@@ -48,8 +48,9 @@ func ExtractExcursionTraces(
 			continue
 		}
 
-		class := det.Meta("type")
-		if class == "" {
+		typeEntry := data.Pull(det.Meta("type"))
+
+		if typeEntry == nil || typeEntry.Value == "" {
 			continue
 		}
 
@@ -66,8 +67,10 @@ func ExtractExcursionTraces(
 	}
 
 	slices.SortFunc(candidates, func(left, right candidate) int {
-		leftUp := left.det.Meta("type") == "up"
-		rightUp := right.det.Meta("type") == "up"
+		leftType := data.Pull(left.det.Meta("type"))
+		rightType := data.Pull(right.det.Meta("type"))
+		leftUp := leftType != nil && leftType.Value == "up"
+		rightUp := rightType != nil && rightType.Value == "up"
 
 		if leftUp && !rightUp {
 			return -1
@@ -97,7 +100,11 @@ func ExtractExcursionTraces(
 
 		det := cand.det
 		symbol := det.Label
-		class := det.Meta("type")
+		var class string
+
+		if typeEntry := data.Pull(det.Meta("type")); typeEntry != nil {
+			class = typeEntry.Value
+		}
 
 		startTick := int64(data.Pull(det.Read("start_tick")).Metric.Raw())
 		bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw())

@@ -143,7 +143,13 @@ func (trainer *Trainer) load(epochs ...int64) (*recording, error) {
 			continue
 		}
 
-		class := measurement.Meta("type")
+		typeEntry := data.Pull(measurement.Meta("type"))
+
+		if typeEntry == nil {
+			continue
+		}
+
+		class := typeEntry.Value
 
 		if class != excursionUp && class != excursionDown {
 			continue
@@ -229,7 +235,11 @@ func (trainer *Trainer) admits(symbol string) bool {
 }
 
 func (trainer *Trainer) parseExcursion(measurement *data.Measurement) (excursion, error) {
-	class := measurement.Meta("type")
+	var class string
+
+	if typeEntry := data.Pull(measurement.Meta("type")); typeEntry != nil {
+		class = typeEntry.Value
+	}
 
 	if class != excursionUp && class != excursionDown {
 		return excursion{}, errnie.Error(errnie.Err(

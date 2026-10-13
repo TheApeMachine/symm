@@ -101,17 +101,17 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		out["morphology_change"] = res[6]
 	}
 
-	var outMeas *data.Measurement
+	var prev *data.Measurement
 
-	if state != nil && state.lastMeasurement != nil {
-		outMeas = state.lastMeasurement.Next(out)
+	if state != nil {
+		prev = state.lastMeasurement
 	}
 
-	if outMeas == nil {
-		outMeas = data.NewFromPrior(prior, signal.Name(), out)
+	if prev == nil {
+		prev = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
 	}
 
-	outMeas.At = prior.At
+	outMeas := prev.Next(prior, out)
 
 	if state != nil {
 		state.lastMeasurement = outMeas

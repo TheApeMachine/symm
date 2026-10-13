@@ -87,3 +87,4 @@ func Pull[T any](value iter.Seq[T]) T {
 
 	return zero
 }
+

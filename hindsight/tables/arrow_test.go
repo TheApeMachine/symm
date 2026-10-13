@@ -66,9 +66,8 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 				So(reconstructed.Tick, ShouldEqual, 42)
 				So(reconstructed.At.Equal(at), ShouldBeTrue)
 				So(reconstructed.From.Equal(at), ShouldBeTrue)
-				So(reconstructed.Meta("side"), ShouldEqual, "bid")
-				So(reconstructed.Meta("type"), ShouldEqual, "limit")
-				So(reconstructed.Maturity(), ShouldEqual, measurement.Maturity())
+				So(data.Pull(reconstructed.Meta("side")).Value, ShouldEqual, "bid")
+				So(data.Pull(reconstructed.Meta("type")).Value, ShouldEqual, "limit")
 
 				priceMetric := data.Pull(reconstructed.Read("price"))
 				So(priceMetric.Err, ShouldBeNil)

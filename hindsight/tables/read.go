@@ -69,7 +69,7 @@ func (catalog *Catalog) scan(
 
 		var tasks []icetable.FileScanTask
 
-		for attempt := 0; attempt < 3; attempt++ {
+		for attempt := range 3 {
 			if attempt > 0 {
 				select {
 				case <-ctx.Done():

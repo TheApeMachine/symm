@@ -998,7 +998,11 @@ func extractTriePhases(
 			continue
 		}
 
-		class := det.Meta("type")
+		var class string
+
+		if entry := data.Pull(det.Meta("type")); entry != nil {
+			class = entry.Value
+		}
 
 		if class == "" {
 			errnie.Error(errnie.Err(

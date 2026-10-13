@@ -130,16 +130,12 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	training.inspectPosition(prior.Label, metrics)
 
 	emit := func() *data.Measurement {
-		var next *data.Measurement
-
-		if prev, ok := training.last[prior.Label]; ok {
-			next = data.NewFromPrior(prev, training.Name(), metrics)
+		prev := training.last[prior.Label]
+		if prev == nil {
+			prev = data.NewMeasurement(prior.Epoch, prior.Label, training.Name(), prior.SeqIdx, prior.Tick)
 		}
 
-		if next == nil {
-			next = data.NewFromPrior(prior, training.Name(), metrics)
-		}
-
+		next := prev.Next(prior, metrics)
 		training.last[prior.Label] = next
 		return next
 	}

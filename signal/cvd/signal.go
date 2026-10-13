@@ -62,7 +62,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		signal.states[key] = state
 	}
 
-	side := prior.Meta("side")
+	var side string
+
+	if entry := data.Pull(prior.Meta("side")); entry != nil {
+		side = entry.Value
+	}
 
 	if side != "buy" && side != "sell" {
 		if state.lastMeasurement != nil {
@@ -159,31 +163,21 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	if tick.Closed {
 		if state.lastBarMeasurement == nil {
-			res = data.NewFromPrior(prior, signal.Name(), out)
+			state.lastBarMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
 		}
 
-		if res == nil {
-			res = state.lastBarMeasurement.Next(out)
-		}
-
+		res = state.lastBarMeasurement.Next(prior, out)
 		state.lastBarMeasurement = res
+		res.From = time.Unix(0, int64(tick.Bar.StartNanos)).UTC()
 	}
 
 	if !tick.Closed {
 		if state.lastMeasurement == nil {
-			res = data.NewFromPrior(prior, signal.Name(), out)
+			state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
 		}
 
-		if res == nil {
-			res = state.lastMeasurement.Next(out)
-		}
-	}
-
-	res.At = prior.At
-	state.lastMeasurement = res
-
-	if tick.Closed {
-		res.From = time.Unix(0, int64(tick.Bar.StartNanos)).UTC()
+		res = state.lastMeasurement.Next(prior, out)
+		state.lastMeasurement = res
 	}
 
 	return res

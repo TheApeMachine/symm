@@ -69,7 +69,7 @@ func TestHawkesTradeMetrics(t *testing.T) {
 				So(instrument.Error(), ShouldBeNil)
 				So(res.Source, ShouldEqual, "hawkes")
 				So(res.Label, ShouldEqual, "BTC/USD")
-				So(res.Meta("side"), ShouldEqual, side)
+				So(data.Pull(res.Meta("side")).Value, ShouldEqual, side)
 				So(res.At, ShouldEqual, at)
 				So(res.From.Sub(origin).Abs(), ShouldBeLessThan, time.Microsecond)
 
@@ -78,9 +78,6 @@ func TestHawkesTradeMetrics(t *testing.T) {
 					So(metricValue(res, "arrival_rate:buy"), ShouldAlmostEqual, buyCount/span, 1e-4)
 					So(metricValue(res, "arrival_rate:sell"), ShouldAlmostEqual, sellCount/span, 1e-4)
 				}
-
-				So(res.Maturity(), ShouldBeGreaterThanOrEqualTo, 0)
-				So(res.Maturity(), ShouldBeLessThanOrEqualTo, 1.0)
 			}
 		})
 

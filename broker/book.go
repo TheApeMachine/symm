@@ -678,7 +678,8 @@ func (book *Book) ApplyFrame(frame []*data.Measurement) error {
 	}
 
 	head := frame[0]
-	checksum, err := strconv.ParseUint(head.Meta("checksum"), 10, 32)
+	checksumStr := storedMeta(head, "checksum")
+	checksum, err := strconv.ParseUint(checksumStr, 10, 32)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -688,7 +689,7 @@ func (book *Book) ApplyFrame(frame []*data.Measurement) error {
 
 	entry := kraken.Level3Data{
 		Symbol:    head.Label,
-		Type:      head.Meta("type"),
+		Type:      storedMeta(head, "type"),
 		Timestamp: head.At,
 		Checksum:  uint32(checksum),
 		Bids:      []kraken.Level3Order{},
@@ -697,22 +698,22 @@ func (book *Book) ApplyFrame(frame []*data.Measurement) error {
 
 	for _, measurement := range frame {
 		if measurement.Label != head.Label ||
-			measurement.Meta("type") != entry.Type ||
-			measurement.Meta("checksum") != head.Meta("checksum") {
+			storedMeta(measurement, "type") != entry.Type ||
+			storedMeta(measurement, "checksum") != checksumStr {
 			return errnie.Error(errnie.Err(
 				errnie.Validation, "[book] level3 frame mixes symbols, types, or checksums", nil,
 			))
 		}
 
 		order := kraken.Level3Order{
-			OrderID:    measurement.Meta("order_id"),
-			Event:      measurement.Meta("event"),
+			OrderID:    storedMeta(measurement, "order_id"),
+			Event:      storedMeta(measurement, "event"),
 			Timestamp:  measurement.At,
 			LimitPrice: storedExact(measurement, "limit_price"),
 			OrderQty:   storedExact(measurement, "order_qty"),
 		}
 
-		switch measurement.Meta("side") {
+		switch storedMeta(measurement, "side") {
 		case "bid":
 			entry.Bids = append(entry.Bids, order)
 		case "ask":
@@ -744,6 +745,19 @@ func storedExact(measurement *data.Measurement, key string) *decimal.Decimal {
 	}
 
 	return entry.Metric.Exact()
+}
+
+/*
+storedMeta returns the string metadata for key using generic data.Pull.
+*/
+func storedMeta(measurement *data.Measurement, key string) string {
+	entry := data.Pull(measurement.Meta(key))
+
+	if entry == nil {
+		return ""
+	}
+
+	return entry.Value
 }
 
 /*

@@ -234,7 +234,11 @@ func AnalyzeTruthfulness(
 			}
 
 			price, qty := tradeField(trade, "price"), tradeField(trade, "qty")
-			side := trade.Meta("side")
+			var side string
+
+			if entry := data.Pull(trade.Meta("side")); entry != nil {
+				side = entry.Value
+			}
 			validFields := price > 0 && qty > 0 && (side == "buy" || side == "sell")
 			fieldVal := 0.0
 
@@ -491,7 +495,12 @@ func level3Frames(level3 []*data.Measurement) map[string][]level3Frame {
 }
 
 func sameLevel3Entry(previous, next *data.Measurement) bool {
+	prevChecksum := data.Pull(previous.Meta("checksum"))
+	nextChecksum := data.Pull(next.Meta("checksum"))
+	prevType := data.Pull(previous.Meta("type"))
+	nextType := data.Pull(next.Meta("type"))
+
 	return next.SeqIdx == previous.SeqIdx+1 &&
-		next.Meta("checksum") == previous.Meta("checksum") &&
-		next.Meta("type") == previous.Meta("type")
+		prevChecksum != nil && nextChecksum != nil && prevChecksum.Value == nextChecksum.Value &&
+		prevType != nil && nextType != nil && prevType.Value == nextType.Value
 }

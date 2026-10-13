@@ -93,6 +93,8 @@ func TestHandleTrade(t *testing.T) {
 			So(measurement.Label, ShouldEqual, "BTC/USD")
 		})
 
+
+
 		Convey("an unprocessable trade frame returns an error", func() {
 			err := handleTrade([]byte(`invalid json`), 100, price, book, nil, storeTee, "public", nil)
 			So(err, ShouldNotBeNil)

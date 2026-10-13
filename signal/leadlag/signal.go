@@ -138,16 +138,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	var res *data.Measurement
-	if prev, ok := signal.last[prior.Label]; ok {
-		res = prev.Next(output)
+	prev := signal.last[prior.Label]
+	if prev == nil {
+		prev = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
 	}
 
-	if res == nil {
-		res = data.NewFromPrior(prior, signal.Name(), output)
-	}
-
-	res.At = prior.At
+	res := prev.Next(prior, output)
 	signal.last[prior.Label] = res
 	return res
 }

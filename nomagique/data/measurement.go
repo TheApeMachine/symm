@@ -4,6 +4,7 @@ import (
 	"errors"
 	"iter"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +27,7 @@ StringEntry stores a key-value pair for metadata and provenance.
 type StringEntry struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+	Err   error  `json:"error"`
 }
 
 const (
@@ -96,103 +98,134 @@ func NewMeasurement(
 }
 
 /*
-NewFromPrior is used when we want to create a new Measurement from the incoming
-prior, when we do not have a stored Measurement for the source and label yet.
+Next instantiates the source's Measurement derived from the current instance
+or the supplied prior. If prior is nil, the current Measurement is used as the prior.
 */
-func NewFromPrior(
+func (measurement *Measurement) Next(
 	prior *Measurement,
-	source string,
 	values map[string]float64,
-	peers ...*Measurement,
+	metadata ...*StringEntry,
 ) *Measurement {
-	meas := NewMeasurement(
-		prior.Epoch,
-		prior.Label,
-		source,
-		system.SeqIdx.Add(1),
-		prior.Tick,
-		prior.Metadata()...,
-	)
+	base := measurement.valid()
 
-	meas.At = prior.At
-	meas.From = prior.From
-
-	if len(peers) > 0 {
-		meas.Peers(peers...)
+	if base == nil {
+		return nil
 	}
 
-	meas.copyMetrics(source, values, prior)
-	meas.finalize()
-	return meas
-}
+	if prior != nil {
+		base = prior.valid()
+	}
 
-/*
-Next instantiates the source's Measurement derived from the current instance
-for the event prior. It carries over identity, metadata, and peers, takes the
-event's venue time and ingress tick, and holds exactly the values the source
-produced: the prior's own metrics belong to the prior.
-*/
-func (measurement *Measurement) Next(values map[string]float64) *Measurement {
-	// Each successor owns copies of the metadata entries, so SetMeta on one
-	// never rewrites its prior or a sibling built from the same prior.
-	metadata := make([]*StringEntry, 0, len(measurement.metadata)+1)
+	if base == nil {
+		return nil
+	}
 
-	for _, entry := range measurement.metadata {
-		if entry != nil {
-			owned := *entry
-			metadata = append(metadata, &owned)
+	source := base.Source
+
+	if measurement != nil && measurement.Source != "" {
+		source = measurement.Source
+	}
+
+	meta := slices.Clone(base.metadata)
+
+	for _, entry := range metadata {
+		if entry == nil {
+			continue
 		}
+
+		index := slices.IndexFunc(meta, func(item *StringEntry) bool {
+			return item != nil && item.Key == entry.Key
+		})
+
+		if index >= 0 {
+			meta[index] = entry
+			continue
+		}
+
+		meta = append(meta, entry)
 	}
 
 	next := NewMeasurement(
-		measurement.Epoch,
-		measurement.Label,
-		measurement.Source,
+		base.Epoch,
+		base.Label,
+		source,
 		system.SeqIdx.Add(1),
 		system.Tick.Load(),
-		metadata...,
+		meta...,
 	)
 
-	next.From = measurement.At
+	next.From = base.At
 	next.Timestamp = time.Now().UnixNano()
 	next.At = time.Unix(0, next.Timestamp).UTC()
-	next.peers = append(next.peers, measurement.peers...)
 
-	next.samples = measurement.samples + 1
-	next.prediction = measurement.prediction
-
-	if measurement.samples > 0 {
-		next.prediction = measurement.prediction + (1.0/float64(measurement.samples))*(measurement.energy-measurement.prediction)
+	if prior != nil && !prior.At.IsZero() {
+		next.At = prior.At
+		next.Tick = prior.Tick
 	}
 
-	next.copyMetrics(measurement.Source, values, measurement)
+	if measurement != nil && measurement.locked() {
+		next.peers = append(next.peers, measurement.peers...)
+		next.samples = measurement.samples + 1
+		next.prediction = measurement.prediction
 
+		if measurement.samples > 0 {
+			next.prediction = measurement.prediction + (1.0/float64(
+				measurement.samples,
+			))*(measurement.energy-measurement.prediction)
+		}
+	}
+
+	if measurement == nil || !measurement.locked() {
+		next.samples = 1
+
+		if prior != nil {
+			next.peers = append(next.peers, prior.peers...)
+		}
+	}
+
+	next.copyMetrics(source, values, measurement, prior)
 	next.finalize()
 	return next
 }
 
-func (measurement *Measurement) copyMetrics(
-	source string, values map[string]float64, prior *Measurement,
-) {
-	if len(values) > 0 {
-		for key, val := range values {
-			unit, timescale := GetDimension(source, key)
-			metric := NewMetric(key, val, unit, timescale)
-
-			if prior != nil {
-				for _, entry := range prior.metrics {
-					if entry != nil && (entry.Key == key || (entry.Metric != nil && entry.Metric.label == key)) && entry.Metric != nil {
-						metric.setSNM(entry.Metric.raw)
-						break
-					}
-				}
-			}
-
-			measurement.metrics = append(measurement.metrics, &MetricEntry{
-				Key:    key,
-				Metric: metric,
-			})
+func (measurement *Measurement) entry(key string) *MetricEntry {
+	for _, metricEntry := range measurement.metrics {
+		if metricEntry != nil && metricEntry.Key == key {
+			return metricEntry
 		}
+	}
+
+	return nil
+}
+
+func (measurement *Measurement) copyMetrics(
+	source string, values map[string]float64, prior *Measurement, trigger *Measurement,
+) {
+	if len(values) == 0 {
+		return
+	}
+
+	for key, val := range values {
+		unit, timescale := GetDimension(source, key)
+		metric := NewMetric(key, val, unit, timescale)
+		var priorEntry *MetricEntry
+
+		if prior != nil {
+			priorEntry = prior.entry(key)
+		}
+
+		if priorEntry == nil && trigger != nil {
+			priorEntry = trigger.entry(key)
+		}
+
+		if priorEntry != nil && priorEntry.Metric != nil {
+			metric.setSNM(priorEntry.Metric.raw)
+		}
+
+		measurement.metrics = append(measurement.metrics, &MetricEntry{
+			Key:    key,
+			Metric: metric,
+		})
 	}
 }
 
@@ -216,6 +249,10 @@ func (measurement *Measurement) Read(keys ...string) iter.Seq[*MetricEntry] {
 				Err: err,
 			})
 		}
+	}
+
+	if measurement.valid() == nil {
+		return nil
 	}
 
 	if len(keys) > 0 {
@@ -250,24 +287,17 @@ func (measurement *Measurement) Write(
 	metrics ...*Metric,
 ) *Measurement {
 	if measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Forbidden,
-			"[data.measurement] locked",
+			"[data.measurement] measurement locked",
 			nil,
-		)))
+		))
 
 		return measurement
 	}
 
 	for _, metric := range metrics {
-		var found *MetricEntry
-
-		for _, entry := range measurement.metrics {
-			if entry != nil && entry.Key == metric.label {
-				found = entry
-				break
-			}
-		}
+		found := measurement.entry(metric.label)
 
 		if found != nil {
 			prior := found.Metric.raw
@@ -299,6 +329,17 @@ func (measurement *Measurement) Write(
 ApproximateBytes returns an estimate of the serialized byte size of the Measurement.
 */
 func (measurement *Measurement) ApproximateBytes() int64 {
+	if !measurement.locked() {
+		err := errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		))
+
+		measurement.err = errors.Join(measurement.err, err)
+		return 0
+	}
+
 	size := int64(128 + len(measurement.Label) + len(measurement.Source))
 
 	for _, entry := range measurement.metrics {
@@ -317,88 +358,68 @@ func (measurement *Measurement) ApproximateBytes() int64 {
 }
 
 /*
-Meta returns the metadata for a key.
+Meta returns an iterator over metadata entries matching keys.
+If no keys are given, all metadata entries are returned.
 */
-func (measurement *Measurement) Meta(key string) string {
+func (measurement *Measurement) Meta(keys ...string) iter.Seq[*StringEntry] {
 	if !measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] not finalized",
-			nil,
-		)))
+		return func(yield func(*StringEntry) bool) {
+			err := errnie.Error(errnie.Err(
+				errnie.Forbidden,
+				"[data.measurement] not finalized",
+				nil,
+			))
 
-		return ""
-	}
+			measurement.err = errors.Join(measurement.err, err)
 
-	for _, entry := range measurement.metadata {
-		if entry == nil {
-			continue
-		}
-
-		if entry.Key == key {
-			return entry.Value
+			yield(&StringEntry{
+				Err: err,
+			})
 		}
 	}
 
-	return ""
-}
-
-/*
-Metadata returns the metadata entries of the Measurement.
-*/
-func (measurement *Measurement) Metadata() []*StringEntry {
-	if !measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] not finalized",
-			nil,
-		)))
-
+	if measurement.valid() == nil {
 		return nil
 	}
 
-	return measurement.metadata
-}
-
-/*
-Peers returns the peers of the Measurement.
-*/
-func (measurement *Measurement) Peers(peers ...*Measurement) []*Measurement {
-	if len(peers) == 0 && !measurement.locked() {
-		measurement.err = errors.Join(errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] not finalized",
-			nil,
-		)))
-
-		return nil
+	if len(keys) > 0 {
+		return func(yield func(*StringEntry) bool) {
+			for _, key := range keys {
+				for _, entry := range measurement.metadata {
+					if entry != nil && entry.Key == key {
+						if !yield(entry) {
+							return
+						}
+					}
+				}
+			}
+		}
 	}
 
-	if len(peers) > 0 {
-		measurement.peers = append(measurement.peers, peers...)
-	}
-
-	return measurement.peers
-}
-
-/*
-SetError joins an error to the measurement error.
-*/
-func (measurement *Measurement) SetError(err error) {
-	if err != nil {
-		measurement.err = errors.Join(measurement.err, err)
+	return func(yield func(*StringEntry) bool) {
+		for _, entry := range measurement.metadata {
+			if entry != nil {
+				if !yield(entry) {
+					return
+				}
+			}
+		}
 	}
 }
 
 /*
-SetMeta sets or updates a metadata entry on the measurement.
+SetMeta sets the metadata of the Measurement.
+It does nothing if the Measurement is locked.
 */
 func (measurement *Measurement) SetMeta(key string, value string) {
-	for _, entry := range measurement.metadata {
-		if entry != nil && entry.Key == key {
-			entry.Value = value
-			return
-		}
+	if measurement.locked() {
+		errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] measurement locked",
+			nil,
+		))
+
+		return
 	}
 
 	measurement.metadata = append(measurement.metadata, &StringEntry{
@@ -408,15 +429,52 @@ func (measurement *Measurement) SetMeta(key string, value string) {
 }
 
 /*
+Peers returns the peers of the Measurement.
+*/
+func (measurement *Measurement) Peers(peers ...*Measurement) []*Measurement {
+	if len(peers) == 0 && !measurement.locked() {
+		err := errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		))
+
+		measurement.err = errors.Join(measurement.err, err)
+		return nil
+	}
+
+	if measurement.valid() == nil {
+		return nil
+	}
+
+	if len(peers) == 0 {
+		return measurement.peers
+	}
+
+	if measurement.locked() {
+		errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] measurement locked",
+			nil,
+		))
+
+		return measurement.peers
+	}
+
+	measurement.peers = append(measurement.peers, peers...)
+	return measurement.peers
+}
+
+/*
 finalize the Measurement, which locks the Measurement and validates it.
 */
 func (measurement *Measurement) finalize() *Measurement {
 	if measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.Forbidden,
-			"[data.measurement] locked",
+			"[data.measurement] measurement locked",
 			nil,
-		)))
+		))
 
 		return measurement
 	}
@@ -462,6 +520,17 @@ total metric energy deviates from the expected regime baseline.
 */
 func (measurement *Measurement) Surprise() float64 {
 	if !measurement.locked() {
+		err := errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] not finalized",
+			nil,
+		))
+
+		measurement.err = errors.Join(measurement.err, err)
+		return 0
+	}
+
+	if measurement.valid() == nil {
 		return 0
 	}
 
@@ -470,58 +539,7 @@ func (measurement *Measurement) Surprise() float64 {
 		return measurement.energy
 	}
 
-	return math.Abs(measurement.energy - measurement.prediction)
-}
-
-/*
-Maturity returns temporal maturity in [0, 1].
-*/
-func (measurement *Measurement) Maturity() float64 {
-	if !measurement.locked() {
-		return 0
-	}
-
-	return measurement.maturity
-}
-
-/*
-Energy returns total metric excitation energy (sum of squared SNM).
-*/
-func (measurement *Measurement) Energy() float64 {
-	if !measurement.locked() {
-		return 0
-	}
-
-	return measurement.energy
-}
-
-/*
-Prediction returns the online expected baseline energy.
-*/
-func (measurement *Measurement) Prediction() float64 {
-	if !measurement.locked() {
-		return 0
-	}
-
-	return measurement.prediction
-}
-
-/*
-Samples returns the cumulative count of observations seen by this stream.
-*/
-func (measurement *Measurement) Samples() int64 {
-	if !measurement.locked() {
-		return 0
-	}
-
-	return measurement.samples
-}
-
-/*
-MetricCount returns the number of metric entries owned by this Measurement.
-*/
-func (measurement *Measurement) MetricCount() int {
-	return len(measurement.metrics)
+	return 1 + math.Abs(measurement.energy-measurement.prediction)
 }
 
 /*
@@ -530,6 +548,12 @@ empirical sample history and metric completeness (warm-up gate).
 */
 func (measurement *Measurement) setMaturity() *Measurement {
 	if measurement.locked() {
+		errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[data.measurement] measurement locked",
+			nil,
+		))
+
 		return measurement
 	}
 
@@ -574,6 +598,18 @@ func (measurement *Measurement) locked() bool {
 valid checks if the Measurement is valid.
 */
 func (measurement *Measurement) valid() *Measurement {
+	if measurement.locked() {
+		if errnie.Error(measurement.err) != nil {
+			return nil
+		}
+
+		return measurement
+	}
+
+	if measurement.err != nil {
+		return nil
+	}
+
 	for _, metricEntry := range measurement.metrics {
 		if metricEntry != nil && metricEntry.Metric != nil {
 			if err := metricEntry.Metric.valid(); err != nil {
@@ -586,10 +622,6 @@ func (measurement *Measurement) valid() *Measurement {
 		if peer != nil && peer.valid() != nil {
 			measurement.err = errors.Join(measurement.err, peer.Error())
 		}
-	}
-
-	if measurement.ID == 0 {
-		measurement.ID = uuid.New().ID()
 	}
 
 	if measurement.Epoch <= 0 {
@@ -626,6 +658,10 @@ func (measurement *Measurement) valid() *Measurement {
 		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
 			errnie.Validation, "seqIdx must be non-negative", nil,
 		), "label", measurement.Label, "source", measurement.Source))
+	}
+
+	if measurement.ID == 0 {
+		measurement.ID = uuid.New().ID()
 	}
 
 	return measurement

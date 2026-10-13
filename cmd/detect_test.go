@@ -9,17 +9,20 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func makeTestDetection(class string, timestamp time.Time) *data.Measurement {
-	measurement := data.NewMeasurement(1, "BTC/USD", "detector", 1, 1)
+func makeTestDetection(class string, timestamp time.Time, extra ...*data.StringEntry) *data.Measurement {
+	meta := []*data.StringEntry{
+		{Key: "type", Value: class},
+		{Key: "start_tick", Value: "1"},
+		{Key: "b_tick", Value: "2"},
+		{Key: "c_tick", Value: "3"},
+		{Key: "b_price", Value: "100.00"},
+		{Key: "c_price", Value: "102.00"},
+	}
+	meta = append(meta, extra...)
+	measurement := data.NewMeasurement(1, "BTC/USD", "detector", 1, 1, meta...)
 	measurement.ID = 1
 	measurement.At = timestamp
 	measurement.From = timestamp.Add(-5 * time.Second)
-	measurement.SetMeta("type", class)
-	measurement.SetMeta("start_tick", "1")
-	measurement.SetMeta("b_tick", "2")
-	measurement.SetMeta("c_tick", "3")
-	measurement.SetMeta("b_price", "100.00")
-	measurement.SetMeta("c_price", "102.00")
 	return measurement
 }
 
@@ -30,23 +33,23 @@ func TestBalanceDetections(t *testing.T) {
 		Convey("When up count is positive, flat, chop, and up_friction are capped to up count", func() {
 			var detected []*data.Measurement
 
-			for index := 0; index < 10; index++ {
+			for index := range 10 {
 				detected = append(detected, makeTestDetection("up", baseTime.Add(time.Duration(index)*time.Minute)))
 			}
 
-			for index := 0; index < 8; index++ {
+			for index := range 8 {
 				detected = append(detected, makeTestDetection("down", baseTime.Add(time.Duration(index)*time.Minute)))
 			}
 
-			for index := 0; index < 25; index++ {
+			for index := range 25 {
 				detected = append(detected, makeTestDetection("flat", baseTime.Add(time.Duration(index)*time.Minute)))
 			}
 
-			for index := 0; index < 30; index++ {
+			for index := range 30 {
 				detected = append(detected, makeTestDetection("chop", baseTime.Add(time.Duration(index)*time.Minute)))
 			}
 
-			for index := 0; index < 15; index++ {
+			for index := range 15 {
 				detected = append(detected, makeTestDetection("up_friction", baseTime.Add(time.Duration(index)*time.Minute)))
 			}
 
@@ -55,7 +58,7 @@ func TestBalanceDetections(t *testing.T) {
 			counts := make(map[string]int)
 
 			for _, measurement := range balanced {
-				counts[measurement.Meta("type")]++
+				counts[detectionType(measurement)]++
 			}
 
 			So(counts["up"], ShouldEqual, 10)
@@ -73,13 +76,15 @@ func TestBalanceDetections(t *testing.T) {
 		Convey("Subsampling selects elements uniformly across the whole tape", func() {
 			var detected []*data.Measurement
 
-			for index := 0; index < 5; index++ {
+			for index := range 5 {
 				detected = append(detected, makeTestDetection("up", baseTime.Add(time.Duration(index)*time.Minute)))
 			}
 
-			for index := 0; index < 50; index++ {
-				measurement := makeTestDetection("flat", baseTime.Add(time.Duration(index)*time.Minute))
-				measurement.SetMeta("original_index", fmt.Sprintf("%d", index))
+			for index := range 50 {
+				measurement := makeTestDetection("flat", baseTime.Add(time.Duration(index)*time.Minute), &data.StringEntry{
+					Key:   "original_index",
+					Value: fmt.Sprintf("%d", index),
+				})
 				detected = append(detected, measurement)
 			}
 
@@ -88,10 +93,12 @@ func TestBalanceDetections(t *testing.T) {
 			var selectedIndices []int
 
 			for _, measurement := range balanced {
-				if measurement.Meta("type") == "flat" {
+				if detectionType(measurement) == "flat" {
 					var originalIndex int
-					_, err := fmt.Sscanf(measurement.Meta("original_index"), "%d", &originalIndex)
-					So(err, ShouldBeNil)
+					if origEntry := data.Pull(measurement.Meta("original_index")); origEntry != nil {
+						_, err := fmt.Sscanf(origEntry.Value, "%d", &originalIndex)
+						So(err, ShouldBeNil)
+					}
 					selectedIndices = append(selectedIndices, originalIndex)
 				}
 			}
@@ -107,19 +114,19 @@ func TestBalanceDetections(t *testing.T) {
 		Convey("When counts are already below or equal to up count, all elements are retained", func() {
 			var detected []*data.Measurement
 
-			for index := 0; index < 10; index++ {
+			for index := range 10 {
 				detected = append(detected, makeTestDetection("up", baseTime.Add(time.Duration(index)*time.Minute)))
 			}
 
-			for index := 0; index < 5; index++ {
+			for index := range 5 {
 				detected = append(detected, makeTestDetection("flat", baseTime.Add(time.Duration(index)*time.Minute)))
 			}
 
-			for index := 0; index < 10; index++ {
+			for index := range 10 {
 				detected = append(detected, makeTestDetection("chop", baseTime.Add(time.Duration(index)*time.Minute)))
 			}
 
-			for index := 0; index < 2; index++ {
+			for index := range 2 {
 				detected = append(detected, makeTestDetection("up_friction", baseTime.Add(time.Duration(index)*time.Minute)))
 			}
 
@@ -128,7 +135,7 @@ func TestBalanceDetections(t *testing.T) {
 			counts := make(map[string]int)
 
 			for _, measurement := range balanced {
-				counts[measurement.Meta("type")]++
+				counts[detectionType(measurement)]++
 			}
 
 			So(counts["up"], ShouldEqual, 10)
@@ -141,7 +148,7 @@ func TestBalanceDetections(t *testing.T) {
 		Convey("When up count is 0, flat, chop, and up_friction are removed", func() {
 			var detected []*data.Measurement
 
-			for index := 0; index < 5; index++ {
+			for index := range 5 {
 				detected = append(detected, makeTestDetection("down", baseTime.Add(time.Duration(index)*time.Minute)))
 				detected = append(detected, makeTestDetection("flat", baseTime.Add(time.Duration(index)*time.Minute)))
 			}
@@ -149,7 +156,7 @@ func TestBalanceDetections(t *testing.T) {
 			balanced, capped := balanceDetections(detected)
 
 			So(len(balanced), ShouldEqual, 5)
-			So(balanced[0].Meta("type"), ShouldEqual, "down")
+			So(detectionType(balanced[0]), ShouldEqual, "down")
 			So(capped["flat"], ShouldEqual, 5)
 		})
 	})

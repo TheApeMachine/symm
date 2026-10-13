@@ -66,7 +66,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 	}
 
-	side := prior.Meta("side")
+	var side string
+
+	if entry := data.Pull(prior.Meta("side")); entry != nil {
+		side = entry.Value
+	}
+
 	var mark float64
 
 	if side == "buy" {
@@ -144,17 +149,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		state.hasPrev = true
 	}
 
-	var out *data.Measurement
-	if prev, ok := signal.last[prior.Label]; ok {
-		out = prev.Next(outMetrics)
+	sideEntry := &data.StringEntry{Key: "side", Value: side}
+
+	prev := signal.last[prior.Label]
+	if prev == nil {
+		prev = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
 	}
 
-	if out == nil {
-		out = data.NewFromPrior(prior, signal.Name(), outMetrics)
-	}
-
-	out.At = prior.At
-	out.SetMeta("side", side)
+	out := prev.Next(prior, outMetrics, sideEntry)
 	out.From = from
 	signal.last[prior.Label] = out
 	return out

@@ -295,7 +295,7 @@ func detectEpoch(ctx context.Context, catalog *tables.Catalog, price *broker.Pri
 		measurement := *(**data.Measurement)(incoming)
 
 		if move := measurement.At.Sub(measurement.From); move < detectMinMove {
-			sweeps[measurement.Meta("type")]++
+			sweeps[detectionType(measurement)]++
 
 			if detectDryRun {
 				key, err := detectionKey(measurement)
@@ -353,7 +353,7 @@ func detectEpoch(ctx context.Context, catalog *tables.Catalog, price *broker.Pri
 	counts := make(map[string]int)
 
 	for _, measurement := range detected {
-		counts[measurement.Meta("type")]++
+		counts[detectionType(measurement)]++
 	}
 
 	if detectDryRun {
@@ -399,7 +399,7 @@ func balanceDetections(
 	capped := make(map[string]int)
 
 	for _, measurement := range detected {
-		class := measurement.Meta("type")
+		class := detectionType(measurement)
 		byClass[class] = append(byClass[class], measurement)
 	}
 
@@ -421,7 +421,7 @@ func balanceDetections(
 
 		sampled := make([]*data.Measurement, upCount)
 
-		for index := 0; index < upCount; index++ {
+		for index := range upCount {
 			pos := (index * total) / upCount
 			sampled[index] = byClass[class][pos]
 		}
@@ -452,7 +452,7 @@ re-run recognises its own rows. Detector rows carry no fee, so a run under
 another fee shows up as stored detections it does not reproduce (a conflict).
 */
 func detectionKey(measurement *data.Measurement) (string, error) {
-	class := measurement.Meta("type")
+	class := detectionType(measurement)
 	startTick, bTick, cTick, err := tables.DetectionTicks(measurement)
 
 	if err != nil {
@@ -513,6 +513,16 @@ func detectCensusReport(ctx context.Context, catalog *tables.Catalog) error {
 	}
 
 	return nil
+}
+
+func detectionType(measurement *data.Measurement) string {
+	entry := data.Pull(measurement.Meta("type"))
+
+	if entry == nil {
+		return ""
+	}
+
+	return entry.Value
 }
 
 func init() {

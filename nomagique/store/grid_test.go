@@ -104,7 +104,7 @@ func regionFrame(sizes [RegionCount]int, warm bool) (*data.Measurement, [RegionC
 				continue
 			}
 
-			peer = peer.Next(values)
+			peer = peer.Next(nil, values)
 		}
 
 		metricCount := 0
@@ -153,20 +153,12 @@ func TestGrid_Observe(t *testing.T) {
 							continue
 						}
 
-						sum += math.Abs(entry.Metric.SNM())
+						sum += math.Abs(entry.Metric.SNM()) * peer.Surprise()
 						metricCount++
 					}
 
-					surprisePerMetric := 0.0
-
-					if peer.MetricCount() > 0 {
-						surprisePerMetric = peer.Surprise() / float64(peer.MetricCount())
-					}
-
-					excitation := 1.0 + surprisePerMetric
-
 					So(region.Counts, ShouldEqual, sizes[region.Key])
-					So(region.Brightness, ShouldAlmostEqual, (sum*excitation)/float64(metricCount), 1e-12)
+					So(region.Brightness, ShouldAlmostEqual, sum/float64(metricCount), 1e-12)
 				}
 			})
 		})
@@ -188,7 +180,7 @@ func TestGrid_Observe(t *testing.T) {
 			solver.Write(data.NewMetric("surprise", 0, data.UnitDimensionless, data.TimescaleTick))
 
 			for hIdx := range int(core.MinimumRankPrior) {
-				solver = solver.Next(map[string]float64{"surprise": float64(2 * (hIdx % 2))})
+				solver = solver.Next(nil, map[string]float64{"surprise": float64(2 * (hIdx % 2))})
 			}
 
 			joined := data.NewMeasurement(frame.Epoch, "BTC/USD", "frame", 1, 1)
