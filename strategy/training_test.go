@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests/tablestest"
 )
@@ -113,28 +115,106 @@ func TestTraining(t *testing.T) {
 			So(tree.Keys, ShouldNotBeNil)
 		})
 
-		Convey("Step emits region metrics and meta", func() {
+		Convey("Step emits an actual member count for every existing region", func() {
 			training := NewTraining(ctx, filling.price, filling.desk, catalog)
-			now := time.Now().UTC()
-			join := data.NewMeasurement(100, "BTC/USD", "runtime:join", 0, 1)
-			join.At = now
-			join.From = now
-
-			// Add peers covering regions
-			peers := make([]*data.Measurement, 0, 12)
-			for idx := range 12 {
-				peer := data.NewMeasurement(100, "BTC/USD", "hawkes", int64(idx+1), int64(idx+1))
-				peer.At = now
-				peer.From = now
-				peer = peer.Write(data.NewMetric("buy_from_buy", float64(idx+2), data.UnitCount, data.TimescaleTick))
-				peers = append(peers, peer)
-			}
-			join.Peers(peers...)
-			join = join.Write()
-
-			next := training.Step(join)
+			next := training.Step(trainingRegionFrame())
 			So(next, ShouldNotBeNil)
+			So(training.Error(), ShouldBeNil)
 			So(next.Source, ShouldEqual, "training")
+
+			for idx := range store.RegionCount {
+				members := data.Pull(next.Read(fmt.Sprintf("region_members:R%02d", idx)))
+				brightness := data.Pull(next.Read(fmt.Sprintf("region_brightness:R%02d", idx)))
+				So(members, ShouldNotBeNil)
+				So(brightness, ShouldNotBeNil)
+				So(members.Metric.Raw(), ShouldEqual, 1)
+				So(brightness.Metric.Raw(), ShouldEqual, 0)
+			}
+
+			So(filling.writes, ShouldHaveLength, 0)
+		})
+
+		Convey("Step rejects twelve copies of a metric from just one region", func() {
+			training := NewTraining(ctx, filling.price, filling.desk, catalog)
+			complete := trainingRegionFrame()
+			join := data.NewMeasurement(complete.Epoch, complete.Label, "runtime:join", 1, 1)
+			join.At, join.From = complete.At, complete.From
+
+			for idx := range store.RegionCount {
+				peer := data.NewMeasurement(complete.Epoch, complete.Label, "hawkes", int64(idx+1), 1)
+				peer.At, peer.From = complete.At, complete.From
+				unit, timescale := data.GetDimension("hawkes", "buy_from_buy")
+				join.Peers(peer.Write(data.NewMetric("buy_from_buy", float64(idx+2), unit, timescale)))
+			}
+
+			join.Write()
+			previous := data.NewFromPrior(complete, "training", map[string]float64{})
+			training.last[complete.Label] = previous
+			training.paths[complete.Label] = []string{"existing"}
+			tokenizer := &Tokenizer{Depth: 1, Regions: 1, Threshold: 0}
+			training.policy.Store(&policy{
+				tokenizer: tokenizer,
+				actions:   map[string]string{"R00": "enter"},
+			})
+			training.seen = *tokenizer
+
+			Convey("No output, path advancement or order is produced", func() {
+				So(training.Step(join), ShouldBeNil)
+				So(training.Error(), ShouldNotBeNil)
+				So(training.Error().Error(), ShouldContainSubstring, "R01")
+				So(training.last[complete.Label], ShouldEqual, previous)
+				So(training.paths[complete.Label], ShouldResemble, []string{"existing"})
+				So(filling.writes, ShouldHaveLength, 0)
+
+				So(training.Step(complete), ShouldBeNil)
+				So(training.last[complete.Label], ShouldEqual, previous)
+				So(training.paths[complete.Label], ShouldResemble, []string{"existing"})
+				So(filling.writes, ShouldHaveLength, 0)
+			})
+		})
+
+		Convey("Step rejects a nil frame before accessing its label", func() {
+			training := NewTraining(ctx, filling.price, filling.desk, catalog)
+			So(training.Step(nil), ShouldBeNil)
+			So(training.Error(), ShouldNotBeNil)
+			So(training.last, ShouldHaveLength, 0)
+			So(training.paths, ShouldHaveLength, 0)
+			So(filling.writes, ShouldHaveLength, 0)
 		})
 	})
+}
+
+/*
+trainingRegionFrame supplies one real pinned metric for each existing region.
+It is a region-coverage fixture, not a claim that each source emitted its
+entire metric schema. Every metric takes its declared dimension from data.
+*/
+func trainingRegionFrame() *data.Measurement {
+	at := time.Unix(1_700_000_000, 0).UTC()
+	join := data.NewMeasurement(100, "BTC/USD", "runtime:join", 1, 1)
+	join.At, join.From = at, at
+	producers := []struct {
+		source  string
+		metrics []string
+	}{
+		{"hawkes", []string{"arrival_rate:buy", "arrival_rate", "arrival_rate:sell"}},
+		{"cvd", []string{"aggressive_notional:buy", "gross_notional", "aggressive_notional:sell"}},
+		{"depthflow", []string{"net_displayed_flow:ask", "book_imbalance", "net_displayed_flow:bid"}},
+		{"sentiment", []string{"breadth", "unchanged_count", "decline_count"}},
+	}
+
+	for idx, producer := range producers {
+		peer := data.NewMeasurement(join.Epoch, join.Label, producer.source, int64(idx+1), join.Tick)
+		peer.At, peer.From = at, at
+		metrics := make([]*data.Metric, 0, len(producer.metrics))
+
+		for _, label := range producer.metrics {
+			unit, timescale := data.GetDimension(producer.source, label)
+			metrics = append(metrics, data.NewMetric(label, 1, unit, timescale))
+		}
+
+		join.Peers(peer.Write(metrics...))
+	}
+
+	return join.Write()
 }
