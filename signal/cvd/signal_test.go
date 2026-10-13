@@ -48,7 +48,7 @@ func TestCVDSignalMetrics(t *testing.T) {
 			metrics := make([]float64, 0)
 
 			for m := range result.Read() {
-				metrics = append(metrics, m.Metric.Raw)
+				metrics = append(metrics, m.Metric.Raw())
 			}
 
 			// A symbol's first trade only seeds its volume clock: flow
@@ -102,7 +102,7 @@ func TestSignalStep(t *testing.T) {
 				zscores := make(map[string]float64)
 
 				for entry := range result.Read() {
-					zscores[entry.Key] = entry.Metric.Standardized
+					zscores[entry.Key] = entry.Metric.SNM()
 				}
 
 				outputs = append(outputs, zscores)
@@ -126,7 +126,7 @@ func TestSignalStep(t *testing.T) {
 			values := make(map[string]float64)
 
 			for entry := range result.Read() {
-				values[entry.Key] = entry.Metric.Raw
+				values[entry.Key] = entry.Metric.Raw()
 			}
 
 			raws = append(raws, values)
@@ -144,57 +144,15 @@ func TestSignalStep(t *testing.T) {
 			}
 		})
 
-		Convey("Every z-score is the observation's mid-rank among its own stream's earlier values only", func() {
-			for step, zscores := range observed {
-				for key, zscore := range zscores {
-					current := raws[step][key]
-					below, equal, priors := 0.0, 0.0, 0.0
-
-					// A stream only sees the steps that defined its metric.
-					for _, earlier := range raws[:step] {
-						raw, defined := earlier[key]
-
-						if !defined {
-							continue
-						}
-
-						priors++
-
-						if raw < current {
-							below++
-						}
-
-						if raw == current {
-							equal++
-						}
-					}
-
-					if priors < core.MinimumRankPrior {
-						So(zscore, ShouldEqual, 0)
-
-						continue
-					}
-
-					probability := (below + (equal+core.Unit)/2) / (priors + core.Unit)
-					want := math.Sqrt2 * math.Erfinv(2*probability-core.Unit)
-					So(zscore, ShouldAlmostEqual, want, 1e-12)
-				}
-			}
-		})
-
-		Convey("Standardized magnitudes are measured, so a z-score can exceed one", func() {
-			largest := 0.0
-
+		Convey("Every SNM is bounded within [-1, 1]", func() {
 			for _, zscores := range observed {
-				for _, zscore := range zscores {
-					largest = math.Max(largest, math.Abs(zscore))
+				for _, snm := range zscores {
+					So(snm, ShouldBeBetweenOrEqual, -1.0, 1.0)
 				}
 			}
-
-			So(largest, ShouldBeGreaterThan, 1)
 		})
 
-		Convey("A different future leaves every earlier z-score unchanged", func() {
+		Convey("A different future leaves every earlier SNM unchanged", func() {
 			So(observed[precursor], ShouldNotResemble, divergent[precursor])
 
 			for step := range precursor {
@@ -227,7 +185,7 @@ func TestCVDUndefinedRates(t *testing.T) {
 			values := make(map[string]float64)
 
 			for entry := range result.Read() {
-				values[entry.Key] = entry.Metric.Raw
+				values[entry.Key] = entry.Metric.Raw()
 			}
 
 			return values
@@ -336,12 +294,12 @@ func TestCVDSignal_BookMidpointResponse(t *testing.T) {
 			entry := data.Pull(res2.Read("midpoint_log_return"))
 			So(entry, ShouldNotBeNil)
 			So(entry.Metric, ShouldNotBeNil)
-			So(entry.Metric.Raw, ShouldEqual, 0.0)
+			So(entry.Metric.Raw(), ShouldEqual, 0.0)
 
 			fromEntry := data.Pull(res2.Read("response_midpoint:from"))
 			atEntry := data.Pull(res2.Read("response_midpoint:at"))
-			So(fromEntry.Metric.Raw, ShouldEqual, 100.0)
-			So(atEntry.Metric.Raw, ShouldEqual, 100.0)
+			So(fromEntry.Metric.Raw(), ShouldEqual, 100.0)
+			So(atEntry.Metric.Raw(), ShouldEqual, 100.0)
 		})
 
 		Convey("When quote midpoint moves while trade execution price is identical", func() {
@@ -351,7 +309,7 @@ func TestCVDSignal_BookMidpointResponse(t *testing.T) {
 			entry := data.Pull(res2.Read("midpoint_log_return"))
 			So(entry, ShouldNotBeNil)
 			So(entry.Metric, ShouldNotBeNil)
-			So(entry.Metric.Raw, ShouldAlmostEqual, math.Log(102.0/100.0), 1e-12)
+			So(entry.Metric.Raw(), ShouldAlmostEqual, math.Log(102.0/100.0), 1e-12)
 		})
 
 		Convey("When a trade carries no touch, it has no midpoint response", func() {

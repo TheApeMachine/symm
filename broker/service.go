@@ -229,21 +229,21 @@ func (service *Service) balanceReport(reqCtx fiber.Ctx) error {
 	if balance.measurement != nil {
 		for entry := range balance.measurement.Read("cash") {
 			if entry.Metric != nil {
-				cash = strconv.FormatFloat(entry.Metric.Raw, 'f', -1, 64)
+				cash = strconv.FormatFloat(entry.Metric.Raw(), 'f', -1, 64)
 				break
 			}
 		}
 
 		for entry := range balance.measurement.Read("unrealized") {
 			if entry.Metric != nil {
-				unrealized = strconv.FormatFloat(entry.Metric.Raw, 'f', -1, 64)
+				unrealized = strconv.FormatFloat(entry.Metric.Raw(), 'f', -1, 64)
 				break
 			}
 		}
 
 		for entry := range balance.measurement.Read("equity") {
 			if entry.Metric != nil {
-				equity = strconv.FormatFloat(entry.Metric.Raw, 'f', -1, 64)
+				equity = strconv.FormatFloat(entry.Metric.Raw(), 'f', -1, 64)
 				break
 			}
 		}

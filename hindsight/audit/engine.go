@@ -602,7 +602,7 @@ func ingestMetrics(
 					continue
 				}
 
-				if entry.Metric.Label == "checksum" {
+				if entry.Metric.Label() == "checksum" {
 					errnie.Error(errnie.Err(
 						errnie.NotFound,
 						"[audit] checksum metric in measurement",
@@ -612,12 +612,12 @@ func ingestMetrics(
 					continue
 				}
 
-				name := seriesKey(meas.Source, meas.Label, entry.Metric.Label)
+				name := seriesKey(meas.Source, meas.Label, entry.Metric.Label())
 
 				if rawSeries[name] == nil {
 					rawSeries[name] = make(map[int64]float64)
 				}
-				rawSeries[name][tick] = entry.Metric.Raw
+				rawSeries[name][tick] = entry.Metric.Raw()
 			}
 		}
 	}
@@ -664,7 +664,7 @@ func ingestMetrics(
 				if canonicalSeries[key] == nil {
 					canonicalSeries[key] = make(map[int64]float64)
 				}
-				canonicalSeries[key][tick] = entry.Metric.Standardized
+				canonicalSeries[key][tick] = entry.Metric.SNM()
 			}
 		}
 	}

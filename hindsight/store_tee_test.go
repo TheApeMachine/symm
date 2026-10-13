@@ -25,6 +25,8 @@ func TestStoreTee_Push(t *testing.T) {
 		Convey("A push while READY is queued and taken", func() {
 			tee.Transition(runtime.READY)
 			tee.Push(row)
+			So(tee.Pending(), ShouldEqual, 1)
+			So(tee.Next(), ShouldNotBeNil)
 			So(tee.Pending(), ShouldEqual, 0)
 		})
 	})

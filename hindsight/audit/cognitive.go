@@ -1011,9 +1011,9 @@ func extractTriePhases(
 			continue
 		}
 
-		startTick := int64(data.Pull(det.Read("start_tick")).Metric.Raw)
-		bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw)
-		cTick := int64(data.Pull(det.Read("c_tick")).Metric.Raw)
+		startTick := int64(data.Pull(det.Read("start_tick")).Metric.Raw())
+		bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw())
+		cTick := int64(data.Pull(det.Read("c_tick")).Metric.Raw())
 
 		if bTick <= 0 || cTick <= bTick {
 			errnie.Error(errnie.Err(

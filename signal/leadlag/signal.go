@@ -56,7 +56,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	for entry := range prior.Read("price") {
 		if entry != nil && entry.Metric != nil {
-			price = entry.Metric.Raw
+			price = entry.Metric.Raw()
 			found = true
 			break
 		}
@@ -140,13 +140,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	var res *data.Measurement
 	if prev, ok := signal.last[prior.Label]; ok {
-		res = prev.Next(prior, output)
+		res = prev.Next(output)
 	}
 
 	if res == nil {
 		res = data.NewFromPrior(prior, signal.Name(), output)
 	}
 
+	res.At = prior.At
 	signal.last[prior.Label] = res
 	return res
 }

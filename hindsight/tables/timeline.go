@@ -302,7 +302,7 @@ func DetectionTicks(measurement *data.Measurement) (int64, int64, int64, error) 
 	for _, key := range []string{"start_tick", "b_tick", "c_tick"} {
 		entry := data.Pull(measurement.Read(key))
 
-		if entry == nil || entry.Err != nil || entry.Metric == nil || entry.Metric.Label != key {
+		if entry == nil || entry.Err != nil || entry.Metric == nil || entry.Metric.Label() != key {
 			return 0, 0, 0, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[catalog] detection measurement missing "+key,
@@ -310,7 +310,7 @@ func DetectionTicks(measurement *data.Measurement) (int64, int64, int64, error) 
 			))
 		}
 
-		ticks = append(ticks, int64(entry.Metric.Raw))
+		ticks = append(ticks, int64(entry.Metric.Raw()))
 	}
 
 	if ticks[0] < 0 || ticks[0] > ticks[1] || ticks[1] >= ticks[2] {
@@ -356,7 +356,7 @@ func DetectionPrices(measurement *data.Measurement) (*decimal.Decimal, *decimal.
 	for _, key := range []string{"b_price", "c_price"} {
 		entry := data.Pull(measurement.Read(key))
 
-		if entry == nil || entry.Err != nil || entry.Metric == nil || entry.Metric.Label != key {
+		if entry == nil || entry.Err != nil || entry.Metric == nil || entry.Metric.Label() != key {
 			return nil, nil, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[catalog] detection measurement missing "+key,
@@ -364,7 +364,7 @@ func DetectionPrices(measurement *data.Measurement) (*decimal.Decimal, *decimal.
 			))
 		}
 
-		price := entry.Metric.Exact
+		price := entry.Metric.Exact()
 
 		if price == nil || price.Sign() <= 0 {
 			return nil, nil, errnie.Error(errnie.Err(

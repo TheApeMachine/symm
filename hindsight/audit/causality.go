@@ -78,7 +78,7 @@ func productionReplay(measurements []*data.Measurement, epoch int64, grid *store
 
 		for entry := range stored.Read() {
 			if entry != nil && entry.Metric != nil {
-				metrics = append(metrics, data.NewMetric(entry.Key, entry.Metric.Raw, entry.Metric.Unit(), entry.Metric.Timescale()))
+				metrics = append(metrics, data.NewMetric(entry.Key, entry.Metric.Raw(), entry.Metric.Unit(), entry.Metric.Timescale()))
 			}
 		}
 
@@ -86,7 +86,7 @@ func productionReplay(measurements []*data.Measurement, epoch int64, grid *store
 
 		for entry := range replayed.Read() {
 			if entry != nil && entry.Metric != nil {
-				outputs[observationKey(stored, entry.Key)] = entry.Metric.Standardized
+				outputs[observationKey(stored, entry.Key)] = entry.Metric.SNM()
 			}
 		}
 
@@ -145,7 +145,7 @@ func perturbFuture(future []*data.Measurement, seed int64) []*data.Measurement {
 		for entry := range stored.Read() {
 			if entry != nil && entry.Metric != nil {
 				metrics = append(metrics, data.NewMetric(
-					entry.Key, entry.Metric.Raw*2*rng.Float64(), entry.Metric.Unit(), entry.Metric.Timescale(),
+					entry.Key, entry.Metric.Raw()*2*rng.Float64(), entry.Metric.Unit(), entry.Metric.Timescale(),
 				))
 			}
 		}

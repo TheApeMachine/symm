@@ -102,17 +102,17 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 		return nil
 	}
-	price := priceEntry.Metric.Raw
+	price := priceEntry.Metric.Raw()
 
 	qtyEntry := data.Pull(prior.Read("qty"))
-	if qtyEntry == nil || qtyEntry.Metric == nil || qtyEntry.Metric.Raw <= 0 {
+	if qtyEntry == nil || qtyEntry.Metric == nil || qtyEntry.Metric.Raw() <= 0 {
 		if state, exists := signal.states[prior.Label]; exists && state.lastMeasurement != nil {
 			return state.lastMeasurement
 		}
 
 		return nil
 	}
-	qty := qtyEntry.Metric.Raw
+	qty := qtyEntry.Metric.Raw()
 
 	// The touch is the one ingress stamped onto the trade at its sequence
 	// number. A trade stamped without a book still advances the volume clock;
@@ -282,9 +282,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if res == nil {
-		res = state.lastMeasurement.Next(prior, out)
+		res = state.lastMeasurement.Next(out)
 	}
 
+	res.At = prior.At
 	state.lastMeasurement = res
 
 	if closed {

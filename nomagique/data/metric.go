@@ -52,14 +52,13 @@ mathematics runs on Raw alone and never consults it. Derived facts leave it
 nil.
 */
 type Metric struct {
-	Label        string           // The name of the metric.
-	support      float64          // The prior observations Standardized was ranked against.
-	Raw          float64          // The raw value of the metric.
-	Normalized   float64          // The normalized value of the metric.
-	Standardized float64          // The standardized value of the metric.
-	Exact        *decimal.Decimal // The exact value of the metric.
-	unit         Unit             // The unit of the metric.
-	timescale    Timescale        // The timescale of the metric.
+	err       error
+	label     string           // The name of the metric.
+	snm       float64          // The self-normalized movement of the metric.
+	raw       float64          // The raw value of the metric.
+	exact     *decimal.Decimal // The exact value of the metric.
+	unit      Unit             // The unit of the metric.
+	timescale Timescale        // The timescale of the metric.
 }
 
 /*
@@ -69,8 +68,8 @@ func NewMetric(
 	label string, raw float64, unit Unit, timescale Timescale,
 ) *Metric {
 	return &Metric{
-		Label:     label,
-		Raw:       raw,
+		label:     label,
+		raw:       raw,
 		unit:      unit,
 		timescale: timescale,
 	}
@@ -84,22 +83,34 @@ func NewExactMetric(
 	label string, exact *decimal.Decimal, unit Unit, timescale Timescale,
 ) *Metric {
 	return &Metric{
-		Label:     label,
-		Raw:       decimalFloat64(exact),
-		Exact:     exact,
+		label:     label,
+		raw:       decimalFloat64(exact),
+		exact:     exact,
 		unit:      unit,
 		timescale: timescale,
 	}
 }
 
-func (metric *Metric) CleanLabel() string {
-	base := metric.Label
+func (metric *Metric) Label() string {
+	base := metric.label
 
 	if atIndex := strings.IndexByte(base, '@'); atIndex != -1 {
 		base = base[:atIndex]
 	}
 
 	return base
+}
+
+func (metric *Metric) Raw() float64 {
+	return metric.raw
+}
+
+func (metric *Metric) SNM() float64 {
+	return metric.snm
+}
+
+func (metric *Metric) Exact() *decimal.Decimal {
+	return metric.exact
 }
 
 func (metric *Metric) Unit() Unit {
@@ -110,52 +121,36 @@ func (metric *Metric) Timescale() Timescale {
 	return metric.timescale
 }
 
-func (metric *Metric) Support() float64 {
-	return metric.support
-}
-
 /*
-finalize is called from the Measurement to standardize the observation against
-its stream: Standardized is the standard normal quantile of Raw's mid-rank
-among the stream's earlier observations, and support is how many there were.
-While the stream has too few of them the z-score is undefined: Standardized,
-Normalized, and support stay zero and Standardizable reports false. An invalid
-observation is rejected before it reaches the stream.
+finalize is called from the Measurement to validate the observation before
+locking.
 */
-func (metric *Metric) finalize(state *standardizer) error {
-	if err := errnie.Require(map[string]any{
-		"raw": metric.Raw,
-	}); err != nil {
-		return errnie.Error(err)
-	}
-
-	standardized, support, defined := state.observe(metric.Raw)
-	metric.support = support
-	metric.Standardized = 0
-	metric.Normalized = 0
-
-	if defined {
-		metric.Standardized = standardized
-		metric.Normalized = math.Tanh(standardized)
-	}
-
+func (metric *Metric) finalize() error {
 	return metric.valid()
 }
 
 /*
-Standardizable reports whether Standardized holds a z-score. It is false until
-the metric's stream has enough prior observations to rank against; an
-undefined z-score is missing evidence, not a zero deformation.
+setSNM (Self-Normalized Movement) takes the reference from the prior magnitude
+and the movement itself. It measures a transition, not an isolated value.
+The result stays within \([-1,1]\) without statistical calibration.
 */
-func (metric *Metric) Standardizable() bool {
-	return metric.support > 0
+func (metric *Metric) setSNM(prior float64) {
+	delta := metric.raw - prior
+	denominator := math.Abs(prior) + math.Abs(delta)
+
+	if denominator == 0 {
+		metric.snm = 0
+		return
+	}
+
+	metric.snm = delta / denominator
 }
 
 /*
 valid checks if the Measurement is valid.
 */
 func (metric *Metric) valid() error {
-	if metric.Label == "" {
+	if metric.label == "" {
 		return errnie.Error(errnie.Err(
 			errnie.Validation, "label is required", nil,
 		))
@@ -173,7 +168,7 @@ func (metric *Metric) valid() error {
 		))
 	}
 
-	if math.IsNaN(metric.Raw) || math.IsInf(metric.Raw, 0) {
+	if math.IsNaN(metric.raw) || math.IsInf(metric.raw, 0) {
 		return errnie.Error(errnie.Err(
 			errnie.Validation, "raw is not a finite number", nil,
 		))

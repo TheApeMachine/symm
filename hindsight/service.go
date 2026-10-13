@@ -571,15 +571,15 @@ func (service *Service) trainingFragments(ctx fiber.Ctx) error {
 		var cIdx int64
 
 		if entry := data.Pull(det.Read("start_idx")); entry != nil && entry.Metric != nil {
-			startIdx = int64(entry.Metric.Raw)
+			startIdx = int64(entry.Metric.Raw())
 		}
 
 		if entry := data.Pull(det.Read("b_idx")); entry != nil && entry.Metric != nil {
-			bIdx = int64(entry.Metric.Raw)
+			bIdx = int64(entry.Metric.Raw())
 		}
 
 		if entry := data.Pull(det.Read("c_idx")); entry != nil && entry.Metric != nil {
-			cIdx = int64(entry.Metric.Raw)
+			cIdx = int64(entry.Metric.Raw())
 		}
 
 		entryIdx := max(bIdx-startIdx, 0)
@@ -673,7 +673,7 @@ func (service *Service) trainingFragmentPoints(ctx fiber.Ctx) error {
 		var price float64
 
 		if pEntry := data.Pull(m.Read("price")); pEntry != nil && pEntry.Metric != nil {
-			price = pEntry.Metric.Raw
+			price = pEntry.Metric.Raw()
 		}
 
 		if price <= 0 {

@@ -104,12 +104,18 @@ func regionFrame(sizes [RegionCount]int, warm bool) (*data.Measurement, [RegionC
 				continue
 			}
 
-			prior := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", int64(hIdx+1), int64(hIdx+1))
-			prior.At, prior.From = at, at
-			peer = peer.Next(prior, values)
+			peer = peer.Next(values)
 		}
 
-		So(peer.Dampen(), ShouldHaveLength, sizes[idx])
+		metricCount := 0
+
+		for entry := range peer.Read() {
+			if entry != nil && entry.Metric != nil {
+				metricCount++
+			}
+		}
+
+		So(metricCount, ShouldEqual, sizes[idx])
 		peers[idx] = peer
 		frame.Peers(peer)
 	}
@@ -136,27 +142,23 @@ func TestGrid_Observe(t *testing.T) {
 				}
 			})
 
-			Convey("A region's brightness is the mean |z| of its confidence-dampened metrics", func() {
+			Convey("A region's brightness is the mean |SNM| of its metrics", func() {
 				for _, region := range regions {
-					dampened := peers[region.Key].Dampen()
 					sum := 0.0
+					metricCount := 0
 
-					for _, metric := range dampened {
-						sum += math.Abs(metric.Standardized)
+					for entry := range peers[region.Key].Read() {
+						if entry == nil || entry.Metric == nil {
+							continue
+						}
+
+						sum += math.Abs(entry.Metric.SNM())
+						metricCount++
 					}
 
 					So(region.Counts, ShouldEqual, sizes[region.Key])
-					So(region.Brightness, ShouldAlmostEqual, sum/float64(len(dampened)), 1e-12)
+					So(region.Brightness, ShouldAlmostEqual, sum/float64(metricCount), 1e-12)
 				}
-			})
-		})
-
-		Convey("When a peer is still warming up", func() {
-			frame, _ := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, false)
-
-			Convey("No regions are returned", func() {
-				So(grid.Observe(frame), ShouldBeNil)
-				So(grid.Error(), ShouldBeNil)
 			})
 		})
 
@@ -177,9 +179,7 @@ func TestGrid_Observe(t *testing.T) {
 			solver.Write(data.NewMetric("surprise", 0, data.UnitDimensionless, data.TimescaleTick))
 
 			for hIdx := range int(core.MinimumRankPrior) {
-				prior := data.NewMeasurement(frame.Epoch, "BTC/USD", "spot:trade", int64(hIdx+2), int64(hIdx+2))
-				prior.At, prior.From = at, at
-				solver = solver.Next(prior, map[string]float64{"surprise": float64(2 * (hIdx % 2))})
+				solver = solver.Next(map[string]float64{"surprise": float64(2 * (hIdx % 2))})
 			}
 
 			joined := data.NewMeasurement(frame.Epoch, "BTC/USD", "frame", 1, 1)

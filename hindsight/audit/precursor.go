@@ -132,9 +132,9 @@ func AnalyzePrecursorSeparation(
 
 		classSet[class] = struct{}{}
 
-		startTick := int64(data.Pull(det.Read("start_tick")).Metric.Raw)
-		bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw)
-		cTick := int64(data.Pull(det.Read("c_tick")).Metric.Raw)
+		startTick := int64(data.Pull(det.Read("start_tick")).Metric.Raw())
+		bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw())
+		cTick := int64(data.Pull(det.Read("c_tick")).Metric.Raw())
 
 		if bTick <= 0 || cTick <= bTick {
 			errnie.Error(errnie.Err(
@@ -162,8 +162,8 @@ func AnalyzePrecursorSeparation(
 			continue
 		}
 
-		bPrice := data.Pull(det.Read("b_price")).Metric.Raw
-		cPrice := data.Pull(det.Read("c_price")).Metric.Raw
+		bPrice := data.Pull(det.Read("b_price")).Metric.Raw()
+		cPrice := data.Pull(det.Read("c_price")).Metric.Raw()
 
 		excursions = append(excursions, excursionInterval{
 			symbol:    det.Label,
@@ -1054,7 +1054,7 @@ func loadOrDetectExcursions(
 		}
 
 		if det != nil && (symbol == "" || det.Label == symbol) {
-			bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw)
+			bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw())
 			if minTick > 0 && bTick < minTick {
 				continue
 			}

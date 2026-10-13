@@ -232,7 +232,8 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return state.lastMeasurement
 	}
 
-	state.lastMeasurement = state.lastMeasurement.Next(prior, out)
+	state.lastMeasurement = state.lastMeasurement.Next(out)
+	state.lastMeasurement.At = prior.At
 	return state.lastMeasurement
 }
 

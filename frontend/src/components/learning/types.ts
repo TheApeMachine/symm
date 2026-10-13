@@ -41,7 +41,7 @@ export interface TrieBranch {
 	visits: number;
 	meanEdge: number;
 	confidence: number;
-	policy: "ENTER" | "EXIT"; // wait is abstention, never a leaf policy
+	policy: "ENTER" | "EXIT" | "NOOP"; // NOOP is a friction leaf policy
 }
 
 export interface FeasibleAction {

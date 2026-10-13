@@ -20,7 +20,7 @@ func metricRaw(measurement *data.Measurement, label string) (float64, bool) {
 		if entry.Err != nil {
 			continue
 		}
-		return entry.Metric.Raw, true
+		return entry.Metric.Raw(), true
 	}
 
 	return 0, false

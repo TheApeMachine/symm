@@ -296,9 +296,6 @@ func (cols *batchCols) decodeRow(measurement *Measurement, rowIdx int) error {
 				}
 
 				metric := NewMetric(metricKey, rawVal, unitVal, timeVal)
-				metric.Normalized = cols.normCol.Value(itemIdx)
-				metric.Standardized = cols.stdCol.Value(itemIdx)
-				metric.support = cols.supportCol.Value(itemIdx)
 
 				if cols.exactCol != nil && !cols.exactCol.IsNull(itemIdx) && cols.exactCol.Value(itemIdx) != "" {
 					exactDec, err := decimal.NewFromString(cols.exactCol.Value(itemIdx))
@@ -311,7 +308,7 @@ func (cols *batchCols) decodeRow(measurement *Measurement, rowIdx int) error {
 						))
 					}
 
-					metric.Exact = exactDec
+					metric.exact = exactDec
 				}
 
 				measurement.metrics = append(measurement.metrics, &MetricEntry{

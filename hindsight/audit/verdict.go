@@ -2,7 +2,6 @@ package audit
 
 import (
 	"fmt"
-	"math"
 	"sort"
 )
 
@@ -136,17 +135,6 @@ func hypothesisVerdict(pValue float64, permutations int, significance float64) s
 }
 
 /*
-rankBound is the largest |z| an empirical mid-rank z-score may show against
-support priors: a value beyond every prior.
-*/
-func rankBound(support float64) float64 {
-	if support <= 0 {
-		return 0
-	}
-	return math.Sqrt2 * math.Erfinv(2*(support+0.5)/(support+1.0)-1.0)
-}
-
-/*
 quantileOf returns the q-quantile of values without modifying them.
 */
 func quantileOf(values []float64, q float64) float64 {
@@ -177,43 +165,42 @@ BuildVerdicts collects every stage's verdict with the criterion it was held
 to, in report order.
 */
 func BuildVerdicts(report *AuditReport) []StageVerdict {
-	t := report.Thresholds
+	thresholds := report.Thresholds
 	verdicts := []StageVerdict{
 		{"0. Contracts", contractVerdict(report.Contract),
-			"declared hard domains on every observation; |z| <= rankBound(support); valid state & mature rank support",
-			fmt.Sprintf("%d/%d domain breaches; %d unstandardized mature; %d z beyond bound; state pass=%t",
+			"declared hard domains on every observation; bounded SNM in [-1, 1]; valid state",
+			fmt.Sprintf("%d/%d domain breaches; %d norm breaches; state pass=%t",
 				report.Contract.BreachingMetricsCount, report.Contract.TotalMetricsChecked,
-				report.Contract.MetricNorm.UnstandardizedMatureBreaches,
-				report.Contract.MetricNorm.ZMagnitudeBreaches,
+				report.Contract.MetricNorm.NormalizationBreaches,
 				report.Contract.MeasurementState.Passed)},
 		{"0.5 Timing", report.Timing.Status,
-			fmt.Sprintf("no At regression per (source, symbol); spikes > %.0fms on at most %.0f%%", t.SpikeLatencyMs, t.SpikeFraction*100),
+			fmt.Sprintf("no At regression per (source, symbol); spikes > %.0fms on at most %.0f%%", thresholds.SpikeLatencyMs, thresholds.SpikeFraction*100),
 			fmt.Sprintf("%d inversions, %d spikes of %d", report.Timing.SequenceInversions, report.Timing.LatencySpikes, report.Timing.TotalChecked)},
 		{"1. Vitality", report.Vitality.Status, "descriptive",
 			fmt.Sprintf("%d raw series, %d canonical cells, %d constant", report.Vitality.RawProducerMetrics,
 				report.Vitality.CanonicalGridCells, report.Vitality.CanonicalDeadCells)},
 		{"2. Sympathy", report.Sympathy.Status,
-			fmt.Sprintf("within-symbol |r| exceedance vs block-shuffled null, p <= %.2f", t.Significance),
+			fmt.Sprintf("within-symbol |r| exceedance vs block-shuffled null, p <= %.2f", thresholds.Significance),
 			fmt.Sprintf("%d pairs, %.1f%% above null p95, p=%.3f", report.Sympathy.TotalPairs, report.Sympathy.SeparationRatio*100, report.Sympathy.PValue)},
 		{"3. Grid stationarity", report.GridStability.Status,
-			fmt.Sprintf("JSD between halves vs tick-shuffled null; stationary when p > %.2f (ARI is NOT_A_TEST)", t.Significance),
+			fmt.Sprintf("JSD between halves vs tick-shuffled null; stationary when p > %.2f (ARI is NOT_A_TEST)", thresholds.Significance),
 			fmt.Sprintf("JSD %.3f bits, p=%.3f", report.GridStability.DistributionJSD, report.GridStability.StationarityPValue)},
 		{"4. Token dynamics", report.TokenDynamics.Status,
-			fmt.Sprintf("transition entropy below block null, p <= %.2f", t.Significance),
+			fmt.Sprintf("transition entropy below block null, p <= %.2f", thresholds.Significance),
 			fmt.Sprintf("%d emissions, H=%.3f, p=%.3f", report.TokenDynamics.TotalEmissions, report.TokenDynamics.TransitionEntropy, report.TokenDynamics.PValue)},
 		{"5a. Ignition precursors", report.Precursor.IgnitionHypothesis.Status,
-			fmt.Sprintf("event vs control excursions, excursion-label null, p <= %.2f", t.Significance),
+			fmt.Sprintf("event vs control excursions, excursion-label null, p <= %.2f", thresholds.Significance),
 			fmt.Sprintf("JSD %.3f bits, p=%.3f", report.Precursor.IgnitionHypothesis.DivergenceBits, report.Precursor.IgnitionHypothesis.PValue)},
 		{"5b. Exhaustion precursors", report.Precursor.ExhaustionHypothesis.Status,
-			fmt.Sprintf("late vs early half within excursions, paired swap null, p <= %.2f", t.Significance),
+			fmt.Sprintf("late vs early half within excursions, paired swap null, p <= %.2f", thresholds.Significance),
 			fmt.Sprintf("JSD %.3f bits, p=%.3f", report.Precursor.ExhaustionHypothesis.DivergenceBits, report.Precursor.ExhaustionHypothesis.PValue)},
 		{"5c. Held-out precursor skill", report.Precursor.PredictiveSkill.Status,
-			fmt.Sprintf("chronological 60/40 split, held-out MCC vs label null, p <= %.2f", t.Significance),
+			fmt.Sprintf("chronological 60/40 split, held-out MCC vs label null, p <= %.2f", thresholds.Significance),
 			fmt.Sprintf("%d held-out, MCC %.3f, p=%.3f", report.Precursor.PredictiveSkill.EvaluatedSamples, report.Precursor.PredictiveSkill.MCC, report.Precursor.PredictiveSkill.PValue)},
 		{"5d. Friction clearance", report.Precursor.EconomicRelevance.Status,
 			"detections are defined as moves that clear friction", "restates the detector's own criterion"},
 		{"6. Simulated trie", report.CognitiveTrie.Status,
-			fmt.Sprintf("in-memory trie (not S3) balanced accuracy vs label-shuffled null, p <= %.2f", t.Significance),
+			fmt.Sprintf("in-memory trie (not S3) balanced accuracy vs label-shuffled null, p <= %.2f", thresholds.Significance),
 			fmt.Sprintf("balanced accuracy %.1f%%", report.CognitiveTrie.Skill.BalancedAccuracy*100)},
 	}
 
@@ -237,7 +224,7 @@ func BuildVerdicts(report *AuditReport) []StageVerdict {
 
 	if report.Sensitivity != nil {
 		verdicts = append(verdicts, StageVerdict{"V4. Sensitivity", report.Sensitivity.Status,
-			fmt.Sprintf("no family moves regions > %.2f bits on removal or > %.2f on duplication (named limits)", t.DominanceJSD, t.DuplicationJSD),
+			fmt.Sprintf("no family moves regions > %.2f bits on removal or > %.2f on duplication (named limits)", thresholds.DominanceJSD, thresholds.DuplicationJSD),
 			fmt.Sprintf("%d dominant; max duplication %.3f bits", report.Sensitivity.DominantFamilies, report.Sensitivity.MaxDuplicationJSD)})
 	}
 

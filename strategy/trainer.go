@@ -138,7 +138,14 @@ func (trainer *Trainer) load(epochs ...int64) (*recording, error) {
 		if err != nil {
 			return nil, errnie.Error(err)
 		}
+
 		if !trainer.admits(measurement.Label) {
+			continue
+		}
+
+		class := measurement.Meta("type")
+
+		if class != excursionUp && class != excursionDown {
 			continue
 		}
 
@@ -222,6 +229,16 @@ func (trainer *Trainer) admits(symbol string) bool {
 }
 
 func (trainer *Trainer) parseExcursion(measurement *data.Measurement) (excursion, error) {
+	class := measurement.Meta("type")
+
+	if class != excursionUp && class != excursionDown {
+		return excursion{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[trainer] excursion %s has unsupported class %q", measurement.Label, class),
+			nil,
+		))
+	}
+
 	bPrice, cPrice, err := tables.DetectionPrices(measurement)
 	if err != nil {
 		return excursion{}, errnie.Error(err)
@@ -278,7 +295,7 @@ func (trainer *Trainer) parseExcursion(measurement *data.Measurement) (excursion
 		symbol:      measurement.Label,
 		b:           measurement.From.UnixNano(),
 		c:           measurement.At.UnixNano(),
-		up:          measurement.Meta("type") == excursionUp,
+		up:          class == excursionUp,
 		gain:        gain,
 		netReturn:   pnl.Div(cost).Float64(),
 		holdSeconds: measurement.At.Sub(measurement.From).Seconds(),
@@ -362,7 +379,7 @@ func (trainer *Trainer) readTape(history *recording, epoch int64) error {
 				bid := data.Pull(peer.Read("best_bid_price"))
 				ask := data.Pull(peer.Read("best_ask_price"))
 				if bid != nil && ask != nil {
-					quotes[key.label] = [2]float64{bid.Metric.Raw, ask.Metric.Raw}
+					quotes[key.label] = [2]float64{bid.Metric.Raw(), ask.Metric.Raw()}
 				}
 			}
 
@@ -853,7 +870,7 @@ func (trainer *Trainer) publish(history *recording, tokenizer *Tokenizer) error 
 		}
 		visits := float64(entry.visits)
 
-		// Prefixes are pure; only unanimous actionable paths are published
+		// Prefixes are pure; unanimous actionable and noop friction paths are published
 		var action string
 		if learned[path] == maskEnter {
 			action = actionEnter
@@ -861,6 +878,10 @@ func (trainer *Trainer) publish(history *recording, tokenizer *Tokenizer) error 
 
 		if learned[path] == maskExit {
 			action = actionExit
+		}
+
+		if learned[path] == maskNoop {
+			action = actionNoop
 		}
 
 		if action == "" {
@@ -901,8 +922,8 @@ func (trainer *Trainer) publish(history *recording, tokenizer *Tokenizer) error 
 	}
 
 	errnie.Info(fmt.Sprintf(
-		"[trainer] published %d unanimous paths (enter=%d exit=%d); replay net return: %.6f",
-		len(valid), counts[actionEnter], counts[actionExit], reward,
+		"[trainer] published %d unanimous paths (enter=%d exit=%d noop=%d); replay net return: %.6f",
+		len(valid), counts[actionEnter], counts[actionExit], counts[actionNoop], reward,
 	))
 
 	return nil

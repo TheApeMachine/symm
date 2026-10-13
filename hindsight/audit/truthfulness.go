@@ -126,7 +126,7 @@ func AnalyzeTruthfulness(
 				}
 
 				if entry.Key == "signed_net_fraction" {
-					value := entry.Metric.Raw
+					value := entry.Metric.Raw()
 					record("cvd", "signed_net_fraction_bounded", value, math.Max(-1, math.Min(1, value)), value >= -1 && value <= 1)
 				}
 			}
@@ -293,7 +293,7 @@ func AnalyzeTruthfulness(
 
 			for entry := range frames[0].Read() {
 				if entry != nil && entry.Metric != nil {
-					published[entry.Key] = entry.Metric.Raw
+					published[entry.Key] = entry.Metric.Raw()
 				}
 			}
 
@@ -423,7 +423,7 @@ func AnalyzeTruthfulness(
 func tradeField(trade *data.Measurement, key string) float64 {
 	for entry := range trade.Read() {
 		if entry != nil && entry.Metric != nil && entry.Key == key {
-			return entry.Metric.Raw
+			return entry.Metric.Raw()
 		}
 	}
 

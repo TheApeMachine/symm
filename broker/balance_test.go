@@ -92,25 +92,25 @@ func TestBalance(t *testing.T) {
 
 			for entry := range pushed.Read("cash") {
 				if entry.Metric != nil {
-					cash = entry.Metric.Raw
-					if entry.Metric.Exact != nil {
-						cashExact = entry.Metric.Exact.String()
+					cash = entry.Metric.Raw()
+					if entry.Metric.Exact() != nil {
+						cashExact = entry.Metric.Exact().String()
 					}
 				}
 			}
 			for entry := range pushed.Read("equity") {
 				if entry.Metric != nil {
-					equity = entry.Metric.Raw
+					equity = entry.Metric.Raw()
 				}
 			}
 			for entry := range pushed.Read("unrealized") {
 				if entry.Metric != nil {
-					unrealized = entry.Metric.Raw
+					unrealized = entry.Metric.Raw()
 				}
 			}
 			for entry := range pushed.Read("balance:ZAMA") {
 				if entry.Metric != nil {
-					zama = entry.Metric.Raw
+					zama = entry.Metric.Raw()
 				}
 			}
 

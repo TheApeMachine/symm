@@ -53,8 +53,8 @@ func ExtractExcursionTraces(
 			continue
 		}
 
-		bPrice := data.Pull(det.Read("b_price")).Metric.Raw
-		cPrice := data.Pull(det.Read("c_price")).Metric.Raw
+		bPrice := data.Pull(det.Read("b_price")).Metric.Raw()
+		cPrice := data.Pull(det.Read("c_price")).Metric.Raw()
 
 		returnPct := 0.0
 		if bPrice > 0 && cPrice > 0 {
@@ -99,9 +99,9 @@ func ExtractExcursionTraces(
 		symbol := det.Label
 		class := det.Meta("type")
 
-		startTick := int64(data.Pull(det.Read("start_tick")).Metric.Raw)
-		bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw)
-		cTick := int64(data.Pull(det.Read("c_tick")).Metric.Raw)
+		startTick := int64(data.Pull(det.Read("start_tick")).Metric.Raw())
+		bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw())
+		cTick := int64(data.Pull(det.Read("c_tick")).Metric.Raw())
 
 		if bTick <= 0 || cTick <= bTick {
 			continue
@@ -117,8 +117,8 @@ func ExtractExcursionTraces(
 			continue
 		}
 
-		bPrice := data.Pull(det.Read("b_price")).Metric.Raw
-		cPrice := data.Pull(det.Read("c_price")).Metric.Raw
+		bPrice := data.Pull(det.Read("b_price")).Metric.Raw()
+		cPrice := data.Pull(det.Read("c_price")).Metric.Raw()
 
 		// Gather tick signals across [startTick, cTick]
 		ticksMap := make(map[int64][]*data.Measurement)
@@ -204,18 +204,18 @@ func ExtractExcursionTraces(
 			// Resolve price at this tick
 			tickPrice := bPrice
 			for _, signal := range signals {
-				if point := data.Pull(signal.Read("response_midpoint:at")); point != nil && point.Metric != nil && point.Metric.Raw > 0 {
-					tickPrice = point.Metric.Raw
+				if point := data.Pull(signal.Read("response_midpoint:at")); point != nil && point.Metric != nil && point.Metric.Raw() > 0 {
+					tickPrice = point.Metric.Raw()
 					break
 				}
 
-				if point := data.Pull(signal.Read("midpoint")); point != nil && point.Metric != nil && point.Metric.Raw > 0 {
-					tickPrice = point.Metric.Raw
+				if point := data.Pull(signal.Read("midpoint")); point != nil && point.Metric != nil && point.Metric.Raw() > 0 {
+					tickPrice = point.Metric.Raw()
 					break
 				}
 
-				if point := data.Pull(signal.Read("price")); point != nil && point.Metric != nil && point.Metric.Raw > 0 {
-					tickPrice = point.Metric.Raw
+				if point := data.Pull(signal.Read("price")); point != nil && point.Metric != nil && point.Metric.Raw() > 0 {
+					tickPrice = point.Metric.Raw()
 					break
 				}
 			}

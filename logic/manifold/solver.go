@@ -448,17 +448,17 @@ func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement) {
 	sell := float32(0)
 
 	if buyFound {
-		if buyMetric.Raw < 0 {
+		if buyMetric.Raw() < 0 {
 			return
 		}
-		buy = float32(buyMetric.Raw)
+		buy = float32(buyMetric.Raw())
 	}
 
 	if sellFound {
-		if sellMetric.Raw < 0 {
+		if sellMetric.Raw() < 0 {
 			return
 		}
-		sell = float32(sellMetric.Raw)
+		sell = float32(sellMetric.Raw())
 	}
 
 	solver.forcing.Store(symbol, forcingState{buyExcitation: buy, sellExcitation: sell})

@@ -51,7 +51,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	price := entry.Metric.Raw
+	price := entry.Metric.Raw()
 
 	frame := &nmcorrelation.Frame{
 		Symbol:  prior.Label,
@@ -72,12 +72,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	var out *data.Measurement
 	if prev, ok := signal.last[prior.Label]; ok {
-		out = prev.Next(prior, frame.Metrics)
+		out = prev.Next(frame.Metrics)
 	}
 
 	if out == nil {
 		out = data.NewFromPrior(prior, signal.Name(), frame.Metrics)
 	}
+
+	out.At = prior.At
 
 	if frame.Reference != "" {
 		out.SetMeta(data.MetadataReferencePeer, frame.Reference)

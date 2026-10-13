@@ -746,7 +746,7 @@ func init() {
 			training[fmt.Sprintf("path_token:%02d:%d", idx, part)] = Dimension{Unit: UnitDimensionless, Timescale: TimescaleInstantaneous}
 		}
 
-		for _, prefix := range []string{"match_candidates", "match_enter", "match_exit"} {
+		for _, prefix := range []string{"match_candidates", "match_enter", "match_exit", "match_noop"} {
 			training[fmt.Sprintf("%s:%02d", prefix, idx+1)] = Dimension{Unit: UnitCount, Timescale: TimescaleInstantaneous}
 		}
 	}

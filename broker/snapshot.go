@@ -164,7 +164,7 @@ func ReadSnapshot(measurement *data.Measurement) (*Snapshot, error) {
 			))
 		}
 
-		if entry.Metric.Exact == nil {
+		if entry.Metric.Exact() == nil {
 			return nil, errnie.Error(errnie.Err(
 				errnie.Validation, "[snapshot] level has no exact value: "+entry.Key, nil,
 			))
@@ -174,7 +174,7 @@ func ReadSnapshot(measurement *data.Measurement) (*Snapshot, error) {
 			levels[prefix] = map[int]*decimal.Decimal{}
 		}
 
-		levels[prefix][index] = entry.Metric.Exact
+		levels[prefix][index] = entry.Metric.Exact()
 	}
 
 	if depth == nil {
@@ -187,11 +187,11 @@ func ReadSnapshot(measurement *data.Measurement) (*Snapshot, error) {
 		return nil, nil
 	}
 
-	snapshot := &Snapshot{Depth: int(depth.Raw)}
+	snapshot := &Snapshot{Depth: int(depth.Raw())}
 
-	if float64(snapshot.Depth) != depth.Raw || snapshot.Depth <= 0 {
+	if float64(snapshot.Depth) != depth.Raw() || snapshot.Depth <= 0 {
 		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, fmt.Sprintf("[snapshot] depth window %v is not a positive count", depth.Raw), nil,
+			errnie.Validation, fmt.Sprintf("[snapshot] depth window %v is not a positive count", depth.Raw()), nil,
 		))
 	}
 

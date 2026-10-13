@@ -35,7 +35,7 @@ func metric(measurement *data.Measurement, label string) (float64, bool) {
 			return 0, false
 		}
 
-		return entry.Metric.Raw, true
+		return entry.Metric.Raw(), true
 	}
 
 	return 0, false

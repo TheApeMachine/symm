@@ -68,7 +68,7 @@ func newTestFillingDesk(t *testing.T) *testFillingDesk {
 		},
 	})
 
-	price := broker.NewPrice(context.Background(), nil, nil, nil, normalizer)
+	price := broker.NewPrice(t.Context(), nil, nil, nil, normalizer)
 	price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.26)})
 	price.SetReferenceCash(decimal.NewFromFloat64(200))
 

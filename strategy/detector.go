@@ -538,7 +538,7 @@ func (detector *Detector) Scan(
 			))
 		}
 
-		if metric == nil || metric.Exact == nil {
+		if metric == nil || metric.Exact() == nil {
 			return detector.Error(errnie.Err(
 				errnie.Validation,
 				fmt.Sprintf(
@@ -549,7 +549,7 @@ func (detector *Detector) Scan(
 			))
 		}
 
-		price := metric.Exact
+		price := metric.Exact()
 
 		if err := current.observe(tapePoint{
 			idx:   measurement.SeqIdx,

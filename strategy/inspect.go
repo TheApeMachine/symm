@@ -153,7 +153,7 @@ func inspectMatch(current *policy, tokens []string, strength float64, metrics ma
 	for depth := 1; depth <= min(len(tokens), data.TrainingPathSlots); depth++ {
 		prefix := strings.Join(tokens[:depth], "/") + "/"
 		start, _ := slices.BinarySearch(current.keys, prefix)
-		var total, enter, exit float64
+		var total, enter, exit, noop float64
 
 		for _, key := range current.keys[start:] {
 			if !strings.HasPrefix(key, prefix) {
@@ -167,12 +167,15 @@ func inspectMatch(current *policy, tokens []string, strength float64, metrics ma
 				enter++
 			case "exit":
 				exit++
+			case "noop":
+				noop++
 			}
 		}
 
 		metrics[fmt.Sprintf("match_candidates:%02d", depth)] = total
 		metrics[fmt.Sprintf("match_enter:%02d", depth)] = enter
 		metrics[fmt.Sprintf("match_exit:%02d", depth)] = exit
+		metrics[fmt.Sprintf("match_noop:%02d", depth)] = noop
 	}
 
 	// The stored keys the whole live path is currently a prefix of, as

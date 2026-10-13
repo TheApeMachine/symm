@@ -83,17 +83,19 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 
 		metricsKey.Append(entry.Key)
 		itemBuilder.Append(true)
-		rawBuilder.Append(entry.Metric.Raw)
-		normBuilder.Append(entry.Metric.Normalized)
-		stdBuilder.Append(entry.Metric.Standardized)
+		rawBuilder.Append(entry.Metric.raw)
+		normBuilder.Append(entry.Metric.snm)
+		stdBuilder.Append(entry.Metric.snm)
 
-		if entry.Metric.Exact != nil {
-			exactBuilder.Append(entry.Metric.Exact.String())
-		} else {
+		if entry.Metric.exact != nil {
+			exactBuilder.Append(entry.Metric.exact.String())
+		}
+
+		if entry.Metric.exact == nil {
 			exactBuilder.AppendNull()
 		}
 
-		supportBuilder.Append(entry.Metric.support)
+		supportBuilder.Append(1.0)
 		unitBuilder.Append(string(entry.Metric.Unit()))
 		timescaleBuilder.Append(string(entry.Metric.Timescale()))
 	}

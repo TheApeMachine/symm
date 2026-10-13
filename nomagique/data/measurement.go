@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -123,7 +122,7 @@ func NewFromPrior(
 		meas.Peers(peers...)
 	}
 
-	meas.copyMetrics(source, values)
+	meas.copyMetrics(source, values, prior)
 	meas.finalize()
 	return meas
 }
@@ -134,9 +133,7 @@ for the event prior. It carries over identity, metadata, and peers, takes the
 event's venue time and ingress tick, and holds exactly the values the source
 produced: the prior's own metrics belong to the prior.
 */
-func (measurement *Measurement) Next(
-	prior *Measurement, values map[string]float64,
-) *Measurement {
+func (measurement *Measurement) Next(values map[string]float64) *Measurement {
 	// Each successor owns copies of the metadata entries, so SetMeta on one
 	// never rewrites its prior or a sibling built from the same prior.
 	metadata := make([]*StringEntry, 0, len(measurement.metadata)+1)
@@ -153,33 +150,44 @@ func (measurement *Measurement) Next(
 		measurement.Label,
 		measurement.Source,
 		system.SeqIdx.Add(1),
-		prior.Tick,
+		system.Tick.Load(),
 		metadata...,
 	)
 
-	next.At = prior.At
 	next.From = measurement.At
 	next.Timestamp = time.Now().UnixNano()
+	next.At = time.Unix(0, next.Timestamp).UTC()
 	next.peers = append(next.peers, measurement.peers...)
 
 	next.samples = measurement.samples + 1
 	next.prediction = measurement.prediction
 
-	next.copyMetrics(measurement.Source, values)
+	next.copyMetrics(measurement.Source, values, measurement)
 
 	next.finalize()
 	return next
 }
 
 func (measurement *Measurement) copyMetrics(
-	source string, values map[string]float64,
+	source string, values map[string]float64, prior *Measurement,
 ) {
 	if len(values) > 0 {
 		for key, val := range values {
 			unit, timescale := GetDimension(source, key)
+			metric := NewMetric(key, val, unit, timescale)
+
+			if prior != nil {
+				for _, entry := range prior.metrics {
+					if entry != nil && entry.Key == key && entry.Metric != nil {
+						metric.setSNM(entry.Metric.raw)
+						break
+					}
+				}
+			}
+
 			measurement.metrics = append(measurement.metrics, &MetricEntry{
 				Key:    key,
-				Metric: NewMetric(key, val, unit, timescale),
+				Metric: metric,
 			})
 		}
 	}
@@ -211,7 +219,7 @@ func (measurement *Measurement) Read(keys ...string) iter.Seq[*MetricEntry] {
 		return func(yield func(*MetricEntry) bool) {
 			for _, key := range keys {
 				for _, metricEntry := range measurement.metrics {
-					if metricEntry.Metric.Label == key {
+					if metricEntry.Metric.label == key {
 						if !yield(metricEntry) {
 							return
 						}
@@ -228,29 +236,6 @@ func (measurement *Measurement) Read(keys ...string) iter.Seq[*MetricEntry] {
 			}
 		}
 	}
-}
-
-/*
-Dampen returns copies of the metrics matching keys (or all metrics if no keys
-are specified), scaled by the Measurement's Confidence.
-*/
-func (measurement *Measurement) Dampen(keys ...string) []*Metric {
-	confidence := measurement.Confidence()
-	metrics := make([]*Metric, 0)
-
-	for entry := range measurement.Read(keys...) {
-		if entry == nil || entry.Metric == nil {
-			continue
-		}
-
-		clone := *entry.Metric
-		clone.Raw *= confidence
-		clone.Normalized *= confidence
-		clone.Standardized *= confidence
-		metrics = append(metrics, &clone)
-	}
-
-	return metrics
 }
 
 /*
@@ -275,22 +260,22 @@ func (measurement *Measurement) Write(
 		var found *MetricEntry
 
 		for _, entry := range measurement.metrics {
-			if entry != nil && entry.Key == metric.Label {
+			if entry != nil && entry.Key == metric.label {
 				found = entry
 				break
 			}
 		}
 
 		if found != nil {
-			found.Metric.Raw = metric.Raw
-			found.Metric.Exact = metric.Exact
+			found.Metric.raw = metric.raw
+			found.Metric.exact = metric.exact
 			found.Metric.unit = metric.unit
 			found.Metric.timescale = metric.timescale
 			continue
 		}
 
 		measurement.metrics = append(measurement.metrics, &MetricEntry{
-			Key:    metric.Label,
+			Key:    metric.label,
 			Metric: metric,
 		})
 	}
@@ -429,168 +414,6 @@ func (measurement *Measurement) finalize() *Measurement {
 		measurement.samples = 1
 	}
 
-	for _, metric := range measurement.metrics {
-		measurement.err = errors.Join(
-			measurement.err,
-			metric.Metric.finalize(standardizerFor(standardizerKey{
-				epoch:  measurement.Epoch,
-				source: measurement.Source,
-				label:  measurement.Label,
-				metric: metric.Key,
-			})),
-		)
-	}
-
-	measurement.Timestamp = time.Now().UnixNano()
-	measurement.setCoherence()
-	measurement.setMaturity()
-
-	// Fully finalize the Measurement by writing its ID.
-	return measurement.valid()
-}
-
-/*
-Coherence returns the cross-metric coherence (Jain's fairness index of
-standardized magnitudes) for the Measurement.
-*/
-func (measurement *Measurement) Coherence() float64 {
-	if !measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] not finalized",
-			nil,
-		)))
-
-		return 0
-	}
-
-	return measurement.coherence
-}
-
-/*
-Maturity returns the maturity for the Measurement.
-*/
-func (measurement *Measurement) Maturity() float64 {
-	if !measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] not finalized",
-			nil,
-		)))
-
-		return 0
-	}
-
-	return measurement.maturity
-}
-
-/*
-Confidence is temporal maturity times cross-metric coherence:
-how unsurprising the observation's energy is relative to the regime,
-scaled by how evenly that energy is distributed across its metrics.
-Both factors lie in [0, 1].
-*/
-func (measurement *Measurement) Confidence() float64 {
-	if !measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] not finalized",
-			nil,
-		)))
-
-		return 0
-	}
-
-	return measurement.maturity * measurement.coherence
-}
-
-/*
-Energy returns the sum of squared standardized metric values for the Measurement.
-*/
-func (measurement *Measurement) Energy() float64 {
-	if !measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] not finalized",
-			nil,
-		)))
-
-		return 0
-	}
-
-	return measurement.energy
-}
-
-/*
-Samples returns the cumulative count of observations seen by this stream.
-*/
-func (measurement *Measurement) Samples() int64 {
-	if !measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] not finalized",
-			nil,
-		)))
-
-		return 0
-	}
-
-	return measurement.samples
-}
-
-/*
-Prediction returns the online exponential moving average of total metric energy.
-*/
-func (measurement *Measurement) Prediction() float64 {
-	if !measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] not finalized",
-			nil,
-		)))
-
-		return 0
-	}
-
-	return measurement.prediction
-}
-
-/*
-Error returns the Measurement error.
-*/
-func (measurement *Measurement) Error() error {
-	return measurement.err
-}
-
-/*
-setCoherence calculates cross-metric coherence using Jain's fairness index
-on the absolute standardized metric magnitudes:
-
-	coherence = (\sum |z_i|)^2 / (N * \sum z_i^2)
-
-It measures how evenly the Measurement's standardized activity is distributed
-across its Metrics. If all Metrics participate equally, coherence is 1.0. If
-only one Metric carries the observation, coherence is 1/N. If all Metrics are
-quiescent (zero energy), coherence is 0.
-*/
-func (measurement *Measurement) setCoherence() *Measurement {
-	if measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] locked",
-			nil,
-		)))
-
-		return measurement
-	}
-
-	count := float64(len(measurement.metrics))
-
-	if count == 0 {
-		measurement.coherence = 0
-		return measurement
-	}
-
 	var sumAbs float64
 	measurement.energy = 0
 
@@ -599,33 +422,125 @@ func (measurement *Measurement) setCoherence() *Measurement {
 			continue
 		}
 
-		standardized := entry.Metric.Standardized
-		sumAbs += math.Abs(standardized)
-		measurement.energy += standardized * standardized
+		measurement.err = errors.Join(
+			measurement.err,
+			entry.Metric.finalize(),
+		)
+
+		snm := entry.Metric.snm
+		sumAbs += math.Abs(snm)
+		measurement.energy += snm * snm
 	}
 
+	metricCount := float64(len(measurement.metrics))
 	measurement.coherence = 0
 
-	if count > 0 && measurement.energy > 0 {
-		measurement.coherence = (sumAbs * sumAbs) / (count * measurement.energy)
+	if metricCount > 0 && measurement.energy > 0 {
+		measurement.coherence = (sumAbs * sumAbs) / (metricCount * measurement.energy)
 	}
 
-	return measurement
+	for _, peer := range measurement.peers {
+		if peer != nil {
+			measurement.energy += peer.energy
+		}
+	}
+
+	measurement.Timestamp = time.Now().UnixNano()
+	measurement.setMaturity()
+
+	// Fully finalize the Measurement by writing its ID.
+	return measurement.valid()
 }
 
 /*
-setMaturity calculates temporal maturity directly against the prior prediction
-of total standardized metric energy using online Minimum Description Length (MDL).
-Runs in O(1) time using the energy computed by setCoherence.
+Surprise returns the MDL prediction error: how much the current
+total metric energy deviates from the expected regime baseline.
+*/
+func (measurement *Measurement) Surprise() float64 {
+	if !measurement.locked() {
+		return 0
+	}
+
+	// Zero expected energy means any energy is complete surprise
+	if measurement.prediction <= 0 {
+		return measurement.energy
+	}
+
+	return math.Abs(measurement.energy - measurement.prediction)
+}
+
+/*
+Confidence returns temporal maturity times cross-metric coherence in [0, 1].
+*/
+func (measurement *Measurement) Confidence() float64 {
+	if !measurement.locked() {
+		return 0
+	}
+
+	return measurement.maturity * measurement.coherence
+}
+
+/*
+Coherence returns cross-metric coherence in [0, 1].
+*/
+func (measurement *Measurement) Coherence() float64 {
+	if !measurement.locked() {
+		return 0
+	}
+
+	return measurement.coherence
+}
+
+/*
+Maturity returns temporal maturity in [0, 1].
+*/
+func (measurement *Measurement) Maturity() float64 {
+	if !measurement.locked() {
+		return 0
+	}
+
+	return measurement.maturity
+}
+
+/*
+Energy returns total metric excitation energy (sum of squared SNM).
+*/
+func (measurement *Measurement) Energy() float64 {
+	if !measurement.locked() {
+		return 0
+	}
+
+	return measurement.energy
+}
+
+/*
+Prediction returns the online expected baseline energy.
+*/
+func (measurement *Measurement) Prediction() float64 {
+	if !measurement.locked() {
+		return 0
+	}
+
+	return measurement.prediction
+}
+
+/*
+Samples returns the cumulative count of observations seen by this stream.
+*/
+func (measurement *Measurement) Samples() int64 {
+	if !measurement.locked() {
+		return 0
+	}
+
+	return measurement.samples
+}
+
+/*
+setMaturity calculates sensor readiness based strictly on
+empirical sample history and metric completeness (warm-up gate).
 */
 func (measurement *Measurement) setMaturity() *Measurement {
 	if measurement.locked() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] locked",
-			nil,
-		)))
-
 		return measurement
 	}
 
@@ -636,23 +551,29 @@ func (measurement *Measurement) setMaturity() *Measurement {
 
 	samplesCount := float64(measurement.samples)
 
-	// 1. Calculate maturity against PRIOR prediction (surprise)
-	measurement.maturity = (core.Unit - core.Unit/samplesCount) / (core.Unit + math.Abs(
-		measurement.energy-measurement.prediction,
-	))
+	// Warm-up curve: approaches 1.0 as samples accumulate
+	// (At 10 samples: ~0.90, at 50 samples: ~0.98, at 500: ~0.998)
+	measurement.maturity = 1.0 - (1.0 / samplesCount)
 
+	// Completeness penalty: if expected metrics are missing, scale down
 	if expected := float64(len(SignalMetrics[measurement.Source])); expected > 0 {
 		actual := float64(len(measurement.metrics))
-
 		if actual < expected {
-			measurement.maturity *= actual / expected
+			measurement.maturity *= (actual / expected)
 		}
 	}
 
-	// 2. Update prediction for next time
-	measurement.prediction += (core.Unit / samplesCount) * (measurement.energy - measurement.prediction)
+	// Update the online prediction of energy for the NEXT tick
+	measurement.prediction += (1.0 / samplesCount) * (measurement.energy - measurement.prediction)
 
 	return measurement
+}
+
+/*
+Error returns the Measurement error.
+*/
+func (measurement *Measurement) Error() error {
+	return measurement.err
 }
 
 /*

@@ -743,7 +743,7 @@ func storedExact(measurement *data.Measurement, key string) *decimal.Decimal {
 		return nil
 	}
 
-	return entry.Metric.Exact
+	return entry.Metric.Exact()
 }
 
 /*

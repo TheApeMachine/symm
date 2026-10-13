@@ -74,14 +74,14 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 				priceMetric := data.Pull(reconstructed.Read("price"))
 				So(priceMetric.Err, ShouldBeNil)
 				So(priceMetric.Metric, ShouldNotBeNil)
-				So(priceMetric.Metric.Exact, ShouldNotBeNil)
-				So(priceMetric.Metric.Exact.String(), ShouldEqual, "65432.10")
-				So(priceMetric.Metric.Raw, ShouldEqual, 65432.10)
+				So(priceMetric.Metric.Exact(), ShouldNotBeNil)
+				So(priceMetric.Metric.Exact().String(), ShouldEqual, "65432.10")
+				So(priceMetric.Metric.Raw(), ShouldEqual, 65432.10)
 
 				volumeMetric := data.Pull(reconstructed.Read("volume"))
 				So(volumeMetric.Err, ShouldBeNil)
 				So(volumeMetric.Metric, ShouldNotBeNil)
-				So(volumeMetric.Metric.Raw, ShouldEqual, 1.5)
+				So(volumeMetric.Metric.Raw(), ShouldEqual, 1.5)
 			})
 		})
 

@@ -160,7 +160,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	price := priceEntry.Metric.Raw
+	price := priceEntry.Metric.Raw()
 	if price <= 0 {
 		signal.mu.Lock()
 		defer signal.mu.Unlock()
@@ -214,9 +214,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 
 		if res == nil {
-			res = mem.lastMeasurement.Next(prior, output)
+			res = mem.lastMeasurement.Next(output)
 		}
 
+		res.At = prior.At
 		mem.lastMeasurement = res
 
 		if !from.IsZero() {

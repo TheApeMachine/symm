@@ -56,21 +56,17 @@ func measurementToWire(
 		}
 
 		wireMetric := data.New[wire.MetricT](alloc)
-		name := entry.Metric.Label
+		name := entry.Metric.Label()
 
 		if name == "" {
 			name = entry.Key
 		}
 
 		wireMetric.Name = name
-		wireMetric.Raw = entry.Metric.Raw
-		if entry.Metric.Normalized != 0 {
-			wireMetric.Normalized = entry.Metric.Normalized
-			wireMetric.HasNormalized = true
-		}
+		wireMetric.Raw = entry.Metric.Raw()
 
-		if entry.Metric.Normalized == 0 && entry.Metric.Standardized != 0 {
-			wireMetric.Normalized = entry.Metric.Standardized
+		if entry.Metric.SNM() != 0 {
+			wireMetric.Normalized = entry.Metric.SNM()
 			wireMetric.HasNormalized = true
 		}
 
@@ -88,13 +84,13 @@ func measurementToWire(
 	}
 
 	for entry := range measurement.Read() {
-		if entry.Err != nil || entry.Metric.Exact == nil {
+		if entry.Err != nil || entry.Metric.Exact() == nil {
 			continue
 		}
 
 		namedString := data.New[wire.NamedStringT](alloc)
 		namedString.Name = "symm:exact:" + entry.Key
-		namedString.Value = entry.Metric.Exact.String()
+		namedString.Value = entry.Metric.Exact().String()
 		provenance = data.AppendA(provenance, namedString, alloc)
 	}
 

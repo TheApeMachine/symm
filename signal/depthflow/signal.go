@@ -287,9 +287,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if res == nil {
-		res = state.lastMeasurement.Next(prior, out)
+		res = state.lastMeasurement.Next(out)
 	}
 
+	res.At = prior.At
 	state.lastMeasurement = res
 
 	if hadPrev {

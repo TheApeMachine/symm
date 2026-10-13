@@ -133,7 +133,7 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 		var next *data.Measurement
 
 		if prev, ok := training.last[prior.Label]; ok {
-			next = prev.Next(prior, metrics)
+			next = data.NewFromPrior(prev, training.Name(), metrics)
 		}
 
 		if next == nil {
@@ -204,7 +204,7 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 
 		dir, file := path.Split(key)
 
-		if file != actionEnter && file != actionExit {
+		if file != actionEnter && file != actionExit && file != actionNoop {
 			continue
 		}
 
@@ -227,6 +227,10 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 
 		if action == "exit" {
 			file = actionExit
+		}
+
+		if action == "noop" {
+			file = actionNoop
 		}
 
 		if file == "" {

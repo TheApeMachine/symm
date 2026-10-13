@@ -51,19 +51,20 @@ func checkFeeProvenance(detections []*data.Measurement, declared float64) FeePro
 			continue
 		}
 
-		b, c := data.Pull(det.Read("b_price")).Metric.Raw, data.Pull(det.Read("c_price")).Metric.Raw
+		bPrice := data.Pull(det.Read("b_price")).Metric.Raw()
+		cPrice := data.Pull(det.Read("c_price")).Metric.Raw()
 
-		if b <= 0 || c <= 0 {
+		if bPrice <= 0 || cPrice <= 0 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[audit.provenance] detection has non-positive b_price or c_price",
 				nil,
-			), "b_price", b, "c_price", c, "label", det.Label)
+			), "b_price", bPrice, "c_price", cPrice, "label", det.Label)
 
 			continue
 		}
 
-		low, high := math.Min(b, c), math.Max(b, c)
+		low, high := math.Min(bPrice, cPrice), math.Max(bPrice, cPrice)
 
 		switch det.Meta("type") {
 		case "up", "down":

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"sort"
+	"time"
 
 	"github.com/apache/iceberg-go"
 	icetable "github.com/apache/iceberg-go/table"
@@ -66,7 +67,26 @@ func (catalog *Catalog) scan(
 			options = append(options, icetable.WithSelectedFields(fields...))
 		}
 
-		tasks, err := tbl.Scan(options...).PlanFiles(ctx)
+		var tasks []icetable.FileScanTask
+
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-ctx.Done():
+					yield(nil, errnie.Error(ctx.Err()))
+					return
+				case <-time.After(time.Duration(attempt) * 100 * time.Millisecond):
+				}
+
+				tbl, _ = catalog.Load(ctx, tableName)
+			}
+
+			tasks, err = tbl.Scan(options...).PlanFiles(ctx)
+
+			if err == nil {
+				break
+			}
+		}
 
 		if err != nil {
 			yield(nil, errnie.Error(errnie.Err(
@@ -78,7 +98,7 @@ func (catalog *Catalog) scan(
 			return
 		}
 
-		chunkSize := 250
+		chunkSize := 64
 		var count int
 
 		for taskIndex := 0; taskIndex < len(tasks); taskIndex += chunkSize {

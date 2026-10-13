@@ -40,7 +40,7 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 			metrics := make([]float64, 0)
 
 			for metricEntry := range result.Read() {
-				metrics = append(metrics, metricEntry.Metric.Raw)
+				metrics = append(metrics, metricEntry.Metric.Raw())
 			}
 
 			// Single-asset initial tick produces last_price and observation_count;
@@ -71,7 +71,7 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 			secondMetrics := make([]float64, 0)
 
 			for metricEntry := range secondResult.Read() {
-				secondMetrics = append(secondMetrics, metricEntry.Metric.Raw)
+				secondMetrics = append(secondMetrics, metricEntry.Metric.Raw())
 			}
 
 			So(len(secondMetrics), ShouldEqual, 2)
@@ -96,9 +96,9 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 			So(repeatBtcResult, ShouldNotBeNil)
 			So(repeatBtcResult.Error(), ShouldBeNil)
 
-			obsCount := data.Pull(repeatBtcResult.Read("observation_count")).Metric.Raw
+			obsCount := data.Pull(repeatBtcResult.Read("observation_count")).Metric.Raw()
 			So(obsCount, ShouldEqual, 2)
-			lastPrice := data.Pull(repeatBtcResult.Read("last_price")).Metric.Raw
+			lastPrice := data.Pull(repeatBtcResult.Read("last_price")).Metric.Raw()
 			So(lastPrice, ShouldEqual, 50000)
 		})
 
@@ -166,7 +166,7 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 			movingKeys := make(map[string]bool)
 
 			for metricEntry := range movingBtcResult.Read() {
-				movingMetrics = append(movingMetrics, metricEntry.Metric.Raw)
+				movingMetrics = append(movingMetrics, metricEntry.Metric.Raw())
 				movingKeys[metricEntry.Key] = true
 			}
 
@@ -188,13 +188,13 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 				So(movingKeys[gone], ShouldBeFalse)
 			}
 
-			covariance := data.Pull(movingBtcResult.Read("covariance")).Metric.Raw
-			standardError := data.Pull(movingBtcResult.Read("covariance_standard_error")).Metric.Raw
-			score := data.Pull(movingBtcResult.Read("covariance_score")).Metric.Raw
+			covariance := data.Pull(movingBtcResult.Read("covariance")).Metric.Raw()
+			standardError := data.Pull(movingBtcResult.Read("covariance_standard_error")).Metric.Raw()
+			score := data.Pull(movingBtcResult.Read("covariance_score")).Metric.Raw()
 			So(standardError, ShouldBeGreaterThan, 0)
 			So(score, ShouldAlmostEqual, covariance/standardError, 1e-12)
-			So(data.Pull(movingBtcResult.Read("absolute_covariance_score")).Metric.Raw, ShouldAlmostEqual, math.Abs(score), 1e-12)
-			pValue := data.Pull(movingBtcResult.Read("covariance_p_value")).Metric.Raw
+			So(data.Pull(movingBtcResult.Read("absolute_covariance_score")).Metric.Raw(), ShouldAlmostEqual, math.Abs(score), 1e-12)
+			pValue := data.Pull(movingBtcResult.Read("covariance_p_value")).Metric.Raw()
 			So(pValue, ShouldBeBetweenOrEqual, 0.0, 1.0)
 			So(movingBtcResult.Meta(data.MetadataReferencePeer), ShouldEqual, "ETH/USD")
 			// Too little history for a dispersion: no z-score, so no path
@@ -258,7 +258,7 @@ func TestCorrelationReferencePeerHasMostOverlap(t *testing.T) {
 		So(last, ShouldNotBeNil)
 		So(last.Error(), ShouldBeNil)
 		So(last.Meta(data.MetadataReferencePeer), ShouldEqual, "AAA/USD")
-		So(data.Pull(last.Read("cohort_peer_count")).Metric.Raw, ShouldEqual, 2)
-		So(data.Pull(last.Read("overlap_pair_count")).Metric.Raw, ShouldBeGreaterThan, 2)
+		So(data.Pull(last.Read("cohort_peer_count")).Metric.Raw(), ShouldEqual, 2)
+		So(data.Pull(last.Read("overlap_pair_count")).Metric.Raw(), ShouldBeGreaterThan, 2)
 	})
 }

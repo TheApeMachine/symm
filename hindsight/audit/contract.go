@@ -66,8 +66,8 @@ func AnalyzeContract(
 			}
 
 			metric := entry.Metric
-			name := metric.CleanLabel()
-			val := metric.Raw
+			name := metric.Label()
+			val := metric.Raw()
 			unit := metric.Unit()
 
 			if unit == "" || unit == data.UnitDimensionless {
@@ -237,8 +237,7 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 
 			totalAudited++
 			metric := entry.Metric
-			std := metric.Standardized
-			norm := metric.Normalized
+			snm := metric.SNM()
 
 			streamKey := meas.Source + "|" + meas.Label + "|" + entry.Key
 			streamCounts[streamKey]++
@@ -246,91 +245,32 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 
 			if streamCount > int(core.MinimumRankPrior) {
 				matureAudited++
-
-				if !metric.Standardizable() || metric.Support() < core.MinimumRankPrior {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"[audit.metric_norm] mature metric stream is unstandardizable or missing required rank support",
-						nil,
-					), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "streamCount", streamCount, "support", metric.Support())
-
-					stdBreaches++
-					unstandardizedMatureBreaches++
-				}
 			}
 
-			if math.IsNaN(std) || math.IsInf(std, 0) {
+			if math.IsNaN(snm) || math.IsInf(snm, 0) || snm < -1.0 || snm > 1.0 {
 				errnie.Error(errnie.Err(
 					errnie.Validation,
-					"[audit.metric_norm] standardized z-score is NaN or Inf",
+					"[audit.metric_norm] SNM value out of bounds [-1, 1] or NaN/Inf",
 					nil,
-				), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "z", std)
+				), "source", meas.Source, "label", meas.Label, "metric", metric.Label(), "snm", snm)
 
+				normBreaches++
 				stdBreaches++
 				continue
 			}
 
-			absZ := math.Abs(std)
-			if absZ > maxAbsZ {
-				maxAbsZ = absZ
+			absSNM := math.Abs(snm)
+
+			if absSNM > maxAbsZ {
+				maxAbsZ = absSNM
 			}
 
-			if !metric.Standardizable() {
-				// Invariant: unstandardizable metric must have zero z-score and zero normalized value.
-				if std != 0 || norm != 0 {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"[audit.metric_norm] unstandardizable metric has non-zero standardized/normalized value",
-						nil,
-					), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "z", std, "norm", norm)
+			maxAbsZBySource[meas.Source] = math.Max(maxAbsZBySource[meas.Source], absSNM)
 
-					stdBreaches++
-				}
-			}
+			sumZ += snm
+			sumZSq += snm * snm
 
-			if metric.Standardizable() {
-				maxAbsZBySource[meas.Source] = math.Max(maxAbsZBySource[meas.Source], absZ)
-
-				support := metric.Support()
-				bound := rankBound(support)
-				if absZ > bound+1e-9 {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"[audit.metric_norm] standardized z-score exceeded rank bound",
-						nil,
-					), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "z", std, "bound", bound, "support", support)
-
-					zBreaches++
-					zBreachesBySource[meas.Source]++
-				}
-			}
-
-			sumZ += std
-			sumZSq += std * std
-
-			if math.IsNaN(norm) || math.IsInf(norm, 0) || norm < -1.0 || norm > 1.0 {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"[audit.metric_norm] normalized value out of bounds [-1, 1] or NaN/Inf",
-					nil,
-				), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "norm", norm)
-
-				normBreaches++
-				continue
-			}
-
-			expectedNorm := math.Tanh(std)
-			if math.Abs(norm-expectedNorm) > 1e-4 {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"[audit.metric_norm] normalized activation mismatch (|norm - tanh(std)| > 1e-4)",
-					nil,
-				), "source", meas.Source, "label", meas.Label, "metric", metric.Label, "norm", norm, "expected", expectedNorm)
-
-				normBreaches++
-			}
-
-			if math.Abs(norm) >= 0.99 {
+			if absSNM >= 0.99 {
 				saturatedCount++
 			}
 		}
@@ -456,22 +396,22 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			), "epoch", meas.Epoch, "label", meas.Label, "source", meas.Source)
 		}
 
-		c := meas.Coherence()
-		m := meas.Maturity()
-		conf := meas.Confidence()
+		coherence := meas.Coherence()
+		maturity := meas.Maturity()
+		confidence := meas.Confidence()
 
-		if math.IsNaN(c) || math.IsInf(c, 0) || c < -1e-9 || c > 1.0+1e-9 {
+		if math.IsNaN(coherence) || math.IsInf(coherence, 0) || coherence < -1e-9 || coherence > 1.0+1e-9 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[audit.measurement_state] coherence out of bounds [0, 1]",
 				nil,
-			), "coherence", c, "label", meas.Label, "source", meas.Source)
+			), "coherence", coherence, "label", meas.Label, "source", meas.Source)
 
 			coherenceBreaches++
 		}
 
-		if !math.IsNaN(c) && !math.IsInf(c, 0) && c >= -1e-9 && c <= 1.0+1e-9 {
-			coherences = append(coherences, c)
+		if !math.IsNaN(coherence) && !math.IsInf(coherence, 0) && coherence >= -1e-9 && coherence <= 1.0+1e-9 {
+			coherences = append(coherences, coherence)
 		}
 
 		var sumAbs float64
@@ -481,7 +421,7 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 		for entry := range meas.Read() {
 			if entry != nil && entry.Metric != nil {
 				metricCount++
-				stdVal := entry.Metric.Standardized
+				stdVal := entry.Metric.SNM()
 				sumAbs += math.Abs(stdVal)
 				sumSq += stdVal * stdVal
 			}
@@ -492,12 +432,12 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			expectedCoherence = (sumAbs * sumAbs) / (float64(metricCount) * sumSq)
 		}
 
-		if math.Abs(c-expectedCoherence) > 1e-5 {
+		if math.Abs(coherence-expectedCoherence) > 1e-5 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[audit.measurement_state] coherence recomputation mismatch",
 				nil,
-			), "storedCoherence", c, "recomputedCoherence", expectedCoherence, "label", meas.Label, "source", meas.Source)
+			), "storedCoherence", coherence, "recomputedCoherence", expectedCoherence, "label", meas.Label, "source", meas.Source)
 
 			coherenceRecomputeBreaches++
 		}
@@ -523,51 +463,51 @@ func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAud
 			energyBreaches++
 		}
 
-		if math.IsNaN(m) || math.IsInf(m, 0) || m < -1e-9 || m > 1.0+1e-9 {
+		if math.IsNaN(maturity) || math.IsInf(maturity, 0) || maturity < -1e-9 || maturity > 1.0+1e-9 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[audit.measurement_state] maturity out of bounds [0, 1]",
 				nil,
-			), "maturity", m, "label", meas.Label, "source", meas.Source)
+			), "maturity", maturity, "label", meas.Label, "source", meas.Source)
 
 			maturityBreaches++
 		}
 
-		if !math.IsNaN(m) && !math.IsInf(m, 0) && m >= -1e-9 && m <= 1.0+1e-9 {
-			maturities = append(maturities, m)
+		if !math.IsNaN(maturity) && !math.IsInf(maturity, 0) && maturity >= -1e-9 && maturity <= 1.0+1e-9 {
+			maturities = append(maturities, maturity)
 		}
 
-		if math.IsNaN(conf) || math.IsInf(conf, 0) || conf < -1e-9 || conf > 1.0+1e-9 {
+		if math.IsNaN(confidence) || math.IsInf(confidence, 0) || confidence < -1e-9 || confidence > 1.0+1e-9 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[audit.measurement_state] confidence out of bounds [0, 1]",
 				nil,
-			), "confidence", conf, "label", meas.Label, "source", meas.Source)
+			), "confidence", confidence, "label", meas.Label, "source", meas.Source)
 
 			confidenceBreaches++
 		}
 
-		if !math.IsNaN(conf) && !math.IsInf(conf, 0) && conf >= -1e-9 && conf <= 1.0+1e-9 {
-			confidences = append(confidences, conf)
+		if !math.IsNaN(confidence) && !math.IsInf(confidence, 0) && confidence >= -1e-9 && confidence <= 1.0+1e-9 {
+			confidences = append(confidences, confidence)
 		}
 
-		expectedConf := m * c
+		expectedConf := maturity * coherence
 
-		if math.Abs(conf-expectedConf) > 1e-5 {
+		if math.Abs(confidence-expectedConf) > 1e-5 {
 			errnie.Error(errnie.Err(
 				errnie.Validation,
 				"[audit.measurement_state] confidence identity mismatch (|conf - m*c| > 1e-5)",
 				nil,
-			), "confidence", conf, "expected", expectedConf, "label", meas.Label, "source", meas.Source)
+			), "confidence", confidence, "expected", expectedConf, "label", meas.Label, "source", meas.Source)
 
 			identityBreaches++
 		}
 
-		if conf < 0.2 {
+		if confidence < 0.2 {
 			coldStartCount++
 		}
 
-		if conf >= 0.5 {
+		if confidence >= 0.5 {
 			settledCount++
 		}
 	}

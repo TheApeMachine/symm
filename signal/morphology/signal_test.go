@@ -24,7 +24,7 @@ func metric(measurement *data.Measurement, label string) (float64, bool) {
 		if entry.Err != nil || entry.Metric == nil {
 			return 0, false
 		}
-		return entry.Metric.Raw, true
+		return entry.Metric.Raw(), true
 	}
 	return 0, false
 }

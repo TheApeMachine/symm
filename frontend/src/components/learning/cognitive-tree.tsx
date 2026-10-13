@@ -18,7 +18,18 @@ export const tokensOf = (measurement?: MeasurementT): string[] => {
 		tokens[idx] ??= [];
 		tokens[idx][part] = `R${String(region).padStart(2, "0")}`;
 	}
-	return tokens.filter(Boolean).map((parts) => parts.filter(Boolean).join("-"));
+	const fromMetrics = tokens.filter(Boolean).map((parts) => parts.filter(Boolean).join("-"));
+	if (fromMetrics.length > 0) return fromMetrics;
+
+	// Fallback to provenance metadata token_path if present
+	if (measurement?.provenance) {
+		for (const p of measurement.provenance) {
+			if (p?.name === "token_path" && p.value) {
+				return String(p.value).split("/").filter(Boolean);
+			}
+		}
+	}
+	return [];
 };
 
 /* keysHash is FNV-1a 32 over the keys joined by newlines, as strategy.keysHash. */
@@ -31,31 +42,51 @@ export const keysHash = (keys: string[]): number => {
 	return hash >>> 0;
 };
 
-/* heldProgress: the token path of every symbol the desk holds, as last sent. */
-const heldProgress = (state: Record<string, { toArray(): MeasurementT[] }>) => {
+/*
+symbolProgress: the token path of every symbol that currently has a built up sequence
+of region ids, as last sent.
+*/
+export const symbolProgress = (state: Record<string, { toArray(): MeasurementT[] }>) => {
 	const out: Record<string, SymbolProgress> = {};
 	for (const [symbol, ring] of Object.entries(state)) {
 		const all = ring?.toArray() ?? [];
+		if (all.length === 0) continue;
 		const last = all[all.length - 1];
-		if (metricOf(last, "position_open") !== 1) continue;
-		const withTokens = [...all].reverse().find((m) => metricOf(m, "token_depth") !== undefined);
+
+		// If the latest measurement explicitly indicates depth 0, no sequence is built up.
+		const latestDepth = metricOf(last, "token_depth");
+		if (latestDepth !== undefined && latestDepth <= 0) continue;
+
+		const withTokens =
+			[...all].reverse().find((m) => {
+				const depth = metricOf(m, "token_depth");
+				return depth !== undefined && depth > 0;
+			}) ?? last;
+
 		const tokens = tokensOf(withTokens);
 		if (tokens.length === 0) continue;
 		const indices = [...metricsWithPrefix(withTokens, "match_key:").values()];
 		const hash = metricOf(withTokens, "stored_paths_hash");
-		out[symbol] = { symbol, path: tokens.join("/"), depth: tokens.length, tokens, indices, hash } as SymbolProgress & { indices: number[]; hash?: number };
+		out[symbol] = {
+			symbol,
+			path: tokens.join("/"),
+			depth: tokens.length,
+			tokens,
+			indices,
+			hash,
+		} as SymbolProgress & { indices: number[]; hash?: number };
 	}
 	return JSON.stringify(out);
 };
 
 /*
 CognitiveTree draws the stored token paths the /cognition/tree endpoint
-reports, with the held symbols' live token paths overlaid.
+reports, with active symbols' live token paths overlaid.
 */
 export const CognitiveTree = () => {
 	const [tree, setTree] = useState<CognitionTreeResponse | null>(null);
 	const [failed, setFailed] = useState(false);
-	const symbols = JSON.parse(useSelector(signals.training, heldProgress)) as Record<string, SymbolProgress>;
+	const symbols = JSON.parse(useSelector(signals.training, symbolProgress)) as Record<string, SymbolProgress>;
 
 	useEffect(() => {
 		let alive = true;
@@ -100,7 +131,7 @@ export const CognitiveTree = () => {
 		// Indices only mean something against the key list Step matched on.
 		const matched =
 			hash === treeHash
-				? indices.map((idx) => keys[idx]).filter(Boolean).map((key) => key.slice(0, key.lastIndexOf("/")))
+				? indices.map((idx) => keys[idx]).filter(Boolean)
 				: undefined;
 		resolved[symbol] = { ...progress, matched };
 	}

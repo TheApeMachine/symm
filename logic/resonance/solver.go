@@ -361,15 +361,15 @@ func extractHeadlineMetric(index int, measurement *data.Measurement) (float64, b
 
 	for _, label := range candidates {
 		if metric, found := lookupMetric(measurement, label); found {
-			if metric.Standardized != 0 || metric.Raw != 0 {
-				return metric.Raw, true
+			if metric.SNM() != 0 || metric.Raw() != 0 {
+				return metric.Raw(), true
 			}
 		}
 	}
 
 	for _, label := range candidates {
 		if metric, found := lookupMetric(measurement, label); found {
-			return metric.Raw, true
+			return metric.Raw(), true
 		}
 	}
 
@@ -397,7 +397,7 @@ func lookupMetric(measurement *data.Measurement, label string) (*data.Metric, bo
 		if entry.Err != nil {
 			continue
 		}
-		if entry.Metric.Label == label || strings.HasPrefix(entry.Metric.Label, prefix) {
+		if entry.Metric.Label() == label || strings.HasPrefix(entry.Metric.Label(), prefix) {
 			return entry.Metric, true
 		}
 	}
@@ -407,8 +407,8 @@ func lookupMetric(measurement *data.Measurement, label string) (*data.Metric, bo
 
 func firstPositive(measurement *data.Measurement, labels ...string) float64 {
 	for _, label := range labels {
-		if metric, found := lookupMetric(measurement, label); found && metric.Raw > 0 {
-			return metric.Raw
+		if metric, found := lookupMetric(measurement, label); found && metric.Raw() > 0 {
+			return metric.Raw()
 		}
 	}
 	return 0

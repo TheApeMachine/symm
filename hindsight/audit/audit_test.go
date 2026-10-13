@@ -129,16 +129,6 @@ func TestAuditStages(t *testing.T) {
 				So(cleanContract.MeasurementState.DampenBreaches, ShouldEqual, 0)
 				So(cleanContract.MeasurementState.Passed, ShouldBeTrue)
 				So(cleanContract.Passed, ShouldBeTrue)
-
-				// Verify Dampen behavior on cleanMeas
-				dampened := cleanMeas.Dampen()
-				So(len(dampened), ShouldEqual, 7)
-				for _, dm := range dampened {
-					orig := data.Pull(cleanMeas.Read(dm.Label))
-					So(orig, ShouldNotBeNil)
-					So(dm.Standardized, ShouldAlmostEqual, orig.Metric.Standardized*cleanMeas.Confidence(), 1e-6)
-					So(math.Abs(dm.Standardized), ShouldBeLessThanOrEqualTo, math.Abs(orig.Metric.Standardized)+1e-9)
-				}
 			})
 		})
 

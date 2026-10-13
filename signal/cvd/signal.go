@@ -190,8 +190,8 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	price := priceEntry.Metric.Raw
-	qty := qtyEntry.Metric.Raw
+	price := priceEntry.Metric.Raw()
+	qty := qtyEntry.Metric.Raw()
 
 	if price <= 0 || qty <= 0 {
 		if state.lastMeasurement != nil {
@@ -347,9 +347,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if res == nil {
-		res = state.lastMeasurement.Next(prior, out)
+		res = state.lastMeasurement.Next(out)
 	}
 
+	res.At = prior.At
 	state.lastMeasurement = res
 
 	if tick.Closed {

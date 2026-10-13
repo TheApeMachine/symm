@@ -320,9 +320,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 
 		if res == nil {
-			res = state.lastMeasurement.Next(prior, out)
+			res = state.lastMeasurement.Next(out)
 		}
 
+		res.At = prior.At
 		state.lastMeasurement = res
 
 		if !from.IsZero() {
@@ -538,11 +539,11 @@ func tradeValue(prior *data.Measurement, key string) (float64, error) {
 		return 0, entry.Err
 	}
 
-	if entry == nil || entry.Metric == nil || entry.Metric.Label != key {
+	if entry == nil || entry.Metric == nil || entry.Metric.Label() != key {
 		return 0, errnie.Err(
 			errnie.NotAcceptable, "[toxicity] trade frame is missing "+key, nil,
 		)
 	}
 
-	return entry.Metric.Raw, nil
+	return entry.Metric.Raw(), nil
 }

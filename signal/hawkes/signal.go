@@ -108,13 +108,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	var out *data.Measurement
 	if prev, ok := signal.last[prior.Label]; ok {
-		out = prev.Next(prior, res)
+		out = prev.Next(res)
 	}
 
 	if out == nil {
 		out = data.NewFromPrior(prior, signal.Name(), res)
 	}
 
+	out.At = prior.At
 	out.SetMeta("side", side)
 	out.From = from
 	signal.last[prior.Label] = out

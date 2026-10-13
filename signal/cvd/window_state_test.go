@@ -75,7 +75,7 @@ func TestSignalStepVolumeBarWindows(t *testing.T) {
 				return 0, false
 			}
 
-			return entry.Metric.Raw, true
+			return entry.Metric.Raw(), true
 		}
 
 		Convey("No frame before a bar closes carries flow totals", func() {

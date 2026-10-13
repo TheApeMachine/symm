@@ -106,7 +106,7 @@ function buildTreeFromPrefixes(prefixes: string[]): TrieNodeData | null {
 		}
 
 		if (action) {
-			if (!current.action || current.action === "NOOP") {
+			if (!current.action) {
 				current.action = action;
 			}
 		}
@@ -134,6 +134,51 @@ function extractPrefixes(data?: TrieNodeData | null): string[] {
 	return paths;
 }
 
+/*
+keyMatchesPrefix checks if a trie key (e.g. "R01-R02/R03-R04/R05-R06/enter.json")
+matches or extends the token prefix sequence of a symbol (e.g. ["R01-R02", "R03-R04"]).
+*/
+export function keyMatchesPrefix(key: string, tokens: string[]): boolean {
+	if (!tokens || tokens.length === 0) return false;
+	const parts = key.split("/").filter(Boolean);
+	const isAction = parts[parts.length - 1]?.endsWith(".json");
+	const keyTokens = isAction ? parts.slice(0, -1) : parts;
+	if (keyTokens.length < tokens.length) {
+		return false;
+	}
+
+	for (let i = 0; i < tokens.length; i++) {
+		if (keyTokens[i] !== tokens[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/*
+keyMatchesSymbol checks if a trie key matches a symbol either through its
+active tokens prefix or through its matched keys list from Step telemetry.
+*/
+export function keyMatchesSymbol(key: string, symbol: SymbolProgress): boolean {
+	if (!symbol.tokens || symbol.tokens.length === 0) return false;
+
+	if (symbol.matched && symbol.matched.length > 0) {
+		const keyClean = key.replace(/\.json$/i, "");
+		for (const m of symbol.matched) {
+			const mClean = m.replace(/\.json$/i, "");
+			if (
+				keyClean === mClean ||
+				keyClean.startsWith(`${mClean}/`) ||
+				mClean.startsWith(`${keyClean}/`)
+			) {
+				return true;
+			}
+		}
+	}
+
+	return keyMatchesPrefix(key, symbol.tokens);
+}
+
 export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	data,
 	keys,
@@ -156,6 +201,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	const projection = externalProjection ?? internalProjection;
 	const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+	const [showAllBranches, setShowAllBranches] = useState(false);
+	type BranchFilter = "matching" | "noop" | "enter" | "exit" | "all";
+	const [branchFilter, setBranchFilter] = useState<BranchFilter>("matching");
 
 	const activeSymbolList = useMemo(() => {
 		if (!symbols) return [];
@@ -164,14 +212,55 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		);
 	}, [symbols]);
 
-	// Set of all prefix paths traversed by active symbols
-	const activePathPrefixes = useMemo(() => {
-		const set = new Set<string>();
-		const list = selectedSymbol
-			? activeSymbolList.filter((s) => s.symbol === selectedSymbol)
-			: activeSymbolList;
+	const targetSymbols = useMemo(() => {
+		if (selectedSymbol) {
+			return activeSymbolList.filter((s) => s.symbol === selectedSymbol);
+		}
+		return activeSymbolList;
+	}, [activeSymbolList, selectedSymbol]);
 
-		for (const item of list) {
+	const allKeys = useMemo(() => {
+		if (keys && keys.length > 0) return keys;
+		if (data) {
+			const extracted = extractPrefixes(data);
+			if (extracted.length > 0) return extracted;
+		}
+		return [];
+	}, [keys, data]);
+
+	const actionCounts = useMemo(() => {
+		let enter = 0;
+		let exit = 0;
+		let noop = 0;
+		for (const key of allKeys) {
+			if (key.endsWith("/enter.json")) enter++;
+			else if (key.endsWith("/exit.json")) exit++;
+			else if (key.endsWith("/noop.json")) noop++;
+		}
+		return { enter, exit, noop, total: allKeys.length };
+	}, [allKeys]);
+
+	const matchingKeys = useMemo(() => {
+		if (allKeys.length === 0 || targetSymbols.length === 0) return [];
+		return allKeys.filter((key) =>
+			targetSymbols.some((s) => keyMatchesSymbol(key, s)),
+		);
+	}, [allKeys, targetSymbols]);
+
+	const filteredKeys = useMemo(() => {
+		if (allKeys.length === 0) return [];
+		if (branchFilter === "all" || showAllBranches) return allKeys;
+		if (branchFilter === "noop") return allKeys.filter((k) => k.endsWith("/noop.json"));
+		if (branchFilter === "enter") return allKeys.filter((k) => k.endsWith("/enter.json"));
+		if (branchFilter === "exit") return allKeys.filter((k) => k.endsWith("/exit.json"));
+		return matchingKeys;
+	}, [allKeys, branchFilter, showAllBranches, matchingKeys]);
+
+	// Set of prefix paths ACTUALLY reached by at least one active symbol
+	const traversedPrefixes = useMemo(() => {
+		const set = new Set<string>();
+		for (const item of targetSymbols) {
+			if (!item.tokens) continue;
 			let prefix = "";
 			for (const tok of item.tokens) {
 				prefix = prefix ? `${prefix}/${tok}` : tok;
@@ -179,36 +268,53 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			}
 		}
 		return set;
-	}, [activeSymbolList, selectedSymbol]);
+	}, [targetSymbols]);
+
+	// Set of all prefix paths present in current displayed tree
+	const treePrefixes = useMemo(() => {
+		const set = new Set<string>();
+		for (const key of filteredKeys) {
+			const parts = key.split("/").filter(Boolean);
+			const isAction = parts[parts.length - 1]?.endsWith(".json");
+			const regionTokens = isAction ? parts.slice(0, -1) : parts;
+			let prefix = "";
+			for (const tok of regionTokens) {
+				prefix = prefix ? `${prefix}/${tok}` : tok;
+				set.add(prefix);
+			}
+		}
+		return set;
+	}, [filteredKeys]);
 
 	// Map of exact prefix to symbols currently located at that node
 	const symbolPositions = useMemo(() => {
 		const map = new Map<string, SymbolProgress[]>();
-		const list = selectedSymbol
-			? activeSymbolList.filter((s) => s.symbol === selectedSymbol)
-			: activeSymbolList;
-
-		for (const item of list) {
-			const existing = map.get(item.path) || [];
+		for (const item of targetSymbols) {
+			let bestPrefix = "";
+			let current = "";
+			for (const tok of item.tokens) {
+				current = current ? `${current}/${tok}` : tok;
+				if (treePrefixes.has(current)) {
+					bestPrefix = current;
+				}
+			}
+			const targetPrefix = bestPrefix || item.path;
+			const existing = map.get(targetPrefix) || [];
 			existing.push(item);
-			map.set(item.path, existing);
+			map.set(targetPrefix, existing);
 		}
 		return map;
-	}, [activeSymbolList, selectedSymbol]);
+	}, [targetSymbols, treePrefixes]);
 
 	const treeData = useMemo(() => {
-		if (keys && keys.length > 0) {
-			return buildTreeFromPrefixes(keys);
+		if (filteredKeys && filteredKeys.length > 0) {
+			return buildTreeFromPrefixes(filteredKeys);
 		}
-		if (data) {
-			const extracted = extractPrefixes(data);
-			if (extracted.length > 0) {
-				return buildTreeFromPrefixes(extracted);
-			}
-			return data;
+		if (showAllBranches && allKeys.length > 0) {
+			return buildTreeFromPrefixes(allKeys);
 		}
 		return null;
-	}, [data, keys]);
+	}, [filteredKeys, allKeys, showAllBranches]);
 
 	const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
 
@@ -236,29 +342,43 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		const svg = d3.select(svgRef.current);
 		const zoom = d3
 			.zoom<SVGSVGElement, unknown>()
+			.extent([
+				[0, 0],
+				[dimensions.width, dimensions.height],
+			])
 			.scaleExtent([0.1, 4])
-			.on("zoom", (e) => {
-				setTransform(e.transform);
+			.on("zoom", (zoomEvent) => {
+				setTransform(zoomEvent.transform);
 			});
 
 		zoomBehavior.current = zoom;
 		svg.call(zoom);
 
-		const initialTransform = d3.zoomIdentity
+		let initialTransform = d3.zoomIdentity
 			.translate(80, dimensions.height / 2)
 			.scale(0.85);
+		if (projection === "radial") {
+			initialTransform = d3.zoomIdentity
+				.translate(dimensions.width / 2, dimensions.height / 2)
+				.scale(0.8);
+		}
+		if (projection === "vertical") {
+			initialTransform = d3.zoomIdentity
+				.translate(dimensions.width / 2, 60)
+				.scale(0.85);
+		}
 		svg.call(zoom.transform, initialTransform);
-	}, [dimensions.width, dimensions.height]);
+	}, [dimensions.width, dimensions.height, projection]);
 
 	const handleNodeClick = (nodeData: TrieNodeData) => {
-		setCollapsedIds((prev) => {
-			const next = new Set(prev);
-			if (next.has(nodeData.id)) {
-				next.delete(nodeData.id);
-			} else {
-				next.add(nodeData.id);
+		setCollapsedIds((previousIds) => {
+			const nextIds = new Set(previousIds);
+			if (nextIds.has(nodeData.id)) {
+				nextIds.delete(nodeData.id);
+				return nextIds;
 			}
-			return next;
+			nextIds.add(nodeData.id);
+			return nextIds;
 		});
 	};
 
@@ -266,17 +386,18 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		if (!treeData) return { nodes: [], links: [] };
 
 		// Clone and apply collapsing
-		const prepareHierarchy = (n: TrieNodeData): TrieNodeData => {
-			const isCollapsed = collapsedIds.has(n.id);
-			const copy: TrieNodeData = { ...n };
-			if (n.children && n.children.length > 0) {
-				if (isCollapsed) {
-					copy._children = n.children;
-					copy.children = undefined;
-				} else {
-					copy.children = n.children.map(prepareHierarchy);
-				}
+		const prepareHierarchy = (nodeItem: TrieNodeData): TrieNodeData => {
+			const isCollapsed = collapsedIds.has(nodeItem.id);
+			const copy: TrieNodeData = { ...nodeItem };
+			if (!nodeItem.children || nodeItem.children.length === 0) {
+				return copy;
 			}
+			if (isCollapsed) {
+				copy._children = nodeItem.children;
+				copy.children = undefined;
+				return copy;
+			}
+			copy.children = nodeItem.children.map(prepareHierarchy);
 			return copy;
 		};
 
@@ -286,14 +407,16 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 
 		if (projection === "radial") {
 			let maxDepth = 0;
-			root.each((d) => {
-				if (d.depth > maxDepth) maxDepth = d.depth;
+			root.each((depthNode) => {
+				if (depthNode.depth > maxDepth) maxDepth = depthNode.depth;
 			});
 			const radius = Math.max(300, maxDepth * 160);
 			treeLayout.size([2 * Math.PI, radius]);
-		} else if (projection === "vertical") {
+		}
+		if (projection === "vertical") {
 			treeLayout.nodeSize([80, 110]);
-		} else {
+		}
+		if (projection === "horizontal") {
 			// Horizontal: x is vertical step, y is horizontal step
 			treeLayout.nodeSize([44, 140]);
 		}
@@ -409,22 +532,111 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			{/* Top Bar with Projection Controls and Active Symbol Depth Ticker */}
 			<div className="border-(--line) border-b flex flex-col bg-(--surface) shrink-0">
 				<div className="h-8 flex items-center justify-between px-3 text-xs">
-					<div className="flex gap-4 items-center">
+					<div className="flex gap-3 items-center">
 						<span className="text-(--acc) border-(--acc) border-b py-1 text-[11px] font-bold tracking-wider">
 							TRIE
 						</span>
 						<span className="text-(--f3) text-[11px]">
 							{nodes.length} nodes
 						</span>
-						{activeSymbolList.length > 0 && (
+						{activeSymbolList.length > 0 && !showAllBranches && (
 							<span className="text-[#38bdf8] text-[11px] font-medium flex items-center gap-1.5">
 								<span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8] animate-pulse" />
-								{activeSymbolList.length} symbols active in Step
+								{filteredKeys.length} matching{" "}
+								{filteredKeys.length === 1 ? "branch" : "branches"} (
+								{targetSymbols.length} active{" "}
+								{targetSymbols.length === 1 ? "symbol" : "symbols"})
+							</span>
+						)}
+						{showAllBranches && (
+							<span className="text-(--warn) text-[11px] font-medium flex items-center gap-1.5">
+								Showing all {allKeys.length} branches
 							</span>
 						)}
 					</div>
 
-					<div className="flex items-center gap-3">
+					<div className="flex items-center gap-2">
+						<div className="flex items-center gap-1 bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px] font-mono">
+							<button
+								type="button"
+								onClick={() => {
+									setBranchFilter("matching");
+									setShowAllBranches(false);
+								}}
+								className={cn(
+									"px-2 py-0.5 rounded transition-colors cursor-pointer",
+									branchFilter === "matching" && !showAllBranches
+										? "bg-(--raised) text-[#38bdf8] font-bold"
+										: "text-(--f3) hover:text-(--f1)",
+								)}
+							>
+								Matching ({matchingKeys.length})
+							</button>
+							{actionCounts.noop > 0 && (
+								<button
+									type="button"
+									onClick={() => {
+										setBranchFilter("noop");
+										setShowAllBranches(false);
+									}}
+									className={cn(
+										"px-2 py-0.5 rounded transition-colors cursor-pointer",
+										branchFilter === "noop"
+											? "bg-(--raised) text-(--warn) font-bold"
+											: "text-(--warn)/70 hover:text-(--warn)",
+									)}
+									title="Inspect NOOP friction branches"
+								>
+									NOOP ({actionCounts.noop})
+								</button>
+							)}
+							<button
+								type="button"
+								onClick={() => {
+									setBranchFilter("enter");
+									setShowAllBranches(false);
+								}}
+								className={cn(
+									"px-2 py-0.5 rounded transition-colors cursor-pointer",
+									branchFilter === "enter"
+										? "bg-(--raised) text-(--up) font-bold"
+										: "text-(--up)/70 hover:text-(--up)",
+								)}
+							>
+								ENTER ({actionCounts.enter})
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									setBranchFilter("exit");
+									setShowAllBranches(false);
+								}}
+								className={cn(
+									"px-2 py-0.5 rounded transition-colors cursor-pointer",
+									branchFilter === "exit"
+										? "bg-(--raised) text-(--down) font-bold"
+										: "text-(--down)/70 hover:text-(--down)",
+								)}
+							>
+								EXIT ({actionCounts.exit})
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									setBranchFilter("all");
+									setShowAllBranches(true);
+								}}
+								className={cn(
+									"px-2 py-0.5 rounded transition-colors cursor-pointer",
+									branchFilter === "all" || showAllBranches
+										? "bg-(--raised) text-(--acc) font-bold"
+										: "text-(--f3) hover:text-(--f1)",
+								)}
+							>
+								All ({allKeys.length})
+							</button>
+						</div>
+
 						<div className="flex items-center gap-1 bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px]">
 							{(["horizontal", "vertical", "radial"] as const).map((mode) => (
 								<button
@@ -516,8 +728,60 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 				/>
 
 				{!treeData && (
-					<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-xs tracking-wider">
-						Loading trie...
+					<div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-(--f3) p-4 text-center select-none pointer-events-auto">
+						<div className="w-12 h-12 rounded-full border border-(--line) flex items-center justify-center text-(--f4) mb-1">
+							<svg
+								width="22"
+								height="22"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="1.5"
+							>
+								<title>Empty Trie</title>
+								<circle cx="6" cy="6" r="3" />
+								<circle cx="6" cy="18" r="3" />
+								<circle cx="18" cy="9" r="3" />
+								<path d="M6 9v6" />
+								<path d="M6 9a9 9 0 0 1 9-3h3" />
+							</svg>
+						</div>
+						<span className="text-xs font-semibold text-(--f2)">
+							{targetSymbols.length > 0
+								? "No Stored Branches Match Current Live Prefixes"
+								: "No Active Symbol Sequences"}
+						</span>
+						<span className="text-[11px] text-(--f4) max-w-sm">
+							{targetSymbols.length > 0
+								? `None of the ${targetSymbols.length} active symbols match the 4-depth policy at their current prefix.`
+								: "No symbol currently has a built-up sequence of region IDs. Branches matching live token paths will appear as Step advances."}
+						</span>
+						{allKeys.length > 0 && (
+							<div className="flex items-center gap-2 mt-2">
+								<button
+									type="button"
+									onClick={() => {
+										setBranchFilter("all");
+										setShowAllBranches(true);
+									}}
+									className="px-3 py-1 text-xs rounded bg-(--surface) border border-(--line) text-(--acc) hover:bg-(--raised) cursor-pointer font-mono"
+								>
+									Show all {allKeys.length} stored branches
+								</button>
+								{actionCounts.noop > 0 && (
+									<button
+										type="button"
+										onClick={() => {
+											setBranchFilter("noop");
+											setShowAllBranches(false);
+										}}
+										className="px-3 py-1 text-xs rounded bg-(--surface) border border-(--warn)/40 text-(--warn) hover:bg-(--raised) cursor-pointer font-mono"
+									>
+										View {actionCounts.noop} NOOP friction branches
+									</button>
+								)}
+							</div>
+						)}
 					</div>
 				)}
 
@@ -537,7 +801,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 								const midX = (s.x + t.x) / 2;
 								const midY = (s.y + t.y) / 2;
 
-								const isSymbolLink = activePathPrefixes.has(
+								const isSymbolLink = traversedPrefixes.has(
 									link.target.data.prefix,
 								);
 								const isLinkActive = activePathIds
@@ -559,9 +823,10 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 										<path
 											d={d}
 											fill="none"
-											stroke={isSymbolLink ? "#38bdf8" : "var(--acc)"}
-											strokeWidth={isSymbolLink ? 2.5 : 2}
-											strokeOpacity={isSymbolLink ? 1 : 0.7}
+											stroke={isSymbolLink ? "#38bdf8" : "var(--line2)"}
+											strokeWidth={isSymbolLink ? 2.5 : 1.2}
+											strokeOpacity={isSymbolLink ? 1 : 0.6}
+											strokeDasharray={isSymbolLink ? undefined : "4 2"}
 											style={{
 												transition: "all 0.3s ease-in-out",
 												filter: isSymbolLink
@@ -584,18 +849,14 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 													height={14}
 													rx={2}
 													fill="var(--surface)"
-													stroke={
-														isSymbolLink ? "#38bdf8" : "var(--line2)"
-													}
+													stroke={isSymbolLink ? "#38bdf8" : "var(--line2)"}
 													strokeWidth={isSymbolLink ? 1.5 : 1}
 													opacity={0.95}
 												/>
 												<text
 													x={0}
 													y={3.5}
-													fill={
-														isSymbolLink ? "#38bdf8" : "var(--acc)"
-													}
+													fill={isSymbolLink ? "#38bdf8" : "var(--acc)"}
 													fontSize="9px"
 													textAnchor="middle"
 													fontWeight="600"
@@ -623,9 +884,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 								const pos = getNodePos(node);
 								const ports = getPorts(node, projection);
 								const symbolsAtNode = symbolPositions.get(nodeData.prefix);
-								const isSymbolOnPath = activePathPrefixes.has(
-									nodeData.prefix,
-								);
+								const isSymbolOnPath = traversedPrefixes.has(nodeData.prefix);
 
 								const isNodeActive = activePathIds
 									? activePathIds.has(nodeData.id)
@@ -701,16 +960,22 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 															? "rgba(115, 190, 104, 0.15)"
 															: action === "EXIT"
 																? "rgba(240, 84, 79, 0.15)"
-																: "rgba(232, 163, 61, 0.15)"
+																: action === "NOOP"
+																	? "rgba(232, 163, 61, 0.2)"
+																	: "rgba(148, 163, 184, 0.12)"
 													}
 													stroke={
 														action === "ENTER"
 															? "var(--up)"
 															: action === "EXIT"
 																? "var(--down)"
-																: "var(--warn)"
+																: action === "NOOP"
+																	? "var(--warn)"
+																	: "var(--f4)"
 													}
-													strokeWidth={1.5}
+													strokeWidth={symbolsAtNode && symbolsAtNode.length > 0 ? 2.5 : 1.2}
+													strokeDasharray={symbolsAtNode && symbolsAtNode.length > 0 ? undefined : "3 2"}
+													opacity={symbolsAtNode && symbolsAtNode.length > 0 ? 1 : 0.75}
 												/>
 												<text
 													x={0}
@@ -722,13 +987,15 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 															? "var(--up)"
 															: action === "EXIT"
 																? "var(--down)"
-																: "var(--warn)"
+																: action === "NOOP"
+																	? "var(--warn)"
+																	: "var(--f3)"
 													}
 													fontSize="11px"
 													fontWeight="700"
 													className="select-none pointer-events-none font-mono tracking-wider uppercase"
 												>
-													{action || "NOOP"}
+													{action}
 												</text>
 											</g>
 										) : (
@@ -747,9 +1014,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 															? "var(--acc)"
 															: "var(--line2)"
 												}
-												strokeWidth={
-													isSymbolOnPath || isCollapsed ? 2 : 1
-												}
+												strokeWidth={isSymbolOnPath || isCollapsed ? 2 : 1}
 												className="transition-colors hover:stroke-(--acc)"
 											/>
 										)}
@@ -772,16 +1037,8 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 												cx={ports.childPort.cx}
 												cy={ports.childPort.cy}
 												r={isCollapsed ? 4 : 3}
-												fill={
-													isCollapsed
-														? "var(--acc)"
-														: "var(--surface)"
-												}
-												stroke={
-													isCollapsed
-														? "var(--acc)"
-														: "var(--f4)"
-												}
+												fill={isCollapsed ? "var(--acc)" : "var(--surface)"}
+												stroke={isCollapsed ? "var(--acc)" : "var(--f4)"}
 												strokeWidth={1.5}
 											/>
 										)}

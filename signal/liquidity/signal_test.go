@@ -31,7 +31,7 @@ func stepTouch(
 
 func metric(measurement *data.Measurement, label string) (float64, bool) {
 	for entry := range measurement.Read(label) {
-		return entry.Metric.Raw, true
+		return entry.Metric.Raw(), true
 	}
 
 	return 0, false
