@@ -48,14 +48,12 @@ sequence number, taken through broker.Book.Stamp. A book that is unseeded,
 stale, one-sided, or crossed leaves the trade unstamped, as ingress leaves it.
 */
 func Stamp(book *broker.Book, symbol, side string, at time.Time, price, qty float64) *data.Measurement {
-	sequence, snapshot := book.Stamp(symbol)
+	_, snapshot := book.Stamp(symbol)
 	measurement := data.NewMeasurement(
-		1, symbol, "spot:trade", sequence, sequence,
+		1, symbol, "spot:trade", at, at,
 		&data.StringEntry{Key: "type", Value: "trade"},
 		&data.StringEntry{Key: "side", Value: side},
 	)
-	measurement.At = at
-	measurement.From = at
 
 	priceUnit, priceTime := data.GetDimension("spot:trade", "price")
 	qtyUnit, qtyTime := data.GetDimension("spot:trade", "qty")
@@ -78,12 +76,10 @@ never produces it.
 */
 func Unreadable(symbol, side string, at time.Time, price, qty float64) *data.Measurement {
 	measurement := data.NewMeasurement(
-		1, symbol, "spot:trade", 0, 0,
+		1, symbol, "spot:trade", at, at,
 		&data.StringEntry{Key: "type", Value: "trade"},
 		&data.StringEntry{Key: "side", Value: side},
 	)
-	measurement.At = at
-	measurement.From = at
 
 	priceUnit, priceTime := data.GetDimension("spot:trade", "price")
 	qtyUnit, qtyTime := data.GetDimension("spot:trade", "qty")

@@ -261,21 +261,19 @@ func (jh *joinHandler) Handle(lower, upper int64) {
 			continue
 		}
 
+		from := ingress.From
+		if from.IsZero() {
+			from = ingress.At
+		}
+
 		join := data.NewMeasurement(
 			ingress.Epoch,
 			ingress.Label,
 			"runtime:join",
-			ingress.SeqIdx,
-			ingress.Tick,
+			ingress.At,
+			from,
 		)
 		join.Peers(peers...)
-
-		join.At = ingress.At
-		join.From = ingress.From
-
-		if join.From.IsZero() {
-			join.From = ingress.At
-		}
 
 		// The join carries no metrics of its own; Write finalizes it so the
 		// next stage can read Peers() under the WORM lock.

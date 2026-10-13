@@ -2,6 +2,7 @@ package types_test
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -10,12 +11,14 @@ import (
 
 func TestRouteFilters(t *testing.T) {
 	Convey("Given route filtering logic", t, func() {
+		now := time.Now().UTC()
+
 		Convey("Fluid route admits manifold measurements", func() {
 			types.SetRoute("fluid")
-			measurement := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
+			measurement := data.NewMeasurement(1, "BTC/USD", "manifold", now, now)
 			So(types.Filters(measurement), ShouldBeTrue)
 
-			hawkes := data.NewMeasurement(1, "BTC/USD", "hawkes", 1, 1)
+			hawkes := data.NewMeasurement(1, "BTC/USD", "hawkes", now, now)
 			So(types.Filters(hawkes), ShouldBeFalse)
 		})
 
@@ -23,26 +26,26 @@ func TestRouteFilters(t *testing.T) {
 			types.SetRoute("dashboard")
 			types.SetFocus("BTC/USD")
 
-			hawkes := data.NewMeasurement(1, "BTC/USD", "hawkes", 1, 1)
+			hawkes := data.NewMeasurement(1, "BTC/USD", "hawkes", now, now)
 			So(types.Filters(hawkes), ShouldBeTrue)
 
-			otherSymbol := data.NewMeasurement(1, "ETH/USD", "hawkes", 1, 1)
+			otherSymbol := data.NewMeasurement(1, "ETH/USD", "hawkes", now, now)
 			So(types.Filters(otherSymbol), ShouldBeFalse)
 
-			manifold := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
+			manifold := data.NewMeasurement(1, "BTC/USD", "manifold", now, now)
 			So(types.Filters(manifold), ShouldBeFalse)
 		})
 
 		Convey("Learning route only admits training strategy outputs", func() {
 			types.SetRoute("learning")
 
-			training := data.NewMeasurement(1, "BTC/USD", "training", 1, 1)
+			training := data.NewMeasurement(1, "BTC/USD", "training", now, now)
 			So(types.Filters(training), ShouldBeTrue)
 
-			hawkes := data.NewMeasurement(1, "BTC/USD", "hawkes", 1, 1)
+			hawkes := data.NewMeasurement(1, "BTC/USD", "hawkes", now, now)
 			So(types.Filters(hawkes), ShouldBeFalse)
 
-			manifold := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
+			manifold := data.NewMeasurement(1, "BTC/USD", "manifold", now, now)
 			So(types.Filters(manifold), ShouldBeFalse)
 		})
 
@@ -50,13 +53,13 @@ func TestRouteFilters(t *testing.T) {
 			types.SetRoute("diagnostics")
 			types.SetFocus("BTC/USD")
 
-			cvd := data.NewMeasurement(1, "BTC/USD", "cvd", 1, 1)
+			cvd := data.NewMeasurement(1, "BTC/USD", "cvd", now, now)
 			So(types.Filters(cvd), ShouldBeTrue)
 
-			manifold := data.NewMeasurement(1, "BTC/USD", "manifold", 1, 1)
+			manifold := data.NewMeasurement(1, "BTC/USD", "manifold", now, now)
 			So(types.Filters(manifold), ShouldBeTrue)
 
-			other := data.NewMeasurement(1, "ETH/USD", "cvd", 1, 1)
+			other := data.NewMeasurement(1, "ETH/USD", "cvd", now, now)
 			So(types.Filters(other), ShouldBeFalse)
 		})
 	})

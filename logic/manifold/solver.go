@@ -397,17 +397,6 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 		))
 	}
 
-	out := data.NewMeasurement(
-		prior.Epoch, symbol, solver.Name(), prior.SeqIdx, prior.Tick,
-	)
-	if prior.Source == "runtime:join" {
-		out.Peers(prior.Peers()...)
-	}
-
-	if prior.Source != "runtime:join" {
-		out.Peers(prior)
-	}
-
 	if prior.At.IsZero() {
 		solver.Error(errnie.Err(
 			errnie.Validation,
@@ -417,10 +406,20 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	out.At = prior.At
-	out.From = prior.From
-	if out.From.IsZero() {
-		out.From = out.At // From defaults to a point window [At, At].
+	from := prior.From
+	if from.IsZero() {
+		from = prior.At
+	}
+
+	out := data.NewMeasurement(
+		prior.Epoch, symbol, solver.Name(), prior.At, from,
+	)
+	if prior.Source == "runtime:join" {
+		out.Peers(prior.Peers()...)
+	}
+
+	if prior.Source != "runtime:join" {
+		out.Peers(prior)
 	}
 
 	return out.Write(metrics...)

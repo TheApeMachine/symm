@@ -27,9 +27,8 @@ func TestWriter_AddAndCommit(t *testing.T) {
 		})
 
 		Convey("When measurements are added to the buffer", func() {
-			measurement := data.NewMeasurement(epoch, "ETH/USD", "spot:trade", 1, 1)
-			measurement.At = time.Now().UTC()
-			measurement.From = measurement.At
+			now := time.Now().UTC()
+			measurement := data.NewMeasurement(epoch, "ETH/USD", "spot:trade", now, now)
 			measurement.Write(data.NewMetric("price", 3000.50, data.UnitCurrency, data.TimescaleTick))
 
 			writer.Add(tables.Measurements, measurement)
@@ -55,9 +54,8 @@ func TestWriter_AddAndCommit(t *testing.T) {
 		})
 
 		Convey("When ReleaseRemaining is called", func() {
-			measurement := data.NewMeasurement(epoch, "SOL/USD", "detector", 2, 2)
-			measurement.At = time.Now().UTC()
-			measurement.From = measurement.At
+			now := time.Now().UTC()
+			measurement := data.NewMeasurement(epoch, "SOL/USD", "detector", now, now)
 			writer.Add(tables.Measurements, measurement)
 
 			So(writer.BufferedRows(), ShouldEqual, 1)
@@ -78,9 +76,8 @@ func TestMeasurement_ToParquet(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(tbl, ShouldNotBeNil)
 
-		measurement := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", 10, 20)
-		measurement.At = time.Now().UTC()
-		measurement.From = measurement.At
+		now := time.Now().UTC()
+		measurement := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", now, now)
 		measurement.Write(data.NewMetric("price", 65000.0, data.UnitCurrency, data.TimescaleInstantaneous))
 
 		Convey("When ToParquet is called", func() {

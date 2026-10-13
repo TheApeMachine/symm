@@ -183,7 +183,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	emit := func(from time.Time) *data.Measurement {
 		if mem.lastMeasurement == nil {
-			mem.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
+			mem.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
 		}
 
 		res := mem.lastMeasurement.Next(prior, output)

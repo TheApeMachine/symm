@@ -9,9 +9,8 @@ import (
 )
 
 func storedDetection(class string, b, c float64) *data.Measurement {
-	m := data.NewMeasurement(1, "BTC/USD", "detector", 1, 1, &data.StringEntry{Key: "type", Value: class})
-	m.At = time.Unix(100, 0).UTC()
-	m.From = m.At
+	at := time.Unix(100, 0).UTC()
+	m := data.NewMeasurement(1, "BTC/USD", "detector", at, at, &data.StringEntry{Key: "type", Value: class})
 	return m.Write(
 		data.NewMetric("b_price", b, data.UnitPrice, data.TimescaleTick),
 		data.NewMetric("c_price", c, data.UnitPrice, data.TimescaleTick),

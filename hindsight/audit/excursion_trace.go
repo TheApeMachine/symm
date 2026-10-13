@@ -184,11 +184,11 @@ func ExtractExcursionTraces(
 				signals[0].Epoch,
 				symbol,
 				"trace",
-				signals[0].SeqIdx,
-				tick,
+				signals[0].At,
+				signals[0].From,
 			)
-			frame.At = signals[0].At
-			frame.From = signals[0].From
+			frame.SeqIdx = signals[0].SeqIdx
+			frame.Tick = tick
 			frame.Peers(signals...)
 			frame.Write()
 

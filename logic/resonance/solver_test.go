@@ -27,9 +27,7 @@ func metricRaw(measurement *data.Measurement, label string) (float64, bool) {
 }
 
 func signalPeer(source, symbol, metricName string, value float64, at time.Time) *data.Measurement {
-	measurement := data.NewMeasurement(1, symbol, source, at.Unix(), at.Unix())
-	measurement.At = at
-	measurement.From = at
+	measurement := data.NewMeasurement(1, symbol, source, at, at)
 	return measurement.Write(data.NewMetric(metricName, value, data.UnitDimensionless, data.TimescaleInstantaneous))
 }
 
@@ -39,9 +37,7 @@ func TestStep(t *testing.T) {
 		defer solver.Close()
 
 		at := time.Unix(1, 0).UTC()
-		prior := data.NewMeasurement(1, "TEST/USD", "ingress", 1, 1)
-		prior.At = at
-		prior.From = at
+		prior := data.NewMeasurement(1, "TEST/USD", "ingress", at, at)
 		prior = prior.Write(data.NewMetric("midpoint", 100, data.UnitPrice, data.TimescaleInstantaneous))
 
 		result := solver.Step(prior)
@@ -74,10 +70,8 @@ func TestSignalFeatureIngestion(t *testing.T) {
 			signalPeer("derivatives", "BTC/USD", "basis", 0.001, at),
 		}
 
-		m := data.NewMeasurement(1, "BTC/USD", "runtime:join", 10, 10)
+		m := data.NewMeasurement(1, "BTC/USD", "runtime:join", at, at)
 		m.Peers(peers...)
-		m.At = at
-		m.From = at
 		m = m.Write(data.NewMetric("midpoint", 50000, data.UnitPrice, data.TimescaleInstantaneous))
 
 		result := solver.Step(m)
@@ -138,10 +132,8 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 				signalPeer("derivatives", "ETH/USD", "basis", 0.0005, at),
 			}
 
-			m := data.NewMeasurement(1, "ETH/USD", "runtime:join", sec, sec)
+			m := data.NewMeasurement(1, "ETH/USD", "runtime:join", at, at)
 			m.Peers(peers...)
-			m.At = at
-			m.From = at
 			return m.Write(data.NewMetric("midpoint", 3000, data.UnitPrice, data.TimescaleInstantaneous))
 		}
 
@@ -167,19 +159,15 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		solver.Transition(runtime.READY)
 
 		at := time.Unix(100, 0).UTC()
-		m1 := data.NewMeasurement(1, "BTC/USD", "runtime:join", 100, 100)
+		m1 := data.NewMeasurement(1, "BTC/USD", "runtime:join", at, at)
 		m1.Peers(signalPeer("cvd", "BTC/USD", "signed_net_fraction", 0.1, at))
-		m1.At = at
-		m1.From = at
 		m1 = m1.Write(data.NewMetric("midpoint", 50000, data.UnitPrice, data.TimescaleInstantaneous))
 		res1 := solver.Step(m1)
 		So(res1, ShouldNotBeNil)
 
 		at2 := time.Unix(101, 0).UTC()
-		m2 := data.NewMeasurement(1, "BTC/USD", "runtime:join", 101, 101)
+		m2 := data.NewMeasurement(1, "BTC/USD", "runtime:join", at2, at2)
 		m2.Peers(signalPeer("toxicity", "BTC/USD", "net_withdrawal_fraction:bid", 0.2, at2))
-		m2.At = at2
-		m2.From = at2
 		m2 = m2.Write(data.NewMetric("midpoint", 50010, data.UnitPrice, data.TimescaleInstantaneous))
 		res2 := solver.Step(m2)
 		So(res2, ShouldNotBeNil)
@@ -194,9 +182,7 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 func TestPeerSuffixedHeadlineMetrics(t *testing.T) {
 	Convey("Given correlation peer-suffixed metrics", t, func() {
 		at := time.Unix(1, 0).UTC()
-		peer := data.NewMeasurement(1, "ETH/USD", "correlation", 1, 1)
-		peer.At = at
-		peer.From = at
+		peer := data.NewMeasurement(1, "ETH/USD", "correlation", at, at)
 		peer = peer.Write(data.NewMetric(
 			"covariance_score@BTC/USD", 0.82, data.UnitCovarianceScore, data.TimescaleRollingWindow,
 		))

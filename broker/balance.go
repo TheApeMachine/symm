@@ -240,11 +240,9 @@ func (balance *Balance) poll() (err error) {
 		epoch,
 		"balance",
 		"balance",
-		system.SeqIdx.Add(1),
-		system.Tick.Load(),
+		now,
+		now,
 	)
-	measurement.At = now
-	measurement.From = now
 	measurement.Write(balance.metrics(tradeBalance)...)
 
 	balance.measurement = measurement

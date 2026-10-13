@@ -151,9 +151,9 @@ func TestPrecursorSeparation(t *testing.T) {
 			grid := store.NewGrid(t.Context())
 			now := time.Now()
 
-			det1 := data.NewMeasurement(1, "BTC/USD", "detector", 1, 100, &data.StringEntry{Key: "type", Value: "up"})
-			det1.At = now
-			det1.From = now.Add(-time.Minute)
+			det1 := data.NewMeasurement(1, "BTC/USD", "detector", now, now.Add(-time.Minute), &data.StringEntry{Key: "type", Value: "up"})
+			det1.SeqIdx = 1
+			det1.Tick = 100
 			det1 = det1.Write(
 				data.NewMetric("start_tick", 10, data.UnitCount, data.TimescaleTick),
 				data.NewMetric("b_tick", 30, data.UnitCount, data.TimescaleTick),
@@ -162,9 +162,9 @@ func TestPrecursorSeparation(t *testing.T) {
 				data.NewExactMetric("c_price", decimal.NewFromFloat64(51000), data.UnitPrice, data.TimescaleTick),
 			)
 
-			det2 := data.NewMeasurement(1, "BTC/USD", "detector", 2, 200, &data.StringEntry{Key: "type", Value: "down"})
-			det2.At = now
-			det2.From = now.Add(-time.Minute)
+			det2 := data.NewMeasurement(1, "BTC/USD", "detector", now, now.Add(-time.Minute), &data.StringEntry{Key: "type", Value: "down"})
+			det2.SeqIdx = 2
+			det2.Tick = 200
 			det2 = det2.Write(
 				data.NewMetric("start_tick", 110, data.UnitCount, data.TimescaleTick),
 				data.NewMetric("b_tick", 130, data.UnitCount, data.TimescaleTick),
@@ -178,9 +178,10 @@ func TestPrecursorSeparation(t *testing.T) {
 			tickMeasurements := make(map[int64][]*data.Measurement)
 
 			for _, tick := range ticks {
-				meas := data.NewMeasurement(1, "BTC/USD", "sensor", tick, tick)
-				meas.At = now.Add(time.Duration(tick) * time.Second)
-				meas.From = meas.At
+				tAt := now.Add(time.Duration(tick) * time.Second)
+				meas := data.NewMeasurement(1, "BTC/USD", "sensor", tAt, tAt)
+				meas.SeqIdx = tick
+				meas.Tick = tick
 				meas = meas.Write(
 					data.NewMetric("midpoint", 50000+float64(tick)*5, data.UnitPrice, data.TimescaleTick),
 				)

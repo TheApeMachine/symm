@@ -376,10 +376,9 @@ func (trainer *Trainer) readTape(history *recording, epoch int64) error {
 			}
 
 			joins++
-			join := data.NewMeasurement(epoch, key.label, "runtime:join", 0, peers[0].Tick)
+			at := time.Unix(0, key.at).UTC()
+			join := data.NewMeasurement(epoch, key.label, "runtime:join", at, at)
 			join.Peers(peers...)
-			join.At = time.Unix(0, key.at).UTC()
-			join.From = join.At
 			join = join.Write()
 
 			for _, peer := range peers {

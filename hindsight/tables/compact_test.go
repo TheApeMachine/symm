@@ -21,9 +21,8 @@ func TestCatalog_Compact(t *testing.T) {
 
 		// Append 5 separate single-row measurements to simulate 5 tiny files.
 		for index := int64(1); index <= 5; index++ {
-			measurement := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", index, index)
-			measurement.At = time.Now().UTC()
-			measurement.From = measurement.At
+			now := time.Now().UTC()
+			measurement := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", now, now)
 			measurement.Write(data.NewMetric("price", 50000.0+float64(index), data.UnitCurrency, data.TimescaleTick))
 
 			err := catalog.Append(ctx, tables.Measurements, epoch, []*data.Measurement{measurement})

@@ -32,9 +32,9 @@ func AnalyzeGridCompleteness(
 		for symbol, peers := range bySymbol {
 			totalFrames++
 
-			frame := data.NewMeasurement(peers[0].Epoch, symbol, "completeness", peers[0].SeqIdx, tick)
-			frame.At = peers[0].At
-			frame.From = peers[0].From
+			frame := data.NewMeasurement(peers[0].Epoch, symbol, "completeness", peers[0].At, peers[0].From)
+			frame.SeqIdx = peers[0].SeqIdx
+			frame.Tick = tick
 			frame.Peers(peers...)
 			frame.Write()
 

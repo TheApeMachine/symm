@@ -83,11 +83,11 @@ func AnalyzeEquivalence(
 				symMeas[0].Epoch,
 				sym,
 				"prod_equivalence",
-				symMeas[0].SeqIdx,
-				tick,
+				symMeas[0].At,
+				symMeas[0].From,
 			)
-			prodFrame.At = symMeas[0].At
-			prodFrame.From = symMeas[0].From
+			prodFrame.SeqIdx = symMeas[0].SeqIdx
+			prodFrame.Tick = tick
 			prodFrame.Peers(symMeas...)
 			prodFrame.Write()
 
@@ -102,11 +102,11 @@ func AnalyzeEquivalence(
 				symMeas[0].Epoch,
 				sym,
 				"audit_equivalence",
-				symMeas[0].SeqIdx,
-				tick,
+				symMeas[0].At,
+				symMeas[0].From,
 			)
-			auditFrame.At = symMeas[0].At
-			auditFrame.From = symMeas[0].From
+			auditFrame.SeqIdx = symMeas[0].SeqIdx
+			auditFrame.Tick = tick
 			auditFrame.Peers(symMeas...)
 			auditFrame.Write()
 			auditRegions := grid.Observe(auditFrame)

@@ -72,8 +72,9 @@ func productionReplay(measurements []*data.Measurement, epoch int64, grid *store
 			continue
 		}
 
-		replayed := data.NewMeasurement(epoch, stored.Label, stored.Source, stored.SeqIdx, stored.Tick)
-		replayed.At, replayed.From = stored.At, stored.From
+		replayed := data.NewMeasurement(epoch, stored.Label, stored.Source, stored.At, stored.From)
+		replayed.SeqIdx = stored.SeqIdx
+		replayed.Tick = stored.Tick
 		metrics := make([]*data.Metric, 0)
 
 		for entry := range stored.Read() {
@@ -105,8 +106,9 @@ func productionReplay(measurements []*data.Measurement, epoch int64, grid *store
 
 	for _, key := range order {
 		peers := byFrame[key]
-		frame := data.NewMeasurement(epoch, key.label, "causality", peers[0].SeqIdx, key.tick)
-		frame.At, frame.From = peers[0].At, peers[0].From
+		frame := data.NewMeasurement(epoch, key.label, "causality", peers[0].At, peers[0].From)
+		frame.SeqIdx = peers[0].SeqIdx
+		frame.Tick = key.tick
 		frame.Peers(peers...)
 		frame.Write()
 
@@ -138,8 +140,9 @@ func perturbFuture(future []*data.Measurement, seed int64) []*data.Measurement {
 			continue
 		}
 
-		copyOf := data.NewMeasurement(stored.Epoch, stored.Label, stored.Source, stored.SeqIdx, stored.Tick)
-		copyOf.At, copyOf.From = stored.At, stored.From
+		copyOf := data.NewMeasurement(stored.Epoch, stored.Label, stored.Source, stored.At, stored.From)
+		copyOf.SeqIdx = stored.SeqIdx
+		copyOf.Tick = stored.Tick
 		metrics := make([]*data.Metric, 0)
 
 		for entry := range stored.Read() {

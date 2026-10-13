@@ -24,9 +24,8 @@ func TestUITee(t *testing.T) {
 		tee.Transition(nmruntime.READY)
 
 		Convey("It admits allowed publications and encodes them", func() {
-			measurement := data.NewMeasurement(1, "BTC/USD", "hawkes", 1, 1)
-			measurement.At = time.Now()
-			measurement.From = measurement.At
+			now := time.Now().UTC()
+			measurement := data.NewMeasurement(1, "BTC/USD", "hawkes", now, now)
 			measurement.Write(data.NewMetric("event_count", 1, data.UnitCount, data.TimescaleInstantaneous))
 
 			tee.Push(measurement)

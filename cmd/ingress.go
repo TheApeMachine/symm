@@ -139,12 +139,13 @@ func storeLevel3(level3Msg *kraken.Level3, epoch int64, storeTee nmruntime.Tee, 
 					)
 				}
 
+				at := order.Timestamp.UTC()
 				measurement := data.NewMeasurement(
 					epoch,
 					level3Data.Symbol,
 					"spot:level3",
-					sequence,
-					tick,
+					at,
+					at,
 					&data.StringEntry{
 						Key:   "type",
 						Value: strings.Clone(level3Data.Type),
@@ -166,9 +167,8 @@ func storeLevel3(level3Msg *kraken.Level3, epoch int64, storeTee nmruntime.Tee, 
 						Value: checksumStr,
 					},
 				)
-
-				measurement.At = order.Timestamp.UTC()
-				measurement.From = measurement.At
+				measurement.SeqIdx = sequence
+				measurement.Tick = tick
 
 				priceUnit, priceTime := data.GetDimension("spot:level3", "limit_price")
 				qtyUnit, qtyTime := data.GetDimension("spot:level3", "order_qty")
@@ -242,12 +242,13 @@ func handleTrade(
 
 		sequence, snapshot := book.Stamp(tradeItem.Symbol)
 
+		at := tradeItem.Timestamp.UTC()
 		measurement := data.NewMeasurement(
 			epoch,
 			tradeItem.Symbol,
 			"spot:trade",
-			sequence,
-			system.Tick.Add(1),
+			at,
+			at,
 			&data.StringEntry{
 				Key:   "type",
 				Value: "trade",
@@ -265,9 +266,7 @@ func handleTrade(
 				Value: strings.Clone(tradeItem.Side),
 			},
 		)
-
-		measurement.At = tradeItem.Timestamp.UTC()
-		measurement.From = measurement.At
+		measurement.SeqIdx = sequence
 
 		priceUnit, priceTime := data.GetDimension("spot:trade", "price")
 		qtyUnit, qtyTime := data.GetDimension("spot:trade", "qty")

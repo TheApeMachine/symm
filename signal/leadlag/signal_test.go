@@ -16,12 +16,10 @@ import (
 
 func trade(label string, at time.Time, seq int64, price float64) *data.Measurement {
 	prior := data.NewMeasurement(
-		1, label, "spot:trade", seq, seq,
+		1, label, "spot:trade", at, at,
 		&data.StringEntry{Key: "type", Value: "trade"},
 		&data.StringEntry{Key: "side", Value: "buy"},
 	)
-	prior.At = at
-	prior.From = at
 
 	return prior.Write(
 		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
@@ -152,9 +150,7 @@ func TestLeadLagSignalMetrics(t *testing.T) {
 		})
 
 		Convey("Treats a trade frame without price as an error", func() {
-			prior := data.NewMeasurement(1, "BTC/USD", "spot:trade", 999, 999)
-			prior.At = now
-			prior.From = now
+			prior := data.NewMeasurement(1, "BTC/USD", "spot:trade", now, now)
 
 			So(instrument.Step(prior.Write()), ShouldBeNil)
 			So(instrument.Error(), ShouldNotBeNil)

@@ -116,16 +116,12 @@ func TestTraining(t *testing.T) {
 		Convey("Step emits region metrics and meta", func() {
 			training := NewTraining(ctx, filling.price, filling.desk, catalog)
 			now := time.Now().UTC()
-			join := data.NewMeasurement(100, "BTC/USD", "runtime:join", 0, 1)
-			join.At = now
-			join.From = now
+			join := data.NewMeasurement(100, "BTC/USD", "runtime:join", now, now)
 
 			// Add peers covering regions
 			peers := make([]*data.Measurement, 0, 12)
 			for idx := range 12 {
-				peer := data.NewMeasurement(100, "BTC/USD", "hawkes", int64(idx+1), int64(idx+1))
-				peer.At = now
-				peer.From = now
+				peer := data.NewMeasurement(100, "BTC/USD", "hawkes", now, now)
 				peer = peer.Write(data.NewMetric("buy_from_buy", float64(idx+2), data.UnitCount, data.TimescaleTick))
 				peers = append(peers, peer)
 			}

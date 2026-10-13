@@ -94,9 +94,9 @@ func tickRegions(
 		}
 
 		for sym, symMeas := range bySymbol {
-			frame := data.NewMeasurement(symMeas[0].Epoch, sym, "stability", symMeas[0].SeqIdx, tick)
-			frame.At = symMeas[0].At
-			frame.From = symMeas[0].From
+			frame := data.NewMeasurement(symMeas[0].Epoch, sym, "stability", symMeas[0].At, symMeas[0].From)
+			frame.SeqIdx = symMeas[0].SeqIdx
+			frame.Tick = tick
 			frame.Peers(symMeas...)
 			frame.Write()
 

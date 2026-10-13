@@ -51,14 +51,11 @@ func LeadLagTape() []*data.Measurement {
 			panic(err)
 		}
 
-		seq := int64(index + 1)
 		frame := data.NewMeasurement(
-			1, observation.symbol, "spot:trade", seq, seq,
+			1, observation.symbol, "spot:trade", at, at,
 			&data.StringEntry{Key: "type", Value: "trade"},
 			&data.StringEntry{Key: "side", Value: "buy"},
 		)
-		frame.At = at
-		frame.From = at
 		priceUnit, priceTime := data.GetDimension("spot:trade", "price")
 		qtyUnit, qtyTime := data.GetDimension("spot:trade", "qty")
 

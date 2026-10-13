@@ -57,8 +57,7 @@ func regionFrame(sizes [RegionCount]int, warm bool) (*data.Measurement, [RegionC
 	var peers [RegionCount]*data.Measurement
 	epoch := regionEpoch.Add(1)
 	at := time.Unix(1_700_000_000, 0).UTC()
-	frame := data.NewMeasurement(epoch, "BTC/USD", "frame", 1, 1)
-	frame.At, frame.From = at, at
+	frame := data.NewMeasurement(epoch, "BTC/USD", "frame", at, at)
 
 	for idx := range RegionCount {
 		if sizes[idx] == 0 {
@@ -83,7 +82,7 @@ func regionFrame(sizes [RegionCount]int, warm bool) (*data.Measurement, [RegionC
 
 		var peer *data.Measurement
 
-		for hIdx, raw := range history {
+		for _, raw := range history {
 			values := make(map[string]float64, sizes[idx])
 
 			for _, label := range labels[:sizes[idx]] {
@@ -91,8 +90,7 @@ func regionFrame(sizes [RegionCount]int, warm bool) (*data.Measurement, [RegionC
 			}
 
 			if peer == nil {
-				peer = data.NewMeasurement(epoch, "BTC/USD", source, int64(hIdx+1), int64(hIdx+1))
-				peer.At, peer.From = at, at
+				peer = data.NewMeasurement(epoch, "BTC/USD", source, at, at)
 				metrics := make([]*data.Metric, 0, len(values))
 
 				for label, value := range values {
@@ -117,9 +115,9 @@ func regionFrame(sizes [RegionCount]int, warm bool) (*data.Measurement, [RegionC
 
 		So(metricCount, ShouldEqual, sizes[idx])
 		peers[idx] = peer
-		frame.Peers(peer)
 	}
 
+	frame.Peers(peers[:]...)
 	frame.Write()
 	return frame, peers
 }
@@ -175,16 +173,14 @@ func TestGrid_Observe(t *testing.T) {
 		Convey("When a peer carries a metric that is not pinned", func() {
 			frame, _ := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, true)
 			at := time.Unix(1_700_000_000, 0).UTC()
-			solver := data.NewMeasurement(frame.Epoch, "BTC/USD", "resonance", 1, 1)
-			solver.At, solver.From = at, at
+			solver := data.NewMeasurement(frame.Epoch, "BTC/USD", "resonance", at, at)
 			solver.Write(data.NewMetric("surprise", 0, data.UnitDimensionless, data.TimescaleTick))
 
 			for hIdx := range int(core.MinimumRankPrior) {
 				solver = solver.Next(nil, map[string]float64{"surprise": float64(2 * (hIdx % 2))})
 			}
 
-			joined := data.NewMeasurement(frame.Epoch, "BTC/USD", "frame", 1, 1)
-			joined.At, joined.From = at, at
+			joined := data.NewMeasurement(frame.Epoch, "BTC/USD", "frame", at, at)
 			joined.Peers(append(frame.Peers(), solver)...)
 			joined.Write()
 

@@ -50,14 +50,13 @@ func TestSignalStepVolumeBarWindows(t *testing.T) {
 
 		results := make([]*data.Measurement, 0, len(observations))
 
-		for index, observation := range observations {
+		for _, observation := range observations {
+			at := time.Unix(observation.at, 0).UTC()
 			prior := data.NewMeasurement(
 				observation.epoch, observation.symbol, "spot:trade",
-				int64(index+1), int64(index+1),
+				at, at,
 				&data.StringEntry{Key: "side", Value: observation.side},
 			)
-			prior.At = time.Unix(observation.at, 0).UTC()
-			prior.From = prior.At
 			prior.Write(
 				data.NewMetric("price", observation.price, data.UnitPrice, data.TimescaleInstantaneous),
 				data.NewMetric("qty", observation.quantity, data.UnitQuantity, data.TimescaleInstantaneous),

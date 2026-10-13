@@ -40,9 +40,8 @@ func TestAuditStages(t *testing.T) {
 		}
 
 		Convey("When analyzing contract integrity (Stage 0)", func() {
-			meas := data.NewMeasurement(1, "BTC/USD", "test", 1, 1)
-			meas.At = time.Now().UTC()
-			meas.From = meas.At
+			now := time.Now().UTC()
+			meas := data.NewMeasurement(1, "BTC/USD", "test", now, now)
 			meas = meas.Write(
 				data.NewMetric("good_corr", 0.5, data.UnitCorrelation, data.TimescaleTick),
 				data.NewMetric("bad_corr", 1.45, data.UnitCorrelation, data.TimescaleTick),
@@ -69,9 +68,9 @@ func TestAuditStages(t *testing.T) {
 			So(contract.Passed, ShouldBeFalse)
 
 			Convey("with physical market quantities violating non-negativity and bounds", func() {
-				physMeas := data.NewMeasurement(1, "BTC/USD", "market", 2, 2)
-				physMeas.At = time.Now().UTC()
-				physMeas.From = physMeas.At
+				physMeas := data.NewMeasurement(1, "BTC/USD", "market", now, now)
+				physMeas.SeqIdx = 2
+				physMeas.Tick = 2
 				physMeas = physMeas.Write(
 					data.NewMetric("bad_price", -100.0, data.UnitPrice, data.TimescaleInstantaneous),
 					data.NewMetric("bad_qty", -5.0, data.UnitQuantity, data.TimescaleInstantaneous),
@@ -92,8 +91,10 @@ func TestAuditStages(t *testing.T) {
 			})
 
 			Convey("with measurement state invariant violations", func() {
-				badMeas := data.NewMeasurement(0, "", "", 3, 3)
+				badMeas := data.NewMeasurement(0, "", "", time.Time{}, time.Time{})
 				badMeas.ID = 0
+				badMeas.SeqIdx = 3
+				badMeas.Tick = 3
 				badContract := AnalyzeContract([]*data.Measurement{badMeas}, 0.05)
 				So(badContract.MeasurementState.UnlockedBreaches, ShouldEqual, 1)
 				So(badContract.MeasurementState.EpochBreaches, ShouldEqual, 1)
@@ -105,9 +106,9 @@ func TestAuditStages(t *testing.T) {
 			})
 
 			Convey("with compliant physical metrics complying with all contracts", func() {
-				cleanMeas := data.NewMeasurement(1, "BTC/USD", "market", 4, 4)
-				cleanMeas.At = time.Now().UTC()
-				cleanMeas.From = cleanMeas.At
+				cleanMeas := data.NewMeasurement(1, "BTC/USD", "market", now, now)
+				cleanMeas.SeqIdx = 4
+				cleanMeas.Tick = 4
 				cleanMeas = cleanMeas.Write(
 					data.NewMetric("price", 60000.0, data.UnitPrice, data.TimescaleInstantaneous),
 					data.NewMetric("qty", 1.5, data.UnitQuantity, data.TimescaleInstantaneous),
@@ -134,8 +135,10 @@ func TestAuditStages(t *testing.T) {
 				now := time.Now().UnixNano()
 				measurements := make([]*data.Measurement, 0, 10)
 				for idx := range int64(10) {
-					meas := data.NewMeasurement(1, "BTC/USD", "test", idx+1, idx+1)
-					meas.At = time.Unix(0, now+idx*1_000_000-25_000_000)
+					at := time.Unix(0, now+idx*1_000_000-25_000_000)
+					meas := data.NewMeasurement(1, "BTC/USD", "test", at, at)
+					meas.SeqIdx = idx + 1
+					meas.Tick = idx + 1
 					meas.Timestamp = now + idx*1_000_000
 					measurements = append(measurements, meas)
 				}
@@ -151,27 +154,35 @@ func TestAuditStages(t *testing.T) {
 				now := time.Now().UnixNano()
 				measurements := make([]*data.Measurement, 0, 10)
 				for idx := range int64(6) {
-					meas := data.NewMeasurement(1, "BTC/USD", "test", idx+1, idx+1)
-					meas.At = time.Unix(0, now+idx*100_000_000)
+					at := time.Unix(0, now+idx*100_000_000)
+					meas := data.NewMeasurement(1, "BTC/USD", "test", at, at)
+					meas.SeqIdx = idx + 1
+					meas.Tick = idx + 1
 					meas.Timestamp = now + idx*100_000_000 + 10_000_000
 					measurements = append(measurements, meas)
 				}
 
 				// Latency spike: latency is 700ms
-				spikeMeas := data.NewMeasurement(1, "BTC/USD", "test", 7, 7)
-				spikeMeas.At = time.Unix(0, now+600_000_000)
+				spikeAt := time.Unix(0, now+600_000_000)
+				spikeMeas := data.NewMeasurement(1, "BTC/USD", "test", spikeAt, spikeAt)
+				spikeMeas.SeqIdx = 7
+				spikeMeas.Tick = 7
 				spikeMeas.Timestamp = now + 600_000_000 + 700_000_000
 				measurements = append(measurements, spikeMeas)
 
 				// Sequence inversion: At goes backwards
-				invMeas := data.NewMeasurement(1, "BTC/USD", "test", 8, 8)
-				invMeas.At = time.Unix(0, now+500_000_000)
+				invAt := time.Unix(0, now+500_000_000)
+				invMeas := data.NewMeasurement(1, "BTC/USD", "test", invAt, invAt)
+				invMeas.SeqIdx = 8
+				invMeas.Tick = 8
 				invMeas.Timestamp = now + 700_000_000
 				measurements = append(measurements, invMeas)
 
 				for idx := int64(8); idx < 10; idx++ {
-					meas := data.NewMeasurement(1, "BTC/USD", "test", idx+1, idx+1)
-					meas.At = time.Unix(0, now+idx*100_000_000)
+					at := time.Unix(0, now+idx*100_000_000)
+					meas := data.NewMeasurement(1, "BTC/USD", "test", at, at)
+					meas.SeqIdx = idx + 1
+					meas.Tick = idx + 1
 					meas.Timestamp = now + idx*100_000_000 + 10_000_000
 					measurements = append(measurements, meas)
 				}

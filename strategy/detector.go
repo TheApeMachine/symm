@@ -650,12 +650,10 @@ func (detector *Detector) Flush(
 		epoch,
 		symbol,
 		detector.Name(),
-		start.idx,
-		end.tick,
+		excursion.c.at,
+		excursion.b.at,
 		&data.StringEntry{Key: "type", Value: class},
 	)
-	measurement.At = excursion.c.at
-	measurement.From = excursion.b.at
 
 	startIdxUnit, startIdxTime := data.GetDimension(detector.Name(), "start_idx")
 	startTickUnit, startTickTime := data.GetDimension(detector.Name(), "start_tick")

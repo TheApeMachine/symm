@@ -386,21 +386,19 @@ var (
 
 				for _, touch := range touches {
 					sequence, snapshot := book.Stamp(touch.Symbol)
-
+					at := touch.Timestamp.UTC()
 					measurement := data.NewMeasurement(
 						epoch,
 						touch.Symbol,
 						"spot:touch",
-						sequence,
-						system.Tick.Add(1),
+						at,
+						at,
 						&data.StringEntry{
 							Key:   "type",
 							Value: "touch",
 						},
 					)
-
-					measurement.At = touch.Timestamp.UTC()
-					measurement.From = measurement.At
+					measurement.SeqIdx = sequence
 
 					var metrics []*data.Metric
 					if snapshot != nil {

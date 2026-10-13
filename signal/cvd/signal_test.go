@@ -13,7 +13,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/tests/market"
 )
 
@@ -24,15 +23,13 @@ func TestCVDSignalMetrics(t *testing.T) {
 			now.UnixNano(),
 			"BTC/USD",
 			"spot:trade",
-			system.SeqIdx.Add(1),
-			system.Tick.Add(1),
+			now,
+			now,
 			&data.StringEntry{
 				Key:   "side",
 				Value: "buy",
 			},
 		)
-		measurement.At = now
-		measurement.From = now
 		measurement.Write(
 			data.NewMetric("price", 100, data.UnitPrice, data.TimescaleInstantaneous),
 			data.NewMetric("qty", 10, data.UnitQuantity, data.TimescaleInstantaneous),
@@ -154,12 +151,10 @@ func stampedTrade(symbol, side string, price, qty float64, at time.Time, bid, as
 		1,
 		symbol,
 		"spot:trade",
-		system.SeqIdx.Add(1),
-		system.Tick.Add(1),
+		at,
+		at,
 		&data.StringEntry{Key: "side", Value: side},
 	)
-	measurement.At = at
-	measurement.From = at
 
 	metrics := []*data.Metric{
 		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),

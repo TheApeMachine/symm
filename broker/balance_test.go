@@ -72,10 +72,8 @@ func TestBalance(t *testing.T) {
 
 			now := time.Now()
 			measurement := data.NewMeasurement(
-				1, "balance", "balance", 1, 1,
+				1, "balance", "balance", now, now,
 			)
-			measurement.At = now
-			measurement.From = now
 			measurement.Write(metrics...)
 
 			So(measurement.Error(), ShouldBeNil)

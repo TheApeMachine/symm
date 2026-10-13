@@ -40,9 +40,9 @@ func TestCatalog_TimelineReadFailure(t *testing.T) {
 
 		for tick := int64(1); tick <= 4; tick++ {
 			for _, source := range []string{"spot:trade", "detector", "cvd"} {
-				measurement := data.NewMeasurement(epoch, "BTC/USD", source, tick, tick)
-				measurement.At = time.Now().UTC()
-				measurement.From = measurement.At
+				now := time.Now().UTC()
+				measurement := data.NewMeasurement(epoch, "BTC/USD", source, now, now)
+				measurement.Tick = tick
 				if source == "spot:trade" {
 					measurement.Write(data.NewMetric("price", float64(tick), data.UnitPrice, data.TimescaleInstantaneous))
 				}
@@ -150,9 +150,9 @@ func TestCatalog_TimelineTickWindow(t *testing.T) {
 		// seqIdx 1..6, tick 100..105: a seqIdx-based window [1, 4] would
 		// match every row, a tick window [1, 4] matches none.
 		for seq := int64(1); seq <= 6; seq++ {
-			measurement := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", seq, 99+seq)
-			measurement.At = time.Now().UTC()
-			measurement.From = measurement.At
+			now := time.Now().UTC()
+			measurement := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", now, now)
+			measurement.Tick = 99 + seq
 			measurement.Write(data.NewMetric("price", float64(seq), data.UnitPrice, data.TimescaleInstantaneous))
 			writer.Add(tables.Measurements, measurement)
 		}

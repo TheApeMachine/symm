@@ -132,7 +132,7 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	emit := func() *data.Measurement {
 		prev := training.last[prior.Label]
 		if prev == nil {
-			prev = data.NewMeasurement(prior.Epoch, prior.Label, training.Name(), prior.SeqIdx, prior.Tick)
+			prev = data.NewMeasurement(prior.Epoch, prior.Label, training.Name(), prior.At, prior.From)
 		}
 
 		next := prev.Next(prior, metrics)

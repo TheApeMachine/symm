@@ -50,15 +50,15 @@ func storedTape(t *testing.T, tape []tapeTrade) (trades []*data.Measurement, lev
 
 	order := func(entryType, side, id, event string, price float64, at time.Time) *data.Measurement {
 		sequence++
-		measurement := data.NewMeasurement(1, "BTC/USD", "spot:level3", sequence, sequence,
+		measurement := data.NewMeasurement(1, "BTC/USD", "spot:level3", at, at,
 			&data.StringEntry{Key: "type", Value: entryType},
 			&data.StringEntry{Key: "order_id", Value: id},
 			&data.StringEntry{Key: "side", Value: side},
 			&data.StringEntry{Key: "event", Value: event},
 			&data.StringEntry{Key: "checksum", Value: "0"},
 		)
-		measurement.At = at
-		measurement.From = at
+		measurement.SeqIdx = sequence
+		measurement.Tick = sequence
 
 		return measurement.Write(
 			data.NewExactMetric("limit_price", decimal.NewFromFloat64(price), data.UnitPrice, data.TimescaleInstantaneous),
@@ -93,10 +93,10 @@ func storedTape(t *testing.T, tape []tapeTrade) (trades []*data.Measurement, lev
 		So(snapshot, ShouldNotBeNil)
 
 		sequence++
-		measurement := data.NewMeasurement(1, "BTC/USD", "spot:trade", sequence, sequence,
+		measurement := data.NewMeasurement(1, "BTC/USD", "spot:trade", trade.at, trade.at,
 			&data.StringEntry{Key: "side", Value: trade.side})
-		measurement.At = trade.at
-		measurement.From = trade.at
+		measurement.SeqIdx = sequence
+		measurement.Tick = sequence
 		trades = append(trades, measurement.Write(append([]*data.Metric{
 			data.NewMetric("price", trade.price, data.UnitPrice, data.TimescaleInstantaneous),
 			data.NewMetric("qty", trade.qty, data.UnitQuantity, data.TimescaleInstantaneous),
@@ -138,9 +138,9 @@ func honestCVD(tape []tapeTrade, corrupt func(index int, values map[string]float
 			continue
 		}
 
-		m := data.NewMeasurement(1, "BTC/USD", "cvd", int64(100+index), int64(100+index))
-		m.At = trade.at
-		m.From = trade.at
+		m := data.NewMeasurement(1, "BTC/USD", "cvd", trade.at, trade.at)
+		m.SeqIdx = int64(100 + index)
+		m.Tick = int64(100 + index)
 		metrics := make([]*data.Metric, 0, len(values))
 
 		for key, value := range values {
@@ -181,9 +181,10 @@ func TestAnalyzeTruthfulness(t *testing.T) {
 		})
 
 		Convey("a stamped book that cannot be decoded is a breach", func() {
-			broken := data.NewMeasurement(1, "BTC/USD", "spot:trade", trades[0].SeqIdx, trades[0].Tick,
+			broken := data.NewMeasurement(1, "BTC/USD", "spot:trade", trades[0].At, trades[0].At,
 				&data.StringEntry{Key: "side", Value: "buy"})
-			broken.At, broken.From = trades[0].At, trades[0].At
+			broken.SeqIdx = trades[0].SeqIdx
+			broken.Tick = trades[0].Tick
 			broken.Write(
 				data.NewMetric("price", tape[0].price, data.UnitPrice, data.TimescaleInstantaneous),
 				data.NewMetric("qty", tape[0].qty, data.UnitQuantity, data.TimescaleInstantaneous),

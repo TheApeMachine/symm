@@ -27,13 +27,13 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 			100,
 			"BTC/USD",
 			"kraken",
-			1,
-			42,
+			at,
+			at,
 			&data.StringEntry{Key: "side", Value: "bid"},
 			&data.StringEntry{Key: "type", Value: "limit"},
 		)
-		measurement.At = at
-		measurement.From = at
+		measurement.SeqIdx = 1
+		measurement.Tick = 42
 		measurement.Write(
 			data.NewExactMetric("price", price, data.UnitCurrency, data.TimescaleInstantaneous),
 			data.NewMetric("volume", 1.5, data.UnitVolume, data.TimescaleInstantaneous),
@@ -84,9 +84,7 @@ func TestArrow_FillAndReadMeasurements(t *testing.T) {
 		})
 
 		Convey("When a stored measurement row carries an invalid timestamp", func() {
-			invalid := data.NewMeasurement(100, "BTC/USD", "depthflow", 3, 44)
-			// Leave At as zero time.Time{}
-			invalid.From = at
+			invalid := data.NewMeasurement(100, "BTC/USD", "depthflow", time.Time{}, at)
 			invalid.Write(
 				data.NewMetric("book_imbalance", 0.1, data.UnitRatio, data.TimescaleInstantaneous),
 			)

@@ -81,19 +81,21 @@ func NewMeasurement(
 	epoch int64,
 	label string,
 	source string,
-	seqIdx int64,
-	tick int64,
+	at, from time.Time,
 	metadata ...*StringEntry,
 ) *Measurement {
 	return &Measurement{
-		Epoch:    epoch,
-		Label:    label,
-		Source:   source,
-		SeqIdx:   seqIdx,
-		Tick:     tick,
-		metrics:  make([]*MetricEntry, 0),
-		metadata: metadata,
-		peers:    make([]*Measurement, 0),
+		Epoch:     epoch,
+		Label:     label,
+		Source:    source,
+		SeqIdx:    system.SeqIdx.Add(1),
+		Tick:      system.Tick.Load(),
+		Timestamp: time.Now().UnixNano(),
+		At:        at,
+		From:      from,
+		metrics:   make([]*MetricEntry, 0),
+		metadata:  metadata,
+		peers:     make([]*Measurement, 0),
 	}
 }
 
@@ -106,17 +108,13 @@ func (measurement *Measurement) Next(
 	values map[string]float64,
 	metadata ...*StringEntry,
 ) *Measurement {
-	base := measurement.valid()
-
-	if base == nil {
-		return nil
-	}
+	base := measurement
 
 	if prior != nil {
-		base = prior.valid()
+		base = prior
 	}
 
-	if base == nil {
+	if base == nil || base.valid() == nil {
 		return nil
 	}
 
@@ -149,14 +147,12 @@ func (measurement *Measurement) Next(
 		base.Epoch,
 		base.Label,
 		source,
-		system.SeqIdx.Add(1),
-		system.Tick.Load(),
+		base.At,
+		base.From,
 		meta...,
 	)
 
-	next.From = base.At
 	next.Timestamp = time.Now().UnixNano()
-	next.At = time.Unix(0, next.Timestamp).UTC()
 
 	if prior != nil && !prior.At.IsZero() {
 		next.At = prior.At
@@ -207,7 +203,6 @@ func (measurement *Measurement) copyMetrics(
 
 	for key, val := range values {
 		unit, timescale := GetDimension(source, key)
-		metric := NewMetric(key, val, unit, timescale)
 		var priorEntry *MetricEntry
 
 		if prior != nil {
@@ -217,6 +212,18 @@ func (measurement *Measurement) copyMetrics(
 		if priorEntry == nil && trigger != nil {
 			priorEntry = trigger.entry(key)
 		}
+
+		if priorEntry != nil && priorEntry.Metric != nil {
+			if unit == "" || unit == UnitNone {
+				unit = priorEntry.Metric.unit
+			}
+
+			if timescale == "" || timescale == TimescaleNone {
+				timescale = priorEntry.Metric.timescale
+			}
+		}
+
+		metric := NewMetric(key, val, unit, timescale)
 
 		if priorEntry != nil && priorEntry.Metric != nil {
 			metric.setSNM(priorEntry.Metric.raw)
@@ -243,7 +250,9 @@ func (measurement *Measurement) Read(keys ...string) iter.Seq[*MetricEntry] {
 				nil,
 			))
 
-			measurement.err = errors.Join(measurement.err, err)
+			if measurement != nil {
+				measurement.err = errors.Join(measurement.err, err)
+			}
 
 			yield(&MetricEntry{
 				Err: err,
@@ -251,28 +260,12 @@ func (measurement *Measurement) Read(keys ...string) iter.Seq[*MetricEntry] {
 		}
 	}
 
-	if measurement.valid() == nil {
-		return nil
-	}
-
-	if len(keys) > 0 {
-		return func(yield func(*MetricEntry) bool) {
-			for _, key := range keys {
-				for _, metricEntry := range measurement.metrics {
-					if metricEntry.Metric.label == key {
-						if !yield(metricEntry) {
-							return
-						}
-					}
-				}
-			}
-		}
-	}
-
 	return func(yield func(*MetricEntry) bool) {
-		for _, metricEntry := range measurement.metrics {
-			if !yield(metricEntry) {
-				return
+		for _, entry := range measurement.metrics {
+			if entry != nil && entry.Metric != nil && (len(keys) == 0 || slices.Contains(keys, entry.Metric.label)) {
+				if !yield(entry) {
+					return
+				}
 			}
 		}
 	}
@@ -322,7 +315,7 @@ func (measurement *Measurement) Write(
 	}
 
 	measurement.finalize()
-	return measurement.valid()
+	return measurement
 }
 
 /*
@@ -378,27 +371,9 @@ func (measurement *Measurement) Meta(keys ...string) iter.Seq[*StringEntry] {
 		}
 	}
 
-	if measurement.valid() == nil {
-		return nil
-	}
-
-	if len(keys) > 0 {
-		return func(yield func(*StringEntry) bool) {
-			for _, key := range keys {
-				for _, entry := range measurement.metadata {
-					if entry != nil && entry.Key == key {
-						if !yield(entry) {
-							return
-						}
-					}
-				}
-			}
-		}
-	}
-
 	return func(yield func(*StringEntry) bool) {
 		for _, entry := range measurement.metadata {
-			if entry != nil {
+			if entry != nil && (len(keys) == 0 || slices.Contains(keys, entry.Key)) {
 				if !yield(entry) {
 					return
 				}
@@ -432,22 +407,18 @@ func (measurement *Measurement) SetMeta(key string, value string) {
 Peers returns the peers of the Measurement.
 */
 func (measurement *Measurement) Peers(peers ...*Measurement) []*Measurement {
-	if len(peers) == 0 && !measurement.locked() {
-		err := errnie.Error(errnie.Err(
-			errnie.Forbidden,
-			"[data.measurement] not finalized",
-			nil,
-		))
-
-		measurement.err = errors.Join(measurement.err, err)
-		return nil
-	}
-
-	if measurement.valid() == nil {
-		return nil
-	}
-
 	if len(peers) == 0 {
+		if !measurement.locked() {
+			err := errnie.Error(errnie.Err(
+				errnie.Forbidden,
+				"[data.measurement] not finalized",
+				nil,
+			))
+
+			measurement.err = errors.Join(measurement.err, err)
+			return nil
+		}
+
 		return measurement.peers
 	}
 
@@ -458,10 +429,16 @@ func (measurement *Measurement) Peers(peers ...*Measurement) []*Measurement {
 			nil,
 		))
 
+		errnie.Error(measurement.err)
 		return measurement.peers
 	}
 
-	measurement.peers = append(measurement.peers, peers...)
+	for _, peer := range peers {
+		if peer != nil {
+			measurement.peers = append(measurement.peers, peer)
+		}
+	}
+
 	return measurement.peers
 }
 
@@ -483,22 +460,13 @@ func (measurement *Measurement) finalize() *Measurement {
 		measurement.samples = 1
 	}
 
-	var sumAbs float64
 	measurement.energy = 0
 
 	for _, entry := range measurement.metrics {
-		if entry == nil || entry.Metric == nil {
-			continue
+		if entry != nil && entry.Metric != nil {
+			measurement.err = errors.Join(measurement.err, entry.Metric.finalize())
+			measurement.energy += entry.Metric.snm * entry.Metric.snm
 		}
-
-		measurement.err = errors.Join(
-			measurement.err,
-			entry.Metric.finalize(),
-		)
-
-		snm := entry.Metric.snm
-		sumAbs += math.Abs(snm)
-		measurement.energy += snm * snm
 	}
 
 	for _, peer := range measurement.peers {
@@ -509,9 +477,11 @@ func (measurement *Measurement) finalize() *Measurement {
 
 	measurement.Timestamp = time.Now().UnixNano()
 	measurement.setMaturity()
+	measurement.ID = uuid.New().ID()
 
 	// Fully finalize the Measurement by writing its ID.
-	return measurement.valid()
+	measurement.valid()
+	return measurement
 }
 
 /*
@@ -527,10 +497,6 @@ func (measurement *Measurement) Surprise() float64 {
 		))
 
 		measurement.err = errors.Join(measurement.err, err)
-		return 0
-	}
-
-	if measurement.valid() == nil {
 		return 0
 	}
 
@@ -591,77 +557,35 @@ locked protects the WORM guarantee of the Measurement.
 Once finalized, a Measurement cannot be changed.
 */
 func (measurement *Measurement) locked() bool {
-	return measurement.ID != 0
+	return measurement != nil && measurement.ID != 0
 }
 
 /*
 valid checks if the Measurement is valid.
 */
 func (measurement *Measurement) valid() *Measurement {
-	if measurement.locked() {
-		if errnie.Error(measurement.err) != nil {
-			return nil
-		}
-
-		return measurement
-	}
-
-	if measurement.err != nil {
+	if measurement == nil {
 		return nil
 	}
 
-	for _, metricEntry := range measurement.metrics {
-		if metricEntry != nil && metricEntry.Metric != nil {
-			if err := metricEntry.Metric.valid(); err != nil {
-				measurement.err = errors.Join(measurement.err, err)
-			}
+	check := func(condition bool, message string) {
+		if condition {
+			measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
+				errnie.Validation, message, nil,
+			), "label", measurement.Label, "source", measurement.Source))
 		}
 	}
 
-	for _, peer := range measurement.peers {
-		if peer != nil && peer.valid() != nil {
-			measurement.err = errors.Join(measurement.err, peer.Error())
-		}
-	}
+	check(measurement.ID == 0, "ID is required")
+	check(measurement.Epoch <= 0, "epoch is required")
+	check(measurement.Label == "", "label is required")
+	check(measurement.Source == "", "source is required")
+	check(measurement.At.IsZero(), "at is required")
+	check(measurement.Tick < 0, "tick must be non-negative")
+	check(measurement.SeqIdx < 0, "seqIdx must be non-negative")
 
-	if measurement.Epoch <= 0 {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Validation, "epoch is required", nil,
-		), "label", measurement.Label, "source", measurement.Source))
-	}
-
-	if measurement.Label == "" {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Validation, "label is required", nil,
-		), "label", measurement.Label, "source", measurement.Source))
-	}
-
-	if measurement.Source == "" {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Validation, "source is required", nil,
-		), "label", measurement.Label, "source", measurement.Source))
-	}
-
-	if measurement.At.IsZero() {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Validation, "at is required", nil,
-		), "label", measurement.Label, "source", measurement.Source))
-	}
-
-	if measurement.Tick < 0 {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Validation, "tick must be non-negative", nil,
-		), "label", measurement.Label, "source", measurement.Source))
-	}
-
-	if measurement.SeqIdx < 0 {
-		measurement.err = errors.Join(measurement.err, errnie.Error(errnie.Err(
-			errnie.Validation, "seqIdx must be non-negative", nil,
-		), "label", measurement.Label, "source", measurement.Source))
-	}
-
-	if measurement.ID == 0 {
-		measurement.ID = uuid.New().ID()
+	if measurement.err != nil {
+		return nil
 	}
 
 	return measurement

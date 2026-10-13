@@ -349,7 +349,7 @@ func (measurement *Measurement) Decode(batch arrow.RecordBatch, rowIdx int) erro
 DecodeMeasurement creates and decodes a Measurement from an Arrow RecordBatch row.
 */
 func DecodeMeasurement(batch arrow.RecordBatch, rowIdx int) (*Measurement, error) {
-	measurement := NewMeasurement(0, "", "", 0, 0)
+	measurement := NewMeasurement(0, "", "", time.Time{}, time.Time{})
 
 	if err := measurement.Decode(batch, rowIdx); err != nil {
 		return nil, err
@@ -372,7 +372,7 @@ func DecodeBatch(batch arrow.RecordBatch) ([]*Measurement, error) {
 	measurements := make([]*Measurement, 0, totalRows)
 
 	for rowIdx := range totalRows {
-		measurement := NewMeasurement(0, "", "", 0, 0)
+		measurement := NewMeasurement(0, "", "", time.Time{}, time.Time{})
 
 		if err := cols.decodeRow(measurement, rowIdx); err != nil {
 			return nil, err
@@ -396,12 +396,10 @@ func FromWire(row *wire.MeasurementT) *Measurement {
 		0,
 		row.Symbol,
 		row.Source,
-		row.Tick,
-		row.Tick,
+		time.Unix(0, row.At).UTC(),
+		time.Unix(0, row.ObservedFrom).UTC(),
 	)
 
-	meas.At = time.Unix(0, row.At).UTC()
-	meas.From = time.Unix(0, row.ObservedFrom).UTC()
 	meas.maturity = row.Maturity
 
 	for _, metric := range row.Metrics {

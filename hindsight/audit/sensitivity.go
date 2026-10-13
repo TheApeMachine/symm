@@ -177,11 +177,11 @@ func computeSampleRegionDistribution(
 				symMeas[0].Epoch,
 				sym,
 				"sensitivity",
-				symMeas[0].SeqIdx,
-				tick,
+				symMeas[0].At,
+				symMeas[0].From,
 			)
-			frame.At = symMeas[0].At
-			frame.From = symMeas[0].From
+			frame.SeqIdx = symMeas[0].SeqIdx
+			frame.Tick = tick
 			frame.Peers(symMeas...)
 			frame.Write()
 			if regions := grid.Observe(frame); regions != nil {
@@ -242,11 +242,11 @@ func computeDuplicatedRegionDistribution(
 				symMeas[0].Epoch,
 				sym,
 				"sensitivity_dup",
-				symMeas[0].SeqIdx,
-				tick,
+				symMeas[0].At,
+				symMeas[0].From,
 			)
-			frame.At = symMeas[0].At
-			frame.From = symMeas[0].From
+			frame.SeqIdx = symMeas[0].SeqIdx
+			frame.Tick = tick
 			frame.Peers(symMeas...)
 			frame.Write()
 			if regions := grid.Observe(frame); regions != nil {

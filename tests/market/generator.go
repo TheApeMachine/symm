@@ -35,13 +35,11 @@ carries bid or ask; touch belongs to the BookManager.
 */
 func tradeFrame(symbol, phase string, seq int64, at time.Time, price float64, side string) *data.Measurement {
 	measurement := data.NewMeasurement(
-		1, symbol, "spot:trade", seq, seq,
+		1, symbol, "spot:trade", at, at,
 		&data.StringEntry{Key: "type", Value: "trade"},
 		&data.StringEntry{Key: "side", Value: side},
 		&data.StringEntry{Key: "phase", Value: phase},
 	)
-	measurement.At = at
-	measurement.From = at
 
 	priceUnit, priceTime := data.GetDimension("spot:trade", "price")
 	qtyUnit, qtyTime := data.GetDimension("spot:trade", "qty")

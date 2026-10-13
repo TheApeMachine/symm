@@ -108,7 +108,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if prev == nil {
-		prev = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.SeqIdx, prior.Tick)
+		prev = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
 	}
 
 	outMeas := prev.Next(prior, out)

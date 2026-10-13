@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -17,8 +18,9 @@ import (
 func TestService(t *testing.T) {
 	Convey("Given a broker Service bound to a Desk and Balance", t, func() {
 		balance := &Balance{Quote: "USD"}
+		now := time.Now()
 		balance.measurement = data.NewMeasurement(
-			0, "balance", "balance", 1, 1,
+			1, "balance", "balance", now, now,
 		).Write(
 			data.NewMetric("equity", 1000, data.UnitCurrency, data.TimescaleInstantaneous),
 			data.NewMetric("unrealized", 50, data.UnitCurrency, data.TimescaleInstantaneous),

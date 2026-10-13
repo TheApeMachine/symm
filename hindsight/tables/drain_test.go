@@ -30,9 +30,8 @@ func TestCatalog_Drain(t *testing.T) {
 		tee := hindsight.NewStoreTee(ctx, "testStoreTee")
 		tee.Transition(nmruntime.READY)
 
-		measurement := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", 1, 1)
-		measurement.At = time.Now().UTC()
-		measurement.From = measurement.At
+		now := time.Now().UTC()
+		measurement := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", now, now)
 		measurement.Write(data.NewMetric("price", 65000.0, data.UnitCurrency, data.TimescaleTick))
 		tee.Push(measurement)
 

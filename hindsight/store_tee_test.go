@@ -13,8 +13,8 @@ import (
 func TestStoreTee_Push(t *testing.T) {
 	Convey("Given a StoreTee", t, func() {
 		tee := NewStoreTee(context.Background(), "test")
-		row := data.NewMeasurement(1, "BTC/USD", "detector", 1, 1)
-		row.At, row.From = time.Unix(1_700_000_000, 0).UTC(), time.Unix(1_700_000_000, 0).UTC()
+		at := time.Unix(1_700_000_000, 0).UTC()
+		row := data.NewMeasurement(1, "BTC/USD", "detector", at, at)
 
 		Convey("A push before READY is dropped and counted", func() {
 			So(tee.Status(), ShouldNotEqual, runtime.READY)

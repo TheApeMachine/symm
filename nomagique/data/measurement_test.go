@@ -13,9 +13,8 @@ func TestMeasurementNext(t *testing.T) {
 		source := "spot:trade"
 		label := "BTC/USD"
 
-		first := NewMeasurement(epoch, label, source, 1, 1)
-		first.At = time.Now().UTC()
-		first.From = first.At
+		now := time.Now().UTC()
+		first := NewMeasurement(epoch, label, source, now, now)
 
 		first.copyMetrics(source, map[string]float64{
 			"price": 100.0,
@@ -61,9 +60,8 @@ func TestMeasurementWrite(t *testing.T) {
 		label := "ETH/USD"
 
 		Convey("When metrics have pre-calculated SNM, Write preserves it", func() {
-			measurement := NewMeasurement(epoch, label, source, 1, 1)
-			measurement.At = time.Now().UTC()
-			measurement.From = measurement.At
+			now := time.Now().UTC()
+			measurement := NewMeasurement(epoch, label, source, now, now)
 
 			priceMetric := NewMetric("price", 3050.0, UnitPrice, TimescaleInstantaneous)
 			priceMetric.setSNM(3000.0)
@@ -79,9 +77,8 @@ func TestMeasurementWrite(t *testing.T) {
 		})
 
 		Convey("When updating existing metrics in Write, SetSNM is computed from prior raw", func() {
-			measurement := NewMeasurement(epoch, label, source, 1, 1)
-			measurement.At = time.Now().UTC()
-			measurement.From = measurement.At
+			now := time.Now().UTC()
+			measurement := NewMeasurement(epoch, label, source, now, now)
 
 			// Initial metric without locking
 			measurement.metrics = append(measurement.metrics, &MetricEntry{
@@ -100,9 +97,8 @@ func TestMeasurementWrite(t *testing.T) {
 		})
 
 		Convey("A locked measurement rejects writes without mutating its err field", func() {
-			measurement := NewMeasurement(epoch, label, source, 1, 1)
-			measurement.At = time.Now().UTC()
-			measurement.From = measurement.At
+			now := time.Now().UTC()
+			measurement := NewMeasurement(epoch, label, source, now, now)
 			measurement.Write(NewMetric("price", 3000.0, UnitPrice, TimescaleInstantaneous))
 
 			So(measurement.locked(), ShouldBeTrue)
@@ -115,13 +111,14 @@ func TestMeasurementWrite(t *testing.T) {
 			measurement.SetMeta("test", "forbidden")
 			So(measurement.Error(), ShouldEqual, originalErr)
 
-			peer := NewMeasurement(epoch, "BTC/USD", source, 2, 2)
+			peer := NewMeasurement(epoch, "BTC/USD", source, now, now)
 			measurement.Peers(peer)
 			So(measurement.Error(), ShouldEqual, originalErr)
 		})
 
 		Convey("Reading an unlocked measurement is strictly guarded and reports not finalized", func() {
-			unlocked := NewMeasurement(epoch, label, source, 1, 1)
+			now := time.Now().UTC()
+			unlocked := NewMeasurement(epoch, label, source, now, now)
 			So(unlocked.locked(), ShouldBeFalse)
 
 			for entry := range unlocked.Read("price") {
@@ -139,4 +136,3 @@ func TestMeasurementWrite(t *testing.T) {
 		})
 	})
 }
-

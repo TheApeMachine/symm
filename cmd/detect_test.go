@@ -19,10 +19,8 @@ func makeTestDetection(class string, timestamp time.Time, extra ...*data.StringE
 		{Key: "c_price", Value: "102.00"},
 	}
 	meta = append(meta, extra...)
-	measurement := data.NewMeasurement(1, "BTC/USD", "detector", 1, 1, meta...)
+	measurement := data.NewMeasurement(1, "BTC/USD", "detector", timestamp, timestamp.Add(-5*time.Second), meta...)
 	measurement.ID = 1
-	measurement.At = timestamp
-	measurement.From = timestamp.Add(-5 * time.Second)
 	return measurement
 }
 

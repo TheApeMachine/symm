@@ -133,12 +133,10 @@ func TestPumpDumpSignal(t *testing.T) {
 
 		Convey("A trade frame without price is an error, not a silent drop", func() {
 			prior := data.NewMeasurement(
-				1, "BTC/USD", "spot:trade", 90, 90,
+				1, "BTC/USD", "spot:trade", now, now,
 				&data.StringEntry{Key: "type", Value: "trade"},
 				&data.StringEntry{Key: "side", Value: "buy"},
 			)
-			prior.At = now
-			prior.From = now
 
 			So(instrument.Step(prior.Write(
 				data.NewMetric("qty", 1.0, data.UnitQuantity, data.TimescaleInstantaneous),

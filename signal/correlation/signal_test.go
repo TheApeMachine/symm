@@ -10,7 +10,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 )
 
 func TestCorrelationSignalMetrics(t *testing.T) {
@@ -20,11 +19,9 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 			now.UnixNano(),
 			"BTC/USD",
 			"spot:trade",
-			system.SeqIdx.Add(1),
-			system.Tick.Add(1),
+			now,
+			now,
 		)
-		measurement.At = now
-		measurement.From = now
 		btcPrice := decimal.NewFromFloat64(50000)
 		measurement.Write(
 			data.NewExactMetric("price", btcPrice, data.UnitCurrency, data.TimescaleInstantaneous),
@@ -47,57 +44,53 @@ func TestCorrelationSignalMetrics(t *testing.T) {
 		})
 
 		Convey("When peer observations arrive and prices move, cross-asset metrics are computed", func() {
+			at1 := now.Add(500 * time.Millisecond)
 			eth1 := data.NewMeasurement(
-				now.Add(500*time.Millisecond).UnixNano(),
+				at1.UnixNano(),
 				"ETH/USD",
 				"spot:trade",
-				system.SeqIdx.Add(1),
-				system.Tick.Add(1),
+				at1,
+				at1,
 			)
-			eth1.At = now.Add(500 * time.Millisecond)
-			eth1.From = eth1.At
 			eth1.Write(
 				data.NewExactMetric("price", decimal.NewFromFloat64(3000), data.UnitCurrency, data.TimescaleInstantaneous),
 			)
 			So(signal.Step(eth1), ShouldNotBeNil)
 
+			at2 := now.Add(1500 * time.Millisecond)
 			btc2 := data.NewMeasurement(
-				now.Add(1500*time.Millisecond).UnixNano(),
+				at2.UnixNano(),
 				"BTC/USD",
 				"spot:trade",
-				system.SeqIdx.Add(1),
-				system.Tick.Add(1),
+				at2,
+				at2,
 			)
-			btc2.At = now.Add(1500 * time.Millisecond)
-			btc2.From = btc2.At
 			btc2.Write(
 				data.NewExactMetric("price", decimal.NewFromFloat64(50500), data.UnitCurrency, data.TimescaleInstantaneous),
 			)
 			So(signal.Step(btc2), ShouldNotBeNil)
 
+			at3 := now.Add(2000 * time.Millisecond)
 			eth2 := data.NewMeasurement(
-				now.Add(2000*time.Millisecond).UnixNano(),
+				at3.UnixNano(),
 				"ETH/USD",
 				"spot:trade",
-				system.SeqIdx.Add(1),
-				system.Tick.Add(1),
+				at3,
+				at3,
 			)
-			eth2.At = now.Add(2000 * time.Millisecond)
-			eth2.From = eth2.At
 			eth2.Write(
 				data.NewExactMetric("price", decimal.NewFromFloat64(3100), data.UnitCurrency, data.TimescaleInstantaneous),
 			)
 			So(signal.Step(eth2), ShouldNotBeNil)
 
+			at4 := now.Add(3000 * time.Millisecond)
 			btc3 := data.NewMeasurement(
-				now.Add(3000*time.Millisecond).UnixNano(),
+				at4.UnixNano(),
 				"BTC/USD",
 				"spot:trade",
-				system.SeqIdx.Add(1),
-				system.Tick.Add(1),
+				at4,
+				at4,
 			)
-			btc3.At = now.Add(3000 * time.Millisecond)
-			btc3.From = btc3.At
 			btc3.Write(
 				data.NewExactMetric("price", decimal.NewFromFloat64(51000), data.UnitCurrency, data.TimescaleInstantaneous),
 			)
@@ -127,9 +120,8 @@ func TestCorrelationSignalWithoutPrice(t *testing.T) {
 		signal := NewSignal(t.Context())
 		signal.Transition(runtime.READY)
 
-		frame := data.NewMeasurement(1, "BTC/USD", "spot:trade", system.SeqIdx.Add(1), system.Tick.Add(1))
-		frame.At = time.Now()
-		frame.From = frame.At
+		now := time.Now()
+		frame := data.NewMeasurement(1, "BTC/USD", "spot:trade", now, now)
 
 		So(func() { So(signal.Step(frame.Write()), ShouldBeNil) }, ShouldNotPanic)
 	})
@@ -145,9 +137,8 @@ func TestCorrelationReferencePeerHasMostOverlap(t *testing.T) {
 
 		step := func(symbol string, offset time.Duration) *data.Measurement {
 			walk[symbol] *= math.Exp(random.NormFloat64() * 0.01)
-			frame := data.NewMeasurement(origin.Add(offset).UnixNano(), symbol, "spot:trade", system.SeqIdx.Add(1), system.Tick.Add(1))
-			frame.At = origin.Add(offset)
-			frame.From = frame.At
+			atOffset := origin.Add(offset)
+			frame := data.NewMeasurement(atOffset.UnixNano(), symbol, "spot:trade", atOffset, atOffset)
 			frame.Write(data.NewExactMetric("price", decimal.NewFromFloat64(walk[symbol]), data.UnitCurrency, data.TimescaleInstantaneous))
 			return signal.Step(frame)
 		}

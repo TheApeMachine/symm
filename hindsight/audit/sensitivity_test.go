@@ -17,19 +17,20 @@ func TestSensitivityAudit(t *testing.T) {
 
 		now := time.Now()
 		for _, tick := range ticks {
-			mCVD := data.NewMeasurement(9101, "BTC/USD", "cvd", tick, tick)
-			mCVD.At = now.Add(time.Duration(tick) * time.Millisecond)
-			mCVD.From = mCVD.At
+			tAt := now.Add(time.Duration(tick) * time.Millisecond)
+			mCVD := data.NewMeasurement(9101, "BTC/USD", "cvd", tAt, tAt)
+			mCVD.SeqIdx = tick
+			mCVD.Tick = tick
 			mCVD = mCVD.Write(data.NewMetric("signed_net_fraction", 0.9, data.UnitDimensionless, data.TimescaleTick))
 
-			mDepth := data.NewMeasurement(9101, "BTC/USD", "depthflow", tick, tick)
-			mDepth.At = mCVD.At
-			mDepth.From = mCVD.From
+			mDepth := data.NewMeasurement(9101, "BTC/USD", "depthflow", tAt, tAt)
+			mDepth.SeqIdx = tick
+			mDepth.Tick = tick
 			mDepth = mDepth.Write(data.NewMetric("ask_retreat_velocity", 0.6, data.UnitDimensionless, data.TimescaleTick))
 
-			mHawkes := data.NewMeasurement(9101, "BTC/USD", "hawkes", tick, tick)
-			mHawkes.At = mCVD.At
-			mHawkes.From = mCVD.From
+			mHawkes := data.NewMeasurement(9101, "BTC/USD", "hawkes", tAt, tAt)
+			mHawkes.SeqIdx = tick
+			mHawkes.Tick = tick
 			mHawkes = mHawkes.Write(data.NewMetric("branching_ratio:buy", 0.4, data.UnitDimensionless, data.TimescaleTick))
 
 			tickMeasurements[tick] = []*data.Measurement{mCVD, mDepth, mHawkes}

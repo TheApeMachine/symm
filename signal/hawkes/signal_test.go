@@ -13,12 +13,10 @@ import (
 
 func trade(at time.Time, seq int64, side string, price, qty float64) *data.Measurement {
 	prior := data.NewMeasurement(
-		1, "BTC/USD", "spot:trade", seq, seq,
+		1, "BTC/USD", "spot:trade", at, at,
 		&data.StringEntry{Key: "type", Value: "trade"},
 		&data.StringEntry{Key: "side", Value: side},
 	)
-	prior.At = at
-	prior.From = at
 
 	return prior.Write(
 		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),
@@ -83,12 +81,10 @@ func TestHawkesTradeMetrics(t *testing.T) {
 
 		Convey("It drops an invalid trade side without publishing", func() {
 			prior := data.NewMeasurement(
-				1, "BTC/USD", "spot:trade", 100, 100,
+				1, "BTC/USD", "spot:trade", origin, origin,
 				&data.StringEntry{Key: "type", Value: "trade"},
 				&data.StringEntry{Key: "side", Value: "neutral"},
 			)
-			prior.At = origin
-			prior.From = origin
 			prior = prior.Write(
 				data.NewMetric("price", 50000, data.UnitPrice, data.TimescaleInstantaneous),
 				data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous),
@@ -100,11 +96,9 @@ func TestHawkesTradeMetrics(t *testing.T) {
 
 		Convey("It treats a non-trade frame as a wiring error", func() {
 			prior := data.NewMeasurement(
-				1, "BTC/USD", "spot:level3", 101, 101,
+				1, "BTC/USD", "spot:level3", origin, origin,
 				&data.StringEntry{Key: "side", Value: "buy"},
 			)
-			prior.At = origin
-			prior.From = origin
 			prior = prior.Write(
 				data.NewMetric("price", 50000, data.UnitPrice, data.TimescaleInstantaneous),
 				data.NewMetric("qty", 1, data.UnitQuantity, data.TimescaleInstantaneous),

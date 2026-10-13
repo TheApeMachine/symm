@@ -349,11 +349,11 @@ func observeAuditToken(grid *store.Grid, sym string, tick int64, signals []*data
 		signals[0].Epoch,
 		sym,
 		"audit",
-		signals[0].SeqIdx,
-		tick,
+		signals[0].At,
+		signals[0].From,
 	)
-	train.At = signals[0].At
-	train.From = signals[0].From
+	train.SeqIdx = signals[0].SeqIdx
+	train.Tick = tick
 	train.Peers(signals...)
 	train = train.Write()
 

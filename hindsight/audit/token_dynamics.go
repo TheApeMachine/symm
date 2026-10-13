@@ -115,11 +115,11 @@ func AnalyzeTokenDynamics(
 				symMeas[0].Epoch,
 				sym,
 				"dynamics",
-				symMeas[0].SeqIdx,
-				tick,
+				symMeas[0].At,
+				symMeas[0].From,
 			)
-			frame.At = symMeas[0].At
-			frame.From = symMeas[0].From
+			frame.SeqIdx = symMeas[0].SeqIdx
+			frame.Tick = tick
 			frame.Peers(symMeas...)
 			frame.Write()
 
