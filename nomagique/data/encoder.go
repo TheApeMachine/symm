@@ -1,8 +1,12 @@
 package data
 
 import (
+	"context"
+
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	icetable "github.com/apache/iceberg-go/table"
 	"github.com/theapemachine/errnie"
 )
 
@@ -32,15 +36,15 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 		), "label", measurement.Label, "source", measurement.Source)
 	}
 
-	epochBuilder := recordBuilder.Field(0).(*array.Int64Builder)
-	seqIdxBuilder := recordBuilder.Field(1).(*array.Int64Builder)
-	sourceBuilder := recordBuilder.Field(2).(*array.StringBuilder)
-	labelBuilder := recordBuilder.Field(3).(*array.StringBuilder)
-	tickBuilder := recordBuilder.Field(4).(*array.Int64Builder)
-	atBuilder := recordBuilder.Field(5).(*array.TimestampBuilder)
-	fromBuilder := recordBuilder.Field(6).(*array.TimestampBuilder)
-	timestampBuilder := recordBuilder.Field(7).(*array.Int64Builder)
-	idBuilder := recordBuilder.Field(8).(*array.Int64Builder)
+	idBuilder := recordBuilder.Field(0).(*array.Int64Builder)
+	epochBuilder := recordBuilder.Field(1).(*array.Int64Builder)
+	labelBuilder := recordBuilder.Field(2).(*array.StringBuilder)
+	sourceBuilder := recordBuilder.Field(3).(*array.StringBuilder)
+	seqIdxBuilder := recordBuilder.Field(4).(*array.Int64Builder)
+	tickBuilder := recordBuilder.Field(5).(*array.Int64Builder)
+	timestampBuilder := recordBuilder.Field(6).(*array.Int64Builder)
+	atBuilder := recordBuilder.Field(7).(*array.TimestampBuilder)
+	fromBuilder := recordBuilder.Field(8).(*array.TimestampBuilder)
 	coherenceBuilder := recordBuilder.Field(9).(*array.Float64Builder)
 	maturityBuilder := recordBuilder.Field(10).(*array.Float64Builder)
 	samplesBuilder := recordBuilder.Field(11).(*array.Int64Builder)
@@ -49,15 +53,15 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 	metricsBuilder := recordBuilder.Field(14).(*array.MapBuilder)
 	metadataBuilder := recordBuilder.Field(15).(*array.MapBuilder)
 
+	idBuilder.Append(int64(measurement.ID))
 	epochBuilder.Append(recEpoch)
-	seqIdxBuilder.Append(measurement.SeqIdx)
-	sourceBuilder.Append(measurement.Source)
 	labelBuilder.Append(measurement.Label)
+	sourceBuilder.Append(measurement.Source)
+	seqIdxBuilder.Append(measurement.SeqIdx)
 	tickBuilder.Append(measurement.Tick)
+	timestampBuilder.Append(measurement.Timestamp)
 	atBuilder.Append(arrow.Timestamp(measurement.At.UTC().UnixMicro()))
 	fromBuilder.Append(arrow.Timestamp(measurement.From.UTC().UnixMicro()))
-	timestampBuilder.Append(measurement.Timestamp)
-	idBuilder.Append(int64(measurement.ID))
 	coherenceBuilder.Append(measurement.coherence)
 	maturityBuilder.Append(measurement.maturity)
 	samplesBuilder.Append(measurement.samples)
@@ -109,6 +113,64 @@ func (measurement *Measurement) Encode(recordBuilder *array.RecordBuilder, epoch
 			metadataKey.Append(entry.Key)
 			metadataVal.Append(entry.Value)
 		}
+	}
+
+	return nil
+}
+
+func (measurement *Measurement) ToParquet(ctx context.Context, tbl *icetable.Table) error {
+	if measurement == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[data.encoder] measurement is nil",
+			nil,
+		))
+	}
+
+	if ctx == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[data.encoder] context is nil",
+			nil,
+		))
+	}
+
+	if tbl == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[data.encoder] table is nil",
+			nil,
+		))
+	}
+
+	converted, err := icetable.SchemaToArrowSchema(tbl.Schema(), nil, true, false)
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[data.encoder] failed to convert table schema to arrow schema",
+			err,
+		))
+	}
+
+	b := array.NewRecordBuilder(memory.DefaultAllocator, converted)
+	defer b.Release()
+
+	if err := measurement.Encode(b, measurement.Epoch); err != nil {
+		return err
+	}
+
+	rec := b.NewRecordBatch()
+	defer rec.Release()
+
+	arrowTbl := array.NewTableFromRecords(converted, []arrow.RecordBatch{rec})
+	defer arrowTbl.Release()
+
+	if _, err := tbl.AppendTable(ctx, arrowTbl, 1024 /* batchSize */, nil); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[data.encoder] failed to append table",
+			err,
+		))
 	}
 
 	return nil

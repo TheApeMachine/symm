@@ -20,7 +20,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "impulse", label: "Impulse map" },
 ];
 
-const tabAtom = createAtom<Tab>("positions");
+export const tabAtom = createAtom<Tab>("forward");
 
 export const LearningDashboard = () => {
 	const focus = useSelector(focusAtom, (s) => s);

@@ -540,8 +540,8 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 							{nodes.length} nodes
 						</span>
 						{activeSymbolList.length > 0 && !showAllBranches && (
-							<span className="text-[#38bdf8] text-[11px] font-medium flex items-center gap-1.5">
-								<span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8] animate-pulse" />
+							<span className="text-(--info) text-[11px] font-medium flex items-center gap-1.5">
+								<span className="w-1.5 h-1.5 rounded-full bg-(--info) animate-pulse" />
 								{filteredKeys.length} matching{" "}
 								{filteredKeys.length === 1 ? "branch" : "branches"} (
 								{targetSymbols.length} active{" "}
@@ -566,7 +566,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 								className={cn(
 									"px-2 py-0.5 rounded transition-colors cursor-pointer",
 									branchFilter === "matching" && !showAllBranches
-										? "bg-(--raised) text-[#38bdf8] font-bold"
+										? "bg-(--raised) text-(--info) font-bold"
 										: "text-(--f3) hover:text-(--f1)",
 								)}
 							>
@@ -681,15 +681,15 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 									className={cn(
 										"flex items-center gap-1.5 px-2 py-0.5 rounded border transition-all cursor-pointer font-mono shrink-0",
 										isSelected
-											? "bg-[#0284c7]/25 border-[#38bdf8] text-[#38bdf8] shadow"
-											: "bg-(--sunken) border-(--line) text-(--f2) hover:border-[#38bdf8]/50",
+											? "bg-(--info)/25 border-(--info) text-(--info) shadow"
+											: "bg-(--sunken) border-(--line) text-(--f2) hover:border-(--info)/50",
 									)}
 								>
-									<span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8]" />
+									<span className="w-1.5 h-1.5 rounded-full bg-(--info)" />
 									<span className="font-bold">
 										{s.symbol.replace("/USD", "")}
 									</span>
-									<span className="px-1 py-0.2 rounded bg-(--raised) text-[#38bdf8] font-bold text-[9px]">
+									<span className="px-1 py-0.2 rounded bg-(--raised) text-(--info) font-bold text-[9px]">
 										D{s.depth}
 									</span>
 									<span className="text-(--f3) text-[9px]">

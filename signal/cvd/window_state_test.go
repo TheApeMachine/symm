@@ -80,7 +80,7 @@ func TestSignalStepVolumeBarWindows(t *testing.T) {
 
 		Convey("No frame before a bar closes carries flow totals", func() {
 			for index := range 6 {
-				for _, label := range []string{"trade_count", "cumulative_volume_delta", "signed_net_fraction", "cvd_epoch_from"} {
+				for _, label := range []string{"signed_net_fraction", "gross_notional"} {
 					_, held := read(results[index], label)
 					So(held, ShouldBeFalse)
 				}
@@ -90,22 +90,8 @@ func TestSignalStepVolumeBarWindows(t *testing.T) {
 		Convey("A closed bar holds exactly its own trades", func() {
 			closed := results[6]
 			want := map[string]float64{
-				"trade_count":               3,
-				"trade_count:buy":           1,
-				"trade_count:sell":          2,
-				"executed_quantity:buy":     5,
-				"executed_quantity:sell":    17,
-				"gross_executed_quantity":   22,
-				"net_executed_quantity":     -12,
-				"cumulative_volume_delta":   -12,
-				"aggressive_notional:buy":   450,
-				"aggressive_notional:sell":  1450,
-				"gross_notional":            1900,
-				"net_notional":              -1000,
-				"cumulative_notional_delta": -1000,
-				"signed_net_fraction":       -1000.0 / 1900.0,
-				"signed_count_fraction":     -1.0 / 3.0,
-				"mean_trade_notional":       1900.0 / 3.0,
+				"gross_notional":      1900,
+				"signed_net_fraction": -1000.0 / 1900.0,
 			}
 
 			for label, value := range want {
@@ -119,11 +105,9 @@ func TestSignalStepVolumeBarWindows(t *testing.T) {
 
 		Convey("The next bar starts empty instead of continuing a running total", func() {
 			next := results[7]
-			count, _ := read(next, "trade_count")
-			delta, _ := read(next, "cumulative_volume_delta")
+			gross, _ := read(next, "gross_notional")
 			fraction, _ := read(next, "signed_net_fraction")
-			So(count, ShouldEqual, 1)
-			So(delta, ShouldEqual, 8)
+			So(gross, ShouldEqual, 800)
 			So(fraction, ShouldEqual, 1)
 			So(next.From, ShouldEqual, time.Unix(160, 0).UTC())
 		})

@@ -38,13 +38,19 @@ func metric(measurement *data.Measurement, label string) (float64, bool) {
 	return 0, false
 }
 
+func metricValue(measurement *data.Measurement, label string) float64 {
+	value, held := metric(measurement, label)
+	So(held, ShouldBeTrue)
+	return value
+}
+
 func TestHawkesTradeMetrics(t *testing.T) {
 	Convey("Given a READY Hawkes arrival-dynamics signal", t, func() {
 		instrument := hawkes.NewSignal(context.Background())
 		instrument.Transition(nmruntime.READY)
 		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-		Convey("It computes exact event counts, side fractions, and arrival rates", func() {
+		Convey("It computes exact arrival rates for buy and sell", func() {
 			var buyCount, sellCount float64
 
 			for step := range 20 {
@@ -67,22 +73,10 @@ func TestHawkesTradeMetrics(t *testing.T) {
 				So(res.At, ShouldEqual, at)
 				So(res.From.Sub(origin).Abs(), ShouldBeLessThan, time.Microsecond)
 
-				total := buyCount + sellCount
-				So(metricValue(res, "event_count"), ShouldEqual, total)
-				So(metricValue(res, "event_count:buy"), ShouldEqual, buyCount)
-				So(metricValue(res, "event_count:sell"), ShouldEqual, sellCount)
-
-				fracBuy := metricValue(res, "event_fraction:buy")
-				fracSell := metricValue(res, "event_fraction:sell")
-				So(fracBuy, ShouldAlmostEqual, buyCount/total, 1e-9)
-				So(fracSell, ShouldAlmostEqual, sellCount/total, 1e-9)
-				So(fracBuy+fracSell, ShouldAlmostEqual, 1.0, 1e-9)
-
 				span := at.Sub(origin).Seconds()
 				if span > 0 {
 					So(metricValue(res, "arrival_rate:buy"), ShouldAlmostEqual, buyCount/span, 1e-4)
 					So(metricValue(res, "arrival_rate:sell"), ShouldAlmostEqual, sellCount/span, 1e-4)
-					So(metricValue(res, "arrival_rate"), ShouldAlmostEqual, (buyCount+sellCount)/span, 1e-4)
 				}
 
 				So(res.Maturity(), ShouldBeGreaterThanOrEqualTo, 0)
@@ -124,10 +118,4 @@ func TestHawkesTradeMetrics(t *testing.T) {
 			So(instrument.Error(), ShouldNotBeNil)
 		})
 	})
-}
-
-func metricValue(measurement *data.Measurement, label string) float64 {
-	got, held := metric(measurement, label)
-	So(held, ShouldBeTrue)
-	return got
 }

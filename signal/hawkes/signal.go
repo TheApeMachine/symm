@@ -4,20 +4,28 @@ import (
 	"context"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 )
 
+type symbolModel struct {
+	estimator     *nmhawkes.Hawkes
+	prevIntensity float64
+	prevAtSec     float64
+	hasPrev       bool
+}
+
 type Signal struct {
 	*runtime.System
-	models map[string]*nmhawkes.Hawkes
+	models map[string]*symbolModel
 	last   map[string]*data.Measurement
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		models: make(map[string]*nmhawkes.Hawkes),
+		models: make(map[string]*symbolModel),
 		last:   make(map[string]*data.Measurement),
 	}
 
@@ -83,14 +91,16 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	atSec := float64(prior.At.UnixNano()) * 1e-9
 
-	model, exists := signal.models[prior.Label]
+	state, exists := signal.models[prior.Label]
 
 	if !exists {
-		model = nmhawkes.NewHawkes()
-		signal.models[prior.Label] = model
+		state = &symbolModel{
+			estimator: nmhawkes.NewHawkes(),
+		}
+		signal.models[prior.Label] = state
 	}
 
-	res, from, err := model.Step(mark, atSec)
+	res, from, err := state.estimator.Step(mark, atSec)
 
 	if err != nil {
 		signal.Error(errnie.Err(
@@ -102,17 +112,45 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	if dropped := model.Dropped(); dropped != nil {
+	if dropped := state.estimator.Dropped(); dropped != nil {
 		errnie.Warn("[hawkes] " + prior.Label + ": model dropped: " + dropped.Error())
+	}
+
+	outMetrics := make(map[string]float64, 4)
+
+	if buyRate, ok := res["arrival_rate:buy"]; ok {
+		outMetrics["arrival_rate:buy"] = buyRate
+	}
+
+	if sellRate, ok := res["arrival_rate:sell"]; ok {
+		outMetrics["arrival_rate:sell"] = sellRate
+	}
+
+	if radius, ok := res["branching_spectral_radius"]; ok {
+		outMetrics["branching_spectral_radius"] = radius
+	}
+
+	if intensity, ok := res["conditional_intensity"]; ok {
+		if state.hasPrev {
+			timeDelta := atSec - state.prevAtSec
+
+			if core.Resolvable(timeDelta) {
+				outMetrics["conditional_intensity_velocity"] = (intensity - state.prevIntensity) / timeDelta
+			}
+		}
+
+		state.prevIntensity = intensity
+		state.prevAtSec = atSec
+		state.hasPrev = true
 	}
 
 	var out *data.Measurement
 	if prev, ok := signal.last[prior.Label]; ok {
-		out = prev.Next(res)
+		out = prev.Next(outMetrics)
 	}
 
 	if out == nil {
-		out = data.NewFromPrior(prior, signal.Name(), res)
+		out = data.NewFromPrior(prior, signal.Name(), outMetrics)
 	}
 
 	out.At = prior.At

@@ -129,7 +129,7 @@ func TestGrid_Observe(t *testing.T) {
 		grid := NewGrid(context.Background())
 
 		Convey("When every region holds metrics", func() {
-			sizes := [RegionCount]int{1, 1, 1, 4, 1, 1, 1, 1, 1, 1, 1, 1}
+			sizes := [RegionCount]int{1, 1, 1, 1, 3, 1, 1, 1, 1, 1, 1, 1}
 			frame, peers := regionFrame(sizes, true)
 			regions := grid.Observe(frame)
 

@@ -57,10 +57,10 @@ func newBatchCols(batch arrow.RecordBatch) (*batchCols, error) {
 			if cols.epochCol, ok = col.(*array.Int64); !ok {
 				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column epoch is not *array.Int64", nil))
 			}
-		case "seqIdx":
+		case "seqIdx", "seq_idx":
 			var ok bool
 			if cols.seqIdxCol, ok = col.(*array.Int64); !ok {
-				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column seqIdx is not *array.Int64", nil))
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "iceberg: column seq_idx is not *array.Int64", nil))
 			}
 		case "source":
 			var ok bool
@@ -296,6 +296,10 @@ func (cols *batchCols) decodeRow(measurement *Measurement, rowIdx int) error {
 				}
 
 				metric := NewMetric(metricKey, rawVal, unitVal, timeVal)
+
+				if cols.normCol != nil && !cols.normCol.IsNull(itemIdx) {
+					metric.snm = cols.normCol.Value(itemIdx)
+				}
 
 				if cols.exactCol != nil && !cols.exactCol.IsNull(itemIdx) && cols.exactCol.Value(itemIdx) != "" {
 					exactDec, err := decimal.NewFromString(cols.exactCol.Value(itemIdx))

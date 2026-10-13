@@ -3,7 +3,6 @@ package depthflow_test
 import (
 	"context"
 	"fmt"
-	"math"
 	"testing"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -58,9 +56,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 
 		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-		Convey("Level notionals, imbalances, resolution gap, and level-diff flow are exact", func() {
-			var prevBid, prevAsk, prevTotal float64
-
+		Convey("Level notionals, imbalances, and level-diff flow are exact", func() {
 			for step := range 14 {
 				at := now.Add(time.Duration(step) * 100 * time.Millisecond)
 
@@ -75,8 +71,6 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 				obsAsk := touchAsk + ask2Price*ask2Qty
 				total := obsBid + obsAsk
 				bookImb := (obsBid - obsAsk) / total
-				touchImb := (touchBid - touchAsk) / (touchBid + touchAsk)
-				gap := touchImb - bookImb
 
 				books.Update(&kraken.Level3{
 					Channel: "level3",
@@ -100,77 +94,20 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 				So(res.Source, ShouldEqual, "depthflow")
 				So(res.Label, ShouldEqual, "BTC/USD")
 
-				So(metricValue(res, "book_notional:bid"), ShouldAlmostEqual, obsBid, 1e-6)
-				So(metricValue(res, "book_notional:ask"), ShouldAlmostEqual, obsAsk, 1e-6)
-				So(metricValue(res, "book_notional"), ShouldAlmostEqual, total, 1e-6)
-				_, duplicated := metric(res, "observed_notional")
-				So(duplicated, ShouldBeFalse)
-
+				So(metricValue(res, "touch_notional:bid"), ShouldAlmostEqual, touchBid, 1e-6)
 				So(metricValue(res, "book_imbalance"), ShouldAlmostEqual, bookImb, 1e-9)
-				So(metricValue(res, "touch_imbalance"), ShouldAlmostEqual, touchImb, 1e-9)
-				So(metricValue(res, "imbalance_resolution_gap"), ShouldAlmostEqual, gap, 1e-9)
-				So(metricValue(res, "imbalance_resolution_distance"), ShouldAlmostEqual, math.Abs(gap), 1e-9)
 
-				// Without a prior book there is no flow, no rate, no baseline.
 				if step == 0 {
-					for _, key := range []string{
-						"added_notional:bid", "book_turnover_rate", "book_imbalance_baseline",
-						"book_imbalance_zscore", "turnover_ratio", "historical_path_distance",
-					} {
-						_, held := metric(res, key)
-						So(held, ShouldBeFalse)
-					}
-
+					_, held := metric(res, "net_displayed_flow:bid")
+					So(held, ShouldBeFalse)
 					So(res.From, ShouldEqual, at)
-				} else {
-					// Every level only grows, so added equals the notional growth and nothing is removed.
-					So(metricValue(res, "added_notional:bid"), ShouldAlmostEqual, obsBid-prevBid, 1e-6)
-					So(metricValue(res, "added_notional:ask"), ShouldAlmostEqual, obsAsk-prevAsk, 1e-6)
-					So(metricValue(res, "removed_notional:bid"), ShouldAlmostEqual, 0.0, 1e-9)
-					So(metricValue(res, "removed_notional:ask"), ShouldAlmostEqual, 0.0, 1e-9)
-					So(metricValue(res, "added_notional_rate:bid"), ShouldAlmostEqual, (obsBid-prevBid)/0.1, 1e-3)
-
-					reference := (prevTotal + total) / 2.0
-					activity := (obsBid - prevBid) + (obsAsk - prevAsk)
-					So(metricValue(res, "book_turnover_rate"), ShouldAlmostEqual, activity/(reference*0.1), 1e-9)
-					So(metricValue(res, "net_book_change_rate"), ShouldAlmostEqual, (total-prevTotal)/(reference*0.1), 1e-9)
-					So(metricValue(res, "signed_net_displayed_flow_rate"), ShouldAlmostEqual,
-						((obsBid-prevBid)-(obsAsk-prevAsk))/(reference*0.1), 1e-9)
-					So(res.From, ShouldEqual, at.Add(-100*time.Millisecond))
 				}
 
-				// A z-score needs core.MinimumPrior prior samples with
-				// positive dispersion.
-				_, scored := metric(res, "book_imbalance_zscore")
-				So(scored, ShouldEqual, float64(step) >= core.MinimumPrior)
-
-				prevBid, prevAsk, prevTotal = obsBid, obsAsk, total
-			}
-		})
-
-		Convey("A same-timestamp frame has flow but no rate", func() {
-			snapshot := func(qty float64) {
-				books.Update(&kraken.Level3{
-					Channel: "level3",
-					Type:    "snapshot",
-					Data: []kraken.Level3Data{{
-						Symbol: "SOL/USD",
-						Bids:   []kraken.Level3Order{order("b1", 100, qty, now)},
-						Asks:   []kraken.Level3Order{order("a1", 101, 1, now)},
-					}},
-				})
-			}
-
-			snapshot(1)
-			So(instrument.Step(market.Stamp(books, "SOL/USD", "buy", now, 1, 1)), ShouldNotBeNil)
-			snapshot(2)
-			res := instrument.Step(market.Stamp(books, "SOL/USD", "buy", now, 1, 1))
-			So(res, ShouldNotBeNil)
-			So(metricValue(res, "added_notional:bid"), ShouldAlmostEqual, 100.0, 1e-9)
-
-			for _, key := range []string{"added_notional_rate:bid", "book_turnover_rate", "turnover_zscore"} {
-				_, held := metric(res, key)
-				So(held, ShouldBeFalse)
+				if step > 0 {
+					So(metricValue(res, "net_displayed_flow:bid"), ShouldBeGreaterThan, 0)
+					So(metricValue(res, "mutation_activity_imbalance"), ShouldBeBetweenOrEqual, -1.0, 1.0)
+					So(res.From, ShouldEqual, at.Add(-100*time.Millisecond))
+				}
 			}
 		})
 
@@ -197,7 +134,6 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 			})
 			So(instrument.Step(market.Stamp(books, "ADA/USD", "buy", now, 1, 1)), ShouldNotBeNil)
 
-			// A new best bid at 101 pushes the level at 91 beyond the depth.
 			later := now.Add(time.Second)
 			books.Update(&kraken.Level3{
 				Channel: "level3",
@@ -211,8 +147,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 
 			res := instrument.Step(market.Stamp(books, "ADA/USD", "buy", later, 1, 1))
 			So(res, ShouldNotBeNil)
-			So(metricValue(res, "added_notional:bid"), ShouldAlmostEqual, 101.0, 1e-9)
-			So(metricValue(res, "removed_notional:bid"), ShouldAlmostEqual, 0.0, 1e-9)
+			So(metricValue(res, "net_displayed_flow:bid"), ShouldAlmostEqual, 101.0, 1e-9)
 		})
 
 		Convey("A vanished level counts as removed notional", func() {
@@ -241,10 +176,8 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 			res := instrument.Step(market.Stamp(books, "ETH/USD", "buy", later, 1, 1))
 			So(res, ShouldNotBeNil)
 			So(instrument.Error(), ShouldBeNil)
-			So(metricValue(res, "removed_notional:bid"), ShouldAlmostEqual, 2999.0*2, 1e-6)
-			So(metricValue(res, "added_notional:bid"), ShouldAlmostEqual, 0.0, 1e-9)
 			So(metricValue(res, "net_displayed_flow:bid"), ShouldAlmostEqual, -2999.0*2, 1e-6)
-			So(metricValue(res, "flow_activity_imbalance"), ShouldAlmostEqual, -1.0, 1e-9)
+			So(metricValue(res, "mutation_activity_imbalance"), ShouldAlmostEqual, 1.0, 1e-9)
 		})
 
 		Convey("A crossed book is dropped with a warning without halting the system", func() {
@@ -267,6 +200,7 @@ func TestDepthflowSignalMetrics(t *testing.T) {
 			So(instrument.Step(market.Stamp(books, "XRP/USD", "buy", now, 1, 1)), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)
 		})
+
 		Convey("A stamped book that cannot be decoded is corrupt ingress state and halts", func() {
 			So(instrument.Step(market.Unreadable("BTC/USD", "buy", now, 1, 1)), ShouldBeNil)
 

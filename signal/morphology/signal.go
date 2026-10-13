@@ -5,7 +5,6 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -27,7 +26,6 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	mu     sync.Mutex
 	states map[string]*symbolState
 }
 
@@ -220,7 +218,6 @@ func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float6
 		currentBook = append(currentBook, point{pos: pt.pos, weight: pt.weight * 0.5})
 	}
 
-	signal.mu.Lock()
 	state, exists := signal.states[stateKey]
 	if !exists {
 		state = &symbolState{}
@@ -235,7 +232,6 @@ func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float6
 
 	state.hasPrev = true
 	state.prevBook = currentBook
-	signal.mu.Unlock()
 
 	res := []float64{shapeDist, ks, concBid, concAsk, entropyBid, entropyAsk}
 	if hasMorphChange {

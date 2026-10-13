@@ -24,7 +24,6 @@ func summarize(readings []nmcorrelation.LeadLagReading) map[string]float64 {
 
 	lags := make([]float64, 0, len(readings))
 	gains := make([]float64, 0, len(readings))
-	gainSum := 0.0
 	led := 0.0
 
 	for _, reading := range readings {
@@ -32,7 +31,6 @@ func summarize(readings []nmcorrelation.LeadLagReading) map[string]float64 {
 
 		if reading.GainDefined {
 			gains = append(gains, reading.AbsoluteGain)
-			gainSum += reading.AbsoluteGain
 		}
 
 		if reading.Leads && reading.X < 0 {
@@ -56,7 +54,6 @@ func summarize(readings []nmcorrelation.LeadLagReading) map[string]float64 {
 	}
 
 	if len(gains) > 0 {
-		summary["covariance_score_gain_mean"] = gainSum / float64(len(gains))
 		summary["covariance_score_gain_median"] = median(gains)
 	}
 

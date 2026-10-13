@@ -97,7 +97,7 @@ describe("KernelInspector", () => {
 	it("renders a meter for every metric the kernel publishes", () => {
 		const ring = getTestRing("toxicity", DEFAULT_FOCUS_SYMBOL);
 		ring.clear();
-		ring.add(metricMeasurement(3.5, "retreat_rate", 1.25, 0.5));
+		ring.add(metricMeasurement(3.5, "retreat_fraction:bid", 1.25, 0.5));
 		signals.toxicity.setState((prev) => ({ ...prev }));
 		terminalStore.actions.inspectSource("toxicity");
 
@@ -107,7 +107,7 @@ describe("KernelInspector", () => {
 
 		// A known toxicity metric is named and its raw readout is shown, while
 		// metrics the row does not carry stay dashed rather than zero.
-		expect(markup).toContain("retreat rate");
+		expect(markup).toContain("retreat fraction · bid");
 		expect(markup).toContain("1.2500");
 		expect(markup).toMatch(/2 \/ \d+ read/);
 
@@ -123,7 +123,7 @@ describe("KernelInspector", () => {
 	it("formats sub-basis-point values using scientific notation", () => {
 		const ring = getTestRing("toxicity", DEFAULT_FOCUS_SYMBOL);
 		ring.clear();
-		ring.add(metricMeasurement(3.5, "retreat_rate", 0.0000117, 0.5));
+		ring.add(metricMeasurement(3.5, "retreat_fraction:bid", 0.0000117, 0.5));
 		signals.toxicity.setState((prev) => ({ ...prev }));
 		terminalStore.actions.inspectSource("toxicity");
 
@@ -136,14 +136,14 @@ describe("KernelInspector", () => {
 	it("holds a metric's last value across rows that do not carry it", () => {
 		const ring = getTestRing("toxicity", DEFAULT_FOCUS_SYMBOL);
 		ring.clear();
-		ring.add(metricMeasurement(3.5, "retreat_rate", 1.25, 0.5));
+		ring.add(metricMeasurement(3.5, "retreat_fraction:bid", 1.25, 0.5));
 		ring.add(sparseMeasurement(2.0));
 		signals.toxicity.setState((prev) => ({ ...prev }));
 		terminalStore.actions.inspectSource("toxicity");
 
 		const markup = renderInspector();
 
-		expect(markup).toContain("retreat rate");
+		expect(markup).toContain("retreat fraction · bid");
 		expect(markup).toContain("1.2500");
 
 		terminalStore.actions.closeInspect();

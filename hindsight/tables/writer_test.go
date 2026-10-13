@@ -67,3 +67,32 @@ func TestWriter_AddAndCommit(t *testing.T) {
 		})
 	})
 }
+
+func TestMeasurement_ToParquet(t *testing.T) {
+	Convey("Given an Iceberg table and a measurement", t, func() {
+		ctx := context.Background()
+		catalog := tablestest.New(t)
+		epoch := int64(201)
+
+		tbl, err := catalog.Load(ctx, tables.Measurements)
+		So(err, ShouldBeNil)
+		So(tbl, ShouldNotBeNil)
+
+		measurement := data.NewMeasurement(epoch, "BTC/USD", "spot:trade", 10, 20)
+		measurement.At = time.Now().UTC()
+		measurement.From = measurement.At
+		measurement.Write(data.NewMetric("price", 65000.0, data.UnitCurrency, data.TimescaleInstantaneous))
+
+		Convey("When ToParquet is called", func() {
+			err := measurement.ToParquet(ctx, tbl)
+			So(err, ShouldBeNil)
+
+			readMeasurements, err := drainSeq(catalog.Trades(ctx, epoch))
+			So(err, ShouldBeNil)
+			So(len(readMeasurements), ShouldEqual, 1)
+			So(readMeasurements[0].Label, ShouldEqual, "BTC/USD")
+			So(readMeasurements[0].Epoch, ShouldEqual, epoch)
+		})
+	})
+}
+

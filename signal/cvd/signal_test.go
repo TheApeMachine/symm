@@ -52,14 +52,11 @@ func TestCVDSignalMetrics(t *testing.T) {
 			}
 
 			// A symbol's first trade only seeds its volume clock: flow
-			// totals wait for a closed bar, and rates, responses, and
-			// baselines need an earlier trade. Nothing is defined yet.
+			// totals wait for a closed bar, and midpoint responses need an earlier trade.
 			So(len(metrics), ShouldEqual, 0)
 
 			for _, label := range []string{
-				"trade_count", "cumulative_volume_delta", "signed_net_fraction",
-				"trade_rate", "gross_notional_rate", "midpoint_log_return",
-				"signed_net_fraction_baseline", "gross_notional_rate_ratio",
+				"signed_net_fraction", "gross_notional", "midpoint_log_return", "flow_aligned_midpoint_return",
 			} {
 				entry := data.Pull(result.Read(label))
 				So(entry == nil || entry.Err != nil || entry.Metric == nil, ShouldBeTrue)
@@ -68,20 +65,10 @@ func TestCVDSignalMetrics(t *testing.T) {
 	})
 }
 
-/*
-stepSymbols hands every execution of the TestSignalStep setup its own symbols:
-standardization moments live per (epoch, source, symbol, metric) for the life
-of the process, so reusing a symbol would continue an earlier execution's
-streams instead of starting them cold.
-*/
 var stepSymbols atomic.Int64
 
 func TestSignalStep(t *testing.T) {
 	Convey("Given CVD stepping a multi-leg trade tape through the real Step boundary", t, func() {
-		// The futures diverge only once the streams hold enough prior
-		// samples to define z-scores at the divergence. A symbol's first
-		// trade has no rate, so the rate streams hold MinimumRankPrior
-		// priors one trade after MinimumRankPrior.
 		precursor := int(core.MinimumRankPrior) + 1
 
 		run := stepSymbols.Add(1)
@@ -162,93 +149,6 @@ func TestSignalStep(t *testing.T) {
 	})
 }
 
-func TestCVDUndefinedRates(t *testing.T) {
-	Convey("Given CVD stepping trades with and without elapsed time", t, func() {
-		signal := NewSignal(t.Context())
-		signal.Transition(runtime.READY)
-		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-
-		step := func(at time.Time, qty float64) map[string]float64 {
-			measurement := data.NewMeasurement(
-				1, "RATE/USD", "spot:trade", system.SeqIdx.Add(1), system.Tick.Add(1),
-				&data.StringEntry{Key: "side", Value: "buy"},
-			)
-			measurement.At = at
-			measurement.From = at
-			measurement.Write(
-				data.NewMetric("price", 100, data.UnitPrice, data.TimescaleInstantaneous),
-				data.NewMetric("qty", qty, data.UnitQuantity, data.TimescaleInstantaneous),
-			)
-
-			result := signal.Step(measurement)
-			So(result, ShouldNotBeNil)
-			values := make(map[string]float64)
-
-			for entry := range result.Read() {
-				values[entry.Key] = entry.Metric.Raw()
-			}
-
-			return values
-		}
-
-		Convey("A rate needs a strictly earlier trade, never an assumed second", func() {
-			first := step(origin, 1)
-			same := step(origin, 2)
-			later := step(origin.Add(2*time.Second), 3)
-
-			for _, values := range []map[string]float64{first, same} {
-				_, rated := values["gross_notional_rate"]
-				So(rated, ShouldBeFalse)
-			}
-
-			So(later["gross_notional_rate"], ShouldAlmostEqual, 300.0/2.0, 1e-9)
-			So(later["trade_rate"], ShouldAlmostEqual, 0.5, 1e-12)
-
-			// One prior rate is a baseline but not yet a dispersion.
-			_, ratio := later["gross_notional_rate_ratio"]
-			_, zscore := later["gross_notional_rate_zscore"]
-			So(ratio, ShouldBeFalse)
-			So(zscore, ShouldBeFalse)
-
-			after := step(origin.Add(3*time.Second), 1)
-			So(after["gross_notional_rate_ratio"], ShouldAlmostEqual, 100.0/150.0, 1e-9)
-			// Scored on ln(rate): the divergence is the log residual and the
-			// baseline the geometric mean of the earlier rates.
-			So(after["gross_notional_rate_divergence"], ShouldAlmostEqual, math.Log(100.0/150.0), 1e-12)
-			So(after["gross_notional_rate_baseline"], ShouldAlmostEqual, 150.0, 1e-9)
-			_, zscore = after["gross_notional_rate_zscore"]
-			So(zscore, ShouldBeFalse)
-		})
-
-		Convey("An interval within the venue clock's grain has no rate or velocity", func() {
-			step(origin, 1)
-			step(origin.Add(2*time.Second), 3)
-
-			// One microsecond is the venue's timestamp resolution: the stored
-			// tape had such pairs, and their trade_rate was 1e6 per second.
-			tick := step(origin.Add(2*time.Second+core.ClockResolution), 2)
-
-			for _, label := range []string{
-				"trade_rate", "gross_notional_rate", "net_notional_rate",
-				"buy_notional_rate", "gross_notional_rate_velocity", "net_notional_rate_velocity",
-			} {
-				_, rated := tick[label]
-				So(rated, ShouldBeFalse)
-			}
-
-			// Four grains is the shortest interval the clock resolves to
-			// core.Tolerance.
-			resolved := step(origin.Add(2*time.Second+5*core.ClockResolution), 2)
-			So(resolved["trade_rate"], ShouldAlmostEqual, 1/(4*core.ClockResolution.Seconds()), 1e-6)
-		})
-	})
-}
-
-/*
-stampedTrade builds a stored trade of one epoch carrying the touch ingress
-stamps onto it at its sequence number; a zero bid leaves it unstamped, as a
-trade on an unseeded or diverged book is.
-*/
 func stampedTrade(symbol, side string, price, qty float64, at time.Time, bid, ask float64) *data.Measurement {
 	measurement := data.NewMeasurement(
 		1,
@@ -296,10 +196,10 @@ func TestCVDSignal_BookMidpointResponse(t *testing.T) {
 			So(entry.Metric, ShouldNotBeNil)
 			So(entry.Metric.Raw(), ShouldEqual, 0.0)
 
-			fromEntry := data.Pull(res2.Read("response_midpoint:from"))
-			atEntry := data.Pull(res2.Read("response_midpoint:at"))
-			So(fromEntry.Metric.Raw(), ShouldEqual, 100.0)
-			So(atEntry.Metric.Raw(), ShouldEqual, 100.0)
+			alignedEntry := data.Pull(res2.Read("flow_aligned_midpoint_return"))
+			So(alignedEntry, ShouldNotBeNil)
+			So(alignedEntry.Metric, ShouldNotBeNil)
+			So(alignedEntry.Metric.Raw(), ShouldEqual, 0.0)
 		})
 
 		Convey("When quote midpoint moves while trade execution price is identical", func() {
@@ -310,14 +210,19 @@ func TestCVDSignal_BookMidpointResponse(t *testing.T) {
 			So(entry, ShouldNotBeNil)
 			So(entry.Metric, ShouldNotBeNil)
 			So(entry.Metric.Raw(), ShouldAlmostEqual, math.Log(102.0/100.0), 1e-12)
+
+			alignedEntry := data.Pull(res2.Read("flow_aligned_midpoint_return"))
+			So(alignedEntry, ShouldNotBeNil)
+			So(alignedEntry.Metric, ShouldNotBeNil)
+			So(alignedEntry.Metric.Raw(), ShouldAlmostEqual, math.Log(102.0/100.0), 1e-12)
 		})
 
 		Convey("When a trade carries no touch, it has no midpoint response", func() {
 			signal.Step(stampedTrade("SOL/USD", "buy", 100.0, 1.0, now, 99.0, 101.0))
 			res2 := signal.Step(stampedTrade("SOL/USD", "buy", 100.0, 1.0, now.Add(time.Second), 0, 0))
 
-			So(data.Pull(res2.Read("response_midpoint:at")), ShouldBeNil)
 			So(data.Pull(res2.Read("midpoint_log_return")), ShouldBeNil)
+			So(data.Pull(res2.Read("flow_aligned_midpoint_return")), ShouldBeNil)
 		})
 	})
 }

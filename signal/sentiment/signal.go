@@ -51,25 +51,6 @@ func (ce *causalEstimator) Step(value float64) (
 	return true, priorMean, residual, true, residual / scale
 }
 
-/*
-emit writes name's baseline, divergence, and z-score as far as the estimator
-defines them, and returns the z-score with its definedness.
-*/
-func (ce *causalEstimator) emit(out map[string]float64, name string, value float64) (float64, bool) {
-	hasBaseline, baseline, residual, hasZ, zScore := ce.Step(value)
-
-	if hasBaseline {
-		out[name+"_baseline"] = baseline
-		out[name+"_divergence"] = residual
-	}
-
-	if hasZ {
-		out[name+"_zscore"] = zScore
-	}
-
-	return zScore, hasZ
-}
-
 type observation struct {
 	at    float64
 	price float64
@@ -128,8 +109,6 @@ type Signal struct {
 	medianEstimator  causalEstimator
 	hasPrevBreadth   bool
 	prevBreadth      float64
-	hasPrevMedian    bool
-	prevMedian       float64
 	historyPoints    [][2]float64
 	historyDistances []float64
 }
@@ -193,12 +172,8 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	mem.observations = append(mem.observations, observation{at: atNano, price: price})
 
-	output := map[string]float64{
-		"cohort_member_count": float64(len(signal.members)),
-	}
+	output := map[string]float64{}
 
-	// The horizon is the cohort's median cadence; without one there is no
-	// common horizon and no cross-section.
 	var cadences []float64
 	for _, m := range signal.members {
 		if len(m.spacings) > 0 {
@@ -234,7 +209,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	horizon := median(cadences)
 	horizonNano := horizon * 1e9
 	fromNano := atNano - horizonNano
-	output["cohort_horizon_seconds"] = horizon
 
 	type memberReturn struct {
 		symbol  string
@@ -243,8 +217,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 	var valid []memberReturn
 
-	// Every member is cut at the same endpoints (T-H, T], each endpoint the
-	// as-of price no older than H.
 	for s, m := range signal.members {
 		m.retain(fromNano - horizonNano)
 
@@ -262,27 +234,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		})
 	}
 
-	cohortMemberCount := float64(len(signal.members))
 	validCount := float64(len(valid))
-	output["valid_member_count"] = validCount
-	output["excluded_member_count"] = cohortMemberCount - validCount
 
 	if validCount == 0 {
 		return emit(time.Unix(0, int64(fromNano)).UTC())
 	}
 
-	for _, vr := range valid {
-		if vr.symbol == symbol {
-			output["return"] = vr.ret
-			output["absolute_return"] = math.Abs(vr.ret)
-			output["from_age_seconds"] = vr.fromAge
-			break
-		}
-	}
-
 	advanceCount := 0.0
 	declineCount := 0.0
-	unchangedCount := 0.0
 
 	var returns []float64
 	var absReturns []float64
@@ -298,96 +257,38 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 		if vr.ret < 0 {
 			declineCount++
-			continue
 		}
-
-		unchangedCount++
 	}
 
-	output["advance_count"] = advanceCount
-	output["decline_count"] = declineCount
-	output["unchanged_count"] = unchangedCount
-	output["advance_fraction"] = advanceCount / validCount
-	output["decline_fraction"] = declineCount / validCount
-	output["unchanged_fraction"] = unchangedCount / validCount
-	output["directional_participation"] = (advanceCount + declineCount) / validCount
 	breadth := (advanceCount - declineCount) / validCount
 	output["breadth"] = breadth
-
-	if dirMoving := advanceCount + declineCount; dirMoving > 0 {
-		output["directional_agreement"] = math.Max(advanceCount, declineCount) / dirMoving
-		output["directional_consensus"] = math.Abs(advanceCount-declineCount) / dirMoving
-	}
 
 	slices.Sort(returns)
 	slices.Sort(absReturns)
 
 	medRet := returns[len(returns)/2]
-	medAbsRet := absReturns[len(absReturns)/2]
-
-	sumAbs := 0.0
-	sumSq := 0.0
-
-	for _, r := range returns {
-		sumAbs += math.Abs(r)
-		sumSq += r * r
-	}
-
-	var retDevs []float64
-	var magDevs []float64
-
-	for _, r := range returns {
-		retDevs = append(retDevs, math.Abs(r-medRet))
-		magDevs = append(magDevs, math.Abs(math.Abs(r)-medAbsRet))
-	}
-
-	slices.Sort(retDevs)
-	slices.Sort(magDevs)
-
-	output["median_return"] = medRet
-	output["median_absolute_return"] = medAbsRet
-	output["mean_absolute_return"] = sumAbs / validCount
-	output["rms_return"] = math.Sqrt(sumSq / validCount)
-	output["return_mad"] = retDevs[len(retDevs)/2]
-	output["magnitude_mad"] = magDevs[len(magDevs)/2]
-	output["return_interquartile_range"] = returns[int(float64(len(returns))*0.75)] -
-		returns[int(float64(len(returns))*0.25)]
 
 	largestAbs := absReturns[len(absReturns)-1]
-	tieCount := 0.0
 	largestSigned := 0.0
 	largestSymbol := ""
 
 	for _, vr := range valid {
 		if math.Abs(vr.ret) == largestAbs {
-			tieCount++
 			largestSigned = vr.ret
 			largestSymbol = vr.symbol
+			break
 		}
 	}
 
-	output["largest_move_tie_count"] = tieCount
-	output["largest_absolute_return"] = largestAbs
-	output["largest_signed_return"] = largestSigned
-
-	if sumAbs > 0 {
-		output["largest_move_share"] = largestAbs / sumAbs
-	}
-
-	var peerAbsReturns []float64
 	sameDirPeer := 0.0
 	oppDirPeer := 0.0
-	zeroDirPeer := 0.0
 
 	for _, vr := range valid {
 		if vr.symbol == largestSymbol {
 			continue
 		}
 
-		peerAbsReturns = append(peerAbsReturns, math.Abs(vr.ret))
-
 		if vr.ret == 0 {
-			zeroDirPeer++
 			continue
 		}
 
@@ -399,38 +300,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		oppDirPeer++
 	}
 
-	if peerCount := float64(len(peerAbsReturns)); peerCount > 0 {
-		slices.Sort(peerAbsReturns)
-		peerMedAbs := peerAbsReturns[len(peerAbsReturns)/2]
+	output["same_direction_peer_count"] = sameDirPeer
+	output["opposite_direction_peer_count"] = oppDirPeer
 
-		var peerDevs []float64
-		for _, pr := range peerAbsReturns {
-			peerDevs = append(peerDevs, math.Abs(pr-peerMedAbs))
-		}
-		slices.Sort(peerDevs)
-		peerMagMAD := peerDevs[len(peerDevs)/2]
-		largestExcess := largestAbs - peerMedAbs
-
-		output["peer_median_absolute_return"] = peerMedAbs
-		output["peer_magnitude_mad"] = peerMagMAD
-		output["largest_move_excess"] = largestExcess
-		output["same_direction_peer_count"] = sameDirPeer
-		output["opposite_direction_peer_count"] = oppDirPeer
-		output["zero_return_peer_count"] = zeroDirPeer
-		output["same_direction_peer_fraction"] = sameDirPeer / peerCount
-		output["opposite_direction_peer_fraction"] = oppDirPeer / peerCount
-		output["zero_return_peer_fraction"] = zeroDirPeer / peerCount
-
-		if peerMedAbs > 0 {
-			output["largest_move_ratio"] = largestAbs / peerMedAbs
-		}
-
-		if peerMagMAD > 0 {
-			output["largest_move_mad_excess"] = largestExcess / peerMagMAD
-		}
-	}
-
-	bZScore, hasBZ := signal.breadthEstimator.emit(output, "breadth", breadth)
+	_, _, _, hasBZ, bZScore := signal.breadthEstimator.Step(breadth)
 
 	if signal.hasPrevBreadth {
 		output["breadth_velocity"] = breadth - signal.prevBreadth
@@ -439,14 +312,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	signal.prevBreadth = breadth
 	signal.hasPrevBreadth = true
 
-	mZScore, hasMZ := signal.medianEstimator.emit(output, "median_return", medRet)
-
-	if signal.hasPrevMedian {
-		output["median_return_velocity"] = medRet - signal.prevMedian
-	}
-
-	signal.prevMedian = medRet
-	signal.hasPrevMedian = true
+	_, _, _, hasMZ, mZScore := signal.medianEstimator.Step(medRet)
 
 	if hasBZ && hasMZ {
 		signal.historyPath(output, [2]float64{bZScore, mZScore})

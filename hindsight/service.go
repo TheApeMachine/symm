@@ -355,7 +355,7 @@ func (service *Service) envelope(ctx fiber.Ctx) error {
 
 	var found *data.Measurement
 
-	frameFilter := iceberg.BooleanExpression(iceberg.EqualTo(iceberg.Reference("seqIdx"), seq))
+	frameFilter := iceberg.BooleanExpression(iceberg.EqualTo(iceberg.Reference("seq_idx"), seq))
 
 	if symbol != "" {
 		frameFilter = iceberg.NewAnd(

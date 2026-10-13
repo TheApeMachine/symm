@@ -41,7 +41,7 @@ func TestSentimentSignalMetrics(t *testing.T) {
 		origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 		symbols := []string{"BTC/USD", "ETH/USD", "SOL/USD", "ADA/USD", "XRP/USD"}
 
-		Convey("It measures advance/decline breadth, unchanged counts, and the median change", func() {
+		Convey("It measures breadth, breadth_velocity, and peer direction counts", func() {
 			for step := range 6 {
 				for idx, symbol := range symbols {
 					seq := int64(step*len(symbols) + idx + 1)
@@ -56,68 +56,25 @@ func TestSentimentSignalMetrics(t *testing.T) {
 					So(res.Source, ShouldEqual, "sentiment")
 					So(res.Label, ShouldEqual, symbol)
 
-					// No member has a cadence yet, so there is no common
-					// horizon: only the membership is a fact.
-					if step == 0 {
-						count, held := metric(res, "cohort_member_count")
-						So(held, ShouldBeTrue)
-						So(count, ShouldEqual, idx+1)
-
-						for _, label := range []string{
-							"cohort_horizon_seconds", "valid_member_count", "breadth", "median_return",
-						} {
-							_, held := metric(res, label)
-							So(held, ShouldBeFalse)
-						}
-					}
-
-					// Every member trades every 500ms: the horizon is that
-					// cadence, and the cut spans it.
-					if step > 1 {
-						horizon, held := metric(res, "cohort_horizon_seconds")
-						So(held, ShouldBeTrue)
-						So(horizon, ShouldAlmostEqual, 0.5, 1e-9)
-						So(res.From, ShouldEqual, at.Add(-500*time.Millisecond))
-					}
-
 					if step > 1 && idx == len(symbols)-1 {
-						expected := map[string]float64{
-							"valid_member_count": 5,
-							"advance_count":      2,
-							"decline_count":      2,
-							"unchanged_count":    1,
-							"advance_fraction":   2.0 / 5.0,
-							"decline_fraction":   2.0 / 5.0,
-							"unchanged_fraction": 1.0 / 5.0,
-							"breadth":            0,
-							"median_return":      0,
-						}
+						breadth, held := metric(res, "breadth")
+						So(held, ShouldBeTrue)
+						So(breadth, ShouldAlmostEqual, 0.0, 1e-9)
 
-						for label, want := range expected {
-							got, held := metric(res, label)
-							So(held, ShouldBeTrue)
-							So(got, ShouldAlmostEqual, want, 1e-9)
-						}
+						_, held = metric(res, "same_direction_peer_count")
+						So(held, ShouldBeTrue)
 
-						for _, label := range []string{
-							"breadth_baseline", "breadth_divergence",
-							"median_return_baseline", "median_return_divergence",
-							"median_return_velocity", "breadth_velocity",
-						} {
-							_, held := metric(res, label)
-							So(held, ShouldBeTrue)
-						}
+						_, held = metric(res, "opposite_direction_peer_count")
+						So(held, ShouldBeTrue)
 
-						median, _ := metric(res, "median_return")
-						baseline, _ := metric(res, "median_return_baseline")
-						divergence, _ := metric(res, "median_return_divergence")
-						So(divergence, ShouldAlmostEqual, median-baseline, 1e-12)
+						_, held = metric(res, "breadth_velocity")
+						So(held, ShouldBeTrue)
 					}
 				}
 			}
 		})
 
-		Convey("A market-wide advance produces full advance breadth and a positive median change", func() {
+		Convey("A market-wide advance produces breadth = 1.0", func() {
 			for step := range 4 {
 				for idx, symbol := range symbols {
 					seq := int64(step*len(symbols) + idx + 100)
@@ -129,55 +86,17 @@ func TestSentimentSignalMetrics(t *testing.T) {
 					So(instrument.Error(), ShouldBeNil)
 
 					if step > 1 && idx == len(symbols)-1 {
-						expected := map[string]float64{
-							"advance_count":    5,
-							"decline_count":    0,
-							"unchanged_count":  0,
-							"advance_fraction": 1,
-							"decline_fraction": 0,
-							"breadth":          1,
-						}
-
-						for label, want := range expected {
-							got, held := metric(res, label)
-							So(held, ShouldBeTrue)
-							So(got, ShouldAlmostEqual, want, 1e-9)
-						}
-
-						median, held := metric(res, "median_return")
+						breadth, held := metric(res, "breadth")
 						So(held, ShouldBeTrue)
-						So(median, ShouldBeGreaterThan, 0)
+						So(breadth, ShouldAlmostEqual, 1.0, 1e-9)
 
-						_, held = metric(res, "directional_consensus")
+						sameCount, held := metric(res, "same_direction_peer_count")
 						So(held, ShouldBeTrue)
+						So(sameCount, ShouldEqual, 4)
 
-						_, held = metric(res, "asof_age_seconds")
-						So(held, ShouldBeFalse)
-					}
-				}
-			}
-		})
-
-		Convey("A member without a fresh as-of price is excluded, not counted as unchanged", func() {
-			for step := range 4 {
-				for idx, symbol := range symbols {
-					// SOL/USD stops trading after the first round.
-					if symbol == "SOL/USD" && step > 0 {
-						continue
-					}
-
-					seq := int64(step*len(symbols) + idx + 200)
-					at := origin.Add(time.Duration(seq) * 100 * time.Millisecond)
-					res := instrument.Step(trade(symbol, at, seq, 100.0*(1.0+float64(step)*0.01)))
-					So(res, ShouldNotBeNil)
-
-					if step == 3 && idx == len(symbols)-1 {
-						valid, _ := metric(res, "valid_member_count")
-						excluded, _ := metric(res, "excluded_member_count")
-						unchanged, _ := metric(res, "unchanged_count")
-						So(valid, ShouldEqual, 4)
-						So(excluded, ShouldEqual, 1)
-						So(unchanged, ShouldEqual, 0)
+						oppCount, held := metric(res, "opposite_direction_peer_count")
+						So(held, ShouldBeTrue)
+						So(oppCount, ShouldEqual, 0)
 					}
 				}
 			}

@@ -10,9 +10,9 @@ describe("sourceHeadline", () => {
 	it("names the metric each signal kernel leads with", () => {
 		expect(sourceHeadline("depthflow")).toBe("book_imbalance");
 		expect(sourceHeadline("hawkes")).toBe("branching_spectral_radius");
-		expect(sourceHeadline("correlation")).toBe("covariance_score");
-		expect(sourceHeadline("cvd")).toBe("signed_net_fraction_zscore");
-		expect(sourceHeadline("toxicity")).toBe("fill_fraction_zscore:bid");
+		expect(sourceHeadline("correlation")).toBe("cohort_covariance_score");
+		expect(sourceHeadline("cvd")).toBe("signed_net_fraction");
+		expect(sourceHeadline("toxicity")).toBe("retreat_fraction:bid");
 	});
 
 	it("returns null for sources with no named headline", () => {
@@ -31,35 +31,35 @@ describe("sourceHeadlineMetric", () => {
 	it("uses a metric the live depthflow measurement publishes", () => {
 		expect(sourceHeadlineMetric("depthflow")).toBe("metrics.book_imbalance");
 		expect(sourceMetrics("depthflow")).toContain("book_imbalance");
-		expect(sourceMetrics("depthflow")).toContain("touch_imbalance");
+		expect(sourceMetrics("depthflow")).toContain("touch_notional:bid");
 		expect(sourceMetrics("depthflow")[0]).toBe("snr");
 	});
 
 	it("uses the live correlation hypothesis as its headline", () => {
 		expect(sourceHeadlineMetric("correlation")).toBe(
-			"metrics.covariance_score",
+			"metrics.cohort_covariance_score",
 		);
-		expect(sourceMetrics("correlation")).toContain("covariance_score");
+		expect(sourceMetrics("correlation")).toContain("cohort_covariance_score");
 		expect(sourceMetrics("correlation")[0]).toBe("snr");
 	});
 
 	it("uses the anchor evidence names emitted by leadlag", () => {
 		expect(sourceHeadlineMetric("leadlag")).toBe(
-			"metrics.best_lag_correlation",
+			"metrics.led_peer_share",
 		);
-		expect(sourceMetrics("leadlag")).toContain("best_lag_correlation");
+		expect(sourceMetrics("leadlag")).toContain("led_peer_share");
+		expect(sourceMetrics("leadlag")).toContain("best_lag_seconds_median");
 		expect(sourceMetrics("leadlag")[0]).toBe("snr");
 	});
 
 	it("shows PumpDump's measured spread contract", () => {
-		expect(sourceMetrics("pumpdump")).toContain("spread");
-		expect(sourceMetrics("pumpdump")).toContain("relative_spread");
-		expect(sourceMetrics("pumpdump")).toContain("spread_zscore");
+		expect(sourceMetrics("pumpdump")).toContain("spread_ratio");
+		expect(sourceMetrics("pumpdump")).toContain("volume_rate");
 	});
 
-	it("uses toxicity's emitted fill-fraction z-score rather than an absent summary", () => {
+	it("uses toxicity's emitted retreat fraction rather than an absent summary", () => {
 		expect(sourceHeadlineMetric("toxicity")).toBe(
-			"metrics.fill_fraction_zscore:bid",
+			"metrics.retreat_fraction:bid",
 		);
 	});
 

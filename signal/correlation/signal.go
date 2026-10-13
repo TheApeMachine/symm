@@ -70,13 +70,25 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
+	outMetrics := make(map[string]float64, 3)
+
+	for _, key := range []string{
+		"cohort_covariance_score",
+		"historical_path_distance",
+		"historical_path_percentile",
+	} {
+		if val, exists := frame.Metrics[key]; exists {
+			outMetrics[key] = val
+		}
+	}
+
 	var out *data.Measurement
 	if prev, ok := signal.last[prior.Label]; ok {
-		out = prev.Next(frame.Metrics)
+		out = prev.Next(outMetrics)
 	}
 
 	if out == nil {
-		out = data.NewFromPrior(prior, signal.Name(), frame.Metrics)
+		out = data.NewFromPrior(prior, signal.Name(), outMetrics)
 	}
 
 	out.At = prior.At

@@ -21,8 +21,8 @@ func MeasurementSchema() *iceberg.Schema {
 	metricStruct := &iceberg.StructType{
 		FieldList: []iceberg.NestedField{
 			{ID: 18, Name: "raw", Type: iceberg.PrimitiveTypes.Float64, Required: true},
-			{ID: 19, Name: "normalized", Type: iceberg.PrimitiveTypes.Float64, Required: true},
-			{ID: 20, Name: "standardized", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+			{ID: 19, Name: "norm", Type: iceberg.PrimitiveTypes.Float64, Required: true},
+			{ID: 20, Name: "std", Type: iceberg.PrimitiveTypes.Float64, Required: true},
 			{ID: 21, Name: "exact", Type: iceberg.PrimitiveTypes.String, Required: false},
 			{ID: 22, Name: "support", Type: iceberg.PrimitiveTypes.Float64, Required: true},
 			{ID: 23, Name: "unit", Type: iceberg.PrimitiveTypes.String, Required: true},
@@ -31,15 +31,15 @@ func MeasurementSchema() *iceberg.Schema {
 	}
 
 	return iceberg.NewSchema(0,
-		iceberg.NestedField{ID: 1, Name: "epoch", Type: iceberg.PrimitiveTypes.Int64, Required: true},
-		iceberg.NestedField{ID: 2, Name: "seqIdx", Type: iceberg.PrimitiveTypes.Int64, Required: true},
-		iceberg.NestedField{ID: 3, Name: "source", Type: iceberg.PrimitiveTypes.String, Required: true},
-		iceberg.NestedField{ID: 4, Name: "label", Type: iceberg.PrimitiveTypes.String, Required: true},
-		iceberg.NestedField{ID: 5, Name: "tick", Type: iceberg.PrimitiveTypes.Int64, Required: true},
-		iceberg.NestedField{ID: 6, Name: "at", Type: iceberg.PrimitiveTypes.TimestampTz, Required: true},
-		iceberg.NestedField{ID: 7, Name: "from", Type: iceberg.PrimitiveTypes.TimestampTz, Required: true},
-		iceberg.NestedField{ID: 8, Name: "timestamp", Type: iceberg.PrimitiveTypes.Int64, Required: true},
-		iceberg.NestedField{ID: 9, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 2, Name: "epoch", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 3, Name: "label", Type: iceberg.PrimitiveTypes.String, Required: true},
+		iceberg.NestedField{ID: 4, Name: "source", Type: iceberg.PrimitiveTypes.String, Required: true},
+		iceberg.NestedField{ID: 5, Name: "seq_idx", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 6, Name: "tick", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 7, Name: "timestamp", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 8, Name: "at", Type: iceberg.PrimitiveTypes.TimestampTz, Required: true},
+		iceberg.NestedField{ID: 9, Name: "from", Type: iceberg.PrimitiveTypes.TimestampTz, Required: true},
 		iceberg.NestedField{ID: 10, Name: "coherence", Type: iceberg.PrimitiveTypes.Float64, Required: true},
 		iceberg.NestedField{ID: 11, Name: "maturity", Type: iceberg.PrimitiveTypes.Float64, Required: true},
 		iceberg.NestedField{ID: 12, Name: "samples", Type: iceberg.PrimitiveTypes.Int64, Required: true},
@@ -66,13 +66,13 @@ MeasurementPartitioning isolates runs physically by identity partitioning on epo
 func MeasurementPartitioning() iceberg.PartitionSpec {
 	return iceberg.NewPartitionSpec(
 		iceberg.PartitionField{
-			SourceIDs: []int{1},
+			SourceIDs: []int{2},
 			FieldID:   1000,
 			Name:      "epoch",
 			Transform: iceberg.IdentityTransform{},
 		},
 		iceberg.PartitionField{
-			SourceIDs: []int{3},
+			SourceIDs: []int{4},
 			FieldID:   1001,
 			Name:      "source",
 			Transform: iceberg.IdentityTransform{},

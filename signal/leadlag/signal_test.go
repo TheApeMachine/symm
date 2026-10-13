@@ -49,7 +49,6 @@ var summaryKeys = []string{
 	"best_lag_seconds_median",
 	"best_lag_seconds_mad",
 	"led_peer_share",
-	"covariance_score_gain_mean",
 	"covariance_score_gain_median",
 }
 

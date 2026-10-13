@@ -244,6 +244,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"net_book_change_rate_zscore":               {Unit: UnitZScore, Timescale: TimescaleRollingWindow},
 		"net_displayed_flow:ask":                    {Unit: UnitSignedNotional, Timescale: TimescaleInstantaneous},
 		"net_displayed_flow:bid":                    {Unit: UnitSignedNotional, Timescale: TimescaleInstantaneous},
+		"touch_notional:bid":                        {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
 		"net_displayed_flow_rate:ask":               {Unit: UnitSignedNotionalRate, Timescale: TimescaleRollingWindow},
 		"net_displayed_flow_rate:bid":               {Unit: UnitSignedNotionalRate, Timescale: TimescaleRollingWindow},
 		"observed_notional_diff":                    {Unit: UnitSignedNotional, Timescale: TimescaleInstantaneous},
