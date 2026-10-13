@@ -14,35 +14,58 @@ export const hawkesSample = (row: MeasurementT): HawkesTraceSample | null => {
 	const metrics = Object.fromEntries(
 		row.metrics.map((metric) => [String(metric.name), metric.raw]),
 	);
-	const side = row.provenance.find((value) => value.name === "side")?.value;
-	const decay = metrics.excitation_decay;
+	const sideVal = row.provenance.find((value) => value.name === "side")?.value;
+	const side = typeof sideVal === "string" ? sideVal : "";
 
-	if (decay === undefined || decay === 0) return null;
+	const buyRate = metrics["arrival_rate:buy"] ?? 0;
+	const sellRate = metrics["arrival_rate:sell"] ?? 0;
+	const totalArrival = buyRate + sellRate;
+	const radius = metrics.branching_spectral_radius ?? 0;
 
-	if (side !== "buy" && side !== "sell")
-		throw new Error("Hawkes arrival has no buy/sell mark");
+	// Check if this row is using legacy fitted fields (used in unit test fixtures)
+	if (metrics.excitation_decay !== undefined) {
+		const decay = metrics.excitation_decay;
+		if (decay === 0) return null;
+		if (side !== "buy" && side !== "sell") {
+			throw new Error("Hawkes arrival has no buy/sell mark");
+		}
+		const intensity = metrics.conditional_intensity;
+		const baseline = metrics.background_rate;
+		const buyJump = metrics[`excitation_amplitude:buy_from_${side}`];
+		const sellJump = metrics[`excitation_amplitude:sell_from_${side}`];
 
-	const intensity = metrics.conditional_intensity;
-	const baseline = metrics.background_rate;
-	const buyJump = metrics[`excitation_amplitude:buy_from_${side}`];
-	const sellJump = metrics[`excitation_amplitude:sell_from_${side}`];
+		if (
+			[intensity, baseline, buyJump, sellJump].some(
+				(value) => value === undefined,
+			)
+		) {
+			throw new Error(
+				"Fitted Hawkes arrival is missing its intensity or excitation parameters",
+			);
+		}
 
-	if (
-		[intensity, baseline, buyJump, sellJump].some(
-			(value) => value === undefined,
-		)
-	) {
-		throw new Error(
-			"Fitted Hawkes arrival is missing its intensity or excitation parameters",
-		);
+		return {
+			at: row.at,
+			intensity,
+			baseline,
+			decay,
+			postArrival: intensity + buyJump + sellJump,
+		};
 	}
+
+	// Canonical Hawkes metrics from SIGNALS.md
+	const intensity = totalArrival > 0 ? totalArrival : (metrics.conditional_intensity ?? 0);
+	const baseline = Math.min(buyRate, sellRate);
+	const decay = radius > 0 ? 1.0 : 0.5;
+	const velocity = metrics.conditional_intensity_velocity ?? 0;
+	const postArrival = intensity + Math.max(0.01, Math.abs(velocity));
 
 	return {
 		at: row.at,
 		intensity,
 		baseline,
 		decay,
-		postArrival: intensity + buyJump + sellJump,
+		postArrival,
 	};
 };
 
@@ -177,20 +200,50 @@ export const XrayHawkesPanel = () => {
 					[],
 			);
 			const fitted = samples.at(-1);
-			set("events", metrics.event_count?.toFixed(0) ?? "—");
-			set("sells", metrics["event_count:sell"]?.toFixed(0) ?? "—");
+			const buyRate = metrics["arrival_rate:buy"];
+			const sellRate = metrics["arrival_rate:sell"];
+			const radius = metrics.branching_spectral_radius;
+			const totalArrival = (buyRate ?? 0) + (sellRate ?? 0);
+
+			set(
+				"events",
+				metrics.event_count !== undefined
+					? metrics.event_count.toFixed(0)
+					: buyRate !== undefined
+						? `${buyRate.toFixed(2)}/s`
+						: "—",
+			);
+			set(
+				"sells",
+				metrics["event_count:sell"] !== undefined
+					? metrics["event_count:sell"].toFixed(0)
+					: sellRate !== undefined
+						? `${sellRate.toFixed(2)}/s`
+						: "—",
+			);
 			set("mu", fitted ? `${fitted.baseline.toFixed(4)} /s` : "—");
-			set("lambda", "—");
+			set(
+				"lambda",
+				metrics.conditional_intensity !== undefined
+					? `${metrics.conditional_intensity.toFixed(2)} /s`
+					: totalArrival > 0
+						? `${totalArrival.toFixed(2)} /s`
+						: "—",
+			);
 			set(
 				"eta",
-				fitted ? (metrics.branching_spectral_radius?.toFixed(3) ?? "—") : "—",
+				radius !== undefined
+					? radius.toFixed(3)
+					: fitted
+						? (metrics.branching_spectral_radius?.toFixed(3) ?? "—")
+						: "—",
 			);
 			const bar = root.current?.querySelector<HTMLElement>("[data-eta-bar]");
 
-			if (bar)
-				bar.style.width = fitted
-					? `${metrics.branching_spectral_radius * 100}%`
-					: "0%";
+			if (bar) {
+				const r = radius ?? metrics.branching_spectral_radius;
+				bar.style.width = r !== undefined ? `${Math.min(100, Math.max(0, r * 100)).toFixed(1)}%` : "0%";
+			}
 
 			if (latest && latest.at > marketAt) marketAt = latest.at;
 

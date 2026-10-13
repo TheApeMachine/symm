@@ -1,9 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef } from "react";
 import {
 	focusAtom,
 	kernelDetailAtom,
-	measurementSourcesAtom,
 	signals,
 	symbolsAtom,
 } from "#/collections/app";
@@ -12,14 +10,15 @@ import {
 	metricLabel,
 	sourceMetrics,
 } from "#/components/terminal/kernel-meta";
+import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
+import { Grid } from "#/components/ui/grid";
 import { Typography } from "#/components/ui/typography";
 
 export const SignalDetail = () => {
 	const focusSymbol = useSelector(focusAtom, (state) => state);
 	const selected = useSelector(kernelDetailAtom, (state) => state);
 	const symbols = useSelector(symbolsAtom, (state) => state);
-	const root = useRef<HTMLDivElement>(null);
 
 	const source = selected || "cvd";
 	const copy =
@@ -27,62 +26,6 @@ export const SignalDetail = () => {
 			? { name: "Signal detail", sub: "", blurb: "" }
 			: kernelCopy(source, "");
 	const metrics = source === "" ? [] : sourceMetrics(source);
-
-	useEffect(() => {
-		if (source === "") return;
-		const sourceStore = signals[source];
-		if (!sourceStore) return;
-
-		const applyState = () => {
-			if (!root.current) return;
-			const ring = sourceStore.state[focusSymbol];
-			const row = ring?.getLast ? ring.getLast() : null;
-
-			const set = (q: string, value: string) => {
-				const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
-				if (el) el.textContent = value;
-			};
-
-			set("symbol", focusSymbol);
-			const rowAt = row?.at;
-			set(
-				"at",
-				rowAt === undefined || rowAt === 0n
-					? "—"
-					: new Date(Number(rowAt / 1000000n)).toISOString().slice(11, 19),
-			);
-			set(
-				"maturity",
-				row?.maturity === undefined ? "—" : row.maturity.toFixed(3),
-			);
-			set("peer", "—");
-			set("epoch", String(measurementSourcesAtom.get().length));
-
-			if (row && Array.isArray(row.metrics)) {
-				for (const m of row.metrics) {
-					if (!m) continue;
-					const name = m.name ?? "";
-					const raw = m.raw;
-					const snm = m.snm;
-
-					set(`m:${name}`, raw.toFixed(4));
-					const bar = root.current?.querySelector<HTMLElement>(
-						`[data-mbar="${name}"]`,
-					);
-					if (bar instanceof HTMLElement) {
-						bar.style.width = `calc(clamp(0, ${Math.abs(snm)}, 1) * 100%)`;
-					}
-				}
-			}
-		};
-
-		applyState();
-		const subscription = sourceStore.subscribe(applyState);
-
-		return () => {
-			subscription.unsubscribe();
-		};
-	}, [source, focusSymbol]);
 
 	if (source === "") {
 		return (
@@ -96,9 +39,10 @@ export const SignalDetail = () => {
 	}
 
 	return (
-		<Flex.Column
+		<Component
 			key={`${source}:${focusSymbol}`}
-			ref={root}
+			store={signals[source]}
+			symbol={focusSymbol}
 			className="min-h-0 overflow-auto px-5 py-4.5"
 		>
 			<Flex.Row className="items-start justify-between gap-3">
@@ -114,18 +58,23 @@ export const SignalDetail = () => {
 				{copy.blurb}
 			</Typography.Paragraph>
 
-			<div className="mt-4.5 grid grid-cols-2 gap-x-5.5 gap-y-3">
+			<Grid cols={2} gapY={3} className="mt-4.5 gap-x-5.5">
 				{metrics.map((metric) => (
 					<div key={metric}>
 						<Flex.Row justify="between" align="center" className="mb-1.5 gap-2">
 							<Typography.Label size="xxs" tone="f3" weight="normal">
 								{metricLabel(metric)}
 							</Typography.Label>
-							<Typography.Mono size="s" tone="f1" data-f={`m:${metric}`}>
+							<Typography.Mono
+								size="s"
+								tone="f1"
+								data-metric-raw={metric}
+								data-format="fixed:4"
+							>
 								—
 							</Typography.Mono>
 						</Flex.Row>
-						<div className="h-1.5 overflow-hidden rounded-[3px] bg-(--line)">
+						<div className="h-1.5 overflow-hidden rounded-[2px] bg-(--line)">
 							<div
 								data-mbar={metric}
 								className="h-full bg-(--acc) transition-[width] duration-500 ease-out"
@@ -134,43 +83,61 @@ export const SignalDetail = () => {
 						</div>
 					</div>
 				))}
-			</div>
+			</Grid>
 
-			<div className="mt-5 grid grid-cols-2 gap-x-5.5 gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs">
-				<div className="flex justify-between">
+			<Grid
+				cols={2}
+				gapY={2}
+				className="mt-5 gap-x-5.5 border-(--line) border-t pt-3.5 font-mono text-xs"
+			>
+				<Flex.Row justify="between">
 					<Typography.Label size="xxs" tone="f3" weight="normal">
 						Symbol
 					</Typography.Label>
-					<span data-f="symbol" className="text-(--f1)" />
-				</div>
-				<div className="flex justify-between">
+					<Typography.Span data-metric="symbol" className="text-(--f1)">
+						—
+					</Typography.Span>
+				</Flex.Row>
+				<Flex.Row justify="between">
 					<Typography.Label size="xxs" tone="f3" weight="normal">
 						Observed
 					</Typography.Label>
-					<span data-f="at" className="text-(--f1)" />
-				</div>
-				<div className="flex justify-between">
+					<Typography.Span data-metric="at" className="text-(--f1)">
+						—
+					</Typography.Span>
+				</Flex.Row>
+				<Flex.Row justify="between">
 					<Typography.Label size="xxs" tone="f3" weight="normal">
 						Maturity
 					</Typography.Label>
-					<span data-f="maturity" className="text-(--f1)" />
-				</div>
-				<div className="flex justify-between">
+					<Typography.Span
+						data-metric="maturity"
+						data-format="fixed:3"
+						className="text-(--f1)"
+					>
+						—
+					</Typography.Span>
+				</Flex.Row>
+				<Flex.Row justify="between">
 					<Typography.Label size="xxs" tone="f3" weight="normal">
 						Peer
 					</Typography.Label>
-					<span data-f="peer" className="text-(--f1)" />
-				</div>
-			</div>
+					<Typography.Span data-metric="peer" className="text-(--f1)">
+						—
+					</Typography.Span>
+				</Flex.Row>
+			</Grid>
 
-			<div className="mt-3.5 grid grid-cols-2 gap-x-5.5 gap-y-2 font-mono text-xs">
-				<div className="flex justify-between">
+			<Grid cols={2} gapY={2} className="mt-3.5 gap-x-5.5 font-mono text-xs">
+				<Flex.Row justify="between">
 					<Typography.Label size="xxs" tone="f3" weight="normal">
 						Readings this epoch
 					</Typography.Label>
-					<span data-f="epoch" className="text-(--f1)" />
-				</div>
-			</div>
+					<Typography.Span data-metric="epoch" className="text-(--f1)">
+						—
+					</Typography.Span>
+				</Flex.Row>
+			</Grid>
 
 			{symbols.length === 0 ? null : (
 				<div className="mt-5">
@@ -186,7 +153,7 @@ export const SignalDetail = () => {
 							<div
 								key={symbol}
 								title={`${symbol} · ${source}`}
-								className="flex aspect-square items-center justify-center overflow-hidden rounded-xs border border-(--line) font-mono text-[8px] text-(--f3)"
+								className="flex aspect-square items-center justify-center overflow-hidden rounded-[2px] border border-(--line) font-mono text-[8px] text-(--f3)"
 							>
 								{symbol.replace(/\/.*$/, "")}
 							</div>
@@ -194,6 +161,6 @@ export const SignalDetail = () => {
 					</div>
 				</div>
 			)}
-		</Flex.Column>
+		</Component>
 	);
 };

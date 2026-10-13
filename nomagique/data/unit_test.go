@@ -13,19 +13,19 @@ func TestGetDimension(t *testing.T) {
 			So(unit, ShouldEqual, UnitPrice)
 			So(timescale, ShouldEqual, TimescaleInstantaneous)
 
-			unit, timescale = GetDimension("correlation", "covariance")
-			So(unit, ShouldEqual, UnitCovariance)
+			unit, timescale = GetDimension("correlation", "cohort_covariance_score")
+			So(unit, ShouldEqual, UnitCovarianceScore)
 			So(timescale, ShouldEqual, TimescaleRollingWindow)
 
-			unit, timescale = GetDimension("cvd", "trade_count")
-			So(unit, ShouldEqual, UnitCount)
-			So(timescale, ShouldEqual, TimescaleInstantaneous)
+			unit, timescale = GetDimension("cvd", "signed_net_fraction")
+			So(unit, ShouldEqual, UnitImbalance)
+			So(timescale, ShouldEqual, TimescaleRollingWindow)
 		})
 
-		Convey("it resolves scoped metrics by stripping @peer", func() {
-			unit, timescale := GetDimension("correlation", "covariance@ETH/USD")
-			So(unit, ShouldEqual, UnitCovariance)
-			So(timescale, ShouldEqual, TimescaleRollingWindow)
+		Convey("it resolves scoped metrics by stripping index", func() {
+			unit, timescale := GetDimension("spot:trade", "bid_price_0")
+			So(unit, ShouldEqual, UnitPrice)
+			So(timescale, ShouldEqual, TimescaleInstantaneous)
 		})
 
 		Convey("it returns UnitNone and TimescaleNone for unknown producers or metrics", func() {
@@ -51,16 +51,16 @@ func TestSignalMetrics(t *testing.T) {
 
 			correlation, exists := SignalMetrics["correlation"]
 			So(exists, ShouldBeTrue)
-			So(correlation["covariance_score"].Unit, ShouldEqual, UnitCovarianceScore)
-			So(correlation["covariance_score"].Timescale, ShouldEqual, TimescaleRollingWindow)
+			So(correlation["cohort_covariance_score"].Unit, ShouldEqual, UnitCovarianceScore)
+			So(correlation["cohort_covariance_score"].Timescale, ShouldEqual, TimescaleRollingWindow)
 
 			cvd, exists := SignalMetrics["cvd"]
 			So(exists, ShouldBeTrue)
-			So(cvd["trade_count"].Unit, ShouldEqual, UnitCount)
+			So(cvd["signed_net_fraction"].Unit, ShouldEqual, UnitImbalance)
 
 			liquidity, exists := SignalMetrics["liquidity"]
 			So(exists, ShouldBeTrue)
-			So(liquidity["spread"].Unit, ShouldEqual, UnitSpread)
+			So(liquidity["relative_spread"].Unit, ShouldEqual, UnitRelativeSpread)
 
 			spotTrade, exists := SignalMetrics["spot:trade"]
 			So(exists, ShouldBeTrue)

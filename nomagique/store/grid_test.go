@@ -151,7 +151,7 @@ func TestGrid_Observe(t *testing.T) {
 							continue
 						}
 
-						sum += math.Abs(entry.Metric.SNM()) * peer.Surprise()
+						sum += math.Abs(entry.Metric.SNM()) * (1 + peer.Surprise())
 						metricCount++
 					}
 

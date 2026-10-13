@@ -65,6 +65,8 @@ func (grid *Grid) Observe(measurement *data.Measurement) []*Region {
 	}
 
 	for _, peer := range measurement.Peers() {
+		excitation := 1 + peer.Surprise()
+
 		for entry := range peer.Read() {
 			region, isPinned := regionMetricPins[peer.Source][entry.Metric.Label()]
 
@@ -80,7 +82,7 @@ func (grid *Grid) Observe(measurement *data.Measurement) []*Region {
 				return nil
 			}
 
-			regions[region].Deformation += math.Abs(entry.Metric.SNM()) * peer.Surprise()
+			regions[region].Deformation += math.Abs(entry.Metric.SNM()) * excitation
 			regions[region].Counts++
 		}
 	}

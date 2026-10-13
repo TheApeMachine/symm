@@ -118,11 +118,25 @@ func TestTraining(t *testing.T) {
 			now := time.Now().UTC()
 			join := data.NewMeasurement(100, "BTC/USD", "runtime:join", now, now)
 
-			// Add peers covering regions
-			peers := make([]*data.Measurement, 0, 12)
-			for idx := range 12 {
-				peer := data.NewMeasurement(100, "BTC/USD", "hawkes", now, now)
-				peer = peer.Write(data.NewMetric("buy_from_buy", float64(idx+2), data.UnitCount, data.TimescaleTick))
+			pins := [][2]string{
+				{"hawkes", "arrival_rate:buy"},
+				{"hawkes", "conditional_intensity_velocity"},
+				{"hawkes", "arrival_rate:sell"},
+				{"cvd", "midpoint_log_return"},
+				{"cvd", "flow_aligned_midpoint_return"},
+				{"toxicity", "retreat_fraction:bid"},
+				{"liquidity", "best_ask_price"},
+				{"depthflow", "book_imbalance"},
+				{"depthflow", "net_displayed_flow:bid"},
+				{"leadlag", "led_peer_share"},
+				{"correlation", "historical_path_distance"},
+				{"correlation", "cohort_covariance_score"},
+			}
+
+			peers := make([]*data.Measurement, 0, len(pins))
+			for idx, pin := range pins {
+				peer := data.NewMeasurement(100, "BTC/USD", pin[0], now, now)
+				peer = peer.Write(data.NewMetric(pin[1], float64(idx+2), data.UnitCount, data.TimescaleTick))
 				peers = append(peers, peer)
 			}
 			join.Peers(peers...)
@@ -131,6 +145,52 @@ func TestTraining(t *testing.T) {
 			next := training.Step(join)
 			So(next, ShouldNotBeNil)
 			So(next.Source, ShouldEqual, "training")
+		})
+
+		Convey("Step matches suffix and sets meta when policy is active", func() {
+			training := NewTraining(ctx, filling.price, filling.desk, catalog)
+			now := time.Now().UTC()
+			join := data.NewMeasurement(100, "BTC/USD", "runtime:join", now, now)
+
+			pins := [][2]string{
+				{"hawkes", "arrival_rate:buy"},
+				{"hawkes", "conditional_intensity_velocity"},
+				{"hawkes", "arrival_rate:sell"},
+				{"cvd", "midpoint_log_return"},
+				{"cvd", "flow_aligned_midpoint_return"},
+				{"toxicity", "retreat_fraction:bid"},
+				{"liquidity", "best_ask_price"},
+				{"depthflow", "book_imbalance"},
+				{"depthflow", "net_displayed_flow:bid"},
+				{"leadlag", "led_peer_share"},
+				{"correlation", "historical_path_distance"},
+				{"correlation", "cohort_covariance_score"},
+			}
+
+			peers := make([]*data.Measurement, 0, len(pins))
+			for idx, pin := range pins {
+				peer := data.NewMeasurement(100, "BTC/USD", pin[0], now, now)
+				peer = peer.Write(data.NewMetric(pin[1], float64(idx+2), data.UnitCount, data.TimescaleTick))
+				peers = append(peers, peer)
+			}
+			join.Peers(peers...)
+			join = join.Write()
+
+			training.policy.Store(&policy{
+				tokenizer: &Tokenizer{Depth: 8, Regions: 1, Threshold: 0.0},
+				actions: map[string]string{
+					"R00/R01": "noop",
+				},
+			})
+
+			next := training.Step(join)
+			So(next, ShouldNotBeNil)
+
+			var tokenPath string
+			for entry := range next.Meta("token_path") {
+				tokenPath = entry.Value
+			}
+			So(tokenPath, ShouldNotBeEmpty)
 		})
 	})
 }

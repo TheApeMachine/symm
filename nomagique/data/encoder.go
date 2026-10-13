@@ -274,6 +274,7 @@ func (measurement *Measurement) ToWire(
 	row.Maturity = measurement.maturity
 	row.Metrics = metrics
 	row.Metadata = metadata
+	row.Provenance = provenance
 	row.Peers = peers
 
 	return row

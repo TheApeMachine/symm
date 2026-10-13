@@ -981,7 +981,7 @@ const HindsightRoute = () => {
 										onSplit={setSplit}
 										provenance={
 											<ProvenancePanel
-												envelope={envelope}
+												envelope={displayEnvelope}
 												onSelect={(sequence, ordinal) =>
 													jumpRef({ sequence, ordinal })
 												}
@@ -991,7 +991,7 @@ const HindsightRoute = () => {
 											<StatePanel
 												measurement={selectedMeasurement}
 												state={state}
-												envelope={envelope}
+												envelope={displayEnvelope}
 												semantics={semantics}
 												plain={plain}
 											/>

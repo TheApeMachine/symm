@@ -129,13 +129,13 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 
 	training.inspectPosition(prior.Label, metrics)
 
-	emit := func() *data.Measurement {
+	emit := func(meta ...*data.StringEntry) *data.Measurement {
 		prev := training.last[prior.Label]
 		if prev == nil {
 			prev = data.NewMeasurement(prior.Epoch, prior.Label, training.Name(), prior.At, prior.From)
 		}
 
-		next := prev.Next(prior, metrics)
+		next := prev.Next(prior, metrics, meta...)
 		training.last[prior.Label] = next
 		return next
 	}
@@ -152,29 +152,44 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 		training.paths = make(map[string][]string)
 	}
 
-	token, strength := current.tokenizer.Token(regions)
-	tokens, moved := current.tokenizer.Advance(training.paths[prior.Label], token, strength)
+	active, strength := current.tokenizer.Active(regions)
+	tokens := training.paths[prior.Label]
+	moved := false
+
+	for _, tok := range active {
+		var advanced bool
+		tokens, advanced = current.tokenizer.Advance(tokens, tok, strength)
+
+		if advanced {
+			moved = true
+		}
+	}
+
 	training.paths[prior.Label] = tokens
 	joined := strings.Join(tokens, "/")
 	inspectMatch(current, tokens, strength, metrics)
-	next := emit()
 
-	next.SetMeta("token_path", joined)
-	next.SetMeta("token_depth", strconv.Itoa(len(tokens)))
-
-	if !moved || len(tokens) < current.tokenizer.Depth {
-		return next
+	meta := []*data.StringEntry{
+		{Key: "token_path", Value: joined},
+		{Key: "token_depth", Value: strconv.Itoa(len(tokens))},
 	}
 
-	action := current.actions[joined]
+	if !moved {
+		return emit(meta...)
+	}
+
+	matchedPath, action := MatchSuffix(tokens, current.actions)
 
 	if action == "" {
-		return next
+		return emit(meta...)
 	}
 
-	next.SetMeta("decision_action", action)
-	next.SetMeta("decision_reason", fmt.Sprintf("path=%s %s", joined, training.act(prior.Label, action, joined)))
-	return next
+	meta = append(meta,
+		&data.StringEntry{Key: "decision_action", Value: action},
+		&data.StringEntry{Key: "decision_reason", Value: fmt.Sprintf("path=%s %s", matchedPath, training.act(prior.Label, action, matchedPath))},
+	)
+
+	return emit(meta...)
 }
 
 /*
@@ -343,7 +358,7 @@ func (training *Training) act(symbol, action string, path ...string) string {
 		}
 
 		allocated := cash.SetScale(4).Mul(system.Cfg.Risk.MaxFraction)
-		qty, err := training.price.Quantity(symbol, allocated)
+		entryCost, err := training.price.AllocateEntry(symbol, allocated)
 
 		if err != nil {
 			training.resetPaperAndReload()
@@ -351,7 +366,7 @@ func (training *Training) act(symbol, action string, path ...string) string {
 
 			if cash != nil && cash.Sign() > 0 {
 				allocated = cash.SetScale(4).Mul(system.Cfg.Risk.MaxFraction)
-				qty, err = training.price.Quantity(symbol, allocated)
+				entryCost, err = training.price.AllocateEntry(symbol, allocated)
 			}
 		}
 
@@ -366,7 +381,7 @@ func (training *Training) act(symbol, action string, path ...string) string {
 			return "enter failed: no quantity"
 		}
 
-		if err := training.desk.Enter(symbol, qty, path...); err != nil {
+		if err := training.desk.Enter(symbol, entryCost.Quantity, path...); err != nil {
 			training.Error(errnie.Err(errnie.IO, "[training] enter failed for "+symbol, err))
 			training.paths[symbol] = nil
 			return "enter failed: " + err.Error()

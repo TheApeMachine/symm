@@ -24,8 +24,6 @@ describe("categoryStore", () => {
 		measurement.at = 1718000000000000000n;
 		measurement.observedFrom = 1718000000000000000n;
 		measurement.maturity = 1.0;
-		measurement.snr = 0.95;
-		measurement.snrDefined = true;
 		const m = new MetricT();
 		m.name = "loaded_imbalance";
 		m.raw = 0.85;
@@ -56,8 +54,6 @@ describe("categoryStore", () => {
 		measurement.at = 1718000000000000000n;
 		measurement.observedFrom = 1718000000000000000n;
 		measurement.maturity = 1.0;
-		measurement.snr = 0.9;
-		measurement.snrDefined = true;
 
 		store.state[symbol].add(measurement);
 		expect(store.state[symbol].isEmpty()).toBe(false);

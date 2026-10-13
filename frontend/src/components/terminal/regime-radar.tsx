@@ -8,20 +8,38 @@ const radarAxes = [
 	{
 		label: "volatility",
 		source: "hawkes",
-		metric: "spectral_radius",
+		metric: "branching_spectral_radius",
 		x: 0,
 		y: -1,
 	},
-	{ label: "trend", source: "pumpdump", metric: "trend", x: 0.951, y: -0.309 },
-	{ label: "drive", source: "cvd", metric: "drive", x: 0.588, y: 0.809 },
+	{
+		label: "trend",
+		source: "pumpdump",
+		metric: "positive_midpoint_return",
+		x: 0.951,
+		y: -0.309,
+	},
+	{
+		label: "drive",
+		source: "cvd",
+		metric: "signed_net_fraction",
+		x: 0.588,
+		y: 0.809,
+	},
 	{
 		label: "starved",
-		source: "cvd",
-		metric: "starvation",
+		source: "pumpdump",
+		metric: "trade_rate",
 		x: -0.588,
 		y: 0.809,
 	},
-	{ label: "chop", source: "cvd", metric: "balance", x: -0.951, y: -0.309 },
+	{
+		label: "chop",
+		source: "depthflow",
+		metric: "book_imbalance",
+		x: -0.951,
+		y: -0.309,
+	},
 ];
 
 export const RadarPanel = () => {

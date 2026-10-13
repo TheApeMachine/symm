@@ -26,10 +26,8 @@ export const TERMINAL_KERNEL_ORDER = [
 	"manifold",
 	"regime",
 	"correlation",
-	"derivatives",
 	"pumpdump",
 	"toxicity",
-	"exhaustion",
 	"cvd",
 	"depthflow",
 	"morphology",
@@ -64,8 +62,6 @@ const SOURCE_HEADLINE: Record<string, string> = {
 	correlation: "cohort_covariance_score",
 	cvd: "signed_net_fraction",
 	depthflow: "book_imbalance",
-	derivatives: "open_interest_growth_zscore",
-	exhaustion: "book_imbalance_zscore",
 	hawkes: "branching_spectral_radius",
 	leadlag: "led_peer_share",
 	liquidity: "relative_spread",
@@ -124,26 +120,8 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"touch_notional:bid",
 		"mutation_activity_imbalance",
 	],
-	derivatives: [
-		"derivative_price",
-		"reference_price",
-		"basis",
-		"basis_zscore",
-		"basis_rate",
-		"open_interest",
-		"open_interest_growth_rate",
-		"open_interest_growth_zscore",
-		"liquidation_notional_rate",
-		"liquidation_signed_fraction",
-		"net_liquidation_notional",
-		"liquidation_share",
-		"return_gap_zscore",
-		"open_interest_growth_baseline",
-	],
 	morphology: [
 		"morphology_change",
-		"morphology_change_baseline",
-		"morphology_change_zscore",
 		"book_shape_distance",
 		"book_shape_ks",
 		"concentration:bid",
@@ -220,7 +198,7 @@ export const sourceMetrics = (source: string): string[] => {
 		throw new Error(`unsupported measurement source: ${source}`);
 	}
 
-	return metrics.includes("snr") ? metrics : ["snr", ...metrics];
+	return metrics;
 };
 
 /*
@@ -309,12 +287,6 @@ const KERNEL_COPY: Record<
 		sub: "correlation · cross-section",
 		blurb: "Cross-symbol correlation pressure from backend measurements.",
 	},
-	derivatives: {
-		name: "Derivatives flow",
-		sub: "derivatives · basis / OI / liquidations",
-		blurb:
-			"Real-time perpetual futures positioning, basis geometry, open interest velocity, and leveraged regime dynamics.",
-	},
 	pumpdump: {
 		name: "Pumpdump",
 		sub: "pumpdump · ignition",
@@ -337,11 +309,6 @@ const KERNEL_COPY: Record<
 		name: "Toxicity",
 		sub: "toxicity · flow",
 		blurb: "Order-flow toxicity measurement from backend frames.",
-	},
-	exhaustion: {
-		name: "Exhaustion",
-		sub: "exhaustion · fade",
-		blurb: "Exhaustion measurement from backend frames.",
 	},
 	depthflow: {
 		name: "Depthflow",

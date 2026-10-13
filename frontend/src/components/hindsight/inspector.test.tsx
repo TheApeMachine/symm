@@ -10,8 +10,6 @@ const measurement: Measurement = {
 	seqIdx: 100,
 	at: "2026-09-02T12:00:00Z",
 	maturity: 0.8,
-	snr: 2.4,
-	snrDefined: true,
 	metrics: {
 		conditional_intensity: {
 			raw: 1.75,
@@ -26,8 +24,6 @@ const measurement: Measurement = {
 			seqIdx: 100,
 			at: "2026-09-02T12:00:00Z",
 			maturity: 0.9,
-			snr: 3.1,
-			snrDefined: true,
 			metrics: {
 				delta: {
 					raw: 42.5,

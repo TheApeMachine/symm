@@ -96,7 +96,7 @@ func (position *Position) Enter(symbol string, qty *decimal.Decimal, path ...str
 
 	order := &spot.OrderRequest{
 		ClOrdId:   clOrdId,
-		OrderType: "limit",
+		OrderType: "market",
 		Type:      "buy",
 		Volume:    qty.String(),
 	}
@@ -135,7 +135,7 @@ func (position *Position) Exit(symbol string) *spot.OrderRequest {
 
 	order := &spot.OrderRequest{
 		ClOrdId:   clOrdId,
-		OrderType: "limit",
+		OrderType: "market",
 		Type:      "sell",
 		Volume:    volume,
 	}

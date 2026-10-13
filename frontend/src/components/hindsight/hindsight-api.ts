@@ -950,8 +950,6 @@ export const flatbufferToMeasurement = (m: MeasurementT): Measurement => {
 		from: fromIso,
 		observedFrom: fromIso,
 		maturity: m.maturity,
-		snr: m.snr,
-		snrDefined: m.snrDefined,
 		metrics: metricsRecord,
 		metadata: metadataRecord,
 		provenance: provenanceRecord,

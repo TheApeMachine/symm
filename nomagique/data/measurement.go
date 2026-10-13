@@ -3,6 +3,7 @@ package data
 import (
 	"errors"
 	"iter"
+	"maps"
 	"math"
 	"slices"
 	"time"
@@ -201,7 +202,8 @@ func (measurement *Measurement) copyMetrics(
 		return
 	}
 
-	for key, val := range values {
+	for _, key := range slices.Sorted(maps.Keys(values)) {
+		val := values[key]
 		unit, timescale := GetDimension(source, key)
 		var priorEntry *MetricEntry
 
@@ -505,7 +507,7 @@ func (measurement *Measurement) Surprise() float64 {
 		return measurement.energy
 	}
 
-	return 1 + math.Abs(measurement.energy-measurement.prediction)
+	return math.Abs(measurement.energy - measurement.prediction)
 }
 
 /*

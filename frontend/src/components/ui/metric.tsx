@@ -1,5 +1,7 @@
-import { focusMetricAtom } from "#/collections/app";
+import { useSelector } from "@tanstack/react-store";
+import { focusAtom, focusMetricAtom, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
+import { sourceHeadline } from "#/components/terminal/kernel-meta";
 import {
 	Badge,
 	Button,
@@ -17,8 +19,12 @@ interface MetricProps {
 }
 
 export const Metric = ({ name, compact = false }: MetricProps) => {
+	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const headline = sourceHeadline(name) ?? name;
+	const store = signals[name];
+
 	return (
-		<Component>
+		<Component store={store} symbol={focusSymbol}>
 			<Button
 				variant="bare"
 				shape="block"
@@ -49,17 +55,18 @@ export const Metric = ({ name, compact = false }: MetricProps) => {
 				<Sparkline data-k="sparkline" title={`${name} sparkline`} />
 				<Flex.Row align="center" gap={2} padding={2} fullWidth>
 					<Meter
-						data-metric="confidence"
+						data-metric-meter={headline}
 						data-k="bar"
 						layout="bar"
 						size="xxs"
 						percent={0}
 						variant="warning"
 						className="flex-1"
-						title={`${name} confidence`}
+						title={`${name} headline: ${headline}`}
 					/>
 					<Typography.Mono
-						data-metric="confidence"
+						data-metric-raw={headline}
+						data-format="fixed:3"
 						data-k="value"
 						size="xxs"
 						tone="f2"

@@ -820,6 +820,13 @@ func (book *Book) getOrderPrices(symbol string) *sync.Map {
 	return actual.(*sync.Map)
 }
 
+func init() {
+	sample, err := decimal.NewFromString("12345.6789")
+	if err != nil || string(appendDecimalDigits(nil, sample)) != "123456789" {
+		panic("appendDecimalDigits memory layout mismatch with decimal.Decimal")
+	}
+}
+
 func appendDecimalDigits(buf []byte, d *decimal.Decimal) []byte {
 	if d == nil || d.Sign() == 0 {
 		return buf

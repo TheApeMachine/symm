@@ -105,13 +105,8 @@ const MeasurementView = ({
 					value={(typeof measurement.symbol === "string" && measurement.symbol) || "pipeline"}
 				/>
 				<Metric
-					label="SNR"
-					value={
-						measurement.snrDefined && Number.isFinite(measurement.snr)
-							? `${measurement.snr.toFixed(2)} dB`
-							: "—"
-					}
-					tone={measurement.snrDefined && measurement.snr > 0 ? "text-(--up)" : "text-(--f1)"}
+					label="Source"
+					value={(typeof measurement.source === "string" && measurement.source) || "—"}
 				/>
 				<Metric
 					label="Maturity"

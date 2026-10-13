@@ -91,7 +91,7 @@ describe("XrayHawkesPanel market clock", () => {
 		};
 		const canvas = vi
 			.spyOn(HTMLCanvasElement.prototype, "getContext")
-			.mockReturnValue(context as unknown as CanvasRenderingContext2D);
+			.mockReturnValue(context as unknown as any);
 		const width = vi
 			.spyOn(HTMLCanvasElement.prototype, "clientWidth", "get")
 			.mockReturnValue(800);

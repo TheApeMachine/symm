@@ -18,16 +18,13 @@ vi.mock("@tanstack/react-router", () => ({
 const renderInspector = () => renderToStaticMarkup(<KernelInspector />);
 
 const metricMeasurement = (
-	snr: number,
 	key: string,
 	raw: number,
 	snm: number,
 ): MeasurementT => {
 	const m = new MeasurementT();
-	m.source = "hawkes";
+	m.source = "toxicity";
 	m.symbol = DEFAULT_FOCUS_SYMBOL;
-	m.snr = snr;
-	m.snrDefined = true;
 	const metric = new MetricT();
 	metric.name = key;
 	metric.raw = raw;
@@ -36,13 +33,15 @@ const metricMeasurement = (
 	return m;
 };
 
-const sparseMeasurement = (snr: number): MeasurementT => {
+const sparseMeasurement = (val: number): MeasurementT => {
 	const m = new MeasurementT();
 	m.source = "hawkes";
 	m.symbol = DEFAULT_FOCUS_SYMBOL;
-	m.snr = snr;
-	m.snrDefined = true;
-	m.metrics = [];
+	const metric = new MetricT();
+	metric.name = "branching_spectral_radius";
+	metric.raw = val;
+	metric.snm = val;
+	m.metrics = [metric];
 	return m;
 };
 
@@ -96,7 +95,7 @@ describe("KernelInspector", () => {
 	it("renders a meter for every metric the kernel publishes", () => {
 		const ring = getTestRing("toxicity", DEFAULT_FOCUS_SYMBOL);
 		ring.clear();
-		ring.add(metricMeasurement(3.5, "retreat_fraction:bid", 1.25, 0.5));
+		ring.add(metricMeasurement("retreat_fraction:bid", 1.25, 0.5));
 		signals.toxicity.setState((prev) => ({ ...prev }));
 		terminalStore.actions.inspectSource("toxicity");
 
@@ -108,7 +107,7 @@ describe("KernelInspector", () => {
 		// metrics the row does not carry stay dashed rather than zero.
 		expect(markup).toContain("retreat fraction · bid");
 		expect(markup).toContain("1.2500");
-		expect(markup).toMatch(/2 \/ \d+ read/);
+		expect(markup).toMatch(/1 \/ \d+ read/);
 
 		// Resonance still names its own quantity and no metric grid.
 		terminalStore.actions.inspectSource("resonance");
@@ -122,7 +121,7 @@ describe("KernelInspector", () => {
 	it("formats sub-basis-point values using scientific notation", () => {
 		const ring = getTestRing("toxicity", DEFAULT_FOCUS_SYMBOL);
 		ring.clear();
-		ring.add(metricMeasurement(3.5, "retreat_fraction:bid", 0.0000117, 0.5));
+		ring.add(metricMeasurement("retreat_fraction:bid", 0.0000117, 0.5));
 		signals.toxicity.setState((prev) => ({ ...prev }));
 		terminalStore.actions.inspectSource("toxicity");
 
@@ -135,7 +134,7 @@ describe("KernelInspector", () => {
 	it("holds a metric's last value across rows that do not carry it", () => {
 		const ring = getTestRing("toxicity", DEFAULT_FOCUS_SYMBOL);
 		ring.clear();
-		ring.add(metricMeasurement(3.5, "retreat_fraction:bid", 1.25, 0.5));
+		ring.add(metricMeasurement("retreat_fraction:bid", 1.25, 0.5));
 		ring.add(sparseMeasurement(2.0));
 		signals.toxicity.setState((prev) => ({ ...prev }));
 		terminalStore.actions.inspectSource("toxicity");

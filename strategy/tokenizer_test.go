@@ -65,5 +65,53 @@ func TestTokenizer(t *testing.T) {
 			So(moved, ShouldBeTrue)
 			So(path, ShouldResemble, []string{"R02", "R03", "R04"})
 		})
+
+		Convey("Active returns regions clearing threshold", func() {
+			regions := []*store.Region{
+				{Key: 3, Brightness: 0.9},
+				{Key: 7, Brightness: 0.6},
+				{Key: 1, Brightness: 0.4},
+			}
+			tok := &Tokenizer{Threshold: 0.5}
+			active, maxStrength := tok.Active(regions)
+			So(active, ShouldResemble, []string{"R03", "R07"})
+			So(maxStrength, ShouldEqual, 0.9)
+		})
+
+		Convey("StepGrammar induces rules from repeated sequence", func() {
+			tok := &Tokenizer{Depth: 4, Threshold: 0.5}
+			grammar := NewGrammar()
+			var last string
+
+			phrase, moved := tok.StepGrammar(grammar, &last, []string{"R01", "R02", "R03"})
+			So(moved, ShouldBeFalse)
+			So(phrase, ShouldBeNil)
+
+			phrase, moved = tok.StepGrammar(grammar, &last, []string{"R01", "R02"})
+			So(moved, ShouldBeTrue)
+			So(phrase, ShouldResemble, []string{"R01", "R02"})
+		})
+
+		Convey("MatchSuffix finds longest matching suffix action", func() {
+			actions := map[string]string{
+				"R01/R02":     "noop",
+				"R03/R01/R02": "enter",
+			}
+
+			tokens := []string{"R05", "R03", "R01", "R02"}
+			matchedPath, action := MatchSuffix(tokens, actions)
+			So(matchedPath, ShouldEqual, "R03/R01/R02")
+			So(action, ShouldEqual, "enter")
+
+			tokens = []string{"R05", "R01", "R02"}
+			matchedPath, action = MatchSuffix(tokens, actions)
+			So(matchedPath, ShouldEqual, "R01/R02")
+			So(action, ShouldEqual, "noop")
+
+			tokens = []string{"R05", "R04"}
+			matchedPath, action = MatchSuffix(tokens, actions)
+			So(matchedPath, ShouldEqual, "")
+			So(action, ShouldEqual, "")
+		})
 	})
 }

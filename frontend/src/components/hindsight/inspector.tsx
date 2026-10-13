@@ -419,7 +419,7 @@ export const measurementToReading = (m: Measurement): MeasurementReading => {
 				: Number(m.from)
 			: null,
 		maturity: m.maturity ?? 0,
-		snr: m.snrDefined && m.snr !== undefined ? m.snr : null,
+		snr: null,
 		metrics,
 		metadata: Object.entries(m.metadata ?? {}).map(([name, value]) => ({
 			id: name,

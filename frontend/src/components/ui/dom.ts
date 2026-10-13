@@ -80,6 +80,8 @@ export type ValueFormat =
 	| "bits"
 	| "nat"
 	| "spread"
+	| "bool"
+	| "time"
 	| `fixed:${number}`
 	| string;
 
@@ -112,6 +114,12 @@ export const formatValue = (val: number, format?: string | null): string => {
 			return `${val.toFixed(2)} nat`;
 		case "spread":
 			return `Spread ${val.toFixed(3)}`;
+		case "bool":
+			return val > 0.5 ? "true" : "false";
+		case "time":
+			return new Date(val > 1e12 ? val / 1e6 : val * 1e3)
+				.toISOString()
+				.slice(11, 19);
 		default:
 			if (format.startsWith("fixed:")) {
 				const precision = Number.parseInt(format.slice(6), 10);
@@ -168,7 +176,9 @@ export const renderValue = (
 
 	const componentType =
 		element.dataset.component ??
-		(element.hasAttribute("data-metric-meter") || element.dataset.k === "bar"
+		(element.hasAttribute("data-metric-meter") ||
+		element.dataset.k === "bar" ||
+		element.hasAttribute("data-mbar")
 			? "meter"
 			: element.hasAttribute("data-metric-badge") ||
 					element.dataset.k === "badge"
@@ -206,11 +216,22 @@ export const renderValue = (
 		const fmt = format ?? element.dataset.format ?? null;
 		out = formatValue(value, fmt);
 	} else if (typeof value === "string") {
-		out = value;
+		const fmt = format ?? element.dataset.format ?? null;
+		const num = Number(value);
+		if (fmt && !Number.isNaN(num) && Number.isFinite(num) && value.trim() !== "") {
+			out = formatValue(num, fmt);
+		} else {
+			out = value;
+		}
 	} else if (typeof value === "boolean") {
 		out = value ? "TRUE" : "FALSE";
 	} else if (typeof value === "bigint") {
-		out = Number(value).toLocaleString();
+		const fmt = format ?? element.dataset.format ?? null;
+		if (fmt === "time" || (fmt === null && element.dataset.metric === "at")) {
+			out = new Date(Number(value / 1000000n)).toISOString().slice(11, 19);
+		} else {
+			out = Number(value).toLocaleString();
+		}
 	} else {
 		out = (value as { toString?: () => string }).toString?.() ?? "";
 	}
@@ -222,7 +243,9 @@ export const renderValue = (
 export const resetValue = (element: HTMLElement, fallback = "--"): void => {
 	const componentType =
 		element.dataset.component ??
-		(element.hasAttribute("data-metric-meter") || element.dataset.k === "bar"
+		(element.hasAttribute("data-metric-meter") ||
+		element.dataset.k === "bar" ||
+		element.hasAttribute("data-mbar")
 			? "meter"
 			: element.hasAttribute("data-metric-badge") ||
 					element.dataset.k === "badge"

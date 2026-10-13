@@ -2,7 +2,6 @@ package leadlag
 
 import (
 	"context"
-	"maps"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -82,8 +81,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	output := make(map[string]float64)
-	output["last"] = price
 	atNano := prior.At.UnixNano()
 
 	currentPath := signal.paths[prior.Label]
@@ -131,7 +128,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 	}
 
-	maps.Copy(output, summarize(readings))
+	output := summarize(readings)
+	if output == nil {
+		output = make(map[string]float64)
+	}
 
 	if err := signal.leadlag.Error(); err != nil {
 		signal.Error(err)

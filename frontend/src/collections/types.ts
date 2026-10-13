@@ -444,8 +444,6 @@ export type Measurement = {
 	peerObservedFrom?: string;
 	horizon?: number | string;
 	maturity?: number;
-	snr?: number;
-	snrDefined?: boolean;
 	estimated?: boolean;
 	uncertainty?: {
 		lower?: number;

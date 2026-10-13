@@ -1,4 +1,3 @@
-import { useSelector } from "@tanstack/react-store";
 import {
 	Activity,
 	ArrowRight,

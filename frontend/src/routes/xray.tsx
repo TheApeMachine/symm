@@ -23,7 +23,7 @@ import {
 	getAllRetainedResonance,
 	retainResonanceRow,
 } from "#/components/terminal/xray-view";
-import { Flex } from "#/components/ui";
+import { Button, Flex, Grid, Typography } from "#/components/ui";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 
 const XrayPaintBridge = () => {
@@ -99,27 +99,29 @@ const XrayCarrierBar = () => {
 			align="center"
 			className="h-11.5 shrink-0 gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5"
 		>
-			<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+			<Typography.Label
+				size="xxs"
+				tone="f3"
+				className="mr-1 shrink-0 uppercase tracking-[0.13em]"
+			>
 				Inspect symbol
-			</span>
+			</Typography.Label>
 			{symbols.map((sym) => {
 				const active = sym === focusSymbol;
 				return (
-					<button
+					<Button
 						key={sym}
-						type="button"
+						variant={active ? "solid" : "quiet"}
+						tone={active ? "accent" : "muted"}
+						size="xs"
 						onClick={() => {
 							focusAtom.set(sym);
 							terminalStore.actions.selectFocusSymbol(sym);
 						}}
-						className={`shrink-0 cursor-pointer rounded-[3px] border px-2.75 py-1 font-medium font-mono text-[11px] transition-colors ${
-							active
-								? "border-(--acc) bg-[color-mix(in_srgb,var(--acc)_14%,transparent)] text-(--acc)"
-								: "border-(--line2) bg-transparent text-(--f3) hover:border-(--acc)"
-						}`}
+						className="shrink-0 font-mono text-[11px]"
 					>
 						{sym}
-					</button>
+					</Button>
 				);
 			})}
 		</Flex.Row>
@@ -130,7 +132,7 @@ const RouteComponent = () => (
 	<Flex.Column className="h-full min-w-275">
 		<XrayPaintBridge />
 		<XrayCarrierBar />
-		<div className="grid min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">
+		<Grid className="min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">
 			<Flex.Column className="min-h-0 overflow-auto border-(--line) border-r">
 				<XrayHierarchyPanel />
 				<XrayHawkesPanel />
@@ -138,12 +140,16 @@ const RouteComponent = () => (
 
 			<Flex.Column className="min-h-0 overflow-auto bg-(--surface)">
 				<div className="shrink-0 px-3.5 pt-3 pb-1.5">
-					<div className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+					<Typography.Label
+						size="xxs"
+						tone="f3"
+						className="font-semibold uppercase tracking-[0.13em]"
+					>
 						Latent manifold
-					</div>
-					<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
+					</Typography.Label>
+					<Typography.Paragraph className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
 						universe embedding · clustered by regime · focus pulses
-					</div>
+					</Typography.Paragraph>
 				</div>
 				<div className="relative mx-2 h-75 shrink-0">
 					<XrayLatentPanel />
@@ -157,7 +163,7 @@ const RouteComponent = () => (
 				<XrayFactsPanel />
 				<XrayManifoldPanel />
 			</Flex.Column>
-		</div>
+		</Grid>
 	</Flex.Column>
 );
 

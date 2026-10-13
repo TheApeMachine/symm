@@ -105,16 +105,6 @@ const readMeasurement = (m: Measurement | null): Map<string, Reading> => {
 			});
 		}
 
-		if (item.snrDefined && item.snr !== undefined) {
-			facts.set(`${source}/snr`, {
-				group: "measurement",
-				name: `${source}/snr`,
-				unit: "dB",
-				value: item.snr,
-				origin,
-			});
-		}
-
 		for (const [key, metric] of Object.entries(item.metrics ?? {})) {
 			const name = `${source}/${key}`;
 			facts.set(name, {

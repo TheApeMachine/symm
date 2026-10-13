@@ -27,15 +27,33 @@ readings collects the accumulated values for one kernel directly from its store.
 */
 const readingsFromMeasurements = (
 	ring: RingBuffer<MeasurementT> | null | undefined,
+	source?: string,
 ) => {
 	const points: number[] = [];
 	if (!ring || typeof ring.getBufferLength !== "function") return points;
 	const len = ring.getBufferLength();
+	const headline = source ? sourceHeadline(source) : null;
 
 	for (let i = 0; i < len; i++) {
 		const m = ring.get(i);
-		if (m?.snrDefined && Number.isFinite(m.snr)) {
-			points.push(m.snr);
+		if (!m) continue;
+		let val: number | null = null;
+		if (headline) {
+			for (const metric of m.metrics ?? []) {
+				if (metric?.name === headline && Number.isFinite(metric.raw)) {
+					val = metric.snm || metric.raw;
+					break;
+				}
+			}
+		}
+		if (val === null && m.metrics?.length) {
+			const first = m.metrics[0];
+			if (first && Number.isFinite(first.raw)) {
+				val = first.snm || first.raw;
+			}
+		}
+		if (val !== null && Number.isFinite(val)) {
+			points.push(val);
 		}
 	}
 
@@ -69,11 +87,6 @@ const metricValues = (
 	const out: Record<string, { raw: number; snm: number } | null> = {};
 	for (const name of names) out[name] = null;
 	if (!row) return out;
-
-	if (names.includes("snr") && row.snrDefined && Number.isFinite(row.snr)) {
-		out.snr = { raw: row.snr, snm: row.snr };
-	}
-
 	for (const m of row.metrics ?? []) {
 		if (!m || !m.name) continue;
 		const name = typeof m.name === "string" ? m.name : null;
@@ -106,7 +119,7 @@ export const KernelInspector = () => {
 	}
 
 	const copy = kernelCopy(source, "");
-	const points = readingsFromMeasurements(measurementRing);
+	const points = readingsFromMeasurements(measurementRing, source);
 	const latest = points.length > 0 ? points[points.length - 1] : null;
 	const status: SignalHealthStatus = latest === null ? "waiting" : "measured";
 	const badge = kernelStatusMeta(status);
@@ -271,7 +284,7 @@ export const KernelInspector = () => {
 					<Typography.Mono size="xxs" tone="f4">
 						{latest === null
 							? "awaiting first reading"
-							: `latest ${resonance ? "confidence" : "SNR"} ${latest.toFixed(resonance ? 3 : 2)}`}
+							: `latest ${resonance ? "confidence" : (sourceHeadline(source) ?? "reading")} ${latest.toFixed(resonance ? 3 : 4)}`}
 					</Typography.Mono>
 				</Flex.Column>
 				<Button

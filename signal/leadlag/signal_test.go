@@ -79,9 +79,6 @@ func TestLeadLagSignalMetrics(t *testing.T) {
 				))
 				So(resBTC, ShouldNotBeNil)
 				So(instrument.Error(), ShouldBeNil)
-				lastBTC, held := metric(resBTC, "last")
-				So(held, ShouldBeTrue)
-				So(lastBTC, ShouldEqual, btcPrice)
 
 				ethPrice := 3000.0 * math.Exp(latent[step*10+3])
 				resETH := instrument.Step(trade(
@@ -89,9 +86,6 @@ func TestLeadLagSignalMetrics(t *testing.T) {
 				))
 				So(resETH, ShouldNotBeNil)
 				So(instrument.Error(), ShouldBeNil)
-				lastETH, held := metric(resETH, "last")
-				So(held, ShouldBeTrue)
-				So(lastETH, ShouldEqual, ethPrice)
 
 				for _, res := range []*data.Measurement{resBTC, resETH} {
 					for entry := range res.Read() {

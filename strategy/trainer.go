@@ -151,7 +151,7 @@ func (trainer *Trainer) load(epochs ...int64) (*recording, error) {
 
 		class := typeEntry.Value
 
-		if class != excursionUp && class != excursionDown {
+		if class != excursionUp && class != excursionDown && class != excursionUpShort {
 			continue
 		}
 
@@ -241,7 +241,7 @@ func (trainer *Trainer) parseExcursion(measurement *data.Measurement) (excursion
 		class = typeEntry.Value
 	}
 
-	if class != excursionUp && class != excursionDown {
+	if class != excursionUp && class != excursionDown && class != excursionUpShort {
 		return excursion{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf("[trainer] excursion %s has unsupported class %q", measurement.Label, class),
@@ -405,8 +405,9 @@ func (trainer *Trainer) readTape(history *recording, epoch int64) error {
 				ask:    quotes[key.label][1],
 			}
 
-			for idx := range store.RegionCount {
-				observed.tokens[idx], observed.strengths[idx] = (&Tokenizer{Regions: idx + 1}).Token(regions)
+			for idx, region := range regions {
+				observed.tokens[idx] = fmt.Sprintf("R%02d", region.Key)
+				observed.strengths[idx] = region.Brightness
 			}
 
 			history.frames = append(history.frames, observed)
@@ -425,6 +426,20 @@ func (trainer *Trainer) readTape(history *recording, epoch int64) error {
 	))
 
 	return nil
+}
+
+func (history *recording) frameActive(observed *frame, threshold float64) []string {
+	var active []string
+
+	for idx := range store.RegionCount {
+		if observed.strengths[idx] < threshold {
+			break
+		}
+
+		active = append(active, observed.tokens[idx])
+	}
+
+	return active
 }
 
 /*
@@ -451,7 +466,9 @@ func (history *recording) replay(
 	}
 
 	tallies := make(map[string]*pathTally)
-	p1Paths := make(map[string][]string)
+	p1Grammars := make(map[string]*Grammar)
+	p1LastSym := make(map[string]string)
+	p1Rules := make(map[string][]string)
 	p1Pending := make(map[int][]string)
 	p1Epoch := history.events[0].epoch
 
@@ -467,43 +484,53 @@ func (history *recording) replay(
 	for _, step := range history.events {
 		if step.epoch != p1Epoch {
 			p1Epoch = step.epoch
-			p1Paths = make(map[string][]string)
+			p1Grammars = make(map[string]*Grammar)
+			p1LastSym = make(map[string]string)
+			p1Rules = make(map[string][]string)
 			p1Pending = make(map[int][]string)
 		}
 
 		switch step.kind {
 		case eventFrame:
 			observed := &history.frames[step.index]
-			tokens, moved := tokenizer.Advance(
-				p1Paths[observed.symbol],
-				observed.tokens[tokenizer.Regions-1],
-				observed.strengths[tokenizer.Regions-1],
-			)
-			if moved {
-				p1Paths[observed.symbol] = tokens
+			g := p1Grammars[observed.symbol]
+
+			if g == nil {
+				g = NewGrammar()
+				p1Grammars[observed.symbol] = g
 			}
 
+			last := p1LastSym[observed.symbol]
+
+			if phrase, moved := tokenizer.StepGrammar(g, &last, history.frameActive(observed, tokenizer.Threshold)); moved {
+				p1Rules[observed.symbol] = phrase
+			}
+
+			p1LastSym[observed.symbol] = last
+
 		case eventB:
-			p1Pending[step.index] = slices.Clone(p1Paths[history.excursions[step.index].symbol])
+			p1Pending[step.index] = slices.Clone(p1Rules[history.excursions[step.index].symbol])
 
 		case eventC:
 			record := history.excursions[step.index]
 			entry := p1Pending[step.index]
 			delete(p1Pending, step.index)
 
-			if len(entry) == tokenizer.Depth {
+			if len(entry) >= 2 {
 				key := strings.Join(entry, "/")
-				if record.up && record.gain > 0 {
+
+				if record.up && record.netReturn > 0 {
 					getTally(key).ups++
 				}
 
-				if !record.up && record.gain < 0 {
+				if !record.up || record.netReturn <= 0 {
 					getTally(key).downs++
 				}
 			}
 
-			exit := p1Paths[record.symbol]
-			if record.up && len(exit) == tokenizer.Depth {
+			exit := p1Rules[record.symbol]
+
+			if record.up && len(exit) >= 2 {
 				getTally(strings.Join(exit, "/")).exits++
 			}
 		}
@@ -512,7 +539,7 @@ func (history *recording) replay(
 	// Determine globally unambiguous, executable policies
 	executable := make(map[string]uint8)
 	for key, tally := range tallies {
-		if tally.ups > 0 && tally.downs == 0 && tally.exits == 0 {
+		if tally.ups >= 2 && tally.downs == 0 && tally.exits == 0 {
 			executable[key] = maskEnter
 		}
 
@@ -528,6 +555,8 @@ func (history *recording) replay(
 	// -------------------------------------------------------------
 	// PASS 2: Simulate Venue-Time Execution with Pure Policies Only
 	// -------------------------------------------------------------
+	grammars := make(map[string]*Grammar)
+	lastSym := make(map[string]string)
 	paths := make(map[string][]string)
 	pending := make(map[int][]string)
 	discovered := make(map[string]uint8)
@@ -571,6 +600,8 @@ func (history *recording) replay(
 				return inactionPenalty, 0, nil, errnie.Error(err)
 			}
 			epoch = step.epoch
+			grammars = make(map[string]*Grammar)
+			lastSym = make(map[string]string)
 			paths = make(map[string][]string)
 			pending = make(map[int][]string)
 		}
@@ -582,20 +613,26 @@ func (history *recording) replay(
 				bids[observed.symbol] = observed.bid
 			}
 
-			tokens, moved := tokenizer.Advance(
-				paths[observed.symbol],
-				observed.tokens[tokenizer.Regions-1],
-				observed.strengths[tokenizer.Regions-1],
-			)
-			if moved {
-				paths[observed.symbol] = tokens
+			g := grammars[observed.symbol]
+
+			if g == nil {
+				g = NewGrammar()
+				grammars[observed.symbol] = g
 			}
 
-			if !moved || len(tokens) < tokenizer.Depth {
+			last := lastSym[observed.symbol]
+			phrase, moved := tokenizer.StepGrammar(g, &last, history.frameActive(observed, tokenizer.Threshold))
+			lastSym[observed.symbol] = last
+
+			if moved {
+				paths[observed.symbol] = phrase
+			}
+
+			if !moved || len(phrase) < 2 {
 				continue
 			}
 
-			pathKey := strings.Join(tokens, "/")
+			pathKey := strings.Join(phrase, "/")
 			mask, isDiscovered := discovered[pathKey]
 
 			if isDiscovered {
@@ -624,24 +661,31 @@ func (history *recording) replay(
 			entry := pending[step.index]
 			delete(pending, step.index)
 
-			if len(entry) == tokenizer.Depth {
+			if len(entry) >= 2 {
 				key := strings.Join(entry, "/")
-				if pureMask, isPure := executable[key]; isPure {
+				pureMask, isPure := executable[key]
+
+				if isPure {
 					discovered[key] |= pureMask
-					if learn != nil {
-						learn(key, record)
-					}
+				}
+
+				if isPure && learn != nil {
+					learn(key, record)
 				}
 			}
 
 			exit := paths[record.symbol]
-			if record.up && len(exit) == tokenizer.Depth {
+
+			if record.up && len(exit) >= 2 {
 				key := strings.Join(exit, "/")
-				if pureMask, isPure := executable[key]; isPure && pureMask == maskExit {
+				pureMask, isPure := executable[key]
+
+				if isPure && pureMask == maskExit {
 					discovered[key] |= maskExit
-					if learn != nil {
-						learn(key, record)
-					}
+				}
+
+				if isPure && pureMask == maskExit && learn != nil {
+					learn(key, record)
 				}
 			}
 		}
@@ -741,20 +785,14 @@ func (node *searchNode) choose(minReward, maxReward float64) *searchNode {
 
 func (trainer *Trainer) search(history *recording) (*Tokenizer, error) {
 	root := &searchNode{best: math.Inf(-1)}
-
-	for regions := 1; regions <= store.RegionCount; regions++ {
-		maxDepth := (s3KeyLimit - len(actionEnter)) / (4 * regions)
-		maxDepth = min(maxPrecursorDepth, max(1, maxDepth))
-
-		root.children = append(root.children, &searchNode{
-			regions: regions,
-			depthLo: 1,
-			depthHi: maxDepth,
-			rankLo:  0,
-			rankHi:  len(history.frames) - 1,
-			best:    math.Inf(-1),
-		})
-	}
+	root.children = append(root.children, &searchNode{
+		regions: 1,
+		depthLo: 2,
+		depthHi: maxPrecursorDepth,
+		rankLo:  0,
+		rankHi:  len(history.frames) - 1,
+		best:    math.Inf(-1),
+	})
 
 	scores := make(map[Tokenizer]float64)
 	highest := math.Inf(-1)

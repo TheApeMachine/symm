@@ -21,6 +21,13 @@ var pow10 = [...]float64{
 	1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18,
 }
 
+func init() {
+	sample, err := decimal.NewFromString("12345.6789")
+	if err != nil || decimalFloat64(sample) != 12345.6789 {
+		panic("decimalFloat64 memory layout mismatch with decimal.Decimal")
+	}
+}
+
 func decimalFloat64(d *decimal.Decimal) float64 {
 	if d == nil {
 		return 0
