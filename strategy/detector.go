@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"math/big"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -96,15 +95,154 @@ func NewDetector(
 tapePoint is one priced trade coordinate on the tape. pos is its index in
 the tape's retained points. bid and ask are the executable quotes from the
 trade measurement's stamped book, falling back to price when unstamped.
+entryAsk and exitBid are the executable VWAPs walking the stamped book
+to buy and sell the allocation budget, falling back to price when unstamped.
 */
 type tapePoint struct {
-	idx   int64
-	tick  int64
-	pos   int
-	at    time.Time
-	price *decimal.Decimal
-	bid   *decimal.Decimal
-	ask   *decimal.Decimal
+	idx         int64
+	tick        int64
+	pos         int
+	at          time.Time
+	price       *decimal.Decimal
+	bid         *decimal.Decimal
+	ask         *decimal.Decimal
+	entryAsk    *decimal.Decimal
+	exitBid     *decimal.Decimal
+	bidDepthQty *decimal.Decimal
+	posQty      *decimal.Decimal
+}
+
+func (detector *Detector) computeBookExecution(
+	symbol string,
+	snapshot *broker.Snapshot,
+	fallbackPrice *decimal.Decimal,
+) (entryAsk, exitBid, bidDepthQty, posQty *decimal.Decimal, err error) {
+	budget := detector.price.ReferenceCash()
+
+	if budget == nil || budget.Sign() <= 0 {
+		return nil, nil, nil, nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[detector] positive reference cash required on price system",
+			nil,
+		))
+	}
+
+	if snapshot != nil && len(snapshot.Bids) > 0 {
+		depth := decimal.NewFromInt64(0)
+
+		for _, lvl := range snapshot.Bids {
+			if lvl.Quantity != nil && lvl.Quantity.Sign() > 0 {
+				depth = depth.Add(lvl.Quantity)
+			}
+		}
+
+		if depth.Sign() > 0 {
+			bidDepthQty = depth
+		}
+	}
+
+	if snapshot != nil && len(snapshot.Asks) > 0 {
+		fee := detector.price.Fee(symbol)
+		feeRate := decimal.NewFromInt64(0)
+
+		if fee != nil && fee.Fee != nil && fee.Fee.Sign() > 0 {
+			feeRate = fee.Fee.Div(decimal.NewFromInt64(100))
+		}
+
+		maxGross := budget.Div(decimal.NewFromInt64(1).Add(feeRate))
+		remainingGross := maxGross
+		accumQty := decimal.NewFromInt64(0)
+		accumCost := decimal.NewFromInt64(0)
+
+		for _, lvl := range snapshot.Asks {
+			if lvl.Price == nil || lvl.Price.Sign() <= 0 || lvl.Quantity == nil || lvl.Quantity.Sign() <= 0 {
+				continue
+			}
+
+			if remainingGross.Sign() <= 0 {
+				break
+			}
+
+			lvlCost := lvl.Price.Mul(lvl.Quantity)
+
+			if lvlCost.Cmp(remainingGross) <= 0 {
+				accumQty = accumQty.Add(lvl.Quantity)
+				accumCost = accumCost.Add(lvlCost)
+				remainingGross = remainingGross.Sub(lvlCost)
+				continue
+			}
+
+			partialQty := remainingGross.Div(lvl.Price)
+			accumQty = accumQty.Add(partialQty)
+			accumCost = accumCost.Add(remainingGross)
+			remainingGross = decimal.NewFromInt64(0)
+			break
+		}
+
+		if accumQty.Sign() > 0 {
+			entryAsk = accumCost.Div(accumQty)
+			posQty = accumQty
+
+			if normalizer := detector.price.Normalizer(); normalizer != nil {
+				if formatted, normErr := normalizer.FormatSize(symbol, accumQty); normErr == nil && formatted != nil {
+					posQty = formatted
+				}
+			}
+		}
+	}
+
+	if entryAsk == nil || posQty == nil {
+		if fallbackPrice != nil && fallbackPrice.Sign() > 0 {
+			entryAsk = fallbackPrice
+			posQty = budget.Div(fallbackPrice)
+
+			if normalizer := detector.price.Normalizer(); normalizer != nil {
+				if formatted, normErr := normalizer.FormatSize(symbol, posQty); normErr == nil && formatted != nil {
+					posQty = formatted
+				}
+			}
+		}
+	}
+
+	if snapshot != nil && len(snapshot.Bids) > 0 && posQty != nil && posQty.Sign() > 0 {
+		remainingQty := posQty
+		accumRevenue := decimal.NewFromInt64(0)
+		filledQty := decimal.NewFromInt64(0)
+
+		for _, lvl := range snapshot.Bids {
+			if lvl.Price == nil || lvl.Price.Sign() <= 0 || lvl.Quantity == nil || lvl.Quantity.Sign() <= 0 {
+				continue
+			}
+
+			if remainingQty.Sign() <= 0 {
+				break
+			}
+
+			if lvl.Quantity.Cmp(remainingQty) <= 0 {
+				lvlRevenue := lvl.Price.Mul(lvl.Quantity)
+				accumRevenue = accumRevenue.Add(lvlRevenue)
+				filledQty = filledQty.Add(lvl.Quantity)
+				remainingQty = remainingQty.Sub(lvl.Quantity)
+				continue
+			}
+
+			lvlRevenue := lvl.Price.Mul(remainingQty)
+			accumRevenue = accumRevenue.Add(lvlRevenue)
+			filledQty = filledQty.Add(remainingQty)
+			remainingQty = decimal.NewFromInt64(0)
+			break
+		}
+
+		if filledQty.Sign() > 0 {
+			exitBid = accumRevenue.Div(filledQty)
+		}
+	}
+
+	if exitBid == nil {
+		exitBid = fallbackPrice
+	}
+
+	return entryAsk, exitBid, bidDepthQty, posQty, nil
 }
 
 /*
@@ -117,63 +255,6 @@ type span struct {
 
 func (s span) held() bool {
 	return s.b.price != nil && s.c.price != nil && s.b.tick < s.c.tick
-}
-
-/*
-friction answers whether buying at low and selling at high clears round-trip
-taker friction. The sign of the round trip depends only on high/low against
-the fee, so the tightest ratios known to clear and to fail bound every later
-question under the same fee without pricing it again; a fee change (tier
-refresh) drops both bounds.
-*/
-type friction struct {
-	detector *Detector
-	symbol   string
-	fee      *decimal.Decimal
-	clears   *big.Rat
-	fails    *big.Rat
-}
-
-func (f *friction) clear(low, high *decimal.Decimal) (bool, error) {
-	if low == nil || high == nil || high.Cmp(low) <= 0 {
-		return false, nil
-	}
-
-	fee := f.detector.feeRate(f.symbol)
-
-	if fee == nil || f.fee == nil || fee.Cmp(f.fee) != 0 {
-		f.fee, f.clears, f.fails = fee, nil, nil
-	}
-
-	ratio := new(big.Rat).Quo(high.Rat(), low.Rat())
-
-	if f.clears != nil && ratio.Cmp(f.clears) >= 0 {
-		return true, nil
-	}
-
-	if f.fails != nil && ratio.Cmp(f.fails) <= 0 {
-		return false, nil
-	}
-
-	clears, err := f.detector.clearFriction(low, high, f.symbol)
-
-	if err != nil {
-		return false, err
-	}
-
-	if clears {
-		if f.clears == nil || ratio.Cmp(f.clears) < 0 {
-			f.clears = ratio
-		}
-
-		return true, nil
-	}
-
-	if f.fails == nil || ratio.Cmp(f.fails) > 0 {
-		f.fails = ratio
-	}
-
-	return false, nil
 }
 
 /*
@@ -195,8 +276,7 @@ type tape struct {
 	start    tapePoint
 	// points keeps every observed trade so flush can pad precursor left of B
 	// and tape right of C (TRAINING.md) without re-reading storage.
-	points   []tapePoint
-	friction friction
+	points []tapePoint
 	// found holds every completed episode in completion order.
 	found []episode
 
@@ -238,7 +318,6 @@ func (t *tape) observe(p tapePoint) error {
 	t.points = append(t.points, p)
 
 	if t.low.price == nil {
-		t.friction = friction{detector: t.detector, symbol: t.symbol}
 		t.low, t.high, t.bounce = p, p, p
 		t.quiet = span{b: p, c: p}
 		t.quietMin, t.quietMax = p.price, p.price
@@ -258,20 +337,59 @@ func (t *tape) observe(p tapePoint) error {
 	return nil
 }
 
+func (t *tape) safeProfit(lowPoint, candidatePoint tapePoint) float64 {
+	if lowPoint.entryAsk == nil || candidatePoint.exitBid == nil || lowPoint.entryAsk.Sign() <= 0 || candidatePoint.exitBid.Sign() <= 0 {
+		return 0
+	}
+
+	if candidatePoint.exitBid.Cmp(lowPoint.entryAsk) <= 0 {
+		return 0
+	}
+
+	if t.detector == nil || t.detector.price == nil {
+		return 0
+	}
+
+	pnl, _, err := t.detector.price.RoundTrip(t.symbol, lowPoint.entryAsk, candidatePoint.exitBid)
+
+	if err != nil || pnl.Sign() <= 0 {
+		return 0
+	}
+
+	netPnl := pnl.Float64()
+
+	if candidatePoint.bidDepthQty == nil {
+		return netPnl
+	}
+
+	if lowPoint.posQty == nil || candidatePoint.bidDepthQty.Cmp(lowPoint.posQty) <= 0 {
+		return 0
+	}
+
+	return netPnl * candidatePoint.bidDepthQty.Sub(lowPoint.posQty).Div(candidatePoint.bidDepthQty).Float64()
+}
+
 /*
 zigzag advances the legs by one trade.
 */
 func (t *tape) zigzag(p tapePoint) error {
 	switch t.leg {
 	case legUp:
-		if p.price.Cmp(t.high.price) > 0 {
+		candidateProfit := t.safeProfit(t.low, p)
+		highProfit := t.safeProfit(t.low, t.high)
+
+		if candidateProfit > highProfit || (highProfit == 0 && candidateProfit == 0 && p.price.Cmp(t.high.price) > 0) {
 			t.high = p
 			return nil
 		}
 
-		clears, err := t.friction.clear(p.price, t.high.price)
+		if p.price.Cmp(t.high.price) >= 0 {
+			return nil
+		}
 
-		if err != nil || !clears {
+		pnl, _, err := t.detector.price.RoundTrip(t.symbol, p.price, t.high.price)
+
+		if err != nil || pnl.Sign() <= 0 {
 			return err
 		}
 
@@ -293,10 +411,10 @@ func (t *tape) zigzag(p tapePoint) error {
 			t.emit(excursionUpShort, span{b: t.low, c: t.bounce})
 			t.low, t.bounce = p, p
 
-			if t.leg == legNone {
-				clears, err := t.friction.clear(p.price, t.high.price)
+			if t.leg == legNone && p.price.Cmp(t.high.price) < 0 {
+				pnl, _, err := t.detector.price.RoundTrip(t.symbol, p.price, t.high.price)
 
-				if err != nil || !clears {
+				if err != nil || pnl.Sign() <= 0 {
 					return err
 				}
 
@@ -306,13 +424,20 @@ func (t *tape) zigzag(p tapePoint) error {
 			return nil
 		}
 
-		if p.price.Cmp(t.bounce.price) > 0 {
+		candidateProfit := t.safeProfit(t.low, p)
+		bounceProfit := t.safeProfit(t.low, t.bounce)
+
+		if candidateProfit > bounceProfit || (bounceProfit == 0 && candidateProfit == 0 && p.price.Cmp(t.bounce.price) > 0) {
 			t.bounce = p
 		}
 
-		clears, err := t.friction.clear(t.low.ask, p.bid)
+		if t.low.ask == nil || p.bid == nil || p.bid.Cmp(t.low.ask) <= 0 {
+			return nil
+		}
 
-		if err != nil || !clears {
+		pnl, _, err := t.detector.price.RoundTrip(t.symbol, t.low.ask, p.bid)
+
+		if err != nil || pnl.Sign() <= 0 {
 			return err
 		}
 
@@ -323,7 +448,12 @@ func (t *tape) zigzag(p tapePoint) error {
 		}
 
 		t.leg = legUp
-		t.high = p
+		t.high = t.bounce
+
+		if t.safeProfit(t.low, p) > t.safeProfit(t.low, t.high) {
+			t.high = p
+		}
+
 		return nil
 	}
 }
@@ -345,12 +475,13 @@ func (t *tape) settle(p tapePoint) error {
 	}
 
 	if widened {
-		clears, err := t.friction.clear(low, high)
+		pnl, _, err := t.detector.price.RoundTrip(t.symbol, low, high)
+
 		if err != nil {
 			return err
 		}
 
-		if clears {
+		if pnl.Sign() > 0 {
 			t.closeQuiet()
 			t.quiet = span{b: p, c: p}
 			t.quietMin, t.quietMax = p.price, p.price
@@ -565,13 +696,33 @@ func (detector *Detector) Scan(
 			ask = askEntry.Metric.Exact()
 		}
 
+		snapshot, _ := broker.ReadSnapshot(measurement)
+
+		if bid == nil && snapshot != nil && len(snapshot.Bids) > 0 {
+			bid = snapshot.Bids[0].Price
+		}
+
+		if ask == nil && snapshot != nil && len(snapshot.Asks) > 0 {
+			ask = snapshot.Asks[0].Price
+		}
+
+		entryAsk, exitBid, bidDepthQty, posQty, err := detector.computeBookExecution(measurement.Label, snapshot, price)
+
+		if err != nil {
+			return detector.Error(err)
+		}
+
 		if err := current.observe(tapePoint{
-			idx:   measurement.SeqIdx,
-			tick:  measurement.Tick,
-			at:    measurement.At,
-			price: price,
-			bid:   bid,
-			ask:   ask,
+			idx:         measurement.SeqIdx,
+			tick:        measurement.Tick,
+			at:          measurement.At,
+			price:       price,
+			bid:         bid,
+			ask:         ask,
+			entryAsk:    entryAsk,
+			exitBid:     exitBid,
+			bidDepthQty: bidDepthQty,
+			posQty:      posQty,
 		}); err != nil {
 			return detector.Error(err)
 		}
@@ -584,67 +735,6 @@ func (detector *Detector) Scan(
 	}
 
 	return nil
-}
-
-/*
-clearFriction verifies that buying at lowPrice and selling at highPrice
-remains profitable after round-trip taker friction. A missing price system
-or a round trip that cannot be priced is an error, never a guess.
-*/
-/*
-feeRate returns the fee rate clearFriction prices under for symbol, or nil
-when none is available (clearFriction then errors on its own).
-*/
-func (detector *Detector) feeRate(symbol string) *decimal.Decimal {
-	if detector.price == nil {
-		return nil
-	}
-
-	fee := detector.price.Fee(symbol)
-
-	if fee == nil {
-		return nil
-	}
-
-	return fee.Fee
-}
-
-func (detector *Detector) clearFriction(
-	lowPrice *decimal.Decimal,
-	highPrice *decimal.Decimal,
-	symbol string,
-) (bool, error) {
-	if detector.price == nil {
-		return false, errnie.Err(
-			errnie.Validation,
-			"[detector] price system is required to measure friction: "+symbol,
-			nil,
-		)
-	}
-
-	pnl, _, err := detector.price.RoundTrip(
-		symbol,
-		lowPrice,
-		highPrice,
-	)
-
-	if err != nil {
-		return false, errnie.Err(
-			errnie.Validation,
-			"[detector] round trip cannot be priced: "+symbol,
-			err,
-		)
-	}
-
-	if pnl == nil {
-		return false, errnie.Err(
-			errnie.Validation,
-			"[detector] round trip returned no pnl: "+symbol,
-			nil,
-		)
-	}
-
-	return pnl.Sign() > 0, nil
 }
 
 /*
@@ -680,6 +770,17 @@ func (detector *Detector) Flush(
 	endTickUnit, endTickTime := data.GetDimension(detector.Name(), "end_tick")
 	bPriceUnit, bPriceTime := data.GetDimension(detector.Name(), "b_price")
 	cPriceUnit, cPriceTime := data.GetDimension(detector.Name(), "c_price")
+	bPrice := excursion.b.entryAsk
+
+	if bPrice == nil || bPrice.Sign() <= 0 {
+		bPrice = excursion.b.price
+	}
+
+	cPrice := excursion.c.exitBid
+
+	if cPrice == nil || cPrice.Sign() <= 0 {
+		cPrice = excursion.c.price
+	}
 
 	measurement.Write(
 		data.NewMetric("start_idx", float64(start.idx), startIdxUnit, startIdxTime),
@@ -689,8 +790,8 @@ func (detector *Detector) Flush(
 		data.NewMetric("c_idx", float64(excursion.c.idx), cIdxUnit, cIdxTime),
 		data.NewMetric("c_tick", float64(excursion.c.tick), cTickUnit, cTickTime),
 		data.NewMetric("end_tick", float64(end.tick), endTickUnit, endTickTime),
-		data.NewExactMetric("b_price", excursion.b.price, bPriceUnit, bPriceTime),
-		data.NewExactMetric("c_price", excursion.c.price, cPriceUnit, cPriceTime),
+		data.NewExactMetric("b_price", bPrice, bPriceUnit, bPriceTime),
+		data.NewExactMetric("c_price", cPrice, cPriceUnit, cPriceTime),
 	)
 
 	detector.storeTee.Push(measurement)

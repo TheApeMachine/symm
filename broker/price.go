@@ -895,7 +895,7 @@ func (price *Price) Liquidate(
 				err = errnie.Error(errnie.Err(
 					errnie.UnprocessableContent, "[price] crossed book for "+symbol, nil,
 				))
-				
+
 				return
 			}
 
@@ -905,7 +905,7 @@ func (price *Price) Liquidate(
 				errnie.Error(errnie.Err(
 					errnie.IO, "[price] liquidate failed for "+symbol, err,
 				))
-				
+
 				return
 			}
 

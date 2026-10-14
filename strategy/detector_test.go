@@ -78,6 +78,41 @@ func makeTrade(
 	return measurement.Write(metrics...)
 }
 
+func makeTradeWithSnapshot(
+	symbol string,
+	sequenceIndex int64,
+	tickIndex int64,
+	atTime time.Time,
+	tradePrice float64,
+	bids []broker.Level,
+	asks []broker.Level,
+) *data.Measurement {
+	measurement := data.NewMeasurement(
+		1, symbol, "spot:trade", atTime, atTime,
+		&data.StringEntry{Key: "type", Value: "trade"},
+		&data.StringEntry{Key: "side", Value: "buy"},
+	)
+	measurement.SeqIdx = sequenceIndex
+	measurement.Tick = tickIndex
+
+	priceUnit, priceTime := data.GetDimension("spot:trade", "price")
+	qtyUnit, qtyTime := data.GetDimension("spot:trade", "qty")
+
+	metrics := []*data.Metric{
+		data.NewExactMetric("price", decimal.NewFromFloat64(tradePrice), priceUnit, priceTime),
+		data.NewMetric("qty", 1.0, qtyUnit, qtyTime),
+	}
+
+	snapshot := &broker.Snapshot{
+		Depth: 10,
+		Bids:  bids,
+		Asks:  asks,
+	}
+	metrics = append(metrics, snapshot.Metrics()...)
+
+	return measurement.Write(metrics...)
+}
+
 func measurementStream(measurements []*data.Measurement) iter.Seq2[*data.Measurement, error] {
 	return func(yield func(*data.Measurement, error) bool) {
 		for _, measurement := range measurements {
@@ -216,6 +251,66 @@ func TestDetector_Scan(t *testing.T) {
 			}
 
 			So(emittedClasses, ShouldNotContain, excursionUp)
+		})
+
+		Convey("Peak excursion C pins at peak safe profit rather than thin needle top", func() {
+			var tapeTrades []*data.Measurement
+
+			// Trade 1 (entry B): price 100, ample bid and ask depth. Budget is 200, so posQty is ~2.0 BTC.
+			bids1 := []broker.Level{
+				{Price: decimal.NewFromFloat64(100.0), Quantity: decimal.NewFromFloat64(10.0)},
+			}
+			asks1 := []broker.Level{
+				{Price: decimal.NewFromFloat64(100.0), Quantity: decimal.NewFromFloat64(10.0)},
+			}
+			tapeTrades = append(tapeTrades, makeTradeWithSnapshot(symbol, 1, 1, startTime, 100.0, bids1, asks1))
+
+			// Trade 2 (fat liquidity, higher price 110): exit bid depth is 10.0, well above posQty (2.0). Safe profit is high.
+			bids2 := []broker.Level{
+				{Price: decimal.NewFromFloat64(110.0), Quantity: decimal.NewFromFloat64(10.0)},
+			}
+			asks2 := []broker.Level{
+				{Price: decimal.NewFromFloat64(111.0), Quantity: decimal.NewFromFloat64(10.0)},
+			}
+			tapeTrades = append(tapeTrades, makeTradeWithSnapshot(symbol, 2, 2, startTime.Add(time.Second), 110.0, bids2, asks2))
+
+			// Trade 3 (thin needle top: price prints 120, but bid depth collapsed to 0.5 < posQty (2.0)): Safe profit is 0!
+			bids3 := []broker.Level{
+				{Price: decimal.NewFromFloat64(120.0), Quantity: decimal.NewFromFloat64(0.5)},
+			}
+			asks3 := []broker.Level{
+				{Price: decimal.NewFromFloat64(121.0), Quantity: decimal.NewFromFloat64(10.0)},
+			}
+			tapeTrades = append(tapeTrades, makeTradeWithSnapshot(symbol, 3, 3, startTime.Add(2*time.Second), 120.0, bids3, asks3))
+
+			// Trade 4 & 5 (confirming retrace back down to 90): confirms the up leg.
+			bids4 := []broker.Level{
+				{Price: decimal.NewFromFloat64(90.0), Quantity: decimal.NewFromFloat64(10.0)},
+			}
+			asks4 := []broker.Level{
+				{Price: decimal.NewFromFloat64(91.0), Quantity: decimal.NewFromFloat64(10.0)},
+			}
+			tapeTrades = append(tapeTrades, makeTradeWithSnapshot(symbol, 4, 4, startTime.Add(3*time.Second), 90.0, bids4, asks4))
+			tapeTrades = append(tapeTrades, makeTradeWithSnapshot(symbol, 5, 5, startTime.Add(4*time.Second), 90.0, bids4, asks4))
+
+			err := detector.Scan(measurementStream(tapeTrades))
+			So(err, ShouldBeNil)
+
+			var upDetections []*data.Measurement
+			for storeTee.Pending() > 0 {
+				incoming := storeTee.Next()
+				pushed := *(**data.Measurement)(incoming)
+				typeEntry := data.Pull(pushed.Meta("type"))
+				if typeEntry != nil && typeEntry.Value == excursionUp {
+					upDetections = append(upDetections, pushed)
+				}
+			}
+
+			So(len(upDetections), ShouldEqual, 1)
+			cPriceMetric := data.Pull(upDetections[0].Read("c_price"))
+			So(cPriceMetric, ShouldNotBeNil)
+			// C price must stay pinned at Trade 2's exit bid (110.0), NOT needle top (120.0)
+			So(cPriceMetric.Metric.Exact().Cmp(decimal.NewFromFloat64(110.0)), ShouldEqual, 0)
 		})
 	})
 }
