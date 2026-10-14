@@ -73,6 +73,23 @@ func TestLiquiditySignalMetrics(t *testing.T) {
 			}
 		})
 
+		Convey("It measures friction_hurdle when fee_rate is stamped", func() {
+			So(market.Quote(books, "BTC/USD", origin, 50000, 1, 50100, 1), ShouldBeNil)
+			stamped := market.Stamp(
+				books, "BTC/USD", "buy", origin, 50050, 1,
+				data.NewMetric("fee_rate", 0.0026, data.UnitRate, data.TimescaleInstantaneous),
+			)
+
+			res := instrument.Step(stamped)
+			So(res, ShouldNotBeNil)
+
+			relSpread := 100.0 / 50050.0
+			expectedHurdle := relSpread + 2.0*0.0026
+
+			So(metricValue(res, "fee_rate"), ShouldEqual, 0.0026)
+			So(metricValue(res, "friction_hurdle"), ShouldAlmostEqual, expectedHurdle, 1e-9)
+		})
+
 		Convey("A crossed touch is dropped with a warning without halting the system", func() {
 			So(stepTouch(instrument, books, "ETH/USD", origin, 3005, 3000, 1, 1), ShouldBeNil)
 			So(instrument.Error(), ShouldBeNil)

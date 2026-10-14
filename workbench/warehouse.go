@@ -343,7 +343,8 @@ so analytical queries execute with zero disk footprint and Parquet filter pushdo
 */
 func sanitizeStatement(statement string) string {
 	statement = selectWithoutSelection.ReplaceAllString(statement, "SELECT NULL FROM")
-	return createTableAsPattern.ReplaceAllString(statement, "CREATE OR REPLACE VIEW $1 AS")
+	statement = createTableAsPattern.ReplaceAllString(statement, "CREATE OR REPLACE VIEW $1 AS")
+	return dropTablePattern.ReplaceAllString(statement, "DROP VIEW")
 }
 
 /*

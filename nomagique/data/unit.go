@@ -139,6 +139,8 @@ var SignalMetrics = map[string]map[string]Dimension{
 	"depthflow": {
 		"book_imbalance":              {Unit: UnitImbalance, Timescale: TimescaleInstantaneous},
 		"touch_notional:bid":          {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
+		"touch_notional:ask":          {Unit: UnitNotional, Timescale: TimescaleInstantaneous},
+		"touch_imbalance":             {Unit: UnitImbalance, Timescale: TimescaleInstantaneous},
 		"net_displayed_flow:bid":      {Unit: UnitSignedNotional, Timescale: TimescaleInstantaneous},
 		"mutation_activity_imbalance": {Unit: UnitImbalance, Timescale: TimescaleRollingWindow},
 	},
@@ -159,6 +161,8 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"best_ask_price":  {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"best_bid_price":  {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"relative_spread": {Unit: UnitRelativeSpread, Timescale: TimescaleInstantaneous},
+		"fee_rate":        {Unit: UnitRate, Timescale: TimescaleInstantaneous},
+		"friction_hurdle": {Unit: UnitRelativeSpread, Timescale: TimescaleInstantaneous},
 	},
 	"morphology": {
 		"book_shape_distance": {Unit: UnitDistance, Timescale: TimescaleInstantaneous},
@@ -171,6 +175,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 	},
 	"pumpdump": {
 		"volume_rate":              {Unit: UnitVolumeRate, Timescale: TimescaleVolumeBar},
+		"volume_ratio":             {Unit: UnitRatio, Timescale: TimescaleVolumeBar},
 		"trade_rate":               {Unit: UnitTradeRate, Timescale: TimescaleRollingWindow},
 		"positive_midpoint_return": {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
 		"negative_midpoint_return": {Unit: UnitLogReturn, Timescale: TimescaleRollingWindow},
@@ -191,6 +196,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 	"spot:trade": {
 		"price":      {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"qty":        {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
+		"fee_rate":   {Unit: UnitRate, Timescale: TimescaleInstantaneous},
 		"book_depth": {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"bid_price":  {Unit: UnitPrice, Timescale: TimescaleInstantaneous},
 		"bid_qty":    {Unit: UnitQuantity, Timescale: TimescaleInstantaneous},
@@ -225,6 +231,9 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"region_brightness:R09":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
 		"region_brightness:R10":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
 		"region_brightness:R11":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R12":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R13":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
+		"region_brightness:R14":  {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
 		"region_members:R00":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"region_members:R01":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"region_members:R02":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
@@ -237,6 +246,9 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"region_members:R09":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"region_members:R10":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"region_members:R11":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R12":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R13":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"region_members:R14":     {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 		"position_open":          {Unit: UnitDimensionless, Timescale: TimescaleInstantaneous},
 		"position_exiting":       {Unit: UnitDimensionless, Timescale: TimescaleInstantaneous},
 		"position_qty":           {Unit: UnitBaseCurrency, Timescale: TimescaleInstantaneous},
@@ -326,7 +338,7 @@ count of stored paths) up to this many tokens, with up to RegionSlots parts.
 const (
 	TrainingPathSlots = 64
 	MatchKeySlots     = 512
-	RegionSlots       = 12
+	RegionSlots       = 15
 )
 
 func init() {

@@ -12,30 +12,30 @@ func TestTokenizer(t *testing.T) {
 		Convey("validate checks valid parameter ranges", func() {
 			So((&Tokenizer{Depth: 0, Regions: 1, Threshold: 0.1}).validate(), ShouldNotBeNil)
 			So((&Tokenizer{Depth: 1, Regions: 0, Threshold: 0.1}).validate(), ShouldNotBeNil)
-			So((&Tokenizer{Depth: 1, Regions: 13, Threshold: 0.1}).validate(), ShouldNotBeNil)
+			So((&Tokenizer{Depth: 1, Regions: store.RegionCount + 1, Threshold: 0.1}).validate(), ShouldNotBeNil)
 			So((&Tokenizer{Depth: 1, Regions: 1, Threshold: 0.1}).validate(), ShouldBeNil)
-			So((&Tokenizer{Depth: 5, Regions: 12, Threshold: 0.0}).validate(), ShouldBeNil)
+			So((&Tokenizer{Depth: 5, Regions: store.RegionCount, Threshold: 0.0}).validate(), ShouldBeNil)
 		})
 
 		Convey("Token names Top-K regions and extracts threshold strength", func() {
-			regions := make([]*store.Region, 12)
+			regions := make([]*store.Region, store.RegionCount)
 
-			for idx := range 12 {
+			for idx := range store.RegionCount {
 				regions[idx] = &store.Region{
 					Key:        uint8(idx + 1),
-					Brightness: float64(12 - idx),
+					Brightness: float64(store.RegionCount - idx),
 				}
 			}
 
 			tok1 := &Tokenizer{Regions: 1}
 			name1, strength1 := tok1.Token(regions)
 			So(name1, ShouldEqual, "R01")
-			So(strength1, ShouldEqual, 12.0)
+			So(strength1, ShouldEqual, float64(store.RegionCount))
 
 			tok3 := &Tokenizer{Regions: 3}
 			name3, strength3 := tok3.Token(regions)
 			So(name3, ShouldEqual, "R01-R02-R03")
-			So(strength3, ShouldEqual, 10.0)
+			So(strength3, ShouldEqual, float64(store.RegionCount-2))
 		})
 
 		Convey("Advance enforces strength threshold and deduplication", func() {

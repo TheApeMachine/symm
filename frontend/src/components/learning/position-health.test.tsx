@@ -66,7 +66,7 @@ describe("position-health components", () => {
 		expect(markup).toContain("★ ENTER");
 		expect(markup).toContain("Active Exit Targets");
 		expect(markup).toContain("⚡ EXIT");
-		expect(markup).toContain("R11 (Cohort Drag)");
+		expect(markup).toContain("R03 (Exit Detector)");
 	});
 
 	it("renders ActivePositionHealthCard for open position without fake realized loss", () => {
@@ -117,8 +117,8 @@ describe("position-health components", () => {
 		expect(markup).toContain("Position Health Gauge");
 	});
 
-	it("has complete region metadata for R00 through R11", () => {
-		for (let i = 0; i <= 11; i++) {
+	it("has complete region metadata for R00 through R14", () => {
+		for (let i = 0; i <= 14; i++) {
 			const key = `R${i.toString().padStart(2, "0")}`;
 			expect(REGIONS[key]).toBeDefined();
 			expect(REGIONS[key].title).toBeTruthy();

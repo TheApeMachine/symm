@@ -82,6 +82,16 @@ func TestToxicitySignal(t *testing.T) {
 			So(instrument.Status(), ShouldEqual, nmruntime.READY)
 		})
 
+		Convey("A touch frame without trade metrics steps without panic", func() {
+			So(market.Quote(books, "BTC/USD", now, 50000.0, 10.0, 50002.0, 4.0), ShouldBeNil)
+			_, snapshot := books.Stamp("BTC/USD")
+			touch := data.NewMeasurement(1, "BTC/USD", "spot:touch", now, now)
+			touch.Write(snapshot.Metrics()...)
+			res := instrument.Step(touch)
+			So(res, ShouldNotBeNil)
+			So(instrument.Error(), ShouldBeNil)
+		})
+
 		Convey("A stamped book that cannot be decoded is corrupt ingress state and halts", func() {
 			So(instrument.Step(market.Unreadable("BTC/USD", "buy", now, 50002.0, 1.0)), ShouldBeNil)
 

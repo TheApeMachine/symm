@@ -39,20 +39,23 @@ Confluence region taxonomy mapped to human-readable names and visual color tones
 */
 const REGION_INFO: Record<
 	string,
-	{ name: string; tone: "up" | "down" | "acc" | "info" | "neutral" }
+	{ name: string; tone: "up" | "down" | "acc" | "info" | "neutral" | "warn" }
 > = {
-	R01: { name: "Buy Cascade", tone: "up" },
-	R02: { name: "Clock Accel", tone: "acc" },
-	R03: { name: "Sell Cascade", tone: "down" },
-	R04: { name: "Taker Buy Inflow", tone: "up" },
-	R05: { name: "Gross Churn", tone: "neutral" },
-	R06: { name: "Taker Sell Outflow", tone: "down" },
-	R07: { name: "Ask Void", tone: "info" },
-	R08: { name: "Friction / Spread", tone: "neutral" },
-	R09: { name: "Bid Pulling", tone: "down" },
-	R10: { name: "Cohort Advance", tone: "up" },
-	R11: { name: "Iceberg Wall", tone: "info" },
-	R12: { name: "Cohort Decline", tone: "down" },
+	R00: { name: "Enter Detector", tone: "up" },
+	R01: { name: "Enter Support", tone: "up" },
+	R02: { name: "Enter Opposition", tone: "info" },
+	R03: { name: "Exit Detector", tone: "down" },
+	R04: { name: "Exit Support", tone: "down" },
+	R05: { name: "Exit Opposition", tone: "down" },
+	R06: { name: "Coiled Compression", tone: "neutral" },
+	R07: { name: "Explosive Ignition", tone: "acc" },
+	R08: { name: "Turbulent Friction", tone: "warn" },
+	R09: { name: "Dead / Starved", tone: "neutral" },
+	R10: { name: "Macro Recurrence", tone: "up" },
+	R11: { name: "Sentiment Recurrence", tone: "info" },
+	R12: { name: "Friction Hurdle", tone: "warn" },
+	R13: { name: "Macro Contagion", tone: "warn" },
+	R14: { name: "Capacity / Liquidity", tone: "warn" },
 };
 
 const TONE_STYLES = {
@@ -61,6 +64,7 @@ const TONE_STYLES = {
 	acc: "bg-(--acc)/15 border-(--acc)/30 text-(--acc)",
 	info: "bg-(--info)/15 border-(--info)/30 text-(--info)",
 	neutral: "bg-(--surface) border-(--line) text-(--f2)",
+	warn: "bg-(--warn)/15 border-(--warn)/30 text-(--warn)",
 };
 
 /*

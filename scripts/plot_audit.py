@@ -446,8 +446,8 @@ def plot_stage3_grid_completeness(report, out_dir):
     ax1.grid(axis='y')
 
     # Panel 2: mean metrics per region in observed frames.
-    regions = [f'R{r:02d}' for r in range(12)]
-    ax2.bar(regions, [members[r] for r in regions], color='#58a6ff', width=0.6, edgecolor='#30363d')
+    regions = [f'R{r:02d}' for r in range(15)]
+    ax2.bar(regions, [members.get(r, 0.0) for r in regions], color='#58a6ff', width=0.6, edgecolor='#30363d')
     ax2.set_xlabel('Grid Region', fontsize=10, color='#adbac7')
     ax2.set_ylabel('Mean Metrics per Observed Frame', fontsize=10, color='#adbac7')
     ax2.set_title('Region Membership', fontsize=11, fontweight='bold')
@@ -1074,10 +1074,12 @@ def animate_excursion_transitions(report, out_dir):
     total_steps = len(transitions)
 
     region_labels = [
-        "R00\nBuyArrival", "R01\nPacingVel", "R02\nSellCascade", "R03\nTakerSweep",
-        "R04\nCVDDelta", "R05\nTakerDump", "R06\nAskThin", "R07\nSpreadFrict",
-        "R08\nBidSupport", "R09\nLeaderCohort", "R10\nQuiescentCoil", "R11\nSystemicDrag"
+        "R00\nEnterDet", "R01\nEnterSupp", "R02\nEnterOpp", "R03\nExitDet",
+        "R04\nExitSupp", "R05\nExitOpp", "R06\nCoiledComp", "R07\nExplIgnit",
+        "R08\nTurbFrict", "R09\nDeadStarv", "R10\nMacroRec", "R11\nSentRec",
+        "R12\nFrictHurd", "R13\nMacroCont", "R14\nCapExitLiq"
     ]
+    num_regions = len(region_labels)
 
     # Pre-extract arrays across all steps
     steps = [tr.get('step', i) for i, tr in enumerate(transitions)]
@@ -1085,14 +1087,14 @@ def animate_excursion_transitions(report, out_dir):
     returns = [tr.get('return_pct', 0.0) for tr in transitions]
     winners = [tr.get('winner', 0) for tr in transitions]
     runner_ups = [tr.get('runner_up', 0) for tr in transitions]
-    brightness_matrix = np.array([tr.get('brightness', [0.0]*12) for tr in transitions]) # shape: (T, 12)
+    brightness_matrix = np.array([tr.get('brightness', [0.0]*num_regions) for tr in transitions]) # shape: (T, 15)
 
     # Set up figure with modern grid layout
     fig = plt.figure(figsize=(15.5, 8.8), facecolor='#0d1117')
     gs = fig.add_gridspec(2, 2, height_ratios=[1.2, 0.8], hspace=0.34, wspace=0.22,
                           left=0.06, right=0.96, top=0.84, bottom=0.08)
 
-    ax_bars = fig.add_subplot(gs[0, :])       # Top: 12 Region Activation Bars
+    ax_bars = fig.add_subplot(gs[0, :])       # Top: Region Activation Bars
     ax_price = fig.add_subplot(gs[1, 0])      # Bottom-Left: Excursion Trajectory & Progress Head
     ax_matrix = fig.add_subplot(gs[1, 1])     # Bottom-Right: Confluence Waterfall Spectrogram
 
@@ -1102,9 +1104,9 @@ def animate_excursion_transitions(report, out_dir):
 
     # 1. Static setup for ax_bars
     ax_bars.set_facecolor('#161b22')
-    ax_bars.set_xlim(-0.8, 11.8)
+    ax_bars.set_xlim(-0.8, num_regions - 0.2)
     ax_bars.set_ylim(min_b, max_b)
-    ax_bars.set_xticks(range(12))
+    ax_bars.set_xticks(range(num_regions))
     ax_bars.set_xticklabels(region_labels, fontsize=8.5, fontweight='bold', color='#c9d1d9')
     ax_bars.set_ylabel('Brightness Excess ($z$-Score)', fontsize=10, fontweight='bold', color='#c9d1d9')
     ax_bars.axhline(0, color='#484f58', linestyle='--', linewidth=1.0, label='Null Expectation ($0\\sigma$)')
@@ -1113,8 +1115,8 @@ def animate_excursion_transitions(report, out_dir):
     ax_bars.legend(loc='upper right', fontsize=8, facecolor='#21262d', edgecolor='#30363d')
     ax_bars.grid(axis='y', color='#30363d', linestyle='--', alpha=0.5)
 
-    bar_rects = ax_bars.bar(range(12), brightness_matrix[0], width=0.6, color='#1f6feb', edgecolor='#388bfd', linewidth=1.0)
-    bar_texts = [ax_bars.text(i, 0, '', ha='center', va='bottom', fontsize=8, fontweight='bold', color='#f0f6fc') for i in range(12)]
+    bar_rects = ax_bars.bar(range(num_regions), brightness_matrix[0], width=0.6, color='#1f6feb', edgecolor='#388bfd', linewidth=1.0)
+    bar_texts = [ax_bars.text(i, 0, '', ha='center', va='bottom', fontsize=8, fontweight='bold', color='#f0f6fc') for i in range(num_regions)]
 
     # 2. Static setup for ax_price
     ax_price.set_facecolor('#161b22')
@@ -1142,15 +1144,15 @@ def animate_excursion_transitions(report, out_dir):
 
     # 3. Static setup for ax_matrix (Confluence Spectrogram)
     ax_matrix.set_facecolor('#161b22')
-    ax_matrix.set_title('Confluence Waterfall: 12 Regions Across Transitions', fontsize=10.5, fontweight='bold', color='#f0f6fc', pad=8)
+    ax_matrix.set_title(f'Confluence Waterfall: {num_regions} Regions Across Transitions', fontsize=10.5, fontweight='bold', color='#f0f6fc', pad=8)
     ax_matrix.set_xlabel('Transition Step', fontsize=9, color='#8b949e')
     ax_matrix.set_ylabel('Region Index', fontsize=9, color='#8b949e')
-    ax_matrix.set_yticks(range(12))
-    ax_matrix.set_yticklabels([f"R{r:02d}" for r in range(12)], fontsize=8, color='#8b949e')
+    ax_matrix.set_yticks(range(num_regions))
+    ax_matrix.set_yticklabels([f"R{r:02d}" for r in range(num_regions)], fontsize=8, color='#8b949e')
 
     # Render waterfall image
     im = ax_matrix.imshow(brightness_matrix.T, aspect='auto', cmap='plasma', origin='lower',
-                          extent=[0, max(1, total_steps-1), -0.5, 11.5], vmin=-2.0, vmax=4.0)
+                          extent=[0, max(1, total_steps-1), -0.5, num_regions - 0.5], vmin=-2.0, vmax=4.0)
     cbar = plt.colorbar(im, ax=ax_matrix, pad=0.02, fraction=0.046)
     cbar.ax.tick_params(labelsize=7.5, colors='#8b949e')
     cbar.set_label('Excitation z-Score', fontsize=8, color='#8b949e')
@@ -1188,7 +1190,7 @@ def animate_excursion_transitions(report, out_dir):
         cur_ret = returns[frame_idx]
 
         # Update bars
-        for r in range(12):
+        for r in range(num_regions):
             val = float(b_vals[r])
             bar = bar_rects[r]
             bar.set_height(val)

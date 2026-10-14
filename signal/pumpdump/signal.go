@@ -37,10 +37,11 @@ func (ce *causalEstimator) Step(value float64) (hasBaseline bool, baseline float
 }
 
 type symbolState struct {
-	lastMeasurement *data.Measurement
-	clock           volumeclock.Clock
-	spreadEstimator causalEstimator
-	barMetrics      map[string]float64
+	lastMeasurement     *data.Measurement
+	clock               volumeclock.Clock
+	spreadEstimator     causalEstimator
+	volumeRateEstimator causalEstimator
+	barMetrics          map[string]float64
 }
 
 type Signal struct {
@@ -134,6 +135,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			state.barMetrics["trade_rate"] = tradeRate
 			out["volume_rate"] = volumeRate
 			out["trade_rate"] = tradeRate
+
+			hasVolBase, volBase := state.volumeRateEstimator.Step(volumeRate)
+
+			if hasVolBase && volBase > 0 && !core.Negligible(volBase, volumeRate) {
+				volRatio := volumeRate / volBase
+				state.barMetrics["volume_ratio"] = volRatio
+				out["volume_ratio"] = volRatio
+			}
 		}
 
 		if bar.FromMid > 0 && bar.AtMid > 0 {

@@ -66,11 +66,26 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	midpoint := (bid + ask) / 2.0
 	spread := ask - bid
+	relSpread := spread / midpoint
 
 	out := map[string]float64{
 		"best_bid_price":  bid,
 		"best_ask_price":  ask,
-		"relative_spread": spread / midpoint,
+		"relative_spread": relSpread,
+	}
+
+	var feeRate float64
+
+	for entry := range prior.Read("fee_rate") {
+		if entry != nil && entry.Metric != nil {
+			feeRate = entry.Metric.Raw()
+			break
+		}
+	}
+
+	if feeRate > 0 {
+		out["fee_rate"] = feeRate
+		out["friction_hurdle"] = relSpread + 2.0*feeRate
 	}
 
 	if state.lastMeasurement == nil {

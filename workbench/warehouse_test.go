@@ -44,6 +44,12 @@ func TestSanitizeStatement(t *testing.T) {
 	if got := sanitizeStatement(tableAs); got != wantView {
 		t.Fatalf("sanitizeStatement = %q, want %q", got, wantView)
 	}
+
+	dropTable := "DROP TABLE memory.view_1"
+	wantDrop := "DROP VIEW memory.view_1"
+	if got := sanitizeStatement(dropTable); got != wantDrop {
+		t.Fatalf("sanitizeStatement = %q, want %q", got, wantDrop)
+	}
 }
 
 func TestNested(t *testing.T) {
@@ -124,4 +130,21 @@ func TestWarehouse_ConnectAndQuery(t *testing.T) {
 		return
 	}
 	t.Logf("Total measurements via DuckDB: %d", count)
+
+	stream, err := warehouse.Execute(ctx, "SHOW ALL TABLES")
+	if err != nil {
+		t.Fatalf("warehouse.Execute(SHOW ALL TABLES) failed: %v", err)
+	}
+	if len(stream) == 0 {
+		t.Fatal("expected non-empty arrow ipc stream from SHOW ALL TABLES")
+	}
+
+	describeStream, err := warehouse.Execute(ctx, "DESCRIBE symmwarehouse.hindsight.runs")
+	if err != nil {
+		t.Fatalf("warehouse.Execute(DESCRIBE) failed: %v", err)
+	}
+	if len(describeStream) == 0 {
+		t.Fatal("expected non-empty arrow ipc stream from DESCRIBE")
+	}
+
 }

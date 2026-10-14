@@ -47,7 +47,7 @@ the quantity, the aggressor side, and the snapshot book holds at the trade's
 sequence number, taken through broker.Book.Stamp. A book that is unseeded,
 stale, one-sided, or crossed leaves the trade unstamped, as ingress leaves it.
 */
-func Stamp(book *broker.Book, symbol, side string, at time.Time, price, qty float64) *data.Measurement {
+func Stamp(book *broker.Book, symbol, side string, at time.Time, price, qty float64, extra ...*data.Metric) *data.Measurement {
 	_, snapshot := book.Stamp(symbol)
 	measurement := data.NewMeasurement(
 		1, symbol, "spot:trade", at, at,
@@ -65,6 +65,8 @@ func Stamp(book *broker.Book, symbol, side string, at time.Time, price, qty floa
 	if snapshot != nil {
 		metrics = append(metrics, snapshot.Metrics()...)
 	}
+
+	metrics = append(metrics, extra...)
 
 	return measurement.Write(metrics...)
 }

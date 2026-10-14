@@ -1,5 +1,9 @@
 package audit
 
+import (
+	"github.com/theapemachine/symm/nomagique/store"
+)
+
 /*
 ContractBreach records one metric's violation of its mathematical contract.
 */
@@ -325,21 +329,21 @@ type Stage5PrecursorSeparation struct {
 }
 
 /*
-ExcursionTransitionFrame captures the 12-region state and market context at a single deduplicated token transition.
+ExcursionTransitionFrame captures the multi-region state and market context at a single deduplicated token transition.
 */
 type ExcursionTransitionFrame struct {
-	Step       int         `json:"step"`
-	Tick       int64       `json:"tick"`
-	Phase      string      `json:"phase"` // "precursor", "excursion", "exhaustion"
-	Token      string      `json:"token"`
-	Top3Token  string      `json:"top3_token"`
-	Winner     uint8       `json:"winner"`
-	RunnerUp   uint8       `json:"runner_up"`
-	Brightness [12]float64 `json:"brightness"`
-	Counts     [12]int     `json:"counts"`
-	DwellTicks int         `json:"dwell_ticks"`
-	Price      float64     `json:"price"`
-	ReturnPct  float64     `json:"return_pct"`
+	Step       int                        `json:"step"`
+	Tick       int64                      `json:"tick"`
+	Phase      string                     `json:"phase"` // "precursor", "excursion", "exhaustion"
+	Token      string                     `json:"token"`
+	Top3Token  string                     `json:"top3_token"`
+	Winner     uint8                      `json:"winner"`
+	RunnerUp   uint8                      `json:"runner_up"`
+	Brightness [store.RegionCount]float64 `json:"brightness"`
+	Counts     [store.RegionCount]int     `json:"counts"`
+	DwellTicks int                        `json:"dwell_ticks"`
+	Price      float64                    `json:"price"`
+	ReturnPct  float64                    `json:"return_pct"`
 }
 
 /*

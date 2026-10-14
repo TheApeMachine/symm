@@ -60,6 +60,8 @@ type memberState struct {
 	lastMeasurement *data.Measurement
 	observations    []observation
 	spacings        []float64
+	lastPrice       float64
+	lastChangeAt    float64
 }
 
 /*
@@ -76,17 +78,13 @@ func (mem *memberState) asOf(t float64) (observation, bool) {
 }
 
 /*
-retain drops observations older than the oldest one a cut at t with horizon
-h could still validate: a start endpoint must be no older than t - 2h.
+retain keeps up to the most recent 256 observations for this member, matching
+the retention capacity of other signals while supporting zero-order hold cuts.
 */
-func (mem *memberState) retain(oldest float64) {
-	keep := 0
-
-	for keep < len(mem.observations) && mem.observations[keep].at < oldest {
-		keep++
+func (mem *memberState) retain() {
+	if len(mem.observations) > 256 {
+		mem.observations = mem.observations[len(mem.observations)-256:]
 	}
-
-	mem.observations = mem.observations[keep:]
 }
 
 func median(values []float64) float64 {
@@ -145,25 +143,40 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	mem, found := signal.members[symbol]
 	if !found {
-		mem = &memberState{}
+		mem = &memberState{
+			lastPrice:    price,
+			lastChangeAt: atNano,
+		}
 		signal.members[symbol] = mem
 	}
 
-	if last := len(mem.observations) - 1; last >= 0 && atNano > mem.observations[last].at {
-		mem.spacings = append(mem.spacings, (atNano-mem.observations[last].at)*1e-9)
-		if len(mem.spacings) > 128 {
-			mem.spacings = mem.spacings[len(mem.spacings)-128:]
+	if len(mem.observations) == 0 {
+		mem.lastPrice = price
+		mem.lastChangeAt = atNano
+	}
+
+	if last := len(mem.observations) - 1; last >= 0 && atNano > mem.observations[last].at && price != mem.lastPrice {
+		spacing := (atNano - mem.lastChangeAt) * 1e-9
+		if spacing > 0 {
+			mem.spacings = append(mem.spacings, spacing)
+			if len(mem.spacings) > 128 {
+				mem.spacings = mem.spacings[len(mem.spacings)-128:]
+			}
 		}
+
+		mem.lastPrice = price
+		mem.lastChangeAt = atNano
 	}
 
 	mem.observations = append(mem.observations, observation{at: atNano, price: price})
+	mem.retain()
 
 	output := map[string]float64{}
 
 	var cadences []float64
-	for _, m := range signal.members {
-		if len(m.spacings) > 0 {
-			cadences = append(cadences, median(m.spacings))
+	for _, member := range signal.members {
+		if len(member.spacings) > 0 {
+			cadences = append(cadences, median(member.spacings))
 		}
 	}
 
@@ -186,7 +199,14 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return emit(time.Time{})
 	}
 
-	horizon := median(cadences)
+	cohortHorizon := median(cadences)
+	focalHorizon := cohortHorizon
+
+	if len(mem.spacings) > 0 {
+		focalHorizon = median(mem.spacings)
+	}
+
+	horizon := math.Max(cohortHorizon, focalHorizon)
 	horizonNano := horizon * 1e9
 	fromNano := atNano - horizonNano
 
@@ -197,18 +217,20 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 	var valid []memberReturn
 
-	for s, m := range signal.members {
-		m.retain(fromNano - horizonNano)
+	for memberSymbol, member := range signal.members {
+		atObs, hasAt := member.asOf(atNano)
+		fromObs, hasFrom := member.asOf(fromNano)
 
-		atObs, hasAt := m.asOf(atNano)
-		fromObs, hasFrom := m.asOf(fromNano)
+		if !hasAt || !hasFrom || atObs.price <= 0 || fromObs.price <= 0 {
+			continue
+		}
 
-		if !hasAt || !hasFrom || atNano-atObs.at > horizonNano || fromNano-fromObs.at > horizonNano {
+		if atNano-atObs.at > float64(15*time.Minute) {
 			continue
 		}
 
 		valid = append(valid, memberReturn{
-			symbol:  s,
+			symbol:  memberSymbol,
 			ret:     math.Log(atObs.price / fromObs.price),
 			fromAge: (fromNano - fromObs.at) * 1e-9,
 		})
@@ -226,16 +248,16 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	var returns []float64
 	var absReturns []float64
 
-	for _, vr := range valid {
-		returns = append(returns, vr.ret)
-		absReturns = append(absReturns, math.Abs(vr.ret))
+	for _, validReturn := range valid {
+		returns = append(returns, validReturn.ret)
+		absReturns = append(absReturns, math.Abs(validReturn.ret))
 
-		if vr.ret > 0 {
+		if validReturn.ret > 0 {
 			advanceCount++
 			continue
 		}
 
-		if vr.ret < 0 {
+		if validReturn.ret < 0 {
 			declineCount++
 		}
 	}
@@ -248,14 +270,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	medRet := returns[len(returns)/2]
 
-	largestAbs := absReturns[len(absReturns)-1]
-	largestSigned := 0.0
-	largestSymbol := ""
+	focalReturn := 0.0
 
-	for _, vr := range valid {
-		if math.Abs(vr.ret) == largestAbs {
-			largestSigned = vr.ret
-			largestSymbol = vr.symbol
+	for _, validReturn := range valid {
+		if validReturn.symbol == symbol {
+			focalReturn = validReturn.ret
 			break
 		}
 	}
@@ -263,21 +282,24 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	sameDirPeer := 0.0
 	oppDirPeer := 0.0
 
-	for _, vr := range valid {
-		if vr.symbol == largestSymbol {
+	for _, validReturn := range valid {
+		if validReturn.symbol == symbol {
 			continue
 		}
 
-		if vr.ret == 0 {
+		if validReturn.ret == 0 {
 			continue
 		}
 
-		if (largestSigned > 0 && vr.ret > 0) || (largestSigned < 0 && vr.ret < 0) {
+		if (focalReturn > 0 && validReturn.ret > 0) || (focalReturn < 0 && validReturn.ret < 0) {
 			sameDirPeer++
 			continue
 		}
 
-		oppDirPeer++
+		if (focalReturn > 0 && validReturn.ret < 0) || (focalReturn < 0 && validReturn.ret > 0) {
+			oppDirPeer++
+			continue
+		}
 	}
 
 	output["same_direction_peer_count"] = sameDirPeer

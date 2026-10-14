@@ -5,12 +5,14 @@
 ### Detector
 
 - [x] pumpdump.volume_rate
+- [x] pumpdump.volume_ratio
 - [x] pumpdump.trade_rate
 - [x] hawkes.arrival_rate:buy
 - [x] pumpdump.positive_midpoint_return
 - [x] sentiment.same_direction_peer_count
 
 Volume & trade arrival velocity burst.
+Volume ratio expansion ($> 1.0$, multiples of baseline volume).
 Sudden tick in buyer arrival intensity.
 First micro-nudge above consolidation.
 Initial sign of cohort peers awakening.
@@ -19,12 +21,14 @@ Initial sign of cohort peers awakening.
 
 - [x] cvd.signed_net_fraction
 - [x] depthflow.net_displayed_flow:bid
+- [x] depthflow.touch_imbalance
 - [x] hawkes.branching_spectral_radius
 - [x] sentiment.same_direction_peer_count
 - [x] leadlag.led_peer_share
 
 Aggressor dominance ($> 0$, heavy market buy pressure).
 Limit bids stepping up behind the price to support the move.
+Touch asymmetry ($> 0$, resting bids at touch outnumbering asks).
 Supercritical feedback loop ($\rho \ge 1.0$: trades triggering more trades).
 Cohort peers confirming the move in lockstep.
 Hero Leadership: leadlag.led_peer_share $> 0.5$ (focal asset is the vanguard leader of the cohort, moving before its peers).
@@ -35,6 +39,7 @@ Hero Leadership: leadlag.led_peer_share $> 0.5$ (focal asset is the vanguard lea
 - [x] cvd.midpoint_log_return
 - [x] toxicity.retreat_fraction:bid
 - [x] depthflow.book_imbalance
+- [x] depthflow.touch_notional:ask
 - [x] sentiment.opposite_direction_peer_count
 - [x] sentiment.breadth_velocity
 - [x] morphology.concentration:ask
@@ -45,6 +50,7 @@ Hero Leadership: leadlag.led_peer_share $> 0.5$ (focal asset is the vanguard lea
 The Iceberg Trap: gross_notional is massive, but midpoint_log_return is flat (buying into a hidden sell wall).
 The Spoof Trap: retreat_fraction:bid ticks up (bid floor flees upon touch).
 The Ask Wall: book_imbalance < 0 (colossal ask stack 1% above touch; no runway) or morphology.concentration:ask approaches 1.0 (monolithic sell wall capping upward movement).
+The Hollow Touch Trap: touch_notional:ask is negligible (buying market orders sweeps thin levels, causing violent slippage).
 The Shape Overhang: morphology.book_shape_distance is wide while morphology.entropy:bid is low (brittle, hollow bid cushion facing an asymmetric overhead ask overhang).
 Contagion Drag: opposite_direction_peer_count dominates and breadth_velocity < 0 (buying while the broader cohort is draining).
 The Helper Trap: leadlag.best_lag_seconds_median $> 0$ (focal asset is trailing behind peers; buying a follower carries high risk of buying the top of a peer-driven impulse).
@@ -172,9 +178,11 @@ Percentile rank: familiar recurring pattern ($< 5\%$) vs high novelty ($> 95\%$)
 ### Friction Hurdle
 
 - [x] liquidity.relative_spread
-- [x] broker.price.fee_rate
+- [x] liquidity.fee_rate
+- [x] liquidity.friction_hurdle
 
 Relative spread plus round-trip taker fees relative to expected move target.
+Total round-trip friction hurdle: relative_spread + 2*fee_rate.
 Rejects trades where friction makes expected value negative.
 
 ### Macro Contagion
@@ -195,10 +203,12 @@ Helper Vulnerability: leadlag.best_lag_seconds_median $> 0$ with elevated leadla
 ### Capacity / Exit Liquidity
 
 - [x] depthflow.touch_notional:bid
+- [x] depthflow.touch_notional:ask
 - [x] morphology.concentration:bid
 - [x] morphology.entropy:ask
 
-Available quote notional at best bid compared to intended position size.
+Available quote notional at best bid compared to intended position size (selling capacity).
+Available quote notional at best ask compared to intended entry size (buying capacity).
 Fragile Touch Depth: high morphology.concentration:bid warns that resting depth behind touch is hollow once the first level is taken.
 Overhead Resistance: thick morphology.entropy:ask confirms heavy resistance bands overhead that will consume exit momentum.
 Rejects trades where exit will crash the book or cause excessive slippage.

@@ -31,7 +31,7 @@ func (tokenizer *Tokenizer) Token(regions []*store.Region) (string, float64) {
 }
 
 /*
-Active returns all individual region names ("R00".."R11") on this tick
+Active returns all individual region names ("R00".."R14") on this tick
 whose brightness clears Threshold, ordered brightest first.
 */
 func (tokenizer *Tokenizer) Active(regions []*store.Region) ([]string, float64) {

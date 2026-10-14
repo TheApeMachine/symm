@@ -186,7 +186,9 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 
 	meta = append(meta,
 		&data.StringEntry{Key: "decision_action", Value: action},
-		&data.StringEntry{Key: "decision_reason", Value: fmt.Sprintf("path=%s %s", matchedPath, training.act(prior.Label, action, matchedPath))},
+		&data.StringEntry{Key: "decision_reason", Value: fmt.Sprintf(
+			"path=%s %s", matchedPath, training.act(prior.Label, action, matchedPath),
+		)},
 	)
 
 	return emit(meta...)

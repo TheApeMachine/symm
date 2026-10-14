@@ -22,12 +22,15 @@ export interface RegionMeta {
 	title: string;
 	subtitle: string;
 	role:
-		| "entry_precursor"
-		| "velocity"
-		| "confirmation"
-		| "exit_precursor"
-		| "baseline"
-		| "risk_drag";
+		| "entry_detector"
+		| "entry_support"
+		| "entry_opposition"
+		| "exit_detector"
+		| "exit_support"
+		| "exit_opposition"
+		| "regime"
+		| "history"
+		| "risk";
 	tone: "up" | "down" | "acc" | "info" | "neutral" | "warn";
 	description: string;
 }
@@ -35,107 +38,138 @@ export interface RegionMeta {
 export const REGIONS: Record<string, RegionMeta> = {
 	R00: {
 		id: "R00",
-		title: "Buy Cascade",
+		title: "Enter Detector",
 		subtitle: "Point-Process Spark",
-		role: "entry_precursor",
+		role: "entry_detector",
 		tone: "up",
 		description:
-			"Supercritical buy arrival cascade — initial spark of aggressive buying.",
+			"Point-process arrival of aggressive buyers, volume spike, and orderbook pressure sparks.",
 	},
 	R01: {
 		id: "R01",
-		title: "Pacing Velocity",
-		subtitle: "Clock Acceleration",
-		role: "velocity",
-		tone: "acc",
-		description: "Pacing expansion & volume velocity transition.",
+		title: "Enter Support",
+		subtitle: "Bid Replenishment",
+		role: "entry_support",
+		tone: "up",
+		description:
+			"Limit order bid replenishment, book depth skew on bid side, positive delta accumulation.",
 	},
 	R02: {
 		id: "R02",
-		title: "Sell Panic",
-		subtitle: "Downward Liquidation",
-		role: "exit_precursor",
-		tone: "down",
+		title: "Enter Opposition",
+		subtitle: "Offer Depletion",
+		role: "entry_opposition",
+		tone: "info",
 		description:
-			"Supercritical sell arrival cascade — high priority exit trigger precursor.",
+			"Ask side thinning/depletion, low seller resistance (inelasticity on offer side).",
 	},
 	R03: {
 		id: "R03",
-		title: "Taker Sweep",
-		subtitle: "Offer Absorption",
-		role: "confirmation",
-		tone: "up",
-		description: "Unilateral taker buy inelasticity confirming upward push.",
+		title: "Exit Detector",
+		subtitle: "Sell Cascade",
+		role: "exit_detector",
+		tone: "down",
+		description:
+			"Aggressive seller arrival cascade, sudden volume dump, negative midpoint return ignition.",
 	},
 	R04: {
 		id: "R04",
-		title: "CVD Churn",
-		subtitle: "Absorption Zone",
-		role: "baseline",
-		tone: "neutral",
-		description: "Cumulative volume delta accumulation and distribution churn.",
+		title: "Exit Support",
+		subtitle: "Ask Loading",
+		role: "exit_support",
+		tone: "down",
+		description:
+			"Ask replenishment, resistance wall loading, negative delta accumulation.",
 	},
 	R05: {
 		id: "R05",
-		title: "Floor Collapse",
-		subtitle: "Support Evaporation",
-		role: "exit_precursor",
+		title: "Exit Opposition",
+		subtitle: "Bid Evaporation",
+		role: "exit_opposition",
 		tone: "down",
 		description:
-			"Unilateral taker sell inelasticity & support evaporation — exit precursor.",
+			"Bid side depletion/pulling, high bid slippage, collapse of buy support.",
 	},
 	R06: {
 		id: "R06",
-		title: "Ask Vacuum",
-		subtitle: "Ceiling Evaporation",
-		role: "confirmation",
-		tone: "info",
+		title: "Coiled Compression",
+		subtitle: "Energy Building",
+		role: "regime",
+		tone: "neutral",
 		description:
-			"Ask resistance thinning & retreat creating path of least resistance.",
+			"Low volatility, narrow spread ratio, tight range, energy building.",
 	},
 	R07: {
 		id: "R07",
-		title: "Dislocation",
-		subtitle: "Spread Deformation",
-		role: "baseline",
-		tone: "neutral",
+		title: "Explosive Ignition",
+		subtitle: "Supercritical Burst",
+		role: "regime",
+		tone: "acc",
 		description:
-			"Frictional dislocation, spread expansion & algorithmic spoof grid.",
+			"Rapid spread opening, extreme volume burst, high tick velocity.",
 	},
 	R08: {
 		id: "R08",
-		title: "Floor Loading",
-		subtitle: "Bid Replenishment",
-		role: "confirmation",
-		tone: "up",
-		description: "Bid support replenishment & limit accumulation base.",
+		title: "Turbulent Friction",
+		subtitle: "Two-Sided Churn",
+		role: "regime",
+		tone: "warn",
+		description:
+			"Choppy two-sided churn, high cancellation rate, spread dislocation.",
 	},
 	R09: {
 		id: "R09",
-		title: "Leader Engine",
-		subtitle: "Advance Concordance",
-		role: "velocity",
-		tone: "up",
+		title: "Dead / Starved",
+		subtitle: "Sparse Liquidity",
+		role: "regime",
+		tone: "neutral",
 		description:
-			"Hero leadership & advance concordance driving cohort advance.",
+			"Illiquid book, wide spread, sparse arrivals, insufficient trading activity.",
 	},
 	R10: {
 		id: "R10",
-		title: "Coil Compression",
-		subtitle: "Macro Baseline",
-		role: "baseline",
-		tone: "neutral",
+		title: "Macro Recurrence",
+		subtitle: "Leader Concordance",
+		role: "history",
+		tone: "up",
 		description:
-			"Quiescent compression, macro baseline & background energy coil.",
+			"Correlated peer alignment, market-wide leader advance concordance.",
 	},
 	R11: {
 		id: "R11",
-		title: "Cohort Drag",
-		subtitle: "Systemic Risk",
-		role: "risk_drag",
+		title: "Sentiment Recurrence",
+		subtitle: "Peer Consensus",
+		role: "history",
+		tone: "info",
+		description:
+			"Cross-asset sentiment agreement, peer directional consensus.",
+	},
+	R12: {
+		id: "R12",
+		title: "Friction Hurdle",
+		subtitle: "Fee & Spread Drag",
+		role: "risk",
 		tone: "warn",
 		description:
-			"Helper lag & systemic dispersion — market-wide breakdown risk precursor.",
+			"High relative spread, roundtrip fee drag, cost hurdle exceeding expected drift.",
+	},
+	R13: {
+		id: "R13",
+		title: "Macro Contagion",
+		subtitle: "Systemic Dispersion",
+		role: "risk",
+		tone: "warn",
+		description:
+			"Systemic peer dislocation, lead-lag breakdown, adverse market beta.",
+	},
+	R14: {
+		id: "R14",
+		title: "Capacity / Liquidity",
+		subtitle: "Exit Thinness",
+		role: "risk",
+		tone: "warn",
+		description:
+			"Thin book depth relative to position size, high market impact risk.",
 	},
 };
 
@@ -152,6 +186,9 @@ export const REGION_KEYS = [
 	"R09",
 	"R10",
 	"R11",
+	"R12",
+	"R13",
+	"R14",
 ];
 
 export const PositionHealthGauge = ({
@@ -324,7 +361,7 @@ export const LiveRegionActivationMap = ({
 				</span>
 			</Flex.Row>
 
-			<div className="grid grid-cols-4 gap-1">
+			<div className="grid grid-cols-5 gap-1">
 				{REGION_KEYS.map((key) => {
 					const meta = REGIONS[key];
 					const isCurrent = key === activeToken;
@@ -459,7 +496,7 @@ export const RegionTransitionPathway = ({
 							</span>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
 							<span className="rounded-xs border border-(--warn)/40 bg-(--warn)/15 px-1.5 py-0.5 text-[9px] font-bold text-(--warn)">
-								R11 (Cohort Drag)
+								R03 (Exit Detector)
 							</span>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
 							<span className="rounded-xs border border-(--down)/40 bg-(--down)/20 px-1.5 py-0.5 text-[9px] font-bold text-(--down)">
@@ -472,7 +509,7 @@ export const RegionTransitionPathway = ({
 							</span>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
 							<span className="rounded-xs border border-(--warn)/40 bg-(--warn)/15 px-1.5 py-0.5 text-[9px] font-bold text-(--warn)">
-								R02 (Sell Panic)
+								R05 (Exit Opposition)
 							</span>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
 							<span className="rounded-xs border border-(--down)/40 bg-(--down)/20 px-1.5 py-0.5 text-[9px] font-bold text-(--down)">
@@ -683,7 +720,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 				<span className="text-[9.5px] text-(--f3) mt-0.5">{verdictText}</span>
 			</Flex.Column>
 
-			{/* 12-Region Live Confluence Strip */}
+			{/* 15-Region Live Confluence Strip */}
 			<Flex.Column gap={1}>
 				<Flex.Row align="center" justify="between" className="text-[10px]">
 					<span className="font-bold uppercase tracking-wider text-(--f4)">
@@ -694,12 +731,18 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 						<span className="font-bold text-(--acc)">{activeToken}</span>
 					</span>
 				</Flex.Row>
-				<div className="grid grid-cols-12 gap-1">
+				<div
+					style={{
+						display: "grid",
+						gridTemplateColumns: "repeat(15, minmax(0, 1fr))",
+						gap: "0.25rem",
+					}}
+				>
 					{REGION_KEYS.map((key) => {
 						const meta = REGIONS[key];
 						const isCurrent = key === activeToken;
 						const isEntry = entryTokens.includes(key);
-						const isExitCandidate = key === "R11" || key === "R02";
+						const isExitCandidate = key === "R03" || key === "R04" || key === "R05";
 
 						return (
 							<div
@@ -771,7 +814,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 							</span>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
 							<span className="rounded-xs border border-(--warn)/40 bg-(--warn)/15 px-1.5 py-0.5 text-[9px] font-bold text-(--warn)">
-								R11 (Cohort Drag)
+								R03 (Exit Detector)
 							</span>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
 							<span className="rounded-xs border border-(--down)/40 bg-(--down)/20 px-1.5 py-0.5 text-[9px] font-bold text-(--down)">
@@ -784,7 +827,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 							</span>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
 							<span className="rounded-xs border border-(--warn)/40 bg-(--warn)/15 px-1.5 py-0.5 text-[9px] font-bold text-(--warn)">
-								R02 (Sell Panic)
+								R05 (Exit Opposition)
 							</span>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
 							<span className="rounded-xs border border-(--down)/40 bg-(--down)/20 px-1.5 py-0.5 text-[9px] font-bold text-(--down)">
@@ -893,14 +936,14 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 		return maxVal;
 	}, [metricMap]);
 
-	// Stable R00-R11 order: never sort dynamically to prevent jumping rows during live streaming
+	// Stable R00-R14 order: never sort dynamically to prevent jumping rows during live streaming
 	const regionScores = useMemo(() => {
 		return REGION_KEYS.map((key) => {
 			const meta = REGIONS[key];
 			const isCurrent = key === activeToken;
 			const isEntry = entryTokens.includes(key);
 			const isLivePath = liveTokens.includes(key);
-			const isExitCandidate = key === "R11" || key === "R02";
+			const isExitCandidate = key === "R03" || key === "R04" || key === "R05";
 
 			const rawBrightness = metricMap[`region_brightness:${key}`];
 			const members = Math.round(metricMap[`region_members:${key}`] ?? 0);

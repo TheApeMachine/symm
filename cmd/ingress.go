@@ -294,6 +294,19 @@ func handleTrade(
 			metrics = append(metrics, snapshot.Metrics()...)
 		}
 
+		if price != nil {
+			fee := price.Fee(tradeItem.Symbol)
+			if fee != nil && fee.Fee != nil {
+				rateUnit, rateTime := data.GetDimension("spot:trade", "fee_rate")
+				metrics = append(metrics, data.NewMetric(
+					"fee_rate",
+					fee.Fee.Float64()/100.0,
+					rateUnit,
+					rateTime,
+				))
+			}
+		}
+
 		measurement.Write(metrics...)
 
 		if workspace != nil {

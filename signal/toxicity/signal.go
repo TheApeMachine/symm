@@ -48,8 +48,15 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
-	price := data.Pull(prior.Read("price")).Metric.Raw()
-	qty := data.Pull(prior.Read("qty")).Metric.Raw()
+	var price, qty float64
+
+	if priceEntry := data.Pull(prior.Read("price")); priceEntry != nil && priceEntry.Metric != nil {
+		price = priceEntry.Metric.Raw()
+	}
+
+	if qtyEntry := data.Pull(prior.Read("qty")); qtyEntry != nil && qtyEntry.Metric != nil {
+		qty = qtyEntry.Metric.Raw()
+	}
 
 	snapshot, err := broker.ReadSnapshot(prior)
 
@@ -127,13 +134,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	fill := math.Min(state.pendingMatchedBid, state.prevBidQty)
 	unfilled := state.prevBidQty - fill
 
-	if bid == state.prevBid {
-		withdrawn := math.Max(unfilled-bidQty, 0)
+	if bid >= state.prevBid {
 		out["retreat_fraction:bid"] = 0
+	}
 
-		if rated {
-			out["net_withdrawal_rate:bid"] = withdrawn / dt
-		}
+	if bid == state.prevBid && rated {
+		withdrawn := math.Max(unfilled-bidQty, 0)
+		out["net_withdrawal_rate:bid"] = withdrawn / dt
 	}
 
 	if bid < state.prevBid {

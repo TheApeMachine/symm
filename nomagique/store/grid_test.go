@@ -25,7 +25,7 @@ func regionLabels(region uint8) (string, []string) {
 		found := make([]string, 0)
 
 		for label, pinned := range regionMetricPins[source] {
-			if pinned == region {
+			if slices.Contains(pinned, region) {
 				found = append(found, label)
 			}
 		}
@@ -127,8 +127,8 @@ func TestGrid_Observe(t *testing.T) {
 		grid := NewGrid(context.Background())
 
 		Convey("When every region holds metrics", func() {
-			sizes := [RegionCount]int{1, 1, 1, 1, 3, 1, 1, 1, 1, 1, 1, 1}
-			frame, peers := regionFrame(sizes, true)
+			sizes := [RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+			frame, _ := regionFrame(sizes, true)
 			regions := grid.Observe(frame)
 
 			Convey("It returns all regions, brightest first", func() {
@@ -144,32 +144,37 @@ func TestGrid_Observe(t *testing.T) {
 				for _, region := range regions {
 					sum := 0.0
 					metricCount := 0
-					peer := peers[region.Key]
 
-					for entry := range peer.Read() {
-						if entry == nil || entry.Metric == nil {
-							continue
+					for _, peer := range frame.Peers() {
+						for entry := range peer.Read() {
+							if entry == nil || entry.Metric == nil {
+								continue
+							}
+
+							pinned := regionMetricPins[peer.Source][entry.Metric.Label()]
+
+							if slices.Contains(pinned, region.Key) {
+								sum += math.Abs(entry.Metric.SNM()) * (1 + peer.Surprise())
+								metricCount++
+							}
 						}
-
-						sum += math.Abs(entry.Metric.SNM()) * (1 + peer.Surprise())
-						metricCount++
 					}
 
-					So(region.Counts, ShouldEqual, sizes[region.Key])
+					So(region.Counts, ShouldEqual, metricCount)
 					So(region.Brightness, ShouldAlmostEqual, sum/float64(metricCount), 1e-12)
 				}
 			})
 		})
 
 		Convey("When a region holds no metric", func() {
-			frame, _ := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1}, true)
+			frame, _ := regionFrame([RegionCount]int{1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, true)
 
 			Convey("All regions are returned with the quiet region at zero brightness", func() {
 				observed := grid.Observe(frame)
 				So(observed, ShouldHaveLength, RegionCount)
 				foundQuiet := false
 				for _, r := range observed {
-					if r.Key == 5 {
+					if r.Key == 3 {
 						So(r.Counts, ShouldEqual, 0)
 						So(r.Brightness, ShouldEqual, 0.0)
 						foundQuiet = true
@@ -181,7 +186,7 @@ func TestGrid_Observe(t *testing.T) {
 		})
 
 		Convey("When all regions hold no metric", func() {
-			frame, _ := regionFrame([RegionCount]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, true)
+			frame, _ := regionFrame([RegionCount]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, true)
 
 			Convey("No regions are returned", func() {
 				So(grid.Observe(frame), ShouldBeNil)
@@ -190,7 +195,7 @@ func TestGrid_Observe(t *testing.T) {
 		})
 
 		Convey("When a peer carries a metric that is not pinned", func() {
-			frame, _ := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, true)
+			frame, _ := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, true)
 			at := time.Unix(1_700_000_000, 0).UTC()
 			solver := data.NewMeasurement(frame.Epoch, "BTC/USD", "resonance", at, at)
 			solver.Write(data.NewMetric("surprise", 0, data.UnitDimensionless, data.TimescaleTick))

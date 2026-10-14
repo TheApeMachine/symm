@@ -38,6 +38,10 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		return nil
 	}
 
+	if prior == nil || prior.Source == "spot:touch" {
+		return nil
+	}
+
 	if prior.Source != "spot:trade" {
 		signal.Error(errnie.Err(
 			errnie.NotAcceptable,

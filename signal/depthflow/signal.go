@@ -71,6 +71,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	fullAsk := snapshot.Full(snapshot.Asks)
 
 	touchBid := bids[0][0] * bids[0][1]
+	touchAsk := asks[0][0] * asks[0][1]
 
 	obsBid := 0.0
 	currentBids := make(map[float64]float64, len(bids))
@@ -96,6 +97,11 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	out := map[string]float64{
 		"book_imbalance":     bookImb,
 		"touch_notional:bid": touchBid,
+		"touch_notional:ask": touchAsk,
+	}
+
+	if touchTotal := touchBid + touchAsk; touchTotal > 0 {
+		out["touch_imbalance"] = (touchBid - touchAsk) / touchTotal
 	}
 
 	if state.hasPrev {

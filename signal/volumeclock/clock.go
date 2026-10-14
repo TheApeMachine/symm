@@ -68,6 +68,10 @@ func (clock *Clock) Step(price, qty, atNanos, midpoint float64) (tick Tick) {
 	}
 
 	if clock.open {
+		if clock.bar.FromMid == 0 && midpoint > 0 {
+			clock.bar.FromMid = midpoint
+		}
+
 		tick.Counted = true
 		clock.bar.Quantity += qty
 		clock.bar.Notional += price * qty

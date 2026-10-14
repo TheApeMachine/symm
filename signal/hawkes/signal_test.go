@@ -94,6 +94,13 @@ func TestHawkesTradeMetrics(t *testing.T) {
 			So(res, ShouldBeNil)
 		})
 
+		Convey("A touch frame is ignored without error", func() {
+			touch := data.NewMeasurement(1, "BTC/USD", "spot:touch", origin, origin)
+			res := instrument.Step(touch)
+			So(res, ShouldBeNil)
+			So(instrument.Error(), ShouldBeNil)
+		})
+
 		Convey("It treats a non-trade frame as a wiring error", func() {
 			prior := data.NewMeasurement(
 				1, "BTC/USD", "spot:level3", origin, origin,

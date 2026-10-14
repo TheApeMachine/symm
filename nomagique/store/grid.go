@@ -11,7 +11,7 @@ import (
 
 /*
 Grid is not a grid at all, it is a "group by" over Measurement
-and Metric pins into 12 multi-signal confluence regions.
+and Metric pins into 15 multi-signal confluence regions.
 */
 type Grid struct {
 	*runtime.System
@@ -20,7 +20,7 @@ type Grid struct {
 /*
 RegionCount is the number of confluence regions the pins map metrics into.
 */
-const RegionCount = 12
+const RegionCount = 15
 
 func NewGrid(ctx context.Context) *Grid {
 	return &Grid{
@@ -42,7 +42,7 @@ type Region struct {
 
 /*
 Observe pins every metric of the frame's peers to its region and returns the
-12 regions sorted brightest first. A region's brightness is the average of its
+15 regions sorted brightest first. A region's brightness is the average of its
 metrics' |SNM| in [0, 1]. Only the magnitude matters, never the direction, and
 an average does not grow with the number of metrics, so a large region has no
 edge over a small one.
@@ -72,15 +72,17 @@ func (grid *Grid) Observe(measurement *data.Measurement) []*Region {
 				continue
 			}
 
-			region, isPinned := regionMetricPins[peer.Source][entry.Metric.Label()]
+			targetRegions, isPinned := regionMetricPins[peer.Source][entry.Metric.Label()]
 
 			if !isPinned {
 				continue
 			}
 
-			regions[region].Deformation += math.Abs(entry.Metric.SNM()) * excitation
-			regions[region].Counts++
-			totalCounts++
+			for _, region := range targetRegions {
+				regions[region].Deformation += math.Abs(entry.Metric.SNM()) * excitation
+				regions[region].Counts++
+				totalCounts++
+			}
 		}
 	}
 

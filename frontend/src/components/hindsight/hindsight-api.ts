@@ -124,10 +124,18 @@ export const resolveHindsightTables = async (): Promise<Record<string, string>> 
 				found[record.name] = `${record.database}.${record.schema}.${record.name}`;
 			}
 
-			if (!found.spot_ticker) {
+			if (!found.measurements && !found.spot_ticker) {
 				throw new Error(
-					"hindsight.spot_ticker missing from workbench catalog",
+					"hindsight tables (measurements or spot_ticker) missing from workbench catalog",
 				);
+			}
+
+			if (found.measurements && !found.spot_ticker) {
+				found.spot_ticker = found.measurements;
+			}
+
+			if (found.measurements && !found.spot_trade) {
+				found.spot_trade = found.measurements;
 			}
 
 			return found;
@@ -177,10 +185,12 @@ export const fetchHindsightSymbols = async (
 	try {
 		const tables = await resolveHindsightTables();
 		const epoch = Number(run) || 0;
+		const targetTable = tables.measurements ?? tables.spot_ticker;
+		const symbolCol = tables.measurements ? "label" : "symbol";
 		const rows = await arrowRows(
-			`SELECT DISTINCT symbol AS symbol FROM ${tables.spot_ticker} ` +
-				`WHERE epoch = ${epoch} AND symbol IS NOT NULL AND symbol <> '' ` +
-				`ORDER BY symbol`,
+			`SELECT DISTINCT ${symbolCol} AS symbol FROM ${targetTable} ` +
+				`WHERE epoch = ${epoch} AND ${symbolCol} IS NOT NULL AND ${symbolCol} <> '' ` +
+				`ORDER BY 1`,
 		);
 		return rows.map((row) => strField(row, "symbol")).filter(Boolean);
 	} catch {
@@ -1010,11 +1020,59 @@ const bucketTimelineSQL = (
 	fromTick: number,
 	toTick: number,
 ): string => {
+	const isMeasurements = ticker.endsWith(".measurements");
+	const symbolCol = isMeasurements ? "label" : "symbol";
 	const symbolPred =
-		symbol === "" ? "TRUE" : `symbol = ${sqlString(symbol)}`;
+		symbol === "" ? "TRUE" : `${symbolCol} = ${sqlString(symbol)}`;
 	const fromPred = fromTick > 0 ? `tick >= ${fromTick}` : "TRUE";
 	const toPred = toTick > 0 ? `tick <= ${toTick}` : "TRUE";
 	const n = Math.max(1, buckets);
+
+	const timeCol = isMeasurements ? `"at"` : "venue_at";
+	const tradeSourcePred = isMeasurements ? "AND source = 'spot:trade'" : "";
+	const tradeQtyExpr = isMeasurements
+		? "COALESCE(metrics['qty'].raw, metrics['volume'].raw, metrics['order_qty'].raw, 0.0)"
+		: "COALESCE(element_at(metrics, 'qty'), element_at(metrics, 'volume'), 0)";
+
+	const midExpr = isMeasurements
+		? `COALESCE(
+      metrics['mid'].raw,
+      metrics['limit_price'].raw,
+      CASE
+        WHEN metrics['bid'].raw IS NOT NULL
+         AND metrics['ask'].raw IS NOT NULL
+         AND metrics['ask'].raw >= metrics['bid'].raw
+        THEN (metrics['bid'].raw + metrics['ask'].raw) / 2.0
+        ELSE COALESCE(
+          metrics['last'].raw,
+          metrics['price'].raw,
+          metrics['close'].raw
+        )
+      END
+    )`
+		: `COALESCE(
+      element_at(metrics, 'mid'),
+      CASE
+        WHEN element_at(metrics, 'bid') IS NOT NULL
+         AND element_at(metrics, 'ask') IS NOT NULL
+         AND element_at(metrics, 'ask') >= element_at(metrics, 'bid')
+        THEN (element_at(metrics, 'bid') + element_at(metrics, 'ask')) / 2.0
+        ELSE COALESCE(
+          element_at(metrics, 'last'),
+          element_at(metrics, 'price'),
+          element_at(metrics, 'close')
+        )
+      END
+    )`;
+
+	const bidExpr = isMeasurements ? "metrics['bid'].raw" : "element_at(metrics, 'bid')";
+	const askExpr = isMeasurements ? "metrics['ask'].raw" : "element_at(metrics, 'ask')";
+	const bidQtyExpr = isMeasurements
+		? "COALESCE(metrics['bid_qty'].raw, metrics['order_qty'].raw)"
+		: "element_at(metrics, 'bid_qty')";
+	const askQtyExpr = isMeasurements
+		? "COALESCE(metrics['ask_qty'].raw, metrics['order_qty'].raw)"
+		: "element_at(metrics, 'ask_qty')";
 
 	const tradeCte =
 		trade === undefined
@@ -1027,7 +1085,7 @@ const bucketTimelineSQL = (
 			: `trades AS (
   SELECT
     tick,
-    COALESCE(element_at(metrics, 'qty'), element_at(metrics, 'volume'), 0) AS qty,
+    ${tradeQtyExpr} AS qty,
     CASE
       WHEN (SELECT max_tick FROM bounds) = (SELECT min_tick FROM bounds) THEN 0
       ELSE least(
@@ -1043,6 +1101,7 @@ const bucketTimelineSQL = (
     AND (${symbolPred})
     AND (${fromPred})
     AND (${toPred})
+    ${tradeSourcePred}
 ),
 trade_buckets AS (
   SELECT bucket_idx,
@@ -1066,25 +1125,12 @@ WITH bounds AS (
 ticker AS (
   SELECT
     tick,
-    venue_at,
-    COALESCE(
-      element_at(metrics, 'mid'),
-      CASE
-        WHEN element_at(metrics, 'bid') IS NOT NULL
-         AND element_at(metrics, 'ask') IS NOT NULL
-         AND element_at(metrics, 'ask') >= element_at(metrics, 'bid')
-        THEN (element_at(metrics, 'bid') + element_at(metrics, 'ask')) / 2.0
-        ELSE COALESCE(
-          element_at(metrics, 'last'),
-          element_at(metrics, 'price'),
-          element_at(metrics, 'close')
-        )
-      END
-    ) AS mid,
-    element_at(metrics, 'bid') AS bid,
-    element_at(metrics, 'ask') AS ask,
-    element_at(metrics, 'bid_qty') AS bid_qty,
-    element_at(metrics, 'ask_qty') AS ask_qty,
+    ${timeCol} AS venue_at,
+    ${midExpr} AS mid,
+    ${bidExpr} AS bid,
+    ${askExpr} AS ask,
+    ${bidQtyExpr} AS bid_qty,
+    ${askQtyExpr} AS ask_qty,
     CASE
       WHEN (SELECT max_tick FROM bounds) = (SELECT min_tick FROM bounds) THEN 0
       ELSE least(
@@ -1139,9 +1185,10 @@ const pickDefaultSymbol = async (
 	ticker: string,
 	epoch: number,
 ): Promise<string> => {
+	const symbolCol = ticker.endsWith(".measurements") ? "label" : "symbol";
 	const rows = await arrowRows(
-		`SELECT symbol AS symbol, count(*)::BIGINT AS n FROM ${ticker} ` +
-			`WHERE epoch = ${epoch} AND symbol IS NOT NULL AND symbol <> '' ` +
+		`SELECT ${symbolCol} AS symbol, count(*)::BIGINT AS n FROM ${ticker} ` +
+			`WHERE epoch = ${epoch} AND ${symbolCol} IS NOT NULL AND ${symbolCol} <> '' ` +
 			`GROUP BY 1 ORDER BY n DESC LIMIT 1`,
 	);
 	return rows.length > 0 ? strField(rows[0], "symbol") : "";

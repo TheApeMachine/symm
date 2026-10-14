@@ -2,81 +2,97 @@ package store
 
 /*
 regionMetricPins defines the explicit mapping between individual signal metrics
-and their confluence regions (0..11).
+and their confluence regions (0..14) matching SIGNALS.md:
 
-The 12 regions detect structural regime transitions for precursor detection:
-  - R00: Supercritical Buy Arrival Cascade (Point-Process Ignition / The Spark — Entry Precursor)
-  - R01: Pacing Expansion & Criticality Transition (Clock Acceleration / Volume Velocity)
-  - R02: Supercritical Sell Arrival Cascade & Panic Cascade (Downward Liquidation — Urgent Exit Precursor)
-  - R03: Unilateral Taker Buy Inelasticity (Aggressive Offer Sweep — Breakout Confirmation)
-  - R04: Cumulative Volume Delta & Distribution Churn (Taker Absorption / Distribution Trap Precursor)
-  - R05: Unilateral Taker Sell Inelasticity & Support Evaporation (Bid Dumping / Floor Collapse — Exit Precursor)
-  - R06: Ask Resistance Thinning & Retreat (Offer Vacuum / Ceiling Evaporation — Immediate Breakout Precursor)
-  - R07: Frictional Dislocation, Spread Expansion & Geometric Book Deformation (Algorithmic Spoof Grid / Climax Blowout)
-  - R08: Bid Support Replenishment & Floor Loading (Limit Accumulation Base — Support Confirmation)
-  - R09: Hero Leadership, Advance Concordance & Cohort Siphon (The 24h Riser Engine)
-  - R10: Quiescent Compression, Macro Baseline & Background Energy (The Coil — Compression Baseline)
-  - R11: Helper Lag, Sympathetic Drift & Systemic Dispersion (Cohort Drag & Market-Wide Breakdown — Risk Precursor)
+ENTER:
+  - R00: Detector (The Spark: arrival rates, positive return, volume burst)
+  - R01: Support (Vanguard & Flow: net displayed bids, signed CVD, peer vanguard)
+  - R02: Opposition (Walls & Spoofs: gross absorption wall, ask overhang, bid retreats)
+
+EXIT:
+  - R03: Detector (Rejection & Stall: negative midpoint return, arrival deceleration)
+  - R04: Support (Support Evaporation: bid withdrawal rate, sell arrival velocity, shape collapse)
+  - R05: Opposition (Absorption Reload: resting bid concentration, bid entropy cushion)
+
+REGIME:
+  - R06: Coiled Compression (Quiescent Balance: book balance, uniform depth entropy, tight spread ratio)
+  - R07: Explosive Ignition (Supercritical Feedback: branching ratio, covariance score gain)
+  - R08: Turbulent Friction (Chop & Warping: book mutation imbalance, shape KS divergence)
+  - R09: Dead / Starved (Dead Tape: trade arrival rate hurdle)
+
+HISTORY:
+  - R10: Macro Trajectory Recurrence (Cross-asset covariance MDL path distance & percentile)
+  - R11: Sentiment Trajectory Recurrence (Market breadth MDL path distance & percentile)
+
+RISK:
+  - R12: Friction Hurdle (Relative spread hurdle, quote levels)
+  - R13: Macro Contagion (Market-wide breadth collapse, peer divergence, helper lag)
+  - R14: Capacity / Exit Liquidity (Touch quote notional at bid)
 */
-var regionMetricPins = map[string]map[string]uint8{
+var regionMetricPins = map[string]map[string][]uint8{
 	"correlation": {
-		"cohort_covariance_score":   11,
-		"historical_path_distance":   10,
-		"historical_path_percentile": 10,
+		"cohort_covariance_score":   {13},
+		"historical_path_distance":   {10},
+		"historical_path_percentile": {10},
 	},
 	"cvd": {
-		"midpoint_log_return":          3,
-		"flow_aligned_midpoint_return": 4,
-		"gross_notional":               4,
-		"signed_net_fraction":          4,
+		"midpoint_log_return":          {2},
+		"flow_aligned_midpoint_return": {4},
+		"gross_notional":               {2},
+		"signed_net_fraction":          {1, 5},
 	},
 	"depthflow": {
-		"mutation_activity_imbalance": 7,
-		"book_imbalance":              7,
-		"net_displayed_flow:bid":      8,
-		"touch_notional:bid":          8,
+		"mutation_activity_imbalance": {8},
+		"book_imbalance":              {2, 6},
+		"net_displayed_flow:bid":      {1, 5},
+		"touch_notional:bid":          {14},
+		"touch_notional:ask":          {2, 14},
+		"touch_imbalance":             {1, 6},
 	},
 	"hawkes": {
-		"arrival_rate:buy":               0,
-		"conditional_intensity_velocity": 1,
-		"arrival_rate:sell":              2,
+		"arrival_rate:buy":               {0, 7},
+		"conditional_intensity_velocity": {3},
+		"arrival_rate:sell":              {4, 7},
+		"branching_spectral_radius":      {1, 7},
 	},
 	"leadlag": {
-		"led_peer_share":               9,
-		"covariance_score_gain_median": 9,
-		"defined_peer_count":            9,
-		"best_lag_seconds_median":      11,
-		"best_lag_seconds_mad":         11,
+		"led_peer_share":               {1, 5, 7},
+		"covariance_score_gain_median": {7},
+		"best_lag_seconds_median":      {2, 4, 6, 13},
+		"best_lag_seconds_mad":         {6, 13},
 	},
 	"liquidity": {
-		"relative_spread": 7,
+		"relative_spread": {4, 8, 12},
+		"fee_rate":        {12},
+		"friction_hurdle": {12},
 	},
 	"morphology": {
-		"concentration:ask":   6,
-		"entropy:ask":         6,
-		"book_shape_distance": 7,
-		"book_shape_ks":       7,
-		"morphology_change":   7,
-		"concentration:bid":   8,
-		"entropy:bid":         8,
+		"concentration:ask":   {2, 4},
+		"entropy:ask":         {6, 14},
+		"book_shape_distance": {2, 6},
+		"book_shape_ks":       {8},
+		"morphology_change":   {4, 6, 8},
+		"concentration:bid":   {5, 14},
+		"entropy:bid":         {2, 4, 5, 6},
 	},
 	"pumpdump": {
-		"volume_rate":              1,
-		"trade_rate":               1,
-		"positive_midpoint_return": 3,
-		"negative_midpoint_return": 5,
-		"spread_ratio":             10,
+		"volume_rate":              {0, 7, 8},
+		"volume_ratio":             {0, 7},
+		"trade_rate":               {0, 6, 9},
+		"positive_midpoint_return": {0},
+		"negative_midpoint_return": {3},
+		"spread_ratio":             {4, 6},
 	},
 	"sentiment": {
-		"same_direction_peer_count":     9,
-		"breadth":                       9,
-		"breadth_velocity":              9,
-		"historical_path_distance":      10,
-		"historical_path_percentile":    10,
-		"opposite_direction_peer_count": 11,
+		"same_direction_peer_count":     {0, 1, 5},
+		"opposite_direction_peer_count": {2, 13},
+		"breadth":                       {13},
+		"breadth_velocity":              {2, 13},
+		"historical_path_distance":      {11},
+		"historical_path_percentile":    {11},
 	},
 	"toxicity": {
-		"retreat_fraction:bid":   5,
-		"net_withdrawal_rate:bid": 5,
+		"retreat_fraction:bid":   {2, 5},
+		"net_withdrawal_rate:bid": {4},
 	},
 }

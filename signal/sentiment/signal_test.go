@@ -105,6 +105,32 @@ func TestSentimentSignalMetrics(t *testing.T) {
 			So(instrument.Error(), ShouldBeNil)
 		})
 
+		Convey("Asynchronous heterogeneous cadences preserve peer agreement", func() {
+			asyncSignal := sentiment.NewSignal(context.Background())
+			asyncSignal.Transition(nmruntime.READY)
+
+			// BTC trades every 100ms
+			for step := range 20 {
+				at := origin.Add(time.Duration(step) * 100 * time.Millisecond)
+				res := asyncSignal.Step(trade("BTC/USD", at, int64(step+1), 50000.0+float64(step)*10.0))
+				So(res, ShouldNotBeNil)
+			}
+
+			// ALTHEA and ELIZAOS trade at 0s and 2s (slower cadence)
+			asyncSignal.Step(trade("ALTHEA/USD", origin, 100, 0.020))
+			asyncSignal.Step(trade("ELIZAOS/USD", origin, 101, 0.00050))
+
+			// At 2 seconds, ALTHEA and ELIZAOS pump together
+			at2s := origin.Add(2 * time.Second)
+			asyncSignal.Step(trade("ELIZAOS/USD", at2s, 102, 0.00060)) // +20%
+			altheaRes := asyncSignal.Step(trade("ALTHEA/USD", at2s, 103, 0.025)) // +25%
+
+			So(altheaRes, ShouldNotBeNil)
+			samePeers, held := metric(altheaRes, "same_direction_peer_count")
+			So(held, ShouldBeTrue)
+			So(samePeers, ShouldBeGreaterThanOrEqualTo, 1) // ELIZAOS confirmed
+		})
+
 		Convey("It drops events before READY", func() {
 			cold := sentiment.NewSignal(context.Background())
 			So(cold.Step(trade("BTC/USD", origin, 1, 100)), ShouldBeNil)
