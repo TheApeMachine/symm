@@ -72,7 +72,7 @@ func TestHawkesModelOutputs(t *testing.T) {
 			}
 		})
 
-		Convey("It drops the model once the window can no longer identify one", func() {
+		Convey("It keeps the model alive during a one-sided buy sweep", func() {
 			ready := false
 			var last *data.Measurement
 			seq := int64(0)
@@ -96,7 +96,7 @@ func TestHawkesModelOutputs(t *testing.T) {
 			}
 
 			for _, key := range modelKeys {
-				So(held(last, key), ShouldBeFalse)
+				So(held(last, key), ShouldBeTrue)
 			}
 		})
 	})

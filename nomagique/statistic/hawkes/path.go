@@ -105,6 +105,10 @@ func (p *path) refit(atSec float64) error {
 	context, ok := newFitContext(stream, atSec)
 
 	if !ok || !context.enoughEvents(stream) {
+		if p.modelReady {
+			return nil
+		}
+
 		return p.drop("hawkes: retained arrivals no longer identify a model")
 	}
 
@@ -126,6 +130,10 @@ func (p *path) refit(atSec float64) error {
 	fitted := estimator.fit(stream, atSec)
 
 	if !fitted.valid() {
+		if p.modelReady {
+			return nil
+		}
+
 		return p.drop("hawkes: refit produced no valid model")
 	}
 

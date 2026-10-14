@@ -372,6 +372,8 @@ func restLevel3Token() (string, error) {
 	return tokenRes.Result.Token, nil
 }
 
+const maxLevel3SymbolsPerConn = 200
+
 var level3SnapshotCost = map[int]int{10: 5, 100: 25, 1000: 100}
 
 /*
@@ -539,7 +541,6 @@ func (instrument *Instrument) Subscribe() error {
 		instrument.symbols, system.Cfg.Market.Subscribe.Batch,
 	) {
 		batch := slices.Clone(chunk)
-		batchKey := strings.Join(batch, "|")
 
 		tradeMsg, err := sonic.Marshal(kraken.NewTradeSubscription(batch))
 
@@ -558,6 +559,11 @@ func (instrument *Instrument) Subscribe() error {
 				err,
 			))
 		}
+	}
+
+	for chunk := range slices.Chunk(instrument.symbols, maxLevel3SymbolsPerConn) {
+		connSymbols := slices.Clone(chunk)
+		batchKey := strings.Join(connSymbols, "|")
 
 		l3Client := network.NewWebsocketClient(instrument.System.Context())
 
@@ -574,7 +580,7 @@ func (instrument *Instrument) Subscribe() error {
 		// started after all subscribes, 0 of 621 with readers running).
 		instrument.level3Reader(l3Client)
 
-		if err := instrument.subscribeLevel3(l3Client.Write, batch); err != nil {
+		if err := instrument.subscribeLevel3(l3Client.Write, connSymbols); err != nil {
 			return instrument.Error(errnie.Err(
 				errnie.IO,
 				"[instrument] level3 subscribe failed for "+batchKey,
@@ -586,7 +592,7 @@ func (instrument *Instrument) Subscribe() error {
 		// live; a drop marks it stale until the resubscribe snapshot lands.
 		l3Client.OnDisconnect(func() {
 			errnie.Warn("[instrument] level3 disconnected, book stale for " + batchKey)
-			stale(batch)
+			stale(connSymbols)
 		})
 
 		// Open runs any registered reconnect hook, so the hook is registered
@@ -594,10 +600,10 @@ func (instrument *Instrument) Subscribe() error {
 		l3Client.OnReconnect(func() error {
 			errnie.Info("[instrument] level3 resubscribe after reconnect for " + batchKey)
 
-			if err := instrument.subscribeLevel3(l3Client.Write, batch); err != nil {
+			if err := instrument.subscribeLevel3(l3Client.Write, connSymbols); err != nil {
 				// The books of this batch were marked stale on disconnect
 				// and stay so until a resubscribe snapshot lands.
-				stale(batch)
+				stale(connSymbols)
 
 				return errnie.Error(errnie.Err(
 					errnie.IO,

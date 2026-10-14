@@ -261,8 +261,8 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 		return strings.Compare(a.label, b.label)
 	})
 
-	for _, sk := range streamKeys {
-		stream := byStream[sk]
+	for _, streamKey := range streamKeys {
+		stream := byStream[streamKey]
 		slices.SortFunc(stream, func(left, right *data.Measurement) int {
 			return cmp.Compare(left.SeqIdx, right.SeqIdx)
 		})
@@ -270,6 +270,8 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 		prevRaw := make(map[string]float64)
 
 		for _, meas := range stream {
+			currentRaw := make(map[string]float64)
+
 			for entry := range meas.Read() {
 				if entry == nil || entry.Metric == nil {
 					errnie.Error(errnie.Err(
@@ -297,48 +299,7 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 					continue
 				}
 
-				prev, hasPrev := prevRaw[entry.Key]
-
-				if hasPrev {
-					matureAudited++
-					currRaw := metric.Raw()
-					delta := currRaw - prev
-					denom := math.Abs(prev) + math.Abs(delta)
-					expectedSNM := 0.0
-
-					if denom != 0 {
-						expectedSNM = delta / denom
-					}
-
-					if math.Abs(snm-expectedSNM) > 1e-9 {
-						stdBreaches++
-
-						seriesKey := meas.Source + ":" + entry.Key
-						item, exists := mismatches[seriesKey]
-
-						if !exists {
-							item = &normMismatch{
-								source:         meas.Source,
-								metric:         entry.Key,
-								seenSymbols:    make(map[string]struct{}),
-								sampleSymbol:   meas.Label,
-								sampleSNM:      snm,
-								sampleExpected: expectedSNM,
-							}
-							mismatches[seriesKey] = item
-						}
-
-						item.breachCount++
-
-						if _, seen := item.seenSymbols[meas.Label]; !seen {
-							item.seenSymbols[meas.Label] = struct{}{}
-							item.symbolCount++
-						}
-					}
-				}
-
-				prevRaw[entry.Key] = metric.Raw()
-
+				currentRaw[entry.Key] = metric.Raw()
 				absSNM := math.Abs(snm)
 
 				if absSNM > maxAbsZ {
@@ -353,7 +314,52 @@ func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit 
 				if absSNM >= 0.99 {
 					saturatedCount++
 				}
+
+				prev, hasPrev := prevRaw[entry.Key]
+
+				if !hasPrev {
+					continue
+				}
+
+				matureAudited++
+				currRaw := metric.Raw()
+				delta := currRaw - prev
+				denom := math.Abs(prev) + math.Abs(delta)
+				expectedSNM := 0.0
+
+				if denom != 0 {
+					expectedSNM = delta / denom
+				}
+
+				if math.Abs(snm-expectedSNM) <= 1e-9 {
+					continue
+				}
+
+				stdBreaches++
+				seriesKey := meas.Source + ":" + entry.Key
+				item, exists := mismatches[seriesKey]
+
+				if !exists {
+					item = &normMismatch{
+						source:         meas.Source,
+						metric:         entry.Key,
+						seenSymbols:    make(map[string]struct{}),
+						sampleSymbol:   meas.Label,
+						sampleSNM:      snm,
+						sampleExpected: expectedSNM,
+					}
+					mismatches[seriesKey] = item
+				}
+
+				item.breachCount++
+
+				if _, seen := item.seenSymbols[meas.Label]; !seen {
+					item.seenSymbols[meas.Label] = struct{}{}
+					item.symbolCount++
+				}
 			}
+
+			prevRaw = currentRaw
 		}
 	}
 

@@ -96,7 +96,7 @@ func TestStepUndefinedBeforeReady(testingT *testing.T) {
 	}
 }
 
-func TestRefitDropsUnidentifiableModel(testingT *testing.T) {
+func TestRefitRetainsModelDuringSweep(testingT *testing.T) {
 	model := NewHawkes()
 	marks, times := mixedArrivals(60)
 
@@ -114,21 +114,18 @@ func TestRefitDropsUnidentifiableModel(testingT *testing.T) {
 
 	at := times[len(times)-1]
 
-	// A retained history that is all buys cannot identify a bivariate model.
+	// A retained history that is all buys cannot identify a bivariate model,
+	// but an active model must stay alive and not be dropped during a sweep.
 	for index := range p.samples {
 		p.samples[index].mark = 1
 	}
 
-	if err := p.refit(at); err == nil {
-		testingT.Fatal("expected the stale model's drop to be reported")
-	}
-
-	if p.modelReady || p.selfOnlyReady {
-		testingT.Fatal("expected the stale model to be dropped")
-	}
-
 	if err := p.refit(at); err != nil {
-		testingT.Fatalf("expected no repeat report without a model, got %v", err)
+		testingT.Fatalf("expected active model to be retained during sweep, got %v", err)
+	}
+
+	if !p.modelReady {
+		testingT.Fatal("expected the active model to be kept alive during one-sided sweep")
 	}
 
 	res, _, err := model.Step(1, at+0.05)
@@ -138,8 +135,8 @@ func TestRefitDropsUnidentifiableModel(testingT *testing.T) {
 	}
 
 	for _, key := range []string{"conditional_intensity", "log_likelihood:hawkes", "compensator:buy"} {
-		if _, ok := res[key]; ok {
-			testingT.Fatalf("model output %q emitted after the model was dropped", key)
+		if _, ok := res[key]; !ok {
+			testingT.Fatalf("expected model output %q while model is kept alive", key)
 		}
 	}
 }
@@ -215,20 +212,30 @@ func TestDroppedReportsOncePerTransition(testingT *testing.T) {
 		model.path.samples[index].mark = 1
 	}
 
-	reports := 0
-
 	for step := 1; step <= 20; step++ {
 		if _, _, err := model.Step(1, at+float64(step)*0.05); err != nil {
 			testingT.Fatal(err)
 		}
 
 		if model.Dropped() != nil {
-			reports++
+			testingT.Fatal("expected no drop report during one-sided sweep")
 		}
 	}
 
-	if reports != 1 {
-		testingT.Fatalf("expected one drop report for one transition, got %d", reports)
+	err := model.path.drop("manual drop")
+
+	if err == nil {
+		testingT.Fatal("expected drop error")
+	}
+
+	model.dropped = err
+
+	if model.Dropped() == nil {
+		testingT.Fatal("expected drop report on transition")
+	}
+
+	if model.Dropped() != nil {
+		testingT.Fatal("expected drop report to be cleared after first call")
 	}
 }
 
