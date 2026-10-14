@@ -9,14 +9,23 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
+	"unsafe"
 )
 
-func newTestDetector(t *testing.T, symbol string) (*Detector, runtime.Tee) {
+type testTee struct {
+	measurements []*data.Measurement
+}
+
+func (t *testTee) Close() error             { return nil }
+func (t *testTee) Push(m *data.Measurement) { t.measurements = append(t.measurements, m) }
+func (t *testTee) Next() unsafe.Pointer     { return nil }
+func (t *testTee) Run()                     {}
+func (t *testTee) Pending() int             { return len(t.measurements) }
+
+func newTestDetector(t *testing.T, symbol string) (*Detector, *testTee) {
 	ctx := t.Context()
 	normalizer := spot.NewNormalizer()
 	normalizer.Update(&spot.AssetsManagerUpdate{
@@ -25,7 +34,16 @@ func newTestDetector(t *testing.T, symbol string) (*Detector, runtime.Tee) {
 			"USD": {AltName: "ZUSD", Decimals: 2},
 		},
 		NewPairs: map[string]spot.AssetPair{
-			symbol: {WSName: symbol, Base: "BTC", Quote: "USD", LotDecimals: 8, LotMultiplier: 1},
+			symbol: {
+				WSName:        symbol,
+				Base:          "BTC",
+				Quote:         "USD",
+				PairDecimals:  2,
+				CostDecimals:  2,
+				LotDecimals:   8,
+				LotMultiplier: 1,
+				TickSize:      decimal.NewFromFloat64(0.01),
+			},
 		},
 	})
 
@@ -33,11 +51,9 @@ func newTestDetector(t *testing.T, symbol string) (*Detector, runtime.Tee) {
 	priceSystem.SetFee(symbol, kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.26)})
 	priceSystem.SetReferenceCash(decimal.NewFromFloat64(200))
 
-	storeTee := hindsight.NewStoreTee(ctx, "detector_test")
-	storeTee.Transition(runtime.READY)
-
-	detector := NewDetector(ctx, storeTee, priceSystem)
-	return detector, storeTee
+	testTee := &testTee{}
+	detector := NewDetector(ctx, testTee, priceSystem)
+	return detector, testTee
 }
 
 func makeTrade(
@@ -65,14 +81,23 @@ func makeTrade(
 		data.NewMetric("qty", 1.0, qtyUnit, qtyTime),
 	}
 
-	if bidQuote != nil {
-		bidUnit, bidTime := data.GetDimension("spot:trade", "bid_price_0")
-		metrics = append(metrics, data.NewExactMetric("bid_price_0", decimal.NewFromFloat64(*bidQuote), bidUnit, bidTime))
-	}
+	if bidQuote != nil || askQuote != nil {
+		var bids, asks []broker.Level
 
-	if askQuote != nil {
-		askUnit, askTime := data.GetDimension("spot:trade", "ask_price_0")
-		metrics = append(metrics, data.NewExactMetric("ask_price_0", decimal.NewFromFloat64(*askQuote), askUnit, askTime))
+		if bidQuote != nil {
+			bids = []broker.Level{{Price: decimal.NewFromFloat64(*bidQuote), Quantity: decimal.NewFromFloat64(10.0)}}
+		}
+
+		if askQuote != nil {
+			asks = []broker.Level{{Price: decimal.NewFromFloat64(*askQuote), Quantity: decimal.NewFromFloat64(10.0)}}
+		}
+
+		snapshot := &broker.Snapshot{
+			Depth: 1,
+			Bids:  bids,
+			Asks:  asks,
+		}
+		metrics = append(metrics, snapshot.Metrics()...)
 	}
 
 	return measurement.Write(metrics...)
@@ -123,10 +148,6 @@ func measurementStream(measurements []*data.Measurement) iter.Seq2[*data.Measure
 	}
 }
 
-func floatPtr(value float64) *float64 {
-	return &value
-}
-
 func TestDetector_Scan(t *testing.T) {
 	system.NewConfig()
 	symbol := "BTC/USD"
@@ -138,7 +159,7 @@ func TestDetector_Scan(t *testing.T) {
 		Convey("Wide-spread bid-ask bounce is not mislabeled as an up excursion", func() {
 			var tapeTrades []*data.Measurement
 
-			for tradeStep := 0; tradeStep < 6; tradeStep++ {
+			for tradeStep := range 6 {
 				var printPrice float64
 				if tradeStep%2 == 0 {
 					printPrice = 100.0
@@ -153,8 +174,8 @@ func TestDetector_Scan(t *testing.T) {
 					int64(tradeStep+1),
 					startTime.Add(time.Duration(tradeStep)*time.Second),
 					printPrice,
-					floatPtr(100.0),
-					floatPtr(110.0),
+					new(100.0),
+					new(110.0),
 				))
 			}
 
@@ -162,9 +183,7 @@ func TestDetector_Scan(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			var emittedClasses []string
-			for storeTee.Pending() > 0 {
-				incoming := storeTee.Next()
-				pushed := *(**data.Measurement)(incoming)
+			for _, pushed := range storeTee.measurements {
 				typeEntry := data.Pull(pushed.Meta("type"))
 				if typeEntry != nil {
 					emittedClasses = append(emittedClasses, typeEntry.Value)
@@ -180,23 +199,23 @@ func TestDetector_Scan(t *testing.T) {
 			var tapeTrades []*data.Measurement
 
 			tapeTrades = append(tapeTrades, makeTrade(
-				symbol, 1, 1, startTime, 100.0, floatPtr(100.0), floatPtr(110.0),
+				symbol, 1, 1, startTime, 100.0, new(100.0), new(110.0),
 			))
 
 			tapeTrades = append(tapeTrades, makeTrade(
-				symbol, 2, 2, startTime.Add(time.Second), 105.0, floatPtr(105.0), floatPtr(115.0),
+				symbol, 2, 2, startTime.Add(time.Second), 105.0, new(105.0), new(115.0),
 			))
 
 			tapeTrades = append(tapeTrades, makeTrade(
-				symbol, 3, 3, startTime.Add(2*time.Second), 135.0, floatPtr(125.0), floatPtr(135.0),
+				symbol, 3, 3, startTime.Add(2*time.Second), 135.0, new(125.0), new(135.0),
 			))
 
 			tapeTrades = append(tapeTrades, makeTrade(
-				symbol, 4, 4, startTime.Add(3*time.Second), 95.0, floatPtr(90.0), floatPtr(100.0),
+				symbol, 4, 4, startTime.Add(3*time.Second), 95.0, new(90.0), new(100.0),
 			))
 
 			tapeTrades = append(tapeTrades, makeTrade(
-				symbol, 5, 5, startTime.Add(4*time.Second), 95.0, floatPtr(90.0), floatPtr(100.0),
+				symbol, 5, 5, startTime.Add(4*time.Second), 95.0, new(90.0), new(100.0),
 			))
 
 			err := detector.Scan(measurementStream(tapeTrades))
@@ -204,9 +223,7 @@ func TestDetector_Scan(t *testing.T) {
 
 			var emittedClasses []string
 			var upDetections []*data.Measurement
-			for storeTee.Pending() > 0 {
-				incoming := storeTee.Next()
-				pushed := *(**data.Measurement)(incoming)
+			for _, pushed := range storeTee.measurements {
 				typeEntry := data.Pull(pushed.Meta("type"))
 				if typeEntry != nil {
 					emittedClasses = append(emittedClasses, typeEntry.Value)
@@ -220,12 +237,14 @@ func TestDetector_Scan(t *testing.T) {
 			So(len(upDetections), ShouldEqual, 1)
 
 			upMeas := upDetections[0]
+			bTickMetric := data.Pull(upMeas.Read("b_tick"))
+			cTickMetric := data.Pull(upMeas.Read("c_tick"))
 			bPriceMetric := data.Pull(upMeas.Read("b_price"))
 			cPriceMetric := data.Pull(upMeas.Read("c_price"))
-			So(bPriceMetric, ShouldNotBeNil)
-			So(cPriceMetric, ShouldNotBeNil)
-			So(bPriceMetric.Metric.Exact().Cmp(decimal.NewFromFloat64(100.0)), ShouldEqual, 0)
-			So(cPriceMetric.Metric.Exact().Cmp(decimal.NewFromFloat64(135.0)), ShouldEqual, 0)
+			So(bTickMetric.Metric.Raw(), ShouldEqual, 1)
+			So(cTickMetric.Metric.Raw(), ShouldEqual, 3)
+			So(bPriceMetric.Metric.Exact().Cmp(decimal.NewFromFloat64(110.0)), ShouldEqual, 0)
+			So(cPriceMetric.Metric.Exact().Cmp(decimal.NewFromFloat64(125.0)), ShouldEqual, 0)
 		})
 
 		Convey("Unstamped trades without quote evidence do not fake excursions", func() {
@@ -241,9 +260,7 @@ func TestDetector_Scan(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			var emittedClasses []string
-			for storeTee.Pending() > 0 {
-				incoming := storeTee.Next()
-				pushed := *(**data.Measurement)(incoming)
+			for _, pushed := range storeTee.measurements {
 				typeEntry := data.Pull(pushed.Meta("type"))
 				if typeEntry != nil {
 					emittedClasses = append(emittedClasses, typeEntry.Value)
@@ -258,7 +275,7 @@ func TestDetector_Scan(t *testing.T) {
 
 			// Trade 1 (entry B): price 100, ample bid and ask depth. Budget is 200, so posQty is ~2.0 BTC.
 			bids1 := []broker.Level{
-				{Price: decimal.NewFromFloat64(100.0), Quantity: decimal.NewFromFloat64(10.0)},
+				{Price: decimal.NewFromFloat64(99.0), Quantity: decimal.NewFromFloat64(10.0)},
 			}
 			asks1 := []broker.Level{
 				{Price: decimal.NewFromFloat64(100.0), Quantity: decimal.NewFromFloat64(10.0)},
@@ -297,9 +314,7 @@ func TestDetector_Scan(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			var upDetections []*data.Measurement
-			for storeTee.Pending() > 0 {
-				incoming := storeTee.Next()
-				pushed := *(**data.Measurement)(incoming)
+			for _, pushed := range storeTee.measurements {
 				typeEntry := data.Pull(pushed.Meta("type"))
 				if typeEntry != nil && typeEntry.Value == excursionUp {
 					upDetections = append(upDetections, pushed)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	neturl "net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/workbench"
@@ -53,6 +55,23 @@ func main() {
 		JSONDecoder: sonic.Unmarshal,
 	})
 
+	app.Use(cors.New(cors.Config{
+		AllowOriginsFunc: func(origin string) bool {
+			parsed, err := neturl.Parse(origin)
+
+			if err != nil {
+				return false
+			}
+
+			host := parsed.Hostname()
+
+			return host == "localhost" || host == "127.0.0.1" || host == "::1"
+		},
+		AllowMethods:        []string{"GET", "POST", "HEAD", "OPTIONS"},
+		AllowHeaders:        []string{"*"},
+		AllowPrivateNetwork: true,
+	}))
+
 	app.Get("/health", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status":  "ok",
@@ -72,6 +91,8 @@ func main() {
 		if request.SQL == "" {
 			return fiber.NewError(fiber.StatusBadRequest, "query is empty")
 		}
+
+		errnie.Info(fmt.Sprintf("[workbench] SQL: %s", request.SQL))
 
 		stream, err := warehouse.Execute(ctx, request.SQL)
 		if err != nil {

@@ -106,6 +106,11 @@ func (tee *UITee) Next() unsafe.Pointer {
 }
 
 /*
+Run is a noop for the UITee.
+*/
+func (tee *UITee) Run() {}
+
+/*
 Pending returns the total backlog of un-transmitted items across ingress and egress.
 */
 func (tee *UITee) Pending() int {

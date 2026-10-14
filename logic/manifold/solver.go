@@ -893,7 +893,7 @@ func (solver *Solver) Crystallize(
 	clampedSnapshot := snapshotClamped(batch)
 
 	var err error
-	for step := 0; step < relaxationSteps; step++ {
+	for range relaxationSteps {
 		_, err = solver.physics.Step(batch)
 
 		if err != nil {

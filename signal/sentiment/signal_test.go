@@ -17,6 +17,7 @@ func trade(label string, at time.Time, seq int64, price float64) *data.Measureme
 		&data.StringEntry{Key: "type", Value: "trade"},
 		&data.StringEntry{Key: "side", Value: "buy"},
 	)
+	prior.SeqIdx = seq
 
 	return prior.Write(
 		data.NewMetric("price", price, data.UnitPrice, data.TimescaleInstantaneous),

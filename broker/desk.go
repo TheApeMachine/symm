@@ -14,7 +14,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -31,11 +30,9 @@ type Desk struct {
 	transport Transport
 	price     *Price
 	balance   *Balance
-	catalog   *tables.Catalog
 	positions *sync.Map
 	closed    []*Position
 	closedMu  sync.RWMutex
-	persistCh chan tables.PositionRecord
 	books     *Book
 }
 
@@ -44,26 +41,16 @@ func NewDesk(
 	transport Transport,
 	price *Price,
 	balance *Balance,
-	catalog ...*tables.Catalog,
 ) *Desk {
-	var cat *tables.Catalog
-
-	if len(catalog) > 0 {
-		cat = catalog[0]
-	}
-
 	desk := &Desk{
 		transport: transport,
 		balance:   balance,
 		price:     price,
-		catalog:   cat,
 		positions: &sync.Map{},
 		closed:    make([]*Position, 0),
-		persistCh: make(chan tables.PositionRecord, 500),
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
-	go desk.persistLoop()
 	desk.restore()
 	desk.Transition(runtime.READY)
 	return desk
@@ -106,8 +93,6 @@ func (desk *Desk) ResetPaper() error {
 }
 
 func (desk *Desk) restore() {
-	desk.restoreFromCatalog()
-
 	if desk.balance == nil || desk.balance.wallet == nil {
 		return
 	}
@@ -266,70 +251,6 @@ func (desk *Desk) restoreFromHistory(
 	}
 }
 
-func (desk *Desk) restoreFromCatalog() {
-	if desk.catalog == nil {
-		return
-	}
-
-	records, err := desk.catalog.Positions(desk.Context())
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	for _, rec := range records {
-		if rec.Status != "closed" {
-			continue
-		}
-
-		var events []LifeEvent
-
-		if rec.Events != "" {
-			_ = sonic.UnmarshalString(rec.Events, &events)
-		}
-
-		var outcome *LifeOutcome
-
-		if rec.Outcome != "" {
-			var parsedOutcome LifeOutcome
-
-			if err := sonic.UnmarshalString(rec.Outcome, &parsedOutcome); err == nil {
-				outcome = &parsedOutcome
-			}
-		}
-
-		if outcome == nil {
-			outcome = &LifeOutcome{
-				VenueCost:     rec.VenueCost,
-				VenueProceeds: rec.VenueProceeds,
-				VenueFees:     rec.VenueFees,
-				VenueRealized: rec.VenueRealized,
-				HoldNs:        rec.HoldNs,
-			}
-		}
-
-		pos := RestorePosition(
-			rec.ID,
-			rec.Symbol,
-			rec.OpenedAt,
-			rec.ClosedAt,
-			events,
-			outcome,
-		)
-
-		desk.closedMu.Lock()
-		desk.closed = append(desk.closed, pos)
-		desk.closedMu.Unlock()
-	}
-
-	if len(desk.closed) > 0 {
-		errnie.Info(fmt.Sprintf(
-			"[desk] restored %d closed positions from Iceberg",
-			len(desk.closed),
-		))
-	}
-}
 
 func (desk *Desk) restoreHolding(symbol string, balance *decimal.Decimal) {
 	pos := NewPosition()
@@ -407,7 +328,6 @@ func (desk *Desk) Enter(symbol string, qty *decimal.Decimal, path ...string) err
 	}
 
 	desk.mu.Unlock()
-	desk.queuePersistence(position)
 
 	return desk.submit(symbol, order)
 }
@@ -590,98 +510,6 @@ func (desk *Desk) Open(symbol string) []*Position {
 	return slices.Clone(untyped.([]*Position))
 }
 
-func (desk *Desk) persistLoop() {
-	for {
-		select {
-		case <-desk.Context().Done():
-			for {
-				select {
-				case rec := <-desk.persistCh:
-					if desk.catalog != nil {
-						if err := desk.catalog.RecordPosition(
-							desk.Context(), rec,
-						); err != nil {
-							errnie.Error(err)
-						}
-					}
-				default:
-					return
-				}
-			}
-		case rec, ok := <-desk.persistCh:
-			if !ok {
-				return
-			}
-
-			if desk.catalog != nil {
-				if err := desk.catalog.RecordPosition(
-					desk.Context(), rec,
-				); err != nil {
-					errnie.Error(err)
-				}
-			}
-		}
-	}
-}
-
-func (desk *Desk) queuePersistence(pos *Position) {
-	if pos == nil || desk.catalog == nil {
-		return
-	}
-
-	lc := pos.Lifecycle()
-
-	eventsJSON, err := sonic.MarshalString(lc.Events)
-
-	if err != nil {
-		eventsJSON = "[]"
-	}
-
-	var outcomeJSON string
-	var venueCost float64
-	var venueProceeds float64
-	var venueFees float64
-	var venueRealized float64
-	var holdNs int64
-
-	if lc.Outcome != nil {
-		if buf, err := sonic.MarshalString(lc.Outcome); err == nil {
-			outcomeJSON = buf
-		}
-
-		venueCost = lc.Outcome.VenueCost
-		venueProceeds = lc.Outcome.VenueProceeds
-		venueFees = lc.Outcome.VenueFees
-		venueRealized = lc.Outcome.VenueRealized
-		holdNs = lc.Outcome.HoldNs
-	}
-
-	rec := tables.PositionRecord{
-		ID:            lc.Id,
-		Symbol:        lc.Symbol,
-		Status:        lc.Status,
-		OpenedAt:      pos.OpenedAt(),
-		ClosedAt:      pos.ClosedAt(),
-		Events:        eventsJSON,
-		VenueCost:     venueCost,
-		VenueProceeds: venueProceeds,
-		VenueFees:     venueFees,
-		VenueRealized: venueRealized,
-		HoldNs:        holdNs,
-		Outcome:       outcomeJSON,
-	}
-
-	select {
-	case desk.persistCh <- rec:
-	default:
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[desk] position persistence queue full for "+lc.Id,
-			nil,
-		))
-	}
-}
-
 func (desk *Desk) recordClosed(position *Position) {
 	if position == nil {
 		return
@@ -698,8 +526,6 @@ func (desk *Desk) recordClosed(position *Position) {
 
 	desk.closed = append(desk.closed, position)
 	desk.closedMu.Unlock()
-
-	desk.queuePersistence(position)
 }
 
 /*

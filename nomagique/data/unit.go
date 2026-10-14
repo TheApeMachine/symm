@@ -126,7 +126,7 @@ SignalMetrics maps each signal producer to its owned metrics and declared dimens
 */
 var SignalMetrics = map[string]map[string]Dimension{
 	"correlation": {
-		"cohort_covariance_score":   {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
+		"cohort_covariance_score":    {Unit: UnitCovarianceScore, Timescale: TimescaleRollingWindow},
 		"historical_path_distance":   {Unit: UnitDistance, Timescale: TimescaleRollingWindow},
 		"historical_path_percentile": {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 	},
@@ -190,7 +190,7 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"historical_path_percentile":    {Unit: UnitProbability, Timescale: TimescaleRollingWindow},
 	},
 	"toxicity": {
-		"retreat_fraction:bid":   {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
+		"retreat_fraction:bid":    {Unit: UnitRatio, Timescale: TimescaleRollingWindow},
 		"net_withdrawal_rate:bid": {Unit: UnitRate, Timescale: TimescaleRollingWindow},
 	},
 	"spot:trade": {

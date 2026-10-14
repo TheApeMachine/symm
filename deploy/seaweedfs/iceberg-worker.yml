@@ -20,11 +20,11 @@ spec:
     spec:
       containers:
       - name: worker
-        image: chrislusf/seaweedfs:latest
+        image: chrislusf/seaweedfs:4.41
         command:
         - "weed"
         - "worker"
-        - "-admin=seaweedfs-admin-service.seaweedfs.svc.cluster.local:23646"
+        - "-admin=seaweed-admin.seaweedfs.svc.cluster.local:23646"
         - "-jobType=iceberg"
         - "-workingDir=/data/worker"
         - "-maxExecute=4"

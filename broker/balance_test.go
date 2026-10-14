@@ -27,6 +27,8 @@ func (tee *testTee) Close() error {
 	return nil
 }
 
+func (tee *testTee) Run() {}
+
 func (tee *testTee) Pending() int {
 	return len(tee.pushed)
 }

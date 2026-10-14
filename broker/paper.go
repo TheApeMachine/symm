@@ -70,7 +70,7 @@ func (paper *Paper) Initialize() error {
 /*
 Read returns the next private frame, as the live websocket client does.
 */
-func (paper *Paper) Read() ([]byte, error) {
+func (paper *Paper) Read(keys ...string) ([]byte, error) {
 	select {
 	case frame := <-paper.frames:
 		return frame, nil
@@ -78,6 +78,7 @@ func (paper *Paper) Read() ([]byte, error) {
 		return nil, errnie.Error(paper.Context().Err())
 	}
 }
+
 
 /*
 Balances loads the current paper wallet through the native CLI and returns the

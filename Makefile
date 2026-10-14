@@ -9,7 +9,8 @@ export GOEXPERIMENT := arenas
 # initialize independent domains concurrently. The full-replay packages drive
 # the real Metal solver per frame and legitimately need more than Go's 600s
 # default per-binary budget.
-GO_TEST_FLAGS := -p 1 -timeout 30m
+OVERLAY_FLAG := $(if $(wildcard overlay.json),-overlay=overlay.json,)
+GO_TEST_FLAGS := $(OVERLAY_FLAG) -p 1 -timeout 30m
 
 SYMM_BIN := bin/symm
 # Leave CONFIG empty to use the binary's default configuration search.
@@ -51,7 +52,7 @@ bench:
 	go test $(GO_TEST_FLAGS) -bench=. -benchmem ./...
 
 kill:
-	-lsof -t -i:8765 | xargs kill -9 || true
+	-lsof -t -i:8765 -i:8081 | xargs kill -9 2>/dev/null || true
 
 metric-lineage:
 	go run ./tools/metriclineage . frontend/public/metric-lineage.json
@@ -63,7 +64,7 @@ metric-map:
 # currently collapses producers (Number/SetMetric pipelines are invisible to the
 # static Project/Binding scanner) and the Influence UI loses most of the graph.
 run:
-	go run main.go
+	./scripts/run_with_workbench.sh go run main.go $(CONFIG_FLAG)
 
 collect:
 	@echo "symm collect running (Ctrl+C to stop)"
@@ -77,11 +78,11 @@ MIN_MOVE_DURATION ?= 1s
 
 detect:
 	@echo "Labeling spot:trade tape with excursion detections (taker fee $(TAKER_FEE_PERCENT)%, min move $(MIN_MOVE_DURATION))..."
-	go run main.go detect $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) --min-move-duration $(MIN_MOVE_DURATION) $(ARGS)
+	go run $(OVERLAY_FLAG) main.go detect $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) --min-move-duration $(MIN_MOVE_DURATION) $(ARGS)
 
 train:
 	@echo "Training action tree with MCTS over detected excursions and sensory tape..."
-	go run main.go train $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
+	go run $(OVERLAY_FLAG) main.go train $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
 
 audit:
 	@echo "Running SYMM sensory & representation health audit (taker fee $(TAKER_FEE_PERCENT)%)..."
@@ -98,8 +99,7 @@ workbench:
 experimental:
 	@echo "symm running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	@echo "Analytical workbench (separate): make workbench"
-	go run main.go experimental
+	./scripts/run_with_workbench.sh go run main.go experimental $(CONFIG_FLAG)
 
 backtest:
 	@echo "symm running (Ctrl+C to stop)"
@@ -109,12 +109,12 @@ backtest:
 debug:
 	@echo "symm debug running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	export DATURA_INSPECT=1 && go run main.go
+	./scripts/run_with_workbench.sh env DATURA_INSPECT=1 go run main.go $(CONFIG_FLAG)
 
 debug-inspect:
 	@echo "symm debug (DATURA_INSPECT) running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	export DATURA_INSPECT=1 && go run main.go
+	./scripts/run_with_workbench.sh env DATURA_INSPECT=1 go run main.go $(CONFIG_FLAG)
 
 run-profile:
 	@echo "pprof http://127.0.0.1:6060/debug/pprof/"
@@ -142,7 +142,7 @@ physics-manifold-metallib:
 
 build: physics-metallib
 	@mkdir -p bin
-	go build -race -o $(SYMM_BIN) .
+	go build $(OVERLAY_FLAG) -race -o $(SYMM_BIN) .
 
 build-cuda:
 	p=nomagique/physics/sensorium

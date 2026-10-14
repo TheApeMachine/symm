@@ -58,6 +58,7 @@ type Detector struct {
 	*runtime.System
 	storeTee runtime.Tee
 	price    *broker.Price
+	tapes    map[string]*tape
 }
 
 /*
@@ -75,7 +76,9 @@ func NewDetector(
 		System:   runtime.NewSystem(ctx, "detector"),
 		storeTee: storeTee,
 		price:    price,
+		tapes:    make(map[string]*tape),
 	}
+
 
 	if err := errnie.Require(map[string]any{
 		"price":    price,
@@ -115,7 +118,6 @@ type tapePoint struct {
 func (detector *Detector) computeBookExecution(
 	symbol string,
 	snapshot *broker.Snapshot,
-	fallbackPrice *decimal.Decimal,
 ) (entryAsk, exitBid, bidDepthQty, posQty *decimal.Decimal, err error) {
 	budget := detector.price.ReferenceCash()
 
@@ -127,7 +129,13 @@ func (detector *Detector) computeBookExecution(
 		))
 	}
 
-	if snapshot != nil && len(snapshot.Bids) > 0 {
+	budget = budget.SetScale(decimal.DefaultScale)
+
+	if snapshot == nil {
+		return nil, nil, nil, nil, nil
+	}
+
+	if len(snapshot.Bids) > 0 {
 		depth := decimal.NewFromInt64(0)
 
 		for _, lvl := range snapshot.Bids {
@@ -141,18 +149,18 @@ func (detector *Detector) computeBookExecution(
 		}
 	}
 
-	if snapshot != nil && len(snapshot.Asks) > 0 {
+	if len(snapshot.Asks) > 0 {
 		fee := detector.price.Fee(symbol)
-		feeRate := decimal.NewFromInt64(0)
+		feeRate := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
 
 		if fee != nil && fee.Fee != nil && fee.Fee.Sign() > 0 {
-			feeRate = fee.Fee.Div(decimal.NewFromInt64(100))
+			feeRate = fee.Fee.SetScale(decimal.DefaultScale).Div(decimal.NewFromInt64(100))
 		}
 
-		maxGross := budget.Div(decimal.NewFromInt64(1).Add(feeRate))
+		maxGross := budget.Div(decimal.NewFromInt64(1).SetScale(decimal.DefaultScale).Add(feeRate))
 		remainingGross := maxGross
-		accumQty := decimal.NewFromInt64(0)
-		accumCost := decimal.NewFromInt64(0)
+		accumQty := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
+		accumCost := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
 
 		for _, lvl := range snapshot.Asks {
 			if lvl.Price == nil || lvl.Price.Sign() <= 0 || lvl.Quantity == nil || lvl.Quantity.Sign() <= 0 {
@@ -163,7 +171,7 @@ func (detector *Detector) computeBookExecution(
 				break
 			}
 
-			lvlCost := lvl.Price.Mul(lvl.Quantity)
+			lvlCost := lvl.Price.SetScale(decimal.DefaultScale).Mul(lvl.Quantity)
 
 			if lvlCost.Cmp(remainingGross) <= 0 {
 				accumQty = accumQty.Add(lvl.Quantity)
@@ -172,18 +180,22 @@ func (detector *Detector) computeBookExecution(
 				continue
 			}
 
-			partialQty := remainingGross.Div(lvl.Price)
+			partialQty := remainingGross.SetScale(decimal.DefaultScale).Div(lvl.Price)
 			accumQty = accumQty.Add(partialQty)
 			accumCost = accumCost.Add(remainingGross)
 			remainingGross = decimal.NewFromInt64(0)
 			break
 		}
 
-		if accumQty.Sign() > 0 {
-			entryAsk = accumCost.Div(accumQty)
+		if remainingGross.Sign() == 0 && accumQty.Sign() > 0 {
+			entryAsk = accumCost.SetScale(decimal.DefaultScale).Div(accumQty)
 			posQty = accumQty
 
 			if normalizer := detector.price.Normalizer(); normalizer != nil {
+				if formatted, normErr := normalizer.FormatPrice(symbol, entryAsk); normErr == nil && formatted != nil {
+					entryAsk = formatted
+				}
+
 				if formatted, normErr := normalizer.FormatSize(symbol, accumQty); normErr == nil && formatted != nil {
 					posQty = formatted
 				}
@@ -191,23 +203,10 @@ func (detector *Detector) computeBookExecution(
 		}
 	}
 
-	if entryAsk == nil || posQty == nil {
-		if fallbackPrice != nil && fallbackPrice.Sign() > 0 {
-			entryAsk = fallbackPrice
-			posQty = budget.Div(fallbackPrice)
-
-			if normalizer := detector.price.Normalizer(); normalizer != nil {
-				if formatted, normErr := normalizer.FormatSize(symbol, posQty); normErr == nil && formatted != nil {
-					posQty = formatted
-				}
-			}
-		}
-	}
-
-	if snapshot != nil && len(snapshot.Bids) > 0 && posQty != nil && posQty.Sign() > 0 {
-		remainingQty := posQty
-		accumRevenue := decimal.NewFromInt64(0)
-		filledQty := decimal.NewFromInt64(0)
+	if posQty != nil && posQty.Sign() > 0 && len(snapshot.Bids) > 0 {
+		remainingQty := posQty.SetScale(decimal.DefaultScale)
+		accumRevenue := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
+		filledQty := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
 
 		for _, lvl := range snapshot.Bids {
 			if lvl.Price == nil || lvl.Price.Sign() <= 0 || lvl.Quantity == nil || lvl.Quantity.Sign() <= 0 {
@@ -219,27 +218,29 @@ func (detector *Detector) computeBookExecution(
 			}
 
 			if lvl.Quantity.Cmp(remainingQty) <= 0 {
-				lvlRevenue := lvl.Price.Mul(lvl.Quantity)
+				lvlRevenue := lvl.Price.SetScale(decimal.DefaultScale).Mul(lvl.Quantity)
 				accumRevenue = accumRevenue.Add(lvlRevenue)
 				filledQty = filledQty.Add(lvl.Quantity)
 				remainingQty = remainingQty.Sub(lvl.Quantity)
 				continue
 			}
 
-			lvlRevenue := lvl.Price.Mul(remainingQty)
+			lvlRevenue := lvl.Price.SetScale(decimal.DefaultScale).Mul(remainingQty)
 			accumRevenue = accumRevenue.Add(lvlRevenue)
 			filledQty = filledQty.Add(remainingQty)
 			remainingQty = decimal.NewFromInt64(0)
 			break
 		}
 
-		if filledQty.Sign() > 0 {
-			exitBid = accumRevenue.Div(filledQty)
-		}
-	}
+		if remainingQty.Sign() == 0 && filledQty.Sign() > 0 {
+			exitBid = accumRevenue.SetScale(decimal.DefaultScale).Div(filledQty)
 
-	if exitBid == nil {
-		exitBid = fallbackPrice
+			if normalizer := detector.price.Normalizer(); normalizer != nil {
+				if formatted, normErr := normalizer.FormatPrice(symbol, exitBid); normErr == nil && formatted != nil {
+					exitBid = formatted
+				}
+			}
+		}
 	}
 
 	return entryAsk, exitBid, bidDepthQty, posQty, nil
@@ -612,14 +613,152 @@ cannot be priced. It never classifies an excursion as if friction were zero,
 and never flushes a tape whose read failed part-way, because its last
 excursion would be cut at an arbitrary tick instead of its real end.
 */
+func (detector *Detector) Step(
+	measurement *data.Measurement,
+) *data.Measurement {
+	if detector.Error() != nil || measurement == nil {
+		return nil
+	}
+
+	trade := measurement
+	if measurement.Source == "runtime:join" {
+		for _, peer := range measurement.Peers() {
+			if peer != nil && peer.Source == "spot:trade" {
+				trade = peer
+				break
+			}
+		}
+	}
+
+	if trade.Source != "spot:trade" {
+		return nil
+	}
+
+	current := detector.tapes[trade.Label]
+
+	if current != nil && trade.Epoch != current.epoch {
+		if err := current.flush(); err != nil {
+			detector.Error(err)
+			return nil
+		}
+
+		delete(detector.tapes, trade.Label)
+		current = nil
+	}
+
+	if current == nil {
+		current = &tape{
+			detector: detector,
+			epoch:    trade.Epoch,
+			symbol:   trade.Label,
+			start: tapePoint{
+				idx:  trade.SeqIdx,
+				tick: trade.Tick,
+				at:   trade.At,
+			},
+		}
+		detector.tapes[trade.Label] = current
+	}
+
+	priceEntry := data.Pull(trade.Read("price"))
+
+	if trade.At.IsZero() {
+		detector.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"[detector] spot:trade without venue time (At): %s epoch=%d tick=%d",
+				trade.Label, trade.Epoch, trade.Tick,
+			),
+			nil,
+		))
+		return nil
+	}
+
+	if priceEntry == nil || priceEntry.Metric == nil || priceEntry.Metric.Exact() == nil {
+		detector.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"[detector] spot:trade without exact price: %s epoch=%d tick=%d",
+				trade.Label, trade.Epoch, trade.Tick,
+			),
+			nil,
+		))
+		return nil
+	}
+
+	price := priceEntry.Metric.Exact()
+	var bid *decimal.Decimal
+
+	if bidEntry := data.Pull(trade.Read("bid_price_0")); bidEntry != nil && bidEntry.Metric != nil && bidEntry.Metric.Exact() != nil {
+		bid = bidEntry.Metric.Exact()
+	}
+
+	var ask *decimal.Decimal
+
+	if askEntry := data.Pull(trade.Read("ask_price_0")); askEntry != nil && askEntry.Metric != nil && askEntry.Metric.Exact() != nil {
+		ask = askEntry.Metric.Exact()
+	}
+
+	snapshot, err := broker.ReadSnapshot(trade)
+
+	if err != nil {
+		detector.Error(err)
+		return nil
+	}
+
+	if bid == nil && snapshot != nil && len(snapshot.Bids) > 0 {
+		bid = snapshot.Bids[0].Price
+	}
+
+	if ask == nil && snapshot != nil && len(snapshot.Asks) > 0 {
+		ask = snapshot.Asks[0].Price
+	}
+
+	entryAsk, exitBid, bidDepthQty, posQty, err := detector.computeBookExecution(trade.Label, snapshot)
+
+	if err != nil {
+		detector.Error(err)
+		return nil
+	}
+
+	if err := current.observe(tapePoint{
+		idx:         trade.SeqIdx,
+		tick:        trade.Tick,
+		at:          trade.At,
+		price:       price,
+		bid:         bid,
+		ask:         ask,
+		entryAsk:    entryAsk,
+		exitBid:     exitBid,
+		bidDepthQty: bidDepthQty,
+		posQty:      posQty,
+	}); err != nil {
+		detector.Error(err)
+		return nil
+	}
+
+	return nil
+}
+
+func (detector *Detector) FlushAll() error {
+	for symbol, current := range detector.tapes {
+		if current != nil {
+			if err := current.flush(); err != nil {
+				return detector.Error(err)
+			}
+		}
+		delete(detector.tapes, symbol)
+	}
+
+	return nil
+}
+
 func (detector *Detector) Scan(
 	measurements iter.Seq2[*data.Measurement, error],
 ) error {
 	if err := detector.Error(); err != nil {
 		return err
 	}
-
-	var current *tape
 
 	for measurement, err := range measurements {
 		if err != nil {
@@ -634,108 +773,12 @@ func (detector *Detector) Scan(
 			continue
 		}
 
-		if measurement.Source != "spot:trade" {
-			continue
-		}
-
-		if current != nil && (measurement.Label != current.symbol || measurement.Epoch != current.epoch) {
-			if err := current.flush(); err != nil {
-				return detector.Error(err)
-			}
-
-			current = nil
-		}
-
-		if current == nil {
-			current = &tape{
-				detector: detector,
-				epoch:    measurement.Epoch,
-				symbol:   measurement.Label,
-				start: tapePoint{
-					idx:  measurement.SeqIdx,
-					tick: measurement.Tick,
-					at:   measurement.At,
-				},
-			}
-		}
-
-		priceEntry := data.Pull(measurement.Read("price"))
-
-		if measurement.At.IsZero() {
-			return detector.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf(
-					"[detector] spot:trade without venue time (At): %s epoch=%d tick=%d",
-					measurement.Label, measurement.Epoch, measurement.Tick,
-				),
-				nil,
-			))
-		}
-
-		if priceEntry == nil || priceEntry.Metric == nil || priceEntry.Metric.Exact() == nil {
-			return detector.Error(errnie.Err(
-				errnie.Validation,
-				fmt.Sprintf(
-					"[detector] spot:trade without exact price: %s epoch=%d tick=%d",
-					measurement.Label, measurement.Epoch, measurement.Tick,
-				),
-				nil,
-			))
-		}
-
-		price := priceEntry.Metric.Exact()
-		var bid *decimal.Decimal
-
-		if bidEntry := data.Pull(measurement.Read("bid_price_0")); bidEntry != nil && bidEntry.Metric != nil && bidEntry.Metric.Exact() != nil {
-			bid = bidEntry.Metric.Exact()
-		}
-
-		var ask *decimal.Decimal
-
-		if askEntry := data.Pull(measurement.Read("ask_price_0")); askEntry != nil && askEntry.Metric != nil && askEntry.Metric.Exact() != nil {
-			ask = askEntry.Metric.Exact()
-		}
-
-		snapshot, _ := broker.ReadSnapshot(measurement)
-
-		if bid == nil && snapshot != nil && len(snapshot.Bids) > 0 {
-			bid = snapshot.Bids[0].Price
-		}
-
-		if ask == nil && snapshot != nil && len(snapshot.Asks) > 0 {
-			ask = snapshot.Asks[0].Price
-		}
-
-		entryAsk, exitBid, bidDepthQty, posQty, err := detector.computeBookExecution(measurement.Label, snapshot, price)
-
-		if err != nil {
-			return detector.Error(err)
-		}
-
-		if err := current.observe(tapePoint{
-			idx:         measurement.SeqIdx,
-			tick:        measurement.Tick,
-			at:          measurement.At,
-			price:       price,
-			bid:         bid,
-			ask:         ask,
-			entryAsk:    entryAsk,
-			exitBid:     exitBid,
-			bidDepthQty: bidDepthQty,
-			posQty:      posQty,
-		}); err != nil {
-			return detector.Error(err)
-		}
+		detector.Step(measurement)
 	}
 
-	if current != nil {
-		if err := current.flush(); err != nil {
-			return detector.Error(err)
-		}
-	}
-
-	return nil
+	return detector.FlushAll()
 }
+
 
 /*
 Flush writes one detected excursion of the given class to storeTee.
@@ -752,6 +795,22 @@ func (detector *Detector) Flush(
 	end tapePoint,
 	excursion span,
 ) *data.Measurement {
+	var bPrice, cPrice *decimal.Decimal
+
+	if class == excursionUp {
+		bPrice = excursion.b.entryAsk
+		cPrice = excursion.c.exitBid
+	}
+
+	if class != excursionUp {
+		bPrice = excursion.b.price
+		cPrice = excursion.c.price
+	}
+
+	if bPrice == nil || cPrice == nil || bPrice.Sign() <= 0 || cPrice.Sign() <= 0 {
+		return nil
+	}
+
 	measurement := data.NewMeasurement(
 		epoch,
 		symbol,
@@ -770,17 +829,6 @@ func (detector *Detector) Flush(
 	endTickUnit, endTickTime := data.GetDimension(detector.Name(), "end_tick")
 	bPriceUnit, bPriceTime := data.GetDimension(detector.Name(), "b_price")
 	cPriceUnit, cPriceTime := data.GetDimension(detector.Name(), "c_price")
-	bPrice := excursion.b.entryAsk
-
-	if bPrice == nil || bPrice.Sign() <= 0 {
-		bPrice = excursion.b.price
-	}
-
-	cPrice := excursion.c.exitBid
-
-	if cPrice == nil || cPrice.Sign() <= 0 {
-		cPrice = excursion.c.price
-	}
 
 	measurement.Write(
 		data.NewMetric("start_idx", float64(start.idx), startIdxUnit, startIdxTime),

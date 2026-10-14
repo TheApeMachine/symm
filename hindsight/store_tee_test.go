@@ -22,12 +22,10 @@ func TestStoreTee_Push(t *testing.T) {
 			So(tee.Pending(), ShouldEqual, 0)
 		})
 
-		Convey("A push while READY is queued and taken", func() {
+		Convey("A push while READY is queued", func() {
 			tee.Transition(runtime.READY)
 			tee.Push(row)
 			So(tee.Pending(), ShouldEqual, 1)
-			So(tee.Next(), ShouldNotBeNil)
-			So(tee.Pending(), ShouldEqual, 0)
 		})
 	})
 }

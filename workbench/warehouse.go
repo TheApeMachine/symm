@@ -26,6 +26,7 @@ dependency that has no business in them.
 package workbench
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -33,9 +34,11 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/marcboeker/go-duckdb/v2"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/store"
 )
 
 /*
@@ -129,17 +132,6 @@ func (warehouse *Warehouse) connect(ctx context.Context) (*sql.DB, error) {
 		return existing, nil
 	}
 
-	uri := viper.GetString("storage.iceberg.uri")
-	location := viper.GetString("storage.iceberg.warehouse")
-
-	if uri == "" || location == "" {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"workbench: storage.iceberg.uri and storage.iceberg.warehouse are both required",
-			nil,
-		))
-	}
-
 	db, err := sql.Open("duckdb", "")
 
 	if err != nil {
@@ -150,9 +142,7 @@ func (warehouse *Warehouse) connect(ctx context.Context) (*sql.DB, error) {
 		))
 	}
 
-	catalog := catalogName(location)
-
-	for _, statement := range warehouse.boot(uri, location, catalog) {
+	for _, statement := range warehouse.boot() {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			if closeErr := db.Close(); closeErr != nil {
 				return nil, errnie.Error(errnie.Err(
@@ -186,35 +176,14 @@ func (warehouse *Warehouse) connect(ctx context.Context) (*sql.DB, error) {
 }
 
 /*
-boot is the statement sequence that turns a blank DuckDB into a reader of this
-deployment's Iceberg warehouse.
-
-The arrow extension is a community extension: it supplies to_arrow_ipc, which
-is how a result leaves this package. The iceberg extension resolves the REST
-catalog. Both are cached on disk after their first install.
-
-SeaweedFS serves both the catalog and the object store unauthenticated, so the
-S3 secret carries placeholder credentials for the same reason hindsight/tables
-does — an SDK given no credentials at all walks its provider chain out to the
-EC2 metadata service — and the catalog is attached with authorization declared
-absent rather than left to default to OAuth2.
+boot is the statement sequence that initializes DuckDB with the analytical
+measurements table, views, Arrow extension, and S3 credentials.
 */
-func (warehouse *Warehouse) boot(uri, location, catalog string) []string {
+func (warehouse *Warehouse) boot() []string {
 	endpoint := viper.GetString("storage.s3.endpoint")
 	secure := strings.HasPrefix(endpoint, "https://")
 
-	return []string{
-		/*
-			The engine shares a process with the trading path, and DuckDB's
-			default ceiling is most of the machine's memory. An unpivoted view
-			of a table is materialized in full before it is paged, and the tape
-			tables run to tens of millions of rows carrying a payload each, so
-			an analyst opening one would otherwise take the run's memory with
-			it. The ceiling is declared instead, and overflowing it is refused
-			rather than spilled: a query that will not fit is the analyst's to
-			narrow, and a run that is holding positions is not the thing that
-			should pay for it.
-		*/
+	statements := []string{
 		fmt.Sprintf("SET GLOBAL memory_limit=%s", literal(
 			viper.GetString("workbench.memory_limit"),
 		)),
@@ -222,19 +191,17 @@ func (warehouse *Warehouse) boot(uri, location, catalog string) []string {
 			viper.GetString("workbench.max_temp_directory_size"),
 		)),
 		fmt.Sprintf("SET GLOBAL threads=%d", viper.GetInt("workbench.threads")),
-		"SET GLOBAL preserve_insertion_order=false",
-		// The viewer orders an unpivoted view by a row identity, and an
-		// Iceberg table has none to offer: its rows have no order the catalog
-		// guarantees, so the handler asks for `ORDER BY NULL` instead. DuckDB
-		// refuses a constant sort key unless told that a no-op ordering is
-		// meant, and having been told, drops the sort from the plan entirely
-		// rather than sorting millions of rows on one repeated value.
+		"SET GLOBAL preserve_insertion_order=true",
+		"SET GLOBAL enable_http_metadata_cache=true",
+		"SET GLOBAL parquet_metadata_cache=true",
+		"SET GLOBAL prefetch_all_parquet_files=true",
 		"SET GLOBAL order_by_non_integer_literal=true",
 		"INSTALL arrow FROM community",
 		"LOAD arrow",
-		"INSTALL iceberg",
-		"LOAD iceberg",
-		fmt.Sprintf(
+	}
+
+	if endpoint != "" {
+		statements = append(statements, fmt.Sprintf(
 			"CREATE OR REPLACE SECRET warehouse_store ("+
 				"TYPE s3, KEY_ID %s, SECRET %s, REGION %s, "+
 				"ENDPOINT %s, URL_STYLE 'path', USE_SSL %t)",
@@ -243,12 +210,144 @@ func (warehouse *Warehouse) boot(uri, location, catalog string) []string {
 			literal(viper.GetString("storage.s3.region")),
 			literal(strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")),
 			secure,
-		),
-		fmt.Sprintf(
-			"ATTACH %s AS %s (TYPE iceberg, ENDPOINT %s, AUTHORIZATION_TYPE 'none')",
-			literal(location), identifier(catalog), literal(uri),
-		),
+		))
 	}
+
+	statements = append(statements,
+		"ATTACH ':memory:' AS symmwarehouse",
+		"CREATE SCHEMA IF NOT EXISTS symmwarehouse.hindsight",
+		`CREATE TABLE IF NOT EXISTS symmwarehouse.hindsight.measurements (
+			id UINTEGER,
+			epoch BIGINT,
+			seq_idx BIGINT,
+			tick BIGINT,
+			"timestamp" BIGINT,
+			"at" TIMESTAMP,
+			"from" TIMESTAMP,
+			label VARCHAR,
+			source VARCHAR,
+			metrics MAP(VARCHAR, STRUCT(raw DOUBLE, snm DOUBLE, exact VARCHAR, unit VARCHAR, timescale VARCHAR)),
+			meta MAP(VARCHAR, VARCHAR)
+		)`,
+		"CREATE OR REPLACE VIEW symmwarehouse.hindsight.spot_trade AS SELECT * FROM symmwarehouse.hindsight.measurements WHERE source = 'spot:trade'",
+		"CREATE OR REPLACE VIEW symmwarehouse.hindsight.spot_ticker AS SELECT * FROM symmwarehouse.hindsight.measurements WHERE source = 'spot:ticker'",
+		"CREATE OR REPLACE VIEW symmwarehouse.hindsight.runs AS SELECT epoch, min(\"at\") AS started_at, max(\"at\") AS ended_at, count(*) AS measurement_count FROM symmwarehouse.hindsight.measurements GROUP BY epoch",
+	)
+
+	return statements
+}
+
+/*
+Ingest streams measurements from the store client and batch-inserts them into
+the symmwarehouse.hindsight.measurements table. It returns the number of ingested measurements.
+*/
+func (warehouse *Warehouse) Ingest(ctx context.Context, client *store.Client, prefix string) (int, error) {
+	if client == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "[warehouse] store client is required for ingest", nil,
+		))
+	}
+
+	db, err := warehouse.DB(ctx)
+
+	if err != nil {
+		return 0, err
+	}
+
+	batchSize := 200
+	var batchRows []string
+	imported := 0
+
+	flush := func() error {
+		if len(batchRows) == 0 {
+			return nil
+		}
+
+		query := "INSERT INTO symmwarehouse.hindsight.measurements VALUES " + strings.Join(batchRows, ",")
+		_, execErr := db.ExecContext(ctx, query)
+		batchRows = batchRows[:0]
+
+		if execErr != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO, "[warehouse] batch insert failed", execErr,
+			))
+		}
+
+		return nil
+	}
+
+	for measurement := range client.Get(prefix) {
+		select {
+		case <-ctx.Done():
+			return imported, errnie.Error(ctx.Err())
+		default:
+		}
+
+		if measurement == nil {
+			continue
+		}
+
+		imported++
+
+		var metricKeys []string
+		var metricVals []string
+
+		for entry := range measurement.Read() {
+			if entry == nil || entry.Metric == nil {
+				continue
+			}
+
+			metricKeys = append(metricKeys, literal(entry.Key))
+			exactStr := "''"
+
+			if entry.Metric.Exact() != nil {
+				exactStr = literal(entry.Metric.Exact().String())
+			}
+
+			metricVals = append(metricVals, fmt.Sprintf(
+				"{'raw': %f, 'snm': %f, 'exact': %s, 'unit': %s, 'timescale': %s}",
+				entry.Metric.Raw(), entry.Metric.SNM(), exactStr,
+				literal(string(entry.Metric.Unit())),
+				literal(string(entry.Metric.Timescale())),
+			))
+		}
+
+		metricsMap := fmt.Sprintf("map([%s], [%s])", strings.Join(metricKeys, ", "), strings.Join(metricVals, ", "))
+
+		var metaKeys []string
+		var metaVals []string
+
+		for entry := range measurement.Meta() {
+			if entry != nil {
+				metaKeys = append(metaKeys, literal(entry.Key))
+				metaVals = append(metaVals, literal(entry.Value))
+			}
+		}
+
+		metaMap := fmt.Sprintf("map([%s], [%s])", strings.Join(metaKeys, ", "), strings.Join(metaVals, ", "))
+
+		rowStr := fmt.Sprintf(
+			"(%d, %d, %d, %d, %d, %s, %s, %s, %s, %s, %s)",
+			measurement.ID, measurement.Epoch, measurement.SeqIdx, measurement.Tick, measurement.Timestamp,
+			literal(measurement.At.Format("2006-01-02 15:04:05.999999")),
+			literal(measurement.From.Format("2006-01-02 15:04:05.999999")),
+			literal(measurement.Label), literal(measurement.Source),
+			metricsMap, metaMap,
+		)
+		batchRows = append(batchRows, rowStr)
+
+		if len(batchRows) >= batchSize {
+			if err := flush(); err != nil {
+				return imported, err
+			}
+		}
+	}
+
+	if err := flush(); err != nil {
+		return imported, err
+	}
+
+	return imported, nil
 }
 
 // accessKeyID is the S3 key the FileIO signs with, placeheld when anonymous.
@@ -465,7 +564,10 @@ func (warehouse *Warehouse) stream(
 
 	defer rows.Close()
 
-	stream := make([]byte, 0)
+	var schemaMessages [][]byte
+	var dictMessages [][]byte
+	var recordMessages [][]byte
+	var otherMessages [][]byte
 
 	for rows.Next() {
 		var message []byte
@@ -478,7 +580,24 @@ func (warehouse *Warehouse) stream(
 			))
 		}
 
-		stream = append(stream, message...)
+		messageReader := ipc.NewMessageReader(bytes.NewReader(message))
+		parsedMessage, parseErr := messageReader.Message()
+
+		if parseErr != nil {
+			otherMessages = append(otherMessages, message)
+			continue
+		}
+
+		switch parsedMessage.Type() {
+		case ipc.MessageSchema:
+			schemaMessages = append(schemaMessages, message)
+		case ipc.MessageDictionaryBatch:
+			dictMessages = append(dictMessages, message)
+		case ipc.MessageRecordBatch:
+			recordMessages = append(recordMessages, message)
+		default:
+			otherMessages = append(otherMessages, message)
+		}
 	}
 
 	if err := rows.Err(); err != nil {
@@ -487,6 +606,42 @@ func (warehouse *Warehouse) stream(
 			"workbench: read arrow ipc stream",
 			err,
 		))
+	}
+
+	totalLength := 0
+
+	for _, chunk := range schemaMessages {
+		totalLength += len(chunk)
+	}
+
+	for _, chunk := range dictMessages {
+		totalLength += len(chunk)
+	}
+
+	for _, chunk := range recordMessages {
+		totalLength += len(chunk)
+	}
+
+	for _, chunk := range otherMessages {
+		totalLength += len(chunk)
+	}
+
+	stream := make([]byte, 0, totalLength)
+
+	for _, chunk := range schemaMessages {
+		stream = append(stream, chunk...)
+	}
+
+	for _, chunk := range dictMessages {
+		stream = append(stream, chunk...)
+	}
+
+	for _, chunk := range recordMessages {
+		stream = append(stream, chunk...)
+	}
+
+	for _, chunk := range otherMessages {
+		stream = append(stream, chunk...)
 	}
 
 	return stream, nil

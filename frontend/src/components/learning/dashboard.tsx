@@ -74,7 +74,7 @@ export const LearningDashboard = () => {
 
 				{tab === "impulse" && (
 					<Flex.Column className="flex-1 min-h-0">
-						<ImpulseMapViz />
+						<ImpulseMapViz symbol={focus} />
 					</Flex.Column>
 				)}
 			</Flex.Column>

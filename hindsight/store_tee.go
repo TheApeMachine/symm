@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/store"
 	"golang.design/x/lockfree/lf"
 )
 
@@ -19,11 +21,13 @@ type StoreTee struct {
 	*runtime.System
 	queue   *lf.Queue[*data.Measurement]
 	dropped atomic.Int64
+	client  *store.Client
 }
 
 func NewStoreTee(ctx context.Context, label string) *StoreTee {
 	tee := &StoreTee{
-		queue: lf.NewQueue[*data.Measurement](),
+		queue:  lf.NewQueue[*data.Measurement](),
+		client: store.NewClient(ctx, "symm"),
 	}
 
 	tee.System = runtime.NewSystem(ctx, label, tee)
@@ -57,6 +61,9 @@ func (tee *StoreTee) Push(measurement *data.Measurement) {
 	tee.queue.Enqueue(measurement)
 }
 
+/*
+Next returns the next measurement from the queue.
+*/
 func (tee *StoreTee) Next() unsafe.Pointer {
 	measurement, ok := tee.queue.Dequeue()
 
@@ -65,6 +72,42 @@ func (tee *StoreTee) Next() unsafe.Pointer {
 	}
 
 	return unsafe.Pointer(&measurement)
+}
+
+/*
+Run consumes the queue and writes to S3.
+*/
+func (tee *StoreTee) Run() {
+	go func() {
+		for {
+			select {
+			case <-tee.Context().Done():
+				for {
+					measurement, ok := tee.queue.Dequeue()
+
+					if !ok || measurement == nil {
+						return
+					}
+
+					if err := tee.client.Put(measurement); err != nil {
+						errnie.Error(err)
+					}
+				}
+			default:
+			}
+
+			measurement, ok := tee.queue.Dequeue()
+
+			if !ok || measurement == nil {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+
+			if err := tee.client.Put(measurement); err != nil {
+				errnie.Error(err)
+			}
+		}
+	}()
 }
 
 func (tee *StoreTee) Pending() int {

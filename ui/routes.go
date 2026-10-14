@@ -36,11 +36,18 @@ func (routes *Routes) Register() {
 			targetURL = system.Cfg.Workbench.URL
 		}
 
+		origin := reqCtx.Get("Origin")
+
 		if err := proxy.Do(reqCtx, targetURL); err != nil {
 			return fiber.NewError(
 				fiber.StatusServiceUnavailable,
 				"workbench service unavailable — start standalone workbench with 'make workbench'",
 			)
+		}
+
+		if origin != "" {
+			reqCtx.Set("Access-Control-Allow-Origin", origin)
+			reqCtx.Set("Vary", "Origin")
 		}
 
 		return nil

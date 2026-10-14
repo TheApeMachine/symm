@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"math/big"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -35,8 +36,10 @@ type Book struct {
 	mutations   atomic.Pointer[func([]kraken.Level3Data)]
 	diverging   sync.Map
 	lastTouch   sync.Map
-	locks       sync.Map
-	orderPrices sync.Map
+	locks           sync.Map
+	orderPrices     sync.Map
+	orderPriorities sync.Map
+	priorityCounter atomic.Int64
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
@@ -447,6 +450,7 @@ func (book *Book) apply(
 			if payload.Type == "snapshot" {
 				book.diverging.Delete(data.Symbol)
 				book.orderPrices.Store(data.Symbol, &sync.Map{})
+				book.orderPriorities.Store(data.Symbol, &sync.Map{})
 				symbolBook = book.manager.CreateBook(
 					data.Symbol,
 					depth,
@@ -571,10 +575,17 @@ func (book *Book) apply(
 
 					if order.Event == "delete" {
 						orderMap.Delete(order.OrderID)
+						priorityMap := book.getOrderPriorities(data.Symbol)
+						priorityMap.Delete(order.OrderID)
 					}
 
 					if order.Event != "delete" && order.LimitPrice != nil {
 						orderMap.Store(order.OrderID, order.LimitPrice)
+						priorityMap := book.getOrderPriorities(data.Symbol)
+
+						if _, exists := priorityMap.Load(order.OrderID); !exists {
+							priorityMap.Store(order.OrderID, book.priorityCounter.Add(1))
+						}
 					}
 
 					filtered = append(filtered, order)
@@ -594,7 +605,7 @@ func (book *Book) apply(
 			symbolBook.EnforceDepth()
 
 			payload.Data[index] = data
-			if data.Checksum != 0 && !fastL3Checksum(symbolBook, data.Checksum) {
+			if data.Checksum != 0 && !book.fastL3Checksum(data.Symbol, symbolBook, data.Checksum) {
 				checksum := symbolBook.L3Checksum(strconv.FormatUint(
 					uint64(data.Checksum),
 					10,
@@ -820,6 +831,19 @@ func (book *Book) getOrderPrices(symbol string) *sync.Map {
 	return actual.(*sync.Map)
 }
 
+func (book *Book) getOrderPriorities(symbol string) *sync.Map {
+	val, ok := book.orderPriorities.Load(symbol)
+
+	if ok && val != nil {
+		return val.(*sync.Map)
+	}
+
+	newMap := &sync.Map{}
+	actual, _ := book.orderPriorities.LoadOrStore(symbol, newMap)
+
+	return actual.(*sync.Map)
+}
+
 func init() {
 	sample, err := decimal.NewFromString("12345.6789")
 	if err != nil || string(appendDecimalDigits(nil, sample)) != "123456789" {
@@ -841,13 +865,16 @@ func appendDecimalDigits(buf []byte, d *decimal.Decimal) []byte {
 	return bi.Append(buf, 10)
 }
 
-func fastL3Checksum(managedBook *spotbook.Book, expected uint32) bool {
+func (book *Book) fastL3Checksum(symbol string, managedBook *spotbook.Book, expected uint32) bool {
 	var crc uint32
 	var buf [64]byte
+	priorityMap := book.getOrderPriorities(symbol)
 
 	cursor := managedBook.BestAsk()
 
 	for count := 0; count < 10 && cursor != nil; count++ {
+		sortQueue(cursor.Queue(), priorityMap)
+
 		for _, order := range cursor.Queue() {
 			digits := appendDecimalDigits(buf[:0], order.LimitPrice)
 			crc = crc32.Update(crc, crc32.IEEETable, digits)
@@ -861,6 +888,8 @@ func fastL3Checksum(managedBook *spotbook.Book, expected uint32) bool {
 	cursor = managedBook.BestBid()
 
 	for count := 0; count < 10 && cursor != nil; count++ {
+		sortQueue(cursor.Queue(), priorityMap)
+
 		for _, order := range cursor.Queue() {
 			digits := appendDecimalDigits(buf[:0], order.LimitPrice)
 			crc = crc32.Update(crc, crc32.IEEETable, digits)
@@ -872,4 +901,50 @@ func fastL3Checksum(managedBook *spotbook.Book, expected uint32) bool {
 	}
 
 	return crc == expected
+}
+
+func sortQueue(queue []*spotbook.Order, priorityMap *sync.Map) {
+	if len(queue) <= 1 {
+		return
+	}
+
+	hasSameTimestamp := false
+
+	for index := 1; index < len(queue); index++ {
+		if queue[index].Timestamp.Equal(queue[index-1].Timestamp) {
+			hasSameTimestamp = true
+			break
+		}
+	}
+
+	if !hasSameTimestamp {
+		return
+	}
+
+	sort.Slice(queue, func(leftIndex, rightIndex int) bool {
+		leftOrder := queue[leftIndex]
+		rightOrder := queue[rightIndex]
+
+		if leftOrder.Timestamp.Equal(rightOrder.Timestamp) {
+			var priorityLeft, priorityRight int64
+
+			if priorityMap != nil {
+				if val, ok := priorityMap.Load(leftOrder.ID); ok {
+					priorityLeft = val.(int64)
+				}
+
+				if val, ok := priorityMap.Load(rightOrder.ID); ok {
+					priorityRight = val.(int64)
+				}
+			}
+
+			if priorityLeft != priorityRight {
+				return priorityLeft < priorityRight
+			}
+
+			return leftOrder.ID < rightOrder.ID
+		}
+
+		return leftOrder.Timestamp.Before(rightOrder.Timestamp)
+	})
 }

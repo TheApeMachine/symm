@@ -2,10 +2,15 @@ import * as d3 from "d3";
 import { Grid2X2, Pause, Play, RefreshCw, Waves } from "lucide-react";
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSelector } from "@tanstack/react-store";
+import { focusAtom } from "#/collections/app";
 import { cn } from "#/lib/utils";
+import { regionCategoryIndex } from "./grid-pins";
 import type { ImpulseNode } from "./types";
+import { useImpulseData } from "./use-impulse-data";
 
 interface ImpulseMapVizProps {
+	symbol?: string;
 	data?: ImpulseNode[];
 	regions?: Array<{
 		id: number;
@@ -27,13 +32,24 @@ interface ImpulseMapVizProps {
 }
 
 export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
-	data = [],
-	regions: _regions = [],
-	activeEvents = [],
-	gridCells,
-	gridRegions,
+	symbol: propSymbol,
+	data: propData,
+	regions: propRegions,
+	activeEvents: propActiveEvents,
+	gridCells: propGridCells,
+	gridRegions: propGridRegions,
 	className,
 }) => {
+	const currentFocus = useSelector(focusAtom, (s) => s);
+	const activeSymbol = propSymbol || currentFocus || "BTC/USD";
+	const liveData = useImpulseData(propData ? "" : activeSymbol);
+
+	const data = propData ?? liveData.data;
+	const _regions = propRegions ?? (propData ? [] : liveData.regions);
+	const activeEvents = propActiveEvents ?? (propData ? [] : liveData.activeEvents);
+	const gridCells = propGridCells ?? (propData ? undefined : liveData.gridCells);
+	const gridRegions = propGridRegions ?? (propData ? undefined : liveData.gridRegions);
+
 	const containerRef = useRef<HTMLDivElement>(null);
 	const svgRef = useRef<SVGSVGElement>(null);
 	const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -92,15 +108,40 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			const nodeLayer = svg.select<SVGGElement>(".nodes");
 			const badgeLayer = svg.select<SVGGElement>(".region-badges");
 
-			// Color Scale: warm panel stone -> sky cyan -> sage green -> radiant amber
-			const colorScale = d3
-				.scaleSequential<string>((t) =>
-					d3.interpolateRgbBasis(["#17140f", "#7fbacb", "#9cc06e", "#e8a33d"])(t),
-				)
-				.domain([0, 1]);
+			// Color Scale: quiescent stone -> deep cyan -> vivid sky cyan -> emerald -> warm amber -> radiant gold
+			const colorScale = (act: number) => {
+				if (act >= 0.7) return "#fbbf24";
+				if (act >= 0.45) return "#f59e0b";
+				if (act >= 0.25) return "#10b981";
+				if (act >= 0.1) return "#0284c7";
+				if (act > 0.02) return "#0f3a4a";
+				return "#1c1917";
+			};
+
+			const getNodeRadius = (d: ImpulseNode) => {
+				const act = d.activation || 0;
+				const base = Math.max(4.5, Math.min((d.snr || 1) * 1.5 + 3, 14));
+				return base + act * 3.5;
+			};
+
+			const getNodeStroke = (d: ImpulseNode) => {
+				const act = d.activation || 0;
+				if (act >= 0.5) return "#fbbf24";
+				if (act >= 0.25) return "#f59e0b";
+				if (act >= 0.1) return "#34d399";
+				if (act > 0.02) return "#38bdf8";
+				return "var(--line2)";
+			};
+
+			const getNodeStrokeWidth = (d: ImpulseNode) => {
+				const act = d.activation || 0;
+				if (act >= 0.5) return 2.5;
+				if (act >= 0.15) return 1.8;
+				return 1.2;
+			};
 
 			// 1. Topographic Regions (Contours) in "regions" mode
-			const hasActiveEnergy = nodes.some((d) => (d.activation || 0) > 0.05);
+			const hasActiveEnergy = nodes.some((d) => (d.activation || 0) > 0.02);
 			if (mode === "regions" && nodes.length > 0 && hasActiveEnergy) {
 				const computeDensity = d3
 					.contourDensity<ImpulseNode>()
@@ -108,7 +149,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					.y((d) => d.y || 0)
 					.weight((d) => (d.activation || 0) * (d.snr || 1))
 					.size([currentWidth, currentHeight])
-					.bandwidth(30)
+					.bandwidth(35)
 					.thresholds(15);
 
 				const contourData = computeDensity(nodes);
@@ -120,11 +161,11 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					.merge(paths)
 					.attr("d", d3.geoPath())
 					.attr("fill", (_, i) => {
-						return d3.color("#e8a33d")?.copy({ opacity: i * 0.015 }).toString() || "none";
+						return d3.color("#e8a33d")?.copy({ opacity: i * 0.02 }).toString() || "none";
 					})
 					.attr("stroke", (_, i) => {
-						if (i === 6) return "rgba(156, 192, 110, 0.4)"; // Sage boundary (--up)
-						if (i === 10) return "rgba(232, 163, 61, 0.8)"; // Amber Otsu split boundary (--acc)
+						if (i === 6) return "rgba(156, 192, 110, 0.5)"; // Sage boundary (--up)
+						if (i === 10) return "rgba(232, 163, 61, 0.9)"; // Amber Otsu split boundary (--acc)
 						return "none";
 					})
 					.attr("stroke-width", (_, i) => (i === 10 ? 1.5 : i === 6 ? 1 : 0))
@@ -138,7 +179,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 
 			// 2. Sympathy Links: Connect active nodes in the same region
 			const activeLinks: { source: ImpulseNode; target: ImpulseNode; strength: number }[] = [];
-			const linkThreshold = 0.5;
+			const linkThreshold = 0.15;
 
 			for (let i = 0; i < nodes.length; i++) {
 				const a = nodes[i];
@@ -152,7 +193,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					const dy = (a.y || 0) - (b.y || 0);
 					const dist = Math.hypot(dx, dy);
 
-					if (dist < 100) {
+					if (dist < 120) {
 						const strength = ((a.activation || 0) + (b.activation || 0)) / 2;
 						activeLinks.push({ source: a, target: b, strength });
 					}
@@ -170,13 +211,13 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.attr("x2", (d) => d.target.x || 0)
 				.attr("y2", (d) => d.target.y || 0)
 				.attr("stroke", "var(--acc)")
-				.attr("stroke-opacity", (d) => Math.min(d.strength * 0.8, 0.8))
+				.attr("stroke-opacity", (d) => Math.min(d.strength * 0.9, 0.9))
 				.attr("stroke-width", 1.5);
 
 			links.exit().remove();
 
-			// 3. Halos for highly active nodes
-			const activeNodes = nodes.filter((d) => (d.activation || 0) >= 0.5);
+			// 3. Halos for active nodes
+			const activeNodes = nodes.filter((d) => (d.activation || 0) >= 0.15);
 			const halos = haloLayer.selectAll<SVGCircleElement, ImpulseNode>("circle").data(activeNodes, (d) => d.id);
 
 			halos
@@ -185,11 +226,11 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.merge(halos)
 				.attr("cx", (d) => d.x || 0)
 				.attr("cy", (d) => d.y || 0)
-				.attr("r", (d) => Math.max(3.5, Math.min((d.snr || 1) * 1.5 + 2, 14)) * 1.8)
+				.attr("r", (d) => getNodeRadius(d) * 1.7)
 				.attr("fill", "none")
-				.attr("stroke", "var(--acc)")
-				.attr("stroke-width", 1.5)
-				.attr("stroke-opacity", (d) => Math.min((d.activation || 0) * 0.7, 0.8))
+				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "var(--acc)"))
+				.attr("stroke-width", (d) => ((d.activation || 0) >= 0.5 ? 2 : 1.2))
+				.attr("stroke-opacity", (d) => Math.min((d.activation || 0) * 0.9, 0.85))
 				.style("filter", "url(#impulse-glow)");
 
 			halos.exit().remove();
@@ -200,16 +241,16 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			const nodeEnter = nodeElements
 				.enter()
 				.append("circle")
-				.attr("r", (d) => Math.max(3.5, Math.min((d.snr || 1) * 1.5 + 2, 14)))
-				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "var(--sunken)"))
-				.attr("stroke-width", (d) => ((d.activation || 0) >= 0.5 ? 2 : 1.5))
+				.attr("r", getNodeRadius)
+				.attr("stroke", getNodeStroke)
+				.attr("stroke-width", getNodeStrokeWidth)
 				.on("mouseover", function () {
-					d3.select(this).attr("stroke", "#fbbf24").attr("stroke-width", 2);
+					d3.select(this).attr("stroke", "#fbbf24").attr("stroke-width", 2.5);
 				})
 				.on("mouseout", function (_, d) {
 					d3.select(this)
-						.attr("stroke", (d.activation || 0) >= 0.5 ? "#fbbf24" : "var(--sunken)")
-						.attr("stroke-width", (d.activation || 0) >= 0.5 ? 2 : 1.5);
+						.attr("stroke", getNodeStroke(d))
+						.attr("stroke-width", getNodeStrokeWidth(d));
 				});
 
 			nodeEnter
@@ -224,10 +265,10 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			nodeMerged
 				.attr("cx", (d) => d.x || 0)
 				.attr("cy", (d) => d.y || 0)
-				.attr("r", (d) => Math.max(3.5, Math.min((d.snr || 1) * 1.5 + 2, 14)))
+				.attr("r", getNodeRadius)
 				.attr("fill", (d) => colorScale(d.activation || 0))
-				.attr("stroke", (d) => ((d.activation || 0) >= 0.5 ? "#fbbf24" : "var(--sunken)"))
-				.attr("stroke-width", (d) => ((d.activation || 0) >= 0.5 ? 2 : 1.5));
+				.attr("stroke", getNodeStroke)
+				.attr("stroke-width", getNodeStrokeWidth);
 
 			nodeMerged.select("title").text(
 				(d) =>
@@ -271,13 +312,14 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				badgeMerged
 					.attr("transform", (d) => `translate(${d.x}, ${d.y - 18})`)
 					.select("text")
-					.attr("fill", (d) => (d.maxAct >= 0.5 ? "var(--acc)" : "var(--f4)"))
+					.attr("fill", (d) => (d.maxAct >= 0.3 ? "var(--acc)" : d.maxAct >= 0.1 ? "var(--up)" : "var(--f4)"))
 					.text((d) => `R${d.clusterId} (${d.count}m)`);
 
 				badges.exit().remove();
 			} else {
 				badgeLayer.selectAll("g").remove();
 			}
+
 		},
 		[],
 	);
@@ -505,11 +547,11 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				.nodes(nodes)
 				.force(
 					"x",
-					d3.forceX<ImpulseNode>((d) => foci[Math.abs(Number(d.cluster || 0)) % foci.length].x).strength(0.12),
+					d3.forceX<ImpulseNode>((d) => foci[regionCategoryIndex(Number(d.cluster || 0))].x).strength(0.12),
 				)
 				.force(
 					"y",
-					d3.forceY<ImpulseNode>((d) => foci[Math.abs(Number(d.cluster || 0)) % foci.length].y).strength(0.12),
+					d3.forceY<ImpulseNode>((d) => foci[regionCategoryIndex(Number(d.cluster || 0))].y).strength(0.12),
 				)
 				.force(
 					"collide",
@@ -552,12 +594,12 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				: nodesRef.current.length;
 	const uniqueClusters = new Set<number>();
 	for (const node of data) {
-		if (node.cluster != null && Number(node.cluster) > 0) {
+		if (node.cluster != null && Number(node.cluster) >= 0) {
 			uniqueClusters.add(Number(node.cluster));
 		}
 	}
 	for (const r of _regions) {
-		if (r.id != null && Number(r.id) > 0) {
+		if (r.id != null && Number(r.id) >= 0) {
 			uniqueClusters.add(Number(r.id));
 		}
 	}
@@ -576,7 +618,10 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					<div className="flex gap-4">
 						<button
 							type="button"
-							onClick={() => setSubTab("map")}
+							onClick={() => {
+								setSubTab("map");
+								setLayoutMode("grid");
+							}}
 							className={cn(
 								"py-1 px-1 transition-colors cursor-pointer text-[11px]",
 								subTab === "map"
@@ -588,7 +633,10 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 						</button>
 						<button
 							type="button"
-							onClick={() => setSubTab("topography")}
+							onClick={() => {
+								setSubTab("topography");
+								setLayoutMode("regions");
+							}}
 							className={cn(
 								"py-1 px-1 transition-colors cursor-pointer text-[11px]",
 								subTab === "topography"
@@ -600,7 +648,10 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 						</button>
 						<button
 							type="button"
-							onClick={() => setSubTab("sympathy")}
+							onClick={() => {
+								setSubTab("sympathy");
+								setLayoutMode("regions");
+							}}
 							className={cn(
 								"py-1 px-1 transition-colors cursor-pointer text-[11px]",
 								subTab === "sympathy"
@@ -632,7 +683,10 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 						<button
 							type="button"
 							data-l="view-initial-grid"
-							onClick={() => setLayoutMode("grid")}
+							onClick={() => {
+								setLayoutMode("grid");
+								setSubTab("map");
+							}}
 							className={cn(
 								"px-2.5 py-0.5 rounded transition-colors flex items-center gap-1.5 cursor-pointer text-[11px]",
 								layoutMode === "grid"
@@ -646,7 +700,10 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 						<button
 							type="button"
 							data-l="view-sympathy-regions"
-							onClick={() => setLayoutMode("regions")}
+							onClick={() => {
+								setLayoutMode("regions");
+								setSubTab("sympathy");
+							}}
 							className={cn(
 								"px-2.5 py-0.5 rounded transition-colors flex items-center gap-1.5 cursor-pointer text-[11px]",
 								layoutMode === "regions"

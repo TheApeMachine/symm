@@ -2,10 +2,7 @@ package strategy
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,10 +10,10 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/store"
+	nmstore "github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
@@ -24,69 +21,71 @@ import (
 /*
 Training paper trades the live market against the action tree the Trainer
 published: every frame becomes a region token, the token advances the
-symbol's token path through the published Tokenizer, and once the path is
-Depth tokens long and moves onto a stored path whose actions all agree, that
-action is taken through the Desk.
+symbol's grammar through Sequitur, and when an induced rule matches a stored
+path with an agreed action, that action is taken through the Desk.
 */
 type Training struct {
 	*runtime.System
-	price   *broker.Price
-	desk    *broker.Desk
-	catalog *tables.Catalog
-	grid    *store.Grid
-	policy  atomic.Pointer[policy]
-	seen    Tokenizer
-	paths   map[string][]string
-	last    map[string]*data.Measurement
+	price    *broker.Price
+	desk     *broker.Desk
+	client   *store.Client
+	grid     *nmstore.Grid
+	policy   atomic.Pointer[policy]
+	grammars map[string]*Grammar
+	lastSym  map[string]string
+	paths    map[string][]string
+	last     map[string]*data.Measurement
 }
 
 /*
-policy is one loaded generation of the published action tree: its Tokenizer
-(nil while none is published, which means no trading), its keys, and the one
+policy is one loaded generation of the published action tree: its keys, and the one
 action each stored path agrees on ("" where its actions disagree). It is
-swapped whole, so Step never pairs a Tokenizer with another generation's
-paths.
+swapped whole.
 */
 type policy struct {
-	tokenizer *Tokenizer
-	keys      []string
-	actions   map[string]string
+	keys    []string
+	actions map[string]string
 }
 
 /*
 Stored path actions: the final segment of every key.
 */
 const (
-	actionEnter = "enter.json"
-	actionExit  = "exit.json"
-	actionNoop  = "noop.json"
+	actionEnter = "enter.bin"
+	actionExit  = "exit.bin"
+	actionNoop  = "noop.bin"
 )
 
 func NewTraining(
 	ctx context.Context,
 	price *broker.Price,
 	desk *broker.Desk,
-	catalog *tables.Catalog,
+	client *store.Client,
 ) *Training {
 	training := &Training{
-		System:  runtime.NewSystem(ctx, "training", price),
-		price:   price,
-		desk:    desk,
-		catalog: catalog,
-		grid:    store.NewGrid(ctx),
-		paths:   make(map[string][]string),
-		last:    make(map[string]*data.Measurement),
+		System:   runtime.NewSystem(ctx, "training", price),
+		price:    price,
+		desk:     desk,
+		client:   client,
+		grid:     nmstore.NewGrid(ctx),
+		grammars: make(map[string]*Grammar),
+		lastSym:  make(map[string]string),
+		paths:    make(map[string][]string),
+		last:     make(map[string]*data.Measurement),
 	}
 
-	training.policy.Store(&policy{})
+	training.policy.Store(&policy{
+		keys:    make([]string, 0),
+		actions: make(map[string]string),
+	})
 
 	if err := errnie.Require(map[string]any{
-		"price":   price,
-		"desk":    desk,
-		"catalog": catalog,
+		"price":  price,
+		"desk":   desk,
+		"client": client,
 	}); err != nil {
 		training.Error(errnie.Err(
-			errnie.Validation, "[training] cannot paper trade without price, desk and catalog", err,
+			errnie.Validation, "[training] cannot paper trade without price, desk and client", err,
 		))
 
 		return training
@@ -115,8 +114,8 @@ func (training *Training) CognitionTree() ui.CognitionTreeExport {
 
 /*
 Step receives the live market join, scores its regions through the grid,
-and advances the symbol's token path, acting when the path lands on a
-stored path with one agreed action.
+and advances the symbol's grammar, acting when an induced rule matches a
+stored path with an agreed action.
 */
 func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	regions := training.grid.Observe(prior)
@@ -142,44 +141,41 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 
 	current := training.policy.Load()
 
-	if current.tokenizer == nil || regions == nil {
+	if len(current.actions) == 0 || len(regions) == 0 {
 		return emit()
 	}
 
-	// Paths built under other Tokenizer parameters are not paths of this one.
-	if *current.tokenizer != training.seen {
-		training.seen = *current.tokenizer
-		training.paths = make(map[string][]string)
+	grammar, exists := training.grammars[prior.Label]
+	if !exists {
+		grammar = NewGrammar()
+		training.grammars[prior.Label] = grammar
 	}
 
-	active, strength := current.tokenizer.Active(regions)
-	tokens := training.paths[prior.Label]
-	moved := false
-
-	for _, tok := range active {
-		var advanced bool
-		tokens, advanced = current.tokenizer.Advance(tokens, tok, strength)
-
-		if advanced {
-			moved = true
-		}
+	sym := fmt.Sprintf("R%02d", regions[0].Key)
+	if sym == training.lastSym[prior.Label] {
+		return emit()
 	}
 
-	training.paths[prior.Label] = tokens
-	joined := strings.Join(tokens, "/")
-	inspectMatch(current, tokens, strength, metrics)
+	training.lastSym[prior.Label] = sym
+	rule := grammar.Append(sym)
+	if rule == nil {
+		return emit()
+	}
 
+	phrase := rule.TerminalNames(grammar)
+	if len(phrase) < 2 {
+		return emit()
+	}
+
+	inspectMatch(current, phrase, metrics)
+
+	matchedPath := strings.Join(phrase, "/")
 	meta := []*data.StringEntry{
-		{Key: "token_path", Value: joined},
-		{Key: "token_depth", Value: strconv.Itoa(len(tokens))},
+		{Key: "token_path", Value: matchedPath},
+		{Key: "token_depth", Value: strconv.Itoa(len(phrase))},
 	}
 
-	if !moved {
-		return emit(meta...)
-	}
-
-	matchedPath, action := MatchSuffix(tokens, current.actions)
-
+	action := current.actions[matchedPath]
 	if action == "" {
 		return emit(meta...)
 	}
@@ -196,8 +192,6 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 
 /*
 ReloadKeys loads the published action tree from S3 and swaps it in whole.
-Without a published Tokenizer the loaded policy holds the keys but never
-trades.
 */
 func (training *Training) ReloadKeys(ctx context.Context) error {
 	loaded := &policy{
@@ -205,30 +199,35 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 		actions: make(map[string]string),
 	}
 
-	for key, err := range training.catalog.ListBlobs(ctx, "") {
-		if errors.Is(err, tables.ErrBlobStorageUnconfigured) {
-			training.policy.Store(loaded)
-			return nil
-		}
+	if training.client == nil {
+		training.policy.Store(loaded)
+		return nil
+	}
 
-		if err != nil {
-			return errnie.Error(err)
-		}
-
-		dir, file := path.Split(key)
-
-		if file != actionEnter && file != actionExit && file != actionNoop {
+	for measurement := range training.client.Get("") {
+		if measurement == nil {
 			continue
 		}
 
-		dir = strings.TrimSuffix(dir, "/")
-		action := strings.TrimSuffix(file, ".json")
+		if measurement.Source != "policy" {
+			continue
+		}
 
-		if existing, found := loaded.actions[dir]; found && existing != action {
+		action := ""
+		if actEntry := data.Pull(measurement.Meta("action")); actEntry != nil {
+			action = actEntry.Value
+		}
+
+		pathKey := measurement.Label
+		if pathKey == "" {
+			continue
+		}
+
+		if existing, found := loaded.actions[pathKey]; found && existing != action {
 			action = ""
 		}
 
-		loaded.actions[dir] = action
+		loaded.actions[pathKey] = action
 	}
 
 	for dir, action := range loaded.actions {
@@ -254,39 +253,11 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 	}
 
 	slices.Sort(loaded.keys)
-	body, err := training.catalog.GetBlob(ctx, tokenizerKey)
-
-	if errors.Is(err, tables.ErrBlobMissing) {
-		training.policy.Store(loaded)
-
-		errnie.Info(fmt.Sprintf(
-			"[training] %d stored token paths but no %s yet: not trading",
-			len(loaded.keys), tokenizerKey,
-		))
-
-		return nil
-	}
-
-	if err != nil {
-		return errnie.Error(err)
-	}
-
-	tokenizer := &Tokenizer{}
-
-	if err := json.Unmarshal(body, tokenizer); err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "[training] unreadable "+tokenizerKey, err))
-	}
-
-	if err := tokenizer.validate(); err != nil {
-		return errnie.Error(err)
-	}
-
-	loaded.tokenizer = tokenizer
 	training.policy.Store(loaded)
 
 	errnie.Info(fmt.Sprintf(
-		"[training] loaded %d stored token paths (depth=%d regions=%d threshold=%g)",
-		len(loaded.keys), tokenizer.Depth, tokenizer.Regions, tokenizer.Threshold,
+		"[training] loaded %d stored paths",
+		len(loaded.keys),
 	))
 
 	return nil
@@ -309,7 +280,7 @@ func (training *Training) resetPaperAndReload() {
 		return
 	}
 
-	if err := training.ReloadKeys(training.Context()); err != nil && !errors.Is(err, tables.ErrBlobStorageUnconfigured) {
+	if err := training.ReloadKeys(training.Context()); err != nil {
 		training.Error(errnie.Err(
 			errnie.IO,
 			"[training] failed to reload stored prefix keys after paper reset",

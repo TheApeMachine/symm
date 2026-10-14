@@ -1,15 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useSelector } from "@tanstack/react-store";
-import { useEffect, useState } from "react";
 import {
 	DEFAULT_FOCUS_SYMBOL,
-	type RingBuffer,
 	focusAtom,
 	observeSymbols,
 	resonanceStore,
 	symbolsAtom,
+	type RingBuffer,
 } from "#/collections/app";
-import { terminalStore } from "#/collections/terminal";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
 import {
@@ -25,6 +21,9 @@ import {
 } from "#/components/terminal/xray-view";
 import { Button, Flex, Grid, Typography } from "#/components/ui";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { createFileRoute } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
+import { useEffect, useState } from "react";
 
 const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(focusAtom);
@@ -116,7 +115,6 @@ const XrayCarrierBar = () => {
 						size="xs"
 						onClick={() => {
 							focusAtom.set(sym);
-							terminalStore.actions.selectFocusSymbol(sym);
 						}}
 						className="shrink-0 font-mono text-[11px]"
 					>
@@ -129,7 +127,7 @@ const XrayCarrierBar = () => {
 };
 
 const RouteComponent = () => (
-	<Flex.Column className="h-full min-w-275">
+	<Flex.Column className="h-full w-full min-w-275">
 		<XrayPaintBridge />
 		<XrayCarrierBar />
 		<Grid className="min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">

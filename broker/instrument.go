@@ -23,7 +23,7 @@ are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
 	*runtime.System
-	public  *network.WebsocketClient
+	public  Transport
 	Level3  *sync.Map
 	cache   *sync.Map
 	quote   string
@@ -84,7 +84,7 @@ NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */
 func NewInstrument(
-	public *network.WebsocketClient,
+	ctx context.Context, public Transport,
 ) *Instrument {
 	instrument := &Instrument{
 		public:           public,
@@ -97,7 +97,7 @@ func NewInstrument(
 	}
 
 	instrument.System = runtime.NewSystem(
-		public.Context(), "instrument", instrument,
+		ctx, "instrument", instrument,
 	)
 
 	instrument.Transition(runtime.BUSY)
@@ -621,21 +621,23 @@ func (instrument *Instrument) Subscribe() error {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	instrument.public.OnReconnect(func() error {
-		errnie.Info("[instrument] public trade resubscribe after reconnect")
+	if reconnector, ok := instrument.public.(interface{ OnReconnect(func() error) }); ok {
+		reconnector.OnReconnect(func() error {
+			errnie.Info("[instrument] public trade resubscribe after reconnect")
 
-		for _, msg := range tradeSubs {
-			if err := instrument.public.Write(msg); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"[instrument] trade resubscribe failed, redialing",
-					err,
-				))
+			for _, msg := range tradeSubs {
+				if err := instrument.public.Write(msg); err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.IO,
+						"[instrument] trade resubscribe failed, redialing",
+						err,
+					))
+				}
 			}
-		}
 
-		return nil
-	})
+			return nil
+		})
+	}
 
 	instrument.Transition(runtime.READY)
 	return nil

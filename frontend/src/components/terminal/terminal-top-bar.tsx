@@ -136,9 +136,7 @@ export const TerminalTopBar = () => {
 			</Toolbar.Group>
 
 			<Rule />
-
 			<AgentSkill />
-
 			<Toolbar.Spacer />
 
 			<Toolbar.Group className="gap-3.5">
@@ -163,20 +161,13 @@ export const TerminalTopBar = () => {
 				</Button>
 
 				<Rule />
-
 				<Count />
-
 				<Rule />
-
 				<Balance />
-
 				<Rule />
-
 				<PaperPerformance />
 			</Toolbar.Group>
-
 			<Rule />
-
 			<TickCounter />
 		</Toolbar>
 	);

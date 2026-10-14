@@ -14,5 +14,6 @@ type Tee interface {
 	io.Closer
 	Push(*data.Measurement)
 	Next() unsafe.Pointer
+	Run()
 	Pending() int
 }

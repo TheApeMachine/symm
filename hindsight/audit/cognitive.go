@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
+	s3store "github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/ui"
 )
@@ -263,7 +263,7 @@ and false-alarm trigger rates on unseen continuous background tape.
 */
 func AnalyzeCognitiveTrie(
 	ctx context.Context,
-	catalog *tables.Catalog,
+	client *s3store.Client,
 	epoch int64,
 	symbol string,
 	grid *store.Grid,
@@ -274,8 +274,8 @@ func AnalyzeCognitiveTrie(
 	detections []*data.Measurement,
 	takerFee ...float64,
 ) Stage6CognitiveTrie {
-	if catalog == nil || grid == nil {
-		return insufficientCognitiveTrie("Catalog or grid unavailable.")
+	if client == nil || grid == nil {
+		return insufficientCognitiveTrie("Client or grid unavailable.")
 	}
 
 	if permutations <= 0 {
@@ -297,7 +297,7 @@ func AnalyzeCognitiveTrie(
 			maxTick = orderedTicks[len(orderedTicks)-1]
 		}
 
-		loaded, loadErr := loadOrDetectExcursions(ctx, catalog, epoch, symbol, fee, minTick, maxTick)
+		loaded, loadErr := loadOrDetectExcursions(client, epoch, symbol, fee, minTick, maxTick)
 
 		if loadErr != nil {
 			return insufficientCognitiveTrie("Excursion detection failed: " + loadErr.Error())
@@ -316,17 +316,17 @@ func AnalyzeCognitiveTrie(
 		unseenTicks = orderedTicks[splitIdx:]
 	}
 
-	phases1 := extractTriePhases(ctx, catalog, epoch, grid, detections, tickMeasurements, 1)
+	phases1 := extractTriePhases(client, epoch, grid, detections, tickMeasurements, 1)
 	if len(phases1) == 0 {
 		return insufficientCognitiveTrie("No valid sequential token contexts formed from excursions.")
 	}
 
 	evalTop1, _ := evaluateCognitiveTrieForK(1, phases1, permutations, epoch, significance, unseenTicks, tickMeasurements, grid)
 
-	phases2 := extractTriePhases(ctx, catalog, epoch, grid, detections, tickMeasurements, 2)
+	phases2 := extractTriePhases(client, epoch, grid, detections, tickMeasurements, 2)
 	evalTop2, _ := evaluateCognitiveTrieForK(2, phases2, permutations, epoch, significance, unseenTicks, tickMeasurements, grid)
 
-	phases3 := extractTriePhases(ctx, catalog, epoch, grid, detections, tickMeasurements, 3)
+	phases3 := extractTriePhases(client, epoch, grid, detections, tickMeasurements, 3)
 	evalTop3, _ := evaluateCognitiveTrieForK(3, phases3, permutations, epoch, significance, unseenTicks, tickMeasurements, grid)
 
 	s3Audit := auditS3PrefixMemory(phases1)
@@ -980,8 +980,7 @@ func computeClassificationMetrics(
 }
 
 func extractTriePhases(
-	ctx context.Context,
-	catalog *tables.Catalog,
+	client *s3store.Client,
 	epoch int64,
 	grid *store.Grid,
 	detections []*data.Measurement,
@@ -1021,7 +1020,7 @@ func extractTriePhases(
 				errnie.Validation,
 				"[audit.cognitive] detection missing 'type' metadata",
 				nil,
-			), "label", det.Label)
+			))
 
 			tracker.Step(int64(detIndex + 1))
 			continue
@@ -1036,7 +1035,7 @@ func extractTriePhases(
 				errnie.Validation,
 				"[audit.cognitive] invalid excursion tick sequence",
 				nil,
-			), "bTick", bTick, "cTick", cTick, "label", det.Label)
+			))
 
 			tracker.Step(int64(detIndex + 1))
 			continue
@@ -1053,7 +1052,7 @@ func extractTriePhases(
 				errnie.Validation,
 				"[audit.cognitive] invalid startTick relative to bTick",
 				nil,
-			), "startTick", startTick, "bTick", bTick, "label", det.Label)
+			))
 
 			tracker.Step(int64(detIndex + 1))
 			continue
@@ -1074,7 +1073,7 @@ func extractTriePhases(
 		}
 
 		eventTokens, err := archivedIntervalTokens(
-			ctx, catalog, epoch, det.Label, grid, startTick, cTick, tickMeasurements, cardinality,
+			client, epoch, det.Label, grid, startTick, cTick, tickMeasurements, cardinality,
 		)
 
 		if err != nil {
@@ -1167,7 +1166,6 @@ func contextOfTokens(tokens []string) string {
 	}
 
 	grammar := strategy.NewGrammar()
-	tokenizer := &strategy.Tokenizer{Depth: 4}
 	var lastSymbol string
 	var latestPhrase []string
 
@@ -1178,8 +1176,23 @@ func contextOfTokens(tokens []string) string {
 
 		parts := strings.Split(tok, "-")
 
-		if phrase, moved := tokenizer.StepGrammar(grammar, &lastSymbol, parts); moved {
-			latestPhrase = phrase
+		if len(parts) == 0 {
+			continue
+		}
+
+		sym := parts[0]
+
+		if sym != lastSymbol {
+			lastSymbol = sym
+			rule := grammar.Append(sym)
+
+			if rule != nil {
+				phrase := rule.TerminalNames(grammar)
+
+				if len(phrase) >= 2 {
+					latestPhrase = phrase
+				}
+			}
 		}
 	}
 

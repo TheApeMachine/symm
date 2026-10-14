@@ -16,11 +16,13 @@ would only mean re-encoding them for the viewer.
 */
 export const runWarehouseStatement = async (
 	sql: string,
+	signal?: AbortSignal,
 ): Promise<Uint8Array> => {
 	const response = await fetch(`${hubBaseUrl()}/workbench/query`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ sql }),
+		signal,
 	});
 
 	if (!response.ok) {

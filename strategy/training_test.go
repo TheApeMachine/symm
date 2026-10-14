@@ -12,8 +12,8 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/tests/tablestest"
 )
 
 type testFillingDesk struct {
@@ -21,6 +21,10 @@ type testFillingDesk struct {
 	price   *broker.Price
 	writes  chan string
 	volumes chan *decimal.Decimal
+}
+
+func (filling *testFillingDesk) Read(keys ...string) ([]byte, error) {
+	return nil, nil
 }
 
 func (filling *testFillingDesk) Write(buf []byte) error {
@@ -87,34 +91,34 @@ func TestTraining(t *testing.T) {
 
 	Convey("Training", t, func() {
 		filling := newTestFillingDesk(t)
-		catalog := tablestest.New(t)
+		client := store.NewClient(ctx, "symm")
 
-		Convey("NewTraining requires price, desk and catalog", func() {
-			tr1 := NewTraining(ctx, nil, filling.desk, catalog)
+		Convey("NewTraining requires price, desk and client", func() {
+			tr1 := NewTraining(ctx, nil, filling.desk, client)
 			So(tr1.Error(), ShouldNotBeNil)
 
-			tr2 := NewTraining(ctx, filling.price, nil, catalog)
+			tr2 := NewTraining(ctx, filling.price, nil, client)
 			So(tr2.Error(), ShouldNotBeNil)
 
 			tr3 := NewTraining(ctx, filling.price, filling.desk, nil)
 			So(tr3.Error(), ShouldNotBeNil)
 		})
 
-		Convey("ReloadKeys without tokenizer stays idle", func() {
-			training := NewTraining(ctx, filling.price, filling.desk, catalog)
+		Convey("ReloadKeys without client policy stays idle", func() {
+			training := NewTraining(ctx, filling.price, filling.desk, client)
 			So(training.Error(), ShouldBeNil)
 			current := training.policy.Load()
-			So(current.tokenizer, ShouldBeNil)
+			So(len(current.actions), ShouldEqual, 0)
 		})
 
 		Convey("CognitionTree exports stored keys", func() {
-			training := NewTraining(ctx, filling.price, filling.desk, catalog)
+			training := NewTraining(ctx, filling.price, filling.desk, client)
 			tree := training.CognitionTree()
 			So(tree.Keys, ShouldNotBeNil)
 		})
 
 		Convey("Step emits region metrics and meta", func() {
-			training := NewTraining(ctx, filling.price, filling.desk, catalog)
+			training := NewTraining(ctx, filling.price, filling.desk, client)
 			now := time.Now().UTC()
 			join := data.NewMeasurement(100, "BTC/USD", "runtime:join", now, now)
 
@@ -148,7 +152,7 @@ func TestTraining(t *testing.T) {
 		})
 
 		Convey("Step matches suffix and sets meta when policy is active", func() {
-			training := NewTraining(ctx, filling.price, filling.desk, catalog)
+			training := NewTraining(ctx, filling.price, filling.desk, client)
 			now := time.Now().UTC()
 			join := data.NewMeasurement(100, "BTC/USD", "runtime:join", now, now)
 
@@ -177,7 +181,6 @@ func TestTraining(t *testing.T) {
 			join = join.Write()
 
 			training.policy.Store(&policy{
-				tokenizer: &Tokenizer{Depth: 8, Regions: 1, Threshold: 0.0},
 				actions: map[string]string{
 					"R00/R01": "noop",
 				},
@@ -185,12 +188,7 @@ func TestTraining(t *testing.T) {
 
 			next := training.Step(join)
 			So(next, ShouldNotBeNil)
-
-			var tokenPath string
-			for entry := range next.Meta("token_path") {
-				tokenPath = entry.Value
-			}
-			So(tokenPath, ShouldNotBeEmpty)
+			So(next.Source, ShouldEqual, "training")
 		})
 	})
 }

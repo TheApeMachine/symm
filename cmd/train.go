@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"context"
+	"time"
 
 	"github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/hindsight"
+	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 )
@@ -43,52 +46,32 @@ action tree published to S3 storage.`,
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		catalog := tables.Open(ctx)
+		client := store.NewClient(ctx, "symm")
 
-		if catalog == nil {
+		if client == nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
-				"[train] unable to open iceberg catalog",
+				"[train] unable to open store client",
 				nil,
 			))
 		}
 
 		if len(trainEpochs) == 0 {
-			runs, err := catalog.Runs(ctx)
+			seen := make(map[int64]bool)
 
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"[train] failed to read recorded runs from catalog",
-					err,
-				))
-			}
-
-			for _, run := range runs {
-				if run.Epoch <= 0 {
+			for measurement := range client.Get("") {
+				if measurement == nil || measurement.Epoch <= 0 || seen[measurement.Epoch] {
 					continue
 				}
 
-				hasExcursions := false
-
-				for _, detErr := range catalog.Excursions(ctx, run.Epoch) {
-					if detErr != nil {
-						break
-					}
-
-					hasExcursions = true
-					break
-				}
-
-				if hasExcursions {
-					trainEpochs = append(trainEpochs, run.Epoch)
-				}
+				seen[measurement.Epoch] = true
+				trainEpochs = append(trainEpochs, measurement.Epoch)
 			}
 
 			if len(trainEpochs) == 0 {
 				return errnie.Error(errnie.Err(
 					errnie.NotFound,
-					"[train] no completed epochs with excursions found in catalog",
+					"[train] no completed epochs found in store",
 					nil,
 				))
 			}
@@ -108,13 +91,21 @@ action tree published to S3 storage.`,
 			return err
 		}
 
-		trainer := strategy.NewTrainer(ctx, catalog, price)
+		storeTee := hindsight.NewStoreTee(ctx, "train")
+		storeTee.Transition(nmruntime.READY)
+		storeTee.Run()
 
-		if len(trainSymbols) > 0 {
-			trainer.SetSymbols(trainSymbols...)
+		trainer := strategy.NewTrainer(ctx, client, storeTee, price)
+
+		if err := trainer.Generate(trainEpochs...); err != nil {
+			return err
 		}
 
-		return trainer.Generate(trainEpochs...)
+		for storeTee.Pending() > 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		return nil
 	},
 }
 

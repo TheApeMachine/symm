@@ -250,6 +250,11 @@ type Stage4TokenDynamics struct {
 	CompressedTransitionEntropy    float64                       `json:"compressed_transition_entropy"`
 	CompressedNullEntropy          float64                       `json:"compressed_null_entropy"`
 	CompressedEntropyReductionBits float64                       `json:"compressed_entropy_reduction_bits"`
+	SequiturRulesInduced           int                           `json:"sequitur_rules_induced"`
+	SequiturUniquePhrases          int                           `json:"sequitur_unique_phrases"`
+	SequiturTransitionEntropy      float64                       `json:"sequitur_transition_entropy"`
+	SequiturNullEntropy            float64                       `json:"sequitur_null_entropy"`
+	SequiturEntropyReductionBits   float64                       `json:"sequitur_entropy_reduction_bits"`
 	AlwaysStayAccuracy             float64                       `json:"always_stay_accuracy"`
 	MarginalAccuracy               float64                       `json:"marginal_accuracy"`
 	PValue                         float64                       `json:"p_value"` // add-one p of raw transition entropy vs block null

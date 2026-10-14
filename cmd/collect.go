@@ -18,7 +18,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
@@ -75,25 +74,6 @@ var collectCmd = &cobra.Command{
 
 		epoch := processStartedAt.UnixNano()
 
-		catalog := tables.Open(ctx)
-
-		if catalog == nil {
-			return errnie.Error(errnie.Err(
-				errnie.IO, "collect: catalog initialization failed", nil,
-			))
-		}
-
-		if err := catalog.Ensure(ctx); err != nil {
-			return err
-		}
-
-		if err := catalog.RecordRun(ctx, tables.Run{
-			Epoch:     epoch,
-			StartedAt: processStartedAt.UTC(),
-			Status:    "collecting",
-		}); err != nil {
-			errnie.Warn("[collect] failed to record hindsight run: " + err.Error())
-		}
 
 		public := network.NewWebsocketClient(ctx)
 
@@ -103,10 +83,7 @@ var collectCmd = &cobra.Command{
 			))
 		}
 
-		var privateTransport interface {
-			broker.Transport
-			Read() ([]byte, error)
-		}
+		var privateTransport broker.Transport
 
 		if system.Cfg.Market.Model == "paper" {
 			privateTransport = broker.NewPaper(ctx)
@@ -124,7 +101,7 @@ var collectCmd = &cobra.Command{
 			privateTransport = privateWS
 		}
 
-		instrument := broker.NewInstrument(public)
+		instrument := broker.NewInstrument(ctx, public)
 		normalizer := spot.NewNormalizer()
 
 		if err := broker.SeedNormalizer(normalizer); err != nil {
@@ -241,16 +218,11 @@ var collectCmd = &cobra.Command{
 			runsys.Transition(nmruntime.READY)
 		}
 
-		drainErrors := make(chan error, 1)
-
-		go func() {
-			drainErrors <- catalog.Drain(ctx, epoch, storeTee)
-		}()
-
+		storeTee.Run()
 		ingressHalted := make(chan error, 1)
 
 		startIngress := func(
-			client interface{ Read() ([]byte, error) }, name string,
+			client broker.Transport, name string,
 		) {
 			go func() {
 				errnie.Info(fmt.Sprintf("[collect] starting %s ingress", name))
@@ -391,24 +363,18 @@ var collectCmd = &cobra.Command{
 			case <-ctx.Done():
 				errnie.Info("[collect] shutdown requested, flushing in-flight measurements...")
 
-				select {
-				case err := <-drainErrors:
-					if err != nil {
-						return errnie.Error(errnie.Err(
-							errnie.IO, "collect: final catalog commit failed", err,
-						))
+				timeout := time.After(15 * time.Second)
+				for storeTee.Pending() > 0 {
+					select {
+					case <-timeout:
+						errnie.Warn("[collect] storeTee flush timed out on shutdown")
+						return nil
+					case <-time.After(100 * time.Millisecond):
 					}
-
-					errnie.Info("[collect] final catalog flush complete")
-				case <-time.After(15 * time.Second):
-					errnie.Warn("[collect] catalog flush timed out on shutdown")
 				}
 
+				errnie.Info("[collect] final storeTee flush complete")
 				return nil
-			case err := <-drainErrors:
-				return errnie.Error(errnie.Err(
-					errnie.IO, "collect: catalog drain stopped", err,
-				))
 			case err := <-ingressHalted:
 				if ctx.Err() != nil {
 					return nil

@@ -8,24 +8,23 @@ import (
 
 func TestInspectMatchNarrowsStoredPaths(t *testing.T) {
 	current := &policy{
-		tokenizer: &Tokenizer{Depth: 3, Regions: 1, Threshold: 0.5},
 		keys: []string{
-			"R01/R02/R03/enter.json",
-			"R01/R02/R04/exit.json",
-			"R01/R05/R06/enter.json",
-			"R07/R02/R03/exit.json",
+			"R01/R02/R03/enter.bin",
+			"R01/R02/R04/exit.bin",
+			"R01/R05/R06/enter.bin",
+			"R07/R02/R03/exit.bin",
 		},
 	}
 
 	metrics := map[string]float64{}
-	inspectMatch(current, []string{"R01", "R02"}, 0.7, metrics)
+	inspectMatch(current, []string{"R01", "R02"}, metrics)
 
 	want := map[string]float64{
 		"match_candidates:01": 3, "match_enter:01": 2, "match_exit:01": 1,
 		"match_candidates:02": 2, "match_enter:02": 1, "match_exit:02": 1,
 		"path_token:00:0": 1, "path_token:01:0": 2,
 		"match_key:000": 0, "match_key:001": 1,
-		"token_depth": 2, "token_capacity": 3, "stored_paths": 4,
+		"token_depth": 2, "stored_paths": 4,
 	}
 
 	for key, value := range want {
@@ -41,12 +40,11 @@ declared dimension, or NewMetric gets no unit and validation rejects it.
 */
 func TestInspectMetricsHaveDimensions(t *testing.T) {
 	current := &policy{
-		tokenizer: &Tokenizer{Depth: 4, Regions: 2, Threshold: 0.5},
-		keys:      []string{"R01-R02/R03-R04/R05-R06/R07-R08/enter.json"},
+		keys: []string{"R01-R02/R03-R04/R05-R06/R07-R08/enter.bin"},
 	}
 
 	metrics := map[string]float64{}
-	inspectMatch(current, []string{"R01-R02", "R03-R04", "R05-R06", "R07-R08"}, 0.7, metrics)
+	inspectMatch(current, []string{"R01-R02", "R03-R04", "R05-R06", "R07-R08"}, metrics)
 
 	for _, name := range []string{
 		"position_open", "position_exiting", "position_qty", "position_bid_depth_qty",

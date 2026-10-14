@@ -74,7 +74,7 @@ func Filters(measurement *data.Measurement) bool {
 			return isFocus(measurement)
 		}
 
-		return isLogic(measurement, "resonance")
+		return isLogic(measurement, "resonance", "manifold", "cognition")
 	case "fluid":
 		return isLogic(measurement, "manifold")
 	case "diagnostics":

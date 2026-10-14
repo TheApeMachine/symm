@@ -20,7 +20,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
@@ -36,6 +35,7 @@ import (
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -118,38 +118,8 @@ var (
 			)
 			uiTee1.Transition(nmruntime.READY)
 
-			// Hindsight's record families are Iceberg tables. The object store
-			// above keeps only genuine blobs, the model checkpoint chief among
-			// them; everything a reader queries lives in the catalog.
-			catalog := tables.Open(ctx)
-
-			if catalog == nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO, "symm: catalog initialization failed", nil,
-				))
-			}
-
-			if err := catalog.Ensure(ctx); err != nil {
-				return err
-			}
-
+			storeClient := store.NewClient(ctx, "symm")
 			captureEnabled := captureFlag || viper.GetBool("hindsight.capture.enabled")
-
-			runStatus := "running"
-
-			if !captureEnabled {
-				runStatus = "observer"
-			}
-
-			// Register this process in the Runs metadata table so Hindsight can
-			// list a capture identity even when the tape is still thin.
-			if err := catalog.RecordRun(ctx, tables.Run{
-				Epoch:     epoch,
-				StartedAt: processStartedAt.UTC(),
-				Status:    runStatus,
-			}); err != nil {
-				errnie.Warn("[root] failed to record hindsight run: " + err.Error())
-			}
 
 			public := network.NewWebsocketClient(ctx)
 
@@ -159,10 +129,7 @@ var (
 				))
 			}
 
-			var privateTransport interface {
-				broker.Transport
-				Read() ([]byte, error)
-			}
+			var privateTransport broker.Transport
 
 			if system.Cfg.Market.Model == "paper" {
 				privateTransport = broker.NewPaper(ctx)
@@ -180,7 +147,7 @@ var (
 				privateTransport = privateWS
 			}
 
-			instrument := broker.NewInstrument(public)
+			instrument := broker.NewInstrument(ctx, public)
 			normalizer := spot.NewNormalizer()
 			if err := broker.SeedNormalizer(normalizer); err != nil {
 				return err
@@ -240,15 +207,13 @@ var (
 
 			ingressTee := teeOf(ingressStoreTee)
 
-			// Every trade's signed volume feeds the participation limit, and
-			// the desk sizes, monitors and shadow-fills against book history.
-			desk := broker.NewDesk(ctx, privateTransport, price, balance, catalog)
+			desk := broker.NewDesk(ctx, privateTransport, price, balance)
 
 			training := strategy.NewTraining(
 				ctx,
 				price,
 				desk,
-				catalog,
+				storeClient,
 			)
 
 			if training.Status() == nmruntime.ERROR {
@@ -269,8 +234,7 @@ var (
 			pumpdumpSignal := pumpdump.NewSignal(ctx)
 			sentimentSignal := sentiment.NewSignal(ctx)
 			toxicitySignal := toxicity.NewSignal(ctx)
-			// resonance.NewSolver is retained and ready to be reintroduced as an action veto gate.
-			_ = resonance.NewSolver
+			resonanceSolver := resonance.NewSolver(ctx, 0.05)
 
 			// Pipeline nodes report construction faults by entering ERROR.
 			// ERROR -> READY is a legal transition, so the READY sweep below
@@ -287,6 +251,7 @@ var (
 				pumpdumpSignal,
 				sentimentSignal,
 				toxicitySignal,
+				resonanceSolver,
 			}
 
 			for _, node := range pipelineNodes {
@@ -323,6 +288,9 @@ var (
 						toxicitySignal,
 					},
 					{
+						resonanceSolver,
+					},
+					{
 						training,
 					},
 				},
@@ -337,7 +305,7 @@ var (
 			brokerService := broker.NewService(desk)
 			brokerService.Register(hub.App())
 
-			hindsightService := hindsight.NewService(ctx, catalog)
+			hindsightService := hindsight.NewService(ctx, storeClient)
 			hindsightService.Register(hub.App())
 
 			hub.App().Get("/cognition/tree", func(reqCtx fiber.Ctx) error {
@@ -368,6 +336,7 @@ var (
 				pumpdumpSignal,
 				sentimentSignal,
 				toxicitySignal,
+				resonanceSolver,
 				workspace,
 			}
 
@@ -377,6 +346,12 @@ var (
 
 			for _, runsys := range runsystems {
 				runsys.Transition(nmruntime.READY)
+			}
+
+			detectorTee.Run()
+
+			if ingressStoreTee != nil {
+				ingressStoreTee.Run()
 			}
 
 			book.SetTouch(func(touches []kraken.Level3Touch) {
@@ -434,18 +409,13 @@ var (
 				}()
 			}
 
-			if ingressStoreTee != nil {
-				go func() {
-					drainErrors <- catalog.Drain(ctx, epoch, ingressStoreTee)
-				}()
-			}
 
 			// Ingress reports a fault it cannot continue past (a Level3 frame
 			// the book could not apply). The first fault halts the process.
 			ingressHalted := make(chan error, 1)
 
 			startIngress := func(
-				client interface{ Read() ([]byte, error) }, name string,
+				client broker.Transport, name string,
 			) {
 				go func() {
 					errnie.Info(fmt.Sprintf("[root] starting %s ingress", name))

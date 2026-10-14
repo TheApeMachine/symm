@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/audit"
-	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -48,17 +48,14 @@ var auditCmd = &cobra.Command{
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		catalog := tables.Open(ctx)
-		if catalog == nil {
+		client := store.NewClient(ctx, "symm")
+
+		if client == nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
-				"[audit] unable to open iceberg catalog",
+				"[audit] unable to open store client",
 				nil,
 			))
-		}
-
-		if err := catalog.Ensure(ctx); err != nil {
-			return errnie.Error(err)
 		}
 
 		opts := audit.AuditOptions{
@@ -71,7 +68,7 @@ var auditCmd = &cobra.Command{
 			NoPlots:      auditNoPlots,
 		}
 
-		report, err := audit.Run(ctx, catalog, opts)
+		report, err := audit.Run(ctx, client, opts)
 		if err != nil {
 			return errnie.Error(err)
 		}

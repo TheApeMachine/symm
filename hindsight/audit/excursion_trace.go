@@ -7,11 +7,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/apache/iceberg-go"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
+	s3store "github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 )
 
@@ -22,7 +21,7 @@ deduplicating consecutive ticks with identical winning region tokens.
 */
 func ExtractExcursionTraces(
 	ctx context.Context,
-	catalog *tables.Catalog,
+	client *s3store.Client,
 	epoch int64,
 	grid *store.Grid,
 	detections []*data.Measurement,
@@ -147,18 +146,21 @@ func ExtractExcursionTraces(
 			}
 		}
 
-		if !hasSample && catalog != nil && epoch > 0 {
-			for meas, tapeErr := range catalog.SignalLogic(
-				ctx, epoch, symbol, startTick, cTick, tables.SensorySources...,
-			) {
-				if tapeErr != nil {
-					errnie.Error(tapeErr)
-					break
+		if !hasSample && client != nil && epoch > 0 {
+			for measurement := range client.Get(fmt.Sprintf("%d/%s/", epoch, symbol)) {
+				if measurement == nil {
+					continue
 				}
 
-				if meas != nil && (symbol == "" || meas.Label == symbol) {
-					ticksMap[meas.Tick] = append(ticksMap[meas.Tick], meas)
+				if measurement.Tick < startTick || measurement.Tick > cTick {
+					continue
 				}
+
+				if !slices.Contains(strategy.SensorySources, measurement.Source) {
+					continue
+				}
+
+				ticksMap[measurement.Tick] = append(ticksMap[measurement.Tick], measurement)
 			}
 		}
 
@@ -168,30 +170,13 @@ func ExtractExcursionTraces(
 
 		tradePrices := make(map[int64]float64)
 
-		if catalog != nil && epoch > 0 {
-			filter := iceberg.NewAnd(
-				iceberg.NewAnd(
-					iceberg.EqualTo(iceberg.Reference("source"), "spot:trade"),
-					iceberg.EqualTo(iceberg.Reference("label"), symbol),
-				),
-				iceberg.NewAnd(
-					iceberg.GreaterThanEqual(iceberg.Reference("tick"), startTick),
-					iceberg.LessThanEqual(iceberg.Reference("tick"), cTick),
-				),
-			)
-
-			for trade, err := range catalog.Scan(ctx, tables.Measurements, epoch, filter, 0) {
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						"[audit.excursion_trace] failed to read trade stream for excursion",
-						err,
-					), "symbol", symbol, "startTick", startTick, "cTick", cTick)
-
-					break
+		if client != nil && epoch > 0 {
+			for trade := range client.Get(fmt.Sprintf("%d/%s/spot:trade/", epoch, symbol)) {
+				if trade == nil {
+					continue
 				}
 
-				if trade == nil {
+				if trade.Tick < startTick || trade.Tick > cTick {
 					continue
 				}
 
@@ -266,7 +251,13 @@ func ExtractExcursionTraces(
 			}
 
 			token := fmt.Sprintf("R%02d", regions[0].Key)
-			top3Token, _ := (&strategy.Tokenizer{Regions: 3}).Token(regions)
+			top3Parts := make([]string, 0, min(3, len(regions)))
+
+			for index := 0; index < min(3, len(regions)); index++ {
+				top3Parts = append(top3Parts, fmt.Sprintf("R%02d", regions[index].Key))
+			}
+
+			top3Token := strings.Join(top3Parts, "-")
 			var brightness [store.RegionCount]float64
 			var counts [store.RegionCount]int
 

@@ -126,11 +126,8 @@ token sequence itself (region keys), how strong the current token is against
 the tokenizer threshold, and for every prefix length how many stored paths
 still match and which actions those agree on.
 */
-func inspectMatch(current *policy, tokens []string, strength float64, metrics map[string]float64) {
+func inspectMatch(current *policy, tokens []string, metrics map[string]float64) {
 	metrics["token_depth"] = float64(len(tokens))
-	metrics["token_capacity"] = float64(current.tokenizer.Depth)
-	metrics["token_strength"] = strength
-	metrics["token_threshold"] = current.tokenizer.Threshold
 	metrics["stored_paths"] = float64(len(current.keys))
 	metrics["stored_paths_hash"] = float64(keysHash(current.keys))
 
@@ -162,7 +159,7 @@ func inspectMatch(current *policy, tokens []string, strength float64, metrics ma
 
 			total++
 
-			switch strings.TrimSuffix(key[len(prefix):][strings.LastIndex(key[len(prefix):], "/")+1:], ".json") {
+			switch strings.TrimSuffix(key[len(prefix):][strings.LastIndex(key[len(prefix):], "/")+1:], ".bin") {
 			case "enter":
 				enter++
 			case "exit":

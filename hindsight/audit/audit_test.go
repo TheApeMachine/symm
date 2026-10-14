@@ -273,7 +273,7 @@ func TestAuditStages(t *testing.T) {
 
 			So(cognitive.Status, ShouldEqual, "INSUFFICIENT_DATA")
 			So(cognitive.Passed, ShouldBeFalse)
-			So(cognitive.SummaryText, ShouldContainSubstring, "Cognitive Trie: Catalog or grid unavailable.")
+			So(cognitive.SummaryText, ShouldContainSubstring, "Cognitive Trie: Client or grid unavailable.")
 		})
 
 		Convey("When testing trie node metric traversal and token deduplication", func() {

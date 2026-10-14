@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { RingBuffer, signals } from "#/collections/app";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import { ImpulseMapViz } from "./impulse-map-viz";
 import type { ImpulseNode } from "./types";
 
 afterEach(() => {
 	cleanup();
+	signals.training.setState(() => ({}));
 });
 
 describe("ImpulseMapViz", () => {
@@ -202,5 +205,59 @@ describe("ImpulseMapViz", () => {
 		expect(regionCountEl?.textContent).toBe("3");
 		expect(hudMetricEl?.textContent).toBe("5");
 		expect(hudRegionEl?.textContent).toBe("3");
+	});
+
+	it("renders canonical grid regions and cells when no data prop is provided", () => {
+		const { container } = render(
+			<div style={{ width: "800px", height: "600px" }}>
+				<ImpulseMapViz symbol="BTC/USD" />
+			</div>,
+		);
+
+		const metricCountEl = container.querySelector('[data-l="grid-metric-count"]');
+		const regionCountEl = container.querySelector('[data-l="grid-region-count"]');
+		expect(metricCountEl?.textContent).toBe("81");
+		expect(regionCountEl?.textContent).toBe("15");
+
+		const circles = container.querySelectorAll(".nodes circle");
+		expect(circles).toHaveLength(81);
+	});
+
+	it("lights up grid regions when live telemetry arrives on signals.training", () => {
+		const ring = new RingBuffer<MeasurementT>(10);
+		ring.add({
+			symbol: "SPACE/USD",
+			source: "training",
+			metrics: [
+				{ name: "region_brightness:R01", raw: 0.85 },
+				{ name: "region_members:R01", raw: 6 },
+				{ name: "region_brightness:R07", raw: 0.92 },
+				{ name: "region_members:R07", raw: 7 },
+			],
+			provenance: [{ name: "token_path", value: "R01/R07" }],
+		} as unknown as MeasurementT);
+
+		const { container } = render(
+			<div style={{ width: "800px", height: "600px" }}>
+				<ImpulseMapViz symbol="SPACE/USD" />
+			</div>,
+		);
+
+		act(() => {
+			signals.training.setState(() => ({ "SPACE/USD": ring }));
+		});
+
+		// Active regions should appear in overlay
+		const activeOverlay = container.querySelector(".space-y-1\\.5");
+		expect(activeOverlay?.textContent).toContain("R07");
+		expect(activeOverlay?.textContent).toContain("R01");
+		expect(activeOverlay?.textContent).toContain("0.92");
+		expect(activeOverlay?.textContent).toContain("0.85");
+
+		// Highly active nodes have golden stroke
+		const goldCircles = Array.from(container.querySelectorAll(".nodes circle")).filter(
+			(el) => el.getAttribute("stroke") === "#fbbf24",
+		);
+		expect(goldCircles.length).toBeGreaterThan(0);
 	});
 });

@@ -1,9 +1,14 @@
 package workbench
 
 import (
+	"database/sql"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -147,4 +152,159 @@ func TestWarehouse_ConnectAndQuery(t *testing.T) {
 		t.Fatal("expected non-empty arrow ipc stream from DESCRIBE")
 	}
 
+}
+
+func TestDuckDBSchema(t *testing.T) {
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+		ATTACH ':memory:' AS symmwarehouse;
+		CREATE SCHEMA symmwarehouse.hindsight;
+		CREATE TABLE symmwarehouse.hindsight.measurements (
+			id UINTEGER,
+			epoch BIGINT,
+			seq_idx BIGINT,
+			tick BIGINT,
+			"timestamp" BIGINT,
+			"at" TIMESTAMP,
+			"from" TIMESTAMP,
+			label VARCHAR,
+			source VARCHAR,
+			metrics MAP(VARCHAR, STRUCT(raw DOUBLE, snm DOUBLE, exact VARCHAR, unit VARCHAR, timescale VARCHAR)),
+			meta MAP(VARCHAR, VARCHAR)
+		);
+		INSERT INTO symmwarehouse.hindsight.measurements VALUES (
+			1, 100, 1, 10, 1000, '2026-10-14 12:00:00', '2026-10-14 12:00:00',
+			'ADA/USD', 'spot:trade',
+			map(['mid', 'qty'], [{'raw': 0.75, 'snm': 0.0, 'exact': '0.75', 'unit': 'USD', 'timescale': 'tick'}, {'raw': 10.0, 'snm': 0.0, 'exact': '10.0', 'unit': 'ADA', 'timescale': 'tick'}]),
+			map(['tag'], ['test'])
+		);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var mid float64
+	err = db.QueryRow(`SELECT metrics['mid'].raw FROM symmwarehouse.hindsight.measurements`).Scan(&mid)
+	if err != nil {
+		t.Fatalf("QueryRow metrics['mid'].raw failed: %v", err)
+	}
+	t.Logf("mid = %f", mid)
+
+	rows, err := db.Query(`SHOW ALL TABLES`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	cols, _ := rows.Columns()
+	t.Logf("SHOW ALL TABLES columns: %v", cols)
+	for rows.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("Row: %v", vals)
+	}
+
+	ctx := t.Context()
+	s3Client := store.NewClient(ctx, "symm")
+	if s3Client == nil {
+		t.Fatal("store.NewClient is nil")
+	}
+
+	start := time.Now()
+	imported := 0
+
+	batchSize := 200
+	var batchRows []string
+
+	flush := func() error {
+		if len(batchRows) == 0 {
+			return nil
+		}
+		query := "INSERT INTO symmwarehouse.hindsight.measurements VALUES " + strings.Join(batchRows, ",")
+		_, err := db.ExecContext(ctx, query)
+		batchRows = batchRows[:0]
+		return err
+	}
+
+	for m := range s3Client.Get("") {
+		imported++
+
+		var metricKeys []string
+		var metricVals []string
+		for entry := range m.Read() {
+			if entry == nil || entry.Metric == nil {
+				continue
+			}
+			metricKeys = append(metricKeys, literal(entry.Key))
+			exactStr := "''"
+			if entry.Metric.Exact() != nil {
+				exactStr = literal(entry.Metric.Exact().String())
+			}
+			metricVals = append(metricVals, fmt.Sprintf(
+				"{'raw': %f, 'snm': %f, 'exact': %s, 'unit': %s, 'timescale': %s}",
+				entry.Metric.Raw(), entry.Metric.SNM(), exactStr,
+				literal(string(entry.Metric.Unit())),
+				literal(string(entry.Metric.Timescale())),
+			))
+		}
+
+		metricsMap := fmt.Sprintf("map([%s], [%s])", strings.Join(metricKeys, ", "), strings.Join(metricVals, ", "))
+
+		var metaKeys []string
+		var metaVals []string
+		for entry := range m.Meta() {
+			if entry != nil {
+				metaKeys = append(metaKeys, literal(entry.Key))
+				metaVals = append(metaVals, literal(entry.Value))
+			}
+		}
+		metaMap := fmt.Sprintf("map([%s], [%s])", strings.Join(metaKeys, ", "), strings.Join(metaVals, ", "))
+
+		rowStr := fmt.Sprintf(
+			"(%d, %d, %d, %d, %d, %s, %s, %s, %s, %s, %s)",
+			m.ID, m.Epoch, m.SeqIdx, m.Tick, m.Timestamp,
+			literal(m.At.Format("2006-01-02 15:04:05.999999")),
+			literal(m.From.Format("2006-01-02 15:04:05.999999")),
+			literal(m.Label), literal(m.Source),
+			metricsMap, metaMap,
+		)
+		batchRows = append(batchRows, rowStr)
+
+		if len(batchRows) >= batchSize {
+			if err := flush(); err != nil {
+				t.Fatalf("flush failed at row %d: %v", imported, err)
+			}
+		}
+
+		if imported%100 == 0 {
+			t.Logf("Downloaded %d measurements (elapsed: %v)", imported, time.Since(start))
+		}
+		if imported >= 500 {
+			break
+		}
+	}
+
+	if err := flush(); err != nil {
+		t.Fatalf("final flush failed: %v", err)
+	}
+
+	t.Logf("Imported %d measurements from S3 into DuckDB in %v", imported, time.Since(start))
+
+	var total int64
+	err = db.QueryRowContext(ctx, "SELECT count(*) FROM symmwarehouse.hindsight.measurements").Scan(&total)
+	if err != nil {
+		t.Fatalf("count query failed: %v", err)
+	}
+	t.Logf("Total rows in DuckDB: %d", total)
 }

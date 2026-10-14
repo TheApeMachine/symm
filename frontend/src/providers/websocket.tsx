@@ -41,11 +41,19 @@ export const sendPositionExit = (symbol: string) => {
 	}
 };
 
+const toBackendRoute = (route: string) => {
+	// The learning surface hosts the Impulse Map and Position Health inspector,
+	// which require focused signal streams (CVD, Hawkes, Depthflow, etc.) to light up
+	// the SOM grid confluence regions.
+	return route === "learning" ? "dashboard" : route;
+};
+
 export const sendRoute = (route: string) => {
+	const backendRoute = toBackendRoute(route);
 	for (const worker of globalWsWorkers) {
 		worker.postMessage({
 			type: "ROUTE",
-			route,
+			route: backendRoute,
 		});
 	}
 };
@@ -282,6 +290,7 @@ export const WsFeed = () => {
 				if (data.type === "STATUS") {
 					onlineAtom.set(data.status);
 					if (data.status === "ONLINE") {
+						errorAtom.set(null);
 						worker.postMessage({ type: "FOCUS", symbol: focusAtom.get() });
 					}
 					return;
@@ -363,7 +372,7 @@ export const WsFeed = () => {
 				}
 			});
 
-			worker.postMessage({ type: "ROUTE", route: routeAtom.get() });
+			worker.postMessage({ type: "ROUTE", route: toBackendRoute(routeAtom.get()) });
 			worker.postMessage({ type: "CONNECT", url });
 			return worker;
 		});
@@ -377,8 +386,9 @@ export const WsFeed = () => {
 		});
 
 		const unsubscribeRoute = routeAtom.subscribe((route: string) => {
+			const backendRoute = toBackendRoute(route);
 			for (const worker of workers) {
-				worker.postMessage({ type: "ROUTE", route });
+				worker.postMessage({ type: "ROUTE", route: backendRoute });
 			}
 		});
 

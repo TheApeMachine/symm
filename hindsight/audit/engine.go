@@ -11,12 +11,11 @@ import (
 	"slices"
 	"time"
 
-	"github.com/apache/iceberg-go"
-	icetable "github.com/apache/iceberg-go/table"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
+	s3store "github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/strategy"
 )
 
 /*
@@ -39,9 +38,9 @@ type AuditOptions struct {
 Run executes the complete 6-stage health audit (Stage 0 to Stage 5) and generates
 machine-readable and visual outputs in the specified directory.
 */
-func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*AuditReport, error) {
-	if catalog == nil {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "[audit] catalog is required", nil))
+func Run(ctx context.Context, client *s3store.Client, opts AuditOptions) (*AuditReport, error) {
+	if client == nil {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "[audit] client is required", nil))
 	}
 
 	if opts.MaxTicks < 0 {
@@ -84,17 +83,23 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	candidates := []int64{opts.Epoch}
 
 	if opts.Epoch <= 0 {
-		runs, err := catalog.Runs(ctx)
+		seen := make(map[int64]bool)
 
-		if err != nil || len(runs) == 0 {
-			return nil, errnie.Error(errnie.Err(errnie.NotFound, "[audit] no recorded runs found to audit", err))
+		for measurement := range client.Get("") {
+			if measurement == nil || measurement.Epoch <= 0 || seen[measurement.Epoch] {
+				continue
+			}
+
+			seen[measurement.Epoch] = true
+			candidates = append(candidates, measurement.Epoch)
 		}
 
-		candidates = candidates[:0]
-
-		for _, run := range runs {
-			candidates = append(candidates, run.Epoch)
+		if len(candidates) == 0 {
+			return nil, errnie.Error(errnie.Err(errnie.NotFound, "[audit] no recorded runs found to audit", nil))
 		}
+
+		slices.Sort(candidates)
+		slices.Reverse(candidates)
 	}
 
 	targetEpoch := candidates[0]
@@ -113,7 +118,7 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	auditStart := time.Now()
 	errnie.Info(fmt.Sprintf("[audit] starting audit on %s (ticks: %s)", symbolDesc, ticksDesc))
 
-	// 1. Ingest observations from Iceberg with chronological ordering and strict error propagation
+	// 1. Ingest observations from store with chronological ordering and strict error propagation
 	var (
 		orderedTicks     []int64
 		tickMeasurements map[int64][]*data.Measurement
@@ -126,7 +131,7 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	for _, epoch := range candidates {
 		targetEpoch = epoch
 		orderedTicks, tickMeasurements, rawSeries, canonicalSeries, allMeasurements, err = ingestMetrics(
-			ctx, catalog, targetEpoch, opts.Symbol, opts.MaxTicks,
+			client, targetEpoch, opts.Symbol, opts.MaxTicks,
 		)
 
 		if err != nil {
@@ -211,14 +216,14 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 		maxTick = orderedTicks[len(orderedTicks)-1]
 	}
 
-	detections, detErr := loadOrDetectExcursions(ctx, catalog, targetEpoch, opts.Symbol, opts.TakerFee, minTick, maxTick)
+	detections, detErr := loadOrDetectExcursions(client, targetEpoch, opts.Symbol, opts.TakerFee, minTick, maxTick)
 
 	if detErr != nil {
 		errnie.Warn("[audit] excursion detection retrieval: " + detErr.Error())
 	}
 
 	precursor := AnalyzePrecursorSeparation(
-		ctx, catalog, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, alpha, detections, opts.TakerFee,
+		ctx, client, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, alpha, detections, opts.TakerFee,
 	)
 	// Hypothesis tests on detections made at another fee than declared test
 	// other excursions than the report claims.
@@ -245,12 +250,12 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	stage6Start := time.Now()
 	errnie.Info(fmt.Sprintf("[audit] [Bonus Stage 6] Auditing Cognitive Engine & Radix Trie Dynamics (%d detections, %d permutations)...", len(detections), opts.Permutations))
 	cognitive := AnalyzeCognitiveTrie(
-		ctx, catalog, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, alpha, detections, opts.TakerFee,
+		ctx, client, targetEpoch, opts.Symbol, fullGrid, orderedTicks, tickMeasurements, opts.Permutations, alpha, detections, opts.TakerFee,
 	)
 	errnie.Info(fmt.Sprintf("[audit] [Bonus Stage 6] Completed in %s: %s", time.Since(stage6Start).Round(time.Millisecond), cognitive.SummaryText))
 
 	// Excursion Dynamic Transitions
-	traces := ExtractExcursionTraces(ctx, catalog, targetEpoch, fullGrid, detections, tickMeasurements, 5)
+	traces := ExtractExcursionTraces(ctx, client, targetEpoch, fullGrid, detections, tickMeasurements, 5)
 	precursor.ExcursionTraces = traces
 
 
@@ -267,13 +272,13 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 	// scattered subset of cvd frames. Truthfulness needs complete streams:
 	// both the trade tape and cvd are read in full from the epoch start to
 	// the sample's last tick for every sampled symbol.
-	trades, tradeErr := loadSampleStream(ctx, catalog, targetEpoch, "spot:trade", orderedTicks, allMeasurements)
+	trades, tradeErr := loadSampleStream(client, targetEpoch, "spot:trade", orderedTicks, allMeasurements)
 
 	if tradeErr != nil {
 		return nil, errnie.Error(tradeErr)
 	}
 
-	cvdFrames, cvdErr := loadSampleStream(ctx, catalog, targetEpoch, "cvd", orderedTicks, allMeasurements)
+	cvdFrames, cvdErr := loadSampleStream(client, targetEpoch, "cvd", orderedTicks, allMeasurements)
 
 	if cvdErr != nil {
 		return nil, errnie.Error(cvdErr)
@@ -281,7 +286,7 @@ func Run(ctx context.Context, catalog *tables.Catalog, opts AuditOptions) (*Audi
 
 	// The level3 tape from the epoch start rebuilds the book every trade was
 	// stamped from, beginning at the subscription snapshot.
-	level3, level3Err := loadSampleStream(ctx, catalog, targetEpoch, "spot:level3", orderedTicks, allMeasurements)
+	level3, level3Err := loadSampleStream(client, targetEpoch, "spot:level3", orderedTicks, allMeasurements)
 
 	if level3Err != nil {
 		return nil, errnie.Error(level3Err)
@@ -375,8 +380,7 @@ and extracts both raw producer series and canonical grid input series.
 Fails loudly on any scan or decode failure.
 */
 func ingestMetrics(
-	ctx context.Context,
-	catalog *tables.Catalog,
+	client *s3store.Client,
 	epoch int64,
 	symbol string,
 	maxTicks int,
@@ -388,114 +392,34 @@ func ingestMetrics(
 	[]*data.Measurement,
 	error,
 ) {
-	tbl, err := catalog.Load(ctx, tables.Measurements)
-	if err != nil {
-		return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(errnie.BadGateway, "[audit] failed to load measurements table", err))
-	}
-
-	s3Ctx := catalog.Context(ctx)
-	var filter iceberg.BooleanExpression = iceberg.NewAnd(
-		iceberg.EqualTo(iceberg.Reference("epoch"), epoch),
-		iceberg.IsIn(iceberg.Reference("source"), tables.SensorySources...),
-	)
-
+	prefix := fmt.Sprintf("%d/", epoch)
 	if symbol != "" {
-		filter = iceberg.NewAnd(
-			filter,
-			iceberg.EqualTo(iceberg.Reference("label"), symbol),
-		)
-	}
-
-	if maxTicks > 0 {
-		filter = iceberg.NewAnd(
-			filter,
-			iceberg.LessThanEqual(iceberg.Reference("tick"), int64(maxTicks)),
-		)
-	}
-
-	tasks, err := tbl.Scan(icetable.WithRowFilter(filter)).PlanFiles(s3Ctx)
-	if err != nil {
-		return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(errnie.BadGateway, "[audit] failed to plan files", err))
-	}
-
-	if len(tasks) == 0 {
-		return nil, nil, nil, nil, nil, nil
+		prefix = fmt.Sprintf("%d/%s/", epoch, symbol)
 	}
 
 	tickMeasurements := make(map[int64][]*data.Measurement)
 	seenTicks := make(map[int64]struct{})
-
-	chunkSize := 250
 	ingestStart := time.Now()
 
-	for taskIndex := 0; taskIndex < len(tasks); taskIndex += chunkSize {
-		endIndex := min(taskIndex+chunkSize, len(tasks))
-
-		scanOpts := []icetable.ScanOption{
-			icetable.WithRowFilter(filter),
-			icetable.WitMaxConcurrency(16),
+	for measurement := range client.Get(prefix) {
+		if measurement == nil {
+			continue
 		}
 
-		_, batches, err := tbl.Scan(scanOpts...).ReadTasks(s3Ctx, tasks[taskIndex:endIndex])
-
-		// A dropped chunk would silently thin the sample every later stage
-		// measures, so any read failure ends the audit.
-		if err != nil {
-			return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(
-				errnie.BadGateway, fmt.Sprintf("[audit] failed to read tasks chunk %d-%d", taskIndex, endIndex), err,
-			))
+		if symbol != "" && measurement.Label != symbol {
+			continue
 		}
 
-		for batch, batchErr := range batches {
-			if batchErr != nil {
-				return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(
-					errnie.BadGateway, "[audit] corrupted measurement batch", batchErr,
-				))
-			}
-
-			if batch != nil {
-				measurements, readErr := tables.ReadMeasurements(batch)
-				batch.Release()
-
-				if readErr != nil {
-					return nil, nil, nil, nil, nil, errnie.Error(errnie.Err(
-						errnie.BadGateway, "[audit] unreadable measurement batch", readErr,
-					))
-				}
-
-				for _, meas := range measurements {
-					if meas != nil {
-						if maxTicks > 0 && meas.Tick > int64(maxTicks) {
-							continue
-						}
-
-						tickMeasurements[meas.Tick] = append(tickMeasurements[meas.Tick], meas)
-						seenTicks[meas.Tick] = struct{}{}
-					}
-				}
-			}
+		if !slices.Contains(strategy.SensorySources, measurement.Source) {
+			continue
 		}
 
-		completedTasks := endIndex
-		percent := float64(completedTasks) / float64(len(tasks)) * 100.0
-		elapsed := time.Since(ingestStart)
-		var etaStr string
-
-		if completedTasks > 0 && completedTasks < len(tasks) {
-			rate := float64(completedTasks) / elapsed.Seconds()
-			remaining := len(tasks) - completedTasks
-			etaDuration := time.Duration(float64(remaining)/rate) * time.Second
-			etaStr = fmt.Sprintf(" | ETA: %s", etaDuration.Round(time.Second))
+		if maxTicks > 0 && measurement.Tick > int64(maxTicks) {
+			continue
 		}
 
-		errnie.Info(fmt.Sprintf(
-			"[audit] [1/7 Ingest] %d / %d tasks (%.1f%%) | %d ticks | elapsed: %s%s",
-			completedTasks, len(tasks), percent, len(seenTicks), elapsed.Round(time.Second), etaStr,
-		))
-
-		if maxTicks > 0 && len(seenTicks) >= maxTicks+50 {
-			break
-		}
+		tickMeasurements[measurement.Tick] = append(tickMeasurements[measurement.Tick], measurement)
+		seenTicks[measurement.Tick] = struct{}{}
 	}
 
 	if len(seenTicks) == 0 {
@@ -696,8 +620,7 @@ sample from the start of the epoch through the sample's last tick, so each
 row has its true predecessor. A read failure fails the audit.
 */
 func loadSampleStream(
-	ctx context.Context,
-	catalog *tables.Catalog,
+	client *s3store.Client,
 	epoch int64,
 	source string,
 	ticks []int64,
@@ -709,9 +632,9 @@ func loadSampleStream(
 
 	symbolSet := make(map[string]struct{})
 
-	for _, m := range measurements {
-		if m != nil && m.Source == "cvd" {
-			symbolSet[m.Label] = struct{}{}
+	for _, measurement := range measurements {
+		if measurement != nil && measurement.Source == "cvd" {
+			symbolSet[measurement.Label] = struct{}{}
 		}
 	}
 
@@ -727,22 +650,21 @@ func loadSampleStream(
 
 	slices.Sort(symbols)
 
-	filter := iceberg.NewAnd(
-		iceberg.NewAnd(
-			iceberg.EqualTo(iceberg.Reference("source"), source),
-			iceberg.IsIn(iceberg.Reference("label"), symbols...),
-		),
-		iceberg.LessThanEqual(iceberg.Reference("tick"), ticks[len(ticks)-1]),
-	)
-
 	var trades []*data.Measurement
+	maxTick := ticks[len(ticks)-1]
 
-	for trade, err := range catalog.Scan(ctx, tables.Measurements, epoch, filter, 0) {
-		if err != nil {
-			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[audit] failed to read the "+source+" stream", err))
+	for _, symbol := range symbols {
+		for trade := range client.Get(fmt.Sprintf("%d/%s/%s/", epoch, symbol, source)) {
+			if trade == nil {
+				continue
+			}
+
+			if trade.Tick > maxTick {
+				continue
+			}
+
+			trades = append(trades, trade)
 		}
-
-		trades = append(trades, trade)
 	}
 
 	return trades, nil

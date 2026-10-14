@@ -3,15 +3,7 @@ package system
 import "github.com/spf13/viper"
 
 type Storage struct {
-	Iceberg *Iceberg
-	S3      *S3
-}
-
-type Iceberg struct {
-	URI           string
-	Warehouse     string
-	CommitRetries int
-	AppendBytes   int
+	S3 *S3
 }
 
 type S3 struct {
@@ -24,22 +16,12 @@ type S3 struct {
 }
 
 func NewStorage() *Storage {
-	viper.SetDefault("storage.iceberg.uri", "http://iceberg.seaweed.home.arpa")
-	viper.SetDefault("storage.iceberg.warehouse", "s3://symmwarehouse/")
-	viper.SetDefault("storage.iceberg.commit_retries", 3)
-	viper.SetDefault("storage.iceberg.append_bytes", 8388608)
 	viper.SetDefault("storage.s3.bucket", "symm")
 	viper.SetDefault("storage.s3.region", "us-east-1")
 	viper.SetDefault("storage.s3.endpoint", "http://s3.seaweed.home.arpa")
 	viper.SetDefault("storage.s3.anonymous", true)
 
 	return &Storage{
-		Iceberg: &Iceberg{
-			URI:           viper.GetString("storage.iceberg.uri"),
-			Warehouse:     viper.GetString("storage.iceberg.warehouse"),
-			CommitRetries: viper.GetInt("storage.iceberg.commit_retries"),
-			AppendBytes:   viper.GetInt("storage.iceberg.append_bytes"),
-		},
 		S3: &S3{
 			Bucket:          viper.GetString("storage.s3.bucket"),
 			Endpoint:        viper.GetString("storage.s3.endpoint"),

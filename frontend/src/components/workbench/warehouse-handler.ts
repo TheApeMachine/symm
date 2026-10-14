@@ -1,6 +1,6 @@
 import type { GenericSQLVirtualServerModel } from "@perspective-dev/client";
 import { DuckDBHandler } from "@perspective-dev/client/dist/esm/virtual_servers/duckdb.js";
-import { tableFromIPC } from "apache-arrow";
+import { type Table, tableFromIPC, tableToIPC } from "apache-arrow";
 import { runWarehouseStatement } from "#/components/workbench/workbench-api";
 
 /*
@@ -136,6 +136,18 @@ const schemas = new Map<string, Promise<Schema>>();
 const sizes = new Map<string, Promise<number>>();
 const widths = new Map<string, Promise<number>>();
 
+type ViewportBuffer = {
+	viewId: string;
+	startRow: number;
+	endRow: number;
+	startCol?: number;
+	endCol?: number;
+	table: Table;
+};
+
+const viewportBuffers = new Map<string, ViewportBuffer>();
+const inFlightFetches = new Map<string, AbortController>();
+
 /*
 WarehouseHandler is the shipped DuckDB handler with one method replaced.
 
@@ -215,10 +227,114 @@ export class WarehouseHandler extends DuckDBHandler {
 		return remember(widths, args[0], () => super.viewColumnSize(...args));
 	}
 
+	async viewGetData(...args: Parameters<DuckDBHandler["viewGetData"]>) {
+		const [viewId, config, schema, viewport, dataSlice] = args;
+		const startRow = viewport.start_row ?? 0;
+		const endRow = viewport.end_row ?? startRow + 33;
+		const rowCount = endRow - startRow;
+
+		if (rowCount <= 0) {
+			return super.viewGetData(...args);
+		}
+
+		const cached = viewportBuffers.get(viewId);
+		const sameCols =
+			cached !== undefined &&
+			cached.startCol === viewport.start_col &&
+			cached.endCol === viewport.end_col;
+
+		if (
+			cached &&
+			sameCols &&
+			startRow >= cached.startRow &&
+			endRow <= cached.endRow
+		) {
+			const relStart = startRow - cached.startRow;
+			const relEnd = endRow - cached.startRow;
+			const slice = cached.table.slice(relStart, relEnd);
+			dataSlice.fromArrowIpc(tableToIPC(slice, "stream"));
+			return;
+		}
+
+		const previousAbort = inFlightFetches.get(viewId);
+		if (previousAbort) {
+			previousAbort.abort();
+		}
+
+		const abortController = new AbortController();
+		inFlightFetches.set(viewId, abortController);
+
+		const BUFFER_ROWS = 600;
+		const targetStart = Math.max(0, startRow - 100);
+		const targetEnd = targetStart + Math.max(BUFFER_ROWS, rowCount);
+
+		const bufferedViewport = {
+			...viewport,
+			start_row: targetStart,
+			end_row: targetEnd,
+		};
+
+		try {
+			const query = (
+				this as unknown as {
+					sqlBuilder: {
+						viewGetData: (
+							viewId: string,
+							config: unknown,
+							viewport: unknown,
+							schema: unknown,
+						) => string;
+					};
+				}
+			).sqlBuilder.viewGetData(viewId, config, bufferedViewport, schema);
+
+			const ipc = await runWarehouseStatement(
+				sanitizeSql(query),
+				abortController.signal,
+			);
+
+			if (ipc.byteLength === 0) {
+				return super.viewGetData(...args);
+			}
+
+			const table = tableFromIPC(ipc);
+
+			viewportBuffers.set(viewId, {
+				viewId,
+				startRow: targetStart,
+				endRow: targetStart + table.numRows,
+				startCol: viewport.start_col,
+				endCol: viewport.end_col,
+				table,
+			});
+
+			const relStart = Math.min(table.numRows, Math.max(0, startRow - targetStart));
+			const relEnd = Math.min(table.numRows, Math.max(relStart, endRow - targetStart));
+			const slice = table.slice(relStart, relEnd);
+			dataSlice.fromArrowIpc(tableToIPC(slice, "stream"));
+		} catch (cause) {
+			if (abortController.signal.aborted) {
+				return;
+			}
+			throw cause;
+		} finally {
+			if (inFlightFetches.get(viewId) === abortController) {
+				inFlightFetches.delete(viewId);
+			}
+		}
+	}
+
 	async viewDelete(viewId: string) {
 		schemas.delete(viewId);
 		sizes.delete(viewId);
 		widths.delete(viewId);
+		viewportBuffers.delete(viewId);
+
+		const inFlight = inFlightFetches.get(viewId);
+		if (inFlight) {
+			inFlight.abort();
+			inFlightFetches.delete(viewId);
+		}
 
 		return super.viewDelete(viewId);
 	}

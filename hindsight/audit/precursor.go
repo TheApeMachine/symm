@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
+	s3store "github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 )
 
@@ -57,7 +57,7 @@ round-trip fee, so its clearance rate restates the detector's construction.
 */
 func AnalyzePrecursorSeparation(
 	ctx context.Context,
-	catalog *tables.Catalog,
+	client *s3store.Client,
 	epoch int64,
 	symbol string,
 	grid *store.Grid,
@@ -83,8 +83,8 @@ func AnalyzePrecursorSeparation(
 	fee := takerFee[0]
 
 	if detections == nil {
-		if catalog == nil {
-			return insufficientPrecursor("Catalog unavailable.")
+		if client == nil {
+			return insufficientPrecursor("Client unavailable.")
 		}
 		var minTick, maxTick int64
 		if len(ticks) > 0 {
@@ -92,7 +92,7 @@ func AnalyzePrecursorSeparation(
 			maxTick = ticks[len(ticks)-1]
 		}
 
-		loaded, err := loadOrDetectExcursions(ctx, catalog, epoch, symbol, fee, minTick, maxTick)
+		loaded, err := loadOrDetectExcursions(client, epoch, symbol, fee, minTick, maxTick)
 
 		if err != nil {
 			return insufficientPrecursor("Detection retrieval failed: " + err.Error())
@@ -226,7 +226,7 @@ func AnalyzePrecursorSeparation(
 		}
 
 		eventTokens, err := archivedIntervalTokens(
-			ctx, catalog, epoch, excursion.symbol, grid, excursion.startTick, excursion.cTick, tickMeasurements,
+			client, epoch, excursion.symbol, grid, excursion.startTick, excursion.cTick, tickMeasurements,
 		)
 		if err != nil {
 			result := insufficientPrecursor("Event-window replay failed: " + err.Error())
@@ -359,8 +359,14 @@ func observeAuditToken(grid *store.Grid, sym string, tick int64, signals []*data
 
 	tok := ""
 
-	if regions := grid.Observe(train); regions != nil {
-		tok, _ = (&strategy.Tokenizer{Regions: cardinality}).Token(regions)
+	if regions := grid.Observe(train); len(regions) > 0 {
+		parts := make([]string, 0, min(cardinality, len(regions)))
+
+		for index := 0; index < min(cardinality, len(regions)); index++ {
+			parts = append(parts, fmt.Sprintf("R%02d", regions[index].Key))
+		}
+
+		tok = strings.Join(parts, "-")
 	}
 
 	auditTokenCache.Store(key, tok)
@@ -471,8 +477,7 @@ func sampledBackgroundTokens(
 }
 
 func archivedIntervalTokens(
-	ctx context.Context,
-	catalog *tables.Catalog,
+	client *s3store.Client,
 	epoch int64,
 	symbol string,
 	grid *store.Grid,
@@ -529,16 +534,22 @@ func archivedIntervalTokens(
 		}
 	}
 
-	if len(tickMap) == 0 && catalog != nil && epoch > 0 {
-		for meas, tapeErr := range catalog.SignalLogic(
-			ctx, epoch, symbol, startTick, endTick, tables.SensorySources...,
-		) {
-			if tapeErr != nil {
-				return nil, errnie.Error(tapeErr)
+	if len(tickMap) == 0 && client != nil && epoch > 0 {
+		for measurement := range client.Get(fmt.Sprintf("%d/%s/", epoch, symbol)) {
+			if measurement == nil {
+				continue
 			}
 
-			if meas != nil && (symbol == "" || meas.Label == symbol) {
-				tickMap[meas.Tick] = append(tickMap[meas.Tick], meas)
+			if measurement.Tick < startTick || measurement.Tick > endTick {
+				continue
+			}
+
+			if !slices.Contains(strategy.SensorySources, measurement.Source) {
+				continue
+			}
+
+			if symbol == "" || measurement.Label == symbol {
+				tickMap[measurement.Tick] = append(tickMap[measurement.Tick], measurement)
 			}
 		}
 	}
@@ -1056,8 +1067,7 @@ func computeJSD(distributionP, distributionQ map[string]int) float64 {
 }
 
 func loadOrDetectExcursions(
-	ctx context.Context,
-	catalog *tables.Catalog,
+	client *s3store.Client,
 	epoch int64,
 	symbol string,
 	takerFee float64,
@@ -1079,16 +1089,26 @@ func loadOrDetectExcursions(
 
 	var detections []*data.Measurement
 
-	for det, err := range catalog.Detections(ctx, epoch) {
-		if err != nil {
-			return nil, errnie.Error(err)
-		}
+	prefix := fmt.Sprintf("%d/", epoch)
+	if symbol != "" {
+		prefix = fmt.Sprintf("%d/%s/detector/", epoch, symbol)
+	}
 
-		if det != nil && (symbol == "" || det.Label == symbol) {
+	if client != nil && epoch > 0 {
+		for det := range client.Get(prefix) {
+			if det == nil || det.Source != "detector" {
+				continue
+			}
+
+			if symbol != "" && det.Label != symbol {
+				continue
+			}
+
 			bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw())
 			if minTick > 0 && bTick < minTick {
 				continue
 			}
+
 			if maxTick > 0 && bTick > maxTick {
 				continue
 			}
@@ -1097,9 +1117,5 @@ func loadOrDetectExcursions(
 		}
 	}
 
-	// Stored detections only. They were produced by `symm detect` at the fee
-	// it was run with; detections do not record that fee, so the caller must
-	// declare it and the report states it as unverified provenance. There is
-	// no in-memory re-detection at a different fee.
 	return detections, nil
 }

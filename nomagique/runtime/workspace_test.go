@@ -16,11 +16,12 @@ type dummyNode struct {
 
 func (node *dummyNode) Step(prior *data.Measurement) *data.Measurement {
 	node.lastPrior = prior
+
 	if prior == nil {
 		return nil
 	}
 
-	return prior.Next(prior, map[string]float64{"dummy": 1.0})
+	return data.NewMeasurement(prior.Epoch, prior.Label, "dummy", prior.At, prior.From)
 }
 
 func TestWorkspaceTickAdvancement(t *testing.T) {

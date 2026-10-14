@@ -5,10 +5,12 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"strings"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/strategy"
 )
 
 /*
@@ -75,6 +77,14 @@ func AnalyzeTokenDynamics(
 	compressedTransitions := make(map[string]map[string]int)
 	stayCount := 0
 	totalTransitions := 0
+
+	grammars := make(map[string]*strategy.Grammar)
+	lastSymbols := make(map[string]string)
+
+	var sequiturPhrases []string
+	sequiturPhrasesBySymbol := make(map[string][]string)
+	sequiturPhraseFreqs := make(map[string]int)
+	sequiturTransitions := make(map[string]map[string]int)
 
 	for _, tick := range unseenTicks {
 		measGroup := tickMeasurements[tick]
@@ -151,6 +161,49 @@ func AnalyzeTokenDynamics(
 				compressedTokens = append(compressedTokens, token)
 				compressedTokenFreqs[token]++
 			}
+
+			// Step Sequitur grammar induction:
+			g := grammars[sym]
+			if g == nil {
+				g = strategy.NewGrammar()
+				grammars[sym] = g
+			}
+
+			last := lastSymbols[sym]
+
+			if len(regions) > 0 {
+				symKey := fmt.Sprintf("R%02d", regions[0].Key)
+
+				if symKey != last {
+					last = symKey
+					rule := g.Append(symKey)
+
+					if rule != nil {
+						phrase := rule.TerminalNames(g)
+
+						if len(phrase) >= 2 {
+							phraseKey := strings.Join(phrase, "/")
+							sequiturPhrases = append(sequiturPhrases, phraseKey)
+							sequiturPhrasesBySymbol[sym] = append(sequiturPhrasesBySymbol[sym], phraseKey)
+							sequiturPhraseFreqs[phraseKey]++
+
+							symPhrases := sequiturPhrasesBySymbol[sym]
+
+							if len(symPhrases) > 1 {
+								prevPhrase := symPhrases[len(symPhrases)-2]
+
+								if sequiturTransitions[prevPhrase] == nil {
+									sequiturTransitions[prevPhrase] = make(map[string]int)
+								}
+
+								sequiturTransitions[prevPhrase][phraseKey]++
+							}
+						}
+					}
+				}
+			}
+
+			lastSymbols[sym] = last
 
 			margin := maxBrightness - runnerUpBrightness
 			winningScore := maxBrightness
@@ -299,6 +352,28 @@ func AnalyzeTokenDynamics(
 		compReduction = compNullMean - compEntropy
 	}
 
+	sequiturRulesCount := 0
+	for _, g := range grammars {
+		sequiturRulesCount += len(g.Rules())
+	}
+
+	seqEntropy := 0.0
+	seqNullMean := 0.0
+	seqReduction := 0.0
+	var seqNullEntropies []float64
+
+	if len(sequiturPhrases) > 0 {
+		seqEntropy = computeTransitionEntropy(sequiturTransitions)
+		seqNullEntropies = computeBlockNullTransitionEntropies(sequiturPhrasesBySymbol, 1, permutations)
+		for _, value := range seqNullEntropies {
+			seqNullMean += value
+		}
+		if len(seqNullEntropies) > 0 {
+			seqNullMean /= float64(len(seqNullEntropies))
+		}
+		seqReduction = seqNullMean - seqEntropy
+	}
+
 	nullRank := 0.0
 	if len(nullEntropies) > 0 {
 		greaterOrEqual := 0
@@ -311,6 +386,14 @@ func AnalyzeTokenDynamics(
 	}
 
 	pValue := lowerPValue(realEntropy, nullEntropies)
+
+	if len(sequiturPhrases) > 0 && len(seqNullEntropies) > 0 {
+		seqPVal := lowerPValue(seqEntropy, seqNullEntropies)
+		if seqPVal < pValue {
+			pValue = seqPVal
+		}
+	}
+
 	verdict := hypothesisVerdict(pValue, len(nullEntropies), significance)
 
 	return Stage4TokenDynamics{
@@ -333,15 +416,22 @@ func AnalyzeTokenDynamics(
 		CompressedTransitionEntropy:    compEntropy,
 		CompressedNullEntropy:          compNullMean,
 		CompressedEntropyReductionBits: compReduction,
+		SequiturRulesInduced:           sequiturRulesCount,
+		SequiturUniquePhrases:          len(sequiturPhraseFreqs),
+		SequiturTransitionEntropy:      seqEntropy,
+		SequiturNullEntropy:            seqNullMean,
+		SequiturEntropyReductionBits:   seqReduction,
 		AlwaysStayAccuracy:             alwaysStayAccuracy,
 		MarginalAccuracy:               marginalAccuracy,
 		SummaryText: fmt.Sprintf(
 			"Token Dynamics (held out): %d raw emissions (%d compressed changes, dwell stay=%.1f%%). "+
 				"Raw entropy = %.3f vs null %.3f (gain=%.3f bits; block=%d; null-rank=%.1f%%; stay-baseline=%.1f%%, marginal-baseline=%.1f%%). "+
-				"Compressed transition entropy = %.3f vs shuffled null %.3f (gain=%.3f bits).",
+				"Compressed transition entropy = %.3f vs shuffled null %.3f (gain=%.3f bits). "+
+				"Sequitur grammar: %d rules induced, %d unique phrases, transition entropy = %.3f vs null %.3f (gain=%.3f bits).",
 			len(tokens), len(compressedTokens), alwaysStayAccuracy*100,
 			realEntropy, nullMean, entropyReduction, blockSize, nullRank*100, alwaysStayAccuracy*100, marginalAccuracy*100,
 			compEntropy, compNullMean, compReduction,
+			sequiturRulesCount, len(sequiturPhraseFreqs), seqEntropy, seqNullMean, seqReduction,
 		),
 		PValue: pValue,
 		Status: verdict,

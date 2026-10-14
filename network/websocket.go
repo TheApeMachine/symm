@@ -165,7 +165,7 @@ func (client *WebsocketClient) dialLocked() error {
 Read returns the next text frame. On disconnect it drops to WAITING and
 returns a soft error so ingress can retry without System.Error floods.
 */
-func (client *WebsocketClient) Read() ([]byte, error) {
+func (client *WebsocketClient) Read(keys ...string) ([]byte, error) {
 	if err := client.ensureReady(); err != nil {
 		return nil, err
 	}
