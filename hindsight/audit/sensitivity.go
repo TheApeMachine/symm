@@ -82,7 +82,7 @@ func AnalyzeGridSensitivity(
 /*
 regionMass is 1 when the grid lit any region on the sample, 0 otherwise.
 */
-func regionMass(dist [12]float64) float64 {
+func regionMass(dist [store.RegionCount]float64) float64 {
 	total := 0.0
 
 	for _, value := range dist {
@@ -143,8 +143,8 @@ func computeSampleRegionDistribution(
 	ticks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
 	excludeFamily string,
-) [12]float64 {
-	var counts [12]float64
+) [store.RegionCount]float64 {
+	var counts [store.RegionCount]float64
 	total := 0.0
 
 	for _, tick := range ticks {
@@ -199,7 +199,7 @@ func computeSampleRegionDistribution(
 	}
 
 	if total > 0 {
-		for r := range 12 {
+		for r := range store.RegionCount {
 			counts[r] /= total
 		}
 	}
@@ -212,8 +212,8 @@ func computeDuplicatedRegionDistribution(
 	ticks []int64,
 	tickMeasurements map[int64][]*data.Measurement,
 	duplicateFamily string,
-) [12]float64 {
-	var counts [12]float64
+) [store.RegionCount]float64 {
+	var counts [store.RegionCount]float64
 	total := 0.0
 
 	for _, tick := range ticks {
@@ -269,7 +269,7 @@ func computeDuplicatedRegionDistribution(
 	}
 
 	if total > 0 {
-		for r := range 12 {
+		for r := range store.RegionCount {
 			counts[r] /= total
 		}
 	}

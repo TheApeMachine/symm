@@ -114,13 +114,13 @@ func tickRegions(
 /*
 regionDistribution is the normalized region histogram of the given ticks.
 */
-func regionDistribution(regions [][]uint8) [12]float64 {
-	var counts [12]float64
+func regionDistribution(regions [][]uint8) [store.RegionCount]float64 {
+	var counts [store.RegionCount]float64
 	total := 0.0
 
 	for _, lit := range regions {
 		for _, reg := range lit {
-			if reg < 12 {
+			if int(reg) < store.RegionCount {
 				counts[reg]++
 				total++
 			}
@@ -128,7 +128,7 @@ func regionDistribution(regions [][]uint8) [12]float64 {
 	}
 
 	if total > 0 {
-		for r := range 12 {
+		for r := range store.RegionCount {
 			counts[r] /= total
 		}
 	}
@@ -136,11 +136,11 @@ func regionDistribution(regions [][]uint8) [12]float64 {
 	return counts
 }
 
-func computeDistributionDivergence(distA, distB [12]float64) (float64, float64) {
+func computeDistributionDivergence(distA, distB [store.RegionCount]float64) (float64, float64) {
 	jsd := 0.0
 	tvd := 0.0
 
-	for r := range 12 {
+	for r := range store.RegionCount {
 		p := distA[r]
 		q := distB[r]
 		tvd += math.Abs(p - q)
