@@ -1,475 +1,263 @@
 package audit
 
 import (
+	"context"
 	"fmt"
 	"math"
-	"runtime"
-	"sort"
+	"slices"
 	"strings"
-	"sync"
+
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/nomagique/statistic"
 )
 
 /*
-AnalyzeVitality processes both raw producer series (e.g. 7,134 peer-qualified metrics)
-and canonical grid input cells (e.g. 377 cells after ChannelsFrom aggregation),
-evaluating coverage, dead/sporadic series, and canonical redundancy.
+MetricVitality tracks running statistics for a single metric stream to determine
+whether the metric is actively varying, stagnant, or dead (constant).
 */
-func AnalyzeVitality(
-	ticks []int64,
-	rawSeries map[string]map[int64]float64,
-	canonicalSeries map[string]map[int64]float64,
-) Stage1Vitality {
-	totalTicks := len(ticks)
-	if totalTicks == 0 {
-		return Stage1Vitality{
-			SummaryText: "No ticks observed to analyze metric vitality.",
-			Status:      "INSUFFICIENT_DATA",
-			Passed:      false,
-		}
-	}
-
-	rawStats := computeMetricStats(ticks, rawSeries)
-	canonicalStats := computeMetricStats(ticks, canonicalSeries)
-
-	rawHealthy, rawDead, rawSporadic, rawWarming := countStatuses(rawStats)
-	canonHealthy, canonDead, canonSporadic, canonWarming := countStatuses(canonicalStats)
-
-	redundantPairs := findCanonicalRedundantPairs(ticks, canonicalSeries, canonicalStats)
-
-	summary := fmt.Sprintf(
-		"Vitality: Raw producers emit %d series (%d healthy, %d dead/constant, %d warming up, %d sporadic). "+
-			"Canonical grid universe aggregates to %d cells (%d healthy, %d dead, %d warming up, %d sporadic). "+
-			"Canonical redundancy: %d cell pairs (|r| >= 0.95).",
-		len(rawStats), rawHealthy, rawDead, rawWarming, rawSporadic,
-		len(canonicalStats), canonHealthy, canonDead, canonWarming, canonSporadic,
-		len(redundantPairs),
-	)
-
-	return Stage1Vitality{
-		RawProducerMetrics:     len(rawStats),
-		RawHealthyMetrics:      rawHealthy,
-		RawDeadMetrics:         rawDead,
-		RawSporadicMetrics:     rawSporadic,
-		RawWarmingMetrics:      rawWarming,
-		RawMetrics:             rawStats,
-		CanonicalGridCells:     len(canonicalStats),
-		CanonicalHealthyCells:  canonHealthy,
-		CanonicalDeadCells:     canonDead,
-		CanonicalSporadicCells: canonSporadic,
-		CanonicalWarmingCells:  canonWarming,
-		CanonicalCells:         canonicalStats,
-		RedundantPairs:         redundantPairs,
-		SummaryText:            summary,
-		// Coverage and redundancy are observations (AUDIT_CONTRACT.md); this
-		// stage reports them and claims nothing.
-		Status: VerdictMeasured,
-		Passed: false,
-	}
+type MetricVitality struct {
+	Name      string
+	Count     float64
+	ZeroCount float64
+	Min       float64
+	Max       float64
+	Moments   statistic.Moments
 }
 
-func computeMetricStats(
-	ticks []int64,
-	series map[string]map[int64]float64,
-) []MetricStat {
-	totalTicks := len(ticks)
-	stats := make([]MetricStat, 0, len(series))
-
-	symbolTicks := make(map[string]map[int64]struct{})
-	for name, tickMap := range series {
-		symbol := seriesSymbol(name)
-
-		if symbol == "" {
-			continue
-		}
-
-		if symbolTicks[symbol] == nil {
-			symbolTicks[symbol] = make(map[int64]struct{})
-		}
-
-		for tick := range tickMap {
-			symbolTicks[symbol][tick] = struct{}{}
-		}
+func (vitality *MetricVitality) Update(value float64) {
+	if vitality.Count == 0 {
+		vitality.Min = value
+		vitality.Max = value
 	}
 
-	for name, tickMap := range series {
-		count := len(tickMap)
-		symbol := seriesSymbol(name)
-		denominator := totalTicks
+	vitality.Count++
+	vitality.Min = math.Min(vitality.Min, value)
+	vitality.Max = math.Max(vitality.Max, value)
 
-		if symbol != "" && len(symbolTicks[symbol]) > 0 {
-			denominator = len(symbolTicks[symbol])
-		}
-
-		coverage := float64(count) / float64(denominator)
-
-		if count == 0 {
-			stats = append(stats, MetricStat{
-				Name:       name,
-				TotalTicks: denominator,
-				Coverage:   0,
-				IsConstant: true,
-				Status:     "DEAD",
-			})
-			continue
-		}
-
-		mean := 0.0
-		m2 := 0.0
-		minVal := math.MaxFloat64
-		maxVal := -math.MaxFloat64
-		zeroCount := 0
-		index := 0
-
-		for _, val := range tickMap {
-			index++
-			delta := val - mean
-			mean += delta / float64(index)
-			m2 += delta * (val - mean)
-
-			if val < minVal {
-				minVal = val
-			}
-
-			if val > maxVal {
-				maxVal = val
-			}
-
-			if val == 0 {
-				zeroCount++
-			}
-		}
-
-		variance := 0.0
-
-		if count > 1 {
-			variance = m2 / float64(count-1)
-		}
-
-		zeroFraction := float64(zeroCount) / float64(count)
-		isConstant := (maxVal == minVal) || (variance == 0 && count > 1)
-
-		status := "HEALTHY"
-
-		if isConstant {
-			status = "DEAD"
-		}
-
-		if !isConstant && zeroFraction == 1.0 {
-			status = "ZERO"
-		}
-
-		if count <= 1 {
-			status = "WARMING_UP"
-		}
-
-		if count > 1 && coverage < 0.10 {
-			status = "SPORADIC"
-		}
-
-		stats = append(stats, MetricStat{
-			Name:         name,
-			Count:        count,
-			TotalTicks:   denominator,
-			Coverage:     coverage,
-			Mean:         mean,
-			Variance:     variance,
-			Min:          minVal,
-			Max:          maxVal,
-			ZeroFraction: zeroFraction,
-			IsConstant:   isConstant,
-			Status:       status,
-		})
+	if math.Abs(value) <= core.Resolution {
+		vitality.ZeroCount++
 	}
 
-	sort.Slice(stats, func(first, second int) bool {
-		return stats[first].Name < stats[second].Name
-	})
-
-	return stats
+	vitality.Moments.Update(value)
 }
 
-func countStatuses(stats []MetricStat) (int, int, int, int) {
-	healthy, dead, sporadic, warming := 0, 0, 0, 0
-	for _, s := range stats {
-		switch s.Status {
-		case "HEALTHY":
-			healthy++
-		case "DEAD", "ZERO":
-			dead++
-		case "SPORADIC":
-			sporadic++
-		case "WARMING_UP":
-			warming++
-		}
+func (vitality *MetricVitality) Variance() float64 {
+	if vitality.Count < 2 {
+		return 0
 	}
-	return healthy, dead, sporadic, warming
+
+	return vitality.Moments.M2 / (vitality.Count - 1)
+}
+
+func (vitality *MetricVitality) ZeroFraction() float64 {
+	if vitality.Count == 0 {
+		return 0
+	}
+
+	return vitality.ZeroCount / vitality.Count
 }
 
 /*
-findCanonicalRedundantPairs checks pairwise correlations across ALL healthy canonical grid cells.
-Does not impose arbitrary ordering-dependent subsets.
+VitalityStage audits the health and variance of all incoming market metrics.
+It detects "dead" metrics (zero variance, providing no informational value)
+and "stagnant" cold-start metrics (>= 80% zero values).
 */
-func findCanonicalRedundantPairs(
-	ticks []int64,
-	series map[string]map[int64]float64,
-	stats []MetricStat,
-) []RedundantPair {
-	healthyNames := make([]string, 0)
-	for _, stat := range stats {
-		if stat.Status == "HEALTHY" {
-			healthyNames = append(healthyNames, stat.Name)
-		}
-	}
-
-	sort.Strings(healthyNames)
-
-	totalHealthy := len(healthyNames)
-	if totalHealthy < 2 || len(ticks) < 10 {
-		return nil
-	}
-
-	// Redundancy is a question about one instrument's metrics; series of two
-	// symbols are compared only by the correlation signal itself.
-	groups := symbolGroups(healthyNames)
-
-	dense := make([]denseVector, totalHealthy)
-	for index, name := range healthyNames {
-		ser := series[name]
-		vecTicks := make([]int32, 0, min(len(ser), len(ticks)))
-		vecVals := make([]float64, 0, len(vecTicks))
-
-		for tickIndex, tick := range ticks {
-			if val, ok := ser[tick]; ok {
-				vecTicks = append(vecTicks, int32(tickIndex))
-				vecVals = append(vecVals, val)
-			}
-		}
-
-		dense[index] = denseVector{
-			name:   name,
-			ticks:  vecTicks,
-			values: vecVals,
-		}
-	}
-
-	workers := max(runtime.NumCPU(), 1)
-
-	results := make([][]RedundantPair, workers)
-	var wg sync.WaitGroup
-
-	for worker := range workers {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-			local := make([]RedundantPair, 0)
-
-			for groupIndex := workerID; groupIndex < len(groups); groupIndex += workers {
-				for firstAt, first := range groups[groupIndex] {
-					vecA := dense[first]
-
-					for _, second := range groups[groupIndex][firstAt+1:] {
-						vecB := dense[second]
-						corr, ok := denseCorrelation(vecA.ticks, vecA.values, vecB.ticks, vecB.values)
-
-						if !ok {
-							continue
-						}
-
-						if math.Abs(corr) >= 0.95 {
-							local = append(local, RedundantPair{
-								MetricA:     vecA.name,
-								MetricB:     vecB.name,
-								Correlation: corr,
-							})
-						}
-					}
-				}
-			}
-
-			results[workerID] = local
-		}(worker)
-	}
-
-	wg.Wait()
-
-	var redundant []RedundantPair
-	for _, chunk := range results {
-		redundant = append(redundant, chunk...)
-	}
-
-	sort.Slice(redundant, func(i, j int) bool {
-		if math.Abs(redundant[i].Correlation) != math.Abs(redundant[j].Correlation) {
-			return math.Abs(redundant[i].Correlation) > math.Abs(redundant[j].Correlation)
-		}
-
-		if redundant[i].MetricA != redundant[j].MetricA {
-			return redundant[i].MetricA < redundant[j].MetricA
-		}
-
-		return redundant[i].MetricB < redundant[j].MetricB
-	})
-
-	return redundant
+type VitalityStage struct {
+	*runtime.System
+	ch           chan *data.Measurement
+	violations   []*Violation
+	series       map[string]*MetricVitality
+	flaggedDead  map[string]bool
+	flaggedStagn map[string]bool
+	totalTicks   int64
 }
 
-type denseVector struct {
-	name   string
-	ticks  []int32
-	values []float64
+func NewVitalityStage(ctx context.Context) *VitalityStage {
+	return &VitalityStage{
+		System:       runtime.NewSystem(ctx, "audit:vitality"),
+		ch:           make(chan *data.Measurement, 64),
+		violations:   make([]*Violation, 0),
+		series:       make(map[string]*MetricVitality),
+		flaggedDead:  make(map[string]bool),
+		flaggedStagn: make(map[string]bool),
+	}
 }
 
-func denseCorrelation(
-	ticksA []int32,
-	valsA []float64,
-	ticksB []int32,
-	valsB []float64,
-) (float64, bool) {
-	lenA := len(ticksA)
-	lenB := len(ticksB)
-
-	if lenA < 10 || lenB < 10 {
-		return 0, false
-	}
-
-	count := 0
-	sumA := 0.0
-	sumB := 0.0
-	idxA, idxB := 0, 0
-
-	for idxA < lenA && idxB < lenB {
-		tickA := ticksA[idxA]
-		tickB := ticksB[idxB]
-
-		if tickA == tickB {
-			count++
-			sumA += valsA[idxA]
-			sumB += valsB[idxB]
-			idxA++
-			idxB++
-			continue
-		}
-
-		if tickA < tickB {
-			idxA++
-			continue
-		}
-
-		idxB++
-	}
-
-	if count < 10 {
-		return 0, false
-	}
-
-	meanA := sumA / float64(count)
-	meanB := sumB / float64(count)
-
-	m2A := 0.0
-	m2B := 0.0
-	cov := 0.0
-
-	idxA, idxB = 0, 0
-	for idxA < lenA && idxB < lenB {
-		tickA := ticksA[idxA]
-		tickB := ticksB[idxB]
-
-		if tickA == tickB {
-			diffA := valsA[idxA] - meanA
-			diffB := valsB[idxB] - meanB
-			m2A += diffA * diffA
-			m2B += diffB * diffB
-			cov += diffA * diffB
-			idxA++
-			idxB++
-			continue
-		}
-
-		if tickA < tickB {
-			idxA++
-			continue
-		}
-
-		idxB++
-	}
-
-	if m2A <= 0 || m2B <= 0 {
-		return 0, false
-	}
-
-	corr := cov / (math.Sqrt(m2A) * math.Sqrt(m2B))
-	return corr, true
+func (stage *VitalityStage) Channel() chan *data.Measurement {
+	return stage.ch
 }
 
-func meanAndVar(values []float64) (float64, float64) {
-	if len(values) == 0 {
-		return 0, 0
+func (stage *VitalityStage) Run() error {
+	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
+
+	for measurement := range stage.ch {
+		if measurement == nil {
+			stage.violations = append(stage.violations, NewViolation(
+				"unknown",
+				"measurement",
+				"Nil measurement encountered in tape",
+				nil,
+				nil,
+			))
+
+			continue
+		}
+
+		if measurement.Error() != nil {
+			stage.violations = append(stage.violations, NewViolation(
+				measurement.Label,
+				"measurement.error",
+				measurement.Error().Error(),
+				measurement,
+				nil,
+			))
+		}
+
+		stage.recordMetrics(measurement)
 	}
 
-	mean := 0.0
-	m2 := 0.0
+	stage.auditVitality()
 
-	for idx, val := range values {
-		delta := val - mean
-		mean += delta / float64(idx+1)
-		m2 += delta * (val - mean)
-	}
-
-	variance := 0.0
-	if len(values) > 1 {
-		variance = m2 / float64(len(values)-1)
-	}
-
-	return mean, variance
+	return nil
 }
 
 /*
-seriesKey names one stored series: a producer's metric for one symbol.
-Series of different symbols never share a key, so a tick that carries two
-symbols' values keeps both rather than the last one written.
+recordMetrics updates the running Welford moments, min, max, and zero count
+for each metric present in the measurement.
 */
-func seriesKey(source, symbol, metric string) string {
-	return source + "|" + symbol + "|" + metric
-}
+func (stage *VitalityStage) recordMetrics(measurement *data.Measurement) {
+	stage.totalTicks++
 
-/*
-seriesSymbol returns the symbol of a seriesKey, or "" for any other name.
-*/
-func seriesSymbol(key string) string {
-	_, after, ok := strings.Cut(key, "|")
+	for entry := range measurement.Read() {
+		if entry == nil || entry.Metric == nil {
+			stage.violations = append(stage.violations, NewViolation(
+				measurement.Label,
+				"entry.metric",
+				"Nil metric entry encountered in measurement",
+				measurement,
+				nil,
+			))
 
-	if !ok {
-		return ""
-	}
-
-	rest := after
-	before, _, ok := strings.Cut(rest, "|")
-
-	if !ok {
-		return ""
-	}
-
-	return before
-}
-
-/*
-symbolGroups partitions the indexes of names by seriesSymbol, in order.
-*/
-func symbolGroups(names []string) [][]int {
-	index := make(map[string]int)
-	var groups [][]int
-
-	for position, name := range names {
-		symbol := seriesSymbol(name)
-		group, found := index[symbol]
-
-		if !found {
-			group = len(groups)
-			index[symbol] = group
-			groups = append(groups, nil)
+			continue
 		}
 
-		groups[group] = append(groups[group], position)
+		key := measurement.Source + "|" + measurement.Label + "|" + entry.Metric.Label()
+		stat, exists := stage.series[key]
+
+		if !exists {
+			stat = &MetricVitality{Name: key}
+			stage.series[key] = stat
+		}
+
+		stat.Update(entry.Metric.Raw())
+	}
+}
+
+/*
+auditVitality scans accumulated metric populations for zero-variance (dead)
+and stagnant (cold-start) series once minimum support is reached.
+*/
+func (stage *VitalityStage) auditVitality() {
+	keys := make([]string, 0, len(stage.series))
+
+	for key := range stage.series {
+		keys = append(keys, key)
 	}
 
-	return groups
+	slices.Sort(keys)
+
+	for _, key := range keys {
+		stat := stage.series[key]
+
+		// Dead Metric Check: If a metric has accumulated enough samples (N >= 9)
+		// but has ZERO variance (M2 == 0), it never changes. It carries zero entropy
+		// and indicates a stalled calculation or dead feed.
+		if stat.Count >= core.MinimumPrior && stat.Variance() == 0 && !stage.flaggedDead[key] {
+			stage.flaggedDead[key] = true
+			stage.violations = append(stage.violations, NewViolation(
+				key,
+				"vitality.dead_metric",
+				fmt.Sprintf("Metric %s is dead/constant (variance = 0.0 across %.0f observations, range [%.3f, %.3f])",
+					key, stat.Count, stat.Min, stat.Max),
+				nil,
+				nil,
+			))
+		}
+
+		// Stagnant / Cold-Start Check: If >= 80% of observations are zero,
+		// the metric is cold-starting or has insufficient event activity.
+		if stat.Count >= core.MinimumPrior && stat.ZeroFraction() >= 0.80 && !stage.flaggedStagn[key] {
+			stage.flaggedStagn[key] = true
+			stage.violations = append(stage.violations, NewViolation(
+				key,
+				"vitality.stagnant_metric",
+				fmt.Sprintf("Metric %s is stagnant/cold-start (zero fraction = %.1f%% across %.0f observations)",
+					key, stat.ZeroFraction()*100, stat.Count),
+				nil,
+				nil,
+			))
+		}
+	}
 }
+
+func (stage *VitalityStage) Violations() []*Violation {
+	return stage.violations
+}
+
+func (stage *VitalityStage) Report() string {
+	var build strings.Builder
+
+	for _, violation := range stage.violations {
+		build.WriteString(violation.String())
+	}
+
+	return build.String()
+}
+
+func (stage *VitalityStage) Data() any {
+	stats := make(map[string]map[string]any, len(stage.series))
+	deadList := make([]string, 0)
+	stagnList := make([]string, 0)
+
+	for name, metricVitality := range stage.series {
+		variance := metricVitality.Variance()
+		zeroFrac := metricVitality.ZeroFraction()
+
+		stats[name] = map[string]any{
+			"count":         metricVitality.Count,
+			"min":           metricVitality.Min,
+			"max":           metricVitality.Max,
+			"variance":      variance,
+			"zero_fraction": zeroFrac,
+		}
+
+		if stage.flaggedDead[name] {
+			deadList = append(deadList, name)
+		}
+
+		if stage.flaggedStagn[name] {
+			stagnList = append(stagnList, name)
+		}
+	}
+
+	healthyCount := len(stage.series) - len(deadList) - len(stagnList)
+
+	if healthyCount < 0 {
+		healthyCount = 0
+	}
+
+	return map[string]any{
+		"passed":           len(stage.violations) == 0,
+		"total_metrics":    len(stage.series),
+		"dead_count":       len(deadList),
+		"stagnant_count":   len(stagnList),
+		"healthy_count":    healthyCount,
+		"dead_metrics":     deadList,
+		"stagnant_metrics": stagnList,
+		"metrics":          stats,
+	}
+}
+

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"iter"
 	"net/http"
 	"strings"
@@ -73,7 +72,7 @@ func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) 
 
 			// Override Default Transport Values
 			options.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(transport *http.Transport) {
-				transport.ResponseHeaderTimeout = 1 * time.Second
+				transport.ResponseHeaderTimeout = 30 * time.Second
 				transport.WriteBufferSize = 1024 * 1024
 				transport.ReadBufferSize = 1024 * 1024
 			})
@@ -103,11 +102,17 @@ func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) 
 	}
 }
 
-func (client *Client) List(prefix string) iter.Seq[*s3.ListObjectsV2Output] {
-	paginator := s3.NewListObjectsV2Paginator(client.s3Client, &s3.ListObjectsV2Input{
+func (client *Client) List(prefix string, delimiter ...string) iter.Seq[*s3.ListObjectsV2Output] {
+	input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(client.bucket),
 		Prefix: aws.String(prefix),
-	})
+	}
+
+	if len(delimiter) > 0 && delimiter[0] != "" {
+		input.Delimiter = aws.String(delimiter[0])
+	}
+
+	paginator := s3.NewListObjectsV2Paginator(client.s3Client, input)
 
 	return func(yield func(*s3.ListObjectsV2Output) bool) {
 		for paginator.HasMorePages() {
@@ -128,7 +133,13 @@ func (client *Client) List(prefix string) iter.Seq[*s3.ListObjectsV2Output] {
 	}
 }
 
-func (client *Client) dowload(key string) []byte {
+func (client *Client) Download(key string) ([]byte, error) {
+	if client == nil || client.downloader == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "[store.client] client or downloader is nil", nil,
+		))
+	}
+
 	writer := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
 
 	_, err := client.downloader.Download(client.Context(), writer, &s3.GetObjectInput{
@@ -137,33 +148,29 @@ func (client *Client) dowload(key string) []byte {
 	})
 
 	if err != nil {
-		errnie.Error(errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.IO, "[store.client] download error", err,
 		))
-
-		return nil
 	}
 
-	return writer.Bytes()
+	return writer.Bytes(), nil
 }
 
 func (client *Client) Get(prefix string) iter.Seq[*data.Measurement] {
 	return func(yield func(*data.Measurement) bool) {
 		for page := range client.List(prefix) {
 			for _, object := range page.Contents {
-				payload := client.dowload(*object.Key)
+				payload, err := client.Download(*object.Key)
 
-				if payload == nil {
+				if err != nil || payload == nil {
 					continue
 				}
 
 				measurement := &data.Measurement{}
 
-				if err := measurement.UnmarshalBinary(payload); err != nil {
-					errnie.Error(errnie.Err(
-						errnie.IO, "[store.client] unmarshal error", err,
-					))
+				err = measurement.UnmarshalBinary(payload)
 
+				if err != nil {
 					continue
 				}
 
@@ -179,9 +186,9 @@ func (client *Client) GetBytes(prefix string) iter.Seq[[]byte] {
 	return func(yield func([]byte) bool) {
 		for page := range client.List(prefix) {
 			for _, object := range page.Contents {
-				payload := client.dowload(*object.Key)
+				payload, err := client.Download(*object.Key)
 
-				if payload == nil {
+				if err != nil || payload == nil {
 					continue
 				}
 
@@ -193,30 +200,20 @@ func (client *Client) GetBytes(prefix string) iter.Seq[[]byte] {
 	}
 }
 
-func (client *Client) Put(measurement *data.Measurement) error {
-	if client == nil {
+func (client *Client) Put(key string, payload []byte) error {
+	if client == nil || client.uploader == nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation, "[store.client] client is nil", nil,
+			errnie.Validation, "[store.client] client or uploader is nil", nil,
 		))
 	}
 
-	if measurement == nil {
+	if key == "" {
 		return errnie.Error(errnie.Err(
-			errnie.Validation, "[store.client] measurement is nil", nil,
+			errnie.Validation, "[store.client] key is empty", nil,
 		))
 	}
 
-	payload, err := measurement.MarshalBinary()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "[store.client] failed to marshal binary", err,
-		))
-	}
-
-	key := fmt.Sprintf("%d/%s/%s/%d.bin", measurement.Epoch, measurement.Label, measurement.Source, measurement.SeqIdx)
-
-	_, err = client.uploader.Upload(client.Context(), &s3.PutObjectInput{
+	_, err := client.uploader.Upload(client.Context(), &s3.PutObjectInput{
 		Bucket: aws.String(client.bucket),
 		Key:    aws.String(key),
 		Body:   bytes.NewReader(payload),

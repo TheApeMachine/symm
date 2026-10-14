@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
@@ -59,13 +61,27 @@ action tree published to S3 storage.`,
 		if len(trainEpochs) == 0 {
 			seen := make(map[int64]bool)
 
-			for measurement := range client.Get("") {
-				if measurement == nil || measurement.Epoch <= 0 || seen[measurement.Epoch] {
-					continue
-				}
+			for page := range client.List("run/epoch/", "/") {
+				for _, commonPrefix := range page.CommonPrefixes {
+					if commonPrefix.Prefix == nil {
+						continue
+					}
 
-				seen[measurement.Epoch] = true
-				trainEpochs = append(trainEpochs, measurement.Epoch)
+					prefixStr := strings.TrimPrefix(*commonPrefix.Prefix, "run/epoch/")
+					prefixStr = strings.Trim(prefixStr, "/")
+					epoch, err := strconv.ParseInt(prefixStr, 10, 64)
+
+					if err != nil || epoch <= 0 {
+						continue
+					}
+
+					if seen[epoch] {
+						continue
+					}
+
+					seen[epoch] = true
+					trainEpochs = append(trainEpochs, epoch)
+				}
 			}
 
 			if len(trainEpochs) == 0 {

@@ -1,617 +1,244 @@
 package audit
 
 import (
+	"context"
 	"fmt"
 	"math"
-	"math/rand"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
-AnalyzeTokenDynamics evaluates token emissions and transition structure on unseen
-held-out data using a frozen grid.
-
-The Stream is supplied by the caller and is the same causal stream used while
-developing the grid, so the holdout boundary does not invent a market-memory
-reset that live operation would never experience.
-
-The temporal null block length is derived from the observed token dwell lengths.
-The verdict is SUPPORTED when the held-out transition entropy is lower than
-the block-shuffled null at the significance level (add-one empirical p),
-i.e. the token sequence carries order beyond its dwell structure.
+DynamicsStage audits token dynamics and state transition entropy across continuous market tape.
+It builds an empirical transition matrix between states and calculates the transition entropy H:
+H = - sum_i P(i) sum_j P(j|i) log2 P(j|i)
+Lower entropy signifies structured, predictable market state sequences.
+Excessive entropy indicates random noise, while extreme token concentration indicates a dead/frozen state.
 */
-func AnalyzeTokenDynamics(
-	frozenGrid *store.Grid,
-	unseenTicks []int64,
-	tickMeasurements map[int64][]*data.Measurement,
-	permutations int,
-	significance float64,
-) Stage4TokenDynamics {
-	if frozenGrid == nil {
-		return Stage4TokenDynamics{
-			SummaryText: "Grid unavailable for held-out token dynamics.",
-			Status:      "INSUFFICIENT_DATA",
-			Passed:      false,
-		}
-	}
-
-	if permutations <= 0 {
-		return Stage4TokenDynamics{
-			SummaryText: "permutations must be strictly positive",
-			Status:      "INVALID_PARAMETER",
-			Passed:      false,
-		}
-	}
-
-	var tokens []string
-	tokensBySymbol := make(map[string][]string)
-	tokenFreqs := make(map[string]int)
-	transitions := make(map[string]map[string]int)
-
-	type regionAccumulator struct {
-		emissions    int
-		totalScore   float64
-		minScore     float64
-		maxScore     float64
-		totalActive  float64
-		totalMembers float64
-		totalMargin  float64
-	}
-
-	regionAccums := make(map[string]*regionAccumulator)
-	sumScore := 0.0
-	peakScore := 0.0
-	sumCoverage := 0.0
-	sumMargin := 0.0
-
-	prevTokens := make(map[string]string)
-	var compressedTokens []string
-	compressedTokensBySymbol := make(map[string][]string)
-	compressedTokenFreqs := make(map[string]int)
-	compressedTransitions := make(map[string]map[string]int)
-	stayCount := 0
-	totalTransitions := 0
-
-	grammars := make(map[string]*strategy.Grammar)
-	lastSymbols := make(map[string]string)
-
-	var sequiturPhrases []string
-	sequiturPhrasesBySymbol := make(map[string][]string)
-	sequiturPhraseFreqs := make(map[string]int)
-	sequiturTransitions := make(map[string]map[string]int)
-
-	for _, tick := range unseenTicks {
-		measGroup := tickMeasurements[tick]
-
-		if len(measGroup) == 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.token_dynamics] no measurement found for tick",
-				nil,
-			), "tick", tick)
-
-			continue
-		}
-
-		bySymbol := make(map[string][]*data.Measurement)
-
-		for _, m := range measGroup {
-			if m == nil {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"[audit.token_dynamics] nil measurement in measurement group",
-					nil,
-				), "tick", tick)
-
-				continue
-			}
-
-			bySymbol[m.Label] = append(bySymbol[m.Label], m)
-		}
-
-		for sym, symMeas := range bySymbol {
-			if len(symMeas) == 0 {
-				continue
-			}
-
-			// Assemble unified frame with peers, exactly mirroring production strategy.Training:
-			frame := data.NewMeasurement(
-				symMeas[0].Epoch,
-				sym,
-				"dynamics",
-				symMeas[0].At,
-				symMeas[0].From,
-			)
-			frame.SeqIdx = symMeas[0].SeqIdx
-			frame.Tick = tick
-			frame.Peers(symMeas...)
-			frame.Write()
-
-			regions := frozenGrid.Observe(frame)
-
-			if regions == nil {
-				continue
-			}
-
-			token := fmt.Sprintf("R%02d", regions[0].Key)
-			maxBrightness := regions[0].Brightness
-			runnerUpBrightness := regions[1].Brightness
-
-			tokens = append(tokens, token)
-			tokensBySymbol[sym] = append(tokensBySymbol[sym], token)
-			tokenFreqs[token]++
-
-			// Track run-length compressed tokens (mirroring S3 sequence storage in training.Train):
-			symComp := compressedTokensBySymbol[sym]
-			if len(symComp) == 0 || symComp[len(symComp)-1] != token {
-				if len(symComp) > 0 {
-					prevComp := symComp[len(symComp)-1]
-					if compressedTransitions[prevComp] == nil {
-						compressedTransitions[prevComp] = make(map[string]int)
-					}
-					compressedTransitions[prevComp][token]++
-				}
-				compressedTokensBySymbol[sym] = append(compressedTokensBySymbol[sym], token)
-				compressedTokens = append(compressedTokens, token)
-				compressedTokenFreqs[token]++
-			}
-
-			// Step Sequitur grammar induction:
-			g := grammars[sym]
-			if g == nil {
-				g = strategy.NewGrammar()
-				grammars[sym] = g
-			}
-
-			last := lastSymbols[sym]
-
-			if len(regions) > 0 {
-				symKey := fmt.Sprintf("R%02d", regions[0].Key)
-
-				if symKey != last {
-					last = symKey
-					rule := g.Append(symKey)
-
-					if rule != nil {
-						phrase := rule.TerminalNames(g)
-
-						if len(phrase) >= 2 {
-							phraseKey := strings.Join(phrase, "/")
-							sequiturPhrases = append(sequiturPhrases, phraseKey)
-							sequiturPhrasesBySymbol[sym] = append(sequiturPhrasesBySymbol[sym], phraseKey)
-							sequiturPhraseFreqs[phraseKey]++
-
-							symPhrases := sequiturPhrasesBySymbol[sym]
-
-							if len(symPhrases) > 1 {
-								prevPhrase := symPhrases[len(symPhrases)-2]
-
-								if sequiturTransitions[prevPhrase] == nil {
-									sequiturTransitions[prevPhrase] = make(map[string]int)
-								}
-
-								sequiturTransitions[prevPhrase][phraseKey]++
-							}
-						}
-					}
-				}
-			}
-
-			lastSymbols[sym] = last
-
-			margin := maxBrightness - runnerUpBrightness
-			winningScore := maxBrightness
-			active := float64(regions[0].Counts)
-			members := float64(regions[0].Counts)
-			coverage := 1.0
-
-			accum := regionAccums[token]
-
-			if accum == nil {
-				accum = &regionAccumulator{
-					minScore: winningScore,
-					maxScore: winningScore,
-				}
-				regionAccums[token] = accum
-			}
-
-			accum.emissions++
-			accum.totalScore += winningScore
-
-			if winningScore < accum.minScore {
-				accum.minScore = winningScore
-			}
-
-			if winningScore > accum.maxScore {
-				accum.maxScore = winningScore
-			}
-
-			accum.totalActive += active
-			accum.totalMembers += members
-			accum.totalMargin += margin
-
-			sumScore += winningScore
-
-			// Brightness is negative for a frame quieter than the null, so the
-			// first emission seeds the peak rather than a zero floor.
-			if len(tokens) == 1 || winningScore > peakScore {
-				peakScore = winningScore
-			}
-
-			sumCoverage += coverage
-			sumMargin += margin
-
-			prevToken := prevTokens[sym]
-
-			if prevToken != "" {
-				totalTransitions++
-				if prevToken == token {
-					stayCount++
-				}
-				if transitions[prevToken] == nil {
-					transitions[prevToken] = make(map[string]int)
-				}
-				transitions[prevToken][token]++
-			}
-			prevTokens[sym] = token
-		}
-	}
-
-	if len(tokens) < 20 {
-		return Stage4TokenDynamics{
-			TotalEmissions: len(tokens),
-			SummaryText:    "Insufficient held-out token emissions to evaluate dynamics.",
-			Status:         "INSUFFICIENT_DATA",
-			Passed:         false,
-		}
-	}
-
-	maxDominance := 0.0
-	for _, count := range tokenFreqs {
-		share := float64(count) / float64(len(tokens))
-		if share > maxDominance {
-			maxDominance = share
-		}
-	}
-
-	alwaysStayAccuracy := 0.0
-	if totalTransitions > 0 {
-		alwaysStayAccuracy = float64(stayCount) / float64(totalTransitions)
-	}
-
-	marginalAccuracy := maxDominance
-
-	regionStrengths := make(map[string]RegionStrengthStat, len(regionAccums))
-	for token, accum := range regionAccums {
-		meanScore := accum.totalScore / float64(accum.emissions)
-		meanActive := accum.totalActive / float64(accum.emissions)
-		meanMembers := accum.totalMembers / float64(accum.emissions)
-		meanCoverage := 0.0
-
-		if meanMembers > 0 {
-			meanCoverage = meanActive / meanMembers
-		}
-
-		meanMargin := accum.totalMargin / float64(accum.emissions)
-
-		regionStrengths[token] = RegionStrengthStat{
-			Region:       token,
-			Emissions:    accum.emissions,
-			MeanScore:    meanScore,
-			MinScore:     accum.minScore,
-			MaxScore:     accum.maxScore,
-			MeanActive:   meanActive,
-			MeanMembers:  meanMembers,
-			MeanCoverage: meanCoverage,
-			MeanMargin:   meanMargin,
-		}
-	}
-
-	meanStrength := 0.0
-	meanActiveCov := 0.0
-	meanMargin := 0.0
-
-	if len(tokens) > 0 {
-		meanStrength = sumScore / float64(len(tokens))
-		meanActiveCov = sumCoverage / float64(len(tokens))
-		meanMargin = sumMargin / float64(len(tokens))
-	}
-
-	realEntropy := computeTransitionEntropy(transitions)
-	blockSize := empiricalDwellBlockSize(tokensBySymbol)
-	nullEntropies := computeBlockNullTransitionEntropies(tokensBySymbol, blockSize, permutations)
-
-	nullMean := 0.0
-	for _, value := range nullEntropies {
-		nullMean += value
-	}
-	if len(nullEntropies) > 0 {
-		nullMean /= float64(len(nullEntropies))
-	}
-	entropyReduction := nullMean - realEntropy
-
-	// Compute compressed sequence transition entropy and null:
-	compEntropy := 0.0
-	compNullMean := 0.0
-	compReduction := 0.0
-	if len(compressedTokens) > 0 {
-		compEntropy = computeTransitionEntropy(compressedTransitions)
-		compNullEntropies := computeBlockNullTransitionEntropies(compressedTokensBySymbol, 1, permutations)
-		for _, value := range compNullEntropies {
-			compNullMean += value
-		}
-		if len(compNullEntropies) > 0 {
-			compNullMean /= float64(len(compNullEntropies))
-		}
-		compReduction = compNullMean - compEntropy
-	}
-
-	sequiturRulesCount := 0
-	for _, g := range grammars {
-		sequiturRulesCount += len(g.Rules())
-	}
-
-	seqEntropy := 0.0
-	seqNullMean := 0.0
-	seqReduction := 0.0
-	var seqNullEntropies []float64
-
-	if len(sequiturPhrases) > 0 {
-		seqEntropy = computeTransitionEntropy(sequiturTransitions)
-		seqNullEntropies = computeBlockNullTransitionEntropies(sequiturPhrasesBySymbol, 1, permutations)
-		for _, value := range seqNullEntropies {
-			seqNullMean += value
-		}
-		if len(seqNullEntropies) > 0 {
-			seqNullMean /= float64(len(seqNullEntropies))
-		}
-		seqReduction = seqNullMean - seqEntropy
-	}
-
-	nullRank := 0.0
-	if len(nullEntropies) > 0 {
-		greaterOrEqual := 0
-		for _, value := range nullEntropies {
-			if value >= realEntropy {
-				greaterOrEqual++
-			}
-		}
-		nullRank = float64(greaterOrEqual) / float64(len(nullEntropies))
-	}
-
-	pValue := lowerPValue(realEntropy, nullEntropies)
-
-	if len(sequiturPhrases) > 0 && len(seqNullEntropies) > 0 {
-		seqPVal := lowerPValue(seqEntropy, seqNullEntropies)
-		if seqPVal < pValue {
-			pValue = seqPVal
-		}
-	}
-
-	verdict := hypothesisVerdict(pValue, len(nullEntropies), significance)
-
-	return Stage4TokenDynamics{
-		TotalEmissions:                 len(tokens),
-		UniqueTokens:                   len(tokenFreqs),
-		TokenFrequencies:               tokenFreqs,
-		MaxTokenDominance:              maxDominance,
-		MeanExcitationStrength:         meanStrength,
-		PeakExcitationStrength:         peakScore,
-		MeanActiveCoverage:             meanActiveCov,
-		MeanRunnerUpMargin:             meanMargin,
-		RegionStrengths:                regionStrengths,
-		TransitionEntropy:              realEntropy,
-		NullTransitionEntropy:          nullMean,
-		EntropyReductionBits:           entropyReduction,
-		Transitions:                    transitions,
-		CompressedEmissions:            len(compressedTokens),
-		CompressedUniqueTokens:         len(compressedTokenFreqs),
-		CompressedTransitions:          compressedTransitions,
-		CompressedTransitionEntropy:    compEntropy,
-		CompressedNullEntropy:          compNullMean,
-		CompressedEntropyReductionBits: compReduction,
-		SequiturRulesInduced:           sequiturRulesCount,
-		SequiturUniquePhrases:          len(sequiturPhraseFreqs),
-		SequiturTransitionEntropy:      seqEntropy,
-		SequiturNullEntropy:            seqNullMean,
-		SequiturEntropyReductionBits:   seqReduction,
-		AlwaysStayAccuracy:             alwaysStayAccuracy,
-		MarginalAccuracy:               marginalAccuracy,
-		SummaryText: fmt.Sprintf(
-			"Token Dynamics (held out): %d raw emissions (%d compressed changes, dwell stay=%.1f%%). "+
-				"Raw entropy = %.3f vs null %.3f (gain=%.3f bits; block=%d; null-rank=%.1f%%; stay-baseline=%.1f%%, marginal-baseline=%.1f%%). "+
-				"Compressed transition entropy = %.3f vs shuffled null %.3f (gain=%.3f bits). "+
-				"Sequitur grammar: %d rules induced, %d unique phrases, transition entropy = %.3f vs null %.3f (gain=%.3f bits).",
-			len(tokens), len(compressedTokens), alwaysStayAccuracy*100,
-			realEntropy, nullMean, entropyReduction, blockSize, nullRank*100, alwaysStayAccuracy*100, marginalAccuracy*100,
-			compEntropy, compNullMean, compReduction,
-			sequiturRulesCount, len(sequiturPhraseFreqs), seqEntropy, seqNullMean, seqReduction,
-		),
-		PValue: pValue,
-		Status: verdict,
-		Passed: passed(verdict),
+type DynamicsStage struct {
+	*runtime.System
+	ch          chan *data.Measurement
+	violations  []*Violation
+	tokens      []string
+	transitions map[string]map[string]int64
+	tokenCounts map[string]int64
+	entropy     float64
+	maxEntropy  float64
+}
+
+func NewDynamicsStage(ctx context.Context) *DynamicsStage {
+	return &DynamicsStage{
+		System:      runtime.NewSystem(ctx, "audit:dynamics"),
+		ch:          make(chan *data.Measurement, 64),
+		violations:  make([]*Violation, 0),
+		tokens:      make([]string, 0),
+		transitions: make(map[string]map[string]int64),
+		tokenCounts: make(map[string]int64),
 	}
 }
 
-func computeTransitionEntropy(
-	transitions map[string]map[string]int,
-) float64 {
-	totalTransitions := 0
-	rowTotals := make(map[string]int, len(transitions))
+func (stage *DynamicsStage) Channel() chan *data.Measurement {
+	return stage.ch
+}
 
-	for fromToken, nextMap := range transitions {
-		rowTotal := 0
+func (stage *DynamicsStage) Run() error {
+	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
 
-		for _, count := range nextMap {
-			rowTotal += count
-		}
+	for measurement := range stage.ch {
+		if measurement == nil {
+			stage.violations = append(stage.violations, NewViolation(
+				"unknown",
+				"measurement",
+				"Nil measurement encountered in tape",
+				nil,
+				nil,
+			))
 
-		rowTotals[fromToken] = rowTotal
-		totalTransitions += rowTotal
-	}
-
-	if totalTransitions == 0 {
-		return 0.0
-	}
-
-	conditionalEntropy := 0.0
-
-	for fromToken, nextMap := range transitions {
-		rowTotal := rowTotals[fromToken]
-
-		if rowTotal == 0 {
 			continue
 		}
 
-		rowEntropy := 0.0
-
-		for _, count := range nextMap {
-			if count == 0 {
-				continue
-			}
-
-			probability := float64(count) / float64(rowTotal)
-			rowEntropy -= probability * math.Log2(probability)
+		if measurement.Error() != nil {
+			stage.violations = append(stage.violations, NewViolation(
+				measurement.Label,
+				"measurement.error",
+				measurement.Error().Error(),
+				measurement,
+				nil,
+			))
 		}
 
-		conditionalEntropy +=
-			(float64(rowTotal) / float64(totalTransitions)) * rowEntropy
+		stage.recordToken(measurement)
 	}
 
-	return conditionalEntropy
+	stage.auditDynamics()
+	return nil
+}
+
+func (stage *DynamicsStage) Violations() []*Violation {
+	return stage.violations
 }
 
 /*
-empiricalDwellBlockSize uses the median run length of identical consecutive
-tokens within each symbol as the null's local-persistence scale. It evaluates
-dwell runs per-symbol to avoid collapsing block size across interleaved multi-symbol feeds.
+recordToken extracts the active state token or dominant metric from the measurement
+and accumulates the sequential transition count from the prior token.
 */
-func empiricalDwellBlockSize(tokensBySymbol map[string][]string) int {
-	runs := make([]int, 0)
+func (stage *DynamicsStage) recordToken(measurement *data.Measurement) {
+	var currentToken string
 
-	for _, symTokens := range tokensBySymbol {
-		if len(symTokens) == 0 {
+	for entry := range measurement.Read() {
+		if entry != nil && entry.Metric != nil {
+			currentToken = entry.Metric.Label()
+			break
+		}
+	}
+
+	if currentToken == "" {
+		return
+	}
+
+	stage.tokens = append(stage.tokens, currentToken)
+	stage.tokenCounts[currentToken]++
+
+	if len(stage.tokens) > 1 {
+		priorToken := stage.tokens[len(stage.tokens)-2]
+		row, exists := stage.transitions[priorToken]
+
+		if !exists {
+			row = make(map[string]int64)
+			stage.transitions[priorToken] = row
+		}
+
+		row[currentToken]++
+	}
+}
+
+/*
+auditDynamics evaluates state transition entropy and checks for absorbing state collapses.
+*/
+func (stage *DynamicsStage) auditDynamics() {
+	totalTokens := len(stage.tokens)
+
+	if totalTokens < 20 {
+		return
+	}
+
+	// 1. Check for Absorbing State Collapse: If a single token dominates > 80%
+	// of all observations, the system is frozen in an absorbing basin.
+	for token, count := range stage.tokenCounts {
+		share := float64(count) / float64(totalTokens)
+
+		if share > 0.80 {
+			stage.violations = append(stage.violations, NewViolation(
+				token,
+				"dynamics.absorbing_token_collapse",
+				fmt.Sprintf("Token %s dominates %.1f%% of all emissions (> 80%% threshold)",
+					token, share*100),
+				nil,
+				nil,
+			))
+		}
+	}
+
+	// 2. Compute Transition Entropy H(S):
+	// H = - sum_i P(i) * [ sum_j P(j|i) log2 P(j|i) ]
+	stage.entropy = stage.computeTransitionEntropy()
+	entropy := stage.entropy
+
+	// Compute empirical maximum possible entropy for the number of observed states
+	distinctStates := len(stage.tokenCounts)
+
+	if distinctStates > 1 {
+		stage.maxEntropy = math.Log2(float64(distinctStates))
+		maxEntropy := stage.maxEntropy
+
+		// If real transition entropy equals max possible entropy within machine precision,
+		// state transitions carry 0 predictive structure (pure random walk / noise).
+		if math.Abs(entropy-maxEntropy) < 0.01 {
+			stage.violations = append(stage.violations, NewViolation(
+				"dynamics",
+				"dynamics.pure_noise_entropy",
+				fmt.Sprintf("Transition entropy H = %.3f bits equals maximum random entropy %.3f bits (zero predictive structure)",
+					entropy, maxEntropy),
+				nil,
+				nil,
+			))
+		}
+	}
+}
+
+func (stage *DynamicsStage) computeTransitionEntropy() float64 {
+	totalTransitions := float64(len(stage.tokens) - 1)
+
+	if totalTransitions <= 0 {
+		return 0
+	}
+
+	keys := make([]string, 0, len(stage.tokenCounts))
+
+	for key := range stage.tokenCounts {
+		keys = append(keys, key)
+	}
+
+	slices.Sort(keys)
+
+	var entropy float64
+
+	for _, stateI := range keys {
+		row, hasRow := stage.transitions[stateI]
+
+		if !hasRow {
 			continue
 		}
 
-		runLength := 1
+		var rowTotal int64
 
-		for index := 1; index < len(symTokens); index++ {
-			if symTokens[index] == symTokens[index-1] {
-				runLength++
-				continue
-			}
-
-			runs = append(runs, runLength)
-			runLength = 1
+		for _, count := range row {
+			rowTotal += count
 		}
 
-		runs = append(runs, runLength)
-	}
-
-	if len(runs) == 0 {
-		return 1
-	}
-
-	sort.Ints(runs)
-	median := runs[len(runs)/2]
-
-	if median < 1 {
-		return 1
-	}
-
-	return median
-}
-
-func computeBlockNullTransitionEntropies(
-	tokensBySymbol map[string][]string,
-	blockSize int,
-	iterations int,
-) []float64 {
-	if iterations <= 0 || len(tokensBySymbol) == 0 {
-		return nil
-	}
-
-	totalTokens := 0
-
-	for _, symTokens := range tokensBySymbol {
-		totalTokens += len(symTokens)
-	}
-
-	if totalTokens < 2 {
-		return nil
-	}
-
-	if blockSize < 1 {
-		blockSize = 1
-	}
-
-	blocksBySymbol := make(map[string][][]string, len(tokensBySymbol))
-
-	for sym, symTokens := range tokensBySymbol {
-		if len(symTokens) == 0 {
+		if rowTotal <= 0 {
 			continue
 		}
 
-		symBlocks := make([][]string, 0, (len(symTokens)+blockSize-1)/blockSize)
+		probI := float64(stage.tokenCounts[stateI]) / float64(len(stage.tokens))
+		var rowEntropy float64
 
-		for start := 0; start < len(symTokens); start += blockSize {
-			end := min(start+blockSize, len(symTokens))
-			symBlocks = append(symBlocks, append([]string(nil), symTokens[start:end]...))
-		}
-
-		blocksBySymbol[sym] = symBlocks
-	}
-
-	rng := rand.New(rand.NewSource(1791))
-	entropies := make([]float64, 0, iterations)
-
-	for range iterations {
-		transitions := make(map[string]map[string]int)
-
-		for _, symBlocks := range blocksBySymbol {
-			if len(symBlocks) == 0 {
-				continue
-			}
-
-			shuffledBlocks := append([][]string(nil), symBlocks...)
-			rng.Shuffle(len(shuffledBlocks), func(first, second int) {
-				shuffledBlocks[first], shuffledBlocks[second] =
-					shuffledBlocks[second], shuffledBlocks[first]
-			})
-
-			shuffledSym := make([]string, 0)
-
-			for _, blk := range shuffledBlocks {
-				shuffledSym = append(shuffledSym, blk...)
-			}
-
-			for idx, tok := range shuffledSym {
-				if idx == 0 {
-					continue
-				}
-
-				previous := shuffledSym[idx-1]
-
-				if transitions[previous] == nil {
-					transitions[previous] = make(map[string]int)
-				}
-
-				transitions[previous][tok]++
+		for _, count := range row {
+			if count > 0 {
+				probJGivenI := float64(count) / float64(rowTotal)
+				rowEntropy -= probJGivenI * math.Log2(probJGivenI)
 			}
 		}
 
-		entropies = append(
-			entropies,
-			computeTransitionEntropy(transitions),
-		)
+		entropy += probI * rowEntropy
 	}
 
-	return entropies
+	return entropy
 }
+
+func (stage *DynamicsStage) Report() string {
+	var build strings.Builder
+
+	for _, violation := range stage.violations {
+		build.WriteString(violation.String())
+	}
+
+	return build.String()
+}
+
+func (stage *DynamicsStage) Data() any {
+	return map[string]any{
+		"passed":          len(stage.violations) == 0,
+		"entropy":         stage.entropy,
+		"max_entropy":     stage.maxEntropy,
+		"total_tokens":    len(stage.tokens),
+		"distinct_tokens": len(stage.tokenCounts),
+		"token_counts":    stage.tokenCounts,
+		"transitions":     stage.transitions,
+	}
+}
+

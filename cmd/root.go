@@ -202,6 +202,11 @@ var (
 
 			if captureEnabled {
 				ingressStoreTee = hindsight.NewStoreTee(ctx, "storeTee")
+				ingressStoreTee.Transition(nmruntime.READY)
+				ingressStoreTee.Run()
+				ingressStoreTee.Push(data.NewMeasurement(
+					epoch, "epoch", "run", processStartedAt, processStartedAt,
+				))
 			}
 
 			ingressTee := teeOf(ingressStoreTee)
@@ -342,19 +347,11 @@ var (
 				workspace,
 			}
 
-			if ingressStoreTee != nil {
-				runsystems = append(runsystems, ingressStoreTee)
-			}
-
 			for _, runsys := range runsystems {
 				runsys.Transition(nmruntime.READY)
 			}
 
 			detectorTee.Run()
-
-			if ingressStoreTee != nil {
-				ingressStoreTee.Run()
-			}
 
 			book.SetTouch(func(touches []kraken.Level3Touch) {
 				if workspace == nil {

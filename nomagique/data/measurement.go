@@ -2,6 +2,7 @@ package data
 
 import (
 	"errors"
+	"fmt"
 	"iter"
 	"maps"
 	"math"
@@ -251,6 +252,21 @@ func (measurement *Measurement) copyMetrics(
 }
 
 /*
+Prefix returns the prefix for the given key.
+*/
+func (measurement *Measurement) Prefix() string {
+	return fmt.Sprintf(
+		"%s/%s/%019d/%019d/%019d/%019d.bin",
+		measurement.Source,
+		measurement.Label,
+		measurement.Epoch,
+		measurement.Tick,
+		measurement.SeqIdx,
+		measurement.Timestamp,
+	)
+}
+
+/*
 Read returns the metric entry for the given key.
 In compliance with the WORM model, a Measurement can not be read
 before it is finalized.
@@ -258,18 +274,12 @@ before it is finalized.
 func (measurement *Measurement) Read(keys ...string) iter.Seq[*MetricEntry] {
 	if !measurement.locked() {
 		return func(yield func(*MetricEntry) bool) {
-			err := errnie.Error(errnie.Err(
-				errnie.Forbidden,
-				"[data.measurement] not finalized",
-				nil,
-			))
-
-			if measurement != nil {
-				measurement.err = errors.Join(measurement.err, err)
-			}
-
 			yield(&MetricEntry{
-				Err: err,
+				Err: errnie.Error(errnie.Err(
+					errnie.Forbidden,
+					"[data.measurement] not finalized",
+					nil,
+				)),
 			})
 		}
 	}
@@ -678,7 +688,7 @@ func (measurement *Measurement) valid() *Measurement {
 	}
 
 	check(measurement.ID == 0, "ID is required")
-	check(measurement.Epoch <= 0, "epoch is required")
+	check(measurement.Epoch < 0 || (measurement.Epoch == 0 && measurement.Source != "policy"), "epoch is required")
 	check(measurement.Label == "", "label is required")
 	check(measurement.Source == "", "source is required")
 	check(measurement.At.IsZero(), "at is required")

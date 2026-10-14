@@ -9,14 +9,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 type mockS3Backend struct {
@@ -65,11 +62,38 @@ func (backend *mockS3Backend) ServeHTTP(writer http.ResponseWriter, request *htt
 	// 1. ListObjectsV2
 	if request.Method == http.MethodGet && request.URL.Query().Get("list-type") == "2" {
 		prefix := request.URL.Query().Get("prefix")
+		delimiter := request.URL.Query().Get("delimiter")
 		var contentsXML strings.Builder
 
-		for objKey := range backend.objects {
-			if prefix == "" || strings.HasPrefix(objKey, prefix) {
-				contentsXML.WriteString(fmt.Sprintf("<Contents><Key>%s</Key><Size>%d</Size></Contents>", objKey, len(backend.objects[objKey])))
+		if delimiter != "" {
+			seenPrefixes := make(map[string]bool)
+
+			for objKey := range backend.objects {
+				if prefix == "" || strings.HasPrefix(objKey, prefix) {
+					sub := strings.TrimPrefix(objKey, prefix)
+					idx := strings.Index(sub, delimiter)
+
+					if idx >= 0 {
+						commonPrefix := prefix + sub[:idx+len(delimiter)]
+
+						if !seenPrefixes[commonPrefix] {
+							seenPrefixes[commonPrefix] = true
+							contentsXML.WriteString(fmt.Sprintf("<CommonPrefixes><Prefix>%s</Prefix></CommonPrefixes>", commonPrefix))
+						}
+					}
+
+					if idx < 0 {
+						contentsXML.WriteString(fmt.Sprintf("<Contents><Key>%s</Key><Size>%d</Size></Contents>", objKey, len(backend.objects[objKey])))
+					}
+				}
+			}
+		}
+
+		if delimiter == "" {
+			for objKey := range backend.objects {
+				if prefix == "" || strings.HasPrefix(objKey, prefix) {
+					contentsXML.WriteString(fmt.Sprintf("<Contents><Key>%s</Key><Size>%d</Size></Contents>", objKey, len(backend.objects[objKey])))
+				}
 			}
 		}
 
@@ -145,52 +169,43 @@ func TestStoreClient(t *testing.T) {
 			backend.mu.Unlock()
 		})
 
-		Convey("When Put is called with a binary Measurement", func() {
-			now := time.Now().UTC().Truncate(time.Nanosecond)
-			prior := now.Add(-time.Second)
+		Convey("When Put is called with a key and payload", func() {
+			key := "run/epoch/0000000000000000001/0000000000000000010.bin"
+			payload := []byte("test-payload-bytes")
 
-			measurement := data.NewMeasurement(
-				1,
-				"BTC/USD",
-				"spot:trade",
-				now,
-				prior,
-				&data.StringEntry{Key: "feed", Value: "kraken-ws"},
-			)
-
-			priceDecimal, err := decimal.NewFromString("92500.25")
-			So(err, ShouldBeNil)
-
-			priceMetric := data.NewExactMetric("price", priceDecimal, data.UnitPrice, data.TimescaleInstantaneous)
-
-			measurement.Write(priceMetric)
-
-			putErr := client.Put(measurement)
+			putErr := client.Put(key, payload)
 			So(putErr, ShouldBeNil)
+			So(string(backend.objects[key]), ShouldEqual, string(payload))
 
-			expectedKey := fmt.Sprintf("1/BTC/USD/spot:trade/%d.bin", measurement.SeqIdx)
-			So(len(backend.objects[expectedKey]), ShouldBeGreaterThan, 0)
+			Convey("Then Get retrieves the exact payload", func() {
+				retrieved, getErr := client.Get(key)
+				So(getErr, ShouldBeNil)
+				So(string(retrieved), ShouldEqual, string(payload))
+			})
 
-			Convey("Then Get retrieves and unmarshals the exact measurement", func() {
-				var retrieved []*data.Measurement
-
-				for item := range client.Get("1/BTC/USD") {
-					retrieved = append(retrieved, item)
+			Convey("Then GetBytes streams all payloads under prefix", func() {
+				var payloads [][]byte
+				for p := range client.GetBytes("run/epoch/0000000000000000001/") {
+					payloads = append(payloads, p)
 				}
 
-				So(len(retrieved), ShouldEqual, 1)
-				So(retrieved[0].ID, ShouldEqual, measurement.ID)
-				So(retrieved[0].Label, ShouldEqual, "BTC/USD")
-				So(retrieved[0].Source, ShouldEqual, "spot:trade")
-				So(retrieved[0].Epoch, ShouldEqual, 1)
+				So(len(payloads), ShouldEqual, 1)
+				So(string(payloads[0]), ShouldEqual, string(payload))
+			})
 
-				readCount := 0
-				for entry := range retrieved[0].Read("price") {
-					readCount++
-					So(entry.Metric.Exact().String(), ShouldEqual, "92500.25")
-					So(entry.Metric.Unit(), ShouldEqual, data.UnitPrice)
+			Convey("Then List with delimiter returns top-level common prefixes", func() {
+				var commonPrefixes []string
+
+				for page := range client.List("run/epoch/", "/") {
+					for _, commonPrefix := range page.CommonPrefixes {
+						if commonPrefix.Prefix != nil {
+							commonPrefixes = append(commonPrefixes, *commonPrefix.Prefix)
+						}
+					}
 				}
-				So(readCount, ShouldEqual, 1)
+
+				So(len(commonPrefixes), ShouldEqual, 1)
+				So(commonPrefixes[0], ShouldEqual, "run/epoch/0000000000000000001/")
 			})
 		})
 	})

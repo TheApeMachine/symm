@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"sync/atomic"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -59,6 +60,8 @@ type Detector struct {
 	storeTee runtime.Tee
 	price    *broker.Price
 	tapes    map[string]*tape
+	steps    atomic.Int64
+	emitted  atomic.Int64
 }
 
 /*
@@ -79,7 +82,6 @@ func NewDetector(
 		tapes:    make(map[string]*tape),
 	}
 
-
 	if err := errnie.Require(map[string]any{
 		"price":    price,
 		"storeTee": storeTee,
@@ -89,7 +91,13 @@ func NewDetector(
 			"[detector] cannot classify excursions without friction",
 			err,
 		))
+		return detector
 	}
+
+	errnie.Info(fmt.Sprintf(
+		"[detector] excursion detector initialized with friction cash budget %s",
+		detector.price.ReferenceCash().String(),
+	))
 
 	return detector
 }
@@ -737,10 +745,21 @@ func (detector *Detector) Step(
 		return nil
 	}
 
+	stepCount := detector.steps.Add(1)
+
+	if stepCount == 1 || stepCount%500 == 0 {
+		errnie.Info(fmt.Sprintf(
+			"[detector] processing trades: %d observed (latest: %s tick=%d price=%s, active tapes: %d)",
+			stepCount, trade.Label, trade.Tick, price.String(), len(detector.tapes),
+		))
+	}
+
 	return nil
 }
 
 func (detector *Detector) FlushAll() error {
+	totalTapes := len(detector.tapes)
+
 	for symbol, current := range detector.tapes {
 		if current != nil {
 			if err := current.flush(); err != nil {
@@ -750,7 +769,20 @@ func (detector *Detector) FlushAll() error {
 		delete(detector.tapes, symbol)
 	}
 
+	errnie.Info(fmt.Sprintf(
+		"[detector] flush complete: %d total trades processed, %d total excursions emitted across %d tape(s)",
+		detector.steps.Load(), detector.emitted.Load(), totalTapes,
+	))
+
 	return nil
+}
+
+func (detector *Detector) Steps() int64 {
+	return detector.steps.Load()
+}
+
+func (detector *Detector) Emitted() int64 {
+	return detector.emitted.Load()
 }
 
 func (detector *Detector) Scan(
@@ -778,7 +810,6 @@ func (detector *Detector) Scan(
 
 	return detector.FlushAll()
 }
-
 
 /*
 Flush writes one detected excursion of the given class to storeTee.
@@ -841,6 +872,12 @@ func (detector *Detector) Flush(
 		data.NewExactMetric("b_price", bPrice, bPriceUnit, bPriceTime),
 		data.NewExactMetric("c_price", cPrice, cPriceUnit, cPriceTime),
 	)
+
+	detector.emitted.Add(1)
+	errnie.Info(fmt.Sprintf(
+		"[detector] detected %s on %s (epoch=%d, span=[tick %d -> %d], bPrice=%s, cPrice=%s)",
+		class, symbol, epoch, excursion.b.tick, excursion.c.tick, bPrice.String(), cPrice.String(),
+	))
 
 	detector.storeTee.Push(measurement)
 

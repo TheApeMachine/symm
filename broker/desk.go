@@ -264,7 +264,6 @@ func (desk *Desk) restoreFromHistory(
 	}
 }
 
-
 func (desk *Desk) restoreHolding(symbol string, balance *decimal.Decimal) {
 	pos := NewPosition()
 	pos.symbol = symbol

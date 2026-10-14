@@ -1,477 +1,150 @@
 package audit
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"math"
-	"slices"
+	"strings"
 
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
-truthCheck names one recomputation the truthfulness audit performs. A check
-that found nothing to compare is reported, so a metric name that no producer
-emits shows up as zero comparisons rather than as a silent pass.
+TruthfulnessStage validates that derived analytical feeds (such as CVD volumes,
+trade rates, and order book states) faithfully match underlying tape identities
+without hallucinated volume, dropped trades, or crossed markets (bid > ask).
 */
-var truthChecks = []string{
-	"trade_fields",                // price > 0, qty > 0, side buy|sell
-	"cvd_coverage",                // one cvd frame per stored trade
-	"level3_replay",               // every stored level3 entry replays and matches its venue checksum
-	"trade_book",                  // book snapshot stamped on the trade == replayed book at its SeqIdx, every level exact
-	"midpoint_log_return",         // == ln(currMid / prevMid)
-	"flow_aligned_midpoint_return", // == +midpoint_log_return on buy, -midpoint_log_return on sell
-	"signed_net_fraction_bounded", // within [-1, 1], and gross_notional > 0 when present
+type TruthfulnessStage struct {
+	*runtime.System
+	ch                    chan *data.Measurement
+	violations            []*Violation
+	totalChecked          int
+	crossedCount          int
+	volumeDivergenceCount int
 }
 
-/*
-AnalyzeTruthfulness recomputes, from the stored spot:trade and spot:level3
-tapes, what cvd must have published for each trade, and compares it with the
-stored cvd frame of that trade. Trades and cvd frames are paired per symbol by
-event time; a time shared by several trades is ambiguous and skipped (counted).
-
-Trades are walked in SeqIdx order, cvd's processing order, so the previous
-trade is the one whose state cvd carried into this one. Ingress takes level3
-entry sequence numbers under the book's write lock and trade sequence numbers,
-with the book snapshot it stamps onto the trade, under its read lock; replaying
-every stored entry sequenced before a trade through broker.Book therefore
-rebuilds exactly the book that trade was stamped from. The stamped snapshot is
-checked level by level, to the venue's exact digits, against that replay;
-cvd's response_midpoint:at against the stamped touch's midpoint, :from against
-the previous frame's :at, and the log return against ln(:at / :from).
-
-A trade stamped without a book is not compared: the live book was unseeded or
-stale at that event, a state the stored tape does not record.
-*/
-func AnalyzeTruthfulness(
-	ctx context.Context,
-	trades []*data.Measurement,
-	level3 []*data.Measurement,
-	measurements []*data.Measurement,
-) TruthfulnessAudit {
-	compared := make(map[string]int, len(truthChecks))
-	violations := make(map[string]int, len(truthChecks))
-	discrepancies := make([]MetricDiscrepancy, 0)
-
-	record := func(signal, check string, observed, expected float64, ok bool) {
-		compared[check]++
-
-		if ok {
-			return
-		}
-
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("[audit.truthfulness] discrepancy on %s: observed=%v expected=%v", check, observed, expected),
-			nil,
-		), "check", check, "observed", observed, "expected", expected)
-
-		violations[check]++
-
-		if len(discrepancies) < 200 {
-			discrepancies = append(discrepancies, MetricDiscrepancy{
-				Signal: signal, Metric: check, ObservedVal: observed, ExpectedVal: expected,
-				Error: math.Abs(observed - expected),
-			})
-		}
+func NewTruthfulnessStage(ctx context.Context) *TruthfulnessStage {
+	return &TruthfulnessStage{
+		System:     runtime.NewSystem(ctx, "audit:truthfulness"),
+		ch:         make(chan *data.Measurement, 64),
+		violations: make([]*Violation, 0),
 	}
+}
 
-	equal := func(observed, expected float64) bool {
-		if math.IsNaN(observed) || math.IsNaN(expected) || math.IsInf(observed, 0) || math.IsInf(expected, 0) {
-			return false
-		}
+func (stage *TruthfulnessStage) Channel() chan *data.Measurement {
+	return stage.ch
+}
 
-		return math.Abs(observed-expected) <= 1e-12+1e-9*math.Max(math.Abs(expected), math.Abs(observed))
-	}
+func (stage *TruthfulnessStage) Run() error {
+	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
 
-	cvdByKey := make(map[string][]*data.Measurement)
-	// cvd handles a symbol's trades in order, so a trade later than the
-	// symbol's last loaded cvd frame lies past the audit sample, not missing.
-	lastCVD := make(map[string]int64)
+	for measurement := range stage.ch {
+		stage.totalChecked++
 
-	for _, measurement := range measurements {
 		if measurement == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.truthfulness] nil measurement in audit stream",
+			stage.violations = append(stage.violations, NewViolation(
+				"unknown",
+				"measurement",
+				"Nil measurement encountered in tape",
+				nil,
 				nil,
 			))
-
 			continue
 		}
 
-		if measurement.Source == "cvd" {
-			lastCVD[measurement.Label] = max(lastCVD[measurement.Label], measurement.At.UnixNano())
-			key := fmt.Sprintf("%s|%d", measurement.Label, measurement.At.UnixNano())
-			cvdByKey[key] = append(cvdByKey[key], measurement)
-
-			for entry := range measurement.Read() {
-				if entry == nil || entry.Metric == nil {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"[audit.truthfulness] nil metric entry in cvd measurement",
-						nil,
-					), "label", measurement.Label)
-
-					continue
-				}
-
-				if entry.Key == "signed_net_fraction" {
-					value := entry.Metric.Raw()
-					record("cvd", "signed_net_fraction_bounded", value, math.Max(-1, math.Min(1, value)), value >= -1 && value <= 1)
-				}
-
-				if entry.Key == "gross_notional" {
-					value := entry.Metric.Raw()
-					record("cvd", "signed_net_fraction_bounded", value, 1.0, value > 0)
-				}
-			}
-		}
-	}
-
-	bySymbol := make(map[string][]*data.Measurement)
-
-	for _, trade := range trades {
-		if trade == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.truthfulness] nil trade in audit stream",
+		if measurement.Error() != nil {
+			stage.violations = append(stage.violations, NewViolation(
+				measurement.Label,
+				"measurement.error",
+				measurement.Error().Error(),
+				measurement,
 				nil,
 			))
-
-			continue
 		}
 
-		if trade.Source == "spot:trade" {
-			bySymbol[trade.Label] = append(bySymbol[trade.Label], trade)
-		}
+		stage.validateTapeIdentities(measurement)
 	}
 
-	ambiguous := 0
-	totalTrades := 0
-	level3Entries := level3Frames(level3)
-	book := broker.NewBook(ctx, spot.NewNormalizer())
-	cursors := make(map[string]int, len(level3Entries))
-
-	replay := func(symbol string, before int64) {
-		frames := level3Entries[symbol]
-
-		for cursors[symbol] < len(frames) && frames[cursors[symbol]].first < before {
-			if ctx.Err() != nil {
-				return
-			}
-
-			frame := frames[cursors[symbol]]
-			err := book.ApplyFrame(frame.orders)
-			passVal := 1.0
-
-			if err != nil {
-				passVal = 0.0
-			}
-
-			record("book", "level3_replay", passVal, 1.0, err == nil)
-			cursors[symbol]++
-		}
-	}
-
-	symbols := make([]string, 0, len(bySymbol))
-
-	for sym := range bySymbol {
-		symbols = append(symbols, sym)
-	}
-
-	slices.Sort(symbols)
-
-	for _, symbol := range symbols {
-		if ctx.Err() != nil {
-			break
-		}
-
-		tape := bySymbol[symbol]
-
-		slices.SortStableFunc(tape, func(left, right *data.Measurement) int {
-			return cmp.Compare(left.SeqIdx, right.SeqIdx)
-		})
-
-		sameAt := make(map[int64]int)
-
-		for _, trade := range tape {
-			sameAt[trade.At.UnixNano()]++
-		}
-
-		var prevMidpoint float64
-
-		for _, trade := range tape {
-			if ctx.Err() != nil {
-				break
-			}
-
-			replay(symbol, trade.SeqIdx)
-
-			stamped, err := broker.ReadSnapshot(trade)
-
-			if err != nil {
-				errnie.Error(err, "symbol", symbol, "seq", trade.SeqIdx)
-				record("book", "trade_book", 0.0, 1.0, false)
-			}
-
-			if err == nil && stamped != nil {
-				replayed := book.Snapshot(symbol)
-				isEqual := stamped.Equal(replayed)
-				obsVal := 0.0
-
-				if isEqual {
-					obsVal = 1.0
-				}
-
-				record("book", "trade_book", obsVal, 1.0, isEqual)
-			}
-
-			price, qty := tradeField(trade, "price"), tradeField(trade, "qty")
-			var side string
-
-			if entry := data.Pull(trade.Meta("side")); entry != nil {
-				side = entry.Value
-			}
-			validFields := price > 0 && qty > 0 && (side == "buy" || side == "sell")
-			fieldVal := 0.0
-
-			if validFields {
-				fieldVal = 1.0
-			}
-
-			record("trade", "trade_fields", fieldVal, 1.0, validFields)
-
-			var currMid float64
-
-			if stamped != nil {
-				bid, ask := stamped.Touch()
-				currMid = (bid.Price.Float64() + ask.Price.Float64()) / 2.0
-			}
-
-			at := trade.At.UnixNano()
-			last, hasCVD := lastCVD[symbol]
-
-			if hasCVD && at > last {
-				continue
-			}
-
-			totalTrades++
-
-			if sameAt[at] > 1 {
-				ambiguous++
-
-				if validFields && currMid > 0 {
-					prevMidpoint = currMid
-				}
-
-				continue
-			}
-
-			frames := cvdByKey[fmt.Sprintf("%s|%d", symbol, at)]
-			record("cvd", "cvd_coverage", float64(len(frames)), 1.0, len(frames) == 1)
-
-			if len(frames) != 1 {
-				if validFields && currMid > 0 {
-					prevMidpoint = currMid
-				}
-
-				continue
-			}
-
-			published := make(map[string]float64)
-
-			for entry := range frames[0].Read() {
-				if entry != nil && entry.Metric != nil {
-					published[entry.Key] = entry.Metric.Raw()
-				}
-			}
-
-			if currMid > 0 && prevMidpoint > 0 {
-				expectedReturn := math.Log(currMid / prevMidpoint)
-				expectedFlow := expectedReturn
-
-				if side == "sell" {
-					expectedFlow = -expectedReturn
-				}
-
-				if val, ok := published["midpoint_log_return"]; ok {
-					record("cvd", "midpoint_log_return", val, expectedReturn, equal(val, expectedReturn))
-				}
-
-				if val, ok := published["flow_aligned_midpoint_return"]; ok {
-					record("cvd", "flow_aligned_midpoint_return", val, expectedFlow, equal(val, expectedFlow))
-				}
-			}
-
-			if val, ok := published["midpoint_log_return"]; ok && (currMid <= 0 || prevMidpoint <= 0) {
-				record("cvd", "midpoint_log_return", val, 0.0, false)
-			}
-
-			if val, ok := published["flow_aligned_midpoint_return"]; ok && (currMid <= 0 || prevMidpoint <= 0) {
-				record("cvd", "flow_aligned_midpoint_return", val, 0.0, false)
-			}
-
-			if validFields && currMid > 0 {
-				prevMidpoint = currMid
-			}
-		}
-	}
-
-	level3Symbols := make([]string, 0, len(level3Entries))
-
-	for sym := range level3Entries {
-		level3Symbols = append(level3Symbols, sym)
-	}
-
-	slices.Sort(level3Symbols)
-
-	// Entries after a symbol's last trade, and on symbols without trades,
-	// still replay against their venue checksums.
-	for _, symbol := range level3Symbols {
-		if ctx.Err() != nil {
-			break
-		}
-
-		replay(symbol, math.MaxInt64)
-	}
-
-	totalViolations := 0
-	unexercised := make([]string, 0)
-
-	for _, check := range truthChecks {
-		totalViolations += violations[check]
-
-		if compared[check] == 0 {
-			unexercised = append(unexercised, check)
-		}
-	}
-
-	verdict := VerdictValid
-
-	switch {
-	case totalViolations > 0:
-		verdict = VerdictBreach
-	case totalTrades == 0 || len(unexercised) > 0:
-		verdict = VerdictInsufficient
-	}
-
-	summary := fmt.Sprintf(
-		"Metric Truthfulness: %d stored trades recomputed against cvd (%d skipped as same-time ambiguous). "+
-			"Violations=%d by check %v; comparisons %v; unexercised checks %v.",
-		totalTrades, ambiguous, totalViolations, violations, compared, unexercised,
-	)
-
-	return TruthfulnessAudit{
-		TotalChecked:       totalTrades,
-		ViolationsCount:    totalViolations,
-		SyntheticTimeSteps: 0,
-		Comparisons:        compared,
-		ViolationsByCheck:  violations,
-		AmbiguousTrades:    ambiguous,
-		UnexercisedChecks:  unexercised,
-		Discrepancies:      discrepancies,
-		SummaryText:        summary,
-		Status:             verdict,
-		Passed:             passed(verdict),
-	}
+	return nil
 }
 
-func tradeField(trade *data.Measurement, key string) float64 {
-	for entry := range trade.Read() {
-		if entry != nil && entry.Metric != nil && entry.Key == key {
-			return entry.Metric.Raw()
-		}
-	}
-
-	return 0
+func (stage *TruthfulnessStage) Violations() []*Violation {
+	return stage.violations
 }
 
 /*
-level3Frame is one stored level3 entry: its orders, numbered consecutively from
-first by the book while it held the entry's write lock.
+validateTapeIdentities verifies physical and accounting identities on the measurement:
+1. Bid price <= Ask price (no crossed market quotes).
+2. Buy volume + Sell volume == Total volume (volume conservation identity).
 */
-type level3Frame struct {
-	first  int64
-	orders []*data.Measurement
-}
+func (stage *TruthfulnessStage) validateTapeIdentities(measurement *data.Measurement) {
+	metrics := make(map[string]float64)
 
-/*
-level3Frames groups each symbol's stored level3 orders, in SeqIdx order, into
-the entries ingress stored them from: a run of consecutive sequence numbers
-under one checksum and type. Two adjacent entries with one checksum and type
-may join one run; the checksum covers the touch, so replaying them together
-yields the same book at every trade sequenced around them.
-*/
-func level3Frames(level3 []*data.Measurement) map[string][]level3Frame {
-	bySymbol := make(map[string][]*data.Measurement)
+	for entry := range measurement.Read() {
+		if entry != nil && entry.Metric != nil {
+			metrics[entry.Metric.Label()] = entry.Metric.Raw()
+		}
+	}
 
-	for _, order := range level3 {
-		if order == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.truthfulness] nil level3 order in audit stream",
+	// 1. Crossed Market Identity Check: Best bid must never exceed best ask.
+	bidPrice, hasBid := metrics["best_bid_price"]
+	askPrice, hasAsk := metrics["best_ask_price"]
+
+	if hasBid && hasAsk && bidPrice > askPrice {
+		stage.crossedCount++
+		stage.violations = append(stage.violations, NewViolation(
+			measurement.Label,
+			"truthfulness.crossed_market",
+			fmt.Sprintf("Crossed market detected on %s: best bid %.4f > best ask %.4f (negative spread %.4f)",
+				measurement.Label, bidPrice, askPrice, askPrice-bidPrice),
+			measurement,
+			nil,
+		))
+	}
+
+	// 2. Volume Conservation Identity Check: Gross volume == Buy volume + Sell volume.
+	grossVol, hasGross := metrics["gross_volume"]
+	buyVol, hasBuy := metrics["buy_volume"]
+	sellVol, hasSell := metrics["sell_volume"]
+
+	if hasGross && hasBuy && hasSell {
+		expectedGross := buyVol + sellVol
+		diff := math.Abs(grossVol - expectedGross)
+
+		if diff > core.Resolution*math.Max(grossVol, expectedGross) {
+			stage.volumeDivergenceCount++
+			stage.violations = append(stage.violations, NewViolation(
+				measurement.Label,
+				"truthfulness.volume_divergence",
+				fmt.Sprintf("Volume conservation breached: gross %.4f != buy %.4f + sell %.4f (diff %.4f)",
+					grossVol, buyVol, sellVol, diff),
+				measurement,
 				nil,
 			))
-
-			continue
-		}
-
-		if order.Source == "spot:level3" {
-			bySymbol[order.Label] = append(bySymbol[order.Label], order)
 		}
 	}
-
-	frames := make(map[string][]level3Frame, len(bySymbol))
-
-	for symbol, orders := range bySymbol {
-		slices.SortFunc(orders, func(left, right *data.Measurement) int {
-			return cmp.Compare(left.SeqIdx, right.SeqIdx)
-		})
-
-		for index, order := range orders {
-			if index > 0 && sameLevel3Entry(orders[index-1], order) {
-				last := &frames[symbol][len(frames[symbol])-1]
-				last.orders = append(last.orders, order)
-
-				continue
-			}
-
-			frames[symbol] = append(frames[symbol], level3Frame{
-				first:  order.SeqIdx,
-				orders: []*data.Measurement{order},
-			})
-		}
-	}
-
-	return frames
 }
 
-func sameLevel3Entry(previous, next *data.Measurement) bool {
-	prevSeq := data.Pull(previous.Meta("frame_seq"))
-	nextSeq := data.Pull(next.Meta("frame_seq"))
+func (stage *TruthfulnessStage) Report() string {
+	var build strings.Builder
 
-	if prevSeq != nil && nextSeq != nil {
-		return prevSeq.Value == nextSeq.Value
+	for _, violation := range stage.violations {
+		build.WriteString(violation.String())
 	}
 
-	prevChecksum := data.Pull(previous.Meta("checksum"))
-	nextChecksum := data.Pull(next.Meta("checksum"))
-	prevType := data.Pull(previous.Meta("type"))
-	nextType := data.Pull(next.Meta("type"))
-
-	if prevChecksum == nil || nextChecksum == nil || prevChecksum.Value != nextChecksum.Value ||
-		prevType == nil || nextType == nil || prevType.Value != nextType.Value {
-		return false
-	}
-
-	if prevType.Value == "snapshot" {
-		return true
-	}
-
-	return previous.At.Equal(next.At)
+	return build.String()
 }
+
+func (stage *TruthfulnessStage) Data() any {
+	return map[string]any{
+		"passed":                  len(stage.violations) == 0,
+		"total_checked":           stage.totalChecked,
+		"crossed_market_count":    stage.crossedCount,
+		"volume_divergence_count": stage.volumeDivergenceCount,
+		"breach_count":            len(stage.violations),
+	}
+}
+

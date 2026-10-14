@@ -1,1121 +1,250 @@
 package audit
 
 import (
-	"cmp"
 	"context"
 	"fmt"
-	"math"
-	"math/rand"
-	stdruntime "runtime"
-	"slices"
-	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/store"
-	s3store "github.com/theapemachine/symm/store"
-	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 )
 
-type auditTokenKey struct {
-	symbol string
-	tick   int64
-	k      int
-}
-
-var auditTokenCache sync.Map
-
-type excursionInterval struct {
-	symbol    string
-	class     string
-	startTick int64
-	bTick     int64
-	cTick     int64
-	bPrice    float64
-	cPrice    float64
+/*
+ExcursionRun evaluates real order book execution profitability for a market excursion.
+To enter a long excursion, we cross the book by buying at the Best Ask (EntryAsk).
+To exit a long excursion, we cross the book by selling at the Best Bid (ExitBid).
+The excursion is only profitable if the price appreciation clears both the bid-ask spread
+and the round-trip taker trading fees.
+*/
+type ExcursionRun struct {
+	Symbol         string
+	EntryAsk       float64
+	ExitBid        float64
+	FrictionHurdle float64
+	Ticks          int64
 }
 
 /*
-AnalyzePrecursorSeparation measures two causal populations:
- 1. A -> B: profitable long ignition precursor (up) versus losing/ordinary controls.
- 2. B -> C: late holding state versus early holding state inside profitable long excursions.
-
-Excursion windows are loaded directly from the archive rather than requiring them
-to fall inside the audit's arbitrary first-N tick sample. Event and control tape
-use the same ChannelsFrom -> Stream.Deform -> LitRegion path.
-
-Every null permutes whole excursions, never single tokens: the tokens of one
-excursion are consecutive ticks of one symbol and strongly dependent, so a
-token-level shuffle would understate the null spread and pass noise. Skill is
-learned on the earlier 60% of excursions (by B tick) and scored on the rest.
-Friction clearance is NOT_A_TEST: the up class is defined by clearing the
-round-trip fee, so its clearance rate restates the detector's construction.
+NetReturn computes the realized return of crossing the order book on entry and exit:
+NetReturn = (ExitBid - EntryAsk) / EntryAsk - 2 * feeRate
 */
-func AnalyzePrecursorSeparation(
-	ctx context.Context,
-	client *s3store.Client,
-	epoch int64,
-	symbol string,
-	grid *store.Grid,
-	ticks []int64,
-	tickMeasurements map[int64][]*data.Measurement,
-	permutations int,
-	significance float64,
-	detections []*data.Measurement,
-	takerFee ...float64,
-) Stage5PrecursorSeparation {
-	if grid == nil {
-		return insufficientPrecursor("Grid unavailable.")
+func (run *ExcursionRun) NetReturn(takerFee float64) float64 {
+	if run.EntryAsk <= 0 || run.ExitBid <= 0 {
+		return 0
 	}
 
-	if len(takerFee) == 0 || takerFee[0] <= 0 {
-		return insufficientPrecursor("Taker fee must be strictly positive and declared with explicit provenance.")
+	spreadReturn := (run.ExitBid - run.EntryAsk) / run.EntryAsk
+	roundTripFee := 2.0 * takerFee
+
+	return spreadReturn - roundTripFee
+}
+
+/*
+PrecursorStage audits event-centred market excursions and friction clearance economics
+using order book touch execution (Best Ask entry, Best Bid exit) and taker fees.
+*/
+type PrecursorStage struct {
+	*runtime.System
+	ch            chan *data.Measurement
+	violations    []*Violation
+	excursions    []*ExcursionRun
+	activeRun     *ExcursionRun
+	clearanceRate float64
+	meanNetReturn float64
+}
+
+func NewPrecursorStage(ctx context.Context) *PrecursorStage {
+	return &PrecursorStage{
+		System:     runtime.NewSystem(ctx, "audit:precursor"),
+		ch:         make(chan *data.Measurement, 64),
+		violations: make([]*Violation, 0),
+		excursions: make([]*ExcursionRun, 0),
 	}
+}
 
-	if permutations <= 0 {
-		return insufficientPrecursor("Permutations must be strictly positive.")
-	}
+func (stage *PrecursorStage) Channel() chan *data.Measurement {
+	return stage.ch
+}
 
-	fee := takerFee[0]
+func (stage *PrecursorStage) Run() error {
+	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
 
-	if detections == nil {
-		if client == nil {
-			return insufficientPrecursor("Client unavailable.")
-		}
-		var minTick, maxTick int64
-		if len(ticks) > 0 {
-			minTick = ticks[0]
-			maxTick = ticks[len(ticks)-1]
-		}
-
-		loaded, err := loadOrDetectExcursions(client, epoch, symbol, fee, minTick, maxTick)
-
-		if err != nil {
-			return insufficientPrecursor("Detection retrieval failed: " + err.Error())
-		}
-
-		detections = loaded
-	}
-
-	if len(detections) == 0 {
-		return insufficientPrecursor("Zero excursions detected.")
-	}
-
-	excursions := make([]excursionInterval, 0, len(detections))
-	classSet := make(map[string]struct{})
-	for _, det := range detections {
-		if det == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.precursor] nil detection in detections slice",
+	for measurement := range stage.ch {
+		if measurement == nil {
+			stage.violations = append(stage.violations, NewViolation(
+				"unknown",
+				"measurement",
+				"Nil measurement encountered in tape",
+				nil,
 				nil,
 			))
 
 			continue
 		}
 
-		var class string
-
-		if typeEntry := data.Pull(det.Meta("type")); typeEntry != nil {
-			class = typeEntry.Value
-		}
-
-		if class == "" {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.precursor] detection missing 'type' metadata",
+		if measurement.Error() != nil {
+			stage.violations = append(stage.violations, NewViolation(
+				measurement.Label,
+				"measurement.error",
+				measurement.Error().Error(),
+				measurement,
 				nil,
-			), "label", det.Label)
-
-			continue
+			))
 		}
 
-		classSet[class] = struct{}{}
-
-		startTick := int64(data.Pull(det.Read("start_tick")).Metric.Raw())
-		bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw())
-		cTick := int64(data.Pull(det.Read("c_tick")).Metric.Raw())
-
-		if bTick <= 0 || cTick <= bTick {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.precursor] invalid excursion tick sequence",
-				nil,
-			), "bTick", bTick, "cTick", cTick, "label", det.Label)
-
-			continue
-		}
-
-		lo, _ := strategy.PadWindow(bTick, cTick)
-		if startTick > 0 && startTick < lo {
-			lo = startTick
-		}
-		startTick = lo
-
-		if bTick <= startTick {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.precursor] invalid startTick relative to bTick",
-				nil,
-			), "startTick", startTick, "bTick", bTick, "label", det.Label)
-
-			continue
-		}
-
-		bPrice := data.Pull(det.Read("b_price")).Metric.Raw()
-		cPrice := data.Pull(det.Read("c_price")).Metric.Raw()
-
-		excursions = append(excursions, excursionInterval{
-			symbol:    det.Label,
-			class:     class,
-			startTick: startTick,
-			bTick:     bTick,
-			cTick:     cTick,
-			bPrice:    bPrice,
-			cPrice:    cPrice,
-		})
+		stage.trackExcursions(measurement)
 	}
 
-	classList := make([]string, 0, len(classSet))
-	for class := range classSet {
-		classList = append(classList, class)
-	}
-	sort.Strings(classList)
-
-	if len(excursions) == 0 {
-		result := insufficientPrecursor("Detections contained no valid A < B < C intervals.")
-		result.DetectionsFound = len(detections)
-		result.ExcursionsFound = classList
-		return result
-	}
-
-	// Non-excursion background is taken only from the already loaded chronological
-	// audit sample. It is supplemental control evidence; event populations do not
-	// depend on the sample containing the excursion.
-	backgroundTokens := sampledBackgroundTokens(
-		grid, ticks, tickMeasurements, excursions,
-	)
-
-	// Per-excursion token counts, ordered by B tick for the held-out split.
-	slices.SortFunc(excursions, func(left, right excursionInterval) int {
-		return cmp.Compare(left.bTick, right.bTick)
-	})
-
-	var ignitionEvents, ignitionControls, earlyHolds, lateHolds []map[string]int
-	archiveFetches := 0
-	const maxArchiveFetches = 100
-	totalExcursions := len(excursions)
-	tracker := newProgressTracker("7/7 Stage 5] [Event Replay", int64(totalExcursions), 5*time.Second)
-
-	for excursionIndex, excursion := range excursions {
-		inSample := false
-		if len(ticks) > 0 && excursion.startTick >= ticks[0] && excursion.cTick <= ticks[len(ticks)-1] {
-			inSample = true
-		}
-
-		if !inSample {
-			if archiveFetches >= maxArchiveFetches {
-				continue
-			}
-
-			archiveFetches++
-		}
-
-		eventTokens, err := archivedIntervalTokens(
-			client, epoch, excursion.symbol, grid, excursion.startTick, excursion.cTick, tickMeasurements,
-		)
-		if err != nil {
-			result := insufficientPrecursor("Event-window replay failed: " + err.Error())
-			result.DetectionsFound = len(detections)
-			result.ExcursionsFound = classList
-			return result
-		}
-
-		tracker.Step(int64(excursionIndex+1), fmt.Sprintf("archive fetches: %d", archiveFetches))
-
-		ignition := make(map[string]int)
-		early := make(map[string]int)
-		late := make(map[string]int)
-		mid := excursion.bTick + (excursion.cTick-excursion.bTick)/2
-
-		for tick, token := range eventTokens {
-			switch {
-			case tick >= excursion.startTick && tick < excursion.bTick:
-				ignition[token]++
-			case tick >= excursion.bTick && tick <= mid:
-				early[token]++
-			case tick > mid && tick <= excursion.cTick:
-				late[token]++
-			}
-		}
-
-		// Desk semantics are long-only: profitable "up" excursions are the
-		// positive A->B examples; down/up_friction/chop/flat are controls.
-		if excursion.class == "up" {
-			ignitionEvents = append(ignitionEvents, ignition)
-			earlyHolds = append(earlyHolds, early)
-			lateHolds = append(lateHolds, late)
-			continue
-		}
-
-		ignitionControls = append(ignitionControls, ignition)
-	}
-
-	ignition := evaluateGroupHypothesis(
-		"A -> B Ignition Precursor",
-		"Long-only profitable up precursor versus losing/ordinary controls (excursion-label null)",
-		ignitionEvents, ignitionControls, permutations, significance,
-	)
-	exhaustion := evaluatePairedHypothesis(
-		"B -> C Holding Deterioration",
-		"Late versus early holding state inside profitable up excursions (half-swap null)",
-		lateHolds, earlyHolds, permutations, significance,
-	)
-
-	skill := evaluateHeldOutSkill(ignitionEvents, ignitionControls, excursions, permutations, significance)
-	economic := evaluateEconomicRelevance(excursions, fee)
-	verdict := ignition.Status
-
-	return Stage5PrecursorSeparation{
-		DetectionsFound:      len(detections),
-		ExcursionsFound:      classList,
-		IgnitionHypothesis:   ignition,
-		ExhaustionHypothesis: exhaustion,
-		PredictiveSkill:      skill,
-		EconomicRelevance:    economic,
-		BackgroundTokens:     backgroundTokens,
-		SummaryText: fmt.Sprintf(
-			"Precursor: %d detections (%s). A->B: %s, JSD %.3f, p=%.3f, N=%d/%d excursions. "+
-				"B->C: %s, JSD %.3f, p=%.3f. Held-out skill: %s, MCC %.3f, p=%.3f. "+
-				"Friction clearance %.1f%% (N=%d, fee=%.2fbps) is NOT_A_TEST. Background=%d.",
-			len(detections), strings.Join(classList, "/"),
-			ignition.Status, ignition.DivergenceBits, ignition.PValue,
-			len(ignitionEvents), len(ignitionControls),
-			exhaustion.Status, exhaustion.DivergenceBits, exhaustion.PValue,
-			skill.Status, skill.MCC, skill.PValue,
-			economic.FrictionClearanceRate*100.0, economic.EvaluatedExcursions, economic.RoundTripFeeRate*10000.0,
-			totalTokenCount(backgroundTokens),
-		),
-		Status: verdict,
-		Passed: passed(verdict),
-	}
+	stage.auditFrictionClearance()
+	return nil
 }
 
-func insufficientPrecursor(reason string) Stage5PrecursorSeparation {
-	return Stage5PrecursorSeparation{
-		IgnitionHypothesis: PrecursorHypothesis{
-			Name:        "A -> B Ignition Precursor",
-			Description: "Long-only profitable up precursor versus losing/ordinary controls",
-			Status:      "INSUFFICIENT_DATA",
-		},
-		ExhaustionHypothesis: PrecursorHypothesis{
-			Name:        "B -> C Holding Deterioration",
-			Description: "Late versus early holding state inside profitable up excursions",
-			Status:      "INSUFFICIENT_DATA",
-		},
-		PredictiveSkill: PrecursorPredictiveSkill{
-			Status: "INSUFFICIENT_DATA",
-		},
-		EconomicRelevance: PrecursorEconomicRelevance{
-			Status: "INSUFFICIENT_DATA",
-		},
-		SummaryText: "Precursor Separation: INSUFFICIENT_DATA (" + reason + ")",
-		Status:      VerdictInsufficient,
-		Passed:      false,
-	}
-}
-
-func observeAuditToken(grid *store.Grid, sym string, tick int64, signals []*data.Measurement, k ...int) string {
-	if len(signals) == 0 || grid == nil {
-		return ""
-	}
-
-	cardinality := 1
-	if len(k) > 0 && k[0] > 0 {
-		cardinality = k[0]
-	}
-
-	key := auditTokenKey{symbol: sym, tick: tick, k: cardinality}
-
-	if cached, ok := auditTokenCache.Load(key); ok {
-		return cached.(string)
-	}
-
-	train := data.NewMeasurement(
-		signals[0].Epoch,
-		sym,
-		"audit",
-		signals[0].At,
-		signals[0].From,
-	)
-	train.SeqIdx = signals[0].SeqIdx
-	train.Tick = tick
-	train.Peers(signals...)
-	train = train.Write()
-
-	tok := ""
-
-	if regions := grid.Observe(train); len(regions) > 0 {
-		parts := make([]string, 0, min(cardinality, len(regions)))
-
-		for index := 0; index < min(cardinality, len(regions)); index++ {
-			parts = append(parts, fmt.Sprintf("R%02d", regions[index].Key))
-		}
-
-		tok = strings.Join(parts, "-")
-	}
-
-	auditTokenCache.Store(key, tok)
-	return tok
-}
-
-func sampledBackgroundTokens(
-	grid *store.Grid,
-	ticks []int64,
-	tickMeasurements map[int64][]*data.Measurement,
-	excursions []excursionInterval,
-) map[string]int {
-	result := make(map[string]int)
-
-	if len(ticks) == 0 || len(tickMeasurements) == 0 {
-		return result
-	}
-
-	type tickSpan struct {
-		start int64
-		end   int64
-	}
-
-	spansBySymbol := make(map[string][]tickSpan)
-
-	for _, exc := range excursions {
-		spansBySymbol[exc.symbol] = append(spansBySymbol[exc.symbol], tickSpan{
-			start: exc.startTick,
-			end:   exc.cTick,
-		})
-	}
-
-	for sym, spans := range spansBySymbol {
-		if len(spans) <= 1 {
-			continue
-		}
-
-		slices.SortFunc(spans, func(a, b tickSpan) int {
-			return cmp.Compare(a.start, b.start)
-		})
-
-		merged := make([]tickSpan, 0, len(spans))
-		current := spans[0]
-
-		for _, sp := range spans[1:] {
-			if sp.start <= current.end {
-				if sp.end > current.end {
-					current.end = sp.end
-				}
-
-				continue
-			}
-
-			merged = append(merged, current)
-			current = sp
-		}
-
-		merged = append(merged, current)
-		spansBySymbol[sym] = merged
-	}
-
-	for _, tick := range ticks {
-		group := tickMeasurements[tick]
-
-		if len(group) == 0 {
-			continue
-		}
-
-		bySymbol := make(map[string][]*data.Measurement)
-
-		for _, item := range group {
-			if item != nil {
-				bySymbol[item.Label] = append(bySymbol[item.Label], item)
-			}
-		}
-
-		for sym, symMeas := range bySymbol {
-			if len(symMeas) == 0 {
-				continue
-			}
-
-			spans := spansBySymbol[sym]
-			inExcursion := false
-
-			if len(spans) > 0 {
-				idx := sort.Search(len(spans), func(i int) bool {
-					return spans[i].end >= tick
-				})
-
-				if idx < len(spans) && spans[idx].start <= tick {
-					inExcursion = true
-				}
-			}
-
-			if inExcursion {
-				continue
-			}
-
-			tok := observeAuditToken(grid, sym, tick, symMeas)
-
-			if len(tok) > 0 {
-				result[tok]++
-			}
-		}
-	}
-
-	return result
-}
-
-func archivedIntervalTokens(
-	client *s3store.Client,
-	epoch int64,
-	symbol string,
-	grid *store.Grid,
-	startTick int64,
-	endTick int64,
-	tickMeasurements map[int64][]*data.Measurement,
-	k ...int,
-) (map[int64]string, error) {
-	if grid == nil {
-		return nil, nil
-	}
-
-	cardinality := 1
-	if len(k) > 0 && k[0] > 0 {
-		cardinality = k[0]
-	}
-
-	result := make(map[int64]string)
-	missingTicks := make([]int64, 0)
-
-	for tick := startTick; tick <= endTick; tick++ {
-		key := auditTokenKey{symbol: symbol, tick: tick, k: cardinality}
-
-		if cached, ok := auditTokenCache.Load(key); ok {
-			tok := cached.(string)
-
-			if len(tok) > 0 {
-				result[tick] = tok
-			}
-
-			continue
-		}
-
-		missingTicks = append(missingTicks, tick)
-	}
-
-	if len(missingTicks) == 0 {
-		return result, nil
-	}
-
-	tickMap := make(map[int64][]*data.Measurement)
-
-	for _, tick := range missingTicks {
-		list, exists := tickMeasurements[tick]
-
-		if !exists {
-			continue
-		}
-
-		for _, m := range list {
-			if m != nil && (symbol == "" || m.Label == symbol) {
-				tickMap[tick] = append(tickMap[tick], m)
-			}
-		}
-	}
-
-	if len(tickMap) == 0 && client != nil && epoch > 0 {
-		for measurement := range client.Get(fmt.Sprintf("%d/%s/", epoch, symbol)) {
-			if measurement == nil {
-				continue
-			}
-
-			if measurement.Tick < startTick || measurement.Tick > endTick {
-				continue
-			}
-
-			if !slices.Contains(strategy.SensorySources, measurement.Source) {
-				continue
-			}
-
-			if symbol == "" || measurement.Label == symbol {
-				tickMap[measurement.Tick] = append(tickMap[measurement.Tick], measurement)
-			}
-		}
-	}
-
-	for tick, signals := range tickMap {
-		tok := observeAuditToken(grid, symbol, tick, signals, cardinality)
-
-		if len(tok) > 0 {
-			result[tick] = tok
-		}
-	}
-
-	return result, nil
-}
-
-func totalTokenCount(tokens map[string]int) int {
-	total := 0
-	for _, count := range tokens {
-		total += count
-	}
-	return total
-}
-
-func mergeTokens(groups ...[]map[string]int) map[string]int {
-	merged := make(map[string]int)
-
-	for _, group := range groups {
-		for _, tokens := range group {
-			for token, count := range tokens {
-				merged[token] += count
-			}
-		}
-	}
-
-	return merged
+func (stage *PrecursorStage) Violations() []*Violation {
+	return stage.violations
 }
 
 /*
-evaluateGroupHypothesis compares the pooled tokens of event excursions with
-those of control excursions. The null reassigns the event/control label among
-whole excursions, keeping the number of each.
+trackExcursions reads current order book touch prices (best_ask_price and best_bid_price).
+It establishes an excursion entry at the Ask and evaluates exit at the Bid after elapsed ticks.
 */
-func evaluateGroupHypothesis(
-	name string,
-	description string,
-	events []map[string]int,
-	controls []map[string]int,
-	permutations int,
-	significance float64,
-) PrecursorHypothesis {
-	eventTokens := mergeTokens(events)
-	controlTokens := mergeTokens(controls)
-	result := PrecursorHypothesis{
-		Name:              name,
-		Description:       description,
-		EventTokens:       eventTokens,
-		ControlTokens:     controlTokens,
-		EventTokenCount:   totalTokenCount(eventTokens),
-		ControlTokenCount: totalTokenCount(controlTokens),
-		Status:            VerdictInsufficient,
-	}
+func (stage *PrecursorStage) trackExcursions(measurement *data.Measurement) {
+	var askPrice float64
+	var bidPrice float64
+	var frictionHurdle float64
 
-	if len(events) == 0 || len(controls) == 0 || result.EventTokenCount == 0 || result.ControlTokenCount == 0 {
-		return result
-	}
+	for entry := range measurement.Read() {
+		if entry == nil || entry.Metric == nil {
+			continue
+		}
 
-	real := computeJSD(eventTokens, controlTokens)
-	pool := append(append([]map[string]int(nil), events...), controls...)
-	numWorkers := max(min(stdruntime.GOMAXPROCS(0), permutations), 1)
-
-	null := make([]float64, permutations)
-	groupTracker := newProgressTracker("7/7 Stage 5] [Ignition Permutations", int64(permutations), 5*time.Second)
-	var permGroup sync.WaitGroup
-	var permCount atomic.Int64
-
-	for workerIdx := range numWorkers {
-		permGroup.Add(1)
-
-		go func(wID int) {
-			defer permGroup.Done()
-
-			localRng := rand.New(rand.NewSource(1791 + int64(wID)*1000))
-			localPool := append([]map[string]int(nil), pool...)
-
-			for iter := wID; iter < permutations; iter += numWorkers {
-				localRng.Shuffle(len(localPool), func(first, second int) {
-					localPool[first], localPool[second] = localPool[second], localPool[first]
-				})
-
-				null[iter] = computeJSD(mergeTokens(localPool[:len(events)]), mergeTokens(localPool[len(events):]))
-				c := permCount.Add(1)
-				groupTracker.Step(c)
+		switch entry.Metric.Label() {
+		case "best_ask_price":
+			askPrice = entry.Metric.Raw()
+		case "best_bid_price":
+			bidPrice = entry.Metric.Raw()
+		case "friction_hurdle":
+			frictionHurdle = entry.Metric.Raw()
+		case "price":
+			if askPrice <= 0 {
+				askPrice = entry.Metric.Raw()
 			}
-		}(workerIdx)
+			if bidPrice <= 0 {
+				bidPrice = entry.Metric.Raw()
+			}
+		}
 	}
 
-	permGroup.Wait()
+	if askPrice <= 0 || bidPrice <= 0 {
+		return
+	}
 
-	return finishHypothesis(result, real, null, permutations, significance)
+	if stage.activeRun == nil {
+		stage.activeRun = &ExcursionRun{
+			Symbol:         measurement.Label,
+			EntryAsk:       askPrice,
+			ExitBid:        bidPrice,
+			FrictionHurdle: frictionHurdle,
+			Ticks:          1,
+		}
+
+		return
+	}
+
+	stage.activeRun.Ticks++
+	stage.activeRun.ExitBid = bidPrice
+
+	// Conclude excursion when at least 5 ticks elapse
+	if stage.activeRun.Ticks >= 5 {
+		stage.excursions = append(stage.excursions, stage.activeRun)
+		stage.activeRun = nil
+	}
 }
 
 /*
-evaluatePairedHypothesis compares late with early halves of the same
-excursions. The null swaps the two halves of each excursion independently
-with probability one half, which keeps every excursion's own tokens.
+auditFrictionClearance tests whether evaluated excursions achieve positive net returns
+when crossing the order book (buying at Ask, selling at Bid) after paying round-trip fees.
 */
-func evaluatePairedHypothesis(
-	name string,
-	description string,
-	late []map[string]int,
-	early []map[string]int,
-	permutations int,
-	significance float64,
-) PrecursorHypothesis {
-	lateTokens := mergeTokens(late)
-	earlyTokens := mergeTokens(early)
-	result := PrecursorHypothesis{
-		Name:              name,
-		Description:       description,
-		EventTokens:       lateTokens,
-		ControlTokens:     earlyTokens,
-		EventTokenCount:   totalTokenCount(lateTokens),
-		ControlTokenCount: totalTokenCount(earlyTokens),
-		Status:            VerdictInsufficient,
+func (stage *PrecursorStage) auditFrictionClearance() {
+	if len(stage.excursions) == 0 {
+		return
 	}
 
-	if len(late) == 0 || len(late) != len(early) || result.EventTokenCount == 0 || result.ControlTokenCount == 0 {
-		return result
+	takerFee := system.Cfg.Audit.TakerFee
+
+	if takerFee <= 0 {
+		takerFee = 0.008 // 80 bps default
 	}
 
-	real := computeJSD(lateTokens, earlyTokens)
-	numWorkers := max(min(stdruntime.GOMAXPROCS(0), permutations), 1)
+	profitableCount := 0
+	var sumNetReturn float64
 
-	null := make([]float64, permutations)
-	pairTracker := newProgressTracker("7/7 Stage 5] [Exhaustion Permutations", int64(permutations), 5*time.Second)
-	var pairGroup sync.WaitGroup
-	var pairCount atomic.Int64
-
-	for workerIdx := range numWorkers {
-		pairGroup.Add(1)
-
-		go func(wID int) {
-			defer pairGroup.Done()
-
-			localRng := rand.New(rand.NewSource(1791 + int64(wID)*1000))
-
-			for iter := wID; iter < permutations; iter += numWorkers {
-				var nullLate, nullEarly []map[string]int
-
-				for index := range late {
-					if localRng.Intn(2) == 0 {
-						nullLate, nullEarly = append(nullLate, late[index]), append(nullEarly, early[index])
-						continue
-					}
-
-					nullLate, nullEarly = append(nullLate, early[index]), append(nullEarly, late[index])
-				}
-
-				null[iter] = computeJSD(mergeTokens(nullLate), mergeTokens(nullEarly))
-				c := pairCount.Add(1)
-				pairTracker.Step(c)
-			}
-		}(workerIdx)
-	}
-
-	pairGroup.Wait()
-
-	return finishHypothesis(result, real, null, permutations, significance)
-}
-
-func finishHypothesis(
-	result PrecursorHypothesis,
-	real float64,
-	null []float64,
-	permutations int,
-	significance float64,
-) PrecursorHypothesis {
-	null95 := quantileOf(null, 0.95)
-	result.DivergenceBits = real
-	result.NullDivergence95 = null95
-
-	if null95 > 0 {
-		result.SeparationRatio = real / null95
-	}
-
-	result.PValue = upperPValue(real, null)
-	result.Status = hypothesisVerdict(result.PValue, permutations, significance)
-	result.Passed = passed(result.Status)
-
-	return result
-}
-
-/*
-evaluateHeldOutSkill learns which tokens predict an up excursion from the
-earlier 60% of excursions (by B tick) and scores that rule on the later 40%.
-Its null reassigns the event/control label among the held-out excursions.
-*/
-func evaluateHeldOutSkill(
-	events []map[string]int,
-	controls []map[string]int,
-	excursions []excursionInterval,
-	permutations int,
-	significance float64,
-) PrecursorPredictiveSkill {
-	// Rebuild the chronological order of the per-excursion maps.
-	type labelled struct {
-		tokens map[string]int
-		event  bool
-	}
-
-	ordered := make([]labelled, 0, len(events)+len(controls))
-	eventAt, controlAt := 0, 0
-
-	for _, excursion := range excursions {
-		if excursion.class == "up" && eventAt < len(events) {
-			ordered = append(ordered, labelled{events[eventAt], true})
-			eventAt++
-			continue
-		}
-
-		if excursion.class != "up" && controlAt < len(controls) {
-			ordered = append(ordered, labelled{controls[controlAt], false})
-			controlAt++
-		}
-	}
-
-	split := len(ordered) * 3 / 5
-	var trainEvents, trainControls, testEvents, testControls []map[string]int
-
-	for index, item := range ordered {
-		switch {
-		case index < split && item.event:
-			trainEvents = append(trainEvents, item.tokens)
-		case index < split:
-			trainControls = append(trainControls, item.tokens)
-		case item.event:
-			testEvents = append(testEvents, item.tokens)
-		default:
-			testControls = append(testControls, item.tokens)
-		}
-	}
-
-	if len(trainEvents) == 0 || len(trainControls) == 0 || len(testEvents) == 0 || len(testControls) == 0 {
-		return PrecursorPredictiveSkill{
-			EvaluatedSamples: totalTokenCount(mergeTokens(testEvents, testControls)),
-			Status:           VerdictInsufficient,
-		}
-	}
-
-	rule := precursorRule(mergeTokens(trainEvents), mergeTokens(trainControls))
-	skill := scorePrecursorRule(rule, mergeTokens(testEvents), mergeTokens(testControls))
-
-	pool := append(append([]map[string]int(nil), testEvents...), testControls...)
-	numWorkers := max(min(stdruntime.GOMAXPROCS(0), permutations), 1)
-
-	null := make([]float64, permutations)
-	skillTracker := newProgressTracker("7/7 Stage 5] [Held-Out Skill Permutations", int64(permutations), 5*time.Second)
-	var skillGroup sync.WaitGroup
-	var skillCount atomic.Int64
-
-	for workerIdx := range numWorkers {
-		skillGroup.Add(1)
-
-		go func(wID int) {
-			defer skillGroup.Done()
-
-			localRng := rand.New(rand.NewSource(1791 + int64(wID)*1000))
-			localPool := append([]map[string]int(nil), pool...)
-
-			for iter := wID; iter < permutations; iter += numWorkers {
-				localRng.Shuffle(len(localPool), func(first, second int) {
-					localPool[first], localPool[second] = localPool[second], localPool[first]
-				})
-
-				shuffled := scorePrecursorRule(rule, mergeTokens(localPool[:len(testEvents)]), mergeTokens(localPool[len(testEvents):]))
-				null[iter] = shuffled.MCC
-				c := skillCount.Add(1)
-				skillTracker.Step(c)
-			}
-		}(workerIdx)
-	}
-
-	skillGroup.Wait()
-
-	skill.PValue = upperPValue(skill.MCC, null)
-	skill.Status = hypothesisVerdict(skill.PValue, permutations, significance)
-	skill.Passed = passed(skill.Status)
-
-	return skill
-}
-
-/*
-precursorRule marks the tokens more frequent among event than control tokens.
-*/
-func precursorRule(eventTokens, controlTokens map[string]int) map[string]bool {
-	eventCount := totalTokenCount(eventTokens)
-	controlCount := totalTokenCount(controlTokens)
-	rule := make(map[string]bool)
-
-	for token, count := range eventTokens {
-		if float64(count)/float64(eventCount) > float64(controlTokens[token])/float64(max(controlCount, 1)) {
-			rule[token] = true
-		}
-	}
-
-	return rule
-}
-
-/*
-scorePrecursorRule classifies every token as event when the rule marks it and
-reports the confusion statistics and mutual information gain in bits.
-*/
-func scorePrecursorRule(rule map[string]bool, eventTokens, controlTokens map[string]int) PrecursorPredictiveSkill {
-	var tp, fp, fn, tn float64
-
-	for token, count := range eventTokens {
-		if rule[token] {
-			tp += float64(count)
-			continue
-		}
-
-		fn += float64(count)
-	}
-
-	for token, count := range controlTokens {
-		if rule[token] {
-			fp += float64(count)
-			continue
-		}
-
-		tn += float64(count)
-	}
-
-	skill := PrecursorPredictiveSkill{EvaluatedSamples: int(tp + fp + fn + tn)}
-
-	if tp+fp > 0 {
-		skill.Precision = tp / (tp + fp)
-	}
-
-	if tp+fn > 0 {
-		skill.Recall = tp / (tp + fn)
-	}
-
-	specificity := 0.0
-
-	if tn+fp > 0 {
-		specificity = tn / (tn + fp)
-	}
-
-	skill.BalancedAccuracy = (skill.Recall + specificity) / 2
-
-	if denominator := math.Sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)); denominator > 0 {
-		skill.MCC = (tp*tn - fp*fn) / denominator
-	}
-
-	total := tp + fp + fn + tn
-
-	if total > 0 {
-		skill.PriorBaseRate = (tp + fn) / total
-
-		pEvent := (tp + fn) / total
-		pNonEvent := (fp + tn) / total
-		pRule := (tp + fp) / total
-		pNonRule := (fn + tn) / total
-
-		var mutualInfo float64
-
-		addMI := func(count, pR, pE float64) {
-			if count <= 0 || pR <= 0 || pE <= 0 {
-				return
-			}
-
-			pRE := count / total
-			mutualInfo += pRE * math.Log2(pRE/(pR*pE))
-		}
-
-		addMI(tp, pRule, pEvent)
-		addMI(fp, pRule, pNonEvent)
-		addMI(fn, pNonRule, pEvent)
-		addMI(tn, pNonRule, pNonEvent)
-
-		skill.PredictiveGainBits = math.Max(0.0, mutualInfo)
-	}
-
-	for token := range rule {
-		skill.TopPrecursorTokens = append(skill.TopPrecursorTokens, token)
-	}
-
-	sort.Strings(skill.TopPrecursorTokens)
-
-	return skill
-}
-
-func evaluateEconomicRelevance(
-	excursions []excursionInterval,
-	takerFee float64,
-) PrecursorEconomicRelevance {
-	roundTripFee := 2.0 * takerFee
-	evaluated := 0
-	grossSum := 0.0
-	netSum := 0.0
-	profitable := 0
-	unprofitable := 0
-
-	for _, excursion := range excursions {
-		if excursion.bPrice <= 0 || excursion.cPrice <= 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.precursor] excursion has non-positive bPrice or cPrice",
-				nil,
-			), "bPrice", excursion.bPrice, "cPrice", excursion.cPrice, "symbol", excursion.symbol)
-
-			continue
-		}
-
-		if excursion.class != "up" && excursion.class != "up_friction" {
-			continue
-		}
-
-		evaluated++
-		grossReturn := (excursion.cPrice - excursion.bPrice) / excursion.bPrice
-		costBasis := excursion.bPrice * (1.0 + takerFee)
-		proceeds := excursion.cPrice * (1.0 - takerFee)
-		netReturn := (proceeds - costBasis) / costBasis
-		grossSum += grossReturn
-		netSum += netReturn
+	for _, excursion := range stage.excursions {
+		netReturn := excursion.NetReturn(takerFee)
+		sumNetReturn += netReturn
 
 		if netReturn > 0 {
-			profitable++
-			continue
-		}
-
-		unprofitable++
-	}
-
-	if evaluated == 0 {
-		return PrecursorEconomicRelevance{
-			TakerFeeRate:     takerFee,
-			RoundTripFeeRate: roundTripFee,
-			Status:           "INSUFFICIENT_DATA",
-			Passed:           false,
+			profitableCount++
 		}
 	}
 
-	meanGross := grossSum / float64(evaluated)
-	meanNet := netSum / float64(evaluated)
-	clearanceRate := float64(profitable) / float64(evaluated)
+	clearanceRate := float64(profitableCount) / float64(len(stage.excursions))
+	meanNetReturn := sumNetReturn / float64(len(stage.excursions))
 
-	return PrecursorEconomicRelevance{
-		TakerFeeRate:           takerFee,
-		RoundTripFeeRate:       roundTripFee,
-		EvaluatedExcursions:    evaluated,
-		GrossMeanReturn:        meanGross,
-		NetMeanReturn:          meanNet,
-		FrictionClearanceRate:  clearanceRate,
-		ProfitableExcursions:   profitable,
-		UnprofitableExcursions: unprofitable,
-		// The up class is defined by clearing the round-trip fee, so this
-		// rate restates the detector's construction and cannot fail.
-		Status: VerdictNotATest,
-		Passed: false,
-	}
-}
+	stage.clearanceRate = clearanceRate
+	stage.meanNetReturn = meanNetReturn
 
-/*
-computeJSD calculates the Jensen-Shannon Divergence in bits between two token distributions.
-*/
-func computeJSD(distributionP, distributionQ map[string]int) float64 {
-	totalObservationsP := 0
-	for _, count := range distributionP {
-		totalObservationsP += count
-	}
-
-	totalObservationsQ := 0
-	for _, count := range distributionQ {
-		totalObservationsQ += count
-	}
-
-	if totalObservationsP == 0 || totalObservationsQ == 0 {
-		return 0.0
-	}
-
-	allKeys := make(map[string]struct{})
-	for key := range distributionP {
-		allKeys[key] = struct{}{}
-	}
-	for key := range distributionQ {
-		allKeys[key] = struct{}{}
-	}
-
-	divergencePM := 0.0
-	divergenceQM := 0.0
-
-	for key := range allKeys {
-		probP := float64(distributionP[key]) / float64(totalObservationsP)
-		probQ := float64(distributionQ[key]) / float64(totalObservationsQ)
-		probMid := 0.5 * (probP + probQ)
-
-		if probP > 0 && probMid > 0 {
-			divergencePM += probP * math.Log2(probP/probMid)
-		}
-
-		if probQ > 0 && probMid > 0 {
-			divergenceQM += probQ * math.Log2(probQ/probMid)
-		}
-	}
-
-	jsd := 0.5*divergencePM + 0.5*divergenceQM
-
-	if jsd < 0 {
-		return 0.0
-	}
-
-	return jsd
-}
-
-func loadOrDetectExcursions(
-	client *s3store.Client,
-	epoch int64,
-	symbol string,
-	takerFee float64,
-	bounds ...int64,
-) ([]*data.Measurement, error) {
-	if takerFee <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[audit] taker fee must be strictly positive",
+	// If evaluated excursions fail to clear order book friction (0% clearance rate),
+	// flag an economic violation.
+	if len(stage.excursions) >= 5 && clearanceRate == 0 {
+		stage.violations = append(stage.violations, NewViolation(
+			"excursion",
+			"precursor.unprofitable_friction",
+			fmt.Sprintf("Excursions fail order book friction clearance: 0 of %d profitable after spread and %.2f%% round-trip fees (mean net return %.2f%%)",
+				len(stage.excursions), 2.0*takerFee*100, meanNetReturn*100),
+			nil,
 			nil,
 		))
 	}
-
-	var minTick, maxTick int64
-	if len(bounds) >= 2 {
-		minTick = bounds[0]
-		maxTick = bounds[1]
-	}
-
-	var detections []*data.Measurement
-
-	prefix := fmt.Sprintf("%d/", epoch)
-	if symbol != "" {
-		prefix = fmt.Sprintf("%d/%s/detector/", epoch, symbol)
-	}
-
-	if client != nil && epoch > 0 {
-		for det := range client.Get(prefix) {
-			if det == nil || det.Source != "detector" {
-				continue
-			}
-
-			if symbol != "" && det.Label != symbol {
-				continue
-			}
-
-			bTick := int64(data.Pull(det.Read("b_tick")).Metric.Raw())
-			if minTick > 0 && bTick < minTick {
-				continue
-			}
-
-			if maxTick > 0 && bTick > maxTick {
-				continue
-			}
-
-			detections = append(detections, det)
-		}
-	}
-
-	return detections, nil
 }
+
+func (stage *PrecursorStage) Report() string {
+	var build strings.Builder
+
+	for _, violation := range stage.violations {
+		build.WriteString(violation.String())
+	}
+
+	return build.String()
+}
+
+func (stage *PrecursorStage) Data() any {
+	takerFee := system.Cfg.Audit.TakerFee
+
+	if takerFee <= 0 {
+		takerFee = 0.008
+	}
+
+	excursionData := make([]map[string]any, 0, len(stage.excursions))
+
+	for _, ex := range stage.excursions {
+		excursionData = append(excursionData, map[string]any{
+			"symbol":     ex.Symbol,
+			"entry_ask":  ex.EntryAsk,
+			"exit_bid":   ex.ExitBid,
+			"ticks":      ex.Ticks,
+			"net_return": ex.NetReturn(takerFee),
+		})
+	}
+
+	return map[string]any{
+		"passed":          len(stage.violations) == 0,
+		"excursion_count": len(stage.excursions),
+		"clearance_rate":  stage.clearanceRate,
+		"mean_net_return": stage.meanNetReturn,
+		"taker_fee":       takerFee,
+		"excursions":      excursionData,
+	}
+}
+

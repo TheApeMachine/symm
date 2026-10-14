@@ -20,6 +20,7 @@ import (
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -73,7 +74,7 @@ var collectCmd = &cobra.Command{
 		defer cancel()
 
 		epoch := processStartedAt.UnixNano()
-
+		system.Epoch.Store(epoch)
 
 		public := network.NewWebsocketClient(ctx)
 
@@ -145,6 +146,11 @@ var collectCmd = &cobra.Command{
 		}
 
 		storeTee := hindsight.NewStoreTee(ctx, "storeTee")
+		storeTee.Transition(nmruntime.READY)
+		storeTee.Run()
+		storeTee.Push(data.NewMeasurement(
+			epoch, "epoch", "run", processStartedAt, processStartedAt,
+		))
 		instrument.SetStoreTee(storeTee)
 
 		correlationSignal := correlation.NewSignal(ctx)
@@ -203,7 +209,6 @@ var collectCmd = &cobra.Command{
 		)
 
 		for _, runsys := range []nmruntime.RuntimeSystem{
-			storeTee,
 			correlationSignal,
 			cvdSignal,
 			depthflowSignal,
@@ -219,7 +224,6 @@ var collectCmd = &cobra.Command{
 			runsys.Transition(nmruntime.READY)
 		}
 
-		storeTee.Run()
 		ingressHalted := make(chan error, 1)
 
 		startIngress := func(

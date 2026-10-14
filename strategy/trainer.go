@@ -105,57 +105,62 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 		allTallies := make(map[string]*pathTally)
 		allStats := make(map[string]*pathStats)
 
-		for measurement := range trainer.client.Get(fmt.Sprintf("%d/", epoch)) {
-			if measurement == nil {
-				continue
-			}
+		sources := append([]string{"detector"}, SensorySources...)
 
-			label := measurement.Label
-			channel, found := symbolChannels[label]
+		for _, source := range sources {
+			for measurement := range trainer.client.Get(source + "/") {
+				if measurement == nil || measurement.Epoch != epoch {
+					continue
+				}
 
-			if !found {
-				channel = make(chan *data.Measurement, 256)
-				symbolChannels[label] = channel
+				label := measurement.Label
+				channel, found := symbolChannels[label]
 
-				group.Go(func() error {
-					tallies, stats, err := trainer.consumeSymbol(ctx, epoch, label, channel)
-					if err != nil {
-						return errnie.Error(err)
-					}
+				if !found {
+					channel = make(chan *data.Measurement, 256)
+					symbolChannels[label] = channel
 
-					syncMutex.Lock()
-					for path, tally := range tallies {
-						merged, exists := allTallies[path]
+					group.Go(func() error {
+						tallies, stats, err := trainer.consumeSymbol(ctx, epoch, label, channel)
 
-						if !exists {
-							merged = &pathTally{}
-							allTallies[path] = merged
+						if err != nil {
+							return errnie.Error(err)
 						}
 
-						merged.ups += tally.ups
-						merged.downs += tally.downs
-						merged.exits += tally.exits
-					}
+						syncMutex.Lock()
+						for path, tally := range tallies {
+							merged, exists := allTallies[path]
 
-					for path, stat := range stats {
-						merged, exists := allStats[path]
+							if !exists {
+								merged = &pathTally{}
+								allTallies[path] = merged
+							}
 
-						if !exists {
-							merged = &pathStats{}
-							allStats[path] = merged
+							merged.ups += tally.ups
+							merged.downs += tally.downs
+							merged.exits += tally.exits
 						}
 
-						merged.gain += stat.gain
-						merged.holdSeconds += stat.holdSeconds
-						merged.visits += stat.visits
-					}
-					syncMutex.Unlock()
+						for path, stat := range stats {
+							merged, exists := allStats[path]
 
-					return nil
-				})
+							if !exists {
+								merged = &pathStats{}
+								allStats[path] = merged
+							}
+
+							merged.gain += stat.gain
+							merged.holdSeconds += stat.holdSeconds
+							merged.visits += stat.visits
+						}
+						syncMutex.Unlock()
+
+						return nil
+					})
+				}
+
+				channel <- measurement
 			}
-
-			channel <- measurement
 		}
 
 		for _, channel := range symbolChannels {

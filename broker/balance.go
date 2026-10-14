@@ -117,8 +117,6 @@ func (balance *Balance) cash(asset string) *decimal.Decimal {
 	return nil
 }
 
-
-
 func (balance *Balance) watch() {
 	for {
 		select {

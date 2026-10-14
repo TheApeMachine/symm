@@ -52,11 +52,38 @@ func (backend *mockTrainerS3Backend) ServeHTTP(writer http.ResponseWriter, reque
 
 	if request.Method == http.MethodGet && request.URL.Query().Get("list-type") == "2" {
 		prefix := request.URL.Query().Get("prefix")
+		delimiter := request.URL.Query().Get("delimiter")
 		var contentsXML strings.Builder
 
-		for objKey := range backend.objects {
-			if prefix == "" || strings.HasPrefix(objKey, prefix) {
-				contentsXML.WriteString(fmt.Sprintf("<Contents><Key>%s</Key><Size>%d</Size></Contents>", objKey, len(backend.objects[objKey])))
+		if delimiter != "" {
+			seenPrefixes := make(map[string]bool)
+
+			for objKey := range backend.objects {
+				if prefix == "" || strings.HasPrefix(objKey, prefix) {
+					sub := strings.TrimPrefix(objKey, prefix)
+					idx := strings.Index(sub, delimiter)
+
+					if idx >= 0 {
+						commonPrefix := prefix + sub[:idx+len(delimiter)]
+
+						if !seenPrefixes[commonPrefix] {
+							seenPrefixes[commonPrefix] = true
+							contentsXML.WriteString(fmt.Sprintf("<CommonPrefixes><Prefix>%s</Prefix></CommonPrefixes>", commonPrefix))
+						}
+					}
+
+					if idx < 0 {
+						contentsXML.WriteString(fmt.Sprintf("<Contents><Key>%s</Key><Size>%d</Size></Contents>", objKey, len(backend.objects[objKey])))
+					}
+				}
+			}
+		}
+
+		if delimiter == "" {
+			for objKey := range backend.objects {
+				if prefix == "" || strings.HasPrefix(objKey, prefix) {
+					contentsXML.WriteString(fmt.Sprintf("<Contents><Key>%s</Key><Size>%d</Size></Contents>", objKey, len(backend.objects[objKey])))
+				}
 			}
 		}
 
@@ -197,7 +224,10 @@ func TestTrainer(t *testing.T) {
 						)
 					}
 
-					err := client.Put(measurement)
+					payload, err := measurement.MarshalBinary()
+					So(err, ShouldBeNil)
+
+					err = client.Put(measurement.Prefix(), payload)
 					So(err, ShouldBeNil)
 				}
 			}
@@ -217,7 +247,10 @@ func TestTrainer(t *testing.T) {
 					data.NewExactMetric("c_price", decimal.NewFromFloat64(60500.0), data.UnitNone, data.TimescaleTick),
 				)
 
-				err := client.Put(detectorMeasurement)
+				payload, err := detectorMeasurement.MarshalBinary()
+				So(err, ShouldBeNil)
+
+				err = client.Put(detectorMeasurement.Prefix(), payload)
 				So(err, ShouldBeNil)
 			}
 

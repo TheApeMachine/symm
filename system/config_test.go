@@ -15,6 +15,7 @@ func TestNewConfig(t *testing.T) {
 			So(Cfg.Planner, ShouldNotBeNil)
 			So(Cfg.UI, ShouldNotBeNil)
 			So(Cfg.Workbench, ShouldNotBeNil)
+			So(Cfg.Audit, ShouldNotBeNil)
 			So(Cfg.Resonance.LearningRate, ShouldBeGreaterThan, 0)
 		})
 
@@ -26,6 +27,7 @@ func TestNewConfig(t *testing.T) {
 			So(config.Planner, ShouldNotBeNil)
 			So(config.UI, ShouldNotBeNil)
 			So(config.Workbench, ShouldNotBeNil)
+			So(config.Audit, ShouldNotBeNil)
 		})
 	})
 }

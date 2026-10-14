@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 )
@@ -237,7 +238,7 @@ func TestDuckDBSchema(t *testing.T) {
 		return err
 	}
 
-	for m := range s3Client.Get("") {
+	for m := range data.Stream(s3Client.GetBytes("")) {
 		imported++
 
 		var metricKeys []string

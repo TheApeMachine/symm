@@ -639,3 +639,16 @@ func (reader *binaryReader) readError() (error, error) {
 
 	return errors.New(string(errBytes)), nil
 }
+
+/*
+Unmarshal deserializes a Measurement from a raw binary payload.
+*/
+func Unmarshal(payload []byte) (*Measurement, error) {
+	measurement := &Measurement{}
+
+	if err := measurement.UnmarshalBinary(payload); err != nil {
+		return nil, err
+	}
+
+	return measurement, nil
+}

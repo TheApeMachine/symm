@@ -1,19 +1,18 @@
 package cmd
 
 import (
+	"context"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/network"
-	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/replay"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 )
@@ -31,101 +30,184 @@ var detectCmd = &cobra.Command{
 requested epoch and symbol, under an explicit taker fee (percent per side), and
 appends the resulting source=detector rows to S3 storage.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		socket := network.NewReplayer(cmd.Context())
-		public := network.NewReplayer(cmd.Context())
-		private := network.NewReplayer(cmd.Context())
-		normalizer := spot.NewNormalizer()
+		system.NewConfig()
 
-		if err := broker.SeedNormalizer(normalizer); err != nil {
+		ctx, cancel := context.WithCancel(cmd.Context())
+		defer cancel()
+
+		client := store.NewClient(ctx, "symm")
+
+		if client == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[detect] unable to open store client",
+				nil,
+			))
+		}
+
+		if len(detectEpochs) == 0 {
+			errnie.Info("[detect] discovering epochs from store under run/epoch/...")
+			seen := make(map[int64]bool)
+
+			for page := range client.List("run/epoch/", "/") {
+				for _, commonPrefix := range page.CommonPrefixes {
+					if commonPrefix.Prefix == nil {
+						continue
+					}
+
+					prefixStr := strings.TrimPrefix(*commonPrefix.Prefix, "run/epoch/")
+					prefixStr = strings.Trim(prefixStr, "/")
+					epoch, err := strconv.ParseInt(prefixStr, 10, 64)
+
+					if err != nil || epoch <= 0 {
+						continue
+					}
+
+					if seen[epoch] {
+						continue
+					}
+
+					seen[epoch] = true
+					detectEpochs = append(detectEpochs, epoch)
+				}
+
+				for _, object := range page.Contents {
+					if object.Key == nil {
+						continue
+					}
+
+					parts := strings.Split(*object.Key, "/")
+
+					if len(parts) < 3 {
+						continue
+					}
+
+					epoch, err := strconv.ParseInt(parts[2], 10, 64)
+
+					if err != nil || epoch <= 0 {
+						continue
+					}
+
+					if seen[epoch] {
+						continue
+					}
+
+					seen[epoch] = true
+					detectEpochs = append(detectEpochs, epoch)
+				}
+			}
+
+			if len(detectEpochs) == 0 {
+				return errnie.Error(errnie.Err(
+					errnie.NotFound,
+					"[detect] no completed epochs found in store",
+					nil,
+				))
+			}
+		}
+
+		errnie.Info(fmt.Sprintf(
+			"[detect] targeting %d epoch(s): %v",
+			len(detectEpochs), detectEpochs,
+		))
+
+		if detectFeePct == "" {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[detect] --taker-fee-percent is required and must be specified",
+				nil,
+			))
+		}
+
+		price, err := offlinePrice(ctx, detectFeePct, detectSymbols)
+
+		if err != nil {
 			return err
 		}
 
-		storeTee := hindsight.NewStoreTee(
-			cmd.Context(), "detector.store",
-		)
+		storeTee := hindsight.NewStoreTee(ctx, "detector.store")
 		storeTee.Transition(nmruntime.READY)
 		storeTee.Run()
 
-		price := broker.NewPrice(
-			cmd.Context(),
-			broker.NewBook(cmd.Context(), normalizer),
-			private,
-			broker.NewInstrument(cmd.Context(), public),
-			normalizer,
-		)
+		detector := strategy.NewDetector(ctx, storeTee, price)
 
-		if detectFeePct != "" {
-			fee, err := decimal.NewFromString(detectFeePct)
-			if err != nil || fee == nil || fee.Sign() <= 0 {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"--taker-fee-percent must be a positive decimal percent per side (e.g. 0.8)",
-					err,
-				))
-			}
-
-			price.SetDefaultFee(kraken.TradeVolumeFee{Fee: fee})
-			for _, sym := range detectSymbols {
-				price.SetFee(sym, kraken.TradeVolumeFee{Fee: fee})
-			}
+		if err := detector.Error(); err != nil {
+			return err
 		}
 
-		budget := decimal.NewFromInt64(int64(system.Cfg.Market.Balance))
-		if budget.Sign() <= 0 {
-			budget = decimal.NewFromInt64(200)
-		}
-		price.SetReferenceCash(budget)
-
-		detector := strategy.NewDetector(cmd.Context(), storeTee, price)
-
-		workspace := nmruntime.NewWorkspace(
-			cmd.Context(),
-			2,
-			"workspace",
-			[][]nmruntime.Node{
-				{
-					replay.NewStage(cmd.Context(), "correlation", socket),
-					replay.NewStage(cmd.Context(), "cvd", socket),
-					replay.NewStage(cmd.Context(), "depthflow", socket),
-					replay.NewStage(cmd.Context(), "hawkes", socket),
-					replay.NewStage(cmd.Context(), "leadlag", socket),
-					replay.NewStage(cmd.Context(), "liquidity", socket),
-					replay.NewStage(cmd.Context(), "morphology", socket),
-					replay.NewStage(cmd.Context(), "pumpdump", socket),
-					replay.NewStage(cmd.Context(), "sentiment", socket),
-					replay.NewStage(cmd.Context(), "toxicity", socket),
-				},
-				{
-					detector,
-				},
-			},
-		)
-
-		for {
-			select {
-			case <-cmd.Context().Done():
-				return cmd.Context().Err()
-			default:
-			}
-
-			buf, err := socket.Read("trades", "spot:trade")
-			if err != nil {
-				break
-			}
-
-			trade := &data.Measurement{}
-			if err := trade.UnmarshalBinary(buf); err != nil {
+		for _, epoch := range detectEpochs {
+			if epoch <= 0 {
 				continue
 			}
 
-			workspace.Step(trade)
+			prefixes := []string{"spot:trade/"}
+
+			if len(detectSymbols) > 0 {
+				prefixes = nil
+
+				for _, symbol := range detectSymbols {
+					prefixes = append(prefixes, fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch))
+				}
+			}
+
+			errnie.Info(fmt.Sprintf(
+				"[detect] scanning epoch %d across prefixes: %v",
+				epoch, prefixes,
+			))
+
+			for _, prefix := range prefixes {
+				tradesSeen := 0
+
+				for measurement := range client.Get(prefix) {
+					if measurement == nil || measurement.Epoch != epoch {
+						continue
+					}
+
+					if len(detectSymbols) > 0 && !slices.Contains(detectSymbols, measurement.Label) {
+						continue
+					}
+
+					tradesSeen++
+					detector.Step(measurement)
+				}
+
+				if tradesSeen == 0 {
+					errnie.Info(fmt.Sprintf(
+						"[detect] no trades observed under prefix %s for epoch %d",
+						prefix, epoch,
+					))
+				}
+
+				if tradesSeen > 0 {
+					errnie.Info(fmt.Sprintf(
+						"[detect] scanned %d trades under prefix %s for epoch %d",
+						tradesSeen, prefix, epoch,
+					))
+				}
+			}
 		}
 
-		detector.FlushAll()
+		if err := detector.FlushAll(); err != nil {
+			return err
+		}
+
+		pending := storeTee.Pending()
+
+		if pending > 0 {
+			errnie.Info(fmt.Sprintf(
+				"[detect] waiting for %d pending excursions to persist...",
+				pending,
+			))
+		}
 
 		for storeTee.Pending() > 0 {
 			time.Sleep(10 * time.Millisecond)
 		}
+
+		errnie.Info(fmt.Sprintf(
+			"[detect] completed: %d total trades processed, %d total excursions emitted",
+			detector.Steps(), detector.Emitted(),
+		))
 
 		return nil
 	},

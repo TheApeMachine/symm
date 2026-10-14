@@ -1,797 +1,197 @@
 package audit
 
 import (
-	"cmp"
+	"context"
 	"fmt"
-	"maps"
 	"math"
-	"slices"
-	"sort"
 	"strings"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
-AnalyzeContract verifies hard mathematical domains declared by metric metadata.
-
-The audit checks declared units as well as canonical physical invariants for known
-metric families (e.g. correlation within [-1, 1], absolute correlation within [0, 1],
-and variance/counts/entropy/SNR strictly non-negative).
+ContractStage verifies hard mathematical domains declared by metric metadata,
+Self-Normalized Movement (SNM) bound invariants, and measurement state invariants.
 */
-func AnalyzeContract(
-	measurements []*data.Measurement,
-	significance float64,
-) Stage0Contract {
-	type accumulator struct {
-		unit      data.Unit
-		domain    string
-		count     int
-		breaches  int
-		minVal    float64
-		maxVal    float64
-		sumVal    float64
-		violation string
+type ContractStage struct {
+	*runtime.System
+	ch           chan *data.Measurement
+	violations   []*Violation
+	totalChecked int
+}
+
+func NewContractStage(ctx context.Context) *ContractStage {
+	return &ContractStage{
+		System: runtime.NewSystem(ctx, "audit:contract"),
+		ch:     make(chan *data.Measurement, 64),
 	}
+}
 
-	stats := make(map[string]*accumulator)
+func (stage *ContractStage) Channel() chan *data.Measurement {
+	return stage.ch
+}
 
-	for _, meas := range measurements {
-		if meas == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.contract] nil measurement in audit slice",
+func (stage *ContractStage) Run() error {
+	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
+
+	for measurement := range stage.ch {
+		if measurement == nil {
+			stage.violations = append(stage.violations, NewViolation(
+				"unknown",
+				"measurement",
+				"Nil measurement encountered in tape",
+				nil,
 				nil,
 			))
-
 			continue
 		}
 
-		if meas.ID == 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.contract] unfinalized measurement (ID == 0)",
+		if measurement.Error() != nil {
+			stage.violations = append(stage.violations, NewViolation(
+				measurement.Label,
+				"measurement.error",
+				measurement.Error().Error(),
+				measurement,
 				nil,
-			), "epoch", meas.Epoch, "label", meas.Label, "source", meas.Source)
+			))
 		}
 
-		for entry := range meas.Read() {
+		for entry := range measurement.Read() {
 			if entry == nil || entry.Metric == nil {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"[audit.contract] nil metric entry in measurement",
+				stage.violations = append(stage.violations, NewViolation(
+					measurement.Label,
+					"entry.metric",
+					"Nil metric entry encountered in measurement",
+					measurement,
 					nil,
-				), "label", meas.Label, "source", meas.Source)
-
+				))
 				continue
 			}
 
-			metric := entry.Metric
-			name := metric.Label()
-			val := metric.Raw()
-			unit := metric.Unit()
+			stage.totalChecked++
 
-			if unit == "" || unit == data.UnitDimensionless {
-				if canonicalUnit, _ := data.GetDimension(meas.Source, name); canonicalUnit != data.UnitNone {
-					unit = canonicalUnit
-				}
+			switch entry.Metric.Unit() {
+			// Asset prices cannot trade at zero or negative values.
+			case data.UnitPrice:
+				stage.validateBounds(
+					entry.Metric.Raw(),
+					entry.Metric,
+					measurement,
+					math.SmallestNonzeroFloat64,
+					math.MaxFloat64,
+					"Price must be strictly positive (> 0)",
+				)
+
+			// Physical counts, rates, variances, and volumes cannot physically be negative.
+			case data.UnitQuantity,
+				data.UnitVolume,
+				data.UnitSpread,
+				data.UnitDuration,
+				data.UnitVariance,
+				data.UnitStandardDeviation,
+				data.UnitRate,
+				data.UnitTradeRate,
+				data.UnitVolumeRate,
+				data.UnitCount,
+				data.UnitEntropy,
+				data.UnitSNR:
+				stage.validateBounds(
+					entry.Metric.Raw(),
+					entry.Metric,
+					measurement,
+					0,
+					math.MaxFloat64,
+					"Physical quantity cannot be negative",
+				)
+
+			// Probabilities represent chances and must strictly stay between 0% and 100% [0, 1].
+			case data.UnitProbability:
+				stage.validateBounds(
+					entry.Metric.Raw(),
+					entry.Metric,
+					measurement,
+					0,
+					1,
+					"Probability must be bounded in [0, 1]",
+				)
+
+			// Correlations and imbalances measure directional co-movement from -100% (-1) to +100% (+1).
+			case data.UnitCorrelation, data.UnitImbalance:
+				stage.validateBounds(
+					entry.Metric.Raw(),
+					entry.Metric,
+					measurement,
+					-1,
+					1,
+					"Correlation must be bounded in [-1, 1]",
+				)
 			}
 
-			// One contract series per producer: the same label from two
-			// sources is two series with two owners.
-			key := meas.Source + ":" + name
-			acc, exists := stats[key]
-			if !exists {
-				acc = &accumulator{
-					unit:   unit,
-					domain: declaredDomain(unit, name),
-					minVal: math.MaxFloat64,
-					maxVal: -math.MaxFloat64,
-				}
-				stats[key] = acc
-			}
-
-			acc.count++
-			acc.sumVal += val
-
-			if val < acc.minVal {
-				acc.minVal = val
-			}
-
-			if val > acc.maxVal {
-				acc.maxVal = val
-			}
-
-			if violation := contractViolation(unit, val, name); violation != "" {
-				acc.breaches++
-				acc.violation = violation
-			}
+			// Self-Normalized Movement (SNM) normalizes signals onto a standard [-1, 1] range.
+			stage.validateBounds(
+				entry.Metric.SNM(),
+				entry.Metric,
+				measurement,
+				-1,
+				1,
+				"Self-Normalized Movement must be bounded in [-1, 1]",
+			)
 		}
 	}
 
-	var breaches []ContractBreach
-	totalBreaches := 0
+	return nil
+}
 
-	for name, acc := range stats {
-		if acc.breaches == 0 {
-			continue
-		}
+func (stage *ContractStage) Violations() []*Violation {
+	return stage.violations
+}
 
-		totalBreaches += acc.breaches
-		meanVal := 0.0
+func (stage *ContractStage) validateBounds(
+	value float64,
+	metric *data.Metric,
+	measurement *data.Measurement,
+	min, max float64,
+	description string,
+) {
+	if value < min || value > max {
+		stage.violations = append(stage.violations, NewViolation(
+			measurement.Label,
+			metric.Label(),
+			description,
+			measurement,
+			metric,
+		))
+	}
+}
 
-		if acc.count > 0 {
-			meanVal = acc.sumVal / float64(acc.count)
-		}
+func (stage *ContractStage) Report() string {
+	var build strings.Builder
 
-		breaches = append(breaches, ContractBreach{
-			Metric:         name,
-			DeclaredUnit:   string(acc.unit),
-			DeclaredDomain: acc.domain,
-			ViolationType:  acc.violation,
-			BreachCount:    acc.breaches,
-			TotalSamples:   acc.count,
-			BreachFraction: float64(acc.breaches) / float64(acc.count),
-			MinVal:         acc.minVal,
-			MaxVal:         acc.maxVal,
-			MeanVal:        meanVal,
+	for _, violation := range stage.violations {
+		build.WriteString(violation.String())
+	}
+
+	return build.String()
+}
+
+func (stage *ContractStage) Data() any {
+	breaches := make([]map[string]any, 0, len(stage.violations))
+
+	for _, violation := range stage.violations {
+		breaches = append(breaches, map[string]any{
+			"symbol":      violation.Symbol,
+			"name":        violation.Name,
+			"description": violation.Description,
 		})
 	}
 
-	sort.Slice(breaches, func(first, second int) bool {
-		if breaches[first].BreachFraction != breaches[second].BreachFraction {
-			return breaches[first].BreachFraction > breaches[second].BreachFraction
-		}
-		return breaches[first].MaxVal > breaches[second].MaxVal
-	})
-
-	for _, b := range breaches {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("[audit.contract] metric contract violation: %s", b.ViolationType),
-			nil,
-		), "metric", b.Metric, "unit", b.DeclaredUnit, "domain", b.DeclaredDomain, "breaches", b.BreachCount, "total", b.TotalSamples, "min", b.MinVal, "max", b.MaxVal)
-	}
-
-	normAudit := auditMetricNormalization(measurements)
-	stateAudit := auditMeasurementState(measurements)
-
-	diagnosis := "All examined metrics comply with the hard domains declared by their units."
-
-	if len(breaches) > 0 {
-		diagnosis = fmt.Sprintf(
-			"CONTRACT_BREACH: %d metric series emitted values outside hard domains declared by their units. "+
-				"The audit does not assign a root cause; producer mathematics/metadata must be investigated separately.",
-			len(breaches),
-		)
-	}
-
-	passed := len(breaches) == 0 && normAudit.Passed && stateAudit.Passed
-
-	summaryText := fmt.Sprintf(
-		"Contract Integrity: %d source:metric series evaluated (%d breached domains). Norm/Std: %d audited (%d mature, %d breaches: %d norm, %d std). Measurements: %d audited (WORM/State passed: %t).",
-		len(stats), len(breaches), normAudit.TotalMetricsAudited, normAudit.MatureMetricsAudited,
-		normAudit.NormalizationBreaches+normAudit.StandardizationBreaches, normAudit.NormalizationBreaches, normAudit.StandardizationBreaches,
-		stateAudit.TotalMeasurementsAudited, stateAudit.Passed,
-	)
-
-	return Stage0Contract{
-		TotalMetricsChecked:   len(stats),
-		BreachingMetricsCount: len(breaches),
-		TotalBreaches:         totalBreaches,
-		Breaches:              breaches,
-		MetricNorm:            normAudit,
-		MeasurementState:      stateAudit,
-		DiagnosisText:         diagnosis,
-		SummaryText:           summaryText,
-		Passed:                passed,
+	return map[string]any{
+		"passed":        len(stage.violations) == 0,
+		"total_checked": stage.totalChecked,
+		"breach_count":  len(stage.violations),
+		"breaches":      breaches,
 	}
 }
 
-func auditMetricNormalization(measurements []*data.Measurement) MetricNormAudit {
-	totalAudited := 0
-	matureAudited := 0
-	normBreaches := 0
-	stdBreaches := 0
-	saturatedCount := 0
-	sumZ := 0.0
-	sumZSq := 0.0
-	maxAbsZ := 0.0
-	maxAbsZBySource := make(map[string]float64)
-
-	type normMismatch struct {
-		source         string
-		metric         string
-		breachCount    int
-		symbolCount    int
-		seenSymbols    map[string]struct{}
-		sampleSymbol   string
-		sampleSNM      float64
-		sampleExpected float64
-	}
-
-	mismatches := make(map[string]*normMismatch)
-
-	type streamKey struct {
-		epoch  int64
-		source string
-		label  string
-	}
-
-	byStream := make(map[streamKey][]*data.Measurement)
-
-	for _, meas := range measurements {
-		if meas == nil {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.metric_norm] nil measurement encountered in audit stream",
-				nil,
-			))
-
-			continue
-		}
-
-		if meas.ID == 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.metric_norm] measurement with unassigned ID (zero) encountered in audit stream",
-				nil,
-			), "source", meas.Source, "label", meas.Label, "epoch", meas.Epoch)
-		}
-
-		key := streamKey{epoch: meas.Epoch, source: meas.Source, label: meas.Label}
-		byStream[key] = append(byStream[key], meas)
-	}
-
-	streamKeys := make([]streamKey, 0, len(byStream))
-	for k := range byStream {
-		streamKeys = append(streamKeys, k)
-	}
-
-	slices.SortFunc(streamKeys, func(a, b streamKey) int {
-		if a.epoch != b.epoch {
-			return cmp.Compare(a.epoch, b.epoch)
-		}
-
-		if a.source != b.source {
-			return strings.Compare(a.source, b.source)
-		}
-
-		return strings.Compare(a.label, b.label)
-	})
-
-	for _, streamKey := range streamKeys {
-		stream := byStream[streamKey]
-		slices.SortFunc(stream, func(left, right *data.Measurement) int {
-			return cmp.Compare(left.SeqIdx, right.SeqIdx)
-		})
-
-		prevRaw := make(map[string]float64)
-
-		for _, meas := range stream {
-			currentRaw := make(map[string]float64)
-
-			for entry := range meas.Read() {
-				if entry == nil || entry.Metric == nil {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"[audit.metric_norm] nil metric entry in measurement",
-						nil,
-					), "label", meas.Label, "source", meas.Source)
-
-					continue
-				}
-
-				totalAudited++
-				metric := entry.Metric
-				snm := metric.SNM()
-
-				if math.IsNaN(snm) || math.IsInf(snm, 0) || snm < -1.0 || snm > 1.0 {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"[audit.metric_norm] SNM value out of bounds [-1, 1] or NaN/Inf",
-						nil,
-					), "source", meas.Source, "label", meas.Label, "metric", metric.Label(), "snm", snm)
-
-					normBreaches++
-					stdBreaches++
-					continue
-				}
-
-				currentRaw[entry.Key] = metric.Raw()
-				absSNM := math.Abs(snm)
-
-				if absSNM > maxAbsZ {
-					maxAbsZ = absSNM
-				}
-
-				maxAbsZBySource[meas.Source] = math.Max(maxAbsZBySource[meas.Source], absSNM)
-
-				sumZ += snm
-				sumZSq += snm * snm
-
-				if absSNM >= 0.99 {
-					saturatedCount++
-				}
-
-				prev, hasPrev := prevRaw[entry.Key]
-
-				if !hasPrev {
-					continue
-				}
-
-				matureAudited++
-				currRaw := metric.Raw()
-				delta := currRaw - prev
-				denom := math.Abs(prev) + math.Abs(delta)
-				expectedSNM := 0.0
-
-				if denom != 0 {
-					expectedSNM = delta / denom
-				}
-
-				if math.Abs(snm-expectedSNM) <= 1e-9 {
-					continue
-				}
-
-				stdBreaches++
-				seriesKey := meas.Source + ":" + entry.Key
-				item, exists := mismatches[seriesKey]
-
-				if !exists {
-					item = &normMismatch{
-						source:         meas.Source,
-						metric:         entry.Key,
-						seenSymbols:    make(map[string]struct{}),
-						sampleSymbol:   meas.Label,
-						sampleSNM:      snm,
-						sampleExpected: expectedSNM,
-					}
-					mismatches[seriesKey] = item
-				}
-
-				item.breachCount++
-
-				if _, seen := item.seenSymbols[meas.Label]; !seen {
-					item.seenSymbols[meas.Label] = struct{}{}
-					item.symbolCount++
-				}
-			}
-
-			prevRaw = currentRaw
-		}
-	}
-
-	for _, seriesKey := range slices.Sorted(maps.Keys(mismatches)) {
-		item := mismatches[seriesKey]
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[audit.metric_norm] SNM mismatch against expected transition",
-			nil,
-		), "source", item.source, "metric", item.metric, "symbols_affected", item.symbolCount, "total_breaches", item.breachCount, "sample_symbol", item.sampleSymbol, "sample_snm", item.sampleSNM, "expected", item.sampleExpected)
-	}
-
-	meanZ := 0.0
-	varZ := 0.0
-	satFraction := 0.0
-
-	if totalAudited > 0 {
-		meanZ = sumZ / float64(totalAudited)
-		varZ = (sumZSq / float64(totalAudited)) - (meanZ * meanZ)
-		satFraction = float64(saturatedCount) / float64(totalAudited)
-	}
-
-	summary := fmt.Sprintf(
-		"Metrics Norm/Std: %d audited (%d mature). Mean z=%.3f (var=%.3f, max|z|=%.3g). Saturated: %.1f%%. Breaches: norm=%d, std=%d.",
-		totalAudited, matureAudited, meanZ, varZ, maxAbsZ, satFraction*100, normBreaches, stdBreaches,
-	)
-
-	return MetricNormAudit{
-		TotalMetricsAudited:     totalAudited,
-		MatureMetricsAudited:    matureAudited,
-		NormalizationBreaches:   normBreaches,
-		StandardizationBreaches: stdBreaches,
-		MeanZScore:              meanZ,
-		VarianceZScore:          varZ,
-		MaxAbsoluteZ:            maxAbsZ,
-		SaturatedNormFraction:   satFraction,
-		MaxAbsZBySource:         maxAbsZBySource,
-		SummaryText:             summary,
-		Passed:                  normBreaches == 0 && stdBreaches == 0,
-	}
-}
-
-func auditMeasurementState(measurements []*data.Measurement) MeasurementStateAudit {
-	totalAudited := 0
-	unlockedBreaches := 0
-	epochBreaches := 0
-	labelBreaches := 0
-	sourceBreaches := 0
-	timingBreaches := 0
-	maturityBreaches := 0
-	energyBreaches := 0
-	snmBreaches := 0
-	dampenBreaches := 0
-
-	maturities := make([]float64, 0, len(measurements))
-
-	coldStartCount := 0
-	settledCount := 0
-
-	for _, meas := range measurements {
-		if meas == nil {
-			errnie.Error(errnie.Err(
-				errnie.NotFound,
-				"[audit] measurement is nil",
-				nil,
-			))
-
-			continue
-		}
-
-		totalAudited++
-
-		if meas.ID == 0 {
-			unlockedBreaches++
-		}
-
-		if meas.Epoch <= 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] measurement epoch <= 0",
-				nil,
-			), "epoch", meas.Epoch, "label", meas.Label, "source", meas.Source)
-
-			epochBreaches++
-		}
-
-		if meas.Label == "" {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] measurement label is empty",
-				nil,
-			), "source", meas.Source)
-
-			labelBreaches++
-		}
-
-		if meas.Source == "" {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] measurement source is empty",
-				nil,
-			), "label", meas.Label)
-
-			sourceBreaches++
-		}
-
-		if meas.At.IsZero() {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] measurement timestamp At is zero",
-				nil,
-			), "label", meas.Label, "source", meas.Source)
-
-			timingBreaches++
-		}
-
-		if meas.ID == 0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] measurement is not finalized (ID == 0)",
-				nil,
-			), "epoch", meas.Epoch, "label", meas.Label, "source", meas.Source)
-		}
-
-		maturity := meas.Maturity()
-		energy := meas.Energy()
-		prediction := meas.Prediction()
-		surprise := meas.Surprise()
-
-		for entry := range meas.Read() {
-			if entry != nil && entry.Metric != nil {
-				stdVal := entry.Metric.SNM()
-
-				if math.IsNaN(stdVal) || math.IsInf(stdVal, 0) || stdVal < -1.0 || stdVal > 1.0 {
-					errnie.Error(errnie.Err(
-						errnie.Validation,
-						"[audit.measurement_state] SNM out of bounds [-1, 1]",
-						nil,
-					), "snm", stdVal, "label", meas.Label, "source", meas.Source, "metric", entry.Key)
-
-					snmBreaches++
-				}
-			}
-		}
-
-		if math.IsNaN(energy) || math.IsInf(energy, 0) || energy < 0.0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] energy out of bounds [0, +inf)",
-				nil,
-			), "energy", energy, "label", meas.Label, "source", meas.Source)
-
-			energyBreaches++
-		}
-
-		if math.IsNaN(prediction) || math.IsInf(prediction, 0) || prediction < 0.0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] prediction out of bounds [0, +inf)",
-				nil,
-			), "prediction", prediction, "label", meas.Label, "source", meas.Source)
-
-			energyBreaches++
-		}
-
-		if math.IsNaN(surprise) || math.IsInf(surprise, 0) || surprise < 0.0 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] surprise out of bounds [0, +inf)",
-				nil,
-			), "surprise", surprise, "label", meas.Label, "source", meas.Source)
-
-			energyBreaches++
-		}
-
-		if math.IsNaN(maturity) || math.IsInf(maturity, 0) || maturity < -1e-9 || maturity > 1.0+1e-9 {
-			errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[audit.measurement_state] maturity out of bounds [0, 1]",
-				nil,
-			), "maturity", maturity, "label", meas.Label, "source", meas.Source)
-
-			maturityBreaches++
-		}
-
-		if !math.IsNaN(maturity) && !math.IsInf(maturity, 0) && maturity >= -1e-9 && maturity <= 1.0+1e-9 {
-			maturities = append(maturities, maturity)
-		}
-
-		if maturity < 0.2 {
-			coldStartCount++
-		}
-
-		if maturity >= 0.5 {
-			settledCount++
-		}
-	}
-
-	meanM, medianM, p95M := distributionSummary(maturities)
-
-	coldFraction := 0.0
-	settledFraction := 0.0
-
-	if totalAudited > 0 {
-		coldFraction = float64(coldStartCount) / float64(totalAudited)
-		settledFraction = float64(settledCount) / float64(totalAudited)
-	}
-
-	summary := fmt.Sprintf(
-		"Measurements State: %d audited. Maturity mean=%.3f (settled=%.1f%%, cold=%.1f%%). Breaches: unlocked=%d, epoch=%d, label=%d, source=%d, timing=%d, mat=%d, energy=%d, snm=%d, dampen=%d.",
-		totalAudited, meanM, settledFraction*100, coldFraction*100,
-		unlockedBreaches, epochBreaches, labelBreaches, sourceBreaches, timingBreaches, maturityBreaches, energyBreaches, snmBreaches, dampenBreaches,
-	)
-
-	passed := unlockedBreaches == 0 && epochBreaches == 0 && labelBreaches == 0 &&
-		sourceBreaches == 0 && timingBreaches == 0 && maturityBreaches == 0 &&
-		energyBreaches == 0 && snmBreaches == 0 && dampenBreaches == 0
-
-	return MeasurementStateAudit{
-		TotalMeasurementsAudited: totalAudited,
-		UnlockedBreaches:         unlockedBreaches,
-		EpochBreaches:            epochBreaches,
-		LabelBreaches:            labelBreaches,
-		SourceBreaches:           sourceBreaches,
-		TimingBreaches:           timingBreaches,
-		MaturityBreaches:         maturityBreaches,
-		EnergyBreaches:           energyBreaches,
-		SNMBreaches:              snmBreaches,
-		DampenBreaches:           dampenBreaches,
-		MeanMaturity:             meanM,
-		MedianMaturity:           medianM,
-		P95Maturity:              p95M,
-		ColdStartFraction:        coldFraction,
-		SettledFraction:          settledFraction,
-		SummaryText:              summary,
-		Passed:                   passed,
-	}
-}
-
-func distributionSummary(values []float64) (float64, float64, float64) {
-	if len(values) == 0 {
-		return 0.0, 0.0, 0.0
-	}
-
-	sorted := append([]float64(nil), values...)
-	sort.Float64s(sorted)
-
-	sum := 0.0
-	for _, val := range sorted {
-		sum += val
-	}
-
-	mean := sum / float64(len(sorted))
-	median := sorted[len(sorted)/2]
-	p95 := empiricalQuantile(sorted, 0.95)
-
-	return mean, median, p95
-}
-
-/*
-isAbsoluteScore reports whether a covariance score metric is explicitly an
-absolute score (its magnitude), which is non-negative [0, +inf).
-*/
-func isAbsoluteScore(name string) bool {
-	return strings.HasPrefix(name, "absolute_covariance_score") ||
-		strings.HasPrefix(name, "cohort_absolute_covariance_score")
-}
-
-func declaredDomain(unit data.Unit, name ...string) string {
-	metricName := ""
-
-	if len(name) > 0 {
-		metricName = name[0]
-	}
-
-	switch unit {
-	case data.UnitProbability, data.UnitConfidence:
-		return "[0, 1]"
-
-	case data.UnitCorrelation, data.UnitImbalance:
-		return "[-1, 1]"
-
-	case data.UnitPrice,
-		data.UnitCurrency,
-		data.UnitQuantity,
-		data.UnitVolume,
-		data.UnitNotional,
-		data.UnitSpread,
-		data.UnitRelativeSpread,
-		data.UnitQuoteCurrencyPerBaseUnit,
-		data.UnitBaseCurrency,
-		data.UnitQuoteCurrency,
-		data.UnitCount,
-		data.UnitVariance,
-		data.UnitStandardDeviation,
-		data.UnitSNR,
-		data.UnitEntropy,
-		data.UnitDistance,
-		data.UnitRate,
-		data.UnitPerSecond,
-		data.UnitTradeRate,
-		data.UnitVolumeRate,
-		data.UnitNotionalRate,
-		data.UnitRatio,
-		data.UnitPercent,
-		data.UnitBasisPoints,
-		data.UnitDuration,
-		data.UnitNanosecond,
-		data.UnitMicrosecond,
-		data.UnitMillisecond,
-		data.UnitSecond,
-		data.UnitMinute,
-		data.UnitHour:
-		return "[0, +inf)"
-
-	case data.UnitCovarianceScore:
-		if isAbsoluteScore(metricName) {
-			return "[0, +inf)"
-		}
-
-		return "finite"
-
-	case data.UnitZScore,
-		data.UnitLogReturn,
-		data.UnitVelocity,
-		data.UnitAcceleration,
-		data.UnitCovariance,
-		data.UnitCountResidual,
-		data.UnitNat,
-		data.UnitPriceImpact,
-		data.UnitDivergence,
-		data.UnitSignedNotional,
-		data.UnitSignedQuantity,
-		data.UnitSignedRate,
-		data.UnitSignedNotionalRate,
-		data.UnitTimeOffset:
-		return "finite"
-
-	default:
-		return "undeclared"
-	}
-}
-
-func contractViolation(unit data.Unit, value float64, name ...string) string {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return "nan_or_inf"
-	}
-
-	metricName := ""
-
-	if len(name) > 0 {
-		metricName = name[0]
-	}
-
-	switch unit {
-	case data.UnitProbability, data.UnitConfidence:
-		if value < 0.0 || value > 1.0 {
-			return "domain_exceeded_[0,1]"
-		}
-
-		return ""
-
-	case data.UnitCorrelation, data.UnitImbalance:
-		if value < -1.0 || value > 1.0 {
-			return "domain_exceeded_[-1,1]"
-		}
-
-		return ""
-
-	case data.UnitPrice,
-		data.UnitCurrency,
-		data.UnitQuantity,
-		data.UnitVolume,
-		data.UnitNotional,
-		data.UnitSpread,
-		data.UnitRelativeSpread,
-		data.UnitQuoteCurrencyPerBaseUnit,
-		data.UnitBaseCurrency,
-		data.UnitQuoteCurrency,
-		data.UnitCount,
-		data.UnitVariance,
-		data.UnitStandardDeviation,
-		data.UnitSNR,
-		data.UnitEntropy,
-		data.UnitDistance,
-		data.UnitRate,
-		data.UnitPerSecond,
-		data.UnitTradeRate,
-		data.UnitVolumeRate,
-		data.UnitNotionalRate,
-		data.UnitRatio,
-		data.UnitPercent,
-		data.UnitBasisPoints,
-		data.UnitDuration,
-		data.UnitNanosecond,
-		data.UnitMicrosecond,
-		data.UnitMillisecond,
-		data.UnitSecond,
-		data.UnitMinute,
-		data.UnitHour:
-		if value < 0.0 {
-			return "negative_value_for_non_negative_unit"
-		}
-
-		return ""
-
-	case data.UnitCovarianceScore:
-		if isAbsoluteScore(metricName) {
-			if value < 0.0 {
-				return "negative_value_for_non_negative_unit"
-			}
-		}
-
-		return ""
-
-	case data.UnitZScore,
-		data.UnitLogReturn,
-		data.UnitVelocity,
-		data.UnitAcceleration,
-		data.UnitCovariance,
-		data.UnitCountResidual,
-		data.UnitNat,
-		data.UnitPriceImpact,
-		data.UnitDivergence,
-		data.UnitSignedNotional,
-		data.UnitSignedQuantity,
-		data.UnitSignedRate,
-		data.UnitSignedNotionalRate,
-		data.UnitTimeOffset:
-		return ""
-
-	default:
-		return "undeclared_or_unknown_physical_dimension"
-	}
-}

@@ -10,17 +10,9 @@ const (
 	SourceLeadLag     SourceType = "leadlag"
 	SourceLiquidity   SourceType = "liquidity"
 	SourcePumpDump    SourceType = "pumpdump"
-	SourceCategory    SourceType = "category"
 	SourceSentiment   SourceType = "sentiment"
 	SourceToxicity    SourceType = "toxicity"
-	SourceDerivatives SourceType = "derivatives"
 	SourceMorphology  SourceType = "morphology"
-	SourceManifold    SourceType = "manifold"
-	SourceResonance   SourceType = "resonance"
-	SourceCausal      SourceType = "causal"
-	SourceCognition   SourceType = "cognition"
-	SourceGraph       SourceType = "graph"
-	SourceDesk        SourceType = "desk"
 )
 
 /*
@@ -37,7 +29,6 @@ var SignalSources = []SourceType{
 	SourcePumpDump,
 	SourceSentiment,
 	SourceToxicity,
-	SourceDerivatives,
 	SourceMorphology,
 }
 
@@ -48,11 +39,10 @@ var SignalSourceStrings = []string{
 	"hawkes",
 	"leadlag",
 	"liquidity",
+	"morphology",
 	"pumpdump",
 	"sentiment",
 	"toxicity",
-	"derivatives",
-	"morphology",
 }
 
 var LogicSourceStrings = []string{

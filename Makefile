@@ -9,7 +9,7 @@ export GOEXPERIMENT := arenas
 # initialize independent domains concurrently. The full-replay packages drive
 # the real Metal solver per frame and legitimately need more than Go's 600s
 # default per-binary budget.
-OVERLAY_FLAG := $(if $(wildcard overlay.json),-overlay=overlay.json,)
+OVERLAY_FLAG := $(if $(wildcard overlay.json),-overlay=$(CURDIR)/overlay.json,)
 GO_TEST_FLAGS := $(OVERLAY_FLAG) -p 1 -timeout 30m
 
 SYMM_BIN := bin/symm
@@ -64,11 +64,11 @@ metric-map:
 # currently collapses producers (Number/SetMetric pipelines are invisible to the
 # static Project/Binding scanner) and the Influence UI loses most of the graph.
 run:
-	./scripts/run_with_workbench.sh go run main.go $(CONFIG_FLAG)
+	./scripts/run_with_workbench.sh go run $(OVERLAY_FLAG) main.go $(CONFIG_FLAG)
 
 collect:
 	@echo "symm collect running (Ctrl+C to stop)"
-	go run main.go collect $(CONFIG_FLAG)
+	go run $(OVERLAY_FLAG) main.go collect $(CONFIG_FLAG)
 
 # The fee must be the one detect ran with (TAKER_FEE_PERCENT, same as detect
 # --taker-fee-percent); the audit checks it against the stored detections.
@@ -77,8 +77,8 @@ TAKER_FEE_PERCENT ?= 0.8
 MIN_MOVE_DURATION ?= 1s
 
 detect:
-	@echo "Labeling spot:trade tape with excursion detections (taker fee $(TAKER_FEE_PERCENT)%, min move $(MIN_MOVE_DURATION))..."
-	go run $(OVERLAY_FLAG) main.go detect $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) --min-move-duration $(MIN_MOVE_DURATION) $(ARGS)
+	@echo "Labeling spot:trade tape with excursion detections (taker fee $(TAKER_FEE_PERCENT)%)..."
+	go run $(OVERLAY_FLAG) main.go detect $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
 
 train:
 	@echo "Training action tree with MCTS over detected excursions and sensory tape..."
@@ -86,7 +86,7 @@ train:
 
 audit:
 	@echo "Running SYMM sensory & representation health audit (taker fee $(TAKER_FEE_PERCENT)%)..."
-	go run main.go audit $(CONFIG_FLAG) --ticks 40000 --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
+	go run $(OVERLAY_FLAG) main.go audit $(CONFIG_FLAG) --ticks 40000 --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
 
 # Analytical Workbench is a separate process on purpose: DuckDB/cgo must not share
 # the trading binary. Hub proxies POST /workbench/query → workbench.url (default
@@ -94,17 +94,17 @@ audit:
 # for /workbench and Hindsight research timelines; trading stays up if it dies.
 workbench:
 	@echo "symm-workbench on :8081 (Ctrl+C to stop) — hub proxies /workbench/query here"
-	go run ./cmd/workbench
+	go run $(OVERLAY_FLAG) ./cmd/workbench
 
 experimental:
 	@echo "symm running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	./scripts/run_with_workbench.sh go run main.go experimental $(CONFIG_FLAG)
+	./scripts/run_with_workbench.sh go run $(OVERLAY_FLAG) main.go experimental $(CONFIG_FLAG)
 
 backtest:
 	@echo "symm running (Ctrl+C to stop)"
 	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	go run main.go backtest
+	go run $(OVERLAY_FLAG) main.go backtest
 
 debug:
 	@echo "symm debug running (Ctrl+C to stop)"

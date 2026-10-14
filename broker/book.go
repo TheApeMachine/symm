@@ -26,16 +26,16 @@ import (
 
 type Book struct {
 	*runtime.System
-	pending     atomic.Pointer[map[string]struct{}]
-	seeded      chan struct{}
-	manager     *spot.BookManager
-	normalizer  *spot.Normalizer
-	notify      atomic.Pointer[func(string, time.Time)]
-	resync      atomic.Pointer[func(string)]
-	touch       atomic.Pointer[func([]kraken.Level3Touch)]
-	mutations   atomic.Pointer[func([]kraken.Level3Data)]
-	diverging   sync.Map
-	lastTouch   sync.Map
+	pending         atomic.Pointer[map[string]struct{}]
+	seeded          chan struct{}
+	manager         *spot.BookManager
+	normalizer      *spot.Normalizer
+	notify          atomic.Pointer[func(string, time.Time)]
+	resync          atomic.Pointer[func(string)]
+	touch           atomic.Pointer[func([]kraken.Level3Touch)]
+	mutations       atomic.Pointer[func([]kraken.Level3Data)]
+	diverging       sync.Map
+	lastTouch       sync.Map
 	locks           sync.Map
 	orderPrices     sync.Map
 	orderPriorities sync.Map

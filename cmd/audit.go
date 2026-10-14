@@ -2,16 +2,12 @@ package cmd
 
 import (
 	"context"
-	"fmt"
-	"path/filepath"
-	"strings"
 
 	"github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/audit"
 	"github.com/theapemachine/symm/store"
-	"github.com/theapemachine/symm/system"
 )
 
 var (
@@ -29,8 +25,6 @@ var auditCmd = &cobra.Command{
 	Short: "Run a read-only empirical audit over archived market and sensory observations",
 	Long:  auditLong,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		system.NewConfig()
-
 		_, err := pyroscope.Start(pyroscope.Config{
 			ApplicationName: "symm.audit.theapemachine.app",
 			ServerAddress:   "http://localhost:4040",
@@ -58,58 +52,8 @@ var auditCmd = &cobra.Command{
 			))
 		}
 
-		opts := audit.AuditOptions{
-			Epoch:        auditEpoch,
-			Symbol:       auditSymbol,
-			MaxTicks:     auditTicks,
-			Permutations: auditPermutations,
-			TakerFee:     auditTakerFee / 100,
-			OutputDir:    auditOutputDir,
-			NoPlots:      auditNoPlots,
-		}
-
-		report, err := audit.Run(ctx, client, opts)
-		if err != nil {
-			return errnie.Error(err)
-		}
-
-		absOut, _ := filepath.Abs(opts.OutputDir)
-		fmt.Printf("%s", "\n"+stringsRepeat("=", 70)+"\n")
-		fmt.Printf("🎯 SYMM PIPELINE EMPIRICAL AUDIT COMPLETED\n")
-		fmt.Printf("%s", stringsRepeat("=", 70)+"\n\n")
-		fmt.Printf("Target Run Epoch: %d\n", report.Epoch)
-		fmt.Printf("Symbol Audited:   %s (%d ticks)\n", report.Symbol, report.TotalTicks)
-		fmt.Printf("Audit State:      %s\n\n", report.Overall)
-
-		for _, row := range report.Verdicts {
-			fmt.Printf("%-30s %-18s %s\n", row.Stage, row.Verdict, row.Evidence)
-		}
-
-		fmt.Println()
-		fmt.Printf("Stage 0 (Contract):   %s\n", report.Contract.SummaryText)
-		fmt.Printf("Stage 0.5 (Timing):   %s\n", report.Timing.SummaryText)
-		fmt.Printf("Stage 1 (Vitality):   %s\n", report.Vitality.SummaryText)
-		fmt.Printf("Stage 2 (Sympathy):   %s\n", report.Sympathy.SummaryText)
-		fmt.Printf("Stage 3 (Stability):  %s\n", report.GridStability.SummaryText)
-		fmt.Printf("Stage 4 (Dynamics):   %s\n", report.TokenDynamics.SummaryText)
-		fmt.Printf("Stage 5 (Precursor):  %s\n", report.Precursor.SummaryText)
-		fmt.Printf("Stage 6 (Cognitive):  %s\n\n", report.CognitiveTrie.SummaryText)
-		fmt.Printf("📂 Full Results & Visualizations:\n")
-		fmt.Printf("   Report: %s/AUDIT_SUMMARY.md\n", absOut)
-		fmt.Printf("   JSON:   %s/audit_results.json\n", absOut)
-		fmt.Printf("   Plots:  %s/plots/\n", absOut)
-		fmt.Printf("%s", stringsRepeat("=", 70)+"\n\n")
-
-		return nil
+		return errnie.Error(audit.NewEngine(ctx).Run())
 	},
-}
-
-func stringsRepeat(s string, count int) string {
-	var result strings.Builder
-	for range count {
-		result.WriteString(s)
-	}
-	return result.String()
 }
 
 func init() {

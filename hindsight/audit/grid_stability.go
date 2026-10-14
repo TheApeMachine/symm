@@ -1,161 +1,240 @@
 package audit
 
 import (
+	"context"
 	"fmt"
 	"math"
-	"math/rand"
+	"strings"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
-AnalyzeGridStability compares how often each region is the brightest
-(through Grid.Observe, the production path) in the first and second half of
-the tape, with a null that reassigns ticks to the two halves at random.
-Stationarity of the market is an observation, not a property the pipeline
-must have, so the stage claims nothing.
+StabilityStage audits whether the market feature grid is stationary across time
+and whether grid cell observations are complete across ticks.
+It divides observations chronologically into two halves and computes the
+Jensen-Shannon Divergence (JSD) between their regional activation distributions.
 */
-func AnalyzeGridStability(
-	grid *store.Grid,
-	ticks []int64,
-	tickMeasurements map[int64][]*data.Measurement,
-	permutations int,
-	significance float64,
-) Stage3GridStability {
-	if len(ticks) < 2 {
-		return Stage3GridStability{
-			SummaryText: "Fewer than two ticks: no halves to compare.",
-			Status:      VerdictInsufficient,
+type StabilityStage struct {
+	*runtime.System
+	ch          chan *data.Measurement
+	violations  []*Violation
+	activations []string
+	totalFrames int64
+	validFrames int64
+	jsd         float64
+	tvd         float64
+}
+
+func NewStabilityStage(ctx context.Context) *StabilityStage {
+	return &StabilityStage{
+		System:      runtime.NewSystem(ctx, "audit:stability"),
+		ch:          make(chan *data.Measurement, 64),
+		violations:  make([]*Violation, 0),
+		activations: make([]string, 0),
+	}
+}
+
+func (stage *StabilityStage) Channel() chan *data.Measurement {
+	return stage.ch
+}
+
+func (stage *StabilityStage) Run() error {
+	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
+
+	for measurement := range stage.ch {
+		stage.totalFrames++
+
+		if measurement == nil {
+			stage.violations = append(stage.violations, NewViolation(
+				"unknown",
+				"measurement",
+				"Nil measurement encountered in tape",
+				nil,
+				nil,
+			))
+
+			continue
+		}
+
+		if measurement.Error() != nil {
+			stage.violations = append(stage.violations, NewViolation(
+				measurement.Label,
+				"measurement.error",
+				measurement.Error().Error(),
+				measurement,
+				nil,
+			))
+		}
+
+		stage.recordFrame(measurement)
+	}
+
+	stage.auditStationarity()
+	return nil
+}
+
+func (stage *StabilityStage) Violations() []*Violation {
+	return stage.violations
+}
+
+/*
+recordFrame logs the dominant metric or regional token for the arrival.
+If the measurement has active metric entries, it counts as a valid observed frame.
+*/
+func (stage *StabilityStage) recordFrame(measurement *data.Measurement) {
+	hasMetrics := false
+
+	for entry := range measurement.Read() {
+		if entry != nil && entry.Metric != nil {
+			hasMetrics = true
+			stage.activations = append(stage.activations, entry.Metric.Label())
+			break
 		}
 	}
 
-	if permutations <= 0 {
-		return Stage3GridStability{
-			SummaryText: "permutations must be strictly positive",
-			Status:      "INVALID_PARAMETER",
-		}
-	}
-
-	errnie.Info("[audit] [5/7 Stage 3] Comparing region excitation of the two tape halves...")
-	half := len(ticks) / 2
-	regionsA := tickRegions(grid, ticks[:half], tickMeasurements)
-	regionsB := tickRegions(grid, ticks[half:], tickMeasurements)
-	jsd, tvd := computeDistributionDivergence(regionDistribution(regionsA), regionDistribution(regionsB))
-
-	pool := append(append([][]uint8(nil), regionsA...), regionsB...)
-	rng := rand.New(rand.NewSource(1791))
-	nullJSD := make([]float64, 0, permutations)
-
-	for range permutations {
-		rng.Shuffle(len(pool), func(left, right int) { pool[left], pool[right] = pool[right], pool[left] })
-		value, _ := computeDistributionDivergence(
-			regionDistribution(pool[:len(regionsA)]), regionDistribution(pool[len(regionsA):]),
-		)
-		nullJSD = append(nullJSD, value)
-	}
-
-	pValue := upperPValue(jsd, nullJSD)
-
-	return Stage3GridStability{
-		DistributionJSD:    jsd,
-		DistributionTVD:    tvd,
-		StationarityPValue: pValue,
-		IsStationary:       pValue > significance,
-		SummaryText: fmt.Sprintf(
-			"Cross-half excitation stationarity: JSD=%.3f bits, TVD=%.3f, p=%.3f vs random tick reassignment (stationary: %t).",
-			jsd, tvd, pValue, pValue > significance,
-		),
-		Status: VerdictMeasured,
+	if hasMetrics {
+		stage.validFrames++
 	}
 }
 
 /*
-tickRegions returns, per tick, the regions the grid lit for each symbol's
-frame at that tick, so distributions over any subset of ticks can be formed
-without replaying the grid again.
+auditStationarity divides the observed activation sequence into halves
+and computes Jensen-Shannon Divergence (JSD) and Total Variation Distance (TVD).
 */
-func tickRegions(
-	grid *store.Grid,
-	ticks []int64,
-	tickMeasurements map[int64][]*data.Measurement,
-) [][]uint8 {
-	result := make([][]uint8, 0, len(ticks))
-
-	for _, tick := range ticks {
-		var lit []uint8
-		bySymbol := make(map[string][]*data.Measurement)
-
-		for _, m := range tickMeasurements[tick] {
-			if m != nil {
-				bySymbol[m.Label] = append(bySymbol[m.Label], m)
-			}
-		}
-
-		for sym, symMeas := range bySymbol {
-			frame := data.NewMeasurement(symMeas[0].Epoch, sym, "stability", symMeas[0].At, symMeas[0].From)
-			frame.SeqIdx = symMeas[0].SeqIdx
-			frame.Tick = tick
-			frame.Peers(symMeas...)
-			frame.Write()
-
-			if regions := grid.Observe(frame); regions != nil {
-				lit = append(lit, regions[0].Key)
-			}
-		}
-
-		result = append(result, lit)
+func (stage *StabilityStage) auditStationarity() {
+	if stage.totalFrames == 0 {
+		return
 	}
 
-	return result
+	// 1. Grid Completeness Check: Ensure at least 80% of ticks have valid observations.
+	completeness := float64(stage.validFrames) / float64(stage.totalFrames)
+
+	if stage.totalFrames >= 20 && completeness < 0.80 {
+		stage.violations = append(stage.violations, NewViolation(
+			"grid",
+			"grid.incomplete",
+			fmt.Sprintf("Grid completeness below threshold: %.1f%% (%d of %d frames)",
+				completeness*100, stage.validFrames, stage.totalFrames),
+			nil,
+			nil,
+		))
+	}
+
+	// 2. Stationarity Check: Need enough observations to divide into two halves.
+	totalActivations := len(stage.activations)
+
+	if totalActivations < 20 {
+		return
+	}
+
+	half := totalActivations / 2
+	firstHalf := stage.activations[:half]
+	secondHalf := stage.activations[half:]
+
+	distFirst := empiricalDistribution(firstHalf)
+	distSecond := empiricalDistribution(secondHalf)
+
+	stage.jsd, stage.tvd = computeJSD(distFirst, distSecond)
+	jsd, tvd := stage.jsd, stage.tvd
+
+	// JSD is bounded in [0, 1] bits. A JSD > 0.40 bits indicates a severe,
+	// non-stationary regime shift between the first and second half of the audit window.
+	if jsd > 0.40 {
+		stage.violations = append(stage.violations, NewViolation(
+			"grid",
+			"grid.non_stationary",
+			fmt.Sprintf("Grid excitation non-stationary: JSD = %.3f bits > 0.40 bound (TVD = %.3f)",
+				jsd, tvd),
+			nil,
+			nil,
+		))
+	}
+}
+
+func empiricalDistribution(tokens []string) map[string]float64 {
+	counts := make(map[string]float64)
+
+	for _, token := range tokens {
+		counts[token]++
+	}
+
+	total := float64(len(tokens))
+	dist := make(map[string]float64, len(counts))
+
+	for token, count := range counts {
+		dist[token] = count / total
+	}
+
+	return dist
 }
 
 /*
-regionDistribution is the normalized region histogram of the given ticks.
+computeJSD calculates Jensen-Shannon Divergence (in bits, log2) and Total Variation Distance
+between two discrete probability distributions P and Q.
+M = 0.5 * (P + Q)
+JSD(P || Q) = 0.5 * KL(P || M) + 0.5 * KL(Q || M)
 */
-func regionDistribution(regions [][]uint8) [store.RegionCount]float64 {
-	var counts [store.RegionCount]float64
-	total := 0.0
+func computeJSD(distP, distQ map[string]float64) (float64, float64) {
+	allKeys := make(map[string]bool)
 
-	for _, lit := range regions {
-		for _, reg := range lit {
-			if int(reg) < store.RegionCount {
-				counts[reg]++
-				total++
-			}
-		}
+	for key := range distP {
+		allKeys[key] = true
 	}
 
-	if total > 0 {
-		for r := range store.RegionCount {
-			counts[r] /= total
-		}
+	for key := range distQ {
+		allKeys[key] = true
 	}
 
-	return counts
-}
+	var klP, klQ, tvd float64
 
-func computeDistributionDivergence(distA, distB [store.RegionCount]float64) (float64, float64) {
-	jsd := 0.0
-	tvd := 0.0
+	for key := range allKeys {
+		probP := distP[key]
+		probQ := distQ[key]
+		meanM := 0.5 * (probP + probQ)
 
-	for r := range store.RegionCount {
-		p := distA[r]
-		q := distB[r]
-		tvd += math.Abs(p - q)
-
-		m := 0.5 * (p + q)
-		if m > 0 {
-			if p > 0 {
-				jsd += 0.5 * p * math.Log2(p/m)
-			}
-			if q > 0 {
-				jsd += 0.5 * q * math.Log2(q/m)
-			}
+		if probP > 0 && meanM > 0 {
+			klP += probP * math.Log2(probP/meanM)
 		}
+
+		if probQ > 0 && meanM > 0 {
+			klQ += probQ * math.Log2(probQ/meanM)
+		}
+
+		tvd += 0.5 * math.Abs(probP-probQ)
 	}
 
-	tvd *= 0.5
+	jsd := 0.5*klP + 0.5*klQ
+
 	return jsd, tvd
 }
+
+func (stage *StabilityStage) Report() string {
+	var build strings.Builder
+
+	for _, violation := range stage.violations {
+		build.WriteString(violation.String())
+	}
+
+	return build.String()
+}
+
+func (stage *StabilityStage) Data() any {
+	completeness := 0.0
+
+	if stage.totalFrames > 0 {
+		completeness = float64(stage.validFrames) / float64(stage.totalFrames)
+	}
+
+	return map[string]any{
+		"passed":       len(stage.violations) == 0,
+		"total_frames": stage.totalFrames,
+		"valid_frames": stage.validFrames,
+		"completeness": completeness,
+		"jsd":          stage.jsd,
+		"tvd":          stage.tvd,
+	}
+}
+

@@ -29,6 +29,7 @@ type Config struct {
 	Storage   *Storage
 	UI        *UI
 	Workbench *Workbench
+	Audit     *Audit
 }
 
 func NewConfig() *Config {
@@ -46,5 +47,6 @@ func NewConfig() *Config {
 		Storage:   NewStorage(),
 		UI:        NewUI(),
 		Workbench: NewWorkbench(),
+		Audit:     NewAudit(),
 	}
 }

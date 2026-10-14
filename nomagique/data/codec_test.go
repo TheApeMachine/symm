@@ -168,7 +168,7 @@ func TestMeasurementUnmarshalBinaryInvalid(t *testing.T) {
 
 func BenchmarkMarshalBinary(b *testing.B) {
 	measurement := buildTestMeasurement()
-	
+
 	b.ReportAllocs()
 
 	for b.Loop() {
@@ -188,7 +188,6 @@ func BenchmarkUnmarshalBinary(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	
 	b.ReportAllocs()
 
 	for b.Loop() {

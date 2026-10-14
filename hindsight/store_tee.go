@@ -89,7 +89,14 @@ func (tee *StoreTee) Run() {
 						return
 					}
 
-					if err := tee.client.Put(measurement); err != nil {
+					payload, err := measurement.MarshalBinary()
+
+					if err != nil {
+						errnie.Error(err)
+						continue
+					}
+
+					if err := tee.client.Put(measurement.Prefix(), payload); err != nil {
 						errnie.Error(err)
 					}
 				}
@@ -103,7 +110,14 @@ func (tee *StoreTee) Run() {
 				continue
 			}
 
-			if err := tee.client.Put(measurement); err != nil {
+			payload, err := measurement.MarshalBinary()
+
+			if err != nil {
+				errnie.Error(err)
+				continue
+			}
+
+			if err := tee.client.Put(measurement.Prefix(), payload); err != nil {
 				errnie.Error(err)
 			}
 		}

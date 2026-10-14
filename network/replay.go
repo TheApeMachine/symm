@@ -9,12 +9,8 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/store"
 	"golang.design/x/lockfree/lf"
 )
-
-var replayer *Replayer
-var once sync.Once
 
 type Replayer struct {
 	*runtime.System
@@ -22,49 +18,16 @@ type Replayer struct {
 	mu     sync.RWMutex
 	tape   []*data.Measurement
 	queues map[string]*lf.Queue[*data.Measurement]
-	store  *store.Client
 }
 
 func NewReplayer(ctx context.Context) *Replayer {
-	once.Do(func() {
-		replayer = &Replayer{
-			ctx:    ctx,
-			queues: make(map[string]*lf.Queue[*data.Measurement]),
-			store:  store.NewClient(ctx, "symm"),
-		}
+	rep := &Replayer{
+		ctx:    ctx,
+		queues: make(map[string]*lf.Queue[*data.Measurement]),
+	}
 
-		replayer.System = runtime.NewSystem(ctx, "network.replayer", replayer)
-
-		go func() {
-			var loaded []*data.Measurement
-
-			for buf := range replayer.store.GetBytes("symm") {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				measurement := &data.Measurement{}
-
-				if err := measurement.UnmarshalBinary(buf); err != nil {
-					errnie.Error(errnie.Err(
-						errnie.Validation, "[network.replayer] failed to unmarshal binary", err,
-					))
-
-					continue
-				}
-
-				loaded = append(loaded, measurement)
-			}
-
-			if len(loaded) > 0 {
-				replayer.Load(loaded...)
-			}
-		}()
-	})
-
-	return replayer
+	rep.System = runtime.NewSystem(ctx, "network.replayer", rep)
+	return rep
 }
 
 /*

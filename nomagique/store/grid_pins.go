@@ -31,7 +31,7 @@ RISK:
 */
 var regionMetricPins = map[string]map[string][]uint8{
 	"correlation": {
-		"cohort_covariance_score":   {13},
+		"cohort_covariance_score":    {13},
 		"historical_path_distance":   {10},
 		"historical_path_percentile": {10},
 	},
@@ -92,7 +92,7 @@ var regionMetricPins = map[string]map[string][]uint8{
 		"historical_path_percentile":    {11},
 	},
 	"toxicity": {
-		"retreat_fraction:bid":   {2, 5},
+		"retreat_fraction:bid":    {2, 5},
 		"net_withdrawal_rate:bid": {4},
 	},
 }

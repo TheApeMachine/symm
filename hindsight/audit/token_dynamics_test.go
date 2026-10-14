@@ -1,54 +1,83 @@
 package audit
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func TestComputeTransitionEntropy(t *testing.T) {
-	Convey("Given transition matrices for conditional entropy calculation", t, func() {
-		Convey("When transitions are completely empty", func() {
-			entropy := computeTransitionEntropy(nil)
-			So(entropy, ShouldEqual, 0.0)
-		})
+func TestDynamicsStage(t *testing.T) {
+	Convey("Given a DynamicsStage instance", t, func() {
+		ctx := context.Background()
+		stage := NewDynamicsStage(ctx)
 
-		Convey("When transitions are deterministic", func() {
-			transitions := map[string]map[string]int{
-				"R00": {"R01": 10},
-				"R01": {"R02": 20},
-				"R02": {"R00": 30},
+		feed := func(s *DynamicsStage, ms ...*data.Measurement) []*Violation {
+			for _, m := range ms {
+				s.Channel() <- m
+			}
+			close(s.Channel())
+			_ = s.Run()
+			return s.Violations()
+		}
+
+		Convey("When auditing structured state transitions", func() {
+			measurements := make([]*data.Measurement, 0, 25)
+
+			// Predictable deterministic cycle: A -> B -> C -> A ...
+			tokens := []string{"state_A", "state_B", "state_C"}
+
+			for idx := range int64(24) {
+				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
+				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
+				token := tokens[idx%3]
+				measurement.Write(data.NewMetric(token, 1.0, data.UnitDimensionless, data.TimescaleInstantaneous))
+				measurement.Finalize()
+				measurements = append(measurements, measurement)
 			}
 
-			entropy := computeTransitionEntropy(transitions)
-			So(entropy, ShouldEqual, 0.0)
+			violations := feed(stage, measurements...)
+			So(violations, ShouldBeEmpty)
+			So(stage.Report(), ShouldBeEmpty)
 		})
 
-		Convey("When each state transitions uniformly to two possible next states", func() {
-			transitions := map[string]map[string]int{
-				"R00": {"R00": 5, "R01": 5},
-				"R01": {"R00": 10, "R01": 10},
+		Convey("When auditing an absorbing state collapse (> 80% same token)", func() {
+			measurements := make([]*data.Measurement, 0, 25)
+
+			for idx := range int64(25) {
+				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
+				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
+
+				// 24 of 25 are frozen_token (96% share)
+				token := "frozen_token"
+				if idx == 0 {
+					token = "init_token"
+				}
+
+				measurement.Write(data.NewMetric(token, 1.0, data.UnitDimensionless, data.TimescaleInstantaneous))
+				measurement.Finalize()
+				measurements = append(measurements, measurement)
 			}
 
-			// Each row has H(Y|X=x) = - (0.5 log2 0.5 + 0.5 log2 0.5) = 1.0 bit
-			// P(X=R00) = 10/30, P(X=R01) = 20/30
-			// Sum P(X=x) H(Y|X=x) = (10/30)*1.0 + (20/30)*1.0 = 1.0 bit
-			entropy := computeTransitionEntropy(transitions)
-			So(entropy, ShouldAlmostEqual, 1.0, 1e-12)
+			violations := feed(stage, measurements...)
+			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
+
+			hasCollapse := false
+			for _, violation := range violations {
+				if violation.Name == "dynamics.absorbing_token_collapse" {
+					hasCollapse = true
+				}
+			}
+			So(hasCollapse, ShouldBeTrue)
+			So(stage.Report(), ShouldContainSubstring, "dynamics.absorbing_token_collapse")
 		})
 
-		Convey("When row frequencies are asymmetric across the transition ensemble", func() {
-			transitions := map[string]map[string]int{
-				"R00": {"R01": 5, "R02": 5}, // 10 transitions, row entropy = 1.0 bit
-				"R01": {"R00": 90},          // 90 transitions, row entropy = 0.0 bit
-			}
-
-			// Total transitions = 100
-			// Weight for R00 = 10 / 100 = 0.1
-			// Weight for R01 = 90 / 100 = 0.9
-			// Conditional entropy = 0.1 * 1.0 + 0.9 * 0.0 = 0.1 bit
-			entropy := computeTransitionEntropy(transitions)
-			So(entropy, ShouldAlmostEqual, 0.1, 1e-12)
+		Convey("When auditing nil measurements", func() {
+			nilViolations := feed(stage, nil)
+			So(len(nilViolations), ShouldEqual, 1)
+			So(nilViolations[0].Name, ShouldEqual, "measurement")
 		})
 	})
 }

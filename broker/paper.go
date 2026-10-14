@@ -79,7 +79,6 @@ func (paper *Paper) Read(keys ...string) ([]byte, error) {
 	}
 }
 
-
 /*
 Balances loads the current paper wallet through the native CLI and returns the
 same asset-to-decimal map used by Kraken's real REST balance endpoint.

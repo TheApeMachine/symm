@@ -204,7 +204,7 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 		return nil
 	}
 
-	for measurement := range training.client.Get("") {
+	for measurement := range training.client.Get("policy/") {
 		if measurement == nil {
 			continue
 		}

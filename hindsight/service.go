@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/contrib/v3/websocket"
@@ -81,17 +82,31 @@ func (service *Service) runs(reqCtx fiber.Ctx) error {
 	runs := []Run{}
 	seen := make(map[int64]bool)
 
-	for measurement := range service.client.Get("") {
-		if measurement == nil || measurement.Epoch <= 0 || seen[measurement.Epoch] {
-			continue
-		}
+	for page := range service.client.List("run/epoch/", "/") {
+		for _, commonPrefix := range page.CommonPrefixes {
+			if commonPrefix.Prefix == nil {
+				continue
+			}
 
-		seen[measurement.Epoch] = true
-		runs = append(runs, Run{
-			Epoch:     measurement.Epoch,
-			StartedAt: measurement.At.UTC(),
-			Status:    "recorded",
-		})
+			prefixStr := strings.TrimPrefix(*commonPrefix.Prefix, "run/epoch/")
+			prefixStr = strings.Trim(prefixStr, "/")
+			epoch, err := strconv.ParseInt(prefixStr, 10, 64)
+
+			if err != nil || epoch <= 0 {
+				continue
+			}
+
+			if seen[epoch] {
+				continue
+			}
+
+			seen[epoch] = true
+			runs = append(runs, Run{
+				Epoch:     epoch,
+				StartedAt: time.Unix(0, epoch).UTC(),
+				Status:    "recorded",
+			})
+		}
 	}
 
 	return reqCtx.JSON(runs)
@@ -120,14 +135,18 @@ func (service *Service) timeline(conn *websocket.Conn) {
 	const timelineBatchSize = 256
 	batch := make([]*data.Measurement, 0, timelineBatchSize)
 
-	prefix := fmt.Sprintf("%d/", epoch)
+	prefix := "spot:trade/"
 
-	if symbol != "" {
-		prefix = fmt.Sprintf("%d/%s/", epoch, symbol)
+	if symbol != "" && epoch > 0 {
+		prefix = fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch)
 	}
 
 	for measurement := range service.client.Get(prefix) {
 		if measurement == nil {
+			continue
+		}
+
+		if epoch > 0 && measurement.Epoch != epoch {
 			continue
 		}
 
@@ -180,24 +199,22 @@ func (service *Service) symbols(ctx fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 	}
 
-	run := ctx.Query("run")
-
-	if run == "" {
-		run = ctx.Query("epoch")
-	}
-
-	epoch := parseInt64Query(run)
 	symbols := []string{}
 	seen := make(map[string]bool)
 
-	for measurement := range service.client.Get(fmt.Sprintf("%d/", epoch)) {
-		if measurement == nil {
-			continue
-		}
+	for page := range service.client.List("spot:trade/", "/") {
+		for _, commonPrefix := range page.CommonPrefixes {
+			if commonPrefix.Prefix == nil {
+				continue
+			}
 
-		if measurement.Label != "" && !seen[measurement.Label] {
-			seen[measurement.Label] = true
-			symbols = append(symbols, measurement.Label)
+			symbol := strings.TrimPrefix(*commonPrefix.Prefix, "spot:trade/")
+			symbol = strings.Trim(symbol, "/")
+
+			if symbol != "" && !seen[symbol] {
+				seen[symbol] = true
+				symbols = append(symbols, symbol)
+			}
 		}
 	}
 
@@ -218,8 +235,12 @@ func (service *Service) excursions(ctx fiber.Ctx) error {
 	epoch := parseInt64Query(run)
 	excursions := []*data.Measurement{}
 
-	for measurement := range service.client.Get(fmt.Sprintf("%d/", epoch)) {
+	for measurement := range service.client.Get("detector/") {
 		if measurement == nil {
+			continue
+		}
+
+		if epoch > 0 && measurement.Epoch != epoch {
 			continue
 		}
 
@@ -242,8 +263,12 @@ func (service *Service) data(ctx fiber.Ctx) error {
 	limit := int(parseUintQuery(ctx.Query("limit")))
 	var measurements []*data.Measurement
 
-	for measurement := range service.client.Get(fmt.Sprintf("%d/", epoch)) {
+	for measurement := range service.client.Get("spot:trade/") {
 		if measurement == nil {
+			continue
+		}
+
+		if epoch > 0 && measurement.Epoch != epoch {
 			continue
 		}
 
@@ -279,14 +304,18 @@ func (service *Service) captures(ctx fiber.Ctx) error {
 	const maxCaptures = 64
 	captures := make([]map[string]any, 0, maxCaptures)
 
-	prefix := fmt.Sprintf("%d/", epoch)
+	prefix := "spot:trade/"
 
-	if symbol != "" {
-		prefix = fmt.Sprintf("%d/%s/", epoch, symbol)
+	if symbol != "" && epoch > 0 {
+		prefix = fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch)
 	}
 
 	for measurement := range service.client.Get(prefix) {
 		if measurement == nil {
+			continue
+		}
+
+		if epoch > 0 && measurement.Epoch != epoch {
 			continue
 		}
 
@@ -342,14 +371,18 @@ func (service *Service) envelope(ctx fiber.Ctx) error {
 
 	var found *data.Measurement
 
-	prefix := fmt.Sprintf("%d/", epoch)
+	prefix := "spot:trade/"
 
-	if symbol != "" {
-		prefix = fmt.Sprintf("%d/%s/", epoch, symbol)
+	if symbol != "" && epoch > 0 {
+		prefix = fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch)
 	}
 
 	for measurement := range service.client.Get(prefix) {
 		if measurement == nil {
+			continue
+		}
+
+		if epoch > 0 && measurement.Epoch != epoch {
 			continue
 		}
 
@@ -493,8 +526,12 @@ func (service *Service) trainingFragments(ctx fiber.Ctx) error {
 	fragments := make([]TrainedFragmentResponse, 0)
 	var autoID int64 = 1
 
-	for det := range service.client.Get(fmt.Sprintf("%d/", epoch)) {
+	for det := range service.client.Get("detector/") {
 		if det == nil || det.Source != "detector" {
+			continue
+		}
+
+		if epoch > 0 && det.Epoch != epoch {
 			continue
 		}
 
@@ -590,8 +627,12 @@ func (service *Service) trainingFragmentPoints(ctx fiber.Ctx) error {
 	var targetDet *data.Measurement
 	var autoID int64 = 1
 
-	for det := range service.client.Get(fmt.Sprintf("%d/", epoch)) {
+	for det := range service.client.Get("detector/") {
 		if det == nil || det.Source != "detector" {
+			continue
+		}
+
+		if epoch > 0 && det.Epoch != epoch {
 			continue
 		}
 
@@ -626,7 +667,9 @@ func (service *Service) trainingFragmentPoints(ctx fiber.Ctx) error {
 	points := make([]FragmentPoint, 0)
 	var x int
 
-	for m := range service.client.Get(fmt.Sprintf("%d/%s/", targetDet.Epoch, targetDet.Label)) {
+	pointsPrefix := fmt.Sprintf("spot:trade/%s/%019d/", targetDet.Label, targetDet.Epoch)
+
+	for m := range service.client.Get(pointsPrefix) {
 		if m == nil {
 			continue
 		}

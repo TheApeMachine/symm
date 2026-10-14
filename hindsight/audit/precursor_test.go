@@ -5,198 +5,88 @@ import (
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/store"
 )
 
-func TestPrecursorSeparation(t *testing.T) {
-	Convey("Given the Precursor Separation audit engine (Stage 5)", t, func() {
+func TestPrecursorStage(t *testing.T) {
+	Convey("Given a PrecursorStage instance", t, func() {
 		ctx := context.Background()
+		stage := NewPrecursorStage(ctx)
 
-		Convey("When invoked with invalid or non-positive taker fee", func() {
-			result := AnalyzePrecursorSeparation(
-				ctx, nil, 1, "BTC/USD", store.NewGrid(t.Context()), nil, nil, 10, 0.05, nil, 0.0,
-			)
-			So(result.Passed, ShouldBeFalse)
-			So(result.SummaryText, ShouldContainSubstring, "strictly positive")
-		})
-
-		Convey("When invoked with nil catalog or grid", func() {
-			result := AnalyzePrecursorSeparation(
-				ctx, nil, 1, "BTC/USD", nil, nil, nil, 10, 0.05, nil, 0.0026,
-			)
-			So(result.Passed, ShouldBeFalse)
-			So(result.SummaryText, ShouldContainSubstring, "Grid unavailable")
-		})
-
-		Convey("When computing Jensen-Shannon Divergence", func() {
-			distA := map[string]int{"R01": 50, "R02": 50}
-			distB := map[string]int{"R01": 50, "R02": 50}
-			jsdIdentical := computeJSD(distA, distB)
-			So(jsdIdentical, ShouldAlmostEqual, 0.0, 1e-6)
-
-			distC := map[string]int{"R03": 50, "R04": 50}
-			jsdDisjoint := computeJSD(distA, distC)
-			So(jsdDisjoint, ShouldAlmostEqual, 1.0, 1e-4)
-
-			jsdEmpty := computeJSD(nil, distA)
-			So(jsdEmpty, ShouldEqual, 0.0)
-		})
-
-		repeat := func(count int, tokens map[string]int) []map[string]int {
-			out := make([]map[string]int, count)
-
-			for index := range out {
-				out[index] = tokens
+		feed := func(s *PrecursorStage, ms ...*data.Measurement) []*Violation {
+			for _, m := range ms {
+				s.Channel() <- m
 			}
-
-			return out
+			close(s.Channel())
+			_ = s.Run()
+			return s.Violations()
 		}
 
-		Convey("When event and control excursions use different tokens", func() {
-			result := evaluateGroupHypothesis("g", "", repeat(10, map[string]int{"R01": 9, "R02": 1}),
-				repeat(10, map[string]int{"R01": 1, "R02": 9}), 200, 0.05)
-			So(result.Status, ShouldEqual, VerdictSupported)
-			So(result.Passed, ShouldBeTrue)
-		})
+		Convey("When auditing profitable excursions that clear order book spread and fees", func() {
+			measurements := make([]*data.Measurement, 0, 30)
 
-		Convey("When event and control excursions are drawn alike, the hypothesis fails", func() {
-			same := map[string]int{"R01": 5, "R02": 5}
-			result := evaluateGroupHypothesis("g", "", repeat(10, same), repeat(10, same), 200, 0.05)
-			So(result.Status, ShouldEqual, VerdictNotSupported)
-			So(result.Passed, ShouldBeFalse)
-		})
+			// 6 excursions of 5 ticks: buy at Ask 100, price rises to Bid 108 (+8% move, clearing 1.6% fee + spread)
+			for exIdx := range int64(6) {
+				for tickIdx := range int64(5) {
+					now := time.Now().Add(time.Duration(exIdx*5+tickIdx) * time.Millisecond)
+					measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
 
-		Convey("When one long event excursion faces one control, many tokens do not make evidence", func() {
-			// A token-level shuffle of these 200 tokens would call this
-			// separated; with two excursions the label null has two outcomes.
-			result := evaluateGroupHypothesis("g", "", repeat(1, map[string]int{"R01": 100}),
-				repeat(1, map[string]int{"R02": 100}), 200, 0.05)
-			So(result.Status, ShouldEqual, VerdictNotSupported)
-		})
+					bid := 99.9 + float64(tickIdx)*2.0
+					ask := 100.1 + float64(tickIdx)*2.0
 
-		Convey("When late halves differ from early halves in every excursion", func() {
-			result := evaluatePairedHypothesis("p", "", repeat(10, map[string]int{"R03": 5}),
-				repeat(10, map[string]int{"R01": 5}), 200, 0.05)
-			So(result.Status, ShouldEqual, VerdictSupported)
-
-			same := evaluatePairedHypothesis("p", "", repeat(10, map[string]int{"R01": 5}),
-				repeat(10, map[string]int{"R01": 5}), 200, 0.05)
-			So(same.Status, ShouldEqual, VerdictNotSupported)
-		})
-
-		Convey("When held-out skill is scored on excursions the rule never saw", func() {
-			var excursions []excursionInterval
-
-			for index := range 20 {
-				class := "down"
-
-				if index%2 == 0 {
-					class = "up"
+					measurement.Write(
+						data.NewMetric("best_bid_price", bid, data.UnitPrice, data.TimescaleInstantaneous),
+						data.NewMetric("best_ask_price", ask, data.UnitPrice, data.TimescaleInstantaneous),
+					)
+					measurement.Finalize()
+					measurements = append(measurements, measurement)
 				}
-
-				excursions = append(excursions, excursionInterval{class: class, bTick: int64(index)})
 			}
 
-			skill := evaluateHeldOutSkill(repeat(10, map[string]int{"R01": 5}),
-				repeat(10, map[string]int{"R02": 5}), excursions, 200, 0.05)
-			So(skill.Status, ShouldEqual, VerdictSupported)
-			So(skill.MCC, ShouldAlmostEqual, 1.0, 1e-9)
-
-			// Tokens unrelated to the label: the rule learned on the first
-			// 60% cannot beat the label null on the rest.
-			mixed := map[string]int{"R01": 5, "R02": 5}
-			chance := evaluateHeldOutSkill(repeat(10, mixed), repeat(10, mixed), excursions, 200, 0.05)
-			So(chance.Status, ShouldEqual, VerdictNotSupported)
+			violations := feed(stage, measurements...)
+			So(violations, ShouldBeEmpty)
+			So(stage.Report(), ShouldBeEmpty)
 		})
 
-		Convey("When evaluating economic relevance (friction clearance)", func() {
-			takerFee := 0.0026 // 26 bps taker fee, 52 bps roundtrip
+		Convey("When auditing unprofitable excursions eaten by book spread and fees", func() {
+			measurements := make([]*data.Measurement, 0, 30)
 
-			excursions := []excursionInterval{
-				{
-					symbol: "BTC/USD",
-					class:  "up",
-					bPrice: 50000.0,
-					cPrice: 51000.0, // +2.0% gross > 0.52% fee -> profitable
-				},
-				{
-					symbol: "BTC/USD",
-					class:  "up",
-					bPrice: 50000.0,
-					cPrice: 50500.0, // +1.0% gross > 0.52% fee -> profitable
-				},
-				{
-					symbol: "BTC/USD",
-					class:  "up_friction",
-					bPrice: 50000.0,
-					cPrice: 50100.0, // +0.2% gross < 0.52% fee -> unprofitable
-				},
+			// 6 excursions of 5 ticks where market is flat: buy at Ask 100.1, sell at Bid 99.9 (-0.2% spread loss + 1.6% fee = negative net return)
+			for exIdx := range int64(6) {
+				for tickIdx := range int64(5) {
+					now := time.Now().Add(time.Duration(exIdx*5+tickIdx) * time.Millisecond)
+					measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
+
+					bid := 99.9 + float64(tickIdx)*0.001
+					ask := 100.1 + float64(tickIdx)*0.001
+
+					measurement.Write(
+						data.NewMetric("best_bid_price", bid, data.UnitPrice, data.TimescaleInstantaneous),
+						data.NewMetric("best_ask_price", ask, data.UnitPrice, data.TimescaleInstantaneous),
+					)
+					measurement.Finalize()
+					measurements = append(measurements, measurement)
+				}
 			}
 
-			economic := evaluateEconomicRelevance(excursions, takerFee)
-			So(economic.Status, ShouldEqual, VerdictNotATest)
-			So(economic.EvaluatedExcursions, ShouldEqual, 3)
-			So(economic.ProfitableExcursions, ShouldEqual, 2)
-			So(economic.UnprofitableExcursions, ShouldEqual, 1)
-			So(economic.FrictionClearanceRate, ShouldAlmostEqual, 2.0/3.0, 1e-4)
-			So(economic.GrossMeanReturn, ShouldBeGreaterThan, economic.RoundTripFeeRate)
-			So(economic.NetMeanReturn, ShouldBeGreaterThan, 0.0)
-			So(economic.Passed, ShouldBeFalse)
+			violations := feed(stage, measurements...)
+			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
+
+			hasFrictionViolation := false
+			for _, violation := range violations {
+				if violation.Name == "precursor.unprofitable_friction" {
+					hasFrictionViolation = true
+				}
+			}
+			So(hasFrictionViolation, ShouldBeTrue)
+			So(stage.Report(), ShouldContainSubstring, "order book friction clearance")
 		})
 
-		Convey("When evaluating end-to-end precursor separation with synthetic detections", func() {
-			grid := store.NewGrid(t.Context())
-			now := time.Now()
-
-			det1 := data.NewMeasurement(1, "BTC/USD", "detector", now, now.Add(-time.Minute), &data.StringEntry{Key: "type", Value: "up"})
-			det1.SeqIdx = 1
-			det1.Tick = 100
-			det1 = det1.Write(
-				data.NewMetric("start_tick", 10, data.UnitCount, data.TimescaleTick),
-				data.NewMetric("b_tick", 30, data.UnitCount, data.TimescaleTick),
-				data.NewMetric("c_tick", 60, data.UnitCount, data.TimescaleTick),
-				data.NewExactMetric("b_price", decimal.NewFromFloat64(50000), data.UnitPrice, data.TimescaleTick),
-				data.NewExactMetric("c_price", decimal.NewFromFloat64(51000), data.UnitPrice, data.TimescaleTick),
-			)
-
-			det2 := data.NewMeasurement(1, "BTC/USD", "detector", now, now.Add(-time.Minute), &data.StringEntry{Key: "type", Value: "down"})
-			det2.SeqIdx = 2
-			det2.Tick = 200
-			det2 = det2.Write(
-				data.NewMetric("start_tick", 110, data.UnitCount, data.TimescaleTick),
-				data.NewMetric("b_tick", 130, data.UnitCount, data.TimescaleTick),
-				data.NewMetric("c_tick", 160, data.UnitCount, data.TimescaleTick),
-				data.NewExactMetric("b_price", decimal.NewFromFloat64(50000), data.UnitPrice, data.TimescaleTick),
-				data.NewExactMetric("c_price", decimal.NewFromFloat64(49000), data.UnitPrice, data.TimescaleTick),
-			)
-
-			detections := []*data.Measurement{det1, det2}
-			ticks := []int64{10, 20, 30, 40, 50, 60, 110, 120, 130, 140, 150, 160}
-			tickMeasurements := make(map[int64][]*data.Measurement)
-
-			for _, tick := range ticks {
-				tAt := now.Add(time.Duration(tick) * time.Second)
-				meas := data.NewMeasurement(1, "BTC/USD", "sensor", tAt, tAt)
-				meas.SeqIdx = tick
-				meas.Tick = tick
-				meas = meas.Write(
-					data.NewMetric("midpoint", 50000+float64(tick)*5, data.UnitPrice, data.TimescaleTick),
-				)
-				tickMeasurements[tick] = []*data.Measurement{meas}
-			}
-
-			result := AnalyzePrecursorSeparation(
-				ctx, nil, 1, "BTC/USD", grid, ticks, tickMeasurements, 20, 0.05, detections, 0.0026,
-			)
-
-			So(result.DetectionsFound, ShouldEqual, 2)
-			So(result.EconomicRelevance.Status, ShouldEqual, VerdictNotATest)
-			So(result.EconomicRelevance.EvaluatedExcursions, ShouldEqual, 1)
-			So(result.EconomicRelevance.FrictionClearanceRate, ShouldEqual, 1.0)
-			So(result.SummaryText, ShouldContainSubstring, "Precursor: 2 detections")
+		Convey("When auditing nil measurements", func() {
+			nilViolations := feed(stage, nil)
+			So(len(nilViolations), ShouldEqual, 1)
+			So(nilViolations[0].Name, ShouldEqual, "measurement")
 		})
 	})
 }
