@@ -1,12 +1,15 @@
 package kraken
 
 import (
+	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -224,4 +227,172 @@ func NewTradeBalanceFromMap(model datura.Map[any]) TradeBalanceResult {
 		MarginFreeOrders:  currentValue,
 		UnexecutedValue:   zero,
 	}
+}
+
+/*
+ToMeasurement converts the Balance into a structured Measurement
+without any serialized raw shortcuts.
+*/
+func (balance *Balance) ToMeasurement(epochs ...int64) *data.Measurement {
+	if balance == nil {
+		return nil
+	}
+
+	epoch := system.Epoch.Load()
+
+	if len(epochs) > 0 && epochs[0] > 0 {
+		epoch = epochs[0]
+	}
+
+	now := time.Now().UTC()
+
+	if !balance.Timestamp.IsZero() {
+		now = balance.Timestamp.UTC()
+	}
+
+	if epoch <= 0 {
+		epoch = now.UnixNano()
+	}
+
+	channel := balance.Channel
+
+	if channel == "" {
+		channel = "balances"
+	}
+
+	msgType := balance.Type
+
+	if msgType == "" {
+		msgType = "snapshot"
+	}
+
+	meas := data.NewMeasurement(
+		epoch,
+		msgType,
+		channel,
+		now,
+		now,
+		&data.StringEntry{
+			Key:   "channel",
+			Value: channel,
+		},
+		&data.StringEntry{
+			Key:   "type",
+			Value: msgType,
+		},
+	)
+
+	var metrics []*data.Metric
+
+	for _, row := range balance.Data {
+		if row.Balance != nil {
+			metrics = append(metrics, data.NewExactMetric(
+				"balance:"+row.Asset, row.Balance, data.UnitCurrency, data.TimescaleInstantaneous,
+			))
+		}
+
+		if row.Available != nil {
+			metrics = append(metrics, data.NewExactMetric(
+				"available:"+row.Asset, row.Available, data.UnitCurrency, data.TimescaleInstantaneous,
+			))
+		}
+
+		if row.Reserved != nil {
+			metrics = append(metrics, data.NewExactMetric(
+				"reserved:"+row.Asset, row.Reserved, data.UnitCurrency, data.TimescaleInstantaneous,
+			))
+		}
+	}
+
+	if len(metrics) > 0 {
+		meas.Write(metrics...)
+	}
+
+	meas.Finalize()
+	return meas
+}
+
+/*
+NewBalanceFromMeasurement reconstructs a Balance from a Measurement.
+*/
+func NewBalanceFromMeasurement(meas *data.Measurement) (*Balance, error) {
+	if meas == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "[kraken.balance] cannot convert nil measurement to balance", nil,
+		))
+	}
+
+	bal := &Balance{
+		Channel:   "balances",
+		Type:      "snapshot",
+		Timestamp: meas.At,
+		Data:      []BalanceData{},
+	}
+
+	for entry := range meas.Meta() {
+		if entry == nil {
+			continue
+		}
+
+		if entry.Key == "channel" && entry.Value != "" {
+			bal.Channel = entry.Value
+		}
+
+		if entry.Key == "type" && entry.Value != "" {
+			bal.Type = entry.Value
+		}
+	}
+
+	assetMap := make(map[string]*BalanceData)
+
+	for entry := range meas.Read() {
+		if entry == nil || entry.Metric == nil || entry.Metric.Exact() == nil {
+			continue
+		}
+
+		key := entry.Key
+		val := entry.Metric.Exact()
+
+		if strings.HasPrefix(key, "balance:") {
+			asset := strings.TrimPrefix(key, "balance:")
+			row, ok := assetMap[asset]
+
+			if !ok {
+				row = &BalanceData{Asset: asset, AssetClass: "currency"}
+				assetMap[asset] = row
+			}
+
+			row.Balance = val
+		}
+
+		if strings.HasPrefix(key, "available:") {
+			asset := strings.TrimPrefix(key, "available:")
+			row, ok := assetMap[asset]
+
+			if !ok {
+				row = &BalanceData{Asset: asset, AssetClass: "currency"}
+				assetMap[asset] = row
+			}
+
+			row.Available = val
+		}
+
+		if strings.HasPrefix(key, "reserved:") {
+			asset := strings.TrimPrefix(key, "reserved:")
+			row, ok := assetMap[asset]
+
+			if !ok {
+				row = &BalanceData{Asset: asset, AssetClass: "currency"}
+				assetMap[asset] = row
+			}
+
+			row.Reserved = val
+		}
+	}
+
+	for _, row := range assetMap {
+		bal.Data = append(bal.Data, *row)
+	}
+
+	return bal, nil
 }

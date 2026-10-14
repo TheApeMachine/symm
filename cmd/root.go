@@ -21,7 +21,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
@@ -207,7 +206,16 @@ var (
 
 			ingressTee := teeOf(ingressStoreTee)
 
+			if ingressTee != nil {
+				instrument.SetStoreTee(ingressTee)
+				balance.SetStoreTee(ingressTee)
+			}
+
 			desk := broker.NewDesk(ctx, privateTransport, price, balance)
+
+			if ingressTee != nil {
+				desk.SetStoreTee(ingressTee)
+			}
 
 			training := strategy.NewTraining(
 				ctx,
@@ -234,7 +242,6 @@ var (
 			pumpdumpSignal := pumpdump.NewSignal(ctx)
 			sentimentSignal := sentiment.NewSignal(ctx)
 			toxicitySignal := toxicity.NewSignal(ctx)
-			resonanceSolver := resonance.NewSolver(ctx, 0.05)
 
 			// Pipeline nodes report construction faults by entering ERROR.
 			// ERROR -> READY is a legal transition, so the READY sweep below
@@ -251,7 +258,6 @@ var (
 				pumpdumpSignal,
 				sentimentSignal,
 				toxicitySignal,
-				resonanceSolver,
 			}
 
 			for _, node := range pipelineNodes {
@@ -286,9 +292,6 @@ var (
 						pumpdumpSignal,
 						sentimentSignal,
 						toxicitySignal,
-					},
-					{
-						resonanceSolver,
 					},
 					{
 						training,
@@ -336,7 +339,6 @@ var (
 				pumpdumpSignal,
 				sentimentSignal,
 				toxicitySignal,
-				resonanceSolver,
 				workspace,
 			}
 
@@ -408,7 +410,6 @@ var (
 					}
 				}()
 			}
-
 
 			// Ingress reports a fault it cannot continue past (a Level3 frame
 			// the book could not apply). The first fault halts the process.
@@ -523,7 +524,26 @@ var (
 							}
 
 							desk.Apply(execution)
+
+							if ingressTee != nil {
+								ingressTee.Push(execution.ToMeasurement(epoch))
+							}
 						case "balances":
+							bal, err := kraken.NewBalance(buf)
+
+							if err != nil {
+								halt(errnie.Err(
+									errnie.UnprocessableContent,
+									fmt.Sprintf("symm: %s balances frame undecodable", name),
+									err,
+								))
+
+								return
+							}
+
+							if ingressTee != nil {
+								ingressTee.Push(bal.ToMeasurement(epoch))
+							}
 						case "level3":
 							if err := handleLevel3(buf, epoch, book, ingressTee, name); err != nil {
 								halt(err)

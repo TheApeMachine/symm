@@ -151,14 +151,20 @@ func (client *Client) Get(prefix string) iter.Seq[*data.Measurement] {
 	return func(yield func(*data.Measurement) bool) {
 		for page := range client.List(prefix) {
 			for _, object := range page.Contents {
+				payload := client.dowload(*object.Key)
+
+				if payload == nil {
+					continue
+				}
+
 				measurement := &data.Measurement{}
 
-				if err := measurement.UnmarshalBinary(client.dowload(*object.Key)); err != nil {
+				if err := measurement.UnmarshalBinary(payload); err != nil {
 					errnie.Error(errnie.Err(
 						errnie.IO, "[store.client] unmarshal error", err,
 					))
 
-					return
+					continue
 				}
 
 				if !yield(measurement) {
@@ -173,7 +179,13 @@ func (client *Client) GetBytes(prefix string) iter.Seq[[]byte] {
 	return func(yield func([]byte) bool) {
 		for page := range client.List(prefix) {
 			for _, object := range page.Contents {
-				if !yield(client.dowload(*object.Key)) {
+				payload := client.dowload(*object.Key)
+
+				if payload == nil {
+					continue
+				}
+
+				if !yield(payload) {
 					return
 				}
 			}

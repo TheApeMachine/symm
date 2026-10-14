@@ -27,6 +27,7 @@ type Balance struct {
 	measurement *data.Measurement
 	limiter     *rate.Limiter
 	uiTee       runtime.Tee
+	storeTee    runtime.Tee
 }
 
 /*
@@ -49,12 +50,20 @@ func NewBalance(
 	ctx context.Context,
 	transport Transport,
 	tee runtime.Tee,
+	storeTees ...runtime.Tee,
 ) *Balance {
+	var storeTee runtime.Tee
+
+	if len(storeTees) > 0 && storeTees[0] != nil {
+		storeTee = storeTees[0]
+	}
+
 	balance := &Balance{
 		System:    runtime.NewSystem(ctx, "balance"),
 		transport: transport,
 		Quote:     system.Cfg.Market.QuoteCurrency,
 		uiTee:     tee,
+		storeTee:  storeTee,
 		limiter: rate.NewLimiter(rate.Limit(
 			privateDecayPerSecond/privateCallsPerUpdate,
 		), 1),
@@ -72,6 +81,10 @@ func NewBalance(
 	return balance
 }
 
+func (balance *Balance) SetStoreTee(tee runtime.Tee) {
+	balance.storeTee = tee
+}
+
 func (balance *Balance) cash(asset string) *decimal.Decimal {
 	if balance.wallet == nil {
 		return nil
@@ -87,7 +100,7 @@ func (balance *Balance) cash(asset string) *decimal.Decimal {
 		}
 	}
 
-	alias := krakenAssetAlias(asset)
+	alias := kraken.AssetAlias(asset)
 
 	if alias != "" {
 		for _, entry := range balance.wallet.Data {
@@ -104,40 +117,7 @@ func (balance *Balance) cash(asset string) *decimal.Decimal {
 	return nil
 }
 
-func krakenAssetAlias(asset string) string {
-	switch asset {
-	case "USD":
-		return "ZUSD"
-	case "ZUSD":
-		return "USD"
-	case "EUR":
-		return "ZEUR"
-	case "ZEUR":
-		return "EUR"
-	case "GBP":
-		return "ZGBP"
-	case "ZGBP":
-		return "GBP"
-	case "CAD":
-		return "ZCAD"
-	case "ZCAD":
-		return "CAD"
-	case "JPY":
-		return "ZJPY"
-	case "ZJPY":
-		return "JPY"
-	case "BTC", "XBT":
-		return "XXBT"
-	case "XXBT":
-		return "XBT"
-	case "ETH":
-		return "XETH"
-	case "XETH":
-		return "ETH"
-	}
 
-	return ""
-}
 
 func (balance *Balance) watch() {
 	for {
@@ -236,72 +216,12 @@ func (balance *Balance) poll() (err error) {
 		epoch = now.UnixNano()
 	}
 
-	measurement := data.NewMeasurement(
-		epoch,
-		"balance",
-		"balance",
-		now,
-		now,
-	)
-	measurement.Write(balance.metrics(tradeBalance)...)
-
-	balance.measurement = measurement
+	balance.measurement = tradeBalance.ToMeasurement(balance.wallet, balance.Quote, epoch)
 	balance.uiTee.Push(balance.measurement)
+
+	if balance.storeTee != nil {
+		balance.storeTee.Push(balance.measurement)
+	}
+
 	return nil
-}
-
-func (balance *Balance) metrics(tradeBalance *kraken.TradeBalanceResult) []*data.Metric {
-	metrics := make([]*data.Metric, 0, len(balance.wallet.Data)+3)
-
-	if tradeBalance.UnrealizedPnL != nil {
-		metrics = append(metrics, data.NewExactMetric(
-			"unrealized",
-			tradeBalance.UnrealizedPnL,
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-		))
-	}
-
-	if tradeBalance.Equity != nil {
-		metrics = append(metrics, data.NewExactMetric(
-			"equity",
-			tradeBalance.Equity,
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-		))
-	}
-
-	quoteCash := balance.cash(balance.Quote)
-
-	if quoteCash == nil && tradeBalance.AvailableCash != nil {
-		quoteCash = tradeBalance.AvailableCash
-	}
-
-	if quoteCash != nil {
-		metrics = append(metrics, data.NewExactMetric(
-			"cash",
-			quoteCash,
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-		))
-	}
-
-	for _, entry := range balance.wallet.Data {
-		if entry.Available == nil {
-			continue
-		}
-
-		if entry.Asset == balance.Quote || entry.Asset == krakenAssetAlias(balance.Quote) {
-			continue
-		}
-
-		metrics = append(metrics, data.NewExactMetric(
-			"balance:"+entry.Asset,
-			entry.Available,
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-		))
-	}
-
-	return metrics
 }

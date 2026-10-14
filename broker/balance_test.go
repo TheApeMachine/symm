@@ -2,7 +2,6 @@ package broker
 
 import (
 	"testing"
-	"time"
 	"unsafe"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -70,13 +69,7 @@ func TestBalance(t *testing.T) {
 		}
 
 		Convey("When metrics are generated from balance state", func() {
-			metrics := balance.metrics(&tradeBalance)
-
-			now := time.Now()
-			measurement := data.NewMeasurement(
-				1, "balance", "balance", now, now,
-			)
-			measurement.Write(metrics...)
+			measurement := tradeBalance.ToMeasurement(balance.wallet, balance.Quote, 1)
 
 			So(measurement.Error(), ShouldBeNil)
 

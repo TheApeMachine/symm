@@ -30,6 +30,7 @@ type Desk struct {
 	transport Transport
 	price     *Price
 	balance   *Balance
+	storeTee  runtime.Tee
 	positions *sync.Map
 	closed    []*Position
 	closedMu  sync.RWMutex
@@ -41,11 +42,19 @@ func NewDesk(
 	transport Transport,
 	price *Price,
 	balance *Balance,
+	storeTees ...runtime.Tee,
 ) *Desk {
+	var storeTee runtime.Tee
+
+	if len(storeTees) > 0 && storeTees[0] != nil {
+		storeTee = storeTees[0]
+	}
+
 	desk := &Desk{
 		transport: transport,
 		balance:   balance,
 		price:     price,
+		storeTee:  storeTee,
 		positions: &sync.Map{},
 		closed:    make([]*Position, 0),
 	}
@@ -54,6 +63,10 @@ func NewDesk(
 	desk.restore()
 	desk.Transition(runtime.READY)
 	return desk
+}
+
+func (desk *Desk) SetStoreTee(tee runtime.Tee) {
+	desk.storeTee = tee
 }
 
 func (desk *Desk) Cash(asset string) *decimal.Decimal {
@@ -101,7 +114,7 @@ func (desk *Desk) restore() {
 	if quote == "" {
 		quote = "USD"
 	}
-	quoteAlias := krakenAssetAlias(quote)
+	quoteAlias := kraken.AssetAlias(quote)
 
 	if paper, ok := desk.transport.(*Paper); ok {
 		history, err := paper.TradesHistory()
@@ -419,14 +432,14 @@ func (desk *Desk) submit(symbol string, order *spot.OrderRequest) error {
 		return nil
 	}
 
-	buf, err := sonic.Marshal(kraken.NewAddOrderMessage(
-		"", &kraken.AddOrderRequest{
-			Pair:    symbol,
-			Type:    order.Type,
-			Volume:  order.Volume,
-			ClOrdId: order.ClOrdId,
-		},
-	))
+	req := &kraken.AddOrderRequest{
+		Pair:    symbol,
+		Type:    order.Type,
+		Volume:  order.Volume,
+		ClOrdId: order.ClOrdId,
+	}
+
+	buf, err := sonic.Marshal(kraken.NewAddOrderMessage("", req))
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -442,6 +455,10 @@ func (desk *Desk) submit(symbol string, order *spot.OrderRequest) error {
 			"[desk] unable to submit "+order.Type+" order for "+symbol,
 			err,
 		))
+	}
+
+	if desk.storeTee != nil {
+		desk.storeTee.Push(req.ToMeasurement())
 	}
 
 	return nil

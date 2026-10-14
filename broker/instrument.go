@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
@@ -23,11 +25,13 @@ are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
 	*runtime.System
-	public  Transport
-	Level3  *sync.Map
-	cache   *sync.Map
-	quote   string
-	symbols []string
+	public   Transport
+	storeTee runtime.Tee
+	snapshot *kraken.Instrument
+	Level3   *sync.Map
+	cache    *sync.Map
+	quote    string
+	symbols  []string
 
 	// products maps a spot symbol to the venue's tradeable perpetual product
 	// identifier, and symbolsByProduct maps every listed product back to its
@@ -80,14 +84,38 @@ func (instrument *Instrument) SetLevel3Stale(stale func([]string)) {
 }
 
 /*
+SetStoreTee connects the persistence store tee.
+*/
+func (instrument *Instrument) SetStoreTee(tee runtime.Tee) {
+	instrument.storeTee = tee
+
+	if tee != nil && instrument.snapshot != nil {
+		snapshotMeas := instrument.snapshot.ToMeasurement()
+
+		for _, pair := range instrument.snapshot.Data.Pairs {
+			tee.Push(pair.ToMeasurement())
+		}
+
+		tee.Push(snapshotMeas)
+	}
+}
+
+/*
 NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */
 func NewInstrument(
-	ctx context.Context, public Transport,
+	ctx context.Context, public Transport, storeTees ...runtime.Tee,
 ) *Instrument {
+	var storeTee runtime.Tee
+
+	if len(storeTees) > 0 && storeTees[0] != nil {
+		storeTee = storeTees[0]
+	}
+
 	instrument := &Instrument{
 		public:           public,
+		storeTee:         storeTee,
 		Level3:           &sync.Map{},
 		cache:            &sync.Map{},
 		symbols:          []string{},
@@ -139,6 +167,73 @@ func NewInstrument(
 			return instrument
 		}
 
+		if bytes.HasPrefix(buf, []byte(data.MeasurementMagic)) {
+			meas := &data.Measurement{}
+
+			if unmarshalErr := meas.UnmarshalBinary(buf); unmarshalErr != nil {
+				continue
+			}
+
+			if meas.Source != "instrument" {
+				continue
+			}
+
+			if meas.Label == "snapshot" || len(meas.Peers()) > 0 {
+				inst, err := kraken.NewInstrumentFromMeasurement(meas)
+
+				if err == nil && inst != nil {
+					instrument.snapshot = inst
+
+					for _, pair := range inst.Data.Pairs {
+						instrument.cachePair(pair)
+					}
+				}
+			}
+
+			if meas.Label != "snapshot" && len(meas.Peers()) == 0 {
+				pair, err := kraken.NewInstrumentPairFromMeasurement(meas)
+
+				if err == nil && pair != nil {
+					instrument.cachePair(*pair)
+				}
+			}
+
+			for {
+				nextBuf, nextErr := public.Read("instrument")
+
+				if nextErr != nil {
+					break
+				}
+
+				nextMeas := &data.Measurement{}
+
+				if unmarshalErr := nextMeas.UnmarshalBinary(nextBuf); unmarshalErr != nil {
+					break
+				}
+
+				if nextMeas.Label == "snapshot" || len(nextMeas.Peers()) > 0 {
+					inst, err := kraken.NewInstrumentFromMeasurement(nextMeas)
+
+					if err == nil && inst != nil {
+						for _, pair := range inst.Data.Pairs {
+							instrument.cachePair(pair)
+						}
+					}
+				}
+
+				if nextMeas.Label != "snapshot" && len(nextMeas.Peers()) == 0 {
+					pair, err := kraken.NewInstrumentPairFromMeasurement(nextMeas)
+
+					if err == nil && pair != nil {
+						instrument.cachePair(*pair)
+					}
+				}
+			}
+
+			instrument.Transition(runtime.READY)
+			return instrument
+		}
+
 		node, _ := sonic.Get(buf, "channel")
 		var str string
 
@@ -147,23 +242,42 @@ func NewInstrument(
 		}
 
 		snapshot = kraken.NewInstrument(buf)
+		instrument.snapshot = snapshot
 		errnie.Info("[instrument] received valid instrument snapshot")
-		break
-	}
 
-	for _, pair := range snapshot.Data.Pairs {
-		if pair.Quote != instrument.quote || pair.Status != "online" || slices.Contains(
-			system.Cfg.Market.Instrument.Excluded, pair.Base,
-		) {
-			continue
+		snapshotMeas := snapshot.ToMeasurement()
+
+		for _, pair := range snapshot.Data.Pairs {
+			instrument.cachePair(pair)
+
+			if instrument.storeTee != nil {
+				instrument.storeTee.Push(pair.ToMeasurement())
+			}
 		}
 
-		instrument.symbols = append(instrument.symbols, pair.Symbol)
-		instrument.cache.Store(pair.Symbol, pair)
+		if instrument.storeTee != nil {
+			instrument.storeTee.Push(snapshotMeas)
+		}
+
+		break
 	}
 
 	instrument.Transition(runtime.READY)
 	return instrument
+}
+
+func (instrument *Instrument) cachePair(pair kraken.InstrumentPair) {
+	if pair.Quote != instrument.quote || pair.Status != "online" || slices.Contains(
+		system.Cfg.Market.Instrument.Excluded, pair.Base,
+	) {
+		return
+	}
+
+	if !slices.Contains(instrument.symbols, pair.Symbol) {
+		instrument.symbols = append(instrument.symbols, pair.Symbol)
+	}
+
+	instrument.cache.Store(pair.Symbol, pair)
 }
 
 func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {

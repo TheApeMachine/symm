@@ -145,6 +145,7 @@ var collectCmd = &cobra.Command{
 		}
 
 		storeTee := hindsight.NewStoreTee(ctx, "storeTee")
+		instrument.SetStoreTee(storeTee)
 
 		correlationSignal := correlation.NewSignal(ctx)
 		cvdSignal := cvd.NewSignal(ctx)

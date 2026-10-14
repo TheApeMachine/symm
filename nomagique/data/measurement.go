@@ -457,8 +457,17 @@ func (measurement *Measurement) Peers(peers ...*Measurement) []*Measurement {
 }
 
 /*
-finalize the Measurement, which locks the Measurement and validates it.
+/*
+Finalize locks the Measurement and validates it.
 */
+func (measurement *Measurement) Finalize() *Measurement {
+	if measurement.locked() {
+		return measurement
+	}
+
+	return measurement.finalize()
+}
+
 func (measurement *Measurement) finalize() *Measurement {
 	if measurement.locked() {
 		errnie.Error(errnie.Err(
@@ -489,7 +498,9 @@ func (measurement *Measurement) finalize() *Measurement {
 		}
 	}
 
-	measurement.Timestamp = time.Now().UnixNano()
+	if measurement.Timestamp <= 0 {
+		measurement.Timestamp = time.Now().UnixNano()
+	}
 	measurement.setMaturity()
 	measurement.ID = uuid.New().ID()
 
@@ -679,4 +690,21 @@ func (measurement *Measurement) valid() *Measurement {
 	}
 
 	return measurement
+}
+
+/*
+Raw returns the raw wire payload stored under key "raw" in metadata, if present.
+*/
+func (measurement *Measurement) Raw() []byte {
+	if measurement == nil {
+		return nil
+	}
+
+	for _, entry := range measurement.metadata {
+		if entry != nil && entry.Key == "raw" {
+			return []byte(entry.Value)
+		}
+	}
+
+	return nil
 }
