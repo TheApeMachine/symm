@@ -15,10 +15,14 @@ CognitivePhase represents one evaluation cycle of the cognitive engine,
 recording whether an entry action was triggered, abstained, or exited.
 */
 type CognitivePhase struct {
-	Action     string
-	Confidence float64
-	Contrast   float64
-	GroundTrue string
+	Action      string  `json:"action"`
+	Confidence  float64 `json:"confidence"`
+	Contrast    float64 `json:"contrast"`
+	GroundTrue  string  `json:"ground_true"`
+	Path        string  `json:"path"`
+	Gain        float64 `json:"gain"`
+	HoldSeconds float64 `json:"hold_seconds"`
+	Visits      int     `json:"visits"`
 }
 
 /*
@@ -99,11 +103,19 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Measurement)
 	var action string
 	var confidence float64
 	var contrast float64
+	var path string
+	var gain float64
+	var holdSeconds float64
+	var visits int
 	hasDecision := false
 
 	if actMeta := data.Pull(measurement.Meta("action")); actMeta != nil && actMeta.Value != "" {
 		action = actMeta.Value
 		hasDecision = true
+	}
+
+	if pathMeta := data.Pull(measurement.Meta("path")); pathMeta != nil && pathMeta.Value != "" {
+		path = pathMeta.Value
 	}
 
 	for entry := range measurement.Read() {
@@ -134,6 +146,12 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Measurement)
 			if confidence == 0 {
 				confidence = entry.Metric.Raw()
 			}
+		case "gain":
+			gain = entry.Metric.Raw()
+		case "hold_seconds":
+			holdSeconds = entry.Metric.Raw()
+		case "visits":
+			visits = int(entry.Metric.Raw())
 		}
 	}
 
@@ -146,9 +164,13 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Measurement)
 	}
 
 	stage.phases = append(stage.phases, &CognitivePhase{
-		Action:     action,
-		Confidence: confidence,
-		Contrast:   contrast,
+		Action:      action,
+		Confidence:  confidence,
+		Contrast:    contrast,
+		Path:        path,
+		Gain:        gain,
+		HoldSeconds: holdSeconds,
+		Visits:      visits,
 	})
 }
 
@@ -241,6 +263,7 @@ func (stage *CognitiveStage) Data() any {
 		"mean_confidence": stage.meanConfidence,
 		"node_count":      stage.nodeCount,
 		"max_depth":       stage.maxDepth,
+		"phases":          stage.phases,
 	}
 }
 

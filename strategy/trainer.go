@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -37,6 +36,12 @@ type Trainer struct {
 	client   *store.Client
 	storeTee *hindsight.StoreTee
 	price    *broker.Price
+	symbols  []string
+}
+
+func (trainer *Trainer) WithSymbols(symbols ...string) *Trainer {
+	trainer.symbols = symbols
+	return trainer
 }
 
 func NewTrainer(
@@ -100,67 +105,78 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 
 		group, ctx := errgroup.WithContext(trainer.Context())
 		symbolChannels := make(map[string]chan *data.Measurement)
-		var syncMutex sync.Mutex
-
-		allTallies := make(map[string]*pathTally)
-		allStats := make(map[string]*pathStats)
-
 		sources := append([]string{"detector"}, SensorySources...)
 
-		for _, source := range sources {
-			for measurement := range trainer.client.Get(source + "/") {
-				if measurement == nil || measurement.Epoch != epoch {
-					continue
-				}
+		symbols := trainer.symbols
 
-				label := measurement.Label
-				channel, found := symbolChannels[label]
+		if len(symbols) == 0 {
+			for page := range trainer.client.List("spot:trade/", "/") {
+				for _, cp := range page.CommonPrefixes {
+					if cp.Prefix == nil {
+						continue
+					}
 
-				if !found {
-					channel = make(chan *data.Measurement, 256)
-					symbolChannels[label] = channel
-
-					group.Go(func() error {
-						tallies, stats, err := trainer.consumeSymbol(ctx, epoch, label, channel)
-
-						if err != nil {
-							return errnie.Error(err)
-						}
-
-						syncMutex.Lock()
-						for path, tally := range tallies {
-							merged, exists := allTallies[path]
-
-							if !exists {
-								merged = &pathTally{}
-								allTallies[path] = merged
+					for subPage := range trainer.client.List(*cp.Prefix, "/") {
+						for _, subCp := range subPage.CommonPrefixes {
+							if subCp.Prefix == nil {
+								continue
 							}
 
-							merged.ups += tally.ups
-							merged.downs += tally.downs
-							merged.exits += tally.exits
-						}
+							symbol := strings.TrimPrefix(*subCp.Prefix, "spot:trade/")
+							symbol = strings.Trim(symbol, "/")
 
-						for path, stat := range stats {
-							merged, exists := allStats[path]
-
-							if !exists {
-								merged = &pathStats{}
-								allStats[path] = merged
+							if symbol != "" && !slices.Contains(symbols, symbol) {
+								symbols = append(symbols, symbol)
 							}
-
-							merged.gain += stat.gain
-							merged.holdSeconds += stat.holdSeconds
-							merged.visits += stat.visits
 						}
-						syncMutex.Unlock()
-
-						return nil
-					})
+					}
 				}
-
-				channel <- measurement
 			}
+		}
+
+		if len(symbols) == 0 {
+			symbols = []string{"BTC/USD"}
+		}
+
+		var prefixes []string
+
+		for _, source := range sources {
+			for _, symbol := range symbols {
+				prefixes = append(
+					prefixes,
+					fmt.Sprintf("%s/%s/%d", source, symbol, epoch),
+				)
+			}
+		}
+
+		for measurement := range trainer.client.Get(prefixes...) {
+			if measurement == nil || measurement.Epoch != epoch {
+				continue
+			}
+
+			label := measurement.Label
+			channel, found := symbolChannels[label]
+
+			if !found {
+				channel = make(chan *data.Measurement, 256)
+				symbolChannels[label] = channel
+
+				group.Go(func() error {
+					tallies, stats, err := trainer.consumeSymbol(ctx, epoch, label, channel)
+
+					if err != nil {
+						return errnie.Error(err)
+					}
+
+					if len(tallies) == 0 {
+						return nil
+					}
+
+					return trainer.publishPolicies(epoch, label, tallies, stats)
+				})
+			}
+
+			channel <- measurement
 		}
 
 		for _, channel := range symbolChannels {
@@ -168,14 +184,6 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 		}
 
 		if err := group.Wait(); err != nil {
-			return errnie.Error(err)
-		}
-
-		if len(allTallies) == 0 {
-			continue
-		}
-
-		if err := trainer.publishPolicies(allTallies, allStats); err != nil {
 			return errnie.Error(err)
 		}
 	}
@@ -228,12 +236,12 @@ func (trainer *Trainer) consumeSymbol(
 			continue
 		}
 
-		timestamp := measurement.At.UnixNano()
-		bucket, exists := buckets[timestamp]
+		tick := measurement.Tick
+		bucket, exists := buckets[tick]
 
 		if !exists {
 			bucket = &timeBucket{}
-			buckets[timestamp] = bucket
+			buckets[tick] = bucket
 		}
 
 		bucket.peers = append(bucket.peers, measurement)
@@ -243,23 +251,27 @@ func (trainer *Trainer) consumeSymbol(
 		return nil, nil, nil
 	}
 
-	timestamps := make([]int64, 0, len(buckets))
-	for timestamp := range buckets {
-		timestamps = append(timestamps, timestamp)
-	}
-	slices.Sort(timestamps)
+	ticks := make([]int64, 0, len(buckets))
 
-	frames := make([]frameRecord, 0, len(timestamps))
+	for tick := range buckets {
+		ticks = append(ticks, tick)
+	}
+
+	slices.Sort(ticks)
+
+	frames := make([]frameRecord, 0, len(ticks))
 	grid := nmstore.NewGrid(trainer.Context())
 	grammar := NewGrammar()
 	activePath := ""
 	lastSym := ""
+	recentSyms := make([]string, 0, 4)
 
-	for _, timestamp := range timestamps {
-		bucket := buckets[timestamp]
-		at := time.Unix(0, timestamp).UTC()
+	for _, tick := range ticks {
+		bucket := buckets[tick]
+		at := bucket.peers[0].At
 
 		join := data.NewMeasurement(epoch, symbol, "runtime:join", at, at)
+		join.Tick = tick
 		join.Peers(bucket.peers...)
 		join = join.Write()
 
@@ -276,12 +288,18 @@ func (trainer *Trainer) consumeSymbol(
 				at:   at,
 				path: activePath,
 			})
+
 			continue
 		}
 
 		lastSym = sym
+		recentSyms = append(recentSyms, sym)
+
+		if len(recentSyms) > 3 {
+			recentSyms = recentSyms[len(recentSyms)-3:]
+		}
+
 		rule := grammar.Append(sym)
-		activePath = ""
 
 		if rule != nil {
 			phrase := rule.TerminalNames(grammar)
@@ -289,6 +307,10 @@ func (trainer *Trainer) consumeSymbol(
 			if len(phrase) >= 2 {
 				activePath = strings.Join(phrase, "/")
 			}
+		}
+
+		if rule == nil && activePath == "" && len(recentSyms) >= 2 {
+			activePath = strings.Join(recentSyms, "/")
 		}
 
 		frames = append(frames, frameRecord{
@@ -411,6 +433,8 @@ func (trainer *Trainer) consumeSymbol(
 }
 
 func (trainer *Trainer) publishPolicies(
+	epoch int64,
+	symbol string,
 	tallies map[string]*pathTally,
 	stats map[string]*pathStats,
 ) error {
@@ -446,22 +470,28 @@ func (trainer *Trainer) publishPolicies(
 			holdSeconds = entry.holdSeconds
 		}
 
+		gainUnit, gainTime := data.GetDimension("policy", "gain")
+		holdUnit, holdTime := data.GetDimension("policy", "hold_seconds")
+		visitsUnit, visitsTime := data.GetDimension("policy", "visits")
+		rewardUnit, rewardTime := data.GetDimension("policy", "mean_reward")
+
 		trainer.storeTee.Push(data.NewMeasurement(
-			0, path, "policy", time.Now().UTC(), time.Now().UTC(),
+			epoch, symbol, "policy", time.Now().UTC(), time.Now().UTC(),
 			&data.StringEntry{Key: "action", Value: action},
+			&data.StringEntry{Key: "path", Value: path},
 		).Write(
-			data.NewMetric("gain", gain/float64(visits), data.UnitNone, data.TimescaleTick),
-			data.NewMetric("hold_seconds", holdSeconds/float64(visits), data.UnitNone, data.TimescaleTick),
-			data.NewMetric("visits", float64(visits), data.UnitNone, data.TimescaleTick),
-			data.NewMetric("mean_reward", gain/float64(visits), data.UnitNone, data.TimescaleTick),
+			data.NewMetric("gain", gain/float64(visits), gainUnit, gainTime),
+			data.NewMetric("hold_seconds", holdSeconds/float64(visits), holdUnit, holdTime),
+			data.NewMetric("visits", float64(visits), visitsUnit, visitsTime),
+			data.NewMetric("mean_reward", gain/float64(visits), rewardUnit, rewardTime),
 		))
 
 		counts[action]++
 	}
 
 	errnie.Info(fmt.Sprintf(
-		"[trainer] published policies (enter=%d exit=%d noop=%d)",
-		counts["enter"], counts["exit"], counts["noop"],
+		"[trainer] published policies for %s epoch %d (enter=%d exit=%d noop=%d)",
+		symbol, epoch, counts["enter"], counts["exit"], counts["noop"],
 	))
 
 	return nil

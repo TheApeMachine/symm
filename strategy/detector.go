@@ -851,6 +851,26 @@ func (detector *Detector) Flush(
 		&data.StringEntry{Key: "type", Value: class},
 	)
 
+	measurement.Tick = end.tick
+
+	if measurement.Tick <= 0 {
+		measurement.Tick = excursion.c.tick
+	}
+
+	measurement.SeqIdx = end.idx
+
+	if measurement.SeqIdx <= 0 {
+		measurement.SeqIdx = excursion.c.idx
+	}
+
+	if !end.at.IsZero() {
+		measurement.Timestamp = end.at.UnixNano()
+	}
+
+	if end.at.IsZero() && !excursion.c.at.IsZero() {
+		measurement.Timestamp = excursion.c.at.UnixNano()
+	}
+
 	startIdxUnit, startIdxTime := data.GetDimension(detector.Name(), "start_idx")
 	startTickUnit, startTickTime := data.GetDimension(detector.Name(), "start_tick")
 	bIdxUnit, bIdxTime := data.GetDimension(detector.Name(), "b_idx")

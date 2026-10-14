@@ -198,11 +198,13 @@ func (client *Client) ListKeys(prefixes ...string) []string {
 	}
 
 	keys := make([]string, 0)
+	seen := make(map[string]bool)
 
 	for _, prefix := range prefixes {
 		for page := range client.List(prefix) {
 			for _, object := range page.Contents {
-				if object.Key != nil {
+				if object.Key != nil && !seen[*object.Key] {
+					seen[*object.Key] = true
 					keys = append(keys, *object.Key)
 				}
 			}
@@ -287,3 +289,47 @@ func (client *Client) Put(key string, payload []byte) error {
 
 	return nil
 }
+
+/*
+Delete removes the specified object keys from the S3 bucket.
+*/
+func (client *Client) Delete(keys ...string) error {
+	if client == nil || client.s3Client == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "[store.client] client is nil", nil,
+		))
+	}
+
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+
+		_, err := client.s3Client.DeleteObject(client.Context(), &s3.DeleteObjectInput{
+			Bucket: aws.String(client.bucket),
+			Key:    aws.String(key),
+		})
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO, "[store.client] delete error", err,
+			))
+		}
+	}
+
+	return nil
+}
+
+/*
+DeletePrefix removes all object keys matching the given prefix from the S3 bucket.
+*/
+func (client *Client) DeletePrefix(prefix string) error {
+	keys := client.ListKeys(prefix)
+
+	if len(keys) == 0 {
+		return nil
+	}
+
+	return client.Delete(keys...)
+}
+

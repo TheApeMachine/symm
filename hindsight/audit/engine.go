@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/theapemachine/errnie"
@@ -103,6 +105,104 @@ func NewEngine(ctx context.Context) *Engine {
 }
 
 /*
+resolveTargetEpoch determines the single epoch to audit.
+If system.Cfg.Audit.Epoch is explicitly configured (> 0), it is used directly.
+Otherwise, it discovers all completed epochs under run/epoch/ and picks the newest
+epoch that has signal measurements stored in S3.
+*/
+func (engine *Engine) resolveTargetEpoch(symbol string) (int64, error) {
+	if system.Cfg.Audit.Epoch > 0 {
+		return system.Cfg.Audit.Epoch, nil
+	}
+
+	if len(engine.epochs) > 0 && engine.epochs[0] > 0 {
+		return engine.epochs[0], nil
+	}
+
+	seen := make(map[int64]bool)
+	var candidateEpochs []int64
+
+	for page := range engine.store.List("run/epoch/", "/") {
+		for _, commonPrefix := range page.CommonPrefixes {
+			if commonPrefix.Prefix == nil {
+				continue
+			}
+
+			prefixStr := strings.TrimPrefix(*commonPrefix.Prefix, "run/epoch/")
+			prefixStr = strings.Trim(prefixStr, "/")
+			epoch, err := strconv.ParseInt(prefixStr, 10, 64)
+
+			if err != nil || epoch <= 0 {
+				continue
+			}
+
+			if seen[epoch] {
+				continue
+			}
+
+			seen[epoch] = true
+			candidateEpochs = append(candidateEpochs, epoch)
+		}
+
+		for _, object := range page.Contents {
+			if object.Key == nil {
+				continue
+			}
+
+			parts := strings.Split(*object.Key, "/")
+
+			if len(parts) < 3 {
+				continue
+			}
+
+			epoch, err := strconv.ParseInt(parts[2], 10, 64)
+
+			if err != nil || epoch <= 0 {
+				continue
+			}
+
+			if seen[epoch] {
+				continue
+			}
+
+			seen[epoch] = true
+			candidateEpochs = append(candidateEpochs, epoch)
+		}
+	}
+
+	if len(candidateEpochs) == 0 {
+		return 0, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[audit:engine] no completed epochs found in store under run/epoch/",
+			nil,
+		))
+	}
+
+	slices.SortFunc(candidateEpochs, func(firstEpoch, secondEpoch int64) int {
+		if firstEpoch > secondEpoch {
+			return -1
+		}
+
+		if firstEpoch < secondEpoch {
+			return 1
+		}
+
+		return 0
+	})
+
+	for _, candidate := range candidateEpochs {
+		testPrefix := fmt.Sprintf("%s/%s/%d", types.SignalSources[0], symbol, candidate)
+		keys := engine.store.ListKeys(testPrefix)
+
+		if len(keys) > 0 {
+			return candidate, nil
+		}
+	}
+
+	return candidateEpochs[0], nil
+}
+
+/*
 Run executes the complete 6-stage health audit and generates machine-readable
 and visual outputs.
 */
@@ -116,57 +216,119 @@ func (engine *Engine) Run() error {
 	}
 
 	group.Go(func() error {
-		for page := range engine.store.List("run/epoch/") {
-			for _, object := range page.Contents {
-				chunks := strings.Split(*object.Key, "/")
+		symbol := system.Cfg.Audit.Symbol
 
-				if len(chunks) > 2 {
-					epochStr := chunks[2]
-					var prefixes []string
-					sources := append(types.SignalSources, "detector", "policy")
+		if symbol == "" {
+			symbol = "BTC/USD"
+		}
 
-					for _, source := range sources {
-						prefixes = append(prefixes, fmt.Sprintf("%s/BTC/USD/%s", source, epochStr))
-					}
+		targetEpoch, err := engine.resolveTargetEpoch(symbol)
 
-					var currentTick int64 = -1
-					var currentPeers []*data.Measurement
+		if err != nil {
+			return errnie.Error(err)
+		}
 
-					flushJoin := func() {
-						if len(currentPeers) == 0 {
-							return
-						}
+		errnie.Info(fmt.Sprintf("[audit:engine] auditing isolated epoch %d for %s", targetEpoch, symbol))
 
-						first := currentPeers[0]
-						join := data.NewMeasurement(first.Epoch, first.Label, "runtime:join", first.At, first.From)
-						join.Tick = first.Tick
-						join.SeqIdx = first.SeqIdx
-						join.Timestamp = first.Timestamp
-						join.Peers(currentPeers...)
-						join = join.Write()
+		var signalStages []AuditorStage
+		var precursorStages []AuditorStage
+		var contractStages []AuditorStage
+		var cognitiveStages []AuditorStage
 
-						for _, stage := range engine.stages {
-							stage.Channel() <- join
-						}
+		for _, stage := range engine.stages {
+			switch stage.Name() {
+			case "audit:precursor":
+				precursorStages = append(precursorStages, stage)
+			case "audit:contract":
+				contractStages = append(contractStages, stage)
+			case "audit:cognitive":
+				cognitiveStages = append(cognitiveStages, stage)
+			default:
+				signalStages = append(signalStages, stage)
+			}
+		}
 
-						currentPeers = nil
-					}
+		var signalPrefixes []string
 
-					for measurement := range engine.store.Get(prefixes...) {
-						if currentTick != -1 && measurement.Tick != currentTick {
-							flushJoin()
-						}
+		for _, source := range types.SignalSources {
+			signalPrefixes = append(signalPrefixes, fmt.Sprintf("%s/%s/%d", source, symbol, targetEpoch))
+		}
 
-						currentTick = measurement.Tick
-						currentPeers = append(currentPeers, measurement)
+		var currentTick int64 = -1
+		var currentPeers []*data.Measurement
+		var uniqueTicksCount int
 
-						for _, stage := range engine.stages {
-							stage.Channel() <- measurement
-						}
-					}
+		flushJoin := func() {
+			if len(currentPeers) == 0 {
+				return
+			}
 
-					flushJoin()
+			first := currentPeers[0]
+			join := data.NewMeasurement(first.Epoch, first.Label, "runtime:join", first.At, first.From)
+			join.Tick = first.Tick
+			join.SeqIdx = first.SeqIdx
+			join.Timestamp = first.Timestamp
+			join.Peers(currentPeers...)
+			join = join.Write()
+
+			for _, stage := range signalStages {
+				stage.Channel() <- join
+			}
+
+			for _, stage := range contractStages {
+				stage.Channel() <- join
+			}
+
+			currentPeers = nil
+		}
+
+		for measurement := range engine.store.Get(signalPrefixes...) {
+			if currentTick != -1 && measurement.Tick != currentTick {
+				flushJoin()
+				uniqueTicksCount++
+
+				if system.Cfg.Audit.Ticks > 0 && uniqueTicksCount >= system.Cfg.Audit.Ticks {
+					break
 				}
+			}
+
+			currentTick = measurement.Tick
+			currentPeers = append(currentPeers, measurement)
+
+			for _, stage := range signalStages {
+				stage.Channel() <- measurement
+			}
+
+			for _, stage := range contractStages {
+				stage.Channel() <- measurement
+			}
+		}
+
+		flushJoin()
+
+		// Stream detector excursions exclusively to PrecursorStage and ContractStage
+		detectorPrefix := fmt.Sprintf("detector/%s/%d", symbol, targetEpoch)
+
+		for measurement := range engine.store.Get(detectorPrefix) {
+			for _, stage := range precursorStages {
+				stage.Channel() <- measurement
+			}
+
+			for _, stage := range contractStages {
+				stage.Channel() <- measurement
+			}
+		}
+
+		// Stream policy decisions exclusively to CognitiveStage and ContractStage
+		policyPrefix := fmt.Sprintf("policy/%s/%d", symbol, targetEpoch)
+
+		for measurement := range engine.store.Get(policyPrefix) {
+			for _, stage := range cognitiveStages {
+				stage.Channel() <- measurement
+			}
+
+			for _, stage := range contractStages {
+				stage.Channel() <- measurement
 			}
 		}
 

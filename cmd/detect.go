@@ -140,6 +140,40 @@ appends the resulting source=detector rows to S3 storage.`,
 				continue
 			}
 
+			// Clean existing detector records for this epoch before detecting to prevent duplicates.
+			if len(detectSymbols) > 0 {
+				for _, symbol := range detectSymbols {
+					if err := client.DeletePrefix(fmt.Sprintf("detector/%s/%019d/", symbol, epoch)); err != nil {
+						errnie.Error(err)
+					}
+
+					if err := client.DeletePrefix(fmt.Sprintf("detector/%s/%d/", symbol, epoch)); err != nil {
+						errnie.Error(err)
+					}
+				}
+			}
+
+			if len(detectSymbols) == 0 {
+				for page := range client.List("detector/", "/") {
+					for _, cp := range page.CommonPrefixes {
+						if cp.Prefix == nil {
+							continue
+						}
+
+						symbolPart := strings.TrimPrefix(*cp.Prefix, "detector/")
+						symbolPart = strings.Trim(symbolPart, "/")
+
+						if err := client.DeletePrefix(fmt.Sprintf("detector/%s/%019d/", symbolPart, epoch)); err != nil {
+							errnie.Error(err)
+						}
+
+						if err := client.DeletePrefix(fmt.Sprintf("detector/%s/%d/", symbolPart, epoch)); err != nil {
+							errnie.Error(err)
+						}
+					}
+				}
+			}
+
 			prefixes := []string{"spot:trade/"}
 
 			if len(detectSymbols) > 0 {

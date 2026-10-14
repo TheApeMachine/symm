@@ -80,6 +80,20 @@ func isTrivialPair(firstMetric, secondMetric string) bool {
 		return true
 	}
 
+	if strings.Contains(firstMetric, "concentration") && strings.Contains(secondMetric, "entropy") {
+		if (strings.Contains(firstMetric, "bid") && strings.Contains(secondMetric, "bid")) ||
+			(strings.Contains(firstMetric, "ask") && strings.Contains(secondMetric, "ask")) {
+			return true
+		}
+	}
+
+	if strings.Contains(firstMetric, "entropy") && strings.Contains(secondMetric, "concentration") {
+		if (strings.Contains(firstMetric, "bid") && strings.Contains(secondMetric, "bid")) ||
+			(strings.Contains(firstMetric, "ask") && strings.Contains(secondMetric, "ask")) {
+			return true
+		}
+	}
+
 	return false
 }
 
@@ -125,7 +139,7 @@ func (stage *RedundancyStage) Run() error {
 			continue
 		}
 
-		if measurement.Source == "runtime:join" {
+		if measurement.Source == "runtime:join" || measurement.Source == "detector" || measurement.Source == "policy" {
 			continue
 		}
 

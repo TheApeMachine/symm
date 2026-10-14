@@ -218,7 +218,15 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 			action = actEntry.Value
 		}
 
-		pathKey := measurement.Label
+		pathKey := ""
+		if pathEntry := data.Pull(measurement.Meta("path")); pathEntry != nil {
+			pathKey = pathEntry.Value
+		}
+
+		if pathKey == "" {
+			pathKey = measurement.Label
+		}
+
 		if pathKey == "" {
 			continue
 		}

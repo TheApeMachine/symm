@@ -270,6 +270,12 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"token_threshold":        {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
 		"stored_paths":           {Unit: UnitCount, Timescale: TimescaleInstantaneous},
 	},
+	"policy": {
+		"gain":         {Unit: UnitLogReturn, Timescale: TimescaleTick},
+		"hold_seconds": {Unit: UnitSecond, Timescale: TimescaleTick},
+		"visits":       {Unit: UnitCount, Timescale: TimescaleTick},
+		"mean_reward":  {Unit: UnitLogReturn, Timescale: TimescaleTick},
+	},
 }
 
 func stripScope(label string) string {

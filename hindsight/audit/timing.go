@@ -28,6 +28,8 @@ type TimingStage struct {
 	lastAtByStream  map[string]time.Time
 	lastSeqByStream map[string]int64
 	driftsByStream  map[string]*statistic.Moments
+	driftLastAt     map[string]time.Time
+	driftSeenByTick map[string]bool
 	flaggedDrift    map[string]bool
 	totalChecked    int
 }
@@ -40,6 +42,8 @@ func NewTimingStage(ctx context.Context) *TimingStage {
 		lastAtByStream:  make(map[string]time.Time),
 		lastSeqByStream: make(map[string]int64),
 		driftsByStream:  make(map[string]*statistic.Moments),
+		driftLastAt:     make(map[string]time.Time),
+		driftSeenByTick: make(map[string]bool),
 		flaggedDrift:    make(map[string]bool),
 	}
 }
@@ -173,8 +177,18 @@ func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
 		return
 	}
 
+	if measurement.Tick > 0 {
+		tickKey := fmt.Sprintf("%s|%d", measurement.Label, measurement.Tick)
+
+		if stage.driftSeenByTick[tickKey] {
+			return
+		}
+
+		stage.driftSeenByTick[tickKey] = true
+	}
+
 	// Calculate latency: local ingest timestamp minus exchange event timestamp.
-	stream := measurement.Source + "|" + measurement.Label
+	stream := measurement.Label
 	driftNs := measurement.Timestamp - measurement.At.UnixNano()
 	driftMs := float64(driftNs) / 1e6
 
@@ -190,6 +204,16 @@ func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
 			nil,
 		))
 	}
+
+	// Only update Welford drift moments when venue time advances.
+	// Multi-fill bursts sharing a single exchange timestamp collapse variance to zero.
+	lastAt, hasLastAt := stage.driftLastAt[stream]
+
+	if hasLastAt && measurement.At.Equal(lastAt) {
+		return
+	}
+
+	stage.driftLastAt[stream] = measurement.At
 
 	moments, exists := stage.driftsByStream[stream]
 

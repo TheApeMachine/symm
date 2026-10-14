@@ -42,6 +42,20 @@ func (run *ExcursionRun) NetReturn(takerFee float64) float64 {
 }
 
 /*
+EpisodeData records empirical coordinates of an excursion episode on the tape.
+*/
+type EpisodeData struct {
+	Class     string  `json:"class"`
+	Symbol    string  `json:"symbol"`
+	StartTick int64   `json:"start_tick"`
+	BTick     int64   `json:"b_tick"`
+	CTick     int64   `json:"c_tick"`
+	EndTick   int64   `json:"end_tick"`
+	BPrice    float64 `json:"b_price"`
+	CPrice    float64 `json:"c_price"`
+}
+
+/*
 PrecursorStage audits event-centred market excursions and friction clearance economics
 using order book touch execution (Best Ask entry, Best Bid exit) and taker fees.
 */
@@ -50,6 +64,7 @@ type PrecursorStage struct {
 	ch                chan *data.Measurement
 	violations        []*Violation
 	excursions        []*ExcursionRun
+	episodes          []*EpisodeData
 	activeRun         *ExcursionRun
 	discoveredFeeRate float64
 	clearanceRate     float64
@@ -62,6 +77,7 @@ func NewPrecursorStage(ctx context.Context) *PrecursorStage {
 		ch:         make(chan *data.Measurement, 64),
 		violations: make([]*Violation, 0),
 		excursions: make([]*ExcursionRun, 0),
+		episodes:   make([]*EpisodeData, 0),
 	}
 }
 
@@ -123,29 +139,71 @@ func (stage *PrecursorStage) trackExcursions(measurement *data.Measurement) {
 
 	// 1. Production Path: Excursions detected by strategy.Detector
 	if measurement.Source == "detector" {
+		typeEntry := data.Pull(measurement.Meta("type"))
+
+		if typeEntry == nil {
+			return
+		}
+
+		class := typeEntry.Value
+
+		if class != "up" && class != "up_friction" {
+			return
+		}
+
 		var bPrice float64
 		var cPrice float64
+		var bTick int64
+		var cTick int64
+		var startTick int64
+		var endTick int64
 
 		for entry := range measurement.Read() {
 			if entry == nil || entry.Metric == nil {
 				continue
 			}
 
-			if entry.Metric.Label() == "b_price" {
+			switch entry.Metric.Label() {
+			case "b_price":
 				bPrice = entry.Metric.Raw()
-			}
-
-			if entry.Metric.Label() == "c_price" {
+			case "c_price":
 				cPrice = entry.Metric.Raw()
+			case "b_tick":
+				bTick = int64(entry.Metric.Raw())
+			case "c_tick":
+				cTick = int64(entry.Metric.Raw())
+			case "start_tick":
+				startTick = int64(entry.Metric.Raw())
+			case "end_tick":
+				endTick = int64(entry.Metric.Raw())
 			}
 		}
 
 		if bPrice > 0 && cPrice > 0 {
-			stage.excursions = append(stage.excursions, &ExcursionRun{
-				Symbol:   measurement.Label,
-				EntryAsk: bPrice,
-				ExitBid:  cPrice,
-				Ticks:    1,
+			ticks := cTick - bTick
+
+			if ticks <= 0 {
+				ticks = 1
+			}
+
+			if class == "up" {
+				stage.excursions = append(stage.excursions, &ExcursionRun{
+					Symbol:   measurement.Label,
+					EntryAsk: bPrice,
+					ExitBid:  cPrice,
+					Ticks:    ticks,
+				})
+			}
+
+			stage.episodes = append(stage.episodes, &EpisodeData{
+				Class:     class,
+				Symbol:    measurement.Label,
+				StartTick: startTick,
+				BTick:     bTick,
+				CTick:     cTick,
+				EndTick:   endTick,
+				BPrice:    bPrice,
+				CPrice:    cPrice,
 			})
 		}
 
@@ -300,6 +358,7 @@ func (stage *PrecursorStage) Data() any {
 		"mean_net_return": stage.meanNetReturn,
 		"taker_fee":       takerFee,
 		"excursions":      excursionData,
+		"episodes":        stage.episodes,
 	}
 }
 

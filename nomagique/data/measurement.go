@@ -274,12 +274,16 @@ before it is finalized.
 func (measurement *Measurement) Read(keys ...string) iter.Seq[*MetricEntry] {
 	if !measurement.locked() {
 		return func(yield func(*MetricEntry) bool) {
+			err := errnie.Error(errnie.Err(
+				errnie.Forbidden,
+				"[data.measurement] not finalized",
+				nil,
+			))
+
+			measurement.err = errors.Join(measurement.err, err)
+
 			yield(&MetricEntry{
-				Err: errnie.Error(errnie.Err(
-					errnie.Forbidden,
-					"[data.measurement] not finalized",
-					nil,
-				)),
+				Err: err,
 			})
 		}
 	}

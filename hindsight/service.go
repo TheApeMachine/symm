@@ -501,8 +501,15 @@ type TrainedFragmentResponse struct {
 
 func parseTick(measurement *data.Measurement, key string) int64 {
 	if entry := data.Pull(measurement.Meta(key)); entry != nil {
-		val, _ := strconv.ParseInt(entry.Value, 10, 64)
-		return val
+		val, err := strconv.ParseInt(entry.Value, 10, 64)
+
+		if err == nil {
+			return val
+		}
+	}
+
+	if entry := data.Pull(measurement.Read(key)); entry != nil && entry.Metric != nil {
+		return int64(entry.Metric.Raw())
 	}
 
 	return 0
@@ -510,8 +517,15 @@ func parseTick(measurement *data.Measurement, key string) int64 {
 
 func parsePrice(measurement *data.Measurement, key string) float64 {
 	if entry := data.Pull(measurement.Meta(key)); entry != nil {
-		val, _ := strconv.ParseFloat(entry.Value, 64)
-		return val
+		val, err := strconv.ParseFloat(entry.Value, 64)
+
+		if err == nil {
+			return val
+		}
+	}
+
+	if entry := data.Pull(measurement.Read(key)); entry != nil && entry.Metric != nil {
+		return entry.Metric.Raw()
 	}
 
 	return 0

@@ -111,7 +111,7 @@ action tree published to S3 storage.`,
 		storeTee.Transition(nmruntime.READY)
 		storeTee.Run()
 
-		trainer := strategy.NewTrainer(ctx, client, storeTee, price)
+		trainer := strategy.NewTrainer(ctx, client, storeTee, price).WithSymbols(trainSymbols...)
 
 		if err := trainer.Generate(trainEpochs...); err != nil {
 			return err
