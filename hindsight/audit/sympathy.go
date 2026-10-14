@@ -32,7 +32,6 @@ type SympathyStage struct {
 	flaggedPairs map[string]bool
 	estimates    []map[string]any
 	estimator    core.Primitive
-	pathReturns  core.Primitive
 }
 
 func NewSympathyStage(ctx context.Context) *SympathyStage {
@@ -43,7 +42,6 @@ func NewSympathyStage(ctx context.Context) *SympathyStage {
 		streams:      make(map[string][]temporal.Price),
 		flaggedPairs: make(map[string]bool),
 		estimator:    algo.NewHayashiYoshida(),
-		pathReturns:  temporal.NewPathReturns(),
 	}
 }
 
@@ -64,6 +62,10 @@ func (stage *SympathyStage) Run() error {
 				nil,
 			))
 
+			continue
+		}
+
+		if measurement.Source == "runtime:join" {
 			continue
 		}
 
@@ -113,12 +115,64 @@ func (stage *SympathyStage) recordMeasurement(measurement *data.Measurement) {
 		}
 
 		streamKey := measurement.Source + "|" + entry.Metric.Label()
-		prices := stage.streams[streamKey]
-		stage.streams[streamKey] = append(prices, temporal.Price{
+		stage.streams[streamKey] = append(stage.streams[streamKey], temporal.Price{
 			At:    venueTime,
 			Value: entry.Metric.Raw(),
 		})
 	}
+}
+
+/*
+buildReturnPath constructs strictly advancing continuous-time intervals and increments,
+handling non-positive metrics and identical venue timestamps safely.
+*/
+func buildReturnPath(prices []temporal.Price) (temporal.ReturnPath, bool) {
+	if len(prices) < 2 {
+		return temporal.ReturnPath{}, false
+	}
+
+	returns := make([]temporal.LogReturn, 0, len(prices)-1)
+	var energy float64
+	lastAt := prices[0].At
+	prevVal := prices[0].Value
+
+	for idx := 1; idx < len(prices); idx++ {
+		curr := prices[idx]
+		venueTime := curr.At
+
+		if venueTime <= lastAt {
+			venueTime = lastAt + 1
+		}
+
+		var increment float64
+
+		if prevVal > 0 && curr.Value > 0 {
+			increment = math.Log(curr.Value / prevVal)
+		}
+
+		if prevVal <= 0 || curr.Value <= 0 {
+			increment = curr.Value - prevVal
+		}
+
+		returns = append(returns, temporal.LogReturn{
+			From:  lastAt,
+			To:    venueTime,
+			Value: increment,
+		})
+
+		energy += increment * increment
+		lastAt = venueTime
+		prevVal = curr.Value
+	}
+
+	if energy <= 0 || len(returns) == 0 {
+		return temporal.ReturnPath{}, false
+	}
+
+	return temporal.ReturnPath{
+		Returns: returns,
+		Energy:  energy,
+	}, true
 }
 
 /*
@@ -141,12 +195,9 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 
 	for _, streamKey := range streamKeys {
 		prices := stage.streams[streamKey]
-		returnPath := data.To[temporal.PricePath, temporal.ReturnPath](
-			stage.pathReturns,
-			&temporal.PricePath{Prices: prices},
-		)
+		returnPath, ok := buildReturnPath(prices)
 
-		if len(returnPath.Returns) > 0 && returnPath.Energy > 0 {
+		if ok {
 			returnPaths[streamKey] = returnPath
 		}
 	}

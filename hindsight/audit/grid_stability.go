@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	nmstore "github.com/theapemachine/symm/nomagique/store"
 )
 
 /*
@@ -19,13 +20,15 @@ Jensen-Shannon Divergence (JSD) between their regional activation distributions.
 */
 type StabilityStage struct {
 	*runtime.System
-	ch          chan *data.Measurement
-	violations  []*Violation
-	activations []string
-	totalFrames int64
-	validFrames int64
-	jsd         float64
-	tvd         float64
+	ch              chan *data.Measurement
+	violations      []*Violation
+	grid            *nmstore.Grid
+	hasJoinedFrames bool
+	activations     []string
+	totalFrames     int64
+	validFrames     int64
+	jsd             float64
+	tvd             float64
 }
 
 func NewStabilityStage(ctx context.Context) *StabilityStage {
@@ -33,6 +36,7 @@ func NewStabilityStage(ctx context.Context) *StabilityStage {
 		System:      runtime.NewSystem(ctx, "audit:stability"),
 		ch:          make(chan *data.Measurement, 64),
 		violations:  make([]*Violation, 0),
+		grid:        nmstore.NewGrid(ctx),
 		activations: make([]string, 0),
 	}
 }
@@ -45,8 +49,6 @@ func (stage *StabilityStage) Run() error {
 	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
 
 	for measurement := range stage.ch {
-		stage.totalFrames++
-
 		if measurement == nil {
 			stage.violations = append(stage.violations, NewViolation(
 				"unknown",
@@ -58,6 +60,16 @@ func (stage *StabilityStage) Run() error {
 
 			continue
 		}
+
+		if measurement.Source != "runtime:join" && stage.hasJoinedFrames {
+			continue
+		}
+
+		if measurement.Source == "runtime:join" {
+			stage.hasJoinedFrames = true
+		}
+
+		stage.totalFrames++
 
 		if measurement.Error() != nil {
 			stage.violations = append(stage.violations, NewViolation(
@@ -85,19 +97,31 @@ recordFrame logs the dominant metric or regional token for the arrival.
 If the measurement has active metric entries, it counts as a valid observed frame.
 */
 func (stage *StabilityStage) recordFrame(measurement *data.Measurement) {
-	hasMetrics := false
+	token := ""
 
-	for entry := range measurement.Read() {
-		if entry != nil && entry.Metric != nil {
-			hasMetrics = true
-			stage.activations = append(stage.activations, entry.Metric.Label())
-			break
+	if len(measurement.Peers()) > 0 {
+		regions := stage.grid.Observe(measurement)
+
+		if len(regions) > 0 && regions[0].Brightness > 0 {
+			token = fmt.Sprintf("R%02d", regions[0].Key)
 		}
 	}
 
-	if hasMetrics {
-		stage.validFrames++
+	if token == "" {
+		for entry := range measurement.Read() {
+			if entry != nil && entry.Metric != nil {
+				token = entry.Metric.Label()
+				break
+			}
+		}
 	}
+
+	if token == "" {
+		return
+	}
+
+	stage.activations = append(stage.activations, token)
+	stage.validFrames++
 }
 
 /*

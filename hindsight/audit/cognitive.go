@@ -92,9 +92,19 @@ recordCognitivePhase extracts action decisions, confidence scores, and contrast
 from the measurement stream.
 */
 func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Measurement) {
+	if measurement.Source == "runtime:join" {
+		return
+	}
+
 	var action string
 	var confidence float64
 	var contrast float64
+	hasDecision := false
+
+	if actMeta := data.Pull(measurement.Meta("action")); actMeta != nil && actMeta.Value != "" {
+		action = actMeta.Value
+		hasDecision = true
+	}
 
 	for entry := range measurement.Read() {
 		if entry == nil || entry.Metric == nil {
@@ -103,17 +113,32 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Measurement)
 
 		switch entry.Metric.Label() {
 		case "action":
+			hasDecision = true
 			if entry.Metric.Raw() > 0.5 {
 				action = "enter"
 			}
+
 			if entry.Metric.Raw() < -0.5 {
 				action = "exit"
 			}
+
+			if action == "" {
+				action = "wait"
+			}
 		case "confidence":
 			confidence = entry.Metric.Raw()
+			hasDecision = true
 		case "contrast":
 			contrast = entry.Metric.Raw()
+		case "mean_reward":
+			if confidence == 0 {
+				confidence = entry.Metric.Raw()
+			}
 		}
+	}
+
+	if !hasDecision {
+		return
 	}
 
 	if action == "" {

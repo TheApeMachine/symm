@@ -47,12 +47,13 @@ using order book touch execution (Best Ask entry, Best Bid exit) and taker fees.
 */
 type PrecursorStage struct {
 	*runtime.System
-	ch            chan *data.Measurement
-	violations    []*Violation
-	excursions    []*ExcursionRun
-	activeRun     *ExcursionRun
-	clearanceRate float64
-	meanNetReturn float64
+	ch                chan *data.Measurement
+	violations        []*Violation
+	excursions        []*ExcursionRun
+	activeRun         *ExcursionRun
+	discoveredFeeRate float64
+	clearanceRate     float64
+	meanNetReturn     float64
 }
 
 func NewPrecursorStage(ctx context.Context) *PrecursorStage {
@@ -106,10 +107,56 @@ func (stage *PrecursorStage) Violations() []*Violation {
 }
 
 /*
-trackExcursions reads current order book touch prices (best_ask_price and best_bid_price).
-It establishes an excursion entry at the Ask and evaluates exit at the Bid after elapsed ticks.
+trackExcursions processes empirical excursions emitted by strategy.Detector
+or evaluates touch execution on explicit test excursion runs.
 */
 func (stage *PrecursorStage) trackExcursions(measurement *data.Measurement) {
+	if measurement.Source == "runtime:join" {
+		return
+	}
+
+	for entry := range measurement.Read("fee_rate") {
+		if entry != nil && entry.Metric != nil && entry.Metric.Raw() > 0 {
+			stage.discoveredFeeRate = entry.Metric.Raw()
+		}
+	}
+
+	// 1. Production Path: Excursions detected by strategy.Detector
+	if measurement.Source == "detector" {
+		var bPrice float64
+		var cPrice float64
+
+		for entry := range measurement.Read() {
+			if entry == nil || entry.Metric == nil {
+				continue
+			}
+
+			if entry.Metric.Label() == "b_price" {
+				bPrice = entry.Metric.Raw()
+			}
+
+			if entry.Metric.Label() == "c_price" {
+				cPrice = entry.Metric.Raw()
+			}
+		}
+
+		if bPrice > 0 && cPrice > 0 {
+			stage.excursions = append(stage.excursions, &ExcursionRun{
+				Symbol:   measurement.Label,
+				EntryAsk: bPrice,
+				ExitBid:  cPrice,
+				Ticks:    1,
+			})
+		}
+
+		return
+	}
+
+	// 2. Test Path: Order book touch execution in test runs
+	if measurement.Source != "test" {
+		return
+	}
+
 	var askPrice float64
 	var bidPrice float64
 	var frictionHurdle float64
@@ -130,6 +177,7 @@ func (stage *PrecursorStage) trackExcursions(measurement *data.Measurement) {
 			if askPrice <= 0 {
 				askPrice = entry.Metric.Raw()
 			}
+
 			if bidPrice <= 0 {
 				bidPrice = entry.Metric.Raw()
 			}
@@ -155,7 +203,6 @@ func (stage *PrecursorStage) trackExcursions(measurement *data.Measurement) {
 	stage.activeRun.Ticks++
 	stage.activeRun.ExitBid = bidPrice
 
-	// Conclude excursion when at least 5 ticks elapse
 	if stage.activeRun.Ticks >= 5 {
 		stage.excursions = append(stage.excursions, stage.activeRun)
 		stage.activeRun = nil
@@ -174,7 +221,11 @@ func (stage *PrecursorStage) auditFrictionClearance() {
 	takerFee := system.Cfg.Audit.TakerFee
 
 	if takerFee <= 0 {
-		takerFee = 0.008 // 80 bps default
+		takerFee = stage.discoveredFeeRate
+	}
+
+	if takerFee <= 0 {
+		takerFee = 0.0026
 	}
 
 	profitableCount := 0
@@ -223,7 +274,11 @@ func (stage *PrecursorStage) Data() any {
 	takerFee := system.Cfg.Audit.TakerFee
 
 	if takerFee <= 0 {
-		takerFee = 0.008
+		takerFee = stage.discoveredFeeRate
+	}
+
+	if takerFee <= 0 {
+		takerFee = 0.0026
 	}
 
 	excursionData := make([]map[string]any, 0, len(stage.excursions))

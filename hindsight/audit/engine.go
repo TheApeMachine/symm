@@ -121,17 +121,51 @@ func (engine *Engine) Run() error {
 				chunks := strings.Split(*object.Key, "/")
 
 				if len(chunks) > 2 {
-					for _, source := range types.SignalSources {
-						errnie.Info(fmt.Sprintf("%s: Streaming...", source))
+					epochStr := chunks[2]
+					var prefixes []string
+					sources := append(types.SignalSources, "detector", "policy")
 
-						for measurement := range engine.store.Get(fmt.Sprintf(
-							"%s/%s/%s", source, "BTC/USD", chunks[2],
-						)) {
-							for _, stage := range engine.stages {
-								stage.Channel() <- measurement
-							}
+					for _, source := range sources {
+						prefixes = append(prefixes, fmt.Sprintf("%s/BTC/USD/%s", source, epochStr))
+					}
+
+					var currentTick int64 = -1
+					var currentPeers []*data.Measurement
+
+					flushJoin := func() {
+						if len(currentPeers) == 0 {
+							return
+						}
+
+						first := currentPeers[0]
+						join := data.NewMeasurement(first.Epoch, first.Label, "runtime:join", first.At, first.From)
+						join.Tick = first.Tick
+						join.SeqIdx = first.SeqIdx
+						join.Timestamp = first.Timestamp
+						join.Peers(currentPeers...)
+						join = join.Write()
+
+						for _, stage := range engine.stages {
+							stage.Channel() <- join
+						}
+
+						currentPeers = nil
+					}
+
+					for measurement := range engine.store.Get(prefixes...) {
+						if currentTick != -1 && measurement.Tick != currentTick {
+							flushJoin()
+						}
+
+						currentTick = measurement.Tick
+						currentPeers = append(currentPeers, measurement)
+
+						for _, stage := range engine.stages {
+							stage.Channel() <- measurement
 						}
 					}
+
+					flushJoin()
 				}
 			}
 		}
@@ -157,6 +191,11 @@ func (engine *Engine) Run() error {
 		builder.WriteString(stage.Report())
 		builder.WriteString("\n\n")
 	}
+
+	builder.WriteString("## Visualizations & Excursion Dynamics\n\n")
+	builder.WriteString("![Excursion Dynamic Transitions Animation](plots/excursion_transitions.gif)\n\n")
+	builder.WriteString("![Excursion Dynamic Transitions Summary](plots/excursion_transitions_summary.png)\n\n")
+	builder.WriteString("![Audit Summary Scorecard](plots/audit_summary_scorecard.png)\n\n")
 
 	outputDir := system.Cfg.Audit.OutputDir
 

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
@@ -29,6 +28,7 @@ type TimingStage struct {
 	lastAtByStream  map[string]time.Time
 	lastSeqByStream map[string]int64
 	driftsByStream  map[string]*statistic.Moments
+	flaggedDrift    map[string]bool
 	totalChecked    int
 }
 
@@ -40,6 +40,7 @@ func NewTimingStage(ctx context.Context) *TimingStage {
 		lastAtByStream:  make(map[string]time.Time),
 		lastSeqByStream: make(map[string]int64),
 		driftsByStream:  make(map[string]*statistic.Moments),
+		flaggedDrift:    make(map[string]bool),
 	}
 }
 
@@ -51,8 +52,6 @@ func (stage *TimingStage) Run() error {
 	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
 
 	for measurement := range stage.ch {
-		stage.totalChecked++
-
 		if measurement == nil {
 			stage.violations = append(stage.violations, NewViolation(
 				"unknown",
@@ -64,6 +63,12 @@ func (stage *TimingStage) Run() error {
 
 			continue
 		}
+
+		if measurement.Source == "runtime:join" {
+			continue
+		}
+
+		stage.totalChecked++
 
 		if measurement.Error() != nil {
 			stage.violations = append(stage.violations, NewViolation(
@@ -174,7 +179,9 @@ func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
 	driftMs := float64(driftNs) / 1e6
 
 	// Physical causality: an event cannot be received before it was produced.
-	if driftNs < 0 {
+	// Latch clock skew once per stream to avoid redundant violations.
+	if driftNs < 0 && !stage.flaggedDrift[stream] {
+		stage.flaggedDrift[stream] = true
 		stage.violations = append(stage.violations, NewViolation(
 			measurement.Label,
 			"timing.negative_drift",
@@ -191,8 +198,8 @@ func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
 		stage.driftsByStream[stream] = moments
 	}
 
-	// Once we have at least 2 observations, we can calculate variance and dispersion (spread).
-	if moments.Count > 1 {
+	// Wait until at least 3 observations have established baseline latency.
+	if moments.Count >= 3 {
 		variance := moments.M2 / (moments.Count - 1)
 		dispersion := math.Sqrt(variance)
 		significance := system.Cfg.Audit.Significance
@@ -201,13 +208,10 @@ func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
 			significance = 0.05
 		}
 
-		// Chebyshev bound: bound = 1 / sqrt(alpha).
-		// For alpha = 0.05 (5%), bound is sqrt(20) ~ 4.47 standard deviations.
 		bound := 1.0 / math.Sqrt(significance)
 		residual := math.Abs(driftMs - moments.Mean)
 
-		// Flag if latency deviation exceeds the statistical Chebyshev bound.
-		if dispersion > 0 && residual > bound*dispersion {
+		if dispersion > 1.0 && residual > bound*dispersion {
 			stage.violations = append(stage.violations, NewViolation(
 				measurement.Label,
 				"timing.latency_spike",
@@ -218,13 +222,12 @@ func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
 			))
 		}
 
-		// If prior dispersion was zero (constant latency), any noticeable shift is a spike.
-		if dispersion == 0 && residual > core.Resolution*math.Max(math.Abs(driftMs), math.Abs(moments.Mean)) {
+		if dispersion <= 1.0 && residual > 50.0 {
 			stage.violations = append(stage.violations, NewViolation(
 				measurement.Label,
 				"timing.latency_spike",
-				fmt.Sprintf("Latency spike: drift %.2f ms deviates from zero-dispersion mean %.2f ms",
-					driftMs, moments.Mean),
+				fmt.Sprintf("Latency spike: drift %.2f ms deviates by %.2f ms from low-dispersion mean %.2f ms",
+					driftMs, residual, moments.Mean),
 				measurement,
 				nil,
 			))

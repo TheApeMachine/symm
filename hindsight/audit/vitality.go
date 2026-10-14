@@ -61,6 +61,33 @@ func (vitality *MetricVitality) ZeroFraction() float64 {
 }
 
 /*
+isStaticParameter returns true for venue configuration metrics (such as fee rate)
+that are constant by design rather than dynamic market signals.
+*/
+func isStaticParameter(key string) bool {
+	if strings.HasSuffix(key, "|fee_rate") || strings.HasSuffix(key, ":fee_rate") {
+		return true
+	}
+
+	return false
+}
+
+/*
+isRectifiedMetric returns true for one-sided rectified features (e.g. positive returns,
+retreat fractions, or withdrawal rates) that are naturally sparse depending on tape direction.
+*/
+func isRectifiedMetric(key string) bool {
+	if strings.Contains(key, "positive_") ||
+		strings.Contains(key, "negative_") ||
+		strings.Contains(key, "retreat_") ||
+		strings.Contains(key, "withdrawal_") {
+		return true
+	}
+
+	return false
+}
+
+/*
 VitalityStage audits the health and variance of all incoming market metrics.
 It detects "dead" metrics (zero variance, providing no informational value)
 and "stagnant" cold-start metrics (>= 80% zero values).
@@ -103,6 +130,10 @@ func (stage *VitalityStage) Run() error {
 				nil,
 			))
 
+			continue
+		}
+
+		if measurement.Source == "runtime:join" {
 			continue
 		}
 
@@ -175,7 +206,8 @@ func (stage *VitalityStage) auditVitality() {
 		// Dead Metric Check: If a metric has accumulated enough samples (N >= 9)
 		// but has ZERO variance (M2 == 0), it never changes. It carries zero entropy
 		// and indicates a stalled calculation or dead feed.
-		if stat.Count >= core.MinimumPrior && stat.Variance() == 0 && !stage.flaggedDead[key] {
+		// Skip known static venue parameters like fee_rate.
+		if stat.Count >= core.MinimumPrior && stat.Variance() == 0 && !isStaticParameter(key) && !stage.flaggedDead[key] {
 			stage.flaggedDead[key] = true
 			stage.violations = append(stage.violations, NewViolation(
 				key,
@@ -189,7 +221,10 @@ func (stage *VitalityStage) auditVitality() {
 
 		// Stagnant / Cold-Start Check: If >= 80% of observations are zero,
 		// the metric is cold-starting or has insufficient event activity.
-		if stat.Count >= core.MinimumPrior && stat.ZeroFraction() >= 0.80 && !stage.flaggedStagn[key] {
+		// One-sided rectified metrics that have varied (Max > Min) are sparse by design, not stagnant.
+		isRectified := isRectifiedMetric(key) && stat.Max > stat.Min
+
+		if stat.Count >= core.MinimumPrior && stat.ZeroFraction() >= 0.80 && !isRectified && !stage.flaggedStagn[key] {
 			stage.flaggedStagn[key] = true
 			stage.violations = append(stage.violations, NewViolation(
 				key,

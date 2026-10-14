@@ -6,6 +6,7 @@ import (
 	"errors"
 	"iter"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -156,45 +157,104 @@ func (client *Client) Download(key string) ([]byte, error) {
 	return writer.Bytes(), nil
 }
 
-func (client *Client) Get(prefix string) iter.Seq[*data.Measurement] {
-	return func(yield func(*data.Measurement) bool) {
+func parseKeyOrder(key string) (epoch, tick, seqIdx, rest string) {
+	parts := strings.Split(key, "/")
+
+	if len(parts) >= 4 {
+		return parts[len(parts)-4], parts[len(parts)-3], parts[len(parts)-2], parts[len(parts)-1]
+	}
+
+	return "", "", "", key
+}
+
+func sortKeys(keys []string) {
+	slices.SortFunc(keys, func(firstKey, secondKey string) int {
+		epochA, tickA, seqA, restA := parseKeyOrder(firstKey)
+		epochB, tickB, seqB, restB := parseKeyOrder(secondKey)
+
+		if epochA != epochB {
+			return strings.Compare(epochA, epochB)
+		}
+
+		if tickA != tickB {
+			return strings.Compare(tickA, tickB)
+		}
+
+		if seqA != seqB {
+			return strings.Compare(seqA, seqB)
+		}
+
+		return strings.Compare(restA, restB)
+	})
+}
+
+/*
+ListKeys collects all object keys matching the given prefix(es) and sorts them
+chronologically by (Epoch, Tick, SeqIdx).
+*/
+func (client *Client) ListKeys(prefixes ...string) []string {
+	if len(prefixes) == 0 {
+		prefixes = []string{""}
+	}
+
+	keys := make([]string, 0)
+
+	for _, prefix := range prefixes {
 		for page := range client.List(prefix) {
 			for _, object := range page.Contents {
-				payload, err := client.Download(*object.Key)
-
-				if err != nil || payload == nil {
-					continue
+				if object.Key != nil {
+					keys = append(keys, *object.Key)
 				}
+			}
+		}
+	}
 
-				measurement := &data.Measurement{}
+	sortKeys(keys)
+	return keys
+}
 
-				err = measurement.UnmarshalBinary(payload)
+/*
+Get retrieves measurements matching the given prefix(es) in strict chronological
+order by (Epoch, Tick, SeqIdx), downloading and unmarshaling one measurement at a time.
+*/
+func (client *Client) Get(prefixes ...string) iter.Seq[*data.Measurement] {
+	return func(yield func(*data.Measurement) bool) {
+		for _, key := range client.ListKeys(prefixes...) {
+			payload, err := client.Download(key)
 
-				if err != nil {
-					continue
-				}
+			if err != nil || payload == nil {
+				continue
+			}
 
-				if !yield(measurement) {
-					return
-				}
+			measurement := &data.Measurement{}
+			err = measurement.UnmarshalBinary(payload)
+
+			if err != nil {
+				continue
+			}
+
+			if !yield(measurement) {
+				return
 			}
 		}
 	}
 }
 
-func (client *Client) GetBytes(prefix string) iter.Seq[[]byte] {
+/*
+GetBytes retrieves raw payloads matching the given prefix(es) in strict chronological
+order by (Epoch, Tick, SeqIdx).
+*/
+func (client *Client) GetBytes(prefixes ...string) iter.Seq[[]byte] {
 	return func(yield func([]byte) bool) {
-		for page := range client.List(prefix) {
-			for _, object := range page.Contents {
-				payload, err := client.Download(*object.Key)
+		for _, key := range client.ListKeys(prefixes...) {
+			payload, err := client.Download(key)
 
-				if err != nil || payload == nil {
-					continue
-				}
+			if err != nil || payload == nil {
+				continue
+			}
 
-				if !yield(payload) {
-					return
-				}
+			if !yield(payload) {
+				return
 			}
 		}
 	}

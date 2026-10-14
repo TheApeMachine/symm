@@ -79,5 +79,29 @@ func TestDynamicsStage(t *testing.T) {
 			So(len(nilViolations), ShouldEqual, 1)
 			So(nilViolations[0].Name, ShouldEqual, "measurement")
 		})
+
+		Convey("When auditing joined frames with peers and prices", func() {
+			now := time.Now()
+			peerTouch := data.NewMeasurement(1, "BTC/USD", "spot:touch", now, now)
+			peerTouch.Write(
+				data.NewMetric("best_bid_price", 50000.0, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("best_ask_price", 50010.0, data.UnitPrice, data.TimescaleInstantaneous),
+			)
+
+			join := data.NewMeasurement(1, "BTC/USD", "runtime:join", now, now)
+			join.Tick = 101
+			join.Peers(peerTouch)
+			join.Write(data.NewMetric("test_signal", 1.0, data.UnitDimensionless, data.TimescaleInstantaneous))
+
+			feed(stage, join)
+			dataMap, ok := stage.Data().(map[string]any)
+			So(ok, ShouldBeTrue)
+			frames, ok := dataMap["frames"].([]*FrameData)
+			So(ok, ShouldBeTrue)
+			So(len(frames), ShouldEqual, 1)
+			So(frames[0].Tick, ShouldEqual, 101)
+			So(frames[0].Price, ShouldEqual, 50005.0)
+			So(len(frames[0].Brightness), ShouldEqual, 15)
+		})
 	})
 }

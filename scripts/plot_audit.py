@@ -123,7 +123,7 @@ def render_docked_header(fig, title, caption, status="PASS", readout=""):
     # Badge box: rounded 2px
     badge = FancyBboxPatch(
         (badge_x, badge_y), badge_w, badge_h,
-        boxstyle='round,pad=0.002,rounding_size=0.005',
+        boxstyle='round,pad=0.002,rounding_size=0.0005',
         facecolor=COLOR_RAISED,
         edgecolor=tone,
         linewidth=1.1,
@@ -677,6 +677,246 @@ def plot_summary_dashboard(data, out_dir):
     save_plot(fig, os.path.join(out_dir, "audit_summary_scorecard.png"))
 
 
+def animate_excursion_transitions(data, out_dir):
+    """
+    Renders the dynamic multi-panel animation of regional confluence transitions,
+    excursion return trajectories, and phase-space progression in frontend-aligned CRT styling.
+    Strictly uses empirical frame data recorded from the market tape.
+    Produces:
+    - excursion_transitions.mp4 (H.264 via ffmpeg)
+    - excursion_transitions.gif (Pillow animated raster)
+    - excursion_transitions_summary.png (static companion sheet with scanline CRT overlay)
+    """
+    import matplotlib.animation as anim
+    import shutil
+
+    dynamics_data = data.get('dynamics', {})
+    frames = dynamics_data.get('frames', [])
+
+    if not frames:
+        raise ValueError(
+            "[plot_audit] Cannot render excursion transitions animation: "
+            "No empirical frames found in dynamics audit data. "
+            "Synthetic fallbacks and approximations are strictly forbidden."
+        )
+
+    regions_all = [f"R{i:02d}" for i in range(15)]
+
+    # Subsample frames evenly if sequence is too long for video rendering (> 120 steps)
+    max_anim_steps = 120
+    if len(frames) > max_anim_steps:
+        indices = np.linspace(0, len(frames) - 1, max_anim_steps, dtype=int)
+        sampled_frames = [frames[idx] for idx in indices]
+    else:
+        sampled_frames = frames
+
+    total_steps = len(sampled_frames)
+
+    # Extract strictly empirical profiles, active regions, and returns
+    step_profiles = []
+    wf_y = []
+    cum_returns = []
+    prices = []
+    ticks = []
+
+    for frame in sampled_frames:
+        active_tok = frame.get('active_token', 'R00')
+        active_idx = int(active_tok[1:]) if (active_tok.startswith('R') and active_tok[1:].isdigit()) else 0
+        wf_y.append(active_idx)
+
+        brightness_raw = frame.get('brightness', [])
+        profile = np.zeros(15)
+        for r_i in range(min(15, len(brightness_raw))):
+            profile[r_i] = float(brightness_raw[r_i])
+
+        # Runner-up region: second highest brightness
+        sorted_indices = np.argsort(profile)[::-1]
+        ru_idx = sorted_indices[1] if len(sorted_indices) > 1 and profile[sorted_indices[1]] > 0 else -1
+
+        step_profiles.append((active_idx, ru_idx, profile))
+        cum_returns.append(float(frame.get('return', 0.0)))
+        prices.append(float(frame.get('price', 0.0)))
+        ticks.append(frame.get('tick', 0))
+
+    # Setup 3-panel figure: Left = Confluence Bars (15 regions), Right Top = Return Trajectory, Right Bottom = State Waterfall
+    fig = plt.figure(figsize=(15, 8.5))
+    gs = fig.add_gridspec(2, 2, width_ratios=[1.1, 1.4], height_ratios=[1.0, 1.0],
+                           left=0.08, right=0.96, top=0.82, bottom=0.10, wspace=0.25, hspace=0.32)
+
+    ax_bars = fig.add_subplot(gs[:, 0])
+    ax_traj = fig.add_subplot(gs[0, 1])
+    ax_wf = fig.add_subplot(gs[1, 1])
+
+    # 1. Bar chart on left for 15 regions
+    y_pos = np.arange(15)
+    init_brightness = np.zeros(15)
+    bars = ax_bars.barh(y_pos, init_brightness, height=0.58, color=COLOR_RAISED, edgecolor=COLOR_LINE)
+    ax_bars.set_yticks(y_pos)
+    ax_bars.set_yticklabels(regions_all, fontsize=9, fontfamily='monospace', color=COLOR_F2)
+    ax_bars.invert_yaxis()
+    max_b = max([p[2].max() for p in step_profiles]) if step_profiles else 1.0
+    ax_bars.set_xlim(0, max(1.10, max_b * 1.15))
+    ax_bars.set_xlabel("Region Brightness |SNM|", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
+    ax_bars.set_title("Multi-Signal Confluence (R00 - R14)", fontsize=10.5, fontfamily='monospace', color=COLOR_F1)
+    ax_bars.grid(axis='x', linestyle='--', alpha=0.5)
+
+    bar_labels = []
+    for y in y_pos:
+        txt = ax_bars.text(0.02, y, "", va='center', fontsize=8.5, fontfamily='monospace', color=COLOR_F3)
+        bar_labels.append(txt)
+
+    # 2. Return Trajectory on right top
+    min_ret = min(cum_returns)
+    max_ret = max(cum_returns)
+    pad = max(0.1, (max_ret - min_ret) * 0.15) if max_ret != min_ret else 0.5
+    ax_traj.set_xlim(0, max(1, total_steps - 1))
+    ax_traj.set_ylim(min_ret - pad, max_ret + pad)
+    ax_traj.axhline(0, color=COLOR_F4, linestyle='--', linewidth=0.8)
+    ax_traj.set_ylabel("Net Return %", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
+    ax_traj.set_title("Excursion Trajectory", fontsize=10.5, fontfamily='monospace', color=COLOR_F1)
+    ax_traj.grid(True, linestyle='--', alpha=0.4)
+
+    trail_line, = ax_traj.plot([], [], color=COLOR_INFO, linewidth=2.0)
+    head_dot, = ax_traj.plot([], [], marker='o', markersize=8, color=COLOR_UP, markeredgecolor=COLOR_F1, markeredgewidth=1.5)
+
+    # 3. Waterfall / Transition Timeline on right bottom
+    ax_wf.set_xlim(0, max(1, total_steps - 1))
+    ax_wf.set_ylim(-0.5, 14.5)
+    ax_wf.set_yticks([0, 4, 8, 12, 14])
+    ax_wf.set_yticklabels(['R00', 'R04', 'R08', 'R12', 'R14'], fontsize=8.5, fontfamily='monospace', color=COLOR_F3)
+    ax_wf.set_xlabel("Step Index", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
+    ax_wf.set_title("Transition Path", fontsize=10.5, fontfamily='monospace', color=COLOR_F1)
+    ax_wf.grid(True, linestyle='--', alpha=0.3)
+
+    wf_line, = ax_wf.plot([], [], color=COLOR_LINE2, linestyle='-', linewidth=1.2, alpha=0.7)
+    wf_dots, = ax_wf.plot([], [], marker='s', markersize=5, linestyle='None', color=COLOR_WARN)
+    cursor_line = ax_wf.axvline(0, color=COLOR_DOWN, linestyle=':', linewidth=1.2, alpha=0.8)
+    cursor_traj = ax_traj.axvline(0, color=COLOR_DOWN, linestyle=':', linewidth=1.2, alpha=0.8)
+
+    # Docked header static bar
+    bar_rect = Rectangle(
+        (0.0, 0.865), 1.0, 0.135,
+        facecolor=COLOR_SURFACE,
+        edgecolor=None,
+        transform=fig.transFigure,
+        clip_on=False
+    )
+    fig.patches.append(bar_rect)
+    div_line = plt.Line2D([0.0, 1.0], [0.865, 0.865], color=COLOR_LINE, linewidth=1.0, transform=fig.transFigure, clip_on=False)
+    fig.lines.append(div_line)
+
+    fig.text(0.03, 0.955, "SYMM Dynamic Excursion & Confluence Resonance",
+             fontsize=12, fontweight='bold', fontfamily='sans-serif', color=COLOR_F1, va='center')
+    fig.text(0.03, 0.900, "Empirical state trajectory of confluence region brightness, tape transitions, and net return.",
+             fontsize=8.5, fontfamily='monospace', color=COLOR_F3, va='center')
+
+    # Status badge (pill)
+    badge_patch = FancyBboxPatch(
+        (0.85, 0.925), 0.12, 0.045,
+        boxstyle="round,pad=0.006,rounding_size=0.008",
+        facecolor=COLOR_RAISED,
+        edgecolor=COLOR_UP,
+        linewidth=1.0,
+        transform=fig.transFigure,
+        clip_on=False
+    )
+    fig.patches.append(badge_patch)
+    fig.text(0.91, 0.947, "● RESONANCE", fontsize=8.5, fontweight='bold', fontfamily='monospace',
+             color=COLOR_UP, ha='center', va='center')
+
+    readout_text = fig.text(0.97, 0.895, "", fontsize=9, fontfamily='monospace', color=COLOR_F2, ha='right', va='center')
+
+    def update(frame_idx):
+        active_idx, ru_idx, profile = step_profiles[frame_idx]
+        active_tok = regions_all[active_idx]
+        cur_ret = cum_returns[frame_idx]
+        cur_price = prices[frame_idx]
+        cur_tick = ticks[frame_idx]
+
+        phase = "EXPANSION" if cur_ret > 0.05 else ("CONTRACTION" if cur_ret < -0.05 else "CONSOLIDATION")
+
+        # Update bars
+        for r_i, bar in enumerate(bars):
+            val = profile[r_i]
+            bar.set_width(val)
+            txt = bar_labels[r_i]
+            txt.set_x(val + 0.02)
+            txt.set_text(f"{val:.3f}")
+
+            if r_i == active_idx:
+                bar.set_color(COLOR_UP)
+                bar.set_edgecolor(COLOR_F1)
+                bar.set_linewidth(1.8)
+                txt.set_color(COLOR_UP)
+                txt.set_fontweight('bold')
+            elif r_i == ru_idx and val > 0:
+                bar.set_color(COLOR_WARN)
+                bar.set_edgecolor(COLOR_WARN)
+                bar.set_linewidth(1.2)
+                txt.set_color(COLOR_WARN)
+                txt.set_fontweight('bold')
+            elif val > 0.25:
+                bar.set_color(COLOR_INFO)
+                bar.set_edgecolor(COLOR_LINE2)
+                bar.set_linewidth(0.8)
+                txt.set_color(COLOR_F2)
+                txt.set_fontweight('normal')
+            else:
+                bar.set_color(COLOR_RAISED)
+                bar.set_edgecolor(COLOR_LINE)
+                bar.set_linewidth(0.6)
+                txt.set_color(COLOR_F4)
+                txt.set_fontweight('normal')
+
+        # Update trajectory
+        cur_x = np.arange(frame_idx + 1)
+        cur_y = cum_returns[:frame_idx + 1]
+        trail_line.set_data(cur_x, cur_y)
+        head_dot.set_data([cur_x[-1]], [cur_y[-1]])
+        cursor_traj.set_xdata([frame_idx, frame_idx])
+
+        # Update waterfall
+        wf_line.set_data(cur_x, wf_y[:frame_idx + 1])
+        wf_dots.set_data(cur_x, wf_y[:frame_idx + 1])
+        cursor_line.set_xdata([frame_idx, frame_idx])
+
+        # Update readout
+        price_str = f"PRICE: ${cur_price:,.2f}  |  " if cur_price > 0 else ""
+        readout_text.set_text(
+            f"STEP {frame_idx+1:02d}/{total_steps}  |  ACTIVE: {active_tok}  |  {price_str}PHASE: {phase}  |  RETURN: {cur_ret:+.2f}%"
+        )
+
+        return list(bars) + bar_labels + [trail_line, head_dot, cursor_traj, wf_line, wf_dots, cursor_line, readout_text]
+
+    animation_obj = anim.FuncAnimation(fig, update, frames=total_steps, interval=250, blit=False)
+
+    # 1. Save MP4 via ffmpeg
+    if shutil.which('ffmpeg'):
+        try:
+            mp4_path = os.path.join(out_dir, 'excursion_transitions.mp4')
+            animation_obj.save(mp4_path, writer='ffmpeg', fps=4, dpi=160)
+            print(f"🎬 Generated excursion_transitions.mp4 at {mp4_path}")
+        except Exception as e:
+            print(f"⚠️ Warning: ffmpeg export failed: {e}", file=sys.stderr)
+
+    # 2. Save GIF via Pillow
+    try:
+        gif_path = os.path.join(out_dir, 'excursion_transitions.gif')
+        animation_obj.save(gif_path, writer='pillow', fps=4)
+        print(f"🎞️ Generated excursion_transitions.gif at {gif_path}")
+    except Exception as e:
+        print(f"⚠️ Warning: gif export failed: {e}", file=sys.stderr)
+
+    # 3. Save static companion milestone summary sheet with scanlines
+    summary_path = os.path.join(out_dir, 'excursion_transitions_summary.png')
+    milestone_idx = min(total_steps - 1, max(0, int(total_steps * 0.70)))
+    update(milestone_idx)
+    fig.savefig(summary_path, dpi=180, facecolor=COLOR_BG)
+    apply_crt_scanlines(summary_path)
+    plt.close(fig)
+    print(f"🖼️ Generated excursion_transitions_summary.png at {summary_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Render SYMM Audit Charts")
     parser.add_argument('positional_input', nargs='?', help="Path to audit_results.json")
@@ -709,8 +949,9 @@ def main():
     plot_stage8_cognitive(data, plots_dir)
     plot_stage9_truthfulness(data, plots_dir)
     plot_summary_dashboard(data, plots_dir)
+    animate_excursion_transitions(data, plots_dir)
 
-    print(f"✅ Generated 11 terminal-styled CRT raster diagnostic charts in {plots_dir}")
+    print(f"✅ Generated 11 terminal-styled CRT raster diagnostic charts + dynamic transition animation in {plots_dir}")
 
 
 if __name__ == '__main__':

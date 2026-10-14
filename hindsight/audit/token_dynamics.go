@@ -10,7 +10,21 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	nmstore "github.com/theapemachine/symm/nomagique/store"
 )
+
+/*
+FrameData records empirical state information for one market tick frame,
+including multi-signal region brightness, active token, and price return.
+*/
+type FrameData struct {
+	Tick        int64     `json:"tick"`
+	Timestamp   int64     `json:"timestamp"`
+	ActiveToken string    `json:"active_token"`
+	Brightness  []float64 `json:"brightness"`
+	Price       float64   `json:"price"`
+	Return      float64   `json:"return"`
+}
 
 /*
 DynamicsStage audits token dynamics and state transition entropy across continuous market tape.
@@ -21,13 +35,18 @@ Excessive entropy indicates random noise, while extreme token concentration indi
 */
 type DynamicsStage struct {
 	*runtime.System
-	ch          chan *data.Measurement
-	violations  []*Violation
-	tokens      []string
-	transitions map[string]map[string]int64
-	tokenCounts map[string]int64
-	entropy     float64
-	maxEntropy  float64
+	ch              chan *data.Measurement
+	violations      []*Violation
+	grid            *nmstore.Grid
+	hasJoinedFrames bool
+	tokens          []string
+	transitions     map[string]map[string]int64
+	tokenCounts     map[string]int64
+	frames          []*FrameData
+	initialPrice    float64
+	lastPrice       float64
+	entropy         float64
+	maxEntropy      float64
 }
 
 func NewDynamicsStage(ctx context.Context) *DynamicsStage {
@@ -35,9 +54,11 @@ func NewDynamicsStage(ctx context.Context) *DynamicsStage {
 		System:      runtime.NewSystem(ctx, "audit:dynamics"),
 		ch:          make(chan *data.Measurement, 64),
 		violations:  make([]*Violation, 0),
+		grid:        nmstore.NewGrid(ctx),
 		tokens:      make([]string, 0),
 		transitions: make(map[string]map[string]int64),
 		tokenCounts: make(map[string]int64),
+		frames:      make([]*FrameData, 0),
 	}
 }
 
@@ -59,6 +80,14 @@ func (stage *DynamicsStage) Run() error {
 			))
 
 			continue
+		}
+
+		if measurement.Source != "runtime:join" && stage.hasJoinedFrames {
+			continue
+		}
+
+		if measurement.Source == "runtime:join" {
+			stage.hasJoinedFrames = true
 		}
 
 		if measurement.Error() != nil {
@@ -88,11 +117,30 @@ and accumulates the sequential transition count from the prior token.
 */
 func (stage *DynamicsStage) recordToken(measurement *data.Measurement) {
 	var currentToken string
+	brightness := make([]float64, nmstore.RegionCount)
 
-	for entry := range measurement.Read() {
-		if entry != nil && entry.Metric != nil {
-			currentToken = entry.Metric.Label()
-			break
+	if len(measurement.Peers()) > 0 {
+		regions := stage.grid.Observe(measurement)
+
+		if len(regions) > 0 {
+			for _, reg := range regions {
+				if int(reg.Key) < len(brightness) {
+					brightness[reg.Key] = reg.Brightness
+				}
+			}
+
+			if regions[0].Brightness > 0 {
+				currentToken = fmt.Sprintf("R%02d", regions[0].Key)
+			}
+		}
+	}
+
+	if currentToken == "" {
+		for entry := range measurement.Read() {
+			if entry != nil && entry.Metric != nil {
+				currentToken = entry.Metric.Label()
+				break
+			}
 		}
 	}
 
@@ -113,6 +161,72 @@ func (stage *DynamicsStage) recordToken(measurement *data.Measurement) {
 		}
 
 		row[currentToken]++
+	}
+
+	if measurement.Source == "runtime:join" {
+		var bidPrice, askPrice, tradePrice float64
+
+		for _, peer := range measurement.Peers() {
+			for entry := range peer.Read() {
+				if entry == nil || entry.Metric == nil {
+					continue
+				}
+
+				switch entry.Metric.Label() {
+				case "best_bid_price", "bid":
+					bidPrice = entry.Metric.Raw()
+				case "best_ask_price", "ask":
+					askPrice = entry.Metric.Raw()
+				case "price":
+					tradePrice = entry.Metric.Raw()
+				}
+			}
+		}
+
+		var price float64
+
+		if bidPrice > 0 && askPrice > 0 {
+			price = (bidPrice + askPrice) / 2.0
+		}
+
+		if price <= 0 && bidPrice > 0 {
+			price = bidPrice
+		}
+
+		if price <= 0 && askPrice > 0 {
+			price = askPrice
+		}
+
+		if price <= 0 && tradePrice > 0 {
+			price = tradePrice
+		}
+
+		if price <= 0 && stage.lastPrice > 0 {
+			price = stage.lastPrice
+		}
+
+		if price > 0 {
+			stage.lastPrice = price
+
+			if stage.initialPrice <= 0 {
+				stage.initialPrice = price
+			}
+		}
+
+		var netReturn float64
+
+		if stage.initialPrice > 0 && price > 0 {
+			netReturn = (price - stage.initialPrice) / stage.initialPrice * 100.0
+		}
+
+		stage.frames = append(stage.frames, &FrameData{
+			Tick:        measurement.Tick,
+			Timestamp:   measurement.Timestamp,
+			ActiveToken: currentToken,
+			Brightness:  brightness,
+			Price:       price,
+			Return:      netReturn,
+		})
 	}
 }
 
@@ -239,6 +353,7 @@ func (stage *DynamicsStage) Data() any {
 		"distinct_tokens": len(stage.tokenCounts),
 		"token_counts":    stage.tokenCounts,
 		"transitions":     stage.transitions,
+		"frames":          stage.frames,
 	}
 }
 

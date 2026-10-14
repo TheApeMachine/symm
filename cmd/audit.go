@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight/audit"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/system"
 )
 
 var (
@@ -41,6 +42,38 @@ var auditCmd = &cobra.Command{
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+
+		if system.Cfg == nil || system.Cfg.Audit == nil {
+			system.Cfg = system.NewConfig()
+		}
+
+		if auditEpoch != 0 {
+			system.Cfg.Audit.Epoch = auditEpoch
+		}
+
+		if auditSymbol != "" {
+			system.Cfg.Audit.Symbol = auditSymbol
+		}
+
+		if auditTicks != 0 {
+			system.Cfg.Audit.Ticks = auditTicks
+		}
+
+		if auditPermutations != 0 {
+			system.Cfg.Audit.Permutations = auditPermutations
+		}
+
+		if auditTakerFee > 0 {
+			system.Cfg.Audit.TakerFee = auditTakerFee / 100.0
+		}
+
+		if auditOutputDir != "" {
+			system.Cfg.Audit.OutputDir = auditOutputDir
+		}
+
+		if auditNoPlots {
+			system.Cfg.Audit.NoPlots = auditNoPlots
+		}
 
 		client := store.NewClient(ctx, "symm")
 

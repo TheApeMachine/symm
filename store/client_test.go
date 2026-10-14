@@ -177,8 +177,8 @@ func TestStoreClient(t *testing.T) {
 			So(putErr, ShouldBeNil)
 			So(string(backend.objects[key]), ShouldEqual, string(payload))
 
-			Convey("Then Get retrieves the exact payload", func() {
-				retrieved, getErr := client.Get(key)
+			Convey("Then Download retrieves the exact payload", func() {
+				retrieved, getErr := client.Download(key)
 				So(getErr, ShouldBeNil)
 				So(string(retrieved), ShouldEqual, string(payload))
 			})
@@ -206,6 +206,22 @@ func TestStoreClient(t *testing.T) {
 
 				So(len(commonPrefixes), ShouldEqual, 1)
 				So(commonPrefixes[0], ShouldEqual, "run/epoch/0000000000000000001/")
+			})
+
+			Convey("Then ListKeys returns objects sorted by Epoch, Tick, and SeqIdx", func() {
+				keyTick2 := "cvd/BTC/USD/0000000000000000001/0000000000000000002/0000000000000000001/0000000001000000000.bin"
+				keyTick1Seq2 := "cvd/BTC/USD/0000000000000000001/0000000000000000001/0000000000000000002/0000000001000000000.bin"
+				keyTick1Seq1 := "correlation/BTC/USD/0000000000000000001/0000000000000000001/0000000000000000001/0000000001000000000.bin"
+
+				_ = client.Put(keyTick2, []byte("tick2"))
+				_ = client.Put(keyTick1Seq2, []byte("tick1seq2"))
+				_ = client.Put(keyTick1Seq1, []byte("tick1seq1"))
+
+				keys := client.ListKeys("correlation/", "cvd/")
+				So(len(keys), ShouldEqual, 3)
+				So(keys[0], ShouldEqual, keyTick1Seq1)
+				So(keys[1], ShouldEqual, keyTick1Seq2)
+				So(keys[2], ShouldEqual, keyTick2)
 			})
 		})
 	})
