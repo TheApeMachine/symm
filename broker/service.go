@@ -144,6 +144,11 @@ func (service *Service) lifecycle(reqCtx fiber.Ctx) error {
 	var closedCount int
 	var venueWins int
 	var totalVenuePnl float64
+	var totalVenueReturn float64
+	var shadowTrades int
+	var shadowWins int
+	var totalShadowPnl float64
+	var totalShadowReturn float64
 	var openCount int
 
 	if service.desk != nil {
@@ -164,6 +169,23 @@ func (service *Service) lifecycle(reqCtx fiber.Ctx) error {
 
 				if lc.Outcome.VenueRealized > 0 {
 					venueWins++
+				}
+
+				if lc.Outcome.VenueCost > 0 {
+					totalVenueReturn += lc.Outcome.VenueRealized / lc.Outcome.VenueCost
+				}
+
+				if lc.Outcome.ShadowDefined {
+					shadowTrades++
+					totalShadowPnl += lc.Outcome.ShadowRealized
+
+					if lc.Outcome.ShadowRealized > 0 {
+						shadowWins++
+					}
+
+					if lc.Outcome.ShadowCost > 0 {
+						totalShadowReturn += lc.Outcome.ShadowRealized / lc.Outcome.ShadowCost
+					}
 				}
 			}
 		}
@@ -194,18 +216,42 @@ func (service *Service) lifecycle(reqCtx fiber.Ctx) error {
 		rate := float64(venueWins) / float64(closedCount)
 		venueWinRate = &rate
 
-		mean := totalVenuePnl / float64(closedCount)
+		mean := totalVenueReturn / float64(closedCount)
 		venueMeanReturn = &mean
+	}
+
+	var shadowWinRate *float64
+	var shadowMeanReturn *float64
+
+	if shadowTrades > 0 {
+		rate := float64(shadowWins) / float64(shadowTrades)
+		shadowWinRate = &rate
+
+		mean := totalShadowReturn / float64(shadowTrades)
+		shadowMeanReturn = &mean
+	}
+
+	if shadowTrades == 0 && closedCount > 0 {
+		shadowWinRate = venueWinRate
+		shadowMeanReturn = venueMeanReturn
+		shadowWins = venueWins
+		shadowTrades = closedCount
+		totalShadowPnl = totalVenuePnl
 	}
 
 	return reqCtx.JSON(LifecycleReport{
 		Lifecycles: lifecycles,
 		Performance: Performance{
-			Closed:          closedCount,
-			VenueWins:       venueWins,
-			VenueWinRate:    venueWinRate,
-			VenueMeanReturn: venueMeanReturn,
-			VenuePnl:        totalVenuePnl,
+			Closed:           closedCount,
+			ShadowTrades:     shadowTrades,
+			ShadowWins:       shadowWins,
+			ShadowWinRate:    shadowWinRate,
+			ShadowMeanReturn: shadowMeanReturn,
+			ShadowPnl:        totalShadowPnl,
+			VenueWins:        venueWins,
+			VenueWinRate:     venueWinRate,
+			VenueMeanReturn:  venueMeanReturn,
+			VenuePnl:         totalVenuePnl,
 		},
 		OpenCount: openCount,
 	})

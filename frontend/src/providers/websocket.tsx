@@ -1,6 +1,3 @@
-import { batch as storeBatch } from "@tanstack/react-store";
-import * as flatbuffers from "flatbuffers";
-import { useEffect } from "react";
 import {
 	closedPositionsAtom,
 	decisionsAtom,
@@ -27,6 +24,9 @@ import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-
 import { Message } from "#/providers/telemetry/telemetry/message";
 import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import { TickFrame } from "#/providers/telemetry/telemetry/tick-frame";
+import { batch as storeBatch } from "@tanstack/react-store";
+import * as flatbuffers from "flatbuffers";
+import { useEffect } from "react";
 
 let globalWsWorkers: Worker[] = [];
 
@@ -127,6 +127,11 @@ export function dispatchMeasurements(frame: MeasurementsFrame) {
 			observeSymbols([symbol]);
 		}
 
+		if (source === "spot:trade") {
+			tickCountAtom.set(Number(row.tick()));
+			continue;
+		}
+
 		if (source === "balance") {
 			let cash = "";
 			let unrealized = "";
@@ -150,7 +155,8 @@ export function dispatchMeasurements(frame: MeasurementsFrame) {
 				const name = p.name() ?? "";
 				const val = p.value() ?? "";
 				if (name === "cash" || name === "symm:exact:cash") cash = val;
-				if (name === "unrealized" || name === "symm:exact:unrealized") unrealized = val;
+				if (name === "unrealized" || name === "symm:exact:unrealized")
+					unrealized = val;
 				if (name === "equity" || name === "symm:exact:equity") equity = val;
 			}
 

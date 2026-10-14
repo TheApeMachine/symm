@@ -155,6 +155,7 @@ func (desk *Desk) restoreFromHistory(
 
 	for _, trade := range trades {
 		pair := trade.Pair
+
 		if desk.price != nil {
 			pair = desk.price.normalize(pair)
 		}
@@ -178,6 +179,7 @@ func (desk *Desk) restoreFromHistory(
 		netVolume := decimal.NewFromInt64(0)
 		for _, trade := range pairTrades {
 			side := strings.ToLower(trade.Type)
+
 			if side == "buy" && trade.Volume != nil {
 				netVolume = netVolume.Add(trade.Volume)
 			}
@@ -196,6 +198,7 @@ func (desk *Desk) restoreFromHistory(
 
 		for _, trade := range pairTrades {
 			side := strings.ToLower(trade.Type)
+
 			if side != "buy" && side != "sell" {
 				continue
 			}
@@ -244,13 +247,17 @@ func (desk *Desk) restoreFromHistory(
 		if !pos.Closed() {
 			desk.positions.Store(symbol, []*Position{pos})
 			priceStr := "0"
+
 			if pos.entryPrice != nil {
 				priceStr = pos.entryPrice.String()
 			}
+
 			qtyStr := "0"
+
 			if pos.qty != nil {
 				qtyStr = pos.qty.String()
 			}
+
 			errnie.Info(fmt.Sprintf(
 				"[desk] restored open position from history: %s %s @ %s",
 				symbol, qtyStr, priceStr,
@@ -317,17 +324,20 @@ func (desk *Desk) restoreFromCatalog() {
 	}
 
 	if len(desk.closed) > 0 {
-		errnie.Info(fmt.Sprintf("[desk] restored %d closed positions from Iceberg", len(desk.closed)))
+		errnie.Info(fmt.Sprintf(
+			"[desk] restored %d closed positions from Iceberg",
+			len(desk.closed),
+		))
 	}
 }
 
 func (desk *Desk) restoreHolding(symbol string, balance *decimal.Decimal) {
-
 	pos := NewPosition()
 	pos.symbol = symbol
 	pos.openedAt = time.Now().UTC()
 
 	var mark *decimal.Decimal
+
 	if desk.price != nil {
 		mark = desk.price.CurrentMark(symbol)
 	}
@@ -337,6 +347,7 @@ func (desk *Desk) restoreHolding(symbol string, balance *decimal.Decimal) {
 	}
 
 	clOrdId := uuid.NewString()
+
 	pos.entryOrders = append(pos.entryOrders, &spot.OrderRequest{
 		ClOrdId:   clOrdId,
 		OrderType: "market",
@@ -364,6 +375,7 @@ func (desk *Desk) restoreHolding(symbol string, balance *decimal.Decimal) {
 	})
 
 	desk.positions.Store(symbol, []*Position{pos})
+
 	errnie.Info(fmt.Sprintf(
 		"[desk] restored open holding from balance: %s %s",
 		symbol, balance.String(),
@@ -393,8 +405,8 @@ func (desk *Desk) Enter(symbol string, qty *decimal.Decimal, path ...string) err
 	if !loaded || untyped == nil {
 		desk.positions.Store(symbol, []*Position{position})
 	}
-	desk.mu.Unlock()
 
+	desk.mu.Unlock()
 	desk.queuePersistence(position)
 
 	return desk.submit(symbol, order)
@@ -450,8 +462,10 @@ func (desk *Desk) Exit(symbol string) error {
 
 	if !exists && desk.price != nil {
 		normalized := desk.price.normalize(symbol)
+
 		if normalized != symbol {
 			untyped, exists = desk.positions.Load(normalized)
+
 			if exists {
 				lookupSymbol = normalized
 			}
@@ -485,22 +499,28 @@ func (desk *Desk) submit(symbol string, order *spot.OrderRequest) error {
 		return nil
 	}
 
-	buf, err := sonic.Marshal(kraken.NewAddOrderMessage("", &kraken.AddOrderRequest{
-		Pair:    symbol,
-		Type:    order.Type,
-		Volume:  order.Volume,
-		ClOrdId: order.ClOrdId,
-	}))
+	buf, err := sonic.Marshal(kraken.NewAddOrderMessage(
+		"", &kraken.AddOrderRequest{
+			Pair:    symbol,
+			Type:    order.Type,
+			Volume:  order.Volume,
+			ClOrdId: order.ClOrdId,
+		},
+	))
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Internal, "[desk] unable to encode "+order.Type+" order for "+symbol, err,
+			errnie.Internal,
+			"[desk] unable to encode "+order.Type+" order for "+symbol,
+			err,
 		))
 	}
 
 	if err := desk.transport.Write(buf); err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.IO, "[desk] unable to submit "+order.Type+" order for "+symbol, err,
+			errnie.IO,
+			"[desk] unable to submit "+order.Type+" order for "+symbol,
+			err,
 		))
 	}
 
@@ -515,6 +535,7 @@ func (desk *Desk) Apply(execution *kraken.Execution) {
 
 		if !exists && desk.price != nil {
 			normalized := desk.price.normalize(symbol)
+
 			if normalized != symbol {
 				symbol = normalized
 				untyped, exists = desk.positions.Load(symbol)
@@ -544,6 +565,7 @@ func (desk *Desk) Apply(execution *kraken.Execution) {
 		if allClosed {
 			desk.positions.Delete(symbol)
 		}
+
 		desk.mu.Unlock()
 	}
 }
@@ -576,7 +598,9 @@ func (desk *Desk) persistLoop() {
 				select {
 				case rec := <-desk.persistCh:
 					if desk.catalog != nil {
-						if err := desk.catalog.RecordPosition(context.Background(), rec); err != nil {
+						if err := desk.catalog.RecordPosition(
+							desk.Context(), rec,
+						); err != nil {
 							errnie.Error(err)
 						}
 					}
@@ -590,7 +614,9 @@ func (desk *Desk) persistLoop() {
 			}
 
 			if desk.catalog != nil {
-				if err := desk.catalog.RecordPosition(desk.Context(), rec); err != nil {
+				if err := desk.catalog.RecordPosition(
+					desk.Context(), rec,
+				); err != nil {
 					errnie.Error(err)
 				}
 			}
@@ -686,7 +712,9 @@ func (desk *Desk) Closed() []*Position {
 	result := slices.Clone(desk.closed)
 
 	sort.Slice(result, func(leftIndex, rightIndex int) bool {
-		return result[leftIndex].OpenedAt().After(result[rightIndex].OpenedAt())
+		return result[leftIndex].OpenedAt().After(
+			result[rightIndex].OpenedAt(),
+		)
 	})
 
 	return result

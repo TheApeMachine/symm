@@ -217,7 +217,7 @@ func handleTrade(
 	workspace *nmruntime.Workspace,
 	storeTee nmruntime.Tee,
 	name string,
-	afterTrade func(),
+	afterTrade func(*data.Measurement),
 ) error {
 	tradeMsg, err := kraken.NewTrade(buf)
 
@@ -318,7 +318,7 @@ func handleTrade(
 		}
 
 		if afterTrade != nil {
-			afterTrade()
+			afterTrade(measurement)
 		}
 	}
 

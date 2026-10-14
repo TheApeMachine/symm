@@ -13,8 +13,7 @@ export const PaperPerformance = () => {
 	const title = perf
 		? [
 				`${perf.closed} closed`,
-				`shadow: ${perf.shadow_wins}/${perf.shadow_trades} wins, mean ${ratePercent(perf.shadow_mean_return)}, P&L ${perf.shadow_pnl.toFixed(2)}`,
-				`venue: ${perf.venue_wins} wins (${ratePercent(perf.venue_win_rate)}), mean ${ratePercent(perf.venue_mean_return)}, P&L ${perf.venue_pnl.toFixed(2)}`,
+				`${perf.venue_wins}/${perf.closed} wins (${ratePercent(perf.venue_win_rate)}), mean edge ${ratePercent(perf.venue_mean_return)}, P&L ${perf.venue_pnl.toFixed(2)}`,
 			].join("\n")
 		: "no closed paper trades yet";
 
@@ -30,7 +29,7 @@ export const PaperPerformance = () => {
 					weight="medium"
 					data-performance="win-rate"
 				>
-					{ratePercent(perf?.shadow_win_rate)}
+					{ratePercent(perf?.venue_win_rate)}
 				</Typography.Mono>
 			</Flex.Column>
 			<Flex.Column className="items-end gap-px">
@@ -43,7 +42,7 @@ export const PaperPerformance = () => {
 					weight="medium"
 					data-performance="edge"
 				>
-					{ratePercent(perf?.shadow_mean_return)}
+					{ratePercent(perf?.venue_mean_return)}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>

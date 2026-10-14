@@ -560,7 +560,14 @@ var (
 								return
 							}
 						case "trade":
-							if err := handleTrade(buf, epoch, price, book, workspace, ingressTee, name, nil); err != nil {
+							if err := handleTrade(
+								buf, epoch, price, book, workspace, ingressTee, name, func(
+									measurement *data.Measurement,
+								) {
+									// Send the "tick" to the frontend.
+									uiTee0.Push(measurement)
+								},
+							); err != nil {
 								halt(err)
 								return
 							}

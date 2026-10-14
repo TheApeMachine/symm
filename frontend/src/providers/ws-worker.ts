@@ -9,23 +9,25 @@ let socketGeneration = 0;
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 10_000;
 
-const sendPositionExit = (symbol: string) => {
-	if (socket !== null && socket.readyState === WebSocket.OPEN) {
-		socket.send(JSON.stringify({ type: "position.exit", symbol }));
-	}
-};
-
 let currentRoute = "dashboard";
 
 const sendRoute = (route: string) => {
 	currentRoute = route;
-	if (socket !== null && socket.readyState === WebSocket.OPEN && typeof route === "string") {
+	if (
+		socket !== null &&
+		socket.readyState === WebSocket.OPEN &&
+		typeof route === "string"
+	) {
 		socket.send(JSON.stringify({ type: "route", route }));
 	}
 };
 
 const sendFocus = (symbol: string) => {
-	if (socket !== null && socket.readyState === WebSocket.OPEN && typeof symbol === "string") {
+	if (
+		socket !== null &&
+		socket.readyState === WebSocket.OPEN &&
+		typeof symbol === "string"
+	) {
 		socket.send(JSON.stringify({ type: "focus", symbol }));
 	}
 };
@@ -167,9 +169,6 @@ self.addEventListener("message", (event: MessageEvent) => {
 			return;
 		case "ROUTE":
 			sendRoute(message.route ?? "");
-			return;
-		case "POSITION_EXIT":
-			sendPositionExit(message.symbol ?? "");
 			return;
 	}
 });

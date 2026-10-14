@@ -24,7 +24,7 @@ Open positions, drawn from the Training Measurement's own Metrics
 computed that the backend did not send; missing Metrics show as waiting.
 */
 
-const REGIONS = 12;
+const REGIONS = 15;
 const regionLabel = (s: number) => `R${String(s).padStart(2, "0")}`;
 const regionColor = (s: number) => sectorHue(s, REGIONS);
 

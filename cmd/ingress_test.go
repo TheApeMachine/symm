@@ -79,8 +79,12 @@ func TestHandleTrade(t *testing.T) {
 			}`)
 
 			invoked := false
-			err := handleTrade(tradeJSON, 100, price, book, nil, storeTee, "public", func() {
+			err := handleTrade(tradeJSON, 100, price, book, nil, storeTee, "public", func(
+				measurement *data.Measurement,
+			) {
 				invoked = true
+				So(measurement, ShouldNotBeNil)
+				So(measurement.Tick, ShouldBeGreaterThan, 0)
 			})
 
 			So(err, ShouldBeNil)
@@ -93,8 +97,6 @@ func TestHandleTrade(t *testing.T) {
 			So(measurement.Label, ShouldEqual, "BTC/USD")
 			So(measurement.Tick, ShouldBeGreaterThan, 0)
 		})
-
-
 
 		Convey("an unprocessable trade frame returns an error", func() {
 			err := handleTrade([]byte(`invalid json`), 100, price, book, nil, storeTee, "public", nil)

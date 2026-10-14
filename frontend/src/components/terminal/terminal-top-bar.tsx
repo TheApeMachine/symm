@@ -1,15 +1,9 @@
-import { useSelector } from "@tanstack/react-store";
-import {
-	focusAtom,
-	onlineAtom,
-	signals,
-	tickCountAtom,
-} from "#/collections/app";
+import { focusAtom, onlineAtom, tickCountAtom } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
-import { PaperPerformance } from "#/components/paper-performance";
 import { Count } from "#/components/count";
 import { AgentSkill } from "#/components/learning/agent-skill";
+import { PaperPerformance } from "#/components/paper-performance";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Divider } from "#/components/ui/divider";
@@ -18,6 +12,8 @@ import { Icon } from "#/components/ui/icon";
 import { Key } from "#/components/ui/key";
 import { Toolbar } from "#/components/ui/toolbar";
 import { Typography } from "#/components/ui/typography";
+import { useSelector } from "@tanstack/react-store";
+import { useEffect } from "react";
 
 const SymmLogo = () => (
 	<svg
@@ -39,48 +35,20 @@ const SymmLogo = () => (
 	</svg>
 );
 
-const ObservationCounter = () => {
-	const observations = useSelector(tickCountAtom, (s) => s);
-
-	return (
-		<Flex.Row align="center" gap={6}>
-			<Flex.Column className="items-end gap-px">
-				<Typography.Label size="s" tone="f4" weight="normal">
-					Observations
-				</Typography.Label>
-				<Typography.Mono size="lg" tone="f1" data-observations="true">
-					{observations > 0 ? observations.toLocaleString() : "—"}
-				</Typography.Mono>
-			</Flex.Column>
-		</Flex.Row>
-	);
-};
-
 const TickCounter = () => {
-	const symbol = useSelector(focusAtom, (s) => s);
-	const ticks = useSelector(signals.training, (state) => {
-		const ring =
-			state[symbol] ??
-			state.learner ??
-			state[""] ??
-			Object.values(state)[0];
-		const latest = ring?.getLast();
-		if (!latest) {
-			return null;
-		}
+	useEffect(() => {
+		const ticksub = tickCountAtom.subscribe((state) => {
+			const tickElement = document.querySelector("[data-tick]");
 
-		for (const metric of latest.metrics ?? []) {
-			if (metric.name === "steps" || metric.name === "tick" || metric.name === "ticks") {
-				return Math.floor(metric.raw ?? 0);
+			if (!tickElement) {
+				return;
 			}
-		}
 
-		if (latest.tick && latest.tick > 0n) {
-			return Number(latest.tick);
-		}
+			tickElement.textContent = state.toLocaleString();
+		});
 
-		return null;
-	});
+		return () => ticksub.unsubscribe();
+	}, []);
 
 	return (
 		<Flex.Row align="center" gap={6}>
@@ -89,7 +57,7 @@ const TickCounter = () => {
 					Ticks
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					{ticks !== null ? ticks.toLocaleString() : "—"}
+					—
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>
@@ -123,7 +91,7 @@ the countdown, the failing channel — belongs in the hover, where reading it is
 deliberate act rather than a line of chrome that changes width every second.
 */
 const ResonanceTransportBadge = () => {
-	const status = useSelector(onlineAtom) 
+	const status = useSelector(onlineAtom);
 	const live = status === "ONLINE";
 	const connecting = status === "CONNECTING";
 	const state = live ? "live" : connecting ? "connecting" : "offline";
@@ -209,11 +177,7 @@ export const TerminalTopBar = () => {
 
 			<Rule />
 
-			<Toolbar.Group className="gap-3.5">
-				<ObservationCounter />
-				<Rule />
-				<TickCounter />
-			</Toolbar.Group>
+			<TickCounter />
 		</Toolbar>
 	);
 };
