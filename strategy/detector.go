@@ -253,8 +253,8 @@ type span struct {
 	c tapePoint
 }
 
-func (s span) held() bool {
-	return s.b.price != nil && s.c.price != nil && s.b.tick < s.c.tick
+func (target span) held() bool {
+	return target.b.price != nil && target.c.price != nil && target.b.tick < target.c.tick
 }
 
 /*
@@ -307,37 +307,37 @@ type episode struct {
 	excursion span
 }
 
-func (t *tape) emit(class string, excursion span) {
+func (tape *tape) emit(class string, excursion span) {
 	if excursion.held() {
-		t.found = append(t.found, episode{class: class, excursion: excursion})
+		tape.found = append(tape.found, episode{class: class, excursion: excursion})
 	}
 }
 
-func (t *tape) observe(p tapePoint) error {
-	p.pos = len(t.points)
-	t.points = append(t.points, p)
+func (tape *tape) observe(point tapePoint) error {
+	point.pos = len(tape.points)
+	tape.points = append(tape.points, point)
 
-	if t.low.price == nil {
-		t.low, t.high, t.bounce = p, p, p
-		t.quiet = span{b: p, c: p}
-		t.quietMin, t.quietMax = p.price, p.price
-		t.run = span{b: p, c: p}
+	if tape.low.price == nil {
+		tape.low, tape.high, tape.bounce = point, point, point
+		tape.quiet = span{b: point, c: point}
+		tape.quietMin, tape.quietMax = point.price, point.price
+		tape.run = span{b: point, c: point}
 		return nil
 	}
 
-	if err := t.zigzag(p); err != nil {
+	if err := tape.zigzag(point); err != nil {
 		return err
 	}
 
-	if err := t.settle(p); err != nil {
+	if err := tape.settle(point); err != nil {
 		return err
 	}
 
-	t.hold(p)
+	tape.hold(point)
 	return nil
 }
 
-func (t *tape) safeProfit(lowPoint, candidatePoint tapePoint) float64 {
+func (tape *tape) safeProfit(lowPoint, candidatePoint tapePoint) float64 {
 	if lowPoint.entryAsk == nil || candidatePoint.exitBid == nil || lowPoint.entryAsk.Sign() <= 0 || candidatePoint.exitBid.Sign() <= 0 {
 		return 0
 	}
@@ -346,13 +346,13 @@ func (t *tape) safeProfit(lowPoint, candidatePoint tapePoint) float64 {
 		return 0
 	}
 
-	if t.detector == nil || t.detector.price == nil {
+	if tape.detector == nil || tape.detector.price == nil {
 		return 0
 	}
 
-	pnl, _, err := t.detector.price.RoundTrip(t.symbol, lowPoint.entryAsk, candidatePoint.exitBid)
+	pnl, _, err := tape.detector.price.RoundTrip(tape.symbol, lowPoint.entryAsk, candidatePoint.exitBid)
 
-	if err != nil || pnl.Sign() <= 0 {
+	if err != nil || pnl == nil || pnl.Sign() <= 0 {
 		return 0
 	}
 
@@ -372,86 +372,86 @@ func (t *tape) safeProfit(lowPoint, candidatePoint tapePoint) float64 {
 /*
 zigzag advances the legs by one trade.
 */
-func (t *tape) zigzag(p tapePoint) error {
-	switch t.leg {
+func (tape *tape) zigzag(point tapePoint) error {
+	switch tape.leg {
 	case legUp:
-		candidateProfit := t.safeProfit(t.low, p)
-		highProfit := t.safeProfit(t.low, t.high)
+		candidateProfit := tape.safeProfit(tape.low, point)
+		highProfit := tape.safeProfit(tape.low, tape.high)
 
-		if candidateProfit > highProfit || (highProfit == 0 && candidateProfit == 0 && p.price.Cmp(t.high.price) > 0) {
-			t.high = p
+		if candidateProfit > highProfit {
+			tape.high = point
 			return nil
 		}
 
-		if p.price.Cmp(t.high.price) >= 0 {
+		if point.price.Cmp(tape.high.price) >= 0 {
 			return nil
 		}
 
-		pnl, _, err := t.detector.price.RoundTrip(t.symbol, p.price, t.high.price)
+		pnl, _, err := tape.detector.price.RoundTrip(tape.symbol, point.price, tape.high.price)
 
-		if err != nil || pnl.Sign() <= 0 {
+		if err != nil || pnl == nil || pnl.Sign() <= 0 {
 			return err
 		}
 
 		// The retrace from C clears friction: the up leg is over and this
 		// trade opens the down leg from C.
-		t.emit(excursionUp, span{b: t.low, c: t.high})
-		t.leg = legDown
-		t.low, t.bounce = p, p
+		tape.emit(excursionUp, span{b: tape.low, c: tape.high})
+		tape.leg = legDown
+		tape.low, tape.bounce = point, point
 		return nil
 
 	default:
-		if t.leg == legNone && p.price.Cmp(t.high.price) > 0 {
-			t.high = p
+		if tape.leg == legNone && point.price.Cmp(tape.high.price) > 0 {
+			tape.high = point
 		}
 
-		if p.price.Cmp(t.low.price) < 0 {
+		if point.price.Cmp(tape.low.price) < 0 {
 			// A new low ends the rise from the old one: it never cleared, or
 			// it would already have become an up leg.
-			t.emit(excursionUpShort, span{b: t.low, c: t.bounce})
-			t.low, t.bounce = p, p
+			tape.emit(excursionUpShort, span{b: tape.low, c: tape.bounce})
+			tape.low, tape.bounce = point, point
 
-			if t.leg == legNone && p.price.Cmp(t.high.price) < 0 {
-				pnl, _, err := t.detector.price.RoundTrip(t.symbol, p.price, t.high.price)
+			if tape.leg == legNone && point.price.Cmp(tape.high.price) < 0 {
+				pnl, _, err := tape.detector.price.RoundTrip(tape.symbol, point.price, tape.high.price)
 
-				if err != nil || pnl.Sign() <= 0 {
+				if err != nil || pnl == nil || pnl.Sign() <= 0 {
 					return err
 				}
 
-				t.leg = legDown
+				tape.leg = legDown
 			}
 
 			return nil
 		}
 
-		candidateProfit := t.safeProfit(t.low, p)
-		bounceProfit := t.safeProfit(t.low, t.bounce)
+		candidateProfit := tape.safeProfit(tape.low, point)
+		bounceProfit := tape.safeProfit(tape.low, tape.bounce)
 
-		if candidateProfit > bounceProfit || (bounceProfit == 0 && candidateProfit == 0 && p.price.Cmp(t.bounce.price) > 0) {
-			t.bounce = p
+		if candidateProfit > bounceProfit || (bounceProfit == 0 && candidateProfit == 0 && point.price.Cmp(tape.bounce.price) > 0) {
+			tape.bounce = point
 		}
 
-		if t.low.ask == nil || p.bid == nil || p.bid.Cmp(t.low.ask) <= 0 {
+		if tape.low.ask == nil || point.bid == nil || point.bid.Cmp(tape.low.ask) <= 0 {
 			return nil
 		}
 
-		pnl, _, err := t.detector.price.RoundTrip(t.symbol, t.low.ask, p.bid)
+		pnl, _, err := tape.detector.price.RoundTrip(tape.symbol, tape.low.ask, point.bid)
 
-		if err != nil || pnl.Sign() <= 0 {
+		if err != nil || pnl == nil || pnl.Sign() <= 0 {
 			return err
 		}
 
 		// The rise from the running low clears friction: the down leg (if
 		// any) ends at that low and this trade opens the up leg from it.
-		if t.leg == legDown {
-			t.emit(excursionDown, span{b: t.high, c: t.low})
+		if tape.leg == legDown {
+			tape.emit(excursionDown, span{b: tape.high, c: tape.low})
 		}
 
-		t.leg = legUp
-		t.high = t.bounce
+		tape.leg = legUp
+		tape.high = tape.bounce
 
-		if t.safeProfit(t.low, p) > t.safeProfit(t.low, t.high) {
-			t.high = p
+		if tape.safeProfit(tape.low, point) > tape.safeProfit(tape.low, tape.high) {
+			tape.high = point
 		}
 
 		return nil
@@ -462,61 +462,61 @@ func (t *tape) zigzag(p tapePoint) error {
 settle grows the current deadband stretch until a trade widens its price
 range far enough to clear friction; that trade starts the next stretch.
 */
-func (t *tape) settle(p tapePoint) error {
-	low, high := t.quietMin, t.quietMax
+func (tape *tape) settle(point tapePoint) error {
+	low, high := tape.quietMin, tape.quietMax
 	widened := false
 
-	if p.price.Cmp(low) < 0 {
-		low, widened = p.price, true
+	if point.price.Cmp(low) < 0 {
+		low, widened = point.price, true
 	}
 
-	if p.price.Cmp(high) > 0 {
-		high, widened = p.price, true
+	if point.price.Cmp(high) > 0 {
+		high, widened = point.price, true
 	}
 
 	if widened {
-		pnl, _, err := t.detector.price.RoundTrip(t.symbol, low, high)
+		pnl, _, err := tape.detector.price.RoundTrip(tape.symbol, low, high)
 
 		if err != nil {
 			return err
 		}
 
-		if pnl.Sign() > 0 {
-			t.closeQuiet()
-			t.quiet = span{b: p, c: p}
-			t.quietMin, t.quietMax = p.price, p.price
+		if pnl != nil && pnl.Sign() > 0 {
+			tape.closeQuiet()
+			tape.quiet = span{b: point, c: point}
+			tape.quietMin, tape.quietMax = point.price, point.price
 			return nil
 		}
 	}
 
-	t.quiet.c = p
-	t.quietMin, t.quietMax = low, high
+	tape.quiet.c = point
+	tape.quietMin, tape.quietMax = low, high
 	return nil
 }
 
-func (t *tape) closeQuiet() {
-	if t.quietMin == nil || t.quietMin.Cmp(t.quietMax) == 0 {
+func (tape *tape) closeQuiet() {
+	if tape.quietMin == nil || tape.quietMin.Cmp(tape.quietMax) == 0 {
 		return
 	}
 
-	t.emit(excursionChop, t.quiet)
+	tape.emit(excursionChop, tape.quiet)
 }
 
 /*
 hold grows the current run of one unchanged price.
 */
-func (t *tape) hold(p tapePoint) {
-	if p.price.Cmp(t.run.b.price) == 0 {
-		t.run.c = p
+func (tape *tape) hold(point tapePoint) {
+	if point.price.Cmp(tape.run.b.price) == 0 {
+		tape.run.c = point
 		return
 	}
 
-	t.closeFlat()
-	t.run = span{b: p, c: p}
+	tape.closeFlat()
+	tape.run = span{b: point, c: point}
 }
 
-func (t *tape) closeFlat() {
-	t.emit(excursionFlat, t.run)
+func (tape *tape) closeFlat() {
+	tape.emit(excursionFlat, tape.run)
 }
 
 /*
@@ -528,18 +528,18 @@ not published, so a detect run over an epoch that is still being collected
 publishes only episodes the rest of the tape can never change, and a later run
 over the longer tape reproduces every one of them.
 */
-func (t *tape) flush() error {
-	for _, found := range t.found {
-		start, end, ok := t.padded(found.excursion)
+func (tape *tape) flush() error {
+	for _, found := range tape.found {
+		start, end, ok := tape.padded(found.excursion)
 
 		if !ok {
 			continue
 		}
 
-		t.detector.Flush(found.class, t.symbol, t.epoch, start, end, found.excursion)
+		tape.detector.Flush(found.class, tape.symbol, tape.epoch, start, end, found.excursion)
 	}
 
-	t.found = nil
+	tape.found = nil
 	return nil
 }
 
@@ -549,14 +549,14 @@ of B at least as many trades as the B→C move, and some tape right of C
 (TRAINING.md). ok is false when there is no trade before B or B→C is too
 short to leave a frame between them.
 */
-func (t *tape) padded(excursion span) (start, end tapePoint, ok bool) {
-	if !excursion.held() || len(t.points) == 0 {
+func (tape *tape) padded(excursion span) (start, end tapePoint, ok bool) {
+	if !excursion.held() || len(tape.points) == 0 {
 		return tapePoint{}, tapePoint{}, false
 	}
 
 	bIdx, cIdx := excursion.b.pos, excursion.c.pos
 
-	if bIdx < 0 || cIdx <= bIdx || cIdx >= len(t.points) {
+	if bIdx < 0 || cIdx <= bIdx || cIdx >= len(tape.points) {
 		return tapePoint{}, tapePoint{}, false
 	}
 
@@ -565,12 +565,12 @@ func (t *tape) padded(excursion span) (start, end tapePoint, ok bool) {
 	// those phases with weakened feedback rather than soft-skipping.
 	left, right := max(width, 1), max(width/2, 1)
 	startIdx := max(0, bIdx-left)
-	endIdx := min(len(t.points)-1, cIdx+right)
+	endIdx := min(len(tape.points)-1, cIdx+right)
 	// startIdx may equal bIdx when B is the first trade of the scanned tape;
 	// still store B→C with right pad. Rehearsal/chart padWindow reads left of
 	// B from storage when earlier trades exist (TRAINING.md precursor).
 
-	return t.points[startIdx], t.points[endIdx], true
+	return tape.points[startIdx], tape.points[endIdx], true
 }
 
 /*
@@ -583,14 +583,14 @@ The left pad never goes before tick 0: when B is near the epoch start, lo is
 clamped to 0 and hi is kept >= lo so SignalLogic/Timeline never see a negative
 lowTick.
 */
-func PadWindow(b, c int64) (lo, hi int64) {
-	width := max(c-b, 1)
+func PadWindow(bTick, cTick int64) (lo, hi int64) {
+	width := max(cTick-bTick, 1)
 	left := max(width, minPrecursorPad)
 
 	// Tick 0 is the earliest stored frame; never ask the catalog for a
 	// negative lowTick (SignalLogic rejects it and halted training).
-	lo = max(b-left, 0)
-	hi = max(c+max(width/2, 1), lo)
+	lo = max(bTick-left, 0)
+	hi = max(cTick+max(width/2, 1), lo)
 
 	return lo, hi
 }

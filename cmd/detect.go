@@ -218,7 +218,13 @@ func offlinePrice(ctx context.Context, feePercent string, symbols []string) (*br
 		}
 	}
 
-	price.SetReferenceCash(decimal.NewFromInt64(int64(system.Cfg.Market.Balance)))
+	budget := decimal.NewFromInt64(int64(system.Cfg.Market.Balance))
+
+	if system.Cfg.Risk != nil && system.Cfg.Risk.MaxFraction != nil && system.Cfg.Risk.MaxFraction.Sign() > 0 {
+		budget = budget.Mul(system.Cfg.Risk.MaxFraction)
+	}
+
+	price.SetReferenceCash(budget)
 
 	return price, nil
 }
