@@ -324,6 +324,11 @@ var (
 				return reqCtx.JSON(training.CognitionTree())
 			})
 
+			hub.App().Get("/cognition/grammar", func(reqCtx fiber.Ctx) error {
+				symbol := reqCtx.Query("symbol")
+				return reqCtx.JSON(training.CognitionGrammar(symbol))
+			})
+
 			hub.Run()
 			hub.Transition(nmruntime.READY)
 
@@ -543,6 +548,11 @@ var (
 							}
 						case "level3":
 							if err := handleLevel3(buf, epoch, book, ingressTee, name); err != nil {
+								if strings.Contains(err.Error(), "awaiting snapshot") || strings.Contains(err.Error(), "checksum mismatch") {
+									errnie.Warn(fmt.Sprintf("[root] %s level3 book update diverged: %s", name, err))
+									continue
+								}
+
 								halt(err)
 								return
 							}

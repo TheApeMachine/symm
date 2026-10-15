@@ -19,23 +19,54 @@ func TestDynamicsStage(t *testing.T) {
 				s.Channel() <- m
 			}
 			close(s.Channel())
-			_ = s.Run()
+			So(s.Run(), ShouldBeNil)
 			return s.Violations()
 		}
 
-		Convey("When auditing structured state transitions", func() {
-			measurements := make([]*data.Measurement, 0, 25)
+		makeGridJoin := func(region uint8, tick int64, now time.Time, bid, ask float64) *data.Measurement {
+			peer := data.NewMeasurement(1, "BTC/USD", "cvd", now, now)
+			peer.Tick = tick
 
-			// Predictable deterministic cycle: A -> B -> C -> A ...
-			tokens := []string{"state_A", "state_B", "state_C"}
+			label := "midpoint_log_return"
+			if region == 4 {
+				label = "flow_aligned_midpoint_return"
+			}
+
+			if region == 1 {
+				label = "signed_net_fraction"
+			}
+
+			metric := data.NewMetric(label, 1.0, data.UnitDimensionless, data.TimescaleInstantaneous)
+			metric.SetSNM(0.95)
+			metrics := []*data.Metric{metric}
+
+			if bid > 0 && ask > 0 {
+				metrics = append(metrics,
+					data.NewMetric("best_bid_price", bid, data.UnitPrice, data.TimescaleInstantaneous),
+					data.NewMetric("best_ask_price", ask, data.UnitPrice, data.TimescaleInstantaneous),
+				)
+			}
+
+			peer.Write(metrics...)
+			peer.Finalize()
+
+			join := data.NewMeasurement(1, "BTC/USD", "runtime:join", now, now)
+			join.Tick = tick
+			join.Peers(peer)
+			join.Finalize()
+			return join
+		}
+
+		Convey("When auditing structured state transitions", func() {
+			measurements := make([]*data.Measurement, 0, 24)
+
+			// Predictable deterministic cycle: R02 -> R04 -> R01 -> R02 ...
+			regions := []uint8{2, 4, 1}
 
 			for idx := range int64(24) {
 				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-				token := tokens[idx%3]
-				measurement.Write(data.NewMetric(token, 1.0, data.UnitDimensionless, data.TimescaleInstantaneous))
-				measurement.Finalize()
-				measurements = append(measurements, measurement)
+				reg := regions[idx%3]
+				measurements = append(measurements, makeGridJoin(reg, idx+1, now, 0, 0))
 			}
 
 			violations := feed(stage, measurements...)
@@ -48,17 +79,12 @@ func TestDynamicsStage(t *testing.T) {
 
 			for idx := range int64(25) {
 				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-
-				// 24 of 25 are frozen_token (96% share)
-				token := "frozen_token"
+				reg := uint8(2)
 				if idx == 0 {
-					token = "init_token"
+					reg = 4
 				}
 
-				measurement.Write(data.NewMetric(token, 1.0, data.UnitDimensionless, data.TimescaleInstantaneous))
-				measurement.Finalize()
-				measurements = append(measurements, measurement)
+				measurements = append(measurements, makeGridJoin(reg, idx+1, now, 0, 0))
 			}
 
 			violations := feed(stage, measurements...)
@@ -82,16 +108,7 @@ func TestDynamicsStage(t *testing.T) {
 
 		Convey("When auditing joined frames with peers and prices", func() {
 			now := time.Now()
-			peerTouch := data.NewMeasurement(1, "BTC/USD", "spot:touch", now, now)
-			peerTouch.Write(
-				data.NewMetric("best_bid_price", 50000.0, data.UnitPrice, data.TimescaleInstantaneous),
-				data.NewMetric("best_ask_price", 50010.0, data.UnitPrice, data.TimescaleInstantaneous),
-			)
-
-			join := data.NewMeasurement(1, "BTC/USD", "runtime:join", now, now)
-			join.Tick = 101
-			join.Peers(peerTouch)
-			join.Write(data.NewMetric("test_signal", 1.0, data.UnitDimensionless, data.TimescaleInstantaneous))
+			join := makeGridJoin(2, 101, now, 50000.0, 50010.0)
 
 			feed(stage, join)
 			dataMap, ok := stage.Data().(map[string]any)

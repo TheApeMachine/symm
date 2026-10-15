@@ -19,26 +19,43 @@ func TestStabilityStage(t *testing.T) {
 				s.Channel() <- m
 			}
 			close(s.Channel())
-			_ = s.Run()
+			So(s.Run(), ShouldBeNil)
 			return s.Violations()
+		}
+
+		makeGridJoin := func(region uint8, tick int64, now time.Time) *data.Measurement {
+			peer := data.NewMeasurement(1, "BTC/USD", "cvd", now, now)
+			peer.Tick = tick
+
+			label := "midpoint_log_return"
+			if region == 4 {
+				label = "flow_aligned_midpoint_return"
+			}
+
+			metric := data.NewMetric(label, 1.0, data.UnitDimensionless, data.TimescaleInstantaneous)
+			metric.SetSNM(0.95)
+			peer.Write(metric)
+			peer.Finalize()
+
+			join := data.NewMeasurement(1, "BTC/USD", "runtime:join", now, now)
+			join.Tick = tick
+			join.Peers(peer)
+			join.Finalize()
+			return join
 		}
 
 		Convey("When auditing stationary grid activations across halves", func() {
 			measurements := make([]*data.Measurement, 0, 30)
 
-			// Both halves alternate between token_a and token_b evenly
+			// Both halves alternate between R02 and R04 evenly
 			for idx := range int64(30) {
 				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-
-				label := "token_a"
+				reg := uint8(2)
 				if idx%2 == 1 {
-					label = "token_b"
+					reg = 4
 				}
 
-				measurement.Write(data.NewMetric(label, 1.0, data.UnitDimensionless, data.TimescaleInstantaneous))
-				measurement.Finalize()
-				measurements = append(measurements, measurement)
+				measurements = append(measurements, makeGridJoin(reg, idx+1, now))
 			}
 
 			violations := feed(stage, measurements...)
@@ -49,22 +66,16 @@ func TestStabilityStage(t *testing.T) {
 		Convey("When auditing severe non-stationary regime shift between halves", func() {
 			measurements := make([]*data.Measurement, 0, 30)
 
-			// First half: 15 frames of token_a
+			// First half: 15 frames of R02
 			for idx := range int64(15) {
 				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-				measurement.Write(data.NewMetric("token_a", 1.0, data.UnitDimensionless, data.TimescaleInstantaneous))
-				measurement.Finalize()
-				measurements = append(measurements, measurement)
+				measurements = append(measurements, makeGridJoin(2, idx+1, now))
 			}
 
-			// Second half: 15 frames of token_b (completely disjoint distributions, JSD = 1.0 bit)
+			// Second half: 15 frames of R04 (completely disjoint distributions, JSD = 1.0 bit)
 			for idx := int64(15); idx < 30; idx++ {
 				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-				measurement.Write(data.NewMetric("token_b", 1.0, data.UnitDimensionless, data.TimescaleInstantaneous))
-				measurement.Finalize()
-				measurements = append(measurements, measurement)
+				measurements = append(measurements, makeGridJoin(4, idx+1, now))
 			}
 
 			violations := feed(stage, measurements...)
@@ -83,12 +94,13 @@ func TestStabilityStage(t *testing.T) {
 		Convey("When auditing incomplete grid observations", func() {
 			measurements := make([]*data.Measurement, 0, 25)
 
-			// 25 measurements without any metrics (0% completeness)
+			// 25 runtime:join measurements without active bright regions (0% completeness)
 			for idx := range int64(25) {
 				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-				measurement.Finalize()
-				measurements = append(measurements, measurement)
+				join := data.NewMeasurement(1, "BTC/USD", "runtime:join", now, now)
+				join.Tick = idx + 1
+				join.Finalize()
+				measurements = append(measurements, join)
 			}
 
 			violations := feed(stage, measurements...)

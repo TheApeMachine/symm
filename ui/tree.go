@@ -13,9 +13,16 @@ type TrieNodeJSON struct {
 }
 
 /*
-TrieBranchJSON is kept for wire compatibility.
+TrieBranchJSON is the wire structure for a cognitive radix branch.
 */
-type TrieBranchJSON struct{}
+type TrieBranchJSON struct {
+	Hash       string  `json:"hash"`
+	Depth      int     `json:"depth"`
+	Visits     int     `json:"visits"`
+	MeanEdge   float64 `json:"meanEdge"`
+	Confidence float64 `json:"confidence"`
+	Policy     string  `json:"policy"`
+}
 
 /*
 CognitionTreeExport is the wire structure consumed by the learning dashboard.

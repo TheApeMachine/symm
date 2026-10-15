@@ -25,14 +25,17 @@ ADVISOR_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run collect detect train audit workbench dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map build-cuda
+.PHONY: build test test-flow test-go test-race test-cover test-e2e test-frontend bench run collect detect train audit workbench dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map build-cuda
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
 	flatc --no-warnings --ts --gen-object-api -o frontend/src/providers/telemetry telemetry/telemetry.fbs
 	find frontend/src/providers/telemetry -type f -name '*.ts' -print0 | xargs -0 perl -pi -e 'if ($$. == 1 && $$_ ne "// \@ts-nocheck\n") { print "// \@ts-nocheck\n" } close ARGV if eof'
 
-test: test-go test-race test-frontend
+test: test-flow test-go test-race test-frontend
+
+test-flow:
+	go run ./tools/controlflow .
 
 test-go:
 	go test $(GO_TEST_FLAGS) ./...

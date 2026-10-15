@@ -659,11 +659,34 @@ func (price *Price) AllocateEntry(
 				return
 			}
 
+			// 1. Calculate bid cushion
+			totalBidQty := decimalZero
+			bidLevel := book.BestBid()
+			for bidLevel != nil {
+				if bidLevel.Quantity != nil && bidLevel.Quantity.Sign() > 0 {
+					totalBidQty = totalBidQty.Add(bidLevel.Quantity)
+				}
+				bidLevel = bidLevel.Lower
+			}
+			maxBidCap := totalBidQty.Mul(decimal.NewFromFloat64(0.5))
+
+			bestAskPrice := book.BestAsk().Price
+			maxAskPrice := bestAskPrice.Mul(decimal.NewFromInt64(2))
+
 			qAccum := decimalZero
 			remainingGross := maxGross
 			level := book.BestAsk()
 
 			for level != nil && remainingGross.Sign() > 0 {
+				if level.Price == nil || level.Quantity == nil || level.Price.Sign() <= 0 || level.Quantity.Sign() <= 0 {
+					level = level.Higher
+					continue
+				}
+
+				if level.Price.Cmp(maxAskPrice) > 0 {
+					break
+				}
+
 				levelCost := notional(level.Price, level.Quantity)
 
 				if levelCost.Cmp(remainingGross) <= 0 {
@@ -676,6 +699,11 @@ func (price *Price) AllocateEntry(
 				partialQty := remainingGross.Div(level.Price)
 				qAccum = qAccum.Add(partialQty)
 				break
+			}
+
+			// If bid book is visible, cap qAccum by 50% of visible bid cushion
+			if maxBidCap.Sign() > 0 && qAccum.Cmp(maxBidCap) > 0 {
+				qAccum = maxBidCap
 			}
 
 			if qAccum.Sign() <= 0 {

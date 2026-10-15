@@ -103,13 +103,14 @@ func (profile ExcursionProfile) GenerateTape(startSeq int64) []*data.Measurement
 
 		// Apply adversarial wick if declared at this step
 		if mult, isWick := profile.Wicks[i]; isWick && mult > 0 {
-			price = idealPrice * mult
-		} else {
-			noise := (float64((i%2)*2-1) * profile.Spread * 0.2)
-			price += noise
-			if price > peakPrice {
-				peakPrice = price
-			}
+			emit(idealPrice*mult, "run")
+			continue
+		}
+
+		noise := (float64((i%2)*2-1) * profile.Spread * 0.2)
+		price += noise
+		if price > peakPrice {
+			peakPrice = price
 		}
 
 		emit(price, "run")

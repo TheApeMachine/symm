@@ -2,6 +2,8 @@ package leadlag
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"unsafe"
 
 	"github.com/theapemachine/errnie"
@@ -107,24 +109,36 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		signal.paths[prior.Label] = currentPath
 	}
 
-	readings := make([]nmcorrelation.LeadLagReading, 0, maxLeadLagPeers)
-	peerCount := 0
+	candidateSymbols := make([]string, 0, len(signal.paths))
 
 	for peerSymbol, peerPath := range signal.paths {
-		if peerCount >= maxLeadLagPeers {
-			break
+		if peerSymbol != prior.Label && len(peerPath) >= 3 && len(currentPath) >= 3 {
+			candidateSymbols = append(candidateSymbols, peerSymbol)
 		}
+	}
 
-		if peerSymbol == prior.Label || len(peerPath) < 3 || len(currentPath) < 3 {
-			continue
+	slices.SortFunc(candidateSymbols, func(a, b string) int {
+		rankA := leaderRank(a)
+		rankB := leaderRank(b)
+		if rankA != rankB {
+			return rankA - rankB
 		}
+		return strings.Compare(a, b)
+	})
 
+	if len(candidateSymbols) > maxLeadLagPeers {
+		candidateSymbols = candidateSymbols[:maxLeadLagPeers]
+	}
+
+	readings := make([]nmcorrelation.LeadLagReading, 0, len(candidateSymbols))
+
+	for _, peerSymbol := range candidateSymbols {
+		peerPath := signal.paths[peerSymbol]
 		input := nmcorrelation.LagProfileInput{Left: peerPath, Right: currentPath}
 		reading := drive[nmcorrelation.LagProfileInput, nmcorrelation.LeadLagReading](signal.leadlag, &input)
 
 		if reading.Defined {
 			readings = append(readings, reading)
-			peerCount++
 		}
 	}
 
@@ -156,4 +170,21 @@ func drive[From, To any](op core.Primitive, payload *From) To {
 	}
 
 	return answer
+}
+
+/*
+leaderRank prioritizes anchor market movers (BTC, ETH, SOL) over obscure altcoins
+so that leadlag evaluates cross-asset dynamics against true market drivers.
+*/
+func leaderRank(symbol string) int {
+	switch {
+	case strings.HasPrefix(symbol, "BTC") || strings.HasPrefix(symbol, "XBT") || strings.HasPrefix(symbol, "XXBT"):
+		return 0
+	case strings.HasPrefix(symbol, "ETH") || strings.HasPrefix(symbol, "XETH"):
+		return 1
+	case strings.HasPrefix(symbol, "SOL"):
+		return 2
+	default:
+		return 3
+	}
 }

@@ -1,3 +1,6 @@
+import { useSelector } from "@tanstack/react-store";
+import { ArrowRight, HeartPulse, Radio } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
 	decisionsAtom,
 	type RingBuffer,
@@ -13,9 +16,6 @@ import type { Lifecycle } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
 import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { useSelector } from "@tanstack/react-store";
-import { ArrowRight, HeartPulse, Radio } from "lucide-react";
-import React, { useEffect, useMemo, useState } from "react";
 
 export interface RegionMeta {
 	id: string;
@@ -141,8 +141,7 @@ export const REGIONS: Record<string, RegionMeta> = {
 		subtitle: "Peer Consensus",
 		role: "history",
 		tone: "info",
-		description:
-			"Cross-asset sentiment agreement, peer directional consensus.",
+		description: "Cross-asset sentiment agreement, peer directional consensus.",
 	},
 	R12: {
 		id: "R12",
@@ -742,7 +741,8 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 						const meta = REGIONS[key];
 						const isCurrent = key === activeToken;
 						const isEntry = entryTokens.includes(key);
-						const isExitCandidate = key === "R03" || key === "R04" || key === "R05";
+						const isExitCandidate =
+							key === "R03" || key === "R04" || key === "R05";
 
 						return (
 							<div

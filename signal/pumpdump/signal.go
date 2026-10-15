@@ -38,10 +38,10 @@ func (ce *causalEstimator) Step(value float64) (hasBaseline bool, baseline float
 
 type symbolState struct {
 	lastMeasurement     *data.Measurement
+	lastBarMeasurement  *data.Measurement
 	clock               volumeclock.Clock
 	spreadEstimator     causalEstimator
 	volumeRateEstimator causalEstimator
-	barMetrics          map[string]float64
 }
 
 type Signal struct {
@@ -126,13 +126,9 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	bar, closed := tick.Bar, tick.Closed
 
 	if closed {
-		state.barMetrics = make(map[string]float64)
-
 		if core.Resolvable(bar.Duration) {
 			volumeRate := bar.Quantity / bar.Duration
 			tradeRate := bar.Trades / bar.Duration
-			state.barMetrics["volume_rate"] = volumeRate
-			state.barMetrics["trade_rate"] = tradeRate
 			out["volume_rate"] = volumeRate
 			out["trade_rate"] = tradeRate
 
@@ -140,7 +136,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 			if hasVolBase && volBase > 0 && !core.Negligible(volBase, volumeRate) {
 				volRatio := volumeRate / volBase
-				state.barMetrics["volume_ratio"] = volRatio
 				out["volume_ratio"] = volRatio
 			}
 		}
@@ -149,16 +144,8 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			midReturn := math.Log(bar.AtMid / bar.FromMid)
 			posReturn := math.Max(midReturn, 0)
 			negReturn := math.Max(-midReturn, 0)
-			state.barMetrics["positive_midpoint_return"] = posReturn
-			state.barMetrics["negative_midpoint_return"] = negReturn
 			out["positive_midpoint_return"] = posReturn
 			out["negative_midpoint_return"] = negReturn
-		}
-	}
-
-	for key, value := range state.barMetrics {
-		if _, exists := out[key]; !exists {
-			out[key] = value
 		}
 	}
 
@@ -166,7 +153,16 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
 	}
 
-	res := state.lastMeasurement.Next(prior, out)
+	sourceMeas := state.lastMeasurement
+	if closed && state.lastBarMeasurement != nil {
+		sourceMeas = state.lastBarMeasurement
+	}
+
+	res := sourceMeas.Next(prior, out)
+	if closed {
+		state.lastBarMeasurement = res
+	}
+
 	state.lastMeasurement = res
 
 	if closed {

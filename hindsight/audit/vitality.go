@@ -73,21 +73,6 @@ func isStaticParameter(key string) bool {
 }
 
 /*
-isRectifiedMetric returns true for one-sided rectified features (e.g. positive returns,
-retreat fractions, or withdrawal rates) that are naturally sparse depending on tape direction.
-*/
-func isRectifiedMetric(key string) bool {
-	if strings.Contains(key, "positive_") ||
-		strings.Contains(key, "negative_") ||
-		strings.Contains(key, "retreat_") ||
-		strings.Contains(key, "withdrawal_") {
-		return true
-	}
-
-	return false
-}
-
-/*
 VitalityStage audits the health and variance of all incoming market metrics.
 It detects "dead" metrics (zero variance, providing no informational value)
 and "stagnant" cold-start metrics (>= 80% zero values).
@@ -221,10 +206,7 @@ func (stage *VitalityStage) auditVitality() {
 
 		// Stagnant / Cold-Start Check: If >= 80% of observations are zero,
 		// the metric is cold-starting or has insufficient event activity.
-		// One-sided rectified metrics that have varied (Max > Min) are sparse by design, not stagnant.
-		isRectified := isRectifiedMetric(key) && stat.Max > stat.Min
-
-		if stat.Count >= core.MinimumPrior && stat.ZeroFraction() >= 0.80 && !isRectified && !stage.flaggedStagn[key] {
+		if stat.Count >= core.MinimumPrior && stat.ZeroFraction() >= 0.80 && !stage.flaggedStagn[key] {
 			stage.flaggedStagn[key] = true
 			stage.violations = append(stage.violations, NewViolation(
 				key,
@@ -278,11 +260,7 @@ func (stage *VitalityStage) Data() any {
 		}
 	}
 
-	healthyCount := len(stage.series) - len(deadList) - len(stagnList)
-
-	if healthyCount < 0 {
-		healthyCount = 0
-	}
+	healthyCount := max(len(stage.series)-len(deadList)-len(stagnList), 0)
 
 	return map[string]any{
 		"passed":           len(stage.violations) == 0,
@@ -295,4 +273,3 @@ func (stage *VitalityStage) Data() any {
 		"metrics":          stats,
 	}
 }
-

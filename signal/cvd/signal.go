@@ -27,12 +27,12 @@ bar's target is the median prior trade quantity, fixed when it opens. Totals
 are reported once per closed bar, never accumulated since an epoch.
 */
 type symbolState struct {
-	lastMeasurement *data.Measurement
-	clock           volumeclock.Clock
-	window          window
-	lastAt          time.Time
-	prevMidpoint    float64
-	barMetrics      map[string]float64
+	lastMeasurement    *data.Measurement
+	lastBarMeasurement *data.Measurement
+	clock              volumeclock.Clock
+	window             window
+	lastAt             time.Time
+	prevMidpoint       float64
 }
 
 type Signal struct {
@@ -129,12 +129,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		state.closeWindow(out)
 	}
 
-	for key, value := range state.barMetrics {
-		if _, exists := out[key]; !exists {
-			out[key] = value
-		}
-	}
-
 	if hasBook && state.prevMidpoint > 0 {
 		midpointLogReturn := math.Log(midpoint / state.prevMidpoint)
 		flowAligned := midpointLogReturn
@@ -157,7 +151,16 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
 	}
 
-	res := state.lastMeasurement.Next(prior, out)
+	sourceMeas := state.lastMeasurement
+	if tick.Closed && state.lastBarMeasurement != nil {
+		sourceMeas = state.lastBarMeasurement
+	}
+
+	res := sourceMeas.Next(prior, out)
+	if tick.Closed {
+		state.lastBarMeasurement = res
+	}
+
 	state.lastMeasurement = res
 
 	if tick.Closed {
@@ -178,13 +181,10 @@ func (state *symbolState) closeWindow(out map[string]float64) {
 	grossNotional := flow.buyNotional + flow.sellNotional
 	netNotional := flow.buyNotional - flow.sellNotional
 
-	state.barMetrics = make(map[string]float64)
-	state.barMetrics["gross_notional"] = grossNotional
 	out["gross_notional"] = grossNotional
 
 	if grossNotional > 0 {
 		signedFraction := netNotional / grossNotional
-		state.barMetrics["signed_net_fraction"] = signedFraction
 		out["signed_net_fraction"] = signedFraction
 	}
 }

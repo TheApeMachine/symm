@@ -98,16 +98,29 @@ describe("ImpulseMapViz", () => {
 
 	it("updates in real-time when regions/nodes are activated", () => {
 		const initialData: ImpulseNode[] = [
-			{ id: "n1", label: "A", cluster: 1, snr: 1, activation: 0.05, x: 0, y: 0 },
-			{ id: "n2", label: "B", cluster: 2, snr: 1, activation: 0.05, x: 2, y: 2 },
+			{
+				id: "n1",
+				label: "A",
+				cluster: 1,
+				snr: 1,
+				activation: 0.05,
+				x: 0,
+				y: 0,
+			},
+			{
+				id: "n2",
+				label: "B",
+				cluster: 2,
+				snr: 1,
+				activation: 0.05,
+				x: 2,
+				y: 2,
+			},
 		];
 
 		const { container, rerender } = render(
 			<div style={{ width: "800px", height: "600px" }}>
-				<ImpulseMapViz
-					data={initialData}
-					activeEvents={[]}
-				/>
+				<ImpulseMapViz data={initialData} activeEvents={[]} />
 			</div>,
 		);
 
@@ -116,8 +129,24 @@ describe("ImpulseMapViz", () => {
 
 		// Live tape activates region 2 / node 2
 		const updatedData: ImpulseNode[] = [
-			{ id: "n1", label: "A", cluster: 1, snr: 1, activation: 0.05, x: 0, y: 0 },
-			{ id: "n2", label: "B", cluster: 2, snr: 1, activation: 0.95, x: 2, y: 2 },
+			{
+				id: "n1",
+				label: "A",
+				cluster: 1,
+				snr: 1,
+				activation: 0.05,
+				x: 0,
+				y: 0,
+			},
+			{
+				id: "n2",
+				label: "B",
+				cluster: 2,
+				snr: 1,
+				activation: 0.95,
+				x: 2,
+				y: 2,
+			},
 		];
 
 		act(() => {
@@ -125,7 +154,9 @@ describe("ImpulseMapViz", () => {
 				<div style={{ width: "800px", height: "600px" }}>
 					<ImpulseMapViz
 						data={updatedData}
-						activeEvents={[{ id: 2, label: "Region #2", activity: 0.95, members: 1 }]}
+						activeEvents={[
+							{ id: 2, label: "Region #2", activity: 0.95, members: 1 },
+						]}
 					/>
 				</div>,
 			);
@@ -157,8 +188,12 @@ describe("ImpulseMapViz", () => {
 			</div>,
 		);
 
-		const regionsBtn = container.querySelector('[data-l="view-sympathy-regions"]') as HTMLButtonElement;
-		const gridBtn = container.querySelector('[data-l="view-initial-grid"]') as HTMLButtonElement;
+		const regionsBtn = container.querySelector(
+			'[data-l="view-sympathy-regions"]',
+		) as HTMLButtonElement;
+		const gridBtn = container.querySelector(
+			'[data-l="view-initial-grid"]',
+		) as HTMLButtonElement;
 
 		expect(regionsBtn).toBeTruthy();
 		expect(gridBtn).toBeTruthy();
@@ -196,8 +231,12 @@ describe("ImpulseMapViz", () => {
 			</div>,
 		);
 
-		const metricCountEl = container.querySelector('[data-l="grid-metric-count"]');
-		const regionCountEl = container.querySelector('[data-l="grid-region-count"]');
+		const metricCountEl = container.querySelector(
+			'[data-l="grid-metric-count"]',
+		);
+		const regionCountEl = container.querySelector(
+			'[data-l="grid-region-count"]',
+		);
 		const hudMetricEl = container.querySelector('[data-l="hud-metric-count"]');
 		const hudRegionEl = container.querySelector('[data-l="hud-region-count"]');
 
@@ -214,8 +253,12 @@ describe("ImpulseMapViz", () => {
 			</div>,
 		);
 
-		const metricCountEl = container.querySelector('[data-l="grid-metric-count"]');
-		const regionCountEl = container.querySelector('[data-l="grid-region-count"]');
+		const metricCountEl = container.querySelector(
+			'[data-l="grid-metric-count"]',
+		);
+		const regionCountEl = container.querySelector(
+			'[data-l="grid-region-count"]',
+		);
 		expect(metricCountEl?.textContent).toBe("81");
 		expect(regionCountEl?.textContent).toBe("15");
 
@@ -255,9 +298,9 @@ describe("ImpulseMapViz", () => {
 		expect(activeOverlay?.textContent).toContain("0.85");
 
 		// Highly active nodes have golden stroke
-		const goldCircles = Array.from(container.querySelectorAll(".nodes circle")).filter(
-			(el) => el.getAttribute("stroke") === "#fbbf24",
-		);
+		const goldCircles = Array.from(
+			container.querySelectorAll(".nodes circle"),
+		).filter((el) => el.getAttribute("stroke") === "#fbbf24");
 		expect(goldCircles.length).toBeGreaterThan(0);
 	});
 });

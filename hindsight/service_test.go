@@ -107,5 +107,18 @@ func TestService(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(resp.StatusCode, ShouldEqual, http.StatusOK)
 		})
+
+		Convey("filterFragmentsByEpoch filters correctly", func() {
+			frags := []TrainedFragmentResponse{
+				{Id: 1, Epoch: 100},
+				{Id: 2, Epoch: 200},
+				{Id: 3, Epoch: 100},
+			}
+			So(filterFragmentsByEpoch(frags, 0), ShouldResemble, frags)
+			filtered := filterFragmentsByEpoch(frags, 100)
+			So(len(filtered), ShouldEqual, 2)
+			So(filtered[0].Id, ShouldEqual, 1)
+			So(filtered[1].Id, ShouldEqual, 3)
+		})
 	})
 }

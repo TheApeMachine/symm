@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -75,6 +76,7 @@ func newTestFillingDesk(t *testing.T) *testFillingDesk {
 	price := broker.NewPrice(t.Context(), nil, nil, nil, normalizer)
 	price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.26)})
 	price.SetReferenceCash(decimal.NewFromFloat64(200))
+	price.SetQuote("BTC/USD", decimal.NewFromFloat64(60000), decimal.NewFromFloat64(60005))
 
 	filling := &testFillingDesk{
 		price:   price,
@@ -182,13 +184,79 @@ func TestTraining(t *testing.T) {
 
 			training.policy.Store(&policy{
 				actions: map[string]string{
-					"R00/R01": "noop",
+					"BTC/USD/R00/R01/R02": "noop",
 				},
 			})
 
 			next := training.Step(join)
 			So(next, ShouldNotBeNil)
 			So(next.Source, ShouldEqual, "training")
+		})
+
+		Convey("Step triggers buy order on Desk when enter policy matches token sequence", func() {
+			training := NewTraining(ctx, filling.price, filling.desk, client)
+			now := time.Now().UTC()
+
+			makeJoin := func(reg uint8, tick int64) *data.Measurement {
+				peer := data.NewMeasurement(100, "BTC/USD", "cvd", now, now)
+				peer.Tick = tick
+				label := "midpoint_log_return"
+				if reg == 4 {
+					label = "flow_aligned_midpoint_return"
+				}
+				if reg == 1 {
+					label = "signed_net_fraction"
+				}
+				m := data.NewMetric(label, 1.0, data.UnitDimensionless, data.TimescaleInstantaneous)
+				m.SetSNM(0.95)
+				peer.Write(m)
+				peer.Finalize()
+
+				j := data.NewMeasurement(100, "BTC/USD", "runtime:join", now, now)
+				j.Tick = tick
+				j.Peers(peer)
+				j.Finalize()
+				return j
+			}
+
+			training.policy.Store(&policy{
+				actions: map[string]string{
+					"BTC/USD/R02/R04/R01/R05": "enter",
+				},
+			})
+
+			// Step 1: Region 2
+			m1 := training.Step(makeJoin(2, 1))
+			So(m1, ShouldNotBeNil)
+			So(filling.desk.Holds("BTC/USD"), ShouldBeFalse)
+
+			gramEntry := data.Pull(m1.Meta("sequitur_grammar"))
+			So(gramEntry, ShouldNotBeNil)
+			So(gramEntry.Value, ShouldNotBeBlank)
+
+			var export GrammarExport
+			So(json.Unmarshal([]byte(gramEntry.Value), &export), ShouldBeNil)
+			So(export.Symbol, ShouldEqual, "BTC/USD")
+			So(export.Start, ShouldResemble, []string{"R02"})
+
+			// Step 2: Region 4
+			m2 := training.Step(makeJoin(4, 2))
+			So(m2, ShouldNotBeNil)
+			So(filling.desk.Holds("BTC/USD"), ShouldBeFalse)
+
+			// Step 3: Region 1 -> matches R02/R04/R01!
+			m3 := training.Step(makeJoin(1, 3))
+			So(m3, ShouldNotBeNil)
+
+			actEntry := data.Pull(m3.Meta("decision_action"))
+			So(actEntry, ShouldNotBeNil)
+			So(actEntry.Value, ShouldEqual, "enter")
+
+			// Desk should now hold BTC/USD
+			So(filling.desk.Holds("BTC/USD"), ShouldBeTrue)
+			So(len(filling.writes), ShouldEqual, 1)
+			orderType := <-filling.writes
+			So(orderType, ShouldEqual, "buy")
 		})
 	})
 }

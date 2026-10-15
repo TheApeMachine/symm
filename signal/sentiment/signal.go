@@ -99,10 +99,7 @@ func median(values []float64) float64 {
 	return (sorted[mid-1] + sorted[mid]) / 2
 }
 
-type Signal struct {
-	*runtime.System
-	mu               sync.Mutex
-	members          map[string]*memberState
+type focalState struct {
 	breadthEstimator causalEstimator
 	medianEstimator  causalEstimator
 	hasPrevBreadth   bool
@@ -111,9 +108,17 @@ type Signal struct {
 	historyDistances []float64
 }
 
+type Signal struct {
+	*runtime.System
+	mu      sync.Mutex
+	members map[string]*memberState
+	focals  map[string]*focalState
+}
+
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		members: make(map[string]*memberState),
+		focals:  make(map[string]*focalState),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "sentiment", signal)
@@ -305,19 +310,25 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	output["same_direction_peer_count"] = sameDirPeer
 	output["opposite_direction_peer_count"] = oppDirPeer
 
-	_, _, _, hasBZ, bZScore := signal.breadthEstimator.Step(breadth)
-
-	if signal.hasPrevBreadth {
-		output["breadth_velocity"] = breadth - signal.prevBreadth
+	focal, found := signal.focals[symbol]
+	if !found {
+		focal = &focalState{}
+		signal.focals[symbol] = focal
 	}
 
-	signal.prevBreadth = breadth
-	signal.hasPrevBreadth = true
+	_, _, _, hasBZ, bZScore := focal.breadthEstimator.Step(breadth)
 
-	_, _, _, hasMZ, mZScore := signal.medianEstimator.Step(medRet)
+	if focal.hasPrevBreadth {
+		output["breadth_velocity"] = breadth - focal.prevBreadth
+	}
+
+	focal.prevBreadth = breadth
+	focal.hasPrevBreadth = true
+
+	_, _, _, hasMZ, mZScore := focal.medianEstimator.Step(medRet)
 
 	if hasBZ && hasMZ {
-		signal.historyPath(output, [2]float64{bZScore, mZScore})
+		focal.historyPath(output, [2]float64{bZScore, mZScore})
 	}
 
 	return emit(time.Unix(0, int64(fromNano)).UTC())
@@ -328,11 +339,11 @@ historyPath scores how far this cut's (breadth, median-return) z-score point
 lies from the nearest retained one, and that distance's rank among past
 nearest distances.
 */
-func (signal *Signal) historyPath(out map[string]float64, target [2]float64) {
-	if len(signal.historyPoints) > 0 {
+func (focal *focalState) historyPath(out map[string]float64, target [2]float64) {
+	if len(focal.historyPoints) > 0 {
 		minDist := math.Inf(1)
 
-		for _, point := range signal.historyPoints {
+		for _, point := range focal.historyPoints {
 			dx := target[0] - point[0]
 			dy := target[1] - point[1]
 			minDist = math.Min(minDist, math.Sqrt(dx*dx+dy*dy))
@@ -340,28 +351,28 @@ func (signal *Signal) historyPath(out map[string]float64, target [2]float64) {
 
 		out["historical_path_distance"] = minDist
 
-		if len(signal.historyDistances) > 0 {
+		if len(focal.historyDistances) > 0 {
 			below := 0
 
-			for _, past := range signal.historyDistances {
+			for _, past := range focal.historyDistances {
 				if past <= minDist {
 					below++
 				}
 			}
 
-			out["historical_path_percentile"] = float64(below) / float64(len(signal.historyDistances))
+			out["historical_path_percentile"] = float64(below) / float64(len(focal.historyDistances))
 		}
 
-		signal.historyDistances = append(signal.historyDistances, minDist)
+		focal.historyDistances = append(focal.historyDistances, minDist)
 
-		if len(signal.historyDistances) > 256 {
-			signal.historyDistances = signal.historyDistances[len(signal.historyDistances)-256:]
+		if len(focal.historyDistances) > 256 {
+			focal.historyDistances = focal.historyDistances[len(focal.historyDistances)-256:]
 		}
 	}
 
-	signal.historyPoints = append(signal.historyPoints, target)
+	focal.historyPoints = append(focal.historyPoints, target)
 
-	if len(signal.historyPoints) > 256 {
-		signal.historyPoints = signal.historyPoints[len(signal.historyPoints)-256:]
+	if len(focal.historyPoints) > 256 {
+		focal.historyPoints = focal.historyPoints[len(focal.historyPoints)-256:]
 	}
 }

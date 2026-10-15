@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -35,18 +36,17 @@ Excessive entropy indicates random noise, while extreme token concentration indi
 */
 type DynamicsStage struct {
 	*runtime.System
-	ch              chan *data.Measurement
-	violations      []*Violation
-	grid            *nmstore.Grid
-	hasJoinedFrames bool
-	tokens          []string
-	transitions     map[string]map[string]int64
-	tokenCounts     map[string]int64
-	frames          []*FrameData
-	initialPrice    float64
-	lastPrice       float64
-	entropy         float64
-	maxEntropy      float64
+	ch           chan *data.Measurement
+	violations   []*Violation
+	grid         *nmstore.Grid
+	tokens       []string
+	transitions  map[string]map[string]int64
+	tokenCounts  map[string]int64
+	frames       []*FrameData
+	initialPrice float64
+	lastPrice    float64
+	entropy      float64
+	maxEntropy   float64
 }
 
 func NewDynamicsStage(ctx context.Context) *DynamicsStage {
@@ -82,12 +82,8 @@ func (stage *DynamicsStage) Run() error {
 			continue
 		}
 
-		if measurement.Source != "runtime:join" && stage.hasJoinedFrames {
+		if measurement.Source != "runtime:join" {
 			continue
-		}
-
-		if measurement.Source == "runtime:join" {
-			stage.hasJoinedFrames = true
 		}
 
 		if measurement.Error() != nil {
@@ -112,40 +108,27 @@ func (stage *DynamicsStage) Violations() []*Violation {
 }
 
 /*
-recordToken extracts the active state token or dominant metric from the measurement
+recordToken extracts the active state token from the measurement
 and accumulates the sequential transition count from the prior token.
 */
 func (stage *DynamicsStage) recordToken(measurement *data.Measurement) {
-	var currentToken string
+	if len(measurement.Peers()) == 0 {
+		return
+	}
+
+	regions := stage.grid.Observe(measurement)
+
+	if len(regions) == 0 || regions[0].Brightness <= 0 {
+		return
+	}
+
+	currentToken := fmt.Sprintf("R%02d", regions[0].Key)
 	brightness := make([]float64, nmstore.RegionCount)
 
-	if len(measurement.Peers()) > 0 {
-		regions := stage.grid.Observe(measurement)
-
-		if len(regions) > 0 {
-			for _, reg := range regions {
-				if int(reg.Key) < len(brightness) {
-					brightness[reg.Key] = reg.Brightness
-				}
-			}
-
-			if regions[0].Brightness > 0 {
-				currentToken = fmt.Sprintf("R%02d", regions[0].Key)
-			}
+	for _, reg := range regions {
+		if int(reg.Key) < len(brightness) {
+			brightness[reg.Key] = reg.Brightness
 		}
-	}
-
-	if currentToken == "" {
-		for entry := range measurement.Read() {
-			if entry != nil && entry.Metric != nil {
-				currentToken = entry.Metric.Label()
-				break
-			}
-		}
-	}
-
-	if currentToken == "" {
-		return
 	}
 
 	stage.tokens = append(stage.tokens, currentToken)
@@ -166,7 +149,38 @@ func (stage *DynamicsStage) recordToken(measurement *data.Measurement) {
 	if measurement.Source == "runtime:join" {
 		var bidPrice, askPrice, tradePrice float64
 
+		targetSymbol := "BTC/USD"
+		if system.Cfg != nil && system.Cfg.Audit.Symbol != "" {
+			targetSymbol = system.Cfg.Audit.Symbol
+		}
+
+		hasTarget := false
 		for _, peer := range measurement.Peers() {
+			if peer.Label == targetSymbol {
+				hasTarget = true
+				break
+			}
+		}
+
+		if !hasTarget && measurement.Label != "" {
+			for _, peer := range measurement.Peers() {
+				if peer.Label == measurement.Label {
+					targetSymbol = measurement.Label
+					hasTarget = true
+					break
+				}
+			}
+		}
+
+		if !hasTarget && len(measurement.Peers()) > 0 {
+			targetSymbol = measurement.Peers()[0].Label
+		}
+
+		for _, peer := range measurement.Peers() {
+			if peer.Label != targetSymbol {
+				continue
+			}
+
 			for entry := range peer.Read() {
 				if entry == nil || entry.Metric == nil {
 					continue

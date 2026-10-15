@@ -99,10 +99,9 @@ type AddOrderMessage struct {
 func NewAddOrderMessage(token string, req *AddOrderRequest) AddOrderMessage {
 	req.Token = token
 	if req.OrdType == "" {
+		req.OrdType = "market"
 		if req.Price != "" {
 			req.OrdType = "limit"
-		} else {
-			req.OrdType = "market"
 		}
 	}
 	return AddOrderMessage{

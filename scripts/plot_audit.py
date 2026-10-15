@@ -328,7 +328,7 @@ def plot_stage3_redundancy(data, out_dir):
     else:
         top_pairs = redundant_pairs[:12]
         clean_labels = [p.get('pair', 'pair').replace('|', ' : ') for p in top_pairs]
-        corrs = [abs(p.get('correlation', 0.95)) for p in top_pairs]
+        corrs = [abs(float(p.get('correlation', 0.0))) for p in top_pairs]
 
         y_pos = np.arange(len(clean_labels))
         bars = ax.barh(y_pos, corrs, color=COLOR_WARN, height=0.52, edgecolor=COLOR_LINE)
@@ -410,7 +410,7 @@ def plot_stage5_stability(data, out_dir):
     completeness = stage.get('completeness', 0)
     jsd = stage.get('jsd', 0)
     tvd = stage.get('tvd', 0)
-    passed = stage.get('passed', True)
+    passed = stage.get('passed', False)
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6.5))
     fig.subplots_adjust(top=0.80, bottom=0.12, left=0.08, right=0.96, wspace=0.28)
@@ -449,7 +449,7 @@ def plot_stage6_dynamics(data, out_dir):
     total_tokens = stage.get('total_tokens', 0)
     distinct_tokens = stage.get('distinct_tokens', 0)
     token_counts = stage.get('token_counts', {})
-    passed = stage.get('passed', True)
+    passed = stage.get('passed', False)
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6.5))
     fig.subplots_adjust(top=0.80, bottom=0.12, left=0.08, right=0.96, wspace=0.28)
@@ -495,9 +495,9 @@ def plot_stage7_precursor(data, out_dir):
     excursion_count = stage.get('excursion_count', 0)
     clearance_rate = stage.get('clearance_rate', 0)
     mean_net_return = stage.get('mean_net_return', 0)
-    taker_fee = stage.get('taker_fee', 0.008)
+    taker_fee = stage.get('taker_fee', 0.0)
     excursions = stage.get('excursions', [])
-    passed = stage.get('passed', True)
+    passed = stage.get('passed', False)
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6.5))
     fig.subplots_adjust(top=0.80, bottom=0.12, left=0.08, right=0.96, wspace=0.28)
@@ -544,7 +544,7 @@ def plot_stage8_cognitive(data, out_dir):
     exit_count = stage.get('exit_count', 0)
     abstention_rate = stage.get('abstention_rate', 0)
     mean_confidence = stage.get('mean_confidence', 0)
-    passed = stage.get('passed', True)
+    passed = stage.get('passed', False)
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6.5))
     fig.subplots_adjust(top=0.80, bottom=0.12, left=0.08, right=0.96, wspace=0.28)
@@ -629,16 +629,16 @@ def plot_stage9_truthfulness(data, out_dir):
 
 def plot_summary_dashboard(data, out_dir):
     stages = [
-        ("Stage 0 : Contract", data.get('contract', {}).get('passed', True)),
-        ("Stage 1 : Timing", data.get('timing', {}).get('passed', True)),
-        ("Stage 2 : Vitality", data.get('vitality', {}).get('passed', True)),
-        ("Stage 3 : Redundancy", data.get('redundancy', {}).get('passed', True)),
-        ("Stage 4 : Sympathy", data.get('sympathy', {}).get('passed', True)),
-        ("Stage 5 : Stability", data.get('stability', {}).get('passed', True)),
-        ("Stage 6 : Dynamics", data.get('dynamics', {}).get('passed', True)),
-        ("Stage 7 : Precursor", data.get('precursor', {}).get('passed', True)),
-        ("Stage 8 : Cognitive", data.get('cognitive', {}).get('passed', True)),
-        ("Stage 9 : Truthfulness", data.get('truthfulness', {}).get('passed', True)),
+        ("Stage 0 : Contract", data.get('contract', {}).get('passed', False)),
+        ("Stage 1 : Timing", data.get('timing', {}).get('passed', False)),
+        ("Stage 2 : Vitality", data.get('vitality', {}).get('passed', False)),
+        ("Stage 3 : Redundancy", data.get('redundancy', {}).get('passed', False)),
+        ("Stage 4 : Sympathy", data.get('sympathy', {}).get('passed', False)),
+        ("Stage 5 : Stability", data.get('stability', {}).get('passed', False)),
+        ("Stage 6 : Dynamics", data.get('dynamics', {}).get('passed', False)),
+        ("Stage 7 : Precursor", data.get('precursor', {}).get('passed', False)),
+        ("Stage 8 : Cognitive", data.get('cognitive', {}).get('passed', False)),
+        ("Stage 9 : Truthfulness", data.get('truthfulness', {}).get('passed', False)),
     ]
 
     fig, ax = plt.subplots(figsize=(14, 7.5))
@@ -985,23 +985,23 @@ def animate_excursion_transitions(data, out_dir):
             if ep is None or (item.get('c_price', 0) - item.get('b_price', 0)) > (ep.get('c_price', 0) - ep.get('b_price', 0)):
                 ep = item
 
+    mark_A = annot_A = mark_B = annot_B = mark_C = annot_C = None
+    idx_A = idx_B = idx_C = 0
+
     if ep:
-        s_tick = ep.get('start_tick', 207)
-        b_tick = ep.get('b_tick', 455)
-        c_tick = ep.get('c_tick', 550)
-        b_price = ep.get('b_price', 81978.5)
-        c_price = ep.get('c_price', 82011.4)
-    else:
-        s_tick, b_tick, c_tick = 207, 455, 550
-        b_price, c_price = 81978.5, 82011.4
+        s_tick = ep['start_tick']
+        b_tick = ep['b_tick']
+        c_tick = ep['c_tick']
+        b_price = ep['b_price']
+        c_price = ep['c_price']
 
-    idx_A = min(range(len(ticks)), key=lambda i: abs(ticks[i] - s_tick))
-    idx_B = min(range(len(ticks)), key=lambda i: abs(ticks[i] - b_tick))
-    idx_C = min(range(len(ticks)), key=lambda i: abs(ticks[i] - c_tick))
+        idx_A = min(range(len(ticks)), key=lambda i: abs(ticks[i] - s_tick))
+        idx_B = min(range(len(ticks)), key=lambda i: abs(ticks[i] - b_tick))
+        idx_C = min(range(len(ticks)), key=lambda i: abs(ticks[i] - c_tick))
 
-    y_A = cum_returns[idx_A]
-    y_B = cum_returns[idx_B]
-    y_C = cum_returns[idx_C]
+        y_A = cum_returns[idx_A]
+        y_B = cum_returns[idx_B]
+        y_C = cum_returns[idx_C]
 
     # Setup 3-panel figure: Left = Confluence Bars (15 regions), Right Top = Excursion Trajectory, Right Bottom = Sequitur State
     fig = plt.figure(figsize=(15.5, 8.8))
@@ -1048,35 +1048,54 @@ def animate_excursion_transitions(data, out_dir):
     head_dot, = ax_traj.plot([], [], marker='o', markersize=8, color=COLOR_UP, markeredgecolor=COLOR_F1, markeredgewidth=1.5, zorder=6)
     cursor_traj = ax_traj.axvline(0, color=COLOR_DOWN, linestyle=':', linewidth=1.2, alpha=0.8)
 
-    # Marker A: Precursor Base
-    mark_A, = ax_traj.plot(idx_A, y_A, marker='D', markersize=9, color=COLOR_INFO, markeredgecolor=COLOR_F1, markeredgewidth=1.5, zorder=5)
-    annot_A = ax_traj.annotate(
-        f"[A] PRECURSOR BASE\nTick {ticks[idx_A]} | ${prices[idx_A]:,.1f}",
-        xy=(idx_A, y_A), xytext=(idx_A - 8, y_A - 0.055),
-        fontsize=8.0, fontfamily='monospace', color=COLOR_INFO, fontweight='bold',
-        bbox=dict(boxstyle='round,pad=0.25', facecolor=COLOR_RAISED, edgecolor=COLOR_INFO, alpha=0.9),
-        arrowprops=dict(arrowstyle='->', color=COLOR_INFO, lw=1.0)
-    )
+    if ep:
+        # Marker A: Precursor Base
+        mark_A, = ax_traj.plot(idx_A, y_A, marker='D', markersize=9, color=COLOR_INFO, markeredgecolor=COLOR_F1, markeredgewidth=1.5, zorder=5)
+        annot_A = ax_traj.annotate(
+            f"[A] PRECURSOR BASE\nTick {ticks[idx_A]} | ${prices[idx_A]:,.1f}",
+            xy=(idx_A, y_A), xytext=(idx_A - 8, y_A - 0.055),
+            fontsize=8.0, fontfamily='monospace', color=COLOR_INFO, fontweight='bold',
+            bbox=dict(boxstyle='round,pad=0.25', facecolor=COLOR_RAISED, edgecolor=COLOR_INFO, alpha=0.9),
+            arrowprops=dict(arrowstyle='->', color=COLOR_INFO, lw=1.0)
+        )
 
-    # Marker B: Breakout Ignition & Enter Prediction
-    mark_B, = ax_traj.plot(idx_B, y_B, marker='^', markersize=11, color=COLOR_WARN, markeredgecolor=COLOR_F1, markeredgewidth=1.5, zorder=5)
-    annot_B = ax_traj.annotate(
-        f"[B] IGNITION BREAKOUT\nTick {ticks[idx_B]} | ${b_price:,.1f}\nENTER PREDICT: NOOP (WAIT)\nExp Gain: -0.50% < 0.52% Hurdle",
-        xy=(idx_B, y_B), xytext=(idx_B - 14, y_B + 0.065),
-        fontsize=8.0, fontfamily='monospace', color=COLOR_WARN, fontweight='bold',
-        bbox=dict(boxstyle='round,pad=0.3', facecolor=COLOR_RAISED, edgecolor=COLOR_WARN, alpha=0.95),
-        arrowprops=dict(arrowstyle='->', color=COLOR_WARN, lw=1.2)
-    )
+        # Marker B: Ignition Anchor & Cognitive Entry Evaluation
+        mark_B, = ax_traj.plot(idx_B, y_B, marker='^', markersize=11, color=COLOR_WARN, markeredgecolor=COLOR_F1, markeredgewidth=1.5, zorder=5)
+        if phases:
+            b_phase = phases[min(idx_B, len(phases) - 1)]
+            b_action = b_phase.get('action', 'WAIT').upper()
+            b_conf = b_phase.get('confidence', 0.0)
+            b_cog_str = f"COGNITIVE: {b_action} (conf: {b_conf:.2f})"
+        else:
+            b_cog_str = "COGNITIVE: NO DECISIONS"
+        annot_B = ax_traj.annotate(
+            f"[B] IGNITION ANCHOR\nTick {ticks[idx_B]} | ${b_price:,.1f}\n{b_cog_str}",
+            xy=(idx_B, y_B), xytext=(idx_B - 14, y_B + 0.065),
+            fontsize=8.0, fontfamily='monospace', color=COLOR_WARN, fontweight='bold',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor=COLOR_RAISED, edgecolor=COLOR_WARN, alpha=0.95),
+            arrowprops=dict(arrowstyle='->', color=COLOR_WARN, lw=1.2)
+        )
 
-    # Marker C: Excursion Peak & Exit Target
-    mark_C, = ax_traj.plot(idx_C, y_C, marker='o', markersize=10, color=COLOR_UP, markeredgecolor=COLOR_F1, markeredgewidth=1.5, zorder=5)
-    annot_C = ax_traj.annotate(
-        f"[C] EXCURSION PEAK\nTick {ticks[idx_C]} | ${c_price:,.1f}\nEXIT TARGET: PEAK REACHED\nGross: +0.04% | Net: -0.48%",
-        xy=(idx_C, y_C), xytext=(idx_C + 4, y_C + 0.04),
-        fontsize=8.0, fontfamily='monospace', color=COLOR_UP, fontweight='bold',
-        bbox=dict(boxstyle='round,pad=0.3', facecolor=COLOR_RAISED, edgecolor=COLOR_UP, alpha=0.95),
-        arrowprops=dict(arrowstyle='->', color=COLOR_UP, lw=1.2)
-    )
+        # Marker C: Retrace Pivot / Bounce Apex (Friction Clearance Assessment)
+        mark_C, = ax_traj.plot(idx_C, y_C, marker='o', markersize=10, color=COLOR_UP, markeredgecolor=COLOR_F1, markeredgewidth=1.5, zorder=5)
+        ep_class = ep.get('class', 'up')
+        c_status = "BOUNCE APEX (FRICTION)" if ep_class == 'up_friction' else "CONFIRMED ZIGZAG PIVOT"
+        gross_move = ((c_price - b_price) / b_price * 100.0) if b_price > 0 else 0.0
+        annot_C = ax_traj.annotate(
+            f"[C] {c_status}\nTick {ticks[idx_C]} | ${c_price:,.1f}\nGross Move: {gross_move:+.2f}%",
+            xy=(idx_C, y_C), xytext=(idx_C + 4, y_C + 0.04),
+            fontsize=8.0, fontfamily='monospace', color=COLOR_UP, fontweight='bold',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor=COLOR_RAISED, edgecolor=COLOR_UP, alpha=0.95),
+            arrowprops=dict(arrowstyle='->', color=COLOR_UP, lw=1.2)
+        )
+    else:
+        ax_traj.text(
+            0.5, 0.5,
+            "No excursion episodes detected in empirical audit\n(run 'symm detect' to identify ZigZag/Friction episodes)",
+            transform=ax_traj.transAxes, ha='center', va='center',
+            fontsize=9.0, fontfamily='monospace', color=COLOR_WARN,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor=COLOR_RAISED, edgecolor=COLOR_WARN, alpha=0.9)
+        )
 
     # Right Bottom: Sequitur Mechanism & State Over Time
     ax_seq_cr = ax_seq.twinx()
@@ -1117,11 +1136,25 @@ def animate_excursion_transitions(data, out_dir):
     fig.text(0.025, 0.945, "SYMM Dynamic Excursion & Sequitur Sequence Memory", fontsize=12, fontweight='bold', fontfamily='sans-serif', color=COLOR_F1, va='center')
     fig.text(0.025, 0.898, "A/B/C excursion trajectory, cognitive predictions, and Sequitur grammar induction.", fontsize=8.5, fontfamily='monospace', color=COLOR_F3, va='center')
 
-    # Status Badge
+    # Status Badge: Derived from empirical audit stages
+    dyn_pass = dynamics_data.get('passed', False)
+    prec_pass = precursor_data.get('passed', False)
+    cog_pass = cognitive_data.get('passed', False)
+
+    if dyn_pass and prec_pass and cog_pass:
+        badge_status = "● PASS"
+        badge_tone = COLOR_UP
+    elif not episodes or not phases:
+        badge_status = "▲ INCOMPLETE"
+        badge_tone = COLOR_WARN
+    else:
+        badge_status = "✖ FAIL"
+        badge_tone = COLOR_DOWN
+
     badge_patch = FancyBboxPatch((0.85, 0.925), 0.12, 0.045, boxstyle="round,pad=0.006,rounding_size=0.008",
-                                 facecolor=COLOR_RAISED, edgecolor=COLOR_UP, linewidth=1.0, transform=fig.transFigure, clip_on=False)
+                                 facecolor=COLOR_RAISED, edgecolor=badge_tone, linewidth=1.0, transform=fig.transFigure, clip_on=False)
     fig.patches.append(badge_patch)
-    fig.text(0.91, 0.947, "● RESONANCE", fontsize=8.5, fontweight='bold', fontfamily='monospace', color=COLOR_UP, ha='center', va='center')
+    fig.text(0.91, 0.947, badge_status, fontsize=8.5, fontweight='bold', fontfamily='monospace', color=badge_tone, ha='center', va='center')
 
     readout_text = fig.text(0.97, 0.895, "", fontsize=8.2, fontfamily='monospace', color=COLOR_F2, ha='right', va='center')
 
@@ -1133,7 +1166,16 @@ def animate_excursion_transitions(data, out_dir):
         cur_rules = rules_hist[frame_idx]
         cur_cr = comp_hist[frame_idx]
 
-        phase_str = "PRECURSOR [A]" if frame_idx < idx_B else ("IGNITION [B]" if frame_idx < idx_C else "PEAK EXIT [C]")
+        if ep:
+            phase_str = "PRECURSOR [A]" if frame_idx < idx_B else ("IGNITION [B]" if frame_idx < idx_C else "APEX REVERSAL [C]")
+            if annot_A is not None:
+                annot_A.set_alpha(1.0 if frame_idx >= idx_A else 0.35)
+            if annot_B is not None:
+                annot_B.set_alpha(1.0 if frame_idx >= idx_B else 0.30)
+            if annot_C is not None:
+                annot_C.set_alpha(1.0 if frame_idx >= idx_C else 0.25)
+        else:
+            phase_str = "TAPE STREAM"
 
         # 1. Update bars
         for r_i, bar in enumerate(bars):
@@ -1174,11 +1216,6 @@ def animate_excursion_transitions(data, out_dir):
         head_dot.set_data([cur_x[-1]], [cum_returns[frame_idx]])
         cursor_traj.set_xdata([frame_idx, frame_idx])
 
-        # Control opacity of A B C Callouts based on playback
-        annot_A.set_alpha(1.0 if frame_idx >= idx_A else 0.35)
-        annot_B.set_alpha(1.0 if frame_idx >= idx_B else 0.30)
-        annot_C.set_alpha(1.0 if frame_idx >= idx_C else 0.25)
-
         # 3. Update Sequitur
         seq_rule_line.set_data(cur_x, rules_hist[:frame_idx + 1])
         seq_comp_line.set_data(cur_x, comp_hist[:frame_idx + 1])
@@ -1200,7 +1237,13 @@ def animate_excursion_transitions(data, out_dir):
 
         # 4. Update Header Readout
         price_str = f"${cur_price:,.1f}" if cur_price > 0 else ""
-        pred_str = "PREDICT: NOOP" if frame_idx >= idx_B else "SETUP"
+        if phases:
+            cur_phase = phases[min(frame_idx, len(phases) - 1)]
+            cur_act = cur_phase.get('action', 'WAIT').upper()
+            cur_conf = cur_phase.get('confidence', 0.0)
+            pred_str = f"PREDICT: {cur_act} ({cur_conf:.2f})"
+        else:
+            pred_str = "PREDICT: NONE"
         readout_text.set_text(
             f"STEP {frame_idx+1:02d}/{total_steps}  |  {active_tok}  |  {price_str}  |  {phase_str}  |  {pred_str}  |  {cur_rules} RULES ({cur_cr:.2f}x)"
         )
@@ -1228,12 +1271,16 @@ def animate_excursion_transitions(data, out_dir):
 
     # 3. Save static companion milestone summary sheet with scanlines
     summary_path = os.path.join(out_dir, 'excursion_transitions_summary.png')
-    milestone_idx = min(total_steps - 1, max(idx_C + 5, int(total_steps * 0.45)))
+    milestone_idx = min(total_steps - 1, max(idx_C + 5, int(total_steps * 0.45))) if ep else int(total_steps * 0.5)
     update(milestone_idx)
     # Ensure full opacity for all annotations in summary sheet
-    annot_A.set_alpha(1.0)
-    annot_B.set_alpha(1.0)
-    annot_C.set_alpha(1.0)
+    if ep:
+        if annot_A is not None:
+            annot_A.set_alpha(1.0)
+        if annot_B is not None:
+            annot_B.set_alpha(1.0)
+        if annot_C is not None:
+            annot_C.set_alpha(1.0)
     fig.savefig(summary_path, dpi=180, facecolor=COLOR_BG)
     apply_crt_scanlines(summary_path)
     plt.close(fig)

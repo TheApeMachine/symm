@@ -16,7 +16,9 @@ describe("LearningDashboard", () => {
 		const { container } = render(<LearningDashboard />);
 
 		expect(container.textContent).toContain("Position life-cycle");
-		expect(container.querySelector('[data-l="lifecycle-performance"]')).not.toBeNull();
+		expect(
+			container.querySelector('[data-l="lifecycle-performance"]'),
+		).not.toBeNull();
 	});
 
 	it("renders all learning dashboard navigation tabs", () => {
@@ -71,5 +73,16 @@ describe("LearningDashboard", () => {
 
 		expect(tabAtom.get()).toBe("impulse");
 		expect(container.textContent).toContain("Quiescent · Awaiting impulse");
+	});
+
+	it("switches to sequitur grammar view when tab is selected", () => {
+		const { container, getByText } = render(<LearningDashboard />);
+
+		act(() => {
+			fireEvent.click(getByText("Sequitur grammar"));
+		});
+
+		expect(tabAtom.get()).toBe("sequitur");
+		expect(container.textContent).toContain("Sequitur Grammar");
 	});
 });

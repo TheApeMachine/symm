@@ -18,7 +18,9 @@ export const tokensOf = (measurement?: MeasurementT): string[] => {
 		tokens[idx] ??= [];
 		tokens[idx][part] = `R${String(region).padStart(2, "0")}`;
 	}
-	const fromMetrics = tokens.filter(Boolean).map((parts) => parts.filter(Boolean).join("-"));
+	const fromMetrics = tokens
+		.filter(Boolean)
+		.map((parts) => parts.filter(Boolean).join("-"));
 	if (fromMetrics.length > 0) return fromMetrics;
 
 	// Fallback to provenance metadata token_path if present
@@ -43,10 +45,29 @@ export const keysHash = (keys: string[]): number => {
 };
 
 /*
+depthOf extracts the sequence depth from either numeric metrics or provenance metadata.
+*/
+export const depthOf = (measurement?: MeasurementT): number | undefined => {
+	const fromMetric = metricOf(measurement, "token_depth");
+	if (fromMetric !== undefined) return fromMetric;
+	if (measurement?.provenance) {
+		for (const p of measurement.provenance) {
+			if (p?.name === "token_depth" && p.value) {
+				const val = Number(p.value);
+				if (Number.isFinite(val)) return val;
+			}
+		}
+	}
+	return undefined;
+};
+
+/*
 symbolProgress: the token path of every symbol that currently has a built up sequence
 of region ids, as last sent.
 */
-export const symbolProgress = (state: Record<string, { toArray(): MeasurementT[] }>) => {
+export const symbolProgress = (
+	state: Record<string, { toArray(): MeasurementT[] }>,
+) => {
 	const out: Record<string, SymbolProgress> = {};
 	for (const [symbol, ring] of Object.entries(state)) {
 		const all = ring?.toArray() ?? [];
@@ -54,12 +75,12 @@ export const symbolProgress = (state: Record<string, { toArray(): MeasurementT[]
 		const last = all[all.length - 1];
 
 		// If the latest measurement explicitly indicates depth 0, no sequence is built up.
-		const latestDepth = metricOf(last, "token_depth");
+		const latestDepth = depthOf(last);
 		if (latestDepth !== undefined && latestDepth <= 0) continue;
 
 		const withTokens =
 			[...all].reverse().find((m) => {
-				const depth = metricOf(m, "token_depth");
+				const depth = depthOf(m);
 				return depth !== undefined && depth > 0;
 			}) ?? last;
 
@@ -70,7 +91,7 @@ export const symbolProgress = (state: Record<string, { toArray(): MeasurementT[]
 		out[symbol] = {
 			symbol,
 			path: tokens.join("/"),
-			depth: tokens.length,
+			depth: depthOf(withTokens) ?? tokens.length,
 			tokens,
 			indices,
 			hash,
@@ -86,7 +107,9 @@ reports, with active symbols' live token paths overlaid.
 export const CognitiveTree = () => {
 	const [tree, setTree] = useState<CognitionTreeResponse | null>(null);
 	const [failed, setFailed] = useState(false);
-	const symbols = JSON.parse(useSelector(signals.training, symbolProgress)) as Record<string, SymbolProgress>;
+	const symbols = JSON.parse(
+		useSelector(signals.training, symbolProgress),
+	) as Record<string, SymbolProgress>;
 
 	useEffect(() => {
 		let alive = true;
@@ -116,9 +139,17 @@ export const CognitiveTree = () => {
 			<div className="flex-1 flex flex-col items-center justify-center gap-2 text-(--f3)">
 				<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
 				<span className="text-sm">
-					{!tree ? (failed ? "Cannot reach the tree endpoint" : "Loading stored paths…") : "No stored token paths yet"}
+					{!tree
+						? failed
+							? "Cannot reach the tree endpoint"
+							: "Loading stored paths…"
+						: "No stored token paths yet"}
 				</span>
-				{tree && <span className="text-[10px] text-(--f4)">run detect and Train to store paths</span>}
+				{tree && (
+					<span className="text-[10px] text-(--f4)">
+						run detect and Train to store paths
+					</span>
+				)}
 			</div>
 		);
 	}
@@ -127,7 +158,10 @@ export const CognitiveTree = () => {
 	const treeHash = keysHash(keys);
 	const resolved: Record<string, SymbolProgress> = {};
 	for (const [symbol, raw] of Object.entries(symbols)) {
-		const { indices, hash, ...progress } = raw as SymbolProgress & { indices: number[]; hash?: number };
+		const { indices, hash, ...progress } = raw as SymbolProgress & {
+			indices: number[];
+			hash?: number;
+		};
 		// Indices only mean something against the key list Step matched on.
 		const matched =
 			hash === treeHash
@@ -136,5 +170,12 @@ export const CognitiveTree = () => {
 		resolved[symbol] = { ...progress, matched };
 	}
 
-	return <RadixTreeViz keys={keys} data={tree.root} symbols={resolved} feasible={tree.feasible ?? []} />;
+	return (
+		<RadixTreeViz
+			keys={keys}
+			data={tree.root}
+			symbols={resolved}
+			feasible={tree.feasible ?? []}
+		/>
+	);
 };

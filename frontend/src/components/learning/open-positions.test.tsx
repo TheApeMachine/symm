@@ -38,7 +38,16 @@ describe("OpenPositions", () => {
 		signals.training.setState(() => ({ "RLC/USD": ring }));
 		const view = render(<OpenPositions />);
 		act(() => {
-			ring.add(measurement({ position_open: 1, position_entry: 1, position_bid: 1.1, position_pnl_pct: 0.05, position_exit_room: 4, position_held_s: 75 }));
+			ring.add(
+				measurement({
+					position_open: 1,
+					position_entry: 1,
+					position_bid: 1.1,
+					position_pnl_pct: 0.05,
+					position_exit_room: 4,
+					position_held_s: 75,
+				}),
+			);
 			signals.training.setState((s) => ({ ...s }));
 		});
 		expect(view.getByText("RLC/USD")).toBeTruthy();

@@ -46,7 +46,7 @@ func NewMarket() *Market {
 	// per side, not the number of individual orders. It stays in lockstep
 	// with cmd/cfg/config.yml (market.l3_depth) so the execution reducer can
 	// read the authoritative subscription depth without guessing.
-	viper.SetDefault("market.l3_depth", 10)
+	viper.SetDefault("market.l3_depth", 100)
 
 	return &Market{
 		Model:         viper.GetString("market.model"),

@@ -65,37 +65,6 @@ func (pm *PairMoment) Correlation() (float64, bool) {
 	return correlation, true
 }
 
-/*
-isTrivialPair returns true for metric pairs that are collinear by definition
-or track identical underlying asset prices (such as ask and bid levels).
-*/
-func isTrivialPair(firstMetric, secondMetric string) bool {
-	if (strings.Contains(firstMetric, "best_ask_price") && strings.Contains(secondMetric, "best_bid_price")) ||
-		(strings.Contains(firstMetric, "best_bid_price") && strings.Contains(secondMetric, "best_ask_price")) {
-		return true
-	}
-
-	if (strings.Contains(firstMetric, "friction_hurdle") && strings.Contains(secondMetric, "relative_spread")) ||
-		(strings.Contains(firstMetric, "relative_spread") && strings.Contains(secondMetric, "friction_hurdle")) {
-		return true
-	}
-
-	if strings.Contains(firstMetric, "concentration") && strings.Contains(secondMetric, "entropy") {
-		if (strings.Contains(firstMetric, "bid") && strings.Contains(secondMetric, "bid")) ||
-			(strings.Contains(firstMetric, "ask") && strings.Contains(secondMetric, "ask")) {
-			return true
-		}
-	}
-
-	if strings.Contains(firstMetric, "entropy") && strings.Contains(secondMetric, "concentration") {
-		if (strings.Contains(firstMetric, "bid") && strings.Contains(secondMetric, "bid")) ||
-			(strings.Contains(firstMetric, "ask") && strings.Contains(secondMetric, "ask")) {
-			return true
-		}
-	}
-
-	return false
-}
 
 /*
 RedundancyStage audits feature space orthogonality to identify collinear metric pairs.
@@ -139,7 +108,7 @@ func (stage *RedundancyStage) Run() error {
 			continue
 		}
 
-		if measurement.Source == "runtime:join" || measurement.Source == "detector" || measurement.Source == "policy" {
+		if measurement.Source == "detector" || measurement.Source == "policy" {
 			continue
 		}
 
@@ -162,26 +131,46 @@ func (stage *RedundancyStage) Run() error {
 }
 
 /*
-auditMetricPairs extracts all metric values from the measurement and updates
-online pairwise sufficient statistics.
+auditMetricPairs extracts all metric values from the measurement (or its peers if runtime:join)
+and updates online pairwise sufficient statistics.
 */
 func (stage *RedundancyStage) auditMetricPairs(measurement *data.Measurement) {
 	values := make(map[string]float64)
 
-	for entry := range measurement.Read() {
-		if entry == nil || entry.Metric == nil {
-			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
-				"entry.metric",
-				"Nil metric entry encountered in measurement",
-				measurement,
-				nil,
-			))
+	if len(measurement.Peers()) > 0 {
+		for _, peer := range measurement.Peers() {
+			if peer == nil {
+				continue
+			}
 
-			continue
+			for entry := range peer.Read() {
+				if entry == nil || entry.Metric == nil {
+					continue
+				}
+
+				key := peer.Source + ":" + entry.Metric.Label()
+				values[key] = entry.Metric.Raw()
+			}
 		}
+	}
 
-		values[entry.Metric.Label()] = entry.Metric.Raw()
+	if len(values) == 0 {
+		for entry := range measurement.Read() {
+			if entry == nil || entry.Metric == nil {
+				stage.violations = append(stage.violations, NewViolation(
+					measurement.Label,
+					"entry.metric",
+					"Nil metric entry encountered in measurement",
+					measurement,
+					nil,
+				))
+
+				continue
+			}
+
+			key := measurement.Source + ":" + entry.Metric.Label()
+			values[key] = entry.Metric.Raw()
+		}
 	}
 
 	metricKeys := make([]string, 0, len(values))
@@ -241,12 +230,6 @@ func (stage *RedundancyStage) auditRedundancy() {
 			pair = parts[1]
 		}
 
-		metricParts := strings.Split(pair, "<->")
-
-		if len(metricParts) == 2 && isTrivialPair(metricParts[0], metricParts[1]) {
-			continue
-		}
-
 		stage.violations = append(stage.violations, NewViolation(
 			label,
 			"redundancy.collinear_pair",
@@ -287,19 +270,6 @@ func (stage *RedundancyStage) Data() any {
 		correlation, scorable := moment.Correlation()
 
 		if !scorable || math.Abs(correlation) < 0.95 {
-			continue
-		}
-
-		parts := strings.Split(pairKey, "|")
-		pair := pairKey
-
-		if len(parts) >= 2 {
-			pair = parts[1]
-		}
-
-		metricParts := strings.Split(pair, "<->")
-
-		if len(metricParts) == 2 && isTrivialPair(metricParts[0], metricParts[1]) {
 			continue
 		}
 

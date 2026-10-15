@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"slices"
 	"strings"
 
@@ -114,7 +115,7 @@ func (stage *SympathyStage) recordMeasurement(measurement *data.Measurement) {
 			continue
 		}
 
-		streamKey := measurement.Source + "|" + entry.Metric.Label()
+		streamKey := measurement.Label + ":" + measurement.Source + ":" + entry.Metric.Label()
 		stage.streams[streamKey] = append(stage.streams[streamKey], temporal.Price{
 			At:    venueTime,
 			Value: entry.Metric.Raw(),
@@ -124,25 +125,51 @@ func (stage *SympathyStage) recordMeasurement(measurement *data.Measurement) {
 
 /*
 buildReturnPath constructs strictly advancing continuous-time intervals and increments,
-handling non-positive metrics and identical venue timestamps safely.
+handling non-positive metrics and identical venue timestamps honestly without faking timestamps.
 */
 func buildReturnPath(prices []temporal.Price) (temporal.ReturnPath, bool) {
 	if len(prices) < 2 {
 		return temporal.ReturnPath{}, false
 	}
 
-	returns := make([]temporal.LogReturn, 0, len(prices)-1)
-	var energy float64
-	lastAt := prices[0].At
-	prevVal := prices[0].Value
+	sortedPrices := make([]temporal.Price, len(prices))
+	copy(sortedPrices, prices)
 
-	for idx := 1; idx < len(prices); idx++ {
-		curr := prices[idx]
-		venueTime := curr.At
-
-		if venueTime <= lastAt {
-			venueTime = lastAt + 1
+	slices.SortStableFunc(sortedPrices, func(first, second temporal.Price) int {
+		if first.At < second.At {
+			return -1
 		}
+
+		if first.At > second.At {
+			return 1
+		}
+
+		return 0
+	})
+
+	deduped := make([]temporal.Price, 0, len(sortedPrices))
+
+	for _, pricePoint := range sortedPrices {
+		if len(deduped) > 0 && deduped[len(deduped)-1].At == pricePoint.At {
+			deduped[len(deduped)-1].Value = pricePoint.Value
+			continue
+		}
+
+		deduped = append(deduped, pricePoint)
+	}
+
+	if len(deduped) < 2 {
+		return temporal.ReturnPath{}, false
+	}
+
+	returns := make([]temporal.LogReturn, 0, len(deduped)-1)
+	var energy float64
+	lastAt := deduped[0].At
+	prevVal := deduped[0].Value
+
+	for idx := 1; idx < len(deduped); idx++ {
+		curr := deduped[idx]
+		venueTime := curr.At
 
 		var increment float64
 
@@ -234,7 +261,14 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 			// Standardized Hayashi-Yoshida concordance: Score / sqrt(Support) scales into [-1, 1]
 			// by Cauchy-Schwarz inequality.
 			// When |concordance| >= 0.95 (VIF > 10) and Score exceeds the significance bound,
-			// the two asynchronous streams are collinear clones.
+			// the two asynchronous streams are candidates for collinear redundancy.
+			// We test statistical significance against a shuffled null using system.Cfg.Audit.Permutations.
+			permutations := system.Cfg.Audit.Permutations
+
+			if permutations <= 0 {
+				permutations = 50
+			}
+
 			significance := system.Cfg.Audit.Significance
 
 			if significance <= 0 || significance >= 1 {
@@ -245,15 +279,83 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 			concordance := estimate.Score / math.Sqrt(estimate.Support)
 
 			if estimate.ScoreDefined && estimate.Support > 0 {
-				isRedundant := math.Abs(concordance) >= 0.95 && math.Abs(estimate.Score) >= bound
+				pValue := 1.0
+
+				if len(rightPath.Returns) > 1 {
+					exceedCount := 0
+					shuffledReturns := make([]temporal.LogReturn, len(rightPath.Returns))
+					copy(shuffledReturns, rightPath.Returns)
+					rng := rand.New(rand.NewSource(42 + int64(outerIdx*1000+innerIdx)))
+
+					for iter := 0; iter < permutations; iter++ {
+						rng.Shuffle(len(shuffledReturns), func(i, j int) {
+							shuffledReturns[i].Value, shuffledReturns[j].Value = shuffledReturns[j].Value, shuffledReturns[i].Value
+						})
+
+						for i := range shuffledReturns {
+							if rng.Intn(2) == 1 {
+								shuffledReturns[i].Value = -shuffledReturns[i].Value
+							}
+						}
+
+						nullInput := correlation.EstimateInput{
+							Left:        leftPath.Returns,
+							Right:       shuffledReturns,
+							LeftEnergy:  leftPath.Energy,
+							RightEnergy: rightPath.Energy,
+							Lag:         0,
+						}
+
+						nullEstimate := data.To[correlation.EstimateInput, correlation.LagEstimate](
+							stage.estimator,
+							&nullInput,
+						)
+
+						if nullEstimate.ScoreDefined && nullEstimate.Support > 0 {
+							nullConcordance := nullEstimate.Score / math.Sqrt(nullEstimate.Support)
+
+							if math.Abs(nullConcordance) >= math.Abs(concordance) {
+								exceedCount++
+							}
+						}
+					}
+
+					pValue = float64(1+exceedCount) / float64(permutations+1)
+				}
+
+				partsA := strings.SplitN(keyA, ":", 3)
+				partsB := strings.SplitN(keyB, ":", 3)
+				isCrossAsset := len(partsA) == 3 && len(partsB) == 3 && partsA[0] != partsB[0]
+				isSameMetricStream := isCrossAsset && partsA[2] == partsB[2]
+
+				isRedundant := math.Abs(concordance) >= 0.98 && math.Abs(estimate.Score) >= bound && pValue <= significance
+				sympathyFailed := isSameMetricStream && (concordance <= 0 || pValue > significance)
 
 				stage.estimates = append(stage.estimates, map[string]any{
-					"pair":        pairKey,
-					"concordance": concordance,
-					"score":       estimate.Score,
-					"support":     estimate.Support,
-					"redundant":   isRedundant,
+					"pair":            pairKey,
+					"concordance":     concordance,
+					"score":           estimate.Score,
+					"support":         estimate.Support,
+					"p_value":         pValue,
+					"permutations":    permutations,
+					"redundant":       isRedundant,
+					"is_cross_asset":  isCrossAsset,
+					"sympathy_failed": sympathyFailed,
 				})
+
+				if sympathyFailed && !stage.flaggedPairs[pairKey] {
+					stage.flaggedPairs[pairKey] = true
+					stage.violations = append(stage.violations, NewViolation(
+						"cross_asset",
+						"sympathy.no_concordance",
+						fmt.Sprintf(
+							"Cross-asset pair %s fails sympathy test: concordance = %.4f <= 0 or p-value = %.4f > %.2f vs shuffled null (z-score = %.2f, N=%d)",
+							pairKey, concordance, pValue, significance, estimate.Score, permutations,
+						),
+						nil,
+						nil,
+					))
+				}
 
 				if isRedundant && !stage.flaggedPairs[pairKey] {
 					stage.flaggedPairs[pairKey] = true
@@ -261,8 +363,8 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 						"cross_stream",
 						"sympathy.cross_stream_redundancy",
 						fmt.Sprintf(
-							"Asynchronous stream pair %s shows extreme continuous-time co-movement (concordance = %.4f >= 0.95, z-score = %.2f)",
-							pairKey, concordance, estimate.Score,
+							"Asynchronous stream pair %s shows extreme continuous-time co-movement (concordance = %.4f >= 0.98, z-score = %.2f, p-value = %.4f vs shuffled null, N=%d)",
+							pairKey, concordance, estimate.Score, pValue, permutations,
 						),
 						nil,
 						nil,

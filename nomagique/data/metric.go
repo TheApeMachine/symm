@@ -116,6 +116,11 @@ func (metric *Metric) SNM() float64 {
 	return metric.snm
 }
 
+func (metric *Metric) SetSNM(snm float64) *Metric {
+	metric.snm = snm
+	return metric
+}
+
 func (metric *Metric) Exact() *decimal.Decimal {
 	return metric.exact
 }

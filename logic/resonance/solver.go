@@ -138,11 +138,9 @@ func (solver *Solver) Step(prior *data.Measurement) *data.Measurement {
 
 	midpoint := firstPositive(prior, "midpoint", "last_price", "price", "last")
 
-	var priors []*data.Measurement
+	priors := append([]*data.Measurement{prior}, prior.Peers()...)
 	if prior.Source == "runtime:join" {
 		priors = prior.Peers()
-	} else {
-		priors = append([]*data.Measurement{prior}, prior.Peers()...)
 	}
 
 	var signals [11]*data.Measurement

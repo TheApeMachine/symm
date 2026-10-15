@@ -103,16 +103,16 @@ func init() {
 
 var auditLong = `
 Run a read-only, component-by-component empirical audit of the SYMM sensory and representation pipeline.
-Inspects seven decoupled boundaries without model checkpointing or paper trading:
-  0. Hard Metric Contract Integrity
+Inspects ten decoupled boundaries without model checkpointing or paper trading:
+  0. Hard Metric Contract Integrity (Audit:Contract)
   0.5. Ingestion Clock Timing & Synchronization (Latency, Spikes, Inversions)
   1. Metric Vitality & Redundancy (Variance, Coverage, Collinear Clones)
-  2. Pair Relationships & Sympathy vs. Shuffled Null (Permutation Test)
-  3. Grid Region Stationarity across Disjoint Time Periods (JSD vs tick-shuffled null; ARI reported as NOT_A_TEST)
+  2. Pair Relationships & Sympathy vs. Shuffled Null (Continuous-Time Permutation Test)
+  3. Grid Region Stationarity across Disjoint Time Periods (JSD vs. Tick-Shuffled Null)
   4. Token Compression, Region Excitation & State Transitions (Dominance, Strength & Conditional Entropy)
-  5. Precursor Separation (B/C Token Divergence vs. Background Noise)
-  6. SIMULATED in-memory trie (not the production S3 memory): balanced accuracy vs label-shuffled null
-  V1-V4. Equivalence (NOT_A_TEST), truthfulness vs stored trades, causality replay probe, family sensitivity
+  5. Precursor Friction Clearance Economics (Touch Execution: Entry Ask vs. Exit Bid vs. Taker Fee)
+  6. Cognitive Decisiveness & Action Policy Dynamics (Abstention Rate, Active Paths, Decision Confidence)
+  V1. Truthfulness vs Stored Trades & Volume Conservation (Order Book Non-Crossing & CVD Identities)
 
 Outputs a comprehensive machine-readable JSON report, an executive AUDIT_SUMMARY.md, and visual plots.
 `

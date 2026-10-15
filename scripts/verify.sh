@@ -52,6 +52,17 @@ check_gofmt() {
 	return 0
 }
 
+check_control_flow() {
+	local module
+	for module in "${GO_MODULES[@]}"; do
+		require_path "$module/go.mod" "Go module"
+		if ! go run "$ROOT/tools/controlflow" "$module"; then
+			return 1
+		fi
+	done
+	return 0
+}
+
 go_test_modules() {
 	local args=("$@")
 	local module
@@ -83,6 +94,9 @@ case "$CMD" in
 	fmt)
 		check_gofmt
 		;;
+	flow)
+		check_control_flow
+		;;
 	test)
 		go_test_modules
 		;;
@@ -104,6 +118,9 @@ case "$CMD" in
 		FAILED=()
 		if ! check_gofmt; then
 			FAILED+=("gofmt")
+		fi
+		if ! check_control_flow; then
+			FAILED+=("control_flow")
 		fi
 		if ! go_test_modules; then
 			FAILED+=("go_test")

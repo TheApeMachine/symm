@@ -1,17 +1,17 @@
-import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import { RingBuffer, signals } from "#/collections/app";
+import type { Lifecycle } from "#/lib/lifecycle";
+import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import {
-	PositionHealthGauge,
-	LiveRegionActivationMap,
-	RegionTransitionPathway,
 	ActivePositionHealthCard,
-	TradeRegionScores,
+	LiveRegionActivationMap,
+	PositionHealthGauge,
 	PositionRegionMonitor,
 	REGIONS,
+	RegionTransitionPathway,
+	TradeRegionScores,
 } from "./position-health";
-import type { Lifecycle } from "#/lib/lifecycle";
-import { RingBuffer, signals } from "#/collections/app";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 
 describe("position-health components", () => {
 	const mockLife: Lifecycle = {
@@ -60,7 +60,7 @@ describe("position-health components", () => {
 			<RegionTransitionPathway
 				entryPath="R01/R04/R06"
 				currentPath="R01/R04/R06"
-			/>
+			/>,
 		);
 		expect(markup).toContain("Entry Ignition Pathway");
 		expect(markup).toContain("★ ENTER");
@@ -90,15 +90,11 @@ describe("position-health components", () => {
 				{ name: "region_brightness:R01", raw: 1.42 },
 				{ name: "region_members:R01", raw: 4 },
 			],
-			provenance: [
-				{ name: "token_path", value: "R01/R06" },
-			],
+			provenance: [{ name: "token_path", value: "R01/R06" }],
 		} as unknown as MeasurementT);
 		signals.training.state["ZAMA/USD"] = ring;
 
-		const markup = renderToStaticMarkup(
-			<TradeRegionScores life={mockLife} />,
-		);
+		const markup = renderToStaticMarkup(<TradeRegionScores life={mockLife} />);
 		expect(markup).toContain("R06");
 		expect(markup).toContain("R00");
 		expect(markup).toContain("2.85 σ");

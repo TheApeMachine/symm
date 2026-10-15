@@ -29,10 +29,7 @@ import {
 	useLifecycles,
 } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
-import {
-	ActivePositionHealthCard,
-	TradeRegionScores,
-} from "./position-health";
+import { ActivePositionHealthCard, TradeRegionScores } from "./position-health";
 
 /*
 Confluence region taxonomy mapped to human-readable names and visual color tones.
@@ -892,8 +889,6 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 	);
 };
 
-
-
 /*
 LifecycleView follows every paper position through its life: the match that
 opened it, the desk's sizing inputs, every child order and fill (venue beside
@@ -929,7 +924,9 @@ export const LifecycleView = () => {
 				<div className="flex items-center gap-2 px-2 py-0.5 rounded bg-(--sunken) border border-(--line)">
 					<div className="w-12 h-1.5 rounded-full bg-(--bg) overflow-hidden border border-(--line) hidden sm:block">
 						<div
-							style={{ width: `${Math.min(100, Math.max(0, (perf?.shadow_win_rate ?? 0) * 100))}%` }}
+							style={{
+								width: `${Math.min(100, Math.max(0, (perf?.shadow_win_rate ?? 0) * 100))}%`,
+							}}
 							className="h-full bg-(--info)"
 						/>
 					</div>
@@ -944,7 +941,9 @@ export const LifecycleView = () => {
 				<div className="flex items-center gap-2 px-2 py-0.5 rounded bg-(--sunken) border border-(--line)">
 					<div className="w-12 h-1.5 rounded-full bg-(--bg) overflow-hidden border border-(--line) hidden sm:block">
 						<div
-							style={{ width: `${Math.min(100, Math.max(0, (perf?.venue_win_rate ?? 0) * 100))}%` }}
+							style={{
+								width: `${Math.min(100, Math.max(0, (perf?.venue_win_rate ?? 0) * 100))}%`,
+							}}
 							className="h-full bg-(--up)"
 						/>
 					</div>
@@ -1010,7 +1009,12 @@ export const LifecycleView = () => {
 											events
 										</span>
 										{pnl !== undefined ? (
-											<span className={cn("font-bold px-1 rounded text-[9px]", tone(pnl))}>
+											<span
+												className={cn(
+													"font-bold px-1 rounded text-[9px]",
+													tone(pnl),
+												)}
+											>
 												{signedMoney(pnl)}
 											</span>
 										) : null}

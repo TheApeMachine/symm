@@ -126,10 +126,15 @@ token sequence itself (region keys), how strong the current token is against
 the tokenizer threshold, and for every prefix length how many stored paths
 still match and which actions those agree on.
 */
-func inspectMatch(current *policy, tokens []string, metrics map[string]float64) {
+func inspectMatch(current *policy, tokens []string, metrics map[string]float64, symbol ...string) {
 	metrics["token_depth"] = float64(len(tokens))
 	metrics["stored_paths"] = float64(len(current.keys))
 	metrics["stored_paths_hash"] = float64(keysHash(current.keys))
+
+	symPrefix := ""
+	if len(symbol) > 0 && symbol[0] != "" && len(current.keys) > 0 && strings.HasPrefix(current.keys[0], symbol[0]+"/") {
+		symPrefix = symbol[0] + "/"
+	}
 
 	for idx, token := range tokens {
 		if idx >= data.TrainingPathSlots {
@@ -148,7 +153,7 @@ func inspectMatch(current *policy, tokens []string, metrics map[string]float64) 
 	}
 
 	for depth := 1; depth <= min(len(tokens), data.TrainingPathSlots); depth++ {
-		prefix := strings.Join(tokens[:depth], "/") + "/"
+		prefix := symPrefix + strings.Join(tokens[:depth], "/") + "/"
 		start, _ := slices.BinarySearch(current.keys, prefix)
 		var total, enter, exit, noop float64
 
@@ -181,7 +186,7 @@ func inspectMatch(current *policy, tokens []string, metrics map[string]float64) 
 		return
 	}
 
-	prefix := strings.Join(tokens, "/") + "/"
+	prefix := symPrefix + strings.Join(tokens, "/") + "/"
 	start, _ := slices.BinarySearch(current.keys, prefix)
 	slot := 0
 

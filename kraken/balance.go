@@ -353,8 +353,8 @@ func NewBalanceFromMeasurement(meas *data.Measurement) (*Balance, error) {
 		key := entry.Key
 		val := entry.Metric.Exact()
 
-		if strings.HasPrefix(key, "balance:") {
-			asset := strings.TrimPrefix(key, "balance:")
+		if after, ok := strings.CutPrefix(key, "balance:"); ok {
+			asset := after
 			row, ok := assetMap[asset]
 
 			if !ok {
@@ -365,8 +365,8 @@ func NewBalanceFromMeasurement(meas *data.Measurement) (*Balance, error) {
 			row.Balance = val
 		}
 
-		if strings.HasPrefix(key, "available:") {
-			asset := strings.TrimPrefix(key, "available:")
+		if after, ok := strings.CutPrefix(key, "available:"); ok {
+			asset := after
 			row, ok := assetMap[asset]
 
 			if !ok {
@@ -377,8 +377,8 @@ func NewBalanceFromMeasurement(meas *data.Measurement) (*Balance, error) {
 			row.Available = val
 		}
 
-		if strings.HasPrefix(key, "reserved:") {
-			asset := strings.TrimPrefix(key, "reserved:")
+		if after, ok := strings.CutPrefix(key, "reserved:"); ok {
+			asset := after
 			row, ok := assetMap[asset]
 
 			if !ok {

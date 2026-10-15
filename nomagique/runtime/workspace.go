@@ -209,11 +209,8 @@ type stageHandler struct {
 func (sh *stageHandler) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
 		slot := seq & sh.workspace.mask
-		var prior *data.Measurement
-
-		if sh.stageIdx == 0 {
-			prior = sh.workspace.buffer[slot]
-		} else {
+		prior := sh.workspace.buffer[slot]
+		if sh.stageIdx > 0 {
 			prior = sh.workspace.joins[sh.stageIdx-1][slot]
 		}
 

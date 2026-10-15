@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -310,6 +311,11 @@ var collectCmd = &cobra.Command{
 					switch channel {
 					case "level3":
 						if err := handleLevel3(buf, epoch, book, storeTee, name); err != nil {
+							if strings.Contains(err.Error(), "awaiting snapshot") || strings.Contains(err.Error(), "checksum mismatch") {
+								errnie.Warn(fmt.Sprintf("[collect] %s level3 book update diverged: %s", name, err))
+								continue
+							}
+
 							halt(err)
 							return
 						}

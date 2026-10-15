@@ -203,6 +203,56 @@ func (engine *Engine) resolveTargetEpoch(symbol string) (int64, error) {
 }
 
 /*
+resolveSymbols discovers all active symbols with recorded signals in targetEpoch.
+If system.Cfg.Audit.Symbol is explicitly configured, it is prioritized.
+*/
+func (engine *Engine) resolveSymbols(targetEpoch int64, defaultSymbol string) []string {
+	if system.Cfg.Audit.Symbol != "" {
+		return []string{system.Cfg.Audit.Symbol}
+	}
+
+	seen := make(map[string]bool)
+	symbols := make([]string, 0)
+
+	for _, key := range engine.store.ListKeys(string(types.SignalSources[0]) + "/") {
+		parts := strings.Split(key, "/")
+
+		if len(parts) < 3 {
+			continue
+		}
+
+		epochIdx := -1
+		var epoch int64
+		for i := 1; i < len(parts); i++ {
+			parsed, err := strconv.ParseInt(parts[i], 10, 64)
+			if err == nil && parsed > 0 {
+				epochIdx = i
+				epoch = parsed
+				break
+			}
+		}
+
+		if epochIdx < 2 || epoch != targetEpoch {
+			continue
+		}
+
+		sym := strings.Join(parts[1:epochIdx], "/")
+
+		if !seen[sym] {
+			seen[sym] = true
+			symbols = append(symbols, sym)
+		}
+	}
+
+	if len(symbols) == 0 {
+		return []string{defaultSymbol}
+	}
+
+	slices.Sort(symbols)
+	return symbols
+}
+
+/*
 Run executes the complete 6-stage health audit and generates machine-readable
 and visual outputs.
 */
@@ -228,7 +278,8 @@ func (engine *Engine) Run() error {
 			return errnie.Error(err)
 		}
 
-		errnie.Info(fmt.Sprintf("[audit:engine] auditing isolated epoch %d for %s", targetEpoch, symbol))
+		symbols := engine.resolveSymbols(targetEpoch, symbol)
+		errnie.Info(fmt.Sprintf("[audit:engine] auditing isolated epoch %d for symbols: %v", targetEpoch, symbols))
 
 		var signalStages []AuditorStage
 		var precursorStages []AuditorStage
@@ -250,8 +301,13 @@ func (engine *Engine) Run() error {
 
 		var signalPrefixes []string
 
-		for _, source := range types.SignalSources {
-			signalPrefixes = append(signalPrefixes, fmt.Sprintf("%s/%s/%d", source, symbol, targetEpoch))
+		for _, sym := range symbols {
+			for _, source := range types.SignalSources {
+				signalPrefixes = append(signalPrefixes, fmt.Sprintf("%s/%s/%019d", source, sym, targetEpoch))
+				if fmt.Sprintf("%d", targetEpoch) != fmt.Sprintf("%019d", targetEpoch) {
+					signalPrefixes = append(signalPrefixes, fmt.Sprintf("%s/%s/%d", source, sym, targetEpoch))
+				}
+			}
 		}
 
 		var currentTick int64 = -1
@@ -272,6 +328,10 @@ func (engine *Engine) Run() error {
 			join = join.Write()
 
 			for _, stage := range signalStages {
+				stage.Channel() <- join
+			}
+
+			for _, stage := range precursorStages {
 				stage.Channel() <- join
 			}
 
@@ -307,28 +367,56 @@ func (engine *Engine) Run() error {
 		flushJoin()
 
 		// Stream detector excursions exclusively to PrecursorStage and ContractStage
-		detectorPrefix := fmt.Sprintf("detector/%s/%d", symbol, targetEpoch)
-
-		for measurement := range engine.store.Get(detectorPrefix) {
-			for _, stage := range precursorStages {
-				stage.Channel() <- measurement
+		for _, sym := range symbols {
+			detectorPrefixes := []string{
+				fmt.Sprintf("detector/%s/%019d", sym, targetEpoch),
+			}
+			if fmt.Sprintf("%d", targetEpoch) != fmt.Sprintf("%019d", targetEpoch) {
+				detectorPrefixes = append(detectorPrefixes, fmt.Sprintf("detector/%s/%d", sym, targetEpoch))
 			}
 
-			for _, stage := range contractStages {
-				stage.Channel() <- measurement
+			for measurement := range engine.store.Get(detectorPrefixes...) {
+				if system.Cfg.Audit.Ticks > 0 && currentTick > 0 {
+					if measurement.Tick > currentTick {
+						continue
+					}
+					if endMetric := data.Pull(measurement.Read("end_tick")); endMetric != nil && endMetric.Metric != nil {
+						if int64(endMetric.Metric.Raw()) > currentTick {
+							continue
+						}
+					}
+					if cMetric := data.Pull(measurement.Read("c_tick")); cMetric != nil && cMetric.Metric != nil {
+						if int64(cMetric.Metric.Raw()) > currentTick {
+							continue
+						}
+					}
+				}
+
+				for _, stage := range precursorStages {
+					stage.Channel() <- measurement
+				}
+
+				for _, stage := range contractStages {
+					stage.Channel() <- measurement
+				}
 			}
-		}
 
-		// Stream policy decisions exclusively to CognitiveStage and ContractStage
-		policyPrefix := fmt.Sprintf("policy/%s/%d", symbol, targetEpoch)
-
-		for measurement := range engine.store.Get(policyPrefix) {
-			for _, stage := range cognitiveStages {
-				stage.Channel() <- measurement
+			// Stream policy decisions exclusively to CognitiveStage and ContractStage
+			policyPrefixes := []string{
+				fmt.Sprintf("policy/%s/%019d", sym, targetEpoch),
+			}
+			if fmt.Sprintf("%d", targetEpoch) != fmt.Sprintf("%019d", targetEpoch) {
+				policyPrefixes = append(policyPrefixes, fmt.Sprintf("policy/%s/%d", sym, targetEpoch))
 			}
 
-			for _, stage := range contractStages {
-				stage.Channel() <- measurement
+			for measurement := range engine.store.Get(policyPrefixes...) {
+				for _, stage := range cognitiveStages {
+					stage.Channel() <- measurement
+				}
+
+				for _, stage := range contractStages {
+					stage.Channel() <- measurement
+				}
 			}
 		}
 

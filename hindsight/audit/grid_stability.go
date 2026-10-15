@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
+	"slices"
 	"strings"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -20,15 +23,18 @@ Jensen-Shannon Divergence (JSD) between their regional activation distributions.
 */
 type StabilityStage struct {
 	*runtime.System
-	ch              chan *data.Measurement
-	violations      []*Violation
-	grid            *nmstore.Grid
-	hasJoinedFrames bool
-	activations     []string
-	totalFrames     int64
-	validFrames     int64
-	jsd             float64
-	tvd             float64
+	ch           chan *data.Measurement
+	violations   []*Violation
+	grid         *nmstore.Grid
+	activations  []string
+	totalFrames  int64
+	validFrames  int64
+	jsd          float64
+	tvd          float64
+	nullJSDMean  float64
+	nullJSDP95   float64
+	pValue       float64
+	permutations int
 }
 
 func NewStabilityStage(ctx context.Context) *StabilityStage {
@@ -61,12 +67,8 @@ func (stage *StabilityStage) Run() error {
 			continue
 		}
 
-		if measurement.Source != "runtime:join" && stage.hasJoinedFrames {
+		if measurement.Source != "runtime:join" {
 			continue
-		}
-
-		if measurement.Source == "runtime:join" {
-			stage.hasJoinedFrames = true
 		}
 
 		stage.totalFrames++
@@ -93,33 +95,20 @@ func (stage *StabilityStage) Violations() []*Violation {
 }
 
 /*
-recordFrame logs the dominant metric or regional token for the arrival.
-If the measurement has active metric entries, it counts as a valid observed frame.
+recordFrame logs the dominant regional token for the arrival using Grid.Observe.
 */
 func (stage *StabilityStage) recordFrame(measurement *data.Measurement) {
-	token := ""
-
-	if len(measurement.Peers()) > 0 {
-		regions := stage.grid.Observe(measurement)
-
-		if len(regions) > 0 && regions[0].Brightness > 0 {
-			token = fmt.Sprintf("R%02d", regions[0].Key)
-		}
-	}
-
-	if token == "" {
-		for entry := range measurement.Read() {
-			if entry != nil && entry.Metric != nil {
-				token = entry.Metric.Label()
-				break
-			}
-		}
-	}
-
-	if token == "" {
+	if len(measurement.Peers()) == 0 {
 		return
 	}
 
+	regions := stage.grid.Observe(measurement)
+
+	if len(regions) == 0 || regions[0].Brightness <= 0 {
+		return
+	}
+
+	token := fmt.Sprintf("R%02d", regions[0].Key)
 	stage.activations = append(stage.activations, token)
 	stage.validFrames++
 }
@@ -164,14 +153,67 @@ func (stage *StabilityStage) auditStationarity() {
 	stage.jsd, stage.tvd = computeJSD(distFirst, distSecond)
 	jsd, tvd := stage.jsd, stage.tvd
 
+	permutations := system.Cfg.Audit.Permutations
+
+	if permutations <= 0 {
+		permutations = 50
+	}
+
+	// Permutation test against tick-shuffled null:
+	// Under the null hypothesis that activations are temporally stationary,
+	// the chronological order of tick activations is exchangeable.
+	exceedCount := 0
+	nullJSDs := make([]float64, 0, permutations)
+	shuffled := make([]string, totalActivations)
+	copy(shuffled, stage.activations)
+	rng := rand.New(rand.NewSource(1337))
+
+	for iter := 0; iter < permutations; iter++ {
+		rng.Shuffle(totalActivations, func(i, j int) {
+			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+		})
+
+		nullFirst := empiricalDistribution(shuffled[:half])
+		nullSecond := empiricalDistribution(shuffled[half:])
+		nullJSD, _ := computeJSD(nullFirst, nullSecond)
+		nullJSDs = append(nullJSDs, nullJSD)
+
+		if nullJSD >= jsd {
+			exceedCount++
+		}
+	}
+
+	var sumNull float64
+
+	for _, v := range nullJSDs {
+		sumNull += v
+	}
+
+	nullMean := sumNull / float64(permutations)
+	slices.Sort(nullJSDs)
+	p95Idx := int(0.95 * float64(permutations))
+
+	if p95Idx >= len(nullJSDs) {
+		p95Idx = len(nullJSDs) - 1
+	}
+
+	nullP95 := nullJSDs[p95Idx]
+	pValue := float64(1+exceedCount) / float64(permutations+1)
+
+	stage.nullJSDMean = nullMean
+	stage.nullJSDP95 = nullP95
+	stage.pValue = pValue
+	stage.permutations = permutations
+
 	// JSD is bounded in [0, 1] bits. A JSD > 0.40 bits indicates a severe,
 	// non-stationary regime shift between the first and second half of the audit window.
-	if jsd > 0.40 {
+	// We verify that the shift is statistically significant against the tick-shuffled null.
+	if jsd > 0.40 && (jsd > nullP95 || pValue <= 0.05) {
 		stage.violations = append(stage.violations, NewViolation(
 			"grid",
 			"grid.non_stationary",
-			fmt.Sprintf("Grid excitation non-stationary: JSD = %.3f bits > 0.40 bound (TVD = %.3f)",
-				jsd, tvd),
+			fmt.Sprintf("Grid excitation non-stationary: JSD = %.3f bits > 0.40 bound (shuffled null mean = %.3f, p95 = %.3f, p-value = %.4f, TVD = %.3f)",
+				jsd, nullMean, nullP95, pValue, tvd),
 			nil,
 			nil,
 		))
@@ -253,12 +295,16 @@ func (stage *StabilityStage) Data() any {
 	}
 
 	return map[string]any{
-		"passed":       len(stage.violations) == 0,
-		"total_frames": stage.totalFrames,
-		"valid_frames": stage.validFrames,
-		"completeness": completeness,
-		"jsd":          stage.jsd,
-		"tvd":          stage.tvd,
+		"passed":        len(stage.violations) == 0,
+		"total_frames":  stage.totalFrames,
+		"valid_frames":  stage.validFrames,
+		"completeness":  completeness,
+		"jsd":           stage.jsd,
+		"tvd":           stage.tvd,
+		"null_jsd_mean": stage.nullJSDMean,
+		"null_jsd_p95":  stage.nullJSDP95,
+		"p_value":       stage.pValue,
+		"permutations":  stage.permutations,
 	}
 }
 

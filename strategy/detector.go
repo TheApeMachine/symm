@@ -121,6 +121,7 @@ type tapePoint struct {
 	exitBid     *decimal.Decimal
 	bidDepthQty *decimal.Decimal
 	posQty      *decimal.Decimal
+	snapshot    *broker.Snapshot
 }
 
 func (detector *Detector) computeBookExecution(
@@ -195,7 +196,7 @@ func (detector *Detector) computeBookExecution(
 			break
 		}
 
-		if remainingGross.Sign() == 0 && accumQty.Sign() > 0 {
+		if accumQty.Sign() > 0 {
 			entryAsk = accumCost.SetScale(decimal.DefaultScale).Div(accumQty)
 			posQty = accumQty
 
@@ -208,11 +209,19 @@ func (detector *Detector) computeBookExecution(
 					posQty = formatted
 				}
 			}
+		} else if len(snapshot.Asks) > 0 && snapshot.Asks[0].Price != nil {
+			entryAsk = snapshot.Asks[0].Price
 		}
 	}
 
-	if posQty != nil && posQty.Sign() > 0 && len(snapshot.Bids) > 0 {
-		remainingQty := posQty.SetScale(decimal.DefaultScale)
+	if len(snapshot.Bids) > 0 {
+		remainingQty := posQty
+		if remainingQty == nil || remainingQty.Sign() <= 0 {
+			if snapshot.Bids[0].Price != nil && snapshot.Bids[0].Price.Sign() > 0 {
+				remainingQty = budget.Div(snapshot.Bids[0].Price)
+			}
+		}
+
 		accumRevenue := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
 		filledQty := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
 
@@ -221,15 +230,17 @@ func (detector *Detector) computeBookExecution(
 				continue
 			}
 
-			if remainingQty.Sign() <= 0 {
+			if remainingQty != nil && remainingQty.Sign() <= 0 {
 				break
 			}
 
-			if lvl.Quantity.Cmp(remainingQty) <= 0 {
+			if remainingQty == nil || lvl.Quantity.Cmp(remainingQty) <= 0 {
 				lvlRevenue := lvl.Price.SetScale(decimal.DefaultScale).Mul(lvl.Quantity)
 				accumRevenue = accumRevenue.Add(lvlRevenue)
 				filledQty = filledQty.Add(lvl.Quantity)
-				remainingQty = remainingQty.Sub(lvl.Quantity)
+				if remainingQty != nil {
+					remainingQty = remainingQty.Sub(lvl.Quantity)
+				}
 				continue
 			}
 
@@ -240,7 +251,7 @@ func (detector *Detector) computeBookExecution(
 			break
 		}
 
-		if remainingQty.Sign() == 0 && filledQty.Sign() > 0 {
+		if filledQty.Sign() > 0 {
 			exitBid = accumRevenue.SetScale(decimal.DefaultScale).Div(filledQty)
 
 			if normalizer := detector.price.Normalizer(); normalizer != nil {
@@ -248,6 +259,8 @@ func (detector *Detector) computeBookExecution(
 					exitBid = formatted
 				}
 			}
+		} else if snapshot.Bids[0].Price != nil {
+			exitBid = snapshot.Bids[0].Price
 		}
 	}
 
@@ -346,36 +359,145 @@ func (tape *tape) observe(point tapePoint) error {
 	return nil
 }
 
-func (tape *tape) safeProfit(lowPoint, candidatePoint tapePoint) float64 {
-	if lowPoint.entryAsk == nil || candidatePoint.exitBid == nil || lowPoint.entryAsk.Sign() <= 0 || candidatePoint.exitBid.Sign() <= 0 {
-		return 0
-	}
-
-	if candidatePoint.exitBid.Cmp(lowPoint.entryAsk) <= 0 {
-		return 0
-	}
-
+// bookRoundTrip sizes a position to the smaller of:
+//  1. What the 20% cash cap (ReferenceCash) can buy on B's ask book,
+//  2. The available ask depth at B (within 2x bestAsk so stub walls like $10 AMI aren't swept),
+//  3. Half of the available bid depth at C (so we exit while buying power remains underneath).
+// It returns the net PnL in quote currency, B's executable entry VWAP, and C's executable exit VWAP.
+func (tape *tape) bookRoundTrip(
+	lowPoint, candidatePoint tapePoint,
+) (netPnl float64, entryVWAP, exitVWAP *decimal.Decimal) {
 	if tape.detector == nil || tape.detector.price == nil {
-		return 0
+		return 0, nil, nil
 	}
 
-	pnl, _, err := tape.detector.price.RoundTrip(tape.symbol, lowPoint.entryAsk, candidatePoint.exitBid)
-
-	if err != nil || pnl == nil || pnl.Sign() <= 0 {
-		return 0
+	budget := tape.detector.price.ReferenceCash()
+	if budget == nil || budget.Sign() <= 0 {
+		return 0, nil, nil
 	}
 
-	netPnl := pnl.Float64()
+	feeRate, _ := tape.detector.price.FeeRate(tape.symbol)
+	maxGross := budget.Float64() / (1.0 + feeRate)
 
-	if candidatePoint.bidDepthQty == nil {
-		return netPnl
+	// If unstamped, fall back to touch/trade prices.
+	if lowPoint.snapshot == nil || candidatePoint.snapshot == nil ||
+		len(lowPoint.snapshot.Asks) == 0 || len(candidatePoint.snapshot.Bids) == 0 {
+		return 0, nil, nil
 	}
 
-	if lowPoint.posQty == nil || candidatePoint.bidDepthQty.Cmp(lowPoint.posQty) <= 0 {
-		return 0
+	bestAskB := 0.0
+	if lowPoint.snapshot.Asks[0].Price != nil {
+		bestAskB = lowPoint.snapshot.Asks[0].Price.Float64()
+	}
+	bestBidC := 0.0
+	if candidatePoint.snapshot.Bids[0].Price != nil {
+		bestBidC = candidatePoint.snapshot.Bids[0].Price.Float64()
+	}
+	if bestAskB <= 0 || bestBidC <= bestAskB {
+		return 0, nil, nil
 	}
 
-	return netPnl * candidatePoint.bidDepthQty.Sub(lowPoint.posQty).Div(candidatePoint.bidDepthQty).Float64()
+	// 1. Walk B's asks up to maxGross (20% cash cap), ignoring absurd stub asks (> 2x bestAskB).
+	askCapQty := 0.0
+	remGross := maxGross
+	for _, lvl := range lowPoint.snapshot.Asks {
+		if lvl.Price == nil || lvl.Quantity == nil {
+			continue
+		}
+		p := lvl.Price.Float64()
+		q := lvl.Quantity.Float64()
+		if p <= 0 || q <= 0 || p > bestAskB*2.0 {
+			break
+		}
+		cost := p * q
+		if cost <= remGross {
+			askCapQty += q
+			remGross -= cost
+			continue
+		}
+		askCapQty += remGross / p
+		remGross = 0
+		break
+	}
+
+	// 2. Sum C's executable bid depth (at prices above B's bestAsk so we never sell at a loss).
+	bidDepthC := 0.0
+	for _, lvl := range candidatePoint.snapshot.Bids {
+		if lvl.Price == nil || lvl.Quantity == nil {
+			continue
+		}
+		p := lvl.Price.Float64()
+		q := lvl.Quantity.Float64()
+		if p <= bestAskB || q <= 0 {
+			break
+		}
+		bidDepthC += q
+	}
+
+	// Size to the book: at most what B's asks offered (capped at 20% cash)
+	// and at most 50% of C's profitable bid depth so we don't nuke the book on exit.
+	qty := min(askCapQty, bidDepthC*0.5)
+	if qty <= 0 {
+		return 0, nil, nil
+	}
+
+	// 3. Walk B's asks for exact qty -> entryCost & entryVWAP.
+	remBuy := qty
+	grossCost := 0.0
+	for _, lvl := range lowPoint.snapshot.Asks {
+		if lvl.Price == nil || lvl.Quantity == nil {
+			continue
+		}
+		p := lvl.Price.Float64()
+		q := min(lvl.Quantity.Float64(), remBuy)
+		grossCost += p * q
+		remBuy -= q
+		if remBuy <= 0 {
+			break
+		}
+	}
+
+	// 4. Walk C's bids for exact qty -> exitProceeds & exitVWAP.
+	remSell := qty
+	grossProceeds := 0.0
+	for _, lvl := range candidatePoint.snapshot.Bids {
+		if lvl.Price == nil || lvl.Quantity == nil {
+			continue
+		}
+		p := lvl.Price.Float64()
+		q := min(lvl.Quantity.Float64(), remSell)
+		grossProceeds += p * q
+		remSell -= q
+		if remSell <= 0 {
+			break
+		}
+	}
+
+	totalEntry := grossCost * (1.0 + feeRate)
+	netExit := grossProceeds * (1.0 - feeRate)
+	pnl := netExit - totalEntry
+	if pnl <= 0 {
+		return 0, nil, nil
+	}
+
+	entryVWAP = decimal.NewFromFloat64(grossCost / qty)
+	exitVWAP = decimal.NewFromFloat64(grossProceeds / qty)
+
+	if normalizer := tape.detector.price.Normalizer(); normalizer != nil {
+		if formatted, normErr := normalizer.FormatPrice(tape.symbol, entryVWAP); normErr == nil && formatted != nil {
+			entryVWAP = formatted
+		}
+		if formatted, normErr := normalizer.FormatPrice(tape.symbol, exitVWAP); normErr == nil && formatted != nil {
+			exitVWAP = formatted
+		}
+	}
+
+	return pnl, entryVWAP, exitVWAP
+}
+
+func (tape *tape) safeProfit(lowPoint, candidatePoint tapePoint) float64 {
+	pnl, _, _ := tape.bookRoundTrip(lowPoint, candidatePoint)
+	return pnl
 }
 
 /*
@@ -440,29 +562,18 @@ func (tape *tape) zigzag(point tapePoint) error {
 			tape.bounce = point
 		}
 
-		if tape.low.ask == nil || point.bid == nil || point.bid.Cmp(tape.low.ask) <= 0 {
+		if candidateProfit <= 0 {
 			return nil
 		}
 
-		pnl, _, err := tape.detector.price.RoundTrip(tape.symbol, tape.low.ask, point.bid)
-
-		if err != nil || pnl == nil || pnl.Sign() <= 0 {
-			return err
-		}
-
-		// The rise from the running low clears friction: the down leg (if
+		// The rise from the running low clears friction and book depth: the down leg (if
 		// any) ends at that low and this trade opens the up leg from it.
 		if tape.leg == legDown {
 			tape.emit(excursionDown, span{b: tape.high, c: tape.low})
 		}
 
 		tape.leg = legUp
-		tape.high = tape.bounce
-
-		if tape.safeProfit(tape.low, point) > tape.safeProfit(tape.low, tape.high) {
-			tape.high = point
-		}
-
+		tape.high = point
 		return nil
 	}
 }
@@ -740,6 +851,7 @@ func (detector *Detector) Step(
 		exitBid:     exitBid,
 		bidDepthQty: bidDepthQty,
 		posQty:      posQty,
+		snapshot:    snapshot,
 	}); err != nil {
 		detector.Error(err)
 		return nil
@@ -829,11 +941,29 @@ func (detector *Detector) Flush(
 	var bPrice, cPrice *decimal.Decimal
 
 	if class == excursionUp {
-		bPrice = excursion.b.entryAsk
-		cPrice = excursion.c.exitBid
-	}
+		if current := detector.tapes[symbol]; current != nil {
+			_, bPrice, cPrice = current.bookRoundTrip(excursion.b, excursion.c)
+		}
+		if bPrice == nil {
+			bPrice = excursion.b.entryAsk
+		}
+		if bPrice == nil && excursion.b.ask != nil {
+			bPrice = excursion.b.ask
+		}
+		if bPrice == nil {
+			bPrice = excursion.b.price
+		}
 
-	if class != excursionUp {
+		if cPrice == nil {
+			cPrice = excursion.c.exitBid
+		}
+		if cPrice == nil && excursion.c.bid != nil {
+			cPrice = excursion.c.bid
+		}
+		if cPrice == nil {
+			cPrice = excursion.c.price
+		}
+	} else {
 		bPrice = excursion.b.price
 		cPrice = excursion.c.price
 	}

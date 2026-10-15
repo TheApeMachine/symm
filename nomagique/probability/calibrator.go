@@ -68,6 +68,10 @@ func (op *Calibrator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				reading.Value = hits / reading.PriorCount
 			}
 
+			if op.retention == nil {
+				op.history = append(op.history, val)
+			}
+
 			if op.retention != nil {
 				candidate := append(slices.Clone(op.history), val)
 				retainedEval := transport.NewEvaluate(op.retention)
@@ -78,15 +82,12 @@ func (op *Calibrator) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 				}
 
 				err := retainedEval.Error()
-
 				if err != nil {
 					op.err = errors.Join(op.err, err)
 					return
 				}
 
 				op.history = retained
-			} else {
-				op.history = append(op.history, val)
 			}
 
 			op.out = reading

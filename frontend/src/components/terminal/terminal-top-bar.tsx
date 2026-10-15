@@ -1,8 +1,13 @@
-import { focusAtom, onlineAtom, tickCountAtom } from "#/collections/app";
+import { useSelector } from "@tanstack/react-store";
+import {
+	focusAtom,
+	onlineAtom,
+	signals,
+	tickCountAtom,
+} from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
 import { Count } from "#/components/count";
-import { AgentSkill } from "#/components/learning/agent-skill";
 import { PaperPerformance } from "#/components/paper-performance";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -12,8 +17,6 @@ import { Icon } from "#/components/ui/icon";
 import { Key } from "#/components/ui/key";
 import { Toolbar } from "#/components/ui/toolbar";
 import { Typography } from "#/components/ui/typography";
-import { useSelector } from "@tanstack/react-store";
-import { useEffect } from "react";
 
 const SymmLogo = () => (
 	<svg
@@ -36,28 +39,58 @@ const SymmLogo = () => (
 );
 
 const TickCounter = () => {
-	useEffect(() => {
-		const ticksub = tickCountAtom.subscribe((state) => {
-			const tickElement = document.querySelector("[data-tick]");
+	const tickCount = useSelector(tickCountAtom, (state) => state);
+	const trainingSignals = useSelector(signals.training, (state) => state);
+	const focusSymbol = useSelector(focusAtom, (state) => state);
 
-			if (!tickElement) {
-				return;
+	let steps: number | null = null;
+	const ring =
+		trainingSignals[focusSymbol] || Object.values(trainingSignals)[0];
+	if (ring && typeof ring.toArray === "function") {
+		const arr = ring.toArray();
+		const last = arr[arr.length - 1];
+		if (last && Array.isArray(last.metrics)) {
+			const stepMetric = last.metrics.find((m) => {
+				if (!m || typeof m !== "object") return false;
+				const metricObj = m as { name?: string; label?: string };
+				return metricObj.name === "steps" || metricObj.label === "steps";
+			});
+			if (stepMetric) {
+				const metricObj = stepMetric as { raw?: number; value?: number };
+				if (typeof metricObj.raw === "number") {
+					steps = metricObj.raw;
+				} else if (typeof metricObj.value === "number") {
+					steps = metricObj.value;
+				}
 			}
+		}
+	}
 
-			tickElement.textContent = state.toLocaleString();
-		});
+	const displayTicks =
+		steps !== null
+			? steps.toLocaleString()
+			: tickCount > 0
+				? tickCount.toLocaleString()
+				: "—";
 
-		return () => ticksub.unsubscribe();
-	}, []);
+	const displayObservations = tickCount > 0 ? tickCount.toLocaleString() : "—";
 
 	return (
 		<Flex.Row align="center" gap={6}>
 			<Flex.Column className="items-end gap-px">
 				<Typography.Label size="s" tone="f4" weight="normal">
+					Observations
+				</Typography.Label>
+				<Typography.Mono size="lg" tone="f1" data-observations="true">
+					{displayObservations}
+				</Typography.Mono>
+			</Flex.Column>
+			<Flex.Column className="items-end gap-px">
+				<Typography.Label size="s" tone="f4" weight="normal">
 					Ticks
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					—
+					{displayTicks}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>
@@ -78,35 +111,6 @@ component drawing two different lines depending on its neighbours.
 const Rule = () => (
 	<Divider orientation="vertical" className="h-4.5 self-center" />
 );
-
-/*
-ResonanceTransportBadge surfaces manifold WebSocket feed health next to the hub websocket
-liveness badge so a dead telemetry transport is never mistaken for a quiet
-predictive coder. Offline here means the resonance/diagnostics channels are down
-or reconnecting — the model may be fine, but no artifacts are arriving.
-
-The label is the transport's name and nothing else: colour carries the state
-(red down, orange connecting, green live), and the detail a reconnect leaves —
-the countdown, the failing channel — belongs in the hover, where reading it is a
-deliberate act rather than a line of chrome that changes width every second.
-*/
-const ResonanceTransportBadge = () => {
-	const status = useSelector(onlineAtom);
-	const live = status === "ONLINE";
-	const connecting = status === "CONNECTING";
-	const state = live ? "live" : connecting ? "connecting" : "offline";
-	const variant = live ? "success" : connecting ? "warning" : "error";
-
-	return (
-		<Badge
-			label="Manifold"
-			variant={variant}
-			dot
-			pulse={live}
-			title={`Manifold WS ${state}`}
-		/>
-	);
-};
 
 export const TerminalTopBar = () => {
 	const online = useSelector(onlineAtom, (state) => state === "ONLINE");
@@ -132,11 +136,9 @@ export const TerminalTopBar = () => {
 					pulse={online}
 					title={online ? "WebSocket live" : "WebSocket offline"}
 				/>
-				<ResonanceTransportBadge />
 			</Toolbar.Group>
 
 			<Rule />
-			<AgentSkill />
 			<Toolbar.Spacer />
 
 			<Toolbar.Group className="gap-3.5">

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 )
@@ -197,10 +196,16 @@ func TestDuckDBSchema(t *testing.T) {
 	t.Logf("mid = %f", mid)
 
 	rows, err := db.Query(`SHOW ALL TABLES`)
+
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer rows.Close()
+
+	if rows.Err() != nil {
+		t.Fatal(rows.Err())
+	}
 
 	cols, _ := rows.Columns()
 	t.Logf("SHOW ALL TABLES columns: %v", cols)
@@ -238,7 +243,7 @@ func TestDuckDBSchema(t *testing.T) {
 		return err
 	}
 
-	for m := range data.Stream(s3Client.GetBytes("")) {
+	for m := range s3Client.Get("") {
 		imported++
 
 		var metricKeys []string

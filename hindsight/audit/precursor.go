@@ -3,11 +3,14 @@ package audit
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"slices"
 	"strings"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -56,19 +59,27 @@ type EpisodeData struct {
 }
 
 /*
-PrecursorStage audits event-centred market excursions and friction clearance economics
-using order book touch execution (Best Ask entry, Best Bid exit) and taker fees.
+PrecursorStage audits event-centred market excursions and precursor token separation.
+It measures whether regional tokens leading into ignition (Mark B) statistically diverge
+from background market noise (outside [start, c]), and whether excursions clear friction.
 */
 type PrecursorStage struct {
 	*runtime.System
 	ch                chan *data.Measurement
 	violations        []*Violation
-	excursions        []*ExcursionRun
-	episodes          []*EpisodeData
-	activeRun         *ExcursionRun
+	grid               *nmstore.Grid
+	tickTokens         map[int64]string
+	excursions         []*ExcursionRun
+	detectorExcursions []*ExcursionRun
+	episodes           []*EpisodeData
+	activeRun          *ExcursionRun
 	discoveredFeeRate float64
 	clearanceRate     float64
 	meanNetReturn     float64
+	jsd               float64
+	nullJSDMean       float64
+	nullJSDP95        float64
+	pValue            float64
 }
 
 func NewPrecursorStage(ctx context.Context) *PrecursorStage {
@@ -76,6 +87,8 @@ func NewPrecursorStage(ctx context.Context) *PrecursorStage {
 		System:     runtime.NewSystem(ctx, "audit:precursor"),
 		ch:         make(chan *data.Measurement, 64),
 		violations: make([]*Violation, 0),
+		grid:       nmstore.NewGrid(ctx),
+		tickTokens: make(map[int64]string),
 		excursions: make([]*ExcursionRun, 0),
 		episodes:   make([]*EpisodeData, 0),
 	}
@@ -111,9 +124,10 @@ func (stage *PrecursorStage) Run() error {
 			))
 		}
 
-		stage.trackExcursions(measurement)
+		stage.recordMeasurement(measurement)
 	}
 
+	stage.auditPrecursorSeparation()
 	stage.auditFrictionClearance()
 	return nil
 }
@@ -122,22 +136,33 @@ func (stage *PrecursorStage) Violations() []*Violation {
 	return stage.violations
 }
 
-/*
-trackExcursions processes empirical excursions emitted by strategy.Detector
-or evaluates touch execution on explicit test excursion runs.
-*/
-func (stage *PrecursorStage) trackExcursions(measurement *data.Measurement) {
-	if measurement.Source == "runtime:join" {
-		return
-	}
-
+func (stage *PrecursorStage) recordMeasurement(measurement *data.Measurement) {
 	for entry := range measurement.Read("fee_rate") {
 		if entry != nil && entry.Metric != nil && entry.Metric.Raw() > 0 {
 			stage.discoveredFeeRate = entry.Metric.Raw()
 		}
 	}
 
-	// 1. Production Path: Excursions detected by strategy.Detector
+	// 1. Sensory join: track regional token per tick
+	if measurement.Source == "runtime:join" {
+		for _, peer := range measurement.Peers() {
+			for entry := range peer.Read("fee_rate") {
+				if entry != nil && entry.Metric != nil && entry.Metric.Raw() > 0 {
+					stage.discoveredFeeRate = entry.Metric.Raw()
+				}
+			}
+		}
+
+		if len(measurement.Peers()) > 0 {
+			regions := stage.grid.Observe(measurement)
+			if len(regions) > 0 && regions[0].Brightness > 0 {
+				stage.tickTokens[measurement.Tick] = fmt.Sprintf("R%02d", regions[0].Key)
+			}
+		}
+		return
+	}
+
+	// 2. Production Path: Excursions detected by strategy.Detector
 	if measurement.Source == "detector" {
 		typeEntry := data.Pull(measurement.Meta("type"))
 
@@ -151,12 +176,8 @@ func (stage *PrecursorStage) trackExcursions(measurement *data.Measurement) {
 			return
 		}
 
-		var bPrice float64
-		var cPrice float64
-		var bTick int64
-		var cTick int64
-		var startTick int64
-		var endTick int64
+		var bPrice, cPrice float64
+		var bTick, cTick, startTick, endTick int64
 
 		for entry := range measurement.Read() {
 			if entry == nil || entry.Metric == nil {
@@ -187,12 +208,14 @@ func (stage *PrecursorStage) trackExcursions(measurement *data.Measurement) {
 			}
 
 			if class == "up" {
-				stage.excursions = append(stage.excursions, &ExcursionRun{
+				run := &ExcursionRun{
 					Symbol:   measurement.Label,
 					EntryAsk: bPrice,
 					ExitBid:  cPrice,
 					Ticks:    ticks,
-				})
+				}
+				stage.detectorExcursions = append(stage.detectorExcursions, run)
+				stage.excursions = append(stage.excursions, run)
 			}
 
 			stage.episodes = append(stage.episodes, &EpisodeData{
@@ -210,14 +233,8 @@ func (stage *PrecursorStage) trackExcursions(measurement *data.Measurement) {
 		return
 	}
 
-	// 2. Test Path: Order book touch execution in test runs
-	if measurement.Source != "test" {
-		return
-	}
-
-	var askPrice float64
-	var bidPrice float64
-	var frictionHurdle float64
+	// 3. Trade / Quote touch execution (evaluated on real and test excursion streams)
+	var askPrice, bidPrice, frictionHurdle float64
 
 	for entry := range measurement.Read() {
 		if entry == nil || entry.Metric == nil {
@@ -268,11 +285,122 @@ func (stage *PrecursorStage) trackExcursions(measurement *data.Measurement) {
 }
 
 /*
+auditPrecursorSeparation tests whether token activations in the precursor window leading into Mark B
+diverge from background noise outside excursions, tested against a label-shuffled null.
+*/
+func (stage *PrecursorStage) auditPrecursorSeparation() {
+	if len(stage.episodes) == 0 || len(stage.tickTokens) == 0 {
+		return
+	}
+
+	var precursorTokens []string
+	var backgroundTokens []string
+
+	for tick, token := range stage.tickTokens {
+		isPrecursor := false
+		isExcursion := false
+
+		for _, ep := range stage.episodes {
+			if tick >= ep.StartTick && tick <= ep.BTick {
+				isPrecursor = true
+				break
+			}
+			if tick >= ep.BTick && tick <= ep.CTick {
+				isExcursion = true
+				break
+			}
+		}
+
+		if isPrecursor {
+			precursorTokens = append(precursorTokens, token)
+			continue
+		}
+
+		if !isExcursion {
+			backgroundTokens = append(backgroundTokens, token)
+		}
+	}
+
+	if len(precursorTokens) < 10 || len(backgroundTokens) < 10 {
+		return
+	}
+
+	p := empiricalDistribution(precursorTokens)
+	q := empiricalDistribution(backgroundTokens)
+	jsd, _ := computeJSD(p, q)
+	stage.jsd = jsd
+
+	permutations := system.Cfg.Audit.Permutations
+	if permutations <= 0 {
+		permutations = 50
+	}
+
+	significance := system.Cfg.Audit.Significance
+	if significance <= 0 || significance >= 1 {
+		significance = 0.05
+	}
+
+	allTokens := append(slices.Clone(precursorTokens), backgroundTokens...)
+	nPrecursor := len(precursorTokens)
+	exceedCount := 0
+	nullJSDs := make([]float64, permutations)
+	rng := rand.New(rand.NewSource(17))
+
+	for iter := 0; iter < permutations; iter++ {
+		rng.Shuffle(len(allTokens), func(i, j int) {
+			allTokens[i], allTokens[j] = allTokens[j], allTokens[i]
+		})
+
+		nullP := empiricalDistribution(allTokens[:nPrecursor])
+		nullQ := empiricalDistribution(allTokens[nPrecursor:])
+		nullVal, _ := computeJSD(nullP, nullQ)
+		nullJSDs[iter] = nullVal
+
+		if nullVal >= jsd {
+			exceedCount++
+		}
+	}
+
+	var sumNull float64
+	for _, v := range nullJSDs {
+		sumNull += v
+	}
+	nullMean := sumNull / float64(permutations)
+	slices.Sort(nullJSDs)
+	p95Idx := int(0.95 * float64(permutations))
+	if p95Idx >= len(nullJSDs) {
+		p95Idx = len(nullJSDs) - 1
+	}
+	nullP95 := nullJSDs[p95Idx]
+	pValue := float64(1+exceedCount) / float64(permutations+1)
+
+	stage.nullJSDMean = nullMean
+	stage.nullJSDP95 = nullP95
+	stage.pValue = pValue
+
+	if jsd <= nullP95 && pValue > significance {
+		stage.violations = append(stage.violations, NewViolation(
+			"precursor",
+			"precursor.no_divergence",
+			fmt.Sprintf("Precursor tokens fail to separate from background noise: JSD = %.4f <= null P95 = %.4f (p-value = %.4f, null mean = %.4f)",
+				jsd, nullP95, pValue, nullMean),
+			nil,
+			nil,
+		))
+	}
+}
+
+/*
 auditFrictionClearance tests whether evaluated excursions achieve positive net returns
 when crossing the order book (buying at Ask, selling at Bid) after paying round-trip fees.
 */
 func (stage *PrecursorStage) auditFrictionClearance() {
-	if len(stage.excursions) == 0 {
+	targetRuns := stage.detectorExcursions
+	if len(targetRuns) == 0 {
+		targetRuns = stage.excursions
+	}
+
+	if len(targetRuns) == 0 {
 		return
 	}
 
@@ -283,13 +411,20 @@ func (stage *PrecursorStage) auditFrictionClearance() {
 	}
 
 	if takerFee <= 0 {
-		takerFee = 0.0026
+		stage.violations = append(stage.violations, NewViolation(
+			"excursion",
+			"precursor.undefined_fee",
+			"Taker fee is not defined (missing in telemetry stream and system.Cfg.Audit.TakerFee)",
+			nil,
+			nil,
+		))
+		return
 	}
 
 	profitableCount := 0
 	var sumNetReturn float64
 
-	for _, excursion := range stage.excursions {
+	for _, excursion := range targetRuns {
 		netReturn := excursion.NetReturn(takerFee)
 		sumNetReturn += netReturn
 
@@ -298,20 +433,20 @@ func (stage *PrecursorStage) auditFrictionClearance() {
 		}
 	}
 
-	clearanceRate := float64(profitableCount) / float64(len(stage.excursions))
-	meanNetReturn := sumNetReturn / float64(len(stage.excursions))
+	clearanceRate := float64(profitableCount) / float64(len(targetRuns))
+	meanNetReturn := sumNetReturn / float64(len(targetRuns))
 
 	stage.clearanceRate = clearanceRate
 	stage.meanNetReturn = meanNetReturn
 
 	// If evaluated excursions fail to clear order book friction (0% clearance rate),
 	// flag an economic violation.
-	if len(stage.excursions) >= 5 && clearanceRate == 0 {
+	if clearanceRate == 0 {
 		stage.violations = append(stage.violations, NewViolation(
 			"excursion",
 			"precursor.unprofitable_friction",
 			fmt.Sprintf("Excursions fail order book friction clearance: 0 of %d profitable after spread and %.2f%% round-trip fees (mean net return %.2f%%)",
-				len(stage.excursions), 2.0*takerFee*100, meanNetReturn*100),
+				len(targetRuns), 2.0*takerFee*100, meanNetReturn*100),
 			nil,
 			nil,
 		))
@@ -335,10 +470,6 @@ func (stage *PrecursorStage) Data() any {
 		takerFee = stage.discoveredFeeRate
 	}
 
-	if takerFee <= 0 {
-		takerFee = 0.0026
-	}
-
 	excursionData := make([]map[string]any, 0, len(stage.excursions))
 
 	for _, ex := range stage.excursions {
@@ -351,14 +482,21 @@ func (stage *PrecursorStage) Data() any {
 		})
 	}
 
+	hasEvidence := len(stage.excursions) > 0 || len(stage.episodes) > 0
+
 	return map[string]any{
-		"passed":          len(stage.violations) == 0,
+		"passed":          len(stage.violations) == 0 && hasEvidence,
 		"excursion_count": len(stage.excursions),
 		"clearance_rate":  stage.clearanceRate,
 		"mean_net_return": stage.meanNetReturn,
 		"taker_fee":       takerFee,
+		"jsd":             stage.jsd,
+		"null_jsd_mean":   stage.nullJSDMean,
+		"null_jsd_p95":    stage.nullJSDP95,
+		"p_value":         stage.pValue,
 		"excursions":      excursionData,
 		"episodes":        stage.episodes,
 	}
 }
+
 

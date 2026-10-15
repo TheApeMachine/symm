@@ -32,6 +32,9 @@ func TestRouteFilters(t *testing.T) {
 			otherSymbol := data.NewMeasurement(1, "ETH/USD", "hawkes", now, now)
 			So(types.Filters(otherSymbol), ShouldBeFalse)
 
+			otherTraining := data.NewMeasurement(1, "ETH/USD", "training", now, now)
+			So(types.Filters(otherTraining), ShouldBeTrue)
+
 			manifold := data.NewMeasurement(1, "BTC/USD", "manifold", now, now)
 			So(types.Filters(manifold), ShouldBeFalse)
 		})
@@ -41,6 +44,9 @@ func TestRouteFilters(t *testing.T) {
 
 			training := data.NewMeasurement(1, "BTC/USD", "training", now, now)
 			So(types.Filters(training), ShouldBeTrue)
+
+			otherTraining := data.NewMeasurement(1, "ETH/USD", "training", now, now)
+			So(types.Filters(otherTraining), ShouldBeTrue)
 
 			hawkes := data.NewMeasurement(1, "BTC/USD", "hawkes", now, now)
 			So(types.Filters(hawkes), ShouldBeFalse)

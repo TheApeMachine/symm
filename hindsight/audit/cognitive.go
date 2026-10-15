@@ -26,16 +26,17 @@ type CognitivePhase struct {
 }
 
 /*
-CognitiveStage audits the learning dynamics, decisiveness, and pattern recall
-of the cognitive engine and sequence memory.
-It evaluates balanced accuracy, Matthews Correlation Coefficient (MCC),
-and checks whether the engine is frozen in 100% abstention.
+CognitiveStage audits the learning dynamics, decisiveness, and action distribution
+of the cognitive engine and sequence memory from published policy decisions.
+It verifies that the engine commits risk (not frozen in 100% abstention)
+and that decision confidence is strictly positive.
 */
 type CognitiveStage struct {
 	*runtime.System
 	ch             chan *data.Measurement
 	violations     []*Violation
 	phases         []*CognitivePhase
+	totalChecked   int
 	nodeCount      int64
 	maxDepth       int64
 	waitCount      int
@@ -73,6 +74,8 @@ func (stage *CognitiveStage) Run() error {
 
 			continue
 		}
+
+		stage.totalChecked++
 
 		if measurement.Error() != nil {
 			stage.violations = append(stage.violations, NewViolation(
@@ -143,9 +146,7 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Measurement)
 		case "contrast":
 			contrast = entry.Metric.Raw()
 		case "mean_reward":
-			if confidence == 0 {
-				confidence = entry.Metric.Raw()
-			}
+			// mean_reward is expected PnL from training, not model confidence.
 		case "gain":
 			gain = entry.Metric.Raw()
 		case "hold_seconds":
@@ -160,7 +161,7 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Measurement)
 	}
 
 	if action == "" {
-		action = "wait"
+		action = "noop"
 	}
 
 	stage.phases = append(stage.phases, &CognitivePhase{
@@ -181,7 +182,18 @@ and not frozen in total abstention (always waiting with 0 decisions).
 func (stage *CognitiveStage) auditDecisiveness() {
 	totalPhases := len(stage.phases)
 
-	if totalPhases < 20 {
+	if stage.totalChecked > 0 && totalPhases == 0 {
+		stage.violations = append(stage.violations, NewViolation(
+			"cognitive",
+			"cognitive.no_decisions",
+			"No cognitive decisions witnessed in stream",
+			nil,
+			nil,
+		))
+		return
+	}
+
+	if totalPhases == 0 {
 		return
 	}
 
@@ -194,7 +206,7 @@ func (stage *CognitiveStage) auditDecisiveness() {
 		sumConfidence += phase.Confidence
 
 		switch phase.Action {
-		case "wait":
+		case "wait", "noop":
 			waitCount++
 		case "enter":
 			enterCount++
@@ -254,7 +266,7 @@ func (stage *CognitiveStage) Report() string {
 
 func (stage *CognitiveStage) Data() any {
 	return map[string]any{
-		"passed":          len(stage.violations) == 0,
+		"passed":          len(stage.violations) == 0 && len(stage.phases) > 0,
 		"total_phases":    len(stage.phases),
 		"wait_count":      stage.waitCount,
 		"enter_count":     stage.enterCount,

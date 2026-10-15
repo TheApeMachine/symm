@@ -55,11 +55,12 @@ func TestHawkesTradeMetrics(t *testing.T) {
 			for step := range 20 {
 				at := origin.Add(time.Duration(step) * 50 * time.Millisecond)
 				side := "buy"
-
 				if step%3 == 0 {
 					side = "sell"
 					sellCount++
-				} else {
+				}
+
+				if step%3 != 0 {
 					buyCount++
 				}
 

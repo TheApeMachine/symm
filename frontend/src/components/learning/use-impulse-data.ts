@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-	DEFAULT_KERNELS,
 	clockAtom,
+	DEFAULT_KERNELS,
 	type RingBuffer,
 	signals,
 } from "#/collections/app";
@@ -11,7 +11,7 @@ import {
 	getCanonicalPinDefs,
 	getCanonicalRegionCounts,
 } from "./grid-pins";
-import { REGIONS, REGION_KEYS } from "./position-health";
+import { REGION_KEYS, REGIONS } from "./position-health";
 import type { ImpulseNode } from "./types";
 
 export interface ImpulseDataState {
@@ -68,7 +68,11 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			// Look for training ring for symbol, learner, or any non-empty ring
 			let trainingRing: RingBuffer<MeasurementT> | null = null;
 			if (trainingState) {
-				if (symbol && trainingState[symbol] && !trainingState[symbol].isEmpty()) {
+				if (
+					symbol &&
+					trainingState[symbol] &&
+					!trainingState[symbol].isEmpty()
+				) {
 					trainingRing = trainingState[symbol];
 				} else if (trainingState.learner && !trainingState.learner.isEmpty()) {
 					trainingRing = trainingState.learner;
@@ -84,7 +88,11 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 
 			// Build fast lookup for training metrics
 			const trainingMetrics: Record<string, number> = {};
-			if (trainingRing && typeof trainingRing.getBufferLength === "function" && trainingRing.getBufferLength() > 0) {
+			if (
+				trainingRing &&
+				typeof trainingRing.getBufferLength === "function" &&
+				trainingRing.getBufferLength() > 0
+			) {
 				const latest = trainingRing.get(trainingRing.getBufferLength() - 1);
 				if (latest?.metrics) {
 					for (const m of latest.metrics) {
@@ -96,7 +104,10 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			}
 
 			// Read specific metric activations directly from the 10 signal kernel stores
-			const kernelMetricSnm: Record<string, { activation: number; snr: number }> = {};
+			const kernelMetricSnm: Record<
+				string,
+				{ activation: number; snr: number }
+			> = {};
 			for (const pin of CANONICAL_PINS) {
 				const store = signals[pin.source];
 				if (!store?.state) continue;
@@ -117,7 +128,12 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 						}
 
 						const snr = Number(row.snr);
-						const validSnr = Number.isFinite(snr) && snr > 0 ? Math.min(4, Math.max(0.8, snr)) : (act >= 0.5 ? 2.5 : 1.0);
+						const validSnr =
+							Number.isFinite(snr) && snr > 0
+								? Math.min(4, Math.max(0.8, snr))
+								: act >= 0.5
+									? 2.5
+									: 1.0;
 						kernelMetricSnm[pin.id] = { activation: act, snr: validSnr };
 						break;
 					}
@@ -160,9 +176,10 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			const updatedNodes: ImpulseNode[] = CANONICAL_PINS.map((pin) => {
 				const directReading = kernelMetricSnm[pin.id];
 				const regBrightness = regionBrightness[pin.cluster] ?? 0;
-				const activation = directReading !== undefined && directReading.activation > 0
-					? directReading.activation
-					: regBrightness;
+				const activation =
+					directReading !== undefined && directReading.activation > 0
+						? directReading.activation
+						: regBrightness;
 				const snr = directReading?.snr ?? (activation >= 0.5 ? 2.5 : 1.0);
 
 				return {
@@ -196,7 +213,9 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 					const meta = REGIONS[REGION_KEYS[i]];
 					activeEventsList.push({
 						id: i,
-						label: meta ? `${meta.id} ${meta.title}` : `R${String(i).padStart(2, "0")}`,
+						label: meta
+							? `${meta.id} ${meta.title}`
+							: `R${String(i).padStart(2, "0")}`,
 						activity: strength,
 						members: regionMembers[i],
 					});

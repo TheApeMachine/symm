@@ -1,19 +1,22 @@
-import { useSelector } from "@tanstack/react-store";
-import * as d3 from "d3";
-import { ChevronRight, Clock, Pause, Play } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { focusAtom, positionCountAtom, type RingBuffer, signals } from "#/collections/app";
+import {
+	focusAtom,
+	positionCountAtom,
+	type RingBuffer,
+	signals,
+} from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
 import { Scanlines } from "#/components/ui/scanlines";
 import { hubBaseUrl } from "#/lib/hub";
 import { cn } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { useSelector } from "@tanstack/react-store";
+import * as d3 from "d3";
+import { ChevronRight, Clock } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Badge } from "../ui";
 import { basis, outcome, prediction } from "./format";
-import type {
-	CognitionTreeResponse,
-	TrieBranch,
-} from "./types";
+import type { CognitionTreeResponse, TrieBranch } from "./types";
 
 interface ForwardTapePoint {
 	x: number;
@@ -35,7 +38,7 @@ interface TrainedFragmentResponse {
 	direction: string;
 	class?: string;
 	tokens: string[];
-	points: { x: number; y: number; seq: number; time: number }[];
+	points: ForwardTapePoint[];
 	entry_idx: number;
 	exit_idx: number;
 	predicted_entry_idx: number;
@@ -62,7 +65,7 @@ function toTimestampMs(time: number | undefined | null): number | undefined {
 	if (!time || time <= 0) return undefined;
 	if (time > 1e16) return Math.floor(time / 1e6); // nanoseconds -> ms
 	if (time > 1e13) return Math.floor(time / 1e3); // microseconds -> ms
-	if (time > 1e10) return Math.floor(time);       // milliseconds
+	if (time > 1e10) return Math.floor(time); // milliseconds
 	if (time > 1e6) return Math.floor(time * 1000); // seconds -> ms
 	return undefined;
 }
@@ -114,7 +117,10 @@ function excursionKind(
 }
 
 /* fragmentClass maps the five trained tape classes onto the banner label. */
-function fragmentClass(className: string | undefined, direction: string): ExcursionKind {
+function fragmentClass(
+	className: string | undefined,
+	direction: string,
+): ExcursionKind {
 	switch (className) {
 		case "up":
 			return "UPWARD EXCURSION";
@@ -138,12 +144,18 @@ function fragmentClass(className: string | undefined, direction: string): Excurs
 }
 
 /* fragmentClassCode keeps the raw class token for the operator list/detail. */
-function fragmentClassCode(className: string | undefined, direction: string): string {
+function fragmentClassCode(
+	className: string | undefined,
+	direction: string,
+): string {
 	if (className) return className;
 	return direction || "unknown";
 }
 
-function fragmentDelayedLabel(className: string | undefined, direction: string): string {
+function fragmentDelayedLabel(
+	className: string | undefined,
+	direction: string,
+): string {
 	switch (className ?? direction) {
 		case "up":
 			return "ENTER (CLEARS)";
@@ -160,7 +172,10 @@ function fragmentDelayedLabel(className: string | undefined, direction: string):
 	}
 }
 
-function fragmentFrozenAction(className: string | undefined, direction: string): string {
+function fragmentFrozenAction(
+	className: string | undefined,
+	direction: string,
+): string {
 	return (className ?? direction) === "up" ? "ENTER" : "WAIT";
 }
 
@@ -243,7 +258,6 @@ export const ForwardLearningViz = ({
 
 	// Real stage & execution mode
 	const [stageCode, setStageCode] = useState(0);
-	const [stageName, setStageName] = useState("MODEL DEVELOPMENT");
 	const [stageBlocker, setStageBlocker] = useState("");
 	const [openPositionsCount, setOpenPositionsCount] = useState(0);
 	const [isPaperFilled, setIsPaperFilled] = useState(false);
@@ -305,8 +319,11 @@ export const ForwardLearningViz = ({
 	const lastSeenSymbolRef = useRef<string>("");
 	const lastSeenExcursionStartRef = useRef<number>(-1);
 
-	const [trainedFragments, setTrainedFragments] = useState<TrainedFragmentResponse[]>([]);
-	const [selectedFragmentIndex, setSelectedFragmentIndex] = useState<number>(-1);
+	const [trainedFragments, setTrainedFragments] = useState<
+		TrainedFragmentResponse[]
+	>([]);
+	const [selectedFragmentIndex, setSelectedFragmentIndex] =
+		useState<number>(-1);
 	/*
 	 * pinnedFragmentRef freezes the tape chart while the operator inspects a
 	 * historical run. Live hub measurements still update stage/side metrics,
@@ -335,14 +352,17 @@ export const ForwardLearningViz = ({
 			void fetch(`${hubBaseUrl()}/training/fragments/${frag.id}/points`)
 				.then((res) => (res.ok ? res.json() : []))
 				.then((tape: TrainedFragmentResponse["points"]) => {
-					if (!pinnedFragmentRef.current || openFragmentRef.current !== frag.id) return;
-					setPoints(
-						(tape ?? []).map((pt, i) => ({
-							x: i,
-							y: pt.y,
-							seq: pt.seq,
-							time: toTimestampMs(pt.time),
-						})),
+					if (!pinnedFragmentRef.current || openFragmentRef.current !== frag.id)
+						return;
+					const mapped = (tape ?? []).map((pt, i) => ({
+						x: i,
+						y: pt.y,
+						seq: pt.seq,
+						time: toTimestampMs(pt.time),
+					}));
+					setPoints(mapped);
+					setTrainedFragments((prev) =>
+						prev.map((f) => (f.id === frag.id ? { ...f, points: mapped } : f)),
 					);
 				})
 				.catch(() => {});
@@ -385,9 +405,15 @@ export const ForwardLearningViz = ({
 	}, [historicalOnly]);
 
 	const replayFragment = useCallback(() => {
-		if (selectedFragmentIndex < 0 || selectedFragmentIndex >= trainedFragments.length) return;
+		if (
+			selectedFragmentIndex < 0 ||
+			selectedFragmentIndex >= trainedFragments.length
+		)
+			return;
 		const frag = trainedFragments[selectedFragmentIndex];
-		const episodePoints = (frag.points ?? []).map((pt, i) => ({
+		const rawPoints =
+			frag.points && frag.points.length > 0 ? frag.points : points;
+		const episodePoints = rawPoints.map((pt, i) => ({
 			x: i,
 			y: pt.y,
 			seq: pt.seq,
@@ -398,7 +424,7 @@ export const ForwardLearningViz = ({
 		setPlaybackTick(0);
 		setPlaybackPhase("PLAYING");
 		setIsPlaying(true);
-	}, [selectedFragmentIndex, trainedFragments]);
+	}, [selectedFragmentIndex, trainedFragments, points]);
 
 	useEffect(() => {
 		let isMounted = true;
@@ -474,6 +500,27 @@ export const ForwardLearningViz = ({
 
 				if (data.branches && data.branches.length > 0) {
 					setTrieBranches(data.branches);
+				} else if (data.keys && data.keys.length > 0) {
+					const derivedBranches: TrieBranch[] = data.keys.map((k) => {
+						const parts = k.replace(/\.bin$/, "").split("/");
+						const rawAction = parts[parts.length - 1]?.toUpperCase() ?? "NOOP";
+						const policy =
+							rawAction === "ENTER" || rawAction === "EXIT"
+								? rawAction
+								: "NOOP";
+						const hash = parts.slice(0, -1).join("/") || k;
+						const depth = Math.max(1, parts.length - 1);
+						return {
+							hash,
+							depth,
+							visits: 1,
+							meanEdge:
+								policy === "ENTER" ? 0.05 : policy === "EXIT" ? -0.02 : 0,
+							confidence: 95,
+							policy,
+						};
+					});
+					setTrieBranches(derivedBranches);
 				}
 			} catch {
 				// Backend endpoint connecting
@@ -496,31 +543,78 @@ export const ForwardLearningViz = ({
 		setEpisodeQueue((queue) => queue.slice(1));
 	}, [isPlaying, currentEpisode, episodeQueue]);
 
-	// Playback Animation Loop
+	// Playback Animation Loop - animates tape using actual tape time
 	useEffect(() => {
 		if (!isPlaying) return;
 
 		let timer: number;
 		if (playbackPhase === "PLAYING") {
-			if (!currentEpisode) {
+			if (!currentEpisode || currentEpisode.length === 0) {
 				return;
 			}
 
-			timer = window.setInterval(() => {
-				setPlaybackTick((t) => {
-					if (currentEpisode && t >= currentEpisode.length - 1) {
+			const validTimes = currentEpisode
+				.map((p) => p.time)
+				.filter((t): t is number => typeof t === "number" && t > 0);
+
+			const hasValidSpan = validTimes.length >= 2;
+			const tStart = hasValidSpan ? validTimes[0] : 0;
+			const tEnd = hasValidSpan ? validTimes[validTimes.length - 1] : 0;
+			const tapeSpanMs = hasValidSpan ? Math.max(0, tEnd - tStart) : 0;
+
+			if (hasValidSpan && tapeSpanMs > 0) {
+				const startTime = Date.now();
+				const isManualReplay = pinnedFragmentRef.current || historicalOnly;
+				// Playback at 1:1 real tape time. Cap extreme recordings at 30s.
+				const maxDuration = isManualReplay
+					? 30000
+					: episodeQueue.length > 2
+						? 1500
+						: 5000;
+				const targetDurationMs = Math.min(tapeSpanMs, maxDuration);
+				const speedRate = tapeSpanMs / targetDurationMs;
+
+				timer = window.setInterval(() => {
+					const elapsedMs = Date.now() - startTime;
+					if (elapsedMs >= targetDurationMs) {
+						setPlaybackTick(currentEpisode.length - 1);
 						setPlaybackPhase("EVALUATING");
-						return t;
+						return;
 					}
-					// Play fast: jump by 2 or 3 ticks depending on length
-					const step = currentEpisode.length > 200 ? 3 : 2;
-					return Math.min(t + step, currentEpisode.length - 1);
-				});
-			}, 16);
+
+					const currentTapeTime = tStart + elapsedMs * speedRate;
+					let targetTick = 0;
+					for (let i = 0; i < currentEpisode.length; i++) {
+						const ptTime = currentEpisode[i]?.time;
+						if (typeof ptTime === "number" && ptTime <= currentTapeTime) {
+							targetTick = i;
+						} else if (typeof ptTime === "number" && ptTime > currentTapeTime) {
+							break;
+						}
+					}
+					setPlaybackTick(targetTick);
+				}, 16);
+			} else {
+				// Fallback when no valid timestamps: step-based animation
+				timer = window.setInterval(() => {
+					setPlaybackTick((t) => {
+						if (currentEpisode && t >= currentEpisode.length - 1) {
+							setPlaybackPhase("EVALUATING");
+							return t;
+						}
+						// Play fast: jump by 2 or 3 ticks depending on length
+						const step = currentEpisode.length > 200 ? 3 : 2;
+						return Math.min(t + step, currentEpisode.length - 1);
+					});
+				}, 16);
+			}
 		} else if (playbackPhase === "EVALUATING") {
 			timer = window.setTimeout(() => {
 				setCurrentEpisode(null);
 				setPlaybackPhase("PLAYING");
+				if (pinnedFragmentRef.current || historicalOnly) {
+					setIsPlaying(false);
+				}
 			}, 1200); // Wait 1.2s at the end of the excursion to show the result
 		}
 
@@ -528,7 +622,13 @@ export const ForwardLearningViz = ({
 			clearInterval(timer);
 			clearTimeout(timer);
 		};
-	}, [isPlaying, playbackPhase, currentEpisode]);
+	}, [
+		isPlaying,
+		playbackPhase,
+		currentEpisode,
+		historicalOnly,
+		episodeQueue.length,
+	]);
 
 	// Update visible points from the animating episode
 	useEffect(() => {
@@ -589,22 +689,14 @@ export const ForwardLearningViz = ({
 				// Update stage
 				const sCode = metricMap.stage_code ?? 0;
 				setStageCode(sCode);
-				let sName = "MODEL DEVELOPMENT";
-				if (sCode === 1) sName = "HISTORICAL VALIDATION";
-				if (sCode === 2) sName = "FORWARD PAPER LEARNING";
-				if (sCode === 3) sName = "FORWARD SKILL DEMONSTRATED";
 
 				if (measurement.provenance) {
 					for (const p of measurement.provenance) {
-						if (p?.name === "stage" && p.value) {
-							sName = String(p.value);
-						}
 						if (p?.name === "stage_blocker" && p.value !== undefined) {
 							setStageBlocker(String(p.value));
 						}
 					}
 				}
-				setStageName(sName);
 
 				// Precursor & prediction
 				const pLen = Math.floor(metricMap.precursor_length ?? 0);
@@ -617,7 +709,8 @@ export const ForwardLearningViz = ({
 						if (p?.name === "precursor_tokens" && p.value) {
 							tokensList = String(p.value).split(",").filter(Boolean);
 						}
-						if (p?.name === "excursion_direction") excDirection = String(p.value);
+						if (p?.name === "excursion_direction")
+							excDirection = String(p.value);
 					}
 				}
 				let excStart: number | undefined;
@@ -893,12 +986,31 @@ export const ForwardLearningViz = ({
 		timeTicks,
 		timeSpanLabel,
 	} = useMemo(() => {
-		const count = Math.max(points.length, 50);
-		const xs = d3.scaleLinear().domain([0, count]).range([0, tapeDim.width]);
+		const activeTape =
+			currentEpisode && currentEpisode.length > 0 ? currentEpisode : points;
+		const isExcursion =
+			historicalOnly ||
+			selectedFragmentIndex >= 0 ||
+			pinnedFragmentRef.current ||
+			currentEpisode !== null ||
+			excursionEvent !== null;
+
+		const totalFrames = activeTape.length;
+		const maxIndex = isExcursion
+			? Math.max(1, totalFrames - 1)
+			: Math.max(totalFrames - 1, 50);
+
+		// Pad horizontal domain so boundary markers (A/B/C) and labels never clip against SVG viewport edges
+		const xPad =
+			tapeDim.width > 0 ? Math.min(32, Math.max(18, tapeDim.width * 0.025)) : 0;
+		const xs = d3
+			.scaleLinear()
+			.domain([0, maxIndex])
+			.range([xPad, Math.max(xPad + 1, tapeDim.width - xPad)]);
 
 		let minY = Number.POSITIVE_INFINITY;
 		let maxY = Number.NEGATIVE_INFINITY;
-		for (const pt of points) {
+		for (const pt of activeTape) {
 			if (pt.y < minY) minY = pt.y;
 			if (pt.y > maxY) maxY = pt.y;
 		}
@@ -934,62 +1046,124 @@ export const ForwardLearningViz = ({
 			.y1((d) => ys(d.y))
 			.curve(d3.curveMonotoneX);
 
-		// Calculate time ticks and span across evaluated tape fragment
-		const validTimes = points
+		// Calculate relative time ticks and span across evaluated tape fragment
+		const validTimes = activeTape
 			.map((p) => p.time)
 			.filter((t): t is number => typeof t === "number" && t > 0);
 
 		let timeSpanLabel = "";
-		const timeTicks: Array<{ x: number; label: string }> = [];
+		const timeTicks: Array<{
+			x: number;
+			label: string;
+			align: "start" | "middle" | "end";
+		}> = [];
+		const availableWidth = Math.max(1, tapeDim.width - 2 * xPad);
 
-		if (validTimes.length >= 2 && tapeDim.width > 0 && points.length > 0) {
+		if (validTimes.length >= 2 && tapeDim.width > 0 && activeTape.length > 0) {
 			const tStart = validTimes[0];
 			const tEnd = validTimes[validTimes.length - 1];
 			const spanMs = Math.max(0, tEnd - tStart);
 			timeSpanLabel = formatDurationSpan(spanMs);
 
-			const activeWidth = xs(points.length - 1);
-			const numTicks = Math.max(2, Math.min(6, Math.floor(activeWidth / 130)));
-
-			const tickIndices = Array.from({ length: numTicks }, (_, i) =>
-				Math.min(
-					points.length - 1,
-					Math.round((i / Math.max(1, numTicks - 1)) * (points.length - 1)),
-				),
+			const maxTicks = Math.min(6, Math.max(2, activeTape.length));
+			const numTicks = Math.max(
+				2,
+				Math.min(maxTicks, Math.floor(availableWidth / 125)),
 			);
 
+			const rawIndices = Array.from({ length: numTicks }, (_, i) =>
+				Math.min(
+					activeTape.length - 1,
+					Math.round((i / Math.max(1, numTicks - 1)) * (activeTape.length - 1)),
+				),
+			);
+			const tickIndices = Array.from(new Set(rawIndices));
+
 			const times = tickIndices.map((idx) => {
-				const ptTime = points[idx]?.time;
+				const ptTime = activeTape[idx]?.time;
 				if (ptTime && ptTime > 0) return ptTime;
-				const fraction = idx / Math.max(1, points.length - 1);
+				const fraction = idx / Math.max(1, activeTape.length - 1);
 				return tStart + fraction * spanMs;
 			});
 
-			const testLabels = times.map((t) => formatClockTime(t, false));
-			const needsSeconds =
-				spanMs < 120_000 || new Set(testLabels).size < testLabels.length;
-
-			for (let i = 0; i < numTicks; i++) {
+			for (let i = 0; i < tickIndices.length; i++) {
 				const ptIdx = tickIndices[i];
-				const px = xs(points[ptIdx].x);
-				const clock = formatClockTime(times[i], needsSeconds);
-				const relSec = ((times[i] - tStart) / 1000).toFixed(spanMs < 10_000 ? 1 : 0);
-				const label = i === 0 ? clock : `${clock} (+${relSec}s)`;
-				timeTicks.push({ x: px, label });
-			}
-		} else if (points.length >= 2 && tapeDim.width > 0) {
-			const seqs = points.map((p) => p.seq).filter((s): s is number => typeof s === "number" && s > 0);
-			if (seqs.length >= 2) {
-				const numTicks = Math.max(2, Math.min(5, Math.floor(tapeDim.width / 140)));
-				for (let i = 0; i < numTicks; i++) {
-					const idx = Math.min(
-						points.length - 1,
-						Math.round((i / Math.max(1, numTicks - 1)) * (points.length - 1)),
-					);
-					const px = xs(points[idx].x);
-					timeTicks.push({ x: px, label: `tick #${points[idx].seq ?? idx}` });
+				const px = xs(activeTape[ptIdx].x);
+				const relMs = Math.max(0, times[i] - tStart);
+
+				let label: string;
+				if (i === 0) {
+					const clock = formatClockTime(tStart, true);
+					label = clock !== "—" ? `t₀ (${clock})` : "t₀ (+0.00s)";
+				} else if (spanMs < 10_000) {
+					label = `+${(relMs / 1000).toFixed(2)}s`;
+				} else if (spanMs < 60_000) {
+					label = `+${(relMs / 1000).toFixed(1)}s`;
+				} else {
+					const totalSec = Math.floor(relMs / 1000);
+					const mins = Math.floor(totalSec / 60);
+					const secs = totalSec % 60;
+					label =
+						mins > 0
+							? `+${mins}m${secs > 0 ? ` ${secs}s` : ""}`
+							: `+${totalSec}s`;
 				}
+
+				timeTicks.push({
+					x: px,
+					label,
+					align:
+						i === 0 ? "start" : i === tickIndices.length - 1 ? "end" : "middle",
+				});
 			}
+		} else if (activeTape.length >= 2 && tapeDim.width > 0) {
+			const seqs = activeTape
+				.map((p) => p.seq)
+				.filter((s): s is number => typeof s === "number" && s > 0);
+
+			const maxTicks = Math.min(5, Math.max(2, activeTape.length));
+			const numTicks = Math.max(
+				2,
+				Math.min(maxTicks, Math.floor(availableWidth / 130)),
+			);
+
+			const rawIndices = Array.from({ length: numTicks }, (_, i) =>
+				Math.min(
+					activeTape.length - 1,
+					Math.round((i / Math.max(1, numTicks - 1)) * (activeTape.length - 1)),
+				),
+			);
+			const tickIndices = Array.from(new Set(rawIndices));
+			const baseSeq = seqs.length > 0 ? seqs[0] : null;
+
+			for (let i = 0; i < tickIndices.length; i++) {
+				const ptIdx = tickIndices[i];
+				const px = xs(activeTape[ptIdx].x);
+				const curSeq = activeTape[ptIdx]?.seq;
+				let label: string;
+				if (i === 0) {
+					label = curSeq !== undefined ? `t₀ (#${curSeq})` : "t₀ (+0)";
+				} else if (baseSeq !== null && curSeq !== undefined) {
+					const diff = curSeq - baseSeq;
+					label = `+${diff} (#${curSeq})`;
+				} else {
+					label = `+${ptIdx}`;
+				}
+				timeTicks.push({
+					x: px,
+					label,
+					align:
+						i === 0 ? "start" : i === tickIndices.length - 1 ? "end" : "middle",
+				});
+			}
+		} else if (activeTape.length === 1 && tapeDim.width > 0) {
+			const t = activeTape[0].time;
+			const clock = t && t > 0 ? formatClockTime(t, true) : "";
+			timeTicks.push({
+				x: xs(0),
+				label: clock && clock !== "—" ? `t₀ (${clock})` : "t₀",
+				align: "start",
+			});
 		}
 
 		return {
@@ -1004,7 +1178,15 @@ export const ForwardLearningViz = ({
 			timeTicks,
 			timeSpanLabel,
 		};
-	}, [points, tapeDim.width, tapeDim.height]);
+	}, [
+		points,
+		currentEpisode,
+		tapeDim.width,
+		tapeDim.height,
+		historicalOnly,
+		selectedFragmentIndex,
+		excursionEvent,
+	]);
 
 	const isForward = stageCode >= 2;
 	const precursorTokens = useMemo(() => {
@@ -1084,31 +1266,16 @@ export const ForwardLearningViz = ({
 					{/* Tape Header */}
 					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 justify-between text-(--f3) shrink-0">
 						<div className="flex items-center gap-2 min-w-0">
-							<span
-								data-l="tape-title"
-								className={cn(
-									"font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0",
-									historicalOnly || selectedFragmentIndex >= 0
-										? "bg-(--info)/10 text-(--info) border border-(--info)/30"
-										: stageCode === 1
-											? "bg-(--acc)/10 text-(--acc) border border-(--acc)/30"
-											: "bg-(--info)/10 text-(--info) border border-(--info)/30",
-								)}
-							>
-								{historicalOnly
-									? "HISTORICAL RUNS"
-									: selectedFragmentIndex >= 0
-										? "TRAINED FRAGMENTS"
-										: isForward
-											? "TRAINED FRAGMENTS"
-											: "HISTORICAL REPLAY TAPE"}
-							</span>
+							<Badge data-l="tape-title" label="HISTORICAL RUNS" />
 							<span className="bg-(--surface) border-(--line) border px-1.5 py-0.5 rounded text-[10px] text-(--f1) font-bold shrink-0">
 								{currentSymbol}
 							</span>
 
 							{trainedFragments.length > 0 && (
-								<div className="flex items-center gap-1 ml-1 min-w-0" data-l="fragment-selector">
+								<div
+									className="flex items-center gap-1 ml-1 min-w-0"
+									data-l="fragment-selector"
+								>
 									<button
 										type="button"
 										onClick={() => selectFragment(selectedFragmentIndex - 1)}
@@ -1129,14 +1296,19 @@ export const ForwardLearningViz = ({
 										)}
 										{trainedFragments.map((frag, idx) => (
 											<option key={frag.id ?? idx} value={idx}>
-												#{frag.id} {frag.symbol} [{fragmentClassCode(frag.class, frag.direction)}] ({frag.direction.toUpperCase()} {(frag.magnitude * 100).toFixed(2)}%)
+												#{frag.id} {frag.symbol} [
+												{fragmentClassCode(frag.class, frag.direction)}] (
+												{frag.direction.toUpperCase()}{" "}
+												{(frag.magnitude * 100).toFixed(2)}%)
 											</option>
 										))}
 									</select>
 									<button
 										type="button"
 										onClick={() => selectFragment(selectedFragmentIndex + 1)}
-										disabled={selectedFragmentIndex >= trainedFragments.length - 1}
+										disabled={
+											selectedFragmentIndex >= trainedFragments.length - 1
+										}
 										className="px-1.5 py-0.5 rounded bg-(--surface) border border-(--line) text-(--f2) hover:text-(--f1) disabled:opacity-30 disabled:pointer-events-none text-[10px] cursor-pointer"
 										title="Next fragment"
 									>
@@ -1195,33 +1367,6 @@ export const ForwardLearningViz = ({
 									)}
 								</span>
 							)}
-							<span className="text-[10px] uppercase tracking-widest text-(--f4)">
-								STAGE:{" "}
-								<span
-									data-l="training-stage"
-									className="border-(--line) border text-(--f2) px-1 rounded ml-1 font-bold"
-								>
-									{stageName}
-								</span>
-							</span>
-							<button
-								type="button"
-								onClick={() => {
-									if (!isPlaying && !currentEpisode && selectedFragmentIndex >= 0 && selectedFragmentIndex < trainedFragments.length) {
-										replayFragment();
-									} else {
-										setIsPlaying(!isPlaying);
-									}
-								}}
-								className="text-(--acc) hover:text-(--f1) transition-colors p-1 cursor-pointer"
-								title={isPlaying ? "Pause tape" : "Resume / replay tape"}
-							>
-								{isPlaying ? (
-									<Pause className="w-3.5 h-3.5" />
-								) : (
-									<Play className="w-3.5 h-3.5" />
-								)}
-							</button>
 						</div>
 					</div>
 
@@ -1265,7 +1410,10 @@ export const ForwardLearningViz = ({
 					</AnimatePresence>
 
 					{/* SVG Tape Canvas */}
-					<div ref={tapeRef} className="flex-1 relative overflow-hidden bg-(--sunken)">
+					<div
+						ref={tapeRef}
+						className="flex-1 relative overflow-hidden bg-(--sunken)"
+					>
 						<Scanlines variant="plate" className="pointer-events-none z-10" />
 
 						{points.length === 0 && (
@@ -1322,7 +1470,10 @@ export const ForwardLearningViz = ({
 										opacity="0.35"
 									/>
 									<text x={8} y={yScale(maxPrice) - 4} fill="var(--f3)">
-										{maxPrice.toLocaleString(undefined, { minimumFractionDigits: 5, maximumFractionDigits: 5 })}
+										{maxPrice.toLocaleString(undefined, {
+											minimumFractionDigits: 5,
+											maximumFractionDigits: 5,
+										})}
 									</text>
 
 									<line
@@ -1335,7 +1486,10 @@ export const ForwardLearningViz = ({
 										opacity="0.35"
 									/>
 									<text x={8} y={yScale(midPrice) - 4} fill="var(--f4)">
-										{midPrice.toLocaleString(undefined, { minimumFractionDigits: 5, maximumFractionDigits: 5 })}
+										{midPrice.toLocaleString(undefined, {
+											minimumFractionDigits: 5,
+											maximumFractionDigits: 5,
+										})}
 									</text>
 
 									<line
@@ -1348,7 +1502,10 @@ export const ForwardLearningViz = ({
 										opacity="0.35"
 									/>
 									<text x={8} y={yScale(minPrice) - 4} fill="var(--f4)">
-										{minPrice.toLocaleString(undefined, { minimumFractionDigits: 5, maximumFractionDigits: 5 })}
+										{minPrice.toLocaleString(undefined, {
+											minimumFractionDigits: 5,
+											maximumFractionDigits: 5,
+										})}
 									</text>
 								</g>
 
@@ -1373,7 +1530,13 @@ export const ForwardLearningViz = ({
 									<g
 										transform={`translate(${xScale(currentPoints[currentPoints.length - 1].x)}, ${yScale(currentPoints[currentPoints.length - 1].y)})`}
 									>
-										<circle r={7} fill="none" stroke="var(--acc)" strokeWidth="0.8" opacity="0.4" />
+										<circle
+											r={7}
+											fill="none"
+											stroke="var(--acc)"
+											strokeWidth="0.8"
+											opacity="0.4"
+										/>
 										<circle r={3.5} fill="var(--acc)" />
 										<text
 											x={-8}
@@ -1405,7 +1568,12 @@ export const ForwardLearningViz = ({
 										excursionEvent.marks.C >= 0) &&
 									(() => {
 										const resolveIdx = (val: number | null): number | null => {
-											if (val === null || val === undefined || val < 0 || points.length === 0)
+											if (
+												val === null ||
+												val === undefined ||
+												val < 0 ||
+												points.length === 0
+											)
 												return null;
 											// 1. Exact sequence index match
 											for (let i = 0; i < points.length; i++) {
@@ -1417,21 +1585,19 @@ export const ForwardLearningViz = ({
 											if (val >= 0 && val < points.length) {
 												return val;
 											}
-											// 3. Nearest sequence index match within sequence range
+											// 3. Nearest sequence index match within or near sequence range
 											if (points.length > 0) {
-												const minSeq = points[0].seq ?? 0;
-												const maxSeq = points[points.length - 1].seq ?? 0;
-												if (val >= minSeq && val <= maxSeq) {
-													let nearestIdx = 0;
-													let nearestDist = Math.abs((points[0].seq ?? 0) - val);
-													for (let i = 1; i < points.length; i++) {
-														const seq = points[i].seq ?? 0;
-														const dist = Math.abs(seq - val);
-														if (dist < nearestDist) {
-															nearestDist = dist;
-															nearestIdx = i;
-														}
+												let nearestIdx = 0;
+												let nearestDist = Math.abs((points[0].seq ?? 0) - val);
+												for (let i = 1; i < points.length; i++) {
+													const seq = points[i].seq ?? 0;
+													const dist = Math.abs(seq - val);
+													if (dist < nearestDist) {
+														nearestDist = dist;
+														nearestIdx = i;
 													}
+												}
+												if (nearestDist <= 50) {
 													return nearestIdx;
 												}
 											}
@@ -1483,60 +1649,82 @@ export const ForwardLearningViz = ({
 										return (
 											<g>
 												{/* Shaded Precursor Horizon (A → B) */}
-												{markAIdx !== null && markBIdx !== null && markBIdx > markAIdx && markAIdx < points.length && markBIdx <= points.length && (
-													<g className="precursor-horizon">
-														<rect
-															x={xScale(markAIdx)}
-															y={0}
-															width={Math.max(0, xScale(markBIdx) - xScale(markAIdx))}
-															height={tapeDim.height - 20}
-															fill="color-mix(in srgb, var(--acc) 6%, transparent)"
-															stroke="var(--acc)"
-															strokeWidth={1}
-															strokeDasharray="2 4"
-															strokeOpacity={0.35}
-														/>
-														<text
-															x={xScale(markAIdx) + 6}
-															y={16}
-															fill="var(--acc)"
-															fontSize="8px"
-															fontWeight="bold"
-															letterSpacing="0.08em"
-															className="select-none pointer-events-none font-mono opacity-80 uppercase"
-														>
-															Precursor Phase (A→B)
-														</text>
-													</g>
-												)}
+												{markAIdx !== null &&
+													markBIdx !== null &&
+													markBIdx > markAIdx &&
+													markAIdx < points.length &&
+													markBIdx <= points.length && (
+														<g className="precursor-horizon">
+															<rect
+																x={xScale(markAIdx)}
+																y={0}
+																width={Math.max(
+																	0,
+																	xScale(markBIdx) - xScale(markAIdx),
+																)}
+																height={tapeDim.height - 20}
+																fill="color-mix(in srgb, var(--acc) 6%, transparent)"
+																stroke="var(--acc)"
+																strokeWidth={1}
+																strokeDasharray="2 4"
+																strokeOpacity={0.35}
+															/>
+															<text
+																x={xScale(markAIdx) + 6}
+																y={16}
+																fill="var(--acc)"
+																fontSize="8px"
+																fontWeight="bold"
+																letterSpacing="0.08em"
+																className="select-none pointer-events-none font-mono opacity-80 uppercase"
+															>
+																{xScale(markBIdx) - xScale(markAIdx) > 90
+																	? "Precursor Phase (A→B)"
+																	: xScale(markBIdx) - xScale(markAIdx) > 40
+																		? "Precursor (A→B)"
+																		: "(A→B)"}
+															</text>
+														</g>
+													)}
 
 												{/* Shaded Excursion Target Horizon (B → C) */}
-												{markBIdx !== null && markCIdx !== null && markCIdx > markBIdx && markBIdx < points.length && markCIdx <= points.length && (
-													<g className="excursion-horizon">
-														<rect
-															x={xScale(markBIdx)}
-															y={0}
-															width={Math.max(0, xScale(markCIdx) - xScale(markBIdx))}
-															height={tapeDim.height - 20}
-															fill="color-mix(in srgb, var(--up) 7%, transparent)"
-															stroke="var(--up)"
-															strokeWidth={1}
-															strokeDasharray="2 4"
-															strokeOpacity={0.35}
-														/>
-														<text
-															x={xScale(markBIdx) + 6}
-															y={16}
-															fill="var(--up)"
-															fontSize="8px"
-															fontWeight="bold"
-															letterSpacing="0.08em"
-															className="select-none pointer-events-none font-mono opacity-80 uppercase"
-														>
-															Excursion Target (B→C)
-														</text>
-													</g>
-												)}
+												{markBIdx !== null &&
+													markCIdx !== null &&
+													markCIdx > markBIdx &&
+													markBIdx < points.length &&
+													markCIdx <= points.length && (
+														<g className="excursion-horizon">
+															<rect
+																x={xScale(markBIdx)}
+																y={0}
+																width={Math.max(
+																	0,
+																	xScale(markCIdx) - xScale(markBIdx),
+																)}
+																height={tapeDim.height - 20}
+																fill="color-mix(in srgb, var(--up) 7%, transparent)"
+																stroke="var(--up)"
+																strokeWidth={1}
+																strokeDasharray="2 4"
+																strokeOpacity={0.35}
+															/>
+															<text
+																x={xScale(markBIdx) + 6}
+																y={16}
+																fill="var(--up)"
+																fontSize="8px"
+																fontWeight="bold"
+																letterSpacing="0.08em"
+																className="select-none pointer-events-none font-mono opacity-80 uppercase"
+															>
+																{xScale(markCIdx) - xScale(markBIdx) > 90
+																	? "Excursion Target (B→C)"
+																	: xScale(markCIdx) - xScale(markBIdx) > 40
+																		? "Target (B→C)"
+																		: "(B→C)"}
+															</text>
+														</g>
+													)}
 
 												{marksList.map(({ name, idx }) => {
 													if (idx < 0 || idx >= points.length) return null;
@@ -1721,8 +1909,8 @@ export const ForwardLearningViz = ({
 											stroke="var(--line)"
 											opacity="0.6"
 										/>
-										{timeTicks.map((tick, idx) => (
-											<g key={`time-tick-${idx}-${tick.x}-${tick.label}`}>
+										{timeTicks.map((tick) => (
+											<g key={`time-tick-${tick.x}-${tick.label}`}>
 												<line
 													x1={tick.x}
 													y1={24}
@@ -1745,14 +1933,14 @@ export const ForwardLearningViz = ({
 													y={tapeDim.height - 5}
 													fill="var(--f3)"
 													fontSize="9px"
-													textAnchor={
-														idx === 0
-															? "start"
-															: idx === timeTicks.length - 1
-																? "end"
-																: "middle"
+													textAnchor={tick.align}
+													dx={
+														tick.align === "start"
+															? 4
+															: tick.align === "end"
+																? -4
+																: 0
 													}
-													dx={idx === 0 ? 4 : idx === timeTicks.length - 1 ? -4 : 0}
 												>
 													{tick.label}
 												</text>
@@ -1779,15 +1967,34 @@ export const ForwardLearningViz = ({
 						</div>
 						<div className="flex items-center gap-2" data-l="abc-markers">
 							<span className="text-(--f4)">Class:</span>
-							<span data-l="fragment-class-detail" className="font-bold text-(--f1) uppercase">
+							<span
+								data-l="fragment-class-detail"
+								className="font-bold text-(--f1) uppercase"
+							>
 								{excursionEvent?.classCode ?? "—"}
 							</span>
 							<span className="text-(--f4)">Boundaries:</span>
 							<span>A: {excursionEvent?.marks.A ?? 0}</span>
 							<span>→</span>
-							<span>B: {excursionEvent?.marks.B ?? 0}</span>
+							<span>
+								B: {excursionEvent?.marks.B ?? 0}
+								{excursionEvent &&
+								excursionEvent.marks.B > excursionEvent.marks.A ? (
+									<span className="text-(--acc) ml-1 font-mono text-[9px]">
+										(+{excursionEvent.marks.B - excursionEvent.marks.A})
+									</span>
+								) : null}
+							</span>
 							<span>→</span>
-							<span>C: {excursionEvent?.marks.C ?? 0}</span>
+							<span>
+								C: {excursionEvent?.marks.C ?? 0}
+								{excursionEvent &&
+								excursionEvent.marks.C > excursionEvent.marks.B ? (
+									<span className="text-(--up) ml-1 font-mono text-[9px]">
+										(+{excursionEvent.marks.C - excursionEvent.marks.B})
+									</span>
+								) : null}
+							</span>
 						</div>
 						<div className="flex items-center gap-2">
 							<span className="text-(--f4)">Pre-Outcome Prediction:</span>
@@ -1826,10 +2033,20 @@ export const ForwardLearningViz = ({
 
 							{/* Visual Stacked Outcome Distribution Bar for Number-Blind Inspection */}
 							{(() => {
-								const totalOutcomes = histCorrectEnter + histFalseEnter + histMissedEnter;
-								const correctPct = totalOutcomes > 0 ? (histCorrectEnter / totalOutcomes) * 100 : 0;
-								const falsePct = totalOutcomes > 0 ? (histFalseEnter / totalOutcomes) * 100 : 0;
-								const missedPct = totalOutcomes > 0 ? (histMissedEnter / totalOutcomes) * 100 : 0;
+								const totalOutcomes =
+									histCorrectEnter + histFalseEnter + histMissedEnter;
+								const correctPct =
+									totalOutcomes > 0
+										? (histCorrectEnter / totalOutcomes) * 100
+										: 0;
+								const falsePct =
+									totalOutcomes > 0
+										? (histFalseEnter / totalOutcomes) * 100
+										: 0;
+								const missedPct =
+									totalOutcomes > 0
+										? (histMissedEnter / totalOutcomes) * 100
+										: 0;
 								return (
 									<div className="flex flex-col gap-1">
 										<div className="h-2 w-full rounded-full bg-(--sunken) border border-(--line) flex overflow-hidden">
@@ -1883,7 +2100,9 @@ export const ForwardLearningViz = ({
 									data-metric="hist_mean_return"
 									data-format="insufficient_if_zero"
 								>
-									{histCorrectEnter + histFalseEnter > 0 ? basis(histMeanReturn) : "—"}
+									{histCorrectEnter + histFalseEnter > 0
+										? basis(histMeanReturn)
+										: "—"}
 								</span>
 							</div>
 							<div className="flex justify-between items-baseline text-[10px]">
@@ -1893,7 +2112,9 @@ export const ForwardLearningViz = ({
 									data-metric="hist_lower_bound"
 									data-format="insufficient_if_zero"
 								>
-									{histCorrectEnter + histFalseEnter > 1 ? basis(histLowerBound) : "—"}
+									{histCorrectEnter + histFalseEnter > 1
+										? basis(histLowerBound)
+										: "—"}
 								</span>
 							</div>
 
@@ -1901,23 +2122,33 @@ export const ForwardLearningViz = ({
 							<div className="flex flex-col gap-0.5 pt-0.5">
 								<div className="flex justify-between text-[9px] text-(--f4)">
 									<span>Lower Bound Edge</span>
-									<span className={histLowerBound > 0 ? "text-(--up) font-bold" : "text-(--f3)"}>
+									<span
+										className={
+											histLowerBound > 0
+												? "text-(--up) font-bold"
+												: "text-(--f3)"
+										}
+									>
 										{histLowerBound > 0 ? "SURVIVES 0 BP" : "NO EDGE"}
 									</span>
 								</div>
 								<div className="relative h-1.5 w-full bg-(--sunken) rounded-full overflow-hidden border border-(--line)">
 									<div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-(--line2) z-10" />
-									{histCorrectEnter + histFalseEnter > 1 && histLowerBound !== 0 && (
-										<div
-											style={{
-												left: histLowerBound > 0 ? "50%" : `${Math.max(0, 50 + histLowerBound * 500)}%`,
-												width: `${Math.min(50, Math.abs(histLowerBound) * 500)}%`,
-											}}
-											className={`absolute top-0 bottom-0 ${
-												histLowerBound > 0 ? "bg-(--up)" : "bg-(--down)"
-											}`}
-										/>
-									)}
+									{histCorrectEnter + histFalseEnter > 1 &&
+										histLowerBound !== 0 && (
+											<div
+												style={{
+													left:
+														histLowerBound > 0
+															? "50%"
+															: `${Math.max(0, 50 + histLowerBound * 500)}%`,
+													width: `${Math.min(50, Math.abs(histLowerBound) * 500)}%`,
+												}}
+												className={`absolute top-0 bottom-0 ${
+													histLowerBound > 0 ? "bg-(--up)" : "bg-(--down)"
+												}`}
+											/>
+										)}
 								</div>
 							</div>
 
@@ -1972,7 +2203,10 @@ export const ForwardLearningViz = ({
 										style={{
 											width: `${
 												fwdPredictions > 0
-													? Math.min(100, (fwdPaperTrades / fwdPredictions) * 100)
+													? Math.min(
+															100,
+															(fwdPaperTrades / fwdPredictions) * 100,
+														)
 													: 0
 											}%`,
 										}}

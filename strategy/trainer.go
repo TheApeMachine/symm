@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -15,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/system"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -135,6 +137,7 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 		}
 
 		if len(symbols) == 0 {
+			errnie.Warn("[trainer] no symbols found, using default BTC/USD")
 			symbols = []string{"BTC/USD"}
 		}
 
@@ -148,6 +151,10 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 				)
 			}
 		}
+
+		var tallyMu sync.Mutex
+		globalTallies := make(map[string]*pathTally)
+		globalStats := make(map[string]*pathStats)
 
 		for measurement := range trainer.client.Get(prefixes...) {
 			if measurement == nil || measurement.Epoch != epoch {
@@ -168,11 +175,37 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 						return errnie.Error(err)
 					}
 
-					if len(tallies) == 0 {
-						return nil
+					tallyMu.Lock()
+
+					for p, t := range tallies {
+						gt, exists := globalTallies[p]
+
+						if !exists {
+							gt = &pathTally{}
+							globalTallies[p] = gt
+						}
+
+						gt.ups += t.ups
+						gt.downs += t.downs
+						gt.exits += t.exits
 					}
 
-					return trainer.publishPolicies(epoch, label, tallies, stats)
+					for p, s := range stats {
+						gs, exists := globalStats[p]
+
+						if !exists {
+							gs = &pathStats{}
+							globalStats[p] = gs
+						}
+
+						gs.gain += s.gain
+						gs.holdSeconds += s.holdSeconds
+						gs.visits += s.visits
+					}
+
+					tallyMu.Unlock()
+
+					return nil
 				})
 			}
 
@@ -185,6 +218,12 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 
 		if err := group.Wait(); err != nil {
 			return errnie.Error(err)
+		}
+
+		if len(globalTallies) > 0 {
+			if err := trainer.publishPolicies(epoch, "current", globalTallies, globalStats); err != nil {
+				return errnie.Error(err)
+			}
 		}
 	}
 
@@ -217,6 +256,7 @@ func (trainer *Trainer) consumeSymbol(
 
 		if measurement.Source == "detector" {
 			typeEntry := data.Pull(measurement.Meta("type"))
+			errnie.Info(fmt.Sprintf("[trainer] typeEntry: %v", typeEntry))
 
 			if typeEntry == nil {
 				continue
@@ -262,9 +302,10 @@ func (trainer *Trainer) consumeSymbol(
 	frames := make([]frameRecord, 0, len(ticks))
 	grid := nmstore.NewGrid(trainer.Context())
 	grammar := NewGrammar()
-	activePath := ""
+	coder := newPredictiveCoder()
+	step := 0
 	lastSym := ""
-	recentSyms := make([]string, 0, 4)
+	recentTokens := make([]string, 0, 16)
 
 	for _, tick := range ticks {
 		bucket := buckets[tick]
@@ -281,36 +322,89 @@ func (trainer *Trainer) consumeSymbol(
 			continue
 		}
 
-		sym := fmt.Sprintf("R%02d", regions[0].Key)
+		// 1. Vector of 15 region brightnesses
+		regionBrightness := make([]float64, 15)
+		for _, r := range regions {
+			if int(r.Key) < 15 {
+				regionBrightness[r.Key] = r.Brightness
+			}
+		}
 
-		if sym == lastSym {
-			frames = append(frames, frameRecord{
-				at:   at,
-				path: activePath,
-			})
+		// 2. PredictiveCoder settles over the 15 regions
+		step++
+		inValue := data.NewValue([2][]float64{
+			regionBrightness,
+			{0.0, 0.0, float64(step), float64(at.UnixNano()) / 1e9},
+		})
 
+		for val := range coder.Next(inValue.Next(nil)) {
+			_ = val
+		}
+
+		// 3. Dynamic Midpoint Activation Gate:
+		active := make([]*nmstore.Region, 0)
+		for _, r := range regions {
+			if r.Brightness > 0 {
+				active = append(active, r)
+			}
+		}
+
+		if len(active) == 0 {
 			continue
 		}
 
-		lastSym = sym
-		recentSyms = append(recentSyms, sym)
+		maxB := active[0].Brightness
+		minB := active[len(active)-1].Brightness
+		midB := (maxB + minB) / 2.0
 
-		if len(recentSyms) > 3 {
-			recentSyms = recentSyms[len(recentSyms)-3:]
+		var firedTokens []string
+		for _, r := range active {
+			if r.Brightness >= midB {
+				firedTokens = append(firedTokens, fmt.Sprintf("R%02d", r.Key))
+			}
 		}
 
-		rule := grammar.Append(sym)
+		if len(firedTokens) == 0 {
+			continue
+		}
 
-		if rule != nil {
-			phrase := rule.TerminalNames(grammar)
+		chordKey := strings.Join(firedTokens, "/")
+		if chordKey == lastSym {
+			frames = append(frames, frameRecord{
+				at:   at,
+				path: "",
+			})
+			continue
+		}
+		lastSym = chordKey
 
+		var deepestRule *Rule
+		for _, token := range firedTokens {
+			rule := grammar.Append(token)
+			if rule != nil {
+				deepestRule = rule
+			}
+		}
+
+		recentTokens = append(recentTokens, firedTokens...)
+
+		if len(recentTokens) > 16 {
+			recentTokens = recentTokens[len(recentTokens)-16:]
+		}
+
+		activePath := ""
+
+		if deepestRule != nil {
+			phrase := deepestRule.TerminalNames(grammar)
 			if len(phrase) >= 2 {
 				activePath = strings.Join(phrase, "/")
 			}
 		}
 
-		if rule == nil && activePath == "" && len(recentSyms) >= 2 {
-			activePath = strings.Join(recentSyms, "/")
+		if activePath == "" && len(recentTokens) >= 2 {
+			activePath = strings.Join(recentTokens[len(recentTokens)-2:], "/")
+		} else if activePath == "" && len(recentTokens) == 1 {
+			activePath = recentTokens[0]
 		}
 
 		frames = append(frames, frameRecord{
@@ -352,6 +446,26 @@ func (trainer *Trainer) consumeSymbol(
 		return stat
 	}
 
+	horizon := system.Cfg.Learning.PrecursorHorizon
+
+	if horizon <= 0 {
+		horizon = 8
+	}
+
+	findPath := func(idx int, minIdx int) string {
+		if idx < 0 || idx >= len(frames) {
+			return ""
+		}
+
+		for i := idx; i >= minIdx && i >= 0; i-- {
+			if frames[i].path != "" {
+				return frames[i].path
+			}
+		}
+
+		return ""
+	}
+
 	for _, excursion := range excursions {
 		bPrice, cPrice := extractPrices(excursion)
 
@@ -363,28 +477,27 @@ func (trainer *Trainer) consumeSymbol(
 		endAt := excursion.At
 
 		startIdx := -1
+
 		for index, frame := range frames {
 			if !frame.at.After(startAt) {
 				startIdx = index
 			}
 		}
 
+		if startIdx < 0 && len(frames) > 0 {
+			startIdx = 0
+		}
+
 		endIdx := -1
+
 		for index, frame := range frames {
 			if !frame.at.After(endAt) {
 				endIdx = index
 			}
 		}
 
-		if startIdx < 0 || startIdx >= len(frames) {
-			continue
-		}
-
-		entryPath := frames[startIdx].path
-
-		if entryPath == "" {
-			continue
-		}
+		minStartLook := max(startIdx-horizon, 0)
+		entryPath := findPath(startIdx, minStartLook)
 
 		pnl, cost, err := trainer.price.RoundTrip(symbol, bPrice, cPrice)
 		netReturn := 0.0
@@ -401,25 +514,35 @@ func (trainer *Trainer) consumeSymbol(
 		}
 
 		if isUp && netReturn > 0 {
-			getTally(entryPath).ups++
-			stat := getStats(entryPath)
-			stat.gain += netReturn
-			stat.holdSeconds += holdSeconds
-			stat.visits++
+			if entryPath != "" {
+				getTally(entryPath).ups++
+				stat := getStats(entryPath)
+				stat.gain += netReturn
+				stat.holdSeconds += holdSeconds
+				stat.visits++
+			}
 		}
 
 		if !isUp || netReturn <= 0 {
-			getTally(entryPath).downs++
-			stat := getStats(entryPath)
-			stat.gain += netReturn
-			stat.holdSeconds += holdSeconds
-			stat.visits++
+			if entryPath != "" {
+				getTally(entryPath).downs++
+				stat := getStats(entryPath)
+				stat.gain += netReturn
+				stat.holdSeconds += holdSeconds
+				stat.visits++
+			}
 		}
 
-		if isUp && endIdx >= 0 && endIdx < len(frames) {
-			exitPath := frames[endIdx].path
+		if isUp && netReturn > 0 && endIdx >= 0 && endIdx < len(frames) {
+			exitLook := startIdx
 
-			if exitPath != "" {
+			if exitLook < 0 {
+				exitLook = endIdx - horizon
+			}
+
+			exitPath := findPath(endIdx, max(0, exitLook))
+
+			if exitPath != "" && exitPath != entryPath {
 				getTally(exitPath).exits++
 				stat := getStats(exitPath)
 				stat.gain += netReturn
@@ -441,17 +564,24 @@ func (trainer *Trainer) publishPolicies(
 	counts := make(map[string]int)
 
 	for path, tally := range tallies {
+		errnie.Info(fmt.Sprintf(
+			"[trainer] path %s: ups=%d downs=%d exits=%d",
+			path, tally.ups, tally.downs, tally.exits,
+		))
+
 		var action string
 
-		if tally.ups >= 2 && tally.downs == 0 && tally.exits == 0 {
+		totalVisits := tally.ups + tally.downs + tally.exits
+
+		if totalVisits == 0 {
+			continue
+		}
+
+		if tally.ups > tally.downs && tally.ups > tally.exits {
 			action = "enter"
-		}
-
-		if tally.exits > 0 && tally.ups == 0 {
+		} else if tally.exits > tally.ups && tally.exits >= tally.downs {
 			action = "exit"
-		}
-
-		if tally.downs > 0 && tally.ups == 0 && tally.exits == 0 {
+		} else if tally.downs >= tally.ups && tally.downs > tally.exits {
 			action = "noop"
 		}
 
@@ -470,12 +600,26 @@ func (trainer *Trainer) publishPolicies(
 			holdSeconds = entry.holdSeconds
 		}
 
+		confidence := 1.0
+
+		if totalVisits > 0 {
+			switch action {
+			case "enter":
+				confidence = float64(tally.ups) / float64(totalVisits)
+			case "exit":
+				confidence = float64(tally.exits) / float64(totalVisits)
+			case "noop":
+				confidence = float64(tally.downs) / float64(totalVisits)
+			}
+		}
+
 		gainUnit, gainTime := data.GetDimension("policy", "gain")
 		holdUnit, holdTime := data.GetDimension("policy", "hold_seconds")
 		visitsUnit, visitsTime := data.GetDimension("policy", "visits")
 		rewardUnit, rewardTime := data.GetDimension("policy", "mean_reward")
+		confidenceUnit, confidenceTime := data.GetDimension("policy", "confidence")
 
-		trainer.storeTee.Push(data.NewMeasurement(
+		meas := data.NewMeasurement(
 			epoch, symbol, "policy", time.Now().UTC(), time.Now().UTC(),
 			&data.StringEntry{Key: "action", Value: action},
 			&data.StringEntry{Key: "path", Value: path},
@@ -484,7 +628,29 @@ func (trainer *Trainer) publishPolicies(
 			data.NewMetric("hold_seconds", holdSeconds/float64(visits), holdUnit, holdTime),
 			data.NewMetric("visits", float64(visits), visitsUnit, visitsTime),
 			data.NewMetric("mean_reward", gain/float64(visits), rewardUnit, rewardTime),
-		))
+			data.NewMetric("confidence", confidence, confidenceUnit, confidenceTime),
+		)
+
+		if trainer.storeTee != nil {
+			trainer.storeTee.Push(meas)
+			counts[action]++
+			continue
+		}
+
+		if trainer.client != nil {
+			key := fmt.Sprintf("policy/%s/%019d/%s/%s.bin", symbol, epoch, path, action)
+			payload, err := meas.MarshalBinary()
+
+			if err != nil {
+				errnie.Error(err)
+				counts[action]++
+				continue
+			}
+
+			if err := trainer.client.Put(key, payload); err != nil {
+				errnie.Error(err)
+			}
+		}
 
 		counts[action]++
 	}

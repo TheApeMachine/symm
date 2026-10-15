@@ -20,7 +20,7 @@ func TestContractStage(t *testing.T) {
 				s.Channel() <- m
 			}
 			close(s.Channel())
-			_ = s.Run()
+			So(s.Run(), ShouldBeNil)
 			return s.Violations()
 		}
 

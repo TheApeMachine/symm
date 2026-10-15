@@ -1,9 +1,10 @@
+import { useSelector } from "@tanstack/react-store";
 import { signals } from "#/collections/app";
 import {
 	Component,
 	DistanceBar,
-	formatValue,
 	Funnel,
+	formatValue,
 	Gauge,
 	type GaugeTone,
 	metricOf,
@@ -16,7 +17,6 @@ import {
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
 import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { useSelector } from "@tanstack/react-store";
 
 /*
 Open positions, drawn from the Training Measurement's own Metrics

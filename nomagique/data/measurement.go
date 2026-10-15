@@ -171,7 +171,6 @@ func (measurement *Measurement) Next(
 	}
 
 	if measurement != nil && measurement.locked() {
-		next.peers = append(next.peers, measurement.peers...)
 		next.samples = measurement.samples + 1
 		next.prediction = measurement.prediction
 
@@ -184,10 +183,6 @@ func (measurement *Measurement) Next(
 
 	if measurement == nil || !measurement.locked() {
 		next.samples = 1
-
-		if prior != nil {
-			next.peers = append(next.peers, prior.peers...)
-		}
 	}
 
 	next.copyMetrics(source, values, measurement, prior)
@@ -255,6 +250,30 @@ func (measurement *Measurement) copyMetrics(
 Prefix returns the prefix for the given key.
 */
 func (measurement *Measurement) Prefix() string {
+	if measurement.Source == "policy" {
+		path := ""
+		action := ""
+
+		for _, entry := range measurement.metadata {
+			if entry != nil && entry.Key == "path" {
+				path = entry.Value
+			}
+
+			if entry != nil && entry.Key == "action" {
+				action = entry.Value
+			}
+		}
+
+		if path != "" && action != "" {
+			label := measurement.Label
+			if label == "" {
+				label = "current"
+			}
+
+			return fmt.Sprintf("policy/%s/%019d/%s/%s.bin", label, measurement.Epoch, path, action)
+		}
+	}
+
 	return fmt.Sprintf(
 		"%s/%s/%019d/%019d/%019d/%019d.bin",
 		measurement.Source,

@@ -203,7 +203,7 @@ func TestTrainer(t *testing.T) {
 			now := time.Now().UTC()
 			var seqIdx int64
 
-			for step := 0; step < 10; step++ {
+			for step := range 10 {
 				at := now.Add(time.Duration(step) * time.Millisecond)
 
 				for _, source := range SensorySources {
@@ -232,7 +232,7 @@ func TestTrainer(t *testing.T) {
 				}
 			}
 
-			for excursionIdx := 0; excursionIdx < 2; excursionIdx++ {
+			for excursionIdx := range 2 {
 				seqIdx++
 				ignitionAt := now.Add(time.Duration(excursionIdx*3) * time.Millisecond)
 				exhaustionAt := now.Add(time.Duration(excursionIdx*3+2) * time.Millisecond)

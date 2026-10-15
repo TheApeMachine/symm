@@ -96,12 +96,12 @@ baseline, giving the measurement its baseline, divergence, and z-score. The
 score is unbounded, so it is tracked directly rather than through atanh.
 */
 type History struct {
-	err      error
-	baseline core.Primitive
+	err       error
+	baselines map[string]core.Primitive
 }
 
 func NewHistory() core.Primitive {
-	return &History{baseline: adaptive.NewBaseline(adaptive.NewWindow())}
+	return &History{baselines: make(map[string]core.Primitive)}
 }
 
 func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -127,7 +127,14 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			reading := data.To[float64, adaptive.BaselineReading](op.baseline, &signed)
+			bl, exists := op.baselines[frame.Symbol]
+
+			if !exists {
+				bl = adaptive.NewBaseline(adaptive.NewWindow())
+				op.baselines[frame.Symbol] = bl
+			}
+
+			reading := data.To[float64, adaptive.BaselineReading](bl, &signed)
 
 			if reading.HasPrior {
 				frame.Metrics["covariance_score_baseline"] = reading.Baseline
@@ -160,12 +167,12 @@ Relative tracks the focal-to-cohort relative return energy rate against its
 own adaptive baseline.
 */
 type Relative struct {
-	err      error
-	baseline core.Primitive
+	err       error
+	baselines map[string]core.Primitive
 }
 
 func NewRelative() core.Primitive {
-	return &Relative{baseline: adaptive.NewBaseline(adaptive.NewWindow())}
+	return &Relative{baselines: make(map[string]core.Primitive)}
 }
 
 func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -183,7 +190,14 @@ func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				continue
 			}
 
-			reading := data.To[float64, adaptive.BaselineReading](op.baseline, &relative)
+			bl, exists := op.baselines[frame.Symbol]
+
+			if !exists {
+				bl = adaptive.NewBaseline(adaptive.NewWindow())
+				op.baselines[frame.Symbol] = bl
+			}
+
+			reading := data.To[float64, adaptive.BaselineReading](bl, &relative)
 
 			if reading.HasPrior {
 				frame.Metrics["relative_return_energy_baseline"] = reading.Baseline
@@ -215,12 +229,12 @@ func (op *Relative) Error(errs ...error) error {
 CorrelationVelocity measures how fast the cohort's covariance score moves.
 */
 type CorrelationVelocity struct {
-	err      error
-	velocity core.Primitive
+	err        error
+	velocities map[string]core.Primitive
 }
 
 func NewCorrelationVelocity() core.Primitive {
-	return &CorrelationVelocity{velocity: temporal.NewVelocity()}
+	return &CorrelationVelocity{velocities: make(map[string]core.Primitive)}
 }
 
 func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -246,13 +260,20 @@ func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 				continue
 			}
 
+			vel, exists := op.velocities[frame.Symbol]
+
+			if !exists {
+				vel = temporal.NewVelocity()
+				op.velocities[frame.Symbol] = vel
+			}
+
 			observation := temporal.Observation{
 				Value: signed,
 				At:    frame.At,
 			}
 
 			reading := data.To[temporal.Observation, temporal.VelocityReading](
-				op.velocity, &observation,
+				vel, &observation,
 			)
 
 			if reading.Defined {
@@ -280,12 +301,12 @@ func (op *CorrelationVelocity) Error(errs ...error) error {
 EnergyVelocity measures how fast the relative return energy rate moves.
 */
 type EnergyVelocity struct {
-	err      error
-	velocity core.Primitive
+	err        error
+	velocities map[string]core.Primitive
 }
 
 func NewEnergyVelocity() core.Primitive {
-	return &EnergyVelocity{velocity: temporal.NewVelocity()}
+	return &EnergyVelocity{velocities: make(map[string]core.Primitive)}
 }
 
 func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
@@ -303,13 +324,20 @@ func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				continue
 			}
 
+			vel, exists := op.velocities[frame.Symbol]
+
+			if !exists {
+				vel = temporal.NewVelocity()
+				op.velocities[frame.Symbol] = vel
+			}
+
 			observation := temporal.Observation{
 				Value: relative,
 				At:    frame.At,
 			}
 
 			reading := data.To[temporal.Observation, temporal.VelocityReading](
-				op.velocity, &observation,
+				vel, &observation,
 			)
 
 			if reading.Defined {
@@ -340,14 +368,14 @@ distance and empirical percentile.
 */
 type Recurrence struct {
 	err              error
-	historyPoints    [][2]float64
-	historyDistances []float64
+	historyPoints    map[string][][2]float64
+	historyDistances map[string][]float64
 }
 
 func NewRecurrence() core.Primitive {
 	return &Recurrence{
-		historyPoints:    make([][2]float64, 0, 256),
-		historyDistances: make([]float64, 0, 256),
+		historyPoints:    make(map[string][][2]float64),
+		historyDistances: make(map[string][]float64),
 	}
 }
 
@@ -377,15 +405,18 @@ func (op *Recurrence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 			}
 
 			target := [2]float64{correlationZScore, energyZScore}
+			sym := frame.Symbol
+			points := op.historyPoints[sym]
+			distances := op.historyDistances[sym]
 
-			if len(op.historyPoints) > 0 {
-				diffX := target[0] - op.historyPoints[0][0]
-				diffY := target[1] - op.historyPoints[0][1]
+			if len(points) > 0 {
+				diffX := target[0] - points[0][0]
+				diffY := target[1] - points[0][1]
 				minDist := math.Sqrt(diffX*diffX + diffY*diffY)
 
-				for index := 1; index < len(op.historyPoints); index++ {
-					deltaX := target[0] - op.historyPoints[index][0]
-					deltaY := target[1] - op.historyPoints[index][1]
+				for index := 1; index < len(points); index++ {
+					deltaX := target[0] - points[index][0]
+					deltaY := target[1] - points[index][1]
 					distance := math.Sqrt(deltaX*deltaX + deltaY*deltaY)
 
 					if distance < minDist {
@@ -393,31 +424,34 @@ func (op *Recurrence) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer]
 					}
 				}
 
-				if len(op.historyDistances) > 0 {
+				if len(distances) > 0 {
 					belowCount := 0
 
-					for _, pastDist := range op.historyDistances {
+					for _, pastDist := range distances {
 						if pastDist <= minDist {
 							belowCount++
 						}
 					}
 
-					frame.Metrics["historical_path_percentile"] = float64(belowCount) / float64(len(op.historyDistances))
+					frame.Metrics["historical_path_percentile"] = float64(belowCount) / float64(len(distances))
 				}
 
 				frame.Metrics["historical_path_distance"] = minDist
-				op.historyDistances = append(op.historyDistances, minDist)
+				distances = append(distances, minDist)
 
-				if len(op.historyDistances) > 256 {
-					op.historyDistances = op.historyDistances[len(op.historyDistances)-256:]
+				if len(distances) > 256 {
+					distances = distances[len(distances)-256:]
 				}
 			}
 
-			op.historyPoints = append(op.historyPoints, target)
+			points = append(points, target)
 
-			if len(op.historyPoints) > 256 {
-				op.historyPoints = op.historyPoints[len(op.historyPoints)-256:]
+			if len(points) > 256 {
+				points = points[len(points)-256:]
 			}
+
+			op.historyPoints[sym] = points
+			op.historyDistances[sym] = distances
 
 			if !yield(arriving) {
 				return

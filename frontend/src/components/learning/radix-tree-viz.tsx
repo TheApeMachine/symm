@@ -79,9 +79,9 @@ function buildTreeFromPrefixes(prefixes: string[]): TrieNodeData | null {
 		if (parts.length === 0) continue;
 
 		const lastPart = parts[parts.length - 1];
-		const isAction = lastPart.endsWith(".json");
+		const isAction = lastPart.endsWith(".bin");
 		const action = isAction
-			? lastPart.replace(/\.json$/i, "").toUpperCase()
+			? lastPart.replace(/\.bin$/i, "").toUpperCase()
 			: null;
 		const regionTokens = isAction ? parts.slice(0, -1) : parts;
 		if (regionTokens.length === 0) continue;
@@ -122,7 +122,7 @@ function extractPrefixes(data?: TrieNodeData | null): string[] {
 	const walk = (node: TrieNodeData, currentPath: string[]) => {
 		const nextPath = node.token ? [...currentPath, node.token] : currentPath;
 		if (node.action && nextPath.length > 0) {
-			paths.push(`${nextPath.join("/")}/${node.action.toLowerCase()}.json`);
+			paths.push(`${nextPath.join("/")}/${node.action.toLowerCase()}.bin`);
 		}
 		const children = [...(node.children || []), ...(node._children || [])];
 		for (const child of children) {
@@ -135,13 +135,14 @@ function extractPrefixes(data?: TrieNodeData | null): string[] {
 }
 
 /*
-keyMatchesPrefix checks if a trie key (e.g. "R01-R02/R03-R04/R05-R06/enter.json")
+keyMatchesPrefix checks if a trie key (e.g. "R01-R02/R03-R04/R05-R06/enter.bin")
 matches or extends the token prefix sequence of a symbol (e.g. ["R01-R02", "R03-R04"]).
 */
 export function keyMatchesPrefix(key: string, tokens: string[]): boolean {
 	if (!tokens || tokens.length === 0) return false;
 	const parts = key.split("/").filter(Boolean);
-	const isAction = parts[parts.length - 1]?.endsWith(".json");
+	const lastPart = parts[parts.length - 1];
+	const isAction = lastPart?.endsWith(".bin");
 	const keyTokens = isAction ? parts.slice(0, -1) : parts;
 	if (keyTokens.length < tokens.length) {
 		return false;
@@ -163,9 +164,9 @@ export function keyMatchesSymbol(key: string, symbol: SymbolProgress): boolean {
 	if (!symbol.tokens || symbol.tokens.length === 0) return false;
 
 	if (symbol.matched && symbol.matched.length > 0) {
-		const keyClean = key.replace(/\.json$/i, "");
+		const keyClean = key.replace(/\.(bin)$/i, "");
 		for (const m of symbol.matched) {
-			const mClean = m.replace(/\.json$/i, "");
+			const mClean = m.replace(/\.(bin)$/i, "");
 			if (
 				keyClean === mClean ||
 				keyClean.startsWith(`${mClean}/`) ||
@@ -233,9 +234,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		let exit = 0;
 		let noop = 0;
 		for (const key of allKeys) {
-			if (key.endsWith("/enter.json")) enter++;
-			else if (key.endsWith("/exit.json")) exit++;
-			else if (key.endsWith("/noop.json")) noop++;
+			if (key.endsWith("/enter.bin")) enter++;
+			else if (key.endsWith("/exit.bin")) exit++;
+			else if (key.endsWith("/noop.bin")) noop++;
 		}
 		return { enter, exit, noop, total: allKeys.length };
 	}, [allKeys]);
@@ -250,9 +251,12 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	const filteredKeys = useMemo(() => {
 		if (allKeys.length === 0) return [];
 		if (branchFilter === "all" || showAllBranches) return allKeys;
-		if (branchFilter === "noop") return allKeys.filter((k) => k.endsWith("/noop.json"));
-		if (branchFilter === "enter") return allKeys.filter((k) => k.endsWith("/enter.json"));
-		if (branchFilter === "exit") return allKeys.filter((k) => k.endsWith("/exit.json"));
+		if (branchFilter === "noop")
+			return allKeys.filter((k) => k.endsWith("/noop.bin"));
+		if (branchFilter === "enter")
+			return allKeys.filter((k) => k.endsWith("/enter.bin"));
+		if (branchFilter === "exit")
+			return allKeys.filter((k) => k.endsWith("/exit.bin"));
 		return matchingKeys;
 	}, [allKeys, branchFilter, showAllBranches, matchingKeys]);
 
@@ -275,7 +279,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		const set = new Set<string>();
 		for (const key of filteredKeys) {
 			const parts = key.split("/").filter(Boolean);
-			const isAction = parts[parts.length - 1]?.endsWith(".json");
+			const isAction = parts[parts.length - 1]?.endsWith(".bin");
 			const regionTokens = isAction ? parts.slice(0, -1) : parts;
 			let prefix = "";
 			for (const tok of regionTokens) {
@@ -973,9 +977,19 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 																	? "var(--warn)"
 																	: "var(--f4)"
 													}
-													strokeWidth={symbolsAtNode && symbolsAtNode.length > 0 ? 2.5 : 1.2}
-													strokeDasharray={symbolsAtNode && symbolsAtNode.length > 0 ? undefined : "3 2"}
-													opacity={symbolsAtNode && symbolsAtNode.length > 0 ? 1 : 0.75}
+													strokeWidth={
+														symbolsAtNode && symbolsAtNode.length > 0
+															? 2.5
+															: 1.2
+													}
+													strokeDasharray={
+														symbolsAtNode && symbolsAtNode.length > 0
+															? undefined
+															: "3 2"
+													}
+													opacity={
+														symbolsAtNode && symbolsAtNode.length > 0 ? 1 : 0.75
+													}
 												/>
 												<text
 													x={0}

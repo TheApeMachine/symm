@@ -58,14 +58,8 @@ func (consumer *Consumer) Step(prior *data.Measurement, seq int64) *data.Measure
 
 	if len(consumer.tees) > 0 && (prior == nil || prior.Source != "spot:touch") {
 		for _, tee := range consumer.tees {
-			if tee != nil {
-				if returned != nil && len(returned.Peers()) > 0 {
-					for _, peer := range consumer.published[slot].Peers() {
-						tee.Push(peer)
-					}
-				} else {
-					tee.Push(returned)
-				}
+			if tee != nil && returned != nil {
+				tee.Push(returned)
 			}
 		}
 	}

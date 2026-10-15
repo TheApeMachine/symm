@@ -20,7 +20,7 @@ func TestRedundancyStage(t *testing.T) {
 				s.Channel() <- m
 			}
 			close(s.Channel())
-			_ = s.Run()
+			So(s.Run(), ShouldBeNil)
 			return s.Violations()
 		}
 
@@ -109,6 +109,39 @@ func TestRedundancyStage(t *testing.T) {
 				}
 			}
 			So(hasNegCollinear, ShouldBeTrue)
+		})
+
+		Convey("When auditing joined multi-signal frames with cross-signal collinearity", func() {
+			measurements := make([]*data.Measurement, 0, 25)
+
+			for idx := range int64(25) {
+				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
+				val := float64(idx) + 1.0
+
+				peerA := data.NewMeasurement(1, "BTC/USD", "signal_a", now, now)
+				peerA.Write(data.NewMetric("feature_x", val, data.UnitDimensionless, data.TimescaleInstantaneous))
+				peerA.Finalize()
+
+				peerB := data.NewMeasurement(1, "BTC/USD", "signal_b", now, now)
+				peerB.Write(data.NewMetric("feature_y", 2.0*val+5.0, data.UnitDimensionless, data.TimescaleInstantaneous))
+				peerB.Finalize()
+
+				join := data.NewMeasurement(1, "BTC/USD", "runtime:join", now, now)
+				join.Peers(peerA, peerB)
+				join.Finalize()
+				measurements = append(measurements, join)
+			}
+
+			violations := feed(stage, measurements...)
+			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
+
+			hasCrossSignalCollinear := false
+			for _, violation := range violations {
+				if violation.Name == "redundancy.collinear_pair" {
+					hasCrossSignalCollinear = true
+				}
+			}
+			So(hasCrossSignalCollinear, ShouldBeTrue)
 		})
 
 		Convey("When auditing nil measurements and nil metric entries", func() {

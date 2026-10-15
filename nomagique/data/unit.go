@@ -269,12 +269,15 @@ var SignalMetrics = map[string]map[string]Dimension{
 		"token_strength":         {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
 		"token_threshold":        {Unit: UnitZScore, Timescale: TimescaleInstantaneous},
 		"stored_paths":           {Unit: UnitCount, Timescale: TimescaleInstantaneous},
+		"resonance_energy":       {Unit: UnitDimensionless, Timescale: TimescaleInstantaneous},
+		"resonance_surprise":     {Unit: UnitDimensionless, Timescale: TimescaleInstantaneous},
 	},
 	"policy": {
 		"gain":         {Unit: UnitLogReturn, Timescale: TimescaleTick},
 		"hold_seconds": {Unit: UnitSecond, Timescale: TimescaleTick},
 		"visits":       {Unit: UnitCount, Timescale: TimescaleTick},
 		"mean_reward":  {Unit: UnitLogReturn, Timescale: TimescaleTick},
+		"confidence":   {Unit: UnitConfidence, Timescale: TimescaleTick},
 	},
 }
 

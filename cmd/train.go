@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -110,6 +111,41 @@ action tree published to S3 storage.`,
 		storeTee := hindsight.NewStoreTee(ctx, "train")
 		storeTee.Transition(nmruntime.READY)
 		storeTee.Run()
+
+		// Archive existing active model in policy/current/ before refining/updating
+		currentKeys := client.ListKeys("policy/current/")
+		if len(currentKeys) > 0 {
+			if err := client.MovePrefix("policy/current/", "policy/archive/"); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"[train] warning: failed to archive current policy before training",
+					err,
+				))
+			}
+		}
+
+		for _, epoch := range trainEpochs {
+			_ = client.DeletePrefix(fmt.Sprintf("policy/current/%019d/", epoch))
+			_ = client.DeletePrefix(fmt.Sprintf("policy/current/%d/", epoch))
+			if len(trainSymbols) > 0 {
+				for _, symbol := range trainSymbols {
+					_ = client.DeletePrefix(fmt.Sprintf("policy/%s/%019d/", symbol, epoch))
+					_ = client.DeletePrefix(fmt.Sprintf("policy/%s/%d/", symbol, epoch))
+				}
+			} else {
+				for page := range client.List("policy/", "/") {
+					for _, cp := range page.CommonPrefixes {
+						if cp.Prefix == nil {
+							continue
+						}
+						symbolPart := strings.TrimPrefix(*cp.Prefix, "policy/")
+						symbolPart = strings.Trim(symbolPart, "/")
+						_ = client.DeletePrefix(fmt.Sprintf("policy/%s/%019d/", symbolPart, epoch))
+						_ = client.DeletePrefix(fmt.Sprintf("policy/%s/%d/", symbolPart, epoch))
+					}
+				}
+			}
+		}
 
 		trainer := strategy.NewTrainer(ctx, client, storeTee, price).WithSymbols(trainSymbols...)
 

@@ -20,7 +20,7 @@ func TestSympathyStage(t *testing.T) {
 				s.Channel() <- m
 			}
 			close(s.Channel())
-			_ = s.Run()
+			So(s.Run(), ShouldBeNil)
 			return s.Violations()
 		}
 
@@ -84,6 +84,39 @@ func TestSympathyStage(t *testing.T) {
 			}
 			So(hasSympathyViolation, ShouldBeTrue)
 			So(stage.Report(), ShouldContainSubstring, "sympathy.cross_stream_redundancy")
+		})
+
+		Convey("When auditing cross-asset streams that fail sympathy test", func() {
+			base := time.Now().UnixNano()
+			measurements := make([]*data.Measurement, 0, 40)
+
+			// BTC/USD trending up
+			for idx := range int64(20) {
+				venueTime := time.Unix(0, base+idx*20_000_000)
+				measurement := data.NewMeasurement(1, "BTC/USD", "source_a", venueTime, venueTime)
+				val := 100.0 + float64(idx)*1.0
+				measurement.Write(data.NewMetric("price", val, data.UnitPrice, data.TimescaleInstantaneous))
+				measurements = append(measurements, measurement)
+			}
+
+			// ETH/USD independent random oscillation (no continuous-time sympathy)
+			for idx := range int64(20) {
+				venueTime := time.Unix(0, base+idx*20_000_000+5_000_000)
+				measurement := data.NewMeasurement(1, "ETH/USD", "source_b", venueTime, venueTime)
+				val := 100.0 + 10.0*math.Sin(float64(idx)*math.Pi/2.0)
+				measurement.Write(data.NewMetric("price", val, data.UnitPrice, data.TimescaleInstantaneous))
+				measurements = append(measurements, measurement)
+			}
+
+			violations := feed(stage, measurements...)
+			hasNoConcordance := false
+			for _, violation := range violations {
+				if violation.Name == "sympathy.no_concordance" {
+					hasNoConcordance = true
+				}
+			}
+			So(hasNoConcordance, ShouldBeTrue)
+			So(stage.Report(), ShouldContainSubstring, "sympathy.no_concordance")
 		})
 
 		Convey("When auditing nil measurements and nil metric entries", func() {

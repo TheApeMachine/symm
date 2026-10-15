@@ -89,3 +89,20 @@ export interface SymbolProgress {
 	/* Stored key dirs Step currently matches for this symbol; undefined when unknown. */
 	matched?: string[];
 }
+
+export interface SequiturRuleExport {
+	id: number;
+	name: string;
+	count: number;
+	depth: number;
+	length: number;
+	symbols: string[];
+	terminals: string[];
+	action?: string;
+}
+
+export interface SequiturGrammarResponse {
+	symbol: string;
+	rules: SequiturRuleExport[];
+	start: string[];
+}

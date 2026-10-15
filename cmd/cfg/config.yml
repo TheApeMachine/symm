@@ -234,7 +234,7 @@ market:
   book_depth_levels: 25
   baseline_halflife: 30s
   l3_enabled: true
-  l3_depth: 10
+  l3_depth: 100
   # Kraken's standard L3 subscription-rate budget. Depth determines the cost
   # per symbol, so websocket batches are derived from this value.
   l3_rate_limit: 200
@@ -312,7 +312,7 @@ learning:
   # Short prefixes are shared by almost every stored path (early on nearly all
   # of them read "enter"), so a 1-2 token agreement is coincidence, not a match.
   # Required: there is no default in code.
-  minimum_path_confidence: 3
+  minimum_path_confidence: 2
 
 cognition:
   # A binary confidence of 0.5 is exactly indifferent. Cognition must exceed

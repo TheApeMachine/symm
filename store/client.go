@@ -6,6 +6,7 @@ import (
 	"errors"
 	"iter"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -331,5 +332,54 @@ func (client *Client) DeletePrefix(prefix string) error {
 	}
 
 	return client.Delete(keys...)
+}
+
+/*
+Copy duplicates an object within the store from srcKey to dstKey using server-side S3 CopyObject.
+*/
+func (client *Client) Copy(srcKey, dstKey string) error {
+	if client == nil || client.s3Client == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "[store.client] client is nil", nil,
+		))
+	}
+
+	_, err := client.s3Client.CopyObject(client.Context(), &s3.CopyObjectInput{
+		Bucket:     aws.String(client.bucket),
+		CopySource: aws.String(url.PathEscape(client.bucket + "/" + srcKey)),
+		Key:        aws.String(dstKey),
+	})
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] copy error", err,
+		))
+	}
+
+	return nil
+}
+
+/*
+MovePrefix server-side moves all object keys matching srcPrefix to dstPrefix.
+*/
+func (client *Client) MovePrefix(srcPrefix, dstPrefix string) error {
+	keys := client.ListKeys(srcPrefix)
+
+	if len(keys) == 0 {
+		return nil
+	}
+
+	for _, key := range keys {
+		rel := strings.TrimPrefix(key, srcPrefix)
+		dstKey := dstPrefix + rel
+
+		if err := client.Copy(key, dstKey); err != nil {
+			return err
+		}
+
+		_ = client.Delete(key)
+	}
+
+	return nil
 }
 

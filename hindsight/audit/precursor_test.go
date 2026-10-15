@@ -19,7 +19,7 @@ func TestPrecursorStage(t *testing.T) {
 				s.Channel() <- m
 			}
 			close(s.Channel())
-			_ = s.Run()
+			So(s.Run(), ShouldBeNil)
 			return s.Violations()
 		}
 
@@ -38,6 +38,7 @@ func TestPrecursorStage(t *testing.T) {
 					measurement.Write(
 						data.NewMetric("best_bid_price", bid, data.UnitPrice, data.TimescaleInstantaneous),
 						data.NewMetric("best_ask_price", ask, data.UnitPrice, data.TimescaleInstantaneous),
+						data.NewMetric("fee_rate", 0.008, data.UnitRate, data.TimescaleInstantaneous),
 					)
 					measurement.Finalize()
 					measurements = append(measurements, measurement)
@@ -64,6 +65,7 @@ func TestPrecursorStage(t *testing.T) {
 					measurement.Write(
 						data.NewMetric("best_bid_price", bid, data.UnitPrice, data.TimescaleInstantaneous),
 						data.NewMetric("best_ask_price", ask, data.UnitPrice, data.TimescaleInstantaneous),
+						data.NewMetric("fee_rate", 0.008, data.UnitRate, data.TimescaleInstantaneous),
 					)
 					measurement.Finalize()
 					measurements = append(measurements, measurement)
@@ -87,6 +89,49 @@ func TestPrecursorStage(t *testing.T) {
 			nilViolations := feed(stage, nil)
 			So(len(nilViolations), ShouldEqual, 1)
 			So(nilViolations[0].Name, ShouldEqual, "measurement")
+		})
+
+		Convey("When auditing precursor token separation against background noise", func() {
+			// Detector episode with precursor window [1, 20] and excursion [20, 30]
+			now := time.Now()
+			detectorMeas := data.NewMeasurement(1, "BTC/USD", "detector", now, now, &data.StringEntry{Key: "type", Value: "up"})
+			detectorMeas.Write(
+				data.NewMetric("start_tick", 1, data.UnitCount, data.TimescaleTick),
+				data.NewMetric("b_tick", 20, data.UnitCount, data.TimescaleTick),
+				data.NewMetric("c_tick", 30, data.UnitCount, data.TimescaleTick),
+				data.NewMetric("end_tick", 40, data.UnitCount, data.TimescaleTick),
+				data.NewMetric("b_price", 100, data.UnitPrice, data.TimescaleInstantaneous),
+				data.NewMetric("c_price", 110, data.UnitPrice, data.TimescaleInstantaneous),
+			)
+			detectorMeas.Finalize()
+
+			ms := []*data.Measurement{detectorMeas}
+
+			// Precursor ticks [1, 20] produce distinct signal, background ticks [31, 50] produce different signal
+			for tick := int64(1); tick <= 50; tick++ {
+				at := now.Add(time.Duration(tick) * time.Millisecond)
+				join := data.NewMeasurement(1, "BTC/USD", "runtime:join", at, at)
+				join.Tick = tick
+
+				signalPeer := data.NewMeasurement(1, "BTC/USD", "cvd", at, at)
+				metric := data.NewMetric("flow_aligned_midpoint_return", 0.9, data.UnitLogReturn, data.TimescaleTick).SetSNM(0.9)
+				signalPeer.Write(metric)
+
+				if tick > 20 {
+					signalPeer = data.NewMeasurement(1, "BTC/USD", "hawkes", at, at)
+					metric = data.NewMetric("conditional_intensity_velocity", 0.9, data.UnitRate, data.TimescaleTick).SetSNM(0.9)
+					signalPeer.Write(metric)
+				}
+				signalPeer.Finalize()
+				join.Peers(signalPeer)
+				join.Finalize()
+				ms = append(ms, join)
+			}
+
+			violations := feed(stage, ms...)
+			dataMap := stage.Data().(map[string]any)
+			So(dataMap["jsd"].(float64), ShouldBeGreaterThan, 0.0)
+			So(len(violations), ShouldEqual, 0)
 		})
 	})
 }
