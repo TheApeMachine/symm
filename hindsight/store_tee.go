@@ -2,7 +2,7 @@ package hindsight
 
 import (
 	"context"
-	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -14,14 +14,28 @@ import (
 	"golang.design/x/lockfree/lf"
 )
 
+const (
+	minWorkers = 2
+	maxWorkers = 32
+)
+
+var payloadPool = sync.Pool{
+	New: func() any {
+		return make([]byte, 0, 4096)
+	},
+}
+
 /*
 StoreTee queues measurements for the catalog drain.
 */
 type StoreTee struct {
 	*runtime.System
-	queue   *lf.Queue[*data.Measurement]
-	dropped atomic.Int64
-	client  *store.Client
+	queue       *lf.Queue[*data.Measurement]
+	dropped     atomic.Int64
+	client      *store.Client
+	workers     atomic.Int32
+	lastPending int64
+	running     atomic.Bool
 }
 
 func NewStoreTee(ctx context.Context, label string) *StoreTee {
@@ -44,44 +58,52 @@ func (tee *StoreTee) Push(measurement *data.Measurement) {
 		return
 	}
 
-	if status := tee.Status(); status != runtime.READY {
-		tee.dropped.Add(1)
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf(
-				"[storeTee] dropped %s/%s epoch=%d tick=%d: tee is %v, not ready",
-				measurement.Source, measurement.Label, measurement.Epoch, measurement.Tick, status,
-			),
-			nil,
-		))
-
-		return
-	}
-
 	tee.queue.Enqueue(measurement)
 }
 
 /*
-Next returns the next measurement from the queue.
+Next mus remain a noop.
 */
 func (tee *StoreTee) Next() unsafe.Pointer {
-	measurement, ok := tee.queue.Dequeue()
+	return nil
+}
 
-	if !ok || measurement == nil {
+func (tee *StoreTee) store(measurement *data.Measurement) (err error) {
+	if measurement == nil {
 		return nil
 	}
 
-	return unsafe.Pointer(&measurement)
+	payload := payloadPool.Get().([]byte)[:0]
+	defer payloadPool.Put(payload)
+
+	if payload, err = measurement.MarshalBinary(); err != nil {
+		return tee.Error(errnie.Err(
+			errnie.IO,
+			"[hindsight.storeTee]: marshal failed for "+measurement.Prefix(),
+			err,
+		))
+	}
+
+	return tee.client.Put(measurement.Prefix(), payload)
 }
 
-/*
-Run consumes the queue and writes to S3.
-*/
-func (tee *StoreTee) Run() {
+func (tee *StoreTee) spawnWorker() {
+	if !tee.running.Load() {
+		return
+	}
+
+	tee.workers.Add(1)
+
+	ctx, cancel := context.WithCancel(tee.Context())
+
 	go func() {
+		defer cancel()
+		defer tee.workers.Add(-1)
+
 		for {
 			select {
-			case <-tee.Context().Done():
+			case <-ctx.Done():
+				// Drain remaining measurements on shutdown
 				for {
 					measurement, ok := tee.queue.Dequeue()
 
@@ -89,41 +111,49 @@ func (tee *StoreTee) Run() {
 						return
 					}
 
-					payload, err := measurement.MarshalBinary()
-
-					if err != nil {
-						errnie.Error(err)
-						continue
-					}
-
-					if err := tee.client.Put(measurement.Prefix(), payload); err != nil {
-						errnie.Error(err)
-					}
+					tee.store(measurement)
 				}
 			default:
-			}
+				measurement, ok := tee.queue.Dequeue()
 
-			measurement, ok := tee.queue.Dequeue()
+				if !ok || measurement == nil {
+					cancel()
+					continue
+				}
 
-			if !ok || measurement == nil {
-				time.Sleep(5 * time.Millisecond)
-				continue
-			}
-
-			payload, err := measurement.MarshalBinary()
-
-			if err != nil {
-				errnie.Error(err)
-				continue
-			}
-
-			if err := tee.client.Put(measurement.Prefix(), payload); err != nil {
-				errnie.Error(err)
+				tee.store(measurement)
 			}
 		}
 	}()
 }
 
-func (tee *StoreTee) Pending() int {
-	return int(tee.queue.Length())
+/*
+Run consumes the queue and writes to S3 with auto-scaling workers.
+*/
+func (tee *StoreTee) Run() {
+	tee.running.Store(true)
+
+	for range minWorkers {
+		tee.spawnWorker()
+	}
+
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-tee.Context().Done():
+				return
+			case <-ticker.C:
+				if tee.Pending() > tee.lastPending && tee.workers.Load() < maxWorkers {
+					tee.spawnWorker()
+				}
+			}
+		}
+	}()
+}
+
+func (tee *StoreTee) Pending() int64 {
+	return int64(tee.queue.Length())
 }

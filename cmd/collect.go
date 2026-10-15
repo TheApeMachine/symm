@@ -103,7 +103,14 @@ var collectCmd = &cobra.Command{
 			privateTransport = privateWS
 		}
 
-		instrument := broker.NewInstrument(ctx, public)
+		storeTee := hindsight.NewStoreTee(ctx, "storeTee")
+		storeTee.Transition(nmruntime.READY)
+		storeTee.Run()
+		storeTee.Push(data.NewMeasurement(
+			epoch, "epoch", "run", processStartedAt, processStartedAt,
+		))
+
+		instrument := broker.NewInstrument(ctx, public, storeTee)
 		normalizer := spot.NewNormalizer()
 
 		if err := broker.SeedNormalizer(normalizer); err != nil {
@@ -146,14 +153,6 @@ var collectCmd = &cobra.Command{
 			))
 		}
 
-		storeTee := hindsight.NewStoreTee(ctx, "storeTee")
-		storeTee.Transition(nmruntime.READY)
-		storeTee.Run()
-		storeTee.Push(data.NewMeasurement(
-			epoch, "epoch", "run", processStartedAt, processStartedAt,
-		))
-		instrument.SetStoreTee(storeTee)
-
 		correlationSignal := correlation.NewSignal(ctx)
 		cvdSignal := cvd.NewSignal(ctx)
 		depthflowSignal := depthflow.NewSignal(ctx)
@@ -190,7 +189,6 @@ var collectCmd = &cobra.Command{
 
 		workspace := nmruntime.NewWorkspace(
 			ctx,
-			2,
 			"workspace",
 			[][]nmruntime.Node{
 				{

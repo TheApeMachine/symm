@@ -28,8 +28,8 @@ func (tee *testTee) Close() error {
 
 func (tee *testTee) Run() {}
 
-func (tee *testTee) Pending() int {
-	return len(tee.pushed)
+func (tee *testTee) Pending() int64 {
+	return int64(len(tee.pushed))
 }
 
 func TestBalance(t *testing.T) {

@@ -113,6 +113,6 @@ func (tee *UITee) Run() {}
 /*
 Pending returns the total backlog of un-transmitted items across ingress and egress.
 */
-func (tee *UITee) Pending() int {
-	return int(tee.egress.Length())
+func (tee *UITee) Pending() int64 {
+	return int64(tee.egress.Length())
 }

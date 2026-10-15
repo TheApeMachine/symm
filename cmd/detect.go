@@ -2,15 +2,14 @@ package cmd
 
 import (
 	"context"
-	"fmt"
-	"slices"
-	"strconv"
-	"strings"
-	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
@@ -45,205 +44,54 @@ appends the resulting source=detector rows to S3 storage.`,
 			))
 		}
 
-		if len(detectEpochs) == 0 {
-			errnie.Info("[detect] discovering epochs from store under run/epoch/...")
-			seen := make(map[int64]bool)
-
-			for page := range client.List("run/epoch/", "/") {
-				for _, commonPrefix := range page.CommonPrefixes {
-					if commonPrefix.Prefix == nil {
-						continue
-					}
-
-					prefixStr := strings.TrimPrefix(*commonPrefix.Prefix, "run/epoch/")
-					prefixStr = strings.Trim(prefixStr, "/")
-					epoch, err := strconv.ParseInt(prefixStr, 10, 64)
-
-					if err != nil || epoch <= 0 {
-						continue
-					}
-
-					if seen[epoch] {
-						continue
-					}
-
-					seen[epoch] = true
-					detectEpochs = append(detectEpochs, epoch)
-				}
-
-				for _, object := range page.Contents {
-					if object.Key == nil {
-						continue
-					}
-
-					parts := strings.Split(*object.Key, "/")
-
-					if len(parts) < 3 {
-						continue
-					}
-
-					epoch, err := strconv.ParseInt(parts[2], 10, 64)
-
-					if err != nil || epoch <= 0 {
-						continue
-					}
-
-					if seen[epoch] {
-						continue
-					}
-
-					seen[epoch] = true
-					detectEpochs = append(detectEpochs, epoch)
-				}
-			}
-
-			if len(detectEpochs) == 0 {
-				return errnie.Error(errnie.Err(
-					errnie.NotFound,
-					"[detect] no completed epochs found in store",
-					nil,
-				))
-			}
-		}
-
-		errnie.Info(fmt.Sprintf(
-			"[detect] targeting %d epoch(s): %v",
-			len(detectEpochs), detectEpochs,
-		))
-
-		if detectFeePct == "" {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[detect] --taker-fee-percent is required and must be specified",
-				nil,
-			))
-		}
-
-		price, err := offlinePrice(ctx, detectFeePct, detectSymbols)
-
-		if err != nil {
-			return err
-		}
-
 		storeTee := hindsight.NewStoreTee(ctx, "detector.store")
 		storeTee.Transition(nmruntime.READY)
 		storeTee.Run()
 
+		normalizer := spot.NewNormalizer()
+		books := broker.NewBook(ctx, normalizer)
+
+		private := network.NewReplayer(ctx)
+		public := network.NewReplayer(ctx)
+
+		instrument := broker.NewInstrument(ctx, public)
+		price := broker.NewPrice(ctx, books, private, instrument, normalizer)
+
 		detector := strategy.NewDetector(ctx, storeTee, price)
 
-		if err := detector.Error(); err != nil {
-			return err
-		}
+		done := false
 
-		for _, epoch := range detectEpochs {
-			if epoch <= 0 {
+		for !done {
+			trade, err := public.Read("spot:trade")
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"[detect] error reading spot:trade",
+					err,
+				))
+			}
+
+			if trade == nil {
+				done = true
 				continue
 			}
 
-			// Clean existing detector records for this epoch before detecting to prevent duplicates.
-			if len(detectSymbols) > 0 {
-				for _, symbol := range detectSymbols {
-					if err := client.DeletePrefix(fmt.Sprintf("detector/%s/%019d/", symbol, epoch)); err != nil {
-						errnie.Error(err)
-					}
+			var measurement *data.Measurement
+			err = measurement.UnmarshalBinary(trade)
 
-					if err := client.DeletePrefix(fmt.Sprintf("detector/%s/%d/", symbol, epoch)); err != nil {
-						errnie.Error(err)
-					}
-				}
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"[detect] error unmarshalling trade",
+					err,
+				))
 			}
 
-			if len(detectSymbols) == 0 {
-				for page := range client.List("detector/", "/") {
-					for _, cp := range page.CommonPrefixes {
-						if cp.Prefix == nil {
-							continue
-						}
-
-						symbolPart := strings.TrimPrefix(*cp.Prefix, "detector/")
-						symbolPart = strings.Trim(symbolPart, "/")
-
-						if err := client.DeletePrefix(fmt.Sprintf("detector/%s/%019d/", symbolPart, epoch)); err != nil {
-							errnie.Error(err)
-						}
-
-						if err := client.DeletePrefix(fmt.Sprintf("detector/%s/%d/", symbolPart, epoch)); err != nil {
-							errnie.Error(err)
-						}
-					}
-				}
-			}
-
-			prefixes := []string{"spot:trade/"}
-
-			if len(detectSymbols) > 0 {
-				prefixes = nil
-
-				for _, symbol := range detectSymbols {
-					prefixes = append(prefixes, fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch))
-				}
-			}
-
-			errnie.Info(fmt.Sprintf(
-				"[detect] scanning epoch %d across prefixes: %v",
-				epoch, prefixes,
-			))
-
-			for _, prefix := range prefixes {
-				tradesSeen := 0
-
-				for measurement := range client.Get(prefix) {
-					if measurement == nil || measurement.Epoch != epoch {
-						continue
-					}
-
-					if len(detectSymbols) > 0 && !slices.Contains(detectSymbols, measurement.Label) {
-						continue
-					}
-
-					tradesSeen++
-					detector.Step(measurement)
-				}
-
-				if tradesSeen == 0 {
-					errnie.Info(fmt.Sprintf(
-						"[detect] no trades observed under prefix %s for epoch %d",
-						prefix, epoch,
-					))
-				}
-
-				if tradesSeen > 0 {
-					errnie.Info(fmt.Sprintf(
-						"[detect] scanned %d trades under prefix %s for epoch %d",
-						tradesSeen, prefix, epoch,
-					))
-				}
-			}
+			detector.Step(measurement)
 		}
 
-		if err := detector.FlushAll(); err != nil {
-			return err
-		}
-
-		pending := storeTee.Pending()
-
-		if pending > 0 {
-			errnie.Info(fmt.Sprintf(
-				"[detect] waiting for %d pending excursions to persist...",
-				pending,
-			))
-		}
-
-		for storeTee.Pending() > 0 {
-			time.Sleep(10 * time.Millisecond)
-		}
-
-		errnie.Info(fmt.Sprintf(
-			"[detect] completed: %d total trades processed, %d total excursions emitted",
-			detector.Steps(), detector.Emitted(),
-		))
-
-		return nil
+		return errnie.Error(detector.Error())
 	},
 }
 

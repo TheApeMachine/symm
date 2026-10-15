@@ -17,21 +17,9 @@ import (
 	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 	"golang.org/x/sync/errgroup"
 )
-
-var SensorySources = []string{
-	"correlation",
-	"cvd",
-	"depthflow",
-	"hawkes",
-	"leadlag",
-	"liquidity",
-	"morphology",
-	"pumpdump",
-	"sentiment",
-	"toxicity",
-}
 
 type Trainer struct {
 	*runtime.System
@@ -39,11 +27,6 @@ type Trainer struct {
 	storeTee *hindsight.StoreTee
 	price    *broker.Price
 	symbols  []string
-}
-
-func (trainer *Trainer) WithSymbols(symbols ...string) *Trainer {
-	trainer.symbols = symbols
-	return trainer
 }
 
 func NewTrainer(
@@ -57,18 +40,6 @@ func NewTrainer(
 		client:   client,
 		storeTee: storeTee,
 		price:    price,
-	}
-
-	if err := errnie.Require(map[string]any{
-		"client":   client,
-		"storeTee": storeTee,
-		"price":    price,
-	}); err != nil {
-		trainer.Error(errnie.Err(
-			errnie.Validation,
-			"[trainer] cannot run trainer without client, storeTee, and price",
-			err,
-		))
 	}
 
 	return trainer
@@ -107,7 +78,7 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 
 		group, ctx := errgroup.WithContext(trainer.Context())
 		symbolChannels := make(map[string]chan *data.Measurement)
-		sources := append([]string{"detector"}, SensorySources...)
+		sources := append([]string{"detector"}, types.SignalSourceStrings...)
 
 		symbols := trainer.symbols
 
@@ -264,7 +235,7 @@ func (trainer *Trainer) consumeSymbol(
 
 			class := typeEntry.Value
 
-			if class != excursionUp && class != excursionDown && class != excursionUpShort {
+			if class != "up" && class != "down" && class != "up_friction" {
 				continue
 			}
 
@@ -272,7 +243,7 @@ func (trainer *Trainer) consumeSymbol(
 			continue
 		}
 
-		if !slices.Contains(SensorySources, measurement.Source) {
+		if !slices.Contains(types.SignalSourceStrings, measurement.Source) {
 			continue
 		}
 
@@ -509,7 +480,7 @@ func (trainer *Trainer) consumeSymbol(
 		holdSeconds := endAt.Sub(startAt).Seconds()
 		isUp := false
 
-		if typeEntry := data.Pull(excursion.Meta("type")); typeEntry != nil && typeEntry.Value == excursionUp {
+		if typeEntry := data.Pull(excursion.Meta("type")); typeEntry != nil && typeEntry.Value == "up" {
 			isUp = true
 		}
 

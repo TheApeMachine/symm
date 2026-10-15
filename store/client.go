@@ -75,6 +75,8 @@ func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) 
 			// Override Default Transport Values
 			options.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(transport *http.Transport) {
 				transport.ResponseHeaderTimeout = 30 * time.Second
+				transport.MaxIdleConns = 256
+				transport.MaxIdleConnsPerHost = 64
 				transport.WriteBufferSize = 1024 * 1024
 				transport.ReadBufferSize = 1024 * 1024
 			})

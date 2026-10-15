@@ -15,5 +15,5 @@ type Tee interface {
 	Push(*data.Measurement)
 	Next() unsafe.Pointer
 	Run()
-	Pending() int
+	Pending() int64
 }

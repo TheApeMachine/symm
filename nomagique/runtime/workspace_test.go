@@ -32,7 +32,6 @@ func TestWorkspaceTickAdvancement(t *testing.T) {
 		node := &dummyNode{}
 		workspace := NewWorkspace(
 			ctx,
-			1,
 			"test_workspace",
 			[][]Node{{node}},
 		)

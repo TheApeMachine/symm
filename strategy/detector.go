@@ -3,9 +3,7 @@ package strategy
 import (
 	"context"
 	"fmt"
-	"iter"
-	"sync/atomic"
-	"time"
+	"math"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -14,61 +12,86 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
-/*
-Excursion classes (TRAINING.md "Excursion Detection"). Each detection is
-stored with its class under the "type" metadata key.
-*/
+type detectorState int
+
 const (
-	// excursionUp is one friction-clearing rise: a zigzag up leg.
-	excursionUp = "up"
-	// excursionUpShort is one rise that failed before clearing round-trip
-	// friction: the near miss that looks like ignition but loses.
-	excursionUpShort = "up_friction"
-	// excursionDown is one fall whose magnitude clears friction: a zigzag
-	// down leg.
-	excursionDown = "down"
-	// excursionChop is one stretch whose whole price range stays inside the
-	// friction deadband without being a flat line.
-	excursionChop = "chop"
-	// excursionFlat is one run of consecutive trades at one unchanged price.
-	excursionFlat = "flat"
+	stateInit detectorState = iota
+	stateUndecided
+	stateUp
+	stateDown
 )
 
+type tradePoint struct {
+	tick   int64
+	seqIdx int64
+	price  *decimal.Decimal
+	priceF float64
+	trade  *data.Measurement
+}
+
+type episode struct {
+	class  string
+	start  tradePoint // B: chronological start / ignition
+	end    tradePoint // C: chronological end / exhaustion
+	lowP   float64
+	highP  float64
+	trades int64
+}
+
 /*
-Detector scans market tape from beginning to end and emits every excursion
-of every class it finds in a symbol/epoch tape, so one long collection run
-yields all of its episodes. Episode boundaries come from the friction
-deadband itself (the round-trip taker fee), never from a tuned constant:
-
-  - up/down are the legs of a zigzag on the deadband. A leg from an anchor
-    (B) runs while it makes new extremes (C) and ends on the first trade that
-    retraces from C by a move that would itself clear friction; that trade
-    starts the opposite leg. A new low below an up leg's B is such a retrace,
-    so it also ends the leg. Every emitted leg clears friction.
-  - up_friction is a rise from the running low of a falling (or not yet
-    directed) tape that never cleared friction and failed: it ends when price
-    makes a new low below its B. A rise that clears instead becomes an up leg.
-  - chop is every maximal stretch whose price range does not clear friction
-    (and is not a single price); the trade that would clear starts the next.
-  - flat is every maximal run of two or more trades at one price.
-
-Only episodes whose end a later trade confirms are published (see flush).
-The scan is streaming; it keeps the tape's trades for padding.
+Detector scans market tape from beginning to end and emits long, coherent
+excursions ("up", "down", "chop", "flat") for each symbol/epoch tape.
 */
 type Detector struct {
 	*runtime.System
 	storeTee runtime.Tee
 	price    *broker.Price
-	tapes    map[string]*tape
-	steps    atomic.Int64
-	emitted  atomic.Int64
+
+	// Structural & regime-coalescing parameters
+	retraceRatio           float64
+	maxContinuationRetrace float64
+	boxOverlapRatio        float64
+	minFlatTrades          int64
+	maxFlatGlitchTrades    int64
+	minEpisodeTrades       int64
+	minStagnationTrades    int64
+	stagnationMultiplier   int64
+
+	// Streaming state per (epoch, label)
+	epoch      int64
+	label      string
+	state      detectorState
+	emaBounce  float64
+	prevTrade  *tradePoint
+	prevDelta  float64
+	lastResult *data.Measurement
+
+	// Undecided / chop / flat tracking
+	segStart      tradePoint
+	runLow        tradePoint
+	runHigh       tradePoint
+	flatStart     tradePoint
+	flatLast      tradePoint
+	flatMin       float64
+	flatMax       float64
+	flatCount     int64
+	flatGlitchCnt int64
+
+	// Active directional leg (stateUp / stateDown)
+	legB         tradePoint
+	legC         tradePoint
+	legExtreme   tradePoint
+	legTrades    int64
+	tradesSinceC int64
+
+	// Lookahead buffer for structural coalescing before Flush
+	pending []episode
 }
 
 /*
 NewDetector creates a new detector and stores the tee used to publish
 detected excursions. Every excursion class is defined against round-trip
-friction, so the price system is a hard dependency: without it the detector
-enters ERROR and Scan refuses to classify anything.
+friction, so the price system is a hard dependency.
 */
 func NewDetector(
 	ctx context.Context,
@@ -76,20 +99,27 @@ func NewDetector(
 	price *broker.Price,
 ) *Detector {
 	detector := &Detector{
-		System:   runtime.NewSystem(ctx, "detector"),
-		storeTee: storeTee,
-		price:    price,
-		tapes:    make(map[string]*tape),
+		System:                 runtime.NewSystem(ctx, "detector"),
+		storeTee:               storeTee,
+		price:                  price,
+		retraceRatio:           0.32, // Pullback must retrace >= 32% of |C - B| (and clear friction) to end a leg
+		maxContinuationRetrace: 0.58, // Higher-low dips < 58% merge into one macro leg when C is broken
+		boxOverlapRatio:        0.68, // Alternating swings overlapping >= 68% coalesce into "chop"
+		minFlatTrades:          24,   // Minimum trades within flatBand to emit an independent "flat" episode
+		maxFlatGlitchTrades:    2,    // Ignore 1-2 trade stray wicks inside a long flat stretch
+		minEpisodeTrades:       8,    // Absorb micro-fragments shorter than 8 trades into adjacent episodes
+		minStagnationTrades:    80,   // Minimum trades after C before checking horizontal time-exhaustion
+		stagnationMultiplier:   3,    // Exhaust leg into chop/flat if sideways trades after C >= 3x impulse trades
+		state:                  stateInit,
+		pending:                make([]episode, 0, 8),
 	}
 
-	if err := errnie.Require(map[string]any{
-		"price":    price,
-		"storeTee": storeTee,
-	}); err != nil {
-		detector.Error(errnie.Err(
+	if detector.price == nil || detector.price.ReferenceCash() == nil {
+		detector.Transition(runtime.ERROR)
+		errnie.Error(errnie.Err(
 			errnie.Validation,
-			"[detector] cannot classify excursions without friction",
-			err,
+			"[detector] price system with reference cash required",
+			nil,
 		))
 		return detector
 	}
@@ -103,906 +133,671 @@ func NewDetector(
 }
 
 /*
-tapePoint is one priced trade coordinate on the tape. pos is its index in
-the tape's retained points. bid and ask are the executable quotes from the
-trade measurement's stamped book, falling back to price when unstamped.
-entryAsk and exitBid are the executable VWAPs walking the stamped book
-to buy and sell the allocation budget, falling back to price when unstamped.
-*/
-type tapePoint struct {
-	idx         int64
-	tick        int64
-	pos         int
-	at          time.Time
-	price       *decimal.Decimal
-	bid         *decimal.Decimal
-	ask         *decimal.Decimal
-	entryAsk    *decimal.Decimal
-	exitBid     *decimal.Decimal
-	bidDepthQty *decimal.Decimal
-	posQty      *decimal.Decimal
-	snapshot    *broker.Snapshot
-}
-
-func (detector *Detector) computeBookExecution(
-	symbol string,
-	snapshot *broker.Snapshot,
-) (entryAsk, exitBid, bidDepthQty, posQty *decimal.Decimal, err error) {
-	budget := detector.price.ReferenceCash()
-
-	if budget == nil || budget.Sign() <= 0 {
-		return nil, nil, nil, nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[detector] positive reference cash required on price system",
-			nil,
-		))
-	}
-
-	budget = budget.SetScale(decimal.DefaultScale)
-
-	if snapshot == nil {
-		return nil, nil, nil, nil, nil
-	}
-
-	if len(snapshot.Bids) > 0 {
-		depth := decimal.NewFromInt64(0)
-
-		for _, lvl := range snapshot.Bids {
-			if lvl.Quantity != nil && lvl.Quantity.Sign() > 0 {
-				depth = depth.Add(lvl.Quantity)
-			}
-		}
-
-		if depth.Sign() > 0 {
-			bidDepthQty = depth
-		}
-	}
-
-	if len(snapshot.Asks) > 0 {
-		fee := detector.price.Fee(symbol)
-		feeRate := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
-
-		if fee != nil && fee.Fee != nil && fee.Fee.Sign() > 0 {
-			feeRate = fee.Fee.SetScale(decimal.DefaultScale).Div(decimal.NewFromInt64(100))
-		}
-
-		maxGross := budget.Div(decimal.NewFromInt64(1).SetScale(decimal.DefaultScale).Add(feeRate))
-		remainingGross := maxGross
-		accumQty := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
-		accumCost := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
-
-		for _, lvl := range snapshot.Asks {
-			if lvl.Price == nil || lvl.Price.Sign() <= 0 || lvl.Quantity == nil || lvl.Quantity.Sign() <= 0 {
-				continue
-			}
-
-			if remainingGross.Sign() <= 0 {
-				break
-			}
-
-			lvlCost := lvl.Price.SetScale(decimal.DefaultScale).Mul(lvl.Quantity)
-
-			if lvlCost.Cmp(remainingGross) <= 0 {
-				accumQty = accumQty.Add(lvl.Quantity)
-				accumCost = accumCost.Add(lvlCost)
-				remainingGross = remainingGross.Sub(lvlCost)
-				continue
-			}
-
-			partialQty := remainingGross.SetScale(decimal.DefaultScale).Div(lvl.Price)
-			accumQty = accumQty.Add(partialQty)
-			accumCost = accumCost.Add(remainingGross)
-			remainingGross = decimal.NewFromInt64(0)
-			break
-		}
-
-		if accumQty.Sign() > 0 {
-			entryAsk = accumCost.SetScale(decimal.DefaultScale).Div(accumQty)
-			posQty = accumQty
-
-			if normalizer := detector.price.Normalizer(); normalizer != nil {
-				if formatted, normErr := normalizer.FormatPrice(symbol, entryAsk); normErr == nil && formatted != nil {
-					entryAsk = formatted
-				}
-
-				if formatted, normErr := normalizer.FormatSize(symbol, accumQty); normErr == nil && formatted != nil {
-					posQty = formatted
-				}
-			}
-		} else if len(snapshot.Asks) > 0 && snapshot.Asks[0].Price != nil {
-			entryAsk = snapshot.Asks[0].Price
-		}
-	}
-
-	if len(snapshot.Bids) > 0 {
-		remainingQty := posQty
-		if remainingQty == nil || remainingQty.Sign() <= 0 {
-			if snapshot.Bids[0].Price != nil && snapshot.Bids[0].Price.Sign() > 0 {
-				remainingQty = budget.Div(snapshot.Bids[0].Price)
-			}
-		}
-
-		accumRevenue := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
-		filledQty := decimal.NewFromInt64(0).SetScale(decimal.DefaultScale)
-
-		for _, lvl := range snapshot.Bids {
-			if lvl.Price == nil || lvl.Price.Sign() <= 0 || lvl.Quantity == nil || lvl.Quantity.Sign() <= 0 {
-				continue
-			}
-
-			if remainingQty != nil && remainingQty.Sign() <= 0 {
-				break
-			}
-
-			if remainingQty == nil || lvl.Quantity.Cmp(remainingQty) <= 0 {
-				lvlRevenue := lvl.Price.SetScale(decimal.DefaultScale).Mul(lvl.Quantity)
-				accumRevenue = accumRevenue.Add(lvlRevenue)
-				filledQty = filledQty.Add(lvl.Quantity)
-				if remainingQty != nil {
-					remainingQty = remainingQty.Sub(lvl.Quantity)
-				}
-				continue
-			}
-
-			lvlRevenue := lvl.Price.SetScale(decimal.DefaultScale).Mul(remainingQty)
-			accumRevenue = accumRevenue.Add(lvlRevenue)
-			filledQty = filledQty.Add(remainingQty)
-			remainingQty = decimal.NewFromInt64(0)
-			break
-		}
-
-		if filledQty.Sign() > 0 {
-			exitBid = accumRevenue.SetScale(decimal.DefaultScale).Div(filledQty)
-
-			if normalizer := detector.price.Normalizer(); normalizer != nil {
-				if formatted, normErr := normalizer.FormatPrice(symbol, exitBid); normErr == nil && formatted != nil {
-					exitBid = formatted
-				}
-			}
-		} else if snapshot.Bids[0].Price != nil {
-			exitBid = snapshot.Bids[0].Price
-		}
-	}
-
-	return entryAsk, exitBid, bidDepthQty, posQty, nil
-}
-
-/*
-span is a B -> C pair of tape points.
-*/
-type span struct {
-	b tapePoint
-	c tapePoint
-}
-
-func (target span) held() bool {
-	return target.b.price != nil && target.c.price != nil && target.b.tick < target.c.tick
-}
-
-/*
-leg directions of the zigzag.
-*/
-const (
-	legNone = iota
-	legUp
-	legDown
-)
-
-/*
-tape is the streaming state for one contiguous symbol/epoch tape.
-*/
-type tape struct {
-	detector *Detector
-	epoch    int64
-	symbol   string
-	start    tapePoint
-	// points keeps every observed trade so flush can pad precursor left of B
-	// and tape right of C (TRAINING.md) without re-reading storage.
-	points []tapePoint
-	// found holds every completed episode in completion order.
-	found []episode
-
-	// Zigzag. In an up leg, low is its B and high its running maximum; in a
-	// down leg, high is its B and low its running minimum; before the first
-	// leg, both are the tape's running extremes. bounce is the highest trade
-	// since low, the C of a rise that has not yet cleared. Equal prices never
-	// replace an extreme, so the earliest occurrence is kept.
-	leg    int
-	low    tapePoint
-	high   tapePoint
-	bounce tapePoint
-
-	// Current deadband stretch and its price range.
-	quiet    span
-	quietMin *decimal.Decimal
-	quietMax *decimal.Decimal
-
-	// Current run of one unchanged price.
-	run span
-}
-
-/*
-episode is one completed excursion and its class.
-*/
-type episode struct {
-	class     string
-	excursion span
-}
-
-func (tape *tape) emit(class string, excursion span) {
-	if excursion.held() {
-		tape.found = append(tape.found, episode{class: class, excursion: excursion})
-	}
-}
-
-func (tape *tape) observe(point tapePoint) error {
-	point.pos = len(tape.points)
-	tape.points = append(tape.points, point)
-
-	if tape.low.price == nil {
-		tape.low, tape.high, tape.bounce = point, point, point
-		tape.quiet = span{b: point, c: point}
-		tape.quietMin, tape.quietMax = point.price, point.price
-		tape.run = span{b: point, c: point}
-		return nil
-	}
-
-	if err := tape.zigzag(point); err != nil {
-		return err
-	}
-
-	if err := tape.settle(point); err != nil {
-		return err
-	}
-
-	tape.hold(point)
-	return nil
-}
-
-// bookRoundTrip sizes a position to the smaller of:
-//  1. What the 20% cash cap (ReferenceCash) can buy on B's ask book,
-//  2. The available ask depth at B (within 2x bestAsk so stub walls like $10 AMI aren't swept),
-//  3. Half of the available bid depth at C (so we exit while buying power remains underneath).
-// It returns the net PnL in quote currency, B's executable entry VWAP, and C's executable exit VWAP.
-func (tape *tape) bookRoundTrip(
-	lowPoint, candidatePoint tapePoint,
-) (netPnl float64, entryVWAP, exitVWAP *decimal.Decimal) {
-	if tape.detector == nil || tape.detector.price == nil {
-		return 0, nil, nil
-	}
-
-	budget := tape.detector.price.ReferenceCash()
-	if budget == nil || budget.Sign() <= 0 {
-		return 0, nil, nil
-	}
-
-	feeRate, _ := tape.detector.price.FeeRate(tape.symbol)
-	maxGross := budget.Float64() / (1.0 + feeRate)
-
-	// If unstamped, fall back to touch/trade prices.
-	if lowPoint.snapshot == nil || candidatePoint.snapshot == nil ||
-		len(lowPoint.snapshot.Asks) == 0 || len(candidatePoint.snapshot.Bids) == 0 {
-		return 0, nil, nil
-	}
-
-	bestAskB := 0.0
-	if lowPoint.snapshot.Asks[0].Price != nil {
-		bestAskB = lowPoint.snapshot.Asks[0].Price.Float64()
-	}
-	bestBidC := 0.0
-	if candidatePoint.snapshot.Bids[0].Price != nil {
-		bestBidC = candidatePoint.snapshot.Bids[0].Price.Float64()
-	}
-	if bestAskB <= 0 || bestBidC <= bestAskB {
-		return 0, nil, nil
-	}
-
-	// 1. Walk B's asks up to maxGross (20% cash cap), ignoring absurd stub asks (> 2x bestAskB).
-	askCapQty := 0.0
-	remGross := maxGross
-	for _, lvl := range lowPoint.snapshot.Asks {
-		if lvl.Price == nil || lvl.Quantity == nil {
-			continue
-		}
-		p := lvl.Price.Float64()
-		q := lvl.Quantity.Float64()
-		if p <= 0 || q <= 0 || p > bestAskB*2.0 {
-			break
-		}
-		cost := p * q
-		if cost <= remGross {
-			askCapQty += q
-			remGross -= cost
-			continue
-		}
-		askCapQty += remGross / p
-		remGross = 0
-		break
-	}
-
-	// 2. Sum C's executable bid depth (at prices above B's bestAsk so we never sell at a loss).
-	bidDepthC := 0.0
-	for _, lvl := range candidatePoint.snapshot.Bids {
-		if lvl.Price == nil || lvl.Quantity == nil {
-			continue
-		}
-		p := lvl.Price.Float64()
-		q := lvl.Quantity.Float64()
-		if p <= bestAskB || q <= 0 {
-			break
-		}
-		bidDepthC += q
-	}
-
-	// Size to the book: at most what B's asks offered (capped at 20% cash)
-	// and at most 50% of C's profitable bid depth so we don't nuke the book on exit.
-	qty := min(askCapQty, bidDepthC*0.5)
-	if qty <= 0 {
-		return 0, nil, nil
-	}
-
-	// 3. Walk B's asks for exact qty -> entryCost & entryVWAP.
-	remBuy := qty
-	grossCost := 0.0
-	for _, lvl := range lowPoint.snapshot.Asks {
-		if lvl.Price == nil || lvl.Quantity == nil {
-			continue
-		}
-		p := lvl.Price.Float64()
-		q := min(lvl.Quantity.Float64(), remBuy)
-		grossCost += p * q
-		remBuy -= q
-		if remBuy <= 0 {
-			break
-		}
-	}
-
-	// 4. Walk C's bids for exact qty -> exitProceeds & exitVWAP.
-	remSell := qty
-	grossProceeds := 0.0
-	for _, lvl := range candidatePoint.snapshot.Bids {
-		if lvl.Price == nil || lvl.Quantity == nil {
-			continue
-		}
-		p := lvl.Price.Float64()
-		q := min(lvl.Quantity.Float64(), remSell)
-		grossProceeds += p * q
-		remSell -= q
-		if remSell <= 0 {
-			break
-		}
-	}
-
-	totalEntry := grossCost * (1.0 + feeRate)
-	netExit := grossProceeds * (1.0 - feeRate)
-	pnl := netExit - totalEntry
-	if pnl <= 0 {
-		return 0, nil, nil
-	}
-
-	entryVWAP = decimal.NewFromFloat64(grossCost / qty)
-	exitVWAP = decimal.NewFromFloat64(grossProceeds / qty)
-
-	if normalizer := tape.detector.price.Normalizer(); normalizer != nil {
-		if formatted, normErr := normalizer.FormatPrice(tape.symbol, entryVWAP); normErr == nil && formatted != nil {
-			entryVWAP = formatted
-		}
-		if formatted, normErr := normalizer.FormatPrice(tape.symbol, exitVWAP); normErr == nil && formatted != nil {
-			exitVWAP = formatted
-		}
-	}
-
-	return pnl, entryVWAP, exitVWAP
-}
-
-func (tape *tape) safeProfit(lowPoint, candidatePoint tapePoint) float64 {
-	pnl, _, _ := tape.bookRoundTrip(lowPoint, candidatePoint)
-	return pnl
-}
-
-/*
-zigzag advances the legs by one trade.
-*/
-func (tape *tape) zigzag(point tapePoint) error {
-	switch tape.leg {
-	case legUp:
-		candidateProfit := tape.safeProfit(tape.low, point)
-		highProfit := tape.safeProfit(tape.low, tape.high)
-
-		if candidateProfit > highProfit {
-			tape.high = point
-			return nil
-		}
-
-		if point.price.Cmp(tape.high.price) >= 0 {
-			return nil
-		}
-
-		pnl, _, err := tape.detector.price.RoundTrip(tape.symbol, point.price, tape.high.price)
-
-		if err != nil || pnl == nil || pnl.Sign() <= 0 {
-			return err
-		}
-
-		// The retrace from C clears friction: the up leg is over and this
-		// trade opens the down leg from C.
-		tape.emit(excursionUp, span{b: tape.low, c: tape.high})
-		tape.leg = legDown
-		tape.low, tape.bounce = point, point
-		return nil
-
-	default:
-		if tape.leg == legNone && point.price.Cmp(tape.high.price) > 0 {
-			tape.high = point
-		}
-
-		if point.price.Cmp(tape.low.price) < 0 {
-			// A new low ends the rise from the old one: it never cleared, or
-			// it would already have become an up leg.
-			tape.emit(excursionUpShort, span{b: tape.low, c: tape.bounce})
-			tape.low, tape.bounce = point, point
-
-			if tape.leg == legNone && point.price.Cmp(tape.high.price) < 0 {
-				pnl, _, err := tape.detector.price.RoundTrip(tape.symbol, point.price, tape.high.price)
-
-				if err != nil || pnl == nil || pnl.Sign() <= 0 {
-					return err
-				}
-
-				tape.leg = legDown
-			}
-
-			return nil
-		}
-
-		candidateProfit := tape.safeProfit(tape.low, point)
-		bounceProfit := tape.safeProfit(tape.low, tape.bounce)
-
-		if candidateProfit > bounceProfit || (bounceProfit == 0 && candidateProfit == 0 && point.price.Cmp(tape.bounce.price) > 0) {
-			tape.bounce = point
-		}
-
-		if candidateProfit <= 0 {
-			return nil
-		}
-
-		// The rise from the running low clears friction and book depth: the down leg (if
-		// any) ends at that low and this trade opens the up leg from it.
-		if tape.leg == legDown {
-			tape.emit(excursionDown, span{b: tape.high, c: tape.low})
-		}
-
-		tape.leg = legUp
-		tape.high = point
-		return nil
-	}
-}
-
-/*
-settle grows the current deadband stretch until a trade widens its price
-range far enough to clear friction; that trade starts the next stretch.
-*/
-func (tape *tape) settle(point tapePoint) error {
-	low, high := tape.quietMin, tape.quietMax
-	widened := false
-
-	if point.price.Cmp(low) < 0 {
-		low, widened = point.price, true
-	}
-
-	if point.price.Cmp(high) > 0 {
-		high, widened = point.price, true
-	}
-
-	if widened {
-		pnl, _, err := tape.detector.price.RoundTrip(tape.symbol, low, high)
-
-		if err != nil {
-			return err
-		}
-
-		if pnl != nil && pnl.Sign() > 0 {
-			tape.closeQuiet()
-			tape.quiet = span{b: point, c: point}
-			tape.quietMin, tape.quietMax = point.price, point.price
-			return nil
-		}
-	}
-
-	tape.quiet.c = point
-	tape.quietMin, tape.quietMax = low, high
-	return nil
-}
-
-func (tape *tape) closeQuiet() {
-	if tape.quietMin == nil || tape.quietMin.Cmp(tape.quietMax) == 0 {
-		return
-	}
-
-	tape.emit(excursionChop, tape.quiet)
-}
-
-/*
-hold grows the current run of one unchanged price.
-*/
-func (tape *tape) hold(point tapePoint) {
-	if point.price.Cmp(tape.run.b.price) == 0 {
-		tape.run.c = point
-		return
-	}
-
-	tape.closeFlat()
-	tape.run = span{b: point, c: point}
-}
-
-func (tape *tape) closeFlat() {
-	tape.emit(excursionFlat, tape.run)
-}
-
-/*
-flush publishes every episode of the completed tape whose end is confirmed by
-a later trade: a leg ended by a friction-clearing retrace, a failed rise ended
-by a new low, a chop stretch ended by the trade that cleared friction, a flat
-run ended by a price change. Episodes still open at the end of the tape are
-not published, so a detect run over an epoch that is still being collected
-publishes only episodes the rest of the tape can never change, and a later run
-over the longer tape reproduces every one of them.
-*/
-func (tape *tape) flush() error {
-	for _, found := range tape.found {
-		start, end, ok := tape.padded(found.excursion)
-
-		if !ok {
-			continue
-		}
-
-		tape.detector.Flush(found.class, tape.symbol, tape.epoch, start, end, found.excursion)
-	}
-
-	tape.found = nil
-	return nil
-}
-
-/*
-padded answers the stored fragment window around an excursion: precursor left
-of B at least as many trades as the B→C move, and some tape right of C
-(TRAINING.md). ok is false when there is no trade before B or B→C is too
-short to leave a frame between them.
-*/
-func (tape *tape) padded(excursion span) (start, end tapePoint, ok bool) {
-	if !excursion.held() || len(tape.points) == 0 {
-		return tapePoint{}, tapePoint{}, false
-	}
-
-	bIdx, cIdx := excursion.b.pos, excursion.c.pos
-
-	if bIdx < 0 || cIdx <= bIdx || cIdx >= len(tape.points) {
-		return tapePoint{}, tapePoint{}, false
-	}
-
-	width := cIdx - bIdx
-	// Pad scale follows the move; short B→C still stores — rehearsal teaches
-	// those phases with weakened feedback rather than soft-skipping.
-	left, right := max(width, 1), max(width/2, 1)
-	startIdx := max(0, bIdx-left)
-	endIdx := min(len(tape.points)-1, cIdx+right)
-	// startIdx may equal bIdx when B is the first trade of the scanned tape;
-	// still store B→C with right pad. Rehearsal/chart padWindow reads left of
-	// B from storage when earlier trades exist (TRAINING.md precursor).
-
-	return tape.points[startIdx], tape.points[endIdx], true
-}
-
-/*
-PadWindow is the tick window rehearsal/chart read around B→C when a stored
-detection's start is tight or missing end (TRAINING.md left/right pad). The
-pad equals the move width so long moves keep a proportional precursor; short
-B→C spans get a minimum left pad so ignition is not the first lit token
-(otherwise there is no precursor to teach, and B sits on the chart's left edge).
-The left pad never goes before tick 0: when B is near the epoch start, lo is
-clamped to 0 and hi is kept >= lo so SignalLogic/Timeline never see a negative
-lowTick.
-*/
-func PadWindow(bTick, cTick int64) (lo, hi int64) {
-	width := max(cTick-bTick, 1)
-	left := max(width, minPrecursorPad)
-
-	// Tick 0 is the earliest stored frame; never ask the catalog for a
-	// negative lowTick (SignalLogic rejects it and halted training).
-	lo = max(bTick-left, 0)
-	hi = max(cTick+max(width/2, 1), lo)
-
-	return lo, hi
-}
-
-// minPrecursorPad is the smallest left pad (in ticks) so short B→C fragments
-// still carry teachable precursor frames before ignition.
-const minPrecursorPad = 4
-
-/*
-Scan scans the tape once from beginning to end and flushes the detections of
-every contiguous symbol/epoch tape when its boundary is crossed, and of the
-last tape when the iterator is exhausted. Only the B/C coordinates of each
-detection are retained; the native tape fragment is recovered from storage
-by its epoch and tick coordinates.
-
-Scan halts on the first error: a tape read failure, a detector without a
-price system, a trade without a positive exact price, or a round trip that
-cannot be priced. It never classifies an excursion as if friction were zero,
-and never flushes a tape whose read failed part-way, because its last
-excursion would be cut at an arbitrary tick instead of its real end.
+Step the replayed tape and hunt for excursions.
 */
 func (detector *Detector) Step(
 	measurement *data.Measurement,
 ) *data.Measurement {
-	if detector.Error() != nil || measurement == nil {
+	if measurement == nil || detector.price == nil {
 		return nil
 	}
 
-	trade := measurement
+	detector.lastResult = nil
+
 	if measurement.Source == "runtime:join" {
 		for _, peer := range measurement.Peers() {
-			if peer != nil && peer.Source == "spot:trade" {
-				trade = peer
-				break
+			if peer == nil || peer.Source != "spot:trade" {
+				continue
 			}
+
+			detector.processTrade(peer)
 		}
+	} else if measurement.Source == "spot:trade" {
+		detector.processTrade(measurement)
 	}
 
-	if trade.Source != "spot:trade" {
-		return nil
-	}
-
-	current := detector.tapes[trade.Label]
-
-	if current != nil && trade.Epoch != current.epoch {
-		if err := current.flush(); err != nil {
-			detector.Error(err)
-			return nil
-		}
-
-		delete(detector.tapes, trade.Label)
-		current = nil
-	}
-
-	if current == nil {
-		current = &tape{
-			detector: detector,
-			epoch:    trade.Epoch,
-			symbol:   trade.Label,
-			start: tapePoint{
-				idx:  trade.SeqIdx,
-				tick: trade.Tick,
-				at:   trade.At,
-			},
-		}
-		detector.tapes[trade.Label] = current
-	}
-
-	priceEntry := data.Pull(trade.Read("price"))
-
-	if trade.At.IsZero() {
-		detector.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf(
-				"[detector] spot:trade without venue time (At): %s epoch=%d tick=%d",
-				trade.Label, trade.Epoch, trade.Tick,
-			),
-			nil,
-		))
-		return nil
-	}
-
-	if priceEntry == nil || priceEntry.Metric == nil || priceEntry.Metric.Exact() == nil {
-		detector.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf(
-				"[detector] spot:trade without exact price: %s epoch=%d tick=%d",
-				trade.Label, trade.Epoch, trade.Tick,
-			),
-			nil,
-		))
-		return nil
-	}
-
-	price := priceEntry.Metric.Exact()
-	var bid *decimal.Decimal
-
-	if bidEntry := data.Pull(trade.Read("bid_price_0")); bidEntry != nil && bidEntry.Metric != nil && bidEntry.Metric.Exact() != nil {
-		bid = bidEntry.Metric.Exact()
-	}
-
-	var ask *decimal.Decimal
-
-	if askEntry := data.Pull(trade.Read("ask_price_0")); askEntry != nil && askEntry.Metric != nil && askEntry.Metric.Exact() != nil {
-		ask = askEntry.Metric.Exact()
-	}
-
-	snapshot, err := broker.ReadSnapshot(trade)
-
-	if err != nil {
-		detector.Error(err)
-		return nil
-	}
-
-	if bid == nil && snapshot != nil && len(snapshot.Bids) > 0 {
-		bid = snapshot.Bids[0].Price
-	}
-
-	if ask == nil && snapshot != nil && len(snapshot.Asks) > 0 {
-		ask = snapshot.Asks[0].Price
-	}
-
-	entryAsk, exitBid, bidDepthQty, posQty, err := detector.computeBookExecution(trade.Label, snapshot)
-
-	if err != nil {
-		detector.Error(err)
-		return nil
-	}
-
-	if err := current.observe(tapePoint{
-		idx:         trade.SeqIdx,
-		tick:        trade.Tick,
-		at:          trade.At,
-		price:       price,
-		bid:         bid,
-		ask:         ask,
-		entryAsk:    entryAsk,
-		exitBid:     exitBid,
-		bidDepthQty: bidDepthQty,
-		posQty:      posQty,
-		snapshot:    snapshot,
-	}); err != nil {
-		detector.Error(err)
-		return nil
-	}
-
-	stepCount := detector.steps.Add(1)
-
-	if stepCount == 1 || stepCount%500 == 0 {
-		errnie.Info(fmt.Sprintf(
-			"[detector] processing trades: %d observed (latest: %s tick=%d price=%s, active tapes: %d)",
-			stepCount, trade.Label, trade.Tick, price.String(), len(detector.tapes),
-		))
-	}
-
-	return nil
+	return detector.lastResult
 }
 
-func (detector *Detector) FlushAll() error {
-	totalTapes := len(detector.tapes)
+func (detector *Detector) processTrade(peer *data.Measurement) {
+	if detector.epoch == 0 || detector.label == "" ||
+		detector.epoch != peer.Epoch || detector.label != peer.Label {
+		detector.flushConfirmedOnReset()
+		detector.resetTape(peer.Epoch, peer.Label)
+	}
 
-	for symbol, current := range detector.tapes {
-		if current != nil {
-			if err := current.flush(); err != nil {
-				return detector.Error(err)
+	priceDec := data.Pull(peer.Read("price")).Metric.Exact()
+
+	if priceDec == nil || priceDec.Sign() <= 0 {
+		return
+	}
+
+	priceF := priceDec.Float64()
+
+	if priceF <= 0 || math.IsNaN(priceF) || math.IsInf(priceF, 0) {
+		return
+	}
+
+	pt := tradePoint{
+		tick:   peer.Tick,
+		seqIdx: peer.SeqIdx,
+		price:  priceDec,
+		priceF: priceF,
+		trade:  peer,
+	}
+
+	detector.updateMicrostructure(pt)
+
+	if detector.state == stateInit {
+		detector.initFromPoint(pt)
+		return
+	}
+
+	switch detector.state {
+	case stateUndecided:
+		detector.stepUndecided(pt)
+	case stateUp:
+		detector.stepUp(pt)
+	case stateDown:
+		detector.stepDown(pt)
+	}
+}
+
+/*
+updateMicrostructure tracks single-trade direction-flip bounces to measure the
+effective bid-ask bounce floor of the book (e.g. ALTHEA 10% spread, AMI 36% spread).
+*/
+func (detector *Detector) updateMicrostructure(pt tradePoint) {
+	if detector.prevTrade != nil && detector.prevTrade.priceF > 0 {
+		delta := (pt.priceF - detector.prevTrade.priceF) / detector.prevTrade.priceF
+		absDelta := math.Abs(delta)
+
+		if absDelta > 0 {
+			if detector.prevDelta != 0 && (delta*detector.prevDelta) < 0 {
+				capped := math.Min(absDelta, 0.25)
+				if detector.emaBounce == 0 {
+					detector.emaBounce = capped
+				} else {
+					detector.emaBounce = 0.92*detector.emaBounce + 0.08*capped
+				}
+			} else {
+				detector.emaBounce *= 0.992
 			}
+			detector.prevDelta = delta
 		}
-		delete(detector.tapes, symbol)
 	}
 
-	errnie.Info(fmt.Sprintf(
-		"[detector] flush complete: %d total trades processed, %d total excursions emitted across %d tape(s)",
-		detector.steps.Load(), detector.emitted.Load(), totalTapes,
-	))
-
-	return nil
+	cp := pt
+	detector.prevTrade = &cp
 }
 
-func (detector *Detector) Steps() int64 {
-	return detector.steps.Load()
-}
-
-func (detector *Detector) Emitted() int64 {
-	return detector.emitted.Load()
-}
-
-func (detector *Detector) Scan(
-	measurements iter.Seq2[*data.Measurement, error],
-) error {
-	if err := detector.Error(); err != nil {
-		return err
+/*
+roundTripFeeRate queries broker.Price for the symbol's authoritative taker fee
+and returns the exact round-trip break-even fraction: (1 + f)/(1 - f) - 1.
+*/
+func (detector *Detector) roundTripFeeRate() float64 {
+	if feeRate, ok := detector.price.FeeRate(detector.label); ok && feeRate > 0 && feeRate < 1 {
+		return (1.0+feeRate)/(1.0-feeRate) - 1.0
 	}
 
-	for measurement, err := range measurements {
-		if err != nil {
-			return detector.Error(errnie.Err(
-				errnie.IO,
-				"[detector] trade tape read failed",
-				err,
-			))
-		}
+	return 0.008 // 80 bps fallback if symbol fee is not loaded
+}
 
-		if measurement == nil {
-			continue
-		}
+/*
+effectiveDeadband combines the venue round-trip taker fee with the rolling
+bid-ask bounce floor so spread bounce never triggers false directional legs.
+*/
+func (detector *Detector) effectiveDeadband() float64 {
+	feeFloor := 2.0 * detector.roundTripFeeRate()
+	spreadFloor := 2.2 * detector.emaBounce
 
-		detector.Step(measurement)
+	return math.Max(feeFloor, spreadFloor)
+}
+
+/*
+clearsEconomicFriction verifies that a move from lowPrice to highPrice clears
+both the dynamic microstructure deadband and broker.Price's RoundTrip fee math.
+*/
+func (detector *Detector) clearsEconomicFriction(lowPrice, highPrice *decimal.Decimal) bool {
+	if lowPrice == nil || highPrice == nil || lowPrice.Sign() <= 0 || highPrice.Cmp(lowPrice) <= 0 {
+		return false
 	}
 
-	return detector.FlushAll()
+	rel := (highPrice.Float64() - lowPrice.Float64()) / lowPrice.Float64()
+	if rel < detector.effectiveDeadband() {
+		return false
+	}
+
+	if pnl, _, err := detector.price.RoundTrip(detector.label, lowPrice, highPrice); err == nil && pnl != nil {
+		return pnl.Sign() > 0
+	}
+
+	// Fallback if Normalizer/Instrument minimums are not seeded in unit tests:
+	entryWithFee := detector.price.WithFee(detector.label, lowPrice, broker.BUY)
+	exitWithFee := detector.price.WithFee(detector.label, highPrice, broker.SELL)
+
+	if entryWithFee != nil && exitWithFee != nil {
+		return exitWithFee.Cmp(entryWithFee) > 0
+	}
+
+	return true
+}
+
+func (detector *Detector) flatBand() float64 {
+	return 0.25 * detector.roundTripFeeRate()
+}
+
+func (detector *Detector) resetTape(epoch int64, label string) {
+	detector.epoch = epoch
+	detector.label = label
+	detector.state = stateInit
+	detector.emaBounce = 0
+	detector.prevTrade = nil
+	detector.prevDelta = 0
+	detector.pending = detector.pending[:0]
+}
+
+func (detector *Detector) initFromPoint(pt tradePoint) {
+	detector.segStart = pt
+	detector.runLow = pt
+	detector.runHigh = pt
+	detector.resetFlatTracker(pt)
+	detector.state = stateUndecided
+}
+
+func (detector *Detector) resetFlatTracker(pt tradePoint) {
+	detector.flatStart = pt
+	detector.flatLast = pt
+	detector.flatMin = pt.priceF
+	detector.flatMax = pt.priceF
+	detector.flatCount = 1
+	detector.flatGlitchCnt = 0
+}
+
+func (detector *Detector) stepUndecided(pt tradePoint) {
+	fBand := detector.flatBand()
+
+	// 1. Track sustained flat regimes (subordinated until minFlatTrades is reached).
+	candMin := math.Min(detector.flatMin, pt.priceF)
+	candMax := math.Max(detector.flatMax, pt.priceF)
+	inFlat := candMin > 0 && ((candMax-candMin)/candMin) <= fBand
+
+	if inFlat {
+		detector.flatMin = candMin
+		detector.flatMax = candMax
+		detector.flatLast = pt
+		detector.flatCount++
+		detector.flatGlitchCnt = 0
+	} else {
+		detector.flatGlitchCnt++
+
+		if detector.flatGlitchCnt > detector.maxFlatGlitchTrades {
+			if detector.flatCount >= detector.minFlatTrades &&
+				detector.flatLast.seqIdx > detector.flatStart.seqIdx {
+
+				if detector.flatStart.seqIdx > detector.segStart.seqIdx {
+					detector.enqueueEpisode(episode{
+						class:  "chop",
+						start:  detector.segStart,
+						end:    detector.flatStart,
+						lowP:   math.Min(detector.segStart.priceF, detector.flatStart.priceF),
+						highP:  math.Max(detector.segStart.priceF, detector.flatStart.priceF),
+						trades: detector.flatStart.seqIdx - detector.segStart.seqIdx,
+					})
+				}
+
+				detector.enqueueEpisode(episode{
+					class:  "flat",
+					start:  detector.flatStart,
+					end:    detector.flatLast,
+					lowP:   detector.flatMin,
+					highP:  detector.flatMax,
+					trades: detector.flatCount,
+				})
+
+				detector.segStart = detector.flatLast
+				detector.runLow = detector.flatLast
+				detector.runHigh = detector.flatLast
+			}
+
+			detector.resetFlatTracker(pt)
+		}
+	}
+
+	// 2. Track running extremes of the undecided window.
+	if pt.price.Cmp(detector.runLow.price) <= 0 {
+		detector.runLow = pt
+	}
+
+	if pt.price.Cmp(detector.runHigh.price) >= 0 {
+		detector.runHigh = pt
+	}
+
+	// 3. Check if a breakout from runLow or runHigh clears economic friction.
+	upClears := pt.seqIdx > detector.runLow.seqIdx &&
+		detector.clearsEconomicFriction(detector.runLow.price, pt.price)
+
+	downClears := pt.seqIdx > detector.runHigh.seqIdx &&
+		detector.clearsEconomicFriction(pt.price, detector.runHigh.price)
+
+	if upClears {
+		if detector.runLow.seqIdx > detector.segStart.seqIdx {
+			detector.enqueueEpisode(episode{
+				class:  "chop",
+				start:  detector.segStart,
+				end:    detector.runLow,
+				lowP:   detector.runLow.priceF,
+				highP:  detector.runHigh.priceF,
+				trades: detector.runLow.seqIdx - detector.segStart.seqIdx,
+			})
+		}
+
+		detector.enterUp(detector.runLow, pt)
+		return
+	}
+
+	if downClears {
+		if detector.runHigh.seqIdx > detector.segStart.seqIdx {
+			detector.enqueueEpisode(episode{
+				class:  "chop",
+				start:  detector.segStart,
+				end:    detector.runHigh,
+				lowP:   detector.runLow.priceF,
+				highP:  detector.runHigh.priceF,
+				trades: detector.runHigh.seqIdx - detector.segStart.seqIdx,
+			})
+		}
+
+		detector.enterDown(detector.runHigh, pt)
+	}
+}
+
+func (detector *Detector) enterUp(b, c tradePoint) {
+	detector.state = stateUp
+	detector.legB = b
+	detector.legC = c
+	detector.legExtreme = c
+	detector.legTrades = c.seqIdx - b.seqIdx + 1
+	detector.tradesSinceC = 0
+	detector.tryAdoptPriorUp()
+}
+
+func (detector *Detector) enterDown(b, c tradePoint) {
+	detector.state = stateDown
+	detector.legB = b
+	detector.legC = c
+	detector.legExtreme = c
+	detector.legTrades = c.seqIdx - b.seqIdx + 1
+	detector.tradesSinceC = 0
+	detector.tryAdoptPriorDown()
+}
+
+func (detector *Detector) stepUp(pt tradePoint) {
+	detector.legTrades++
+
+	if pt.price.Cmp(detector.legC.price) >= 0 {
+		detector.legC = pt
+		detector.legExtreme = pt
+		detector.tradesSinceC = 0
+		detector.tryAdoptPriorUp()
+		return
+	}
+
+	detector.tradesSinceC++
+
+	if pt.price.Cmp(detector.legExtreme.price) < 0 {
+		detector.legExtreme = pt
+	}
+
+	legRange := detector.legC.priceF - detector.legB.priceF
+	retraceAbs := detector.legC.priceF - pt.priceF
+
+	var retraceOfLeg float64
+
+	if legRange > 0 {
+		retraceOfLeg = retraceAbs / legRange
+	}
+
+	brokeOrigin := pt.price.Cmp(detector.legB.price) < 0
+	retraceClearsFee := detector.clearsEconomicFriction(pt.price, detector.legC.price)
+	clearedProportional := retraceClearsFee && retraceOfLeg >= detector.retraceRatio
+
+	if brokeOrigin || clearedProportional {
+		detector.completeUpLeg()
+
+		if retraceClearsFee && pt.seqIdx > detector.legC.seqIdx {
+			detector.enterDown(detector.legC, pt)
+		} else {
+			detector.initFromPoint(detector.legC)
+			detector.stepUndecided(pt)
+		}
+
+		return
+	}
+
+	// Horizontal time-exhaustion: if price stalls below C for >= 3x the impulse duration,
+	// end the up leg at C and transition the post-C sideways box into chop/flat.
+	impulseTrades := max(1, detector.legC.seqIdx-detector.legB.seqIdx)
+	stagnationLimit := max(detector.minStagnationTrades, impulseTrades*detector.stagnationMultiplier)
+
+	if detector.tradesSinceC >= stagnationLimit {
+		detector.completeUpLeg()
+		detector.initFromPoint(detector.legC)
+		detector.stepUndecided(pt)
+	}
+}
+
+func (detector *Detector) stepDown(pt tradePoint) {
+	detector.legTrades++
+
+	if pt.price.Cmp(detector.legC.price) <= 0 {
+		detector.legC = pt
+		detector.legExtreme = pt
+		detector.tradesSinceC = 0
+		detector.tryAdoptPriorDown()
+		return
+	}
+
+	detector.tradesSinceC++
+
+	if pt.price.Cmp(detector.legExtreme.price) > 0 {
+		detector.legExtreme = pt
+	}
+
+	legRange := detector.legB.priceF - detector.legC.priceF
+	bounceAbs := pt.priceF - detector.legC.priceF
+
+	var retraceOfLeg float64
+
+	if legRange > 0 {
+		retraceOfLeg = bounceAbs / legRange
+	}
+
+	brokeOrigin := pt.price.Cmp(detector.legB.price) > 0
+	bounceClearsFee := detector.clearsEconomicFriction(detector.legC.price, pt.price)
+	clearedProportional := bounceClearsFee && retraceOfLeg >= detector.retraceRatio
+
+	if brokeOrigin || clearedProportional {
+		detector.completeDownLeg()
+
+		if bounceClearsFee && pt.seqIdx > detector.legC.seqIdx {
+			detector.enterUp(detector.legC, pt)
+		} else {
+			detector.initFromPoint(detector.legC)
+			detector.stepUndecided(pt)
+		}
+
+		return
+	}
+
+	impulseTrades := max(1, detector.legC.seqIdx-detector.legB.seqIdx)
+	stagnationLimit := max(detector.minStagnationTrades, impulseTrades*detector.stagnationMultiplier)
+
+	if detector.tradesSinceC >= stagnationLimit {
+		detector.completeDownLeg()
+		detector.initFromPoint(detector.legC)
+		detector.stepUndecided(pt)
+	}
+}
+
+func (detector *Detector) completeUpLeg() {
+	trades := detector.legC.seqIdx - detector.legB.seqIdx
+	class := "up"
+
+	if trades < 1 || !detector.clearsEconomicFriction(detector.legB.price, detector.legC.price) {
+		class = "chop"
+	}
+
+	detector.enqueueEpisode(episode{
+		class:  class,
+		start:  detector.legB,
+		end:    detector.legC,
+		lowP:   detector.legB.priceF,
+		highP:  detector.legC.priceF,
+		trades: trades,
+	})
+}
+
+func (detector *Detector) completeDownLeg() {
+	trades := detector.legC.seqIdx - detector.legB.seqIdx
+	class := "down"
+
+	if trades < 1 || !detector.clearsEconomicFriction(detector.legC.price, detector.legB.price) {
+		class = "chop"
+	}
+
+	detector.enqueueEpisode(episode{
+		class:  class,
+		start:  detector.legB,
+		end:    detector.legC,
+		lowP:   detector.legC.priceF,
+		highP:  detector.legB.priceF,
+		trades: trades,
+	})
+}
+
+/*
+tryAdoptPriorUp merges a staircase uptrend (up1 -> shallow dip -> up2) into one
+macro up leg as soon as the active leg breaks above up1's peak C1, provided the
+intervening pullback held a higher low above B1 and did not stagnate into a
+long sideways regime.
+*/
+func (detector *Detector) tryAdoptPriorUp() {
+	n := len(detector.pending)
+
+	if n == 0 {
+		return
+	}
+
+	// Case 1: pending ends directly with an "up" episode.
+	if detector.pending[n-1].class == "up" {
+		prior := detector.pending[n-1]
+		if detector.legC.price.Cmp(prior.end.price) >= 0 &&
+			detector.legB.price.Cmp(prior.start.price) >= 0 {
+			detector.legB = prior.start
+			detector.pending = detector.pending[:n-1]
+		}
+		return
+	}
+
+	// Case 2: pending ends with [..., priorUp, dip] where dip is a shallow pullback.
+	if n >= 2 && detector.pending[n-2].class == "up" {
+		priorUp := detector.pending[n-2]
+		dip := detector.pending[n-1]
+
+		priorRange := priorUp.end.priceF - priorUp.start.priceF
+		dipDepth := priorUp.end.priceF - detector.legB.priceF
+
+		if priorRange > 0 &&
+			detector.legC.price.Cmp(priorUp.end.price) >= 0 &&
+			detector.legB.price.Cmp(priorUp.start.price) > 0 &&
+			(dipDepth/priorRange) <= detector.maxContinuationRetrace &&
+			dip.trades <= max(detector.minStagnationTrades, priorUp.trades*2) {
+			detector.legB = priorUp.start
+			detector.pending = detector.pending[:n-2]
+		}
+	}
+}
+
+/*
+tryAdoptPriorDown mirrors tryAdoptPriorUp for staircase downtrends.
+*/
+func (detector *Detector) tryAdoptPriorDown() {
+	n := len(detector.pending)
+
+	if n == 0 {
+		return
+	}
+
+	if detector.pending[n-1].class == "down" {
+		prior := detector.pending[n-1]
+
+		if detector.legC.price.Cmp(prior.end.price) <= 0 &&
+			detector.legB.price.Cmp(prior.start.price) <= 0 {
+			detector.legB = prior.start
+			detector.pending = detector.pending[:n-1]
+		}
+
+		return
+	}
+
+	if n >= 2 && detector.pending[n-2].class == "down" {
+		priorDown := detector.pending[n-2]
+		bounce := detector.pending[n-1]
+
+		priorRange := priorDown.start.priceF - priorDown.end.priceF
+		bounceHeight := detector.legB.priceF - priorDown.end.priceF
+
+		if priorRange > 0 &&
+			detector.legC.price.Cmp(priorDown.end.price) <= 0 &&
+			detector.legB.price.Cmp(priorDown.start.price) < 0 &&
+			(bounceHeight/priorRange) <= detector.maxContinuationRetrace &&
+			bounce.trades <= max(detector.minStagnationTrades, priorDown.trades*2) {
+			detector.legB = priorDown.start
+			detector.pending = detector.pending[:n-2]
+		}
+	}
+}
+
+/*
+enqueueEpisode coalesces adjacent identical regimes, absorbs micro-slivers, and
+demotes self-canceling box whip-saws into a single contiguous "chop" stretch.
+*/
+func (detector *Detector) enqueueEpisode(ep episode) {
+	if ep.end.seqIdx <= ep.start.seqIdx {
+		return
+	}
+
+	// 1. Absorb micro-slivers into the preceding episode if one exists.
+	if ep.trades < detector.minEpisodeTrades && len(detector.pending) > 0 {
+		last := &detector.pending[len(detector.pending)-1]
+		last.end = ep.end
+		last.lowP = math.Min(last.lowP, ep.lowP)
+		last.highP = math.Max(last.highP, ep.highP)
+		last.trades = last.end.seqIdx - last.start.seqIdx
+		return
+	}
+
+	// 2. Merge adjacent episodes of the same class.
+	if len(detector.pending) > 0 && detector.pending[len(detector.pending)-1].class == ep.class {
+		last := &detector.pending[len(detector.pending)-1]
+		last.end = ep.end
+		last.lowP = math.Min(last.lowP, ep.lowP)
+		last.highP = math.Max(last.highP, ep.highP)
+		last.trades = last.end.seqIdx - last.start.seqIdx
+		return
+	}
+
+	detector.pending = append(detector.pending, ep)
+
+	// 3. Detect 3-swing overlapping whip-saws inside a range box and collapse into "chop".
+	detector.coalesceBoxWhipsaws()
+
+	// 4. Flush the oldest episode once it is safely beyond the lookahead window.
+	for len(detector.pending) > 3 {
+		oldest := detector.pending[0]
+		detector.pending = detector.pending[1:]
+		detector.lastResult = detector.Flush(
+			oldest.class,
+			oldest.start.tick, oldest.end.tick,
+			oldest.start.seqIdx, oldest.end.seqIdx,
+			oldest.start.price, oldest.end.price,
+			oldest.start.trade, oldest.end.trade,
+		)
+	}
+}
+
+/*
+coalesceBoxWhipsaws detects alternating up/down swings that retrace >= 68% of
+each other without escaping the bounding box and collapses them into "chop".
+*/
+func (detector *Detector) coalesceBoxWhipsaws() {
+	n := len(detector.pending)
+
+	if n < 3 {
+		return
+	}
+
+	s1 := detector.pending[n-3]
+	s2 := detector.pending[n-2]
+	s3 := detector.pending[n-1]
+
+	isAlternating := (s1.class == "up" && s2.class == "down" && s3.class == "up") ||
+		(s1.class == "down" && s2.class == "up" && s3.class == "down")
+
+	if !isAlternating {
+		return
+	}
+
+	amp1 := math.Abs(s1.end.priceF - s1.start.priceF)
+	amp2 := math.Abs(s2.end.priceF - s2.start.priceF)
+	amp3 := math.Abs(s3.end.priceF - s3.start.priceF)
+
+	if amp1 <= 0 || amp2 <= 0 {
+		return
+	}
+
+	r12 := amp2 / amp1
+	r23 := amp3 / amp2
+
+	// If both counter-swings wipe out most of the prior swing without breaking out (> 1.35x),
+	// they are oscillating inside a horizontal chop box.
+	if r12 >= detector.boxOverlapRatio && r12 <= 1.35 &&
+		r23 >= detector.boxOverlapRatio && r23 <= 1.35 {
+		merged := episode{
+			class:  "chop",
+			start:  s1.start,
+			end:    s3.end,
+			lowP:   math.Min(s1.lowP, math.Min(s2.lowP, s3.lowP)),
+			highP:  math.Max(s1.highP, math.Max(s2.highP, s3.highP)),
+			trades: s3.end.seqIdx - s1.start.seqIdx,
+		}
+		detector.pending = detector.pending[:n-3]
+		detector.enqueueEpisode(merged)
+	}
+}
+
+func (detector *Detector) flushConfirmedOnReset() {
+	for len(detector.pending) > 0 {
+		oldest := detector.pending[0]
+		detector.pending = detector.pending[1:]
+		detector.lastResult = detector.Flush(
+			oldest.class,
+			oldest.start.tick, oldest.end.tick,
+			oldest.start.seqIdx, oldest.end.seqIdx,
+			oldest.start.price, oldest.end.price,
+			oldest.start.trade, oldest.end.trade,
+		)
+	}
 }
 
 /*
 Flush writes one detected excursion of the given class to storeTee.
-B is ignition (or the start of a chop/flat stretch) and C is exhaustion (or
-its end). start and end are the padded fragment window (precursor left of B,
-tape right of C); the stored epoch and tick coordinates identify that
-contiguous historical tape.
+bTick/bSeqIdx/bPrice/bTrade is chronological start B (ignition) and
+cTick/cSeqIdx/cPrice/cTrade is chronological end C (exhaustion).
 */
 func (detector *Detector) Flush(
 	class string,
-	symbol string,
-	epoch int64,
-	start tapePoint,
-	end tapePoint,
-	excursion span,
+	bTick, cTick int64,
+	bSeqIdx, cSeqIdx int64,
+	bPrice, cPrice *decimal.Decimal,
+	bTrade, cTrade *data.Measurement,
 ) *data.Measurement {
-	var bPrice, cPrice *decimal.Decimal
-
-	if class == excursionUp {
-		if current := detector.tapes[symbol]; current != nil {
-			_, bPrice, cPrice = current.bookRoundTrip(excursion.b, excursion.c)
-		}
-		if bPrice == nil {
-			bPrice = excursion.b.entryAsk
-		}
-		if bPrice == nil && excursion.b.ask != nil {
-			bPrice = excursion.b.ask
-		}
-		if bPrice == nil {
-			bPrice = excursion.b.price
-		}
-
-		if cPrice == nil {
-			cPrice = excursion.c.exitBid
-		}
-		if cPrice == nil && excursion.c.bid != nil {
-			cPrice = excursion.c.bid
-		}
-		if cPrice == nil {
-			cPrice = excursion.c.price
-		}
-	} else {
-		bPrice = excursion.b.price
-		cPrice = excursion.c.price
-	}
-
-	if bPrice == nil || cPrice == nil || bPrice.Sign() <= 0 || cPrice.Sign() <= 0 {
-		return nil
-	}
-
 	measurement := data.NewMeasurement(
-		epoch,
-		symbol,
+		bTrade.Epoch,
+		bTrade.Label,
 		detector.Name(),
-		excursion.c.at,
-		excursion.b.at,
+		bTrade.At,
+		bTrade.From,
 		&data.StringEntry{Key: "type", Value: class},
 	)
 
-	measurement.Tick = end.tick
+	measurement.Tick = bTick
+	measurement.SeqIdx = bSeqIdx
+	measurement.Timestamp = bTrade.Timestamp
 
-	if measurement.Tick <= 0 {
-		measurement.Tick = excursion.c.tick
-	}
-
-	measurement.SeqIdx = end.idx
-
-	if measurement.SeqIdx <= 0 {
-		measurement.SeqIdx = excursion.c.idx
-	}
-
-	if !end.at.IsZero() {
-		measurement.Timestamp = end.at.UnixNano()
-	}
-
-	if end.at.IsZero() && !excursion.c.at.IsZero() {
-		measurement.Timestamp = excursion.c.at.UnixNano()
-	}
-
-	startIdxUnit, startIdxTime := data.GetDimension(detector.Name(), "start_idx")
-	startTickUnit, startTickTime := data.GetDimension(detector.Name(), "start_tick")
+	aIdxUnit, aIdxTime := data.GetDimension(detector.Name(), "a_idx")
+	aTickUnit, aTickTime := data.GetDimension(detector.Name(), "a_tick")
 	bIdxUnit, bIdxTime := data.GetDimension(detector.Name(), "b_idx")
 	bTickUnit, bTickTime := data.GetDimension(detector.Name(), "b_tick")
 	cIdxUnit, cIdxTime := data.GetDimension(detector.Name(), "c_idx")
@@ -1011,25 +806,28 @@ func (detector *Detector) Flush(
 	bPriceUnit, bPriceTime := data.GetDimension(detector.Name(), "b_price")
 	cPriceUnit, cPriceTime := data.GetDimension(detector.Name(), "c_price")
 
+	// Half the move added to the start and end. Captures the precursor, and
+	// adds some at the end for good measure.
+	halfMoveSeqIdx := cSeqIdx - bSeqIdx
+	halfMoveTick := cTick - bTick
+
+	// Ten percent of half the move, accounts for order filling times.
+	tenPercentMoveSeqIdx := halfMoveSeqIdx / 10
+	tenPercentMoveTick := halfMoveTick / 10
+
 	measurement.Write(
-		data.NewMetric("start_idx", float64(start.idx), startIdxUnit, startIdxTime),
-		data.NewMetric("start_tick", float64(start.tick), startTickUnit, startTickTime),
-		data.NewMetric("b_idx", float64(excursion.b.idx), bIdxUnit, bIdxTime),
-		data.NewMetric("b_tick", float64(excursion.b.tick), bTickUnit, bTickTime),
-		data.NewMetric("c_idx", float64(excursion.c.idx), cIdxUnit, cIdxTime),
-		data.NewMetric("c_tick", float64(excursion.c.tick), cTickUnit, cTickTime),
-		data.NewMetric("end_tick", float64(end.tick), endTickUnit, endTickTime),
+		data.NewExactMetric("a_idx", decimal.NewFromInt64(bSeqIdx-halfMoveSeqIdx), aIdxUnit, aIdxTime),
+		data.NewExactMetric("a_tick", decimal.NewFromInt64(bTick-halfMoveTick), aTickUnit, aTickTime),
+		data.NewExactMetric("b_idx", decimal.NewFromInt64(bSeqIdx-tenPercentMoveSeqIdx), bIdxUnit, bIdxTime),
+		data.NewExactMetric("b_tick", decimal.NewFromInt64(bTick-tenPercentMoveTick), bTickUnit, bTickTime),
+		data.NewExactMetric("c_idx", decimal.NewFromInt64(cSeqIdx-tenPercentMoveSeqIdx), cIdxUnit, cIdxTime),
+		data.NewExactMetric("c_tick", decimal.NewFromInt64(cTick-tenPercentMoveTick), cTickUnit, cTickTime),
+		data.NewExactMetric("d_idx", decimal.NewFromInt64(cSeqIdx+halfMoveSeqIdx), endTickUnit, endTickTime),
+		data.NewExactMetric("d_tick", decimal.NewFromInt64(cTick+halfMoveTick), endTickUnit, endTickTime),
 		data.NewExactMetric("b_price", bPrice, bPriceUnit, bPriceTime),
 		data.NewExactMetric("c_price", cPrice, cPriceUnit, cPriceTime),
 	)
 
-	detector.emitted.Add(1)
-	errnie.Info(fmt.Sprintf(
-		"[detector] detected %s on %s (epoch=%d, span=[tick %d -> %d], bPrice=%s, cPrice=%s)",
-		class, symbol, epoch, excursion.b.tick, excursion.c.tick, bPrice.String(), cPrice.String(),
-	))
-
 	detector.storeTee.Push(measurement)
-
 	return measurement
 }

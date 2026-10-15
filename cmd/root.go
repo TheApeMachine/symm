@@ -283,7 +283,6 @@ var (
 
 			workspace := nmruntime.NewWorkspace(
 				ctx,
-				2,
 				"workspace",
 				[][]nmruntime.Node{
 					{

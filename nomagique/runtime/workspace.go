@@ -67,7 +67,6 @@ type Workspace struct {
 
 func NewWorkspace(
 	ctx context.Context,
-	writerCount uint8,
 	label string,
 	stages [][]Node,
 	tees ...Tee,
@@ -95,7 +94,7 @@ func NewWorkspace(
 
 	opts := optionList(
 		disruptor.Options.BufferCapacity(uint32(capacity)),
-		disruptor.Options.WriterCount(writerCount),
+		disruptor.Options.WriterCount(1),
 	)
 
 	for stageIdx, stageNodes := range stages {
