@@ -14,7 +14,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -31,7 +30,6 @@ type Desk struct {
 	transport Transport
 	price     *Price
 	balance   *Balance
-	storeTee  runtime.Tee
 	positions *sync.Map
 	closed    []*Position
 	closedMu  sync.RWMutex
@@ -43,19 +41,11 @@ func NewDesk(
 	transport Transport,
 	price *Price,
 	balance *Balance,
-	storeTees ...runtime.Tee,
 ) *Desk {
-	var storeTee runtime.Tee
-
-	if len(storeTees) > 0 && storeTees[0] != nil {
-		storeTee = storeTees[0]
-	}
-
 	desk := &Desk{
 		transport: transport,
 		balance:   balance,
 		price:     price,
-		storeTee:  storeTee,
 		positions: &sync.Map{},
 		closed:    make([]*Position, 0),
 	}
@@ -64,10 +54,6 @@ func NewDesk(
 	desk.restore()
 	desk.Transition(runtime.READY)
 	return desk
-}
-
-func (desk *Desk) SetStoreTee(tee runtime.Tee) {
-	desk.storeTee = tee
 }
 
 func (desk *Desk) Cash(asset string) *decimal.Decimal {
@@ -457,10 +443,6 @@ func (desk *Desk) submit(symbol string, order *spot.OrderRequest) error {
 		))
 	}
 
-	if desk.storeTee != nil {
-		desk.storeTee.Push(data.NewValue("broker", "order", symbol).Append(buf))
-	}
-
 	return nil
 }
 
@@ -607,4 +589,3 @@ func (desk *Desk) PositionsJSON(symbol ...string) []byte {
 	raw, _ := sonic.Marshal(all)
 	return raw
 }
-

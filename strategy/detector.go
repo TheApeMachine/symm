@@ -44,8 +44,7 @@ excursions ("up", "down", "chop", "flat") for each symbol/epoch tape.
 */
 type Detector struct {
 	*runtime.System
-	storeTee runtime.Tee
-	price    *broker.Price
+	price *broker.Price
 
 	// Structural & regime-coalescing parameters
 	retraceRatio           float64
@@ -95,12 +94,10 @@ friction, so the price system is a hard dependency.
 */
 func NewDetector(
 	ctx context.Context,
-	storeTee runtime.Tee,
 	price *broker.Price,
 ) *Detector {
 	detector := &Detector{
 		System:                 runtime.NewSystem(ctx, "detector"),
-		storeTee:               storeTee,
 		price:                  price,
 		retraceRatio:           0.32, // Pullback must retrace >= 32% of |C - B| (and clear friction) to end a leg
 		maxContinuationRetrace: 0.58, // Higher-low dips < 58% merge into one macro leg when C is broken
@@ -824,8 +821,5 @@ func (detector *Detector) Flush(
 		cPrice.Float64(),
 	}, keys...)
 
-	if detector.storeTee != nil {
-		detector.storeTee.Push(value)
-	}
 	return value
 }

@@ -17,40 +17,6 @@ func optionList[O any](initial ...O) []O {
 Workspace runs registered nodes in dependency stages using an LMAX Disruptor.
 Between stages, a post-barrier runtime join handler composes completed prior
 producer outputs into an immutable WORM join measurement without metric copying.
-
-For each sequence S, the architecture is:
-
-	ingress[S]                       WORM
-
-	stage 0:
-	    correlation[S]               WORM → Tee
-	    liquidity[S]                 WORM → Tee
-	    cvd[S]                       WORM → Tee
-	    hawkes[S]                    WORM → Tee
-	    ...
-	             LMAX BARRIER
-	join 0:
-	    runtime:join[S]              WORM (Peers: stage 0 outputs)
-	             LMAX BARRIER
-
-	stage 1:
-	    category[S]                  WORM → Tee
-	    resonance[S]                 WORM → Tee
-	    manifold[S]                  WORM → Tee
-	             LMAX BARRIER
-	join 1:
-	    runtime:join[S]              WORM (Peers: stage 1 outputs)
-	             LMAX BARRIER
-
-	stage 2:
-	    cognition[S]                 WORM → Tee
-	             LMAX BARRIER
-	join 2:
-	    runtime:join[S]              WORM (Peers: stage 2 outputs)
-	             LMAX BARRIER
-
-	stage 3:
-	    training[S]                  WORM → Tee
 */
 type Workspace struct {
 	*System
@@ -65,7 +31,6 @@ func NewWorkspace(
 	ctx context.Context,
 	label string,
 	stages [][]Node,
-	tees ...Tee,
 ) *Workspace {
 	capacity := 8192
 
@@ -92,7 +57,7 @@ func NewWorkspace(
 		group := make([]disruptor.Handler, 0, len(stageNodes))
 
 		for _, node := range stageNodes {
-			consumer := NewConsumer(node, capacity, mask, tees...)
+			consumer := NewConsumer(node, capacity, mask)
 			consumers = append(consumers, consumer)
 			group = append(group, &stageHandler{
 				consumer:  consumer,

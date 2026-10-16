@@ -55,7 +55,7 @@ NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */
 func NewInstrument(
-	ctx context.Context, public Transport, storeTees ...runtime.Tee,
+	ctx context.Context, public Transport,
 ) *Instrument {
 	instrument := &Instrument{
 		public:  public,

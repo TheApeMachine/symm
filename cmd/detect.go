@@ -50,7 +50,7 @@ appends the resulting source=detector rows to S3 storage.`,
 			return err
 		}
 
-		detector := strategy.NewDetector(ctx, storeTee, price)
+		detector := strategy.NewDetector(ctx, price)
 
 		prefixes := make([]string, 0)
 		if len(detectEpochs) > 0 && len(detectSymbols) > 0 {

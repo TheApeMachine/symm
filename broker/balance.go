@@ -25,8 +25,6 @@ type Balance struct {
 	wallet    *kraken.Balance
 	value     *data.Value
 	limiter   *rate.Limiter
-	uiTee     runtime.Tee
-	storeTee  runtime.Tee
 }
 
 /*
@@ -48,21 +46,11 @@ const (
 func NewBalance(
 	ctx context.Context,
 	transport Transport,
-	tee runtime.Tee,
-	storeTees ...runtime.Tee,
 ) *Balance {
-	var storeTee runtime.Tee
-
-	if len(storeTees) > 0 && storeTees[0] != nil {
-		storeTee = storeTees[0]
-	}
-
 	balance := &Balance{
 		System:    runtime.NewSystem(ctx, "balance"),
 		transport: transport,
 		Quote:     system.Cfg.Market.QuoteCurrency,
-		uiTee:     tee,
-		storeTee:  storeTee,
 		limiter: rate.NewLimiter(rate.Limit(
 			privateDecayPerSecond/privateCallsPerUpdate,
 		), 1),
@@ -78,10 +66,6 @@ func NewBalance(
 	balance.Transition(runtime.READY)
 	go balance.watch()
 	return balance
-}
-
-func (balance *Balance) SetStoreTee(tee runtime.Tee) {
-	balance.storeTee = tee
 }
 
 func (balance *Balance) cash(asset string) *decimal.Decimal {

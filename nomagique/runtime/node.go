@@ -33,35 +33,23 @@ type Consumer struct {
 	node     Node
 	mask     int64
 	capacity int
-	tees     []Tee
 }
 
 func NewConsumer(
 	node Node,
 	capacity int,
 	mask int64,
-	tees ...Tee,
 ) *Consumer {
 	consumer := &Consumer{
 		node:     node,
 		mask:     mask,
 		capacity: capacity,
-		tees:     tees,
 	}
 
 	return consumer
 }
 
 func (consumer *Consumer) Step(value *data.Value) *data.Value {
-	returned := consumer.node.Step(value)
-
-	if len(consumer.tees) > 0 && returned != nil {
-		for _, tee := range consumer.tees {
-			if tee != nil {
-				tee.Push(returned)
-			}
-		}
-	}
-
+	consumer.node.Step(value)
 	return value
 }

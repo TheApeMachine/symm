@@ -293,6 +293,7 @@ func (booter *Booter) startIngress(
 
 				booter.book.Update(level3)
 			case "trade":
+				data.Tick.Add(1)
 				if booter.workspace != nil {
 					booter.workspace.Step(data.NewValue(
 						"workspace", "tick", "aggregate",
