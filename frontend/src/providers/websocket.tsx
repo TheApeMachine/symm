@@ -207,13 +207,13 @@ const SIGNAL_OF_KEY: Record<string, string> = {
 	cohort_covariance_score: "correlation",
 	midpoint_log_return: "cvd",
 	book_imbalance: "depthflow",
-	arrival_rate_buy: "hawkes",
+	"arrival_rate:buy": "hawkes",
 	defined_peer_count: "leadlag",
-	best_bid_price: "liquidity",
+	"best_price:bid": "liquidity",
 	book_shape_distance: "morphology",
 	spread_ratio: "pumpdump",
 	breadth: "sentiment",
-	retreat_fraction_bid: "toxicity",
+	"retreat_fraction:bid": "toxicity",
 };
 
 const parseJSON = (bytes: Uint8Array): unknown => {
@@ -302,6 +302,8 @@ const applyPositions = (rows: PositionLayer[]) => {
 };
 
 type Reading = {
+	source: string;
+	symbol: string;
 	metrics: Metric[];
 	metadata: NamedNumber[];
 	provenance: Tag[];
@@ -311,7 +313,9 @@ type Reading = {
 	index: string[];
 };
 
-const newReading = (): Reading => ({
+const newReading = (source: string, symbol: string): Reading => ({
+	source,
+	symbol,
 	metrics: [],
 	metadata: [],
 	provenance: [],
@@ -320,6 +324,17 @@ const newReading = (): Reading => ({
 	layers: [],
 	index: [],
 });
+
+/*
+layerSymbol is the symbol a signal layer describes. Signals index their layer
+as <symbol>/<Prefix>/<keys>, so one tick of a multi-symbol trade frame carries
+one layer per symbol; a layer without that lead belongs to the tick symbol.
+*/
+const layerSymbol = (val: ParsedValue, index: string, fallback: string): string => {
+	const head = index.split(".bin/")[0] ?? "";
+	const at = head.indexOf(`/${val.origin}/`);
+	return at > 0 ? head.slice(0, at) : fallback;
+};
 
 /*
 readVector turns one vector layer into metrics: the labels after the Value's
@@ -416,7 +431,9 @@ export function dispatchValue(val: ParsedValue) {
 		if (bytes.length < 8 || bytes.length % 8 !== 0) continue;
 
 		const { source, metrics, provenance } = readVector(val, index, bytes);
-		const reading = readings.get(source) ?? newReading();
+		const owner = layerSymbol(val, index, symbol);
+		const key = `${source}\u0000${owner}`;
+		const reading = readings.get(key) ?? newReading(source, owner);
 
 		reading.metrics.push(...metrics);
 		reading.provenance.push(...provenance);
@@ -431,7 +448,7 @@ export function dispatchValue(val: ParsedValue) {
 			}
 		}
 
-		readings.set(source, reading);
+		readings.set(key, reading);
 	}
 
 	// Empty layers are skipped on the wire, so a tick without a positions
@@ -440,7 +457,8 @@ export function dispatchValue(val: ParsedValue) {
 		applyPositions([]);
 	}
 
-	for (const [source, reading] of readings) {
+	for (const reading of readings.values()) {
+		const { source, symbol } = reading;
 		const value = new Value({
 			id: val.id,
 			origin: source,

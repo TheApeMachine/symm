@@ -175,13 +175,14 @@ func (hub *Hub) App() *fiber.App {
 Run listens for dashboard clients on the configured address.
 */
 func (hub *Hub) Run() {
+	if hub.listenAddr == "" {
+		errnie.Error(errnie.Err(errnie.Validation, "[hub] ui.addr is not configured", nil))
+		return
+	}
+
 	go func() {
-		address := hub.listenAddr
-
-		if address == "" {
-			address = ":8765"
+		if err := hub.app.Listen(hub.listenAddr); err != nil {
+			errnie.Error(errnie.Err(errnie.IO, "[hub] listen on "+hub.listenAddr+" failed", err))
 		}
-
-		hub.app.Listen(address)
 	}()
 }

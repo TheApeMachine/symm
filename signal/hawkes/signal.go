@@ -28,8 +28,8 @@ func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		models: make(map[string]*symbolModel),
 		keys: []string{
-			"arrival_rate_buy",
-			"arrival_rate_sell",
+			"arrival_rate:buy",
+			"arrival_rate:sell",
 			"branching_spectral_radius",
 			"conditional_intensity",
 			"conditional_intensity_velocity",

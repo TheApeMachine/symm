@@ -249,7 +249,7 @@ describe("Value Binary Decoder and Dispatcher", () => {
 					json: [{ symbol: "ETH/USD", status: "open", entry_price: "2" }],
 				},
 				{
-					index: `${prefix}/arrival_rate_buy/arrival_rate_sell`,
+					index: `${prefix}/arrival_rate:buy/arrival_rate:sell`,
 					vector: [1.5, 0.5],
 				},
 			],
@@ -264,7 +264,44 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		const ring = signals.hawkes.state["ETH/USD"];
 		const latest = ring?.get(ring.getBufferLength() - 1);
 		expect(latest?.origin).toBe("hawkes");
-		expect(latest?.metric("arrival_rate_buy")).toBeCloseTo(1.5);
-		expect(latest?.metric("arrival_rate_sell")).toBeCloseTo(0.5);
+		expect(latest?.metric("arrival_rate:buy")).toBeCloseTo(1.5);
+		expect(latest?.metric("arrival_rate:sell")).toBeCloseTo(0.5);
+	});
+
+	it("routes each symbol's signal layer of a multi-symbol tick to that symbol", () => {
+		const prefix =
+			"workspace/tick/aggregate/0000000000000000001/0000000000000000078.bin";
+		const raw = encodeValue({
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
+			tick: 78n,
+			layers: [
+				{
+					index: "spot:trade/update",
+					json: {
+						channel: "trade",
+						data: [{ symbol: "ETH/USD" }, { symbol: "SOL/USD" }],
+					},
+				},
+				{ index: "price/ETH/USD", json: { symbol: "ETH/USD" } },
+				{
+					index: `ETH/USD/${prefix}/arrival_rate:buy/arrival_rate:sell`,
+					vector: [1, 2],
+				},
+				{
+					index: `SOL/USD/${prefix}/arrival_rate:buy/arrival_rate:sell`,
+					vector: [3, 4],
+				},
+			],
+		});
+
+		dispatchValue(parseOneValue(raw)!);
+
+		const eth = signals.hawkes.state["ETH/USD"];
+		const sol = signals.hawkes.state["SOL/USD"];
+		expect(eth?.get(eth.getBufferLength() - 1)?.metric("arrival_rate:buy")).toBeCloseTo(1);
+		expect(sol?.get(sol.getBufferLength() - 1)?.metric("arrival_rate:buy")).toBeCloseTo(3);
+		expect(sol?.get(sol.getBufferLength() - 1)?.metric("arrival_rate:sell")).toBeCloseTo(4);
 	});
 });

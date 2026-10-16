@@ -149,13 +149,13 @@ func (stage *DynamicsStage) recordToken(measurement *data.Value) {
 		var bidPrice, askPrice, tradePrice float64
 		metrics := data.Metrics(measurement)
 
-		if val, ok := metrics["best_bid_price"]; ok {
+		if val, ok := metrics["best_price:bid"]; ok {
 			bidPrice = val
 		} else if val, ok := metrics["bid"]; ok {
 			bidPrice = val
 		}
 
-		if val, ok := metrics["best_ask_price"]; ok {
+		if val, ok := metrics["best_price:ask"]; ok {
 			askPrice = val
 		} else if val, ok := metrics["ask"]; ok {
 			askPrice = val

@@ -208,8 +208,8 @@ func (stage *PrecursorStage) recordMeasurement(measurement *data.Value) {
 	}
 
 	// 3. Trade / Quote touch execution (evaluated on real and test excursion streams)
-	askPrice := metrics["best_ask_price"]
-	bidPrice := metrics["best_bid_price"]
+	askPrice := metrics["best_price:ask"]
+	bidPrice := metrics["best_price:bid"]
 	frictionHurdle := metrics["friction_hurdle"]
 
 	if p, ok := metrics["price"]; ok {

@@ -38,6 +38,7 @@ type Booter struct {
 	*nmruntime.System
 	epoch            int64
 	capture          bool
+	dashboard        bool
 	public           *network.WebsocketClient
 	privateTransport broker.Transport
 	instrument       *broker.Instrument
@@ -89,6 +90,16 @@ func NewBooter(ctx context.Context, name string, capture ...bool) *Booter {
 		System:  nmruntime.NewSystem(ctx, name, nil),
 		capture: enableCapture,
 	}
+}
+
+/*
+WithDashboard makes this booter serve the dashboard: it constructs the ui Hub
+(127.0.0.1:8765/ws) and io.Copy's every tick to it. Only the command behind
+`make run` sets it; every other command runs headless.
+*/
+func (booter *Booter) WithDashboard() *Booter {
+	booter.dashboard = true
+	return booter
 }
 
 func (booter *Booter) Run() error {
@@ -242,10 +253,13 @@ func (booter *Booter) initPipeline() error {
 		sinks = append(sinks, booter.store)
 	}
 
-	// Every tick is also io.Copy'd to the dashboard hub (127.0.0.1:8765/ws).
-	booter.hub = ui.NewHub(ctx)
-	booter.hub.Run()
-	sinks = append(sinks, booter.hub)
+	// Only the dashboard command io.Copy's every tick to the hub
+	// (127.0.0.1:8765/ws); every other command is headless.
+	if booter.dashboard {
+		booter.hub = ui.NewHub(ctx)
+		booter.hub.Run()
+		sinks = append(sinks, booter.hub)
+	}
 
 	booter.workspace = nmruntime.NewWorkspace(
 		ctx,

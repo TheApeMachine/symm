@@ -9,13 +9,13 @@ import { Typography } from "#/components/ui/typography";
 const STATS = [
 	{
 		label: "best bid",
-		name: "best_bid_price",
+		name: "best_price:bid",
 		format: "fixed:2",
 		align: "text-left",
 	},
 	{
 		label: "best ask",
-		name: "best_ask_price",
+		name: "best_price:ask",
 		format: "fixed:2",
 		align: "text-center",
 	},

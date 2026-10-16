@@ -31,8 +31,8 @@ func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		states: make(map[string]*symbolState),
 		keys: []string{
-			"retreat_fraction_bid",
-			"net_withdrawal_rate_bid",
+			"retreat_fraction:bid",
+			"net_withdrawal_rate:bid",
 		},
 	}
 

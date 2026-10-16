@@ -143,8 +143,8 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"defined_peer_count",
 	],
 	liquidity: [
-		"best_bid_price",
-		"best_ask_price",
+		"best_price:bid",
+		"best_price:ask",
 		"relative_spread",
 	],
 	pumpdump: [

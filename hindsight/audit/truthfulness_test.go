@@ -33,8 +33,8 @@ func TestTruthfulnessStage(t *testing.T) {
 				val.Timestamp = uint64(now.UnixNano())
 				val.Tick = uint64(idx + 1)
 
-				data.AppendVector(val, []float64{99.0}, "best_bid_price")
-				data.AppendVector(val, []float64{101.0}, "best_ask_price")
+				data.AppendVector(val, []float64{99.0}, "best_price:bid")
+				data.AppendVector(val, []float64{101.0}, "best_price:ask")
 				data.AppendVector(val, []float64{0.02}, "relative_spread")
 				data.AppendVector(val, []float64{0.001}, "fee_rate")
 				data.AppendVector(val, []float64{0.022}, "friction_hurdle")
@@ -51,8 +51,8 @@ func TestTruthfulnessStage(t *testing.T) {
 
 		Convey("When auditing crossed market order book quotes (bid > ask)", func() {
 			val := data.NewValue("test", "tick", "BTC/USD")
-			data.AppendVector(val, []float64{102.0}, "best_bid_price")
-			data.AppendVector(val, []float64{100.0}, "best_ask_price")
+			data.AppendVector(val, []float64{102.0}, "best_price:bid")
+			data.AppendVector(val, []float64{100.0}, "best_price:ask")
 
 			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
@@ -69,8 +69,8 @@ func TestTruthfulnessStage(t *testing.T) {
 
 		Convey("When auditing relative spread identity breaches", func() {
 			val := data.NewValue("test", "tick", "BTC/USD")
-			data.AppendVector(val, []float64{99.0}, "best_bid_price")
-			data.AppendVector(val, []float64{101.0}, "best_ask_price")
+			data.AppendVector(val, []float64{99.0}, "best_price:bid")
+			data.AppendVector(val, []float64{101.0}, "best_price:ask")
 			data.AppendVector(val, []float64{0.05}, "relative_spread")
 
 			violations := feed(stage, val)

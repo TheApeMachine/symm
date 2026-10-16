@@ -18,8 +18,8 @@ type Signal struct {
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		keys: []string{
-			"best_bid_price",
-			"best_ask_price",
+			"best_price:bid",
+			"best_price:ask",
 			"relative_spread",
 			"fee_rate",
 			"friction_hurdle",

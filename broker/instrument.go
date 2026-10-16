@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -222,6 +223,37 @@ func level3Depth() int {
 }
 
 /*
+level3FrameSize is how many symbols one subscribe frame may carry: Kraken's
+level3 subscription-rate budget (market.l3_rate_limit per rate window)
+divided by the rate-counter cost of one symbol at depth (5 at 10, 25 at 100,
+100 at 1000). Symbols past the budget get no snapshot and never get a book.
+*/
+func level3FrameSize(depth int) (int, error) {
+	cost := map[int]int{10: 5, 100: 25, 1000: 100}[depth]
+
+	if cost == 0 {
+		return 0, errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[instrument] level3 depth %d is not one of 10, 100, 1000", depth),
+			nil,
+		)
+	}
+
+	budget := viper.GetInt("market.l3_rate_limit")
+
+	if budget < cost {
+		return 0, errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[instrument] market.l3_rate_limit %d cannot fit one level3 symbol at depth %d (cost %d)",
+				budget, depth, cost),
+			nil,
+		)
+	}
+
+	return budget / cost, nil
+}
+
+/*
 subscribeLevel3 writes the Level3 subscription for one batch with a currently
 valid token, split into frames that each fit the venue's snapshot rate
 budget, one frame per rate window across all sockets.
@@ -237,9 +269,16 @@ func (instrument *Instrument) SubscribeLevel3(write func([]byte) error, batch []
 		))
 	}
 
-	for frame := range slices.Chunk(batch, 40) {
+	depth := level3Depth()
+	frameSize, err := level3FrameSize(depth)
+
+	if err != nil {
+		return instrument.Error(err)
+	}
+
+	for frame := range slices.Chunk(batch, frameSize) {
 		msg, err := sonic.Marshal(kraken.NewLevel3Subscription(
-			frame, token, level3Depth(),
+			frame, token, depth,
 		))
 
 		if err != nil {

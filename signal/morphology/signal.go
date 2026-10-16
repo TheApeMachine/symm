@@ -35,10 +35,10 @@ func NewSignal(ctx context.Context) *Signal {
 		keys: []string{
 			"book_shape_distance",
 			"book_shape_ks",
-			"concentration_bid",
-			"concentration_ask",
-			"entropy_bid",
-			"entropy_ask",
+			"concentration:bid",
+			"concentration:ask",
+			"entropy:bid",
+			"entropy:ask",
 			"morphology_change",
 		},
 	}

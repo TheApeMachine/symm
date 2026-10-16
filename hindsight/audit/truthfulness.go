@@ -88,8 +88,8 @@ func (stage *TruthfulnessStage) validateTapeIdentities(measurement *data.Value) 
 	metrics := data.Metrics(measurement)
 
 	// 1. Crossed Market Identity Check: Best bid must never exceed best ask, and quotes must be positive.
-	bidPrice, hasBid := metrics["best_bid_price"]
-	askPrice, hasAsk := metrics["best_ask_price"]
+	bidPrice, hasBid := metrics["best_price:bid"]
+	askPrice, hasAsk := metrics["best_price:ask"]
 
 	if hasBid && bidPrice <= 0 {
 		stage.crossedCount++

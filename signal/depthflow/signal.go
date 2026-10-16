@@ -31,10 +31,10 @@ func NewSignal(ctx context.Context) *Signal {
 		states: make(map[string]*symbolState),
 		keys: []string{
 			"book_imbalance",
-			"touch_notional_bid",
-			"touch_notional_ask",
+			"touch_notional:bid",
+			"touch_notional:ask",
 			"touch_imbalance",
-			"net_displayed_flow_bid",
+			"net_displayed_flow:bid",
 			"mutation_activity_imbalance",
 		},
 	}

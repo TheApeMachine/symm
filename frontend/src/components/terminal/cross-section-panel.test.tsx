@@ -21,8 +21,8 @@ describe("CrossSectionPanel", () => {
 				timestamp: 1_700_000_000_000_000_000n,
 				metrics: [
 					{ name: "relative_spread", raw: 0.0004, snm: 0.0004 },
-					{ name: "best_bid_price", raw: 95123.45, snm: 95123.45 },
-					{ name: "best_ask_price", raw: 95127.25, snm: 95127.25 },
+					{ name: "best_price:bid", raw: 95123.45, snm: 95123.45 },
+					{ name: "best_price:ask", raw: 95127.25, snm: 95127.25 },
 				],
 			});
 			ring.add(val);
@@ -30,8 +30,8 @@ describe("CrossSectionPanel", () => {
 		});
 
 		expect(view.container.querySelector('[data-metric="symbol"]')?.textContent).toBe("BTC/USD");
-		expect(view.container.querySelector('[data-metric-raw="best_bid_price"]')?.textContent).toBe("95123.45");
-		expect(view.container.querySelector('[data-metric-raw="best_ask_price"]')?.textContent).toBe("95127.25");
+		expect(view.container.querySelector('[data-metric-raw="best_price:bid"]')?.textContent).toBe("95123.45");
+		expect(view.container.querySelector('[data-metric-raw="best_price:ask"]')?.textContent).toBe("95127.25");
 		expect(view.container.querySelector('[data-metric-raw="relative_spread"]')?.textContent).toBe("4.0 bp");
 	});
 });

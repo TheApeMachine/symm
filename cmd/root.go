@@ -43,7 +43,8 @@ var (
 			)
 
 			defer cancel()
-			return NewBooter(ctx, "symm", captureFlag).Run()
+			// `make run` runs this command: the only one that serves the dashboard.
+			return NewBooter(ctx, "symm", captureFlag).WithDashboard().Run()
 		},
 	}
 )

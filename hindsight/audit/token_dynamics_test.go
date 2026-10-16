@@ -50,8 +50,8 @@ func TestDynamicsStage(t *testing.T) {
 				pricePeer := data.NewValue("kraken", "quote", "BTC/USD")
 				pricePeer.Tick = uint64(tick)
 				pricePeer.Timestamp = uint64(now.UnixNano())
-				data.AppendVector(pricePeer, []float64{bid}, "best_bid_price")
-				data.AppendVector(pricePeer, []float64{ask}, "best_ask_price")
+				data.AppendVector(pricePeer, []float64{bid}, "best_price:bid")
+				data.AppendVector(pricePeer, []float64{ask}, "best_price:ask")
 				join.Layers = append(join.Layers, pricePeer.Layers...)
 				join.Index = append(join.Index, pricePeer.Index...)
 			}

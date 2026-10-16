@@ -37,8 +37,8 @@ func TestPrecursorStage(t *testing.T) {
 					bid := 99.9 + float64(tickIdx)*2.0
 					ask := 100.1 + float64(tickIdx)*2.0
 
-					data.AppendVector(val, []float64{bid}, "best_bid_price")
-					data.AppendVector(val, []float64{ask}, "best_ask_price")
+					data.AppendVector(val, []float64{bid}, "best_price:bid")
+					data.AppendVector(val, []float64{ask}, "best_price:ask")
 					data.AppendVector(val, []float64{0.008}, "fee_rate")
 
 					measurements = append(measurements, val)
@@ -64,8 +64,8 @@ func TestPrecursorStage(t *testing.T) {
 					bid := 99.9 + float64(tickIdx)*0.001
 					ask := 100.1 + float64(tickIdx)*0.001
 
-					data.AppendVector(val, []float64{bid}, "best_bid_price")
-					data.AppendVector(val, []float64{ask}, "best_ask_price")
+					data.AppendVector(val, []float64{bid}, "best_price:bid")
+					data.AppendVector(val, []float64{ask}, "best_price:ask")
 					data.AppendVector(val, []float64{0.008}, "fee_rate")
 
 					measurements = append(measurements, val)

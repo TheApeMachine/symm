@@ -131,8 +131,8 @@ func (h *Hawkes) Step(mark, atSec float64) (map[string]float64, time.Time, error
 		buyParent, sellParent, hasDesc := totalDescendants(alphaXX, alphaXY, alphaYX, alphaYY, beta)
 
 		if hasDesc {
-			res["expected_descendants_from_buy"] = buyParent
-			res["expected_descendants_from_sell"] = sellParent
+			res["expected_descendants:buy"] = buyParent
+			res["expected_descendants:sell"] = sellParent
 		}
 
 		streamPrior := newArrivalStream(buyArrivals, sellArrivals)
