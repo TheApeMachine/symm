@@ -1237,12 +1237,17 @@ func (price *Price) JSON(symbol string) []byte {
 		FeeRate float64          `json:"feeRate,omitempty"`
 	}
 
-	raw, _ := sonic.Marshal(PriceInfo{
+	raw, err := sonic.Marshal(PriceInfo{
 		Symbol:  symbol,
 		Bid:     bid,
 		Ask:     ask,
 		FeeRate: fee,
 	})
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.UnprocessableContent, "[price] "+symbol+" marshal failed", err))
+		return nil
+	}
 
 	return raw
 }
@@ -1260,6 +1265,12 @@ func (price *Price) InstrumentJSON(symbol string) []byte {
 		return nil
 	}
 
-	raw, _ := sonic.Marshal(pair)
+	raw, err := sonic.Marshal(pair)
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.UnprocessableContent, "[price] instrument marshal failed", err))
+		return nil
+	}
+
 	return raw
 }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -38,16 +40,35 @@ func NewSignal(ctx context.Context) *Signal {
 	return signal
 }
 
+/*
+Step processes every trade entry of the tick's frame; per-symbol state is keyed
+by the entry's symbol and each entry writes its own (reserved) layer.
+*/
 func (signal *Signal) Step(value *data.Value) *data.Value {
+	trades, err := data.AttributeOk[[]kraken.TradeData](value.Layers[0], "data")
+
+	if err != nil {
+		errnie.Error(err)
+		return value
+	}
+
+	for _, trade := range trades {
+		signal.step(value, trade)
+	}
+
+	return value
+}
+
+func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
 		return value
 	}
 
-	price := data.Attribute[float64](value.Layers[0], "data", 0, "price")
-	qty := data.Attribute[float64](value.Layers[0], "data", 0, "qty")
-	side := data.Attribute[string](value.Layers[0], "data", 0, "side")
+	price := trade.Price.Float64()
+	qty := trade.Qty
+	side := trade.Side
 
-	snapshot, err := broker.ReadSnapshot(value)
+	snapshot, err := broker.ReadSnapshot(value, trade.Symbol)
 	if err != nil || snapshot == nil || len(snapshot.Bids) == 0 {
 		return value
 	}
@@ -56,23 +77,26 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	bid, bidQty := bestBid.Price.Float64(), bestBid.Quantity.Float64()
 
 	sideIndicator := 0.0
-	if side == "buy" {
+
+	switch side {
+	case "buy":
 		sideIndicator = 1.0
-	} else if side == "sell" {
+	case "sell":
 		sideIndicator = -1.0
 	}
 
 	atNano := float64(value.Timestamp)
 
-	state, exists := signal.states[value.Scope]
+	state, exists := signal.states[trade.Symbol]
+
 	if !exists {
 		state = &symbolState{}
-		signal.states[value.Scope] = state
+		signal.states[trade.Symbol] = state
 	}
 
 	if !state.hasPrev {
 		state.observe(bid, bidQty, atNano)
-		return data.AppendVector(value, []float64{0, 0}, signal.keys...)
+		return data.AppendSymbolVector(value, trade.Symbol, []float64{0, 0}, signal.keys...)
 	}
 
 	state.pendingTradeQty += qty
@@ -82,7 +106,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	}
 
 	if atNano <= state.prevAtNano {
-		return data.AppendVector(value, []float64{0, 0}, signal.keys...)
+		return data.AppendSymbolVector(value, trade.Symbol, []float64{0, 0}, signal.keys...)
 	}
 
 	dt := (atNano - state.prevAtNano) / 1e9
@@ -104,7 +128,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 
 	state.observe(bid, bidQty, atNano)
 
-	return data.AppendVector(value, []float64{
+	return data.AppendSymbolVector(value, trade.Symbol, []float64{
 		retreatFraction,
 		withdrawalRate,
 	}, signal.keys...)

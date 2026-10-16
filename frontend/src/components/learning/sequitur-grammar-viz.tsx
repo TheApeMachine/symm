@@ -61,8 +61,8 @@ export const SequiturGrammarViz = () => {
 		};
 	}, [focus]);
 
-	// Listen for live measurements from training stream
-	const trainingMeasurements = useSelector(signals.training, (state) => {
+	// Listen for live training Values
+	const latestTraining = useSelector(signals.training, (state) => {
 		const ring = state[focus];
 		if (!ring) return null;
 		const all = ring.toArray();
@@ -70,13 +70,13 @@ export const SequiturGrammarViz = () => {
 	});
 
 	useEffect(() => {
-		if (!trainingMeasurements?.provenance) return;
+		if (!latestTraining?.provenance) return;
 
 		let grammarJson = "";
 		let surpriseVal: number | undefined;
 		let activeTokensVal: string | undefined;
 
-		for (const p of trainingMeasurements.provenance) {
+		for (const p of latestTraining.provenance) {
 			if (p?.name === "sequitur_grammar" && p.value) {
 				grammarJson = String(p.value);
 			} else if (p?.name === "resonance_surprise" && p.value) {
@@ -115,7 +115,7 @@ export const SequiturGrammarViz = () => {
 				};
 			});
 		}
-	}, [trainingMeasurements]);
+	}, [latestTraining]);
 
 	return (
 		<Flex.Column

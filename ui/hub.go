@@ -3,8 +3,8 @@ package ui
 import (
 	"context"
 	"fmt"
-	"io"
 	neturl "net/url"
+	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
@@ -22,7 +22,7 @@ type Hub struct {
 	app        *fiber.App
 	listenAddr string
 	routes     *Routes
-	conn       *websocket.Conn
+	clients    sync.Map // *websocket.Conn -> chan []byte
 }
 
 /*
@@ -70,51 +70,72 @@ func NewHub(ctx context.Context) *Hub {
 	return hub
 }
 
+/*
+clientQueue bounds the frames buffered per dashboard client; when a client
+falls behind, new frames are dropped so the pipeline never waits on it.
+*/
+const clientQueue = 256
+
 func (hub *Hub) wsHandler(shard int) fiber.Handler {
 	return websocket.New(func(conn *websocket.Conn) {
-		hub.conn = conn
+		frames := make(chan []byte, clientQueue)
+		hub.clients.Store(conn, frames)
 		errnie.Info(fmt.Sprintf("[hub] frontend websocket shard %d connected", shard))
 
 		defer func() {
+			hub.clients.Delete(conn)
+			close(frames)
 			errnie.Info(fmt.Sprintf("[hub] frontend websocket shard %d disconnected", shard))
 
-			if err := hub.conn.Conn.Close(); err != nil {
+			if err := conn.Conn.Close(); err != nil {
 				errnie.Error(err)
 			}
 		}()
 
+		// The only writer on this connection.
 		go func() {
-			for {
-				select {
-				case <-hub.ctx.Done():
-					return
-				default:
-				}
-
-				_, payload, err := hub.conn.Conn.ReadMessage()
-
-				if err != nil {
+			for frame := range frames {
+				if err := conn.Conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
 					return
 				}
-
-				hub.handleCommand(payload)
 			}
 		}()
+
+		// Block on the read loop: returning closes the connection.
+		for {
+			select {
+			case <-hub.ctx.Done():
+				return
+			default:
+			}
+
+			_, payload, err := conn.Conn.ReadMessage()
+
+			if err != nil {
+				return
+			}
+
+			hub.handleCommand(payload)
+		}
 	}, websocket.Config{
 		Origins: []string{"*"},
 	})
 }
 
+/*
+Write fans one serialized Value out to every connected dashboard client
+without blocking: no client, or a full client queue, drops the frame.
+p must be a fresh buffer (io.Copy(hub, value) hands over value.Bytes()).
+*/
 func (hub *Hub) Write(p []byte) (n int, err error) {
-	if hub.conn == nil {
-		return 0, io.ErrClosedPipe
-	}
+	hub.clients.Range(func(_, queue any) bool {
+		select {
+		case queue.(chan []byte) <- p:
+		default:
+		}
 
-	if err := hub.conn.Conn.WriteMessage(
-		websocket.BinaryMessage, p,
-	); err != nil {
-		return 0, err
-	}
+		return true
+	})
 
 	return len(p), nil
 }

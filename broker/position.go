@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -455,4 +456,33 @@ func (position *Position) Exiting() bool {
 	defer position.mu.RUnlock()
 
 	return len(position.exitOrders) > 0
+}
+
+/*
+MarshalJSON exposes the position's lifecycle and economic state, so a tick
+Value can carry it as a layer.
+*/
+func (position *Position) MarshalJSON() ([]byte, error) {
+	lifecycle := position.Lifecycle()
+
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	return sonic.Marshal(struct {
+		Lifecycle
+		Qty        *decimal.Decimal `json:"qty,omitempty"`
+		EntryPrice *decimal.Decimal `json:"entry_price,omitempty"`
+		ExitPrice  *decimal.Decimal `json:"exit_price,omitempty"`
+		EntryFee   *decimal.Decimal `json:"entry_fee,omitempty"`
+		ExitFee    *decimal.Decimal `json:"exit_fee,omitempty"`
+		Mark       *decimal.Decimal `json:"mark,omitempty"`
+	}{
+		Lifecycle:  lifecycle,
+		Qty:        position.qty,
+		EntryPrice: position.entryPrice,
+		ExitPrice:  position.exitPrice,
+		EntryFee:   position.entryFee,
+		ExitFee:    position.exitFee,
+		Mark:       position.mark,
+	})
 }

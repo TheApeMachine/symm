@@ -263,8 +263,6 @@ func TestBookUpdate(t *testing.T) {
 	Convey("Given a snapshot and updates whose checksums disagree with local state", t, func() {
 		managed := newBookFixture(t, "CELR/USD", 7, 5)
 		managed.Create("CELR/USD", 10)
-		resynced := make(chan string, 4)
-		managed.SetResync(func(symbol string) { resynced <- symbol })
 		bidPrice, err := decimal.NewFromString("0.0003400")
 		So(err, ShouldBeNil)
 		bidQuantity, err := decimal.NewFromString("2000.00000")
@@ -294,11 +292,10 @@ func TestBookUpdate(t *testing.T) {
 			}},
 		}
 
-		Convey("It should diverge once, drop further deltas, and recover on the resubscription snapshot", func() {
+		Convey("It should raise the mismatch with its debugging context, never wipe or hide the book", func() {
 			So(managed.Update(knownGood), ShouldBeNil)
 
-			// A wrong server checksum for state that is known good: local
-			// state is untrustworthy from here on.
+			// A wrong server checksum for state that is known good.
 			diverged := &kraken.Level3{Data: []kraken.Level3Data{{
 				Symbol:   "CELR/USD",
 				Checksum: 1,
@@ -309,46 +306,35 @@ func TestBookUpdate(t *testing.T) {
 				}},
 			}}}
 
+			err := managed.Update(diverged)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "checksum mismatch for CELR/USD")
+			So(err.Error(), ShouldContainSubstring, "server 1")
+			So(err.Error(), ShouldContainSubstring, "late-bid")
+			So(err.Error(), ShouldContainSubstring, "bids=[")
+
+			// Every further mismatch is raised again; nothing is dropped.
 			So(managed.Update(diverged), ShouldNotBeNil)
-			So(<-resynced, ShouldEqual, "CELR/USD")
+
+			read := false
 			managed.Book("CELR/USD", func(book *spotbook.Book) {
-				t.Fatal("diverging book was exposed to a reader")
-			})
-
-			// Deltas for a diverged symbol are dropped without touching the
-			// empty book and without asking for a second resubscription.
-			So(managed.Update(diverged), ShouldBeNil)
-
-			select {
-			case symbol := <-resynced:
-				So(symbol, ShouldBeNil)
-			default:
-			}
-
-			managed.Book("CELR/USD", func(book *spotbook.Book) {
-				t.Fatal("diverging book was exposed to a reader")
-			})
-
-			// The resubscription snapshot is authoritative again.
-			So(managed.Update(knownGood), ShouldBeNil)
-			managed.Book("CELR/USD", func(book *spotbook.Book) {
-				So(book.BestBid(), ShouldNotBeNil)
+				read = true
 				So(book.BestAsk(), ShouldNotBeNil)
 			})
+			So(read, ShouldBeTrue)
+		})
 
-			accepted := &kraken.Level3{Data: []kraken.Level3Data{{
-				Symbol: "CELR/USD",
-				Bids: []kraken.Level3Order{{
-					Event: "add", OrderID: "fresh-bid",
-					LimitPrice: lateBidPrice,
-					OrderQty:   lateBidQuantity, Timestamp: time.Unix(3, 0).UTC(),
-				}},
-			}}}
-
-			So(managed.Update(accepted), ShouldBeNil)
+		Convey("A stale book is hidden from readers until a fresh snapshot", func() {
+			So(managed.Update(knownGood), ShouldBeNil)
+			managed.Stale([]string{"CELR/USD"})
 			managed.Book("CELR/USD", func(book *spotbook.Book) {
-				So(book.BestBid(), ShouldNotBeNil)
+				t.Fatal("stale book was exposed to a reader")
 			})
+
+			So(managed.Update(knownGood), ShouldBeNil)
+			read := false
+			managed.Book("CELR/USD", func(book *spotbook.Book) { read = true })
+			So(read, ShouldBeTrue)
 		})
 	})
 
@@ -405,13 +391,12 @@ func TestBookApply(t *testing.T) {
 		frame := func(orders ...kraken.Level3Order) *kraken.Level3 {
 			return &kraken.Level3{Type: "update", Data: []kraken.Level3Data{{Symbol: "BTC/USD", Bids: orders}}}
 		}
-		_, _, err, _ := managed.apply(frame(order("add", "best", 100, 1), order("add", "worst", 99, 2)))
+		_, err, _ := managed.apply(frame(order("add", "best", 100, 1), order("add", "worst", 99, 2)))
 		So(err, ShouldBeNil)
 
 		Convey("Truncation occurs after the whole frame, so later deletion can still address the old worst level", func() {
-			accepted, resynced, err, _ := managed.apply(frame(order("add", "new", 101, 3), order("delete", "worst", 99, 0)))
+			accepted, err, _ := managed.apply(frame(order("add", "new", 101, 3), order("delete", "worst", 99, 0)))
 			So(err, ShouldBeNil)
-			So(resynced, ShouldBeEmpty)
 			So(accepted, ShouldHaveLength, 1)
 			managed.Book("BTC/USD", func(current *spotbook.Book) {
 				So(current.Bids.Levels, ShouldHaveLength, 2)
@@ -424,31 +409,23 @@ func TestBookApply(t *testing.T) {
 				{Symbol: "BTC/USD", Bids: []kraken.Level3Order{order("add", "first", 101, 3)}},
 				{Symbol: "BTC/USD", Bids: []kraken.Level3Order{order("add", "second", 102, 4)}},
 			}}
-			accepted, resynced, err, _ := managed.apply(payload)
+			accepted, err, _ := managed.apply(payload)
 			So(err, ShouldBeNil)
 			So(accepted, ShouldHaveLength, 2)
-			So(resynced, ShouldBeEmpty)
 			managed.Book("BTC/USD", func(current *spotbook.Book) {
 				So(current.BestBid().Price.Float64(), ShouldEqual, 102)
 			})
 		})
 
-		Convey("An unknown deleted level fails explicitly and requests exactly one fresh snapshot", func() {
+		Convey("An unknown deleted level is raised every time, with its debugging context", func() {
 			bad := frame(order("delete", "missing", 98, 0))
-			accepted, resynced, err, _ := managed.apply(bad)
+			accepted, err, _ := managed.apply(bad)
 			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "references absent level 98")
+			So(err.Error(), ShouldContainSubstring, "missing")
 			So(accepted, ShouldBeEmpty)
-			So(resynced, ShouldResemble, []string{"BTC/USD"})
-			accepted, resynced, err, _ = managed.apply(bad)
-			So(err, ShouldBeNil)
-			So(accepted, ShouldBeEmpty)
-			So(resynced, ShouldBeEmpty)
-			snapshot := frame(order("add", "restored", 100, 1))
-			snapshot.Type = "snapshot"
-			_, _, err, _ = managed.apply(snapshot)
-			So(err, ShouldBeNil)
-			_, _, err, _ = managed.apply(frame(order("delete", "restored", 100, 0)))
-			So(err, ShouldBeNil)
+			_, err, _ = managed.apply(bad)
+			So(err, ShouldNotBeNil)
 		})
 	})
 }
@@ -560,5 +537,3 @@ func TestBookWait(t *testing.T) {
 		})
 	})
 }
-
-

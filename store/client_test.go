@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -180,7 +181,18 @@ func TestStoreClient(t *testing.T) {
 			n, writeErr := io.Copy(client, val)
 			So(writeErr, ShouldBeNil)
 			So(n, ShouldBeGreaterThan, 0)
-			So(len(backend.objects[val.Prefix]), ShouldBeGreaterThan, 0)
+			// The upload runs async; wait for it to land on the backend.
+			stored := func() bool {
+				backend.mu.Lock()
+				defer backend.mu.Unlock()
+				return len(backend.objects[val.Prefix]) > 0
+			}
+
+			for deadline := time.Now().Add(5 * time.Second); !stored() && time.Now().Before(deadline); {
+				time.Sleep(5 * time.Millisecond)
+			}
+
+			So(stored(), ShouldBeTrue)
 
 			Convey("Then Download retrieves the exact payload bytes", func() {
 				retrieved, getErr := client.Download(val.Prefix)
@@ -222,7 +234,13 @@ func TestStoreClient(t *testing.T) {
 				v3.FormatPrefix()
 				_, _ = io.Copy(client, v3)
 
+				// Uploads are async; wait until all three have landed.
 				keys := client.ListKeys("correlation/", "cvd/")
+				for deadline := time.Now().Add(5 * time.Second); len(keys) < 3 && time.Now().Before(deadline); {
+					time.Sleep(5 * time.Millisecond)
+					keys = client.ListKeys("correlation/", "cvd/")
+				}
+
 				So(len(keys), ShouldEqual, 3)
 				So(keys[0], ShouldEqual, v3.Prefix)
 				So(keys[1], ShouldEqual, v2.Prefix)

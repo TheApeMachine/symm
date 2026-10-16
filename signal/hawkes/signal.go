@@ -3,7 +3,9 @@ package hawkes
 import (
 	"context"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
@@ -38,12 +40,31 @@ func NewSignal(ctx context.Context) *Signal {
 	return signal
 }
 
+/*
+Step processes every trade entry of the tick's frame; per-symbol state is keyed
+by the entry's symbol and each entry writes its own (reserved) layer.
+*/
 func (signal *Signal) Step(value *data.Value) *data.Value {
+	trades, err := data.AttributeOk[[]kraken.TradeData](value.Layers[0], "data")
+
+	if err != nil {
+		errnie.Error(err)
+		return value
+	}
+
+	for _, trade := range trades {
+		signal.step(value, trade)
+	}
+
+	return value
+}
+
+func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
 		return value
 	}
 
-	side := data.Attribute[string](value.Layers[0], "data", 0, "side")
+	side := trade.Side
 	var mark float64
 	if side == "buy" {
 		mark = 1.0
@@ -53,8 +74,8 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		return value
 	}
 
-	price := data.Attribute[float64](value.Layers[0], "data", 0, "price")
-	qty := data.Attribute[float64](value.Layers[0], "data", 0, "qty")
+	price := trade.Price.Float64()
+	qty := trade.Qty
 	if price <= 0 || qty <= 0 {
 		return value
 	}
@@ -64,12 +85,12 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		return value
 	}
 
-	state, exists := signal.models[value.Scope]
+	state, exists := signal.models[trade.Symbol]
 	if !exists {
 		state = &symbolModel{
 			estimator: nmhawkes.NewHawkes(),
 		}
-		signal.models[value.Scope] = state
+		signal.models[trade.Symbol] = state
 	}
 
 	res, _, err := state.estimator.Step(mark, atSec)
@@ -96,7 +117,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		state.hasPrev = true
 	}
 
-	return data.AppendVector(value, []float64{
+	return data.AppendSymbolVector(value, trade.Symbol, []float64{
 		buyRate,
 		sellRate,
 		radius,

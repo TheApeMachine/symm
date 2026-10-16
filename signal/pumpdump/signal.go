@@ -5,8 +5,10 @@ import (
 	"math"
 	"sync"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/volumeclock"
@@ -64,18 +66,43 @@ func NewSignal(ctx context.Context) *Signal {
 	return signal
 }
 
+/*
+Step processes every trade entry of the tick's frame; per-symbol state is keyed
+by the entry's symbol and each entry writes its own (reserved) layer.
+*/
 func (signal *Signal) Step(value *data.Value) *data.Value {
+	trades, err := data.AttributeOk[[]kraken.TradeData](value.Layers[0], "data")
+
+	if err != nil {
+		errnie.Error(err)
+		return value
+	}
+
+	for _, trade := range trades {
+		signal.step(value, trade)
+	}
+
+	return value
+}
+
+func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
 		return value
 	}
 
-	price := data.Attribute[float64](value.Layers[0], "data", 0, "price")
-	qty := data.Attribute[float64](value.Layers[0], "data", 0, "qty")
+	price := trade.Price.Float64()
+	qty := trade.Qty
 	if price <= 0 || qty <= 0 {
 		return value
 	}
 
-	snapshot, _ := broker.ReadSnapshot(value)
+	snapshot, err := broker.ReadSnapshot(value, trade.Symbol)
+
+	if err != nil {
+		errnie.Error(err)
+		return value
+	}
+
 	var bid, ask float64
 	hasTouch := snapshot != nil && len(snapshot.Bids) > 0 && len(snapshot.Asks) > 0
 	if hasTouch {
@@ -89,10 +116,10 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	signal.mu.Lock()
 	defer signal.mu.Unlock()
 
-	state, found := signal.states[value.Scope]
+	state, found := signal.states[trade.Symbol]
 	if !found {
 		state = &symbolState{}
-		signal.states[value.Scope] = state
+		signal.states[trade.Symbol] = state
 	}
 
 	var spreadRatio float64
@@ -126,7 +153,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		}
 	}
 
-	return data.AppendVector(value, []float64{
+	return data.AppendSymbolVector(value, trade.Symbol, []float64{
 		spreadRatio,
 		volumeRate,
 		tradeRate,

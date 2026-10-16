@@ -65,7 +65,7 @@ func newTestFillingDesk(ctx context.Context) (*testFillingDesk, *broker.Price, *
 	price := broker.NewPrice(ctx, nil, nil, nil, normalizer)
 	price.SetQuote("BTC/USD", decimal.NewFromFloat64(50_000.0), decimal.NewFromFloat64(50_010.0))
 
-	balance := broker.NewBalance(ctx, filling, nil)
+	balance := broker.NewBalance(ctx, filling)
 
 	desk := broker.NewDesk(ctx, filling, price, balance)
 	return filling, price, desk

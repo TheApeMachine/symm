@@ -1,6 +1,7 @@
 package data
 
 import (
+	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -11,6 +12,8 @@ import (
 	"unsafe"
 
 	"github.com/bytedance/sonic"
+	"github.com/bytedance/sonic/ast"
+	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -18,49 +21,72 @@ Append adds one or more payload layers to Value.
 Returns the Value pointer for method chaining.
 */
 func (value *Value) Append(layers ...[]byte) *Value {
-	value.Layers = append(value.Layers, layers...)
-
-	for range layers {
-		value.Index = append(value.Index, value.Prefix)
+	for _, layer := range layers {
+		value.claim(layer, value.Prefix)
 	}
 
 	return value
 }
 
 /*
-AppendJSON adds a JSON payload layer to Value using sonic.PreallocMarshal.
-This is more efficient than Append for large JSON objects.
+AppendJSON adds a JSON payload layer to Value. The layer owns a copy of buf,
+so it never aliases an ingress or ring buffer that gets reused.
 */
 func (value *Value) AppendJSON(buf []byte, prefix string) *Value {
-	value.Layers = append(value.Layers, buf)
-	value.Index = append(value.Index, prefix)
+	if len(buf) == 0 {
+		return value
+	}
+
+	layer := make([]byte, len(buf))
+	copy(layer, buf)
+
+	value.claim(layer, prefix)
 
 	return value
 }
 
 /*
-AppendVector stores a typed slice as raw binary bytes and indexes its element keys.
+AppendVector stores a typed slice as raw binary bytes on value itself (in place)
+and indexes its element keys.
 */
 func AppendVector[T any](value *Value, vector []T, keys ...string) *Value {
 	if value == nil {
 		return nil
 	}
 
-	var rawBytes []byte
-	if len(vector) > 0 {
-		var zero T
-		rawBytes = unsafe.Slice((*byte)(
-			unsafe.Pointer(&vector[0]),
-		), len(vector)*int(unsafe.Sizeof(zero)))
-	}
-
-	val := value.Clone()
-	val.Layers = append(val.Layers, rawBytes)
-	val.Index = append(val.Index, strings.Join(append(
-		[]string{val.Prefix}, keys...), "/",
+	value.claim(vectorBytes(vector), strings.Join(append(
+		[]string{value.Prefix}, keys...), "/",
 	))
 
-	return val
+	return value
+}
+
+/*
+AppendSymbolVector is AppendVector for one symbol of a multi-symbol tick: the
+index is "<symbol>/<prefix>/<keys...>", so labels after ".bin/" stay aligned.
+*/
+func AppendSymbolVector[T any](value *Value, symbol string, vector []T, keys ...string) *Value {
+	if value == nil {
+		return nil
+	}
+
+	value.claim(vectorBytes(vector), strings.Join(append(
+		[]string{symbol, value.Prefix}, keys...), "/",
+	))
+
+	return value
+}
+
+func vectorBytes[T any](vector []T) []byte {
+	if len(vector) == 0 {
+		return []byte{}
+	}
+
+	var zero T
+
+	return append([]byte(nil), unsafe.Slice((*byte)(
+		unsafe.Pointer(&vector[0]),
+	), len(vector)*int(unsafe.Sizeof(zero)))...)
 }
 
 /*
@@ -75,7 +101,7 @@ func Layer[T any](value *Value, idx ...int) *T {
 		i = idx[0]
 	}
 
-	if value == nil || i < 0 || i >= len(value.Layers) {
+	if value == nil || i < 0 || i >= value.visible() {
 		return nil
 	}
 
@@ -97,6 +123,12 @@ func Layer[T any](value *Value, idx ...int) *T {
 	var target T
 
 	if err := sonic.Unmarshal(layer, &target); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			fmt.Sprintf("data: layer %d does not decode into %T", i, target),
+			err,
+		))
+
 		return nil
 	}
 
@@ -111,7 +143,7 @@ func Indexed[T any](v *Value, keys ...string) iter.Seq2[string, T] {
 		if v == nil {
 			return
 		}
-		for i, layer := range v.Layers {
+		for i, layer := range v.Layers[:v.visible()] {
 			if i >= len(v.Index) || len(v.Index[i]) == 0 || (len(keys) > 0 && !slices.ContainsFunc(keys, func(k string) bool {
 				return strings.Contains(v.Index[i], k)
 			})) {
@@ -128,11 +160,21 @@ func Indexed[T any](v *Value, keys ...string) iter.Seq2[string, T] {
 				for ki, k := range keys {
 					anyKeys[ki] = k
 				}
-				if val, ok := AttributeOk[T](layer, anyKeys...); ok && !reflect.ValueOf(val).IsZero() {
-					out = val
-				} else {
+				val, err := AttributeOk[T](layer, anyKeys...)
+
+				if err != nil {
+					if !errors.Is(err, ErrMissing) {
+						errnie.Error(err)
+					}
+
 					continue
 				}
+
+				if reflect.ValueOf(val).IsZero() {
+					continue
+				}
+
+				out = val
 			}
 
 			if !yield(v.Index[i], out) {
@@ -150,7 +192,7 @@ func Layers[T any](v *Value, keys ...string) iter.Seq[T] {
 		if v == nil {
 			return
 		}
-		for i, layer := range v.Layers {
+		for i, layer := range v.Layers[:v.visible()] {
 			if len(keys) > 0 && (i >= len(v.Index) || len(v.Index[i]) == 0 || !slices.ContainsFunc(keys, func(k string) bool {
 				return strings.Contains(v.Index[i], k)
 			})) {
@@ -169,9 +211,21 @@ func Layers[T any](v *Value, keys ...string) iter.Seq[T] {
 				for ki, k := range keys {
 					anyKeys[ki] = k
 				}
-				if val, ok := AttributeOk[T](layer, anyKeys...); ok && !reflect.ValueOf(val).IsZero() {
-					out = val
+				val, err := AttributeOk[T](layer, anyKeys...)
+
+				if err != nil {
+					if !errors.Is(err, ErrMissing) {
+						errnie.Error(err)
+					}
+
+					continue
 				}
+
+				if reflect.ValueOf(val).IsZero() {
+					continue
+				}
+
+				out = val
 			}
 
 			if !yield(out) {
@@ -185,36 +239,93 @@ func Layers[T any](v *Value, keys ...string) iter.Seq[T] {
 Attribute navigates into byte payloads using sonic SIMD path traversal
 to pick out a typed attribute without unmarshaling the entire structure.
 Handles both native JSON numbers/types and string-encoded venue numbers (e.g. Kraken "123.45").
-Returns the zero value of T if the attribute does not exist or cannot be converted.
+Returns the zero value of T if the attribute does not exist; a value that
+cannot be converted is logged. Use AttributeOk to receive the error.
 */
 func Attribute[T any](data []byte, path ...any) T {
-	val, _ := AttributeOk[T](data, path...)
+	val, err := AttributeOk[T](data, path...)
+
+	if err != nil && !errors.Is(err, ErrMissing) {
+		errnie.Error(err)
+	}
+
 	return val
 }
 
 /*
-AttributeOk navigates into byte payloads using sonic SIMD path traversal
-to pick out a typed attribute without unmarshaling the entire structure.
-Returns (value, true) if found and converted, or (zero, false) otherwise.
+ErrMissing reports that a path does not exist in a payload (or holds null).
+It is the one expected outcome of a lookup; every other failure is an error.
 */
-func AttributeOk[T any](data []byte, path ...any) (T, bool) {
+var ErrMissing = errors.New("data: attribute missing")
+
+/*
+AttributeOk picks the attribute at path out of data as T using sonic SIMD
+path traversal. Scalars and slices of scalars use the venue-number
+conversions; any other T (structs, slices of structs) is unmarshaled from the
+attribute's raw JSON. A missing path returns ErrMissing; a value that does not
+decode into T returns that error. It never returns a zero value with a nil
+error.
+*/
+func AttributeOk[T any](data []byte, path ...any) (T, error) {
 	var zero T
 
 	if len(data) == 0 || len(path) == 0 {
-		return zero, false
+		return zero, ErrMissing
 	}
 
 	root, err := sonic.Get(data, path...)
-	if err != nil || !root.Exists() {
-		return zero, false
+
+	if errors.Is(err, ast.ErrNotExist) {
+		return zero, ErrMissing
+	}
+
+	if err != nil {
+		return zero, errnie.Err(
+			errnie.UnprocessableContent,
+			fmt.Sprintf("data: attribute %v unreadable", path),
+			err,
+		)
 	}
 
 	value, err := root.Interface()
-	if err != nil || value == nil {
-		return zero, false
+
+	if err != nil {
+		return zero, errnie.Err(
+			errnie.UnprocessableContent,
+			fmt.Sprintf("data: attribute %v unreadable", path),
+			err,
+		)
 	}
 
-	return convertLookup[T](value)
+	if value == nil {
+		return zero, ErrMissing
+	}
+
+	if converted, ok := convertLookup[T](value); ok {
+		return converted, nil
+	}
+
+	raw, err := root.Raw()
+
+	if err != nil {
+		return zero, errnie.Err(
+			errnie.UnprocessableContent,
+			fmt.Sprintf("data: attribute %v unreadable", path),
+			err,
+		)
+	}
+
+	var out T
+
+	if err := sonic.UnmarshalString(raw, &out); err != nil {
+		return zero, errnie.Err(
+			errnie.UnprocessableContent,
+			fmt.Sprintf("data: attribute %v not decodable as %T", path, zero),
+			err,
+		)
+	}
+
+	return out, nil
 }
 
 func convertLookup[T any](value any) (T, bool) {
@@ -376,7 +487,7 @@ func Metrics(v *Value) map[string]float64 {
 		return out
 	}
 
-	for i, layer := range v.Layers {
+	for i, layer := range v.Layers[:v.visible()] {
 		if len(layer) < 8 || i >= len(v.Index) {
 			continue
 		}

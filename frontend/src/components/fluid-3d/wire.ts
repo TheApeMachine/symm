@@ -255,19 +255,14 @@ export type FluidManifoldFrame = {
 	phase: FluidPhase;
 };
 
-export const decodeManifold = (measurement: Value): FluidManifoldFrame =>
-	decodeManifoldMeasurement(measurement);
-
-export const decodeManifoldMeasurement = (
-	measurement: Value,
-): FluidManifoldFrame => {
-	if (!measurement) {
-		throw new Error("manifold measurement is null or undefined");
+export const decodeManifold = (value: Value): FluidManifoldFrame => {
+	if (!value) {
+		throw new Error("manifold value is null or undefined");
 	}
 
-	const sequence = measurement.tick;
-	const at = measurement.timestamp;
-	const version = measurement.tick;
+	const sequence = value.tick;
+	const at = value.timestamp;
+	const version = value.tick;
 
 	const integrator = new IntegratorHealthT();
 	const gas = new GasHealthT();
@@ -294,7 +289,7 @@ export const decodeManifoldMeasurement = (
 	let waveScale = 1;
 
 	let particleCount = 0;
-	const metrics = measurement.metrics;
+	const metrics = value.metrics;
 	const metricsLen = metrics.length;
 
 	for (let i = 0; i < metricsLen; i += 1) {

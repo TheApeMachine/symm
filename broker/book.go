@@ -6,6 +6,7 @@ import (
 	"hash/crc32"
 	"math/big"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,7 +21,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"golang.org/x/sync/errgroup"
 )
 
 type Book struct {
@@ -32,9 +32,9 @@ type Book struct {
 	manager    *spot.BookManager
 	normalizer *spot.Normalizer
 	notify     atomic.Pointer[func(string, time.Time)]
-	resync     atomic.Pointer[func(string)]
 	touch      atomic.Pointer[func([]kraken.Level3Touch)]
-	diverging  sync.Map
+	mu         sync.RWMutex
+	stale      sync.Map
 	lastTouch  sync.Map
 }
 
@@ -132,13 +132,17 @@ func (book *Book) Wait() error {
 }
 
 func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
+	// Readers (pricing, JSON layers) must not observe a half-applied frame.
+	book.mu.RLock()
+	defer book.mu.RUnlock()
+
 	if pendingPtr := book.pending.Load(); pendingPtr != nil {
 		if _, pending := (*pendingPtr)[symbol]; pending {
 			return
 		}
 	}
 
-	if _, diverging := book.diverging.Load(symbol); diverging {
+	if _, stale := book.stale.Load(symbol); stale {
 		return
 	}
 
@@ -162,12 +166,21 @@ func (book *Book) Create(symbol string, depth int) {
 }
 
 /*
-SetResync connects checksum-divergence recovery to the owning transport. The
-callback owns the venue conversation: unsubscribe the diverged symbol and
-resubscribe so the venue delivers a fresh snapshot.
+Stale marks the books of symbols whose Level3 socket dropped. Their depth is
+frozen, so it is an error: readers do not see them until the reconnect
+resubscribe delivers a fresh snapshot.
 */
-func (book *Book) SetResync(resync func(string)) {
-	book.resync.Store(&resync)
+func (book *Book) Stale(symbols []string) {
+	for _, symbol := range symbols {
+		book.stale.Store(symbol, struct{}{})
+	}
+
+	errnie.Error(errnie.Err(
+		errnie.IO,
+		fmt.Sprintf("level3 socket down, %d books stale until resubscribe snapshot: %s",
+			len(symbols), strings.Join(symbols, ",")),
+		nil,
+	))
 }
 
 func (book *Book) SetNotify(notify func(string, time.Time)) {
@@ -185,18 +198,14 @@ func (book *Book) Update(
 		payload.Data = []kraken.Level3Data{}
 	}
 
-	accepted, resynced, applyErr, touches := book.apply(payload)
+	book.mu.Lock()
+	accepted, applyErr, touches := book.apply(payload)
+	book.mu.Unlock()
 
 	var notify func(string, time.Time)
 
 	if notifyPtr := book.notify.Load(); notifyPtr != nil {
 		notify = *notifyPtr
-	}
-
-	var resync func(string)
-
-	if resyncPtr := book.resync.Load(); resyncPtr != nil {
-		resync = *resyncPtr
 	}
 
 	var touch func([]kraken.Level3Touch)
@@ -209,25 +218,8 @@ func (book *Book) Update(
 		touch(touches)
 	}
 
-	if len(resynced) > 0 && resync != nil {
-		group, ctx := errgroup.WithContext(book.ctx)
-
-		for _, symbol := range resynced {
-			group.Go(func() error {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-
-				resync(symbol)
-				return nil
-			})
-		}
-	}
-
 	if applyErr != nil {
-		return errnie.Error(applyErr)
+		return applyErr
 	}
 
 	for _, data := range accepted {
@@ -264,14 +256,14 @@ func (book *Book) Update(
 				pendingCount = len(*pendingPtr)
 			}
 
-			divergingEmpty := true
+			staleEmpty := true
 
-			book.diverging.Range(func(_, _ any) bool {
-				divergingEmpty = false
+			book.stale.Range(func(_, _ any) bool {
+				staleEmpty = false
 				return false
 			})
 
-			if pendingCount == 0 && divergingEmpty {
+			if pendingCount == 0 && staleEmpty {
 				book.status.Transition(runtime.READY)
 
 				select {
@@ -291,24 +283,20 @@ Transport publication happens only after this method returns and the lock is
 released, so downstream backpressure cannot prevent pricing readers from
 observing the accepted frame.
 
-A symbol whose local state has failed a venue checksum stays diverged until a
-fresh snapshot replaces it: further deltas would only decorate state that is
-already known wrong, so they are dropped. Newly diverged symbols are reported
-once, for the owning transport to resubscribe.
+A venue checksum mismatch, or a delete that references a level the local book
+does not hold, is a bug in local book maintenance. It is raised as an error
+carrying the offending entry and the local top of book; the state is neither
+wiped nor hidden, so the failure can be reproduced and fixed.
 */
 func (book *Book) apply(
 	payload *kraken.Level3,
-) (accepted []kraken.Level3Data, resynced []string, err error, touches []kraken.Level3Touch) {
+) (accepted []kraken.Level3Data, err error, touches []kraken.Level3Touch) {
 	touches = make([]kraken.Level3Touch, 0)
 	accepted = make([]kraken.Level3Data, 0, len(payload.Data))
 
 	var symbolBook *spotbook.Book
 
 	for index, data := range payload.Data {
-		if _, diverged := book.diverging.Load(data.Symbol); diverged && payload.Type != "snapshot" {
-			continue
-		}
-
 		err := func() error {
 			select {
 			case <-book.ctx.Done():
@@ -317,6 +305,7 @@ func (book *Book) apply(
 			}
 
 			data.Type = payload.Type
+			original := data
 			symbolBook = book.manager.GetBook(data.Symbol)
 
 			depth := viper.GetInt("market.l3_depth")
@@ -330,7 +319,7 @@ func (book *Book) apply(
 			}
 
 			if payload.Type == "snapshot" {
-				book.diverging.Delete(data.Symbol)
+				book.stale.Delete(data.Symbol)
 				symbolBook = book.manager.CreateBook(
 					data.Symbol,
 					depth,
@@ -404,17 +393,15 @@ func (book *Book) apply(
 					// The SDK dereferences an absent level on zero-quantity updates.
 					// Absence is a lost-book precondition, not an empty order to insert.
 					if quantity.Sign() <= 0 && symbolSide.Levels[order.LimitPrice.String()] == nil {
-						book.manager.CreateBook(data.Symbol, depth)
-						book.diverging.Store(data.Symbol, struct{}{})
 						book.status.Transition(runtime.ERROR)
-						resynced = append(resynced, data.Symbol)
 
-						return errnie.Error(errnie.Err(
+						return errnie.Err(
 							errnie.Validation,
-							fmt.Sprintf("level3 %s order %s references absent level %s for %s; awaiting snapshot",
-								order.Event, order.OrderID, order.LimitPrice.String(), data.Symbol),
+							fmt.Sprintf("level3 %s order %s references absent level %s for %s (frame %s); %s",
+								order.Event, order.OrderID, order.LimitPrice.String(), data.Symbol,
+								payload.Type, bookContext(symbolBook, original)),
 							nil,
-						))
+						)
 					}
 
 					symbolBook.Update(&spotbook.UpdateOptions{
@@ -450,27 +437,21 @@ func (book *Book) apply(
 				))
 
 				if !checksum.Match {
-					// The venue checksum is authority. Local state is known wrong,
-					// so it is discarded rather than kept serving corrupt depth,
-					// the symbol is marked diverged so later deltas are dropped,
-					// and the transport is asked to resubscribe — only a fresh
-					// snapshot restores trust.
-					book.manager.CreateBook(data.Symbol, depth)
-
-					if _, marked := book.diverging.LoadOrStore(data.Symbol, struct{}{}); !marked {
-						resynced = append(resynced, data.Symbol)
-					}
-
-					return errnie.Error(errnie.Err(
+					// The venue checksum is authority: local book maintenance
+					// diverged from the venue. Raise it with what is needed to
+					// reproduce it; never paper over it.
+					return errnie.Err(
 						errnie.Validation,
 						fmt.Sprintf(
-							"level3 checksum mismatch for %s: local %s, server %s",
+							"level3 checksum mismatch for %s: local %s, server %s (frame %s); %s",
 							data.Symbol,
 							checksum.LocalChecksum,
 							checksum.ServerChecksum,
+							payload.Type,
+							bookContext(symbolBook, original),
 						),
 						nil,
-					))
+					)
 				}
 			}
 
@@ -478,14 +459,63 @@ func (book *Book) apply(
 		}()
 
 		if err != nil {
-			return accepted, resynced, err, touches
+			return accepted, err, touches
 		}
 
 		accepted = append(accepted, data)
 		book.recordTouch(symbolBook, data, &touches)
 	}
 
-	return accepted, resynced, nil, touches
+	return accepted, nil, touches
+}
+
+/*
+bookContext renders what a book-maintenance failure needs for debugging: the
+venue entry as received, and the local top ten levels per side with each
+order's id, quantity and the price+quantity digits Kraken's level3 checksum
+hashes for it.
+*/
+func bookContext(symbolBook *spotbook.Book, data kraken.Level3Data) string {
+	var out strings.Builder
+
+	update, err := sonic.MarshalString(data)
+
+	if err != nil {
+		update = "unmarshalable update: " + err.Error()
+	}
+
+	out.WriteString("update=" + update)
+
+	if symbolBook == nil {
+		out.WriteString(" book=nil")
+		return out.String()
+	}
+
+	var digits [128]byte
+
+	writeSide := func(name string, cursor *spotbook.Level, next func(*spotbook.Level) *spotbook.Level) {
+		out.WriteString(" " + name + "=[")
+
+		for count := 0; count < 10 && cursor != nil; count++ {
+			fmt.Fprintf(&out, "%v{", cursor.Price)
+
+			for _, order := range cursor.Queue() {
+				hashed := appendDecimalDigits(digits[:0], order.LimitPrice)
+				hashed = appendDecimalDigits(hashed, order.Quantity)
+				fmt.Fprintf(&out, " %s:%v#%s", order.ID, order.Quantity, hashed)
+			}
+
+			out.WriteString(" }")
+			cursor = next(cursor)
+		}
+
+		out.WriteString("]")
+	}
+
+	writeSide("asks", symbolBook.BestAsk(), func(level *spotbook.Level) *spotbook.Level { return level.Higher })
+	writeSide("bids", symbolBook.BestBid(), func(level *spotbook.Level) *spotbook.Level { return level.Lower })
+
+	return out.String()
 }
 
 /*
@@ -559,13 +589,18 @@ func (book *Book) JSON(symbol string) []byte {
 	}
 
 	var raw []byte
+
 	book.Book(symbol, func(b *spotbook.Book) {
-		raw, _ = sonic.Marshal(b)
+		var err error
+
+		if raw, err = sonic.Marshal(b); err != nil {
+			errnie.Error(errnie.Err(errnie.UnprocessableContent, "[book] "+symbol+" marshal failed", err))
+			raw = nil
+		}
 	})
 
 	return raw
 }
-
 
 type decimalLayout struct {
 	integer *big.Int

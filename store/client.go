@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -9,7 +8,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -39,8 +37,6 @@ type Client struct {
 	prefix         string
 	keys           []string
 	cursor         int
-	writeMu        sync.Mutex
-	buffer         bytes.Buffer
 	currentPayload []byte
 	payloadOffset  int
 }
@@ -314,28 +310,23 @@ func (client *Client) ReadFrom(r io.Reader) (int64, error) {
 
 /*
 Write uploads the serialized Value in p to S3 at Key = val.Prefix.
-Buffers chunks if p is streamed partially.
+p must be a freshly serialized Value (io.Copy(store, value) hands over
+value.Bytes()); its layers alias p, which the async upload keeps using.
 */
 func (client *Client) Write(p []byte) (n int, err error) {
-	client.writeMu.Lock()
-	defer client.writeMu.Unlock()
+	val := data.From(p)
 
-	client.buffer.Write(p)
-	val := data.New()
-	if _, wErr := val.Write(client.buffer.Bytes()); wErr == nil && val.Prefix != "" {
-		client.buffer.Reset()
-		_, err = client.uploader.Upload(client.Context(), &s3.PutObjectInput{
+	go func() {
+		if _, err := client.uploader.Upload(client.Context(), &s3.PutObjectInput{
 			Bucket: aws.String(client.bucket),
 			Key:    aws.String(val.Prefix),
 			Body:   val,
-		})
-
-		if err != nil {
-			return 0, errnie.Error(errnie.Err(
+		}); err != nil {
+			errnie.Error(errnie.Err(
 				errnie.IO, "[store.client] upload error", err,
 			))
 		}
-	}
+	}()
 
 	return len(p), nil
 }

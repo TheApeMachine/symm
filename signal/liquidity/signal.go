@@ -3,8 +3,10 @@ package liquidity
 import (
 	"context"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -28,12 +30,31 @@ func NewSignal(ctx context.Context) *Signal {
 	return signal
 }
 
+/*
+Step processes the book of every distinct symbol traded in the tick's frame;
+each symbol writes its own (reserved) layer.
+*/
 func (signal *Signal) Step(value *data.Value) *data.Value {
+	trades, err := data.AttributeOk[[]kraken.TradeData](value.Layers[0], "data")
+
+	if err != nil {
+		errnie.Error(err)
+		return value
+	}
+
+	for _, symbol := range broker.Symbols(trades) {
+		signal.step(value, symbol)
+	}
+
+	return value
+}
+
+func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
 		return value
 	}
 
-	snapshot, err := broker.ReadSnapshot(value)
+	snapshot, err := broker.ReadSnapshot(value, symbol)
 	if err != nil || snapshot == nil || len(snapshot.Bids) == 0 || len(snapshot.Asks) == 0 {
 		return value
 	}
@@ -48,13 +69,13 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		relSpread = (ask - bid) / midpoint
 	}
 
-	feeRate := data.Attribute[float64](value.Layers[0], "fee_rate")
+	feeRate := data.Attribute[float64](broker.SymbolLayer(value, "price", symbol), "feeRate")
 	var frictionHurdle float64
 	if feeRate > 0 {
 		frictionHurdle = relSpread + 2.0*feeRate
 	}
 
-	return data.AppendVector(value, []float64{
+	return data.AppendSymbolVector(value, symbol, []float64{
 		bid,
 		ask,
 		relSpread,

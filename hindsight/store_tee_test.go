@@ -36,7 +36,7 @@ func TestStoreTee_Push(t *testing.T) {
 		tee.Transition(runtime.READY)
 		tee.Run()
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			tee.Push(data.NewValue("test", "metric", "BTC/USD"))
 		}
 

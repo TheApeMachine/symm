@@ -1,5 +1,5 @@
 import {
-	decodeManifoldMeasurement,
+	decodeManifold,
 	type FluidFields,
 	type FluidParticleFrame,
 	type FluidPhase,
@@ -20,7 +20,7 @@ const errorValue = (value: unknown) =>
 	value instanceof Error ? value : new Error(String(value));
 
 /*
-FluidManifoldFeed consumes native MeasurementT updates from signals.manifold
+FluidManifoldFeed consumes manifold Values from signals.manifold
 via the standard WebSocket stream.
 */
 export class FluidManifoldFeed {
@@ -49,14 +49,13 @@ export class FluidManifoldFeed {
 			return;
 		}
 
-		const measurement = ring.getLast();
-		if (!measurement) {
+		const value = ring.getLast();
+		if (!value) {
 			return;
 		}
 
 		try {
-			const { fields, particles, phase } =
-				decodeManifoldMeasurement(measurement);
+			const { fields, particles, phase } = decodeManifold(value);
 			if (fields.momRho.length > 0) {
 				this.handlers.onFields(fields);
 			}
@@ -127,6 +126,3 @@ export class FluidManifoldFeed {
 		this.handlers.onState("disconnected");
 	}
 }
-
-/** @deprecated Prefer FluidManifoldFeed. */
-export class FluidWebRTCFeed extends FluidManifoldFeed {}

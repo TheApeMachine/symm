@@ -93,7 +93,7 @@ func (desk *Desk) ResetPaper() error {
 }
 
 func (desk *Desk) restore() {
-	if desk.balance == nil || desk.balance.wallet == nil {
+	if desk.balance == nil || desk.balance.Wallet() == nil {
 		return
 	}
 
@@ -110,7 +110,7 @@ func (desk *Desk) restore() {
 		}
 	}
 
-	for _, entry := range desk.balance.wallet.Data {
+	for _, entry := range desk.balance.Wallet().Data {
 		if entry.Asset == quote || entry.Asset == quoteAlias {
 			continue
 		}
@@ -549,11 +549,23 @@ func (desk *Desk) Closed() []*Position {
 BalanceJSON returns the serialized JSON representation of the wallet balance.
 */
 func (desk *Desk) BalanceJSON() []byte {
-	if desk == nil || desk.balance == nil || desk.balance.wallet == nil {
+	if desk == nil || desk.balance == nil {
 		return nil
 	}
 
-	raw, _ := sonic.Marshal(desk.balance.wallet)
+	wallet := desk.balance.Wallet()
+
+	if wallet == nil {
+		return nil
+	}
+
+	raw, err := sonic.Marshal(wallet)
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.UnprocessableContent, "[desk] balance marshal failed", err))
+		return nil
+	}
+
 	return raw
 }
 
@@ -570,7 +582,13 @@ func (desk *Desk) PositionsJSON(symbol ...string) []byte {
 		if len(open) == 0 {
 			return nil
 		}
-		raw, _ := sonic.Marshal(open)
+		raw, err := sonic.Marshal(open)
+
+		if err != nil {
+			errnie.Error(errnie.Err(errnie.UnprocessableContent, "[desk] positions marshal failed", err))
+			return nil
+		}
+
 		return raw
 	}
 
@@ -586,6 +604,12 @@ func (desk *Desk) PositionsJSON(symbol ...string) []byte {
 		return nil
 	}
 
-	raw, _ := sonic.Marshal(all)
+	raw, err := sonic.Marshal(all)
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.UnprocessableContent, "[desk] positions marshal failed", err))
+		return nil
+	}
+
 	return raw
 }

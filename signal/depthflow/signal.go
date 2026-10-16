@@ -3,8 +3,10 @@ package depthflow
 import (
 	"context"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -41,23 +43,42 @@ func NewSignal(ctx context.Context) *Signal {
 	return signal
 }
 
+/*
+Step processes the book of every distinct symbol traded in the tick's frame;
+each symbol writes its own (reserved) layer.
+*/
 func (signal *Signal) Step(value *data.Value) *data.Value {
+	trades, err := data.AttributeOk[[]kraken.TradeData](value.Layers[0], "data")
+
+	if err != nil {
+		errnie.Error(err)
+		return value
+	}
+
+	for _, symbol := range broker.Symbols(trades) {
+		signal.step(value, symbol)
+	}
+
+	return value
+}
+
+func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
 		return value
 	}
 
-	snapshot, err := broker.ReadSnapshot(value)
+	snapshot, err := broker.ReadSnapshot(value, symbol)
 	if err != nil || snapshot == nil || len(snapshot.Bids) == 0 || len(snapshot.Asks) == 0 {
 		return value
 	}
 
-	state, found := signal.states[value.Scope]
+	state, found := signal.states[symbol]
 	if !found {
 		state = &symbolState{
 			prevBids: make(map[float64]float64),
 			prevAsks: make(map[float64]float64),
 		}
-		signal.states[value.Scope] = state
+		signal.states[symbol] = state
 	}
 
 	bids := ladder(snapshot.Bids)
@@ -127,7 +148,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	state.prevAskWorst = asks[len(asks)-1][0]
 	state.hasPrev = true
 
-	return data.AppendVector(value, []float64{
+	return data.AppendSymbolVector(value, symbol, []float64{
 		bookImb,
 		touchBid,
 		touchAsk,

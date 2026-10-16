@@ -5,8 +5,10 @@ import (
 	"math"
 	"sort"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -45,12 +47,31 @@ func NewSignal(ctx context.Context) *Signal {
 	return signal
 }
 
+/*
+Step processes the book of every distinct symbol traded in the tick's frame;
+each symbol writes its own (reserved) layer.
+*/
 func (signal *Signal) Step(value *data.Value) *data.Value {
+	trades, err := data.AttributeOk[[]kraken.TradeData](value.Layers[0], "data")
+
+	if err != nil {
+		errnie.Error(err)
+		return value
+	}
+
+	for _, symbol := range broker.Symbols(trades) {
+		signal.step(value, symbol)
+	}
+
+	return value
+}
+
+func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
 		return value
 	}
 
-	snapshot, err := broker.ReadSnapshot(value)
+	snapshot, err := broker.ReadSnapshot(value, symbol)
 	if err != nil || snapshot == nil || len(snapshot.Bids) == 0 || len(snapshot.Asks) == 0 {
 		return value
 	}
@@ -67,7 +88,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		asks = append(asks, level.Price.Float64(), level.Quantity.Float64())
 	}
 
-	res, err := signal.Calculate(value.Scope, bids, asks)
+	res, err := signal.Calculate(symbol, bids, asks)
 	if err != nil || len(res) == 0 {
 		return value
 	}
@@ -76,7 +97,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		res = append(res, 0.0)
 	}
 
-	return data.AppendVector(value, res, signal.keys...)
+	return data.AppendSymbolVector(value, symbol, res, signal.keys...)
 }
 
 func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float64, error) {

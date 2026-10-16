@@ -1,10 +1,15 @@
 package broker
 
 import (
+	"fmt"
+	"slices"
+
 	"github.com/bytedance/sonic"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/kraken"
 )
 
 /*
@@ -83,46 +88,115 @@ func sameLevels(left, right []Level) bool {
 }
 
 /*
-ReadSnapshot decodes the snapshot stamped onto value.
+Symbols returns the distinct symbols of trades, in frame order.
 */
-func ReadSnapshot(value *data.Value) (*Snapshot, error) {
-	if value == nil || len(value.Layers) == 0 {
+func Symbols(trades []kraken.TradeData) []string {
+	symbols := make([]string, 0, len(trades))
+
+	for _, trade := range trades {
+		if trade.Symbol != "" && !slices.Contains(symbols, trade.Symbol) {
+			symbols = append(symbols, trade.Symbol)
+		}
+	}
+
+	return symbols
+}
+
+/*
+SymbolLayer returns the layer indexed exactly "<kind>/<symbol>" (book, price,
+instrument), so BTC/USD never matches BTC/USDT.
+*/
+func SymbolLayer(value *data.Value, kind, symbol string) []byte {
+	key := kind + "/" + symbol
+
+	for index, layer := range data.Indexed[[]byte](value, key) {
+		if index == key {
+			return layer
+		}
+	}
+
+	return nil
+}
+
+/*
+ReadSnapshot decodes the book of symbol stamped onto value (the spotbook.Book
+that Book.JSON marshals). A tick that carries no book for symbol is (nil, nil).
+A book layer that does not decode, or is one-sided, is an error.
+
+Levels come from each side's Levels map, sorted best first: the SDK's
+High/Low/Lower/Higher links are not serialized, so walking them from a decoded
+book yields only the touch.
+*/
+func ReadSnapshot(value *data.Value, symbol string) (*Snapshot, error) {
+	layer := SymbolLayer(value, "book", symbol)
+
+	if layer == nil {
 		return nil, nil
 	}
 
-	for layer := range data.Layers[[]byte](value, "snapshot") {
+	var book spotbook.Book
 
-		var snap Snapshot
-		if err := sonic.Unmarshal(layer, &snap); err == nil && len(snap.Bids) > 0 && len(snap.Asks) > 0 {
-			return &snap, nil
-		}
+	if err := sonic.Unmarshal(layer, &book); err != nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"broker: book/"+symbol+" layer does not decode",
+			err,
+		)
 	}
 
-	for layer := range data.Layers[[]byte](value, "book") {
-		var snap Snapshot
-		if err := sonic.Unmarshal(layer, &snap); err == nil && len(snap.Bids) > 0 && len(snap.Asks) > 0 {
-			return &snap, nil
-		}
+	bids, err := sideLevels(symbol, book.Bids, -1)
 
-		var b spotbook.Book
-		if err := sonic.Unmarshal(layer, &b); err == nil && b.BestBid() != nil && b.BestAsk() != nil {
-			var bids, asks []Level
-			for bid := b.BestBid(); bid != nil; bid = bid.Lower {
-				bids = append(bids, Level{Price: bid.Price, Quantity: bid.Quantity})
-			}
-			for ask := b.BestAsk(); ask != nil; ask = ask.Higher {
-				asks = append(asks, Level{Price: ask.Price, Quantity: ask.Quantity})
-			}
-			if len(bids) > 0 && len(asks) > 0 {
-				return &Snapshot{
-					Depth: len(bids),
-					Bids:  bids,
-					Asks:  asks,
-				}, nil
-			}
-		}
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, nil
+	asks, err := sideLevels(symbol, book.Asks, 1)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if len(bids) == 0 || len(asks) == 0 {
+		return nil, errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("broker: book/%s is one-sided (%d bids, %d asks)", symbol, len(bids), len(asks)),
+			nil,
+		)
+	}
+
+	return &Snapshot{
+		Depth: book.MaxDepth,
+		Bids:  bids,
+		Asks:  asks,
+	}, nil
 }
 
+/*
+sideLevels returns a decoded side's levels ordered by price: order -1 is
+descending (bids, best first), 1 is ascending (asks, best first).
+*/
+func sideLevels(symbol string, side *spotbook.Side, order int) ([]Level, error) {
+	if side == nil {
+		return nil, nil
+	}
+
+	levels := make([]Level, 0, len(side.Levels))
+
+	for key, level := range side.Levels {
+		if level == nil || level.Price == nil || level.Quantity == nil {
+			return nil, errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("broker: book/%s level %s has no price or quantity", symbol, key),
+				nil,
+			)
+		}
+
+		levels = append(levels, Level{Price: level.Price, Quantity: level.Quantity})
+	}
+
+	slices.SortFunc(levels, func(left, right Level) int {
+		return order * left.Price.Cmp(right.Price)
+	})
+
+	return levels, nil
+}

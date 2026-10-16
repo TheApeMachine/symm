@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Value } from "#/types/value";
-import { decodeManifoldMeasurement } from "./wire";
+import { decodeManifold } from "./wire";
 
-describe("decodeManifoldMeasurement", () => {
+describe("decodeManifold", () => {
 	it("decodes real physics, health, particles, and modes from an honest Value", () => {
 		const val = new Value({
 			tick: 42n,
@@ -96,7 +96,7 @@ describe("decodeManifoldMeasurement", () => {
 			],
 		});
 
-		const decoded = decodeManifoldMeasurement(val);
+		const decoded = decodeManifold(val);
 
 		expect(decoded.fields.sequence).toBe(42n);
 		expect(decoded.fields.grid).toEqual({ x: 16, y: 16, z: 16, spacing: 0.0625 });

@@ -251,7 +251,14 @@ func (instrument *Instrument) SubscribeLevel3(write func([]byte) error, batch []
 		}
 
 		time.Sleep(viper.GetDuration("market.subscribe.pace"))
-		write(msg)
+
+		if err := write(msg); err != nil {
+			return errnie.Err(
+				errnie.IO,
+				"[instrument] level3 subscribe write failed for "+strings.Join(frame, ","),
+				err,
+			)
+		}
 	}
 
 	return nil
@@ -275,6 +282,14 @@ func (instrument *Instrument) Subscribe() error {
 		return instrument.Error(errnie.Err(
 			errnie.Validation,
 			"[instrument] level3 reader is required before subscribe",
+			nil,
+		))
+	}
+
+	if stale == nil {
+		return instrument.Error(errnie.Err(
+			errnie.Validation,
+			"[instrument] level3 stale hook is required before subscribe",
 			nil,
 		))
 	}

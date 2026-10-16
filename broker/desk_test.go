@@ -54,21 +54,19 @@ func TestDesk(t *testing.T) {
 		})
 
 		Convey("When initialized with pre-existing wallet holding", func() {
-			balance := &Balance{
-				Quote: "USD",
-				wallet: &kraken.Balance{
-					Data: []kraken.BalanceData{
-						{
-							Asset:   "USD",
-							Balance: decimal.NewFromFloat64(160.14),
-						},
-						{
-							Asset:   "ZAMA",
-							Balance: decimal.NewFromFloat64(517.71),
-						},
+			balance := &Balance{Quote: "USD"}
+			balance.wallet.Store(&kraken.Balance{
+				Data: []kraken.BalanceData{
+					{
+						Asset:   "USD",
+						Balance: decimal.NewFromFloat64(160.14),
+					},
+					{
+						Asset:   "ZAMA",
+						Balance: decimal.NewFromFloat64(517.71),
 					},
 				},
-			}
+			})
 
 			restoredDesk := NewDesk(ctx, &dummyTransport{}, nil, balance)
 			So(restoredDesk.Holds("ZAMA/USD"), ShouldBeTrue)

@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -22,7 +23,7 @@ type Balance struct {
 	transport Transport
 	paper     *Paper
 	Quote     string
-	wallet    *kraken.Balance
+	wallet    atomic.Pointer[kraken.Balance]
 	value     *data.Value
 	limiter   *rate.Limiter
 }
@@ -68,12 +69,21 @@ func NewBalance(
 	return balance
 }
 
+/*
+Wallet returns the latest polled wallet; poll publishes it atomically.
+*/
+func (balance *Balance) Wallet() *kraken.Balance {
+	return balance.wallet.Load()
+}
+
 func (balance *Balance) cash(asset string) *decimal.Decimal {
-	if balance.wallet == nil {
+	wallet := balance.Wallet()
+
+	if wallet == nil {
 		return nil
 	}
 
-	for _, entry := range balance.wallet.Data {
+	for _, entry := range wallet.Data {
 		if entry.Asset == asset {
 			if entry.Available != nil {
 				return entry.Available
@@ -86,7 +96,7 @@ func (balance *Balance) cash(asset string) *decimal.Decimal {
 	alias := kraken.AssetAlias(asset)
 
 	if alias != "" {
-		for _, entry := range balance.wallet.Data {
+		for _, entry := range wallet.Data {
 			if entry.Asset == alias {
 				if entry.Available != nil {
 					return entry.Available
@@ -136,7 +146,7 @@ func (balance *Balance) poll() (err error) {
 			))
 		}
 
-		balance.wallet = wallet
+		balance.wallet.Store(wallet)
 		tradeBalance, err = balance.paper.TradeBalance()
 
 		if err != nil {
@@ -165,7 +175,7 @@ func (balance *Balance) poll() (err error) {
 			))
 		}
 
-		balance.wallet = kraken.NewBalanceFromMap(resp.Result)
+		balance.wallet.Store(kraken.NewBalanceFromMap(resp.Result))
 
 		// No asset parameter: Kraken values the trade balance in its documented
 		// default asset, ZUSD.
@@ -182,7 +192,7 @@ func (balance *Balance) poll() (err error) {
 		tradeBalance = &result.Result
 	}
 
-	if tradeBalance == nil || balance.wallet == nil {
+	if tradeBalance == nil || balance.Wallet() == nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[balance] trade balance or wallet unavailable",

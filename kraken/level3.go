@@ -82,11 +82,11 @@ func NewLevel3(buf []byte) *Level3 {
 	var level3 Level3
 
 	if err := sonic.Unmarshal(buf, &level3); err != nil {
-		errnie.Err(
+		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"invalid level3",
 			err,
-		)
+		))
 
 		return nil
 	}

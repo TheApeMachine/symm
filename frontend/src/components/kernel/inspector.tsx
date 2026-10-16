@@ -25,7 +25,7 @@ const isResonance = (source: string) => source === "resonance";
 /*
 readings collects the accumulated values for one kernel directly from its store.
 */
-const readingsFromMeasurements = (
+const readingsFromValues = (
 	ring: RingBuffer<Value> | null | undefined,
 	source?: string,
 ) => {
@@ -110,7 +110,7 @@ export const KernelInspector = () => {
 	const resonance = active && isResonance(source);
 
 	const signalStore = source ? signals[source] : undefined;
-	const measurementRing = useSelector(signalStore ?? signals.hawkes, (state) =>
+	const ring = useSelector(signalStore ?? signals.hawkes, (state) =>
 		signalStore ? (state[focusSymbol] ?? null) : null,
 	);
 
@@ -119,7 +119,7 @@ export const KernelInspector = () => {
 	}
 
 	const copy = kernelCopy(source, "");
-	const points = readingsFromMeasurements(measurementRing, source);
+	const points = readingsFromValues(ring, source);
 	const latest = points.length > 0 ? points[points.length - 1] : null;
 	const status: SignalHealthStatus = latest === null ? "waiting" : "measured";
 	const badge = kernelStatusMeta(status);
@@ -134,12 +134,12 @@ export const KernelInspector = () => {
 		let raw: number | null = null;
 		let snm = 0;
 
-		const count = measurementRing?.getBufferLength
-			? measurementRing.getBufferLength()
+		const count = ring?.getBufferLength
+			? ring.getBufferLength()
 			: 0;
 		let row: Value | null = null;
 		for (let i = count - 1; i >= 0; i--) {
-			const candidate = measurementRing?.get(i);
+			const candidate = ring?.get(i);
 			if (candidate && metricValues(candidate, [name])[name] !== null) {
 				row = candidate;
 				break;

@@ -2,7 +2,6 @@ package data
 
 import (
 	"encoding/binary"
-	"fmt"
 	"io"
 
 	"github.com/theapemachine/errnie"
@@ -12,16 +11,18 @@ import (
 Size returns the exact total byte count of the serialized Value.
 */
 func (value *Value) Size() int {
-	total := 40 + 1 + len(value.Origin) + 1 + len(value.Role) + 1 + len(value.Scope) + 2
-	for i := 0; i < len(value.Layers); i++ {
-		idxLen := 0
-		if i < len(value.Index) {
-			idxLen = len(value.Index[i])
-		}
-		total += 2 + idxLen + 4 + len(value.Layers[i])
+	layers, index := value.filled()
+	total := headerSize + 1 + len(value.Origin) + 1 + len(value.Role) + 1 + len(value.Scope) + 2
+	for i := range layers {
+		total += 2 + len(index[i]) + 4 + len(layers[i])
 	}
 	return total
 }
+
+/*
+headerSize is the fixed numerical header: ID, Tick, SeqIdx, Timestamp, Epoch.
+*/
+const headerSize = 48
 
 /*
 Read serializes Value into p in one pass.
@@ -35,13 +36,16 @@ func (value *Value) Read(p []byte) (n int, err error) {
 		return 0, io.ErrShortBuffer
 	}
 
-	// 1. Fixed numerical header (40 bytes)
+	layers, index := value.filled()
+
+	// 1. Fixed numerical header (headerSize bytes)
 	copy(p[0:16], value.ID[:])
 	binary.LittleEndian.PutUint64(p[16:24], value.Tick)
 	binary.LittleEndian.PutUint64(p[24:32], value.SeqIdx)
 	binary.LittleEndian.PutUint64(p[32:40], value.Timestamp)
+	binary.LittleEndian.PutUint64(p[40:48], value.Epoch)
 
-	offset := 40
+	offset := headerSize
 
 	// 2. Identity strings (Origin, Role, Scope)
 	p[offset] = byte(len(value.Origin))
@@ -60,21 +64,18 @@ func (value *Value) Read(p []byte) (n int, err error) {
 	offset += len(value.Scope)
 
 	// 3. Layer count (uint16)
-	binary.LittleEndian.PutUint16(p[offset:offset+2], uint16(len(value.Layers)))
+	binary.LittleEndian.PutUint16(p[offset:offset+2], uint16(len(layers)))
 	offset += 2
 
 	// 4. Layers
-	for i := 0; i < len(value.Layers); i++ {
-		idx := ""
-		if i < len(value.Index) {
-			idx = value.Index[i]
-		}
+	for i := range layers {
+		idx := index[i]
 		binary.LittleEndian.PutUint16(p[offset:offset+2], uint16(len(idx)))
 		offset += 2
 		copy(p[offset:offset+len(idx)], idx)
 		offset += len(idx)
 
-		layer := value.Layers[i]
+		layer := layers[i]
 		lLen := len(layer)
 		binary.LittleEndian.PutUint32(p[offset:offset+4], uint32(lLen))
 		offset += 4
@@ -90,7 +91,7 @@ Write unserializes a Value from p.
 Implements io.Writer.
 */
 func (value *Value) Write(p []byte) (n int, err error) {
-	if len(p) < 45 {
+	if len(p) < headerSize+5 {
 		return 0, io.ErrUnexpectedEOF
 	}
 
@@ -98,8 +99,10 @@ func (value *Value) Write(p []byte) (n int, err error) {
 	value.Tick = binary.LittleEndian.Uint64(p[16:24])
 	value.SeqIdx = binary.LittleEndian.Uint64(p[24:32])
 	value.Timestamp = binary.LittleEndian.Uint64(p[32:40])
+	value.Epoch = binary.LittleEndian.Uint64(p[40:48])
+	value.slots = 0
 
-	offset := 40
+	offset := headerSize
 
 	// Origin
 	oLen := int(p[offset])
@@ -134,10 +137,7 @@ func (value *Value) Write(p []byte) (n int, err error) {
 	value.Scope = string(p[offset : offset+sLen])
 	offset += sLen
 
-	value.Prefix = fmt.Sprintf(
-		"%s/%s/%s/%019d/%019d.bin",
-		value.Origin, value.Role, value.Scope, value.Tick, value.SeqIdx,
-	)
+	value.FormatPrefix()
 
 	// Layer count
 	if len(p) < offset+2 {
@@ -195,93 +195,13 @@ func From(p []byte) *Value {
 }
 
 /*
-WriteTo writes Value directly to w without allocating an intermediate buffer.
-Implements io.WriterTo for zero-copy streaming via io.Copy.
+WriteTo writes the whole serialized Value to w in a single Write, so
+io.Copy(dst, value) hands dst exactly one complete Value per call.
+Implements io.WriterTo.
 */
 func (value *Value) WriteTo(w io.Writer) (int64, error) {
-	var fixed [40]byte
-	copy(fixed[0:16], value.ID[:])
-	binary.LittleEndian.PutUint64(fixed[16:24], value.Tick)
-	binary.LittleEndian.PutUint64(fixed[24:32], value.SeqIdx)
-	binary.LittleEndian.PutUint64(fixed[32:40], value.Timestamp)
-
-	n, err := w.Write(fixed[:])
-	if err != nil {
-		return int64(n), err
-	}
-	total := int64(n)
-
-	writeStr := func(s string) error {
-		var lenBuf [1]byte
-		lenBuf[0] = byte(len(s))
-		if _, err := w.Write(lenBuf[:]); err != nil {
-			return err
-		}
-		total++
-		if len(s) > 0 {
-			nw, err := w.Write([]byte(s))
-			if err != nil {
-				return err
-			}
-			total += int64(nw)
-		}
-		return nil
-	}
-
-	if err := writeStr(value.Origin); err != nil {
-		return total, err
-	}
-	if err := writeStr(value.Role); err != nil {
-		return total, err
-	}
-	if err := writeStr(value.Scope); err != nil {
-		return total, err
-	}
-
-	var numBuf [2]byte
-	binary.LittleEndian.PutUint16(numBuf[:], uint16(len(value.Layers)))
-	if nw, err := w.Write(numBuf[:]); err != nil {
-		return total + int64(nw), err
-	}
-	total += 2
-
-	var idxLenBuf [2]byte
-	var lenBuf [4]byte
-	for i, layer := range value.Layers {
-		idx := ""
-		if i < len(value.Index) {
-			idx = value.Index[i]
-		}
-		binary.LittleEndian.PutUint16(idxLenBuf[:], uint16(len(idx)))
-		nw, err := w.Write(idxLenBuf[:])
-		if err != nil {
-			return total + int64(nw), err
-		}
-		total += int64(nw)
-
-		if len(idx) > 0 {
-			nw, err = w.Write([]byte(idx))
-			if err != nil {
-				return total + int64(nw), err
-			}
-			total += int64(nw)
-		}
-
-		binary.LittleEndian.PutUint32(lenBuf[:], uint32(len(layer)))
-		nw, err = w.Write(lenBuf[:])
-		if err != nil {
-			return total + int64(nw), err
-		}
-		total += int64(nw)
-
-		nw, err = w.Write(layer)
-		if err != nil {
-			return total + int64(nw), err
-		}
-		total += int64(nw)
-	}
-
-	return total, nil
+	n, err := w.Write(value.Bytes())
+	return int64(n), err
 }
 
 /*
@@ -289,7 +209,7 @@ ReadFrom reconstructs Value directly from an incoming stream r.
 Implements io.ReaderFrom for zero-intermediate streaming via io.Copy.
 */
 func (value *Value) ReadFrom(r io.Reader) (int64, error) {
-	var fixed [40]byte
+	var fixed [headerSize]byte
 	if _, err := io.ReadFull(r, fixed[:]); err != nil {
 		return 0, err
 	}
@@ -298,8 +218,10 @@ func (value *Value) ReadFrom(r io.Reader) (int64, error) {
 	value.Tick = binary.LittleEndian.Uint64(fixed[16:24])
 	value.SeqIdx = binary.LittleEndian.Uint64(fixed[24:32])
 	value.Timestamp = binary.LittleEndian.Uint64(fixed[32:40])
+	value.Epoch = binary.LittleEndian.Uint64(fixed[40:48])
+	value.slots = 0
 
-	total := int64(40)
+	total := int64(headerSize)
 
 	readStr := func() (string, error) {
 		var lenBuf [1]byte
@@ -330,10 +252,7 @@ func (value *Value) ReadFrom(r io.Reader) (int64, error) {
 		return total, err
 	}
 
-	value.Prefix = fmt.Sprintf(
-		"%s/%s/%s/%019d/%019d.bin",
-		value.Origin, value.Role, value.Scope, value.Tick, value.SeqIdx,
-	)
+	value.FormatPrefix()
 
 	var numBuf [2]byte
 	if _, err := io.ReadFull(r, numBuf[:]); err != nil {
@@ -385,6 +304,12 @@ Bytes returns a newly allocated slice containing the serialized Value.
 */
 func (value *Value) Bytes() []byte {
 	buf := make([]byte, value.Size())
-	_, _ = value.Read(buf)
+
+	// Read reports a complete serialization as io.EOF.
+	if _, err := value.Read(buf); err != nil && err != io.EOF {
+		errnie.Error(errnie.Err(errnie.IO, "data: value serialization failed", err))
+		return nil
+	}
+
 	return buf
 }

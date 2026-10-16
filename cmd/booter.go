@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	sysruntime "runtime"
 
 	"github.com/grafana/pyroscope-go"
@@ -24,7 +25,9 @@ import (
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -40,9 +43,13 @@ type Booter struct {
 	instrument       *broker.Instrument
 	book             *broker.Book
 	price            *broker.Price
+	balance          *broker.Balance
+	desk             *broker.Desk
 	normalizer       *spot.Normalizer
 	signals          []nmruntime.Node
 	workspace        *nmruntime.Workspace
+	store            *store.Client
+	hub              *ui.Hub
 }
 
 func NewBooter(ctx context.Context, name string, capture ...bool) *Booter {
@@ -106,6 +113,10 @@ func (booter *Booter) Run() error {
 	}
 
 	booter.Transition(nmruntime.READY)
+
+	// Run is the daemon's lifetime: ingress runs in goroutines, so returning
+	// here would let the command return, cancel the context, and exit.
+	<-booter.Context().Done()
 	return nil
 }
 
@@ -183,6 +194,11 @@ func (booter *Booter) initMarket() error {
 		))
 	}
 
+	booter.balance = broker.NewBalance(ctx, booter.privateTransport)
+	booter.desk = broker.NewDesk(
+		ctx, booter.privateTransport, booter.price, booter.balance,
+	)
+
 	return nil
 }
 
@@ -212,10 +228,30 @@ func (booter *Booter) initPipeline() error {
 		}
 	}
 
+	sinks := []io.Writer{}
+
+	if booter.capture {
+		booter.store = store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
+
+		if booter.store == nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO, "booter: store client unavailable for capture", nil,
+			))
+		}
+
+		sinks = append(sinks, booter.store)
+	}
+
+	// Every tick is also io.Copy'd to the dashboard hub (127.0.0.1:8765/ws).
+	booter.hub = ui.NewHub(ctx)
+	booter.hub.Run()
+	sinks = append(sinks, booter.hub)
+
 	booter.workspace = nmruntime.NewWorkspace(
 		ctx,
 		"workspace",
 		[][]nmruntime.Node{booter.signals},
+		sinks...,
 	)
 
 	for _, signal := range booter.signals {
@@ -231,7 +267,7 @@ func (booter *Booter) subscribe() error {
 
 	// Every socket is read while it subscribes: Kraken rejects Level3
 	// snapshot requests on a socket whose earlier snapshots sit unread.
-	// booter.instrument.SetLevel3Stale(booter.book.Stale)
+	booter.instrument.SetLevel3Stale(booter.book.Stale)
 	booter.instrument.SetLevel3Reader(func(client *network.WebsocketClient) {
 		booter.startIngress(client, "level3")
 	})
@@ -291,14 +327,68 @@ func (booter *Booter) startIngress(
 					continue
 				}
 
-				booter.book.Update(level3)
+				if err := booter.book.Update(level3); err != nil {
+					errnie.Error(err)
+				}
 			case "trade":
 				data.Tick.Add(1)
-				if booter.workspace != nil {
-					booter.workspace.Step(data.NewValue(
-						"workspace", "tick", "aggregate",
-					).AppendJSON(buf, "spot:trade/"+msgType))
+
+				if booter.workspace == nil {
+					continue
 				}
+
+				// One Kraken frame is one tick (it may carry several symbols).
+				// The tick's Value carries the state of every component it
+				// touches, so a stored tick reproduces book, price, instrument,
+				// wallet and positions for every symbol in the frame.
+				value := data.NewValue(
+					"workspace", "tick", "aggregate",
+				).AppendJSON(buf, "spot:trade/"+msgType)
+
+				trades, err := data.AttributeOk[[]kraken.TradeData](buf, "data")
+
+				if err != nil {
+					booter.Error(err)
+					continue
+				}
+
+				for _, symbol := range broker.Symbols(trades) {
+					value.AppendJSON(booter.book.JSON(symbol), "book/"+symbol).
+						AppendJSON(booter.price.JSON(symbol), "price/"+symbol).
+						AppendJSON(booter.price.InstrumentJSON(symbol), "instrument/"+symbol)
+				}
+
+				value.AppendJSON(booter.desk.BalanceJSON(), "balance").
+					AppendJSON(booter.desk.PositionsJSON(), "positions")
+
+				// Signals write one layer per trade entry (or per symbol),
+				// each into its own pre-reserved slot.
+				value.Reserve(len(booter.signals) * max(1, len(trades)))
+				booter.workspace.Step(value)
+			case "heartbeat", "status":
+			default:
+				// Request acknowledgements (subscribe, unsubscribe, ...). A
+				// rejection is an error; it is never dropped.
+				if success, err := data.AttributeOk[bool](buf, "success"); err == nil && !success {
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						fmt.Sprintf("[booter] %s venue rejected %s %s: %s",
+							name,
+							data.Attribute[string](buf, "method"),
+							data.Attribute[string](buf, "symbol"),
+							data.Attribute[string](buf, "error"),
+						),
+						nil,
+					))
+
+					continue
+				}
+
+				errnie.Debug(fmt.Sprintf("[booter] %s frame %s %s %s", name,
+					data.Attribute[string](buf, "method"),
+					data.Attribute[string](buf, "result", "channel"),
+					data.Attribute[string](buf, "result", "symbol"),
+				))
 			}
 		}
 	}()

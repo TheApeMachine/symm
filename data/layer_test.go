@@ -1,6 +1,7 @@
 package data
 
 import (
+	"errors"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -86,12 +87,33 @@ func TestAttribute(t *testing.T) {
 			missingFloat := Attribute[float64](payload, "data", 0, "missing_price")
 			So(missingFloat, ShouldEqual, 0)
 
-			val, ok := AttributeOk[string](payload, "channel")
-			So(ok, ShouldBeTrue)
+			val, err := AttributeOk[string](payload, "channel")
+			So(err, ShouldBeNil)
 			So(val, ShouldEqual, "trade")
 
-			_, ok = AttributeOk[string](payload, "missing_channel")
-			So(ok, ShouldBeFalse)
+			_, err = AttributeOk[string](payload, "missing_channel")
+			So(errors.Is(err, ErrMissing), ShouldBeTrue)
+		})
+
+		Convey("AttributeOk decodes structured attributes from their raw JSON", func() {
+			payload := []byte(`{"channel":"trade","data":[{"symbol":"BTC/USD","price":67500.5,"qty":1.25}]}`)
+			trades, err := AttributeOk[[]sampleTrade](payload, "data")
+			So(err, ShouldBeNil)
+			So(trades, ShouldHaveLength, 1)
+			So(trades[0].Symbol, ShouldEqual, "BTC/USD")
+			So(trades[0].Price, ShouldEqual, 67500.5)
+
+			first, err := AttributeOk[sampleTrade](payload, "data", 0)
+			So(err, ShouldBeNil)
+			So(first.Qty, ShouldEqual, 1.25)
+		})
+
+		Convey("AttributeOk returns an error, never a silent zero, for an undecodable attribute", func() {
+			trades, err := AttributeOk[[]sampleTrade](payload, "channel")
+			So(err, ShouldNotBeNil)
+			So(errors.Is(err, ErrMissing), ShouldBeFalse)
+			So(err.Error(), ShouldContainSubstring, "not decodable as")
+			So(trades, ShouldBeNil)
 		})
 	})
 }

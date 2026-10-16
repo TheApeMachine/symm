@@ -2,11 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
 	cashAtom,
 	decisionsAtom,
-	equityAtom,
+	positionsAtom,
 	signals,
 	symbolsAtom,
 	tickCountAtom,
-	unrealizedAtom,
 } from "#/collections/app";
 import {
 	dispatchValue,
@@ -25,7 +24,7 @@ function encodeValue({
 	layers = [] as Array<{
 		index: string;
 		vector?: number[];
-		json?: Record<string, unknown>;
+		json?: unknown;
 	}>,
 }) {
 	const textEncoder = new TextEncoder();
@@ -34,7 +33,7 @@ function encodeValue({
 	const scopeBytes = textEncoder.encode(scope);
 
 	let size =
-		40 + 1 + originBytes.length + 1 + roleBytes.length + 1 + scopeBytes.length + 2;
+		48 + 1 + originBytes.length + 1 + roleBytes.length + 1 + scopeBytes.length + 2;
 	const encodedLayers: Array<{ idxBytes: Uint8Array; payloadBytes: Uint8Array }> = [];
 
 	for (const l of layers) {
@@ -62,8 +61,9 @@ function encodeValue({
 	dv.setBigUint64(16, tick, true);
 	dv.setBigUint64(24, seqIdx, true);
 	dv.setBigUint64(32, timestamp, true);
+	dv.setBigUint64(40, 0n, true);
 
-	let offset = 40;
+	let offset = 48;
 	buf[offset++] = originBytes.length;
 	buf.set(originBytes, offset);
 	offset += originBytes.length;
@@ -192,18 +192,17 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		expect(btcDecision?.cause).toBe("R01/R06");
 	});
 
-	it("dispatches balance JSON frame and updates equity atoms", () => {
+	it("dispatches the balance layer into the cash atom", () => {
 		const raw = encodeValue({
-			origin: "broker",
-			role: "balance",
-			scope: "USD",
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
 			layers: [
 				{
-					index: "broker/balance/USD",
+					index: "balance",
 					json: {
-						cash: "10000.50",
-						unrealized: "250.75",
-						equity: "10251.25",
+						channel: "balances",
+						data: [{ asset: "USD", balance: "10000.50" }],
 					},
 				},
 			],
@@ -214,8 +213,6 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		dispatchValue(parsed!);
 
 		expect(cashAtom.get()).toBe("10000.50");
-		expect(unrealizedAtom.get()).toBe("250.75");
-		expect(equityAtom.get()).toBe("10251.25");
 	});
 
 	it("dispatches spot trade frame and updates tickCountAtom", () => {
@@ -231,5 +228,43 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		dispatchValue(parsed!);
 
 		expect(tickCountAtom.get()).toBe(9999);
+	});
+
+	it("routes an aggregate tick's layers to the tick symbol's consumers", () => {
+		const prefix =
+			"workspace/tick/aggregate/0000000000000000001/0000000000000000077.bin";
+		const raw = encodeValue({
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
+			tick: 77n,
+			layers: [
+				{
+					index: "spot:trade/update",
+					json: { channel: "trade", data: [{ symbol: "ETH/USD", price: 1 }] },
+				},
+				{ index: "price/ETH/USD", json: { symbol: "ETH/USD" } },
+				{
+					index: "positions",
+					json: [{ symbol: "ETH/USD", status: "open", entry_price: "2" }],
+				},
+				{
+					index: `${prefix}/arrival_rate_buy/arrival_rate_sell`,
+					vector: [1.5, 0.5],
+				},
+			],
+		});
+
+		dispatchValue(parseOneValue(raw)!);
+
+		expect(symbolsAtom.get()).toContain("ETH/USD");
+		expect(tickCountAtom.get()).toBe(77);
+		expect(positionsAtom.get()[0]?.holding?.symbol).toBe("ETH/USD");
+
+		const ring = signals.hawkes.state["ETH/USD"];
+		const latest = ring?.get(ring.getBufferLength() - 1);
+		expect(latest?.origin).toBe("hawkes");
+		expect(latest?.metric("arrival_rate_buy")).toBeCloseTo(1.5);
+		expect(latest?.metric("arrival_rate_sell")).toBeCloseTo(0.5);
 	});
 });

@@ -31,8 +31,9 @@ describe("WsFeed", () => {
 			type: "ROUTE",
 			route: "xray",
 		});
-		expect(worker.postMessage.mock.calls[1][0]).toMatchObject({
+		expect(worker.postMessage.mock.calls[1][0]).toEqual({
 			type: "CONNECT",
+			url: "ws://127.0.0.1:8765/ws",
 		});
 		act(() => routeAtom.set("fluid"));
 		expect(worker.postMessage).toHaveBeenLastCalledWith({
