@@ -31,7 +31,23 @@ Layers of a stored tick (one Kraken trade frame; collect, cmd/booter.go):
 
 An excursion Value carries one float64 vector labelled ExcursionKeys; a
 policy Value one labelled PolicyKeys plus a trailing PolicyPathTag tag.
+
+Hub-only Values (streamed to the dashboard, never stored):
+
+	| writer             | Origin/Role/Scope           | layer                          |
+	|--------------------|-----------------------------|--------------------------------|
+	| run (strategy.Sequitur) | sequitur/grammar/<symbol> | LayerGrammar: strategy.SequiturFrame JSON |
 */
+
+/*
+SequiturOrigin and SequiturRole identify a live grammar frame on the hub;
+its Scope is the symbol and its one layer is LayerGrammar.
+*/
+const (
+	SequiturOrigin = "sequitur"
+	SequiturRole   = "grammar"
+	LayerGrammar   = "grammar"
+)
 
 const (
 	TickOrigin = "workspace"

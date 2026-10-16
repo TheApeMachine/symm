@@ -63,6 +63,20 @@ func TestSignals(t *testing.T) {
 			So(Metrics(tick), ShouldBeEmpty)
 		})
 
+		Convey("A tag containing /symbol: stays a tag; the last symbol tag names the symbol", func() {
+			AppendSignalVector(tick, "cvd", "SOL/USD", []float64{2}, "gross_notional", "ref:x/symbol:y")
+
+			var last Signal
+			for signal, err := range Signals(tick) {
+				So(err, ShouldBeNil)
+				last = signal
+			}
+
+			So(last.Symbol, ShouldEqual, "SOL/USD")
+			So(last.Labels, ShouldResemble, []string{"gross_notional"})
+			So(last.Tags, ShouldResemble, []string{"ref:x", "symbol:y"})
+		})
+
 		Convey("A signal layer without a symbol tag is an error", func() {
 			tick.claim(vectorBytes([]float64{1}), "signal/cvd/gross_notional")
 

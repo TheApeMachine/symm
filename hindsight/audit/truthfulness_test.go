@@ -137,8 +137,9 @@ func TestTruthfulnessStage(t *testing.T) {
 
 		Convey("When auditing nil measurements", func() {
 			nilViolations := feed(stage, nil)
-			So(len(nilViolations), ShouldEqual, 1)
-			So(nilViolations[0].Name, ShouldEqual, "measurement")
+			// A nil-only tape is a nil violation and, counting nothing, insufficient evidence.
+			So(hasViolation(nilViolations, "measurement"), ShouldBeTrue)
+			So(hasInsufficient(nilViolations), ShouldBeTrue)
 		})
 	})
 }

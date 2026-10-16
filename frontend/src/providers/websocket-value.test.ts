@@ -225,6 +225,11 @@ describe("Value Binary Decoder and Dispatcher", () => {
 			symbol: "BTC/USD",
 			labels: ["gross_notional"],
 		});
+		expect(parseSignalIndex("signal/cvd/gross_notional/ref:x/symbol:y/symbol:SOL/USD")).toEqual({
+			source: "cvd",
+			symbol: "SOL/USD",
+			labels: ["gross_notional", "ref:x", "symbol:y"],
+		});
 		expect(parseSignalIndex("signal/cvd/gross_notional")).toBeNull();
 		expect(parseSignalIndex("price/BTC/USD")).toBeNull();
 	});

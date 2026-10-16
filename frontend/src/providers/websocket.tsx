@@ -215,7 +215,7 @@ export const parseSignalIndex = (
 ): { source: string; symbol: string; labels: string[] } | null => {
 	if (!index.startsWith(SIGNAL_NAMESPACE)) return null;
 
-	const at = index.indexOf(SYMBOL_TAG);
+	const at = index.lastIndexOf(SYMBOL_TAG);
 	const head = at >= 0 ? index.slice(SIGNAL_NAMESPACE.length, at) : "";
 	const symbol = at >= 0 ? index.slice(at + SYMBOL_TAG.length) : "";
 	const [source = "", ...labels] = head.split("/");

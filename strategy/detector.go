@@ -74,6 +74,11 @@ type Detector struct {
 	results   []*data.Value
 	failure   error
 
+	// firstTick is the epoch's first stored tick; an excursion whose
+	// lookback window (A) starts before it lacks history and is not emitted.
+	firstTick    int64
+	insufficient int
+
 	// Undecided / chop / flat tracking
 	segStart      tradePoint
 	runLow        tradePoint
@@ -97,14 +102,16 @@ type Detector struct {
 }
 
 /*
-NewDetector creates the detector for symbol's tape in epoch. Every excursion
-class is defined against round-trip friction, so a price system with
-reference cash and a taker fee for symbol are required.
+NewDetector creates the detector for symbol's tape in epoch, whose first
+stored tick is firstTick. Every excursion class is defined against
+round-trip friction, so a price system with reference cash and a taker fee
+for symbol are required.
 */
 func NewDetector(
 	ctx context.Context,
 	price *broker.Price,
 	epoch uint64,
+	firstTick uint64,
 	symbol string,
 ) (*Detector, error) {
 	if price == nil || price.ReferenceCash() == nil {
@@ -124,6 +131,7 @@ func NewDetector(
 		price:                  price,
 		symbol:                 symbol,
 		epoch:                  epoch,
+		firstTick:              int64(firstTick),
 		roundTrip:              (1.0+feeRate)/(1.0-feeRate) - 1.0,
 		retraceRatio:           0.32, // Pullback must retrace >= 32% of |C - B| (and clear friction) to end a leg
 		maxContinuationRetrace: 0.58, // Higher-low dips < 58% merge into one macro leg when C is broken
@@ -136,6 +144,14 @@ func NewDetector(
 		state:                  stateInit,
 		pending:                make([]episode, 0, 8),
 	}, nil
+}
+
+/*
+Insufficient is how many confirmed excursions were not emitted because their
+lookback window starts before the epoch's first stored tick.
+*/
+func (detector *Detector) Insufficient() int {
+	return detector.insufficient
 }
 
 /*
@@ -763,6 +779,16 @@ func (detector *Detector) flush(ep episode) {
 
 	halfMoveSeqIdx := c.seqIdx - b.seqIdx
 	halfMoveTick := c.tick - b.tick
+
+	if aTick := b.tick - halfMoveTick; aTick < detector.firstTick {
+		detector.insufficient++
+		errnie.Info(fmt.Sprintf(
+			"[detector] %s %s excursion ticks %d..%d not emitted: lookback starts at tick %d, before the epoch's first stored tick %d",
+			detector.symbol, ep.class, b.tick, c.tick, aTick, detector.firstTick,
+		))
+
+		return
+	}
 
 	value := &data.Value{
 		Origin:    data.ExcursionOrigin,

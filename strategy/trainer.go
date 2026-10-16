@@ -80,69 +80,95 @@ func newSymbolTape() *symbolTape {
 }
 
 /*
-observe turns one frame's regions into the grammar path active at tick.
+tapeStep is what one grid frame did to a symbol's grammar: the active regions
+and the midpoint gate over them, the region tokens that fired, whether that
+chord merely repeated the previous one (nothing is appended then), the rule
+the append completed, and the grammar path active after it. The trainer
+tallies excursions against Path; live inspection shows every field.
 */
-func (tape *symbolTape) observe(tick uint64, regions []*nmstore.Region) {
-	active := make([]*nmstore.Region, 0)
+type tapeStep struct {
+	Active   []*nmstore.Region
+	Midpoint float64
+	Fired    []string
+	Repeat   bool
+	Rule     *Rule
+	Path     string
+}
+
+/*
+advance turns one frame's regions into region tokens and appends them to the
+grammar. It reports false when no region is active, so the frame has no chord.
+*/
+func (tape *symbolTape) advance(regions []*nmstore.Region) (tapeStep, bool) {
+	step := tapeStep{Active: make([]*nmstore.Region, 0)}
 
 	for _, region := range regions {
 		if region.Brightness > 0 {
-			active = append(active, region)
+			step.Active = append(step.Active, region)
 		}
 	}
 
-	if len(active) == 0 {
-		return
+	if len(step.Active) == 0 {
+		return step, false
 	}
 
 	// Dynamic midpoint activation gate.
-	midB := (active[0].Brightness + active[len(active)-1].Brightness) / 2.0
-	firedTokens := make([]string, 0)
+	step.Midpoint = (step.Active[0].Brightness + step.Active[len(step.Active)-1].Brightness) / 2.0
+	step.Fired = make([]string, 0)
 
-	for _, region := range active {
-		if region.Brightness >= midB {
-			firedTokens = append(firedTokens, fmt.Sprintf("R%02d", region.Key))
+	for _, region := range step.Active {
+		if region.Brightness >= step.Midpoint {
+			step.Fired = append(step.Fired, fmt.Sprintf("R%02d", region.Key))
 		}
 	}
 
-	chordKey := strings.Join(firedTokens, "/")
+	chordKey := strings.Join(step.Fired, "/")
 
 	if chordKey == tape.lastSym {
-		tape.frames = append(tape.frames, frameRecord{tick: tick})
-		return
+		step.Repeat = true
+		return step, true
 	}
 
 	tape.lastSym = chordKey
 
-	var deepestRule *Rule
-
-	for _, token := range firedTokens {
+	for _, token := range step.Fired {
 		if rule := tape.grammar.Append(token); rule != nil {
-			deepestRule = rule
+			step.Rule = rule
 		}
 	}
 
-	tape.recentTokens = append(tape.recentTokens, firedTokens...)
+	tape.recentTokens = append(tape.recentTokens, step.Fired...)
 
 	if len(tape.recentTokens) > 16 {
 		tape.recentTokens = tape.recentTokens[len(tape.recentTokens)-16:]
 	}
 
-	activePath := ""
-
-	if deepestRule != nil {
-		if phrase := deepestRule.TerminalNames(tape.grammar); len(phrase) >= 2 {
-			activePath = strings.Join(phrase, "/")
+	if step.Rule != nil {
+		if phrase := step.Rule.TerminalNames(tape.grammar); len(phrase) >= 2 {
+			step.Path = strings.Join(phrase, "/")
 		}
 	}
 
-	if activePath == "" && len(tape.recentTokens) >= 2 {
-		activePath = strings.Join(tape.recentTokens[len(tape.recentTokens)-2:], "/")
-	} else if activePath == "" && len(tape.recentTokens) == 1 {
-		activePath = tape.recentTokens[0]
+	if step.Path == "" && len(tape.recentTokens) >= 2 {
+		step.Path = strings.Join(tape.recentTokens[len(tape.recentTokens)-2:], "/")
+	} else if step.Path == "" && len(tape.recentTokens) == 1 {
+		step.Path = tape.recentTokens[0]
 	}
 
-	tape.frames = append(tape.frames, frameRecord{tick: tick, path: activePath})
+	return step, true
+}
+
+/*
+observe records the grammar path active at tick for one frame's regions.
+*/
+func (tape *symbolTape) observe(tick uint64, regions []*nmstore.Region) {
+	step, ok := tape.advance(regions)
+
+	if !ok {
+		return
+	}
+
+	tape.frames = append(tape.frames, frameRecord{tick: tick, path: step.Path})
 }
 
 /*

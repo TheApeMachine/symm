@@ -46,6 +46,7 @@ action each stored path agrees on ("" where its actions disagree). It is
 swapped whole.
 */
 type policy struct {
+	epoch   uint64
 	keys    []string
 	actions map[string]string
 }
@@ -189,68 +190,49 @@ type GrammarExport struct {
 	Start  []string            `json:"start"`
 }
 
+/*
+CognitionGrammar exports symbol's live grammar; an unknown symbol has none.
+*/
 func (training *Training) CognitionGrammar(symbol string) GrammarExport {
-	if symbol == "" {
-		symbol = "BTC/USD"
-	}
+	return exportGrammar(symbol, training.grammars[symbol], training.policy.Load())
+}
 
-	grammar := training.grammars[symbol]
-
+/*
+exportGrammar lists every rule of grammar with its references, depth, body
+and expansion, and the action pol stores for that expansion as a path.
+*/
+func exportGrammar(symbol string, grammar *Grammar, pol *policy) GrammarExport {
 	if grammar == nil {
-		return GrammarExport{Symbol: symbol, Rules: []GrammarRuleExport{}}
+		return GrammarExport{Symbol: symbol, Rules: []GrammarRuleExport{}, Start: []string{}}
 	}
 
-	current := training.policy.Load()
 	rules := grammar.Rules()
 	exports := make([]GrammarRuleExport, 0, len(rules))
 
 	for _, rule := range rules {
 		terms := rule.TerminalNames(grammar)
-		termPath := strings.Join(terms, "/")
 		action := ""
-		if current != nil && current.actions != nil {
-			if act, found := current.actions[termPath]; found {
-				action = act
-			}
-		}
 
-		syms := make([]string, 0)
-		for currentSymbol := rule.guard.next; currentSymbol != rule.guard && currentSymbol != nil; currentSymbol = currentSymbol.next {
-			if currentSymbol.rule != nil {
-				syms = append(syms, fmt.Sprintf("M%d", currentSymbol.rule.id))
-			} else {
-				syms = append(syms, grammar.Name(currentSymbol.value))
-			}
+		if pol != nil {
+			action = pol.actions[strings.Join(terms, "/")]
 		}
 
 		exports = append(exports, GrammarRuleExport{
 			ID:        rule.ID(),
-			Name:      fmt.Sprintf("M%d", rule.ID()),
+			Name:      RuleLabel(rule.ID()),
 			Count:     rule.Count(),
 			Depth:     rule.Depth(),
 			Length:    rule.Length(),
-			Symbols:   syms,
+			Symbols:   grammar.Symbols(rule),
 			Terminals: terms,
 			Action:    action,
 		})
 	}
 
-	startSyms := make([]string, 0)
-
-	if grammar.startRule != nil {
-		for s := grammar.startRule.guard.next; s != grammar.startRule.guard && s != nil; s = s.next {
-			if s.rule != nil {
-				startSyms = append(startSyms, fmt.Sprintf("M%d", s.rule.id))
-			} else {
-				startSyms = append(startSyms, grammar.Name(s.value))
-			}
-		}
-	}
-
 	return GrammarExport{
 		Symbol: symbol,
 		Rules:  exports,
-		Start:  startSyms,
+		Start:  grammar.Symbols(grammar.StartRule()),
 	}
 }
 
@@ -428,38 +410,50 @@ func (training *Training) Step(value *data.Value) *data.Value {
 ReloadKeys loads the published action tree from S3 and swaps it in whole.
 */
 func (training *Training) ReloadKeys(ctx context.Context) error {
+	loaded, err := loadPolicy(training.client)
+
+	if err != nil {
+		return err
+	}
+
+	training.policy.Store(loaded)
+	return nil
+}
+
+/*
+loadPolicy reads the newest epoch the Trainer published: every stored path
+with the one action its policies agree on ("" where they disagree). No
+client, or no published epoch, is an empty policy.
+*/
+func loadPolicy(client *store.Client) (*policy, error) {
 	loaded := &policy{
 		keys:    make([]string, 0),
 		actions: make(map[string]string),
 	}
 
-	if training.client == nil {
-		training.policy.Store(loaded)
-		return nil
+	if client == nil {
+		return loaded, nil
 	}
 
-	// The tree in force is the newest epoch the Trainer published.
-	var newest uint64
-
 	for _, prefix := range data.PolicyPrefixes() {
-		epochs, err := store.Epochs(training.client, prefix)
+		epochs, err := store.Epochs(client, prefix)
 
 		if err != nil {
-			return errnie.Error(err)
+			return nil, errnie.Error(err)
 		}
 
 		if len(epochs) > 0 {
-			newest = max(newest, epochs[len(epochs)-1])
+			loaded.epoch = max(loaded.epoch, epochs[len(epochs)-1])
 		}
 	}
 
-	if newest > 0 {
-		for val := range store.Values(training.client, data.PolicyPrefixes(newest)...) {
+	if loaded.epoch > 0 {
+		for val := range store.Values(client, data.PolicyPrefixes(loaded.epoch)...) {
 			action := val.Role
 			pathKey, err := data.PolicyPath(val)
 
 			if err != nil {
-				return errnie.Error(err)
+				return nil, errnie.Error(err)
 			}
 
 			if existing, found := loaded.actions[pathKey]; found && existing != action {
@@ -473,14 +467,12 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 
 	slices.Sort(loaded.keys)
 	loaded.keys = slices.Compact(loaded.keys)
-	training.policy.Store(loaded)
 
 	errnie.Info(fmt.Sprintf(
-		"[training] loaded %d stored paths",
-		len(loaded.keys),
+		"[policy] loaded %d stored paths from epoch %d", len(loaded.keys), loaded.epoch,
 	))
 
-	return nil
+	return loaded, nil
 }
 
 /*

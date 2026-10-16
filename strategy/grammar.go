@@ -59,6 +59,133 @@ type Grammar struct {
 	symbolCodes map[string]uint32
 	nextRuleID  uint32
 	nextCodeID  uint32
+	trace       bool
+	events      []GrammarEvent
+}
+
+/*
+Grammar event kinds, in the order Sequitur performs them on one Append:
+the terminal joins R0, then each digram repeat is resolved either by creating
+a rule for it or by reusing the rule whose whole body it is, and a rule left
+with one reference is inlined back into its parent (rule utility).
+*/
+const (
+	EventAppend = "append"
+	EventCreate = "create"
+	EventReuse  = "reuse"
+	EventInline = "inline"
+)
+
+/*
+GrammarEvent is one structural step Sequitur took. Rule is the rule created,
+reused or inlined; Into is the rule the step rewrote (the owner of the
+substituted occurrence, or the parent an inlined rule dissolved into); Digram
+is the repeated pair, labelled as in RuleLabel.
+*/
+type GrammarEvent struct {
+	Kind   string    `json:"kind"`
+	Token  string    `json:"token,omitempty"`
+	Rule   uint32    `json:"rule"`
+	Into   uint32    `json:"into"`
+	From   uint32    `json:"from"`
+	Digram [2]string `json:"digram"`
+}
+
+/*
+Trace makes the grammar record every GrammarEvent until Drain takes them. It
+is off by default so batch training never accumulates events nobody reads.
+*/
+func (grammar *Grammar) Trace() *Grammar {
+	grammar.trace = true
+	return grammar
+}
+
+/*
+Drain returns the events recorded since the previous Drain.
+*/
+func (grammar *Grammar) Drain() []GrammarEvent {
+	events := grammar.events
+	grammar.events = nil
+	return events
+}
+
+func (grammar *Grammar) record(event GrammarEvent) {
+	if grammar.trace {
+		grammar.events = append(grammar.events, event)
+	}
+}
+
+/*
+RuleLabel names a rule reference M<id>; terminals keep their own names (the
+region tokens are R<nn>, so rules cannot reuse the R prefix).
+*/
+func RuleLabel(id uint32) string {
+	return fmt.Sprintf("M%d", id)
+}
+
+/*
+label is the display name of one symbol: RuleLabel for a rule reference, the
+terminal name otherwise.
+*/
+func (grammar *Grammar) label(symbol *Symbol) string {
+	if symbol.rule != nil {
+		return RuleLabel(symbol.rule.id)
+	}
+
+	return grammar.Name(symbol.value)
+}
+
+/*
+Symbols labels the right-hand side of rule in order.
+*/
+func (grammar *Grammar) Symbols(rule *Rule) []string {
+	labels := make([]string, 0)
+
+	for current := rule.guard.next; current != rule.guard && current != nil; current = current.next {
+		labels = append(labels, grammar.label(current))
+	}
+
+	return labels
+}
+
+/*
+Check verifies Sequitur's two invariants over the whole grammar and returns
+every violation: digram uniqueness (no digram occurs twice, except the
+overlapping pair in a run like "a a a") and rule utility (every rule other
+than R0 is referenced at least twice).
+*/
+func (grammar *Grammar) Check() []string {
+	violations := make([]string, 0)
+	seen := make(map[digramKey]*Symbol)
+
+	for _, rule := range append([]*Rule{grammar.startRule}, grammar.Rules()...) {
+		for current := rule.guard.next; current != rule.guard && current != nil; current = current.next {
+			if current.next == nil || current.next.isGuard {
+				continue
+			}
+
+			key := makeDigramKey(current, current.next)
+
+			if prior, found := seen[key]; found && prior.next != current {
+				violations = append(violations, fmt.Sprintf(
+					"digram uniqueness: %s %s occurs in %s and %s",
+					grammar.label(current), grammar.label(current.next),
+					RuleLabel(prior.owner.id), RuleLabel(current.owner.id),
+				))
+				continue
+			}
+
+			seen[key] = current
+		}
+
+		if rule.id > 0 && rule.count < 2 {
+			violations = append(violations, fmt.Sprintf(
+				"rule utility: %s is referenced %d time(s)", RuleLabel(rule.id), rule.count,
+			))
+		}
+	}
+
+	return violations
 }
 
 /*
@@ -111,6 +238,8 @@ func (grammar *Grammar) AppendCode(code uint32) *Rule {
 		owner: grammar.startRule,
 		value: code,
 	}
+
+	grammar.record(GrammarEvent{Kind: EventAppend, Token: grammar.Name(code)})
 
 	lastSymbol := grammar.startRule.guard.prev
 	grammar.join(lastSymbol, newSymbol)
@@ -388,12 +517,20 @@ func (grammar *Grammar) checkDigram(symbol *Symbol) bool {
 }
 
 func (grammar *Grammar) resolveRepeat(symbol, matchSymbol *Symbol) {
+	digram := [2]string{grammar.label(symbol), grammar.label(symbol.next)}
+
 	if matchSymbol.owner.id != 0 && matchSymbol.prev.isGuard && matchSymbol.next.next.isGuard {
+		grammar.record(GrammarEvent{
+			Kind: EventReuse, Rule: matchSymbol.owner.id, Into: symbol.owner.id, Digram: digram,
+		})
 		grammar.substitute(symbol, matchSymbol.owner)
 		return
 	}
 
 	newRule := grammar.createRule()
+	grammar.record(GrammarEvent{
+		Kind: EventCreate, Rule: newRule.id, Into: symbol.owner.id, From: matchSymbol.owner.id, Digram: digram,
+	})
 
 	firstCopy := grammar.cloneSymbol(matchSymbol, newRule)
 	secondCopy := grammar.cloneSymbol(matchSymbol.next, newRule)
@@ -457,6 +594,7 @@ func (grammar *Grammar) inlineRule(rule *Rule) {
 	}
 
 	parentRule := refSymbol.owner
+	grammar.record(GrammarEvent{Kind: EventInline, Rule: rule.id, Into: parentRule.id})
 	refPrev := refSymbol.prev
 	refNext := refSymbol.next
 

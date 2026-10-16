@@ -128,11 +128,13 @@ func TestSchemaRoundTrip(t *testing.T) {
 			price, err := offlinePrice(ctx, "0.26", []string{symbol})
 			So(err, ShouldBeNil)
 
-			detector, err := strategy.NewDetector(ctx, price, epoch, symbol)
+			detector, err := strategy.NewDetector(ctx, price, epoch, 1, symbol)
 			So(err, ShouldBeNil)
 
-			path := make([]float64, 0, 400)
-			for idx := range 100 {
+			// 300 flat ticks first: the up leg's lookback (half the move
+			// before B) lies on the stored tape.
+			path := make([]float64, 0, 600)
+			for idx := range 300 {
 				path = append(path, 100+0.001*float64(idx%2))
 			}
 			for idx := range 100 {
@@ -178,6 +180,9 @@ func TestSchemaRoundTrip(t *testing.T) {
 			}
 
 			So(up, ShouldNotBeNil)
+			upFields, err := data.ExcursionFields(up)
+			So(err, ShouldBeNil)
+			So(upFields["a_tick"], ShouldBeGreaterThanOrEqualTo, 1)
 
 			// The audit's precursor stage accepts the stored excursion.
 			stage := audit.NewPrecursorStage(ctx)
@@ -186,6 +191,50 @@ func TestSchemaRoundTrip(t *testing.T) {
 				close(stage.Channel())
 			}()
 			So(stage.Run(), ShouldBeNil)
+		})
+
+		Convey("detect does not emit an excursion whose lookback precedes the first stored tick", func() {
+			price, err := offlinePrice(ctx, "0.26", []string{symbol})
+			So(err, ShouldBeNil)
+
+			// The epoch's tape starts at tick 1; the up leg starts at once.
+			detector, err := strategy.NewDetector(ctx, price, epoch, 1, symbol)
+			So(err, ShouldBeNil)
+
+			path := make([]float64, 0, 300)
+			for idx := range 100 {
+				path = append(path, 100+float64(idx)*0.2)
+			}
+			for idx := range 100 {
+				path = append(path, 120-float64(idx)*0.2)
+			}
+			for idx := range 100 {
+				path = append(path, 100+0.001*float64(idx%2))
+			}
+
+			emitted := make([]*data.Value, 0)
+			for idx, p := range path {
+				tick := stored(collectTick(epoch, uint64(idx+1), trade(idx, p), p*0.9999, p*1.0001))
+				symbolTicks, err := broker.ReadTick(tick)
+				So(err, ShouldBeNil)
+
+				results, err := detector.Step(tick.Tick, symbolTicks[0].Trades[0], symbolTicks[0].Price)
+				So(err, ShouldBeNil)
+				emitted = append(emitted, results...)
+			}
+
+			results, err := detector.Close()
+			So(err, ShouldBeNil)
+			emitted = append(emitted, results...)
+
+			for _, result := range emitted {
+				fields, err := data.ExcursionFields(result)
+				So(err, ShouldBeNil)
+				So(fields["a_tick"], ShouldBeGreaterThanOrEqualTo, 1)
+				So(result.Role, ShouldNotEqual, "up")
+			}
+
+			So(detector.Insufficient(), ShouldBeGreaterThan, 0)
 		})
 
 		Convey("train -> live training/audit: a policy reads back with its path", func() {

@@ -29,6 +29,7 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
@@ -279,6 +280,22 @@ func (booter *Booter) initPipeline() error {
 		}
 
 		sinks = append(sinks, booter.hub)
+
+		// The live grammar view reads the published policy; without capture
+		// there is no store sink, so it gets its own (read-only) client.
+		client := booter.store
+
+		if client == nil {
+			client = store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
+		}
+
+		sequitur, err := strategy.NewSequitur(ctx, booter.hub, client)
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		sinks = append(sinks, sequitur)
 	}
 
 	for _, sink := range sinks {

@@ -132,11 +132,15 @@ func ParseSignal(index string, layer []byte) (Signal, error) {
 		return signal, errnie.Err(errnie.Validation, "not in the "+signalNamespace+"/ namespace", nil)
 	}
 
-	rest, symbol, ok := strings.Cut(rest, "/"+symbolTag)
+	// The symbol tag is last by contract: cut at its last occurrence, so a
+	// label or tag containing "/symbol:" stays a label or tag.
+	at := strings.LastIndex(rest, "/"+symbolTag)
 
-	if !ok || symbol == "" {
+	if at < 0 || at+len("/"+symbolTag) == len(rest) {
 		return signal, errnie.Err(errnie.Validation, "no "+symbolTag+" tag", nil)
 	}
+
+	rest, symbol := rest[:at], rest[at+len("/"+symbolTag):]
 
 	parts := strings.Split(rest, "/")
 

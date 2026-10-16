@@ -57,16 +57,17 @@ var regionMetricPins = map[string]map[string][]uint8{
 		"conditional_intensity_velocity": {3},
 		"arrival_rate:sell":              {4, 7},
 		"branching_spectral_radius":      {1, 7},
-		"conditional_intensity":          {},
+		"conditional_intensity":          {}, // deliberately unpinned: kept out of the grid
 	},
 	"leadlag": {
 		"led_peer_share":               {1, 5, 7},
 		"covariance_score_gain_median": {7},
 		"best_lag_seconds_median":      {2, 4, 6, 13},
 		"best_lag_seconds_mad":         {6, 13},
-		"defined_peer_count":           {},
+		"defined_peer_count":           {}, // deliberately unpinned: kept out of the grid
 	},
 	"liquidity": {
+		// deliberately unpinned: raw touch prices, kept out of the grid
 		"best_price:bid":  {},
 		"best_price:ask":  {},
 		"relative_spread": {4, 8, 12},

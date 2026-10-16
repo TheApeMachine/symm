@@ -69,6 +69,7 @@ func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price,
 	written := make(map[string]bool)
 	counts := make(map[string]int)
 	ticks := 0
+	var firstTick uint64
 
 	write := func(results []*data.Value) error {
 		for _, result := range results {
@@ -99,6 +100,10 @@ func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price,
 			return err
 		}
 
+		if ticks == 0 {
+			firstTick = value.Tick
+		}
+
 		ticks++
 
 		for _, symbolTick := range symbolTicks {
@@ -109,7 +114,7 @@ func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price,
 			detector, ok := detectors[symbolTick.Symbol]
 
 			if !ok {
-				if detector, err = strategy.NewDetector(ctx, price, epoch, symbolTick.Symbol); err != nil {
+				if detector, err = strategy.NewDetector(ctx, price, epoch, firstTick, symbolTick.Symbol); err != nil {
 					return err
 				}
 
@@ -141,8 +146,11 @@ func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price,
 		return errnie.Err(errnie.NotFound, "[detect] no stored ticks under "+data.TickPrefix(epoch), nil)
 	}
 
+	insufficient := 0
+
 	for _, symbol := range order {
 		results, err := detectors[symbol].Close()
+		insufficient += detectors[symbol].Insufficient()
 
 		if err != nil {
 			return err
@@ -154,8 +162,8 @@ func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price,
 	}
 
 	errnie.Info(fmt.Sprintf(
-		"[detect] epoch %d: %d ticks, %d symbols, excursions up=%d down=%d chop=%d flat=%d",
-		epoch, ticks, len(order), counts["up"], counts["down"], counts["chop"], counts["flat"],
+		"[detect] epoch %d: %d ticks (first %d), %d symbols, excursions up=%d down=%d chop=%d flat=%d, not emitted for insufficient history=%d",
+		epoch, ticks, firstTick, len(order), counts["up"], counts["down"], counts["chop"], counts["flat"], insufficient,
 	))
 
 	return nil
