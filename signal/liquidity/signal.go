@@ -88,7 +88,7 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		frictionHurdle = relSpread + 2.0*feeRate
 	}
 
-	return data.AppendSymbolVector(value, symbol, []float64{
+	return data.AppendSignalVector(value, signal.Name(), symbol, []float64{
 		bid,
 		ask,
 		relSpread,

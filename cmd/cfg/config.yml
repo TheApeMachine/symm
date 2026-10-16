@@ -339,3 +339,30 @@ manifold:
   phase:
     lattice:
       width: 1024
+
+audit:
+  # Thresholds the audit stages judge by. They are declared hypotheses about
+  # healthy data, not tuned to make a run pass; changing one changes what a
+  # stage calls a violation, and the report names the value it used.
+  # Minimum grid tokens per symbol before dynamics/stability are evaluated.
+  min_tokens: 20
+  # Minimum precursor and background tokens before separation is tested.
+  min_precursor_tokens: 10
+  # A single token holding more than this share of a symbol's emissions is an
+  # absorbing-state collapse.
+  dominance_share: 0.80
+  # Transition entropy within this many bits of the maximum is pure noise.
+  entropy_tolerance: 0.01
+  # Half-vs-half region distribution shift (JSD, bits) that, when significant,
+  # is a non-stationary rupture.
+  stationarity_jsd: 0.35
+  # Minimum share of scorable (non warm-up) frames that light a region.
+  grid_completeness: 0.80
+  # A metric with at least this share of zero observations is stagnant.
+  stagnant_zero_fraction: 0.80
+  # Absolute tolerance for arithmetic identities (spread, friction hurdle).
+  identity_tolerance: 0.0001
+  # Latency spikes: Chebyshev bound at audit.significance when the stream's
+  # drift dispersion exceeds the floor, else a residual above the spike floor.
+  latency_dispersion_floor_ms: 1.0
+  latency_spike_floor_ms: 50

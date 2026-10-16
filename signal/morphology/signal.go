@@ -110,7 +110,7 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		res = append(res, 0.0)
 	}
 
-	return data.AppendSymbolVector(value, symbol, res, signal.keys...)
+	return data.AppendSignalVector(value, signal.Name(), symbol, res, signal.keys...)
 }
 
 func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float64, error) {

@@ -134,7 +134,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	output := summarize(readings)
 
-	return data.AppendSymbolVector(value, trade.Symbol, []float64{
+	return data.AppendSignalVector(value, signal.Name(), trade.Symbol, []float64{
 		output["defined_peer_count"],
 		output["best_lag_seconds_median"],
 		output["best_lag_seconds_mad"],

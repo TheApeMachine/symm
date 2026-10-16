@@ -62,19 +62,118 @@ func AppendVector[T any](value *Value, vector []T, keys ...string) *Value {
 }
 
 /*
-AppendSymbolVector is AppendVector for one symbol of a multi-symbol tick: the
-index is "<symbol>/<prefix>/<keys...>", so labels after ".bin/" stay aligned.
+AppendSignalVector is AppendVector for one signal source and one symbol of a
+multi-symbol tick. The index is "<symbol>/<prefix>/<keys...>/source:<source>":
+labels after ".bin/" stay aligned with the vector and the trailing tag names
+the signal that wrote it, so Signals can attribute every layer.
 */
-func AppendSymbolVector[T any](value *Value, symbol string, vector []T, keys ...string) *Value {
+func AppendSignalVector[T any](value *Value, source, symbol string, vector []T, keys ...string) *Value {
 	if value == nil {
 		return nil
 	}
 
-	value.claim(vectorBytes(vector), strings.Join(append(
-		[]string{symbol, value.Prefix}, keys...), "/",
-	))
+	parts := append([]string{symbol, value.Prefix}, keys...)
+	value.claim(vectorBytes(vector), strings.Join(append(parts, sourceTag+source), "/"))
 
 	return value
+}
+
+const sourceTag = "source:"
+
+/*
+Signal is one signal vector layer of a tick: which source wrote it, for which
+symbol, the label of every value, and any trailing "key:value" tags.
+*/
+type Signal struct {
+	Source string
+	Symbol string
+	Labels []string
+	Values []float64
+	Tags   []string
+}
+
+/*
+Metric returns the value labelled label, or ErrMissing.
+*/
+func (signal Signal) Metric(label string) (float64, error) {
+	if idx := slices.Index(signal.Labels, label); idx >= 0 {
+		return signal.Values[idx], nil
+	}
+
+	return 0, errnie.Err(errnie.NotFound, fmt.Sprintf(
+		"data: %s signal for %s has no %s", signal.Source, signal.Symbol, label,
+	), ErrMissing)
+}
+
+/*
+Signals yields every layer AppendSignalVector wrote on value, in layer order.
+A layer under value's prefix that does not parse (no source tag, fewer labels
+than values, a length that is not whole float64s) is yielded as an error.
+*/
+func Signals(value *Value) iter.Seq2[Signal, error] {
+	return func(yield func(Signal, error) bool) {
+		if value == nil || value.Prefix == "" {
+			return
+		}
+
+		marker := "/" + value.Prefix + "/"
+
+		for i, layer := range value.Layers[:value.visible()] {
+			if i >= len(value.Index) {
+				return
+			}
+
+			symbol, rest, ok := strings.Cut(value.Index[i], marker)
+
+			if !ok {
+				continue
+			}
+
+			signal, err := parseSignal(symbol, rest, layer)
+
+			if err != nil {
+				err = errnie.Err(errnie.UnprocessableContent, "data: signal layer "+value.Index[i], err)
+			}
+
+			if !yield(signal, err) {
+				return
+			}
+		}
+	}
+}
+
+func parseSignal(symbol, rest string, layer []byte) (Signal, error) {
+	signal := Signal{Symbol: symbol}
+	parts := strings.Split(rest, "/")
+	last := parts[len(parts)-1]
+
+	source, ok := strings.CutPrefix(last, sourceTag)
+
+	if !ok || source == "" {
+		return signal, errnie.Err(errnie.Validation, "no "+sourceTag+" tag", nil)
+	}
+
+	signal.Source = source
+	parts = parts[:len(parts)-1]
+
+	if len(layer)%8 != 0 {
+		return signal, errnie.Err(errnie.Validation, fmt.Sprintf("%d bytes is not whole float64s", len(layer)), nil)
+	}
+
+	count := len(layer) / 8
+
+	if count > len(parts) {
+		return signal, errnie.Err(errnie.Validation, fmt.Sprintf("%d values for %d labels", count, len(parts)), nil)
+	}
+
+	if count > 0 {
+		signal.Values = slices.Clone(unsafe.Slice((*float64)(unsafe.Pointer(&layer[0])), count))
+	}
+
+	signal.Labels = parts[:count]
+	signal.Tags = parts[count:]
+
+	return signal, nil
 }
 
 func vectorBytes[T any](vector []T) []byte {

@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"math"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -9,16 +10,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	s3store "github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/strategy"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -56,7 +55,7 @@ func (violation *Violation) String() string {
 - [VIOLATION] {{.Name}},
   **SYMBOL:** {{.Symbol}},
   **DESCRIPTION:** {{.Description}},
-  **METRIC:** {{.Metric.Name}},
+  **METRIC:** {{.Metric}},
 `
 
 	t := template.Must(template.New("violation").Parse(tmpl))
@@ -72,26 +71,33 @@ func (violation *Violation) String() string {
 
 /*
 Engine is the composition root and orchestrator for the empirical audit.
-It loads and validates datasets, coordinates stage evaluations concurrently,
-and produces the synthesized audit report and artifacts.
+It reads one epoch of stored ticks (one full tick Value per key, under
+data.TickPrefix), the excursions detect wrote and the policies train
+published for it, fans every symbol's measurements out to the stages, and
+writes the report and artifacts.
 */
 type Engine struct {
 	*runtime.System
 	store  *s3store.Client
 	stages []AuditorStage
-	epochs []int64
 }
 
 /*
-NewEngine constructs an audit engine using system.Cfg.Audit defaults.
+NewEngine constructs an audit engine reading through client, configured by
+system.Cfg.Audit.
 */
-func NewEngine(ctx context.Context) *Engine {
-	store := s3store.NewClient(ctx, "symm")
-	epochs := make([]int64, 0, 1)
+func NewEngine(ctx context.Context, client *s3store.Client) (*Engine, error) {
+	if client == nil {
+		return nil, errnie.Err(errnie.Validation, "[audit:engine] a store client is required", nil)
+	}
+
+	if err := validateConfig(system.Cfg.Audit); err != nil {
+		return nil, err
+	}
 
 	return &Engine{
 		System: runtime.NewSystem(ctx, "audit:engine"),
-		store:  store,
+		store:  client,
 		stages: []AuditorStage{
 			NewTimingStage(ctx),
 			NewContractStage(ctx),
@@ -104,163 +110,207 @@ func NewEngine(ctx context.Context) *Engine {
 			NewCognitiveStage(ctx),
 			NewTruthfulnessStage(ctx),
 		},
-		epochs: epochs,
-	}
+	}, nil
 }
 
 /*
-resolveTargetEpoch determines the single epoch to audit.
-If system.Cfg.Audit.Epoch is explicitly configured (> 0), it is used directly.
-Otherwise, it discovers all completed epochs under run/epoch/ and picks the newest
-epoch that has signal measurements stored in S3.
+validateConfig rejects an audit configuration a stage cannot judge by: no
+stage falls back to a value of its own.
 */
-func (engine *Engine) resolveTargetEpoch(symbol string) (int64, error) {
+func validateConfig(cfg *system.Audit) error {
+	checks := []struct {
+		name     string
+		value    float64
+		min, max float64
+		openMin  bool
+	}{
+		{"audit.permutations", float64(cfg.Permutations), 1, math.MaxInt32, false},
+		{"audit.significance", cfg.Significance, 0, 1, true},
+		{"audit.taker_fee (--taker-fee-percent / 100)", cfg.TakerFee, 0, 1, true},
+		{"audit.min_tokens", float64(cfg.MinTokens), 2, math.MaxInt32, false},
+		{"audit.min_precursor_tokens", float64(cfg.MinPrecursorTokens), 1, math.MaxInt32, false},
+		{"audit.dominance_share", cfg.DominanceShare, 0, 1, true},
+		{"audit.entropy_tolerance", cfg.EntropyTolerance, 0, math.MaxFloat64, true},
+		{"audit.stationarity_jsd", cfg.StationarityJSD, 0, 1, true},
+		{"audit.grid_completeness", cfg.GridCompleteness, 0, 1, true},
+		{"audit.stagnant_zero_fraction", cfg.StagnantZeroFraction, 0, 1, true},
+		{"audit.identity_tolerance", cfg.IdentityTolerance, 0, math.MaxFloat64, true},
+		{"audit.latency_dispersion_floor_ms", cfg.LatencyDispersionFloorMs, 0, math.MaxFloat64, true},
+		{"audit.latency_spike_floor_ms", cfg.LatencySpikeFloorMs, 0, math.MaxFloat64, true},
+	}
+
+	for _, check := range checks {
+		low := check.value < check.min || (check.openMin && check.value == check.min)
+
+		if math.IsNaN(check.value) || low || check.value > check.max {
+			return errnie.Err(errnie.Validation, fmt.Sprintf(
+				"[audit:engine] %s = %v is outside its domain (%v, %v]", check.name, check.value, check.min, check.max,
+			), nil)
+		}
+	}
+
+	if cfg.Significance >= 1 || cfg.TakerFee >= 1 {
+		return errnie.Err(errnie.Validation, "[audit:engine] audit.significance and the taker fee must be below 1", nil)
+	}
+
+	return nil
+}
+
+/*
+resolveTargetEpoch is system.Cfg.Audit.Epoch when set, else the newest epoch
+with stored ticks.
+*/
+func (engine *Engine) resolveTargetEpoch() (uint64, error) {
 	if system.Cfg.Audit.Epoch > 0 {
-		return system.Cfg.Audit.Epoch, nil
+		return uint64(system.Cfg.Audit.Epoch), nil
 	}
 
-	if len(engine.epochs) > 0 && engine.epochs[0] > 0 {
-		return engine.epochs[0], nil
+	epochs, err := s3store.Epochs(engine.store, data.TickPrefix())
+
+	if err != nil {
+		return 0, err
 	}
 
-	seen := make(map[int64]bool)
-	var candidateEpochs []int64
-
-	for page := range engine.store.List("run/epoch/", "/") {
-		for _, commonPrefix := range page.CommonPrefixes {
-			if commonPrefix.Prefix == nil {
-				continue
-			}
-
-			prefixStr := strings.TrimPrefix(*commonPrefix.Prefix, "run/epoch/")
-			prefixStr = strings.Trim(prefixStr, "/")
-			epoch, err := strconv.ParseInt(prefixStr, 10, 64)
-
-			if err != nil || epoch <= 0 {
-				continue
-			}
-
-			if seen[epoch] {
-				continue
-			}
-
-			seen[epoch] = true
-			candidateEpochs = append(candidateEpochs, epoch)
-		}
-
-		for _, object := range page.Contents {
-			if object.Key == nil {
-				continue
-			}
-
-			parts := strings.Split(*object.Key, "/")
-
-			if len(parts) < 3 {
-				continue
-			}
-
-			epoch, err := strconv.ParseInt(parts[2], 10, 64)
-
-			if err != nil || epoch <= 0 {
-				continue
-			}
-
-			if seen[epoch] {
-				continue
-			}
-
-			seen[epoch] = true
-			candidateEpochs = append(candidateEpochs, epoch)
-		}
+	if len(epochs) == 0 {
+		return 0, errnie.Err(errnie.NotFound, "[audit:engine] no stored ticks under "+data.TickPrefix(), nil)
 	}
 
-	if len(candidateEpochs) == 0 {
-		return 0, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"[audit:engine] no completed epochs found in store under run/epoch/",
-			nil,
-		))
-	}
-
-	slices.SortFunc(candidateEpochs, func(firstEpoch, secondEpoch int64) int {
-		if firstEpoch > secondEpoch {
-			return -1
-		}
-
-		if firstEpoch < secondEpoch {
-			return 1
-		}
-
-		return 0
-	})
-
-	for _, candidate := range candidateEpochs {
-		testPrefix := fmt.Sprintf("%s/%s/%d", types.SignalSources[0], symbol, candidate)
-		keys := engine.store.ListKeys(testPrefix)
-
-		if len(keys) > 0 {
-			return candidate, nil
-		}
-	}
-
-	return candidateEpochs[0], nil
+	return epochs[len(epochs)-1], nil
 }
 
 /*
-resolveSymbols discovers all active symbols with recorded signals in targetEpoch.
-If system.Cfg.Audit.Symbol is explicitly configured, it is prioritized.
+Routes name the stages each kind of measurement is fanned out to.
 */
-func (engine *Engine) resolveSymbols(targetEpoch int64, defaultSymbol string) []string {
-	if system.Cfg.Audit.Symbol != "" {
-		return []string{system.Cfg.Audit.Symbol}
+type routes struct {
+	trades, signals, prices, joins, excursions, policies []AuditorStage
+}
+
+func (engine *Engine) routes() routes {
+	stage := make(map[string]AuditorStage, len(engine.stages))
+
+	for _, s := range engine.stages {
+		stage[s.Name()] = s
 	}
 
-	seen := make(map[string]bool)
-	symbols := make([]string, 0)
+	pick := func(names ...string) []AuditorStage {
+		out := make([]AuditorStage, 0, len(names))
 
-	for _, key := range engine.store.ListKeys(string(types.SignalSources[0]) + "/") {
-		parts := strings.Split(key, "/")
-
-		if len(parts) < 3 {
-			continue
+		for _, name := range names {
+			out = append(out, stage[name])
 		}
 
-		epochIdx := -1
-		var epoch int64
-		for i := 1; i < len(parts); i++ {
-			parsed, err := strconv.ParseInt(parts[i], 10, 64)
-			if err == nil && parsed > 0 {
-				epochIdx = i
-				epoch = parsed
-				break
-			}
-		}
-
-		if epochIdx < 2 || epoch != targetEpoch {
-			continue
-		}
-
-		sym := strings.Join(parts[1:epochIdx], "/")
-
-		if !seen[sym] {
-			seen[sym] = true
-			symbols = append(symbols, sym)
-		}
+		return out
 	}
 
-	if len(symbols) == 0 {
-		return []string{defaultSymbol}
+	return routes{
+		trades:     pick("audit:timing", "audit:contract", "audit:truthfulness"),
+		signals:    pick("audit:contract", "audit:vitality", "audit:redundancy", "audit:sympathy", "audit:truthfulness"),
+		prices:     pick("audit:contract", "audit:vitality", "audit:sympathy", "audit:truthfulness"),
+		joins:      pick("audit:stability", "audit:dynamics", "audit:precursor"),
+		excursions: pick("audit:precursor", "audit:contract"),
+		policies:   pick("audit:cognitive", "audit:contract"),
 	}
+}
 
-	slices.Sort(symbols)
-	return symbols
+func send(stages []AuditorStage, measurement *data.Value) {
+	for _, stage := range stages {
+		stage.Channel() <- measurement
+	}
 }
 
 /*
-Run executes the complete 6-stage health audit and generates machine-readable
-and visual outputs.
+feed streams epoch to the stages and closes their channels when done.
+*/
+func (engine *Engine) feed(epoch uint64) error {
+	defer func() {
+		for _, stage := range engine.stages {
+			close(stage.Channel())
+		}
+	}()
+
+	route := engine.routes()
+	symbols := make([]string, 0)
+	var ticks int
+	var lastTick uint64
+
+	for value := range s3store.Values(engine.store, data.TickPrefix(epoch)) {
+		if err := engine.Context().Err(); err != nil {
+			return err
+		}
+
+		views, err := TickViews(value, system.Cfg.Audit.Symbol)
+
+		if err != nil {
+			return err
+		}
+
+		ticks++
+		lastTick = value.Tick
+
+		for _, view := range views {
+			if !slices.Contains(symbols, view.Symbol) {
+				symbols = append(symbols, view.Symbol)
+			}
+
+			for _, trade := range view.Trades {
+				send(route.trades, trade)
+			}
+
+			for _, signal := range view.Signals {
+				send(route.signals, signal)
+			}
+
+			send(route.prices, view.Price)
+			send(route.joins, view.Join)
+		}
+
+		if system.Cfg.Audit.Ticks > 0 && ticks >= system.Cfg.Audit.Ticks {
+			break
+		}
+	}
+
+	if ticks == 0 {
+		return errnie.Err(errnie.NotFound, "[audit:engine] no stored ticks under "+data.TickPrefix(epoch), nil)
+	}
+
+	errnie.Info(fmt.Sprintf("[audit:engine] epoch %d: %d ticks (through tick %d), symbols %v", epoch, ticks, lastTick, symbols))
+
+	var excursions, policies int
+
+	for _, symbol := range symbols {
+		for excursion := range s3store.Values(engine.store, strategy.ExcursionPrefixes(symbol, epoch)...) {
+			// An excursion that ends after the audited ticks is outside the
+			// window the stages saw.
+			if excursion.Tick > lastTick {
+				continue
+			}
+
+			excursions++
+			send(route.excursions, excursion)
+		}
+	}
+
+	for policy := range s3store.Values(engine.store, strategy.PolicyPrefixes(epoch)...) {
+		policies++
+		send(route.policies, policy)
+	}
+
+	errnie.Info(fmt.Sprintf("[audit:engine] epoch %d: %d excursions, %d policies", epoch, excursions, policies))
+
+	return nil
+}
+
+/*
+Run executes every audit stage over one epoch and writes audit.md and
+audit_results.json (and plots unless disabled).
 */
 func (engine *Engine) Run() error {
+	epoch, err := engine.resolveTargetEpoch()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
 	group, _ := errgroup.WithContext(engine.Context())
 
 	for _, stage := range engine.stages {
@@ -270,170 +320,7 @@ func (engine *Engine) Run() error {
 	}
 
 	group.Go(func() error {
-		symbol := system.Cfg.Audit.Symbol
-
-		if symbol == "" {
-			symbol = "BTC/USD"
-		}
-
-		targetEpoch, err := engine.resolveTargetEpoch(symbol)
-
-		if err != nil {
-			return errnie.Error(err)
-		}
-
-		symbols := engine.resolveSymbols(targetEpoch, symbol)
-		errnie.Info(fmt.Sprintf("[audit:engine] auditing isolated epoch %d for symbols: %v", targetEpoch, symbols))
-
-		var signalStages []AuditorStage
-		var precursorStages []AuditorStage
-		var contractStages []AuditorStage
-		var cognitiveStages []AuditorStage
-
-		for _, stage := range engine.stages {
-			switch stage.Name() {
-			case "audit:precursor":
-				precursorStages = append(precursorStages, stage)
-			case "audit:contract":
-				contractStages = append(contractStages, stage)
-			case "audit:cognitive":
-				cognitiveStages = append(cognitiveStages, stage)
-			default:
-				signalStages = append(signalStages, stage)
-			}
-		}
-
-		var signalPrefixes []string
-
-		for _, sym := range symbols {
-			for _, source := range types.SignalSources {
-				signalPrefixes = append(signalPrefixes, fmt.Sprintf("%s/%s/%019d", source, sym, targetEpoch))
-				if fmt.Sprintf("%d", targetEpoch) != fmt.Sprintf("%019d", targetEpoch) {
-					signalPrefixes = append(signalPrefixes, fmt.Sprintf("%s/%s/%d", source, sym, targetEpoch))
-				}
-			}
-		}
-
-		var currentTick uint64
-		var hasTick bool
-		var currentPeers []*data.Value
-		var uniqueTicksCount int
-
-		flushJoin := func() {
-			if len(currentPeers) == 0 {
-				return
-			}
-
-			first := currentPeers[0]
-			join := data.NewValue(first.Origin, "runtime:join", first.Scope)
-			join.Tick = first.Tick
-			join.SeqIdx = first.SeqIdx
-			join.Timestamp = first.Timestamp
-			for _, peer := range currentPeers {
-				join.Layers = append(join.Layers, peer.Layers...)
-				join.Index = append(join.Index, peer.Index...)
-			}
-
-			for _, stage := range signalStages {
-				stage.Channel() <- join
-			}
-
-			for _, stage := range precursorStages {
-				stage.Channel() <- join
-			}
-
-			for _, stage := range contractStages {
-				stage.Channel() <- join
-			}
-
-			currentPeers = nil
-		}
-
-		for measurement := range hindsight.Measurements(engine.store, signalPrefixes...) {
-			if hasTick && measurement.Tick != currentTick {
-				flushJoin()
-				uniqueTicksCount++
-
-				if system.Cfg.Audit.Ticks > 0 && uniqueTicksCount >= system.Cfg.Audit.Ticks {
-					break
-				}
-			}
-
-			hasTick = true
-			currentTick = measurement.Tick
-			currentPeers = append(currentPeers, measurement)
-
-			for _, stage := range signalStages {
-				stage.Channel() <- measurement
-			}
-
-			for _, stage := range contractStages {
-				stage.Channel() <- measurement
-			}
-		}
-
-		flushJoin()
-
-		// Stream detector excursions exclusively to PrecursorStage and ContractStage
-		for _, sym := range symbols {
-			detectorPrefixes := []string{
-				fmt.Sprintf("detector/%s/%019d", sym, targetEpoch),
-			}
-			if fmt.Sprintf("%d", targetEpoch) != fmt.Sprintf("%019d", targetEpoch) {
-				detectorPrefixes = append(detectorPrefixes, fmt.Sprintf("detector/%s/%d", sym, targetEpoch))
-			}
-
-			for measurement := range hindsight.Measurements(engine.store, detectorPrefixes...) {
-				if system.Cfg.Audit.Ticks > 0 && currentTick > 0 {
-					if measurement.Tick > currentTick {
-						continue
-					}
-					metrics := data.Metrics(measurement)
-					if endTick, ok := metrics["end_tick"]; ok {
-						if uint64(endTick) > currentTick {
-							continue
-						}
-					}
-					if cTick, ok := metrics["c_tick"]; ok {
-						if uint64(cTick) > currentTick {
-							continue
-						}
-					}
-				}
-
-				for _, stage := range precursorStages {
-					stage.Channel() <- measurement
-				}
-
-				for _, stage := range contractStages {
-					stage.Channel() <- measurement
-				}
-			}
-
-			// Stream policy decisions exclusively to CognitiveStage and ContractStage
-			policyPrefixes := []string{
-				fmt.Sprintf("policy/%s/%019d", sym, targetEpoch),
-			}
-			if fmt.Sprintf("%d", targetEpoch) != fmt.Sprintf("%019d", targetEpoch) {
-				policyPrefixes = append(policyPrefixes, fmt.Sprintf("policy/%s/%d", sym, targetEpoch))
-			}
-
-			for measurement := range hindsight.Measurements(engine.store, policyPrefixes...) {
-				for _, stage := range cognitiveStages {
-					stage.Channel() <- measurement
-				}
-
-				for _, stage := range contractStages {
-					stage.Channel() <- measurement
-				}
-			}
-		}
-
-		for _, stage := range engine.stages {
-			close(stage.Channel())
-		}
-
-		return nil
+		return engine.feed(epoch)
 	})
 
 	if err := group.Wait(); err != nil {

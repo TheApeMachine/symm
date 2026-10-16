@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/rand"
-	"slices"
 	"strings"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -26,8 +25,10 @@ type StabilityStage struct {
 	violations   []*Violation
 	grid         *nmstore.Grid
 	activations  []string
-	totalFrames  int64
-	validFrames  int64
+	totalFrames   int64
+	validFrames   int64
+	warmingFrames int64
+	err           error
 	jsd          float64
 	tvd          float64
 	nullJSDMean  float64
@@ -54,25 +55,15 @@ func (stage *StabilityStage) Run() error {
 	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
 
 	for measurement := range stage.ch {
-		if measurement == nil {
-			stage.violations = append(stage.violations, NewViolation(
-				"unknown",
-				"measurement",
-				"Nil measurement encountered in tape",
-				nil,
-				nil,
-			))
-
+		if measurement.Role != "runtime:join" || stage.err != nil {
 			continue
 		}
-
-		if measurement.Role != "runtime:join" {
-			continue
-		}
-
-		stage.totalFrames++
 
 		stage.recordFrame(measurement)
+	}
+
+	if stage.err != nil {
+		return stage.err
 	}
 
 	stage.auditStationarity()
@@ -84,21 +75,33 @@ func (stage *StabilityStage) Violations() []*Violation {
 }
 
 /*
-recordFrame logs the dominant regional token for the arrival using Grid.Observe.
+recordFrame logs the dominant region of one symbol's frame. Frames still
+warming up (no prior tick to normalize against) are counted apart: they are
+not missing observations.
 */
 func (stage *StabilityStage) recordFrame(measurement *data.Value) {
-	if len(measurement.Layers) == 0 {
+	frame, err := stage.grid.Observe(measurement, measurement.Scope)
+
+	if err != nil {
+		stage.err = err
 		return
 	}
 
-	regions := stage.grid.Observe(measurement)
+	stage.totalFrames++
 
-	if len(regions) == 0 || regions[0].Brightness <= 0 {
+	if frame.Regions == nil {
+		if frame.Warming > 0 {
+			stage.warmingFrames++
+		}
+
 		return
 	}
 
-	token := fmt.Sprintf("R%02d", regions[0].Key)
-	stage.activations = append(stage.activations, token)
+	if frame.Regions[0].Brightness <= 0 {
+		return
+	}
+
+	stage.activations = append(stage.activations, regionToken(frame.Regions[0].Key))
 	stage.validFrames++
 }
 
@@ -107,57 +110,49 @@ auditStationarity divides the observed activation sequence into halves
 and computes Jensen-Shannon Divergence (JSD) and Total Variation Distance (TVD).
 */
 func (stage *StabilityStage) auditStationarity() {
-	if stage.totalFrames == 0 {
+	cfg := system.Cfg.Audit
+	scorable := stage.totalFrames - stage.warmingFrames
+
+	if scorable < int64(cfg.MinTokens) || len(stage.activations) < cfg.MinTokens {
+		stage.violations = append(stage.violations, insufficient("grid", fmt.Sprintf(
+			"%d scorable frames (%d warming up) and %d activations; need %d of each",
+			scorable, stage.warmingFrames, len(stage.activations), cfg.MinTokens,
+		)))
 		return
 	}
 
-	// 1. Grid Completeness Check: Ensure at least 80% of ticks have valid observations.
-	completeness := float64(stage.validFrames) / float64(stage.totalFrames)
+	// 1. Grid completeness: scorable frames that light a region.
+	completeness := float64(stage.validFrames) / float64(scorable)
 
-	if stage.totalFrames >= 20 && completeness < 0.80 {
+	if completeness < cfg.GridCompleteness {
 		stage.violations = append(stage.violations, NewViolation(
 			"grid",
 			"grid.incomplete",
-			fmt.Sprintf("Grid completeness below threshold: %.1f%% (%d of %d frames)",
-				completeness*100, stage.validFrames, stage.totalFrames),
+			fmt.Sprintf("Grid completeness %.1f%% below %.1f%% (%d of %d scorable frames, %d warming up)",
+				completeness*100, cfg.GridCompleteness*100, stage.validFrames, scorable, stage.warmingFrames),
 			nil,
 			nil,
 		))
 	}
 
-	// 2. Stationarity Check: Need enough observations to divide into two halves.
-	totalActivations := len(stage.activations)
-	if totalActivations < 20 {
-		return
-	}
-
-	mid := totalActivations / 2
-	firstHalf := stage.activations[:mid]
-	secondHalf := stage.activations[mid:]
-
-	dist1 := computeFrequencyDistribution(firstHalf)
-	dist2 := computeFrequencyDistribution(secondHalf)
+	// 2. Stationarity: first versus second half of the activations.
+	mid := len(stage.activations) / 2
+	dist1 := computeFrequencyDistribution(stage.activations[:mid])
+	dist2 := computeFrequencyDistribution(stage.activations[mid:])
 
 	stage.jsd = computeJSD(dist1, dist2)
 	stage.tvd = computeTVD(dist1, dist2)
-
-	// 3. Permutation Test for Empirical Significance (P-Value & Null P95)
-	stage.permutations = 500
-	stage.pValue, stage.nullJSDMean, stage.nullJSDP95 = stage.permutationTest(
-		stage.activations, mid, stage.jsd, stage.permutations,
+	stage.permutations = cfg.Permutations
+	stage.pValue, stage.nullJSDMean, stage.nullJSDP95 = permutationNull(
+		stage.activations, mid, stage.jsd, stage.permutations, tokenJSD,
 	)
 
-	// Violation Criteria:
-	// A distribution shift is a non-stationary rupture if JSD > 0.35 bits
-	// AND the observed divergence is statistically significant (p-value < 0.05).
-	threshold := 0.35
-
-	if stage.jsd > threshold && stage.pValue < 0.05 {
+	if stage.jsd > cfg.StationarityJSD && stage.pValue < cfg.Significance {
 		stage.violations = append(stage.violations, NewViolation(
 			"grid",
 			"grid.non_stationary",
 			fmt.Sprintf("Feature grid regional activation is non-stationary across time halves: JSD = %.4f bits (threshold: %.2f), TVD = %.4f, p-value = %.4f (null 95th pct: %.4f)",
-				stage.jsd, threshold, stage.tvd, stage.pValue, stage.nullJSDP95),
+				stage.jsd, cfg.StationarityJSD, stage.tvd, stage.pValue, stage.nullJSDP95),
 			nil,
 			nil,
 		))
@@ -243,47 +238,6 @@ func computeTVD(p, q map[string]float64) float64 {
 	return 0.5 * sumAbs
 }
 
-func (stage *StabilityStage) permutationTest(
-	tokens []string, mid int, observedJSD float64, runs int,
-) (float64, float64, float64) {
-	shuffled := slices.Clone(tokens)
-	nullJSDs := make([]float64, runs)
-	exceedCount := 0
-
-	r := rand.New(rand.NewSource(42))
-
-	for i := range runs {
-		r.Shuffle(len(shuffled), func(i, j int) {
-			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
-		})
-
-		dist1 := computeFrequencyDistribution(shuffled[:mid])
-		dist2 := computeFrequencyDistribution(shuffled[mid:])
-		jsd := computeJSD(dist1, dist2)
-		nullJSDs[i] = jsd
-
-		if jsd >= observedJSD {
-			exceedCount++
-		}
-	}
-
-	slices.Sort(nullJSDs)
-	sum := 0.0
-	for _, val := range nullJSDs {
-		sum += val
-	}
-
-	mean := sum / float64(runs)
-	p95Idx := int(float64(runs) * 0.95)
-	if p95Idx >= runs {
-		p95Idx = runs - 1
-	}
-	p95 := nullJSDs[p95Idx]
-	pValue := float64(exceedCount) / float64(runs)
-
-	return pValue, mean, p95
-}
-
 func (stage *StabilityStage) Report() string {
 	var build strings.Builder
 
@@ -299,7 +253,8 @@ func (stage *StabilityStage) Data() any {
 		"passed":             len(stage.violations) == 0,
 		"total_frames":       stage.totalFrames,
 		"valid_frames":       stage.validFrames,
-		"completeness":       float64(stage.validFrames) / math.Max(1.0, float64(stage.totalFrames)),
+		"warming_frames":     stage.warmingFrames,
+		"completeness":       float64(stage.validFrames) / math.Max(1.0, float64(stage.totalFrames-stage.warmingFrames)),
 		"jsd_bits":           stage.jsd,
 		"tvd":                stage.tvd,
 		"p_value":            stage.pValue,

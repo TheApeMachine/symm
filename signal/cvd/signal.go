@@ -159,7 +159,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		state.prevMidpoint = midpoint
 	}
 
-	return data.AppendSymbolVector(value, trade.Symbol, []float64{
+	return data.AppendSignalVector(value, signal.Name(), trade.Symbol, []float64{
 		midpointLogReturn,
 		flowAligned,
 		grossNotional,

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -39,6 +40,9 @@ type Client struct {
 	cursor         int
 	currentPayload []byte
 	payloadOffset  int
+	uploads        sync.WaitGroup
+	failedMu       sync.Mutex
+	failed         []error
 }
 
 var _ io.ReadWriteCloser = (*Client)(nil)
@@ -165,20 +169,21 @@ func (client *Client) Download(key string) ([]byte, error) {
 	return writer.Bytes(), nil
 }
 
-func parseKeyOrder(key string) (epoch, tick, seqIdx, rest string) {
-	parts := strings.Split(key, "/")
-
-	if len(parts) >= 4 {
-		return parts[len(parts)-4], parts[len(parts)-3], parts[len(parts)-2], parts[len(parts)-1]
+/*
+sortKeys orders keys chronologically by the epoch and tick segments every
+key ends with (data.Value.FormatPrefix: .../epoch%019d/tick%019d.bin), then
+by key. Zero-padded segments compare correctly as strings.
+*/
+func sortKeys(keys []string) {
+	order := func(key string) (string, string) {
+		rest, tick, _ := cutLast(key)
+		_, epoch, _ := cutLast(rest)
+		return epoch, tick
 	}
 
-	return "", "", "", key
-}
-
-func sortKeys(keys []string) {
 	slices.SortFunc(keys, func(firstKey, secondKey string) int {
-		epochA, tickA, seqA, restA := parseKeyOrder(firstKey)
-		epochB, tickB, seqB, restB := parseKeyOrder(secondKey)
+		epochA, tickA := order(firstKey)
+		epochB, tickB := order(secondKey)
 
 		if epochA != epochB {
 			return strings.Compare(epochA, epochB)
@@ -188,12 +193,50 @@ func sortKeys(keys []string) {
 			return strings.Compare(tickA, tickB)
 		}
 
-		if seqA != seqB {
-			return strings.Compare(seqA, seqB)
-		}
-
-		return strings.Compare(restA, restB)
+		return strings.Compare(firstKey, secondKey)
 	})
+}
+
+func cutLast(key string) (string, string, bool) {
+	idx := strings.LastIndex(key, "/")
+
+	if idx < 0 {
+		return "", key, false
+	}
+
+	return key[:idx], key[idx+1:], true
+}
+
+/*
+Epochs lists the epochs stored under prefix (a data.Prefix without epoch),
+oldest first. A listed entry without a %019d epoch segment is an error: it
+was not written through data.Value.FormatPrefix.
+*/
+func Epochs(client *Client, prefix string) ([]uint64, error) {
+	if client == nil {
+		return nil, errnie.Err(errnie.Validation, "[store.client] no client to list epochs under "+prefix, nil)
+	}
+
+	epochs := make([]uint64, 0)
+
+	for page := range client.List(prefix, "/") {
+		for _, common := range page.CommonPrefixes {
+			if common.Prefix == nil {
+				continue
+			}
+
+			epoch, err := data.KeyEpoch(prefix, *common.Prefix)
+
+			if err != nil {
+				return nil, err
+			}
+
+			epochs = append(epochs, epoch)
+		}
+	}
+
+	slices.Sort(epochs)
+	return slices.Compact(epochs), nil
 }
 
 /*
@@ -224,22 +267,28 @@ func (client *Client) ListKeys(prefixes ...string) []string {
 }
 
 /*
-Values returns an iterator yielding each Value found under prefixes.
+Values returns an iterator yielding each Value found under prefixes, in key
+order. A key that does not download or decode is raised and skipped: the
+iterator cannot return it, so the error is logged with the key.
 */
 func Values(client *Client, prefixes ...string) iter.Seq[*data.Value] {
 	return func(yield func(*data.Value) bool) {
 		if client == nil {
+			errnie.Error(errnie.Err(errnie.Validation, "[store.client] no client to read values from", nil))
 			return
 		}
 
 		for _, key := range client.ListKeys(prefixes...) {
 			payload, err := client.Download(key)
+
 			if err != nil {
 				continue
 			}
 
-			val := data.From(payload)
-			if val == nil {
+			val := data.New()
+
+			if _, err := val.Write(payload); err != nil {
+				errnie.Error(errnie.Err(errnie.UnprocessableContent, "[store.client] "+key+" does not decode as a Value", err))
 				continue
 			}
 
@@ -331,19 +380,48 @@ p must be a freshly serialized Value (io.Copy(store, value) hands over
 value.Bytes()); its layers alias p, which the async upload keeps using.
 */
 func (client *Client) Write(p []byte) (n int, err error) {
-	val := data.From(p)
+	val := data.New()
+
+	if _, err := val.Write(p); err != nil {
+		return 0, errnie.Error(errnie.Err(errnie.UnprocessableContent, "[store.client] write does not decode as a Value", err))
+	}
+
+	client.uploads.Add(1)
 
 	go func() {
+		defer client.uploads.Done()
+
 		if _, err := client.uploader.Upload(client.Context(), &s3.PutObjectInput{
 			Bucket: aws.String(client.bucket),
 			Key:    aws.String(val.Prefix),
 			Body:   val,
 		}); err != nil {
 			client.uploadFailed(val.Prefix, err)
+
+			client.failedMu.Lock()
+			client.failed = append(client.failed, errnie.Err(errnie.IO, "[store.client] upload of "+val.Prefix+" failed", err))
+			client.failedMu.Unlock()
 		}
 	}()
 
 	return len(p), nil
+}
+
+/*
+Drain waits for every upload Write started and returns the uploads that
+failed since the last Drain. A batch command drains before it exits, so
+nothing it wrote is lost to process exit and no failure goes unreported.
+*/
+func (client *Client) Drain() error {
+	client.uploads.Wait()
+
+	client.failedMu.Lock()
+	defer client.failedMu.Unlock()
+
+	err := errors.Join(client.failed...)
+	client.failed = nil
+
+	return err
 }
 
 /*

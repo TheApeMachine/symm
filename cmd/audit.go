@@ -6,8 +6,9 @@ import (
 	"github.com/grafana/pyroscope-go"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight/audit"
+	auditpkg "github.com/theapemachine/symm/hindsight/audit"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/system"
 )
 
 var (
@@ -39,6 +40,36 @@ var auditCmd = &cobra.Command{
 			))
 		}
 
+		// Flags override config only where given; the taker fee is required.
+		audit := system.Cfg.Audit
+		flags := cmd.Flags()
+
+		if flags.Changed("epoch") {
+			audit.Epoch = auditEpoch
+		}
+
+		if flags.Changed("symbol") {
+			audit.Symbol = auditSymbol
+		}
+
+		if flags.Changed("ticks") {
+			audit.Ticks = auditTicks
+		}
+
+		if flags.Changed("permutations") {
+			audit.Permutations = auditPermutations
+		}
+
+		if flags.Changed("out") {
+			audit.OutputDir = auditOutputDir
+		}
+
+		if flags.Changed("no-plots") {
+			audit.NoPlots = auditNoPlots
+		}
+
+		audit.TakerFee = auditTakerFee / 100
+
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
@@ -52,16 +83,26 @@ var auditCmd = &cobra.Command{
 			))
 		}
 
-		return errnie.Error(audit.NewEngine(ctx).Run())
+		engine, err := auditpkg.NewEngine(ctx, client)
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		return errnie.Error(engine.Run())
 	},
 }
 
 func init() {
-	auditCmd.Flags().Int64Var(&auditEpoch, "epoch", 0, "Specific run epoch to audit (0 = newest run that has stored measurements)")
-	auditCmd.Flags().StringVar(&auditSymbol, "symbol", "", "Market symbol to audit (empty = all symbols across market tape)")
+	auditCmd.Flags().Int64Var(&auditEpoch, "epoch", 0, "Epoch to audit (0 = config audit.epoch, else the newest epoch with stored ticks)")
+	auditCmd.Flags().StringVar(&auditSymbol, "symbol", "", "Symbol to audit (empty = every symbol the ticks trade)")
 	auditCmd.Flags().IntVar(&auditTicks, "ticks", 1000, "Maximum number of ticks to sample (0 = all available ticks in epoch)")
 	auditCmd.Flags().IntVar(&auditPermutations, "permutations", 50, "Number of permutation iterations for null hypothesis testing")
-	auditCmd.Flags().Float64Var(&auditTakerFee, "taker-fee-percent", 0, "Taker fee percent the stored detections were made at (as given to detect --taker-fee-percent); required, checked against the detections")
+	auditCmd.Flags().Float64Var(&auditTakerFee, "taker-fee-percent", 0, "Taker fee percent per side the stored detections were made at (as given to detect --taker-fee-percent); required")
+
+	if err := auditCmd.MarkFlagRequired("taker-fee-percent"); err != nil {
+		errnie.Error(err)
+	}
 	auditCmd.Flags().StringVar(&auditOutputDir, "out", "audit_results", "Output directory for audit reports and plots")
 	auditCmd.Flags().BoolVar(&auditNoPlots, "no-plots", false, "Skip generating Python/matplotlib visualization charts")
 

@@ -84,7 +84,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		frame = (*nmcorrelation.Frame)(ptr)
 	}
 
-	return data.AppendSymbolVector(value, trade.Symbol, []float64{
+	return data.AppendSignalVector(value, signal.Name(), trade.Symbol, []float64{
 		frame.Metrics[signal.keys[0]],
 		frame.Metrics[signal.keys[1]],
 		frame.Metrics[signal.keys[2]],

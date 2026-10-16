@@ -161,7 +161,7 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	state.prevAskWorst = asks[len(asks)-1][0]
 	state.hasPrev = true
 
-	return data.AppendSymbolVector(value, symbol, []float64{
+	return data.AppendSignalVector(value, signal.Name(), symbol, []float64{
 		bookImb,
 		touchBid,
 		touchAsk,

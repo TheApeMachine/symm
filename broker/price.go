@@ -1220,6 +1220,17 @@ func (price *Price) WithFee(
 }
 
 /*
+PriceLayer is the price/<symbol> layer of a stored tick. An absent touch or
+fee is absent (nil), never zero: a known zero fee is present.
+*/
+type PriceLayer struct {
+	Symbol  string           `json:"symbol"`
+	Bid     *decimal.Decimal `json:"bid,omitempty"`
+	Ask     *decimal.Decimal `json:"ask,omitempty"`
+	FeeRate *float64         `json:"feeRate,omitempty"`
+}
+
+/*
 JSON returns the serialized JSON representation of price touch and fees for symbol.
 */
 func (price *Price) JSON(symbol string) []byte {
@@ -1229,14 +1240,7 @@ func (price *Price) JSON(symbol string) []byte {
 
 	bid, ask := price.Touch(symbol)
 
-	type PriceInfo struct {
-		Symbol  string           `json:"symbol"`
-		Bid     *decimal.Decimal `json:"bid,omitempty"`
-		Ask     *decimal.Decimal `json:"ask,omitempty"`
-		FeeRate *float64         `json:"feeRate,omitempty"`
-	}
-
-	info := PriceInfo{Symbol: symbol, Bid: bid, Ask: ask}
+	info := PriceLayer{Symbol: symbol, Bid: bid, Ask: ask}
 
 	// An unknown fee is absent from the layer; a known zero fee is present.
 	if fee, ok := price.FeeRate(symbol); ok {

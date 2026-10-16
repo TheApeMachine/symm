@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -270,7 +269,14 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		symbol = value.Origin
 	}
 
-	regions := training.grid.Observe(value)
+	frame, err := training.grid.Observe(value, symbol)
+	if err != nil {
+		errnie.Error(err)
+		return value
+	}
+
+	regions := frame.Regions
+
 	if len(regions) == 0 {
 		return value
 	}
@@ -432,121 +438,44 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 		return nil
 	}
 
-	s3Keys := training.client.ListKeys("policy/current/")
-	if len(s3Keys) == 0 {
-		s3Keys = training.client.ListKeys("policy/")
-	}
+	// The tree in force is the newest epoch the Trainer published.
+	var newest uint64
 
-	for _, key := range s3Keys {
-		if !strings.HasPrefix(key, "policy/") || !strings.HasSuffix(key, ".bin") {
-			continue
+	for _, prefix := range PolicyPrefixes() {
+		epochs, err := store.Epochs(training.client, prefix)
+
+		if err != nil {
+			return errnie.Error(err)
 		}
 
-		if strings.HasPrefix(key, "policy/archive/") {
-			continue
-		}
-
-		sub := strings.TrimPrefix(key, "policy/")
-		sub = strings.TrimSuffix(sub, ".bin")
-		parts := strings.Split(sub, "/")
-
-		if len(parts) < 2 {
-			continue
-		}
-
-		action := parts[len(parts)-1]
-		if action != "enter" && action != "exit" && action != "noop" {
-			continue
-		}
-
-		firstR := -1
-		for i := 0; i < len(parts)-1; i++ {
-			if strings.HasPrefix(parts[i], "R") {
-				firstR = i
-				break
-			}
-		}
-
-		if firstR < 0 {
-			continue
-		}
-
-		path := strings.Join(parts[firstR:len(parts)-1], "/")
-		if path == "" {
-			continue
-		}
-
-		// Map path globally
-		if existing, found := loaded.actions[path]; found && existing != action {
-			action = ""
-		}
-
-		loaded.actions[path] = action
-		loaded.keys = append(loaded.keys, path+"/"+parts[len(parts)-1]+".bin")
-
-		// Also preserve symbol-scoped key if key has a symbol prefix
-		symbol := parts[0]
-		if firstR > 0 {
-			symEnd := firstR
-			if firstR > 1 {
-				if _, err := strconv.ParseInt(parts[firstR-1], 10, 64); err == nil {
-					symEnd = firstR - 1
-				}
-			}
-			symbol = strings.Join(parts[:symEnd], "/")
-		}
-
-		if symbol != "" && symbol != "current" {
-			loaded.actions[symbol+"/"+path] = action
+		if len(epochs) > 0 {
+			newest = max(newest, epochs[len(epochs)-1])
 		}
 	}
 
-	if len(loaded.actions) == 0 {
-		for val := range store.Values(training.client, "policy/") {
-			if val == nil || val.Origin != "policy" {
-				continue
-			}
-
+	if newest > 0 {
+		for val := range store.Values(training.client, PolicyPrefixes(newest)...) {
 			action := val.Role
-			symbol := val.Scope
 			pathKey := ""
 
 			for _, idx := range val.Index {
 				for part := range strings.SplitSeq(idx, "/") {
 					if after, ok := strings.CutPrefix(part, "path:"); ok {
 						pathKey = after
-						break
 					}
 				}
-				if pathKey != "" {
-					break
-				}
 			}
 
-			if pathKey == "" || symbol == "" {
-				continue
+			if pathKey == "" {
+				return errnie.Error(errnie.Err(errnie.UnprocessableContent, "[training] policy "+val.Prefix+" has no path: tag", nil))
 			}
 
-			actionKey := symbol + "/" + pathKey
-			if existing, found := loaded.actions[actionKey]; found && existing != action {
+			if existing, found := loaded.actions[pathKey]; found && existing != action {
 				action = ""
 			}
 
-			loaded.actions[actionKey] = action
-
-			var file string
-			switch action {
-			case "enter":
-				file = actionEnter
-			case "exit":
-				file = actionExit
-			case "noop":
-				file = actionNoop
-			}
-
-			if file != "" {
-				loaded.keys = append(loaded.keys, symbol+"/"+pathKey+"/"+file)
-			}
+			loaded.actions[pathKey] = action
+			loaded.keys = append(loaded.keys, pathKey+"/"+val.Role+".bin")
 		}
 	}
 

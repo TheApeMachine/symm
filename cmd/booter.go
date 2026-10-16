@@ -434,7 +434,7 @@ func (booter *Booter) startIngress(
 				// touches, so a stored tick reproduces book, price, instrument,
 				// wallet and positions for every symbol in the frame.
 				value := data.NewValue(
-					"workspace", "tick", "aggregate",
+					data.TickOrigin, data.TickRole, data.TickScope,
 				).AppendJSON(buf, "spot:trade/"+msgType)
 
 				trades, err := data.AttributeOk[[]kraken.TradeData](buf, "data")

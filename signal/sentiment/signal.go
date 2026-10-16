@@ -189,7 +189,9 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	}
 
 	if len(cadences) == 0 {
-		return data.AppendSymbolVector(value, trade.Symbol, []float64{0, 0, 0, 0, 0, 0}, signal.keys...)
+		// Nothing is computable yet: the tick carries no layer for it
+		// rather than zeros that read as a measured value.
+		return value
 	}
 
 	cohortHorizon := median(cadences)
@@ -227,7 +229,9 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	validCount := float64(len(valid))
 	if validCount == 0 {
-		return data.AppendSymbolVector(value, trade.Symbol, []float64{0, 0, 0, 0, 0, 0}, signal.keys...)
+		// Nothing is computable yet: the tick carries no layer for it
+		// rather than zeros that read as a measured value.
+		return value
 	}
 
 	advanceCount := 0.0
@@ -288,7 +292,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		histDistance, histPercentile = focal.historyPath([2]float64{bZScore, mZScore})
 	}
 
-	return data.AppendSymbolVector(value, trade.Symbol, []float64{
+	return data.AppendSignalVector(value, signal.Name(), trade.Symbol, []float64{
 		breadth,
 		sameDirPeer,
 		oppDirPeer,

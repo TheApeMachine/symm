@@ -2,10 +2,13 @@ package data
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/theapemachine/errnie"
 )
 
 type Value struct {
@@ -122,14 +125,66 @@ func NewValue(
 }
 
 /*
-FormatPrefix recomputes and sets Prefix from current Origin, Role, Scope, Tick, SeqIdx.
+FormatPrefix recomputes and sets Prefix from current Origin, Role, Scope,
+Epoch and Tick: origin/role/scope/epoch%019d/tick%019d.bin, the storage key.
 */
 func (value *Value) FormatPrefix() string {
-	value.Prefix = fmt.Sprintf(
-		"%s/%s/%s/%019d/%019d.bin",
-		value.Origin, value.Role, value.Scope, value.Epoch, value.Tick,
-	)
+	value.Prefix = Prefix(value.Origin, value.Role, value.Scope, value.Epoch) +
+		fmt.Sprintf("%019d.bin", value.Tick)
 	return value.Prefix
+}
+
+/*
+Prefix is the key prefix FormatPrefix gives every Value of origin/role/scope,
+narrowed to one epoch when epoch is given. It is the only place keys are
+built: a reader lists exactly what writers stored.
+*/
+func Prefix(origin, role, scope string, epoch ...uint64) string {
+	prefix := origin + "/" + role + "/" + scope + "/"
+
+	if len(epoch) > 0 {
+		prefix += fmt.Sprintf("%019d/", epoch[0])
+	}
+
+	return prefix
+}
+
+/*
+The stored tick: one Kraken trade frame with every component's state, written
+by the booter as NewValue(TickOrigin, TickRole, TickScope).
+*/
+const (
+	TickOrigin = "workspace"
+	TickRole   = "tick"
+	TickScope  = "aggregate"
+)
+
+/*
+TickPrefix is Prefix for stored ticks, narrowed to one epoch when given.
+*/
+func TickPrefix(epoch ...uint64) string {
+	return Prefix(TickOrigin, TickRole, TickScope, epoch...)
+}
+
+/*
+KeyEpoch parses the epoch segment that follows prefix in key (a key or
+common prefix listed under Prefix(origin, role, scope)).
+*/
+func KeyEpoch(prefix, key string) (uint64, error) {
+	rest, ok := strings.CutPrefix(key, prefix)
+
+	if !ok {
+		return 0, errnie.Err(errnie.Validation, fmt.Sprintf("data: key %q is not under %q", key, prefix), nil)
+	}
+
+	segment, _, _ := strings.Cut(rest, "/")
+	epoch, err := strconv.ParseUint(segment, 10, 64)
+
+	if err != nil || len(segment) != 19 {
+		return 0, errnie.Err(errnie.Validation, fmt.Sprintf("data: key %q has no %%019d epoch after %q", key, prefix), err)
+	}
+
+	return epoch, nil
 }
 
 /*

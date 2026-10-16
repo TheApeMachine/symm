@@ -122,7 +122,7 @@ func TestTraining(t *testing.T) {
 			}
 
 			for idx, pin := range pins {
-				data.AppendVector(join, []float64{float64(idx + 2)}, pin[1])
+				data.AppendSignalVector(join, pin[0], "BTC/USD", []float64{float64(idx + 2)}, pin[1])
 			}
 
 			next := training.Step(join)
@@ -150,7 +150,7 @@ func TestTraining(t *testing.T) {
 			}
 
 			for idx, pin := range pins {
-				data.AppendVector(join, []float64{float64(idx + 2)}, pin[1])
+				data.AppendSignalVector(join, pin[0], "BTC/USD", []float64{float64(idx + 2)}, pin[1])
 			}
 
 			training.policy.Store(&policy{

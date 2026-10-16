@@ -109,7 +109,9 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	if !state.hasPrev {
 		state.observe(bid, bidQty, atNano)
-		return data.AppendSymbolVector(value, trade.Symbol, []float64{0, 0}, signal.keys...)
+		// Nothing is computable yet: the tick carries no layer for it
+		// rather than zeros that read as a measured value.
+		return value
 	}
 
 	state.pendingTradeQty += qty
@@ -119,7 +121,9 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	}
 
 	if atNano <= state.prevAtNano {
-		return data.AppendSymbolVector(value, trade.Symbol, []float64{0, 0}, signal.keys...)
+		// Nothing is computable yet: the tick carries no layer for it
+		// rather than zeros that read as a measured value.
+		return value
 	}
 
 	dt := (atNano - state.prevAtNano) / 1e9
@@ -141,7 +145,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	state.observe(bid, bidQty, atNano)
 
-	return data.AppendSymbolVector(value, trade.Symbol, []float64{
+	return data.AppendSignalVector(value, signal.Name(), trade.Symbol, []float64{
 		retreatFraction,
 		withdrawalRate,
 	}, signal.keys...)
