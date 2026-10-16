@@ -426,11 +426,19 @@ export const measurementToReading = (m: Measurement): MeasurementReading => {
 			name,
 			value: Number(value) || 0,
 		})),
-		provenance: Object.entries(m.provenance ?? {}).map(([name, value]) => ({
-			id: name,
-			name,
-			value: String(value),
-		})),
+		provenance: Array.isArray(m.provenance)
+			? m.provenance.map((p, idx) => ({
+					id: `${idx}:${p.name}`,
+					name: p.name,
+					value: String(p.value),
+				}))
+			: Object.entries((m.provenance ?? {}) as Record<string, string | number>).map(
+					([name, value]) => ({
+						id: name,
+						name,
+						value: String(value),
+					}),
+				),
 		peers,
 		Peers: peers,
 	};

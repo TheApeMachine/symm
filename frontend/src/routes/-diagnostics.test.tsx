@@ -1,11 +1,10 @@
 import { renderToReadableStream } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
-import { topologyStore } from "#/collections/topology";
+import { topologyStore, type BoundaryStamp } from "#/collections/topology";
 import {
 	DiagnosticsGraph,
 	type DiagnosticsSelection,
 } from "#/components/dashboard/diagnostics-graph";
-import type { BoundaryStamp } from "#/providers/telemetry/telemetry/boundary-stamp";
 
 /*
 FakeStamp mimics only the BoundaryStamp accessors topologyStore.ingest

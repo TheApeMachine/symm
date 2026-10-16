@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Measurement } from "#/collections/types";
+import { Value } from "#/types/value";
 import { terminalHealthSummary } from "./health";
 
 const reading = (
@@ -8,15 +8,12 @@ const reading = (
 	metric: string,
 	raw: number,
 	snm: number | null = null,
-): Measurement => ({
-	source,
-	symbol,
-	at: "2026-07-06T10:00:00Z",
-	metrics: {
-		[metric]: { raw, snm: snm ?? raw },
-	},
-	uncertainty: null,
-});
+): Value =>
+	new Value({
+		origin: source,
+		scope: symbol,
+		metrics: [{ name: metric, raw, snm: snm ?? raw }],
+	});
 
 describe("terminalHealthSummary", () => {
 	it("counts backend measurement frames as firing", () => {

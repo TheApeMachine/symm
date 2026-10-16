@@ -2,14 +2,13 @@
 import { act, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { focusAtom, RingBuffer, signals } from "#/collections/app";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MetricT } from "#/providers/telemetry/telemetry/metric";
+import { Value } from "#/types/value";
 import { CrossSectionPanel } from "./cross-section-panel";
 
 describe("CrossSectionPanel", () => {
 	it("renders panel and binds liquidity metrics live", () => {
 		focusAtom.set("BTC/USD");
-		const ring = new RingBuffer<MeasurementT>(10);
+		const ring = new RingBuffer<Value>(10);
 		signals.liquidity.setState((prev) => ({ ...prev, "BTC/USD": ring }));
 
 		const view = render(<CrossSectionPanel />);
@@ -17,15 +16,16 @@ describe("CrossSectionPanel", () => {
 		expect(view.container.querySelector('[data-metric="symbol"]')?.textContent).toBe("—");
 
 		act(() => {
-			const m = new MeasurementT();
-			m.symbol = "BTC/USD";
-			m.at = 1_700_000_000_000_000_000n;
-			m.metrics = [
-				new MetricT("relative_spread", 0.0004, 0.0004),
-				new MetricT("best_bid_price", 95123.45, 95123.45),
-				new MetricT("best_ask_price", 95127.25, 95127.25),
-			];
-			ring.add(m);
+			const val = new Value({
+				scope: "BTC/USD",
+				timestamp: 1_700_000_000_000_000_000n,
+				metrics: [
+					{ name: "relative_spread", raw: 0.0004, snm: 0.0004 },
+					{ name: "best_bid_price", raw: 95123.45, snm: 95123.45 },
+					{ name: "best_ask_price", raw: 95127.25, snm: 95127.25 },
+				],
+			});
+			ring.add(val);
 			signals.liquidity.setState((prev) => ({ ...prev, "BTC/USD": ring }));
 		});
 

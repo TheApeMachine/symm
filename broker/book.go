@@ -17,8 +17,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"golang.org/x/sync/errgroup"
@@ -186,22 +186,6 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	if managed != nil {
 		read(managed)
 	}
-}
-
-/*
-Stamp takes the next ingress sequence number for an event on symbol under the
-symbol's book read lock and returns it with the book's snapshot at that number.
-Level3 entries take their numbers under the same symbol's write lock once
-applied, so the snapshot is exactly the book built by every entry sequenced
-before the event: the book a SeqIdx-ordered replay of the stored tape rebuilds.
-A book without an executable touch has no snapshot.
-*/
-func (book *Book) Stamp(symbol string) (sequence int64, snapshot *Snapshot) {
-	symbolLock := book.symbolLock(symbol)
-	symbolLock.RLock()
-	defer symbolLock.RUnlock()
-
-	return system.SeqIdx.Add(1), book.snapshot(symbol)
 }
 
 /*
@@ -681,94 +665,27 @@ applied as one payload through Update, so the venue checksum is verified once,
 after the entry's last order, exactly as it was live. A stored tape that does
 not reproduce the venue checksum is an error.
 */
-func (book *Book) ApplyFrame(frame []*data.Measurement) error {
-	if len(frame) == 0 {
+func (book *Book) ApplyFrame(value *data.Value) error {
+	if value == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation, "[book] empty level3 frame", nil,
 		))
 	}
 
-	head := frame[0]
-	checksumStr := storedMeta(head, "checksum")
-	checksum, err := strconv.ParseUint(checksumStr, 10, 32)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "[book] level3 frame checksum unreadable", err,
-		))
-	}
-
-	entry := kraken.Level3Data{
-		Symbol:    head.Label,
-		Type:      storedMeta(head, "type"),
-		Timestamp: head.At,
-		Checksum:  uint32(checksum),
-		Bids:      []kraken.Level3Order{},
-		Asks:      []kraken.Level3Order{},
-	}
-
-	for _, measurement := range frame {
-		if measurement.Label != head.Label ||
-			storedMeta(measurement, "type") != entry.Type ||
-			storedMeta(measurement, "checksum") != checksumStr {
+	for layer := range data.Layers[[]byte](value, "level3") {
+		level3, err := kraken.NewLevel3(layer)
+		if err != nil {
 			return errnie.Error(errnie.Err(
-				errnie.Validation, "[book] level3 frame mixes symbols, types, or checksums", nil,
+				errnie.NotAcceptable, "[book] failed to parse level3 message", err,
 			))
 		}
 
-		order := kraken.Level3Order{
-			OrderID:    storedMeta(measurement, "order_id"),
-			Event:      storedMeta(measurement, "event"),
-			Timestamp:  measurement.At,
-			LimitPrice: storedExact(measurement, "limit_price"),
-			OrderQty:   storedExact(measurement, "order_qty"),
-		}
-
-		switch storedMeta(measurement, "side") {
-		case "bid":
-			entry.Bids = append(entry.Bids, order)
-		case "ask":
-			entry.Asks = append(entry.Asks, order)
-		default:
-			return errnie.Error(errnie.Err(
-				errnie.Validation, "[book] stored level3 order has no side", nil,
-			))
+		if err := book.Update(level3); err != nil {
+			return err
 		}
 	}
 
-	return book.Update(&kraken.Level3{
-		Channel: "level3",
-		Type:    entry.Type,
-		Data:    []kraken.Level3Data{entry},
-	})
-}
-
-/*
-storedExact returns the venue's exact decimal for key as ingress stored it. The
-checksum is computed over the venue's digits, so a float reconstruction would
-not reproduce it.
-*/
-func storedExact(measurement *data.Measurement, key string) *decimal.Decimal {
-	entry := data.Pull(measurement.Read(key))
-
-	if entry == nil || entry.Metric == nil {
-		return nil
-	}
-
-	return entry.Metric.Exact()
-}
-
-/*
-storedMeta returns the string metadata for key using generic data.Pull.
-*/
-func storedMeta(measurement *data.Measurement, key string) string {
-	entry := data.Pull(measurement.Meta(key))
-
-	if entry == nil {
-		return ""
-	}
-
-	return entry.Value
+	return nil
 }
 
 /*
@@ -779,7 +696,11 @@ are the venue's own. A crossed or one-sided book is not a touch: there is no
 price at which both sides could trade, and reporting one would put a number
 into the price series that the market never offered.
 */
-func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data, touches *[]kraken.Level3Touch) {
+func (book *Book) recordTouch(
+	symbolBook *spotbook.Book,
+	data kraken.Level3Data,
+	touches *[]kraken.Level3Touch,
+) {
 	bid, ask, defined := Touch(symbolBook)
 
 	if !defined {

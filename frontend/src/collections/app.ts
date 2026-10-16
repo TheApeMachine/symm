@@ -3,10 +3,9 @@ import { createStore, type Store } from "@tanstack/store";
 import { RingBuffer } from "./ring";
 export { RingBuffer };
 
-import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import type { HoldingT } from "#/providers/telemetry/telemetry/holding";
-import type { PositionT } from "#/providers/telemetry/telemetry/position";
+import { Value } from "#/types/value";
+export type { Metric, NamedNumber, Tag } from "#/types/value";
+export { Value };
 
 export const DEFAULT_KERNELS = [
 	"correlation",
@@ -89,32 +88,35 @@ export const tickCountAtom = createAtom<number>(0);
 export const phaseAtom = createAtom<string>("—");
 export const candidatesAtom = createAtom<number>(0);
 export const positionCountAtom = createAtom<number>(0);
-export const measurementSourcesAtom = createAtom<string[]>(DEFAULT_KERNELS);
+export const signalSourcesAtom = createAtom<string[]>(DEFAULT_KERNELS);
 export const kernelDetailAtom = createAtom<string>("cvd");
+
+import type { DecisionT, HoldingT, PositionT } from "#/collections/types";
 
 export const positionsAtom = createAtom<PositionT[]>([]);
 // Round trips closed this session, each with the triggers of its sells.
 export const closedPositionsAtom = createAtom<HoldingT[]>([]);
 export const decisionsAtom = createAtom<DecisionT[]>([]);
-export const resonanceStore = createStore<Record<string, RingBuffer<MeasurementT>>>({});
+export const resonanceStore = createStore<Record<string, RingBuffer<Value>>>(
+	{},
+);
 
 export const signals: Record<
 	string,
-	Store<Record<string, RingBuffer<MeasurementT>>>
+	Store<Record<string, RingBuffer<Value>>>
 > = {
-	category: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	correlation: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	cvd: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	depthflow: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	hawkes: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	leadlag: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	liquidity: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	morphology: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	pumpdump: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	sentiment: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
+	category: createStore<Record<string, RingBuffer<Value>>>({}),
+	correlation: createStore<Record<string, RingBuffer<Value>>>({}),
+	cvd: createStore<Record<string, RingBuffer<Value>>>({}),
+	depthflow: createStore<Record<string, RingBuffer<Value>>>({}),
+	hawkes: createStore<Record<string, RingBuffer<Value>>>({}),
+	leadlag: createStore<Record<string, RingBuffer<Value>>>({}),
+	liquidity: createStore<Record<string, RingBuffer<Value>>>({}),
+	morphology: createStore<Record<string, RingBuffer<Value>>>({}),
+	pumpdump: createStore<Record<string, RingBuffer<Value>>>({}),
+	sentiment: createStore<Record<string, RingBuffer<Value>>>({}),
 	resonance: resonanceStore,
-	toxicity: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	training: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
-	manifold: createStore<Record<string, RingBuffer<MeasurementT>>>({}),
+	toxicity: createStore<Record<string, RingBuffer<Value>>>({}),
+	training: createStore<Record<string, RingBuffer<Value>>>({}),
+	manifold: createStore<Record<string, RingBuffer<Value>>>({}),
 };
-

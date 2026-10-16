@@ -8,7 +8,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -134,7 +133,7 @@ func (op *History) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.baselines[frame.Symbol] = bl
 			}
 
-			reading := data.To[float64, adaptive.BaselineReading](bl, &signed)
+			reading := transport.To[float64, adaptive.BaselineReading](bl, &signed)
 
 			if reading.HasPrior {
 				frame.Metrics["covariance_score_baseline"] = reading.Baseline
@@ -197,7 +196,7 @@ func (op *Relative) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				op.baselines[frame.Symbol] = bl
 			}
 
-			reading := data.To[float64, adaptive.BaselineReading](bl, &relative)
+			reading := transport.To[float64, adaptive.BaselineReading](bl, &relative)
 
 			if reading.HasPrior {
 				frame.Metrics["relative_return_energy_baseline"] = reading.Baseline
@@ -272,7 +271,7 @@ func (op *CorrelationVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe
 				At:    frame.At,
 			}
 
-			reading := data.To[temporal.Observation, temporal.VelocityReading](
+			reading := transport.To[temporal.Observation, temporal.VelocityReading](
 				vel, &observation,
 			)
 
@@ -336,7 +335,7 @@ func (op *EnergyVelocity) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 				At:    frame.At,
 			}
 
-			reading := data.To[temporal.Observation, temporal.VelocityReading](
+			reading := transport.To[temporal.Observation, temporal.VelocityReading](
 				vel, &observation,
 			)
 

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { RingBuffer, signals } from "#/collections/app";
 import type { Lifecycle } from "#/lib/lifecycle";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { Value } from "#/types/value";
 import {
 	ActivePositionHealthCard,
 	LiveRegionActivationMap,
@@ -80,18 +80,20 @@ describe("position-health components", () => {
 	});
 
 	it("renders TradeRegionScores with live measured brightness from signals.training", () => {
-		const ring = new RingBuffer<MeasurementT>(10);
-		ring.add({
-			symbol: "ZAMA/USD",
-			source: "training",
-			metrics: [
-				{ name: "region_brightness:R06", raw: 2.85 },
-				{ name: "region_members:R06", raw: 7 },
-				{ name: "region_brightness:R01", raw: 1.42 },
-				{ name: "region_members:R01", raw: 4 },
-			],
-			provenance: [{ name: "token_path", value: "R01/R06" }],
-		} as unknown as MeasurementT);
+		const ring = new RingBuffer<Value>(10);
+		ring.add(
+			new Value({
+				scope: "ZAMA/USD",
+				origin: "training",
+				metrics: [
+					{ name: "region_brightness:R06", raw: 2.85 },
+					{ name: "region_members:R06", raw: 7 },
+					{ name: "region_brightness:R01", raw: 1.42 },
+					{ name: "region_members:R01", raw: 4 },
+				],
+				provenance: [{ name: "token_path", value: "R01/R06" }],
+			}),
+		);
 		signals.training.state["ZAMA/USD"] = ring;
 
 		const markup = renderToStaticMarkup(<TradeRegionScores life={mockLife} />);

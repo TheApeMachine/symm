@@ -7,14 +7,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -77,7 +79,7 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 		}
 
 		group, ctx := errgroup.WithContext(trainer.Context())
-		symbolChannels := make(map[string]chan *data.Measurement)
+		symbolChannels := make(map[string]chan *data.Value)
 		sources := append([]string{"detector"}, types.SignalSourceStrings...)
 
 		symbols := trainer.symbols
@@ -127,16 +129,16 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 		globalTallies := make(map[string]*pathTally)
 		globalStats := make(map[string]*pathStats)
 
-		for measurement := range trainer.client.Get(prefixes...) {
-			if measurement == nil || measurement.Epoch != epoch {
+		for val := range store.Values(trainer.client, prefixes...) {
+			if val == nil || val.Epoch != uint64(epoch) {
 				continue
 			}
 
-			label := measurement.Label
+			label := val.Scope
 			channel, found := symbolChannels[label]
 
 			if !found {
-				channel = make(chan *data.Measurement, 256)
+				channel = make(chan *data.Value, 256)
 				symbolChannels[label] = channel
 
 				group.Go(func() error {
@@ -180,7 +182,7 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 				})
 			}
 
-			channel <- measurement
+			channel <- val
 		}
 
 		for _, channel := range symbolChannels {
@@ -205,49 +207,44 @@ func (trainer *Trainer) consumeSymbol(
 	ctx context.Context,
 	epoch int64,
 	symbol string,
-	channel <-chan *data.Measurement,
+	channel <-chan *data.Value,
 ) (map[string]*pathTally, map[string]*pathStats, error) {
+	_ = epoch
 	type timeBucket struct {
-		peers []*data.Measurement
+		peers []*data.Value
 	}
 
-	buckets := make(map[int64]*timeBucket)
-	var excursions []*data.Measurement
+	buckets := make(map[uint64]*timeBucket)
+	var excursions []*data.Value
 
-	for measurement := range channel {
+	for val := range channel {
 		select {
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
 		default:
 		}
 
-		if measurement == nil {
+		if val == nil {
 			continue
 		}
 
-		if measurement.Source == "detector" {
-			typeEntry := data.Pull(measurement.Meta("type"))
-			errnie.Info(fmt.Sprintf("[trainer] typeEntry: %v", typeEntry))
-
-			if typeEntry == nil {
-				continue
-			}
-
-			class := typeEntry.Value
+		if val.Origin == "detector" {
+			class := val.Role
+			errnie.Info(fmt.Sprintf("[trainer] detector excursion class: %s", class))
 
 			if class != "up" && class != "down" && class != "up_friction" {
 				continue
 			}
 
-			excursions = append(excursions, measurement)
+			excursions = append(excursions, val)
 			continue
 		}
 
-		if !slices.Contains(types.SignalSourceStrings, measurement.Source) {
+		if !slices.Contains(types.SignalSourceStrings, val.Origin) {
 			continue
 		}
 
-		tick := measurement.Tick
+		tick := val.Tick
 		bucket, exists := buckets[tick]
 
 		if !exists {
@@ -255,14 +252,14 @@ func (trainer *Trainer) consumeSymbol(
 			buckets[tick] = bucket
 		}
 
-		bucket.peers = append(bucket.peers, measurement)
+		bucket.peers = append(bucket.peers, val)
 	}
 
 	if len(buckets) == 0 || len(excursions) == 0 {
 		return nil, nil, nil
 	}
 
-	ticks := make([]int64, 0, len(buckets))
+	ticks := make([]uint64, 0, len(buckets))
 
 	for tick := range buckets {
 		ticks = append(ticks, tick)
@@ -280,14 +277,20 @@ func (trainer *Trainer) consumeSymbol(
 
 	for _, tick := range ticks {
 		bucket := buckets[tick]
-		at := bucket.peers[0].At
+		at := time.Unix(0, int64(bucket.peers[0].Timestamp))
+		if bucket.peers[0].Timestamp < 1e11 {
+			at = time.Unix(int64(bucket.peers[0].Timestamp), 0)
+		}
 
-		join := data.NewMeasurement(epoch, symbol, "runtime:join", at, at)
-		join.Tick = tick
-		join.Peers(bucket.peers...)
-		join = join.Write()
+		frame := data.NewValue("frame", "frame", bucket.peers[0].Scope)
+		frame.Timestamp = bucket.peers[0].Timestamp
+		frame.Tick = tick
+		for _, peer := range bucket.peers {
+			frame.Layers = append(frame.Layers, peer.Layers...)
+			frame.Index = append(frame.Index, peer.Index...)
+		}
 
-		regions := grid.Observe(join)
+		regions := grid.Observe(frame)
 
 		if len(regions) == 0 {
 			continue
@@ -303,12 +306,12 @@ func (trainer *Trainer) consumeSymbol(
 
 		// 2. PredictiveCoder settles over the 15 regions
 		step++
-		inValue := data.NewValue([2][]float64{
+		inValue := [2][]float64{
 			regionBrightness,
 			{0.0, 0.0, float64(step), float64(at.UnixNano()) / 1e9},
-		})
+		}
 
-		for val := range coder.Next(inValue.Next(nil)) {
+		for val := range coder.Next(transport.NewOne(unsafe.Pointer(&inValue)).Next(nil)) {
 			_ = val
 		}
 
@@ -438,14 +441,20 @@ func (trainer *Trainer) consumeSymbol(
 	}
 
 	for _, excursion := range excursions {
-		bPrice, cPrice := extractPrices(excursion)
+		bPrice, cPrice, bTick, cTick := extractExcursionData(excursion)
 
 		if bPrice.Sign() == 0 || cPrice.Sign() == 0 {
 			continue
 		}
 
-		startAt := excursion.From
-		endAt := excursion.At
+		startAt := time.Unix(0, bTick)
+		if bTick < 1e11 {
+			startAt = time.Unix(bTick, 0)
+		}
+		endAt := time.Unix(0, cTick)
+		if cTick < 1e11 {
+			endAt = time.Unix(cTick, 0)
+		}
 
 		startIdx := -1
 
@@ -478,11 +487,7 @@ func (trainer *Trainer) consumeSymbol(
 		}
 
 		holdSeconds := endAt.Sub(startAt).Seconds()
-		isUp := false
-
-		if typeEntry := data.Pull(excursion.Meta("type")); typeEntry != nil && typeEntry.Value == "up" {
-			isUp = true
-		}
+		isUp := excursion.Role == "up"
 
 		if isUp && netReturn > 0 {
 			if entryPath != "" {
@@ -584,41 +589,26 @@ func (trainer *Trainer) publishPolicies(
 			}
 		}
 
-		gainUnit, gainTime := data.GetDimension("policy", "gain")
-		holdUnit, holdTime := data.GetDimension("policy", "hold_seconds")
-		visitsUnit, visitsTime := data.GetDimension("policy", "visits")
-		rewardUnit, rewardTime := data.GetDimension("policy", "mean_reward")
-		confidenceUnit, confidenceTime := data.GetDimension("policy", "confidence")
 
-		meas := data.NewMeasurement(
-			epoch, symbol, "policy", time.Now().UTC(), time.Now().UTC(),
-			&data.StringEntry{Key: "action", Value: action},
-			&data.StringEntry{Key: "path", Value: path},
-		).Write(
-			data.NewMetric("gain", gain/float64(visits), gainUnit, gainTime),
-			data.NewMetric("hold_seconds", holdSeconds/float64(visits), holdUnit, holdTime),
-			data.NewMetric("visits", float64(visits), visitsUnit, visitsTime),
-			data.NewMetric("mean_reward", gain/float64(visits), rewardUnit, rewardTime),
-			data.NewMetric("confidence", confidence, confidenceUnit, confidenceTime),
-		)
+		val := data.NewValue("policy", action, symbol)
+		val.Epoch = uint64(epoch)
+		val.FormatPrefix()
+		data.AppendVector(val, []float64{
+			gain / float64(visits),
+			holdSeconds / float64(visits),
+			float64(visits),
+			gain / float64(visits),
+			confidence,
+		}, "gain", "hold_seconds", "visits", "mean_reward", "confidence", "path:"+path)
 
 		if trainer.storeTee != nil {
-			trainer.storeTee.Push(meas)
+			trainer.storeTee.Push(val)
 			counts[action]++
 			continue
 		}
 
 		if trainer.client != nil {
-			key := fmt.Sprintf("policy/%s/%019d/%s/%s.bin", symbol, epoch, path, action)
-			payload, err := meas.MarshalBinary()
-
-			if err != nil {
-				errnie.Error(err)
-				counts[action]++
-				continue
-			}
-
-			if err := trainer.client.Put(key, payload); err != nil {
+			if _, err := trainer.client.Write(val.Bytes()); err != nil {
 				errnie.Error(err)
 			}
 		}
@@ -634,21 +624,27 @@ func (trainer *Trainer) publishPolicies(
 	return nil
 }
 
-func extractPrices(measurement *data.Measurement) (*decimal.Decimal, *decimal.Decimal) {
+func extractExcursionData(val *data.Value) (*decimal.Decimal, *decimal.Decimal, int64, int64) {
 	bPrice := decimal.NewFromInt64(0)
 	cPrice := decimal.NewFromInt64(0)
+	var bTick, cTick int64
 
-	if entry := data.Pull(measurement.Read("b_price")); entry != nil && entry.Metric != nil {
-		if exact := entry.Metric.Exact(); exact != nil {
-			bPrice = exact
+	if val == nil {
+		return bPrice, cPrice, 0, 0
+	}
+
+	for _, layer := range val.Layers {
+		if len(layer) >= 80 {
+			floats := unsafe.Slice((*float64)(unsafe.Pointer(&layer[0])), len(layer)/8)
+			if len(floats) >= 10 {
+				bTick = int64(floats[3])
+				cTick = int64(floats[5])
+				bPrice = decimal.NewFromFloat64(floats[8])
+				cPrice = decimal.NewFromFloat64(floats[9])
+				return bPrice, cPrice, bTick, cTick
+			}
 		}
 	}
 
-	if entry := data.Pull(measurement.Read("c_price")); entry != nil && entry.Metric != nil {
-		if exact := entry.Metric.Exact(); exact != nil {
-			cPrice = exact
-		}
-	}
-
-	return bPrice, cPrice
+	return bPrice, cPrice, bTick, cTick
 }

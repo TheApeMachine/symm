@@ -4,11 +4,9 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/data"
 )
 
 /*
@@ -116,133 +114,41 @@ func (msg AddOrderMessage) MarshalJSON() ([]byte, error) {
 }
 
 /*
-ToMeasurement converts the AddOrderRequest into a structured Measurement
-without any serialized raw shortcuts.
+ToValue serializes the AddOrderRequest into a *data.Value layer.
 */
-func (req *AddOrderRequest) ToMeasurement(epochs ...int64) *data.Measurement {
+func (req *AddOrderRequest) ToValue(epochs ...int64) *data.Value {
 	if req == nil {
 		return nil
 	}
 
-	epoch := system.Epoch.Load()
+	buf, err := sonic.Marshal(req)
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
 
+	val := data.NewValue("kraken", "order", req.Pair)
 	if len(epochs) > 0 && epochs[0] > 0 {
-		epoch = epochs[0]
+		val.Epoch = uint64(epochs[0])
+		val.FormatPrefix()
 	}
-
-	now := time.Now().UTC()
-
-	if epoch <= 0 {
-		epoch = now.UnixNano()
-	}
-
-	symbol := req.Pair
-	orderType := req.OrdType
-
-	if orderType == "" {
-		if req.Price != "" {
-			orderType = "limit"
-		}
-
-		if orderType == "" {
-			orderType = "market"
-		}
-	}
-
-	meas := data.NewMeasurement(
-		epoch,
-		symbol,
-		"orders",
-		now,
-		now,
-		&data.StringEntry{
-			Key:   "symbol",
-			Value: symbol,
-		},
-		&data.StringEntry{
-			Key:   "cl_ord_id",
-			Value: req.ClOrdId,
-		},
-		&data.StringEntry{
-			Key:   "order_type",
-			Value: orderType,
-		},
-		&data.StringEntry{
-			Key:   "type",
-			Value: req.Type,
-		},
-		&data.StringEntry{
-			Key:   "side",
-			Value: req.Type,
-		},
-	)
-
-	var metrics []*data.Metric
-
-	if req.Volume != "" {
-		if vol, err := decimal.NewFromString(req.Volume); err == nil && vol != nil {
-			metrics = append(metrics, data.NewExactMetric("volume", vol, data.UnitQuantity, data.TimescaleInstantaneous))
-		}
-	}
-
-	if req.Price != "" {
-		if limitPrice, err := decimal.NewFromString(req.Price); err == nil && limitPrice != nil {
-			metrics = append(metrics, data.NewExactMetric(
-				"limit_price", limitPrice, data.UnitPrice, data.TimescaleInstantaneous,
-			))
-		}
-	}
-
-	if len(metrics) > 0 {
-		meas.Write(metrics...)
-	}
-
-	meas.Finalize()
-	return meas
+	val.Append(buf)
+	return val
 }
 
 /*
-NewAddOrderRequestFromMeasurement reconstructs an AddOrderRequest from a Measurement.
+NewAddOrderRequestFromValue reconstructs an AddOrderRequest from a *data.Value.
 */
-func NewAddOrderRequestFromMeasurement(meas *data.Measurement) (*AddOrderRequest, error) {
-	if meas == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "[kraken.order] cannot convert nil measurement to order request", nil,
-		))
+func NewAddOrderRequestFromValue(val *data.Value) (*AddOrderRequest, error) {
+	if val == nil || len(val.Layers) == 0 {
+		return nil, errnie.Err(errnie.Validation, "[kraken.order] cannot convert nil value to order request", nil)
 	}
 
-	meta := make(map[string]string)
-
-	for entry := range meas.Meta() {
-		if entry != nil && entry.Key != "" {
-			meta[entry.Key] = entry.Value
-		}
+	var req AddOrderRequest
+	if err := sonic.Unmarshal(val.Layers[0], &req); err != nil {
+		return nil, errnie.Err(errnie.Validation, "[kraken.order] failed to unmarshal order request", err)
 	}
 
-	symbol := meas.Label
-
-	if s, ok := meta["symbol"]; ok && s != "" {
-		symbol = s
-	}
-
-	req := &AddOrderRequest{
-		Pair:    symbol,
-		Type:    meta["side"],
-		OrdType: meta["order_type"],
-		ClOrdId: meta["cl_ord_id"],
-	}
-
-	if req.Type == "" {
-		req.Type = meta["type"]
-	}
-
-	if entry := data.Pull(meas.Read("volume")); entry != nil && entry.Metric != nil && entry.Metric.Exact() != nil {
-		req.Volume = entry.Metric.Exact().String()
-	}
-
-	if entry := data.Pull(meas.Read("limit_price")); entry != nil && entry.Metric != nil && entry.Metric.Exact() != nil {
-		req.Price = entry.Metric.Exact().String()
-	}
-
-	return req, nil
+	return &req, nil
 }
+

@@ -3,22 +3,18 @@ package toxicity
 import (
 	"context"
 	"math"
-	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type symbolState struct {
-	lastMeasurement   *data.Measurement
 	hasPrev           bool
 	prevBid           float64
 	prevBidQty        float64
 	prevAtNano        float64
-	prevAt            time.Time
 	pendingTradeQty   float64
 	pendingMatchedBid float64
 }
@@ -26,96 +22,57 @@ type symbolState struct {
 type Signal struct {
 	*runtime.System
 	states map[string]*symbolState
+	keys   []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		states: make(map[string]*symbolState),
+		keys: []string{
+			"retreat_fraction_bid",
+			"net_withdrawal_rate_bid",
+		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "toxicity", signal)
 	return signal
 }
 
-func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY {
-		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
-		return nil
+func (signal *Signal) Step(value *data.Value) *data.Value {
+	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+		return value
 	}
 
-	if prior == nil || prior.Label == "" {
-		errnie.Warn("[" + signal.Name() + "] nil or empty prior")
-		return nil
-	}
+	price := data.Attribute[float64](value.Layers[0], "data", 0, "price")
+	qty := data.Attribute[float64](value.Layers[0], "data", 0, "qty")
+	side := data.Attribute[string](value.Layers[0], "data", 0, "side")
 
-	var price, qty float64
-
-	if priceEntry := data.Pull(prior.Read("price")); priceEntry != nil && priceEntry.Metric != nil {
-		price = priceEntry.Metric.Raw()
-	}
-
-	if qtyEntry := data.Pull(prior.Read("qty")); qtyEntry != nil && qtyEntry.Metric != nil {
-		qty = qtyEntry.Metric.Raw()
-	}
-
-	snapshot, err := broker.ReadSnapshot(prior)
-
-	if err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[toxicity] stamped book unreadable", err))
-		return nil
-	}
-
-	if snapshot == nil {
-		return nil
+	snapshot, err := broker.ReadSnapshot(value)
+	if err != nil || snapshot == nil || len(snapshot.Bids) == 0 {
+		return value
 	}
 
 	bestBid, _ := snapshot.Touch()
 	bid, bidQty := bestBid.Price.Float64(), bestBid.Quantity.Float64()
 
 	sideIndicator := 0.0
-	var side string
-
-	if entry := data.Pull(prior.Meta("side")); entry != nil {
-		side = entry.Value
-	}
-
 	if side == "buy" {
 		sideIndicator = 1.0
-	}
-
-	if side == "sell" {
+	} else if side == "sell" {
 		sideIndicator = -1.0
 	}
 
-	atNano := float64(prior.At.UnixNano())
+	atNano := float64(value.Timestamp)
 
-	state, exists := signal.states[prior.Label]
-
+	state, exists := signal.states[value.Scope]
 	if !exists {
 		state = &symbolState{}
-		signal.states[prior.Label] = state
-	}
-
-	out := map[string]float64{}
-
-	emit := func(from time.Time) *data.Measurement {
-		if state.lastMeasurement == nil {
-			state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
-		}
-
-		res := state.lastMeasurement.Next(prior, out)
-		state.lastMeasurement = res
-
-		if !from.IsZero() {
-			res.From = from
-		}
-
-		return res
+		signal.states[value.Scope] = state
 	}
 
 	if !state.hasPrev {
-		state.observe(bid, bidQty, atNano, prior.At)
-		return emit(time.Time{})
+		state.observe(bid, bidQty, atNano)
+		return data.AppendVector(value, []float64{0, 0}, signal.keys...)
 	}
 
 	state.pendingTradeQty += qty
@@ -125,7 +82,7 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if atNano <= state.prevAtNano {
-		return emit(time.Time{})
+		return data.AppendVector(value, []float64{0, 0}, signal.keys...)
 	}
 
 	dt := (atNano - state.prevAtNano) / 1e9
@@ -134,33 +91,30 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	fill := math.Min(state.pendingMatchedBid, state.prevBidQty)
 	unfilled := state.prevBidQty - fill
 
-	if bid >= state.prevBid {
-		out["retreat_fraction:bid"] = 0
-	}
+	var retreatFraction, withdrawalRate float64
 
 	if bid == state.prevBid && rated {
 		withdrawn := math.Max(unfilled-bidQty, 0)
-		out["net_withdrawal_rate:bid"] = withdrawn / dt
+		withdrawalRate = withdrawn / dt
 	}
 
-	if bid < state.prevBid {
-		out["retreat_fraction:bid"] = unfilled / state.prevBidQty
+	if bid < state.prevBid && state.prevBidQty > 0 {
+		retreatFraction = unfilled / state.prevBidQty
 	}
 
-	from := state.prevAt
-	state.observe(bid, bidQty, atNano, prior.At)
+	state.observe(bid, bidQty, atNano)
 
-	return emit(from)
+	return data.AppendVector(value, []float64{
+		retreatFraction,
+		withdrawalRate,
+	}, signal.keys...)
 }
 
-func (state *symbolState) observe(
-	bid, bidQty, atNano float64, at time.Time,
-) {
+func (state *symbolState) observe(bid, bidQty, atNano float64) {
 	state.hasPrev = true
 	state.prevBid = bid
 	state.prevBidQty = bidQty
 	state.prevAtNano = atNano
-	state.prevAt = at
 	state.pendingTradeQty = 0
 	state.pendingMatchedBid = 0
 }

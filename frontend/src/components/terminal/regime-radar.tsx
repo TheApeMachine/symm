@@ -61,7 +61,7 @@ export const RadarPanel = () => {
 				if (row) {
 					for (const m of row.metrics ?? []) {
 						if (m?.name === axis.metric) {
-							snm = m.snm;
+							snm = m.snm ?? m.raw;
 							break;
 						}
 					}

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 )
 
 func TestSympathyStage(t *testing.T) {
@@ -15,7 +15,7 @@ func TestSympathyStage(t *testing.T) {
 		ctx := context.Background()
 		stage := NewSympathyStage(ctx)
 
-		feed := func(s *SympathyStage, ms ...*data.Measurement) []*Violation {
+		feed := func(s *SympathyStage, ms ...*data.Value) []*Violation {
 			for _, m := range ms {
 				s.Channel() <- m
 			}
@@ -26,24 +26,22 @@ func TestSympathyStage(t *testing.T) {
 
 		Convey("When auditing independent asynchronous streams", func() {
 			base := time.Now().UnixNano()
-			measurements := make([]*data.Measurement, 0, 40)
+			measurements := make([]*data.Value, 0, 40)
 
 			// Source A updates at intervals +10ms, +20ms, etc.
 			for idx := range int64(20) {
-				venueTime := time.Unix(0, base+idx*20_000_000)
-				measurement := data.NewMeasurement(1, "BTC/USD", "source_a", venueTime, venueTime)
-				val := 100.0 + float64(idx)*0.5
-				measurement.Write(data.NewMetric("price", val, data.UnitPrice, data.TimescaleInstantaneous))
-				measurements = append(measurements, measurement)
+				val := data.NewValue("source_a", "signal", "BTC/USD")
+				val.Timestamp = uint64(base + idx*20_000_000)
+				data.AppendVector(val, []float64{100.0 + float64(idx)*0.5}, "price")
+				measurements = append(measurements, val)
 			}
 
 			// Source B updates at offset intervals +5ms, +25ms, etc. with sinusoidal values (uncorrelated)
 			for idx := range int64(20) {
-				venueTime := time.Unix(0, base+idx*20_000_000+5_000_000)
-				measurement := data.NewMeasurement(1, "BTC/USD", "source_b", venueTime, venueTime)
-				val := 100.0 + 5.0*math.Sin(float64(idx)*math.Pi/2.0)
-				measurement.Write(data.NewMetric("signal", val, data.UnitDimensionless, data.TimescaleInstantaneous))
-				measurements = append(measurements, measurement)
+				val := data.NewValue("source_b", "signal", "BTC/USD")
+				val.Timestamp = uint64(base + idx*20_000_000 + 5_000_000)
+				data.AppendVector(val, []float64{100.0 + 5.0*math.Sin(float64(idx)*math.Pi/2.0)}, "signal")
+				measurements = append(measurements, val)
 			}
 
 			violations := feed(stage, measurements...)
@@ -53,24 +51,22 @@ func TestSympathyStage(t *testing.T) {
 
 		Convey("When auditing cross-source clone streams with continuous-time Hayashi-Yoshida overlap", func() {
 			base := time.Now().UnixNano()
-			measurements := make([]*data.Measurement, 0, 40)
+			measurements := make([]*data.Value, 0, 40)
 
 			// Source A updates at intervals +100ms
 			for idx := range int64(20) {
-				venueTime := time.Unix(0, base+idx*100_000_000)
-				measurement := data.NewMeasurement(1, "BTC/USD", "producer_one", venueTime, venueTime)
-				val := 100.0 * math.Exp(float64(idx+1)*0.01)
-				measurement.Write(data.NewMetric("quote", val, data.UnitPrice, data.TimescaleInstantaneous))
-				measurements = append(measurements, measurement)
+				val := data.NewValue("producer_one", "signal", "BTC/USD")
+				val.Timestamp = uint64(base + idx*100_000_000)
+				data.AppendVector(val, []float64{100.0 * math.Exp(float64(idx+1)*0.01)}, "quote")
+				measurements = append(measurements, val)
 			}
 
 			// Producer Two is an asynchronous copy with slight timestamp jitter (+10ms) but identical returns
 			for idx := range int64(20) {
-				venueTime := time.Unix(0, base+idx*100_000_000+10_000_000)
-				measurement := data.NewMeasurement(1, "BTC/USD", "producer_two", venueTime, venueTime)
-				val := 100.0 * math.Exp(float64(idx+1)*0.01)
-				measurement.Write(data.NewMetric("quote", val, data.UnitPrice, data.TimescaleInstantaneous))
-				measurements = append(measurements, measurement)
+				val := data.NewValue("producer_two", "signal", "BTC/USD")
+				val.Timestamp = uint64(base + idx*100_000_000 + 10_000_000)
+				data.AppendVector(val, []float64{100.0 * math.Exp(float64(idx+1)*0.01)}, "quote")
+				measurements = append(measurements, val)
 			}
 
 			violations := feed(stage, measurements...)
@@ -88,24 +84,22 @@ func TestSympathyStage(t *testing.T) {
 
 		Convey("When auditing cross-asset streams that fail sympathy test", func() {
 			base := time.Now().UnixNano()
-			measurements := make([]*data.Measurement, 0, 40)
+			measurements := make([]*data.Value, 0, 40)
 
 			// BTC/USD trending up
 			for idx := range int64(20) {
-				venueTime := time.Unix(0, base+idx*20_000_000)
-				measurement := data.NewMeasurement(1, "BTC/USD", "source_a", venueTime, venueTime)
-				val := 100.0 + float64(idx)*1.0
-				measurement.Write(data.NewMetric("price", val, data.UnitPrice, data.TimescaleInstantaneous))
-				measurements = append(measurements, measurement)
+				val := data.NewValue("source_a", "signal", "BTC/USD")
+				val.Timestamp = uint64(base + idx*20_000_000)
+				data.AppendVector(val, []float64{100.0 + float64(idx)*1.0}, "price")
+				measurements = append(measurements, val)
 			}
 
 			// ETH/USD independent random oscillation (no continuous-time sympathy)
 			for idx := range int64(20) {
-				venueTime := time.Unix(0, base+idx*20_000_000+5_000_000)
-				measurement := data.NewMeasurement(1, "ETH/USD", "source_b", venueTime, venueTime)
-				val := 100.0 + 10.0*math.Sin(float64(idx)*math.Pi/2.0)
-				measurement.Write(data.NewMetric("price", val, data.UnitPrice, data.TimescaleInstantaneous))
-				measurements = append(measurements, measurement)
+				val := data.NewValue("source_b", "signal", "ETH/USD")
+				val.Timestamp = uint64(base + idx*20_000_000 + 5_000_000)
+				data.AppendVector(val, []float64{100.0 + 10.0*math.Sin(float64(idx)*math.Pi/2.0)}, "price")
+				measurements = append(measurements, val)
 			}
 
 			violations := feed(stage, measurements...)
@@ -119,17 +113,10 @@ func TestSympathyStage(t *testing.T) {
 			So(stage.Report(), ShouldContainSubstring, "sympathy.no_concordance")
 		})
 
-		Convey("When auditing nil measurements and nil metric entries", func() {
+		Convey("When auditing nil measurements", func() {
 			nilViolations := feed(stage, nil)
 			So(len(nilViolations), ShouldEqual, 1)
 			So(nilViolations[0].Name, ShouldEqual, "measurement")
-
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-			measurement.Write(&data.Metric{})
-			entryStage := NewSympathyStage(ctx)
-			violations := feed(entryStage, measurement)
-			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 		})
 	})
 }

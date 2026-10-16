@@ -6,7 +6,7 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -174,7 +174,7 @@ func (op *TemporalLedger) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 						op.pair = [2]float64{current, meta[0]}
 						target := 0.0
 
-						for out := range op.target.Next(data.NewValue(op.pair).Next(nil)) {
+						for out := range op.target.Next(transport.NewValue(op.pair).Next(nil)) {
 							target = *(*float64)(out)
 						}
 
@@ -196,7 +196,7 @@ func (op *TemporalLedger) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Poin
 						op.control[3] = target
 						op.command = [3][]float64{op.control, op.features[key], nil}
 
-						for range op.manifold.Next(data.NewValue(op.command).Next(nil)) {
+						for range op.manifold.Next(transport.NewValue(op.command).Next(nil)) {
 						}
 
 						if err := op.manifold.Error(); err != nil {

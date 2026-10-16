@@ -8,7 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -26,7 +26,7 @@ type tradePoint struct {
 	seqIdx int64
 	price  *decimal.Decimal
 	priceF float64
-	trade  *data.Measurement
+	trade  *data.Value
 }
 
 type episode struct {
@@ -64,7 +64,7 @@ type Detector struct {
 	emaBounce  float64
 	prevTrade  *tradePoint
 	prevDelta  float64
-	lastResult *data.Measurement
+	lastResult *data.Value
 
 	// Undecided / chop / flat tracking
 	segStart      tradePoint
@@ -136,51 +136,56 @@ func NewDetector(
 Step the replayed tape and hunt for excursions.
 */
 func (detector *Detector) Step(
-	measurement *data.Measurement,
-) *data.Measurement {
-	if measurement == nil || detector.price == nil {
+	value *data.Value,
+) *data.Value {
+	if value == nil || detector.price == nil {
 		return nil
 	}
 
 	detector.lastResult = nil
 
-	if measurement.Source == "runtime:join" {
-		for _, peer := range measurement.Peers() {
-			if peer == nil || peer.Source != "spot:trade" {
+	if value.Origin == "runtime:join" {
+		for peer := range data.Layers[*data.Value](value) {
+			if peer == nil || peer.Origin != "spot:trade" {
 				continue
 			}
 
 			detector.processTrade(peer)
 		}
-	} else if measurement.Source == "spot:trade" {
-		detector.processTrade(measurement)
+	} else if value.Origin == "spot:trade" || value.Origin == "kraken" {
+		detector.processTrade(value)
 	}
 
 	return detector.lastResult
 }
 
-func (detector *Detector) processTrade(peer *data.Measurement) {
+func (detector *Detector) processTrade(peer *data.Value) {
+	epoch := int64(peer.Timestamp)
+	label := peer.Scope
+
 	if detector.epoch == 0 || detector.label == "" ||
-		detector.epoch != peer.Epoch || detector.label != peer.Label {
+		detector.epoch != epoch || detector.label != label {
 		detector.flushConfirmedOnReset()
-		detector.resetTape(peer.Epoch, peer.Label)
+		detector.resetTape(epoch, label)
 	}
 
-	priceDec := data.Pull(peer.Read("price")).Metric.Exact()
-
-	if priceDec == nil || priceDec.Sign() <= 0 {
-		return
+	var priceF float64
+	if len(peer.Layers) > 0 {
+		priceF = data.Attribute[float64](peer.Layers[0], "data", 0, "price")
+		if priceF <= 0 {
+			priceF = data.Attribute[float64](peer.Layers[0], "price")
+		}
 	}
-
-	priceF := priceDec.Float64()
 
 	if priceF <= 0 || math.IsNaN(priceF) || math.IsInf(priceF, 0) {
 		return
 	}
 
+	priceDec := decimal.NewFromFloat64(priceF)
+
 	pt := tradePoint{
-		tick:   peer.Tick,
-		seqIdx: peer.SeqIdx,
+		tick:   int64(peer.Tick),
+		seqIdx: int64(peer.SeqIdx),
 		price:  priceDec,
 		priceF: priceF,
 		trade:  peer,
@@ -781,53 +786,46 @@ func (detector *Detector) Flush(
 	bTick, cTick int64,
 	bSeqIdx, cSeqIdx int64,
 	bPrice, cPrice *decimal.Decimal,
-	bTrade, cTrade *data.Measurement,
-) *data.Measurement {
-	measurement := data.NewMeasurement(
-		bTrade.Epoch,
-		bTrade.Label,
-		detector.Name(),
-		bTrade.At,
-		bTrade.From,
-		&data.StringEntry{Key: "type", Value: class},
-	)
-
-	measurement.Tick = bTick
-	measurement.SeqIdx = bSeqIdx
-	measurement.Timestamp = bTrade.Timestamp
-
-	aIdxUnit, aIdxTime := data.GetDimension(detector.Name(), "a_idx")
-	aTickUnit, aTickTime := data.GetDimension(detector.Name(), "a_tick")
-	bIdxUnit, bIdxTime := data.GetDimension(detector.Name(), "b_idx")
-	bTickUnit, bTickTime := data.GetDimension(detector.Name(), "b_tick")
-	cIdxUnit, cIdxTime := data.GetDimension(detector.Name(), "c_idx")
-	cTickUnit, cTickTime := data.GetDimension(detector.Name(), "c_tick")
-	endTickUnit, endTickTime := data.GetDimension(detector.Name(), "end_tick")
-	bPriceUnit, bPriceTime := data.GetDimension(detector.Name(), "b_price")
-	cPriceUnit, cPriceTime := data.GetDimension(detector.Name(), "c_price")
-
-	// Half the move added to the start and end. Captures the precursor, and
-	// adds some at the end for good measure.
+	bTrade, cTrade *data.Value,
+) *data.Value {
 	halfMoveSeqIdx := cSeqIdx - bSeqIdx
 	halfMoveTick := cTick - bTick
 
-	// Ten percent of half the move, accounts for order filling times.
 	tenPercentMoveSeqIdx := halfMoveSeqIdx / 10
 	tenPercentMoveTick := halfMoveTick / 10
 
-	measurement.Write(
-		data.NewExactMetric("a_idx", decimal.NewFromInt64(bSeqIdx-halfMoveSeqIdx), aIdxUnit, aIdxTime),
-		data.NewExactMetric("a_tick", decimal.NewFromInt64(bTick-halfMoveTick), aTickUnit, aTickTime),
-		data.NewExactMetric("b_idx", decimal.NewFromInt64(bSeqIdx-tenPercentMoveSeqIdx), bIdxUnit, bIdxTime),
-		data.NewExactMetric("b_tick", decimal.NewFromInt64(bTick-tenPercentMoveTick), bTickUnit, bTickTime),
-		data.NewExactMetric("c_idx", decimal.NewFromInt64(cSeqIdx-tenPercentMoveSeqIdx), cIdxUnit, cIdxTime),
-		data.NewExactMetric("c_tick", decimal.NewFromInt64(cTick-tenPercentMoveTick), cTickUnit, cTickTime),
-		data.NewExactMetric("d_idx", decimal.NewFromInt64(cSeqIdx+halfMoveSeqIdx), endTickUnit, endTickTime),
-		data.NewExactMetric("d_tick", decimal.NewFromInt64(cTick+halfMoveTick), endTickUnit, endTickTime),
-		data.NewExactMetric("b_price", bPrice, bPriceUnit, bPriceTime),
-		data.NewExactMetric("c_price", cPrice, cPriceUnit, cPriceTime),
+	aIdx := bSeqIdx - halfMoveSeqIdx
+	aTick := bTick - halfMoveTick
+	bIdx := bSeqIdx - tenPercentMoveSeqIdx
+	bTickVal := bTick - tenPercentMoveTick
+	cIdx := cSeqIdx - tenPercentMoveSeqIdx
+	cTickVal := cTick - tenPercentMoveTick
+	dIdx := cSeqIdx + halfMoveSeqIdx
+	dTick := cTick + halfMoveTick
+
+	value := data.NewValue(
+		detector.Name(), class, detector.label,
 	)
 
-	detector.storeTee.Push(measurement)
-	return measurement
+	keys := []string{
+		"a_idx", "a_tick", "b_idx", "b_tick", "c_idx", "c_tick", "d_idx", "d_tick", "b_price", "c_price",
+	}
+
+	data.AppendVector(value, []float64{
+		float64(aIdx),
+		float64(aTick),
+		float64(bIdx),
+		float64(bTickVal),
+		float64(cIdx),
+		float64(cTickVal),
+		float64(dIdx),
+		float64(dTick),
+		bPrice.Float64(),
+		cPrice.Float64(),
+	}, keys...)
+
+	if detector.storeTee != nil {
+		detector.storeTee.Push(value)
+	}
+	return value
 }

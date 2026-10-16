@@ -8,7 +8,7 @@ import { RingCursor } from "#/collections/ring";
 import { Scanlines } from "#/components/ui/scanlines";
 import { hubBaseUrl } from "#/lib/hub";
 import { cn } from "#/lib/utils";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { Value } from "#/types/value";
 import { useSelector } from "@tanstack/react-store";
 import * as d3 from "d3";
 import { ChevronRight, Clock } from "lucide-react";
@@ -200,9 +200,9 @@ function signedPercent(fraction: number): string {
 }
 
 const getTargetRing = (
-	records: Record<string, RingBuffer<MeasurementT>> | undefined,
+	records: Record<string, RingBuffer<Value>> | undefined,
 	target: string,
-): { ring: RingBuffer<MeasurementT>; symbol: string } | null => {
+): { ring: RingBuffer<Value>; symbol: string } | null => {
 	if (!records) return null;
 	if (target && records[target] && !records[target].isEmpty()) {
 		return { ring: records[target], symbol: target };
@@ -210,7 +210,7 @@ const getTargetRing = (
 	if (records.learner && !records.learner.isEmpty()) {
 		return { ring: records.learner, symbol: "learner" };
 	}
-	let bestRing: RingBuffer<MeasurementT> | null = null;
+	let bestRing: RingBuffer<Value> | null = null;
 	let bestSym = "";
 	let latestTick = -1n;
 
@@ -642,7 +642,7 @@ export const ForwardLearningViz = ({
 	// Historical-runs mode still reads stage/metrics for the side panels, but never
 	// mutates the tape chart — selection must stick against BTC/USD hub updates.
 	useEffect(() => {
-		const cursor = new RingCursor<MeasurementT>();
+		const cursor = new RingCursor<Value>();
 		pendingEpisodeRef.current = [];
 		currentEpisodeRef.current = null;
 		setEpisodeQueue([]);
@@ -652,11 +652,11 @@ export const ForwardLearningViz = ({
 		}
 		lastSeenExcursionStartRef.current = -1;
 
-		const handleRing = (ring: RingBuffer<MeasurementT>) => {
+		const handleRing = (ring: RingBuffer<Value>) => {
 			if (!ring || ring.isEmpty()) return;
 
 			cursor.read(ring, (measurement) => {
-				const activeSym = String(measurement.symbol || "TRAINING");
+				const activeSym = String(measurement.scope || "TRAINING");
 				const tapePinned = historicalOnly || pinnedFragmentRef.current;
 
 				if (
@@ -818,9 +818,9 @@ export const ForwardLearningViz = ({
 				if (metricMap.price !== undefined) {
 					rawPrice = metricMap.price;
 				} else if (measurement.metrics) {
-					for (const [k, met] of Object.entries(measurement.metrics)) {
-						if (met?.raw !== undefined) {
-							const lk = k.toLowerCase();
+					for (const met of measurement.metrics) {
+						if (met?.name && met?.raw !== undefined) {
+							const lk = met.name.toLowerCase();
 							const validPrices = [
 								"price",
 								"last_price",
@@ -839,38 +839,10 @@ export const ForwardLearningViz = ({
 					}
 				}
 
-				if (rawPrice === undefined && measurement.peers) {
-					for (const peer of measurement.peers) {
-						for (const m of peer.metrics ?? []) {
-							if (m?.name && m?.raw !== undefined) {
-								const nm = String(m.name).toLowerCase();
-								const validPrices = [
-									"price",
-									"last_price",
-									"mark_price",
-									"best_bid_price",
-									"best_ask_price",
-									"trade_price",
-									"mid",
-									"close",
-								];
-								if (validPrices.includes(nm)) {
-									rawPrice = m.raw;
-									break;
-								}
-							}
-						}
-						if (rawPrice !== undefined) break;
-					}
-				}
-
 				if (rawPrice !== undefined) {
 					const seqVal = Number(measurement.tick ?? 0n);
 					const pointPrice = rawPrice;
-					const ptTime = parseTimestamp(
-						measurement.at,
-						measurement.observedFrom,
-					);
+					const ptTime = parseTimestamp(measurement.timestamp);
 					if (!tapePinned) {
 						pendingEpisodeRef.current.push({
 							x: pendingEpisodeRef.current.length,
@@ -953,7 +925,7 @@ export const ForwardLearningViz = ({
 		};
 
 		const updateFromState = (
-			state: Record<string, RingBuffer<MeasurementT>> | undefined,
+			state: Record<string, RingBuffer<Value>> | undefined,
 		) => {
 			if (!state) return;
 			const target = getTargetRing(state, targetSymbol);

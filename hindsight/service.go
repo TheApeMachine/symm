@@ -2,20 +2,27 @@ package hindsight
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"iter"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/store"
 )
+
+/*
+Measurements streams *data.Value from the store.
+*/
+func Measurements(client *store.Client, prefixes ...string) iter.Seq[*data.Value] {
+	return store.Values(client, prefixes...)
+}
 
 type Run struct {
 	Epoch     int64     `json:"epoch"`
@@ -29,14 +36,14 @@ type Service struct {
 	fragmentsMu  sync.RWMutex
 	fragments    []TrainedFragmentResponse
 	fragmentsAt  time.Time
-	fragmentsMap map[int64]*data.Measurement
+	fragmentsMap map[int64]*data.Value
 }
 
 func NewService(ctx context.Context, client *store.Client) *Service {
 	return &Service{
 		ctx:          ctx,
 		client:       client,
-		fragmentsMap: make(map[int64]*data.Measurement),
+		fragmentsMap: make(map[int64]*data.Value),
 	}
 }
 
@@ -45,7 +52,6 @@ func (service *Service) Register(router fiber.Router) {
 		return
 	}
 
-	router.Get("/hindsight/metric-map", service.metricMap)
 	router.Get("/hindsight/runs", service.runs)
 
 	router.Use("/hindsight/timeline", func(ctx fiber.Ctx) error {
@@ -74,10 +80,14 @@ func (service *Service) Register(router fiber.Router) {
 	router.Get("/hindsight/lifecycle", service.lifecycle)
 	router.Get("/hindsight/states", service.states)
 	router.Get("/hindsight/state", service.state)
+	router.Get("/hindsight/metric-map", service.metricMap)
 }
 
-func (service *Service) metricMap(reqCtx fiber.Ctx) error {
-	return reqCtx.JSON(signal.Semantics())
+func (service *Service) metricMap(ctx fiber.Ctx) error {
+	return ctx.JSON(fiber.Map{
+		"metrics": []any{},
+		"signals": fiber.Map{},
+	})
 }
 
 func (service *Service) runs(reqCtx fiber.Ctx) error {
@@ -133,13 +143,13 @@ func (service *Service) timeline(conn *websocket.Conn) {
 		return
 	}
 
-	epoch := parseInt64Query(run)
+	epoch := uint64(parseInt64Query(run))
 	symbol := conn.Query("symbol")
-	fromTick := parseInt64Query(conn.Query("from"))
-	toTick := parseInt64Query(conn.Query("to"))
+	fromTick := uint64(parseInt64Query(conn.Query("from")))
+	toTick := uint64(parseInt64Query(conn.Query("to")))
 
 	const timelineBatchSize = 256
-	batch := make([]*data.Measurement, 0, timelineBatchSize)
+	batch := make([]*data.Value, 0, timelineBatchSize)
 
 	prefix := "spot:trade/"
 
@@ -147,30 +157,30 @@ func (service *Service) timeline(conn *websocket.Conn) {
 		prefix = fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch)
 	}
 
-	for measurement := range service.client.Get(prefix) {
-		if measurement == nil {
+	for val := range store.Values(service.client, prefix) {
+		if val == nil {
 			continue
 		}
 
-		if epoch > 0 && measurement.Epoch != epoch {
+		if epoch > 0 && val.Epoch != epoch {
 			continue
 		}
 
-		if fromTick > 0 && measurement.Tick < fromTick {
+		if fromTick > 0 && val.Tick < fromTick {
 			continue
 		}
 
-		if toTick > 0 && measurement.Tick > toTick {
+		if toTick > 0 && val.Tick > toTick {
 			continue
 		}
 
-		batch = append(batch, measurement)
+		batch = append(batch, val)
 
 		if len(batch) < timelineBatchSize {
 			continue
 		}
 
-		payload, err := data.EncodeMeasurements(batch)
+		payload, err := sonic.Marshal(batch)
 
 		if err != nil {
 			errnie.Error(err)
@@ -186,7 +196,7 @@ func (service *Service) timeline(conn *websocket.Conn) {
 	}
 
 	if len(batch) > 0 {
-		payload, err := data.EncodeMeasurements(batch)
+		payload, err := sonic.Marshal(batch)
 
 		if err != nil {
 			errnie.Error(err)
@@ -205,19 +215,37 @@ func (service *Service) symbols(ctx fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 	}
 
+	run := ctx.Query("run")
+
+	if run == "" {
+		run = ctx.Query("epoch")
+	}
+
+	epoch := parseInt64Query(run)
 	symbols := []string{}
 	seen := make(map[string]bool)
 
-	for page := range service.client.List("spot:trade/", "/") {
+	prefix := "spot:trade/"
+
+	if epoch > 0 {
+		prefix = fmt.Sprintf("spot:trade/*/%019d/", epoch)
+	}
+
+	for page := range service.client.List(prefix, "/") {
 		for _, commonPrefix := range page.CommonPrefixes {
 			if commonPrefix.Prefix == nil {
 				continue
 			}
 
-			symbol := strings.TrimPrefix(*commonPrefix.Prefix, "spot:trade/")
-			symbol = strings.Trim(symbol, "/")
+			parts := strings.Split(strings.Trim(*commonPrefix.Prefix, "/"), "/")
 
-			if symbol != "" && !seen[symbol] {
+			if len(parts) < 2 {
+				continue
+			}
+
+			symbol := parts[1]
+
+			if !seen[symbol] {
 				seen[symbol] = true
 				symbols = append(symbols, symbol)
 			}
@@ -238,22 +266,27 @@ func (service *Service) excursions(ctx fiber.Ctx) error {
 		run = ctx.Query("epoch")
 	}
 
-	epoch := parseInt64Query(run)
-	excursions := []*data.Measurement{}
+	epoch := uint64(parseInt64Query(run))
+	excursions := []*data.Value{}
 
-	for measurement := range service.client.Get("detector/") {
-		if measurement == nil {
+	for val := range store.Values(service.client, "detector/") {
+		if val == nil {
 			continue
 		}
 
-		if epoch > 0 && measurement.Epoch != epoch {
+		if epoch > 0 && val.Epoch != epoch {
 			continue
 		}
 
-		status := data.Pull(measurement.Meta("status"))
+		status := val.Role
+		if len(val.Layers) > 0 {
+			if s := data.Attribute[string](val.Layers[0], "status"); s != "" {
+				status = s
+			}
+		}
 
-		if status != nil && status.Value == "resolved" {
-			excursions = append(excursions, measurement)
+		if status == "resolved" {
+			excursions = append(excursions, val)
 		}
 	}
 
@@ -265,31 +298,31 @@ func (service *Service) data(ctx fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 	}
 
-	epoch := parseInt64Query(ctx.Query("epoch"))
+	epoch := uint64(parseInt64Query(ctx.Query("epoch")))
 	limit := int(parseUintQuery(ctx.Query("limit")))
-	var measurements []*data.Measurement
+	var values []*data.Value
 
-	for measurement := range service.client.Get("spot:trade/") {
-		if measurement == nil {
+	for val := range store.Values(service.client, "spot:trade/") {
+		if val == nil {
 			continue
 		}
 
-		if epoch > 0 && measurement.Epoch != epoch {
+		if epoch > 0 && val.Epoch != epoch {
 			continue
 		}
 
-		measurements = append(measurements, measurement)
+		values = append(values, val)
 
-		if limit > 0 && len(measurements) >= limit {
+		if limit > 0 && len(values) >= limit {
 			break
 		}
 	}
 
-	if measurements == nil {
-		measurements = []*data.Measurement{}
+	if values == nil {
+		values = []*data.Value{}
 	}
 
-	return ctx.JSON(measurements)
+	return ctx.JSON(values)
 }
 
 func (service *Service) captures(ctx fiber.Ctx) error {
@@ -303,8 +336,8 @@ func (service *Service) captures(ctx fiber.Ctx) error {
 		run = ctx.Query("epoch")
 	}
 
-	epoch := parseInt64Query(run)
-	after := parseInt64Query(ctx.Query("after"))
+	epoch := uint64(parseInt64Query(run))
+	after := uint64(parseInt64Query(ctx.Query("after")))
 	symbol := ctx.Query("symbol")
 
 	const maxCaptures = 64
@@ -316,35 +349,34 @@ func (service *Service) captures(ctx fiber.Ctx) error {
 		prefix = fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch)
 	}
 
-	for measurement := range service.client.Get(prefix) {
-		if measurement == nil {
+	for val := range store.Values(service.client, prefix) {
+		if val == nil {
 			continue
 		}
 
-		if epoch > 0 && measurement.Epoch != epoch {
+		if epoch > 0 && val.Epoch != epoch {
 			continue
 		}
 
-		if measurement.SeqIdx < after {
+		if val.SeqIdx < after {
 			continue
 		}
 
 		receivedAt := ""
-
-		if !measurement.At.IsZero() {
-			receivedAt = measurement.At.UTC().Format("2006-01-02T15:04:05.000Z07:00")
+		if val.Timestamp > 0 {
+			receivedAt = time.Unix(0, int64(val.Timestamp)).UTC().Format("2006-01-02T15:04:05.000Z07:00")
 		}
 
 		captures = append(captures, map[string]any{
 			"identity": map[string]any{
-				"run":            strconv.FormatInt(epoch, 10),
-				"sequence":       measurement.SeqIdx,
-				"stream":         measurement.Source,
-				"streamEpoch":    epoch,
-				"streamSequence": measurement.SeqIdx,
+				"run":            strconv.FormatUint(val.Epoch, 10),
+				"sequence":       val.SeqIdx,
+				"stream":         val.Origin,
+				"streamEpoch":    val.Epoch,
+				"streamSequence": val.SeqIdx,
 			},
 			"kind":       "ticker",
-			"endpoint":   measurement.Source,
+			"endpoint":   val.Origin,
 			"receivedAt": receivedAt,
 		})
 
@@ -367,15 +399,15 @@ func (service *Service) envelope(ctx fiber.Ctx) error {
 		run = ctx.Query("epoch")
 	}
 
-	epoch := parseInt64Query(run)
-	seq := parseInt64Query(ctx.Query("seq"))
+	epoch := uint64(parseInt64Query(run))
+	seq := uint64(parseInt64Query(ctx.Query("seq")))
 	symbol := ctx.Query("symbol")
 
 	if seq <= 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "seq required")
 	}
 
-	var found *data.Measurement
+	var found *data.Value
 
 	prefix := "spot:trade/"
 
@@ -383,17 +415,17 @@ func (service *Service) envelope(ctx fiber.Ctx) error {
 		prefix = fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch)
 	}
 
-	for measurement := range service.client.Get(prefix) {
-		if measurement == nil {
+	for val := range store.Values(service.client, prefix) {
+		if val == nil {
 			continue
 		}
 
-		if epoch > 0 && measurement.Epoch != epoch {
+		if epoch > 0 && val.Epoch != epoch {
 			continue
 		}
 
-		if measurement.SeqIdx == seq && (symbol == "" || measurement.Label == symbol) {
-			found = measurement
+		if val.SeqIdx == seq && (symbol == "" || val.Scope == symbol) {
+			found = val
 			break
 		}
 	}
@@ -402,46 +434,26 @@ func (service *Service) envelope(ctx fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "frame not found")
 	}
 
-	payloadBytes, err := json.Marshal(found)
+	payloadBytes, err := sonic.Marshal(found)
 
 	if err != nil {
 		return readFailure(err)
 	}
 
-	receivedAt := ""
-
-	if !found.At.IsZero() {
-		receivedAt = found.At.UTC().Format("2006-01-02T15:04:05.000Z07:00")
-	}
-
-	capture := map[string]any{
-		"identity": map[string]any{
-			"run":            strconv.FormatInt(epoch, 10),
-			"sequence":       found.SeqIdx,
-			"stream":         found.Source,
-			"streamEpoch":    epoch,
-			"streamSequence": found.SeqIdx,
-		},
-		"kind":       "ticker",
-		"endpoint":   found.Source,
-		"receivedAt": receivedAt,
-	}
-
-	return ctx.JSON(map[string]any{
-		"run":       strconv.FormatInt(epoch, 10),
-		"sequence":  found.SeqIdx,
-		"capture":   capture,
-		"payload":   string(payloadBytes),
-		"manifests": []any{},
-		"witnesses": []any{},
+	return ctx.JSON(HindsightEnvelope{
+		Payload: string(payloadBytes),
 	})
+}
+
+type HindsightEnvelope struct {
+	Payload string `json:"payload"`
 }
 
 type HindsightGap struct {
 	RunId    string `json:"runId"`
 	Encoding string `json:"encoding"`
 	Sequence int64  `json:"sequence"`
-	Detail   string `json:"detail,omitempty"`
+	Detail   string `json:"detail"`
 }
 
 type HindsightLifecycleEvent struct {
@@ -450,15 +462,15 @@ type HindsightLifecycleEvent struct {
 	Kind       string `json:"kind"`
 	Action     string `json:"action"`
 	At         string `json:"at"`
-	CaptureSeq int64  `json:"captureSeq,omitempty"`
+	CaptureSeq uint64 `json:"captureSeq"`
 }
 
 type HindsightCaptureIdentity struct {
 	Run            string `json:"run"`
-	Sequence       int64  `json:"sequence"`
+	Sequence       uint64 `json:"sequence"`
 	Stream         string `json:"stream"`
-	StreamEpoch    int64  `json:"streamEpoch"`
-	StreamSequence int64  `json:"streamSequence"`
+	StreamEpoch    uint64 `json:"streamEpoch"`
+	StreamSequence uint64 `json:"streamSequence"`
 }
 
 type HindsightStateEnvelope struct {
@@ -482,7 +494,7 @@ func (service *Service) gaps(ctx fiber.Ctx) error {
 		run = ctx.Query("epoch")
 	}
 
-	epoch := parseInt64Query(run)
+	epoch := uint64(parseInt64Query(run))
 	symbol := ctx.Query("symbol")
 	gaps := make([]HindsightGap, 0)
 	var prevSeq int64 = -1
@@ -493,25 +505,25 @@ func (service *Service) gaps(ctx fiber.Ctx) error {
 		prefix = fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch)
 	}
 
-	for measurement := range service.client.Get(prefix) {
-		if measurement == nil {
+	for val := range store.Values(service.client, prefix) {
+		if val == nil {
 			continue
 		}
 
-		if epoch > 0 && measurement.Epoch != epoch {
+		if epoch > 0 && val.Epoch != epoch {
 			continue
 		}
 
-		if prevSeq != -1 && measurement.SeqIdx > prevSeq+1 {
+		if prevSeq != -1 && int64(val.SeqIdx) > prevSeq+1 {
 			gaps = append(gaps, HindsightGap{
-				RunId:    strconv.FormatInt(measurement.Epoch, 10),
+				RunId:    strconv.FormatUint(val.Epoch, 10),
 				Encoding: "sequence_gap",
 				Sequence: prevSeq + 1,
-				Detail:   fmt.Sprintf("Sequence jump from %d to %d (missing %d frames)", prevSeq, measurement.SeqIdx, measurement.SeqIdx-prevSeq-1),
+				Detail:   fmt.Sprintf("Sequence jump from %d to %d (missing %d frames)", prevSeq, val.SeqIdx, int64(val.SeqIdx)-prevSeq-1),
 			})
 		}
 
-		prevSeq = measurement.SeqIdx
+		prevSeq = int64(val.SeqIdx)
 	}
 
 	return ctx.JSON(gaps)
@@ -528,49 +540,47 @@ func (service *Service) lifecycle(ctx fiber.Ctx) error {
 		run = ctx.Query("epoch")
 	}
 
-	epoch := parseInt64Query(run)
+	epoch := uint64(parseInt64Query(run))
 	symbol := ctx.Query("symbol")
 	events := make([]HindsightLifecycleEvent, 0)
 
-	// 1. Ingest detector excursions as lifecycle events
 	detPrefix := "detector/"
 
 	if symbol != "" && epoch > 0 {
 		detPrefix = fmt.Sprintf("detector/%s/%019d/", symbol, epoch)
 	}
 
-	for measurement := range service.client.Get(detPrefix) {
-		if measurement == nil || measurement.Source != "detector" {
+	for val := range store.Values(service.client, detPrefix) {
+		if val == nil || val.Origin != "detector" {
 			continue
 		}
 
-		if epoch > 0 && measurement.Epoch != epoch {
+		if epoch > 0 && val.Epoch != epoch {
 			continue
 		}
 
-		action := "excursion"
-
-		if typeEntry := data.Pull(measurement.Meta("type")); typeEntry != nil && typeEntry.Value != "" {
-			action = typeEntry.Value
+		action := val.Role
+		if len(val.Layers) > 0 {
+			if t := data.Attribute[string](val.Layers[0], "type"); t != "" {
+				action = t
+			}
 		}
 
 		atStr := ""
-
-		if !measurement.At.IsZero() {
-			atStr = measurement.At.UTC().Format("2006-01-02T15:04:05.000Z07:00")
+		if val.Timestamp > 0 {
+			atStr = time.Unix(0, int64(val.Timestamp)).UTC().Format("2006-01-02T15:04:05.000Z07:00")
 		}
 
 		events = append(events, HindsightLifecycleEvent{
-			DecisionId: fmt.Sprintf("det-%d-%d", measurement.Epoch, measurement.SeqIdx),
-			Symbol:     measurement.Label,
+			DecisionId: fmt.Sprintf("det-%d-%d", val.Epoch, val.SeqIdx),
+			Symbol:     val.Scope,
 			Kind:       "detector",
 			Action:     action,
 			At:         atStr,
-			CaptureSeq: measurement.SeqIdx,
+			CaptureSeq: val.SeqIdx,
 		})
 	}
 
-	// 2. Ingest policy decisions as lifecycle events
 	polPrefix := "policy/current/"
 
 	if epoch > 0 {
@@ -582,34 +592,29 @@ func (service *Service) lifecycle(ctx fiber.Ctx) error {
 		polPrefix = fmt.Sprintf("policy/%s/%019d/", symbol, epoch)
 	}
 
-	for measurement := range service.client.Get(polPrefix) {
-		if measurement == nil || measurement.Source != "policy" {
+	for val := range store.Values(service.client, polPrefix) {
+		if val == nil || val.Origin != "policy" {
 			continue
 		}
 
-		if epoch > 0 && measurement.Epoch != epoch {
+		if epoch > 0 && val.Epoch != epoch {
 			continue
 		}
 
-		action := "noop"
-
-		if actEntry := data.Pull(measurement.Meta("action")); actEntry != nil && actEntry.Value != "" {
-			action = actEntry.Value
-		}
+		action := val.Role
 
 		atStr := ""
-
-		if !measurement.At.IsZero() {
-			atStr = measurement.At.UTC().Format("2006-01-02T15:04:05.000Z07:00")
+		if val.Timestamp > 0 {
+			atStr = time.Unix(0, int64(val.Timestamp)).UTC().Format("2006-01-02T15:04:05.000Z07:00")
 		}
 
 		events = append(events, HindsightLifecycleEvent{
-			DecisionId: fmt.Sprintf("pol-%d-%d", measurement.Epoch, measurement.SeqIdx),
-			Symbol:     measurement.Label,
+			DecisionId: fmt.Sprintf("pol-%d-%d", val.Epoch, val.SeqIdx),
+			Symbol:     val.Scope,
 			Kind:       "policy",
 			Action:     action,
 			At:         atStr,
-			CaptureSeq: measurement.SeqIdx,
+			CaptureSeq: val.SeqIdx,
 		})
 	}
 
@@ -627,7 +632,7 @@ func (service *Service) states(ctx fiber.Ctx) error {
 		run = ctx.Query("epoch")
 	}
 
-	epoch := parseInt64Query(run)
+	epoch := uint64(parseInt64Query(run))
 	symbol := ctx.Query("symbol")
 	const maxStates = 64
 	states := make([]HindsightState, 0, maxStates)
@@ -638,16 +643,16 @@ func (service *Service) states(ctx fiber.Ctx) error {
 		prefix = fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch)
 	}
 
-	for measurement := range service.client.Get(prefix) {
-		if measurement == nil {
+	for val := range store.Values(service.client, prefix) {
+		if val == nil {
 			continue
 		}
 
-		if epoch > 0 && measurement.Epoch != epoch {
+		if epoch > 0 && val.Epoch != epoch {
 			continue
 		}
 
-		payloadBytes, err := json.Marshal(measurement)
+		payloadBytes, err := sonic.Marshal(val)
 
 		if err != nil {
 			continue
@@ -656,11 +661,11 @@ func (service *Service) states(ctx fiber.Ctx) error {
 		states = append(states, HindsightState{
 			Envelope: HindsightStateEnvelope{
 				Origin: HindsightCaptureIdentity{
-					Run:            strconv.FormatInt(measurement.Epoch, 10),
-					Sequence:       measurement.SeqIdx,
-					Stream:         measurement.Source,
-					StreamEpoch:    measurement.Epoch,
-					StreamSequence: measurement.SeqIdx,
+					Run:            strconv.FormatUint(val.Epoch, 10),
+					Sequence:       val.SeqIdx,
+					Stream:         val.Origin,
+					StreamEpoch:    val.Epoch,
+					StreamSequence: val.SeqIdx,
 				},
 				Ordinal: 0,
 			},
@@ -686,8 +691,8 @@ func (service *Service) state(ctx fiber.Ctx) error {
 		run = ctx.Query("epoch")
 	}
 
-	epoch := parseInt64Query(run)
-	seq := parseInt64Query(ctx.Query("seq"))
+	epoch := uint64(parseInt64Query(run))
+	seq := uint64(parseInt64Query(ctx.Query("seq")))
 	ordinal := int(parseUintQuery(ctx.Query("ordinal")))
 	symbol := ctx.Query("symbol")
 
@@ -695,24 +700,24 @@ func (service *Service) state(ctx fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "seq required")
 	}
 
-	var found *data.Measurement
+	var found *data.Value
 	prefix := "spot:trade/"
 
 	if symbol != "" && epoch > 0 {
 		prefix = fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch)
 	}
 
-	for measurement := range service.client.Get(prefix) {
-		if measurement == nil {
+	for val := range store.Values(service.client, prefix) {
+		if val == nil {
 			continue
 		}
 
-		if epoch > 0 && measurement.Epoch != epoch {
+		if epoch > 0 && val.Epoch != epoch {
 			continue
 		}
 
-		if measurement.SeqIdx == seq && (symbol == "" || measurement.Label == symbol) {
-			found = measurement
+		if val.SeqIdx == seq && (symbol == "" || val.Scope == symbol) {
+			found = val
 			break
 		}
 	}
@@ -721,7 +726,7 @@ func (service *Service) state(ctx fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "no witnessed state at sequence")
 	}
 
-	payloadBytes, err := json.Marshal(found)
+	payloadBytes, err := sonic.Marshal(found)
 
 	if err != nil {
 		return readFailure(err)
@@ -730,9 +735,9 @@ func (service *Service) state(ctx fiber.Ctx) error {
 	return ctx.JSON(HindsightState{
 		Envelope: HindsightStateEnvelope{
 			Origin: HindsightCaptureIdentity{
-				Run:            strconv.FormatInt(found.Epoch, 10),
+				Run:            strconv.FormatUint(found.Epoch, 10),
 				Sequence:       found.SeqIdx,
-				Stream:         found.Source,
+				Stream:         found.Origin,
 				StreamEpoch:    found.Epoch,
 				StreamSequence: found.SeqIdx,
 			},
@@ -794,35 +799,27 @@ type TrainedFragmentResponse struct {
 	LearnedAt         string          `json:"learned_at"`
 }
 
-func parseTick(measurement *data.Measurement, key string) int64 {
-	if entry := data.Pull(measurement.Meta(key)); entry != nil {
-		val, err := strconv.ParseInt(entry.Value, 10, 64)
-
-		if err == nil {
-			return val
+func parseTick(val *data.Value, key string) int64 {
+	if val == nil {
+		return 0
+	}
+	if len(val.Layers) > 0 {
+		if t := data.Attribute[int64](val.Layers[0], key); t != 0 {
+			return t
 		}
 	}
-
-	if entry := data.Pull(measurement.Read(key)); entry != nil && entry.Metric != nil {
-		return int64(entry.Metric.Raw())
-	}
-
-	return 0
+	return int64(val.Tick)
 }
 
-func parsePrice(measurement *data.Measurement, key string) float64 {
-	if entry := data.Pull(measurement.Meta(key)); entry != nil {
-		val, err := strconv.ParseFloat(entry.Value, 64)
-
-		if err == nil {
-			return val
+func parsePrice(val *data.Value, key string) float64 {
+	if val == nil {
+		return 0
+	}
+	if len(val.Layers) > 0 {
+		if p := data.Attribute[float64](val.Layers[0], key); p != 0 {
+			return p
 		}
 	}
-
-	if entry := data.Pull(measurement.Read(key)); entry != nil && entry.Metric != nil {
-		return entry.Metric.Raw()
-	}
-
 	return 0
 }
 
@@ -862,20 +859,16 @@ func (service *Service) getFragments(epoch int64) ([]TrainedFragmentResponse, er
 	}
 
 	fragments := make([]TrainedFragmentResponse, 0)
-	fragmentsMap := make(map[int64]*data.Measurement)
+	fragmentsMap := make(map[int64]*data.Value)
 	var autoID int64 = 1
 
-	for det := range service.client.Get("detector/") {
-		if det == nil || det.Source != "detector" {
+	for det := range store.Values(service.client, "detector/") {
+		if det == nil || det.Origin != "detector" {
 			continue
 		}
 
 		id := autoID
 		autoID++
-
-		if det.ID > 0 {
-			id = int64(det.ID)
-		}
 
 		fragmentsMap[id] = det
 
@@ -897,32 +890,26 @@ func (service *Service) getFragments(epoch int64) ([]TrainedFragmentResponse, er
 			direction = "down"
 		}
 
-		class := direction
-
-		if entry := data.Pull(det.Meta("type")); entry != nil && entry.Value != "" {
-			class = entry.Value
+		class := det.Role
+		if len(det.Layers) > 0 {
+			if t := data.Attribute[string](det.Layers[0], "type"); t != "" {
+				class = t
+			}
 		}
 
 		learnedAt := ""
-
-		if !det.At.IsZero() {
-			learnedAt = det.At.UTC().Format("2006-01-02T15:04:05Z07:00")
+		if det.Timestamp > 0 {
+			learnedAt = time.Unix(0, int64(det.Timestamp)).UTC().Format("2006-01-02T15:04:05Z07:00")
 		}
 
 		var startIdx int64
 		var bIdx int64
 		var cIdx int64
 
-		if entry := data.Pull(det.Read("start_idx")); entry != nil && entry.Metric != nil {
-			startIdx = int64(entry.Metric.Raw())
-		}
-
-		if entry := data.Pull(det.Read("b_idx")); entry != nil && entry.Metric != nil {
-			bIdx = int64(entry.Metric.Raw())
-		}
-
-		if entry := data.Pull(det.Read("c_idx")); entry != nil && entry.Metric != nil {
-			cIdx = int64(entry.Metric.Raw())
+		if len(det.Layers) > 0 {
+			startIdx = data.Attribute[int64](det.Layers[0], "start_idx")
+			bIdx = data.Attribute[int64](det.Layers[0], "b_idx")
+			cIdx = data.Attribute[int64](det.Layers[0], "c_idx")
 		}
 
 		entryIdx := max(bIdx-startIdx, 0)
@@ -931,18 +918,19 @@ func (service *Service) getFragments(epoch int64) ([]TrainedFragmentResponse, er
 		var predictedEntryIdx int64 = -1
 		var predictedExitIdx int64 = -1
 
-		if pEntry := data.Pull(det.Read("predicted_entry")); pEntry != nil && pEntry.Metric != nil && pEntry.Metric.Raw() >= 0 {
-			predictedEntryIdx = int64(pEntry.Metric.Raw())
-		}
-
-		if pExit := data.Pull(det.Read("predicted_exit")); pExit != nil && pExit.Metric != nil && pExit.Metric.Raw() >= 0 {
-			predictedExitIdx = int64(pExit.Metric.Raw())
+		if len(det.Layers) > 0 {
+			if pe := data.Attribute[int64](det.Layers[0], "predicted_entry"); pe >= 0 {
+				predictedEntryIdx = pe
+			}
+			if px := data.Attribute[int64](det.Layers[0], "predicted_exit"); px >= 0 {
+				predictedExitIdx = px
+			}
 		}
 
 		fragments = append(fragments, TrainedFragmentResponse{
 			Id:                id,
-			Symbol:            det.Label,
-			Epoch:             det.Epoch,
+			Symbol:            det.Scope,
+			Epoch:             int64(det.Epoch),
 			MarkA:             startTick,
 			MarkB:             bTick,
 			MarkC:             cTick,
@@ -992,23 +980,25 @@ func fetchFragmentPoints(client *store.Client, symbol string, epoch, startTick, 
 	var x int
 	pointsPrefix := fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch)
 
-	for m := range client.Get(pointsPrefix) {
+	for m := range store.Values(client, pointsPrefix) {
 		if m == nil {
 			continue
 		}
 
-		if startTick > 0 && m.Tick < startTick {
+		if startTick > 0 && int64(m.Tick) < startTick {
 			continue
 		}
 
-		if cTick > 0 && m.Tick > cTick {
+		if cTick > 0 && int64(m.Tick) > cTick {
 			break
 		}
 
 		var price float64
-
-		if pEntry := data.Pull(m.Read("price")); pEntry != nil && pEntry.Metric != nil {
-			price = pEntry.Metric.Raw()
+		if len(m.Layers) > 0 {
+			price = data.Attribute[float64](m.Layers[0], "price")
+			if price == 0 {
+				price = data.Attribute[float64](m.Layers[0], "data", 0, "price")
+			}
 		}
 
 		if price <= 0 {
@@ -1016,15 +1006,17 @@ func fetchFragmentPoints(client *store.Client, symbol string, epoch, startTick, 
 		}
 
 		var timeMs int64
-
-		if !m.At.IsZero() {
-			timeMs = m.At.UnixMilli()
+		if m.Timestamp > 0 {
+			timeMs = int64(m.Timestamp / 1e6)
+			if m.Timestamp < 1e11 {
+				timeMs = int64(m.Timestamp * 1000)
+			}
 		}
 
 		points = append(points, FragmentPoint{
 			X:    x,
 			Y:    price,
-			Seq:  m.Tick,
+			Seq:  int64(m.Tick),
 			Time: timeMs,
 		})
 
@@ -1060,13 +1052,13 @@ func (service *Service) trainingFragmentPoints(ctx fiber.Ctx) error {
 	cTick := parseTick(targetDet, "c_tick")
 
 	if startTick <= 0 && targetDet.Tick > 0 {
-		startTick = targetDet.Tick
+		startTick = int64(targetDet.Tick)
 	}
 
 	if cTick <= 0 && targetDet.SeqIdx > 0 {
-		cTick = targetDet.SeqIdx
+		cTick = int64(targetDet.SeqIdx)
 	}
 
-	points := fetchFragmentPoints(service.client, targetDet.Label, targetDet.Epoch, startTick, cTick)
+	points := fetchFragmentPoints(service.client, targetDet.Scope, int64(targetDet.Epoch), startTick, cTick)
 	return ctx.JSON(points)
 }

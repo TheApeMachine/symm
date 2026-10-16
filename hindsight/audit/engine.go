@@ -13,7 +13,8 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	s3store "github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
@@ -22,7 +23,7 @@ import (
 )
 
 type AuditorStage interface {
-	Channel() chan *data.Measurement
+	Channel() chan *data.Value
 	Run() error
 	Report() string
 	Name() string
@@ -33,14 +34,14 @@ type Violation struct {
 	Symbol      string
 	Name        string
 	Description string
-	Measurement *data.Measurement
-	Metric      *data.Metric
+	Measurement *data.Value
+	Metric      any
 }
 
 func NewViolation(
 	symbol, name, description string,
-	measurement *data.Measurement,
-	metric *data.Metric) *Violation {
+	measurement *data.Value,
+	metric any) *Violation {
 	return &Violation{
 		Symbol:      symbol,
 		Name:        name,
@@ -310,8 +311,9 @@ func (engine *Engine) Run() error {
 			}
 		}
 
-		var currentTick int64 = -1
-		var currentPeers []*data.Measurement
+		var currentTick uint64
+		var hasTick bool
+		var currentPeers []*data.Value
 		var uniqueTicksCount int
 
 		flushJoin := func() {
@@ -320,12 +322,14 @@ func (engine *Engine) Run() error {
 			}
 
 			first := currentPeers[0]
-			join := data.NewMeasurement(first.Epoch, first.Label, "runtime:join", first.At, first.From)
+			join := data.NewValue(first.Origin, "runtime:join", first.Scope)
 			join.Tick = first.Tick
 			join.SeqIdx = first.SeqIdx
 			join.Timestamp = first.Timestamp
-			join.Peers(currentPeers...)
-			join = join.Write()
+			for _, peer := range currentPeers {
+				join.Layers = append(join.Layers, peer.Layers...)
+				join.Index = append(join.Index, peer.Index...)
+			}
 
 			for _, stage := range signalStages {
 				stage.Channel() <- join
@@ -342,8 +346,8 @@ func (engine *Engine) Run() error {
 			currentPeers = nil
 		}
 
-		for measurement := range engine.store.Get(signalPrefixes...) {
-			if currentTick != -1 && measurement.Tick != currentTick {
+		for measurement := range hindsight.Measurements(engine.store, signalPrefixes...) {
+			if hasTick && measurement.Tick != currentTick {
 				flushJoin()
 				uniqueTicksCount++
 
@@ -352,6 +356,7 @@ func (engine *Engine) Run() error {
 				}
 			}
 
+			hasTick = true
 			currentTick = measurement.Tick
 			currentPeers = append(currentPeers, measurement)
 
@@ -375,18 +380,19 @@ func (engine *Engine) Run() error {
 				detectorPrefixes = append(detectorPrefixes, fmt.Sprintf("detector/%s/%d", sym, targetEpoch))
 			}
 
-			for measurement := range engine.store.Get(detectorPrefixes...) {
+			for measurement := range hindsight.Measurements(engine.store, detectorPrefixes...) {
 				if system.Cfg.Audit.Ticks > 0 && currentTick > 0 {
 					if measurement.Tick > currentTick {
 						continue
 					}
-					if endMetric := data.Pull(measurement.Read("end_tick")); endMetric != nil && endMetric.Metric != nil {
-						if int64(endMetric.Metric.Raw()) > currentTick {
+					metrics := data.Metrics(measurement)
+					if endTick, ok := metrics["end_tick"]; ok {
+						if uint64(endTick) > currentTick {
 							continue
 						}
 					}
-					if cMetric := data.Pull(measurement.Read("c_tick")); cMetric != nil && cMetric.Metric != nil {
-						if int64(cMetric.Metric.Raw()) > currentTick {
+					if cTick, ok := metrics["c_tick"]; ok {
+						if uint64(cTick) > currentTick {
 							continue
 						}
 					}
@@ -409,7 +415,7 @@ func (engine *Engine) Run() error {
 				policyPrefixes = append(policyPrefixes, fmt.Sprintf("policy/%s/%d", sym, targetEpoch))
 			}
 
-			for measurement := range engine.store.Get(policyPrefixes...) {
+			for measurement := range hindsight.Measurements(engine.store, policyPrefixes...) {
 				for _, stage := range cognitiveStages {
 					stage.Channel() <- measurement
 				}

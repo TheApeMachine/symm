@@ -2,15 +2,13 @@
 import { act, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { focusAtom, RingBuffer, signals } from "#/collections/app";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MetricT } from "#/providers/telemetry/telemetry/metric";
-import { NamedStringT } from "#/providers/telemetry/telemetry/named-string";
+import { Value } from "#/types/value";
 import { XrayFactsPanel } from "./xray-facts-panel";
 
 describe("XrayFactsPanel", () => {
 	it("renders panel and binds resonance metrics live", () => {
 		focusAtom.set("BTC/USD");
-		const ring = new RingBuffer<MeasurementT>(10);
+		const ring = new RingBuffer<Value>(10);
 		signals.resonance.setState((prev) => ({ ...prev, "BTC/USD": ring }));
 
 		const view = render(<XrayFactsPanel />);
@@ -18,21 +16,24 @@ describe("XrayFactsPanel", () => {
 		// Initially fallback
 		expect(view.container.querySelector('[data-metric="symbol"]')?.textContent).toBe("—");
 
-		// Live measurement
+		// Live value
 		act(() => {
-			const m = new MeasurementT();
-			m.symbol = "BTC/USD";
-			m.maturity = 42;
-			m.metrics = [
-				new MetricT("energy", 0.1234, 0.1234),
-				new MetricT("surprise", 0.0567, 0.0567),
-			];
-			m.provenance = [
-				new NamedStringT("confidence", "0.952"),
-				new NamedStringT("supported_horizon", "32"),
-				new NamedStringT("resolved_steps", "120"),
-			];
-			ring.add(m);
+			const val = new Value({
+				scope: "BTC/USD",
+				metrics: [
+					{ name: "energy", raw: 0.1234, snm: 0.1234 },
+					{ name: "surprise", raw: 0.0567, snm: 0.0567 },
+				],
+				metadata: [{ name: "maturity", value: 42 }],
+				provenance: [
+					{ name: "confidence", value: "0.952" },
+					{ name: "supported_horizon", value: "32" },
+					{ name: "resolved_steps", value: "120" },
+					{ name: "maturity", value: "42" },
+				],
+			});
+			(val as any).maturity = 42;
+			ring.add(val);
 			signals.resonance.setState((prev) => ({ ...prev, "BTC/USD": ring }));
 		});
 

@@ -12,10 +12,10 @@ import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Meter } from "#/components/ui/meter";
 import { Section } from "#/components/ui/section";
+import { type DecisionT } from "#/collections/types";
 import type { Lifecycle } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
-import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { Value } from "#/types/value";
 
 export interface RegionMeta {
 	id: string;
@@ -531,8 +531,8 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 	const currentDecision = decisions.find((d) => d.symbol === activeSymbol);
 
 	// Read live ring buffer from signals.training for this specific symbol
-	const [latestMeasurement, setLatestMeasurement] =
-		useState<MeasurementT | null>(() => {
+	const [latestValue, setLatestValue] =
+		useState<Value | null>(() => {
 			const ring = signals.training?.state?.[activeSymbol];
 			if (
 				ring &&
@@ -545,7 +545,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 		});
 
 	useEffect(() => {
-		const updateRing = (state: Record<string, RingBuffer<MeasurementT>>) => {
+		const updateRing = (state: Record<string, RingBuffer<Value>>) => {
 			const ring = state[activeSymbol];
 			if (
 				ring &&
@@ -554,7 +554,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 			) {
 				const latest = ring.get(ring.getBufferLength() - 1);
 				if (latest) {
-					setLatestMeasurement(latest);
+					setLatestValue(latest);
 				}
 			}
 		};
@@ -570,14 +570,14 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 	}, [activeSymbol]);
 
 	const livePathFromMeasurement = useMemo(() => {
-		if (!latestMeasurement?.provenance) return "";
-		for (const p of latestMeasurement.provenance) {
+		if (!latestValue?.provenance) return "";
+		for (const p of latestValue.provenance) {
 			if (p?.name === "token_path" && p.value) {
 				return String(p.value);
 			}
 		}
 		return "";
-	}, [latestMeasurement]);
+	}, [latestValue]);
 
 	const currentPath = livePathFromMeasurement || currentDecision?.cause || "";
 
@@ -848,9 +848,9 @@ showing the active regions, entry confluence, and exit precursor levels for the 
 export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 	const activeSymbol = life?.symbol ?? "BTC/USD";
 
-	// Subscribe to live measurement for activeSymbol directly from signals.training
-	const [latestMeasurement, setLatestMeasurement] =
-		useState<MeasurementT | null>(() => {
+	// Subscribe to live value for activeSymbol directly from signals.training
+	const [latestValue, setLatestValue] =
+		useState<Value | null>(() => {
 			const ring = signals.training?.state?.[activeSymbol];
 			if (
 				ring &&
@@ -863,8 +863,8 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 		});
 
 	useEffect(() => {
-		const updateMeasurement = (
-			state: Record<string, RingBuffer<MeasurementT>>,
+		const updateValue = (
+			state: Record<string, RingBuffer<Value>>,
 		) => {
 			const ring = state[activeSymbol];
 			if (
@@ -874,16 +874,16 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 			) {
 				const latest = ring.get(ring.getBufferLength() - 1);
 				if (latest) {
-					setLatestMeasurement(latest);
+					setLatestValue(latest);
 				}
 			}
 		};
 
 		if (signals.training?.state) {
-			updateMeasurement(signals.training.state);
+			updateValue(signals.training.state);
 		}
 
-		const unsub = signals.training?.subscribe(updateMeasurement);
+		const unsub = signals.training?.subscribe(updateValue);
 		return () => {
 			unsub?.unsubscribe?.();
 		};
@@ -891,24 +891,24 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 
 	const metricMap = useMemo(() => {
 		const map: Record<string, number> = {};
-		if (!latestMeasurement?.metrics) return map;
-		for (const m of latestMeasurement.metrics) {
+		if (!latestValue?.metrics) return map;
+		for (const m of latestValue.metrics) {
 			if (m?.name) {
 				map[String(m.name)] = m.raw ?? 0;
 			}
 		}
 		return map;
-	}, [latestMeasurement]);
+	}, [latestValue]);
 
 	const liveTokenPath = useMemo(() => {
-		if (!latestMeasurement?.provenance) return "";
-		for (const p of latestMeasurement.provenance) {
+		if (!latestValue?.provenance) return "";
+		for (const p of latestValue.provenance) {
 			if (p?.name === "token_path" && p.value) {
 				return String(p.value);
 			}
 		}
 		return "";
-	}, [latestMeasurement]);
+	}, [latestValue]);
 
 	const liveTokens = useMemo(
 		() => liveTokenPath.split("/").filter(Boolean),

@@ -7,28 +7,36 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
-func metricRaw(measurement *data.Measurement, label string) (float64, bool) {
+func metricRaw(measurement *data.Value, label string) (float64, bool) {
 	if measurement == nil {
 		return 0, false
 	}
-
-	for entry := range measurement.Read(label) {
-		if entry.Err != nil {
-			continue
-		}
-		return entry.Metric.Raw(), true
-	}
-
-	return 0, false
+	metrics := data.Metrics(measurement)
+	val, ok := metrics[label]
+	return val, ok
 }
 
-func signalPeer(source, symbol, metricName string, value float64, at time.Time) *data.Measurement {
-	measurement := data.NewMeasurement(1, symbol, source, at, at)
-	return measurement.Write(data.NewMetric(metricName, value, data.UnitDimensionless, data.TimescaleInstantaneous))
+func signalPeer(source, symbol, metricName string, value float64, at time.Time) *data.Value {
+	val := data.NewValue(source, "signal", symbol)
+	val.Timestamp = uint64(at.UnixNano())
+	return data.AppendVector(val, []float64{value}, metricName)
+}
+
+func joinSignalPeers(symbol string, at time.Time, peers []*data.Value, midpoint float64) *data.Value {
+	val := data.NewValue("resonance", "frame", symbol)
+	val.Timestamp = uint64(at.UnixNano())
+	if midpoint > 0 {
+		data.AppendVector(val, []float64{midpoint}, "midpoint")
+	}
+	for _, p := range peers {
+		val.Layers = append(val.Layers, p.Layers...)
+		val.Index = append(val.Index, p.Index...)
+	}
+	return val
 }
 
 func TestStep(t *testing.T) {
@@ -37,8 +45,9 @@ func TestStep(t *testing.T) {
 		defer solver.Close()
 
 		at := time.Unix(1, 0).UTC()
-		prior := data.NewMeasurement(1, "TEST/USD", "ingress", at, at)
-		prior = prior.Write(data.NewMetric("midpoint", 100, data.UnitPrice, data.TimescaleInstantaneous))
+		prior := data.NewValue("ingress", "frame", "TEST/USD")
+		prior.Timestamp = uint64(at.UnixNano())
+		data.AppendVector(prior, []float64{100}, "midpoint")
 
 		result := solver.Step(prior)
 
@@ -56,7 +65,7 @@ func TestSignalFeatureIngestion(t *testing.T) {
 		defer solver.Close()
 
 		at := time.Unix(10, 0).UTC()
-		peers := []*data.Measurement{
+		peers := []*data.Value{
 			signalPeer("correlation", "BTC/USD", "relative_return_energy", 1.2, at),
 			signalPeer("leadlag", "BTC/USD", "covariance_score_gain_median", 0.75, at),
 			signalPeer("liquidity", "BTC/USD", "relative_spread", 0.0002, at),
@@ -70,10 +79,7 @@ func TestSignalFeatureIngestion(t *testing.T) {
 			signalPeer("derivatives", "BTC/USD", "basis", 0.001, at),
 		}
 
-		m := data.NewMeasurement(1, "BTC/USD", "runtime:join", at, at)
-		m.Peers(peers...)
-		m = m.Write(data.NewMetric("midpoint", 50000, data.UnitPrice, data.TimescaleInstantaneous))
-
+		m := joinSignalPeers("BTC/USD", at, peers, 50000)
 		result := solver.Step(m)
 
 		Convey("the predictive coder ingests all 11 features and produces resonance dynamics", func() {
@@ -116,9 +122,9 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 		solver := NewSolver(context.Background(), 0.05)
 		defer solver.Close()
 
-		createMeasurement := func(sec int64, cvdVal, toxVal float64) *data.Measurement {
+		createMeasurement := func(sec int64, cvdVal, toxVal float64) *data.Value {
 			at := time.Unix(sec, 0).UTC()
-			peers := []*data.Measurement{
+			peers := []*data.Value{
 				signalPeer("correlation", "ETH/USD", "relative_return_energy", 1.0, at),
 				signalPeer("leadlag", "ETH/USD", "covariance_score_gain_median", 0.5, at),
 				signalPeer("liquidity", "ETH/USD", "relative_spread", 0.0003, at),
@@ -132,9 +138,7 @@ func TestSurpriseBreakInCommonFlow(t *testing.T) {
 				signalPeer("derivatives", "ETH/USD", "basis", 0.0005, at),
 			}
 
-			m := data.NewMeasurement(1, "ETH/USD", "runtime:join", at, at)
-			m.Peers(peers...)
-			return m.Write(data.NewMetric("midpoint", 3000, data.UnitPrice, data.TimescaleInstantaneous))
+			return joinSignalPeers("ETH/USD", at, peers, 3000)
 		}
 
 		for step := int64(1); step <= 10; step++ {
@@ -159,16 +163,16 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 		solver.Transition(runtime.READY)
 
 		at := time.Unix(100, 0).UTC()
-		m1 := data.NewMeasurement(1, "BTC/USD", "runtime:join", at, at)
-		m1.Peers(signalPeer("cvd", "BTC/USD", "signed_net_fraction", 0.1, at))
-		m1 = m1.Write(data.NewMetric("midpoint", 50000, data.UnitPrice, data.TimescaleInstantaneous))
+		m1 := joinSignalPeers("BTC/USD", at, []*data.Value{
+			signalPeer("cvd", "BTC/USD", "signed_net_fraction", 0.1, at),
+		}, 50000)
 		res1 := solver.Step(m1)
 		So(res1, ShouldNotBeNil)
 
 		at2 := time.Unix(101, 0).UTC()
-		m2 := data.NewMeasurement(1, "BTC/USD", "runtime:join", at2, at2)
-		m2.Peers(signalPeer("toxicity", "BTC/USD", "net_withdrawal_fraction:bid", 0.2, at2))
-		m2 = m2.Write(data.NewMetric("midpoint", 50010, data.UnitPrice, data.TimescaleInstantaneous))
+		m2 := joinSignalPeers("BTC/USD", at2, []*data.Value{
+			signalPeer("toxicity", "BTC/USD", "net_withdrawal_fraction:bid", 0.2, at2),
+		}, 50010)
 		res2 := solver.Step(m2)
 		So(res2, ShouldNotBeNil)
 
@@ -181,13 +185,11 @@ func TestNoVarianceCollapseOnAsynchronousSignals(t *testing.T) {
 
 func TestPeerSuffixedHeadlineMetrics(t *testing.T) {
 	Convey("Given correlation peer-suffixed metrics", t, func() {
-		at := time.Unix(1, 0).UTC()
-		peer := data.NewMeasurement(1, "ETH/USD", "correlation", at, at)
-		peer = peer.Write(data.NewMetric(
-			"covariance_score@BTC/USD", 0.82, data.UnitCovarianceScore, data.TimescaleRollingWindow,
-		))
+		metrics := map[string]float64{
+			"covariance_score@BTC/USD": 0.82,
+		}
 
-		value, ok := extractHeadlineMetric(0, peer)
+		value, ok := extractHeadlineMetric(0, metrics)
 		So(ok, ShouldBeTrue)
 		So(value, ShouldEqual, 0.82)
 	})
@@ -198,7 +200,7 @@ func TestPublishReturnsRejectsMisshapedLayers(t *testing.T) {
 		var out [12][]float64
 		out[7] = make([]float64, 2+2*3+1)
 
-		_, _, err := publishReturns(out, []int{3})
+		_, err := publishReturns(data.New(), out, []int{3})
 		So(err, ShouldNotBeNil)
 	})
 }

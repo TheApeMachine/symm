@@ -1,9 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { closedPositionsAtom, positionsAtom } from "#/collections/app";
-import { HoldingT } from "#/providers/telemetry/telemetry/holding";
-import { PositionT } from "#/providers/telemetry/telemetry/position";
-import { SellEventT } from "#/providers/telemetry/telemetry/sell-event";
+import { HoldingT, PositionT, SellEventT } from "#/collections/types";
 import { Positions } from "./positions";
 
 describe("Positions", () => {

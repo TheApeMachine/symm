@@ -3,9 +3,8 @@ package hawkes
 import (
 	"context"
 
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 )
@@ -20,144 +19,88 @@ type symbolModel struct {
 type Signal struct {
 	*runtime.System
 	models map[string]*symbolModel
-	last   map[string]*data.Measurement
+	keys   []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		models: make(map[string]*symbolModel),
-		last:   make(map[string]*data.Measurement),
+		keys: []string{
+			"arrival_rate_buy",
+			"arrival_rate_sell",
+			"branching_spectral_radius",
+			"conditional_intensity",
+			"conditional_intensity_velocity",
+		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "hawkes", signal)
 	return signal
 }
 
-func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY {
-		return nil
+func (signal *Signal) Step(value *data.Value) *data.Value {
+	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+		return value
 	}
 
-	if prior == nil || prior.Source == "spot:touch" {
-		return nil
-	}
-
-	if prior.Source != "spot:trade" {
-		signal.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"[hawkes] non-trade frame "+prior.Source+" reached a trade-only signal",
-			nil,
-		))
-
-		return nil
-	}
-
-	for _, key := range []string{"price", "qty"} {
-		found := false
-
-		for entry := range prior.Read(key) {
-			if entry != nil && entry.Metric != nil {
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			signal.Error(errnie.Err(
-				errnie.Validation, "[hawkes] trade frame missing "+key, nil,
-			))
-			return nil
-		}
-	}
-
-	var side string
-
-	if entry := data.Pull(prior.Meta("side")); entry != nil {
-		side = entry.Value
-	}
-
+	side := data.Attribute[string](value.Layers[0], "data", 0, "side")
 	var mark float64
-
 	if side == "buy" {
 		mark = 1.0
-	}
-
-	if side == "sell" {
+	} else if side == "sell" {
 		mark = -1.0
+	} else {
+		return value
 	}
 
-	if side != "buy" && side != "sell" {
-		if prior.Source == "spot:trade" {
-			errnie.Warn(signal.Name() + ": trade without an explicit aggressor side; dropping event")
-		}
-
-		return nil
+	price := data.Attribute[float64](value.Layers[0], "data", 0, "price")
+	qty := data.Attribute[float64](value.Layers[0], "data", 0, "qty")
+	if price <= 0 || qty <= 0 {
+		return value
 	}
 
-	atSec := float64(prior.At.UnixNano()) * 1e-9
+	atSec := float64(value.Timestamp) * 1e-9
+	if atSec <= 0 {
+		return value
+	}
 
-	state, exists := signal.models[prior.Label]
-
+	state, exists := signal.models[value.Scope]
 	if !exists {
 		state = &symbolModel{
 			estimator: nmhawkes.NewHawkes(),
 		}
-		signal.models[prior.Label] = state
+		signal.models[value.Scope] = state
 	}
 
-	res, from, err := state.estimator.Step(mark, atSec)
-
+	res, _, err := state.estimator.Step(mark, atSec)
 	if err != nil {
-		signal.Error(errnie.Err(
-			errnie.Internal,
-			"[hawkes] "+prior.Label+": step failed",
-			err,
-		))
-
-		return nil
+		return value
 	}
 
-	if dropped := state.estimator.Dropped(); dropped != nil {
-		errnie.Warn("[hawkes] " + prior.Label + ": model dropped: " + dropped.Error())
-	}
+	buyRate := res["arrival_rate:buy"]
+	sellRate := res["arrival_rate:sell"]
+	radius := res["branching_spectral_radius"]
+	intensity := res["conditional_intensity"]
+	var intensityVelocity float64
 
-	outMetrics := make(map[string]float64, 4)
-
-	if buyRate, ok := res["arrival_rate:buy"]; ok {
-		outMetrics["arrival_rate:buy"] = buyRate
-	}
-
-	if sellRate, ok := res["arrival_rate:sell"]; ok {
-		outMetrics["arrival_rate:sell"] = sellRate
-	}
-
-	if radius, ok := res["branching_spectral_radius"]; ok {
-		outMetrics["branching_spectral_radius"] = radius
-	}
-
-	if intensity, ok := res["conditional_intensity"]; ok {
-		if state.hasPrev {
-			timeDelta := atSec - state.prevAtSec
-
-			if core.Resolvable(timeDelta) {
-				outMetrics["conditional_intensity_velocity"] = (intensity - state.prevIntensity) / timeDelta
-			}
+	if intensity > 0 && state.hasPrev {
+		timeDelta := atSec - state.prevAtSec
+		if core.Resolvable(timeDelta) {
+			intensityVelocity = (intensity - state.prevIntensity) / timeDelta
 		}
+	}
 
+	if intensity > 0 {
 		state.prevIntensity = intensity
 		state.prevAtSec = atSec
 		state.hasPrev = true
 	}
 
-	sideEntry := &data.StringEntry{Key: "side", Value: side}
-
-	prev := signal.last[prior.Label]
-	if prev == nil {
-		prev = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
-	}
-
-	out := prev.Next(prior, outMetrics, sideEntry)
-	out.From = from
-	signal.last[prior.Label] = out
-	return out
+	return data.AppendVector(value, []float64{
+		buyRate,
+		sellRate,
+		radius,
+		intensity,
+		intensityVelocity,
+	}, signal.keys...)
 }

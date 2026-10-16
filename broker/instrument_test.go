@@ -12,7 +12,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -219,18 +218,17 @@ func TestInstrumentPairMeasurementRoundTrip(t *testing.T) {
 			QtyMin:             qtyMin,
 		}
 
-		Convey("ToMeasurement serializes all fields into a Measurement without raw shortcuts", func() {
+		Convey("ToValue serializes all fields into a Value", func() {
 			epoch := int64(123456789)
-			meas := original.ToMeasurement(epoch)
+			val := original.ToValue(epoch)
 
-			So(meas, ShouldNotBeNil)
-			So(meas.Epoch, ShouldEqual, epoch)
-			So(meas.Label, ShouldEqual, "BTC/USD")
-			So(meas.Source, ShouldEqual, "instrument")
-			So(meas.Raw(), ShouldBeNil)
+			So(val, ShouldNotBeNil)
+			So(val.Epoch, ShouldEqual, uint64(epoch))
+			So(val.Scope, ShouldEqual, "BTC/USD")
+			So(val.Role, ShouldEqual, "instrument")
 
-			Convey("and NewInstrumentPairFromMeasurement completely reconstructs the original pair", func() {
-				restored, err := kraken.NewInstrumentPairFromMeasurement(meas)
+			Convey("and NewInstrumentPairFromValue completely reconstructs the original pair", func() {
+				restored, err := kraken.NewInstrumentPairFromValue(val)
 
 				So(err, ShouldBeNil)
 				So(restored, ShouldNotBeNil)
@@ -282,31 +280,21 @@ func TestInstrumentSnapshotWithPeers(t *testing.T) {
 		}
 		snapshot.Data.Pairs = []kraken.InstrumentPair{pair1, pair2}
 
-		snapshotMeas := snapshot.ToMeasurement(epoch)
+		val := snapshot.ToValue(epoch)
 
-		Convey("the snapshot measurement holds the individual pair measurements as peers", func() {
-			peers := snapshotMeas.Peers()
-			So(len(peers), ShouldEqual, 2)
-			So(peers[0].Label, ShouldEqual, "BTC/USD")
-			So(peers[1].Label, ShouldEqual, "ETH/USD")
-			So(snapshotMeas.Label, ShouldEqual, "snapshot")
-			So(snapshotMeas.Source, ShouldEqual, "instrument")
+		Convey("the snapshot value carries serialized pairs", func() {
+			So(val, ShouldNotBeNil)
+			So(val.Epoch, ShouldEqual, uint64(epoch))
+			So(val.Role, ShouldEqual, "snapshot")
+			So(val.Scope, ShouldEqual, "instrument")
 
-			Convey("and binary serialization preserves both snapshot and peers", func() {
-				payload, err := snapshotMeas.MarshalBinary()
+			Convey("and NewInstrumentFromValue restores the snapshot", func() {
+				restored, err := kraken.NewInstrumentFromValue(val)
 				So(err, ShouldBeNil)
-
-				restored := &data.Measurement{}
-				So(restored.UnmarshalBinary(payload), ShouldBeNil)
-				So(restored.Label, ShouldEqual, "snapshot")
-				So(restored.Source, ShouldEqual, "instrument")
-
-				restoredSnapshot, err := kraken.NewInstrumentFromMeasurement(restored)
-				So(err, ShouldBeNil)
-				So(restoredSnapshot, ShouldNotBeNil)
-				So(len(restoredSnapshot.Data.Pairs), ShouldEqual, 2)
-				So(restoredSnapshot.Data.Pairs[0].Symbol, ShouldEqual, "BTC/USD")
-				So(restoredSnapshot.Data.Pairs[1].Symbol, ShouldEqual, "ETH/USD")
+				So(restored, ShouldNotBeNil)
+				So(len(restored.Data.Pairs), ShouldEqual, 2)
+				So(restored.Data.Pairs[0].Symbol, ShouldEqual, "BTC/USD")
+				So(restored.Data.Pairs[1].Symbol, ShouldEqual, "ETH/USD")
 			})
 		})
 	})

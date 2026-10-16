@@ -36,15 +36,14 @@ func TestTradeBalanceResultMeasurementRoundTrip(t *testing.T) {
 			},
 		}
 
-		Convey("ToMeasurement serializes trade balance and wallet into structured metrics", func() {
-			meas := tb.ToMeasurement(wallet, "USD", 123456789)
-			So(meas, ShouldNotBeNil)
-			So(meas.Label, ShouldEqual, "balance")
-			So(meas.Source, ShouldEqual, "balance")
-			So(meas.Raw(), ShouldBeNil)
+		Convey("ToValue serializes trade balance and wallet into Value", func() {
+			val := tb.ToValue(wallet, "USD", 123456789)
+			So(val, ShouldNotBeNil)
+			So(val.Scope, ShouldEqual, "USD")
+			So(val.Role, ShouldEqual, "trade_balance")
 
-			Convey("and NewTradeBalanceResultFromMeasurement reconstructs equity, unrealized, and cash", func() {
-				restored, err := kraken.NewTradeBalanceResultFromMeasurement(meas)
+			Convey("and NewTradeBalanceResultFromValue reconstructs equity, unrealized, and cash", func() {
+				restored, err := kraken.NewTradeBalanceResultFromValue(val)
 				So(err, ShouldBeNil)
 				So(restored, ShouldNotBeNil)
 				So(restored.Equity.String(), ShouldEqual, tb.Equity.String())

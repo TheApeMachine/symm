@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -11,10 +10,11 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
@@ -37,7 +37,7 @@ type Training struct {
 	grammars map[string]*Grammar
 	lastSym  map[string]string
 	paths    map[string][]string
-	last     map[string]*data.Measurement
+	last     map[string]*data.Value
 	step     int64
 }
 
@@ -85,7 +85,7 @@ func NewTraining(
 		grammars: make(map[string]*Grammar),
 		lastSym:  make(map[string]string),
 		paths:    make(map[string][]string),
-		last:     make(map[string]*data.Measurement),
+		last:     make(map[string]*data.Value),
 	}
 
 	training.policy.Store(&policy{
@@ -130,22 +130,22 @@ func (training *Training) CognitionTree() ui.CognitionTreeExport {
 
 	keys := pol.keys
 	branches := make([]ui.TrieBranchJSON, 0, len(keys))
-	
+
 	for _, key := range keys {
 		clean := strings.TrimSuffix(key, ".bin")
 		parts := strings.Split(clean, "/")
-		
+
 		if len(parts) < 2 {
 			continue
 		}
-		
+
 		rawAction := strings.ToUpper(parts[len(parts)-1])
 		policy := "NOOP"
-		
+
 		if rawAction == "ENTER" || rawAction == "EXIT" {
 			policy = rawAction
 		}
-		
+
 		hash := strings.Join(parts[:len(parts)-1], "/")
 		depth := len(parts) - 1
 		meanEdge := 0.0
@@ -156,7 +156,7 @@ func (training *Training) CognitionTree() ui.CognitionTreeExport {
 		case "EXIT":
 			meanEdge = -0.02
 		}
-		
+
 		branches = append(branches, ui.TrieBranchJSON{
 			Hash:       hash,
 			Depth:      depth,
@@ -196,7 +196,7 @@ func (training *Training) CognitionGrammar(symbol string) GrammarExport {
 	}
 
 	grammar := training.grammars[symbol]
-	
+
 	if grammar == nil {
 		return GrammarExport{Symbol: symbol, Rules: []GrammarRuleExport{}}
 	}
@@ -237,7 +237,7 @@ func (training *Training) CognitionGrammar(symbol string) GrammarExport {
 	}
 
 	startSyms := make([]string, 0)
-	
+
 	if grammar.startRule != nil {
 		for s := grammar.startRule.guard.next; s != grammar.startRule.guard && s != nil; s = s.next {
 			if s.rule != nil {
@@ -260,47 +260,21 @@ Step receives the live market join, scores its regions through the grid,
 advances the predictive coder over the 15 regions, and gates emission of
 active regions into Sequitur via the dynamic midpoint.
 */
-func (training *Training) Step(prior *data.Measurement) *data.Measurement {
-	regions := training.grid.Observe(prior)
-	metrics := make(map[string]float64, len(regions)*2+2)
-
-	for _, region := range regions {
-		metrics[fmt.Sprintf("region_brightness:R%02d", region.Key)] = region.Brightness
-		metrics[fmt.Sprintf("region_members:R%02d", region.Key)] = float64(region.Counts)
+func (training *Training) Step(value *data.Value) *data.Value {
+	if value == nil {
+		return nil
 	}
 
-	training.inspectPosition(prior.Label, metrics)
-
-	emit := func(meta ...*data.StringEntry) *data.Measurement {
-		prev := training.last[prior.Label]
-		if prev == nil {
-			prev = data.NewMeasurement(prior.Epoch, prior.Label, training.Name(), prior.At, prior.From)
-		}
-
-		next := prev.Next(prior, metrics, meta...)
-		training.last[prior.Label] = next
-		return next
+	symbol := value.Scope
+	if symbol == "" {
+		symbol = value.Origin
 	}
 
-	current := training.policy.Load()
-
-	if len(current.actions) == 0 || len(regions) == 0 {
-		return emit()
+	regions := training.grid.Observe(value)
+	if len(regions) == 0 {
+		return value
 	}
 
-	coder, exists := training.coders[prior.Label]
-	if !exists {
-		coder = newPredictiveCoder()
-		training.coders[prior.Label] = coder
-	}
-
-	grammar, exists := training.grammars[prior.Label]
-	if !exists {
-		grammar = NewGrammar()
-		training.grammars[prior.Label] = grammar
-	}
-
-	// 1. Vector of 15 region brightnesses
 	regionBrightness := make([]float64, 15)
 	for _, r := range regions {
 		if int(r.Key) < 15 {
@@ -308,11 +282,31 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 		}
 	}
 
-	// 2. Resonance PredictiveCoder settles over the 15 regions
+	current := training.policy.Load()
+	if current == nil || len(current.actions) == 0 {
+		return value
+	}
+
+	coder, exists := training.coders[symbol]
+	if !exists {
+		coder = newPredictiveCoder()
+		training.coders[symbol] = coder
+	}
+
+	grammar, exists := training.grammars[symbol]
+	if !exists {
+		grammar = NewGrammar()
+		training.grammars[symbol] = grammar
+	}
+
 	training.step++
-	inValue := data.NewValue([2][]float64{
+	sec := float64(value.Timestamp) / 1e9
+	if value.Timestamp < 1e11 {
+		sec = float64(value.Timestamp)
+	}
+	inValue := transport.NewValue([2][]float64{
 		regionBrightness,
-		{0.0, 0.0, float64(training.step), float64(prior.At.UnixNano()) / 1e9},
+		{0.0, 0.0, float64(training.step), sec},
 	})
 
 	var out [12][]float64
@@ -328,10 +322,7 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	if len(out[0]) > 5 {
 		surprise = out[0][5]
 	}
-	metrics["resonance_surprise"] = surprise
-	metrics["resonance_energy"] = energy
 
-	// 3. Dynamic Midpoint Activation Gate:
 	active := make([]*nmstore.Region, 0)
 	for _, r := range regions {
 		if r.Brightness > 0 {
@@ -340,7 +331,7 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if len(active) == 0 {
-		return emit()
+		return value
 	}
 
 	maxB := active[0].Brightness
@@ -355,16 +346,16 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	if len(firedTokens) == 0 {
-		return emit()
+		return value
 	}
 
 	chordKey := strings.Join(firedTokens, "/")
-	if chordKey == training.lastSym[prior.Label] {
-		return emit()
+	if chordKey == training.lastSym[symbol] {
+		return value
 	}
-	training.lastSym[prior.Label] = chordKey
+	training.lastSym[symbol] = chordKey
 
-	tokens := training.paths[prior.Label]
+	tokens := training.paths[symbol]
 	var deepestRule *Rule
 
 	for _, token := range firedTokens {
@@ -382,7 +373,7 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	if len(tokens) > horizon {
 		tokens = tokens[len(tokens)-horizon:]
 	}
-	training.paths[prior.Label] = tokens
+	training.paths[symbol] = tokens
 
 	var phrase []string
 	if deepestRule != nil {
@@ -393,8 +384,6 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 	if len(phrase) >= 2 {
 		tokensToMatch = phrase
 	}
-
-	inspectMatch(current, tokensToMatch, metrics, prior.Label)
 
 	matchedPath := strings.Join(tokensToMatch, "/")
 	action := ""
@@ -411,36 +400,22 @@ func (training *Training) Step(prior *data.Measurement) *data.Measurement {
 			matchedPath = candidate
 			break
 		}
-		if act, found := current.actions[prior.Label+"/"+candidate]; found && act != "" {
+		if act, found := current.actions[symbol+"/"+candidate]; found && act != "" {
 			action = act
 			matchedPath = candidate
 			break
 		}
 	}
 
-	grammarJSON, _ := json.Marshal(training.CognitionGrammar(prior.Label))
-
-	meta := []*data.StringEntry{
-		{Key: "token_path", Value: matchedPath},
-		{Key: "token_depth", Value: strconv.Itoa(len(tokensToMatch))},
-		{Key: "sequitur_grammar", Value: string(grammarJSON)},
-		{Key: "resonance_surprise", Value: fmt.Sprintf("%.6f", surprise)},
-		{Key: "active_tokens", Value: chordKey},
+	if action != "" {
+		training.act(symbol, action, matchedPath)
+		data.AppendVector(value, []float64{surprise, energy}, "surprise", "energy", "action:"+action, "path:"+matchedPath)
+	} else {
+		data.AppendVector(value, []float64{surprise, energy}, "surprise", "energy", "path:"+matchedPath)
 	}
 
-	if action == "" {
-		return emit(meta...)
-	}
-
-	reason := training.act(prior.Label, action, matchedPath)
-
-	meta = append(meta,
-		&data.StringEntry{Key: "decision_action", Value: action},
-		&data.StringEntry{Key: "action", Value: action},
-		&data.StringEntry{Key: "decision_reason", Value: fmt.Sprintf("path=%s %s", matchedPath, reason)},
-	)
-
-	return emit(meta...)
+	training.last[symbol] = value
+	return value
 }
 
 /*
@@ -527,26 +502,32 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 	}
 
 	if len(loaded.actions) == 0 {
-		for measurement := range training.client.Get("policy/") {
-			if measurement == nil || measurement.Source != "policy" {
+		for val := range store.Values(training.client, "policy/") {
+			if val == nil || val.Origin != "policy" {
 				continue
 			}
 
-			action := ""
-			if actEntry := data.Pull(measurement.Meta("action")); actEntry != nil {
-				action = actEntry.Value
-			}
-
+			action := val.Role
+			symbol := val.Scope
 			pathKey := ""
-			if pathEntry := data.Pull(measurement.Meta("path")); pathEntry != nil {
-				pathKey = pathEntry.Value
+
+			for _, idx := range val.Index {
+				for part := range strings.SplitSeq(idx, "/") {
+					if after, ok := strings.CutPrefix(part, "path:"); ok {
+						pathKey = after
+						break
+					}
+				}
+				if pathKey != "" {
+					break
+				}
 			}
 
-			if pathKey == "" || measurement.Label == "" {
+			if pathKey == "" || symbol == "" {
 				continue
 			}
 
-			actionKey := measurement.Label + "/" + pathKey
+			actionKey := symbol + "/" + pathKey
 			if existing, found := loaded.actions[actionKey]; found && existing != action {
 				action = ""
 			}
@@ -564,7 +545,7 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 			}
 
 			if file != "" {
-				loaded.keys = append(loaded.keys, measurement.Label+"/"+pathKey+"/"+file)
+				loaded.keys = append(loaded.keys, symbol+"/"+pathKey+"/"+file)
 			}
 		}
 	}

@@ -3,8 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_FOCUS_SYMBOL, RingBuffer, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { KernelInspector } from "#/components/kernel/inspector";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MetricT } from "#/providers/telemetry/telemetry/metric";
+import { Value } from "#/types/value";
 
 /*
 The inspector calls useNavigate purely for the footer action. Stubbing it keeps
@@ -21,28 +20,20 @@ const metricMeasurement = (
 	key: string,
 	raw: number,
 	snm: number,
-): MeasurementT => {
-	const m = new MeasurementT();
-	m.source = "toxicity";
-	m.symbol = DEFAULT_FOCUS_SYMBOL;
-	const metric = new MetricT();
-	metric.name = key;
-	metric.raw = raw;
-	metric.snm = snm;
-	m.metrics = [metric];
-	return m;
+): Value => {
+	return new Value({
+		origin: "toxicity",
+		scope: DEFAULT_FOCUS_SYMBOL,
+		metrics: [{ name: key, raw, snm }],
+	});
 };
 
-const sparseMeasurement = (val: number): MeasurementT => {
-	const m = new MeasurementT();
-	m.source = "hawkes";
-	m.symbol = DEFAULT_FOCUS_SYMBOL;
-	const metric = new MetricT();
-	metric.name = "branching_spectral_radius";
-	metric.raw = val;
-	metric.snm = val;
-	m.metrics = [metric];
-	return m;
+const sparseMeasurement = (val: number): Value => {
+	return new Value({
+		origin: "hawkes",
+		scope: DEFAULT_FOCUS_SYMBOL,
+		metrics: [{ name: "branching_spectral_radius", raw: val, snm: val }],
+	});
 };
 
 const getTestRing = (source: string, symbol: string) => {
@@ -50,7 +41,7 @@ const getTestRing = (source: string, symbol: string) => {
 	if (!store) throw new Error(`unknown source ${source}`);
 	let ring = store.state[symbol];
 	if (!ring) {
-		ring = new RingBuffer<MeasurementT>(50);
+		ring = new RingBuffer<Value>(50);
 		store.state[symbol] = ring;
 	}
 	return ring;

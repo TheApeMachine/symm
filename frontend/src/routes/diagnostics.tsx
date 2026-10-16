@@ -15,9 +15,9 @@ import {
 	isHop,
 } from "#/components/dashboard/diagnostics-graph";
 import { Button, Tabs } from "#/components/ui";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { Value } from "#/types/value";
 
-const serializeMeasurement = (m: MeasurementT): string => {
+const serializeValue = (m: Value): string => {
 	return JSON.stringify(
 		m,
 		(_key, value) => (typeof value === "bigint" ? value.toString() : value),
@@ -65,31 +65,31 @@ const Metric = ({
 	</div>
 );
 
-const MeasurementView = ({
-	measurement,
+const ValueView = ({
+	value,
 	onSelectStage,
 }: {
-	measurement: MeasurementT | null | undefined;
+	value: Value | null | undefined;
 	onSelectStage: (name: string) => void;
 }) => {
-	if (!measurement) {
+	if (!value) {
 		return (
 			<div className="flex flex-col items-center justify-center py-8 text-center">
 				<span className="size-2 rounded-full bg-(--warn) animate-pulse mb-2" />
 				<div className="font-mono text-[11px] text-(--f2)">
-					No measurement captured yet
+					No value captured yet
 				</div>
 				<div className="font-mono text-[9px] text-(--f4) mt-1">
-					Waiting for a live measurement frame from this stage...
+					Waiting for a live value frame from this stage...
 				</div>
 			</div>
 		);
 	}
 
-	const metrics = measurement.metrics ?? [];
-	const metadata = measurement.metadata ?? [];
-	const provenance = measurement.provenance ?? [];
-	const peers = measurement.peers ?? [];
+	const metrics = value.metrics ?? [];
+	const metadata = value.metadata ?? [];
+	const provenance = value.provenance ?? [];
+	const peers = (value as any)?.peers ?? [];
 
 	return (
 		<div className="space-y-3 py-2">
@@ -97,46 +97,30 @@ const MeasurementView = ({
 			<div className="grid grid-cols-2 gap-x-3">
 				<Metric
 					label="Tick"
-					value={measurement.tick ? `#${measurement.tick.toString()}` : "—"}
+					value={value.tick ? `#${value.tick.toString()}` : "—"}
 					tone="text-(--acc)"
 				/>
 				<Metric
-					label="Symbol"
-					value={(typeof measurement.symbol === "string" && measurement.symbol) || "pipeline"}
+					label="Scope"
+					value={(typeof value.scope === "string" && value.scope) || "pipeline"}
 				/>
 				<Metric
-					label="Source"
-					value={(typeof measurement.source === "string" && measurement.source) || "—"}
+					label="Origin"
+					value={(typeof value.origin === "string" && value.origin) || "—"}
 				/>
 				<Metric
-					label="Maturity"
-					value={
-						measurement.maturity > 0
-							? `${(measurement.maturity * 100).toFixed(1)}%`
-							: "—"
-					}
-				/>
-				<Metric
-					label="Timestamp (At)"
-					value={formatNanosDate(measurement.at)}
-				/>
-				<Metric
-					label="Horizon"
-					value={
-						measurement.horizon > 0n
-							? formatNanos(Number(measurement.horizon))
-							: "—"
-					}
+					label="Timestamp"
+					value={formatNanosDate(value.timestamp)}
 				/>
 			</div>
 
-			{measurement.id ? (
+			{value.id ? (
 				<div className="border-(--line) border-b pb-2">
 					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 						ID
 					</div>
 					<div className="mt-0.5 font-mono text-[10px] text-(--f3) break-all">
-						{typeof measurement.id === "string" ? measurement.id : String(measurement.id)}
+						{typeof value.id === "string" ? value.id : String(value.id)}
 					</div>
 				</div>
 			) : null}
@@ -156,7 +140,6 @@ const MeasurementView = ({
 							const name = typeof m.name === "string" ? m.name : String(m.name ?? "");
 							const rawVal = formatMetricVal(m.raw);
 							const snmVal = m.snm;
-							const unit = typeof m.unit === "string" ? m.unit : "";
 
 							return (
 								<div
@@ -166,17 +149,13 @@ const MeasurementView = ({
 									<div className="flex items-center justify-between">
 										<span className="font-bold text-(--f1)">{name}</span>
 										<span className="tabular-nums text-(--acc)">
-											{rawVal} {unit ? <span className="text-(--f4) text-[9px]">{unit}</span> : null}
+											{rawVal}
 										</span>
 									</div>
-									<div className="mt-1 flex items-center justify-between text-[8px] text-(--f4)">
-										<span>snm</span>
-										<span className="text-(--f2) tabular-nums">{snmVal.toFixed(4)}</span>
-									</div>
-									{m.region > 0 ? (
-										<div className="mt-1 text-[8px] text-(--f4)">
-											region: <span className="text-(--f2)">{m.region}</span>
-											{m.x > 0n || m.y > 0n ? ` · (${m.x}, ${m.y})` : ""}
+									{snmVal !== undefined && Number.isFinite(snmVal) ? (
+										<div className="mt-1 flex items-center justify-between text-[8px] text-(--f4)">
+											<span>snm</span>
+											<span className="text-(--f2) tabular-nums">{snmVal.toFixed(4)}</span>
 										</div>
 									) : null}
 								</div>
@@ -220,7 +199,7 @@ const MeasurementView = ({
 						Attached Peers ({peers.length})
 					</div>
 					<div className="flex flex-wrap gap-1">
-						{peers.map((peer) => {
+						{peers.map((peer: any) => {
 							const peerSource = typeof peer.source === "string" ? peer.source : "";
 							const peerKey = (typeof peer.id === "string" && peer.id) || peerSource || "peer";
 							return (
@@ -241,25 +220,25 @@ const MeasurementView = ({
 	);
 };
 
-const MeasurementJsonView = ({
-	measurement,
+const ValueJsonView = ({
+	value,
 }: {
-	measurement: MeasurementT | null | undefined;
+	value: Value | null | undefined;
 }) => {
 	const [copied, setCopied] = useState(false);
 
-	if (!measurement) {
+	if (!value) {
 		return (
 			<div className="flex flex-col items-center justify-center py-8 text-center">
 				<span className="size-2 rounded-full bg-(--warn) animate-pulse mb-2" />
 				<div className="font-mono text-[11px] text-(--f2)">
-					No measurement captured yet
+					No value captured yet
 				</div>
 			</div>
 		);
 	}
 
-	const json = serializeMeasurement(measurement);
+	const json = serializeValue(value);
 
 	const handleCopy = () => {
 		navigator.clipboard.writeText(json);
@@ -297,8 +276,8 @@ const StageDetail = ({
 	stage: NodeStats | undefined;
 	nodes: Map<string, NodeStats>;
 	edges: EdgeStats[];
-	activeTab: "overview" | "measurement" | "json";
-	onTabChange: (tab: "overview" | "measurement" | "json") => void;
+	activeTab: "overview" | "value" | "json";
+	onTabChange: (tab: "overview" | "value" | "json") => void;
 	onSelect: (selection: DiagnosticsSelection) => void;
 }) => {
 	// Only real hops. A stamp from a concurrent sibling is the same barrier
@@ -346,11 +325,11 @@ const StageDetail = ({
 						Overview
 					</Tabs.Tab>
 					<Tabs.Tab
-						active={activeTab === "measurement"}
-						onClick={() => onTabChange("measurement")}
+						active={activeTab === "value"}
+						onClick={() => onTabChange("value")}
 						grow
 					>
-						Measurement {stage?.lastMeasurement?.metrics?.length ? `(${stage.lastMeasurement.metrics.length})` : ""}
+						Value {stage?.lastValue?.metrics?.length ? `(${stage.lastValue.metrics.length})` : ""}
 					</Tabs.Tab>
 					<Tabs.Tab
 						active={activeTab === "json"}
@@ -456,13 +435,13 @@ const StageDetail = ({
 							</div>
 						) : null}
 					</>
-				) : activeTab === "measurement" ? (
-					<MeasurementView
-						measurement={stage?.lastMeasurement}
+				) : activeTab === "value" ? (
+					<ValueView
+						value={stage?.lastValue}
 						onSelectStage={(target) => onSelect({ kind: "stage", name: target })}
 					/>
 				) : (
-					<MeasurementJsonView measurement={stage?.lastMeasurement} />
+					<ValueJsonView value={stage?.lastValue} />
 				)}
 			</div>
 		</>
@@ -598,8 +577,8 @@ const DetailPanel = ({
 	nodes: Map<string, NodeStats>;
 	edges: EdgeStats[];
 	selection: DiagnosticsSelection | null;
-	activeTab: "overview" | "measurement" | "json";
-	onTabChange: (tab: "overview" | "measurement" | "json") => void;
+	activeTab: "overview" | "value" | "json";
+	onTabChange: (tab: "overview" | "value" | "json") => void;
 	onSelect: (selection: DiagnosticsSelection) => void;
 }) => {
 	if (selection?.kind === "stage") {
@@ -734,7 +713,7 @@ const DiagnosticsSurface = () => {
 	const { nodes, edges } = topologyStore.state;
 	const connection = useSelector(onlineAtom, (s) => s);
 	const [selection, setSelection] = useState<DiagnosticsSelection | null>(null);
-	const [activeTab, setActiveTab] = useState<"overview" | "measurement" | "json">(
+	const [activeTab, setActiveTab] = useState<"overview" | "value" | "json">(
 		"overview",
 	);
 

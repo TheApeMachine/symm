@@ -1,25 +1,3 @@
-/*
-Hindsight read-model types: the capture tape and its persisted historical
-states, exactly as the hub's /hindsight/* endpoints project the store records.
-These mirror hindsight.CaptureIdentity / Run / StateEntry — not a parallel
-domain model — so the UI reads the same identities the backend persisted.
-*/
-
-export { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-export { MetricT } from "#/providers/telemetry/telemetry/metric";
-import type { Measurement } from "#/collections/types";
-export type { Measurement };
-export type Metric<Value = number> = {
-	label?: string;
-	raw: Value;
-	snm?: Value | null;
-	exact?: string | null;
-	center?: number;
-	scale?: number;
-	unit?: number | string;
-	timescale?: number | string;
-};
-
 export type HindsightRun = {
 	epoch?: number;
 	id: string;
@@ -341,6 +319,32 @@ export type HindsightTimelineSpan = {
 	toSequence: number;
 	fromAt: string;
 	toAt: string;
+};
+
+export type HindsightMetric = {
+	label?: string;
+	raw: number;
+	snm?: number | null;
+	unit?: string;
+	timescale?: string;
+};
+
+export type Measurement = {
+	id?: string;
+	seqIdx?: number | string | bigint;
+	tick?: number | string | bigint;
+	source?: string;
+	symbol?: string;
+	label?: string;
+	at?: string | number | bigint;
+	from?: string | number | bigint;
+	observedFrom?: string | number | bigint;
+	maturity?: number;
+	metrics?: Record<string, HindsightMetric>;
+	metadata?: Record<string, string | number>;
+	provenance?: Record<string, string | number> | Array<{ name: string; value: string }>;
+	peers?: Measurement[];
+	Peers?: Measurement[];
 };
 
 export type HindsightTimeline = {

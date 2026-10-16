@@ -1,7 +1,16 @@
 import { createStore } from "@tanstack/react-store";
-import type { BoundaryStamp } from "#/providers/telemetry/telemetry/boundary-stamp";
-import type { Measurement, MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import type { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
+import { Value } from "#/types/value";
+
+export interface BoundaryStamp {
+	label(): string | null;
+	group(): string | null;
+	stage(): number;
+	atNs(): bigint;
+	seqCount(): bigint;
+	avgGapNs(): bigint;
+	lastGapNs(): bigint;
+	backlog(): bigint;
+}
 
 export const PIPELINE_TOPOLOGY: Record<
 	string,
@@ -50,139 +59,71 @@ export const normalizeSource = (
 	return base;
 };
 
-type ExtractedMeasurement = {
+type ExtractedValue = {
 	source: string;
 	at: number;
 	backlog: number;
 	group?: string;
 	stage?: number;
 	peers: { source: string; at: number }[];
-	rawMeasurement?: MeasurementT;
+	rawValue?: Value;
 };
 
-function extractMeasurement(
-	item: Measurement | MeasurementT,
-): ExtractedMeasurement | null {
+function extractValue(item: Value | any): ExtractedValue | null {
 	if (!item) return null;
 
-	if ("unpack" in item && typeof (item as Measurement).source === "function") {
-		const m = item as Measurement;
-		const rawSource = m.source();
-		const source = normalizeSource(rawSource);
-		if (!source) return null;
-
-		const at = Number(m.at());
-		let backlog = 0;
-		const metricsLen = m.metricsLength();
-		for (let i = 0; i < metricsLen; i++) {
-			const met = m.metrics(i);
-			if (met && met.name() === "backlog") {
-				backlog = Number(met.raw());
-				break;
-			}
-		}
-
-		let group: string | undefined;
-		let stage: number | undefined;
-
-		const provLen = m.provenanceLength();
-		for (let i = 0; i < provLen; i++) {
-			const entry = m.provenance(i);
-			if (!entry) continue;
-			if (entry.name() === "group") {
-				const val = entry.value();
-				group = typeof val === "string" ? val : undefined;
-			}
-		}
-
-		const metaLen = m.metadataLength();
-		for (let i = 0; i < metaLen; i++) {
-			const entry = m.metadata(i);
-			if (!entry) continue;
-			if (entry.name() === "group" && !group) {
-				group = String(entry.value());
-			}
-			if (entry.name() === "stage") {
-				stage = Number(entry.value());
-			}
-		}
-
-		const peers: { source: string; at: number }[] = [];
-		const peersLen = m.peersLength();
-
-		for (let i = 0; i < peersLen; i++) {
-			const peer = m.peers(i);
-			if (peer) {
-				const peerSource = normalizeSource(peer.source());
-				if (peerSource && peerSource !== source) {
-					peers.push({
-						source: peerSource,
-						at: Number(peer.at()),
-					});
-				}
-			}
-		}
-
-		const rawMeasurement =
-			typeof m.unpack === "function" ? m.unpack() : undefined;
-
-		return { source, at, backlog, group, stage, peers, rawMeasurement };
-	}
-
-	const mt = item as MeasurementT;
-	const source = normalizeSource(mt.source);
+	const rawSource = (typeof item.source === "string" ? item.source : item.origin) || "";
+	const source = normalizeSource(rawSource);
 	if (!source) return null;
 
-	const at = Number(mt.at ?? 0n);
+	const at = Number(item.at ?? item.timestamp ?? 0n);
 	let backlog = 0;
-	for (const met of mt.metrics ?? []) {
-		if (met?.name === "backlog") {
-			backlog = Number(met.raw);
-			break;
+	if (typeof item.metric === "function") {
+		backlog = item.metric("backlog") ?? 0;
+	} else if (Array.isArray(item.metrics)) {
+		for (const m of item.metrics) {
+			if (m?.name === "backlog" && typeof m.raw === "number") {
+				backlog = m.raw;
+				break;
+			}
 		}
 	}
 
 	let group: string | undefined;
 	let stage: number | undefined;
 
-	for (const entry of mt.provenance ?? []) {
-		if (!entry) continue;
-		if (entry.name === "group") {
-			const val = entry.value;
-			group =
-				typeof val === "string"
-					? val
-					: val
-						? new TextDecoder().decode(val)
-						: undefined;
+	if (Array.isArray(item.provenance)) {
+		for (const entry of item.provenance) {
+			if (!entry) continue;
+			if (entry.name === "group") group = String(entry.value);
+			if (entry.name === "stage") stage = Number(entry.value);
 		}
 	}
 
-	for (const entry of mt.metadata ?? []) {
-		if (!entry) continue;
-		if (entry.name === "group" && !group) {
-			group = String(entry.value);
-		}
-		if (entry.name === "stage") {
-			stage = Number(entry.value);
+	if (Array.isArray(item.metadata)) {
+		for (const entry of item.metadata) {
+			if (!entry) continue;
+			if (entry.name === "group" && !group) group = String(entry.value);
+			if (entry.name === "stage" && stage === undefined) stage = Number(entry.value);
 		}
 	}
 
 	const peers: { source: string; at: number }[] = [];
-
-	for (const peer of mt.peers ?? []) {
-		if (peer) {
-			const peerSource = normalizeSource(peer.source);
-			if (peerSource && peerSource !== source) {
-				peers.push({
-					source: peerSource,
-					at: Number(peer.at ?? 0n),
-				});
+	if (Array.isArray(item.peers)) {
+		for (const peer of item.peers) {
+			if (peer) {
+				const peerSource = normalizeSource(peer.source);
+				if (peerSource && peerSource !== source) {
+					peers.push({
+						source: peerSource,
+						at: Number(peer.at ?? 0n),
+					});
+				}
 			}
 		}
 	}
 
-	return { source, at, backlog, group, stage, peers, rawMeasurement: mt };
+	return { source, at, backlog, group, stage, peers, rawValue: item };
 }
 
 /*
@@ -213,7 +154,7 @@ export type NodeStats = {
 	// single instantaneous backlog reading can look fine right after a spike
 	// drains.
 	maxBacklog: number;
-	lastMeasurement?: MeasurementT;
+	lastValue?: Value | null;
 };
 
 /*
@@ -379,32 +320,24 @@ export const topologyStore = createStore(
 			});
 		},
 
-		ingestMeasurements: (
-			target: MeasurementsFrame | (Measurement | MeasurementT)[],
-		) => {
-			const extracted: ExtractedMeasurement[] = [];
+		ingestValues: (target: Value[] | any[]) => {
+			const extracted: ExtractedValue[] = [];
 
-			if ("rowsLength" in target && typeof target.rowsLength === "function") {
-				const count = target.rowsLength();
-				for (let i = 0; i < count; i++) {
-					const row = target.rows(i);
-					if (row) {
-						const ex = extractMeasurement(row);
-						if (ex) extracted.push(ex);
-					}
-				}
-			} else if (Array.isArray(target)) {
+			if (Array.isArray(target)) {
 				for (const item of target) {
-					const ex = extractMeasurement(item);
+					const ex = extractValue(item);
 					if (ex) extracted.push(ex);
 				}
+			} else if (target) {
+				const ex = extractValue(target);
+				if (ex) extracted.push(ex);
 			}
 
 			if (extracted.length === 0) return;
 
 			setState((prev) => {
-				for (const measurement of extracted) {
-					const { source, peers, backlog, group: metaGroup, stage: metaStage } = measurement;
+				for (const val of extracted) {
+					const { source, peers, backlog, group: metaGroup, stage: metaStage } = val;
 					const defaultTopo = PIPELINE_TOPOLOGY[source] ?? {
 						group: "signal",
 						stage: 1,
@@ -413,7 +346,7 @@ export const topologyStore = createStore(
 					const stage = metaStage ?? defaultTopo.stage;
 
 					const atNs =
-						measurement.at > 0 ? measurement.at : Date.now() * 1_000_000;
+						val.at > 0 ? val.at : Date.now() * 1_000_000;
 					const existingNode = prev.nodes.get(source);
 
 					let seqCount = 1;
@@ -438,6 +371,7 @@ export const topologyStore = createStore(
 						}
 					}
 
+					const activeValue = val.rawValue ?? existingNode?.lastValue;
 					prev.nodes.set(source, {
 						label: source,
 						group,
@@ -448,8 +382,7 @@ export const topologyStore = createStore(
 						lastAtNs: atNs,
 						backlog,
 						maxBacklog,
-						lastMeasurement:
-							measurement.rawMeasurement ?? existingNode?.lastMeasurement,
+						lastValue: activeValue,
 					});
 
 					for (const p of peers) {

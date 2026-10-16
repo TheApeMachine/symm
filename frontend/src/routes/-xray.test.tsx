@@ -9,7 +9,7 @@ import {
 	clearRetainedTelemetry,
 	latentPointsFromFrames,
 } from "#/components/terminal/xray-view";
-import { ResonanceT } from "#/providers/telemetry/telemetry/resonance";
+import { Value } from "#/types/value";
 import { Route } from "./xray";
 
 vi.mock("#/components/terminal/xray-hierarchy", () => ({
@@ -27,14 +27,17 @@ vi.mock("#/components/terminal/xray-panels", () => ({
 }));
 
 const publish = (symbol: string, embedding: number[]) => {
-	const row = new ResonanceT();
-	row.symbol = symbol;
-	row.embedding = embedding;
-	const ring = new RingBuffer<ResonanceT>(1);
+	const row = new Value({
+		origin: "resonance",
+		role: "frame",
+		scope: symbol,
+	});
+	(row as any).embedding = embedding;
+	const ring = new RingBuffer<Value>(1);
 	ring.add(row);
 	resonanceStore.setState((state) => ({
 		...state,
-		[symbol]: ring as unknown as any,
+		[symbol]: ring,
 	}));
 };
 

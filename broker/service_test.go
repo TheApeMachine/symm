@@ -6,26 +6,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	symmdata "github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestService(t *testing.T) {
 	Convey("Given a broker Service bound to a Desk and Balance", t, func() {
-		balance := &Balance{Quote: "USD"}
-		now := time.Now()
-		balance.measurement = data.NewMeasurement(
-			1, "balance", "balance", now, now,
-		).Write(
-			data.NewMetric("equity", 1000, data.UnitCurrency, data.TimescaleInstantaneous),
-			data.NewMetric("unrealized", 50, data.UnitCurrency, data.TimescaleInstantaneous),
-			data.NewMetric("cash", 200, data.UnitCurrency, data.TimescaleInstantaneous),
-		)
+		balance := &Balance{
+			Quote: "USD",
+			value: symmdata.NewValue("broker", "balance", "USD").Append(
+				[]byte(`{"tb":"200","n":"50","e":"1000"}`),
+			),
+		}
 		desk := NewDesk(context.Background(), &dummyTransport{}, nil, balance)
 
 		service := NewService(desk)

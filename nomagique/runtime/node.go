@@ -1,7 +1,7 @@
 package runtime
 
 import (
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 )
 
 /*
@@ -11,7 +11,7 @@ from its owned arena, computes its owned facts, finalizes, and returns it.
 The returned Measurement is WORM forever.
 */
 type Node interface {
-	Step(prior *data.Measurement) *data.Measurement
+	Step(prior *data.Value) *data.Value
 }
 
 /*
@@ -26,11 +26,10 @@ For each sequence:
 No StageInput. No reusable published measurement. No reset. No clone. No detached snapshot.
 */
 type Consumer struct {
-	node      Node
-	published []*data.Measurement
-	mask      int64
-	capacity  int
-	tees      []Tee
+	node     Node
+	mask     int64
+	capacity int
+	tees     []Tee
 }
 
 func NewConsumer(
@@ -40,35 +39,25 @@ func NewConsumer(
 	tees ...Tee,
 ) *Consumer {
 	consumer := &Consumer{
-		node:      node,
-		published: make([]*data.Measurement, capacity),
-		mask:      mask,
-		capacity:  capacity,
-		tees:      tees,
+		node:     node,
+		mask:     mask,
+		capacity: capacity,
+		tees:     tees,
 	}
 
 	return consumer
 }
 
-func (consumer *Consumer) Step(prior *data.Measurement, seq int64) *data.Measurement {
-	slot := seq & consumer.mask
+func (consumer *Consumer) Step(value *data.Value) *data.Value {
+	returned := consumer.node.Step(value)
 
-	returned := consumer.node.Step(prior)
-	consumer.published[slot] = returned
-
-	if len(consumer.tees) > 0 && (prior == nil || prior.Source != "spot:touch") {
+	if len(consumer.tees) > 0 && returned != nil {
 		for _, tee := range consumer.tees {
-			if tee != nil && returned != nil {
+			if tee != nil {
 				tee.Push(returned)
 			}
 		}
 	}
 
-	return consumer.published[slot]
-}
-
-// Published returns this consumer's WORM output for the given sequence,
-// or nil if the sequence has not been published or the producer returned nil.
-func (consumer *Consumer) Published(sequence int64) *data.Measurement {
-	return consumer.published[sequence&consumer.mask]
+	return value
 }

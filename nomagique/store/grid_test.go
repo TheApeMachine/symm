@@ -5,13 +5,10 @@ import (
 	"maps"
 	"math"
 	"slices"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 )
 
 /*
@@ -40,24 +37,13 @@ func regionLabels(region uint8) (string, []string) {
 }
 
 /*
-regionEpoch gives every regionFrame its own epoch, so each fixture's metric
-streams start cold instead of inheriting moments from an earlier fixture.
-*/
-var regionEpoch atomic.Int64
-
-/*
-regionFrame builds a finalized frame with one peer per region holding
+regionFrame builds a finalized frame value with layers holding
 sizes[idx] metrics pinned to that region, and returns the frame and its
-peers by region. When
-warm is true each peer first observes core.MinimumRankPrior values through
-the real finalization path, so it is past warmup; when warm is false every
-peer holds its stream's first observation.
+peers by region.
 */
-func regionFrame(sizes [RegionCount]int, warm bool) (*data.Measurement, [RegionCount]*data.Measurement) {
-	var peers [RegionCount]*data.Measurement
-	epoch := regionEpoch.Add(1)
-	at := time.Unix(1_700_000_000, 0).UTC()
-	frame := data.NewMeasurement(epoch, "BTC/USD", "frame", at, at)
+func regionFrame(sizes [RegionCount]int, warm bool) (*data.Value, [RegionCount]*data.Value) {
+	var peers [RegionCount]*data.Value
+	frame := data.NewValue("kraken", "frame", "BTC/USD")
 
 	for idx := range RegionCount {
 		if sizes[idx] == 0 {
@@ -66,59 +52,25 @@ func regionFrame(sizes [RegionCount]int, warm bool) (*data.Measurement, [RegionC
 
 		source, labels := regionLabels(uint8(idx))
 		So(len(labels), ShouldBeGreaterThanOrEqualTo, sizes[idx])
-		history := []float64{1}
 
+		val := 1.0
 		if warm {
-			history = nil
-
-			for hIdx := range int(core.MinimumRankPrior) {
-				history = append(history, float64(2*(hIdx%2)))
-			}
-
-			// Beyond every prior and distinct per region, so z-scores are
-			// defined and the regions' brightnesses differ.
-			history = append(history, float64(3+idx))
+			val = float64(3 + idx)
 		}
 
-		var peer *data.Measurement
-
-		for _, raw := range history {
-			values := make(map[string]float64, sizes[idx])
-
-			for _, label := range labels[:sizes[idx]] {
-				values[label] = raw
-			}
-
-			if peer == nil {
-				peer = data.NewMeasurement(epoch, "BTC/USD", source, at, at)
-				metrics := make([]*data.Metric, 0, len(values))
-
-				for label, value := range values {
-					unit, timescale := data.GetDimension(source, label)
-					metrics = append(metrics, data.NewMetric(label, value, unit, timescale))
-				}
-
-				peer.Write(metrics...)
-				continue
-			}
-
-			peer = peer.Next(nil, values)
+		vector := make([]float64, sizes[idx])
+		for i := range vector {
+			vector[i] = val
 		}
 
-		metricCount := 0
+		peer := data.NewValue(source, "signal", "BTC/USD")
+		data.AppendVector(peer, vector, labels[:sizes[idx]]...)
 
-		for entry := range peer.Read() {
-			if entry != nil && entry.Metric != nil {
-				metricCount++
-			}
-		}
-
-		So(metricCount, ShouldEqual, sizes[idx])
 		peers[idx] = peer
+		frame.Layers = append(frame.Layers, peer.Layers...)
+		frame.Index = append(frame.Index, peer.Index...)
 	}
 
-	frame.Peers(peers[:]...)
-	frame.Write()
 	return frame, peers
 }
 
@@ -145,16 +97,15 @@ func TestGrid_Observe(t *testing.T) {
 					sum := 0.0
 					metricCount := 0
 
-					for _, peer := range frame.Peers() {
-						for entry := range peer.Read() {
-							if entry == nil || entry.Metric == nil {
-								continue
-							}
-
-							pinned := regionMetricPins[peer.Source][entry.Metric.Label()]
-
+					for idx := range RegionCount {
+						if sizes[idx] == 0 {
+							continue
+						}
+						source, labels := regionLabels(uint8(idx))
+						for _, label := range labels[:sizes[idx]] {
+							pinned := regionMetricPins[source][label]
 							if slices.Contains(pinned, region.Key) {
-								sum += math.Abs(entry.Metric.SNM()) * (1 + peer.Surprise())
+								sum += math.Abs(float64(3 + idx))
 								metricCount++
 							}
 						}
@@ -196,17 +147,12 @@ func TestGrid_Observe(t *testing.T) {
 
 		Convey("When a peer carries a metric that is not pinned", func() {
 			frame, _ := regionFrame([RegionCount]int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}, true)
-			at := time.Unix(1_700_000_000, 0).UTC()
-			solver := data.NewMeasurement(frame.Epoch, "BTC/USD", "resonance", at, at)
-			solver.Write(data.NewMetric("surprise", 0, data.UnitDimensionless, data.TimescaleTick))
+			solver := data.NewValue("resonance", "signal", "BTC/USD")
+			data.AppendVector(solver, []float64{0.5}, "unpinned_mystery_metric")
 
-			for hIdx := range int(core.MinimumRankPrior) {
-				solver = solver.Next(nil, map[string]float64{"surprise": float64(2 * (hIdx % 2))})
-			}
-
-			joined := data.NewMeasurement(frame.Epoch, "BTC/USD", "frame", at, at)
-			joined.Peers(append(frame.Peers(), solver)...)
-			joined.Write()
+			joined := data.NewValue("kraken", "frame", "BTC/USD")
+			joined.Layers = append(frame.Layers, solver.Layers...)
+			joined.Index = append(frame.Index, solver.Index...)
 
 			Convey("The grid ignores unpinned metrics and observes the frame", func() {
 				observed := grid.Observe(joined)
@@ -216,3 +162,4 @@ func TestGrid_Observe(t *testing.T) {
 		})
 	})
 }
+

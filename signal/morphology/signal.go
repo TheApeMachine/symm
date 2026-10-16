@@ -4,12 +4,10 @@ import (
 	"context"
 	"math"
 	"sort"
-	"strconv"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -19,50 +17,42 @@ type point struct {
 }
 
 type symbolState struct {
-	lastMeasurement *data.Measurement
-	hasPrev         bool
-	prevBook        []point
+	hasPrev  bool
+	prevBook []point
 }
 
 type Signal struct {
 	*runtime.System
 	states map[string]*symbolState
+	keys   []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		states: make(map[string]*symbolState),
+		keys: []string{
+			"book_shape_distance",
+			"book_shape_ks",
+			"concentration_bid",
+			"concentration_ask",
+			"entropy_bid",
+			"entropy_ask",
+			"morphology_change",
+		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "morphology", signal)
-
 	return signal
 }
 
-func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY || prior == nil || prior.Label == "" {
-		return nil
+func (signal *Signal) Step(value *data.Value) *data.Value {
+	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+		return value
 	}
 
-	stateKey := strconv.FormatInt(prior.Epoch, 10) + "/" + prior.Label
-	state, found := signal.states[stateKey]
-
-	if !found {
-		state = &symbolState{}
-		signal.states[stateKey] = state
-	}
-
-	// The shape is measured on the snapshot ingress stamped onto the trade at
-	// its sequence number: the book this trade happened against.
-	snapshot, err := broker.ReadSnapshot(prior)
-
-	if err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[morphology] stamped book unreadable", err))
-		return nil
-	}
-
-	if snapshot == nil {
-		return nil
+	snapshot, err := broker.ReadSnapshot(value)
+	if err != nil || snapshot == nil || len(snapshot.Bids) == 0 || len(snapshot.Asks) == 0 {
+		return value
 	}
 
 	bestBid, bestAsk := snapshot.Touch()
@@ -73,48 +63,20 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	for _, level := range snapshot.Bids {
 		bids = append(bids, level.Price.Float64(), level.Quantity.Float64())
 	}
-
 	for _, level := range snapshot.Asks {
 		asks = append(asks, level.Price.Float64(), level.Quantity.Float64())
 	}
 
-	res, err := signal.Calculate(stateKey, bids, asks)
-	if err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[morphology] "+prior.Label+": calculation failed", err))
-		return nil
+	res, err := signal.Calculate(value.Scope, bids, asks)
+	if err != nil || len(res) == 0 {
+		return value
 	}
 
-	if len(res) == 0 {
-		return nil
+	if len(res) == 6 {
+		res = append(res, 0.0)
 	}
 
-	out := map[string]float64{
-		"book_shape_distance": res[0],
-		"book_shape_ks":       res[1],
-		"concentration:bid":   res[2],
-		"concentration:ask":   res[3],
-		"entropy:bid":         res[4],
-		"entropy:ask":         res[5],
-	}
-
-	// Calculate appends the change only once a prior shape exists.
-	if len(res) > 6 {
-		out["morphology_change"] = res[6]
-	}
-
-	var prev *data.Measurement
-	if state.lastMeasurement != nil {
-		prev = state.lastMeasurement
-	}
-
-	if prev == nil {
-		prev = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
-	}
-
-	outMeas := prev.Next(prior, out)
-	state.lastMeasurement = outMeas
-
-	return outMeas
+	return data.AppendVector(value, res, signal.keys...)
 }
 
 func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float64, error) {

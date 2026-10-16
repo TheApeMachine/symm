@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -17,7 +17,7 @@ Self-Normalized Movement (SNM) bound invariants, and measurement state invariant
 */
 type ContractStage struct {
 	*runtime.System
-	ch           chan *data.Measurement
+	ch           chan *data.Value
 	violations   []*Violation
 	totalChecked int
 }
@@ -25,11 +25,11 @@ type ContractStage struct {
 func NewContractStage(ctx context.Context) *ContractStage {
 	return &ContractStage{
 		System: runtime.NewSystem(ctx, "audit:contract"),
-		ch:     make(chan *data.Measurement, 64),
+		ch:     make(chan *data.Value, 64),
 	}
 }
 
-func (stage *ContractStage) Channel() chan *data.Measurement {
+func (stage *ContractStage) Channel() chan *data.Value {
 	return stage.ch
 }
 
@@ -48,96 +48,48 @@ func (stage *ContractStage) Run() error {
 			continue
 		}
 
-		if measurement.Error() != nil {
-			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
-				"measurement.error",
-				measurement.Error().Error(),
-				measurement,
-				nil,
-			))
-		}
-
-		for entry := range measurement.Read() {
-			if entry == nil || entry.Metric == nil {
-				stage.violations = append(stage.violations, NewViolation(
-					measurement.Label,
-					"entry.metric",
-					"Nil metric entry encountered in measurement",
-					measurement,
-					nil,
-				))
-				continue
-			}
-
+		metrics := data.Metrics(measurement)
+		for label, val := range metrics {
 			stage.totalChecked++
 
-			switch entry.Metric.Unit() {
-			// Asset prices cannot trade at zero or negative values.
-			case data.UnitPrice:
+			lower := strings.ToLower(label)
+			if strings.Contains(lower, "price") || strings.Contains(lower, "midpoint") {
 				stage.validateBounds(
-					entry.Metric.Raw(),
-					entry.Metric,
+					val,
+					label,
 					measurement,
 					math.SmallestNonzeroFloat64,
 					math.MaxFloat64,
 					"Price must be strictly positive (> 0)",
 				)
-
-			// Physical counts, rates, variances, and volumes cannot physically be negative.
-			case data.UnitQuantity,
-				data.UnitVolume,
-				data.UnitSpread,
-				data.UnitDuration,
-				data.UnitVariance,
-				data.UnitStandardDeviation,
-				data.UnitRate,
-				data.UnitTradeRate,
-				data.UnitVolumeRate,
-				data.UnitCount,
-				data.UnitEntropy,
-				data.UnitSNR:
+			} else if strings.Contains(lower, "prob") || strings.Contains(lower, "confidence") || strings.Contains(lower, "excitation_fraction") {
 				stage.validateBounds(
-					entry.Metric.Raw(),
-					entry.Metric,
-					measurement,
-					0,
-					math.MaxFloat64,
-					"Physical quantity cannot be negative",
-				)
-
-			// Probabilities represent chances and must strictly stay between 0% and 100% [0, 1].
-			case data.UnitProbability:
-				stage.validateBounds(
-					entry.Metric.Raw(),
-					entry.Metric,
+					val,
+					label,
 					measurement,
 					0,
 					1,
 					"Probability must be bounded in [0, 1]",
 				)
-
-			// Correlations and imbalances measure directional co-movement from -100% (-1) to +100% (+1).
-			case data.UnitCorrelation, data.UnitImbalance:
+			} else if strings.Contains(lower, "corr") || strings.Contains(lower, "imbalance") || strings.Contains(lower, "signed_net_fraction") {
 				stage.validateBounds(
-					entry.Metric.Raw(),
-					entry.Metric,
+					val,
+					label,
 					measurement,
 					-1,
 					1,
 					"Correlation must be bounded in [-1, 1]",
 				)
+			} else if strings.Contains(lower, "qty") || strings.Contains(lower, "volume") || strings.Contains(lower, "count") || strings.Contains(lower, "spread") || strings.Contains(lower, "duration") || strings.Contains(lower, "rate") {
+				stage.validateBounds(
+					val,
+					label,
+					measurement,
+					0,
+					math.MaxFloat64,
+					"Physical quantity cannot be negative",
+				)
 			}
-
-			// Self-Normalized Movement (SNM) normalizes signals onto a standard [-1, 1] range.
-			stage.validateBounds(
-				entry.Metric.SNM(),
-				entry.Metric,
-				measurement,
-				-1,
-				1,
-				"Self-Normalized Movement must be bounded in [-1, 1]",
-			)
 		}
 	}
 
@@ -150,18 +102,22 @@ func (stage *ContractStage) Violations() []*Violation {
 
 func (stage *ContractStage) validateBounds(
 	value float64,
-	metric *data.Metric,
-	measurement *data.Measurement,
+	label string,
+	measurement *data.Value,
 	min, max float64,
 	description string,
 ) {
-	if value < min || value > max {
+	if math.IsNaN(value) || value < min || value > max {
+		scope := "unknown"
+		if measurement != nil {
+			scope = measurement.Scope
+		}
 		stage.violations = append(stage.violations, NewViolation(
-			measurement.Label,
-			metric.Label(),
+			scope,
+			label,
 			description,
 			measurement,
-			metric,
+			label,
 		))
 	}
 }
@@ -194,4 +150,3 @@ func (stage *ContractStage) Data() any {
 		"breaches":      breaches,
 	}
 }
-

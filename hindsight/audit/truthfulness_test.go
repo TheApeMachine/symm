@@ -7,7 +7,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 )
 
 func TestTruthfulnessStage(t *testing.T) {
@@ -15,7 +15,7 @@ func TestTruthfulnessStage(t *testing.T) {
 		ctx := context.Background()
 		stage := NewTruthfulnessStage(ctx)
 
-		feed := func(s *TruthfulnessStage, ms ...*data.Measurement) []*Violation {
+		feed := func(s *TruthfulnessStage, ms ...*data.Value) []*Violation {
 			for _, m := range ms {
 				s.Channel() <- m
 			}
@@ -25,24 +25,23 @@ func TestTruthfulnessStage(t *testing.T) {
 		}
 
 		Convey("When auditing truthful quotes and conserving volumes", func() {
-			measurements := make([]*data.Measurement, 0, 10)
+			measurements := make([]*data.Value, 0, 10)
 
 			for idx := range int64(10) {
 				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
+				val := data.NewValue("test", "tick", "BTC/USD")
+				val.Timestamp = uint64(now.UnixNano())
+				val.Tick = uint64(idx + 1)
 
-				// Bid (99.0) <= Ask (101.0), midpoint 100.0, relSpread 0.02, feeRate 0.001, hurdle 0.022
-				measurement.Write(
-					data.NewMetric("best_bid_price", 99.0, data.UnitPrice, data.TimescaleInstantaneous),
-					data.NewMetric("best_ask_price", 101.0, data.UnitPrice, data.TimescaleInstantaneous),
-					data.NewMetric("relative_spread", 0.02, data.UnitRatio, data.TimescaleInstantaneous),
-					data.NewMetric("fee_rate", 0.001, data.UnitRate, data.TimescaleInstantaneous),
-					data.NewMetric("friction_hurdle", 0.022, data.UnitRatio, data.TimescaleInstantaneous),
-					data.NewMetric("gross_notional", 1000.0, data.UnitVolume, data.TimescaleInstantaneous),
-					data.NewMetric("signed_net_fraction", 0.5, data.UnitRatio, data.TimescaleInstantaneous),
-				)
-				measurement.Finalize()
-				measurements = append(measurements, measurement)
+				data.AppendVector(val, []float64{99.0}, "best_bid_price")
+				data.AppendVector(val, []float64{101.0}, "best_ask_price")
+				data.AppendVector(val, []float64{0.02}, "relative_spread")
+				data.AppendVector(val, []float64{0.001}, "fee_rate")
+				data.AppendVector(val, []float64{0.022}, "friction_hurdle")
+				data.AppendVector(val, []float64{1000.0}, "gross_notional")
+				data.AppendVector(val, []float64{0.5}, "signed_net_fraction")
+
+				measurements = append(measurements, val)
 			}
 
 			violations := feed(stage, measurements...)
@@ -51,19 +50,11 @@ func TestTruthfulnessStage(t *testing.T) {
 		})
 
 		Convey("When auditing crossed market order book quotes (bid > ask)", func() {
-			measurements := make([]*data.Measurement, 0, 1)
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
+			val := data.NewValue("test", "tick", "BTC/USD")
+			data.AppendVector(val, []float64{102.0}, "best_bid_price")
+			data.AppendVector(val, []float64{100.0}, "best_ask_price")
 
-			// Best bid 102.0 > Best ask 100.0 (crossed market anomaly)
-			measurement.Write(
-				data.NewMetric("best_bid_price", 102.0, data.UnitPrice, data.TimescaleInstantaneous),
-				data.NewMetric("best_ask_price", 100.0, data.UnitPrice, data.TimescaleInstantaneous),
-			)
-			measurement.Finalize()
-			measurements = append(measurements, measurement)
-
-			violations := feed(stage, measurements...)
+			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 
 			hasCrossed := false
@@ -77,20 +68,12 @@ func TestTruthfulnessStage(t *testing.T) {
 		})
 
 		Convey("When auditing relative spread identity breaches", func() {
-			measurements := make([]*data.Measurement, 0, 1)
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
+			val := data.NewValue("test", "tick", "BTC/USD")
+			data.AppendVector(val, []float64{99.0}, "best_bid_price")
+			data.AppendVector(val, []float64{101.0}, "best_ask_price")
+			data.AppendVector(val, []float64{0.05}, "relative_spread")
 
-			// bid 99, ask 101 -> midpoint 100 -> expected relSpread 0.02, but reported 0.05
-			measurement.Write(
-				data.NewMetric("best_bid_price", 99.0, data.UnitPrice, data.TimescaleInstantaneous),
-				data.NewMetric("best_ask_price", 101.0, data.UnitPrice, data.TimescaleInstantaneous),
-				data.NewMetric("relative_spread", 0.05, data.UnitRatio, data.TimescaleInstantaneous),
-			)
-			measurement.Finalize()
-			measurements = append(measurements, measurement)
-
-			violations := feed(stage, measurements...)
+			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 
 			hasSpreadViolation := false
@@ -103,19 +86,11 @@ func TestTruthfulnessStage(t *testing.T) {
 		})
 
 		Convey("When auditing CVD signed_net_fraction out of bounds", func() {
-			measurements := make([]*data.Measurement, 0, 1)
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "cvd", now, now)
+			val := data.NewValue("cvd", "tick", "BTC/USD")
+			data.AppendVector(val, []float64{50000.0}, "gross_notional")
+			data.AppendVector(val, []float64{1.5}, "signed_net_fraction")
 
-			// signed_net_fraction 1.5 > 1.0 (impossible fraction)
-			measurement.Write(
-				data.NewMetric("gross_notional", 50000.0, data.UnitVolume, data.TimescaleInstantaneous),
-				data.NewMetric("signed_net_fraction", 1.5, data.UnitRatio, data.TimescaleInstantaneous),
-			)
-			measurement.Finalize()
-			measurements = append(measurements, measurement)
-
-			violations := feed(stage, measurements...)
+			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 
 			hasCvdViolation := false
@@ -128,19 +103,11 @@ func TestTruthfulnessStage(t *testing.T) {
 		})
 
 		Convey("When auditing trade anomalies (non-positive price or quantity)", func() {
-			measurements := make([]*data.Measurement, 0, 1)
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "spot:trade", now, now)
+			val := data.NewValue("spot", "trade", "BTC/USD")
+			data.AppendVector(val, []float64{-10.0}, "price")
+			data.AppendVector(val, []float64{1.0}, "qty")
 
-			// price <= 0
-			measurement.Write(
-				data.NewMetric("price", -10.0, data.UnitPrice, data.TimescaleInstantaneous),
-				data.NewMetric("qty", 1.0, data.UnitVolume, data.TimescaleInstantaneous),
-			)
-			measurement.Finalize()
-			measurements = append(measurements, measurement)
-
-			violations := feed(stage, measurements...)
+			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 
 			hasTradeViolation := false
@@ -153,17 +120,10 @@ func TestTruthfulnessStage(t *testing.T) {
 		})
 
 		Convey("When auditing non-finite metric values (NaN or Inf)", func() {
-			measurements := make([]*data.Measurement, 0, 1)
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
+			val := data.NewValue("test", "tick", "BTC/USD")
+			data.AppendVector(val, []float64{math.NaN()}, "midpoint_log_return")
 
-			measurement.Write(
-				data.NewMetric("midpoint_log_return", math.NaN(), data.UnitRatio, data.TimescaleInstantaneous),
-			)
-			measurement.Finalize()
-			measurements = append(measurements, measurement)
-
-			violations := feed(stage, measurements...)
+			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 
 			hasNonFinite := false
@@ -182,4 +142,3 @@ func TestTruthfulnessStage(t *testing.T) {
 		})
 	})
 }
-

@@ -7,8 +7,8 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/collection"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/probability"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -93,7 +93,7 @@ func (op *Pace) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			score := 0.0
 			priorCount := 0.0
 
-			for out := range op.calibrator.Next(data.NewValue(val).Next(nil)) {
+			for out := range op.calibrator.Next(transport.NewValue(val).Next(nil)) {
 				reading := (*probability.CalibratorReading)(out)
 				score = reading.Value
 				priorCount = reading.PriorCount
@@ -148,7 +148,7 @@ func (op *Pace) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			op.out = [4]float64{op.alpha, rank, readyFlag, count}
 
-			for value := range data.NewValue(op.out).Next(nil) {
+			for value := range transport.NewValue(op.out).Next(nil) {
 				if !yield(value) {
 					return
 				}

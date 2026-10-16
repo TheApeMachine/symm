@@ -7,7 +7,7 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -84,7 +84,7 @@ func (op *RLS) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 
 			var reading *algo.Reading
 
-			for out := range op.learner.Next(data.NewValue(query).Next(nil)) {
+			for out := range op.learner.Next(transport.NewValue(query).Next(nil)) {
 				reading = (*algo.Reading)(out)
 			}
 

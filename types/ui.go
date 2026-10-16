@@ -1,10 +1,8 @@
 package types
 
-import wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+import "github.com/theapemachine/symm/data"
 
 /*
-UIFrame is one immutable schema object awaiting transport batching. Producers
-publish this representation directly so the websocket hub performs the only
-FlatBuffers encoding and never copies separately encoded child frames.
+UIFrame is the binary Value representation awaiting transport.
 */
-type UIFrame = wire.FrameT
+type UIFrame = *data.Value

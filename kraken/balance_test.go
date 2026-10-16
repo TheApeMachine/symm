@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 )
 
-func TestBalanceMeasurementRoundTrip(t *testing.T) {
+func TestBalanceValueRoundTrip(t *testing.T) {
 	Convey("Given a kraken.Balance with asset rows", t, func() {
 		btcBal, _ := decimal.NewFromString("1.5")
 		usdBal, _ := decimal.NewFromString("1000.50")
@@ -30,15 +30,15 @@ func TestBalanceMeasurementRoundTrip(t *testing.T) {
 			},
 		}
 
-		Convey("ToMeasurement serializes wallet balances into structured metrics", func() {
-			meas := original.ToMeasurement(987654321)
-			So(meas, ShouldNotBeNil)
-			So(meas.Label, ShouldEqual, "snapshot")
-			So(meas.Source, ShouldEqual, "balances")
-			So(meas.Raw(), ShouldBeNil)
+		Convey("ToValue serializes wallet balances into Value", func() {
+			val := original.ToValue(987654321)
+			So(val, ShouldNotBeNil)
+			So(val.Origin, ShouldEqual, "kraken")
+			So(val.Role, ShouldEqual, "snapshot")
+			So(val.Scope, ShouldEqual, "balances")
 
-			Convey("and NewBalanceFromMeasurement completely restores balance rows", func() {
-				restored, err := kraken.NewBalanceFromMeasurement(meas)
+			Convey("and NewBalanceFromValue completely restores balance rows", func() {
+				restored, err := kraken.NewBalanceFromValue(val)
 				So(err, ShouldBeNil)
 				So(restored, ShouldNotBeNil)
 				So(len(restored.Data), ShouldEqual, 2)

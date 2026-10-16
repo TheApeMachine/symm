@@ -6,7 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 )
 
 func TestDynamicsStage(t *testing.T) {
@@ -14,7 +14,7 @@ func TestDynamicsStage(t *testing.T) {
 		ctx := context.Background()
 		stage := NewDynamicsStage(ctx)
 
-		feed := func(s *DynamicsStage, ms ...*data.Measurement) []*Violation {
+		feed := func(s *DynamicsStage, ms ...*data.Value) []*Violation {
 			for _, m := range ms {
 				s.Channel() <- m
 			}
@@ -23,42 +23,44 @@ func TestDynamicsStage(t *testing.T) {
 			return s.Violations()
 		}
 
-		makeGridJoin := func(region uint8, tick int64, now time.Time, bid, ask float64) *data.Measurement {
-			peer := data.NewMeasurement(1, "BTC/USD", "cvd", now, now)
-			peer.Tick = tick
-
-			label := "midpoint_log_return"
-			if region == 4 {
-				label = "flow_aligned_midpoint_return"
+		makeGridJoin := func(region uint8, tick int64, now time.Time, bid, ask float64) *data.Value {
+			source := "cvd"
+			label := "signed_net_fraction" // region 1
+			switch region {
+			case 2:
+				source = "cvd"
+				label = "midpoint_log_return" // region 2
+			case 4:
+				source = "cvd"
+				label = "flow_aligned_midpoint_return" // region 4
 			}
 
-			if region == 1 {
-				label = "signed_net_fraction"
-			}
+			peer := data.NewValue(source, "signal", "BTC/USD")
+			peer.Tick = uint64(tick)
+			peer.Timestamp = uint64(now.UnixNano())
+			data.AppendVector(peer, []float64{0.95}, label)
 
-			metric := data.NewMetric(label, 1.0, data.UnitDimensionless, data.TimescaleInstantaneous)
-			metric.SetSNM(0.95)
-			metrics := []*data.Metric{metric}
+			join := data.NewValue("runtime", "runtime:join", "BTC/USD")
+			join.Tick = uint64(tick)
+			join.Timestamp = uint64(now.UnixNano())
+			join.Layers = append(join.Layers, peer.Layers...)
+			join.Index = append(join.Index, peer.Index...)
 
 			if bid > 0 && ask > 0 {
-				metrics = append(metrics,
-					data.NewMetric("best_bid_price", bid, data.UnitPrice, data.TimescaleInstantaneous),
-					data.NewMetric("best_ask_price", ask, data.UnitPrice, data.TimescaleInstantaneous),
-				)
+				pricePeer := data.NewValue("kraken", "quote", "BTC/USD")
+				pricePeer.Tick = uint64(tick)
+				pricePeer.Timestamp = uint64(now.UnixNano())
+				data.AppendVector(pricePeer, []float64{bid}, "best_bid_price")
+				data.AppendVector(pricePeer, []float64{ask}, "best_ask_price")
+				join.Layers = append(join.Layers, pricePeer.Layers...)
+				join.Index = append(join.Index, pricePeer.Index...)
 			}
 
-			peer.Write(metrics...)
-			peer.Finalize()
-
-			join := data.NewMeasurement(1, "BTC/USD", "runtime:join", now, now)
-			join.Tick = tick
-			join.Peers(peer)
-			join.Finalize()
 			return join
 		}
 
 		Convey("When auditing structured state transitions", func() {
-			measurements := make([]*data.Measurement, 0, 24)
+			measurements := make([]*data.Value, 0, 24)
 
 			// Predictable deterministic cycle: R02 -> R04 -> R01 -> R02 ...
 			regions := []uint8{2, 4, 1}
@@ -75,7 +77,7 @@ func TestDynamicsStage(t *testing.T) {
 		})
 
 		Convey("When auditing an absorbing state collapse (> 80% same token)", func() {
-			measurements := make([]*data.Measurement, 0, 25)
+			measurements := make([]*data.Value, 0, 25)
 
 			for idx := range int64(25) {
 				now := time.Now().Add(time.Duration(idx) * time.Millisecond)

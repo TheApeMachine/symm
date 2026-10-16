@@ -1,9 +1,4 @@
-import * as flatbuffers from "flatbuffers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BatchT } from "#/providers/telemetry/telemetry/batch";
-import { Frame } from "#/providers/telemetry/telemetry/frame";
-import { FrameEntryT } from "#/providers/telemetry/telemetry/frame-entry";
-import { TickFrameT } from "#/providers/telemetry/telemetry/tick-frame";
 
 type EventListener = (event: MessageEvent) => void | Promise<void>;
 
@@ -55,21 +50,12 @@ class MockWebSocket {
 	}
 }
 
-const encodeTick = (count: number): FrameEntryT =>
-	new FrameEntryT(Frame.TickFrame, new TickFrameT(BigInt(count)));
-
 const encodeFrameBatch = (counts: number[]): ArrayBuffer => {
-	const builder = new flatbuffers.Builder(64);
-	const offset = new BatchT(
-		BigInt(counts.at(-1) ?? 0),
-		counts.map(encodeTick),
-	).pack(builder);
-	builder.finish(offset, "SYMB");
-	const bytes = builder.asUint8Array();
-	return bytes.buffer.slice(
-		bytes.byteOffset,
-		bytes.byteOffset + bytes.byteLength,
-	) as ArrayBuffer;
+	const buf = new Uint8Array(counts.length);
+	for (let i = 0; i < counts.length; i++) {
+		buf[i] = counts[i];
+	}
+	return buf.buffer;
 };
 
 const connectWorker = async () => {

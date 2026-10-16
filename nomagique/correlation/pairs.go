@@ -10,7 +10,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -169,7 +168,7 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 			}
 
 			price := temporal.Price{At: frame.At, Value: last}
-			focal := data.To[temporal.Price, PathReading](path, &price)
+			focal := transport.To[temporal.Price, PathReading](path, &price)
 
 			if err := path.Error(); err != nil {
 				op.Error(err)
@@ -206,7 +205,7 @@ func (op *Pairs) Next(in iter.Seq[unsafe.Pointer]) iter.Seq[unsafe.Pointer] {
 				}
 
 				input := LagProfileInput{Left: focal.Observations, Right: peer.Observations}
-				dependence := data.To[LagProfileInput, DependenceReading](op.pairwise, &input)
+				dependence := transport.To[LagProfileInput, DependenceReading](op.pairwise, &input)
 
 				if err := op.pairwise.Error(); err != nil {
 					op.Error(err)

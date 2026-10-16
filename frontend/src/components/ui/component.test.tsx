@@ -3,10 +3,7 @@ import { render, act, cleanup } from "@testing-library/react";
 import { describe, expect, it, afterEach } from "vitest";
 import { createStore } from "@tanstack/store";
 import { RingBuffer } from "#/collections/ring";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MetricT } from "#/providers/telemetry/telemetry/metric";
-import { NamedNumberT } from "#/providers/telemetry/telemetry/named-number";
-import { NamedStringT } from "#/providers/telemetry/telemetry/named-string";
+import { Value } from "#/types/value";
 import { Component } from "./component";
 import { Typography } from "./typography";
 
@@ -15,26 +12,25 @@ describe("Component telemetry binding", () => {
 		cleanup();
 	});
 
-	const createSampleMeasurement = (symbol = "BTC/USD") => {
-		const m = new MeasurementT();
-		m.symbol = symbol;
-		m.at = 1_700_000_000_000_000_000n; // valid timestamp
-		m.maturity = 0.85;
-		m.metrics = [
-			new MetricT("contrast", 1.2346, 0.65),
-			new MetricT("stability", 0.942, 0.942),
-			new MetricT("ambiguity", 0.8, 0.8),
-		];
-		m.metadata = [new NamedNumberT("epoch", 12)];
-		m.provenance = [new NamedStringT("regime", "TREND")];
-		return m;
+	const createSampleValue = (symbol = "BTC/USD") => {
+		return new Value({
+			scope: symbol,
+			timestamp: 1_700_000_000_000_000_000n,
+			metrics: [
+				{ name: "contrast", raw: 1.2346, snm: 0.65 },
+				{ name: "stability", raw: 0.942, snm: 0.942 },
+				{ name: "ambiguity", raw: 0.8, snm: 0.8 },
+			],
+			metadata: [{ name: "epoch", value: 12 }],
+			provenance: [{ name: "regime", value: "TREND" }],
+		});
 	};
 
-	it("binds direct measurement prop into DOM elements", () => {
-		const m = createSampleMeasurement();
+	it("binds direct value prop into DOM elements", () => {
+		const v = createSampleValue();
 
 		const view = render(
-			<Component measurement={m}>
+			<Component value={v}>
 				<Typography.Span data-metric="symbol" data-testid="symbol">
 					—
 				</Typography.Span>
@@ -74,11 +70,11 @@ describe("Component telemetry binding", () => {
 		expect(view.getByTestId("bar").style.width).toBe("65%");
 	});
 
-	it("resets DOM elements when measurement is null", () => {
-		const m = createSampleMeasurement();
+	it("resets DOM elements when value is null", () => {
+		const v = createSampleValue();
 
 		const view = render(
-			<Component measurement={m}>
+			<Component value={v}>
 				<Typography.Span data-metric="symbol" data-testid="symbol">
 					—
 				</Typography.Span>
@@ -88,7 +84,7 @@ describe("Component telemetry binding", () => {
 		expect(view.getByTestId("symbol").textContent).toBe("BTC/USD");
 
 		view.rerender(
-			<Component measurement={null}>
+			<Component value={null}>
 				<Typography.Span data-metric="symbol" data-testid="symbol">
 					—
 				</Typography.Span>
@@ -99,8 +95,8 @@ describe("Component telemetry binding", () => {
 	});
 
 	it("subscribes to a store with symbol and streams live ring updates", () => {
-		const store = createStore<Record<string, RingBuffer<MeasurementT>>>({});
-		const ring = new RingBuffer<MeasurementT>(10);
+		const store = createStore<Record<string, RingBuffer<Value>>>({});
+		const ring = new RingBuffer<Value>(10);
 		store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
 
 		const view = render(
@@ -121,8 +117,8 @@ describe("Component telemetry binding", () => {
 		expect(view.getByTestId("symbol").textContent).toBe("—");
 
 		act(() => {
-			const m = createSampleMeasurement("ETH/USD");
-			ring.add(m);
+			const v = createSampleValue("ETH/USD");
+			ring.add(v);
 			store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
 		});
 

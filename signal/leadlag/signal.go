@@ -6,11 +6,10 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
@@ -28,75 +27,49 @@ type Signal struct {
 	*runtime.System
 	paths   map[string][]temporal.Price
 	leadlag core.Primitive
-	last    map[string]*data.Measurement
+	keys    []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		paths:   make(map[string][]temporal.Price),
 		leadlag: nmcorrelation.NewLeadLag(algo.NewHayashiYoshida()),
-		last:    make(map[string]*data.Measurement),
+		keys: []string{
+			"defined_peer_count",
+			"best_lag_seconds_median",
+			"best_lag_seconds_mad",
+			"led_peer_share",
+			"covariance_score_gain_median",
+		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "leadlag", signal)
 	return signal
 }
 
-func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY {
-		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
-		return nil
+func (signal *Signal) Step(value *data.Value) *data.Value {
+	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+		return value
 	}
 
-	if prior == nil || prior.Label == "" {
-		return nil
-	}
-
-	var price float64
-	var found bool
-
-	for entry := range prior.Read("price") {
-		if entry != nil && entry.Metric != nil {
-			price = entry.Metric.Raw()
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		if prev, ok := signal.last[prior.Label]; ok && prev != nil {
-			return prev
-		}
-
-		if prior.Source == "spot:trade" {
-			signal.Error(errnie.Err(errnie.Validation, "[leadlag] missing price", nil))
-		}
-
-		return nil
-	}
-
+	price := data.Attribute[float64](value.Layers[0], "data", 0, "price")
 	if price <= 0 {
-		if prev, ok := signal.last[prior.Label]; ok && prev != nil {
-			return prev
-		}
-
-		return nil
+		return value
 	}
 
-	atNano := prior.At.UnixNano()
+	atNano := int64(value.Timestamp)
+	symbol := value.Scope
 
-	currentPath := signal.paths[prior.Label]
+	currentPath := signal.paths[symbol]
 
 	if len(currentPath) > 0 {
 		last := currentPath[len(currentPath)-1].At
-
 		if atNano < last {
-			return nil
+			return value
 		}
-
 		if atNano == last {
 			currentPath[len(currentPath)-1] = temporal.Price{At: atNano, Value: price}
-			signal.paths[prior.Label] = currentPath
+			signal.paths[symbol] = currentPath
 		}
 	}
 
@@ -104,15 +77,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		if len(currentPath) >= maxLeadLagSamples {
 			currentPath = currentPath[1:]
 		}
-
 		currentPath = append(currentPath, temporal.Price{At: atNano, Value: price})
-		signal.paths[prior.Label] = currentPath
+		signal.paths[symbol] = currentPath
 	}
 
 	candidateSymbols := make([]string, 0, len(signal.paths))
-
 	for peerSymbol, peerPath := range signal.paths {
-		if peerSymbol != prior.Label && len(peerPath) >= 3 && len(currentPath) >= 3 {
+		if peerSymbol != symbol && len(peerPath) >= 3 && len(currentPath) >= 3 {
 			candidateSymbols = append(candidateSymbols, peerSymbol)
 		}
 	}
@@ -131,51 +102,34 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	readings := make([]nmcorrelation.LeadLagReading, 0, len(candidateSymbols))
-
 	for _, peerSymbol := range candidateSymbols {
 		peerPath := signal.paths[peerSymbol]
 		input := nmcorrelation.LagProfileInput{Left: peerPath, Right: currentPath}
 		reading := drive[nmcorrelation.LagProfileInput, nmcorrelation.LeadLagReading](signal.leadlag, &input)
-
 		if reading.Defined {
 			readings = append(readings, reading)
 		}
 	}
 
 	output := summarize(readings)
-	if output == nil {
-		output = make(map[string]float64)
-	}
 
-	if err := signal.leadlag.Error(); err != nil {
-		signal.Error(err)
-		return nil
-	}
-
-	prev := signal.last[prior.Label]
-	if prev == nil {
-		prev = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
-	}
-
-	res := prev.Next(prior, output)
-	signal.last[prior.Label] = res
-	return res
+	return data.AppendVector(value, []float64{
+		output["defined_peer_count"],
+		output["best_lag_seconds_median"],
+		output["best_lag_seconds_mad"],
+		output["led_peer_share"],
+		output["covariance_score_gain_median"],
+	}, signal.keys...)
 }
 
 func drive[From, To any](op core.Primitive, payload *From) To {
 	var answer To
-
 	for out := range op.Next(transport.NewOne(unsafe.Pointer(payload)).Next(nil)) {
 		answer = *(*To)(out)
 	}
-
 	return answer
 }
 
-/*
-leaderRank prioritizes anchor market movers (BTC, ETH, SOL) over obscure altcoins
-so that leadlag evaluates cross-asset dynamics against true market drivers.
-*/
 func leaderRank(symbol string) int {
 	switch {
 	case strings.HasPrefix(symbol, "BTC") || strings.HasPrefix(symbol, "XBT") || strings.HasPrefix(symbol, "XXBT"):

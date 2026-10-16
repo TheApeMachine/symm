@@ -3,9 +3,7 @@ import { act, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { clockAtom, focusAtom, RingBuffer, signals } from "#/collections/app";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MetricT } from "#/providers/telemetry/telemetry/metric";
-import { NamedStringT } from "#/providers/telemetry/telemetry/named-string";
+import { Value } from "#/types/value";
 import { hawkesSample, XrayHawkesPanel } from "./xray-hawkes";
 
 describe("XrayHawkesPanel", () => {
@@ -24,22 +22,22 @@ describe("XrayHawkesPanel", () => {
 
 describe("hawkesSample", () => {
 	const row = (side: string) => {
-		const measurement = new MeasurementT();
-		measurement.at = 1_000_000_000n;
-		measurement.provenance = [new NamedStringT("side", side)];
-		measurement.metrics = Object.entries({
-			event_count: 65,
-			"event_count:buy": 40,
-			"event_count:sell": 25,
-			conditional_intensity: 2,
-			background_rate: 0.2,
-			excitation_decay: 1,
-			"excitation_amplitude:buy_from_buy": 0.4,
-			"excitation_amplitude:sell_from_buy": 0.1,
-			"excitation_amplitude:buy_from_sell": 0.2,
-			"excitation_amplitude:sell_from_sell": 0.6,
-		}).map(([name, value]) => new MetricT(name, value));
-		return measurement;
+		return new Value({
+			timestamp: 1_000_000_000n,
+			provenance: [{ name: "side", value: side }],
+			metrics: Object.entries({
+				event_count: 65,
+				"event_count:buy": 40,
+				"event_count:sell": 25,
+				conditional_intensity: 2,
+				background_rate: 0.2,
+				excitation_decay: 1,
+				"excitation_amplitude:buy_from_buy": 0.4,
+				"excitation_amplitude:sell_from_buy": 0.1,
+				"excitation_amplitude:buy_from_sell": 0.2,
+				"excitation_amplitude:sell_from_sell": 0.6,
+			}).map(([name, value]) => ({ name, raw: value })),
+		});
 	};
 
 	it("uses the event mark even when retained window counts stay constant", () => {
@@ -101,21 +99,22 @@ describe("XrayHawkesPanel market clock", () => {
 		const symbol = focusAtom.get();
 		let ring = signals.hawkes.state[symbol];
 		if (!ring) {
-			ring = new RingBuffer<MeasurementT>(50);
+			ring = new RingBuffer<Value>(50);
 			signals.hawkes.state[symbol] = ring;
 		}
 		ring.clear();
-		const measurement = new MeasurementT();
-		measurement.at = 1_000_000_000n;
-		measurement.provenance = [new NamedStringT("side", "buy")];
-		measurement.metrics = Object.entries({
-			conditional_intensity: 0.2,
-			background_rate: 0.2,
-			excitation_decay: 1,
-			"excitation_amplitude:buy_from_buy": 0.4,
-			"excitation_amplitude:sell_from_buy": 0.1,
-		}).map(([name, value]) => new MetricT(name, value));
-		ring.add(measurement);
+		const val = new Value({
+			timestamp: 1_000_000_000n,
+			provenance: [{ name: "side", value: "buy" }],
+			metrics: Object.entries({
+				conditional_intensity: 0.2,
+				background_rate: 0.2,
+				excitation_decay: 1,
+				"excitation_amplitude:buy_from_buy": 0.4,
+				"excitation_amplitude:sell_from_buy": 0.1,
+			}).map(([name, value]) => ({ name, raw: value })),
+		});
+		ring.add(val);
 		const view = render(<XrayHawkesPanel />);
 
 		try {
@@ -135,8 +134,11 @@ describe("XrayHawkesPanel market clock", () => {
 			act(() => repaint?.(2));
 			expect(context.moveTo.mock.calls[0][1]).toBe(baselineY);
 			expect(baselineY).toBeGreaterThan(30);
-			const next = new MeasurementT();
-			Object.assign(next, measurement, { at: 5_500_000_000n });
+			const next = new Value({
+				timestamp: 5_500_000_000n,
+				provenance: [...val.provenance],
+				metrics: [...val.metrics],
+			});
 			act(() => {
 				ring.add(next);
 				signals.hawkes.setState((previous) => ({ ...previous }));

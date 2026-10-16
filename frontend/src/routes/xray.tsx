@@ -20,7 +20,7 @@ import {
 	retainResonanceRow,
 } from "#/components/terminal/xray-view";
 import { Button, Flex, Grid, Typography } from "#/components/ui";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import type { Value } from "#/types/value";
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
@@ -29,13 +29,13 @@ const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(focusAtom);
 
 	useEffect(() => {
-		const updatePaint = (state: Record<string, RingBuffer<MeasurementT>>) => {
+		const updatePaint = (state: Record<string, RingBuffer<Value>>) => {
 			for (const ring of Object.values(state)) {
 				const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
 				if (!last) continue;
 
-				const sym = typeof last.symbol === "string" ? last.symbol : "";
+				const sym = typeof last.scope === "string" ? last.scope : "";
 
 				if (sym) {
 					retainResonanceRow(sym, last as unknown as Record<string, unknown>);
@@ -66,7 +66,7 @@ const XrayCarrierBar = () => {
 	const [symbols, setSymbols] = useState<string[]>(() => {
 		const initial = new Set<string>(symbolsAtom.get());
 		for (const row of getAllRetainedResonance()) {
-			if (row.symbol) initial.add(row.symbol as string);
+			if (typeof row.scope === "string") initial.add(row.scope);
 		}
 		if (initial.size === 0) initial.add(DEFAULT_FOCUS_SYMBOL);
 		return [...initial];
@@ -76,7 +76,7 @@ const XrayCarrierBar = () => {
 		const syncSymbols = () => {
 			const current = new Set<string>(symbolsAtom.get());
 			for (const row of getAllRetainedResonance()) {
-				if (row.symbol) current.add(row.symbol as string);
+				if (typeof row.scope === "string") current.add(row.scope);
 			}
 			if (current.size === 0) current.add(DEFAULT_FOCUS_SYMBOL);
 			const list = [...current];
@@ -127,7 +127,7 @@ const XrayCarrierBar = () => {
 };
 
 const RouteComponent = () => (
-	<Flex.Column className="h-full w-full min-w-275">
+	<Flex.Column className="min-w-275" fullWidth fullHeight>
 		<XrayPaintBridge />
 		<XrayCarrierBar />
 		<Grid className="min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">

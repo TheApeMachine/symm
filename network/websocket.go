@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ while status != READY ("client is not ready").
 type WebsocketClient struct {
 	*runtime.System
 	mu           sync.Mutex
+	readMu       sync.Mutex
 	writeMu      sync.Mutex
 	conn         *gorilla.Conn
 	url          string
@@ -165,7 +167,16 @@ func (client *WebsocketClient) dialLocked() error {
 Read returns the next text frame. On disconnect it drops to WAITING and
 returns a soft error so ingress can retry without System.Error floods.
 */
-func (client *WebsocketClient) Read(keys ...string) ([]byte, error) {
+func (client *WebsocketClient) Read(keys ...string) (msg []byte, err error) {
+	client.readMu.Lock()
+	defer client.readMu.Unlock()
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = client.softDown(fmt.Errorf("[network.websocket] read panic: %v", r))
+		}
+	}()
+
 	if err := client.ensureReady(); err != nil {
 		return nil, err
 	}
@@ -181,6 +192,8 @@ func (client *WebsocketClient) Read(keys ...string) ([]byte, error) {
 			nil,
 		)))
 	}
+
+	_ = conn.SetReadDeadline(time.Time{})
 
 	_, message, err := conn.ReadMessage()
 
@@ -348,6 +361,7 @@ func (client *WebsocketClient) closeConnLocked() {
 		return
 	}
 
+	_ = client.conn.SetReadDeadline(time.Now())
 	_ = client.conn.Close()
 	client.conn = nil
 	client.pinger.Stop()

@@ -1,7 +1,6 @@
 import { tableFromIPC } from "apache-arrow";
 import { hubBaseUrl } from "#/lib/hub";
 import { runWarehouseStatement } from "#/components/workbench/workbench-api";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import type {
 	EpisodeKind,
 	HindsightCapture,
@@ -485,6 +484,26 @@ const provenanceValue = (
 	return record[key] ?? "";
 };
 
+const toIsoString = (
+	val: string | number | bigint | undefined | null,
+): string => {
+	if (!val) return new Date().toISOString();
+	if (typeof val === "string") {
+		return val.includes("T")
+			? val
+			: new Date(
+					Number(val) > 1e12 ? Number(val) : Number(val) * 1000,
+				).toISOString();
+	}
+	const num =
+		typeof val === "bigint"
+			? Number(val > 1000000000000000000n ? val / 1_000_000n : val)
+			: val;
+	const ms =
+		num > 1e16 ? num / 1e6 : num > 1e13 ? num / 1e3 : num > 1e10 ? num : num * 1000;
+	return new Date(ms).toISOString();
+};
+
 /*
 isTradePeer recognises Iceberg SpotTrade rows and live websocket trades whose
 Source stayed "websocket" while metadata/provenance carry type/channel=trade.
@@ -512,7 +531,7 @@ export const adaptMeasurementsToTimeline = (
 			!query.symbol ||
 			m.label === query.symbol ||
 			m.symbol === query.symbol ||
-			m.source.includes("ticker"),
+			(m.source ?? "").includes("ticker"),
 	);
 
 	const totalObservations = measurements.reduce(
@@ -532,12 +551,8 @@ export const adaptMeasurementsToTimeline = (
 			: filtered[filtered.length - 1]?.tick != null
 				? Number(filtered[filtered.length - 1].tick)
 				: firstSeq;
-	const firstAt = filtered[0]?.at
-		? new Date(filtered[0].at).toISOString()
-		: new Date().toISOString();
-	const lastAt = filtered[filtered.length - 1]?.at
-		? new Date(filtered[filtered.length - 1].at).toISOString()
-		: firstAt;
+	const firstAt = toIsoString(filtered[0]?.at);
+	const lastAt = toIsoString(filtered[filtered.length - 1]?.at) || firstAt;
 
 	const span: HindsightTimelineSpan = {
 		fromSequence: firstSeq,
@@ -628,12 +643,9 @@ export const adaptMeasurementsToTimeline = (
 			chunk[chunk.length - 1]?.seqIdx != null
 				? Number(chunk[chunk.length - 1].seqIdx)
 				: chunkFirstSeq;
-		const chunkFirstAt = chunk[0]?.at
-			? new Date(chunk[0].at).toISOString()
-			: firstAt;
-		const chunkLastAt = chunk[chunk.length - 1]?.at
-			? new Date(chunk[chunk.length - 1].at).toISOString()
-			: chunkFirstAt;
+		const chunkFirstAt = toIsoString(chunk[0]?.at) || firstAt;
+		const chunkLastAt =
+			toIsoString(chunk[chunk.length - 1]?.at) || chunkFirstAt;
 
 		const obsCount = chunk.reduce(
 			(acc, m) => acc + 1 + (m.peers?.length || 0),
@@ -694,7 +706,7 @@ export const adaptMeasurementsToTimeline = (
 			if (diff === 0) break;
 		}
 		if (!best?.at) return "";
-		return typeof best.at === "string" ? best.at : new Date(best.at).toISOString();
+		return toIsoString(best.at);
 	};
 
 	const priceAtSeq = (seq: number, fallback: number): number => {
@@ -881,7 +893,7 @@ const toStr = (val: string | Uint8Array | null | undefined): string => {
 	return new TextDecoder().decode(val);
 };
 
-export const flatbufferToMeasurement = (m: MeasurementT): Measurement => {
+export const flatbufferToMeasurement = (m: any): Measurement => {
 	const metricsRecord: Record<
 		string,
 		{

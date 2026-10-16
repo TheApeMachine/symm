@@ -2,7 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { type CSSProperties, useRef } from "react";
 import { focusAtom, resonanceStore } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { Value } from "#/types/value";
 import { Flex } from "../ui";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
@@ -63,7 +63,7 @@ const densify = (sparse: number[] | undefined): number[] => {
 	return out;
 };
 
-export const parseResonanceData = (measurement: MeasurementT | undefined): ResonanceData | undefined => {
+export const parseResonanceData = (measurement: Value | undefined): ResonanceData | undefined => {
 	if (!measurement) return undefined;
 
 	const metrics = measurement.metrics ?? [];
@@ -144,7 +144,7 @@ const useArtifact = (): ResonanceData | undefined => {
 
 	const held = useRef<{
 		symbol: string | undefined;
-		row: MeasurementT | undefined;
+		row: Value | undefined;
 	}>({ symbol, row: undefined });
 
 	if (held.current.symbol !== symbol) {

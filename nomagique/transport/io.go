@@ -82,3 +82,40 @@ func (op *One) Error(errs ...error) error {
 
 	return op.err
 }
+
+/*
+To evaluates a single input through an operation and returns the typed reading.
+*/
+func To[In any, Out any](op core.Primitive, in *In) Out {
+	for ptr := range op.Next(func(yield func(unsafe.Pointer) bool) {
+		yield(unsafe.Pointer(in))
+	}) {
+		if ptr != nil {
+			return *(*Out)(ptr)
+		}
+	}
+	var zero Out
+	return zero
+}
+
+/*
+Read extracts the first non-nil typed value from a sequence of unsafe.Pointers.
+*/
+func Read[T any](seq iter.Seq[unsafe.Pointer]) T {
+	for ptr := range seq {
+		if ptr != nil {
+			return *(*T)(ptr)
+		}
+	}
+	var zero T
+	return zero
+}
+
+/*
+NewValue instantiates a Primitive run yielding a pointer to a copy of v.
+*/
+func NewValue[T any](v T) core.Primitive {
+	owned := v
+	return &One{value: unsafe.Pointer(&owned)}
+}
+

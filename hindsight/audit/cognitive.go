@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -33,7 +33,7 @@ and that decision confidence is strictly positive.
 */
 type CognitiveStage struct {
 	*runtime.System
-	ch             chan *data.Measurement
+	ch             chan *data.Value
 	violations     []*Violation
 	phases         []*CognitivePhase
 	totalChecked   int
@@ -49,13 +49,13 @@ type CognitiveStage struct {
 func NewCognitiveStage(ctx context.Context) *CognitiveStage {
 	return &CognitiveStage{
 		System:     runtime.NewSystem(ctx, "audit:cognitive"),
-		ch:         make(chan *data.Measurement, 64),
+		ch:         make(chan *data.Value, 64),
 		violations: make([]*Violation, 0),
 		phases:     make([]*CognitivePhase, 0),
 	}
 }
 
-func (stage *CognitiveStage) Channel() chan *data.Measurement {
+func (stage *CognitiveStage) Channel() chan *data.Value {
 	return stage.ch
 }
 
@@ -77,16 +77,6 @@ func (stage *CognitiveStage) Run() error {
 
 		stage.totalChecked++
 
-		if measurement.Error() != nil {
-			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
-				"measurement.error",
-				measurement.Error().Error(),
-				measurement,
-				nil,
-			))
-		}
-
 		stage.recordCognitivePhase(measurement)
 	}
 
@@ -98,8 +88,8 @@ func (stage *CognitiveStage) Run() error {
 recordCognitivePhase extracts action decisions, confidence scores, and contrast
 from the measurement stream.
 */
-func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Measurement) {
-	if measurement.Source == "runtime:join" {
+func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Value) {
+	if measurement.Role == "runtime:join" {
 		return
 	}
 
@@ -112,48 +102,37 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Measurement)
 	var visits int
 	hasDecision := false
 
-	if actMeta := data.Pull(measurement.Meta("action")); actMeta != nil && actMeta.Value != "" {
-		action = actMeta.Value
+	metrics := data.Metrics(measurement)
+
+	if actVal, ok := metrics["action"]; ok {
+		hasDecision = true
+		if actVal > 0.5 {
+			action = "enter"
+		} else if actVal < -0.5 {
+			action = "exit"
+		} else {
+			action = "wait"
+		}
+	} else if measurement.Role == "enter" || measurement.Role == "exit" || measurement.Role == "wait" || measurement.Role == "noop" {
+		action = measurement.Role
 		hasDecision = true
 	}
 
-	if pathMeta := data.Pull(measurement.Meta("path")); pathMeta != nil && pathMeta.Value != "" {
-		path = pathMeta.Value
+	if confVal, ok := metrics["confidence"]; ok {
+		confidence = confVal
+		hasDecision = true
 	}
-
-	for entry := range measurement.Read() {
-		if entry == nil || entry.Metric == nil {
-			continue
-		}
-
-		switch entry.Metric.Label() {
-		case "action":
-			hasDecision = true
-			if entry.Metric.Raw() > 0.5 {
-				action = "enter"
-			}
-
-			if entry.Metric.Raw() < -0.5 {
-				action = "exit"
-			}
-
-			if action == "" {
-				action = "wait"
-			}
-		case "confidence":
-			confidence = entry.Metric.Raw()
-			hasDecision = true
-		case "contrast":
-			contrast = entry.Metric.Raw()
-		case "mean_reward":
-			// mean_reward is expected PnL from training, not model confidence.
-		case "gain":
-			gain = entry.Metric.Raw()
-		case "hold_seconds":
-			holdSeconds = entry.Metric.Raw()
-		case "visits":
-			visits = int(entry.Metric.Raw())
-		}
+	if contVal, ok := metrics["contrast"]; ok {
+		contrast = contVal
+	}
+	if gainVal, ok := metrics["gain"]; ok {
+		gain = gainVal
+	}
+	if holdVal, ok := metrics["hold_seconds"]; ok {
+		holdSeconds = holdVal
+	}
+	if visitsVal, ok := metrics["visits"]; ok {
+		visits = int(visitsVal)
 	}
 
 	if !hasDecision {

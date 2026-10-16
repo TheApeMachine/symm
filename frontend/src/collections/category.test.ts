@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RingBuffer, signals } from "./app";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MetricT } from "#/providers/telemetry/telemetry/metric";
+import { Value } from "#/types/value";
 
 describe("categoryStore", () => {
 	const categoryStore = signals.category;
@@ -11,32 +10,33 @@ describe("categoryStore", () => {
 		expect(typeof categoryStore.state).toBe("object");
 	});
 
-	it("stores MeasurementT objects per symbol ring buffer", () => {
+	it("stores Value objects per symbol ring buffer", () => {
 		const symbol = "BTC/USD";
 		if (!categoryStore.state[symbol]) {
-			categoryStore.state[symbol] = new RingBuffer<MeasurementT>(50);
+			categoryStore.state[symbol] = new RingBuffer<Value>(50);
 		}
 
-		const measurement = new MeasurementT();
-		measurement.source = "category";
-		measurement.symbol = symbol;
-		measurement.tick = 100n;
-		measurement.at = 1718000000000000000n;
-		measurement.observedFrom = 1718000000000000000n;
-		measurement.maturity = 1.0;
-		const m = new MetricT();
-		m.name = "loaded_imbalance";
-		m.raw = 0.85;
-		m.snm = 0.85;
-		measurement.metrics = [m];
+		const val = new Value({
+			origin: "category",
+			scope: symbol,
+			tick: 100n,
+			timestamp: 1718000000000000000n,
+			metrics: [
+				{
+					name: "loaded_imbalance",
+					raw: 0.85,
+					snm: 0.85,
+				},
+			],
+		});
 
-		categoryStore.state[symbol].add(measurement);
+		categoryStore.state[symbol].add(val);
 		categoryStore.setState((prev) => ({ ...prev }));
 
 		const ring = categoryStore.state[symbol];
 		expect(ring.isEmpty()).toBe(false);
-		expect(ring.getLast()).toEqual(measurement);
-		expect(ring.getLast()?.source).toBe("category");
+		expect(ring.getLast()).toEqual(val);
+		expect(ring.getLast()?.origin).toBe("category");
 	});
 
 	it("integrates seamlessly with signals.category", () => {
@@ -44,20 +44,19 @@ describe("categoryStore", () => {
 		const store = signals.category;
 		expect(store).toBeDefined();
 		if (!store.state[symbol]) {
-			store.state[symbol] = new RingBuffer<MeasurementT>(50);
+			store.state[symbol] = new RingBuffer<Value>(50);
 		}
 
-		const measurement = new MeasurementT();
-		measurement.source = "category";
-		measurement.symbol = symbol;
-		measurement.tick = 101n;
-		measurement.at = 1718000000000000000n;
-		measurement.observedFrom = 1718000000000000000n;
-		measurement.maturity = 1.0;
+		const val = new Value({
+			origin: "category",
+			scope: symbol,
+			tick: 101n,
+			timestamp: 1718000000000000000n,
+		});
 
-		store.state[symbol].add(measurement);
+		store.state[symbol].add(val);
 		expect(store.state[symbol].isEmpty()).toBe(false);
-		expect(store.state[symbol].getLast()?.symbol).toBe("ETH/USD");
+		expect(store.state[symbol].getLast()?.scope).toBe("ETH/USD");
 		expect(categoryStore.state[symbol]?.getLast()?.tick).toBe(101n);
 	});
 });

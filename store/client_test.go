@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/data"
 )
 
 type mockS3Backend struct {
@@ -169,59 +170,63 @@ func TestStoreClient(t *testing.T) {
 			backend.mu.Unlock()
 		})
 
-		Convey("When Put is called with a key and payload", func() {
-			key := "run/epoch/0000000000000000001/0000000000000000010.bin"
-			payload := []byte("test-payload-bytes")
+		Convey("When a Value is written via io.Copy", func() {
+			val := data.NewValue("testorigin", "tick", "agg")
+			val.Tick = 1
+			val.SeqIdx = 10
+			val.FormatPrefix()
+			val.Append([]byte("test-payload-bytes"))
 
-			putErr := client.Put(key, payload)
-			So(putErr, ShouldBeNil)
-			So(string(backend.objects[key]), ShouldEqual, string(payload))
+			n, writeErr := io.Copy(client, val)
+			So(writeErr, ShouldBeNil)
+			So(n, ShouldBeGreaterThan, 0)
+			So(len(backend.objects[val.Prefix]), ShouldBeGreaterThan, 0)
 
-			Convey("Then Download retrieves the exact payload", func() {
-				retrieved, getErr := client.Download(key)
+			Convey("Then Download retrieves the exact payload bytes", func() {
+				retrieved, getErr := client.Download(val.Prefix)
 				So(getErr, ShouldBeNil)
-				So(string(retrieved), ShouldEqual, string(payload))
+				outVal := data.From(retrieved)
+				So(outVal.Origin, ShouldEqual, "testorigin")
+				So(len(outVal.Layers), ShouldEqual, 1)
+				So(string(outVal.Layers[0]), ShouldEqual, "test-payload-bytes")
 			})
 
-			Convey("Then GetBytes streams all payloads under prefix", func() {
-				var payloads [][]byte
-				for p := range client.GetBytes("run/epoch/0000000000000000001/") {
-					payloads = append(payloads, p)
-				}
-
-				So(len(payloads), ShouldEqual, 1)
-				So(string(payloads[0]), ShouldEqual, string(payload))
-			})
-
-			Convey("Then List with delimiter returns top-level common prefixes", func() {
-				var commonPrefixes []string
-
-				for page := range client.List("run/epoch/", "/") {
-					for _, commonPrefix := range page.CommonPrefixes {
-						if commonPrefix.Prefix != nil {
-							commonPrefixes = append(commonPrefixes, *commonPrefix.Prefix)
-						}
-					}
-				}
-
-				So(len(commonPrefixes), ShouldEqual, 1)
-				So(commonPrefixes[0], ShouldEqual, "run/epoch/0000000000000000001/")
+			Convey("Then io.Copy from client reads the Value", func() {
+				client.prefix = "testorigin/"
+				client.keys = nil
+				client.cursor = 0
+				readVal := data.New()
+				rn, rErr := io.Copy(readVal, client)
+				So(rErr, ShouldBeNil)
+				So(rn, ShouldBeGreaterThan, 0)
+				So(readVal.Origin, ShouldEqual, "testorigin")
+				So(string(readVal.Layers[0]), ShouldEqual, "test-payload-bytes")
 			})
 
 			Convey("Then ListKeys returns objects sorted by Epoch, Tick, and SeqIdx", func() {
-				keyTick2 := "cvd/BTC/USD/0000000000000000001/0000000000000000002/0000000000000000001/0000000001000000000.bin"
-				keyTick1Seq2 := "cvd/BTC/USD/0000000000000000001/0000000000000000001/0000000000000000002/0000000001000000000.bin"
-				keyTick1Seq1 := "correlation/BTC/USD/0000000000000000001/0000000000000000001/0000000000000000001/0000000001000000000.bin"
+				v1 := data.NewValue("cvd", "BTC", "USD")
+				v1.Tick = 2
+				v1.SeqIdx = 1
+				v1.FormatPrefix()
+				_, _ = io.Copy(client, v1)
 
-				_ = client.Put(keyTick2, []byte("tick2"))
-				_ = client.Put(keyTick1Seq2, []byte("tick1seq2"))
-				_ = client.Put(keyTick1Seq1, []byte("tick1seq1"))
+				v2 := data.NewValue("cvd", "BTC", "USD")
+				v2.Tick = 1
+				v2.SeqIdx = 2
+				v2.FormatPrefix()
+				_, _ = io.Copy(client, v2)
+
+				v3 := data.NewValue("correlation", "BTC", "USD")
+				v3.Tick = 1
+				v3.SeqIdx = 1
+				v3.FormatPrefix()
+				_, _ = io.Copy(client, v3)
 
 				keys := client.ListKeys("correlation/", "cvd/")
 				So(len(keys), ShouldEqual, 3)
-				So(keys[0], ShouldEqual, keyTick1Seq1)
-				So(keys[1], ShouldEqual, keyTick1Seq2)
-				So(keys[2], ShouldEqual, keyTick2)
+				So(keys[0], ShouldEqual, v3.Prefix)
+				So(keys[1], ShouldEqual, v2.Prefix)
+				So(keys[2], ShouldEqual, v1.Prefix)
 			})
 		})
 	})

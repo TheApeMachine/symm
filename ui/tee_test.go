@@ -6,7 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -24,11 +24,10 @@ func TestUITee(t *testing.T) {
 		tee.Transition(nmruntime.READY)
 
 		Convey("It admits allowed publications and encodes them", func() {
-			now := time.Now().UTC()
-			measurement := data.NewMeasurement(1, "BTC/USD", "hawkes", now, now)
-			measurement.Write(data.NewMetric("event_count", 1, data.UnitCount, data.TimescaleInstantaneous))
+			value := data.NewValue("hawkes", "signal", "BTC/USD")
+			
 
-			tee.Push(measurement)
+			tee.Push(value)
 
 			time.Sleep(20 * time.Millisecond)
 

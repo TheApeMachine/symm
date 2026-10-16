@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"iter"
 	"net/http"
-	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -18,7 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
@@ -32,9 +33,19 @@ type Client struct {
 	*runtime.System
 	s3Client   *s3.Client
 	bucket     string
+	key        string
 	downloader *manager.Downloader
 	uploader   *manager.Uploader
+	prefix         string
+	keys           []string
+	cursor         int
+	writeMu        sync.Mutex
+	buffer         bytes.Buffer
+	currentPayload []byte
+	payloadOffset  int
 }
+
+var _ io.ReadWriteCloser = (*Client)(nil)
 
 func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) *Client {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
@@ -47,33 +58,27 @@ func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) 
 		return nil
 	}
 
-	if system.Cfg == nil || system.Cfg.Storage == nil || system.Cfg.Storage.S3 == nil {
-		system.Cfg = system.NewConfig()
-	}
-
-	s3Cfg := system.Cfg.Storage.S3
-
-	if bucket == "" {
-		bucket = s3Cfg.Bucket
-	}
-
 	options := append([]func(*s3.Options){
 		func(options *s3.Options) {
-			if options.BaseEndpoint == nil && s3Cfg.Endpoint != "" {
-				options.BaseEndpoint = aws.String(s3Cfg.Endpoint)
+			if options.BaseEndpoint == nil && system.Cfg.Storage.S3.Endpoint != "" {
+				options.BaseEndpoint = aws.String(system.Cfg.Storage.S3.Endpoint)
 				options.UsePathStyle = true
 			}
 
 			if options.Region == "" {
-				options.Region = s3Cfg.Region
+				options.Region = system.Cfg.Storage.S3.Region
 			}
 
-			if s3Cfg.Anonymous || s3Cfg.AccessKeyID == "" {
-				options.Credentials = credentials.NewStaticCredentialsProvider("anonymous", "anonymous", "")
+			if system.Cfg.Storage.S3.Anonymous || system.Cfg.Storage.S3.AccessKeyID == "" {
+				options.Credentials = credentials.NewStaticCredentialsProvider(
+					"anonymous", "anonymous", "",
+				)
 			}
 
 			// Override Default Transport Values
-			options.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(transport *http.Transport) {
+			options.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(
+				transport *http.Transport,
+			) {
 				transport.ResponseHeaderTimeout = 30 * time.Second
 				transport.MaxIdleConns = 256
 				transport.MaxIdleConnsPerHost = 64
@@ -219,169 +224,179 @@ func (client *Client) ListKeys(prefixes ...string) []string {
 }
 
 /*
-Get retrieves measurements matching the given prefix(es) in strict chronological
-order by (Epoch, Tick, SeqIdx), downloading and unmarshaling one measurement at a time.
+Values returns an iterator yielding each Value found under prefixes.
 */
-func (client *Client) Get(prefixes ...string) iter.Seq[*data.Measurement] {
-	return func(yield func(*data.Measurement) bool) {
+func Values(client *Client, prefixes ...string) iter.Seq[*data.Value] {
+	return func(yield func(*data.Value) bool) {
+		if client == nil {
+			return
+		}
+
 		for _, key := range client.ListKeys(prefixes...) {
 			payload, err := client.Download(key)
-
-			if err != nil || payload == nil {
-				continue
-			}
-
-			measurement := &data.Measurement{}
-			err = measurement.UnmarshalBinary(payload)
-
 			if err != nil {
 				continue
 			}
 
-			if !yield(measurement) {
-				return
-			}
-		}
-	}
-}
-
-/*
-GetBytes retrieves raw payloads matching the given prefix(es) in strict chronological
-order by (Epoch, Tick, SeqIdx).
-*/
-func (client *Client) GetBytes(prefixes ...string) iter.Seq[[]byte] {
-	return func(yield func([]byte) bool) {
-		for _, key := range client.ListKeys(prefixes...) {
-			payload, err := client.Download(key)
-
-			if err != nil || payload == nil {
+			val := data.From(payload)
+			if val == nil {
 				continue
 			}
 
-			if !yield(payload) {
+			if !yield(val) {
 				return
 			}
 		}
 	}
 }
 
-func (client *Client) Put(key string, payload []byte) error {
-	if client == nil || client.uploader == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "[store.client] client or uploader is nil", nil,
-		))
+/*
+Read downloads the next chronological Value from S3 into p,
+returning io.EOF when completed.
+*/
+func (client *Client) Read(p []byte) (n int, err error) {
+	if client.currentPayload == nil || client.payloadOffset >= len(client.currentPayload) {
+		if client.keys == nil {
+			client.keys = client.ListKeys(client.prefix)
+			client.cursor = 0
+		}
+
+		if client.cursor >= len(client.keys) {
+			return 0, io.EOF
+		}
+
+		key := client.keys[client.cursor]
+		client.cursor++
+
+		payload, err := client.Download(key)
+		if err != nil {
+			return 0, err
+		}
+
+		client.currentPayload = payload
+		client.payloadOffset = 0
 	}
 
-	if key == "" {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "[store.client] key is empty", nil,
-		))
+	n = copy(p, client.currentPayload[client.payloadOffset:])
+	client.payloadOffset += n
+
+	if client.payloadOffset >= len(client.currentPayload) && client.cursor >= len(client.keys) {
+		return n, io.EOF
 	}
 
-	_, err := client.uploader.Upload(client.Context(), &s3.PutObjectInput{
-		Bucket: aws.String(client.bucket),
-		Key:    aws.String(key),
-		Body:   bytes.NewReader(payload),
-	})
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] upload error", err,
-		))
-	}
-
-	return nil
+	return n, nil
 }
 
 /*
-Delete removes the specified object keys from the S3 bucket.
+ReadFrom reconstructs and uploads a Value directly from an incoming stream r.
+Implements io.ReaderFrom for zero-intermediate streaming via io.Copy.
 */
-func (client *Client) Delete(keys ...string) error {
-	if client == nil || client.s3Client == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "[store.client] client is nil", nil,
+func (client *Client) ReadFrom(r io.Reader) (int64, error) {
+	val := data.New()
+	n, err := val.ReadFrom(r)
+	if err != nil && err != io.EOF {
+		return n, err
+	}
+
+	_, uploadErr := client.uploader.Upload(client.Context(), &s3.PutObjectInput{
+		Bucket: aws.String(client.bucket),
+		Key:    aws.String(val.Prefix),
+		Body:   val,
+	})
+	if uploadErr != nil {
+		return n, errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] upload error", uploadErr,
 		))
 	}
 
-	for _, key := range keys {
-		if key == "" {
-			continue
-		}
+	return n, nil
+}
 
-		_, err := client.s3Client.DeleteObject(client.Context(), &s3.DeleteObjectInput{
+/*
+Write uploads the serialized Value in p to S3 at Key = val.Prefix.
+Buffers chunks if p is streamed partially.
+*/
+func (client *Client) Write(p []byte) (n int, err error) {
+	client.writeMu.Lock()
+	defer client.writeMu.Unlock()
+
+	client.buffer.Write(p)
+	val := data.New()
+	if _, wErr := val.Write(client.buffer.Bytes()); wErr == nil && val.Prefix != "" {
+		client.buffer.Reset()
+		_, err = client.uploader.Upload(client.Context(), &s3.PutObjectInput{
 			Bucket: aws.String(client.bucket),
-			Key:    aws.String(key),
+			Key:    aws.String(val.Prefix),
+			Body:   val,
 		})
 
 		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.IO, "[store.client] delete error", err,
+			return 0, errnie.Error(errnie.Err(
+				errnie.IO, "[store.client] upload error", err,
 			))
 		}
 	}
 
-	return nil
+	return len(p), nil
 }
 
 /*
-DeletePrefix removes all object keys matching the given prefix from the S3 bucket.
+DeletePrefix deletes all objects under the specified prefix.
 */
 func (client *Client) DeletePrefix(prefix string) error {
-	keys := client.ListKeys(prefix)
-
-	if len(keys) == 0 {
+	if client == nil || client.s3Client == nil {
 		return nil
 	}
 
-	return client.Delete(keys...)
-}
-
-/*
-Copy duplicates an object within the store from srcKey to dstKey using server-side S3 CopyObject.
-*/
-func (client *Client) Copy(srcKey, dstKey string) error {
-	if client == nil || client.s3Client == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "[store.client] client is nil", nil,
-		))
+	keys := client.ListKeys(prefix)
+	for _, key := range keys {
+		_, err := client.s3Client.DeleteObject(client.Context(), &s3.DeleteObjectInput{
+			Bucket: aws.String(client.bucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO, "[store.client] delete object error", err,
+			))
+		}
 	}
-
-	_, err := client.s3Client.CopyObject(client.Context(), &s3.CopyObjectInput{
-		Bucket:     aws.String(client.bucket),
-		CopySource: aws.String(url.PathEscape(client.bucket + "/" + srcKey)),
-		Key:        aws.String(dstKey),
-	})
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] copy error", err,
-		))
-	}
-
 	return nil
 }
 
 /*
-MovePrefix server-side moves all object keys matching srcPrefix to dstPrefix.
+MovePrefix copies all objects matching sourcePrefix to destPrefix, then deletes the originals.
 */
-func (client *Client) MovePrefix(srcPrefix, dstPrefix string) error {
-	keys := client.ListKeys(srcPrefix)
-
-	if len(keys) == 0 {
+func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
+	if client == nil || client.s3Client == nil {
 		return nil
 	}
 
+	keys := client.ListKeys(sourcePrefix)
 	for _, key := range keys {
-		rel := strings.TrimPrefix(key, srcPrefix)
-		dstKey := dstPrefix + rel
+		relKey := strings.TrimPrefix(key, sourcePrefix)
+		destKey := strings.TrimSuffix(destPrefix, "/") + "/" + strings.TrimPrefix(relKey, "/")
 
-		if err := client.Copy(key, dstKey); err != nil {
-			return err
+		copySource := client.bucket + "/" + key
+		_, err := client.s3Client.CopyObject(client.Context(), &s3.CopyObjectInput{
+			Bucket:     aws.String(client.bucket),
+			Key:        aws.String(destKey),
+			CopySource: aws.String(copySource),
+		})
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO, "[store.client] copy object error", err,
+			))
 		}
 
-		_ = client.Delete(key)
+		_, err = client.s3Client.DeleteObject(client.Context(), &s3.DeleteObjectInput{
+			Bucket: aws.String(client.bucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO, "[store.client] delete source object error", err,
+			))
+		}
 	}
-
 	return nil
 }
-

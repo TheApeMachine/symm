@@ -3,10 +3,9 @@ package audit
 import (
 	"context"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 )
 
 func TestCognitiveStage(t *testing.T) {
@@ -14,7 +13,7 @@ func TestCognitiveStage(t *testing.T) {
 		ctx := context.Background()
 		stage := NewCognitiveStage(ctx)
 
-		feed := func(s *CognitiveStage, ms []*data.Measurement) []*Violation {
+		feed := func(s *CognitiveStage, ms []*data.Value) []*Violation {
 			for _, m := range ms {
 				s.Channel() <- m
 			}
@@ -24,22 +23,17 @@ func TestCognitiveStage(t *testing.T) {
 		}
 
 		Convey("When auditing decisive cognitive phases with valid confidence", func() {
-			measurements := make([]*data.Measurement, 0, 25)
+			measurements := make([]*data.Value, 0, 25)
 
 			for idx := range int64(25) {
-				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
+				measurement := data.NewValue("test", "test", "BTC/USD")
 
 				actionVal := 0.0 // default wait
 				if idx%5 == 0 {
 					actionVal = 1.0 // enter
 				}
 
-				measurement.Write(
-					data.NewMetric("action", actionVal, data.UnitDimensionless, data.TimescaleInstantaneous),
-					data.NewMetric("confidence", 0.75, data.UnitProbability, data.TimescaleInstantaneous),
-				)
-				measurement.Finalize()
+				data.AppendVector(measurement, []float64{actionVal, 0.75}, "action", "confidence")
 				measurements = append(measurements, measurement)
 			}
 
@@ -49,17 +43,13 @@ func TestCognitiveStage(t *testing.T) {
 		})
 
 		Convey("When auditing complete abstention (100% wait actions)", func() {
-			measurements := make([]*data.Measurement, 0, 25)
+			measurements := make([]*data.Value, 0, 25)
 
-			for idx := range int64(25) {
-				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
+			for range int64(25) {
+				measurement := data.NewValue("test", "test", "BTC/USD")
 
 				// No action metric emitted -> defaults to wait
-				measurement.Write(
-					data.NewMetric("confidence", 0.0, data.UnitProbability, data.TimescaleInstantaneous),
-				)
-				measurement.Finalize()
+				data.AppendVector(measurement, []float64{0.0}, "confidence")
 				measurements = append(measurements, measurement)
 			}
 
@@ -77,17 +67,12 @@ func TestCognitiveStage(t *testing.T) {
 		})
 
 		Convey("When auditing active actions with zero confidence", func() {
-			measurements := make([]*data.Measurement, 0, 25)
+			measurements := make([]*data.Value, 0, 25)
 
-			for idx := range int64(25) {
-				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
+			for range int64(25) {
+				measurement := data.NewValue("test", "test", "BTC/USD")
 
-				measurement.Write(
-					data.NewMetric("action", 1.0, data.UnitDimensionless, data.TimescaleInstantaneous),
-					data.NewMetric("confidence", 0.0, data.UnitProbability, data.TimescaleInstantaneous),
-				)
-				measurement.Finalize()
+				data.AppendVector(measurement, []float64{1.0, 0.0}, "action", "confidence")
 				measurements = append(measurements, measurement)
 			}
 
@@ -104,9 +89,10 @@ func TestCognitiveStage(t *testing.T) {
 		})
 
 		Convey("When auditing nil measurements", func() {
-			nilViolations := feed(stage, []*data.Measurement{nil})
+			nilViolations := feed(stage, []*data.Value{nil})
 			So(len(nilViolations), ShouldEqual, 1)
 			So(nilViolations[0].Name, ShouldEqual, "measurement")
 		})
 	})
 }
+

@@ -19,7 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/transport"
 
 	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/mat"
@@ -1010,7 +1010,7 @@ func (rm *ResonanceManifold) taskReading(
 	row := append(append(make([]float64, 0, len(features)+1), features...), target)
 	var reading [][]float64
 
-	for out := range learner.Next(data.NewValue(row).Next(nil)) {
+	for out := range learner.Next(transport.NewValue(row).Next(nil)) {
 		reading = *(*[][]float64)(out)
 	}
 
@@ -1577,7 +1577,7 @@ func (rm *ResonanceManifold) rolloutTaskForecast(steps int) ([]float64, error) {
 		learner := rm.taskLearners[horizonIndex]
 		var reading [][]float64
 
-		for out := range learner.Next(data.NewValue(query).Next(nil)) {
+		for out := range learner.Next(transport.NewValue(query).Next(nil)) {
 			reading = *(*[][]float64)(out)
 		}
 

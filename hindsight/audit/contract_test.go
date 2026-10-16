@@ -4,10 +4,9 @@ import (
 	"context"
 	"math"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 )
 
 func TestContractStage(t *testing.T) {
@@ -15,7 +14,7 @@ func TestContractStage(t *testing.T) {
 		ctx := context.Background()
 		stage := NewContractStage(ctx)
 
-		feed := func(s *ContractStage, ms ...*data.Measurement) []*Violation {
+		feed := func(s *ContractStage, ms ...*data.Value) []*Violation {
 			for _, m := range ms {
 				s.Channel() <- m
 			}
@@ -25,12 +24,10 @@ func TestContractStage(t *testing.T) {
 		}
 
 		Convey("When auditing valid measurements", func() {
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-			metric := data.NewMetric("test_metric", 100.0, data.UnitPrice, data.TimescaleInstantaneous)
-			measurement.Write(metric)
+			val := data.NewValue("test", "test", "BTC/USD")
+			data.AppendVector(val, []float64{100.0}, "test_metric")
 
-			violations := feed(stage, measurement)
+			violations := feed(stage, val)
 			So(violations, ShouldBeEmpty)
 			So(stage.Report(), ShouldBeEmpty)
 		})
@@ -42,12 +39,10 @@ func TestContractStage(t *testing.T) {
 		})
 
 		Convey("When auditing price metrics with negative values", func() {
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-			metric := data.NewMetric("test_price", -50.0, data.UnitPrice, data.TimescaleInstantaneous)
-			measurement.Write(metric)
+			val := data.NewValue("test", "test", "BTC/USD")
+			data.AppendVector(val, []float64{-50.0}, "test_price")
 
-			violations := feed(stage, measurement)
+			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 
 			hasViolation := false
@@ -60,12 +55,10 @@ func TestContractStage(t *testing.T) {
 		})
 
 		Convey("When auditing probability metrics with out-of-bound values", func() {
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-			metric := data.NewMetric("test_prob", 1.5, data.UnitProbability, data.TimescaleInstantaneous)
-			measurement.Write(metric)
+			val := data.NewValue("test", "test", "BTC/USD")
+			data.AppendVector(val, []float64{1.5}, "test_prob")
 
-			violations := feed(stage, measurement)
+			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 
 			hasViolation := false
@@ -78,12 +71,10 @@ func TestContractStage(t *testing.T) {
 		})
 
 		Convey("When auditing physical quantities with negative values", func() {
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-			metric := data.NewMetric("test_qty", -1.0, data.UnitQuantity, data.TimescaleInstantaneous)
-			measurement.Write(metric)
+			val := data.NewValue("test", "test", "BTC/USD")
+			data.AppendVector(val, []float64{-1.0}, "test_qty")
 
-			violations := feed(stage, measurement)
+			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 
 			hasViolation := false
@@ -96,12 +87,10 @@ func TestContractStage(t *testing.T) {
 		})
 
 		Convey("When auditing correlations with out-of-bound values", func() {
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-			metric := data.NewMetric("test_corr", -1.5, data.UnitCorrelation, data.TimescaleInstantaneous)
-			measurement.Write(metric)
+			val := data.NewValue("test", "test", "BTC/USD")
+			data.AppendVector(val, []float64{-1.5}, "test_corr")
 
-			violations := feed(stage, measurement)
+			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 
 			hasViolation := false
@@ -114,15 +103,14 @@ func TestContractStage(t *testing.T) {
 		})
 
 		Convey("When validating bounds directly", func() {
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-			metric := data.NewMetric("test_snm", 0.0, data.UnitPrice, data.TimescaleInstantaneous)
+			val := data.NewValue("test", "test", "BTC/USD")
 
-			stage.validateBounds(2.0, metric, measurement, -1.0, 1.0, "SNM bound breach")
+			stage.validateBounds(2.0, "test_snm", val, -1.0, 1.0, "SNM bound breach")
 			So(len(stage.violations), ShouldEqual, 1)
 			So(stage.violations[0].Description, ShouldEqual, "SNM bound breach")
 
-			stage.validateBounds(math.NaN(), metric, measurement, -1.0, 1.0, "NaN bound breach")
+			stage.validateBounds(math.NaN(), "test_snm", val, -1.0, 1.0, "NaN bound breach")
+			So(len(stage.violations), ShouldEqual, 2)
 		})
 	})
 }

@@ -147,6 +147,7 @@ action tree published to S3 storage.`,
 			}
 		}
 
+
 		trainer := strategy.NewTrainer(ctx, client, storeTee, price)
 
 		if err := trainer.Generate(trainEpochs...); err != nil {

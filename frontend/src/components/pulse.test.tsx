@@ -21,7 +21,7 @@ describe("Pulse", () => {
 		expect(html).toContain('data-read="tick"');
 		expect(html).toContain('data-read="phase"');
 		expect(html).toContain('data-read="cand"');
-		expect(html).toContain('data-read="meas"');
+		expect(html).toContain('data-read="sigs"');
 		expect(html).toContain('data-read="open"');
 	});
 

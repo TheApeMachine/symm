@@ -2,12 +2,13 @@ package network
 
 import (
 	"context"
+	"io"
 	"sync"
 
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/data/transport"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/store"
-	"golang.design/x/lockfree/lf"
 )
 
 var (
@@ -15,62 +16,68 @@ var (
 	once     sync.Once
 )
 
+/*
+Replayer wraps a transport.Stream connected to the shared replayerDriver.
+*/
 type Replayer struct {
 	*runtime.System
-	ctx    context.Context
-	store  *store.Client
-	queues map[string]*lf.Queue[*data.Measurement]
+	store   *store.Client
+	streams map[string]*transport.Stream
 }
 
-func NewReplayer(ctx context.Context) *Replayer {
+/*
+NewReplayer returns a Replayer for the given stream key (e.g. "public", "private").
+All Replayers share the same underlying driver via sync.Once, ensuring synchronized ticks.
+*/
+func NewReplayer(ctx context.Context, key string) *Replayer {
 	once.Do(func() {
 		replayer = &Replayer{
-			ctx:   ctx,
-			store: store.NewClient(ctx, "symm"),
-			queues: map[string]*lf.Queue[*data.Measurement]{
-				"spot:trade":  lf.NewQueue[*data.Measurement](),
-				"spot:level3": lf.NewQueue[*data.Measurement](),
+			System: runtime.NewSystem(ctx, "replay"),
+			store:  store.NewClient(ctx, key),
+			streams: map[string]*transport.Stream{
+				"public":  transport.NewStream(ctx, nil),
+				"private": transport.NewStream(ctx, nil),
 			},
 		}
-
-		replayer.System = runtime.NewSystem(ctx, "network.replayer", replayer)
-
-		go func() {
-			for measurement := range replayer.store.Get(
-				"spot:trade", "spot:level3",
-			) {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				replayer.queues[measurement.Source].Enqueue(measurement)
-			}
-		}()
 	})
 
 	return replayer
 }
 
-func (replayer *Replayer) Read(keys ...string) ([]byte, error) {
-	if len(keys) > 0 {
-		measurement, found := replayer.queues[keys[0]].Dequeue()
+func (replayer *Replayer) Read(p []byte) (n int, err error) {
+	value := data.From(p)
 
-		if !found || measurement == nil {
-			return nil, nil
-		}
-
-		if measurement.Timestamp > 0 {
-			SetSynthetic(measurement.Timestamp)
-		}
-
-		return measurement.MarshalBinary()
+	switch value.Origin {
+	case "spot:trade", "spot:instrument":
+		_, err = io.Copy(value, replayer.streams["public"])
+	case "spot:level3", "spot:executions", "spot:orders":
+		_, err = io.Copy(value, replayer.streams["private"])
 	}
 
-	return nil, nil
+	if err != nil {
+		return 0, err
+	}
+
+	return value.Read(p)
 }
 
-func (replayer *Replayer) Write(data []byte) error {
-	return nil
+func (replayer *Replayer) Write(p []byte) (n int, err error) {
+	value := data.From(p)
+
+	switch value.Origin {
+	case "spot:trade", "spot:instrument":
+		_, err = io.Copy(replayer.streams["public"], value)
+	case "spot:level3", "spot:executions", "spot:orders":
+		_, err = io.Copy(replayer.streams["private"], value)
+	}
+
+	if err != nil {
+		return 0, err
+	}
+
+	return len(p), nil
+}
+
+func (replayer *Replayer) Close() error {
+	return replayer.store.Close()
 }

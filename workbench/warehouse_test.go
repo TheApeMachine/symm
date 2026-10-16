@@ -2,6 +2,7 @@ package workbench
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"testing"
@@ -243,46 +244,29 @@ func TestDuckDBSchema(t *testing.T) {
 		return err
 	}
 
-	for m := range s3Client.Get("") {
+	for val := range store.Values(s3Client, "") {
 		imported++
 
-		var metricKeys []string
-		var metricVals []string
-		for entry := range m.Read() {
-			if entry == nil || entry.Metric == nil {
-				continue
-			}
-			metricKeys = append(metricKeys, literal(entry.Key))
-			exactStr := "''"
-			if entry.Metric.Exact() != nil {
-				exactStr = literal(entry.Metric.Exact().String())
-			}
-			metricVals = append(metricVals, fmt.Sprintf(
-				"{'raw': %f, 'snm': %f, 'exact': %s, 'unit': %s, 'timescale': %s}",
-				entry.Metric.Raw(), entry.Metric.SNM(), exactStr,
-				literal(string(entry.Metric.Unit())),
-				literal(string(entry.Metric.Timescale())),
-			))
-		}
-
-		metricsMap := fmt.Sprintf("map([%s], [%s])", strings.Join(metricKeys, ", "), strings.Join(metricVals, ", "))
+		metricsMap := "map([], [])"
 
 		var metaKeys []string
 		var metaVals []string
-		for entry := range m.Meta() {
-			if entry != nil {
-				metaKeys = append(metaKeys, literal(entry.Key))
-				metaVals = append(metaVals, literal(entry.Value))
-			}
-		}
+		metaKeys = append(metaKeys, literal("origin"), literal("role"), literal("scope"), literal("prefix"))
+		metaVals = append(metaVals, literal(val.Origin), literal(val.Role), literal(val.Scope), literal(val.Prefix))
 		metaMap := fmt.Sprintf("map([%s], [%s])", strings.Join(metaKeys, ", "), strings.Join(metaVals, ", "))
+
+		at := time.Now()
+		if val.Timestamp > 0 {
+			at = time.Unix(0, int64(val.Timestamp))
+		}
+		id := binary.BigEndian.Uint32(val.ID[:4])
 
 		rowStr := fmt.Sprintf(
 			"(%d, %d, %d, %d, %d, %s, %s, %s, %s, %s, %s)",
-			m.ID, m.Epoch, m.SeqIdx, m.Tick, m.Timestamp,
-			literal(m.At.Format("2006-01-02 15:04:05.999999")),
-			literal(m.From.Format("2006-01-02 15:04:05.999999")),
-			literal(m.Label), literal(m.Source),
+			id, val.Epoch, val.SeqIdx, val.Tick, val.Timestamp,
+			literal(at.Format("2006-01-02 15:04:05.999999")),
+			literal(at.Format("2006-01-02 15:04:05.999999")),
+			literal(val.Scope), literal(val.Origin),
 			metricsMap, metaMap,
 		)
 		batchRows = append(batchRows, rowStr)

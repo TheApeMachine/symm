@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BoundaryStamp } from "#/providers/telemetry/telemetry/boundary-stamp";
-import { topologyStore } from "./topology";
+import { topologyStore, type BoundaryStamp } from "./topology";
 
 /*
 Stamp is the slice of BoundaryStamp that ingest actually reads. The
@@ -145,14 +144,14 @@ describe("topologyStore.ingest", () => {
 		expect(hop?.lastLatencyNs).toBe(500);
 	});
 
-	it("ingests Measurement objects and derives topology, stages, and hops", () => {
+	it("ingests Value objects and derives topology, stages, and hops", () => {
 		topologyStore.setState(() => ({
 			nodes: new Map(),
 			edges: new Map(),
 			version: 0,
 		}));
 
-		topologyStore.actions.ingestMeasurements([
+		topologyStore.actions.ingestValues([
 			{
 				source: "kraken:trade",
 				at: 1_000_000_000n,
@@ -210,7 +209,7 @@ describe("topologyStore.ingest", () => {
 			version: 0,
 		}));
 
-		topologyStore.actions.ingestMeasurements([
+		topologyStore.actions.ingestValues([
 			{
 				source: "ui_tee",
 				at: 2_000_000_000n,
@@ -234,15 +233,15 @@ describe("topologyStore.ingest", () => {
 		expect(uiNode?.stage).toBe(4);
 		expect(uiNode?.backlog).toBe(42);
 		expect(uiNode?.maxBacklog).toBe(42);
-		expect(uiNode?.lastMeasurement).toBeDefined();
-		expect(uiNode?.lastMeasurement?.metrics?.[0]?.raw).toBe(42);
+		expect(uiNode?.lastValue).toBeDefined();
+		expect(uiNode?.lastValue?.metrics?.[0]?.raw).toBe(42);
 
 		const storeNode = nodes.get("store_tee");
 		expect(storeNode?.group).toBe("tees");
 		expect(storeNode?.stage).toBe(4);
 		expect(storeNode?.backlog).toBe(1500);
 		expect(storeNode?.maxBacklog).toBe(1500);
-		expect(storeNode?.lastMeasurement).toBeDefined();
-		expect(storeNode?.lastMeasurement?.metrics?.[0]?.raw).toBe(1500);
+		expect(storeNode?.lastValue).toBeDefined();
+		expect(storeNode?.lastValue?.metrics?.[0]?.raw).toBe(1500);
 	});
 });

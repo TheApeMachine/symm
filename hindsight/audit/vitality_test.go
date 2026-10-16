@@ -3,10 +3,9 @@ package audit
 import (
 	"context"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 )
 
 func TestVitalityStage(t *testing.T) {
@@ -14,7 +13,7 @@ func TestVitalityStage(t *testing.T) {
 		ctx := context.Background()
 		stage := NewVitalityStage(ctx)
 
-		feed := func(s *VitalityStage, ms ...*data.Measurement) []*Violation {
+		feed := func(s *VitalityStage, ms ...*data.Value) []*Violation {
 			for _, m := range ms {
 				s.Channel() <- m
 			}
@@ -24,14 +23,12 @@ func TestVitalityStage(t *testing.T) {
 		}
 
 		Convey("When auditing healthy varying metrics", func() {
-			measurements := make([]*data.Measurement, 0, 15)
+			measurements := make([]*data.Value, 0, 15)
 
 			for idx := range int64(15) {
-				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-				val := float64(idx+1) * 2.5
-				measurement.Write(data.NewMetric("healthy_var", val, data.UnitPrice, data.TimescaleInstantaneous))
-				measurements = append(measurements, measurement)
+				val := data.NewValue("test", "test", "BTC/USD")
+				data.AppendVector(val, []float64{float64(idx+1) * 2.5}, "healthy_var")
+				measurements = append(measurements, val)
 			}
 
 			violations := feed(stage, measurements...)
@@ -40,13 +37,12 @@ func TestVitalityStage(t *testing.T) {
 		})
 
 		Convey("When auditing dead/constant metrics with zero variance", func() {
-			measurements := make([]*data.Measurement, 0, 15)
+			measurements := make([]*data.Value, 0, 15)
 
-			for idx := range int64(15) {
-				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-				measurement.Write(data.NewMetric("dead_const", 42.0, data.UnitPrice, data.TimescaleInstantaneous))
-				measurements = append(measurements, measurement)
+			for range int64(15) {
+				val := data.NewValue("test", "test", "BTC/USD")
+				data.AppendVector(val, []float64{42.0}, "dead_const")
+				measurements = append(measurements, val)
 			}
 
 			violations := feed(stage, measurements...)
@@ -63,19 +59,16 @@ func TestVitalityStage(t *testing.T) {
 		})
 
 		Convey("When auditing stagnant/cold-start metrics with high zero fractions", func() {
-			measurements := make([]*data.Measurement, 0, 15)
+			measurements := make([]*data.Value, 0, 15)
 
 			for idx := range int64(15) {
-				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-				val := 0.0
-
+				val := data.NewValue("test", "test", "BTC/USD")
+				v := 0.0
 				if idx == 14 {
-					val = 1.0 // Only 1 non-zero out of 15 (93.3% zero)
+					v = 1.0 // Only 1 non-zero out of 15 (93.3% zero)
 				}
-
-				measurement.Write(data.NewMetric("stagnant_sig", val, data.UnitDimensionless, data.TimescaleInstantaneous))
-				measurements = append(measurements, measurement)
+				data.AppendVector(val, []float64{v}, "stagnant_sig")
+				measurements = append(measurements, val)
 			}
 
 			violations := feed(stage, measurements...)
@@ -90,17 +83,10 @@ func TestVitalityStage(t *testing.T) {
 			So(hasStagnant, ShouldBeTrue)
 		})
 
-		Convey("When auditing nil measurements and nil metric entries", func() {
+		Convey("When auditing nil measurements", func() {
 			nilViolations := feed(stage, nil)
 			So(len(nilViolations), ShouldEqual, 1)
 			So(nilViolations[0].Name, ShouldEqual, "measurement")
-
-			now := time.Now()
-			measurement := data.NewMeasurement(1, "BTC/USD", "test", now, now)
-			measurement.Write(&data.Metric{})
-			entryStage := NewVitalityStage(ctx)
-			violations := feed(entryStage, measurement)
-			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 		})
 	})
 }

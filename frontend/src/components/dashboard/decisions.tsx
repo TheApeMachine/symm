@@ -7,7 +7,7 @@ import {
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
-import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
+import type { DecisionT } from "#/collections/types";
 
 type DecisionRow = {
 	id: string;

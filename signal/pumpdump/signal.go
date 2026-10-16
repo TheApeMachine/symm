@@ -4,12 +4,10 @@ import (
 	"context"
 	"math"
 	"sync"
-	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/volumeclock"
 )
@@ -37,8 +35,6 @@ func (ce *causalEstimator) Step(value float64) (hasBaseline bool, baseline float
 }
 
 type symbolState struct {
-	lastMeasurement     *data.Measurement
-	lastBarMeasurement  *data.Measurement
 	clock               volumeclock.Clock
 	spreadEstimator     causalEstimator
 	volumeRateEstimator causalEstimator
@@ -48,132 +44,94 @@ type Signal struct {
 	*runtime.System
 	mu     sync.Mutex
 	states map[string]*symbolState
+	keys   []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		states: make(map[string]*symbolState),
+		keys: []string{
+			"spread_ratio",
+			"volume_rate",
+			"trade_rate",
+			"volume_ratio",
+			"positive_midpoint_return",
+			"negative_midpoint_return",
+		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "pumpdump", signal)
-
 	return signal
 }
 
-func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY || prior == nil || prior.Label == "" {
-		return nil
+func (signal *Signal) Step(value *data.Value) *data.Value {
+	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+		return value
 	}
 
-	priceEntry := data.Pull(prior.Read("price"))
-	if priceEntry == nil || priceEntry.Metric == nil {
-		if prior.Source == "spot:trade" {
-			signal.Error(errnie.Err(errnie.Validation, "[pumpdump] price is required", nil))
-		}
-
-		return nil
-	}
-	price := priceEntry.Metric.Raw()
-
-	qtyEntry := data.Pull(prior.Read("qty"))
-	if qtyEntry == nil || qtyEntry.Metric == nil || qtyEntry.Metric.Raw() <= 0 {
-		return nil
-	}
-	qty := qtyEntry.Metric.Raw()
-
-	snapshot, err := broker.ReadSnapshot(prior)
-
-	if err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[pumpdump] stamped book unreadable", err))
-		return nil
+	price := data.Attribute[float64](value.Layers[0], "data", 0, "price")
+	qty := data.Attribute[float64](value.Layers[0], "data", 0, "qty")
+	if price <= 0 || qty <= 0 {
+		return value
 	}
 
+	snapshot, _ := broker.ReadSnapshot(value)
 	var bid, ask float64
-	hasTouch := snapshot != nil
-
+	hasTouch := snapshot != nil && len(snapshot.Bids) > 0 && len(snapshot.Asks) > 0
 	if hasTouch {
 		bestBid, bestAsk := snapshot.Touch()
 		bid, ask = bestBid.Price.Float64(), bestAsk.Price.Float64()
 	}
 
-	atNanos := float64(prior.At.UnixNano())
+	atNanos := float64(value.Timestamp)
 	midpoint := 0.0
 
 	signal.mu.Lock()
 	defer signal.mu.Unlock()
 
-	state, found := signal.states[prior.Label]
-
+	state, found := signal.states[value.Scope]
 	if !found {
 		state = &symbolState{}
-		signal.states[prior.Label] = state
+		signal.states[value.Scope] = state
 	}
 
-	out := map[string]float64{}
-
+	var spreadRatio float64
 	if hasTouch {
 		midpoint = (bid + ask) * 0.5
 		spread := ask - bid
-
 		hasBaseline, baseline := state.spreadEstimator.Step(spread)
-
 		if hasBaseline && baseline > 0 && !core.Negligible(baseline, spread) {
-			out["spread_ratio"] = spread / baseline
+			spreadRatio = spread / baseline
 		}
 	}
 
 	tick := state.clock.Step(price, qty, atNanos, midpoint)
 	bar, closed := tick.Bar, tick.Closed
 
+	var volumeRate, tradeRate, volRatio, posReturn, negReturn float64
 	if closed {
 		if core.Resolvable(bar.Duration) {
-			volumeRate := bar.Quantity / bar.Duration
-			tradeRate := bar.Trades / bar.Duration
-			out["volume_rate"] = volumeRate
-			out["trade_rate"] = tradeRate
-
+			volumeRate = bar.Quantity / bar.Duration
+			tradeRate = bar.Trades / bar.Duration
 			hasVolBase, volBase := state.volumeRateEstimator.Step(volumeRate)
-
 			if hasVolBase && volBase > 0 && !core.Negligible(volBase, volumeRate) {
-				volRatio := volumeRate / volBase
-				out["volume_ratio"] = volRatio
+				volRatio = volumeRate / volBase
 			}
 		}
 
 		if bar.FromMid > 0 && bar.AtMid > 0 {
 			midReturn := math.Log(bar.AtMid / bar.FromMid)
-			posReturn := math.Max(midReturn, 0)
-			negReturn := math.Max(-midReturn, 0)
-			out["positive_midpoint_return"] = posReturn
-			out["negative_midpoint_return"] = negReturn
+			posReturn = math.Max(midReturn, 0)
+			negReturn = math.Max(-midReturn, 0)
 		}
 	}
 
-	if state.lastMeasurement == nil {
-		state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
-	}
-
-	sourceMeas := state.lastMeasurement
-	if closed && state.lastBarMeasurement != nil {
-		sourceMeas = state.lastBarMeasurement
-	}
-
-	res := sourceMeas.Next(prior, out)
-	if closed {
-		state.lastBarMeasurement = res
-	}
-
-	state.lastMeasurement = res
-
-	if closed {
-		res.From = time.Unix(0, int64(bar.StartNanos)).UTC()
-	}
-
-	if !closed {
-		if activeBar, open := state.clock.ActiveBar(); open && activeBar.StartNanos > 0 {
-			res.From = time.Unix(0, int64(activeBar.StartNanos)).UTC()
-		}
-	}
-
-	return res
+	return data.AppendVector(value, []float64{
+		spreadRatio,
+		volumeRate,
+		tradeRate,
+		volRatio,
+		posReturn,
+		negReturn,
+	}, signal.keys...)
 }

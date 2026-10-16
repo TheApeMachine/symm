@@ -6,7 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 )
 
 func TestStabilityStage(t *testing.T) {
@@ -14,7 +14,7 @@ func TestStabilityStage(t *testing.T) {
 		ctx := context.Background()
 		stage := NewStabilityStage(ctx)
 
-		feed := func(s *StabilityStage, ms ...*data.Measurement) []*Violation {
+		feed := func(s *StabilityStage, ms ...*data.Value) []*Violation {
 			for _, m := range ms {
 				s.Channel() <- m
 			}
@@ -23,29 +23,29 @@ func TestStabilityStage(t *testing.T) {
 			return s.Violations()
 		}
 
-		makeGridJoin := func(region uint8, tick int64, now time.Time) *data.Measurement {
-			peer := data.NewMeasurement(1, "BTC/USD", "cvd", now, now)
-			peer.Tick = tick
-
-			label := "midpoint_log_return"
-			if region == 4 {
-				label = "flow_aligned_midpoint_return"
+		makeGridJoin := func(region uint8, tick int64, now time.Time) *data.Value {
+			source := "cvd"
+			label := "signed_net_fraction"
+			if region == 2 {
+				source = "liquidity"
+				label = "relative_spread"
 			}
 
-			metric := data.NewMetric(label, 1.0, data.UnitDimensionless, data.TimescaleInstantaneous)
-			metric.SetSNM(0.95)
-			peer.Write(metric)
-			peer.Finalize()
+			peer := data.NewValue(source, "signal", "BTC/USD")
+			peer.Tick = uint64(tick)
+			peer.Timestamp = uint64(now.UnixNano())
+			data.AppendVector(peer, []float64{0.95}, label)
 
-			join := data.NewMeasurement(1, "BTC/USD", "runtime:join", now, now)
-			join.Tick = tick
-			join.Peers(peer)
-			join.Finalize()
+			join := data.NewValue("runtime", "runtime:join", "BTC/USD")
+			join.Tick = uint64(tick)
+			join.Timestamp = uint64(now.UnixNano())
+			join.Layers = append(join.Layers, peer.Layers...)
+			join.Index = append(join.Index, peer.Index...)
 			return join
 		}
 
 		Convey("When auditing stationary grid activations across halves", func() {
-			measurements := make([]*data.Measurement, 0, 30)
+			measurements := make([]*data.Value, 0, 30)
 
 			// Both halves alternate between R02 and R04 evenly
 			for idx := range int64(30) {
@@ -64,7 +64,7 @@ func TestStabilityStage(t *testing.T) {
 		})
 
 		Convey("When auditing severe non-stationary regime shift between halves", func() {
-			measurements := make([]*data.Measurement, 0, 30)
+			measurements := make([]*data.Value, 0, 30)
 
 			// First half: 15 frames of R02
 			for idx := range int64(15) {
@@ -92,14 +92,14 @@ func TestStabilityStage(t *testing.T) {
 		})
 
 		Convey("When auditing incomplete grid observations", func() {
-			measurements := make([]*data.Measurement, 0, 25)
+			measurements := make([]*data.Value, 0, 25)
 
 			// 25 runtime:join measurements without active bright regions (0% completeness)
 			for idx := range int64(25) {
 				now := time.Now().Add(time.Duration(idx) * time.Millisecond)
-				join := data.NewMeasurement(1, "BTC/USD", "runtime:join", now, now)
-				join.Tick = idx + 1
-				join.Finalize()
+				join := data.NewValue("runtime", "runtime:join", "BTC/USD")
+				join.Tick = uint64(idx + 1)
+				join.Timestamp = uint64(now.UnixNano())
 				measurements = append(measurements, join)
 			}
 
@@ -113,12 +113,13 @@ func TestStabilityStage(t *testing.T) {
 				}
 			}
 			So(hasIncomplete, ShouldBeTrue)
+			So(stage.Report(), ShouldContainSubstring, "grid.incomplete")
 		})
 
 		Convey("When auditing nil measurements", func() {
-			nilViolations := feed(stage, nil)
-			So(len(nilViolations), ShouldEqual, 1)
-			So(nilViolations[0].Name, ShouldEqual, "measurement")
+			violations := feed(stage, nil)
+			So(len(violations), ShouldEqual, 1)
+			So(violations[0].Name, ShouldEqual, "measurement")
 		})
 	})
 }

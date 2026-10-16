@@ -2,11 +2,10 @@ package runtime
 
 import (
 	"context"
-	"sync/atomic"
 
 	"github.com/smarty/go-disruptor"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -56,13 +55,11 @@ For each sequence S, the architecture is:
 type Workspace struct {
 	*System
 	channel  disruptor.Disruptor
-	buffer   []*data.Measurement
 	mask     int64
 	capacity int
-	sequence atomic.Int64
-	at       atomic.Int64
 	stages   [][]*Consumer
-	joins    [][]*data.Measurement // [stageIdx][slot]
+	buffer   []*data.Value
+	
 }
 
 func NewWorkspace(
@@ -78,18 +75,12 @@ func NewWorkspace(
 	}
 
 	mask := int64(capacity - 1)
-	numJoins := max(len(stages)-1, 0)
 
 	workspace := &Workspace{
-		buffer:   make([]*data.Measurement, capacity),
 		mask:     mask,
 		capacity: capacity,
 		stages:   make([][]*Consumer, len(stages)),
-		joins:    make([][]*data.Measurement, numJoins),
-	}
-
-	for joinIdx := range numJoins {
-		workspace.joins[joinIdx] = make([]*data.Measurement, capacity)
+		buffer:   make([]*data.Value, capacity),
 	}
 
 	opts := optionList(
@@ -116,16 +107,6 @@ func NewWorkspace(
 		if len(group) > 0 {
 			opts = append(opts, disruptor.Options.NewHandlerGroup(group...))
 		}
-
-		// Insert post-barrier join handler between stages
-		if stageIdx < numJoins {
-			jh := &joinHandler{
-				workspace: workspace,
-				stageIdx:  stageIdx,
-			}
-
-			opts = append(opts, disruptor.Options.NewHandlerGroup(jh))
-		}
 	}
 
 	channel, err := disruptor.New(opts...)
@@ -145,25 +126,26 @@ func NewWorkspace(
 	return workspace
 }
 
-func (workspace *Workspace) Step(payload *data.Measurement) *data.Measurement {
+func (workspace *Workspace) Step(value *data.Value) *data.Value {
 	if workspace.Status() != READY {
 		errnie.Warn(workspace.Name() + ": Step called before READY; dropping event")
-		return payload
+		return value
 	}
 
-	if payload == nil {
+	if value == nil {
 		errnie.Error(errnie.Err(
 			errnie.Internal,
 			"[workspace] nil payload passed to Step",
 			nil,
 		))
-		return payload
+
+		return value
 	}
 
 	select {
 	case <-workspace.Context().Done():
 		workspace.Error(workspace.Context().Err())
-		return payload
+		return value
 	default:
 		if workspace.Error() != nil {
 			workspace.Error(errnie.Err(
@@ -171,32 +153,18 @@ func (workspace *Workspace) Step(payload *data.Measurement) *data.Measurement {
 				"[workspace] internal error encountered",
 				nil,
 			))
-			return payload
+			return value
 		}
 	}
 
-	workspace.at.Store(payload.At.UnixNano())
 	seq := workspace.channel.Reserve(1)
-	workspace.buffer[seq&workspace.mask] = payload
+
+	slot := seq & workspace.mask
+	workspace.buffer[slot] = value
+
 	workspace.channel.Commit(seq, seq)
 
-	return payload
-}
-
-/*
-Progress returns the tick and market time (UnixNano) of the latest live ingress
-observation, independent of which outputs any off-ramp chooses to forward.
-*/
-func (workspace *Workspace) Progress() (tick int64, at int64) {
-	return system.Tick.Load(), workspace.at.Load()
-}
-
-func (workspace *Workspace) Stages() [][]*Consumer {
-	return workspace.stages
-}
-
-func (workspace *Workspace) Joins() [][]*data.Measurement {
-	return workspace.joins
+	return value
 }
 
 type stageHandler struct {
@@ -208,59 +176,6 @@ type stageHandler struct {
 func (sh *stageHandler) Handle(lower, upper int64) {
 	for seq := lower; seq <= upper; seq++ {
 		slot := seq & sh.workspace.mask
-		prior := sh.workspace.buffer[slot]
-		if sh.stageIdx > 0 {
-			prior = sh.workspace.joins[sh.stageIdx-1][slot]
-		}
-
-		sh.consumer.Step(prior, seq)
-	}
-}
-
-type joinHandler struct {
-	workspace *Workspace
-	stageIdx  int
-}
-
-func (jh *joinHandler) Handle(lower, upper int64) {
-	for seq := lower; seq <= upper; seq++ {
-		slot := seq & jh.workspace.mask
-		ingress := jh.workspace.buffer[slot]
-
-		producers := jh.workspace.stages[jh.stageIdx]
-		var peers []*data.Measurement
-
-		if jh.stageIdx > 0 {
-			prevJoin := jh.workspace.joins[jh.stageIdx-1][slot]
-
-			if prevJoin != nil && len(prevJoin.Peers()) > 0 {
-				peers = make([]*data.Measurement, 0, len(prevJoin.Peers())+len(producers))
-				peers = append(peers, prevJoin.Peers()...)
-			}
-		}
-
-		if peers == nil {
-			peers = make([]*data.Measurement, 0, len(producers))
-		}
-
-		for _, consumer := range producers {
-			if pub := consumer.Published(seq); pub != nil {
-				peers = append(peers, pub)
-			}
-		}
-
-		join := data.NewMeasurement(
-			ingress.Epoch,
-			ingress.Label,
-			"runtime:join",
-			ingress.At,
-			ingress.From,
-		)
-		join.Tick = ingress.Tick
-		join.Peers(peers...)
-
-		// The join carries no metrics of its own; Write finalizes it so the
-		// next stage can read Peers() under the WORM lock.
-		jh.workspace.joins[jh.stageIdx][slot] = join.Write()
+		sh.consumer.Step(sh.workspace.buffer[slot])
 	}
 }

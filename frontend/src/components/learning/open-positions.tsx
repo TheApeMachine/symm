@@ -13,13 +13,13 @@ import {
 	sectorHue,
 	TokenRibbon,
 	Trail,
-	useMeasurements,
+	useValues,
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { Value } from "#/types/value";
 
 /*
-Open positions, drawn from the Training Measurement's own Metrics
+Open positions, drawn from the Training Value's own Metrics
 (position_*, region_brightness:*, path_token:*, match_*). Nothing here is
 computed that the backend did not send; missing Metrics show as waiting.
 */
@@ -29,7 +29,7 @@ const regionLabel = (s: number) => `R${String(s).padStart(2, "0")}`;
 const regionColor = (s: number) => sectorHue(s, REGIONS);
 
 const heldSymbols = (
-	state: Record<string, { getLast(): MeasurementT | undefined }>,
+	state: Record<string, { getLast(): Value | undefined }>,
 ) =>
 	Object.entries(state)
 		.filter(([, ring]) => metricOf(ring?.getLast(), "position_open") === 1)
@@ -48,7 +48,7 @@ const duration = (s?: number) => {
 			: `${Math.floor(s)}s`;
 };
 
-const tokensOf = (m?: MeasurementT): number[][] => {
+const tokensOf = (m?: Value): number[][] => {
 	const tokens: number[][] = [];
 	for (const [key, region] of metricsWithPrefix(m, "path_token:")) {
 		const [i, j] = key.split(":").map(Number);
@@ -58,7 +58,7 @@ const tokensOf = (m?: MeasurementT): number[][] => {
 	return tokens.filter(Boolean);
 };
 
-const regionRow = (m: MeasurementT): Array<number | undefined> => {
+const regionRow = (m: Value): Array<number | undefined> => {
 	const row: Array<number | undefined> = new Array(REGIONS).fill(undefined);
 	for (const [key, v] of metricsWithPrefix(m, "region_brightness:R"))
 		row[Number(key)] = v;
@@ -66,7 +66,7 @@ const regionRow = (m: MeasurementT): Array<number | undefined> => {
 };
 
 const PositionCard = ({ symbol }: { symbol: string }) => {
-	const history = useMeasurements(signals.training, symbol, 90);
+	const history = useValues(signals.training, symbol, 90);
 	const latest = history[history.length - 1];
 	const m = (name: string) => metricOf(latest, name);
 

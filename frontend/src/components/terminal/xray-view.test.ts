@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Measurement } from "#/collections/types";
+import { Value } from "#/types/value";
 import {
 	clearRetainedTelemetry,
 	getAllRetainedResonance,
@@ -14,26 +14,22 @@ import {
 	xrayLayersFromResonance,
 } from "#/components/terminal/xray-view";
 
-const hawkesMeasurement = (
+const hawkesValue = (
 	at: string,
 	metric: string,
 	side: string,
 	raw: number,
-): Measurement => ({
-	source: "hawkes",
-	symbol: "BTC/USD",
-	at,
-	observedFrom: at,
-	horizon: 0,
-	maturity: 1,
-	uncertainty: null,
-	metrics: {
-		[side === "" ? metric : `${metric}:${side}`]: {
-			raw,
-			unit: "dimensionless",
-		},
-	},
-});
+): Value => {
+	const key = side === "" ? metric : `${metric}:${side}`;
+	const ts = BigInt(Number(at) || 0) * 1_000_000_000n;
+	return new Value({
+		origin: "hawkes",
+		role: "signal",
+		scope: "BTC/USD",
+		timestamp: ts,
+		metrics: [{ name: key, raw }],
+	});
+};
 
 describe("xray-view", () => {
 	beforeEach(() => {
@@ -95,13 +91,13 @@ describe("xray-view", () => {
 
 	it("groups sequential hawkes metrics by observation epoch", () => {
 		const frames = [
-			hawkesMeasurement("1", "arrival_rate", "buy", 0.15),
-			hawkesMeasurement("1", "arrival_rate", "sell", 0.1),
-			hawkesMeasurement("2", "conditional_intensity", "buy", 0.3),
-			hawkesMeasurement("2", "conditional_intensity", "sell", 0.2),
-			hawkesMeasurement("2", "background_rate", "buy", 0.05),
-			hawkesMeasurement("2", "background_rate", "sell", 0.04),
-			hawkesMeasurement("2", "spectral_radius", "", 0.8),
+			hawkesValue("1", "arrival_rate", "buy", 0.15),
+			hawkesValue("1", "arrival_rate", "sell", 0.1),
+			hawkesValue("2", "conditional_intensity", "buy", 0.3),
+			hawkesValue("2", "conditional_intensity", "sell", 0.2),
+			hawkesValue("2", "background_rate", "buy", 0.05),
+			hawkesValue("2", "background_rate", "sell", 0.04),
+			hawkesValue("2", "spectral_radius", "", 0.8),
 		];
 		const metrics = hawkesMetricsFromFrames(frames);
 
@@ -117,11 +113,11 @@ describe("xray-view", () => {
 
 	it("reads hawkes metrics from retained observation epochs", () => {
 		const frames = [
-			hawkesMeasurement("1", "conditional_intensity", "buy", 0.3),
-			hawkesMeasurement("1", "conditional_intensity", "sell", 0.2),
-			hawkesMeasurement("1", "background_rate", "buy", 0.05),
-			hawkesMeasurement("1", "background_rate", "sell", 0.04),
-			hawkesMeasurement("1", "spectral_radius", "", 0.8),
+			hawkesValue("1", "conditional_intensity", "buy", 0.3),
+			hawkesValue("1", "conditional_intensity", "sell", 0.2),
+			hawkesValue("1", "background_rate", "buy", 0.05),
+			hawkesValue("1", "background_rate", "sell", 0.04),
+			hawkesValue("1", "spectral_radius", "", 0.8),
 		];
 
 		expect(hawkesMetricsFromBuffer(frames)).toMatchObject({
@@ -142,9 +138,6 @@ describe("xray-view", () => {
 	});
 
 	it("never fabricates a zero for an epoch that reported no intensity", () => {
-		// A ring buffer holds one row per emission, not per epoch, and most
-		// emissions carry an unrelated Hawkes binding rather than intensity.
-		// Only epochs present in the input contribute a sample.
 		const series = intensitySeriesFromRingRows([
 			{ at: 1n, raw: 0.5 },
 			{ at: 4n, raw: 0.6 },

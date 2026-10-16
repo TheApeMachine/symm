@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -18,12 +18,6 @@ type causalEstimator struct {
 	m2    float64
 }
 
-/*
-Step scores value against the estimator's state before it, then incorporates
-it. The baseline (and residual against it) is defined from the second sample;
-the z-score only once core.PriorScale admits the prior dispersion
-(enough prior samples, a scale not negligible next to the values).
-*/
 func (ce *causalEstimator) Step(value float64) (
 	hasBaseline bool, baseline, residual float64, hasZ bool, zScore float64,
 ) {
@@ -41,9 +35,7 @@ func (ce *causalEstimator) Step(value float64) (
 	}
 
 	residual = value - priorMean
-
 	scale, scorable := core.PriorScale(priorCount, priorM2, value, priorMean)
-
 	if !scorable {
 		return true, priorMean, residual, false, 0
 	}
@@ -57,30 +49,21 @@ type observation struct {
 }
 
 type memberState struct {
-	lastMeasurement *data.Measurement
-	observations    []observation
-	spacings        []float64
-	lastPrice       float64
-	lastChangeAt    float64
+	observations []observation
+	spacings     []float64
+	lastPrice    float64
+	lastChangeAt float64
 }
 
-/*
-asOf is the zero-order hold of the member's last observation at or before t.
-*/
 func (mem *memberState) asOf(t float64) (observation, bool) {
 	for index := len(mem.observations) - 1; index >= 0; index-- {
 		if mem.observations[index].at <= t {
 			return mem.observations[index], true
 		}
 	}
-
 	return observation{}, false
 }
 
-/*
-retain keeps up to the most recent 256 observations for this member, matching
-the retention capacity of other signals while supporting zero-order hold cuts.
-*/
 func (mem *memberState) retain() {
 	if len(mem.observations) > 256 {
 		mem.observations = mem.observations[len(mem.observations)-256:]
@@ -91,11 +74,9 @@ func median(values []float64) float64 {
 	sorted := slices.Clone(values)
 	slices.Sort(sorted)
 	mid := len(sorted) / 2
-
 	if len(sorted)%2 == 1 {
 		return sorted[mid]
 	}
-
 	return (sorted[mid-1] + sorted[mid]) / 2
 }
 
@@ -113,35 +94,39 @@ type Signal struct {
 	mu      sync.Mutex
 	members map[string]*memberState
 	focals  map[string]*focalState
+	keys    []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		members: make(map[string]*memberState),
 		focals:  make(map[string]*focalState),
+		keys: []string{
+			"breadth",
+			"same_direction_peer_count",
+			"opposite_direction_peer_count",
+			"breadth_velocity",
+			"historical_path_distance",
+			"historical_path_percentile",
+		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "sentiment", signal)
 	return signal
 }
 
-func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY || prior == nil || prior.Label == "" {
-		return nil
+func (signal *Signal) Step(value *data.Value) *data.Value {
+	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+		return value
 	}
 
-	priceEntry := data.Pull(prior.Read("price"))
-	if priceEntry == nil || priceEntry.Metric == nil {
-		return nil
-	}
-
-	price := priceEntry.Metric.Raw()
+	price := data.Attribute[float64](value.Layers[0], "data", 0, "price")
 	if price <= 0 {
-		return nil
+		return value
 	}
 
-	atNano := float64(prior.At.UnixNano())
-	symbol := prior.Label
+	atNano := float64(value.Timestamp)
+	symbol := value.Scope
 
 	signal.mu.Lock()
 	defer signal.mu.Unlock()
@@ -168,15 +153,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 				mem.spacings = mem.spacings[len(mem.spacings)-128:]
 			}
 		}
-
 		mem.lastPrice = price
 		mem.lastChangeAt = atNano
 	}
 
 	mem.observations = append(mem.observations, observation{at: atNano, price: price})
 	mem.retain()
-
-	output := map[string]float64{}
 
 	var cadences []float64
 	for _, member := range signal.members {
@@ -185,28 +167,12 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		}
 	}
 
-	emit := func(from time.Time) *data.Measurement {
-		if mem.lastMeasurement == nil {
-			mem.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
-		}
-
-		res := mem.lastMeasurement.Next(prior, output)
-		mem.lastMeasurement = res
-
-		if !from.IsZero() {
-			res.From = from
-		}
-
-		return res
-	}
-
 	if len(cadences) == 0 {
-		return emit(time.Time{})
+		return data.AppendVector(value, []float64{0, 0, 0, 0, 0, 0}, signal.keys...)
 	}
 
 	cohortHorizon := median(cadences)
 	focalHorizon := cohortHorizon
-
 	if len(mem.spacings) > 0 {
 		focalHorizon = median(mem.spacings)
 	}
@@ -216,9 +182,8 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	fromNano := atNano - horizonNano
 
 	type memberReturn struct {
-		symbol  string
-		ret     float64
-		fromAge float64
+		symbol string
+		ret    float64
 	}
 	var valid []memberReturn
 
@@ -229,54 +194,39 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 		if !hasAt || !hasFrom || atObs.price <= 0 || fromObs.price <= 0 {
 			continue
 		}
-
 		if atNano-atObs.at > float64(15*time.Minute) {
 			continue
 		}
 
 		valid = append(valid, memberReturn{
-			symbol:  memberSymbol,
-			ret:     math.Log(atObs.price / fromObs.price),
-			fromAge: (fromNano - fromObs.at) * 1e-9,
+			symbol: memberSymbol,
+			ret:    math.Log(atObs.price / fromObs.price),
 		})
 	}
 
 	validCount := float64(len(valid))
-
 	if validCount == 0 {
-		return emit(time.Unix(0, int64(fromNano)).UTC())
+		return data.AppendVector(value, []float64{0, 0, 0, 0, 0, 0}, signal.keys...)
 	}
 
 	advanceCount := 0.0
 	declineCount := 0.0
-
 	var returns []float64
-	var absReturns []float64
 
 	for _, validReturn := range valid {
 		returns = append(returns, validReturn.ret)
-		absReturns = append(absReturns, math.Abs(validReturn.ret))
-
 		if validReturn.ret > 0 {
 			advanceCount++
-			continue
-		}
-
-		if validReturn.ret < 0 {
+		} else if validReturn.ret < 0 {
 			declineCount++
 		}
 	}
 
 	breadth := (advanceCount - declineCount) / validCount
-	output["breadth"] = breadth
-
 	slices.Sort(returns)
-	slices.Sort(absReturns)
-
 	medRet := returns[len(returns)/2]
 
 	focalReturn := 0.0
-
 	for _, validReturn := range valid {
 		if validReturn.symbol == symbol {
 			focalReturn = validReturn.ret
@@ -286,29 +236,16 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	sameDirPeer := 0.0
 	oppDirPeer := 0.0
-
 	for _, validReturn := range valid {
-		if validReturn.symbol == symbol {
+		if validReturn.symbol == symbol || validReturn.ret == 0 {
 			continue
 		}
-
-		if validReturn.ret == 0 {
-			continue
-		}
-
 		if (focalReturn > 0 && validReturn.ret > 0) || (focalReturn < 0 && validReturn.ret < 0) {
 			sameDirPeer++
-			continue
-		}
-
-		if (focalReturn > 0 && validReturn.ret < 0) || (focalReturn < 0 && validReturn.ret > 0) {
+		} else if (focalReturn > 0 && validReturn.ret < 0) || (focalReturn < 0 && validReturn.ret > 0) {
 			oppDirPeer++
-			continue
 		}
 	}
-
-	output["same_direction_peer_count"] = sameDirPeer
-	output["opposite_direction_peer_count"] = oppDirPeer
 
 	focal, found := signal.focals[symbol]
 	if !found {
@@ -317,62 +254,58 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	_, _, _, hasBZ, bZScore := focal.breadthEstimator.Step(breadth)
-
+	var breadthVelocity float64
 	if focal.hasPrevBreadth {
-		output["breadth_velocity"] = breadth - focal.prevBreadth
+		breadthVelocity = breadth - focal.prevBreadth
 	}
-
 	focal.prevBreadth = breadth
 	focal.hasPrevBreadth = true
 
 	_, _, _, hasMZ, mZScore := focal.medianEstimator.Step(medRet)
-
+	var histDistance, histPercentile float64
 	if hasBZ && hasMZ {
-		focal.historyPath(output, [2]float64{bZScore, mZScore})
+		histDistance, histPercentile = focal.historyPath([2]float64{bZScore, mZScore})
 	}
 
-	return emit(time.Unix(0, int64(fromNano)).UTC())
+	return data.AppendVector(value, []float64{
+		breadth,
+		sameDirPeer,
+		oppDirPeer,
+		breadthVelocity,
+		histDistance,
+		histPercentile,
+	}, signal.keys...)
 }
 
-/*
-historyPath scores how far this cut's (breadth, median-return) z-score point
-lies from the nearest retained one, and that distance's rank among past
-nearest distances.
-*/
-func (focal *focalState) historyPath(out map[string]float64, target [2]float64) {
+func (focal *focalState) historyPath(target [2]float64) (minDist float64, percentile float64) {
 	if len(focal.historyPoints) > 0 {
-		minDist := math.Inf(1)
-
+		minDist = math.Inf(1)
 		for _, point := range focal.historyPoints {
 			dx := target[0] - point[0]
 			dy := target[1] - point[1]
 			minDist = math.Min(minDist, math.Sqrt(dx*dx+dy*dy))
 		}
 
-		out["historical_path_distance"] = minDist
-
 		if len(focal.historyDistances) > 0 {
 			below := 0
-
 			for _, past := range focal.historyDistances {
 				if past <= minDist {
 					below++
 				}
 			}
-
-			out["historical_path_percentile"] = float64(below) / float64(len(focal.historyDistances))
+			percentile = float64(below) / float64(len(focal.historyDistances))
 		}
 
 		focal.historyDistances = append(focal.historyDistances, minDist)
-
 		if len(focal.historyDistances) > 256 {
 			focal.historyDistances = focal.historyDistances[len(focal.historyDistances)-256:]
 		}
 	}
 
 	focal.historyPoints = append(focal.historyPoints, target)
-
 	if len(focal.historyPoints) > 256 {
 		focal.historyPoints = focal.historyPoints[len(focal.historyPoints)-256:]
 	}
+
+	return minDist, percentile
 }

@@ -1,9 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
 import {
 	candidatesAtom,
-	measurementSourcesAtom,
 	phaseAtom,
 	positionCountAtom,
+	signalSourcesAtom,
 	tickCountAtom,
 } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
@@ -38,8 +38,8 @@ export const Pulse = () => {
 	const tick = useSelector(tickCountAtom, (state) => state);
 	const phase = useSelector(phaseAtom, (state) => state);
 	const candidates = useSelector(candidatesAtom, (state) => state);
-	const measurementCount = useSelector(
-		measurementSourcesAtom,
+	const signalCount = useSelector(
+		signalSourcesAtom,
 		(state) => state.length,
 	);
 	const openCount = useSelector(positionCountAtom, (state) => state);
@@ -57,7 +57,7 @@ export const Pulse = () => {
 				which="cand"
 				value={candidates ? String(candidates) : "—"}
 			/>
-			<Reading label="meas" which="meas" value={String(measurementCount)} />
+			<Reading label="sigs" which="sigs" value={String(signalCount)} />
 			<Reading label="open" which="open" value={String(openCount)} />
 		</Flex.Row>
 	);

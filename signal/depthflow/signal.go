@@ -2,67 +2,62 @@ package depthflow
 
 import (
 	"context"
-	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type symbolState struct {
-	lastMeasurement *data.Measurement
-	prevBids        map[float64]float64
-	prevAsks        map[float64]float64
-	prevFullBid     bool
-	prevFullAsk     bool
-	prevBidWorst    float64
-	prevAskWorst    float64
-	prevAt          time.Time
-	hasPrev         bool
+	prevBids     map[float64]float64
+	prevAsks     map[float64]float64
+	prevFullBid  bool
+	prevFullAsk  bool
+	prevBidWorst float64
+	prevAskWorst float64
+	hasPrev      bool
 }
 
 type Signal struct {
 	*runtime.System
 	states map[string]*symbolState
+	keys   []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		states: make(map[string]*symbolState),
+		keys: []string{
+			"book_imbalance",
+			"touch_notional_bid",
+			"touch_notional_ask",
+			"touch_imbalance",
+			"net_displayed_flow_bid",
+			"mutation_activity_imbalance",
+		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "depthflow", signal)
-
 	return signal
 }
 
-func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY || prior == nil || prior.Label == "" {
-		return nil
+func (signal *Signal) Step(value *data.Value) *data.Value {
+	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+		return value
 	}
 
-	state, found := signal.states[prior.Label]
+	snapshot, err := broker.ReadSnapshot(value)
+	if err != nil || snapshot == nil || len(snapshot.Bids) == 0 || len(snapshot.Asks) == 0 {
+		return value
+	}
 
+	state, found := signal.states[value.Scope]
 	if !found {
 		state = &symbolState{
 			prevBids: make(map[float64]float64),
 			prevAsks: make(map[float64]float64),
 		}
-		signal.states[prior.Label] = state
-	}
-
-	// The book is the snapshot ingress stamped onto the trade at its sequence
-	// number: every level of the depth window as the trade found it.
-	snapshot, err := broker.ReadSnapshot(prior)
-
-	if err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[depthflow] stamped book unreadable", err))
-		return nil
-	}
-
-	if snapshot == nil {
-		return nil
+		signal.states[value.Scope] = state
 	}
 
 	bids := ladder(snapshot.Bids)
@@ -75,7 +70,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	obsBid := 0.0
 	currentBids := make(map[float64]float64, len(bids))
-
 	for _, b := range bids {
 		notional := b[0] * b[1]
 		obsBid += notional
@@ -84,7 +78,6 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 
 	obsAsk := 0.0
 	currentAsks := make(map[float64]float64, len(asks))
-
 	for _, a := range asks {
 		notional := a[0] * a[1]
 		obsAsk += notional
@@ -92,18 +85,17 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	}
 
 	total := obsBid + obsAsk
-	bookImb := (obsBid - obsAsk) / total
-
-	out := map[string]float64{
-		"book_imbalance":     bookImb,
-		"touch_notional:bid": touchBid,
-		"touch_notional:ask": touchAsk,
+	var bookImb float64
+	if total > 0 {
+		bookImb = (obsBid - obsAsk) / total
 	}
 
+	var touchImb float64
 	if touchTotal := touchBid + touchAsk; touchTotal > 0 {
-		out["touch_imbalance"] = (touchBid - touchAsk) / touchTotal
+		touchImb = (touchBid - touchAsk) / touchTotal
 	}
 
+	var netBid, activityImb float64
 	if state.hasPrev {
 		bidWorst := bids[len(bids)-1][0]
 		askWorst := asks[len(asks)-1][0]
@@ -117,15 +109,13 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 			state.prevAskWorst, askWorst, func(price, edge float64) bool { return price <= edge },
 		)
 
-		netBid := addedBid - removedBid
-		out["net_displayed_flow:bid"] = netBid
-
+		netBid = addedBid - removedBid
 		bidActivity := addedBid + removedBid
 		askActivity := addedAsk + removedAsk
 		bookActivity := bidActivity + askActivity
 
 		if bookActivity > 0 {
-			out["mutation_activity_imbalance"] = (bidActivity - askActivity) / bookActivity
+			activityImb = (bidActivity - askActivity) / bookActivity
 		}
 	}
 
@@ -135,46 +125,26 @@ func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
 	state.prevFullAsk = fullAsk
 	state.prevBidWorst = bids[len(bids)-1][0]
 	state.prevAskWorst = asks[len(asks)-1][0]
-	prevAt := state.prevAt
-	hadPrev := state.hasPrev
-	state.prevAt = prior.At
 	state.hasPrev = true
 
-	if state.lastMeasurement == nil {
-		state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
-	}
-
-	res := state.lastMeasurement.Next(prior, out)
-	state.lastMeasurement = res
-
-	if hadPrev {
-		res.From = prevAt
-	}
-
-	return res
+	return data.AppendVector(value, []float64{
+		bookImb,
+		touchBid,
+		touchAsk,
+		touchImb,
+		netBid,
+		activityImb,
+	}, signal.keys...)
 }
 
-/*
-ladder converts one stamped side, best first, to (price, quantity) pairs.
-*/
 func ladder(levels []broker.Level) [][2]float64 {
 	pairs := make([][2]float64, len(levels))
-
 	for index, level := range levels {
 		pairs[index] = [2]float64{level.Price.Float64(), level.Quantity.Float64()}
 	}
-
 	return pairs
 }
 
-/*
-levelFlow returns notional added and removed between two windows of one book
-side. A price only in the previous window is removed unless the current side
-is full and the price lies beyond its edge (it left the window, not the book);
-a price only in the current window is added unless the previous side was full
-and the price lies beyond that edge. inside reports whether price lies within
-the window ending at edge.
-*/
 func levelFlow(
 	prev, current map[float64]float64,
 	prevFull, currentFull bool,
@@ -183,19 +153,15 @@ func levelFlow(
 ) (added, removed float64) {
 	for price, notional := range current {
 		before, seen := prev[price]
-
 		if !seen {
 			if !prevFull || inside(price, prevEdge) {
 				added += notional
 			}
-
 			continue
 		}
-
 		if notional > before {
 			added += notional - before
 		}
-
 		if notional < before {
 			removed += before - notional
 		}
@@ -205,7 +171,6 @@ func levelFlow(
 		if _, held := current[price]; held {
 			continue
 		}
-
 		if !currentFull || inside(price, currentEdge) {
 			removed += before
 		}

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/system"
@@ -23,10 +23,10 @@ TimingStage audits market clock synchronization, feed sequencing, and ingest lat
 */
 type TimingStage struct {
 	*runtime.System
-	ch              chan *data.Measurement
+	ch              chan *data.Value
 	violations      []*Violation
 	lastAtByStream  map[string]time.Time
-	lastSeqByStream map[string]int64
+	lastSeqByStream map[string]uint64
 	driftsByStream  map[string]*statistic.Moments
 	driftLastAt     map[string]time.Time
 	driftSeenByTick map[string]bool
@@ -37,10 +37,10 @@ type TimingStage struct {
 func NewTimingStage(ctx context.Context) *TimingStage {
 	return &TimingStage{
 		System:          runtime.NewSystem(ctx, "audit:timing"),
-		ch:              make(chan *data.Measurement, 64),
+		ch:              make(chan *data.Value, 64),
 		violations:      make([]*Violation, 0),
 		lastAtByStream:  make(map[string]time.Time),
-		lastSeqByStream: make(map[string]int64),
+		lastSeqByStream: make(map[string]uint64),
 		driftsByStream:  make(map[string]*statistic.Moments),
 		driftLastAt:     make(map[string]time.Time),
 		driftSeenByTick: make(map[string]bool),
@@ -48,8 +48,22 @@ func NewTimingStage(ctx context.Context) *TimingStage {
 	}
 }
 
-func (stage *TimingStage) Channel() chan *data.Measurement {
+func (stage *TimingStage) Channel() chan *data.Value {
 	return stage.ch
+}
+
+func venueTime(measurement *data.Value) time.Time {
+	if measurement == nil {
+		return time.Time{}
+	}
+	metrics := data.Metrics(measurement)
+	if at, ok := metrics["at"]; ok && at > 0 {
+		return time.Unix(0, int64(at))
+	}
+	if at, ok := metrics["venue_time"]; ok && at > 0 {
+		return time.Unix(0, int64(at))
+	}
+	return time.Time{}
 }
 
 func (stage *TimingStage) Run() error {
@@ -68,17 +82,17 @@ func (stage *TimingStage) Run() error {
 			continue
 		}
 
-		if measurement.Source == "runtime:join" {
+		if measurement.Role == "runtime:join" {
 			continue
 		}
 
 		stage.totalChecked++
 
-		if measurement.Error() != nil {
+		if measurement.Role == "error" {
 			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
+				measurement.Scope,
 				"measurement.error",
-				measurement.Error().Error(),
+				"error measurement encountered",
 				measurement,
 				nil,
 			))
@@ -98,10 +112,11 @@ Venue time (At) tells us when the event occurred on the exchange.
 Local time (Timestamp) tells us when our system received and recorded it.
 Without both, event ordering and latency calculations are impossible.
 */
-func (stage *TimingStage) validateTimestamps(measurement *data.Measurement) {
-	if measurement.At.IsZero() {
+func (stage *TimingStage) validateTimestamps(measurement *data.Value) {
+	vt := venueTime(measurement)
+	if vt.IsZero() {
 		stage.violations = append(stage.violations, NewViolation(
-			measurement.Label,
+			measurement.Scope,
 			"timing.zero_venue_time",
 			"Measurement venue timestamp At is zero",
 			measurement,
@@ -111,7 +126,7 @@ func (stage *TimingStage) validateTimestamps(measurement *data.Measurement) {
 
 	if measurement.Timestamp <= 0 {
 		stage.violations = append(stage.violations, NewViolation(
-			measurement.Label,
+			measurement.Scope,
 			"timing.zero_local_time",
 			"Measurement local timestamp is zero or negative",
 			measurement,
@@ -126,23 +141,24 @@ Market events from one source must always move forward in time (venue time canno
 travel backwards) and event sequence numbers (SeqIdx) must strictly increase.
 Any drop or backwards jump indicates corrupted feeds or out-of-order delivery.
 */
-func (stage *TimingStage) validateSequencing(measurement *data.Measurement) {
-	stream := measurement.Source + "|" + measurement.Label
+func (stage *TimingStage) validateSequencing(measurement *data.Value) {
+	stream := measurement.Origin + "|" + measurement.Scope
+	vt := venueTime(measurement)
 
-	if !measurement.At.IsZero() {
+	if !vt.IsZero() {
 		lastAt, exists := stage.lastAtByStream[stream]
 
-		if exists && measurement.At.Before(lastAt) {
+		if exists && vt.Before(lastAt) {
 			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
+				measurement.Scope,
 				"timing.sequence_inversion",
-				fmt.Sprintf("Venue time inverted: %s before last %s in stream %s", measurement.At, lastAt, stream),
+				fmt.Sprintf("Venue time inverted: %s before last %s in stream %s", vt, lastAt, stream),
 				measurement,
 				nil,
 			))
 		}
 
-		stage.lastAtByStream[stream] = measurement.At
+		stage.lastAtByStream[stream] = vt
 	}
 
 	if measurement.SeqIdx > 0 {
@@ -150,7 +166,7 @@ func (stage *TimingStage) validateSequencing(measurement *data.Measurement) {
 
 		if exists && measurement.SeqIdx <= lastSeq {
 			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
+				measurement.Scope,
 				"timing.seq_idx_inversion",
 				fmt.Sprintf("Sequence index non-increasing: %d <= %d in stream %s", measurement.SeqIdx, lastSeq, stream),
 				measurement,
@@ -172,13 +188,14 @@ validateDrift tracks transit latency and detects desynchronization or jitter spi
     than 1/sqrt(alpha) standard deviations (e.g. ~4.47 sigma at 5% significance) is
     statistically an extreme outlier / network stall rather than routine noise.
 */
-func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
-	if measurement.At.IsZero() || measurement.Timestamp <= 0 {
+func (stage *TimingStage) validateDrift(measurement *data.Value) {
+	vt := venueTime(measurement)
+	if vt.IsZero() || measurement.Timestamp <= 0 {
 		return
 	}
 
 	if measurement.Tick > 0 {
-		tickKey := fmt.Sprintf("%s|%d", measurement.Label, measurement.Tick)
+		tickKey := fmt.Sprintf("%s|%d", measurement.Scope, measurement.Tick)
 
 		if stage.driftSeenByTick[tickKey] {
 			return
@@ -188,8 +205,8 @@ func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
 	}
 
 	// Calculate latency: local ingest timestamp minus exchange event timestamp.
-	stream := measurement.Label
-	driftNs := measurement.Timestamp - measurement.At.UnixNano()
+	stream := measurement.Scope
+	driftNs := int64(measurement.Timestamp) - vt.UnixNano()
 	driftMs := float64(driftNs) / 1e6
 
 	// Physical causality: an event cannot be received before it was produced.
@@ -197,7 +214,7 @@ func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
 	if driftNs < 0 && !stage.flaggedDrift[stream] {
 		stage.flaggedDrift[stream] = true
 		stage.violations = append(stage.violations, NewViolation(
-			measurement.Label,
+			measurement.Scope,
 			"timing.negative_drift",
 			fmt.Sprintf("Negative latency detected (clock skew: %.2f ms) in stream %s", driftMs, stream),
 			measurement,
@@ -209,11 +226,11 @@ func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
 	// Multi-fill bursts sharing a single exchange timestamp collapse variance to zero.
 	lastAt, hasLastAt := stage.driftLastAt[stream]
 
-	if hasLastAt && measurement.At.Equal(lastAt) {
+	if hasLastAt && vt.Equal(lastAt) {
 		return
 	}
 
-	stage.driftLastAt[stream] = measurement.At
+	stage.driftLastAt[stream] = vt
 
 	moments, exists := stage.driftsByStream[stream]
 
@@ -237,7 +254,7 @@ func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
 
 		if dispersion > 1.0 && residual > bound*dispersion {
 			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
+				measurement.Scope,
 				"timing.latency_spike",
 				fmt.Sprintf("Latency spike: drift %.2f ms deviates by %.2f sigma from mean %.2f ms (bound %.2f)",
 					driftMs, residual/dispersion, moments.Mean, bound),
@@ -248,7 +265,7 @@ func (stage *TimingStage) validateDrift(measurement *data.Measurement) {
 
 		if dispersion <= 1.0 && residual > 50.0 {
 			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
+				measurement.Scope,
 				"timing.latency_spike",
 				fmt.Sprintf("Latency spike: drift %.2f ms deviates by %.2f ms from low-dispersion mean %.2f ms",
 					driftMs, residual, moments.Mean),
@@ -305,4 +322,3 @@ func (stage *TimingStage) Data() any {
 		"drifts":        drifts,
 	}
 }
-

@@ -4,9 +4,11 @@ import (
 	"context"
 	"math"
 	"slices"
+	"strings"
 
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -41,45 +43,47 @@ type Region struct {
 }
 
 /*
-Observe pins every metric of the frame's peers to its region and returns the
-15 regions sorted brightest first. A region's brightness is the average of its
-metrics' |SNM| in [0, 1]. Only the magnitude matters, never the direction, and
-an average does not grow with the number of metrics, so a large region has no
-edge over a small one.
-
-Observe returns nil when a metric is not pinned to a region (a contract breach,
-reported once as an error, after which the grid observes nothing), or when a
-region holds no metric at all.
+Observe pins every metric of the frame to its region and returns the
+15 regions sorted brightest first.
 */
-func (grid *Grid) Observe(measurement *data.Measurement) []*Region {
-	if grid.Error() != nil {
+func (grid *Grid) Observe(value *data.Value) []*Region {
+	if grid.Error() != nil || value == nil {
 		return nil
 	}
 
 	regions := make([]*Region, RegionCount)
-
 	for idx := range regions {
 		regions[idx] = &Region{Key: uint8(idx)}
 	}
 
 	totalCounts := 0
 
-	for _, peer := range measurement.Peers() {
-		excitation := 1 + peer.Surprise()
+	for indexKey, floats := range data.Indexed[[]float64](value, types.SignalSourceStrings...) {
+		parts := strings.Split(indexKey, "/")
+		if len(parts) == 0 {
+			continue
+		}
 
-		for entry := range peer.Read() {
-			if entry == nil || entry.Metric == nil {
-				continue
+		source := parts[0]
+		sourcePins, hasSource := regionMetricPins[source]
+		if !hasSource {
+			continue
+		}
+
+		offset := max(len(parts)-len(floats), 0)
+		for idx, floatVal := range floats {
+			if offset+idx >= len(parts) {
+				break
 			}
 
-			targetRegions, isPinned := regionMetricPins[peer.Source][entry.Metric.Label()]
-
+			label := parts[offset+idx]
+			targetRegions, isPinned := sourcePins[label]
 			if !isPinned {
 				continue
 			}
 
 			for _, region := range targetRegions {
-				regions[region].Deformation += math.Abs(entry.Metric.SNM()) * excitation
+				regions[region].Deformation += math.Abs(floatVal)
 				regions[region].Counts++
 				totalCounts++
 			}
@@ -100,11 +104,9 @@ func (grid *Grid) Observe(measurement *data.Measurement) []*Region {
 		if first.Brightness > second.Brightness {
 			return -1
 		}
-
 		if first.Brightness < second.Brightness {
 			return 1
 		}
-
 		return int(first.Key) - int(second.Key)
 	})
 

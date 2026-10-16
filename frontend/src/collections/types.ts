@@ -1,23 +1,3 @@
-import type {
-	Decision,
-	Finding,
-	Graph,
-	LifecycleState,
-	ThesisCategory,
-	ThesisForecast,
-	ThesisHypothesis,
-} from "#/types/thesis";
-
-export type {
-	Finding,
-	Graph,
-	LifecycleState,
-	Decision,
-	ThesisCategory,
-	ThesisForecast,
-	ThesisHypothesis,
-};
-
 /*
 Balance mirrors the Balance.Frame wallet row JSON.
 */
@@ -66,57 +46,11 @@ export type Fill = {
 
 export type Position = {
 	status: string;
-	decision: Decision;
 	entry_order: Record<string, unknown> | null;
 	exit_order: Record<string, unknown> | null;
 	entry_order_result: Record<string, unknown> | null;
 	exit_order_result: Record<string, unknown> | null;
 	holding: Holding;
-};
-
-export type CategoryGraphNode = {
-	symbol: string;
-	type: string;
-	strength: number;
-	freshness: number;
-	at: string;
-};
-
-export type CategoryGraphEdge = {
-	symbol: string;
-	from: string;
-	to: string;
-	type: string;
-	weight: number | null;
-	evidence: string[];
-	at: string;
-};
-
-export type CategoryGraph = {
-	nodes: CategoryGraphNode[];
-	edges: CategoryGraphEdge[];
-	priors: Record<string, string>;
-};
-
-export type Thesis = {
-	tick: number;
-	at: string;
-	forecasts?: ThesisForecast[];
-	decisions?: Decision[];
-	findings?: Finding[];
-	hypotheses?: ThesisHypothesis[];
-	categories?: Record<string, ThesisCategory[]>;
-	positions?: Record<string, boolean>;
-	holdings?: Record<string, Holding>;
-	lifecycle?: Record<string, LifecycleState>;
-	graphs?: Record<string, unknown> & {
-		categories?: CategoryGraph;
-	};
-	measurements?: Record<string, unknown>;
-	manifold?: Record<string, unknown>;
-	cognition?: Record<string, unknown>;
-	resonance?: Record<string, unknown>;
-	causal?: Record<string, unknown>;
 };
 
 /*
@@ -161,6 +95,67 @@ export type Instrument = Record<string, unknown> & {
 	symbol: string;
 };
 
+export type LifecycleState = string;
+
+export class SellEventT {
+	trigger = "";
+	qty = "";
+	at: bigint = 0n;
+	capacityQty = 0;
+	capacityRatio = 0;
+	budget: number | string = 0;
+	note = "";
+
+	constructor(init: Partial<SellEventT> = {}) {
+		Object.assign(this, init);
+	}
+}
+
+export class HoldingT {
+	symbol = "";
+	status = "";
+	pnl: number | string = "0";
+	entryPrice: number | string = "0";
+	mark: number | string = "0";
+	returnPct = 0;
+	capacityDefined = false;
+	capacityRatio: number | string = 0;
+	capacityBounded = false;
+	slippageBudget: number | string = 0;
+	budgetSource = "";
+	venuePnl: number | string = "0";
+	shadowPnl: number | string = "0";
+	shadowDefined = false;
+	closedAt: bigint = 0n;
+	sells: SellEventT[] = [];
+
+	constructor(init: Partial<HoldingT> = {}) {
+		Object.assign(this, init);
+	}
+}
+
+export class PositionT {
+	status = "";
+	holding: HoldingT | null = null;
+
+	constructor(init: Partial<PositionT> = {}) {
+		Object.assign(this, init);
+	}
+}
+
+export class DecisionT {
+	id = "";
+	symbol = "";
+	action = "";
+	cause = "";
+	reason = "";
+	confidence = 0;
+
+	constructor(init: Partial<DecisionT> = {}) {
+		Object.assign(this, init);
+	}
+}
+
 /*
 LifecycleRow is one symbol's lifecycle phase on the UI wire.
 */
@@ -178,60 +173,6 @@ export type TickFrame = Record<string, unknown> & {
 	candidates?: number;
 	quotes_ready?: number;
 	quotes_total?: number;
-};
-
-/*
-DashboardFrame is a generic keyed UI frame used by legacy paint helpers.
-*/
-export type DashboardFrame = Record<string, unknown>;
-
-/*
-CausalReading mirrors algorithm.PearlOutput.
-
-The solver publishes it flat — every reading sits at the top level of the row
-alongside the symbol, and the baselines keep their snake-cased wire names. A
-nested `reading` wrapper and camel-cased baselines were what this file used to
-describe, which is why every consumer of a causal row read undefined.
-*/
-export type CausalReading = {
-	value?: number;
-	category?: number;
-	confidence?: number;
-	confidence_baseline?: number;
-	entry_baseline?: number;
-	exit_baseline?: number;
-	strength?: number;
-	association?: number;
-	associationScore?: number;
-	intervention?: number;
-	interventionScore?: number;
-	doExpectation?: number;
-	uplift?: number;
-	upliftScore?: number;
-	residual?: number;
-	counterfactual?: number;
-	noise?: number;
-	contagion?: number;
-	condition?: number;
-	inverted?: number;
-	probabilities?: number[];
-	distribution?: Record<string, number>;
-};
-
-/*
-CausalFrame mirrors the causal estimate published for each aligned observation.
-Precision reports finite-sample support without withholding an estimate.
-*/
-export type CausalFrame = CausalReading & {
-	source?: string;
-	symbol: string;
-	at?: string;
-	samples?: number;
-	precision?: number;
-	hypothesis?: string;
-	treatment?: string;
-	controls?: string[];
-	target?: string;
 };
 
 /*
@@ -423,56 +364,6 @@ export type CognitiveBeam = {
 export type CognitiveClass = {
 	name: string;
 	probability: number;
-};
-
-export type MeasurementCategory = Omit<ThesisCategory, "maturity"> & {
-	maturity?: number;
-};
-
-export type Measurement = {
-	id?: string | number;
-	label?: string;
-	source: string;
-	symbol?: string;
-	seqIdx?: number | string;
-	tick?: number;
-	peer?: string;
-	at: string;
-	from?: string;
-	observedFrom?: string;
-	peerAt?: string;
-	peerObservedFrom?: string;
-	horizon?: number | string;
-	maturity?: number;
-	estimated?: boolean;
-	uncertainty?: {
-		lower?: number;
-		upper?: number;
-		confidence?: number;
-		method?: string;
-	} | null;
-	metrics?: Record<
-		string,
-		{
-			label?: string;
-			raw: number;
-			snm?: number | null;
-			exact?: string | null;
-			unit?: string | number;
-			timescale?: string | number;
-		}
-	>;
-	metadata?: Record<string, string | number>;
-	provenance?: Record<string, string>;
-	categories?: MeasurementCategory[];
-	peers?: Measurement[];
-	Peers?: Measurement[];
-};
-
-export type MeasurementEpoch = {
-	at: string;
-	readings: Measurement[];
-	publishedAt?: string;
 };
 
 /*

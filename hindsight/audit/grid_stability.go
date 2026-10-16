@@ -9,10 +9,9 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -23,7 +22,7 @@ Jensen-Shannon Divergence (JSD) between their regional activation distributions.
 */
 type StabilityStage struct {
 	*runtime.System
-	ch           chan *data.Measurement
+	ch           chan *data.Value
 	violations   []*Violation
 	grid         *nmstore.Grid
 	activations  []string
@@ -40,14 +39,14 @@ type StabilityStage struct {
 func NewStabilityStage(ctx context.Context) *StabilityStage {
 	return &StabilityStage{
 		System:      runtime.NewSystem(ctx, "audit:stability"),
-		ch:          make(chan *data.Measurement, 64),
+		ch:          make(chan *data.Value, 64),
 		violations:  make([]*Violation, 0),
 		grid:        nmstore.NewGrid(ctx),
 		activations: make([]string, 0),
 	}
 }
 
-func (stage *StabilityStage) Channel() chan *data.Measurement {
+func (stage *StabilityStage) Channel() chan *data.Value {
 	return stage.ch
 }
 
@@ -67,21 +66,11 @@ func (stage *StabilityStage) Run() error {
 			continue
 		}
 
-		if measurement.Source != "runtime:join" {
+		if measurement.Role != "runtime:join" {
 			continue
 		}
 
 		stage.totalFrames++
-
-		if measurement.Error() != nil {
-			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
-				"measurement.error",
-				measurement.Error().Error(),
-				measurement,
-				nil,
-			))
-		}
 
 		stage.recordFrame(measurement)
 	}
@@ -97,8 +86,8 @@ func (stage *StabilityStage) Violations() []*Violation {
 /*
 recordFrame logs the dominant regional token for the arrival using Grid.Observe.
 */
-func (stage *StabilityStage) recordFrame(measurement *data.Measurement) {
-	if len(measurement.Peers()) == 0 {
+func (stage *StabilityStage) recordFrame(measurement *data.Value) {
+	if len(measurement.Layers) == 0 {
 		return
 	}
 
@@ -138,143 +127,161 @@ func (stage *StabilityStage) auditStationarity() {
 
 	// 2. Stationarity Check: Need enough observations to divide into two halves.
 	totalActivations := len(stage.activations)
-
 	if totalActivations < 20 {
 		return
 	}
 
-	half := totalActivations / 2
-	firstHalf := stage.activations[:half]
-	secondHalf := stage.activations[half:]
+	mid := totalActivations / 2
+	firstHalf := stage.activations[:mid]
+	secondHalf := stage.activations[mid:]
 
-	distFirst := empiricalDistribution(firstHalf)
-	distSecond := empiricalDistribution(secondHalf)
+	dist1 := computeFrequencyDistribution(firstHalf)
+	dist2 := computeFrequencyDistribution(secondHalf)
 
-	stage.jsd, stage.tvd = computeJSD(distFirst, distSecond)
-	jsd, tvd := stage.jsd, stage.tvd
+	stage.jsd = computeJSD(dist1, dist2)
+	stage.tvd = computeTVD(dist1, dist2)
 
-	permutations := system.Cfg.Audit.Permutations
+	// 3. Permutation Test for Empirical Significance (P-Value & Null P95)
+	stage.permutations = 500
+	stage.pValue, stage.nullJSDMean, stage.nullJSDP95 = stage.permutationTest(
+		stage.activations, mid, stage.jsd, stage.permutations,
+	)
 
-	if permutations <= 0 {
-		permutations = 50
-	}
+	// Violation Criteria:
+	// A distribution shift is a non-stationary rupture if JSD > 0.35 bits
+	// AND the observed divergence is statistically significant (p-value < 0.05).
+	threshold := 0.35
 
-	// Permutation test against tick-shuffled null:
-	// Under the null hypothesis that activations are temporally stationary,
-	// the chronological order of tick activations is exchangeable.
-	exceedCount := 0
-	nullJSDs := make([]float64, 0, permutations)
-	shuffled := make([]string, totalActivations)
-	copy(shuffled, stage.activations)
-	rng := rand.New(rand.NewSource(1337))
-
-	for iter := 0; iter < permutations; iter++ {
-		rng.Shuffle(totalActivations, func(i, j int) {
-			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
-		})
-
-		nullFirst := empiricalDistribution(shuffled[:half])
-		nullSecond := empiricalDistribution(shuffled[half:])
-		nullJSD, _ := computeJSD(nullFirst, nullSecond)
-		nullJSDs = append(nullJSDs, nullJSD)
-
-		if nullJSD >= jsd {
-			exceedCount++
-		}
-	}
-
-	var sumNull float64
-
-	for _, v := range nullJSDs {
-		sumNull += v
-	}
-
-	nullMean := sumNull / float64(permutations)
-	slices.Sort(nullJSDs)
-	p95Idx := int(0.95 * float64(permutations))
-
-	if p95Idx >= len(nullJSDs) {
-		p95Idx = len(nullJSDs) - 1
-	}
-
-	nullP95 := nullJSDs[p95Idx]
-	pValue := float64(1+exceedCount) / float64(permutations+1)
-
-	stage.nullJSDMean = nullMean
-	stage.nullJSDP95 = nullP95
-	stage.pValue = pValue
-	stage.permutations = permutations
-
-	// JSD is bounded in [0, 1] bits. A JSD > 0.40 bits indicates a severe,
-	// non-stationary regime shift between the first and second half of the audit window.
-	// We verify that the shift is statistically significant against the tick-shuffled null.
-	if jsd > 0.40 && (jsd > nullP95 || pValue <= 0.05) {
+	if stage.jsd > threshold && stage.pValue < 0.05 {
 		stage.violations = append(stage.violations, NewViolation(
 			"grid",
 			"grid.non_stationary",
-			fmt.Sprintf("Grid excitation non-stationary: JSD = %.3f bits > 0.40 bound (shuffled null mean = %.3f, p95 = %.3f, p-value = %.4f, TVD = %.3f)",
-				jsd, nullMean, nullP95, pValue, tvd),
+			fmt.Sprintf("Feature grid regional activation is non-stationary across time halves: JSD = %.4f bits (threshold: %.2f), TVD = %.4f, p-value = %.4f (null 95th pct: %.4f)",
+				stage.jsd, threshold, stage.tvd, stage.pValue, stage.nullJSDP95),
 			nil,
 			nil,
 		))
 	}
 }
 
-func empiricalDistribution(tokens []string) map[string]float64 {
+func computeFrequencyDistribution(tokens []string) map[string]float64 {
 	counts := make(map[string]float64)
+	total := float64(len(tokens))
+
+	if total == 0 {
+		return counts
+	}
 
 	for _, token := range tokens {
 		counts[token]++
 	}
 
-	total := float64(len(tokens))
-	dist := make(map[string]float64, len(counts))
-
-	for token, count := range counts {
-		dist[token] = count / total
+	for token := range counts {
+		counts[token] /= total
 	}
 
-	return dist
+	return counts
 }
 
 /*
-computeJSD calculates Jensen-Shannon Divergence (in bits, log2) and Total Variation Distance
-between two discrete probability distributions P and Q.
-M = 0.5 * (P + Q)
-JSD(P || Q) = 0.5 * KL(P || M) + 0.5 * KL(Q || M)
+computeJSD calculates Jensen-Shannon Divergence in bits (using base-2 logarithm).
+Bounded in [0, 1].
 */
-func computeJSD(distP, distQ map[string]float64) (float64, float64) {
+func computeJSD(p, q map[string]float64) float64 {
 	allKeys := make(map[string]bool)
-
-	for key := range distP {
-		allKeys[key] = true
+	for k := range p {
+		allKeys[k] = true
+	}
+	for k := range q {
+		allKeys[k] = true
 	}
 
-	for key := range distQ {
-		allKeys[key] = true
+	m := make(map[string]float64)
+	for k := range allKeys {
+		m[k] = 0.5 * (p[k] + q[k])
 	}
 
-	var klP, klQ, tvd float64
+	klPM := computeKLDivergence(p, m)
+	klQM := computeKLDivergence(q, m)
 
-	for key := range allKeys {
-		probP := distP[key]
-		probQ := distQ[key]
-		meanM := 0.5 * (probP + probQ)
+	return 0.5*klPM + 0.5*klQM
+}
 
-		if probP > 0 && meanM > 0 {
-			klP += probP * math.Log2(probP/meanM)
+func computeKLDivergence(p, q map[string]float64) float64 {
+	var kl float64
+
+	for k, probP := range p {
+		if probP <= 0 {
+			continue
 		}
 
-		if probQ > 0 && meanM > 0 {
-			klQ += probQ * math.Log2(probQ/meanM)
+		probQ := q[k]
+		if probQ <= 0 {
+			continue
 		}
 
-		tvd += 0.5 * math.Abs(probP-probQ)
+		kl += probP * math.Log2(probP/probQ)
 	}
 
-	jsd := 0.5*klP + 0.5*klQ
+	return kl
+}
 
-	return jsd, tvd
+func computeTVD(p, q map[string]float64) float64 {
+	allKeys := make(map[string]bool)
+	for k := range p {
+		allKeys[k] = true
+	}
+	for k := range q {
+		allKeys[k] = true
+	}
+
+	var sumAbs float64
+	for k := range allKeys {
+		sumAbs += math.Abs(p[k] - q[k])
+	}
+
+	return 0.5 * sumAbs
+}
+
+func (stage *StabilityStage) permutationTest(
+	tokens []string, mid int, observedJSD float64, runs int,
+) (float64, float64, float64) {
+	shuffled := slices.Clone(tokens)
+	nullJSDs := make([]float64, runs)
+	exceedCount := 0
+
+	r := rand.New(rand.NewSource(42))
+
+	for i := range runs {
+		r.Shuffle(len(shuffled), func(i, j int) {
+			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+		})
+
+		dist1 := computeFrequencyDistribution(shuffled[:mid])
+		dist2 := computeFrequencyDistribution(shuffled[mid:])
+		jsd := computeJSD(dist1, dist2)
+		nullJSDs[i] = jsd
+
+		if jsd >= observedJSD {
+			exceedCount++
+		}
+	}
+
+	slices.Sort(nullJSDs)
+	sum := 0.0
+	for _, val := range nullJSDs {
+		sum += val
+	}
+
+	mean := sum / float64(runs)
+	p95Idx := int(float64(runs) * 0.95)
+	if p95Idx >= runs {
+		p95Idx = runs - 1
+	}
+	p95 := nullJSDs[p95Idx]
+	pValue := float64(exceedCount) / float64(runs)
+
+	return pValue, mean, p95
 }
 
 func (stage *StabilityStage) Report() string {
@@ -288,23 +295,16 @@ func (stage *StabilityStage) Report() string {
 }
 
 func (stage *StabilityStage) Data() any {
-	completeness := 0.0
-
-	if stage.totalFrames > 0 {
-		completeness = float64(stage.validFrames) / float64(stage.totalFrames)
-	}
-
 	return map[string]any{
-		"passed":        len(stage.violations) == 0,
-		"total_frames":  stage.totalFrames,
-		"valid_frames":  stage.validFrames,
-		"completeness":  completeness,
-		"jsd":           stage.jsd,
-		"tvd":           stage.tvd,
-		"null_jsd_mean": stage.nullJSDMean,
-		"null_jsd_p95":  stage.nullJSDP95,
-		"p_value":       stage.pValue,
-		"permutations":  stage.permutations,
+		"passed":             len(stage.violations) == 0,
+		"total_frames":       stage.totalFrames,
+		"valid_frames":       stage.validFrames,
+		"completeness":       float64(stage.validFrames) / math.Max(1.0, float64(stage.totalFrames)),
+		"jsd_bits":           stage.jsd,
+		"tvd":                stage.tvd,
+		"p_value":            stage.pValue,
+		"null_jsd_mean_bits": stage.nullJSDMean,
+		"null_jsd_p95_bits":  stage.nullJSDP95,
+		"permutations":       stage.permutations,
 	}
 }
-

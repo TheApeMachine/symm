@@ -9,12 +9,13 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/correlation"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -27,7 +28,7 @@ without forcing data into artificial, distortive time buckets (preventing the Ep
 */
 type SympathyStage struct {
 	*runtime.System
-	ch           chan *data.Measurement
+	ch           chan *data.Value
 	violations   []*Violation
 	streams      map[string][]temporal.Price
 	flaggedPairs map[string]bool
@@ -38,7 +39,7 @@ type SympathyStage struct {
 func NewSympathyStage(ctx context.Context) *SympathyStage {
 	return &SympathyStage{
 		System:       runtime.NewSystem(ctx, "audit:sympathy"),
-		ch:           make(chan *data.Measurement, 64),
+		ch:           make(chan *data.Value, 64),
 		violations:   make([]*Violation, 0),
 		streams:      make(map[string][]temporal.Price),
 		flaggedPairs: make(map[string]bool),
@@ -46,7 +47,7 @@ func NewSympathyStage(ctx context.Context) *SympathyStage {
 	}
 }
 
-func (stage *SympathyStage) Channel() chan *data.Measurement {
+func (stage *SympathyStage) Channel() chan *data.Value {
 	return stage.ch
 }
 
@@ -66,15 +67,15 @@ func (stage *SympathyStage) Run() error {
 			continue
 		}
 
-		if measurement.Source == "runtime:join" {
+		if measurement.Role == "runtime:join" {
 			continue
 		}
 
-		if measurement.Error() != nil {
+		if measurement.Role == "error" {
 			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
+				measurement.Scope,
 				"measurement.error",
-				measurement.Error().Error(),
+				"error measurement encountered",
 				measurement,
 				nil,
 			))
@@ -95,30 +96,20 @@ func (stage *SympathyStage) Violations() []*Violation {
 recordMeasurement appends price points to the respective metric stream timeline.
 Each point records the nanosecond venue timestamp (At) and the raw numeric value.
 */
-func (stage *SympathyStage) recordMeasurement(measurement *data.Measurement) {
-	if measurement.At.IsZero() {
+func (stage *SympathyStage) recordMeasurement(measurement *data.Value) {
+	venueTime := int64(measurement.Timestamp)
+	if venueTime == 0 {
 		return
 	}
+	if venueTime < 1e11 {
+		venueTime *= 1e9
+	}
 
-	venueTime := measurement.At.UnixNano()
-
-	for entry := range measurement.Read() {
-		if entry == nil || entry.Metric == nil {
-			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
-				"entry.metric",
-				"Nil metric entry encountered in measurement",
-				measurement,
-				nil,
-			))
-
-			continue
-		}
-
-		streamKey := measurement.Label + ":" + measurement.Source + ":" + entry.Metric.Label()
+	for label, val := range data.Metrics(measurement) {
+		streamKey := measurement.Scope + ":" + measurement.Origin + ":" + label
 		stage.streams[streamKey] = append(stage.streams[streamKey], temporal.Price{
 			At:    venueTime,
-			Value: entry.Metric.Raw(),
+			Value: val,
 		})
 	}
 }
@@ -253,7 +244,7 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 
 			// HayashiYoshida checks continuous-time overlap between [From, To] intervals
 			// of left and right, computing covariance and its plug-in null standard error.
-			estimate := data.To[correlation.EstimateInput, correlation.LagEstimate](
+			estimate := transport.To[correlation.EstimateInput, correlation.LagEstimate](
 				stage.estimator,
 				&input,
 			)
@@ -306,7 +297,7 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 							Lag:         0,
 						}
 
-						nullEstimate := data.To[correlation.EstimateInput, correlation.LagEstimate](
+						nullEstimate := transport.To[correlation.EstimateInput, correlation.LagEstimate](
 							stage.estimator,
 							&nullInput,
 						)

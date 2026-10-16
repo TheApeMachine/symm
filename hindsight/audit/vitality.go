@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 )
@@ -79,7 +79,7 @@ and "stagnant" cold-start metrics (>= 80% zero values).
 */
 type VitalityStage struct {
 	*runtime.System
-	ch           chan *data.Measurement
+	ch           chan *data.Value
 	violations   []*Violation
 	series       map[string]*MetricVitality
 	flaggedDead  map[string]bool
@@ -90,7 +90,7 @@ type VitalityStage struct {
 func NewVitalityStage(ctx context.Context) *VitalityStage {
 	return &VitalityStage{
 		System:       runtime.NewSystem(ctx, "audit:vitality"),
-		ch:           make(chan *data.Measurement, 64),
+		ch:           make(chan *data.Value, 64),
 		violations:   make([]*Violation, 0),
 		series:       make(map[string]*MetricVitality),
 		flaggedDead:  make(map[string]bool),
@@ -98,7 +98,7 @@ func NewVitalityStage(ctx context.Context) *VitalityStage {
 	}
 }
 
-func (stage *VitalityStage) Channel() chan *data.Measurement {
+func (stage *VitalityStage) Channel() chan *data.Value {
 	return stage.ch
 }
 
@@ -118,18 +118,8 @@ func (stage *VitalityStage) Run() error {
 			continue
 		}
 
-		if measurement.Source == "runtime:join" {
+		if measurement.Role == "runtime:join" {
 			continue
-		}
-
-		if measurement.Error() != nil {
-			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
-				"measurement.error",
-				measurement.Error().Error(),
-				measurement,
-				nil,
-			))
 		}
 
 		stage.recordMetrics(measurement)
@@ -144,23 +134,11 @@ func (stage *VitalityStage) Run() error {
 recordMetrics updates the running Welford moments, min, max, and zero count
 for each metric present in the measurement.
 */
-func (stage *VitalityStage) recordMetrics(measurement *data.Measurement) {
+func (stage *VitalityStage) recordMetrics(measurement *data.Value) {
 	stage.totalTicks++
 
-	for entry := range measurement.Read() {
-		if entry == nil || entry.Metric == nil {
-			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
-				"entry.metric",
-				"Nil metric entry encountered in measurement",
-				measurement,
-				nil,
-			))
-
-			continue
-		}
-
-		key := measurement.Source + "|" + measurement.Label + "|" + entry.Metric.Label()
+	for label, val := range data.Metrics(measurement) {
+		key := measurement.Origin + "|" + measurement.Scope + "|" + label
 		stat, exists := stage.series[key]
 
 		if !exists {
@@ -168,7 +146,7 @@ func (stage *VitalityStage) recordMetrics(measurement *data.Measurement) {
 			stage.series[key] = stat
 		}
 
-		stat.Update(entry.Metric.Raw())
+		stat.Update(val)
 	}
 }
 
@@ -235,41 +213,31 @@ func (stage *VitalityStage) Report() string {
 }
 
 func (stage *VitalityStage) Data() any {
-	stats := make(map[string]map[string]any, len(stage.series))
 	deadList := make([]string, 0)
-	stagnList := make([]string, 0)
+	stagnantList := make([]string, 0)
 
-	for name, metricVitality := range stage.series {
-		variance := metricVitality.Variance()
-		zeroFrac := metricVitality.ZeroFraction()
-
-		stats[name] = map[string]any{
-			"count":         metricVitality.Count,
-			"min":           metricVitality.Min,
-			"max":           metricVitality.Max,
-			"variance":      variance,
-			"zero_fraction": zeroFrac,
-		}
-
-		if stage.flaggedDead[name] {
-			deadList = append(deadList, name)
-		}
-
-		if stage.flaggedStagn[name] {
-			stagnList = append(stagnList, name)
+	for key, dead := range stage.flaggedDead {
+		if dead {
+			deadList = append(deadList, key)
 		}
 	}
 
-	healthyCount := max(len(stage.series)-len(deadList)-len(stagnList), 0)
+	for key, st := range stage.flaggedStagn {
+		if st {
+			stagnantList = append(stagnantList, key)
+		}
+	}
+
+	slices.Sort(deadList)
+	slices.Sort(stagnantList)
 
 	return map[string]any{
-		"passed":           len(stage.violations) == 0,
-		"total_metrics":    len(stage.series),
-		"dead_count":       len(deadList),
-		"stagnant_count":   len(stagnList),
-		"healthy_count":    healthyCount,
-		"dead_metrics":     deadList,
-		"stagnant_metrics": stagnList,
-		"metrics":          stats,
+		"passed":         len(stage.violations) == 0,
+		"total_ticks":    stage.totalTicks,
+		"series_tracked": len(stage.series),
+		"dead_count":     len(deadList),
+		"stagnant_count": len(stagnantList),
+		"dead_series":    deadList,
+		"stagnant":       stagnantList,
 	}
 }

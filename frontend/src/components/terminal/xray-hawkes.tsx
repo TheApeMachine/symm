@@ -2,7 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import { clockAtom, focusAtom, signals } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import type { Value } from "#/types/value";
 import { type HawkesTraceSample, hawkesTrace } from "./xray-hawkes-trace";
 
 /*
@@ -10,7 +10,7 @@ An event's mark determines its excitation jump. Windowed event counts are not
 cumulative counters and cannot identify the side of the arriving trade.
 A declared zero decay has not been fitted and supplies no intensity curve.
 */
-export const hawkesSample = (row: MeasurementT): HawkesTraceSample | null => {
+export const hawkesSample = (row: Value): HawkesTraceSample | null => {
 	const metrics = Object.fromEntries(
 		row.metrics.map((metric) => [String(metric.name), metric.raw]),
 	);
@@ -45,7 +45,7 @@ export const hawkesSample = (row: MeasurementT): HawkesTraceSample | null => {
 		}
 
 		return {
-			at: row.at,
+			at: row.timestamp,
 			intensity,
 			baseline,
 			decay,
@@ -61,7 +61,7 @@ export const hawkesSample = (row: MeasurementT): HawkesTraceSample | null => {
 	const postArrival = intensity + Math.max(0.01, Math.abs(velocity));
 
 	return {
-		at: row.at,
+		at: row.timestamp,
 		intensity,
 		baseline,
 		decay,
@@ -245,7 +245,7 @@ export const XrayHawkesPanel = () => {
 				bar.style.width = r !== undefined ? `${Math.min(100, Math.max(0, r * 100)).toFixed(1)}%` : "0%";
 			}
 
-			if (latest && latest.at > marketAt) marketAt = latest.at;
+			if (latest && latest.timestamp > marketAt) marketAt = latest.timestamp;
 
 			schedule();
 		};

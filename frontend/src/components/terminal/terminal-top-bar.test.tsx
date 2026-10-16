@@ -5,9 +5,8 @@ import {
 	tickCountAtom,
 	RingBuffer,
 } from "#/collections/app";
+import { Value } from "#/types/value";
 import { TerminalTopBar } from "./terminal-top-bar";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MetricT } from "#/providers/telemetry/telemetry/metric";
 
 describe("TerminalTopBar", () => {
 	beforeEach(() => {
@@ -30,10 +29,11 @@ describe("TerminalTopBar", () => {
 	});
 
 	it("renders training steps as ticks when available", () => {
-		const ring = new RingBuffer<MeasurementT>(50);
-		const measurement = new MeasurementT();
-		measurement.metrics = [new MetricT("steps", 1234)];
-		ring.add(measurement);
+		const ring = new RingBuffer<Value>(50);
+		const val = new Value({
+			metrics: [{ name: "steps", raw: 1234 }],
+		});
+		ring.add(val);
 
 		signals.training.setState(() => ({ "BTC/USD": ring }));
 

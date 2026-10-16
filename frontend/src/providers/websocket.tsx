@@ -15,17 +15,11 @@ import {
 	updateClock,
 	updateEquity,
 } from "#/collections/app";
+import { DecisionT } from "#/collections/types";
 import { topologyStore } from "#/collections/topology";
-import { DecisionT } from "#/providers/telemetry/telemetry/decision";
-import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
-import { Frame } from "#/providers/telemetry/telemetry/frame";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
-import { Message } from "#/providers/telemetry/telemetry/message";
-import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
-import { TickFrame } from "#/providers/telemetry/telemetry/tick-frame";
+import { type Metric, type NamedNumber, type Tag, Value } from "#/types/value";
 import { batch as storeBatch } from "@tanstack/react-store";
-import * as flatbuffers from "flatbuffers";
+import { createStore } from "@tanstack/store";
 import { useEffect } from "react";
 
 let globalWsWorkers: Worker[] = [];
@@ -111,165 +105,379 @@ const scheduleFlush = () => {
 	}
 };
 
-/*
-Dispatches one decoded MeasurementsFrame into per-measurement rings.
-Each Measurement row carries its own source, symbol, tick, snr, and metrics.
-Engine tick and clock are owned by TickFrame, never by individual rows.
-*/
-export function dispatchMeasurements(frame: MeasurementsFrame) {
-	topologyStore.actions.ingestMeasurements(frame);
+const textDecoder = new TextDecoder();
 
-	const count = frame.rowsLength();
+export interface ParsedValue {
+	id: string;
+	tick: bigint;
+	seqIdx: bigint;
+	timestamp: bigint;
+	origin: string;
+	role: string;
+	scope: string;
+	layers: Array<{ index: string; bytes: Uint8Array }>;
+	byteLength: number;
+}
 
-	for (let i = 0; i < count; i++) {
-		const row = frame.rows(i);
-		if (!row) continue;
+export const parseOneValue = (
+	bytes: Uint8Array,
+	byteOffset = 0,
+): ParsedValue | null => {
+	const remaining = bytes.byteLength - byteOffset;
+	if (remaining < 45) return null;
 
-		const rawSource = (row.source() ?? "").toLowerCase();
-		const source = rawSource.includes(":")
-			? rawSource.split(":")[0]
-			: rawSource;
-		const symbol = row.symbol() ?? "";
+	const view = new DataView(
+		bytes.buffer,
+		bytes.byteOffset + byteOffset,
+		remaining,
+	);
 
-		if (symbol && !symbolsAtom.get().includes(symbol)) {
-			observeSymbols([symbol]);
+	const idBytes = bytes.subarray(byteOffset, byteOffset + 16);
+	const id = Array.from(idBytes)
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
+
+	const tick = view.getBigUint64(16, true);
+	const seqIdx = view.getBigUint64(24, true);
+	const timestamp = view.getBigUint64(32, true);
+
+	let cursor = byteOffset + 40;
+
+	if (cursor >= bytes.byteLength) return null;
+	const originLen = bytes[cursor++];
+	if (cursor + originLen > bytes.byteLength) return null;
+	const origin = textDecoder.decode(bytes.subarray(cursor, cursor + originLen));
+	cursor += originLen;
+
+	if (cursor >= bytes.byteLength) return null;
+	const roleLen = bytes[cursor++];
+	if (cursor + roleLen > bytes.byteLength) return null;
+	const role = textDecoder.decode(bytes.subarray(cursor, cursor + roleLen));
+	cursor += roleLen;
+
+	if (cursor >= bytes.byteLength) return null;
+	const scopeLen = bytes[cursor++];
+	if (cursor + scopeLen > bytes.byteLength) return null;
+	const scope = textDecoder.decode(bytes.subarray(cursor, cursor + scopeLen));
+	cursor += scopeLen;
+
+	if (cursor + 2 > bytes.byteLength) return null;
+	const numLayers = view.getUint16(cursor - byteOffset, true);
+	cursor += 2;
+
+	const layers: Array<{ index: string; bytes: Uint8Array }> = [];
+	for (let i = 0; i < numLayers; i++) {
+		if (cursor + 2 > bytes.byteLength) return null;
+		const idxLen = view.getUint16(cursor - byteOffset, true);
+		cursor += 2;
+		if (cursor + idxLen > bytes.byteLength) return null;
+		const index =
+			idxLen > 0
+				? textDecoder.decode(bytes.subarray(cursor, cursor + idxLen))
+				: "";
+		cursor += idxLen;
+
+		if (cursor + 4 > bytes.byteLength) return null;
+		const layerLen = view.getUint32(cursor - byteOffset, true);
+		cursor += 4;
+		if (cursor + layerLen > bytes.byteLength) return null;
+		const layerBytes = bytes.subarray(cursor, cursor + layerLen);
+		cursor += layerLen;
+
+		layers.push({ index, bytes: layerBytes });
+	}
+
+	const totalSize = cursor - byteOffset;
+	return {
+		id,
+		tick,
+		seqIdx,
+		timestamp,
+		origin,
+		role,
+		scope,
+		layers,
+		byteLength: totalSize,
+	};
+};
+
+export const parseValues = (bytes: Uint8Array): ParsedValue[] | null => {
+	if (bytes.byteLength < 45) return null;
+
+	const list: ParsedValue[] = [];
+	let offset = 0;
+
+	while (offset < bytes.byteLength) {
+		const val = parseOneValue(bytes, offset);
+		if (!val || val.byteLength === 0) {
+			return null;
 		}
+		list.push(val);
+		offset += val.byteLength;
+	}
 
-		if (source === "spot:trade") {
-			tickCountAtom.set(Number(row.tick()));
+	return list.length > 0 ? list : null;
+};
+
+export function dispatchValue(val: ParsedValue) {
+	const rawSource = (val.origin || "").toLowerCase();
+	const source = rawSource.includes(":") ? rawSource.split(":")[0] : rawSource;
+	const symbol = val.scope || "";
+
+	if (symbol && !symbolsAtom.get().includes(symbol)) {
+		observeSymbols([symbol]);
+	}
+
+	if (val.tick > 0n) {
+		pendingTick = val.tick;
+	}
+	if (val.timestamp > 0n) {
+		pendingAt = val.timestamp;
+	}
+
+	if (
+		source === "spot" ||
+		rawSource === "spot:trade" ||
+		source === "spot:trade" ||
+		val.role === "trade"
+	) {
+		tickCountAtom.set(Number(val.tick));
+		scheduleFlush();
+		return;
+	}
+
+	let cash = "";
+	let unrealized = "";
+	let equity = "";
+
+	const metrics: Metric[] = [];
+	const metadata: NamedNumber[] = [];
+	const provenance: Tag[] = [];
+	let snr = 0.0;
+	let snrDefined = false;
+
+	const prefix = `${val.origin}/${val.role}/${val.scope}/${String(val.tick).padStart(19, "0")}/${String(val.seqIdx).padStart(19, "0")}.bin`;
+
+	for (const layer of val.layers) {
+		const bytes = layer.bytes;
+		if (bytes.length === 0) continue;
+
+		// JSON payload check
+		if (bytes[0] === 0x7b || bytes[0] === 0x5b) {
+			try {
+				const jsonStr = textDecoder.decode(bytes);
+				const data = JSON.parse(jsonStr);
+
+				if (data.cash !== undefined) cash = String(data.cash);
+				if (data.unrealized !== undefined) unrealized = String(data.unrealized);
+				if (data.equity !== undefined) equity = String(data.equity);
+
+				if (data.price !== undefined) {
+					metrics.push({
+						name: "price",
+						raw: Number(data.price),
+						snm: Number(data.price),
+					});
+				} else if (
+					Array.isArray(data.data) &&
+					data.data[0]?.price !== undefined
+				) {
+					metrics.push({
+						name: "price",
+						raw: Number(data.data[0].price),
+						snm: Number(data.data[0].price),
+					});
+				}
+
+				if (data.rows && Array.isArray(data.rows)) {
+					positionsAtom.set(data.rows);
+					if (data.closed && Array.isArray(data.closed)) {
+						closedPositionsAtom.set(data.closed);
+					}
+					positionCountAtom.set(data.rows.length);
+				}
+
+				for (const [k, v] of Object.entries(data)) {
+					if (typeof v === "number") {
+						metrics.push({ name: k, raw: v, snm: v });
+						metadata.push({ name: k, value: v });
+					} else if (
+						typeof v === "string" &&
+						!["cash", "unrealized", "equity", "rows", "closed"].includes(k)
+					) {
+						if (k === "action" || k === "decision_action") {
+							provenance.push({ name: "decision_action", value: v });
+						} else if (k === "path" || k === "token_path") {
+							provenance.push({ name: "token_path", value: v });
+						} else if (k === "reason" || k === "decision_reason") {
+							provenance.push({ name: "decision_reason", value: v });
+						}
+						provenance.push({ name: k, value: v });
+					}
+				}
+			} catch {
+				// ignore JSON parse error
+			}
 			continue;
 		}
 
-		if (source === "balance") {
-			let cash = "";
-			let unrealized = "";
-			let equity = "";
-
-			const metricsCount = row.metricsLength();
-			for (let mIdx = 0; mIdx < metricsCount; mIdx++) {
-				const m = row.metrics(mIdx);
-				if (!m) continue;
-				const name = m.name() ?? "";
-				const val = String(m.raw());
-				if (name === "cash") cash = val;
-				if (name === "unrealized") unrealized = val;
-				if (name === "equity") equity = val;
+		// Float64 vector payload check
+		if (bytes.length >= 8 && bytes.length % 8 === 0) {
+			const floatCount = bytes.length / 8;
+			const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+			const floats: number[] = [];
+			for (let j = 0; j < floatCount; j++) {
+				floats.push(dv.getFloat64(j * 8, true));
 			}
 
-			const provCount = row.provenanceLength();
-			for (let pIdx = 0; pIdx < provCount; pIdx++) {
-				const p = row.provenance(pIdx);
-				if (!p) continue;
-				const name = p.name() ?? "";
-				const val = p.value() ?? "";
-				if (name === "cash" || name === "symm:exact:cash") cash = val;
-				if (name === "unrealized" || name === "symm:exact:unrealized")
-					unrealized = val;
-				if (name === "equity" || name === "symm:exact:equity") equity = val;
+			let afterPrefix = layer.index;
+			if (layer.index.includes(".bin/")) {
+				afterPrefix = layer.index.split(".bin/")[1];
+			} else if (prefix && layer.index.startsWith(prefix)) {
+				afterPrefix = layer.index.slice(prefix.length).replace(/^\/+/, "");
+			} else {
+				const parts = layer.index.split("/");
+				if (parts.length > 5) {
+					afterPrefix = parts.slice(5).join("/");
+				}
 			}
 
-			const metaCount = row.metadataLength();
-			for (let mIdx = 0; mIdx < metaCount; mIdx++) {
-				const m = row.metadata(mIdx);
-				if (!m) continue;
-				const name = m.name() ?? "";
-				const val = String(m.value());
-				if (name === "cash" && !cash) cash = val;
-				if (name === "unrealized" && !unrealized) unrealized = val;
-				if (name === "equity" && !equity) equity = val;
-			}
-
-			updateEquity(cash, unrealized, equity);
-			continue;
-		}
-
-		const signalStore = signals[source];
-
-		if (!signalStore) {
-			continue;
-		}
-
-		let ring = signalStore.state[symbol];
-
-		if (!ring) {
-			// Training historical replay can burst thousands of frames per
-			// excursion; a 50-slot ring drops the mid-fragment path and leaves
-			// the Model Training tape blank / incomplete.
-			const capacity = source === "training" ? 4096 : 50;
-			ring = new RingBuffer<MeasurementT>(capacity);
-			signalStore.state[symbol] = ring;
-		}
-
-		ring.add(row.unpack());
-		pendingSources.add(source);
-
-		if (source === "training" && symbol) {
-			let decisionAction = "";
-			let decisionReason = "";
-			let tokenPath = "";
-
-			const provCount = row.provenanceLength();
-			for (let pIdx = 0; pIdx < provCount; pIdx++) {
-				const p = row.provenance(pIdx);
-				if (!p) continue;
-				const name = p.name();
-				const val = p.value() ?? "";
-				if (name === "decision_action") decisionAction = val;
-				if (name === "decision_reason") decisionReason = val;
-				if (name === "token_path") tokenPath = val;
-			}
-
-			if (decisionAction) {
-				const decision = new DecisionT();
-				decision.id = `dec-${symbol}`;
-				decision.symbol = symbol;
-				decision.action = decisionAction;
-				decision.reason = decisionReason;
-				decision.at = row.at();
-				decision.cause = tokenPath;
-
-				const current = decisionsAtom.get();
-				const next = current.filter((d) => d.symbol !== symbol);
-				next.push(decision);
-				decisionsAtom.set(next);
+			if (afterPrefix) {
+				const labels = afterPrefix.split("/");
+				for (let k = 0; k < labels.length; k++) {
+					const label = labels[k];
+					if (k < floats.length) {
+						const f = floats[k];
+						metrics.push({ name: label, raw: f, snm: f });
+						if (label === "snr") {
+							snr = f;
+							snrDefined = true;
+						}
+					} else {
+						if (label.startsWith("path:")) {
+							const remainingSegments = labels.slice(k).join("/");
+							const pathVal = remainingSegments.slice("path:".length);
+							provenance.push({ name: "token_path", value: pathVal });
+							provenance.push({ name: "path", value: pathVal });
+							break;
+						} else if (label.includes(":")) {
+							const colonIdx = label.indexOf(":");
+							const key = label.slice(0, colonIdx);
+							const valStr = label.slice(colonIdx + 1);
+							if (key === "action") {
+								provenance.push({ name: "decision_action", value: valStr });
+							} else if (key === "reason") {
+								provenance.push({ name: "decision_reason", value: valStr });
+							}
+							provenance.push({ name: key, value: valStr });
+						} else {
+							provenance.push({ name: label, value: "" });
+						}
+					}
+				}
+			} else {
+				for (let k = 0; k < floats.length; k++) {
+					metrics.push({ name: `m${k}`, raw: floats[k], snm: floats[k] });
+				}
 			}
 		}
 	}
 
-	if (pendingSources.size > 0) {
+	if (source === "balance" || val.role === "balance") {
+		if (cash || unrealized || equity) {
+			updateEquity(cash, unrealized, equity);
+		}
+		return;
+	}
+
+	if (cash || unrealized || equity) {
+		updateEquity(cash, unrealized, equity);
+	}
+
+	const value = new Value({
+		id: val.id,
+		origin: val.origin,
+		scope: val.scope,
+		role: val.role,
+		tick: val.tick,
+		seqIdx: val.seqIdx,
+		timestamp: val.timestamp,
+		layers: val.layers.map((l) => l.bytes),
+		index: val.layers.map((l) => l.index),
+		metrics,
+		metadata,
+		provenance,
+		snr,
+		snrDefined,
+	});
+
+	topologyStore.actions.ingestValues([value]);
+
+	let signalStore = signals[source];
+	if (!signalStore) {
+		signalStore = createStore<Record<string, RingBuffer<Value>>>({});
+		signals[source] = signalStore;
+	}
+
+	let ring = signalStore.state[symbol];
+	if (!ring) {
+		const capacity = source === "training" ? 4096 : 50;
+		ring = new RingBuffer<Value>(capacity);
+		signalStore.state[symbol] = ring;
+	}
+
+	ring.add(value);
+	pendingSources.add(source);
+
+	if (source === "training") {
+		const actionProv = provenance.find(
+			(p) => p.name === "decision_action" || p.name === "action",
+		);
+		const pathProv = provenance.find(
+			(p) => p.name === "token_path" || p.name === "path",
+		);
+		if (actionProv || pathProv) {
+			const current = decisionsAtom.get().filter((d) => d.symbol !== symbol);
+			current.push(
+				new DecisionT({
+					id: val.id || `dec-${symbol}`,
+					symbol,
+					action: actionProv?.value ?? "",
+					cause: pathProv?.value ?? "",
+					reason:
+						provenance.find(
+							(p) => p.name === "decision_reason" || p.name === "reason",
+						)?.value ?? "",
+					confidence: snrDefined ? snr : 0,
+				}),
+			);
+			decisionsAtom.set(current);
+		}
+	}
+
+	if (pendingSources.size > 0 || pendingTick !== null || pendingAt !== null) {
 		scheduleFlush();
 	}
 }
 
 /*
-dispatchTick records the hub's live ingress progress for the next display frame.
+dispatchValuesBuffer accepts serialized *data.Value bytes.
 */
-const dispatchTick = (frame: TickFrame) => {
-	pendingTick = frame.count();
-
-	if (frame.at() > 0n) {
-		pendingAt = frame.at();
-	}
-
-	scheduleFlush();
-};
-
-/*
-dispatchMeasurementsBuffer accepts a FlatBuffer ByteBuffer that is either a
-SYMM Message wrapping MeasurementsFrame or a bare MeasurementsFrame root.
-*/
-export const dispatchMeasurementsBuffer = (buffer: flatbuffers.ByteBuffer) => {
-	if (Message.bufferHasIdentifier(buffer)) {
-		const message = Message.getRootAsMessage(buffer);
-		const frame = message.frame(new MeasurementsFrame());
-		if (frame) {
-			dispatchMeasurements(frame);
+export const dispatchValuesBuffer = (
+	buffer: Uint8Array | ArrayBuffer | { bytes: () => Uint8Array },
+) => {
+	const bytes =
+		buffer instanceof Uint8Array
+			? buffer
+			: buffer instanceof ArrayBuffer
+				? new Uint8Array(buffer)
+				: buffer.bytes();
+	const values = parseValues(bytes);
+	if (values && values.length > 0) {
+		for (const val of values) {
+			dispatchValue(val);
 		}
-		return;
 	}
-
-	const frame = MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
-	dispatchMeasurements(frame);
 };
 
 export const WsFeed = () => {
@@ -316,63 +524,22 @@ export const WsFeed = () => {
 				if (data.type === "BATCH" && data.buffer instanceof ArrayBuffer) {
 					try {
 						const bytes = new Uint8Array(data.buffer);
-						const buffer = new flatbuffers.ByteBuffer(bytes);
-
-						if (Message.bufferHasIdentifier(buffer)) {
-							const message = Message.getRootAsMessage(buffer);
-							const frameType = message.frameType();
-
-							if (frameType === Frame.MeasurementsFrame) {
-								const measurementsFrame = message.frame(
-									new MeasurementsFrame(),
-								);
-								if (measurementsFrame) {
-									dispatchMeasurements(measurementsFrame);
-								}
-								return;
-							}
-
-							if (frameType === Frame.TickFrame) {
-								const tickFrame = message.frame(new TickFrame());
-								if (tickFrame) {
-									dispatchTick(tickFrame);
-								}
-								return;
-							}
-
-							if (frameType === Frame.EquityFrame) {
-								const equityFrame = message.frame(new EquityFrame());
-								if (equityFrame) {
-									updateEquity(
-										equityFrame.cash(),
-										equityFrame.unrealized(),
-										equityFrame.equity(),
-									);
-								}
-								return;
-							}
-
-							if (frameType === Frame.PositionsFrame) {
-								const positionsFrame = message.frame(new PositionsFrame());
-								if (positionsFrame) {
-									const unpacked = positionsFrame.unpack();
-									positionsAtom.set(unpacked.rows);
-									closedPositionsAtom.set(unpacked.closed);
-									positionCountAtom.set(unpacked.rows.length);
-								}
-								return;
+						const values = parseValues(bytes);
+						if (values && values.length > 0) {
+							for (const val of values) {
+								dispatchValue(val);
 							}
 						}
-
-						const frame = MeasurementsFrame.getRootAsMeasurementsFrame(buffer);
-						dispatchMeasurements(frame);
 					} catch (err) {
 						console.error(`WS[${shardIndex}] message processing error:`, err);
 					}
 				}
 			});
 
-			worker.postMessage({ type: "ROUTE", route: toBackendRoute(routeAtom.get()) });
+			worker.postMessage({
+				type: "ROUTE",
+				route: toBackendRoute(routeAtom.get()),
+			});
 			worker.postMessage({ type: "CONNECT", url });
 			return worker;
 		});

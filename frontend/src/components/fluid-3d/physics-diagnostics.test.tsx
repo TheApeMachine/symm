@@ -1,9 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { IntegratorHealthT } from "#/providers/telemetry/telemetry/integrator-health";
-import { PhysicsHealthT } from "#/providers/telemetry/telemetry/physics-health";
+import { IntegratorHealthT, PhysicsHealthT, type FluidPhaseReading } from "./wire";
 import { PhysicsDiagnosticsHUD } from "./physics-diagnostics";
-import type { FluidPhaseReading } from "./wire";
 
 const render = (phaseReading: FluidPhaseReading | null) => renderToStaticMarkup(
  <PhysicsDiagnosticsHUD isOpen onClose={() => {}} phaseReading={phaseReading} particleCount={2} />,

@@ -1,5 +1,4 @@
-import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
+import type { Value } from "#/types/value";
 import {
 	chartFragmentShader,
 	chartVertexShader,
@@ -119,7 +118,6 @@ export class GPUStreamRenderer {
 	>();
 	private readonly sampleValues = new Float32Array(4);
 	private readonly sampleMetadata = new Float32Array(4);
-	private readonly metricView = new Metric();
 	private head = 0;
 	private count = 0;
 	private origin: bigint | null = null;
@@ -169,30 +167,20 @@ export class GPUStreamRenderer {
 		return source === this.metric.source && symbol === this.metric.symbol;
 	}
 
-	ingest(row: Measurement) {
+	ingest(row: Value) {
 		let value: number | undefined;
 		let baseline = Number.NaN;
 		let decay = Number.NaN;
 
-		for (let index = 0; index < row.metricsLength(); index += 1) {
-			const current = row.metrics(index, this.metricView);
-
-			if (current === null) {
-				throw new Error(`measurement metric ${index} is missing`);
+		for (const m of row.metrics) {
+			if (m.name === this.metric.value) {
+				value = m.raw;
 			}
-
-			const name = current.name();
-
-			if (name === this.metric.value) {
-				value = current.raw();
+			if (m.name === this.metric.baseline) {
+				baseline = m.raw;
 			}
-
-			if (name === this.metric.baseline) {
-				baseline = current.raw();
-			}
-
-			if (name === this.metric.decay) {
-				decay = current.raw();
+			if (m.name === this.metric.decay) {
+				decay = m.raw;
 			}
 		}
 
@@ -200,9 +188,9 @@ export class GPUStreamRenderer {
 			return;
 		}
 
-		const at = row.at();
+		const at = row.timestamp;
 		this.origin ??= at;
-		const time = Number(at - this.origin) / 1e9;
+		const time = Number(at - (this.origin ?? at)) / 1e9;
 		this.sampleValues.fill(value);
 		this.sampleMetadata[0] = time;
 		this.sampleMetadata[1] = time;

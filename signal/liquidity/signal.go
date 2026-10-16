@@ -2,96 +2,63 @@ package liquidity
 
 import (
 	"context"
-	"sync"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
-type symbolState struct {
-	lastMeasurement *data.Measurement
-}
-
 type Signal struct {
 	*runtime.System
-	mu     sync.Mutex
-	states map[string]*symbolState
+	keys []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		states: make(map[string]*symbolState),
+		keys: []string{
+			"best_bid_price",
+			"best_ask_price",
+			"relative_spread",
+			"fee_rate",
+			"friction_hurdle",
+		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "liquidity", signal)
-
 	return signal
 }
 
-func (signal *Signal) Step(prior *data.Measurement) *data.Measurement {
-	if signal.Status() != runtime.READY {
-		errnie.Warn(signal.Name() + ": Step called before READY; dropping event")
-		return nil
+func (signal *Signal) Step(value *data.Value) *data.Value {
+	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+		return value
 	}
 
-	if prior == nil || prior.Label == "" {
-		return nil
-	}
-
-	snapshot, err := broker.ReadSnapshot(prior)
-
-	if err != nil {
-		signal.Error(errnie.Err(errnie.Internal, "[liquidity] stamped book unreadable", err))
-		return nil
-	}
-
-	if snapshot == nil {
-		return nil
+	snapshot, err := broker.ReadSnapshot(value)
+	if err != nil || snapshot == nil || len(snapshot.Bids) == 0 || len(snapshot.Asks) == 0 {
+		return value
 	}
 
 	bestBid, bestAsk := snapshot.Touch()
 	bid := bestBid.Price.Float64()
 	ask := bestAsk.Price.Float64()
 
-	signal.mu.Lock()
-	defer signal.mu.Unlock()
-
-	state, exists := signal.states[prior.Label]
-	if !exists {
-		state = &symbolState{}
-		signal.states[prior.Label] = state
-	}
-
 	midpoint := (bid + ask) / 2.0
-	spread := ask - bid
-	relSpread := spread / midpoint
-
-	out := map[string]float64{
-		"best_bid_price":  bid,
-		"best_ask_price":  ask,
-		"relative_spread": relSpread,
+	var relSpread float64
+	if midpoint > 0 {
+		relSpread = (ask - bid) / midpoint
 	}
 
-	var feeRate float64
-
-	for entry := range prior.Read("fee_rate") {
-		if entry != nil && entry.Metric != nil {
-			feeRate = entry.Metric.Raw()
-			break
-		}
-	}
-
+	feeRate := data.Attribute[float64](value.Layers[0], "fee_rate")
+	var frictionHurdle float64
 	if feeRate > 0 {
-		out["fee_rate"] = feeRate
-		out["friction_hurdle"] = relSpread + 2.0*feeRate
+		frictionHurdle = relSpread + 2.0*feeRate
 	}
 
-	if state.lastMeasurement == nil {
-		state.lastMeasurement = data.NewMeasurement(prior.Epoch, prior.Label, signal.Name(), prior.At, prior.From)
-	}
-
-	state.lastMeasurement = state.lastMeasurement.Next(prior, out)
-	return state.lastMeasurement
+	return data.AppendVector(value, []float64{
+		bid,
+		ask,
+		relSpread,
+		feeRate,
+		frictionHurdle,
+	}, signal.keys...)
 }

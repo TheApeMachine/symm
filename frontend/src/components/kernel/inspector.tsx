@@ -18,7 +18,7 @@ import { Flex } from "#/components/ui/flex";
 import { Meter } from "#/components/ui/meter";
 import { Modal } from "#/components/ui/modal";
 import { Typography } from "#/components/ui/typography";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { Value } from "#/types/value";
 
 const isResonance = (source: string) => source === "resonance";
 
@@ -26,7 +26,7 @@ const isResonance = (source: string) => source === "resonance";
 readings collects the accumulated values for one kernel directly from its store.
 */
 const readingsFromMeasurements = (
-	ring: RingBuffer<MeasurementT> | null | undefined,
+	ring: RingBuffer<Value> | null | undefined,
 	source?: string,
 ) => {
 	const points: number[] = [];
@@ -81,7 +81,7 @@ const formatMetricValue = (val: number | null): string => {
 };
 
 const metricValues = (
-	row: MeasurementT | null | undefined,
+	row: Value | null | undefined,
 	names: string[],
 ): Record<string, { raw: number; snm: number } | null> => {
 	const out: Record<string, { raw: number; snm: number } | null> = {};
@@ -93,7 +93,7 @@ const metricValues = (
 		if (!name || !names.includes(name)) continue;
 		out[name] = {
 			raw: m.raw,
-			snm: m.snm,
+			snm: m.snm ?? m.raw,
 		};
 	}
 
@@ -137,7 +137,7 @@ export const KernelInspector = () => {
 		const count = measurementRing?.getBufferLength
 			? measurementRing.getBufferLength()
 			: 0;
-		let row: MeasurementT | null = null;
+		let row: Value | null = null;
 		for (let i = count - 1; i >= 0; i--) {
 			const candidate = measurementRing?.get(i);
 			if (candidate && metricValues(candidate, [name])[name] !== null) {

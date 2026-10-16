@@ -55,15 +55,14 @@ func TestExecutionMeasurementRoundTrip(t *testing.T) {
 			Data:    []kraken.ExecutionData{execData},
 		}
 
-		Convey("ToMeasurement serializes execution into structured metrics without raw shortcuts", func() {
-			meas := execution.ToMeasurement(123456789)
-			So(meas, ShouldNotBeNil)
-			So(meas.Label, ShouldEqual, "BTC/USD")
-			So(meas.Source, ShouldEqual, "executions")
-			So(meas.Raw(), ShouldBeNil)
+		Convey("ToValue serializes execution into Value", func() {
+			val := execution.ToValue(123456789)
+			So(val, ShouldNotBeNil)
+			So(val.Scope, ShouldEqual, "BTC/USD")
+			So(val.Role, ShouldEqual, "execution")
 
-			Convey("and NewExecutionFromMeasurement reconstructs execution with exact values", func() {
-				restored, err := kraken.NewExecutionFromMeasurement(meas)
+			Convey("and NewExecutionFromValue reconstructs execution with exact values", func() {
+				restored, err := kraken.NewExecutionFromValue(val)
 				So(err, ShouldBeNil)
 				So(restored, ShouldNotBeNil)
 				So(len(restored.Data), ShouldEqual, 1)

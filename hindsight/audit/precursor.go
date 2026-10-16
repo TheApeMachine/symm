@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
@@ -65,27 +65,27 @@ from background market noise (outside [start, c]), and whether excursions clear 
 */
 type PrecursorStage struct {
 	*runtime.System
-	ch                chan *data.Measurement
-	violations        []*Violation
+	ch                 chan *data.Value
+	violations         []*Violation
 	grid               *nmstore.Grid
 	tickTokens         map[int64]string
 	excursions         []*ExcursionRun
 	detectorExcursions []*ExcursionRun
 	episodes           []*EpisodeData
 	activeRun          *ExcursionRun
-	discoveredFeeRate float64
-	clearanceRate     float64
-	meanNetReturn     float64
-	jsd               float64
-	nullJSDMean       float64
-	nullJSDP95        float64
-	pValue            float64
+	discoveredFeeRate  float64
+	clearanceRate      float64
+	meanNetReturn      float64
+	jsd                float64
+	nullJSDMean        float64
+	nullJSDP95         float64
+	pValue             float64
 }
 
 func NewPrecursorStage(ctx context.Context) *PrecursorStage {
 	return &PrecursorStage{
 		System:     runtime.NewSystem(ctx, "audit:precursor"),
-		ch:         make(chan *data.Measurement, 64),
+		ch:         make(chan *data.Value, 64),
 		violations: make([]*Violation, 0),
 		grid:       nmstore.NewGrid(ctx),
 		tickTokens: make(map[int64]string),
@@ -94,7 +94,7 @@ func NewPrecursorStage(ctx context.Context) *PrecursorStage {
 	}
 }
 
-func (stage *PrecursorStage) Channel() chan *data.Measurement {
+func (stage *PrecursorStage) Channel() chan *data.Value {
 	return stage.ch
 }
 
@@ -114,11 +114,11 @@ func (stage *PrecursorStage) Run() error {
 			continue
 		}
 
-		if measurement.Error() != nil {
+		if measurement.Role == "error" {
 			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
+				measurement.Scope,
 				"measurement.error",
-				measurement.Error().Error(),
+				"error measurement encountered",
 				measurement,
 				nil,
 			))
@@ -136,68 +136,42 @@ func (stage *PrecursorStage) Violations() []*Violation {
 	return stage.violations
 }
 
-func (stage *PrecursorStage) recordMeasurement(measurement *data.Measurement) {
-	for entry := range measurement.Read("fee_rate") {
-		if entry != nil && entry.Metric != nil && entry.Metric.Raw() > 0 {
-			stage.discoveredFeeRate = entry.Metric.Raw()
-		}
+func (stage *PrecursorStage) recordMeasurement(measurement *data.Value) {
+	metrics := data.Metrics(measurement)
+
+	if fee, ok := metrics["fee_rate"]; ok && fee > 0 {
+		stage.discoveredFeeRate = fee
 	}
 
 	// 1. Sensory join: track regional token per tick
-	if measurement.Source == "runtime:join" {
-		for _, peer := range measurement.Peers() {
-			for entry := range peer.Read("fee_rate") {
-				if entry != nil && entry.Metric != nil && entry.Metric.Raw() > 0 {
-					stage.discoveredFeeRate = entry.Metric.Raw()
-				}
-			}
-		}
-
-		if len(measurement.Peers()) > 0 {
+	if measurement.Role == "runtime:join" {
+		if len(measurement.Layers) > 0 {
 			regions := stage.grid.Observe(measurement)
 			if len(regions) > 0 && regions[0].Brightness > 0 {
-				stage.tickTokens[measurement.Tick] = fmt.Sprintf("R%02d", regions[0].Key)
+				stage.tickTokens[int64(measurement.Tick)] = fmt.Sprintf("R%02d", regions[0].Key)
 			}
 		}
 		return
 	}
 
 	// 2. Production Path: Excursions detected by strategy.Detector
-	if measurement.Source == "detector" {
-		typeEntry := data.Pull(measurement.Meta("type"))
-
-		if typeEntry == nil {
-			return
-		}
-
-		class := typeEntry.Value
-
+	if measurement.Origin == "detector" {
+		class := measurement.Role
 		if class != "up" && class != "up_friction" {
 			return
 		}
 
-		var bPrice, cPrice float64
-		var bTick, cTick, startTick, endTick int64
-
-		for entry := range measurement.Read() {
-			if entry == nil || entry.Metric == nil {
-				continue
-			}
-
-			switch entry.Metric.Label() {
-			case "b_price":
-				bPrice = entry.Metric.Raw()
-			case "c_price":
-				cPrice = entry.Metric.Raw()
-			case "b_tick":
-				bTick = int64(entry.Metric.Raw())
-			case "c_tick":
-				cTick = int64(entry.Metric.Raw())
-			case "start_tick":
-				startTick = int64(entry.Metric.Raw())
-			case "end_tick":
-				endTick = int64(entry.Metric.Raw())
-			}
+		bPrice := metrics["b_price"]
+		cPrice := metrics["c_price"]
+		bTick := int64(metrics["b_tick"])
+		cTick := int64(metrics["c_tick"])
+		startTick := int64(metrics["start_tick"])
+		if startTick == 0 {
+			startTick = int64(metrics["a_tick"])
+		}
+		endTick := int64(metrics["end_tick"])
+		if endTick == 0 {
+			endTick = int64(metrics["d_tick"])
 		}
 
 		if bPrice > 0 && cPrice > 0 {
@@ -209,7 +183,7 @@ func (stage *PrecursorStage) recordMeasurement(measurement *data.Measurement) {
 
 			if class == "up" {
 				run := &ExcursionRun{
-					Symbol:   measurement.Label,
+					Symbol:   measurement.Scope,
 					EntryAsk: bPrice,
 					ExitBid:  cPrice,
 					Ticks:    ticks,
@@ -220,7 +194,7 @@ func (stage *PrecursorStage) recordMeasurement(measurement *data.Measurement) {
 
 			stage.episodes = append(stage.episodes, &EpisodeData{
 				Class:     class,
-				Symbol:    measurement.Label,
+				Symbol:    measurement.Scope,
 				StartTick: startTick,
 				BTick:     bTick,
 				CTick:     cTick,
@@ -234,28 +208,16 @@ func (stage *PrecursorStage) recordMeasurement(measurement *data.Measurement) {
 	}
 
 	// 3. Trade / Quote touch execution (evaluated on real and test excursion streams)
-	var askPrice, bidPrice, frictionHurdle float64
+	askPrice := metrics["best_ask_price"]
+	bidPrice := metrics["best_bid_price"]
+	frictionHurdle := metrics["friction_hurdle"]
 
-	for entry := range measurement.Read() {
-		if entry == nil || entry.Metric == nil {
-			continue
+	if p, ok := metrics["price"]; ok {
+		if askPrice <= 0 {
+			askPrice = p
 		}
-
-		switch entry.Metric.Label() {
-		case "best_ask_price":
-			askPrice = entry.Metric.Raw()
-		case "best_bid_price":
-			bidPrice = entry.Metric.Raw()
-		case "friction_hurdle":
-			frictionHurdle = entry.Metric.Raw()
-		case "price":
-			if askPrice <= 0 {
-				askPrice = entry.Metric.Raw()
-			}
-
-			if bidPrice <= 0 {
-				bidPrice = entry.Metric.Raw()
-			}
+		if bidPrice <= 0 {
+			bidPrice = p
 		}
 	}
 
@@ -265,7 +227,7 @@ func (stage *PrecursorStage) recordMeasurement(measurement *data.Measurement) {
 
 	if stage.activeRun == nil {
 		stage.activeRun = &ExcursionRun{
-			Symbol:         measurement.Label,
+			Symbol:         measurement.Scope,
 			EntryAsk:       askPrice,
 			ExitBid:        bidPrice,
 			FrictionHurdle: frictionHurdle,
@@ -325,9 +287,9 @@ func (stage *PrecursorStage) auditPrecursorSeparation() {
 		return
 	}
 
-	p := empiricalDistribution(precursorTokens)
-	q := empiricalDistribution(backgroundTokens)
-	jsd, _ := computeJSD(p, q)
+	p := computeFrequencyDistribution(precursorTokens)
+	q := computeFrequencyDistribution(backgroundTokens)
+	jsd := computeJSD(p, q)
 	stage.jsd = jsd
 
 	permutations := system.Cfg.Audit.Permutations
@@ -351,9 +313,9 @@ func (stage *PrecursorStage) auditPrecursorSeparation() {
 			allTokens[i], allTokens[j] = allTokens[j], allTokens[i]
 		})
 
-		nullP := empiricalDistribution(allTokens[:nPrecursor])
-		nullQ := empiricalDistribution(allTokens[nPrecursor:])
-		nullVal, _ := computeJSD(nullP, nullQ)
+		nullP := computeFrequencyDistribution(allTokens[:nPrecursor])
+		nullQ := computeFrequencyDistribution(allTokens[nPrecursor:])
+		nullVal := computeJSD(nullP, nullQ)
 		nullJSDs[iter] = nullVal
 
 		if nullVal >= jsd {
@@ -498,5 +460,3 @@ func (stage *PrecursorStage) Data() any {
 		"episodes":        stage.episodes,
 	}
 }
-
-

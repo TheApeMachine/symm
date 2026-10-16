@@ -32,6 +32,16 @@ const sendFocus = (symbol: string) => {
 	}
 };
 
+const sendPositionExit = (symbol: string) => {
+	if (
+		socket !== null &&
+		socket.readyState === WebSocket.OPEN &&
+		typeof symbol === "string"
+	) {
+		socket.send(JSON.stringify({ type: "position.exit", symbol }));
+	}
+};
+
 const teardownSocket = () => {
 	// Invalidate the current socket before an intentional close so its stale
 	// lifecycle handlers can never schedule a reconnect for a replaced or
@@ -169,6 +179,9 @@ self.addEventListener("message", (event: MessageEvent) => {
 			return;
 		case "ROUTE":
 			sendRoute(message.route ?? "");
+			return;
+		case "POSITION_EXIT":
+			sendPositionExit(message.symbol ?? "");
 			return;
 	}
 });

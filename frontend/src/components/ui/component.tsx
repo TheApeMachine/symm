@@ -1,11 +1,11 @@
 import type { RingBuffer } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { Value } from "#/types/value";
 import { type ReactNode, useEffect, useRef } from "react";
 import { Alert } from "./alert";
 import { memoizedQuery, memoizedQueryAll, renderValue, resetValue } from "./dom";
 import { Loader } from "./loader";
-import type { MeasurementStore } from "./measurement";
+import type { ValueStore } from "./value";
 
 export const nameOf = (val: unknown): string => {
 	if (typeof val === "string") return val;
@@ -102,47 +102,66 @@ export const walk = (root: HTMLElement, obj: unknown) => {
 				? nameOf(value) || value
 				: value;
 
-		renderValue(
-			memoizedQuery(
-				root,
-				`[data-metric="${key}"], [data-metric-meter="${key}"], [data-metric-badge="${key}"]`,
-			),
-			resolved,
-		);
+		const selectors = [
+			`[data-metric="${key}"]`,
+			`[data-metric-meter="${key}"]`,
+			`[data-metric-badge="${key}"]`,
+		];
+		if (key === "scope") {
+			selectors.push(
+				'[data-metric="symbol"]',
+				'[data-metric-meter="symbol"]',
+				'[data-metric-badge="symbol"]',
+			);
+		} else if (key === "origin") {
+			selectors.push(
+				'[data-metric="source"]',
+				'[data-metric-meter="source"]',
+				'[data-metric-badge="source"]',
+			);
+		} else if (key === "timestamp") {
+			selectors.push(
+				'[data-metric="at"]',
+				'[data-metric-meter="at"]',
+				'[data-metric-badge="at"]',
+			);
+		}
+
+		renderValue(memoizedQuery(root, selectors.join(", ")), resolved);
 	}
 };
 
 export interface ComponentProps {
-	/* Direct single measurement to bind */
-	measurement?: MeasurementT | null;
+	/* Direct single value to bind */
+	value?: Value | null;
 	/* Direct ring buffer to observe */
-	ringBuffer?: RingBuffer<MeasurementT>;
+	ringBuffer?: RingBuffer<Value>;
 	/* A signal store; with symbol, the Component follows that symbol's ring live. */
-	store?: MeasurementStore;
+	store?: ValueStore;
 	source?: string;
 	symbol?: string;
 	children?: ReactNode;
 	className?: string;
-	onMeasurement?: (measurement: MeasurementT, root: HTMLElement) => void;
+	onValue?: (value: Value, root: HTMLElement) => void;
 	isLoading?: boolean;
 	error?: Error;
 }
 
 /*
 Component acts as a dynamic telemetry data-binding boundary.
-It subscribes to a MeasurementT, RingBuffer<MeasurementT>, or a named signal store
-and dynamically binds incoming Measurement fields to matching data attributes in
+It subscribes to a Value, RingBuffer<Value>, or a named signal store
+and dynamically binds incoming Value fields to matching data attributes in
 its children DOM tree (e.g., data-metric="<metric_name>"), bypassing React's
 render cycle for maximum streaming throughput without repetitive boilerplate.
 */
 export const Component = ({
-	measurement: propMeasurement,
+	value: propValue,
 	ringBuffer: propRing,
 	store,
 	symbol,
 	children,
 	className,
-	onMeasurement,
+	onValue,
 	isLoading,
 	error,
 }: ComponentProps) => {
@@ -152,11 +171,11 @@ export const Component = ({
 		const root = containerRef.current;
 		if (!root) return;
 
-		// 1. Direct measurement prop
-		if (propMeasurement !== undefined) {
-			if (propMeasurement) {
-				walk(root, propMeasurement);
-				if (onMeasurement) onMeasurement(propMeasurement, root);
+		// 1. Direct value prop
+		if (propValue !== undefined) {
+			if (propValue) {
+				walk(root, propValue);
+				if (onValue) onValue(propValue, root);
 			} else {
 				reset(root);
 			}
@@ -166,11 +185,11 @@ export const Component = ({
 		// 2. RingBuffer or Store subscription
 		reset(root);
 
-		const cursor = new RingCursor<MeasurementT>();
-		let observedRing: RingBuffer<MeasurementT> | undefined;
+		const cursor = new RingCursor<Value>();
+		let observedRing: RingBuffer<Value> | undefined;
 		let generation = -1;
 
-		const update = (ring: RingBuffer<MeasurementT> | undefined) => {
+		const update = (ring: RingBuffer<Value> | undefined) => {
 			if (!ring || ring.isEmpty()) {
 				reset(root);
 				return;
@@ -181,9 +200,9 @@ export const Component = ({
 				generation = ring.generation;
 			}
 
-			cursor.read(ring, (measurement) => {
-				walk(root, measurement);
-				if (onMeasurement) onMeasurement(measurement, root);
+			cursor.read(ring, (val) => {
+				walk(root, val);
+				if (onValue) onValue(val, root);
 			});
 		};
 
@@ -201,7 +220,7 @@ export const Component = ({
 		});
 
 		return () => subscription.unsubscribe();
-	}, [propMeasurement, propRing, store, symbol, onMeasurement]);
+	}, [propValue, propRing, store, symbol, onValue]);
 
 	if (isLoading) {
 		return <Loader />;

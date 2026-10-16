@@ -14,6 +14,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -457,7 +458,7 @@ func (desk *Desk) submit(symbol string, order *spot.OrderRequest) error {
 	}
 
 	if desk.storeTee != nil {
-		desk.storeTee.Push(req.ToMeasurement())
+		desk.storeTee.Push(data.NewValue("broker", "order", symbol).Append(buf))
 	}
 
 	return nil

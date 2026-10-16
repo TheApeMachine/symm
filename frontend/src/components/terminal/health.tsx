@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
 import { tickCountAtom } from "#/collections/app";
-import type { Measurement } from "#/collections/types";
 import { sourceHeadlineMetric } from "#/components/terminal/kernel-meta";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
+import type { Value } from "#/types/value";
 
 export type TerminalHealth = {
 	firing: number;
@@ -33,7 +33,7 @@ const healthLabel = (
 };
 
 export const terminalHealthSummary = (
-	measurements: Measurement[],
+	measurements: Value[],
 	focusSymbol: string,
 	sources: string[],
 	tick: { count: number; completed: boolean; ns: number },
@@ -43,18 +43,19 @@ export const terminalHealthSummary = (
 	const strengths: number[] = [];
 
 	for (const measurement of measurements) {
-		firingSources.add(measurement.source);
+		firingSources.add(measurement.origin);
 
-		if (measurement.symbol !== focusSymbol) {
+		if (measurement.scope !== focusSymbol) {
 			continue;
 		}
 
-		focusSources.add(measurement.source);
+		focusSources.add(measurement.origin);
 
-		const metric = sourceHeadlineMetric(measurement.source).slice(
+		const metricName = sourceHeadlineMetric(measurement.origin).slice(
 			"metrics.".length,
 		);
-		const value = measurement.metrics?.[metric]?.snm;
+		const found = measurement.metrics?.find((m) => m.name === metricName);
+		const value = found ? (found.snm ?? found.raw) : undefined;
 
 		if (typeof value === "number" && Number.isFinite(value)) {
 			strengths.push(value);

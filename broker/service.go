@@ -1,9 +1,8 @@
 package broker
 
 import (
-	"strconv"
-
 	"github.com/gofiber/fiber/v3"
+	"github.com/theapemachine/symm/data"
 )
 
 /*
@@ -272,26 +271,16 @@ func (service *Service) balanceReport(reqCtx fiber.Ctx) error {
 	unrealized := "0"
 	equity := "0"
 
-	if balance.measurement != nil {
-		for entry := range balance.measurement.Read("cash") {
-			if entry.Metric != nil {
-				cash = strconv.FormatFloat(entry.Metric.Raw(), 'f', -1, 64)
-				break
-			}
+	if balance.value != nil && len(balance.value.Layers) > 0 {
+		layer := balance.value.Layers[0]
+		if c := data.Attribute[string](layer, "tb"); c != "" {
+			cash = c
 		}
-
-		for entry := range balance.measurement.Read("unrealized") {
-			if entry.Metric != nil {
-				unrealized = strconv.FormatFloat(entry.Metric.Raw(), 'f', -1, 64)
-				break
-			}
+		if u := data.Attribute[string](layer, "n"); u != "" {
+			unrealized = u
 		}
-
-		for entry := range balance.measurement.Read("equity") {
-			if entry.Metric != nil {
-				equity = strconv.FormatFloat(entry.Metric.Raw(), 'f', -1, 64)
-				break
-			}
+		if e := data.Attribute[string](layer, "e"); e != "" {
+			equity = e
 		}
 	}
 

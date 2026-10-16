@@ -1,8 +1,8 @@
-import type { Measurement, ResonanceFrame } from "#/collections/types";
+import type { ResonanceFrame } from "#/collections/types";
 import { parseResonanceData } from "#/components/charts/prediction";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { requirePositiveLength } from "#/lib/domain";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { Value } from "#/types/value";
 
 export type HawkesMetrics = {
 	intensity: number | null;
@@ -41,28 +41,29 @@ const numberArray = (value: unknown): number[] =>
 		? value.filter((item): item is number => typeof item === "number")
 		: [];
 
-const measurementEpochs = (measurements: Measurement[]): Measurement[][] => {
-	const epochs = new Map<string, Measurement[]>();
+const valueEpochs = (values: Value[]): Value[][] => {
+	const epochs = new Map<string, Value[]>();
 
-	for (const measurement of measurements) {
-		const epoch = epochs.get(measurement.at) ?? [];
-		epoch.push(measurement);
-		epochs.set(measurement.at, epoch);
+	for (const val of values) {
+		const key = String(val.timestamp);
+		const epoch = epochs.get(key) ?? [];
+		epoch.push(val);
+		epochs.set(key, epoch);
 	}
 
 	return [...epochs.values()];
 };
 
-const measurementRaw = (
-	epoch: Measurement[],
+const valueRaw = (
+	epoch: Value[],
 	metric: string,
 	side = "",
 ): number | null => {
 	const key = side === "" ? metric : `${metric}:${side}`;
 
 	for (let index = epoch.length - 1; index >= 0; index -= 1) {
-		const measurement = epoch[index];
-		const raw = measurement.metrics?.[key]?.raw;
+		const val = epoch[index];
+		const raw = val.metric(key);
 
 		if (typeof raw === "number" && Number.isFinite(raw)) {
 			return raw;
@@ -112,7 +113,7 @@ export const xrayLayersFromResonance = (
 		"metrics" in frame &&
 		Array.isArray((frame as { metrics?: unknown }).metrics)
 	) {
-		const parsed = parseResonanceData(frame as unknown as MeasurementT);
+		const parsed = parseResonanceData(frame as unknown as Value);
 		if (parsed?.layers && parsed.layers.length > 0) {
 			layers = parsed.layers as unknown as Array<Record<string, unknown>>;
 			surprise = parsed.surprise;
@@ -134,23 +135,23 @@ export const xrayLayersFromResonance = (
 	});
 };
 
-const hawkesMetrics = (epoch: Measurement[]): HawkesMetrics => {
+const hawkesMetrics = (epoch: Value[]): HawkesMetrics => {
 	const aggregateIntensity =
-		measurementRaw(epoch, "conditional_intensity") ??
-		measurementRaw(epoch, "arrival_rate");
+		valueRaw(epoch, "conditional_intensity") ??
+		valueRaw(epoch, "arrival_rate");
 	const buyIntensity =
-		measurementRaw(epoch, "conditional_intensity", "buy") ??
-		measurementRaw(epoch, "arrival_rate", "buy");
+		valueRaw(epoch, "conditional_intensity", "buy") ??
+		valueRaw(epoch, "arrival_rate", "buy");
 	const sellIntensity =
-		measurementRaw(epoch, "conditional_intensity", "sell") ??
-		measurementRaw(epoch, "arrival_rate", "sell");
+		valueRaw(epoch, "conditional_intensity", "sell") ??
+		valueRaw(epoch, "arrival_rate", "sell");
 	const radius =
-		measurementRaw(epoch, "branching_spectral_radius") ??
-		measurementRaw(epoch, "spectral_radius");
+		valueRaw(epoch, "branching_spectral_radius") ??
+		valueRaw(epoch, "spectral_radius");
 
-	const aggregateBg = measurementRaw(epoch, "background_rate");
-	const buyBg = measurementRaw(epoch, "background_rate", "buy");
-	const sellBg = measurementRaw(epoch, "background_rate", "sell");
+	const aggregateBg = valueRaw(epoch, "background_rate");
+	const buyBg = valueRaw(epoch, "background_rate", "buy");
+	const sellBg = valueRaw(epoch, "background_rate", "sell");
 
 	const intensity =
 		aggregateIntensity ??
@@ -174,13 +175,13 @@ const hawkesMetrics = (epoch: Measurement[]): HawkesMetrics => {
 };
 
 /*
-hawkesMetricsFromFrames reads Hawkes intensity metrics from a flat measurement
+hawkesMetricsFromFrames reads Hawkes intensity metrics from a flat value
 history for one symbol/source without store access.
 */
 export const hawkesMetricsFromFrames = (
-	frames: Measurement[],
+	frames: Value[],
 ): HawkesMetrics => {
-	const epoch = measurementEpochs(frames).at(-1);
+	const epoch = valueEpochs(frames).at(-1);
 
 	if (epoch === undefined) {
 		return {
@@ -202,10 +203,10 @@ hawkesMetricsFromBuffer is the array-facing alias used by paint paths that
 already filtered Hawkes rows from a worker snapshot.
 */
 export const hawkesMetricsFromBuffer = (
-	frames: Measurement[] | undefined,
+	frames: Value[] | undefined,
 ): HawkesMetrics => hawkesMetricsFromFrames(frames ?? []);
 
-export const hawkesEventCount = (frames: Measurement[] | undefined): number =>
+export const hawkesEventCount = (frames: Value[] | undefined): number =>
 	frames?.length ?? 0;
 
 /*
@@ -268,7 +269,7 @@ export const latentPointsFromFrames = (
 			"metrics" in frame &&
 			Array.isArray((frame as { metrics?: unknown }).metrics)
 		) {
-			const parsed = parseResonanceData(frame as unknown as MeasurementT);
+			const parsed = parseResonanceData(frame as unknown as Value);
 			if (parsed?.latent && parsed.latent.length >= 2) {
 				position = parsed.latent.slice(0, 2);
 			}
@@ -350,7 +351,7 @@ const retainedHawkes = new Map<string, Record<string, number>>();
 
 export const retainResonanceRow = (
 	symbol: string,
-	row: Record<string, unknown> | MeasurementT,
+	row: Record<string, unknown> | Value,
 ) => {
 	if (!symbol) return;
 	const existing = retainedResonance.get(symbol) ?? {};
@@ -360,7 +361,7 @@ export const retainResonanceRow = (
 		"metrics" in row &&
 		Array.isArray((row as { metrics?: unknown }).metrics)
 	) {
-		const parsed = parseResonanceData(row as unknown as MeasurementT);
+		const parsed = parseResonanceData(row as unknown as Value);
 		if (parsed) {
 			parsedData = {
 				latent: parsed.latent,

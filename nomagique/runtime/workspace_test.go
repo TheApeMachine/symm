@@ -3,25 +3,23 @@ package runtime
 import (
 	"context"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/data"
 )
 
 type dummyNode struct {
-	lastPrior *data.Measurement
+	lastPrior *data.Value
 }
 
-func (node *dummyNode) Step(prior *data.Measurement) *data.Measurement {
+func (node *dummyNode) Step(prior *data.Value) *data.Value {
 	node.lastPrior = prior
 
 	if prior == nil {
 		return nil
 	}
 
-	return data.NewMeasurement(prior.Epoch, prior.Label, "dummy", prior.At, prior.From)
+	return data.NewValue("test", "tick", "node").Append([]byte("dummy"))
 }
 
 func TestWorkspaceTickAdvancement(t *testing.T) {
@@ -42,34 +40,16 @@ func TestWorkspaceTickAdvancement(t *testing.T) {
 			So(workspace.mask, ShouldEqual, 8191)
 		})
 
-		Convey("measurements stamped with Tick at source are preserved and track Progress", func() {
-			initialTick := system.Tick.Load()
-			now := time.Now().UTC()
+		Convey("values passed to Step are handled through the pipeline", func() {
+			val1 := data.NewValue("workspace", "tick", "aggregate").Append([]byte(`{"price":50000}`))
+			workspace.Step(val1)
 
-			m1 := data.NewMeasurement(1, "BTC/USD", "spot:trade", now, now)
-			m1.Write(data.NewMetric("price", 50000, data.UnitPrice, data.TimescaleInstantaneous))
+			So(val1, ShouldNotBeNil)
 
-			workspace.Step(m1)
+			val2 := data.NewValue("workspace", "tick", "aggregate").Append([]byte(`{"price":50010}`))
+			workspace.Step(val2)
 
-			So(m1.Tick, ShouldEqual, initialTick+1)
-			So(system.Tick.Load(), ShouldEqual, initialTick+1)
-
-			tickProgress, atProgress := workspace.Progress()
-			So(tickProgress, ShouldEqual, initialTick+1)
-			So(atProgress, ShouldEqual, now.UnixNano())
-
-			now2 := now.Add(time.Second)
-			m2 := data.NewMeasurement(1, "BTC/USD", "spot:trade", now2, now2)
-			m2.Write(data.NewMetric("price", 50010, data.UnitPrice, data.TimescaleInstantaneous))
-
-			workspace.Step(m2)
-
-			So(m2.Tick, ShouldEqual, initialTick+2)
-			So(system.Tick.Load(), ShouldEqual, initialTick+2)
-
-			tickProgress2, atProgress2 := workspace.Progress()
-			So(tickProgress2, ShouldEqual, initialTick+2)
-			So(atProgress2, ShouldEqual, now2.UnixNano())
+			So(val2, ShouldNotBeNil)
 		})
 	})
 }

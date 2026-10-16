@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 func TestRLSNext(t *testing.T) {
@@ -22,14 +22,14 @@ func TestRLSNext(t *testing.T) {
 				features[index] = float64(index + 1)
 			}
 
-			first := data.Read[[][]float64](node.Next(data.NewValue(append(append([]float64(nil), features...), 1)).Next(nil)))
+			first := transport.Read[[][]float64](node.Next(transport.NewValue(append(append([]float64(nil), features...), 1)).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(first[0]), ShouldEqual, 8)
 			So(first[0][6], ShouldEqual, 1)
 			So(first[0][7], ShouldEqual, 0)
 			beta := append([]float64(nil), first[1]...)
 
-			query := data.Read[[][]float64](node.Next(data.NewValue(features).Next(nil)))
+			query := transport.Read[[][]float64](node.Next(transport.NewValue(features).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(len(query[0]), ShouldEqual, 8)
 			So(query[0][6], ShouldEqual, 0)
@@ -44,9 +44,9 @@ func TestRLSNext(t *testing.T) {
 			So(query[0][0], ShouldAlmostEqual, prediction)
 
 			// Train two more observations so posterior has 3 updates (nu = 3 > 2)
-			_ = data.Read[[][]float64](node.Next(data.NewValue(append(append([]float64(nil), features...), 2)).Next(nil)))
-			_ = data.Read[[][]float64](node.Next(data.NewValue(append(append([]float64(nil), features...), 3)).Next(nil)))
-			fourth := data.Read[[][]float64](node.Next(data.NewValue(features).Next(nil)))
+			_ = transport.Read[[][]float64](node.Next(transport.NewValue(append(append([]float64(nil), features...), 2)).Next(nil)))
+			_ = transport.Read[[][]float64](node.Next(transport.NewValue(append(append([]float64(nil), features...), 3)).Next(nil)))
+			fourth := transport.Read[[][]float64](node.Next(transport.NewValue(features).Next(nil)))
 			So(node.Error(), ShouldBeNil)
 			So(fourth[0][7], ShouldEqual, 1)
 		})
@@ -55,7 +55,7 @@ func TestRLSNext(t *testing.T) {
 	Convey("A row of the wrong width is a shape failure", t, func() {
 		node := learning.NewRLS(2, 1, 1)
 
-		for range node.Next(data.NewValue([]float64{1, 2, 3, 4}).Next(nil)) {
+		for range node.Next(transport.NewValue([]float64{1, 2, 3, 4}).Next(nil)) {
 			t.Fatal("a mis-shaped row must yield nothing")
 		}
 
@@ -80,11 +80,11 @@ func BenchmarkRLSNext(b *testing.B) {
 		copy(labeled, features)
 		labeled[dimension] = features[0] - features[1]
 
-		for out := range node.Next(data.NewValue(labeled).Next(nil)) {
+		for out := range node.Next(transport.NewValue(labeled).Next(nil)) {
 			_ = *(*[][]float64)(out)
 		}
 
-		for out := range node.Next(data.NewValue(features).Next(nil)) {
+		for out := range node.Next(transport.NewValue(features).Next(nil)) {
 			_ = *(*[][]float64)(out)
 		}
 

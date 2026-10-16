@@ -3,13 +3,14 @@ package audit
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -65,7 +66,6 @@ func (pm *PairMoment) Correlation() (float64, bool) {
 	return correlation, true
 }
 
-
 /*
 RedundancyStage audits feature space orthogonality to identify collinear metric pairs.
 When two metrics move in near-perfect lockstep (|r| >= 0.95), they are redundant clones
@@ -74,7 +74,7 @@ sharing representation subspace. This wastes memory/compute and creates numerica
 */
 type RedundancyStage struct {
 	*runtime.System
-	ch         chan *data.Measurement
+	ch         chan *data.Value
 	violations []*Violation
 	pairs      map[string]*PairMoment
 }
@@ -82,13 +82,13 @@ type RedundancyStage struct {
 func NewRedundancyStage(ctx context.Context) *RedundancyStage {
 	return &RedundancyStage{
 		System:     runtime.NewSystem(ctx, "audit:redundancy"),
-		ch:         make(chan *data.Measurement, 64),
+		ch:         make(chan *data.Value, 64),
 		violations: make([]*Violation, 0),
 		pairs:      make(map[string]*PairMoment),
 	}
 }
 
-func (stage *RedundancyStage) Channel() chan *data.Measurement {
+func (stage *RedundancyStage) Channel() chan *data.Value {
 	return stage.ch
 }
 
@@ -108,18 +108,8 @@ func (stage *RedundancyStage) Run() error {
 			continue
 		}
 
-		if measurement.Source == "detector" || measurement.Source == "policy" {
+		if measurement.Origin == "detector" || measurement.Origin == "policy" || measurement.Role == "detector" || measurement.Role == "policy" {
 			continue
-		}
-
-		if measurement.Error() != nil {
-			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
-				"measurement.error",
-				measurement.Error().Error(),
-				measurement,
-				nil,
-			))
 		}
 
 		stage.auditMetricPairs(measurement)
@@ -131,78 +121,38 @@ func (stage *RedundancyStage) Run() error {
 }
 
 /*
-auditMetricPairs extracts all metric values from the measurement (or its peers if runtime:join)
+auditMetricPairs extracts all metric values from the measurement
 and updates online pairwise sufficient statistics.
 */
-func (stage *RedundancyStage) auditMetricPairs(measurement *data.Measurement) {
+func (stage *RedundancyStage) auditMetricPairs(measurement *data.Value) {
 	values := make(map[string]float64)
 
-	if len(measurement.Peers()) > 0 {
-		for _, peer := range measurement.Peers() {
-			if peer == nil {
-				continue
-			}
-
-			for entry := range peer.Read() {
-				if entry == nil || entry.Metric == nil {
-					continue
-				}
-
-				key := peer.Source + ":" + entry.Metric.Label()
-				values[key] = entry.Metric.Raw()
-			}
-		}
-	}
-
-	if len(values) == 0 {
-		for entry := range measurement.Read() {
-			if entry == nil || entry.Metric == nil {
-				stage.violations = append(stage.violations, NewViolation(
-					measurement.Label,
-					"entry.metric",
-					"Nil metric entry encountered in measurement",
-					measurement,
-					nil,
-				))
-
-				continue
-			}
-
-			key := measurement.Source + ":" + entry.Metric.Label()
-			values[key] = entry.Metric.Raw()
-		}
-	}
+	maps.Copy(values, data.Metrics(measurement))
 
 	metricKeys := make([]string, 0, len(values))
-
 	for metricKey := range values {
 		metricKeys = append(metricKeys, metricKey)
 	}
-
 	slices.Sort(metricKeys)
 
-	// Compare every unique pair of metrics (A, B) where A < B.
-	for outerIdx := 0; outerIdx < len(metricKeys); outerIdx++ {
-		for innerIdx := outerIdx + 1; innerIdx < len(metricKeys); innerIdx++ {
-			keyA := metricKeys[outerIdx]
-			keyB := metricKeys[innerIdx]
-			pairKey := measurement.Label + "|" + keyA + "<->" + keyB
+	for i := 0; i < len(metricKeys); i++ {
+		for j := i + 1; j < len(metricKeys); j++ {
+			pairKey := metricKeys[i] + " <-> " + metricKeys[j]
 
 			moment, exists := stage.pairs[pairKey]
-
 			if !exists {
 				moment = &PairMoment{}
 				stage.pairs[pairKey] = moment
 			}
 
-			moment.Update(values[keyA], values[keyB])
+			moment.Update(values[metricKeys[i]], values[metricKeys[j]])
 		}
 	}
 }
 
 /*
-auditRedundancy evaluates mature correlation across the entire stream at the end of the run.
-This avoids false positives from early-sample latching when N is small.
+auditRedundancy scans the bivariate correlation matrix across all pairs and flags
+any pairs exceeding the collinearity threshold (|r| >= 0.95).
 */
 func (stage *RedundancyStage) auditRedundancy() {
 	pairKeys := make([]string, 0, len(stage.pairs))
@@ -215,29 +165,22 @@ func (stage *RedundancyStage) auditRedundancy() {
 
 	for _, pairKey := range pairKeys {
 		moment := stage.pairs[pairKey]
-		correlation, scorable := moment.Correlation()
 
-		if !scorable || math.Abs(correlation) < 0.95 {
+		correlation, ok := moment.Correlation()
+		if !ok {
 			continue
 		}
 
-		parts := strings.Split(pairKey, "|")
-		label := ""
-		pair := pairKey
-
-		if len(parts) >= 2 {
-			label = parts[0]
-			pair = parts[1]
+		if math.Abs(correlation) >= 0.95 {
+			stage.violations = append(stage.violations, NewViolation(
+				pairKey,
+				"redundancy.collinear_pair",
+				fmt.Sprintf("Metric pair [%s] are collinear clones (|r| = %.4f >= 0.95 across %.0f observations)",
+					pairKey, correlation, moment.Count),
+				nil,
+				nil,
+			))
 		}
-
-		stage.violations = append(stage.violations, NewViolation(
-			label,
-			"redundancy.collinear_pair",
-			fmt.Sprintf("Metrics in %s are collinear clones (|r| = %.4f >= 0.95)",
-				pair, correlation),
-			nil,
-			nil,
-		))
 	}
 }
 
@@ -256,7 +199,14 @@ func (stage *RedundancyStage) Report() string {
 }
 
 func (stage *RedundancyStage) Data() any {
-	redundantPairs := make([]map[string]any, 0)
+	type PairSummary struct {
+		Pair        string  `json:"pair"`
+		Correlation float64 `json:"correlation"`
+		Count       float64 `json:"count"`
+		Collinear   bool    `json:"collinear"`
+	}
+
+	summaries := make([]PairSummary, 0, len(stage.pairs))
 	pairKeys := make([]string, 0, len(stage.pairs))
 
 	for pairKey := range stage.pairs {
@@ -267,24 +217,23 @@ func (stage *RedundancyStage) Data() any {
 
 	for _, pairKey := range pairKeys {
 		moment := stage.pairs[pairKey]
-		correlation, scorable := moment.Correlation()
-
-		if !scorable || math.Abs(correlation) < 0.95 {
+		corr, ok := moment.Correlation()
+		if !ok {
 			continue
 		}
 
-		redundantPairs = append(redundantPairs, map[string]any{
-			"pair":        pairKey,
-			"correlation": correlation,
-			"count":       moment.Count,
+		summaries = append(summaries, PairSummary{
+			Pair:        pairKey,
+			Correlation: corr,
+			Count:       moment.Count,
+			Collinear:   math.Abs(corr) >= 0.95,
 		})
 	}
 
 	return map[string]any{
-		"passed":          len(redundantPairs) == 0,
-		"total_pairs":     len(stage.pairs),
-		"redundant_count": len(redundantPairs),
-		"redundant_pairs": redundantPairs,
+		"passed":          len(stage.violations) == 0,
+		"pairs_evaluated": len(summaries),
+		"collinear_count": len(stage.violations),
+		"pairs":           summaries,
 	}
 }
-

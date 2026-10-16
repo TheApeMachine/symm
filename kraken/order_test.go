@@ -7,7 +7,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 )
 
-func TestAddOrderRequestMeasurementRoundTrip(t *testing.T) {
+func TestAddOrderRequestValueRoundTrip(t *testing.T) {
 	Convey("Given a valid kraken.AddOrderRequest", t, func() {
 		original := &kraken.AddOrderRequest{
 			Pair:    "BTC/USD",
@@ -17,15 +17,14 @@ func TestAddOrderRequestMeasurementRoundTrip(t *testing.T) {
 			ClOrdId: "order-xyz-123",
 		}
 
-		Convey("ToMeasurement serializes order without raw shortcuts", func() {
-			meas := original.ToMeasurement(123456789)
-			So(meas, ShouldNotBeNil)
-			So(meas.Label, ShouldEqual, "BTC/USD")
-			So(meas.Source, ShouldEqual, "orders")
-			So(meas.Raw(), ShouldBeNil)
+		Convey("ToValue serializes order into Value", func() {
+			val := original.ToValue(123456789)
+			So(val, ShouldNotBeNil)
+			So(val.Scope, ShouldEqual, "BTC/USD")
+			So(val.Role, ShouldEqual, "order")
 
-			Convey("and NewAddOrderRequestFromMeasurement restores all fields", func() {
-				restored, err := kraken.NewAddOrderRequestFromMeasurement(meas)
+			Convey("and NewAddOrderRequestFromValue restores all fields", func() {
+				restored, err := kraken.NewAddOrderRequestFromValue(val)
 				So(err, ShouldBeNil)
 				So(restored, ShouldNotBeNil)
 				So(restored.Pair, ShouldEqual, original.Pair)

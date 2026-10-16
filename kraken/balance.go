@@ -1,15 +1,13 @@
 package kraken
 
 import (
-	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/data"
 )
 
 /*
@@ -230,169 +228,30 @@ func NewTradeBalanceFromMap(model datura.Map[any]) TradeBalanceResult {
 }
 
 /*
-ToMeasurement converts the Balance into a structured Measurement
-without any serialized raw shortcuts.
+ToValue serializes wallet balances into a *data.Value layer.
 */
-func (balance *Balance) ToMeasurement(epochs ...int64) *data.Measurement {
-	if balance == nil {
-		return nil
+func (balance *Balance) ToValue(epochs ...int64) *data.Value {
+	buf, _ := sonic.Marshal(balance)
+	val := data.NewValue("kraken", "snapshot", "balances")
+	if len(epochs) > 0 {
+		val.Epoch = uint64(epochs[0])
+		val.FormatPrefix()
 	}
-
-	epoch := system.Epoch.Load()
-
-	if len(epochs) > 0 && epochs[0] > 0 {
-		epoch = epochs[0]
-	}
-
-	now := time.Now().UTC()
-
-	if !balance.Timestamp.IsZero() {
-		now = balance.Timestamp.UTC()
-	}
-
-	if epoch <= 0 {
-		epoch = now.UnixNano()
-	}
-
-	channel := balance.Channel
-
-	if channel == "" {
-		channel = "balances"
-	}
-
-	msgType := balance.Type
-
-	if msgType == "" {
-		msgType = "snapshot"
-	}
-
-	meas := data.NewMeasurement(
-		epoch,
-		msgType,
-		channel,
-		now,
-		now,
-		&data.StringEntry{
-			Key:   "channel",
-			Value: channel,
-		},
-		&data.StringEntry{
-			Key:   "type",
-			Value: msgType,
-		},
-	)
-
-	var metrics []*data.Metric
-
-	for _, row := range balance.Data {
-		if row.Balance != nil {
-			metrics = append(metrics, data.NewExactMetric(
-				"balance:"+row.Asset, row.Balance, data.UnitCurrency, data.TimescaleInstantaneous,
-			))
-		}
-
-		if row.Available != nil {
-			metrics = append(metrics, data.NewExactMetric(
-				"available:"+row.Asset, row.Available, data.UnitCurrency, data.TimescaleInstantaneous,
-			))
-		}
-
-		if row.Reserved != nil {
-			metrics = append(metrics, data.NewExactMetric(
-				"reserved:"+row.Asset, row.Reserved, data.UnitCurrency, data.TimescaleInstantaneous,
-			))
-		}
-	}
-
-	if len(metrics) > 0 {
-		meas.Write(metrics...)
-	}
-
-	meas.Finalize()
-	return meas
+	val.Append(buf)
+	return val
 }
 
 /*
-NewBalanceFromMeasurement reconstructs a Balance from a Measurement.
+NewBalanceFromValue reconstructs a Balance from a *data.Value layer.
 */
-func NewBalanceFromMeasurement(meas *data.Measurement) (*Balance, error) {
-	if meas == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "[kraken.balance] cannot convert nil measurement to balance", nil,
-		))
+func NewBalanceFromValue(val *data.Value) (*Balance, error) {
+	if val == nil || len(val.Layers) == 0 {
+		return nil, errnie.Err(errnie.Validation, "empty balance value", nil)
 	}
-
-	bal := &Balance{
-		Channel:   "balances",
-		Type:      "snapshot",
-		Timestamp: meas.At,
-		Data:      []BalanceData{},
+	var balance Balance
+	if err := sonic.Unmarshal(val.Layers[0], &balance); err != nil {
+		return nil, err
 	}
-
-	for entry := range meas.Meta() {
-		if entry == nil {
-			continue
-		}
-
-		if entry.Key == "channel" && entry.Value != "" {
-			bal.Channel = entry.Value
-		}
-
-		if entry.Key == "type" && entry.Value != "" {
-			bal.Type = entry.Value
-		}
-	}
-
-	assetMap := make(map[string]*BalanceData)
-
-	for entry := range meas.Read() {
-		if entry == nil || entry.Metric == nil || entry.Metric.Exact() == nil {
-			continue
-		}
-
-		key := entry.Key
-		val := entry.Metric.Exact()
-
-		if after, ok := strings.CutPrefix(key, "balance:"); ok {
-			asset := after
-			row, ok := assetMap[asset]
-
-			if !ok {
-				row = &BalanceData{Asset: asset, AssetClass: "currency"}
-				assetMap[asset] = row
-			}
-
-			row.Balance = val
-		}
-
-		if after, ok := strings.CutPrefix(key, "available:"); ok {
-			asset := after
-			row, ok := assetMap[asset]
-
-			if !ok {
-				row = &BalanceData{Asset: asset, AssetClass: "currency"}
-				assetMap[asset] = row
-			}
-
-			row.Available = val
-		}
-
-		if after, ok := strings.CutPrefix(key, "reserved:"); ok {
-			asset := after
-			row, ok := assetMap[asset]
-
-			if !ok {
-				row = &BalanceData{Asset: asset, AssetClass: "currency"}
-				assetMap[asset] = row
-			}
-
-			row.Reserved = val
-		}
-	}
-
-	for _, row := range assetMap {
-		bal.Data = append(bal.Data, *row)
-	}
-
-	return bal, nil
+	return &balance, nil
 }
+

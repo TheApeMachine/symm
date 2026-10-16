@@ -1,19 +1,17 @@
 package kraken
 
 import (
-	"time"
-
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/data"
 )
 
 /*
 TradeBalanceResult mirrors Kraken's private `/0/private/TradeBalance` result.
 */
 type TradeBalanceResult struct {
-	AvailableCash     *decimal.Decimal `json:"-"`
+	AvailableCash     *decimal.Decimal `json:"available_cash,omitempty"`
 	NetFunding        *decimal.Decimal `json:"-"`
 	FundingReason     string           `json:"-"`
 	ValuationComplete *bool            `json:"-"`
@@ -76,144 +74,46 @@ func AssetAlias(asset string) string {
 }
 
 /*
-ToMeasurement converts the TradeBalanceResult and associated wallet into a structured Measurement.
+ToValue serializes the TradeBalanceResult and associated wallet into a *data.Value layer.
 */
-func (tb *TradeBalanceResult) ToMeasurement(wallet *Balance, quote string, epochs ...int64) *data.Measurement {
+func (tb *TradeBalanceResult) ToValue(wallet *Balance, quote string, epochs ...int64) *data.Value {
 	if tb == nil {
 		return nil
 	}
 
-	epoch := system.Epoch.Load()
+	buf, err := sonic.Marshal(tb)
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
 
+	val := data.NewValue("kraken", "trade_balance", quote)
 	if len(epochs) > 0 && epochs[0] > 0 {
-		epoch = epochs[0]
+		val.Epoch = uint64(epochs[0])
+		val.FormatPrefix()
 	}
-
-	now := time.Now().UTC()
-
-	if epoch <= 0 {
-		epoch = now.UnixNano()
-	}
-
-	meas := data.NewMeasurement(
-		epoch,
-		"balance",
-		"balance",
-		now,
-		now,
-		&data.StringEntry{
-			Key:   "channel",
-			Value: "balance",
-		},
-		&data.StringEntry{
-			Key:   "quote",
-			Value: quote,
-		},
-	)
-
-	var metrics []*data.Metric
-
-	if tb.UnrealizedPnL != nil {
-		metrics = append(metrics, data.NewExactMetric(
-			"unrealized",
-			tb.UnrealizedPnL,
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-		))
-	}
-
-	if tb.Equity != nil {
-		metrics = append(metrics, data.NewExactMetric(
-			"equity",
-			tb.Equity,
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-		))
-	}
-
-	var quoteCash *decimal.Decimal
-
+	val.Append(buf)
 	if wallet != nil {
-		for _, entry := range wallet.Data {
-			alias := AssetAlias(quote)
-
-			if entry.Asset == quote || (alias != "" && entry.Asset == alias) {
-				if entry.Available != nil {
-					quoteCash = entry.Available
-					break
-				}
-
-				quoteCash = entry.Balance
-				break
-			}
+		if wbuf, err := sonic.Marshal(wallet); err == nil {
+			val.Append(wbuf)
 		}
 	}
-
-	if quoteCash == nil && tb.AvailableCash != nil {
-		quoteCash = tb.AvailableCash
-	}
-
-	if quoteCash != nil {
-		metrics = append(metrics, data.NewExactMetric(
-			"cash",
-			quoteCash,
-			data.UnitCurrency,
-			data.TimescaleInstantaneous,
-		))
-	}
-
-	if wallet != nil {
-		for _, entry := range wallet.Data {
-			if entry.Available == nil {
-				continue
-			}
-
-			alias := AssetAlias(quote)
-
-			if entry.Asset == quote || (alias != "" && entry.Asset == alias) {
-				continue
-			}
-
-			metrics = append(metrics, data.NewExactMetric(
-				"balance:"+entry.Asset,
-				entry.Available,
-				data.UnitCurrency,
-				data.TimescaleInstantaneous,
-			))
-		}
-	}
-
-	if len(metrics) > 0 {
-		meas.Write(metrics...)
-	}
-
-	meas.Finalize()
-	return meas
+	return val
 }
 
 /*
-NewTradeBalanceResultFromMeasurement reconstructs a TradeBalanceResult from a Measurement.
+NewTradeBalanceResultFromValue reconstructs a TradeBalanceResult from a *data.Value layer.
 */
-func NewTradeBalanceResultFromMeasurement(meas *data.Measurement) (*TradeBalanceResult, error) {
-	if meas == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "[kraken.trade_balance] cannot convert nil measurement to trade balance", nil,
-		))
+func NewTradeBalanceResultFromValue(val *data.Value) (*TradeBalanceResult, error) {
+	if val == nil || len(val.Layers) == 0 {
+		return nil, errnie.Err(errnie.Validation, "[kraken.trade_balance] cannot convert nil value to trade balance", nil)
 	}
 
-	tb := &TradeBalanceResult{}
-
-	if entry := data.Pull(meas.Read("unrealized")); entry != nil && entry.Metric != nil {
-		tb.UnrealizedPnL = entry.Metric.Exact()
+	var tb TradeBalanceResult
+	if err := sonic.Unmarshal(val.Layers[0], &tb); err != nil {
+		return nil, errnie.Err(errnie.Validation, "[kraken.trade_balance] failed to unmarshal trade balance", err)
 	}
 
-	if entry := data.Pull(meas.Read("equity")); entry != nil && entry.Metric != nil {
-		tb.Equity = entry.Metric.Exact()
-	}
-
-	if entry := data.Pull(meas.Read("cash")); entry != nil && entry.Metric != nil {
-		tb.AvailableCash = entry.Metric.Exact()
-	}
-
-	return tb, nil
+	return &tb, nil
 }
+

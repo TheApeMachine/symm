@@ -3,15 +3,15 @@ import { useEffect, useState } from "react";
 import { signals } from "#/collections/app";
 import { metricOf, metricsWithPrefix } from "#/components/ui";
 import { hubBaseUrl } from "#/lib/hub";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { Value } from "#/types/value";
 import { RadixTreeViz } from "./radix-tree-viz";
 import type { CognitionTreeResponse, SymbolProgress } from "./types";
 
 /*
-tokensOf rebuilds the token strings ("R01-R02") of a Training Measurement
+tokensOf rebuilds the token strings ("R01-R02") of a Training Value
 from its path_token:IDX:PART Metrics, the same form the stored keys use.
 */
-export const tokensOf = (measurement?: MeasurementT): string[] => {
+export const tokensOf = (measurement?: Value): string[] => {
 	const tokens: string[][] = [];
 	for (const [key, region] of metricsWithPrefix(measurement, "path_token:")) {
 		const [idx, part] = key.split(":").map(Number);
@@ -47,7 +47,7 @@ export const keysHash = (keys: string[]): number => {
 /*
 depthOf extracts the sequence depth from either numeric metrics or provenance metadata.
 */
-export const depthOf = (measurement?: MeasurementT): number | undefined => {
+export const depthOf = (measurement?: Value): number | undefined => {
 	const fromMetric = metricOf(measurement, "token_depth");
 	if (fromMetric !== undefined) return fromMetric;
 	if (measurement?.provenance) {
@@ -66,7 +66,7 @@ symbolProgress: the token path of every symbol that currently has a built up seq
 of region ids, as last sent.
 */
 export const symbolProgress = (
-	state: Record<string, { toArray(): MeasurementT[] }>,
+	state: Record<string, { toArray(): Value[] }>,
 ) => {
 	const out: Record<string, SymbolProgress> = {};
 	for (const [symbol, ring] of Object.entries(state)) {

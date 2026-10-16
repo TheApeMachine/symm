@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 )
 
 /*
@@ -55,33 +55,33 @@ AllowsRoute reports whether a measurement should go on the dashboard websocket
 for the current page. Raw venue feeds stay off the wire. Focus still limits
 which symbol is published so the UI is not flooded.
 */
-func Filters(measurement *data.Measurement) bool {
-	if measurement == nil {
+func Filters(value *data.Value) bool {
+	if value == nil {
 		return false
 	}
 
-	if kernelSource(measurement.Source) == "balance" {
+	if kernelSource(value.Origin) == "balance" {
 		return true
 	}
 
 	switch Route() {
 	case "dashboard":
-		if isStrategy(measurement, "training") {
+		if isStrategy(value, "training") {
 			return true
 		}
-		return isFocus(measurement) && (isSignal(measurement) || isLogic(measurement, "resonance"))
+		return isFocus(value) && (isSignal(value) || isLogic(value, "resonance"))
 	case "learning":
-		return isStrategy(measurement, "training")
+		return isStrategy(value, "training")
 	case "xray":
-		if isSignal(measurement, "hawkes") {
-			return isFocus(measurement)
+		if isSignal(value, "hawkes") {
+			return isFocus(value)
 		}
 
-		return isLogic(measurement, "resonance", "manifold", "cognition")
+		return isLogic(value, "resonance", "manifold", "cognition")
 	case "fluid":
-		return isLogic(measurement, "manifold")
+		return isLogic(value, "manifold")
 	case "diagnostics":
-		return isFocus(measurement)
+		return isFocus(value)
 	default:
 		return false
 	}
@@ -126,17 +126,17 @@ func Shard(source string) int {
 	}
 }
 
-func isFocus(measurement *data.Measurement) bool {
-	if Focus() == "" || measurement.Label == "" {
+func isFocus(value *data.Value) bool {
+	if Focus() == "" {
 		return true
 	}
 
-	return measurement.Label == Focus()
+	return value.Scope == Focus()
 }
 
-func isSignal(measurement *data.Measurement, signals ...string) bool {
+func isSignal(value *data.Value, signals ...string) bool {
 	if len(signals) == 0 {
-		switch kernelSource(measurement.Source) {
+		switch kernelSource(value.Origin) {
 		case "correlation",
 			"cvd",
 			"depthflow",
@@ -154,18 +154,18 @@ func isSignal(measurement *data.Measurement, signals ...string) bool {
 		}
 	}
 
-	return slices.Contains(signals, kernelSource(measurement.Source))
+	return slices.Contains(signals, kernelSource(value.Origin))
 }
 
-func isLogic(measurement *data.Measurement, solverNames ...string) bool {
-	if kernelSource(measurement.Source) == "websocket" {
+func isLogic(value *data.Value, solverNames ...string) bool {
+	if kernelSource(value.Origin) == "websocket" {
 		return true
 	}
-	return slices.Contains(solverNames, kernelSource(measurement.Source))
+	return slices.Contains(solverNames, kernelSource(value.Origin))
 }
 
-func isStrategy(measurement *data.Measurement, strategies ...string) bool {
-	return slices.Contains(strategies, kernelSource(measurement.Source))
+func isStrategy(value *data.Value, strategies ...string) bool {
+	return slices.Contains(strategies, kernelSource(value.Origin))
 }
 
 func kernelSource(source string) string {

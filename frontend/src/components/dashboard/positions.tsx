@@ -4,9 +4,7 @@ import { terminalStore } from "#/collections/terminal";
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
-import type { HoldingT } from "#/providers/telemetry/telemetry/holding";
-import type { PositionT } from "#/providers/telemetry/telemetry/position";
-import type { SellEventT } from "#/providers/telemetry/telemetry/sell-event";
+import type { HoldingT, PositionT, SellEventT } from "#/collections/types";
 import { cn } from "@/lib/utils";
 
 const formatValue = (value: unknown, digits: number): string => {

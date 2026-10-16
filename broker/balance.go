@@ -4,11 +4,12 @@ import (
 	"context"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"golang.org/x/time/rate"
@@ -20,14 +21,14 @@ any other object that wants to interact with the balance in any way.
 */
 type Balance struct {
 	*runtime.System
-	transport   Transport
-	paper       *Paper
-	Quote       string
-	wallet      *kraken.Balance
-	measurement *data.Measurement
-	limiter     *rate.Limiter
-	uiTee       runtime.Tee
-	storeTee    runtime.Tee
+	transport Transport
+	paper     *Paper
+	Quote     string
+	wallet    *kraken.Balance
+	value     *data.Value
+	limiter   *rate.Limiter
+	uiTee     runtime.Tee
+	storeTee  runtime.Tee
 }
 
 /*
@@ -214,11 +215,13 @@ func (balance *Balance) poll() (err error) {
 		epoch = now.UnixNano()
 	}
 
-	balance.measurement = tradeBalance.ToMeasurement(balance.wallet, balance.Quote, epoch)
-	balance.uiTee.Push(balance.measurement)
+	if buf, err := sonic.Marshal(tradeBalance); err == nil {
+		balance.value = data.NewValue("broker", "balance", balance.Quote).Append(buf)
+	}
+	balance.uiTee.Push(balance.value)
 
 	if balance.storeTee != nil {
-		balance.storeTee.Push(balance.measurement)
+		balance.storeTee.Push(balance.value)
 	}
 
 	return nil

@@ -2,14 +2,11 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/network"
-	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
@@ -48,47 +45,29 @@ appends the resulting source=detector rows to S3 storage.`,
 		storeTee.Transition(nmruntime.READY)
 		storeTee.Run()
 
-		normalizer := spot.NewNormalizer()
-		books := broker.NewBook(ctx, normalizer)
-
-		private := network.NewReplayer(ctx)
-		public := network.NewReplayer(ctx)
-
-		instrument := broker.NewInstrument(ctx, public)
-		price := broker.NewPrice(ctx, books, private, instrument, normalizer)
+		price, err := offlinePrice(ctx, detectFeePct, detectSymbols)
+		if err != nil {
+			return err
+		}
 
 		detector := strategy.NewDetector(ctx, storeTee, price)
 
-		done := false
-
-		for !done {
-			trade, err := public.Read("spot:trade")
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"[detect] error reading spot:trade",
-					err,
-				))
+		prefixes := make([]string, 0)
+		if len(detectEpochs) > 0 && len(detectSymbols) > 0 {
+			for _, epoch := range detectEpochs {
+				for _, symbol := range detectSymbols {
+					prefixes = append(prefixes, fmt.Sprintf("spot:trade/%s/%019d/", symbol, epoch))
+				}
 			}
+		} else {
+			prefixes = append(prefixes, "spot:trade/")
+		}
 
-			if trade == nil {
-				done = true
+		for value := range store.Values(client, prefixes...) {
+			if value == nil {
 				continue
 			}
-
-			var measurement *data.Measurement
-			err = measurement.UnmarshalBinary(trade)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"[detect] error unmarshalling trade",
-					err,
-				))
-			}
-
-			detector.Step(measurement)
+			detector.Step(value)
 		}
 
 		return errnie.Error(detector.Error())

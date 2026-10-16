@@ -4,8 +4,8 @@ import {
 	DEFAULT_KERNELS,
 	type RingBuffer,
 	signals,
+	Value,
 } from "#/collections/app";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
 import {
 	createCanonicalGridNodes,
 	getCanonicalPinDefs,
@@ -66,7 +66,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			const trainingState = signals.training?.state;
 
 			// Look for training ring for symbol, learner, or any non-empty ring
-			let trainingRing: RingBuffer<MeasurementT> | null = null;
+			let trainingRing: RingBuffer<Value> | null = null;
 			if (trainingState) {
 				if (
 					symbol &&

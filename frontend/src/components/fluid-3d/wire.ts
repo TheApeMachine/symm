@@ -1,18 +1,97 @@
-import * as flatbuffers from "flatbuffers";
-import { GasHealthT } from "#/providers/telemetry/telemetry/gas-health";
-import { IntegratorHealthT } from "#/providers/telemetry/telemetry/integrator-health";
-import { ManifoldFrame } from "#/providers/telemetry/telemetry/manifold-frame";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { Message } from "#/providers/telemetry/telemetry/message";
-import { PhaseResultant as PhaseResultantTable } from "#/providers/telemetry/telemetry/phase-resultant";
-import {
-	PhysicsHealth,
-	PhysicsHealthT,
-} from "#/providers/telemetry/telemetry/physics-health";
-import { PilotHealthT } from "#/providers/telemetry/telemetry/pilot-health";
-import { SourceLedgerT } from "#/providers/telemetry/telemetry/source-ledger";
-import { WaveHealthT } from "#/providers/telemetry/telemetry/wave-health";
-import { WaveMode as WaveModeTable } from "#/providers/telemetry/telemetry/wave-mode";
+import { Value } from "#/types/value";
+
+export class IntegratorHealthT {
+	constructor(
+		public contactDt = 0,
+		public requestedDt = 0,
+		public targetDt = 0,
+		public acceptedDt = 0,
+		public lastDt = 0,
+		public minDt = 0,
+		public time = 0,
+		public hyperbolicDt = 0,
+		public viscousDt = 0,
+		public thermalDt = 0,
+		public particleDt = 0,
+		public phaseDt = 0,
+		public combinedDt = 0,
+		public substeps = 0,
+		public rejections = 0,
+	) {}
+}
+
+export class GasHealthT {
+	mass = 0;
+	internal = 0;
+	kinetic = 0;
+	total = 0;
+	minDensity = 0;
+	minPressure = 0;
+	minTemperature = 0;
+	maxSpeed = 0;
+	maxSound = 0;
+	maxMach = 0;
+	vorticityRms = 0;
+	vorticityMax = 0;
+	strainRms = 0;
+	strainMax = 0;
+	viscousPower = 0;
+}
+
+export class WaveHealthT {
+	norm = 0;
+	kinetic = 0;
+	potential = 0;
+	nonlinear = 0;
+	chemical = 0;
+	projectedNorm = 0;
+	phasePotential = 0;
+	phaseGradientRms = 0;
+	supercurrent = 0;
+	phaseVariance = 0;
+	frequencySpread = 0;
+	coherenceLength = 0;
+	condensateFraction = 0;
+	superfluidDensity = 0;
+}
+
+export class PilotHealthT {
+	speedRms = 0;
+	speedMax = 0;
+	displacementRms = 0;
+	displacementMax = 0;
+	minDensity = 0;
+	densityMedian = 0;
+	densityP01 = 0;
+	densityP10 = 0;
+	integrationErrorMax = 0;
+}
+
+export class SourceLedgerT {
+	gasEnergyResidual = 0;
+	conservativeWaveError = 0;
+	picDepositEnergyResidual = 0;
+	particleBalanceResidual = 0;
+	gravityBalanceResidual = 0;
+}
+
+export class PhysicsHealthT {
+	particleThermal = 0;
+	particleOscillator = 0;
+	particleKinetic = 0;
+	particleMaterialTotal = 0;
+	spatialSigmaRaw = 0;
+	spatialSigmaUsed = 0;
+	sigmaUniformLimit = false;
+
+	constructor(
+		public integrator: IntegratorHealthT = new IntegratorHealthT(),
+		public gas: GasHealthT = new GasHealthT(),
+		public wave: WaveHealthT = new WaveHealthT(),
+		public pilot: PilotHealthT = new PilotHealthT(),
+		public sources: SourceLedgerT = new SourceLedgerT(),
+	) {}
+}
 
 export type FluidGrid = {
 	x: number;
@@ -176,200 +255,18 @@ export type FluidManifoldFrame = {
 	phase: FluidPhase;
 };
 
-const modeObj = new WaveModeTable();
-const healthTable = new PhysicsHealth();
-const resultantObj = new PhaseResultantTable();
-
-/*
-decodeManifold reads one ManifoldFrame flatbuffer as published on the hub
-WebSocket (types.EncodeManifold → ui.UITee → /ws). bytes is one complete
-SYMM-identified Message carrying FrameManifoldFrame.
-*/
-export const decodeManifold = (bytes: Uint8Array): FluidManifoldFrame => {
-	const buffer = new flatbuffers.ByteBuffer(bytes);
-
-	if (!Message.bufferHasIdentifier(buffer)) {
-		throw new Error("manifold frame is missing its message identifier");
-	}
-
-	const message = Message.getRootAsMessage(buffer);
-	const frame = message.frame(new ManifoldFrame());
-
-	if (frame === null) {
-		throw new Error("message does not carry a ManifoldFrame");
-	}
-
-	const sequence = frame.sequence();
-	const count = Number(frame.n());
-
-	const reading = frame.reading();
-
-	if (reading === null) {
-		throw new Error("ManifoldFrame is missing its reading");
-	}
-
-	const fields: FluidFields = {
-		sequence,
-		grid: {
-			x: frame.gridX(),
-			y: frame.gridY(),
-			z: frame.gridZ(),
-			spacing: frame.gridSpacing(),
-		},
-		momRho: frame.momRhoArray() ?? new Float32Array(0),
-		internalEnergy: frame.fieldEnergyArray() ?? new Float32Array(0),
-		waveReal: frame.waveRealArray() ?? new Float32Array(0),
-		waveImaginary: frame.waveImagArray() ?? new Float32Array(0),
-		densityScale: frame.densityScale(),
-		momentumScale: frame.momentumScale(),
-		energyScale: frame.energyScale(),
-		waveScale: frame.waveScale(),
-	};
-
-	const posArray = frame.posArray();
-	const velArray = frame.velArray();
-	const massArray = frame.massArray();
-	const heatArray = frame.heatArray();
-	const energyArray = frame.energyArray();
-	const phaseArray = frame.phaseArray();
-	const omegaArray = frame.omegaArray();
-	const amplitudeArray = frame.ampArray();
-
-	if (
-		count > 0 &&
-		(!posArray ||
-			!velArray ||
-			!massArray ||
-			!heatArray ||
-			!energyArray ||
-			!phaseArray ||
-			!omegaArray ||
-			!amplitudeArray)
-	) {
-		throw new Error(
-			"manifold frame missing required particle arrays for non-zero count",
-		);
-	}
-
-	const particles = new FluidParticleFrame(
-		sequence,
-		count,
-		posArray ?? new Float32Array(0),
-		velArray ?? new Float32Array(0),
-		massArray ?? new Float32Array(0),
-		heatArray ?? new Float32Array(0),
-		energyArray ?? new Float32Array(0),
-		phaseArray ?? new Float32Array(0),
-		omegaArray ?? new Float32Array(0),
-		amplitudeArray ?? new Float32Array(0),
-		frame.pilotVelArray(),
-	);
-
-	const oscillators: FluidOscillator[] = [];
-
-	for (let index = 0; index < count; index += 1) {
-		const tokenID = frame.tokenIds(index);
-		if (tokenID === null) {
-			throw new Error(`manifold frame missing token ID at index ${index}`);
-		}
-		if (!phaseArray || !omegaArray || !amplitudeArray || !heatArray) {
-			throw new Error(
-				`manifold frame missing oscillator arrays at index ${index}`,
-			);
-		}
-
-		const p = phaseArray[index];
-		const o = omegaArray[index];
-		const a = amplitudeArray[index];
-		const h = heatArray[index];
-
-		if (
-			p === undefined ||
-			o === undefined ||
-			a === undefined ||
-			h === undefined
-		) {
-			throw new Error(`missing oscillator values at index ${index}`);
-		}
-
-		oscillators.push({
-			phase: p,
-			omega: o,
-			amplitude: a,
-			heat: h,
-			side: (tokenID & 1n) === 0n ? "bid" : "ask",
-		});
-	}
-
-	const modes: FluidWaveMode[] = [];
-
-	for (let index = 0; index < frame.modesLength(); index += 1) {
-		const mode = frame.modes(index, modeObj);
-
-		if (mode === null) {
-			continue;
-		}
-
-		modes.push({
-			omega: mode.omega(),
-			real: mode.real(),
-			imaginary: mode.imaginary(),
-			linewidth: mode.linewidth(),
-		});
-	}
-
-	const resultants: FluidResultant[] = [];
-
-	for (let index = 0; index < frame.resultantsLength(); index += 1) {
-		const res = frame.resultants(index, resultantObj);
-
-		if (res === null) {
-			continue;
-		}
-
-		resultants.push({
-			side: res.side() === "ask" ? "ask" : "bid",
-			count: res.count(),
-			totalAmplitude: res.totalAmplitude(),
-			coherence: res.coherence(),
-			phase: res.phase(),
-		});
-	}
-
-	const readingHealth = reading.health(healthTable);
-	const health = readingHealth !== null ? readingHealth.unpack() : null;
-
-	const phase: FluidPhase = {
-		sequence,
-		reading: {
-			divergence: reading.divergence(),
-			guidanceSpeed: reading.guidanceSpeed(),
-			coherenceMag2: reading.coherenceMag2(),
-			pressureGradNorm: reading.pressureGradNorm(),
-			viscosityProxy: reading.viscosityProxy(),
-			kuramotoR: reading.kuramotoR(),
-			kuramotoPsi: reading.kuramotoPsi(),
-			health,
-			version: frame.version(),
-			at: frame.at(),
-		},
-		oscillators,
-		modes,
-		resultants,
-	};
-
-	return { fields, particles, phase };
-};
+export const decodeManifold = (measurement: Value): FluidManifoldFrame =>
+	decodeManifoldMeasurement(measurement);
 
 export const decodeManifoldMeasurement = (
-	measurement: MeasurementT,
+	measurement: Value,
 ): FluidManifoldFrame => {
 	if (!measurement) {
 		throw new Error("manifold measurement is null or undefined");
 	}
 
 	const sequence = measurement.tick;
-	const at = measurement.at;
+	const at = measurement.timestamp;
 	const version = measurement.tick;
 
 	const integrator = new IntegratorHealthT();
@@ -608,6 +505,9 @@ export const decodeManifoldMeasurement = (
 				break;
 			case "pilot:min_density":
 				pilot.minDensity = val;
+				break;
+			case "pilot:density_median":
+				pilot.densityMedian = val;
 				break;
 
 			// Sources

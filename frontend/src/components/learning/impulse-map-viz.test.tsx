@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { RingBuffer, signals } from "#/collections/app";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import { Value } from "#/types/value";
 import { ImpulseMapViz } from "./impulse-map-viz";
 import type { ImpulseNode } from "./types";
 
@@ -267,18 +267,20 @@ describe("ImpulseMapViz", () => {
 	});
 
 	it("lights up grid regions when live telemetry arrives on signals.training", () => {
-		const ring = new RingBuffer<MeasurementT>(10);
-		ring.add({
-			symbol: "SPACE/USD",
-			source: "training",
-			metrics: [
-				{ name: "region_brightness:R01", raw: 0.85 },
-				{ name: "region_members:R01", raw: 6 },
-				{ name: "region_brightness:R07", raw: 0.92 },
-				{ name: "region_members:R07", raw: 7 },
-			],
-			provenance: [{ name: "token_path", value: "R01/R07" }],
-		} as unknown as MeasurementT);
+		const ring = new RingBuffer<Value>(10);
+		ring.add(
+			new Value({
+				scope: "SPACE/USD",
+				origin: "training",
+				metrics: [
+					{ name: "region_brightness:R01", raw: 0.85 },
+					{ name: "region_members:R01", raw: 6 },
+					{ name: "region_brightness:R07", raw: 0.92 },
+					{ name: "region_members:R07", raw: 7 },
+				],
+				provenance: [{ name: "token_path", value: "R01/R07" }],
+			}),
+		);
 
 		const { container } = render(
 			<div style={{ width: "800px", height: "600px" }}>

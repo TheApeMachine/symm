@@ -8,10 +8,9 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -36,7 +35,7 @@ Excessive entropy indicates random noise, while extreme token concentration indi
 */
 type DynamicsStage struct {
 	*runtime.System
-	ch           chan *data.Measurement
+	ch           chan *data.Value
 	violations   []*Violation
 	grid         *nmstore.Grid
 	tokens       []string
@@ -52,7 +51,7 @@ type DynamicsStage struct {
 func NewDynamicsStage(ctx context.Context) *DynamicsStage {
 	return &DynamicsStage{
 		System:      runtime.NewSystem(ctx, "audit:dynamics"),
-		ch:          make(chan *data.Measurement, 64),
+		ch:          make(chan *data.Value, 64),
 		violations:  make([]*Violation, 0),
 		grid:        nmstore.NewGrid(ctx),
 		tokens:      make([]string, 0),
@@ -62,7 +61,7 @@ func NewDynamicsStage(ctx context.Context) *DynamicsStage {
 	}
 }
 
-func (stage *DynamicsStage) Channel() chan *data.Measurement {
+func (stage *DynamicsStage) Channel() chan *data.Value {
 	return stage.ch
 }
 
@@ -82,15 +81,15 @@ func (stage *DynamicsStage) Run() error {
 			continue
 		}
 
-		if measurement.Source != "runtime:join" {
+		if measurement.Role != "runtime:join" {
 			continue
 		}
 
-		if measurement.Error() != nil {
+		if measurement.Role == "error" {
 			stage.violations = append(stage.violations, NewViolation(
-				measurement.Label,
+				measurement.Scope,
 				"measurement.error",
-				measurement.Error().Error(),
+				"error measurement encountered",
 				measurement,
 				nil,
 			))
@@ -111,8 +110,8 @@ func (stage *DynamicsStage) Violations() []*Violation {
 recordToken extracts the active state token from the measurement
 and accumulates the sequential transition count from the prior token.
 */
-func (stage *DynamicsStage) recordToken(measurement *data.Measurement) {
-	if len(measurement.Peers()) == 0 {
+func (stage *DynamicsStage) recordToken(measurement *data.Value) {
+	if len(measurement.Layers) == 0 {
 		return
 	}
 
@@ -146,55 +145,24 @@ func (stage *DynamicsStage) recordToken(measurement *data.Measurement) {
 		row[currentToken]++
 	}
 
-	if measurement.Source == "runtime:join" {
+	if measurement.Role == "runtime:join" {
 		var bidPrice, askPrice, tradePrice float64
+		metrics := data.Metrics(measurement)
 
-		targetSymbol := "BTC/USD"
-		if system.Cfg != nil && system.Cfg.Audit.Symbol != "" {
-			targetSymbol = system.Cfg.Audit.Symbol
+		if val, ok := metrics["best_bid_price"]; ok {
+			bidPrice = val
+		} else if val, ok := metrics["bid"]; ok {
+			bidPrice = val
 		}
 
-		hasTarget := false
-		for _, peer := range measurement.Peers() {
-			if peer.Label == targetSymbol {
-				hasTarget = true
-				break
-			}
+		if val, ok := metrics["best_ask_price"]; ok {
+			askPrice = val
+		} else if val, ok := metrics["ask"]; ok {
+			askPrice = val
 		}
 
-		if !hasTarget && measurement.Label != "" {
-			for _, peer := range measurement.Peers() {
-				if peer.Label == measurement.Label {
-					targetSymbol = measurement.Label
-					hasTarget = true
-					break
-				}
-			}
-		}
-
-		if !hasTarget && len(measurement.Peers()) > 0 {
-			targetSymbol = measurement.Peers()[0].Label
-		}
-
-		for _, peer := range measurement.Peers() {
-			if peer.Label != targetSymbol {
-				continue
-			}
-
-			for entry := range peer.Read() {
-				if entry == nil || entry.Metric == nil {
-					continue
-				}
-
-				switch entry.Metric.Label() {
-				case "best_bid_price", "bid":
-					bidPrice = entry.Metric.Raw()
-				case "best_ask_price", "ask":
-					askPrice = entry.Metric.Raw()
-				case "price":
-					tradePrice = entry.Metric.Raw()
-				}
-			}
+		if val, ok := metrics["price"]; ok {
+			tradePrice = val
 		}
 
 		var price float64
@@ -234,8 +202,8 @@ func (stage *DynamicsStage) recordToken(measurement *data.Measurement) {
 		}
 
 		stage.frames = append(stage.frames, &FrameData{
-			Tick:        measurement.Tick,
-			Timestamp:   measurement.Timestamp,
+			Tick:        int64(measurement.Tick),
+			Timestamp:   int64(measurement.Timestamp),
 			ActiveToken: currentToken,
 			Brightness:  brightness,
 			Price:       price,
@@ -370,4 +338,3 @@ func (stage *DynamicsStage) Data() any {
 		"frames":          stage.frames,
 	}
 }
-

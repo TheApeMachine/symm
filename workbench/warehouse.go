@@ -29,10 +29,12 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"fmt"
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/marcboeker/go-duckdb/v2"
@@ -276,62 +278,42 @@ func (warehouse *Warehouse) Ingest(ctx context.Context, client *store.Client, pr
 		return nil
 	}
 
-	for measurement := range client.Get(prefix) {
+	for val := range store.Values(client, prefix) {
 		select {
 		case <-ctx.Done():
 			return imported, errnie.Error(ctx.Err())
 		default:
 		}
 
-		if measurement == nil {
+		if val == nil {
 			continue
 		}
 
 		imported++
 
-		var metricKeys []string
-		var metricVals []string
-
-		for entry := range measurement.Read() {
-			if entry == nil || entry.Metric == nil {
-				continue
-			}
-
-			metricKeys = append(metricKeys, literal(entry.Key))
-			exactStr := "''"
-
-			if entry.Metric.Exact() != nil {
-				exactStr = literal(entry.Metric.Exact().String())
-			}
-
-			metricVals = append(metricVals, fmt.Sprintf(
-				"{'raw': %f, 'snm': %f, 'exact': %s, 'unit': %s, 'timescale': %s}",
-				entry.Metric.Raw(), entry.Metric.SNM(), exactStr,
-				literal(string(entry.Metric.Unit())),
-				literal(string(entry.Metric.Timescale())),
-			))
-		}
-
-		metricsMap := fmt.Sprintf("map([%s], [%s])", strings.Join(metricKeys, ", "), strings.Join(metricVals, ", "))
+		metricsMap := "map([], [])"
 
 		var metaKeys []string
 		var metaVals []string
 
-		for entry := range measurement.Meta() {
-			if entry != nil {
-				metaKeys = append(metaKeys, literal(entry.Key))
-				metaVals = append(metaVals, literal(entry.Value))
-			}
-		}
+		metaKeys = append(metaKeys, literal("origin"), literal("role"), literal("scope"), literal("prefix"))
+		metaVals = append(metaVals, literal(val.Origin), literal(val.Role), literal(val.Scope), literal(val.Prefix))
 
 		metaMap := fmt.Sprintf("map([%s], [%s])", strings.Join(metaKeys, ", "), strings.Join(metaVals, ", "))
 
+		at := time.Now()
+		if val.Timestamp > 0 {
+			at = time.Unix(0, int64(val.Timestamp))
+		}
+
+		id := binary.BigEndian.Uint32(val.ID[:4])
+
 		rowStr := fmt.Sprintf(
 			"(%d, %d, %d, %d, %d, %s, %s, %s, %s, %s, %s)",
-			measurement.ID, measurement.Epoch, measurement.SeqIdx, measurement.Tick, measurement.Timestamp,
-			literal(measurement.At.Format("2006-01-02 15:04:05.999999")),
-			literal(measurement.From.Format("2006-01-02 15:04:05.999999")),
-			literal(measurement.Label), literal(measurement.Source),
+			id, val.Epoch, val.SeqIdx, val.Tick, val.Timestamp,
+			literal(at.Format("2006-01-02 15:04:05.999999")),
+			literal(at.Format("2006-01-02 15:04:05.999999")),
+			literal(val.Scope), literal(val.Origin),
 			metricsMap, metaMap,
 		)
 		batchRows = append(batchRows, rowStr)

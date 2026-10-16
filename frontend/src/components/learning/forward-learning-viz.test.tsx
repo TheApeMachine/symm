@@ -2,10 +2,7 @@
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { RingBuffer, signals } from "#/collections/app";
-import { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
-import { MetricT } from "#/providers/telemetry/telemetry/metric";
-import { NamedNumberT } from "#/providers/telemetry/telemetry/named-number";
-import { NamedStringT } from "#/providers/telemetry/telemetry/named-string";
+import { Value } from "#/types/value";
 import { ForwardLearningViz } from "./forward-learning-viz";
 
 afterEach(() => {
@@ -26,21 +23,24 @@ it("starts playback when a completed episode arrives after an empty queue", asyn
 	);
 	const { container } = render(<ForwardLearningViz />);
 	expect(container.textContent).toContain("Awaiting historical replay");
-	const ring = new RingBuffer<MeasurementT>(8);
+	const ring = new RingBuffer<Value>(8);
 
 	await act(async () => {
 		for (const [index, price] of [100, 102, 101].entries()) {
-			const frame = new MeasurementT();
-			frame.source = "training";
-			frame.symbol = "BTC/USD";
-			frame.tick = BigInt(index + 1);
-			frame.metrics = [
-				new MetricT("price", price),
-				new MetricT("stage_code", 1),
-			];
-			frame.metadata = [new NamedNumberT("excursion_start", 1)];
-			if (index === 2)
-				frame.provenance = [new NamedStringT("excursion_event", "completed")];
+			const frame = new Value({
+				origin: "training",
+				scope: "BTC/USD",
+				tick: BigInt(index + 1),
+				metrics: [
+					{ name: "price", raw: price },
+					{ name: "stage_code", raw: 1 },
+				],
+				metadata: [{ name: "excursion_start", value: 1 }],
+				provenance:
+					index === 2
+						? [{ name: "excursion_event", value: "completed" }]
+						: [],
+			});
 			ring.add(frame);
 		}
 		signals.training.setState(() => ({ "BTC/USD": ring }));
@@ -62,7 +62,7 @@ it("renders screen plate scanlines and time-scale span for tape fragments", asyn
 		}),
 	);
 	const { container } = render(<ForwardLearningViz />);
-	const ring = new RingBuffer<MeasurementT>(8);
+	const ring = new RingBuffer<Value>(8);
 
 	// Start at 14:00:00 UTC (1718028000000 ms = 1718028000000000000 ns)
 	const baseNanos = 1718028000000000000n;
@@ -70,15 +70,16 @@ it("renders screen plate scanlines and time-scale span for tape fragments", asyn
 
 	await act(async () => {
 		for (const [index, price] of [100, 102, 105].entries()) {
-			const frame = new MeasurementT();
-			frame.source = "training";
-			frame.symbol = "BTC/USD";
-			frame.tick = BigInt(index + 1);
-			frame.at = baseNanos + BigInt(index * 2) * minuteNanos; // spans 4 minutes
-			frame.metrics = [
-				new MetricT("price", price),
-				new MetricT("stage_code", 1),
-			];
+			const frame = new Value({
+				origin: "training",
+				scope: "BTC/USD",
+				tick: BigInt(index + 1),
+				timestamp: baseNanos + BigInt(index * 2) * minuteNanos,
+				metrics: [
+					{ name: "price", raw: price },
+					{ name: "stage_code", raw: 1 },
+				],
+			});
 			ring.add(frame);
 		}
 		signals.training.setState(() => ({ "BTC/USD": ring }));
@@ -266,13 +267,17 @@ it("keeps a pinned historical fragment when live BTC hub updates arrive", async 
 		container.querySelector('[data-l="historical-run-active"]'),
 	).toBeTruthy();
 
-	const ring = new RingBuffer<MeasurementT>(8);
+	const ring = new RingBuffer<Value>(8);
 	await act(async () => {
-		const frame = new MeasurementT();
-		frame.source = "training";
-		frame.symbol = "BTC/USD";
-		frame.tick = 99n;
-		frame.metrics = [new MetricT("price", 85000), new MetricT("stage_code", 1)];
+		const frame = new Value({
+			origin: "training",
+			scope: "BTC/USD",
+			tick: 99n,
+			metrics: [
+				{ name: "price", raw: 85000 },
+				{ name: "stage_code", raw: 1 },
+			],
+		});
 		ring.add(frame);
 		signals.training.setState(() => ({ "BTC/USD": ring }));
 	});

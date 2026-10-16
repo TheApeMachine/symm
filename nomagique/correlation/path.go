@@ -8,8 +8,8 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -78,7 +78,7 @@ func (op *Path) Next(
 
 				if op.retention != nil {
 					value := sample.Value
-					reading := data.To[float64, adaptive.WindowReading](op.retention, &value)
+					reading := transport.To[float64, adaptive.WindowReading](op.retention, &value)
 
 					if err := op.retention.Error(); err != nil {
 						op.err = err

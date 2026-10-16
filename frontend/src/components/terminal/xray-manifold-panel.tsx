@@ -8,7 +8,7 @@ import {
 } from "#/components/terminal/xray-view";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import type { MeasurementT } from "#/providers/telemetry/telemetry/measurement";
+import type { Value } from "#/types/value";
 
 const num = (value: unknown, digits: number): string =>
 	typeof value !== "number" || !Number.isFinite(value)
@@ -133,7 +133,7 @@ export const XrayManifoldPanel = () => {
 			const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
 			if (last) {
-				const sym = typeof last.symbol === "string" ? last.symbol : "";
+				const sym = typeof last.scope === "string" ? last.scope : "";
 
 				if (sym) {
 					retainResonanceRow(sym, last as unknown as Record<string, unknown>);
@@ -141,7 +141,7 @@ export const XrayManifoldPanel = () => {
 			}
 
 			const retained = getRetainedResonance(focusSymbol);
-			const targetRow = parseResonanceData((retained as unknown as MeasurementT | null) ?? last ?? undefined);
+			const targetRow = parseResonanceData((retained as unknown as Value | null) ?? last ?? undefined);
 
 			const set = (q: string, value: string) => {
 				const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
