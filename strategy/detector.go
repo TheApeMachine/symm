@@ -42,39 +42,6 @@ type episode struct {
 }
 
 /*
-ExcursionClasses are the classes a Detector emits; each is the Role of its
-excursion Values, keyed data.Prefix("detector", class, symbol, epoch).
-*/
-var ExcursionClasses = []string{"up", "down", "chop", "flat"}
-
-/*
-ExcursionPrefixes are the keys of every excursion detected for symbol in
-epoch, one prefix per class.
-*/
-func ExcursionPrefixes(symbol string, epoch uint64) []string {
-	prefixes := make([]string, 0, len(ExcursionClasses))
-
-	for _, class := range ExcursionClasses {
-		prefixes = append(prefixes, data.Prefix(detectorOrigin, class, symbol, epoch))
-	}
-
-	return prefixes
-}
-
-const detectorOrigin = "detector"
-
-/*
-ExcursionKeys are the vector labels of an excursion Value, in order. B and C
-are the ignition and exhaustion trades; A and D bound the precursor and
-aftermath windows by half the move on either side. b_ask and c_bid are the
-touch the tick recorded at B and C: the prices a long entry and exit cross.
-*/
-var ExcursionKeys = []string{
-	"a_idx", "a_tick", "b_idx", "b_tick", "c_idx", "c_tick", "d_idx", "d_tick",
-	"b_price", "c_price", "b_ask", "c_bid", "b_at", "c_at",
-}
-
-/*
 Detector scans one symbol's stored trade tape of one epoch from beginning to
 end and emits long, coherent excursions ("up", "down", "chop", "flat").
 */
@@ -776,7 +743,7 @@ func (detector *Detector) coalesceBoxWhipsaws() {
 
 /*
 flush emits one confirmed episode as an excursion Value keyed
-data.Prefix("detector", class, symbol, epoch) at C's tick. Its long-side
+data.ExcursionPrefixes(symbol, epoch) at C's tick. Its long-side
 economics need the touch at B (ask) and C (bid): an episode the tape cannot
 price is a detector failure, not a zero.
 */
@@ -798,7 +765,7 @@ func (detector *Detector) flush(ep episode) {
 	halfMoveTick := c.tick - b.tick
 
 	value := &data.Value{
-		Origin:    detectorOrigin,
+		Origin:    data.ExcursionOrigin,
 		Role:      ep.class,
 		Scope:     detector.symbol,
 		Epoch:     detector.epoch,
@@ -823,7 +790,7 @@ func (detector *Detector) flush(ep episode) {
 		c.bid.Float64(),
 		float64(b.at),
 		float64(c.at),
-	}, ExcursionKeys...)
+	}, data.ExcursionKeys...)
 
 	detector.results = append(detector.results, value)
 }

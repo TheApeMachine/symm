@@ -109,7 +109,7 @@ func (stage *RedundancyStage) Run() error {
 			continue
 		}
 
-		if measurement.Origin == "detector" || measurement.Origin == "policy" || measurement.Role == "detector" || measurement.Role == "policy" {
+		if measurement.Origin == data.ExcursionOrigin || measurement.Origin == data.PolicyOrigin {
 			continue
 		}
 
@@ -236,10 +236,18 @@ func (stage *RedundancyStage) Data() any {
 		})
 	}
 
+	collinear := 0
+
+	for _, summary := range summaries {
+		if summary.Collinear {
+			collinear++
+		}
+	}
+
 	return map[string]any{
 		"passed":          len(stage.violations) == 0,
 		"pairs_evaluated": len(summaries),
-		"collinear_count": len(stage.violations),
+		"collinear_count": collinear,
 		"pairs":           summaries,
 	}
 }

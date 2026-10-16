@@ -119,10 +119,9 @@ func TestGrid_Observe(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 
-		Convey("A signal layer without a source tag is an error", func() {
-			frame := data.NewValue(data.TickOrigin, data.TickRole, data.TickScope)
-			data.AppendVector(frame, []float64{1}, label)
-			frame.Index[len(frame.Index)-1] = "BTC/USD/" + frame.Index[len(frame.Index)-1]
+		Convey("A signal layer without a symbol tag is an error", func() {
+			frame := tick("BTC/USD", "cvd", label, 1)
+			frame.Index[len(frame.Index)-1] = "signal/cvd/" + label
 
 			_, err := grid.Observe(frame, "BTC/USD")
 			So(err, ShouldNotBeNil)

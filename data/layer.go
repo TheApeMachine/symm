@@ -62,25 +62,6 @@ func AppendVector[T any](value *Value, vector []T, keys ...string) *Value {
 }
 
 /*
-AppendSignalVector is AppendVector for one signal source and one symbol of a
-multi-symbol tick. The index is "<symbol>/<prefix>/<keys...>/source:<source>":
-labels after ".bin/" stay aligned with the vector and the trailing tag names
-the signal that wrote it, so Signals can attribute every layer.
-*/
-func AppendSignalVector[T any](value *Value, source, symbol string, vector []T, keys ...string) *Value {
-	if value == nil {
-		return nil
-	}
-
-	parts := append([]string{symbol, value.Prefix}, keys...)
-	value.claim(vectorBytes(vector), strings.Join(append(parts, sourceTag+source), "/"))
-
-	return value
-}
-
-const sourceTag = "source:"
-
-/*
 Signal is one signal vector layer of a tick: which source wrote it, for which
 symbol, the label of every value, and any trailing "key:value" tags.
 */
@@ -106,30 +87,27 @@ func (signal Signal) Metric(label string) (float64, error) {
 }
 
 /*
-Signals yields every layer AppendSignalVector wrote on value, in layer order.
-A layer under value's prefix that does not parse (no source tag, fewer labels
-than values, a length that is not whole float64s) is yielded as an error.
+Signals yields every signal layer of value (IsSignalIndex), in layer order.
+A signal layer that does not parse (no source or symbol, a byte length that
+is not whole float64s, more values than labels) is yielded as an error,
+never skipped.
 */
 func Signals(value *Value) iter.Seq2[Signal, error] {
 	return func(yield func(Signal, error) bool) {
-		if value == nil || value.Prefix == "" {
+		if value == nil {
 			return
 		}
-
-		marker := "/" + value.Prefix + "/"
 
 		for i, layer := range value.Layers[:value.visible()] {
 			if i >= len(value.Index) {
 				return
 			}
 
-			symbol, rest, ok := strings.Cut(value.Index[i], marker)
-
-			if !ok {
+			if !IsSignalIndex(value.Index[i]) {
 				continue
 			}
 
-			signal, err := parseSignal(symbol, rest, layer)
+			signal, err := ParseSignal(value.Index[i], layer)
 
 			if err != nil {
 				err = errnie.Err(errnie.UnprocessableContent, "data: signal layer "+value.Index[i], err)
@@ -142,19 +120,31 @@ func Signals(value *Value) iter.Seq2[Signal, error] {
 	}
 }
 
-func parseSignal(symbol, rest string, layer []byte) (Signal, error) {
-	signal := Signal{Symbol: symbol}
-	parts := strings.Split(rest, "/")
-	last := parts[len(parts)-1]
+/*
+ParseSignal reads one layer written under SignalIndex.
+*/
+func ParseSignal(index string, layer []byte) (Signal, error) {
+	var signal Signal
 
-	source, ok := strings.CutPrefix(last, sourceTag)
+	rest, ok := strings.CutPrefix(index, signalNamespace+"/")
 
-	if !ok || source == "" {
-		return signal, errnie.Err(errnie.Validation, "no "+sourceTag+" tag", nil)
+	if !ok {
+		return signal, errnie.Err(errnie.Validation, "not in the "+signalNamespace+"/ namespace", nil)
 	}
 
-	signal.Source = source
-	parts = parts[:len(parts)-1]
+	rest, symbol, ok := strings.Cut(rest, "/"+symbolTag)
+
+	if !ok || symbol == "" {
+		return signal, errnie.Err(errnie.Validation, "no "+symbolTag+" tag", nil)
+	}
+
+	parts := strings.Split(rest, "/")
+
+	if parts[0] == "" {
+		return signal, errnie.Err(errnie.Validation, "no source", nil)
+	}
+
+	signal.Source, signal.Symbol, parts = parts[0], symbol, parts[1:]
 
 	if len(layer)%8 != 0 {
 		return signal, errnie.Err(errnie.Validation, fmt.Sprintf("%d bytes is not whole float64s", len(layer)), nil)
@@ -578,7 +568,9 @@ func slicePeek[T any](value any) (T, bool) {
 }
 
 /*
-Metrics extracts all indexed vector metric labels and attributes into a map.
+Metrics maps the labels of value's own vector layers to their floats. Signal
+layers (per symbol, read with Signals) and JSON layers are not vectors of
+the Value and are left out.
 */
 func Metrics(v *Value) map[string]float64 {
 	out := make(map[string]float64)
@@ -591,20 +583,24 @@ func Metrics(v *Value) map[string]float64 {
 			continue
 		}
 
-		floats := unsafe.Slice((*float64)(unsafe.Pointer(&layer[0])), len(layer)/8)
 		idx := v.Index[i]
 
-		afterPrefix := idx
+		// Signal layers are per symbol; merging them into one map would mix
+		// symbols. They read through Signals.
+		if IsSignalIndex(idx) {
+			continue
+		}
+
+		floats := unsafe.Slice((*float64)(unsafe.Pointer(&layer[0])), len(layer)/8)
+
+		// A vector layer is indexed "<key>.bin/<labels...>" (AppendVector on
+		// this or another Value). Anything else (JSON layers such as
+		// price/<sym>, book/<sym>) is not a labelled vector.
+		var afterPrefix string
 		if _, after, ok := strings.Cut(idx, ".bin/"); ok {
 			afterPrefix = after
-		} else if v.Prefix != "" && strings.HasPrefix(idx, v.Prefix) {
-			afterPrefix = strings.TrimPrefix(idx, v.Prefix)
-			afterPrefix = strings.TrimPrefix(afterPrefix, "/")
-		} else {
-			parts := strings.Split(idx, "/")
-			if len(parts) > 5 {
-				afterPrefix = strings.Join(parts[5:], "/")
-			}
+		} else if v.Prefix != "" && strings.HasPrefix(idx, v.Prefix+"/") {
+			afterPrefix = strings.TrimPrefix(idx, v.Prefix+"/")
 		}
 
 		if afterPrefix == "" {
@@ -615,15 +611,6 @@ func Metrics(v *Value) map[string]float64 {
 		for k, f := range floats {
 			if k < len(labels) {
 				out[labels[k]] = f
-			}
-		}
-	}
-
-	if _, ok := out["price"]; !ok && len(v.Layers) > 0 {
-		first := v.Layers[0]
-		if len(first) > 0 && (first[0] == '{' || first[0] == '[') {
-			if p := Attribute[float64](first, "data", 0, "price"); p > 0 {
-				out["price"] = p
 			}
 		}
 	}

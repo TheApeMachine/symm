@@ -13,11 +13,14 @@ func TestStabilityStage(t *testing.T) {
 		stage := NewStabilityStage(context.Background())
 
 		feed := func(values ...*data.Value) ([]*Violation, error) {
-			for _, value := range values {
-				stage.Channel() <- value
-			}
+			go func() {
+				for _, value := range values {
+					stage.Channel() <- value
+				}
 
-			close(stage.Channel())
+				close(stage.Channel())
+			}()
+
 			err := stage.Run()
 			return stage.Violations(), err
 		}

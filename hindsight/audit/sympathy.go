@@ -340,8 +340,8 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 						"cross_stream",
 						"sympathy.cross_stream_redundancy",
 						fmt.Sprintf(
-							"Asynchronous stream pair %s shows extreme continuous-time co-movement (concordance = %.4f >= 0.98, z-score = %.2f, p-value = %.4f vs shuffled null, N=%d)",
-							pairKey, concordance, estimate.Score, pValue, permutations,
+							"Asynchronous stream pair %s shows extreme continuous-time co-movement (concordance = %.4f >= %.2f, z-score = %.2f, p-value = %.4f vs shuffled null, N=%d)",
+							pairKey, concordance, system.Cfg.Audit.ComovementConcordance, estimate.Score, pValue, permutations,
 						),
 						nil,
 						nil,

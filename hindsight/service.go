@@ -16,7 +16,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/store"
-	"github.com/theapemachine/symm/strategy"
 )
 
 /*
@@ -38,7 +37,7 @@ type Service struct {
 	ctx         context.Context
 	client      *store.Client
 	fragmentsMu sync.Mutex
-	fragments   map[uint64][]TrainedFragmentResponse
+	ids         map[string]int64
 	excursions  map[int64]*data.Value
 }
 
@@ -46,7 +45,7 @@ func NewService(ctx context.Context, client *store.Client) *Service {
 	return &Service{
 		ctx:        ctx,
 		client:     client,
-		fragments:  make(map[uint64][]TrainedFragmentResponse),
+		ids:        make(map[string]int64),
 		excursions: make(map[int64]*data.Value),
 	}
 }
@@ -191,8 +190,12 @@ func (service *Service) tickAt(epoch, tick uint64) (*data.Value, error) {
 	key := (&data.Value{Origin: data.TickOrigin, Role: data.TickRole, Scope: data.TickScope, Epoch: epoch, Tick: tick}).FormatPrefix()
 	payload, err := service.client.Download(key)
 
-	if err != nil {
+	if store.IsNotFound(err) {
 		return nil, fiber.NewError(fiber.StatusNotFound, "no stored tick "+key)
+	}
+
+	if err != nil {
+		return nil, readFailure(err)
 	}
 
 	value := data.New()
@@ -369,7 +372,7 @@ func (service *Service) excursionsHandler(ctx fiber.Ctx) error {
 
 	excursions := make([]*data.Value, 0)
 
-	for value := range store.Values(service.client, strategy.ExcursionPrefixes(symbol, epoch)...) {
+	for value := range store.Values(service.client, data.ExcursionPrefixes(symbol, epoch)...) {
 		excursions = append(excursions, value)
 	}
 
@@ -596,7 +599,7 @@ func (service *Service) lifecycle(ctx fiber.Ctx) error {
 
 	events := make([]HindsightLifecycleEvent, 0)
 
-	for value := range store.Values(service.client, strategy.ExcursionPrefixes(symbol, epoch)...) {
+	for value := range store.Values(service.client, data.ExcursionPrefixes(symbol, epoch)...) {
 		events = append(events, HindsightLifecycleEvent{
 			DecisionId: value.Prefix,
 			Symbol:     value.Scope,
@@ -607,7 +610,7 @@ func (service *Service) lifecycle(ctx fiber.Ctx) error {
 		})
 	}
 
-	for value := range store.Values(service.client, strategy.PolicyPrefixes(epoch)...) {
+	for value := range store.Values(service.client, data.PolicyPrefixes(epoch)...) {
 		events = append(events, HindsightLifecycleEvent{
 			DecisionId: value.Prefix,
 			Symbol:     value.Scope,
@@ -728,63 +731,45 @@ type TrainedFragmentResponse struct {
 	LearnedAt  string          `json:"learned_at"`
 }
 
-func excursionFields(value *data.Value) (map[string]float64, error) {
-	metrics := data.Metrics(value)
-	fields := make(map[string]float64, len(strategy.ExcursionKeys))
-
-	for _, key := range strategy.ExcursionKeys {
-		field, ok := metrics[key]
-
-		if !ok {
-			return nil, errnie.Err(errnie.UnprocessableContent, value.Prefix+" has no "+key, nil)
-		}
-
-		fields[key] = field
-	}
-
-	return fields, nil
-}
-
 /*
-fragmentsOf is every excursion of epoch, over the symbols its ticks trade.
-Ids are stable within the process: one per excursion key.
+fragmentsOf is every excursion of epoch, over the symbols its ticks trade,
+read fresh on every call: an epoch still being collected or relabelled has no
+final snapshot to cache. An excursion keeps one id per key for the process,
+so /training/fragments/:id/points resolves it; ids are published only after
+the whole epoch loaded.
 */
 func (service *Service) fragmentsOf(epoch uint64) ([]TrainedFragmentResponse, error) {
-	service.fragmentsMu.Lock()
-	defer service.fragmentsMu.Unlock()
-
-	if cached, ok := service.fragments[epoch]; ok {
-		return cached, nil
-	}
-
 	symbols, err := service.epochSymbols(epoch)
 
 	if err != nil {
 		return nil, err
 	}
 
+	loaded := make([]*data.Value, 0)
 	fragments := make([]TrainedFragmentResponse, 0)
 
 	for _, symbol := range symbols {
-		for value := range store.Values(service.client, strategy.ExcursionPrefixes(symbol, epoch)...) {
-			fields, err := excursionFields(value)
+		for value := range store.Values(service.client, data.ExcursionPrefixes(symbol, epoch)...) {
+			fields, err := data.ExcursionFields(value)
 
 			if err != nil {
 				return nil, err
 			}
 
-			id := int64(len(service.excursions) + 1)
-			service.excursions[id] = value
-
 			entry, exit := fields["b_ask"], fields["c_bid"]
+
+			if entry <= 0 {
+				return nil, errnie.Err(errnie.Validation, fmt.Sprintf("[hindsight] %s has b_ask %v", value.Prefix, entry), nil)
+			}
+
 			direction := "up"
 
 			if exit < entry {
 				direction = "down"
 			}
 
+			loaded = append(loaded, value)
 			fragments = append(fragments, TrainedFragmentResponse{
-				Id:         id,
 				Symbol:     symbol,
 				Epoch:      epoch,
 				MarkA:      int64(fields["a_tick"]),
@@ -803,7 +788,21 @@ func (service *Service) fragmentsOf(epoch uint64) ([]TrainedFragmentResponse, er
 		}
 	}
 
-	service.fragments[epoch] = fragments
+	service.fragmentsMu.Lock()
+	defer service.fragmentsMu.Unlock()
+
+	for idx, value := range loaded {
+		id, known := service.ids[value.Prefix]
+
+		if !known {
+			id = int64(len(service.ids) + 1)
+			service.ids[value.Prefix] = id
+		}
+
+		service.excursions[id] = value
+		fragments[idx].Id = id
+	}
+
 	return fragments, nil
 }
 
@@ -850,13 +849,22 @@ func (service *Service) trainingFragmentPoints(ctx fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "fragment not loaded: list /training/fragments for its epoch first")
 	}
 
-	fields, err := excursionFields(excursion)
+	fields, err := data.ExcursionFields(excursion)
 
 	if err != nil {
 		return readFailure(err)
 	}
 
-	startTick, endTick := uint64(max(fields["a_tick"], 0)), uint64(fields["c_tick"])
+	// A tick bound below zero is not a tick of the tape: an error, never
+	// clamped onto it.
+	if fields["a_tick"] < 0 || fields["c_tick"] < 0 {
+		return readFailure(errnie.Err(errnie.Validation, fmt.Sprintf(
+			"[hindsight] %s has a negative tick bound (a_tick %v, c_tick %v)",
+			excursion.Prefix, fields["a_tick"], fields["c_tick"],
+		), nil))
+	}
+
+	startTick, endTick := uint64(fields["a_tick"]), uint64(fields["c_tick"])
 	points := make([]FragmentPoint, 0)
 
 	for value, err := range service.ticks(excursion.Epoch, excursion.Scope) {

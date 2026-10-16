@@ -199,21 +199,33 @@ export const parseValues = (bytes: Uint8Array): ParsedValue[] | null => {
 
 
 /*
-SIGNAL_OF_KEY names the signal that owns a vector layer, by the first metric
-key it emits. A tick Value carries every signal's layer under the tick's own
-Prefix, so the index names the metrics but not the signal.
+parseSignalIndex reads a signal layer index (data.SignalIndex in data/schema.go):
+
+	signal/<source>/<label...>/<tag...>/symbol:<symbol>
+
+The symbol tag is last because a symbol carries a "/" itself. An index in the
+signal namespace without a source or symbol tag is malformed: it is reported
+and yields null, never a guessed owner.
 */
-const SIGNAL_OF_KEY: Record<string, string> = {
-	cohort_covariance_score: "correlation",
-	midpoint_log_return: "cvd",
-	book_imbalance: "depthflow",
-	"arrival_rate:buy": "hawkes",
-	defined_peer_count: "leadlag",
-	"best_price:bid": "liquidity",
-	book_shape_distance: "morphology",
-	spread_ratio: "pumpdump",
-	breadth: "sentiment",
-	"retreat_fraction:bid": "toxicity",
+const SIGNAL_NAMESPACE = "signal/";
+const SYMBOL_TAG = "/symbol:";
+
+export const parseSignalIndex = (
+	index: string,
+): { source: string; symbol: string; labels: string[] } | null => {
+	if (!index.startsWith(SIGNAL_NAMESPACE)) return null;
+
+	const at = index.indexOf(SYMBOL_TAG);
+	const head = at >= 0 ? index.slice(SIGNAL_NAMESPACE.length, at) : "";
+	const symbol = at >= 0 ? index.slice(at + SYMBOL_TAG.length) : "";
+	const [source = "", ...labels] = head.split("/");
+
+	if (!source || !symbol) {
+		console.error("parseSignalIndex: malformed signal layer index", index);
+		return null;
+	}
+
+	return { source, symbol, labels };
 };
 
 const parseJSON = (bytes: Uint8Array): unknown => {
@@ -329,25 +341,12 @@ const newReading = (source: string, symbol: string): Reading => ({
 });
 
 /*
-layerSymbol is the symbol a signal layer describes. Signals index their layer
-as <symbol>/<Prefix>/<keys>, so one tick of a multi-symbol trade frame carries
-one layer per symbol; a layer without that lead belongs to the tick symbol.
-*/
-const layerSymbol = (val: ParsedValue, index: string, fallback: string): string => {
-	const head = index.split(".bin/")[0] ?? "";
-	const at = head.indexOf(`/${val.origin}/`);
-	return at > 0 ? head.slice(0, at) : fallback;
-};
-
-/*
 readVector turns one vector layer into metrics: the labels after the Value's
 Prefix name the floats in order, and any labels past the floats are tags
 (action:<x>, path:<a/b>, ...).
 */
-const readVector = (val: ParsedValue, index: string, bytes: Uint8Array) => {
+const readVector = (labels: string[], bytes: Uint8Array) => {
 	const floats = readFloats(bytes);
-	const after = index.includes(".bin/") ? index.split(".bin/")[1] : "";
-	const labels = after ? after.split("/") : [];
 	const metrics: Metric[] = [];
 	const provenance: Tag[] = [];
 
@@ -378,11 +377,7 @@ const readVector = (val: ParsedValue, index: string, bytes: Uint8Array) => {
 		});
 	}
 
-	const source =
-		SIGNAL_OF_KEY[labels[0] ?? ""] ??
-		(val.origin.split(":")[0] || "").toLowerCase();
-
-	return { source, metrics, provenance };
+	return { metrics, provenance };
 };
 
 /*
@@ -433,8 +428,25 @@ export function dispatchValue(val: ParsedValue) {
 
 		if (bytes.length < 8 || bytes.length % 8 !== 0) continue;
 
-		const { source, metrics, provenance } = readVector(val, index, bytes);
-		const owner = layerSymbol(val, index, symbol);
+		// A signal layer names its source and symbol (parseSignalIndex); any
+		// other vector layer belongs to the Value's own origin and symbol,
+		// its labels after the Value's key (".bin/").
+		let source: string;
+		let owner: string;
+		let labels: string[];
+
+		if (index.startsWith(SIGNAL_NAMESPACE)) {
+			const signal = parseSignalIndex(index);
+			if (!signal) continue;
+			({ source, symbol: owner, labels } = signal);
+		} else {
+			const after = index.includes(".bin/") ? index.split(".bin/")[1] : "";
+			labels = after ? after.split("/") : [];
+			source = (val.origin.split(":")[0] || "").toLowerCase();
+			owner = symbol;
+		}
+
+		const { metrics, provenance } = readVector(labels, bytes);
 		const key = `${source}\u0000${owner}`;
 		const reading = readings.get(key) ?? newReading(source, owner);
 

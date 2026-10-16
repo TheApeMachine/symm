@@ -34,8 +34,9 @@ func TestContractStage(t *testing.T) {
 
 		Convey("When auditing nil measurements", func() {
 			violations := feed(stage, nil)
-			So(len(violations), ShouldEqual, 1)
-			So(violations[0].Name, ShouldEqual, "measurement")
+			// A nil-only tape is a nil violation and, carrying nothing, insufficient evidence.
+			So(hasViolation(violations, "measurement"), ShouldBeTrue)
+			So(hasInsufficient(violations), ShouldBeTrue)
 		})
 
 		Convey("When auditing price metrics with negative values", func() {

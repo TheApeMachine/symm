@@ -108,7 +108,7 @@ SymbolLayer returns the layer indexed exactly "<kind>/<symbol>" (book, price,
 instrument), so BTC/USD never matches BTC/USDT.
 */
 func SymbolLayer(value *data.Value, kind, symbol string) []byte {
-	key := kind + "/" + symbol
+	key := data.SymbolIndex(kind, symbol)
 
 	for index, layer := range data.Indexed[[]byte](value, key) {
 		if index == key {
@@ -138,12 +138,12 @@ this error is acting on the tick's explicit record, not hiding a failure.
 var ErrBookNotValid = errors.New("book recorded as not valid on this tick")
 
 func ReadSnapshot(value *data.Value, symbol string) (*Snapshot, error) {
-	layer := SymbolLayer(value, "book", symbol)
+	layer := SymbolLayer(value, data.LayerBook, symbol)
 
 	if layer == nil {
 		// The tick says why it has no valid book (invalid, stale, unseeded);
 		// computing on it anyway would be computing on bad data.
-		if reason := SymbolLayer(value, "book_error", symbol); reason != nil {
+		if reason := SymbolLayer(value, data.LayerBookError, symbol); reason != nil {
 			return nil, errnie.Err(
 				errnie.Validation,
 				fmt.Sprintf("broker: book/%s is not valid on this tick: %s", symbol, reason),

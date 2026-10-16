@@ -9,6 +9,7 @@ import {
 } from "#/collections/app";
 import {
 	dispatchValue,
+	parseSignalIndex,
 	parseOneValue,
 	parseValues,
 } from "./websocket";
@@ -192,6 +193,42 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		expect(btcDecision?.cause).toBe("R01/R06");
 	});
 
+	it("routes a tick's signal layer by its canonical index (data.SignalIndex)", () => {
+		const raw = encodeValue({
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
+			tick: 9n,
+			layers: [
+				{
+					index: "signal/cvd/midpoint_log_return/signed_net_fraction/symbol:ETH/USD",
+					vector: [0.001, -0.5],
+				},
+			],
+		});
+
+		const parsed = parseOneValue(raw);
+		expect(parsed).not.toBeNull();
+		dispatchValue(parsed!);
+
+		const ring = signals.cvd.state["ETH/USD"];
+		expect(ring).toBeDefined();
+		const latest = ring.get(ring.getBufferLength() - 1);
+		expect(latest?.origin).toBe("cvd");
+		expect(latest?.scope).toBe("ETH/USD");
+		expect(latest?.metrics.find((m) => m.name === "signed_net_fraction")?.raw).toBeCloseTo(-0.5);
+	});
+
+	it("parseSignalIndex rejects a signal index without a symbol tag", () => {
+		expect(parseSignalIndex("signal/cvd/gross_notional/symbol:BTC/USD")).toEqual({
+			source: "cvd",
+			symbol: "BTC/USD",
+			labels: ["gross_notional"],
+		});
+		expect(parseSignalIndex("signal/cvd/gross_notional")).toBeNull();
+		expect(parseSignalIndex("price/BTC/USD")).toBeNull();
+	});
+
 	it("dispatches the balance layer into the cash atom", () => {
 		const raw = encodeValue({
 			origin: "workspace",
@@ -231,8 +268,6 @@ describe("Value Binary Decoder and Dispatcher", () => {
 	});
 
 	it("routes an aggregate tick's layers to the tick symbol's consumers", () => {
-		const prefix =
-			"workspace/tick/aggregate/0000000000000000001/0000000000000000077.bin";
 		const raw = encodeValue({
 			origin: "workspace",
 			role: "tick",
@@ -249,7 +284,7 @@ describe("Value Binary Decoder and Dispatcher", () => {
 					json: [{ symbol: "ETH/USD", status: "open", entry_price: "2" }],
 				},
 				{
-					index: `${prefix}/arrival_rate:buy/arrival_rate:sell`,
+					index: "signal/hawkes/arrival_rate:buy/arrival_rate:sell/symbol:ETH/USD",
 					vector: [1.5, 0.5],
 				},
 			],
@@ -269,8 +304,6 @@ describe("Value Binary Decoder and Dispatcher", () => {
 	});
 
 	it("routes each symbol's signal layer of a multi-symbol tick to that symbol", () => {
-		const prefix =
-			"workspace/tick/aggregate/0000000000000000001/0000000000000000078.bin";
 		const raw = encodeValue({
 			origin: "workspace",
 			role: "tick",
@@ -286,11 +319,11 @@ describe("Value Binary Decoder and Dispatcher", () => {
 				},
 				{ index: "price/ETH/USD", json: { symbol: "ETH/USD" } },
 				{
-					index: `ETH/USD/${prefix}/arrival_rate:buy/arrival_rate:sell`,
+					index: "signal/hawkes/arrival_rate:buy/arrival_rate:sell/symbol:ETH/USD",
 					vector: [1, 2],
 				},
 				{
-					index: `SOL/USD/${prefix}/arrival_rate:buy/arrival_rate:sell`,
+					index: "signal/hawkes/arrival_rate:buy/arrival_rate:sell/symbol:SOL/USD",
 					vector: [3, 4],
 				},
 			],

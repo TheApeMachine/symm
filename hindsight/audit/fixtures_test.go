@@ -1,8 +1,9 @@
 package audit
 
 import (
+	"strings"
+
 	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/strategy"
 )
 
 /*
@@ -71,20 +72,30 @@ excursionValue is a detector excursion Value carrying every ExcursionKeys
 field, overridden by fields.
 */
 func excursionValue(class, symbol string, fields map[string]float64) *data.Value {
-	value := data.NewValue("detector", class, symbol)
-	values := make([]float64, len(strategy.ExcursionKeys))
+	value := data.NewValue(data.ExcursionOrigin, class, symbol)
+	values := make([]float64, len(data.ExcursionKeys))
 
-	for idx, key := range strategy.ExcursionKeys {
+	for idx, key := range data.ExcursionKeys {
 		values[idx] = fields[key]
 	}
 
-	data.AppendVector(value, values, strategy.ExcursionKeys...)
+	data.AppendVector(value, values, data.ExcursionKeys...)
 	return value
 }
 
 func hasViolation(violations []*Violation, name string) bool {
 	for _, violation := range violations {
 		if violation.Name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasInsufficient(violations []*Violation) bool {
+	for _, violation := range violations {
+		if strings.HasSuffix(violation.Name, ".insufficient_evidence") {
 			return true
 		}
 	}

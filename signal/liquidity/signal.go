@@ -82,7 +82,7 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		relSpread = (ask - bid) / midpoint
 	}
 
-	feeRate := data.Attribute[float64](broker.SymbolLayer(value, "price", symbol), "feeRate")
+	feeRate := data.Attribute[float64](broker.SymbolLayer(value, data.LayerPrice, symbol), "feeRate")
 	var frictionHurdle float64
 	if feeRate > 0 {
 		frictionHurdle = relSpread + 2.0*feeRate

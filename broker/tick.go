@@ -38,6 +38,10 @@ func ReadTick(value *data.Value) ([]*SymbolTick, error) {
 		return nil, errnie.Err(errnie.Validation, "broker: no tick to read", nil)
 	}
 
+	if err := data.CheckTickLayers(value); err != nil {
+		return nil, err
+	}
+
 	layer, err := tradeLayer(value)
 
 	if err != nil {
@@ -62,7 +66,7 @@ func ReadTick(value *data.Value) ([]*SymbolTick, error) {
 			}
 		}
 
-		raw := SymbolLayer(value, "price", symbol)
+		raw := SymbolLayer(value, data.LayerPrice, symbol)
 
 		if raw == nil {
 			return nil, errnie.Err(errnie.NotFound, fmt.Sprintf("broker: %s has no price/%s layer", value.Prefix, symbol), nil)
@@ -112,8 +116,8 @@ tradeLayer returns the tick's single "spot:trade/<type>" layer.
 func tradeLayer(value *data.Value) ([]byte, error) {
 	var found []byte
 
-	for index, layer := range data.Indexed[[]byte](value, "spot:trade/") {
-		if !strings.HasPrefix(index, "spot:trade/") {
+	for index, layer := range data.Indexed[[]byte](value, data.LayerTrade+"/") {
+		if !strings.HasPrefix(index, data.LayerTrade+"/") {
 			continue
 		}
 

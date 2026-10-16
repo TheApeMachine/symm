@@ -144,8 +144,9 @@ func TestTimingStage(t *testing.T) {
 
 		Convey("When auditing zero timestamps and nil measurements", func() {
 			nilViolations := feed(stage, nil)
-			So(len(nilViolations), ShouldEqual, 1)
-			So(nilViolations[0].Name, ShouldEqual, "measurement")
+			// A nil-only tape is a nil violation and, carrying nothing, insufficient evidence.
+			So(hasViolation(nilViolations, "measurement"), ShouldBeTrue)
+			So(hasInsufficient(nilViolations), ShouldBeTrue)
 
 			zeroVenue := newTestMeasurement(1, 1, 0, 123456)
 			zeroStage := NewTimingStage(ctx)

@@ -184,7 +184,7 @@ silently lacks a book.
 */
 func (book *Book) Layer(symbol string) (string, []byte) {
 	if raw := book.JSON(symbol); raw != nil {
-		return "book/" + symbol, raw
+		return data.SymbolIndex(data.LayerBook, symbol), raw
 	}
 
 	state := map[string]any{"symbol": symbol, "kind": "unseeded"}
@@ -208,8 +208,8 @@ func (book *Book) Layer(symbol string) (string, []byte) {
 
 	if err != nil {
 		errnie.Error(errnie.Err(errnie.UnprocessableContent, "[book] "+symbol+" error layer marshal failed", err))
-		return "book_error/" + symbol, nil
+		return data.SymbolIndex(data.LayerBookError, symbol), nil
 	}
 
-	return "book_error/" + symbol, raw
+	return data.SymbolIndex(data.LayerBookError, symbol), raw
 }

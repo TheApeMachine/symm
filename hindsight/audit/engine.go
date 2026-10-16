@@ -16,7 +16,6 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	s3store "github.com/theapemachine/symm/store"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"golang.org/x/sync/errgroup"
 )
@@ -280,7 +279,7 @@ func (engine *Engine) feed(epoch uint64) error {
 	var excursions, policies int
 
 	for _, symbol := range symbols {
-		for excursion := range s3store.Values(engine.store, strategy.ExcursionPrefixes(symbol, epoch)...) {
+		for excursion := range s3store.Values(engine.store, data.ExcursionPrefixes(symbol, epoch)...) {
 			// An excursion that ends after the audited ticks is outside the
 			// window the stages saw.
 			if excursion.Tick > lastTick {
@@ -292,7 +291,7 @@ func (engine *Engine) feed(epoch uint64) error {
 		}
 	}
 
-	for policy := range s3store.Values(engine.store, strategy.PolicyPrefixes(epoch)...) {
+	for policy := range s3store.Values(engine.store, data.PolicyPrefixes(epoch)...) {
 		policies++
 		send(route.policies, policy)
 	}

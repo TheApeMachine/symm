@@ -105,8 +105,8 @@ func SNM(raw, prior float64) float64 {
 /*
 Observe advances symbol by one tick on value's signal layers and returns its
 frame. A signal layer that does not parse, or carries a source or label
-regionMetricPins does not pin, is an error: every key a signal writes must
-have a declared place in the grid.
+regionMetricPins does not declare, is an error: every key a signal writes must
+have a declared place in the grid, which may be an explicit empty one.
 */
 func (grid *Grid) Observe(value *data.Value, symbol string) (*Frame, error) {
 	if err := grid.Error(); err != nil {
@@ -136,10 +136,18 @@ func (grid *Grid) Observe(value *data.Value, symbol string) (*Frame, error) {
 		for idx, val := range signal.Values {
 			key := metricKey{signal.Source, signal.Labels[idx]}
 
-			if _, pinned := sourcePins[key.label]; !pinned {
+			regions, pinned := sourcePins[key.label]
+
+			if !pinned {
 				return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
 					"grid: %s metric %s/%s is not pinned to a region", symbol, key.source, key.label,
 				), nil)
+			}
+
+			// Declared with no regions: written on purpose, read elsewhere,
+			// and kept out of the grid's energy and brightness.
+			if len(regions) == 0 {
+				continue
 			}
 
 			if _, seen := raw[key]; !seen {

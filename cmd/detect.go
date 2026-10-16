@@ -26,7 +26,7 @@ var detectCmd = &cobra.Command{
 	Long: `detect runs one excursion Detector per symbol over the stored ticks of each
 requested epoch (data.TickPrefix), under an explicit taker fee (percent per
 side), and writes every excursion to the store under
-data.Prefix("detector", class, symbol, epoch). An epoch's earlier detections
+data.ExcursionPrefixes(symbol, epoch). An epoch's earlier detections
 are removed before it is relabelled.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(cmd.Context())
@@ -113,7 +113,7 @@ func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price,
 					return err
 				}
 
-				for _, prefix := range strategy.ExcursionPrefixes(symbolTick.Symbol, epoch) {
+				for _, prefix := range data.ExcursionPrefixes(symbolTick.Symbol, epoch) {
 					if err := client.DeletePrefix(prefix); err != nil {
 						return errnie.Err(errnie.IO, "[detect] cannot clear "+prefix+" before relabelling it", err)
 					}

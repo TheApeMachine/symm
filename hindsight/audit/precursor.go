@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -141,22 +140,15 @@ func (stage *PrecursorStage) recordMeasurement(measurement *data.Value) error {
 		return nil
 	}
 
-	if measurement.Origin != "detector" {
+	if measurement.Origin != data.ExcursionOrigin {
 		return errnie.Err(errnie.Validation, "audit:precursor: unexpected measurement "+measurement.Prefix, nil)
 	}
 
 	// 2. Excursions detected by strategy.Detector.
-	metrics := data.Metrics(measurement)
-	fields := make(map[string]float64, len(strategy.ExcursionKeys))
+	fields, err := data.ExcursionFields(measurement)
 
-	for _, key := range strategy.ExcursionKeys {
-		field, ok := metrics[key]
-
-		if !ok {
-			return errnie.Err(errnie.UnprocessableContent, "audit:precursor: "+measurement.Prefix+" has no "+key, nil)
-		}
-
-		fields[key] = field
+	if err != nil {
+		return errnie.Err(errnie.UnprocessableContent, "audit:precursor", err)
 	}
 
 	if fields["b_ask"] <= 0 || fields["c_bid"] <= 0 {

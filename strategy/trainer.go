@@ -19,30 +19,9 @@ import (
 )
 
 /*
-Policies are published as data.Prefix("policy", action, PolicyScope, epoch):
+Policies are published under data.data.PolicyPrefixes(epoch):
 one Value per learned path, pooled across the epoch's symbols.
 */
-const (
-	policyOrigin = "policy"
-	PolicyScope  = "all"
-)
-
-var PolicyActions = []string{"enter", "exit", "noop"}
-
-/*
-PolicyPrefixes are the keys of every policy published for epoch, or of every
-epoch when epoch is omitted, one prefix per action.
-*/
-func PolicyPrefixes(epoch ...uint64) []string {
-	prefixes := make([]string, 0, len(PolicyActions))
-
-	for _, action := range PolicyActions {
-		prefixes = append(prefixes, data.Prefix(policyOrigin, action, PolicyScope, epoch...))
-	}
-
-	return prefixes
-}
-
 /*
 Trainer learns which grammar paths of the signal grid precede profitable
 excursions. Its inputs are the stored ticks of an epoch (one full tick Value
@@ -288,7 +267,7 @@ func (trainer *Trainer) generate(epoch uint64, horizon int) error {
 	for _, symbol := range order {
 		tape := tapes[symbol]
 
-		for excursion := range store.Values(trainer.client, ExcursionPrefixes(symbol, epoch)...) {
+		for excursion := range store.Values(trainer.client, data.ExcursionPrefixes(symbol, epoch)...) {
 			if excursion.Role != "up" && excursion.Role != "down" {
 				continue
 			}
@@ -335,17 +314,10 @@ func (trainer *Trainer) tally(
 	tallies map[string]*pathTally,
 	stats map[string]*pathStats,
 ) (bool, error) {
-	metrics := data.Metrics(excursion)
-	fields := make(map[string]float64, len(ExcursionKeys))
+	fields, err := data.ExcursionFields(excursion)
 
-	for _, key := range ExcursionKeys {
-		field, ok := metrics[key]
-
-		if !ok {
-			return false, errnie.Err(errnie.UnprocessableContent, excursion.Prefix+" has no "+key, nil)
-		}
-
-		fields[key] = field
+	if err != nil {
+		return false, err
 	}
 
 	pnl, cost, err := trainer.price.RoundTrip(
@@ -423,7 +395,7 @@ func (trainer *Trainer) publishPolicies(
 ) error {
 	// Outputs of the epoch being regenerated are removed first; a failed
 	// delete would mix stale and fresh policy, so it stops training.
-	for _, prefix := range PolicyPrefixes(epoch) {
+	for _, prefix := range data.PolicyPrefixes(epoch) {
 		if err := trainer.client.DeletePrefix(prefix); err != nil {
 			return errnie.Err(errnie.IO, "[trainer] cannot clear "+prefix+" before regenerating it", err)
 		}
@@ -471,9 +443,9 @@ func (trainer *Trainer) publishPolicies(
 		sequence++
 
 		val := &data.Value{
-			Origin: policyOrigin,
+			Origin: data.PolicyOrigin,
 			Role:   action,
-			Scope:  PolicyScope,
+			Scope:  data.PolicyScope,
 			Epoch:  epoch,
 			Tick:   sequence,
 		}
@@ -481,13 +453,15 @@ func (trainer *Trainer) publishPolicies(
 
 		meanGain := entry.gain / float64(entry.visits)
 
-		data.AppendVector(val, []float64{
+		if err := data.AppendPolicy(val, path, []float64{
 			meanGain,
 			entry.holdSeconds / float64(entry.visits),
 			float64(entry.visits),
 			meanGain,
 			confidence,
-		}, "gain", "hold_seconds", "visits", "mean_reward", "confidence", "path:"+path)
+		}); err != nil {
+			return err
+		}
 
 		if _, err := io.Copy(trainer.client, val); err != nil {
 			return errnie.Err(errnie.IO, "[trainer] publishing "+val.Prefix, err)

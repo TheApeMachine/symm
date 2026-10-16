@@ -28,6 +28,9 @@ RISK:
   - R12: Friction Hurdle (Relative spread hurdle, quote levels)
   - R13: Macro Contagion (Market-wide breadth collapse, peer divergence, helper lag)
   - R14: Capacity / Exit Liquidity (Touch quote notional at bid)
+
+A label pinned to no regions ({}) is declared: its signal writes it, the grid
+leaves it out of energy and brightness. A label missing here is an error.
 */
 var regionMetricPins = map[string]map[string][]uint8{
 	"correlation": {
@@ -54,14 +57,18 @@ var regionMetricPins = map[string]map[string][]uint8{
 		"conditional_intensity_velocity": {3},
 		"arrival_rate:sell":              {4, 7},
 		"branching_spectral_radius":      {1, 7},
+		"conditional_intensity":          {},
 	},
 	"leadlag": {
 		"led_peer_share":               {1, 5, 7},
 		"covariance_score_gain_median": {7},
 		"best_lag_seconds_median":      {2, 4, 6, 13},
 		"best_lag_seconds_mad":         {6, 13},
+		"defined_peer_count":           {},
 	},
 	"liquidity": {
+		"best_price:bid":  {},
+		"best_price:ask":  {},
 		"relative_spread": {4, 8, 12},
 		"fee_rate":        {12},
 		"friction_hurdle": {12},

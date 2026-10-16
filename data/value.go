@@ -150,23 +150,6 @@ func Prefix(origin, role, scope string, epoch ...uint64) string {
 }
 
 /*
-The stored tick: one Kraken trade frame with every component's state, written
-by the booter as NewValue(TickOrigin, TickRole, TickScope).
-*/
-const (
-	TickOrigin = "workspace"
-	TickRole   = "tick"
-	TickScope  = "aggregate"
-)
-
-/*
-TickPrefix is Prefix for stored ticks, narrowed to one epoch when given.
-*/
-func TickPrefix(epoch ...uint64) string {
-	return Prefix(TickOrigin, TickRole, TickScope, epoch...)
-}
-
-/*
 KeyEpoch parses the epoch segment that follows prefix in key (a key or
 common prefix listed under Prefix(origin, role, scope)).
 */

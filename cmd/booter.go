@@ -435,7 +435,7 @@ func (booter *Booter) startIngress(
 				// wallet and positions for every symbol in the frame.
 				value := data.NewValue(
 					data.TickOrigin, data.TickRole, data.TickScope,
-				).AppendJSON(buf, "spot:trade/"+msgType)
+				).AppendJSON(buf, data.TradeIndex(msgType))
 
 				trades, err := data.AttributeOk[[]kraken.TradeData](buf, "data")
 
@@ -448,12 +448,12 @@ func (booter *Booter) startIngress(
 					index, book := booter.book.Layer(symbol)
 
 					value.AppendJSON(book, index).
-						AppendJSON(booter.price.JSON(symbol), "price/"+symbol).
-						AppendJSON(booter.price.InstrumentJSON(symbol), "instrument/"+symbol)
+						AppendJSON(booter.price.JSON(symbol), data.SymbolIndex(data.LayerPrice, symbol)).
+						AppendJSON(booter.price.InstrumentJSON(symbol), data.SymbolIndex(data.LayerInstrument, symbol))
 				}
 
-				value.AppendJSON(booter.desk.BalanceJSON(), "balance").
-					AppendJSON(booter.desk.PositionsJSON(), "positions")
+				value.AppendJSON(booter.desk.BalanceJSON(), data.LayerBalance).
+					AppendJSON(booter.desk.PositionsJSON(), data.LayerPositions)
 
 				// Signals write one layer per trade entry (or per symbol),
 				// each into its own pre-reserved slot.

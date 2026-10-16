@@ -441,7 +441,7 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 	// The tree in force is the newest epoch the Trainer published.
 	var newest uint64
 
-	for _, prefix := range PolicyPrefixes() {
+	for _, prefix := range data.PolicyPrefixes() {
 		epochs, err := store.Epochs(training.client, prefix)
 
 		if err != nil {
@@ -454,20 +454,12 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 	}
 
 	if newest > 0 {
-		for val := range store.Values(training.client, PolicyPrefixes(newest)...) {
+		for val := range store.Values(training.client, data.PolicyPrefixes(newest)...) {
 			action := val.Role
-			pathKey := ""
+			pathKey, err := data.PolicyPath(val)
 
-			for _, idx := range val.Index {
-				for part := range strings.SplitSeq(idx, "/") {
-					if after, ok := strings.CutPrefix(part, "path:"); ok {
-						pathKey = after
-					}
-				}
-			}
-
-			if pathKey == "" {
-				return errnie.Error(errnie.Err(errnie.UnprocessableContent, "[training] policy "+val.Prefix+" has no path: tag", nil))
+			if err != nil {
+				return errnie.Error(err)
 			}
 
 			if existing, found := loaded.actions[pathKey]; found && existing != action {

@@ -17,6 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -167,6 +169,22 @@ func (client *Client) Download(key string) ([]byte, error) {
 	}
 
 	return writer.Bytes(), nil
+}
+
+/*
+IsNotFound reports whether err (from Download) is S3 answering that the key
+does not exist, as opposed to a transport, auth or decode failure.
+*/
+func IsNotFound(err error) bool {
+	var noSuchKey *types.NoSuchKey
+
+	if errors.As(err, &noSuchKey) {
+		return true
+	}
+
+	var api smithy.APIError
+
+	return errors.As(err, &api) && (api.ErrorCode() == "NoSuchKey" || api.ErrorCode() == "NotFound")
 }
 
 /*

@@ -43,8 +43,6 @@ func (stage *TruthfulnessStage) Run() error {
 	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
 
 	for measurement := range stage.ch {
-		stage.totalChecked++
-
 		if measurement == nil {
 			stage.violations = append(stage.violations, NewViolation(
 				"unknown",
@@ -56,6 +54,7 @@ func (stage *TruthfulnessStage) Run() error {
 			continue
 		}
 
+		stage.totalChecked++
 		stage.validateTapeIdentities(measurement)
 	}
 

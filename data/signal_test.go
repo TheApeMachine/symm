@@ -53,6 +53,27 @@ func TestSignals(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 
+		Convey("The index is the canonical signal index, free of the tick's key", func() {
+			So(tick.Index[1], ShouldEqual, "signal/cvd/gross_notional/signed_net_fraction/window:5m/symbol:BTC/USD")
+			So(tick.Index[1], ShouldEqual, SignalIndex("cvd", "BTC/USD", "gross_notional", "signed_net_fraction", "window:5m"))
+			So(tick.Index[1], ShouldNotContainSubstring, tick.Prefix)
+		})
+
+		Convey("Signal layers are not merged into Metrics", func() {
+			So(Metrics(tick), ShouldBeEmpty)
+		})
+
+		Convey("A signal layer without a symbol tag is an error", func() {
+			tick.claim(vectorBytes([]float64{1}), "signal/cvd/gross_notional")
+
+			var last error
+			for _, err := range Signals(tick) {
+				last = err
+			}
+
+			So(last, ShouldNotBeNil)
+		})
+
 		Convey("A layer with more values than labels is an error", func() {
 			AppendSignalVector(tick, "cvd", "BTC/USD", []float64{1, 2})
 

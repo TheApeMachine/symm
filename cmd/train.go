@@ -22,7 +22,7 @@ var trainCmd = &cobra.Command{
 	Long: `train replays each epoch's stored ticks (data.TickPrefix) through the signal
 grid and grammar per symbol, attributes the excursions detect wrote for the
 epoch to the grammar paths that preceded them, and publishes the epoch's
-policies under data.Prefix("policy", action, "all", epoch), replacing any
+policies under data.PolicyPrefixes(epoch), replacing any
 published earlier for that epoch.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := pyroscope.Start(pyroscope.Config{
