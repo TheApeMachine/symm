@@ -92,7 +92,11 @@ func loadEmbeddedConfig() error {
 		))
 	}
 
-	defer cfgReader.Close()
+	defer func() {
+		if err := cfgReader.Close(); err != nil {
+			errnie.Error(errnie.Err(errnie.IO, "[root] embedded config close failed", err))
+		}
+	}()
 
 	if err := viper.ReadConfig(cfgReader); err != nil {
 		return errnie.Error(errnie.Err(

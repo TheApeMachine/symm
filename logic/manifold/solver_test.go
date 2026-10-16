@@ -15,7 +15,16 @@ import (
 
 func projectionSolver(t testing.TB) *Solver {
 	t.Helper()
-	book := broker.NewBook(context.Background(), spot.NewNormalizer())
+	// The book keys levels at each pair's precision, so the pairs are known.
+	normalizer := spot.NewNormalizer()
+	normalizer.Update(&spot.AssetsManagerUpdate{
+		NewAssets: map[string]spot.AssetInfo{"BTC": {AltName: "BTC"}, "ETH": {AltName: "ETH"}, "USD": {AltName: "USD"}},
+		NewPairs: map[string]spot.AssetPair{
+			"BTCUSD": {WSName: "BTC/USD", Base: "BTC", Quote: "USD", LotMultiplier: 1, TickSize: decimal.NewFromInt64(1)},
+			"ETHUSD": {WSName: "ETH/USD", Base: "ETH", Quote: "USD", LotMultiplier: 1, TickSize: decimal.NewFromInt64(1)},
+		},
+	})
+	book := broker.NewBook(context.Background(), normalizer)
 	for _, symbol := range []string{"BTC/USD", "ETH/USD"} {
 		err := book.Update(&kraken.Level3{Type: "snapshot", Data: []kraken.Level3Data{{Symbol: symbol,
 			Bids: []kraken.Level3Order{{OrderID: symbol + "-bid", LimitPrice: decimal.NewFromInt64(99), OrderQty: decimal.NewFromInt64(1), Timestamp: time.Unix(100, 0), Event: "add"}},

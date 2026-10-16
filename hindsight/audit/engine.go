@@ -62,7 +62,10 @@ func (violation *Violation) String() string {
 	t := template.Must(template.New("violation").Parse(tmpl))
 
 	var b strings.Builder
-	t.Execute(&b, violation)
+
+	if err := t.Execute(&b, violation); err != nil {
+		errnie.Error(errnie.Err(errnie.UnprocessableContent, "[audit] violation render failed for "+violation.Name, err))
+	}
 
 	return b.String()
 }
@@ -474,8 +477,15 @@ func (engine *Engine) Run() error {
 		))
 	}
 
-	defer fh.Close()
-	fh.WriteString(builder.String())
+	defer func() {
+		if err := fh.Close(); err != nil {
+			errnie.Error(errnie.Err(errnie.IO, "failed to close audit report", err))
+		}
+	}()
+
+	if _, err := fh.WriteString(builder.String()); err != nil {
+		return errnie.Error(errnie.Err(errnie.IO, "failed to write audit report", err))
+	}
 
 	results := make(map[string]any)
 

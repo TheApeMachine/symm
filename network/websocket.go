@@ -2,7 +2,9 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -193,7 +195,9 @@ func (client *WebsocketClient) Read(keys ...string) (msg []byte, err error) {
 		)))
 	}
 
-	_ = conn.SetReadDeadline(time.Time{})
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		return nil, client.softDown(errnie.Err(errnie.IO, "[network.websocket] read deadline reset failed", err))
+	}
 
 	_, message, err := conn.ReadMessage()
 
@@ -260,8 +264,7 @@ func (client *WebsocketClient) writePing() error {
 	)
 
 	if err != nil {
-		_ = client.softDown(err)
-		return err
+		return client.softDown(errnie.Err(errnie.IO, "[network.websocket] ping failed", err))
 	}
 
 	return nil
@@ -361,8 +364,15 @@ func (client *WebsocketClient) closeConnLocked() {
 		return
 	}
 
-	_ = client.conn.SetReadDeadline(time.Now())
-	_ = client.conn.Close()
+	// Teardown of a socket that already failed reports net.ErrClosed; that
+	// is the expected state, anything else is raised.
+	if err := client.conn.SetReadDeadline(time.Now()); err != nil && !errors.Is(err, net.ErrClosed) {
+		errnie.Error(errnie.Err(errnie.IO, "[network.websocket] read deadline on close failed", err))
+	}
+
+	if err := client.conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		errnie.Error(errnie.Err(errnie.IO, "[network.websocket] close failed", err))
+	}
 	client.conn = nil
 	client.pinger.Stop()
 }

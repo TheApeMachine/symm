@@ -220,7 +220,10 @@ const parseJSON = (bytes: Uint8Array): unknown => {
 	if (bytes[0] !== 0x7b && bytes[0] !== 0x5b) return undefined;
 	try {
 		return JSON.parse(textDecoder.decode(bytes));
-	} catch {
+	} catch (err) {
+		// A layer that opens like JSON but does not parse is corrupt data,
+		// not an absent layer: raise it with the text that failed.
+		console.error("parseJSON: corrupt JSON layer", err, textDecoder.decode(bytes.subarray(0, 200)));
 		return undefined;
 	}
 };

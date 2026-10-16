@@ -59,11 +59,20 @@ func (system *System) Transition(stage Stage) {
 
 func (system *System) Status() Stage { return system.status.Current() }
 
+/*
+ShuttingDown reports whether err is only the cancellation of ctx during an
+orderly shutdown: ctx is done and err is context.Canceled. Such an error is
+the expected end of in-flight work, not a failure; anything else is.
+*/
+func ShuttingDown(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && errors.Is(err, context.Canceled)
+}
+
 func (system *System) Error(errs ...error) error {
 	var added bool
 
 	for _, err := range errs {
-		if err == nil {
+		if err == nil || ShuttingDown(system.ctx, err) {
 			continue
 		}
 
@@ -119,7 +128,10 @@ func (system *System) Close() error {
 			continue
 		}
 
-		system.err = errors.Join(system.err, closer.Close())
+		if err := closer.Close(); err != nil {
+			errnie.Error(errnie.Err(errnie.IO, fmt.Sprintf("%s: closing %T failed", system.name, closer), err))
+			system.err = errors.Join(system.err, err)
+		}
 	}
 
 	return system.err

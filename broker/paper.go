@@ -215,17 +215,13 @@ func ResetPaperAccount(ctx context.Context) error {
 		cmd.Err = nil
 	}
 
-	stdout, err := cmd.Output()
-
-	if err != nil {
+	if _, err := cmd.Output(); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"kraken paper reset failed",
 			err,
 		))
 	}
-
-	_ = stdout
 
 	return nil
 }

@@ -1228,21 +1228,22 @@ func (price *Price) JSON(symbol string) []byte {
 	}
 
 	bid, ask := price.Touch(symbol)
-	fee, _ := price.FeeRate(symbol)
 
 	type PriceInfo struct {
 		Symbol  string           `json:"symbol"`
 		Bid     *decimal.Decimal `json:"bid,omitempty"`
 		Ask     *decimal.Decimal `json:"ask,omitempty"`
-		FeeRate float64          `json:"feeRate,omitempty"`
+		FeeRate *float64         `json:"feeRate,omitempty"`
 	}
 
-	raw, err := sonic.Marshal(PriceInfo{
-		Symbol:  symbol,
-		Bid:     bid,
-		Ask:     ask,
-		FeeRate: fee,
-	})
+	info := PriceInfo{Symbol: symbol, Bid: bid, Ask: ask}
+
+	// An unknown fee is absent from the layer; a known zero fee is present.
+	if fee, ok := price.FeeRate(symbol); ok {
+		info.FeeRate = &fee
+	}
+
+	raw, err := sonic.Marshal(info)
 
 	if err != nil {
 		errnie.Error(errnie.Err(errnie.UnprocessableContent, "[price] "+symbol+" marshal failed", err))

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -124,29 +125,44 @@ action tree published to S3 storage.`,
 			}
 		}
 
-		for _, epoch := range trainEpochs {
-			_ = client.DeletePrefix(fmt.Sprintf("policy/current/%019d/", epoch))
-			_ = client.DeletePrefix(fmt.Sprintf("policy/current/%d/", epoch))
-			if len(trainSymbols) > 0 {
-				for _, symbol := range trainSymbols {
-					_ = client.DeletePrefix(fmt.Sprintf("policy/%s/%019d/", symbol, epoch))
-					_ = client.DeletePrefix(fmt.Sprintf("policy/%s/%d/", symbol, epoch))
-				}
-			} else {
-				for page := range client.List("policy/", "/") {
-					for _, cp := range page.CommonPrefixes {
-						if cp.Prefix == nil {
-							continue
-						}
-						symbolPart := strings.TrimPrefix(*cp.Prefix, "policy/")
-						symbolPart = strings.Trim(symbolPart, "/")
-						_ = client.DeletePrefix(fmt.Sprintf("policy/%s/%019d/", symbolPart, epoch))
-						_ = client.DeletePrefix(fmt.Sprintf("policy/%s/%d/", symbolPart, epoch))
+		// Outputs of the epochs about to be regenerated are removed first; a
+		// failed delete would mix stale and fresh policy, so it stops training.
+		stale := make([]string, 0)
+		symbols := slices.Clone(trainSymbols)
+
+		if len(symbols) == 0 {
+			for page := range client.List("policy/", "/") {
+				for _, cp := range page.CommonPrefixes {
+					if cp.Prefix == nil {
+						continue
 					}
+
+					symbols = append(symbols, strings.Trim(strings.TrimPrefix(*cp.Prefix, "policy/"), "/"))
 				}
 			}
 		}
 
+		for _, epoch := range trainEpochs {
+			stale = append(stale,
+				fmt.Sprintf("policy/current/%019d/", epoch),
+				fmt.Sprintf("policy/current/%d/", epoch),
+			)
+
+			for _, symbol := range symbols {
+				stale = append(stale,
+					fmt.Sprintf("policy/%s/%019d/", symbol, epoch),
+					fmt.Sprintf("policy/%s/%d/", symbol, epoch),
+				)
+			}
+		}
+
+		for _, prefix := range stale {
+			if err := client.DeletePrefix(prefix); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO, "[train] cannot clear "+prefix+" before regenerating it", err,
+				))
+			}
+		}
 
 		trainer := strategy.NewTrainer(ctx, client, storeTee, price)
 

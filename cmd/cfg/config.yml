@@ -254,9 +254,12 @@ market:
   # This optional per-symbol version cap bounds memory only; 0 leaves
   # retention to the learned lag.
   book_history_limit: 0
-  # High-liquidity run: deeper L2 book and faster subscription pacing.
+  # Level3 subscribe frames are sized to one second of l3_rate_limit (40
+  # symbols at depth 10, cost 5 each; Kraken's limit is per second). Measured:
+  # at 1s Kraken silently drops every other full-budget frame (no ack, no
+  # error; 208 of 621 never seeded), so frames go out every 2s.
   subscribe:
-    pace: 3s
+    pace: 2s
     batch: 25
   book:
     depth: 10

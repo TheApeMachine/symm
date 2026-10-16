@@ -17,7 +17,12 @@ type Instrument struct {
 
 func NewInstrument(buf []byte) *Instrument {
 	instrument := &Instrument{}
-	errnie.Error(sonic.Unmarshal(buf, instrument))
+
+	if err := sonic.Unmarshal(buf, instrument); err != nil {
+		errnie.Error(errnie.Err(errnie.UnprocessableContent, "[kraken.instrument] snapshot decode failed", err))
+		return nil
+	}
+
 	return instrument
 }
 
@@ -146,4 +151,3 @@ func NewInstrumentPairFromValue(val *data.Value) (*InstrumentPair, error) {
 
 	return &pair, nil
 }
-

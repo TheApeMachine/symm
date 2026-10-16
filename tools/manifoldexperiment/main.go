@@ -196,7 +196,9 @@ func (command *ExperimentCommand) replay(input io.Reader) (run ReplayRun, err er
 	var physics *sensorium.Manifold
 	defer func() {
 		if physics != nil {
-			physics.Close()
+			if err := physics.Close(); err != nil {
+				fmt.Fprintln(os.Stderr, "manifoldexperiment: close physics:", err)
+			}
 		}
 	}()
 	for frameIndex := 0; run.Steps < command.Steps; frameIndex++ {

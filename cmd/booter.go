@@ -419,7 +419,7 @@ func (booter *Booter) startIngress(
 					continue
 				}
 
-				if err := booter.book.Update(level3); err != nil {
+				if err := booter.book.Update(level3); err != nil && !nmruntime.ShuttingDown(booter.Context(), err) {
 					errnie.Error(err)
 				}
 			case "trade":

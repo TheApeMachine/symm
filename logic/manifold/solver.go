@@ -642,6 +642,7 @@ func (solver *Solver) Crystallize(
 		_, err = solver.physics.Step(batch)
 
 		if err != nil {
+			errnie.Error(errnie.Err(errnie.Internal, "manifold: relaxation step failed", err))
 			return nil
 		}
 

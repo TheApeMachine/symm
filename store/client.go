@@ -304,12 +304,25 @@ func (client *Client) ReadFrom(r io.Reader) (int64, error) {
 		Body:   val,
 	})
 	if uploadErr != nil {
-		return n, errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] upload error", uploadErr,
-		))
+		client.uploadFailed(val.Prefix, uploadErr)
+		return n, uploadErr
 	}
 
 	return n, nil
+}
+
+/*
+uploadFailed raises a failed upload of key. An upload cut off by an orderly
+shutdown is reported at info with its key, so the lost tick stays traceable
+without posing as a store failure.
+*/
+func (client *Client) uploadFailed(key string, err error) {
+	if runtime.ShuttingDown(client.Context(), err) {
+		errnie.Info("[store.client] upload of " + key + " canceled by shutdown")
+		return
+	}
+
+	errnie.Error(errnie.Err(errnie.IO, "[store.client] upload of "+key+" failed", err))
 }
 
 /*
@@ -326,9 +339,7 @@ func (client *Client) Write(p []byte) (n int, err error) {
 			Key:    aws.String(val.Prefix),
 			Body:   val,
 		}); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO, "[store.client] upload error", err,
-			))
+			client.uploadFailed(val.Prefix, err)
 		}
 	}()
 
@@ -340,7 +351,7 @@ DeletePrefix deletes all objects under the specified prefix.
 */
 func (client *Client) DeletePrefix(prefix string) error {
 	if client == nil || client.s3Client == nil {
-		return nil
+		return errnie.Error(errnie.Err(errnie.Validation, "[store.client] no S3 client", nil))
 	}
 
 	keys := client.ListKeys(prefix)
@@ -363,7 +374,7 @@ MovePrefix copies all objects matching sourcePrefix to destPrefix, then deletes 
 */
 func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 	if client == nil || client.s3Client == nil {
-		return nil
+		return errnie.Error(errnie.Err(errnie.Validation, "[store.client] no S3 client", nil))
 	}
 
 	keys := client.ListKeys(sourcePrefix)

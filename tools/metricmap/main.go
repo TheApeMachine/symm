@@ -116,7 +116,10 @@ func main() {
 	}
 
 	catalog, err := readCatalog(input)
-	_ = input.Close()
+
+	if closeErr := input.Close(); closeErr != nil {
+		panic(closeErr)
+	}
 
 	if err != nil {
 		panic(err)

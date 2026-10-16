@@ -98,8 +98,12 @@ func (desk *Desk) restore() {
 	}
 
 	quote := desk.balance.Quote
+
+	// Balance carries market.quote_currency from construction; an empty
+	// quote cannot be restored against.
 	if quote == "" {
-		quote = "USD"
+		errnie.Error(errnie.Err(errnie.Validation, "[desk] balance has no quote currency to restore against", nil))
+		return
 	}
 	quoteAlias := kraken.AssetAlias(quote)
 

@@ -95,6 +95,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	res, _, err := state.estimator.Step(mark, atSec)
 	if err != nil {
+		errnie.Error(errnie.Err(errnie.Internal, "[hawkes] estimator step failed for "+trade.Symbol, err))
 		return value
 	}
 

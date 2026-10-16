@@ -1,6 +1,7 @@
 package kraken
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -238,44 +239,34 @@ func (nonce *AuthNonce) writeAtomic(value int64) error {
 	payload := []byte(strconv.FormatInt(value, 10) + "\n")
 
 	if _, err := temporary.Write(payload); err != nil {
-		temporary.Close()
-		os.Remove(temporaryPath)
-
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[kraken.nonce] failed to write auth nonce",
-			err,
+			errors.Join(err, temporary.Close(), os.Remove(temporaryPath)),
 		))
 	}
 
 	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		os.Remove(temporaryPath)
-
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[kraken.nonce] failed to sync auth nonce",
-			err,
+			errors.Join(err, temporary.Close(), os.Remove(temporaryPath)),
 		))
 	}
 
 	if err := temporary.Close(); err != nil {
-		os.Remove(temporaryPath)
-
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[kraken.nonce] failed to close auth nonce temp file",
-			err,
+			errors.Join(err, os.Remove(temporaryPath)),
 		))
 	}
 
 	if err := os.Rename(temporaryPath, nonce.path); err != nil {
-		os.Remove(temporaryPath)
-
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[kraken.nonce] failed to persist auth nonce",
-			err,
+			errors.Join(err, os.Remove(temporaryPath)),
 		))
 	}
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 )
 
 const futuresInstrumentsURL = "https://futures.kraken.com/derivatives/api/v3/instruments"
@@ -45,7 +46,11 @@ func FetchFuturesInstruments(ctx context.Context) ([]FuturesInstrument, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			errnie.Error(errnie.Err(errnie.IO, "futures instruments: response close failed", err))
+		}
+	}()
 
 	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {

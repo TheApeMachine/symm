@@ -2,11 +2,14 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/theapemachine/symm/data"
 
 	"github.com/bytedance/sonic"
 	"github.com/spf13/viper"
@@ -110,14 +113,24 @@ func NewInstrument(
 			return instrument
 		}
 
-		node, _ := sonic.Get(buf, "channel")
-		var str string
+		// Acks and heartbeats carry no instrument channel; a frame whose
+		// channel cannot be read is an error, not something to skip past.
+		channel, err := data.AttributeOk[string](buf, "channel")
 
-		if str, err = node.String(); err != nil || str != "instrument" {
+		if errors.Is(err, data.ErrMissing) || (err == nil && channel != "instrument") {
 			continue
 		}
 
-		snapshot = kraken.NewInstrument(buf)
+		if err != nil {
+			errnie.Error(err)
+			continue
+		}
+
+		if snapshot = kraken.NewInstrument(buf); snapshot == nil {
+			instrument.Error(errnie.Err(errnie.UnprocessableContent, "[instrument] instrument snapshot did not decode", nil))
+			return instrument
+		}
+
 		instrument.snapshot = snapshot
 		errnie.Info("[instrument] received valid instrument snapshot")
 

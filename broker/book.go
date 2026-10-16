@@ -113,9 +113,7 @@ func (book *Book) Wait(timeout time.Duration) error {
 	for book.Status() != runtime.READY {
 		select {
 		case <-book.ctx.Done():
-			return errnie.Error(errnie.Err(
-				errnie.IO, "book: seed interrupted", book.ctx.Err(),
-			))
+			return errnie.Err(errnie.IO, "book: seed interrupted", book.ctx.Err())
 		case <-deadline.C:
 			pending := book.Pending()
 
@@ -364,7 +362,8 @@ func (book *Book) apply(
 		err := func() error {
 			select {
 			case <-book.ctx.Done():
-				return errnie.Error(book.ctx.Err())
+				// Shutdown: the caller decides; cancellation is not a failure.
+				return book.ctx.Err()
 			default:
 			}
 

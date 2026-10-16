@@ -422,8 +422,14 @@ func (trainer *Trainer) consumeSymbol(
 
 	horizon := system.Cfg.Learning.PrecursorHorizon
 
+	// learning.precursor_horizon has its default in system; a non-positive
+	// value is a broken config.
 	if horizon <= 0 {
-		horizon = 8
+		return nil, nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[trainer] learning.precursor_horizon %d is not positive", horizon),
+			nil,
+		))
 	}
 
 	findPath := func(idx int, minIdx int) string {

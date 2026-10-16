@@ -33,7 +33,9 @@ func main() {
 	}
 
 	defer func() {
-		_ = os.RemoveAll(tempDir)
+		if err := os.RemoveAll(tempDir); err != nil {
+			fmt.Fprintln(os.Stderr, "metallibgen: remove", tempDir+":", err)
+		}
 	}()
 
 	generator := NewGenerator(packageDir, tempDir)

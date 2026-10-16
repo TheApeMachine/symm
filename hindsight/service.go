@@ -655,6 +655,7 @@ func (service *Service) states(ctx fiber.Ctx) error {
 		payloadBytes, err := sonic.Marshal(val)
 
 		if err != nil {
+			errnie.Error(errnie.Err(errnie.UnprocessableContent, "[hindsight] state marshal failed for "+val.Prefix, err))
 			continue
 		}
 
@@ -1038,7 +1039,9 @@ func (service *Service) trainingFragmentPoints(ctx fiber.Ctx) error {
 	service.fragmentsMu.RUnlock()
 
 	if targetDet == nil {
-		_, _ = service.getFragments(0)
+		if _, err := service.getFragments(0); err != nil {
+			return errnie.Error(errnie.Err(errnie.IO, "[hindsight] fragments unavailable", err))
+		}
 		service.fragmentsMu.RLock()
 		targetDet = service.fragmentsMap[targetID]
 		service.fragmentsMu.RUnlock()
