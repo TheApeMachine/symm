@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -155,6 +156,11 @@ auditRedundancy scans the bivariate correlation matrix across all pairs and flag
 any pairs exceeding the collinearity threshold (|r| >= 0.95).
 */
 func (stage *RedundancyStage) auditRedundancy() {
+	if len(stage.pairs) == 0 {
+		stage.violations = append(stage.violations, insufficient("redundancy", "no metric pairs observed"))
+		return
+	}
+
 	pairKeys := make([]string, 0, len(stage.pairs))
 
 	for pairKey := range stage.pairs {
@@ -171,12 +177,12 @@ func (stage *RedundancyStage) auditRedundancy() {
 			continue
 		}
 
-		if math.Abs(correlation) >= 0.95 {
+		if math.Abs(correlation) >= system.Cfg.Audit.CollinearCorrelation {
 			stage.violations = append(stage.violations, NewViolation(
 				pairKey,
 				"redundancy.collinear_pair",
-				fmt.Sprintf("Metric pair [%s] are collinear clones (|r| = %.4f >= 0.95 across %.0f observations)",
-					pairKey, correlation, moment.Count),
+				fmt.Sprintf("Metric pair [%s] are collinear clones (|r| = %.4f >= %.2f across %.0f observations)",
+					pairKey, correlation, system.Cfg.Audit.CollinearCorrelation, moment.Count),
 				nil,
 				nil,
 			))
@@ -226,7 +232,7 @@ func (stage *RedundancyStage) Data() any {
 			Pair:        pairKey,
 			Correlation: corr,
 			Count:       moment.Count,
-			Collinear:   math.Abs(corr) >= 0.95,
+			Collinear:   math.Abs(corr) >= system.Cfg.Audit.CollinearCorrelation,
 		})
 	}
 

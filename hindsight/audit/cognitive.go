@@ -173,6 +173,7 @@ func (stage *CognitiveStage) auditDecisiveness() {
 	}
 
 	if totalPhases == 0 {
+		stage.violations = append(stage.violations, insufficient("cognitive", "no published policies for the epoch: run train on it"))
 		return
 	}
 
@@ -257,4 +258,3 @@ func (stage *CognitiveStage) Data() any {
 		"phases":          stage.phases,
 	}
 }
-

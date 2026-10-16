@@ -12,8 +12,7 @@ import (
 
 func TestService(t *testing.T) {
 	Convey("Given a hindsight Service with nil store", t, func() {
-		ctx := context.Background()
-		service := NewService(ctx, nil)
+		service := NewService(context.Background(), nil)
 
 		app := fiber.New()
 		service.Register(app)
@@ -24,101 +23,48 @@ func TestService(t *testing.T) {
 			service.Register(nil)
 		})
 
-		Convey("GET /hindsight/metric-map returns signal semantics", func() {
-			req := httptest.NewRequest(http.MethodGet, "/hindsight/metric-map", nil)
-			resp, err := app.Test(req)
+		Convey("GET /hindsight/metric-map is explicitly not implemented", func() {
+			resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/hindsight/metric-map", nil))
 			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusOK)
+			So(resp.StatusCode, ShouldEqual, http.StatusNotImplemented)
 		})
 
-		Convey("GET /hindsight/runs reports service unavailable when store is nil", func() {
-			req := httptest.NewRequest(http.MethodGet, "/hindsight/runs", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusServiceUnavailable)
-		})
-
-		Convey("GET /hindsight/symbols reports service unavailable when store is nil", func() {
-			req := httptest.NewRequest(http.MethodGet, "/hindsight/symbols", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusServiceUnavailable)
-		})
-
-		Convey("GET /hindsight/excursions reports service unavailable when store is nil", func() {
-			req := httptest.NewRequest(http.MethodGet, "/hindsight/excursions", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusServiceUnavailable)
-		})
-
-		Convey("GET /hindsight/data reports service unavailable when store is nil", func() {
-			req := httptest.NewRequest(http.MethodGet, "/hindsight/data", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusServiceUnavailable)
-		})
-
-		Convey("GET /hindsight/captures reports service unavailable when store is nil", func() {
-			req := httptest.NewRequest(http.MethodGet, "/hindsight/captures", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusServiceUnavailable)
-		})
-
-		Convey("GET /hindsight/envelope reports service unavailable when store is nil", func() {
-			req := httptest.NewRequest(http.MethodGet, "/hindsight/envelope?seq=1", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusServiceUnavailable)
-		})
-
-		Convey("GET /hindsight/gaps returns empty list", func() {
-			req := httptest.NewRequest(http.MethodGet, "/hindsight/gaps", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusOK)
-		})
-
-		Convey("GET /hindsight/lifecycle returns empty list", func() {
-			req := httptest.NewRequest(http.MethodGet, "/hindsight/lifecycle", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusOK)
-		})
-
-		Convey("GET /hindsight/states returns empty list", func() {
-			req := httptest.NewRequest(http.MethodGet, "/hindsight/states", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusOK)
-		})
-
-		Convey("GET /training/fragments returns empty list when store is nil", func() {
-			req := httptest.NewRequest(http.MethodGet, "/training/fragments", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusOK)
-		})
-
-		Convey("GET /training/fragments/:id/points returns empty list when store is nil", func() {
-			req := httptest.NewRequest(http.MethodGet, "/training/fragments/1/points", nil)
-			resp, err := app.Test(req)
-			So(err, ShouldBeNil)
-			So(resp.StatusCode, ShouldEqual, http.StatusOK)
-		})
-
-		Convey("filterFragmentsByEpoch filters correctly", func() {
-			frags := []TrainedFragmentResponse{
-				{Id: 1, Epoch: 100},
-				{Id: 2, Epoch: 200},
-				{Id: 3, Epoch: 100},
+		Convey("Every store-backed route is unavailable, never an empty success", func() {
+			for _, route := range []string{
+				"/hindsight/runs",
+				"/hindsight/symbols?run=1",
+				"/hindsight/excursions?run=1&symbol=BTC/USD",
+				"/hindsight/data?run=1",
+				"/hindsight/captures?run=1",
+				"/hindsight/envelope?run=1&seq=1",
+				"/hindsight/gaps?run=1",
+				"/hindsight/lifecycle?run=1&symbol=BTC/USD",
+				"/hindsight/states?run=1",
+				"/hindsight/state?run=1&seq=1",
+				"/training/fragments?run=1",
+				"/training/fragments/1/points",
+			} {
+				resp, err := app.Test(httptest.NewRequest(http.MethodGet, route, nil))
+				So(err, ShouldBeNil)
+				So(resp.StatusCode, ShouldEqual, http.StatusServiceUnavailable)
 			}
-			So(filterFragmentsByEpoch(frags, 0), ShouldResemble, frags)
-			filtered := filterFragmentsByEpoch(frags, 100)
-			So(len(filtered), ShouldEqual, 2)
-			So(filtered[0].Id, ShouldEqual, 1)
-			So(filtered[1].Id, ShouldEqual, 3)
 		})
+	})
+
+	Convey("queryUint rejects what it cannot parse", t, func() {
+		_, _, err := queryUint("", "run", true)
+		So(err, ShouldNotBeNil)
+
+		_, present, err := queryUint("", "limit", false)
+		So(err, ShouldBeNil)
+		So(present, ShouldBeFalse)
+
+		_, _, err = queryUint("abc", "limit", false)
+		So(err, ShouldNotBeNil)
+
+		value, present, err := queryUint("42", "limit", false)
+		So(err, ShouldBeNil)
+		So(present, ShouldBeTrue)
+		So(value, ShouldEqual, uint64(42))
 	})
 }

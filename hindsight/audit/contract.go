@@ -93,6 +93,10 @@ func (stage *ContractStage) Run() error {
 		}
 	}
 
+	if stage.totalChecked == 0 {
+		stage.violations = append(stage.violations, insufficient("contract", "no metrics observed"))
+	}
+
 	return nil
 }
 

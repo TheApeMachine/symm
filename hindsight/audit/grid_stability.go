@@ -21,20 +21,20 @@ Jensen-Shannon Divergence (JSD) between their regional activation distributions.
 */
 type StabilityStage struct {
 	*runtime.System
-	ch           chan *data.Value
-	violations   []*Violation
-	grid         *nmstore.Grid
-	activations  []string
+	ch            chan *data.Value
+	violations    []*Violation
+	grid          *nmstore.Grid
+	activations   []string
 	totalFrames   int64
 	validFrames   int64
 	warmingFrames int64
 	err           error
-	jsd          float64
-	tvd          float64
-	nullJSDMean  float64
-	nullJSDP95   float64
-	pValue       float64
-	permutations int
+	jsd           float64
+	tvd           float64
+	nullJSDMean   float64
+	nullJSDP95    float64
+	pValue        float64
+	permutations  int
 }
 
 func NewStabilityStage(ctx context.Context) *StabilityStage {
@@ -55,7 +55,16 @@ func (stage *StabilityStage) Run() error {
 	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
 
 	for measurement := range stage.ch {
-		if measurement.Role != "runtime:join" || stage.err != nil {
+		if stage.err != nil {
+			continue
+		}
+
+		if measurement == nil {
+			stage.err = errnie.Err(errnie.Validation, stage.Name()+": nil measurement on the tape", nil)
+			continue
+		}
+
+		if measurement.Role != "runtime:join" {
 			continue
 		}
 

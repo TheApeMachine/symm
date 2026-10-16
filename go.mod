@@ -96,5 +96,4 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/theapemachine/datura v1.2.11
 	github.com/theapemachine/errnie v1.2.10
-	golang.design/x/lockfree v0.1.0
 )

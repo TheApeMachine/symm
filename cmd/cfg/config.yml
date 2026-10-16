@@ -366,3 +366,8 @@ audit:
   # drift dispersion exceeds the floor, else a residual above the spike floor.
   latency_dispersion_floor_ms: 1.0
   latency_spike_floor_ms: 50
+  # Same-symbol metric pairs with |r| at or above this are collinear clones.
+  collinear_correlation: 0.95
+  # Asynchronous stream pairs with concordance at or above this (and
+  # significant against the shuffled null) are redundant co-movers.
+  comovement_concordance: 0.98

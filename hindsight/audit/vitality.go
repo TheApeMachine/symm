@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -118,11 +119,11 @@ func (stage *VitalityStage) Run() error {
 			continue
 		}
 
-		if measurement.Role == "runtime:join" {
-			continue
-		}
-
 		stage.recordMetrics(measurement)
+	}
+
+	if len(stage.series) == 0 {
+		stage.violations = append(stage.violations, insufficient("vitality", "no metric series observed"))
 	}
 
 	stage.auditVitality()
@@ -184,7 +185,7 @@ func (stage *VitalityStage) auditVitality() {
 
 		// Stagnant / Cold-Start Check: If >= 80% of observations are zero,
 		// the metric is cold-starting or has insufficient event activity.
-		if stat.Count >= core.MinimumPrior && stat.ZeroFraction() >= 0.80 && !stage.flaggedStagn[key] {
+		if stat.Count >= core.MinimumPrior && stat.ZeroFraction() >= system.Cfg.Audit.StagnantZeroFraction && !stage.flaggedStagn[key] {
 			stage.flaggedStagn[key] = true
 			stage.violations = append(stage.violations, NewViolation(
 				key,

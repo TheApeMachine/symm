@@ -95,4 +95,3 @@ func TestCognitiveStage(t *testing.T) {
 		})
 	})
 }
-

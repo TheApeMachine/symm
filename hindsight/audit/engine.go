@@ -2,10 +2,10 @@ package audit
 
 import (
 	"context"
-	"math"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,8 +16,8 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	s3store "github.com/theapemachine/symm/store"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/system"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -137,6 +137,8 @@ func validateConfig(cfg *system.Audit) error {
 		{"audit.identity_tolerance", cfg.IdentityTolerance, 0, math.MaxFloat64, true},
 		{"audit.latency_dispersion_floor_ms", cfg.LatencyDispersionFloorMs, 0, math.MaxFloat64, true},
 		{"audit.latency_spike_floor_ms", cfg.LatencySpikeFloorMs, 0, math.MaxFloat64, true},
+		{"audit.collinear_correlation", cfg.CollinearCorrelation, 0, 1, true},
+		{"audit.comovement_concordance", cfg.ComovementConcordance, 0, 1, true},
 	}
 
 	for _, check := range checks {
@@ -327,8 +329,32 @@ func (engine *Engine) Run() error {
 		return errnie.Error(err)
 	}
 
+	results := make(map[string]any)
+	failed := make([]string, 0)
+
 	var builder strings.Builder
-	builder.WriteString("# Audit\n\n")
+	builder.WriteString(fmt.Sprintf("# Audit of epoch %d (%s)\n\n", epoch, data.TickPrefix(epoch)))
+	builder.WriteString("| stage | result |\n|---|---|\n")
+
+	for _, stage := range engine.stages {
+		stageKey := strings.TrimPrefix(stage.Name(), "audit:")
+		stageData := stage.Data()
+		results[stageKey] = stageData
+		result := "FAIL"
+
+		if fields, ok := stageData.(map[string]any); ok && fields["passed"] == true {
+			result = "pass"
+		} else {
+			failed = append(failed, stageKey)
+		}
+
+		builder.WriteString(fmt.Sprintf("| %s | %s |\n", stageKey, result))
+	}
+
+	builder.WriteString("\n")
+	results["epoch"] = epoch
+	results["failed_stages"] = failed
+	errnie.Info(fmt.Sprintf("[audit:engine] epoch %d: %d of %d stages failed %v", epoch, len(failed), len(engine.stages), failed))
 
 	for _, stage := range engine.stages {
 		builder.WriteString("## ")
@@ -372,13 +398,6 @@ func (engine *Engine) Run() error {
 
 	if _, err := fh.WriteString(builder.String()); err != nil {
 		return errnie.Error(errnie.Err(errnie.IO, "failed to write audit report", err))
-	}
-
-	results := make(map[string]any)
-
-	for _, stage := range engine.stages {
-		stageKey := strings.TrimPrefix(stage.Name(), "audit:")
-		results[stageKey] = stage.Data()
 	}
 
 	jsonBytes, err := json.MarshalIndent(results, "", "  ")

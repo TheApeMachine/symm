@@ -97,13 +97,8 @@ recordMeasurement appends price points to the respective metric stream timeline.
 Each point records the nanosecond venue timestamp (At) and the raw numeric value.
 */
 func (stage *SympathyStage) recordMeasurement(measurement *data.Value) {
+	// Timestamp is the tick's local receive time in nanoseconds.
 	venueTime := int64(measurement.Timestamp)
-	if venueTime == 0 {
-		return
-	}
-	if venueTime < 1e11 {
-		venueTime *= 1e9
-	}
 
 	for label, val := range data.Metrics(measurement) {
 		streamKey := measurement.Scope + ":" + measurement.Origin + ":" + label
@@ -255,16 +250,7 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 			// the two asynchronous streams are candidates for collinear redundancy.
 			// We test statistical significance against a shuffled null using system.Cfg.Audit.Permutations.
 			permutations := system.Cfg.Audit.Permutations
-
-			if permutations <= 0 {
-				permutations = 50
-			}
-
 			significance := system.Cfg.Audit.Significance
-
-			if significance <= 0 || significance >= 1 {
-				significance = 0.05
-			}
 
 			bound := 1.0 / math.Sqrt(significance)
 			concordance := estimate.Score / math.Sqrt(estimate.Support)
@@ -319,7 +305,7 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 				isCrossAsset := len(partsA) == 3 && len(partsB) == 3 && partsA[0] != partsB[0]
 				isSameMetricStream := isCrossAsset && partsA[2] == partsB[2]
 
-				isRedundant := math.Abs(concordance) >= 0.98 && math.Abs(estimate.Score) >= bound && pValue <= significance
+				isRedundant := math.Abs(concordance) >= system.Cfg.Audit.ComovementConcordance && math.Abs(estimate.Score) >= bound && pValue <= significance
 				sympathyFailed := isSameMetricStream && (concordance <= 0 || pValue > significance)
 
 				stage.estimates = append(stage.estimates, map[string]any{
@@ -384,4 +370,3 @@ func (stage *SympathyStage) Data() any {
 		"estimates":       stage.estimates,
 	}
 }
-

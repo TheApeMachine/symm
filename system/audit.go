@@ -28,6 +28,8 @@ type Audit struct {
 	IdentityTolerance        float64
 	LatencyDispersionFloorMs float64
 	LatencySpikeFloorMs      float64
+	CollinearCorrelation     float64
+	ComovementConcordance    float64
 }
 
 func NewAudit() *Audit {
@@ -59,5 +61,7 @@ func NewAudit() *Audit {
 		IdentityTolerance:        viper.GetFloat64("audit.identity_tolerance"),
 		LatencyDispersionFloorMs: viper.GetFloat64("audit.latency_dispersion_floor_ms"),
 		LatencySpikeFloorMs:      viper.GetFloat64("audit.latency_spike_floor_ms"),
+		CollinearCorrelation:     viper.GetFloat64("audit.collinear_correlation"),
+		ComovementConcordance:    viper.GetFloat64("audit.comovement_concordance"),
 	}
 }

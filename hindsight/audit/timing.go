@@ -60,9 +60,6 @@ func venueTime(measurement *data.Value) time.Time {
 	if at, ok := metrics["at"]; ok && at > 0 {
 		return time.Unix(0, int64(at))
 	}
-	if at, ok := metrics["venue_time"]; ok && at > 0 {
-		return time.Unix(0, int64(at))
-	}
 	return time.Time{}
 }
 
@@ -82,25 +79,15 @@ func (stage *TimingStage) Run() error {
 			continue
 		}
 
-		if measurement.Role == "runtime:join" {
-			continue
-		}
-
 		stage.totalChecked++
-
-		if measurement.Role == "error" {
-			stage.violations = append(stage.violations, NewViolation(
-				measurement.Scope,
-				"measurement.error",
-				"error measurement encountered",
-				measurement,
-				nil,
-			))
-		}
 
 		stage.validateTimestamps(measurement)
 		stage.validateSequencing(measurement)
 		stage.validateDrift(measurement)
+	}
+
+	if stage.totalChecked == 0 {
+		stage.violations = append(stage.violations, insufficient("timing", "no trades observed"))
 	}
 
 	return nil
@@ -243,16 +230,12 @@ func (stage *TimingStage) validateDrift(measurement *data.Value) {
 	if moments.Count >= 3 {
 		variance := moments.M2 / (moments.Count - 1)
 		dispersion := math.Sqrt(variance)
-		significance := system.Cfg.Audit.Significance
-
-		if significance <= 0 || significance >= 1 {
-			significance = 0.05
-		}
-
+		cfg := system.Cfg.Audit
+		significance := cfg.Significance
 		bound := 1.0 / math.Sqrt(significance)
 		residual := math.Abs(driftMs - moments.Mean)
 
-		if dispersion > 1.0 && residual > bound*dispersion {
+		if dispersion > cfg.LatencyDispersionFloorMs && residual > bound*dispersion {
 			stage.violations = append(stage.violations, NewViolation(
 				measurement.Scope,
 				"timing.latency_spike",
@@ -263,7 +246,7 @@ func (stage *TimingStage) validateDrift(measurement *data.Value) {
 			))
 		}
 
-		if dispersion <= 1.0 && residual > 50.0 {
+		if dispersion <= cfg.LatencyDispersionFloorMs && residual > cfg.LatencySpikeFloorMs {
 			stage.violations = append(stage.violations, NewViolation(
 				measurement.Scope,
 				"timing.latency_spike",

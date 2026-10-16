@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -55,21 +56,11 @@ func (stage *TruthfulnessStage) Run() error {
 			continue
 		}
 
-		if measurement.Role == "runtime:join" {
-			continue
-		}
-
-		if measurement.Role == "error" {
-			stage.violations = append(stage.violations, NewViolation(
-				measurement.Scope,
-				"measurement.error",
-				"error measurement encountered",
-				measurement,
-				nil,
-			))
-		}
-
 		stage.validateTapeIdentities(measurement)
+	}
+
+	if stage.totalChecked == 0 {
+		stage.violations = append(stage.violations, insufficient("truthfulness", "no measurements observed"))
 	}
 
 	return nil
@@ -133,7 +124,7 @@ func (stage *TruthfulnessStage) validateTapeIdentities(measurement *data.Value) 
 		expectedSpread := (askPrice - bidPrice) / midpoint
 		spreadDiff := math.Abs(relSpread - expectedSpread)
 
-		if spreadDiff > 1e-4 {
+		if spreadDiff > system.Cfg.Audit.IdentityTolerance {
 			stage.volumeDivergenceCount++
 			stage.violations = append(stage.violations, NewViolation(
 				measurement.Scope,
@@ -154,7 +145,7 @@ func (stage *TruthfulnessStage) validateTapeIdentities(measurement *data.Value) 
 		expectedHurdle := relSpread + 2.0*feeRate
 		hurdleDiff := math.Abs(frictionHurdle - expectedHurdle)
 
-		if hurdleDiff > 1e-4 {
+		if hurdleDiff > system.Cfg.Audit.IdentityTolerance {
 			stage.volumeDivergenceCount++
 			stage.violations = append(stage.violations, NewViolation(
 				measurement.Scope,

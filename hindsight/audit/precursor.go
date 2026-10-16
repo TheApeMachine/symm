@@ -93,9 +93,16 @@ func (stage *PrecursorStage) Run() error {
 	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
 
 	for measurement := range stage.ch {
-		if stage.err == nil {
-			stage.err = stage.recordMeasurement(measurement)
+		if stage.err != nil {
+			continue
 		}
+
+		if measurement == nil {
+			stage.err = errnie.Err(errnie.Validation, stage.Name()+": nil measurement on the tape", nil)
+			continue
+		}
+
+		stage.err = stage.recordMeasurement(measurement)
 	}
 
 	if stage.err != nil {
