@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"io"
 	sysruntime "runtime"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/grafana/pyroscope-go"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -51,6 +54,7 @@ type Booter struct {
 	workspace        *nmruntime.Workspace
 	store            *store.Client
 	hub              *ui.Hub
+	replies          sync.Map
 }
 
 func NewBooter(ctx context.Context, name string, capture ...bool) *Booter {
@@ -107,6 +111,17 @@ func (booter *Booter) Run() error {
 		"[booter] symm boot started with %d CPUs", sysruntime.NumCPU(),
 	))
 
+	started := time.Now()
+
+	// Downstream consumers start before the producers that feed them: sinks,
+	// then the workspace and its signals, then every exchange-data phase, and
+	// only then the trade firehose. Each phase is a status transition.
+	if err := booter.initPipeline(); err != nil {
+		return err
+	}
+
+	booter.Transition(nmruntime.WAITING)
+
 	if err := booter.initTransports(); err != nil {
 		return err
 	}
@@ -115,15 +130,16 @@ func (booter *Booter) Run() error {
 		return err
 	}
 
-	if err := booter.initPipeline(); err != nil {
+	if err := booter.seedBooks(); err != nil {
 		return err
 	}
 
-	if err := booter.subscribe(); err != nil {
+	if err := booter.openFirehose(); err != nil {
 		return err
 	}
 
 	booter.Transition(nmruntime.READY)
+	errnie.Info(fmt.Sprintf("[booter] trade firehose open %s after boot", time.Since(started).Round(time.Millisecond)))
 
 	// Run is the daemon's lifetime: ingress runs in goroutines, so returning
 	// here would let the command return, cancel the context, and exit.
@@ -257,8 +273,22 @@ func (booter *Booter) initPipeline() error {
 	// (127.0.0.1:8765/ws); every other command is headless.
 	if booter.dashboard {
 		booter.hub = ui.NewHub(ctx)
-		booter.hub.Run()
+
+		if err := booter.hub.Run(); err != nil {
+			return err
+		}
+
 		sinks = append(sinks, booter.hub)
+	}
+
+	for _, sink := range sinks {
+		if node, ok := sink.(interface{ Status() nmruntime.Stage }); ok && node.Status() != nmruntime.READY {
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				fmt.Sprintf("booter: sink %T is %s, not ready", sink, node.Status()),
+				nil,
+			))
+		}
 	}
 
 	booter.workspace = nmruntime.NewWorkspace(
@@ -276,7 +306,23 @@ func (booter *Booter) initPipeline() error {
 	return nil
 }
 
-func (booter *Booter) subscribe() error {
+/*
+seedBooks is the level3 phase: every subscribed symbol's snapshot must be
+applied (book READY) before any trade reaches the workspace. A symbol that does
+not seed within market.l3_snapshot_timeout of the last subscribe fails the boot
+with the venue's reply for it; the universe is never silently reduced.
+*/
+func (booter *Booter) seedBooks() error {
+	timeout := viper.GetDuration("market.l3_snapshot_timeout")
+
+	if timeout <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "[booter] market.l3_snapshot_timeout is not configured", nil,
+		))
+	}
+
+	// The public socket carries acknowledgements now and trades only once
+	// the firehose is opened.
 	booter.startIngress(booter.public, "public")
 
 	// Every socket is read while it subscribes: Kraken rejects Level3
@@ -286,19 +332,51 @@ func (booter *Booter) subscribe() error {
 		booter.startIngress(client, "level3")
 	})
 
-	if err := booter.instrument.Subscribe(); err != nil {
+	booter.book.Expect(booter.instrument.Symbols())
+
+	if err := booter.instrument.SubscribeBooks(); err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"booter: subscribe to instrument universe",
+			errnie.Internal, "booter: level3 subscribe to instrument universe", err,
+		))
+	}
+
+	if err := booter.book.Wait(timeout); err != nil {
+		replies := make([]string, 0)
+
+		for _, symbol := range booter.book.Pending() {
+			reply := "no venue reply"
+
+			if raw, ok := booter.replies.Load(symbol); ok {
+				reply = raw.(string)
+			}
+
+			replies = append(replies, symbol+": "+reply)
+		}
+
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"booter: level3 seeding failed; venue replies: "+strings.Join(replies, "; "),
 			err,
+		))
+	}
+
+	return nil
+}
+
+/*
+openFirehose is the last phase: the workspace and every book are READY, so the
+first trade tick already carries a seeded book for each symbol it touches.
+*/
+func (booter *Booter) openFirehose() error {
+	if err := booter.instrument.SubscribeTrades(); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal, "booter: trade subscribe to instrument universe", err,
 		))
 	}
 
 	if booter.instrument.Status() != nmruntime.READY {
 		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"booter: instrument universe is not seeded",
-			nil,
+			errnie.NotAcceptable, "booter: instrument universe is not seeded", nil,
 		))
 	}
 
@@ -367,7 +445,9 @@ func (booter *Booter) startIngress(
 				}
 
 				for _, symbol := range broker.Symbols(trades) {
-					value.AppendJSON(booter.book.JSON(symbol), "book/"+symbol).
+					index, book := booter.book.Layer(symbol)
+
+					value.AppendJSON(book, index).
 						AppendJSON(booter.price.JSON(symbol), "price/"+symbol).
 						AppendJSON(booter.price.InstrumentJSON(symbol), "instrument/"+symbol)
 				}
@@ -395,10 +475,20 @@ func (booter *Booter) startIngress(
 						nil,
 					))
 
+					if name == "level3" {
+						booter.replies.Store(data.Attribute[string](buf, "symbol"), "rejected: "+string(buf))
+					}
+
 					continue
 				}
 
-				errnie.Debug(fmt.Sprintf("[booter] %s frame %s %s %s", name,
+				// Level3 replies are kept per symbol: a symbol that fails to
+				// seed is reported with the venue's answer for it.
+				if data.Attribute[string](buf, "result", "channel") == "level3" {
+					booter.replies.Store(data.Attribute[string](buf, "result", "symbol"), "accepted: "+string(buf))
+				}
+
+				errnie.Debug(fmt.Sprintf("[booter] %s venue accepted %s %s %s", name,
 					data.Attribute[string](buf, "method"),
 					data.Attribute[string](buf, "result", "channel"),
 					data.Attribute[string](buf, "result", "symbol"),

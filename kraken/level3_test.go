@@ -33,6 +33,11 @@ func TestNewLevel3(t *testing.T) {
 			So(level3.Data[0].Asks[0].OrderQty.String(), ShouldEqual, "0.00001")
 			So(level3.Data[0].Asks[0].ChecksumOrderQty(), ShouldEqual, "0.00001")
 		})
+
+		Convey("A modify to the minimum lot is still resting liquidity, never a delete", func() {
+			So(level3.Data[0].Asks[0].OrderQty.Sign(), ShouldEqual, 1)
+			So(level3.Data[0].Asks[0].Resting(), ShouldBeTrue)
+		})
 	})
 
 	Convey("Given a level3 frame that cannot be decoded", t, func() {
@@ -84,6 +89,32 @@ func TestLevel3OrderResting(t *testing.T) {
 			So(Level3Order{Event: "add", LimitPrice: negative, OrderQty: quantity}.Resting(), ShouldBeFalse)
 			So(Level3Order{Event: "add", LimitPrice: price, OrderQty: zero}.Resting(), ShouldBeFalse)
 			So(Level3Order{Event: "add", LimitPrice: price, OrderQty: negative}.Resting(), ShouldBeFalse)
+		})
+	})
+}
+
+func TestPlainDecimal(t *testing.T) {
+	Convey("Given venue numbers in plain and scientific notation", t, func() {
+		Convey("Every digit the venue sent survives, trailing zeros included", func() {
+			for _, tc := range []struct{ in, out string }{
+				{"0.5640", "0.5640"},
+				{"1e-05", "0.00001"},
+				{"1.50e-05", "0.0000150"},
+				{"2.5E+3", "2500"},
+				{"1.234e2", "123.4"},
+				{"-3e-2", "-0.03"},
+			} {
+				got, err := plainDecimal(tc.in)
+				So(err, ShouldBeNil)
+				So(got, ShouldEqual, tc.out)
+			}
+		})
+
+		Convey("A malformed number is an error", func() {
+			_, err := plainDecimal("1e-x")
+			So(err, ShouldNotBeNil)
+			_, err = plainDecimal("abce5")
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

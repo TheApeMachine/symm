@@ -217,3 +217,5 @@ nomagique/physics/sensorium/README.md
 nomagique/physics/sensorium/VALIDATION.md
 ./scratch/
 timeoverlay
+# Book-maintenance failure dumps (broker.DiagnosticDir)
+diagnostics/

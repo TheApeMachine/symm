@@ -234,10 +234,13 @@ market:
   book_depth_levels: 25
   baseline_halflife: 30s
   l3_enabled: true
-  l3_depth: 100
+  l3_depth: 10
   # Kraken's standard L3 subscription-rate budget. Depth determines the cost
   # per symbol, so websocket batches are derived from this value.
   l3_rate_limit: 200
+  # How long after subscribing every level3 symbol must have its snapshot;
+  # symbols still without one are raised as an error.
+  l3_snapshot_timeout: 30s
   # Lock-free MPMC ingress requires a power-of-two capacity. Producers apply
   # backpressure rather than discard authoritative order-level deltas.
   # ponytail: fixed capacity is an intentional simplification with memory and

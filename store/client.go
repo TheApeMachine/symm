@@ -98,13 +98,17 @@ func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) 
 		return nil
 	}
 
-	return &Client{
+	store := &Client{
 		System:     runtime.NewSystem(ctx, "store.client"),
 		s3Client:   client,
 		bucket:     bucket,
 		downloader: manager.NewDownloader(client),
 		uploader:   manager.NewUploader(client),
 	}
+
+	// The bucket exists and the client is configured: it can take writes.
+	store.Transition(runtime.READY)
+	return store
 }
 
 func (client *Client) List(prefix string, delimiter ...string) iter.Seq[*s3.ListObjectsV2Output] {

@@ -1,6 +1,10 @@
 package kraken
 
 import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -12,6 +16,8 @@ type Level3 struct {
 	Channel string       `json:"channel"`
 	Type    string       `json:"type"`
 	Data    []Level3Data `json:"data"`
+	// Raw is the frame exactly as received, kept for failure diagnostics.
+	Raw []byte `json:"-"`
 }
 
 type Level3Data struct {
@@ -33,6 +39,115 @@ type Level3Order struct {
 	LimitPrice *decimal.Decimal `json:"limit_price"`
 	OrderQty   *decimal.Decimal `json:"order_qty"`
 	Timestamp  time.Time        `json:"timestamp"`
+}
+
+/*
+UnmarshalJSON decodes limit_price and order_qty from the exact number text
+Kraken sent. The level3 checksum hashes those digits, so they are never
+routed through a float: plain decimals keep every digit (trailing zeros
+included), and scientific notation (Kraken sends e.g. 1e-05 for a minimum
+lot) is expanded digit for digit to its plain decimal form.
+*/
+func (order *Level3Order) UnmarshalJSON(buf []byte) error {
+	var wire struct {
+		Event      string          `json:"event,omitempty"`
+		OrderID    string          `json:"order_id"`
+		LimitPrice json.RawMessage `json:"limit_price"`
+		OrderQty   json.RawMessage `json:"order_qty"`
+		Timestamp  time.Time       `json:"timestamp"`
+	}
+
+	if err := sonic.Unmarshal(buf, &wire); err != nil {
+		return err
+	}
+
+	price, err := exactDecimal(wire.LimitPrice)
+
+	if err != nil {
+		return fmt.Errorf("level3 order %s limit_price: %w", wire.OrderID, err)
+	}
+
+	quantity, err := exactDecimal(wire.OrderQty)
+
+	if err != nil {
+		return fmt.Errorf("level3 order %s order_qty: %w", wire.OrderID, err)
+	}
+
+	*order = Level3Order{
+		Event:      wire.Event,
+		OrderID:    wire.OrderID,
+		LimitPrice: price,
+		OrderQty:   quantity,
+		Timestamp:  wire.Timestamp,
+	}
+
+	return nil
+}
+
+/*
+exactDecimal parses one JSON number (or numeric string) without losing a
+digit. An absent or null field is nil: a delete may omit its price.
+*/
+func exactDecimal(raw json.RawMessage) (*decimal.Decimal, error) {
+	text := strings.Trim(strings.TrimSpace(string(raw)), `"`)
+
+	if text == "" || text == "null" {
+		return nil, nil
+	}
+
+	plain, err := plainDecimal(text)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return decimal.NewFromString(plain)
+}
+
+/*
+plainDecimal rewrites scientific notation (1.50e-05) as a plain decimal
+(0.0000150) by moving the decimal point over the mantissa's own digits.
+*/
+func plainDecimal(text string) (string, error) {
+	mantissa, exponentText, scientific := strings.Cut(strings.ToLower(text), "e")
+
+	if !scientific {
+		return text, nil
+	}
+
+	exponent, err := strconv.Atoi(exponentText)
+
+	if err != nil {
+		return "", fmt.Errorf("invalid exponent in %q: %w", text, err)
+	}
+
+	sign := ""
+
+	if strings.HasPrefix(mantissa, "-") || strings.HasPrefix(mantissa, "+") {
+		if mantissa[0] == '-' {
+			sign = "-"
+		}
+
+		mantissa = mantissa[1:]
+	}
+
+	integer, fraction, _ := strings.Cut(mantissa, ".")
+	digits := integer + fraction
+
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return "", fmt.Errorf("invalid mantissa in %q", text)
+	}
+
+	point := len(integer) + exponent
+
+	switch {
+	case point <= 0:
+		return sign + "0." + strings.Repeat("0", -point) + digits, nil
+	case point >= len(digits):
+		return sign + digits + strings.Repeat("0", point-len(digits)), nil
+	default:
+		return sign + digits[:point] + "." + digits[point:], nil
+	}
 }
 
 /*
@@ -90,6 +205,8 @@ func NewLevel3(buf []byte) *Level3 {
 
 		return nil
 	}
+
+	level3.Raw = append([]byte(nil), buf...)
 
 	for index := range level3.Data {
 		if level3.Data[index].Type == "" {

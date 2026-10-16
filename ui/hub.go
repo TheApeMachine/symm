@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"net"
 	neturl "net/url"
 	"sync"
 
@@ -172,17 +173,26 @@ func (hub *Hub) App() *fiber.App {
 }
 
 /*
-Run listens for dashboard clients on the configured address.
+Run binds the dashboard listener before returning and only then transitions
+the hub READY, so nothing upstream writes to a hub that cannot serve yet.
 */
-func (hub *Hub) Run() {
+func (hub *Hub) Run() error {
 	if hub.listenAddr == "" {
-		errnie.Error(errnie.Err(errnie.Validation, "[hub] ui.addr is not configured", nil))
-		return
+		return errnie.Error(errnie.Err(errnie.Validation, "[hub] ui.addr is not configured", nil))
+	}
+
+	listener, err := net.Listen("tcp", hub.listenAddr)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.IO, "[hub] listen on "+hub.listenAddr+" failed", err))
 	}
 
 	go func() {
-		if err := hub.app.Listen(hub.listenAddr); err != nil {
-			errnie.Error(errnie.Err(errnie.IO, "[hub] listen on "+hub.listenAddr+" failed", err))
+		if err := hub.app.Listener(listener); err != nil {
+			hub.Error(errnie.Err(errnie.IO, "[hub] serve on "+hub.listenAddr+" failed", err))
 		}
 	}()
+
+	hub.Transition(runtime.READY)
+	return nil
 }

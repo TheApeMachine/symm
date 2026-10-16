@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 
@@ -120,17 +121,36 @@ func SymbolLayer(value *data.Value, kind, symbol string) []byte {
 
 /*
 ReadSnapshot decodes the book of symbol stamped onto value (the spotbook.Book
-that Book.JSON marshals). A tick that carries no book for symbol is (nil, nil).
-A book layer that does not decode, or is one-sided, is an error.
+that Book.JSON marshals). A tick carrying a book_error layer for symbol is an
+error naming why; a tick that carries neither is (nil, nil). A book layer that
+does not decode, or is one-sided, is an error.
 
 Levels come from each side's Levels map, sorted best first: the SDK's
 High/Low/Lower/Higher links are not serialized, so walking them from a decoded
 book yields only the touch.
 */
+/*
+ErrBookNotValid is the cause of a ReadSnapshot error for a tick that records
+its book as not valid (a book_error layer). The book's transition into that
+state was raised once where it happened; a reader that skips the symbol on
+this error is acting on the tick's explicit record, not hiding a failure.
+*/
+var ErrBookNotValid = errors.New("book recorded as not valid on this tick")
+
 func ReadSnapshot(value *data.Value, symbol string) (*Snapshot, error) {
 	layer := SymbolLayer(value, "book", symbol)
 
 	if layer == nil {
+		// The tick says why it has no valid book (invalid, stale, unseeded);
+		// computing on it anyway would be computing on bad data.
+		if reason := SymbolLayer(value, "book_error", symbol); reason != nil {
+			return nil, errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("broker: book/%s is not valid on this tick: %s", symbol, reason),
+				ErrBookNotValid,
+			)
+		}
+
 		return nil, nil
 	}
 

@@ -2,6 +2,7 @@ package morphology
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sort"
 
@@ -72,7 +73,19 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	}
 
 	snapshot, err := broker.ReadSnapshot(value, symbol)
-	if err != nil || snapshot == nil || len(snapshot.Bids) == 0 || len(snapshot.Asks) == 0 {
+
+	if err != nil {
+		// The tick records this book as not valid (book_error layer) and
+		// its transition was raised once where it happened: skip the symbol.
+		if errors.Is(err, broker.ErrBookNotValid) {
+			return value
+		}
+
+		errnie.Error(err)
+		return value
+	}
+
+	if snapshot == nil {
 		return value
 	}
 

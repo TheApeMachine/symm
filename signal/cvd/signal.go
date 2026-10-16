@@ -2,6 +2,7 @@ package cvd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 
@@ -94,9 +95,17 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	snapshot, err := broker.ReadSnapshot(value, trade.Symbol)
 
 	if err != nil {
-		signal.Error(errnie.Err(
+		// The tick records this book as not valid (book_error layer) and
+		// its transition was raised once where it happened: skip the symbol.
+		if errors.Is(err, broker.ErrBookNotValid) {
+			return value
+		}
+
+		// errnie.Error, not signal.Error: a per-tick condition must not
+		// accumulate into the node's joined error forever.
+		errnie.Error(errnie.Err(
 			errnie.NotFound,
-			fmt.Sprintf("[cvd] snapshot for %s not found", trade.Symbol),
+			fmt.Sprintf("[cvd] snapshot for %s unavailable", trade.Symbol),
 			err,
 		))
 

@@ -2,6 +2,7 @@ package pumpdump
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sync"
 
@@ -99,6 +100,12 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	snapshot, err := broker.ReadSnapshot(value, trade.Symbol)
 
 	if err != nil {
+		// The tick records this book as not valid (book_error layer) and
+		// its transition was raised once where it happened: skip the symbol.
+		if errors.Is(err, broker.ErrBookNotValid) {
+			return value
+		}
+
 		errnie.Error(err)
 		return value
 	}

@@ -93,6 +93,15 @@ func TestPrice_AllocateEntryAndLiquidate(t *testing.T) {
 	Convey("Given a broker.Price with isolated Book and fee", t, func() {
 		ctx := context.Background()
 		normalizer := spot.NewNormalizer()
+		tickSize, err := decimal.NewFromString("0.1")
+		So(err, ShouldBeNil)
+		normalizer.Update(&spot.AssetsManagerUpdate{
+			NewAssets: map[string]spot.AssetInfo{"BTC": {AltName: "BTC"}, "USD": {AltName: "USD"}},
+			NewPairs: map[string]spot.AssetPair{"BTCUSD": {
+				WSName: "BTC/USD", Base: "BTC", Quote: "USD",
+				PairDecimals: 1, LotDecimals: 8, LotMultiplier: 1, TickSize: tickSize,
+			}},
+		})
 		book := broker.NewBook(ctx, normalizer)
 		price := broker.NewPrice(ctx, book, nil, nil, normalizer)
 		symbol := "BTC/USD"
@@ -147,7 +156,7 @@ func TestPrice_AllocateEntryAndLiquidate(t *testing.T) {
 				},
 			},
 		}
-		err := book.Update(payload)
+		err = book.Update(payload)
 		So(err, ShouldBeNil)
 
 		Convey("AllocateEntry spends at most the reference cash via depth walk", func() {

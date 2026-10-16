@@ -2,9 +2,11 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,7 +28,7 @@ import (
 type Book struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
-	status     *runtime.Status
+	system     *runtime.System
 	pending    atomic.Pointer[map[string]struct{}]
 	seeded     chan struct{}
 	manager    *spot.BookManager
@@ -35,6 +37,9 @@ type Book struct {
 	touch      atomic.Pointer[func([]kraken.Level3Touch)]
 	mu         sync.RWMutex
 	stale      sync.Map
+	invalid    sync.Map
+	snapshots  sync.Map
+	failures   atomic.Int64
 	lastTouch  sync.Map
 }
 
@@ -49,7 +54,7 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 	book := &Book{
 		ctx:        ctx,
 		cancel:     cancel,
-		status:     runtime.NewStatus(),
+		system:     runtime.NewSystem(ctx, "book"),
 		seeded:     make(chan struct{}, 1),
 		manager:    spot.NewBookManager(),
 		normalizer: normalizer,
@@ -72,31 +77,13 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 		// can delete a newly added order before the later orders in that same
 		// frame resolve the transient cross.
 		managed.NoBookCrossing = false
-
-		managed.OnChecksummed.Recurring(func(
-			bookEvent *callback.Event[*spotbook.ChecksumResult],
-		) {
-			if !bookEvent.Data.Match {
-				book.status.Transition(runtime.ERROR)
-
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					fmt.Sprintf(
-						"checksum mismatch for local: %s, and server: %s",
-						bookEvent.Data.LocalChecksum,
-						bookEvent.Data.ServerChecksum,
-					),
-					nil,
-				))
-			}
-		})
 	})
 
 	return book
 }
 
 func (book *Book) Status() runtime.Stage {
-	return book.status.Current()
+	return book.system.Status()
 }
 
 /*
@@ -111,24 +98,58 @@ func (book *Book) Expect(symbols []string) {
 	}
 
 	book.pending.Store(&newPending)
-	book.status.Transition(runtime.BUSY)
+	book.system.Transition(runtime.BUSY)
 }
 
 /*
-Wait blocks boot on the owner's readiness, never on elapsed market time.
+Wait blocks boot until every expected snapshot is applied (READY). Seeding is
+bounded: a symbol still pending after timeout is a broken subscription, and
+that is an error naming every such symbol, never a silent partial universe.
 */
-func (book *Book) Wait() error {
+func (book *Book) Wait(timeout time.Duration) error {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
 	for book.Status() != runtime.READY {
 		select {
 		case <-book.ctx.Done():
 			return errnie.Error(errnie.Err(
 				errnie.IO, "book: seed interrupted", book.ctx.Err(),
 			))
+		case <-deadline.C:
+			pending := book.Pending()
+
+			return errnie.Err(
+				errnie.NotFound,
+				fmt.Sprintf("book: %d level3 books not seeded within %s: %s",
+					len(pending), timeout, strings.Join(pending, ",")),
+				nil,
+			)
 		case <-book.seeded:
 		}
 	}
 
 	return nil
+}
+
+/*
+Pending returns the expected symbols whose snapshot has not been applied.
+*/
+func (book *Book) Pending() []string {
+	pendingPtr := book.pending.Load()
+
+	if pendingPtr == nil {
+		return nil
+	}
+
+	pending := make([]string, 0, len(*pendingPtr))
+
+	for symbol := range *pendingPtr {
+		pending = append(pending, symbol)
+	}
+
+	slices.Sort(pending)
+	return pending
 }
 
 func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
@@ -146,6 +167,10 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 		return
 	}
 
+	if _, invalid := book.invalid.Load(symbol); invalid {
+		return
+	}
+
 	managed := book.manager.GetBook(symbol)
 
 	if managed != nil {
@@ -153,16 +178,55 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	}
 }
 
-func (book *Book) Create(symbol string, depth int) {
+func (book *Book) Create(symbol string, depth int) error {
 	if depth <= 0 {
-		depth = viper.GetInt("market.l3_depth")
-
-		if depth <= 0 {
-			depth = 10
-		}
+		return errnie.Error(errnie.Err(
+			errnie.Validation, fmt.Sprintf("[book] %s depth %d is not a book depth", symbol, depth), nil,
+		))
 	}
 
 	book.manager.CreateBook(symbol, depth)
+	return nil
+}
+
+/*
+level3Depth is the subscribed level3 depth, market.l3_depth. A book is only
+maintained at the depth the venue sends, so a missing setting is an error.
+*/
+func level3Depth() (int, error) {
+	depth := viper.GetInt("market.l3_depth")
+
+	if depth <= 0 {
+		return 0, errnie.Err(errnie.Validation, "[book] market.l3_depth is not configured", nil)
+	}
+
+	return depth, nil
+}
+
+/*
+canonical rescales a venue decimal to the pair's precision (pair_decimals for
+prices, lot_decimals for quantities). The SDK keys a side's levels by the
+price's text, so 0.564 and 0.5640 must be one key; Kraken's checksum strings
+are the same precision-formatted text ("44928.0", "0.00100000" in its L3
+checksum example). A value with more significant decimals than the pair
+allows is an error, never rounded.
+*/
+func canonical(value *decimal.Decimal, scale int, field, symbol string) (*decimal.Decimal, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	scaled := value.SetScale(int64(scale))
+
+	if scaled.Cmp(value) != 0 {
+		return nil, errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("[book] %s %s %s has more than the pair's %d decimals", symbol, field, value.String(), scale),
+			nil,
+		)
+	}
+
+	return scaled, nil
 }
 
 /*
@@ -264,7 +328,7 @@ func (book *Book) Update(
 			})
 
 			if pendingCount == 0 && staleEmpty {
-				book.status.Transition(runtime.READY)
+				book.system.Transition(runtime.READY)
 
 				select {
 				case book.seeded <- struct{}{}:
@@ -306,20 +370,41 @@ func (book *Book) apply(
 
 			data.Type = payload.Type
 			original := data
+
+			// An invalid book is known wrong: its deltas are counted (and
+			// surfaced on every tick's book_error layer), not applied, until
+			// a fresh snapshot replaces it.
+			if value, invalid := book.invalid.Load(data.Symbol); invalid && payload.Type != "snapshot" {
+				value.(*invalidBook).dropped.Add(1)
+				return errSkipInvalid
+			}
 			symbolBook = book.manager.GetBook(data.Symbol)
 
-			depth := viper.GetInt("market.l3_depth")
+			depth, err := level3Depth()
 
-			if depth <= 0 {
-				depth = 10
+			if err != nil {
+				return err
 			}
+
+			var pair *spot.AssetPair
 
 			if symbolBook == nil {
 				symbolBook = book.manager.CreateBook(data.Symbol, depth)
 			}
 
 			if payload.Type == "snapshot" {
-				book.stale.Delete(data.Symbol)
+				_, wasStale := book.stale.LoadAndDelete(data.Symbol)
+				was, wasInvalid := book.invalid.LoadAndDelete(data.Symbol)
+				book.snapshots.Store(data.Symbol, struct{}{})
+
+				// The way back to valid is a transition too, logged once.
+				switch {
+				case wasInvalid:
+					errnie.Info(fmt.Sprintf("[book] %s valid again: fresh snapshot replaced the %s book (%d deltas dropped while invalid)",
+						data.Symbol, was.(*invalidBook).diagnostic.Kind, was.(*invalidBook).dropped.Load()))
+				case wasStale:
+					errnie.Info(fmt.Sprintf("[book] %s valid again: resubscribe snapshot replaced the stale book", data.Symbol))
+				}
 				symbolBook = book.manager.CreateBook(
 					data.Symbol,
 					depth,
@@ -340,6 +425,20 @@ func (book *Book) apply(
 				filtered := make([]kraken.Level3Order, 0, len(*level3data))
 
 				for _, order := range *level3data {
+					if pair == nil {
+						if pair, err = book.normalizer.PairInfo(data.Symbol); err != nil {
+							return errnie.Err(errnie.NotFound, "[book] no pair precision for "+data.Symbol, err)
+						}
+					}
+
+					if order.LimitPrice, err = canonical(order.LimitPrice, pair.PairDecimals, "limit_price", data.Symbol); err != nil {
+						return err
+					}
+
+					if order.OrderQty, err = canonical(order.OrderQty, pair.LotDecimals, "order_qty", data.Symbol); err != nil {
+						return err
+					}
+
 					if order.Event == "delete" && order.LimitPrice == nil {
 						for _, level := range symbolSide.Levels {
 							if level == nil {
@@ -393,14 +492,11 @@ func (book *Book) apply(
 					// The SDK dereferences an absent level on zero-quantity updates.
 					// Absence is a lost-book precondition, not an empty order to insert.
 					if quantity.Sign() <= 0 && symbolSide.Levels[order.LimitPrice.String()] == nil {
-						book.status.Transition(runtime.ERROR)
-
-						return errnie.Err(
-							errnie.Validation,
-							fmt.Sprintf("level3 %s order %s references absent level %s for %s (frame %s); %s",
-								order.Event, order.OrderID, order.LimitPrice.String(), data.Symbol,
-								payload.Type, bookContext(symbolBook, original)),
-							nil,
+						return book.invalidate(
+							"absent_level",
+							fmt.Sprintf("%s order %s references absent level %s",
+								order.Event, order.OrderID, order.LimitPrice.String()),
+							symbolBook, payload, original, strconv.FormatUint(uint64(data.Checksum), 10),
 						)
 					}
 
@@ -440,23 +536,20 @@ func (book *Book) apply(
 					// The venue checksum is authority: local book maintenance
 					// diverged from the venue. Raise it with what is needed to
 					// reproduce it; never paper over it.
-					return errnie.Err(
-						errnie.Validation,
-						fmt.Sprintf(
-							"level3 checksum mismatch for %s: local %s, server %s (frame %s); %s",
-							data.Symbol,
-							checksum.LocalChecksum,
-							checksum.ServerChecksum,
-							payload.Type,
-							bookContext(symbolBook, original),
-						),
-						nil,
+					return book.invalidate(
+						"checksum_mismatch",
+						"local book diverged from the venue checksum after applying the entry",
+						symbolBook, payload, original, checksum.ServerChecksum,
 					)
 				}
 			}
 
 			return nil
 		}()
+
+		if err == errSkipInvalid {
+			continue
+		}
 
 		if err != nil {
 			return accepted, err, touches
@@ -470,53 +563,9 @@ func (book *Book) apply(
 }
 
 /*
-bookContext renders what a book-maintenance failure needs for debugging: the
-venue entry as received, and the local top ten levels per side with each
-order's id, quantity and the price+quantity digits Kraken's level3 checksum
-hashes for it.
+errSkipInvalid marks an entry for an invalid book: counted, not applied.
 */
-func bookContext(symbolBook *spotbook.Book, data kraken.Level3Data) string {
-	var out strings.Builder
-
-	update, err := sonic.MarshalString(data)
-
-	if err != nil {
-		update = "unmarshalable update: " + err.Error()
-	}
-
-	out.WriteString("update=" + update)
-
-	if symbolBook == nil {
-		out.WriteString(" book=nil")
-		return out.String()
-	}
-
-	var digits [128]byte
-
-	writeSide := func(name string, cursor *spotbook.Level, next func(*spotbook.Level) *spotbook.Level) {
-		out.WriteString(" " + name + "=[")
-
-		for count := 0; count < 10 && cursor != nil; count++ {
-			fmt.Fprintf(&out, "%v{", cursor.Price)
-
-			for _, order := range cursor.Queue() {
-				hashed := appendDecimalDigits(digits[:0], order.LimitPrice)
-				hashed = appendDecimalDigits(hashed, order.Quantity)
-				fmt.Fprintf(&out, " %s:%v#%s", order.ID, order.Quantity, hashed)
-			}
-
-			out.WriteString(" }")
-			cursor = next(cursor)
-		}
-
-		out.WriteString("]")
-	}
-
-	writeSide("asks", symbolBook.BestAsk(), func(level *spotbook.Level) *spotbook.Level { return level.Higher })
-	writeSide("bids", symbolBook.BestBid(), func(level *spotbook.Level) *spotbook.Level { return level.Lower })
-
-	return out.String()
-}
+var errSkipInvalid = errors.New("level3 entry for an invalid book")
 
 /*
 SetTouch connects verified top-of-book reporting to the owning transport.

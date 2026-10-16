@@ -211,18 +211,6 @@ func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
 }
 
 /*
-level3Depth is the depth subscribed and maintained: market.l3_depth, with the
-venue's default of 10 when unset (the same default the book enforces).
-*/
-func level3Depth() int {
-	if depth := viper.GetInt("market.l3_depth"); depth > 0 {
-		return depth
-	}
-
-	return 10
-}
-
-/*
 level3FrameSize is how many symbols one subscribe frame may carry: Kraken's
 level3 subscription-rate budget (market.l3_rate_limit per rate window)
 divided by the rate-counter cost of one symbol at depth (5 at 10, 25 at 100,
@@ -269,7 +257,12 @@ func (instrument *Instrument) SubscribeLevel3(write func([]byte) error, batch []
 		))
 	}
 
-	depth := level3Depth()
+	depth, err := level3Depth()
+
+	if err != nil {
+		return instrument.Error(err)
+	}
+
 	frameSize, err := level3FrameSize(depth)
 
 	if err != nil {
@@ -304,16 +297,16 @@ func (instrument *Instrument) SubscribeLevel3(write func([]byte) error, batch []
 }
 
 /*
-Subscribe issues paced market-data batches for the online quote universe. The
-public socket carries trades only, the sole frame type the workspace pipeline
-consumes. Level3 runs on its own authenticated socket per batch and feeds the
-BookManager only. A failed resubscribe after a reconnect is logged and
+SubscribeBooks opens the Level3 sockets for the online quote universe and
+issues their paced subscriptions. Level3 runs on its own authenticated socket
+per batch of 200 symbols and feeds the BookManager only; it is the upstream
+that must be seeded before the trade firehose (SubscribeTrades) is opened. A failed resubscribe after a reconnect is logged and
 returned to the socket, which drops the connection and redials with backoff
 until a resubscribe succeeds; the batch's books stay stale meanwhile. It never
 halts the instrument.
 */
-func (instrument *Instrument) Subscribe() error {
-	errnie.Info("[instrument] subscribing to symbol pairs")
+func (instrument *Instrument) SubscribeBooks() error {
+	errnie.Info("[instrument] subscribing to level3 books")
 
 	stale := instrument.level3Stale
 
@@ -332,32 +325,6 @@ func (instrument *Instrument) Subscribe() error {
 			nil,
 		))
 	}
-	var tradeSubs [][]byte
-
-	for chunk := range slices.Chunk(
-		instrument.symbols, system.Cfg.Market.Subscribe.Batch,
-	) {
-		batch := slices.Clone(chunk)
-
-		tradeMsg, err := sonic.Marshal(kraken.NewTradeSubscription(batch))
-
-		if err != nil {
-			return instrument.Error(errnie.Err(
-				errnie.IO, "[instrument] trade subscribe marshal failed", err,
-			))
-		}
-
-		tradeSubs = append(tradeSubs, tradeMsg)
-
-		if err := instrument.public.Write(tradeMsg); err != nil {
-			return instrument.Error(errnie.Err(
-				errnie.IO,
-				"[instrument] required trade subscription failed",
-				err,
-			))
-		}
-	}
-
 	for chunk := range slices.Chunk(instrument.symbols, 200) {
 		connSymbols := slices.Clone(chunk)
 		batchKey := strings.Join(connSymbols, "|")
@@ -416,6 +383,45 @@ func (instrument *Instrument) Subscribe() error {
 
 		errnie.Info("[instrument] subscribed to level3 for " + batchKey)
 		time.Sleep(100 * time.Millisecond)
+	}
+
+	instrument.Transition(runtime.WAITING)
+	return nil
+}
+
+/*
+SubscribeTrades opens the trade firehose on the public socket, the sole frame
+type the workspace pipeline consumes. It is the last startup phase: the
+workspace and every book it reads are already READY. A failed resubscribe after
+a reconnect is returned to the socket, which redials with backoff.
+*/
+func (instrument *Instrument) SubscribeTrades() error {
+	errnie.Info("[instrument] opening the trade firehose")
+
+	var tradeSubs [][]byte
+
+	for chunk := range slices.Chunk(
+		instrument.symbols, system.Cfg.Market.Subscribe.Batch,
+	) {
+		batch := slices.Clone(chunk)
+
+		tradeMsg, err := sonic.Marshal(kraken.NewTradeSubscription(batch))
+
+		if err != nil {
+			return instrument.Error(errnie.Err(
+				errnie.IO, "[instrument] trade subscribe marshal failed", err,
+			))
+		}
+
+		tradeSubs = append(tradeSubs, tradeMsg)
+
+		if err := instrument.public.Write(tradeMsg); err != nil {
+			return instrument.Error(errnie.Err(
+				errnie.IO,
+				"[instrument] required trade subscription failed",
+				err,
+			))
+		}
 	}
 
 	if reconnector, ok := instrument.public.(interface{ OnReconnect(func() error) }); ok {

@@ -15,8 +15,8 @@ func TestSubscribeRequiresLevel3Reader(t *testing.T) {
 		instrument := &Instrument{System: runtime.NewSystem(context.Background(), "instrument")}
 		instrument.SetLevel3Stale(func([]string) {})
 
-		Convey("Subscribe refuses before opening any socket", func() {
-			So(instrument.Subscribe(), ShouldNotBeNil)
+		Convey("SubscribeBooks refuses before opening any socket", func() {
+			So(instrument.SubscribeBooks(), ShouldNotBeNil)
 		})
 	})
 }
