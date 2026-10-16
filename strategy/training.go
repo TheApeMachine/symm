@@ -408,7 +408,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 	}
 
 	if action != "" {
-		training.act(symbol, action, matchedPath)
+		training.act(value, symbol, action, matchedPath)
 		data.AppendVector(value, []float64{surprise, energy}, "surprise", "energy", "action:"+action, "path:"+matchedPath)
 	} else {
 		data.AppendVector(value, []float64{surprise, energy}, "surprise", "energy", "path:"+matchedPath)
@@ -603,15 +603,22 @@ needs it flat, exiting needs it held.
 Entries are opened sized against configured allocation fraction and available cash.
 Exits sell everything currently open.
 */
-func (training *Training) act(symbol, action string, path ...string) string {
+func (training *Training) act(value *data.Value, symbol, action string, path ...string) string {
 	switch action {
 	case "enter":
+		if posJSON := training.desk.PositionsJSON(symbol); len(posJSON) > 0 && value != nil {
+			value.AppendJSON(posJSON, "position")
+		}
+
 		if training.desk.Holds(symbol) {
 			training.paths[symbol] = nil
 			return "holding: enter ignored"
 		}
 
 		cash := training.desk.Cash(system.Cfg.Market.QuoteCurrency)
+		if balJSON := training.desk.BalanceJSON(); len(balJSON) > 0 && value != nil {
+			value.AppendJSON(balJSON, "balance")
+		}
 
 		if cash == nil || cash.Sign() <= 0 {
 			training.resetPaperAndReload()
@@ -631,6 +638,13 @@ func (training *Training) act(symbol, action string, path ...string) string {
 
 		allocated := cash.SetScale(4).Mul(system.Cfg.Risk.MaxFraction)
 		entryCost, err := training.price.AllocateEntry(symbol, allocated)
+
+		if priceJSON := training.price.JSON(symbol); len(priceJSON) > 0 && value != nil {
+			value.AppendJSON(priceJSON, "price")
+		}
+		if instJSON := training.price.InstrumentJSON(symbol); len(instJSON) > 0 && value != nil {
+			value.AppendJSON(instJSON, "instrument")
+		}
 
 		if err != nil {
 			training.resetPaperAndReload()
@@ -662,9 +676,17 @@ func (training *Training) act(symbol, action string, path ...string) string {
 		training.paths[symbol] = nil
 		return "enter submitted"
 	case "exit":
+		if posJSON := training.desk.PositionsJSON(symbol); len(posJSON) > 0 && value != nil {
+			value.AppendJSON(posJSON, "position")
+		}
+
 		if !training.desk.Holds(symbol) {
 			training.paths[symbol] = nil
 			return "flat: exit ignored"
+		}
+
+		if priceJSON := training.price.JSON(symbol); len(priceJSON) > 0 && value != nil {
+			value.AppendJSON(priceJSON, "price")
 		}
 
 		if err := training.desk.Exit(symbol); err != nil {

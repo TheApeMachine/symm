@@ -562,3 +562,49 @@ func (desk *Desk) Closed() []*Position {
 
 	return result
 }
+
+/*
+BalanceJSON returns the serialized JSON representation of the wallet balance.
+*/
+func (desk *Desk) BalanceJSON() []byte {
+	if desk == nil || desk.balance == nil || desk.balance.wallet == nil {
+		return nil
+	}
+
+	raw, _ := sonic.Marshal(desk.balance.wallet)
+	return raw
+}
+
+/*
+PositionsJSON returns open positions as a serialized JSON slice.
+*/
+func (desk *Desk) PositionsJSON(symbol ...string) []byte {
+	if desk == nil || desk.positions == nil {
+		return nil
+	}
+
+	if len(symbol) > 0 && symbol[0] != "" {
+		open := desk.Open(symbol[0])
+		if len(open) == 0 {
+			return nil
+		}
+		raw, _ := sonic.Marshal(open)
+		return raw
+	}
+
+	var all []*Position
+	desk.positions.Range(func(_, val any) bool {
+		if pos, ok := val.(*Position); ok && pos != nil {
+			all = append(all, pos)
+		}
+		return true
+	})
+
+	if len(all) == 0 {
+		return nil
+	}
+
+	raw, _ := sonic.Marshal(all)
+	return raw
+}
+

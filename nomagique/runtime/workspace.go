@@ -59,7 +59,6 @@ type Workspace struct {
 	capacity int
 	stages   [][]*Consumer
 	buffer   []*data.Value
-	
 }
 
 func NewWorkspace(

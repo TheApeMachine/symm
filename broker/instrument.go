@@ -269,14 +269,6 @@ halts the instrument.
 func (instrument *Instrument) Subscribe() error {
 	errnie.Info("[instrument] subscribing to symbol pairs")
 
-	if instrument.level3Stale == nil {
-		return instrument.Error(errnie.Err(
-			errnie.Validation,
-			"[instrument] level3 stale sink is required before subscribe",
-			nil,
-		))
-	}
-
 	stale := instrument.level3Stale
 
 	if instrument.level3Reader == nil {

@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/sonic"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -1216,4 +1217,49 @@ func (price *Price) WithFee(
 	}
 
 	return amount.OffsetPercent(rate)
+}
+
+/*
+JSON returns the serialized JSON representation of price touch and fees for symbol.
+*/
+func (price *Price) JSON(symbol string) []byte {
+	if price == nil {
+		return nil
+	}
+
+	bid, ask := price.Touch(symbol)
+	fee, _ := price.FeeRate(symbol)
+
+	type PriceInfo struct {
+		Symbol  string           `json:"symbol"`
+		Bid     *decimal.Decimal `json:"bid,omitempty"`
+		Ask     *decimal.Decimal `json:"ask,omitempty"`
+		FeeRate float64          `json:"feeRate,omitempty"`
+	}
+
+	raw, _ := sonic.Marshal(PriceInfo{
+		Symbol:  symbol,
+		Bid:     bid,
+		Ask:     ask,
+		FeeRate: fee,
+	})
+
+	return raw
+}
+
+/*
+InstrumentJSON returns the serialized JSON representation of the instrument pair for symbol.
+*/
+func (price *Price) InstrumentJSON(symbol string) []byte {
+	if price == nil || price.Instrument == nil {
+		return nil
+	}
+
+	pair := price.Instrument.Pair(symbol)
+	if pair.Symbol == "" {
+		return nil
+	}
+
+	raw, _ := sonic.Marshal(pair)
+	return raw
 }

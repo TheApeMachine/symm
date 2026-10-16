@@ -31,11 +31,11 @@ var (
 
 type Client struct {
 	*runtime.System
-	s3Client   *s3.Client
-	bucket     string
-	key        string
-	downloader *manager.Downloader
-	uploader   *manager.Uploader
+	s3Client       *s3.Client
+	bucket         string
+	key            string
+	downloader     *manager.Downloader
+	uploader       *manager.Uploader
 	prefix         string
 	keys           []string
 	cursor         int

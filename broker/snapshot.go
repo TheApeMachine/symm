@@ -2,6 +2,7 @@ package broker
 
 import (
 	"github.com/bytedance/sonic"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/data"
 )
@@ -31,7 +32,6 @@ type Snapshot struct {
 	Bids  []Level `json:"bids"`
 	Asks  []Level `json:"asks"`
 }
-
 
 /*
 Touch returns the snapshot's best bid and best ask.
@@ -91,7 +91,7 @@ func ReadSnapshot(value *data.Value) (*Snapshot, error) {
 	}
 
 	for layer := range data.Layers[[]byte](value, "snapshot") {
-		
+
 		var snap Snapshot
 		if err := sonic.Unmarshal(layer, &snap); err == nil && len(snap.Bids) > 0 && len(snap.Asks) > 0 {
 			return &snap, nil
@@ -103,7 +103,26 @@ func ReadSnapshot(value *data.Value) (*Snapshot, error) {
 		if err := sonic.Unmarshal(layer, &snap); err == nil && len(snap.Bids) > 0 && len(snap.Asks) > 0 {
 			return &snap, nil
 		}
+
+		var b spotbook.Book
+		if err := sonic.Unmarshal(layer, &b); err == nil && b.BestBid() != nil && b.BestAsk() != nil {
+			var bids, asks []Level
+			for bid := b.BestBid(); bid != nil; bid = bid.Lower {
+				bids = append(bids, Level{Price: bid.Price, Quantity: bid.Quantity})
+			}
+			for ask := b.BestAsk(); ask != nil; ask = ask.Higher {
+				asks = append(asks, Level{Price: ask.Price, Quantity: ask.Quantity})
+			}
+			if len(bids) > 0 && len(asks) > 0 {
+				return &Snapshot{
+					Depth: len(bids),
+					Bids:  bids,
+					Asks:  asks,
+				}, nil
+			}
+		}
 	}
 
 	return nil, nil
 }
+

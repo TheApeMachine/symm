@@ -2,12 +2,9 @@ package data
 
 import (
 	"fmt"
-	"sync/atomic"
 
 	"github.com/google/uuid"
 )
-
-var CurrentValue = &atomic.Pointer[*Value]{}
 
 type Value struct {
 	ID        [16]byte

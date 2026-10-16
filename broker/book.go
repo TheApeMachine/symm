@@ -11,6 +11,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/bytedance/sonic"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -548,6 +549,23 @@ func (book *Book) SnapshotInto(out *sync.Map) {
 		out.Store(symbol, book.manager.GetBook(symbol))
 	}
 }
+
+/*
+JSON returns the serialized JSON representation of the resident book for symbol.
+*/
+func (book *Book) JSON(symbol string) []byte {
+	if book == nil {
+		return nil
+	}
+
+	var raw []byte
+	book.Book(symbol, func(b *spotbook.Book) {
+		raw, _ = sonic.Marshal(b)
+	})
+
+	return raw
+}
+
 
 type decimalLayout struct {
 	integer *big.Int

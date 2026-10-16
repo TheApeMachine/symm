@@ -589,7 +589,6 @@ func (trainer *Trainer) publishPolicies(
 			}
 		}
 
-
 		val := data.NewValue("policy", action, symbol)
 		val.Epoch = uint64(epoch)
 		val.FormatPrefix()
