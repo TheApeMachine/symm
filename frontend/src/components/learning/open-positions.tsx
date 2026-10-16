@@ -1,10 +1,9 @@
-import { useSelector } from "@tanstack/react-store";
 import { signals } from "#/collections/app";
 import {
 	Component,
 	DistanceBar,
-	Funnel,
 	formatValue,
+	Funnel,
 	Gauge,
 	type GaugeTone,
 	metricOf,
@@ -16,7 +15,8 @@ import {
 	useValues,
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
-import { Value } from "#/types/value";
+import type { Value } from "#/types/value";
+import { useSelector } from "@tanstack/react-store";
 
 /*
 Open positions, drawn from the Training Value's own Metrics
@@ -28,9 +28,7 @@ const REGIONS = 15;
 const regionLabel = (s: number) => `R${String(s).padStart(2, "0")}`;
 const regionColor = (s: number) => sectorHue(s, REGIONS);
 
-const heldSymbols = (
-	state: Record<string, { getLast(): Value | undefined }>,
-) =>
+const heldSymbols = (state: Record<string, { getLast(): Value | undefined }>) =>
 	Object.entries(state)
 		.filter(([, ring]) => metricOf(ring?.getLast(), "position_open") === 1)
 		.map(([symbol]) => symbol)
@@ -66,7 +64,7 @@ const regionRow = (m: Value): Array<number | undefined> => {
 };
 
 const PositionCard = ({ symbol }: { symbol: string }) => {
-	const history = useValues(signals.training, symbol, 90);
+	const history: Value[] = useValues(signals.training, symbol, 90);
 	const latest = history[history.length - 1];
 	const m = (name: string) => metricOf(latest, name);
 
@@ -89,9 +87,9 @@ const PositionCard = ({ symbol }: { symbol: string }) => {
 	const roomTone: GaugeTone =
 		room === undefined ? "muted" : room < 1 ? "down" : room < 3 ? "warn" : "up";
 	const pnlTrail = history
-		.map((h) => metricOf(h, "position_pnl_pct"))
+		.map((h: Value) => metricOf(h, "position_pnl_pct"))
 		.filter((v): v is number => v !== undefined);
-	const deviations = history.flatMap((h) => {
+	const deviations = history.flatMap((h: Value) => {
 		const b = metricOf(h, "position_bid");
 		const e = metricOf(h, "position_entry");
 		return b !== undefined && e !== undefined ? [Math.abs(b - e)] : [];
@@ -99,7 +97,7 @@ const PositionCard = ({ symbol }: { symbol: string }) => {
 
 	const rows = history
 		.filter(
-			(h) =>
+			(h: Value) =>
 				metricOf(h, "region_brightness:R00") !== undefined ||
 				metricsWithPrefix(h, "region_brightness:").size > 0,
 		)
@@ -109,13 +107,13 @@ const PositionCard = ({ symbol }: { symbol: string }) => {
 		1,
 		...rows.flat().filter((v): v is number => v !== undefined),
 	);
-	const scaled = rows.map((r) =>
+	const scaled = rows.map((r: Array<number | undefined>) =>
 		r.map((v) => (v === undefined ? v : v / peak)),
 	);
 
 	const withTokens = [...history]
 		.reverse()
-		.find((h) => metricOf(h, "token_depth") !== undefined);
+		.find((h: Value) => metricOf(h, "token_depth") !== undefined);
 	const tokens = tokensOf(withTokens);
 	const capacity = metricOf(withTokens, "token_capacity");
 	const strength = metricOf(withTokens, "token_strength");

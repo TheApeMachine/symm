@@ -43,7 +43,7 @@ var (
 			)
 
 			defer cancel()
-			return NewBooter(ctx, "collect").Run()
+			return NewBooter(ctx, "symm", captureFlag).Run()
 		},
 	}
 )

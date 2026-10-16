@@ -2,9 +2,7 @@ package broker
 
 import (
 	"context"
-	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
@@ -206,22 +204,6 @@ func (balance *Balance) poll() (err error) {
 			"[balance] trade balance or wallet unavailable",
 			nil,
 		))
-	}
-
-	now := time.Now()
-	epoch := system.Epoch.Load()
-
-	if epoch <= 0 {
-		epoch = now.UnixNano()
-	}
-
-	if buf, err := sonic.Marshal(tradeBalance); err == nil {
-		balance.value = data.NewValue("broker", "balance", balance.Quote).Append(buf)
-	}
-	balance.uiTee.Push(balance.value)
-
-	if balance.storeTee != nil {
-		balance.storeTee.Push(balance.value)
 	}
 
 	return nil

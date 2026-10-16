@@ -42,18 +42,25 @@ func (value *Value) AppendJSON(buf []byte, prefix string) *Value {
 AppendVector stores a typed slice as raw binary bytes and indexes its element keys.
 */
 func AppendVector[T any](value *Value, vector []T, keys ...string) *Value {
-	var zero T
+	if value == nil {
+		return nil
+	}
 
-	rawBytes := unsafe.Slice((*byte)(
-		unsafe.Pointer(&vector[0]),
-	), len(vector)*int(unsafe.Sizeof(zero)))
+	var rawBytes []byte
+	if len(vector) > 0 {
+		var zero T
+		rawBytes = unsafe.Slice((*byte)(
+			unsafe.Pointer(&vector[0]),
+		), len(vector)*int(unsafe.Sizeof(zero)))
+	}
 
-	value.Layers = append(value.Layers, rawBytes)
-	value.Index = append(value.Index, strings.Join(append(
-		[]string{value.Prefix}, keys...), "/",
+	val := value.Clone()
+	val.Layers = append(val.Layers, rawBytes)
+	val.Index = append(val.Index, strings.Join(append(
+		[]string{val.Prefix}, keys...), "/",
 	))
 
-	return value
+	return val
 }
 
 /*
@@ -101,8 +108,11 @@ Indexed returns the layers, their source, and their indexed metrics.
 */
 func Indexed[T any](v *Value, keys ...string) iter.Seq2[string, T] {
 	return func(yield func(string, T) bool) {
+		if v == nil {
+			return
+		}
 		for i, layer := range v.Layers {
-			if i >= len(v.Index) || (len(keys) > 0 && !slices.ContainsFunc(keys, func(k string) bool {
+			if i >= len(v.Index) || len(v.Index[i]) == 0 || (len(keys) > 0 && !slices.ContainsFunc(keys, func(k string) bool {
 				return strings.Contains(v.Index[i], k)
 			})) {
 				continue
@@ -137,8 +147,11 @@ Layers returns the layers for a given key match.
 */
 func Layers[T any](v *Value, keys ...string) iter.Seq[T] {
 	return func(yield func(T) bool) {
+		if v == nil {
+			return
+		}
 		for i, layer := range v.Layers {
-			if len(keys) > 0 && (i >= len(v.Index) || !slices.ContainsFunc(keys, func(k string) bool {
+			if len(keys) > 0 && (i >= len(v.Index) || len(v.Index[i]) == 0 || !slices.ContainsFunc(keys, func(k string) bool {
 				return strings.Contains(v.Index[i], k)
 			})) {
 				continue

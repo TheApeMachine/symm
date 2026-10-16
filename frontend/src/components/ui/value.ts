@@ -1,9 +1,8 @@
-import type { RingBuffer } from "#/collections/app";
 import type { Value } from "#/types/value";
-import type { Store } from "@tanstack/store";
 import { useEffect, useState } from "react";
+import type { ValueStore } from "./types";
 
-export type ValueStore = Store<Record<string, RingBuffer<Value>>>;
+export type { ValueStore };
 
 /*
 useValues subscribes to a Value store and returns the most recent values for a symbol.

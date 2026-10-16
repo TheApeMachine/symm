@@ -55,34 +55,6 @@ type Wallet struct {
 }
 
 /*
-BalanceSubscription requests the authenticated wallet stream through the same
-transport abstraction used by public market subscriptions.
-*/
-type BalanceSubscription struct {
-	Token string
-}
-
-/*
-NewBalanceSubscription binds the current authenticated websocket token.
-*/
-func NewBalanceSubscription(token string) BalanceSubscription {
-	return BalanceSubscription{Token: token}
-}
-
-/*
-MarshalJSON encodes Kraken's private balances subscription request.
-*/
-func (subscription BalanceSubscription) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(map[string]any{
-		"method": "subscribe",
-		"params": map[string]any{
-			"channel": "balances",
-			"token":   subscription.Token,
-		},
-	})
-}
-
-/*
 NewBalance decodes a streamed balances frame. An undecodable frame is an
 error, never a partially filled wallet that would overwrite the account state.
 */

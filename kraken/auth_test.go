@@ -21,38 +21,38 @@ func TestAuthTokenReuse(t *testing.T) {
 		}
 
 		Convey("a token within TokenReuse is reused", func() {
-			first, err := auth.Token()
+			first, err := auth.Token(t.Context())
 			So(err, ShouldBeNil)
 			clock = clock.Add(TokenReuse - time.Second)
-			second, err := auth.Token()
+			second, err := auth.Token(t.Context())
 			So(err, ShouldBeNil)
 			So(second, ShouldEqual, first)
 			So(fetches, ShouldEqual, 1)
 		})
 
 		Convey("a token past TokenReuse is reissued for a reconnect", func() {
-			first, err := auth.Token()
+			first, err := auth.Token(t.Context())
 			So(err, ShouldBeNil)
 			clock = clock.Add(TokenReuse)
-			second, err := auth.Token()
+			second, err := auth.Token(t.Context())
 			So(err, ShouldBeNil)
 			So(second, ShouldNotEqual, first)
 			So(fetches, ShouldEqual, 2)
 		})
 
 		Convey("a fetch failure is returned, not masked by the stale token", func() {
-			_, err := auth.Token()
+			_, err := auth.Token(t.Context())
 			So(err, ShouldBeNil)
 			clock = clock.Add(TokenReuse)
 			auth.fetch = func() (string, error) { return "", errors.New("rest down") }
-			token, err := auth.Token()
+			token, err := auth.Token(t.Context())
 			So(err, ShouldNotBeNil)
 			So(token, ShouldBeEmpty)
 		})
 
 		Convey("an empty token is an error", func() {
 			auth.fetch = func() (string, error) { return "", nil }
-			_, err := auth.Token()
+			_, err := auth.Token(t.Context())
 			So(err, ShouldNotBeNil)
 		})
 	})

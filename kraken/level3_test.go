@@ -11,8 +11,7 @@ var level3FrameFixture = []byte(`{"channel":"level3","type":"snapshot","data":[{
 
 func TestNewLevel3(t *testing.T) {
 	Convey("Given a Level-3 frame with fixed-point order values", t, func() {
-		level3, err := NewLevel3(level3FrameFixture)
-		So(err, ShouldBeNil)
+		level3 := NewLevel3(level3FrameFixture)
 
 		Convey("The parsed book should retain values used by checksum construction", func() {
 			So(level3.Data, ShouldHaveLength, 1)
@@ -26,8 +25,7 @@ func TestNewLevel3(t *testing.T) {
 	})
 
 	Convey("Given a Level-3 modification encoded in scientific notation", t, func() {
-		level3, err := NewLevel3([]byte(`{"channel":"level3","type":"update","data":[{"symbol":"AKE/USD","asks":[{"event":"modify","order_id":"order","limit_price":0.00567764,"order_qty":1e-05,"timestamp":"2026-08-13T11:41:06.617465962Z"}],"bids":[]}]}`))
-		So(err, ShouldBeNil)
+		level3 := NewLevel3([]byte(`{"channel":"level3","type":"update","data":[{"symbol":"AKE/USD","asks":[{"event":"modify","order_id":"order","limit_price":0.00567764,"order_qty":1e-05,"timestamp":"2026-08-13T11:41:06.617465962Z"}],"bids":[]}]}`))
 
 		Convey("The minimum lot should retain its exact nonzero quantity", func() {
 			So(level3.Data, ShouldHaveLength, 1)
@@ -38,21 +36,12 @@ func TestNewLevel3(t *testing.T) {
 	})
 
 	Convey("Given a level3 frame that cannot be decoded", t, func() {
-		level3, err := NewLevel3([]byte(`{"channel":"level3","type":"update","data":[{"symbol":"BTC/USD","bids":[{"limit_price":"not-a-number"`))
+		level3 := NewLevel3([]byte(`{"channel":"level3","type":"update","data":[{"symbol":"BTC/USD","bids":[{"limit_price":"not-a-number"`))
 
 		Convey("It is an error, never a partial frame to apply", func() {
-			So(err, ShouldNotBeNil)
 			So(level3, ShouldBeNil)
 		})
 	})
-}
-
-func BenchmarkNewLevel3(b *testing.B) {
-	for b.Loop() {
-		if _, err := NewLevel3(level3FrameFixture); err != nil {
-			b.Fatal(err)
-		}
-	}
 }
 
 /*

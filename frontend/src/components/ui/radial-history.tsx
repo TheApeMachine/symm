@@ -12,16 +12,27 @@ export interface RadialHistoryProps {
 	className?: string;
 }
 
-export const sectorHue = (sector: number, sectors: number) => `hsl(${Math.round((sector * 360) / Math.max(sectors, 1))} 85% 60%)`;
+export const sectorHue = (sector: number, sectors: number) =>
+	`hsl(${Math.round((sector * 360) / Math.max(sectors, 1))} 85% 60%)`;
 
-const polar = (c: number, r: number, a: number) => [c + r * Math.cos(a), c + r * Math.sin(a)];
+const polar = (c: number, r: number, a: number) => [
+	c + r * Math.cos(a),
+	c + r * Math.sin(a),
+];
 
 /*
 RadialHistory is a radar of rings: one sector per region, the outer ring is
 the latest reading and each ring inward is older, so a region that keeps
 lighting up draws a bright spoke and a flash draws a single bright cell.
 */
-export const RadialHistory = ({ sectors, rows, highlight = [], size = 220, labels, className }: RadialHistoryProps) => {
+export const RadialHistory = ({
+	sectors,
+	rows,
+	highlight = [],
+	size = 220,
+	labels,
+	className,
+}: RadialHistoryProps) => {
 	const c = size / 2;
 	const outer = size / 2 - 16;
 	const inner = outer * 0.22;
@@ -40,31 +51,72 @@ export const RadialHistory = ({ sectors, rows, highlight = [], size = 220, label
 	};
 
 	return (
-		<svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className={cn("shrink-0", className)}>
+		<svg
+			width={size}
+			height={size}
+			viewBox={`0 0 ${size} ${size}`}
+			className={cn("shrink-0", className)}
+		>
+			<title>Ring</title>
 			{Array.from({ length: sectors }, (_, s) => (
-				<path key={`bg${s}`} d={cell(s, inner, outer)} fill="var(--sunken)" stroke="var(--line)" strokeWidth={0.5} />
+				<path
+					key={`bg${s}`}
+					d={cell(s, inner, outer)}
+					fill="var(--sunken)"
+					stroke="var(--line)"
+					strokeWidth={0.5}
+				/>
 			))}
 			{rows.map((row, i) =>
 				row.map((v, s) =>
 					v === undefined || v <= 0.01 ? null : (
-						<path key={`${i}-${s}`} d={cell(s, inner + i * step, inner + (i + 1) * step)} fill={sectorHue(s, sectors)} opacity={Math.min(1, v) * (0.25 + (0.75 * (i + 1)) / n)} />
+						<path
+							key={`${i}-${s}`}
+							d={cell(s, inner + i * step, inner + (i + 1) * step)}
+							fill={sectorHue(s, sectors)}
+							opacity={Math.min(1, v) * (0.25 + (0.75 * (i + 1)) / n)}
+						/>
 					),
 				),
 			)}
 			{highlight.map((s) => (
-				<path key={`h${s}`} d={cell(s, inner, outer + 4)} fill="none" stroke="var(--f1)" strokeWidth={1.5} />
+				<path
+					key={`h${s}`}
+					d={cell(s, inner, outer + 4)}
+					fill="none"
+					stroke="var(--f1)"
+					strokeWidth={1.5}
+				/>
 			))}
 			{labels &&
 				Array.from({ length: sectors }, (_, s) => {
 					const [x, y] = polar(c, outer + 9, (s + 0.5) * wedge - Math.PI / 2);
 					return (
-						<text key={`l${s}`} x={x} y={y} fontSize={8} textAnchor="middle" dominantBaseline="middle" fill="var(--f3)" className="font-mono">
+						<text
+							key={`l${s}`}
+							x={x}
+							y={y}
+							fontSize={8}
+							textAnchor="middle"
+							dominantBaseline="middle"
+							fill="var(--f3)"
+							className="font-mono"
+						>
 							{labels(s)}
 						</text>
 					);
 				})}
 			{n === 0 && (
-				<text x={c} y={c} fontSize={10} textAnchor="middle" fill="var(--f4)" className="font-mono">waiting</text>
+				<text
+					x={c}
+					y={c}
+					fontSize={10}
+					textAnchor="middle"
+					fill="var(--f4)"
+					className="font-mono"
+				>
+					waiting
+				</text>
 			)}
 		</svg>
 	);

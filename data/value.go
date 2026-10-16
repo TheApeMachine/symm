@@ -2,9 +2,12 @@ package data
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 )
+
+var CurrentValue = &atomic.Pointer[*Value]{}
 
 type Value struct {
 	ID        [16]byte
@@ -55,4 +58,17 @@ New returns a zeroed Value ready for deserialization.
 */
 func New() *Value {
 	return &Value{}
+}
+
+func (value *Value) Clone() *Value {
+	if value == nil {
+		return nil
+	}
+	cp := *value
+	cp.Layers = make([][]byte, len(value.Layers))
+	for i, l := range value.Layers {
+		cp.Layers[i] = append([]byte(nil), l...)
+	}
+	cp.Index = append([]string(nil), value.Index...)
+	return &cp
 }

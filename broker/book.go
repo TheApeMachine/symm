@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"math/big"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -16,30 +15,26 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 	"golang.org/x/sync/errgroup"
 )
 
 type Book struct {
-	*runtime.System
-	pending         atomic.Pointer[map[string]struct{}]
-	seeded          chan struct{}
-	manager         *spot.BookManager
-	normalizer      *spot.Normalizer
-	notify          atomic.Pointer[func(string, time.Time)]
-	resync          atomic.Pointer[func(string)]
-	touch           atomic.Pointer[func([]kraken.Level3Touch)]
-	mutations       atomic.Pointer[func([]kraken.Level3Data)]
-	diverging       sync.Map
-	lastTouch       sync.Map
-	locks           sync.Map
-	orderPrices     sync.Map
-	orderPriorities sync.Map
-	priorityCounter atomic.Int64
+	ctx        context.Context
+	cancel     context.CancelFunc
+	status     *runtime.Status
+	pending    atomic.Pointer[map[string]struct{}]
+	seeded     chan struct{}
+	manager    *spot.BookManager
+	normalizer *spot.Normalizer
+	notify     atomic.Pointer[func(string, time.Time)]
+	resync     atomic.Pointer[func(string)]
+	touch      atomic.Pointer[func([]kraken.Level3Touch)]
+	diverging  sync.Map
+	lastTouch  sync.Map
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
@@ -48,13 +43,16 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 	}
 
 	errnie.Info("websocket: initializing book manager")
+	ctx, cancel := context.WithCancel(ctx)
 
 	book := &Book{
+		ctx:        ctx,
+		cancel:     cancel,
+		status:     runtime.NewStatus(),
 		seeded:     make(chan struct{}, 1),
 		manager:    spot.NewBookManager(),
 		normalizer: normalizer,
 	}
-	book.System = runtime.NewSystem(ctx, "book", book)
 
 	book.manager.OnCreateBook.Recurring(func(
 		event *callback.Event[*spotbook.Book],
@@ -78,7 +76,7 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 			bookEvent *callback.Event[*spotbook.ChecksumResult],
 		) {
 			if !bookEvent.Data.Match {
-				book.Transition(runtime.ERROR)
+				book.status.Transition(runtime.ERROR)
 
 				errnie.Error(errnie.Err(
 					errnie.Validation,
@@ -97,7 +95,7 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 }
 
 func (book *Book) Status() runtime.Stage {
-	return book.System.Status()
+	return book.status.Current()
 }
 
 /*
@@ -112,7 +110,7 @@ func (book *Book) Expect(symbols []string) {
 	}
 
 	book.pending.Store(&newPending)
-	book.Transition(runtime.BUSY)
+	book.status.Transition(runtime.BUSY)
 }
 
 /*
@@ -121,9 +119,9 @@ Wait blocks boot on the owner's readiness, never on elapsed market time.
 func (book *Book) Wait() error {
 	for book.Status() != runtime.READY {
 		select {
-		case <-book.Context().Done():
+		case <-book.ctx.Done():
 			return errnie.Error(errnie.Err(
-				errnie.IO, "book: seed interrupted", book.Context().Err(),
+				errnie.IO, "book: seed interrupted", book.ctx.Err(),
 			))
 		case <-book.seeded:
 		}
@@ -132,54 +130,16 @@ func (book *Book) Wait() error {
 	return nil
 }
 
-/*
-Stale marks symbols whose Level3 stream dropped. Their local state stops
-tracking the venue the moment the socket goes down, so readers get nothing
-(exactly like a checksum-diverged symbol) and deltas are dropped until the
-resubscribe delivers a fresh snapshot, which clears the mark. No resync is
-requested: the reconnecting transport resubscribes on its own.
-*/
-func (book *Book) Stale(symbols []string) {
-	for _, symbol := range symbols {
-		book.diverging.Store(symbol, struct{}{})
-	}
-}
-
-func (book *Book) symbolLock(symbol string) *sync.RWMutex {
-	if val, ok := book.locks.Load(symbol); ok {
-		return val.(*sync.RWMutex)
-	}
-
-	symbolLock := &sync.RWMutex{}
-	actual, _ := book.locks.LoadOrStore(symbol, symbolLock)
-
-	return actual.(*sync.RWMutex)
-}
-
-/*
-readable reports whether symbol's local book may be read: seeded by its
-snapshot and not diverged from the venue.
-*/
-func (book *Book) readable(symbol string) bool {
+func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	if pendingPtr := book.pending.Load(); pendingPtr != nil {
 		if _, pending := (*pendingPtr)[symbol]; pending {
-			return false
+			return
 		}
 	}
 
-	_, diverging := book.diverging.Load(symbol)
-
-	return !diverging
-}
-
-func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
-	if !book.readable(symbol) {
+	if _, diverging := book.diverging.Load(symbol); diverging {
 		return
 	}
-
-	symbolLock := book.symbolLock(symbol)
-	symbolLock.RLock()
-	defer symbolLock.RUnlock()
 
 	managed := book.manager.GetBook(symbol)
 
@@ -188,68 +148,16 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	}
 }
 
-/*
-Snapshot returns symbol's current book snapshot, or nil when the book has no
-executable touch. Replays use it to rebuild what ingress stamped.
-*/
-func (book *Book) Snapshot(symbol string) *Snapshot {
-	symbolLock := book.symbolLock(symbol)
-	symbolLock.RLock()
-	defer symbolLock.RUnlock()
+func (book *Book) Create(symbol string, depth int) {
+	if depth <= 0 {
+		depth = viper.GetInt("market.l3_depth")
 
-	return book.snapshot(symbol)
-}
-
-/*
-snapshot copies every level of symbol's book, best first, while the caller holds
-the symbol's lock. An unseeded, diverged, missing, one-sided, or crossed book
-has no snapshot.
-*/
-func (book *Book) snapshot(symbol string) *Snapshot {
-	if !book.readable(symbol) {
-		return nil
+		if depth <= 0 {
+			depth = 10
+		}
 	}
 
-	managed := book.manager.GetBook(symbol)
-
-	if _, _, defined := Touch(managed); !defined {
-		return nil
-	}
-
-	snapshot := &Snapshot{Depth: managed.MaxDepth}
-
-	for level := managed.BestBid(); level != nil; level = level.Lower {
-		snapshot.Bids = append(snapshot.Bids, Level{Price: level.Price.Copy(), Quantity: level.Quantity.Copy()})
-	}
-
-	for level := managed.BestAsk(); level != nil; level = level.Higher {
-		snapshot.Asks = append(snapshot.Asks, Level{Price: level.Price.Copy(), Quantity: level.Quantity.Copy()})
-	}
-
-	return snapshot
-}
-
-/*
-Touch is a book's executable top: the best bid and best ask, both priced and
-the bid strictly below the ask. A one-sided or crossed book has no touch: there
-is no price at which both sides could trade.
-*/
-func Touch(managed *spotbook.Book) (bid *spotbook.Level, ask *spotbook.Level, defined bool) {
-	if managed == nil {
-		return nil, nil, false
-	}
-
-	bid, ask = managed.BestBid(), managed.BestAsk()
-
-	if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
-		return nil, nil, false
-	}
-
-	if bid.Price.Sign() <= 0 || ask.Price.Sign() <= 0 || bid.Price.Cmp(ask.Price) >= 0 {
-		return nil, nil, false
-	}
-
-	return bid, ask, true
+	book.manager.CreateBook(symbol, depth)
 }
 
 /*
@@ -300,18 +208,8 @@ func (book *Book) Update(
 		touch(touches)
 	}
 
-	var mutations func([]kraken.Level3Data)
-
-	if mutationsPtr := book.mutations.Load(); mutationsPtr != nil {
-		mutations = *mutationsPtr
-	}
-
-	if mutations != nil && len(accepted) > 0 {
-		mutations(accepted)
-	}
-
 	if len(resynced) > 0 && resync != nil {
-		group, ctx := errgroup.WithContext(book.Context())
+		group, ctx := errgroup.WithContext(book.ctx)
 
 		for _, symbol := range resynced {
 			group.Go(func() error {
@@ -373,7 +271,7 @@ func (book *Book) Update(
 			})
 
 			if pendingCount == 0 && divergingEmpty {
-				book.Transition(runtime.READY)
+				book.status.Transition(runtime.READY)
 
 				select {
 				case book.seeded <- struct{}{}:
@@ -410,22 +308,21 @@ func (book *Book) apply(
 			continue
 		}
 
-		symbolLock := book.symbolLock(data.Symbol)
-		symbolLock.Lock()
-
 		err := func() error {
-			defer symbolLock.Unlock()
-
 			select {
-			case <-book.Context().Done():
-				return errnie.Error(book.Context().Err())
+			case <-book.ctx.Done():
+				return errnie.Error(book.ctx.Err())
 			default:
 			}
 
 			data.Type = payload.Type
 			symbolBook = book.manager.GetBook(data.Symbol)
 
-			depth := level3Depth()
+			depth := viper.GetInt("market.l3_depth")
+
+			if depth <= 0 {
+				depth = 10
+			}
 
 			if symbolBook == nil {
 				symbolBook = book.manager.CreateBook(data.Symbol, depth)
@@ -433,15 +330,11 @@ func (book *Book) apply(
 
 			if payload.Type == "snapshot" {
 				book.diverging.Delete(data.Symbol)
-				book.orderPrices.Store(data.Symbol, &sync.Map{})
-				book.orderPriorities.Store(data.Symbol, &sync.Map{})
 				symbolBook = book.manager.CreateBook(
 					data.Symbol,
 					depth,
 				)
 			}
-
-			orderMap := book.getOrderPrices(data.Symbol)
 
 			for sideIndex, level3data := range []*[]kraken.Level3Order{
 				&data.Bids, &data.Asks,
@@ -458,26 +351,20 @@ func (book *Book) apply(
 
 				for _, order := range *level3data {
 					if order.Event == "delete" && order.LimitPrice == nil {
-						if val, ok := orderMap.Load(order.OrderID); ok && val != nil {
-							order.LimitPrice = val.(*decimal.Decimal)
-						}
+						for _, level := range symbolSide.Levels {
+							if level == nil {
+								continue
+							}
 
-						if order.LimitPrice == nil {
-							for _, level := range symbolSide.Levels {
-								if level == nil {
-									continue
-								}
-
-								for _, queued := range level.Queue() {
-									if queued.ID == order.OrderID {
-										order.LimitPrice = level.Price
-										break
-									}
-								}
-
-								if order.LimitPrice != nil {
+							for _, queued := range level.Queue() {
+								if queued.ID == order.OrderID {
+									order.LimitPrice = level.Price
 									break
 								}
+							}
+
+							if order.LimitPrice != nil {
+								break
 							}
 						}
 					}
@@ -487,42 +374,23 @@ func (book *Book) apply(
 					}
 
 					if order.OrderID != "" {
-						var movedOldPrice *decimal.Decimal
-
-						if val, ok := orderMap.Load(order.OrderID); ok && val != nil {
-							cachedPrice := val.(*decimal.Decimal)
-							if cachedPrice.Cmp(order.LimitPrice) != 0 {
-								movedOldPrice = cachedPrice
+						for _, level := range symbolSide.Levels {
+							if level == nil || level.Price == nil || level.Price.Cmp(order.LimitPrice) == 0 {
+								continue
 							}
-						}
 
-						if movedOldPrice == nil {
-							for _, level := range symbolSide.Levels {
-								if level == nil || level.Price == nil || level.Price.Cmp(order.LimitPrice) == 0 {
-									continue
-								}
-
-								for _, queued := range level.Queue() {
-									if queued.ID == order.OrderID {
-										movedOldPrice = level.Price
-										break
-									}
-								}
-
-								if movedOldPrice != nil {
+							for _, queued := range level.Queue() {
+								if queued.ID == order.OrderID {
+									symbolBook.Update(&spotbook.UpdateOptions{
+										Direction: direction,
+										ID:        order.OrderID,
+										Price:     level.Price,
+										Quantity:  decimal.NewFromInt64(0),
+										Silent:    true,
+									})
 									break
 								}
 							}
-						}
-
-						if movedOldPrice != nil && symbolSide.Levels != nil && symbolSide.Levels[movedOldPrice.String()] != nil {
-							symbolBook.Update(&spotbook.UpdateOptions{
-								Direction: direction,
-								ID:        order.OrderID,
-								Price:     movedOldPrice,
-								Quantity:  decimal.NewFromInt64(0),
-								Silent:    true,
-							})
 						}
 					}
 
@@ -537,7 +405,7 @@ func (book *Book) apply(
 					if quantity.Sign() <= 0 && symbolSide.Levels[order.LimitPrice.String()] == nil {
 						book.manager.CreateBook(data.Symbol, depth)
 						book.diverging.Store(data.Symbol, struct{}{})
-						book.Transition(runtime.ERROR)
+						book.status.Transition(runtime.ERROR)
 						resynced = append(resynced, data.Symbol)
 
 						return errnie.Error(errnie.Err(
@@ -557,21 +425,6 @@ func (book *Book) apply(
 						Silent:    true,
 					})
 
-					if order.Event == "delete" {
-						orderMap.Delete(order.OrderID)
-						priorityMap := book.getOrderPriorities(data.Symbol)
-						priorityMap.Delete(order.OrderID)
-					}
-
-					if order.Event != "delete" && order.LimitPrice != nil {
-						orderMap.Store(order.OrderID, order.LimitPrice)
-						priorityMap := book.getOrderPriorities(data.Symbol)
-
-						if _, exists := priorityMap.Load(order.OrderID); !exists {
-							priorityMap.Store(order.OrderID, book.priorityCounter.Add(1))
-						}
-					}
-
 					filtered = append(filtered, order)
 				}
 
@@ -589,7 +442,7 @@ func (book *Book) apply(
 			symbolBook.EnforceDepth()
 
 			payload.Data[index] = data
-			if data.Checksum != 0 && !book.fastL3Checksum(data.Symbol, symbolBook, data.Checksum) {
+			if data.Checksum != 0 && !fastL3Checksum(symbolBook, data.Checksum) {
 				checksum := symbolBook.L3Checksum(strconv.FormatUint(
 					uint64(data.Checksum),
 					10,
@@ -599,10 +452,9 @@ func (book *Book) apply(
 					// The venue checksum is authority. Local state is known wrong,
 					// so it is discarded rather than kept serving corrupt depth,
 					// the symbol is marked diverged so later deltas are dropped,
-					// and the book enters ERROR — same halt posture as an absent
-					// level. Only a fresh snapshot restores trust.
+					// and the transport is asked to resubscribe — only a fresh
+					// snapshot restores trust.
 					book.manager.CreateBook(data.Symbol, depth)
-					book.Transition(runtime.ERROR)
 
 					if _, marked := book.diverging.LoadOrStore(data.Symbol, struct{}{}); !marked {
 						resynced = append(resynced, data.Symbol)
@@ -619,15 +471,6 @@ func (book *Book) apply(
 						nil,
 					))
 				}
-			}
-
-			// The entry's orders take their ingress sequence numbers while the
-			// write lock still holds the book they produced, so no event
-			// stamped under the read lock can fall between applying the entry
-			// and numbering it.
-			if orders := int64(len(data.Bids) + len(data.Asks)); orders > 0 {
-				data.Sequence = system.SeqIdx.Add(orders) - orders + 1
-				payload.Data[index].Sequence = data.Sequence
 			}
 
 			return nil
@@ -652,43 +495,6 @@ func (book *Book) SetTouch(touch func([]kraken.Level3Touch)) {
 }
 
 /*
-SetMutations connects verified checksum-matched level3 order mutations to downstream consumers.
-*/
-func (book *Book) SetMutations(mutations func([]kraken.Level3Data)) {
-	book.mutations.Store(&mutations)
-}
-
-/*
-ApplyFrame replays one stored Level3 entry: the order measurements ingress
-stored for one accepted venue entry of one symbol, type, and checksum. They are
-applied as one payload through Update, so the venue checksum is verified once,
-after the entry's last order, exactly as it was live. A stored tape that does
-not reproduce the venue checksum is an error.
-*/
-func (book *Book) ApplyFrame(value *data.Value) error {
-	if value == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "[book] empty level3 frame", nil,
-		))
-	}
-
-	for layer := range data.Layers[[]byte](value, "level3") {
-		level3, err := kraken.NewLevel3(layer)
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.NotAcceptable, "[book] failed to parse level3 message", err,
-			))
-		}
-
-		if err := book.Update(level3); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-/*
 recordTouch stages this symbol's executable top of book if it moved.
 
 The frame reaching here has already matched the venue's checksum, so the levels
@@ -696,18 +502,20 @@ are the venue's own. A crossed or one-sided book is not a touch: there is no
 price at which both sides could trade, and reporting one would put a number
 into the price series that the market never offered.
 */
-func (book *Book) recordTouch(
-	symbolBook *spotbook.Book,
-	data kraken.Level3Data,
-	touches *[]kraken.Level3Touch,
-) {
-	bid, ask, defined := Touch(symbolBook)
-
-	if !defined {
+func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data, touches *[]kraken.Level3Touch) {
+	if symbolBook == nil {
 		return
 	}
+	bid, ask := symbolBook.BestBid(), symbolBook.BestAsk()
 
+	if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
+		return
+	}
 	bidPrice, askPrice := bid.Price.Float64(), ask.Price.Float64()
+
+	if bidPrice <= 0 || askPrice <= 0 || bidPrice >= askPrice {
+		return
+	}
 
 	if val, seen := book.lastTouch.Load(data.Symbol); seen {
 		previous := val.([2]float64)
@@ -741,61 +549,31 @@ func (book *Book) SnapshotInto(out *sync.Map) {
 	}
 }
 
-func (book *Book) getOrderPrices(symbol string) *sync.Map {
-	val, ok := book.orderPrices.Load(symbol)
-	if ok && val != nil {
-		return val.(*sync.Map)
-	}
-
-	newMap := &sync.Map{}
-	actual, _ := book.orderPrices.LoadOrStore(symbol, newMap)
-	return actual.(*sync.Map)
-}
-
-func (book *Book) getOrderPriorities(symbol string) *sync.Map {
-	val, ok := book.orderPriorities.Load(symbol)
-
-	if ok && val != nil {
-		return val.(*sync.Map)
-	}
-
-	newMap := &sync.Map{}
-	actual, _ := book.orderPriorities.LoadOrStore(symbol, newMap)
-
-	return actual.(*sync.Map)
-}
-
-func init() {
-	sample, err := decimal.NewFromString("12345.6789")
-	if err != nil || string(appendDecimalDigits(nil, sample)) != "123456789" {
-		panic("appendDecimalDigits memory layout mismatch with decimal.Decimal")
-	}
+type decimalLayout struct {
+	integer *big.Int
 }
 
 func appendDecimalDigits(buf []byte, d *decimal.Decimal) []byte {
-	if d == nil || d.Sign() == 0 {
+	if d == nil {
 		return buf
 	}
 
-	bi := *(**big.Int)(unsafe.Pointer(d))
+	raw := (*decimalLayout)(unsafe.Pointer(d)).integer
 
-	if bi == nil {
+	if raw == nil || raw.Sign() == 0 {
 		return buf
 	}
 
-	return bi.Append(buf, 10)
+	return raw.Append(buf, 10)
 }
 
-func (book *Book) fastL3Checksum(symbol string, managedBook *spotbook.Book, expected uint32) bool {
+func fastL3Checksum(b *spotbook.Book, expected uint32) bool {
 	var crc uint32
 	var buf [64]byte
-	priorityMap := book.getOrderPriorities(symbol)
 
-	cursor := managedBook.BestAsk()
+	cursor := b.BestAsk()
 
 	for count := 0; count < 10 && cursor != nil; count++ {
-		sortQueue(cursor.Queue(), priorityMap)
-
 		for _, order := range cursor.Queue() {
 			digits := appendDecimalDigits(buf[:0], order.LimitPrice)
 			crc = crc32.Update(crc, crc32.IEEETable, digits)
@@ -806,11 +584,9 @@ func (book *Book) fastL3Checksum(symbol string, managedBook *spotbook.Book, expe
 		cursor = cursor.Higher
 	}
 
-	cursor = managedBook.BestBid()
+	cursor = b.BestBid()
 
 	for count := 0; count < 10 && cursor != nil; count++ {
-		sortQueue(cursor.Queue(), priorityMap)
-
 		for _, order := range cursor.Queue() {
 			digits := appendDecimalDigits(buf[:0], order.LimitPrice)
 			crc = crc32.Update(crc, crc32.IEEETable, digits)
@@ -822,50 +598,4 @@ func (book *Book) fastL3Checksum(symbol string, managedBook *spotbook.Book, expe
 	}
 
 	return crc == expected
-}
-
-func sortQueue(queue []*spotbook.Order, priorityMap *sync.Map) {
-	if len(queue) <= 1 {
-		return
-	}
-
-	hasSameTimestamp := false
-
-	for index := 1; index < len(queue); index++ {
-		if queue[index].Timestamp.Equal(queue[index-1].Timestamp) {
-			hasSameTimestamp = true
-			break
-		}
-	}
-
-	if !hasSameTimestamp {
-		return
-	}
-
-	sort.Slice(queue, func(leftIndex, rightIndex int) bool {
-		leftOrder := queue[leftIndex]
-		rightOrder := queue[rightIndex]
-
-		if leftOrder.Timestamp.Equal(rightOrder.Timestamp) {
-			var priorityLeft, priorityRight int64
-
-			if priorityMap != nil {
-				if val, ok := priorityMap.Load(leftOrder.ID); ok {
-					priorityLeft = val.(int64)
-				}
-
-				if val, ok := priorityMap.Load(rightOrder.ID); ok {
-					priorityRight = val.(int64)
-				}
-			}
-
-			if priorityLeft != priorityRight {
-				return priorityLeft < priorityRight
-			}
-
-			return leftOrder.ID < rightOrder.ID
-		}
-
-		return leftOrder.Timestamp.Before(rightOrder.Timestamp)
-	})
 }

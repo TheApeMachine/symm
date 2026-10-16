@@ -12,6 +12,10 @@ The returned Measurement is WORM forever.
 */
 type Node interface {
 	Step(prior *data.Value) *data.Value
+	Status() Stage
+	Transition(Stage)
+	Error(...error) error
+	Name() string
 }
 
 /*

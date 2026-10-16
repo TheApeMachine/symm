@@ -2,7 +2,6 @@ package broker
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -23,43 +22,14 @@ are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
 	*runtime.System
-	public   Transport
-	snapshot *kraken.Instrument
-	Level3   *sync.Map
-	cache    *sync.Map
-	quote    string
-	symbols  []string
-
-	// products maps a spot symbol to the venue's tradeable perpetual product
-	// identifier, and symbolsByProduct maps every listed product back to its
-	// spot symbol. Both are built once from the venue's instrument list, which
-	// is the only authority on which contracts exist and what they are called.
-	products         map[string]string
-	symbolsByProduct map[string]string
-
-	// token caches the Level3 websockets token and when it was issued, so
-	// every batch shares one fetch and a late reconnect gets a fresh token.
-	tokenMu sync.Mutex
-	token   string
-	tokenAt time.Time
-
-	// fetchToken asks the venue for a websockets token; nil is the
-	// authenticated process REST client. Tests replace it.
-	fetchToken func() (string, error)
-
-	// level3Stale receives a batch's symbols when its Level3 socket drops,
-	// so the book stops serving state that no longer tracks the venue.
-	level3Stale func([]string)
-
-	// paceMu serializes Level3 subscribe frames across every socket and
-	// reconnect hook; pacedAt is when the last frame went out. The venue's
-	// snapshot rate counter is per client, not per socket.
-	paceMu  sync.Mutex
-	pacedAt time.Time
-
-	// level3Reader starts reading a Level3 socket. Subscribe calls it as soon
-	// as the socket opens, before any subscribe frame: the venue rejects
-	// snapshot requests on a socket whose earlier snapshots sit unread.
+	public       Transport
+	snapshot     *kraken.Instrument
+	Level3       *sync.Map
+	cache        *sync.Map
+	quote        string
+	symbols      []string
+	auth         *kraken.Auth
+	level3Stale  func([]string)
 	level3Reader func(*network.WebsocketClient)
 }
 
@@ -88,13 +58,12 @@ func NewInstrument(
 	ctx context.Context, public Transport, storeTees ...runtime.Tee,
 ) *Instrument {
 	instrument := &Instrument{
-		public:           public,
-		Level3:           &sync.Map{},
-		cache:            &sync.Map{},
-		symbols:          []string{},
-		quote:            system.Cfg.Market.QuoteCurrency,
-		products:         make(map[string]string),
-		symbolsByProduct: make(map[string]string),
+		public:  public,
+		Level3:  &sync.Map{},
+		cache:   &sync.Map{},
+		symbols: []string{},
+		quote:   system.Cfg.Market.QuoteCurrency,
+		auth:    kraken.NewAuth(),
 	}
 
 	instrument.System = runtime.NewSystem(
@@ -241,175 +210,6 @@ func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
 }
 
 /*
-LoadFuturesProducts maps each online spot symbol onto one tradeable Futures
-perpetual product_id. Without this map, futures subscriptions using spot names
-are silent no-ops and derivatives never see index/mark/OI.
-*/
-func (instrument *Instrument) LoadFuturesProducts(ctx context.Context) error {
-	if instrument == nil {
-		return nil
-	}
-
-	listed, err := kraken.FetchFuturesInstruments(ctx)
-	if err != nil {
-		return err
-	}
-
-	bySpot := make(map[string][]kraken.FuturesInstrument)
-	for _, item := range listed {
-		spot := kraken.SpotSymbolForFutures(item)
-		if spot == "" || !instrument.Has(spot) {
-			continue
-		}
-		bySpot[spot] = append(bySpot[spot], item)
-	}
-
-	instrument.products = make(map[string]string, len(bySpot))
-	instrument.symbolsByProduct = make(map[string]string, len(bySpot))
-
-	for spot, candidates := range bySpot {
-		product := kraken.PreferPerpetual(candidates)
-		if product == "" {
-			continue
-		}
-		instrument.products[spot] = product
-		instrument.symbolsByProduct[product] = spot
-	}
-
-	errnie.Info(fmt.Sprintf(
-		"[instrument] mapped %d spot symbols onto futures perpetuals",
-		len(instrument.products),
-	))
-
-	return nil
-}
-
-/*
-FuturesProductIDs returns the subscribed perpetual product identifiers.
-*/
-func (instrument *Instrument) FuturesProductIDs() []string {
-	if instrument == nil || len(instrument.products) == 0 {
-		return nil
-	}
-
-	ids := make([]string, 0, len(instrument.products))
-	for _, product := range instrument.products {
-		ids = append(ids, product)
-	}
-	slices.Sort(ids)
-	return ids
-}
-
-/*
-SpotForProduct returns the spot WS symbol for a Futures product_id, or "".
-*/
-func (instrument *Instrument) SpotForProduct(productID string) string {
-	if instrument == nil || productID == "" {
-		return ""
-	}
-	return instrument.symbolsByProduct[productID]
-}
-
-/*
-level3TokenReuse bounds how long one websockets token is presented for a new
-Level3 subscription. Kraken honours a token for establishing a subscription
-only within 15 minutes of issue; an established connection keeps it, but a
-reconnect after that window must present a fresh token or the venue rejects
-the subscription and the book goes dark.
-*/
-const level3TokenReuse = 10 * time.Minute
-
-/*
-level3Token returns a websockets token young enough to subscribe with,
-fetching a fresh one when the cached token is missing or past
-level3TokenReuse. A transient fetch failure (an invalid nonce after another
-process signed with the same key, a rate limit, a network error) is retried
-with backoff until it succeeds or the instrument closes; only a permanent
-credential error is returned. Other batches wait on tokenMu and then share the
-fetched token.
-*/
-func (instrument *Instrument) level3Token() (string, error) {
-	instrument.tokenMu.Lock()
-	defer instrument.tokenMu.Unlock()
-
-	if instrument.token != "" && time.Since(instrument.tokenAt) < level3TokenReuse {
-		return instrument.token, nil
-	}
-
-	fetch := instrument.fetchToken
-
-	if fetch == nil {
-		fetch = restLevel3Token
-	}
-
-	token, err := kraken.RetryToken(instrument.System.Context(), "level3", fetch)
-
-	if err != nil {
-		return "", errnie.Err(
-			errnie.IO,
-			"[instrument] level3 websocket token unavailable",
-			err,
-		)
-	}
-
-	instrument.token = token
-	instrument.tokenAt = time.Now()
-
-	return instrument.token, nil
-}
-
-/*
-restLevel3Token fetches one websockets token through the authenticated
-process REST client.
-*/
-func restLevel3Token() (string, error) {
-	restClient, err := kraken.NewAuthenticatedREST()
-
-	if err != nil {
-		return "", err
-	}
-
-	tokenRes, err := restClient.GetWebSocketsToken()
-
-	if err != nil || tokenRes == nil {
-		return "", errnie.Err(
-			errnie.IO,
-			"[instrument] level3 websocket token request failed",
-			err,
-		)
-	}
-
-	return tokenRes.Result.Token, nil
-}
-
-const maxLevel3SymbolsPerConn = 200
-
-var level3SnapshotCost = map[int]int{10: 5, 100: 25, 1000: 100}
-
-/*
-level3RateWindow returns the pause between Level3 subscribe frames. The venue's
-snapshot rate counter budget is market.l3_rate_limit (default 200), and its
-sustained drain rate is 50 counter units per second. A frame carrying cost
-size*cost requires at least (size*cost)/50 seconds to drain, with a minimum
-pause of 2 seconds to absorb venue clock jitter and discrete sampling.
-*/
-func level3RateWindow() time.Duration {
-	if window := viper.GetDuration("market.l3_rate_window"); window > 0 {
-		return window
-	}
-
-	size, err := level3FrameSize()
-
-	if err != nil {
-		return 2 * time.Second
-	}
-
-	return time.Duration(max(
-		((size*level3SnapshotCost[level3Depth()])+49)/50, 2,
-	)) * time.Second
-}
-
-/*
 level3Depth is the depth subscribed and maintained: market.l3_depth, with the
 venue's default of 10 when unset (the same default the book enforces).
 */
@@ -422,61 +222,25 @@ func level3Depth() int {
 }
 
 /*
-level3FrameSize is how many symbols one subscribe frame may carry so its
-snapshots fit one rate window: market.l3_rate_limit (the account tier's
-counter budget) divided by the per-symbol cost at the subscribed depth.
-*/
-func level3FrameSize() (int, error) {
-	depth := level3Depth()
-	cost, ok := level3SnapshotCost[depth]
-
-	if !ok {
-		return 0, errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf(
-				"[instrument] market.l3_depth %d is not a Kraken level3 depth (10, 100, 1000)",
-				depth,
-			),
-			nil,
-		)
-	}
-
-	size := viper.GetInt("market.l3_rate_limit") / cost
-
-	if size < 1 {
-		return 0, errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf(
-				"[instrument] market.l3_rate_limit must cover one symbol at depth %d (cost %d)",
-				depth, cost,
-			),
-			nil,
-		)
-	}
-
-	return size, nil
-}
-
-/*
 subscribeLevel3 writes the Level3 subscription for one batch with a currently
 valid token, split into frames that each fit the venue's snapshot rate
 budget, one frame per rate window across all sockets.
 */
-func (instrument *Instrument) subscribeLevel3(write func([]byte) error, batch []string) error {
-	size, err := level3FrameSize()
+func (instrument *Instrument) SubscribeLevel3(write func([]byte) error, batch []string) error {
+	token, err := instrument.auth.Token(instrument.Context())
 
 	if err != nil {
-		return err
+		return instrument.Error(errnie.Err(
+			errnie.Forbidden,
+			"[instrument] level3 auth token unavailable",
+			err,
+		))
 	}
 
-	token, err := instrument.level3Token()
-
-	if err != nil {
-		return err
-	}
-
-	for frame := range slices.Chunk(batch, size) {
-		msg, err := sonic.Marshal(kraken.NewLevel3Subscription(frame, token, level3Depth()))
+	for frame := range slices.Chunk(batch, 40) {
+		msg, err := sonic.Marshal(kraken.NewLevel3Subscription(
+			frame, token, level3Depth(),
+		))
 
 		if err != nil {
 			return errnie.Err(
@@ -486,34 +250,11 @@ func (instrument *Instrument) subscribeLevel3(write func([]byte) error, batch []
 			)
 		}
 
-		if err := instrument.paceLevel3(func() error { return write(msg) }); err != nil {
-			return err
-		}
+		time.Sleep(viper.GetDuration("market.subscribe.pace"))
+		write(msg)
 	}
 
 	return nil
-}
-
-/*
-paceLevel3 runs write once a full rate window has passed since the previous
-Level3 subscribe frame, or returns when the instrument closes.
-*/
-func (instrument *Instrument) paceLevel3(write func() error) error {
-	instrument.paceMu.Lock()
-	defer instrument.paceMu.Unlock()
-
-	if wait := time.Until(instrument.pacedAt.Add(level3RateWindow())); wait > 0 {
-		select {
-		case <-instrument.System.Context().Done():
-			return instrument.System.Context().Err()
-		case <-time.After(wait):
-		}
-	}
-
-	err := write()
-	instrument.pacedAt = time.Now()
-
-	return err
 }
 
 /*
@@ -571,7 +312,7 @@ func (instrument *Instrument) Subscribe() error {
 		}
 	}
 
-	for chunk := range slices.Chunk(instrument.symbols, maxLevel3SymbolsPerConn) {
+	for chunk := range slices.Chunk(instrument.symbols, 200) {
 		connSymbols := slices.Clone(chunk)
 		batchKey := strings.Join(connSymbols, "|")
 
@@ -585,12 +326,14 @@ func (instrument *Instrument) Subscribe() error {
 			))
 		}
 
+		instrument.Level3.Store(batchKey, l3Client)
+
 		// Read before subscribing: unread snapshots make the venue reject
 		// later snapshot requests (measured: 120 of 621 rejected with readers
 		// started after all subscribes, 0 of 621 with readers running).
 		instrument.level3Reader(l3Client)
 
-		if err := instrument.subscribeLevel3(l3Client.Write, connSymbols); err != nil {
+		if err := instrument.SubscribeLevel3(l3Client.Write, connSymbols); err != nil {
 			return instrument.Error(errnie.Err(
 				errnie.IO,
 				"[instrument] level3 subscribe failed for "+batchKey,
@@ -610,7 +353,7 @@ func (instrument *Instrument) Subscribe() error {
 		l3Client.OnReconnect(func() error {
 			errnie.Info("[instrument] level3 resubscribe after reconnect for " + batchKey)
 
-			if err := instrument.subscribeLevel3(l3Client.Write, connSymbols); err != nil {
+			if err := instrument.SubscribeLevel3(l3Client.Write, connSymbols); err != nil {
 				// The books of this batch were marked stale on disconnect
 				// and stay so until a resubscribe snapshot lands.
 				stale(connSymbols)
@@ -626,8 +369,6 @@ func (instrument *Instrument) Subscribe() error {
 		})
 
 		errnie.Info("[instrument] subscribed to level3 for " + batchKey)
-		instrument.Level3.Store(batchKey, l3Client)
-
 		time.Sleep(100 * time.Millisecond)
 	}
 
@@ -688,58 +429,4 @@ func (instrument *Instrument) Unsubscribe() error {
 
 func (instrument *Instrument) Symbols() []string {
 	return slices.Clone(instrument.symbols)
-}
-
-/*
-Resync requests a fresh Level3 snapshot for a diverged symbol over its batch websocket.
-*/
-func (instrument *Instrument) Resync(symbol string) error {
-	token, err := instrument.level3Token()
-	if err != nil {
-		return err
-	}
-
-	msg, err := sonic.Marshal(kraken.NewLevel3Subscription([]string{symbol}, token, level3Depth()))
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"[instrument] level3 resync marshal failed for "+symbol,
-			err,
-		))
-	}
-
-	var targetClient *network.WebsocketClient
-
-	instrument.Level3.Range(func(key, val any) bool {
-		batchKey, ok := key.(string)
-		if !ok {
-			return true
-		}
-
-		for part := range strings.SplitSeq(batchKey, "|") {
-			if part != symbol {
-				continue
-			}
-
-			client, isWS := val.(*network.WebsocketClient)
-			if isWS {
-				targetClient = client
-				return false
-			}
-		}
-
-		return true
-	})
-
-	if targetClient == nil {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"[instrument] no level3 socket found for "+symbol,
-			nil,
-		))
-	}
-
-	return instrument.paceLevel3(func() error {
-		return targetClient.Write(msg)
-	})
 }

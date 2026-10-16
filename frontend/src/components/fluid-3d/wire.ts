@@ -1,4 +1,4 @@
-import { Value } from "#/types/value";
+import type { Value } from "#/types/value";
 
 export class IntegratorHealthT {
 	constructor(
@@ -505,9 +505,6 @@ export const decodeManifoldMeasurement = (
 				break;
 			case "pilot:min_density":
 				pilot.minDensity = val;
-				break;
-			case "pilot:density_median":
-				pilot.densityMedian = val;
 				break;
 
 			// Sources

@@ -2,8 +2,10 @@ package cvd
 
 import (
 	"context"
+	"fmt"
 	"math"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -48,17 +50,20 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	}
 
 	side := data.Attribute[string](value.Layers[0], "data", 0, "side")
+
 	if side != "buy" && side != "sell" {
 		return value
 	}
 
 	price := data.Attribute[float64](value.Layers[0], "data", 0, "price")
 	qty := data.Attribute[float64](value.Layers[0], "data", 0, "qty")
+
 	if price <= 0 || qty <= 0 {
 		return value
 	}
 
 	state, found := signal.states[value.Scope]
+	
 	if !found {
 		state = &symbolState{}
 		signal.states[value.Scope] = state
@@ -66,24 +71,40 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 
 	tradeNotional := qty * price
 
-	snapshot, _ := broker.ReadSnapshot(value)
+	snapshot, err := broker.ReadSnapshot(value)
+
+	if err != nil {
+		signal.Error(errnie.Err(
+			errnie.NotFound,
+			fmt.Sprintf("[cvd] snapshot for %s not found", value.Scope),
+			err,
+		))
+
+		return value
+	}
+
 	var midpoint float64
+
 	hasBook := snapshot != nil
+
 	if hasBook {
 		bid, ask := snapshot.Touch()
 		midpoint = (bid.Price.Float64() + ask.Price.Float64()) / 2.0
 	}
 
 	tick := state.clock.Step(price, qty, float64(value.Timestamp), midpoint)
+
 	if tick.Counted {
-		if side == "buy" {
+		switch side {
+		case "buy":
 			state.window.buyNotional += tradeNotional
-		} else if side == "sell" {
+		case "sell":
 			state.window.sellNotional += tradeNotional
 		}
 	}
 
 	var grossNotional, signedFraction float64
+
 	if tick.Closed {
 		flow := state.window
 		state.window = window{}
@@ -95,9 +116,11 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	}
 
 	var midpointLogReturn, flowAligned float64
+	
 	if hasBook && state.prevMidpoint > 0 {
 		midpointLogReturn = math.Log(midpoint / state.prevMidpoint)
 		flowAligned = midpointLogReturn
+	
 		if side == "sell" {
 			flowAligned = -midpointLogReturn
 		}

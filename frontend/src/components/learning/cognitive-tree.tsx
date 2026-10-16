@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { signals } from "#/collections/app";
 import { metricOf, metricsWithPrefix } from "#/components/ui";
 import { hubBaseUrl } from "#/lib/hub";
-import { Value } from "#/types/value";
+import type { Value } from "#/types/value";
 import { RadixTreeViz } from "./radix-tree-viz";
 import type { CognitionTreeResponse, SymbolProgress } from "./types";
 

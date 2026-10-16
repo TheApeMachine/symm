@@ -19,7 +19,7 @@ var collectCmd = &cobra.Command{
 		)
 
 		defer cancel()
-		return NewBooter(ctx, "collect").Run()
+		return NewBooter(ctx, "collect", true).Run()
 	},
 }
 

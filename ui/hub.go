@@ -3,8 +3,8 @@ package ui
 import (
 	"context"
 	"fmt"
+	"io"
 	neturl "net/url"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
@@ -19,22 +19,18 @@ import (
 type Hub struct {
 	*runtime.System
 	ctx        context.Context
-	uiTees     []*UITee
 	app        *fiber.App
 	listenAddr string
 	routes     *Routes
+	conn       *websocket.Conn
 }
 
 /*
 NewHub constructs the dashboard hub from its queue-backed system boundaries.
 */
-func NewHub(
-	ctx context.Context,
-	uiTees ...*UITee,
-) *Hub {
+func NewHub(ctx context.Context) *Hub {
 	hub := &Hub{
 		ctx:        ctx,
-		uiTees:     uiTees,
 		listenAddr: system.Cfg.UI.Addr,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     sonic.Marshal,
@@ -76,12 +72,13 @@ func NewHub(
 
 func (hub *Hub) wsHandler(shard int) fiber.Handler {
 	return websocket.New(func(conn *websocket.Conn) {
+		hub.conn = conn
 		errnie.Info(fmt.Sprintf("[hub] frontend websocket shard %d connected", shard))
 
 		defer func() {
 			errnie.Info(fmt.Sprintf("[hub] frontend websocket shard %d disconnected", shard))
 
-			if err := conn.Conn.Close(); err != nil {
+			if err := hub.conn.Conn.Close(); err != nil {
 				errnie.Error(err)
 			}
 		}()
@@ -94,7 +91,7 @@ func (hub *Hub) wsHandler(shard int) fiber.Handler {
 				default:
 				}
 
-				_, payload, err := conn.Conn.ReadMessage()
+				_, payload, err := hub.conn.Conn.ReadMessage()
 
 				if err != nil {
 					return
@@ -103,46 +100,23 @@ func (hub *Hub) wsHandler(shard int) fiber.Handler {
 				hub.handleCommand(payload)
 			}
 		}()
-
-		for {
-			select {
-			case <-hub.ctx.Done():
-				return
-			default:
-			}
-
-			if hub.Status() != runtime.READY {
-				time.Sleep(10 * time.Millisecond)
-				continue
-			}
-
-			if shard >= len(hub.uiTees) || hub.uiTees[shard] == nil {
-				time.Sleep(10 * time.Millisecond)
-				continue
-			}
-
-			frame := hub.uiTees[shard].Next()
-
-			if frame == nil {
-				time.Sleep(5 * time.Millisecond)
-				continue
-			}
-
-			payload := *(*[]byte)(frame)
-
-			if len(payload) == 0 {
-				continue
-			}
-
-			if err := conn.Conn.WriteMessage(
-				websocket.BinaryMessage, payload,
-			); err != nil {
-				return
-			}
-		}
 	}, websocket.Config{
 		Origins: []string{"*"},
 	})
+}
+
+func (hub *Hub) Write(p []byte) (n int, err error) {
+	if hub.conn == nil {
+		return 0, io.ErrClosedPipe
+	}
+
+	if err := hub.conn.Conn.WriteMessage(
+		websocket.BinaryMessage, p,
+	); err != nil {
+		return 0, err
+	}
+
+	return len(p), nil
 }
 
 /*

@@ -91,6 +91,7 @@ func ReadSnapshot(value *data.Value) (*Snapshot, error) {
 	}
 
 	for layer := range data.Layers[[]byte](value, "snapshot") {
+		
 		var snap Snapshot
 		if err := sonic.Unmarshal(layer, &snap); err == nil && len(snap.Bids) > 0 && len(snap.Asks) > 0 {
 			return &snap, nil

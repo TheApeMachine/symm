@@ -12,10 +12,10 @@ import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Meter } from "#/components/ui/meter";
 import { Section } from "#/components/ui/section";
-import { type DecisionT } from "#/collections/types";
+import type { DecisionT } from "#/collections/types";
 import type { Lifecycle } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
-import { Value } from "#/types/value";
+import type { Value } from "#/types/value";
 
 export interface RegionMeta {
 	id: string;

@@ -1,6 +1,7 @@
 package kraken
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -83,7 +84,7 @@ with: the cached token while it is within TokenReuse of issue, otherwise a
 fresh one fetched through authenticated REST. Reconnect hooks therefore get a
 token the venue will accept, not the one issued at process start.
 */
-func (auth *Auth) Token() (string, error) {
+func (auth *Auth) Token(ctx context.Context) (string, error) {
 	if auth == nil {
 		return "", errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -105,11 +106,12 @@ func (auth *Auth) Token() (string, error) {
 	}
 
 	fetch := auth.fetch
+
 	if fetch == nil {
 		fetch = fetchWebSocketsToken
 	}
 
-	token, err := fetch()
+	token, err := RetryToken(ctx, "auth", fetch)
 
 	if err != nil {
 		return "", err

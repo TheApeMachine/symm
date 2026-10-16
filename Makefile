@@ -25,12 +25,7 @@ ADVISOR_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-flow test-go test-race test-cover test-e2e test-frontend bench run collect detect train audit workbench dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map build-cuda
-
-generate-telemetry:
-	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
-	flatc --no-warnings --ts --gen-object-api -o frontend/src/providers/telemetry telemetry/telemetry.fbs
-	find frontend/src/providers/telemetry -type f -name '*.ts' -print0 | xargs -0 perl -pi -e 'if ($$. == 1 && $$_ ne "// \@ts-nocheck\n") { print "// \@ts-nocheck\n" } close ARGV if eof'
+.PHONY: build test test-flow test-go test-race test-cover test-e2e test-frontend bench run collect detect train audit dump strip-trailing-newlines physics-metallib physics-manifold-metallib build-cuda
 
 test: test-flow test-go test-race test-frontend
 
@@ -54,20 +49,11 @@ test-frontend:
 bench:
 	go test $(GO_TEST_FLAGS) -bench=. -benchmem ./...
 
-kill:
-	-lsof -t -i:8765 -i:8081 | xargs kill -9 2>/dev/null || true
-
-metric-lineage:
-	go run ./tools/metriclineage . frontend/public/metric-lineage.json
-
-metric-map:
-	go run ./tools/metricmap signal/metric_map.csv signal/metric_map.json
-
 # metric-lineage is a separate audit target. Regenerating it on every `make run`
 # currently collapses producers (Number/SetMetric pipelines are invisible to the
 # static Project/Binding scanner) and the Influence UI loses most of the graph.
 run:
-	./scripts/run_with_workbench.sh go run $(OVERLAY_FLAG) main.go $(CONFIG_FLAG)
+	go run $(OVERLAY_FLAG) main.go $(CONFIG_FLAG)
 
 collect:
 	@echo "symm collect running (Ctrl+C to stop)"
@@ -90,44 +76,6 @@ train:
 audit:
 	@echo "Running SYMM sensory & representation health audit (taker fee $(TAKER_FEE_PERCENT)%)..."
 	go run $(OVERLAY_FLAG) main.go audit $(CONFIG_FLAG) --ticks 40000 --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
-
-# Analytical Workbench is a separate process on purpose: DuckDB/cgo must not share
-# the trading binary. Hub proxies POST /workbench/query → workbench.url (default
-# http://127.0.0.1:8081/workbench/query). Start this beside `make run` / `pnpm dev`
-# for /workbench and Hindsight research timelines; trading stays up if it dies.
-workbench:
-	@echo "symm-workbench on :8081 (Ctrl+C to stop) — hub proxies /workbench/query here"
-	go run $(OVERLAY_FLAG) ./cmd/workbench
-
-experimental:
-	@echo "symm running (Ctrl+C to stop)"
-	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	./scripts/run_with_workbench.sh go run $(OVERLAY_FLAG) main.go experimental $(CONFIG_FLAG)
-
-backtest:
-	@echo "symm running (Ctrl+C to stop)"
-	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	go run $(OVERLAY_FLAG) main.go backtest
-
-debug:
-	@echo "symm debug running (Ctrl+C to stop)"
-	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	./scripts/run_with_workbench.sh env DATURA_INSPECT=1 go run main.go $(CONFIG_FLAG)
-
-debug-inspect:
-	@echo "symm debug (DATURA_INSPECT) running (Ctrl+C to stop)"
-	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	./scripts/run_with_workbench.sh env DATURA_INSPECT=1 go run main.go $(CONFIG_FLAG)
-
-run-profile:
-	@echo "pprof http://127.0.0.1:6060/debug/pprof/"
-	SYMM_PPROF=1 go run main.go
-
-profile:
-	curl -o profile http://127.0.0.1:6060/debug/pprof/profile?seconds=30
-
-profile-report:
-	go tool pprof -top profile
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

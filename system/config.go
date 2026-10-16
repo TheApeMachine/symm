@@ -1,14 +1,7 @@
 package system
 
-import (
-	"sync/atomic"
-)
-
 var (
-	SeqIdx atomic.Int64
-	Tick   atomic.Int64
-	Epoch  atomic.Int64
-	Cfg    *Config
+	Cfg *Config
 )
 
 func init() {

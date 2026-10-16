@@ -1,11 +1,11 @@
 import type { RingBuffer } from "#/collections/app";
 import { RingCursor } from "#/collections/ring";
-import { Value } from "#/types/value";
+import type { Value } from "#/types/value";
 import { type ReactNode, useEffect, useRef } from "react";
 import { Alert } from "./alert";
 import { memoizedQuery, memoizedQueryAll, renderValue, resetValue } from "./dom";
 import { Loader } from "./loader";
-import type { ValueStore } from "./value";
+import type { ValueStore } from "./types";
 
 export const nameOf = (val: unknown): string => {
 	if (typeof val === "string") return val;
