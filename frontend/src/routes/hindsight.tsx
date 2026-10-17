@@ -1,12 +1,21 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useSelector } from "@tanstack/react-store";
-import { useEffect, useMemo, useState } from "react";
 import {
 	beginHindsight,
 	type HindsightExcursion,
-	type HindsightStream,
 	hindsightStore,
+	type HindsightStream,
 } from "#/collections/hindsight";
+import {
+	annotationBody,
+	DETECTION_CLASSES,
+	type DetectionClass,
+	emptyAnnotation,
+	type Marker,
+	MARKERS,
+	marksOf,
+	nextMarker,
+	placeMarker,
+	snapTick,
+} from "#/components/hindsight/annotate";
 import {
 	fetchHindsightRuns,
 	summariesOf,
@@ -28,7 +37,11 @@ import {
 	Toolbar,
 	Typography,
 } from "#/components/ui";
+import { hubBaseUrl } from "#/lib/hub";
 import { sendCommand } from "#/providers/websocket";
+import { createFileRoute } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
+import { useEffect, useMemo, useState } from "react";
 
 /*
 Hindsight reads one stored run back: the ticks collect wrote, the
@@ -41,6 +54,45 @@ const COORDINATES: MarketCoordinate[] = ["midpoint", "trade", "bid", "ask"];
 const AXES: TimelineAxis[] = ["time", "capture"];
 const DETAIL_BUCKETS = 320;
 const OVERVIEW_BUCKETS = 200;
+
+/*
+chooseRun opens the collector's tape. That is the run with the most stored
+ticks. A hub that has not reported counts yet still lists the collector first
+by start time: the dashboard's own runs are the later, shorter ones.
+*/
+const chooseRun = (loaded: HindsightRun[]): string | null => {
+	if (loaded.length === 0) return null;
+
+	const longest = loaded.reduce((best, run) =>
+		(run.ticks ?? 0) > (best.ticks ?? 0) ? run : best,
+	);
+
+	if ((longest.ticks ?? 0) > 0) return longest.id;
+
+	return loaded.reduce((best, run) =>
+		Date.parse(run.startedAt) < Date.parse(best.startedAt) ? run : best,
+	).id;
+};
+
+const runLabel = (run: HindsightRun): string => {
+	const at = new Date(run.startedAt);
+	const when = Number.isNaN(at.getTime())
+		? run.startedAt
+		: at.toLocaleString([], {
+				hour12: false,
+				month: "2-digit",
+				day: "2-digit",
+				hour: "2-digit",
+				minute: "2-digit",
+				second: "2-digit",
+			});
+	const ticks =
+		run.ticks !== undefined && run.ticks > 0
+			? ` · ${run.ticks.toLocaleString()} ticks`
+			: "";
+
+	return `${when}${ticks}`;
+};
 
 const send = (run: string, symbol: string) => {
 	try {
@@ -212,6 +264,12 @@ const HindsightRoute = () => {
 	);
 	const [playhead, setPlayhead] = useState<number | null>(null);
 	const [episode, setEpisode] = useState<string | null>(null);
+	const [annotating, setAnnotating] = useState(false);
+	const [marker, setMarker] = useState<Marker>("A");
+	const [annotation, setAnnotation] = useState(emptyAnnotation);
+	const [detectionClass, setDetectionClass] = useState<DetectionClass>("up");
+	const [saveError, setSaveError] = useState<string | null>(null);
+	const [saving, setSaving] = useState(false);
 	const { index, stream } = useSelector(hindsightStore, (state) => state);
 
 	useEffect(() => {
@@ -221,7 +279,7 @@ const HindsightRoute = () => {
 			.then((loaded) => {
 				if (cancelled) return;
 				setRuns(loaded);
-				setRun((current) => current ?? loaded[0]?.id ?? null);
+				setRun((current) => current ?? chooseRun(loaded));
 			})
 			.catch((cause: unknown) => {
 				if (!cancelled)
@@ -261,37 +319,46 @@ const HindsightRoute = () => {
 	}, [index, run, symbol, summaries]);
 
 	useEffect(() => {
-		if (
-			run === null ||
-			symbol === null ||
-			index?.status !== "done" ||
-			index.run !== run
-		)
-			return;
+		if (run === null || symbol === null) return;
+		if (index !== null && index.run !== run) return;
 		setViewport(null);
 		setPlayhead(null);
 		setEpisode(null);
 		send(run, symbol);
-	}, [run, symbol, index?.status, index?.run]);
+	}, [run, symbol, index]);
 
 	const current =
 		stream !== null && stream.run === run && stream.symbol === symbol
 			? stream
 			: null;
-
+	const runMeta = runs.find((entry) => entry.id === run) ?? null;
+	const tape = useMemo(
+		() =>
+			runMeta !== null && (runMeta.ticks ?? 0) > 1
+				? { from: 1, to: runMeta.ticks ?? 1 }
+				: null,
+		[runMeta],
+	);
 	const overview = useMemo(
 		() =>
 			current
-				? timelineOf(current, index, coordinate, axis, OVERVIEW_BUCKETS, null)
+				? timelineOf(current, index, coordinate, axis, OVERVIEW_BUCKETS, tape)
 				: null,
-		[current, index, coordinate, axis],
+		[current, index, coordinate, axis, tape],
 	);
 	const detail = useMemo(
 		() =>
 			current
-				? timelineOf(current, index, coordinate, axis, DETAIL_BUCKETS, viewport)
+				? timelineOf(
+						current,
+						index,
+						coordinate,
+						axis,
+						DETAIL_BUCKETS,
+						viewport ?? tape,
+					)
 				: null,
-		[current, index, coordinate, axis, viewport],
+		[current, index, coordinate, axis, viewport, tape],
 	);
 
 	const selected = useMemo(
@@ -301,8 +368,37 @@ const HindsightRoute = () => {
 		[current, episode],
 	);
 
-	const runMeta = runs.find((entry) => entry.id === run) ?? null;
 	const failure = runsError ?? index?.error ?? current?.error ?? null;
+	const draft =
+		run !== null && symbol !== null
+			? annotationBody(run, symbol, detectionClass, annotation)
+			: null;
+
+	const saveAnnotation = async () => {
+		if (draft === null || run === null || symbol === null) return;
+		setSaving(true);
+		setSaveError(null);
+
+		try {
+			const response = await fetch(`${hubBaseUrl()}/hindsight/annotate`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(draft),
+			});
+
+			if (!response.ok) {
+				throw new Error(await response.text());
+			}
+
+			setAnnotation(emptyAnnotation());
+			setMarker("A");
+			send(run, symbol);
+		} catch (cause) {
+			setSaveError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setSaving(false);
+		}
+	};
 
 	return (
 		<Flex.Column
@@ -328,7 +424,7 @@ const HindsightRoute = () => {
 				>
 					{runs.map((entry) => (
 						<option key={entry.id} value={entry.id}>
-							{entry.startedAt} · {entry.id}
+							{runLabel(entry)}
 							{entry.trained ? " · trained" : ""}
 						</option>
 					))}
@@ -342,6 +438,16 @@ const HindsightRoute = () => {
 				) : null}
 				<StreamStatus label="index" stream={index} />
 				<StreamStatus label={symbol ?? "symbol"} stream={current} />
+				<Button
+					size="xs"
+					variant={annotating ? "solid" : "outline"}
+					onClick={() => {
+						setAnnotating((on) => !on);
+						setSaveError(null);
+					}}
+				>
+					annotate
+				</Button>
 				<Toolbar.Spacer />
 				{COORDINATES.map((entry) => (
 					<Button
@@ -364,6 +470,62 @@ const HindsightRoute = () => {
 					</Button>
 				))}
 			</Toolbar>
+
+			{annotating ? (
+				<Toolbar
+					size="s"
+					className="gap-2 border-(--line) border-b bg-(--sunken) px-3"
+				>
+					{DETECTION_CLASSES.map((entry) => (
+						<Button
+							key={entry}
+							size="xs"
+							variant={entry === detectionClass ? "solid" : "outline"}
+							onClick={() => setDetectionClass(entry)}
+						>
+							{entry}
+						</Button>
+					))}
+					{MARKERS.map((entry) => (
+						<Button
+							key={entry}
+							size="xs"
+							variant={entry === marker ? "solid" : "outline"}
+							onClick={() => setMarker(entry)}
+						>
+							{entry}
+							{annotation[entry] === null ? "" : ` ${annotation[entry]}`}
+						</Button>
+					))}
+					<Button
+						size="xs"
+						variant="solid"
+						disabled={draft === null || saving}
+						onClick={() => void saveAnnotation()}
+					>
+						{saving ? "saving" : "save detection"}
+					</Button>
+					<Button
+						size="xs"
+						variant="outline"
+						onClick={() => {
+							setAnnotation(emptyAnnotation());
+							setMarker("A");
+							setSaveError(null);
+						}}
+					>
+						clear
+					</Button>
+					{draft === null ? (
+						<Typography.Label size="s" tone="f4">
+							click the tape: A, then B, then C, then D, in that order
+						</Typography.Label>
+					) : null}
+					{saveError !== null ? (
+						<span className="text-[10px] text-rose-300">{saveError}</span>
+					) : null}
+				</Toolbar>
+			) : null}
 
 			{failure !== null ? (
 				<div
@@ -400,10 +562,24 @@ const HindsightRoute = () => {
 							lifecycle={[]}
 							positions={[]}
 							playhead={playhead}
-							marks={[]}
+							marks={annotating ? marksOf(annotation) : []}
 							selectedEpisode={episode}
 							selectedPosition={null}
-							onPlayhead={setPlayhead}
+							onPlayhead={(sequence) => {
+								if (!annotating || current === null) {
+									setPlayhead(sequence);
+									return;
+								}
+
+								const snapped = snapTick(
+									current.ticks.map((tick) => tick.tick),
+									sequence,
+								);
+								if (snapped === null) return;
+								setAnnotation((placed) => placeMarker(placed, marker, snapped));
+								setMarker(nextMarker(marker));
+								setSaveError(null);
+							}}
 							onEpisode={(picked: HindsightEpisode) => {
 								setEpisode(picked.id);
 								setViewport({

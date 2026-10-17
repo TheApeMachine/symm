@@ -72,6 +72,14 @@ describe("hindsight projection", () => {
 		expect(coordinateOf(loaded.ticks[2], "trade")).toBe(103);
 	});
 
+	it("keeps an empty slot's place so a later tick is not drawn in it", () => {
+		const loaded = stream();
+		const edge = loaded.ticks.filter((tick) => tick.tick === 1 || tick.tick === 6);
+		const buckets = bucketize(edge, "midpoint", 3, 1, 6);
+
+		expect(buckets.map((bucket) => bucket.index)).toEqual([0, 2]);
+	});
+
 	it("buckets ticks by tick number with OHLC over the ticks that define the coordinate", () => {
 		const buckets = bucketize(stream().ticks, "midpoint", 3, 1, 6);
 		expect(
@@ -92,12 +100,18 @@ describe("hindsight projection", () => {
 		expect(buckets[0].spreadFraction).toBeGreaterThan(0);
 	});
 
-	it("turns up/down excursions into episodes with their stored points; chop is counted, not drawn", () => {
+	it("turns stored excursions into episodes, chop included", () => {
 		const timeline = timelineOf(stream(), null, "midpoint", "time", 10, null);
 		expect(timeline?.discovery.stored).toBe(2);
-		expect(timeline?.discovery.episodes).toHaveLength(1);
+		expect(timeline?.discovery.episodes.map((episode) => episode.kind)).toEqual([
+			"upward_excursion",
+			"chop",
+		]);
 
-		const [episode] = timeline?.discovery.episodes ?? [];
+		const episode = timeline?.discovery.episodes.find(
+			(item) => item.kind === "upward_excursion",
+		);
+		if (episode === undefined) throw new Error("no up episode");
 		expect(episode.kind).toBe("upward_excursion");
 		expect([episode.fromSequence, episode.toSequence]).toEqual([1, 5]);
 		expect(episode.observedExcursion).toBeCloseTo(0.04);
@@ -190,6 +204,7 @@ describe("hindsight projection", () => {
 						learningRate: 0.01,
 					},
 				],
+				ticks: 0,
 			},
 		]);
 

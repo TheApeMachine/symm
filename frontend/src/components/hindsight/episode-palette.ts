@@ -44,6 +44,20 @@ export const EPISODE_DESCRIPTORS: Record<EpisodeKind, EpisodeDescriptor> = {
 		color: "var(--down)",
 		lane: "geometry",
 	},
+	chop: {
+		label: "CHOP",
+		name: "Chop",
+		meaning: "Price crossed back and forth across the marked span.",
+		color: "var(--warn)",
+		lane: "geometry",
+	},
+	flat: {
+		label: "FLAT",
+		name: "Flat",
+		meaning: "Price stayed inside a tight band across the marked span.",
+		color: "var(--f3)",
+		lane: "geometry",
+	},
 	reversal: {
 		label: "REV",
 		name: "Reversal",

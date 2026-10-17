@@ -9,6 +9,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -31,6 +32,9 @@ type Run struct {
 	Status    string       `json:"status"`
 	Trained   bool         `json:"trained"`
 	Policies  []PolicyInfo `json:"policies"`
+	// Ticks is the last stored tick of the epoch. Ticks are numbered from 1
+	// without gaps, so this is also how many ticks the run holds.
+	Ticks uint64 `json:"ticks"`
 }
 
 /*
@@ -47,14 +51,15 @@ type PolicyInfo struct {
 /*
 Service replays what the commands stored for one run (data/schema.go):
 the ticks collect wrote, the excursions detect found, the policies train
-published and the paper records traded under them. It reads through a
-store.Reader only, so it cannot write storage. The run list is its one REST
-route; everything else streams as hindsight Values over the hub websocket
-(Stream), on the client's "hindsight" command.
+published and the paper records traded under them. The run list and a
+hand-placed detection are its REST routes; everything else streams as
+hindsight Values over the hub websocket (Stream), on the client's
+"hindsight" command.
 */
 type Service struct {
 	ctx    context.Context
 	client *store.Client
+	scanMu sync.Mutex
 }
 
 func NewService(ctx context.Context, client *store.Client) (*Service, error) {
@@ -69,6 +74,10 @@ func NewService(ctx context.Context, client *store.Client) (*Service, error) {
 Register mounts GET /hindsight/runs on router.
 */
 func (service *Service) Register(router fiber.Router) {
+	router.Post("/hindsight/annotate", service.annotateRoute)
+	router.Post("/hindsight/scan", service.scanRoute)
+	router.Post("/hindsight/commit", service.commitRoute)
+	router.Post("/hindsight/commit-all", service.commitAllRoute)
 	router.Get("/hindsight/runs", func(ctx fiber.Ctx) error {
 		runs, err := service.Runs()
 
@@ -120,10 +129,69 @@ func (service *Service) Runs() ([]Run, error) {
 			Status:    "recorded",
 			Trained:   len(policies) > 0,
 			Policies:  policies,
+			Ticks:     service.lastTick(epoch),
 		})
 	}
 
 	return runs, nil
+}
+
+/*
+lastTick is the highest tick stored under epoch, 0 when the epoch is empty.
+Ticks are written from 1 with no gaps, so a missing tick is past the end.
+*/
+func (service *Service) lastTick(epoch uint64) uint64 {
+	prefix := data.TickPrefix(epoch)
+
+	return lastPresent(func(tick uint64) bool {
+		key := prefix + fmt.Sprintf("%019d.bin", tick)
+
+		for page := range service.client.List(key) {
+			for _, object := range page.Contents {
+				if object.Key != nil && *object.Key == key {
+					return true
+				}
+			}
+
+			return false
+		}
+
+		return false
+	})
+}
+
+/*
+lastPresent is the largest n at which exists is true, assuming exists is true
+for every n from 1 through that tick and false after it.
+*/
+func lastPresent(exists func(uint64) bool) uint64 {
+	if !exists(1) {
+		return 0
+	}
+
+	hi := uint64(1)
+
+	for exists(hi) {
+		if hi >= 1<<22 {
+			break
+		}
+
+		hi *= 2
+	}
+
+	lo := hi / 2
+
+	for lo+1 < hi {
+		mid := lo + (hi-lo)/2
+
+		if exists(mid) {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+
+	return lo
 }
 
 /*
@@ -225,7 +293,7 @@ func (service *Service) policies(epoch uint64) iter.Seq2[*data.Value, error] {
 		return func(func(*data.Value, error) bool) {}
 	}
 
-	return store.Values(service.client,data.PolicyPrefixes(epoch)...)
+	return store.Values(service.client, data.PolicyPrefixes(epoch)...)
 }
 
 func forward(w io.Writer, value *data.Value, run uint64, symbol string) error {
@@ -282,7 +350,7 @@ func (service *Service) symbol(ctx context.Context, w io.Writer, run uint64, sym
 		counts["policies"]++
 	}
 
-	for value, err := range store.Values(service.client,data.ExcursionPrefixes(symbol, run)...) {
+	for value, err := range store.Values(service.client, data.ExcursionPrefixes(symbol, run)...) {
 		if err != nil {
 			return err
 		}
@@ -298,7 +366,29 @@ func (service *Service) symbol(ctx context.Context, w io.Writer, run uint64, sym
 		counts["excursions"]++
 	}
 
-	for value, err := range store.Values(service.client,data.PaperPrefixes(symbol)...) {
+	drafts := make([]string, 0, len(data.ExcursionClasses))
+
+	for _, class := range data.ExcursionClasses {
+		drafts = append(drafts, data.Prefix(data.DraftOrigin, class, symbol, run))
+	}
+
+	for value, err := range store.Values(service.client, drafts...) {
+		if err != nil {
+			return err
+		}
+
+		if err := excursionComplete(value); err != nil {
+			return err
+		}
+
+		if err := forward(w, value, run, symbol); err != nil {
+			return err
+		}
+
+		counts["excursions"]++
+	}
+
+	for value, err := range store.Values(service.client, data.PaperPrefixes(symbol)...) {
 		if err != nil {
 			return err
 		}
@@ -320,7 +410,7 @@ func (service *Service) symbol(ctx context.Context, w io.Writer, run uint64, sym
 		counts["papers"]++
 	}
 
-	for value, err := range store.Values(service.client,data.TickPrefix(run)) {
+	for value, err := range store.Values(service.client, data.TickPrefix(run)) {
 		if err != nil {
 			return err
 		}
@@ -406,8 +496,9 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 	order := make([]string, 0)
 	symbols := make(map[string]*summary)
 	ticks := 0.0
+	announced := false
 
-	for value, err := range store.Values(service.client,data.TickPrefix(run)) {
+	for value, err := range store.Values(service.client, data.TickPrefix(run)) {
 		if err != nil {
 			return err
 		}
@@ -423,6 +514,7 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 		}
 
 		ticks++
+		added := false
 
 		for _, tick := range symbolTicks {
 			entry, ok := symbols[tick.Symbol]
@@ -445,6 +537,26 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 				price := trade.Price.Float64()
 				entry.low, entry.high = min(entry.low, price), max(entry.high, price)
 			}
+
+			// Name the instrument the first time it trades, so the run index
+			// is usable while the rest of the tape is still being read.
+			if !ok {
+				added = true
+
+				if err := service.writeSummary(w, run, tick.Symbol, entry, nil, 0); err != nil {
+					return err
+				}
+			}
+		}
+
+		if added && !announced {
+			announced = true
+
+			if flusher, ok := w.(interface{ Flush() error }); ok {
+				if err := flusher.Flush(); err != nil {
+					return err
+				}
+			}
 		}
 	}
 
@@ -459,7 +571,7 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 		classes := map[string]float64{}
 		top := 0.0
 
-		for value, err := range store.Values(service.client,data.ExcursionPrefixes(symbol, run)...) {
+		for value, err := range store.Values(service.client, data.ExcursionPrefixes(symbol, run)...) {
 			if err != nil {
 				return err
 			}
@@ -486,27 +598,39 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 			}
 		}
 
-		summary := frame(data.HindsightSymbol, run, symbol, 0)
-		data.AppendVector(summary, []float64{
-			entry.ticks, entry.touched, entry.trades,
-			float64(entry.firstTick), float64(entry.lastTick),
-			float64(entry.firstAt), float64(entry.lastAt),
-			entry.low, entry.high,
-			classes["up"], classes["down"], top,
-		}, data.HindsightSymbolKeys...)
-
-		// The run index answers the request for symbol "": its frames carry
-		// that Scope, and the summarized symbol stays in their key.
-		summary.Scope = ""
-
-		if _, err := io.Copy(w, summary); err != nil {
-			return fmt.Errorf("writing %s summary: %w", symbol, err)
+		if err := service.writeSummary(w, run, symbol, entry, classes, top); err != nil {
+			return err
 		}
 	}
 
 	return done(w, run, "", map[string]float64{
 		"ticks": ticks, "symbols": float64(len(order)), "excursions": excursions,
 	})
+}
+
+/*
+writeSummary is one symbol row of the run index. classes may be nil while
+the tape is still being read; the finished row replaces it.
+*/
+func (service *Service) writeSummary(w io.Writer, run uint64, symbol string, entry *summary, classes map[string]float64, top float64) error {
+	summary := frame(data.HindsightSymbol, run, symbol, 0)
+	data.AppendVector(summary, []float64{
+		entry.ticks, entry.touched, entry.trades,
+		float64(entry.firstTick), float64(entry.lastTick),
+		float64(entry.firstAt), float64(entry.lastAt),
+		entry.low, entry.high,
+		classes["up"], classes["down"], top,
+	}, data.HindsightSymbolKeys...)
+
+	// The run index answers the request for symbol "": its frames carry
+	// that Scope, and the summarized symbol stays in their key.
+	summary.Scope = ""
+
+	if _, err := io.Copy(w, summary); err != nil {
+		return fmt.Errorf("writing %s summary: %w", symbol, err)
+	}
+
+	return nil
 }
 
 func done(w io.Writer, run uint64, symbol string, counts map[string]float64) error {

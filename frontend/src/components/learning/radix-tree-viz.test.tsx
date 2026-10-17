@@ -2,13 +2,43 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
+	buildTreeFromPrefixes,
 	keyMatchesPrefix,
 	keyMatchesSymbol,
 	RadixTreeViz,
 } from "./radix-tree-viz";
-import type { SymbolProgress } from "./types";
+import type { SymbolProgress, TrieNodeData } from "./types";
+
+const actionsOf = (node: TrieNodeData | null): string[] => {
+	if (!node) return [];
+	const found: string[] = [];
+	const walk = (current: TrieNodeData) => {
+		if (current.action) found.push(current.action);
+		for (const child of current.children ?? []) walk(child);
+	};
+	walk(node);
+	return found;
+};
+
+describe("buildTreeFromPrefixes", () => {
+	it("keeps enter and exit when they share a grammar path", () => {
+		const actions = actionsOf(
+			buildTreeFromPrefixes([
+				"policy/current/R01/R02/enter.bin",
+				"policy/current/R01/R02/exit.bin",
+			]),
+		);
+		expect(actions).toEqual(["ENTER", "EXIT"]);
+	});
+});
 
 describe("keyMatchesPrefix", () => {
+	it("ignores the policy/current store prefix", () => {
+		expect(
+			keyMatchesPrefix("policy/current/R01/R02/enter.bin", ["R01", "R02"]),
+		).toBe(true);
+	});
+
 	it("returns true when key starts with the exact token sequence", () => {
 		const key = "R01-R02/R03-R04/R05-R06/enter.json";
 		expect(keyMatchesPrefix(key, ["R01-R02"])).toBe(true);

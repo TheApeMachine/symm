@@ -36,7 +36,7 @@ export const SymbolTargets = ({
 	onSelect: (symbol: string) => void;
 }) => {
 	const [filter, setFilter] = useState("");
-	const [onlyMoved, setOnlyMoved] = useState(true);
+	const [onlyMoved, setOnlyMoved] = useState(false);
 
 	const rows = useMemo(() => {
 		const needle = filter.trim().toUpperCase();
@@ -270,7 +270,7 @@ export const EpisodeTargets = ({
 										{episode.references.map((reference) => (
 											<span
 												key={reference.role}
-												className="cursor-pointer rounded-[2px] border border-(--line2) px-1 py-0.5 font-mono text-[8px] text-(--f3) hover:border-(--acc) hover:text-(--f1)"
+												className="cursor-pointer rounded-xs border border-(--line2) px-1 py-0.5 font-mono text-[8px] text-(--f3) hover:border-(--acc) hover:text-(--f1)"
 												onClickCapture={(event) => {
 													event.stopPropagation();
 													onReference({

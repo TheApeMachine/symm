@@ -18,6 +18,8 @@ export type HindsightRun = {
 	status?: string;
 	/* train published policies for this run. */
 	trained?: boolean;
+	/* Last stored tick. Ticks are numbered from 1, so this is the tape length. */
+	ticks?: number;
 	/*
 		The policy epochs trained on this run's ticks, newest first, each with
 		the surprise gate it was trained under (hindsight.PolicyInfo). The
@@ -192,6 +194,8 @@ have captured.
 export type EpisodeKind =
 	| "upward_excursion"
 	| "downward_excursion"
+	| "chop"
+	| "flat"
 	| "reversal"
 	| "volatility_expansion"
 	| "volatility_contraction"

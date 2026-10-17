@@ -37,12 +37,35 @@ range each bucket actually covered — so the map is pinned to real observations
 rather than to the nominal edges the axis drew. A bucket that observed nothing
 contributes no anchor and is simply spanned by its neighbours.
 */
+/*
+slots is how many bucket columns the span covers, including columns with no
+observation. A symbol's ticks leave holes in the run, and those holes have to
+keep their place or a click lands on a different tick than the one drawn
+under the cursor.
+*/
+const slotsOf = (
+	timeline: HindsightTimeline | null,
+	buckets: HindsightTimelineBucket[],
+): number => {
+	if (timeline === null || buckets.length === 0) return Math.max(buckets.length, 1);
+
+	const span = timeline.span.toSequence - timeline.span.fromSequence + 1;
+	let slotWidth = 1;
+
+	for (const bucket of buckets) {
+		slotWidth = Math.max(slotWidth, bucket.toSequence - bucket.fromSequence + 1);
+	}
+
+	return Math.max(buckets.length, Math.ceil(span / slotWidth));
+};
+
 export const buildScale = (
 	timeline: HindsightTimeline | null,
 	width: number,
 ): TimelineScale => {
 	const buckets = timeline?.buckets ?? [];
-	const step = buckets.length > 0 ? width / buckets.length : width;
+	const slots = slotsOf(timeline, buckets);
+	const step = slots > 0 ? width / slots : width;
 	const anchors: Anchor[] = [];
 
 	for (const bucket of buckets) {
@@ -108,14 +131,11 @@ export const buildScale = (
 	};
 
 	const bucketAt = (x: number): HindsightTimelineBucket | null => {
-		if (buckets.length === 0) return null;
+		if (buckets.length === 0 || step <= 0) return null;
 
-		const index = Math.min(
-			buckets.length - 1,
-			Math.max(0, Math.floor(x / step)),
-		);
+		const index = Math.min(slots - 1, Math.max(0, Math.floor(x / step)));
 
-		return buckets[index] ?? null;
+		return buckets.find((bucket) => bucket.index === index) ?? null;
 	};
 
 	const sequenceAt = (x: number): number => {

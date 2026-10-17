@@ -278,8 +278,13 @@ func (booter *Booter) initPipeline() error {
 	booter.training.Transition(nmruntime.READY)
 
 	// The last handler group io.Copy's the tick, after every signal and
-	// training have written their layers, into the store.
-	sinks := []io.Writer{booter.store}
+	// training have written their layers. Only collect persists ticks;
+	// the dashboard reads the collector's tape and must not start its own.
+	sinks := make([]io.Writer, 0, 2)
+
+	if booter.capture {
+		sinks = append(sinks, booter.store)
+	}
 
 	if booter.dashboard {
 		booter.hub = ui.NewHub(ctx)

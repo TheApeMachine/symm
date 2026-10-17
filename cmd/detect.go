@@ -3,6 +3,9 @@ package cmd
 import (
 	"context"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 
@@ -22,6 +25,7 @@ var (
 	detectEpochs  []int64
 	detectSymbols []string
 	detectFeePct  string
+	detectTrace   string
 )
 
 var detectCmd = &cobra.Command{
@@ -76,6 +80,12 @@ written back with io.Copy.`,
 		price.SetDefaultFee(kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(feePct)})
 
 		detector := strategy.NewDetector(ctx, price)
+
+		if err := os.MkdirAll(detectTrace, 0o755); err != nil {
+			return errnie.Error(err)
+		}
+
+		detector.EnableTrace()
 
 		if err := detector.Error(); err != nil {
 			return errnie.Error(err)
@@ -139,6 +149,22 @@ written back with io.Copy.`,
 			}
 		}
 
+		tracePath := filepath.Join(detectTrace, "detector_trace.json")
+
+		if err := detector.WriteTrace(tracePath); err != nil {
+			return errnie.Error(err)
+		}
+
+		plot := exec.Command("python3", "scripts/plot_detector.py", tracePath, detectTrace)
+		plot.Stdout = os.Stdout
+		plot.Stderr = os.Stderr
+
+		if err := plot.Run(); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Internal, "[detect] detector tape plot failed", err,
+			))
+		}
+
 		return nil
 	},
 }
@@ -189,6 +215,7 @@ func init() {
 	detectCmd.Flags().Int64SliceVar(&detectEpochs, "epoch", nil, "Run epoch to label (repeatable; default: every stored epoch)")
 	detectCmd.Flags().StringSliceVar(&detectSymbols, "symbols", nil, "Symbols to label, e.g. BTC/USD,ETH/USD (default: every symbol on the tick)")
 	detectCmd.Flags().StringVar(&detectFeePct, "taker-fee-percent", "", "Taker fee in percent per side when the tick has no fee, e.g. 0.8")
+	detectCmd.Flags().StringVar(&detectTrace, "trace", "detector_trace", "Directory for the whole-tape decision video detect writes when it labels")
 
 	if err := detectCmd.MarkFlagRequired("taker-fee-percent"); err != nil {
 		errnie.Error(err)

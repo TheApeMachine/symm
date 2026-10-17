@@ -89,6 +89,7 @@ type Detector struct {
 	// Lookahead buffer for structural coalescing before Flush
 	pending []episode
 	emitted []*data.Value
+	trace   *decisionTrace
 }
 
 /*
@@ -131,6 +132,23 @@ func NewDetector(
 	))
 
 	return detector
+}
+
+/*
+SetRetrace raises the pullback a leg will absorb, up to 90% of the move.
+A committed detection that kept a deeper dip than the current ratio is how
+the next scan learns that dip was still the same swing.
+*/
+func (detector *Detector) SetRetrace(ratio float64) {
+	if ratio <= detector.retraceRatio || ratio >= 0.9 {
+		return
+	}
+
+	detector.retraceRatio = ratio
+
+	if ratio > detector.maxContinuationRetrace {
+		detector.maxContinuationRetrace = ratio
+	}
 }
 
 /*
@@ -193,6 +211,7 @@ func (detector *Detector) processTrade(peer *data.Value) {
 	}
 
 	detector.updateMicrostructure(pt)
+	detector.sample(pt)
 
 	if detector.state == stateInit {
 		detector.initFromPoint(pt)
@@ -322,6 +341,7 @@ func (detector *Detector) initFromPoint(pt tradePoint) {
 	detector.runHigh = pt
 	detector.resetFlatTracker(pt)
 	detector.state = stateUndecided
+	detector.note("undecided", pt, "segment start")
 }
 
 func (detector *Detector) resetFlatTracker(pt tradePoint) {
@@ -432,6 +452,10 @@ func (detector *Detector) stepUndecided(pt tradePoint) {
 }
 
 func (detector *Detector) enterUp(b, c tradePoint) {
+	detector.note("enter-up", c, fmt.Sprintf(
+		"B tick %d seq %d price %.6g -> C tick %d seq %d price %.6g",
+		b.tick, b.seqIdx, b.priceF, c.tick, c.seqIdx, c.priceF,
+	))
 	detector.state = stateUp
 	detector.legB = b
 	detector.legC = c
@@ -442,6 +466,10 @@ func (detector *Detector) enterUp(b, c tradePoint) {
 }
 
 func (detector *Detector) enterDown(b, c tradePoint) {
+	detector.note("enter-down", c, fmt.Sprintf(
+		"B tick %d seq %d price %.6g -> C tick %d seq %d price %.6g",
+		b.tick, b.seqIdx, b.priceF, c.tick, c.seqIdx, c.priceF,
+	))
 	detector.state = stateDown
 	detector.legB = b
 	detector.legC = c
@@ -455,6 +483,7 @@ func (detector *Detector) stepUp(pt tradePoint) {
 	detector.legTrades++
 
 	if pt.price.Cmp(detector.legC.price) >= 0 {
+		detector.note("extend-c", pt, fmt.Sprintf("up C tick %d seq %d", pt.tick, pt.seqIdx))
 		detector.legC = pt
 		detector.legExtreme = pt
 		detector.tradesSinceC = 0
@@ -482,6 +511,11 @@ func (detector *Detector) stepUp(pt tradePoint) {
 	clearedProportional := retraceClearsFee && retraceOfLeg >= detector.retraceRatio
 
 	if brokeOrigin || clearedProportional {
+		detector.note("retrace", pt, fmt.Sprintf(
+			"up brokeOrigin=%t proportional=%t retrace=%.3f feeClear=%t B tick %d seq %d C tick %d seq %d",
+			brokeOrigin, clearedProportional, retraceOfLeg, retraceClearsFee,
+			detector.legB.tick, detector.legB.seqIdx, detector.legC.tick, detector.legC.seqIdx,
+		))
 		detector.completeUpLeg()
 
 		if retraceClearsFee && pt.seqIdx > detector.legC.seqIdx {
@@ -500,6 +534,10 @@ func (detector *Detector) stepUp(pt tradePoint) {
 	stagnationLimit := max(detector.minStagnationTrades, impulseTrades*detector.stagnationMultiplier)
 
 	if detector.tradesSinceC >= stagnationLimit {
+		detector.note("stagnation", pt, fmt.Sprintf(
+			"up tradesSinceC=%d limit=%d B tick %d C tick %d",
+			detector.tradesSinceC, stagnationLimit, detector.legB.tick, detector.legC.tick,
+		))
 		detector.completeUpLeg()
 		detector.initFromPoint(detector.legC)
 		detector.stepUndecided(pt)
@@ -510,6 +548,7 @@ func (detector *Detector) stepDown(pt tradePoint) {
 	detector.legTrades++
 
 	if pt.price.Cmp(detector.legC.price) <= 0 {
+		detector.note("extend-c", pt, fmt.Sprintf("down C tick %d seq %d", pt.tick, pt.seqIdx))
 		detector.legC = pt
 		detector.legExtreme = pt
 		detector.tradesSinceC = 0
@@ -537,6 +576,11 @@ func (detector *Detector) stepDown(pt tradePoint) {
 	clearedProportional := bounceClearsFee && retraceOfLeg >= detector.retraceRatio
 
 	if brokeOrigin || clearedProportional {
+		detector.note("retrace", pt, fmt.Sprintf(
+			"down brokeOrigin=%t proportional=%t retrace=%.3f feeClear=%t B tick %d seq %d C tick %d seq %d",
+			brokeOrigin, clearedProportional, retraceOfLeg, bounceClearsFee,
+			detector.legB.tick, detector.legB.seqIdx, detector.legC.tick, detector.legC.seqIdx,
+		))
 		detector.completeDownLeg()
 
 		if bounceClearsFee && pt.seqIdx > detector.legC.seqIdx {
@@ -553,6 +597,10 @@ func (detector *Detector) stepDown(pt tradePoint) {
 	stagnationLimit := max(detector.minStagnationTrades, impulseTrades*detector.stagnationMultiplier)
 
 	if detector.tradesSinceC >= stagnationLimit {
+		detector.note("stagnation", pt, fmt.Sprintf(
+			"down tradesSinceC=%d limit=%d B tick %d C tick %d",
+			detector.tradesSinceC, stagnationLimit, detector.legB.tick, detector.legC.tick,
+		))
 		detector.completeDownLeg()
 		detector.initFromPoint(detector.legC)
 		detector.stepUndecided(pt)
@@ -567,6 +615,11 @@ func (detector *Detector) completeUpLeg() {
 		class = "chop"
 	}
 
+	detector.note("complete", detector.legC, fmt.Sprintf(
+		"up class=%s tickSpan=%d seqSpan=%d B tick %d seq %d C tick %d seq %d",
+		class, detector.legC.tick-detector.legB.tick, trades,
+		detector.legB.tick, detector.legB.seqIdx, detector.legC.tick, detector.legC.seqIdx,
+	))
 	detector.enqueueEpisode(episode{
 		class:  class,
 		start:  detector.legB,
@@ -585,6 +638,11 @@ func (detector *Detector) completeDownLeg() {
 		class = "chop"
 	}
 
+	detector.note("complete", detector.legC, fmt.Sprintf(
+		"down class=%s tickSpan=%d seqSpan=%d B tick %d seq %d C tick %d seq %d",
+		class, detector.legC.tick-detector.legB.tick, trades,
+		detector.legB.tick, detector.legB.seqIdx, detector.legC.tick, detector.legC.seqIdx,
+	))
 	detector.enqueueEpisode(episode{
 		class:  class,
 		start:  detector.legB,
@@ -684,11 +742,19 @@ demotes self-canceling box whip-saws into a single contiguous "chop" stretch.
 */
 func (detector *Detector) enqueueEpisode(ep episode) {
 	if ep.end.seqIdx <= ep.start.seqIdx {
+		detector.note("drop", ep.end, fmt.Sprintf(
+			"class=%s end seq %d is not after start seq %d",
+			ep.class, ep.end.seqIdx, ep.start.seqIdx,
+		))
 		return
 	}
 
 	// 1. Absorb micro-slivers into the preceding episode if one exists.
 	if ep.trades < detector.minEpisodeTrades && len(detector.pending) > 0 {
+		detector.note("absorb", ep.end, fmt.Sprintf(
+			"class=%s trades=%d startTick=%d endTick=%d startSeq=%d endSeq=%d",
+			ep.class, ep.trades, ep.start.tick, ep.end.tick, ep.start.seqIdx, ep.end.seqIdx,
+		))
 		last := &detector.pending[len(detector.pending)-1]
 		last.end = ep.end
 		last.lowP = math.Min(last.lowP, ep.lowP)
@@ -699,6 +765,10 @@ func (detector *Detector) enqueueEpisode(ep episode) {
 
 	// 2. Merge adjacent episodes of the same class.
 	if len(detector.pending) > 0 && detector.pending[len(detector.pending)-1].class == ep.class {
+		detector.note("merge", ep.end, fmt.Sprintf(
+			"class=%s startTick=%d endTick=%d startSeq=%d endSeq=%d",
+			ep.class, ep.start.tick, ep.end.tick, ep.start.seqIdx, ep.end.seqIdx,
+		))
 		last := &detector.pending[len(detector.pending)-1]
 		last.end = ep.end
 		last.lowP = math.Min(last.lowP, ep.lowP)
@@ -707,6 +777,10 @@ func (detector *Detector) enqueueEpisode(ep episode) {
 		return
 	}
 
+	detector.note("enqueue", ep.end, fmt.Sprintf(
+		"class=%s startTick=%d endTick=%d startSeq=%d endSeq=%d trades=%d",
+		ep.class, ep.start.tick, ep.end.tick, ep.start.seqIdx, ep.end.seqIdx, ep.trades,
+	))
 	detector.pending = append(detector.pending, ep)
 
 	// 3. Detect 3-swing overlapping whip-saws inside a range box and collapse into "chop".
@@ -898,6 +972,8 @@ func (detector *Detector) Flush(
 	cTickVal := cTick - tenPercentMoveTick
 	dIdx := cSeqIdx + halfMoveSeqIdx
 	dTick := cTick + halfMoveTick
+
+	detector.noteMarks(class, aTick, bTickVal, cTickVal, dTick, aIdx, bIdx, cIdx, dIdx, cPrice)
 
 	value := data.NewValue(
 		detector.Name(), class, detector.label,

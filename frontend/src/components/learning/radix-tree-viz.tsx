@@ -27,6 +27,11 @@ const TERMINAL_HEIGHT = 26;
 const ROOT_WIDTH = 44;
 const ROOT_HEIGHT = 24;
 
+const grammarPrefix = (node: TrieNodeData) =>
+	node.action
+		? node.prefix.slice(0, node.prefix.lastIndexOf("/"))
+		: node.prefix;
+
 const isNodeRoot = (node: TreeNode) => node.data.id === "root";
 const isNodeTerminal = (node: TreeNode) =>
 	!node.data.children?.length && !node.data._children?.length;
@@ -62,7 +67,19 @@ const getPorts = (
 	};
 };
 
-function buildTreeFromPrefixes(prefixes: string[]): TrieNodeData | null {
+/*
+grammarKey drops the store location so the tree is the token path. Train
+writes policy/current/<path>/<action>.bin.
+*/
+export function grammarKey(key: string): string {
+	const current = "policy/current/";
+	if (key.startsWith(current)) return key.slice(current.length);
+	return key;
+}
+
+export function buildTreeFromPrefixes(
+	prefixes: string[],
+): TrieNodeData | null {
 	if (!prefixes || prefixes.length === 0) return null;
 
 	const root: TrieNodeData = {
@@ -74,8 +91,8 @@ function buildTreeFromPrefixes(prefixes: string[]): TrieNodeData | null {
 
 	let nextId = 1;
 
-	for (const key of prefixes) {
-		const parts = key.split("/").filter(Boolean);
+	for (const raw of prefixes) {
+		const parts = grammarKey(raw).split("/").filter(Boolean);
 		if (parts.length === 0) continue;
 
 		const lastPart = parts[parts.length - 1];
@@ -92,7 +109,7 @@ function buildTreeFromPrefixes(prefixes: string[]): TrieNodeData | null {
 		for (const token of regionTokens) {
 			prefix = prefix ? `${prefix}/${token}` : token;
 			if (!current.children) current.children = [];
-			let child = current.children.find((c) => c.token === token);
+			let child = current.children.find((c) => c.token === token && !c.action);
 			if (!child) {
 				child = {
 					id: String(nextId++),
@@ -106,8 +123,16 @@ function buildTreeFromPrefixes(prefixes: string[]): TrieNodeData | null {
 		}
 
 		if (action) {
-			if (!current.action) {
-				current.action = action;
+			if (!current.children) current.children = [];
+			const leaf = current.children.find((child) => child.action === action);
+			if (!leaf) {
+				current.children.push({
+					id: String(nextId++),
+					prefix: `${prefix}/${action.toLowerCase()}.bin`,
+					token: "",
+					action,
+					children: [],
+				});
 			}
 		}
 	}
@@ -140,7 +165,7 @@ matches or extends the token prefix sequence of a symbol (e.g. ["R01-R02", "R03-
 */
 export function keyMatchesPrefix(key: string, tokens: string[]): boolean {
 	if (!tokens || tokens.length === 0) return false;
-	const parts = key.split("/").filter(Boolean);
+	const parts = grammarKey(key).split("/").filter(Boolean);
 	const lastPart = parts[parts.length - 1];
 	const isAction = lastPart?.endsWith(".bin");
 	const keyTokens = isAction ? parts.slice(0, -1) : parts;
@@ -164,9 +189,9 @@ export function keyMatchesSymbol(key: string, symbol: SymbolProgress): boolean {
 	if (!symbol.tokens || symbol.tokens.length === 0) return false;
 
 	if (symbol.matched && symbol.matched.length > 0) {
-		const keyClean = key.replace(/\.(bin)$/i, "");
+		const keyClean = grammarKey(key).replace(/\.(bin)$/i, "");
 		for (const m of symbol.matched) {
-			const mClean = m.replace(/\.(bin)$/i, "");
+			const mClean = grammarKey(m).replace(/\.(bin)$/i, "");
 			if (
 				keyClean === mClean ||
 				keyClean.startsWith(`${mClean}/`) ||
@@ -806,7 +831,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 								const midY = (s.y + t.y) / 2;
 
 								const isSymbolLink = traversedPrefixes.has(
-									link.target.data.prefix,
+									grammarPrefix(link.target.data),
 								);
 								const isLinkActive = activePathIds
 									? activePathIds.has(link.target.data.id)
@@ -888,7 +913,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 								const pos = getNodePos(node);
 								const ports = getPorts(node, projection);
 								const symbolsAtNode = symbolPositions.get(nodeData.prefix);
-								const isSymbolOnPath = traversedPrefixes.has(nodeData.prefix);
+								const isSymbolOnPath = traversedPrefixes.has(
+									grammarPrefix(nodeData),
+								);
 
 								const isNodeActive = activePathIds
 									? activePathIds.has(nodeData.id)

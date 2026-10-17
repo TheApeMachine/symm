@@ -19,7 +19,7 @@ The storage schema: every key and layer the commands exchange, in one place.
 	| collect | workspace/tick/aggregate/<epoch>/<tick>.bin    | detect, train, audit |
 	| detect  | detector/<class>/<symbol>/<epoch>/<c_tick>.bin | train, audit        |
 	| detect  | detector/watermark/all/<epoch>/<last tick>.bin | train               |
-	| train   | policy/<action>/all/<policy epoch>/<seq>.bin   | run (CognitionTree), audit, hindsight |
+	| train   | policy/current/<grammar path>/<action>.bin     | run (CognitionTree) |
 	| train   | resonance/state/<symbol>/<policy epoch>/<last tick>.bin | train (next), run (CognitionTree) |
 	| paper   | paper/<action>/<symbol>/<epoch>/<seq>.bin      | audit (realization) |
 
@@ -211,6 +211,12 @@ Excursions: detect writes one Value per excursion, Origin ExcursionOrigin,
 Role its class, Scope its symbol, Tick its C tick.
 */
 const ExcursionOrigin = "detector"
+
+/*
+DraftOrigin holds a run's working predictions. A commit copies the ones
+that are right to DetectionsOrigin and the draft is scanned again.
+*/
+const DraftOrigin = "draft"
 
 var ExcursionClasses = []string{"up", "down", "chop", "flat"}
 
@@ -988,8 +994,9 @@ const (
 	HindsightError      = "error"
 	LayerHindsightError = "error"
 
-	// DetectionsOrigin is the origin of the "detections" command's frames
-	// (the roles below and the Hindsight ones they share), never stored.
+	// DetectionsOrigin is the stored prefix of a committed detection
+	// (detections/<class>/<symbol>/<epoch>/<tick>.bin) and the origin of
+	// the "detections" command's frames. The command's frames are not stored.
 	DetectionsOrigin      = "detections"
 	HindsightDetectionRun = "detection_run"
 	HindsightTrades       = "trades"

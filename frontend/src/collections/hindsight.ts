@@ -345,11 +345,19 @@ export const ingestHindsightFrame = (frame: HindsightFrame) => {
 				target.papers.push(record);
 				break;
 			}
-			case "symbol":
+			case "symbol": {
 				// The run index frames carry their symbol in the key, Scope ""
 				// is the request: the summary's symbol is its key's scope.
-				target.symbols.push(readSymbolRow(frame));
+				// A later frame for the same symbol replaces the first, which
+				// was sent when the symbol was first seen.
+				const row = readSymbolRow(frame);
+				const at = target.symbols.findIndex(
+					(item) => item.symbol === row.symbol,
+				);
+				if (at >= 0) target.symbols[at] = row;
+				else target.symbols.push(row);
 				break;
+			}
 			case "done":
 				target.counts = readVector(onlyLayer(frame), HINDSIGHT_DONE_KEYS);
 				target.status = "done";

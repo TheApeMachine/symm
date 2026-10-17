@@ -174,7 +174,7 @@ export type TimelineProps = {
 	lifecycle: HindsightLifecycleEvent[];
 	positions: Position[];
 	playhead: number | null;
-	marks: number[];
+	marks: { label: string; at: number }[];
 	selectedEpisode: string | null;
 	selectedPosition: string | null;
 	onPlayhead: (sequence: number) => void;
@@ -356,7 +356,7 @@ export const Timeline = ({
 			<div ref={ref} className="min-h-40 flex-1">
 				<p className="px-4 py-8 font-mono text-[10px] text-(--f4)">
 					{timeline === null
-						? "Select a run to project its capture tape."
+						? "Select an instrument to project its tape."
 						: "Measuring…"}
 				</p>
 			</div>
@@ -509,6 +509,7 @@ export const Timeline = ({
 						band={lanes.axis}
 						buckets={buckets}
 						timeline={timeline}
+						scale={scale}
 						width={width}
 					/>
 
@@ -537,19 +538,19 @@ export const Timeline = ({
 						/>
 					) : null}
 
-					{marks.map((mark, index) => (
-						<g key={`mark-${mark}`}>
+					{marks.map((mark) => (
+						<g key={`mark-${mark.label}`}>
 							<line
-								x1={scale.xOf(mark)}
+								x1={scale.xOf(mark.at)}
 								y1={0}
-								x2={scale.xOf(mark)}
+								x2={scale.xOf(mark.at)}
 								y2={lanes.axis.top}
 								stroke="var(--info)"
 								strokeWidth={1}
 								strokeDasharray="4 2"
 							/>
 							<rect
-								x={scale.xOf(mark) - 6}
+								x={scale.xOf(mark.at) - 6}
 								y={lanes.track.top - 11}
 								width={12}
 								height={10}
@@ -557,14 +558,14 @@ export const Timeline = ({
 								rx={1}
 							/>
 							<text
-								x={scale.xOf(mark)}
+								x={scale.xOf(mark.at)}
 								y={lanes.track.top - 3}
 								textAnchor="middle"
 								fontSize={7.5}
 								fill="var(--bg)"
 								className="font-mono"
 							>
-								{String.fromCharCode(65 + index)}
+								{mark.label}
 							</text>
 						</g>
 					))}
@@ -1269,15 +1270,45 @@ const AxisBand = ({
 	band,
 	buckets,
 	timeline,
+	scale,
 	width,
 }: {
 	band: Band;
 	buckets: HindsightTimelineBucket[];
 	timeline: HindsightTimeline;
+	scale: TimelineScale;
 	width: number;
 }) => {
 	const ticks = 6;
-	const step = width / ticks;
+	const labels: { x: number; label: string }[] = [];
+
+	for (let index = 0; index <= ticks; index++) {
+		const bucket =
+			buckets[
+				Math.min(
+					buckets.length - 1,
+					Math.floor((index / ticks) * buckets.length),
+				)
+			];
+
+		if (bucket === undefined) continue;
+
+		const x = Math.min(
+			Math.max(scale.xOf(bucket.observedFromSequence || bucket.fromSequence), 0),
+			width - 1,
+		);
+		const previous = labels[labels.length - 1];
+
+		if (previous !== undefined && x - previous.x < width * 0.08) continue;
+
+		labels.push({
+			x,
+			label:
+				timeline.axis === "time"
+					? formatClock(bucket.fromAt || bucket.observedFromAt)
+					: `#${bucket.fromSequence || bucket.observedFromSequence}`,
+		});
+	}
 
 	return (
 		<g transform={`translate(0, ${band.top})`}>
@@ -1289,46 +1320,28 @@ const AxisBand = ({
 				stroke="var(--line)"
 				strokeWidth={1}
 			/>
-			{Array.from({ length: ticks + 1 }, (_, index) => index).map((index) => {
-				const x = Math.min(index * step, width - 1);
-				const bucket =
-					buckets[
-						Math.min(
-							buckets.length - 1,
-							Math.floor((index / ticks) * buckets.length),
-						)
-					];
-
-				if (bucket === undefined) return null;
-
-				const label =
-					timeline.axis === "time"
-						? formatClock(bucket.fromAt || bucket.observedFromAt)
-						: `#${bucket.fromSequence || bucket.observedFromSequence}`;
-
-				return (
-					<g key={`tick-${x}`}>
-						<line
-							x1={x}
-							y1={0}
-							x2={x}
-							y2={3}
-							stroke="var(--line2)"
-							strokeWidth={1}
-						/>
-						<text
-							x={index === ticks ? x - 2 : x + 2}
-							y={11}
-							textAnchor={index === ticks ? "end" : "start"}
-							className="font-mono"
-							fontSize={7.5}
-							fill="var(--f4)"
-						>
-							{label}
-						</text>
-					</g>
-				);
-			})}
+			{labels.map((mark, index) => (
+				<g key={`tick-${mark.x}`}>
+					<line
+						x1={mark.x}
+						y1={0}
+						x2={mark.x}
+						y2={3}
+						stroke="var(--line2)"
+						strokeWidth={1}
+					/>
+					<text
+						x={index === labels.length - 1 ? mark.x - 2 : mark.x + 2}
+						y={11}
+						textAnchor={index === labels.length - 1 ? "end" : "start"}
+						className="font-mono"
+						fontSize={7.5}
+						fill="var(--f4)"
+					>
+						{mark.label}
+					</text>
+				</g>
+			))}
 		</g>
 	);
 };

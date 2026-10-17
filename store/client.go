@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -21,6 +22,8 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
+const inflightGets = 512
+
 var (
 	ErrBlobMissing             = errors.New("blob missing")
 	ErrBlobStorageUnconfigured = errors.New("blob storage unconfigured")
@@ -32,6 +35,7 @@ type Client struct {
 	bucket     string
 	downloader *manager.Downloader
 	uploader   *manager.Uploader
+	slots      chan struct{}
 }
 
 var _ io.ReadWriteCloser = (*Client)(nil)
@@ -69,8 +73,9 @@ func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) 
 				transport *http.Transport,
 			) {
 				transport.ResponseHeaderTimeout = 30 * time.Second
-				transport.MaxIdleConns = 256
-				transport.MaxIdleConnsPerHost = 64
+				transport.MaxIdleConns = inflightGets * 2
+				transport.MaxIdleConnsPerHost = inflightGets
+				transport.MaxConnsPerHost = inflightGets
 				transport.WriteBufferSize = 1024 * 1024
 				transport.ReadBufferSize = 1024 * 1024
 			})
@@ -97,7 +102,29 @@ func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) 
 		bucket:     bucket,
 		downloader: manager.NewDownloader(client),
 		uploader:   manager.NewUploader(client),
+		slots:      make(chan struct{}, inflightGets),
 	}
+}
+
+func (client *Client) acquire(ctx context.Context) error {
+	if client == nil || client.slots == nil {
+		return nil
+	}
+
+	select {
+	case client.slots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (client *Client) release() {
+	if client == nil || client.slots == nil {
+		return
+	}
+
+	<-client.slots
 }
 
 func (client *Client) List(prefix string, delimiter ...string) iter.Seq[*s3.ListObjectsV2Output] {
@@ -208,6 +235,32 @@ func (client *Client) Write(p []byte) (n int, err error) {
 	}
 
 	return len(p), nil
+}
+
+/*
+Put uploads body at key exactly. Write derives its key from the Value, which
+recomputes Prefix and cannot name a grammar path.
+*/
+func (client *Client) Put(key string, body []byte) error {
+	if client == nil || client.uploader == nil || key == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "[store.client] object key required", nil,
+		))
+	}
+
+	_, err := client.uploader.Upload(client.Context(), &s3.PutObjectInput{
+		Bucket: aws.String(client.bucket),
+		Key:    aws.String(key),
+		Body:   bytes.NewReader(body),
+	})
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] upload error", err,
+		))
+	}
+
+	return nil
 }
 
 /*

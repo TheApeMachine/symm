@@ -39,6 +39,7 @@ export const fetchHindsightRuns = async (): Promise<HindsightRun[]> => {
 		status: unknown;
 		trained: unknown;
 		policies: unknown;
+		ticks: unknown;
 	}>;
 
 	const isPolicyEpoch = (value: unknown): value is HindsightPolicyEpoch => {
@@ -68,6 +69,10 @@ export const fetchHindsightRuns = async (): Promise<HindsightRun[]> => {
 			status: String(run.status),
 			trained: run.trained === true,
 			policies: run.policies,
+			ticks:
+				typeof run.ticks === "number" && Number.isFinite(run.ticks)
+					? run.ticks
+					: 0,
 		};
 	});
 };
@@ -100,9 +105,29 @@ export const coordinateOf = (
 	}
 };
 
-const KINDS: Record<string, HindsightEpisode["kind"]> = {
+const KINDS = {
 	up: "upward_excursion",
 	down: "downward_excursion",
+	chop: "chop",
+	flat: "flat",
+} as const;
+
+type StoredKind = (typeof KINDS)[keyof typeof KINDS];
+
+const crestOf = (kind: StoredKind): ReferenceRole => {
+	switch (kind) {
+		case "upward_excursion":
+			return "peak";
+		case "downward_excursion":
+			return "trough";
+		case "chop":
+		case "flat":
+			return "reversal";
+		default: {
+			const exhaustive: never = kind;
+			return exhaustive;
+		}
+	}
 };
 
 /*
@@ -116,7 +141,7 @@ export const episodeOf = (
 	coordinate: MarketCoordinate,
 	ticks: HindsightTick[],
 ): HindsightEpisode | null => {
-	const kind = KINDS[excursion.kind];
+	const kind = KINDS[excursion.kind as keyof typeof KINDS];
 	if (kind === undefined) return null;
 
 	const f = excursion.fields;
@@ -173,11 +198,7 @@ export const episodeOf = (
 		references: [
 			point("anchor", f.entry_tick, f.entry_ask, f.entry_at),
 			point("shock_onset", f.b_tick, f.b_price, f.b_at),
-			point(
-				kind === "upward_excursion" ? "peak" : "trough",
-				f.c_tick,
-				f.c_price,
-				f.c_at,
+			point(crestOf(kind), f.c_tick, f.c_price, f.c_at,
 			),
 			point("exit_anchor", f.exit_tick, f.exit_bid, f.exit_at),
 		],
