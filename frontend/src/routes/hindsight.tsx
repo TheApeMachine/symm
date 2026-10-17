@@ -8,6 +8,7 @@ import {
 	annotationBody,
 	DETECTION_CLASSES,
 	type DetectionClass,
+	draftOf,
 	emptyAnnotation,
 	type Marker,
 	MARKERS,
@@ -264,12 +265,11 @@ const HindsightRoute = () => {
 	);
 	const [playhead, setPlayhead] = useState<number | null>(null);
 	const [episode, setEpisode] = useState<string | null>(null);
-	const [annotating, setAnnotating] = useState(false);
 	const [marker, setMarker] = useState<Marker>("A");
 	const [annotation, setAnnotation] = useState(emptyAnnotation);
 	const [detectionClass, setDetectionClass] = useState<DetectionClass>("up");
 	const [saveError, setSaveError] = useState<string | null>(null);
-	const [saving, setSaving] = useState(false);
+	const [busy, setBusy] = useState<string | null>(null);
 	const { index, stream } = useSelector(hindsightStore, (state) => state);
 
 	useEffect(() => {
@@ -291,7 +291,7 @@ const HindsightRoute = () => {
 		};
 	}, []);
 
-	// The run index first; the hub serves one replay per client at a time.
+	// The run index names every symbol. Opening one symbol streams that tape beside it.
 	useEffect(() => {
 		if (run === null) return;
 		setSymbol(null);
@@ -302,6 +302,7 @@ const HindsightRoute = () => {
 	}, [run]);
 
 	const summaries = useMemo(() => summariesOf(index), [index]);
+	const indexRun = index?.run ?? null;
 
 	// Once the index is complete, open the instrument that moved furthest.
 	useEffect(() => {
@@ -320,12 +321,12 @@ const HindsightRoute = () => {
 
 	useEffect(() => {
 		if (run === null || symbol === null) return;
-		if (index !== null && index.run !== run) return;
+		if (indexRun !== null && indexRun !== run) return;
 		setViewport(null);
 		setPlayhead(null);
 		setEpisode(null);
 		send(run, symbol);
-	}, [run, symbol, index]);
+	}, [run, symbol, indexRun]);
 
 	const current =
 		stream !== null && stream.run === run && stream.symbol === symbol
@@ -373,30 +374,61 @@ const HindsightRoute = () => {
 		run !== null && symbol !== null
 			? annotationBody(run, symbol, detectionClass, annotation)
 			: null;
+	const pickedDraft =
+		current !== null && current.status === "done"
+			? draftOf(current.excursions, detectionClass)
+			: null;
+	const draftMarks =
+		pickedDraft === null
+			? null
+			: [
+					Math.round(pickedDraft.fields.a_tick),
+					Math.round(pickedDraft.fields.b_tick),
+					Math.round(pickedDraft.fields.c_tick),
+					Math.round(pickedDraft.fields.d_tick),
+				].join(":");
 
-	const saveAnnotation = async () => {
-		if (draft === null || run === null || symbol === null) return;
-		setSaving(true);
+	useEffect(() => {
+		if (draftMarks === null) return;
+
+		const [a, b, c, d] = draftMarks.split(":").map(Number);
+		if (
+			a === undefined ||
+			b === undefined ||
+			c === undefined ||
+			d === undefined ||
+			Number.isNaN(a) ||
+			Number.isNaN(b) ||
+			Number.isNaN(c) ||
+			Number.isNaN(d)
+		)
+			return;
+
+		setAnnotation({ A: a, B: b, C: c, D: d });
+		setMarker("A");
+	}, [draftMarks]);
+
+	const postRun = async (path: string, label: string, body: unknown) => {
+		if (run === null || busy !== null) return;
+		setBusy(label);
 		setSaveError(null);
 
 		try {
-			const response = await fetch(`${hubBaseUrl()}/hindsight/annotate`, {
+			const response = await fetch(`${hubBaseUrl()}${path}`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(draft),
+				body: JSON.stringify(body),
 			});
 
 			if (!response.ok) {
 				throw new Error(await response.text());
 			}
 
-			setAnnotation(emptyAnnotation());
-			setMarker("A");
-			send(run, symbol);
+			if (symbol !== null) send(run, symbol);
 		} catch (cause) {
 			setSaveError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
-			setSaving(false);
+			setBusy(null);
 		}
 	};
 
@@ -440,13 +472,11 @@ const HindsightRoute = () => {
 				<StreamStatus label={symbol ?? "symbol"} stream={current} />
 				<Button
 					size="xs"
-					variant={annotating ? "solid" : "outline"}
-					onClick={() => {
-						setAnnotating((on) => !on);
-						setSaveError(null);
-					}}
+					variant="outline"
+					disabled={run === null || busy !== null}
+					onClick={() => void postRun("/hindsight/scan", "scanning the tape", { run })}
 				>
-					annotate
+					scan
 				</Button>
 				<Toolbar.Spacer />
 				{COORDINATES.map((entry) => (
@@ -471,61 +501,58 @@ const HindsightRoute = () => {
 				))}
 			</Toolbar>
 
-			{annotating ? (
-				<Toolbar
-					size="s"
-					className="gap-2 border-(--line) border-b bg-(--sunken) px-3"
+			<Toolbar
+				size="s"
+				className="gap-2 border-(--line) border-b bg-(--sunken) px-3"
+			>
+				{DETECTION_CLASSES.map((entry) => (
+					<Button
+						key={entry}
+						size="xs"
+						variant={entry === detectionClass ? "solid" : "outline"}
+						onClick={() => setDetectionClass(entry)}
+					>
+						{entry}
+					</Button>
+				))}
+				{MARKERS.map((entry) => (
+					<Button
+						key={entry}
+						size="xs"
+						variant={entry === marker ? "solid" : "outline"}
+						onClick={() => setMarker(entry)}
+					>
+						{entry}
+						{annotation[entry] === null ? "" : ` ${annotation[entry]}`}
+					</Button>
+				))}
+				<Button
+					size="xs"
+					variant="solid"
+					disabled={draft === null || busy !== null}
+					onClick={() =>
+						void postRun("/hindsight/commit", "recalculating detections", draft)
+					}
 				>
-					{DETECTION_CLASSES.map((entry) => (
-						<Button
-							key={entry}
-							size="xs"
-							variant={entry === detectionClass ? "solid" : "outline"}
-							onClick={() => setDetectionClass(entry)}
-						>
-							{entry}
-						</Button>
-					))}
-					{MARKERS.map((entry) => (
-						<Button
-							key={entry}
-							size="xs"
-							variant={entry === marker ? "solid" : "outline"}
-							onClick={() => setMarker(entry)}
-						>
-							{entry}
-							{annotation[entry] === null ? "" : ` ${annotation[entry]}`}
-						</Button>
-					))}
-					<Button
-						size="xs"
-						variant="solid"
-						disabled={draft === null || saving}
-						onClick={() => void saveAnnotation()}
-					>
-						{saving ? "saving" : "save detection"}
-					</Button>
-					<Button
-						size="xs"
-						variant="outline"
-						onClick={() => {
-							setAnnotation(emptyAnnotation());
-							setMarker("A");
-							setSaveError(null);
-						}}
-					>
-						clear
-					</Button>
-					{draft === null ? (
-						<Typography.Label size="s" tone="f4">
-							click the tape: A, then B, then C, then D, in that order
-						</Typography.Label>
-					) : null}
-					{saveError !== null ? (
-						<span className="text-[10px] text-rose-300">{saveError}</span>
-					) : null}
-				</Toolbar>
-			) : null}
+					commit
+				</Button>
+				<Button
+					size="xs"
+					variant="outline"
+					disabled={run === null || busy !== null}
+					onClick={() =>
+						void postRun("/hindsight/commit-all", "committing the tape", { run })
+					}
+				>
+					commit all
+				</Button>
+				<Typography.Label size="s" tone="f4">
+					drag a marker, or click the tape to move {marker}
+				</Typography.Label>
+				{saveError !== null ? (
+					<span className="text-[10px] text-rose-300">{saveError}</span>
+				) : null}
+			</Toolbar>
 
 			{failure !== null ? (
 				<div
@@ -549,7 +576,13 @@ const HindsightRoute = () => {
 							onSelect={setSymbol}
 						/>
 					</Flex.Column>
-					<Flex.Column className="min-h-0 overflow-y-auto">
+					<Flex.Column className="relative min-h-0 overflow-y-auto">
+						{busy !== null ? (
+							<div className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-black/60">
+								<div className="h-5 w-5 animate-spin rounded-full border-2 border-(--f4) border-t-(--f1)" />
+								<span className="text-[10px] text-(--f1)">{busy}</span>
+							</div>
+						) : null}
 						<Overview
 							timeline={overview}
 							window={viewport}
@@ -558,15 +591,32 @@ const HindsightRoute = () => {
 						/>
 						<Timeline
 							timeline={detail}
+							emptyLabel={
+								symbol !== null && current?.status === "streaming"
+									? `Reading ${symbol}.`
+									: undefined
+							}
 							gaps={[]}
 							lifecycle={[]}
 							positions={[]}
 							playhead={playhead}
-							marks={annotating ? marksOf(annotation) : []}
+							marks={marksOf(annotation)}
 							selectedEpisode={episode}
 							selectedPosition={null}
+							onMark={(label, sequence) => {
+								if (current === null) return;
+								const snapped = snapTick(
+									current.ticks.map((tick) => tick.tick),
+									sequence,
+								);
+								if (snapped === null) return;
+								if (!MARKERS.includes(label as Marker)) return;
+								setAnnotation((placed) =>
+									placeMarker(placed, label as Marker, snapped),
+								);
+							}}
 							onPlayhead={(sequence) => {
-								if (!annotating || current === null) {
+								if (current === null) {
 									setPlayhead(sequence);
 									return;
 								}

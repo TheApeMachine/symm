@@ -15,7 +15,15 @@ func Epochs(client *Client, prefix string) ([]uint64, error) {
 
 	epochs := make([]uint64, 0)
 
-	for page := range client.List(prefix, "/") {
+	for page, err := range client.listObjects(client.Context(), prefix, "/") {
+		if err != nil {
+			return nil, err
+		}
+
+		if page == nil {
+			continue
+		}
+
 		for _, common := range page.CommonPrefixes {
 			if common.Prefix == nil {
 				continue
@@ -35,27 +43,40 @@ func Epochs(client *Client, prefix string) ([]uint64, error) {
 	return epochs, nil
 }
 
+type keyRank struct {
+	key   string
+	epoch string
+	tick  string
+}
+
 func sortKeys(keys []string) {
-	order := func(key string) (string, string) {
-		rest, tick, _ := cutLast(key)
-		_, epoch, _ := cutLast(rest)
-		return epoch, tick
+	if len(keys) < 2 {
+		return
 	}
 
-	slices.SortFunc(keys, func(firstKey, secondKey string) int {
-		epochA, tickA := order(firstKey)
-		epochB, tickB := order(secondKey)
+	ranks := make([]keyRank, len(keys))
 
-		if epochA != epochB {
-			return strings.Compare(epochA, epochB)
+	for i, key := range keys {
+		rest, tick, _ := cutLast(key)
+		_, epoch, _ := cutLast(rest)
+		ranks[i] = keyRank{key: key, epoch: epoch, tick: tick}
+	}
+
+	slices.SortFunc(ranks, func(first, second keyRank) int {
+		if first.epoch != second.epoch {
+			return strings.Compare(first.epoch, second.epoch)
 		}
 
-		if tickA != tickB {
-			return strings.Compare(tickA, tickB)
+		if first.tick != second.tick {
+			return strings.Compare(first.tick, second.tick)
 		}
 
-		return strings.Compare(firstKey, secondKey)
+		return strings.Compare(first.key, second.key)
 	})
+
+	for i := range ranks {
+		keys[i] = ranks[i].key
+	}
 }
 
 func cutLast(key string) (string, string, bool) {

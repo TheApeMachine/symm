@@ -6,12 +6,14 @@ import (
 	"errors"
 	"io"
 	"iter"
+	"math"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -55,12 +57,30 @@ func readObject(ctx context.Context, client *Client, key string) ([]byte, error)
 
 	defer out.Body.Close()
 
-	buf, err := io.ReadAll(out.Body)
+	buf, err := readBody(out.Body, out.ContentLength)
 	if err != nil {
 		return nil, downloadErr(err)
 	}
 
 	return buf, nil
+}
+
+func readBody(body io.Reader, n *int64) ([]byte, error) {
+	if n != nil && *n == 0 {
+		return []byte{}, nil
+	}
+
+	if n != nil && *n > 0 && *n <= int64(math.MaxInt) {
+		buf := make([]byte, int(*n))
+
+		if _, err := io.ReadFull(body, buf); err != nil {
+			return nil, err
+		}
+
+		return buf, nil
+	}
+
+	return io.ReadAll(body)
 }
 
 func readValue(ctx context.Context, client *Client, key string) (*data.Value, error) {
@@ -77,17 +97,125 @@ func readValue(ctx context.Context, client *Client, key string) (*data.Value, er
 	return val, nil
 }
 
+/*
+ValuesPaged lists each prefix a page at a time and downloads that page while
+later pages are still being listed. Zero-padded tick keys are already in tape
+order, so the first page can be read before the listing finishes.
+*/
+func ValuesPaged(client *Client, prefixes ...string) iter.Seq2[*data.Value, error] {
+	return func(yield func(*data.Value, error) bool) {
+		if client == nil {
+			yield(nil, errnie.Error(errnie.Err(
+				errnie.Validation, "[store.values] client is nil", nil,
+			)))
+
+			return
+		}
+
+		ctx, cancel := context.WithCancel(client.Context())
+		defer cancel()
+
+		type pageKeys struct {
+			keys []string
+			err  error
+		}
+
+		pages := make(chan pageKeys, 2)
+
+		go func() {
+			defer close(pages)
+
+			if len(prefixes) == 0 {
+				prefixes = []string{""}
+			}
+
+			for _, prefix := range prefixes {
+				for page, err := range client.listObjects(ctx, prefix, "") {
+					if err != nil {
+						select {
+						case pages <- pageKeys{err: err}:
+						case <-ctx.Done():
+						}
+
+						return
+					}
+
+					if page == nil {
+						continue
+					}
+
+					keys := make([]string, 0, len(page.Contents))
+
+					for _, object := range page.Contents {
+						if object.Key != nil {
+							keys = append(keys, *object.Key)
+						}
+					}
+
+					select {
+					case pages <- pageKeys{keys: keys}:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}()
+
+		for page := range pages {
+			if page.err != nil {
+				yield(nil, page.err)
+				return
+			}
+
+			stopped := false
+
+			parallelValues(client, page.keys, nil)(func(value *data.Value, err error) bool {
+				stopped = !yield(value, err)
+				return !stopped
+			})
+
+			if stopped {
+				return
+			}
+		}
+	}
+}
+
 func Values(client *Client, prefixes ...string) iter.Seq2[*data.Value, error] {
-	return ParallelValues(client, client.ListKeys(prefixes...))
+	return func(yield func(*data.Value, error) bool) {
+		if client == nil {
+			yield(nil, errnie.Error(errnie.Err(
+				errnie.Validation, "[store.values] client is nil", nil,
+			)))
+
+			return
+		}
+
+		keys, err := client.collectKeys(client.Context(), nil, prefixes...)
+
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+
+		parallelValues(client, keys, nil)(yield)
+	}
+}
+
+func ParallelValuesProgress(client *Client, keys []string, onObject func()) iter.Seq2[*data.Value, error] {
+	return parallelValues(client, keys, onObject)
 }
 
 /*
-ParallelValues splits an already-sorted key list into contiguous groups,
-downloads each group together, and yields the groups in that same order.
-Several groups stay in flight so the next slice is downloading while the
-detector walks the one it already has.
+ParallelValues downloads keys with a bounded worker window and yields values
+in that key order. onObject, when set through ParallelValuesProgress, runs
+once per finished object read.
 */
 func ParallelValues(client *Client, keys []string) iter.Seq2[*data.Value, error] {
+	return parallelValues(client, keys, nil)
+}
+
+func parallelValues(client *Client, keys []string, onObject func()) iter.Seq2[*data.Value, error] {
 	return func(yield func(*data.Value, error) bool) {
 		if len(keys) == 0 || client == nil {
 			return
@@ -96,7 +224,7 @@ func ParallelValues(client *Client, keys []string) iter.Seq2[*data.Value, error]
 		ctx, cancel := context.WithCancel(client.Context())
 		defer cancel()
 
-		parallelObjects(ctx, client, keys, func(buf []byte, err error) bool {
+		parallelObjects(ctx, client, keys, onObject, func(buf []byte, err error) bool {
 			if err != nil {
 				return yield(nil, err)
 			}
@@ -111,84 +239,116 @@ func ParallelValues(client *Client, keys []string) iter.Seq2[*data.Value, error]
 	}
 }
 
+const prefetchFrames = 8
+
+func inflightLimit(client *Client) int {
+	if client != nil && client.slots != nil {
+		if n := cap(client.slots); n > 0 {
+			return n
+		}
+	}
+
+	return system.Cfg.Storage.S3.MaxIdleConns
+}
+
+type objectResult struct {
+	buf []byte
+	err error
+}
+
+type objectDone struct {
+	index int
+	objectResult
+}
+
 func parallelObjects(
 	ctx context.Context,
 	client *Client,
 	keys []string,
+	onObject func(),
 	yield func([]byte, error) bool,
 ) {
-	const groupSize = 64
-
-	groupsInFlight := inflightGets / groupSize
-
-	type item struct {
-		buf []byte
-		err error
+	if len(keys) == 0 {
+		return
 	}
 
-	type batch struct {
-		items []item
+	parent := ctx
+	ctx, cancel := context.WithCancel(parent)
+	limit := inflightLimit(client)
+
+	if limit > len(keys) {
+		limit = len(keys)
 	}
 
-	groupCount := (len(keys) + groupSize - 1) / groupSize
-	batches := make([]chan batch, groupCount)
-
-	for i := range batches {
-		batches[i] = make(chan batch, 1)
+	if limit < 1 {
+		limit = 1
 	}
 
-	started := 0
-	start := func(group int) {
-		lo := group * groupSize
-		hi := min(lo+groupSize, len(keys))
+	jobs := make(chan int)
+	results := make(chan objectDone)
+	var wg sync.WaitGroup
+	wg.Add(limit)
 
-		slice := keys[lo:hi]
-
+	for range limit {
 		go func() {
-			items := make([]item, len(slice))
-			var wg sync.WaitGroup
+			defer wg.Done()
 
-			for i := range slice {
-				wg.Add(1)
+			for index := range jobs {
+				buf, err := readObject(ctx, client, keys[index])
 
-				go func(i int) {
-					defer wg.Done()
+				if onObject != nil {
+					onObject()
+				}
 
-					if ctx.Err() != nil {
-						items[i] = item{err: ctx.Err()}
-						return
-					}
-
-					buf, err := readObject(ctx, client, slice[i])
-					items[i] = item{buf, err}
-				}(i)
-			}
-
-			wg.Wait()
-
-			select {
-			case batches[group] <- batch{items}:
-			case <-ctx.Done():
+				select {
+				case results <- objectDone{index: index, objectResult: objectResult{buf: buf, err: err}}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 	}
 
-	for group := range groupCount {
-		if ctx.Err() != nil {
-			return
-		}
+	defer func() {
+		cancel()
+		close(jobs)
+		wg.Wait()
+	}()
 
-		for started < groupCount && started < group+groupsInFlight {
-			start(started)
-			started++
+	slots := make([]objectResult, limit)
+	ready := make([]bool, limit)
+	next := 0
+	started := 0
+
+	for next < len(keys) {
+		sendTo := jobs
+		job := started
+
+		if started >= len(keys) || started >= next+limit {
+			sendTo = nil
 		}
 
 		select {
 		case <-ctx.Done():
+			if err := parent.Err(); err != nil {
+				yield(nil, downloadErr(err))
+			}
+
 			return
-		case got := <-batches[group]:
-			for _, it := range got.items {
-				if !yield(it.buf, it.err) {
+		case sendTo <- job:
+			started++
+		case done := <-results:
+			slot := done.index % limit
+			slots[slot] = done.objectResult
+			ready[slot] = true
+
+			for next < len(keys) && ready[next%limit] {
+				item := slots[next%limit]
+				slots[next%limit] = objectResult{}
+				ready[next%limit] = false
+				next++
+
+				if !yield(item.buf, item.err) {
 					return
 				}
 			}
@@ -197,14 +357,21 @@ func parallelObjects(
 }
 
 func Open(client *Client, prefixes ...string) io.ReadWriteCloser {
+	if client == nil {
+		return &prefixStream{err: errnie.Error(errnie.Err(
+			errnie.Validation, "[store.values] client is nil", nil,
+		))}
+	}
+
 	ctx, cancel := context.WithCancel(client.Context())
 	stream := &prefixStream{
 		client: client,
+		ctx:    ctx,
 		cancel: cancel,
-		frames: make(chan prefixFrame, inflightGets/64),
+		frames: make(chan prefixFrame, prefetchFrames),
 	}
 
-	go stream.prefetch(ctx, client.ListKeys(prefixes...))
+	go stream.run(prefixes)
 
 	return stream
 }
@@ -216,20 +383,32 @@ type prefixFrame struct {
 
 type prefixStream struct {
 	client *Client
+	ctx    context.Context
 	cancel context.CancelFunc
 	frames chan prefixFrame
 	frame  *bytes.Reader
 	err    error
 }
 
-func (stream *prefixStream) prefetch(ctx context.Context, keys []string) {
+func (stream *prefixStream) run(prefixes []string) {
 	defer close(stream.frames)
 
-	parallelObjects(ctx, stream.client, keys, func(buf []byte, err error) bool {
+	keys, err := stream.client.collectKeys(stream.ctx, nil, prefixes...)
+
+	if err != nil {
 		select {
-		case <-ctx.Done():
+		case <-stream.ctx.Done():
+		case stream.frames <- prefixFrame{err: err}:
+		}
+
+		return
+	}
+
+	parallelObjects(stream.ctx, stream.client, keys, nil, func(buf []byte, err error) bool {
+		select {
+		case <-stream.ctx.Done():
 			return false
-		case stream.frames <- prefixFrame{buf, err}:
+		case stream.frames <- prefixFrame{buf: buf, err: err}:
 			return err == nil
 		}
 	})
@@ -240,38 +419,93 @@ func (stream *prefixStream) Read(p []byte) (int, error) {
 		return 0, stream.err
 	}
 
-	if stream.frame == nil {
-		next, ok := <-stream.frames
-
-		if !ok {
-			return 0, io.EOF
-		}
-
-		if next.err != nil {
-			stream.err = next.err
-			return 0, next.err
-		}
-
-		stream.frame = bytes.NewReader(next.buf)
+	if len(p) == 0 {
+		return 0, nil
 	}
 
-	n, err := stream.frame.Read(p)
-	if stream.frame.Len() == 0 {
-		stream.frame = nil
-		if err == nil {
-			err = io.EOF
+	if stream.frames == nil {
+		return 0, io.EOF
+	}
+
+	total := 0
+
+	for total < len(p) {
+		if stream.frame == nil || stream.frame.Len() == 0 {
+			next, ok := <-stream.frames
+
+			if !ok {
+				err := io.EOF
+
+				if stream.ctx != nil && stream.ctx.Err() != nil {
+					err = stream.ctx.Err()
+				}
+
+				stream.err = err
+
+				if total > 0 {
+					return total, nil
+				}
+
+				return 0, err
+			}
+
+			if next.err != nil {
+				stream.err = next.err
+
+				if total > 0 {
+					return total, nil
+				}
+
+				return 0, next.err
+			}
+
+			if len(next.buf) == 0 {
+				continue
+			}
+
+			stream.frame = bytes.NewReader(next.buf)
+		}
+
+		n, err := stream.frame.Read(p[total:])
+		total += n
+
+		if stream.frame.Len() == 0 {
+			stream.frame = nil
+		}
+
+		if err != nil && err != io.EOF {
+			stream.err = err
+
+			if total > 0 {
+				return total, nil
+			}
+
+			return 0, err
 		}
 	}
 
-	return n, err
+	return total, nil
 }
 
 func (stream *prefixStream) Write(p []byte) (int, error) {
+	if stream.client == nil {
+		if stream.err != nil {
+			return 0, stream.err
+		}
+
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "[store.values] client is nil", nil,
+		))
+	}
+
 	return stream.client.Write(p)
 }
 
 func (stream *prefixStream) Close() error {
-	stream.cancel()
+	if stream.cancel != nil {
+		stream.cancel()
+	}
+
 	stream.frame = nil
 	return nil
 }

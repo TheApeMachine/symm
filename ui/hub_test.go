@@ -92,6 +92,32 @@ func TestHubReplay(t *testing.T) {
 			So(hub.handleCommand(nil, []byte(`{"type":"hindsight","run":"7"}`)), ShouldNotBeNil)
 		})
 
+		Convey("The run index keeps naming symbols while a tape is open", func() {
+			So(hub.handleCommand(current, []byte(`{"type":"hindsight","run":"1792187257188073000"}`)), ShouldBeNil)
+			So(<-replayer.started, ShouldEqual, "")
+			So(string(<-current.frames), ShouldEqual, "")
+
+			So(hub.handleCommand(current, []byte(`{"type":"hindsight","run":"1792187257188073000","symbol":"BTC/USD"}`)), ShouldBeNil)
+			So(<-replayer.started, ShouldEqual, "BTC/USD")
+			So(string(<-current.frames), ShouldEqual, "BTC/USD")
+
+			select {
+			case err := <-replayer.ended:
+				t.Fatalf("opening a symbol ended the index: %v", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+
+			So(hub.handleCommand(current, []byte(`{"type":"hindsight","run":"1792187257188073000","symbol":"ETH/USD"}`)), ShouldBeNil)
+			So(<-replayer.ended, ShouldEqual, context.Canceled)
+			So(<-replayer.started, ShouldEqual, "ETH/USD")
+
+			select {
+			case err := <-replayer.ended:
+				t.Fatalf("switching the tape ended the index: %v", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+		})
+
 		Convey("A replay streams to the client that asked; a newer request cancels it", func() {
 			So(hub.handleCommand(current, []byte(`{"type":"hindsight","run":"1792187257188073000","symbol":"BTC/USD"}`)), ShouldBeNil)
 			So(<-replayer.started, ShouldEqual, "BTC/USD")

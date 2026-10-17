@@ -217,9 +217,11 @@ export const EpisodeTargets = ({
 			<Section.Body>
 				{episodes.length === 0 ? (
 					<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
-						{discovery?.insufficientData
-							? "Too few stored ticks for this instrument to place an excursion."
-							: "detect stored no up or down excursion for this instrument in this run."}
+						{timeline === null
+							? "Reading this instrument's tape."
+							: discovery?.insufficientData
+								? "Too few stored ticks for this instrument to place an excursion."
+								: "detect stored no up or down excursion for this instrument in this run."}
 					</p>
 				) : null}
 				<ul className="flex flex-col divide-y divide-(--line)">

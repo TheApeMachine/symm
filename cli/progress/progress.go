@@ -11,6 +11,19 @@ type Bar struct {
 	inner *progressbar.ProgressBar
 }
 
+func Spin(label string) *Bar {
+	bar := progressbar.NewOptions64(
+		-1,
+		progressbar.OptionSetDescription(label),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionShowIts(),
+		progressbar.OptionEnableColorCodes(true),
+		progressbar.OptionSetWidth(40),
+	)
+
+	return &Bar{inner: bar}
+}
+
 func New(label string, total int64) *Bar {
 	if total < 1 {
 		total = 1

@@ -10,6 +10,7 @@ type Market struct {
 	Model         string
 	QuoteCurrency string
 	Balance       int
+	TakerFee      float64
 	Instrument    *Instrument
 	Book          *Book
 	Subscribe     *Subscribe
@@ -40,6 +41,7 @@ func NewMarket() *Market {
 	viper.SetDefault("market.quote_currency", "USD")
 	viper.SetDefault("market.book.depth", 10)
 	viper.SetDefault("market.balance", 200)
+	viper.SetDefault("market.taker_fee", 0.8)
 	viper.SetDefault("market.subscribe.batch", 100)
 	viper.SetDefault("market.subscribe.pace", 500*time.Millisecond)
 	// l3_depth is the subscribed Kraken L3 depth: the number of PRICE LEVELS
@@ -52,6 +54,7 @@ func NewMarket() *Market {
 		Model:         viper.GetString("market.model"),
 		QuoteCurrency: viper.GetString("market.quote_currency"),
 		Balance:       viper.GetInt("market.balance"),
+		TakerFee:      viper.GetFloat64("market.taker_fee"),
 		Instrument: &Instrument{
 			Excluded: viper.GetStringSlice("market.instrument.excluded"),
 		},

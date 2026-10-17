@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	annotationBody,
+	draftOf,
 	emptyAnnotation,
 	marksOf,
 	nextMarker,
@@ -25,6 +26,27 @@ describe("annotate", () => {
 			{ label: "C", at: 30 },
 		]);
 		expect(nextMarker("C")).toBe("D");
+	});
+
+	it("drags the widest draft of the selected class", () => {
+		const fields = (b: number, c: number) => ({
+			a_tick: 1,
+			b_tick: 2,
+			c_tick: 3,
+			d_tick: 4,
+			b_price: b,
+			c_price: c,
+		});
+		const picked = draftOf(
+			[
+				{ kind: "up", key: "draft/up/BTC/USD/1/1.bin", fields: fields(1, 1.1) },
+				{ kind: "up", key: "draft/up/BTC/USD/1/2.bin", fields: fields(1, 1.4) },
+				{ kind: "up", key: "detections/up/BTC/USD/1/2.bin", fields: fields(1, 2) },
+			],
+			"up",
+		);
+
+		expect(picked?.key).toBe("draft/up/BTC/USD/1/2.bin");
 	});
 
 	it("saves only when A B C D are in tape order", () => {

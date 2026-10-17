@@ -8,10 +8,8 @@ import (
 	"iter"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -20,13 +18,6 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
-)
-
-const inflightGets = 512
-
-var (
-	ErrBlobMissing             = errors.New("blob missing")
-	ErrBlobStorageUnconfigured = errors.New("blob storage unconfigured")
 )
 
 type Client struct {
@@ -40,8 +31,17 @@ type Client struct {
 
 var _ io.ReadWriteCloser = (*Client)(nil)
 
-func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) *Client {
-	cfg, err := config.LoadDefaultConfig(ctx)
+func NewClient(ctx context.Context, bucket string) *Client {
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithHTTPClient(&http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:          system.Cfg.Storage.S3.MaxIdleConns,
+			MaxIdleConnsPerHost:   system.Cfg.Storage.S3.MaxIdleConnsPerHost,
+			MaxConnsPerHost:       system.Cfg.Storage.S3.MaxConnsPerHost,
+			IdleConnTimeout:       system.Cfg.Storage.S3.IdleConnTimeout,
+			ResponseHeaderTimeout: system.Cfg.Storage.S3.ResponseHeaderTimeout,
+		},
+		Timeout: system.Cfg.Storage.S3.RequestTimeout,
+	}))
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -51,38 +51,14 @@ func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) 
 		return nil
 	}
 
-	options := append([]func(*s3.Options){
-		func(options *s3.Options) {
-			if options.BaseEndpoint == nil && system.Cfg.Storage.S3.Endpoint != "" {
-				options.BaseEndpoint = aws.String(system.Cfg.Storage.S3.Endpoint)
-				options.UsePathStyle = true
-			}
-
-			if options.Region == "" {
-				options.Region = system.Cfg.Storage.S3.Region
-			}
-
-			if system.Cfg.Storage.S3.Anonymous || system.Cfg.Storage.S3.AccessKeyID == "" {
-				options.Credentials = credentials.NewStaticCredentialsProvider(
-					"anonymous", "anonymous", "",
-				)
-			}
-
-			// Override Default Transport Values
-			options.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(
-				transport *http.Transport,
-			) {
-				transport.ResponseHeaderTimeout = 30 * time.Second
-				transport.MaxIdleConns = inflightGets * 2
-				transport.MaxIdleConnsPerHost = inflightGets
-				transport.MaxConnsPerHost = inflightGets
-				transport.WriteBufferSize = 1024 * 1024
-				transport.ReadBufferSize = 1024 * 1024
-			})
-		},
-	}, optFns...)
-
-	client := s3.NewFromConfig(cfg, options...)
+	client := s3.NewFromConfig(cfg, func(options *s3.Options) {
+		options.BaseEndpoint = aws.String(system.Cfg.Storage.S3.Endpoint)
+		options.UsePathStyle = true
+		options.Region = system.Cfg.Storage.S3.Region
+		options.Credentials = credentials.NewStaticCredentialsProvider(
+			"anonymous", "anonymous", "",
+		)
+	})
 
 	_, err = client.CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(bucket),
@@ -102,7 +78,7 @@ func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) 
 		bucket:     bucket,
 		downloader: manager.NewDownloader(client),
 		uploader:   manager.NewUploader(client),
-		slots:      make(chan struct{}, inflightGets),
+		slots:      make(chan struct{}, system.Cfg.Storage.S3.MaxIdleConns),
 	}
 }
 
@@ -127,31 +103,75 @@ func (client *Client) release() {
 	<-client.slots
 }
 
-func (client *Client) List(prefix string, delimiter ...string) iter.Seq[*s3.ListObjectsV2Output] {
-	input := &s3.ListObjectsV2Input{
-		Bucket: aws.String(client.bucket),
-		Prefix: aws.String(prefix),
+func listErr(err error) error {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
 
-	if len(delimiter) > 0 && delimiter[0] != "" {
-		input.Delimiter = aws.String(delimiter[0])
-	}
+	return errnie.Error(errnie.Err(
+		errnie.IO, "[store.client] listing error", err,
+	))
+}
 
-	paginator := s3.NewListObjectsV2Paginator(client.s3Client, input)
+func (client *Client) listObjects(
+	ctx context.Context,
+	prefix,
+	delimiter string,
+) iter.Seq2[*s3.ListObjectsV2Output, error] {
+	return func(yield func(*s3.ListObjectsV2Output, error) bool) {
+		if client == nil || client.s3Client == nil {
+			yield(nil, listErr(errnie.Err(
+				errnie.Validation, "[store.client] client is nil", nil,
+			)))
 
-	return func(yield func(*s3.ListObjectsV2Output) bool) {
+			return
+		}
+
+		input := &s3.ListObjectsV2Input{
+			Bucket: aws.String(client.bucket),
+			Prefix: aws.String(prefix),
+		}
+
+		if delimiter != "" {
+			input.Delimiter = aws.String(delimiter)
+		}
+
+		paginator := s3.NewListObjectsV2Paginator(client.s3Client, input)
+
 		for paginator.HasMorePages() {
-			page, err := paginator.NextPage(client.Context())
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO, "[store.client] listing error", err,
-				))
-
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
 				return
 			}
 
-			if !yield(page) {
+			page, err := paginator.NextPage(ctx)
+
+			if err != nil {
+				yield(nil, listErr(err))
+				return
+			}
+
+			if !yield(page, nil) {
+				return
+			}
+		}
+	}
+}
+
+func (client *Client) List(prefix string, delimiter ...string) iter.Seq[*s3.ListObjectsV2Output] {
+	delim := ""
+
+	if len(delimiter) > 0 {
+		delim = delimiter[0]
+	}
+
+	return func(yield func(*s3.ListObjectsV2Output) bool) {
+		if client == nil {
+			return
+		}
+
+		for page, err := range client.listObjects(client.Context(), prefix, delim) {
+			if err != nil || page == nil || !yield(page) {
 				return
 			}
 		}
@@ -182,29 +202,84 @@ func (client *Client) Download(key string) ([]byte, error) {
 }
 
 /*
-ListKeys collects all object keys matching the given prefix(es) and sorts them
-chronologically by (Epoch, Tick, SeqIdx).
+ListKeys collects object keys under prefixes, drops duplicates, and sorts them
+by epoch, tick, then the full key. Canonical keys store those segments as
+zero-padded decimals, so that string order is numeric order. A listing failure
+returns no keys: a partial page is not reported as the complete set.
 */
 func (client *Client) ListKeys(prefixes ...string) []string {
+	return client.ListKeysProgress(nil, prefixes...)
+}
+
+/*
+ListKeysProgress is ListKeys. onPage receives how many distinct keys are known
+after each page, before the final sort.
+*/
+func (client *Client) ListKeysProgress(onPage func(int), prefixes ...string) []string {
+	if client == nil {
+		return nil
+	}
+
+	keys, err := client.collectKeys(client.Context(), onPage, prefixes...)
+
+	if err != nil {
+		return nil
+	}
+
+	return keys
+}
+
+func (client *Client) collectKeys(ctx context.Context, onPage func(int), prefixes ...string) ([]string, error) {
+	if client == nil || client.s3Client == nil {
+		return nil, listErr(errnie.Err(
+			errnie.Validation, "[store.client] client is nil", nil,
+		))
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if len(prefixes) == 0 {
 		prefixes = []string{""}
 	}
 
+	seen := make(map[string]struct{})
 	keys := make([]string, 0)
-	seen := make(map[string]bool)
 
 	for _, prefix := range prefixes {
-		for page := range client.List(prefix) {
+		for page, err := range client.listObjects(ctx, prefix, "") {
+			if err != nil {
+				return nil, err
+			}
+
+			if page == nil {
+				continue
+			}
+
 			for _, object := range page.Contents {
-				if object.Key != nil && !seen[*object.Key] {
-					seen[*object.Key] = true
-					keys = append(keys, *object.Key)
+				if object.Key == nil {
+					continue
 				}
+
+				key := *object.Key
+
+				if _, ok := seen[key]; ok {
+					continue
+				}
+
+				seen[key] = struct{}{}
+				keys = append(keys, key)
+			}
+
+			if onPage != nil {
+				onPage(len(keys))
 			}
 		}
 	}
 
-	return SortKeys(keys)
+	sortKeys(keys)
+	return keys, nil
 }
 
 /*
@@ -271,7 +346,12 @@ func (client *Client) DeletePrefix(prefix string) error {
 		return nil
 	}
 
-	keys := client.ListKeys(prefix)
+	keys, err := client.collectKeys(client.Context(), nil, prefix)
+
+	if err != nil {
+		return err
+	}
+
 	for _, key := range keys {
 		_, err := client.s3Client.DeleteObject(client.Context(), &s3.DeleteObjectInput{
 			Bucket: aws.String(client.bucket),
@@ -294,7 +374,12 @@ func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 		return nil
 	}
 
-	keys := client.ListKeys(sourcePrefix)
+	keys, err := client.collectKeys(client.Context(), nil, sourcePrefix)
+
+	if err != nil {
+		return err
+	}
+
 	for _, key := range keys {
 		relKey := strings.TrimPrefix(key, sourcePrefix)
 		destKey := strings.TrimSuffix(destPrefix, "/") + "/" + strings.TrimPrefix(relKey, "/")

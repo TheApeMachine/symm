@@ -84,10 +84,11 @@ type Detector interface {
 client is one dashboard socket. Its frames queue has one writer goroutine.
 Broadcast frames (Hub.Write) never wait on it; a stream written through the
 client itself (io.Writer) waits for room, so a stream is never dropped, and
-ends when the socket closes. A new stream of a kind ("hindsight", and the
-detections' "detection runs", "detection excursions" and "detection tape")
-cancels the one of that kind in flight; kinds run side by side, so opening an
-excursion's tape leaves its epoch's excursions streaming.
+ends when the socket closes. A new stream of a kind cancels the one of
+that kind in flight. Kinds run side by side. The hindsight index and the
+open symbol tape are different kinds, so opening a symbol leaves the index
+naming the others. A new run's index cancels the tape from the run it
+replaces. Switching the open symbol cancels only that tape.
 */
 type client struct {
 	frames  chan []byte
@@ -110,12 +111,35 @@ func (client *client) Write(p []byte) (int, error) {
 }
 
 /*
-replay cancels the client's hindsight replay in flight, if any, and starts this one.
+replay starts the run index or one symbol tape. The index keeps naming
+symbols while a tape is open. A new index replaces the previous index and
+cancels the tape. A new tape replaces only the previous tape.
 */
 func (client *client) replay(parent context.Context, replayer Replayer, run uint64, symbol string) {
-	client.stream(parent, "hindsight", fmt.Sprintf("run %d %q", run, symbol), func(ctx context.Context) error {
+	kind := "hindsight-tape"
+
+	if symbol == "" {
+		kind = "hindsight-index"
+		client.cancelStream("hindsight-tape")
+	}
+
+	client.stream(parent, kind, fmt.Sprintf("run %d %q", run, symbol), func(ctx context.Context) error {
 		return replayer.Stream(ctx, client, run, symbol)
 	})
+}
+
+func (client *client) cancelStream(kind string) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if client.cancels == nil {
+		return
+	}
+
+	if cancel := client.cancels[kind]; cancel != nil {
+		cancel()
+		delete(client.cancels, kind)
+	}
 }
 
 /*

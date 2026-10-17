@@ -10,9 +10,12 @@ storage:
     # credentials fails, so anonymous access is declared rather than inferred
     # from the absence of a key.
     anonymous: true
-    max_idle_conns: 64
-    max_idle_conns_per_host: 64
-    max_conns_per_host: 64
+    max_idle_conns: 128
+    max_idle_conns_per_host: 128
+    max_conns_per_host: 128
+    idle_conn_timeout: 90s
+    response_header_timeout: 30s
+    request_timeout: 10s
   iceberg:
     # SeaweedFS serves one Iceberg catalog per table bucket, so warehouse
     # selects the catalog rather than naming a directory inside a shared one.
@@ -167,6 +170,7 @@ kraken:
 market:
   model: paper
   quote_currency: USD
+  taker_fee: 0.8
   balance: 200 # No, this is neither a typo nor a test amount. It is the exact amount I 
                # found in my Kraken account, and the only money I am willing to risk.
                # Now, you might think this system is therefore overkill. That is a valid point.

@@ -6,8 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
-	"strconv"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/cobra"
@@ -36,17 +34,10 @@ layers, and runs the excursion detector against that book. The taker-fee flag
 is the friction rate when a tick's price layer has no fee. Excursions are
 written back with io.Copy.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		system.NewConfig()
-
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
-		bucket := "symm"
-
-		if system.Cfg != nil && system.Cfg.Storage != nil && system.Cfg.Storage.S3 != nil && system.Cfg.Storage.S3.Bucket != "" {
-			bucket = system.Cfg.Storage.S3.Bucket
-		}
-
+		bucket := system.Cfg.Storage.S3.Bucket
 		client := store.NewClient(ctx, bucket)
 
 		if client == nil {
@@ -59,16 +50,6 @@ written back with io.Copy.`,
 
 		defer client.Close()
 
-		feePct, err := strconv.ParseFloat(detectFeePct, 64)
-
-		if err != nil || feePct <= 0 {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[detect] taker-fee-percent must be a positive percent per side",
-				err,
-			))
-		}
-
 		price := broker.NewPrice(ctx, nil, nil, nil, nil)
 		cash := 200.0
 
@@ -77,7 +58,9 @@ written back with io.Copy.`,
 		}
 
 		price.SetReferenceCash(decimal.NewFromFloat64(cash))
-		price.SetDefaultFee(kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(feePct)})
+		price.SetDefaultFee(kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(system.Cfg.Market.TakerFee),
+		})
 
 		detector := strategy.NewDetector(ctx, price)
 
@@ -103,41 +86,48 @@ written back with io.Copy.`,
 			want[symbol] = struct{}{}
 		}
 
-		var tickTotal int64
+		prefixes := make([]string, 0, len(epochs))
 
 		for _, epoch := range epochs {
-			tickTotal += int64(len(client.ListKeys(data.TickPrefix(epoch))))
+			prefixes = append(prefixes, data.TickPrefix(epoch))
 		}
 
-		bar := progress.New("detect ticks", tickTotal)
+		listing := progress.Spin("listing ticks")
+		keys := []string{}
+
+		if len(prefixes) > 0 {
+			keys = client.ListKeysProgress(func(n int) {
+				listing.Describe("listing ticks %d", n)
+			}, prefixes...)
+		}
+
+		listing.Finish()
+
+		bar := progress.New("detect ticks", int64(len(keys)))
 		defer bar.Finish()
 
-		for _, epoch := range epochs {
-			for frame, err := range store.Values(client, data.TickPrefix(epoch)) {
-				if err != nil {
-					return errnie.Error(err)
-				}
+		for frame, err := range store.ParallelValuesProgress(client, keys, bar.Step) {
+			if err != nil {
+				return errnie.Error(err)
+			}
 
-				bar.Step()
+			ticks, err := broker.ReadTick(frame)
 
-				ticks, err := broker.ReadTick(frame)
+			if err != nil {
+				errnie.Error(err)
+				continue
+			}
 
-				if err != nil {
-					errnie.Error(err)
-					continue
-				}
-
-				for _, tick := range ticks {
-					if len(want) > 0 {
-						if _, ok := want[tick.Symbol]; !ok {
-							continue
-						}
+			for _, tick := range ticks {
+				if len(want) > 0 {
+					if _, ok := want[tick.Symbol]; !ok {
+						continue
 					}
+				}
 
-					for _, value := range detector.Replay(frame, tick) {
-						if _, err := io.Copy(client, value); err != nil {
-							return errnie.Error(err)
-						}
+				for _, value := range detector.Replay(frame, tick) {
+					if _, err := io.Copy(client, value); err != nil {
+						return errnie.Error(err)
 					}
 				}
 			}
@@ -184,31 +174,7 @@ func detectRunEpochs(client *store.Client) ([]uint64, error) {
 		return epochs, nil
 	}
 
-	var epochs []uint64
-
-	for page := range client.List(data.TickPrefix(), "/") {
-		if page == nil {
-			continue
-		}
-
-		for _, prefix := range page.CommonPrefixes {
-			if prefix.Prefix == nil {
-				continue
-			}
-
-			epoch, err := data.KeyEpoch(data.TickPrefix(), *prefix.Prefix)
-
-			if err != nil {
-				continue
-			}
-
-			epochs = append(epochs, epoch)
-		}
-	}
-
-	slices.Sort(epochs)
-
-	return epochs, nil
+	return store.Epochs(client, data.TickPrefix())
 }
 
 func init() {

@@ -182,6 +182,8 @@ export type TimelineProps = {
 	onPosition: (position: Position) => void;
 	onZoom: (from: number, to: number) => void;
 	onResetZoom: () => void;
+	onMark?: (label: string, sequence: number) => void;
+	emptyLabel?: string;
 };
 
 export const Timeline = ({
@@ -198,10 +200,13 @@ export const Timeline = ({
 	onPosition,
 	onZoom,
 	onResetZoom,
+	onMark,
+	emptyLabel,
 }: TimelineProps) => {
 	const { ref, width } = useMeasure<HTMLDivElement>();
 	const [hover, setHover] = useState<number | null>(null);
 	const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
+	const [heldMark, setHeldMark] = useState<string | null>(null);
 
 	const scale = useMemo(() => buildScale(timeline, width), [timeline, width]);
 	const buckets = timeline?.buckets ?? [];
@@ -300,6 +305,24 @@ export const Timeline = ({
 		[width],
 	);
 
+	const markAt = (x: number): string | null => {
+		if (onMark === undefined) return null;
+
+		let found: string | null = null;
+		let distance = 8;
+
+		for (const mark of marks) {
+			const gap = Math.abs(scale.xOf(mark.at) - x);
+
+			if (gap <= distance) {
+				distance = gap;
+				found = mark.label;
+			}
+		}
+
+		return found;
+	};
+
 	/*
 		The ribbons are painted marks, not controls, so the surface hit-tests them:
 		a click landing inside one selects that episode, a click anywhere else parks
@@ -356,7 +379,7 @@ export const Timeline = ({
 			<div ref={ref} className="min-h-40 flex-1">
 				<p className="px-4 py-8 font-mono text-[10px] text-(--f4)">
 					{timeline === null
-						? "Select an instrument to project its tape."
+						? (emptyLabel ?? "Select an instrument to project its tape.")
 						: "Measuring…"}
 				</p>
 			</div>
@@ -382,6 +405,12 @@ export const Timeline = ({
 					onMouseMove={(event) => {
 						const x = positionOf(event);
 						setHover(x);
+
+						if (heldMark !== null && onMark !== undefined) {
+							onMark(heldMark, Math.round(scale.sequenceAt(x)));
+							return;
+						}
+
 						setDrag((current) =>
 							current === null ? null : { ...current, to: x },
 						);
@@ -389,13 +418,29 @@ export const Timeline = ({
 					onMouseLeave={() => {
 						setHover(null);
 						setDrag(null);
+						setHeldMark(null);
 					}}
 					onMouseDown={(event) => {
 						const x = positionOf(event);
+						const mark = markAt(x);
+
+						if (mark !== null) {
+							setHeldMark(mark);
+							setDrag(null);
+							return;
+						}
+
 						setDrag({ from: x, to: x });
 					}}
 					onMouseUp={(event) => {
 						const x = positionOf(event);
+
+						if (heldMark !== null && onMark !== undefined) {
+							onMark(heldMark, Math.round(scale.sequenceAt(x)));
+							setHeldMark(null);
+							setDrag(null);
+							return;
+						}
 						const bounds = event.currentTarget.getBoundingClientRect();
 						const y = event.clientY - bounds.top;
 						const hit = episodeAt(x, y);

@@ -308,7 +308,9 @@ export const ingestHindsightFrame = (frame: HindsightFrame) => {
 					fields: readVector(onlyLayer(frame), HINDSIGHT_TICK_KEYS),
 				});
 				break;
-			case "detector": {
+			case "detector":
+			case "draft":
+			case "detections": {
 				const layer = onlyLayer(frame);
 				target.excursions.push({
 					kind: keyRole(layer),

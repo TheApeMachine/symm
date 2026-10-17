@@ -274,25 +274,11 @@ func send(stages []AuditorStage, measurement *data.Value) {
 epochsUnder lists the epoch segments stored under prefix, oldest first.
 */
 func epochsUnder(client *s3store.Client, prefix string) ([]uint64, error) {
-	epochs := make([]uint64, 0)
+	epochs, err := s3store.Epochs(client, prefix)
 
-	for page := range client.List(prefix, "/") {
-		for _, common := range page.CommonPrefixes {
-			if common.Prefix == nil {
-				continue
-			}
-
-			epoch, err := data.KeyEpoch(prefix, *common.Prefix)
-
-			if err != nil {
-				return nil, err
-			}
-
-			epochs = append(epochs, epoch)
-		}
+	if err != nil {
+		return nil, err
 	}
-
-	slices.Sort(epochs)
 
 	return slices.Compact(epochs), nil
 }

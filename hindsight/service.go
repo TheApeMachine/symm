@@ -410,7 +410,7 @@ func (service *Service) symbol(ctx context.Context, w io.Writer, run uint64, sym
 		counts["papers"]++
 	}
 
-	for value, err := range store.Values(service.client, data.TickPrefix(run)) {
+	for value, err := range store.ValuesPaged(service.client, data.TickPrefix(run)) {
 		if err != nil {
 			return err
 		}
@@ -496,9 +496,8 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 	order := make([]string, 0)
 	symbols := make(map[string]*summary)
 	ticks := 0.0
-	announced := false
 
-	for value, err := range store.Values(service.client, data.TickPrefix(run)) {
+	for value, err := range store.ValuesPaged(service.client, data.TickPrefix(run)) {
 		if err != nil {
 			return err
 		}
@@ -549,9 +548,7 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 			}
 		}
 
-		if added && !announced {
-			announced = true
-
+		if added {
 			if flusher, ok := w.(interface{ Flush() error }); ok {
 				if err := flusher.Flush(); err != nil {
 					return err
