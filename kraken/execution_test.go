@@ -3,6 +3,7 @@ package kraken_test
 import (
 	"testing"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
@@ -85,5 +86,18 @@ func TestExecutionMeasurementRoundTrip(t *testing.T) {
 				So(item.FeeUsdEquiv.String(), ShouldEqual, "12.50")
 			})
 		})
+	})
+}
+
+func TestExecutionSubscriptionMarshal(t *testing.T) {
+	Convey("ExecutionSubscription encodes private executions subscribe", t, func() {
+		raw, err := sonic.Marshal(kraken.NewExecutionSubscription("tok-1"))
+		So(err, ShouldBeNil)
+		var decoded map[string]any
+		So(sonic.Unmarshal(raw, &decoded), ShouldBeNil)
+		So(decoded["method"], ShouldEqual, "subscribe")
+		params := decoded["params"].(map[string]any)
+		So(params["channel"], ShouldEqual, "executions")
+		So(params["token"], ShouldEqual, "tok-1")
 	})
 }

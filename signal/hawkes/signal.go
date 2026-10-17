@@ -66,26 +66,31 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	side := trade.Side
 	var mark float64
-	if side == "buy" {
+
+	switch side {
+	case "buy":
 		mark = 1.0
-	} else if side == "sell" {
+	case "sell":
 		mark = -1.0
-	} else {
+	default:
 		return value
 	}
 
 	price := trade.Price.Float64()
 	qty := trade.Qty
+
 	if price <= 0 || qty <= 0 {
 		return value
 	}
 
 	atSec := float64(value.Timestamp) * 1e-9
+
 	if atSec <= 0 {
 		return value
 	}
 
 	state, exists := signal.models[trade.Symbol]
+
 	if !exists {
 		state = &symbolModel{
 			estimator: nmhawkes.NewHawkes(),
@@ -94,6 +99,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	}
 
 	res, _, err := state.estimator.Step(mark, atSec)
+
 	if err != nil {
 		errnie.Error(errnie.Err(errnie.Internal, "[hawkes] estimator step failed for "+trade.Symbol, err))
 		return value
@@ -103,10 +109,12 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	sellRate := res["arrival_rate:sell"]
 	radius := res["branching_spectral_radius"]
 	intensity := res["conditional_intensity"]
+
 	var intensityVelocity float64
 
 	if intensity > 0 && state.hasPrev {
 		timeDelta := atSec - state.prevAtSec
+
 		if core.Resolvable(timeDelta) {
 			intensityVelocity = (intensity - state.prevIntensity) / timeDelta
 		}

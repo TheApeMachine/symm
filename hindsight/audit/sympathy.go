@@ -264,7 +264,7 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 					copy(shuffledReturns, rightPath.Returns)
 					rng := rand.New(rand.NewSource(42 + int64(outerIdx*1000+innerIdx)))
 
-					for iter := 0; iter < permutations; iter++ {
+					for range permutations {
 						rng.Shuffle(len(shuffledReturns), func(i, j int) {
 							shuffledReturns[i].Value, shuffledReturns[j].Value = shuffledReturns[j].Value, shuffledReturns[i].Value
 						})

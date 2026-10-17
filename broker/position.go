@@ -157,6 +157,23 @@ func (position *Position) Exit(symbol string) *spot.OrderRequest {
 	return order
 }
 
+/*
+abandonExit drops the sell Exit just recorded when the venue did not take it,
+so a later exit can submit again.
+*/
+func (position *Position) abandonExit() {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if len(position.exitOrders) > 0 {
+		position.exitOrders = position.exitOrders[:len(position.exitOrders)-1]
+	}
+
+	if n := len(position.events); n > 0 && position.events[n-1].Kind == "exit_order" {
+		position.events = position.events[:n-1]
+	}
+}
+
 func (position *Position) Qty() *decimal.Decimal {
 	position.mu.RLock()
 	defer position.mu.RUnlock()

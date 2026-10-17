@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 export GOFLAGS="${GOFLAGS:--ldflags=-checklinkname=0}"
+if [[ -f "$ROOT/overlay.json" ]]; then
+	GO_TEST_OVERLAY=(-overlay="$ROOT/overlay.json")
+else
+	GO_TEST_OVERLAY=()
+fi
 if [[ -f "$ROOT/go.work" ]]; then
 	export GOWORK="${GOWORK:-$ROOT/go.work}"
 else
@@ -71,7 +76,7 @@ go_test_modules() {
 	for module in "${GO_MODULES[@]}"; do
 		(
 			cd "$module"
-			go test "${args[@]}" ./...
+			go test "${GO_TEST_OVERLAY[@]}" "${args[@]}" ./...
 		) || status=$?
 	done
 

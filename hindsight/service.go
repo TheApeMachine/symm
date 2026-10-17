@@ -54,15 +54,15 @@ route; everything else streams as hindsight Values over the hub websocket
 */
 type Service struct {
 	ctx    context.Context
-	reader *store.Reader
+	client *store.Client
 }
 
-func NewService(ctx context.Context, reader *store.Reader) (*Service, error) {
-	if reader == nil {
-		return nil, errnie.Err(errnie.Validation, "[hindsight] a store reader is required", nil)
+func NewService(ctx context.Context, client *store.Client) (*Service, error) {
+	if client == nil {
+		return nil, errnie.Err(errnie.Validation, "[hindsight] a store client is required", nil)
 	}
 
-	return &Service{ctx: ctx, reader: reader}, nil
+	return &Service{ctx: ctx, client: client}, nil
 }
 
 /*
@@ -84,13 +84,13 @@ func (service *Service) Register(router fiber.Router) {
 Runs lists every epoch with stored ticks, newest first.
 */
 func (service *Service) Runs() ([]Run, error) {
-	epochs, err := service.reader.Epochs(data.TickPrefix())
+	epochs, err := store.Epochs(service.client, data.TickPrefix())
 
 	if err != nil {
 		return nil, err
 	}
 
-	gates, err := service.reader.PolicyGates()
+	gates, err := store.PolicyGates(service.client)
 
 	if err != nil {
 		return nil, err
@@ -225,7 +225,7 @@ func (service *Service) policies(epoch uint64) iter.Seq2[*data.Value, error] {
 		return func(func(*data.Value, error) bool) {}
 	}
 
-	return service.reader.Values(data.PolicyPrefixes(epoch)...)
+	return store.Values(service.client,data.PolicyPrefixes(epoch)...)
 }
 
 func forward(w io.Writer, value *data.Value, run uint64, symbol string) error {
@@ -242,7 +242,7 @@ func forward(w io.Writer, value *data.Value, run uint64, symbol string) error {
 newestPolicy is the newest policy epoch trained on run's ticks, 0 when none.
 */
 func (service *Service) newestPolicy(run uint64) (uint64, error) {
-	gates, err := service.reader.PolicyGates()
+	gates, err := store.PolicyGates(service.client)
 
 	if err != nil {
 		return 0, err
@@ -282,12 +282,12 @@ func (service *Service) symbol(ctx context.Context, w io.Writer, run uint64, sym
 		counts["policies"]++
 	}
 
-	for value, err := range service.reader.Values(data.ExcursionPrefixes(symbol, run)...) {
+	for value, err := range store.Values(service.client,data.ExcursionPrefixes(symbol, run)...) {
 		if err != nil {
 			return err
 		}
 
-		if _, err := data.ExcursionFields(value); err != nil {
+		if _, err := data.DetectExcursionFields(value); err != nil {
 			return err
 		}
 
@@ -298,7 +298,7 @@ func (service *Service) symbol(ctx context.Context, w io.Writer, run uint64, sym
 		counts["excursions"]++
 	}
 
-	for value, err := range service.reader.Values(data.PaperPrefixes(symbol)...) {
+	for value, err := range store.Values(service.client,data.PaperPrefixes(symbol)...) {
 		if err != nil {
 			return err
 		}
@@ -320,7 +320,7 @@ func (service *Service) symbol(ctx context.Context, w io.Writer, run uint64, sym
 		counts["papers"]++
 	}
 
-	for value, err := range service.reader.Values(data.TickPrefix(run)) {
+	for value, err := range store.Values(service.client,data.TickPrefix(run)) {
 		if err != nil {
 			return err
 		}
@@ -407,7 +407,7 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 	symbols := make(map[string]*summary)
 	ticks := 0.0
 
-	for value, err := range service.reader.Values(data.TickPrefix(run)) {
+	for value, err := range store.Values(service.client,data.TickPrefix(run)) {
 		if err != nil {
 			return err
 		}
@@ -459,7 +459,7 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 		classes := map[string]float64{}
 		top := 0.0
 
-		for value, err := range service.reader.Values(data.ExcursionPrefixes(symbol, run)...) {
+		for value, err := range store.Values(service.client,data.ExcursionPrefixes(symbol, run)...) {
 			if err != nil {
 				return err
 			}
@@ -471,7 +471,7 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 				continue
 			}
 
-			fields, err := data.ExcursionFields(value)
+			fields, err := data.DetectExcursionFields(value)
 
 			if err != nil {
 				return err

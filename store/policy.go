@@ -9,18 +9,6 @@ import (
 	"github.com/theapemachine/symm/data"
 )
 
-/*
-PolicyGates reads the data.PolicyGate of every published policy epoch,
-oldest first, through reader. Which tick epoch a policy epoch was trained
-on is on its gate (TickEpoch).
-*/
-func (reader *Reader) PolicyGates() ([]data.PolicyGate, error) {
-	return policyGates(reader.Epochs, reader.Values)
-}
-
-/*
-PolicyGates is Reader.PolicyGates through client.
-*/
 func PolicyGates(client *Client) ([]data.PolicyGate, error) {
 	return policyGates(
 		func(prefix string) ([]uint64, error) { return Epochs(client, prefix) },
@@ -28,10 +16,6 @@ func PolicyGates(client *Client) ([]data.PolicyGate, error) {
 	)
 }
 
-/*
-policyGates reads the first policy of each policy epoch for its gate: train
-tags every policy of an epoch alike, and LoadCognitionTree checks them all.
-*/
 func policyGates(
 	epochs func(string) ([]uint64, error),
 	values func(...string) iter.Seq2[*data.Value, error],

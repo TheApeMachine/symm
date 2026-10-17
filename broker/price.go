@@ -160,6 +160,52 @@ func (price *Price) Normalizer() *spot.Normalizer {
 }
 
 /*
+InstallPair teaches the normalizer one pair from a stored tick's instrument
+layer, so FormatSize can lot-round that symbol without a live asset list.
+*/
+func (price *Price) InstallPair(pair kraken.InstrumentPair) {
+	if price == nil || price.normalizer == nil || pair.Symbol == "" {
+		return
+	}
+
+	base, quote, ok := strings.Cut(pair.Symbol, "/")
+
+	if !ok || base == "" || quote == "" {
+		return
+	}
+
+	if pair.Base == "" {
+		pair.Base = base
+	}
+
+	if pair.Quote == "" {
+		pair.Quote = quote
+	}
+
+	price.normalizer.Update(&spot.AssetsManagerUpdate{
+		NewAssets: map[string]spot.AssetInfo{
+			base:  {AltName: base, Decimals: pair.QtyPrecision, Status: pair.Status},
+			quote: {AltName: quote, Decimals: pair.PricePrecision, Status: pair.Status},
+		},
+		NewPairs: map[string]spot.AssetPair{
+			base + quote: {
+				WSName:        pair.Symbol,
+				Base:          pair.Base,
+				Quote:         pair.Quote,
+				PairDecimals:  pair.PricePrecision,
+				CostDecimals:  pair.CostPrecision,
+				LotDecimals:   pair.QtyPrecision,
+				LotMultiplier: 1,
+				TickSize:      pair.TickSize,
+				OrderMinimum:  pair.QtyMin,
+				CostMinimum:   pair.CostMin,
+				Status:        pair.Status,
+			},
+		},
+	})
+}
+
+/*
 SeedNormalizer loads public Assets and AssetPairs into n so FormatSize/FormatPrice
 and Name resolve venue lot facts. Call once at construction; do not invent scales.
 */

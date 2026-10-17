@@ -120,13 +120,13 @@ func (stage *PrecursorStage) Violations() []*Violation {
 func (stage *PrecursorStage) recordMeasurement(measurement *data.Value) error {
 	// 1. Sensory join: the symbol's dominant region per tick.
 	if measurement.Role == "runtime:join" {
-		frame, err := stage.grid.Observe(measurement, measurement.Scope)
+		regions, err := stage.grid.Observe(measurement)
 
 		if err != nil {
 			return err
 		}
 
-		if len(frame.Regions) > 0 && frame.Regions[0].Brightness > 0 {
+		if len(regions) > 0 && regions[0].Brightness > 0 {
 			tokens, ok := stage.tickTokens[measurement.Scope]
 
 			if !ok {
@@ -134,7 +134,7 @@ func (stage *PrecursorStage) recordMeasurement(measurement *data.Value) error {
 				stage.tickTokens[measurement.Scope] = tokens
 			}
 
-			tokens[int64(measurement.Tick)] = regionToken(frame.Regions[0].Key)
+			tokens[int64(measurement.Tick)] = regionToken(regions[0].Key)
 		}
 
 		return nil

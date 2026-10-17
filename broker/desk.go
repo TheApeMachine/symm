@@ -102,13 +102,19 @@ func (desk *Desk) restore() {
 	// Balance carries market.quote_currency from construction; an empty
 	// quote cannot be restored against.
 	if quote == "" {
-		errnie.Error(errnie.Err(errnie.Validation, "[desk] balance has no quote currency to restore against", nil))
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] balance has no quote currency to restore against",
+			nil,
+		))
 		return
 	}
+	
 	quoteAlias := kraken.AssetAlias(quote)
 
 	if paper, ok := desk.transport.(*Paper); ok {
 		history, err := paper.TradesHistory()
+
 		if err == nil && len(history.Trades) > 0 {
 			desk.restoreFromHistory(history.Trades, quote)
 		}
@@ -318,6 +324,10 @@ func (desk *Desk) Enter(symbol string, qty *decimal.Decimal, path ...string) err
 	position := NewPosition()
 	order := position.Enter(symbol, qty, path...)
 
+	if err := desk.submit(symbol, order); err != nil {
+		return err
+	}
+
 	desk.mu.Lock()
 	untyped, loaded := desk.positions.Load(symbol)
 
@@ -332,7 +342,7 @@ func (desk *Desk) Enter(symbol string, qty *decimal.Decimal, path ...string) err
 
 	desk.mu.Unlock()
 
-	return desk.submit(symbol, order)
+	return nil
 }
 
 /*
@@ -405,7 +415,10 @@ func (desk *Desk) Exit(symbol string) error {
 	desk.mu.Unlock()
 
 	for _, position := range posList {
-		if err := desk.submit(lookupSymbol, position.Exit(lookupSymbol)); err != nil {
+		order := position.Exit(lookupSymbol)
+
+		if err := desk.submit(lookupSymbol, order); err != nil {
+			position.abandonExit()
 			return errnie.Error(err)
 		}
 	}
@@ -566,7 +579,12 @@ func (desk *Desk) BalanceJSON() []byte {
 	raw, err := sonic.Marshal(wallet)
 
 	if err != nil {
-		errnie.Error(errnie.Err(errnie.UnprocessableContent, "[desk] balance marshal failed", err))
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[desk] balance marshal failed",
+			err,
+		))
+
 		return nil
 	}
 
@@ -583,13 +601,20 @@ func (desk *Desk) PositionsJSON(symbol ...string) []byte {
 
 	if len(symbol) > 0 && symbol[0] != "" {
 		open := desk.Open(symbol[0])
+
 		if len(open) == 0 {
 			return nil
 		}
+
 		raw, err := sonic.Marshal(open)
 
 		if err != nil {
-			errnie.Error(errnie.Err(errnie.UnprocessableContent, "[desk] positions marshal failed", err))
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[desk] positions marshal failed",
+				err,
+			))
+
 			return nil
 		}
 
@@ -597,10 +622,12 @@ func (desk *Desk) PositionsJSON(symbol ...string) []byte {
 	}
 
 	var all []*Position
+
 	desk.positions.Range(func(_, val any) bool {
 		if pos, ok := val.(*Position); ok && pos != nil {
 			all = append(all, pos)
 		}
+
 		return true
 	})
 
@@ -611,7 +638,11 @@ func (desk *Desk) PositionsJSON(symbol ...string) []byte {
 	raw, err := sonic.Marshal(all)
 
 	if err != nil {
-		errnie.Error(errnie.Err(errnie.UnprocessableContent, "[desk] positions marshal failed", err))
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[desk] positions marshal failed",
+			err,
+		))
 		return nil
 	}
 

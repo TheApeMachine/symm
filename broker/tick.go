@@ -17,12 +17,13 @@ the frame for the symbol, its price layer, its book (or the tick's record of
 why the book was not valid), and every signal layer written for it.
 */
 type SymbolTick struct {
-	Symbol  string
-	Trades  []kraken.TradeData
-	Price   PriceLayer
-	Book    *Snapshot
-	BookErr error
-	Signals []data.Signal
+	Symbol     string
+	Trades     []kraken.TradeData
+	Price      PriceLayer
+	Book       *Snapshot
+	BookErr    error
+	Instrument kraken.InstrumentPair
+	Signals    []data.Signal
 }
 
 /*
@@ -35,23 +36,27 @@ ErrBookNotValid), so a reader skips it on the tick's explicit record.
 */
 func ReadTick(value *data.Value) ([]*SymbolTick, error) {
 	if value == nil {
-		return nil, errnie.Err(errnie.Validation, "broker: no tick to read", nil)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "broker: no tick to read", nil,
+		))
 	}
 
 	if err := data.CheckTickLayers(value); err != nil {
-		return nil, err
+		return nil, errnie.Error(err)
 	}
 
 	layer, err := tradeLayer(value)
 
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(err)
 	}
 
 	trades, err := data.AttributeOk[[]kraken.TradeData](layer, "data")
 
 	if err != nil {
-		return nil, errnie.Err(errnie.UnprocessableContent, "broker: trade layer of "+value.Prefix+" does not decode", err)
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "broker: trade layer of "+value.Prefix+" does not decode", err,
+		))
 	}
 
 	ticks := make([]*SymbolTick, 0, 1)
@@ -69,11 +74,15 @@ func ReadTick(value *data.Value) ([]*SymbolTick, error) {
 		raw := SymbolLayer(value, data.LayerPrice, symbol)
 
 		if raw == nil {
-			return nil, errnie.Err(errnie.NotFound, fmt.Sprintf("broker: %s has no price/%s layer", value.Prefix, symbol), nil)
+			return nil, errnie.Error(errnie.Err(
+				errnie.NotFound, fmt.Sprintf("broker: %s has no price/%s layer", value.Prefix, symbol), nil,
+			))
 		}
 
 		if err := sonic.Unmarshal(raw, &tick.Price); err != nil {
-			return nil, errnie.Err(errnie.UnprocessableContent, fmt.Sprintf("broker: price/%s of %s does not decode", symbol, value.Prefix), err)
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, fmt.Sprintf("broker: price/%s of %s does not decode", symbol, value.Prefix), err,
+			))
 		}
 
 		tick.Book, err = ReadSnapshot(value, symbol)
@@ -83,7 +92,17 @@ func ReadTick(value *data.Value) ([]*SymbolTick, error) {
 		}
 
 		if err != nil {
-			return nil, errnie.Err(errnie.UnprocessableContent, "broker: book of "+value.Prefix, err)
+			return nil, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, "broker: book of "+value.Prefix, err,
+			))
+		}
+
+		if raw = SymbolLayer(value, data.LayerInstrument, symbol); raw != nil {
+			if err := sonic.Unmarshal(raw, &tick.Instrument); err != nil {
+				return nil, errnie.Error(errnie.Err(errnie.UnprocessableContent, fmt.Sprintf(
+					"broker: instrument/%s of %s does not decode", symbol, value.Prefix,
+				), err))
+			}
 		}
 
 		ticks = append(ticks, tick)
@@ -92,22 +111,46 @@ func ReadTick(value *data.Value) ([]*SymbolTick, error) {
 
 	for signal, err := range data.Signals(value) {
 		if err != nil {
-			return nil, err
+			return nil, errnie.Error(err)
 		}
 
 		tick, ok := bySymbol[signal.Symbol]
 
 		if !ok {
-			return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
+			return nil, errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf(
 				"broker: %s carries a %s signal for %s, which the frame did not trade",
 				value.Prefix, signal.Source, signal.Symbol,
-			), nil)
+			), nil,
+			))
 		}
 
 		tick.Signals = append(tick.Signals, signal)
 	}
 
 	return ticks, nil
+}
+
+/*
+TradedSymbols returns the symbols that appear in the tick's trade frame, in
+first-trade order. Aggregate ticks carry no single Scope symbol; callers that
+need an instrument for paper or policy use this (and dashboard focus) instead.
+*/
+func TradedSymbols(value *data.Value) ([]string, error) {
+	layer, err := tradeLayer(value)
+
+	if err != nil {
+		return nil, err
+	}
+
+	trades, err := data.AttributeOk[[]kraken.TradeData](layer, "data")
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "broker: trade layer does not decode", err,
+		))
+	}
+
+	return Symbols(trades), nil
 }
 
 /*
@@ -122,14 +165,18 @@ func tradeLayer(value *data.Value) ([]byte, error) {
 		}
 
 		if found != nil {
-			return nil, errnie.Err(errnie.Validation, "broker: "+value.Prefix+" carries more than one trade layer", nil)
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation, "broker: "+value.Prefix+" carries more than one trade layer", nil,
+			))
 		}
 
 		found = layer
 	}
 
 	if found == nil {
-		return nil, errnie.Err(errnie.NotFound, "broker: "+value.Prefix+" has no spot:trade layer", nil)
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "broker: "+value.Prefix+" has no spot:trade layer", nil,
+		))
 	}
 
 	return found, nil

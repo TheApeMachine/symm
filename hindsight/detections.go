@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/store"
 )
 
 /*
@@ -97,13 +98,7 @@ func (service *Service) excursionKeys() (map[uint64]map[string][]string, error) 
 	byEpoch := make(map[uint64]map[string][]string)
 
 	for _, class := range data.ExcursionClasses {
-		keys, err := service.reader.Keys(data.ExcursionOrigin + "/" + class + "/")
-
-		if err != nil {
-			return nil, err
-		}
-
-		for _, key := range keys {
+		for _, key := range service.client.ListKeys(data.ExcursionOrigin + "/" + class + "/") {
 			epoch, err := excursionEpoch(key)
 
 			if err != nil {
@@ -126,7 +121,7 @@ detectionRuns writes one HindsightDetectionRun per epoch with a detector
 watermark (every epoch detect labelled to completion), newest first.
 */
 func (service *Service) detectionRuns(ctx context.Context, w io.Writer) error {
-	epochs, err := service.reader.Epochs(data.Prefix(data.ExcursionOrigin, data.DetectorWatermarkRole, data.PolicyScope))
+	epochs, err := store.Epochs(service.client, data.Prefix(data.ExcursionOrigin, data.DetectorWatermarkRole, data.PolicyScope))
 
 	if err != nil {
 		return err
@@ -147,7 +142,7 @@ func (service *Service) detectionRuns(ctx context.Context, w io.Writer) error {
 
 		var watermark *data.DetectorWatermark
 
-		for value, err := range service.reader.Values(data.DetectorWatermarkPrefix(epoch)) {
+		for value, err := range store.Values(service.client, data.DetectorWatermarkPrefix(epoch)) {
 			if err != nil {
 				return err
 			}
@@ -205,7 +200,7 @@ func (service *Service) excursions(ctx context.Context, w io.Writer, run uint64)
 	total := 0.0
 
 	for _, class := range data.ExcursionClasses {
-		for value, err := range service.reader.Download(byEpoch[run][class]) {
+		for value, err := range store.Download(service.client, byEpoch[run][class]) {
 			if err != nil {
 				return err
 			}
@@ -214,7 +209,7 @@ func (service *Service) excursions(ctx context.Context, w io.Writer, run uint64)
 				return err
 			}
 
-			if _, err := data.ExcursionFields(value); err != nil {
+			if _, err := data.DetectExcursionFields(value); err != nil {
 				return err
 			}
 
@@ -256,15 +251,9 @@ func (service *Service) trades(ctx context.Context, w io.Writer, detection Detec
 
 	aTick, dTick := uint64(fields["a_tick"]), uint64(fields["d_tick"])
 	bTick, cTick := uint64(fields["b_tick"]), uint64(fields["c_tick"])
-	keys, err := service.reader.Keys(data.TickPrefix(detection.Run))
-
-	if err != nil {
-		return err
-	}
-
 	window := make([]string, 0)
 
-	for _, key := range keys {
+	for _, key := range service.client.ListKeys(data.TickPrefix(detection.Run)) {
 		tick, err := tickOfKey(key)
 
 		if err != nil {
@@ -327,7 +316,7 @@ func (service *Service) trades(ctx context.Context, w io.Writer, detection Detec
 		return nil
 	}
 
-	for value, err := range service.reader.Download(window) {
+	for value, err := range store.Download(service.client, window) {
 		if err != nil {
 			return err
 		}
@@ -425,7 +414,7 @@ func (service *Service) excursion(detection Detection) (map[string]float64, erro
 
 	var found map[string]float64
 
-	for value, err := range service.reader.Values(data.Prefix(data.ExcursionOrigin, detection.Class, detection.Symbol, detection.Run)) {
+	for value, err := range store.Values(service.client, data.Prefix(data.ExcursionOrigin, detection.Class, detection.Symbol, detection.Run)) {
 		if err != nil {
 			return nil, err
 		}
@@ -440,7 +429,7 @@ func (service *Service) excursion(detection Detection) (map[string]float64, erro
 			), nil)
 		}
 
-		fields, err := data.ExcursionFields(value)
+		fields, err := data.DetectExcursionFields(value)
 
 		if err != nil {
 			return nil, err

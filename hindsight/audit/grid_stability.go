@@ -84,12 +84,11 @@ func (stage *StabilityStage) Violations() []*Violation {
 }
 
 /*
-recordFrame logs the dominant region of one symbol's frame. Frames still
-warming up (no prior tick to normalize against) are counted apart: they are
-not missing observations.
+recordFrame logs the dominant region of one symbol's frame. Observe reads
+the signal layers already on the value.
 */
 func (stage *StabilityStage) recordFrame(measurement *data.Value) {
-	frame, err := stage.grid.Observe(measurement, measurement.Scope)
+	regions, err := stage.grid.Observe(measurement)
 
 	if err != nil {
 		stage.err = err
@@ -98,19 +97,16 @@ func (stage *StabilityStage) recordFrame(measurement *data.Value) {
 
 	stage.totalFrames++
 
-	if frame.Regions == nil {
-		if frame.Warming > 0 {
-			stage.warmingFrames++
-		}
-
+	if len(regions) == 0 {
+		stage.warmingFrames++
 		return
 	}
 
-	if frame.Regions[0].Brightness <= 0 {
+	if regions[0].Brightness <= 0 {
 		return
 	}
 
-	stage.activations = append(stage.activations, regionToken(frame.Regions[0].Key))
+	stage.activations = append(stage.activations, regionToken(regions[0].Key))
 	stage.validFrames++
 }
 

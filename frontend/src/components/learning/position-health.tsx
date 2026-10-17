@@ -7,12 +7,12 @@ import {
 	signals,
 	unrealizedAtom,
 } from "#/collections/app";
+import type { DecisionT } from "#/collections/types";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Meter } from "#/components/ui/meter";
 import { Section } from "#/components/ui/section";
-import type { DecisionT } from "#/collections/types";
 import type { Lifecycle } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
 import type { Value } from "#/types/value";
@@ -524,25 +524,27 @@ export const RegionTransitionPathway = ({
 
 export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 	const rawUnrealized = useSelector(unrealizedAtom, (state) => Number(state));
-	const currentUnrealized = Number.isFinite(rawUnrealized) ? rawUnrealized : 0;
+	// The position's own mark against the live bid, where the run published one.
+	const currentUnrealized =
+		life.mark?.unrealized ??
+		(Number.isFinite(rawUnrealized) ? rawUnrealized : 0);
 
 	const decisions = useSelector(decisionsAtom, (list: DecisionT[]) => list);
 	const activeSymbol = life?.symbol ?? "";
 	const currentDecision = decisions.find((d) => d.symbol === activeSymbol);
 
 	// Read live ring buffer from signals.training for this specific symbol
-	const [latestValue, setLatestValue] =
-		useState<Value | null>(() => {
-			const ring = signals.training?.state?.[activeSymbol];
-			if (
-				ring &&
-				typeof ring.getBufferLength === "function" &&
-				ring.getBufferLength() > 0
-			) {
-				return ring.get(ring.getBufferLength() - 1) ?? null;
-			}
-			return null;
-		});
+	const [latestValue, setLatestValue] = useState<Value | null>(() => {
+		const ring = signals.training?.state?.[activeSymbol];
+		if (
+			ring &&
+			typeof ring.getBufferLength === "function" &&
+			ring.getBufferLength() > 0
+		) {
+			return ring.get(ring.getBufferLength() - 1) ?? null;
+		}
+		return null;
+	});
 
 	useEffect(() => {
 		const updateRing = (state: Record<string, RingBuffer<Value>>) => {
@@ -849,23 +851,20 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 	const activeSymbol = life?.symbol ?? "BTC/USD";
 
 	// Subscribe to live value for activeSymbol directly from signals.training
-	const [latestValue, setLatestValue] =
-		useState<Value | null>(() => {
-			const ring = signals.training?.state?.[activeSymbol];
-			if (
-				ring &&
-				typeof ring.getBufferLength === "function" &&
-				ring.getBufferLength() > 0
-			) {
-				return ring.get(ring.getBufferLength() - 1) ?? null;
-			}
-			return null;
-		});
+	const [latestValue, setLatestValue] = useState<Value | null>(() => {
+		const ring = signals.training?.state?.[activeSymbol];
+		if (
+			ring &&
+			typeof ring.getBufferLength === "function" &&
+			ring.getBufferLength() > 0
+		) {
+			return ring.get(ring.getBufferLength() - 1) ?? null;
+		}
+		return null;
+	});
 
 	useEffect(() => {
-		const updateValue = (
-			state: Record<string, RingBuffer<Value>>,
-		) => {
+		const updateValue = (state: Record<string, RingBuffer<Value>>) => {
 			const ring = state[activeSymbol];
 			if (
 				ring &&

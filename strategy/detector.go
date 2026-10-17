@@ -4,15 +4,14 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"slices"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 )
 
 type detectorState int
@@ -27,11 +26,9 @@ const (
 type tradePoint struct {
 	tick   int64
 	seqIdx int64
-	at     int64
 	price  *decimal.Decimal
 	priceF float64
-	bid    *decimal.Decimal
-	ask    *decimal.Decimal
+	trade  *data.Value
 }
 
 type episode struct {
@@ -44,18 +41,13 @@ type episode struct {
 }
 
 /*
-Detector scans one symbol's stored trade tape of one epoch from beginning to
-end and emits long, coherent excursions ("up", "down", "chop", "flat").
+Detector scans market tape from beginning to end and emits long, coherent
+excursions ("up", "down", "chop", "flat") for each symbol/epoch tape.
 */
 type Detector struct {
 	*runtime.System
-	price  *broker.Price
-	symbol string
-	epoch  uint64
-
-	// roundTrip is the symbol's round-trip break-even fraction (1+f)/(1-f)-1
-	// at its taker fee f.
-	roundTrip float64
+	price *broker.Price
+	book  *broker.Snapshot
 
 	// Structural & regime-coalescing parameters
 	retraceRatio           float64
@@ -67,23 +59,14 @@ type Detector struct {
 	minStagnationTrades    int64
 	stagnationMultiplier   int64
 
-	// Streaming state
-	seq       int64
-	state     detectorState
-	emaBounce float64
-	prevTrade *tradePoint
-	prevDelta float64
-	results   []*data.Value
-	failure   error
-
-	// insufficient counts excursions whose precursor, clamped to the
-	// symbol's first trade, is shorter than cfg.MinPrecursorTicks.
-	insufficient int
-	cfg          system.Detector
-
-	// tape is every trade stepped, tape[i].seqIdx == i+1: the entry and exit
-	// are found in it after their episode is confirmed.
-	tape []tradePoint
+	// Streaming state per (epoch, label)
+	epoch      int64
+	label      string
+	state      detectorState
+	emaBounce  float64
+	prevTrade  *tradePoint
+	prevDelta  float64
+	lastResult *data.Value
 
 	// Undecided / chop / flat tracking
 	segStart      tradePoint
@@ -105,43 +88,21 @@ type Detector struct {
 
 	// Lookahead buffer for structural coalescing before Flush
 	pending []episode
+	emitted []*data.Value
 }
 
 /*
-NewDetector creates the detector for symbol's tape in epoch, bounding
-precursors to the symbol's first trade and placing entry and exit by cfg. Every excursion class is defined against round-trip friction, so a
-price system with reference cash and a taker fee for symbol are required.
+NewDetector creates a new detector and stores the tee used to publish
+detected excursions. Every excursion class is defined against round-trip
+friction, so the price system is a hard dependency.
 */
 func NewDetector(
 	ctx context.Context,
 	price *broker.Price,
-	epoch uint64,
-	symbol string,
-	cfg *system.Detector,
-) (*Detector, error) {
-	if err := cfg.Validate(); err != nil {
-		return nil, errnie.Err(errnie.Validation, "[detector] "+symbol, err)
-	}
-
-	if price == nil || price.ReferenceCash() == nil {
-		return nil, errnie.Err(errnie.Validation, "[detector] price system with reference cash required", nil)
-	}
-
-	feeRate, ok := price.FeeRate(symbol)
-
-	if !ok || feeRate <= 0 || feeRate >= 1 {
-		return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
-			"[detector] %s needs a taker fee in (0, 1), have %v (known: %v)", symbol, feeRate, ok,
-		), nil)
-	}
-
-	return &Detector{
+) *Detector {
+	detector := &Detector{
 		System:                 runtime.NewSystem(ctx, "detector"),
 		price:                  price,
-		symbol:                 symbol,
-		epoch:                  epoch,
-		cfg:                    *cfg,
-		roundTrip:              (1.0+feeRate)/(1.0-feeRate) - 1.0,
 		retraceRatio:           0.32, // Pullback must retrace >= 32% of |C - B| (and clear friction) to end a leg
 		maxContinuationRetrace: 0.58, // Higher-low dips < 58% merge into one macro leg when C is broken
 		boxOverlapRatio:        0.68, // Alternating swings overlapping >= 68% coalesce into "chop"
@@ -152,59 +113,93 @@ func NewDetector(
 		stagnationMultiplier:   3,    // Exhaust leg into chop/flat if sideways trades after C >= 3x impulse trades
 		state:                  stateInit,
 		pending:                make([]episode, 0, 8),
-	}, nil
+	}
+
+	if detector.price == nil || detector.price.ReferenceCash() == nil {
+		detector.Transition(runtime.ERROR)
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[detector] price system with reference cash required",
+			nil,
+		))
+		return detector
+	}
+
+	errnie.Info(fmt.Sprintf(
+		"[detector] excursion detector initialized with friction cash budget %s",
+		detector.price.ReferenceCash().String(),
+	))
+
+	return detector
 }
 
 /*
-Insufficient is how many confirmed excursions were not emitted for lack of
-history: a precursor shorter than cfg.MinPrecursorTicks once A is clamped to
-the symbol's first trade.
-*/
-func (detector *Detector) Insufficient() int {
-	return detector.insufficient
-}
-
-/*
-Step feeds one trade of the detector's symbol from stored tick number tick,
-with the touch that tick recorded for the symbol, and returns the excursions
-this trade confirmed. A trade of another symbol, a non-positive price, or a
-friction computation that fails is an error.
+Step the replayed tape and hunt for excursions.
 */
 func (detector *Detector) Step(
-	tick uint64, trade kraken.TradeData, touch broker.PriceLayer,
-) ([]*data.Value, error) {
-	if trade.Symbol != detector.symbol {
-		return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
-			"[detector] %s detector fed a %s trade", detector.symbol, trade.Symbol,
-		), nil)
+	value *data.Value,
+) *data.Value {
+	if value == nil || detector.price == nil {
+		return nil
 	}
 
-	if trade.Price.Sign() <= 0 {
-		return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
-			"[detector] %s trade %d at tick %d has non-positive price %s",
-			trade.Symbol, trade.TradeID, tick, trade.Price.String(),
-		), nil)
+	detector.lastResult = nil
+
+	if value.Origin == "runtime:join" {
+		for peer := range data.Layers[*data.Value](value) {
+			if peer == nil || peer.Origin != "spot:trade" {
+				continue
+			}
+
+			detector.processTrade(peer)
+		}
+	} else if value.Origin == "spot:trade" || value.Origin == "kraken" {
+		detector.processTrade(value)
 	}
 
-	price := trade.Price
-	detector.seq++
+	return detector.lastResult
+}
+
+func (detector *Detector) processTrade(peer *data.Value) {
+	epoch := int64(peer.Timestamp)
+	label := peer.Scope
+
+	if detector.epoch == 0 || detector.label == "" ||
+		detector.epoch != epoch || detector.label != label {
+		detector.flushConfirmedOnReset()
+		detector.resetTape(epoch, label)
+	}
+
+	var priceF float64
+	if len(peer.Layers) > 0 {
+		priceF = data.Attribute[float64](peer.Layers[0], "data", 0, "price")
+		if priceF <= 0 {
+			priceF = data.Attribute[float64](peer.Layers[0], "price")
+		}
+	}
+
+	if priceF <= 0 || math.IsNaN(priceF) || math.IsInf(priceF, 0) {
+		return
+	}
+
+	priceDec := decimal.NewFromFloat64(priceF)
 
 	pt := tradePoint{
-		tick:   int64(tick),
-		seqIdx: detector.seq,
-		at:     trade.Timestamp.UnixNano(),
-		price:  &price,
-		priceF: price.Float64(),
-		bid:    touch.Bid,
-		ask:    touch.Ask,
+		tick:   int64(peer.Tick),
+		seqIdx: int64(peer.SeqIdx),
+		price:  priceDec,
+		priceF: priceF,
+		trade:  peer,
 	}
 
-	detector.tape = append(detector.tape, pt)
 	detector.updateMicrostructure(pt)
 
-	switch detector.state {
-	case stateInit:
+	if detector.state == stateInit {
 		detector.initFromPoint(pt)
+		return
+	}
+
+	switch detector.state {
 	case stateUndecided:
 		detector.stepUndecided(pt)
 	case stateUp:
@@ -212,32 +207,6 @@ func (detector *Detector) Step(
 	case stateDown:
 		detector.stepDown(pt)
 	}
-
-	return detector.take()
-}
-
-/*
-Close flushes the episodes still held for coalescing at the end of the tape.
-*/
-func (detector *Detector) Close() ([]*data.Value, error) {
-	for len(detector.pending) > 0 {
-		oldest := detector.pending[0]
-		detector.pending = detector.pending[1:]
-		detector.flush(oldest)
-	}
-
-	return detector.take()
-}
-
-func (detector *Detector) take() ([]*data.Value, error) {
-	results := detector.results
-	detector.results = nil
-
-	if detector.failure != nil {
-		return nil, detector.failure
-	}
-
-	return results, nil
 }
 
 /*
@@ -269,12 +238,37 @@ func (detector *Detector) updateMicrostructure(pt tradePoint) {
 }
 
 /*
+roundTripFeeRate queries broker.Price for the symbol's authoritative taker fee
+and returns the exact round-trip break-even fraction: (1 + f)/(1 - f) - 1.
+*/
+func (detector *Detector) roundTripFeeRate() float64 {
+	if feeRate, ok := detector.price.FeeRate(detector.label); ok && feeRate > 0 && feeRate < 1 {
+		return (1.0+feeRate)/(1.0-feeRate) - 1.0
+	}
+
+	return 0.008 // 80 bps fallback if symbol fee is not loaded
+}
+
+/*
 effectiveDeadband combines the venue round-trip taker fee with the rolling
 bid-ask bounce floor so spread bounce never triggers false directional legs.
 */
 func (detector *Detector) effectiveDeadband() float64 {
-	feeFloor := 2.0 * detector.roundTrip
+	feeFloor := 2.0 * detector.roundTripFeeRate()
 	spreadFloor := 2.2 * detector.emaBounce
+
+	if detector.book != nil && len(detector.book.Bids) > 0 && len(detector.book.Asks) > 0 {
+		bid := detector.book.Bids[0].Price
+		ask := detector.book.Asks[0].Price
+
+		if bid != nil && ask != nil && bid.Sign() > 0 && ask.Cmp(bid) > 0 {
+			spread := (ask.Float64() - bid.Float64()) / bid.Float64()
+
+			if spread > spreadFloor {
+				spreadFloor = spread
+			}
+		}
+	}
 
 	return math.Max(feeFloor, spreadFloor)
 }
@@ -282,8 +276,6 @@ func (detector *Detector) effectiveDeadband() float64 {
 /*
 clearsEconomicFriction verifies that a move from lowPrice to highPrice clears
 both the dynamic microstructure deadband and broker.Price's RoundTrip fee math.
-A RoundTrip that cannot be computed fails the detector: no class is assigned
-on a guess.
 */
 func (detector *Detector) clearsEconomicFriction(lowPrice, highPrice *decimal.Decimal) bool {
 	if lowPrice == nil || highPrice == nil || lowPrice.Sign() <= 0 || highPrice.Cmp(lowPrice) <= 0 {
@@ -295,23 +287,33 @@ func (detector *Detector) clearsEconomicFriction(lowPrice, highPrice *decimal.De
 		return false
 	}
 
-	pnl, _, err := detector.price.RoundTrip(detector.symbol, lowPrice, highPrice)
-
-	if err != nil {
-		if detector.failure == nil {
-			detector.failure = errnie.Err(errnie.Validation, fmt.Sprintf(
-				"[detector] %s round trip %s -> %s", detector.symbol, lowPrice.String(), highPrice.String(),
-			), err)
-		}
-
-		return false
+	if pnl, _, err := detector.price.RoundTrip(detector.label, lowPrice, highPrice); err == nil && pnl != nil {
+		return pnl.Sign() > 0
 	}
 
-	return pnl.Sign() > 0
+	// Fallback if Normalizer/Instrument minimums are not seeded in unit tests:
+	entryWithFee := detector.price.WithFee(detector.label, lowPrice, broker.BUY)
+	exitWithFee := detector.price.WithFee(detector.label, highPrice, broker.SELL)
+
+	if entryWithFee != nil && exitWithFee != nil {
+		return exitWithFee.Cmp(entryWithFee) > 0
+	}
+
+	return true
 }
 
 func (detector *Detector) flatBand() float64 {
-	return 0.25 * detector.roundTrip
+	return 0.25 * detector.roundTripFeeRate()
+}
+
+func (detector *Detector) resetTape(epoch int64, label string) {
+	detector.epoch = epoch
+	detector.label = label
+	detector.state = stateInit
+	detector.emaBounce = 0
+	detector.prevTrade = nil
+	detector.prevDelta = 0
+	detector.pending = detector.pending[:0]
 }
 
 func (detector *Detector) initFromPoint(pt tradePoint) {
@@ -714,7 +716,13 @@ func (detector *Detector) enqueueEpisode(ep episode) {
 	for len(detector.pending) > 3 {
 		oldest := detector.pending[0]
 		detector.pending = detector.pending[1:]
-		detector.flush(oldest)
+		detector.lastResult = detector.Flush(
+			oldest.class,
+			oldest.start.tick, oldest.end.tick,
+			oldest.start.seqIdx, oldest.end.seqIdx,
+			oldest.start.price, oldest.end.price,
+			oldest.start.trade, oldest.end.trade,
+		)
 	}
 }
 
@@ -768,151 +776,150 @@ func (detector *Detector) coalesceBoxWhipsaws() {
 	}
 }
 
+func (detector *Detector) flushConfirmedOnReset() {
+	for _, value := range detector.drain() {
+		detector.lastResult = value
+	}
+}
+
 /*
-flush emits one confirmed episode as an excursion Value keyed
-data.ExcursionPrefixes(symbol, epoch) at C's tick. Its long-side
-economics need the touch at B (ask) and C (bid): an episode the tape cannot
-price is a detector failure, not a zero.
+Replay steps one stored tick. The book and fee are the ones stamped on that
+tick; a missing or invalid book is skipped. Returned values are the excursions
+that became safe to flush while stepping.
 */
-func (detector *Detector) flush(ep episode) {
-	b, c := ep.start, ep.end
+func (detector *Detector) Replay(
+	frame *data.Value,
+	tick *broker.SymbolTick,
+) []*data.Value {
+	if frame == nil || tick == nil || tick.Book == nil || tick.BookErr != nil {
+		return nil
+	}
 
-	if b.ask == nil || c.bid == nil {
-		if detector.failure == nil {
-			detector.failure = errnie.Err(errnie.NotFound, fmt.Sprintf(
-				"[detector] %s %s excursion ticks %d..%d: tick recorded no ask at B or no bid at C",
-				detector.symbol, ep.class, b.tick, c.tick,
-			), nil)
+	detector.book = tick.Book
+
+	if detector.price != nil {
+		detector.price.InstallPair(tick.Instrument)
+
+		if tick.Price.FeeRate != nil {
+			detector.price.SetFee(tick.Symbol, kraken.TradeVolumeFee{
+				Fee: decimal.NewFromFloat64(*tick.Price.FeeRate * 100),
+			})
+		}
+	}
+
+	before := len(detector.emitted)
+
+	for i := range tick.Trades {
+		trade := tick.Trades[i]
+		price := trade.Price.Float64()
+
+		if price <= 0 {
+			continue
 		}
 
-		return
-	}
+		buf, err := sonic.Marshal(map[string]float64{"price": price})
 
-	// A and D lie half the B..C move before B and after C. A is clamped to
-	// the symbol's first trade, not the epoch's first tick: before it the
-	// symbol has no tape, so no precursor and nothing to enter on. A shorter
-	// precursor is still one, as long as cfg.MinPrecursorTicks of it remain.
-	halfMoveSeqIdx := (c.seqIdx - b.seqIdx) / 2
-	halfMoveTick := (c.tick - b.tick) / 2
-	aTick := max(b.tick-halfMoveTick, detector.tape[0].tick)
-	precursorTicks := b.tick - aTick
-
-	if precursorTicks < detector.cfg.MinPrecursorTicks {
-		detector.insufficient++
-		errnie.Info(fmt.Sprintf(
-			"[detector] %s %s excursion ticks %d..%d not emitted: precursor %d..%d is %d tick(s), fewer than detector.min_precursor_ticks %d",
-			detector.symbol, ep.class, b.tick, c.tick, aTick, b.tick, precursorTicks, detector.cfg.MinPrecursorTicks,
-		))
-
-		return
-	}
-
-	// Entry and exit are pulled back from B and C by a fraction of the
-	// precursor, so an order placed there fills before the move. The lead is
-	// shorter than the precursor, so the entry tick is at or after A, which
-	// is at or after the symbol's first trade: a miss is a detector bug.
-	lead := int64(math.Round(detector.cfg.ExecutionLeadFraction * float64(precursorTicks)))
-	entry, entryOK := detector.lastAtOrBefore(b.tick-lead, b)
-	exit, exitOK := detector.lastAtOrBefore(c.tick-lead, c)
-
-	if !entryOK || !exitOK {
-		if detector.failure == nil {
-			detector.failure = errnie.Err(errnie.Internal, fmt.Sprintf(
-				"[detector] %s %s excursion ticks %d..%d: no %s trade at or before entry tick %d / exit tick %d (lead %d) though the tape starts at tick %d",
-				detector.symbol, ep.class, b.tick, c.tick, detector.symbol, b.tick-lead, c.tick-lead, lead, detector.tape[0].tick,
-			), nil)
+		if err != nil {
+			continue
 		}
 
-		return
+		peer := data.NewValue("spot:trade", "update", tick.Symbol)
+		peer.Timestamp = frame.Epoch
+		peer.Tick = frame.Tick
+		peer.SeqIdx = uint64(trade.TradeID)
+		peer.AppendJSON(buf, data.LayerTrade)
+		detector.processTrade(peer)
 	}
 
-	if entry.ask == nil || exit.bid == nil {
-		if detector.failure == nil {
-			detector.failure = errnie.Err(errnie.NotFound, fmt.Sprintf(
-				"[detector] %s %s excursion ticks %d..%d: entry tick %d recorded no ask or exit tick %d no bid",
-				detector.symbol, ep.class, b.tick, c.tick, entry.tick, exit.tick,
-			), nil)
+	out := append([]*data.Value(nil), detector.emitted[before:]...)
+	detector.emitted = detector.emitted[:before]
+
+	return out
+}
+
+/*
+Finish flushes excursions still held for lookahead after the tape ends.
+*/
+func (detector *Detector) Finish() []*data.Value {
+	detector.drain()
+	out := detector.emitted
+	detector.emitted = nil
+	detector.book = nil
+
+	return out
+}
+
+func (detector *Detector) drain() []*data.Value {
+	var out []*data.Value
+
+	for len(detector.pending) > 0 {
+		oldest := detector.pending[0]
+		detector.pending = detector.pending[1:]
+		value := detector.Flush(
+			oldest.class,
+			oldest.start.tick, oldest.end.tick,
+			oldest.start.seqIdx, oldest.end.seqIdx,
+			oldest.start.price, oldest.end.price,
+			oldest.start.trade, oldest.end.trade,
+		)
+		detector.lastResult = value
+
+		if value != nil {
+			out = append(out, value)
 		}
-
-		return
 	}
 
-	// A's trade index is the first trade of the symbol at or after A.
-	aIdx := b.seqIdx
+	return out
+}
 
-	if at, _ := slices.BinarySearchFunc(detector.tape[:b.seqIdx], aTick, func(point tradePoint, tick int64) int {
-		return compareTick(point.tick, tick)
-	}); at < int(b.seqIdx) {
-		aIdx = detector.tape[at].seqIdx
-	}
+/*
+Flush writes one detected excursion of the given class to storeTee.
+bTick/bSeqIdx/bPrice/bTrade is chronological start B (ignition) and
+cTick/cSeqIdx/cPrice/cTrade is chronological end C (exhaustion).
+*/
+func (detector *Detector) Flush(
+	class string,
+	bTick, cTick int64,
+	bSeqIdx, cSeqIdx int64,
+	bPrice, cPrice *decimal.Decimal,
+	bTrade, cTrade *data.Value,
+) *data.Value {
+	halfMoveSeqIdx := cSeqIdx - bSeqIdx
+	halfMoveTick := cTick - bTick
 
-	value := &data.Value{
-		Origin:    data.ExcursionOrigin,
-		Role:      ep.class,
-		Scope:     detector.symbol,
-		Epoch:     detector.epoch,
-		Tick:      uint64(c.tick),
-		SeqIdx:    uint64(c.seqIdx),
-		Timestamp: uint64(c.at),
-	}
+	tenPercentMoveSeqIdx := halfMoveSeqIdx / 10
+	tenPercentMoveTick := halfMoveTick / 10
+
+	aIdx := bSeqIdx - halfMoveSeqIdx
+	aTick := bTick - halfMoveTick
+	bIdx := bSeqIdx - tenPercentMoveSeqIdx
+	bTickVal := bTick - tenPercentMoveTick
+	cIdx := cSeqIdx - tenPercentMoveSeqIdx
+	cTickVal := cTick - tenPercentMoveTick
+	dIdx := cSeqIdx + halfMoveSeqIdx
+	dTick := cTick + halfMoveTick
+
+	value := data.NewValue(
+		detector.Name(), class, detector.label,
+	)
+	value.Epoch = uint64(detector.epoch)
+	value.Tick = uint64(cTick)
 	value.FormatPrefix()
+
+	detector.emitted = append(detector.emitted, value)
 
 	data.AppendVector(value, []float64{
 		float64(aIdx),
 		float64(aTick),
-		float64(b.seqIdx),
-		float64(b.tick),
-		float64(c.seqIdx),
-		float64(c.tick),
-		float64(c.seqIdx + halfMoveSeqIdx),
-		float64(c.tick + halfMoveTick),
-		b.priceF,
-		c.priceF,
-		b.ask.Float64(),
-		c.bid.Float64(),
-		float64(b.at),
-		float64(c.at),
-		float64(entry.seqIdx),
-		float64(entry.tick),
-		float64(exit.seqIdx),
-		float64(exit.tick),
-		entry.ask.Float64(),
-		exit.bid.Float64(),
-		float64(entry.at),
-		float64(exit.at),
-	}, data.ExcursionKeys...)
+		float64(bIdx),
+		float64(bTickVal),
+		float64(cIdx),
+		float64(cTickVal),
+		float64(dIdx),
+		float64(dTick),
+		bPrice.Float64(),
+		cPrice.Float64(),
+	}, data.DetectExcursionKeys...)
 
-	detector.results = append(detector.results, value)
-}
-
-/*
-lastAtOrBefore is the last trade stepped at or before tick, no later than
-bound itself (a tick holds several trades, so the one at bound's tick may
-come after bound). It reports false when the tape has no trade that early.
-*/
-func (detector *Detector) lastAtOrBefore(tick int64, bound tradePoint) (tradePoint, bool) {
-	if tick >= bound.tick {
-		return bound, true
-	}
-
-	after, _ := slices.BinarySearchFunc(detector.tape[:bound.seqIdx], tick+1, func(point tradePoint, target int64) int {
-		return compareTick(point.tick, target)
-	})
-
-	if after == 0 {
-		return tradePoint{}, false
-	}
-
-	return detector.tape[after-1], true
-}
-
-func compareTick(tick, target int64) int {
-	switch {
-	case tick < target:
-		return -1
-	case tick > target:
-		return 1
-	}
-
-	return 0
+	return value
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"iter"
 	"math"
 	"os"
 	"os/exec"
@@ -167,7 +168,7 @@ func (engine *Engine) resolveTargetEpoch() (uint64, error) {
 		return uint64(system.Cfg.Audit.Epoch), nil
 	}
 
-	epochs, err := s3store.Epochs(engine.store, data.TickPrefix())
+	epochs, err := epochsUnder(engine.store, data.TickPrefix())
 
 	if err != nil {
 		return 0, err
@@ -186,7 +187,7 @@ when set (it must be trained on epoch's ticks), else the newest policy epoch
 trained on them; none is the zero gate (the policy stages report it).
 */
 func (engine *Engine) resolvePolicy(epoch uint64) (data.PolicyGate, error) {
-	gates, err := s3store.PolicyGates(engine.store)
+	gates, err := policyGates(engine.store)
 
 	if err != nil {
 		return data.PolicyGate{}, err
@@ -270,6 +271,88 @@ func send(stages []AuditorStage, measurement *data.Value) {
 }
 
 /*
+epochsUnder lists the epoch segments stored under prefix, oldest first.
+*/
+func epochsUnder(client *s3store.Client, prefix string) ([]uint64, error) {
+	epochs := make([]uint64, 0)
+
+	for page := range client.List(prefix, "/") {
+		for _, common := range page.CommonPrefixes {
+			if common.Prefix == nil {
+				continue
+			}
+
+			epoch, err := data.KeyEpoch(prefix, *common.Prefix)
+
+			if err != nil {
+				return nil, err
+			}
+
+			epochs = append(epochs, epoch)
+		}
+	}
+
+	slices.Sort(epochs)
+
+	return slices.Compact(epochs), nil
+}
+
+/*
+policyGates reads the gate on the first policy of every published policy epoch.
+*/
+func policyGates(client *s3store.Client) ([]data.PolicyGate, error) {
+	all := make([]uint64, 0)
+
+	for _, prefix := range data.PolicyPrefixes() {
+		found, err := epochsUnder(client, prefix)
+
+		if err != nil {
+			return nil, errnie.Err(errnie.IO, "[audit] listing policy epochs under "+prefix, err)
+		}
+
+		all = append(all, found...)
+	}
+
+	slices.Sort(all)
+	gates := make([]data.PolicyGate, 0)
+
+	for _, epoch := range slices.Compact(all) {
+		var gate *data.PolicyGate
+
+		for value, err := range copyValues(client, data.PolicyPrefixes(epoch)...) {
+			if err != nil {
+				return nil, err
+			}
+
+			read, err := data.ReadPolicyGate(value)
+
+			if err != nil {
+				return nil, err
+			}
+
+			gate = &read
+
+			break
+		}
+
+		if gate == nil {
+			return nil, errnie.Err(errnie.NotFound, fmt.Sprintf("[audit] policy epoch %d lists no readable policy", epoch), nil)
+		}
+
+		gates = append(gates, *gate)
+	}
+
+	return gates, nil
+}
+
+/*
+copyValues reconstructs every object under prefixes, in key order.
+*/
+func copyValues(client *s3store.Client, prefixes ...string) iter.Seq2[*data.Value, error] {
+	return s3store.Values(client, prefixes...)
+}
+
+/*
 feed streams epoch to the stages and closes their channels when done.
 */
 func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
@@ -284,7 +367,7 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 	var ticks int
 	var lastTick uint64
 
-	for value, err := range s3store.Values(engine.store, data.TickPrefix(epoch)) {
+	for value, err := range copyValues(engine.store, data.TickPrefix(epoch)) {
 		if err != nil {
 			return err
 		}
@@ -333,7 +416,7 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 	var excursions, policies int
 
 	for _, symbol := range symbols {
-		for excursion, err := range s3store.Values(engine.store, data.ExcursionPrefixes(symbol, epoch)...) {
+		for excursion, err := range copyValues(engine.store, data.ExcursionPrefixes(symbol, epoch)...) {
 			if err != nil {
 				return err
 			}
@@ -350,7 +433,7 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 	}
 
 	if policy.Epoch != 0 {
-		for value, err := range s3store.Values(engine.store, data.PolicyPrefixes(policy.Epoch)...) {
+		for value, err := range copyValues(engine.store, data.PolicyPrefixes(policy.Epoch)...) {
 			if err != nil {
 				return err
 			}
@@ -364,7 +447,7 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 	// traded under this epoch's policies.
 	var papers int
 
-	for paper, err := range s3store.Values(engine.store, data.PaperActionPrefixes()...) {
+	for paper, err := range copyValues(engine.store, data.PaperActionPrefixes()...) {
 		if err != nil {
 			return err
 		}

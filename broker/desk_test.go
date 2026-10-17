@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -16,6 +17,24 @@ func (d *dummyTransport) Read(keys ...string) ([]byte, error) {
 }
 
 func (d *dummyTransport) Write([]byte) error {
+	return nil
+}
+
+type failTransport struct {
+	writes int
+	fail   bool
+}
+
+func (transport *failTransport) Read(keys ...string) ([]byte, error) {
+	return nil, nil
+}
+
+func (transport *failTransport) Write([]byte) error {
+	if transport.fail {
+		return errors.New("venue down")
+	}
+
+	transport.writes++
 	return nil
 }
 
@@ -51,6 +70,27 @@ func TestDesk(t *testing.T) {
 					So(err, ShouldBeNil)
 				})
 			})
+		})
+
+		Convey("A rejected order does not leave the symbol held or exiting", func() {
+			transport := &failTransport{fail: true}
+			rejected := NewDesk(ctx, transport, nil, nil)
+			qty := decimal.NewFromFloat64(0.5)
+
+			So(rejected.Enter("BTC/USD", qty), ShouldNotBeNil)
+			So(rejected.Holds("BTC/USD"), ShouldBeFalse)
+
+			transport.fail = false
+			So(rejected.Enter("BTC/USD", qty), ShouldBeNil)
+			So(rejected.Holds("BTC/USD"), ShouldBeTrue)
+			So(transport.writes, ShouldEqual, 1)
+
+			transport.fail = true
+			So(rejected.Exit("BTC/USD"), ShouldNotBeNil)
+
+			transport.fail = false
+			So(rejected.Exit("BTC/USD"), ShouldBeNil)
+			So(transport.writes, ShouldEqual, 2)
 		})
 
 		Convey("When initialized with pre-existing wallet holding", func() {

@@ -39,8 +39,9 @@ Layers of a stored tick (one Kraken trade frame; collect, cmd/booter.go):
 	| signal/<source>/<label...>/<tag...>/symbol:<symbol> | float64 vector, one per label |
 	| "" (empty)                               | a reserved slot no signal claimed       |
 
-An excursion Value carries one float64 vector labelled ExcursionKeys; a
-policy Value one labelled PolicyKeys plus a trailing PolicyPathTag tag, and
+An excursion Value from detect carries one vector labelled DetectExcursionKeys;
+ExcursionKeys is the full vector when entry/exit and book touch are stored too.
+A policy Value one labelled PolicyKeys plus a trailing PolicyPathTag tag, and
 its gate layer (PolicyGate).
 
 Hub-only Values (streamed to the dashboard, never stored):
@@ -214,15 +215,18 @@ const ExcursionOrigin = "detector"
 var ExcursionClasses = []string{"up", "down", "chop", "flat"}
 
 /*
-ExcursionKeys label an excursion's vector, in order. B and C are the
-ignition and exhaustion trades; A and D bound the precursor and aftermath
-windows by half the move on either side (A clamped to the symbol's first
-trade in the epoch). b_ask and c_bid are the touch the tick recorded at B and C.
+DetectExcursionKeys is what strategy/detector.Flush writes today.
+*/
+var DetectExcursionKeys = []string{
+	"a_idx", "a_tick", "b_idx", "b_tick", "c_idx", "c_tick", "d_idx", "d_tick",
+	"b_price", "c_price",
+}
 
-entry and exit are the executable points: the last trades at or before B and
-C pulled back by detector.execution_lead_fraction of the precursor (A..B)
-length in ticks, with the touch their ticks recorded. Train learns and
-prices entry/exit; B and C stay for audit and hindsight.
+/*
+ExcursionKeys is the full excursion vector: DetectExcursionKeys plus book
+touch at B/C and entry/exit (when detect stores them). b_ask and c_bid are
+the touch the tick recorded at B and C; entry and exit are the executable
+points train may learn later.
 */
 var ExcursionKeys = []string{
 	"a_idx", "a_tick", "b_idx", "b_tick", "c_idx", "c_tick", "d_idx", "d_tick",
@@ -246,18 +250,28 @@ func ExcursionPrefixes(symbol string, epoch uint64) []string {
 }
 
 /*
-ExcursionFields reads every ExcursionKeys field of an excursion Value; a
-missing one is an error.
+DetectExcursionFields reads every DetectExcursionKeys field of a detect excursion.
+*/
+func DetectExcursionFields(value *Value) (map[string]float64, error) {
+	return excursionFields(value, DetectExcursionKeys)
+}
+
+/*
+ExcursionFields reads every ExcursionKeys field; a missing one is an error.
 */
 func ExcursionFields(value *Value) (map[string]float64, error) {
+	return excursionFields(value, ExcursionKeys)
+}
+
+func excursionFields(value *Value, keys []string) (map[string]float64, error) {
 	if value == nil || value.Origin != ExcursionOrigin {
 		return nil, errnie.Err(errnie.Validation, "data: not an excursion Value", nil)
 	}
 
 	metrics := Metrics(value)
-	fields := make(map[string]float64, len(ExcursionKeys))
+	fields := make(map[string]float64, len(keys))
 
-	for _, key := range ExcursionKeys {
+	for _, key := range keys {
 		field, ok := metrics[key]
 
 		if !ok {
@@ -453,6 +467,11 @@ Same reports whether gate and other were trained under the same gate
 settings; which epochs they belong to does not matter.
 */
 func (gate PolicyGate) Same(other PolicyGate) bool {
+	// With the gate off no gate setting takes part in training or running.
+	if !gate.Enabled && !other.Enabled {
+		return true
+	}
+
 	return gate.Enabled == other.Enabled && gate.SurpriseZ == other.SurpriseZ &&
 		gate.Warmup == other.Warmup && gate.LearningRate == other.LearningRate
 }
@@ -904,7 +923,7 @@ func PaperFields(value *Value) (PaperRecord, error) {
 			continue
 		}
 
-		for _, tag := range strings.Split(rest, "/") {
+		for tag := range strings.SplitSeq(rest, "/") {
 			if epoch, found := strings.CutPrefix(tag, PaperPolicyEpochTag); found {
 				parsed, err := strconv.ParseUint(epoch, 10, 64)
 

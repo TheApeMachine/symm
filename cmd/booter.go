@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	sysruntime "runtime"
 	"strings"
 	"sync"
@@ -55,11 +53,10 @@ type Booter struct {
 	desk             *broker.Desk
 	normalizer       *spot.Normalizer
 	signals          []nmruntime.Node
+	training         *strategy.Training
 	workspace        *nmruntime.Workspace
 	store            *store.Client
 	hub              *ui.Hub
-	tree             *strategy.CognitionTree
-	sequitur         *strategy.Sequitur
 	replies          sync.Map
 }
 
@@ -119,13 +116,8 @@ func (booter *Booter) Run() error {
 
 	started := time.Now()
 
-	// Downstream consumers start before the producers that feed them: sinks,
-	// then the workspace and its signals, then every exchange-data phase, and
-	// only then the trade firehose. Each phase is a status transition.
-	if err := booter.initPipeline(); err != nil {
-		return err
-	}
-
+	// Transports and the market come first: training paper-trades through the
+	// price and the desk. The workspace is up before any trade is subscribed.
 	booter.Transition(nmruntime.WAITING)
 
 	if err := booter.initTransports(); err != nil {
@@ -136,11 +128,11 @@ func (booter *Booter) Run() error {
 		return err
 	}
 
-	if err := booter.seedBooks(); err != nil {
+	if err := booter.initPipeline(); err != nil {
 		return err
 	}
 
-	if err := booter.startPaperTrading(); err != nil {
+	if err := booter.seedBooks(); err != nil {
 		return err
 	}
 
@@ -236,6 +228,8 @@ func (booter *Booter) initMarket() error {
 		ctx, booter.privateTransport, booter.price, booter.balance,
 	)
 
+	booter.startPrivateIngress()
+
 	return nil
 }
 
@@ -265,45 +259,32 @@ func (booter *Booter) initPipeline() error {
 		}
 	}
 
-	sinks := []io.Writer{}
+	booter.store = store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
-	// The dashboard command (`make run`) never writes storage: collect is
-	// the only tick writer.
-	if booter.dashboard && booter.capture {
+	if booter.store == nil {
 		return errnie.Err(
-			errnie.Validation, "booter: the dashboard run is read-only and cannot capture ticks; run collect", nil,
+			errnie.IO, "booter: store client unavailable", nil,
 		)
 	}
 
-	if booter.capture {
-		booter.store = store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
+	booter.store.Transition(nmruntime.READY)
 
-		if booter.store == nil {
-			return errnie.Err(
-				errnie.IO, "booter: store client unavailable for capture", nil,
-			)
-		}
+	booter.training = strategy.NewTraining(ctx, booter.price, booter.desk, booter.store)
 
-		sinks = append(sinks, booter.store)
+	if err := booter.training.Error(); err != nil {
+		return err
 	}
 
-	// Only the dashboard command io.Copy's every tick to the hub
-	// (127.0.0.1:8765/ws); every other command is headless.
+	booter.training.Transition(nmruntime.READY)
+
+	// The last handler group io.Copy's the tick, after every signal and
+	// training have written their layers, into the store.
+	sinks := []io.Writer{booter.store}
+
 	if booter.dashboard {
 		booter.hub = ui.NewHub(ctx)
 
-		// Everything the dashboard reads from storage goes through one
-		// read-only store view: an unreachable bucket fails the boot.
-		reader, err := store.NewReader(ctx, system.Cfg.Storage.S3.Bucket)
-
-		if err != nil {
-			return err
-		}
-
-		// Hindsight replays stored runs to the client that asks, over the
-		// hub socket; its run list is the one REST route. It is mounted
-		// before the hub listens.
-		replay, err := hindsight.NewService(ctx, reader)
+		replay, err := hindsight.NewService(ctx, booter.store)
 
 		if err != nil {
 			return err
@@ -311,33 +292,17 @@ func (booter *Booter) initPipeline() error {
 
 		replay.Register(booter.hub.App())
 		booter.hub.Replay(replay)
-		// The Historical runs tab: what detect stored, from the same view.
 		booter.hub.Detect(replay)
 
 		if err := booter.hub.Run(); err != nil {
 			return err
 		}
 
+		if err := strategy.PublishCognitionTree(booter.hub.Retained(), booter.training, true); err != nil {
+			return err
+		}
+
 		sinks = append(sinks, booter.hub)
-
-		// The live grammar view and paper trading read the newest published
-		// policy. Only an unreachable store fails the boot: a model make
-		// run cannot use (none, malformed, other gate settings) is an empty
-		// tree with its Problem, and paper trading stays off.
-
-		booter.tree, err = strategy.LoadCognitionTree(ctx, reader, system.Cfg.Learning.MinimumPathConfidence, system.Cfg.Resonance)
-
-		if err != nil {
-			return err
-		}
-
-		booter.sequitur, err = strategy.NewSequitur(ctx, booter.hub, booter.tree)
-
-		if err != nil {
-			return err
-		}
-
-		sinks = append(sinks, booter.sequitur)
 	}
 
 	for _, sink := range sinks {
@@ -353,9 +318,16 @@ func (booter *Booter) initPipeline() error {
 	booter.workspace = nmruntime.NewWorkspace(
 		ctx,
 		"workspace",
-		[][]nmruntime.Node{booter.signals},
+		[][]nmruntime.Node{
+			booter.signals,
+			{booter.training},
+		},
 		sinks...,
 	)
+
+	if booter.workspace == nil {
+		return errnie.Err(errnie.Internal, "booter: workspace pipeline failed to start", nil)
+	}
 
 	for _, signal := range booter.signals {
 		signal.Transition(nmruntime.READY)
@@ -423,99 +395,12 @@ func (booter *Booter) seedBooks() error {
 }
 
 /*
-startPaperTrading turns paper trading on for the dashboard run when a model
-is stored: books are seeded and the firehose is not yet open, so the first
-trade tick can already be acted on. Without a usable model (the tree's
-Problem) it logs why and the fix (ERROR for a stored model it cannot use,
-WARN for none), publishes the Problem in the retained cognition/tree frame
-for the dashboard's banner, and the run continues as a view (Hindsight,
-Workbench, dashboards). Records go to the local paper.records_path file
-(append-only) and to the hub; storage is never written.
-*/
-func (booter *Booter) startPaperTrading() error {
-	if !booter.dashboard {
-		return nil
-	}
-
-	if problem := booter.tree.Problem(); problem != nil {
-		message := fmt.Sprintf("[booter] paper trading inactive: %s; fix: %s", problem.Reason, problem.Fix)
-
-		if problem.Level == strategy.ProblemError {
-			errnie.Error(errnie.Err(errnie.Validation, message, nil))
-		} else {
-			errnie.Warn(message)
-		}
-
-		return strategy.PublishTree(booter.hub.Retained(), booter.tree, false)
-	}
-
-	if booter.tree.Empty() {
-		// A stored epoch whose policies hold no path: nothing to trade.
-		errnie.Warn(fmt.Sprintf("[booter] paper trading inactive: policy epoch %d stores no path; fix: re-run detect and train on the tick epoch", booter.tree.Epoch()))
-		return strategy.PublishTree(booter.hub.Retained(), booter.tree, false)
-	}
-
-	if err := system.Cfg.Paper.Validate(); err != nil {
-		return errnie.Err(errnie.Validation, "[booter] paper trading", err)
-	}
-
-	path := system.Cfg.Paper.RecordsPath
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return errnie.Err(errnie.IO, "[booter] paper records directory for "+path, err)
-	}
-
-	records, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-
-	if err != nil {
-		return errnie.Err(errnie.IO, "[booter] paper records file "+path, err)
-	}
-
-	ctx := booter.Context()
-
-	closeRecords := func() {
-		if err := records.Close(); err != nil {
-			errnie.Error(errnie.Err(errnie.IO, "[booter] closing paper records file "+path, err))
-		}
-	}
-
-	training, err := strategy.NewTraining(ctx, booter.price, booter.desk, booter.tree, booter.hub, records)
-
-	if err != nil {
-		closeRecords()
-		return err
-	}
-
-	go func() {
-		<-ctx.Done()
-		// A round trip still open has no exit to record: say so, and
-		// write nothing for it.
-		training.WarnOpen()
-		closeRecords()
-	}()
-
-	booter.startPrivateIngress(training)
-	booter.sequitur.Trade(training)
-
-	if err := strategy.PublishTree(booter.hub.Retained(), booter.tree, true); err != nil {
-		return err
-	}
-
-	errnie.Info(fmt.Sprintf(
-		"[booter] paper trading active: policy epoch %d, %d stored paths; records appended to %s",
-		booter.tree.Epoch(), booter.tree.Paths(), path,
-	))
-
-	return nil
-}
-
-/*
 startPrivateIngress reads the paper desk's private frames: executions are
 applied to the desk and accounted by training; a rejected order is an
 error. The paper transport blocks until each frame is read, so this runs
 for as long as orders can be placed.
 */
-func (booter *Booter) startPrivateIngress(training *strategy.Training) {
+func (booter *Booter) startPrivateIngress() {
 	go func() {
 		for {
 			buf, err := booter.privateTransport.Read()
@@ -539,10 +424,6 @@ func (booter *Booter) startPrivateIngress(training *strategy.Training) {
 				}
 
 				booter.desk.Apply(execution)
-
-				if err := training.Filled(execution); err != nil {
-					errnie.Error(err)
-				}
 			case data.Attribute[string](buf, "method") == "add_order":
 				if success, err := data.AttributeOk[bool](buf, "success"); err != nil || !success {
 					errnie.Error(errnie.Err(errnie.IO, "[booter] paper desk rejected an order: "+string(buf), err))
@@ -636,13 +517,22 @@ func (booter *Booter) startIngress(
 				for _, symbol := range broker.Symbols(trades) {
 					index, book := booter.book.Layer(symbol)
 
-					value.AppendJSON(book, index).
-						AppendJSON(booter.price.JSON(symbol), data.SymbolIndex(data.LayerPrice, symbol)).
-						AppendJSON(booter.price.InstrumentJSON(symbol), data.SymbolIndex(data.LayerInstrument, symbol))
+					value.AppendJSON(book, index).AppendJSON(
+						booter.price.JSON(symbol),
+						data.SymbolIndex(data.LayerPrice, symbol),
+					).AppendJSON(
+						booter.price.InstrumentJSON(symbol),
+						data.SymbolIndex(data.LayerInstrument, symbol),
+					)
 				}
 
-				value.AppendJSON(booter.desk.BalanceJSON(), data.LayerBalance).
-					AppendJSON(booter.desk.PositionsJSON(), data.LayerPositions)
+				value.AppendJSON(
+					booter.desk.BalanceJSON(),
+					data.LayerBalance,
+				).AppendJSON(
+					booter.desk.PositionsJSON(),
+					data.LayerPositions,
+				)
 
 				// Signals write one layer per trade entry (or per symbol),
 				// each into its own pre-reserved slot.

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"slices"
 	"sync"
@@ -13,46 +12,13 @@ import (
 )
 
 /*
-Grid groups one symbol's signal layers of a tick into the 15 confluence
-regions regionMetricPins declares, on self-normalized movement.
-
-Stored ticks carry raw signal values only. Normalization happens here, at
-read time, identically live and in replay, because it depends only on the
-order of the ticks a Grid observes:
-
-  - SNM of a metric is (raw - prior) / (|prior| + |raw - prior|), where prior
-    is the same <symbol>/<source>/<label> in the previous tick the Grid
-    observed for that symbol. It is bounded in [-1, 1]; raw == prior is 0.
-  - A metric with no prior (first tick of the symbol, or absent from the
-    previous tick: a gap) is warming up: it has no SNM and is counted in
-    Frame.Warming, never scored as 0.
-  - Energy of a source is the sum of SNM^2 of its metrics on this tick. Its
-    prediction is the source's previous energy; surprise is the magnitude of
-    the SNM of energy against that prediction, in [0, 1]. A source without a
-    previous energy is warming up and contributes nothing.
-  - A region's Deformation is the sum of |SNM| * surprise of its pinned
-    metrics, Brightness their mean.
-
-A key that appears in several layers of one tick (signals that write once per
-trade) takes its last value: the tick's final state.
+Grid is not a grid at all, it is a "group by" over a tick's signal layers
+and Metric pins into 15 multi-signal confluence regions.
 */
 type Grid struct {
 	*runtime.System
 	mu      sync.Mutex
 	symbols map[string]*symbolState
-}
-
-type symbolState struct {
-	observed uint64
-	metrics  map[metricKey]prior
-	energy   map[string]prior
-}
-
-type metricKey struct{ source, label string }
-
-type prior struct {
-	value    float64
-	observed uint64
 }
 
 /*
@@ -69,8 +35,8 @@ func NewGrid(ctx context.Context) *Grid {
 
 /*
 Region is one confluence region's evidence in a frame: Deformation is the sum
-of |SNM| * surprise of its metrics, Counts how many metrics it holds, and
-Brightness their average.
+of its self-normalized metric magnitudes |SNM|, Counts how many metrics it holds,
+and Brightness their average in [0, 1].
 */
 type Region struct {
 	Key         uint8
@@ -79,13 +45,20 @@ type Region struct {
 	Counts      int
 }
 
-/*
-Frame is one Observe: Regions sorted brightest first (nil when no pinned
-metric was scorable), and Warming the pinned metrics still warming up.
-*/
-type Frame struct {
-	Regions []*Region
-	Warming int
+type metricKey struct {
+	source string
+	label  string
+}
+
+type prior struct {
+	value    float64
+	observed int
+}
+
+type symbolState struct {
+	metrics  map[metricKey]prior
+	energy   map[string]prior
+	observed int
 }
 
 /*
@@ -103,136 +76,134 @@ func SNM(raw, prior float64) float64 {
 }
 
 /*
-Observe advances symbol by one tick on value's signal layers and returns its
-frame. A signal layer that does not parse, or carries a source or label
-regionMetricPins does not declare, is an error: every key a signal writes must
-have a declared place in the grid, which may be an explicit empty one.
+Observe reads the signal layers on value, advances each symbol by one tick,
+and returns the 15 regions sorted brightest first. A metric's first tick,
+and the tick after that (the source energy has no prior yet), score nothing.
+A signal source or label with no pin is an error.
 */
-func (grid *Grid) Observe(value *data.Value, symbol string) (*Frame, error) {
+func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
 	if err := grid.Error(); err != nil {
 		return nil, err
 	}
 
-	raw := make(map[metricKey]float64)
-	order := make([]metricKey, 0)
+	if value == nil {
+		return nil, nil
+	}
+
+	type sample struct {
+		key   metricKey
+		value float64
+	}
+
+	bySymbol := make(map[string][]sample)
 
 	for signal, err := range data.Signals(value) {
 		if err != nil {
 			return nil, err
 		}
 
-		if signal.Symbol != symbol {
-			continue
-		}
-
-		sourcePins, pinned := regionMetricPins[signal.Source]
+		pins, pinned := regionMetricPins[signal.Source]
 
 		if !pinned {
-			return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
-				"grid: %s signal source %s has no region pins", symbol, signal.Source,
-			), nil)
+			return nil, grid.Error(errnie.Err(
+				errnie.Validation,
+				"grid: "+signal.Symbol+" signal source "+signal.Source+" has no region pins",
+				nil,
+			))
 		}
 
 		for idx, val := range signal.Values {
-			key := metricKey{signal.Source, signal.Labels[idx]}
-
-			regions, pinned := sourcePins[key.label]
+			label := signal.Labels[idx]
+			regions, pinned := pins[label]
 
 			if !pinned {
-				return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
-					"grid: %s metric %s/%s is not pinned to a region", symbol, key.source, key.label,
-				), nil)
+				return nil, grid.Error(errnie.Err(
+					errnie.Validation,
+					"grid: "+signal.Symbol+" metric "+signal.Source+"/"+label+" is not pinned to a region",
+					nil,
+				))
 			}
 
-			// Declared with no regions: written on purpose, read elsewhere,
-			// and kept out of the grid's energy and brightness.
 			if len(regions) == 0 {
 				continue
 			}
 
-			if _, seen := raw[key]; !seen {
-				order = append(order, key)
-			}
-
-			raw[key] = val
+			bySymbol[signal.Symbol] = append(bySymbol[signal.Symbol], sample{
+				key:   metricKey{signal.Source, label},
+				value: val,
+			})
 		}
 	}
 
-	grid.mu.Lock()
-	defer grid.mu.Unlock()
-
-	state, ok := grid.symbols[symbol]
-
-	if !ok {
-		state = &symbolState{metrics: make(map[metricKey]prior), energy: make(map[string]prior)}
-		grid.symbols[symbol] = state
-	}
-
-	state.observed++
-	now := state.observed
-
-	snm := make(map[metricKey]float64, len(raw))
-	energy := make(map[string]float64)
-	sources := make([]string, 0)
-
-	for _, key := range order {
-		last, has := state.metrics[key]
-		state.metrics[key] = prior{value: raw[key], observed: now}
-
-		if !has || last.observed != now-1 {
-			continue
-		}
-
-		movement := SNM(raw[key], last.value)
-		snm[key] = movement
-
-		if _, seen := energy[key.source]; !seen {
-			sources = append(sources, key.source)
-		}
-
-		energy[key.source] += movement * movement
-	}
-
-	surprise := make(map[string]float64, len(sources))
-
-	for _, source := range sources {
-		last, has := state.energy[source]
-		state.energy[source] = prior{value: energy[source], observed: now}
-
-		if has && last.observed == now-1 {
-			surprise[source] = math.Abs(SNM(energy[source], last.value))
-		}
-	}
-
-	frame := &Frame{}
 	regions := make([]*Region, RegionCount)
 
 	for idx := range regions {
 		regions[idx] = &Region{Key: uint8(idx)}
 	}
 
-	totalCounts := 0
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
 
-	for _, key := range order {
-		targetRegions := regionMetricPins[key.source][key.label]
+	total := 0
 
-		movement, scored := snm[key]
-		sourceSurprise, surprised := surprise[key.source]
+	for symbol, samples := range bySymbol {
+		state, ok := grid.symbols[symbol]
 
-		if !scored || !surprised {
-			frame.Warming++
-			continue
+		if !ok {
+			state = &symbolState{
+				metrics: make(map[metricKey]prior),
+				energy:  make(map[string]prior),
+			}
+			grid.symbols[symbol] = state
 		}
 
-		for _, region := range targetRegions {
-			regions[region].Deformation += math.Abs(movement) * sourceSurprise
-			regions[region].Counts++
-			totalCounts++
+		state.observed++
+		now := state.observed
+		movement := make(map[metricKey]float64)
+		energy := make(map[string]float64)
+
+		for _, sample := range samples {
+			last, has := state.metrics[sample.key]
+			state.metrics[sample.key] = prior{value: sample.value, observed: now}
+
+			if !has || last.observed != now-1 {
+				continue
+			}
+
+			delta := SNM(sample.value, last.value)
+			movement[sample.key] = delta
+			energy[sample.key.source] += delta * delta
+		}
+
+		surprise := make(map[string]float64)
+
+		for source, amount := range energy {
+			last, has := state.energy[source]
+			state.energy[source] = prior{value: amount, observed: now}
+
+			if has && last.observed == now-1 {
+				surprise[source] = math.Abs(SNM(amount, last.value))
+			}
+		}
+
+		for _, sample := range samples {
+			delta, scored := movement[sample.key]
+			sourceSurprise, surprised := surprise[sample.key.source]
+
+			if !scored || !surprised {
+				continue
+			}
+
+			for _, region := range regionMetricPins[sample.key.source][sample.key.label] {
+				regions[region].Deformation += math.Abs(delta) * sourceSurprise
+				regions[region].Counts++
+				total++
+			}
 		}
 	}
 
-	if totalCounts == 0 {
-		return frame, nil
+	if total == 0 {
+		return nil, nil
 	}
 
 	for _, region := range regions {
@@ -245,12 +216,13 @@ func (grid *Grid) Observe(value *data.Value, symbol string) (*Frame, error) {
 		if first.Brightness > second.Brightness {
 			return -1
 		}
+
 		if first.Brightness < second.Brightness {
 			return 1
 		}
+
 		return int(first.Key) - int(second.Key)
 	})
 
-	frame.Regions = regions
-	return frame, nil
+	return regions, nil
 }

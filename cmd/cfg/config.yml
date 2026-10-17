@@ -130,7 +130,7 @@ resonance:
   # length to configure; the z-score accumulates only once warm. gate: false
   # appends every proposed chord. Every policy records these settings; run
   # refuses a policy epoch trained under different ones. No defaults in code.
-  gate: true
+  gate: false # experimental: off by default
   surprise_z: 1.0
   # The resonance solver's pace: each coder's resting learning rate, and the
   # slow rate of its warm-up error average. At most 0.15 (the coders' fastest).

@@ -1,14 +1,14 @@
 package strategy
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
-	"iter"
-	"maps"
 	"slices"
+	"strconv"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -16,395 +16,475 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
+	"golang.org/x/sync/errgroup"
 )
 
-/*
-Policies are published under data.PolicyPrefixes(policy epoch): a fresh
-policy epoch per trained tick epoch, one Value per learned path, pooled
-across the epoch's symbols, each carrying its data.PolicyGate.
-*/
-/*
-Trainer learns which grammar paths of the signal grid precede profitable
-excursions. Its inputs are the stored ticks of an epoch (one full tick Value
-per key) and the excursions detect wrote for that epoch.
-*/
 type Trainer struct {
 	*runtime.System
-	client  *store.Client
-	price   *broker.Price
-	symbols []string
+	client       *store.Client
+	price        *broker.Price
+	symbols      []string
+	OnFrame      func()
+	SetWorkTotal func(int64)
+	writeMu      sync.Mutex
+	tickIndexMu  sync.Mutex
+	tickIndexes  map[int64]map[uint64]string
 }
 
 func NewTrainer(
 	ctx context.Context,
 	client *store.Client,
 	price *broker.Price,
-	symbols []string,
+	symbols ...string,
 ) *Trainer {
-	return &Trainer{
+	trainer := &Trainer{
 		System:  runtime.NewSystem(ctx, "trainer"),
 		client:  client,
 		price:   price,
 		symbols: symbols,
 	}
-}
 
-type pathStats struct {
-	gain        float64
-	holdSeconds float64
-	visits      int
-}
-
-type pathTally struct {
-	ups   int
-	downs int
-	exits int
+	return trainer
 }
 
 /*
-trainFunnel counts what became of one trained epoch's up/down excursions,
-stage by stage, and of the chords the midpoint rule proposed, so the summary
-says where excursions were lost instead of only what was published.
+ExcursionKeyCount is listed detector objects for the epoch (before GET filtering).
 */
-type trainFunnel struct {
-	// Chords: new chords the midpoint rule proposed, those the surprise gate
-	// blocked, and of those how many it blocked while the symbol was cold,
-	// by reason (coldSilent, coldHistory, coldFalling).
-	proposed int
-	blocked  int
-	cold     map[string]int
+func (trainer *Trainer) ExcursionKeyCount(epoch int64) int {
+	n := 0
 
-	// Symbols the epoch replayed, and how many of them warmed up (their
-	// coder's error settled); all of them with the gate off.
-	symbols int
-	warm    int
-
-	// Excursions: up/down excursions, those with no frame of the symbol at
-	// or before the entry tick, those with frames but no appended chord
-	// within learning.precursor_horizon frames, and those with a path.
-	excursions int
-	noFrame    int
-	noPath     int
-	withPath   int
-
-	// Votes the excursions with a path cast: enter (a profitable up), noop
-	// (a down or a losing up) and exit (a profitable up's path at exit).
-	enters int
-	noops  int
-	exits  int
-
-	// Paths: distinct voted paths, and those whose votes tie so no action
-	// holds a majority (nothing is published for them).
-	paths int
-	tied  int
-}
-
-func (funnel *trainFunnel) String() string {
-	return fmt.Sprintf(
-		"funnel: symbols=%d warmed up=%d | chords proposed=%d blocked by gate=%d (cold: %d no error yet, %d too little history, %d error still falling) | excursions=%d no frame before entry=%d no path within horizon=%d with path=%d | votes enter=%d noop=%d exit=%d | paths=%d tied (unpublished)=%d",
-		funnel.symbols, funnel.warm, funnel.proposed, funnel.blocked, funnel.cold[coldSilent], funnel.cold[coldHistory], funnel.cold[coldFalling],
-		funnel.excursions, funnel.noFrame, funnel.noPath, funnel.withPath,
-		funnel.enters, funnel.noops, funnel.exits,
-		funnel.paths, funnel.tied,
-	)
-}
-
-type frameRecord struct {
-	tick uint64
-	path string
-}
-
-/*
-symbolTape is the grammar state of one symbol's grid frames over an epoch,
-and the gate's running surprise moments for the symbol.
-*/
-type symbolTape struct {
-	grammar      *Grammar
-	gate         *chordGate
-	surprise     surpriseMoments
-	lastSym      string
-	recentTokens []string
-	frames       []frameRecord
-
-	// proposed, blocked and cold count the train path's new chords, those
-	// the gate blocked, and the blocked ones while the symbol was cold, by
-	// reason.
-	proposed int
-	blocked  int
-	cold     map[string]int
-}
-
-func newSymbolTape(gate *chordGate, symbol string) *symbolTape {
-	tape := &symbolTape{grammar: NewGrammar(), gate: gate, recentTokens: make([]string, 0, 16)}
-
-	// A symbol whose coder state the gate was seeded with continues its
-	// warm-up and surprise moments.
-	if gate != nil {
-		tape.surprise = gate.carried[symbol]
+	for _, job := range trainer.detectionJobs(epoch) {
+		if job.epoch == epoch {
+			n++
+		}
 	}
 
-	return tape
+	return n
 }
 
 /*
-tapeStep is what one grid frame did to a symbol's grammar: the active regions
-and the midpoint gate over them, the region tokens that fired, whether that
-chord merely repeated the previous one (nothing is appended then), what the
-surprise gate read (nil when it is off), the solver's reading Value (nil
-when the gate is off), and whether it blocked the chord (nothing is
-appended then either), the rule the append completed, and the grammar path
-active after it. The trainer tallies excursions against Path; live
-inspection shows every field. The live Sequitur copies each symbol's
-Reading to the hub every tick.
+WorkTotal is the number of detection jobs train will run.
 */
-type tapeStep struct {
-	Active   []*nmstore.Region
-	Midpoint float64
-	Fired    []string
-	Repeat   bool
-	Gate     *GateReading
-	Reading  *data.Value
-	Blocked  bool
-	Rule     *Rule
-	Path     string
+func (trainer *Trainer) WorkTotal(epochs ...int64) int64 {
+	return int64(len(trainer.detectionJobs(epochs...)))
 }
 
 /*
-step advances the tape by one stored tick of its symbol, the same way for
-train and run: the grid frame, the gate's solver step (every tick, chord
-or not, so its surprise is causal per symbol) and advance.
+parseDetectionStorageKey reads class and epoch from detector/<class>/…/<epoch>/<tick>.bin.
 */
-func (tape *symbolTape) step(grid *nmstore.Grid, tick *data.Value, symbol *broker.SymbolTick) (tapeStep, bool, error) {
-	frame, err := grid.Observe(tick, symbol.Symbol)
+func parseDetectionStorageKey(key string) (class string, epoch uint64, ok bool) {
+	head := data.ExcursionOrigin + "/"
+
+	if !strings.HasPrefix(key, head) {
+		return "", 0, false
+	}
+
+	parts := strings.Split(strings.TrimPrefix(key, head), "/")
+
+	if len(parts) < 3 {
+		return "", 0, false
+	}
+
+	class = parts[0]
+	epochPart := parts[len(parts)-2]
+
+	if len(epochPart) != 19 {
+		return "", 0, false
+	}
+
+	parsed, err := strconv.ParseUint(epochPart, 10, 64)
 
 	if err != nil {
-		return tapeStep{}, false, errnie.Err(errnie.Internal, "[tape] grid frame of "+symbol.Symbol+" at "+tick.Prefix, err)
+		return "", 0, false
 	}
 
-	gate, reading, err := tape.gate.read(&tape.surprise, tick, symbol)
-
-	if err != nil {
-		return tapeStep{}, false, err
-	}
-
-	step, ok := tape.advance(frame.Regions, gate)
-	step.Reading = reading
-	return step, ok, nil
+	return class, parsed, true
 }
 
 /*
-advance turns one frame's regions into region tokens and appends them to the
-grammar, unless gate (nil when the gate is off) did not pass. It reports
-false when no region is active, so the frame has no chord.
+balanceDetectionJobs keeps every up and down detection but caps chop and flat
+at the up count so background classes cannot dominate training.
 */
-func (tape *symbolTape) advance(regions []*nmstore.Region, gate *GateReading) (tapeStep, bool) {
-	step := tapeStep{Active: make([]*nmstore.Region, 0), Gate: gate}
+func balanceDetectionJobs(jobs []detectionJob) []detectionJob {
+	byClass := make(map[string][]detectionJob, len(data.ExcursionClasses))
 
-	for _, region := range regions {
-		if region.Brightness > 0 {
-			step.Active = append(step.Active, region)
-		}
-	}
+	for _, job := range jobs {
+		class, _, ok := parseDetectionStorageKey(job.key)
 
-	if len(step.Active) == 0 {
-		return step, false
-	}
-
-	// Dynamic midpoint activation gate.
-	step.Midpoint = (step.Active[0].Brightness + step.Active[len(step.Active)-1].Brightness) / 2.0
-	step.Fired = make([]string, 0)
-
-	for _, region := range step.Active {
-		if region.Brightness >= step.Midpoint {
-			step.Fired = append(step.Fired, fmt.Sprintf("R%02d", region.Key))
-		}
-	}
-
-	chordKey := strings.Join(step.Fired, "/")
-
-	if chordKey == tape.lastSym {
-		step.Repeat = true
-		return step, true
-	}
-
-	// The midpoint rule proposed a new chord; the surprise gate decides.
-	if gate != nil && !gate.Passed {
-		step.Blocked = true
-		return step, true
-	}
-
-	tape.lastSym = chordKey
-
-	for _, token := range step.Fired {
-		if rule := tape.grammar.Append(token); rule != nil {
-			step.Rule = rule
-		}
-	}
-
-	tape.recentTokens = append(tape.recentTokens, step.Fired...)
-
-	if len(tape.recentTokens) > 16 {
-		tape.recentTokens = tape.recentTokens[len(tape.recentTokens)-16:]
-	}
-
-	if step.Rule != nil {
-		if phrase := step.Rule.TerminalNames(tape.grammar); len(phrase) >= 2 {
-			step.Path = strings.Join(phrase, "/")
-		}
-	}
-
-	if step.Path == "" && len(tape.recentTokens) >= 2 {
-		step.Path = strings.Join(tape.recentTokens[len(tape.recentTokens)-2:], "/")
-	} else if step.Path == "" && len(tape.recentTokens) == 1 {
-		step.Path = tape.recentTokens[0]
-	}
-
-	return step, true
-}
-
-/*
-observe advances the tape by one stored tick of its symbol and records the
-grammar path active at that tick (empty on a repeated or blocked chord).
-*/
-func (tape *symbolTape) observe(grid *nmstore.Grid, tick *data.Value, symbol *broker.SymbolTick) error {
-	step, ok, err := tape.step(grid, tick, symbol)
-
-	if err != nil || !ok {
-		return err
-	}
-
-	if !step.Repeat {
-		tape.proposed++
-	}
-
-	if step.Blocked {
-		tape.blocked++
-
-		if !step.Gate.Warm {
-			if tape.cold == nil {
-				tape.cold = make(map[string]int)
-			}
-
-			tape.cold[step.Gate.Cold]++
-		}
-	}
-
-	tape.frames = append(tape.frames, frameRecord{tick: tick.Tick, path: step.Path})
-	return nil
-}
-
-/*
-frameAt is the index of the last frame at or before tick, or -1 when the
-tape has no frame that early.
-*/
-func (tape *symbolTape) frameAt(tick uint64) int {
-	idx, found := slices.BinarySearchFunc(tape.frames, tick, func(frame frameRecord, target uint64) int {
-		switch {
-		case frame.tick < target:
-			return -1
-		case frame.tick > target:
-			return 1
-		}
-		return 0
-	})
-
-	if found {
-		for idx+1 < len(tape.frames) && tape.frames[idx+1].tick == tick {
-			idx++
-		}
-
-		return idx
-	}
-
-	return idx - 1
-}
-
-func (tape *symbolTape) findPath(idx, minIdx int) string {
-	for i := idx; i >= minIdx && i >= 0; i-- {
-		if tape.frames[i].path != "" {
-			return tape.frames[i].path
-		}
-	}
-
-	return ""
-}
-
-/*
-tapeReplay is the train path's tape per symbol over one epoch's stored ticks,
-in the order symbols first trade, limited to symbols when any are given.
-*/
-type tapeReplay struct {
-	grid    *nmstore.Grid
-	gate    *chordGate
-	symbols []string
-	tapes   map[string]*symbolTape
-	order   []string
-}
-
-func newTapeReplay(ctx context.Context, gate *chordGate, symbols []string) *tapeReplay {
-	return &tapeReplay{
-		grid: nmstore.NewGrid(ctx), gate: gate, symbols: symbols,
-		tapes: make(map[string]*symbolTape), order: make([]string, 0),
-	}
-}
-
-/*
-observe advances every symbol of one stored tick.
-*/
-func (replay *tapeReplay) observe(value *data.Value) error {
-	symbolTicks, err := broker.ReadTick(value)
-
-	if err != nil {
-		return err
-	}
-
-	for _, symbolTick := range symbolTicks {
-		symbol := symbolTick.Symbol
-
-		if len(replay.symbols) > 0 && !slices.Contains(replay.symbols, symbol) {
+		if !ok {
 			continue
 		}
 
-		tape, ok := replay.tapes[symbol]
-
-		if !ok {
-			tape = newSymbolTape(replay.gate, symbol)
-			replay.tapes[symbol] = tape
-			replay.order = append(replay.order, symbol)
-		}
-
-		if err := tape.observe(replay.grid, value, symbolTick); err != nil {
-			return err
-		}
+		byClass[class] = append(byClass[class], job)
 	}
 
-	return nil
+	up := byClass["up"]
+	capN := len(up)
+	out := make([]detectionJob, 0, len(jobs))
+
+	out = append(out, up...)
+	out = append(out, byClass["down"]...)
+
+	chop := byClass["chop"]
+	if len(chop) > capN {
+		errnie.Info(fmt.Sprintf("[trainer] cap chop: %d → %d (up=%d)", len(chop), capN, capN))
+		chop = chop[:capN]
+	}
+
+	out = append(out, chop...)
+
+	flat := byClass["flat"]
+	if len(flat) > capN {
+		errnie.Info(fmt.Sprintf("[trainer] cap flat: %d → %d (up=%d)", len(flat), capN, capN))
+		flat = flat[:capN]
+	}
+
+	out = append(out, flat...)
+
+	return out
 }
 
 /*
-Generate trains on each epoch and publishes its policies.
+detectionJobs lists every detector class train reads (data.ExcursionClasses).
+Chop and flat are capped to the number of up detections. When epochs is
+non-empty, only keys whose storage epoch is in that set are kept.
 */
-func (trainer *Trainer) Generate(epochs ...uint64) error {
-	if trainer.client == nil || trainer.price == nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "[trainer] trainer requires client and price", nil))
+func (trainer *Trainer) detectionJobs(epochs ...int64) []detectionJob {
+	allowed := map[int64]bool{}
+
+	for _, epoch := range epochs {
+		if epoch > 0 {
+			allowed[epoch] = true
+		}
 	}
 
-	horizon := system.Cfg.Learning.PrecursorHorizon
+	filterEpochs := len(allowed) > 0
+	jobs := make([]detectionJob, 0)
+	seen := make(map[string]bool)
 
-	// learning.precursor_horizon has its default in system; a non-positive
-	// value is a broken config.
-	if horizon <= 0 {
+	for _, class := range data.ExcursionClasses {
+		prefix := data.ExcursionOrigin + "/" + class + "/"
+
+		for _, key := range trainer.client.ListKeys(prefix) {
+			if !strings.HasSuffix(key, ".bin") || seen[key] {
+				continue
+			}
+
+			seen[key] = true
+
+			_, epoch, ok := parseDetectionStorageKey(key)
+
+			if !ok {
+				continue
+			}
+
+			if filterEpochs && !allowed[int64(epoch)] {
+				continue
+			}
+
+			jobs = append(jobs, detectionJob{epoch: int64(epoch), key: key})
+		}
+	}
+
+	return balanceDetectionJobs(jobs)
+}
+
+/*
+FrameCount is the number of trainable excursions for the epoch (same set Generate runs).
+*/
+func (trainer *Trainer) FrameCount(epoch int64) int {
+	return len(trainer.loadExcursions(epoch))
+}
+
+/*
+loadExcursions serially reads every listed detection for the epoch.
+*/
+func (trainer *Trainer) loadExcursions(epoch int64) []*data.Value {
+	out := make([]*data.Value, 0)
+
+	for _, job := range trainer.detectionJobs(epoch) {
+		if job.epoch != epoch {
+			continue
+		}
+
+		key := job.key
+		val, err := store.ReadValue(trainer.client, key)
+
+		if err != nil {
+			errnie.Error(errnie.Err(errnie.IO, "[trainer] excursion "+key, err))
+			continue
+		}
+
+		if val.Epoch != uint64(epoch) {
+			continue
+		}
+
+		class := val.Role
+
+		if !slices.Contains(data.ExcursionClasses, class) {
+			continue
+		}
+
+		if len(trainer.symbols) > 0 && !slices.Contains(trainer.symbols, val.Scope) {
+			continue
+		}
+
+		out = append(out, val)
+	}
+
+	return out
+}
+
+func (trainer *Trainer) trainableExcursion(val *data.Value, epoch int64) bool {
+	if val == nil || val.Epoch != uint64(epoch) {
+		return false
+	}
+
+	if !slices.Contains(data.ExcursionClasses, val.Role) {
+		return false
+	}
+
+	if len(trainer.symbols) > 0 && !slices.Contains(trainer.symbols, val.Scope) {
+		return false
+	}
+
+	return true
+}
+
+func (trainer *Trainer) tickIndexForEpoch(epoch int64) map[uint64]string {
+	trainer.tickIndexMu.Lock()
+	defer trainer.tickIndexMu.Unlock()
+
+	if trainer.tickIndexes == nil {
+		trainer.tickIndexes = make(map[int64]map[uint64]string)
+	}
+
+	if index, ok := trainer.tickIndexes[epoch]; ok {
+		return index
+	}
+
+	index := trainer.tickKeyIndex(epoch)
+	trainer.tickIndexes[epoch] = index
+
+	return index
+}
+
+func (trainer *Trainer) tickKeyIndex(epoch int64) map[uint64]string {
+	index := make(map[uint64]string)
+
+	for _, key := range trainer.client.ListKeys(data.TickPrefix(uint64(epoch))) {
+		if tick, ok := tickFromStorageKey(key); ok {
+			index[tick] = key
+		}
+	}
+
+	return index
+}
+
+func tickFromStorageKey(key string) (uint64, bool) {
+	base := key
+
+	if idx := strings.LastIndex(key, "/"); idx >= 0 {
+		base = key[idx+1:]
+	}
+
+	base = strings.TrimSuffix(base, ".bin")
+
+	if len(base) != 19 {
+		return 0, false
+	}
+
+	var tick uint64
+
+	for _, digit := range base {
+		if digit < '0' || digit > '9' {
+			return 0, false
+		}
+
+		tick = tick*10 + uint64(digit-'0')
+	}
+
+	return tick, true
+}
+
+type detectionJob struct {
+	epoch int64
+	key   string
+}
+
+func (trainer *Trainer) Generate(epochs ...int64) error {
+	if trainer.client == nil || trainer.price == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf("[trainer] learning.precursor_horizon %d is not positive", horizon),
+			"[trainer] trainer requires client and price",
 			nil,
 		))
 	}
 
-	for _, epoch := range epochs {
-		if err := trainer.generate(epoch, horizon); err != nil {
+	jobs := trainer.detectionJobs(epochs...)
+
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	if trainer.SetWorkTotal != nil {
+		trainer.SetWorkTotal(int64(len(jobs)))
+	}
+
+	group, ctx := errgroup.WithContext(trainer.Context())
+
+	for _, job := range jobs {
+		job := job
+
+		group.Go(func() error {
+			if trainer.OnFrame != nil {
+				defer trainer.OnFrame()
+			}
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			excursion, err := store.ReadValue(trainer.client, job.key)
+
+			if err != nil {
+				errnie.Error(errnie.Err(errnie.IO, "[trainer] excursion "+job.key, err))
+				return nil
+			}
+
+			trainEpoch := int64(excursion.Epoch)
+
+			if !trainer.trainableExcursion(excursion, trainEpoch) {
+				return nil
+			}
+
+			return trainer.trainExcursion(job.key, trainEpoch, excursion)
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		return errnie.Error(err)
+	}
+
+	return nil
+}
+
+func (trainer *Trainer) trainExcursion(
+	detectionKey string,
+	epoch int64,
+	excursion *data.Value,
+) error {
+	tag := detectionKey
+	if tag == "" && excursion != nil {
+		tag = excursion.Prefix
+	}
+
+	if excursion == nil {
+		return nil
+	}
+
+	fields, err := data.DetectExcursionFields(excursion)
+
+	if err != nil {
+		return nil
+	}
+
+	aTick := uint64(fields["a_tick"])
+	bTick := uint64(fields["b_tick"])
+	dTick := uint64(fields["d_tick"])
+
+	if aTick == 0 || dTick < aTick || bTick < aTick || bTick > dTick {
+		return nil
+	}
+
+	tickIndex := trainer.tickIndexForEpoch(epoch)
+	replayFrom := tickWarmupBefore(aTick)
+	ticks, missing, loadErr := trainer.loadTicksCounted(tickIndex, replayFrom, dTick)
+
+	if loadErr != nil {
+		return errnie.Error(loadErr)
+	}
+
+	if len(ticks) == 0 {
+		errnie.Info(fmt.Sprintf(
+			"[trainer] %s: no ticks in [%d,%d] (a=%d d=%d missing=%d index=%d)",
+			tag, replayFrom, dTick, aTick, dTick, missing, len(tickIndex),
+		))
+		return nil
+	}
+
+	precursorPath, holdingPath, replayErr := trainer.replayTape(ticks, bTick, dTick)
+
+	if replayErr != nil {
+		return errnie.Error(replayErr)
+	}
+
+	if precursorPath == "" && holdingPath == "" {
+		errnie.Info(fmt.Sprintf(
+			"[trainer] %s: no paths after replay (loaded=%d a=%d b=%d d=%d)",
+			tag, len(ticks), aTick, bTick, dTick,
+		))
+		return nil
+	}
+
+	bPrice := decimal.NewFromFloat64(fields["b_price"])
+	cPrice := decimal.NewFromFloat64(fields["c_price"])
+
+	if bPrice.Sign() == 0 || cPrice.Sign() == 0 {
+		return nil
+	}
+
+	label := excursion.Scope
+
+	if label == "" {
+		label = "current"
+	}
+
+	pnl, cost, roundErr := trainer.price.RoundTrip(label, bPrice, cPrice)
+	netReturn := 0.0
+
+	if roundErr == nil && pnl != nil && cost != nil && cost.Sign() > 0 {
+		netReturn = pnl.Div(cost).Float64()
+	} else if bPrice.Sign() > 0 {
+		move := cPrice.Sub(bPrice).Div(bPrice).Float64()
+		fee := 0.0
+
+		if rate, ok := trainer.price.FeeRate(label); ok {
+			fee = 2 * rate
+		}
+
+		netReturn = move - fee
+	}
+
+	isUp := excursion.Role == "up"
+
+	if isUp && netReturn > 0 {
+		if err := trainer.writePolicy(epoch, label, precursorPath, "enter", netReturn); err != nil {
+			return errnie.Error(err)
+		}
+
+		if holdingPath != "" {
+			if err := trainer.writePolicy(epoch, label, holdingPath, "exit", netReturn); err != nil {
+				return errnie.Error(err)
+			}
+		}
+
+		return nil
+	}
+
+	if precursorPath != "" {
+		if err := trainer.writePolicy(epoch, label, precursorPath, "noop", netReturn); err != nil {
+			return errnie.Error(err)
+		}
+	}
+
+	if holdingPath != "" && holdingPath != precursorPath {
+		if err := trainer.writePolicy(epoch, label, holdingPath, "noop", netReturn); err != nil {
 			return errnie.Error(err)
 		}
 	}
@@ -412,437 +492,238 @@ func (trainer *Trainer) Generate(epochs ...uint64) error {
 	return nil
 }
 
-func (trainer *Trainer) generate(epoch uint64, horizon int) error {
-	// One gate per trained epoch, continuing the newest coder state trained
-	// under the same gate settings (cold when there is none); its own state
-	// is saved under the policy epoch it publishes, for make run and the
-	// next training to continue.
-	gate, err := newChordGate(trainer.Context(), system.Cfg.Resonance)
+func tickWarmupBefore(aTick uint64) uint64 {
+	warmup := uint64(64)
 
-	if err != nil {
-		return err
+	if system.Cfg != nil && system.Cfg.Learning.PrecursorHorizon > 0 {
+		warmup = uint64(system.Cfg.Learning.PrecursorHorizon * 8)
 	}
 
-	if err := trainer.continueCoderState(gate); err != nil {
-		return err
+	if aTick > warmup {
+		return aTick - warmup
 	}
 
-	watermark, err := readWatermark(trainer.client, epoch)
-
-	if err != nil {
-		return err
-	}
-
-	replay := newTapeReplay(trainer.Context(), gate, trainer.symbols)
-
-	grown, err := replayThrough(trainer.client, watermark, func(value *data.Value) error {
-		if err := trainer.Context().Err(); err != nil {
-			return err
-		}
-
-		return replay.observe(value)
-	})
-
-	if err != nil {
-		return err
-	}
-
-	tapes, order := replay.tapes, replay.order
-	ticks, firstTick, lastTick := watermark.Ticks, watermark.FirstTick, watermark.LastTick
-
-	if grown > 0 {
-		errnie.Warn(fmt.Sprintf(
-			"[trainer] tick epoch %d grew since detect: tick %d is stored past its watermark; training on ticks %d..%d only (re-run detect to train on more)",
-			epoch, grown, firstTick, lastTick,
-		))
-	}
-
-	tallies := make(map[string]*pathTally)
-	stats := make(map[string]*pathStats)
-	funnel := &trainFunnel{cold: make(map[string]int)}
-
-	for _, symbol := range order {
-		tape := tapes[symbol]
-		funnel.symbols++
-		funnel.proposed += tape.proposed
-
-		if gate.solver == nil || tape.surprise.settle.warm {
-			funnel.warm++
-		}
-
-		funnel.blocked += tape.blocked
-
-		for reason, count := range tape.cold {
-			funnel.cold[reason] += count
-		}
-
-		for excursion, err := range store.Values(trainer.client, data.ExcursionPrefixes(symbol, epoch)...) {
-			if err != nil {
-				return err
-			}
-
-			if excursion.Role != "up" && excursion.Role != "down" {
-				continue
-			}
-
-			funnel.excursions++
-
-			if err := trainer.tally(symbol, tape, excursion, horizon, tallies, stats, funnel); err != nil {
-				return err
-			}
-		}
-	}
-
-	if funnel.excursions == 0 {
-		return errnie.Err(errnie.NotFound, fmt.Sprintf(
-			"[trainer] epoch %d has no up/down excursions for %d symbols: run detect on it first", epoch, len(order),
-		), nil)
-	}
-
-	settings := gate.settings
-	settings.Epoch, settings.TickEpoch = uint64(time.Now().UnixNano()), epoch
-
-	errnie.Info(fmt.Sprintf(
-		"[trainer] epoch %d: %d ticks (tick %d..%d), %d symbols, %d up/down excursions, %s; %s",
-		epoch, ticks, firstTick, lastTick, len(order), funnel.excursions, settings, watermark,
-	))
-
-	// The state first: a policy epoch make run can load always has its
-	// coder state.
-	if err := gate.save(trainer.client, settings, lastTick, tapes); err != nil {
-		return err
-	}
-
-	return trainer.publishPolicies(settings, tallies, stats, funnel)
+	return 1
 }
 
-/*
-continueCoderState seeds gate with the newest coder state trained under its
-settings; none is a cold start, said so. An unreadable state is an error.
-*/
-func (trainer *Trainer) continueCoderState(gate *chordGate) error {
-	if gate.solver == nil {
-		return nil
-	}
+func (trainer *Trainer) loadTicksCounted(
+	index map[uint64]string,
+	fromTick, toTick uint64,
+) ([]*data.Value, int, error) {
+	vals := make([]*data.Value, 0, toTick-fromTick+1)
+	missing := 0
 
-	states, prior, skipped, err := newestCoderStates(stateSource{
-		keys: trainer.client.ListKeys,
-		download: func(keys []string) iter.Seq2[*data.Value, error] {
-			return store.Values(trainer.client, keys...)
-		},
-	}, gate.settings)
-
-	if err != nil {
-		return err
-	}
-
-	if states == nil {
-		errnie.Info(fmt.Sprintf(
-			"[trainer] cold start: no coder state trained under %s is stored (%d policy epochs saved one under other settings)",
-			gate.settings, skipped,
-		))
-
-		return nil
-	}
-
-	if err := gate.seed(states); err != nil {
-		return errnie.Err(errnie.UnprocessableContent, fmt.Sprintf("[trainer] coder state of policy epoch %d", prior), err)
-	}
-
-	errnie.Info(fmt.Sprintf(
-		"[trainer] continuing the coder state of %d symbols from policy epoch %d (%d newer policy epochs under other settings)",
-		len(states), prior, skipped,
-	))
-
-	return nil
-}
-
-/*
-readWatermark is epoch's detector watermark; none (detect never completed
-on the epoch) or more than one is an error.
-*/
-func readWatermark(client *store.Client, epoch uint64) (data.DetectorWatermark, error) {
-	var found []data.DetectorWatermark
-
-	for value, err := range store.Values(client, data.DetectorWatermarkPrefix(epoch)) {
-		if err != nil {
-			return data.DetectorWatermark{}, err
-		}
-
-		watermark, err := data.ReadDetectorWatermark(value)
-
-		if err != nil {
-			return data.DetectorWatermark{}, err
-		}
-
-		found = append(found, watermark)
-	}
-
-	switch len(found) {
-	case 0:
-		return data.DetectorWatermark{}, errnie.Err(errnie.NotFound, fmt.Sprintf(
-			"[trainer] epoch %d has no detector watermark under %s: run detect on it (to completion) first",
-			epoch, data.DetectorWatermarkPrefix(epoch),
-		), nil)
-	case 1:
-		return found[0], nil
-	}
-
-	return data.DetectorWatermark{}, errnie.Err(errnie.Conflict, fmt.Sprintf(
-		"[trainer] epoch %d has %d detector watermarks under %s", epoch, len(found), data.DetectorWatermarkPrefix(epoch),
-	), nil)
-}
-
-/*
-replayThrough feeds observe the epoch's stored ticks up to and including
-watermark.LastTick, in order, and checks they are exactly the ticks detect
-read (the same first tick and count). It returns the first stored tick past
-the watermark, 0 when the epoch has not grown since detect.
-*/
-func replayThrough(client *store.Client, watermark data.DetectorWatermark, observe func(*data.Value) error) (uint64, error) {
-	ticks := 0
-	var firstTick, grown uint64
-
-	for value, err := range store.Values(client, data.TickPrefix(watermark.Epoch)) {
-		if err != nil {
-			return 0, err
-		}
-
-		if value.Tick > watermark.LastTick {
-			grown = value.Tick
-			break
-		}
-
-		if ticks == 0 {
-			firstTick = value.Tick
-		}
-
-		if err := observe(value); err != nil {
-			return 0, err
-		}
-
-		ticks++
-	}
-
-	if ticks != watermark.Ticks || firstTick != watermark.FirstTick {
-		return 0, errnie.Err(errnie.Conflict, fmt.Sprintf(
-			"[trainer] epoch %d stores %d ticks from tick %d up to the watermark, but detect read %d from tick %d (%s): re-run detect",
-			watermark.Epoch, ticks, firstTick, watermark.Ticks, watermark.FirstTick, watermark,
-		), nil)
-	}
-
-	return grown, nil
-}
-
-/*
-tally attributes one excursion to the grammar paths active at its entry and
-at its exit: the points detect pulled back from ignition B and exhaustion C
-so orders placed there can fill (data.ExcursionKeys). The long round trip
-buys at the ask the entry tick recorded and sells at the exit tick's bid. It
-counts in funnel which stage the excursion reached: no frame before the
-entry, no appended chord within horizon frames of it, or a path and the
-votes it cast.
-*/
-func (trainer *Trainer) tally(
-	symbol string,
-	tape *symbolTape,
-	excursion *data.Value,
-	horizon int,
-	tallies map[string]*pathTally,
-	stats map[string]*pathStats,
-	funnel *trainFunnel,
-) error {
-	fields, err := data.ExcursionFields(excursion)
-
-	if err != nil {
-		return err
-	}
-
-	pnl, cost, err := trainer.price.RoundTrip(
-		symbol, decimal.NewFromFloat64(fields["entry_ask"]), decimal.NewFromFloat64(fields["exit_bid"]),
-	)
-
-	if err != nil {
-		return errnie.Err(errnie.Validation, "[trainer] round trip of "+excursion.Prefix, err)
-	}
-
-	if cost.Sign() <= 0 {
-		return errnie.Err(errnie.Validation, "[trainer] non-positive round-trip cost for "+excursion.Prefix, nil)
-	}
-
-	startIdx := tape.frameAt(uint64(fields["entry_tick"]))
-
-	if startIdx < 0 {
-		funnel.noFrame++
-		return nil
-	}
-
-	endIdx := tape.frameAt(uint64(fields["exit_tick"]))
-	netReturn := pnl.Div(cost).Float64()
-	holdSeconds := (fields["exit_at"] - fields["entry_at"]) / 1e9
-	isUp := excursion.Role == "up"
-
-	record := func(path string, count func(*pathTally)) {
-		tally, ok := tallies[path]
+	for tick := fromTick; tick <= toTick; tick++ {
+		key, ok := index[tick]
 
 		if !ok {
-			tally = &pathTally{}
-			tallies[path] = tally
-		}
-
-		count(tally)
-
-		stat, ok := stats[path]
-
-		if !ok {
-			stat = &pathStats{}
-			stats[path] = stat
-		}
-
-		stat.gain += netReturn
-		stat.holdSeconds += holdSeconds
-		stat.visits++
-	}
-
-	entryPath := tape.findPath(startIdx, max(startIdx-horizon, 0))
-
-	if entryPath == "" {
-		funnel.noPath++
-		return nil
-	}
-
-	funnel.withPath++
-
-	if isUp && netReturn > 0 {
-		funnel.enters++
-		record(entryPath, func(tally *pathTally) { tally.ups++ })
-	} else {
-		funnel.noops++
-		record(entryPath, func(tally *pathTally) { tally.downs++ })
-	}
-
-	if isUp && netReturn > 0 && endIdx >= 0 {
-		if exitPath := tape.findPath(endIdx, startIdx); exitPath != "" && exitPath != entryPath {
-			funnel.exits++
-			record(exitPath, func(tally *pathTally) { tally.exits++ })
-		}
-	}
-
-	return nil
-}
-
-/*
-majority is the action a path's votes elect, or "" when they tie and no
-action holds a majority.
-*/
-func (tally *pathTally) majority() string {
-	switch {
-	case tally.ups > tally.downs && tally.ups > tally.exits:
-		return "enter"
-	case tally.exits > tally.ups && tally.exits >= tally.downs:
-		return "exit"
-	case tally.downs >= tally.ups && tally.downs > tally.exits:
-		return "noop"
-	}
-
-	return ""
-}
-
-/*
-publishPolicies publishes one Value per path that has a majority action
-under the fresh policy epoch gate.Epoch, each tagged with gate, written
-through the store with io.Copy. Earlier policy epochs are left as they are,
-so trainings of the same ticks under different gates can be compared.
-*/
-func (trainer *Trainer) publishPolicies(
-	gate data.PolicyGate,
-	tallies map[string]*pathTally,
-	stats map[string]*pathStats,
-	funnel *trainFunnel,
-) error {
-	epoch := gate.Epoch
-
-	for _, prefix := range data.PolicyPrefixes(epoch) {
-		keys, err := trainer.client.ListKeys(prefix)
-
-		if err != nil {
-			return errnie.Err(errnie.IO, "[trainer] listing "+prefix, err)
-		}
-
-		if len(keys) > 0 {
-			return errnie.Err(errnie.Conflict, fmt.Sprintf("[trainer] policy epoch %d already holds %d policies under %s", epoch, len(keys), prefix), nil)
-		}
-	}
-
-	counts := make(map[string]int)
-	var sequence uint64
-
-	for _, path := range slices.Sorted(maps.Keys(tallies)) {
-		tally := tallies[path]
-		totalVisits := tally.ups + tally.downs + tally.exits
-		action := tally.majority()
-		funnel.paths++
-
-		if action == "" {
-			funnel.tied++
+			missing++
 			continue
 		}
 
-		entry := stats[path]
+		val, err := store.ReadValue(trainer.client, key)
 
-		if entry == nil || entry.visits == 0 {
-			return errnie.Err(errnie.Internal, "[trainer] path "+path+" is tallied without stats", nil)
+		if err != nil {
+			return nil, missing, err
 		}
 
-		var confidence float64
-
-		switch action {
-		case "enter":
-			confidence = float64(tally.ups) / float64(totalVisits)
-		case "exit":
-			confidence = float64(tally.exits) / float64(totalVisits)
-		case "noop":
-			confidence = float64(tally.downs) / float64(totalVisits)
-		}
-
-		sequence++
-
-		val := &data.Value{
-			Origin: data.PolicyOrigin,
-			Role:   action,
-			Scope:  data.PolicyScope,
-			Epoch:  epoch,
-			Tick:   sequence,
-		}
-		val.FormatPrefix()
-
-		meanGain := entry.gain / float64(entry.visits)
-
-		if err := data.AppendPolicy(val, path, []float64{
-			meanGain,
-			entry.holdSeconds / float64(entry.visits),
-			float64(entry.visits),
-			meanGain,
-			confidence,
-		}); err != nil {
-			return err
-		}
-
-		if err := data.AppendPolicyGate(val, gate); err != nil {
-			return err
-		}
-
-		if _, err := io.Copy(trainer.client, val); err != nil {
-			return errnie.Err(errnie.IO, "[trainer] publishing "+val.Prefix, err)
-		}
-
-		counts[action]++
+		vals = append(vals, val)
 	}
 
-	errnie.Info(fmt.Sprintf(
-		"[trainer] published policy epoch %d for tick epoch %d (enter=%d exit=%d noop=%d); %s",
-		epoch, gate.TickEpoch, counts["enter"], counts["exit"], counts["noop"], funnel,
-	))
+	slices.SortFunc(vals, func(first, second *data.Value) int {
+		return cmp.Compare(first.Tick, second.Tick)
+	})
+
+	return vals, missing, nil
+}
+
+/*
+replayTape runs grid, predictive coder, and Sequitur over [a,d] and returns the
+Sequitur paths settled by b (precursor) and by d (holding).
+*/
+func (trainer *Trainer) replayTape(
+	ticks []*data.Value,
+	bTick, dTick uint64,
+) (precursorPath, holdingPath string, err error) {
+	grid := nmstore.NewGrid(trainer.Context())
+	grammar := NewGrammar()
+	coder := newPredictiveCoder()
+	step := 0
+	lastSym := ""
+	recentTokens := make([]string, 0, 16)
+	lastPhrase := ""
+
+	for _, val := range ticks {
+		regions, observeErr := grid.Observe(val)
+
+		if observeErr != nil {
+			continue
+		}
+
+		if len(regions) == 0 {
+			continue
+		}
+
+		regionBrightness := make([]float64, 15)
+
+		for _, r := range regions {
+			if int(r.Key) < 15 {
+				regionBrightness[r.Key] = r.Brightness
+			}
+		}
+
+		step++
+		sec := float64(val.Timestamp) / 1e9
+
+		if val.Timestamp < 1e11 {
+			sec = float64(val.Timestamp)
+		}
+
+		inValue := transport.NewValue([2][]float64{
+			regionBrightness,
+			{0.0, 0.0, float64(step), sec},
+		})
+
+		for range coder.Next(inValue.Next(nil)) {
+		}
+
+		active := make([]*nmstore.Region, 0)
+
+		for _, r := range regions {
+			if r.Brightness > 0 {
+				active = append(active, r)
+			}
+		}
+
+		if len(active) == 0 {
+			continue
+		}
+
+		maxB := active[0].Brightness
+		minB := active[len(active)-1].Brightness
+		midB := (maxB + minB) / 2.0
+
+		var firedTokens []string
+
+		for _, r := range active {
+			if r.Brightness >= midB {
+				firedTokens = append(firedTokens, fmt.Sprintf("R%02d", r.Key))
+			}
+		}
+
+		if len(firedTokens) == 0 {
+			continue
+		}
+
+		chordKey := strings.Join(firedTokens, "/")
+
+		if chordKey == lastSym {
+			trainer.snapshotPaths(val.Tick, bTick, dTick, lastPhrase, &precursorPath, &holdingPath)
+			continue
+		}
+
+		lastSym = chordKey
+
+		var deepestRule *Rule
+
+		for _, token := range firedTokens {
+			rule := grammar.Append(token)
+
+			if rule != nil {
+				deepestRule = rule
+			}
+		}
+
+		recentTokens = append(recentTokens, firedTokens...)
+
+		if len(recentTokens) > 16 {
+			recentTokens = recentTokens[len(recentTokens)-16:]
+		}
+
+		activePath := ""
+
+		if deepestRule != nil {
+			phrase := deepestRule.TerminalNames(grammar)
+
+			if len(phrase) >= 1 {
+				activePath = strings.Join(phrase, "/")
+			}
+		}
+
+		if activePath == "" && len(recentTokens) >= 2 {
+			activePath = strings.Join(recentTokens[len(recentTokens)-2:], "/")
+		} else if activePath == "" && len(recentTokens) == 1 {
+			activePath = recentTokens[0]
+		}
+
+		if activePath != "" {
+			lastPhrase = activePath
+		}
+
+		trainer.snapshotPaths(val.Tick, bTick, dTick, lastPhrase, &precursorPath, &holdingPath)
+	}
+
+	if gridErr := grid.Error(); gridErr != nil {
+		return "", "", errnie.Error(gridErr)
+	}
+
+	return precursorPath, holdingPath, nil
+}
+
+func (trainer *Trainer) snapshotPaths(
+	tick, bTick, dTick uint64,
+	phrase string,
+	precursorPath, holdingPath *string,
+) {
+	if phrase == "" {
+		return
+	}
+
+	if tick <= bTick {
+		*precursorPath = phrase
+	}
+
+	if tick >= bTick && tick <= dTick {
+		*holdingPath = phrase
+	}
+}
+
+func (trainer *Trainer) writePolicy(
+	epoch int64,
+	symbol string,
+	path string,
+	action string,
+	netReturn float64,
+) error {
+	if path == "" || trainer.client == nil {
+		return nil
+	}
+
+	if action != "enter" && action != "exit" && action != "noop" {
+		return nil
+	}
+
+	val := data.NewValue("policy", action, symbol)
+	val.Epoch = uint64(epoch)
+	data.AppendVector(val, []float64{
+		netReturn,
+		0,
+		1,
+		netReturn,
+		1,
+	}, "gain", "hold_seconds", "visits", "mean_reward", "confidence", "path:"+path)
+
+	val.FormatPrefix()
+	val.Prefix = "policy/current/" + path + "/" + action + ".bin"
+
+	trainer.writeMu.Lock()
+	defer trainer.writeMu.Unlock()
+
+	if _, err := io.Copy(trainer.client, val); err != nil {
+		return errnie.Error(err)
+	}
+
+	errnie.Info(fmt.Sprintf("[trainer] policy %s/%s → %s", path, action, val.Prefix))
 
 	return nil
 }

@@ -45,6 +45,11 @@ import { ingestSequiturFrame } from "#/collections/sequitur";
 import { topologyStore } from "#/collections/topology";
 import { DecisionT, HoldingT, PositionT } from "#/collections/types";
 import { hubWsUrl } from "#/lib/hub";
+import {
+	ingestPositionFrame,
+	LAYER_POSITION,
+	POSITION_ORIGIN,
+} from "#/lib/lifecycle";
 
 /*
 The hub multiplexes everything over one socket: each message is one serialized
@@ -471,6 +476,26 @@ export function dispatchValue(val: ParsedValue) {
 	// this client only.
 	if (val.origin === DETECTIONS_ORIGIN) {
 		ingestDetectionFrame(val);
+		return;
+	}
+
+	// A paper position frame (position/<event>/<symbol>, data/schema.go):
+	// its one layer is the strategy.PositionFrame JSON.
+	if (val.origin === POSITION_ORIGIN) {
+		const layer = val.layers.find((entry) =>
+			entry.index.endsWith(`/${LAYER_POSITION}`),
+		);
+
+		if (!layer) {
+			console.error(
+				"dispatchValue: position frame without its layer",
+				val.role,
+				val.scope,
+			);
+			return;
+		}
+
+		ingestPositionFrame(parseJSON(layer.bytes));
 		return;
 	}
 

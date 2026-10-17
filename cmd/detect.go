@@ -2,14 +2,17 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"slices"
+	"strconv"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/cli/progress"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
@@ -23,183 +26,169 @@ var (
 
 var detectCmd = &cobra.Command{
 	Use:   "detect",
-	Short: "Label the stored tick tape with excursion detections (origin=detector)",
-	Long: `detect runs one excursion Detector per symbol over the stored ticks of each
-requested epoch (data.TickPrefix), under an explicit taker fee (percent per
-side), and writes every excursion to the store under
-data.ExcursionPrefixes(symbol, epoch). An epoch's earlier detections
-are removed before it is relabelled. Once every excursion is uploaded, the
-epoch's watermark (data.DetectorWatermark: the stored ticks it read) is
-written; train replays only the ticks up to it.`,
+	Short: "Label stored ticks with excursion detections",
+	Long: `detect reads each stored tick, rebuilds that tick's book and fee from its
+layers, and runs the excursion detector against that book. The taker-fee flag
+is the friction rate when a tick's price layer has no fee. Excursions are
+written back with io.Copy.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		system.NewConfig()
+
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
-		client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
+		bucket := "symm"
+
+		if system.Cfg != nil && system.Cfg.Storage != nil && system.Cfg.Storage.S3 != nil && system.Cfg.Storage.S3.Bucket != "" {
+			bucket = system.Cfg.Storage.S3.Bucket
+		}
+
+		client := store.NewClient(ctx, bucket)
 
 		if client == nil {
-			return errnie.Err(errnie.Validation, "[detect] unable to open store client", nil)
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[detect] unable to open store client",
+				nil,
+			))
 		}
 
-		epochs, err := storedEpochs(client, detectEpochs)
+		defer client.Close()
+
+		feePct, err := strconv.ParseFloat(detectFeePct, 64)
+
+		if err != nil || feePct <= 0 {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[detect] taker-fee-percent must be a positive percent per side",
+				err,
+			))
+		}
+
+		price := broker.NewPrice(ctx, nil, nil, nil, nil)
+		cash := 200.0
+
+		if system.Cfg != nil && system.Cfg.Market != nil && system.Cfg.Market.Balance > 0 {
+			cash = float64(system.Cfg.Market.Balance)
+		}
+
+		price.SetReferenceCash(decimal.NewFromFloat64(cash))
+		price.SetDefaultFee(kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(feePct)})
+
+		detector := strategy.NewDetector(ctx, price)
+
+		if err := detector.Error(); err != nil {
+			return errnie.Error(err)
+		}
+
+		epochs, err := detectRunEpochs(client)
 
 		if err != nil {
-			return err
+			return errnie.Error(err)
 		}
 
-		price, err := offlinePrice(ctx, detectFeePct, detectSymbols)
+		want := map[string]struct{}{}
 
-		if err != nil {
-			return err
+		for _, symbol := range detectSymbols {
+			want[symbol] = struct{}{}
 		}
+
+		var tickTotal int64
 
 		for _, epoch := range epochs {
-			if err := detectEpoch(ctx, client, price, epoch); err != nil {
-				return err
+			tickTotal += int64(len(client.ListKeys(data.TickPrefix(epoch))))
+		}
+
+		bar := progress.New("detect ticks", tickTotal)
+		defer bar.Finish()
+
+		for _, epoch := range epochs {
+			for frame, err := range store.Values(client, data.TickPrefix(epoch)) {
+				if err != nil {
+					return errnie.Error(err)
+				}
+
+				bar.Step()
+
+				ticks, err := broker.ReadTick(frame)
+
+				if err != nil {
+					errnie.Error(err)
+					continue
+				}
+
+				for _, tick := range ticks {
+					if len(want) > 0 {
+						if _, ok := want[tick.Symbol]; !ok {
+							continue
+						}
+					}
+
+					for _, value := range detector.Replay(frame, tick) {
+						if _, err := io.Copy(client, value); err != nil {
+							return errnie.Error(err)
+						}
+					}
+				}
 			}
 		}
 
-		return client.Drain()
-	},
-}
-
-/*
-detectEpoch streams epoch's ticks in order through a Detector per symbol.
-*/
-func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price, epoch uint64) error {
-	detectors := make(map[string]*strategy.Detector)
-	order := make([]string, 0)
-	written := make(map[string]bool)
-	counts := make(map[string]int)
-	ticks := 0
-	var firstTick, lastTick uint64
-
-	// A relabelling that fails must leave no watermark: train then refuses
-	// the epoch instead of trusting a partial labelling.
-	if err := client.DeletePrefix(data.DetectorWatermarkPrefix(epoch)); err != nil {
-		return errnie.Err(errnie.IO, "[detect] cannot clear the watermark of epoch "+fmt.Sprint(epoch)+" before relabelling it", err)
-	}
-
-	write := func(results []*data.Value) error {
-		for _, result := range results {
-			// Two excursions on one key would overwrite each other.
-			if written[result.Prefix] {
-				return errnie.Err(errnie.Conflict, "[detect] two excursions share key "+result.Prefix, nil)
-			}
-
-			written[result.Prefix] = true
-			counts[result.Role]++
-
-			if _, err := io.Copy(client, result); err != nil {
-				return errnie.Err(errnie.IO, "[detect] writing "+result.Prefix, err)
+		for _, value := range detector.Finish() {
+			if _, err := io.Copy(client, value); err != nil {
+				return errnie.Error(err)
 			}
 		}
 
 		return nil
+	},
+}
+
+func detectRunEpochs(client *store.Client) ([]uint64, error) {
+	if len(detectEpochs) > 0 {
+		epochs := make([]uint64, 0, len(detectEpochs))
+
+		for _, epoch := range detectEpochs {
+			if epoch <= 0 {
+				return nil, errnie.Err(errnie.Validation, "[detect] epoch must be positive", nil)
+			}
+
+			epochs = append(epochs, uint64(epoch))
+		}
+
+		return epochs, nil
 	}
 
-	for value, err := range store.Values(client, data.TickPrefix(epoch)) {
-		if err != nil {
-			return err
+	var epochs []uint64
+
+	for page := range client.List(data.TickPrefix(), "/") {
+		if page == nil {
+			continue
 		}
 
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		symbolTicks, err := broker.ReadTick(value)
-
-		if err != nil {
-			return err
-		}
-
-		if ticks == 0 {
-			firstTick = value.Tick
-		}
-
-		lastTick = value.Tick
-		ticks++
-
-		for _, symbolTick := range symbolTicks {
-			if len(detectSymbols) > 0 && !slices.Contains(detectSymbols, symbolTick.Symbol) {
+		for _, prefix := range page.CommonPrefixes {
+			if prefix.Prefix == nil {
 				continue
 			}
 
-			detector, ok := detectors[symbolTick.Symbol]
+			epoch, err := data.KeyEpoch(data.TickPrefix(), *prefix.Prefix)
 
-			if !ok {
-				if detector, err = strategy.NewDetector(ctx, price, epoch, symbolTick.Symbol, system.Cfg.Detector); err != nil {
-					return err
-				}
-
-				for _, prefix := range data.ExcursionPrefixes(symbolTick.Symbol, epoch) {
-					if err := client.DeletePrefix(prefix); err != nil {
-						return errnie.Err(errnie.IO, "[detect] cannot clear "+prefix+" before relabelling it", err)
-					}
-				}
-
-				detectors[symbolTick.Symbol] = detector
-				order = append(order, symbolTick.Symbol)
+			if err != nil {
+				continue
 			}
 
-			for _, trade := range symbolTick.Trades {
-				results, err := detector.Step(value.Tick, trade, symbolTick.Price)
-
-				if err != nil {
-					return err
-				}
-
-				if err := write(results); err != nil {
-					return err
-				}
-			}
+			epochs = append(epochs, epoch)
 		}
 	}
 
-	if ticks == 0 {
-		return errnie.Err(errnie.NotFound, "[detect] no stored ticks under "+data.TickPrefix(epoch), nil)
-	}
+	slices.Sort(epochs)
 
-	insufficient := 0
-
-	for _, symbol := range order {
-		results, err := detectors[symbol].Close()
-		insufficient += detectors[symbol].Insufficient()
-
-		if err != nil {
-			return err
-		}
-
-		if err := write(results); err != nil {
-			return err
-		}
-	}
-
-	errnie.Info(fmt.Sprintf(
-		"[detect] epoch %d: %d ticks (first %d), %d symbols, excursions up=%d down=%d chop=%d flat=%d, not emitted for insufficient history (precursor from the symbol's first trade < detector.min_precursor_ticks)=%d",
-		epoch, ticks, firstTick, len(order), counts["up"], counts["down"], counts["chop"], counts["flat"], insufficient,
-	))
-
-	// The watermark goes up only after every excursion has.
-	if err := client.Drain(); err != nil {
-		return errnie.Err(errnie.IO, fmt.Sprintf("[detect] uploading the excursions of epoch %d", epoch), err)
-	}
-
-	watermark := data.DetectorWatermark{Epoch: epoch, FirstTick: firstTick, LastTick: lastTick, Ticks: ticks, Symbols: len(order)}
-
-	if _, err := io.Copy(client, watermark.Value()); err != nil {
-		return errnie.Err(errnie.IO, "[detect] writing "+watermark.String(), err)
-	}
-
-	errnie.Info("[detect] " + watermark.String())
-
-	return nil
+	return epochs, nil
 }
 
 func init() {
-	detectCmd.Flags().Int64SliceVar(&detectEpochs, "epoch", nil, "Epoch to label (repeatable; default: every epoch with stored ticks)")
-	detectCmd.Flags().StringSliceVar(&detectSymbols, "symbols", nil, "Symbols to label, e.g. BTC/USD,ETH/USD (default: every symbol the ticks trade)")
-	detectCmd.Flags().StringVar(&detectFeePct, "taker-fee-percent", "", "Taker fee in percent per side that defines friction, e.g. 0.8")
+	detectCmd.Flags().Int64SliceVar(&detectEpochs, "epoch", nil, "Run epoch to label (repeatable; default: every stored epoch)")
+	detectCmd.Flags().StringSliceVar(&detectSymbols, "symbols", nil, "Symbols to label, e.g. BTC/USD,ETH/USD (default: every symbol on the tick)")
+	detectCmd.Flags().StringVar(&detectFeePct, "taker-fee-percent", "", "Taker fee in percent per side when the tick has no fee, e.g. 0.8")
 
 	if err := detectCmd.MarkFlagRequired("taker-fee-percent"); err != nil {
 		errnie.Error(err)
