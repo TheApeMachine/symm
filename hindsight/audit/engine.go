@@ -78,8 +78,9 @@ writes the report and artifacts.
 */
 type Engine struct {
 	*runtime.System
-	store  *s3store.Client
-	stages []AuditorStage
+	store           *s3store.Client
+	stages          []AuditorStage
+	currentPolicies int
 }
 
 /*
@@ -234,7 +235,7 @@ func (engine *Engine) resolvePolicy(epoch uint64) (data.PolicyGate, error) {
 Routes name the stages each kind of measurement is fanned out to.
 */
 type routes struct {
-	trades, signals, prices, joins, excursions, policies, papers []AuditorStage
+	trades, signals, prices, joins, excursions, policies, sequences, papers []AuditorStage
 }
 
 func (engine *Engine) routes() routes {
@@ -261,6 +262,7 @@ func (engine *Engine) routes() routes {
 		joins:      pick("audit:stability", "audit:dynamics", "audit:precursor"),
 		excursions: pick("audit:precursor", "audit:contract"),
 		policies:   pick("audit:cognitive", "audit:contract", "audit:realization"),
+		sequences:  pick("audit:cognitive"),
 		papers:     pick("audit:realization"),
 	}
 }
@@ -330,6 +332,83 @@ func policyGates(client *s3store.Client) ([]data.PolicyGate, error) {
 	}
 
 	return gates, nil
+}
+
+/*
+currentSequences reads the tree train saved at policy/current. The grammar
+path lives in the object key, so a value that does not carry it is tagged
+from that key.
+*/
+func currentSequences(client *s3store.Client) iter.Seq2[*data.Value, error] {
+	return func(yield func(*data.Value, error) bool) {
+		if client == nil {
+			return
+		}
+
+		keys := client.ListKeys("policy/current/")
+		ordered := make([]string, 0, len(keys))
+
+		for _, key := range keys {
+			if strings.HasPrefix(key, "policy/current/") && strings.HasSuffix(key, ".bin") {
+				ordered = append(ordered, key)
+			}
+		}
+
+		slices.Sort(ordered)
+		index := 0
+
+		for value, err := range s3store.ParallelValues(client, ordered) {
+			key := ordered[index]
+			index++
+
+			if err != nil {
+				if !yield(nil, err) {
+					return
+				}
+
+				continue
+			}
+
+			if value != nil {
+				stampCurrentPath(value, key)
+			}
+
+			if !yield(value, nil) {
+				return
+			}
+		}
+	}
+}
+
+func stampCurrentPath(value *data.Value, key string) {
+	if _, err := data.PolicyPath(value); err == nil {
+		return
+	}
+
+	path := pathFromCurrentKey(key)
+
+	if path == "" || len(value.Index) == 0 {
+		return
+	}
+
+	value.Index[len(value.Index)-1] += "/" + data.PolicyPathTag + path
+}
+
+func pathFromCurrentKey(key string) string {
+	rest := strings.TrimSuffix(strings.TrimPrefix(key, "policy/current/"), ".bin")
+	parts := strings.Split(rest, "/")
+
+	if len(parts) < 2 {
+		return ""
+	}
+
+	action := parts[len(parts)-1]
+
+	if action != "enter" && action != "exit" && action != "noop" {
+		return ""
+	}
+
+	return strings.Join(parts[:len(parts)-1], "/")
 }
 
 /*
@@ -428,6 +507,22 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 			policies++
 			send(route.policies, value)
 		}
+	} else {
+		// train stores the tree at policy/current/<path>/<action>.bin. That
+		// shelf has no tick-epoch gate, so only the cognitive stage reads it.
+		for value, err := range currentSequences(engine.store) {
+			if err != nil {
+				return err
+			}
+
+			if value == nil || value.Origin != data.PolicyOrigin {
+				continue
+			}
+
+			policies++
+			engine.currentPolicies++
+			send(route.sequences, value)
+		}
 	}
 
 	// Paper records of every run; the realization stage judges those
@@ -487,10 +582,13 @@ func (engine *Engine) Run() error {
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("# Audit of epoch %d (%s)\n\n", epoch, data.TickPrefix(epoch)))
 
-	if policy.Epoch == 0 {
-		builder.WriteString("No policy epoch is trained on these ticks.\n\n")
-	} else {
+	switch {
+	case policy.Epoch != 0:
 		builder.WriteString(fmt.Sprintf("Policies: %s.\n\n", policy))
+	case engine.currentPolicies > 0:
+		builder.WriteString(fmt.Sprintf("%d sequences from policy/current.\n\n", engine.currentPolicies))
+	default:
+		builder.WriteString("No policy epoch is trained on these ticks.\n\n")
 	}
 
 	builder.WriteString("| stage | result |\n|---|---|\n")

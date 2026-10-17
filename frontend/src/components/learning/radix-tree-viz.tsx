@@ -228,7 +228,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 	const [showAllBranches, setShowAllBranches] = useState(false);
-	type BranchFilter = "matching" | "noop" | "enter" | "exit" | "all";
+	type BranchFilter = "matching" | "enter" | "exit" | "all";
 	const [branchFilter, setBranchFilter] = useState<BranchFilter>("matching");
 
 	const activeSymbolList = useMemo(() => {
@@ -257,13 +257,11 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	const actionCounts = useMemo(() => {
 		let enter = 0;
 		let exit = 0;
-		let noop = 0;
 		for (const key of allKeys) {
 			if (key.endsWith("/enter.bin")) enter++;
 			else if (key.endsWith("/exit.bin")) exit++;
-			else if (key.endsWith("/noop.bin")) noop++;
 		}
-		return { enter, exit, noop, total: allKeys.length };
+		return { enter, exit, total: allKeys.length };
 	}, [allKeys]);
 
 	const matchingKeys = useMemo(() => {
@@ -275,14 +273,21 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 
 	const filteredKeys = useMemo(() => {
 		if (allKeys.length === 0) return [];
-		if (branchFilter === "all" || showAllBranches) return allKeys;
-		if (branchFilter === "noop")
-			return allKeys.filter((k) => k.endsWith("/noop.bin"));
-		if (branchFilter === "enter")
-			return allKeys.filter((k) => k.endsWith("/enter.bin"));
-		if (branchFilter === "exit")
-			return allKeys.filter((k) => k.endsWith("/exit.bin"));
-		return matchingKeys;
+		if (showAllBranches) return allKeys;
+		switch (branchFilter) {
+			case "all":
+				return allKeys;
+			case "enter":
+				return allKeys.filter((k) => k.endsWith("/enter.bin"));
+			case "exit":
+				return allKeys.filter((k) => k.endsWith("/exit.bin"));
+			case "matching":
+				return matchingKeys;
+			default: {
+				const unreachable: never = branchFilter;
+				return unreachable;
+			}
+		}
 	}, [allKeys, branchFilter, showAllBranches, matchingKeys]);
 
 	// Set of prefix paths ACTUALLY reached by at least one active symbol
@@ -601,24 +606,6 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 							>
 								Matching ({matchingKeys.length})
 							</button>
-							{actionCounts.noop > 0 && (
-								<button
-									type="button"
-									onClick={() => {
-										setBranchFilter("noop");
-										setShowAllBranches(false);
-									}}
-									className={cn(
-										"px-2 py-0.5 rounded transition-colors cursor-pointer",
-										branchFilter === "noop"
-											? "bg-(--raised) text-(--warn) font-bold"
-											: "text-(--warn)/70 hover:text-(--warn)",
-									)}
-									title="Inspect NOOP friction branches"
-								>
-									NOOP ({actionCounts.noop})
-								</button>
-							)}
 							<button
 								type="button"
 								onClick={() => {
@@ -797,18 +784,6 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 								>
 									Show all {allKeys.length} stored branches
 								</button>
-								{actionCounts.noop > 0 && (
-									<button
-										type="button"
-										onClick={() => {
-											setBranchFilter("noop");
-											setShowAllBranches(false);
-										}}
-										className="px-3 py-1 text-xs rounded bg-(--surface) border border-(--warn)/40 text-(--warn) hover:bg-(--raised) cursor-pointer font-mono"
-									>
-										View {actionCounts.noop} NOOP friction branches
-									</button>
-								)}
 							</div>
 						)}
 					</div>
@@ -1084,44 +1059,6 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 											/>
 										)}
 
-										{/* Floating Live Symbol Marker on Current Node */}
-										{symbolsAtNode && symbolsAtNode.length > 0 && (
-											<g
-												transform={`translate(0, ${projection === "vertical" ? -24 : -22})`}
-												className="pointer-events-none select-none font-mono"
-											>
-												<rect
-													x={-Math.max(26, symbolsAtNode.length * 15)}
-													y={-8}
-													width={Math.max(52, symbolsAtNode.length * 30)}
-													height={16}
-													rx={4}
-													fill="rgba(2, 132, 199, 0.3)"
-													stroke="#38bdf8"
-													strokeWidth={1.5}
-												/>
-												<circle
-													cx={-Math.max(26, symbolsAtNode.length * 15) + 6}
-													cy={0}
-													r={2.5}
-													fill="#38bdf8"
-													className="animate-pulse"
-												/>
-												<text
-													x={-Math.max(26, symbolsAtNode.length * 15) + 12}
-													y={0}
-													dy="0.32em"
-													fill="#38bdf8"
-													fontSize="8px"
-													fontWeight="700"
-													className="font-mono tracking-wider"
-												>
-													{symbolsAtNode
-														.map((s) => s.symbol.replace("/USD", ""))
-														.join(", ")}
-												</text>
-											</g>
-										)}
 									</g>
 								);
 							})}

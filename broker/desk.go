@@ -109,7 +109,7 @@ func (desk *Desk) restore() {
 		))
 		return
 	}
-	
+
 	quoteAlias := kraken.AssetAlias(quote)
 
 	if paper, ok := desk.transport.(*Paper); ok {
@@ -588,7 +588,33 @@ func (desk *Desk) BalanceJSON() []byte {
 		return nil
 	}
 
-	return raw
+	trade := desk.balance.Trade()
+
+	if trade == nil {
+		return raw
+	}
+
+	var frame map[string]any
+
+	if err := sonic.Unmarshal(raw, &frame); err != nil {
+		return raw
+	}
+
+	if trade.UnrealizedPnL != nil {
+		frame["unrealized"] = trade.UnrealizedPnL.String()
+	}
+
+	if trade.Equity != nil {
+		frame["equity"] = trade.Equity.String()
+	}
+
+	merged, err := sonic.Marshal(frame)
+
+	if err != nil {
+		return raw
+	}
+
+	return merged
 }
 
 /*
@@ -621,15 +647,7 @@ func (desk *Desk) PositionsJSON(symbol ...string) []byte {
 		return raw
 	}
 
-	var all []*Position
-
-	desk.positions.Range(func(_, val any) bool {
-		if pos, ok := val.(*Position); ok && pos != nil {
-			all = append(all, pos)
-		}
-
-		return true
-	})
+	all := desk.OpenPositions()
 
 	if len(all) == 0 {
 		return nil
@@ -647,4 +665,106 @@ func (desk *Desk) PositionsJSON(symbol ...string) []byte {
 	}
 
 	return raw
+}
+
+/*
+OpenPositions lists every lot the desk still holds.
+*/
+func (desk *Desk) OpenPositions() []*Position {
+	if desk == nil || desk.positions == nil {
+		return nil
+	}
+
+	var all []*Position
+
+	desk.positions.Range(func(_, val any) bool {
+		for _, pos := range heldPositions(val) {
+			if pos != nil && !pos.Closed() {
+				all = append(all, pos)
+			}
+		}
+
+		return true
+	})
+
+	return all
+}
+
+/*
+RestoreStored installs a lot previously written to the store. The wallet
+restore that ran at boot is a balance-only stand-in; this replaces it with
+the stored quantity and entry so an exit can sell the lot.
+*/
+func (desk *Desk) RestoreStored(raw []byte) (string, error) {
+	if desk == nil || len(raw) == 0 {
+		return "", nil
+	}
+
+	var stored struct {
+		ID         string           `json:"id"`
+		Symbol     string           `json:"symbol"`
+		OpenedAt   string           `json:"opened_at"`
+		Qty        *decimal.Decimal `json:"qty"`
+		EntryPrice *decimal.Decimal `json:"entry_price"`
+		EntryFee   *decimal.Decimal `json:"entry_fee"`
+		Mark       *decimal.Decimal `json:"mark"`
+	}
+
+	if err := sonic.Unmarshal(raw, &stored); err != nil {
+		return "", errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "[desk] stored position does not decode", err,
+		))
+	}
+
+	if stored.Symbol == "" || stored.Qty == nil || stored.Qty.Sign() <= 0 {
+		return "", nil
+	}
+
+	position := NewPosition()
+
+	if stored.ID != "" {
+		position.id = stored.ID
+	}
+
+	position.symbol = stored.Symbol
+	position.qty = stored.Qty
+	position.entryPrice = stored.EntryPrice
+	position.entryFee = stored.EntryFee
+	position.mark = stored.Mark
+
+	if stored.OpenedAt != "" {
+		if opened, err := time.Parse(time.RFC3339, stored.OpenedAt); err == nil {
+			position.openedAt = opened
+		}
+	}
+
+	if position.openedAt.IsZero() {
+		position.openedAt = time.Now().UTC()
+	}
+
+	if desk.positions == nil {
+		desk.positions = &sync.Map{}
+	}
+
+	desk.positions.Store(stored.Symbol, []*Position{position})
+
+	errnie.Info(fmt.Sprintf(
+		"[desk] restored open position from store: %s %s",
+		stored.Symbol, stored.Qty.String(),
+	))
+
+	return stored.Symbol, nil
+}
+
+func heldPositions(val any) []*Position {
+	switch held := val.(type) {
+	case []*Position:
+		return held
+	case *Position:
+		if held != nil {
+			return []*Position{held}
+		}
+	}
+
+	return nil
 }

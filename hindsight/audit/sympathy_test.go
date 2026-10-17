@@ -80,6 +80,15 @@ func TestSympathyStage(t *testing.T) {
 			}
 			So(hasSympathyViolation, ShouldBeTrue)
 			So(stage.Report(), ShouldContainSubstring, "sympathy.cross_stream_redundancy")
+
+			nullDist := stage.Data().(map[string]any)["null_distribution"].(map[string]any)
+			So(nullDist["percentile_95"].(float64), ShouldBeGreaterThan, 0.0)
+			counts := nullDist["histogram_counts"].([]int)
+			total := 0
+			for _, count := range counts {
+				total += count
+			}
+			So(total, ShouldBeGreaterThan, 0)
 		})
 
 		Convey("When two assets move independently", func() {

@@ -28,13 +28,18 @@ path with an agreed action, that action is taken through the Desk.
 */
 type Training struct {
 	*runtime.System
-	price     *broker.Price
-	desk      *broker.Desk
-	client    *store.Client
-	grid    *nmstore.Grid
-	policy  atomic.Pointer[policy]
-	hub     io.Writer
-	symbols map[string]*symbolGrammar
+	price        *broker.Price
+	desk         *broker.Desk
+	client       *store.Client
+	grid         *nmstore.Grid
+	policy       atomic.Pointer[policy]
+	hub          io.Writer
+	symbols      map[string]*symbolGrammar
+	published    map[string]string
+	archived     map[string]struct{}
+	virtuals     virtualBook
+	bars         stepBars
+	virtualShown map[string]struct{}
 }
 
 /*
@@ -42,11 +47,44 @@ symbolGrammar is one instrument's Sequitur and the token path it has built.
 The grid is shared; the grammar is not.
 */
 type symbolGrammar struct {
-	grammar   *Grammar
-	lastChord string
-	lastRule  *Rule
-	tokenPath []string
-	held      int
+	grammar    *Grammar
+	lastChord  string
+	lastRule   *Rule
+	tokenPath  []string
+	sentence   []string
+	regime     regime
+	held       int
+	brightness map[int]float64
+	strength   float64
+	threshold  float64
+}
+
+/*
+cutSentence ends the tokens the desk is matching. The chord that just
+matched stays, so the same chord does not fire again on the next tick.
+*/
+func (state *symbolGrammar) cutSentence() {
+	if state == nil {
+		return
+	}
+
+	state.tokenPath = nil
+	state.sentence = nil
+	state.lastRule = nil
+}
+
+/*
+breakSentence ends the regime. The next chord starts a new sentence, even
+when it repeats the chord that just broke.
+*/
+func (state *symbolGrammar) breakSentence() {
+	state.cutSentence()
+
+	if state == nil {
+		return
+	}
+
+	state.lastChord = ""
 }
 
 /*
@@ -58,6 +96,7 @@ func (training *Training) SetHub(hub io.Writer) {
 	}
 
 	training.hub = hub
+	training.replayClosed()
 }
 
 /*
@@ -97,7 +136,6 @@ Stored path actions: the final segment of every key.
 const (
 	actionEnter = "enter.bin"
 	actionExit  = "exit.bin"
-	actionNoop  = "noop.bin"
 )
 
 func NewTraining(
@@ -131,9 +169,14 @@ func NewTraining(
 		return training
 	}
 
-	if err := training.ReloadKeys(ctx); err != nil {
+	loadErr := training.ReloadKeys(ctx)
+	training.restoreOpenPositions()
+	training.loadBars()
+	training.loadVirtuals()
+
+	if loadErr != nil {
 		training.Error(errnie.Err(
-			errnie.IO, "[training] unable to load the published action tree", err,
+			errnie.IO, "[training] unable to load the published action tree", loadErr,
 		))
 
 		return training
@@ -309,6 +352,8 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		return nil
 	}
 
+	defer training.publishHeld(value)
+
 	if _, err := training.grid.Observe(value); err != nil {
 		training.Error(err)
 		return value
@@ -335,17 +380,35 @@ func (training *Training) Step(value *data.Value) *data.Value {
 /*
 stepSymbol turns one symbol's lit regions into its own chord. A new chord
 is appended to that symbol's grammar, matched against the stored paths, and
-published. A repeated chord is held. The hub replays the last frame when a
-dashboard connects.
+published. A repeated chord is held. The sentence ends when two regimes
+describe this symbol's metric energy in a shorter code than one regime;
+Sequitur keeps the rules it has already learned. The hub replays the last
+frame when a dashboard connects.
 */
 func (training *Training) stepSymbol(value *data.Value, symbol string, regions []*nmstore.Region) {
+	training.markSymbolVirtuals(symbol)
+
 	current := training.policy.Load()
 	if current == nil {
 		current = &policy{actions: map[string]string{}}
 	}
 
 	state := training.symbolState(symbol)
+
+	if state.regime.advance(training.grid.Energy(symbol)) {
+		state.breakSentence()
+	}
+
 	grammar := state.grammar
+	state.brightness = make(map[int]float64, len(regions))
+
+	for _, region := range regions {
+		if region == nil {
+			continue
+		}
+
+		state.brightness[int(region.Key)] = region.Brightness
+	}
 
 	active := make([]*nmstore.Region, 0)
 	for _, region := range regions {
@@ -359,12 +422,21 @@ func (training *Training) stepSymbol(value *data.Value, symbol string, regions [
 	}
 
 	midB := (active[0].Brightness + active[len(active)-1].Brightness) / 2.0
+	state.strength = active[0].Brightness
+	state.threshold = midB
 
-	firedTokens := make([]string, 0)
+	prefix := append([]string{}, state.tokenPath...)
+	firedTokens := make([]string, 0, len(active))
+
 	for _, region := range active {
-		if region.Brightness >= midB {
-			firedTokens = append(firedTokens, fmt.Sprintf("R%02d", region.Key))
+		token := fmt.Sprintf("R%02d", region.Key)
+
+		if !training.admitToken(prefix, token, region.Brightness, midB) {
+			continue
 		}
+
+		firedTokens = append(firedTokens, token)
+		prefix = append(prefix, token)
 	}
 
 	if len(firedTokens) == 0 {
@@ -382,6 +454,7 @@ func (training *Training) stepSymbol(value *data.Value, symbol string, regions [
 
 		for _, token := range firedTokens {
 			tokens = append(tokens, token)
+			state.sentence = append(state.sentence, token)
 			if rule := grammar.Append(token); rule != nil {
 				state.lastRule = rule
 			}
@@ -405,6 +478,10 @@ func (training *Training) stepSymbol(value *data.Value, symbol string, regions [
 		phrase = state.lastRule.TerminalNames(grammar)
 	}
 
+	if !phraseInSentence(phrase, state.sentence) {
+		phrase = nil
+	}
+
 	matchedPath := ""
 	action := ""
 
@@ -417,6 +494,8 @@ func (training *Training) stepSymbol(value *data.Value, symbol string, regions [
 	// and a shorter suffix are not substitutes for that rule.
 	if len(phrase) >= minConf {
 		matchedPath = strings.Join(phrase, "/")
+		training.noteSteps(matchedPath, tokenBrightness(state, phrase))
+		training.openVirtual(symbol, phrase, tokenBrightness(state, phrase))
 
 		if act, found := current.actions[symbol+"/"+matchedPath]; found && act != "" {
 			action = act
@@ -448,6 +527,30 @@ func (training *Training) stepSymbol(value *data.Value, symbol string, regions [
 	if err := training.publishSequitur(value, symbol, active, midB, firedTokens, state.held, matchedPath, state.lastRule, action, outcome); err != nil {
 		training.Error(err)
 	}
+}
+
+func tokenBrightness(state *symbolGrammar, phrase []string) []float64 {
+	if state == nil {
+		return nil
+	}
+
+	out := make([]float64, len(phrase))
+
+	for i, token := range phrase {
+		if len(token) != 3 || token[0] != 'R' {
+			continue
+		}
+
+		key, err := strconv.Atoi(token[1:])
+
+		if err != nil {
+			continue
+		}
+
+		out[i] = state.brightness[key]
+	}
+
+	return out
 }
 
 /*
@@ -556,7 +659,7 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 		}
 
 		action := parts[len(parts)-1]
-		if action != "enter" && action != "exit" && action != "noop" {
+		if action != "enter" && action != "exit" {
 			continue
 		}
 
@@ -632,6 +735,10 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 				continue
 			}
 
+			if action != "enter" && action != "exit" {
+				continue
+			}
+
 			actionKey := symbol + "/" + pathKey
 			if existing, found := loaded.actions[actionKey]; found && existing != action {
 				action = ""
@@ -645,8 +752,6 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 				file = actionEnter
 			case "exit":
 				file = actionExit
-			case "noop":
-				file = actionNoop
 			}
 
 			if file != "" {
@@ -668,8 +773,9 @@ func (training *Training) ReloadKeys(ctx context.Context) error {
 }
 
 /*
-resetPaperAndReload resets the Kraken paper account to its default state ($200, 0.8% fee)
-and reloads the published action tree.
+resetPaperAndReload resets the Kraken paper account to its default state ($200, 0.8% fee),
+drops the open and closed lots that belonged to the spent account, and reloads the
+published action tree.
 */
 func (training *Training) resetPaperAndReload() {
 	errnie.Info("[training] paper account exhausted or below minimum order; resetting paper account and reloading prefixes...")
@@ -683,6 +789,8 @@ func (training *Training) resetPaperAndReload() {
 
 		return
 	}
+
+	training.dropWalletLots()
 
 	if err := training.ReloadKeys(training.Context()); err != nil {
 		training.Error(errnie.Err(
@@ -712,7 +820,7 @@ func (training *Training) act(state *symbolGrammar, symbol, action string, path 
 	switch action {
 	case "enter":
 		if training.desk.Holds(symbol) {
-			state.tokenPath = nil
+			state.cutSentence()
 			return "holding: enter ignored"
 		}
 
@@ -730,7 +838,7 @@ func (training *Training) act(state *symbolGrammar, symbol, action string, path 
 				nil,
 			))
 
-			state.tokenPath = nil
+			state.cutSentence()
 			return "enter failed: no cash"
 		}
 
@@ -754,35 +862,32 @@ func (training *Training) act(state *symbolGrammar, symbol, action string, path 
 				err,
 			))
 
-			state.tokenPath = nil
+			state.cutSentence()
 			return "enter failed: no quantity"
 		}
 
 		if err := training.desk.Enter(symbol, entryCost.Quantity, path...); err != nil {
 			training.Error(errnie.Err(errnie.IO, "[training] enter failed for "+symbol, err))
-			state.tokenPath = nil
+			state.cutSentence()
 			return "enter failed: " + err.Error()
 		}
 
-		state.tokenPath = nil
+		state.cutSentence()
 		return "enter submitted"
 	case "exit":
 		if !training.desk.Holds(symbol) {
-			state.tokenPath = nil
+			state.cutSentence()
 			return "flat: exit ignored"
 		}
 
 		if err := training.desk.Exit(symbol); err != nil {
 			training.Error(errnie.Err(errnie.IO, "[training] exit failed for "+symbol, err))
-			state.tokenPath = nil
+			state.cutSentence()
 			return "exit failed: " + err.Error()
 		}
 
-		state.tokenPath = nil
+		state.cutSentence()
 		return "exit submitted"
-	case "noop":
-		state.tokenPath = nil
-		return "noop: matched unpromising precursor"
 	}
 
 	return "ignored: unknown action " + action

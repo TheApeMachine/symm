@@ -15,17 +15,20 @@ import {
 	Zap,
 } from "lucide-react";
 import { useState } from "react";
+import { useSelector } from "@tanstack/react-store";
 import { Badge, type BadgeVariant } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
+import { bookAtom } from "#/collections/book";
 import {
 	type Lifecycle,
 	type LifeEvent,
 	NOT_AVAILABLE,
 	ratePercent,
 	seconds,
+	selectBook,
 	signedMoney,
 	useLifecycles,
 } from "#/lib/lifecycle";
@@ -863,9 +866,11 @@ no real-exchange ledger: those figures read "not available", never zero.
 */
 export const LifecycleView = () => {
 	const { report } = useLifecycles();
+	const book = useSelector(bookAtom, (state) => state);
+	const view = selectBook(report, book);
 	const [selected, setSelected] = useState<string | null>(null);
-	const lifecycles = report.lifecycles;
-	const perf = report.performance;
+	const lifecycles = view.lifecycles;
+	const perf = view.performance;
 	const active =
 		lifecycles.find((life) => life.id === selected) ?? lifecycles[0];
 

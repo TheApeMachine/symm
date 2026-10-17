@@ -3,7 +3,10 @@ package broker
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
@@ -119,4 +122,127 @@ func TestDesk(t *testing.T) {
 			So(posList[0].Closed(), ShouldBeFalse)
 		})
 	})
+}
+
+func TestPositionsJSONReadsLotSlices(t *testing.T) {
+	desk := &Desk{positions: &sync.Map{}}
+	position := NewPosition()
+	position.Enter("RLC/USD", decimal.NewFromFloat64(2))
+	desk.positions.Store("RLC/USD", []*Position{position})
+
+	raw := string(desk.PositionsJSON())
+
+	if !strings.Contains(raw, `"symbol":"RLC/USD"`) {
+		t.Fatalf("positions layer = %s", raw)
+	}
+}
+
+func TestBalanceJSONCarriesTradeValuation(t *testing.T) {
+	balance := &Balance{}
+	balance.wallet.Store(&kraken.Balance{
+		Data: []kraken.BalanceData{{
+			Asset:   "USD",
+			Balance: decimal.NewFromFloat64(120),
+		}},
+	})
+	balance.trade.Store(&kraken.TradeBalanceResult{
+		UnrealizedPnL: decimal.NewFromFloat64(-4.5),
+		Equity:        decimal.NewFromFloat64(195.5),
+	})
+
+	raw := string((&Desk{balance: balance}).BalanceJSON())
+
+	if !strings.Contains(raw, `"unrealized":"-4.5"`) || !strings.Contains(raw, `"equity":"195.5"`) {
+		t.Fatalf("balance layer = %s", raw)
+	}
+}
+
+type captureTransport struct {
+	body []byte
+}
+
+func (transport *captureTransport) Read(keys ...string) ([]byte, error) {
+	return nil, nil
+}
+
+func (transport *captureTransport) Write(buf []byte) error {
+	transport.body = append([]byte(nil), buf...)
+	return nil
+}
+
+func TestClosedLotIsKept(t *testing.T) {
+	desk := &Desk{positions: &sync.Map{}}
+	position := NewPosition()
+	position.Enter("TEL/USD", decimal.NewFromFloat64(2))
+	desk.positions.Store("TEL/USD", []*Position{position})
+
+	desk.Apply(&kraken.Execution{Data: []kraken.ExecutionData{{
+		Symbol:    "TEL/USD",
+		Side:      "sell",
+		ExecType:  "trade",
+		LastQty:   decimal.NewFromFloat64(2),
+		LastPrice: decimal.NewFromFloat64(11),
+	}}})
+
+	closed := desk.Closed()
+
+	if len(closed) != 1 || closed[0].ID() != position.ID() || !closed[0].Closed() {
+		t.Fatalf("closed %+v", closed)
+	}
+
+	if len(desk.OpenPositions()) != 0 {
+		t.Fatal("closed lot still open")
+	}
+}
+
+func TestRestoreStoredLotCanBeSold(t *testing.T) {
+	transport := &captureTransport{}
+	desk := &Desk{positions: &sync.Map{}, transport: transport}
+	opened := time.Now().UTC()
+	raw, err := (&Position{
+		symbol:     "RLC/USD",
+		qty:        decimal.NewFromFloat64(12.5),
+		entryPrice: decimal.NewFromFloat64(1.2),
+		openedAt:   opened,
+	}).MarshalJSON()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	symbol, err := desk.RestoreStored(raw)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if symbol != "RLC/USD" || !desk.Holds("RLC/USD") {
+		t.Fatalf("restored %q holds=%v", symbol, desk.Holds("RLC/USD"))
+	}
+
+	if !strings.Contains(string(desk.PositionsJSON()), `"symbol":"RLC/USD"`) {
+		t.Fatalf("positions layer = %s", desk.PositionsJSON())
+	}
+
+	if err := desk.Exit("RLC/USD"); err != nil {
+		t.Fatal(err)
+	}
+
+	sold := string(transport.body)
+
+	if !strings.Contains(sold, `"side":"sell"`) || !strings.Contains(sold, `"order_qty":"12.5"`) {
+		t.Fatalf("exit order = %s", sold)
+	}
+
+	flat, err := (&Position{symbol: "RLC/USD"}).MarshalJSON()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	symbol, err = desk.RestoreStored(flat)
+
+	if err != nil || symbol != "" {
+		t.Fatalf("flat lot restored as %q (%v)", symbol, err)
+	}
 }

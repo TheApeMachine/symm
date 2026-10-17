@@ -52,6 +52,7 @@ export type Lifecycle = {
 	events: LifeEvent[] | null;
 	mark?: LifeMark | null;
 	outcome?: LifeOutcome | null;
+	book?: string;
 };
 
 export type Performance = {
@@ -128,6 +129,31 @@ const publish = () => {
 	for (const listener of listeners) listener();
 };
 
+const isSnapshot = (frame: unknown): frame is Lifecycle => {
+	if (!frame || typeof frame !== "object") return false;
+	const value = frame as Record<string, unknown>;
+	return (
+		typeof value.id === "string" &&
+		typeof value.symbol === "string" &&
+		typeof value.status === "string" &&
+		typeof value.opened_at === "string" &&
+		Array.isArray(value.events)
+	);
+};
+
+const remember = (life: Lifecycle) => {
+	lives.delete(life.id);
+	lives.set(life.id, life);
+
+	while (lives.size > LIFECYCLE_LIMIT) {
+		const oldest = lives.keys().next().value;
+		if (oldest === undefined) break;
+		lives.delete(oldest);
+	}
+
+	publish();
+};
+
 const isFrame = (frame: unknown): frame is PositionFrame => {
 	if (!frame || typeof frame !== "object") return false;
 	const value = frame as Record<string, unknown>;
@@ -146,6 +172,11 @@ that is not a PositionFrame (exactly one of event or mark) is reported and
 dropped.
 */
 export const ingestPositionFrame = (frame: unknown) => {
+	if (isSnapshot(frame)) {
+		remember({ ...frame, events: frame.events ?? [] });
+		return;
+	}
+
 	if (!isFrame(frame)) {
 		console.error("ingestPositionFrame: malformed position frame", frame);
 		return;
@@ -169,16 +200,7 @@ export const ingestPositionFrame = (frame: unknown) => {
 		events: frame.event ? [...(life.events ?? []), frame.event] : life.events,
 	};
 
-	lives.delete(frame.id);
-	lives.set(frame.id, next);
-
-	while (lives.size > LIFECYCLE_LIMIT) {
-		const oldest = lives.keys().next().value;
-		if (oldest === undefined) break;
-		lives.delete(oldest);
-	}
-
-	publish();
+	remember(next);
 };
 
 /* resetLifecycles empties the store (tests). */
@@ -200,6 +222,17 @@ export const useLifecycles = (): Snapshot =>
 		subscribe,
 		() => snapshot,
 		() => snapshot,
+	);
+
+/*
+selectBook keeps one book. A life with no book is a paper trade.
+*/
+export const selectBook = (
+	report: LifecycleReport,
+	book: "paper" | "virtual",
+): LifecycleReport =>
+	summarize(
+		report.lifecycles.filter((life) => (life.book ?? "paper") === book),
 	);
 
 /* NOT_AVAILABLE is what a real-exchange figure reads under paper trading. */

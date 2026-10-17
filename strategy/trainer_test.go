@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
+	nmstore "github.com/theapemachine/symm/nomagique/store"
 )
 
 func TestPriceRoundTripReadsInstrumentLayer(t *testing.T) {
@@ -62,7 +63,7 @@ func TestUpClearsFrictionPublishesEnterAndExit(t *testing.T) {
 	}
 }
 
-func TestDownPublishesNoopOnBothFragments(t *testing.T) {
+func TestDownPublishesNoAction(t *testing.T) {
 	t.Parallel()
 
 	trainer := &Trainer{}
@@ -70,7 +71,7 @@ func TestDownPublishesNoopOnBothFragments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	if got != "noop policy/current/R01/noop.bin, noop policy/current/R04/noop.bin" {
+	if got != "no file" {
 		t.Fatalf("published %s", got)
 	}
 }
@@ -83,12 +84,12 @@ func TestExitRequiresEnter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	if got != "noop policy/current/R01/R05/noop.bin, noop policy/current/R02/R10/noop.bin" {
+	if got != "no file" {
 		t.Fatalf("published %s", got)
 	}
 }
 
-func TestUpWithoutFrictionPublishesNoopOnBothFragments(t *testing.T) {
+func TestUpWithoutFrictionPublishesNoAction(t *testing.T) {
 	t.Parallel()
 
 	trainer := &Trainer{}
@@ -96,7 +97,7 @@ func TestUpWithoutFrictionPublishesNoopOnBothFragments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	if got != "noop policy/current/R01/R05/noop.bin, noop policy/current/R02/R10/noop.bin" {
+	if got != "no file" {
 		t.Fatalf("published %s", got)
 	}
 }
@@ -122,7 +123,7 @@ func TestReplayTapeSplitsPrecursorAndHolding(t *testing.T) {
 
 	trainer := NewTrainer(context.Background(), nil, nil)
 	precursor, holding, precursorTicks, holdingTicks, err := trainer.replayTape(
-		"test", ticks, aTick, bTick, cTick,
+		"test", "ES/USD", ticks, aTick, bTick, cTick,
 	)
 	if err != nil {
 		t.Fatalf("replay: %v", err)
@@ -133,8 +134,44 @@ func TestReplayTapeSplitsPrecursorAndHolding(t *testing.T) {
 	if holdingTicks != int(cTick-bTick+1) {
 		t.Fatalf("holding ticks = %d", holdingTicks)
 	}
-	if precursor != "" || holding != "" {
-		t.Fatalf("path without a completed rule: precursor %q holding %q", precursor, holding)
+	if precursor == holding && precursor != "" {
+		t.Fatalf("the two windows returned one path %q", precursor)
+	}
+}
+
+func TestConsumeBreaksTheSentenceWhenEnergyChangesRegime(t *testing.T) {
+	t.Parallel()
+
+	fragment := newFragment(nmstore.NewGrid(context.Background()))
+
+	for tick := uint64(1); tick <= 4; tick++ {
+		quiet := signalTick(tick, "hawkes", "arrival_rate:buy", 1)
+		data.AppendSignalVector(quiet, "liquidity", "ES/USD", []float64{1}, "relative_spread")
+		regions, err := fragment.observe(quiet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fragment.consume("ES/USD", quiet, regions)
+	}
+
+	fragment.sentence = []string{"R01", "R05"}
+	fragment.lastPhrase = "R01/R05"
+	fragment.lastSym = "R01"
+
+	loud := signalTick(5, "hawkes", "arrival_rate:buy", 1e9)
+	data.AppendSignalVector(loud, "liquidity", "ES/USD", []float64{1e9}, "relative_spread")
+	regions, err := fragment.observe(loud)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fragment.consume("ES/USD", loud, regions)
+
+	if len(fragment.sentence) >= 2 && fragment.sentence[0] == "R01" && fragment.sentence[1] == "R05" {
+		t.Fatalf("planted sentence survived: %v", fragment.sentence)
+	}
+
+	if fragment.lastPhrase == "R01/R05" {
+		t.Fatal("planted phrase survived the new regime")
 	}
 }
 

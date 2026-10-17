@@ -5,6 +5,7 @@ import { positionCountAtom } from "#/collections/app";
 import {
 	ingestPositionFrame,
 	resetLifecycles,
+	selectBook,
 	useLifecycles,
 } from "./lifecycle";
 
@@ -66,6 +67,38 @@ describe("lifecycle store", () => {
 		});
 	});
 
+	it("installs a stored closed life in one piece", () => {
+		ingestPositionFrame({
+			id: "lot-1",
+			symbol: "TEL/USD",
+			status: "closed",
+			opened_at: "2026-10-17T12:00:00Z",
+			closed_at: "2026-10-17T12:10:00Z",
+			events: [
+				{ at: "2026-10-17T12:00:00Z", kind: "entry_match", detail: "R13/R04" },
+				{ at: "2026-10-17T12:10:00Z", kind: "fill", detail: "sell fill" },
+			],
+			outcome: {
+				cost: 20,
+				proceeds: 22,
+				fees: 0.1,
+				realized: 1.9,
+				net_return: 0.095,
+				hold_ns: 600e9,
+				expected_hold_ns: null,
+				triggers: ["sell"],
+			},
+		});
+
+		const { report } = snapshotOf();
+		expect(report.lifecycles).toHaveLength(1);
+		expect(report.lifecycles[0].symbol).toBe("TEL/USD");
+		expect(report.lifecycles[0].events).toHaveLength(2);
+		expect(report.performance.closed).toBe(1);
+		expect(report.performance.pnl).toBe(1.9);
+		expect(report.open_count).toBe(0);
+	});
+
 	it("keeps the latest mark without adding an event", () => {
 		ingestPositionFrame(frame("1", "holding"));
 		ingestPositionFrame({
@@ -92,5 +125,22 @@ describe("lifecycle store", () => {
 		ingestPositionFrame({ ...frame("1", "holding"), mark: { bid: 1 } });
 		expect(error).toHaveBeenCalledTimes(2);
 		expect(snapshotOf().report.lifecycles).toHaveLength(0);
+	});
+
+	it("keeps a virtual life out of the paper book", () => {
+		ingestPositionFrame({
+			id: "R01/R05",
+			symbol: "TEL/USD",
+			status: "open",
+			opened_at: "2026-10-17T12:00:00Z",
+			events: [],
+			book: "virtual",
+		});
+		ingestPositionFrame(frame("1", "holding"));
+
+		const report = snapshotOf().report;
+		expect(selectBook(report, "paper").lifecycles).toHaveLength(1);
+		expect(selectBook(report, "virtual").lifecycles).toHaveLength(1);
+		expect(selectBook(report, "virtual").open_count).toBe(1);
 	});
 });

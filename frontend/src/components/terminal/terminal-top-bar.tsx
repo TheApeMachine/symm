@@ -1,4 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
+import { bookAtom, type Book } from "#/collections/book";
 import {
 	focusAtom,
 	onlineAtom,
@@ -15,6 +16,7 @@ import { Divider } from "#/components/ui/divider";
 import { Flex } from "#/components/ui/flex";
 import { Icon } from "#/components/ui/icon";
 import { Key } from "#/components/ui/key";
+import { Tabs } from "#/components/ui/tabs";
 import { Toolbar } from "#/components/ui/toolbar";
 import { Typography } from "#/components/ui/typography";
 
@@ -115,7 +117,9 @@ const Rule = () => (
 export const TerminalTopBar = () => {
 	const online = useSelector(onlineAtom, (state) => state === "ONLINE");
 	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const book = useSelector(bookAtom, (state) => state);
 	const { openPalette, openSymbolPalette } = terminalStore.actions;
+	const choose = (next: Book) => () => bookAtom.set(next);
 
 	return (
 		<Toolbar size="lg" className="relative z-5">
@@ -140,6 +144,19 @@ export const TerminalTopBar = () => {
 
 			<Rule />
 			<Toolbar.Spacer />
+
+			<Tabs size="s" data-book={book}>
+				<Tabs.Tab size="s" active={book === "paper"} onClick={choose("paper")}>
+					Paper
+				</Tabs.Tab>
+				<Tabs.Tab
+					size="s"
+					active={book === "virtual"}
+					onClick={choose("virtual")}
+				>
+					Virtual
+				</Tabs.Tab>
+			</Tabs>
 
 			<Toolbar.Group className="gap-3.5">
 				<Button

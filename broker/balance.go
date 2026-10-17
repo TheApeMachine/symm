@@ -24,6 +24,7 @@ type Balance struct {
 	paper     *Paper
 	Quote     string
 	wallet    atomic.Pointer[kraken.Balance]
+	trade     atomic.Pointer[kraken.TradeBalanceResult]
 	value     *data.Value
 	limiter   *rate.Limiter
 }
@@ -74,6 +75,17 @@ Wallet returns the latest polled wallet; poll publishes it atomically.
 */
 func (balance *Balance) Wallet() *kraken.Balance {
 	return balance.wallet.Load()
+}
+
+/*
+Trade is the latest trade-balance reading from the same poll as Wallet.
+*/
+func (balance *Balance) Trade() *kraken.TradeBalanceResult {
+	if balance == nil {
+		return nil
+	}
+
+	return balance.trade.Load()
 }
 
 func (balance *Balance) cash(asset string) *decimal.Decimal {
@@ -199,6 +211,9 @@ func (balance *Balance) poll() (err error) {
 			nil,
 		))
 	}
+
+	kept := *tradeBalance
+	balance.trade.Store(&kept)
 
 	return nil
 }

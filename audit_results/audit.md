@@ -1,4 +1,4 @@
-# Audit of epoch 1792223133597007000 (workspace/tick/aggregate/1792223133597007000/)
+# Audit of epoch 1792249581528452000 (workspace/tick/aggregate/1792249581528452000/)
 
 No policy epoch is trained on these ticks.
 
@@ -19,28 +19,73 @@ No policy epoch is trained on these ticks.
 ## audit:timing
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** AKE/USD,
-  **DESCRIPTION:** Delay on AKE/USD is unsteady: 5.4% of 37 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** AVA/USD,
+  **DESCRIPTION:** Delay on AVA/USD is unsteady: 7.4% of 27 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** DOT/USD,
-  **DESCRIPTION:** Delay on DOT/USD is unsteady: 5.3% of 38 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** BABY/USD,
+  **DESCRIPTION:** Delay on BABY/USD is unsteady: 5.1% of 39 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** HYPE/USD,
-  **DESCRIPTION:** Delay on HYPE/USD is unsteady: 5.7% of 35 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** CT/USD,
+  **DESCRIPTION:** Delay on CT/USD is unsteady: 5.4% of 56 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** INJ/USD,
-  **DESCRIPTION:** Delay on INJ/USD is unsteady: 16.0% of 25 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** CTR/USD,
+  **DESCRIPTION:** Delay on CTR/USD is unsteady: 6.9% of 29 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** RSR/USD,
-  **DESCRIPTION:** Delay on RSR/USD is unsteady: 5.5% of 55 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** EIGEN/USD,
+  **DESCRIPTION:** Delay on EIGEN/USD is unsteady: 5.9% of 34 packets were far from its usual delay, above the 5% allowance,
+  **METRIC:** ,
+
+- [VIOLATION] timing.latency_excess,
+  **SYMBOL:** FET/USD,
+  **DESCRIPTION:** Delay on FET/USD is unsteady: 7.7% of 26 packets were far from its usual delay, above the 5% allowance,
+  **METRIC:** ,
+
+- [VIOLATION] timing.latency_excess,
+  **SYMBOL:** RSC/USD,
+  **DESCRIPTION:** Delay on RSC/USD is unsteady: 8.0% of 25 packets were far from its usual delay, above the 5% allowance,
+  **METRIC:** ,
+
+- [VIOLATION] timing.latency_excess,
+  **SYMBOL:** SHIB/USD,
+  **DESCRIPTION:** Delay on SHIB/USD is unsteady: 5.1% of 39 packets were far from its usual delay, above the 5% allowance,
+  **METRIC:** ,
+
+- [VIOLATION] timing.latency_excess,
+  **SYMBOL:** SNEK/USD,
+  **DESCRIPTION:** Delay on SNEK/USD is unsteady: 10.0% of 40 packets were far from its usual delay, above the 5% allowance,
+  **METRIC:** ,
+
+- [VIOLATION] timing.latency_excess,
+  **SYMBOL:** SPX/USD,
+  **DESCRIPTION:** Delay on SPX/USD is unsteady: 5.8% of 52 packets were far from its usual delay, above the 5% allowance,
+  **METRIC:** ,
+
+- [VIOLATION] timing.latency_excess,
+  **SYMBOL:** TEL/USD,
+  **DESCRIPTION:** Delay on TEL/USD is unsteady: 7.7% of 26 packets were far from its usual delay, above the 5% allowance,
+  **METRIC:** ,
+
+- [VIOLATION] timing.latency_excess,
+  **SYMBOL:** UAI/USD,
+  **DESCRIPTION:** Delay on UAI/USD is unsteady: 14.3% of 21 packets were far from its usual delay, above the 5% allowance,
+  **METRIC:** ,
+
+- [VIOLATION] timing.latency_excess,
+  **SYMBOL:** WAL/USD,
+  **DESCRIPTION:** Delay on WAL/USD is unsteady: 9.8% of 41 packets were far from its usual delay, above the 5% allowance,
+  **METRIC:** ,
+
+- [VIOLATION] timing.latency_excess,
+  **SYMBOL:** ZBCN/USD,
+  **DESCRIPTION:** Delay on ZBCN/USD is unsteady: 5.6% of 36 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 
@@ -51,12 +96,12 @@ No policy epoch is trained on these ticks.
 
 - [VIOLATION] vitality.unmeasured,
   **SYMBOL:** sentiment.historical_path_distance,
-  **DESCRIPTION:** sentiment.historical_path_distance was 0 on every sample from the active symbols (WINGS/USD, Q/USD, RSC/USD, ICNT/USD, RAD/USD), so it never measured anything there,
+  **DESCRIPTION:** sentiment.historical_path_distance was 0 on every sample from the active symbols (COPM/USD, Q/USD, IDEX/USD, ALEO/USD, BABYSHARK/USD), so it never measured anything there,
   **METRIC:** ,
 
 - [VIOLATION] vitality.unmeasured,
   **SYMBOL:** sentiment.historical_path_percentile,
-  **DESCRIPTION:** sentiment.historical_path_percentile was 0 on every sample from the active symbols (WINGS/USD, Q/USD, RSC/USD, ICNT/USD, RAD/USD), so it never measured anything there,
+  **DESCRIPTION:** sentiment.historical_path_percentile was 0 on every sample from the active symbols (COPM/USD, Q/USD, IDEX/USD, ALEO/USD, BABYSHARK/USD), so it never measured anything there,
   **METRIC:** ,
 
 
@@ -64,12 +109,12 @@ No policy epoch is trained on these ticks.
 
 - [VIOLATION] redundancy.collinear_pair,
   **SYMBOL:** concentration:ask &lt;-&gt; entropy:ask,
-  **DESCRIPTION:** Metric pair [concentration:ask &lt;-&gt; entropy:ask] are collinear clones (|r| = -0.9571 &gt;= 0.95 across 2619 observations),
+  **DESCRIPTION:** Metric pair [concentration:ask &lt;-&gt; entropy:ask] are collinear clones (|r| = -0.9593 &gt;= 0.95 across 13216 observations),
   **METRIC:** ,
 
 - [VIOLATION] redundancy.collinear_pair,
   **SYMBOL:** concentration:bid &lt;-&gt; entropy:bid,
-  **DESCRIPTION:** Metric pair [concentration:bid &lt;-&gt; entropy:bid] are collinear clones (|r| = -0.9539 &gt;= 0.95 across 2619 observations),
+  **DESCRIPTION:** Metric pair [concentration:bid &lt;-&gt; entropy:bid] are collinear clones (|r| = -0.9636 &gt;= 0.95 across 13216 observations),
   **METRIC:** ,
 
 
@@ -86,7 +131,7 @@ No policy epoch is trained on these ticks.
 
 - [VIOLATION] precursor.insufficient_evidence,
   **SYMBOL:** precursor,
-  **DESCRIPTION:** 0 precursor and 2211 background tokens over 0 episodes; need 10 of each,
+  **DESCRIPTION:** 0 precursor and 12487 background tokens over 0 episodes; need 10 of each,
   **METRIC:** ,
 
 - [VIOLATION] excursion.insufficient_evidence,

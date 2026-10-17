@@ -10,11 +10,11 @@ import (
 )
 
 type CognitionGateFrame struct {
-	TickEpoch      string  `json:"tickEpoch"`
-	Enabled        bool    `json:"enabled"`
-	SurpriseZ      float64 `json:"surpriseZ"`
-	Warmup         string  `json:"warmup"`
-	LearningRate   float64 `json:"learningRate"`
+	TickEpoch    string  `json:"tickEpoch"`
+	Enabled      bool    `json:"enabled"`
+	SurpriseZ    float64 `json:"surpriseZ"`
+	Warmup       string  `json:"warmup"`
+	LearningRate float64 `json:"learningRate"`
 }
 
 type CognitionFrame struct {

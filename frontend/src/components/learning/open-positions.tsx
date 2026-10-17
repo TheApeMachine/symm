@@ -1,4 +1,5 @@
 import { signals } from "#/collections/app";
+import { bookAtom, type Book } from "#/collections/book";
 import {
 	Component,
 	DistanceBar,
@@ -28,9 +29,16 @@ const REGIONS = 15;
 const regionLabel = (s: number) => `R${String(s).padStart(2, "0")}`;
 const regionColor = (s: number) => sectorHue(s, REGIONS);
 
-const heldSymbols = (state: Record<string, { getLast(): Value | undefined }>) =>
+const heldSymbols = (
+	state: Record<string, { getLast(): Value | undefined }>,
+	book: Book,
+) =>
 	Object.entries(state)
-		.filter(([, ring]) => metricOf(ring?.getLast(), "position_open") === 1)
+		.filter(([symbol, ring]) => {
+			const virtual = symbol.includes(" · ");
+			if ((book === "virtual") !== virtual) return false;
+			return metricOf(ring?.getLast(), "position_open") === 1;
+		})
 		.map(([symbol]) => symbol)
 		.sort()
 		.join("|");
@@ -169,7 +177,14 @@ const PositionCard = ({ symbol }: { symbol: string }) => {
 								background: `var(--${pnlTone === "muted" ? "f4" : pnlTone})`,
 							}}
 						/>
-						<span className="text-(--f1) font-bold text-sm">{symbol}</span>
+						<span className="text-(--f1) font-bold text-sm">
+							{symbol.includes(" · ") ? symbol.split(" · ")[0] : symbol}
+						</span>
+						{symbol.includes(" · ") && (
+							<span className="text-[10px] text-(--f3)">
+								{symbol.split(" · ").slice(1).join(" · ")}
+							</span>
+						)}
 						{exiting && (
 							<span className="text-[10px] px-1.5 rounded bg-(--down)/20 text-(--down)">
 								selling…
@@ -249,8 +264,8 @@ const PositionCard = ({ symbol }: { symbol: string }) => {
 										]
 									: []),
 							]}
-							leftLabel="below entry"
-							rightLabel="above entry"
+							leftLabel="less than paid"
+							rightLabel="more than paid"
 						/>
 						<Trail values={pnlTrail} width={240} height={40} />
 					</div>
@@ -318,16 +333,23 @@ const PositionCard = ({ symbol }: { symbol: string }) => {
 };
 
 export const OpenPositions = () => {
-	const held = useSelector(signals.training, heldSymbols);
+	const book = useSelector(bookAtom, (state) => state);
+	const held = useSelector(signals.training, (state) =>
+		heldSymbols(state, book),
+	);
 	const symbols = held ? held.split("|") : [];
 
 	if (symbols.length === 0) {
 		return (
 			<div className="flex-1 flex flex-col items-center justify-center gap-2 text-(--f3)">
 				<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
-				<span className="text-sm">No open positions</span>
+				<span className="text-sm">
+					{book === "virtual" ? "No virtual trades" : "No open positions"}
+				</span>
 				<span className="text-[10px] text-(--f4)">
-					cards appear here as soon as the desk holds a symbol
+					{book === "virtual"
+						? "a card appears when a finished rule opens a virtual trade"
+						: "cards appear here as soon as the desk holds a symbol"}
 				</span>
 			</div>
 		);

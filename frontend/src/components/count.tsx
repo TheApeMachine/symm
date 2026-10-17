@@ -1,15 +1,19 @@
 import { useSelector } from "@tanstack/react-store";
 import { positionCountAtom } from "#/collections/app";
+import { bookAtom } from "#/collections/book";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
+import { selectBook, useLifecycles } from "#/lib/lifecycle";
 
 /*
-Count reads the account positions and states the open-lot tally in the same
-label-over-value form the cash readings use, so the top bar's right-hand side is
-one row of readouts rather than a sentence sitting among them.
+Count reads the open-lot tally for the book selected in the top bar.
 */
 export const Count = () => {
-	const count = useSelector(positionCountAtom, (state) => state);
+	const book = useSelector(bookAtom, (state) => state);
+	const desk = useSelector(positionCountAtom, (state) => state);
+	const { report } = useLifecycles();
+	const count =
+		book === "virtual" ? selectBook(report, "virtual").open_count : (desk ?? 0);
 
 	return (
 		<Flex.Column align="end" gap={1}>

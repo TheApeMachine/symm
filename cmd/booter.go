@@ -113,6 +113,14 @@ func (booter *Booter) WithDashboard() *Booter {
 	return booter
 }
 
+/*
+paperTrades reports whether this process places paper orders. The collector
+writes the tape. The dashboard is the process that trades.
+*/
+func paperTrades(capture, dashboard bool) bool {
+	return !(capture && !dashboard)
+}
+
 func (booter *Booter) Run() error {
 	errnie.Info(fmt.Sprintf(
 		"[booter] symm boot started with %d CPUs", sysruntime.NumCPU(),
@@ -273,13 +281,20 @@ func (booter *Booter) initPipeline() error {
 
 	booter.store.Transition(nmruntime.READY)
 
-	booter.training = strategy.NewTraining(ctx, booter.price, booter.desk, booter.store)
+	strategyNodes := make([]nmruntime.Node, 0, 1)
 
-	if err := booter.training.Error(); err != nil {
-		return err
+	// The collector writes the tape. It shares the paper account with the
+	// dashboard, so it must not place orders of its own.
+	if paperTrades(booter.capture, booter.dashboard) {
+		booter.training = strategy.NewTraining(ctx, booter.price, booter.desk, booter.store)
+
+		if err := booter.training.Error(); err != nil {
+			return err
+		}
+
+		booter.training.Transition(nmruntime.READY)
+		strategyNodes = append(strategyNodes, booter.training)
 	}
-
-	booter.training.Transition(nmruntime.READY)
 
 	// The last handler group io.Copy's the tick, after every signal and
 	// training have written their layers. Only collect persists ticks;
@@ -331,7 +346,7 @@ func (booter *Booter) initPipeline() error {
 		"workspace",
 		[]nmruntime.Ring{
 			{Group: "signal", Nodes: booter.signals},
-			{Group: "strategy", Nodes: []nmruntime.Node{booter.training}},
+			{Group: "strategy", Nodes: strategyNodes},
 		},
 		sinks...,
 	)

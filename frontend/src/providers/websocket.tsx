@@ -321,13 +321,22 @@ const tickSymbol = (val: ParsedValue): string => {
 
 type Wallet = {
 	data?: Array<{ asset?: string; balance?: string | number }>;
+	unrealized?: string | number;
+	equity?: string | number;
+};
+
+const moneyText = (value: string | number | null | undefined) => {
+	if (value === null || value === undefined) return null;
+	return String(value);
 };
 
 const applyBalance = (wallet: Wallet) => {
 	const quote = wallet.data?.find((entry) => entry.asset === "USD");
-	if (quote?.balance !== undefined) {
-		updateEquity(String(quote.balance), null, null);
-	}
+	updateEquity(
+		quote?.balance !== undefined ? String(quote.balance) : null,
+		moneyText(wallet.unrealized),
+		moneyText(wallet.equity),
+	);
 };
 
 type PositionLayer = {

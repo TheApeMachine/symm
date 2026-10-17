@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"math/rand"
 	"slices"
 	"strings"
 
@@ -36,8 +37,8 @@ DynamicsStage audits token dynamics and state transition entropy across continuo
 Each symbol is its own token sequence; transitions never cross symbols. It
 builds the empirical transition matrix and the transition entropy H:
 H = - sum_i P(i) sum_j P(j|i) log2 P(j|i)
-Lower entropy signifies structured, predictable market state sequences.
-Excessive entropy indicates random noise, while extreme token concentration indicates a dead/frozen state.
+Lower entropy than a block-shuffled copy of the same tokens is structure.
+Entropy that matches the shuffled copy is chance. One token taking over the tape is a frozen state.
 */
 type DynamicsStage struct {
 	*runtime.System
@@ -50,8 +51,12 @@ type DynamicsStage struct {
 	transitions  map[string]map[string]int64
 	tokenCounts  map[string]int64
 	frames       []*FrameData
+	tokens       map[string][]string
 	entropy      float64
 	maxEntropy   float64
+	nullEntropy  float64
+	nullPValue   float64
+	blockSize    int
 	err          error
 }
 
@@ -65,6 +70,7 @@ func NewDynamicsStage(ctx context.Context) *DynamicsStage {
 		initialPrice: make(map[string]float64),
 		transitions:  make(map[string]map[string]int64),
 		tokenCounts:  make(map[string]int64),
+		tokens:       make(map[string][]string),
 		frames:       make([]*FrameData, 0),
 	}
 }
@@ -130,6 +136,7 @@ func (stage *DynamicsStage) recordToken(measurement *data.Value) {
 
 	stage.totalTokens++
 	stage.tokenCounts[currentToken]++
+	stage.tokens[symbol] = append(stage.tokens[symbol], currentToken)
 
 	if priorToken, ok := stage.lastToken[symbol]; ok {
 		row, exists := stage.transitions[priorToken]
@@ -195,34 +202,48 @@ func (stage *DynamicsStage) auditDynamics() {
 		}
 	}
 
-	// 2. Transition entropy against the maximum for the observed states.
-	stage.entropy = stage.computeTransitionEntropy()
+	// 2. Transition entropy against a block-shuffled copy of the same tokens.
+	// The block length is the median dwell, so the copy keeps local persistence
+	// and only the order of those blocks is chance.
+	stage.entropy = transitionEntropy(stage.transitions, stage.tokenCounts, stage.totalTokens)
 	distinctStates := len(stage.tokenCounts)
 
 	if distinctStates > 1 {
 		stage.maxEntropy = math.Log2(float64(distinctStates))
+	}
 
-		if math.Abs(stage.entropy-stage.maxEntropy) < cfg.EntropyTolerance {
-			stage.violations = append(stage.violations, NewViolation(
-				"dynamics",
-				"dynamics.pure_noise_entropy",
-				fmt.Sprintf("Transition entropy H = %.3f bits equals maximum random entropy %.3f bits (zero predictive structure)",
-					stage.entropy, stage.maxEntropy),
-				nil,
-				nil,
-			))
-		}
+	stage.blockSize = dwellBlockSize(stage.tokens)
+	nullEntropies := blockNullEntropies(stage.tokens, stage.blockSize, cfg.Permutations)
+	stage.nullPValue = lowerTailP(stage.entropy, nullEntropies)
+
+	for _, value := range nullEntropies {
+		stage.nullEntropy += value
+	}
+
+	if len(nullEntropies) > 0 {
+		stage.nullEntropy /= float64(len(nullEntropies))
+	}
+
+	if len(nullEntropies) > 0 && stage.nullPValue > cfg.Significance {
+		stage.violations = append(stage.violations, NewViolation(
+			"dynamics",
+			"dynamics.no_structure_vs_null",
+			fmt.Sprintf("Token order matches a shuffled copy of the same tokens: entropy %.3f bits, shuffled mean %.3f bits (p = %.3f)",
+				stage.entropy, stage.nullEntropy, stage.nullPValue),
+			nil,
+			nil,
+		))
 	}
 }
 
-func (stage *DynamicsStage) computeTransitionEntropy() float64 {
-	if stage.totalTokens == 0 {
+func transitionEntropy(transitions map[string]map[string]int64, tokenCounts map[string]int64, total int) float64 {
+	if total == 0 {
 		return 0
 	}
 
-	keys := make([]string, 0, len(stage.tokenCounts))
+	keys := make([]string, 0, len(tokenCounts))
 
-	for key := range stage.tokenCounts {
+	for key := range tokenCounts {
 		keys = append(keys, key)
 	}
 
@@ -231,7 +252,7 @@ func (stage *DynamicsStage) computeTransitionEntropy() float64 {
 	var entropy float64
 
 	for _, stateI := range keys {
-		row, hasRow := stage.transitions[stateI]
+		row, hasRow := transitions[stateI]
 
 		if !hasRow {
 			continue
@@ -247,7 +268,7 @@ func (stage *DynamicsStage) computeTransitionEntropy() float64 {
 			continue
 		}
 
-		probI := float64(stage.tokenCounts[stateI]) / float64(stage.totalTokens)
+		probI := float64(tokenCounts[stateI]) / float64(total)
 		var rowEntropy float64
 
 		for _, count := range row {
@@ -263,6 +284,165 @@ func (stage *DynamicsStage) computeTransitionEntropy() float64 {
 	return entropy
 }
 
+/*
+dwellBlockSize is the median run of the same token inside one symbol. The
+shuffled copy keeps runs of this length.
+*/
+func dwellBlockSize(tokensBySymbol map[string][]string) int {
+	runs := make([]int, 0)
+
+	for _, tokens := range tokensBySymbol {
+		if len(tokens) == 0 {
+			continue
+		}
+
+		run := 1
+
+		for index := 1; index < len(tokens); index++ {
+			if tokens[index] == tokens[index-1] {
+				run++
+				continue
+			}
+
+			runs = append(runs, run)
+			run = 1
+		}
+
+		runs = append(runs, run)
+	}
+
+	if len(runs) == 0 {
+		return 1
+	}
+
+	slices.Sort(runs)
+	median := runs[len(runs)/2]
+
+	if median < 1 {
+		return 1
+	}
+
+	return median
+}
+
+/*
+blockNullEntropies is the transition entropy of each block-shuffle of the
+observed tokens. Seed 1791 makes a rerun reproduce.
+*/
+func blockNullEntropies(tokensBySymbol map[string][]string, blockSize, iterations int) []float64 {
+	if iterations <= 0 || len(tokensBySymbol) == 0 {
+		return nil
+	}
+
+	if blockSize < 1 {
+		blockSize = 1
+	}
+
+	symbols := slices.Sorted(maps.Keys(tokensBySymbol))
+	blocksBySymbol := make(map[string][][]string, len(symbols))
+	total := 0
+
+	for _, symbol := range symbols {
+		tokens := tokensBySymbol[symbol]
+		total += len(tokens)
+
+		if len(tokens) == 0 {
+			continue
+		}
+
+		blocks := make([][]string, 0, (len(tokens)+blockSize-1)/blockSize)
+
+		for start := 0; start < len(tokens); start += blockSize {
+			end := min(start+blockSize, len(tokens))
+			blocks = append(blocks, append([]string(nil), tokens[start:end]...))
+		}
+
+		blocksBySymbol[symbol] = blocks
+	}
+
+	if total < 2 {
+		return nil
+	}
+
+	rng := rand.New(rand.NewSource(1791))
+	entropies := make([]float64, 0, iterations)
+
+	for range iterations {
+		shuffled := make(map[string][]string, len(blocksBySymbol))
+
+		for symbol, blocks := range blocksBySymbol {
+			order := append([][]string(nil), blocks...)
+			rng.Shuffle(len(order), func(i, j int) {
+				order[i], order[j] = order[j], order[i]
+			})
+
+			flat := make([]string, 0, len(tokensBySymbol[symbol]))
+
+			for _, block := range order {
+				flat = append(flat, block...)
+			}
+
+			shuffled[symbol] = flat
+		}
+
+		entropies = append(entropies, sequenceEntropy(shuffled))
+	}
+
+	return entropies
+}
+
+func sequenceEntropy(tokensBySymbol map[string][]string) float64 {
+	transitions := make(map[string]map[string]int64)
+	counts := make(map[string]int64)
+	var total int
+
+	for _, tokens := range tokensBySymbol {
+		var prior string
+		var hasPrior bool
+
+		for _, token := range tokens {
+			total++
+			counts[token]++
+
+			if hasPrior {
+				row := transitions[prior]
+
+				if row == nil {
+					row = make(map[string]int64)
+					transitions[prior] = row
+				}
+
+				row[token]++
+			}
+
+			prior = token
+			hasPrior = true
+		}
+	}
+
+	return transitionEntropy(transitions, counts, total)
+}
+
+/*
+lowerTailP is (1 + shuffles at or below observed) / (shuffles + 1). A small
+value means the real entropy is lower than the shuffled copies.
+*/
+func lowerTailP(observed float64, null []float64) float64 {
+	if len(null) == 0 {
+		return 1
+	}
+
+	below := 0
+
+	for _, value := range null {
+		if value <= observed {
+			below++
+		}
+	}
+
+	return float64(1+below) / float64(len(null)+1)
+}
+
 func (stage *DynamicsStage) Report() string {
 	var build strings.Builder
 
@@ -275,13 +455,17 @@ func (stage *DynamicsStage) Report() string {
 
 func (stage *DynamicsStage) Data() any {
 	return map[string]any{
-		"passed":          len(stage.violations) == 0,
-		"entropy":         stage.entropy,
-		"max_entropy":     stage.maxEntropy,
-		"total_tokens":    stage.totalTokens,
-		"distinct_tokens": len(stage.tokenCounts),
-		"token_counts":    stage.tokenCounts,
-		"transitions":     stage.transitions,
-		"frames":          stage.frames,
+		"passed":                  len(stage.violations) == 0,
+		"entropy":                 stage.entropy,
+		"max_entropy":             stage.maxEntropy,
+		"null_transition_entropy": stage.nullEntropy,
+		"entropy_reduction":       stage.nullEntropy - stage.entropy,
+		"null_p_value":            stage.nullPValue,
+		"null_block_size":         stage.blockSize,
+		"total_tokens":            stage.totalTokens,
+		"distinct_tokens":         len(stage.tokenCounts),
+		"token_counts":            stage.tokenCounts,
+		"transitions":             stage.transitions,
+		"frames":                  stage.frames,
 	}
 }

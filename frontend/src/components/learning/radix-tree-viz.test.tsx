@@ -113,6 +113,9 @@ describe("RadixTreeViz", () => {
 		expect(container.textContent).toContain("R02");
 		expect(container.textContent).not.toContain("R05");
 		expect(container.textContent).not.toContain("R08");
+
+		const svg = container.querySelector("svg");
+		expect(svg?.textContent).not.toContain("BTC");
 	});
 
 	it("shows informative empty state when no active symbol sequence exists", () => {

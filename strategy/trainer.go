@@ -455,8 +455,10 @@ func (trainer *Trainer) trainExcursion(
 		return nil
 	}
 
+	symbol := excursion.Scope
+
 	precursorPath, holdingPath, precursorTicks, holdingTicks, replayErr := trainer.replayTape(
-		tag, ticks, aTick, bTick, cTick,
+		tag, symbol, ticks, aTick, bTick, cTick,
 	)
 
 	if replayErr != nil {
@@ -520,9 +522,9 @@ func (trainer *Trainer) trainExcursion(
 }
 
 /*
-publishExcursion writes both fragment paths for one trade. When that up
+publishExcursion writes the fragment paths of one trade. When that up
 round trip (B→C) clears friction, the precursor path is enter.bin and the
-holding path is exit.bin. Otherwise both paths are noop.bin. An exit is
+holding path is exit.bin. Anything else is left unmatched. An exit is
 never written unless the same excursion also writes its enter.
 */
 func (trainer *Trainer) publishExcursion(
@@ -540,24 +542,12 @@ func (trainer *Trainer) publishExcursion(
 
 	enter := precursorClears && precursorPath != ""
 
-	if precursorPath != "" {
-		action := "noop"
-
-		if enter {
-			action = "enter"
-		}
-
-		files = append(files, file{precursorPath, action})
+	if enter {
+		files = append(files, file{precursorPath, "enter"})
 	}
 
-	if holdingPath != "" {
-		action := "noop"
-
-		if enter && holdingClears {
-			action = "exit"
-		}
-
-		files = append(files, file{holdingPath, action})
+	if enter && holdingClears && holdingPath != "" {
+		files = append(files, file{holdingPath, "exit"})
 	}
 
 	if len(files) == 0 {
@@ -795,7 +785,7 @@ on that fragment's grid. Regions at or above the midpoint of the brightest
 and dimmest lit region become the chord.
 */
 func (trainer *Trainer) replayTape(
-	label string,
+	label, symbol string,
 	ticks []*data.Value,
 	aTick, bTick, cTick uint64,
 ) (precursorPath, holdingPath string, precursorTicks, holdingTicks int, err error) {
@@ -805,20 +795,20 @@ func (trainer *Trainer) replayTape(
 		ctx = trainer.Context()
 	}
 
-	precursorPath, precursorTicks, err = trainer.replayFragment(ctx, label, "precursor", ticks, aTick, bTick)
+	precursorPath, precursorTicks, err = trainer.replayFragment(ctx, label, symbol, "precursor", ticks, aTick, bTick)
 
 	if err != nil {
 		return "", "", precursorTicks, holdingTicks, err
 	}
 
-	holdingPath, holdingTicks, err = trainer.replayFragment(ctx, label, "holding", ticks, bTick, cTick)
+	holdingPath, holdingTicks, err = trainer.replayFragment(ctx, label, symbol, "holding", ticks, bTick, cTick)
 
 	return precursorPath, holdingPath, precursorTicks, holdingTicks, err
 }
 
 func (trainer *Trainer) replayFragment(
 	ctx context.Context,
-	label, phase string,
+	label, symbol, phase string,
 	ticks []*data.Value,
 	fromTick, toTick uint64,
 ) (path string, count int, err error) {
@@ -847,7 +837,7 @@ func (trainer *Trainer) replayFragment(
 			return "", count, errnie.Error(observeErr)
 		}
 
-		fragment.consume(val, regions)
+		fragment.consume(symbol, val, regions)
 	}
 
 	if gridErr := grid.Error(); gridErr != nil {
@@ -865,6 +855,8 @@ type fragment struct {
 	grammar    *Grammar
 	lastSym    string
 	lastPhrase string
+	sentence   []string
+	regime     regime
 }
 
 func newFragment(grid *nmstore.Grid) *fragment {
@@ -883,8 +875,18 @@ consume appends the chord of regions at or above the brightness midpoint.
 The fragment's phrase is the terminal expansion of a rule Sequitur completed.
 A chord that completes no rule leaves the phrase unchanged.
 */
-func (fragment *fragment) consume(val *data.Value, regions []*nmstore.Region) {
-	if fragment == nil || val == nil || len(regions) == 0 {
+func (fragment *fragment) consume(label string, val *data.Value, regions []*nmstore.Region) {
+	if fragment == nil {
+		return
+	}
+
+	if fragment.regime.advance(fragment.grid.Energy(label)) {
+		fragment.sentence = nil
+		fragment.lastSym = ""
+		fragment.lastPhrase = ""
+	}
+
+	if val == nil || len(regions) == 0 {
 		return
 	}
 
@@ -923,6 +925,8 @@ func (fragment *fragment) consume(val *data.Value, regions []*nmstore.Region) {
 	var deepest *Rule
 
 	for _, token := range fired {
+		fragment.sentence = append(fragment.sentence, token)
+
 		if rule := fragment.grammar.Append(token); rule != nil {
 			deepest = rule
 		}
@@ -934,7 +938,7 @@ func (fragment *fragment) consume(val *data.Value, regions []*nmstore.Region) {
 
 	phrase := deepest.TerminalNames(fragment.grammar)
 
-	if len(phrase) < 2 {
+	if len(phrase) < 2 || !phraseInSentence(phrase, fragment.sentence) {
 		return
 	}
 
@@ -960,7 +964,7 @@ func (trainer *Trainer) writePolicy(
 		return nil
 	}
 
-	if action != "enter" && action != "exit" && action != "noop" {
+	if action != "enter" && action != "exit" {
 		return nil
 	}
 

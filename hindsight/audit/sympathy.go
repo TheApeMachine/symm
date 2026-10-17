@@ -33,6 +33,9 @@ type SympathyStage struct {
 	streams      map[string][]temporal.Price
 	flaggedPairs map[string]bool
 	estimates    []map[string]any
+	realCounts   []int
+	nullCounts   []int
+	nullAbs      []int
 	estimator    core.Primitive
 }
 
@@ -43,6 +46,9 @@ func NewSympathyStage(ctx context.Context) *SympathyStage {
 		violations:   make([]*Violation, 0),
 		streams:      make(map[string][]temporal.Price),
 		flaggedPairs: make(map[string]bool),
+		realCounts:   make([]int, sympathyHistBins),
+		nullCounts:   make([]int, sympathyHistBins),
+		nullAbs:      make([]int, sympathyHistBins),
 		estimator:    algo.NewHayashiYoshida(),
 	}
 }
@@ -257,6 +263,7 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 
 			if estimate.ScoreDefined && estimate.Support > 0 {
 				pValue := 1.0
+				addHistogram(stage.realCounts, -1, 1, concordance)
 
 				if len(rightPath.Returns) > 1 {
 					exceedCount := 0
@@ -290,6 +297,8 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 
 						if nullEstimate.ScoreDefined && nullEstimate.Support > 0 {
 							nullConcordance := nullEstimate.Score / math.Sqrt(nullEstimate.Support)
+							addHistogram(stage.nullCounts, -1, 1, nullConcordance)
+							addHistogram(stage.nullAbs, 0, 1, math.Abs(nullConcordance))
 
 							if math.Abs(nullConcordance) >= math.Abs(concordance) {
 								exceedCount++
@@ -345,11 +354,89 @@ func (stage *SympathyStage) Report() string {
 	return build.String()
 }
 
+const sympathyHistBins = 25
+
 func (stage *SympathyStage) Data() any {
+	edges := histogramEdges(sympathyHistBins, -1, 1)
+
 	return map[string]any{
 		"passed":          len(stage.violations) == 0,
 		"total_streams":   len(stage.streams),
 		"redundant_count": len(stage.flaggedPairs),
 		"estimates":       stage.estimates,
+		"real_distribution": map[string]any{
+			"histogram_bins":   edges,
+			"histogram_counts": stage.realCounts,
+		},
+		"null_distribution": map[string]any{
+			"histogram_bins":   edges,
+			"histogram_counts": stage.nullCounts,
+			"percentile_95":    histogramQuantile(stage.nullAbs, 0, 1, 0.95),
+		},
 	}
+}
+
+func histogramEdges(bins int, low, high float64) []float64 {
+	edges := make([]float64, bins+1)
+	step := (high - low) / float64(bins)
+
+	for i := range edges {
+		edges[i] = low + float64(i)*step
+	}
+
+	edges[len(edges)-1] = high
+	return edges
+}
+
+func addHistogram(counts []int, low, high, value float64) {
+	if len(counts) == 0 {
+		return
+	}
+
+	if value < low {
+		value = low
+	}
+
+	if value > high {
+		value = high
+	}
+
+	step := (high - low) / float64(len(counts))
+	idx := int((value - low) / step)
+
+	if idx >= len(counts) {
+		idx = len(counts) - 1
+	}
+
+	if idx < 0 {
+		idx = 0
+	}
+
+	counts[idx]++
+}
+
+func histogramQuantile(counts []int, low, high, q float64) float64 {
+	total := 0
+
+	for _, count := range counts {
+		total += count
+	}
+
+	if total == 0 {
+		return 0
+	}
+
+	target := q * float64(total)
+	step := (high - low) / float64(len(counts))
+	accumulated := 0
+
+	for i, count := range counts {
+		accumulated += count
+
+		if float64(accumulated) >= target {
+			return low + float64(i+1)*step
+		}
+	}
+
+	return high
 }

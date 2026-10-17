@@ -29,10 +29,11 @@ detector/, plus workspace ticks for each excursion. Precursor A→B and holding
 B→C are replayed separately: each tick in the window through its own grid
 and Sequitur. Regions at or above the brightness midpoint become the chord.
 When the up round trip from B to C clears friction, the precursor phrase is
-enter.bin and the holding phrase is exit.bin; otherwise both paths are
-noop.bin (down, chop, and flat always noop). An exit is never published
-without that excursion's enter. Noops dampen live matching. The previous
-policy/current tree is moved to policy/archive/ first.`,
+enter.bin and the holding phrase is exit.bin. Anything else is left
+unmatched. An exit is never published without that excursion's enter. A
+live sentence ends when two regimes describe its metric energy in a
+shorter code than one regime.
+The previous policy/current tree is moved to policy/archive/ first.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		system.NewConfig()
 

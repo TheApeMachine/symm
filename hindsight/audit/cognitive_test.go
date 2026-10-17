@@ -2,10 +2,13 @@ package audit
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/system"
 )
 
 func TestCognitiveStage(t *testing.T) {
@@ -52,14 +55,17 @@ func TestCognitiveStage(t *testing.T) {
 			So(gate["policy_epoch"], ShouldEqual, "1792187257188073000")
 		})
 
-		Convey("A policy without a gate tag is a violation", func() {
-			policy := &data.Value{Origin: data.PolicyOrigin, Role: "enter", Scope: data.PolicyScope, Epoch: realizationEpoch, Tick: 1}
-			policy.FormatPrefix()
-			So(data.AppendPolicy(policy, "R01/R04", []float64{0.01, 30, 4, 0.01, 0.75}), ShouldBeNil)
+		Convey("A stored sequence without a gate tag is counted", func() {
+			policy := data.NewValue("policy", "enter", "BTC/USD")
+			data.AppendVector(policy, []float64{0.01, 0, 1, 0.01, 1}, "gain", "hold_seconds", "visits", "mean_reward", "confidence", "path:R01/R05")
 
 			violations := feed(stage, []*data.Value{policy})
-			So(violations, ShouldHaveLength, 1)
-			So(violations[0].Name, ShouldEqual, "cognitive.gate")
+			So(violations, ShouldBeEmpty)
+
+			fields := stage.Data().(map[string]any)
+			So(fields["enter_count"], ShouldEqual, 1)
+			So(fields["total_phases"], ShouldEqual, 1)
+			So(stage.phases[0].Path, ShouldEqual, "R01/R05")
 		})
 
 		Convey("When auditing complete abstention (100% wait actions)", func() {
@@ -115,4 +121,45 @@ func TestCognitiveStage(t *testing.T) {
 			So(hasInsufficient(nilViolations), ShouldBeTrue)
 		})
 	})
+}
+
+func TestLiveCurrentSequences(t *testing.T) {
+	if os.Getenv("AUDIT_LIVE") != "1" {
+		t.Skip()
+	}
+
+	ctx := context.Background()
+	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
+
+	if client == nil {
+		t.Fatal("store client")
+	}
+
+	stage := NewCognitiveStage(ctx)
+
+	go func() {
+		for value, err := range currentSequences(client) {
+			if err != nil {
+				t.Error(err)
+				continue
+			}
+
+			if value != nil && value.Origin == data.PolicyOrigin {
+				stage.Channel() <- value
+			}
+		}
+
+		close(stage.Channel())
+	}()
+
+	if err := stage.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	fields := stage.Data().(map[string]any)
+	t.Logf("sequences %v enter %v exit %v noop %v", fields["total_phases"], fields["enter_count"], fields["exit_count"], fields["noop_count"])
+
+	if fields["total_phases"] == 0 {
+		t.Fatal("policy/current has no sequences")
+	}
 }

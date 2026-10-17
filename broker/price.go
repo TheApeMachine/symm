@@ -356,6 +356,27 @@ func (price *Price) RealizedReturn(
 	return profit.Div(totalEntry).Mul(decimalHundred).Float64()
 }
 
+/*
+Exit is a held quantity sold through the bid book. Sale is the book's average
+price, proceeds the cash after the exit fee, and ret that result as a fraction
+of what the lot cost. RealizedReturn reports percent; ret is that number as a
+fraction. ok is false when the book cannot take the quantity.
+*/
+func (price *Price) Exit(symbol string, quantity, entry, fee *decimal.Decimal) (sale, proceeds, ret float64, ok bool) {
+	if price == nil || symbol == "" || quantity == nil || quantity.Sign() <= 0 || entry == nil || entry.Sign() <= 0 {
+		return 0, 0, 0, false
+	}
+
+	surface, err := price.SellQuote(symbol, quantity)
+
+	if err != nil || surface == nil || !surface.FullyExecutable || surface.ExecutableVWAP == nil || surface.ExecutableValue == nil {
+		return 0, 0, 0, false
+	}
+
+	return surface.ExecutableVWAP.Float64(), surface.ExecutableValue.Float64(),
+		price.RealizedReturn(entry.Mul(quantity), fee, surface.ExecutableValue, nil) / 100, true
+}
+
 /* Quantity sizes a buy against visible asks and available cash. */
 func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Decimal, error) {
 	if cash == nil || cash.Sign() <= 0 {

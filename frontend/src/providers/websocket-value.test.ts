@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	cashAtom,
 	decisionsAtom,
+	equityAtom,
 	positionsAtom,
+	unrealizedAtom,
 	resonanceStore,
 	signals,
 	symbolsAtom,
@@ -289,6 +291,30 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		dispatchValue(parsed!);
 
 		expect(cashAtom.get()).toBe("10000.50");
+	});
+
+	it("dispatches unrealized and equity from the balance layer", () => {
+		const raw = encodeValue({
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
+			layers: [
+				{
+					index: "balance",
+					json: {
+						data: [{ asset: "USD", balance: "120" }],
+						unrealized: "-4.5",
+						equity: "195.5",
+					},
+				},
+			],
+		});
+
+		dispatchValue(parseOneValue(raw)!);
+
+		expect(cashAtom.get()).toBe("120");
+		expect(unrealizedAtom.get()).toBe("-4.5");
+		expect(equityAtom.get()).toBe("195.5");
 	});
 
 	it("dispatches spot trade frame and updates tickCountAtom", () => {

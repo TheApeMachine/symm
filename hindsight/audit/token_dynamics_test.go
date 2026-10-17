@@ -42,6 +42,8 @@ func TestDynamicsStage(t *testing.T) {
 			stats := stage.Data().(map[string]any)
 			So(stats["distinct_tokens"], ShouldEqual, 2)
 			So(stats["entropy"], ShouldEqual, 0.0)
+			So(stats["null_transition_entropy"].(float64), ShouldBeGreaterThan, 0.0)
+			So(stats["null_p_value"].(float64), ShouldBeLessThan, 0.05)
 		})
 
 		Convey("One source lighting alone fails absorbing collapse", func() {

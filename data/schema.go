@@ -22,10 +22,17 @@ The storage schema: every key and layer the commands exchange, in one place.
 	| train   | policy/current/<grammar path>/<action>.bin     | run (CognitionTree) |
 	| train   | resonance/state/<symbol>/<policy epoch>/<last tick>.bin | train (next), run (CognitionTree) |
 	| paper   | paper/<action>/<symbol>/<epoch>/<seq>.bin      | audit (realization) |
+	| run     | position/open/<symbol>.bin                     | run (the open lot)  |
+	| run     | position/closed/<id>.bin                       | run (a closed life) |
+	| run     | policy/threshold/<path>.bin                    | run (step brightness) |
+	| run     | policy/virtual/<path>.bin                      | run (open virtual)  |
 
-run (`make run`) never writes storage: it reads policies through a
-store.Reader and appends its paper records to the local file
-paper.records_path; `symm paper` uploads that file under paper/.
+run (`make run`) reads policies through a store.Reader and appends its
+paper records to the local file paper.records_path; `symm paper` uploads
+that file under paper/. An open lot is Put at OpenPositionKey and removed when the lot closes, so
+a restart can manage it. The closed life is Put at ClosedPositionKey and
+kept, so the life-cycle list can show it after a restart. train archives
+policy/current and leaves thresholds and open virtuals in place.
 
 Layers of a stored tick (one Kraken trade frame; collect, cmd/booter.go):
 
@@ -77,9 +84,26 @@ the event (or "mark"), Scope the symbol, Epoch the policy epoch traded, one
 LayerPosition JSON layer.
 */
 const (
-	PositionOrigin = "position"
-	LayerPosition  = "position"
+	PositionOrigin       = "position"
+	LayerPosition        = "position"
+	OpenPositionPrefix   = "position/open/"
+	ClosedPositionPrefix = "position/closed/"
+	LayerLedger          = "ledger"
 )
+
+/*
+OpenPositionKey is the one object for a symbol's live lot.
+*/
+func OpenPositionKey(symbol string) string {
+	return OpenPositionPrefix + symbol + ".bin"
+}
+
+/*
+ClosedPositionKey is the one object for a closed lot's life.
+*/
+func ClosedPositionKey(id string) string {
+	return ClosedPositionPrefix + id + ".bin"
+}
 
 /*
 SequiturOrigin and SequiturRole identify a live grammar frame on the hub;
@@ -96,7 +120,7 @@ TapeCacheOrigin stores run manifests and scan stamps so detect and hindsight
 can skip a full rescan when ticks and learned parameters are unchanged.
 */
 const (
-	TapeCacheOrigin = "tape"
+	TapeCacheOrigin  = "tape"
 	TapeManifestRole = "manifest"
 	TapeStampRole    = "stamp"
 
@@ -413,7 +437,7 @@ const (
 	PolicyPathTag = "path:"
 )
 
-var PolicyActions = []string{"enter", "exit", "noop"}
+var PolicyActions = []string{"enter", "exit"}
 
 /*
 PolicyKeys label a policy's vector, in order; PolicyPathTag+<path> follows.
@@ -642,20 +666,45 @@ PolicyPath reads the grammar path a policy Value was published for.
 */
 func PolicyPath(value *Value) (string, error) {
 	head := value.Prefix + "/"
+	fallback := ""
 
 	for _, index := range value.Index {
 		rest, ok := strings.CutPrefix(index, head)
 
 		if !ok {
+			// The index was baked before Epoch was copied into the prefix, so
+			// the path tag is still there under the epoch the object was written with.
+			if _, path, found := strings.Cut(index, "/"+PolicyPathTag); found && path != "" && fallback == "" {
+				fallback = policyPathOnce(path)
+			}
+
 			continue
 		}
 
 		if _, path, found := strings.Cut(rest, "/"+PolicyPathTag); found && path != "" {
-			return path, nil
+			return policyPathOnce(path), nil
 		}
 	}
 
-	return "", errnie.Err(errnie.UnprocessableContent, "data: policy "+value.Prefix+" has no "+PolicyPathTag+" tag", nil)
+	if fallback != "" {
+		return fallback, nil
+	}
+
+	prefix := ""
+
+	if value != nil {
+		prefix = value.Prefix
+	}
+
+	return "", errnie.Err(errnie.UnprocessableContent, "data: policy "+prefix+" has no "+PolicyPathTag+" tag", nil)
+}
+
+func policyPathOnce(path string) string {
+	if cut, _, ok := strings.Cut(path, "/"+PolicyPathTag); ok {
+		return cut
+	}
+
+	return path
 }
 
 /*

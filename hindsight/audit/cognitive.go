@@ -40,6 +40,7 @@ type CognitiveStage struct {
 	nodeCount      int64
 	maxDepth       int64
 	waitCount      int
+	noopCount      int
 	enterCount     int
 	exitCount      int
 	abstentionRate float64
@@ -94,7 +95,7 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Value) {
 		return
 	}
 
-	if measurement.Origin == data.PolicyOrigin {
+	if measurement.Origin == data.PolicyOrigin && hasGateLayer(measurement) {
 		stage.recordGate(measurement)
 	}
 
@@ -138,6 +139,12 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Value) {
 	}
 	if visitsVal, ok := metrics["visits"]; ok {
 		visits = int(visitsVal)
+	}
+
+	if measurement.Origin == data.PolicyOrigin {
+		if read, err := data.PolicyPath(measurement); err == nil {
+			path = read
+		}
 	}
 
 	if !hasDecision {
@@ -202,6 +209,7 @@ func (stage *CognitiveStage) auditDecisiveness() {
 	}
 
 	waitCount := 0
+	noopCount := 0
 	enterCount := 0
 	exitCount := 0
 	var sumConfidence float64
@@ -210,8 +218,10 @@ func (stage *CognitiveStage) auditDecisiveness() {
 		sumConfidence += phase.Confidence
 
 		switch phase.Action {
-		case "wait", "noop":
+		case "wait":
 			waitCount++
+		case "noop":
+			noopCount++
 		case "enter":
 			enterCount++
 		case "exit":
@@ -219,10 +229,11 @@ func (stage *CognitiveStage) auditDecisiveness() {
 		}
 	}
 
-	abstentionRate := float64(waitCount) / float64(totalPhases)
+	abstentionRate := float64(waitCount+noopCount) / float64(totalPhases)
 	meanConfidence := sumConfidence / float64(totalPhases)
 
 	stage.waitCount = waitCount
+	stage.noopCount = noopCount
 	stage.enterCount = enterCount
 	stage.exitCount = exitCount
 	stage.abstentionRate = abstentionRate
@@ -273,6 +284,7 @@ func (stage *CognitiveStage) Data() any {
 		"passed":          len(stage.violations) == 0 && len(stage.phases) > 0,
 		"total_phases":    len(stage.phases),
 		"wait_count":      stage.waitCount,
+		"noop_count":      stage.noopCount,
 		"enter_count":     stage.enterCount,
 		"exit_count":      stage.exitCount,
 		"abstention_rate": stage.abstentionRate,
@@ -288,6 +300,22 @@ func (stage *CognitiveStage) Data() any {
 gateData is the gate tag a policy stage reports: which policy epoch it
 judged, trained on which ticks, under which gate (nil when none was judged).
 */
+func hasGateLayer(value *data.Value) bool {
+	if value == nil {
+		return false
+	}
+
+	needle := "/" + data.PolicyGateLayer + "/"
+
+	for _, index := range value.Index {
+		if strings.Contains(index, needle) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func gateData(gate *data.PolicyGate) any {
 	if gate == nil {
 		return nil

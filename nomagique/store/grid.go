@@ -58,9 +58,10 @@ type prior struct {
 }
 
 type symbolState struct {
-	metrics  map[metricKey]prior
-	energy   map[string]prior
-	observed int
+	metrics    map[metricKey]prior
+	energy     map[string]prior
+	observed   int
+	lastEnergy float64
 }
 
 /*
@@ -184,6 +185,13 @@ func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
 			energy[sample.key.source] += delta * delta
 		}
 
+		totalEnergy := 0.0
+
+		for _, amount := range energy {
+			totalEnergy += amount
+		}
+
+		state.lastEnergy = totalEnergy
 		surprise := make(map[string]float64)
 
 		for source, amount := range energy {
@@ -255,6 +263,27 @@ func brighterFirst(first, second *Region) int {
 	}
 
 	return int(first.Key) - int(second.Key)
+}
+
+/*
+Energy is the symbol's metric energy on the latest Observe: the sum of
+squared self-normalized moves. A symbol with no prior yet has energy 0.
+*/
+func (grid *Grid) Energy(symbol string) float64 {
+	if grid == nil || symbol == "" {
+		return 0
+	}
+
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	state := grid.symbols[symbol]
+
+	if state == nil {
+		return 0
+	}
+
+	return state.lastEnergy
 }
 
 /*

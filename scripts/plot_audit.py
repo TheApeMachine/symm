@@ -380,19 +380,31 @@ def plot_stage3_redundancy(data, out_dir):
     save_plot(fig, os.path.join(out_dir, "stage3_representation_redundancy.png"))
 
 
+def _hist_curve(dist):
+    bins = dist.get('histogram_bins', [])
+    counts = dist.get('histogram_counts', [])
+    if len(bins) < 2 or not counts or sum(counts) <= 0:
+        return [], []
+    total = sum(counts)
+    centers = [(bins[i] + bins[i + 1]) / 2 for i in range(len(bins) - 1)]
+    probs = [c / total for c in counts[:len(centers)]]
+    return centers, probs
+
+
 def plot_stage4_sympathy(data, out_dir):
     stage = data.get('sympathy', {})
     total_streams = stage.get('total_streams', 0)
     estimates = stage.get('estimates', [])
     redundant_count = stage.get('redundant_count', 0)
+    null_dist = stage.get('null_distribution', {})
+    real_dist = stage.get('real_distribution', {})
 
-    fig, ax = plt.subplots(figsize=(13, 6.5))
-    fig.subplots_adjust(top=0.80, bottom=0.12, left=0.34, right=0.96)
+    fig, (ax, axn) = plt.subplots(1, 2, figsize=(14, 6.5))
+    fig.subplots_adjust(top=0.80, bottom=0.12, left=0.22, right=0.96, wspace=0.28)
 
     if not estimates:
-        ax.text(0.5, 0.5, f"✔ Asynchronous Continuous-Time Sympathy Evaluated\n\nTracked {total_streams} asynchronous timelines.\nNo cross-source redundant clone streams detected via Hayashi-Yoshida.",
-                ha='center', va='center', fontsize=11.5, color=COLOR_UP, fontfamily='monospace', transform=ax.transAxes,
-                bbox=dict(boxstyle='square,pad=1.2', facecolor=COLOR_SURFACE, edgecolor=COLOR_LINE, linewidth=1.0))
+        ax.text(0.5, 0.5, f"Tracked {total_streams} timelines.\nNo pair had enough samples.",
+                ha='center', va='center', fontsize=11, color=COLOR_F2, fontfamily='monospace', transform=ax.transAxes)
         ax.set_xticks([])
         ax.set_yticks([])
         status = "INDEPENDENT"
@@ -403,23 +415,42 @@ def plot_stage4_sympathy(data, out_dir):
         concs = [e.get('concordance', 0) for e in top_est]
 
         y_pos = np.arange(len(clean_labels))
-        colors = [COLOR_DOWN if abs(c) >= 0.95 else COLOR_INFO for c in concs]
+        colors = [COLOR_DOWN if e.get('redundant') else COLOR_INFO for e in top_est]
         ax.barh(y_pos, concs, color=colors, height=0.52, edgecolor=COLOR_LINE)
         ax.set_yticks(y_pos)
-        ax.set_yticklabels(clean_labels, fontsize=8.5, fontfamily='monospace', color=COLOR_F1)
+        ax.set_yticklabels(clean_labels, fontsize=8, fontfamily='monospace', color=COLOR_F1)
         ax.invert_yaxis()
         ax.set_xlim(-1.05, 1.05)
         ax.axvline(0, color=COLOR_LINE2, linestyle='--')
-        ax.set_xlabel("Hayashi-Yoshida Overlap Concordance [-1, 1]", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
+        ax.set_xlabel("Overlap Concordance [-1, 1]", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
         ax.grid(axis='x')
 
         status = "WARN" if redundant_count > 0 else "PASS"
         readout = f"{len(estimates)} PAIRS EVALUATED  |  {redundant_count} REDUNDANT"
 
+    null_x, null_y = _hist_curve(null_dist)
+    real_x, real_y = _hist_curve(real_dist)
+    if null_x and real_x:
+        axn.plot(null_x, null_y, color='#8b949e', linewidth=2.0, label='Shuffled copy')
+        axn.fill_between(null_x, null_y, color='#8b949e', alpha=0.25)
+        axn.plot(real_x, real_y, color=COLOR_INFO, linewidth=2.0, label='Real pairs')
+        p95 = null_dist.get('percentile_95', 0)
+        if p95:
+            axn.axvline(p95, color=COLOR_WARN, linestyle='--', linewidth=1.4, label=f'Shuffled 95th ({p95:.2f})')
+            axn.axvline(-p95, color=COLOR_WARN, linestyle='--', linewidth=1.4)
+        axn.legend(fontsize=8, frameon=False)
+        axn.set_xlabel("Concordance", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
+        axn.set_title("Real pairs against a shuffled copy", fontsize=10, fontfamily='monospace', color=COLOR_F2)
+        axn.grid(axis='y')
+    else:
+        axn.text(0.5, 0.5, "Shuffled comparison did not run", ha='center', va='center', color=COLOR_F3, transform=axn.transAxes)
+        axn.set_xticks([])
+        axn.set_yticks([])
+
     render_docked_header(
         fig,
         "Stage 4: Asynchronous Cross-Stream Sympathy",
-        "Continuous-time Hayashi-Yoshida overlap covariance without artificial time bucketing (no Epps distortion).",
+        "Each pair is drawn next to a shuffled copy of the same pair. A copy of another stream sits outside that copy.",
         status=status,
         readout=readout
     )
@@ -431,7 +462,9 @@ def plot_stage5_stability(data, out_dir):
     total_frames = stage.get('total_frames', 0)
     valid_frames = stage.get('valid_frames', 0)
     completeness = stage.get('completeness', 0)
-    jsd = stage.get('jsd', 0)
+    jsd = stage.get('jsd_bits', stage.get('jsd', 0))
+    null_mean = stage.get('null_jsd_mean_bits', 0)
+    null_p95 = stage.get('null_jsd_p95_bits', 0)
     tvd = stage.get('tvd', 0)
     passed = stage.get('passed', False)
 
@@ -446,19 +479,27 @@ def plot_stage5_stability(data, out_dir):
     ax1.set_title(f"Grid Completeness: {comp_pct:.1f}% ({valid_frames}/{total_frames})", fontsize=10, fontfamily='monospace', color=COLOR_F2)
     ax1.grid(axis='y')
 
-    ax2.bar(['Empirical JSD', 'Stationarity Bound'], [jsd, 0.40],
-            color=[COLOR_DOWN if jsd > 0.40 else COLOR_INFO, COLOR_LINE2], width=0.45, edgecolor=COLOR_LINE)
+    compared = stage.get('p_value', 0) > 0 or null_mean > 0
+    if compared:
+        ax2.bar(['Real shift', 'Shuffled copy'], [jsd, null_mean],
+                color=[COLOR_INFO, '#8b949e'], width=0.45, edgecolor=COLOR_LINE)
+        if null_p95 > 0:
+            ax2.axhline(null_p95, color=COLOR_WARN, linestyle='--', linewidth=1.4,
+                        label=f'Shuffled 95th ({null_p95:.3f})')
+            ax2.legend(fontsize=8, frameon=False)
+    else:
+        ax2.text(0.5, 0.5, "Shuffled comparison did not run", ha='center', va='center', color=COLOR_F3, transform=ax2.transAxes)
     ax2.set_ylabel("JSD (Bits)", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
-    ax2.set_title(f"Regime Divergence: JSD = {jsd:.3f}b (TVD = {tvd:.3f})", fontsize=10, fontfamily='monospace', color=COLOR_F2)
+    ax2.set_title(f"First half vs second half: {jsd:.3f}b (TVD {tvd:.3f})", fontsize=10, fontfamily='monospace', color=COLOR_F2)
     ax2.grid(axis='y')
 
     status = "STABLE" if passed else "UNSTABLE"
-    readout = f"COMPLETENESS: {comp_pct:.1f}%  |  JSD: {jsd:.3f}b"
+    readout = f"COMPLETENESS: {comp_pct:.1f}%  |  JSD: {jsd:.3f}b  |  SHUFFLED 95th: {null_p95:.3f}b"
 
     render_docked_header(
         fig,
         "Stage 5: Feature Grid Stationarity & Completeness",
-        "Audits frame excitation completeness and regime shift stability via Jensen-Shannon divergence.",
+        "The shift between the first and second half of the tape, next to the same shift after shuffling the labels.",
         status=status,
         readout=readout
     )
@@ -469,6 +510,7 @@ def plot_stage6_dynamics(data, out_dir):
     stage = data.get('dynamics', {})
     entropy = stage.get('entropy', 0)
     max_entropy = stage.get('max_entropy', 0)
+    null_entropy = stage.get('null_transition_entropy', 0)
     total_tokens = stage.get('total_tokens', 0)
     distinct_tokens = stage.get('distinct_tokens', 0)
     token_counts = stage.get('token_counts', {})
@@ -493,20 +535,26 @@ def plot_stage6_dynamics(data, out_dir):
     else:
         ax1.text(0.5, 0.5, "No token emissions", ha='center', va='center', color=COLOR_F3)
 
-    ax2.bar(['Empirical H(S)', 'Max Random H'], [entropy, max(0.01, max_entropy)],
-            color=[COLOR_UP, COLOR_LINE2], width=0.45, edgecolor=COLOR_LINE)
+    if 'null_transition_entropy' in stage:
+        ax2.bar(['Real order', 'Shuffled copy'], [entropy, null_entropy],
+                color=[COLOR_INFO, '#8b949e'], width=0.45, edgecolor=COLOR_LINE)
+        ax2.set_title(f"Real {entropy:.3f}b vs shuffled {null_entropy:.3f}b", fontsize=10, fontfamily='monospace', color=COLOR_F2)
+        readout = f"H = {entropy:.3f}b  |  SHUFFLED = {null_entropy:.3f}b  |  {distinct_tokens} STATES"
+    else:
+        ax2.bar(['Empirical H(S)', 'Max Random H'], [entropy, max(0.01, max_entropy)],
+                color=[COLOR_UP, COLOR_LINE2], width=0.45, edgecolor=COLOR_LINE)
+        structure_pct = (1.0 - (entropy / max(1e-6, max_entropy))) * 100 if max_entropy > 0 else 0
+        ax2.set_title(f"Predictive Structure: {structure_pct:.1f}% Organized", fontsize=10, fontfamily='monospace', color=COLOR_F2)
+        readout = f"H = {entropy:.3f}b / {max_entropy:.3f}b  |  {distinct_tokens} STATES"
     ax2.set_ylabel("Entropy (Bits)", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
-    structure_pct = (1.0 - (entropy / max(1e-6, max_entropy))) * 100 if max_entropy > 0 else 0
-    ax2.set_title(f"Predictive Structure: {structure_pct:.1f}% Organized", fontsize=10, fontfamily='monospace', color=COLOR_F2)
     ax2.grid(axis='y')
 
     status = "STRUCTURED" if passed else "ATTENTION"
-    readout = f"H = {entropy:.3f}b / {max_entropy:.3f}b  |  {distinct_tokens} STATES"
 
     render_docked_header(
         fig,
         "Stage 6: Discrete Token Dynamics & Transition Entropy",
-        "Audits sequential state transition entropy to differentiate predictive structure from random walk noise.",
+        "Token order next to a shuffled copy of the same tokens. Structure is a real order that is tighter than the copy.",
         status=status,
         readout=readout
     )
@@ -522,16 +570,25 @@ def plot_stage7_precursor(data, out_dir):
     excursions = stage.get('excursions', [])
     passed = stage.get('passed', False)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6.5))
-    fig.subplots_adjust(top=0.80, bottom=0.12, left=0.08, right=0.96, wspace=0.28)
+    jsd = stage.get('jsd', 0)
+    null_mean = stage.get('null_jsd_mean', 0)
+    null_p95 = stage.get('null_jsd_p95', 0)
+
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(16, 6.5))
+    fig.subplots_adjust(top=0.80, bottom=0.12, left=0.06, right=0.97, wspace=0.28)
 
     prof_count = int(round(clearance_rate * excursion_count))
     unprof_count = excursion_count - prof_count
-    ax1.bar(['Profitable\n(Net > 0)', 'Fee/Spread\nEaten'], [prof_count, unprof_count],
-            color=[COLOR_UP, COLOR_DOWN if unprof_count > 0 else COLOR_LINE], width=0.48, edgecolor=COLOR_LINE)
-    ax1.set_ylabel("Excursion Count", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
-    ax1.set_title(f"Friction Clearance: {clearance_rate*100:.1f}% ({prof_count}/{excursion_count})", fontsize=10, fontfamily='monospace', color=COLOR_F2)
-    ax1.grid(axis='y')
+    if excursion_count == 0:
+        ax1.text(0.5, 0.5, "No detected swings", ha='center', va='center', color=COLOR_F3, fontsize=12, fontfamily='monospace', transform=ax1.transAxes)
+        ax1.set_xticks([])
+        ax1.set_yticks([])
+    else:
+        ax1.bar(['Profitable\n(Net > 0)', 'Fee/Spread\nEaten'], [prof_count, unprof_count],
+                color=[COLOR_UP, COLOR_DOWN if unprof_count > 0 else COLOR_LINE], width=0.48, edgecolor=COLOR_LINE)
+        ax1.set_ylabel("Excursion Count", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
+        ax1.set_title(f"Friction Clearance: {clearance_rate*100:.1f}% ({prof_count}/{excursion_count})", fontsize=10, fontfamily='monospace', color=COLOR_F2)
+        ax1.grid(axis='y')
 
     if excursions:
         returns = [e.get('net_return', 0) * 100 for e in excursions[:30]]
@@ -544,15 +601,31 @@ def plot_stage7_precursor(data, out_dir):
         ax2.set_title(f"Mean Net Return: {mean_net_return*100:+.2f}%", fontsize=10, fontfamily='monospace', color=COLOR_F2)
         ax2.grid(axis='y')
     else:
-        ax2.text(0.5, 0.5, "No completed order book touch excursions", ha='center', va='center', color=COLOR_F3)
+        ax2.text(0.5, 0.5, "No completed order book touch excursions", ha='center', va='center', color=COLOR_F3, transform=ax2.transAxes)
+
+    compared = stage.get('p_value', 0) > 0 or null_mean > 0
+    if compared:
+        ax3.bar(['Before the swing', 'Shuffled copy'], [jsd, null_mean],
+                color=[COLOR_INFO, '#8b949e'], width=0.45, edgecolor=COLOR_LINE)
+        if null_p95 > 0:
+            ax3.axhline(null_p95, color=COLOR_WARN, linestyle='--', linewidth=1.4,
+                        label=f'Shuffled 95th ({null_p95:.3f})')
+            ax3.legend(fontsize=8, frameon=False)
+        ax3.set_ylabel("Separation (bits)", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
+        ax3.set_title(f"Swing lead-in vs the rest: {jsd:.3f}b", fontsize=10, fontfamily='monospace', color=COLOR_F2)
+        ax3.grid(axis='y')
+    else:
+        ax3.text(0.5, 0.5, "Shuffled comparison did not run", ha='center', va='center', color=COLOR_F3, transform=ax3.transAxes)
+        ax3.set_xticks([])
+        ax3.set_yticks([])
 
     status = "CLEARED" if passed else "BREACH"
-    readout = f"CLEARANCE: {clearance_rate*100:.1f}%  |  MEAN: {mean_net_return*100:+.2f}%"
+    readout = f"CLEARANCE: {clearance_rate*100:.1f}%  |  SEPARATION: {jsd:.3f}b  |  SHUFFLED 95th: {null_p95:.3f}b"
 
     render_docked_header(
         fig,
         "Stage 7: Precursor Excursions & Order Book Friction",
-        "Audits execution viability: crossing Ask on entry, Bid on exit, after full round-trip taker trading fees.",
+        "Whether the tokens before a swing differ from the rest of the tape, next to a shuffled copy of those labels.",
         status=status,
         readout=readout
     )
@@ -572,30 +645,41 @@ def plot_stage8_cognitive(data, out_dir):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6.5))
     fig.subplots_adjust(top=0.80, bottom=0.12, left=0.08, right=0.96, wspace=0.28)
 
-    categories = ['Wait\n(Abstain)', 'Enter\n(Risk)', 'Exit\n(De-risk)']
-    counts = [wait_count, enter_count, exit_count]
-    colors = [COLOR_INFO, COLOR_UP, COLOR_WARN]
+    noop_count = stage.get('noop_count', 0)
 
-    bars = ax1.bar(categories, counts, color=colors, width=0.52, edgecolor=COLOR_LINE)
-    ax1.set_ylabel("Decision Cycles", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
-    ax1.set_title(f"Decisiveness: {(1-abstention_rate)*100:.1f}% Active", fontsize=10, fontfamily='monospace', color=COLOR_F2)
-    ax1.grid(axis='y')
+    if total_phases == 0:
+        for ax in (ax1, ax2):
+            ax.text(0.5, 0.5, "No trained sequences", ha='center', va='center', color=COLOR_F3, fontsize=12, fontfamily='monospace', transform=ax.transAxes)
+            ax.set_xticks([])
+            ax.set_yticks([])
+        status = "EMPTY"
+        readout = "NO SEQUENCES"
+    else:
+        categories = ['Wait', 'Noop', 'Enter', 'Exit']
+        counts = [wait_count, noop_count, enter_count, exit_count]
+        colors = [COLOR_INFO, COLOR_LINE2, COLOR_UP, COLOR_WARN]
 
-    for bar in bars:
-        h = bar.get_height()
-        pct = (h / max(1, total_phases)) * 100
-        ax1.text(bar.get_x() + bar.get_width() / 2, h + max(1, total_phases * 0.02),
-                 f"{int(h)}\n({pct:.1f}%)", ha='center', va='bottom', fontsize=8.5, fontfamily='monospace', color=COLOR_F1)
+        bars = ax1.bar(categories, counts, color=colors, width=0.52, edgecolor=COLOR_LINE)
+        ax1.set_ylim(0, max(counts) * 1.28 if counts else 1)
+        ax1.set_ylabel("Sequences", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
+        ax1.set_title(f"Decisiveness: {(1-abstention_rate)*100:.1f}% Active", fontsize=10, fontfamily='monospace', color=COLOR_F2)
+        ax1.grid(axis='y')
 
-    ax2.bar(['Mean Confidence', 'Active Rate'], [mean_confidence, 1.0 - abstention_rate],
-            color=[COLOR_INFO, COLOR_UP], width=0.45, edgecolor=COLOR_LINE)
-    ax2.set_ylabel("Score / Ratio [0, 1]", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
-    ax2.set_title(f"Confidence Calibration: {mean_confidence:.3f}", fontsize=10, fontfamily='monospace', color=COLOR_F2)
-    ax2.set_ylim(0, 1.05)
-    ax2.grid(axis='y')
+        for bar in bars:
+            h = bar.get_height()
+            pct = (h / max(1, total_phases)) * 100
+            ax1.text(bar.get_x() + bar.get_width() / 2, h + max(1, total_phases * 0.02),
+                     f"{int(h)}\n({pct:.1f}%)", ha='center', va='bottom', fontsize=8.5, fontfamily='monospace', color=COLOR_F1)
 
-    status = "OPTIMAL" if passed else "ATTENTION"
-    readout = f"PHASES: {total_phases}  |  ABSTAIN: {abstention_rate*100:.1f}%  |  CONF: {mean_confidence:.3f}"
+        ax2.bar(['Mean Confidence', 'Active Rate'], [mean_confidence, 1.0 - abstention_rate],
+                color=[COLOR_INFO, COLOR_UP], width=0.45, edgecolor=COLOR_LINE)
+        ax2.set_ylabel("Score / Ratio [0, 1]", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
+        ax2.set_title(f"Confidence Calibration: {mean_confidence:.3f}", fontsize=10, fontfamily='monospace', color=COLOR_F2)
+        ax2.set_ylim(0, 1.05)
+        ax2.grid(axis='y')
+
+        status = "OPTIMAL" if passed else "ATTENTION"
+        readout = f"SEQUENCES: {total_phases}  |  ENTER: {enter_count}  |  EXIT: {exit_count}  |  NOOP: {noop_count}"
 
     render_docked_header(
         fig,
