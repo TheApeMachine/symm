@@ -79,4 +79,17 @@ describe("XrayPaintBridge", () => {
 		expect(points()).toHaveLength(3);
 		expect(vi.mocked(paintXrayLatent).mock.calls.at(-1)?.[1]).toBe("ETH/USD");
 	});
+
+	it("keeps the two-column pane full width so the manifold sits on the right edge", async () => {
+		const View = Route.options.component as ComponentType;
+		await Route.options.component?.preload?.();
+		const { container } = render(<View />);
+		const grid = container.querySelector(".grid");
+		const classes = grid?.className.split(/\s+/) ?? [];
+
+		expect(classes).toContain("w-full");
+		expect(grid?.className).toContain("grid-cols-[minmax(520px,1fr)_352px]");
+		expect(classes).not.toContain("xl:grid-cols-6");
+		expect(classes).not.toContain("md:grid-cols-2");
+	});
 });

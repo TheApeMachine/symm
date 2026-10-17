@@ -1,5 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { type CognitionMatch, cognitionStore } from "#/collections/cognition";
+import { ModelProblem } from "./model-problem";
 import { RadixTreeViz } from "./radix-tree-viz";
 import type { SymbolProgress } from "./types";
 
@@ -27,21 +28,24 @@ export const CognitiveTree = () => {
 
 	if (!tree || tree.keys.length === 0) {
 		return (
-			<div
-				className="flex-1 flex flex-col items-center justify-center gap-2 text-(--f3)"
-				data-testid="cognitive-tree-empty"
-			>
-				<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
-				<span className="text-sm">
-					{tree
-						? "paper trading inactive: no trained paths"
-						: "waiting for the hub's cognition tree frame"}
-				</span>
-				{tree && (
-					<span className="text-[10px] text-(--f4)">
-						run detect and train, then restart make run
+			<div className="flex-1 flex flex-col min-h-0">
+				<ModelProblem />
+				<div
+					className="flex-1 flex flex-col items-center justify-center gap-2 text-(--f3)"
+					data-testid="cognitive-tree-empty"
+				>
+					<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
+					<span className="text-sm">
+						{tree
+							? "paper trading inactive: no trained paths"
+							: "waiting for the hub's cognition tree frame"}
 					</span>
-				)}
+					{tree && !tree.problem && (
+						<span className="text-[10px] text-(--f4)">
+							run detect and train, then restart make run
+						</span>
+					)}
+				</div>
 			</div>
 		);
 	}

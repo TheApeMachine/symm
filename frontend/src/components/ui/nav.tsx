@@ -19,7 +19,9 @@ looks like, and guessing at it is how a sidebar ends up disagreeing with the
 page it is sitting next to.
 */
 
-export const navVariants = cva("flex shrink-0 flex-col", {
+export const navVariants = cva(
+	"flex w-56 min-w-0 max-w-56 shrink-0 flex-col overflow-hidden",
+	{
 	variants: {
 		surface: {
 			surface: "bg-(--surface)",
@@ -79,7 +81,7 @@ Nav.Group = ({ ref, label, className, children, ...props }: NavGroupProps) => (
 				{label}
 			</Typography.Label>
 		)}
-		<div className="flex flex-col gap-0.75 px-2">{children}</div>
+		<div className="flex min-w-0 flex-col gap-0.75 px-2">{children}</div>
 	</div>
 );
 

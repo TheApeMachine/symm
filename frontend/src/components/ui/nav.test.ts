@@ -6,6 +6,10 @@ describe("navVariants", () => {
 	it("is a fixed-width rail on a surface", () => {
 		const classes = navVariants();
 
+		expect(classes).toContain("w-56");
+		expect(classes).toContain("min-w-0");
+		expect(classes).toContain("max-w-56");
+		expect(classes).toContain("overflow-hidden");
 		expect(classes).toContain("shrink-0");
 		expect(classes).toContain("flex-col");
 		expect(classes).toContain("bg-(--surface)");

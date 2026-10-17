@@ -15,6 +15,7 @@ import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Meter } from "#/components/ui/meter";
 import { Modal } from "#/components/ui/modal";
+import { meterPercent } from "#/components/ui/dom";
 import { scaleSparklineValues } from "#/components/ui/sparkline";
 import { Typography } from "#/components/ui/typography";
 import type { Value } from "#/types/value";
@@ -68,12 +69,6 @@ const readingsFromValues = (
 	}
 
 	return points;
-};
-
-const meterPercent = (value: number | null): number => {
-	if (value === null || !Number.isFinite(value)) return 0;
-	const magnitude = Math.abs(value);
-	return Math.min(100, magnitude <= 1 ? magnitude * 100 : magnitude);
 };
 
 const formatMetricValue = (val: number | null): string => {

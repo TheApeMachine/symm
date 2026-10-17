@@ -1,22 +1,32 @@
-import {
-	focusAtom,
-	positionCountAtom,
-	type RingBuffer,
-	signals,
-} from "#/collections/app";
-import { RingCursor } from "#/collections/ring";
-import { Scanlines } from "#/components/ui/scanlines";
-import { hubBaseUrl } from "#/lib/hub";
-import { cn } from "#/lib/utils";
-import { Value } from "#/types/value";
 import { useSelector } from "@tanstack/react-store";
 import * as d3 from "d3";
 import { ChevronRight, Clock } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Badge } from "../ui";
-import { basis, outcome, prediction } from "./format";
+import {
+	focusAtom,
+	onlineAtom,
+	positionCountAtom,
+	type RingBuffer,
+	signals,
+} from "#/collections/app";
 import { type CognitionBranch, cognitionStore } from "#/collections/cognition";
+import {
+	abortDetections,
+	beginDetectionRuns,
+	beginDetections,
+	beginDetectionTape,
+	type Detection,
+	type DetectionRun,
+	detectionsStore,
+} from "#/collections/detections";
+import { RingCursor } from "#/collections/ring";
+import { Scanlines } from "#/components/ui/scanlines";
+import { cn } from "#/lib/utils";
+import { sendCommand } from "#/providers/websocket";
+import type { Value } from "#/types/value";
+import { Alert, Badge } from "../ui";
+import { basis, outcome, prediction } from "./format";
 
 const NO_BRANCHES: CognitionBranch[] = [];
 
@@ -30,7 +40,10 @@ interface ForwardTapePoint {
 interface TrainedFragmentResponse {
 	id: number;
 	symbol: string;
-	epoch: number;
+	/* The tick epoch detect labelled (a decimal string: beyond a JS number). */
+	epoch: string;
+	/* The excursion's C tick, which names it in its run (decimal string). */
+	c_tick: string;
 	mark_a: number;
 	mark_b: number;
 	mark_c: number;
@@ -47,6 +60,48 @@ interface TrainedFragmentResponse {
 	predicted_exit_idx: number;
 	learned_at: string;
 }
+
+/*
+fragmentOf maps one stored excursion (detect's detector/<class>/<symbol>/
+<epoch>/<c tick>.bin) onto the fragment this view draws. Marks, entry and
+exit are detect's trade indices (a_idx..), which the tape's points carry as
+seq. Excursions carry no precursor tokens and no predicted entry/exit (those
+are train's and paper's), so tokens are empty and the predictions -1; the
+time shown is C's (when the move was exhausted).
+*/
+const fragmentOf = (
+	run: string,
+	detection: Detection,
+	idx: number,
+): TrainedFragmentResponse => {
+	const fields = detection.fields;
+	return {
+		id: idx + 1,
+		symbol: detection.symbol,
+		epoch: run,
+		c_tick: String(fields.c_tick),
+		mark_a: fields.a_idx,
+		mark_b: fields.b_idx,
+		mark_c: fields.c_idx,
+		entry_price: fields.entry_ask,
+		exit_price: fields.exit_bid,
+		magnitude:
+			fields.b_price > 0
+				? (fields.c_price - fields.b_price) / fields.b_price
+				: 0,
+		direction: detection.class,
+		class: detection.class,
+		tokens: [],
+		points: [],
+		entry_idx: fields.entry_idx,
+		exit_idx: fields.exit_idx,
+		predicted_entry_idx: -1,
+		predicted_exit_idx: -1,
+		learned_at: new Date(fields.c_at / 1e6).toISOString(),
+	};
+};
+
+const NO_RUNS: DetectionRun[] = [];
 
 function parseTimestamp(
 	atNs: bigint | number | undefined | null,
@@ -330,6 +385,9 @@ export const ForwardLearningViz = ({
 	>([]);
 	const [selectedFragmentIndex, setSelectedFragmentIndex] =
 		useState<number>(-1);
+	/* The tick epoch whose detections are listed, and why a request failed. */
+	const [detectionRun, setDetectionRun] = useState<string | null>(null);
+	const [detectionsError, setDetectionsError] = useState<string | null>(null);
 	/*
 	 * pinnedFragmentRef freezes the tape chart while the operator inspects a
 	 * historical run. Live hub measurements still update stage/side metrics,
@@ -337,6 +395,8 @@ export const ForwardLearningViz = ({
 	 */
 	const pinnedFragmentRef = useRef(false);
 	const openFragmentRef = useRef<number | null>(null);
+	/* Tapes already streamed for the listed epoch, by fragment id. */
+	const tapesRef = useRef(new Map<number, ForwardTapePoint[]>());
 
 	const loadFragment = useCallback((frag: TrainedFragmentResponse) => {
 		if (!frag) return;
@@ -344,34 +404,38 @@ export const ForwardLearningViz = ({
 		setCurrentEpisode(null);
 		currentEpisodeRef.current = null;
 		setCurrentSymbol(frag.symbol);
-		const mappedPoints = (frag.points ?? []).map((pt, i) => ({
-			x: i,
-			y: pt.y,
-			seq: pt.seq,
-			time: toTimestampMs(pt.time),
-		}));
+		const mappedPoints =
+			tapesRef.current.get(frag.id) ??
+			(frag.points ?? []).map((pt, i) => ({
+				x: i,
+				y: pt.y,
+				seq: pt.seq,
+				time: toTimestampMs(pt.time),
+			}));
 		setPoints(mappedPoints);
 		// The list carries no points: a fragment's stored trades are read from
 		// the tape when it is opened.
 		openFragmentRef.current = frag.id ?? null;
-		if (mappedPoints.length === 0 && frag.id !== undefined) {
-			void fetch(`${hubBaseUrl()}/training/fragments/${frag.id}/points`)
-				.then((res) => (res.ok ? res.json() : []))
-				.then((tape: TrainedFragmentResponse["points"]) => {
-					if (!pinnedFragmentRef.current || openFragmentRef.current !== frag.id)
-						return;
-					const mapped = (tape ?? []).map((pt, i) => ({
-						x: i,
-						y: pt.y,
-						seq: pt.seq,
-						time: toTimestampMs(pt.time),
-					}));
-					setPoints(mapped);
-					setTrainedFragments((prev) =>
-						prev.map((f) => (f.id === frag.id ? { ...f, points: mapped } : f)),
-					);
-				})
-				.catch(() => {});
+		if (mappedPoints.length === 0) {
+			// The excursion's trades A..D stream over the hub socket (the
+			// tape effect below draws them as they arrive).
+			try {
+				sendCommand(
+					beginDetectionTape(
+						frag.epoch,
+						frag.symbol,
+						frag.class ?? frag.direction,
+						frag.c_tick,
+					),
+				);
+			} catch (cause) {
+				const message = cause instanceof Error ? cause.message : String(cause);
+				console.error("historical runs: tape request not sent:", message);
+				abortDetections(message);
+				setDetectionsError(
+					`tape of #${frag.id} ${frag.symbol} not requested: ${message}`,
+				);
+			}
 		}
 		setExcursionEvent({
 			type: fragmentClass(frag.class, frag.direction),
@@ -432,27 +496,109 @@ export const ForwardLearningViz = ({
 		setIsPlaying(true);
 	}, [selectedFragmentIndex, trainedFragments, points]);
 
-	useEffect(() => {
-		let isMounted = true;
-		const fetchFragments = async () => {
-			try {
-				const res = await fetch(`${hubBaseUrl()}/training/fragments`);
-				if (!res.ok) return;
-				const frags: TrainedFragmentResponse[] = await res.json();
-				if (!isMounted || !Array.isArray(frags)) return;
-				setTrainedFragments(frags);
-			} catch {
-				// Endpoint connecting
-			}
-		};
+	/*
+	 * Detections stream over the hub socket: the epochs detect labelled
+	 * (newest first), then the chosen epoch's excursions. A request that
+	 * cannot be sent, or a stream that fails, is shown, never swallowed.
+	 */
+	const online = useSelector(onlineAtom, (state) => state === "ONLINE");
+	const detectionRuns = useSelector(
+		detectionsStore,
+		(state) => state.runs?.items ?? NO_RUNS,
+	);
+	const runsSlot = useSelector(detectionsStore, (state) => state.runs);
+	const excursionsSlot = useSelector(
+		detectionsStore,
+		(state) => state.excursions,
+	);
+	const tapeSlot = useSelector(detectionsStore, (state) => state.tape);
 
-		fetchFragments();
-		const interval = setInterval(fetchFragments, 3000);
-		return () => {
-			isMounted = false;
-			clearInterval(interval);
-		};
-	}, []);
+	const request = useCallback(
+		(command: Record<string, unknown>, what: string) => {
+			try {
+				sendCommand(command);
+				setDetectionsError(null);
+			} catch (cause) {
+				const message = cause instanceof Error ? cause.message : String(cause);
+				console.error(`historical runs: ${what} not requested:`, message);
+				abortDetections(message);
+				setDetectionsError(`${what} not requested: ${message}`);
+			}
+		},
+		[],
+	);
+
+	// The runs are requested once the socket is up, and again after it
+	// comes back if their stream failed (the hub ends a stream with its
+	// client); a stream the hub failed is shown, not retried in a loop.
+	useEffect(() => {
+		if (!online) return;
+		const runs = detectionsStore.state.runs;
+		if (runs && runs.status !== "error") return;
+		request(beginDetectionRuns(), "detection runs");
+	}, [online, request]);
+
+	useEffect(() => {
+		if (detectionRun !== null || detectionRuns.length === 0) return;
+		setDetectionRun(detectionRuns[0].epoch);
+	}, [detectionRun, detectionRuns]);
+
+	// A chosen epoch's excursions; a failed stream is retried on a new
+	// choice or a reconnect, not in a loop.
+	useEffect(() => {
+		if (detectionRun === null || !online) return;
+		const listed = detectionsStore.state.excursions;
+		if (listed?.run === detectionRun && listed.status !== "error") return;
+		setSelectedFragmentIndex(-1);
+		pinnedFragmentRef.current = false;
+		request(
+			beginDetections(detectionRun),
+			`detections of epoch ${detectionRun}`,
+		);
+	}, [detectionRun, online, request]);
+
+	useEffect(() => {
+		if (!excursionsSlot || excursionsSlot.run !== detectionRun) return;
+		tapesRef.current.clear();
+		setTrainedFragments(
+			excursionsSlot.items.map((detection, idx) =>
+				fragmentOf(excursionsSlot.run, detection, idx),
+			),
+		);
+	}, [excursionsSlot, detectionRun]);
+
+	// The open fragment's tape, drawn as its trades arrive.
+	useEffect(() => {
+		if (!tapeSlot || !pinnedFragmentRef.current) return;
+		const open = trainedFragments.find((f) => f.id === openFragmentRef.current);
+		if (
+			!open ||
+			open.epoch !== tapeSlot.run ||
+			open.symbol !== tapeSlot.symbol ||
+			open.c_tick !== tapeSlot.cTick
+		)
+			return;
+		const mapped = tapeSlot.items.map((trade, i) => ({
+			x: i,
+			y: trade.price,
+			seq: trade.seq,
+			time: toTimestampMs(trade.at),
+		}));
+		setPoints(mapped);
+		if (tapeSlot.status === "done") tapesRef.current.set(open.id, mapped);
+	}, [tapeSlot, trainedFragments]);
+
+	const streamError =
+		detectionsError ??
+		(runsSlot?.status === "error"
+			? `detection runs: ${runsSlot.error}`
+			: null) ??
+		(excursionsSlot?.status === "error"
+			? `detections of epoch ${excursionsSlot.run}: ${excursionsSlot.error}`
+			: null) ??
+		(tapeSlot?.status === "error"
+			? `tape of ${tapeSlot.symbol} at tick ${tapeSlot.cTick}: ${tapeSlot.error}`
+			: null);
 
 	useEffect(() => {
 		// Only the Historical runs tab auto-selects. Model training stays on the
@@ -1146,11 +1292,38 @@ export const ForwardLearningViz = ({
 								{trainedFragments.length}
 							</span>
 						</div>
+						{detectionRuns.length > 0 && (
+							<select
+								className="mx-2 my-1.5 bg-(--sunken) border border-(--line) rounded px-1 py-0.5 text-[10px] text-(--f2) shrink-0"
+								value={detectionRun ?? ""}
+								onChange={(event) => setDetectionRun(event.target.value)}
+								aria-label="Select detected tick epoch"
+								data-l="historical-runs-epoch"
+							>
+								{detectionRuns.map((entry) => (
+									<option key={entry.epoch} value={entry.epoch}>
+										{new Date(Number(BigInt(entry.epoch) / 1_000_000n))
+											.toISOString()
+											.slice(0, 16)}{" "}
+										· {entry.fields.ticks} ticks · {entry.fields.up} up /{" "}
+										{entry.fields.down} down
+									</option>
+								))}
+							</select>
+						)}
+						{streamError && (
+							<Alert size="s" data-l="historical-runs-error">
+								{streamError}
+							</Alert>
+						)}
 						<div className="flex-1 overflow-y-auto min-h-0">
 							{trainedFragments.length === 0 ? (
 								<div className="p-3 text-(--f4) text-[10px] leading-relaxed">
-									No detections read yet. Train lists every stored detection at
-									startup (/training/fragments).
+									{runsSlot?.status === "done" && detectionRuns.length === 0
+										? "No epoch is labelled yet: run detect on a collected tick epoch."
+										: excursionsSlot?.status === "done"
+											? `Epoch ${excursionsSlot.run} stores no detections.`
+											: "Streaming detections from the hub…"}
 								</div>
 							) : (
 								trainedFragments

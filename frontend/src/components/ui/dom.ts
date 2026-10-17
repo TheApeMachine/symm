@@ -4,6 +4,15 @@ Low-level DOM mutation and query caching utilities for the UI library.
 These helpers power zero-React-re-render high-throughput telemetry updates.
 */
 
+/*
+meterPercent maps a signed reading onto a 0–100 fill: magnitude × 100,
+capped so values above 1 still read as full rather than a sliver.
+*/
+export const meterPercent = (value: number | null | undefined): number => {
+	if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+	return Math.min(100, Math.abs(value) * 100);
+};
+
 const querySelectorCache = new WeakMap<Element, Map<string, Element | null>>();
 const querySelectorAllCache = new WeakMap<Element, Map<string, Element[]>>();
 const seenElements = new WeakSet<HTMLElement>();
@@ -189,9 +198,7 @@ export const renderValue = (
 	if (componentType === "meter") {
 		const num = typeof value === "number" ? value : Number(value);
 		if (!Number.isNaN(num) && Number.isFinite(num)) {
-			const magnitude = Math.abs(num);
-			const percent = Math.min(100, magnitude <= 1 ? magnitude * 100 : magnitude);
-			setMeter(element, percent, "warning");
+			setMeter(element, meterPercent(num), "warning");
 		}
 		return;
 	}

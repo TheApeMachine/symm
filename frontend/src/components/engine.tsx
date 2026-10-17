@@ -6,6 +6,7 @@ import {
 	positionCountAtom,
 	tickCountAtom,
 } from "#/collections/app";
+import { ModelProblem } from "#/components/learning/model-problem";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 
@@ -35,7 +36,11 @@ export const Engine = () => {
 	}
 
 	return (
-		<Panel size="bare" className="p-2.5 font-mono text-[11px] leading-[1.7]">
+		<Panel
+			size="bare"
+			className="min-w-0 p-2.5 font-mono text-[11px] leading-[1.7]"
+		>
+			<ModelProblem size="s" />
 			<Row label="observations">
 				<Flex data-e="seq" className="text-(--f1)">
 					{String(seq ?? "—")}

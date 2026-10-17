@@ -4,11 +4,16 @@ import { parseResonanceData, type ResonanceData } from "#/components/charts/pred
 
 export const LiveResonanceTitle = () => {
 	const symbol = useSelector(focusAtom);
-	const artifact: ResonanceData | null = useSelector(resonanceStore, (state) => {
-		const ring = state[symbol];
-		const last = ring && !ring.isEmpty() ? (ring.getLast() ?? null) : null;
-		return last ? (parseResonanceData(last) ?? null) : null;
-	});
+	const published = useSelector(resonanceStore, (state) =>
+		state[symbol]?.end ?? 0,
+	);
+	const ring =
+		published > 0 ? (resonanceStore.state[symbol] ?? undefined) : undefined;
+	const last =
+		ring && !ring.isEmpty() ? (ring.getLast() ?? undefined) : undefined;
+	const artifact: ResonanceData | null = last
+		? (parseResonanceData(last) ?? null)
+		: null;
 
 	const horizonVal = artifact && artifact.supportedHorizon != null ? Number(artifact.supportedHorizon) : "—";
 	const reachVal = artifact?.forwardCurve ? artifact.forwardCurve.length : "—";

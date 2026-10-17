@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"iter"
 	"maps"
 	"slices"
 	"strings"
@@ -135,18 +136,28 @@ type symbolTape struct {
 	cold     map[string]int
 }
 
-func newSymbolTape(gate *chordGate) *symbolTape {
-	return &symbolTape{grammar: NewGrammar(), gate: gate, recentTokens: make([]string, 0, 16)}
+func newSymbolTape(gate *chordGate, symbol string) *symbolTape {
+	tape := &symbolTape{grammar: NewGrammar(), gate: gate, recentTokens: make([]string, 0, 16)}
+
+	// A symbol whose coder state the gate was seeded with continues its
+	// warm-up and surprise moments.
+	if gate != nil {
+		tape.surprise = gate.carried[symbol]
+	}
+
+	return tape
 }
 
 /*
 tapeStep is what one grid frame did to a symbol's grammar: the active regions
 and the midpoint gate over them, the region tokens that fired, whether that
 chord merely repeated the previous one (nothing is appended then), what the
-surprise gate read (nil when it is off) and whether it blocked the chord
-(nothing is appended then either), the rule the append completed, and the
-grammar path active after it. The trainer tallies excursions against Path;
-live inspection shows every field.
+surprise gate read (nil when it is off), the solver's reading Value (nil
+when the gate is off), and whether it blocked the chord (nothing is
+appended then either), the rule the append completed, and the grammar path
+active after it. The trainer tallies excursions against Path; live
+inspection shows every field. The live Sequitur copies each symbol's
+Reading to the hub every tick.
 */
 type tapeStep struct {
 	Active   []*nmstore.Region
@@ -154,6 +165,7 @@ type tapeStep struct {
 	Fired    []string
 	Repeat   bool
 	Gate     *GateReading
+	Reading  *data.Value
 	Blocked  bool
 	Rule     *Rule
 	Path     string
@@ -171,13 +183,14 @@ func (tape *symbolTape) step(grid *nmstore.Grid, tick *data.Value, symbol *broke
 		return tapeStep{}, false, errnie.Err(errnie.Internal, "[tape] grid frame of "+symbol.Symbol+" at "+tick.Prefix, err)
 	}
 
-	gate, err := tape.gate.read(&tape.surprise, tick, symbol)
+	gate, reading, err := tape.gate.read(&tape.surprise, tick, symbol)
 
 	if err != nil {
 		return tapeStep{}, false, err
 	}
 
 	step, ok := tape.advance(frame.Regions, gate)
+	step.Reading = reading
 	return step, ok, nil
 }
 
@@ -357,7 +370,7 @@ func (replay *tapeReplay) observe(value *data.Value) error {
 		tape, ok := replay.tapes[symbol]
 
 		if !ok {
-			tape = newSymbolTape(replay.gate)
+			tape = newSymbolTape(replay.gate, symbol)
 			replay.tapes[symbol] = tape
 			replay.order = append(replay.order, symbol)
 		}
@@ -400,11 +413,17 @@ func (trainer *Trainer) Generate(epochs ...uint64) error {
 }
 
 func (trainer *Trainer) generate(epoch uint64, horizon int) error {
-	// One gate per trained epoch: each epoch replays from a cold solver,
-	// exactly as `make run` starts one.
+	// One gate per trained epoch, continuing the newest coder state trained
+	// under the same gate settings (cold when there is none); its own state
+	// is saved under the policy epoch it publishes, for make run and the
+	// next training to continue.
 	gate, err := newChordGate(trainer.Context(), system.Cfg.Resonance)
 
 	if err != nil {
+		return err
+	}
+
+	if err := trainer.continueCoderState(gate); err != nil {
 		return err
 	}
 
@@ -488,7 +507,54 @@ func (trainer *Trainer) generate(epoch uint64, horizon int) error {
 		epoch, ticks, firstTick, lastTick, len(order), funnel.excursions, settings, watermark,
 	))
 
+	// The state first: a policy epoch make run can load always has its
+	// coder state.
+	if err := gate.save(trainer.client, settings, lastTick, tapes); err != nil {
+		return err
+	}
+
 	return trainer.publishPolicies(settings, tallies, stats, funnel)
+}
+
+/*
+continueCoderState seeds gate with the newest coder state trained under its
+settings; none is a cold start, said so. An unreadable state is an error.
+*/
+func (trainer *Trainer) continueCoderState(gate *chordGate) error {
+	if gate.solver == nil {
+		return nil
+	}
+
+	states, prior, skipped, err := newestCoderStates(stateSource{
+		keys: trainer.client.ListKeys,
+		download: func(keys []string) iter.Seq2[*data.Value, error] {
+			return store.Values(trainer.client, keys...)
+		},
+	}, gate.settings)
+
+	if err != nil {
+		return err
+	}
+
+	if states == nil {
+		errnie.Info(fmt.Sprintf(
+			"[trainer] cold start: no coder state trained under %s is stored (%d policy epochs saved one under other settings)",
+			gate.settings, skipped,
+		))
+
+		return nil
+	}
+
+	if err := gate.seed(states); err != nil {
+		return errnie.Err(errnie.UnprocessableContent, fmt.Sprintf("[trainer] coder state of policy epoch %d", prior), err)
+	}
+
+	errnie.Info(fmt.Sprintf(
+		"[trainer] continuing the coder state of %d symbols from policy epoch %d (%d newer policy epochs under other settings)",
+		len(states), prior, skipped,
+	))
+
+	return nil
 }
 
 /*

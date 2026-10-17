@@ -35,16 +35,16 @@ written; train replays only the ticks up to it.`,
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
-		client := store.NewClient(ctx, "symm")
+		client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
 		if client == nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "[detect] unable to open store client", nil))
+			return errnie.Err(errnie.Validation, "[detect] unable to open store client", nil)
 		}
 
 		epochs, err := storedEpochs(client, detectEpochs)
 
 		if err != nil {
-			return errnie.Error(err)
+			return err
 		}
 
 		price, err := offlinePrice(ctx, detectFeePct, detectSymbols)
@@ -55,11 +55,11 @@ written; train replays only the ticks up to it.`,
 
 		for _, epoch := range epochs {
 			if err := detectEpoch(ctx, client, price, epoch); err != nil {
-				return errnie.Error(err)
+				return err
 			}
 		}
 
-		return errnie.Error(client.Drain())
+		return client.Drain()
 	},
 }
 

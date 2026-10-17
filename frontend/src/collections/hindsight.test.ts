@@ -19,6 +19,7 @@ const RUN = "1792187257188073000";
 describe("hindsight stream store", () => {
 	afterEach(() => {
 		hindsightStore.setState(() => ({ index: null, stream: null }));
+		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
 
@@ -110,5 +111,27 @@ describe("hindsight stream store", () => {
 		abortHindsight("hub socket closed");
 		expect(hindsightStore.state.index?.error).toBe("hub socket closed");
 		expect(error).toHaveBeenCalled();
+	});
+
+	it("settles a delayed flush before begin or abort so it cannot overwrite them", () => {
+		vi.useFakeTimers();
+		beginHindsight(RUN, "BTC/USD");
+		ingestHindsightFrame(tickFrame(RUN, "BTC/USD", 1, 99.5, 100.5, 101));
+		expect(hindsightStore.state.stream?.ticks).toEqual([]);
+
+		beginHindsight(RUN, "ETH/USD");
+		expect(hindsightStore.state.stream?.symbol).toBe("ETH/USD");
+		expect(hindsightStore.state.stream?.ticks).toEqual([]);
+
+		vi.advanceTimersByTime(50);
+		expect(hindsightStore.state.stream?.symbol).toBe("ETH/USD");
+		expect(hindsightStore.state.stream?.ticks).toEqual([]);
+
+		ingestHindsightFrame(tickFrame(RUN, "ETH/USD", 1, 1, 2, 1.5));
+		abortHindsight("hub socket closed");
+		expect(hindsightStore.state.stream?.status).toBe("error");
+		vi.advanceTimersByTime(50);
+		expect(hindsightStore.state.stream?.status).toBe("error");
+		vi.useRealTimers();
 	});
 });

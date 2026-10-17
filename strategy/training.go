@@ -243,16 +243,18 @@ func (training *Training) exit(symbol string, match CognitionMatch) string {
 
 	training.mu.Lock()
 	trip := training.trips[symbol]
+	entryFilled := trip != nil && trip.entry != nil && trip.entry.filled
+	exitWorking := trip != nil && trip.exit != nil
 	training.mu.Unlock()
 
 	// A holding this run did not enter (restored from the paper account's
 	// history) has no entry decision to account the round trip against.
-	if trip == nil || trip.entry == nil || !trip.entry.filled {
+	if trip == nil || trip.entry == nil || !entryFilled {
 		errnie.Error(errnie.Err(errnie.NotAcceptable, "[training] "+symbol+" is held without a filled entry from this run: exit not taken", nil))
 		return "exit refused: no filled entry this run"
 	}
 
-	if trip.exit != nil {
+	if exitWorking {
 		return "exiting: exit already working"
 	}
 
@@ -516,7 +518,15 @@ func loadPolicy(reader *store.Reader) (*policy, error) {
 
 	for val, err := range reader.Values(data.PolicyPrefixes(loaded.epoch)...) {
 		if err != nil {
-			return nil, errnie.Err(errnie.IO, fmt.Sprintf("[policy] reading epoch %d", loaded.epoch), err)
+			// A failed download is the store failing (IO); a stored Value that
+			// does not decode is malformed data, not an unreachable store.
+			kind := errnie.UnprocessableContent
+
+			if errnie.IsIO(err) {
+				kind = errnie.IO
+			}
+
+			return nil, errnie.Err(kind, fmt.Sprintf("[policy] reading epoch %d", loaded.epoch), err)
 		}
 
 		gate, err := data.ReadPolicyGate(val)

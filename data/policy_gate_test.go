@@ -45,6 +45,15 @@ func TestPolicyGate(t *testing.T) {
 			So(gate.Same(other), ShouldBeFalse)
 		})
 
+		Convey("A configuration describes its settings only; a stored gate also where it was trained", func() {
+			config := PolicyGate{Enabled: true, SurpriseZ: 1, Warmup: PolicyWarmup{Rule: WarmupSettled, FastRate: 0.15, SlowRate: 0.01}, LearningRate: 0.01}
+			So(config.String(), ShouldEqual, "gate enabled=true surprise_z=1 warm-up settled: error average at 0.15 no longer below its average at 0.01 learning_rate=0.01")
+
+			stored := config
+			stored.Epoch, stored.TickEpoch = 7, 3
+			So(stored.String(), ShouldEndWith, " (policy epoch 7, ticks 3)")
+		})
+
 		Convey("Only the settled warm-up is published", func() {
 			gate := PolicyGate{TickEpoch: 3, Enabled: true, SurpriseZ: 1, Warmup: PolicyWarmup{Rule: WarmupTicksRule, Ticks: 300}, LearningRate: 0.01}
 			So(AppendPolicyGate(policy, gate), ShouldNotBeNil)

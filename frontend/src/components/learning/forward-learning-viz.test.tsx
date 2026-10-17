@@ -2,6 +2,9 @@
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { RingBuffer, signals } from "#/collections/app";
+import { type DetectionTrade, detectionsStore } from "#/collections/detections";
+import { EXCURSION_KEYS } from "#/collections/hindsight";
+import { sendCommand } from "#/providers/websocket";
 import { Value } from "#/types/value";
 import { ForwardLearningViz } from "./forward-learning-viz";
 
@@ -37,9 +40,7 @@ it("starts playback when a completed episode arrives after an empty queue", asyn
 				],
 				metadata: [{ name: "excursion_start", value: 1 }],
 				provenance:
-					index === 2
-						? [{ name: "excursion_event", value: "completed" }]
-						: [],
+					index === 2 ? [{ name: "excursion_event", value: "completed" }] : [],
 			});
 			ring.add(frame);
 		}
@@ -92,55 +93,135 @@ it("renders screen plate scanlines and time-scale span for tape fragments", asyn
 	expect(scanlineEl).toBeDefined();
 });
 
-it("renders A/B/C and ENTER/EXIT markers from a trained fragment", async () => {
-	vi.useFakeTimers();
-	vi.stubGlobal(
-		"fetch",
-		vi.fn().mockImplementation(async (url: string) => {
-			if (String(url).includes("/training/fragments")) {
-				return {
-					ok: true,
-					json: async () => [
-						{
-							id: 1,
-							symbol: "BTC/USD",
-							epoch: 100,
-							mark_a: 7,
-							mark_b: 10,
-							mark_c: 15,
-							entry_price: 60000,
-							exit_price: 63000,
-							magnitude: 0.05,
-							direction: "up",
-							class: "up",
-							tokens: ["R0", "R1", "R0"],
-							points: [
-								{ x: 0, y: 60000, seq: 7, time: 1 },
-								{ x: 1, y: 60100, seq: 8, time: 2 },
-								{ x: 2, y: 60200, seq: 9, time: 3 },
-								{ x: 3, y: 60500, seq: 10, time: 4 },
-								{ x: 4, y: 61000, seq: 12, time: 5 },
-								{ x: 5, y: 62000, seq: 14, time: 6 },
-								{ x: 6, y: 63000, seq: 15, time: 7 },
-							],
-							entry_idx: 2,
-							exit_idx: 5,
-							predicted_entry_idx: 2,
-							predicted_exit_idx: 5,
-							learned_at: new Date().toISOString(),
-						},
-					],
-				};
-			}
-			return { ok: true, json: async () => ({ branches: [] }) };
-		}),
+vi.mock("#/providers/websocket", () => ({ sendCommand: vi.fn() }));
+
+afterEach(() => {
+	detectionsStore.setState(() => ({
+		runs: null,
+		excursions: null,
+		tape: null,
+	}));
+});
+
+const ms = (at: number) => at * 1_000_000;
+
+type Fixture = {
+	symbol: string;
+	class: string;
+	fields: Partial<Record<(typeof EXCURSION_KEYS)[number], number>>;
+	trades: DetectionTrade[];
+};
+
+/*
+historical renders the Historical runs tab over one detected epoch holding
+fixture's excursion, as the hub streams it: the epoch, its excursions, then
+(once the tab opened the newest one and asked for it) its trades.
+*/
+const historical = async (fixture: Fixture) => {
+	const run = "1792189318815706000";
+	const fields = Object.fromEntries(
+		EXCURSION_KEYS.map((key) => [key, 0]),
+	) as Record<(typeof EXCURSION_KEYS)[number], number>;
+	Object.assign(
+		fields,
+		{ b_price: 100, c_price: 101, c_tick: 9 },
+		fixture.fields,
 	);
 
-	const { container } = render(<ForwardLearningViz tapeSource="historical" />);
+	detectionsStore.setState(() => ({
+		runs: {
+			status: "done",
+			error: null,
+			items: [
+				{
+					epoch: run,
+					fields: {
+						first_tick: 1,
+						last_tick: 9,
+						ticks: 9,
+						symbols: 1,
+						up: 1,
+						down: 0,
+						chop: 0,
+						flat: 0,
+					},
+				},
+			],
+		},
+		excursions: {
+			run,
+			status: "done",
+			error: null,
+			items: [{ symbol: fixture.symbol, class: fixture.class, fields }],
+		},
+		tape: null,
+	}));
+
+	const view = render(<ForwardLearningViz tapeSource="historical" />);
 
 	await act(async () => {
 		vi.advanceTimersByTime(50);
 		await Promise.resolve();
+	});
+
+	// The tab asked for the opened excursion's tape: the hub answers.
+	const asked = detectionsStore.state.tape;
+	expect(asked).toMatchObject({
+		run,
+		symbol: fixture.symbol,
+		class: fixture.class,
+		cTick: "9",
+	});
+	expect(sendCommand).toHaveBeenCalledWith({
+		type: "detections",
+		run,
+		symbol: fixture.symbol,
+		class: fixture.class,
+		at: "9",
+	});
+
+	await act(async () => {
+		detectionsStore.setState((state) => ({
+			...state,
+			tape: state.tape && {
+				...state.tape,
+				status: "done",
+				items: fixture.trades,
+			},
+		}));
+		vi.advanceTimersByTime(50);
+		await Promise.resolve();
+	});
+
+	return view;
+};
+
+it("renders A/B/C and ENTER/EXIT markers from a detected excursion", async () => {
+	vi.useFakeTimers();
+	const { container } = await historical({
+		symbol: "BTC/USD",
+		class: "up",
+		fields: {
+			a_idx: 7,
+			b_idx: 10,
+			c_idx: 15,
+			d_idx: 15,
+			entry_idx: 9,
+			exit_idx: 14,
+			b_price: 60000,
+			c_price: 63000,
+			entry_ask: 60200,
+			exit_bid: 62000,
+		},
+		trades: [
+			{ seq: 7, price: 60000, at: ms(1) },
+			{ seq: 8, price: 60100, at: ms(2) },
+			{ seq: 9, price: 60200, at: ms(3) },
+			{ seq: 10, price: 60500, at: ms(4) },
+			{ seq: 12, price: 61000, at: ms(5) },
+			{ seq: 14, price: 62000, at: ms(6) },
+			{ seq: 15, price: 63000, at: ms(7) },
+		],
 	});
 
 	expect(container.textContent).toContain("A:");
@@ -148,10 +229,11 @@ it("renders A/B/C and ENTER/EXIT markers from a trained fragment", async () => {
 	expect(container.textContent).toContain("C:");
 	expect(container.textContent).toContain("ENTER");
 	expect(container.textContent).toContain("EXIT");
-	expect(container.textContent).toContain("PREDICTED ENTER");
-	expect(container.textContent).toContain("PREDICTED EXIT");
+	// Detections carry no predicted entry or exit (train's and paper's).
+	expect(container.textContent).not.toContain("PREDICTED ENTER");
 	expect(container.textContent).toContain("UPWARD EXCURSION");
 	expect(container.textContent).toContain("[up]");
+	expect(container.textContent).toContain("+5.00%");
 	expect(
 		container.querySelector('[data-l="fragment-class"]')?.textContent,
 	).toContain("up");
@@ -160,105 +242,91 @@ it("renders A/B/C and ENTER/EXIT markers from a trained fragment", async () => {
 	).toContain("up");
 });
 
-it("surfaces up_friction class on fragment list and detail", async () => {
+it("surfaces a down class on fragment list and detail", async () => {
 	vi.useFakeTimers();
-	vi.stubGlobal(
-		"fetch",
-		vi.fn().mockImplementation(async (url: string) => {
-			if (String(url).includes("/training/fragments")) {
-				return {
-					ok: true,
-					json: async () => [
-						{
-							id: 2,
-							symbol: "ETH/USD",
-							epoch: 101,
-							mark_a: 1,
-							mark_b: 2,
-							mark_c: 3,
-							entry_price: 3000,
-							exit_price: 3010,
-							magnitude: 0.003,
-							direction: "up",
-							class: "up_friction",
-							tokens: ["R0"],
-							points: [
-								{ x: 0, y: 3000, seq: 1, time: 1 },
-								{ x: 1, y: 3005, seq: 2, time: 2 },
-								{ x: 2, y: 3010, seq: 3, time: 3 },
-							],
-							entry_idx: 0,
-							exit_idx: 2,
-							predicted_entry_idx: -1,
-							predicted_exit_idx: -1,
-							learned_at: new Date().toISOString(),
-						},
-					],
-				};
-			}
-			return { ok: true, json: async () => ({ branches: [] }) };
-		}),
-	);
-
-	const { container } = render(<ForwardLearningViz tapeSource="historical" />);
-
-	await act(async () => {
-		vi.advanceTimersByTime(50);
-		await Promise.resolve();
+	const { container } = await historical({
+		symbol: "ETH/USD",
+		class: "down",
+		fields: {
+			a_idx: 1,
+			b_idx: 2,
+			c_idx: 3,
+			d_idx: 3,
+			entry_idx: 1,
+			exit_idx: 3,
+			b_price: 3010,
+			c_price: 3000,
+		},
+		trades: [
+			{ seq: 1, price: 3010, at: ms(1) },
+			{ seq: 2, price: 3005, at: ms(2) },
+			{ seq: 3, price: 3000, at: ms(3) },
+		],
 	});
 
-	expect(container.textContent).toContain("UP FRICTION");
-	expect(container.textContent).toContain("[up_friction]");
+	expect(container.textContent).toContain("DOWNWARD EXCURSION");
+	expect(container.textContent).toContain("[down]");
 	expect(
 		container.querySelector('[data-l="fragment-class-detail"]')?.textContent,
-	).toContain("up_friction");
+	).toContain("down");
+});
+
+it("lists the detected epochs and shows a failed stream instead of hiding it", async () => {
+	vi.useFakeTimers();
+	const { container } = await historical({
+		symbol: "ETH/USD",
+		class: "up",
+		fields: {
+			a_idx: 1,
+			b_idx: 2,
+			c_idx: 3,
+			d_idx: 3,
+			entry_idx: 1,
+			exit_idx: 3,
+		},
+		trades: [{ seq: 1, price: 3000, at: ms(1) }],
+	});
+
+	expect(
+		container.querySelector('[data-l="historical-runs-epoch"]')?.textContent,
+	).toContain("9 ticks · 1 up / 0 down");
+
+	await act(async () => {
+		detectionsStore.setState((state) => ({
+			...state,
+			tape: state.tape && {
+				...state.tape,
+				status: "error",
+				error: "tick 2 holds no trade at b_at",
+			},
+		}));
+	});
+
+	expect(
+		container.querySelector('[data-l="historical-runs-error"]')?.textContent,
+	).toContain("tick 2 holds no trade at b_at");
 });
 
 it("keeps a pinned historical fragment when live BTC hub updates arrive", async () => {
 	vi.useFakeTimers();
-	vi.stubGlobal(
-		"fetch",
-		vi.fn().mockImplementation(async (url: string) => {
-			if (String(url).includes("/training/fragments")) {
-				return {
-					ok: true,
-					json: async () => [
-						{
-							id: 9,
-							symbol: "ETH/USD",
-							epoch: 42,
-							mark_a: 1,
-							mark_b: 2,
-							mark_c: 3,
-							entry_price: 3000,
-							exit_price: 3100,
-							magnitude: 0.033,
-							direction: "up",
-							class: "up",
-							tokens: ["R0", "R1"],
-							points: [
-								{ x: 0, y: 3000, seq: 1, time: 1 },
-								{ x: 1, y: 3050, seq: 2, time: 2 },
-								{ x: 2, y: 3100, seq: 3, time: 3 },
-							],
-							entry_idx: 0,
-							exit_idx: 2,
-							predicted_entry_idx: -1,
-							predicted_exit_idx: -1,
-							learned_at: new Date().toISOString(),
-						},
-					],
-				};
-			}
-			return { ok: true, json: async () => ({ branches: [] }) };
-		}),
-	);
-
-	const { container } = render(<ForwardLearningViz tapeSource="historical" />);
-
-	await act(async () => {
-		vi.advanceTimersByTime(50);
-		await Promise.resolve();
+	const { container } = await historical({
+		symbol: "ETH/USD",
+		class: "up",
+		fields: {
+			a_idx: 1,
+			b_idx: 2,
+			c_idx: 3,
+			d_idx: 3,
+			entry_idx: 1,
+			exit_idx: 3,
+			b_price: 3000,
+			c_price: 3100,
+		},
+		trades: [
+			{ seq: 1, price: 3000, at: ms(1) },
+			{ seq: 2, price: 3050, at: ms(2) },
+			{ seq: 3, price: 3100, at: ms(3) },
+		],
 	});
 
 	expect(container.textContent).toContain("ETH/USD");
@@ -293,51 +361,24 @@ it("keeps a pinned historical fragment when live BTC hub updates arrive", async 
 
 it("scales excursions across the full canvas width and renders relative timeline and boundaries", async () => {
 	vi.useFakeTimers();
-	vi.stubGlobal(
-		"fetch",
-		vi.fn().mockImplementation(async (url: string) => {
-			if (String(url).includes("/training/fragments")) {
-				return {
-					ok: true,
-					json: async () => [
-						{
-							id: 42,
-							symbol: "LIGHTER/USD",
-							epoch: 1,
-							mark_a: 271,
-							mark_b: 275,
-							mark_c: 277,
-							entry_price: 3.091,
-							exit_price: 3.098,
-							magnitude: 0.002,
-							direction: "up",
-							class: "flat",
-							tokens: ["R0", "R1"],
-							points: [
-								{ x: 0, y: 3.091, seq: 271, time: 1718028000000 },
-								{ x: 1, y: 3.093, seq: 273, time: 1718028000090 },
-								{ x: 2, y: 3.095, seq: 275, time: 1718028000180 },
-								{ x: 3, y: 3.097, seq: 276, time: 1718028000270 },
-								{ x: 4, y: 3.098, seq: 277, time: 1718028000350 },
-							],
-							entry_idx: 0,
-							exit_idx: 4,
-							predicted_entry_idx: -1,
-							predicted_exit_idx: -1,
-							learned_at: new Date().toISOString(),
-						},
-					],
-				};
-			}
-			return { ok: true, json: async () => ({ branches: [] }) };
-		}),
-	);
-
-	const { container } = render(<ForwardLearningViz tapeSource="historical" />);
-
-	await act(async () => {
-		vi.advanceTimersByTime(50);
-		await Promise.resolve();
+	const { container } = await historical({
+		symbol: "LIGHTER/USD",
+		class: "flat",
+		fields: {
+			a_idx: 271,
+			b_idx: 275,
+			c_idx: 277,
+			d_idx: 277,
+			entry_idx: 271,
+			exit_idx: 277,
+		},
+		trades: [
+			{ seq: 271, price: 3.091, at: ms(1718028000000) },
+			{ seq: 273, price: 3.093, at: ms(1718028000090) },
+			{ seq: 275, price: 3.095, at: ms(1718028000180) },
+			{ seq: 276, price: 3.097, at: ms(1718028000270) },
+			{ seq: 277, price: 3.098, at: ms(1718028000350) },
+		],
 	});
 
 	// Check boundary display with relative tick steps (+4, +2)
@@ -355,49 +396,22 @@ it("scales excursions across the full canvas width and renders relative timeline
 
 it("replays fragment according to actual tape duration and timestamps", async () => {
 	vi.useFakeTimers();
-	vi.stubGlobal(
-		"fetch",
-		vi.fn().mockImplementation(async (url: string) => {
-			if (String(url).includes("/training/fragments")) {
-				return {
-					ok: true,
-					json: async () => [
-						{
-							id: 101,
-							symbol: "GNOT/USD",
-							epoch: 1,
-							mark_a: 723,
-							mark_b: 738,
-							mark_c: 739,
-							entry_price: 0.07381,
-							exit_price: 0.07382,
-							magnitude: 0.001,
-							direction: "up",
-							class: "flat",
-							tokens: ["R08", "R10"],
-							points: [
-								{ x: 0, y: 0.07381, seq: 723, time: 1718028000000 },
-								{ x: 1, y: 0.07382, seq: 738, time: 1718028000500 },
-								{ x: 2, y: 0.07382, seq: 739, time: 1718028000940 },
-							],
-							entry_idx: 0,
-							exit_idx: 2,
-							predicted_entry_idx: -1,
-							predicted_exit_idx: -1,
-							learned_at: new Date().toISOString(),
-						},
-					],
-				};
-			}
-			return { ok: true, json: async () => ({ branches: [] }) };
-		}),
-	);
-
-	const { container } = render(<ForwardLearningViz tapeSource="historical" />);
-
-	await act(async () => {
-		vi.advanceTimersByTime(50);
-		await Promise.resolve();
+	const { container } = await historical({
+		symbol: "GNOT/USD",
+		class: "flat",
+		fields: {
+			a_idx: 723,
+			b_idx: 738,
+			c_idx: 739,
+			d_idx: 739,
+			entry_idx: 723,
+			exit_idx: 739,
+		},
+		trades: [
+			{ seq: 723, price: 0.07381, at: ms(1718028000000) },
+			{ seq: 738, price: 0.07382, at: ms(1718028000500) },
+			{ seq: 739, price: 0.07382, at: ms(1718028000940) },
+		],
 	});
 
 	// Replay button should be enabled for auto-selected fragment
@@ -432,4 +446,3 @@ it("replays fragment according to actual tape duration and timestamps", async ()
 	});
 	expect(container.textContent).toContain("3 frames evaluated");
 });
-

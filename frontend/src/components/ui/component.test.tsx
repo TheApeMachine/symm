@@ -165,4 +165,29 @@ describe("Component telemetry binding", () => {
 		const ys = points.split(" ").map((pair) => Number(pair.split(",")[1]));
 		expect(ys[0]).toBeGreaterThan(ys[1]);
 	});
+
+	it("does not paint the first metric when the named series is absent", () => {
+		const store = createStore<Record<string, RingBuffer<Value>>>({});
+		const ring = new RingBuffer<Value>(10);
+		store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
+
+		const view = render(
+			<Component store={store} symbol="ETH/USD">
+				<Sparkline data-k="sparkline" data-series="missing" title="missing" />
+			</Component>,
+		);
+
+		act(() => {
+			ring.add(
+				new Value({
+					scope: "ETH/USD",
+					metrics: [{ name: "contrast", raw: 0.9, snm: 0.9 }],
+				}),
+			);
+			store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
+		});
+
+		const spark = view.container.querySelector('polyline[fill="none"]');
+		expect(spark?.getAttribute("points")).toBe("0.0,29.0 150,29.0");
+	});
 });

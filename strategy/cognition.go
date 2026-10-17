@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,7 +28,30 @@ type CognitionTree struct {
 	policy   *policy
 	minDepth int
 	maxDepth int
+	problem  *CognitionProblem
+	// seeded is the chord gate continuing the policy epoch's coder state
+	// (nil when the gate is off or the tree has a Problem): the live tapes
+	// gate as train would have gated the same ticks next.
+	seeded *chordGate
 }
+
+/*
+CognitionProblem is why make run holds no model to trade: Level
+ProblemError (a stored model it cannot use: malformed, or trained under
+other gate settings) or ProblemWarning (none stored), the exact Reason, and
+the Fix. The run goes on as a view (Hindsight, Workbench, the dashboards);
+only paper trading stays off. The dashboard shows it as a banner.
+*/
+type CognitionProblem struct {
+	Level  string `json:"level"`
+	Reason string `json:"reason"`
+	Fix    string `json:"fix"`
+}
+
+const (
+	ProblemError   = "error"
+	ProblemWarning = "warning"
+)
 
 /*
 CognitionMatch is the stored path the recent tokens ended on, its depth in
@@ -41,12 +65,15 @@ type CognitionMatch struct {
 
 /*
 LoadCognitionTree reads the newest published policy epoch through reader.
-No published epoch is an empty tree (paper trading stays off); an
-unreachable store, a malformed policy, or a policy epoch trained under other
-gate settings than run (data.PolicyGate) is an error: the run's tapes would
-propose other chords than the ones its paths were learned from.
+Only an unreachable store (an IO failure: everything make run serves reads
+it) or invalid run settings are errors. A model make run cannot trade is an
+empty tree with its Problem: none published (a warning), or a malformed
+policy, or one trained under other gate settings than run (data.PolicyGate),
+whose paths were learned from other chords than the run's tapes would
+propose, or a gated epoch whose coder state is missing or does not fit
+(errors): its gate would start cold, not where train left it.
 */
-func LoadCognitionTree(reader *store.Reader, minDepth int, run *system.Resonance) (*CognitionTree, error) {
+func LoadCognitionTree(ctx context.Context, reader *store.Reader, minDepth int, run *system.Resonance) (*CognitionTree, error) {
 	if reader == nil {
 		return nil, errnie.Err(errnie.Validation, "[cognition] no store reader to load policies from", nil)
 	}
@@ -55,21 +82,123 @@ func LoadCognitionTree(reader *store.Reader, minDepth int, run *system.Resonance
 		return nil, errnie.Err(errnie.Validation, "[cognition] resonance configuration", err)
 	}
 
+	if minDepth < 1 {
+		return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
+			"[cognition] learning.minimum_path_confidence %d must be at least 1", minDepth,
+		), nil)
+	}
+
 	loaded, err := loadPolicy(reader)
+
+	switch {
+	case err != nil && errnie.IsIO(err):
+		return nil, err
+	case err != nil:
+		return unusableTree(minDepth, &CognitionProblem{
+			Level:  ProblemError,
+			Reason: "the newest stored policy is malformed: " + err.Error(),
+			Fix:    "re-run detect and train on the tick epoch",
+		})
+	case loaded.epoch == 0:
+		return unusableTree(minDepth, &CognitionProblem{
+			Level:  ProblemWarning,
+			Reason: "no trained policy is stored under policy/",
+			Fix:    "run detect and train on a collected tick epoch",
+		})
+	}
+
+	if want := gateSettings(run); !loaded.gate.Same(want) {
+		return unusableTree(minDepth, &CognitionProblem{
+			Level: ProblemError,
+			Reason: fmt.Sprintf(
+				"newest policy epoch %d was trained under %s; this run is configured for %s",
+				loaded.epoch, loaded.gate, want,
+			),
+			Fix: fmt.Sprintf(
+				"re-run detect and train on the tick epoch %d (or set resonance.* back to what it was trained under)",
+				loaded.gate.TickEpoch,
+			),
+		})
+	}
+
+	tree, err := newCognitionTree(loaded, minDepth)
+
+	if err != nil || !loaded.gate.Enabled {
+		return tree, err
+	}
+
+	return seedTree(ctx, reader, tree, run, minDepth)
+}
+
+/*
+seedTree loads tree's policy epoch's coder state into the gate run trades
+with. An unreachable store is an error; a missing or unusable state is the
+tree's Problem.
+*/
+func seedTree(ctx context.Context, reader *store.Reader, tree *CognitionTree, run *system.Resonance, minDepth int) (*CognitionTree, error) {
+	gate := tree.Gate()
+	fix := fmt.Sprintf("re-run detect and train on the tick epoch %d", gate.TickEpoch)
+
+	states, err := policyCoderStates(stateSource{keys: reader.Keys, download: reader.Download}, gate)
+
+	switch {
+	case err != nil && errnie.IsIO(err):
+		return nil, err
+	case err != nil:
+		return unusableTree(minDepth, &CognitionProblem{
+			Level: ProblemError, Reason: fmt.Sprintf("policy epoch %d's coder state is unusable: %v", gate.Epoch, err), Fix: fix,
+		})
+	case states == nil:
+		return unusableTree(minDepth, &CognitionProblem{
+			Level: ProblemError,
+			Reason: fmt.Sprintf(
+				"policy epoch %d stores no coder state (trained before coder state was saved): its gate would start cold, not where train left it",
+				gate.Epoch,
+			),
+			Fix: fix,
+		})
+	}
+
+	seeded, err := newChordGate(ctx, run)
 
 	if err != nil {
 		return nil, err
 	}
 
-	if want := gateSettings(run); loaded.epoch != 0 && !loaded.gate.Same(want) {
-		return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
-			"[cognition] newest policy epoch %d was trained under %s; this run is configured for %s: retrain or change resonance.*",
-			loaded.epoch, loaded.gate, want,
-		), nil)
+	if err := seeded.seed(states); err != nil {
+		return unusableTree(minDepth, &CognitionProblem{
+			Level: ProblemError, Reason: fmt.Sprintf("policy epoch %d's coder state does not fit this run: %v", gate.Epoch, err), Fix: fix,
+		})
 	}
 
-	return newCognitionTree(loaded, minDepth)
+	errnie.Info(fmt.Sprintf("[cognition] continuing the coder state of %d symbols from policy epoch %d", len(states), gate.Epoch))
+	tree.seeded = seeded
+	return tree, nil
 }
+
+/*
+unusableTree is the empty tree make run holds when it has no model to trade,
+carrying why.
+*/
+func unusableTree(minDepth int, problem *CognitionProblem) (*CognitionTree, error) {
+	tree, err := newCognitionTree(&policy{
+		keys:    make([]string, 0),
+		actions: make(map[string]string),
+		metrics: make(map[string]map[string]float64),
+	}, minDepth)
+
+	if err != nil {
+		return nil, err
+	}
+
+	tree.problem = problem
+	return tree, nil
+}
+
+/*
+Problem is why the tree holds no model to trade, nil when it holds one.
+*/
+func (tree *CognitionTree) Problem() *CognitionProblem { return tree.problem }
 
 func newCognitionTree(loaded *policy, minDepth int) (*CognitionTree, error) {
 	if minDepth < 1 {
@@ -169,7 +298,9 @@ cognitive tree tab draws it: the policy epoch (a JSON string: it exceeds a
 JavaScript number) and its path count, whether paper trading acts on it,
 the gate it was trained under (null when no epoch is loaded), every stored
 key (<token>/.../<action>.bin) and per key its stored visits, mean gain and
-confidence (Export). An empty tree is a frame too: Paths 0, Trading false.
+confidence (Export), and the Problem (null when the tree holds a model): why
+make run has nothing to trade. An empty tree is a frame too: Paths 0,
+Trading false.
 */
 type CognitionFrame struct {
 	Epoch    uint64              `json:"epoch,string"`
@@ -178,6 +309,7 @@ type CognitionFrame struct {
 	Gate     *CognitionGate      `json:"gate"`
 	Keys     []string            `json:"keys"`
 	Branches []ui.TrieBranchJSON `json:"branches"`
+	Problem  *CognitionProblem   `json:"problem"`
 }
 
 /*
@@ -222,7 +354,7 @@ func PublishTree(w io.Writer, tree *CognitionTree, trading bool) error {
 
 	frame := CognitionFrame{
 		Epoch: tree.Epoch(), Paths: tree.Paths(), Trading: trading,
-		Keys: export.Keys, Branches: export.Branches,
+		Keys: export.Keys, Branches: export.Branches, Problem: tree.Problem(),
 	}
 
 	if frame.Keys == nil {

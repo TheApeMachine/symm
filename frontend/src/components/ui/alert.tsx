@@ -19,7 +19,7 @@ Alert interrupts the layout, which is why it draws a rule and spans the width.
 
 export const alertVariants = cva(
 	[
-		"flex w-full shrink-0 items-start gap-2 border-b px-3 py-2",
+		"flex w-full min-w-0 shrink-0 items-start gap-2 border-b px-3 py-2 wrap-anywhere",
 		"[--alert-tone:var(--error)]",
 		"border-[color:color-mix(in_srgb,var(--alert-tone)_40%,transparent)]",
 		"bg-[color:color-mix(in_srgb,var(--alert-tone)_12%,transparent)]",
@@ -102,7 +102,7 @@ export const Alert = ({
 			{name === undefined ? null : (
 				<Icon name={name} size="s" className="mt-px shrink-0" />
 			)}
-			<span className="min-w-0">{children}</span>
+			<span className="min-w-0 flex-1">{children}</span>
 		</div>
 	);
 };

@@ -21,15 +21,15 @@ func offlinePrice(ctx context.Context, feePercent string, symbols []string) (*br
 	fee, err := decimal.NewFromString(feePercent)
 
 	if err != nil || fee == nil || fee.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.Validation,
 			"--taker-fee-percent must be a positive decimal percent per side (e.g. 0.26)",
 			err,
-		))
+		)
 	}
 
 	if system.Cfg.Market.Balance <= 0 {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "market.balance must be positive", nil))
+		return nil, errnie.Err(errnie.Validation, "market.balance must be positive", nil)
 	}
 
 	normalizer := spot.NewNormalizer()
@@ -45,7 +45,7 @@ func offlinePrice(ctx context.Context, feePercent string, symbols []string) (*br
 		price.SetFee(symbol, kraken.TradeVolumeFee{Fee: fee})
 
 		if price.Fee(symbol) == nil {
-			return nil, errnie.Error(errnie.Err(errnie.NotFound, "fee did not register for "+symbol, nil))
+			return nil, errnie.Err(errnie.NotFound, "fee did not register for "+symbol, nil)
 		}
 	}
 

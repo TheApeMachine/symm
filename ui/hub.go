@@ -30,6 +30,7 @@ type Hub struct {
 	routes     *Routes
 	clients    sync.Map // *websocket.Conn -> *client
 	replayer   Replayer
+	detector   Detector
 	retained   atomic.Pointer[[]byte]
 }
 
@@ -70,23 +71,38 @@ type Replayer interface {
 }
 
 /*
+Detector streams what detect stored to one client (hindsight.Service, the
+Historical runs tab): run 0 the labelled epochs, a run its excursions, a run
+with symbol, class and C tick that excursion's trades. It writes whole
+serialized Values to w until done, ctx is canceled or w fails.
+*/
+type Detector interface {
+	Detections(ctx context.Context, w io.Writer, run uint64, symbol, class string, cTick uint64) error
+}
+
+/*
 client is one dashboard socket. Its frames queue has one writer goroutine.
-Broadcast frames (Hub.Write) never wait on it; a replay written through the
-client itself (io.Writer) waits for room, so a replay is never dropped, and
-ends when the socket closes. A new replay cancels the one in flight.
+Broadcast frames (Hub.Write) never wait on it; a stream written through the
+client itself (io.Writer) waits for room, so a stream is never dropped, and
+ends when the socket closes. A new stream of a kind ("hindsight", and the
+detections' "detection runs", "detection excursions" and "detection tape")
+cancels the one of that kind in flight; kinds run side by side, so opening an
+excursion's tape leaves its epoch's excursions streaming.
 */
 type client struct {
-	frames chan []byte
-	done   chan struct{}
-	mu     sync.Mutex
-	cancel context.CancelFunc
+	frames  chan []byte
+	done    chan struct{}
+	mu      sync.Mutex
+	cancels map[string]context.CancelFunc
 }
 
 var errClientClosed = errors.New("[hub] dashboard client closed")
 
 func (client *client) Write(p []byte) (int, error) {
+	frame := slices.Clone(p)
+
 	select {
-	case client.frames <- p:
+	case client.frames <- frame:
 		return len(p), nil
 	case <-client.done:
 		return 0, errClientClosed
@@ -94,18 +110,32 @@ func (client *client) Write(p []byte) (int, error) {
 }
 
 /*
-replay cancels the client's replay in flight, if any, and starts this one.
+replay cancels the client's hindsight replay in flight, if any, and starts this one.
 */
 func (client *client) replay(parent context.Context, replayer Replayer, run uint64, symbol string) {
+	client.stream(parent, "hindsight", fmt.Sprintf("run %d %q", run, symbol), func(ctx context.Context) error {
+		return replayer.Stream(ctx, client, run, symbol)
+	})
+}
+
+/*
+stream cancels the client's stream of kind in flight, if any, and runs this
+one; what names it in the log.
+*/
+func (client *client) stream(parent context.Context, kind, what string, run func(context.Context) error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 
-	if client.cancel != nil {
-		client.cancel()
+	if client.cancels == nil {
+		client.cancels = make(map[string]context.CancelFunc)
+	}
+
+	if cancel := client.cancels[kind]; cancel != nil {
+		cancel()
 	}
 
 	ctx, cancel := context.WithCancel(parent)
-	client.cancel = cancel
+	client.cancels[kind] = cancel
 
 	go func() {
 		defer cancel()
@@ -118,19 +148,27 @@ func (client *client) replay(parent context.Context, replayer Replayer, run uint
 	}()
 
 	go func() {
-		err := replayer.Stream(ctx, client, run, symbol)
+		err := run(ctx)
 
 		if ctx.Err() != nil {
-			errnie.Info(fmt.Sprintf("[hub] hindsight replay of run %d %q ended: %v", run, symbol, context.Cause(ctx)))
+			errnie.Info(fmt.Sprintf("[hub] %s stream of %s ended: %v", kind, what, context.Cause(ctx)))
 			return
 		}
 
 		if err != nil {
-			errnie.Error(errnie.Err(errnie.IO, fmt.Sprintf("[hub] hindsight replay of run %d %q", run, symbol), err))
+			errnie.Error(errnie.Err(errnie.IO, fmt.Sprintf("[hub] %s stream of %s", kind, what), err))
 		}
 
 		cancel()
 	}()
+}
+
+/*
+Detect sets the detector serving the "detections" command. It is set before
+Run; without one the command is an error.
+*/
+func (hub *Hub) Detect(detector Detector) {
+	hub.detector = detector
 }
 
 /*
@@ -281,6 +319,7 @@ func (hub *Hub) handleCommand(from *client, payload []byte) error {
 		Symbol    string `json:"symbol"`
 		Route     string `json:"route"`
 		Run       string `json:"run"`
+		Class     string `json:"class"`
 		At        string `json:"at"`
 		CaptureID int64  `json:"captureId"`
 	}
@@ -314,6 +353,47 @@ func (hub *Hub) handleCommand(from *client, payload []byte) error {
 		}
 
 		from.replay(hub.ctx, hub.replayer, run, request.Symbol)
+	case "detections":
+		// run "" lists the labelled epochs; run and symbol name one
+		// excursion, its class and its C tick (at) too. Epochs and ticks
+		// are decimal strings, beyond what a JSON number carries exactly.
+		var run, cTick uint64
+		var err error
+
+		if request.Run != "" {
+			if run, err = strconv.ParseUint(request.Run, 10, 64); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Validation, fmt.Sprintf("[hub] detections command run %q is not an epoch", request.Run), err,
+				))
+			}
+		}
+
+		if request.Symbol != "" {
+			if cTick, err = strconv.ParseUint(request.At, 10, 64); err != nil || run == 0 || request.Class == "" {
+				return errnie.Error(errnie.Err(
+					errnie.Validation, fmt.Sprintf("[hub] detections command for a symbol needs a run, a class and a C tick (at): %s", payload), err,
+				))
+			}
+		}
+
+		if hub.detector == nil || from == nil {
+			return errnie.Error(errnie.Err(
+				errnie.ServiceUnavailable, "[hub] detections command with no detector or no client: "+string(payload), nil,
+			))
+		}
+
+		kind := "detection tape"
+
+		switch {
+		case run == 0:
+			kind = "detection runs"
+		case request.Symbol == "":
+			kind = "detection excursions"
+		}
+
+		from.stream(hub.ctx, kind, string(payload), func(ctx context.Context) error {
+			return hub.detector.Detections(ctx, from, run, request.Symbol, request.Class, cTick)
+		})
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation, fmt.Sprintf("[hub] unknown dashboard command type %q in %q", request.Type, payload), nil,

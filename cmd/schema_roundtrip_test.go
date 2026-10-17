@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -14,11 +18,14 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/audit"
 	"github.com/theapemachine/symm/kraken"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/signal/cvd"
+	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/store/storetest"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 )
@@ -240,6 +247,113 @@ func TestSchemaRoundTrip(t *testing.T) {
 				close(stage.Channel())
 			}()
 			So(stage.Run(), ShouldBeNil)
+		})
+
+		Convey("detect -> Historical runs: an excursion's trades stream with detect's own trade index", func() {
+			price, err := offlinePrice(ctx, "0.26", []string{symbol})
+			So(err, ShouldBeNil)
+			detector, err := strategy.NewDetector(ctx, price, epoch, symbol, detectorCfg)
+			So(err, ShouldBeNil)
+
+			backend := storetest.NewBackend()
+			backend.Buckets["symm"] = true
+			server := httptest.NewServer(backend)
+			defer server.Close()
+
+			// Two trades per tick (the second a hair above the first), so
+			// a trade index is no tick number.
+			excursions := make([]*data.Value, 0)
+			path := upDown(300)
+
+			for idx, p := range path {
+				first, second := trade(2*idx, p), trade(2*idx+1, p*1.00001)
+				first.Timestamp = start.Add(time.Duration(idx) * time.Second)
+				second.Timestamp = first.Timestamp.Add(time.Millisecond)
+
+				frame, err := sonic.Marshal(map[string]any{"channel": "trade", "type": "update", "data": []kraken.TradeData{first, second}})
+				So(err, ShouldBeNil)
+
+				value := data.NewValue(data.TickOrigin, data.TickRole, data.TickScope)
+				value.Epoch, value.Tick, value.Timestamp = epoch, uint64(idx+1), uint64(second.Timestamp.UnixNano())
+				value.FormatPrefix()
+				value.AppendJSON(frame, data.TradeIndex("update"))
+				touch, err := sonic.Marshal(broker.PriceLayer{Symbol: symbol, Bid: decimal.NewFromFloat64(p * 0.9999), Ask: decimal.NewFromFloat64(p * 1.0001)})
+				So(err, ShouldBeNil)
+				value.AppendJSON(touch, data.SymbolIndex(data.LayerPrice, symbol))
+				tick := stored(value)
+				backend.Objects[tick.Prefix] = tick.Bytes()
+
+				symbolTicks, err := broker.ReadTick(tick)
+				So(err, ShouldBeNil)
+
+				for _, traded := range symbolTicks[0].Trades {
+					results, err := detector.Step(tick.Tick, traded, symbolTicks[0].Price)
+					So(err, ShouldBeNil)
+					excursions = append(excursions, results...)
+				}
+			}
+
+			results, err := detector.Close()
+			So(err, ShouldBeNil)
+
+			excursions = append(excursions, results...)
+
+			for _, excursion := range excursions {
+				read := stored(excursion)
+				backend.Objects[read.Prefix] = read.Bytes()
+			}
+
+			up := upOf(excursions)
+			So(up, ShouldNotBeNil)
+
+			reader, err := store.NewReader(ctx, "symm", storetest.Options(server.URL))
+			So(err, ShouldBeNil)
+			service, err := hindsight.NewService(ctx, reader)
+			So(err, ShouldBeNil)
+
+			out := &bytes.Buffer{}
+			So(service.Detect(ctx, out, hindsight.Detection{Run: epoch, Symbol: symbol, Class: "up", CTick: uint64(up["c_tick"])}), ShouldBeNil)
+
+			points := map[float64][2]float64{} // seq -> price, at
+
+			for message := bufio.NewReader(out); ; {
+				value := data.New()
+				n, err := value.ReadFrom(message)
+
+				if n == 0 && errors.Is(err, io.EOF) {
+					break
+				}
+
+				So(err, ShouldBeNil)
+
+				if value.Role != data.HindsightTrades {
+					So(value.Role, ShouldEqual, data.HindsightDone)
+					continue
+				}
+
+				layer := func(idx int) []float64 {
+					raw := *data.Layer[[]byte](value, idx)
+					vector := make([]float64, len(raw)/8)
+
+					for at := range vector {
+						vector[at] = math.Float64frombits(binary.LittleEndian.Uint64(raw[at*8:]))
+					}
+
+					return vector
+				}
+
+				seqs, prices, ats := layer(0), layer(1), layer(2)
+
+				for idx, seq := range seqs {
+					points[seq] = [2]float64{prices[idx], ats[idx]}
+				}
+			}
+
+			So(len(points), ShouldEqual, int(up["d_idx"]-up["a_idx"])+1)
+			So(points[up["b_idx"]], ShouldResemble, [2]float64{up["b_price"], up["b_at"]})
+			So(points[up["c_idx"]], ShouldResemble, [2]float64{up["c_price"], up["c_at"]})
+			So(points[up["entry_idx"]][1], ShouldEqual, up["entry_at"])
+			So(points[up["exit_idx"]][1], ShouldEqual, up["exit_at"])
 		})
 
 		Convey("detect -> train: the epoch's watermark reads back under its prefix", func() {

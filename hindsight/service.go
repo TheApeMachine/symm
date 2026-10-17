@@ -375,17 +375,20 @@ func tickVector(tick *broker.SymbolTick) []float64 {
 	}
 
 	qty := 0.0
+	trade := math.NaN()
 
-	for _, trade := range tick.Trades {
-		qty += trade.Qty
+	for _, row := range tick.Trades {
+		qty += row.Qty
 	}
 
-	last := tick.Trades[len(tick.Trades)-1]
+	if n := len(tick.Trades); n > 0 {
+		trade = tick.Trades[n-1].Price.Float64()
+	}
 
 	return []float64{
 		side(tick.Price.Bid, tick.Price.Bid != nil),
 		side(tick.Price.Ask, tick.Price.Ask != nil),
-		last.Price.Float64(),
+		trade,
 		qty,
 		float64(len(tick.Trades)),
 	}

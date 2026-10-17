@@ -1,21 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
-import { beginHindsight, HINDSIGHT_TICK_KEYS, hindsightStore } from "#/collections/hindsight";
-import { PAPER_KEYS, paperStore } from "#/collections/paper";
-import { cognitionStore } from "#/collections/cognition";
-import { sequiturStore } from "#/collections/sequitur";
-import { sequiturFrame } from "#/collections/sequitur-fixture";
 import {
 	cashAtom,
 	decisionsAtom,
 	positionsAtom,
+	resonanceStore,
 	signals,
 	symbolsAtom,
 	tickCountAtom,
 } from "#/collections/app";
+import { cognitionStore } from "#/collections/cognition";
+import {
+	beginHindsight,
+	HINDSIGHT_TICK_KEYS,
+	hindsightStore,
+} from "#/collections/hindsight";
+import { PAPER_KEYS, paperStore } from "#/collections/paper";
+import { sequiturStore } from "#/collections/sequitur";
+import { sequiturFrame } from "#/collections/sequitur-fixture";
+import { parseResonanceData } from "#/components/charts/prediction";
 import {
 	dispatchValue,
-	parseSignalIndex,
 	parseOneValue,
+	parseSignalIndex,
 	parseValues,
 } from "./websocket";
 
@@ -39,8 +45,18 @@ function encodeValue({
 	const scopeBytes = textEncoder.encode(scope);
 
 	let size =
-		48 + 1 + originBytes.length + 1 + roleBytes.length + 1 + scopeBytes.length + 2;
-	const encodedLayers: Array<{ idxBytes: Uint8Array; payloadBytes: Uint8Array }> = [];
+		48 +
+		1 +
+		originBytes.length +
+		1 +
+		roleBytes.length +
+		1 +
+		scopeBytes.length +
+		2;
+	const encodedLayers: Array<{
+		idxBytes: Uint8Array;
+		payloadBytes: Uint8Array;
+	}> = [];
 
 	for (const l of layers) {
 		const idxBytes = textEncoder.encode(l.index);
@@ -111,7 +127,8 @@ describe("Value Binary Decoder and Dispatcher", () => {
 			timestamp: 1718028000000000000n,
 			layers: [
 				{
-					index: "cvd/signal/ETH/USD/0000000000000000042/0000000000000000007.bin/delta/volume",
+					index:
+						"cvd/signal/ETH/USD/0000000000000000042/0000000000000000007.bin/delta/volume",
 					vector: [12.5, 3400.0],
 				},
 			],
@@ -156,7 +173,8 @@ describe("Value Binary Decoder and Dispatcher", () => {
 			timestamp: 1718028000000000000n,
 			layers: [
 				{
-					index: "training/frame/BTC/USD/0000000000000000105/0000000000000000001.bin/surprise/energy/action:enter/path:R01/R06",
+					index:
+						"training/frame/BTC/USD/0000000000000000105/0000000000000000001.bin/surprise/energy/action:enter/path:R01/R06",
 					vector: [0.85, 0.42],
 				},
 			],
@@ -185,7 +203,9 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		expect(energyMetric?.raw).toBeCloseTo(0.42);
 
 		// Provenance extracted
-		const actionProv = latest?.provenance.find((p) => p.name === "decision_action");
+		const actionProv = latest?.provenance.find(
+			(p) => p.name === "decision_action",
+		);
 		expect(actionProv?.value).toBe("enter");
 		const pathProv = latest?.provenance.find((p) => p.name === "token_path");
 		expect(pathProv?.value).toBe("R01/R06");
@@ -206,7 +226,8 @@ describe("Value Binary Decoder and Dispatcher", () => {
 			tick: 9n,
 			layers: [
 				{
-					index: "signal/cvd/midpoint_log_return/signed_net_fraction/symbol:ETH/USD",
+					index:
+						"signal/cvd/midpoint_log_return/signed_net_fraction/symbol:ETH/USD",
 					vector: [0.001, -0.5],
 				},
 			],
@@ -221,16 +242,24 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		const latest = ring.get(ring.getBufferLength() - 1);
 		expect(latest?.origin).toBe("cvd");
 		expect(latest?.scope).toBe("ETH/USD");
-		expect(latest?.metrics.find((m) => m.name === "signed_net_fraction")?.raw).toBeCloseTo(-0.5);
+		expect(
+			latest?.metrics.find((m) => m.name === "signed_net_fraction")?.raw,
+		).toBeCloseTo(-0.5);
 	});
 
 	it("parseSignalIndex rejects a signal index without a symbol tag", () => {
-		expect(parseSignalIndex("signal/cvd/gross_notional/symbol:BTC/USD")).toEqual({
+		expect(
+			parseSignalIndex("signal/cvd/gross_notional/symbol:BTC/USD"),
+		).toEqual({
 			source: "cvd",
 			symbol: "BTC/USD",
 			labels: ["gross_notional"],
 		});
-		expect(parseSignalIndex("signal/cvd/gross_notional/ref:x/symbol:y/symbol:SOL/USD")).toEqual({
+		expect(
+			parseSignalIndex(
+				"signal/cvd/gross_notional/ref:x/symbol:y/symbol:SOL/USD",
+			),
+		).toEqual({
 			source: "cvd",
 			symbol: "SOL/USD",
 			labels: ["gross_notional", "ref:x", "symbol:y"],
@@ -294,7 +323,8 @@ describe("Value Binary Decoder and Dispatcher", () => {
 					json: [{ symbol: "ETH/USD", status: "open", entry_price: "2" }],
 				},
 				{
-					index: "signal/hawkes/arrival_rate:buy/arrival_rate:sell/symbol:ETH/USD",
+					index:
+						"signal/hawkes/arrival_rate:buy/arrival_rate:sell/symbol:ETH/USD",
 					vector: [1.5, 0.5],
 				},
 			],
@@ -329,11 +359,13 @@ describe("Value Binary Decoder and Dispatcher", () => {
 				},
 				{ index: "price/ETH/USD", json: { symbol: "ETH/USD" } },
 				{
-					index: "signal/hawkes/arrival_rate:buy/arrival_rate:sell/symbol:ETH/USD",
+					index:
+						"signal/hawkes/arrival_rate:buy/arrival_rate:sell/symbol:ETH/USD",
 					vector: [1, 2],
 				},
 				{
-					index: "signal/hawkes/arrival_rate:buy/arrival_rate:sell/symbol:SOL/USD",
+					index:
+						"signal/hawkes/arrival_rate:buy/arrival_rate:sell/symbol:SOL/USD",
 					vector: [3, 4],
 				},
 			],
@@ -343,9 +375,15 @@ describe("Value Binary Decoder and Dispatcher", () => {
 
 		const eth = signals.hawkes.state["ETH/USD"];
 		const sol = signals.hawkes.state["SOL/USD"];
-		expect(eth?.get(eth.getBufferLength() - 1)?.metric("arrival_rate:buy")).toBeCloseTo(1);
-		expect(sol?.get(sol.getBufferLength() - 1)?.metric("arrival_rate:buy")).toBeCloseTo(3);
-		expect(sol?.get(sol.getBufferLength() - 1)?.metric("arrival_rate:sell")).toBeCloseTo(4);
+		expect(
+			eth?.get(eth.getBufferLength() - 1)?.metric("arrival_rate:buy"),
+		).toBeCloseTo(1);
+		expect(
+			sol?.get(sol.getBufferLength() - 1)?.metric("arrival_rate:buy"),
+		).toBeCloseTo(3);
+		expect(
+			sol?.get(sol.getBufferLength() - 1)?.metric("arrival_rate:sell"),
+		).toBeCloseTo(4);
 	});
 });
 
@@ -375,7 +413,11 @@ describe("dispatchValue: sequitur grammar frames", () => {
 		sequiturStore.setState(() => ({}));
 		const error = vi.spyOn(console, "error").mockImplementation(() => {});
 		const parsed = parseOneValue(
-			encodeValue({ origin: "sequitur", role: "grammar", layers: [{ index: "other", json: {} }] }),
+			encodeValue({
+				origin: "sequitur",
+				role: "grammar",
+				layers: [{ index: "other", json: {} }],
+			}),
 		);
 		if (!parsed) throw new Error("fixture did not parse");
 
@@ -424,7 +466,12 @@ describe("dispatchValue: paper-trade records", () => {
 			encodeValue({
 				origin: "paper",
 				role: "exit",
-				layers: [{ index: index.replace("/fees", ""), vector: PAPER_KEYS.slice(1).map(() => 1) }],
+				layers: [
+					{
+						index: index.replace("/fees", ""),
+						vector: PAPER_KEYS.slice(1).map(() => 1),
+					},
+				],
 			}),
 		);
 		if (!parsed) throw new Error("fixture did not parse");
@@ -462,8 +509,53 @@ describe("dispatchValue: hindsight frames", () => {
 		await new Promise((resolve) => setTimeout(resolve, 80));
 
 		expect(tickCountAtom.get()).toBe(before);
-		expect(hindsightStore.state.stream?.ticks.map((tick) => [tick.tick, tick.fields.ask])).toEqual([[5, 100.5]]);
+		expect(
+			hindsightStore.state.stream?.ticks.map((tick) => [
+				tick.tick,
+				tick.fields.ask,
+			]),
+		).toEqual([[5, 100.5]]);
 		hindsightStore.setState(() => ({ index: null, stream: null }));
+	});
+});
+
+describe("dispatchValue: resonance readings", () => {
+	it("routes resonance/reading/<symbol> into the resonance store the prediction chart reads", () => {
+		resonanceStore.setState(() => ({}));
+		const prefix =
+			"resonance/reading/BTC/USD/0000000000000000007/0000000000000000040.bin";
+		const parsed = parseOneValue(
+			encodeValue({
+				tick: 40n,
+				origin: "resonance",
+				role: "reading",
+				scope: "BTC/USD",
+				layers: [
+					{ index: `${prefix}/energy`, vector: [0.12] },
+					{ index: `${prefix}/surprise`, vector: [0.45] },
+					{ index: `${prefix}/latent_0`, vector: [0.3] },
+					{ index: `${prefix}/layer_0_state_0`, vector: [1] },
+					{ index: `${prefix}/layer_0_prediction_0`, vector: [0.5] },
+				],
+			}),
+		);
+		if (!parsed) throw new Error("fixture did not parse");
+
+		dispatchValue(parsed);
+
+		const ring = resonanceStore.state["BTC/USD"];
+		const last = ring?.getLast();
+		expect(last?.origin).toBe("resonance");
+		expect(last?.scope).toBe("BTC/USD");
+		expect(last?.tick).toBe(40n);
+
+		const artifact = parseResonanceData(last);
+		expect(artifact?.energy).toBeCloseTo(0.12);
+		expect(artifact?.surprise).toBeCloseTo(0.45);
+		expect(artifact?.latent).toEqual([0.3]);
+		expect(artifact?.layers?.[0]?.state).toEqual([1]);
+		expect(artifact?.layers?.[0]?.prediction).toEqual([0.5]);
+		resonanceStore.setState(() => ({}));
 	});
 });
 
@@ -473,13 +565,26 @@ describe("dispatchValue: cognition frames", () => {
 		const before = tickCountAtom.get();
 		const send = (role: string, scope: string, json: unknown) => {
 			const parsed = parseOneValue(
-				encodeValue({ origin: "cognition", role, scope, layers: [{ index: "cognition", json }] }),
+				encodeValue({
+					origin: "cognition",
+					role,
+					scope,
+					layers: [{ index: "cognition", json }],
+				}),
 			);
 			if (!parsed) throw new Error("fixture did not parse");
 			dispatchValue(parsed);
 		};
 
-		send("tree", "all", { epoch: "7", paths: 0, trading: false, gate: null, keys: [], branches: [] });
+		send("tree", "all", {
+			epoch: "7",
+			paths: 0,
+			trading: false,
+			gate: null,
+			keys: [],
+			branches: [],
+			problem: null,
+		});
 		send("match", "BTC/USD", {
 			symbol: "BTC/USD",
 			tick: 3,

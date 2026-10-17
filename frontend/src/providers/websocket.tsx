@@ -1,3 +1,6 @@
+import { batch as storeBatch } from "@tanstack/react-store";
+import { createStore } from "@tanstack/store";
+import { useEffect } from "react";
 import {
 	closedPositionsAtom,
 	decisionsAtom,
@@ -18,16 +21,30 @@ import {
 	updateEquity,
 	Value,
 } from "#/collections/app";
-import { DecisionT, HoldingT, PositionT } from "#/collections/types";
-import { COGNITION_ORIGIN, ingestCognitionFrame, LAYER_COGNITION } from "#/collections/cognition";
-import { abortHindsight, HINDSIGHT_ORIGIN, ingestHindsightFrame } from "#/collections/hindsight";
-import { ingestPaperRecord, PAPER_ORIGIN, parsePaperRecord } from "#/collections/paper";
+import {
+	COGNITION_ORIGIN,
+	ingestCognitionFrame,
+	LAYER_COGNITION,
+} from "#/collections/cognition";
+import {
+	abortDetections,
+	DETECTIONS_ORIGIN,
+	ingestDetectionFrame,
+} from "#/collections/detections";
+import {
+	abortHindsight,
+	HINDSIGHT_ORIGIN,
+	ingestHindsightFrame,
+} from "#/collections/hindsight";
+import {
+	ingestPaperRecord,
+	PAPER_ORIGIN,
+	parsePaperRecord,
+} from "#/collections/paper";
 import { ingestSequiturFrame } from "#/collections/sequitur";
 import { topologyStore } from "#/collections/topology";
+import { DecisionT, HoldingT, PositionT } from "#/collections/types";
 import { hubWsUrl } from "#/lib/hub";
-import { batch as storeBatch } from "@tanstack/react-store";
-import { createStore } from "@tanstack/store";
-import { useEffect } from "react";
 
 /*
 The hub multiplexes everything over one socket: each message is one serialized
@@ -52,7 +69,9 @@ socket the command cannot be sent, which is an error, not a no-op.
 */
 export const sendCommand = (command: Record<string, unknown>) => {
 	if (wsWorker === null) {
-		throw new Error(`hub socket is not running: ${JSON.stringify(command)} not sent`);
+		throw new Error(
+			`hub socket is not running: ${JSON.stringify(command)} not sent`,
+		);
 	}
 
 	wsWorker.postMessage({ type: "COMMAND", command });
@@ -213,7 +232,6 @@ export const parseValues = (bytes: Uint8Array): ParsedValue[] | null => {
 	return list.length > 0 ? list : null;
 };
 
-
 /*
 parseSignalIndex reads a signal layer index (data.SignalIndex in data/schema.go):
 
@@ -254,7 +272,11 @@ const parseJSON = (bytes: Uint8Array): unknown => {
 	} catch (err) {
 		// A layer that opens like JSON but does not parse is corrupt data,
 		// not an absent layer: raise it with the text that failed.
-		console.error("parseJSON: corrupt JSON layer", err, textDecoder.decode(bytes.subarray(0, 200)));
+		console.error(
+			"parseJSON: corrupt JSON layer",
+			err,
+			textDecoder.decode(bytes.subarray(0, 200)),
+		);
 		return undefined;
 	}
 };
@@ -411,7 +433,10 @@ export function dispatchValue(val: ParsedValue) {
 		const layer = val.layers.find((entry) => entry.index === LAYER_GRAMMAR);
 
 		if (!layer) {
-			console.error("dispatchValue: sequitur frame without a grammar layer", val.scope);
+			console.error(
+				"dispatchValue: sequitur frame without a grammar layer",
+				val.scope,
+			);
 			return;
 		}
 
@@ -424,7 +449,11 @@ export function dispatchValue(val: ParsedValue) {
 		const layer = val.layers.find((entry) => entry.index === LAYER_COGNITION);
 
 		if (!layer) {
-			console.error("dispatchValue: cognition frame without its layer", val.role, val.scope);
+			console.error(
+				"dispatchValue: cognition frame without its layer",
+				val.role,
+				val.scope,
+			);
 			return;
 		}
 
@@ -435,6 +464,13 @@ export function dispatchValue(val: ParsedValue) {
 	// A hindsight frame replays a stored run to this client only.
 	if (val.origin === HINDSIGHT_ORIGIN) {
 		ingestHindsightFrame(val);
+		return;
+	}
+
+	// A detections frame streams what detect stored (Historical runs) to
+	// this client only.
+	if (val.origin === DETECTIONS_ORIGIN) {
+		ingestDetectionFrame(val);
 		return;
 	}
 
@@ -606,14 +642,20 @@ export const WsFeed = () => {
 
 			if (data.type === "COMMAND_FAILED") {
 				console.error("hub command not sent:", data.command, data.error);
-				if (data.command?.type === "hindsight") abortHindsight(String(data.error));
+				if (data.command?.type === "hindsight")
+					abortHindsight(String(data.error));
+				if (data.command?.type === "detections")
+					abortDetections(String(data.error));
 				return;
 			}
 
 			if (data.type === "STATUS") {
 				onlineAtom.set(data.status);
 				// The hub ends a replay with its client.
-				if (data.status === "OFFLINE") abortHindsight("hub socket closed");
+				if (data.status === "OFFLINE") {
+					abortHindsight("hub socket closed");
+					abortDetections("hub socket closed");
+				}
 				if (data.status === "ONLINE") {
 					errorAtom.set(null);
 					worker.postMessage({ type: "FOCUS", symbol: focusAtom.get() });

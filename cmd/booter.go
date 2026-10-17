@@ -163,9 +163,9 @@ func (booter *Booter) initTransports() error {
 	booter.public = network.NewWebsocketClient(ctx)
 
 	if err := booter.public.Open(system.Cfg.WebSocket.Endpoints.Public); err != nil {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.IO, "booter: public websocket open failed", err,
-		))
+		)
 	}
 
 	if system.Cfg.Market.Model == "paper" {
@@ -176,9 +176,9 @@ func (booter *Booter) initTransports() error {
 		privateWS := network.NewWebsocketClient(ctx)
 
 		if err := privateWS.Open(system.Cfg.WebSocket.Endpoints.Private); err != nil {
-			return errnie.Error(errnie.Err(
+			return errnie.Err(
 				errnie.IO, "booter: private websocket open failed", err,
-			))
+			)
 		}
 
 		booter.privateTransport = privateWS
@@ -208,27 +208,27 @@ func (booter *Booter) initMarket() error {
 	)
 
 	if err := booter.instrument.Error(); err != nil {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.IO,
 			"booter: instrument registry failed during construction",
 			err,
-		))
+		)
 	}
 
 	if err := booter.price.GetFees(booter.instrument.Symbols()); err != nil {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.NotAcceptable,
 			"[booter] initial fees are not available",
 			nil,
-		))
+		)
 	}
 
 	if booter.price.Status() != nmruntime.READY {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.NotAcceptable,
 			"[booter] initial price fees are not ready",
 			nil,
-		))
+		)
 	}
 
 	booter.balance = broker.NewBalance(ctx, booter.privateTransport)
@@ -257,11 +257,11 @@ func (booter *Booter) initPipeline() error {
 
 	for _, node := range booter.signals {
 		if node.Status() == nmruntime.ERROR || node.Status() == nmruntime.FATAL {
-			return errnie.Error(errnie.Err(
+			return errnie.Err(
 				errnie.Internal,
 				fmt.Sprintf("booter: %s failed construction", node.Name()),
 				node.Error(),
-			))
+			)
 		}
 	}
 
@@ -270,18 +270,18 @@ func (booter *Booter) initPipeline() error {
 	// The dashboard command (`make run`) never writes storage: collect is
 	// the only tick writer.
 	if booter.dashboard && booter.capture {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.Validation, "booter: the dashboard run is read-only and cannot capture ticks; run collect", nil,
-		))
+		)
 	}
 
 	if booter.capture {
 		booter.store = store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
 		if booter.store == nil {
-			return errnie.Error(errnie.Err(
+			return errnie.Err(
 				errnie.IO, "booter: store client unavailable for capture", nil,
-			))
+			)
 		}
 
 		sinks = append(sinks, booter.store)
@@ -297,7 +297,7 @@ func (booter *Booter) initPipeline() error {
 		reader, err := store.NewReader(ctx, system.Cfg.Storage.S3.Bucket)
 
 		if err != nil {
-			return errnie.Error(err)
+			return err
 		}
 
 		// Hindsight replays stored runs to the client that asks, over the
@@ -306,11 +306,13 @@ func (booter *Booter) initPipeline() error {
 		replay, err := hindsight.NewService(ctx, reader)
 
 		if err != nil {
-			return errnie.Error(err)
+			return err
 		}
 
 		replay.Register(booter.hub.App())
 		booter.hub.Replay(replay)
+		// The Historical runs tab: what detect stored, from the same view.
+		booter.hub.Detect(replay)
 
 		if err := booter.hub.Run(); err != nil {
 			return err
@@ -319,19 +321,20 @@ func (booter *Booter) initPipeline() error {
 		sinks = append(sinks, booter.hub)
 
 		// The live grammar view and paper trading read the newest published
-		// policy: a malformed policy fails the boot; no published policy is
-		// an empty tree.
+		// policy. Only an unreachable store fails the boot: a model make
+		// run cannot use (none, malformed, other gate settings) is an empty
+		// tree with its Problem, and paper trading stays off.
 
-		booter.tree, err = strategy.LoadCognitionTree(reader, system.Cfg.Learning.MinimumPathConfidence, system.Cfg.Resonance)
+		booter.tree, err = strategy.LoadCognitionTree(ctx, reader, system.Cfg.Learning.MinimumPathConfidence, system.Cfg.Resonance)
 
 		if err != nil {
-			return errnie.Error(err)
+			return err
 		}
 
 		booter.sequitur, err = strategy.NewSequitur(ctx, booter.hub, booter.tree)
 
 		if err != nil {
-			return errnie.Error(err)
+			return err
 		}
 
 		sinks = append(sinks, booter.sequitur)
@@ -339,11 +342,11 @@ func (booter *Booter) initPipeline() error {
 
 	for _, sink := range sinks {
 		if node, ok := sink.(interface{ Status() nmruntime.Stage }); ok && node.Status() != nmruntime.READY {
-			return errnie.Error(errnie.Err(
+			return errnie.Err(
 				errnie.NotAcceptable,
 				fmt.Sprintf("booter: sink %T is %s, not ready", sink, node.Status()),
 				nil,
-			))
+			)
 		}
 	}
 
@@ -372,9 +375,9 @@ func (booter *Booter) seedBooks() error {
 	timeout := viper.GetDuration("market.l3_snapshot_timeout")
 
 	if timeout <= 0 {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.Validation, "[booter] market.l3_snapshot_timeout is not configured", nil,
-		))
+		)
 	}
 
 	// The public socket carries acknowledgements now and trades only once
@@ -391,9 +394,9 @@ func (booter *Booter) seedBooks() error {
 	booter.book.Expect(booter.instrument.Symbols())
 
 	if err := booter.instrument.SubscribeBooks(); err != nil {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.Internal, "booter: level3 subscribe to instrument universe", err,
-		))
+		)
 	}
 
 	if err := booter.book.Wait(timeout); err != nil {
@@ -409,11 +412,11 @@ func (booter *Booter) seedBooks() error {
 			replies = append(replies, symbol+": "+reply)
 		}
 
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.NotFound,
 			"booter: level3 seeding failed; venue replies: "+strings.Join(replies, "; "),
 			err,
-		))
+		)
 	}
 
 	return nil
@@ -422,8 +425,11 @@ func (booter *Booter) seedBooks() error {
 /*
 startPaperTrading turns paper trading on for the dashboard run when a model
 is stored: books are seeded and the firehose is not yet open, so the first
-trade tick can already be acted on. Without stored paths it says so and the
-run continues as a view. Records go to the local paper.records_path file
+trade tick can already be acted on. Without a usable model (the tree's
+Problem) it logs why and the fix (ERROR for a stored model it cannot use,
+WARN for none), publishes the Problem in the retained cognition/tree frame
+for the dashboard's banner, and the run continues as a view (Hindsight,
+Workbench, dashboards). Records go to the local paper.records_path file
 (append-only) and to the hub; storage is never written.
 */
 func (booter *Booter) startPaperTrading() error {
@@ -431,25 +437,38 @@ func (booter *Booter) startPaperTrading() error {
 		return nil
 	}
 
+	if problem := booter.tree.Problem(); problem != nil {
+		message := fmt.Sprintf("[booter] paper trading inactive: %s; fix: %s", problem.Reason, problem.Fix)
+
+		if problem.Level == strategy.ProblemError {
+			errnie.Error(errnie.Err(errnie.Validation, message, nil))
+		} else {
+			errnie.Warn(message)
+		}
+
+		return strategy.PublishTree(booter.hub.Retained(), booter.tree, false)
+	}
+
 	if booter.tree.Empty() {
-		errnie.Warn("[booter] paper trading inactive: no trained paths are stored under policy/ (run detect and train first)")
+		// A stored epoch whose policies hold no path: nothing to trade.
+		errnie.Warn(fmt.Sprintf("[booter] paper trading inactive: policy epoch %d stores no path; fix: re-run detect and train on the tick epoch", booter.tree.Epoch()))
 		return strategy.PublishTree(booter.hub.Retained(), booter.tree, false)
 	}
 
 	if err := system.Cfg.Paper.Validate(); err != nil {
-		return errnie.Error(errnie.Err(errnie.Validation, "[booter] paper trading", err))
+		return errnie.Err(errnie.Validation, "[booter] paper trading", err)
 	}
 
 	path := system.Cfg.Paper.RecordsPath
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return errnie.Error(errnie.Err(errnie.IO, "[booter] paper records directory for "+path, err))
+		return errnie.Err(errnie.IO, "[booter] paper records directory for "+path, err)
 	}
 
 	records, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 
 	if err != nil {
-		return errnie.Error(errnie.Err(errnie.IO, "[booter] paper records file "+path, err))
+		return errnie.Err(errnie.IO, "[booter] paper records file "+path, err)
 	}
 
 	ctx := booter.Context()
@@ -464,7 +483,7 @@ func (booter *Booter) startPaperTrading() error {
 
 	if err != nil {
 		closeRecords()
-		return errnie.Error(err)
+		return err
 	}
 
 	go func() {
@@ -479,7 +498,7 @@ func (booter *Booter) startPaperTrading() error {
 	booter.sequitur.Trade(training)
 
 	if err := strategy.PublishTree(booter.hub.Retained(), booter.tree, true); err != nil {
-		return errnie.Error(err)
+		return err
 	}
 
 	errnie.Info(fmt.Sprintf(
@@ -539,15 +558,15 @@ first trade tick already carries a seeded book for each symbol it touches.
 */
 func (booter *Booter) openFirehose() error {
 	if err := booter.instrument.SubscribeTrades(); err != nil {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.Internal, "booter: trade subscribe to instrument universe", err,
-		))
+		)
 	}
 
 	if booter.instrument.Status() != nmruntime.READY {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.NotAcceptable, "booter: instrument universe is not seeded", nil,
-		))
+		)
 	}
 
 	return nil

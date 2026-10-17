@@ -197,6 +197,52 @@ describe("xray-view", () => {
 		]);
 	});
 
+	it("projects live gate-coder readings into hierarchy layers and a latent point per carrier", () => {
+		const reading = (scope: string, x: number, y: number) =>
+			new Value({
+				origin: "resonance",
+				role: "reading",
+				scope,
+				metrics: [
+					{ name: "energy", raw: 0.12 },
+					{ name: "surprise", raw: 0.45 },
+					{ name: "latent_0", raw: x },
+					{ name: "latent_1", raw: y },
+					{ name: "layer_0_state_0", raw: 1 },
+					{ name: "layer_0_prediction_0", raw: 0.5 },
+					{ name: "layer_1_state_0", raw: 0.3 },
+					{ name: "layer_1_prediction_0", raw: 0.1 },
+				],
+			});
+
+		retainResonanceRow("BTC/USD", reading("BTC/USD", 0.2, -0.4));
+		retainResonanceRow("ETH/USD", reading("ETH/USD", -0.1, 0.7));
+
+		const retained = getAllRetainedResonance();
+		const btc = retained.find((row) => row.symbol === "BTC/USD");
+		const layers = xrayLayersFromResonance(btc);
+
+		expect(layers).toHaveLength(2);
+		expect(layers[0]?.state).toEqual([1]);
+		expect(layers[0]?.prediction).toEqual([0.5]);
+		expect(latentPointsFromFrames(retained)).toEqual([
+			{
+				key: "BTC/USD:",
+				symbol: "BTC/USD",
+				x: 0.2,
+				y: -0.4,
+				category: "",
+			},
+			{
+				key: "ETH/USD:",
+				symbol: "ETH/USD",
+				x: -0.1,
+				y: 0.7,
+				category: "",
+			},
+		]);
+	});
+
 	it("retains per-symbol resonance state across sparse updates", () => {
 		retainResonanceRow("BTC/USD", {
 			symbol: "BTC/USD",

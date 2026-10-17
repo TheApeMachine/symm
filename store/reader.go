@@ -102,34 +102,39 @@ func (reader *Reader) Epochs(prefix string) ([]uint64, error) {
 }
 
 /*
-Values yields every Value under prefixes, in key order, downloading one at
-a time so an epoch of ticks is never held whole. A key that fails to list,
-download or decode is yielded as an error naming it and ends the sequence;
-so does a canceled context.
+Keys lists every key under prefixes, deduplicated and in key order (epoch,
+then tick: sortKeys). A listing that fails is an error.
 */
-func (reader *Reader) Values(prefixes ...string) iter.Seq2[*data.Value, error] {
-	return func(yield func(*data.Value, error) bool) {
-		keys := make([]string, 0)
-		seen := make(map[string]bool)
+func (reader *Reader) Keys(prefixes ...string) ([]string, error) {
+	keys := make([]string, 0)
+	seen := make(map[string]bool)
 
-		for _, prefix := range prefixes {
-			err := reader.list(prefix, "", func(out *s3.ListObjectsV2Output) {
-				for _, object := range out.Contents {
-					if object.Key != nil && !seen[*object.Key] {
-						seen[*object.Key] = true
-						keys = append(keys, *object.Key)
-					}
+	for _, prefix := range prefixes {
+		err := reader.list(prefix, "", func(out *s3.ListObjectsV2Output) {
+			for _, object := range out.Contents {
+				if object.Key != nil && !seen[*object.Key] {
+					seen[*object.Key] = true
+					keys = append(keys, *object.Key)
 				}
-			})
-
-			if err != nil {
-				yield(nil, err)
-				return
 			}
+		})
+
+		if err != nil {
+			return nil, err
 		}
+	}
 
-		sortKeys(keys)
+	sortKeys(keys)
+	return keys, nil
+}
 
+/*
+Download yields the Value stored at each key, in the order given, one at a
+time. A key that fails to download or decode is yielded as an error naming
+it and ends the sequence; so does a canceled context.
+*/
+func (reader *Reader) Download(keys []string) iter.Seq2[*data.Value, error] {
+	return func(yield func(*data.Value, error) bool) {
 		for _, key := range keys {
 			if err := reader.ctx.Err(); err != nil {
 				yield(nil, err)
@@ -154,6 +159,29 @@ func (reader *Reader) Values(prefixes ...string) iter.Seq2[*data.Value, error] {
 			}
 
 			if !yield(value, nil) {
+				return
+			}
+		}
+	}
+}
+
+/*
+Values yields every Value under prefixes, in key order, downloading one at
+a time so an epoch of ticks is never held whole. A key that fails to list,
+download or decode is yielded as an error naming it and ends the sequence;
+so does a canceled context.
+*/
+func (reader *Reader) Values(prefixes ...string) iter.Seq2[*data.Value, error] {
+	return func(yield func(*data.Value, error) bool) {
+		keys, err := reader.Keys(prefixes...)
+
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+
+		for value, err := range reader.Download(keys) {
+			if !yield(value, err) || err != nil {
 				return
 			}
 		}

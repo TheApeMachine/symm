@@ -26,6 +26,7 @@ const sampleMetric = (item: Value, name: string | null): number | null => {
 			if (metric?.name !== name) continue;
 			return finiteSample(metric.snm) ?? finiteSample(metric.raw);
 		}
+		return null;
 	}
 
 	const first = item.metrics?.[0];

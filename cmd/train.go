@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/system"
 )
 
 var (
@@ -41,16 +42,16 @@ an ungated training of the same ticks can be audited side by side
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
-		client := store.NewClient(ctx, "symm")
+		client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
 		if client == nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "[train] unable to open store client", nil))
+			return errnie.Err(errnie.Validation, "[train] unable to open store client", nil)
 		}
 
 		epochs, err := storedEpochs(client, trainEpochs)
 
 		if err != nil {
-			return errnie.Error(err)
+			return err
 		}
 
 		price, err := offlinePrice(ctx, trainFeePct, trainSymbols)
@@ -63,7 +64,7 @@ an ungated training of the same ticks can be audited side by side
 			return err
 		}
 
-		return errnie.Error(client.Drain())
+		return client.Drain()
 	},
 }
 

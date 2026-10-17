@@ -136,11 +136,13 @@ export const parseResonanceData = (measurement: Value | undefined): ResonanceDat
 
 const useArtifact = (): ResonanceData | undefined => {
 	const symbol = useSelector(focusAtom);
-
-	const row = useSelector(resonanceStore, (state) => {
-		const ring = state[symbol];
-		return ring && !ring.isEmpty() ? (ring.getLast() ?? undefined) : undefined;
-	});
+	const published = useSelector(resonanceStore, (state) =>
+		state[symbol]?.end ?? 0,
+	);
+	const ring =
+		published > 0 ? (resonanceStore.state[symbol] ?? undefined) : undefined;
+	const row =
+		ring && !ring.isEmpty() ? (ring.getLast() ?? undefined) : undefined;
 
 	const held = useRef<{
 		symbol: string | undefined;

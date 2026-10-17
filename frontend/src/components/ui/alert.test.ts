@@ -7,6 +7,13 @@ describe("alertVariants", () => {
 	failure starts looking like a different kind of event depending on where it
 	is reported, which is the thing this component exists to stop.
 	*/
+	it("wraps inside its column instead of stretching the rail", () => {
+		const classes = alertVariants();
+
+		expect(classes).toContain("min-w-0");
+		expect(classes).toContain("wrap-anywhere");
+	});
+
 	it("tints the plate from the tone at badge strengths", () => {
 		const classes = alertVariants();
 

@@ -130,7 +130,11 @@ const RouteComponent = () => (
 	<Flex.Column className="min-w-275" fullWidth fullHeight>
 		<XrayPaintBridge />
 		<XrayCarrierBar />
-		<Grid className="min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]">
+		<Grid
+			fullWidth
+			responsive={false}
+			className="min-h-0 min-w-0 flex-1 grid-cols-[minmax(520px,1fr)_352px]"
+		>
 			<Flex.Column className="min-h-0 overflow-auto border-(--line) border-r">
 				<XrayHierarchyPanel />
 				<XrayHawkesPanel />

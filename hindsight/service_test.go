@@ -325,3 +325,27 @@ func TestService(t *testing.T) {
 		})
 	})
 }
+
+func TestTickVector(t *testing.T) {
+	Convey("Given a symbol tick", t, func() {
+		Convey("No trades leave trade_price as NaN", func() {
+			out := tickVector(&broker.SymbolTick{Symbol: btcUSD})
+			So(math.IsNaN(out[2]), ShouldBeTrue)
+			So(out[3], ShouldEqual, 0)
+			So(out[4], ShouldEqual, 0)
+		})
+
+		Convey("The last trade's price is used when trades exist", func() {
+			out := tickVector(&broker.SymbolTick{
+				Symbol: btcUSD,
+				Trades: []kraken.TradeData{
+					{Price: *decimal.NewFromFloat64(100), Qty: 0.1},
+					{Price: *decimal.NewFromFloat64(102), Qty: 0.2},
+				},
+			})
+			So(out[2], ShouldEqual, 102)
+			So(out[3], ShouldAlmostEqual, 0.3, 1e-12)
+			So(out[4], ShouldEqual, 2)
+		})
+	})
+}

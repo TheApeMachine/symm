@@ -16,6 +16,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
@@ -244,73 +245,102 @@ func TestLoadCognitionTree(t *testing.T) {
 			publishGated(epoch, tick, action, path, vector, &run)
 		}
 
-		Convey("No published epoch is an empty tree", func() {
-			tree, err := LoadCognitionTree(reader, 2, system.Cfg.Resonance)
+		// unusable loads a tree make run cannot trade: no error (make run
+		// goes on as a view), an empty tree, and its Problem at level.
+		unusable := func(level string) *CognitionProblem {
+			tree, err := LoadCognitionTree(context.Background(), reader, 2, system.Cfg.Resonance)
 			So(err, ShouldBeNil)
 			So(tree.Empty(), ShouldBeTrue)
+			So(tree.Problem(), ShouldNotBeNil)
+			So(tree.Problem().Level, ShouldEqual, level)
+			So(tree.Problem().Fix, ShouldNotBeEmpty)
+			return tree.Problem()
+		}
+
+		Convey("No published epoch is an empty tree with a warning", func() {
+			problem := unusable(ProblemWarning)
+			So(problem.Reason, ShouldContainSubstring, "no trained policy")
+			So(problem.Fix, ShouldContainSubstring, "run detect and train")
 		})
 
 		Convey("The newest epoch's paths load with their actions and gate", func() {
-			publish(5, 1, "exit", "R09/R09", []float64{0.01, 10, 2, 0.01, 0.5})
-			publish(7, 1, "enter", "R01/R04", []float64{0.02, 30, 3, 0.02, 0.66})
+			// Ungated: a gated epoch also needs its coder state (TestCoderState).
+			defer withGate(false, system.Cfg.Resonance.SurpriseZ)()
+			run := gateSettings(system.Cfg.Resonance)
+			run.TickEpoch = 3
+			publishGated(5, 1, "exit", "R09/R09", []float64{0.01, 10, 2, 0.01, 0.5}, &run)
+			publishGated(7, 1, "enter", "R01/R04", []float64{0.02, 30, 3, 0.02, 0.66}, &run)
 
-			tree, err := LoadCognitionTree(reader, 2, system.Cfg.Resonance)
+			tree, err := LoadCognitionTree(context.Background(), reader, 2, system.Cfg.Resonance)
 			So(err, ShouldBeNil)
 			So(tree.Epoch(), ShouldEqual, 7)
 			So(tree.policy.actions, ShouldResemble, map[string]string{"R01/R04": "enter"})
 			So(tree.Gate().Same(run), ShouldBeTrue)
 			So(tree.Gate().Epoch, ShouldEqual, 7)
 			So(tree.Gate().TickEpoch, ShouldEqual, 3)
+			So(tree.Problem(), ShouldBeNil)
+			So(tree.seeded, ShouldBeNil)
 		})
 
-		Convey("A policy epoch trained under other gate settings is refused, naming both", func() {
+		Convey("A gated epoch without its coder state is an error problem, naming the fix", func() {
+			So(run.Enabled, ShouldBeTrue)
+			publish(7, 1, "enter", "R01/R04", []float64{0.02, 30, 3, 0.02, 0.66})
+			problem := unusable(ProblemError)
+			So(problem.Reason, ShouldContainSubstring, "policy epoch 7 stores no coder state")
+			So(problem.Fix, ShouldEqual, "re-run detect and train on the tick epoch 3")
+		})
+
+		Convey("A policy epoch trained under other gate settings is an error problem, naming both and the fix", func() {
 			other := run
 			other.Enabled = !run.Enabled
 			publishGated(7, 1, "enter", "R01/R04", []float64{0.02, 30, 3, 0.02, 0.66}, &other)
 
-			_, err := LoadCognitionTree(reader, 2, system.Cfg.Resonance)
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "policy epoch 7 was trained under")
-			So(err.Error(), ShouldContainSubstring, "this run is configured for")
+			problem := unusable(ProblemError)
+			So(problem.Reason, ShouldContainSubstring, "policy epoch 7 was trained under")
+			So(problem.Reason, ShouldContainSubstring, "this run is configured for")
+			// The run's side is its settings only: no zero epochs.
+			So(problem.Reason, ShouldNotContainSubstring, "policy epoch 0")
+			So(problem.Fix, ShouldStartWith, "re-run detect and train on the tick epoch 3")
 
 			other = run
 			other.SurpriseZ = run.SurpriseZ + 0.5
 			publishGated(7, 1, "enter", "R01/R04", []float64{0.02, 30, 3, 0.02, 0.66}, &other)
-
-			_, err = LoadCognitionTree(reader, 2, system.Cfg.Resonance)
-			So(err, ShouldNotBeNil)
+			unusable(ProblemError)
 		})
 
-		Convey("A policy without a gate tag (trained before the gate) is refused", func() {
+		Convey("A policy without a gate tag (trained before the gate) is an error problem", func() {
 			publishGated(7, 1, "enter", "R01/R04", []float64{0.02, 30, 3, 0.02, 0.66}, nil)
 
-			_, err := LoadCognitionTree(reader, 2, system.Cfg.Resonance)
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "retrain")
+			problem := unusable(ProblemError)
+			So(problem.Reason, ShouldContainSubstring, "malformed")
+			So(problem.Fix, ShouldContainSubstring, "re-run detect and train")
 		})
 
-		Convey("Policies of one epoch that disagree on their gate are refused", func() {
+		Convey("Policies of one epoch that disagree on their gate are an error problem", func() {
 			other := run
 			other.Warmup.SlowRate = run.Warmup.SlowRate * 2
 			publish(7, 1, "enter", "R01/R04", []float64{0.02, 30, 3, 0.02, 0.66})
 			publishGated(7, 2, "exit", "R02/R03", []float64{0.02, 30, 3, 0.02, 0.66}, &other)
-
-			_, err := LoadCognitionTree(reader, 2, system.Cfg.Resonance)
-			So(err, ShouldNotBeNil)
+			unusable(ProblemError)
 		})
 
-		Convey("A stored policy missing a PolicyKey is an error", func() {
+		Convey("A stored policy missing a PolicyKey is an error problem", func() {
 			publish(7, 1, "enter", "R01/R04", []float64{0.02, 30})
-
-			_, err := LoadCognitionTree(reader, 2, system.Cfg.Resonance)
-			So(err, ShouldNotBeNil)
+			So(unusable(ProblemError).Reason, ShouldContainSubstring, "has no")
 		})
 
-		Convey("An object that does not decode is an error", func() {
+		Convey("An object that does not decode is an error problem, not an unreachable store", func() {
 			backend.Objects[data.Prefix(data.PolicyOrigin, "enter", data.PolicyScope, 7)+"0000000000000000001.bin"] = []byte("garbage")
+			So(unusable(ProblemError).Reason, ShouldContainSubstring, "does not decode")
+		})
 
-			_, err := LoadCognitionTree(reader, 2, system.Cfg.Resonance)
+		Convey("A store that becomes unreachable stays an error: everything make run serves reads it", func() {
+			server.Close()
+
+			tree, err := LoadCognitionTree(context.Background(), reader, 2, system.Cfg.Resonance)
 			So(err, ShouldNotBeNil)
+			So(errnie.IsIO(err), ShouldBeTrue)
+			So(tree, ShouldBeNil)
 		})
 	})
 }
@@ -340,6 +370,19 @@ func TestPublishTree(t *testing.T) {
 			So(fields["trading"], ShouldEqual, false)
 			So(fields["gate"], ShouldBeNil)
 			So(fields["keys"], ShouldBeEmpty)
+			So(fields["problem"], ShouldBeNil)
+		})
+
+		Convey("A tree make run cannot trade carries its problem for the dashboard's banner", func() {
+			tree, err := unusableTree(2, &CognitionProblem{Level: ProblemError, Reason: "trained under other settings", Fix: "re-run detect and train on the tick epoch 3"})
+			So(err, ShouldBeNil)
+			So(PublishTree(sink, tree, false), ShouldBeNil)
+
+			fields := read()
+			So(fields["trading"], ShouldEqual, false)
+			So(fields["problem"], ShouldResemble, map[string]any{
+				"level": "error", "reason": "trained under other settings", "fix": "re-run detect and train on the tick epoch 3",
+			})
 		})
 
 		Convey("A loaded tree carries its epoch, keys, stored values and gate", func() {

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,36 @@ func (replayer *fakeReplayer) Stream(ctx context.Context, w io.Writer, run uint6
 
 	<-ctx.Done()
 	replayer.ended <- ctx.Err()
+	return ctx.Err()
+}
+
+/*
+fakeDetector reports each Detections request it was asked for (its symbol,
+or the run for an epoch's excursions, or "runs") and holds the stream open
+until its ctx ends, reporting how it ended.
+*/
+type fakeDetector struct {
+	started chan string
+	ended   chan string
+}
+
+func (detector *fakeDetector) Detections(
+	ctx context.Context, w io.Writer, run uint64, symbol, class string, cTick uint64,
+) error {
+	name := symbol
+
+	switch {
+	case run == 0:
+		name = "runs"
+	case symbol == "":
+		name = fmt.Sprintf("run %d", run)
+	default:
+		name = fmt.Sprintf("%s %s %d", symbol, class, cTick)
+	}
+
+	detector.started <- name
+	<-ctx.Done()
+	detector.ended <- name
 	return ctx.Err()
 }
 
@@ -103,6 +134,57 @@ func TestHubReplay(t *testing.T) {
 			close(current.done)
 			_, err = current.Write([]byte("late"))
 			So(err, ShouldEqual, errClientClosed)
+		})
+
+		Convey("Write clones the frame so the caller cannot mutate what is queued", func() {
+			frame := []byte("replayed")
+			n, err := current.Write(frame)
+			So(err, ShouldBeNil)
+			So(n, ShouldEqual, len(frame))
+			frame[0] = 'X'
+			So(string(<-current.frames), ShouldEqual, "replayed")
+		})
+	})
+}
+
+func TestHubDetections(t *testing.T) {
+	Convey("Given a hub with a detector and one client", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		hub := NewHub(ctx)
+		detector := &fakeDetector{started: make(chan string, 4), ended: make(chan string, 4)}
+		current := newClient()
+		defer close(current.done)
+
+		Convey("Without a detector the detections command is an error", func() {
+			So(hub.handleCommand(current, []byte(`{"type":"detections"}`)), ShouldNotBeNil)
+		})
+
+		hub.Detect(detector)
+
+		Convey("A malformed request is an error and starts nothing", func() {
+			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"x"}`)), ShouldNotBeNil)
+			So(hub.handleCommand(current, []byte(`{"type":"detections","symbol":"BTC/USD","class":"up","at":"9"}`)), ShouldNotBeNil)
+			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"7","symbol":"BTC/USD","at":"9"}`)), ShouldNotBeNil)
+			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"7","symbol":"BTC/USD","class":"up"}`)), ShouldNotBeNil)
+			So(hub.handleCommand(nil, []byte(`{"type":"detections"}`)), ShouldNotBeNil)
+			So(detector.started, ShouldBeEmpty)
+		})
+
+		Convey("Runs, excursions and a tape stream side by side; a newer tape replaces the tape", func() {
+			So(hub.handleCommand(current, []byte(`{"type":"detections"}`)), ShouldBeNil)
+			So(<-detector.started, ShouldEqual, "runs")
+			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"7"}`)), ShouldBeNil)
+			So(<-detector.started, ShouldEqual, "run 7")
+			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"7","symbol":"BTC/USD","class":"up","at":"9"}`)), ShouldBeNil)
+			So(<-detector.started, ShouldEqual, "BTC/USD up 9")
+			So(detector.ended, ShouldBeEmpty)
+
+			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"7","symbol":"ETH/USD","class":"down","at":"12"}`)), ShouldBeNil)
+			So(<-detector.ended, ShouldEqual, "BTC/USD up 9")
+			So(<-detector.started, ShouldEqual, "ETH/USD down 12")
+			So(detector.ended, ShouldBeEmpty)
 		})
 	})
 }

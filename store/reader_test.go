@@ -61,6 +61,23 @@ func TestReader(t *testing.T) {
 			So(values, ShouldHaveLength, 2)
 			So(values[1].Epoch, ShouldEqual, 9)
 
+			// Keys lists without downloading; Download reads just the keys given.
+			keys, err := reader.Keys("policy/enter/all/")
+			So(err, ShouldBeNil)
+			So(keys, ShouldResemble, []string{
+				"policy/enter/all/0000000000000000003/0000000000000000001.bin",
+				"policy/enter/all/0000000000000000009/0000000000000000001.bin",
+			})
+
+			downloaded := make([]uint64, 0)
+
+			for value, err := range reader.Download(keys[1:]) {
+				So(err, ShouldBeNil)
+				downloaded = append(downloaded, value.Epoch)
+			}
+
+			So(downloaded, ShouldResemble, []uint64{9})
+
 			garbage := "policy/enter/all/0000000000000000009/0000000000000000002.bin"
 			backend.Objects[garbage] = []byte("garbage")
 			values, err = collect()
@@ -85,7 +102,7 @@ func TestReader(t *testing.T) {
 			}
 
 			slices.Sort(methods)
-			So(methods, ShouldResemble, []string{"Epochs", "PolicyGates", "Values"})
+			So(methods, ShouldResemble, []string{"Download", "Epochs", "Keys", "PolicyGates", "Values"})
 		})
 	})
 }

@@ -36,7 +36,7 @@ func TestUploadPaper(t *testing.T) {
 			So(backend.Objects, ShouldContainKey, records[1].Prefix)
 		})
 
-		Convey("A key already stored refuses the whole upload, naming it, and writes nothing", func() {
+		Convey("A key already stored with different content refuses the whole upload, naming it, and writes nothing", func() {
 			backend.Objects[records[1].Prefix] = []byte("stored before")
 
 			err := uploadPaper(client, records)
@@ -44,6 +44,14 @@ func TestUploadPaper(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, records[1].Prefix)
 			So(backend.Objects, ShouldNotContainKey, records[0].Prefix)
 			So(string(backend.Objects[records[1].Prefix]), ShouldEqual, "stored before")
+		})
+
+		Convey("A key already stored with identical bytes is skipped so the file can be uploaded again", func() {
+			So(uploadPaper(client, records), ShouldBeNil)
+			first := append([]byte(nil), backend.Objects[records[0].Prefix]...)
+			So(uploadPaper(client, records), ShouldBeNil)
+			So(backend.Objects[records[0].Prefix], ShouldResemble, first)
+			So(backend.Objects, ShouldContainKey, records[1].Prefix)
 		})
 
 		Convey("A key repeating in the file is refused", func() {

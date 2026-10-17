@@ -32,6 +32,18 @@ export type CognitionGate = {
 	learningRate: number;
 };
 
+/*
+Why make run has no model to trade (strategy.CognitionProblem): error for a
+stored model it cannot use (malformed, trained under other gate settings),
+warning for none stored; the exact reason and the fix. Paper trading is off;
+everything else make run serves keeps working.
+*/
+export type CognitionProblem = {
+	level: "error" | "warning";
+	reason: string;
+	fix: string;
+};
+
 export type CognitionTreeFrame = {
 	epoch: string;
 	paths: number;
@@ -39,6 +51,7 @@ export type CognitionTreeFrame = {
 	gate: CognitionGate | null;
 	keys: string[];
 	branches: CognitionBranch[];
+	problem: CognitionProblem | null;
 };
 
 export type CognitionMatch = {
@@ -85,6 +98,18 @@ const isGate = (value: unknown): value is CognitionGate | null => {
 	);
 };
 
+const isProblem = (value: unknown): value is CognitionProblem | null => {
+	if (value === null) return true;
+	const problem = value as Partial<CognitionProblem> | undefined;
+	return (
+		(problem?.level === "error" || problem?.level === "warning") &&
+		typeof problem.reason === "string" &&
+		problem.reason !== "" &&
+		typeof problem.fix === "string" &&
+		problem.fix !== ""
+	);
+};
+
 const isTree = (value: unknown): value is CognitionTreeFrame => {
 	const tree = value as Partial<CognitionTreeFrame> | null;
 	return (
@@ -95,7 +120,8 @@ const isTree = (value: unknown): value is CognitionTreeFrame => {
 		Array.isArray(tree.keys) &&
 		tree.keys.every((key) => typeof key === "string") &&
 		Array.isArray(tree.branches) &&
-		tree.branches.every(isBranch)
+		tree.branches.every(isBranch) &&
+		isProblem(tree.problem)
 	);
 };
 

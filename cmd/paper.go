@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -23,18 +24,20 @@ var paperCmd = &cobra.Command{
 every record (data.PaperFields), and uploads each under its own key,
 paper/<action>/<symbol>/<epoch>/<seq>.bin, with io.Copy. It is the only
 writer of the paper/ prefix; run itself never writes storage. A record whose
-key is already stored (or repeats in the file) refuses the whole upload
-before anything is written: stored paper records are never overwritten.`,
+key is already stored with identical bytes is skipped, so the append-only
+file can be uploaded again; a stored key whose content differs, or a key
+that repeats in the file, refuses the whole upload before anything is
+written.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := system.Cfg.Paper.Validate(); err != nil {
-			return errnie.Error(errnie.Err(errnie.Validation, "[paper]", err))
+			return errnie.Err(errnie.Validation, "[paper]", err)
 		}
 
 		path := system.Cfg.Paper.RecordsPath
 		file, err := os.Open(path)
 
 		if err != nil {
-			return errnie.Error(errnie.Err(errnie.IO, "[paper] records file "+path, err))
+			return errnie.Err(errnie.IO, "[paper] records file "+path, err)
 		}
 
 		defer file.Close()
@@ -42,11 +45,11 @@ before anything is written: stored paper records are never overwritten.`,
 		records, err := readPaperRecords(file)
 
 		if err != nil {
-			return errnie.Error(errnie.Err(errnie.UnprocessableContent, "[paper] "+path, err))
+			return errnie.Err(errnie.UnprocessableContent, "[paper] "+path, err)
 		}
 
 		if len(records) == 0 {
-			return errnie.Error(errnie.Err(errnie.NotFound, "[paper] "+path+" holds no paper records", nil))
+			return errnie.Err(errnie.NotFound, "[paper] "+path+" holds no paper records", nil)
 		}
 
 		ctx, cancel := context.WithCancel(cmd.Context())
@@ -55,11 +58,11 @@ before anything is written: stored paper records are never overwritten.`,
 		client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
 		if client == nil {
-			return errnie.Error(errnie.Err(errnie.IO, "[paper] unable to open store client", nil))
+			return errnie.Err(errnie.IO, "[paper] unable to open store client", nil)
 		}
 
 		if err := uploadPaper(client, records); err != nil {
-			return errnie.Error(errnie.Err(errnie.IO, "[paper] "+path, err))
+			return errnie.Err(errnie.IO, "[paper] "+path, err)
 		}
 
 		errnie.Info(fmt.Sprintf("[paper] uploaded %d paper records from %s", len(records), path))
@@ -98,9 +101,10 @@ func readPaperRecords(r io.Reader) ([]*data.Value, error) {
 }
 
 /*
-uploadPaper writes records under their own keys with io.Copy, after checking
-that none of those keys is stored already or repeats among the records. Any
-collision is an error naming every colliding key, and nothing is written.
+uploadPaper writes records under their own keys with io.Copy. A key already
+stored with identical bytes is skipped; a stored key whose content differs,
+or a key that repeats in the file, is an error naming every colliding key,
+and nothing is written.
 */
 func uploadPaper(client *store.Client, records []*data.Value) error {
 	stored, err := client.ListKeys(data.PaperActionPrefixes()...)
@@ -109,27 +113,47 @@ func uploadPaper(client *store.Client, records []*data.Value) error {
 		return fmt.Errorf("listing stored paper records: %w", err)
 	}
 
-	taken := make(map[string]bool, len(stored)+len(records))
+	held := make(map[string]bool, len(stored))
 
 	for _, key := range stored {
-		taken[key] = true
+		held[key] = true
 	}
 
+	seen := make(map[string]bool, len(records))
+	pending := make([]*data.Value, 0, len(records))
 	var collisions error
 
 	for _, record := range records {
-		if taken[record.Prefix] {
-			collisions = errors.Join(collisions, fmt.Errorf("paper record %s is already stored (or repeats in the file): refusing to overwrite it", record.Prefix))
+		if seen[record.Prefix] {
+			collisions = errors.Join(collisions, fmt.Errorf("paper record %s repeats in the file: refusing to overwrite it", record.Prefix))
+			continue
 		}
 
-		taken[record.Prefix] = true
+		seen[record.Prefix] = true
+
+		if held[record.Prefix] {
+			payload, err := client.Download(record.Prefix)
+
+			if err != nil {
+				return fmt.Errorf("reading stored paper record %s: %w", record.Prefix, err)
+			}
+
+			if bytes.Equal(payload, record.Bytes()) {
+				continue
+			}
+
+			collisions = errors.Join(collisions, fmt.Errorf("paper record %s is already stored with different content: refusing to overwrite it", record.Prefix))
+			continue
+		}
+
+		pending = append(pending, record)
 	}
 
 	if collisions != nil {
 		return collisions
 	}
 
-	for _, record := range records {
+	for _, record := range pending {
 		if _, err := io.Copy(client, record); err != nil {
 			return fmt.Errorf("upload %s: %w", record.Prefix, err)
 		}

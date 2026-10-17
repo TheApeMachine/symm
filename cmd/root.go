@@ -36,6 +36,14 @@ var (
 		Use:   "symm",
 		Short: "S.Y.M.M. is not financial advice, or a toaster.",
 		Long:  rootLong,
+		// Cobra reaches PersistentPreRunE only once flags and args parsed, so
+		// a flag or argument error still prints cobra's Error line and the
+		// usage. From here on an error is a runtime one: no usage, and no
+		// cobra Error line, because Execute logs it once.
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage, cmd.SilenceErrors = true, true
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := signal.NotifyContext(
 				cmd.Context(), os.Interrupt, syscall.SIGTERM,
@@ -50,9 +58,15 @@ var (
 )
 
 func Execute() {
-	err := rootCmd.Execute()
+	cmd, err := rootCmd.ExecuteC()
 
 	if err != nil {
+		// A runtime error (PersistentPreRunE ran and silenced cobra) is
+		// logged here, its one print; a flag error cobra already printed.
+		if cmd.SilenceErrors {
+			errnie.Error(err)
+		}
+
 		os.Exit(1)
 	}
 }

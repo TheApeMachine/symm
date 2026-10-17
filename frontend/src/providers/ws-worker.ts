@@ -10,6 +10,25 @@ const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 10_000;
 
 let currentRoute = "dashboard";
+let pendingCommands: Record<string, unknown>[] = [];
+
+const queueCommand = (command: Record<string, unknown>) => {
+	if (command.type === "hindsight") {
+		pendingCommands = pendingCommands.filter((item) => item.type !== "hindsight");
+	}
+
+	pendingCommands.push(command);
+};
+
+const flushCommands = () => {
+	if (socket === null || socket.readyState !== WebSocket.OPEN) {
+		return;
+	}
+
+	for (const command of pendingCommands) {
+		socket.send(JSON.stringify(command));
+	}
+};
 
 const sendRoute = (route: string) => {
 	currentRoute = route;
@@ -98,6 +117,7 @@ const connect = (url: string) => {
 		if (currentRoute) {
 			sendRoute(currentRoute);
 		}
+		flushCommands();
 	});
 
 	socket.addEventListener("close", () => {
@@ -173,6 +193,7 @@ self.addEventListener("message", (event: MessageEvent) => {
 			}
 
 			reconnectAttempts = 0;
+			pendingCommands = [];
 			teardownSocket();
 			return;
 		case "FOCUS":
@@ -184,20 +205,26 @@ self.addEventListener("message", (event: MessageEvent) => {
 		case "POSITION_EXIT":
 			sendPositionExit(message.symbol ?? "");
 			return;
-		case "COMMAND":
-			// A command the hub must answer (hindsight) is never dropped
-			// quietly: with no open socket it is reported back.
-			if (socket === null || socket.readyState !== WebSocket.OPEN) {
+		case "COMMAND": {
+			const command = message.command;
+
+			if (!command) {
 				self.postMessage({
 					type: "COMMAND_FAILED",
-					command: message.command,
-					error: "hub socket is not open",
+					command,
+					error: "hub command is empty",
 				});
 				return;
 			}
 
-			socket.send(JSON.stringify(message.command));
+			queueCommand(command);
+
+			if (socket !== null && socket.readyState === WebSocket.OPEN) {
+				socket.send(JSON.stringify(command));
+			}
+
 			return;
+		}
 	}
 });
 

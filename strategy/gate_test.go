@@ -153,7 +153,7 @@ func TestChordGate(t *testing.T) {
 		// run drives one tape the way both paths do (symbolTape.step).
 		run := func(gate *chordGate) (*symbolTape, []tapeStep) {
 			grid := nmstore.NewGrid(ctx)
-			tape := newSymbolTape(gate)
+			tape := newSymbolTape(gate, "BTC/USD")
 			steps := make([]tapeStep, 0, len(ticks))
 
 			for _, value := range ticks {
@@ -287,7 +287,7 @@ func TestChordGate(t *testing.T) {
 
 		Convey("A blocked chord leaves the tape as it was, so the same chord can pass later", func() {
 			regions := []*nmstore.Region{{Key: 1, Brightness: 2}, {Key: 4, Brightness: 3}}
-			tape := newSymbolTape(nil)
+			tape := newSymbolTape(nil, "BTC/USD")
 
 			step, ok := tape.advance(regions, &GateReading{Passed: false})
 			So(ok, ShouldBeTrue)

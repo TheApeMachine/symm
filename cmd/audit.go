@@ -78,23 +78,23 @@ var auditCmd = &cobra.Command{
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
-		client := store.NewClient(ctx, "symm")
+		client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
 		if client == nil {
-			return errnie.Error(errnie.Err(
+			return errnie.Err(
 				errnie.Validation,
 				"[audit] unable to open store client",
 				nil,
-			))
+			)
 		}
 
 		engine, err := auditpkg.NewEngine(ctx, client)
 
 		if err != nil {
-			return errnie.Error(err)
+			return err
 		}
 
-		return errnie.Error(engine.Run())
+		return engine.Run()
 	},
 }
 

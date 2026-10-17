@@ -160,6 +160,7 @@ beginHindsight opens the slot for run/symbol and returns the hub command to
 send for it. Frames of any other request are stale and are not applied.
 */
 export const beginHindsight = (run: string, symbol: string) => {
+	settle(true);
 	const slot = symbol === "" ? "index" : "stream";
 	hindsightStore.setState((state) => ({
 		...state,
@@ -173,6 +174,7 @@ abortHindsight fails every stream still in flight, e.g. when the hub socket
 closed under it: the hub ends a replay with its client.
 */
 export const abortHindsight = (reason: string) => {
+	settle(true);
 	hindsightStore.setState((state) => {
 		const fail = (stream: HindsightStream | null) =>
 			stream?.status === "streaming"

@@ -24,6 +24,9 @@ appended.
 type chordGate struct {
 	settings data.PolicyGate
 	solver   *resonance.Solver
+	// carried are the gate moments of the symbols whose coder state the
+	// solver was seeded with (seed); a symbol's tape starts from them.
+	carried map[string]surpriseMoments
 }
 
 /*
@@ -162,27 +165,28 @@ type surpriseMoments struct {
 read steps the solver on one symbol of tick and scores its surprise
 causally: until the symbol is warm nothing passes and nothing accumulates;
 once warm the z-score is taken against the moments before this surprise,
-which is folded in afterwards. A nil reading means the gate is off.
+which is folded in afterwards. The GateReading is nil when the gate is off;
+the Value is the coder's hub reading (energy, surprise, latents, layers).
 */
-func (gate *chordGate) read(moments *surpriseMoments, tick *data.Value, symbol *broker.SymbolTick) (*GateReading, error) {
+func (gate *chordGate) read(moments *surpriseMoments, tick *data.Value, symbol *broker.SymbolTick) (*GateReading, *data.Value, error) {
 	if gate == nil || gate.solver == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	reading, err := gate.solver.Step(tick, symbol)
 
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	surprise, err := resonance.ReadSurprise(reading)
 
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if math.IsNaN(surprise) || math.IsInf(surprise, 0) {
-		return nil, errnie.Err(errnie.Internal, fmt.Sprintf(
+		return nil, nil, errnie.Err(errnie.Internal, fmt.Sprintf(
 			"[gate] %s surprise %g at %s is not finite", symbol.Symbol, surprise, tick.Prefix,
 		), nil)
 	}
@@ -194,14 +198,14 @@ func (gate *chordGate) read(moments *surpriseMoments, tick *data.Value, symbol *
 	out := &GateReading{Surprise: surprise}
 
 	if out.Warm, out.Cold = moments.settle.observe(surprise); !out.Warm {
-		return out, nil
+		return out, reading, nil
 	}
 
 	if moments.count >= 2 {
 		deviation := math.Sqrt(moments.m2 / float64(moments.count-1))
 
 		if !(deviation > 0) {
-			return nil, errnie.Err(errnie.Internal, fmt.Sprintf(
+			return nil, nil, errnie.Err(errnie.Internal, fmt.Sprintf(
 				"[gate] %s surprise has not varied over %d warm solver steps (at %s): no z-score to gate by",
 				symbol.Symbol, moments.count, tick.Prefix,
 			), nil)
@@ -218,5 +222,5 @@ func (gate *chordGate) read(moments *surpriseMoments, tick *data.Value, symbol *
 	moments.mean += delta / float64(moments.count)
 	moments.m2 += delta * (surprise - moments.mean)
 
-	return out, nil
+	return out, reading, nil
 }

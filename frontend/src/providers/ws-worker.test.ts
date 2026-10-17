@@ -151,4 +151,56 @@ describe("ws-worker", () => {
 			JSON.stringify({ type: "position.exit", symbol: "ETH/USD" }),
 		);
 	});
+
+	it("queues hub commands while the socket is connecting and flushes them on open", async () => {
+		const scope = new MockWorkerScope();
+		vi.stubGlobal("self", scope);
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		await import("#/providers/ws-worker");
+		await scope.emit("message", {
+			type: "CONNECT",
+			url: "ws://127.0.0.1:8765/ws",
+		});
+
+		const socket = MockWebSocket.latest;
+		if (socket === null) throw new Error("worker did not create a websocket");
+
+		const command = { type: "hindsight", run: "7", symbol: "BTC/USD" };
+		await scope.emit("message", { type: "COMMAND", command });
+
+		expect(scope.messages).not.toContainEqual(
+			expect.objectContaining({ type: "COMMAND_FAILED" }),
+		);
+		expect(socket.sent).toEqual([]);
+
+		socket.readyState = MockWebSocket.OPEN;
+		await socket.emit("open", {});
+
+		expect(socket.sent).toContainEqual(JSON.stringify(command));
+	});
+
+	it("resends a hindsight command after the socket reconnects", async () => {
+		const { scope, socket } = await connectWorker();
+		await socket.emit("open", {});
+
+		const command = { type: "hindsight", run: "7", symbol: "BTC/USD" };
+		await scope.emit("message", { type: "COMMAND", command });
+		expect(socket.sent).toContainEqual(JSON.stringify(command));
+
+		await socket.emit("close", {});
+
+		const reconnect = new Promise<MockWebSocket>((resolve) => {
+			const timer = setInterval(() => {
+				if (MockWebSocket.latest !== null && MockWebSocket.latest !== socket) {
+					clearInterval(timer);
+					resolve(MockWebSocket.latest);
+				}
+			}, 10);
+		});
+
+		const next = await reconnect;
+		next.readyState = MockWebSocket.OPEN;
+		await next.emit("open", {});
+		expect(next.sent).toContainEqual(JSON.stringify(command));
+	});
 });

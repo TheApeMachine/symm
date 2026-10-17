@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -27,6 +28,7 @@ receive them.
 type frameSink struct {
 	values    []*data.Value
 	cognition []*data.Value
+	resonance []*data.Value
 }
 
 func (sink *frameSink) Write(p []byte) (int, error) {
@@ -36,12 +38,15 @@ func (sink *frameSink) Write(p []byte) (int, error) {
 		return 0, err
 	}
 
-	if value.Origin == data.CognitionOrigin {
+	switch value.Origin {
+	case data.CognitionOrigin:
 		sink.cognition = append(sink.cognition, value)
-		return len(p), nil
+	case resonance.ReadingOrigin:
+		sink.resonance = append(sink.resonance, value)
+	default:
+		sink.values = append(sink.values, value)
 	}
 
-	sink.values = append(sink.values, value)
 	return len(p), nil
 }
 
@@ -403,6 +408,79 @@ func TestSequitur(t *testing.T) {
 		Convey("A tick that is not a stored tick is a loud error", func() {
 			_, err := sequitur.Write([]byte("not a value"))
 			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestSequiturResonance(t *testing.T) {
+	Convey("Given the live Sequitur sink with the surprise gate on", t, func() {
+		defer withGate(true, 0)()
+		types.SetFocus("BTC/USD")
+		defer types.SetFocus("BTC/USD")
+
+		sink := &frameSink{}
+		tree, err := newCognitionTree(&policy{epoch: 42, actions: map[string]string{}}, 2)
+		So(err, ShouldBeNil)
+		sequitur, err := NewSequitur(context.Background(), sink, tree)
+		So(err, ShouldBeNil)
+
+		ticks := featureTicks(40, "BTC/USD", "ETH/USD")
+
+		for _, value := range ticks {
+			_, err := io.Copy(sequitur, value)
+			So(err, ShouldBeNil)
+		}
+
+		Convey("It copies each symbol's gate coder reading to the hub every tick", func() {
+			bySymbol := map[string][]*data.Value{}
+
+			for _, reading := range sink.resonance {
+				So(reading.Origin, ShouldEqual, resonance.ReadingOrigin)
+				So(reading.Role, ShouldEqual, resonance.ReadingRole)
+				bySymbol[reading.Scope] = append(bySymbol[reading.Scope], reading)
+			}
+
+			So(bySymbol["BTC/USD"], ShouldHaveLength, len(ticks))
+			So(bySymbol["ETH/USD"], ShouldHaveLength, len(ticks))
+
+			for symbol, readings := range bySymbol {
+				for idx, reading := range readings {
+					So(reading.Scope, ShouldEqual, symbol)
+					So(reading.Tick, ShouldEqual, ticks[idx].Tick)
+
+					surprise, err := resonance.ReadSurprise(reading)
+					So(err, ShouldBeNil)
+					So(surprise, ShouldEqual, data.Metrics(reading)["surprise"])
+					So(data.Metrics(reading), ShouldContainKey, "energy")
+					So(data.Metrics(reading), ShouldContainKey, "latent_0")
+					So(data.Metrics(reading), ShouldContainKey, "latent_1")
+				}
+			}
+		})
+	})
+}
+
+func TestSequiturResonanceOff(t *testing.T) {
+	Convey("Given the live Sequitur sink with the surprise gate off", t, func() {
+		defer withGate(false, 0)()
+		types.SetFocus("BTC/USD")
+		defer types.SetFocus("BTC/USD")
+
+		sink := &frameSink{}
+		tree, err := newCognitionTree(&policy{epoch: 42, actions: map[string]string{}}, 2)
+		So(err, ShouldBeNil)
+		sequitur, err := NewSequitur(context.Background(), sink, tree)
+		So(err, ShouldBeNil)
+
+		ticks := featureTicks(8, "BTC/USD")
+
+		for _, value := range ticks {
+			_, err := io.Copy(sequitur, value)
+			So(err, ShouldBeNil)
+		}
+
+		Convey("It copies no coder reading: there is no solver", func() {
+			So(sink.resonance, ShouldBeEmpty)
 		})
 	})
 }

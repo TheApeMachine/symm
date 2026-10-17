@@ -19,6 +19,7 @@ import {
 	Toolbar,
 	Typography,
 } from "#/components/ui";
+import { ModelProblem } from "./model-problem";
 import { frameToSnapshot } from "./sequitur-engine";
 import { SequiturLaminarStrata } from "./sequitur-laminar-strata";
 import { SequiturRulebookDeck } from "./sequitur-rulebook-deck";
@@ -413,6 +414,7 @@ export const SequiturGrammarViz = () => {
 			fullWidth
 			className="h-full min-h-0 bg-(--bg) text-(--f2) font-mono"
 		>
+			<ModelProblem />
 			<Toolbar
 				size="s"
 				className="border-b border-(--line) bg-(--surface) px-3 gap-3"

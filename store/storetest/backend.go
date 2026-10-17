@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -142,6 +143,32 @@ func (backend *Backend) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		}
 
 		writer.Header().Set("Content-Type", "application/octet-stream")
+
+		// A ranged GET (the SDK's download manager asks for parts) is
+		// answered as S3 does: 206 with Content-Range, so the manager knows
+		// the object's size instead of asking again.
+		if spec := request.Header.Get("Range"); spec != "" {
+			var first, last int
+
+			if _, err := fmt.Sscanf(spec, "bytes=%d-%d", &first, &last); err != nil || first < 0 || first > last {
+				http.Error(writer, "unsupported range "+spec, http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+
+			if first >= len(payload) {
+				writer.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", len(payload)))
+				http.Error(writer, "range beyond the object", http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+
+			last = min(last, len(payload)-1)
+			writer.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", first, last, len(payload)))
+			writer.Header().Set("Content-Length", strconv.Itoa(last-first+1))
+			writer.WriteHeader(http.StatusPartialContent)
+			writer.Write(payload[first : last+1])
+			return
+		}
+
 		writer.WriteHeader(http.StatusOK)
 		writer.Write(payload)
 		return

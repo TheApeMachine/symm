@@ -21,9 +21,10 @@ is a workspace sink: every completed tick is io.Copy'd into it, each symbol's
 grid frame advances that symbol's tape exactly as the Trainer's does
 (symbolTape.advance). After every new chord the CognitionTree is asked for
 the deepest stored path the symbol's recent tokens end on; when paper
-trading is on (Trade), the matched action goes to Training.Act. For the
-focused symbol it io.Copy's one SequiturFrame to the hub per new chord. It
-never stores.
+trading is on (Trade), the matched action goes to Training.Act. It
+io.Copy's each symbol's gate coder reading every tick (the x-ray scatter
+needs every carrier; the dashboard chart still displays the focused ring)
+and one SequiturFrame per new chord of the focused symbol. It never stores.
 */
 type Sequitur struct {
 	ctx    context.Context
@@ -105,10 +106,16 @@ func NewSequitur(ctx context.Context, hub io.Writer, tree *CognitionTree) (*Sequ
 		return nil, errnie.Err(errnie.Validation, "[sequitur] needs the hub and a cognition tree", nil)
 	}
 
-	gate, err := newChordGate(ctx, system.Cfg.Resonance)
+	// The tree's seeded gate continues its policy epoch's coder state; with
+	// none (gate off, or no model to trade) the tapes gate from cold.
+	gate := tree.seeded
 
-	if err != nil {
-		return nil, err
+	if gate == nil {
+		var err error
+
+		if gate, err = newChordGate(ctx, system.Cfg.Resonance); err != nil {
+			return nil, err
+		}
 	}
 
 	if !tree.Empty() && !tree.Gate().Same(gate.settings) {
@@ -160,7 +167,7 @@ func (sequitur *Sequitur) Write(p []byte) (int, error) {
 		tape, ok := sequitur.tapes[symbol]
 
 		if !ok {
-			tape = newSymbolTape(sequitur.gate)
+			tape = newSymbolTape(sequitur.gate, symbol)
 			tape.grammar.Trace()
 			sequitur.tapes[symbol] = tape
 		}
@@ -172,6 +179,10 @@ func (sequitur *Sequitur) Write(p []byte) (int, error) {
 		}
 
 		events := tape.grammar.Drain()
+
+		if err := sequitur.emitReading(step.Reading); err != nil {
+			return 0, err
+		}
 
 		if !ok {
 			continue
@@ -247,6 +258,20 @@ func (sequitur *Sequitur) policy(matched bool, match CognitionMatch, trader *Tra
 		Action:  match.Action,
 		Outcome: outcome,
 	}
+}
+
+func (sequitur *Sequitur) emitReading(reading *data.Value) error {
+	if reading == nil {
+		return nil
+	}
+
+	if _, err := io.Copy(sequitur.hub, reading); err != nil {
+		return errnie.Err(errnie.IO, fmt.Sprintf(
+			"[sequitur] resonance reading of %s at tick %d to the hub", reading.Scope, reading.Tick,
+		), err)
+	}
+
+	return nil
 }
 
 func (sequitur *Sequitur) emit(

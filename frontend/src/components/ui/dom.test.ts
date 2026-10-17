@@ -134,6 +134,19 @@ describe("dom utilities", () => {
 			expect(el.getAttribute("aria-valuenow")).toBe("49.1");
 		});
 
+		it("fills a meter completely for readings above 1", () => {
+			const el = document.createElement("div");
+			el.setAttribute("data-metric-meter", "contrast");
+			const fill = document.createElement("div");
+			fill.setAttribute("data-meter-fill", "true");
+			el.appendChild(fill);
+
+			renderValue(el, { name: "contrast", raw: 14.349, snm: 14.349 });
+
+			expect(fill.style.width).toBe("100%");
+			expect(el.getAttribute("aria-valuenow")).toBe("100");
+		});
+
 		it("resets value on standby", () => {
 			const el = document.createElement("span");
 			renderValue(el, 123.456);

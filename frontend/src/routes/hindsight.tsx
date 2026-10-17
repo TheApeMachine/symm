@@ -247,21 +247,32 @@ const HindsightRoute = () => {
 
 	// Once the index is complete, open the instrument that moved furthest.
 	useEffect(() => {
-		if (index?.status !== "done" || symbol !== null || summaries.length === 0)
+		if (
+			index?.status !== "done" ||
+			index.run !== run ||
+			symbol !== null ||
+			summaries.length === 0
+		)
 			return;
 		const top = summaries.reduce((best, row) =>
 			row.topExcursion > best.topExcursion ? row : best,
 		);
 		setSymbol(top.symbol);
-	}, [index, symbol, summaries]);
+	}, [index, run, symbol, summaries]);
 
 	useEffect(() => {
-		if (run === null || symbol === null || index?.status !== "done") return;
+		if (
+			run === null ||
+			symbol === null ||
+			index?.status !== "done" ||
+			index.run !== run
+		)
+			return;
 		setViewport(null);
 		setPlayhead(null);
 		setEpisode(null);
 		send(run, symbol);
-	}, [run, symbol, index?.status]);
+	}, [run, symbol, index?.status, index?.run]);
 
 	const current =
 		stream !== null && stream.run === run && stream.symbol === symbol

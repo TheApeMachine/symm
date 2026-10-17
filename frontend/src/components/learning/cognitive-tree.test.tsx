@@ -27,6 +27,23 @@ const tree = {
 			policy: "NOOP",
 		},
 	],
+	problem: null,
+};
+
+const mismatch = {
+	...tree,
+	epoch: "0",
+	paths: 0,
+	trading: false,
+	gate: null,
+	keys: [],
+	branches: [],
+	problem: {
+		level: "error",
+		reason:
+			"newest policy epoch 7 was trained under gate enabled=false; this run is configured for gate enabled=true",
+		fix: "re-run detect and train on the tick epoch 3",
+	},
 };
 
 afterEach(() => {
@@ -112,6 +129,54 @@ describe("CognitiveTree", () => {
 		expect(screen.getByTestId("cognitive-tree-empty").textContent).toContain(
 			"paper trading inactive: no trained paths",
 		);
+	});
+
+	it("shows the model problem as a banner with its exact reason and fix", () => {
+		expect(ingestCognitionFrame("tree", mismatch)).toBe(true);
+		render(<CognitiveTree />);
+		const banner = screen.getByRole("alert");
+		expect(banner.getAttribute("data-problem")).toBe("error");
+		expect(banner.textContent).toContain(
+			"paper trading inactive (model error)",
+		);
+		expect(banner.textContent).toContain(mismatch.problem.reason);
+		expect(banner.textContent).toContain(
+			"Fix: re-run detect and train on the tick epoch 3",
+		);
+	});
+
+	it("shows no stored model as a warning banner", () => {
+		ingestCognitionFrame("tree", {
+			...mismatch,
+			problem: {
+				level: "warning",
+				reason: "no trained policy is stored under policy/",
+				fix: "run detect and train on a collected tick epoch",
+			},
+		});
+		render(<CognitiveTree />);
+		const banner = screen.getByRole("alert");
+		expect(banner.getAttribute("data-problem")).toBe("warning");
+		expect(banner.textContent).not.toContain("model error");
+	});
+
+	it("refuses a tree frame whose problem is malformed, or missing", () => {
+		const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+		expect(
+			ingestCognitionFrame("tree", {
+				...mismatch,
+				problem: { level: "fatal", reason: "x", fix: "y" },
+			}),
+		).toBe(false);
+		expect(
+			ingestCognitionFrame("tree", {
+				...mismatch,
+				problem: { level: "error", reason: "x", fix: "" },
+			}),
+		).toBe(false);
+		const { problem: _dropped, ...without } = tree;
+		expect(ingestCognitionFrame("tree", without)).toBe(false);
+		errors.mockRestore();
 	});
 
 	it("shows the loaded epoch, path count and gate", () => {

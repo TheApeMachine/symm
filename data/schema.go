@@ -1,7 +1,9 @@
 package data
 
 import (
+	"encoding/binary"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,6 +20,7 @@ The storage schema: every key and layer the commands exchange, in one place.
 	| detect  | detector/<class>/<symbol>/<epoch>/<c_tick>.bin | train, audit        |
 	| detect  | detector/watermark/all/<epoch>/<last tick>.bin | train               |
 	| train   | policy/<action>/all/<policy epoch>/<seq>.bin   | run (CognitionTree), audit, hindsight |
+	| train   | resonance/state/<symbol>/<policy epoch>/<last tick>.bin | train (next), run (CognitionTree) |
 	| paper   | paper/<action>/<symbol>/<epoch>/<seq>.bin      | audit (realization) |
 
 run (`make run`) never writes storage: it reads policies through a
@@ -44,11 +47,13 @@ Hub-only Values (streamed to the dashboard, never stored):
 
 	| writer             | Origin/Role/Scope           | layer                          |
 	|--------------------|-----------------------------|--------------------------------|
+	| run (strategy.Sequitur) | resonance/reading/<symbol> | each symbol's chord-gate coder reading (logic/resonance.Solver.Step), every tick |
 	| run (strategy.Sequitur) | sequitur/grammar/<symbol> | LayerGrammar: strategy.SequiturFrame JSON |
 	| run (strategy.Training) | paper/<action>/<symbol>   | PaperKeys vector + tags (also appended to paper.records_path) |
 	| run (hindsight.Service) | hindsight/<role>/<symbol> | see HindsightOrigin: one client's replay of a stored run |
 	| run (strategy.PublishTree) | cognition/tree/all     | LayerCognition: strategy.CognitionFrame JSON, the hub's retained frame |
 	| run (strategy.Sequitur) | cognition/match/<symbol>  | LayerCognition: strategy.CognitionMatchFrame JSON, per appended chord |
+	| run (strategy.Training) | position/<event>/<symbol> | LayerPosition: strategy.PositionFrame JSON, per paper round-trip event and per tick mark of an open position |
 */
 
 /*
@@ -63,6 +68,16 @@ const (
 	CognitionTreeRole  = "tree"
 	CognitionMatchRole = "match"
 	LayerCognition     = "cognition"
+)
+
+/*
+PositionOrigin identifies paper trading's live round trips on the hub: Role
+the event (or "mark"), Scope the symbol, Epoch the policy epoch traded, one
+LayerPosition JSON layer.
+*/
+const (
+	PositionOrigin = "position"
+	LayerPosition  = "position"
 )
 
 /*
@@ -443,10 +458,18 @@ func (gate PolicyGate) Same(other PolicyGate) bool {
 }
 
 func (gate PolicyGate) String() string {
-	return fmt.Sprintf(
-		"gate enabled=%t surprise_z=%g warm-up %s learning_rate=%g (policy epoch %d, ticks %d)",
-		gate.Enabled, gate.SurpriseZ, gate.Warmup, gate.LearningRate, gate.Epoch, gate.TickEpoch,
+	settings := fmt.Sprintf(
+		"gate enabled=%t surprise_z=%g warm-up %s learning_rate=%g",
+		gate.Enabled, gate.SurpriseZ, gate.Warmup, gate.LearningRate,
 	)
+
+	// A configuration (no epochs: what a run is set up for) is only its
+	// settings; a stored gate also names where it was trained.
+	if gate.Epoch == 0 && gate.TickEpoch == 0 {
+		return settings
+	}
+
+	return fmt.Sprintf("%s (policy epoch %d, ticks %d)", settings, gate.Epoch, gate.TickEpoch)
 }
 
 /*
@@ -589,6 +612,167 @@ func PolicyPath(value *Value) (string, error) {
 	}
 
 	return "", errnie.Err(errnie.UnprocessableContent, "data: policy "+value.Prefix+" has no "+PolicyPathTag+" tag", nil)
+}
+
+/*
+Coder state: one Value per symbol the chord gate's solver learned, written
+by train under the policy epoch it publishes (Epoch), Tick the last tick it
+trained on, so a later train continues the newest state trained under the
+same gate settings and make run the state of the policy epoch it trades.
+Origin CoderOrigin, Role CoderStateRole, Scope the symbol. Layers:
+
+	| layer            | content                                                  |
+	|------------------|----------------------------------------------------------|
+	| CoderStateKeys   | float64 vector, below                                    |
+	| CoderStateLayer  | the solver's symbol state (logic/resonance.Solver.SaveSymbol) |
+	| PolicyGateLayer  | the gate it was trained under (as on that epoch's policies) |
+
+	| key            | meaning                                                    |
+	|----------------|------------------------------------------------------------|
+	| pending_dropped| predictions issued and not yet resolved when it was saved; dropped, never resolved across the gap |
+	| settle_steps   | the gate warm-up's error count (strategy settling)         |
+	| settle_fast    | its fast error average                                     |
+	| settle_slow    | its slow error average                                     |
+	| warm           | 1 once the symbol warmed up, else 0                        |
+	| surprise_count | warm solver steps folded into the surprise moments          |
+	| surprise_mean  | their mean surprise                                        |
+	| surprise_m2    | their sum of squared deviations (Welford)                  |
+*/
+const (
+	CoderOrigin     = "resonance"
+	CoderStateRole  = "state"
+	CoderStateLayer = "coder"
+)
+
+var CoderStateKeys = []string{
+	"pending_dropped", "settle_steps", "settle_fast", "settle_slow", "warm",
+	"surprise_count", "surprise_mean", "surprise_m2",
+}
+
+/*
+CoderStatesPrefix is the prefix of every stored coder state.
+*/
+func CoderStatesPrefix() string { return CoderOrigin + "/" + CoderStateRole + "/" }
+
+/*
+CoderStateEpoch is the policy epoch of a stored coder state key (its
+second-to-last segment: a symbol holds "/").
+*/
+func CoderStateEpoch(key string) (uint64, error) {
+	segments := strings.Split(key, "/")
+
+	if !strings.HasPrefix(key, CoderStatesPrefix()) || len(segments) < 5 || len(segments[len(segments)-2]) != 19 {
+		return 0, errnie.Err(errnie.UnprocessableContent, "data: coder state key "+key+" has no %019d policy epoch", nil)
+	}
+
+	epoch, err := strconv.ParseUint(segments[len(segments)-2], 10, 64)
+
+	if err != nil {
+		return 0, errnie.Err(errnie.UnprocessableContent, "data: coder state key "+key+" has no %019d policy epoch", err)
+	}
+
+	return epoch, nil
+}
+
+/*
+CoderState is one stored coder state's content.
+*/
+type CoderState struct {
+	Symbol string
+	Gate   PolicyGate
+	Fields map[string]float64
+	Blob   []byte
+}
+
+/*
+AppendCoderState writes vector (CoderStateKeys order), the solver state
+blob and the gate onto value.
+*/
+func AppendCoderState(value *Value, vector []float64, blob []byte, gate PolicyGate) error {
+	if len(vector) != len(CoderStateKeys) {
+		return errnie.Err(errnie.Validation, fmt.Sprintf(
+			"data: coder state %s has %d values for %d keys", value.Prefix, len(vector), len(CoderStateKeys),
+		), nil)
+	}
+
+	if len(blob) == 0 {
+		return errnie.Err(errnie.Validation, "data: coder state "+value.Prefix+" has no solver state", nil)
+	}
+
+	AppendVector(value, vector, CoderStateKeys...)
+	// A raw layer: AppendJSON copies the bytes and indexes them; it does
+	// not parse them.
+	value.AppendJSON(blob, value.Prefix+"/"+CoderStateLayer)
+	return AppendPolicyGate(value, gate)
+}
+
+/*
+ReadCoderState reads a stored coder state; one missing a layer, or whose
+gate does not read, is an error.
+*/
+func ReadCoderState(value *Value) (CoderState, error) {
+	state := CoderState{Symbol: value.Scope}
+
+	if value.Origin != CoderOrigin || value.Role != CoderStateRole || value.Scope == "" {
+		return state, errnie.Err(errnie.UnprocessableContent, "data: "+value.Prefix+" is not a coder state", nil)
+	}
+
+	vectorIndex := value.Prefix + "/" + strings.Join(CoderStateKeys, "/")
+	blobIndex := value.Prefix + "/" + CoderStateLayer
+
+	for index, layer := range value.Layers[:value.visible()] {
+		if index >= len(value.Index) {
+			break
+		}
+
+		switch value.Index[index] {
+		case vectorIndex:
+			vector, err := floats(layer, len(CoderStateKeys))
+
+			if err != nil {
+				return state, errnie.Err(errnie.UnprocessableContent, "data: coder state "+value.Prefix, err)
+			}
+
+			state.Fields = make(map[string]float64, len(CoderStateKeys))
+
+			for key, name := range CoderStateKeys {
+				state.Fields[name] = vector[key]
+			}
+		case blobIndex:
+			state.Blob = layer
+		}
+	}
+
+	if state.Fields == nil || len(state.Blob) == 0 {
+		return state, errnie.Err(errnie.UnprocessableContent, "data: coder state "+value.Prefix+" lacks its "+
+			strings.Join(CoderStateKeys, "/")+" vector or its "+CoderStateLayer+" layer", nil)
+	}
+
+	gate, err := ReadPolicyGate(value)
+
+	if err != nil {
+		return state, err
+	}
+
+	state.Gate = gate
+	return state, nil
+}
+
+/*
+floats reads a float64 vector layer of exactly n values.
+*/
+func floats(layer []byte, n int) ([]float64, error) {
+	if len(layer) != n*8 {
+		return nil, fmt.Errorf("layer holds %d bytes, not %d float64s", len(layer), n)
+	}
+
+	out := make([]float64, n)
+
+	for index := range out {
+		out[index] = math.Float64frombits(binary.LittleEndian.Uint64(layer[index*8:]))
+	}
+
+	return out, nil
 }
 
 /*
@@ -761,6 +945,21 @@ Epoch the run (the collect epoch), Scope the symbol ("" for the run index).
 	| HindsightError             | LayerHindsightError: the error text; the stream ended on it |
 
 A tick's bid or ask is NaN where its price layer holds no such side.
+
+The hub's "detections" command (the Historical runs tab) streams what detect
+wrote, in the same frames but under Origin DetectionsOrigin, so neither
+stream takes the other's frames: with no run, one HindsightDetectionRun per epoch
+detect labelled (its watermark, Epoch the tick epoch), newest first; with a
+run, every excursion of it (ExcursionOrigin, verbatim); with a run, a symbol,
+a class and a C tick, that excursion's trades from its A tick to its D tick,
+one HindsightTrades frame per stored tick (Tick, Timestamp the tick's), its
+layers DetectionTradeLayers, each one value per trade of the symbol at that
+tick. A done frame closes each complete stream.
+
+	| Role                       | layers                                                 |
+	|----------------------------|--------------------------------------------------------|
+	| HindsightDetectionRun      | DetectionRunKeys: the watermark and the class counts   |
+	| HindsightTrades            | DetectionTradeLayers: seq (the symbol's 1-based trade index in the epoch, detect's a_idx..d_idx), price, at (trade time, ns) |
 */
 const (
 	HindsightOrigin     = "hindsight"
@@ -769,7 +968,25 @@ const (
 	HindsightDone       = "done"
 	HindsightError      = "error"
 	LayerHindsightError = "error"
+
+	// DetectionsOrigin is the origin of the "detections" command's frames
+	// (the roles below and the Hindsight ones they share), never stored.
+	DetectionsOrigin      = "detections"
+	HindsightDetectionRun = "detection_run"
+	HindsightTrades       = "trades"
 )
+
+/*
+DetectionRunKeys are DetectorWatermarkKeys, then the epoch's stored
+excursions per ExcursionClasses.
+*/
+var DetectionRunKeys = append(slices.Clone(DetectorWatermarkKeys), ExcursionClasses...)
+
+/*
+DetectionTradeLayers are a HindsightTrades frame's layers, each one vector
+indexed <prefix>/<layer>.
+*/
+var DetectionTradeLayers = []string{"seq", "price", "at"}
 
 var HindsightTickKeys = []string{"bid", "ask", "trade_price", "trade_qty", "trades"}
 
