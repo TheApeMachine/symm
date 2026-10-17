@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -13,6 +12,12 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
+
+/*
+ScanVersion bumps when replay semantics change enough to invalidate stored
+scan stamps and working drafts.
+*/
+const ScanVersion = 1
 
 type detectorState int
 
@@ -179,18 +184,15 @@ func (detector *Detector) Step(
 }
 
 func (detector *Detector) processTrade(peer *data.Value) {
-	epoch := int64(peer.Timestamp)
-	label := peer.Scope
-
-	if detector.epoch == 0 || detector.label == "" ||
-		detector.epoch != epoch || detector.label != label {
-		detector.flushConfirmedOnReset()
-		detector.resetTape(epoch, label)
+	if peer == nil {
+		return
 	}
 
 	var priceF float64
+
 	if len(peer.Layers) > 0 {
 		priceF = data.Attribute[float64](peer.Layers[0], "data", 0, "price")
+
 		if priceF <= 0 {
 			priceF = data.Attribute[float64](peer.Layers[0], "price")
 		}
@@ -200,14 +202,33 @@ func (detector *Detector) processTrade(peer *data.Value) {
 		return
 	}
 
-	priceDec := decimal.NewFromFloat64(priceF)
+	detector.stepTradePoint(
+		int64(peer.Timestamp),
+		peer.Scope,
+		tradePoint{
+			tick:   int64(peer.Tick),
+			seqIdx: int64(peer.SeqIdx),
+			price:  decimal.NewFromFloat64(priceF),
+			priceF: priceF,
+			trade:  peer,
+		},
+	)
+}
 
-	pt := tradePoint{
-		tick:   int64(peer.Tick),
-		seqIdx: int64(peer.SeqIdx),
-		price:  priceDec,
-		priceF: priceF,
-		trade:  peer,
+/*
+stepTradePoint runs one print through the excursion state machine. Live
+spot:trade frames reach it through processTrade and sonic path reads; replay
+steps stored tape prints directly without synthesizing JSON layers.
+*/
+func (detector *Detector) stepTradePoint(epoch int64, label string, pt tradePoint) {
+	if pt.priceF <= 0 || math.IsNaN(pt.priceF) || math.IsInf(pt.priceF, 0) {
+		return
+	}
+
+	if detector.epoch == 0 || detector.label == "" ||
+		detector.epoch != epoch || detector.label != label {
+		detector.flushConfirmedOnReset()
+		detector.resetTape(epoch, label)
 	}
 
 	detector.updateMicrostructure(pt)
@@ -856,6 +877,15 @@ func (detector *Detector) flushConfirmedOnReset() {
 	}
 }
 
+func (detector *Detector) replayTrade(frame *data.Value, symbol string, tradeID int64, price float64) {
+	detector.stepTradePoint(int64(frame.Epoch), symbol, tradePoint{
+		tick:   int64(frame.Tick),
+		seqIdx: tradeID,
+		price:  decimal.NewFromFloat64(price),
+		priceF: price,
+	})
+}
+
 /*
 Replay steps one stored tick. The book and fee are the ones stamped on that
 tick; a missing or invalid book is skipped. Returned values are the excursions
@@ -891,18 +921,7 @@ func (detector *Detector) Replay(
 			continue
 		}
 
-		buf, err := sonic.Marshal(map[string]float64{"price": price})
-
-		if err != nil {
-			continue
-		}
-
-		peer := data.NewValue("spot:trade", "update", tick.Symbol)
-		peer.Timestamp = frame.Epoch
-		peer.Tick = frame.Tick
-		peer.SeqIdx = uint64(trade.TradeID)
-		peer.AppendJSON(buf, data.LayerTrade)
-		detector.processTrade(peer)
+		detector.replayTrade(frame, tick.Symbol, trade.TradeID, price)
 	}
 
 	out := append([]*data.Value(nil), detector.emitted[before:]...)

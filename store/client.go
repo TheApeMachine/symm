@@ -8,6 +8,7 @@ import (
 	"iter"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -17,6 +18,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/store/keyindex"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -27,6 +29,8 @@ type Client struct {
 	downloader *manager.Downloader
 	uploader   *manager.Uploader
 	slots      chan struct{}
+	keysMu     sync.Mutex
+	keys       *keyindex.Index
 }
 
 var _ io.ReadWriteCloser = (*Client)(nil)
@@ -79,7 +83,72 @@ func NewClient(ctx context.Context, bucket string) *Client {
 		downloader: manager.NewDownloader(client),
 		uploader:   manager.NewUploader(client),
 		slots:      make(chan struct{}, system.Cfg.Storage.S3.MaxIdleConns),
+		keys:       keyindex.New(),
 	}
+}
+
+/*
+RememberObjectKey indexes a listed storage key in the in-memory radix views.
+*/
+func (client *Client) RememberObjectKey(key string) {
+	if client == nil || key == "" {
+		return
+	}
+
+	client.keysMu.Lock()
+	defer client.keysMu.Unlock()
+
+	next, err := client.keys.InsertObjectKey(key)
+
+	if err == nil {
+		client.keys = next
+	}
+}
+
+/*
+CachedObject returns a body previously stored with CacheObject.
+*/
+func (client *Client) CachedObject(key string) ([]byte, bool) {
+	if client == nil {
+		return nil, false
+	}
+
+	client.keysMu.Lock()
+	defer client.keysMu.Unlock()
+
+	return client.keys.Object(key)
+}
+
+/*
+CacheObject stores an object body for later reads of the same canonical key.
+*/
+func (client *Client) CacheObject(key string, body []byte) {
+	if client == nil || key == "" || len(body) == 0 {
+		return
+	}
+
+	client.keysMu.Lock()
+	defer client.keysMu.Unlock()
+
+	client.keys = client.keys.StoreObject(key, body)
+}
+
+/*
+WalkScopeKeys visits object keys registered under the scope-first view, for
+example every draft object whose scope is BTC/USD.
+*/
+func (client *Client) WalkScopeKeys(scope string, yield func(string) bool) {
+	if client == nil {
+		return
+	}
+
+	client.keysMu.Lock()
+	index := client.keys
+	client.keysMu.Unlock()
+
+	index.WalkScopePrefix(scope, func(entry *keyindex.Entry) bool {
+		return yield(entry.Canonical)
+	})
 }
 
 func (client *Client) acquire(ctx context.Context) error {

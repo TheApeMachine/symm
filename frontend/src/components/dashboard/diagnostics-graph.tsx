@@ -12,28 +12,86 @@ export type DiagnosticsSelection =
 	| { kind: "group"; name: string };
 
 /*
-HEARTBEAT_NS is roughly how often a healthy stage's own gap should be, used
-only to size the "slight vs high" latency bands below as fractions of a beat
-rather than free-floating magic numbers.
+CHEAP_NS is the work below which a stage is not a bottleneck no matter how
+it compares with its neighbours: a few hundred microseconds is the noise
+floor of this pipeline, not a stall.
 */
-const HEARTBEAT_NS = 250_000_000;
+const CHEAP_NS = 200_000;
+const WAIT_MARK_NS = 50_000;
+
+/*
+GROUP_ORDER is the only sequence the diagram and the stage list share.
+Anything outside it sorts after the known rings, then by name, so a new
+stage cannot shuffle the ones already on screen.
+*/
+const GROUP_ORDER = ["venue", "ingress", "signal", "strategy", "sink"];
+
+export const compareStages = (
+	a: { label: string; group: string; stage: number },
+	b: { label: string; group: string; stage: number },
+): number => {
+	const rank = (group: string) => {
+		const index = GROUP_ORDER.indexOf(group);
+		return index < 0 ? GROUP_ORDER.length : index;
+	};
+
+	return (
+		rank(a.group) - rank(b.group) ||
+		a.stage - b.stage ||
+		a.label.localeCompare(b.label)
+	);
+};
+
+/*
+stageMarks names the stages whose smoothed work or wait is actually in the
+lead. The average, not the last sample, is what gets marked, so a single
+tick trading places with its neighbour does not repaint the row.
+*/
+export const stageMarks = (nodes: Iterable<NodeStats>) => {
+	let peakWork = 0;
+	let peakWait = 0;
+
+	for (const node of nodes) {
+		if (node.side) continue;
+		peakWork = Math.max(peakWork, node.avgWorkNs ?? 0);
+		peakWait = Math.max(peakWait, node.avgWaitNs ?? 0);
+	}
+
+	const bottleneck = new Set<string>();
+	const waiting = new Set<string>();
+
+	for (const node of nodes) {
+		if (node.side) continue;
+
+		const work = node.avgWorkNs ?? 0;
+		const wait = node.avgWaitNs ?? 0;
+
+		if (work >= CHEAP_NS && work >= peakWork * 0.67) bottleneck.add(node.label);
+		if (wait >= WAIT_MARK_NS && wait >= peakWait * 0.67) waiting.add(node.label);
+	}
+
+	return { bottleneck, waiting };
+};
 
 type HealthTone = "healthy" | "slight" | "high";
 
-const edgeHealth = (latencyNs: number | undefined): HealthTone => {
+/*
+pressureOf colours a stage by its share of the slowest stage on the last
+tick. An absolute threshold painted every hop red whenever a trade was a
+few milliseconds apart, which is the cadence of the venue, not the cost of
+the stage.
+*/
+const pressureOf = (workNs: number | undefined, peakNs: number): HealthTone => {
 	if (
-		latencyNs === undefined ||
-		!Number.isFinite(latencyNs) ||
-		latencyNs <= 0
+		workNs === undefined ||
+		!Number.isFinite(workNs) ||
+		workNs <= 0 ||
+		workNs < CHEAP_NS
 	) {
 		return "healthy";
 	}
 
-	if (latencyNs < HEARTBEAT_NS / 10) {
-		return "healthy";
-	}
-
-	if (latencyNs < HEARTBEAT_NS) {
+	if (peakNs <= 0 || workNs < peakNs * 0.67 || workNs < 1_000_000) {
 		return "slight";
 	}
 
@@ -168,6 +226,13 @@ export const formatNanos = (nanos: number | undefined): string => {
 	}
 
 	return `${(nanos / 1_000_000_000).toFixed(2)}s`;
+};
+
+export const formatBytes = (bytes: number | undefined): string => {
+	if (bytes === undefined || !Number.isFinite(bytes) || bytes <= 0) return "—";
+	if (bytes < 1024) return `${bytes.toFixed(0)} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 };
 
 export const formatRate = (avgGapNs: number): string => {
@@ -1116,14 +1181,24 @@ export const buildDiagnosticsGraph = (
 	edges: Map<string, EdgeStats>,
 	panel: { w: number; h: number } = DEFAULT_PANEL,
 ) => {
-	const nodeIds = Array.from(nodes.keys());
+	const nodeIds = Array.from(nodes.keys()).sort((a, b) => {
+		const left = nodes.get(a);
+		const right = nodes.get(b);
+
+		if (left === undefined || right === undefined) return a.localeCompare(b);
+
+		return compareStages(left, right);
+	});
 	// Sibling stamps from one handler group are dropped before anything else
 	// sees them: they are the same barrier reporting itself in race order, so
 	// keeping them would both tangle the wiring and push concurrent stages
-	// onto separate layers as though they fed each other.
-	const edgeList = Array.from(edges.values()).filter((edge) =>
-		isHop(nodes, edge),
-	);
+	// onto separate layers as though they fed each other. The remaining hops
+	// are sorted so the layout seed does not follow goroutine completion.
+	const edgeList = Array.from(edges.values())
+		.filter((edge) => isHop(nodes, edge))
+		.sort(
+			(a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to),
+		);
 	const { placements, groups } = autoLayout(nodeIds, nodes, edgeList, panel);
 
 	const attachments = new Map<
@@ -1570,6 +1645,8 @@ const StageNode = ({
 	extent,
 	stage,
 	state,
+	workHot,
+	waitHot,
 	density,
 	selected,
 	dimmed,
@@ -1580,6 +1657,8 @@ const StageNode = ({
 	extent: Extent;
 	stage: NodeStats | undefined;
 	state: StageState;
+	workHot: boolean;
+	waitHot: boolean;
 	density: NodeDensity;
 	selected: boolean;
 	dimmed: boolean;
@@ -1660,15 +1739,16 @@ const StageNode = ({
 			fixed 3ch/7ch/6ch grid truncated real readings like "peak 1.5K". */}
 			{density !== "name" ? (
 				<div className="relative grid grid-cols-[auto_1fr_auto] items-baseline gap-x-1.5 font-mono">
-					<span className={cn("uppercase text-(--f4)", type.meta)}>rate</span>
+					<span className={cn("uppercase text-(--f4)", type.meta)}>work</span>
 					<span
 						className={cn(
-							"text-right font-bold tabular-nums text-(--acc)",
+							"text-right font-bold tabular-nums",
 							type.rate,
+							workHot ? "text-(--down)" : "text-(--acc)",
 							stage === undefined && "text-(--f4)",
 						)}
 					>
-						{stage === undefined ? "—" : formatRate(stage.avgGapNs)}
+						{formatNanos(stage?.lastWorkNs)}
 					</span>
 					<span className={cn("text-right uppercase", type.meta, tone.text)}>
 						{state}
@@ -1682,14 +1762,12 @@ const StageNode = ({
 						type.meta,
 					)}
 				>
-					<span className="text-(--f4)">last</span>
+					<span className="text-(--f4)">avg</span>
 					<span className="text-right tabular-nums">
-						{formatNanos(stage?.lastGapNs)}
+						{formatNanos(stage?.avgWorkNs)}
 					</span>
 					<span className="text-right tabular-nums">
-						{stage !== undefined
-							? `${formatCount(stage.seqCount)} ops`
-							: "unseen"}
+						peak {formatNanos(stage?.maxWorkNs)}
 					</span>
 				</div>
 			) : null}
@@ -1700,19 +1778,20 @@ const StageNode = ({
 						type.meta,
 					)}
 				>
-					<span className="text-(--f4)">bklg</span>
+					<span className="text-(--f4)">wait</span>
 					<span
 						className={cn(
 							"text-right font-bold tabular-nums",
-							pressure === "backed-up" && "text-(--down)",
-							pressure === "building" && "text-(--warn)",
-							pressure === "clear" && "text-(--f3)",
+							waitHot && "text-(--warn)",
+							!waitHot && pressure === "backed-up" && "text-(--down)",
+							!waitHot && pressure === "building" && "text-(--warn)",
+							!waitHot && pressure === "clear" && "text-(--f3)",
 						)}
 					>
-						{formatCount(backlog)}
+						{formatNanos(stage?.lastWaitNs)}
 					</span>
 					<span className="text-right tabular-nums">
-						peak {formatCount(maxBacklog)}
+						bklg {formatCount(backlog)}
 					</span>
 				</div>
 			) : null}
@@ -1722,6 +1801,7 @@ const StageNode = ({
 
 const EdgePath = ({
 	edge,
+	peakWorkNs,
 	flowing,
 	dimmed,
 	highlight,
@@ -1729,13 +1809,14 @@ const EdgePath = ({
 	onHover,
 }: {
 	edge: DiagEdge;
+	peakWorkNs: number;
 	flowing: boolean;
 	dimmed: boolean;
 	highlight: "up" | "down" | null;
 	hovered: boolean;
 	onHover: (hovered: boolean) => void;
 }) => {
-	const health = edgeHealth(edge.stats.avgLatencyNs);
+	const health = pressureOf(edge.stats.lastLatencyNs, peakWorkNs);
 	const stroke =
 		highlight === "up"
 			? "var(--warn)"
@@ -1783,9 +1864,11 @@ const EdgePath = ({
 					d={edge.d}
 					fill="none"
 					stroke={stroke}
-					strokeWidth={hovered ? 2.4 : 1.8}
+					strokeWidth={hovered ? 2.2 : 1.6}
 					strokeOpacity={0.95}
 					vectorEffect="non-scaling-stroke"
+					pathLength={100}
+					strokeDasharray="8 14"
 					strokeLinecap="round"
 					strokeLinejoin="round"
 					className="diag-flow"
@@ -1818,7 +1901,7 @@ const EdgeLatency = ({
 				hovered && "border-(--acc) text-(--acc) opacity-100 z-20 scale-110",
 			)}
 			style={{ left: `${at.left}%`, top: `${at.top}%` }}
-			title={`${edge.from} to ${edge.to} average hop latency`}
+			title={`${edge.to} took ${formatNanos(edge.stats.lastLatencyNs)} on the last tick`}
 		>
 			{formatNanos(edge.stats.avgLatencyNs)}
 		</div>
@@ -1967,10 +2050,17 @@ export const DiagnosticsGraph = ({
 	const rendered = surface ?? { width: target.w, height: target.h };
 	const density = densityFor(((HALF.h * 2) / graph.extent.h) * rendered.height);
 
+	const labeledTargets = new Set<string>();
+	const marks = stageMarks(nodes.values());
+	const peakWorkNs = Math.max(
+		0,
+		...Array.from(nodes.values()).map((node) => node.lastWorkNs ?? 0),
+	);
+
 	if (nodes.size === 0) {
 		return (
 			<div className="flex h-full items-center justify-center font-mono text-[10px] uppercase tracking-widest text-(--f4)">
-				Waiting for the pipeline to stamp its first boundary
+				Waiting for the first measured tick
 			</div>
 		);
 	}
@@ -1985,7 +2075,7 @@ export const DiagnosticsGraph = ({
 		>
 			<style>{`
 				@keyframes diag-dash-flow {
-					from { stroke-dashoffset: 18; }
+					from { stroke-dashoffset: 22; }
 					to { stroke-dashoffset: 0; }
 				}
 				@keyframes diag-node-live {
@@ -1993,13 +2083,12 @@ export const DiagnosticsGraph = ({
 					50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--up) 22%, transparent); opacity: 1; }
 				}
 				.diag-edge { stroke-linecap: round; }
-				/* Dash pattern is in user units against pathLength-free geometry,
-				   so it stays consistent whatever the route's length; the offset
-				   runs source-to-target (positive to zero) to read as travel in
-				   the direction of flow. */
+				/* The dash is in pathLength units (the path is normalised to
+				   100), so a route stretched across the panel still shows a
+				   dash instead of one solid stroke or an invisible gap. The
+				   offset runs from one period back to zero, source to target. */
 				.diag-flow {
-					stroke-dasharray: 3 15;
-					animation: diag-dash-flow 1.1s linear infinite;
+					animation: diag-dash-flow 0.9s linear infinite;
 				}
 				.diag-node-live::after {
 					content: "";
@@ -2079,6 +2168,7 @@ export const DiagnosticsGraph = ({
 								<EdgePath
 									key={edge.id}
 									edge={edge}
+									peakWorkNs={peakWorkNs}
 									flowing={flowing}
 									dimmed={dimmed}
 									highlight={highlight}
@@ -2093,6 +2183,11 @@ export const DiagnosticsGraph = ({
 				</svg>
 
 				{graph.edges.map((edge) => {
+					// Fan-in draws the destination's work once. Repeating it on
+					// every inbound wire made one stage look like several costs.
+					if (labeledTargets.has(edge.to)) return null;
+					labeledTargets.add(edge.to);
+
 					const connected =
 						(selection?.kind === "stage" &&
 							(selection.name === edge.from || selection.name === edge.to)) ||
@@ -2140,6 +2235,8 @@ export const DiagnosticsGraph = ({
 							extent={graph.extent}
 							stage={stage}
 							state={stageState(stage, atNs)}
+							workHot={marks.bottleneck.has(placement.id)}
+							waitHot={marks.waiting.has(placement.id)}
 							density={density}
 							selected={selectedHere}
 							dimmed={dimmed}

@@ -15,12 +15,9 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/store"
-	"github.com/theapemachine/symm/system"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -30,11 +27,14 @@ type Trainer struct {
 	price        *broker.Price
 	symbols      []string
 	OnFrame      func()
+	OnDescribe   func(string)
 	SetWorkTotal func(int64)
 	writeMu      sync.Mutex
 	priceMu      sync.Mutex
 	tickIndexMu  sync.Mutex
 	tickIndexes  map[int64]map[uint64]string
+	tickCacheMu  sync.Mutex
+	tickCache    map[int64]map[uint64]*data.Value
 }
 
 func NewTrainer(
@@ -54,7 +54,7 @@ func NewTrainer(
 }
 
 /*
-ExcursionKeyCount is listed detector objects for the epoch (before GET filtering).
+ExcursionKeyCount is listed detections/ objects for the epoch (before GET filtering).
 */
 func (trainer *Trainer) ExcursionKeyCount(epoch int64) int {
 	n := 0
@@ -76,10 +76,11 @@ func (trainer *Trainer) WorkTotal(epochs ...int64) int64 {
 }
 
 /*
-parseDetectionStorageKey reads class and epoch from detector/<class>/…/<epoch>/<tick>.bin.
+parseDetectionStorageKey reads class and epoch from
+detections/<class>/…/<epoch>/<tick>.bin.
 */
 func parseDetectionStorageKey(key string) (class string, epoch uint64, ok bool) {
-	head := data.ExcursionOrigin + "/"
+	head := data.DetectionsOrigin + "/"
 
 	if !strings.HasPrefix(key, head) {
 		return "", 0, false
@@ -151,7 +152,7 @@ func balanceDetectionJobs(jobs []detectionJob) []detectionJob {
 }
 
 /*
-detectionJobs lists every detector class train reads (data.ExcursionClasses).
+detectionJobs lists committed detections under detections/<class>/….
 Chop and flat are capped to the number of up detections. When epochs is
 non-empty, only keys whose storage epoch is in that set are kept.
 */
@@ -169,7 +170,7 @@ func (trainer *Trainer) detectionJobs(epochs ...int64) []detectionJob {
 	seen := make(map[string]bool)
 
 	for _, class := range data.ExcursionClasses {
-		prefix := data.ExcursionOrigin + "/" + class + "/"
+		prefix := data.DetectionsOrigin + "/" + class + "/"
 
 		for _, key := range trainer.client.ListKeys(prefix) {
 			if !strings.HasSuffix(key, ".bin") || seen[key] {
@@ -357,11 +358,16 @@ func (trainer *Trainer) Generate(epochs ...int64) error {
 	}
 
 	group, ctx := errgroup.WithContext(trainer.Context())
+	sem := make(chan struct{}, 2)
 
 	for i, job := range jobs {
 		excursion := loaded[i]
 
 		group.Go(func() error {
+			sem <- struct{}{}
+
+			defer func() { <-sem }()
+
 			if trainer.OnFrame != nil {
 				defer trainer.OnFrame()
 			}
@@ -407,7 +413,7 @@ func (trainer *Trainer) trainExcursion(
 		return nil
 	}
 
-	fields, err := data.DetectExcursionFields(excursion)
+	fields, err := excursionMetrics(excursion)
 
 	if err != nil {
 		return nil
@@ -418,13 +424,24 @@ func (trainer *Trainer) trainExcursion(
 	cTick := uint64(fields["c_tick"])
 	dTick := uint64(fields["d_tick"])
 
-	if aTick == 0 || dTick < aTick || bTick < aTick || bTick > dTick {
+	if aTick == 0 || bTick < aTick || cTick < bTick {
 		return nil
 	}
 
 	tickIndex := trainer.tickIndexForEpoch(epoch)
-	replayFrom := tickWarmupBefore(aTick)
-	ticks, missing, loadErr := trainer.loadTicksCounted(tickIndex, replayFrom, dTick)
+	precursorSpan := bTick - aTick + 1
+	holdingSpan := cTick - bTick + 1
+
+	trainer.describe(fmt.Sprintf(
+		"train %s %s precursor=%d holding=%d ticks",
+		excursion.Scope, excursion.Role, precursorSpan, holdingSpan,
+	))
+	errnie.Info(fmt.Sprintf(
+		"[trainer] begin %s %s a=%d b=%d c=%d (precursor %d ticks, holding %d ticks)",
+		excursion.Scope, excursion.Role, aTick, bTick, cTick, precursorSpan, holdingSpan,
+	))
+
+	ticks, missing, loadErr := trainer.loadTicksCounted(epoch, tickIndex, aTick, cTick)
 
 	if loadErr != nil {
 		return errnie.Error(loadErr)
@@ -433,13 +450,13 @@ func (trainer *Trainer) trainExcursion(
 	if len(ticks) == 0 {
 		errnie.Info(fmt.Sprintf(
 			"[trainer] %s: no ticks in [%d,%d] (a=%d d=%d missing=%d index=%d)",
-			tag, replayFrom, dTick, aTick, dTick, missing, len(tickIndex),
+			tag, aTick, cTick, aTick, cTick, missing, len(tickIndex),
 		))
 		return nil
 	}
 
 	precursorPath, holdingPath, precursorTicks, holdingTicks, replayErr := trainer.replayTape(
-		ticks, aTick, bTick, dTick,
+		tag, ticks, aTick, bTick, cTick,
 	)
 
 	if replayErr != nil {
@@ -475,8 +492,16 @@ func (trainer *Trainer) trainExcursion(
 		netReturn = move - fee
 	}
 
+	// One trade: buy at B, sell at C. The precursor path is where that
+	// trade is entered and the holding path is where it is exited, so
+	// both actions follow the same round trip. A→B is the pattern that
+	// leads into the entry, not a second trade.
+	trades := excursion.Role == "up" &&
+		trainer.clearsFriction(label, ticks, bPrice, cPrice)
+
 	wrote, err := trainer.publishExcursion(
-		epoch, label, excursion.Role, precursorPath, holdingPath, netReturn,
+		epoch, label, precursorPath, holdingPath,
+		trades, trades, netReturn,
 	)
 
 	if err != nil {
@@ -495,14 +520,16 @@ func (trainer *Trainer) trainExcursion(
 }
 
 /*
-publishExcursion writes the two fragment sequences. A profitable up excursion
-enters on the precursor path and exits on the holding path. Anything else is
-a noop. An empty sequence is not a file.
+publishExcursion writes both fragment paths for one trade. When that up
+round trip (B→C) clears friction, the precursor path is enter.bin and the
+holding path is exit.bin. Otherwise both paths are noop.bin. An exit is
+never written unless the same excursion also writes its enter.
 */
 func (trainer *Trainer) publishExcursion(
 	epoch int64,
-	label, role, precursorPath, holdingPath string,
-	netReturn float64,
+	label, precursorPath, holdingPath string,
+	precursorClears, holdingClears bool,
+	gain float64,
 ) (string, error) {
 	type file struct {
 		path   string
@@ -511,25 +538,26 @@ func (trainer *Trainer) publishExcursion(
 
 	var files []file
 
-	if role == "up" && netReturn > 0 {
-		if precursorPath != "" {
-			files = append(files, file{precursorPath, "enter"})
+	enter := precursorClears && precursorPath != ""
+
+	if precursorPath != "" {
+		action := "noop"
+
+		if enter {
+			action = "enter"
 		}
 
-		if holdingPath != "" {
-			files = append(files, file{holdingPath, "exit"})
-		}
-	} else {
-		seen := map[string]bool{}
+		files = append(files, file{precursorPath, action})
+	}
 
-		for _, path := range []string{precursorPath, holdingPath} {
-			if path == "" || seen[path] {
-				continue
-			}
+	if holdingPath != "" {
+		action := "noop"
 
-			seen[path] = true
-			files = append(files, file{path, "noop"})
+		if enter && holdingClears {
+			action = "exit"
 		}
+
+		files = append(files, file{holdingPath, action})
 	}
 
 	if len(files) == 0 {
@@ -539,7 +567,7 @@ func (trainer *Trainer) publishExcursion(
 	names := make([]string, 0, len(files))
 
 	for _, file := range files {
-		if err := trainer.writePolicy(epoch, label, file.path, file.action, netReturn); err != nil {
+		if err := trainer.writePolicy(epoch, label, file.path, file.action, gain); err != nil {
 			return "", err
 		}
 
@@ -555,6 +583,58 @@ func pathOrNone(path string) string {
 	}
 
 	return path
+}
+
+func (trainer *Trainer) describe(msg string) {
+	if trainer != nil && trainer.OnDescribe != nil {
+		trainer.OnDescribe(msg)
+	}
+}
+
+func excursionMetrics(value *data.Value) (map[string]float64, error) {
+	if value == nil {
+		return nil, errnie.Err(errnie.Validation, "[trainer] no excursion", nil)
+	}
+
+	if value.Origin != data.DetectionsOrigin {
+		return nil, errnie.Err(
+			errnie.Validation,
+			"[trainer] train reads only committed detections, not "+value.Origin,
+			nil,
+		)
+	}
+
+	metrics := data.Metrics(value)
+
+	for _, key := range []string{"a_tick", "b_tick", "c_tick", "b_price", "c_price"} {
+		if _, ok := metrics[key]; !ok {
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[trainer] excursion "+value.Prefix+" has no "+key,
+				nil,
+			)
+		}
+	}
+
+	return metrics, nil
+}
+
+/*
+clearsFriction is true when a low→high move on symbol clears round-trip fees.
+*/
+func (trainer *Trainer) clearsFriction(
+	symbol string,
+	ticks []*data.Value,
+	low, high *decimal.Decimal,
+) bool {
+	if trainer == nil || trainer.price == nil || low == nil || high == nil ||
+		low.Sign() <= 0 || high.Cmp(low) <= 0 {
+		return false
+	}
+
+	pnl, _, err := trainer.priceRoundTrip(symbol, ticks, low, high)
+
+	return err == nil && pnl != nil && pnl.Sign() > 0
 }
 
 /*
@@ -618,32 +698,22 @@ func installInstrument(price *broker.Price, symbol string, ticks []*data.Value) 
 	price.InstallPair(pair)
 }
 
-func tickWarmupBefore(aTick uint64) uint64 {
-	warmup := uint64(64)
-
-	if system.Cfg != nil && system.Cfg.Learning.PrecursorHorizon > 0 {
-		warmup = uint64(system.Cfg.Learning.PrecursorHorizon * 8)
-	}
-
-	if aTick > warmup {
-		return aTick - warmup
-	}
-
-	return 1
-}
-
 func (trainer *Trainer) loadTicksCounted(
+	epoch int64,
 	index map[uint64]string,
 	fromTick, toTick uint64,
 ) ([]*data.Value, int, error) {
 	vals := make([]*data.Value, 0, toTick-fromTick+1)
 	missing := 0
-	ordered := make([]struct {
-		tick uint64
-		key  string
-	}, 0, toTick-fromTick+1)
+	fetchKeys := make([]string, 0)
+	fetchTicks := make([]uint64, 0)
 
 	for tick := fromTick; tick <= toTick; tick++ {
+		if cached, ok := trainer.cachedTick(epoch, tick); ok {
+			vals = append(vals, cached)
+			continue
+		}
+
 		key, ok := index[tick]
 
 		if !ok {
@@ -651,30 +721,25 @@ func (trainer *Trainer) loadTicksCounted(
 			continue
 		}
 
-		ordered = append(ordered, struct {
-			tick uint64
-			key  string
-		}{tick, key})
+		fetchKeys = append(fetchKeys, key)
+		fetchTicks = append(fetchTicks, tick)
 	}
 
-	keys := make([]string, len(ordered))
-
-	for i, item := range ordered {
-		keys[i] = item.key
+	if len(fetchKeys) > 0 {
+		trainer.describe(fmt.Sprintf("loading %d workspace ticks", len(fetchKeys)))
 	}
 
 	at := 0
 
-	for val, err := range store.ParallelValues(trainer.client, keys) {
+	for val, err := range store.ParallelValues(trainer.client, fetchKeys) {
 		if err != nil {
 			return nil, missing, err
 		}
 
-		// The object name is the tick detect stored. A header that did not
-		// round-trip would make every frame look earlier than b_tick, so the
-		// holding window would never run and exit.bin would not be written.
-		val.Tick = ordered[at].tick
+		tick := fetchTicks[at]
 		at++
+		val.Tick = tick
+		trainer.storeCachedTick(epoch, tick, val)
 		vals = append(vals, val)
 	}
 
@@ -685,16 +750,54 @@ func (trainer *Trainer) loadTicksCounted(
 	return vals, missing, nil
 }
 
+func (trainer *Trainer) cachedTick(epoch int64, tick uint64) (*data.Value, bool) {
+	trainer.tickCacheMu.Lock()
+	defer trainer.tickCacheMu.Unlock()
+
+	if trainer.tickCache == nil {
+		return nil, false
+	}
+
+	byTick, ok := trainer.tickCache[epoch]
+
+	if !ok {
+		return nil, false
+	}
+
+	val, ok := byTick[tick]
+
+	return val, ok
+}
+
+func (trainer *Trainer) storeCachedTick(epoch int64, tick uint64, val *data.Value) {
+	if val == nil {
+		return
+	}
+
+	trainer.tickCacheMu.Lock()
+	defer trainer.tickCacheMu.Unlock()
+
+	if trainer.tickCache == nil {
+		trainer.tickCache = make(map[int64]map[uint64]*data.Value)
+	}
+
+	if trainer.tickCache[epoch] == nil {
+		trainer.tickCache[epoch] = make(map[uint64]*data.Value)
+	}
+
+	trainer.tickCache[epoch][tick] = val
+}
+
 /*
-replayTape splits the loaded tape into a precursor fragment [a, b] and a
-holding fragment [b, d]. Ticks before a only warm the grid. Each fragment has
-its own predictive coder and Sequitur grammar. The boundary tick is observed
-once and fed to both grammars. The two return counts are stored ticks in each
-fragment, and the two paths are the sequences those fragments settled.
+replayTape runs two isolated fragments: precursor A→B and holding B→C. Each
+has its own grid and Sequitur grammar. Every tick in the window is observed
+on that fragment's grid. Regions at or above the midpoint of the brightest
+and dimmest lit region become the chord.
 */
 func (trainer *Trainer) replayTape(
+	label string,
 	ticks []*data.Value,
-	aTick, bTick, dTick uint64,
+	aTick, bTick, cTick uint64,
 ) (precursorPath, holdingPath string, precursorTicks, holdingTicks int, err error) {
 	ctx := context.Background()
 
@@ -702,81 +805,72 @@ func (trainer *Trainer) replayTape(
 		ctx = trainer.Context()
 	}
 
+	precursorPath, precursorTicks, err = trainer.replayFragment(ctx, label, "precursor", ticks, aTick, bTick)
+
+	if err != nil {
+		return "", "", precursorTicks, holdingTicks, err
+	}
+
+	holdingPath, holdingTicks, err = trainer.replayFragment(ctx, label, "holding", ticks, bTick, cTick)
+
+	return precursorPath, holdingPath, precursorTicks, holdingTicks, err
+}
+
+func (trainer *Trainer) replayFragment(
+	ctx context.Context,
+	label, phase string,
+	ticks []*data.Value,
+	fromTick, toTick uint64,
+) (path string, count int, err error) {
 	grid := nmstore.NewGrid(ctx)
-	precursor := newFragment(grid)
-	holding := newFragment(grid)
+	fragment := newFragment(grid)
+	span := toTick - fromTick + 1
 
 	for _, val := range ticks {
-		if val == nil || val.Tick > dTick {
+		if val == nil || val.Tick < fromTick || val.Tick > toTick {
 			continue
 		}
 
-		if val.Tick < aTick {
-			if _, observeErr := grid.Observe(val); observeErr != nil {
-				return "", "", precursorTicks, holdingTicks, errnie.Error(observeErr)
-			}
+		count++
 
-			continue
+		if count == 1 || count%1000 == 0 || count == int(span) {
+			trainer.describe(fmt.Sprintf("%s %s tick %d/%d", label, phase, count, span))
+
+			if count%1000 == 0 || count == int(span) {
+				errnie.Info(fmt.Sprintf("[trainer] %s %s at tick %d/%d", label, phase, count, span))
+			}
 		}
 
-		var regions []*nmstore.Region
+		regions, observeErr := fragment.observe(val)
 
-		if val.Tick <= bTick {
-			precursorTicks++
-			observed, observeErr := precursor.observe(val)
-
-			if observeErr != nil {
-				return "", "", precursorTicks, holdingTicks, errnie.Error(observeErr)
-			}
-
-			regions = observed
-			precursor.consume(val, regions)
+		if observeErr != nil {
+			return "", count, errnie.Error(observeErr)
 		}
 
-		if val.Tick >= bTick {
-			holdingTicks++
-
-			if val.Tick > bTick {
-				observed, observeErr := holding.observe(val)
-
-				if observeErr != nil {
-					return "", "", precursorTicks, holdingTicks, errnie.Error(observeErr)
-				}
-
-				regions = observed
-			}
-
-			holding.consume(val, regions)
-		}
+		fragment.consume(val, regions)
 	}
 
 	if gridErr := grid.Error(); gridErr != nil {
-		return "", "", precursorTicks, holdingTicks, errnie.Error(gridErr)
+		return "", count, errnie.Error(gridErr)
 	}
 
-	return precursor.lastPhrase, holding.lastPhrase, precursorTicks, holdingTicks, nil
+	return fragment.lastPhrase, count, nil
 }
 
 /*
-fragment is one tape window: its own coder and grammar, on a grid shared with
-the other window so priors survive from the warmup into the hold.
+fragment is one A→B or B→C window: grid and grammar private to that window.
 */
 type fragment struct {
-	grid         *nmstore.Grid
-	grammar      *Grammar
-	coder        *learning.PredictiveCoder
-	step         int
-	lastSym      string
-	recentTokens []string
-	lastPhrase   string
+	grid       *nmstore.Grid
+	grammar    *Grammar
+	lastSym    string
+	lastPhrase string
 }
 
 func newFragment(grid *nmstore.Grid) *fragment {
 	return &fragment{
-		grid:         grid,
-		grammar:      NewGrammar(),
-		coder:        newPredictiveCoder(),
-		recentTokens: make([]string, 0, 16),
+		grid:    grid,
+		grammar: NewGrammar(),
 	}
 }
 
@@ -785,42 +879,19 @@ func (fragment *fragment) observe(val *data.Value) ([]*nmstore.Region, error) {
 }
 
 /*
-consume gates the lit regions through this fragment's predictive coder and
-appends the chord to its grammar. The settled phrase is the fragment's token
-sequence.
+consume appends the chord of regions at or above the brightness midpoint.
+The fragment's phrase is the terminal expansion of a rule Sequitur completed.
+A chord that completes no rule leaves the phrase unchanged.
 */
 func (fragment *fragment) consume(val *data.Value, regions []*nmstore.Region) {
 	if fragment == nil || val == nil || len(regions) == 0 {
 		return
 	}
 
-	regionBrightness := make([]float64, 15)
-
-	for _, region := range regions {
-		if int(region.Key) < 15 {
-			regionBrightness[region.Key] = region.Brightness
-		}
-	}
-
-	fragment.step++
-	sec := float64(val.Timestamp) / 1e9
-
-	if val.Timestamp < 1e11 {
-		sec = float64(val.Timestamp)
-	}
-
-	inValue := transport.NewValue([2][]float64{
-		regionBrightness,
-		{0.0, 0.0, float64(fragment.step), sec},
-	})
-
-	for range fragment.coder.Next(inValue.Next(nil)) {
-	}
-
 	active := make([]*nmstore.Region, 0, len(regions))
 
 	for _, region := range regions {
-		if region.Brightness > 0 {
+		if region != nil && region.Brightness > 0 {
 			active = append(active, region)
 		}
 	}
@@ -829,9 +900,7 @@ func (fragment *fragment) consume(val *data.Value, regions []*nmstore.Region) {
 		return
 	}
 
-	maxB := active[0].Brightness
-	minB := active[len(active)-1].Brightness
-	midB := (maxB + minB) / 2.0
+	midB := (active[0].Brightness + active[len(active)-1].Brightness) / 2.0
 	fired := make([]string, 0, len(active))
 
 	for _, region := range active {
@@ -859,29 +928,17 @@ func (fragment *fragment) consume(val *data.Value, regions []*nmstore.Region) {
 		}
 	}
 
-	fragment.recentTokens = append(fragment.recentTokens, fired...)
-
-	if len(fragment.recentTokens) > 16 {
-		fragment.recentTokens = fragment.recentTokens[len(fragment.recentTokens)-16:]
+	if deepest == nil {
+		return
 	}
 
-	path := ""
+	phrase := deepest.TerminalNames(fragment.grammar)
 
-	if deepest != nil {
-		if phrase := deepest.TerminalNames(fragment.grammar); len(phrase) >= 1 {
-			path = strings.Join(phrase, "/")
-		}
+	if len(phrase) < 2 {
+		return
 	}
 
-	if path == "" && len(fragment.recentTokens) >= 2 {
-		path = strings.Join(fragment.recentTokens[len(fragment.recentTokens)-2:], "/")
-	} else if path == "" && len(fragment.recentTokens) == 1 {
-		path = fragment.recentTokens[0]
-	}
-
-	if path != "" {
-		fragment.lastPhrase = path
-	}
+	fragment.lastPhrase = strings.Join(phrase, "/")
 }
 
 /*

@@ -7,6 +7,7 @@ import (
 	sysruntime "runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
@@ -58,6 +59,9 @@ type Booter struct {
 	store            *store.Client
 	hub              *ui.Hub
 	replies          sync.Map
+	// bookNs is the last level3 apply, measured on the book ingress. It is
+	// off the trade tick's critical path and reported as a side span.
+	bookNs atomic.Int64
 }
 
 func NewBooter(ctx context.Context, name string, capture ...bool) *Booter {
@@ -307,6 +311,8 @@ func (booter *Booter) initPipeline() error {
 			return err
 		}
 
+		booter.training.SetHub(booter.hub)
+
 		sinks = append(sinks, booter.hub)
 	}
 
@@ -323,15 +329,21 @@ func (booter *Booter) initPipeline() error {
 	booter.workspace = nmruntime.NewWorkspace(
 		ctx,
 		"workspace",
-		[][]nmruntime.Node{
-			booter.signals,
-			{booter.training},
+		[]nmruntime.Ring{
+			{Group: "signal", Nodes: booter.signals},
+			{Group: "strategy", Nodes: []nmruntime.Node{booter.training}},
 		},
 		sinks...,
 	)
 
 	if booter.workspace == nil {
 		return errnie.Err(errnie.Internal, "booter: workspace pipeline failed to start", nil)
+	}
+
+	if booter.hub != nil {
+		booter.workspace.Publish(func(value *data.Value) {
+			booter.hub.PublishTrace(value, booter.bookNs.Load())
+		})
 	}
 
 	for _, signal := range booter.signals {
@@ -488,6 +500,7 @@ func (booter *Booter) startIngress(
 
 			switch channel {
 			case "level3":
+				started := time.Now()
 				level3 := kraken.NewLevel3(buf)
 
 				if level3 == nil {
@@ -497,6 +510,8 @@ func (booter *Booter) startIngress(
 				if err := booter.book.Update(level3); err != nil && !nmruntime.ShuttingDown(booter.Context(), err) {
 					errnie.Error(err)
 				}
+
+				booter.bookNs.Store(int64(time.Since(started)))
 			case "trade":
 				data.Tick.Add(1)
 
@@ -508,6 +523,10 @@ func (booter *Booter) startIngress(
 				// The tick's Value carries the state of every component it
 				// touches, so a stored tick reproduces book, price, instrument,
 				// wallet and positions for every symbol in the frame.
+				// assemble is the cost of building that value, before the
+				// workspace queue. It is on the critical path and is not
+				// inside any disruptor stage.
+				assemble := time.Now()
 				value := data.NewValue(
 					data.TickOrigin, data.TickRole, data.TickScope,
 				).AppendJSON(buf, data.TradeIndex(msgType))
@@ -542,6 +561,11 @@ func (booter *Booter) startIngress(
 				// Signals write one layer per trade entry (or per symbol),
 				// each into its own pre-reserved slot.
 				value.Reserve(len(booter.signals) * max(1, len(trades)))
+				value.Note(data.Span{
+					Name:   "assemble",
+					Group:  "ingress",
+					WorkNs: int64(time.Since(assemble)),
+				})
 				booter.workspace.Step(value)
 			case "heartbeat", "status":
 			default:

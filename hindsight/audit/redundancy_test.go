@@ -119,6 +119,35 @@ func TestRedundancyStage(t *testing.T) {
 			So(hasCrossSignalCollinear, ShouldBeTrue)
 		})
 
+		Convey("When bid and ask move together because they are one quote", func() {
+			measurements := make([]*data.Value, 0, 25)
+
+			for idx := range int64(25) {
+				val := data.NewValue("liquidity", "signal", "BTC/USD")
+				bid := 100.0 + float64(idx)
+				data.AppendVector(val, []float64{bid, bid + 0.05}, "best_price:bid", "best_price:ask")
+				measurements = append(measurements, val)
+			}
+
+			violations := feed(stage, measurements...)
+			So(violations, ShouldBeEmpty)
+		})
+
+		Convey("When the friction hurdle is the spread plus a fee", func() {
+			measurements := make([]*data.Value, 0, 25)
+
+			for idx := range int64(25) {
+				val := data.NewValue("liquidity", "signal", "BTC/USD")
+				spread := float64(idx+1) * 0.01
+				data.AppendVector(val, []float64{spread, spread + 0.004}, "relative_spread", "friction_hurdle")
+				measurements = append(measurements, val)
+			}
+
+			quote := NewRedundancyStage(ctx)
+			violations := feed(quote, measurements...)
+			So(violations, ShouldBeEmpty)
+		})
+
 		Convey("When auditing nil measurements", func() {
 			nilViolations := feed(stage, nil)
 			// A nil-only tape is a nil violation and, carrying nothing, insufficient evidence.

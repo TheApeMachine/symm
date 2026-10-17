@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "transcripts": {
+    "/Users/theapemachine/.cursor/projects/Users-theapemachine-go-src-github-com-theapemachine-backup-symm/agent-transcripts/0be36b26-a0d0-4465-99ad-e541f0bf0287/0be36b26-a0d0-4465-99ad-e541f0bf0287.jsonl": {
+      "mtimeMs": 1792233344745,
+      "lastProcessedAt": "2026-10-17T10:46:55.077Z"
+    },
+    "/Users/theapemachine/.cursor/projects/Users-theapemachine-go-src-github-com-theapemachine-backup-symm/agent-transcripts/1dd4e2d2-52d0-4ef9-af70-f02973c6af0c/1dd4e2d2-52d0-4ef9-af70-f02973c6af0c.jsonl": {
+      "mtimeMs": 1792202506321,
+      "lastProcessedAt": "2026-10-17T10:46:55.077Z"
+    },
+    "/Users/theapemachine/.cursor/projects/Users-theapemachine-go-src-github-com-theapemachine-backup-symm/agent-transcripts/7cdf0a41-89ca-4e75-b40b-797f5f40d382/7cdf0a41-89ca-4e75-b40b-797f5f40d382.jsonl": {
+      "mtimeMs": 1792226744293,
+      "lastProcessedAt": "2026-10-17T10:46:55.077Z"
+    },
+    "/Users/theapemachine/.cursor/projects/Users-theapemachine-go-src-github-com-theapemachine-backup-symm/agent-transcripts/7cdf0a41-89ca-4e75-b40b-797f5f40d382/subagents/ad4caced-efe4-4480-a199-3b29d3e0374f.jsonl": {
+      "mtimeMs": 1792226687232,
+      "lastProcessedAt": "2026-10-17T10:46:55.077Z"
+    },
+    "/Users/theapemachine/.cursor/projects/Users-theapemachine-go-src-github-com-theapemachine-backup-symm/agent-transcripts/a45abae8-1ee8-466f-8abd-f14656e3d1d1/a45abae8-1ee8-466f-8abd-f14656e3d1d1.jsonl": {
+      "mtimeMs": 1792215139981,
+      "lastProcessedAt": "2026-10-17T10:46:55.077Z"
+    },
+    "/Users/theapemachine/.cursor/projects/Users-theapemachine-go-src-github-com-theapemachine-backup-symm/agent-transcripts/ae54a5e9-e5cd-4aef-8b51-d520f2a4694c/ae54a5e9-e5cd-4aef-8b51-d520f2a4694c.jsonl": {
+      "mtimeMs": 1792216439507,
+      "lastProcessedAt": "2026-10-17T10:46:55.077Z"
+    },
+    "/Users/theapemachine/.cursor/projects/Users-theapemachine-go-src-github-com-theapemachine-backup-symm/agent-transcripts/c4f6fb0f-3af9-4077-8d6b-2a7678a59b23/c4f6fb0f-3af9-4077-8d6b-2a7678a59b23.jsonl": {
+      "mtimeMs": 1792233873526,
+      "lastProcessedAt": "2026-10-17T10:46:55.077Z"
+    },
+    "/Users/theapemachine/.cursor/projects/Users-theapemachine-go-src-github-com-theapemachine-backup-symm/agent-transcripts/c4f6fb0f-3af9-4077-8d6b-2a7678a59b23/subagents/d8feaeed-77ae-4737-a66f-7150ec71a418.jsonl": {
+      "mtimeMs": 1792234014976,
+      "lastProcessedAt": "2026-10-17T10:46:55.077Z"
+    },
+    "/Users/theapemachine/.cursor/projects/Users-theapemachine-go-src-github-com-theapemachine-backup-symm/agent-transcripts/e8d51f9b-13e7-4ebd-8893-faafa4545404/e8d51f9b-13e7-4ebd-8893-faafa4545404.jsonl": {
+      "mtimeMs": 1792231644323,
+      "lastProcessedAt": "2026-10-17T10:46:55.077Z"
+    },
+    "/Users/theapemachine/.cursor/projects/Users-theapemachine-go-src-github-com-theapemachine-backup-symm/agent-transcripts/eaa91626-224c-4eb5-8340-68878e2fcd9b/eaa91626-224c-4eb5-8340-68878e2fcd9b.jsonl": {
+      "mtimeMs": 1792210063894,
+      "lastProcessedAt": "2026-10-17T10:46:55.077Z"
+    },
+    "/Users/theapemachine/.cursor/projects/Users-theapemachine-go-src-github-com-theapemachine-backup-symm/agent-transcripts/eaa91626-224c-4eb5-8340-68878e2fcd9b/subagents/d9b527c4-d8eb-4a28-bd08-f740989063b1.jsonl": {
+      "mtimeMs": 1792204221829,
+      "lastProcessedAt": "2026-10-17T10:46:55.077Z"
+    }
+  }
+}

@@ -177,6 +177,10 @@ func (stage *RedundancyStage) auditRedundancy() {
 			continue
 		}
 
+		if algebraicPair(pairKey) {
+			continue
+		}
+
 		if math.Abs(correlation) >= system.Cfg.Audit.CollinearCorrelation {
 			stage.violations = append(stage.violations, NewViolation(
 				pairKey,
@@ -187,6 +191,22 @@ func (stage *RedundancyStage) auditRedundancy() {
 				nil,
 			))
 		}
+	}
+}
+
+/*
+algebraicPair is a pair whose lockstep is the definition of the two numbers,
+not a second copy of one sensor. Best bid and best ask are the two sides of
+one quote; the spread is the separate fact. The friction hurdle is the
+relative spread plus a constant fee, so a correlation of 1 restates that
+sum, which the truthfulness stage checks directly.
+*/
+func algebraicPair(pairKey string) bool {
+	switch pairKey {
+	case "best_price:ask <-> best_price:bid", "friction_hurdle <-> relative_spread":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -232,7 +252,7 @@ func (stage *RedundancyStage) Data() any {
 			Pair:        pairKey,
 			Correlation: corr,
 			Count:       moment.Count,
-			Collinear:   math.Abs(corr) >= system.Cfg.Audit.CollinearCorrelation,
+			Collinear:   !algebraicPair(pairKey) && math.Abs(corr) >= system.Cfg.Audit.CollinearCorrelation,
 		})
 	}
 

@@ -240,8 +240,15 @@ def plot_stage1_timing(data, out_dir):
         ax.set_xlabel("Mean Latency Drift ± Jitter Std (ms)", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
         ax.grid(axis='x')
 
+        inversions = stage.get('inversion_count', 0)
+        spikes = stage.get('spike_count', 0)
+        excess = stage.get('excess_count', 0)
+        skew = stage.get('skew_count', 0)
         status = "PASS" if passed else "WARN"
-        readout = f"{len(drifts)} STREAMS TRACKED  |  {breach_count} INVERSIONS"
+        readout = (
+            f"{len(drifts)} STREAMS  |  {inversions} INVERSIONS  |  "
+            f"{spikes} SLOW PACKETS  |  {excess} UNSTEADY  |  {skew} CLOCK SKEW"
+        )
 
     render_docked_header(
         fig,
@@ -255,17 +262,19 @@ def plot_stage1_timing(data, out_dir):
 
 def plot_stage2_vitality(data, out_dir):
     stage = data.get('vitality', {})
-    total_metrics = stage.get('total_metrics', 0)
+    total_metrics = stage.get('catalog_count', stage.get('series_tracked', stage.get('total_metrics', 0)))
     dead_count = stage.get('dead_count', 0)
-    stagnant_count = stage.get('stagnant_count', 0)
-    healthy_count = stage.get('healthy_count', max(0, total_metrics - dead_count - stagnant_count))
+    unmeasured_count = stage.get('unmeasured_count', 0)
+    missing_count = stage.get('missing_count', 0)
+    healthy_count = stage.get('healthy_count', max(0, total_metrics - dead_count - unmeasured_count - missing_count))
+    active = stage.get('active_symbols') or []
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6.5))
-    fig.subplots_adjust(top=0.80, bottom=0.12, left=0.08, right=0.96, wspace=0.28)
+    fig.subplots_adjust(top=0.80, bottom=0.18, left=0.08, right=0.96, wspace=0.28)
 
-    categories = ['Healthy\n(Active)', 'Stagnant\n(>=80% Zero)', 'Dead\n(0 Variance)']
-    counts = [healthy_count, stagnant_count, dead_count]
-    colors = [COLOR_UP, COLOR_WARN, COLOR_DOWN]
+    categories = ['Moved', 'Missing', 'Always zero', 'Frozen']
+    counts = [healthy_count, missing_count, unmeasured_count, dead_count]
+    colors = [COLOR_UP, COLOR_WARN, COLOR_DOWN, COLOR_DOWN]
 
     bars = ax1.bar(categories, counts, color=colors, width=0.52, edgecolor=COLOR_LINE)
     ax1.set_ylabel("Metric Count", fontsize=9.5, fontfamily='monospace', color=COLOR_F3)
@@ -277,12 +286,20 @@ def plot_stage2_vitality(data, out_dir):
         ax1.text(bar.get_x() + bar.get_width() / 2, h + max(1, total_metrics * 0.02),
                  f"{int(h)}\n({pct:.1f}%)", ha='center', va='bottom', fontsize=8.5, fontfamily='monospace', color=COLOR_F1)
 
+    top_rows = stage.get('top_variance') or []
     metrics_map = stage.get('metrics', {})
-    if metrics_map:
+    if top_rows:
+        names = [row.get('name', '')[:28] for row in top_rows]
+        vars_vals = [row.get('variance', 0) for row in top_rows]
+    elif metrics_map:
         top_by_var = sorted(metrics_map.items(), key=lambda kv: kv[1].get('variance', 0), reverse=True)[:10]
-        names = [kv[0][:22] for kv in top_by_var]
+        names = [kv[0][:28] for kv in top_by_var]
         vars_vals = [kv[1].get('variance', 0) for kv in top_by_var]
+    else:
+        names = []
+        vars_vals = []
 
+    if names:
         y_pos = np.arange(len(names))
         ax2.barh(y_pos, vars_vals, color=COLOR_INFO, height=0.52, edgecolor=COLOR_LINE)
         ax2.set_yticks(y_pos)
@@ -294,13 +311,18 @@ def plot_stage2_vitality(data, out_dir):
     else:
         ax2.text(0.5, 0.5, "No individual metric variance available", ha='center', va='center', color=COLOR_F3)
 
-    status = "HEALTHY" if dead_count == 0 else "ATTENTION"
-    readout = f"{healthy_count}/{total_metrics} ACTIVE  |  {dead_count} DEAD  |  {stagnant_count} STAGNANT"
+    passed = stage.get('passed', dead_count == 0 and unmeasured_count == 0 and missing_count == 0)
+    status = "HEALTHY" if passed else "ATTENTION"
+    shown = ", ".join(active) if active else "NO ACTIVE SYMBOLS"
+    readout = (
+        f"{shown}  |  {healthy_count}/{total_metrics} MOVED  |  "
+        f"{missing_count} MISSING  |  {unmeasured_count} ALWAYS ZERO  |  {dead_count} FROZEN"
+    )
 
     render_docked_header(
         fig,
-        "Stage 2: Sensor Vitality & Variance Health",
-        "Identifies dead (zero variance) sensors and stagnant cold-starts across streaming observations.",
+        "Stage 2: Do the signals in SIGNALS.md move?",
+        "A few symbols whose price moved. Each listed signal has to change on those symbols.",
         status=status,
         readout=readout
     )
@@ -309,9 +331,10 @@ def plot_stage2_vitality(data, out_dir):
 
 def plot_stage3_redundancy(data, out_dir):
     stage = data.get('redundancy', {})
-    total_pairs = stage.get('total_pairs', 0)
-    redundant_pairs = stage.get('redundant_pairs', [])
-    redundant_count = stage.get('redundant_count', len(redundant_pairs))
+    pairs = stage.get('pairs', [])
+    total_pairs = stage.get('pairs_evaluated', stage.get('total_pairs', len(pairs)))
+    redundant_pairs = stage.get('redundant_pairs') or [p for p in pairs if p.get('collinear')]
+    redundant_count = stage.get('collinear_count', stage.get('redundant_count', len(redundant_pairs)))
     passed = stage.get('passed', redundant_count == 0)
 
     fig, ax = plt.subplots(figsize=(13, 6.5))
@@ -391,7 +414,7 @@ def plot_stage4_sympathy(data, out_dir):
         ax.grid(axis='x')
 
         status = "WARN" if redundant_count > 0 else "PASS"
-        readout = f"{len(estimates)} PAIRS EVALUATED  |  {redundant_count} EXTREME"
+        readout = f"{len(estimates)} PAIRS EVALUATED  |  {redundant_count} REDUNDANT"
 
     render_docked_header(
         fig,

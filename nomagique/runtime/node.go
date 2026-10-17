@@ -53,3 +53,7 @@ func (consumer *Consumer) Step(value *data.Value) *data.Value {
 	consumer.node.Step(value)
 	return value
 }
+
+func (consumer *Consumer) Name() string {
+	return consumer.node.Name()
+}

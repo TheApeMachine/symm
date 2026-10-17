@@ -221,3 +221,4 @@ timeoverlay
 diagnostics/
 /paper_records/
 _peek/main.go
+scripts/__pycache__/plot_audit.cpython-314.pyc

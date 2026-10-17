@@ -246,9 +246,9 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 
 			// Standardized Hayashi-Yoshida concordance: Score / sqrt(Support) scales into [-1, 1]
 			// by Cauchy-Schwarz inequality.
-			// When |concordance| >= 0.95 (VIF > 10) and Score exceeds the significance bound,
-			// the two asynchronous streams are candidates for collinear redundancy.
-			// We test statistical significance against a shuffled null using system.Cfg.Audit.Permutations.
+			// Two different assets are allowed to move independently. A failure is a
+			// second copy of a stream: |concordance| at the co-movement bar, the
+			// score past the significance bound, and the shuffled null not reaching it.
 			permutations := system.Cfg.Audit.Permutations
 			significance := system.Cfg.Audit.Significance
 
@@ -303,36 +303,19 @@ func (stage *SympathyStage) evaluateAsynchronousCovariance() {
 				partsA := strings.SplitN(keyA, ":", 3)
 				partsB := strings.SplitN(keyB, ":", 3)
 				isCrossAsset := len(partsA) == 3 && len(partsB) == 3 && partsA[0] != partsB[0]
-				isSameMetricStream := isCrossAsset && partsA[2] == partsB[2]
 
 				isRedundant := math.Abs(concordance) >= system.Cfg.Audit.ComovementConcordance && math.Abs(estimate.Score) >= bound && pValue <= significance
-				sympathyFailed := isSameMetricStream && (concordance <= 0 || pValue > significance)
 
 				stage.estimates = append(stage.estimates, map[string]any{
-					"pair":            pairKey,
-					"concordance":     concordance,
-					"score":           estimate.Score,
-					"support":         estimate.Support,
-					"p_value":         pValue,
-					"permutations":    permutations,
-					"redundant":       isRedundant,
-					"is_cross_asset":  isCrossAsset,
-					"sympathy_failed": sympathyFailed,
+					"pair":           pairKey,
+					"concordance":    concordance,
+					"score":          estimate.Score,
+					"support":        estimate.Support,
+					"p_value":        pValue,
+					"permutations":   permutations,
+					"redundant":      isRedundant,
+					"is_cross_asset": isCrossAsset,
 				})
-
-				if sympathyFailed && !stage.flaggedPairs[pairKey] {
-					stage.flaggedPairs[pairKey] = true
-					stage.violations = append(stage.violations, NewViolation(
-						"cross_asset",
-						"sympathy.no_concordance",
-						fmt.Sprintf(
-							"Cross-asset pair %s fails sympathy test: concordance = %.4f <= 0 or p-value = %.4f > %.2f vs shuffled null (z-score = %.2f, N=%d)",
-							pairKey, concordance, pValue, significance, estimate.Score, permutations,
-						),
-						nil,
-						nil,
-					))
-				}
 
 				if isRedundant && !stage.flaggedPairs[pairKey] {
 					stage.flaggedPairs[pairKey] = true

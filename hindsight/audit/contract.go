@@ -52,44 +52,12 @@ func (stage *ContractStage) Run() error {
 		for label, val := range metrics {
 			stage.totalChecked++
 
-			lower := strings.ToLower(label)
-			if strings.Contains(lower, "price") || strings.Contains(lower, "midpoint") {
-				stage.validateBounds(
-					val,
-					label,
-					measurement,
-					math.SmallestNonzeroFloat64,
-					math.MaxFloat64,
-					"Price must be strictly positive (> 0)",
-				)
-			} else if strings.Contains(lower, "prob") || strings.Contains(lower, "confidence") || strings.Contains(lower, "excitation_fraction") {
-				stage.validateBounds(
-					val,
-					label,
-					measurement,
-					0,
-					1,
-					"Probability must be bounded in [0, 1]",
-				)
-			} else if strings.Contains(lower, "corr") || strings.Contains(lower, "imbalance") || strings.Contains(lower, "signed_net_fraction") {
-				stage.validateBounds(
-					val,
-					label,
-					measurement,
-					-1,
-					1,
-					"Correlation must be bounded in [-1, 1]",
-				)
-			} else if strings.Contains(lower, "qty") || strings.Contains(lower, "volume") || strings.Contains(lower, "count") || strings.Contains(lower, "spread") || strings.Contains(lower, "duration") || strings.Contains(lower, "rate") {
-				stage.validateBounds(
-					val,
-					label,
-					measurement,
-					0,
-					math.MaxFloat64,
-					"Physical quantity cannot be negative",
-				)
+			min, max, description, applies := metricDomain(label)
+			if !applies {
+				continue
 			}
+
+			stage.validateBounds(val, label, measurement, min, max, description)
 		}
 	}
 
@@ -104,6 +72,44 @@ func (stage *ContractStage) Violations() []*Violation {
 	return stage.violations
 }
 
+/*
+metricDomain is the range a metric is allowed to take. Returns are matched
+before prices: a name like midpoint_log_return contains "midpoint" but it is
+a signed change, and zero or a down-move is a real result, not a broken price.
+One-sided return names (positive_ / negative_) store a size, so they may be
+zero and must not be negative. A bare price or midpoint is a level and must
+be above zero.
+*/
+func metricDomain(label string) (min, max float64, description string, applies bool) {
+	lower := strings.ToLower(label)
+
+	if strings.Contains(lower, "return") {
+		if strings.HasPrefix(lower, "positive_") || strings.HasPrefix(lower, "negative_") {
+			return 0, math.MaxFloat64, "One-sided return cannot be negative", true
+		}
+
+		return math.Inf(-1), math.Inf(1), "Return must be a real number", true
+	}
+
+	if strings.Contains(lower, "corr") || strings.Contains(lower, "imbalance") || strings.Contains(lower, "signed_net_fraction") || lower == "breadth" {
+		return -1, 1, "Correlation must be bounded in [-1, 1]", true
+	}
+
+	if strings.Contains(lower, "percentile") || strings.Contains(lower, "prob") || strings.Contains(lower, "confidence") || strings.Contains(lower, "excitation_fraction") {
+		return 0, 1, "Probability must be bounded in [0, 1]", true
+	}
+
+	if strings.Contains(lower, "price") || strings.Contains(lower, "midpoint") {
+		return math.SmallestNonzeroFloat64, math.MaxFloat64, "Price must be strictly positive (> 0)", true
+	}
+
+	if strings.Contains(lower, "qty") || strings.Contains(lower, "volume") || strings.Contains(lower, "count") || strings.Contains(lower, "spread") || strings.Contains(lower, "duration") || strings.Contains(lower, "rate") {
+		return 0, math.MaxFloat64, "Physical quantity cannot be negative", true
+	}
+
+	return 0, 0, "", false
+}
+
 func (stage *ContractStage) validateBounds(
 	value float64,
 	label string,
@@ -111,7 +117,7 @@ func (stage *ContractStage) validateBounds(
 	min, max float64,
 	description string,
 ) {
-	if math.IsNaN(value) || value < min || value > max {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < min || value > max {
 		scope := "unknown"
 		if measurement != nil {
 			scope = measurement.Scope

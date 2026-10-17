@@ -1,6 +1,6 @@
 import { renderToReadableStream } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
-import { topologyStore, type BoundaryStamp } from "#/collections/topology";
+import { type BoundaryStamp, topologyStore } from "#/collections/topology";
 import {
 	DiagnosticsGraph,
 	type DiagnosticsSelection,
@@ -141,9 +141,7 @@ describe("DiagnosticsGraph", () => {
 	it("renders the empty-topology placeholder before any envelope has been stamped", async () => {
 		const markup = await render();
 
-		expect(markup).toContain(
-			"Waiting for the pipeline to stamp its first boundary",
-		);
+		expect(markup).toContain("Waiting for the first measured tick");
 	});
 
 	it("shows real ring backlog stamped from the Workload's own sequence numbers", async () => {

@@ -69,17 +69,28 @@ type Lanes = {
 	total: number;
 };
 
-const layout = (geometryLanes: number, regimeLanes: number): Lanes => {
+const layout = (
+	geometryLanes: number,
+	regimeLanes: number,
+	available: number,
+): Lanes => {
 	const geometryHeight = Math.max(geometryLanes, 1) * (LANE_HEIGHT + LANE_GAP);
 	const regimeHeight = Math.max(regimeLanes, 1) * (LANE_HEIGHT + LANE_GAP);
+	const above = 3 + geometryHeight + 2 + regimeHeight + 4;
+	const below =
+		DENSITY_HEIGHT + MICRO_HEIGHT + OPERATIONAL_HEIGHT + AXIS_HEIGHT;
+	const trackHeight = Math.max(
+		TRACK_HEIGHT,
+		available > above + below ? available - above - below : TRACK_HEIGHT,
+	);
 
 	let cursor = 3;
 	const geometry = { top: cursor, height: geometryHeight };
 	cursor += geometryHeight + 2;
 	const regime = { top: cursor, height: regimeHeight };
 	cursor += regimeHeight + 4;
-	const track = { top: cursor, height: TRACK_HEIGHT };
-	cursor += TRACK_HEIGHT;
+	const track = { top: cursor, height: trackHeight };
+	cursor += trackHeight;
 	const density = { top: cursor, height: DENSITY_HEIGHT };
 	cursor += DENSITY_HEIGHT;
 	const micro = { top: cursor, height: MICRO_HEIGHT };
@@ -109,6 +120,7 @@ with the data, which is exactly what makes a dense chart unreadable.
 const useMeasure = <T extends HTMLElement>() => {
 	const ref = useRef<T | null>(null);
 	const [width, setWidth] = useState(0);
+	const [height, setHeight] = useState(0);
 
 	useEffect(() => {
 		const element = ref.current;
@@ -118,16 +130,18 @@ const useMeasure = <T extends HTMLElement>() => {
 		const observer = new ResizeObserver((entries) => {
 			for (const entry of entries) {
 				setWidth(entry.contentRect.width);
+				setHeight(entry.contentRect.height);
 			}
 		});
 
 		observer.observe(element);
 		setWidth(element.clientWidth);
+		setHeight(element.clientHeight);
 
 		return () => observer.disconnect();
 	}, []);
 
-	return { ref, width };
+	return { ref, width, height };
 };
 
 type PlacedEpisode = {
@@ -203,7 +217,7 @@ export const Timeline = ({
 	onMark,
 	emptyLabel,
 }: TimelineProps) => {
-	const { ref, width } = useMeasure<HTMLDivElement>();
+	const { ref, width, height } = useMeasure<HTMLDivElement>();
 	const [hover, setHover] = useState<number | null>(null);
 	const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
 	const [heldMark, setHeldMark] = useState<string | null>(null);
@@ -239,8 +253,9 @@ export const Timeline = ({
 			layout(
 				geometry.reduce((most, entry) => Math.max(most, entry.lane + 1), 0),
 				regime.reduce((most, entry) => Math.max(most, entry.lane + 1), 0),
+				height,
 			),
-		[geometry, regime],
+		[geometry, regime, height],
 	);
 
 	const values = useMemo(
@@ -389,7 +404,7 @@ export const Timeline = ({
 	const empty = buckets.length === 0;
 
 	return (
-		<div ref={ref} className="relative w-full select-none">
+		<div ref={ref} className="relative min-h-0 w-full flex-1 overflow-hidden select-none">
 			{empty ? (
 				<p className="px-4 py-8 font-mono text-[10px] text-(--f4)">
 					No market observations were captured for{" "}
@@ -1507,7 +1522,7 @@ export const Overview = ({
 		.join(" ");
 
 	return (
-		<div ref={ref} className="w-full select-none">
+		<div ref={ref} className="w-full shrink-0 select-none">
 			<svg
 				width={width}
 				height={OVERVIEW_HEIGHT}

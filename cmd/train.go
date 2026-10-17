@@ -24,11 +24,15 @@ var (
 var trainCmd = &cobra.Command{
 	Use:   "train",
 	Short: "Train the action tree and publish its prefixes",
-	Long: `train reads each stored tick and the excursions detect wrote for it.
-Sequitur turns the lit region tokens into a path. Each path that agrees on
-one action is written under policy/current/<path>/enter.bin, exit.bin, or
-noop.bin, which is the key training matches later. The previous current tree
-is moved to policy/archive/ first.`,
+	Long: `train reads only detections/ (committed labels), never draft/ or
+detector/, plus workspace ticks for each excursion. Precursor A→B and holding
+B→C are replayed separately: each tick in the window through its own grid
+and Sequitur. Regions at or above the brightness midpoint become the chord.
+When the up round trip from B to C clears friction, the precursor phrase is
+enter.bin and the holding phrase is exit.bin; otherwise both paths are
+noop.bin (down, chop, and flat always noop). An exit is never published
+without that excursion's enter. Noops dampen live matching. The previous
+policy/current tree is moved to policy/archive/ first.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		system.NewConfig()
 
@@ -73,7 +77,7 @@ is moved to policy/archive/ first.`,
 		price.SetReferenceCash(decimal.NewFromFloat64(cash))
 		price.SetDefaultFee(kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(feePct)})
 
-		epochs, err := trainRunEpochs(client)
+		epochs, err := trainRunEpochs()
 
 		if err != nil {
 			return errnie.Error(err)
@@ -96,13 +100,14 @@ is moved to policy/archive/ first.`,
 		bar := progress.New("train excursions", workTotal)
 		defer bar.Finish()
 		trainer.OnFrame = bar.Step
+		trainer.OnDescribe = func(msg string) { bar.Describe("%s", msg) }
 		trainer.SetWorkTotal = bar.SetTotal
 
 		return trainer.Generate(epochs...)
 	},
 }
 
-func trainRunEpochs(client *store.Client) ([]int64, error) {
+func trainRunEpochs() ([]int64, error) {
 	if len(trainEpochs) == 0 {
 		return nil, nil
 	}

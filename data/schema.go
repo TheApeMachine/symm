@@ -17,8 +17,8 @@ The storage schema: every key and layer the commands exchange, in one place.
 	| writer  | key (Prefix + %019d tick .bin)                 | reader              |
 	|---------|------------------------------------------------|---------------------|
 	| collect | workspace/tick/aggregate/<epoch>/<tick>.bin    | detect, train, audit |
-	| detect  | detector/<class>/<symbol>/<epoch>/<c_tick>.bin | train, audit        |
-	| detect  | detector/watermark/all/<epoch>/<last tick>.bin | train               |
+	| hindsight | detections/<class>/<symbol>/<epoch>/<c_tick>.bin | train, audit      |
+	| detect  | draft/<class>/<symbol>/<epoch>/<c_tick>.bin   | hindsight           |
 	| train   | policy/current/<grammar path>/<action>.bin     | run (CognitionTree) |
 	| train   | resonance/state/<symbol>/<policy epoch>/<last tick>.bin | train (next), run (CognitionTree) |
 	| paper   | paper/<action>/<symbol>/<epoch>/<seq>.bin      | audit (realization) |
@@ -91,10 +91,29 @@ const (
 	LayerGrammar   = "grammar"
 )
 
+/*
+TapeCacheOrigin stores run manifests and scan stamps so detect and hindsight
+can skip a full rescan when ticks and learned parameters are unchanged.
+*/
 const (
+	TapeCacheOrigin = "tape"
+	TapeManifestRole = "manifest"
+	TapeStampRole    = "stamp"
+
 	TickOrigin = "workspace"
 	TickRole   = "tick"
 	TickScope  = "aggregate"
+)
+
+/*
+TraceOrigin is a diagnostics frame the hub broadcasts after each tick. It is
+never stored: the workspace publishes it only to the dashboard sink.
+*/
+const (
+	TraceOrigin = "trace"
+	TraceRole   = "tick"
+	TraceScope  = "pipeline"
+	LayerTrace  = "trace"
 )
 
 /*

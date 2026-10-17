@@ -62,40 +62,49 @@ func (vitality *MetricVitality) ZeroFraction() float64 {
 }
 
 /*
-isStaticParameter returns true for venue configuration metrics (such as fee rate)
-that are constant by design rather than dynamic market signals.
+symbolVitality holds one symbol's price range and the SIGNALS.md metrics
+observed on it. A symbol whose price never changes is not judged.
 */
-func isStaticParameter(key string) bool {
-	if strings.HasSuffix(key, "|fee_rate") || strings.HasSuffix(key, ":fee_rate") {
-		return true
-	}
-
-	return false
+type symbolVitality struct {
+	priceMin   float64
+	priceMax   float64
+	priceCount int
+	metrics    map[string]*MetricVitality
 }
 
 /*
-VitalityStage audits the health and variance of all incoming market metrics.
-It detects "dead" metrics (zero variance, providing no informational value)
-and "stagnant" cold-start metrics (>= 80% zero values).
+VitalityStage checks the signals named in SIGNALS.md on a few symbols whose
+price actually moved. A quiet symbol is ignored. A signal passes when its
+number changes on those symbols. fee_rate only has to be present.
 */
 type VitalityStage struct {
 	*runtime.System
-	ch           chan *data.Value
-	violations   []*Violation
-	series       map[string]*MetricVitality
-	flaggedDead  map[string]bool
-	flaggedStagn map[string]bool
-	totalTicks   int64
+	ch         chan *data.Value
+	violations []*Violation
+	catalog    []catalogMetric
+	index      map[string]catalogMetric
+	bySymbol   map[string]*symbolVitality
+	moved      map[string]float64
+	flatZero   map[string]bool
+	frozen     map[string]bool
+	missing    map[string]bool
+	active     []string
+	totalTicks int64
 }
 
 func NewVitalityStage(ctx context.Context) *VitalityStage {
+	catalog := signalCatalog()
+
 	return &VitalityStage{
-		System:       runtime.NewSystem(ctx, "audit:vitality"),
-		ch:           make(chan *data.Value, 64),
-		violations:   make([]*Violation, 0),
-		series:       make(map[string]*MetricVitality),
-		flaggedDead:  make(map[string]bool),
-		flaggedStagn: make(map[string]bool),
+		System:     runtime.NewSystem(ctx, "audit:vitality"),
+		ch:         make(chan *data.Value, 64),
+		violations: make([]*Violation, 0),
+		catalog:    catalog,
+		bySymbol:   make(map[string]*symbolVitality),
+		moved:      make(map[string]float64),
+		flatZero:   make(map[string]bool),
+		frozen:     make(map[string]bool),
+		missing:    make(map[string]bool),
 	}
 }
 
@@ -105,6 +114,8 @@ func (stage *VitalityStage) Channel() chan *data.Value {
 
 func (stage *VitalityStage) Run() error {
 	errnie.Info(fmt.Sprintf("%s: Running audit...", stage.Name()))
+
+	stage.indexCatalog()
 
 	for measurement := range stage.ch {
 		if measurement == nil {
@@ -122,7 +133,7 @@ func (stage *VitalityStage) Run() error {
 		stage.recordMetrics(measurement)
 	}
 
-	if len(stage.series) == 0 {
+	if len(stage.bySymbol) == 0 {
 		stage.violations = append(stage.violations, insufficient("vitality", "no metric series observed"))
 	}
 
@@ -131,72 +142,232 @@ func (stage *VitalityStage) Run() error {
 	return nil
 }
 
+func (stage *VitalityStage) indexCatalog() {
+	stage.index = make(map[string]catalogMetric, len(stage.catalog))
+
+	for _, metric := range stage.catalog {
+		stage.index[metric.key()] = metric
+	}
+}
+
+func (stage *VitalityStage) symbol(name string) *symbolVitality {
+	book, exists := stage.bySymbol[name]
+
+	if !exists {
+		book = &symbolVitality{metrics: make(map[string]*MetricVitality)}
+		stage.bySymbol[name] = book
+	}
+
+	return book
+}
+
 /*
-recordMetrics updates the running Welford moments, min, max, and zero count
-for each metric present in the measurement.
+recordMetrics keeps price range for every symbol, and keeps a SIGNALS.md
+metric only. Everything else on the tape is ignored, which is what stops a
+quiet coin from turning one signal into hundreds of series.
 */
 func (stage *VitalityStage) recordMetrics(measurement *data.Value) {
 	stage.totalTicks++
 
+	if measurement.Scope == "" {
+		return
+	}
+
+	book := stage.symbol(measurement.Scope)
+
 	for label, val := range data.Metrics(measurement) {
-		key := measurement.Origin + "|" + measurement.Scope + "|" + label
-		stat, exists := stage.series[key]
+		if isPriceLabel(label) && val > 0 {
+			if book.priceCount == 0 {
+				book.priceMin = val
+				book.priceMax = val
+			}
+
+			book.priceMin = math.Min(book.priceMin, val)
+			book.priceMax = math.Max(book.priceMax, val)
+			book.priceCount++
+		}
+
+		key := measurement.Origin + "." + label
+		if _, wanted := stage.index[key]; !wanted {
+			continue
+		}
+
+		stat, exists := book.metrics[key]
 
 		if !exists {
 			stat = &MetricVitality{Name: key}
-			stage.series[key] = stat
+			book.metrics[key] = stat
 		}
 
 		stat.Update(val)
 	}
 }
 
+func isPriceLabel(label string) bool {
+	switch label {
+	case "best_price:bid", "best_price:ask", "price":
+		return true
+	default:
+		return false
+	}
+}
+
 /*
-auditVitality scans accumulated metric populations for zero-variance (dead)
-and stagnant (cold-start) series once minimum support is reached.
+auditVitality picks the symbols whose price moved the most, up to the
+configured handful, and asks whether each catalog signal changes there.
 */
 func (stage *VitalityStage) auditVitality() {
-	keys := make([]string, 0, len(stage.series))
-
-	for key := range stage.series {
-		keys = append(keys, key)
+	if len(stage.bySymbol) == 0 {
+		return
 	}
 
-	slices.Sort(keys)
+	stage.active = stage.activeSymbols()
 
-	for _, key := range keys {
-		stat := stage.series[key]
+	if len(stage.active) == 0 {
+		stage.violations = append(stage.violations, insufficient("vitality", "no symbol's price moved"))
+		return
+	}
 
-		// Dead Metric Check: If a metric has accumulated enough samples (N >= 9)
-		// but has ZERO variance (M2 == 0), it never changes. It carries zero entropy
-		// and indicates a stalled calculation or dead feed.
-		// Skip known static venue parameters like fee_rate.
-		if stat.Count >= core.MinimumPrior && stat.Variance() == 0 && !isStaticParameter(key) && !stage.flaggedDead[key] {
-			stage.flaggedDead[key] = true
+	for _, metric := range stage.catalog {
+		stage.judge(metric)
+	}
+}
+
+func (stage *VitalityStage) activeSymbols() []string {
+	type activity struct {
+		symbol string
+		span   float64
+	}
+
+	ranked := make([]activity, 0, len(stage.bySymbol))
+
+	for symbol, book := range stage.bySymbol {
+		if book.priceCount < 2 || book.priceMin <= 0 || book.priceMax <= book.priceMin {
+			continue
+		}
+
+		ranked = append(ranked, activity{
+			symbol: symbol,
+			span:   (book.priceMax - book.priceMin) / book.priceMin,
+		})
+	}
+
+	slices.SortFunc(ranked, func(left, right activity) int {
+		if left.span == right.span {
+			return strings.Compare(left.symbol, right.symbol)
+		}
+
+		if left.span > right.span {
+			return -1
+		}
+
+		return 1
+	})
+
+	limit := system.Cfg.Audit.ActiveSymbols
+
+	if limit > 0 && len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+
+	symbols := make([]string, len(ranked))
+
+	for idx, row := range ranked {
+		symbols[idx] = row.symbol
+	}
+
+	return symbols
+}
+
+func (stage *VitalityStage) judge(metric catalogMetric) {
+	var (
+		count   float64
+		low     float64
+		high    float64
+		best    float64
+		started bool
+	)
+
+	for _, symbol := range stage.active {
+		stat := stage.bySymbol[symbol].metrics[metric.key()]
+
+		if stat == nil || stat.Count == 0 {
+			continue
+		}
+
+		if !started {
+			low = stat.Min
+			high = stat.Max
+			started = true
+		} else {
+			low = math.Min(low, stat.Min)
+			high = math.Max(high, stat.Max)
+		}
+
+		count += stat.Count
+
+		if variance := stat.Variance(); variance > best {
+			best = variance
+		}
+	}
+
+	where := strings.Join(stage.active, ", ")
+	name := metric.key()
+
+	if !started || count < 2 {
+		stage.missing[name] = true
+		stage.violations = append(stage.violations, NewViolation(
+			name,
+			"vitality.missing",
+			fmt.Sprintf("%s was not produced on the active symbols (%s)", name, where),
+			nil,
+			nil,
+		))
+		return
+	}
+
+	if metric.Static {
+		if high <= 0 {
+			stage.missing[name] = true
 			stage.violations = append(stage.violations, NewViolation(
-				key,
-				"vitality.dead_metric",
-				fmt.Sprintf("Metric %s is dead/constant (variance = 0.0 across %.0f observations, range [%.3f, %.3f])",
-					key, stat.Count, stat.Min, stat.Max),
+				name,
+				"vitality.missing",
+				fmt.Sprintf("%s was not present on the active symbols (%s)", name, where),
 				nil,
 				nil,
 			))
+			return
 		}
 
-		// Stagnant / Cold-Start Check: If >= 80% of observations are zero,
-		// the metric is cold-starting or has insufficient event activity.
-		if stat.Count >= core.MinimumPrior && stat.ZeroFraction() >= system.Cfg.Audit.StagnantZeroFraction && !stage.flaggedStagn[key] {
-			stage.flaggedStagn[key] = true
-			stage.violations = append(stage.violations, NewViolation(
-				key,
-				"vitality.stagnant_metric",
-				fmt.Sprintf("Metric %s is stagnant/cold-start (zero fraction = %.1f%% across %.0f observations)",
-					key, stat.ZeroFraction()*100, stat.Count),
-				nil,
-				nil,
-			))
-		}
+		stage.moved[name] = best
+		return
 	}
+
+	if high > low {
+		stage.moved[name] = best
+		return
+	}
+
+	if math.Abs(low) <= core.Resolution {
+		stage.flatZero[name] = true
+		stage.violations = append(stage.violations, NewViolation(
+			name,
+			"vitality.unmeasured",
+			fmt.Sprintf("%s was 0 on every sample from the active symbols (%s), so it never measured anything there", name, where),
+			nil,
+			nil,
+		))
+		return
+	}
+
+	stage.frozen[name] = true
+	stage.violations = append(stage.violations, NewViolation(
+		name,
+		"vitality.dead_metric",
+		fmt.Sprintf("%s stayed at %.3f on the active symbols (%s), so it is not a live measurement", name, low, where),
+		nil,
+		nil,
+	))
 }
 
 func (stage *VitalityStage) Violations() []*Violation {
@@ -214,31 +385,61 @@ func (stage *VitalityStage) Report() string {
 }
 
 func (stage *VitalityStage) Data() any {
-	deadList := make([]string, 0)
-	stagnantList := make([]string, 0)
-
-	for key, dead := range stage.flaggedDead {
-		if dead {
-			deadList = append(deadList, key)
-		}
+	type varianceRow struct {
+		Name     string  `json:"name"`
+		Variance float64 `json:"variance"`
 	}
 
-	for key, st := range stage.flaggedStagn {
-		if st {
-			stagnantList = append(stagnantList, key)
-		}
+	ranked := make([]varianceRow, 0, len(stage.moved))
+
+	for name, variance := range stage.moved {
+		ranked = append(ranked, varianceRow{Name: name, Variance: variance})
 	}
 
-	slices.Sort(deadList)
-	slices.Sort(stagnantList)
+	slices.SortFunc(ranked, func(left, right varianceRow) int {
+		if left.Variance == right.Variance {
+			return strings.Compare(left.Name, right.Name)
+		}
+
+		if left.Variance > right.Variance {
+			return -1
+		}
+
+		return 1
+	})
+
+	if len(ranked) > 10 {
+		ranked = ranked[:10]
+	}
+
+	catalogCount := len(stage.catalog)
 
 	return map[string]any{
-		"passed":         len(stage.violations) == 0,
-		"total_ticks":    stage.totalTicks,
-		"series_tracked": len(stage.series),
-		"dead_count":     len(deadList),
-		"stagnant_count": len(stagnantList),
-		"dead_series":    deadList,
-		"stagnant":       stagnantList,
+		"passed":           len(stage.violations) == 0,
+		"total_ticks":      stage.totalTicks,
+		"catalog_count":    catalogCount,
+		"series_tracked":   catalogCount,
+		"active_symbols":   stage.active,
+		"healthy_count":    len(stage.moved),
+		"dead_count":       len(stage.frozen),
+		"unmeasured_count": len(stage.flatZero),
+		"missing_count":    len(stage.missing),
+		"dead_series":      flaggedKeys(stage.frozen),
+		"unmeasured":       flaggedKeys(stage.flatZero),
+		"missing":          flaggedKeys(stage.missing),
+		"top_variance":     ranked,
 	}
+}
+
+func flaggedKeys(flags map[string]bool) []string {
+	keys := make([]string, 0)
+
+	for key, flagged := range flags {
+		if flagged {
+			keys = append(keys, key)
+		}
+	}
+
+	slices.Sort(keys)
+	return keys
 }

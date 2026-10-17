@@ -85,22 +85,33 @@ func excursionComplete(value *data.Value) error {
 	return nil
 }
 
-func (service *Service) newDetector() *strategy.Detector {
-	price := broker.NewPrice(service.ctx, nil, nil, nil, nil)
+func scanningDetector() *strategy.Detector {
+	price := broker.NewPrice(context.Background(), nil, nil, nil, nil)
 	cash := 200.0
+	fee := 0.8
 
-	if system.Cfg != nil && system.Cfg.Market != nil && system.Cfg.Market.Balance > 0 {
-		cash = float64(system.Cfg.Market.Balance)
+	if system.Cfg != nil && system.Cfg.Market != nil {
+		if system.Cfg.Market.Balance > 0 {
+			cash = float64(system.Cfg.Market.Balance)
+		}
+
+		if system.Cfg.Market.TakerFee > 0 {
+			fee = system.Cfg.Market.TakerFee
+		}
 	}
 
 	price.SetReferenceCash(decimal.NewFromFloat64(cash))
-	price.SetDefaultFee(kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.8)})
+	price.SetDefaultFee(kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(fee)})
 
-	return strategy.NewDetector(service.ctx, price)
+	return strategy.NewDetector(context.Background(), price)
 }
 
-func (service *Service) loadRetrace(run uint64) float64 {
-	for value, err := range store.Values(service.client, data.Prefix(data.DraftOrigin, "tolerance", data.PolicyScope, run)) {
+/*
+LearnedRetrace is the pullback the last commit taught the detector. The next
+detect run reads this one object and starts from it.
+*/
+func LearnedRetrace(client *store.Client) float64 {
+	for value, err := range store.Values(client, data.Prefix(data.DraftOrigin, "params", "learned", 1)) {
 		if err != nil || value == nil {
 			return 0
 		}
@@ -111,18 +122,18 @@ func (service *Service) loadRetrace(run uint64) float64 {
 	return 0
 }
 
-func (service *Service) saveRetrace(run uint64, ratio float64) error {
+func saveLearnedRetrace(client *store.Client, ratio float64) error {
 	if ratio <= 0 {
 		return nil
 	}
 
-	value := data.NewValue(data.DraftOrigin, "tolerance", data.PolicyScope)
-	value.Epoch = run
+	value := data.NewValue(data.DraftOrigin, "params", "learned")
+	value.Epoch = 1
 	value.Tick = 1
 	value.FormatPrefix()
 	data.AppendVector(value, []float64{ratio}, "retrace")
 
-	_, err := io.Copy(service.client, value)
+	_, err := io.Copy(client, value)
 
 	return err
 }
@@ -132,24 +143,40 @@ clearDrafts removes the run's working predictions. The tolerance object lives
 under a different role and stays.
 */
 func (service *Service) clearDrafts(run uint64) error {
-	for _, class := range data.ExcursionClasses {
-		for _, key := range service.client.ListKeys(data.DraftOrigin + "/" + class + "/") {
-			got, err := excursionEpoch(key)
+	return clearDraftsForRun(service.client, run)
+}
 
-			if err != nil || got != run {
-				continue
-			}
+func (service *Service) loadRetrace() float64 {
+	return LearnedRetrace(service.client)
+}
 
-			if err := service.client.DeletePrefix(key); err != nil {
-				return err
-			}
+func (service *Service) saveRetrace(ratio float64) error {
+	return saveLearnedRetrace(service.client, ratio)
+}
+
+func (service *Service) writeDraft(value *data.Value) error {
+	return writeDraftTo(service.client, value)
+}
+
+/*
+StoreDrafts replaces run's working predictions with drafts. detect uses this
+after it has stitched the run and scanned each symbol.
+*/
+func StoreDrafts(client *store.Client, run uint64, drafts []*data.Value) error {
+	if err := clearDraftsForRun(client, run); err != nil {
+		return err
+	}
+
+	for _, value := range drafts {
+		if err := writeDraftTo(client, value); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-func (service *Service) writeDraft(value *data.Value) error {
+func writeDraftTo(client *store.Client, value *data.Value) error {
 	fields, err := data.DetectExcursionFields(value)
 
 	if err != nil {
@@ -176,123 +203,155 @@ func (service *Service) writeDraft(value *data.Value) error {
 	draft.FormatPrefix()
 	data.AppendVector(draft, vector, data.ExcursionKeys...)
 
-	_, err = io.Copy(service.client, draft)
+	_, err = io.Copy(client, draft)
 
 	return err
 }
 
-/*
-rescan walks the run once per symbol. Each symbol keeps its own detector for
-the whole run, so a trade of another symbol cannot wipe its swing.
-*/
-func (service *Service) rescan(ctx context.Context, run uint64, retrace float64) (int, error) {
-	if err := service.clearDrafts(run); err != nil {
-		return 0, err
+func clearDraftsForSymbols(client *store.Client, run uint64, symbols map[string]struct{}) error {
+	if len(symbols) == 0 {
+		return clearDraftsForRun(client, run)
 	}
 
-	detectors := map[string]*strategy.Detector{}
-	written := 0
-	seen := 0
-
-	errnie.Info(fmt.Sprintf("[hindsight] scanning run %d one symbol at a time", run))
-
-	for frame, err := range store.Values(service.client, data.TickPrefix(run)) {
-		if err != nil {
-			return written, err
+	for symbol := range symbols {
+		for _, class := range data.ExcursionClasses {
+			for _, key := range client.ListKeys(data.Prefix(data.DraftOrigin, class, symbol, run)) {
+				if err := client.DeletePrefix(key); err != nil {
+					return err
+				}
+			}
 		}
+	}
 
-		if err := ctx.Err(); err != nil {
-			return written, err
-		}
+	return nil
+}
 
-		seen++
+func clearDraftsForRun(client *store.Client, run uint64) error {
+	for _, class := range data.ExcursionClasses {
+		for _, key := range client.ListKeys(data.DraftOrigin + "/" + class + "/") {
+			got, err := excursionEpoch(key)
 
-		if seen%20000 == 0 {
-			errnie.Info(fmt.Sprintf("[hindsight] scan of run %d has read %d ticks", run, seen))
-		}
-
-		ticks, err := broker.ReadTick(frame)
-
-		if err != nil {
-			return written, err
-		}
-
-		for _, tick := range ticks {
-			if tick == nil || tick.Symbol == "" {
+			if err != nil || got != run {
 				continue
 			}
 
-			detector := detectors[tick.Symbol]
-
-			if detector == nil {
-				detector = service.newDetector()
-				detector.SetRetrace(retrace)
-				detectors[tick.Symbol] = detector
-			}
-
-			for _, value := range detector.Replay(frame, tick) {
-				if err := service.writeDraft(value); err != nil {
-					return written, err
-				}
-
-				written++
+			if err := client.DeletePrefix(key); err != nil {
+				return err
 			}
 		}
 	}
 
-	for _, detector := range detectors {
-		for _, value := range detector.Finish() {
-			if err := service.writeDraft(value); err != nil {
-				return written, err
-			}
-
-			written++
-		}
-	}
-
-	errnie.Info(fmt.Sprintf("[hindsight] scan of run %d wrote %d draft detections across %d symbols", run, written, len(detectors)))
-
-	return written, nil
+	return nil
 }
 
-func (service *Service) symbolPrices(ctx context.Context, run uint64, symbol string, from, to uint64) ([]float64, error) {
-	prices := make([]float64, 0)
+func (service *Service) replaceDrafts(run uint64, symbols map[string]struct{}, drafts []*data.Value) error {
+	if err := clearDraftsForSymbols(service.client, run, symbols); err != nil {
+		return err
+	}
 
-	for frame, err := range store.Values(service.client, data.TickPrefix(run)) {
-		if err != nil {
-			return nil, err
+	for _, value := range drafts {
+		if err := service.writeDraft(value); err != nil {
+			return err
 		}
+	}
 
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
+	return nil
+}
 
-		if frame.Tick < from || frame.Tick > to {
+/*
+rescan reruns every symbol tape already in memory and replaces the run's drafts.
+*/
+func (service *Service) rescan(ctx context.Context, run uint64, retrace float64) ([]*data.Value, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	loaded, err := service.tape(ctx, run)
+
+	if err != nil {
+		return nil, err
+	}
+
+	drafts := scanSymbols(loaded, retrace, nil)
+
+	if err := service.replaceDrafts(run, nil, drafts); err != nil {
+		return nil, err
+	}
+
+	errnie.Info(fmt.Sprintf("[hindsight] scan of run %d wrote %d draft detections across %d symbols", run, len(drafts), len(loaded.bySymbol)))
+
+	return drafts, nil
+}
+
+/*
+rescanSymbols replays only the given symbols. commit uses this when learned
+retrace did not change, because only the edited symbol's drafts need refresh.
+*/
+func (service *Service) rescanSymbols(ctx context.Context, run uint64, retrace float64, symbols []string) ([]*data.Value, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	loaded, err := service.tape(ctx, run)
+
+	if err != nil {
+		return nil, err
+	}
+
+	want := make(map[string]struct{}, len(symbols))
+
+	for _, symbol := range symbols {
+		want[symbol] = struct{}{}
+	}
+
+	drafts := make([]*data.Value, 0)
+
+	for symbol := range want {
+		drafts = append(drafts, scanSymbol(loaded, symbol, retrace)...)
+	}
+
+	if err := service.replaceDrafts(run, want, drafts); err != nil {
+		return nil, err
+	}
+
+	errnie.Info(fmt.Sprintf("[hindsight] rescan of run %d refreshed %d symbols (%d drafts)", run, len(want), len(drafts)))
+
+	return drafts, nil
+}
+
+func widestDraft(drafts []*data.Value, symbol, class string) (a, b, c, d uint64, ok bool) {
+	best := 0.0
+
+	for _, value := range drafts {
+		if value == nil || value.Scope != symbol || value.Role != class {
 			continue
 		}
 
-		ticks, err := broker.ReadTick(frame)
+		fields, err := data.DetectExcursionFields(value)
 
-		if err != nil {
-			return nil, err
+		if err != nil || fields["b_price"] <= 0 {
+			continue
 		}
 
-		for _, tick := range ticks {
-			if tick == nil || tick.Symbol != symbol {
-				continue
-			}
+		span := math.Abs(fields["c_price"] - fields["b_price"])
 
-			for _, trade := range tick.Trades {
-				price := trade.Price.Float64()
-
-				if price > 0 {
-					prices = append(prices, price)
-				}
-			}
+		if ok && span <= best {
+			continue
 		}
+
+		if fields["a_tick"] < 1 {
+			fields["a_tick"] = fields["b_tick"]
+		}
+
+		best = span
+		a = uint64(fields["a_tick"])
+		b = uint64(fields["b_tick"])
+		c = uint64(fields["c_tick"])
+		d = uint64(fields["d_tick"])
+		ok = true
 	}
 
-	return prices, nil
+	return a, b, c, d, ok
 }
 
 func (service *Service) beginScan(ctx context.Context, run uint64) (int, error) {
@@ -302,33 +361,66 @@ func (service *Service) beginScan(ctx context.Context, run uint64) (int, error) 
 
 	defer service.scanMu.Unlock()
 
-	return service.rescan(ctx, run, service.loadRetrace(run))
-}
-
-func (service *Service) commit(ctx context.Context, run uint64, symbol, class string, marks [4]uint64) (int, error) {
-	if !service.scanMu.TryLock() {
-		return 0, errnie.Err(errnie.NotAcceptable, "[hindsight] a scan is already running", nil)
-	}
-
-	defer service.scanMu.Unlock()
-
-	prices, err := service.symbolPrices(ctx, run, symbol, marks[1], marks[2])
+	retrace := service.loadRetrace()
+	drafts, err := service.rescan(ctx, run, retrace)
 
 	if err != nil {
 		return 0, err
 	}
 
-	retrace := math.Max(service.loadRetrace(run), includedRetrace(prices))
-
-	if _, err := service.storeMarks(ctx, data.DetectionsOrigin, run, symbol, class, marks); err != nil {
+	if err := WriteScanStamp(service.client, run, retrace, len(drafts)); err != nil {
 		return 0, err
 	}
 
-	if err := service.saveRetrace(run, retrace); err != nil {
-		return 0, err
+	return len(drafts), nil
+}
+
+func (service *Service) commit(ctx context.Context, run uint64, symbol, class string, marks [4]uint64) (int, [4]uint64, bool, error) {
+	none := [4]uint64{}
+
+	if !service.scanMu.TryLock() {
+		return 0, none, false, errnie.Err(errnie.NotAcceptable, "[hindsight] a scan is already running", nil)
 	}
 
-	return service.rescan(ctx, run, retrace)
+	defer service.scanMu.Unlock()
+
+	loaded, err := service.tape(ctx, run)
+
+	if err != nil {
+		return 0, none, false, err
+	}
+
+	priorRetrace := service.loadRetrace()
+	retrace := math.Max(priorRetrace, includedRetrace(loaded.prices(symbol, marks[1], marks[2])))
+	retraceChanged := retrace > priorRetrace+1e-12
+
+	if _, err := service.writeMarks(data.DetectionsOrigin, run, symbol, class, marks, markedTrades(loaded, symbol, marks[0], marks[3])); err != nil {
+		return 0, none, false, err
+	}
+
+	if err := service.saveRetrace(retrace); err != nil {
+		return 0, none, false, err
+	}
+
+	var drafts []*data.Value
+
+	if retraceChanged {
+		drafts, err = service.rescan(ctx, run, retrace)
+	} else {
+		drafts, err = service.rescanSymbols(ctx, run, retrace, []string{symbol})
+	}
+
+	if err != nil {
+		return 0, none, false, err
+	}
+
+	if err := WriteScanStamp(service.client, run, retrace, len(drafts)); err != nil {
+		return 0, none, false, err
+	}
+
+	a, b, c, d, ok := widestDraft(drafts, symbol, class)
+
+	return len(drafts), [4]uint64{a, b, c, d}, ok, nil
 }
 
 func (service *Service) commitAll(ctx context.Context, run uint64) (int, error) {
@@ -409,15 +501,37 @@ func (service *Service) commitRoute(ctx fiber.Ctx) error {
 		}
 	}
 
-	written, err := service.commit(ctx.Context(), run, request.Symbol, request.Class, marks)
+	written, next, ok, err := service.commit(ctx.Context(), run, request.Symbol, request.Class, marks)
 
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
 	}
 
-	return ctx.JSON(struct {
+	response := struct {
 		Drafts int `json:"drafts"`
-	}{Drafts: written})
+		Marker *struct {
+			A string `json:"a"`
+			B string `json:"b"`
+			C string `json:"c"`
+			D string `json:"d"`
+		} `json:"marker,omitempty"`
+	}{Drafts: written}
+
+	if ok {
+		response.Marker = &struct {
+			A string `json:"a"`
+			B string `json:"b"`
+			C string `json:"c"`
+			D string `json:"d"`
+		}{
+			A: strconv.FormatUint(next[0], 10),
+			B: strconv.FormatUint(next[1], 10),
+			C: strconv.FormatUint(next[2], 10),
+			D: strconv.FormatUint(next[3], 10),
+		}
+	}
+
+	return ctx.JSON(response)
 }
 
 func (service *Service) commitAllRoute(ctx fiber.Ctx) error {

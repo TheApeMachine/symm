@@ -12,14 +12,18 @@ type Audit struct {
 	Epoch int64
 	// PolicyEpoch is the policy epoch the cognitive and realization stages
 	// judge: it must be trained on Epoch's ticks. 0 is the newest one that is.
-	PolicyEpoch  int64
-	Symbol       string
-	Ticks        int
-	Permutations int
-	TakerFee     float64
-	OutputDir    string
-	NoPlots      bool
-	Significance float64
+	PolicyEpoch int64
+	Symbol      string
+	Ticks       int
+	// ActiveSymbols is how many symbols whose price actually moved are used
+	// to decide whether each signal in SIGNALS.md is alive. Quiet symbols
+	// are not judged.
+	ActiveSymbols int
+	Permutations  int
+	TakerFee      float64
+	OutputDir     string
+	NoPlots       bool
+	Significance  float64
 
 	MinTokens                int
 	MinPrecursorTokens       int
@@ -43,17 +47,19 @@ func NewAudit() *Audit {
 	viper.SetDefault("audit.output_dir", "audit_results")
 	viper.SetDefault("audit.no_plots", false)
 	viper.SetDefault("audit.significance", 0.05)
+	viper.SetDefault("audit.active_symbols", 5)
 
 	return &Audit{
-		Epoch:        viper.GetInt64("audit.epoch"),
-		PolicyEpoch:  viper.GetInt64("audit.policy_epoch"),
-		Symbol:       viper.GetString("audit.symbol"),
-		Ticks:        viper.GetInt("audit.ticks"),
-		Permutations: viper.GetInt("audit.permutations"),
-		TakerFee:     viper.GetFloat64("audit.taker_fee"),
-		OutputDir:    viper.GetString("audit.output_dir"),
-		NoPlots:      viper.GetBool("audit.no_plots"),
-		Significance: viper.GetFloat64("audit.significance"),
+		Epoch:         viper.GetInt64("audit.epoch"),
+		PolicyEpoch:   viper.GetInt64("audit.policy_epoch"),
+		Symbol:        viper.GetString("audit.symbol"),
+		Ticks:         viper.GetInt("audit.ticks"),
+		ActiveSymbols: viper.GetInt("audit.active_symbols"),
+		Permutations:  viper.GetInt("audit.permutations"),
+		TakerFee:      viper.GetFloat64("audit.taker_fee"),
+		OutputDir:     viper.GetString("audit.output_dir"),
+		NoPlots:       viper.GetBool("audit.no_plots"),
+		Significance:  viper.GetFloat64("audit.significance"),
 
 		MinTokens:                viper.GetInt("audit.min_tokens"),
 		MinPrecursorTokens:       viper.GetInt("audit.min_precursor_tokens"),

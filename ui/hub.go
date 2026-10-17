@@ -11,12 +11,15 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -31,34 +34,95 @@ type Hub struct {
 	clients    sync.Map // *websocket.Conn -> *client
 	replayer   Replayer
 	detector   Detector
-	retained   atomic.Pointer[[]byte]
+	// kept is the latest frame of each dashboard state, replayed when a
+	// client connects. Ticks are not kept: a key is one origin/role/scope.
+	keepMu    sync.Mutex
+	kept      map[string][]byte
+	keptOrder []string
+	// drops counts frames a client queue refused. The pipeline does not wait
+	// on a slow dashboard, so a rising drop count is the dashboard falling
+	// behind, not the venue.
+	drops atomic.Uint64
 }
 
 /*
-Retained is a writer for the one frame every client must hold whatever
-time it connects (the loaded CognitionTree): each Write is broadcast like
-Write and kept, and a client that connects later receives the latest one
-first. p must be one whole serialized Value.
+retainedTreeKey is the cognition tree. It is replayed ahead of the other
+kept frames so a connecting dashboard has the tree before the matches.
 */
-func (hub *Hub) Retained() io.Writer { return retainedWriter{hub: hub} }
-
-type retainedWriter struct{ hub *Hub }
+const retainedTreeKey = "cognition/tree/all"
 
 /*
-join registers a new client, the retained frame queued first.
+Retained is the writer for the cognition tree. Retain keeps any other
+latest frame (one sequitur grammar, one cognition match, per symbol).
+A Write is broadcast and kept. A client that connects later receives
+every kept frame, tree first. p must be one whole serialized Value.
+*/
+func (hub *Hub) Retained() io.Writer { return hub.Retain(retainedTreeKey) }
+
+/*
+Retain returns a writer that broadcasts p and keeps the latest bytes under key.
+*/
+func (hub *Hub) Retain(key string) io.Writer { return retainWriter{hub: hub, key: key} }
+
+type retainWriter struct {
+	hub *Hub
+	key string
+}
+
+/*
+join registers a new client and queues every kept frame first.
 */
 func (hub *Hub) join(key any, current *client) {
-	// The queue is empty: the retained frame is always the first one.
-	if retained := hub.retained.Load(); retained != nil {
-		current.frames <- *retained
+	for _, frame := range hub.snapshotKept() {
+		current.frames <- frame
 	}
 
 	hub.clients.Store(key, current)
 }
 
-func (writer retainedWriter) Write(p []byte) (int, error) {
+func (hub *Hub) storeKept(key string, frame []byte) {
+	if hub == nil || key == "" {
+		return
+	}
+
+	hub.keepMu.Lock()
+	defer hub.keepMu.Unlock()
+
+	if hub.kept == nil {
+		hub.kept = map[string][]byte{}
+	}
+
+	if _, ok := hub.kept[key]; !ok {
+		hub.keptOrder = append(hub.keptOrder, key)
+	}
+
+	hub.kept[key] = frame
+}
+
+func (hub *Hub) snapshotKept() [][]byte {
+	hub.keepMu.Lock()
+	defer hub.keepMu.Unlock()
+
+	out := make([][]byte, 0, len(hub.keptOrder))
+
+	if frame, ok := hub.kept[retainedTreeKey]; ok {
+		out = append(out, frame)
+	}
+
+	for _, key := range hub.keptOrder {
+		if key == retainedTreeKey {
+			continue
+		}
+
+		out = append(out, hub.kept[key])
+	}
+
+	return out
+}
+
+func (writer retainWriter) Write(p []byte) (int, error) {
 	frame := slices.Clone(p)
-	writer.hub.retained.Store(&frame)
+	writer.hub.storeKept(writer.key, frame)
 	return writer.hub.Write(frame)
 }
 
@@ -257,6 +321,22 @@ const clientQueue = 256
 func (hub *Hub) wsHandler(shard int) fiber.Handler {
 	return websocket.New(func(conn *websocket.Conn) {
 		current := &client{frames: make(chan []byte, clientQueue), done: make(chan struct{})}
+
+		// The only writer on this connection. It starts before join so a
+		// replay of every kept frame can drain instead of filling the queue.
+		go func() {
+			for {
+				select {
+				case frame := <-current.frames:
+					if err := conn.Conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+						return
+					}
+				case <-current.done:
+					return
+				}
+			}
+		}()
+
 		hub.join(conn, current)
 		errnie.Info(fmt.Sprintf("[hub] frontend websocket shard %d connected", shard))
 
@@ -269,20 +349,6 @@ func (hub *Hub) wsHandler(shard int) fiber.Handler {
 
 			if err := conn.Conn.Close(); err != nil {
 				errnie.Error(err)
-			}
-		}()
-
-		// The only writer on this connection.
-		go func() {
-			for {
-				select {
-				case frame := <-current.frames:
-					if err := conn.Conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
-						return
-					}
-				case <-current.done:
-					return
-				}
 			}
 		}()
 
@@ -324,12 +390,93 @@ func (hub *Hub) Write(p []byte) (n int, err error) {
 		case current.frames <- p:
 		case <-current.done:
 		default:
+			hub.drops.Add(1)
 		}
 
 		return true
 	})
 
 	return len(p), nil
+}
+
+type traceSpan struct {
+	Name    string `json:"name"`
+	Group   string `json:"group"`
+	Stage   int    `json:"stage"`
+	WaitNs  int64  `json:"waitNs"`
+	WorkNs  int64  `json:"workNs"`
+	Backlog int64  `json:"backlog"`
+	Side    bool   `json:"side,omitempty"`
+}
+
+type traceFrame struct {
+	Tick  uint64      `json:"tick"`
+	Seq   uint64      `json:"seq"`
+	Bytes int         `json:"bytes"`
+	Drops uint64      `json:"drops"`
+	Spans []traceSpan `json:"spans"`
+}
+
+/*
+PublishTrace broadcasts one tick's measured spans to the dashboard. The
+frame is its own value, origin "trace", and is not written to the store.
+bookNs is the latest book-ingress apply; it rides along as a side span
+because that work is not part of this tick.
+*/
+func (hub *Hub) PublishTrace(value *data.Value, bookNs int64) {
+	if hub == nil || value == nil {
+		return
+	}
+
+	spans := value.Spans()
+	frame := traceFrame{
+		Tick:  value.Tick,
+		Seq:   value.SeqIdx,
+		Bytes: value.Size(),
+		Drops: hub.drops.Load(),
+		Spans: make([]traceSpan, 0, len(spans)+1),
+	}
+
+	for _, span := range spans {
+		frame.Spans = append(frame.Spans, traceSpan{
+			Name:    span.Name,
+			Group:   span.Group,
+			Stage:   span.Stage,
+			WaitNs:  span.WaitNs,
+			WorkNs:  span.WorkNs,
+			Backlog: span.Backlog,
+			Side:    span.Side,
+		})
+	}
+
+	if bookNs > 0 {
+		frame.Spans = append(frame.Spans, traceSpan{
+			Name:   "book",
+			Group:  "venue",
+			WorkNs: bookNs,
+			Side:   true,
+		})
+	}
+
+	body, err := sonic.Marshal(frame)
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Internal, "[hub] trace marshal failed", err))
+		return
+	}
+
+	out := &data.Value{
+		ID:        uuid.New(),
+		Epoch:     value.Epoch,
+		Tick:      value.Tick,
+		SeqIdx:    value.SeqIdx,
+		Timestamp: uint64(time.Now().UnixNano()),
+		Origin:    data.TraceOrigin,
+		Role:      data.TraceRole,
+		Scope:     data.TraceScope,
+	}
+	out.AppendJSON(body, data.LayerTrace)
+	hub.Write(out.Bytes())
 }
 
 /*

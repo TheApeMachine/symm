@@ -160,6 +160,16 @@ describe("CognitiveTree", () => {
 		expect(banner.textContent).not.toContain("model error");
 	});
 
+	it("accepts a hub tree frame without gate or problem (PublishCognitionTree wire)", () => {
+		const { gate: _g, problem: _p, ...hubTree } = tree;
+		expect(ingestCognitionFrame("tree", hubTree)).toBe(true);
+		render(<CognitiveTree />);
+		expect(screen.queryByTestId("cognitive-tree-empty")).toBeNull();
+		expect(screen.getByTestId("cognitive-tree-meta").textContent).toContain(
+			"1 paths",
+		);
+	});
+
 	it("refuses a tree frame whose problem is malformed, or missing", () => {
 		const errors = vi.spyOn(console, "error").mockImplementation(() => {});
 		expect(
@@ -174,8 +184,6 @@ describe("CognitiveTree", () => {
 				problem: { level: "error", reason: "x", fix: "" },
 			}),
 		).toBe(false);
-		const { problem: _dropped, ...without } = tree;
-		expect(ingestCognitionFrame("tree", without)).toBe(false);
 		errors.mockRestore();
 	});
 

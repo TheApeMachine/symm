@@ -432,6 +432,21 @@ spot:trade is the tick, balance and positions feed the desk atoms, and each
 vector layer lands in its signal's ring for the tick's symbol.
 */
 export function dispatchValue(val: ParsedValue) {
+	if (val.origin === "trace") {
+		const layer = val.layers.find((entry) => entry.index === "trace");
+
+		if (layer) {
+			try {
+				topologyStore.actions.ingestTrace(
+					JSON.parse(textDecoder.decode(layer.bytes)),
+				);
+			} catch (err) {
+				console.error("trace frame did not parse", err);
+			}
+		}
+
+		return;
+	}
 	// A live grammar frame (sequitur/grammar/<symbol>, data/schema.go) is not
 	// a tick: its one layer is the strategy.SequiturFrame JSON.
 	if (val.origin === SEQUITUR_ORIGIN && val.role === SEQUITUR_ROLE) {

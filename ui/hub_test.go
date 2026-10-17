@@ -302,5 +302,22 @@ func TestHubRetained(t *testing.T) {
 			hub.join("late", late)
 			So(len(late.frames), ShouldEqual, 0)
 		})
+
+		Convey("Each kept key is replayed, the tree ahead of the others", func() {
+			_, err := hub.Retain("sequitur/grammar/ETH/USD").Write([]byte("eth"))
+			So(err, ShouldBeNil)
+			_, err = hub.Retained().Write([]byte("tree"))
+			So(err, ShouldBeNil)
+			_, err = hub.Retain("cognition/match/SOL/USD").Write([]byte("sol"))
+			So(err, ShouldBeNil)
+
+			late := newClient()
+			hub.join("late", late)
+			So(string(<-late.frames), ShouldEqual, "tree")
+
+			rest := map[string]bool{string(<-late.frames): true, string(<-late.frames): true}
+			So(rest["eth"], ShouldBeTrue)
+			So(rest["sol"], ShouldBeTrue)
+		})
 	})
 }

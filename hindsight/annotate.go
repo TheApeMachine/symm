@@ -10,9 +10,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/store"
 )
 
 /*
@@ -111,73 +109,51 @@ func (service *Service) Annotate(ctx context.Context, run uint64, symbol, class 
 }
 
 /*
-storeMarks writes the hand-placed detection under origin.
+markedTrades reads one symbol's prints between two ticks from the tape already
+in memory.
 */
-func (service *Service) storeMarks(ctx context.Context, origin string, run uint64, symbol, class string, marks [4]uint64) (string, error) {
-	if service == nil || service.client == nil {
-		return "", errnie.Err(errnie.Validation, "[hindsight] annotate needs a store", nil)
-	}
-
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	keys := make([]string, 0)
-
-	for _, key := range service.client.ListKeys(data.TickPrefix(run)) {
-		tick, err := tickOfKey(key)
-
-		if err != nil {
-			return "", err
-		}
-
-		if tick >= marks[0] && tick <= marks[3] {
-			keys = append(keys, key)
-		}
+func markedTrades(tape *runTape, symbol string, from, to uint64) []annotationTrade {
+	if tape == nil {
+		return nil
 	}
 
 	trades := make([]annotationTrade, 0)
 
-	for value, err := range store.Download(service.client, keys) {
-		if err != nil {
-			return "", err
-		}
-
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-
-		ticks, err := broker.ReadTick(value)
-
-		if err != nil {
-			return "", err
-		}
-
-		index := slices.IndexFunc(ticks, func(tick *broker.SymbolTick) bool { return tick.Symbol == symbol })
-
-		if index < 0 {
+	for _, row := range tape.bySymbol[symbol] {
+		if row.frame == nil || row.tick == nil || row.frame.Tick < from || row.frame.Tick > to {
 			continue
 		}
 
 		bid, ask := 0.0, 0.0
 
-		if ticks[index].Price.Bid != nil {
-			bid = ticks[index].Price.Bid.Float64()
+		if row.tick.Price.Bid != nil {
+			bid = row.tick.Price.Bid.Float64()
 		}
 
-		if ticks[index].Price.Ask != nil {
-			ask = ticks[index].Price.Ask.Float64()
+		if row.tick.Price.Ask != nil {
+			ask = row.tick.Price.Ask.Float64()
 		}
 
-		for _, trade := range ticks[index].Trades {
+		for _, trade := range row.tick.Trades {
 			trades = append(trades, annotationTrade{
-				tick:  value.Tick,
+				tick:  row.frame.Tick,
 				at:    trade.Timestamp.UnixNano(),
 				price: trade.Price.Float64(),
 				bid:   bid,
 				ask:   ask,
 			})
 		}
+	}
+
+	return trades
+}
+
+/*
+writeMarks stores the hand-placed detection. The prints come from the caller.
+*/
+func (service *Service) writeMarks(origin string, run uint64, symbol, class string, marks [4]uint64, trades []annotationTrade) (string, error) {
+	if service == nil || service.client == nil {
+		return "", errnie.Err(errnie.Validation, "[hindsight] annotate needs a store", nil)
 	}
 
 	vector, err := annotationVector(class, marks, trades)
@@ -197,6 +173,24 @@ func (service *Service) storeMarks(ctx context.Context, origin string, run uint6
 	}
 
 	return value.Prefix, nil
+}
+
+/*
+storeMarks writes the hand-placed detection under origin from the run tape
+already loaded. It does not list or download the run again.
+*/
+func (service *Service) storeMarks(ctx context.Context, origin string, run uint64, symbol, class string, marks [4]uint64) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	loaded, err := service.tape(ctx, run)
+
+	if err != nil {
+		return "", err
+	}
+
+	return service.writeMarks(origin, run, symbol, class, marks, markedTrades(loaded, symbol, marks[0], marks[3]))
 }
 
 type annotationRequest struct {

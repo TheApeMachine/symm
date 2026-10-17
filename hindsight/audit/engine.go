@@ -126,6 +126,7 @@ func validateConfig(cfg *system.Audit) error {
 		openMin  bool
 	}{
 		{"audit.permutations", float64(cfg.Permutations), 1, math.MaxInt32, false},
+		{"audit.active_symbols", float64(cfg.ActiveSymbols), 1, math.MaxInt32, false},
 		{"audit.significance", cfg.Significance, 0, 1, true},
 		{"audit.taker_fee (--taker-fee-percent / 100)", cfg.TakerFee, 0, 1, true},
 		{"audit.min_tokens", float64(cfg.MinTokens), 2, math.MaxInt32, false},

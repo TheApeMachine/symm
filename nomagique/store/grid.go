@@ -19,6 +19,8 @@ type Grid struct {
 	*runtime.System
 	mu      sync.Mutex
 	symbols map[string]*symbolState
+	// last is each symbol's own regions from the latest Observe, brightest first.
+	last map[string][]*Region
 }
 
 /*
@@ -145,8 +147,15 @@ func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
 	defer grid.mu.Unlock()
 
 	total := 0
+	grid.last = make(map[string][]*Region, len(bySymbol))
 
 	for symbol, samples := range bySymbol {
+		local := make([]*Region, RegionCount)
+
+		for idx := range local {
+			local[idx] = &Region{Key: uint8(idx)}
+		}
+
 		state, ok := grid.symbols[symbol]
 
 		if !ok {
@@ -186,6 +195,8 @@ func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
 			}
 		}
 
+		symTotal := 0
+
 		for _, sample := range samples {
 			delta, scored := movement[sample.key]
 			sourceSurprise, surprised := surprise[sample.key.source]
@@ -195,11 +206,28 @@ func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
 			}
 
 			for _, region := range regionMetricPins[sample.key.source][sample.key.label] {
-				regions[region].Deformation += math.Abs(delta) * sourceSurprise
+				amount := math.Abs(delta) * sourceSurprise
+				regions[region].Deformation += amount
 				regions[region].Counts++
+				local[region].Deformation += amount
+				local[region].Counts++
 				total++
+				symTotal++
 			}
 		}
+
+		if symTotal == 0 {
+			continue
+		}
+
+		for _, region := range local {
+			if region.Counts > 0 {
+				region.Brightness = region.Deformation / float64(region.Counts)
+			}
+		}
+
+		slices.SortFunc(local, brighterFirst)
+		grid.last[symbol] = local
 	}
 
 	if total == 0 {
@@ -212,17 +240,51 @@ func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
 		}
 	}
 
-	slices.SortFunc(regions, func(first, second *Region) int {
-		if first.Brightness > second.Brightness {
-			return -1
-		}
-
-		if first.Brightness < second.Brightness {
-			return 1
-		}
-
-		return int(first.Key) - int(second.Key)
-	})
+	slices.SortFunc(regions, brighterFirst)
 
 	return regions, nil
+}
+
+func brighterFirst(first, second *Region) int {
+	if first.Brightness > second.Brightness {
+		return -1
+	}
+
+	if first.Brightness < second.Brightness {
+		return 1
+	}
+
+	return int(first.Key) - int(second.Key)
+}
+
+/*
+SymbolRegions returns each symbol's own regions from the latest Observe,
+brightest first. Symbols that scored nothing this tick are absent.
+*/
+func (grid *Grid) SymbolRegions() map[string][]*Region {
+	if grid == nil {
+		return nil
+	}
+
+	grid.mu.Lock()
+	defer grid.mu.Unlock()
+
+	out := make(map[string][]*Region, len(grid.last))
+
+	for symbol, regions := range grid.last {
+		cloned := make([]*Region, len(regions))
+
+		for i, region := range regions {
+			if region == nil {
+				continue
+			}
+
+			copyRegion := *region
+			cloned[i] = &copyRegion
+		}
+
+		out[symbol] = cloned
+	}
+
+	return out
 }

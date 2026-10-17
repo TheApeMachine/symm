@@ -57,9 +57,13 @@ hindsight Values over the hub websocket (Stream), on the client's
 "hindsight" command.
 */
 type Service struct {
-	ctx    context.Context
-	client *store.Client
-	scanMu sync.Mutex
+	ctx      context.Context
+	client   *store.Client
+	scanMu   sync.Mutex
+	tapesMu  sync.Mutex
+	tapes    map[uint64]*runTape
+	tapeWait map[uint64]chan struct{}
+	tapeErr  map[uint64]error
 }
 
 func NewService(ctx context.Context, client *store.Client) (*Service, error) {
@@ -67,7 +71,13 @@ func NewService(ctx context.Context, client *store.Client) (*Service, error) {
 		return nil, errnie.Err(errnie.Validation, "[hindsight] a store client is required", nil)
 	}
 
-	return &Service{ctx: ctx, client: client}, nil
+	return &Service{
+		ctx:      ctx,
+		client:   client,
+		tapes:    map[uint64]*runTape{},
+		tapeWait: map[uint64]chan struct{}{},
+		tapeErr:  map[uint64]error{},
+	}, nil
 }
 
 /*
@@ -253,8 +263,8 @@ func (service *Service) Stream(ctx context.Context, w io.Writer, run uint64, sym
 		err = service.symbol(ctx, out, run, symbol)
 	}
 
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
 
 	if err != nil {
@@ -410,33 +420,23 @@ func (service *Service) symbol(ctx context.Context, w io.Writer, run uint64, sym
 		counts["papers"]++
 	}
 
-	for value, err := range store.ValuesPaged(service.client, data.TickPrefix(run)) {
-		if err != nil {
-			return err
-		}
+	loaded, err := service.tape(ctx, run)
 
+	if err != nil {
+		return err
+	}
+
+	for _, row := range loaded.bySymbol[symbol] {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		ticks, err := broker.ReadTick(value)
-
-		if err != nil {
-			return err
-		}
-
-		index := slices.IndexFunc(ticks, func(tick *broker.SymbolTick) bool { return tick.Symbol == symbol })
-
-		if index < 0 {
-			continue
-		}
-
-		tick := frame(data.HindsightTick, run, symbol, value.Tick)
-		tick.Timestamp = value.Timestamp
-		data.AppendVector(tick, tickVector(ticks[index]), data.HindsightTickKeys...)
+		tick := frame(data.HindsightTick, run, symbol, row.frame.Tick)
+		tick.Timestamp = row.frame.Timestamp
+		data.AppendVector(tick, tickVector(row.tick), data.HindsightTickKeys...)
 
 		if _, err := io.Copy(w, tick); err != nil {
-			return fmt.Errorf("writing tick %d: %w", value.Tick, err)
+			return fmt.Errorf("writing tick %d: %w", row.frame.Tick, err)
 		}
 
 		counts["ticks"]++
@@ -492,30 +492,87 @@ type summary struct {
 	low, high           float64
 }
 
+/*
+excursionPrefixes are the stored predictions for one instrument: the committed
+detector rows and the working drafts. The index ranks either.
+*/
+func excursionPrefixes(symbol string, run uint64) []string {
+	prefixes := data.ExcursionPrefixes(symbol, run)
+
+	for _, class := range data.ExcursionClasses {
+		prefixes = append(prefixes, data.Prefix(data.DraftOrigin, class, symbol, run))
+	}
+
+	return prefixes
+}
+
+/*
+excursionMove is (c-b)/b for a stored up or down row. Drafts are not detector
+origin, so this reads the vector directly. A row without a positive b is skipped.
+*/
+func excursionMove(value *data.Value) (float64, bool) {
+	if value == nil {
+		return 0, false
+	}
+
+	metrics := data.Metrics(value)
+	b, bok := metrics["b_price"]
+	c, cok := metrics["c_price"]
+
+	if !bok || !cok || b <= 0 {
+		return 0, false
+	}
+
+	return (c - b) / b, true
+}
+
 func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) error {
 	order := make([]string, 0)
 	symbols := make(map[string]*summary)
 	ticks := 0.0
 
-	for value, err := range store.ValuesPaged(service.client, data.TickPrefix(run)) {
-		if err != nil {
-			return err
-		}
+	loaded, err := service.loadTape(ctx, run, func(ctx context.Context) (*runTape, error) {
+		return assemble(ctx, service.client, service.client.ListKeys(data.TickPrefix(run)), nil, func(frame *data.Value, tick *broker.SymbolTick) error {
+			if _, seen := symbols[tick.Symbol]; seen {
+				return nil
+			}
 
+			symbols[tick.Symbol] = &summary{
+				firstTick: frame.Tick,
+				firstAt:   frame.Timestamp,
+				low:       math.Inf(1),
+				high:      math.Inf(-1),
+			}
+			order = append(order, tick.Symbol)
+
+			if err := service.writeSummary(w, run, tick.Symbol, symbols[tick.Symbol], nil, 0); err != nil {
+				return err
+			}
+
+			flusher, ok := w.(interface{ Flush() error })
+
+			if !ok {
+				return nil
+			}
+
+			return flusher.Flush()
+		})
+	})
+
+	if err != nil {
+		return err
+	}
+
+	for _, row := range loaded.all {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		symbolTicks, err := broker.ReadTick(value)
-
-		if err != nil {
-			return err
-		}
-
+		value := row.frame
 		ticks++
 		added := false
 
-		for _, tick := range symbolTicks {
+		for _, tick := range []*broker.SymbolTick{row.tick} {
 			entry, ok := symbols[tick.Symbol]
 
 			if !ok {
@@ -568,7 +625,7 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 		classes := map[string]float64{}
 		top := 0.0
 
-		for value, err := range store.Values(service.client, data.ExcursionPrefixes(symbol, run)...) {
+		for value, err := range store.Values(service.client, excursionPrefixes(symbol, run)...) {
 			if err != nil {
 				return err
 			}
@@ -580,17 +637,13 @@ func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) 
 				continue
 			}
 
-			fields, err := data.DetectExcursionFields(value)
+			move, ok := excursionMove(value)
 
-			if err != nil {
-				return err
+			if !ok {
+				continue
 			}
 
-			if fields["b_price"] <= 0 {
-				return errnie.Err(errnie.UnprocessableContent, "[hindsight] excursion "+value.Prefix+" has no positive b_price", nil)
-			}
-
-			if move := (fields["c_price"] - fields["b_price"]) / fields["b_price"]; math.Abs(move) > math.Abs(top) {
+			if math.Abs(move) > math.Abs(top) {
 				top = move
 			}
 		}

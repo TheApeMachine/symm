@@ -1,5 +1,4 @@
 import { createStore } from "@tanstack/react-store";
-import { Value } from "#/types/value";
 
 export interface BoundaryStamp {
 	label(): string | null;
@@ -53,10 +52,52 @@ export const normalizeSource = (
 	const text = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
 	const lower = text.toLowerCase().trim();
 	const base = lower.includes(":") ? lower.split(":")[0] : lower;
-	if (base === "spot" || base === "trade" || base === "ticker" || base === "book") {
+	if (
+		base === "spot" ||
+		base === "trade" ||
+		base === "ticker" ||
+		base === "book"
+	) {
 		return "kraken";
 	}
 	return base;
+};
+
+/*
+TopologyValue is the slice ingestValues actually reads. Live frames are Value
+instances; tests and older frames pass the same fields as plain objects, and
+peers only exist on that wider shape.
+*/
+export type TopologyPeer = {
+	id?: string;
+	source?: string | Uint8Array | null;
+	at?: bigint | number;
+};
+
+export type TopologyMetric = {
+	name?: string;
+	raw?: number;
+	snm?: number;
+};
+
+export type TopologyTag = {
+	name?: string;
+	value?: string | number;
+};
+
+export type TopologyValue = {
+	id?: string;
+	tick?: bigint;
+	timestamp?: bigint;
+	origin?: string;
+	scope?: string;
+	source?: string | Uint8Array | null;
+	at?: bigint | number;
+	metric?: (name: string) => number | undefined;
+	metrics?: TopologyMetric[];
+	metadata?: TopologyTag[];
+	provenance?: TopologyTag[];
+	peers?: TopologyPeer[];
 };
 
 type ExtractedValue = {
@@ -66,17 +107,23 @@ type ExtractedValue = {
 	group?: string;
 	stage?: number;
 	peers: { source: string; at: number }[];
-	rawValue?: Value;
+	rawValue?: TopologyValue;
 };
 
-function extractValue(item: Value | any): ExtractedValue | null {
+function extractValue(
+	item: TopologyValue | null | undefined,
+): ExtractedValue | null {
 	if (!item) return null;
 
-	const rawSource = (typeof item.source === "string" ? item.source : item.origin) || "";
+	const rawSource =
+		(typeof item.source === "string" ? item.source : item.origin) || "";
 	const source = normalizeSource(rawSource);
 	if (!source) return null;
 
-	const at = Number(item.at ?? item.timestamp ?? 0n);
+	// `at` is a processing stamp. The value's timestamp is when the tick was
+	// built, which is the same instant for every layer of that tick, so using
+	// it as a clock reports the gap between trades as if it were stage cost.
+	const at = Number(item.at ?? 0);
 	let backlog = 0;
 	if (typeof item.metric === "function") {
 		backlog = item.metric("backlog") ?? 0;
@@ -104,7 +151,8 @@ function extractValue(item: Value | any): ExtractedValue | null {
 		for (const entry of item.metadata) {
 			if (!entry) continue;
 			if (entry.name === "group" && !group) group = String(entry.value);
-			if (entry.name === "stage" && stage === undefined) stage = Number(entry.value);
+			if (entry.name === "stage" && stage === undefined)
+				stage = Number(entry.value);
 		}
 	}
 
@@ -154,7 +202,19 @@ export type NodeStats = {
 	// single instantaneous backlog reading can look fine right after a spike
 	// drains.
 	maxBacklog: number;
-	lastValue?: Value | null;
+	// Work is time inside the stage. Wait is time it sat blocked before that
+	// work: the ring queue, or the previous stage's barrier. These come from
+	// the workspace trace, not from the gap between tick timestamps.
+	lastWorkNs?: number;
+	avgWorkNs?: number;
+	maxWorkNs?: number;
+	lastWaitNs?: number;
+	avgWaitNs?: number;
+	maxWaitNs?: number;
+	// side is a measurement that shares the machine but is not on the tick's
+	// critical path. The book apply is one: it runs on its own ingress.
+	side?: boolean;
+	lastValue?: TopologyValue | null;
 };
 
 /*
@@ -172,6 +232,47 @@ export type EdgeStats = {
 	lastAtNs: number;
 };
 
+/*
+PipelineAccount is the last measured tick: where the time went, which stage
+burned the most of it, and which one sat blocked the longest.
+*/
+export type PipelineAccount = {
+	tick: number;
+	bytes: number;
+	drops: number;
+	criticalNs: number;
+	// cadenceNs is how often a whole tick arrives. It is one number for the
+	// pipeline: every stage of a tick is measured in the same trace, so copying
+	// it onto each stage reported one rate ten times.
+	cadenceNs: number;
+	bottleneck: string;
+	bottleneckNs: number;
+	stalled: string;
+	stalledNs: number;
+};
+
+export type TraceSpan = {
+	name: string;
+	group: string;
+	stage: number;
+	waitNs: number;
+	workNs: number;
+	backlog: number;
+	side?: boolean;
+};
+
+export type TraceFrame = {
+	tick: number;
+	seq: number;
+	bytes: number;
+	drops: number;
+	spans: TraceSpan[];
+};
+
+// The order a trade tick actually walks. Venue is not in it: the book apply
+// is a side measurement and only feeds the assemble step.
+const FLOW_GROUPS = ["ingress", "signal", "strategy", "sink"];
+
 // EMA smoothing weight for edge latency, matching the ~16-sample half-life
 // system.Diagnostic uses server-side (avg += (gap-avg) >> 4). JS numbers are
 // float64, not int64, so this uses the equivalent floating-point weight
@@ -186,6 +287,7 @@ export const TOPOLOGY_LIVE_WINDOW_NS = 2_000_000_000;
 type TopologyState = {
 	nodes: Map<string, NodeStats>;
 	edges: Map<string, EdgeStats>;
+	account?: PipelineAccount;
 	// version increments on every ingest so a shallow-equality selector
 	// (useSelector reading the Map references) still notices updates without
 	// cloning either Map on every single envelope.
@@ -315,21 +417,17 @@ export const topologyStore = createStore(
 				return {
 					nodes: prev.nodes,
 					edges: prev.edges,
+					account: prev.account,
 					version: prev.version + 1,
 				};
 			});
 		},
 
-		ingestValues: (target: Value[] | any[]) => {
+		ingestValues: (target: readonly TopologyValue[]) => {
 			const extracted: ExtractedValue[] = [];
 
-			if (Array.isArray(target)) {
-				for (const item of target) {
-					const ex = extractValue(item);
-					if (ex) extracted.push(ex);
-				}
-			} else if (target) {
-				const ex = extractValue(target);
+			for (const item of target) {
+				const ex = extractValue(item);
 				if (ex) extracted.push(ex);
 			}
 
@@ -337,7 +435,13 @@ export const topologyStore = createStore(
 
 			setState((prev) => {
 				for (const val of extracted) {
-					const { source, peers, backlog, group: metaGroup, stage: metaStage } = val;
+					const {
+						source,
+						peers,
+						backlog,
+						group: metaGroup,
+						stage: metaStage,
+					} = val;
 					const defaultTopo = PIPELINE_TOPOLOGY[source] ?? {
 						group: "signal",
 						stage: 1,
@@ -345,9 +449,34 @@ export const topologyStore = createStore(
 					const group = metaGroup ?? defaultTopo.group;
 					const stage = metaStage ?? defaultTopo.stage;
 
-					const atNs =
-						val.at > 0 ? val.at : Date.now() * 1_000_000;
+					const atNs = val.at > 0 ? val.at : 0;
 					const existingNode = prev.nodes.get(source);
+
+					// A live value carries the stage's last reading. It does
+					// not carry how long the stage took; the trace does. Leave
+					// the timings already measured on the node alone.
+					if (atNs <= 0) {
+						const kept = existingNode ?? {
+							label: source,
+							group,
+							stage,
+							seqCount: 0,
+							avgGapNs: 0,
+							lastGapNs: 0,
+							lastAtNs: 0,
+							backlog: 0,
+							maxBacklog: 0,
+						};
+						prev.nodes.set(source, {
+							...kept,
+							group: metaGroup ?? kept.group,
+							stage: metaStage ?? kept.stage,
+							backlog: backlog || kept.backlog,
+							maxBacklog: Math.max(kept.maxBacklog, backlog),
+							lastValue: val.rawValue ?? kept.lastValue,
+						});
+						continue;
+					}
 
 					let seqCount = 1;
 					let avgGapNs = 0;
@@ -408,8 +537,7 @@ export const topologyStore = createStore(
 						}
 
 						const key = edgeKey(feeder, source);
-						const latencyNs =
-							p.at > 0 && atNs > p.at ? atNs - p.at : 0;
+						const latencyNs = p.at > 0 && atNs > p.at ? atNs - p.at : 0;
 						const existingEdge = prev.edges.get(key);
 
 						if (!existingEdge) {
@@ -440,6 +568,214 @@ export const topologyStore = createStore(
 				return {
 					nodes: prev.nodes,
 					edges: prev.edges,
+					account: prev.account,
+					version: prev.version + 1,
+				};
+			});
+		},
+
+		/*
+		ingestTrace folds one workspace measurement into the graph. Edges are
+		the rings the tick actually walked — ingress, then the signal ring,
+		then strategy, then the sinks — not the order goroutines happened to
+		finish. A stage's cost is its own work; the wire into it carries that
+		same number so the dashed flow and the card agree.
+		*/
+		ingestTrace: (frame: TraceFrame) => {
+			if (!frame || !Array.isArray(frame.spans) || frame.spans.length === 0) {
+				return;
+			}
+
+			setState((prev) => {
+				const now = Date.now() * 1_000_000;
+				const seen = new Set<string>();
+				const priorAt = prev.account
+					? [...prev.nodes.values()].reduce(
+							(latest, node) => Math.max(latest, node.lastAtNs),
+							0,
+						)
+					: 0;
+				const gap = priorAt > 0 && now > priorAt ? now - priorAt : 0;
+				const prevCadence = prev.account?.cadenceNs ?? 0;
+				const cadenceNs =
+					gap <= 0
+						? prevCadence
+						: prevCadence <= 0
+							? gap
+							: prevCadence + (gap - prevCadence) * EDGE_LATENCY_EMA_WEIGHT;
+
+				for (const span of frame.spans) {
+					if (!span?.name) continue;
+
+					seen.add(span.name);
+					const existing = prev.nodes.get(span.name);
+					const work = Math.max(0, span.workNs);
+					const wait = Math.max(0, span.waitNs);
+					const backlog = Math.max(0, span.backlog);
+					let seqCount = 1;
+					let avgWorkNs = work;
+					let avgWaitNs = wait;
+
+					if (existing) {
+						seqCount = existing.seqCount + 1;
+
+						const prevWork = existing.avgWorkNs ?? 0;
+						const prevWait = existing.avgWaitNs ?? 0;
+						avgWorkNs =
+							prevWork <= 0
+								? work
+								: prevWork + (work - prevWork) * EDGE_LATENCY_EMA_WEIGHT;
+						avgWaitNs =
+							prevWait <= 0
+								? wait
+								: prevWait + (wait - prevWait) * EDGE_LATENCY_EMA_WEIGHT;
+					}
+
+					prev.nodes.set(span.name, {
+						label: span.name,
+						group: span.group,
+						stage: span.stage,
+						seqCount,
+						avgGapNs: 0,
+						lastGapNs: 0,
+						lastAtNs: now,
+						backlog,
+						maxBacklog: Math.max(existing?.maxBacklog ?? 0, backlog),
+						lastWorkNs: work,
+						avgWorkNs,
+						maxWorkNs: Math.max(existing?.maxWorkNs ?? 0, work),
+						lastWaitNs: wait,
+						avgWaitNs,
+						maxWaitNs: Math.max(existing?.maxWaitNs ?? 0, wait),
+						side: span.side === true,
+						lastValue: existing?.lastValue,
+					});
+				}
+
+				for (const label of [...prev.nodes.keys()]) {
+					if (!seen.has(label)) prev.nodes.delete(label);
+				}
+
+				const byGroup = new Map<string, NodeStats[]>();
+
+				for (const node of prev.nodes.values()) {
+					const list = byGroup.get(node.group) ?? [];
+					list.push(node);
+					byGroup.set(node.group, list);
+				}
+
+				const wanted = new Map<
+					string,
+					{ from: string; to: string; work: number }
+				>();
+				const link = (
+					sources: NodeStats[] | undefined,
+					destinations: NodeStats[] | undefined,
+				) => {
+					if (sources === undefined || destinations === undefined) return;
+
+					const orderedSources = [...sources].sort((a, b) =>
+						a.label.localeCompare(b.label),
+					);
+					const orderedDestinations = [...destinations].sort((a, b) =>
+						a.label.localeCompare(b.label),
+					);
+
+					for (const source of orderedSources) {
+						for (const destination of orderedDestinations) {
+							if (source.label === destination.label) continue;
+
+							wanted.set(edgeKey(source.label, destination.label), {
+								from: source.label,
+								to: destination.label,
+								work: destination.lastWorkNs ?? 0,
+							});
+						}
+					}
+				};
+
+				link(byGroup.get("venue"), byGroup.get("ingress"));
+
+				for (let index = 1; index < FLOW_GROUPS.length; index++) {
+					link(
+						byGroup.get(FLOW_GROUPS[index - 1]),
+						byGroup.get(FLOW_GROUPS[index]),
+					);
+				}
+
+				for (const key of [...prev.edges.keys()]) {
+					if (!wanted.has(key)) prev.edges.delete(key);
+				}
+
+				for (const [key, hop] of wanted) {
+					const existing = prev.edges.get(key);
+
+					if (!existing) {
+						prev.edges.set(key, {
+							from: hop.from,
+							to: hop.to,
+							hopCount: 1,
+							avgLatencyNs: hop.work,
+							lastLatencyNs: hop.work,
+							lastAtNs: now,
+						});
+						continue;
+					}
+
+					existing.hopCount += 1;
+					existing.avgLatencyNs =
+						existing.avgLatencyNs <= 0
+							? hop.work
+							: existing.avgLatencyNs +
+								(hop.work - existing.avgLatencyNs) * EDGE_LATENCY_EMA_WEIGHT;
+					existing.lastLatencyNs = hop.work;
+					existing.lastAtNs = now;
+				}
+
+				let criticalNs = 0;
+				let bottleneck = "";
+				let bottleneckNs = 0;
+				let stalled = "";
+				let stalledNs = 0;
+
+				for (const group of FLOW_GROUPS) {
+					let barrier = 0;
+
+					for (const span of frame.spans) {
+						if (span.group !== group || span.side) continue;
+
+						const cost = Math.max(0, span.waitNs) + Math.max(0, span.workNs);
+
+						if (cost > barrier) barrier = cost;
+
+						if (span.workNs > bottleneckNs) {
+							bottleneckNs = span.workNs;
+							bottleneck = span.name;
+						}
+
+						if (span.waitNs > stalledNs) {
+							stalledNs = span.waitNs;
+							stalled = span.name;
+						}
+					}
+
+					criticalNs += barrier;
+				}
+
+				return {
+					nodes: prev.nodes,
+					edges: prev.edges,
+					account: {
+						tick: frame.tick,
+						bytes: frame.bytes,
+						drops: frame.drops,
+						criticalNs,
+						cadenceNs,
+						bottleneck,
+						bottleneckNs,
+						stalled: stalledNs > 0 ? stalled : "",
+						stalledNs,
+					},
 					version: prev.version + 1,
 				};
 			});

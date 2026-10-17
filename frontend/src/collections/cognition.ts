@@ -116,12 +116,12 @@ const isTree = (value: unknown): value is CognitionTreeFrame => {
 		typeof tree?.epoch === "string" &&
 		typeof tree.paths === "number" &&
 		typeof tree.trading === "boolean" &&
-		isGate(tree.gate) &&
+		isGate(tree.gate ?? null) &&
 		Array.isArray(tree.keys) &&
 		tree.keys.every((key) => typeof key === "string") &&
 		Array.isArray(tree.branches) &&
 		tree.branches.every(isBranch) &&
-		isProblem(tree.problem)
+		isProblem(tree.problem ?? null)
 	);
 };
 
@@ -147,7 +147,11 @@ A new tree drops the matches made against the previous one.
 */
 export const ingestCognitionFrame = (role: string, payload: unknown) => {
 	if (role === COGNITION_TREE_ROLE && isTree(payload)) {
-		cognitionStore.setState(() => ({ tree: payload, matches: {} }));
+		const tree = payload as CognitionTreeFrame;
+		cognitionStore.setState(() => ({
+			tree: { ...tree, gate: tree.gate ?? null, problem: tree.problem ?? null },
+			matches: {},
+		}));
 		return true;
 	}
 

@@ -1,8 +1,11 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	beginHindsight,
 	type HindsightExcursion,
-	hindsightStore,
 	type HindsightStream,
+	hindsightStore,
 } from "#/collections/hindsight";
 import {
 	annotationBody,
@@ -10,8 +13,8 @@ import {
 	type DetectionClass,
 	draftOf,
 	emptyAnnotation,
-	type Marker,
 	MARKERS,
+	type Marker,
 	marksOf,
 	nextMarker,
 	placeMarker,
@@ -40,9 +43,6 @@ import {
 } from "#/components/ui";
 import { hubBaseUrl } from "#/lib/hub";
 import { sendCommand } from "#/providers/websocket";
-import { createFileRoute } from "@tanstack/react-router";
-import { useSelector } from "@tanstack/react-store";
-import { useEffect, useMemo, useState } from "react";
 
 /*
 Hindsight reads one stored run back: the ticks collect wrote, the
@@ -270,6 +270,7 @@ const HindsightRoute = () => {
 	const [detectionClass, setDetectionClass] = useState<DetectionClass>("up");
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [busy, setBusy] = useState<string | null>(null);
+	const chosen = useRef(false);
 	const { index, stream } = useSelector(hindsightStore, (state) => state);
 
 	useEffect(() => {
@@ -294,6 +295,7 @@ const HindsightRoute = () => {
 	// The run index names every symbol. Opening one symbol streams that tape beside it.
 	useEffect(() => {
 		if (run === null) return;
+		chosen.current = false;
 		setSymbol(null);
 		setViewport(null);
 		setPlayhead(null);
@@ -304,20 +306,21 @@ const HindsightRoute = () => {
 	const summaries = useMemo(() => summariesOf(index), [index]);
 	const indexRun = index?.run ?? null;
 
-	// Once the index is complete, open the instrument that moved furthest.
+	// Open the first instrument as soon as it is named. When the index
+	// finishes, move to the one that travelled furthest unless a click chose.
 	useEffect(() => {
-		if (
-			index?.status !== "done" ||
-			index.run !== run ||
-			symbol !== null ||
-			summaries.length === 0
-		)
+		if (chosen.current || indexRun !== run || summaries.length === 0) return;
+
+		if (index?.status === "done") {
+			const top = summaries.reduce((best, row) =>
+				row.topExcursion > best.topExcursion ? row : best,
+			);
+			setSymbol(top.symbol);
 			return;
-		const top = summaries.reduce((best, row) =>
-			row.topExcursion > best.topExcursion ? row : best,
-		);
-		setSymbol(top.symbol);
-	}, [index, run, symbol, summaries]);
+		}
+
+		if (symbol === null) setSymbol(summaries[0].symbol);
+	}, [index, indexRun, run, symbol, summaries]);
 
 	useEffect(() => {
 		if (run === null || symbol === null) return;
@@ -375,9 +378,7 @@ const HindsightRoute = () => {
 			? annotationBody(run, symbol, detectionClass, annotation)
 			: null;
 	const pickedDraft =
-		current !== null && current.status === "done"
-			? draftOf(current.excursions, detectionClass)
-			: null;
+		current === null ? null : draftOf(current.excursions, detectionClass);
 	const draftMarks =
 		pickedDraft === null
 			? null
@@ -424,7 +425,20 @@ const HindsightRoute = () => {
 				throw new Error(await response.text());
 			}
 
-			if (symbol !== null) send(run, symbol);
+			const payload = (await response.json()) as {
+				marker?: { a: string; b: string; c: string; d: string };
+			};
+
+			if (payload.marker !== undefined) {
+				setAnnotation({
+					A: Number(payload.marker.a),
+					B: Number(payload.marker.b),
+					C: Number(payload.marker.c),
+					D: Number(payload.marker.d),
+				});
+			}
+
+			if (path !== "/hindsight/commit" && symbol !== null) send(run, symbol);
 		} catch (cause) {
 			setSaveError(cause instanceof Error ? cause.message : String(cause));
 		} finally {
@@ -474,7 +488,9 @@ const HindsightRoute = () => {
 					size="xs"
 					variant="outline"
 					disabled={run === null || busy !== null}
-					onClick={() => void postRun("/hindsight/scan", "scanning the tape", { run })}
+					onClick={() =>
+						void postRun("/hindsight/scan", "scanning the tape", { run })
+					}
 				>
 					scan
 				</Button>
@@ -541,7 +557,9 @@ const HindsightRoute = () => {
 					variant="outline"
 					disabled={run === null || busy !== null}
 					onClick={() =>
-						void postRun("/hindsight/commit-all", "committing the tape", { run })
+						void postRun("/hindsight/commit-all", "committing the tape", {
+							run,
+						})
 					}
 				>
 					commit all
@@ -573,10 +591,20 @@ const HindsightRoute = () => {
 						<SymbolTargets
 							summaries={summaries}
 							selected={symbol}
-							onSelect={setSymbol}
+							onSelect={(next) => {
+								chosen.current = true;
+								setSymbol(next);
+							}}
+							pending={
+								index?.status === "error"
+									? "The run index stopped."
+									: index?.status === "done"
+										? "No instrument of this run has a stored up or down excursion."
+										: "Reading this run's tape."
+							}
 						/>
 					</Flex.Column>
-					<Flex.Column className="relative min-h-0 overflow-y-auto">
+					<Flex.Column className="relative h-full min-h-0 overflow-hidden">
 						{busy !== null ? (
 							<div className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-black/60">
 								<div className="h-5 w-5 animate-spin rounded-full border-2 border-(--f4) border-t-(--f1)" />
@@ -594,7 +622,9 @@ const HindsightRoute = () => {
 							emptyLabel={
 								symbol !== null && current?.status === "streaming"
 									? `Reading ${symbol}.`
-									: undefined
+									: symbol === null && index?.status !== "error"
+										? "Reading this run's tape."
+										: undefined
 							}
 							gaps={[]}
 							lifecycle={[]}

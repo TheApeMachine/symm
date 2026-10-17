@@ -72,7 +72,7 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 	},
 };
 
-/* 5 Macro Confluence Categories matching the 5 D3 cluster foci */
+/* 5 Macro Confluence Categories matching SIGNALS.md. */
 export const CATEGORY_NAMES = [
 	"ENTER",
 	"EXIT",
@@ -84,9 +84,35 @@ export const CATEGORY_NAMES = [
 export const regionCategoryIndex = (regionKey: number): number => {
 	if (regionKey <= 2) return 0; // Enter: R00, R01, R02
 	if (regionKey <= 5) return 1; // Exit: R03, R04, R05
-	if (regionKey <= 9) return 2; // Regime: R06, R07, R08, R09
-	if (regionKey <= 11) return 3; // History: R10, R11
-	return 4; // Risk: R12, R13, R14
+	if (regionKey <= 9) return 2; // Regime oracle: R06–R09
+	if (regionKey <= 11) return 3; // History oracle: R10, R11
+	return 4; // Risk oracle: R12–R14
+};
+
+/*
+sympathyAnchor places a region in the sympathy view the way SIGNALS.md
+is written: enter down the left, exit down the right, and the three
+oracles along the bottom in regime, history, risk order.
+*/
+export const sympathyAnchor = (
+	regionKey: number,
+	width: number,
+	height: number,
+): { x: number; y: number } => {
+	if (regionKey <= 2) {
+		return { x: width * 0.38, y: height * (0.28 + regionKey * 0.14) };
+	}
+	if (regionKey <= 5) {
+		return {
+			x: width * 0.78,
+			y: height * (0.22 + (regionKey - 3) * 0.16),
+		};
+	}
+	const slot = Math.min(Math.max(regionKey - 6, 0), 8);
+	return {
+		x: width * (0.14 + (slot / 8) * 0.72),
+		y: height * 0.78,
+	};
 };
 
 export interface CanonicalPinDef {

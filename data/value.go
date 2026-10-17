@@ -29,6 +29,10 @@ type Value struct {
 	base  int
 	slots int
 	next  atomic.Int32
+
+	// trace holds per-stage timings for the diagnostics page. It is not
+	// serialized: stored ticks stay exactly the layers the pipeline wrote.
+	trace atomic.Pointer[diag]
 }
 
 /*

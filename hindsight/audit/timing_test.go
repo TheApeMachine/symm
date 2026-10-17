@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/system"
 )
 
 func newTestMeasurement(seqIdx, tick, atNs, timestampNs int64) *data.Value {
@@ -97,7 +98,7 @@ func TestTimingStage(t *testing.T) {
 			So(hasSeqInversion, ShouldBeTrue)
 		})
 
-		Convey("When auditing latency jitter spikes", func() {
+		Convey("When one packet is late and the rest are steady", func() {
 			base := time.Now().UnixNano()
 			measurements := make([]*data.Value, 0, 5)
 
@@ -115,15 +116,41 @@ func TestTimingStage(t *testing.T) {
 			measurements = append(measurements, spike)
 
 			violations := feed(stage, measurements...)
-			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
+			So(violations, ShouldBeEmpty)
+			So(stage.spikeCount, ShouldBeGreaterThanOrEqualTo, 1)
+			So(stage.excessCount, ShouldEqual, 0)
+		})
 
-			hasSpike := false
-			for _, violation := range violations {
-				if violation.Name == "timing.latency_spike" {
-					hasSpike = true
+		Convey("When late packets are too large a share of a stream", func() {
+			savedFloor := system.Cfg.Audit.LatencySpikeFloorMs
+			savedDispersion := system.Cfg.Audit.LatencyDispersionFloorMs
+			system.Cfg.Audit.LatencySpikeFloorMs = 20
+			system.Cfg.Audit.LatencyDispersionFloorMs = 1_000
+			defer func() {
+				system.Cfg.Audit.LatencySpikeFloorMs = savedFloor
+				system.Cfg.Audit.LatencyDispersionFloorMs = savedDispersion
+			}()
+
+			base := time.Now().UnixNano()
+			measurements := make([]*data.Value, 0, 40)
+
+			for idx := range int64(24) {
+				delay := int64(10_000_000)
+				if idx >= 14 {
+					delay = 200_000_000
 				}
+				measurements = append(measurements, newTestMeasurement(
+					idx+1,
+					idx+1,
+					base+idx*300_000_000,
+					base+idx*300_000_000+delay,
+				))
 			}
-			So(hasSpike, ShouldBeTrue)
+
+			excess := NewTimingStage(ctx)
+			violations := feed(excess, measurements...)
+			So(hasViolation(violations, "timing.latency_excess"), ShouldBeTrue)
+			So(excess.excessCount, ShouldBeGreaterThanOrEqualTo, 1)
 		})
 
 		Convey("When auditing negative latency clock skew", func() {

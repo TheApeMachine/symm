@@ -146,6 +146,22 @@ func TestSignals(t *testing.T) {
 		AppendSignalVector(tick, "cvd", "BTC/USD", []float64{1.5, -0.25}, "gross_notional", "signed_net_fraction", "window:5m")
 		AppendSignalVector(tick, "hawkes", "ETH/USD", []float64{0.75}, "intensity")
 
+		Convey("Signals reads layers written into reserved slots", func() {
+			live := NewValue(TickOrigin, TickRole, TickScope)
+			live.Reserve(4)
+			AppendSignalVector(live, "cvd", "BTC/USD", []float64{1.5}, "gross_notional")
+
+			var got []Signal
+			for signal, err := range Signals(live) {
+				So(err, ShouldBeNil)
+				got = append(got, signal)
+			}
+
+			So(got, ShouldHaveLength, 1)
+			So(got[0].Symbol, ShouldEqual, "BTC/USD")
+			So(got[0].Values, ShouldResemble, []float64{1.5})
+		})
+
 		Convey("Its key is the one Prefix derives", func() {
 			So(tick.Prefix, ShouldEqual, TickPrefix(7)+"0000000000000000042.bin")
 			So(tick.Prefix, ShouldStartWith, "workspace/tick/aggregate/0000000000000000007/")

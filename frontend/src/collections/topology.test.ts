@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { topologyStore, type BoundaryStamp } from "./topology";
+import { type BoundaryStamp, topologyStore } from "./topology";
 
 /*
 Stamp is the slice of BoundaryStamp that ingest actually reads. The
@@ -155,17 +155,17 @@ describe("topologyStore.ingest", () => {
 			{
 				source: "kraken:trade",
 				at: 1_000_000_000n,
-			} as any,
+			},
 			{
 				source: "cvd",
 				at: 1_000_020_000n,
 				peers: [{ source: "kraken", at: 1_000_000_000n }],
-			} as any,
+			},
 			{
 				source: "depthflow",
 				at: 1_000_025_000n,
 				peers: [{ source: "kraken", at: 1_000_000_000n }],
-			} as any,
+			},
 			{
 				source: "manifold",
 				at: 1_000_050_000n,
@@ -173,12 +173,12 @@ describe("topologyStore.ingest", () => {
 					{ source: "cvd", at: 1_000_020_000n },
 					{ source: "depthflow", at: 1_000_025_000n },
 				],
-			} as any,
+			},
 			{
 				source: "training",
 				at: 1_000_080_000n,
 				peers: [{ source: "manifold", at: 1_000_050_000n }],
-			} as any,
+			},
 		]);
 
 		const { nodes, edges } = topologyStore.state;
@@ -202,6 +202,113 @@ describe("topologyStore.ingest", () => {
 		expect(edges.has("cvd>depthflow")).toBe(false);
 	});
 
+	it("does not treat a tick timestamp as time spent in a stage", () => {
+		topologyStore.setState(() => ({
+			nodes: new Map(),
+			edges: new Map(),
+			version: 0,
+		}));
+
+		topologyStore.actions.ingestValues([
+			{
+				source: "cvd",
+				timestamp: 5_000_000_000n,
+			},
+		]);
+
+		const node = topologyStore.state.nodes.get("cvd");
+
+		expect(node?.lastGapNs).toBe(0);
+		expect(node?.lastAtNs).toBe(0);
+		expect(node?.lastWorkNs ?? 0).toBe(0);
+		expect(topologyStore.state.edges.size).toBe(0);
+	});
+
+	it("wires the measured rings and names the bottleneck", () => {
+		topologyStore.setState(() => ({
+			nodes: new Map(),
+			edges: new Map(),
+			version: 0,
+		}));
+
+		topologyStore.actions.ingestTrace({
+			tick: 40,
+			seq: 40,
+			bytes: 18000,
+			drops: 2,
+			spans: [
+				{
+					name: "assemble",
+					group: "ingress",
+					stage: 0,
+					waitNs: 0,
+					workNs: 80_000,
+					backlog: 0,
+				},
+				{
+					name: "cvd",
+					group: "signal",
+					stage: 0,
+					waitNs: 4_000,
+					workNs: 90_000,
+					backlog: 0,
+				},
+				{
+					name: "hawkes",
+					group: "signal",
+					stage: 0,
+					waitNs: 4_000,
+					workNs: 2_400_000,
+					backlog: 3,
+				},
+				{
+					name: "training",
+					group: "strategy",
+					stage: 1,
+					waitNs: 12_000,
+					workNs: 400_000,
+					backlog: 0,
+				},
+				{
+					name: "hub",
+					group: "sink",
+					stage: 2,
+					waitNs: 1_000,
+					workNs: 30_000,
+					backlog: 0,
+				},
+				{
+					name: "book",
+					group: "venue",
+					stage: 0,
+					waitNs: 0,
+					workNs: 3_000_000,
+					backlog: 0,
+					side: true,
+				},
+			],
+		});
+
+		const { nodes, edges, account } = topologyStore.state;
+
+		expect(edges.has("assemble>cvd")).toBe(true);
+		expect(edges.has("assemble>hawkes")).toBe(true);
+		expect(edges.has("cvd>hawkes")).toBe(false);
+		expect(edges.has("hawkes>training")).toBe(true);
+		expect(edges.has("training>hub")).toBe(true);
+		expect(edges.has("book>assemble")).toBe(true);
+		expect(edges.get("hawkes>training")?.lastLatencyNs).toBe(400_000);
+		expect(nodes.get("hawkes")?.lastWorkNs).toBe(2_400_000);
+		expect(nodes.get("hawkes")?.backlog).toBe(3);
+		expect(nodes.get("book")?.side).toBe(true);
+		expect(account?.bottleneck).toBe("hawkes");
+		expect(account?.drops).toBe(2);
+		// Book is off the path, so its 3ms does not extend the critical path.
+		// The path is assemble, then the slower signal (hawkes wait+work),
+		// then training, then the hub.
+		expect(account?.criticalNs).toBe(80_000 + 2_404_000 + 412_000 + 31_000);
+	});
+
 	it("tracks Tee nodes and their queue backpressure", () => {
 		topologyStore.setState(() => ({
 			nodes: new Map(),
@@ -214,14 +321,20 @@ describe("topologyStore.ingest", () => {
 				source: "ui_tee",
 				at: 2_000_000_000n,
 				metrics: [{ name: "backlog", raw: 42 }],
-				metadata: [{ name: "group", value: "tees" }, { name: "stage", value: "4" }],
-			} as any,
+				metadata: [
+					{ name: "group", value: "tees" },
+					{ name: "stage", value: "4" },
+				],
+			},
 			{
 				source: "store_tee",
 				at: 2_000_000_000n,
 				metrics: [{ name: "backlog", raw: 1500 }],
-				metadata: [{ name: "group", value: "tees" }, { name: "stage", value: "4" }],
-			} as any,
+				metadata: [
+					{ name: "group", value: "tees" },
+					{ name: "stage", value: "4" },
+				],
+			},
 		]);
 
 		const { nodes } = topologyStore.state;

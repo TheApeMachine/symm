@@ -9,10 +9,19 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
+type CognitionGateFrame struct {
+	TickEpoch      string  `json:"tickEpoch"`
+	Enabled        bool    `json:"enabled"`
+	SurpriseZ      float64 `json:"surpriseZ"`
+	Warmup         string  `json:"warmup"`
+	LearningRate   float64 `json:"learningRate"`
+}
+
 type CognitionFrame struct {
 	Epoch    uint64              `json:"epoch,string"`
 	Paths    int                 `json:"paths"`
 	Trading  bool                `json:"trading"`
+	Gate     *CognitionGateFrame `json:"gate"`
 	Keys     []string            `json:"keys"`
 	Branches []ui.TrieBranchJSON `json:"branches"`
 	Problem  *CognitionProblem   `json:"problem"`
@@ -22,6 +31,19 @@ type CognitionProblem struct {
 	Level  string `json:"level"`
 	Reason string `json:"reason"`
 	Fix    string `json:"fix"`
+}
+
+/*
+CognitionMatchFrame is one symbol's live token path against the stored tree.
+*/
+type CognitionMatchFrame struct {
+	Symbol string   `json:"symbol"`
+	Tick   uint64   `json:"tick"`
+	Tokens []string `json:"tokens"`
+	Stored bool     `json:"stored"`
+	Match  string   `json:"match"`
+	Depth  int      `json:"depth"`
+	Action string   `json:"action"`
 }
 
 func PublishCognitionTree(w io.Writer, training *Training, trading bool) error {
@@ -71,6 +93,45 @@ func PublishCognitionTree(w io.Writer, training *Training, trading bool) error {
 
 	if _, err := io.Copy(w, out); err != nil {
 		return errnie.Err(errnie.IO, "[cognition] tree frame to the hub", err)
+	}
+
+	return nil
+}
+
+/*
+publishCognitionMatch writes one symbol's live path. The hub keeps the latest
+frame per symbol and replays it when a dashboard connects.
+*/
+func (training *Training) publishCognitionMatch(tick *data.Value, symbol string, tokens []string, matched string, depth int, action string) error {
+	if training == nil || training.hub == nil || symbol == "" || tick == nil {
+		return nil
+	}
+
+	if tokens == nil {
+		tokens = []string{}
+	}
+
+	buf, err := json.Marshal(CognitionMatchFrame{
+		Symbol: symbol,
+		Tick:   tick.Tick,
+		Tokens: tokens,
+		Stored: action != "",
+		Match:  matched,
+		Depth:  depth,
+		Action: action,
+	})
+
+	if err != nil {
+		return errnie.Err(errnie.Internal, "[cognition] match frame of "+symbol, err)
+	}
+
+	out := data.NewValue(data.CognitionOrigin, data.CognitionMatchRole, symbol)
+	out.Epoch, out.Tick, out.Timestamp = tick.Epoch, tick.Tick, tick.Timestamp
+	out.FormatPrefix()
+	out.AppendJSON(buf, data.LayerCognition)
+
+	if err := training.writeFrame("cognition/match/"+symbol, out); err != nil {
+		return errnie.Err(errnie.IO, "[cognition] match frame of "+symbol, err)
 	}
 
 	return nil

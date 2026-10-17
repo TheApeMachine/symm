@@ -2,22 +2,30 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useSelector, useStore } from "@tanstack/react-store";
 import { useState } from "react";
 import { onlineAtom } from "#/collections/app";
-import type { EdgeStats, NodeStats } from "#/collections/topology";
+import type {
+	EdgeStats,
+	NodeStats,
+	PipelineAccount,
+	TopologyPeer,
+	TopologyValue,
+} from "#/collections/topology";
 import { topologyStore } from "#/collections/topology";
 import {
 	backlogTone,
+	compareStages,
 	concurrentSiblings,
 	DiagnosticsGraph,
 	type DiagnosticsSelection,
+	formatBytes,
 	formatCount,
 	formatNanos,
 	formatRate,
 	isHop,
+	stageMarks,
 } from "#/components/dashboard/diagnostics-graph";
 import { Button, Tabs } from "#/components/ui";
-import { Value } from "#/types/value";
 
-const serializeValue = (m: Value): string => {
+const serializeValue = (m: TopologyValue): string => {
 	return JSON.stringify(
 		m,
 		(_key, value) => (typeof value === "bigint" ? value.toString() : value),
@@ -25,7 +33,8 @@ const serializeValue = (m: Value): string => {
 	);
 };
 
-const formatNanosDate = (nanos: bigint | number): string => {
+const formatNanosDate = (nanos: bigint | number | undefined): string => {
+	if (nanos == null) return "—";
 	const n =
 		typeof nanos === "bigint"
 			? Number(nanos / 1_000_000n)
@@ -69,7 +78,7 @@ const ValueView = ({
 	value,
 	onSelectStage,
 }: {
-	value: Value | null | undefined;
+	value: TopologyValue | null | undefined;
 	onSelectStage: (name: string) => void;
 }) => {
 	if (!value) {
@@ -89,7 +98,7 @@ const ValueView = ({
 	const metrics = value.metrics ?? [];
 	const metadata = value.metadata ?? [];
 	const provenance = value.provenance ?? [];
-	const peers = (value as any)?.peers ?? [];
+	const peers: TopologyPeer[] = value.peers ?? [];
 
 	return (
 		<div className="space-y-3 py-2">
@@ -108,10 +117,7 @@ const ValueView = ({
 					label="Origin"
 					value={(typeof value.origin === "string" && value.origin) || "—"}
 				/>
-				<Metric
-					label="Timestamp"
-					value={formatNanosDate(value.timestamp)}
-				/>
+				<Metric label="Timestamp" value={formatNanosDate(value.timestamp)} />
 			</div>
 
 			{value.id ? (
@@ -133,12 +139,15 @@ const ValueView = ({
 					</div>
 				</div>
 				{metrics.length === 0 ? (
-					<div className="font-mono text-[9px] text-(--f4)">No metrics attached</div>
+					<div className="font-mono text-[9px] text-(--f4)">
+						No metrics attached
+					</div>
 				) : (
 					<div className="space-y-1.5">
 						{metrics.map((m) => {
-							const name = typeof m.name === "string" ? m.name : String(m.name ?? "");
-							const rawVal = formatMetricVal(m.raw);
+							const name =
+								typeof m.name === "string" ? m.name : String(m.name ?? "");
+							const rawVal = formatMetricVal(m.raw ?? Number.NaN);
 							const snmVal = m.snm;
 
 							return (
@@ -148,14 +157,14 @@ const ValueView = ({
 								>
 									<div className="flex items-center justify-between">
 										<span className="font-bold text-(--f1)">{name}</span>
-										<span className="tabular-nums text-(--acc)">
-											{rawVal}
-										</span>
+										<span className="tabular-nums text-(--acc)">{rawVal}</span>
 									</div>
 									{snmVal !== undefined && Number.isFinite(snmVal) ? (
 										<div className="mt-1 flex items-center justify-between text-[8px] text-(--f4)">
 											<span>snm</span>
-											<span className="text-(--f2) tabular-nums">{snmVal.toFixed(4)}</span>
+											<span className="text-(--f2) tabular-nums">
+												{snmVal.toFixed(4)}
+											</span>
 										</div>
 									) : null}
 								</div>
@@ -199,9 +208,13 @@ const ValueView = ({
 						Attached Peers ({peers.length})
 					</div>
 					<div className="flex flex-wrap gap-1">
-						{peers.map((peer: any) => {
-							const peerSource = typeof peer.source === "string" ? peer.source : "";
-							const peerKey = (typeof peer.id === "string" && peer.id) || peerSource || "peer";
+						{peers.map((peer) => {
+							const peerSource =
+								typeof peer.source === "string" ? peer.source : "";
+							const peerKey =
+								(typeof peer.id === "string" && peer.id) ||
+								peerSource ||
+								"peer";
 							return (
 								<Button
 									key={peerKey}
@@ -223,7 +236,7 @@ const ValueView = ({
 const ValueJsonView = ({
 	value,
 }: {
-	value: Value | null | undefined;
+	value: TopologyValue | null | undefined;
 }) => {
 	const [copied, setCopied] = useState(false);
 
@@ -329,7 +342,10 @@ const StageDetail = ({
 						onClick={() => onTabChange("value")}
 						grow
 					>
-						Value {stage?.lastValue?.metrics?.length ? `(${stage.lastValue.metrics.length})` : ""}
+						Value{" "}
+						{stage?.lastValue?.metrics?.length
+							? `(${stage.lastValue.metrics.length})`
+							: ""}
 					</Tabs.Tab>
 					<Tabs.Tab
 						active={activeTab === "json"}
@@ -346,11 +362,24 @@ const StageDetail = ({
 					<>
 						<div className="grid grid-cols-2 gap-x-3">
 							<Metric
-								label="rate"
-								value={stage ? formatRate(stage.avgGapNs) : "—"}
+								label="last work"
+								value={formatNanos(stage?.lastWorkNs)}
+								tone="text-(--acc)"
 							/>
-							<Metric label="last gap" value={formatNanos(stage?.lastGapNs)} />
-							<Metric label="average gap" value={formatNanos(stage?.avgGapNs)} />
+							<Metric
+								label="average work"
+								value={formatNanos(stage?.avgWorkNs)}
+							/>
+							<Metric label="peak work" value={formatNanos(stage?.maxWorkNs)} />
+							<Metric
+								label="last wait"
+								value={formatNanos(stage?.lastWaitNs)}
+							/>
+							<Metric
+								label="average wait"
+								value={formatNanos(stage?.avgWaitNs)}
+							/>
+							<Metric label="peak wait" value={formatNanos(stage?.maxWaitNs)} />
 							<Metric
 								label="lifetime calls"
 								value={(stage?.seqCount ?? 0).toLocaleString()}
@@ -358,13 +387,21 @@ const StageDetail = ({
 							<Metric
 								label="ring backlog"
 								value={(stage?.backlog ?? 0).toLocaleString()}
-								tone={(stage?.backlog ?? 0) > 0 ? "text-(--warn)" : "text-(--f1)"}
+								tone={
+									(stage?.backlog ?? 0) > 0 ? "text-(--warn)" : "text-(--f1)"
+								}
 							/>
 							<Metric
 								label="session peak backlog"
 								value={(stage?.maxBacklog ?? 0).toLocaleString()}
 							/>
 						</div>
+						{stage?.side ? (
+							<div className="border-(--line) border-b py-2 font-mono text-[9px] leading-relaxed text-(--f4)">
+								Off the tick's critical path. This runs on its own ingress, so
+								its work is real but it does not sit between the other stages.
+							</div>
+						) : null}
 						<div className="border-(--line) border-b py-2">
 							<div className="mb-1 font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 								fed by
@@ -377,7 +414,8 @@ const StageDetail = ({
 										size="xxs"
 										onClick={() => onSelect({ kind: "stage", name: edge.from })}
 									>
-										{edge.from} · {formatNanos(edge.avgLatencyNs)}
+										{edge.from} ·{" "}
+										{formatNanos(nodes.get(edge.from)?.lastWorkNs)}
 									</Button>
 								))}
 								{fedBy.length === 0 ? (
@@ -399,7 +437,7 @@ const StageDetail = ({
 										size="xxs"
 										onClick={() => onSelect({ kind: "stage", name: edge.to })}
 									>
-										{edge.to} · {formatNanos(edge.avgLatencyNs)}
+										{edge.to} · {formatNanos(nodes.get(edge.to)?.lastWorkNs)}
 									</Button>
 								))}
 								{feeds.length === 0 ? (
@@ -429,8 +467,9 @@ const StageDetail = ({
 									))}
 								</div>
 								<div className="mt-1 font-mono text-[9px] leading-relaxed text-(--f4)">
-									Same handler group, same barrier — these run concurrently against
-									the same envelope, so nothing orders them against each other.
+									Same handler group, same barrier — these run concurrently
+									against the same envelope, so nothing orders them against each
+									other.
 								</div>
 							</div>
 						) : null}
@@ -438,7 +477,9 @@ const StageDetail = ({
 				) : activeTab === "value" ? (
 					<ValueView
 						value={stage?.lastValue}
-						onSelectStage={(target) => onSelect({ kind: "stage", name: target })}
+						onSelectStage={(target) =>
+							onSelect({ kind: "stage", name: target })
+						}
 					/>
 				) : (
 					<ValueJsonView value={stage?.lastValue} />
@@ -509,18 +550,20 @@ const GroupDetail = ({
 							{(byStage.get(stage)?.length ?? 0) > 1 ? " · concurrent" : ""}
 						</div>
 						<div className="flex flex-wrap gap-1">
-							{(byStage.get(stage) ?? []).map((member) => (
-								<Button
-									key={member.label}
-									variant="outline"
-									size="xxs"
-									onClick={() =>
-										onSelect({ kind: "stage", name: member.label })
-									}
-								>
-									{member.label} · {formatRate(member.avgGapNs)}
-								</Button>
-							))}
+							{[...(byStage.get(stage) ?? [])]
+								.sort((a, b) => a.label.localeCompare(b.label))
+								.map((member) => (
+									<Button
+										key={member.label}
+										variant="outline"
+										size="xxs"
+										onClick={() =>
+											onSelect({ kind: "stage", name: member.label })
+										}
+									>
+										{member.label} · {formatNanos(member.lastWorkNs)}
+									</Button>
+								))}
 						</div>
 					</div>
 				))}
@@ -538,37 +581,99 @@ const GroupDetail = ({
 };
 
 const OverviewDetail = ({
-	nodeCount,
+	nodes,
+	account,
 	groupCount,
 	hopCount,
 }: {
-	nodeCount: number;
+	nodes: Map<string, NodeStats>;
+	account: PipelineAccount | undefined;
 	groupCount: number;
 	hopCount: number;
-}) => (
-	<>
-		<div className="border-(--line) border-b px-3 py-2.5 font-mono text-[12px] font-bold text-(--f1)">
-			Inspection
-		</div>
-		<div className="px-3 py-3 font-mono text-[9px] leading-relaxed text-(--f3)">
-			Select a stage to see who feeds it (amber) and who it feeds (blue), or a
-			ring to see everything running inside it. Every node, hop and ring on this
-			graph is discovered live — the hops from the boundary stamps each envelope
-			carries, the rings from the runtime composition itself. Nothing here is a
-			hand-maintained diagram.
-		</div>
-		<div className="border-(--line) border-b px-3 py-2.5 font-mono text-[12px] font-bold text-(--f1)">
-			Topology <span className="text-(--acc)">{nodeCount} stages</span>
-		</div>
-		<div className="px-3 py-2 font-mono text-[9px] leading-relaxed text-(--f3)">
-			{groupCount} rings · {hopCount} hops observed
-		</div>
-	</>
-);
+}) => {
+	const ordered = Array.from(nodes.values()).sort(compareStages);
+	const marks = stageMarks(ordered);
+
+	return (
+		<>
+			<div className="border-(--line) border-b px-3 py-2.5 font-mono text-[12px] font-bold text-(--f1)">
+				Last tick
+			</div>
+			{account ? (
+				<div className="grid grid-cols-2 gap-x-3 px-3">
+					<Metric
+						label="critical path"
+						value={formatNanos(account.criticalNs)}
+						tone="text-(--acc)"
+					/>
+					<Metric label="cadence" value={formatRate(account.cadenceNs)} />
+					<Metric label="frame" value={formatBytes(account.bytes)} />
+					<Metric label="tick" value={account.tick.toLocaleString()} />
+					<Metric
+						label="dashboard drops"
+						value={account.drops.toLocaleString()}
+						tone={account.drops > 0 ? "text-(--warn)" : "text-(--f1)"}
+					/>
+				</div>
+			) : (
+				<div className="px-3 py-3 font-mono text-[9px] leading-relaxed text-(--f3)">
+					No measured tick yet. Work is time inside a stage. Wait is time it sat
+					blocked on the ring or the previous barrier. The critical path sums
+					the slowest stage of each ring.
+				</div>
+			)}
+			<div className="border-(--line) border-b px-3 py-2.5 font-mono text-[12px] font-bold text-(--f1)">
+				Where the time went{" "}
+				<span className="text-(--acc)">{nodes.size} stages</span>
+			</div>
+			<div className="min-h-0 flex-1 overflow-auto px-3">
+				{ordered.map((node) => (
+					<div
+						key={node.label}
+						className="grid grid-cols-[1fr_auto_auto] items-baseline gap-x-3 border-(--line) border-b py-1.5 font-mono text-[10px]"
+					>
+						<span className="truncate text-(--f1)">
+							{node.label}
+							<span className="ml-1 text-[8px] uppercase text-(--f4)">
+								{node.group}
+								{node.side ? " · off path" : ""}
+							</span>
+						</span>
+						<span
+							className={
+								marks.bottleneck.has(node.label)
+									? "tabular-nums text-(--down)"
+									: "tabular-nums text-(--acc)"
+							}
+						>
+							{formatNanos(node.lastWorkNs)}
+						</span>
+						<span
+							className={
+								marks.waiting.has(node.label)
+									? "tabular-nums text-(--warn)"
+									: "tabular-nums text-(--f4)"
+							}
+						>
+							wait {formatNanos(node.lastWaitNs)}
+						</span>
+					</div>
+				))}
+				<div className="py-2 font-mono text-[9px] leading-relaxed text-(--f4)">
+					{groupCount} rings · {hopCount} hops. Red work is a stage that is
+					actually slow. Yellow wait is a stage sitting blocked. The order stays
+					put. Cadence above is how often a tick arrives, once for the whole
+					pipeline.
+				</div>
+			</div>
+		</>
+	);
+};
 
 const DetailPanel = ({
 	nodes,
 	edges,
+	account,
 	selection,
 	activeTab,
 	onTabChange,
@@ -576,6 +681,7 @@ const DetailPanel = ({
 }: {
 	nodes: Map<string, NodeStats>;
 	edges: EdgeStats[];
+	account: PipelineAccount | undefined;
 	selection: DiagnosticsSelection | null;
 	activeTab: "overview" | "value" | "json";
 	onTabChange: (tab: "overview" | "value" | "json") => void;
@@ -608,7 +714,8 @@ const DetailPanel = ({
 
 	return (
 		<OverviewDetail
-			nodeCount={nodes.size}
+			nodes={nodes}
+			account={account}
 			groupCount={
 				new Set(Array.from(nodes.values()).map((node) => node.group)).size
 			}
@@ -627,13 +734,13 @@ const Legend = () => (
 		</span>
 		<span className="border-l border-(--line) mx-0.5 h-3" aria-hidden="true" />
 		<span className="flex items-center gap-1.5">
-			<span className="h-0.5 w-4 rounded bg-(--up)" /> healthy latency
+			<span className="h-0.5 w-4 rounded bg-(--up)" /> light work
 		</span>
 		<span className="flex items-center gap-1.5">
-			<span className="h-0.5 w-4 rounded bg-(--warn)" /> slight latency
+			<span className="h-0.5 w-4 rounded bg-(--warn)" /> notable
 		</span>
 		<span className="flex items-center gap-1.5">
-			<span className="h-0.5 w-4 rounded bg-(--down)" /> high latency
+			<span className="h-0.5 w-4 rounded bg-(--down)" /> bottleneck
 		</span>
 		<span className="border-l border-(--line) mx-0.5 h-3" aria-hidden="true" />
 		<span className="flex items-center gap-1.5">
@@ -710,7 +817,7 @@ const DiagnosticsSurface = () => {
 	// the store's re-render trigger is `version` (a primitive that changes on
 	// every ingest) and the Maps are read fresh off current state each render.
 	useStore(topologyStore, (state) => state.version);
-	const { nodes, edges } = topologyStore.state;
+	const { nodes, edges, account } = topologyStore.state;
 	const connection = useSelector(onlineAtom, (s) => s);
 	const [selection, setSelection] = useState<DiagnosticsSelection | null>(null);
 	const [activeTab, setActiveTab] = useState<"overview" | "value" | "json">(
@@ -764,6 +871,7 @@ const DiagnosticsSurface = () => {
 				<DetailPanel
 					nodes={nodes}
 					edges={edgeList}
+					account={account}
 					selection={selection}
 					activeTab={activeTab}
 					onTabChange={setActiveTab}

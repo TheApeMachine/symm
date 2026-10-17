@@ -82,7 +82,7 @@ func TestSympathyStage(t *testing.T) {
 			So(stage.Report(), ShouldContainSubstring, "sympathy.cross_stream_redundancy")
 		})
 
-		Convey("When auditing cross-asset streams that fail sympathy test", func() {
+		Convey("When two assets move independently", func() {
 			base := time.Now().UnixNano()
 			measurements := make([]*data.Value, 0, 40)
 
@@ -103,14 +103,8 @@ func TestSympathyStage(t *testing.T) {
 			}
 
 			violations := feed(stage, measurements...)
-			hasNoConcordance := false
-			for _, violation := range violations {
-				if violation.Name == "sympathy.no_concordance" {
-					hasNoConcordance = true
-				}
-			}
-			So(hasNoConcordance, ShouldBeTrue)
-			So(stage.Report(), ShouldContainSubstring, "sympathy.no_concordance")
+			So(violations, ShouldBeEmpty)
+			So(stage.Report(), ShouldBeEmpty)
 		})
 
 		Convey("When auditing nil measurements", func() {

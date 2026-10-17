@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,10 +12,8 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -32,13 +31,54 @@ type Training struct {
 	price     *broker.Price
 	desk      *broker.Desk
 	client    *store.Client
-	grid      *nmstore.Grid
-	policy    atomic.Pointer[policy]
-	coder     *learning.PredictiveCoder
+	grid    *nmstore.Grid
+	policy  atomic.Pointer[policy]
+	hub     io.Writer
+	symbols map[string]*symbolGrammar
+}
+
+/*
+symbolGrammar is one instrument's Sequitur and the token path it has built.
+The grid is shared; the grammar is not.
+*/
+type symbolGrammar struct {
 	grammar   *Grammar
 	lastChord string
+	lastRule  *Rule
 	tokenPath []string
-	step      int64
+	held      int
+}
+
+/*
+SetHub is where live grammar frames go. The dashboard Sequitur tab reads them.
+*/
+func (training *Training) SetHub(hub io.Writer) {
+	if training == nil {
+		return
+	}
+
+	training.hub = hub
+}
+
+/*
+writeFrame copies value to the hub. A hub that can Retain keeps the latest
+frame under key and replays it when a dashboard connects.
+*/
+func (training *Training) writeFrame(key string, value *data.Value) error {
+	if training == nil || training.hub == nil || value == nil {
+		return nil
+	}
+
+	writer := training.hub
+
+	if key != "" {
+		if kept, ok := training.hub.(interface{ Retain(string) io.Writer }); ok {
+			writer = kept.Retain(key)
+		}
+	}
+
+	_, err := io.Copy(writer, value)
+	return err
 }
 
 /*
@@ -59,15 +99,6 @@ const (
 	actionExit  = "exit.bin"
 	actionNoop  = "noop.bin"
 )
-
-func newPredictiveCoder() *learning.PredictiveCoder {
-	arch := []int{15, 60, 30, 15}
-	pace := learning.NewPace(0.05, 0.005, 0.150, 0.1, 0.2, 256)
-	target := learning.NewDirectionalTarget(0)
-	return learning.NewPredictiveCoder(
-		arch, 8, target, pace, 0.05, true, learning.ReadoutAll,
-	).(*learning.PredictiveCoder)
-}
 
 func NewTraining(
 	ctx context.Context,
@@ -185,12 +216,31 @@ type GrammarExport struct {
 	Start  []string            `json:"start"`
 }
 
-func (training *Training) CognitionGrammar(symbol string) GrammarExport {
-	if symbol == "" {
-		symbol = "BTC/USD"
+func (training *Training) symbolState(symbol string) *symbolGrammar {
+	if training.symbols == nil {
+		training.symbols = map[string]*symbolGrammar{}
 	}
 
-	grammar := training.grammar
+	state, ok := training.symbols[symbol]
+
+	if !ok {
+		state = &symbolGrammar{grammar: NewGrammar()}
+		training.symbols[symbol] = state
+	}
+
+	if state.grammar == nil {
+		state.grammar = NewGrammar()
+	}
+
+	return state
+}
+
+func (training *Training) CognitionGrammar(symbol string) GrammarExport {
+	if symbol == "" || training == nil || training.symbols == nil || training.symbols[symbol] == nil {
+		return GrammarExport{Symbol: symbol, Rules: []GrammarRuleExport{}}
+	}
+
+	grammar := training.symbols[symbol].grammar
 
 	if grammar == nil {
 		return GrammarExport{Symbol: symbol, Rules: []GrammarRuleExport{}}
@@ -251,171 +301,153 @@ func (training *Training) CognitionGrammar(symbol string) GrammarExport {
 }
 
 /*
-Step receives the live market join, scores its regions through the grid,
-advances the predictive coder over the 15 regions, and gates emission of
-active regions into Sequitur via the dynamic midpoint.
+Step receives the live market join, scores its regions through the grid, and
+appends the regions at or above the brightness midpoint to Sequitur.
 */
 func (training *Training) Step(value *data.Value) *data.Value {
 	if value == nil {
 		return nil
 	}
 
-	regions, err := training.grid.Observe(value)
-	if err != nil || len(regions) == 0 {
+	if _, err := training.grid.Observe(value); err != nil {
+		training.Error(err)
 		return value
 	}
 
-	regionBrightness := make([]float64, 15)
-	for _, r := range regions {
-		if int(r.Key) < 15 {
-			regionBrightness[r.Key] = r.Brightness
-		}
+	bySymbol := training.grid.SymbolRegions()
+	if len(bySymbol) == 0 {
+		return value
 	}
 
+	names := make([]string, 0, len(bySymbol))
+	for symbol := range bySymbol {
+		names = append(names, symbol)
+	}
+	slices.Sort(names)
+
+	for _, symbol := range names {
+		training.stepSymbol(value, symbol, bySymbol[symbol])
+	}
+
+	return value
+}
+
+/*
+stepSymbol turns one symbol's lit regions into its own chord. A new chord
+is appended to that symbol's grammar, matched against the stored paths, and
+published. A repeated chord is held. The hub replays the last frame when a
+dashboard connects.
+*/
+func (training *Training) stepSymbol(value *data.Value, symbol string, regions []*nmstore.Region) {
 	current := training.policy.Load()
-	if current == nil || len(current.actions) == 0 {
-		return value
+	if current == nil {
+		current = &policy{actions: map[string]string{}}
 	}
 
-	if training.coder == nil {
-		training.coder = newPredictiveCoder()
-	}
-
-	if training.grammar == nil {
-		training.grammar = NewGrammar()
-	}
-
-	coder := training.coder
-	grammar := training.grammar
-
-	training.step++
-	sec := float64(value.Timestamp) / 1e9
-	if value.Timestamp < 1e11 {
-		sec = float64(value.Timestamp)
-	}
-	inValue := transport.NewValue([2][]float64{
-		regionBrightness,
-		{0.0, 0.0, float64(training.step), sec},
-	})
-
-	var out [12][]float64
-	for val := range coder.Next(inValue.Next(nil)) {
-		out = *(*[12][]float64)(val)
-	}
-
-	surprise := 0.0
-	energy := 0.0
-	if len(out[0]) > 1 {
-		energy = out[0][1]
-	}
-	if len(out[0]) > 5 {
-		surprise = out[0][5]
-	}
+	state := training.symbolState(symbol)
+	grammar := state.grammar
 
 	active := make([]*nmstore.Region, 0)
-	for _, r := range regions {
-		if r.Brightness > 0 {
-			active = append(active, r)
+	for _, region := range regions {
+		if region != nil && region.Brightness > 0 {
+			active = append(active, region)
 		}
 	}
 
 	if len(active) == 0 {
-		return value
+		return
 	}
 
-	maxB := active[0].Brightness
-	minB := active[len(active)-1].Brightness
-	midB := (maxB + minB) / 2.0
+	midB := (active[0].Brightness + active[len(active)-1].Brightness) / 2.0
 
-	var firedTokens []string
-	for _, r := range active {
-		if r.Brightness >= midB {
-			firedTokens = append(firedTokens, fmt.Sprintf("R%02d", r.Key))
+	firedTokens := make([]string, 0)
+	for _, region := range active {
+		if region.Brightness >= midB {
+			firedTokens = append(firedTokens, fmt.Sprintf("R%02d", region.Key))
 		}
 	}
 
 	if len(firedTokens) == 0 {
-		return value
+		return
 	}
 
 	chordKey := strings.Join(firedTokens, "/")
-	if chordKey == training.lastChord {
-		return value
-	}
-	training.lastChord = chordKey
+	newChord := chordKey != state.lastChord
 
-	tokens := training.tokenPath
-	var deepestRule *Rule
+	if newChord {
+		state.held = 0
+		state.lastChord = chordKey
 
-	for _, token := range firedTokens {
-		tokens = append(tokens, token)
-		r := grammar.Append(token)
-		if r != nil {
-			deepestRule = r
+		tokens := state.tokenPath
+
+		for _, token := range firedTokens {
+			tokens = append(tokens, token)
+			if rule := grammar.Append(token); rule != nil {
+				state.lastRule = rule
+			}
 		}
-	}
 
-	horizon := 16
-	if system.Cfg != nil && system.Cfg.Learning.PrecursorHorizon > 0 {
-		horizon = system.Cfg.Learning.PrecursorHorizon
+		horizon := 16
+		if system.Cfg != nil && system.Cfg.Learning.PrecursorHorizon > 0 {
+			horizon = system.Cfg.Learning.PrecursorHorizon
+		}
+		if len(tokens) > horizon {
+			tokens = tokens[len(tokens)-horizon:]
+		}
+		state.tokenPath = tokens
+	} else {
+		state.held++
+		return
 	}
-	if len(tokens) > horizon {
-		tokens = tokens[len(tokens)-horizon:]
-	}
-	training.tokenPath = tokens
 
 	var phrase []string
-	if deepestRule != nil {
-		phrase = deepestRule.TerminalNames(grammar)
+	if state.lastRule != nil {
+		phrase = state.lastRule.TerminalNames(grammar)
 	}
 
-	tokensToMatch := tokens
-	if len(phrase) >= 2 {
-		tokensToMatch = phrase
-	}
-
-	matchedPath := strings.Join(tokensToMatch, "/")
+	matchedPath := ""
 	action := ""
-	tradeSymbol := ""
 
 	minConf := 2
 	if system.Cfg != nil && system.Cfg.Learning.MinimumPathConfidence >= 2 {
 		minConf = system.Cfg.Learning.MinimumPathConfidence
 	}
 
-	scopedSymbols := training.scopedPolicySymbols(value)
+	// The stored key is the rule Sequitur just completed. A raw token window
+	// and a shorter suffix are not substitutes for that rule.
+	if len(phrase) >= minConf {
+		matchedPath = strings.Join(phrase, "/")
 
-	for d := len(tokensToMatch); d >= minConf; d-- {
-		candidate := strings.Join(tokensToMatch[len(tokensToMatch)-d:], "/")
-		if act, found := current.actions[candidate]; found && act != "" {
+		if act, found := current.actions[symbol+"/"+matchedPath]; found && act != "" {
 			action = act
-			matchedPath = candidate
-			tradeSymbol = training.tradeSymbol(value, scopedSymbols, "")
-			break
-		}
-
-		for _, sym := range scopedSymbols {
-			if act, found := current.actions[sym+"/"+candidate]; found && act != "" {
-				action = act
-				matchedPath = candidate
-				tradeSymbol = sym
-				break
-			}
-		}
-
-		if action != "" {
-			break
+		} else if act, found := current.actions[matchedPath]; found && act != "" {
+			action = act
 		}
 	}
 
-	if action != "" && tradeSymbol != "" {
-		training.act(tradeSymbol, action, matchedPath)
-		data.AppendVector(value, []float64{surprise, energy}, "surprise", "energy", "action:"+action, "path:"+matchedPath)
-	} else {
-		data.AppendVector(value, []float64{surprise, energy}, "surprise", "energy", "path:"+matchedPath)
+	outcome := ""
+
+	if action != "" {
+		outcome = training.act(state, symbol, action, matchedPath)
 	}
 
-	return value
+	tokens := firedTokens
+	if len(phrase) >= minConf {
+		tokens = phrase
+	}
+
+	depth := len(tokens)
+	if action != "" && matchedPath != "" {
+		depth = len(phrase)
+	}
+
+	if err := training.publishCognitionMatch(value, symbol, tokens, matchedPath, depth, action); err != nil {
+		training.Error(err)
+	}
+
+	if err := training.publishSequitur(value, symbol, active, midB, firedTokens, state.held, matchedPath, state.lastRule, action, outcome); err != nil {
+		training.Error(err)
+	}
 }
 
 /*
@@ -676,11 +708,11 @@ needs it flat, exiting needs it held.
 Entries are opened sized against configured allocation fraction and available cash.
 Exits sell everything currently open.
 */
-func (training *Training) act(symbol, action string, path ...string) string {
+func (training *Training) act(state *symbolGrammar, symbol, action string, path ...string) string {
 	switch action {
 	case "enter":
 		if training.desk.Holds(symbol) {
-			training.tokenPath = nil
+			state.tokenPath = nil
 			return "holding: enter ignored"
 		}
 
@@ -698,7 +730,7 @@ func (training *Training) act(symbol, action string, path ...string) string {
 				nil,
 			))
 
-			training.tokenPath = nil
+			state.tokenPath = nil
 			return "enter failed: no cash"
 		}
 
@@ -722,34 +754,34 @@ func (training *Training) act(symbol, action string, path ...string) string {
 				err,
 			))
 
-			training.tokenPath = nil
+			state.tokenPath = nil
 			return "enter failed: no quantity"
 		}
 
 		if err := training.desk.Enter(symbol, entryCost.Quantity, path...); err != nil {
 			training.Error(errnie.Err(errnie.IO, "[training] enter failed for "+symbol, err))
-			training.tokenPath = nil
+			state.tokenPath = nil
 			return "enter failed: " + err.Error()
 		}
 
-		training.tokenPath = nil
+		state.tokenPath = nil
 		return "enter submitted"
 	case "exit":
 		if !training.desk.Holds(symbol) {
-			training.tokenPath = nil
+			state.tokenPath = nil
 			return "flat: exit ignored"
 		}
 
 		if err := training.desk.Exit(symbol); err != nil {
 			training.Error(errnie.Err(errnie.IO, "[training] exit failed for "+symbol, err))
-			training.tokenPath = nil
+			state.tokenPath = nil
 			return "exit failed: " + err.Error()
 		}
 
-		training.tokenPath = nil
+		state.tokenPath = nil
 		return "exit submitted"
 	case "noop":
-		training.tokenPath = nil
+		state.tokenPath = nil
 		return "noop: matched unpromising precursor"
 	}
 

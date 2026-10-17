@@ -30,10 +30,12 @@ export const SymbolTargets = ({
 	summaries,
 	selected,
 	onSelect,
+	pending,
 }: {
 	summaries: HindsightSymbolSummary[];
 	selected: string | null;
 	onSelect: (symbol: string) => void;
+	pending?: string;
 }) => {
 	const [filter, setFilter] = useState("");
 	const [onlyMoved, setOnlyMoved] = useState(false);
@@ -88,7 +90,10 @@ export const SymbolTargets = ({
 			<Section.Body>
 				{rows.length === 0 ? (
 					<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
-						No instrument of this run has a stored up or down excursion.
+						{summaries.length === 0
+							? (pending ??
+								"No instrument of this run has a stored up or down excursion.")
+							: "No instrument matches this filter."}
 					</p>
 				) : null}
 				<ul className="flex flex-col divide-y divide-(--line)">

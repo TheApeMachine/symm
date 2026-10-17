@@ -5,7 +5,7 @@ import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { focusAtom } from "#/collections/app";
 import { cn } from "#/lib/utils";
-import { regionCategoryIndex } from "./grid-pins";
+import { sympathyAnchor } from "./grid-pins";
 import type { ImpulseNode } from "./types";
 import { useImpulseData } from "./use-impulse-data";
 
@@ -573,14 +573,6 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 		const centerX = width / 2;
 		const centerY = height / 2;
 
-		const foci = [
-			{ x: width * 0.28, y: height * 0.32 }, // Cluster 0
-			{ x: width * 0.72, y: height * 0.32 }, // Cluster 1
-			{ x: width * 0.28, y: height * 0.68 }, // Cluster 2
-			{ x: width * 0.72, y: height * 0.68 }, // Cluster 3
-			{ x: width * 0.5, y: height * 0.5 }, // Cluster 4
-		];
-
 		if (layoutMode === "grid") {
 			simulation.alpha(0).stop();
 			for (const n of nodes) {
@@ -597,26 +589,28 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					"x",
 					d3
 						.forceX<ImpulseNode>(
-							(d) => foci[regionCategoryIndex(Number(d.cluster || 0))].x,
+							(d) =>
+								sympathyAnchor(Number(d.cluster || 0), width, height).x,
 						)
-						.strength(0.12),
+						.strength(0.55),
 				)
 				.force(
 					"y",
 					d3
 						.forceY<ImpulseNode>(
-							(d) => foci[regionCategoryIndex(Number(d.cluster || 0))].y,
+							(d) =>
+								sympathyAnchor(Number(d.cluster || 0), width, height).y,
 						)
-						.strength(0.12),
+						.strength(0.55),
 				)
 				.force(
 					"collide",
 					d3
 						.forceCollide<ImpulseNode>()
-						.radius((d) => Math.max(4, (d.snr || 1) * 1.5 + 4))
+						.radius((d) => Math.max(4, (d.snr || 1) * 1.2 + 3))
 						.iterations(2),
 				)
-				.force("charge", d3.forceManyBody().strength(-15))
+				.force("charge", d3.forceManyBody().strength(-6))
 				.alpha(0.6)
 				.restart();
 

@@ -41,6 +41,12 @@ func ReadValue(client *Client, key string) (*data.Value, error) {
 }
 
 func readObject(ctx context.Context, client *Client, key string) ([]byte, error) {
+	if buf, ok := client.CachedObject(key); ok {
+		return buf, nil
+	}
+
+	client.RememberObjectKey(key)
+
 	if err := client.acquire(ctx); err != nil {
 		return nil, downloadErr(err)
 	}
@@ -61,6 +67,8 @@ func readObject(ctx context.Context, client *Client, key string) ([]byte, error)
 	if err != nil {
 		return nil, downloadErr(err)
 	}
+
+	client.CacheObject(key, buf)
 
 	return buf, nil
 }

@@ -2,20 +2,13 @@ package cmd
 
 import (
 	"context"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/cli/progress"
 	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/store"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -29,10 +22,9 @@ var (
 var detectCmd = &cobra.Command{
 	Use:   "detect",
 	Short: "Label stored ticks with excursion detections",
-	Long: `detect reads each stored tick, rebuilds that tick's book and fee from its
-layers, and runs the excursion detector against that book. The taker-fee flag
-is the friction rate when a tick's price layer has no fee. Excursions are
-written back with io.Copy.`,
+	Long: `detect reads each stored run once, stitches a continuous tape per symbol,
+and writes that symbol's detections under draft/. A later commit's learned
+pullback is applied when it is stored.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
@@ -50,30 +42,6 @@ written back with io.Copy.`,
 
 		defer client.Close()
 
-		price := broker.NewPrice(ctx, nil, nil, nil, nil)
-		cash := 200.0
-
-		if system.Cfg != nil && system.Cfg.Market != nil && system.Cfg.Market.Balance > 0 {
-			cash = float64(system.Cfg.Market.Balance)
-		}
-
-		price.SetReferenceCash(decimal.NewFromFloat64(cash))
-		price.SetDefaultFee(kraken.TradeVolumeFee{
-			Fee: decimal.NewFromFloat64(system.Cfg.Market.TakerFee),
-		})
-
-		detector := strategy.NewDetector(ctx, price)
-
-		if err := os.MkdirAll(detectTrace, 0o755); err != nil {
-			return errnie.Error(err)
-		}
-
-		detector.EnableTrace()
-
-		if err := detector.Error(); err != nil {
-			return errnie.Error(err)
-		}
-
 		epochs, err := detectRunEpochs(client)
 
 		if err != nil {
@@ -86,73 +54,42 @@ written back with io.Copy.`,
 			want[symbol] = struct{}{}
 		}
 
-		prefixes := make([]string, 0, len(epochs))
+		retrace := hindsight.LearnedRetrace(client)
 
 		for _, epoch := range epochs {
-			prefixes = append(prefixes, data.TickPrefix(epoch))
-		}
-
-		listing := progress.Spin("listing ticks")
-		keys := []string{}
-
-		if len(prefixes) > 0 {
-			keys = client.ListKeysProgress(func(n int) {
+			listing := progress.Spin("listing ticks")
+			keys := client.ListKeysProgress(func(n int) {
 				listing.Describe("listing ticks %d", n)
-			}, prefixes...)
-		}
+			}, data.TickPrefix(epoch))
+			listing.Finish()
 
-		listing.Finish()
-
-		bar := progress.New("detect ticks", int64(len(keys)))
-		defer bar.Finish()
-
-		for frame, err := range store.ParallelValuesProgress(client, keys, bar.Step) {
-			if err != nil {
-				return errnie.Error(err)
-			}
-
-			ticks, err := broker.ReadTick(frame)
-
-			if err != nil {
-				errnie.Error(err)
+			if hindsight.ScanUpToDate(client, epoch, retrace, keys) {
+				bar := progress.New("detect ticks", int64(len(keys)))
+				bar.Finish()
 				continue
 			}
 
-			for _, tick := range ticks {
-				if len(want) > 0 {
-					if _, ok := want[tick.Symbol]; !ok {
-						continue
-					}
-				}
+			bar := progress.New("detect ticks", int64(len(keys)))
+			loaded, err := hindsight.Assemble(ctx, client, keys, bar.Step)
+			bar.Finish()
 
-				for _, value := range detector.Replay(frame, tick) {
-					if _, err := io.Copy(client, value); err != nil {
-						return errnie.Error(err)
-					}
-				}
-			}
-		}
-
-		for _, value := range detector.Finish() {
-			if _, err := io.Copy(client, value); err != nil {
+			if err != nil {
 				return errnie.Error(err)
 			}
-		}
 
-		tracePath := filepath.Join(detectTrace, "detector_trace.json")
+			if err := hindsight.WriteRunManifest(client, epoch, keys); err != nil {
+				return errnie.Error(err)
+			}
 
-		if err := detector.WriteTrace(tracePath); err != nil {
-			return errnie.Error(err)
-		}
+			drafts := hindsight.ScanRun(loaded, retrace, want)
 
-		plot := exec.Command("python3", "scripts/plot_detector.py", tracePath, detectTrace)
-		plot.Stdout = os.Stdout
-		plot.Stderr = os.Stderr
+			if err := hindsight.StoreDrafts(client, epoch, drafts); err != nil {
+				return errnie.Error(err)
+			}
 
-		if err := plot.Run(); err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.Internal, "[detect] detector tape plot failed", err,
-			))
+			if err := hindsight.WriteScanStamp(client, epoch, retrace, len(drafts)); err != nil {
+				return errnie.Error(err)
+			}
 		}
 
 		return nil
@@ -165,7 +102,9 @@ func detectRunEpochs(client *store.Client) ([]uint64, error) {
 
 		for _, epoch := range detectEpochs {
 			if epoch <= 0 {
-				return nil, errnie.Err(errnie.Validation, "[detect] epoch must be positive", nil)
+				return nil, errnie.Error(errnie.Err(
+					errnie.Validation, "[detect] epoch must be positive", nil,
+				))
 			}
 
 			epochs = append(epochs, uint64(epoch))

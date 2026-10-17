@@ -49,11 +49,11 @@ func TestPriceRoundTripReadsInstrumentLayer(t *testing.T) {
 	}
 }
 
-func TestProfitableUpPublishesEnterAndExit(t *testing.T) {
+func TestUpClearsFrictionPublishesEnterAndExit(t *testing.T) {
 	t.Parallel()
 
 	trainer := &Trainer{}
-	got, err := trainer.publishExcursion(1, "ES/USD", "up", "R01/R05", "R02/R10", 0.02)
+	got, err := trainer.publishExcursion(1, "ES/USD", "R01/R05", "R02/R10", true, true, 0.02)
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
@@ -62,15 +62,41 @@ func TestProfitableUpPublishesEnterAndExit(t *testing.T) {
 	}
 }
 
-func TestUnprofitableExcursionPublishesNoop(t *testing.T) {
+func TestDownPublishesNoopOnBothFragments(t *testing.T) {
 	t.Parallel()
 
 	trainer := &Trainer{}
-	got, err := trainer.publishExcursion(1, "ES/USD", "down", "R01", "R04", -0.01)
+	got, err := trainer.publishExcursion(1, "ES/USD", "R01", "R04", false, false, -0.01)
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
 	if got != "noop policy/current/R01/noop.bin, noop policy/current/R04/noop.bin" {
+		t.Fatalf("published %s", got)
+	}
+}
+
+func TestExitRequiresEnter(t *testing.T) {
+	t.Parallel()
+
+	trainer := &Trainer{}
+	got, err := trainer.publishExcursion(1, "ES/USD", "R01/R05", "R02/R10", false, true, 0.18)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if got != "noop policy/current/R01/R05/noop.bin, noop policy/current/R02/R10/noop.bin" {
+		t.Fatalf("published %s", got)
+	}
+}
+
+func TestUpWithoutFrictionPublishesNoopOnBothFragments(t *testing.T) {
+	t.Parallel()
+
+	trainer := &Trainer{}
+	got, err := trainer.publishExcursion(1, "ES/USD", "R01/R05", "R02/R10", false, false, 0.001)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if got != "noop policy/current/R01/R05/noop.bin, noop policy/current/R02/R10/noop.bin" {
 		t.Fatalf("published %s", got)
 	}
 }
@@ -81,11 +107,11 @@ func TestReplayTapeSplitsPrecursorAndHolding(t *testing.T) {
 	const (
 		aTick = 12
 		bTick = 20
-		dTick = 32
+		cTick = 28
 	)
 
-	ticks := make([]*data.Value, 0, dTick)
-	for tick := uint64(1); tick <= dTick; tick++ {
+	ticks := make([]*data.Value, 0, cTick)
+	for tick := uint64(1); tick <= cTick; tick++ {
 		value := math.Exp(float64(tick) / 4)
 		source, label := "hawkes", "arrival_rate:buy"
 		if tick > bTick {
@@ -96,7 +122,7 @@ func TestReplayTapeSplitsPrecursorAndHolding(t *testing.T) {
 
 	trainer := NewTrainer(context.Background(), nil, nil)
 	precursor, holding, precursorTicks, holdingTicks, err := trainer.replayTape(
-		ticks, aTick, bTick, dTick,
+		"test", ticks, aTick, bTick, cTick,
 	)
 	if err != nil {
 		t.Fatalf("replay: %v", err)
@@ -104,14 +130,11 @@ func TestReplayTapeSplitsPrecursorAndHolding(t *testing.T) {
 	if precursorTicks != int(bTick-aTick+1) {
 		t.Fatalf("precursor ticks = %d", precursorTicks)
 	}
-	if holdingTicks != int(dTick-bTick+1) {
+	if holdingTicks != int(cTick-bTick+1) {
 		t.Fatalf("holding ticks = %d", holdingTicks)
 	}
-	if precursor == "" || holding == "" {
-		t.Fatalf("precursor %q holding %q", precursor, holding)
-	}
-	if precursor == holding {
-		t.Fatalf("holding sequence repeated the precursor %s", precursor)
+	if precursor != "" || holding != "" {
+		t.Fatalf("path without a completed rule: precursor %q holding %q", precursor, holding)
 	}
 }
 

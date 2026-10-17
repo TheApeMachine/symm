@@ -382,6 +382,10 @@ audit:
   # Thresholds the audit stages judge by. They are declared hypotheses about
   # healthy data, not tuned to make a run pass; changing one changes what a
   # stage calls a violation, and the report names the value it used.
+  # How many symbols whose price actually moved are used to decide whether
+  # each signal in SIGNALS.md is alive. Symbols whose price did not move
+  # are not judged.
+  active_symbols: 5
   # Minimum grid tokens per symbol before dynamics/stability are evaluated.
   min_tokens: 20
   # Minimum precursor and background tokens before separation is tested.
@@ -400,8 +404,12 @@ audit:
   stagnant_zero_fraction: 0.80
   # Absolute tolerance for arithmetic identities (spread, friction hurdle).
   identity_tolerance: 0.0001
-  # Latency spikes: Chebyshev bound at audit.significance when the stream's
-  # drift dispersion exceeds the floor, else a residual above the spike floor.
+  # A packet is "late" when it sits beyond the Chebyshev distance
+  # (1/sqrt(significance) standard deviations) from that stream's own average,
+  # or, when the stream's spread is below the dispersion floor, when it is
+  # more than latency_spike_floor_ms away from that average. One late packet
+  # is counted and does not fail the stage. The stream fails when late packets
+  # are a larger share of its arrivals than significance.
   latency_dispersion_floor_ms: 1.0
   latency_spike_floor_ms: 50
   # Same-symbol metric pairs with |r| at or above this are collinear clones.

@@ -87,10 +87,11 @@ func (signal Signal) Metric(label string) (float64, error) {
 }
 
 /*
-Signals yields every signal layer of value (IsSignalIndex), in layer order.
-A signal layer that does not parse (no source or symbol, a byte length that
-is not whole float64s, more values than labels) is yielded as an error,
-never skipped.
+Signals yields every completed signal layer of value (IsSignalIndex), in layer
+order, including layers claimed into reserved slots. A nil reserved slot is
+still being written and is skipped. A signal layer that does not parse (no
+source or symbol, a byte length that is not whole float64s, more values than
+labels) is yielded as an error, never skipped.
 */
 func Signals(value *Value) iter.Seq2[Signal, error] {
 	return func(yield func(Signal, error) bool) {
@@ -98,19 +99,17 @@ func Signals(value *Value) iter.Seq2[Signal, error] {
 			return
 		}
 
-		for i, layer := range value.Layers[:value.visible()] {
-			if i >= len(value.Index) {
-				return
-			}
+		layers, index := value.filled()
 
-			if !IsSignalIndex(value.Index[i]) {
+		for i, layer := range layers {
+			if !IsSignalIndex(index[i]) {
 				continue
 			}
 
-			signal, err := ParseSignal(value.Index[i], layer)
+			signal, err := ParseSignal(index[i], layer)
 
 			if err != nil {
-				err = errnie.Err(errnie.UnprocessableContent, "data: signal layer "+value.Index[i], err)
+				err = errnie.Err(errnie.UnprocessableContent, "data: signal layer "+index[i], err)
 			}
 
 			if !yield(signal, err) {
