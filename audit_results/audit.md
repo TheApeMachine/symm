@@ -1,6 +1,6 @@
-# Audit of epoch 1792249581528452000 (workspace/tick/aggregate/1792249581528452000/)
+# Audit of epoch 1792252538780196000 (workspace/tick/aggregate/1792252538780196000/)
 
-No policy epoch is trained on these ticks.
+44 sequences from policy/current.
 
 | stage | result |
 |---|---|
@@ -12,80 +12,80 @@ No policy epoch is trained on these ticks.
 | stability | pass |
 | dynamics | pass |
 | precursor | FAIL |
-| cognitive | FAIL |
+| cognitive | pass |
 | truthfulness | pass |
 | realization | FAIL |
 
 ## audit:timing
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** AVA/USD,
-  **DESCRIPTION:** Delay on AVA/USD is unsteady: 7.4% of 27 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** ACU/USD,
+  **DESCRIPTION:** Delay on ACU/USD is unsteady: 6.1% of 33 packets were far from its usual delay, above the 5% allowance,
+  **METRIC:** ,
+
+- [VIOLATION] timing.latency_excess,
+  **SYMBOL:** AKE/USD,
+  **DESCRIPTION:** Delay on AKE/USD is unsteady: 7.1% of 28 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
   **SYMBOL:** BABY/USD,
-  **DESCRIPTION:** Delay on BABY/USD is unsteady: 5.1% of 39 packets were far from its usual delay, above the 5% allowance,
+  **DESCRIPTION:** Delay on BABY/USD is unsteady: 6.7% of 30 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
   **SYMBOL:** CT/USD,
-  **DESCRIPTION:** Delay on CT/USD is unsteady: 5.4% of 56 packets were far from its usual delay, above the 5% allowance,
+  **DESCRIPTION:** Delay on CT/USD is unsteady: 9.1% of 33 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** CTR/USD,
-  **DESCRIPTION:** Delay on CTR/USD is unsteady: 6.9% of 29 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** ENA/USD,
+  **DESCRIPTION:** Delay on ENA/USD is unsteady: 14.3% of 21 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** EIGEN/USD,
-  **DESCRIPTION:** Delay on EIGEN/USD is unsteady: 5.9% of 34 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** MEGA/USD,
+  **DESCRIPTION:** Delay on MEGA/USD is unsteady: 14.3% of 21 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** FET/USD,
-  **DESCRIPTION:** Delay on FET/USD is unsteady: 7.7% of 26 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** POL/USD,
+  **DESCRIPTION:** Delay on POL/USD is unsteady: 5.4% of 37 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** RSC/USD,
-  **DESCRIPTION:** Delay on RSC/USD is unsteady: 8.0% of 25 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** PYTH/USD,
+  **DESCRIPTION:** Delay on PYTH/USD is unsteady: 6.9% of 29 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** SHIB/USD,
-  **DESCRIPTION:** Delay on SHIB/USD is unsteady: 5.1% of 39 packets were far from its usual delay, above the 5% allowance,
-  **METRIC:** ,
-
-- [VIOLATION] timing.latency_excess,
-  **SYMBOL:** SNEK/USD,
-  **DESCRIPTION:** Delay on SNEK/USD is unsteady: 10.0% of 40 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** SENT/USD,
+  **DESCRIPTION:** Delay on SENT/USD is unsteady: 6.5% of 31 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
   **SYMBOL:** SPX/USD,
-  **DESCRIPTION:** Delay on SPX/USD is unsteady: 5.8% of 52 packets were far from its usual delay, above the 5% allowance,
+  **DESCRIPTION:** Delay on SPX/USD is unsteady: 10.7% of 28 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** TEL/USD,
-  **DESCRIPTION:** Delay on TEL/USD is unsteady: 7.7% of 26 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** WLD/USD,
+  **DESCRIPTION:** Delay on WLD/USD is unsteady: 8.0% of 25 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** UAI/USD,
-  **DESCRIPTION:** Delay on UAI/USD is unsteady: 14.3% of 21 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** XDC/USD,
+  **DESCRIPTION:** Delay on XDC/USD is unsteady: 5.6% of 36 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** WAL/USD,
-  **DESCRIPTION:** Delay on WAL/USD is unsteady: 9.8% of 41 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** XMR/USD,
+  **DESCRIPTION:** Delay on XMR/USD is unsteady: 11.8% of 34 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 - [VIOLATION] timing.latency_excess,
-  **SYMBOL:** ZBCN/USD,
-  **DESCRIPTION:** Delay on ZBCN/USD is unsteady: 5.6% of 36 packets were far from its usual delay, above the 5% allowance,
+  **SYMBOL:** ZRO/USD,
+  **DESCRIPTION:** Delay on ZRO/USD is unsteady: 7.1% of 28 packets were far from its usual delay, above the 5% allowance,
   **METRIC:** ,
 
 
@@ -96,12 +96,12 @@ No policy epoch is trained on these ticks.
 
 - [VIOLATION] vitality.unmeasured,
   **SYMBOL:** sentiment.historical_path_distance,
-  **DESCRIPTION:** sentiment.historical_path_distance was 0 on every sample from the active symbols (COPM/USD, Q/USD, IDEX/USD, ALEO/USD, BABYSHARK/USD), so it never measured anything there,
+  **DESCRIPTION:** sentiment.historical_path_distance was 0 on every sample from the active symbols (BDXN/USD, MEZO/USD, ICNT/USD, ALTHEA/USD, Q/USD), so it never measured anything there,
   **METRIC:** ,
 
 - [VIOLATION] vitality.unmeasured,
   **SYMBOL:** sentiment.historical_path_percentile,
-  **DESCRIPTION:** sentiment.historical_path_percentile was 0 on every sample from the active symbols (COPM/USD, Q/USD, IDEX/USD, ALEO/USD, BABYSHARK/USD), so it never measured anything there,
+  **DESCRIPTION:** sentiment.historical_path_percentile was 0 on every sample from the active symbols (BDXN/USD, MEZO/USD, ICNT/USD, ALTHEA/USD, Q/USD), so it never measured anything there,
   **METRIC:** ,
 
 
@@ -109,12 +109,12 @@ No policy epoch is trained on these ticks.
 
 - [VIOLATION] redundancy.collinear_pair,
   **SYMBOL:** concentration:ask &lt;-&gt; entropy:ask,
-  **DESCRIPTION:** Metric pair [concentration:ask &lt;-&gt; entropy:ask] are collinear clones (|r| = -0.9593 &gt;= 0.95 across 13216 observations),
+  **DESCRIPTION:** Metric pair [concentration:ask &lt;-&gt; entropy:ask] are collinear clones (|r| = -0.9568 &gt;= 0.95 across 9801 observations),
   **METRIC:** ,
 
 - [VIOLATION] redundancy.collinear_pair,
   **SYMBOL:** concentration:bid &lt;-&gt; entropy:bid,
-  **DESCRIPTION:** Metric pair [concentration:bid &lt;-&gt; entropy:bid] are collinear clones (|r| = -0.9636 &gt;= 0.95 across 13216 observations),
+  **DESCRIPTION:** Metric pair [concentration:bid &lt;-&gt; entropy:bid] are collinear clones (|r| = -0.9607 &gt;= 0.95 across 9801 observations),
   **METRIC:** ,
 
 
@@ -131,7 +131,7 @@ No policy epoch is trained on these ticks.
 
 - [VIOLATION] precursor.insufficient_evidence,
   **SYMBOL:** precursor,
-  **DESCRIPTION:** 0 precursor and 12487 background tokens over 0 episodes; need 10 of each,
+  **DESCRIPTION:** 0 precursor and 9135 background tokens over 0 episodes; need 10 of each,
   **METRIC:** ,
 
 - [VIOLATION] excursion.insufficient_evidence,
@@ -141,11 +141,6 @@ No policy epoch is trained on these ticks.
 
 
 ## audit:cognitive
-
-- [VIOLATION] cognitive.insufficient_evidence,
-  **SYMBOL:** cognitive,
-  **DESCRIPTION:** no published policies for the epoch: run train on it,
-  **METRIC:** ,
 
 
 ## audit:truthfulness

@@ -127,6 +127,51 @@ describe("lifecycle store", () => {
 		expect(snapshotOf().report.lifecycles).toHaveLength(0);
 	});
 
+	it("keeps a restored position whose events are null", () => {
+		ingestPositionFrame({
+			id: "restored",
+			symbol: "ETH/USD",
+			status: "holding",
+			opened_at: "2026-10-17T12:00:00Z",
+			events: null,
+		});
+
+		const [life] = snapshotOf().report.lifecycles;
+		expect(life.symbol).toBe("ETH/USD");
+		expect(life.events).toEqual([]);
+		expect(snapshotOf().report.open_count).toBe(1);
+	});
+
+	it("keeps an open paper life when closed lives pass the limit", () => {
+		ingestPositionFrame(
+			frame("open", "holding", { opened_at: "2026-10-01T00:00:00Z" }),
+		);
+
+		for (let index = 0; index < 200; index++) {
+			ingestPositionFrame({
+				id: `closed-${index}`,
+				symbol: "BTC/USD",
+				status: "closed",
+				opened_at: `2026-10-02T00:00:${String(index).padStart(2, "0")}Z`,
+				events: [],
+				outcome: {
+					cost: 1,
+					proceeds: 1,
+					fees: 0,
+					realized: 1,
+					net_return: 1,
+					hold_ns: 1,
+					expected_hold_ns: null,
+					triggers: [],
+				},
+			});
+		}
+
+		const ids = snapshotOf().report.lifecycles.map((life) => life.id);
+		expect(ids).toContain("open");
+		expect(ids).not.toContain("closed-0");
+	});
+
 	it("keeps a virtual life out of the paper book", () => {
 		ingestPositionFrame({
 			id: "R01/R05",

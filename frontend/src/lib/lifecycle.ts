@@ -137,7 +137,7 @@ const isSnapshot = (frame: unknown): frame is Lifecycle => {
 		typeof value.symbol === "string" &&
 		typeof value.status === "string" &&
 		typeof value.opened_at === "string" &&
-		Array.isArray(value.events)
+		(Array.isArray(value.events) || value.events === null)
 	);
 };
 
@@ -146,9 +146,15 @@ const remember = (life: Lifecycle) => {
 	lives.set(life.id, life);
 
 	while (lives.size > LIFECYCLE_LIMIT) {
-		const oldest = lives.keys().next().value;
-		if (oldest === undefined) break;
-		lives.delete(oldest);
+		let evict: string | undefined;
+		for (const [id, life] of lives) {
+			if (life.status === "closed" || life.status === "abandoned") {
+				evict = id;
+				break;
+			}
+		}
+		if (evict === undefined) break;
+		lives.delete(evict);
 	}
 
 	publish();

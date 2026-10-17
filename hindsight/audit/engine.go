@@ -428,6 +428,12 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 		}
 	}()
 
+	for _, stage := range engine.stages {
+		if cognitive, ok := stage.(*CognitiveStage); ok {
+			cognitive.policyEpoch = policy.Epoch
+		}
+	}
+
 	route := engine.routes()
 	symbols := make([]string, 0)
 	var ticks int

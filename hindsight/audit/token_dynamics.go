@@ -370,7 +370,13 @@ func blockNullEntropies(tokensBySymbol map[string][]string, blockSize, iteration
 	for range iterations {
 		shuffled := make(map[string][]string, len(blocksBySymbol))
 
-		for symbol, blocks := range blocksBySymbol {
+		for _, symbol := range symbols {
+			blocks := blocksBySymbol[symbol]
+
+			if len(blocks) == 0 {
+				continue
+			}
+
 			order := append([][]string(nil), blocks...)
 			rng.Shuffle(len(order), func(i, j int) {
 				order[i], order[j] = order[j], order[i]

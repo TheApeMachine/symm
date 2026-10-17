@@ -2,9 +2,12 @@ package strategy
 
 import (
 	"testing"
+	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -123,6 +126,49 @@ func TestAWinningCloseLowersTheStep(t *testing.T) {
 
 	if !training.admitToken([]string{"R13"}, "R04", 0.45, 0.2) {
 		t.Fatal("a profitable enter did not lower the next step")
+	}
+}
+
+func TestStoredVirtualKeepsTokensAndOpened(t *testing.T) {
+	opened := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	lot := virtualLot{
+		Path:       "R01/R05",
+		Symbol:     "TEL/USD",
+		Brightness: []float64{0.4, 0.2},
+		Tokens:     []string{"R01", "R05"},
+		Opened:     opened,
+		Quantity:   decimal.NewFromFloat64(1),
+		Entry:      decimal.NewFromFloat64(2),
+		Fee:        decimal.NewFromFloat64(0.01),
+	}
+	record := storedVirtual{
+		Path:       lot.Path,
+		Symbol:     lot.Symbol,
+		Brightness: lot.Brightness,
+		Tokens:     append([]string{}, lot.Tokens...),
+		Opened:     lot.Opened.UTC().Format(time.RFC3339Nano),
+		Quantity:   lot.Quantity.String(),
+		Entry:      lot.Entry.String(),
+		Fee:        lot.Fee.String(),
+	}
+	raw, err := sonic.Marshal(record)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	value := data.NewValue("policy", "virtual", lot.Symbol)
+	value.FormatPrefix()
+	value.AppendJSON(raw, value.Prefix+"/"+data.LayerLedger)
+
+	got, ok := virtualFrom(value)
+
+	if !ok {
+		t.Fatal("stored virtual did not load")
+	}
+
+	if got.Opened.UTC() != opened || len(got.Tokens) != 2 || got.Tokens[0] != "R01" || got.Tokens[1] != "R05" {
+		t.Fatalf("restored opened %s tokens %v", got.Opened, got.Tokens)
 	}
 }
 

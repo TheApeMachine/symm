@@ -46,6 +46,7 @@ type CognitiveStage struct {
 	abstentionRate float64
 	meanConfidence float64
 	gate           *data.PolicyGate
+	policyEpoch    uint64
 }
 
 func NewCognitiveStage(ctx context.Context) *CognitiveStage {
@@ -95,7 +96,10 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Value) {
 		return
 	}
 
-	if measurement.Origin == data.PolicyOrigin && hasGateLayer(measurement) {
+	// policy/current is judged only when no policy epoch is selected
+	// (policyEpoch == 0) and may omit the gate. A selected epoch expects
+	// one on every policy, tagged or not.
+	if measurement.Origin == data.PolicyOrigin && (stage.policyEpoch != 0 || hasGateLayer(measurement)) {
 		stage.recordGate(measurement)
 	}
 

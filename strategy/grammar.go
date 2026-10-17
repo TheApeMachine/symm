@@ -357,8 +357,21 @@ func (grammar *Grammar) deleteDigram(symbol *Symbol) {
 	key := makeDigramKey(symbol, symbol.next)
 	matchSymbol, found := grammar.digrams[key]
 
-	if found && matchSymbol == symbol {
-		delete(grammar.digrams, key)
+	if !found || matchSymbol != symbol {
+		return
+	}
+
+	delete(grammar.digrams, key)
+
+	// An overlapping repeat is not indexed. When this representative goes
+	// away, the neighbor that still forms the digram becomes the index.
+	survivor := symbol.next
+	if survivor.next == nil || survivor.next.isGuard {
+		return
+	}
+
+	if makeDigramKey(survivor, survivor.next) == key {
+		grammar.digrams[key] = survivor
 	}
 }
 

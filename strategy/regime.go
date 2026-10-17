@@ -94,7 +94,8 @@ func (regime *regime) keepAfter(k int) {
 
 /*
 segmentCost is the two-part code length of samples left..right (1-based).
-A zero residual has no deviation to encode.
+A flat segment's residual is bounded by the squared quantization step of its
+mean energy, so the cost stays finite and still below a noisy segment.
 */
 func segmentCost(sum, sumSq []float64, left, right int) float64 {
 	n := right - left + 1
@@ -106,14 +107,29 @@ func segmentCost(sum, sumSq []float64, left, right int) float64 {
 	squares := sumSq[right] - sumSq[left-1]
 	width := float64(n)
 	rss := squares - span*span/width
+	mean := span / width
+	// The variance of a flat segment cancels to a few ulps. The quantization
+	// step that covers that cancellation, squared, is the smallest variance
+	// a segment of this energy can claim.
+	quantum := math.Abs(mean) * math.Sqrt(8*0x1p-52)
 
-	// squares - (sum)²/n cancels to a few units in the last place when the
-	// samples are equal. Eight ulps times n covers that cancellation.
-	if rss <= squares*width*(8*0x1p-52) {
-		return math.Inf(-1)
+	if quantum == 0 || math.IsNaN(quantum) || math.IsInf(quantum, 0) {
+		quantum = math.SmallestNonzeroFloat64
 	}
 
-	return 0.5*width*math.Log(rss/width) + 0.5*math.Log(width)
+	floor := quantum * quantum
+
+	if floor == 0 || math.IsNaN(floor) {
+		floor = math.SmallestNonzeroFloat64
+	}
+
+	variance := rss / width
+
+	if variance < floor || math.IsNaN(variance) {
+		variance = floor
+	}
+
+	return 0.5*width*math.Log(variance) + 0.5*math.Log(width)
 }
 
 /*

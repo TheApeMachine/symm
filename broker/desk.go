@@ -597,7 +597,13 @@ func (desk *Desk) BalanceJSON() []byte {
 	var frame map[string]any
 
 	if err := sonic.Unmarshal(raw, &frame); err != nil {
-		return raw
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[desk] balance unmarshal failed",
+			err,
+		))
+
+		return nil
 	}
 
 	if trade.UnrealizedPnL != nil {
@@ -611,7 +617,13 @@ func (desk *Desk) BalanceJSON() []byte {
 	merged, err := sonic.Marshal(frame)
 
 	if err != nil {
-		return raw
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[desk] balance marshal failed",
+			err,
+		))
+
+		return nil
 	}
 
 	return merged

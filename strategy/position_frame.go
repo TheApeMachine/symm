@@ -505,11 +505,6 @@ func (training *Training) publishClosed() {
 			continue
 		}
 
-		if err := training.noteClosed(position); err != nil {
-			training.Error(errnie.Err(errnie.IO, "[training] note closed "+id, err))
-			continue
-		}
-
 		raw, ok := closedSnapshot(position)
 
 		if !ok {
@@ -526,6 +521,11 @@ func (training *Training) publishClosed() {
 		}
 
 		training.publishSnapshot(id, position.Symbol(), raw)
+
+		if err := training.noteClosed(position); err != nil {
+			training.Error(errnie.Err(errnie.IO, "[training] note closed "+id, err))
+		}
+
 		training.archived[id] = struct{}{}
 	}
 }

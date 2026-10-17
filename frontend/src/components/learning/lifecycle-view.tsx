@@ -491,15 +491,26 @@ const EventRow = ({ event }: { event: LifeEvent }) => {
 	);
 };
 
+const heldVirtual = (life: Lifecycle) =>
+	(life.book ?? "paper") === "virtual" &&
+	(life.status === "open" || life.status === "holding");
+
+const shownLife = (life: Lifecycle): Lifecycle =>
+	life.book === "virtual" && life.status === "open"
+		? { ...life, status: "holding" }
+		: life;
+
 const LifecycleStepper = ({ life }: { life: Lifecycle }) => {
 	const events = life.events ?? [];
 	const hasMatch = events.some((e) => e.kind === "entry_match");
 	const hasSizing = events.some((e) => e.kind === "sizing");
 	const hasFill = events.some((e) => e.kind === "fill");
+	const virtualHold = heldVirtual(life);
 	const isHolding =
 		life.status === "holding" ||
 		life.status === "exiting" ||
-		life.status === "closed";
+		life.status === "closed" ||
+		virtualHold;
 	const hasExit = events.some(
 		(e) =>
 			e.kind === "exit" || e.kind === "exit_match" || e.kind === "risk_sell",
@@ -507,10 +518,14 @@ const LifecycleStepper = ({ life }: { life: Lifecycle }) => {
 	const isClosed = life.status === "closed";
 
 	const stages = [
-		{ label: "1. Match", done: hasMatch, active: !hasSizing },
+		{ label: "1. Match", done: hasMatch, active: !hasSizing && !virtualHold },
 		{ label: "2. Sizing", done: hasSizing, active: hasSizing && !hasFill },
 		{ label: "3. Fill", done: hasFill, active: hasFill && !isHolding },
-		{ label: "4. Hold", done: isHolding, active: life.status === "holding" },
+		{
+			label: "4. Hold",
+			done: isHolding,
+			active: life.status === "holding" || virtualHold,
+		},
 		{
 			label: "5. Exit",
 			done: hasExit || isClosed,
@@ -792,9 +807,10 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 
 	const isWin = outcome.realized > 0;
 	const pnl = outcome.realized;
+	const name = life.book === "virtual" ? "virtual" : "paper";
 
 	const rows: Array<[string, string, number?]> = [
-		["paper P&L", signedMoney(outcome.realized), outcome.realized],
+		[`${name} P&L`, signedMoney(outcome.realized), outcome.realized],
 		["exchange P&L", NOT_AVAILABLE],
 		["net return", ratePercent(outcome.net_return), outcome.net_return],
 		["exchange fees", NOT_AVAILABLE],
@@ -869,8 +885,9 @@ export const LifecycleView = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const view = selectBook(report, book);
 	const [selected, setSelected] = useState<string | null>(null);
-	const lifecycles = view.lifecycles;
+	const lifecycles = view.lifecycles.map(shownLife);
 	const perf = view.performance;
+	const name = book === "virtual" ? "virtual" : "paper";
 	const active =
 		lifecycles.find((life) => life.id === selected) ?? lifecycles[0];
 
@@ -886,7 +903,7 @@ export const LifecycleView = () => {
 				<div className="flex items-center gap-1.5">
 					<span className="w-1.5 h-1.5 rounded-full bg-(--up) animate-pulse" />
 					<span className="font-bold uppercase tracking-wider text-(--f4)">
-						Paper outcome
+						{name} outcome
 					</span>
 				</div>
 				<span className="px-2 py-0.5 rounded bg-(--sunken) border border-(--line)">
@@ -902,7 +919,7 @@ export const LifecycleView = () => {
 						/>
 					</div>
 					<span>
-						paper win {ratePercent(perf.win_rate)} · edge{" "}
+						{name} win {ratePercent(perf.win_rate)} · edge{" "}
 						{ratePercent(perf.mean_return)} · P&L{" "}
 						<span className={tone(perf.pnl)}>{signedMoney(perf.pnl)}</span>
 					</span>

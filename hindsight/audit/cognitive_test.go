@@ -55,6 +55,17 @@ func TestCognitiveStage(t *testing.T) {
 			So(gate["policy_epoch"], ShouldEqual, "1792187257188073000")
 		})
 
+		Convey("An untagged policy of a selected epoch violates the gate", func() {
+			policy := data.NewValue(data.PolicyOrigin, "enter", data.PolicyScope)
+			policy.Epoch = realizationEpoch
+			policy.FormatPrefix()
+			So(data.AppendPolicy(policy, "R01/R05", []float64{0.01, 0, 1, 0.01, 1}), ShouldBeNil)
+			stage.policyEpoch = realizationEpoch
+
+			violations := feed(stage, []*data.Value{policy})
+			So(hasViolation(violations, "cognitive.gate"), ShouldBeTrue)
+		})
+
 		Convey("A stored sequence without a gate tag is counted", func() {
 			policy := data.NewValue("policy", "enter", "BTC/USD")
 			data.AppendVector(policy, []float64{0.01, 0, 1, 0.01, 1}, "gain", "hold_seconds", "visits", "mean_reward", "confidence", "path:R01/R05")

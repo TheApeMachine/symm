@@ -1,6 +1,9 @@
 package strategy
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestRegimeHoldsAStableEnergy(t *testing.T) {
 	var regime regime
@@ -63,6 +66,22 @@ func TestRegimeBreaksOnALevelShift(t *testing.T) {
 
 	if regime.advance(11) {
 		t.Fatal("the new regime broke on its next sample")
+	}
+}
+
+func TestFlatSegmentCostStaysFiniteAndBelowNoise(t *testing.T) {
+	flatSum := []float64{0, 0, 0, 0, 0}
+	flatSq := []float64{0, 0, 0, 0, 0}
+	flat := segmentCost(flatSum, flatSq, 1, 4)
+
+	if math.IsNaN(flat) || math.IsInf(flat, 0) {
+		t.Fatalf("flat cost = %v, want a finite cost", flat)
+	}
+
+	noisy := segmentCost([]float64{0, 1, 3, 4, 6}, []float64{0, 1, 5, 6, 10}, 1, 4)
+
+	if !(flat < noisy) {
+		t.Fatalf("flat cost %v is not below noisy cost %v", flat, noisy)
 	}
 }
 

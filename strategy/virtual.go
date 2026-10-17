@@ -13,12 +13,17 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/system"
 )
 
 const (
 	virtualProfit = 0.50
 	virtualLoss   = -0.25
 	thresholdEase = 0.8
+	// virtualStake is the paper account's reset balance, in quote currency.
+	// Each virtual entry is sized from this stake, scaled by the risk
+	// fraction, so the stake is reset rather than left at an unbounded budget.
+	virtualStake = 200
 )
 
 /*
@@ -481,8 +486,19 @@ func (training *Training) openVirtual(symbol string, phrase []string, brightness
 		return
 	}
 
-	budget := decimal.NewFromFloat64(1000000000)
-	cost, err := training.price.AllocateEntry(symbol, budget)
+	if system.Cfg == nil || system.Cfg.Risk == nil || system.Cfg.Risk.MaxFraction == nil || system.Cfg.Risk.MaxFraction.Sign() <= 0 {
+		training.Error(errnie.Err(
+			errnie.Validation,
+			"[training] risk max fraction required to size a virtual entry",
+			nil,
+		))
+
+		return
+	}
+
+	stake := decimal.NewFromFloat64(virtualStake)
+	allocated := stake.SetScale(4).Mul(system.Cfg.Risk.MaxFraction)
+	cost, err := training.price.AllocateEntry(symbol, allocated)
 
 	if err != nil || cost == nil || cost.Quantity == nil || cost.EntryPrice == nil || cost.Quantity.Sign() <= 0 {
 		return
@@ -563,6 +579,8 @@ type storedVirtual struct {
 	Entry      string    `json:"entry"`
 	Fee        string    `json:"fee"`
 	Brightness []float64 `json:"brightness"`
+	Tokens     []string  `json:"tokens,omitempty"`
+	Opened     string    `json:"opened,omitempty"`
 }
 
 func (training *Training) persistVirtual(lot virtualLot) {
@@ -574,6 +592,11 @@ func (training *Training) persistVirtual(lot virtualLot) {
 		Path:       lot.Path,
 		Symbol:     lot.Symbol,
 		Brightness: lot.Brightness,
+		Tokens:     append([]string{}, lot.Tokens...),
+	}
+
+	if !lot.Opened.IsZero() {
+		record.Opened = lot.Opened.UTC().Format(time.RFC3339Nano)
 	}
 
 	if lot.Quantity != nil {
@@ -653,8 +676,21 @@ func virtualFrom(value *data.Value) (virtualLot, bool) {
 			return virtualLot{}, false
 		}
 
-		lot := virtualLot{Path: record.Path, Symbol: record.Symbol, Brightness: record.Brightness}
+		lot := virtualLot{
+			Path:       record.Path,
+			Symbol:     record.Symbol,
+			Brightness: record.Brightness,
+			Tokens:     append([]string{}, record.Tokens...),
+		}
 		var err error
+
+		if record.Opened != "" {
+			lot.Opened, err = time.Parse(time.RFC3339Nano, record.Opened)
+
+			if err != nil {
+				return virtualLot{}, false
+			}
+		}
 
 		if record.Quantity != "" {
 			if lot.Quantity, err = decimal.NewFromString(record.Quantity); err != nil {

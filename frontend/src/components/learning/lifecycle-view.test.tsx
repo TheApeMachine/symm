@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { bookAtom } from "#/collections/book";
 import { ingestPositionFrame, resetLifecycles } from "#/lib/lifecycle";
 import { LifecycleView } from "./lifecycle-view";
 
@@ -74,6 +75,7 @@ const deliver = (frames: unknown[]) =>
 afterEach(() => {
 	cleanup();
 	resetLifecycles();
+	bookAtom.set("paper");
 });
 
 describe("LifecycleView", () => {
@@ -150,5 +152,77 @@ describe("LifecycleView", () => {
 		expect(widget?.textContent).not.toContain("Book Exit Depth");
 		expect(widget?.textContent).not.toContain("Flow Participation");
 		expect(widget?.textContent).not.toContain("Bound by");
+	});
+
+	it("shows an open virtual as holding, with virtual performance labels", () => {
+		bookAtom.set("virtual");
+		const { container } = render(<LifecycleView />);
+		deliver([
+			{
+				id: "R01/R05",
+				symbol: "TEL/USD",
+				status: "open",
+				book: "virtual",
+				opened_at: "2026-10-17T12:00:00Z",
+				closed_at: null,
+				events: [
+					{
+						at: "2026-10-17T12:00:00Z",
+						kind: "entry_match",
+						detail: "virtual R01/R05",
+						fields: { path: "R01/R05" },
+					},
+				],
+				mark: null,
+				outcome: null,
+			},
+		]);
+
+		expect(container.textContent).toContain("TEL/USD · holding");
+		expect(container.textContent).toContain("virtual outcome");
+		expect(container.textContent).toContain("virtual win");
+		const stage = (label: string) =>
+			[...container.querySelectorAll("span")].find(
+				(element) => element.textContent === label,
+			);
+		expect(stage("1. Match")?.className).not.toContain("animate-pulse");
+		expect(stage("4. Hold")?.className).toContain("font-bold");
+	});
+
+	it("labels a virtual close with virtual P&L", () => {
+		bookAtom.set("virtual");
+		const { container } = render(<LifecycleView />);
+		deliver([
+			{
+				id: "R01/R05",
+				symbol: "TEL/USD",
+				status: "closed",
+				book: "virtual",
+				opened_at: "2026-10-17T12:00:00Z",
+				closed_at: "2026-10-17T12:10:00Z",
+				events: [
+					{
+						at: "2026-10-17T12:00:00Z",
+						kind: "entry_match",
+						detail: "virtual R01/R05",
+					},
+				],
+				mark: null,
+				outcome: {
+					cost: 20,
+					proceeds: 30,
+					fees: 0.1,
+					realized: 9.9,
+					net_return: 0.5,
+					hold_ns: 1,
+					expected_hold_ns: null,
+					triggers: ["virtual"],
+				},
+			},
+		]);
+
+		expect(
+			container.querySelector('[data-l="lifecycle-outcome"]')?.textContent,
+		).toContain("virtual P&L");
 	});
 });

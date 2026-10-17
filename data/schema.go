@@ -666,18 +666,11 @@ PolicyPath reads the grammar path a policy Value was published for.
 */
 func PolicyPath(value *Value) (string, error) {
 	head := value.Prefix + "/"
-	fallback := ""
 
 	for _, index := range value.Index {
 		rest, ok := strings.CutPrefix(index, head)
 
 		if !ok {
-			// The index was baked before Epoch was copied into the prefix, so
-			// the path tag is still there under the epoch the object was written with.
-			if _, path, found := strings.Cut(index, "/"+PolicyPathTag); found && path != "" && fallback == "" {
-				fallback = policyPathOnce(path)
-			}
-
 			continue
 		}
 
@@ -686,17 +679,7 @@ func PolicyPath(value *Value) (string, error) {
 		}
 	}
 
-	if fallback != "" {
-		return fallback, nil
-	}
-
-	prefix := ""
-
-	if value != nil {
-		prefix = value.Prefix
-	}
-
-	return "", errnie.Err(errnie.UnprocessableContent, "data: policy "+prefix+" has no "+PolicyPathTag+" tag", nil)
+	return "", errnie.Err(errnie.UnprocessableContent, "data: policy "+value.Prefix+" has no "+PolicyPathTag+" tag", nil)
 }
 
 func policyPathOnce(path string) string {
