@@ -1,6 +1,7 @@
 package kraken
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -47,13 +48,30 @@ func TestAuthTokenReuse(t *testing.T) {
 			auth.fetch = func() (string, error) { return "", errors.New("rest down") }
 			token, err := auth.Token(t.Context())
 			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "rest down")
 			So(token, ShouldBeEmpty)
+			So(fetches, ShouldEqual, 1) // no retry: the one failed fetch is all
+
+			// The failure caches nothing: the next call fetches again.
+			auth.fetch = func() (string, error) { fetches++; return "token-B", nil }
+			token, err = auth.Token(t.Context())
+			So(err, ShouldBeNil)
+			So(token, ShouldEqual, "token-B")
 		})
 
 		Convey("an empty token is an error", func() {
 			auth.fetch = func() (string, error) { return "", nil }
 			_, err := auth.Token(t.Context())
 			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "empty websockets token")
+		})
+
+		Convey("a cancelled context fetches nothing", func() {
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			_, err := auth.Token(ctx)
+			So(err, ShouldNotBeNil)
+			So(fetches, ShouldEqual, 0)
 		})
 	})
 }

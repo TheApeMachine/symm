@@ -19,6 +19,10 @@ import {
 	Value,
 } from "#/collections/app";
 import { DecisionT, HoldingT, PositionT } from "#/collections/types";
+import { COGNITION_ORIGIN, ingestCognitionFrame, LAYER_COGNITION } from "#/collections/cognition";
+import { abortHindsight, HINDSIGHT_ORIGIN, ingestHindsightFrame } from "#/collections/hindsight";
+import { ingestPaperRecord, PAPER_ORIGIN, parsePaperRecord } from "#/collections/paper";
+import { ingestSequiturFrame } from "#/collections/sequitur";
 import { topologyStore } from "#/collections/topology";
 import { hubWsUrl } from "#/lib/hub";
 import { batch as storeBatch } from "@tanstack/react-store";
@@ -40,6 +44,18 @@ const toBackendRoute = (route: string) => {
 
 export const sendRoute = (route: string) => {
 	wsWorker?.postMessage({ type: "ROUTE", route: toBackendRoute(route) });
+};
+
+/*
+sendCommand sends one JSON command the hub answers on this socket. With no
+socket the command cannot be sent, which is an error, not a no-op.
+*/
+export const sendCommand = (command: Record<string, unknown>) => {
+	if (wsWorker === null) {
+		throw new Error(`hub socket is not running: ${JSON.stringify(command)} not sent`);
+	}
+
+	wsWorker.postMessage({ type: "COMMAND", command });
 };
 
 /*
@@ -208,6 +224,9 @@ signal namespace without a source or symbol tag is malformed: it is reported
 and yields null, never a guessed owner.
 */
 const SIGNAL_NAMESPACE = "signal/";
+const SEQUITUR_ORIGIN = "sequitur";
+const SEQUITUR_ROLE = "grammar";
+const LAYER_GRAMMAR = "grammar";
 const SYMBOL_TAG = "/symbol:";
 
 export const parseSignalIndex = (
@@ -386,6 +405,46 @@ spot:trade is the tick, balance and positions feed the desk atoms, and each
 vector layer lands in its signal's ring for the tick's symbol.
 */
 export function dispatchValue(val: ParsedValue) {
+	// A live grammar frame (sequitur/grammar/<symbol>, data/schema.go) is not
+	// a tick: its one layer is the strategy.SequiturFrame JSON.
+	if (val.origin === SEQUITUR_ORIGIN && val.role === SEQUITUR_ROLE) {
+		const layer = val.layers.find((entry) => entry.index === LAYER_GRAMMAR);
+
+		if (!layer) {
+			console.error("dispatchValue: sequitur frame without a grammar layer", val.scope);
+			return;
+		}
+
+		ingestSequiturFrame(parseJSON(layer.bytes));
+		return;
+	}
+
+	// The loaded CognitionTree and live matches against it (cognition/<role>).
+	if (val.origin === COGNITION_ORIGIN) {
+		const layer = val.layers.find((entry) => entry.index === LAYER_COGNITION);
+
+		if (!layer) {
+			console.error("dispatchValue: cognition frame without its layer", val.role, val.scope);
+			return;
+		}
+
+		ingestCognitionFrame(val.role, parseJSON(layer.bytes));
+		return;
+	}
+
+	// A hindsight frame replays a stored run to this client only.
+	if (val.origin === HINDSIGHT_ORIGIN) {
+		ingestHindsightFrame(val);
+		return;
+	}
+
+	// A paper-trade record (paper/<action>/<symbol>, data.PaperKeys) is one
+	// vector layer with its matched path and policy epoch tags.
+	if (val.origin === PAPER_ORIGIN) {
+		ingestPaperRecord(parsePaperRecord(val.role, val.scope, val.layers));
+		return;
+	}
+
 	const symbol = tickSymbol(val);
 
 	if (symbol) {
@@ -545,8 +604,16 @@ export const WsFeed = () => {
 			const data = event.data;
 			if (!data) return;
 
+			if (data.type === "COMMAND_FAILED") {
+				console.error("hub command not sent:", data.command, data.error);
+				if (data.command?.type === "hindsight") abortHindsight(String(data.error));
+				return;
+			}
+
 			if (data.type === "STATUS") {
 				onlineAtom.set(data.status);
+				// The hub ends a replay with its client.
+				if (data.status === "OFFLINE") abortHindsight("hub socket closed");
 				if (data.status === "ONLINE") {
 					errorAtom.set(null);
 					worker.postMessage({ type: "FOCUS", symbol: focusAtom.get() });

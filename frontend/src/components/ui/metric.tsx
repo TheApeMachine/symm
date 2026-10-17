@@ -1,4 +1,3 @@
-import { useSelector } from "@tanstack/react-store";
 import { focusAtom, focusMetricAtom, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { sourceHeadline } from "#/components/terminal/kernel-meta";
@@ -12,6 +11,7 @@ import {
 	Typography,
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
+import { useSelector } from "@tanstack/react-store";
 
 interface MetricProps {
 	name: string;
@@ -24,11 +24,15 @@ export const Metric = ({ name, compact = false }: MetricProps) => {
 	const store = signals[name];
 
 	return (
-		<Component store={store} symbol={focusSymbol}>
+		<Component
+			store={store}
+			symbol={focusSymbol}
+			className="flex min-h-0 flex-1 flex-col overflow-hidden"
+		>
 			<Button
 				variant="bare"
 				shape="block"
-				className="border-(--line) border-b"
+				className="min-h-0 justify-start border-(--line) border-b"
 				onClick={() => {
 					focusMetricAtom.set(() => name);
 					terminalStore.actions.inspectSource(name);
@@ -39,8 +43,9 @@ export const Metric = ({ name, compact = false }: MetricProps) => {
 					align="center"
 					justify="between"
 					gap={2}
-					padding={2}
+					padding={1}
 					fullWidth
+					className="shrink-0"
 				>
 					<Typography.Span
 						variant="f1"
@@ -50,10 +55,27 @@ export const Metric = ({ name, compact = false }: MetricProps) => {
 					>
 						{name.toUpperCase()}
 					</Typography.Span>
-					<Badge data-k="badge" label="Standby" variant="disabled" size="xxs" />
+					<Badge
+						data-k="badge"
+						data-metric-badge={headline}
+						label="Standby"
+						variant="disabled"
+						size="xxs"
+					/>
 				</Flex.Row>
-				<Sparkline data-k="sparkline" title={`${name} sparkline`} />
-				<Flex.Row align="center" gap={2} padding={2} fullWidth>
+				<Sparkline
+					data-k="sparkline"
+					data-series={headline}
+					title={`${name} sparkline`}
+					className="mt-0 h-0 min-h-0"
+				/>
+				<Flex.Row
+					align="center"
+					gap={2}
+					padding={1}
+					fullWidth
+					className="shrink-0"
+				>
 					<Meter
 						data-metric-meter={headline}
 						data-k="bar"

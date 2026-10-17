@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"testing"
 	"time"
 
@@ -124,28 +125,17 @@ func TestSchemaRoundTrip(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 
-		Convey("detect -> train/audit: an excursion reads back under its prefix with every field", func() {
+		detectorCfg := &system.Detector{MinPrecursorTicks: 10, ExecutionLeadFraction: 0.1}
+
+		// detectPath runs a fresh detector over one trade per tick (tick
+		// idx+1 trades at path[idx], touch p*0.9999 / p*1.0001) and returns
+		// every excursion read back from storage.
+		detectPath := func(path []float64) ([]*data.Value, *strategy.Detector) {
 			price, err := offlinePrice(ctx, "0.26", []string{symbol})
 			So(err, ShouldBeNil)
 
-			detector, err := strategy.NewDetector(ctx, price, epoch, 1, symbol)
+			detector, err := strategy.NewDetector(ctx, price, epoch, symbol, detectorCfg)
 			So(err, ShouldBeNil)
-
-			// 300 flat ticks first: the up leg's lookback (half the move
-			// before B) lies on the stored tape.
-			path := make([]float64, 0, 600)
-			for idx := range 300 {
-				path = append(path, 100+0.001*float64(idx%2))
-			}
-			for idx := range 100 {
-				path = append(path, 100+float64(idx)*0.2)
-			}
-			for idx := range 100 {
-				path = append(path, 120-float64(idx)*0.2)
-			}
-			for idx := range 100 {
-				path = append(path, 100+0.001*float64(idx%2))
-			}
 
 			excursions := make([]*data.Value, 0)
 
@@ -161,47 +151,21 @@ func TestSchemaRoundTrip(t *testing.T) {
 
 			results, err := detector.Close()
 			So(err, ShouldBeNil)
-			excursions = append(excursions, results...)
-			So(excursions, ShouldNotBeEmpty)
 
-			var up *data.Value
-			for _, excursion := range excursions {
-				read := stored(excursion)
-				So(read.Prefix, ShouldStartWith, data.Prefix(data.ExcursionOrigin, read.Role, symbol, epoch))
-				So(data.ExcursionPrefixes(symbol, epoch), ShouldContain, data.Prefix(data.ExcursionOrigin, read.Role, symbol, epoch))
-
-				fields, err := data.ExcursionFields(read)
-				So(err, ShouldBeNil)
-				So(fields["b_tick"], ShouldBeLessThan, fields["c_tick"])
-
-				if read.Role == "up" {
-					up = read
-				}
+			read := make([]*data.Value, 0)
+			for _, excursion := range append(excursions, results...) {
+				read = append(read, stored(excursion))
 			}
 
-			So(up, ShouldNotBeNil)
-			upFields, err := data.ExcursionFields(up)
-			So(err, ShouldBeNil)
-			So(upFields["a_tick"], ShouldBeGreaterThanOrEqualTo, 1)
+			return read, detector
+		}
 
-			// The audit's precursor stage accepts the stored excursion.
-			stage := audit.NewPrecursorStage(ctx)
-			go func() {
-				stage.Channel() <- up
-				close(stage.Channel())
-			}()
-			So(stage.Run(), ShouldBeNil)
-		})
-
-		Convey("detect does not emit an excursion whose lookback precedes the first stored tick", func() {
-			price, err := offlinePrice(ctx, "0.26", []string{symbol})
-			So(err, ShouldBeNil)
-
-			// The epoch's tape starts at tick 1; the up leg starts at once.
-			detector, err := strategy.NewDetector(ctx, price, epoch, 1, symbol)
-			So(err, ShouldBeNil)
-
-			path := make([]float64, 0, 300)
+		// upDown is flat ticks, then a 100-tick rise and a 100-tick fall.
+		upDown := func(flat int) []float64 {
+			path := make([]float64, 0, flat+300)
+			for idx := range flat {
+				path = append(path, 100+0.001*float64(idx%2))
+			}
 			for idx := range 100 {
 				path = append(path, 100+float64(idx)*0.2)
 			}
@@ -211,30 +175,155 @@ func TestSchemaRoundTrip(t *testing.T) {
 			for idx := range 100 {
 				path = append(path, 100+0.001*float64(idx%2))
 			}
+			return path
+		}
 
-			emitted := make([]*data.Value, 0)
-			for idx, p := range path {
-				tick := stored(collectTick(epoch, uint64(idx+1), trade(idx, p), p*0.9999, p*1.0001))
-				symbolTicks, err := broker.ReadTick(tick)
-				So(err, ShouldBeNil)
+		upOf := func(excursions []*data.Value) map[string]float64 {
+			for _, excursion := range excursions {
+				if excursion.Role == "up" {
+					fields, err := data.ExcursionFields(excursion)
+					So(err, ShouldBeNil)
+					return fields
+				}
+			}
+			return nil
+		}
 
-				results, err := detector.Step(tick.Tick, symbolTicks[0].Trades[0], symbolTicks[0].Price)
+		Convey("detect -> train/audit: an excursion reads back under its prefix with every field", func() {
+			path := upDown(300)
+			excursions, _ := detectPath(path)
+			So(excursions, ShouldNotBeEmpty)
+
+			for _, read := range excursions {
+				So(read.Prefix, ShouldStartWith, data.Prefix(data.ExcursionOrigin, read.Role, symbol, epoch))
+				So(data.ExcursionPrefixes(symbol, epoch), ShouldContain, data.Prefix(data.ExcursionOrigin, read.Role, symbol, epoch))
+
+				fields, err := data.ExcursionFields(read)
 				So(err, ShouldBeNil)
-				emitted = append(emitted, results...)
+				So(fields["b_tick"], ShouldBeLessThan, fields["c_tick"])
+				So(fields["a_tick"], ShouldBeGreaterThanOrEqualTo, 1)
+				So(fields["entry_tick"], ShouldBeLessThanOrEqualTo, fields["b_tick"])
+				So(fields["exit_tick"], ShouldBeLessThanOrEqualTo, fields["c_tick"])
 			}
 
-			results, err := detector.Close()
-			So(err, ShouldBeNil)
-			emitted = append(emitted, results...)
+			up := upOf(excursions)
+			So(up, ShouldNotBeNil)
 
-			for _, result := range emitted {
-				fields, err := data.ExcursionFields(result)
+			// A is half the B..C move before B (300 flat ticks: no clamp).
+			b, c := int64(up["b_tick"]), int64(up["c_tick"])
+			So(int64(up["a_tick"]), ShouldEqual, b-(c-b)/2)
+			So(int64(up["d_tick"]), ShouldEqual, c+(c-b)/2)
+
+			// Entry and exit lead B and C by 10% of the precursor, and carry
+			// the touch their ticks recorded.
+			lead := int64(math.Round(0.1 * float64(b-int64(up["a_tick"]))))
+			So(lead, ShouldBeGreaterThan, 0)
+			So(int64(up["entry_tick"]), ShouldEqual, b-lead)
+			So(int64(up["exit_tick"]), ShouldEqual, c-lead)
+			So(up["entry_ask"], ShouldAlmostEqual, path[int(b-lead)-1]*1.0001, 1e-9)
+			So(up["exit_bid"], ShouldAlmostEqual, path[int(c-lead)-1]*0.9999, 1e-9)
+			So(up["entry_at"], ShouldBeLessThan, up["b_at"])
+			So(up["exit_at"], ShouldBeLessThan, up["c_at"])
+			So(up["entry_idx"], ShouldEqual, up["entry_tick"])
+
+			// The audit's precursor stage accepts the stored excursion.
+			var stored *data.Value
+			for _, excursion := range excursions {
+				if excursion.Role == "up" {
+					stored = excursion
+				}
+			}
+
+			stage := audit.NewPrecursorStage(ctx)
+			go func() {
+				stage.Channel() <- stored
+				close(stage.Channel())
+			}()
+			So(stage.Run(), ShouldBeNil)
+		})
+
+		Convey("detect -> train: the epoch's watermark reads back under its prefix", func() {
+			watermark := data.DetectorWatermark{Epoch: epoch, FirstTick: 1, LastTick: 23138, Ticks: 23138, Symbols: 465}
+			read := stored(watermark.Value())
+
+			So(read.Prefix, ShouldEqual, data.DetectorWatermarkPrefix(epoch)+fmt.Sprintf("%019d.bin", 23138))
+			back, err := data.ReadDetectorWatermark(read)
+			So(err, ShouldBeNil)
+			So(back, ShouldResemble, watermark)
+
+			// The watermark is no excursion class: train never tallies it.
+			for _, prefix := range data.ExcursionPrefixes(data.PolicyScope, epoch) {
+				So(read.Prefix, ShouldNotStartWith, prefix)
+			}
+		})
+
+		Convey("A watermark that is foreign, short a field, or disagrees with its key is refused", func() {
+			_, err := data.ReadDetectorWatermark(stored(collectTick(epoch, 1, kraken.TradeData{
+				Symbol: symbol, Side: "buy", Price: *decimal.NewFromFloat64(1), Qty: 1, OrderType: "market", TradeID: 1, Timestamp: time.Unix(1, 0),
+			}, 0.9, 1.1)))
+			So(err, ShouldNotBeNil)
+
+			short := &data.Value{Origin: data.ExcursionOrigin, Role: data.DetectorWatermarkRole, Scope: data.PolicyScope, Epoch: epoch, Tick: 9}
+			short.FormatPrefix()
+			data.AppendVector(short, []float64{1, 9, 9}, data.DetectorWatermarkKeys[:3]...)
+			_, err = data.ReadDetectorWatermark(stored(short))
+			So(err, ShouldNotBeNil)
+
+			moved := data.DetectorWatermark{Epoch: epoch, FirstTick: 1, LastTick: 9, Ticks: 9, Symbols: 1}.Value()
+			moved.Tick = 10
+			moved.FormatPrefix()
+			_, err = data.ReadDetectorWatermark(stored(moved))
+			So(err, ShouldNotBeNil)
+		})
+
+		Convey("detect clamps A to the symbol's first trade when enough precursor remains", func() {
+			excursions, detector := detectPath(upDown(20))
+			up := upOf(excursions)
+			So(up, ShouldNotBeNil)
+
+			b, c := int64(up["b_tick"]), int64(up["c_tick"])
+			So(b-(c-b)/2, ShouldBeLessThan, 1)
+			So(up["a_tick"], ShouldEqual, 1)
+			So(b-1, ShouldBeGreaterThanOrEqualTo, detectorCfg.MinPrecursorTicks)
+			So(int64(up["entry_tick"]), ShouldEqual, b-int64(math.Round(0.1*float64(b-1))))
+
+			// Only episodes starting within min_precursor_ticks of the tape's
+			// start (the opening flat stretch) go unemitted.
+			So(detector.Insufficient(), ShouldBeLessThanOrEqualTo, 1)
+			for _, excursion := range excursions {
+				fields, err := data.ExcursionFields(excursion)
 				So(err, ShouldBeNil)
-				So(fields["a_tick"], ShouldBeGreaterThanOrEqualTo, 1)
-				So(result.Role, ShouldNotEqual, "up")
+				So(fields["b_tick"]-fields["a_tick"], ShouldBeGreaterThanOrEqualTo, detectorCfg.MinPrecursorTicks)
+			}
+		})
+
+		Convey("detect does not emit an excursion left with too short a precursor", func() {
+			// The rise starts at tick 1: nothing precedes B.
+			excursions, detector := detectPath(upDown(0))
+
+			for _, excursion := range excursions {
+				fields, err := data.ExcursionFields(excursion)
+				So(err, ShouldBeNil)
+				So(fields["b_tick"]-fields["a_tick"], ShouldBeGreaterThanOrEqualTo, detectorCfg.MinPrecursorTicks)
+				So(excursion.Role, ShouldNotEqual, "up")
 			}
 
 			So(detector.Insufficient(), ShouldBeGreaterThan, 0)
+		})
+
+		Convey("detect refuses a missing or out-of-range detector configuration", func() {
+			price, err := offlinePrice(ctx, "0.26", []string{symbol})
+			So(err, ShouldBeNil)
+
+			for _, cfg := range []*system.Detector{
+				nil,
+				{MinPrecursorTicks: 0, ExecutionLeadFraction: 0.1},
+				{MinPrecursorTicks: 10, ExecutionLeadFraction: -0.1},
+				{MinPrecursorTicks: 10, ExecutionLeadFraction: 1},
+			} {
+				_, err := strategy.NewDetector(ctx, price, epoch, symbol, cfg)
+				So(err, ShouldNotBeNil)
+			}
 		})
 
 		Convey("train -> live training/audit: a policy reads back with its path", func() {
@@ -252,6 +341,83 @@ func TestSchemaRoundTrip(t *testing.T) {
 			So(data.Metrics(read)["confidence"], ShouldEqual, 0.66)
 
 			So(data.AppendPolicy(policy, "R01", []float64{1}), ShouldNotBeNil)
+		})
+
+		paperRecord := func(action, path string, seq uint64) *data.Value {
+			record := data.NewValue(data.PaperOrigin, action, symbol)
+			record.Epoch, record.Tick = epoch+1, seq
+			record.FormatPrefix()
+			vector := make([]float64, len(data.PaperKeys))
+
+			for idx := range vector {
+				vector[idx] = float64(idx) + 0.5
+			}
+
+			So(data.AppendPaper(record, path, epoch, vector), ShouldBeNil)
+			return record
+		}
+
+		Convey("run -> paper -> audit: a paper record reads back from the local file and the store with every field", func() {
+			var file bytes.Buffer
+
+			// run appends each record to its local file with io.Copy.
+			for idx, action := range []string{"enter", "exit"} {
+				_, err := io.Copy(&file, paperRecord(action, "R01/R04", uint64(idx+1)))
+				So(err, ShouldBeNil)
+			}
+
+			records, err := readPaperRecords(bytes.NewReader(file.Bytes()))
+			So(err, ShouldBeNil)
+			So(records, ShouldHaveLength, 2)
+
+			for idx, action := range []string{"enter", "exit"} {
+				// paper uploads each one under its own key; audit reads it.
+				read := stored(records[idx])
+				So(data.PaperPrefixes(symbol, epoch+1), ShouldContain, data.Prefix(data.PaperOrigin, action, symbol, epoch+1))
+				So(read.Prefix, ShouldEqual, data.Prefix(data.PaperOrigin, action, symbol, epoch+1)+fmt.Sprintf("%019d.bin", idx+1))
+				So(data.PaperActionPrefixes(), ShouldContain, data.PaperOrigin+"/"+action+"/")
+
+				record, err := data.PaperFields(read)
+				So(err, ShouldBeNil)
+				So(record.Action, ShouldEqual, action)
+				So(record.Symbol, ShouldEqual, symbol)
+				So(record.Path, ShouldEqual, "R01/R04")
+				So(record.PolicyEpoch, ShouldEqual, epoch)
+
+				for key, field := range data.PaperKeys {
+					So(record.Fields[field], ShouldEqual, float64(key)+0.5)
+				}
+			}
+		})
+
+		Convey("A truncated or foreign record in the paper file is a loud error", func() {
+			var file bytes.Buffer
+			_, err := io.Copy(&file, paperRecord("enter", "R01/R04", 1))
+			So(err, ShouldBeNil)
+
+			_, err = readPaperRecords(bytes.NewReader(file.Bytes()[:file.Len()-3]))
+			So(err, ShouldNotBeNil)
+
+			foreign := &data.Value{Origin: data.PolicyOrigin, Role: "enter", Scope: data.PolicyScope, Epoch: epoch, Tick: 1}
+			foreign.FormatPrefix()
+			_, err = io.Copy(&file, foreign)
+			So(err, ShouldBeNil)
+
+			_, err = readPaperRecords(bytes.NewReader(file.Bytes()))
+			So(err, ShouldNotBeNil)
+
+			empty, err := readPaperRecords(bytes.NewReader(nil))
+			So(err, ShouldBeNil)
+			So(empty, ShouldBeEmpty)
+		})
+
+		Convey("A paper record without its full vector or path is refused", func() {
+			record := data.NewValue(data.PaperOrigin, "enter", symbol)
+			So(data.AppendPaper(record, "R01/R04", epoch, []float64{1}), ShouldNotBeNil)
+			So(data.AppendPaper(record, "", epoch, make([]float64, len(data.PaperKeys))), ShouldNotBeNil)
+
+			_, err := data.PaperFields(stored(record))
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

@@ -219,3 +219,5 @@ nomagique/physics/sensorium/VALIDATION.md
 timeoverlay
 # Book-maintenance failure dumps (broker.DiagnosticDir)
 diagnostics/
+/paper_records/
+_peek/main.go

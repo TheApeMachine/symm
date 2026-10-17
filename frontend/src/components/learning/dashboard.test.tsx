@@ -61,7 +61,7 @@ describe("LearningDashboard", () => {
 		});
 
 		expect(tabAtom.get()).toBe("cognitive");
-		expect(container.textContent).toContain("Loading stored paths…");
+		expect(container.textContent).toContain("waiting for the hub's cognition tree frame");
 	});
 
 	it("switches to impulse map view when tab is selected", () => {

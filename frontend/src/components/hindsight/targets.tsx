@@ -75,20 +75,20 @@ export const SymbolTargets = ({
 				<Button
 					variant="bare"
 					size="xs"
-					title="Show only instruments where the declared coordinate travelled far enough to qualify under the selector."
+					title="Show only instruments detect stored an up or down excursion for."
 					className="mt-1.5 w-full justify-start gap-1 whitespace-nowrap px-0 font-mono text-[9px] text-(--f4) hover:text-(--f2)"
 					onClick={() => setOnlyMoved((current) => !current)}
 				>
 					<span className={onlyMoved ? "text-(--acc)" : ""}>
 						{onlyMoved ? "▣" : "▢"}
 					</span>
-					only instruments that moved
+					only instruments with excursions
 				</Button>
 			</div>
 			<Section.Body>
 				{rows.length === 0 ? (
 					<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
-						No instrument on this tape qualified under the declared selector.
+						No instrument of this run has a stored up or down excursion.
 					</p>
 				) : null}
 				<ul className="flex flex-col divide-y divide-(--line)">
@@ -209,37 +209,17 @@ export const EpisodeTargets = ({
 			/>
 			{discovery !== undefined ? (
 				<div className="shrink-0 border-(--line) border-b bg-(--sunken) px-2.5 py-1.5 font-mono text-[8px] text-(--f4) leading-relaxed">
-					<div>
-						selector: {discovery.coordinate} · qualifying move{" "}
-						<span className="text-(--f2)">
-							{(discovery.qualifyingMove * 100).toFixed(3)}%
-						</span>{" "}
-						= max(floor {(discovery.policy.floorExcursion * 100).toFixed(2)}%,{" "}
-						{discovery.policy.excursionSigmas}σ ×{" "}
-						{discovery.hasSigma
-							? discovery.sigma.toExponential(2)
-							: "σ undefined"}{" "}
-						× √{discovery.policy.excursionHorizon})
-					</div>
-					<div>
-						measured on{" "}
-						<span className="text-(--f2)">
-							{formatCount(discovery.defined)}
-						</span>{" "}
-						of {formatCount(discovery.observations)} observations ·{" "}
-						<span className="text-(--warn)">
-							{formatCount(discovery.undefined)}
-						</span>{" "}
-						undefined (not zero)
-					</div>
+					up and down excursions detect stored for this run ·{" "}
+					<span className="text-(--f2)">{formatCount(episodes.length)}</span> of{" "}
+					{formatCount(discovery.stored)} stored (chop and flat are not episodes)
 				</div>
 			) : null}
 			<Section.Body>
 				{episodes.length === 0 ? (
 					<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
 						{discovery?.insufficientData
-							? "Too few defined observations here for the selector to answer. Reported as unmeasured, not as quiet."
-							: "Nothing on this instrument's tape qualified under the declared selector."}
+							? "Too few stored ticks for this instrument to place an excursion."
+							: "detect stored no up or down excursion for this instrument in this run."}
 					</p>
 				) : null}
 				<ul className="flex flex-col divide-y divide-(--line)">

@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { beginHindsight, HINDSIGHT_TICK_KEYS, hindsightStore } from "#/collections/hindsight";
+import { PAPER_KEYS, paperStore } from "#/collections/paper";
+import { cognitionStore } from "#/collections/cognition";
+import { sequiturStore } from "#/collections/sequitur";
+import { sequiturFrame } from "#/collections/sequitur-fixture";
 import {
 	cashAtom,
 	decisionsAtom,
@@ -341,5 +346,152 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		expect(eth?.get(eth.getBufferLength() - 1)?.metric("arrival_rate:buy")).toBeCloseTo(1);
 		expect(sol?.get(sol.getBufferLength() - 1)?.metric("arrival_rate:buy")).toBeCloseTo(3);
 		expect(sol?.get(sol.getBufferLength() - 1)?.metric("arrival_rate:sell")).toBeCloseTo(4);
+	});
+});
+
+describe("dispatchValue: sequitur grammar frames", () => {
+	it("routes sequitur/grammar/<symbol> to the sequitur feed, not the tick path", () => {
+		sequiturStore.setState(() => ({}));
+		const before = tickCountAtom.get();
+		const parsed = parseOneValue(
+			encodeValue({
+				tick: 9999n,
+				origin: "sequitur",
+				role: "grammar",
+				scope: "BTC/USD",
+				layers: [{ index: "grammar", json: sequiturFrame() }],
+			}),
+		);
+		expect(parsed).not.toBeNull();
+		if (!parsed) return;
+
+		dispatchValue(parsed);
+
+		expect(sequiturStore.state["BTC/USD"]?.latest.path).toBe("R02/R04");
+		expect(tickCountAtom.get()).toBe(before);
+	});
+
+	it("reports a sequitur Value without its grammar layer", () => {
+		sequiturStore.setState(() => ({}));
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		const parsed = parseOneValue(
+			encodeValue({ origin: "sequitur", role: "grammar", layers: [{ index: "other", json: {} }] }),
+		);
+		if (!parsed) throw new Error("fixture did not parse");
+
+		dispatchValue(parsed);
+
+		expect(error).toHaveBeenCalled();
+		expect(sequiturStore.state).toEqual({});
+		error.mockRestore();
+	});
+});
+
+describe("dispatchValue: paper-trade records", () => {
+	const index =
+		"paper/enter/BTC/USD/1792187257188073099/0000000000000000001.bin/" +
+		`${PAPER_KEYS.join("/")}/path:R01/R04/policy_epoch:1792187257188073000`;
+
+	it("routes paper/<action>/<symbol> to the paper store with every key, its path and policy epoch", () => {
+		paperStore.setState(() => []);
+		const parsed = parseOneValue(
+			encodeValue({
+				tick: 1n,
+				origin: "paper",
+				role: "enter",
+				scope: "BTC/USD",
+				layers: [{ index, vector: PAPER_KEYS.map((_, idx) => idx + 0.5) }],
+			}),
+		);
+		if (!parsed) throw new Error("fixture did not parse");
+
+		dispatchValue(parsed);
+
+		const [record] = paperStore.state;
+		expect(paperStore.state).toHaveLength(1);
+		expect(record.action).toBe("enter");
+		expect(record.symbol).toBe("BTC/USD");
+		expect(record.path).toBe("R01/R04");
+		expect(record.policyEpoch).toBe("1792187257188073000");
+		expect(record.fields.depth).toBe(0.5);
+		expect(record.fields.net_return).toBe(14.5);
+	});
+
+	it("reports a paper record whose layer misses a key", () => {
+		paperStore.setState(() => []);
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		const parsed = parseOneValue(
+			encodeValue({
+				origin: "paper",
+				role: "exit",
+				layers: [{ index: index.replace("/fees", ""), vector: PAPER_KEYS.slice(1).map(() => 1) }],
+			}),
+		);
+		if (!parsed) throw new Error("fixture did not parse");
+
+		dispatchValue(parsed);
+
+		expect(error).toHaveBeenCalled();
+		expect(paperStore.state).toEqual([]);
+		error.mockRestore();
+	});
+});
+
+describe("dispatchValue: hindsight frames", () => {
+	it("routes hindsight/<role>/<symbol> to the replay store, not the live tick path", async () => {
+		const run = "1792187257188073000";
+		beginHindsight(run, "BTC/USD");
+		const before = tickCountAtom.get();
+		const index =
+			"hindsight/tick/BTC/USD/1792187257188073000/0000000000000000005.bin/" +
+			HINDSIGHT_TICK_KEYS.join("/");
+		const parsed = parseOneValue(
+			encodeValue({
+				tick: 5n,
+				origin: "hindsight",
+				role: "tick",
+				scope: "BTC/USD",
+				layers: [{ index, vector: [99.5, 100.5, 100, 0.25, 1] }],
+			}),
+		);
+		if (!parsed) throw new Error("fixture did not parse");
+		parsed.epoch = BigInt(run);
+
+		dispatchValue(parsed);
+		// Replay frames are applied to the store in batches.
+		await new Promise((resolve) => setTimeout(resolve, 80));
+
+		expect(tickCountAtom.get()).toBe(before);
+		expect(hindsightStore.state.stream?.ticks.map((tick) => [tick.tick, tick.fields.ask])).toEqual([[5, 100.5]]);
+		hindsightStore.setState(() => ({ index: null, stream: null }));
+	});
+});
+
+describe("dispatchValue: cognition frames", () => {
+	it("routes cognition/tree and cognition/match to the cognition store", () => {
+		cognitionStore.setState(() => ({ tree: null, matches: {} }));
+		const before = tickCountAtom.get();
+		const send = (role: string, scope: string, json: unknown) => {
+			const parsed = parseOneValue(
+				encodeValue({ origin: "cognition", role, scope, layers: [{ index: "cognition", json }] }),
+			);
+			if (!parsed) throw new Error("fixture did not parse");
+			dispatchValue(parsed);
+		};
+
+		send("tree", "all", { epoch: "7", paths: 0, trading: false, gate: null, keys: [], branches: [] });
+		send("match", "BTC/USD", {
+			symbol: "BTC/USD",
+			tick: 3,
+			tokens: ["R01"],
+			stored: false,
+			match: "",
+			depth: 0,
+			action: "",
+		});
+
+		expect(cognitionStore.state.tree?.trading).toBe(false);
+		expect(cognitionStore.state.matches["BTC/USD"]?.tokens).toEqual(["R01"]);
+		expect(tickCountAtom.get()).toBe(before);
 	});
 });

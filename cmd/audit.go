@@ -13,6 +13,7 @@ import (
 
 var (
 	auditEpoch        int64
+	auditPolicyEpoch  int64
 	auditSymbol       string
 	auditTicks        int
 	auditPermutations int
@@ -46,6 +47,10 @@ var auditCmd = &cobra.Command{
 
 		if flags.Changed("epoch") {
 			audit.Epoch = auditEpoch
+		}
+
+		if flags.Changed("policy-epoch") {
+			audit.PolicyEpoch = auditPolicyEpoch
 		}
 
 		if flags.Changed("symbol") {
@@ -95,6 +100,7 @@ var auditCmd = &cobra.Command{
 
 func init() {
 	auditCmd.Flags().Int64Var(&auditEpoch, "epoch", 0, "Epoch to audit (0 = config audit.epoch, else the newest epoch with stored ticks)")
+	auditCmd.Flags().Int64Var(&auditPolicyEpoch, "policy-epoch", 0, "Policy epoch to judge, trained on the audited ticks (0 = the newest one; run twice to compare a gated and an ungated training)")
 	auditCmd.Flags().StringVar(&auditSymbol, "symbol", "", "Symbol to audit (empty = every symbol the ticks trade)")
 	auditCmd.Flags().IntVar(&auditTicks, "ticks", 1000, "Maximum number of ticks to sample (0 = all available ticks in epoch)")
 	auditCmd.Flags().IntVar(&auditPermutations, "permutations", 50, "Number of permutation iterations for null hypothesis testing")

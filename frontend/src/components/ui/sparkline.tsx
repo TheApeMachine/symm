@@ -30,6 +30,25 @@ export const computeSparklinePath = (
 	return d;
 };
 
+/*
+scaleSparklineValues maps a window of raw readings onto [0, 1] by its own
+min/max so a kernel whose headline is not a unit interval still fills the
+chart instead of clamping to a flat rail.
+*/
+export const scaleSparklineValues = (values: number[]): number[] => {
+	if (values.length === 0) return [];
+
+	let min = values[0];
+	let max = values[0];
+	for (let i = 1; i < values.length; i++) {
+		if (values[i] < min) min = values[i];
+		if (values[i] > max) max = values[i];
+	}
+
+	const range = max - min;
+	return values.map((value) => (range > 0 ? (value - min) / range : 1));
+};
+
 export type SparklinePaths = {
 	spark: string;
 	area: string;

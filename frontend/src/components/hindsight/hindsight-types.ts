@@ -1,3 +1,11 @@
+export type HindsightPolicyEpoch = {
+	epoch: string;
+	gate: boolean;
+	surpriseZ: number;
+	warmup: string;
+	learningRate: number;
+};
+
 export type HindsightRun = {
 	epoch?: number;
 	id: string;
@@ -8,6 +16,14 @@ export type HindsightRun = {
 	schemaVersions?: Record<string, string>;
 	integrity?: "COMPLETE" | "GAPPED" | "CORRUPT" | "UNKNOWN";
 	status?: string;
+	/* train published policies for this run. */
+	trained?: boolean;
+	/*
+		The policy epochs trained on this run's ticks, newest first, each with
+		the surprise gate it was trained under (hindsight.PolicyInfo). The
+		stream replays the newest.
+	*/
+	policies?: HindsightPolicyEpoch[];
 	/*
 		How many positions the desk held during this run, counted from the
 		lifecycle tape. Lets a reader pick a run that actually traded instead of
@@ -227,33 +243,15 @@ export type HindsightEpisode = {
 	references: HindsightReferencePoint[];
 };
 
-export type HindsightDiscoveryPolicy = {
-	coordinate: MarketCoordinate;
-	floorExcursion: number;
-	excursionSigmas: number;
-	excursionHorizon: number;
-	retraceFraction: number;
-	regimeWindow: number;
-	regimeBaseline: number;
-	volatilityRatio: number;
-	spreadRatio: number;
-	depthRatio: number;
-	arrivalRatio: number;
-	minRegimeSpan: number;
-	minObservations: number;
-	maxEpisodesPerSet: number;
-};
-
+/*
+HindsightDiscovery is the selected instrument's episodes: the up and down
+excursions detect stored for the run (detector/<class>/<symbol>/<run>).
+stored counts every stored excursion of the symbol, chop and flat included.
+*/
 export type HindsightDiscovery = {
 	symbol: string;
 	coordinate: MarketCoordinate;
-	policy: HindsightDiscoveryPolicy;
-	observations: number;
-	defined: number;
-	undefined: number;
-	sigma: number;
-	hasSigma: boolean;
-	qualifyingMove: number;
+	stored: number;
 	episodes: HindsightEpisode[];
 	insufficientData: boolean;
 };
@@ -342,7 +340,9 @@ export type Measurement = {
 	maturity?: number;
 	metrics?: Record<string, HindsightMetric>;
 	metadata?: Record<string, string | number>;
-	provenance?: Record<string, string | number> | Array<{ name: string; value: string }>;
+	provenance?:
+		| Record<string, string | number>
+		| Array<{ name: string; value: string }>;
 	peers?: Measurement[];
 	Peers?: Measurement[];
 };
@@ -351,7 +351,6 @@ export type HindsightTimeline = {
 	run: string;
 	symbol: string;
 	coordinate: MarketCoordinate;
-	policy: HindsightDiscoveryPolicy;
 	axis: TimelineAxis;
 	span: HindsightTimelineSpan;
 	runSpan: HindsightTimelineSpan;
@@ -359,10 +358,6 @@ export type HindsightTimeline = {
 	discovery: HindsightDiscovery;
 	streams: HindsightStreamSpan[];
 	symbols: HindsightSymbolSummary[];
-	totalObservations: number;
-	totalSymbols: number;
-	indexedAt: string;
-	measurements?: Measurement[];
 };
 
 export type HindsightTimelineQuery = {
@@ -414,5 +409,3 @@ export type HindsightMetricMap = {
 	metrics: Record<string, MetricSemantics>;
 	signals: Record<string, SignalSemantics>;
 };
-
-

@@ -16,7 +16,9 @@ import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "../ui";
 import { basis, outcome, prediction } from "./format";
-import type { CognitionTreeResponse, TrieBranch } from "./types";
+import { type CognitionBranch, cognitionStore } from "#/collections/cognition";
+
+const NO_BRANCHES: CognitionBranch[] = [];
 
 interface ForwardTapePoint {
 	x: number;
@@ -288,7 +290,11 @@ export const ForwardLearningViz = ({
 	const [edgeSamples, setEdgeSamples] = useState<number[]>([]);
 
 	// Real Radix Trie branches fetched from backend engine
-	const [trieBranches, setTrieBranches] = useState<TrieBranch[]>([]);
+	// The loaded CognitionTree's stored branches (the hub's cognition/tree frame).
+	const trieBranches = useSelector(
+		cognitionStore,
+		(state) => state.tree?.branches ?? NO_BRANCHES,
+	);
 
 	// Real excursion markers if active
 	const [excursionEvent, setExcursionEvent] = useState<{
@@ -485,54 +491,6 @@ export const ForwardLearningViz = ({
 		});
 		ro.observe(tapeTarget);
 		return () => ro.disconnect();
-	}, []);
-
-	// Fetch real Radix Trie tree & branch data from backend
-	useEffect(() => {
-		let isMounted = true;
-
-		const fetchTree = async () => {
-			try {
-				const res = await fetch(`${hubBaseUrl()}/cognition/tree`);
-				if (!res.ok) return;
-				const data: CognitionTreeResponse = await res.json();
-				if (!isMounted) return;
-
-				if (data.branches && data.branches.length > 0) {
-					setTrieBranches(data.branches);
-				} else if (data.keys && data.keys.length > 0) {
-					const derivedBranches: TrieBranch[] = data.keys.map((k) => {
-						const parts = k.replace(/\.bin$/, "").split("/");
-						const rawAction = parts[parts.length - 1]?.toUpperCase() ?? "NOOP";
-						const policy =
-							rawAction === "ENTER" || rawAction === "EXIT"
-								? rawAction
-								: "NOOP";
-						const hash = parts.slice(0, -1).join("/") || k;
-						const depth = Math.max(1, parts.length - 1);
-						return {
-							hash,
-							depth,
-							visits: 1,
-							meanEdge:
-								policy === "ENTER" ? 0.05 : policy === "EXIT" ? -0.02 : 0,
-							confidence: 95,
-							policy,
-						};
-					});
-					setTrieBranches(derivedBranches);
-				}
-			} catch {
-				// Backend endpoint connecting
-			}
-		};
-
-		fetchTree();
-		const interval = window.setInterval(fetchTree, 4000);
-		return () => {
-			isMounted = false;
-			clearInterval(interval);
-		};
 	}, []);
 
 	// A newly completed episode must wake playback even when the queue was empty.

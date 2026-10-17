@@ -2,14 +2,110 @@ package ui
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 )
+
+/*
+fakeReplayer reports each Stream it was asked for, writes one frame, and
+then holds the stream open until its ctx ends.
+*/
+type fakeReplayer struct {
+	started chan string
+	ended   chan error
+}
+
+func (replayer *fakeReplayer) Stream(ctx context.Context, w io.Writer, run uint64, symbol string) error {
+	replayer.started <- symbol
+
+	if _, err := w.Write([]byte(symbol)); err != nil {
+		replayer.ended <- err
+		return err
+	}
+
+	<-ctx.Done()
+	replayer.ended <- ctx.Err()
+	return ctx.Err()
+}
+
+func newClient() *client {
+	return &client{frames: make(chan []byte, clientQueue), done: make(chan struct{})}
+}
+
+func TestHubReplay(t *testing.T) {
+	Convey("Given a hub with a replayer and one client", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		hub := NewHub(ctx)
+		replayer := &fakeReplayer{started: make(chan string, 4), ended: make(chan error, 4)}
+		current := newClient()
+
+		Convey("Without a replayer the hindsight command is an error", func() {
+			So(hub.handleCommand(current, []byte(`{"type":"hindsight","run":"1792187257188073000"}`)), ShouldNotBeNil)
+		})
+
+		hub.Replay(replayer)
+
+		Convey("A run that is not a decimal epoch is an error", func() {
+			So(hub.handleCommand(current, []byte(`{"type":"hindsight","run":1}`)), ShouldNotBeNil)
+			So(hub.handleCommand(current, []byte(`{"type":"hindsight","run":"-3"}`)), ShouldNotBeNil)
+			So(hub.handleCommand(nil, []byte(`{"type":"hindsight","run":"7"}`)), ShouldNotBeNil)
+		})
+
+		Convey("A replay streams to the client that asked; a newer request cancels it", func() {
+			So(hub.handleCommand(current, []byte(`{"type":"hindsight","run":"1792187257188073000","symbol":"BTC/USD"}`)), ShouldBeNil)
+			So(<-replayer.started, ShouldEqual, "BTC/USD")
+			So(string(<-current.frames), ShouldEqual, "BTC/USD")
+
+			So(hub.handleCommand(current, []byte(`{"type":"hindsight","run":"1792187257188073000","symbol":"ETH/USD"}`)), ShouldBeNil)
+			So(<-replayer.ended, ShouldEqual, context.Canceled)
+			So(<-replayer.started, ShouldEqual, "ETH/USD")
+
+			Convey("and closing the client ends the replay", func() {
+				close(current.done)
+				So(<-replayer.ended, ShouldEqual, context.Canceled)
+			})
+		})
+
+		Convey("A replay waits for room in the client queue; a broadcast drops instead", func() {
+			for range clientQueue {
+				current.frames <- []byte("x")
+			}
+
+			hub.clients.Store(current, current)
+			_, err := hub.Write([]byte("live"))
+			So(err, ShouldBeNil)
+
+			written := make(chan error, 1)
+			go func() {
+				_, err := current.Write([]byte("replayed"))
+				written <- err
+			}()
+
+			select {
+			case <-written:
+				t.Fatal("a replay write into a full queue returned without room")
+			case <-time.After(50 * time.Millisecond):
+			}
+
+			<-current.frames
+			So(<-written, ShouldBeNil)
+
+			close(current.done)
+			_, err = current.Write([]byte("late"))
+			So(err, ShouldEqual, errClientClosed)
+		})
+	})
+}
 
 func TestHub(t *testing.T) {
 	Convey("Given a ui Hub", t, func() {
@@ -17,6 +113,17 @@ func TestHub(t *testing.T) {
 		defer cancel()
 
 		hub := NewHub(ctx)
+
+		Convey("Dashboard commands: known ones apply, malformed or unknown ones are errors", func() {
+			defer types.SetFocus("BTC/USD")
+
+			So(hub.handleCommand(nil, []byte(`{"type":"focus","symbol":"ETH/USD"}`)), ShouldBeNil)
+			So(types.Focus(), ShouldEqual, "ETH/USD")
+
+			So(hub.handleCommand(nil, []byte(`{"type":`)), ShouldNotBeNil)
+			So(hub.handleCommand(nil, []byte(`{"type":"teleport"}`)), ShouldNotBeNil)
+			So(types.Focus(), ShouldEqual, "ETH/USD")
+		})
 
 		Convey("Hub provides a Fiber App with registered routes", func() {
 			app := hub.App()
@@ -56,6 +163,36 @@ func TestHub(t *testing.T) {
 			badResp, err := app.Test(badReq)
 			So(err, ShouldBeNil)
 			So(badResp.StatusCode, ShouldEqual, http.StatusServiceUnavailable)
+		})
+	})
+}
+
+func TestHubRetained(t *testing.T) {
+	Convey("Given a hub and a connected client", t, func() {
+		hub := NewHub(context.Background())
+		early := newClient()
+		hub.join("early", early)
+
+		Convey("A retained frame reaches connected clients and every later one first", func() {
+			frame := []byte("tree-1")
+			_, err := hub.Retained().Write(frame)
+			So(err, ShouldBeNil)
+			frame[0] = 'X' // the hub holds its own copy
+			So(string(<-early.frames), ShouldEqual, "tree-1")
+
+			_, err = hub.Retained().Write([]byte("tree-2"))
+			So(err, ShouldBeNil)
+			So(string(<-early.frames), ShouldEqual, "tree-2")
+
+			late := newClient()
+			hub.join("late", late)
+			So(string(<-late.frames), ShouldEqual, "tree-2")
+		})
+
+		Convey("Without a retained frame a new client's queue starts empty", func() {
+			late := newClient()
+			hub.join("late", late)
+			So(len(late.frames), ShouldEqual, 0)
 		})
 	})
 }

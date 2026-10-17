@@ -104,6 +104,7 @@ export {
 export {
 	computeSparklinePath,
 	computeSparklinePaths,
+	scaleSparklineValues,
 	Sparkline,
 	type SparklinePaths,
 	type SparklineProps,

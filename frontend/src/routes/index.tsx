@@ -32,9 +32,11 @@ const RouteComponent = () => {
 							title="Signal kernels"
 							meta={`${DEFAULT_KERNELS.length} kernels`}
 						/>
-						{DEFAULT_KERNELS.map((kernel) => (
-							<Metric key={kernel} name={kernel} />
-						))}
+						<Section.Body scroll={false} className="flex flex-col">
+							{DEFAULT_KERNELS.map((kernel) => (
+								<Metric key={kernel} name={kernel} />
+							))}
+						</Section.Body>
 					</Section>
 
 					<Flex.Column className="min-h-0 border-(--line) border-r bg-(--sunken)">

@@ -124,6 +124,17 @@ func RuleLabel(id uint32) string {
 }
 
 /*
+ruleName names a rule in messages: S for the start rule R0, RuleLabel otherwise.
+*/
+func ruleName(id uint32) string {
+	if id == 0 {
+		return "S"
+	}
+
+	return RuleLabel(id)
+}
+
+/*
 label is the display name of one symbol: RuleLabel for a rule reference, the
 terminal name otherwise.
 */
@@ -170,7 +181,7 @@ func (grammar *Grammar) Check() []string {
 				violations = append(violations, fmt.Sprintf(
 					"digram uniqueness: %s %s occurs in %s and %s",
 					grammar.label(current), grammar.label(current.next),
-					RuleLabel(prior.owner.id), RuleLabel(current.owner.id),
+					ruleName(prior.owner.id), ruleName(current.owner.id),
 				))
 				continue
 			}
@@ -478,6 +489,20 @@ func (grammar *Grammar) join(leftSymbol, rightSymbol *Symbol) {
 	rightSymbol.prev = leftSymbol
 }
 
+/*
+inRun reports whether symbol is the middle of three equal adjacent symbols.
+*/
+func inRun(symbol *Symbol) bool {
+	prev, next := symbol.prev, symbol.next
+
+	if symbol.isGuard || prev == nil || next == nil || prev.isGuard || next.isGuard {
+		return false
+	}
+
+	id := makeSymbolID(symbol)
+	return makeSymbolID(prev) == id && makeSymbolID(next) == id
+}
+
 func (grammar *Grammar) deleteDigram(symbol *Symbol) {
 	if symbol == nil || symbol.isGuard || symbol.next == nil || symbol.next.isGuard {
 		return
@@ -539,11 +564,13 @@ func (grammar *Grammar) resolveRepeat(symbol, matchSymbol *Symbol) {
 	grammar.join(firstCopy, secondCopy)
 	grammar.join(secondCopy, newRule.guard)
 
-	key := makeDigramKey(firstCopy, secondCopy)
-	grammar.digrams[key] = firstCopy
-
 	grammar.substitute(matchSymbol, newRule)
 	grammar.substitute(symbol, newRule)
+
+	// The new body's digram is indexed only once both occurrences are gone,
+	// as in the reference implementation: indexing it first lets the
+	// substitutions overwrite or delete the entry.
+	grammar.digrams[makeDigramKey(firstCopy, secondCopy)] = firstCopy
 }
 
 func (grammar *Grammar) substitute(symbol *Symbol, targetRule *Rule) *Symbol {
@@ -553,6 +580,15 @@ func (grammar *Grammar) substitute(symbol *Symbol, targetRule *Rule) *Symbol {
 	grammar.deleteDigram(prevSymbol)
 	grammar.deleteDigram(symbol)
 	grammar.deleteDigram(symbol.next)
+
+	// A run of three equal symbols indexes only its first digram
+	// (checkDigram skips the overlapping second). Substituting the pair
+	// that starts the run leaves the second pair unindexed, so a later copy
+	// of it would go unseen and break digram uniqueness: index it, as the
+	// reference implementation's join does for triples.
+	if inRun(nextSymbol) {
+		grammar.digrams[makeDigramKey(nextSymbol, nextSymbol.next)] = nextSymbol
+	}
 
 	firstTarget := grammar.detachRuleRef(symbol)
 	secondTarget := grammar.detachRuleRef(symbol.next)

@@ -2,15 +2,15 @@ package hindsight
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"iter"
+	"math"
 	"slices"
 	"strconv"
-	"sync"
 	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -19,888 +19,506 @@ import (
 )
 
 /*
-Run is one stored epoch.
+Run is one stored epoch of collected ticks. ID is the epoch in decimal: an
+epoch exceeds the integers a JSON number carries exactly in the browser.
+Policies are the policy epochs train published from these ticks, newest
+first, each with the gate it was trained under (a gated and an ungated
+training of the same ticks are two entries); Trained is whether any exist.
 */
 type Run struct {
-	Epoch     uint64    `json:"epoch"`
-	StartedAt time.Time `json:"started_at"`
-	Status    string    `json:"status"`
+	ID        string       `json:"id"`
+	StartedAt string       `json:"startedAt"`
+	Status    string       `json:"status"`
+	Trained   bool         `json:"trained"`
+	Policies  []PolicyInfo `json:"policies"`
 }
 
 /*
-Service serves the stored ticks (data.TickPrefix), the excursions detect
-wrote and the policies train published, read through the store only by the
-prefixes their writers key them under. A missing store is 503; a missing or
-malformed query parameter is 400; a stored Value that does not read is 500.
+PolicyInfo is one policy epoch trained on a run and its data.PolicyGate.
+*/
+type PolicyInfo struct {
+	Epoch        string  `json:"epoch"`
+	Gate         bool    `json:"gate"`
+	SurpriseZ    float64 `json:"surpriseZ"`
+	Warmup       string  `json:"warmup"`
+	LearningRate float64 `json:"learningRate"`
+}
+
+/*
+Service replays what the commands stored for one run (data/schema.go):
+the ticks collect wrote, the excursions detect found, the policies train
+published and the paper records traded under them. It reads through a
+store.Reader only, so it cannot write storage. The run list is its one REST
+route; everything else streams as hindsight Values over the hub websocket
+(Stream), on the client's "hindsight" command.
 */
 type Service struct {
-	ctx         context.Context
-	client      *store.Client
-	fragmentsMu sync.Mutex
-	ids         map[string]int64
-	excursions  map[int64]*data.Value
+	ctx    context.Context
+	reader *store.Reader
 }
 
-func NewService(ctx context.Context, client *store.Client) *Service {
-	return &Service{
-		ctx:        ctx,
-		client:     client,
-		ids:        make(map[string]int64),
-		excursions: make(map[int64]*data.Value),
+func NewService(ctx context.Context, reader *store.Reader) (*Service, error) {
+	if reader == nil {
+		return nil, errnie.Err(errnie.Validation, "[hindsight] a store reader is required", nil)
 	}
+
+	return &Service{ctx: ctx, reader: reader}, nil
 }
 
+/*
+Register mounts GET /hindsight/runs on router.
+*/
 func (service *Service) Register(router fiber.Router) {
-	if service == nil || router == nil {
-		return
-	}
-
-	router.Get("/hindsight/runs", service.runs)
-
-	router.Use("/hindsight/timeline", func(ctx fiber.Ctx) error {
-		if websocket.IsWebSocketUpgrade(ctx) {
-			ctx.Locals("allowed", true)
-			return ctx.Next()
-		}
-
-		return fiber.ErrUpgradeRequired
-	})
-
-	router.Get("/hindsight/timeline", websocket.New(service.timeline, websocket.Config{
-		Origins: []string{"*"},
-	}))
-
-	router.Get("/hindsight/symbols", service.symbols)
-	router.Get("/hindsight/excursions", service.excursionsHandler)
-	router.Get("/hindsight/data", service.data)
-	router.Get("/hindsight/captures", service.captures)
-	router.Get("/hindsight/envelope", service.envelope)
-
-	router.Get("/training/fragments", service.trainingFragments)
-	router.Get("/training/fragments/:id/points", service.trainingFragmentPoints)
-
-	router.Get("/hindsight/gaps", service.gaps)
-	router.Get("/hindsight/lifecycle", service.lifecycle)
-	router.Get("/hindsight/states", service.states)
-	router.Get("/hindsight/state", service.state)
-	router.Get("/hindsight/metric-map", service.metricMap)
-}
-
-/*
-metricMap has no source: no metric registry exists to serve. It answers 501
-rather than an empty map that reads as "no metrics".
-*/
-func (service *Service) metricMap(ctx fiber.Ctx) error {
-	return fiber.NewError(fiber.StatusNotImplemented, "no metric map is published")
-}
-
-func (service *Service) available() error {
-	if service.client == nil {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
-	}
-
-	return nil
-}
-
-func badRequest(format string, args ...any) error {
-	return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf(format, args...))
-}
-
-func readFailure(err error) error {
-	return fiber.NewError(fiber.StatusInternalServerError, errnie.Error(err).Error())
-}
-
-/*
-queryUint parses name; absent is (0, false, nil) unless required, which is
-a 400, as is a value that does not parse.
-*/
-func queryUint(raw, name string, required bool) (uint64, bool, error) {
-	if raw == "" {
-		if required {
-			return 0, false, badRequest("%s is required", name)
-		}
-
-		return 0, false, nil
-	}
-
-	value, err := strconv.ParseUint(raw, 10, 64)
-
-	if err != nil {
-		return 0, false, badRequest("%s %q is not an unsigned integer", name, raw)
-	}
-
-	return value, true, nil
-}
-
-/*
-queryEpoch reads the required run (or epoch) parameter.
-*/
-func queryEpoch(ctx fiber.Ctx) (uint64, error) {
-	run := ctx.Query("run")
-
-	if run == "" {
-		run = ctx.Query("epoch")
-	}
-
-	epoch, _, err := queryUint(run, "run (or epoch)", true)
-	return epoch, err
-}
-
-func querySymbol(ctx fiber.Ctx) (string, error) {
-	symbol := ctx.Query("symbol")
-
-	if symbol == "" {
-		return "", badRequest("symbol is required")
-	}
-
-	return symbol, nil
-}
-
-/*
-ticks yields epoch's stored ticks in order, only those that trade symbol when
-symbol is set, each with its decoded symbols.
-*/
-func (service *Service) ticks(epoch uint64, symbol string) iter.Seq2[*data.Value, error] {
-	return func(yield func(*data.Value, error) bool) {
-		for value := range store.Values(service.client, data.TickPrefix(epoch)) {
-			if symbol != "" {
-				symbolTicks, err := broker.ReadTick(value)
-
-				if err != nil {
-					yield(nil, err)
-					return
-				}
-
-				if !slices.ContainsFunc(symbolTicks, func(tick *broker.SymbolTick) bool { return tick.Symbol == symbol }) {
-					continue
-				}
-			}
-
-			if !yield(value, nil) {
-				return
-			}
-		}
-	}
-}
-
-/*
-tickAt downloads the stored tick with number tick in epoch, by its key.
-*/
-func (service *Service) tickAt(epoch, tick uint64) (*data.Value, error) {
-	key := (&data.Value{Origin: data.TickOrigin, Role: data.TickRole, Scope: data.TickScope, Epoch: epoch, Tick: tick}).FormatPrefix()
-	payload, err := service.client.Download(key)
-
-	if store.IsNotFound(err) {
-		return nil, fiber.NewError(fiber.StatusNotFound, "no stored tick "+key)
-	}
-
-	if err != nil {
-		return nil, readFailure(err)
-	}
-
-	value := data.New()
-
-	if _, err := value.Write(payload); err != nil {
-		return nil, readFailure(errnie.Err(errnie.UnprocessableContent, key+" does not decode", err))
-	}
-
-	return value, nil
-}
-
-func (service *Service) runs(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
-		return err
-	}
-
-	epochs, err := store.Epochs(service.client, data.TickPrefix())
-
-	if err != nil {
-		return readFailure(err)
-	}
-
-	runs := make([]Run, 0, len(epochs))
-
-	for _, epoch := range epochs {
-		runs = append(runs, Run{Epoch: epoch, StartedAt: time.Unix(0, int64(epoch)).UTC(), Status: "recorded"})
-	}
-
-	return ctx.JSON(runs)
-}
-
-func (service *Service) timeline(conn *websocket.Conn) {
-	if service.client == nil {
-		errnie.Error(errnie.Err(errnie.Validation, "[hindsight] timeline: capture store unavailable", nil))
-		return
-	}
-
-	run := conn.Query("run")
-
-	if run == "" {
-		run = conn.Query("epoch")
-	}
-
-	epoch, _, err := queryUint(run, "run (or epoch)", true)
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	fromTick, _, err := queryUint(conn.Query("from"), "from", false)
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	toTick, bounded, err := queryUint(conn.Query("to"), "to", false)
-
-	if err != nil {
-		errnie.Error(err)
-		return
-	}
-
-	const timelineBatchSize = 256
-	batch := make([]*data.Value, 0, timelineBatchSize)
-
-	flush := func() bool {
-		payload, err := sonic.Marshal(batch)
+	router.Get("/hindsight/runs", func(ctx fiber.Ctx) error {
+		runs, err := service.Runs()
 
 		if err != nil {
-			errnie.Error(err)
-			return false
+			return fiber.NewError(fiber.StatusInternalServerError, errnie.Error(err).Error())
 		}
 
-		if err := conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
-			errnie.Error(err)
-			return false
-		}
-
-		batch = batch[:0]
-		return true
-	}
-
-	for value, err := range service.ticks(epoch, conn.Query("symbol")) {
-		if err != nil {
-			errnie.Error(err)
-			return
-		}
-
-		if value.Tick < fromTick {
-			continue
-		}
-
-		if bounded && value.Tick > toTick {
-			break
-		}
-
-		batch = append(batch, value)
-
-		if len(batch) == timelineBatchSize && !flush() {
-			return
-		}
-	}
-
-	if len(batch) > 0 {
-		flush()
-	}
-}
-
-func (service *Service) symbols(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
-		return err
-	}
-
-	epoch, err := queryEpoch(ctx)
-
-	if err != nil {
-		return err
-	}
-
-	symbols, err := service.epochSymbols(epoch)
-
-	if err != nil {
-		return readFailure(err)
-	}
-
-	return ctx.JSON(symbols)
-}
-
-/*
-epochSymbols is every symbol epoch's ticks trade, in first-trade order.
-*/
-func (service *Service) epochSymbols(epoch uint64) ([]string, error) {
-	symbols := make([]string, 0)
-
-	for value, err := range service.ticks(epoch, "") {
-		if err != nil {
-			return nil, err
-		}
-
-		symbolTicks, err := broker.ReadTick(value)
-
-		if err != nil {
-			return nil, err
-		}
-
-		for _, tick := range symbolTicks {
-			if !slices.Contains(symbols, tick.Symbol) {
-				symbols = append(symbols, tick.Symbol)
-			}
-		}
-	}
-
-	return symbols, nil
-}
-
-func (service *Service) excursionsHandler(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
-		return err
-	}
-
-	epoch, err := queryEpoch(ctx)
-
-	if err != nil {
-		return err
-	}
-
-	symbol, err := querySymbol(ctx)
-
-	if err != nil {
-		return err
-	}
-
-	excursions := make([]*data.Value, 0)
-
-	for value := range store.Values(service.client, data.ExcursionPrefixes(symbol, epoch)...) {
-		excursions = append(excursions, value)
-	}
-
-	return ctx.JSON(excursions)
-}
-
-func (service *Service) data(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
-		return err
-	}
-
-	epoch, err := queryEpoch(ctx)
-
-	if err != nil {
-		return err
-	}
-
-	limit, limited, err := queryUint(ctx.Query("limit"), "limit", false)
-
-	if err != nil {
-		return err
-	}
-
-	values := make([]*data.Value, 0)
-
-	for value, err := range service.ticks(epoch, "") {
-		if err != nil {
-			return readFailure(err)
-		}
-
-		values = append(values, value)
-
-		if limited && uint64(len(values)) >= limit {
-			break
-		}
-	}
-
-	return ctx.JSON(values)
-}
-
-func receivedAt(value *data.Value) string {
-	return time.Unix(0, int64(value.Timestamp)).UTC().Format("2006-01-02T15:04:05.000Z07:00")
-}
-
-func identity(value *data.Value) HindsightCaptureIdentity {
-	return HindsightCaptureIdentity{
-		Run:            strconv.FormatUint(value.Epoch, 10),
-		Sequence:       value.Tick,
-		Stream:         value.Origin,
-		StreamEpoch:    value.Epoch,
-		StreamSequence: value.Tick,
-	}
-}
-
-func (service *Service) captures(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
-		return err
-	}
-
-	epoch, err := queryEpoch(ctx)
-
-	if err != nil {
-		return err
-	}
-
-	after, _, err := queryUint(ctx.Query("after"), "after", false)
-
-	if err != nil {
-		return err
-	}
-
-	const maxCaptures = 64
-	captures := make([]map[string]any, 0, maxCaptures)
-
-	for value, err := range service.ticks(epoch, ctx.Query("symbol")) {
-		if err != nil {
-			return readFailure(err)
-		}
-
-		if value.Tick < after {
-			continue
-		}
-
-		captures = append(captures, map[string]any{
-			"identity":   identity(value),
-			"kind":       "tick",
-			"endpoint":   value.Origin,
-			"receivedAt": receivedAt(value),
-		})
-
-		if len(captures) >= maxCaptures {
-			break
-		}
-	}
-
-	return ctx.JSON(captures)
-}
-
-func (service *Service) envelope(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
-		return err
-	}
-
-	epoch, err := queryEpoch(ctx)
-
-	if err != nil {
-		return err
-	}
-
-	tick, _, err := queryUint(ctx.Query("seq"), "seq (tick)", true)
-
-	if err != nil {
-		return err
-	}
-
-	found, err := service.tickAt(epoch, tick)
-
-	if err != nil {
-		return err
-	}
-
-	payload, err := sonic.Marshal(found)
-
-	if err != nil {
-		return readFailure(err)
-	}
-
-	return ctx.JSON(HindsightEnvelope{Payload: string(payload)})
-}
-
-type HindsightEnvelope struct {
-	Payload string `json:"payload"`
-}
-
-type HindsightGap struct {
-	RunId    string `json:"runId"`
-	Encoding string `json:"encoding"`
-	Sequence uint64 `json:"sequence"`
-	Detail   string `json:"detail"`
-}
-
-type HindsightLifecycleEvent struct {
-	DecisionId string `json:"decisionId"`
-	Symbol     string `json:"symbol"`
-	Kind       string `json:"kind"`
-	Action     string `json:"action"`
-	At         string `json:"at"`
-	CaptureSeq uint64 `json:"captureSeq"`
-}
-
-type HindsightCaptureIdentity struct {
-	Run            string `json:"run"`
-	Sequence       uint64 `json:"sequence"`
-	Stream         string `json:"stream"`
-	StreamEpoch    uint64 `json:"streamEpoch"`
-	StreamSequence uint64 `json:"streamSequence"`
-}
-
-type HindsightStateEnvelope struct {
-	Origin  HindsightCaptureIdentity `json:"origin"`
-	Ordinal int                      `json:"ordinal"`
-}
-
-type HindsightState struct {
-	Envelope HindsightStateEnvelope `json:"envelope"`
-	Payload  string                 `json:"payload"`
-}
-
-/*
-gaps reports jumps in the stored tick numbers of an epoch: every trade frame
-is one tick, so a jump is frames that were never stored.
-*/
-func (service *Service) gaps(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
-		return err
-	}
-
-	epoch, err := queryEpoch(ctx)
-
-	if err != nil {
-		return err
-	}
-
-	gaps := make([]HindsightGap, 0)
-	var previous uint64
-	started := false
-
-	for value, err := range service.ticks(epoch, "") {
-		if err != nil {
-			return readFailure(err)
-		}
-
-		if started && value.Tick > previous+1 {
-			gaps = append(gaps, HindsightGap{
-				RunId:    strconv.FormatUint(epoch, 10),
-				Encoding: "tick_gap",
-				Sequence: previous + 1,
-				Detail:   fmt.Sprintf("Tick jump from %d to %d (missing %d ticks)", previous, value.Tick, value.Tick-previous-1),
-			})
-		}
-
-		previous, started = value.Tick, true
-	}
-
-	return ctx.JSON(gaps)
-}
-
-func (service *Service) lifecycle(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
-		return err
-	}
-
-	epoch, err := queryEpoch(ctx)
-
-	if err != nil {
-		return err
-	}
-
-	symbol, err := querySymbol(ctx)
-
-	if err != nil {
-		return err
-	}
-
-	events := make([]HindsightLifecycleEvent, 0)
-
-	for value := range store.Values(service.client, data.ExcursionPrefixes(symbol, epoch)...) {
-		events = append(events, HindsightLifecycleEvent{
-			DecisionId: value.Prefix,
-			Symbol:     value.Scope,
-			Kind:       "detector",
-			Action:     value.Role,
-			At:         receivedAt(value),
-			CaptureSeq: value.Tick,
-		})
-	}
-
-	for value := range store.Values(service.client, data.PolicyPrefixes(epoch)...) {
-		events = append(events, HindsightLifecycleEvent{
-			DecisionId: value.Prefix,
-			Symbol:     value.Scope,
-			Kind:       "policy",
-			Action:     value.Role,
-			CaptureSeq: value.Tick,
-		})
-	}
-
-	return ctx.JSON(events)
-}
-
-func (service *Service) states(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
-		return err
-	}
-
-	epoch, err := queryEpoch(ctx)
-
-	if err != nil {
-		return err
-	}
-
-	const maxStates = 64
-	states := make([]HindsightState, 0, maxStates)
-
-	for value, err := range service.ticks(epoch, ctx.Query("symbol")) {
-		if err != nil {
-			return readFailure(err)
-		}
-
-		payload, err := sonic.Marshal(value)
-
-		if err != nil {
-			return readFailure(errnie.Err(errnie.UnprocessableContent, "[hindsight] state marshal failed for "+value.Prefix, err))
-		}
-
-		states = append(states, HindsightState{
-			Envelope: HindsightStateEnvelope{Origin: identity(value)},
-			Payload:  string(payload),
-		})
-
-		if len(states) >= maxStates {
-			break
-		}
-	}
-
-	return ctx.JSON(states)
-}
-
-func (service *Service) state(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
-		return err
-	}
-
-	epoch, err := queryEpoch(ctx)
-
-	if err != nil {
-		return err
-	}
-
-	tick, _, err := queryUint(ctx.Query("seq"), "seq (tick)", true)
-
-	if err != nil {
-		return err
-	}
-
-	ordinal, _, err := queryUint(ctx.Query("ordinal"), "ordinal", false)
-
-	if err != nil {
-		return err
-	}
-
-	found, err := service.tickAt(epoch, tick)
-
-	if err != nil {
-		return err
-	}
-
-	payload, err := sonic.Marshal(found)
-
-	if err != nil {
-		return readFailure(err)
-	}
-
-	return ctx.JSON(HindsightState{
-		Envelope: HindsightStateEnvelope{Origin: identity(found), Ordinal: int(ordinal)},
-		Payload:  string(payload),
+		return ctx.JSON(runs)
 	})
 }
 
-type FragmentPoint struct {
-	X    int     `json:"x"`
-	Y    float64 `json:"y"`
-	Seq  uint64  `json:"seq"`
-	Time int64   `json:"time"`
-}
-
 /*
-TrainedFragmentResponse is one detected excursion: marks A, B and C are
-ticks, entry and exit the touch it crosses (ask at B, bid at C).
+Runs lists every epoch with stored ticks, newest first.
 */
-type TrainedFragmentResponse struct {
-	Id         int64           `json:"id"`
-	Symbol     string          `json:"symbol"`
-	Epoch      uint64          `json:"epoch"`
-	MarkA      int64           `json:"mark_a"`
-	MarkB      int64           `json:"mark_b"`
-	MarkC      int64           `json:"mark_c"`
-	EntryPrice float64         `json:"entry_price"`
-	ExitPrice  float64         `json:"exit_price"`
-	Magnitude  float64         `json:"magnitude"`
-	Direction  string          `json:"direction"`
-	Class      string          `json:"class"`
-	Points     []FragmentPoint `json:"points"`
-	EntryIdx   int64           `json:"entry_idx"`
-	ExitIdx    int64           `json:"exit_idx"`
-	LearnedAt  string          `json:"learned_at"`
-}
-
-/*
-fragmentsOf is every excursion of epoch, over the symbols its ticks trade,
-read fresh on every call: an epoch still being collected or relabelled has no
-final snapshot to cache. An excursion keeps one id per key for the process,
-so /training/fragments/:id/points resolves it; ids are published only after
-the whole epoch loaded.
-*/
-func (service *Service) fragmentsOf(epoch uint64) ([]TrainedFragmentResponse, error) {
-	symbols, err := service.epochSymbols(epoch)
+func (service *Service) Runs() ([]Run, error) {
+	epochs, err := service.reader.Epochs(data.TickPrefix())
 
 	if err != nil {
 		return nil, err
 	}
 
-	loaded := make([]*data.Value, 0)
-	fragments := make([]TrainedFragmentResponse, 0)
-
-	for _, symbol := range symbols {
-		for value := range store.Values(service.client, data.ExcursionPrefixes(symbol, epoch)...) {
-			fields, err := data.ExcursionFields(value)
-
-			if err != nil {
-				return nil, err
-			}
-
-			entry, exit := fields["b_ask"], fields["c_bid"]
-
-			if entry <= 0 {
-				return nil, errnie.Err(errnie.Validation, fmt.Sprintf("[hindsight] %s has b_ask %v", value.Prefix, entry), nil)
-			}
-
-			direction := "up"
-
-			if exit < entry {
-				direction = "down"
-			}
-
-			loaded = append(loaded, value)
-			fragments = append(fragments, TrainedFragmentResponse{
-				Symbol:     symbol,
-				Epoch:      epoch,
-				MarkA:      int64(fields["a_tick"]),
-				MarkB:      int64(fields["b_tick"]),
-				MarkC:      int64(fields["c_tick"]),
-				EntryPrice: entry,
-				ExitPrice:  exit,
-				Magnitude:  (exit - entry) / entry,
-				Direction:  direction,
-				Class:      value.Role,
-				Points:     []FragmentPoint{},
-				EntryIdx:   int64(fields["b_idx"] - fields["a_idx"]),
-				ExitIdx:    int64(fields["c_idx"] - fields["a_idx"]),
-				LearnedAt:  receivedAt(value),
-			})
-		}
-	}
-
-	service.fragmentsMu.Lock()
-	defer service.fragmentsMu.Unlock()
-
-	for idx, value := range loaded {
-		id, known := service.ids[value.Prefix]
-
-		if !known {
-			id = int64(len(service.ids) + 1)
-			service.ids[value.Prefix] = id
-		}
-
-		service.excursions[id] = value
-		fragments[idx].Id = id
-	}
-
-	return fragments, nil
-}
-
-func (service *Service) trainingFragments(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
-		return err
-	}
-
-	epoch, err := queryEpoch(ctx)
+	gates, err := service.reader.PolicyGates()
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	fragments, err := service.fragmentsOf(epoch)
+	trained := make(map[uint64][]PolicyInfo)
 
-	if err != nil {
-		return readFailure(err)
+	for _, gate := range slices.Backward(gates) {
+		trained[gate.TickEpoch] = append(trained[gate.TickEpoch], PolicyInfo{
+			Epoch: strconv.FormatUint(gate.Epoch, 10), Gate: gate.Enabled, SurpriseZ: gate.SurpriseZ,
+			Warmup: gate.Warmup.String(), LearningRate: gate.LearningRate,
+		})
 	}
 
-	return ctx.JSON(fragments)
+	runs := make([]Run, 0, len(epochs))
+
+	for _, epoch := range slices.Backward(epochs) {
+		policies := trained[epoch]
+
+		if policies == nil {
+			policies = []PolicyInfo{}
+		}
+
+		runs = append(runs, Run{
+			ID:        strconv.FormatUint(epoch, 10),
+			StartedAt: time.Unix(0, int64(epoch)).UTC().Format(time.RFC3339Nano),
+			Status:    "recorded",
+			Trained:   len(policies) > 0,
+			Policies:  policies,
+		})
+	}
+
+	return runs, nil
 }
 
 /*
-trainingFragmentPoints is the traded price path of one fragment's symbol
-from mark A to mark C.
+batchBytes bounds one websocket message of hindsight frames. Frames are
+whole serialized Values back to back, which the dashboard parses as a batch.
 */
-func (service *Service) trainingFragmentPoints(ctx fiber.Ctx) error {
-	if err := service.available(); err != nil {
+const batchBytes = 256 << 10
+
+/*
+batch gathers whole Values (one Write each, data.Value.WriteTo) into
+messages of about batchBytes, each a fresh buffer handed to dst.
+*/
+type batch struct {
+	dst io.Writer
+	buf []byte
+}
+
+func (batch *batch) Write(p []byte) (int, error) {
+	batch.buf = append(batch.buf, p...)
+
+	if len(batch.buf) >= batchBytes {
+		if err := batch.Flush(); err != nil {
+			return 0, err
+		}
+	}
+
+	return len(p), nil
+}
+
+func (batch *batch) Flush() error {
+	if len(batch.buf) == 0 {
+		return nil
+	}
+
+	out := batch.buf
+	batch.buf = make([]byte, 0, batchBytes)
+
+	_, err := batch.dst.Write(out)
+	return err
+}
+
+/*
+Stream writes run's hindsight frames to w. With a symbol: the policies of
+the newest policy epoch trained on the run's ticks, the symbol's excursions,
+the paper records traded under that policy epoch, then one tick frame per stored tick that traded the symbol. With
+no symbol: one summary frame per symbol the run traded (Scope "", the
+symbol in its key). A done frame closes
+a complete stream. A failure is written as an error frame and returned; a
+canceled ctx (a newer request, a closed client) returns ctx.Err() with no
+frame.
+*/
+func (service *Service) Stream(ctx context.Context, w io.Writer, run uint64, symbol string) error {
+	out := &batch{dst: w, buf: make([]byte, 0, batchBytes)}
+	var err error
+
+	if symbol == "" {
+		err = service.summaries(ctx, out, run)
+	} else {
+		err = service.symbol(ctx, out, run, symbol)
+	}
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	if err != nil {
+		failure := frame(data.HindsightError, run, symbol, 0)
+		failure.AppendJSON([]byte(err.Error()), data.LayerHindsightError)
+
+		if _, copyErr := io.Copy(out, failure); copyErr != nil {
+			err = errors.Join(err, copyErr)
+		}
+	}
+
+	return errors.Join(err, out.Flush())
+}
+
+/*
+frame is an empty hindsight Value of role for symbol in run.
+*/
+func frame(role string, run uint64, symbol string, tick uint64) *data.Value {
+	value := data.NewValue(data.HindsightOrigin, role, symbol)
+	value.Epoch, value.Tick = run, tick
+	value.FormatPrefix()
+	return value
+}
+
+/*
+forward copies a stored Value to w as a hindsight frame of the requested
+run: Origin becomes HindsightOrigin, Role the store origin it came from,
+Scope the symbol and Epoch the run (a paper record's own run epoch stays in
+its key). Its layers, whose indices name the stored key, are untouched.
+*/
+/*
+policies are the Values of policy epoch, none when epoch is 0.
+*/
+func (service *Service) policies(epoch uint64) iter.Seq2[*data.Value, error] {
+	if epoch == 0 {
+		return func(func(*data.Value, error) bool) {}
+	}
+
+	return service.reader.Values(data.PolicyPrefixes(epoch)...)
+}
+
+func forward(w io.Writer, value *data.Value, run uint64, symbol string) error {
+	value.Role, value.Origin, value.Scope, value.Epoch = value.Origin, data.HindsightOrigin, symbol, run
+
+	if _, err := io.Copy(w, value); err != nil {
+		return fmt.Errorf("forwarding %s: %w", value.Prefix, err)
+	}
+
+	return nil
+}
+
+/*
+newestPolicy is the newest policy epoch trained on run's ticks, 0 when none.
+*/
+func (service *Service) newestPolicy(run uint64) (uint64, error) {
+	gates, err := service.reader.PolicyGates()
+
+	if err != nil {
+		return 0, err
+	}
+
+	var newest uint64
+
+	for _, gate := range gates {
+		if gate.TickEpoch == run {
+			newest = max(newest, gate.Epoch)
+		}
+	}
+
+	return newest, nil
+}
+
+func (service *Service) symbol(ctx context.Context, w io.Writer, run uint64, symbol string) error {
+	counts := map[string]float64{}
+
+	// The newest training of these ticks; with none, no policy and no paper
+	// record is streamed.
+	policyEpoch, err := service.newestPolicy(run)
+
+	if err != nil {
 		return err
 	}
 
-	id, err := strconv.ParseInt(ctx.Params("id"), 10, 64)
-
-	if err != nil {
-		return badRequest("fragment id %q is not an integer", ctx.Params("id"))
-	}
-
-	service.fragmentsMu.Lock()
-	excursion := service.excursions[id]
-	service.fragmentsMu.Unlock()
-
-	if excursion == nil {
-		return fiber.NewError(fiber.StatusNotFound, "fragment not loaded: list /training/fragments for its epoch first")
-	}
-
-	fields, err := data.ExcursionFields(excursion)
-
-	if err != nil {
-		return readFailure(err)
-	}
-
-	// A tick bound below zero is not a tick of the tape: an error, never
-	// clamped onto it.
-	if fields["a_tick"] < 0 || fields["c_tick"] < 0 {
-		return readFailure(errnie.Err(errnie.Validation, fmt.Sprintf(
-			"[hindsight] %s has a negative tick bound (a_tick %v, c_tick %v)",
-			excursion.Prefix, fields["a_tick"], fields["c_tick"],
-		), nil))
-	}
-
-	startTick, endTick := uint64(fields["a_tick"]), uint64(fields["c_tick"])
-	points := make([]FragmentPoint, 0)
-
-	for value, err := range service.ticks(excursion.Epoch, excursion.Scope) {
+	for value, err := range service.policies(policyEpoch) {
 		if err != nil {
-			return readFailure(err)
+			return err
 		}
 
-		if value.Tick < startTick {
+		if err := forward(w, value, run, symbol); err != nil {
+			return err
+		}
+
+		counts["policies"]++
+	}
+
+	for value, err := range service.reader.Values(data.ExcursionPrefixes(symbol, run)...) {
+		if err != nil {
+			return err
+		}
+
+		if _, err := data.ExcursionFields(value); err != nil {
+			return err
+		}
+
+		if err := forward(w, value, run, symbol); err != nil {
+			return err
+		}
+
+		counts["excursions"]++
+	}
+
+	for value, err := range service.reader.Values(data.PaperPrefixes(symbol)...) {
+		if err != nil {
+			return err
+		}
+
+		record, err := data.PaperFields(value)
+
+		if err != nil {
+			return err
+		}
+
+		if policyEpoch == 0 || record.PolicyEpoch != policyEpoch {
 			continue
 		}
 
-		if value.Tick > endTick {
-			break
+		if err := forward(w, value, run, symbol); err != nil {
+			return err
+		}
+
+		counts["papers"]++
+	}
+
+	for value, err := range service.reader.Values(data.TickPrefix(run)) {
+		if err != nil {
+			return err
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		ticks, err := broker.ReadTick(value)
+
+		if err != nil {
+			return err
+		}
+
+		index := slices.IndexFunc(ticks, func(tick *broker.SymbolTick) bool { return tick.Symbol == symbol })
+
+		if index < 0 {
+			continue
+		}
+
+		tick := frame(data.HindsightTick, run, symbol, value.Tick)
+		tick.Timestamp = value.Timestamp
+		data.AppendVector(tick, tickVector(ticks[index]), data.HindsightTickKeys...)
+
+		if _, err := io.Copy(w, tick); err != nil {
+			return fmt.Errorf("writing tick %d: %w", value.Tick, err)
+		}
+
+		counts["ticks"]++
+	}
+
+	if counts["ticks"] == 0 {
+		return errnie.Err(errnie.NotFound, fmt.Sprintf("[hindsight] run %d has no stored tick trading %s", run, symbol), nil)
+	}
+
+	counts["symbols"] = 1
+	return done(w, run, symbol, counts)
+}
+
+/*
+tickVector is a symbol's HindsightTickKeys at one tick: the touch the tick
+recorded (NaN where the price layer holds no side: undefined, not zero),
+the last trade's price, the traded quantity and the trade count.
+*/
+func tickVector(tick *broker.SymbolTick) []float64 {
+	side := func(price interface{ Float64() float64 }, held bool) float64 {
+		if !held {
+			return math.NaN()
+		}
+
+		return price.Float64()
+	}
+
+	qty := 0.0
+
+	for _, trade := range tick.Trades {
+		qty += trade.Qty
+	}
+
+	last := tick.Trades[len(tick.Trades)-1]
+
+	return []float64{
+		side(tick.Price.Bid, tick.Price.Bid != nil),
+		side(tick.Price.Ask, tick.Price.Ask != nil),
+		last.Price.Float64(),
+		qty,
+		float64(len(tick.Trades)),
+	}
+}
+
+type summary struct {
+	ticks, touched      float64
+	trades              float64
+	firstTick, lastTick uint64
+	firstAt, lastAt     uint64
+	low, high           float64
+}
+
+func (service *Service) summaries(ctx context.Context, w io.Writer, run uint64) error {
+	order := make([]string, 0)
+	symbols := make(map[string]*summary)
+	ticks := 0.0
+
+	for value, err := range service.reader.Values(data.TickPrefix(run)) {
+		if err != nil {
+			return err
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 
 		symbolTicks, err := broker.ReadTick(value)
 
 		if err != nil {
-			return readFailure(err)
+			return err
 		}
 
+		ticks++
+
 		for _, tick := range symbolTicks {
-			if tick.Symbol != excursion.Scope {
-				continue
+			entry, ok := symbols[tick.Symbol]
+
+			if !ok {
+				entry = &summary{firstTick: value.Tick, firstAt: value.Timestamp, low: math.Inf(1), high: math.Inf(-1)}
+				symbols[tick.Symbol] = entry
+				order = append(order, tick.Symbol)
 			}
 
+			entry.ticks++
+
+			if tick.Price.Bid != nil && tick.Price.Ask != nil {
+				entry.touched++
+			}
+			entry.trades += float64(len(tick.Trades))
+			entry.lastTick, entry.lastAt = value.Tick, value.Timestamp
+
 			for _, trade := range tick.Trades {
-				points = append(points, FragmentPoint{
-					X:    len(points),
-					Y:    trade.Price.Float64(),
-					Seq:  value.Tick,
-					Time: trade.Timestamp.UnixMilli(),
-				})
+				price := trade.Price.Float64()
+				entry.low, entry.high = min(entry.low, price), max(entry.high, price)
 			}
 		}
 	}
 
-	return ctx.JSON(points)
+	if ticks == 0 {
+		return errnie.Err(errnie.NotFound, "[hindsight] no stored ticks under "+data.TickPrefix(run), nil)
+	}
+
+	excursions := 0.0
+
+	for _, symbol := range order {
+		entry := symbols[symbol]
+		classes := map[string]float64{}
+		top := 0.0
+
+		for value, err := range service.reader.Values(data.ExcursionPrefixes(symbol, run)...) {
+			if err != nil {
+				return err
+			}
+
+			classes[value.Role]++
+			excursions++
+
+			if value.Role != "up" && value.Role != "down" {
+				continue
+			}
+
+			fields, err := data.ExcursionFields(value)
+
+			if err != nil {
+				return err
+			}
+
+			if fields["b_price"] <= 0 {
+				return errnie.Err(errnie.UnprocessableContent, "[hindsight] excursion "+value.Prefix+" has no positive b_price", nil)
+			}
+
+			if move := (fields["c_price"] - fields["b_price"]) / fields["b_price"]; math.Abs(move) > math.Abs(top) {
+				top = move
+			}
+		}
+
+		summary := frame(data.HindsightSymbol, run, symbol, 0)
+		data.AppendVector(summary, []float64{
+			entry.ticks, entry.touched, entry.trades,
+			float64(entry.firstTick), float64(entry.lastTick),
+			float64(entry.firstAt), float64(entry.lastAt),
+			entry.low, entry.high,
+			classes["up"], classes["down"], top,
+		}, data.HindsightSymbolKeys...)
+
+		// The run index answers the request for symbol "": its frames carry
+		// that Scope, and the summarized symbol stays in their key.
+		summary.Scope = ""
+
+		if _, err := io.Copy(w, summary); err != nil {
+			return fmt.Errorf("writing %s summary: %w", symbol, err)
+		}
+	}
+
+	return done(w, run, "", map[string]float64{
+		"ticks": ticks, "symbols": float64(len(order)), "excursions": excursions,
+	})
+}
+
+func done(w io.Writer, run uint64, symbol string, counts map[string]float64) error {
+	vector := make([]float64, len(data.HindsightDoneKeys))
+
+	for idx, key := range data.HindsightDoneKeys {
+		vector[idx] = counts[key]
+	}
+
+	closing := frame(data.HindsightDone, run, symbol, 0)
+	data.AppendVector(closing, vector, data.HindsightDoneKeys...)
+
+	if _, err := io.Copy(w, closing); err != nil {
+		return fmt.Errorf("writing done: %w", err)
+	}
+
+	return nil
 }

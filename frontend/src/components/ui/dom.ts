@@ -189,7 +189,8 @@ export const renderValue = (
 	if (componentType === "meter") {
 		const num = typeof value === "number" ? value : Number(value);
 		if (!Number.isNaN(num) && Number.isFinite(num)) {
-			const percent = Math.min(100, Math.max(0, num <= 1 ? num * 100 : num));
+			const magnitude = Math.abs(num);
+			const percent = Math.min(100, magnitude <= 1 ? magnitude * 100 : magnitude);
 			setMeter(element, percent, "warning");
 		}
 		return;

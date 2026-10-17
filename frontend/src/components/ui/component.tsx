@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useRef } from "react";
 import { Alert } from "./alert";
 import { memoizedQuery, memoizedQueryAll, renderValue, resetValue } from "./dom";
 import { Loader } from "./loader";
+import { scaleSparklineValues, setSparkline } from "./sparkline";
 import type { ValueStore } from "./types";
 
 export const nameOf = (val: unknown): string => {
@@ -16,6 +17,50 @@ export const nameOf = (val: unknown): string => {
 /*
 reset restores all bound telemetry and metric elements in root to their fallback state.
 */
+const finiteSample = (value: number | undefined): number | null =>
+	typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const sampleMetric = (item: Value, name: string | null): number | null => {
+	if (name) {
+		for (const metric of item.metrics ?? []) {
+			if (metric?.name !== name) continue;
+			return finiteSample(metric.snm) ?? finiteSample(metric.raw);
+		}
+	}
+
+	const first = item.metrics?.[0];
+	if (!first) return null;
+	return finiteSample(first.snm) ?? finiteSample(first.raw);
+};
+
+const seriesFromRing = (
+	ring: RingBuffer<Value>,
+	name: string | null,
+): number[] => {
+	const points: number[] = [];
+	const len = ring.getBufferLength();
+	for (let i = 0; i < len; i++) {
+		const item = ring.get(i);
+		if (!item) continue;
+		const sample = sampleMetric(item, name);
+		if (sample !== null) points.push(sample);
+	}
+	return points;
+};
+
+const paintSparkline = (root: HTMLElement, ring?: RingBuffer<Value>) => {
+	const svg = memoizedQuery<SVGElement>(root, '[data-k="sparkline"]');
+	if (!svg) return;
+
+	if (!ring || ring.isEmpty()) {
+		setSparkline(svg, [], false);
+		return;
+	}
+
+	const series = seriesFromRing(ring, svg.getAttribute("data-series"));
+	setSparkline(svg, scaleSparklineValues(series), series.length > 0);
+};
+
 export const reset = (root: HTMLElement, fallback = "—") => {
 	const elements = memoizedQueryAll(
 		root,
@@ -24,6 +69,7 @@ export const reset = (root: HTMLElement, fallback = "—") => {
 	for (const el of elements) {
 		resetValue(el, fallback);
 	}
+	paintSparkline(root);
 };
 
 /*
@@ -204,6 +250,7 @@ export const Component = ({
 				walk(root, val);
 				if (onValue) onValue(val, root);
 			});
+			paintSparkline(root, ring);
 		};
 
 		const resolve = () =>

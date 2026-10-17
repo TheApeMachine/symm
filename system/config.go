@@ -19,6 +19,8 @@ type Config struct {
 	WebSocket *WebSocket
 	Market    *Market
 	Learning  *Learning
+	Detector  *Detector
+	Paper     *Paper
 	Storage   *Storage
 	UI        *UI
 	Workbench *Workbench
@@ -37,6 +39,8 @@ func NewConfig() *Config {
 		WebSocket: NewWebSocket(),
 		Market:    NewMarket(),
 		Learning:  NewLearning(),
+		Detector:  NewDetector(),
+		Paper:     NewPaper(),
 		Storage:   NewStorage(),
 		UI:        NewUI(),
 		Workbench: NewWorkbench(),

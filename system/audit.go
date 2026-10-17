@@ -9,7 +9,10 @@ TakerFee is a fraction per side; the audit command sets it from its required
 --taker-fee-percent flag.
 */
 type Audit struct {
-	Epoch        int64
+	Epoch int64
+	// PolicyEpoch is the policy epoch the cognitive and realization stages
+	// judge: it must be trained on Epoch's ticks. 0 is the newest one that is.
+	PolicyEpoch  int64
 	Symbol       string
 	Ticks        int
 	Permutations int
@@ -43,6 +46,7 @@ func NewAudit() *Audit {
 
 	return &Audit{
 		Epoch:        viper.GetInt64("audit.epoch"),
+		PolicyEpoch:  viper.GetInt64("audit.policy_epoch"),
 		Symbol:       viper.GetString("audit.symbol"),
 		Ticks:        viper.GetInt("audit.ticks"),
 		Permutations: viper.GetInt("audit.permutations"),

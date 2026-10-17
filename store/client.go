@@ -50,47 +50,12 @@ type Client struct {
 var _ io.ReadWriteCloser = (*Client)(nil)
 
 func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) *Client {
-	cfg, err := config.LoadDefaultConfig(context.TODO())
+	client, err := newS3(optFns...)
 
 	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] error", err,
-		))
-
+		errnie.Error(err)
 		return nil
 	}
-
-	options := append([]func(*s3.Options){
-		func(options *s3.Options) {
-			if options.BaseEndpoint == nil && system.Cfg.Storage.S3.Endpoint != "" {
-				options.BaseEndpoint = aws.String(system.Cfg.Storage.S3.Endpoint)
-				options.UsePathStyle = true
-			}
-
-			if options.Region == "" {
-				options.Region = system.Cfg.Storage.S3.Region
-			}
-
-			if system.Cfg.Storage.S3.Anonymous || system.Cfg.Storage.S3.AccessKeyID == "" {
-				options.Credentials = credentials.NewStaticCredentialsProvider(
-					"anonymous", "anonymous", "",
-				)
-			}
-
-			// Override Default Transport Values
-			options.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(
-				transport *http.Transport,
-			) {
-				transport.ResponseHeaderTimeout = 30 * time.Second
-				transport.MaxIdleConns = 256
-				transport.MaxIdleConnsPerHost = 64
-				transport.WriteBufferSize = 1024 * 1024
-				transport.ReadBufferSize = 1024 * 1024
-			})
-		},
-	}, optFns...)
-
-	client := s3.NewFromConfig(cfg, options...)
 
 	_, err = client.CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(bucket),
@@ -117,7 +82,11 @@ func NewClient(ctx context.Context, bucket string, optFns ...func(*s3.Options)) 
 	return store
 }
 
-func (client *Client) List(prefix string, delimiter ...string) iter.Seq[*s3.ListObjectsV2Output] {
+/*
+List pages the objects under prefix. A page that fails to list is yielded as
+an error naming the prefix and ends the sequence.
+*/
+func (client *Client) List(prefix string, delimiter ...string) iter.Seq2[*s3.ListObjectsV2Output, error] {
 	input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(client.bucket),
 		Prefix: aws.String(prefix),
@@ -129,19 +98,16 @@ func (client *Client) List(prefix string, delimiter ...string) iter.Seq[*s3.List
 
 	paginator := s3.NewListObjectsV2Paginator(client.s3Client, input)
 
-	return func(yield func(*s3.ListObjectsV2Output) bool) {
+	return func(yield func(*s3.ListObjectsV2Output, error) bool) {
 		for paginator.HasMorePages() {
 			page, err := paginator.NextPage(client.Context())
 
 			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO, "[store.client] listing error", err,
-				))
-
+				yield(nil, errnie.Err(errnie.IO, "[store.client] listing "+prefix, err))
 				return
 			}
 
-			if !yield(page) {
+			if !yield(page, nil) {
 				return
 			}
 		}
@@ -237,7 +203,11 @@ func Epochs(client *Client, prefix string) ([]uint64, error) {
 
 	epochs := make([]uint64, 0)
 
-	for page := range client.List(prefix, "/") {
+	for page, err := range client.List(prefix, "/") {
+		if err != nil {
+			return nil, err
+		}
+
 		for _, common := range page.CommonPrefixes {
 			if common.Prefix == nil {
 				continue
@@ -253,15 +223,14 @@ func Epochs(client *Client, prefix string) ([]uint64, error) {
 		}
 	}
 
-	slices.Sort(epochs)
-	return slices.Compact(epochs), nil
+	return sortedEpochs(epochs), nil
 }
 
 /*
 ListKeys collects all object keys matching the given prefix(es) and sorts them
-chronologically by (Epoch, Tick, SeqIdx).
+chronologically by (Epoch, Tick, SeqIdx). A listing failure is returned.
 */
-func (client *Client) ListKeys(prefixes ...string) []string {
+func (client *Client) ListKeys(prefixes ...string) ([]string, error) {
 	if len(prefixes) == 0 {
 		prefixes = []string{""}
 	}
@@ -270,7 +239,11 @@ func (client *Client) ListKeys(prefixes ...string) []string {
 	seen := make(map[string]bool)
 
 	for _, prefix := range prefixes {
-		for page := range client.List(prefix) {
+		for page, err := range client.List(prefix) {
+			if err != nil {
+				return nil, err
+			}
+
 			for _, object := range page.Contents {
 				if object.Key != nil && !seen[*object.Key] {
 					seen[*object.Key] = true
@@ -281,36 +254,44 @@ func (client *Client) ListKeys(prefixes ...string) []string {
 	}
 
 	sortKeys(keys)
-	return keys
+	return keys, nil
 }
 
 /*
-Values returns an iterator yielding each Value found under prefixes, in key
-order. A key that does not download or decode is raised and skipped: the
-iterator cannot return it, so the error is logged with the key.
+Values yields each Value found under prefixes, in key order. A listing,
+download or decode failure is yielded as an error naming the key and ends
+the sequence: callers return it, nothing is skipped.
 */
-func Values(client *Client, prefixes ...string) iter.Seq[*data.Value] {
-	return func(yield func(*data.Value) bool) {
+func Values(client *Client, prefixes ...string) iter.Seq2[*data.Value, error] {
+	return func(yield func(*data.Value, error) bool) {
 		if client == nil {
-			errnie.Error(errnie.Err(errnie.Validation, "[store.client] no client to read values from", nil))
+			yield(nil, errnie.Err(errnie.Validation, "[store.client] no client to read values from", nil))
 			return
 		}
 
-		for _, key := range client.ListKeys(prefixes...) {
+		keys, err := client.ListKeys(prefixes...)
+
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+
+		for _, key := range keys {
 			payload, err := client.Download(key)
 
 			if err != nil {
-				continue
+				yield(nil, errnie.Err(errnie.IO, "[store.client] download "+key, err))
+				return
 			}
 
 			val := data.New()
 
 			if _, err := val.Write(payload); err != nil {
-				errnie.Error(errnie.Err(errnie.UnprocessableContent, "[store.client] "+key+" does not decode as a Value", err))
-				continue
+				yield(nil, errnie.Err(errnie.UnprocessableContent, "[store.client] "+key+" does not decode as a Value", err))
+				return
 			}
 
-			if !yield(val) {
+			if !yield(val, nil) {
 				return
 			}
 		}
@@ -324,7 +305,13 @@ returning io.EOF when completed.
 func (client *Client) Read(p []byte) (n int, err error) {
 	if client.currentPayload == nil || client.payloadOffset >= len(client.currentPayload) {
 		if client.keys == nil {
-			client.keys = client.ListKeys(client.prefix)
+			keys, err := client.ListKeys(client.prefix)
+
+			if err != nil {
+				return 0, err
+			}
+
+			client.keys = keys
 			client.cursor = 0
 		}
 
@@ -450,7 +437,12 @@ func (client *Client) DeletePrefix(prefix string) error {
 		return errnie.Error(errnie.Err(errnie.Validation, "[store.client] no S3 client", nil))
 	}
 
-	keys := client.ListKeys(prefix)
+	keys, err := client.ListKeys(prefix)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
 	for _, key := range keys {
 		_, err := client.s3Client.DeleteObject(client.Context(), &s3.DeleteObjectInput{
 			Bucket: aws.String(client.bucket),
@@ -473,7 +465,12 @@ func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 		return errnie.Error(errnie.Err(errnie.Validation, "[store.client] no S3 client", nil))
 	}
 
-	keys := client.ListKeys(sourcePrefix)
+	keys, err := client.ListKeys(sourcePrefix)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
 	for _, key := range keys {
 		relKey := strings.TrimPrefix(key, sourcePrefix)
 		destKey := strings.TrimSuffix(destPrefix, "/") + "/" + strings.TrimPrefix(relKey, "/")
@@ -501,4 +498,53 @@ func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 		}
 	}
 	return nil
+}
+
+/*
+newS3 is the configured S3 API client every store view shares: endpoint,
+region and credentials from system.Cfg.Storage.S3, then optFns.
+*/
+func newS3(optFns ...func(*s3.Options)) (*s3.Client, error) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+
+	if err != nil {
+		return nil, errnie.Err(errnie.IO, "[store.client] aws config", err)
+	}
+
+	options := append([]func(*s3.Options){
+		func(options *s3.Options) {
+			if options.BaseEndpoint == nil && system.Cfg.Storage.S3.Endpoint != "" {
+				options.BaseEndpoint = aws.String(system.Cfg.Storage.S3.Endpoint)
+				options.UsePathStyle = true
+			}
+
+			if options.Region == "" {
+				options.Region = system.Cfg.Storage.S3.Region
+			}
+
+			if system.Cfg.Storage.S3.Anonymous || system.Cfg.Storage.S3.AccessKeyID == "" {
+				options.Credentials = credentials.NewStaticCredentialsProvider(
+					"anonymous", "anonymous", "",
+				)
+			}
+
+			// Override Default Transport Values
+			options.HTTPClient = awshttp.NewBuildableClient().WithTransportOptions(func(
+				transport *http.Transport,
+			) {
+				transport.ResponseHeaderTimeout = 30 * time.Second
+				transport.MaxIdleConns = 256
+				transport.MaxIdleConnsPerHost = 64
+				transport.WriteBufferSize = 1024 * 1024
+				transport.ReadBufferSize = 1024 * 1024
+			})
+		},
+	}, optFns...)
+
+	return s3.NewFromConfig(cfg, options...), nil
+}
+
+func sortedEpochs(epochs []uint64) []uint64 {
+	slices.Sort(epochs)
+	return slices.Compact(epochs)
 }

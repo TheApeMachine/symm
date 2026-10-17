@@ -1,5 +1,3 @@
-import { useNavigate } from "@tanstack/react-router";
-import { useSelector } from "@tanstack/react-store";
 import { focusAtom, type RingBuffer, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
@@ -17,8 +15,11 @@ import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Meter } from "#/components/ui/meter";
 import { Modal } from "#/components/ui/modal";
+import { scaleSparklineValues } from "#/components/ui/sparkline";
 import { Typography } from "#/components/ui/typography";
-import { Value } from "#/types/value";
+import type { Value } from "#/types/value";
+import { useNavigate } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
 
 const isResonance = (source: string) => source === "resonance";
 
@@ -40,16 +41,25 @@ const readingsFromValues = (
 		let val: number | null = null;
 		if (headline) {
 			for (const metric of m.metrics ?? []) {
-				if (metric?.name === headline && Number.isFinite(metric.raw)) {
-					val = metric.snm || metric.raw;
+				if (metric?.name !== headline) continue;
+				const chosen =
+					typeof metric.snm === "number" && Number.isFinite(metric.snm)
+						? metric.snm
+						: metric.raw;
+				if (Number.isFinite(chosen)) {
+					val = chosen;
 					break;
 				}
 			}
 		}
 		if (val === null && m.metrics?.length) {
 			const first = m.metrics[0];
-			if (first && Number.isFinite(first.raw)) {
-				val = first.snm || first.raw;
+			const chosen =
+				typeof first.snm === "number" && Number.isFinite(first.snm)
+					? first.snm
+					: first.raw;
+			if (Number.isFinite(chosen)) {
+				val = chosen;
 			}
 		}
 		if (val !== null && Number.isFinite(val)) {
@@ -60,14 +70,10 @@ const readingsFromValues = (
 	return points;
 };
 
-const relativeToOwnRange = (values: number[]): number[] => {
-	if (values.length === 0) return [];
-
-	const min = Math.min(...values);
-	const max = Math.max(...values);
-	const range = max - min;
-
-	return values.map((value) => (range > 0 ? (value - min) / range : 1));
+const meterPercent = (value: number | null): number => {
+	if (value === null || !Number.isFinite(value)) return 0;
+	const magnitude = Math.abs(value);
+	return Math.min(100, magnitude <= 1 ? magnitude * 100 : magnitude);
 };
 
 const formatMetricValue = (val: number | null): string => {
@@ -110,9 +116,11 @@ export const KernelInspector = () => {
 	const resonance = active && isResonance(source);
 
 	const signalStore = source ? signals[source] : undefined;
-	const ring = useSelector(signalStore ?? signals.hawkes, (state) =>
-		signalStore ? (state[focusSymbol] ?? null) : null,
+	const published = useSelector(signalStore ?? signals.hawkes, (state) =>
+		signalStore ? (state[focusSymbol]?.end ?? 0) : 0,
 	);
+	const ring =
+		published >= 0 ? (signalStore?.state[focusSymbol] ?? null) : null;
 
 	if (!active) {
 		return null;
@@ -124,19 +132,16 @@ export const KernelInspector = () => {
 	const status: SignalHealthStatus = latest === null ? "waiting" : "measured";
 	const badge = kernelStatusMeta(status);
 
-	const relativePoints = resonance ? points : relativeToOwnRange(points);
+	const relativePoints = resonance ? points : scaleSparklineValues(points);
 	const paths = kernelSparkPaths(relativePoints, status);
-	const level =
-		relativePoints.length > 0 ? relativePoints[relativePoints.length - 1] : 0;
+	const level = meterPercent(latest);
 
 	const metrics = resonance ? [] : sourceMetrics(source);
 	const metricReadouts = metrics.map((name) => {
 		let raw: number | null = null;
 		let snm = 0;
 
-		const count = ring?.getBufferLength
-			? ring.getBufferLength()
-			: 0;
+		const count = ring?.getBufferLength ? ring.getBufferLength() : 0;
 		let row: Value | null = null;
 		for (let i = count - 1; i >= 0; i--) {
 			const candidate = ring?.get(i);
@@ -160,7 +165,7 @@ export const KernelInspector = () => {
 		: (sourceHeadline(source) ?? "");
 
 	const valueLabel = resonance
-		? `${(level * 100).toFixed(0)}%`
+		? `${((latest ?? 0) * 100).toFixed(0)}%`
 		: latest === null
 			? "—"
 			: latest.toFixed(2);
@@ -230,7 +235,7 @@ export const KernelInspector = () => {
 
 				<Flex.Column gap={2}>
 					<Meter
-						percent={level * 100}
+						percent={level}
 						label={resonance ? "Confidence" : "Level"}
 						value={valueLabel}
 						variant={status === "measured" ? "warning" : "disabled"}
@@ -262,7 +267,7 @@ export const KernelInspector = () => {
 							{metricReadouts.map((metric) => (
 								<Meter
 									key={metric.name}
-									percent={metric.raw === null ? 0 : Math.abs(metric.snm) * 100}
+									percent={metric.raw === null ? 0 : meterPercent(metric.snm)}
 									label={metricLabel(metric.name)}
 									value={formatMetricValue(metric.raw)}
 									variant={metric.raw === null ? "disabled" : "warning"}

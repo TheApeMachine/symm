@@ -16,7 +16,15 @@ func TestNewConfig(t *testing.T) {
 			So(Cfg.UI, ShouldNotBeNil)
 			So(Cfg.Workbench, ShouldNotBeNil)
 			So(Cfg.Audit, ShouldNotBeNil)
-			So(Cfg.Resonance.LearningRate, ShouldBeGreaterThan, 0)
+		})
+
+		Convey("The gate has no defaults: unconfigured, Validate names every missing key", func() {
+			err := NewResonance().Validate()
+			So(err, ShouldNotBeNil)
+
+			for _, key := range []string{"resonance.gate", "resonance.surprise_z", "resonance.learning_rate"} {
+				So(err.Error(), ShouldContainSubstring, key+" is not configured")
+			}
 		})
 
 		Convey("It should construct independent config instances", func() {

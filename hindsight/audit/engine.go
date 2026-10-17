@@ -108,6 +108,7 @@ func NewEngine(ctx context.Context, client *s3store.Client) (*Engine, error) {
 			NewPrecursorStage(ctx),
 			NewCognitiveStage(ctx),
 			NewTruthfulnessStage(ctx),
+			NewRealizationStage(ctx),
 		},
 	}, nil
 }
@@ -180,10 +181,58 @@ func (engine *Engine) resolveTargetEpoch() (uint64, error) {
 }
 
 /*
+resolvePolicy is the policy epoch the stages judge: system.Cfg.Audit.PolicyEpoch
+when set (it must be trained on epoch's ticks), else the newest policy epoch
+trained on them; none is the zero gate (the policy stages report it).
+*/
+func (engine *Engine) resolvePolicy(epoch uint64) (data.PolicyGate, error) {
+	gates, err := s3store.PolicyGates(engine.store)
+
+	if err != nil {
+		return data.PolicyGate{}, err
+	}
+
+	var chosen data.PolicyGate
+
+	for _, gate := range gates {
+		if want := uint64(system.Cfg.Audit.PolicyEpoch); want > 0 {
+			if gate.Epoch != want {
+				continue
+			}
+
+			if gate.TickEpoch != epoch {
+				return data.PolicyGate{}, errnie.Err(errnie.Validation, fmt.Sprintf(
+					"[audit:engine] policy epoch %d was trained on tick epoch %d, not the audited %d", want, gate.TickEpoch, epoch,
+				), nil)
+			}
+
+			chosen = gate
+			break
+		}
+
+		if gate.TickEpoch == epoch && gate.Epoch > chosen.Epoch {
+			chosen = gate
+		}
+	}
+
+	if want := system.Cfg.Audit.PolicyEpoch; want > 0 && chosen.Epoch == 0 {
+		return data.PolicyGate{}, errnie.Err(errnie.NotFound, fmt.Sprintf("[audit:engine] no policy epoch %d is published", want), nil)
+	}
+
+	if chosen.Epoch == 0 {
+		errnie.Warn(fmt.Sprintf("[audit:engine] no policy epoch is trained on tick epoch %d", epoch))
+	} else {
+		errnie.Info("[audit:engine] judging policies of " + chosen.String())
+	}
+
+	return chosen, nil
+}
+
+/*
 Routes name the stages each kind of measurement is fanned out to.
 */
 type routes struct {
-	trades, signals, prices, joins, excursions, policies []AuditorStage
+	trades, signals, prices, joins, excursions, policies, papers []AuditorStage
 }
 
 func (engine *Engine) routes() routes {
@@ -209,7 +258,8 @@ func (engine *Engine) routes() routes {
 		prices:     pick("audit:contract", "audit:vitality", "audit:sympathy", "audit:truthfulness"),
 		joins:      pick("audit:stability", "audit:dynamics", "audit:precursor"),
 		excursions: pick("audit:precursor", "audit:contract"),
-		policies:   pick("audit:cognitive", "audit:contract"),
+		policies:   pick("audit:cognitive", "audit:contract", "audit:realization"),
+		papers:     pick("audit:realization"),
 	}
 }
 
@@ -222,7 +272,7 @@ func send(stages []AuditorStage, measurement *data.Value) {
 /*
 feed streams epoch to the stages and closes their channels when done.
 */
-func (engine *Engine) feed(epoch uint64) error {
+func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 	defer func() {
 		for _, stage := range engine.stages {
 			close(stage.Channel())
@@ -234,7 +284,11 @@ func (engine *Engine) feed(epoch uint64) error {
 	var ticks int
 	var lastTick uint64
 
-	for value := range s3store.Values(engine.store, data.TickPrefix(epoch)) {
+	for value, err := range s3store.Values(engine.store, data.TickPrefix(epoch)) {
+		if err != nil {
+			return err
+		}
+
 		if err := engine.Context().Err(); err != nil {
 			return err
 		}
@@ -279,7 +333,11 @@ func (engine *Engine) feed(epoch uint64) error {
 	var excursions, policies int
 
 	for _, symbol := range symbols {
-		for excursion := range s3store.Values(engine.store, data.ExcursionPrefixes(symbol, epoch)...) {
+		for excursion, err := range s3store.Values(engine.store, data.ExcursionPrefixes(symbol, epoch)...) {
+			if err != nil {
+				return err
+			}
+
 			// An excursion that ends after the audited ticks is outside the
 			// window the stages saw.
 			if excursion.Tick > lastTick {
@@ -291,12 +349,31 @@ func (engine *Engine) feed(epoch uint64) error {
 		}
 	}
 
-	for policy := range s3store.Values(engine.store, data.PolicyPrefixes(epoch)...) {
-		policies++
-		send(route.policies, policy)
+	if policy.Epoch != 0 {
+		for value, err := range s3store.Values(engine.store, data.PolicyPrefixes(policy.Epoch)...) {
+			if err != nil {
+				return err
+			}
+
+			policies++
+			send(route.policies, value)
+		}
 	}
 
-	errnie.Info(fmt.Sprintf("[audit:engine] epoch %d: %d excursions, %d policies", epoch, excursions, policies))
+	// Paper records of every run; the realization stage judges those
+	// traded under this epoch's policies.
+	var papers int
+
+	for paper, err := range s3store.Values(engine.store, data.PaperActionPrefixes()...) {
+		if err != nil {
+			return err
+		}
+
+		papers++
+		send(route.papers, paper)
+	}
+
+	errnie.Info(fmt.Sprintf("[audit:engine] epoch %d: %d excursions, %d policies, %d paper records", epoch, excursions, policies, papers))
 
 	return nil
 }
@@ -312,6 +389,12 @@ func (engine *Engine) Run() error {
 		return errnie.Error(err)
 	}
 
+	policy, err := engine.resolvePolicy(epoch)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
 	group, _ := errgroup.WithContext(engine.Context())
 
 	for _, stage := range engine.stages {
@@ -321,7 +404,7 @@ func (engine *Engine) Run() error {
 	}
 
 	group.Go(func() error {
-		return engine.feed(epoch)
+		return engine.feed(epoch, policy)
 	})
 
 	if err := group.Wait(); err != nil {
@@ -333,6 +416,13 @@ func (engine *Engine) Run() error {
 
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("# Audit of epoch %d (%s)\n\n", epoch, data.TickPrefix(epoch)))
+
+	if policy.Epoch == 0 {
+		builder.WriteString("No policy epoch is trained on these ticks.\n\n")
+	} else {
+		builder.WriteString(fmt.Sprintf("Policies: %s.\n\n", policy))
+	}
+
 	builder.WriteString("| stage | result |\n|---|---|\n")
 
 	for _, stage := range engine.stages {

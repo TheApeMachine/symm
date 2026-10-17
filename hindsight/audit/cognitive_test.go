@@ -42,6 +42,26 @@ func TestCognitiveStage(t *testing.T) {
 			So(stage.Report(), ShouldBeEmpty)
 		})
 
+		Convey("Published policies report the gate they were trained under", func() {
+			enter := policyFixture(1, "enter", "R01/R04", 0.01)
+			exit := policyFixture(2, "exit", "R02/R03", 0.01)
+			So(feed(stage, []*data.Value{enter, exit}), ShouldBeEmpty)
+
+			gate := stage.Data().(map[string]any)["gate"].(map[string]any)
+			So(gate["enabled"], ShouldEqual, true)
+			So(gate["policy_epoch"], ShouldEqual, "1792187257188073000")
+		})
+
+		Convey("A policy without a gate tag is a violation", func() {
+			policy := &data.Value{Origin: data.PolicyOrigin, Role: "enter", Scope: data.PolicyScope, Epoch: realizationEpoch, Tick: 1}
+			policy.FormatPrefix()
+			So(data.AppendPolicy(policy, "R01/R04", []float64{0.01, 30, 4, 0.01, 0.75}), ShouldBeNil)
+
+			violations := feed(stage, []*data.Value{policy})
+			So(violations, ShouldHaveLength, 1)
+			So(violations[0].Name, ShouldEqual, "cognitive.gate")
+		})
+
 		Convey("When auditing complete abstention (100% wait actions)", func() {
 			measurements := make([]*data.Value, 0, 25)
 

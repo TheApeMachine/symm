@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	goruntime "runtime"
-	"strings"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning"
@@ -19,7 +20,10 @@ import (
 )
 
 /*
-Solver orchestrates Predictive Coding across the multi-sensory microstructure stream.
+Solver runs one predictive coder per symbol over that symbol's signal
+features (Features), at the configured pace. Each Step reads one symbol of
+one stored tick and returns the coder's reading as a Value; its "surprise"
+is the coder's reconstruction error per feature (ReadSurprise).
 */
 type Solver struct {
 	*runtime.System
@@ -36,12 +40,54 @@ type Solver struct {
 }
 
 /*
-NewSolver returns a feature detection solver using the configured pace.
+Feature is one signal metric the solver reads: the label a source writes
+(the same labels the grid pins, nomagique/store/grid_pins.go).
 */
-func NewSolver(
-	ctx context.Context,
-	pace float64,
-) *Solver {
+type Feature struct {
+	Source string
+	Label  string
+}
+
+/*
+Features are the solver's inputs, one headline metric per signal source, in
+coder order. A source a tick carries for the symbol without its pinned label
+is an error; a source the tick does not carry (signals arrive with trades,
+so not every tick carries every source) holds its last standardized value,
+zero until its first arrival.
+*/
+var Features = []Feature{
+	{"correlation", "cohort_covariance_score"},
+	{"leadlag", "covariance_score_gain_median"},
+	{"liquidity", "relative_spread"},
+	{"sentiment", "breadth"},
+	{"cvd", "signed_net_fraction"},
+	{"depthflow", "book_imbalance"},
+	{"morphology", "morphology_change"},
+	{"hawkes", "branching_spectral_radius"},
+	{"pumpdump", "spread_ratio"},
+	{"toxicity", "retreat_fraction:bid"},
+}
+
+/*
+ReadingOrigin and ReadingRole identify a Step's reading Value; its Scope is
+the symbol, its Epoch, Tick and Timestamp those of the tick.
+*/
+const (
+	ReadingOrigin = "resonance"
+	ReadingRole   = "reading"
+)
+
+/*
+NewSolver returns a solver stepping at pace; a pace that is not positive is
+an error.
+*/
+func NewSolver(ctx context.Context, pace float64) (*Solver, error) {
+	if !(pace > 0) || pace > paceUpper {
+		return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
+			"resonance: pace must be in (0, %g] (a coder's rate rests at pace and moves up to %g), got %g", paceUpper, paceUpper, pace,
+		), nil)
+	}
+
 	solver := &Solver{
 		System:        runtime.NewSystem(ctx, "resonance"),
 		detectors:     &sync.Map{},
@@ -51,70 +97,72 @@ func NewSolver(
 		pace:          pace,
 	}
 
-	if pace <= 0 {
-		solver.Transition(runtime.ERROR)
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("resonance: pace must be positive, got %f", pace),
-			nil,
-		))
-
-		return solver
-	}
-
 	solver.Transition(runtime.READY)
-	return solver
+	return solver, nil
 }
 
 /*
-Step advances the symbol's predictive coder over the canonical microstructure
-sensory features from completed prior-stage signal outputs.
+Step advances symbol's predictive coder by one stored tick: its Features,
+standardized causally, and the tick's touch midpoint as the coder's
+reference (no reference when the tick recorded either side as absent).
 */
-func (solver *Solver) Step(prior *data.Value) *data.Value {
-	if solver.Status() != runtime.READY {
-		errnie.Warn(solver.Name() + ": Step called before READY; dropping event")
-		return nil
+func (solver *Solver) Step(tick *data.Value, symbol *broker.SymbolTick) (*data.Value, error) {
+	if tick == nil || symbol == nil || symbol.Symbol == "" {
+		return nil, errnie.Err(errnie.Validation, "resonance: Step needs a tick and one of its symbols", nil)
 	}
 
-	if solver.Error() != nil || prior == nil {
-		return nil
+	if err := solver.Error(); err != nil {
+		return nil, errnie.Err(errnie.Internal, "resonance: solver failed earlier", err)
 	}
 
-	symbol := prior.Scope
-	if symbol == "" {
-		return nil
+	name := symbol.Symbol
+	sources := make(map[string]data.Signal, len(symbol.Signals))
+
+	for _, signal := range symbol.Signals {
+		if signal.Symbol != name {
+			return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
+				"resonance: %s carries a %s signal for %s among %s's", tick.Prefix, signal.Source, signal.Symbol, name,
+			), nil)
+		}
+
+		sources[signal.Source] = signal
 	}
 
-	metrics := data.Metrics(prior)
-	midpoint := firstPositive(metrics, "midpoint", "last_price", "price", "last")
+	features, err := solver.scorer(name).Step(sources)
 
-	features := solver.scorer(symbol).Step(metrics)
+	if err != nil {
+		return nil, errnie.Err(errnie.UnprocessableContent, fmt.Sprintf("resonance: %s of %s", name, tick.Prefix), err)
+	}
 
-	loadedStep, _ := solver.steps.LoadOrStore(symbol, &atomic.Int64{})
+	var midpoint float64
+
+	if symbol.Price.Bid != nil && symbol.Price.Ask != nil {
+		midpoint = (symbol.Price.Bid.Float64() + symbol.Price.Ask.Float64()) / 2
+	}
+
+	loadedStep, _ := solver.steps.LoadOrStore(name, &atomic.Int64{})
 	step := loadedStep.(*atomic.Int64).Add(1)
 
-	coder := solver.coder(symbol, len(features))
-	if coder == nil {
-		return nil
+	coder, err := solver.coder(name, len(features))
+
+	if err != nil {
+		return nil, err
 	}
 
 	hasReference := 0.0
-	if _, held := solver.references.Load(symbol); held {
+
+	if _, held := solver.references.Load(name); held {
 		hasReference = 1
 	}
-	if midpoint > 0 {
-		solver.references.Store(symbol, midpoint)
-	}
 
-	sec := float64(prior.Timestamp) / 1e9
-	if prior.Timestamp < 1e11 {
-		sec = float64(prior.Timestamp)
+	if midpoint > 0 {
+		solver.references.Store(name, midpoint)
 	}
 
 	stepStarted := time.Now()
 	out := transport.Read[[12][]float64](coder.Next(transport.NewValue([2][]float64{
 		features,
-		{midpoint, hasReference, float64(step), sec},
+		{midpoint, hasReference, float64(step), float64(tick.Timestamp) / 1e9},
 	}).Next(nil)))
 
 	if solver.ObserveModule != nil {
@@ -122,163 +170,69 @@ func (solver *Solver) Step(prior *data.Value) *data.Value {
 	}
 
 	if err := coder.Error(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("resonance: detector step failed for %s", symbol),
-			err,
-		))
-		return nil
+		return nil, errnie.Err(errnie.Internal, fmt.Sprintf("resonance: coder step failed for %s at %s", name, tick.Prefix), err)
 	}
 
-	res, err := publishReturns(prior, out, coderArch(len(features)))
-	if err != nil {
-		solver.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("resonance: unable to publish coder reading for %s", symbol),
-			err,
-		))
-		return nil
+	reading := data.NewValue(ReadingOrigin, ReadingRole, name)
+	reading.Epoch, reading.Tick, reading.Timestamp = tick.Epoch, tick.Tick, tick.Timestamp
+	reading.FormatPrefix()
+
+	if _, err := publishReturns(reading, out, coderArch(len(features))); err != nil {
+		return nil, errnie.Err(errnie.Internal, fmt.Sprintf("resonance: unable to publish coder reading for %s", name), err)
 	}
 
-	return res
+	return reading, nil
+}
+
+/*
+ReadSurprise is the surprise a Step reading carries.
+*/
+func ReadSurprise(reading *data.Value) (float64, error) {
+	surprise, ok := data.Metrics(reading)["surprise"]
+
+	if !ok {
+		return 0, errnie.Err(errnie.UnprocessableContent, "resonance: reading carries no surprise", nil)
+	}
+
+	return surprise, nil
+}
+
+/*
+paceUpper is the fastest learning rate a symbol's coder may move to (its
+Pace's upper bound); the pace it rests at is the solver's.
+*/
+const paceUpper = 0.150
+
+/*
+Rates are the two timescales of every coder's Pace in a solver stepping at
+pace: fast, the rate a coder moves up to when its error is badly ranked, and
+slow, the pace it rests at. They are the coders' own learning timescales, so
+averages of a coder's error at these rates track it as fast and as slowly as
+it can learn.
+*/
+func Rates(pace float64) (fast, slow float64) {
+	return paceUpper, pace
 }
 
 func coderArch(featureDim int) []int {
-	if featureDim <= 0 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("resonance: featureDim must be positive, got %d", featureDim),
-			nil,
-		))
-		return nil
-	}
-
 	return []int{featureDim, featureDim * 4, featureDim * 2, featureDim}
 }
 
-func (solver *Solver) coder(symbol string, featureDim int) *learning.PredictiveCoder {
+func (solver *Solver) coder(symbol string, featureDim int) (*learning.PredictiveCoder, error) {
 	if loaded, found := solver.detectors.Load(symbol); found {
-		if coder, ok := loaded.(*learning.PredictiveCoder); ok {
-			return coder
-		}
+		return loaded.(*learning.PredictiveCoder), nil
 	}
 
-	arch := coderArch(featureDim)
-	if arch == nil {
-		return nil
-	}
-
-	pace := learning.NewPace(solver.pace, solver.pace*0.1, 0.150, 0.1, 0.2, 256)
+	pace := learning.NewPace(solver.pace, solver.pace*0.1, paceUpper, 0.1, 0.2, 256)
 	target := learning.NewDirectionalTarget(0)
-	coder := learning.NewPredictiveCoder(arch, 8, target, pace, 0.05, true, learning.ReadoutAll).(*learning.PredictiveCoder)
+	coder := learning.NewPredictiveCoder(coderArch(featureDim), 8, target, pace, 0.05, true, learning.ReadoutAll).(*learning.PredictiveCoder)
+
+	if err := coder.Error(); err != nil {
+		return nil, errnie.Err(errnie.Internal, "resonance: predictive coder for "+symbol, err)
+	}
 
 	actual, _ := solver.detectors.LoadOrStore(symbol, coder)
-	return actual.(*learning.PredictiveCoder)
-}
-
-func extractHeadlineMetric(index int, metrics map[string]float64) (float64, bool) {
-	if len(metrics) == 0 {
-		return 0, false
-	}
-
-	var candidates []string
-
-	switch index {
-	case 0: // Correlation
-		candidates = []string{
-			"covariance_score", "cohort_covariance_score", "covariance",
-			"absolute_covariance_score", "relative_return_energy",
-		}
-	case 1: // LeadLag
-		candidates = []string{
-			"covariance_score_gain_median", "led_peer_share",
-		}
-	case 2: // Liquidity
-		candidates = []string{
-			"touch_notional_imbalance", "relative_spread", "spread", "depth_zscore:bid",
-		}
-	case 3: // Sentiment
-		candidates = []string{
-			"signed_fraction_zscore", "signed_fraction", "signed_median",
-			"median_absolute_zscore", "advance_fraction", "breadth", "median_return",
-		}
-	case 4: // CVD
-		candidates = []string{
-			"signed_net_fraction_zscore", "signed_net_fraction",
-			"cumulative_volume_delta", "net_notional_rate", "signed_count_fraction",
-		}
-	case 5: // DepthFlow
-		candidates = []string{
-			"book_imbalance_zscore", "book_imbalance",
-		}
-	case 6: // Morphology
-		candidates = []string{
-			"morphology_change_zscore", "morphology_change",
-			"book_shape_distance", "book_shape_ks",
-		}
-	case 7: // Hawkes
-		candidates = []string{
-			"branching_spectral_radius", "conditional_intensity:buy",
-			"arrival_rate", "event_fraction:buy", "excitation_fraction:buy",
-		}
-	case 8: // PumpDump
-		candidates = []string{
-			"spread_zscore", "notional_rate_zscore", "spread_ratio",
-			"notional_rate_ratio", "relative_spread",
-		}
-	case 9: // Toxicity
-		candidates = []string{
-			"fill_fraction_zscore:bid", "fill_fraction_zscore:ask",
-			"net_withdrawal_fraction:bid", "retreat_fraction:bid", "touch_fill_fraction:bid",
-		}
-	case 10: // Derivatives
-		candidates = []string{
-			"basis_zscore", "open_interest_growth_zscore", "basis",
-			"open_interest_growth_rate", "liquidation_signed_fraction", "log_basis",
-		}
-	}
-
-	for _, label := range candidates {
-		if val, found := lookupMetric(metrics, label); found && val != 0 {
-			return val, true
-		}
-	}
-
-	for _, label := range candidates {
-		if val, found := lookupMetric(metrics, label); found {
-			return val, true
-		}
-	}
-
-	return 0, false
-}
-
-func lookupMetric(metrics map[string]float64, label string) (float64, bool) {
-	if len(metrics) == 0 {
-		return 0, false
-	}
-
-	if val, found := metrics[label]; found {
-		return val, true
-	}
-
-	prefix := label + "@"
-	for k, val := range metrics {
-		if strings.HasPrefix(k, prefix) {
-			return val, true
-		}
-	}
-
-	return 0, false
-}
-
-func firstPositive(metrics map[string]float64, labels ...string) float64 {
-	for _, label := range labels {
-		if val, found := lookupMetric(metrics, label); found && val > 0 {
-			return val
-		}
-	}
-	return 0
+	return actual.(*learning.PredictiveCoder), nil
 }
 
 func (solver *Solver) scorer(symbol string) *featureScorer {
@@ -297,13 +251,17 @@ func (solver *Solver) scorer(symbol string) *featureScorer {
 
 type featureScorer struct {
 	isStepping   atomic.Bool
-	moments      [11]core.Primitive
-	residuals    [11]core.Primitive
-	standardized [11]float64
+	moments      []core.Primitive
+	residuals    []core.Primitive
+	standardized []float64
 }
 
 func newFeatureScorer() *featureScorer {
-	scorer := &featureScorer{}
+	scorer := &featureScorer{
+		moments:      make([]core.Primitive, len(Features)),
+		residuals:    make([]core.Primitive, len(Features)),
+		standardized: make([]float64, len(Features)),
+	}
 
 	for index := range scorer.moments {
 		scorer.moments[index] = statistic.NewEstimator()
@@ -313,40 +271,60 @@ func newFeatureScorer() *featureScorer {
 	return scorer
 }
 
-func (scorer *featureScorer) Step(metrics map[string]float64) []float64 {
+/*
+Step standardizes each Feature the tick carries for the symbol (a causal
+residual z-score over its running moments) and returns every Feature's
+latest standardized value, in Features order.
+*/
+func (scorer *featureScorer) Step(sources map[string]data.Signal) ([]float64, error) {
 	for !scorer.isStepping.CompareAndSwap(false, true) {
 		goruntime.Gosched()
 	}
 	defer scorer.isStepping.Store(false)
 
-	for index := range 11 {
-		val, ok := extractHeadlineMetric(index, metrics)
-		if !ok {
+	for source := range sources {
+		if !slices.ContainsFunc(Features, func(feature Feature) bool { return feature.Source == source }) {
+			return nil, errnie.Err(errnie.Validation, "resonance: signal source "+source+" has no pinned feature", nil)
+		}
+	}
+
+	for index, feature := range Features {
+		signal, carried := sources[feature.Source]
+
+		if !carried {
 			continue
+		}
+
+		val, err := signal.Metric(feature.Label)
+
+		if err != nil {
+			return nil, err
 		}
 
 		var reading *statistic.MomentReading
+
 		for out := range scorer.moments[index].Next(transport.NewValue(val).Next(nil)) {
 			reading = (*statistic.MomentReading)(out)
 		}
+
 		if err := scorer.moments[index].Error(); err != nil || reading == nil {
-			continue
+			return nil, errnie.Err(errnie.Internal, fmt.Sprintf("resonance: moments of %s/%s", feature.Source, feature.Label), err)
 		}
 
-		var residual statistic.CausalResidualResult
+		var residual *statistic.CausalResidualResult
+
 		for out := range scorer.residuals[index].Next(transport.NewValue(*reading).Next(nil)) {
-			residual = *(*statistic.CausalResidualResult)(out)
+			residual = (*statistic.CausalResidualResult)(out)
 		}
-		if err := scorer.residuals[index].Error(); err != nil {
-			continue
+
+		if err := scorer.residuals[index].Error(); err != nil || residual == nil {
+			return nil, errnie.Err(errnie.Internal, fmt.Sprintf("resonance: residual of %s/%s", feature.Source, feature.Label), err)
 		}
 
 		scorer.standardized[index] = residual.ZScore
 	}
 
-	features := make([]float64, 11)
-	copy(features, scorer.standardized[:])
-	return features
+	return slices.Clone(scorer.standardized), nil
 }
 
 func publishReturns(prior *data.Value, out [12][]float64, arch []int) (*data.Value, error) {
@@ -364,15 +342,13 @@ func publishReturns(prior *data.Value, out [12][]float64, arch []int) (*data.Val
 		}
 	}
 
-	if len(out[0]) > 1 {
-		data.AppendVector(prior, []float64{out[0][1]}, "energy")
-	} else {
-		data.AppendVector(prior, []float64{0}, "energy")
+	// The summary row is {reconstruction, energy, ..., surprise (5), ...}.
+	if len(out[0]) <= 5 {
+		return nil, fmt.Errorf("resonance: coder summary holds %d values, energy and surprise need 6", len(out[0]))
 	}
 
-	if len(out[0]) > 5 {
-		data.AppendVector(prior, []float64{out[0][5]}, "surprise")
-	}
+	data.AppendVector(prior, []float64{out[0][1]}, "energy")
+	data.AppendVector(prior, []float64{out[0][5]}, "surprise")
 
 	for i, val := range out[2] {
 		data.AppendVector(prior, []float64{val}, fmt.Sprintf("latent_%d", i))

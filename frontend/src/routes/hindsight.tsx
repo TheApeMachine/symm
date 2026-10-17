@@ -1,189 +1,218 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSelector } from "@tanstack/react-store";
+import { useEffect, useMemo, useState } from "react";
 import {
-	type CompareMode,
-	ComparePanel,
-	type Mark,
-	MarkBar,
-} from "#/components/hindsight/compare";
-import { Guide } from "#/components/hindsight/guide";
+	beginHindsight,
+	type HindsightExcursion,
+	type HindsightStream,
+	hindsightStore,
+} from "#/collections/hindsight";
 import {
-	fetchHindsightCaptures,
-	fetchHindsightEnvelope,
-	fetchHindsightGaps,
-	fetchHindsightLifecycle,
-	fetchHindsightMetricMap,
 	fetchHindsightRuns,
-	fetchHindsightState,
-	fetchHindsightTimeline,
-	capturesFromMeasurements,
+	summariesOf,
+	timelineOf,
 } from "#/components/hindsight/hindsight-api";
 import type {
-	HindsightCapture,
-	HindsightEnvelope,
 	HindsightEpisode,
-	HindsightGap,
-	HindsightLifecycleEvent,
-	HindsightMetricMap,
-	HindsightRef,
 	HindsightRun,
-	HindsightTimeline,
 	MarketCoordinate,
-	Measurement,
 	TimelineAxis,
 } from "#/components/hindsight/hindsight-types";
-import {
-	compareHindsightRef,
-	orderHindsightRefs,
-} from "#/components/hindsight/hindsight-types";
-import {
-	CaptureCard,
-	decodeEnvelopeState,
-	FrameStrip,
-	ProvenancePanel,
-	StatePanel,
-} from "#/components/hindsight/inspector";
-import { PositionIndex } from "#/components/hindsight/position-index";
-import {
-	buildPositions,
-	type Position,
-} from "#/components/hindsight/positions";
 import { EpisodeTargets, SymbolTargets } from "#/components/hindsight/targets";
 import { Overview, Timeline } from "#/components/hindsight/timeline";
 import {
-	formatClock,
-	formatCount,
-} from "#/components/hindsight/timeline-scale";
-import { Button } from "#/components/ui/button";
-import { Flex } from "#/components/ui/flex";
+	Badge,
+	Button,
+	Flex,
+	Section,
+	Toolbar,
+	Typography,
+} from "#/components/ui";
+import { sendCommand } from "#/providers/websocket";
 
 /*
-Hindsight — a microscope over a captured running system.
-
-The market tells us which slides are interesting; the capture tape tells us what
-reality reached SYMM; the witness tape tells us what SYMM produced from it. This
-surface puts those three in one horizontal frame: a declared market coordinate
-across the capture axis, the episodes a declared selector found on it, and — for
-whichever exact frame the playhead is parked on — the state the running binary
-actually held there, navigable back to the raw bytes by identity.
-
-Two rules shape the layout. Episode discovery never consults a SYMM output, so
-what the desk did is drawn in its own band beside the market record rather than
-inside it. And the future may choose where to look but may never change what was
-known there, so nothing below the timeline is ever recomputed from what happened
-afterwards.
+Hindsight reads one stored run back: the ticks collect wrote, the
+excursions detect found, the policies train published for the run and the
+paper records traded under them. The run list is REST (/hindsight/runs);
+the run index and each symbol stream over the hub socket.
 */
 
-const COORDINATES: MarketCoordinate[] = ["midpoint", "trade", "last"];
+const COORDINATES: MarketCoordinate[] = ["midpoint", "trade", "bid", "ask"];
 const AXES: TimelineAxis[] = ["time", "capture"];
 const DETAIL_BUCKETS = 320;
 const OVERVIEW_BUCKETS = 200;
 
-/*
-The reader's working posture, remembered between sessions. A split is the
-fraction of the inspection row given to provenance, held away from either edge
-so a pane can never be dragged out of existence.
-*/
-const SPLIT_KEY = "hindsight.split";
-const PLAIN_KEY = "hindsight.plain";
-const MIN_SPLIT = 0.15;
-const MAX_SPLIT = 0.85;
-
-const storedSplit = (): number => {
-	const stored = Number(globalThis.localStorage?.getItem(SPLIT_KEY));
-
-	if (!Number.isFinite(stored) || stored < MIN_SPLIT || stored > MAX_SPLIT) {
-		return 0.5;
+const send = (run: string, symbol: string) => {
+	try {
+		sendCommand(beginHindsight(run, symbol));
+	} catch (cause) {
+		console.error(cause);
+		hindsightStore.setState((state) => {
+			const slot = symbol === "" ? "index" : "stream";
+			const stream = state[slot];
+			return stream === null
+				? state
+				: {
+						...state,
+						[slot]: { ...stream, status: "error", error: String(cause) },
+					};
+		});
 	}
-
-	return stored;
 };
 
-const INITIAL_SPLIT = storedSplit();
-const INITIAL_PLAIN = globalThis.localStorage?.getItem(PLAIN_KEY) !== "0";
+const StreamStatus = ({
+	label,
+	stream,
+}: {
+	label: string;
+	stream: HindsightStream | null;
+}) => {
+	if (stream === null) return null;
 
-const digest = (value?: string | null): string =>
-	value == null || value === "" ? "—" : value.slice(0, 10);
+	const variant =
+		stream.status === "error"
+			? "error"
+			: stream.status === "done"
+				? "success"
+				: "warning";
+	const text =
+		stream.status === "streaming"
+			? `${label}: streaming ${stream.ticks.length || stream.symbols.length}`
+			: stream.status === "done"
+				? `${label}: ${stream.counts?.ticks ?? 0} ticks`
+				: `${label}: failed`;
+
+	return <Badge size="xs" variant={variant} label={text} />;
+};
+
+const ExcursionDetail = ({ excursion }: { excursion: HindsightExcursion }) => {
+	const f = excursion.fields;
+	const rows: Array<[string, string]> = [
+		["key", excursion.key],
+		[
+			"A / B / C / D tick",
+			`${f.a_tick} / ${f.b_tick} / ${f.c_tick} / ${f.d_tick}`,
+		],
+		[
+			"B → C price",
+			`${f.b_price} → ${f.c_price} (${(((f.c_price - f.b_price) / f.b_price) * 100).toFixed(3)}%)`,
+		],
+		["entry tick · ask", `${f.entry_tick} · ${f.entry_ask}`],
+		["exit tick · bid", `${f.exit_tick} · ${f.exit_bid}`],
+		[
+			"entry → exit",
+			`${(((f.exit_bid - f.entry_ask) / f.entry_ask) * 100).toFixed(3)}% before fees`,
+		],
+	];
+
+	return (
+		<Section fit="content" className="shrink-0">
+			<Section.Header
+				size="s"
+				title={`Excursion · ${excursion.kind}`}
+				meta="as detect stored it"
+			/>
+			<div className="grid grid-cols-[120px_1fr] gap-x-2 gap-y-0.5 p-2 font-mono text-[10px]">
+				{rows.map(([name, value]) => (
+					<div key={name} className="contents">
+						<span className="text-(--f4)">{name}</span>
+						<span className="break-all text-(--f1)">{value}</span>
+					</div>
+				))}
+			</div>
+		</Section>
+	);
+};
+
+const Policies = ({ stream }: { stream: HindsightStream }) => (
+	<Section fit="content" className="shrink-0">
+		<Section.Header
+			size="s"
+			title="Policies"
+			meta={
+				stream.policies.length === 0
+					? "train published none for this run"
+					: `${stream.policies.length} paths`
+			}
+		/>
+		<div className="max-h-48 overflow-y-auto font-mono text-[10px]">
+			{stream.policies
+				.slice()
+				.sort((left, right) => right.fields.gain - left.fields.gain)
+				.map((policy) => (
+					<div
+						key={`${policy.action}:${policy.path}`}
+						className="grid grid-cols-[1fr_44px_60px_44px_44px] gap-1.5 px-2 py-0.5"
+					>
+						<span className="truncate text-(--f1)">{policy.path}</span>
+						<span className="text-(--f3)">{policy.action}</span>
+						<span
+							className={
+								policy.fields.gain >= 0 ? "text-emerald-400" : "text-rose-400"
+							}
+						>
+							{(policy.fields.gain * 100).toFixed(3)}%
+						</span>
+						<span className="text-(--f4)">n {policy.fields.visits}</span>
+						<span className="text-(--f4)">
+							c {policy.fields.confidence.toFixed(2)}
+						</span>
+					</div>
+				))}
+		</div>
+	</Section>
+);
+
+const Papers = ({ stream }: { stream: HindsightStream }) => (
+	<Section fit="content" className="shrink-0">
+		<Section.Header
+			size="s"
+			title="Paper trades"
+			meta={
+				stream.papers.length === 0
+					? "none uploaded under this run's policies"
+					: `${stream.papers.length} decision records`
+			}
+		/>
+		<div className="max-h-48 overflow-y-auto font-mono text-[10px]">
+			{stream.papers.map((record) => (
+				<div
+					key={record.seq}
+					className="grid grid-cols-[38px_1fr_60px_60px] gap-1.5 px-2 py-0.5"
+				>
+					<span className="text-(--f3)">{record.action}</span>
+					<span className="truncate text-(--f1)">
+						{record.path} · d{record.fields.depth}
+					</span>
+					<span className="text-(--f4)">
+						{(record.fields.slippage * 100).toFixed(3)}%
+					</span>
+					<span
+						className={
+							record.fields.pnl >= 0 ? "text-emerald-400" : "text-rose-400"
+						}
+					>
+						{(record.fields.net_return * 100).toFixed(3)}%
+					</span>
+				</div>
+			))}
+		</div>
+	</Section>
+);
 
 const HindsightRoute = () => {
 	const [runs, setRuns] = useState<HindsightRun[]>([]);
+	const [runsError, setRunsError] = useState<string | null>(null);
 	const [run, setRun] = useState<string | null>(null);
+	const [symbol, setSymbol] = useState<string | null>(null);
 	const [coordinate, setCoordinate] = useState<MarketCoordinate>("midpoint");
 	const [axis, setAxis] = useState<TimelineAxis>("time");
-	const [symbol, setSymbol] = useState<string | null>(null);
-
-	const [overview, setOverview] = useState<HindsightTimeline | null>(null);
-	const [detail, setDetail] = useState<HindsightTimeline | null>(null);
 	const [viewport, setViewport] = useState<{ from: number; to: number } | null>(
 		null,
 	);
-
-	const [gaps, setGaps] = useState<HindsightGap[]>([]);
-	const [lifecycle, setLifecycle] = useState<HindsightLifecycleEvent[]>([]);
-
-	const [playhead, setPlayhead] = useState<HindsightRef | null>(null);
+	const [playhead, setPlayhead] = useState<number | null>(null);
 	const [episode, setEpisode] = useState<string | null>(null);
-	const [captures, setCaptures] = useState<HindsightCapture[]>([]);
-	const [envelope, setEnvelope] = useState<HindsightEnvelope | null>(null);
-	const [state, setState] = useState<unknown>(null);
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const [semantics, setSemantics] = useState<HindsightMetricMap | null>(null);
-	const [position, setPosition] = useState<string | null>(null);
-	const [marks, setMarks] = useState<Mark[]>([]);
-	const [markMeasurements, setMarkMeasurements] = useState<
-		Array<Measurement | null>
-	>([]);
-	const [markStates, setMarkStates] = useState<Array<unknown>>([]);
-	const [compareMode, setCompareMode] = useState<CompareMode>("resident");
-	const [resolving, setResolving] = useState(false);
-
-	/*
-		Layout is the reader's, not the surface's. Inspection starts as a band
-		under the market record, but once a finding is being read the evidence is
-		the whole job — so the inspector can take the surface, and the split
-		between provenance and state can be dragged. Both choices are the
-		reader's working posture rather than a property of the run, so they are
-		remembered across runs and reloads.
-	*/
-	const [focus, setFocus] = useState(false);
-	const [guide, setGuide] = useState(false);
-	const [split, setSplit] = useState(INITIAL_SPLIT);
-	const [plain, setPlain] = useState(INITIAL_PLAIN);
-
-	useEffect(() => {
-		globalThis.localStorage?.setItem(SPLIT_KEY, String(split));
-	}, [split]);
-
-	useEffect(() => {
-		globalThis.localStorage?.setItem(PLAIN_KEY, plain ? "1" : "0");
-	}, [plain]);
-
-	const surface = useRef<HTMLDivElement | null>(null);
-
-	const failed = useCallback((cause: unknown) => {
-		setError(cause instanceof Error ? cause.message : String(cause));
-		setLoading(false);
-		setResolving(false);
-	}, []);
-
-	// The declared metric semantics are the same answer for every run and every
-	// capture, so they are read once per session.
-	useEffect(() => {
-		let cancelled = false;
-
-		fetchHindsightMetricMap()
-			.then((loaded) => {
-				if (!cancelled) setSemantics(loaded);
-			})
-			.catch(() => {
-				if (!cancelled) setSemantics(null);
-			});
-
-		return () => {
-			cancelled = true;
-		};
-	}, []);
+	const { index, stream } = useSelector(hindsightStore, (state) => state);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -191,1204 +220,235 @@ const HindsightRoute = () => {
 		fetchHindsightRuns()
 			.then((loaded) => {
 				if (cancelled) return;
-
-				const sortedRuns = [...loaded].sort((left, right) => {
-					const epochLeft = Number(left.id) || 0;
-					const epochRight = Number(right.id) || 0;
-
-					if (epochLeft !== epochRight) {
-						return epochRight - epochLeft;
-					}
-
-					return new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime();
-				});
-
-				setRuns(sortedRuns);
-				setRun((current) => current ?? sortedRuns[0]?.id ?? null);
+				setRuns(loaded);
+				setRun((current) => current ?? loaded[0]?.id ?? null);
 			})
 			.catch((cause: unknown) => {
-				if (!cancelled) failed(cause);
+				if (!cancelled)
+					setRunsError(cause instanceof Error ? cause.message : String(cause));
 			});
 
 		return () => {
 			cancelled = true;
 		};
-	}, [failed]);
+	}, []);
 
+	// The run index first; the hub serves one replay per client at a time.
 	useEffect(() => {
 		if (run === null) return;
-
-		let cancelled = false;
-
-		setError(null);
-		setOverview(null);
-		setDetail(null);
-		setLifecycle([]);
-		setGaps([]);
 		setSymbol(null);
 		setViewport(null);
 		setPlayhead(null);
 		setEpisode(null);
-		setEnvelope(null);
-		setState(null);
-		setCaptures([]);
-		setMarks([]);
-		setMarkMeasurements([]);
-		setMarkStates([]);
-		setPosition(null);
-
-		fetchHindsightGaps(run)
-			.then((loaded) => {
-				if (!cancelled) setGaps(loaded);
-			})
-			.catch(() => {
-				if (!cancelled) setGaps([]);
-			});
-
-		fetchHindsightLifecycle(run)
-			.then((loaded) => {
-				if (!cancelled) setLifecycle(loaded);
-			})
-			.catch(() => {
-				if (!cancelled) setLifecycle([]);
-			});
-
-		return () => {
-			cancelled = true;
-		};
+		send(run, "");
 	}, [run]);
 
-	// The overview is the whole run for the selected instrument. It is also what
-	// answers "which instrument?" on first load: with no symbol declared, the hub
-	// projects the instrument whose declared coordinate travelled furthest.
+	const summaries = useMemo(() => summariesOf(index), [index]);
+
+	// Once the index is complete, open the instrument that moved furthest.
 	useEffect(() => {
-		if (run === null) return;
-
-		let cancelled = false;
-		const controller = new AbortController();
-		setLoading(true);
-
-		fetchHindsightTimeline(
-			{
-				run,
-				symbol: symbol ?? undefined,
-				coordinate,
-				axis,
-				buckets: OVERVIEW_BUCKETS,
-				symbols: true,
-			},
-			{
-				signal: controller.signal,
-				onProgress: (partial) => {
-					if (!cancelled) {
-						setOverview(partial);
-						if (symbol === null && partial.symbol !== "") {
-							setSymbol(partial.symbol);
-						}
-					}
-				},
-			},
-		)
-			.then((loaded) => {
-				if (cancelled) return;
-
-				setOverview(loaded);
-				setLoading(false);
-
-				if (loaded !== null && symbol === null && loaded.symbol !== "") {
-					setSymbol(loaded.symbol);
-				}
-			})
-			.catch((cause: unknown) => {
-				if (!cancelled && !controller.signal.aborted) failed(cause);
-			});
-
-		return () => {
-			cancelled = true;
-			controller.abort();
-		};
-	}, [run, symbol, coordinate, axis, failed]);
-
-	// The detail view is the same projection at the plotted window's resolution.
-	// With no window it is the overview at full resolution.
-	useEffect(() => {
-		if (run === null || symbol === null) {
-			setDetail(null);
+		if (index?.status !== "done" || symbol !== null || summaries.length === 0)
 			return;
-		}
-
-		let cancelled = false;
-		const controller = new AbortController();
-
-		fetchHindsightTimeline(
-			{
-				run,
-				symbol,
-				coordinate,
-				axis,
-				buckets: DETAIL_BUCKETS,
-				from: viewport?.from,
-				to: viewport?.to,
-			},
-			{
-				signal: controller.signal,
-				onProgress: (partial) => {
-					if (!cancelled) setDetail(partial);
-				},
-			},
-		)
-			.then((loaded) => {
-				if (!cancelled) setDetail(loaded);
-			})
-			.catch((cause: unknown) => {
-				if (!cancelled && !controller.signal.aborted) failed(cause);
-			});
-
-		return () => {
-			cancelled = true;
-			controller.abort();
-		};
-	}, [run, symbol, coordinate, axis, viewport, failed]);
-
-	// Everything below the timeline is addressed by the playhead's exact capture
-	// identity: the neighbouring raw frames, the envelopes this frame produced,
-	// and the historical state witnessed at its observe boundary.
-	useEffect(() => {
-		if (run === null || playhead === null) return;
-
-		let cancelled = false;
-		const from = Math.max(playhead.sequence - 24, 0);
-		setEnvelope(null);
-		setState(null);
-
-		fetchHindsightCaptures(run, from)
-			.then((loaded) => {
-				if (cancelled) return;
-				if (loaded.length > 0) {
-					setCaptures(loaded.slice(0, 48));
-					return;
-				}
-				// Iceberg-only install: synthesize FrameStrip from the timeline tape.
-				const tape = (detail ?? overview)?.measurements ?? [];
-				setCaptures(capturesFromMeasurements(run, tape, from, 48));
-			})
-			.catch(() => {
-				if (cancelled) return;
-				const tape = (detail ?? overview)?.measurements ?? [];
-				setCaptures(capturesFromMeasurements(run, tape, from, 48));
-			});
-
-		fetchHindsightEnvelope(run, playhead.sequence)
-			.then((loaded) => {
-				if (!cancelled) setEnvelope(loaded);
-			})
-			.catch(() => {
-				if (!cancelled) setEnvelope(null);
-			});
-
-		fetchHindsightState(run, playhead.sequence, playhead.ordinal)
-			.then((loaded) => {
-				if (!cancelled) setState(decodeEnvelopeState(loaded?.payload));
-			})
-			.catch(() => {
-				if (!cancelled) setState(null);
-			});
-
-		return () => {
-			cancelled = true;
-		};
-	}, [run, playhead, detail, overview]);
-
-	const positions = useMemo<Position[]>(
-		() => buildPositions(lifecycle),
-		[lifecycle],
-	);
-
-	const activeTimeline = detail ?? overview;
-	const selectedMeasurement = useMemo<Measurement | null>(() => {
-		const list = activeTimeline?.measurements ?? overview?.measurements;
-		if (list && list.length > 0) {
-			if (playhead === null) return list[0] ?? null;
-
-			const targetSeq = playhead.sequence;
-			let closest: Measurement = list[0];
-			let minDiff = Infinity;
-
-			for (const item of list) {
-				const seq = Number(item.seqIdx ?? item.id ?? 0);
-				const diff = Math.abs(seq - targetSeq);
-				if (diff < minDiff) {
-					minDiff = diff;
-					closest = item;
-				}
-				if (diff === 0) break;
-			}
-
-			return closest;
-		}
-
-		// Research timelines are bucketed via DuckDB and omit the full tape; the
-		// exact frame at the playhead still arrives through /hindsight/envelope.
-		if (envelope?.payload) {
-			try {
-				return JSON.parse(envelope.payload) as Measurement;
-			} catch {
-				return null;
-			}
-		}
-
-		return null;
-	}, [activeTimeline, overview, playhead, envelope]);
-
-	/*
-		Each mark's state is read by its own exact capture identity, never
-		reconstructed from the neighbouring one. A mark whose envelope witnessed
-		no state stays null, and the comparison reports it as unavailable rather
-		than carrying the previous mark's values forward.
-	*/
-	useEffect(() => {
-		if (run === null || marks.length === 0) {
-			setMarkStates([]);
-			return;
-		}
-
-		let cancelled = false;
-
-		Promise.all(
-			marks.map((mark) =>
-				fetchHindsightState(run, mark.sequence, mark.ordinal).then((loaded) =>
-					decodeEnvelopeState(loaded?.payload),
-				),
-			),
-		)
-			.then((loaded) => {
-				if (!cancelled) setMarkStates(loaded);
-			})
-			.catch(() => {
-				if (!cancelled) setMarkStates([]);
-			});
-
-		return () => {
-			cancelled = true;
-		};
-	}, [run, marks]);
-
-
-
-	const runMeta = useMemo(
-		() => runs.find((entry) => entry.id === run) ?? null,
-		[runs, run],
-	);
-
-	/*
-		The capture card reads the identity the envelope read answered with. The
-		surrounding frame strip is a listing, not the source of truth: a playhead
-		parked outside the loaded neighbourhood must still name its own frame.
-	*/
-	const capture = useMemo(() => {
-		if (
-			envelope !== null &&
-			envelope.capture?.identity?.sequence === playhead?.sequence
-		) {
-			return envelope.capture;
-		}
-
-		return (
-			captures.find(
-				(entry) => entry.identity.sequence === playhead?.sequence,
-			) ?? null
+		const top = summaries.reduce((best, row) =>
+			row.topExcursion > best.topExcursion ? row : best,
 		);
-	}, [envelope, captures, playhead]);
-
-	/*
-		When the hub has not yet served /hindsight/envelope, still expose the
-		Iceberg timeline frame as an honest raw payload so ProvenancePanel's
-		Raw frame section is usable for research.
-	*/
-	const displayEnvelope = useMemo(() => {
-		if (envelope !== null) return envelope;
-		if (run === null || playhead === null || selectedMeasurement === null) {
-			return null;
-		}
-
-		const sequence = playhead.sequence;
-		const identity = {
-			run,
-			sequence,
-			stream: selectedMeasurement.source || "spot_ticker",
-			streamEpoch: Number(run) || 0,
-			streamSequence: sequence,
-		};
-
-		return {
-			run,
-			sequence,
-			capture: {
-				identity,
-				kind: "ticker",
-				endpoint: selectedMeasurement.source || "spot_ticker",
-				receivedAt:
-					typeof selectedMeasurement.at === "string"
-						? selectedMeasurement.at
-						: "",
-			},
-			payload: JSON.stringify(selectedMeasurement),
-			manifests: [],
-			witnesses: [],
-		} satisfies HindsightEnvelope;
-	}, [envelope, run, playhead, selectedMeasurement]);
-
-	/*
-		Reference points are the navigable targets of the whole surface: [ and ]
-		step through them by exact HindsightRef (sequence, then ordinal), which
-		is exactly the walk an inspection session wants — one interesting
-		boundary to the next, never a scroll, and never a sequence-only hop that
-		could leave the previous ordinal attached to a new sequence.
-	*/
-	const references = useMemo<HindsightRef[]>(() => {
-		const points = (detail ?? overview)?.discovery.episodes.flatMap(
-			(entry) => entry.references,
-		);
-
-		if (points === undefined) return [];
-
-		return orderHindsightRefs(
-			points.map((point) => ({
-				sequence: point.capture.sequence,
-				ordinal: point.ordinal,
-			})),
-		);
-	}, [detail, overview]);
-
-	const stepReference = useCallback(
-		(direction: 1 | -1) => {
-			if (references.length === 0) return;
-
-			if (playhead === null) {
-				setPlayhead(
-					direction === 1 ? references[0] : references[references.length - 1],
-				);
-
-				return;
-			}
-
-			const next =
-				direction === 1
-					? references.find(
-							(reference) => compareHindsightRef(reference, playhead) > 0,
-						)
-					: [...references]
-							.reverse()
-							.find(
-								(reference) => compareHindsightRef(reference, playhead) < 0,
-							);
-
-			if (next !== undefined) setPlayhead(next);
-		},
-		[references, playhead],
-	);
-
-	/*
-		jumpRef parks the playhead on an exact causal EnvelopeRef. jumpChart
-		parks on a raw sequence — a chart coordinate only — and resolves the
-		first envelope (ordinal 0) of that capture deterministically rather than
-		silently inheriting whatever ordinal a previous inspection had left.
-	*/
-	const jumpRef = useCallback((target: HindsightRef) => {
-		setPlayhead({ sequence: target.sequence, ordinal: target.ordinal });
-	}, []);
-
-	const jumpChart = useCallback((sequence: number) => {
-		setPlayhead({ sequence, ordinal: 0 });
-	}, []);
-
-	const mark = useCallback(() => {
-		if (playhead === null) return;
-
-		setMarks((current) => {
-			if (current.length >= 3) return current;
-			if (
-				current.some(
-					(entry) =>
-						entry.sequence === playhead.sequence &&
-						entry.ordinal === playhead.ordinal,
-				)
-			) {
-				return current;
-			}
-
-			setMarkMeasurements((prev) => [...prev, selectedMeasurement]);
-
-			return [
-				...current,
-				{
-					sequence: playhead.sequence,
-					ordinal: playhead.ordinal,
-					label: selectedMeasurement?.source
-						? `${selectedMeasurement.source} · #${playhead.sequence}`
-						: `#${playhead.sequence}:${playhead.ordinal}`,
-				},
-			].sort((left, right) =>
-				left.sequence !== right.sequence
-					? left.sequence - right.sequence
-					: left.ordinal - right.ordinal,
-			);
-		});
-	}, [playhead, selectedMeasurement]);
-
-	/*
-		Focusing a position parks the playhead on the nearest frame that really
-		was captured around the venue's reported fill instant. That frame is an
-		inspection location, not the fill's causal identity: the position's own
-		identity stays its decision, and the parked ordinal is the resolved
-		first envelope of the selected capture frame — never a previous
-		inspection's ordinal silently carried onto a new sequence.
-	*/
-	/*
-		focusPosition parks the tape on the position's own opening frame.
-
-		The store resolves that frame exactly, by joining the lifecycle record
-		to the decision witness that caused it, so the seek lands on the capture
-		the desk actually decided on. The nearest-bucket search below is the
-		fallback for records written before that correlation existed: it lands
-		on whichever bucket started closest in wall time, which is an
-		approximation and is only used when there is no recorded frame.
-	*/
-	const focusPosition = useCallback(
-		(selected: Position) => {
-			setPosition(selected.decisionId);
-
-			if (selected.symbol !== "") setSymbol(selected.symbol);
-
-			if (selected.entrySeq !== null) {
-				setViewport(null);
-				setEpisode(null);
-				setPlayhead({ sequence: selected.entrySeq, ordinal: 0 });
-
-				return;
-			}
-
-			const source = detail ?? overview;
-			const at = new Date(selected.entry?.at ?? "").getTime();
-
-			if (source === null || Number.isNaN(at)) return;
-
-			let nearest: number | null = null;
-			let distance = Number.POSITIVE_INFINITY;
-
-			for (const bucket of source.buckets) {
-				if (bucket.observations === 0) continue;
-
-				const from = new Date(bucket.observedFromAt).getTime();
-
-				if (Number.isNaN(from)) continue;
-
-				const gap = Math.abs(from - at);
-
-				if (gap < distance) {
-					distance = gap;
-					nearest = bucket.observedFromSequence;
-				}
-			}
-
-			if (nearest !== null) setPlayhead({ sequence: nearest, ordinal: 0 });
-		},
-		[detail, overview],
-	);
-
-	/*
-		seekPosition parks the tape on one edge of a position. Only an edge the
-		record actually named is offered, so this never has to guess which frame
-		an unstamped exit belonged to.
-	*/
-	const seekPosition = useCallback(
-		(selected: Position, edge: "entry" | "exit") => {
-			const sequence = edge === "entry" ? selected.entrySeq : selected.exitSeq;
-
-			if (sequence === null) return;
-
-			setPosition(selected.decisionId);
-
-			if (selected.symbol !== "") setSymbol(selected.symbol);
-
-			setViewport(null);
-			setEpisode(null);
-			setPlayhead({ sequence, ordinal: 0 });
-		},
-		[],
-	);
-
-	const focusEpisode = useCallback((selected: HindsightEpisode) => {
-		setEpisode(selected.id);
-
-		const pad = Math.max(
-			Math.round((selected.toSequence - selected.fromSequence) * 0.15),
-			1,
-		);
-
-		setViewport({
-			from: Math.max(selected.fromSequence - pad, 0),
-			to: selected.toSequence + pad,
-		});
-
-		const anchor =
-			selected.references.find((reference) => reference.role === "anchor") ??
-			selected.references[0];
-
-		// The anchor's ordinal is part of its causal identity and is preserved:
-		// focusing an episode navigates to the exact reference, not a sequence.
-		if (anchor !== undefined) {
-			setPlayhead({
-				sequence: anchor.capture.sequence,
-				ordinal: anchor.ordinal,
-			});
-		}
-	}, []);
+		setSymbol(top.symbol);
+	}, [index, symbol, summaries]);
 
 	useEffect(() => {
-		const onKey = (event: KeyboardEvent) => {
-			if (event.target instanceof HTMLInputElement) return;
+		if (run === null || symbol === null || index?.status !== "done") return;
+		setViewport(null);
+		setPlayhead(null);
+		setEpisode(null);
+		send(run, symbol);
+	}, [run, symbol, index?.status]);
 
-			switch (event.key) {
-				case "[":
-					stepReference(-1);
-					break;
-				case "]":
-					stepReference(1);
-					break;
-				case "f":
-					setViewport(null);
-					break;
-				case "m":
-					mark();
-					break;
-				case "e":
-					setFocus((current) => !current);
-					break;
-				case "?":
-					setPlain((current) => !current);
-					break;
-				case "h":
-					setGuide((current) => !current);
-					break;
-				case "Escape":
-					if (guide) {
-						setGuide(false);
-						break;
-					}
+	const current =
+		stream !== null && stream.run === run && stream.symbol === symbol
+			? stream
+			: null;
 
-					if (focus) {
-						setFocus(false);
-						break;
-					}
+	const overview = useMemo(
+		() =>
+			current
+				? timelineOf(current, index, coordinate, axis, OVERVIEW_BUCKETS, null)
+				: null,
+		[current, index, coordinate, axis],
+	);
+	const detail = useMemo(
+		() =>
+			current
+				? timelineOf(current, index, coordinate, axis, DETAIL_BUCKETS, viewport)
+				: null,
+		[current, index, coordinate, axis, viewport],
+	);
 
-					setViewport(null);
-					setEpisode(null);
-					setPosition(null);
-					break;
-				default:
-					return;
-			}
+	const selected = useMemo(
+		() =>
+			current?.excursions.find((excursion) => excursion.key === episode) ??
+			null,
+		[current, episode],
+	);
 
-			event.preventDefault();
-		};
-
-		globalThis.addEventListener("keydown", onKey);
-
-		return () => globalThis.removeEventListener("keydown", onKey);
-	}, [stepReference, mark, focus, guide]);
+	const runMeta = runs.find((entry) => entry.id === run) ?? null;
+	const failure = runsError ?? index?.error ?? current?.error ?? null;
 
 	return (
-		<div
-			ref={surface}
-			className="flex h-full min-w-275 flex-col overflow-hidden bg-(--bg)"
+		<Flex.Column
+			fullWidth
+			className="h-full min-h-0 bg-(--bg) font-mono text-(--f2)"
 		>
-			<RunBar
-				runs={runs}
-				run={run}
-				runMeta={runMeta}
-				overview={overview}
-				coordinate={coordinate}
-				axis={axis}
-				gaps={gaps}
-				onRun={setRun}
-				onCoordinate={setCoordinate}
-				onAxis={setAxis}
-			/>
-
-			{error !== null ? (
-				<Flex.Column
-					role="alert"
-					className="border-b border-(--down) p-4 font-mono text-sm text-(--down)"
+			<Toolbar
+				size="s"
+				className="gap-3 border-(--line) border-b bg-(--surface) px-3"
+			>
+				<Typography.Label
+					size="s"
+					tone="f1"
+					className="font-bold tracking-wider"
 				>
-					Hindsight could not load the archive: {error}
-				</Flex.Column>
+					Hindsight
+				</Typography.Label>
+				<select
+					aria-label="run"
+					className="bg-(--sunken) text-[10px]"
+					value={run ?? ""}
+					onChange={(event) => setRun(event.currentTarget.value)}
+				>
+					{runs.map((entry) => (
+						<option key={entry.id} value={entry.id}>
+							{entry.startedAt} · {entry.id}
+							{entry.trained ? " · trained" : ""}
+						</option>
+					))}
+				</select>
+				{runMeta !== null ? (
+					<Badge
+						size="xs"
+						variant={runMeta.trained ? "success" : "disabled"}
+						label={policyLabel(runMeta)}
+					/>
+				) : null}
+				<StreamStatus label="index" stream={index} />
+				<StreamStatus label={symbol ?? "symbol"} stream={current} />
+				<Toolbar.Spacer />
+				{COORDINATES.map((entry) => (
+					<Button
+						key={entry}
+						size="xs"
+						variant={entry === coordinate ? "solid" : "outline"}
+						onClick={() => setCoordinate(entry)}
+					>
+						{entry}
+					</Button>
+				))}
+				{AXES.map((entry) => (
+					<Button
+						key={entry}
+						size="xs"
+						variant={entry === axis ? "solid" : "outline"}
+						onClick={() => setAxis(entry)}
+					>
+						{entry}
+					</Button>
+				))}
+			</Toolbar>
+
+			{failure !== null ? (
+				<div
+					role="alert"
+					className="border-(--line) border-b bg-rose-950/40 px-3 py-1.5 text-[10px] text-rose-300"
+				>
+					{failure}
+				</div>
 			) : null}
 
-			{guide ? <Guide onClose={() => setGuide(false)} /> : null}
-
-			<div
-				className={`${guide || error !== null ? "hidden" : "flex"} min-h-0 flex-1 overflow-hidden`}
-			>
-				<div
-					className={`${focus ? "hidden" : "flex"} w-56 shrink-0 flex-col border-(--line) border-r`}
-				>
-					<PositionIndex
-						positions={positions}
-						selected={position}
-						onSelect={focusPosition}
-						onSeek={seekPosition}
-					/>
-
-					<SymbolTargets
-						summaries={overview?.symbols ?? []}
-						selected={symbol}
-						onSelect={(next) => {
-							setSymbol(next);
-							setViewport(null);
-							setEpisode(null);
-						}}
-					/>
-				</div>
-
-				<Flex.Column className="min-h-0 min-w-0 flex-1 overflow-hidden">
-					<TimelineHeader
-						timeline={detail ?? overview}
-						window={viewport}
-						loading={loading}
-						references={references.length}
-						marks={marks}
-						playhead={playhead?.sequence ?? null}
-						focus={focus}
-						plain={plain}
-						onGuide={() => setGuide((current) => !current)}
-						onFocus={() => setFocus((current) => !current)}
-						onPlain={() => setPlain((current) => !current)}
-						onMark={mark}
-						onReset={() => {
-							setViewport(null);
-							setEpisode(null);
-						}}
-					/>
-
-					<div
-						className={`${focus ? "hidden" : "block"} shrink-0 border-(--line) border-b`}
-					>
-						<Timeline
-							timeline={detail ?? overview}
-							gaps={gaps}
-							lifecycle={lifecycle}
-							positions={positions}
-							playhead={playhead?.sequence ?? null}
-							marks={marks.map((entry) => entry.sequence)}
-							selectedEpisode={episode}
-							selectedPosition={position}
-							onPlayhead={jumpChart}
-							onEpisode={focusEpisode}
-							onPosition={focusPosition}
-							onZoom={(from, to) => setViewport({ from, to })}
-							onResetZoom={() => setViewport(null)}
+			{runs.length === 0 && runsError === null ? (
+				<Flex.Center className="flex-1 text-(--f4) text-xs">
+					no stored runs: run collect first
+				</Flex.Center>
+			) : (
+				<div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)_320px]">
+					<Flex.Column className="min-h-0 border-(--line) border-r">
+						<SymbolTargets
+							summaries={summaries}
+							selected={symbol}
+							onSelect={setSymbol}
 						/>
-						<div className="flex items-center gap-2 border-(--line) border-t px-3 pt-1 font-mono text-[8px] text-(--f4) uppercase tracking-widest">
-							<span>whole run</span>
-							<span className="normal-case tracking-normal text-(--f4)">
-								drag here to move the plotted window
-							</span>
-						</div>
+					</Flex.Column>
+					<Flex.Column className="min-h-0 overflow-y-auto">
 						<Overview
 							timeline={overview}
-							window={
-								viewport ??
-								(detail === null
-									? null
-									: {
-											from: detail.span.fromSequence,
-											to: detail.span.toSequence,
-										})
-							}
+							window={viewport}
 							onZoom={(from, to) => setViewport({ from, to })}
 							onResetZoom={() => setViewport(null)}
 						/>
-					</div>
-
-					<div className="flex min-h-0 flex-1 overflow-hidden">
-						<div
-							className={`${focus ? "hidden" : "flex"} w-80 shrink-0 flex-col border-(--line) border-r`}
-						>
-							<EpisodeTargets
-								timeline={detail ?? overview}
-								selected={episode}
-								onSelect={focusEpisode}
-								onReference={jumpRef}
-							/>
-						</div>
-
-						<Flex.Column className="min-h-0 min-w-0 flex-1 overflow-hidden">
-							{marks.length >= 2 ? (
-								<ComparePanel
-									marks={marks}
-									states={markStates}
-									measurements={markMeasurements}
-									mode={compareMode}
-									loading={resolving}
-									onMode={setCompareMode}
-									onPlayhead={(sequence, ordinal) => {
-										setPlayhead({ sequence, ordinal });
-									}}
-									onClear={() => {
-										setMarks([]);
-										setMarkMeasurements([]);
-									}}
-									onRemove={(sequence, ordinal) => {
-										const index = marks.findIndex(
-											(entry) =>
-												entry.sequence === sequence &&
-												entry.ordinal === ordinal,
-										);
-										setMarks((current) =>
-											current.filter(
-												(entry) =>
-													entry.sequence !== sequence ||
-													entry.ordinal !== ordinal,
-											),
-										);
-										if (index !== -1) {
-											setMarkMeasurements((current) =>
-												current.filter((_, idx) => idx !== index),
-											);
-										}
-									}}
-								/>
-							) : playhead === null ? (
-								<p className="px-3 py-8 font-mono text-[10px] text-(--f4) leading-relaxed">
-									Pick an episode, or click the timeline, to park the playhead
-									on an exact captured frame.
-									<br />
-									Everything here is then read from that identity — the raw
-									frame, the envelopes it produced, and the state the running
-									binary actually held. Never from a nearby timestamp.
-								</p>
-							) : (
-								<>
-									<CaptureCard capture={capture} run={runMeta} />
-									<FrameStrip
-										captures={captures}
-										playhead={playhead?.sequence ?? null}
-										onSelect={jumpChart}
-									/>
-									<InspectionRow
-										split={split}
-										onSplit={setSplit}
-										provenance={
-											<ProvenancePanel
-												envelope={displayEnvelope}
-												onSelect={(sequence, ordinal) =>
-													jumpRef({ sequence, ordinal })
-												}
-											/>
-										}
-										state={
-											<StatePanel
-												measurement={selectedMeasurement}
-												state={state}
-												envelope={displayEnvelope}
-												semantics={semantics}
-												plain={plain}
-											/>
-										}
-									/>
-								</>
-							)}
-						</Flex.Column>
-					</div>
-				</Flex.Column>
-			</div>
-		</div>
+						<Timeline
+							timeline={detail}
+							gaps={[]}
+							lifecycle={[]}
+							positions={[]}
+							playhead={playhead}
+							marks={[]}
+							selectedEpisode={episode}
+							selectedPosition={null}
+							onPlayhead={setPlayhead}
+							onEpisode={(picked: HindsightEpisode) => {
+								setEpisode(picked.id);
+								setViewport({
+									from: picked.fromSequence,
+									to: picked.toSequence,
+								});
+							}}
+							onPosition={() => {}}
+							onZoom={(from, to) => setViewport({ from, to })}
+							onResetZoom={() => setViewport(null)}
+						/>
+						{selected !== null ? (
+							<ExcursionDetail excursion={selected} />
+						) : null}
+					</Flex.Column>
+					<Flex.Column className="min-h-0 overflow-y-auto border-(--line) border-l">
+						<EpisodeTargets
+							timeline={detail}
+							selected={episode}
+							onSelect={(picked) => {
+								setEpisode(picked.id);
+								setViewport({
+									from: picked.fromSequence,
+									to: picked.toSequence,
+								});
+							}}
+							onReference={(reference) => setPlayhead(reference.sequence)}
+						/>
+						{current !== null ? (
+							<>
+								<Policies stream={current} />
+								<Papers stream={current} />
+							</>
+						) : null}
+					</Flex.Column>
+				</div>
+			)}
+		</Flex.Column>
 	);
 };
 
 /*
-InspectionRow is the evidence row: provenance on the left, the state the binary
-held on the right, with the boundary between them owned by the reader.
-
-The split is dragged rather than stepped because the two panes are read at very
-different widths depending on the question — walking a causal chain wants the
-left, reading a metric table wants the right — and no fixed ratio serves both.
-The handle is also a real focusable control, so the split can be moved without
-a pointer.
+policyLabel names the policy epoch the stream replays (the newest trained on
+the run) and the gate it was trained under, and how many others exist.
 */
-const InspectionRow = ({
-	split,
-	onSplit,
-	provenance,
-	state,
-}: {
-	split: number;
-	onSplit: (next: number) => void;
-	provenance: React.ReactNode;
-	state: React.ReactNode;
-}) => {
-	const row = useRef<HTMLDivElement | null>(null);
+const policyLabel = (run: HindsightRun) => {
+	const [newest, ...older] = run.policies ?? [];
 
-	const drag = useCallback(
-		(event: React.PointerEvent<HTMLDivElement>) => {
-			event.preventDefault();
+	if (!newest) return "no policies";
 
-			const bounds = row.current?.getBoundingClientRect();
+	const gate = newest.gate
+		? `gated z≥${newest.surpriseZ}, warm-up ${newest.warmup}`
+		: "ungated";
 
-			if (bounds === undefined || bounds.width === 0) return;
-
-			const move = (moved: PointerEvent) => {
-				const fraction = (moved.clientX - bounds.left) / bounds.width;
-
-				onSplit(Math.min(Math.max(fraction, MIN_SPLIT), MAX_SPLIT));
-			};
-
-			const release = () => {
-				globalThis.removeEventListener("pointermove", move);
-				globalThis.removeEventListener("pointerup", release);
-			};
-
-			globalThis.addEventListener("pointermove", move);
-			globalThis.addEventListener("pointerup", release);
-		},
-		[onSplit],
-	);
-
-	return (
-		<div ref={row} className="flex min-h-0 flex-1 overflow-hidden">
-			<div
-				className="min-w-0 overflow-auto"
-				style={{ flexBasis: `${split * 100}%` }}
-			>
-				{provenance}
-			</div>
-
-			<div
-				role="slider"
-				aria-label="Resize the evidence panes"
-				aria-orientation="vertical"
-				aria-valuemin={Math.round(MIN_SPLIT * 100)}
-				aria-valuemax={Math.round(MAX_SPLIT * 100)}
-				aria-valuenow={Math.round(split * 100)}
-				tabIndex={0}
-				title="Drag to rebalance · ← → to nudge · double-click to even up"
-				className="w-1 shrink-0 cursor-col-resize border-(--line) border-x bg-(--line) hover:bg-(--acc) focus:bg-(--acc) focus:outline-none"
-				onPointerDown={drag}
-				onDoubleClick={() => onSplit(0.5)}
-				onKeyDown={(event) => {
-					if (event.key === "ArrowLeft") {
-						onSplit(Math.max(split - 0.05, MIN_SPLIT));
-					}
-
-					if (event.key === "ArrowRight") {
-						onSplit(Math.min(split + 0.05, MAX_SPLIT));
-					}
-				}}
-			/>
-
-			<div className="min-w-0 flex-1 overflow-auto">{state}</div>
-		</div>
-	);
+	return `policies ${newest.epoch} · ${gate}${older.length > 0 ? ` · +${older.length} older` : ""}`;
 };
-
-const RunBar = ({
-	runs,
-	run,
-	runMeta,
-	overview,
-	coordinate,
-	axis,
-	gaps,
-	onRun,
-	onCoordinate,
-	onAxis,
-}: {
-	runs: HindsightRun[];
-	run: string | null;
-	runMeta: HindsightRun | null;
-	overview: HindsightTimeline | null;
-	coordinate: MarketCoordinate;
-	axis: TimelineAxis;
-	gaps: HindsightGap[];
-	onRun: (id: string) => void;
-	onCoordinate: (next: MarketCoordinate) => void;
-	onAxis: (next: TimelineAxis) => void;
-}) => (
-	<Flex.Column className="shrink-0 border-(--line) border-b bg-(--surface)">
-		<Flex.Row
-			align="center"
-			gap={3}
-			className="h-10 shrink-0 overflow-x-auto px-3"
-		>
-			<span className="shrink-0 font-mono text-[8px] text-(--f4) uppercase tracking-widest">
-				run
-			</span>
-			{runs.length === 0 ? (
-				<span className="font-mono text-[10px] text-(--f4)">
-					No capture run recorded yet.
-				</span>
-			) : null}
-			{runs.map((entry) => {
-				const active = entry.id === run;
-
-				return (
-					<Button
-						key={entry.id}
-						variant="bare"
-						title={`${entry.id}\ncommit ${entry.codeCommit || "—"} · build ${entry.buildId || "—"} · config ${entry.configDigest || "—"}\nrecorded positions: ${entry.positions ?? 0}`}
-						className={`shrink-0 rounded-[3px] border px-2 py-1 font-mono text-[9px] ${
-							active
-								? "border-(--acc) bg-(--raised) text-(--f1)"
-								: "border-(--line) text-(--f4) hover:border-(--line2) hover:text-(--f2)"
-						}`}
-						onClick={() => onRun(entry.id)}
-					>
-						{new Date(entry.startedAt).toLocaleString([], {
-							month: "short",
-							day: "2-digit",
-							hour: "2-digit",
-							minute: "2-digit",
-						})}
-						{entry.positions ? (
-							<span className="ml-1.5 text-(--acc)">{entry.positions}▲</span>
-						) : null}
-						<span
-							className={`ml-1.5 ${entry.integrity === "COMPLETE" ? "text-(--up)" : "text-(--warn)"}`}
-						>
-							{entry.integrity === "COMPLETE" ? "●" : "◐"}
-						</span>
-					</Button>
-				);
-			})}
-
-			<span className="ml-auto shrink-0" />
-
-			<Flex.Row align="center" gap={1} className="shrink-0">
-				<span className="font-mono text-[8px] text-(--f4) uppercase tracking-widest">
-					coordinate
-				</span>
-				{COORDINATES.map((option) => (
-					<Button
-						key={option}
-						variant="bare"
-						title={`Declare the market coordinate the selector measures. "${option}" means exactly that quantity — never a realisable price.`}
-						className={`rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] ${
-							coordinate === option
-								? "border-(--acc) text-(--f1)"
-								: "border-(--line) text-(--f4) hover:text-(--f2)"
-						}`}
-						onClick={() => onCoordinate(option)}
-					>
-						{option}
-					</Button>
-				))}
-			</Flex.Row>
-
-			<Flex.Row align="center" gap={1} className="shrink-0">
-				<span className="font-mono text-[8px] text-(--f4) uppercase tracking-widest">
-					axis
-				</span>
-				{AXES.map((option) => (
-					<Button
-						key={option}
-						variant="bare"
-						title={
-							option === "time"
-								? "Position by wall clock. Identity stays capture sequence."
-								: "Position by capture sequence — the order SYMM observed the world in."
-						}
-						className={`rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] ${
-							axis === option
-								? "border-(--acc) text-(--f1)"
-								: "border-(--line) text-(--f4) hover:text-(--f2)"
-						}`}
-						onClick={() => onAxis(option)}
-					>
-						{option}
-					</Button>
-				))}
-			</Flex.Row>
-		</Flex.Row>
-
-		<Flex.Row
-			align="center"
-			gap={4}
-			className="h-7 shrink-0 flex-wrap border-(--line) border-t px-3 font-mono text-[9px] text-(--f4)"
-		>
-			<span>
-				commit{" "}
-				<span className="text-(--f2)">{digest(runMeta?.codeCommit)}</span>
-			</span>
-			<span>
-				build <span className="text-(--f2)">{digest(runMeta?.buildId)}</span>
-			</span>
-			<span>
-				config{" "}
-				<span className="text-(--f2)">{digest(runMeta?.configDigest)}</span>
-			</span>
-			<span>
-				captured{" "}
-				<span className="text-(--f2)">
-					{formatClock(overview?.runSpan.fromAt ?? "")} →{" "}
-					{formatClock(overview?.runSpan.toAt ?? "")}
-				</span>
-			</span>
-			<span>
-				observations{" "}
-				<span className="text-(--f2) tabular-nums">
-					{formatCount(overview?.totalObservations ?? 0)}
-				</span>{" "}
-				over{" "}
-				<span className="text-(--f2) tabular-nums">
-					{formatCount(overview?.totalSymbols ?? 0)}
-				</span>{" "}
-				instruments
-			</span>
-			{gaps.length > 0 ? (
-				<span
-					className="text-(--down)"
-					title={gaps
-						.slice(0, 8)
-						.map(
-							(gap) =>
-								`${gap.encoding} @ ${gap.sequence}: ${gap.detail ?? "no additional detail recorded"}`,
-						)
-						.join("\n")}
-				>
-					{gaps.length} capture integrity defect{gaps.length === 1 ? "" : "s"} —
-					inspection certainty is broken across them
-				</span>
-			) : (
-				<span className="text-(--up)">
-					no capture integrity defect recorded
-				</span>
-			)}
-		</Flex.Row>
-	</Flex.Column>
-);
-
-const TimelineHeader = ({
-	timeline,
-	window,
-	loading,
-	references,
-	marks,
-	playhead,
-	focus,
-	plain,
-	onGuide,
-	onFocus,
-	onPlain,
-	onMark,
-	onReset,
-}: {
-	timeline: HindsightTimeline | null;
-	window: { from: number; to: number } | null;
-	loading: boolean;
-	references: number;
-	marks: Mark[];
-	playhead: number | null;
-	focus: boolean;
-	plain: boolean;
-	onGuide: () => void;
-	onFocus: () => void;
-	onPlain: () => void;
-	onMark: () => void;
-	onReset: () => void;
-}) => (
-	<Flex.Row
-		align="center"
-		gap={4}
-		className="h-9 shrink-0 border-(--line) border-b bg-(--surface) px-3"
-	>
-		<span className="font-mono text-[12px] font-semibold text-(--f1)">
-			{timeline?.symbol || "—"}
-		</span>
-		<span className="font-mono text-[9px] text-(--f4)">
-			observed {timeline?.coordinate ?? "—"} across{" "}
-			<span className="text-(--f2) tabular-nums">
-				{formatCount(timeline?.discovery.defined ?? 0)}
-			</span>{" "}
-			defined observations
-		</span>
-		<span className="font-mono text-[9px] text-(--f4)">
-			capture{" "}
-			<span className="text-(--f2) tabular-nums">
-				{timeline?.span.fromSequence ?? 0}–{timeline?.span.toSequence ?? 0}
-			</span>
-		</span>
-		<span className="font-mono text-[9px] text-(--f4)">
-			<span className="text-(--f2) tabular-nums">{references}</span> reference
-			points ·{" "}
-			<span className="rounded-xs border border-(--line2) px-1">[</span>{" "}
-			<span className="rounded-xs border border-(--line2) px-1">]</span> to walk
-			them
-		</span>
-
-		<span className="ml-auto" />
-
-		<Button
-			variant="bare"
-			title="What every band of this surface is, and how to read it. (h)"
-			className="rounded-[3px] border border-(--line) px-1.5 py-0.5 font-mono text-[9px] text-(--f4) hover:text-(--f2)"
-			onClick={onGuide}
-		>
-			how to read this (h)
-		</Button>
-
-		<Button
-			variant="bare"
-			title={
-				plain
-					? "Reading in plain language. Switch to the system's own vocabulary. (?)"
-					: "Reading in the system's own vocabulary. Switch to plain language. (?)"
-			}
-			className={`rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] ${
-				plain
-					? "border-(--acc) text-(--f1)"
-					: "border-(--line) text-(--f4) hover:text-(--f2)"
-			}`}
-			onClick={onPlain}
-		>
-			{plain ? "plain" : "expert"}
-		</Button>
-
-		<Button
-			variant="bare"
-			title={
-				focus
-					? "Bring the market record back. (e / Esc)"
-					: "Give the whole surface to the evidence. (e)"
-			}
-			className={`rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] ${
-				focus
-					? "border-(--acc) text-(--f1)"
-					: "border-(--line) text-(--f4) hover:text-(--f2)"
-			}`}
-			onClick={onFocus}
-		>
-			{focus ? "exit focus (e)" : "focus (e)"}
-		</Button>
-
-		<MarkBar marks={marks} playhead={playhead} onMark={onMark} />
-
-		{loading ? (
-			<span className="font-mono text-[9px] text-(--acc)">indexing tape…</span>
-		) : null}
-
-		{window !== null ? (
-			<Button
-				variant="outline"
-				size="xs"
-				className="font-mono text-[9px]"
-				onClick={onReset}
-			>
-				fit run (f)
-			</Button>
-		) : null}
-	</Flex.Row>
-);
 
 export const Route = createFileRoute("/hindsight")({
 	component: HindsightRoute,

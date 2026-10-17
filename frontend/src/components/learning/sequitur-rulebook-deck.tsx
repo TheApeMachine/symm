@@ -45,16 +45,12 @@ export const SequiturRulebookDeck = ({
 							variant={
 								snapshot.invariantStatus.digramUniqueness === "VIOLATED"
 									? "error"
-									: snapshot.invariantStatus.digramUniqueness === "REPAIRED"
-										? "info"
-										: "success"
+									: "success"
 							}
 							label={
 								snapshot.invariantStatus.digramUniqueness === "VIOLATED"
 									? "Duplicate"
-									: snapshot.invariantStatus.digramUniqueness === "REPAIRED"
-										? "Fused"
-										: "Nominal (≤1×)"
+									: "Nominal (≤1×)"
 							}
 						/>
 					</div>
@@ -69,16 +65,12 @@ export const SequiturRulebookDeck = ({
 							variant={
 								snapshot.invariantStatus.ruleUtility === "VIOLATED"
 									? "warning"
-									: snapshot.invariantStatus.ruleUtility === "REPAIRED"
-										? "info"
-										: "success"
+									: "success"
 							}
 							label={
 								snapshot.invariantStatus.ruleUtility === "VIOLATED"
 									? "Underused"
-									: snapshot.invariantStatus.ruleUtility === "REPAIRED"
-										? "Dissolved"
-										: "Nominal (≥2×)"
+									: "Nominal (≥2×)"
 							}
 						/>
 					</div>

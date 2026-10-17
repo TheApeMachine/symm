@@ -3,6 +3,7 @@ package data
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/theapemachine/errnie"
@@ -15,7 +16,13 @@ The storage schema: every key and layer the commands exchange, in one place.
 	|---------|------------------------------------------------|---------------------|
 	| collect | workspace/tick/aggregate/<epoch>/<tick>.bin    | detect, train, audit |
 	| detect  | detector/<class>/<symbol>/<epoch>/<c_tick>.bin | train, audit        |
-	| train   | policy/<action>/all/<epoch>/<seq>.bin          | live Training, audit |
+	| detect  | detector/watermark/all/<epoch>/<last tick>.bin | train               |
+	| train   | policy/<action>/all/<policy epoch>/<seq>.bin   | run (CognitionTree), audit, hindsight |
+	| paper   | paper/<action>/<symbol>/<epoch>/<seq>.bin      | audit (realization) |
+
+run (`make run`) never writes storage: it reads policies through a
+store.Reader and appends its paper records to the local file
+paper.records_path; `symm paper` uploads that file under paper/.
 
 Layers of a stored tick (one Kraken trade frame; collect, cmd/booter.go):
 
@@ -30,14 +37,33 @@ Layers of a stored tick (one Kraken trade frame; collect, cmd/booter.go):
 	| "" (empty)                               | a reserved slot no signal claimed       |
 
 An excursion Value carries one float64 vector labelled ExcursionKeys; a
-policy Value one labelled PolicyKeys plus a trailing PolicyPathTag tag.
+policy Value one labelled PolicyKeys plus a trailing PolicyPathTag tag, and
+its gate layer (PolicyGate).
 
 Hub-only Values (streamed to the dashboard, never stored):
 
 	| writer             | Origin/Role/Scope           | layer                          |
 	|--------------------|-----------------------------|--------------------------------|
 	| run (strategy.Sequitur) | sequitur/grammar/<symbol> | LayerGrammar: strategy.SequiturFrame JSON |
+	| run (strategy.Training) | paper/<action>/<symbol>   | PaperKeys vector + tags (also appended to paper.records_path) |
+	| run (hindsight.Service) | hindsight/<role>/<symbol> | see HindsightOrigin: one client's replay of a stored run |
+	| run (strategy.PublishTree) | cognition/tree/all     | LayerCognition: strategy.CognitionFrame JSON, the hub's retained frame |
+	| run (strategy.Sequitur) | cognition/match/<symbol>  | LayerCognition: strategy.CognitionMatchFrame JSON, per appended chord |
 */
+
+/*
+CognitionOrigin identifies the CognitionTree make run loaded (Role
+CognitionTreeRole, Scope PolicyScope; sent once and retained by the hub for
+every client that connects later) and each symbol's live match against it
+(Role CognitionMatchRole, Scope the symbol). Both carry one LayerCognition
+JSON layer.
+*/
+const (
+	CognitionOrigin    = "cognition"
+	CognitionTreeRole  = "tree"
+	CognitionMatchRole = "match"
+	LayerCognition     = "cognition"
+)
 
 /*
 SequiturOrigin and SequiturRole identify a live grammar frame on the hub;
@@ -175,12 +201,19 @@ var ExcursionClasses = []string{"up", "down", "chop", "flat"}
 /*
 ExcursionKeys label an excursion's vector, in order. B and C are the
 ignition and exhaustion trades; A and D bound the precursor and aftermath
-windows by half the move on either side. b_ask and c_bid are the touch the
-tick recorded at B and C: the prices a long entry and exit cross.
+windows by half the move on either side (A clamped to the symbol's first
+trade in the epoch). b_ask and c_bid are the touch the tick recorded at B and C.
+
+entry and exit are the executable points: the last trades at or before B and
+C pulled back by detector.execution_lead_fraction of the precursor (A..B)
+length in ticks, with the touch their ticks recorded. Train learns and
+prices entry/exit; B and C stay for audit and hindsight.
 */
 var ExcursionKeys = []string{
 	"a_idx", "a_tick", "b_idx", "b_tick", "c_idx", "c_tick", "d_idx", "d_tick",
 	"b_price", "c_price", "b_ask", "c_bid", "b_at", "c_at",
+	"entry_idx", "entry_tick", "exit_idx", "exit_tick",
+	"entry_ask", "exit_bid", "entry_at", "exit_at",
 }
 
 /*
@@ -223,6 +256,99 @@ func ExcursionFields(value *Value) (map[string]float64, error) {
 }
 
 /*
+DetectorWatermark is what one detect run of an epoch labelled: collect may
+still be writing the epoch, so train replays only the ticks detect saw and
+checks it sees exactly them. detect writes it as one Value, Origin
+ExcursionOrigin, Role DetectorWatermarkRole, Scope PolicyScope, Epoch the
+tick epoch and Tick its last tick, carrying one vector labelled
+DetectorWatermarkKeys. detect replaces it on every run; a run that fails
+leaves none, so train refuses the epoch until detect completes.
+
+	| key        | meaning                                        |
+	|------------|------------------------------------------------|
+	| first_tick | the epoch's first stored tick detect read      |
+	| last_tick  | the last stored tick detect read (the watermark) |
+	| ticks      | how many stored ticks detect read              |
+	| symbols    | how many symbols detect labelled               |
+*/
+type DetectorWatermark struct {
+	Epoch     uint64
+	FirstTick uint64
+	LastTick  uint64
+	Ticks     int
+	Symbols   int
+}
+
+const DetectorWatermarkRole = "watermark"
+
+var DetectorWatermarkKeys = []string{"first_tick", "last_tick", "ticks", "symbols"}
+
+/*
+DetectorWatermarkPrefix is the key prefix of epoch's watermark.
+*/
+func DetectorWatermarkPrefix(epoch uint64) string {
+	return Prefix(ExcursionOrigin, DetectorWatermarkRole, PolicyScope, epoch)
+}
+
+func (watermark DetectorWatermark) String() string {
+	return fmt.Sprintf(
+		"detect watermark of epoch %d: ticks %d..%d (%d ticks), %d symbols",
+		watermark.Epoch, watermark.FirstTick, watermark.LastTick, watermark.Ticks, watermark.Symbols,
+	)
+}
+
+/*
+Value is the stored form of watermark.
+*/
+func (watermark DetectorWatermark) Value() *Value {
+	value := &Value{
+		Origin: ExcursionOrigin, Role: DetectorWatermarkRole, Scope: PolicyScope,
+		Epoch: watermark.Epoch, Tick: watermark.LastTick,
+	}
+	value.FormatPrefix()
+
+	return AppendVector(value, []float64{
+		float64(watermark.FirstTick), float64(watermark.LastTick), float64(watermark.Ticks), float64(watermark.Symbols),
+	}, DetectorWatermarkKeys...)
+}
+
+/*
+ReadDetectorWatermark reads a stored watermark; a foreign Value, a missing
+field, or a last tick that disagrees with the key is an error.
+*/
+func ReadDetectorWatermark(value *Value) (DetectorWatermark, error) {
+	if value == nil || value.Origin != ExcursionOrigin || value.Role != DetectorWatermarkRole {
+		return DetectorWatermark{}, errnie.Err(errnie.Validation, "data: not a detector watermark Value", nil)
+	}
+
+	metrics := Metrics(value)
+	fields := make([]float64, len(DetectorWatermarkKeys))
+
+	for idx, key := range DetectorWatermarkKeys {
+		field, ok := metrics[key]
+
+		if !ok {
+			return DetectorWatermark{}, errnie.Err(errnie.UnprocessableContent, "data: watermark "+value.Prefix+" has no "+key, nil)
+		}
+
+		fields[idx] = field
+	}
+
+	watermark := DetectorWatermark{
+		Epoch: value.Epoch, FirstTick: uint64(fields[0]), LastTick: uint64(fields[1]),
+		Ticks: int(fields[2]), Symbols: int(fields[3]),
+	}
+
+	if watermark.LastTick != value.Tick || watermark.FirstTick > watermark.LastTick || watermark.Ticks <= 0 {
+		return DetectorWatermark{}, errnie.Err(errnie.UnprocessableContent, fmt.Sprintf(
+			"data: watermark %s is inconsistent: %s, key tick %d", value.Prefix, watermark, value.Tick,
+		), nil)
+	}
+
+	return watermark, nil
+}
+
+/*
 Policies: train publishes one Value per learned grammar path, Origin
 PolicyOrigin, Role its action, Scope PolicyScope (pooled across symbols),
 Tick a per-epoch sequence.
@@ -239,6 +365,182 @@ var PolicyActions = []string{"enter", "exit", "noop"}
 PolicyKeys label a policy's vector, in order; PolicyPathTag+<path> follows.
 */
 var PolicyKeys = []string{"gain", "hold_seconds", "visits", "mean_reward", "confidence"}
+
+/*
+PolicyGate is the chord gate a policy epoch was trained under: train mints a
+fresh policy epoch per tick epoch it trains on, so a gated and an ungated
+training of the same ticks coexist. Every policy Value of the epoch carries
+it as a second layer, PolicyGateKeys labelled and tagged PolicyGateLayer,
+PolicyWarmupTag+<warm-up rule> and PolicyTicksTag+<tick epoch> (a tag: an
+epoch exceeds what a float64 holds).
+
+	| key              | meaning                                                 |
+	|------------------|---------------------------------------------------------|
+	| enabled          | 1 when resonance.gate was on, 0 when off                |
+	| surprise_z       | resonance.surprise_z: the causal z a chord had to reach  |
+	| warmup_fast_rate | the fast error average's rate of the settled warm-up    |
+	| warmup_slow_rate | the slow error average's rate of the settled warm-up    |
+	| learning_rate    | resonance.learning_rate: the solver's pace              |
+
+Policies published before the settled warm-up carry the legacy layout
+(PolicyLegacyGateKeys, warmup_ticks instead of the two rates, no warm-up
+tag); they read back as the WarmupTicksRule warm-up, which no current gate
+is Same as.
+*/
+type PolicyGate struct {
+	Epoch        uint64
+	TickEpoch    uint64
+	Enabled      bool
+	SurpriseZ    float64
+	Warmup       PolicyWarmup
+	LearningRate float64
+}
+
+/*
+PolicyWarmup is the rule that decided when a symbol's gate opened.
+WarmupSettled: once the coder's error stopped falling, its average at
+FastRate no longer below its average at SlowRate. WarmupTicksRule (legacy,
+read only): after Ticks solver steps.
+*/
+type PolicyWarmup struct {
+	Rule     string
+	FastRate float64
+	SlowRate float64
+	Ticks    int
+}
+
+const (
+	WarmupSettled   = "settled"
+	WarmupTicksRule = "ticks"
+)
+
+func (warmup PolicyWarmup) String() string {
+	if warmup.Rule == WarmupTicksRule {
+		return fmt.Sprintf("after %d ticks (legacy)", warmup.Ticks)
+	}
+
+	return fmt.Sprintf("%s: error average at %g no longer below its average at %g", warmup.Rule, warmup.FastRate, warmup.SlowRate)
+}
+
+const (
+	PolicyGateLayer = "gate"
+	PolicyWarmupTag = "warmup:"
+	PolicyTicksTag  = "ticks:"
+)
+
+var (
+	PolicyGateKeys       = []string{"enabled", "surprise_z", "warmup_fast_rate", "warmup_slow_rate", "learning_rate"}
+	PolicyLegacyGateKeys = []string{"enabled", "surprise_z", "warmup_ticks", "learning_rate"}
+)
+
+/*
+Same reports whether gate and other were trained under the same gate
+settings; which epochs they belong to does not matter.
+*/
+func (gate PolicyGate) Same(other PolicyGate) bool {
+	return gate.Enabled == other.Enabled && gate.SurpriseZ == other.SurpriseZ &&
+		gate.Warmup == other.Warmup && gate.LearningRate == other.LearningRate
+}
+
+func (gate PolicyGate) String() string {
+	return fmt.Sprintf(
+		"gate enabled=%t surprise_z=%g warm-up %s learning_rate=%g (policy epoch %d, ticks %d)",
+		gate.Enabled, gate.SurpriseZ, gate.Warmup, gate.LearningRate, gate.Epoch, gate.TickEpoch,
+	)
+}
+
+/*
+AppendPolicyGate writes gate as value's gate layer. Only the settled warm-up
+is written; the legacy ticks rule is read, never published.
+*/
+func AppendPolicyGate(value *Value, gate PolicyGate) error {
+	if gate.Warmup.Rule != WarmupSettled {
+		return errnie.Err(errnie.Validation, fmt.Sprintf(
+			"data: policy %s gate warm-up %q is not %q", value.Prefix, gate.Warmup.Rule, WarmupSettled,
+		), nil)
+	}
+
+	enabled := 0.0
+
+	if gate.Enabled {
+		enabled = 1
+	}
+
+	AppendVector(value, []float64{enabled, gate.SurpriseZ, gate.Warmup.FastRate, gate.Warmup.SlowRate, gate.LearningRate},
+		append(slices.Clone(PolicyGateKeys),
+			PolicyGateLayer, PolicyWarmupTag+gate.Warmup.Rule, PolicyTicksTag+strconv.FormatUint(gate.TickEpoch, 10),
+		)...,
+	)
+
+	return nil
+}
+
+/*
+ReadPolicyGate reads the gate layer of a policy Value, in the current or the
+legacy layout; a policy without one (published before the gate existed) or
+with a malformed one is an error.
+*/
+func ReadPolicyGate(value *Value) (PolicyGate, error) {
+	current := value.Prefix + "/" + strings.Join(PolicyGateKeys, "/") + "/" + PolicyGateLayer + "/" + PolicyWarmupTag
+	legacy := value.Prefix + "/" + strings.Join(PolicyLegacyGateKeys, "/") + "/" + PolicyGateLayer + "/" + PolicyTicksTag
+
+	for index, vector := range Indexed[[]float64](value, current, legacy) {
+		var gate PolicyGate
+		var ticks string
+
+		switch {
+		case strings.HasPrefix(index, current):
+			rule, rest, cut := strings.Cut(strings.TrimPrefix(index, current), "/")
+			epochTag, tagged := strings.CutPrefix(rest, PolicyTicksTag)
+			ticks = epochTag
+
+			if !cut || !tagged || rule != WarmupSettled {
+				return PolicyGate{}, errnie.Err(errnie.UnprocessableContent, "data: policy "+value.Prefix+" gate tag "+index+" names no known warm-up and tick epoch", nil)
+			}
+
+			if len(vector) != len(PolicyGateKeys) {
+				return PolicyGate{}, gateWidth(value, vector, PolicyGateKeys)
+			}
+
+			gate.Warmup = PolicyWarmup{Rule: rule, FastRate: vector[2], SlowRate: vector[3]}
+			gate.LearningRate = vector[4]
+		case strings.HasPrefix(index, legacy):
+			ticks = strings.TrimPrefix(index, legacy)
+
+			if len(vector) != len(PolicyLegacyGateKeys) {
+				return PolicyGate{}, gateWidth(value, vector, PolicyLegacyGateKeys)
+			}
+
+			gate.Warmup = PolicyWarmup{Rule: WarmupTicksRule, Ticks: int(vector[2])}
+			gate.LearningRate = vector[3]
+		default:
+			continue
+		}
+
+		epoch, err := strconv.ParseUint(ticks, 10, 64)
+
+		if err != nil || epoch == 0 {
+			return PolicyGate{}, errnie.Err(errnie.UnprocessableContent, "data: policy "+value.Prefix+" gate tag "+index+" names no tick epoch", err)
+		}
+
+		if vector[0] != 0 && vector[0] != 1 {
+			return PolicyGate{}, errnie.Err(errnie.UnprocessableContent, fmt.Sprintf(
+				"data: policy %s gate enabled is %g, not 0 or 1", value.Prefix, vector[0],
+			), nil)
+		}
+
+		gate.Epoch, gate.TickEpoch, gate.Enabled, gate.SurpriseZ = value.Epoch, epoch, vector[0] == 1, vector[1]
+		return gate, nil
+	}
+
+	return PolicyGate{}, errnie.Err(errnie.UnprocessableContent, "data: policy "+value.Prefix+" carries no gate tag: it was trained before the gate, retrain it", nil)
+}
+
+func gateWidth(value *Value, vector []float64, keys []string) error {
+	return errnie.Err(errnie.UnprocessableContent, fmt.Sprintf(
+		"data: policy %s gate layer holds %d values for %d keys", value.Prefix, len(vector), len(keys),
+	), nil)
+}
 
 /*
 PolicyPrefixes are the keys of every policy of epoch, or of every epoch when
@@ -288,3 +590,197 @@ func PolicyPath(value *Value) (string, error) {
 
 	return "", errnie.Err(errnie.UnprocessableContent, "data: policy "+value.Prefix+" has no "+PolicyPathTag+" tag", nil)
 }
+
+/*
+Paper records: one Value per paper decision that traded a round trip (its
+entry and its exit decision each get one), Origin PaperOrigin, Role the
+decision's action, Scope the symbol, Epoch the run's epoch and Tick a
+per-run sequence. The vector is labelled PaperKeys, followed by the tags
+PolicyPathTag+<matched stored path> and PaperPolicyEpochTag+<policy epoch>.
+
+	| key             | meaning                                                   |
+	|-----------------|-----------------------------------------------------------|
+	| depth           | tokens in the matched stored path (prefix match depth)    |
+	| intended_price  | the touch when this decision was taken (ask enter, bid exit) |
+	| fill_price      | this decision's simulated average fill price              |
+	| decided_at      | unix ns the decision was taken                            |
+	| filled_at       | unix ns of its last fill (venue timestamp)                |
+	| latency_seconds | filled_at - decided_at                                    |
+	| slippage        | adverse fill vs intended, as a fraction of intended       |
+	| qty             | base quantity of the round trip                           |
+	| entry_price     | average entry fill price                                  |
+	| exit_price      | average exit fill price                                   |
+	| entered_at      | unix ns of the entry's last fill                          |
+	| exited_at       | unix ns of the exit's last fill                           |
+	| fees            | entry + exit fees in the quote currency                   |
+	| pnl             | exit proceeds - entry cost, after fees (slippage is in the fills) |
+	| net_return      | pnl / (entry_price*qty + entry fee): the trainer's gain unit |
+*/
+const (
+	PaperOrigin         = "paper"
+	PaperPolicyEpochTag = "policy_epoch:"
+)
+
+var PaperActions = []string{"enter", "exit"}
+
+var PaperKeys = []string{
+	"depth", "intended_price", "fill_price", "decided_at", "filled_at",
+	"latency_seconds", "slippage", "qty", "entry_price", "exit_price",
+	"entered_at", "exited_at", "fees", "pnl", "net_return",
+}
+
+/*
+PaperPrefixes are the keys of every paper record of symbol, one prefix per
+action, narrowed to one run epoch when given.
+*/
+func PaperPrefixes(symbol string, epoch ...uint64) []string {
+	prefixes := make([]string, 0, len(PaperActions))
+
+	for _, action := range PaperActions {
+		prefixes = append(prefixes, Prefix(PaperOrigin, action, symbol, epoch...))
+	}
+
+	return prefixes
+}
+
+/*
+PaperActionPrefixes are the keys of every paper record of every symbol and
+run, one prefix per action.
+*/
+func PaperActionPrefixes() []string {
+	prefixes := make([]string, 0, len(PaperActions))
+
+	for _, action := range PaperActions {
+		prefixes = append(prefixes, PaperOrigin+"/"+action+"/")
+	}
+
+	return prefixes
+}
+
+/*
+AppendPaper writes a paper record's vector (PaperKeys order) and its tags.
+*/
+func AppendPaper(value *Value, path string, policyEpoch uint64, vector []float64) error {
+	if len(vector) != len(PaperKeys) {
+		return errnie.Err(errnie.Validation, fmt.Sprintf(
+			"data: paper record %s has %d values for %d keys", value.Prefix, len(vector), len(PaperKeys),
+		), nil)
+	}
+
+	if path == "" {
+		return errnie.Err(errnie.Validation, "data: paper record "+value.Prefix+" has no matched path", nil)
+	}
+
+	AppendVector(value, vector, append(
+		slices.Clone(PaperKeys), PolicyPathTag+path, fmt.Sprintf("%s%d", PaperPolicyEpochTag, policyEpoch),
+	)...)
+
+	return nil
+}
+
+/*
+PaperRecord is a paper Value read back: its fields, the matched stored path
+and the policy epoch that path came from.
+*/
+type PaperRecord struct {
+	Action      string
+	Symbol      string
+	Path        string
+	PolicyEpoch uint64
+	Fields      map[string]float64
+}
+
+/*
+PaperFields reads a paper Value; a missing key or tag is an error.
+*/
+func PaperFields(value *Value) (PaperRecord, error) {
+	if value == nil || value.Origin != PaperOrigin {
+		return PaperRecord{}, errnie.Err(errnie.Validation, "data: not a paper Value", nil)
+	}
+
+	record := PaperRecord{Action: value.Role, Symbol: value.Scope, Fields: make(map[string]float64, len(PaperKeys))}
+	metrics := Metrics(value)
+
+	for _, key := range PaperKeys {
+		field, ok := metrics[key]
+
+		if !ok {
+			return PaperRecord{}, errnie.Err(errnie.UnprocessableContent, "data: paper record "+value.Prefix+" has no "+key, nil)
+		}
+
+		record.Fields[key] = field
+	}
+
+	head := value.Prefix + "/"
+
+	for _, index := range value.Index {
+		rest, ok := strings.CutPrefix(index, head)
+
+		if !ok {
+			continue
+		}
+
+		for _, tag := range strings.Split(rest, "/") {
+			if epoch, found := strings.CutPrefix(tag, PaperPolicyEpochTag); found {
+				parsed, err := strconv.ParseUint(epoch, 10, 64)
+
+				if err != nil {
+					return PaperRecord{}, errnie.Err(errnie.UnprocessableContent, "data: paper record "+value.Prefix+" policy epoch "+epoch, err)
+				}
+
+				record.PolicyEpoch = parsed
+			}
+		}
+
+		if _, path, found := strings.Cut(rest, "/"+PolicyPathTag); found {
+			path, _, _ = strings.Cut(path, "/"+PaperPolicyEpochTag)
+			record.Path = path
+		}
+	}
+
+	if record.Path == "" || record.PolicyEpoch == 0 {
+		return PaperRecord{}, errnie.Err(errnie.UnprocessableContent, "data: paper record "+value.Prefix+" has no path or policy epoch tag", nil)
+	}
+
+	return record, nil
+}
+
+/*
+Hindsight frames replay one stored run to the one dashboard client that sent
+the hub's "hindsight" command; they are never stored. Origin HindsightOrigin,
+Epoch the run (the collect epoch), Scope the symbol ("" for the run index).
+
+	| Role                       | layers                                                 |
+	|----------------------------|--------------------------------------------------------|
+	| HindsightTick              | HindsightTickKeys: the symbol at one stored tick (Tick, Timestamp) |
+	| ExcursionOrigin            | a stored excursion, verbatim: its index names its key   |
+	| PolicyOrigin               | a policy published for the run, verbatim                |
+	| PaperOrigin                | a paper record traded under the run's policies, verbatim |
+	| HindsightSymbol            | HindsightSymbolKeys: one symbol the run traded (Scope "", symbol in the key) |
+	| HindsightDone              | HindsightDoneKeys: the stream is complete               |
+	| HindsightError             | LayerHindsightError: the error text; the stream ended on it |
+
+A tick's bid or ask is NaN where its price layer holds no such side.
+*/
+const (
+	HindsightOrigin     = "hindsight"
+	HindsightTick       = "tick"
+	HindsightSymbol     = "symbol"
+	HindsightDone       = "done"
+	HindsightError      = "error"
+	LayerHindsightError = "error"
+)
+
+var HindsightTickKeys = []string{"bid", "ask", "trade_price", "trade_qty", "trades"}
+
+/*
+HindsightSymbolKeys: touched counts ticks whose price layer held both sides;
+top_excursion is the largest up or down excursion move (c_price-b_price)/b_price,
+signed, 0 with none.
+*/
+var HindsightSymbolKeys = []string{
+	"ticks", "touched", "trades", "first_tick", "last_tick", "first_at", "last_at",
+	"low", "high", "up", "down", "top_excursion",
+}
+
+var HindsightDoneKeys = []string{"ticks", "symbols", "excursions", "policies", "papers"}

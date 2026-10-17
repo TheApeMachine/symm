@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/system"
 )
 
 var (
@@ -27,7 +28,9 @@ var detectCmd = &cobra.Command{
 requested epoch (data.TickPrefix), under an explicit taker fee (percent per
 side), and writes every excursion to the store under
 data.ExcursionPrefixes(symbol, epoch). An epoch's earlier detections
-are removed before it is relabelled.`,
+are removed before it is relabelled. Once every excursion is uploaded, the
+epoch's watermark (data.DetectorWatermark: the stored ticks it read) is
+written; train replays only the ticks up to it.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
@@ -69,7 +72,13 @@ func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price,
 	written := make(map[string]bool)
 	counts := make(map[string]int)
 	ticks := 0
-	var firstTick uint64
+	var firstTick, lastTick uint64
+
+	// A relabelling that fails must leave no watermark: train then refuses
+	// the epoch instead of trusting a partial labelling.
+	if err := client.DeletePrefix(data.DetectorWatermarkPrefix(epoch)); err != nil {
+		return errnie.Err(errnie.IO, "[detect] cannot clear the watermark of epoch "+fmt.Sprint(epoch)+" before relabelling it", err)
+	}
 
 	write := func(results []*data.Value) error {
 		for _, result := range results {
@@ -89,7 +98,11 @@ func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price,
 		return nil
 	}
 
-	for value := range store.Values(client, data.TickPrefix(epoch)) {
+	for value, err := range store.Values(client, data.TickPrefix(epoch)) {
+		if err != nil {
+			return err
+		}
+
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -104,6 +117,7 @@ func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price,
 			firstTick = value.Tick
 		}
 
+		lastTick = value.Tick
 		ticks++
 
 		for _, symbolTick := range symbolTicks {
@@ -114,7 +128,7 @@ func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price,
 			detector, ok := detectors[symbolTick.Symbol]
 
 			if !ok {
-				if detector, err = strategy.NewDetector(ctx, price, epoch, firstTick, symbolTick.Symbol); err != nil {
+				if detector, err = strategy.NewDetector(ctx, price, epoch, symbolTick.Symbol, system.Cfg.Detector); err != nil {
 					return err
 				}
 
@@ -162,9 +176,22 @@ func detectEpoch(ctx context.Context, client *store.Client, price *broker.Price,
 	}
 
 	errnie.Info(fmt.Sprintf(
-		"[detect] epoch %d: %d ticks (first %d), %d symbols, excursions up=%d down=%d chop=%d flat=%d, not emitted for insufficient history=%d",
+		"[detect] epoch %d: %d ticks (first %d), %d symbols, excursions up=%d down=%d chop=%d flat=%d, not emitted for insufficient history (precursor from the symbol's first trade < detector.min_precursor_ticks)=%d",
 		epoch, ticks, firstTick, len(order), counts["up"], counts["down"], counts["chop"], counts["flat"], insufficient,
 	))
+
+	// The watermark goes up only after every excursion has.
+	if err := client.Drain(); err != nil {
+		return errnie.Err(errnie.IO, fmt.Sprintf("[detect] uploading the excursions of epoch %d", epoch), err)
+	}
+
+	watermark := data.DetectorWatermark{Epoch: epoch, FirstTick: firstTick, LastTick: lastTick, Ticks: ticks, Symbols: len(order)}
+
+	if _, err := io.Copy(client, watermark.Value()); err != nil {
+		return errnie.Err(errnie.IO, "[detect] writing "+watermark.String(), err)
+	}
+
+	errnie.Info("[detect] " + watermark.String())
 
 	return nil
 }

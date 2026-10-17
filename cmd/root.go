@@ -25,8 +25,7 @@ which allows a developer to easily override the config file.
 var embedded embed.FS
 
 var (
-	cfgFile     string
-	captureFlag bool
+	cfgFile string
 
 	// processStartedAt is the process start instant the Hindsight Run identity
 	// is anchored to. It is captured once at process start so a run's identity
@@ -43,8 +42,9 @@ var (
 			)
 
 			defer cancel()
-			// `make run` runs this command: the only one that serves the dashboard.
-			return NewBooter(ctx, "symm", captureFlag).WithDashboard().Run()
+			// `make run` runs this command: the only one that serves the
+			// dashboard. It never writes storage; collect captures ticks.
+			return NewBooter(ctx, "symm", false).WithDashboard().Run()
 		},
 	}
 )
@@ -65,13 +65,6 @@ func init() {
 		"config",
 		"",
 		"path to config file (default: try cmd/cfg/config.yml, ./config.yml, $HOME/.symm/config.yml, then embedded default)",
-	)
-
-	rootCmd.Flags().BoolVar(
-		&captureFlag,
-		"capture",
-		false,
-		"enable live market and sensory data persistence to Iceberg storage (default: false, handled by symm collect)",
 	)
 }
 

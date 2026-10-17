@@ -82,7 +82,9 @@ func NewAuthenticatedREST() (*spot.REST, error) {
 Token returns a websockets authentication token young enough to subscribe
 with: the cached token while it is within TokenReuse of issue, otherwise a
 fresh one fetched through authenticated REST. Reconnect hooks therefore get a
-token the venue will accept, not the one issued at process start.
+token the venue will accept, not the one issued at process start. A failed or
+empty fetch is returned at once: Token never retries; the websocket redial
+loop (network.WebsocketClient's reconnect hook backoff) owns retrying.
 */
 func (auth *Auth) Token(ctx context.Context) (string, error) {
 	if auth == nil {
@@ -111,10 +113,14 @@ func (auth *Auth) Token(ctx context.Context) (string, error) {
 		fetch = fetchWebSocketsToken
 	}
 
-	token, err := RetryToken(ctx, "auth", fetch)
+	if err := ctx.Err(); err != nil {
+		return "", errnie.Error(errnie.Err(errnie.IO, "[kraken.auth] token fetch cancelled", err))
+	}
+
+	token, err := fetch()
 
 	if err != nil {
-		return "", err
+		return "", errnie.Error(errnie.Err(errnie.IO, "[kraken.auth] websockets token fetch failed", err))
 	}
 
 	if token == "" {

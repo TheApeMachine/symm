@@ -1,181 +1,77 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useState } from "react";
-import { signals } from "#/collections/app";
-import { metricOf, metricsWithPrefix } from "#/components/ui";
-import { hubBaseUrl } from "#/lib/hub";
-import type { Value } from "#/types/value";
+import { type CognitionMatch, cognitionStore } from "#/collections/cognition";
 import { RadixTreeViz } from "./radix-tree-viz";
-import type { CognitionTreeResponse, SymbolProgress } from "./types";
+import type { SymbolProgress } from "./types";
 
 /*
-tokensOf rebuilds the token strings ("R01-R02") of a Training Value
-from its path_token:IDX:PART Metrics, the same form the stored keys use.
+progressOf lays one symbol's live match out for the tree: its recent tokens,
+and the stored key it matched (<path>/<action>.bin) when one did.
 */
-export const tokensOf = (measurement?: Value): string[] => {
-	const tokens: string[][] = [];
-	for (const [key, region] of metricsWithPrefix(measurement, "path_token:")) {
-		const [idx, part] = key.split(":").map(Number);
-		tokens[idx] ??= [];
-		tokens[idx][part] = `R${String(region).padStart(2, "0")}`;
-	}
-	const fromMetrics = tokens
-		.filter(Boolean)
-		.map((parts) => parts.filter(Boolean).join("-"));
-	if (fromMetrics.length > 0) return fromMetrics;
-
-	// Fallback to provenance metadata token_path if present
-	if (measurement?.provenance) {
-		for (const p of measurement.provenance) {
-			if (p?.name === "token_path" && p.value) {
-				return String(p.value).split("/").filter(Boolean);
-			}
-		}
-	}
-	return [];
-};
-
-/* keysHash is FNV-1a 32 over the keys joined by newlines, as strategy.keysHash. */
-export const keysHash = (keys: string[]): number => {
-	let hash = 2166136261;
-	const text = keys.join("\n");
-	for (let i = 0; i < text.length; i++) {
-		hash = Math.imul(hash ^ text.charCodeAt(i), 16777619) >>> 0;
-	}
-	return hash >>> 0;
-};
+export const progressOf = (match: CognitionMatch): SymbolProgress => ({
+	symbol: match.symbol,
+	path: match.tokens.join("/"),
+	depth: match.stored ? match.depth : match.tokens.length,
+	tokens: match.tokens,
+	matched:
+		match.stored && match.action ? [`${match.match}/${match.action}.bin`] : [],
+});
 
 /*
-depthOf extracts the sequence depth from either numeric metrics or provenance metadata.
-*/
-export const depthOf = (measurement?: Value): number | undefined => {
-	const fromMetric = metricOf(measurement, "token_depth");
-	if (fromMetric !== undefined) return fromMetric;
-	if (measurement?.provenance) {
-		for (const p of measurement.provenance) {
-			if (p?.name === "token_depth" && p.value) {
-				const val = Number(p.value);
-				if (Number.isFinite(val)) return val;
-			}
-		}
-	}
-	return undefined;
-};
-
-/*
-symbolProgress: the token path of every symbol that currently has a built up sequence
-of region ids, as last sent.
-*/
-export const symbolProgress = (
-	state: Record<string, { toArray(): Value[] }>,
-) => {
-	const out: Record<string, SymbolProgress> = {};
-	for (const [symbol, ring] of Object.entries(state)) {
-		const all = ring?.toArray() ?? [];
-		if (all.length === 0) continue;
-		const last = all[all.length - 1];
-
-		// If the latest measurement explicitly indicates depth 0, no sequence is built up.
-		const latestDepth = depthOf(last);
-		if (latestDepth !== undefined && latestDepth <= 0) continue;
-
-		const withTokens =
-			[...all].reverse().find((m) => {
-				const depth = depthOf(m);
-				return depth !== undefined && depth > 0;
-			}) ?? last;
-
-		const tokens = tokensOf(withTokens);
-		if (tokens.length === 0) continue;
-		const indices = [...metricsWithPrefix(withTokens, "match_key:").values()];
-		const hash = metricOf(withTokens, "stored_paths_hash");
-		out[symbol] = {
-			symbol,
-			path: tokens.join("/"),
-			depth: depthOf(withTokens) ?? tokens.length,
-			tokens,
-			indices,
-			hash,
-		} as SymbolProgress & { indices: number[]; hash?: number };
-	}
-	return JSON.stringify(out);
-};
-
-/*
-CognitiveTree draws the stored token paths the /cognition/tree endpoint
-reports, with active symbols' live token paths overlaid.
+CognitiveTree draws the stored token paths of the CognitionTree make run
+loaded (the hub's cognition/tree frame), with each symbol's live match
+(cognition/match frames) highlighting its active prefix.
 */
 export const CognitiveTree = () => {
-	const [tree, setTree] = useState<CognitionTreeResponse | null>(null);
-	const [failed, setFailed] = useState(false);
-	const symbols = JSON.parse(
-		useSelector(signals.training, symbolProgress),
-	) as Record<string, SymbolProgress>;
+	const tree = useSelector(cognitionStore, (state) => state.tree);
+	const matches = useSelector(cognitionStore, (state) => state.matches);
 
-	useEffect(() => {
-		let alive = true;
-		const load = async () => {
-			try {
-				const res = await fetch(`${hubBaseUrl()}/cognition/tree`);
-				if (!res.ok) throw new Error(String(res.status));
-				const data = (await res.json()) as CognitionTreeResponse;
-				if (alive) {
-					setTree(data);
-					setFailed(false);
-				}
-			} catch {
-				if (alive) setFailed(true);
-			}
-		};
-		load();
-		const timer = window.setInterval(load, 10000);
-		return () => {
-			alive = false;
-			window.clearInterval(timer);
-		};
-	}, []);
-
-	if (!tree || (tree.keys ?? []).length === 0) {
+	if (!tree || tree.keys.length === 0) {
 		return (
-			<div className="flex-1 flex flex-col items-center justify-center gap-2 text-(--f3)">
+			<div
+				className="flex-1 flex flex-col items-center justify-center gap-2 text-(--f3)"
+				data-testid="cognitive-tree-empty"
+			>
 				<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
 				<span className="text-sm">
-					{!tree
-						? failed
-							? "Cannot reach the tree endpoint"
-							: "Loading stored paths…"
-						: "No stored token paths yet"}
+					{tree
+						? "paper trading inactive: no trained paths"
+						: "waiting for the hub's cognition tree frame"}
 				</span>
 				{tree && (
 					<span className="text-[10px] text-(--f4)">
-						run detect and Train to store paths
+						run detect and train, then restart make run
 					</span>
 				)}
 			</div>
 		);
 	}
 
-	const keys = tree.keys ?? [];
-	const treeHash = keysHash(keys);
-	const resolved: Record<string, SymbolProgress> = {};
-	for (const [symbol, raw] of Object.entries(symbols)) {
-		const { indices, hash, ...progress } = raw as SymbolProgress & {
-			indices: number[];
-			hash?: number;
-		};
-		// Indices only mean something against the key list Step matched on.
-		const matched =
-			hash === treeHash
-				? indices.map((idx) => keys[idx]).filter(Boolean)
-				: undefined;
-		resolved[symbol] = { ...progress, matched };
+	const symbols: Record<string, SymbolProgress> = {};
+
+	for (const [symbol, match] of Object.entries(matches)) {
+		symbols[symbol] = progressOf(match);
 	}
 
+	const gate = tree.gate;
+
 	return (
-		<RadixTreeViz
-			keys={keys}
-			data={tree.root}
-			symbols={resolved}
-			feasible={tree.feasible ?? []}
-		/>
+		<div className="flex-1 flex flex-col min-h-0">
+			<div
+				className="flex gap-3 px-2 py-1 text-[10px] text-(--f3) border-b border-(--line)"
+				data-testid="cognitive-tree-meta"
+			>
+				<span>policy epoch {tree.epoch}</span>
+				<span>{tree.paths} paths</span>
+				<span>{tree.trading ? "paper trading" : "not trading"}</span>
+				<span>
+					{gate === null
+						? "no gate tag"
+						: gate.enabled
+							? `gated z≥${gate.surpriseZ} · warm-up ${gate.warmup} · trained on ${gate.tickEpoch}`
+							: `ungated · trained on ${gate.tickEpoch}`}
+				</span>
+			</div>
+			<RadixTreeViz keys={tree.keys} symbols={symbols} feasible={[]} />
+		</div>
 	);
 };

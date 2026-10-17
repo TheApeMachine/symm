@@ -44,6 +44,7 @@ type CognitiveStage struct {
 	exitCount      int
 	abstentionRate float64
 	meanConfidence float64
+	gate           *data.PolicyGate
 }
 
 func NewCognitiveStage(ctx context.Context) *CognitiveStage {
@@ -91,6 +92,10 @@ from the measurement stream.
 func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Value) {
 	if measurement.Role == "runtime:join" {
 		return
+	}
+
+	if measurement.Origin == data.PolicyOrigin {
+		stage.recordGate(measurement)
 	}
 
 	var action string
@@ -152,6 +157,25 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Value) {
 		HoldSeconds: holdSeconds,
 		Visits:      visits,
 	})
+}
+
+/*
+recordGate keeps the gate the judged policies were trained under; a policy
+without one, or one disagreeing with the others, is a violation.
+*/
+func (stage *CognitiveStage) recordGate(policy *data.Value) {
+	gate, err := data.ReadPolicyGate(policy)
+
+	switch {
+	case err != nil:
+		stage.violations = append(stage.violations, NewViolation("all", "cognitive.gate", err.Error(), policy, nil))
+	case stage.gate == nil:
+		stage.gate = &gate
+	case gate != *stage.gate:
+		stage.violations = append(stage.violations, NewViolation(
+			"all", "cognitive.gate", fmt.Sprintf("%s carries %s, other policies %s", policy.Prefix, gate, stage.gate), policy, nil,
+		))
+	}
 }
 
 /*
@@ -256,5 +280,25 @@ func (stage *CognitiveStage) Data() any {
 		"node_count":      stage.nodeCount,
 		"max_depth":       stage.maxDepth,
 		"phases":          stage.phases,
+		"gate":            gateData(stage.gate),
+	}
+}
+
+/*
+gateData is the gate tag a policy stage reports: which policy epoch it
+judged, trained on which ticks, under which gate (nil when none was judged).
+*/
+func gateData(gate *data.PolicyGate) any {
+	if gate == nil {
+		return nil
+	}
+
+	return map[string]any{
+		"policy_epoch":  fmt.Sprint(gate.Epoch),
+		"tick_epoch":    fmt.Sprint(gate.TickEpoch),
+		"enabled":       gate.Enabled,
+		"surprise_z":    gate.SurpriseZ,
+		"warmup":        gate.Warmup.String(),
+		"learning_rate": gate.LearningRate,
 	}
 }

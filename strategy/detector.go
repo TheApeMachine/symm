@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -11,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 )
 
 type detectorState int
@@ -74,10 +76,14 @@ type Detector struct {
 	results   []*data.Value
 	failure   error
 
-	// firstTick is the epoch's first stored tick; an excursion whose
-	// lookback window (A) starts before it lacks history and is not emitted.
-	firstTick    int64
+	// insufficient counts excursions whose precursor, clamped to the
+	// symbol's first trade, is shorter than cfg.MinPrecursorTicks.
 	insufficient int
+	cfg          system.Detector
+
+	// tape is every trade stepped, tape[i].seqIdx == i+1: the entry and exit
+	// are found in it after their episode is confirmed.
+	tape []tradePoint
 
 	// Undecided / chop / flat tracking
 	segStart      tradePoint
@@ -102,18 +108,21 @@ type Detector struct {
 }
 
 /*
-NewDetector creates the detector for symbol's tape in epoch, whose first
-stored tick is firstTick. Every excursion class is defined against
-round-trip friction, so a price system with reference cash and a taker fee
-for symbol are required.
+NewDetector creates the detector for symbol's tape in epoch, bounding
+precursors to the symbol's first trade and placing entry and exit by cfg. Every excursion class is defined against round-trip friction, so a
+price system with reference cash and a taker fee for symbol are required.
 */
 func NewDetector(
 	ctx context.Context,
 	price *broker.Price,
 	epoch uint64,
-	firstTick uint64,
 	symbol string,
+	cfg *system.Detector,
 ) (*Detector, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, errnie.Err(errnie.Validation, "[detector] "+symbol, err)
+	}
+
 	if price == nil || price.ReferenceCash() == nil {
 		return nil, errnie.Err(errnie.Validation, "[detector] price system with reference cash required", nil)
 	}
@@ -131,7 +140,7 @@ func NewDetector(
 		price:                  price,
 		symbol:                 symbol,
 		epoch:                  epoch,
-		firstTick:              int64(firstTick),
+		cfg:                    *cfg,
 		roundTrip:              (1.0+feeRate)/(1.0-feeRate) - 1.0,
 		retraceRatio:           0.32, // Pullback must retrace >= 32% of |C - B| (and clear friction) to end a leg
 		maxContinuationRetrace: 0.58, // Higher-low dips < 58% merge into one macro leg when C is broken
@@ -147,8 +156,9 @@ func NewDetector(
 }
 
 /*
-Insufficient is how many confirmed excursions were not emitted because their
-lookback window starts before the epoch's first stored tick.
+Insufficient is how many confirmed excursions were not emitted for lack of
+history: a precursor shorter than cfg.MinPrecursorTicks once A is clamped to
+the symbol's first trade.
 */
 func (detector *Detector) Insufficient() int {
 	return detector.insufficient
@@ -189,6 +199,7 @@ func (detector *Detector) Step(
 		ask:    touch.Ask,
 	}
 
+	detector.tape = append(detector.tape, pt)
 	detector.updateMicrostructure(pt)
 
 	switch detector.state {
@@ -777,17 +788,62 @@ func (detector *Detector) flush(ep episode) {
 		return
 	}
 
-	halfMoveSeqIdx := c.seqIdx - b.seqIdx
-	halfMoveTick := c.tick - b.tick
+	// A and D lie half the B..C move before B and after C. A is clamped to
+	// the symbol's first trade, not the epoch's first tick: before it the
+	// symbol has no tape, so no precursor and nothing to enter on. A shorter
+	// precursor is still one, as long as cfg.MinPrecursorTicks of it remain.
+	halfMoveSeqIdx := (c.seqIdx - b.seqIdx) / 2
+	halfMoveTick := (c.tick - b.tick) / 2
+	aTick := max(b.tick-halfMoveTick, detector.tape[0].tick)
+	precursorTicks := b.tick - aTick
 
-	if aTick := b.tick - halfMoveTick; aTick < detector.firstTick {
+	if precursorTicks < detector.cfg.MinPrecursorTicks {
 		detector.insufficient++
 		errnie.Info(fmt.Sprintf(
-			"[detector] %s %s excursion ticks %d..%d not emitted: lookback starts at tick %d, before the epoch's first stored tick %d",
-			detector.symbol, ep.class, b.tick, c.tick, aTick, detector.firstTick,
+			"[detector] %s %s excursion ticks %d..%d not emitted: precursor %d..%d is %d tick(s), fewer than detector.min_precursor_ticks %d",
+			detector.symbol, ep.class, b.tick, c.tick, aTick, b.tick, precursorTicks, detector.cfg.MinPrecursorTicks,
 		))
 
 		return
+	}
+
+	// Entry and exit are pulled back from B and C by a fraction of the
+	// precursor, so an order placed there fills before the move. The lead is
+	// shorter than the precursor, so the entry tick is at or after A, which
+	// is at or after the symbol's first trade: a miss is a detector bug.
+	lead := int64(math.Round(detector.cfg.ExecutionLeadFraction * float64(precursorTicks)))
+	entry, entryOK := detector.lastAtOrBefore(b.tick-lead, b)
+	exit, exitOK := detector.lastAtOrBefore(c.tick-lead, c)
+
+	if !entryOK || !exitOK {
+		if detector.failure == nil {
+			detector.failure = errnie.Err(errnie.Internal, fmt.Sprintf(
+				"[detector] %s %s excursion ticks %d..%d: no %s trade at or before entry tick %d / exit tick %d (lead %d) though the tape starts at tick %d",
+				detector.symbol, ep.class, b.tick, c.tick, detector.symbol, b.tick-lead, c.tick-lead, lead, detector.tape[0].tick,
+			), nil)
+		}
+
+		return
+	}
+
+	if entry.ask == nil || exit.bid == nil {
+		if detector.failure == nil {
+			detector.failure = errnie.Err(errnie.NotFound, fmt.Sprintf(
+				"[detector] %s %s excursion ticks %d..%d: entry tick %d recorded no ask or exit tick %d no bid",
+				detector.symbol, ep.class, b.tick, c.tick, entry.tick, exit.tick,
+			), nil)
+		}
+
+		return
+	}
+
+	// A's trade index is the first trade of the symbol at or after A.
+	aIdx := b.seqIdx
+
+	if at, _ := slices.BinarySearchFunc(detector.tape[:b.seqIdx], aTick, func(point tradePoint, tick int64) int {
+		return compareTick(point.tick, tick)
+	}); at < int(b.seqIdx) {
+		aIdx = detector.tape[at].seqIdx
 	}
 
 	value := &data.Value{
@@ -802,8 +858,8 @@ func (detector *Detector) flush(ep episode) {
 	value.FormatPrefix()
 
 	data.AppendVector(value, []float64{
-		float64(b.seqIdx - halfMoveSeqIdx),
-		float64(b.tick - halfMoveTick),
+		float64(aIdx),
+		float64(aTick),
 		float64(b.seqIdx),
 		float64(b.tick),
 		float64(c.seqIdx),
@@ -816,7 +872,47 @@ func (detector *Detector) flush(ep episode) {
 		c.bid.Float64(),
 		float64(b.at),
 		float64(c.at),
+		float64(entry.seqIdx),
+		float64(entry.tick),
+		float64(exit.seqIdx),
+		float64(exit.tick),
+		entry.ask.Float64(),
+		exit.bid.Float64(),
+		float64(entry.at),
+		float64(exit.at),
 	}, data.ExcursionKeys...)
 
 	detector.results = append(detector.results, value)
+}
+
+/*
+lastAtOrBefore is the last trade stepped at or before tick, no later than
+bound itself (a tick holds several trades, so the one at bound's tick may
+come after bound). It reports false when the tape has no trade that early.
+*/
+func (detector *Detector) lastAtOrBefore(tick int64, bound tradePoint) (tradePoint, bool) {
+	if tick >= bound.tick {
+		return bound, true
+	}
+
+	after, _ := slices.BinarySearchFunc(detector.tape[:bound.seqIdx], tick+1, func(point tradePoint, target int64) int {
+		return compareTick(point.tick, target)
+	})
+
+	if after == 0 {
+		return tradePoint{}, false
+	}
+
+	return detector.tape[after-1], true
+}
+
+func compareTick(tick, target int64) int {
+	switch {
+	case tick < target:
+		return -1
+	case tick > target:
+		return 1
+	}
+
+	return 0
 }

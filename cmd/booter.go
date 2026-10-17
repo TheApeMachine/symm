@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	sysruntime "runtime"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
@@ -55,6 +58,8 @@ type Booter struct {
 	workspace        *nmruntime.Workspace
 	store            *store.Client
 	hub              *ui.Hub
+	tree             *strategy.CognitionTree
+	sequitur         *strategy.Sequitur
 	replies          sync.Map
 }
 
@@ -132,6 +137,10 @@ func (booter *Booter) Run() error {
 	}
 
 	if err := booter.seedBooks(); err != nil {
+		return err
+	}
+
+	if err := booter.startPaperTrading(); err != nil {
 		return err
 	}
 
@@ -258,6 +267,14 @@ func (booter *Booter) initPipeline() error {
 
 	sinks := []io.Writer{}
 
+	// The dashboard command (`make run`) never writes storage: collect is
+	// the only tick writer.
+	if booter.dashboard && booter.capture {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "booter: the dashboard run is read-only and cannot capture ticks; run collect", nil,
+		))
+	}
+
 	if booter.capture {
 		booter.store = store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
@@ -275,27 +292,49 @@ func (booter *Booter) initPipeline() error {
 	if booter.dashboard {
 		booter.hub = ui.NewHub(ctx)
 
+		// Everything the dashboard reads from storage goes through one
+		// read-only store view: an unreachable bucket fails the boot.
+		reader, err := store.NewReader(ctx, system.Cfg.Storage.S3.Bucket)
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		// Hindsight replays stored runs to the client that asks, over the
+		// hub socket; its run list is the one REST route. It is mounted
+		// before the hub listens.
+		replay, err := hindsight.NewService(ctx, reader)
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		replay.Register(booter.hub.App())
+		booter.hub.Replay(replay)
+
 		if err := booter.hub.Run(); err != nil {
 			return err
 		}
 
 		sinks = append(sinks, booter.hub)
 
-		// The live grammar view reads the published policy; without capture
-		// there is no store sink, so it gets its own (read-only) client.
-		client := booter.store
+		// The live grammar view and paper trading read the newest published
+		// policy: a malformed policy fails the boot; no published policy is
+		// an empty tree.
 
-		if client == nil {
-			client = store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
-		}
-
-		sequitur, err := strategy.NewSequitur(ctx, booter.hub, client)
+		booter.tree, err = strategy.LoadCognitionTree(reader, system.Cfg.Learning.MinimumPathConfidence, system.Cfg.Resonance)
 
 		if err != nil {
 			return errnie.Error(err)
 		}
 
-		sinks = append(sinks, sequitur)
+		booter.sequitur, err = strategy.NewSequitur(ctx, booter.hub, booter.tree)
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		sinks = append(sinks, booter.sequitur)
 	}
 
 	for _, sink := range sinks {
@@ -378,6 +417,120 @@ func (booter *Booter) seedBooks() error {
 	}
 
 	return nil
+}
+
+/*
+startPaperTrading turns paper trading on for the dashboard run when a model
+is stored: books are seeded and the firehose is not yet open, so the first
+trade tick can already be acted on. Without stored paths it says so and the
+run continues as a view. Records go to the local paper.records_path file
+(append-only) and to the hub; storage is never written.
+*/
+func (booter *Booter) startPaperTrading() error {
+	if !booter.dashboard {
+		return nil
+	}
+
+	if booter.tree.Empty() {
+		errnie.Warn("[booter] paper trading inactive: no trained paths are stored under policy/ (run detect and train first)")
+		return strategy.PublishTree(booter.hub.Retained(), booter.tree, false)
+	}
+
+	if err := system.Cfg.Paper.Validate(); err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "[booter] paper trading", err))
+	}
+
+	path := system.Cfg.Paper.RecordsPath
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return errnie.Error(errnie.Err(errnie.IO, "[booter] paper records directory for "+path, err))
+	}
+
+	records, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.IO, "[booter] paper records file "+path, err))
+	}
+
+	ctx := booter.Context()
+
+	closeRecords := func() {
+		if err := records.Close(); err != nil {
+			errnie.Error(errnie.Err(errnie.IO, "[booter] closing paper records file "+path, err))
+		}
+	}
+
+	training, err := strategy.NewTraining(ctx, booter.price, booter.desk, booter.tree, booter.hub, records)
+
+	if err != nil {
+		closeRecords()
+		return errnie.Error(err)
+	}
+
+	go func() {
+		<-ctx.Done()
+		// A round trip still open has no exit to record: say so, and
+		// write nothing for it.
+		training.WarnOpen()
+		closeRecords()
+	}()
+
+	booter.startPrivateIngress(training)
+	booter.sequitur.Trade(training)
+
+	if err := strategy.PublishTree(booter.hub.Retained(), booter.tree, true); err != nil {
+		return errnie.Error(err)
+	}
+
+	errnie.Info(fmt.Sprintf(
+		"[booter] paper trading active: policy epoch %d, %d stored paths; records appended to %s",
+		booter.tree.Epoch(), booter.tree.Paths(), path,
+	))
+
+	return nil
+}
+
+/*
+startPrivateIngress reads the paper desk's private frames: executions are
+applied to the desk and accounted by training; a rejected order is an
+error. The paper transport blocks until each frame is read, so this runs
+for as long as orders can be placed.
+*/
+func (booter *Booter) startPrivateIngress(training *strategy.Training) {
+	go func() {
+		for {
+			buf, err := booter.privateTransport.Read()
+
+			if err != nil {
+				if nmruntime.ShuttingDown(booter.Context(), err) || booter.Context().Err() != nil {
+					return
+				}
+
+				errnie.Error(errnie.Err(errnie.IO, "[booter] private ingress read failed", err))
+				continue
+			}
+
+			switch {
+			case data.Attribute[string](buf, "channel") == "executions":
+				execution, err := kraken.NewExecution(buf)
+
+				if err != nil {
+					errnie.Error(errnie.Err(errnie.UnprocessableContent, "[booter] executions frame: "+string(buf), err))
+					continue
+				}
+
+				booter.desk.Apply(execution)
+
+				if err := training.Filled(execution); err != nil {
+					errnie.Error(err)
+				}
+			case data.Attribute[string](buf, "method") == "add_order":
+				if success, err := data.AttributeOk[bool](buf, "success"); err != nil || !success {
+					errnie.Error(errnie.Err(errnie.IO, "[booter] paper desk rejected an order: "+string(buf), err))
+				}
+			}
+		}
+	}()
 }
 
 /*

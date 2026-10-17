@@ -5,6 +5,7 @@ import { createStore } from "@tanstack/store";
 import { RingBuffer } from "#/collections/ring";
 import { Value } from "#/types/value";
 import { Component } from "./component";
+import { Sparkline } from "./sparkline";
 import { Typography } from "./typography";
 
 describe("Component telemetry binding", () => {
@@ -124,5 +125,44 @@ describe("Component telemetry binding", () => {
 
 		expect(view.getByTestId("symbol").textContent).toBe("ETH/USD");
 		expect(view.getByTestId("contrast").textContent).toBe("1.23");
+	});
+
+	it("paints a sparkline from ring history for the named headline metric", () => {
+		const store = createStore<Record<string, RingBuffer<Value>>>({});
+		const ring = new RingBuffer<Value>(10);
+		store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
+
+		const view = render(
+			<Component store={store} symbol="ETH/USD">
+				<Sparkline data-k="sparkline" data-series="contrast" title="contrast" />
+			</Component>,
+		);
+
+		act(() => {
+			ring.add(
+				new Value({
+					scope: "ETH/USD",
+					metrics: [
+						{ name: "contrast", raw: 0.1, snm: 0.1 },
+						{ name: "stability", raw: 9, snm: 9 },
+					],
+				}),
+			);
+			ring.add(
+				new Value({
+					scope: "ETH/USD",
+					metrics: [{ name: "contrast", raw: 0.9, snm: 0.9 }],
+				}),
+			);
+			store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
+		});
+
+		const spark = view.container.querySelector('polyline[fill="none"]');
+		const points = spark?.getAttribute("points") ?? "";
+
+		expect(points).not.toBe("0.0,29.0 150,29.0");
+		expect(points.split(" ")).toHaveLength(2);
+		const ys = points.split(" ").map((pair) => Number(pair.split(",")[1]));
+		expect(ys[0]).toBeGreaterThan(ys[1]);
 	});
 });

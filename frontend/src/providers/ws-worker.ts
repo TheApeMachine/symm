@@ -157,6 +157,7 @@ self.addEventListener("message", (event: MessageEvent) => {
 		url?: string;
 		symbol?: string;
 		route?: string;
+		command?: Record<string, unknown>;
 	};
 
 	switch (message.type) {
@@ -182,6 +183,20 @@ self.addEventListener("message", (event: MessageEvent) => {
 			return;
 		case "POSITION_EXIT":
 			sendPositionExit(message.symbol ?? "");
+			return;
+		case "COMMAND":
+			// A command the hub must answer (hindsight) is never dropped
+			// quietly: with no open socket it is reported back.
+			if (socket === null || socket.readyState !== WebSocket.OPEN) {
+				self.postMessage({
+					type: "COMMAND_FAILED",
+					command: message.command,
+					error: "hub socket is not open",
+				});
+				return;
+			}
+
+			socket.send(JSON.stringify(message.command));
 			return;
 	}
 });

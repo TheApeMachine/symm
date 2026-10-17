@@ -121,6 +121,19 @@ describe("dom utilities", () => {
 			expect(boolEl.textContent).toBe("FALSE");
 		});
 
+		it("fills a meter from the magnitude of a signed unit value", () => {
+			const el = document.createElement("div");
+			el.setAttribute("data-metric-meter", "signed_net_fraction");
+			const fill = document.createElement("div");
+			fill.setAttribute("data-meter-fill", "true");
+			el.appendChild(fill);
+
+			renderValue(el, { name: "signed_net_fraction", raw: -0.491, snm: -0.491 });
+
+			expect(fill.style.width).toBe("49.1%");
+			expect(el.getAttribute("aria-valuenow")).toBe("49.1");
+		});
+
 		it("resets value on standby", () => {
 			const el = document.createElement("span");
 			renderValue(el, 123.456);

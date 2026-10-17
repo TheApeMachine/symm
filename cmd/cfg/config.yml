@@ -120,6 +120,20 @@ hindsight:
     observation_budget: 500000
 
 resonance:
+  # Chord-level surprise gate (strategy symbolTape.advance, shared by train
+  # and run): the midpoint rule proposes a chord; it is appended to the
+  # grammar only when the resonance solver's surprise, as a causal running
+  # z-score per symbol, reaches surprise_z. Before that the symbol warms up:
+  # its gate stays closed (chords blocked, counted "cold") until its coder's
+  # error has settled, i.e. its average at the coder's fastest rate (0.15)
+  # is no longer below its average at learning_rate. There is no warm-up
+  # length to configure; the z-score accumulates only once warm. gate: false
+  # appends every proposed chord. Every policy records these settings; run
+  # refuses a policy epoch trained under different ones. No defaults in code.
+  gate: true
+  surprise_z: 1.0
+  # The resonance solver's pace: each coder's resting learning rate, and the
+  # slow rate of its warm-up error average. At most 0.15 (the coders' fastest).
   learning_rate: 0.01
   layers: 3
 
@@ -319,6 +333,26 @@ learning:
   # of them read "enter"), so a 1-2 token agreement is coincidence, not a match.
   # Required: there is no default in code.
   minimum_path_confidence: 2
+
+detector:
+  # A is half the B..C move before B, clamped to the symbol's first trade in
+  # the epoch. An excursion whose clamped precursor (A..B) is shorter than this
+  # many ticks is not emitted (logged, counted in the detect summary).
+  # Required: there is no default in code.
+  min_precursor_ticks: 10
+  # Entry and exit are pulled back from B and C by this fraction of the
+  # precursor length in ticks, so orders placed there can fill. Train learns
+  # and prices the pulled-back points; the exact B and C stay stored.
+  # Required: there is no default in code.
+  execution_lead_fraction: 0.1
+
+paper:
+  # `make run` never writes storage: every paper-trade record (one data.Value
+  # per traded decision, data.PaperKeys) is appended to this local file, and
+  # `make paper` uploads it under paper/<action>/<symbol>/<epoch>/<seq>.bin.
+  # Relative paths are relative to the working directory. Required while
+  # paper trading is active: there is no default in code.
+  records_path: paper_records/records.bin
 
 cognition:
   # A binary confidence of 0.5 is exactly indifferent. Cognition must exceed

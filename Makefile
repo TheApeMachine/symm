@@ -25,7 +25,7 @@ ADVISOR_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-flow test-go test-race test-cover test-e2e test-frontend bench run collect detect train audit dump strip-trailing-newlines physics-metallib physics-manifold-metallib build-cuda
+.PHONY: build test test-flow test-go test-race test-cover test-e2e test-frontend bench run paper collect detect train audit dump strip-trailing-newlines physics-metallib physics-manifold-metallib build-cuda
 
 test: test-flow test-go test-race test-frontend
 
@@ -54,6 +54,11 @@ bench:
 # static Project/Binding scanner) and the Influence UI loses most of the graph.
 run:
 	go run $(OVERLAY_FLAG) main.go $(CONFIG_FLAG)
+
+# paper uploads the records `make run` appended to paper.records_path; run
+# itself never writes storage.
+paper:
+	go run $(OVERLAY_FLAG) main.go paper $(CONFIG_FLAG)
 
 collect:
 	@echo "symm collect running (Ctrl+C to stop)"

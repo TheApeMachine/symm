@@ -19,11 +19,16 @@ var (
 var trainCmd = &cobra.Command{
 	Use:   "train",
 	Short: "Train the action tree on detected excursions and the stored tick tape",
-	Long: `train replays each epoch's stored ticks (data.TickPrefix) through the signal
-grid and grammar per symbol, attributes the excursions detect wrote for the
-epoch to the grammar paths that preceded them, and publishes the epoch's
-policies under data.PolicyPrefixes(epoch), replacing any
-published earlier for that epoch.`,
+	Long: `train replays each epoch's stored ticks (data.TickPrefix) up to detect's
+watermark (data.DetectorWatermark; an epoch without one is refused, and
+ticks collect stored after detect ran are left out) through the signal
+grid, the chord-level surprise gate (resonance.*) and grammar per symbol,
+attributes the excursions detect wrote for the epoch to the grammar paths
+that preceded them, and publishes the policies under a fresh policy epoch,
+data.PolicyPrefixes(policy epoch), each tagged with the gate settings and
+the tick epoch (data.PolicyGate). Earlier trainings are kept, so a gated and
+an ungated training of the same ticks can be audited side by side
+(symm audit --policy-epoch).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := pyroscope.Start(pyroscope.Config{
 			ApplicationName: "symm.train.theapemachine.app",

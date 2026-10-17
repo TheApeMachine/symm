@@ -1,60 +1,127 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { Value } from "#/types/value";
-import { keysHash, symbolProgress, tokensOf } from "./cognitive-tree";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cognitionStore, ingestCognitionFrame } from "#/collections/cognition";
+import { CognitiveTree, progressOf } from "./cognitive-tree";
 
-describe("tokensOf", () => {
-	it("rebuilds stored-key tokens from path_token metrics", () => {
-		const m = new Value({
-			metrics: Object.entries({
-				"path_token:00:0": 1,
-				"path_token:00:1": 2,
-				"path_token:01:0": 11,
-			}).map(([name, raw]) => ({
-				name,
-				raw,
-			})),
-		});
-		expect(tokensOf(m)).toEqual(["R01-R02", "R11"]);
+const tree = {
+	epoch: "1792195368165650000",
+	paths: 1,
+	trading: true,
+	gate: {
+		tickEpoch: "1792189318815706000",
+		enabled: true,
+		surpriseZ: 1,
+		warmup:
+			"settled: error average at 0.15 no longer below its average at 0.01",
+		learningRate: 0.01,
+	},
+	keys: ["R12/R10/noop.bin"],
+	branches: [
+		{
+			hash: "R12/R10",
+			depth: 2,
+			visits: 1,
+			meanEdge: -0.033,
+			confidence: 1,
+			policy: "NOOP",
+		},
+	],
+};
+
+afterEach(() => {
+	cleanup();
+	cognitionStore.setState(() => ({ tree: null, matches: {} }));
+	vi.restoreAllMocks();
+});
+
+describe("ingestCognitionFrame", () => {
+	it("keeps the tree and per-symbol matches; a new tree drops old matches", () => {
+		expect(ingestCognitionFrame("tree", tree)).toBe(true);
+		expect(
+			ingestCognitionFrame("match", {
+				symbol: "BTC/USD",
+				tick: 9,
+				tokens: ["R12", "R10"],
+				stored: true,
+				match: "R12/R10",
+				depth: 2,
+				action: "noop",
+			}),
+		).toBe(true);
+		expect(cognitionStore.state.matches["BTC/USD"].depth).toBe(2);
+
+		ingestCognitionFrame("tree", { ...tree, epoch: "1792195368165650001" });
+		expect(cognitionStore.state.matches).toEqual({});
+	});
+
+	it("refuses a malformed frame without applying it", () => {
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		expect(ingestCognitionFrame("tree", { ...tree, epoch: 1 })).toBe(false);
+		expect(ingestCognitionFrame("match", { symbol: "BTC/USD" })).toBe(false);
+		expect(ingestCognitionFrame("other", tree)).toBe(false);
+		expect(cognitionStore.state.tree).toBeNull();
+		expect(error).toHaveBeenCalledTimes(3);
 	});
 });
 
-describe("keysHash", () => {
-	it("matches strategy.keysHash (FNV-1a 32)", () => {
-		expect(keysHash(["a", "b"])).toBe(0x28e4c710);
+describe("progressOf", () => {
+	it("points a stored match at its stored key", () => {
+		expect(
+			progressOf({
+				symbol: "ETH/USD",
+				tick: 3,
+				tokens: ["R01", "R12", "R10"],
+				stored: true,
+				match: "R12/R10",
+				depth: 2,
+				action: "noop",
+			}),
+		).toEqual({
+			symbol: "ETH/USD",
+			path: "R01/R12/R10",
+			depth: 2,
+			tokens: ["R01", "R12", "R10"],
+			matched: ["R12/R10/noop.bin"],
+		});
 	});
 });
 
-describe("symbolProgress", () => {
-	it("tracks multiple symbols advancing through the trie", () => {
-		const btc = new Value({
-			scope: "BTC/USD",
-			provenance: [
-				{ name: "token_path", value: "R12/R11" },
-				{ name: "token_depth", value: "2" },
-			],
+describe("CognitiveTree", () => {
+	it("waits for the hub frame, without any fetch", () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		render(<CognitiveTree />);
+		expect(screen.getByTestId("cognitive-tree-empty").textContent).toContain(
+			"waiting for the hub",
+		);
+		expect(fetchMock).not.toHaveBeenCalled();
+		vi.unstubAllGlobals();
+	});
+
+	it("says paper trading is inactive when the hub reports no trained paths", () => {
+		ingestCognitionFrame("tree", {
+			...tree,
+			paths: 0,
+			trading: false,
+			gate: null,
+			keys: [],
+			branches: [],
 		});
+		render(<CognitiveTree />);
+		expect(screen.getByTestId("cognitive-tree-empty").textContent).toContain(
+			"paper trading inactive: no trained paths",
+		);
+	});
 
-		const eth = new Value({
-			scope: "ETH/USD",
-			provenance: [
-				{ name: "token_path", value: "R05/R02/R01" },
-				{ name: "token_depth", value: "3" },
-			],
-		});
-
-		const state = {
-			"BTC/USD": { toArray: () => [btc] },
-			"ETH/USD": { toArray: () => [eth] },
-		};
-
-		const parsed = JSON.parse(symbolProgress(state));
-		expect(parsed["BTC/USD"]).toBeDefined();
-		expect(parsed["BTC/USD"].tokens).toEqual(["R12", "R11"]);
-		expect(parsed["BTC/USD"].depth).toBe(2);
-
-		expect(parsed["ETH/USD"]).toBeDefined();
-		expect(parsed["ETH/USD"].tokens).toEqual(["R05", "R02", "R01"]);
-		expect(parsed["ETH/USD"].depth).toBe(3);
+	it("shows the loaded epoch, path count and gate", () => {
+		ingestCognitionFrame("tree", tree);
+		render(<CognitiveTree />);
+		const meta = screen.getByTestId("cognitive-tree-meta").textContent ?? "";
+		expect(meta).toContain("policy epoch 1792195368165650000");
+		expect(meta).toContain("1 paths");
+		expect(meta).toContain(
+			"gated z≥1 · warm-up settled: error average at 0.15 no longer below its average at 0.01",
+		);
 	});
 });

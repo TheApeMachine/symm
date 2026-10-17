@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
+import { act, cleanup, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_FOCUS_SYMBOL, RingBuffer, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { KernelInspector } from "#/components/kernel/inspector";
@@ -48,6 +50,11 @@ const getTestRing = (source: string, symbol: string) => {
 };
 
 describe("KernelInspector", () => {
+	afterEach(() => {
+		cleanup();
+		terminalStore.actions.closeInspect();
+	});
+
 	it("renders nothing when no kernel is being inspected", () => {
 		terminalStore.actions.closeInspect();
 
@@ -152,6 +159,27 @@ describe("KernelInspector", () => {
 		expect(markup).toContain("awaiting first reading");
 
 		terminalStore.actions.closeInspect();
+	});
+
+	it("repaints the history sparkline when the kernel ring grows", () => {
+		const ring = getTestRing("hawkes", DEFAULT_FOCUS_SYMBOL);
+		ring.clear();
+		ring.add(sparseMeasurement(0.2));
+		signals.hawkes.setState((prev) => ({ ...prev }));
+		terminalStore.actions.inspectSource("hawkes");
+
+		const view = render(<KernelInspector />);
+		const spark = () =>
+			view.container.querySelector("svg polyline[fill='none']");
+		const before = spark()?.getAttribute("points");
+
+		act(() => {
+			ring.add(sparseMeasurement(0.9));
+			signals.hawkes.setState((prev) => ({ ...prev }));
+		});
+
+		const after = spark()?.getAttribute("points");
+		expect(after).not.toBe(before);
 	});
 
 	it("opens on resonance, which publishes no headline metric", () => {

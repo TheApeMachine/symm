@@ -1,273 +1,207 @@
-import { tableFromArrays, tableToIPC } from "apache-arrow";
+// @vitest-environment jsdom
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	beginHindsight,
+	hindsightStore,
+	ingestHindsightFrame,
+} from "#/collections/hindsight";
+import {
+	doneFrame,
+	excursionFrame,
+	symbolFrame,
+	tickFrame,
+} from "#/collections/hindsight-frames";
+import {
+	bucketize,
+	coordinateOf,
 	fetchHindsightRuns,
-	fetchHindsightCaptures,
-	fetchHindsightStates,
-	fetchHindsightState,
-	fetchHindsightEnvelope,
-	fetchHindsightGaps,
-	fetchHindsightLifecycle,
-	fetchHindsightTimeline,
-	fetchHindsightSymbols,
-	fetchHindsightMetricMap,
-	normalizeExcursionRecord,
-	adaptMeasurementsToTimeline,
+	summariesOf,
+	timelineOf,
 } from "./hindsight-api";
 
-afterEach(() => vi.unstubAllGlobals());
+const RUN = "1792187257188073000";
 
-const respond = (status: number, body: unknown) => {
-	vi.stubGlobal("window", {
-		location: { protocol: "http:", hostname: "localhost" },
-	});
-	const payload = typeof body === "string" ? body : JSON.stringify(body);
-	vi.stubGlobal(
-		"fetch",
-		vi.fn().mockImplementation(() =>
-			Promise.resolve(new Response(payload, { status })),
-		),
+const stream = () => {
+	beginHindsight(RUN, "BTC/USD");
+	ingestHindsightFrame(
+		excursionFrame(RUN, "BTC/USD", "up", {
+			a_tick: 1,
+			b_tick: 2,
+			c_tick: 4,
+			d_tick: 5,
+			b_price: 100,
+			c_price: 104,
+			entry_tick: 2,
+			entry_ask: 100.5,
+			exit_tick: 4,
+			exit_bid: 103.5,
+		}),
 	);
+	ingestHindsightFrame(excursionFrame(RUN, "BTC/USD", "chop", {}));
+
+	for (let tick = 1; tick <= 6; tick++) {
+		ingestHindsightFrame(
+			tickFrame(
+				RUN,
+				"BTC/USD",
+				tick,
+				99 + tick,
+				tick === 3 ? Number.NaN : 101 + tick,
+				100 + tick,
+			),
+		);
+	}
+
+	ingestHindsightFrame(doneFrame(RUN, "BTC/USD", 6));
+	const loaded = hindsightStore.state.stream;
+	if (loaded === null) throw new Error("no stream");
+	return loaded;
 };
 
-describe("Hindsight archive reads", () => {
-	it("preserves the run identity and timestamp used by run selection", async () => {
-		const run = { id: "run", startedAt: "2026-09-09T00:00:00Z", positions: 2 };
-		respond(200, [run]);
-		expect(await fetchHindsightRuns()).toEqual([run]);
+describe("hindsight projection", () => {
+	afterEach(() => {
+		hindsightStore.setState(() => ({ index: null, stream: null }));
+		vi.restoreAllMocks();
 	});
 
-	it("rejects storage-row JSON instead of rendering invalid dates and unselectable runs", async () => {
-		respond(200, [{ ID: "run", StartedAt: "2026-09-09T00:00:00Z" }]);
-		await expect(fetchHindsightRuns()).rejects.toThrow("invalid run metadata");
+	it("leaves a coordinate the tick does not define undefined, not zero", () => {
+		const loaded = stream();
+		expect(coordinateOf(loaded.ticks[0], "midpoint")).toBe(101);
+		expect(coordinateOf(loaded.ticks[2], "midpoint")).toBeNull();
+		expect(coordinateOf(loaded.ticks[2], "trade")).toBe(103);
 	});
 
-	it.each([
-		["runs", () => fetchHindsightRuns()],
-		["captures", () => fetchHindsightCaptures("run")],
-		["states", () => fetchHindsightStates("run")],
-		["state", () => fetchHindsightState("run", 2, 1)],
-		["envelope", () => fetchHindsightEnvelope("run", 2)],
-		["gaps", () => fetchHindsightGaps("run")],
-		["lifecycle", () => fetchHindsightLifecycle("run")],
-		["symbols", () => fetchHindsightSymbols("run")],
-		["semantics", () => fetchHindsightMetricMap()],
-	])("surfaces a failed %s read instead of returning an empty archive", async (_name, read) => {
-		respond(503, "archive unavailable");
-		await expect(read()).rejects.toThrow("503");
+	it("buckets ticks by tick number with OHLC over the ticks that define the coordinate", () => {
+		const buckets = bucketize(stream().ticks, "midpoint", 3, 1, 6);
+		expect(
+			buckets.map((bucket) => [
+				bucket.fromSequence,
+				bucket.toSequence,
+				bucket.observations,
+			]),
+		).toEqual([
+			[1, 2, 2],
+			[3, 4, 2],
+			[5, 6, 2],
+		]);
+		expect(buckets[1].open).toBe(104);
+		expect(buckets[1].close).toBe(104);
+		expect(buckets[1].defined).toBe(true);
+		expect(buckets[0].hasTouchDepth).toBe(false);
+		expect(buckets[0].spreadFraction).toBeGreaterThan(0);
 	});
 
-	it("surfaces a failed workbench timeline query instead of returning an empty archive", async () => {
-		respond(503, "workbench service unavailable");
-		await expect(fetchHindsightTimeline({ run: "run" })).rejects.toThrow(
-			"workbench",
-		);
+	it("turns up/down excursions into episodes with their stored points; chop is counted, not drawn", () => {
+		const timeline = timelineOf(stream(), null, "midpoint", "time", 10, null);
+		expect(timeline?.discovery.stored).toBe(2);
+		expect(timeline?.discovery.episodes).toHaveLength(1);
+
+		const [episode] = timeline?.discovery.episodes ?? [];
+		expect(episode.kind).toBe("upward_excursion");
+		expect([episode.fromSequence, episode.toSequence]).toEqual([1, 5]);
+		expect(episode.observedExcursion).toBeCloseTo(0.04);
+		expect(
+			episode.references.map((reference) => [
+				reference.role,
+				reference.capture.sequence,
+				reference.value,
+			]),
+		).toEqual([
+			["anchor", 2, 100.5],
+			["shock_onset", 2, 100],
+			["peak", 4, 104],
+			["exit_anchor", 4, 103.5],
+		]);
 	});
 
-	it("decodes DuckDB Arrow IPC buckets from /workbench/query", async () => {
-		vi.stubGlobal("window", {
-			location: { protocol: "http:", hostname: "localhost" },
+	it("narrows to a window", () => {
+		const timeline = timelineOf(stream(), null, "trade", "capture", 10, {
+			from: 2,
+			to: 4,
 		});
+		expect(timeline?.span.fromSequence).toBe(2);
+		expect(timeline?.runSpan.toSequence).toBe(6);
+		expect(
+			timeline?.buckets.reduce((sum, bucket) => sum + bucket.observations, 0),
+		).toBe(3);
+	});
 
-		const listing = tableToIPC(
-			tableFromArrays({
-				database: ["symmtables", "symmtables"],
-				schema: ["hindsight", "hindsight"],
-				name: ["spot_ticker", "spot_trade"],
+	it("summarizes the run index", () => {
+		beginHindsight(RUN, "");
+		ingestHindsightFrame(
+			symbolFrame(RUN, "ETH/USD", {
+				ticks: 9,
+				touched: 8,
+				up: 1,
+				down: 2,
+				top_excursion: -0.02,
 			}),
 		);
-		const buckets = tableToIPC(
-			tableFromArrays({
-				index: [0],
-				from_sequence: [10],
-				to_sequence: [10],
-				from_at: ["2026-10-01T12:00:00.000Z"],
-				to_at: ["2026-10-01T12:00:00.000Z"],
-				tickers: [1],
-				observations: [1],
-				open: [101],
-				high: [101],
-				low: [101],
-				close: [101],
-				spread_fraction: [0.02],
-				touch_depth: [3],
-				trades: [0],
-				trade_qty: [0],
-			}),
+		ingestHindsightFrame(doneFrame(RUN, "", 9));
+
+		const [summary] = summariesOf(hindsightStore.state.index);
+		expect(summary.symbol).toBe("ETH/USD");
+		expect(summary.defined).toBe(8);
+		expect(summary.priceEpisodes).toBe(3);
+		expect(summary.topExcursion).toBeCloseTo(0.02);
+		expect(summary.topKind).toBe("downward_excursion");
+	});
+
+	it("reads runs with string ids and refuses a malformed one", async () => {
+		const fetchMock = vi.fn().mockResolvedValueOnce(
+			new Response(
+				JSON.stringify([
+					{
+						id: RUN,
+						startedAt: "2026-10-16T00:00:00Z",
+						status: "recorded",
+						trained: true,
+						policies: [
+							{
+								epoch: "1792190000000000000",
+								gate: true,
+								surpriseZ: 1,
+								warmup:
+									"settled: error average at 0.15 no longer below its average at 0.01",
+								learningRate: 0.01,
+							},
+						],
+					},
+				]),
+			),
 		);
+		vi.stubGlobal("fetch", fetchMock);
 
-		const asBody = (bytes: Uint8Array): BodyInit =>
-			bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-
-		const fetcher = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
-			const body = typeof init?.body === "string" ? init.body : "";
-			if (body.includes("SHOW ALL TABLES")) {
-				return new Response(asBody(listing), { status: 200 });
-			}
-			if (init?.method === "POST" && body.includes("bucket_idx")) {
-				return new Response(asBody(buckets), { status: 200 });
-			}
-			if (_url.includes("/hindsight/excursions")) {
-				return new Response("[]", { status: 200 });
-			}
-			return new Response("unexpected", { status: 500 });
-		});
-		vi.stubGlobal("fetch", fetcher);
-
-		let progressCount = 0;
-		const timeline = await fetchHindsightTimeline(
-			{ run: "1", symbol: "BTC/USD" },
+		const runs = await fetchHindsightRuns();
+		expect(runs).toEqual([
 			{
-				onProgress: (partial) => {
-					progressCount++;
-					expect(partial.symbol).toBe("BTC/USD");
-				},
+				id: RUN,
+				startedAt: "2026-10-16T00:00:00Z",
+				status: "recorded",
+				trained: true,
+				policies: [
+					{
+						epoch: "1792190000000000000",
+						gate: true,
+						surpriseZ: 1,
+						warmup:
+							"settled: error average at 0.15 no longer below its average at 0.01",
+						learningRate: 0.01,
+					},
+				],
 			},
+		]);
+
+		fetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify([{ id: 1792187257188073000, startedAt: "x" }]),
+			),
 		);
+		await expect(fetchHindsightRuns()).rejects.toThrow(/malformed run/);
 
-		expect(timeline).not.toBeNull();
-		expect(timeline?.symbol).toBe("BTC/USD");
-		expect(timeline?.totalObservations).toBe(1);
-		expect(timeline?.buckets[0]?.open).toBe(101);
-		expect(timeline?.measurements).toEqual([]);
-		expect(progressCount).toBeGreaterThan(0);
-	});
-
-	it("keeps a genuinely absent exact artifact distinct from a failed read", async () => {
-		respond(404, "not found");
-		expect(await fetchHindsightState("run", 2, 1)).toBeNull();
-		expect(await fetchHindsightEnvelope("run", 2)).toBeNull();
-	});
-});
-
-
-describe("Hindsight excursion wire shape", () => {
-	it("normalizes Go camelCase excursion JSON into episode geometry", () => {
-		const record = normalizeExcursionRecord({
-			epoch: 42,
-			id: "exc-1",
-			symbol: "BTC/USD",
-			direction: "up",
-			clearsFriction: true,
-			precursorStartTick: 10,
-			anchorTick: 20,
-			extremumTick: 30,
-			exitTick: 40,
-			grossExcursion: 0.012,
-			profitFraction: 0.008,
-			observationCount: 12,
-			entryPrice: 100,
-			extremumPrice: 101.2,
-			exitPrice: 100.8,
-		});
-
-		expect(record.precursorStartTick).toBe(10);
-		expect(record.anchorTick).toBe(20);
-		expect(record.exitTick).toBe(40);
-		expect(record.clearsFriction).toBe(true);
-		expect(record.grossExcursion).toBe(0.012);
-	});
-
-	it("accepts legacy snake_case fixtures without inventing ticks", () => {
-		const record = normalizeExcursionRecord({
-			epoch: 1,
-			id: "legacy",
-			symbol: "ETH/USD",
-			direction: "down",
-			clears_friction: false,
-			precursor_start_tick: 5,
-			anchor_tick: 6,
-			exit_tick: 9,
-			gross_excursion: 0.02,
-		});
-
-		expect(record.precursorStartTick).toBe(5);
-		expect(record.exitTick).toBe(9);
-		expect(record.clearsFriction).toBe(false);
-	});
-
-	it("maps up/down directions onto upward/downward episode kinds with A→C span", () => {
-		const timeline = adaptMeasurementsToTimeline(
-			[
-				{
-					label: "BTC/USD",
-					symbol: "BTC/USD",
-					source: "spot_ticker",
-					seqIdx: 10,
-					tick: 10,
-					at: "2026-10-01T12:00:00.000Z",
-					metrics: { bid: { raw: 100 }, ask: { raw: 102 } },
-				} as any,
-				{
-					label: "BTC/USD",
-					symbol: "BTC/USD",
-					source: "spot_ticker",
-					seqIdx: 40,
-					tick: 40,
-					at: "2026-10-01T12:01:00.000Z",
-					metrics: { bid: { raw: 101 }, ask: { raw: 103 } },
-				} as any,
-			],
-			{ run: "42", symbol: "BTC/USD", buckets: 2 },
-			["BTC/USD"],
-			[
-				normalizeExcursionRecord({
-					epoch: 42,
-					id: "exc-up",
-					symbol: "BTC/USD",
-					direction: "up",
-					clearsFriction: true,
-					precursorStartTick: 10,
-					anchorTick: 20,
-					extremumTick: 30,
-					exitTick: 40,
-					grossExcursion: 0.01,
-					profitFraction: 0.005,
-					observationCount: 5,
-					entryPrice: 101,
-					extremumPrice: 102,
-					exitPrice: 101.5,
-				}),
-			],
-		);
-
-		expect(timeline.discovery.episodes).toHaveLength(1);
-		expect(timeline.discovery.episodes[0].kind).toBe("upward_excursion");
-		expect(timeline.discovery.episodes[0].fromSequence).toBe(10);
-		expect(timeline.discovery.episodes[0].toSequence).toBe(40);
-		expect(timeline.discovery.episodes[0].references.some((r) => r.role === "shock_onset")).toBe(true);
-		expect(timeline.discovery.episodes[0].references.every((r) => r.ordinal === 0)).toBe(true);
-		expect(timeline.discovery.episodes[0].references.some((r) => r.role === "peak")).toBe(true);
-		expect(timeline.buckets[0].open).toBe(101);
-		expect(timeline.buckets[0].hasSpreadFraction).toBe(true);
-	});
-
-	it("counts websocket trades via metadata type for arrivals", () => {
-		const timeline = adaptMeasurementsToTimeline(
-			[
-				{
-					label: "BTC/USD",
-					symbol: "BTC/USD",
-					source: "websocket",
-					seqIdx: 1,
-					tick: 1,
-					at: "2026-10-01T12:00:00.000Z",
-					metrics: { bid: { raw: 100 }, ask: { raw: 102 }, bid_qty: { raw: 1 }, ask_qty: { raw: 2 } },
-					peers: [
-						{
-							source: "websocket",
-							seqIdx: 1,
-							metrics: { qty: { raw: 0.5 } },
-							metadata: { type: "trade" },
-						} as any,
-					],
-				} as any,
-			],
-			{ run: "1", symbol: "BTC/USD", buckets: 1 },
-		);
-		expect(timeline.buckets[0].trades).toBe(1);
-		expect(timeline.buckets[0].tradeQty).toBe(0.5);
-		expect(timeline.buckets[0].hasTouchDepth).toBe(true);
-		expect(timeline.buckets[0].touchDepth).toBe(3);
+		fetchMock.mockResolvedValueOnce(new Response("boom", { status: 500 }));
+		await expect(fetchHindsightRuns()).rejects.toThrow(/500/);
+		vi.unstubAllGlobals();
 	});
 });
