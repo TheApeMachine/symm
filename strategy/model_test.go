@@ -2,11 +2,10 @@ package strategy
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"testing"
 
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 func TestModelRefusesARegionBelowThePathThreshold(t *testing.T) {
@@ -76,22 +75,34 @@ func TestModelRestoresALearnedThreshold(t *testing.T) {
 	model := NewModel(context.Background(), nil, nil)
 	model.learn("R01/R02", true, true)
 	model.learn("R01/R02", true, true)
-	io.Copy(model.client, data.NewValue("policy", "current", "BTC/USD", "R01/R02"))
+	model.Open[holdKey("BTC/USD", true)] = "R01/R02"
 
-	body, err := json.Marshal(model)
+	value := data.NewValue("model", "state", "current")
+	value.Append(model.Threshold, "threshold")
+	value.Append(model.Wins, "wins")
+	value.Append(model.Promoted, "promoted")
+	value.Append(model.Open, "open")
+	next := NewModel(context.Background(), nil, nil)
+	stored := data.From(value.Bytes())
 
-	if err != nil {
-		t.Fatal(err)
+	for _, gates := range data.Layer[map[string]float64](stored, "threshold") {
+		next.Threshold = gates
 	}
 
-	value := data.NewValue("model", "threshold", "current")
-	value.Append(body, "model")
-	next := NewModel(context.Background(), nil, nil)
+	for _, wins := range data.Layer[map[string]int](stored, "wins") {
+		next.Wins = wins
+	}
 
-	for _, raw := range data.Layer[[]byte](data.From(value.Bytes()), "model") {
-		if err := json.Unmarshal(raw, next); err != nil {
-			t.Fatal(err)
-		}
+	for _, promoted := range data.Layer[map[string]bool](stored, "promoted") {
+		next.Promoted = promoted
+	}
+
+	for _, open := range data.Layer[map[string]string](stored, "open") {
+		next.Open = open
+	}
+
+	if stored.Err != nil {
+		t.Fatal(stored.Err)
 	}
 
 	if next.Threshold["R01/R02"] != 0.4 || next.Wins["R01/R02"] != 2 {
@@ -100,6 +111,10 @@ func TestModelRestoresALearnedThreshold(t *testing.T) {
 
 	if next.Open[holdKey("BTC/USD", true)] != "R01/R02" {
 		t.Fatalf("restored hold: %q", next.Open[holdKey("BTC/USD", true)])
+	}
+
+	if model.Status() != runtime.READY {
+		t.Fatalf("model status %s", model.Status())
 	}
 
 	next.Note("R01/R02")
@@ -116,3 +131,16 @@ func TestModelRestoresALearnedThreshold(t *testing.T) {
 		t.Fatalf("threshold object key: %s", value.Prefix)
 	}
 }
+
+func TestModelPersistSafeWithNilClient(t *testing.T) {
+	model := NewModel(context.Background(), nil, nil)
+	val := data.NewValue("model", "state", "current")
+	// Should not panic or error when model.client is nil
+	model.persist(val)
+	model.persist(nil)
+
+	// When value has an error
+	errVal := data.NewValue("too", "few")
+	model.persist(errVal)
+}
+

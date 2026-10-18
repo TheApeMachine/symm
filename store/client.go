@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
@@ -21,10 +22,9 @@ import (
 
 type Client struct {
 	*runtime.System
-	S3Client   *s3.Client
-	bucket     string
-	downloader *manager.Downloader
-	uploader   *manager.Uploader
+	S3Client *s3.Client
+	bucket   string
+	transfer *transfermanager.Client
 }
 
 func NewClient(ctx context.Context, bucket string) *Client {
@@ -72,11 +72,10 @@ func NewClient(ctx context.Context, bucket string) *Client {
 	}
 
 	return &Client{
-		System:     runtime.NewSystem(ctx, "store.client"),
-		S3Client:   client,
-		bucket:     bucket,
-		downloader: manager.NewDownloader(client),
-		uploader:   manager.NewUploader(client),
+		System:   runtime.NewSystem(ctx, "store.client"),
+		S3Client: client,
+		bucket:   bucket,
+		transfer: transfermanager.New(client),
 	}
 }
 
@@ -143,9 +142,10 @@ func (client *Client) Read(p []byte) (n int, err error) {
 
 			writer := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
 
-			_, err := client.downloader.Download(client.Context(), writer, &s3.GetObjectInput{
-				Bucket: aws.String(client.bucket),
-				Key:    aws.String(*object.Key),
+			_, err := client.transfer.DownloadObject(client.Context(), &transfermanager.DownloadObjectInput{
+				Bucket:   aws.String(client.bucket),
+				Key:      aws.String(*object.Key),
+				WriterAt: writer,
 			})
 
 			if err != nil {
@@ -183,9 +183,10 @@ func (client *Client) Stream(ctx context.Context, prefix string, dst io.Writer) 
 
 		body := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
 
-		_, err := client.downloader.Download(ctx, body, &s3.GetObjectInput{
-			Bucket: aws.String(client.bucket),
-			Key:    aws.String(key),
+		_, err := client.transfer.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
+			Bucket:   aws.String(client.bucket),
+			Key:      aws.String(key),
+			WriterAt: body,
 		})
 
 		if err != nil {
@@ -203,8 +204,8 @@ func (client *Client) Stream(ctx context.Context, prefix string, dst io.Writer) 
 }
 
 /*
-Write uploads a serialized Value. Prefix is not in the body, so a Value
-copied onto the client uses WriteAtPrefix and the key is that prefix.
+Write is unsupported because serialized Values do not carry an upload key prefix.
+Use WriteAtPrefix or io.Copy with a *data.Value (which routes through WriteAtPrefix).
 */
 func (client *Client) Write(p []byte) (int, error) {
 	return client.WriteAtPrefix(data.From(p).Prefix, p)
@@ -220,7 +221,7 @@ func (client *Client) WriteAtPrefix(prefix string, p []byte) (int, error) {
 		))
 	}
 
-	_, err := client.uploader.Upload(client.Context(), &s3.PutObjectInput{
+	_, err := client.transfer.UploadObject(client.Context(), &transfermanager.UploadObjectInput{
 		Bucket: aws.String(client.bucket),
 		Key:    aws.String(prefix),
 		Body:   bytes.NewReader(p),

@@ -88,13 +88,13 @@ const PositionCard = ({ row }: { row: DeskPosition }) => {
 		room === undefined ? "muted" : room < 1 ? "down" : room < 3 ? "warn" : "up";
 
 	if (pnlPct !== undefined) {
-		const prior = trails.get(row.symbol) ?? [];
+		const prior = trails.get(row.id) ?? [];
 		if (prior[prior.length - 1] !== pnlPct) {
-			trails.set(row.symbol, [...prior, pnlPct].slice(-90));
+			trails.set(row.id, [...prior, pnlPct].slice(-90));
 		}
 	}
 
-	const pnlTrail = trails.get(row.symbol) ?? [];
+	const pnlTrail = trails.get(row.id) ?? [];
 	const tokens = (match?.tokens ?? [])
 		.map(sectorOf)
 		.filter((sector): sector is number => sector !== undefined)

@@ -6,15 +6,14 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/data/transport"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/store"
 )
 
-const thresholdKey = "model/threshold/current"
+const thresholdKey = "model/state/current"
 
 const (
 	thresholdStart = 0.5
@@ -33,14 +32,13 @@ stored model.
 */
 type Model struct {
 	*runtime.System `json:"-"`
-	*transport.Stream
-	mu        sync.Mutex
-	desk      *broker.Desk
-	client    *store.Client
-	Threshold map[string]float64 `json:"threshold"`
-	Wins      map[string]int     `json:"wins"`
-	Promoted  map[string]bool    `json:"promoted"`
-	Open      map[string]string  `json:"open"`
+	mu              sync.Mutex
+	desk            *broker.Desk
+	client          *store.Client
+	Threshold       map[string]float64
+	Wins            map[string]int
+	Promoted        map[string]bool
+	Open            map[string]string
 }
 
 func NewModel(
@@ -56,51 +54,72 @@ func NewModel(
 		Open:      map[string]string{},
 	}
 
-	model.Stream = transport.NewStream(model.Context(), func(value *data.Value) *data.Value {
-		body, err := sonic.Marshal(model)
-
-		if err != nil {
-			model.Error(err)
-			return value
-		}
-
-		return data.NewValue("model", "threshold", "current").Append(body, "model")
-	})
-
-	value := data.NewValue("model", "threshold", "current")
-
-	for stored := range transport.Next(
-		transport.NewFlipFlop(value, model.client),
-	) {
-		if stored.Err != nil {
-			model.Error(stored.Err)
-			continue
-		}
-
-		stored.Lookup(model, "model")
-		break
-	}
-
+	model.load()
 	return model
 }
 
-func (model *Model) Note(path string) {
-	if _, ok := model.Threshold[path]; ok {
+func (model *Model) load() {
+	if model == nil || model.client == nil {
 		return
 	}
 
-	model.Threshold[path] = thresholdStart
+	buf, err := object(model.Context(), model.client, thresholdKey)
+
+	if errnie.IsNotFound(err) {
+		return
+	}
+
+	if err != nil {
+		model.Error(err)
+		return
+	}
+
+	stored := data.From(buf)
+
+	for _, gates := range data.Layer[map[string]float64](stored, "threshold") {
+		model.Threshold = gates
+	}
+
+	for _, wins := range data.Layer[map[string]int](stored, "wins") {
+		model.Wins = wins
+	}
+
+	for _, promoted := range data.Layer[map[string]bool](stored, "promoted") {
+		model.Promoted = promoted
+	}
+
+	for _, open := range data.Layer[map[string]string](stored, "open") {
+		model.Open = open
+	}
+
+	if stored.Err != nil && !errnie.IsNotFound(stored.Err) {
+		model.Error(stored.Err)
+		return
+	}
+
+	if len(model.Threshold) > 0 {
+		model.Transition(runtime.READY)
+	}
 }
 
-func (model *Model) Ready() bool {
-	if model == nil {
-		return false
+func (model *Model) Note(path string) {
+	if model == nil || path == "" {
+		return
 	}
 
 	model.mu.Lock()
 	defer model.mu.Unlock()
 
-	return len(model.Threshold) > 0
+	model.note(path)
+}
+
+func (model *Model) note(path string) {
+	if _, ok := model.Threshold[path]; ok {
+		return
+	}
+
+	model.Threshold[path] = thresholdStart
+	model.Transition(runtime.READY)
 }
 
 func (model *Model) Match(sentence, regions []*Token) []string {
@@ -173,37 +192,62 @@ func (model *Model) Act(symbol, path, action string) {
 		return
 	}
 
+	var virtual bool
+
 	switch model.decide(symbol, path, action) {
 	case "exit":
 		model.settle(symbol, path, false)
+		return
+	case "close":
+		model.settle(symbol, path, true)
+		return
 	case "enter":
 		if err := model.desk.Enter(symbol, false); err != nil {
 			model.Error(err)
 			return
 		}
-
-		io.Copy(model.client, model)
-	default:
+	case "virtual":
 		if err := model.desk.Enter(symbol, true); err != nil {
-			model.settle(symbol, path, true)
+			model.Error(err)
 			return
 		}
 
-		io.Copy(model.client, model)
+		virtual = true
+	default:
+		return
 	}
+
+	model.mu.Lock()
+	model.note(path)
+	model.Open[holdKey(symbol, virtual)] = path
+	recorded := data.NewValue("model", "state", "current")
+	recorded.Append(model.Threshold, "threshold")
+	recorded.Append(model.Wins, "wins")
+	recorded.Append(model.Promoted, "promoted")
+	recorded.Append(model.Open, "open")
+	model.mu.Unlock()
+
+	model.persist(recorded)
 }
 
 func (model *Model) decide(symbol, path, action string) string {
 	model.mu.Lock()
 	defer model.mu.Unlock()
 
-	holding := model.Open[holdKey(symbol, false)] != ""
+	paper := model.Open[holdKey(symbol, false)] != "" || model.desk.Holding(symbol, false)
+	virtual := model.Open[holdKey(symbol, true)] != "" || model.desk.Holding(symbol, true)
 
 	switch {
-	case action == "exit.bin" || (model.Promoted[path] && holding):
+	case action == "exit.bin" || (model.Promoted[path] && paper):
 		return "exit"
 	case action == "enter.bin" || model.Promoted[path]:
+		if paper {
+			return ""
+		}
+
 		return "enter"
+	case virtual:
+		return "close"
 	default:
 		return "virtual"
 	}
@@ -224,22 +268,25 @@ func (model *Model) settle(symbol, fallback string, virtual bool) {
 	}
 
 	if path != "" && ok {
-		if model.learn(path, profit, virtual) {
-			model.write(path)
-		}
-
+		model.learn(path, profit, virtual)
 		return
 	}
 
-	if _, err := io.Copy(model.client, model); err != nil {
-		model.Error(err)
-	}
+	model.mu.Lock()
+	recorded := data.NewValue("model", "state", "current")
+	recorded.Append(model.Threshold, "threshold")
+	recorded.Append(model.Wins, "wins")
+	recorded.Append(model.Promoted, "promoted")
+	recorded.Append(model.Open, "open")
+	model.mu.Unlock()
+
+	model.persist(recorded)
 }
 
 func (model *Model) learn(path string, profit, virtual bool) bool {
 	model.mu.Lock()
 
-	model.Note(path)
+	model.note(path)
 
 	if profit {
 		model.Threshold[path] = min(max(
@@ -262,27 +309,25 @@ func (model *Model) learn(path string, profit, virtual bool) bool {
 		}
 	}
 
+	recorded := data.NewValue("model", "state", "current")
+	recorded.Append(model.Threshold, "threshold")
+	recorded.Append(model.Wins, "wins")
+	recorded.Append(model.Promoted, "promoted")
+	recorded.Append(model.Open, "open")
 	model.mu.Unlock()
 
-	if _, err := io.Copy(model.client, model); err != nil {
-		model.Error(err)
-	}
+	model.persist(recorded)
 
-	return promote
-}
-
-func (model *Model) write(path string) {
-	if model.client == nil {
-		return
+	if !promote {
+		return promote
 	}
 
 	for _, action := range []string{"enter.bin", "exit.bin"} {
 		value := data.NewValue("policy", "current", path, action)
-
-		if _, err := io.Copy(model.client, value); err != nil {
-			model.Error(err)
-		}
+		model.persist(value)
 	}
+
+	return promote
 }
 
 func (model *Model) take(symbol string, virtual bool) string {
@@ -302,3 +347,23 @@ func holdKey(symbol string, virtual bool) string {
 
 	return symbol + "\x00paper"
 }
+
+func (model *Model) persist(value *data.Value) {
+	if model == nil || value == nil {
+		return
+	}
+
+	if value.Err != nil {
+		model.Error(value.Err)
+		return
+	}
+
+	if model.client == nil {
+		return
+	}
+
+	if _, err := io.Copy(model.client, value); err != nil {
+		model.Error(err)
+	}
+}
+

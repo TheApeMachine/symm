@@ -177,7 +177,7 @@ match checks if the region has enough energy to overcome the
 threshold needed to allow matching the tokens.
 */
 func (training *Training) match(sentence, regions []*Token) []string {
-	if training.model != nil && training.model.Ready() {
+	if training.model != nil && training.model.Status() == runtime.READY {
 		return training.model.Match(sentence, regions)
 	}
 
@@ -212,7 +212,7 @@ brightness is under that token's energy gate. Those regions are not
 admitted, and the caller publishes them so the trie can show the refusal.
 */
 func (training *Training) belowEnergy(sentence, regions []*Token) []*Token {
-	if training.model != nil && training.model.Ready() {
+	if training.model != nil && training.model.Status() == runtime.READY {
 		return training.model.Below(sentence, regions)
 	}
 

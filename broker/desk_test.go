@@ -48,6 +48,47 @@ func TestPositionsMarshalsBothBooks(t *testing.T) {
 	}
 }
 
+func TestPositionsIncludesClosedLotsAndDeduplicates(t *testing.T) {
+	desk := &Desk{
+		positions: &sync.Map{},
+		virtuals:  &sync.Map{},
+		closed:    make([]*Position, 0),
+	}
+
+	open := NewPosition()
+	open.Symbol = "BTC/USD"
+	desk.positions.Store(open.Symbol, open)
+
+	closed1 := NewPosition()
+	closed1.Symbol = "SOL/USD"
+	desk.closed = append(desk.closed, closed1)
+
+	// Duplicate lot with same ID as open
+	dup := NewPosition()
+	dup.ID = open.ID
+	dup.Symbol = open.Symbol
+	desk.closed = append(desk.closed, dup)
+
+	var got []*Position
+	if err := json.Unmarshal(desk.Positions(), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 positions (deduplicated), got %d", len(got))
+	}
+
+	foundSOL := false
+	for _, p := range got {
+		if p.Symbol == "SOL/USD" {
+			foundSOL = true
+		}
+	}
+	if !foundSOL {
+		t.Fatal("expected closed position SOL/USD to be included")
+	}
+}
+
 func TestBalancePublishesTheTradeValuation(t *testing.T) {
 	balance := &Balance{}
 	balance.wallet.Store(&kraken.Balance{

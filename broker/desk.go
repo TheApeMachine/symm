@@ -105,15 +105,37 @@ func (desk *Desk) Balance() []byte {
 
 func (desk *Desk) Positions() []byte {
 	positions := make([]*Position, 0)
+	seen := make(map[string]struct{})
 
 	for _, cache := range []*sync.Map{desk.positions, desk.virtuals} {
+		if cache == nil {
+			continue
+		}
 		cache.Range(func(key, value any) bool {
 			position := value.(*Position)
 			desk.quote(position)
 			positions = append(positions, position)
+			if position.ID != "" {
+				seen[position.ID] = struct{}{}
+			}
 			return true
 		})
 	}
+
+	desk.closedMu.RLock()
+	for _, position := range desk.closed {
+		if position == nil {
+			continue
+		}
+		if position.ID != "" {
+			if _, ok := seen[position.ID]; ok {
+				continue
+			}
+			seen[position.ID] = struct{}{}
+		}
+		positions = append(positions, position)
+	}
+	desk.closedMu.RUnlock()
 
 	json, err := sonic.Marshal(positions)
 
@@ -246,6 +268,25 @@ deviation of signed traded volume over one expected hold (participation
 within flow noise), and what the available cash buys at the budget's entry
 limit. Every refusal is an error naming its reason.
 */
+func (desk *Desk) Holding(symbol string, virtual bool) bool {
+	if desk == nil || symbol == "" {
+		return false
+	}
+
+	book := desk.positions
+
+	if virtual {
+		book = desk.virtuals
+	}
+
+	if book == nil {
+		return false
+	}
+
+	_, ok := book.Load(symbol)
+	return ok
+}
+
 func (desk *Desk) Enter(symbol string, virtual bool) error {
 	if system.Cfg == nil || system.Cfg.Risk == nil || system.Cfg.Risk.MaxFraction == nil {
 		return errnie.Error(errnie.Err(
@@ -294,6 +335,14 @@ func (desk *Desk) Enter(symbol string, virtual bool) error {
 
 		cash = decimal.NewFromInt64(int64(system.Cfg.Market.Balance))
 	} else {
+		if desk.balance == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[desk] balance unavailable",
+				nil,
+			))
+		}
+
 		cash = desk.balance.cash(desk.balance.Quote)
 	}
 
