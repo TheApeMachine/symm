@@ -338,8 +338,19 @@ func (price *Price) CurrentMark(symbol string) *decimal.Decimal {
 func (price *Price) RealizedReturn(
 	entryCost, entryFee, exitCost, exitFee *decimal.Decimal,
 ) float64 {
+	_, _, _, percent := price.realize(entryCost, entryFee, exitCost, exitFee)
+	return percent
+}
+
+/*
+realize is RealizedReturn's arithmetic, also returning the cost and the profit
+it already subtracts. The percent is profit / cost * 100.
+*/
+func (price *Price) realize(
+	entryCost, entryFee, exitCost, exitFee *decimal.Decimal,
+) (cost, proceeds, profit *decimal.Decimal, percent float64) {
 	if entryCost == nil || entryCost.Sign() <= 0 || exitCost == nil {
-		return 0
+		return nil, nil, nil, 0
 	}
 
 	totalEntry := entryCost
@@ -352,8 +363,13 @@ func (price *Price) RealizedReturn(
 		netExit = exitCost.Sub(exitFee)
 	}
 
-	profit := netExit.Sub(totalEntry)
-	return profit.Div(totalEntry).Mul(decimalHundred).Float64()
+	gain := netExit.Sub(totalEntry)
+
+	if totalEntry.Sign() <= 0 {
+		return totalEntry, netExit, gain, 0
+	}
+
+	return totalEntry, netExit, gain, gain.Div(totalEntry).Mul(decimalHundred).Float64()
 }
 
 /*
@@ -363,18 +379,119 @@ of what the lot cost. RealizedReturn reports percent; ret is that number as a
 fraction. ok is false when the book cannot take the quantity.
 */
 func (price *Price) Exit(symbol string, quantity, entry, fee *decimal.Decimal) (sale, proceeds, ret float64, ok bool) {
-	if price == nil || symbol == "" || quantity == nil || quantity.Sign() <= 0 || entry == nil || entry.Sign() <= 0 {
+	taken := price.pricedExit(symbol, quantity, entry, fee)
+
+	if !taken.ok || taken.sale == nil || taken.proceeds == nil {
 		return 0, 0, 0, false
+	}
+
+	return taken.sale.Float64(), taken.proceeds.Float64(), taken.ret, true
+}
+
+/*
+Sale is the price a held quantity would fetch now. A book that can take the
+whole quantity uses Exit. Otherwise the best bid is the sale, still fee-net,
+so a mark exists whenever the touch does.
+*/
+func (price *Price) Sale(symbol string, quantity, entry, fee *decimal.Decimal) (sale, proceeds, ret float64, ok bool) {
+	taken := price.booked(symbol, quantity, entry, fee)
+
+	if !taken.ok || taken.sale == nil || taken.proceeds == nil {
+		return 0, 0, 0, false
+	}
+
+	return taken.sale.Float64(), taken.proceeds.Float64(), taken.ret, true
+}
+
+/*
+CloseOut is Sale for a lot that has finished: the cost, the fee-net proceeds,
+and the profit realize already computed. No entry is not a profit.
+*/
+func (price *Price) CloseOut(
+	symbol string, quantity, entry, fee *decimal.Decimal,
+) (cost, proceeds, profit *decimal.Decimal, ret float64, ok bool) {
+	taken := price.booked(symbol, quantity, entry, fee)
+
+	if !taken.ok {
+		return nil, nil, nil, 0, false
+	}
+
+	return taken.cost, taken.proceeds, taken.profit, taken.ret, true
+}
+
+func (price *Price) booked(symbol string, quantity, entry, fee *decimal.Decimal) booked {
+	taken := price.pricedExit(symbol, quantity, entry, fee)
+
+	if taken.ok {
+		return taken
+	}
+
+	return price.pricedMark(symbol, quantity, entry, fee)
+}
+
+type booked struct {
+	sale, cost, proceeds, profit *decimal.Decimal
+	ret                          float64
+	ok                           bool
+}
+
+func (price *Price) pricedExit(symbol string, quantity, entry, fee *decimal.Decimal) booked {
+	if price == nil || symbol == "" || quantity == nil || quantity.Sign() <= 0 || entry == nil || entry.Sign() <= 0 {
+		return booked{}
 	}
 
 	surface, err := price.SellQuote(symbol, quantity)
 
 	if err != nil || surface == nil || !surface.FullyExecutable || surface.ExecutableVWAP == nil || surface.ExecutableValue == nil {
-		return 0, 0, 0, false
+		return booked{}
 	}
 
-	return surface.ExecutableVWAP.Float64(), surface.ExecutableValue.Float64(),
-		price.RealizedReturn(entry.Mul(quantity), fee, surface.ExecutableValue, nil) / 100, true
+	cost, proceeds, profit, percent := price.realize(notional(entry, quantity), fee, surface.ExecutableValue, nil)
+
+	if profit == nil {
+		return booked{}
+	}
+
+	return booked{
+		sale: surface.ExecutableVWAP, cost: cost, proceeds: proceeds, profit: profit,
+		ret: percent / 100, ok: true,
+	}
+}
+
+func (price *Price) pricedMark(symbol string, quantity, entry, fee *decimal.Decimal) booked {
+	if price == nil || symbol == "" || quantity == nil || quantity.Sign() <= 0 || entry == nil || entry.Sign() <= 0 {
+		return booked{}
+	}
+
+	bid, _ := price.Touch(symbol)
+
+	if bid == nil || bid.Sign() <= 0 {
+		return booked{}
+	}
+
+	known := price.Fee(symbol)
+
+	if known == nil || known.Fee == nil {
+		return booked{}
+	}
+
+	gross := notional(bid, quantity)
+	net := price.WithFee(symbol, gross, SELL)
+
+	if net == nil || net.Sign() <= 0 {
+		return booked{}
+	}
+
+	cost, proceeds, profit, percent := price.realize(notional(entry, quantity), fee, net, nil)
+
+	if profit == nil {
+		return booked{}
+	}
+
+	return booked{
+		sale: bid, cost: cost, proceeds: proceeds, profit: profit,
+		ret: percent / 100, ok: true,
+	}
 }
 
 /* Quantity sizes a buy against visible asks and available cash. */

@@ -48,7 +48,13 @@ const mismatch = {
 
 afterEach(() => {
 	cleanup();
-	cognitionStore.setState(() => ({ tree: null, matches: {} }));
+	cognitionStore.setState(() => ({
+		epoch: "0",
+		policyKeys: [],
+		matches: {},
+		problem: null,
+		tree: null,
+	}));
 	vi.restoreAllMocks();
 });
 
@@ -110,7 +116,7 @@ describe("CognitiveTree", () => {
 		vi.stubGlobal("fetch", fetchMock);
 		render(<CognitiveTree />);
 		expect(screen.getByTestId("cognitive-tree-empty").textContent).toContain(
-			"waiting for the hub",
+			"waiting for policy paths",
 		);
 		expect(fetchMock).not.toHaveBeenCalled();
 		vi.unstubAllGlobals();

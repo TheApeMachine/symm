@@ -114,7 +114,6 @@ func NewWorkspace(
 	}
 
 	sinkGroup := make([]disruptor.Handler, 0, len(sinks))
-
 	sinkStage := len(stages)
 
 	for _, sink := range sinks {
@@ -128,12 +127,17 @@ func NewWorkspace(
 	}
 
 	if len(sinkGroup) > 0 {
-		opts = append(opts, disruptor.Options.NewHandlerGroup(sinkGroup...))
+		opts = append(
+			opts, disruptor.Options.NewHandlerGroup(sinkGroup...),
+		)
 	}
 
 	// After every sink has returned, one handler publishes the tick's spans.
 	// It does no work of its own, so it is not a stage on the critical path.
-	opts = append(opts, disruptor.Options.NewHandlerGroup(&traceHandler{workspace: workspace}))
+	opts = append(
+		opts,
+		disruptor.Options.NewHandlerGroup(&traceHandler{workspace: workspace}),
+	)
 
 	channel, err := disruptor.New(opts...)
 	workspace.System = NewSystem(ctx, label, channel, workspace)
@@ -144,11 +148,13 @@ func NewWorkspace(
 			"[workspace] error creating LMAX disruptor channel",
 			err,
 		))
+
 		return nil
 	}
 
 	workspace.channel = channel
 	go workspace.channel.Listen()
+
 	return workspace
 }
 
@@ -179,6 +185,7 @@ func (workspace *Workspace) Step(value *data.Value) *data.Value {
 				"[workspace] internal error encountered",
 				nil,
 			))
+
 			return value
 		}
 	}
@@ -311,11 +318,7 @@ func (workspace *Workspace) measure(
 	body()
 
 	end := mono()
-	backlog := workspace.published.Load() - seq
-
-	if backlog < 0 {
-		backlog = 0
-	}
+	backlog := max(workspace.published.Load() - seq, 0)
 
 	value.Note(data.Span{
 		Name:    name,
@@ -325,6 +328,7 @@ func (workspace *Workspace) measure(
 		WorkNs:  end - start,
 		Backlog: backlog,
 	})
+	
 	value.MarkStageDone(stage, end)
 }
 

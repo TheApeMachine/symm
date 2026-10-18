@@ -10,7 +10,11 @@ import {
 	type RingBuffer,
 	signals,
 } from "#/collections/app";
-import { type CognitionBranch, cognitionStore } from "#/collections/cognition";
+import {
+	branchesFromPolicyKeys,
+	type CognitionBranch,
+	cognitionStore,
+} from "#/collections/cognition";
 import {
 	abortDetections,
 	beginDetectionRuns,
@@ -346,10 +350,12 @@ export const ForwardLearningViz = ({
 
 	// Real Radix Trie branches fetched from backend engine
 	// The loaded CognitionTree's stored branches (the hub's cognition/tree frame).
-	const trieBranches = useSelector(
-		cognitionStore,
-		(state) => state.tree?.branches ?? NO_BRANCHES,
-	);
+	const trieBranches = useSelector(cognitionStore, (state) => {
+		if (state.tree?.branches?.length) return state.tree.branches;
+		const keys =
+			state.policyKeys.length > 0 ? state.policyKeys : (state.tree?.keys ?? []);
+		return branchesFromPolicyKeys(keys);
+	});
 
 	// Real excursion markers if active
 	const [excursionEvent, setExcursionEvent] = useState<{

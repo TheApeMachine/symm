@@ -9,7 +9,10 @@ the exact reason and the fix. Nothing when the loaded tree is usable or no
 tree frame has arrived yet.
 */
 export const ModelProblem = ({ size = "m" }: { size?: "s" | "m" }) => {
-	const problem = useSelector(cognitionStore, (state) => state.tree?.problem);
+	const problem = useSelector(
+		cognitionStore,
+		(state) => state.problem ?? state.tree?.problem,
+	);
 
 	if (!problem) return null;
 

@@ -253,7 +253,7 @@ func IsSignalIndex(index string) bool {
 Excursions: detect writes one Value per excursion, Origin ExcursionOrigin,
 Role its class, Scope its symbol, Tick its C tick.
 */
-const ExcursionOrigin = "detector"
+const ExcursionOrigin = "detections"
 
 /*
 DraftOrigin holds a run's working predictions. A commit copies the ones
@@ -342,12 +342,12 @@ tick epoch and Tick its last tick, carrying one vector labelled
 DetectorWatermarkKeys. detect replaces it on every run; a run that fails
 leaves none, so train refuses the epoch until detect completes.
 
-	| key        | meaning                                        |
-	|------------|------------------------------------------------|
-	| first_tick | the epoch's first stored tick detect read      |
+	| key        | meaning                                          |
+	|------------|--------------------------------------------------|
+	| first_tick | the epoch's first stored tick detect read        |
 	| last_tick  | the last stored tick detect read (the watermark) |
-	| ticks      | how many stored ticks detect read              |
-	| symbols    | how many symbols detect labelled               |
+	| ticks      | how many stored ticks detect read                |
+	| symbols    | how many symbols detect labelled                 |
 */
 type DetectorWatermark struct {
 	Epoch     uint64

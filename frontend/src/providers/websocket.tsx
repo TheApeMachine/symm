@@ -24,6 +24,8 @@ import {
 import {
 	COGNITION_ORIGIN,
 	ingestCognitionFrame,
+	ingestPolicyLayers,
+	ingestTrainRegionsLayer,
 	LAYER_COGNITION,
 } from "#/collections/cognition";
 import {
@@ -528,6 +530,16 @@ export function dispatchValue(val: ParsedValue) {
 	if (val.origin === PAPER_ORIGIN) {
 		ingestPaperRecord(parsePaperRecord(val.role, val.scope, val.layers));
 		return;
+	}
+
+	if (val.origin === "policy") {
+		ingestPolicyLayers(val.epoch, val.layers);
+	}
+
+	for (const layer of val.layers) {
+		if (layer.index.includes("train/regions/")) {
+			ingestTrainRegionsLayer(Number(val.tick), layer.index, layer.bytes);
+		}
 	}
 
 	const symbol = tickSymbol(val);

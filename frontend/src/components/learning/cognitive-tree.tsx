@@ -4,10 +4,6 @@ import { ModelProblem } from "./model-problem";
 import { RadixTreeViz } from "./radix-tree-viz";
 import type { SymbolProgress } from "./types";
 
-/*
-progressOf lays one symbol's live match out for the tree: its recent tokens,
-and the stored key it matched (<path>/<action>.bin) when one did.
-*/
 export const progressOf = (match: CognitionMatch): SymbolProgress => ({
 	symbol: match.symbol,
 	path: match.tokens.join("/"),
@@ -17,16 +13,19 @@ export const progressOf = (match: CognitionMatch): SymbolProgress => ({
 		match.stored && match.action ? [`${match.match}/${match.action}.bin`] : [],
 });
 
-/*
-CognitiveTree draws the stored token paths of the CognitionTree make run
-loaded (the hub's cognition/tree frame), with each symbol's live match
-(cognition/match frames) highlighting its active prefix.
-*/
 export const CognitiveTree = () => {
-	const tree = useSelector(cognitionStore, (state) => state.tree);
+	const epoch = useSelector(cognitionStore, (state) => state.epoch);
+	const policyKeys = useSelector(cognitionStore, (state) =>
+		state.policyKeys.length > 0 ? state.policyKeys : (state.tree?.keys ?? []),
+	);
 	const matches = useSelector(cognitionStore, (state) => state.matches);
+	const trading = useSelector(
+		cognitionStore,
+		(state) => state.tree?.trading ?? policyKeys.length > 0,
+	);
+	const gate = useSelector(cognitionStore, (state) => state.tree?.gate ?? null);
 
-	if (!tree || tree.keys.length === 0) {
+	if (policyKeys.length === 0) {
 		return (
 			<div className="flex-1 flex flex-col min-h-0">
 				<ModelProblem />
@@ -36,15 +35,10 @@ export const CognitiveTree = () => {
 				>
 					<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
 					<span className="text-sm">
-						{tree
+						{epoch !== "0"
 							? "paper trading inactive: no trained paths"
-							: "waiting for the hub's cognition tree frame"}
+							: "waiting for policy paths or tick train/regions layers"}
 					</span>
-					{tree && !tree.problem && (
-						<span className="text-[10px] text-(--f4)">
-							run detect and train, then restart make run
-						</span>
-					)}
 				</div>
 			</div>
 		);
@@ -56,26 +50,24 @@ export const CognitiveTree = () => {
 		symbols[symbol] = progressOf(match);
 	}
 
-	const gate = tree.gate;
-
 	return (
 		<div className="flex-1 flex flex-col min-h-0">
 			<div
 				className="flex gap-3 px-2 py-1 text-[10px] text-(--f3) border-b border-(--line)"
 				data-testid="cognitive-tree-meta"
 			>
-				<span>policy epoch {tree.epoch}</span>
-				<span>{tree.paths} paths</span>
-				<span>{tree.trading ? "paper trading" : "not trading"}</span>
+				<span>policy epoch {epoch}</span>
+				<span>{policyKeys.length} paths</span>
+				<span>{trading ? "paper trading" : "not trading"}</span>
 				<span>
 					{gate === null
-						? "no gate tag"
+						? "live tokens from train/regions on tick"
 						: gate.enabled
 							? `gated z≥${gate.surpriseZ} · warm-up ${gate.warmup} · trained on ${gate.tickEpoch}`
 							: `ungated · trained on ${gate.tickEpoch}`}
 				</span>
 			</div>
-			<RadixTreeViz keys={tree.keys} symbols={symbols} feasible={[]} />
+			<RadixTreeViz keys={policyKeys} symbols={symbols} feasible={[]} />
 		</div>
 	);
 };

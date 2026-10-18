@@ -69,6 +69,39 @@ describe("position-health components", () => {
 		expect(markup).toContain("R03 (Exit Detector)");
 	});
 
+	it("shows an open virtual as a regime trial", () => {
+		const markup = renderToStaticMarkup(
+			<ActivePositionHealthCard
+				life={{
+					id: "TEL/USD · R01/R05",
+					symbol: "TEL/USD",
+					status: "open",
+					book: "virtual",
+					opened_at: new Date().toISOString(),
+					events: [
+						{
+							at: new Date().toISOString(),
+							kind: "entry_match",
+							detail: "virtual R01/R05",
+						},
+					],
+					mark: {
+						at: new Date().toISOString(),
+						bid: 0.004,
+						quantity: 100,
+						entry_price: 0.004,
+						unrealized: 0.4,
+						unrealized_return: 0.02,
+					},
+				}}
+			/>,
+		);
+		expect(markup).toContain("OPEN TRIAL");
+		expect(markup).toContain("next regime boundary");
+		expect(markup).toContain("+2.00%");
+		expect(markup).not.toContain("Order submitted to venue");
+	});
+
 	it("renders ActivePositionHealthCard for open position without fake realized loss", () => {
 		const markup = renderToStaticMarkup(
 			<ActivePositionHealthCard life={mockLife} />,

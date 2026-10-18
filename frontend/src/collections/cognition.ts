@@ -1,18 +1,11 @@
 import { createStore } from "@tanstack/store";
 
-/*
-The CognitionTree make run loaded and each symbol's live match against it,
-streamed over the hub websocket (data/schema.go): cognition/tree/all carries
-a strategy.CognitionFrame (the hub retains it, so a client that connects
-later still receives it first), cognition/match/<symbol> a
-strategy.CognitionMatchFrame per appended chord. Both are one JSON layer,
-LAYER_COGNITION.
-*/
-
 export const COGNITION_ORIGIN = "cognition";
 export const COGNITION_TREE_ROLE = "tree";
 export const COGNITION_MATCH_ROLE = "match";
 export const LAYER_COGNITION = "cognition";
+
+export const TRAIN_REGIONS = "train/regions/";
 
 export type CognitionBranch = {
 	hash: string;
@@ -27,17 +20,10 @@ export type CognitionGate = {
 	tickEpoch: string;
 	enabled: boolean;
 	surpriseZ: number;
-	/* The warm-up rule and its rates (data.PolicyWarmup), as text. */
 	warmup: string;
 	learningRate: number;
 };
 
-/*
-Why make run has no model to trade (strategy.CognitionProblem): error for a
-stored model it cannot use (malformed, trained under other gate settings),
-warning for none stored; the exact reason and the fix. Paper trading is off;
-everything else make run serves keeps working.
-*/
 export type CognitionProblem = {
 	level: "error" | "warning";
 	reason: string;
@@ -65,14 +51,131 @@ export type CognitionMatch = {
 };
 
 export type CognitionState = {
-	tree: CognitionTreeFrame | null;
+	epoch: string;
+	policyKeys: string[];
 	matches: Record<string, CognitionMatch>;
+	problem: CognitionProblem | null;
+	tree: CognitionTreeFrame | null;
 };
 
 export const cognitionStore = createStore<CognitionState>({
-	tree: null,
+	epoch: "0",
+	policyKeys: [],
 	matches: {},
+	problem: null,
+	tree: null,
 });
+
+const REGION = /^R\d{2}$/;
+
+export const parseTrainRegionsIndex = (
+	index: string,
+): { symbol: string; tokens: string[] } | null => {
+	const start = index.indexOf(TRAIN_REGIONS);
+	if (start < 0) return null;
+
+	const tail = index.slice(start + TRAIN_REGIONS.length);
+	const parts = tail.split("/").filter(Boolean);
+	if (parts.length === 0) return null;
+
+	const tokens: string[] = [];
+	let symbolEnd = 0;
+
+	for (let i = parts.length - 1; i >= 0; i--) {
+		if (REGION.test(parts[i])) {
+			tokens.unshift(parts[i]);
+			symbolEnd = i;
+			continue;
+		}
+		break;
+	}
+
+	if (tokens.length === 0) return null;
+
+	const symbol = parts.slice(0, symbolEnd).join("/");
+	if (!symbol) return null;
+
+	return { symbol, tokens };
+};
+
+const policyKeyFromIndex = (index: string): string | null => {
+	const match = index.match(/policy\/current\/(.+\/(?:enter|exit))\.bin/);
+	if (!match) return null;
+	return `policy/current/${match[1]}.bin`;
+};
+
+export const ingestPolicyKey = (key: string, epoch?: string) => {
+	const normalized = key.includes("policy/current/")
+		? key
+		: `policy/current/${key.replace(/^\//, "")}`;
+
+	cognitionStore.setState((state) => ({
+		...state,
+		epoch: epoch ?? state.epoch,
+		policyKeys: state.policyKeys.includes(normalized)
+			? state.policyKeys
+			: [...state.policyKeys, normalized],
+	}));
+};
+
+export const ingestTrainRegionsLayer = (
+	tick: number,
+	index: string,
+	_bytes: Uint8Array,
+) => {
+	const parsed = parseTrainRegionsIndex(index);
+	if (!parsed) return false;
+
+	cognitionStore.setState((state) => {
+		const prior = state.matches[parsed.symbol];
+		const tokens =
+			prior && prior.tokens.length >= parsed.tokens.length
+				? prior.tokens
+				: parsed.tokens;
+
+		return {
+			...state,
+			matches: {
+				...state.matches,
+				[parsed.symbol]: {
+					symbol: parsed.symbol,
+					tick,
+					tokens,
+					stored: prior?.stored ?? false,
+					match: prior?.match ?? "",
+					depth: tokens.length,
+					action: prior?.action ?? "",
+				},
+			},
+		};
+	});
+
+	return true;
+};
+
+export const branchesFromPolicyKeys = (
+	keys: string[],
+): CognitionBranch[] => {
+	const out: CognitionBranch[] = [];
+
+	for (const raw of keys) {
+		if (!raw.includes("enter.bin")) continue;
+
+		const trimmed = raw.replace(/^policy\/current\//, "").replace(/\/enter\.bin$/, "");
+		const depth = trimmed.split("/").filter(Boolean).length;
+
+		out.push({
+			hash: trimmed,
+			depth,
+			visits: 1,
+			meanEdge: 0,
+			confidence: 1,
+			policy: "ENTER",
+		});
+	}
+
+	return out;
+};
 
 const isBranch = (value: unknown): value is CognitionBranch => {
 	const branch = value as Partial<CognitionBranch> | null;
@@ -140,17 +243,15 @@ const isMatch = (value: unknown): value is CognitionMatch => {
 	);
 };
 
-/*
-ingestCognitionFrame applies one cognition frame by role. A payload that
-does not have its role's shape is reported and dropped, never half-applied.
-A new tree drops the matches made against the previous one.
-*/
 export const ingestCognitionFrame = (role: string, payload: unknown) => {
 	if (role === COGNITION_TREE_ROLE && isTree(payload)) {
 		const tree = payload as CognitionTreeFrame;
 		cognitionStore.setState(() => ({
-			tree: { ...tree, gate: tree.gate ?? null, problem: tree.problem ?? null },
+			epoch: tree.epoch,
+			policyKeys: [...tree.keys],
 			matches: {},
+			problem: tree.problem ?? null,
+			tree: { ...tree, gate: tree.gate ?? null, problem: tree.problem ?? null },
 		}));
 		return true;
 	}
@@ -169,4 +270,16 @@ export const ingestCognitionFrame = (role: string, payload: unknown) => {
 		payload,
 	);
 	return false;
+};
+
+export const ingestPolicyLayers = (
+	epoch: bigint,
+	layers: Array<{ index: string; bytes: Uint8Array }>,
+) => {
+	for (const layer of layers) {
+		const key = policyKeyFromIndex(layer.index);
+		if (key) {
+			ingestPolicyKey(key, String(epoch));
+		}
+	}
 };

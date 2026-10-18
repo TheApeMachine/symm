@@ -21,7 +21,13 @@ const problemTree = {
 
 afterEach(() => {
 	cleanup();
-	cognitionStore.setState(() => ({ tree: null, matches: {} }));
+	cognitionStore.setState(() => ({
+		epoch: "0",
+		policyKeys: [],
+		matches: {},
+		problem: null,
+		tree: null,
+	}));
 });
 
 describe("ModelProblem banner", () => {
@@ -32,16 +38,16 @@ describe("ModelProblem banner", () => {
 
 	it("cannot stretch the engine rail past its fixed width", () => {
 		cognitionStore.setState(() => ({
-			tree: {
-				...problemTree,
-				problem: {
-					level: "error",
-					reason:
-						"policy epoch 1792282175840704000 stores no coder state (trained before coder state was saved); its gate would start cold, not where train left it",
-					fix: "re-run detect and train on the tick epoch 1792169333015760400",
-				},
-			},
+			epoch: "0",
+			policyKeys: [],
 			matches: {},
+			problem: {
+				level: "error",
+				reason:
+					"policy epoch 1792282175840704000 stores no coder state (trained before coder state was saved); its gate would start cold, not where train left it",
+				fix: "re-run detect and train on the tick epoch 1792169333015760400",
+			},
+			tree: null,
 		}));
 
 		const { container } = render(<Engine />);
@@ -54,7 +60,13 @@ describe("ModelProblem banner", () => {
 	});
 
 	it("shows in the engine panel and the Sequitur tab", () => {
-		cognitionStore.setState(() => ({ tree: problemTree, matches: {} }));
+		cognitionStore.setState(() => ({
+			epoch: "0",
+			policyKeys: [],
+			matches: {},
+			problem: problemTree.problem,
+			tree: problemTree,
+		}));
 
 		for (const view of [<Engine key="e" />, <SequiturGrammarViz key="s" />]) {
 			const { container, unmount } = render(view);

@@ -190,6 +190,24 @@ export const REGION_KEYS = [
 	"R14",
 ];
 
+const virtualTrialStatus = (
+	life?: Lifecycle | null,
+): { statusText: string; verdictText: string } | null => {
+	if (life?.book !== "virtual") return null;
+	const marked = life.mark?.unrealized_return;
+	if (typeof marked !== "number" || !Number.isFinite(marked)) {
+		return {
+			statusText: "OPEN TRIAL",
+			verdictText: "Waiting for this symbol's next regime boundary.",
+		};
+	}
+	const percent = `${marked > 0 ? "+" : ""}${(marked * 100).toFixed(2)}%`;
+	return {
+		statusText: "OPEN TRIAL",
+		verdictText: `Marked ${percent} until this symbol's next regime boundary.`,
+	};
+};
+
 export const PositionHealthGauge = ({
 	life,
 	unrealizedVal,
@@ -221,7 +239,13 @@ export const PositionHealthGauge = ({
 	let verdictText =
 		"Position is holding securely near entry basis. Trailing protection active.";
 
-	if (cost <= 0) {
+	const trial = virtualTrialStatus(life);
+	if (trial) {
+		healthScore = 50;
+		statusText = trial.statusText;
+		statusVariant = "brand";
+		verdictText = trial.verdictText;
+	} else if (cost <= 0) {
 		healthScore = 50;
 		statusText = "PENDING FILL";
 		statusVariant = "brand";
@@ -603,7 +627,13 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 	let verdictText =
 		"Position is holding securely near entry basis. Trailing protection active.";
 
-	if (cost <= 0) {
+	const trial = virtualTrialStatus(life);
+	if (trial) {
+		healthScore = 50;
+		statusText = trial.statusText;
+		statusVariant = "brand";
+		verdictText = trial.verdictText;
+	} else if (cost <= 0) {
 		healthScore = 50;
 		statusText = "PENDING FILL";
 		statusVariant = "brand";
@@ -651,7 +681,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 					<Badge
 						size="xs"
 						variant="brand"
-						label="OPEN POSITION"
+						label={life.book === "virtual" ? "OPEN TRIAL" : "OPEN POSITION"}
 						className="animate-pulse"
 					/>
 					<span className="font-bold text-[12px] text-(--f1)">

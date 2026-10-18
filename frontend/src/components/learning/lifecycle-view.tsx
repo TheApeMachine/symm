@@ -500,6 +500,42 @@ const shownLife = (life: Lifecycle): Lifecycle =>
 		? { ...life, status: "holding" }
 		: life;
 
+type TrialWord = "win" | "loss" | "scratch";
+
+const trialWord = (life: Lifecycle): TrialWord | null => {
+	if (life.book !== "virtual") return null;
+	const word = life.outcome?.triggers?.[0];
+	switch (word) {
+		case "win":
+		case "loss":
+		case "scratch":
+			return word;
+		default:
+			return null;
+	}
+};
+
+const closedVerdict = (life: Lifecycle): TrialWord => {
+	const word = trialWord(life);
+	if (word) return word;
+	return (life.outcome?.realized ?? 0) > 0 ? "win" : "loss";
+};
+
+const verdictClass = (kind: TrialWord): string => {
+	switch (kind) {
+		case "win":
+			return "bg-(--up)/20 text-(--up) border border-(--up)/30";
+		case "loss":
+			return "bg-(--down)/20 text-(--down) border border-(--down)/30";
+		case "scratch":
+			return "bg-(--sunken) text-(--f2) border border-(--line)";
+		default: {
+			const unreachable: never = kind;
+			return unreachable;
+		}
+	}
+};
+
 const LifecycleStepper = ({ life }: { life: Lifecycle }) => {
 	const events = life.events ?? [];
 	const hasMatch = events.some((e) => e.kind === "entry_match");
@@ -737,12 +773,10 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 								<span
 									className={cn(
 										"px-2 py-0.5 rounded text-[10px] font-bold uppercase",
-										(outcome?.realized ?? 0) > 0
-											? "bg-(--up)/20 text-(--up) border border-(--up)/30"
-											: "bg-(--down)/20 text-(--down) border border-(--down)/30",
+										verdictClass(closedVerdict(life)),
 									)}
 								>
-									{(outcome?.realized ?? 0) > 0 ? "WIN" : "LOSS"}
+									{closedVerdict(life)}
 								</span>
 								<span
 									className={cn(
@@ -805,7 +839,7 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 	const outcome = life.outcome;
 	if (!outcome || life.status !== "closed") return null;
 
-	const isWin = outcome.realized > 0;
+	const verdict = closedVerdict(life);
 	const pnl = outcome.realized;
 	const name = life.book === "virtual" ? "virtual" : "paper";
 
@@ -840,12 +874,10 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 					<span
 						className={cn(
 							"px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
-							isWin
-								? "bg-(--up)/20 text-(--up) border border-(--up)/40"
-								: "bg-(--down)/20 text-(--down) border border-(--down)/40",
+							verdictClass(verdict),
 						)}
 					>
-						{isWin ? "WIN" : "LOSS"}
+						{verdict}
 					</span>
 					<span className={cn("text-[13px] font-bold", tone(pnl))}>
 						{signedMoney(pnl)} USD Realized
@@ -961,7 +993,7 @@ export const LifecycleView = () => {
 										<Badge
 											size="xxs"
 											variant={STATUS[life.status] ?? "disabled"}
-											label={life.status}
+											label={trialWord(life) ?? life.status}
 										/>
 									</Flex.Row>
 									<Flex.Row
@@ -993,7 +1025,7 @@ export const LifecycleView = () => {
 					{active ? (
 						<>
 							<Section.Header
-								title={`${active.symbol} · ${active.status}`}
+								title={`${active.symbol} · ${trialWord(active) ?? active.status}`}
 								meta={`opened ${time(active.opened_at)}${active.closed_at ? ` · ended ${time(active.closed_at)}` : ""}`}
 							/>
 							<LifecycleStepper life={active} />

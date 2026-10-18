@@ -78,11 +78,11 @@ func TestDynamicsStage(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			frames := stage.Data().(map[string]any)["frames"].([]*FrameData)
-			So(len(frames), ShouldEqual, 2)
-			So(frames[0].Tick, ShouldEqual, 3)
+			So(len(frames), ShouldEqual, 3)
+			So(frames[0].Tick, ShouldEqual, 2)
 			So(*frames[0].Price, ShouldEqual, 50005.0)
 			So(len(frames[0].Brightness), ShouldEqual, 15)
-			So(frames[1].Price, ShouldBeNil)
+			So(frames[2].Price, ShouldBeNil)
 		})
 
 		Convey("A nil measurement is an error", func() {

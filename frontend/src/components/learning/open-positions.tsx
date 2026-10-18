@@ -1,10 +1,9 @@
 import { signals } from "#/collections/app";
-import { bookAtom, type Book } from "#/collections/book";
+import { type Book, bookAtom } from "#/collections/book";
 import {
 	Component,
 	DistanceBar,
 	formatValue,
-	Funnel,
 	Gauge,
 	type GaugeTone,
 	metricOf,
@@ -29,7 +28,7 @@ const REGIONS = 15;
 const regionLabel = (s: number) => `R${String(s).padStart(2, "0")}`;
 const regionColor = (s: number) => sectorHue(s, REGIONS);
 
-const heldSymbols = (
+export const openLots = (
 	state: Record<string, { getLast(): Value | undefined }>,
 	book: Book,
 ) =>
@@ -40,8 +39,12 @@ const heldSymbols = (
 			return metricOf(ring?.getLast(), "position_open") === 1;
 		})
 		.map(([symbol]) => symbol)
-		.sort()
-		.join("|");
+		.sort();
+
+const heldSymbols = (
+	state: Record<string, { getLast(): Value | undefined }>,
+	book: Book,
+) => openLots(state, book).join("|");
 
 const duration = (s?: number) => {
 	if (s === undefined) return "—";
@@ -126,47 +129,18 @@ const PositionCard = ({ symbol }: { symbol: string }) => {
 	const capacity = metricOf(withTokens, "token_capacity");
 	const strength = metricOf(withTokens, "token_strength");
 	const threshold = metricOf(withTokens, "token_threshold");
-	const stored = metricOf(withTokens, "stored_paths") ?? 0;
-	const stages = tokens.map((_, i) => {
-		const k = String(i + 1).padStart(2, "0");
-		const total = metricOf(withTokens, `match_candidates:${k}`) ?? 0;
-		const enter = metricOf(withTokens, `match_enter:${k}`) ?? 0;
-		const exit = metricOf(withTokens, `match_exit:${k}`) ?? 0;
-		return {
-			label: String(i + 1),
-			segments: [
-				{ value: enter, color: "var(--up)", label: "say enter" },
-				{ value: exit, color: "var(--down)", label: "say exit" },
-				{
-					value: Math.max(0, total - enter - exit),
-					color: "var(--f4)",
-					label: "other",
-				},
-			],
-		};
-	});
-	const lastStage = stages[stages.length - 1]?.segments;
-	const verdict = !lastStage
-		? "waiting for tokens"
-		: lastStage.every((s) => s.value === 0)
-			? "no stored path fits this sequence"
-			: lastStage[1].value > 0 && lastStage[0].value === 0
-				? "fitting paths point to EXIT"
-				: lastStage[0].value > 0 && lastStage[1].value === 0
-					? "fitting paths point to ENTER"
-					: "fitting paths disagree";
 
 	return (
 		<Component store={signals.training} symbol={symbol}>
 			<div
 				className={cn(
-					"rounded-xs border bg-(--surface) p-3 flex flex-col gap-3 transition-shadow",
+					"rounded-xs border-r border-b border-(--line) bg-(--surface) p-3 flex flex-col gap-2 transition-shadow",
 					exiting && "animate-pulse",
 				)}
 				style={{
 					borderColor: `color-mix(in srgb, var(--${pnlTone === "muted" ? "line" : pnlTone}) 60%, var(--line))`,
 					boxShadow:
-						pnlTone === "muted" ? undefined : `0 0 12px -8px var(--${pnlTone})`,
+						pnlTone === "muted" ? undefined : `0 0 8px -8px var(--${pnlTone})`,
 				}}
 			>
 				<div className="flex items-center justify-between">
@@ -318,13 +292,6 @@ const PositionCard = ({ symbol }: { symbol: string }) => {
 								<span className="text-(--f4)">tick = needed to advance</span>
 							</span>
 						</div>
-						<div>
-							<div className="text-[10px] text-(--f3) mb-1">
-								stored paths still fitting ({stored} total)
-							</div>
-							<Funnel total={stored} stages={stages} />
-							<div className="text-[10px] text-(--f2) mt-1">{verdict}</div>
-						</div>
 					</div>
 				</div>
 			</div>
@@ -356,7 +323,7 @@ export const OpenPositions = () => {
 	}
 
 	return (
-		<div className="flex-1 min-h-0 overflow-auto p-3 grid gap-3 grid-cols-[repeat(auto-fill,minmax(440px,1fr))] content-start">
+		<div className="flex-1 min-h-0 overflow-auto grid grid-cols-[repeat(auto-fill,minmax(440px,1fr))] content-start">
 			{symbols.map((symbol) => (
 				<PositionCard key={symbol} symbol={symbol} />
 			))}

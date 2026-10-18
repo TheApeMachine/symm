@@ -51,6 +51,5 @@ describe("OpenPositions", () => {
 		expect(view.getByText("held 1m 15s")).toBeTruthy();
 		expect(view.getByText("4.0×")).toBeTruthy();
 		expect(view.getByText("5.0%")).toBeTruthy();
-		expect(view.getByText("waiting for tokens")).toBeTruthy();
 	});
 });

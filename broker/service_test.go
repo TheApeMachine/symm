@@ -22,7 +22,23 @@ func TestService(t *testing.T) {
 				[]byte(`{"tb":"200","n":"50","e":"1000"}`),
 			),
 		}
-		desk := NewDesk(context.Background(), &dummyTransport{}, nil, balance)
+		ctx := context.Background()
+		price := NewPrice(ctx, nil, nil, nil, testNormalizer())
+		symbol := "BTC/USD"
+		fee := decimal.NewFromFloat64(0.26)
+		price.SetFee(symbol, kraken.TradeVolumeFee{Fee: fee, Minfee: fee, Maxfee: fee})
+		price.SetQuote(
+			symbol,
+			decimal.NewFromFloat64(49_000),
+			decimal.NewFromFloat64(50_000),
+		)
+		balance.wallet.Store(&kraken.Balance{
+			Data: []kraken.BalanceData{{
+				Asset:   "USD",
+				Balance: decimal.NewFromFloat64(10_000),
+			}},
+		})
+		desk := NewDesk(ctx, &dummyTransport{}, price, balance)
 
 		service := NewService(desk)
 
@@ -73,8 +89,11 @@ func TestService(t *testing.T) {
 		})
 
 		Convey("Positions lifecycle reflects exit status", func() {
-			qty := decimal.NewFromFloat64(0.2)
-			So(desk.Enter("BTC/USD", qty), ShouldBeNil)
+			So(desk.Enter("BTC/USD"), ShouldBeNil)
+			held := desk.Open("BTC/USD")
+			So(len(held), ShouldEqual, 1)
+			qty := held[0].Qty()
+			So(qty, ShouldNotBeNil)
 
 			reqOpen := httptest.NewRequest(http.MethodGet, "/positions", nil)
 			respOpen, err := app.Test(reqOpen)

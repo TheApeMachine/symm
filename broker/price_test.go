@@ -89,6 +89,101 @@ func TestAffordableEmptyNormalizerReportsNameNotFound(t *testing.T) {
 	}
 }
 
+func TestSaleFollowsTheBidWhenTheBookCannotFill(t *testing.T) {
+	t.Parallel()
+
+	price := broker.NewPrice(context.Background(), nil, nil, nil, spot.NewNormalizer())
+	symbol := "FET/USD"
+	fee := decimal.NewFromFloat64(0.26)
+	price.SetFee(symbol, kraken.TradeVolumeFee{Fee: fee, Minfee: fee, Maxfee: fee})
+
+	entry := decimal.NewFromFloat64(100)
+	qty := decimal.NewFromFloat64(2)
+	ask := decimal.NewFromFloat64(101)
+
+	price.SetQuote(symbol, decimal.NewFromFloat64(110), ask)
+	sale, _, ret, ok := price.Sale(symbol, qty, entry, nil)
+
+	if !ok {
+		t.Fatal("a quoted bid did not mark the lot")
+	}
+
+	if sale != 110 || ret <= 0 {
+		t.Fatalf("sale = %v ret = %v, want the higher bid and a gain", sale, ret)
+	}
+
+	price.SetQuote(symbol, decimal.NewFromFloat64(90), ask)
+	sale, _, ret, ok = price.Sale(symbol, qty, entry, nil)
+
+	if !ok || sale != 90 || ret >= 0 {
+		t.Fatalf("sale = %v ret = %v, want the lower bid and a loss", sale, ret)
+	}
+}
+
+func TestSaleUsesTheBookWhenItCanTakeTheQuantity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	normalizer := spot.NewNormalizer()
+	tickSize, err := decimal.NewFromString("0.1")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	normalizer.Update(&spot.AssetsManagerUpdate{
+		NewAssets: map[string]spot.AssetInfo{"BTC": {AltName: "BTC"}, "USD": {AltName: "USD"}},
+		NewPairs: map[string]spot.AssetPair{"BTCUSD": {
+			WSName: "BTC/USD", Base: "BTC", Quote: "USD",
+			PairDecimals: 1, LotDecimals: 8, LotMultiplier: 1, TickSize: tickSize,
+		}},
+	})
+
+	book := broker.NewBook(ctx, normalizer)
+	price := broker.NewPrice(ctx, book, nil, nil, normalizer)
+	symbol := "BTC/USD"
+	fee := decimal.NewFromFloat64(0.1)
+	price.SetFee(symbol, kraken.TradeVolumeFee{Fee: fee, Minfee: fee, Maxfee: fee})
+	price.SetQuote(symbol, decimal.NewFromFloat64(1), decimal.NewFromFloat64(2))
+
+	err = book.Update(&kraken.Level3{
+		Channel: "level3",
+		Type:    "snapshot",
+		Data: []kraken.Level3Data{{
+			Symbol: symbol,
+			Asks: []kraken.Level3Order{{
+				OrderID: "a1", LimitPrice: decimal.NewFromFloat64(50000),
+				OrderQty: decimal.NewFromFloat64(1), Timestamp: time.Now().UTC(), Event: "add",
+			}},
+			Bids: []kraken.Level3Order{
+				{
+					OrderID: "b1", LimitPrice: decimal.NewFromFloat64(49990),
+					OrderQty: decimal.NewFromFloat64(0.02), Timestamp: time.Now().UTC(), Event: "add",
+				},
+				{
+					OrderID: "b2", LimitPrice: decimal.NewFromFloat64(49900),
+					OrderQty: decimal.NewFromFloat64(0.05), Timestamp: time.Now().UTC(), Event: "add",
+				},
+			},
+			Timestamp: time.Now().UTC(),
+		}},
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sale, _, _, ok := price.Sale(symbol, decimal.NewFromFloat64(0.04), decimal.NewFromFloat64(50000), nil)
+
+	if !ok {
+		t.Fatal("a book deep enough for the quantity did not price the sale")
+	}
+
+	if sale >= 49990 || sale <= 49900 {
+		t.Fatalf("sale = %v, want the walk through both bids", sale)
+	}
+}
+
 func TestPrice_AllocateEntryAndLiquidate(t *testing.T) {
 	Convey("Given a broker.Price with isolated Book and fee", t, func() {
 		ctx := context.Background()

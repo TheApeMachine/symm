@@ -1,16 +1,20 @@
 import { useSelector } from "@tanstack/react-store";
+import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
+import { openLots } from "#/components/learning/open-positions";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import { selectBook, useLifecycles } from "#/lib/lifecycle";
 
 /*
-Count reads the open-lot tally for the book selected in the top bar.
+Count reads the open lots on the book selected in the top bar, the same
+lots the open-positions panel draws.
 */
 export const Count = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const { report } = useLifecycles();
-	const count = selectBook(report, book).open_count;
+	const count = useSelector(
+		signals.training,
+		(state) => openLots(state, book).length,
+	);
 
 	return (
 		<Flex.Column align="end" gap={1}>

@@ -4,23 +4,26 @@ import (
 	"context"
 	"math"
 	"slices"
-	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
+type Prior struct {
+	Signal     data.Signal
+	Samples    int64
+	Prediction float64
+	Energy     float64
+}
+
 /*
-Grid is not a grid at all, it is a "group by" over a tick's signal layers
+Grid is not a grid at all, it is a "group by" over Measurement
 and Metric pins into 15 multi-signal confluence regions.
 */
 type Grid struct {
 	*runtime.System
-	mu      sync.Mutex
-	symbols map[string]*symbolState
-	// last is each symbol's own regions from the latest Observe, brightest first.
-	last map[string][]*Region
+	Priors map[string]map[string]*Prior
 }
 
 /*
@@ -30,8 +33,8 @@ const RegionCount = 15
 
 func NewGrid(ctx context.Context) *Grid {
 	return &Grid{
-		System:  runtime.NewSystem(ctx, "grid"),
-		symbols: make(map[string]*symbolState),
+		System: runtime.NewSystem(ctx, "grid"),
+		Priors: make(map[string]map[string]*Prior),
 	}
 }
 
@@ -47,29 +50,143 @@ type Region struct {
 	Counts      int
 }
 
-type metricKey struct {
-	source string
-	label  string
+/*
+Observe applies every signal layer for symbol on this tick, then returns the
+lit regions at or above the brightness midpoint.
+*/
+func (grid *Grid) Observe(symbol string, signals []data.Signal) []*Region {
+	if grid.Error() != nil || symbol == "" {
+		return nil
+	}
+
+	var byKey [RegionCount]*Region
+	regions := make([]*Region, 0, RegionCount)
+
+	for _, signal := range signals {
+		if signal.Symbol != symbol {
+			continue
+		}
+
+		if grid.Priors[signal.Source] == nil {
+			grid.Priors[signal.Source] = make(map[string]*Prior)
+		}
+
+		prior := grid.Priors[signal.Source][symbol]
+
+		if prior == nil {
+			grid.Priors[signal.Source][symbol] = &Prior{Signal: signal}
+			continue
+		}
+
+		if prior.Samples > 0 {
+			prior.Prediction += (prior.Energy - prior.Prediction) / float64(prior.Samples)
+		}
+
+		energy := 0.0
+
+		for idx := range signal.Values {
+			snm := grid.SNM(&signal, idx)
+			energy += snm * snm
+		}
+
+		excitation := 1 + grid.Surprise(prior.Prediction, energy)
+		sourcePins, ok := regionMetricPins[signal.Source]
+
+		if !ok {
+			prior.Signal = signal
+			prior.Energy = energy
+			prior.Samples++
+			continue
+		}
+
+		for idx, label := range signal.Labels {
+			targets, pinned := sourcePins[label]
+
+			if !pinned {
+				grid.Error(errnie.Err(
+					errnie.Validation,
+					"grid: "+symbol+" metric "+signal.Source+"/"+label+" is not pinned to a region",
+					nil,
+				))
+				continue
+			}
+
+			if len(targets) == 0 {
+				continue
+			}
+
+			for _, key := range targets {
+				if key >= RegionCount {
+					continue
+				}
+
+				region := byKey[key]
+
+				if region == nil {
+					region = &Region{Key: key}
+					byKey[key] = region
+					regions = append(regions, region)
+				}
+
+				region.Deformation += math.Abs(grid.SNM(&signal, idx)) * excitation
+				region.Counts++
+				region.Brightness = region.Deformation / float64(region.Counts)
+			}
+		}
+
+		prior.Signal = signal
+		prior.Energy = energy
+		prior.Samples++
+	}
+
+	return grid.finalizeRegions(regions)
 }
 
-type prior struct {
-	value    float64
-	observed int
-}
+func (grid *Grid) finalizeRegions(regions []*Region) []*Region {
+	if len(regions) == 0 {
+		return nil
+	}
 
-type symbolState struct {
-	metrics    map[metricKey]prior
-	energy     map[string]prior
-	observed   int
-	lastEnergy float64
+	slices.SortFunc(regions, func(a, b *Region) int {
+		if a.Brightness > b.Brightness {
+			return -1
+		}
+
+		if a.Brightness < b.Brightness {
+			return 1
+		}
+
+		return int(a.Key) - int(b.Key)
+	})
+
+	midB := (regions[0].Brightness + regions[len(regions)-1].Brightness) / 2
+
+	cut, _ := slices.BinarySearchFunc(regions, midB, func(r *Region, mid float64) int {
+		if r.Brightness >= mid {
+			return -1
+		}
+
+		return 1
+	})
+
+	return regions[:cut]
 }
 
 /*
-SNM is the self-normalized movement of raw against prior.
+SNM (Self-Normalized Movement) takes the reference from the prior magnitude
+and the movement itself. It measures a transition, not an isolated value.
+The result stays within \([-1,1]\) without statistical calibration.
 */
-func SNM(raw, prior float64) float64 {
-	delta := raw - prior
-	denominator := math.Abs(prior) + math.Abs(delta)
+func (grid *Grid) SNM(signal *data.Signal, idx int) float64 {
+	prior := grid.Priors[signal.Source][signal.Symbol]
+
+	if prior == nil || idx >= len(signal.Values) || idx >= len(prior.Signal.Values) {
+		return 0
+	}
+
+	rawPrior := prior.Signal.Values[idx]
+	delta := signal.Values[idx] - rawPrior
+	denominator := math.Abs(rawPrior) + math.Abs(delta)
 
 	if denominator == 0 {
 		return 0
@@ -79,241 +196,39 @@ func SNM(raw, prior float64) float64 {
 }
 
 /*
-Observe reads the signal layers on value, advances each symbol by one tick,
-and returns the 15 regions sorted brightest first. A metric's first tick,
-and the tick after that (the source energy has no prior yet), score nothing.
-A signal source or label with no pin is an error.
+Surprise returns the MDL prediction error: how much the current
+total metric energy deviates from the expected regime baseline.
 */
-func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
-	if err := grid.Error(); err != nil {
-		return nil, err
+func (grid *Grid) Surprise(prediction, energy float64) float64 {
+	if prediction <= 0 {
+		return energy
 	}
 
-	if value == nil {
-		return nil, nil
-	}
-
-	type sample struct {
-		key   metricKey
-		value float64
-	}
-
-	bySymbol := make(map[string][]sample)
-
-	for signal, err := range data.Signals(value) {
-		if err != nil {
-			return nil, err
-		}
-
-		pins, pinned := regionMetricPins[signal.Source]
-
-		if !pinned {
-			return nil, grid.Error(errnie.Err(
-				errnie.Validation,
-				"grid: "+signal.Symbol+" signal source "+signal.Source+" has no region pins",
-				nil,
-			))
-		}
-
-		for idx, val := range signal.Values {
-			label := signal.Labels[idx]
-			regions, pinned := pins[label]
-
-			if !pinned {
-				return nil, grid.Error(errnie.Err(
-					errnie.Validation,
-					"grid: "+signal.Symbol+" metric "+signal.Source+"/"+label+" is not pinned to a region",
-					nil,
-				))
-			}
-
-			if len(regions) == 0 {
-				continue
-			}
-
-			bySymbol[signal.Symbol] = append(bySymbol[signal.Symbol], sample{
-				key:   metricKey{signal.Source, label},
-				value: val,
-			})
-		}
-	}
-
-	regions := make([]*Region, RegionCount)
-
-	for idx := range regions {
-		regions[idx] = &Region{Key: uint8(idx)}
-	}
-
-	grid.mu.Lock()
-	defer grid.mu.Unlock()
-
-	total := 0
-	grid.last = make(map[string][]*Region, len(bySymbol))
-
-	for symbol, samples := range bySymbol {
-		local := make([]*Region, RegionCount)
-
-		for idx := range local {
-			local[idx] = &Region{Key: uint8(idx)}
-		}
-
-		state, ok := grid.symbols[symbol]
-
-		if !ok {
-			state = &symbolState{
-				metrics: make(map[metricKey]prior),
-				energy:  make(map[string]prior),
-			}
-			grid.symbols[symbol] = state
-		}
-
-		state.observed++
-		now := state.observed
-		movement := make(map[metricKey]float64)
-		energy := make(map[string]float64)
-
-		for _, sample := range samples {
-			last, has := state.metrics[sample.key]
-			state.metrics[sample.key] = prior{value: sample.value, observed: now}
-
-			if !has || last.observed != now-1 {
-				continue
-			}
-
-			delta := SNM(sample.value, last.value)
-			movement[sample.key] = delta
-			energy[sample.key.source] += delta * delta
-		}
-
-		totalEnergy := 0.0
-
-		for _, amount := range energy {
-			totalEnergy += amount
-		}
-
-		state.lastEnergy = totalEnergy
-		surprise := make(map[string]float64)
-
-		for source, amount := range energy {
-			last, has := state.energy[source]
-			state.energy[source] = prior{value: amount, observed: now}
-
-			if has && last.observed == now-1 {
-				surprise[source] = math.Abs(SNM(amount, last.value))
-			}
-		}
-
-		symTotal := 0
-
-		for _, sample := range samples {
-			delta, scored := movement[sample.key]
-			sourceSurprise, surprised := surprise[sample.key.source]
-
-			if !scored || !surprised {
-				continue
-			}
-
-			for _, region := range regionMetricPins[sample.key.source][sample.key.label] {
-				amount := math.Abs(delta) * sourceSurprise
-				regions[region].Deformation += amount
-				regions[region].Counts++
-				local[region].Deformation += amount
-				local[region].Counts++
-				total++
-				symTotal++
-			}
-		}
-
-		if symTotal == 0 {
-			continue
-		}
-
-		for _, region := range local {
-			if region.Counts > 0 {
-				region.Brightness = region.Deformation / float64(region.Counts)
-			}
-		}
-
-		slices.SortFunc(local, brighterFirst)
-		grid.last[symbol] = local
-	}
-
-	if total == 0 {
-		return nil, nil
-	}
-
-	for _, region := range regions {
-		if region.Counts > 0 {
-			region.Brightness = region.Deformation / float64(region.Counts)
-		}
-	}
-
-	slices.SortFunc(regions, brighterFirst)
-
-	return regions, nil
-}
-
-func brighterFirst(first, second *Region) int {
-	if first.Brightness > second.Brightness {
-		return -1
-	}
-
-	if first.Brightness < second.Brightness {
-		return 1
-	}
-
-	return int(first.Key) - int(second.Key)
+	return math.Abs(energy - prediction)
 }
 
 /*
-Energy is the symbol's metric energy on the latest Observe: the sum of
-squared self-normalized moves. A symbol with no prior yet has energy 0.
+Maturity calculates sensor readiness based strictly on
+empirical sample history and metric completeness (warm-up gate).
 */
-func (grid *Grid) Energy(symbol string) float64 {
-	if grid == nil || symbol == "" {
+func (grid *Grid) Maturity(signal *data.Signal) float64 {
+	prior := grid.Priors[signal.Source][signal.Symbol]
+
+	if prior == nil || prior.Samples <= 0 {
 		return 0
 	}
 
-	grid.mu.Lock()
-	defer grid.mu.Unlock()
+	samplesCount := float64(prior.Samples)
 
-	state := grid.symbols[symbol]
+	maturity := 1.0 - (1.0 / samplesCount)
 
-	if state == nil {
-		return 0
-	}
+	if expected := float64(len(regionMetricPins[prior.Signal.Source])); expected > 0 {
+		actual := float64(len(prior.Signal.Labels))
 
-	return state.lastEnergy
-}
-
-/*
-SymbolRegions returns each symbol's own regions from the latest Observe,
-brightest first. Symbols that scored nothing this tick are absent.
-*/
-func (grid *Grid) SymbolRegions() map[string][]*Region {
-	if grid == nil {
-		return nil
-	}
-
-	grid.mu.Lock()
-	defer grid.mu.Unlock()
-
-	out := make(map[string][]*Region, len(grid.last))
-
-	for symbol, regions := range grid.last {
-		cloned := make([]*Region, len(regions))
-
-		for i, region := range regions {
-			if region == nil {
-				continue
-			}
-
-			copyRegion := *region
-			cloned[i] = &copyRegion
+		if actual < expected {
+			maturity *= (actual / expected)
 		}
-
-		out[symbol] = cloned
 	}
 
-	return out
+	return maturity
 }

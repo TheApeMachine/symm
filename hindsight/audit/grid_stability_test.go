@@ -41,7 +41,7 @@ func TestStabilityStage(t *testing.T) {
 			So(violations, ShouldBeEmpty)
 
 			stats := stage.Data().(map[string]any)
-			So(stats["warming_frames"], ShouldEqual, int64(2))
+			So(stats["warming_frames"], ShouldEqual, int64(1))
 		})
 
 		Convey("A regime shift between the halves fails non-stationary", func() {
@@ -75,7 +75,10 @@ func TestStabilityStage(t *testing.T) {
 		})
 
 		Convey("An unpinned signal label is an error", func() {
-			_, err := feed(signalJoin(1, "BTC/USD", []fixtureSignal{{"cvd", "not_a_pinned_label", 1}}))
+			_, err := feed(
+				signalJoin(1, "BTC/USD", []fixtureSignal{{"cvd", "signed_net_fraction", 1}}),
+				signalJoin(2, "BTC/USD", []fixtureSignal{{"cvd", "not_a_pinned_label", 1}}),
+			)
 			So(err, ShouldNotBeNil)
 		})
 

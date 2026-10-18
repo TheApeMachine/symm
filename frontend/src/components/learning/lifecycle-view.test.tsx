@@ -224,5 +224,54 @@ describe("LifecycleView", () => {
 		expect(
 			container.querySelector('[data-l="lifecycle-outcome"]')?.textContent,
 		).toContain("virtual P&L");
+		expect(
+			container.querySelector('[data-l="lifecycle-outcome"]')?.textContent,
+		).toContain("win");
+	});
+
+	it("labels a scratched virtual trial as a scratch", () => {
+		bookAtom.set("virtual");
+		const { container } = render(<LifecycleView />);
+		deliver([
+			{
+				id: "ETH/USD · R01/R05",
+				symbol: "ETH/USD",
+				status: "closed",
+				book: "virtual",
+				opened_at: "2026-10-17T12:00:00Z",
+				closed_at: "2026-10-17T12:10:00Z",
+				events: [
+					{
+						at: "2026-10-17T12:00:00Z",
+						kind: "entry_match",
+						detail: "virtual R01/R05",
+					},
+					{
+						at: "2026-10-17T12:10:00Z",
+						kind: "exit_match",
+						detail: "scratch",
+					},
+				],
+				mark: null,
+				outcome: {
+					cost: 20,
+					proceeds: 0,
+					fees: 0.1,
+					realized: 0,
+					net_return: 0,
+					hold_ns: 1,
+					expected_hold_ns: null,
+					triggers: ["scratch"],
+				},
+			},
+		]);
+
+		expect(container.textContent).toContain("ETH/USD · scratch");
+		expect(
+			container.querySelector('[data-l="lifecycle-outcome"]')?.textContent,
+		).toContain("scratch");
+		expect(
+			container.querySelector('[data-l="lifecycle-outcome"]')?.textContent,
+		).not.toContain("loss");
 	});
 });

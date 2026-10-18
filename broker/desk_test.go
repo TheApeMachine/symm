@@ -9,9 +9,61 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/system"
 )
+
+func init() {
+	if system.Cfg != nil && system.Cfg.Risk != nil {
+		system.Cfg.Risk.MaxFraction = decimal.NewFromFloat64(0.20)
+	}
+}
+
+func testNormalizer() *spot.Normalizer {
+	n := spot.NewNormalizer()
+	n.Update(&spot.AssetsManagerUpdate{
+		NewAssets: map[string]spot.AssetInfo{
+			"BTC": {AltName: "XBT"},
+			"ETH": {AltName: "ETH"},
+			"USD": {AltName: "USD"},
+		},
+		NewPairs: map[string]spot.AssetPair{
+			"BTC/USD": {
+				WSName: "BTC/USD", Base: "BTC", Quote: "USD",
+				LotDecimals: 8, LotMultiplier: 1,
+			},
+			"ETH/USD": {
+				WSName: "ETH/USD", Base: "ETH", Quote: "USD",
+				LotDecimals: 8, LotMultiplier: 1,
+			},
+		},
+	})
+	return n
+}
+
+func deskWithQuote(
+	ctx context.Context,
+	transport Transport,
+	symbol string,
+	ask *decimal.Decimal,
+	cash float64,
+) *Desk {
+	price := NewPrice(ctx, nil, nil, nil, testNormalizer())
+	fee := decimal.NewFromFloat64(0.26)
+	price.SetFee(symbol, kraken.TradeVolumeFee{Fee: fee, Minfee: fee, Maxfee: fee})
+	bid := decimal.NewFromFloat64(ask.Float64() * 0.99)
+	price.SetQuote(symbol, bid, ask)
+	balance := &Balance{Quote: "USD"}
+	balance.wallet.Store(&kraken.Balance{
+		Data: []kraken.BalanceData{{
+			Asset:   "USD",
+			Balance: decimal.NewFromFloat64(cash),
+		}},
+	})
+	return NewDesk(ctx, transport, price, balance)
+}
 
 type dummyTransport struct{}
 
@@ -44,18 +96,21 @@ func (transport *failTransport) Write([]byte) error {
 func TestDesk(t *testing.T) {
 	Convey("Given a Desk instance", t, func() {
 		ctx := context.Background()
-		desk := NewDesk(ctx, &dummyTransport{}, nil, nil)
+		desk := deskWithQuote(
+			ctx, &dummyTransport{}, "BTC/USD", decimal.NewFromFloat64(50_000), 10_000,
+		)
 		So(desk, ShouldNotBeNil)
 
-		Convey("When Enter is called with a symbol and quantity", func() {
-			qty := decimal.NewFromFloat64(0.5)
-			err := desk.Enter("BTC/USD", qty)
+		Convey("When Enter is called for a symbol", func() {
+			err := desk.Enter("BTC/USD")
 			So(err, ShouldBeNil)
 
 			val, ok := desk.positions.Load("BTC/USD")
 			So(ok, ShouldBeTrue)
 			positions := val.([]*Position)
 			So(len(positions), ShouldEqual, 1)
+			qty := positions[0].Qty()
+			So(qty, ShouldNotBeNil)
 
 			Convey("When Apply is called with an execution", func() {
 				desk.Apply(&kraken.Execution{
@@ -77,14 +132,15 @@ func TestDesk(t *testing.T) {
 
 		Convey("A rejected order does not leave the symbol held or exiting", func() {
 			transport := &failTransport{fail: true}
-			rejected := NewDesk(ctx, transport, nil, nil)
-			qty := decimal.NewFromFloat64(0.5)
+			rejected := deskWithQuote(
+				ctx, transport, "BTC/USD", decimal.NewFromFloat64(50_000), 10_000,
+			)
 
-			So(rejected.Enter("BTC/USD", qty), ShouldNotBeNil)
+			So(rejected.Enter("BTC/USD"), ShouldNotBeNil)
 			So(rejected.Holds("BTC/USD"), ShouldBeFalse)
 
 			transport.fail = false
-			So(rejected.Enter("BTC/USD", qty), ShouldBeNil)
+			So(rejected.Enter("BTC/USD"), ShouldBeNil)
 			So(rejected.Holds("BTC/USD"), ShouldBeTrue)
 			So(transport.writes, ShouldEqual, 1)
 
@@ -244,5 +300,153 @@ func TestRestoreStoredLotCanBeSold(t *testing.T) {
 
 	if err != nil || symbol != "" {
 		t.Fatalf("flat lot restored as %q (%v)", symbol, err)
+	}
+}
+
+type fillOnWrite struct {
+	desk *Desk
+	fill *kraken.Execution
+}
+
+func (transport *fillOnWrite) Read(...string) ([]byte, error) { return nil, nil }
+
+func (transport *fillOnWrite) Write([]byte) error {
+	if transport.desk != nil && transport.fill != nil {
+		transport.desk.Apply(transport.fill)
+	}
+
+	return nil
+}
+
+func TestBuyFillDuringSubmitIsKept(t *testing.T) {
+	qty := decimal.NewFromFloat64(0.00840739)
+	paid := decimal.NewFromFloat64(2500)
+	transport := &fillOnWrite{fill: &kraken.Execution{Data: []kraken.ExecutionData{{
+		Symbol: "ETH/USD", Side: "buy", ExecType: "trade",
+		LastQty: qty, LastPrice: paid, AvgPrice: paid,
+	}}}}
+	ctx := context.Background()
+	desk := deskWithQuote(ctx, transport, "ETH/USD", paid, 10_000)
+	transport.desk = desk
+
+	if err := desk.Enter("ETH/USD"); err != nil {
+		t.Fatal(err)
+	}
+
+	held := desk.Open("ETH/USD")
+
+	if len(held) != 1 || held[0].EntryPrice() == nil || held[0].EntryPrice().Cmp(paid) != 0 {
+		got := "none"
+		if len(held) == 1 && held[0].EntryPrice() != nil {
+			got = held[0].EntryPrice().String()
+		}
+		t.Fatalf("entry = %s, want the buy fill", got)
+	}
+}
+
+func TestSaleWithoutAPurchaseIsNotAProfit(t *testing.T) {
+	qty := decimal.NewFromFloat64(0.00840739)
+	position := NewPosition()
+	position.Enter("ETH/USD", qty)
+	position.Exit("ETH/USD")
+	position.Apply(kraken.ExecutionData{
+		Symbol: "ETH/USD", Side: "sell", ExecType: "trade",
+		LastQty: qty, LastPrice: decimal.NewFromFloat64(2418.69),
+		FeeUsdEquiv: decimal.NewFromFloat64(0.1627),
+	})
+
+	life := position.Lifecycle()
+
+	if life.Outcome != nil && life.Outcome.VenueRealized > 0 {
+		t.Fatalf("realized %v from a sale with no purchase", life.Outcome.VenueRealized)
+	}
+}
+
+func TestCloseBelowTheEntryIsALoss(t *testing.T) {
+	ctx := context.Background()
+	symbol := "ETH/USD"
+	desk := deskWithQuote(ctx, &dummyTransport{}, symbol, decimal.NewFromFloat64(101), 500)
+
+	if err := desk.Enter(symbol); err != nil {
+		t.Fatal(err)
+	}
+
+	held := desk.Open(symbol)
+
+	if len(held) != 1 || held[0].Qty() == nil {
+		t.Fatal("enter did not open a lot")
+	}
+
+	qty := held[0].Qty()
+
+	if err := desk.Exit(symbol); err != nil {
+		t.Fatal(err)
+	}
+
+	desk.Apply(&kraken.Execution{Data: []kraken.ExecutionData{{
+		Symbol: symbol, Side: "sell", ExecType: "trade",
+		LastQty: qty, LastPrice: decimal.NewFromFloat64(2418.69),
+	}}})
+
+	closed := desk.Closed()
+
+	if len(closed) != 1 || closed[0].Lifecycle().Outcome == nil {
+		t.Fatal("close was not scored")
+	}
+
+	if closed[0].Lifecycle().Outcome.VenueRealized >= 0 {
+		t.Fatalf("realized %v, want a loss from the book", closed[0].Lifecycle().Outcome.VenueRealized)
+	}
+}
+
+func TestEnterKeepsTheBookPriceUntilAFillNamesOne(t *testing.T) {
+	ctx := context.Background()
+	paid := decimal.NewFromFloat64(100)
+	price := NewPrice(ctx, nil, nil, nil, testNormalizer())
+	fee := decimal.NewFromFloat64(0.26)
+	price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: fee, Minfee: fee, Maxfee: fee})
+	price.SetQuote("BTC/USD", paid, paid)
+	balance := &Balance{Quote: "USD"}
+	balance.wallet.Store(&kraken.Balance{
+		Data: []kraken.BalanceData{{
+			Asset:   "USD",
+			Balance: decimal.NewFromFloat64(10_000),
+		}},
+	})
+	desk := NewDesk(ctx, &dummyTransport{}, price, balance)
+
+	if err := desk.Enter("BTC/USD"); err != nil {
+		t.Fatal(err)
+	}
+
+	held := desk.Open("BTC/USD")
+
+	if len(held) != 1 || held[0].EntryPrice() == nil || held[0].EntryPrice().Cmp(paid) != 0 {
+		t.Fatal("the order left the desk with no entry price")
+	}
+
+	desk.Apply(&kraken.Execution{Data: []kraken.ExecutionData{{
+		Symbol:    "BTC/USD",
+		Side:      "buy",
+		ExecType:  "trade",
+		LastQty:   decimal.NewFromFloat64(0.01),
+		LastPrice: decimal.NewFromFloat64(0),
+		AvgPrice:  decimal.NewFromFloat64(0),
+	}}})
+
+	if held[0].EntryPrice().Cmp(paid) != 0 {
+		t.Fatal("a fill with no price cleared the entry")
+	}
+
+	desk.Apply(&kraken.Execution{Data: []kraken.ExecutionData{{
+		Symbol:    "BTC/USD",
+		Side:      "buy",
+		ExecType:  "trade",
+		LastQty:   decimal.NewFromFloat64(0.01),
+		LastPrice: decimal.NewFromFloat64(101),
+	}}})
+
+	if held[0].EntryPrice().Float64() != 101 {
+		t.Fatalf("entry = %s, want the fill", held[0].EntryPrice())
 	}
 }

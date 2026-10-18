@@ -117,16 +117,27 @@ accumulates the transition from that symbol's prior token.
 */
 func (stage *DynamicsStage) recordToken(measurement *data.Value) {
 	symbol := measurement.Scope
-	regions, err := stage.grid.Observe(measurement)
+	signals := make([]data.Signal, 0)
 
-	if err != nil {
-		stage.err = err
-		return
+	for signal, err := range data.Signals(measurement) {
+		if err != nil {
+			stage.grid.Error(err)
+			continue
+		}
+
+		if signal.Symbol != symbol {
+			continue
+		}
+
+		signals = append(signals, signal)
 	}
+
+	regions := stage.grid.Observe(symbol, signals)
 
 	if len(regions) == 0 || regions[0].Brightness <= 0 {
 		return
 	}
+
 	currentToken := regionToken(regions[0].Key)
 	brightness := make([]float64, nmstore.RegionCount)
 

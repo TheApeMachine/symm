@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"io"
 	"slices"
 	"sort"
 	"strings"
@@ -16,6 +17,8 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -34,6 +37,12 @@ type Desk struct {
 	closed    []*Position
 	closedMu  sync.RWMutex
 	books     *Book
+
+	positionStore  *store.Client
+	positionHub    io.Writer
+	openPublished  map[string]string
+	closedArchived map[string]struct{}
+	onClosed       func(*Position) error
 }
 
 func NewDesk(
@@ -320,29 +329,89 @@ deviation of signed traded volume over one expected hold (participation
 within flow noise), and what the available cash buys at the budget's entry
 limit. Every refusal is an error naming its reason.
 */
-func (desk *Desk) Enter(symbol string, qty *decimal.Decimal, path ...string) error {
+func (desk *Desk) Enter(symbol string) error {
 	position := NewPosition()
-	order := position.Enter(symbol, qty, path...)
+
+	cash := desk.balance.cash(desk.balance.Quote)
+	// budget = cash/100 * max_fraction; integer-scaled cash cannot Mul a
+	// fractional MaxFraction without truncating it to zero.
+	pct := int64(system.Cfg.Risk.MaxFraction.Float64() * 100)
+	budget := cash.Mul(decimal.NewFromInt64(pct)).Div(decimal.NewFromInt64(10_000))
+
+	qty, err := desk.price.Quantity(symbol, budget)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	order := position.Enter(
+		symbol,
+		qty,
+	)
+
+	desk.keep(symbol, position)
 
 	if err := desk.submit(symbol, order); err != nil {
+		desk.forget(symbol, position)
 		return err
 	}
 
+	var entry, fee *decimal.Decimal
+
+	if desk.price != nil {
+		if cost, costErr := desk.price.EntryCost(symbol, qty); costErr == nil && cost != nil {
+			entry = cost.EntryPrice
+			fee = cost.EntryFee
+		}
+
+		if entry == nil {
+			entry = desk.price.CurrentMark(symbol)
+		}
+	}
+
+	position.SeedEntry(entry, fee)
+	return nil
+}
+
+func (desk *Desk) keep(symbol string, position *Position) {
 	desk.mu.Lock()
+	defer desk.mu.Unlock()
+
 	untyped, loaded := desk.positions.Load(symbol)
 
 	if loaded && untyped != nil {
-		positions := untyped.([]*Position)
+		positions := append([]*Position{}, untyped.([]*Position)...)
 		desk.positions.Store(symbol, append(positions, position))
+		return
 	}
+
+	desk.positions.Store(symbol, []*Position{position})
+}
+
+func (desk *Desk) forget(symbol string, position *Position) {
+	desk.mu.Lock()
+	defer desk.mu.Unlock()
+
+	untyped, loaded := desk.positions.Load(symbol)
 
 	if !loaded || untyped == nil {
-		desk.positions.Store(symbol, []*Position{position})
+		return
 	}
 
-	desk.mu.Unlock()
+	kept := make([]*Position, 0)
 
-	return nil
+	for _, existing := range untyped.([]*Position) {
+		if existing != position {
+			kept = append(kept, existing)
+		}
+	}
+
+	if len(kept) == 0 {
+		desk.positions.Delete(symbol)
+		return
+	}
+
+	desk.positions.Store(symbol, kept)
 }
 
 /*
@@ -487,7 +556,12 @@ func (desk *Desk) Apply(execution *kraken.Execution) {
 		allClosed := true
 
 		for _, position := range positions {
+			open := !position.Closed()
 			position.Apply(data)
+
+			if open && position.Closed() {
+				desk.score(position, data.LastQty)
+			}
 
 			if !position.Closed() {
 				allClosed = false
@@ -524,6 +598,39 @@ func (desk *Desk) Open(symbol string) []*Position {
 	defer desk.mu.Unlock()
 
 	return slices.Clone(untyped.([]*Position))
+}
+
+/*
+score asks Price.CloseOut what the closed lot made. A missing entry or a book
+that cannot price the sale records no profit.
+*/
+func (desk *Desk) score(position *Position, qty *decimal.Decimal) {
+	if desk == nil || position == nil {
+		return
+	}
+
+	outcome := &LifeOutcome{Triggers: []string{"unpriced"}}
+
+	if desk.price != nil {
+		cost, proceeds, profit, _, ok := desk.price.CloseOut(
+			position.Symbol(), qty, position.EntryPrice(), position.EntryFee(),
+		)
+
+		if ok && cost != nil && proceeds != nil && profit != nil {
+			outcome = &LifeOutcome{
+				VenueCost:     cost.Float64(),
+				VenueProceeds: proceeds.Float64(),
+				VenueRealized: profit.Float64(),
+				Triggers:      []string{},
+			}
+		}
+	}
+
+	if position.ClosedAt() != nil && !position.OpenedAt().IsZero() {
+		outcome.HoldNs = position.ClosedAt().Sub(position.OpenedAt()).Nanoseconds()
+	}
+
+	position.SetOutcome(outcome)
 }
 
 func (desk *Desk) recordClosed(position *Position) {

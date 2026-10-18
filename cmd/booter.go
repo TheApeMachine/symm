@@ -281,12 +281,35 @@ func (booter *Booter) initPipeline() error {
 
 	booter.store.Transition(nmruntime.READY)
 
+	// Hub before training: NewTraining takes the hub as io.Writer in its
+	// constructor. The dashboard process paper-trades and streams ticks
+	// through the same hub.
+	if booter.dashboard {
+		booter.hub = ui.NewHub(ctx)
+
+		replay, err := hindsight.NewService(ctx, booter.store)
+
+		if err != nil {
+			return err
+		}
+
+		replay.Register(booter.hub.App())
+		booter.hub.Replay(replay)
+		booter.hub.Detect(replay)
+
+		if err := booter.hub.Run(); err != nil {
+			return err
+		}
+	}
+
 	strategyNodes := make([]nmruntime.Node, 0, 1)
 
 	// The collector writes the tape. It shares the paper account with the
 	// dashboard, so it must not place orders of its own.
 	if paperTrades(booter.capture, booter.dashboard) {
-		booter.training = strategy.NewTraining(ctx, booter.price, booter.desk, booter.store)
+		booter.training = strategy.NewTraining(
+			ctx, booter.price, booter.desk, booter.store, booter.hub,
+		)
 
 		if err := booter.training.Error(); err != nil {
 			return err
@@ -306,28 +329,6 @@ func (booter *Booter) initPipeline() error {
 	}
 
 	if booter.dashboard {
-		booter.hub = ui.NewHub(ctx)
-
-		replay, err := hindsight.NewService(ctx, booter.store)
-
-		if err != nil {
-			return err
-		}
-
-		replay.Register(booter.hub.App())
-		booter.hub.Replay(replay)
-		booter.hub.Detect(replay)
-
-		if err := booter.hub.Run(); err != nil {
-			return err
-		}
-
-		if err := strategy.PublishCognitionTree(booter.hub.Retained(), booter.training, true); err != nil {
-			return err
-		}
-
-		booter.training.SetHub(booter.hub)
-
 		sinks = append(sinks, booter.hub)
 	}
 

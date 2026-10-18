@@ -585,9 +585,49 @@ describe("dispatchValue: resonance readings", () => {
 	});
 });
 
+describe("dispatchValue: train/regions on ticks", () => {
+	it("updates cognition matches from train/regions layers", () => {
+		cognitionStore.setState(() => ({
+			epoch: "0",
+			policyKeys: [],
+			matches: {},
+			problem: null,
+			tree: null,
+		}));
+		const parsed = parseOneValue(
+			encodeValue({
+				origin: "workspace",
+				role: "tick",
+				scope: "aggregate",
+				tick: 9n,
+				layers: [
+					{
+						index:
+							"workspace/tick/aggregate/1/0000000000000000009.bin/train/regions/BTC/USD/R01/R02",
+						vector: [0.8, 0.6],
+						labels: ["R01", "R02"],
+					},
+				],
+			}),
+		);
+		if (!parsed) throw new Error("fixture did not parse");
+		dispatchValue(parsed);
+		expect(cognitionStore.state.matches["BTC/USD"]?.tokens).toEqual([
+			"R01",
+			"R02",
+		]);
+	});
+});
+
 describe("dispatchValue: cognition frames", () => {
 	it("routes cognition/tree and cognition/match to the cognition store", () => {
-		cognitionStore.setState(() => ({ tree: null, matches: {} }));
+		cognitionStore.setState(() => ({
+			epoch: "0",
+			policyKeys: [],
+			matches: {},
+			problem: null,
+			tree: null,
+		}));
 		const before = tickCountAtom.get();
 		const send = (role: string, scope: string, json: unknown) => {
 			const parsed = parseOneValue(

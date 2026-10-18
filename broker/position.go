@@ -119,6 +119,41 @@ func (position *Position) Enter(symbol string, qty *decimal.Decimal, path ...str
 }
 
 /*
+SetOutcome records the close Price.CloseOut scored. The ledger does not
+compute a profit of its own.
+*/
+func (position *Position) SetOutcome(outcome *LifeOutcome) {
+	if position == nil || outcome == nil {
+		return
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+	position.outcome = outcome
+}
+
+/*
+SeedEntry records the price the book asked when the order was sent. A fill
+with a positive price replaces it. A fill that names no price leaves it.
+*/
+func (position *Position) SeedEntry(price, fee *decimal.Decimal) {
+	if position == nil {
+		return
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if (position.entryPrice == nil || position.entryPrice.Sign() <= 0) && price != nil && price.Sign() > 0 {
+		position.entryPrice = price.Copy()
+	}
+
+	if position.entryFee == nil && fee != nil && fee.Sign() > 0 {
+		position.entryFee = fee.Copy()
+	}
+}
+
+/*
 Exit records a sell of everything open and returns the order to submit. A
 position that is closed or already has its sell pending returns nil: selling
 it again would sell quantity it no longer holds.
@@ -248,34 +283,11 @@ func (position *Position) Lifecycle() Lifecycle {
 			Triggers:      []string{},
 		}
 
-		var cost float64
-		var proceeds float64
-		var fees float64
-
 		for _, fill := range position.fills {
 			if fill.FeeUsdEquiv != nil {
-				fees += fill.FeeUsdEquiv.Float64()
-			}
-
-			if fill.LastQty == nil || fill.LastPrice == nil {
-				continue
-			}
-
-			val := fill.LastQty.Float64() * fill.LastPrice.Float64()
-
-			if strings.ToLower(fill.Side) == "buy" {
-				cost += val
-			}
-
-			if strings.ToLower(fill.Side) == "sell" {
-				proceeds += val
+				outcome.VenueFees += fill.FeeUsdEquiv.Float64()
 			}
 		}
-
-		outcome.VenueCost = cost
-		outcome.VenueProceeds = proceeds
-		outcome.VenueFees = fees
-		outcome.VenueRealized = proceeds - cost - fees
 
 		if position.closedAt != nil && !position.openedAt.IsZero() {
 			outcome.HoldNs = position.closedAt.Sub(position.openedAt).Nanoseconds()
@@ -392,9 +404,7 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 
 		if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
 			position.entryPrice = execution.AvgPrice
-		}
-
-		if (execution.AvgPrice == nil || execution.AvgPrice.Sign() <= 0) && execution.LastPrice != nil {
+		} else if execution.LastPrice != nil && execution.LastPrice.Sign() > 0 {
 			position.entryPrice = execution.LastPrice
 		}
 

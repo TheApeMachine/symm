@@ -88,12 +88,28 @@ recordFrame logs the dominant region of one symbol's frame. Observe reads
 the signal layers already on the value.
 */
 func (stage *StabilityStage) recordFrame(measurement *data.Value) {
-	regions, err := stage.grid.Observe(measurement)
+	symbol := measurement.Scope
+	signals := make([]data.Signal, 0)
 
-	if err != nil {
+	for signal, err := range data.Signals(measurement) {
+		if err != nil {
+			stage.grid.Error(err)
+			continue
+		}
+
+		if signal.Symbol != symbol {
+			continue
+		}
+
+		signals = append(signals, signal)
+	}
+
+	if err := stage.grid.Error(); err != nil {
 		stage.err = err
 		return
 	}
+
+	regions := stage.grid.Observe(symbol, signals)
 
 	stage.totalFrames++
 
