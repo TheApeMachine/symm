@@ -15,28 +15,36 @@ const realizationEpoch = uint64(1792187257188073000)
 policyFixture is a published policy for path with gain predicted.
 */
 func policyFixture(seq uint64, action, path string, predicted float64) *data.Value {
-	policy := &data.Value{Origin: data.PolicyOrigin, Role: action, Scope: data.PolicyScope, Epoch: realizationEpoch, Tick: seq}
-	policy.FormatPrefix()
-	So(data.AppendPolicy(policy, path, []float64{predicted, 30, 4, predicted, 0.75}), ShouldBeNil)
-	So(data.AppendPolicyGate(policy, fixtureGate), ShouldBeNil)
+	policy := data.NewValue("policy", action, "all")
+	policy.Epoch = realizationEpoch
+	policy.Tick = seq
+	policy.Append([]float64{predicted, 30, 4, predicted, 0.75}, "gain", "hold_seconds", "visits", "mean_reward", "confidence", "path:"+path)
+	policy.Append([]float64{
+		1, fixtureGate.SurpriseZ, fixtureGate.Warmup.FastRate, fixtureGate.Warmup.SlowRate, fixtureGate.LearningRate,
+	}, "enabled", "surprise_z", "warmup_fast_rate", "warmup_slow_rate", "learning_rate", "gate", "warmup:"+fixtureGate.Warmup.Rule, fmt.Sprintf("ticks:%d", fixtureGate.TickEpoch))
 	return policy
 }
 
-/*
-fixtureGate is the gate the fixture policies were trained under.
-*/
-var fixtureGate = data.PolicyGate{TickEpoch: realizationEpoch - 1, Enabled: true, SurpriseZ: 1, Warmup: data.PolicyWarmup{Rule: data.WarmupSettled, FastRate: 0.15, SlowRate: 0.01}, LearningRate: 0.01}
+var fixtureGate = policyGate{
+	TickEpoch:    realizationEpoch - 1,
+	Enabled:      true,
+	SurpriseZ:    1,
+	Warmup:       policyWarmup{Rule: "settled", FastRate: 0.15, SlowRate: 0.01},
+	LearningRate: 0.01,
+}
 
-/*
-paperFixture is a paper record that traded path under policyEpoch and
-realized netReturn.
-*/
 func paperFixture(seq uint64, action, path string, policyEpoch uint64, netReturn float64) *data.Value {
-	record := &data.Value{Origin: data.PaperOrigin, Role: action, Scope: "BTC/USD", Epoch: realizationEpoch + 99, Tick: seq}
-	record.FormatPrefix()
-	vector := make([]float64, len(data.PaperKeys))
+	record := data.NewValue("paper", action, "BTC/USD")
+	record.Epoch = realizationEpoch + 99
+	record.Tick = seq
+	vector := make([]float64, 15)
 	vector[len(vector)-1] = netReturn
-	So(data.AppendPaper(record, path, policyEpoch, vector), ShouldBeNil)
+	record.Append(vector,
+		"depth", "intended_price", "fill_price", "decided_at", "filled_at",
+		"latency_seconds", "slippage", "qty", "entry_price", "exit_price",
+		"entered_at", "exited_at", "fees", "pnl", "net_return",
+		"path:"+path, fmt.Sprintf("policy_epoch:%d", policyEpoch),
+	)
 	return record
 }
 
@@ -144,8 +152,7 @@ func TestRealizationStage(t *testing.T) {
 		})
 
 		Convey("A malformed record is a violation", func() {
-			broken := &data.Value{Origin: data.PaperOrigin, Role: "enter", Scope: "BTC/USD", Epoch: 1, Tick: 1}
-			broken.FormatPrefix()
+			broken := &data.Value{Origin: "paper", Role: "enter", Scope: "BTC/USD", Epoch: 1, Tick: 1}
 
 			violations := feed(policyFixture(1, "enter", "R01/R04", 0.02), broken)
 			So(hasViolation(violations, "realization.malformed"), ShouldBeTrue)

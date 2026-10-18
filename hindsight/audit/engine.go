@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/theapemachine/errnie"
@@ -170,14 +172,14 @@ func (engine *Engine) resolveTargetEpoch() (uint64, error) {
 		return uint64(system.Cfg.Audit.Epoch), nil
 	}
 
-	epochs, err := epochsUnder(engine.store, data.TickPrefix())
+	epochs, err := epochsUnder(engine.store, "workspace/tick/aggregate")
 
 	if err != nil {
 		return 0, err
 	}
 
 	if len(epochs) == 0 {
-		return 0, errnie.Err(errnie.NotFound, "[audit:engine] no stored ticks under "+data.TickPrefix(), nil)
+		return 0, errnie.Err(errnie.NotFound, "[audit:engine] no stored ticks under "+"workspace/tick/aggregate", nil)
 	}
 
 	return epochs[len(epochs)-1], nil
@@ -188,14 +190,14 @@ resolvePolicy is the policy epoch the stages judge: system.Cfg.Audit.PolicyEpoch
 when set (it must be trained on epoch's ticks), else the newest policy epoch
 trained on them; none is the zero gate (the policy stages report it).
 */
-func (engine *Engine) resolvePolicy(epoch uint64) (data.PolicyGate, error) {
+func (engine *Engine) resolvePolicy(epoch uint64) (policyGate, error) {
 	gates, err := policyGates(engine.store)
 
 	if err != nil {
-		return data.PolicyGate{}, err
+		return policyGate{}, err
 	}
 
-	var chosen data.PolicyGate
+	var chosen policyGate
 
 	for _, gate := range gates {
 		if want := uint64(system.Cfg.Audit.PolicyEpoch); want > 0 {
@@ -204,7 +206,7 @@ func (engine *Engine) resolvePolicy(epoch uint64) (data.PolicyGate, error) {
 			}
 
 			if gate.TickEpoch != epoch {
-				return data.PolicyGate{}, errnie.Err(errnie.Validation, fmt.Sprintf(
+				return policyGate{}, errnie.Err(errnie.Validation, fmt.Sprintf(
 					"[audit:engine] policy epoch %d was trained on tick epoch %d, not the audited %d", want, gate.TickEpoch, epoch,
 				), nil)
 			}
@@ -219,7 +221,7 @@ func (engine *Engine) resolvePolicy(epoch uint64) (data.PolicyGate, error) {
 	}
 
 	if want := system.Cfg.Audit.PolicyEpoch; want > 0 && chosen.Epoch == 0 {
-		return data.PolicyGate{}, errnie.Err(errnie.NotFound, fmt.Sprintf("[audit:engine] no policy epoch %d is published", want), nil)
+		return policyGate{}, errnie.Err(errnie.NotFound, fmt.Sprintf("[audit:engine] no policy epoch %d is published", want), nil)
 	}
 
 	if chosen.Epoch == 0 {
@@ -277,22 +279,46 @@ func send(stages []AuditorStage, measurement *data.Value) {
 epochsUnder lists the epoch segments stored under prefix, oldest first.
 */
 func epochsUnder(client *s3store.Client, prefix string) ([]uint64, error) {
-	epochs, err := s3store.Epochs(client, prefix)
-
-	if err != nil {
-		return nil, err
+	if client == nil {
+		return nil, errnie.Err(errnie.Validation, "[audit] no store", nil)
 	}
 
-	return slices.Compact(epochs), nil
+	seen := map[uint64]struct{}{}
+	epochs := make([]uint64, 0)
+
+	for key := range client.ListKeys(prefix) {
+		for _, segment := range strings.Split(key, "/") {
+			if len(segment) != 19 {
+				continue
+			}
+
+			epoch, err := strconv.ParseUint(segment, 10, 64)
+
+			if err != nil {
+				continue
+			}
+
+			if _, ok := seen[epoch]; ok {
+				continue
+			}
+
+			seen[epoch] = struct{}{}
+			epochs = append(epochs, epoch)
+		}
+	}
+
+	slices.Sort(epochs)
+
+	return epochs, nil
 }
 
 /*
 policyGates reads the gate on the first policy of every published policy epoch.
 */
-func policyGates(client *s3store.Client) ([]data.PolicyGate, error) {
+func policyGates(client *s3store.Client) ([]policyGate, error) {
 	all := make([]uint64, 0)
 
-	for _, prefix := range data.PolicyPrefixes() {
+	for _, prefix := range policyPrefixes() {
 		found, err := epochsUnder(client, prefix)
 
 		if err != nil {
@@ -303,17 +329,17 @@ func policyGates(client *s3store.Client) ([]data.PolicyGate, error) {
 	}
 
 	slices.Sort(all)
-	gates := make([]data.PolicyGate, 0)
+	gates := make([]policyGate, 0)
 
 	for _, epoch := range slices.Compact(all) {
-		var gate *data.PolicyGate
+		var gate *policyGate
 
-		for value, err := range copyValues(client, data.PolicyPrefixes(epoch)...) {
+		for value, err := range copyValues(client, policyPrefixes(epoch)...) {
 			if err != nil {
 				return nil, err
 			}
 
-			read, err := data.ReadPolicyGate(value)
+			read, err := readPolicyGate(value)
 
 			if err != nil {
 				return nil, err
@@ -345,21 +371,19 @@ func currentSequences(client *s3store.Client) iter.Seq2[*data.Value, error] {
 			return
 		}
 
-		keys := client.ListKeys("policy/current/")
-		ordered := make([]string, 0, len(keys))
+		keys := make([]string, 0)
 
-		for _, key := range keys {
+		for key := range client.ListKeys("policy/current/") {
 			if strings.HasPrefix(key, "policy/current/") && strings.HasSuffix(key, ".bin") {
-				ordered = append(ordered, key)
+				keys = append(keys, key)
 			}
 		}
 
-		slices.Sort(ordered)
-		index := 0
+		slices.Sort(keys)
 
-		for value, err := range s3store.ParallelValues(client, ordered) {
-			key := ordered[index]
-			index++
+		for _, key := range keys {
+			var buf bytes.Buffer
+			err := client.Stream(context.Background(), key, &buf)
 
 			if err != nil {
 				if !yield(nil, err) {
@@ -369,9 +393,12 @@ func currentSequences(client *s3store.Client) iter.Seq2[*data.Value, error] {
 				continue
 			}
 
-			if value != nil {
-				stampCurrentPath(value, key)
+			if buf.Len() == 0 {
+				continue
 			}
+
+			value := data.From(buf.Bytes())
+			stampCurrentPath(value, key)
 
 			if !yield(value, nil) {
 				return
@@ -381,7 +408,7 @@ func currentSequences(client *s3store.Client) iter.Seq2[*data.Value, error] {
 }
 
 func stampCurrentPath(value *data.Value, key string) {
-	if _, err := data.PolicyPath(value); err == nil {
+	if _, err := policyPath(value); err == nil {
 		return
 	}
 
@@ -391,7 +418,7 @@ func stampCurrentPath(value *data.Value, key string) {
 		return
 	}
 
-	value.Index[len(value.Index)-1] += "/" + data.PolicyPathTag + path
+	value.Index[len(value.Index)-1] += "/" + "path:" + path
 }
 
 func pathFromCurrentKey(key string) string {
@@ -415,13 +442,39 @@ func pathFromCurrentKey(key string) string {
 copyValues reconstructs every object under prefixes, in key order.
 */
 func copyValues(client *s3store.Client, prefixes ...string) iter.Seq2[*data.Value, error] {
-	return s3store.Values(client, prefixes...)
+	return func(yield func(*data.Value, error) bool) {
+		if client == nil {
+			return
+		}
+
+		for _, prefix := range prefixes {
+			for key := range client.ListKeys(prefix) {
+				var buf bytes.Buffer
+
+				if err := client.Stream(context.Background(), key, &buf); err != nil {
+					if !yield(nil, err) {
+						return
+					}
+
+					continue
+				}
+
+				if buf.Len() == 0 {
+					continue
+				}
+
+				if !yield(data.From(buf.Bytes()), nil) {
+					return
+				}
+			}
+		}
+	}
 }
 
 /*
 feed streams epoch to the stages and closes their channels when done.
 */
-func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
+func (engine *Engine) feed(epoch uint64, policy policyGate) error {
 	defer func() {
 		for _, stage := range engine.stages {
 			close(stage.Channel())
@@ -439,7 +492,7 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 	var ticks int
 	var lastTick uint64
 
-	for value, err := range copyValues(engine.store, data.TickPrefix(epoch)) {
+	for value, err := range copyValues(engine.store, fmt.Sprintf("workspace/tick/aggregate/%019d", epoch)) {
 		if err != nil {
 			return err
 		}
@@ -480,7 +533,7 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 	}
 
 	if ticks == 0 {
-		return errnie.Err(errnie.NotFound, "[audit:engine] no stored ticks under "+data.TickPrefix(epoch), nil)
+		return errnie.Err(errnie.NotFound, "[audit:engine] no stored ticks under "+fmt.Sprintf("workspace/tick/aggregate/%019d", epoch), nil)
 	}
 
 	errnie.Info(fmt.Sprintf("[audit:engine] epoch %d: %d ticks (through tick %d), symbols %v", epoch, ticks, lastTick, symbols))
@@ -488,7 +541,7 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 	var excursions, policies int
 
 	for _, symbol := range symbols {
-		for excursion, err := range copyValues(engine.store, data.ExcursionPrefixes(symbol, epoch)...) {
+		for excursion, err := range copyValues(engine.store, excursionPrefixes(symbol, epoch)...) {
 			if err != nil {
 				return err
 			}
@@ -505,7 +558,7 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 	}
 
 	if policy.Epoch != 0 {
-		for value, err := range copyValues(engine.store, data.PolicyPrefixes(policy.Epoch)...) {
+		for value, err := range copyValues(engine.store, policyPrefixes(policy.Epoch)...) {
 			if err != nil {
 				return err
 			}
@@ -521,7 +574,7 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 				return err
 			}
 
-			if value == nil || value.Origin != data.PolicyOrigin {
+			if value == nil || value.Origin != "policy" {
 				continue
 			}
 
@@ -535,7 +588,7 @@ func (engine *Engine) feed(epoch uint64, policy data.PolicyGate) error {
 	// traded under this epoch's policies.
 	var papers int
 
-	for paper, err := range copyValues(engine.store, data.PaperActionPrefixes()...) {
+	for paper, err := range copyValues(engine.store, paperActionPrefixes()...) {
 		if err != nil {
 			return err
 		}
@@ -586,7 +639,7 @@ func (engine *Engine) Run() error {
 	failed := make([]string, 0)
 
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("# Audit of epoch %d (%s)\n\n", epoch, data.TickPrefix(epoch)))
+	builder.WriteString(fmt.Sprintf("# Audit of epoch %d (%s)\n\n", epoch, fmt.Sprintf("workspace/tick/aggregate/%019d", epoch)))
 
 	switch {
 	case policy.Epoch != 0:

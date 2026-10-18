@@ -31,7 +31,7 @@ func TestRedundancyStage(t *testing.T) {
 				valA := float64(idx)
 				valB := math.Sin(float64(idx) * math.Pi / 2.0)
 
-				data.AppendVector(val, []float64{valA, valB}, "metric_a", "metric_b")
+				val.Append([]float64{valA, valB}, "metric_a", "metric_b")
 				measurements = append(measurements, val)
 			}
 
@@ -48,7 +48,7 @@ func TestRedundancyStage(t *testing.T) {
 				valA := float64(idx) + 1.0
 				valB := 2.0*valA + 3.0
 
-				data.AppendVector(val, []float64{valA, valB}, "alpha", "beta")
+				val.Append([]float64{valA, valB}, "alpha", "beta")
 				measurements = append(measurements, val)
 			}
 
@@ -73,7 +73,7 @@ func TestRedundancyStage(t *testing.T) {
 				valA := float64(idx) + 1.0
 				valB := -valA
 
-				data.AppendVector(val, []float64{valA, valB}, "pos", "neg")
+				val.Append([]float64{valA, valB}, "pos", "neg")
 				measurements = append(measurements, val)
 			}
 
@@ -96,10 +96,10 @@ func TestRedundancyStage(t *testing.T) {
 				val := float64(idx) + 1.0
 
 				peerA := data.NewValue("signal_a", "signal", "BTC/USD")
-				data.AppendVector(peerA, []float64{val}, "feature_x")
+				peerA.Append([]float64{val}, "feature_x")
 
 				peerB := data.NewValue("signal_b", "signal", "BTC/USD")
-				data.AppendVector(peerB, []float64{2.0*val + 5.0}, "feature_y")
+				peerB.Append([]float64{2.0*val + 5.0}, "feature_y")
 
 				join := data.NewValue("runtime", "runtime:join", "BTC/USD")
 				join.Layers = append(peerA.Layers, peerB.Layers...)
@@ -125,7 +125,7 @@ func TestRedundancyStage(t *testing.T) {
 			for idx := range int64(25) {
 				val := data.NewValue("liquidity", "signal", "BTC/USD")
 				bid := 100.0 + float64(idx)
-				data.AppendVector(val, []float64{bid, bid + 0.05}, "best_price:bid", "best_price:ask")
+				val.Append([]float64{bid, bid + 0.05}, "best_price:bid", "best_price:ask")
 				measurements = append(measurements, val)
 			}
 
@@ -139,7 +139,7 @@ func TestRedundancyStage(t *testing.T) {
 			for idx := range int64(25) {
 				val := data.NewValue("liquidity", "signal", "BTC/USD")
 				spread := float64(idx+1) * 0.01
-				data.AppendVector(val, []float64{spread, spread + 0.004}, "relative_spread", "friction_hurdle")
+				val.Append([]float64{spread, spread + 0.004}, "relative_spread", "friction_hurdle")
 				measurements = append(measurements, val)
 			}
 

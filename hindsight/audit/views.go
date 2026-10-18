@@ -70,7 +70,7 @@ func TickViews(value *data.Value, only string) ([]*SymbolView, error) {
 				SeqIdx:    seq,
 				Timestamp: value.Timestamp,
 			}
-			out.FormatPrefix()
+			out.Prefix = origin + "/" + role + "/" + tick.Symbol
 			return out
 		}
 
@@ -80,7 +80,7 @@ func TickViews(value *data.Value, only string) ([]*SymbolView, error) {
 			}
 
 			out := header("trade", "trade", uint64(trade.TradeID))
-			data.AppendVector(out, []float64{
+			out.Append([]float64{
 				trade.Price.Float64(), trade.Qty, float64(trade.Timestamp.UnixNano()),
 			}, "price", "qty", "at")
 			view.Trades = append(view.Trades, out)
@@ -89,19 +89,19 @@ func TickViews(value *data.Value, only string) ([]*SymbolView, error) {
 		labels, values := touch(tick.Price)
 
 		view.Price = header(priceSource, "price", value.SeqIdx)
-		data.AppendVector(view.Price, values, labels...)
+		view.Price.Append(values, labels...)
 
-		view.Join = header(data.TickOrigin, "runtime:join", value.SeqIdx)
+		view.Join = header("workspace", "runtime:join", value.SeqIdx)
 
 		for _, signal := range tick.Signals {
 			out := header(signal.Source, "signal", value.SeqIdx)
-			data.AppendVector(out, signal.Values, signal.Labels...)
+			out.Append(signal.Values, signal.Labels...)
 			view.Signals = append(view.Signals, out)
 
-			data.AppendSignalVector(view.Join, signal.Source, tick.Symbol, signal.Values, append(signal.Labels, signal.Tags...)...)
+			view.Join.Append(signal.Values, append(append([]string{"signal", signal.Source}, append(signal.Labels, signal.Tags...)...), "symbol:"+tick.Symbol)...)
 		}
 
-		data.AppendVector(view.Join, values, append(labels, touchTag)...)
+		view.Join.Append(values, append(labels, touchTag)...)
 		views = append(views, view)
 	}
 
@@ -138,7 +138,7 @@ when the tick recorded either side as absent.
 func Touch(join *data.Value) (bid, ask float64, ok bool) {
 	head := join.Prefix + "/"
 
-	for index, values := range data.Indexed[[]float64](join, head) {
+	for index, values := range data.Layer[[]float64](join, head) {
 		rest, isTouch := strings.CutPrefix(index, head)
 
 		if !isTouch || !strings.HasSuffix(rest, "/"+touchTag) {

@@ -1,55 +1,68 @@
 // @vitest-environment jsdom
-import { act, cleanup, render } from "@testing-library/react";
+import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { RingBuffer, signals } from "#/collections/app";
-import { Value } from "#/types/value";
+import { deskPositionsAtom } from "#/collections/app";
+import { bookAtom } from "#/collections/book";
+import type { DeskPosition } from "#/collections/types";
 import { OpenPositions } from "./open-positions";
 
-const createValue = (values: Record<string, number>) => {
-	return new Value({
-		origin: "training",
-		scope: "RLC/USD",
-		metrics: Object.entries(values).map(([name, raw]) => ({
-			name,
-			raw,
-		})),
-	});
-};
+const lot = (over: Partial<DeskPosition>): DeskPosition => ({
+	id: over.id ?? over.symbol ?? "lot",
+	symbol: over.symbol ?? "RLC/USD",
+	virtual: over.virtual ?? false,
+	openedAt: over.openedAt ?? "2026-10-18T08:00:00Z",
+	closedAt: over.closedAt ?? null,
+	qty: over.qty ?? "2",
+	entryPrice: over.entryPrice ?? "1",
+	mark: over.mark ?? "1.05",
+	entryFee: over.entryFee ?? "0.01",
+	exitFee: over.exitFee ?? null,
+	exitVwap: over.exitVwap ?? null,
+	exitRoom: over.exitRoom ?? null,
+	returnPct: over.returnPct ?? null,
+	holdNs: over.holdNs ?? 75_000_000_000,
+});
 
 afterEach(() => {
 	cleanup();
-	signals.training.setState(() => ({}));
+	bookAtom.set("paper");
+	deskPositionsAtom.set([]);
 });
 
 describe("OpenPositions", () => {
 	it("shows the empty state when nothing is held", () => {
-		const ring = new RingBuffer<Value>(8);
-		ring.add(createValue({ position_open: 0 }));
-		signals.training.setState(() => ({ "RLC/USD": ring }));
 		const view = render(<OpenPositions />);
 		expect(view.getByText("No open positions")).toBeTruthy();
 	});
 
-	it("draws a card from the position metrics the backend sent", () => {
-		const ring = new RingBuffer<Value>(8);
-		signals.training.setState(() => ({ "RLC/USD": ring }));
+	it("draws a card from the position JSON the desk sent", () => {
+		deskPositionsAtom.set([lot({ symbol: "RLC/USD" })]);
 		const view = render(<OpenPositions />);
-		act(() => {
-			ring.add(
-				createValue({
-					position_open: 1,
-					position_entry: 1,
-					position_bid: 1.1,
-					position_pnl_pct: 0.05,
-					position_exit_room: 4,
-					position_held_s: 75,
-				}),
-			);
-			signals.training.setState((s) => ({ ...s }));
-		});
 		expect(view.getByText("RLC/USD")).toBeTruthy();
 		expect(view.getByText("held 1m 15s")).toBeTruthy();
-		expect(view.getByText("4.0×")).toBeTruthy();
 		expect(view.getByText("5.0%")).toBeTruthy();
+		expect(view.getByText("qty 2")).toBeTruthy();
+	});
+
+	it("shows exit room on the gauge when the book covers the lot", () => {
+		deskPositionsAtom.set([lot({ symbol: "RLC/USD", exitRoom: 12.5 })]);
+		const view = render(<OpenPositions />);
+		expect(view.getByText("12.5×")).toBeTruthy();
+	});
+
+	it("keeps a virtual lot off the paper book", () => {
+		deskPositionsAtom.set([
+			lot({ symbol: "BTC/USD" }),
+			lot({ id: "trial", symbol: "ETH/USD", virtual: true }),
+		]);
+		const paper = render(<OpenPositions />);
+		expect(paper.getByText("BTC/USD")).toBeTruthy();
+		expect(paper.queryByText("ETH/USD")).toBeNull();
+		paper.unmount();
+
+		bookAtom.set("virtual");
+		const virtual = render(<OpenPositions />);
+		expect(virtual.getByText("ETH/USD")).toBeTruthy();
+		expect(virtual.queryByText("BTC/USD")).toBeNull();
 	});
 });

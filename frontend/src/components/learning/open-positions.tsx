@@ -1,312 +1,269 @@
-import { signals } from "#/collections/app";
+import { useSelector } from "@tanstack/react-store";
+import { deskPositionsAtom } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
+import { cognitionStore, regionHistoryStore } from "#/collections/cognition";
+import type { DeskPosition } from "#/collections/types";
 import {
-	Component,
 	DistanceBar,
 	formatValue,
 	Gauge,
 	type GaugeTone,
-	metricOf,
-	metricsWithPrefix,
 	RadialHistory,
-	sectorHue,
 	TokenRibbon,
 	Trail,
-	useValues,
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
-import type { Value } from "#/types/value";
-import { useSelector } from "@tanstack/react-store";
 
 /*
-Open positions, drawn from the Training Value's own Metrics
-(position_*, region_brightness:*, path_token:*, match_*). Nothing here is
-computed that the backend did not send; missing Metrics show as waiting.
+Open positions are the tick's positions layer. Entry, mark, fee and the
+sale return are on that position. The token path and the region ring are
+the live train/regions sentence for the same symbol.
 */
 
 const REGIONS = 15;
-const regionLabel = (s: number) => `R${String(s).padStart(2, "0")}`;
-const regionColor = (s: number) => sectorHue(s, REGIONS);
+const TOKEN_GATE = 0.5;
+const regionLabel = (sector: number) => `R${String(sector).padStart(2, "0")}`;
+const trails = new Map<string, number[]>();
 
-export const openLots = (
-	state: Record<string, { getLast(): Value | undefined }>,
-	book: Book,
-) =>
-	Object.entries(state)
-		.filter(([symbol, ring]) => {
-			const virtual = symbol.includes(" · ");
-			if ((book === "virtual") !== virtual) return false;
-			return metricOf(ring?.getLast(), "position_open") === 1;
-		})
-		.map(([symbol]) => symbol)
+export const openLots = (rows: DeskPosition[], book: Book) =>
+	rows
+		.filter(
+			(row) => row.closedAt === null && row.virtual === (book === "virtual"),
+		)
+		.map((row) => row.symbol)
 		.sort();
 
-const heldSymbols = (
-	state: Record<string, { getLast(): Value | undefined }>,
-	book: Book,
-) => openLots(state, book).join("|");
-
-const duration = (s?: number) => {
-	if (s === undefined) return "—";
-	const m = Math.floor(s / 60);
+const duration = (seconds?: number) => {
+	if (seconds === undefined) return "—";
+	const m = Math.floor(seconds / 60);
 	const h = Math.floor(m / 60);
 	return h > 0
 		? `${h}h ${m % 60}m`
 		: m > 0
-			? `${m}m ${Math.floor(s % 60)}s`
-			: `${Math.floor(s)}s`;
+			? `${m}m ${Math.floor(seconds % 60)}s`
+			: `${Math.floor(seconds)}s`;
 };
 
-const tokensOf = (m?: Value): number[][] => {
-	const tokens: number[][] = [];
-	for (const [key, region] of metricsWithPrefix(m, "path_token:")) {
-		const [i, j] = key.split(":").map(Number);
-		tokens[i] ??= [];
-		tokens[i][j] = region;
-	}
-	return tokens.filter(Boolean);
+const numberOf = (value: string | null) => {
+	if (value === null) return undefined;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) ? parsed : undefined;
 };
 
-const regionRow = (m: Value): Array<number | undefined> => {
-	const row: Array<number | undefined> = new Array(REGIONS).fill(undefined);
-	for (const [key, v] of metricsWithPrefix(m, "region_brightness:R"))
-		row[Number(key)] = v;
-	return row;
+const heldSeconds = (row: DeskPosition) => {
+	if (row.holdNs > 0) return row.holdNs / 1e9;
+	if (row.openedAt === "") return undefined;
+	const at = Date.parse(row.openedAt);
+	if (Number.isNaN(at)) return undefined;
+	return Math.max(0, (Date.now() - at) / 1000);
 };
 
-const PositionCard = ({ symbol }: { symbol: string }) => {
-	const history: Value[] = useValues(signals.training, symbol, 90);
-	const latest = history[history.length - 1];
-	const m = (name: string) => metricOf(latest, name);
+const sectorOf = (token: string) => {
+	const sector = Number(token.slice(1));
+	return Number.isInteger(sector) ? sector : undefined;
+};
 
-	const entry = m("position_entry");
-	const bid = m("position_bid");
-	const qty = m("position_qty");
-	const cost = m("position_cost");
-	const value = m("position_value");
-	const vwap = m("position_exit_vwap");
-	const pnlPct = m("position_pnl_pct");
-	const room = m("position_exit_room");
-	const exiting = m("position_exiting") === 1;
-	const breakEven =
-		cost !== undefined && value !== undefined && vwap && qty
-			? cost / (qty * (value / (vwap * qty)))
-			: undefined;
-
+const PositionCard = ({ row }: { row: DeskPosition }) => {
+	const match = useSelector(
+		cognitionStore,
+		(state) => state.matches[row.symbol],
+	);
+	const rings = useSelector(
+		regionHistoryStore,
+		(state) => state[row.symbol] ?? [],
+	);
+	const entry = numberOf(row.entryPrice);
+	const mark = numberOf(row.mark);
+	const qty = numberOf(row.qty);
+	const vwap = numberOf(row.exitVwap);
+	const pnlPct =
+		row.returnPct ??
+		(entry !== undefined && mark !== undefined && entry !== 0
+			? (mark - entry) / entry
+			: undefined);
+	const room = row.exitRoom ?? undefined;
 	const pnlTone: GaugeTone =
 		pnlPct === undefined ? "muted" : pnlPct >= 0 ? "up" : "down";
 	const roomTone: GaugeTone =
 		room === undefined ? "muted" : room < 1 ? "down" : room < 3 ? "warn" : "up";
-	const pnlTrail = history
-		.map((h: Value) => metricOf(h, "position_pnl_pct"))
-		.filter((v): v is number => v !== undefined);
-	const deviations = history.flatMap((h: Value) => {
-		const b = metricOf(h, "position_bid");
-		const e = metricOf(h, "position_entry");
-		return b !== undefined && e !== undefined ? [Math.abs(b - e)] : [];
-	});
 
-	const rows = history
-		.filter(
-			(h: Value) =>
-				metricOf(h, "region_brightness:R00") !== undefined ||
-				metricsWithPrefix(h, "region_brightness:").size > 0,
-		)
-		.slice(-24)
-		.map(regionRow);
+	if (pnlPct !== undefined) {
+		const prior = trails.get(row.symbol) ?? [];
+		if (prior[prior.length - 1] !== pnlPct) {
+			trails.set(row.symbol, [...prior, pnlPct].slice(-90));
+		}
+	}
+
+	const pnlTrail = trails.get(row.symbol) ?? [];
+	const tokens = (match?.tokens ?? [])
+		.map(sectorOf)
+		.filter((sector): sector is number => sector !== undefined)
+		.map((sector) => [sector]);
+	const strength = rings.length
+		? rings[rings.length - 1]?.[tokens[tokens.length - 1]?.[0] ?? -1]
+		: undefined;
 	const peak = Math.max(
 		1,
-		...rows.flat().filter((v): v is number => v !== undefined),
+		...rings.flat().filter((value): value is number => value !== undefined),
 	);
-	const scaled = rows.map((r: Array<number | undefined>) =>
-		r.map((v) => (v === undefined ? v : v / peak)),
+	const scaled = rings.map((ring) =>
+		ring.map((value) => (value === undefined ? value : value / peak)),
 	);
-
-	const withTokens = [...history]
-		.reverse()
-		.find((h: Value) => metricOf(h, "token_depth") !== undefined);
-	const tokens = tokensOf(withTokens);
-	const capacity = metricOf(withTokens, "token_capacity");
-	const strength = metricOf(withTokens, "token_strength");
-	const threshold = metricOf(withTokens, "token_threshold");
+	const selling = row.closedAt === null && qty === 0;
 
 	return (
-		<Component store={signals.training} symbol={symbol}>
-			<div
-				className={cn(
-					"rounded-xs border-r border-b border-(--line) bg-(--surface) p-3 flex flex-col gap-2 transition-shadow",
-					exiting && "animate-pulse",
-				)}
-				style={{
-					borderColor: `color-mix(in srgb, var(--${pnlTone === "muted" ? "line" : pnlTone}) 60%, var(--line))`,
-					boxShadow:
-						pnlTone === "muted" ? undefined : `0 0 8px -8px var(--${pnlTone})`,
-				}}
-			>
-				<div className="flex items-center justify-between">
-					<div className="flex items-center gap-2">
-						<span
-							className="w-2.5 h-2.5 rounded-full"
-							style={{
-								background: `var(--${pnlTone === "muted" ? "f4" : pnlTone})`,
-							}}
-						/>
-						<span className="text-(--f1) font-bold text-sm">
-							{symbol.includes(" · ") ? symbol.split(" · ")[0] : symbol}
+		<div
+			className={cn(
+				"border-r border-b border-(--line) bg-(--surface) p-3 flex flex-col gap-2",
+				selling && "animate-pulse",
+			)}
+		>
+			<div className="flex items-center justify-between">
+				<div className="flex items-center gap-2">
+					<span
+						className="w-2.5 h-2.5 rounded-full"
+						style={{
+							background: `var(--${pnlTone === "muted" ? "f4" : pnlTone})`,
+						}}
+					/>
+					<span className="text-(--f1) font-bold text-sm">{row.symbol}</span>
+					{selling && (
+						<span className="text-[10px] px-1.5 rounded bg-(--down)/20 text-(--down)">
+							flat
 						</span>
-						{symbol.includes(" · ") && (
-							<span className="text-[10px] text-(--f3)">
-								{symbol.split(" · ").slice(1).join(" · ")}
-							</span>
-						)}
-						{exiting && (
-							<span className="text-[10px] px-1.5 rounded bg-(--down)/20 text-(--down)">
-								selling…
-							</span>
-						)}
-					</div>
-					<span className="text-[10px] text-(--f3)">
-						held {duration(m("position_held_s"))}
+					)}
+				</div>
+				<span className="text-[10px] text-(--f3)">
+					held {duration(heldSeconds(row))}
+				</span>
+			</div>
+
+			<div className="grid grid-cols-[auto_1fr] gap-4 items-center">
+				<div className="flex gap-1">
+					<Gauge
+						value={
+							pnlPct === undefined
+								? undefined
+								: 0.5 + Math.max(-0.5, Math.min(0.5, pnlPct * 5))
+						}
+						tone={pnlTone}
+						ticks={[0.5]}
+						label={
+							pnlPct === undefined ? undefined : (
+								<span style={{ color: `var(--${pnlTone})` }}>
+									{formatValue(pnlPct, "pct")}
+								</span>
+							)
+						}
+						caption="if sold now"
+					/>
+					<Gauge
+						value={
+							room === undefined
+								? undefined
+								: Math.max(
+										0,
+										Math.min(
+											1,
+											Math.log10(Math.max(room, 1e-3) * 10) / Math.log10(200),
+										),
+									)
+						}
+						tone={roomTone}
+						ticks={[Math.log10(10) / Math.log10(200)]}
+						label={
+							room === undefined
+								? undefined
+								: `${room >= 100 ? Math.round(room) : room.toFixed(1)}×`
+						}
+						caption="exit room"
+					/>
+				</div>
+				<div className="flex flex-col gap-2 min-w-0">
+					<DistanceBar
+						origin={entry}
+						value={mark}
+						markers={
+							vwap === undefined
+								? []
+								: [
+										{
+											value: vwap,
+											label: "average price selling everything",
+											color: "var(--info)",
+										},
+									]
+						}
+						leftLabel="less than paid"
+						rightLabel="more than paid"
+					/>
+					<Trail values={pnlTrail} width={240} height={40} />
+				</div>
+			</div>
+
+			<div className="grid grid-cols-[auto_1fr] gap-4 items-start border-t border-(--line) pt-3">
+				<div className="flex flex-col items-center">
+					<RadialHistory
+						sectors={REGIONS}
+						rows={scaled}
+						highlight={tokens[tokens.length - 1] ?? []}
+						labels={regionLabel}
+						size={170}
+					/>
+					<span className="text-[9px] text-(--f4)">
+						grid regions · outer ring = now
 					</span>
 				</div>
-
-				<div className="grid grid-cols-[auto_1fr] gap-4 items-center">
-					<div className="flex gap-1">
+				<div className="flex flex-col gap-3 min-w-0">
+					<div>
+						<div className="text-[10px] text-(--f3) mb-1">token sequence</div>
+						<TokenRibbon tokens={tokens} label={regionLabel} />
+					</div>
+					<div className="flex items-center gap-2">
 						<Gauge
+							size={56}
+							sweep={180}
 							value={
-								pnlPct === undefined
+								strength === undefined
 									? undefined
-									: 0.5 + Math.max(-0.5, Math.min(0.5, pnlPct * 5))
+									: Math.min(1, strength / (2 * TOKEN_GATE))
 							}
-							tone={pnlTone}
+							tone={
+								strength !== undefined && strength >= TOKEN_GATE
+									? "acc"
+									: "muted"
+							}
 							ticks={[0.5]}
-							label={
-								pnlPct === undefined ? undefined : (
-									<span style={{ color: `var(--${pnlTone})` }}>
-										{formatValue(pnlPct, "pct")}
-									</span>
-								)
-							}
-							caption="if sold now"
 						/>
-						<Gauge
-							value={
-								room === undefined
-									? undefined
-									: Math.max(
-											0,
-											Math.min(
-												1,
-												Math.log10(Math.max(room, 1e-3) * 10) / Math.log10(200),
-											),
-										)
-							}
-							tone={roomTone}
-							ticks={[Math.log10(10) / Math.log10(200)]}
-							label={
-								room === undefined
-									? undefined
-									: `${room >= 100 ? Math.round(room) : room.toFixed(1)}×`
-							}
-							caption="exit room"
-						/>
-					</div>
-					<div className="flex flex-col gap-2 min-w-0">
-						<DistanceBar
-							origin={entry}
-							value={bid}
-							reach={
-								deviations.length ? Math.max(...deviations) * 1.2 : undefined
-							}
-							markers={[
-								...(vwap !== undefined
-									? [
-											{
-												value: vwap,
-												label: "average price selling everything",
-												color: "var(--info)",
-											},
-										]
-									: []),
-								...(breakEven !== undefined
-									? [
-											{
-												value: breakEven,
-												label: "break-even after fees",
-												color: "var(--warn)",
-											},
-										]
-									: []),
-							]}
-							leftLabel="less than paid"
-							rightLabel="more than paid"
-						/>
-						<Trail values={pnlTrail} width={240} height={40} />
-					</div>
-				</div>
-
-				<div className="grid grid-cols-[auto_1fr] gap-4 items-start border-t border-(--line) pt-3">
-					<div className="flex flex-col items-center">
-						<RadialHistory
-							sectors={REGIONS}
-							rows={scaled}
-							highlight={tokens[tokens.length - 1] ?? []}
-							labels={regionLabel}
-							size={170}
-						/>
-						<span className="text-[9px] text-(--f4)">
-							grid regions · outer ring = now
+						<span className="text-[10px] text-(--f3) leading-tight">
+							token strength
+							<br />
+							<span className="text-(--f4)">tick = needed to advance</span>
 						</span>
-					</div>
-					<div className="flex flex-col gap-3 min-w-0">
-						<div>
-							<div className="text-[10px] text-(--f3) mb-1">token sequence</div>
-							<TokenRibbon
-								tokens={tokens}
-								capacity={capacity}
-								color={regionColor}
-								label={regionLabel}
-							/>
-						</div>
-						<div className="flex items-center gap-2">
-							<Gauge
-								size={56}
-								sweep={180}
-								value={
-									strength === undefined || !threshold
-										? undefined
-										: Math.min(1, strength / (2 * threshold))
-								}
-								tone={
-									strength !== undefined &&
-									threshold !== undefined &&
-									strength >= threshold
-										? "acc"
-										: "muted"
-								}
-								ticks={[0.5]}
-							/>
-							<span className="text-[10px] text-(--f3) leading-tight">
-								token strength
-								<br />
-								<span className="text-(--f4)">tick = needed to advance</span>
-							</span>
-						</div>
 					</div>
 				</div>
 			</div>
-		</Component>
+
+			<div className="grid grid-cols-4 gap-2 border-t border-(--line) pt-2 text-[10px] text-(--f3)">
+				<span>qty {row.qty ?? "—"}</span>
+				<span>entry {row.entryPrice ?? "—"}</span>
+				<span>mark {row.mark ?? "—"}</span>
+				<span>fee {row.entryFee ?? "—"}</span>
+			</div>
+		</div>
 	);
 };
 
 export const OpenPositions = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const held = useSelector(signals.training, (state) =>
-		heldSymbols(state, book),
-	);
-	const symbols = held ? held.split("|") : [];
+	const rows = useSelector(deskPositionsAtom, (state) => state);
+	const held = rows
+		.filter(
+			(row) => row.closedAt === null && row.virtual === (book === "virtual"),
+		)
+		.sort((a, b) => a.symbol.localeCompare(b.symbol));
 
-	if (symbols.length === 0) {
+	if (held.length === 0) {
 		return (
 			<div className="flex-1 flex flex-col items-center justify-center gap-2 text-(--f3)">
 				<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
@@ -324,8 +281,8 @@ export const OpenPositions = () => {
 
 	return (
 		<div className="flex-1 min-h-0 overflow-auto grid grid-cols-[repeat(auto-fill,minmax(440px,1fr))] content-start">
-			{symbols.map((symbol) => (
-				<PositionCard key={symbol} symbol={symbol} />
+			{held.map((row) => (
+				<PositionCard key={row.id} row={row} />
 			))}
 		</div>
 	);

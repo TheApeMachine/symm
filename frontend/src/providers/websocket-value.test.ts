@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	cashAtom,
 	decisionsAtom,
+	deskPositionsAtom,
 	equityAtom,
 	positionsAtom,
-	unrealizedAtom,
 	resonanceStore,
 	signals,
 	symbolsAtom,
 	tickCountAtom,
+	unrealizedAtom,
 } from "#/collections/app";
 import { cognitionStore } from "#/collections/cognition";
 import {
@@ -39,6 +40,7 @@ function encodeValue({
 		index: string;
 		vector?: number[];
 		json?: unknown;
+		raw?: Uint8Array;
 	}>,
 }) {
 	const textEncoder = new TextEncoder();
@@ -71,6 +73,8 @@ function encodeValue({
 			}
 		} else if (l.json) {
 			payloadBytes = textEncoder.encode(JSON.stringify(l.json));
+		} else if (l.raw) {
+			payloadBytes = l.raw;
 		} else {
 			payloadBytes = new Uint8Array(0);
 		}
@@ -183,8 +187,10 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		});
 
 		const parsed = parseOneValue(raw);
-		expect(parsed).not.toBeNull();
-		dispatchValue(parsed!);
+		if (!parsed) {
+			throw new Error("fixture did not parse");
+		}
+		dispatchValue(parsed);
 
 		// Symbol observed
 		expect(symbolsAtom.get()).toContain("BTC/USD");
@@ -236,8 +242,10 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		});
 
 		const parsed = parseOneValue(raw);
-		expect(parsed).not.toBeNull();
-		dispatchValue(parsed!);
+		if (!parsed) {
+			throw new Error("fixture did not parse");
+		}
+		dispatchValue(parsed);
 
 		const ring = signals.cvd.state["ETH/USD"];
 		expect(ring).toBeDefined();
@@ -247,6 +255,48 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		expect(
 			latest?.metrics.find((m) => m.name === "signed_net_fraction")?.raw,
 		).toBeCloseTo(-0.5);
+	});
+
+	it("routes a prefixed gob signal layer and the gob balance", () => {
+		const raw = encodeValue({
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
+			tick: 11n,
+			layers: [
+				{
+					index:
+						"workspace/tick/aggregate/signal/cvd/midpoint_log_return/signed_net_fraction/symbol:BTC/USD",
+					raw: new Uint8Array([
+						11, 127, 2, 1, 2, 255, 128, 0, 1, 8, 0, 0, 16, 255, 128, 0, 2,
+						248, 252, 169, 241, 210, 77, 98, 80, 63, 254, 224, 191,
+					]),
+				},
+				{
+					index: "workspace/tick/aggregate/balance",
+					raw: new Uint8Array([
+						46, 10, 0, 43, 123, 34, 100, 97, 116, 97, 34, 58, 91, 123, 34,
+						97, 115, 115, 101, 116, 34, 58, 34, 85, 83, 68, 34, 44, 34, 98,
+						97, 108, 97, 110, 99, 101, 34, 58, 34, 49, 50, 46, 53, 34, 125,
+						93, 125,
+					]),
+				},
+			],
+		});
+
+		const parsed = parseOneValue(raw);
+		if (!parsed) {
+			throw new Error("fixture did not parse");
+		}
+		dispatchValue(parsed);
+
+		const ring = signals.cvd.state["BTC/USD"];
+		expect(ring).toBeDefined();
+		const latest = ring.get(ring.getBufferLength() - 1);
+		expect(
+			latest?.metrics.find((m) => m.name === "signed_net_fraction")?.raw,
+		).toBeCloseTo(-0.5);
+		expect(cashAtom.get()).toBe("12.5");
 	});
 
 	it("parseSignalIndex rejects a signal index without a symbol tag", () => {
@@ -287,8 +337,10 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		});
 
 		const parsed = parseOneValue(raw);
-		expect(parsed).not.toBeNull();
-		dispatchValue(parsed!);
+		if (!parsed) {
+			throw new Error("fixture did not parse");
+		}
+		dispatchValue(parsed);
 
 		expect(cashAtom.get()).toBe("10000.50");
 	});
@@ -303,14 +355,18 @@ describe("Value Binary Decoder and Dispatcher", () => {
 					index: "balance",
 					json: {
 						data: [{ asset: "USD", balance: "120" }],
-						unrealized: "-4.5",
-						equity: "195.5",
+						n: "-4.5",
+						e: "195.5",
 					},
 				},
 			],
 		});
 
-		dispatchValue(parseOneValue(raw)!);
+		const parsed = parseOneValue(raw);
+		if (!parsed) {
+			throw new Error("fixture did not parse");
+		}
+		dispatchValue(parsed);
 
 		expect(cashAtom.get()).toBe("120");
 		expect(unrealizedAtom.get()).toBe("-4.5");
@@ -326,8 +382,10 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		});
 
 		const parsed = parseOneValue(raw);
-		expect(parsed).not.toBeNull();
-		dispatchValue(parsed!);
+		if (!parsed) {
+			throw new Error("fixture did not parse");
+		}
+		dispatchValue(parsed);
 
 		expect(tickCountAtom.get()).toBe(9999);
 	});
@@ -356,7 +414,11 @@ describe("Value Binary Decoder and Dispatcher", () => {
 			],
 		});
 
-		dispatchValue(parseOneValue(raw)!);
+		const parsed = parseOneValue(raw);
+		if (!parsed) {
+			throw new Error("fixture did not parse");
+		}
+		dispatchValue(parsed);
 
 		expect(symbolsAtom.get()).toContain("ETH/USD");
 		expect(tickCountAtom.get()).toBe(77);
@@ -367,6 +429,100 @@ describe("Value Binary Decoder and Dispatcher", () => {
 		expect(latest?.origin).toBe("hawkes");
 		expect(latest?.metric("arrival_rate:buy")).toBeCloseTo(1.5);
 		expect(latest?.metric("arrival_rate:sell")).toBeCloseTo(0.5);
+	});
+
+	it("reads a position's entry and fee from its fills and the mark from the price layer", () => {
+		const raw = encodeValue({
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
+			layers: [
+				{
+					index: "price/BTC/USD",
+					json: { symbol: "BTC/USD", bid: "101.5", ask: "102" },
+				},
+				{
+					index: "positions",
+					json: [
+						{
+							id: "p1",
+							symbol: "BTC/USD",
+							opened_at: "2026-10-18T09:00:00Z",
+							closed_at: null,
+							qty: "0.01",
+							virtual: false,
+							entry_orders: [
+								{ type: "buy", ordertype: "market", volume: "0.01" },
+							],
+							fills: [
+								{
+									side: "buy",
+									avg_price: "100",
+									last_price: "100",
+									fee_usd_equiv: "0.08",
+								},
+							],
+						},
+					],
+				},
+			],
+		});
+
+		const parsed = parseOneValue(raw);
+		if (!parsed) {
+			throw new Error("fixture did not parse");
+		}
+		dispatchValue(parsed);
+
+		expect(deskPositionsAtom.get()[0]).toMatchObject({
+			symbol: "BTC/USD",
+			qty: "0.01",
+			entryPrice: "100",
+			entryFee: "0.08",
+			mark: "101.5",
+		});
+	});
+
+	it("reads exit room as visible bid size divided by the lot", () => {
+		const raw = encodeValue({
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
+			layers: [
+				{
+					index: "book/SENT/USD",
+					json: {
+						bids: {
+							levels: {
+								a: { quantity: "400" },
+								b: { quantity: "121.12387102" },
+							},
+						},
+					},
+				},
+				{
+					index: "positions",
+					json: [
+						{
+							id: "sent",
+							symbol: "SENT/USD",
+							opened_at: "2026-10-18T09:00:00Z",
+							closed_at: null,
+							qty: "521.12387102",
+							virtual: false,
+						},
+					],
+				},
+			],
+		});
+
+		const parsed = parseOneValue(raw);
+		if (!parsed) {
+			throw new Error("fixture did not parse");
+		}
+		dispatchValue(parsed);
+
+		expect(deskPositionsAtom.get()[0]?.exitRoom).toBeCloseTo(1);
 	});
 
 	it("routes each symbol's signal layer of a multi-symbol tick to that symbol", () => {
@@ -397,7 +553,11 @@ describe("Value Binary Decoder and Dispatcher", () => {
 			],
 		});
 
-		dispatchValue(parseOneValue(raw)!);
+		const parsed = parseOneValue(raw);
+		if (!parsed) {
+			throw new Error("fixture did not parse");
+		}
+		dispatchValue(parsed);
 
 		const eth = signals.hawkes.state["ETH/USD"];
 		const sol = signals.hawkes.state["SOL/USD"];
@@ -605,7 +765,6 @@ describe("dispatchValue: train/regions on ticks", () => {
 						index:
 							"workspace/tick/aggregate/1/0000000000000000009.bin/train/regions/BTC/USD/R01/R02",
 						vector: [0.8, 0.6],
-						labels: ["R01", "R02"],
 					},
 				],
 			}),

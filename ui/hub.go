@@ -9,18 +9,20 @@ import (
 	neturl "net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
-	"github.com/google/uuid"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/squeel"
+	"github.com/theapemachine/squeel/backend"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -33,7 +35,8 @@ type Hub struct {
 	routes     *Routes
 	clients    sync.Map // *websocket.Conn -> *client
 	replayer   Replayer
-	detector   Detector
+	objects    objectSource
+	client     *store.Client
 	// kept is the latest frame of each dashboard state, replayed when a
 	// client connects. Ticks are not kept: a key is one origin/role/scope.
 	keepMu    sync.Mutex
@@ -43,6 +46,13 @@ type Hub struct {
 	// on a slow dashboard, so a rising drop count is the dashboard falling
 	// behind, not the venue.
 	drops atomic.Uint64
+}
+
+/*
+objectSource streams the objects under a prefix. Each object is one Write.
+*/
+type objectSource interface {
+	Stream(ctx context.Context, prefix string, dst io.Writer) error
 }
 
 /*
@@ -127,21 +137,11 @@ func (writer retainWriter) Write(p []byte) (int, error) {
 }
 
 /*
-Replayer streams one stored run to one client (hindsight.Service): it
-writes whole serialized Values to w until done, ctx is canceled or w fails.
+Replayer streams one run to the client that asked. Nothing registers one:
+the dashboard reads stored prefixes itself.
 */
 type Replayer interface {
 	Stream(ctx context.Context, w io.Writer, run uint64, symbol string) error
-}
-
-/*
-Detector streams what detect stored to one client (hindsight.Service, the
-Historical runs tab): run 0 the labelled epochs, a run its excursions, a run
-with symbol, class and C tick that excursion's trades. It writes whole
-serialized Values to w until done, ctx is canceled or w fails.
-*/
-type Detector interface {
-	Detections(ctx context.Context, w io.Writer, run uint64, symbol, class string, cTick uint64) error
 }
 
 /*
@@ -252,14 +252,6 @@ func (client *client) stream(parent context.Context, kind, what string, run func
 }
 
 /*
-Detect sets the detector serving the "detections" command. It is set before
-Run; without one the command is an error.
-*/
-func (hub *Hub) Detect(detector Detector) {
-	hub.detector = detector
-}
-
-/*
 Replay sets the replayer serving the "hindsight" command. It is set before
 Run; without one the command is an error.
 */
@@ -270,7 +262,7 @@ func (hub *Hub) Replay(replayer Replayer) {
 /*
 NewHub constructs the dashboard hub from its queue-backed system boundaries.
 */
-func NewHub(ctx context.Context) *Hub {
+func NewHub(ctx context.Context, store *store.Client) *Hub {
 	hub := &Hub{
 		ctx:        ctx,
 		listenAddr: system.Cfg.UI.Addr,
@@ -284,6 +276,11 @@ func NewHub(ctx context.Context) *Hub {
 	}
 
 	hub.routes = NewRoutes(hub)
+
+	if store != nil {
+		hub.objects = store
+		hub.client = store
+	}
 	hub.System = runtime.NewSystem(ctx, "hub")
 
 	// The dashboard is a separate origin from the hub (vite dev server on
@@ -399,84 +396,58 @@ func (hub *Hub) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-type traceSpan struct {
-	Name    string `json:"name"`
-	Group   string `json:"group"`
-	Stage   int    `json:"stage"`
-	WaitNs  int64  `json:"waitNs"`
-	WorkNs  int64  `json:"workNs"`
-	Backlog int64  `json:"backlog"`
-	Side    bool   `json:"side,omitempty"`
-}
+/*
+writeDetectionDone closes a detections stream. Epoch 0 is the run list,
+an empty symbol is that epoch's excursions, and a symbol is one tape.
+*/
+func writeDetectionDone(w io.Writer, run uint64, symbol string) error {
+	scope := symbol
 
-type traceFrame struct {
-	Tick  uint64      `json:"tick"`
-	Seq   uint64      `json:"seq"`
-	Bytes int         `json:"bytes"`
-	Drops uint64      `json:"drops"`
-	Spans []traceSpan `json:"spans"`
+	if scope == "" {
+		scope = "all"
+	}
+
+	value := data.NewValue("detections", "done", scope)
+	value.Epoch = run
+
+	if symbol == "" {
+		value.Scope = ""
+	}
+
+	value.Append([]float64{0, 0, 0, 0, 0}, "ticks", "symbols", "excursions", "policies", "papers")
+
+	_, err := io.Copy(w, value)
+
+	return err
 }
 
 /*
-PublishTrace broadcasts one tick's measured spans to the dashboard. The
-frame is its own value, origin "trace", and is not written to the store.
-bookNs is the latest book-ingress apply; it rides along as a side span
-because that work is not part of this tick.
+writePolicyIndex sends the object keys under prefix as one policy value.
+The stored objects do not carry their key, and the trie is the key.
 */
-func (hub *Hub) PublishTrace(value *data.Value, bookNs int64) {
-	if hub == nil || value == nil {
-		return
+func writePolicyIndex(ctx context.Context, client *store.Client, prefix string, dst io.Writer) error {
+	value := data.NewValue("policy", "current", "index")
+	value.Prefix = "policy/current"
+
+	for key := range client.ListKeys(prefix) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		rest := strings.Trim(strings.TrimPrefix(key, "policy/current"), "/")
+
+		if rest == "" {
+			continue
+		}
+
+		value.Append([]byte{0}, rest)
 	}
 
-	spans := value.Spans()
-	frame := traceFrame{
-		Tick:  value.Tick,
-		Seq:   value.SeqIdx,
-		Bytes: value.Size(),
-		Drops: hub.drops.Load(),
-		Spans: make([]traceSpan, 0, len(spans)+1),
+	if _, err := io.Copy(dst, value); err != nil {
+		return err
 	}
 
-	for _, span := range spans {
-		frame.Spans = append(frame.Spans, traceSpan{
-			Name:    span.Name,
-			Group:   span.Group,
-			Stage:   span.Stage,
-			WaitNs:  span.WaitNs,
-			WorkNs:  span.WorkNs,
-			Backlog: span.Backlog,
-			Side:    span.Side,
-		})
-	}
-
-	if bookNs > 0 {
-		frame.Spans = append(frame.Spans, traceSpan{
-			Name:   "book",
-			Group:  "venue",
-			WorkNs: bookNs,
-			Side:   true,
-		})
-	}
-
-	body, err := sonic.Marshal(frame)
-
-	if err != nil {
-		errnie.Error(errnie.Err(errnie.Internal, "[hub] trace marshal failed", err))
-		return
-	}
-
-	out := &data.Value{
-		ID:        uuid.New(),
-		Epoch:     value.Epoch,
-		Tick:      value.Tick,
-		SeqIdx:    value.SeqIdx,
-		Timestamp: uint64(time.Now().UnixNano()),
-		Origin:    data.TraceOrigin,
-		Role:      data.TraceRole,
-		Scope:     data.TraceScope,
-	}
-	out.AppendJSON(body, data.LayerTrace)
-	hub.Write(out.Bytes())
+	return ctx.Err()
 }
 
 /*
@@ -493,11 +464,15 @@ func (hub *Hub) handleCommand(from *client, payload []byte) error {
 		Class     string `json:"class"`
 		At        string `json:"at"`
 		CaptureID int64  `json:"captureId"`
+		Prefix    string `json:"prefix"`
+		Query     string `json:"query"`
 	}
 
 	if err := sonic.Unmarshal(payload, &request); err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation, fmt.Sprintf("[hub] malformed dashboard command %q", payload), err,
+			errnie.Validation,
+			fmt.Sprintf("[hub] malformed dashboard command %s", string(payload)),
+			err,
 		))
 	}
 
@@ -513,44 +488,59 @@ func (hub *Hub) handleCommand(from *client, payload []byte) error {
 
 		if err != nil {
 			return errnie.Error(errnie.Err(
-				errnie.Validation, fmt.Sprintf("[hub] hindsight command run %q is not an epoch", request.Run), err,
+				errnie.Validation,
+				fmt.Sprintf("[hub] hindsight command run %s is not an epoch", request.Run),
+				err,
 			))
 		}
 
 		if hub.replayer == nil || from == nil {
 			return errnie.Error(errnie.Err(
-				errnie.ServiceUnavailable, "[hub] hindsight command with no replayer or no client: "+string(payload), nil,
+				errnie.ServiceUnavailable,
+				fmt.Sprintf("[hub] hindsight command with no replayer or no client: %s", string(payload)),
+				nil,
 			))
 		}
 
 		from.replay(hub.ctx, hub.replayer, run, request.Symbol)
 	case "detections":
-		// run "" lists the labelled epochs; run and symbol name one
-		// excursion, its class and its C tick (at) too. Epochs and ticks
-		// are decimal strings, beyond what a JSON number carries exactly.
-		var run, cTick uint64
+		// The stored objects are the detections. run "" and a run list
+		// detections/; a symbol names detections/<class>/<symbol>/.
+		var run uint64
 		var err error
 
 		if request.Run != "" {
 			if run, err = strconv.ParseUint(request.Run, 10, 64); err != nil {
 				return errnie.Error(errnie.Err(
-					errnie.Validation, fmt.Sprintf("[hub] detections command run %q is not an epoch", request.Run), err,
+					errnie.Validation,
+					fmt.Sprintf("[hub] detections command run %s is not an epoch", request.Run),
+					err,
 				))
 			}
 		}
 
 		if request.Symbol != "" {
-			if cTick, err = strconv.ParseUint(request.At, 10, 64); err != nil || run == 0 || request.Class == "" {
+			if _, err = strconv.ParseUint(request.At, 10, 64); err != nil || run == 0 || request.Class == "" {
 				return errnie.Error(errnie.Err(
-					errnie.Validation, fmt.Sprintf("[hub] detections command for a symbol needs a run, a class and a C tick (at): %s", payload), err,
+					errnie.Validation,
+					fmt.Sprintf("[hub] detections command for a symbol needs a run, a class and a C tick (at): %s", string(payload)),
+					err,
 				))
 			}
 		}
 
-		if hub.detector == nil || from == nil {
+		if hub.objects == nil || from == nil {
 			return errnie.Error(errnie.Err(
-				errnie.ServiceUnavailable, "[hub] detections command with no detector or no client: "+string(payload), nil,
+				errnie.ServiceUnavailable,
+				fmt.Sprintf("[hub] detections command with no store or no client: %s", string(payload)),
+				nil,
 			))
+		}
+
+		prefix := "detections/"
+
+		if request.Symbol != "" {
+			prefix = "detections/" + request.Class + "/" + request.Symbol + "/"
 		}
 
 		kind := "detection tape"
@@ -562,9 +552,63 @@ func (hub *Hub) handleCommand(from *client, payload []byte) error {
 			kind = "detection excursions"
 		}
 
-		from.stream(hub.ctx, kind, string(payload), func(ctx context.Context) error {
-			return hub.detector.Detections(ctx, from, run, request.Symbol, request.Class, cTick)
+		from.stream(hub.ctx, kind, prefix, func(ctx context.Context) error {
+			if err := hub.objects.Stream(ctx, prefix, from); err != nil {
+				return err
+			}
+
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
+			return writeDetectionDone(from, run, request.Symbol)
 		})
+	case "s3":
+		if request.Prefix == "" {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("[hub] s3 command needs a prefix: %s", string(payload)),
+				nil,
+			))
+		}
+
+		if hub.objects == nil || from == nil {
+			return errnie.Error(errnie.Err(
+				errnie.ServiceUnavailable,
+				fmt.Sprintf("[hub] s3 command with no store or no client: %s", string(payload)),
+				nil,
+			))
+		}
+
+		prefix := request.Prefix
+
+		from.stream(hub.ctx, "s3", prefix, func(ctx context.Context) error {
+			if strings.HasPrefix(prefix, "policy/current") && hub.client != nil {
+				return writePolicyIndex(ctx, hub.client, prefix, from)
+			}
+
+			return hub.objects.Stream(ctx, prefix, from)
+		})
+	case "query":
+		if hub.client == nil || hub.client.S3Client == nil {
+			return errnie.Error(errnie.Err(
+				errnie.ServiceUnavailable,
+				fmt.Sprintf("[hub] query command with no store: %s", string(payload)),
+				nil,
+			))
+		}
+
+		if request.Query == "" {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("[hub] query command needs a statement: %s", string(payload)),
+				nil,
+			))
+		}
+
+		squeel.NewStatement(request.Query, backend.NewS3(
+			backend.WithS3Client(hub.client.S3Client),
+		))
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation, fmt.Sprintf("[hub] unknown dashboard command type %q in %q", request.Type, payload), nil,
@@ -586,19 +630,23 @@ Run binds the dashboard listener before returning and only then transitions
 the hub READY, so nothing upstream writes to a hub that cannot serve yet.
 */
 func (hub *Hub) Run() error {
-	if hub.listenAddr == "" {
-		return errnie.Error(errnie.Err(errnie.Validation, "[hub] ui.addr is not configured", nil))
-	}
-
 	listener, err := net.Listen("tcp", hub.listenAddr)
 
 	if err != nil {
-		return errnie.Error(errnie.Err(errnie.IO, "[hub] listen on "+hub.listenAddr+" failed", err))
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			fmt.Sprintf("[hub] listen on %s failed", hub.listenAddr),
+			err,
+		))
 	}
 
 	go func() {
 		if err := hub.app.Listener(listener); err != nil {
-			hub.Error(errnie.Err(errnie.IO, "[hub] serve on "+hub.listenAddr+" failed", err))
+			hub.Error(errnie.Err(
+				errnie.IO,
+				fmt.Sprintf("[hub] serve on %s failed", hub.listenAddr),
+				err,
+			))
 		}
 	}()
 

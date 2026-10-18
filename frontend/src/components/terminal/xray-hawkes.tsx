@@ -53,19 +53,26 @@ export const hawkesSample = (row: Value): HawkesTraceSample | null => {
 		};
 	}
 
-	// Canonical Hawkes metrics from SIGNALS.md
-	const intensity = totalArrival > 0 ? totalArrival : (metrics.conditional_intensity ?? 0);
+	/*
+		The published conditional intensity is λ at the event. Velocity is
+		(λ − λ_prev) / Δt, so a short gap turns it into a needle that is not
+		a jump in the process. The trace decays this level toward the rest
+		rate; the next event's level is the next jump.
+	*/
+	const level =
+		metrics.conditional_intensity !== undefined &&
+		metrics.conditional_intensity > 0
+			? metrics.conditional_intensity
+			: totalArrival;
 	const baseline = Math.min(buyRate, sellRate);
 	const decay = radius > 0 ? 1.0 : 0.5;
-	const velocity = metrics.conditional_intensity_velocity ?? 0;
-	const postArrival = intensity + Math.max(0.01, Math.abs(velocity));
 
 	return {
 		at: row.timestamp,
-		intensity,
+		intensity: level,
 		baseline,
 		decay,
-		postArrival,
+		postArrival: level,
 	};
 };
 

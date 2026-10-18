@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"errors"
 	"io"
 
 	"github.com/theapemachine/errnie"
@@ -40,43 +39,24 @@ func NewPipeline(components ...io.ReadWriteCloser) io.ReadWriteCloser {
 }
 
 /*
-Read implements the io.Reader interface.
-
-It reads from the first component and passes data through the pipeline.
-Returns EOF when no more data is available.
+Read copies each stage into the next one, then reads the last stage.
+An empty frame ends the pass. The next Write starts a new one.
 */
 func (pipeline *Pipeline) Read(p []byte) (n int, err error) {
 	if len(pipeline.components) == 0 {
 		return 0, io.EOF
 	}
 
-	var nn int64
-
 	if !pipeline.processed {
 		for i := range len(pipeline.components) - 1 {
-			nn, err = Copy(pipeline.components[i+1], pipeline.components[i])
+			n, err = Copy(pipeline.components[i+1], pipeline.components[i])
 
-			if err != nil {
-				if err == io.EOF {
-					pipeline.processed = false
-					return 0, io.EOF
-				}
-
-				if errors.Is(err, io.ErrShortBuffer) {
-					return 0, err
-				}
-
-				if errors.Is(err, io.ErrNoProgress) && nn == 0 {
-					pipeline.processed = false
-					return 0, io.EOF
-				}
-
-				return 0, errnie.Error(err)
+			if err == io.EOF || (err == nil && n == 0) {
+				return 0, io.EOF
 			}
 
-			if nn == 0 {
-				pipeline.processed = false
-				return 0, io.EOF
+			if err != nil {
+				return 0, errnie.Error(err)
 			}
 		}
 
@@ -85,22 +65,18 @@ func (pipeline *Pipeline) Read(p []byte) (n int, err error) {
 
 	n, err = pipeline.components[len(pipeline.components)-1].Read(p)
 
-	if err != nil {
-		if err == io.EOF {
-			pipeline.processed = false
-			return n, err
+	if err == io.EOF || (err == nil && n == 0) {
+		pipeline.processed = false
+
+		if err == nil {
+			return 0, io.EOF
 		}
 
-		if errors.Is(err, io.ErrShortBuffer) {
-			return n, err
-		}
-
-		return n, errnie.Error(err)
+		return n, err
 	}
 
-	if n == 0 {
-		pipeline.processed = false
-		return n, io.EOF
+	if err != nil {
+		return n, errnie.Error(err)
 	}
 
 	return n, nil
@@ -122,16 +98,12 @@ func (pipeline *Pipeline) Write(p []byte) (n int, err error) {
 }
 
 /*
-Close implements the io.Closer interface.
-
-It closes all components in the pipeline that implement io.Closer.
+Close closes every stage in the pipeline.
 */
 func (pipeline *Pipeline) Close() error {
 	for _, component := range pipeline.components {
-		if closer, ok := component.(io.Closer); ok {
-			if err := closer.Close(); err != nil {
-				return errnie.Error(err)
-			}
+		if err := component.Close(); err != nil {
+			return errnie.Error(err)
 		}
 	}
 

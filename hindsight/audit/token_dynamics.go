@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
@@ -117,9 +118,9 @@ accumulates the transition from that symbol's prior token.
 */
 func (stage *DynamicsStage) recordToken(measurement *data.Value) {
 	symbol := measurement.Scope
-	signals := make([]data.Signal, 0)
+	signals := make([]broker.Sample, 0)
 
-	for signal, err := range data.Signals(measurement) {
+	for signal, err := range broker.Samples(measurement) {
 		if err != nil {
 			stage.grid.Error(err)
 			continue
@@ -132,7 +133,17 @@ func (stage *DynamicsStage) recordToken(measurement *data.Value) {
 		signals = append(signals, signal)
 	}
 
-	regions := stage.grid.Observe(symbol, signals)
+	if err := stage.grid.Error(); err != nil {
+		stage.err = err
+		return
+	}
+
+	regions, err := stage.grid.Observe(symbol, signals)
+
+	if err != nil {
+		stage.err = err
+		return
+	}
 
 	if len(regions) == 0 || regions[0].Brightness <= 0 {
 		return

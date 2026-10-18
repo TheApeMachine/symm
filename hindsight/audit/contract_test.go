@@ -25,7 +25,7 @@ func TestContractStage(t *testing.T) {
 
 		Convey("When auditing valid measurements", func() {
 			val := data.NewValue("test", "test", "BTC/USD")
-			data.AppendVector(val, []float64{100.0}, "test_metric")
+			val.Append([]float64{100.0}, "test_metric")
 
 			violations := feed(stage, val)
 			So(violations, ShouldBeEmpty)
@@ -41,7 +41,7 @@ func TestContractStage(t *testing.T) {
 
 		Convey("When auditing signed returns that are zero or negative", func() {
 			down := data.NewValue("test", "test", "BTC/USD")
-			data.AppendVector(down, []float64{-0.012, 0, 0.004}, "midpoint_log_return", "flow_aligned_midpoint_return", "midpoint_log_return_up")
+			down.Append([]float64{-0.012, 0, 0.004}, "midpoint_log_return", "flow_aligned_midpoint_return", "midpoint_log_return_up")
 
 			violations := feed(stage, down)
 			So(violations, ShouldBeEmpty)
@@ -49,14 +49,14 @@ func TestContractStage(t *testing.T) {
 
 		Convey("When auditing one-sided returns", func() {
 			flat := data.NewValue("test", "test", "BTC/USD")
-			data.AppendVector(flat, []float64{0, 0.02}, "positive_midpoint_return", "negative_midpoint_return")
+			flat.Append([]float64{0, 0.02}, "positive_midpoint_return", "negative_midpoint_return")
 
 			violations := feed(stage, flat)
 			So(violations, ShouldBeEmpty)
 
 			negative := NewContractStage(ctx)
 			bad := data.NewValue("test", "test", "BTC/USD")
-			data.AppendVector(bad, []float64{-0.01}, "positive_midpoint_return")
+			bad.Append([]float64{-0.01}, "positive_midpoint_return")
 			violations = feed(negative, bad)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
 			So(violations[0].Description, ShouldEqual, "One-sided return cannot be negative")
@@ -64,7 +64,7 @@ func TestContractStage(t *testing.T) {
 
 		Convey("When auditing price metrics with negative values", func() {
 			val := data.NewValue("test", "test", "BTC/USD")
-			data.AppendVector(val, []float64{-50.0}, "test_price")
+			val.Append([]float64{-50.0}, "test_price")
 
 			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
@@ -80,7 +80,7 @@ func TestContractStage(t *testing.T) {
 
 		Convey("When auditing probability metrics with out-of-bound values", func() {
 			val := data.NewValue("test", "test", "BTC/USD")
-			data.AppendVector(val, []float64{1.5}, "test_prob")
+			val.Append([]float64{1.5}, "test_prob")
 
 			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
@@ -96,7 +96,7 @@ func TestContractStage(t *testing.T) {
 
 		Convey("When auditing physical quantities with negative values", func() {
 			val := data.NewValue("test", "test", "BTC/USD")
-			data.AppendVector(val, []float64{-1.0}, "test_qty")
+			val.Append([]float64{-1.0}, "test_qty")
 
 			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
@@ -112,7 +112,7 @@ func TestContractStage(t *testing.T) {
 
 		Convey("When auditing correlations with out-of-bound values", func() {
 			val := data.NewValue("test", "test", "BTC/USD")
-			data.AppendVector(val, []float64{-1.5}, "test_corr")
+			val.Append([]float64{-1.5}, "test_corr")
 
 			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)

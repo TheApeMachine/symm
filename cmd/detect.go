@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/cli/progress"
-	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
@@ -58,9 +61,13 @@ pullback is applied when it is stored.`,
 
 		for _, epoch := range epochs {
 			listing := progress.Spin("listing ticks")
-			keys := client.ListKeysProgress(func(n int) {
-				listing.Describe("listing ticks %d", n)
-			}, data.TickPrefix(epoch))
+			prefix := fmt.Sprintf("workspace/tick/aggregate/%019d", epoch)
+			var keys []string
+
+			for key := range client.ListKeys(prefix) {
+				keys = append(keys, key)
+			}
+
 			listing.Finish()
 
 			if hindsight.ScanUpToDate(client, epoch, retrace, keys) {
@@ -113,7 +120,43 @@ func detectRunEpochs(client *store.Client) ([]uint64, error) {
 		return epochs, nil
 	}
 
-	return store.Epochs(client, data.TickPrefix())
+	return listedEpochs(client)
+}
+
+func listedEpochs(client *store.Client) ([]uint64, error) {
+	seen := map[uint64]struct{}{}
+	epochs := make([]uint64, 0)
+
+	for key := range client.ListKeys("workspace/tick/aggregate") {
+		for _, segment := range strings.Split(key, "/") {
+			if len(segment) != 19 {
+				continue
+			}
+
+			epoch, err := strconv.ParseUint(segment, 10, 64)
+
+			if err != nil {
+				continue
+			}
+
+			if _, ok := seen[epoch]; ok {
+				continue
+			}
+
+			seen[epoch] = struct{}{}
+			epochs = append(epochs, epoch)
+		}
+	}
+
+	if len(epochs) == 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound, "[detect] no stored ticks under workspace/tick/aggregate", nil,
+		))
+	}
+
+	slices.Sort(epochs)
+
+	return epochs, nil
 }
 
 func init() {

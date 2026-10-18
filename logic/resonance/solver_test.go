@@ -24,7 +24,7 @@ func symbolTick(symbol string, values map[string]float64, touch bool) *broker.Sy
 
 	for _, feature := range Features {
 		if val, ok := values[feature.Source]; ok {
-			out.Signals = append(out.Signals, data.Signal{
+			out.Signals = append(out.Signals, broker.Sample{
 				Source: feature.Source, Symbol: symbol, Labels: []string{feature.Label}, Values: []float64{val},
 			})
 		}
@@ -34,9 +34,8 @@ func symbolTick(symbol string, values map[string]float64, touch bool) *broker.Sy
 }
 
 func stored(tick uint64) *data.Value {
-	value := data.NewValue(data.TickOrigin, data.TickRole, data.TickScope)
+	value := data.NewValue("tick", "tick", "BTC/USD")
 	value.Epoch, value.Tick, value.Timestamp = 7, tick, tick*1e9
-	value.FormatPrefix()
 	return value
 }
 
@@ -72,7 +71,7 @@ func TestSolver(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(surprise, ShouldBeGreaterThanOrEqualTo, 0)
 
-			metrics := data.Metrics(reading)
+			metrics := floatMetrics(reading)
 			So(metrics, ShouldContainKey, "energy")
 
 			for layer, rows := range coderArch(len(Features)) {
@@ -103,7 +102,7 @@ func TestSolver(t *testing.T) {
 
 		Convey("A source with no pinned feature is an error", func() {
 			tick := symbolTick("BTC/USD", every(1), true)
-			tick.Signals = append(tick.Signals, data.Signal{Source: "derivatives", Symbol: "BTC/USD", Labels: []string{"basis"}, Values: []float64{1}})
+			tick.Signals = append(tick.Signals, broker.Sample{Source: "derivatives", Symbol: "BTC/USD", Labels: []string{"basis"}, Values: []float64{1}})
 
 			_, err := solver.Step(stored(1), tick)
 			So(err, ShouldNotBeNil)

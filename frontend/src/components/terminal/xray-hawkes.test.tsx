@@ -59,6 +59,23 @@ describe("hawkesSample", () => {
 	it("reports a malformed fitted event instead of guessing its mark", () => {
 		expect(() => hawkesSample(row("unknown"))).toThrow("buy/sell mark");
 	});
+
+	it("keeps a short-gap velocity out of the spike height", () => {
+		const live = new Value({
+			timestamp: 1_000_000_000n,
+			metrics: Object.entries({
+				"arrival_rate:buy": 2,
+				"arrival_rate:sell": 0.1,
+				branching_spectral_radius: 0.22,
+				conditional_intensity: 2.42,
+				conditional_intensity_velocity: 480,
+			}).map(([name, value]) => ({ name, raw: value })),
+		});
+		const sample = hawkesSample(live);
+
+		expect(sample?.intensity).toBeCloseTo(2.42);
+		expect(sample?.postArrival).toBeCloseTo(2.42);
+	});
 });
 
 describe("XrayHawkesPanel market clock", () => {
@@ -89,7 +106,7 @@ describe("XrayHawkesPanel market clock", () => {
 		};
 		const canvas = vi
 			.spyOn(HTMLCanvasElement.prototype, "getContext")
-			.mockReturnValue(context as unknown as any);
+			.mockReturnValue(context as unknown as GPUCanvasContext);
 		const width = vi
 			.spyOn(HTMLCanvasElement.prototype, "clientWidth", "get")
 			.mockReturnValue(800);

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
@@ -89,9 +90,9 @@ the signal layers already on the value.
 */
 func (stage *StabilityStage) recordFrame(measurement *data.Value) {
 	symbol := measurement.Scope
-	signals := make([]data.Signal, 0)
+	signals := make([]broker.Sample, 0)
 
-	for signal, err := range data.Signals(measurement) {
+	for signal, err := range broker.Samples(measurement) {
 		if err != nil {
 			stage.grid.Error(err)
 			continue
@@ -109,7 +110,12 @@ func (stage *StabilityStage) recordFrame(measurement *data.Value) {
 		return
 	}
 
-	regions := stage.grid.Observe(symbol, signals)
+	regions, err := stage.grid.Observe(symbol, signals)
+
+	if err != nil {
+		stage.err = err
+		return
+	}
 
 	stage.totalFrames++
 

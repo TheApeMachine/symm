@@ -91,7 +91,6 @@ func (instrument *Instrument) ToValue(epochs ...int64) *data.Value {
 	val := data.NewValue("kraken", "snapshot", "instrument")
 	if len(epochs) > 0 && epochs[0] > 0 {
 		val.Epoch = uint64(epochs[0])
-		val.FormatPrefix()
 	}
 	val.Append(buf)
 	return val
@@ -130,7 +129,6 @@ func (pair *InstrumentPair) ToValue(epochs ...int64) *data.Value {
 	val := data.NewValue("kraken", "instrument", pair.Symbol)
 	if len(epochs) > 0 && epochs[0] > 0 {
 		val.Epoch = uint64(epochs[0])
-		val.FormatPrefix()
 	}
 	val.Append(buf)
 	return val

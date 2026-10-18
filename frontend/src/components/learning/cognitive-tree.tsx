@@ -1,5 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
+import { useEffect } from "react";
 import { type CognitionMatch, cognitionStore } from "#/collections/cognition";
+import { sendCommand } from "#/providers/websocket";
 import { ModelProblem } from "./model-problem";
 import { RadixTreeViz } from "./radix-tree-viz";
 import type { SymbolProgress } from "./types";
@@ -11,6 +13,7 @@ export const progressOf = (match: CognitionMatch): SymbolProgress => ({
 	tokens: match.tokens,
 	matched:
 		match.stored && match.action ? [`${match.match}/${match.action}.bin`] : [],
+	rejected: match.rejected ?? [],
 });
 
 export const CognitiveTree = () => {
@@ -21,9 +24,23 @@ export const CognitiveTree = () => {
 	const matches = useSelector(cognitionStore, (state) => state.matches);
 	const trading = useSelector(
 		cognitionStore,
-		(state) => state.tree?.trading ?? policyKeys.length > 0,
+		(state): boolean | undefined => state.tree?.trading,
 	);
 	const gate = useSelector(cognitionStore, (state) => state.tree?.gate ?? null);
+	const tradingLabel =
+		trading === true
+			? "paper trading"
+			: trading === false
+				? "not trading"
+				: "trading unknown";
+
+	useEffect(() => {
+		try {
+			sendCommand({ type: "s3", prefix: "policy/current" });
+		} catch (err) {
+			console.error(err);
+		}
+	}, []);
 
 	if (policyKeys.length === 0) {
 		return (
@@ -37,7 +54,7 @@ export const CognitiveTree = () => {
 					<span className="text-sm">
 						{epoch !== "0"
 							? "paper trading inactive: no trained paths"
-							: "waiting for policy paths or tick train/regions layers"}
+							: "waiting for policy/current"}
 					</span>
 				</div>
 			</div>
@@ -58,7 +75,7 @@ export const CognitiveTree = () => {
 			>
 				<span>policy epoch {epoch}</span>
 				<span>{policyKeys.length} paths</span>
-				<span>{trading ? "paper trading" : "not trading"}</span>
+				<span>{tradingLabel}</span>
 				<span>
 					{gate === null
 						? "live tokens from train/regions on tick"

@@ -16,7 +16,7 @@ func newTestMeasurement(seqIdx, tick, atNs, timestampNs int64) *data.Value {
 	val.Tick = uint64(tick)
 	val.Timestamp = uint64(timestampNs)
 	if atNs > 0 {
-		data.AppendVector(val, []float64{float64(atNs)}, "at")
+		val.Append([]float64{float64(atNs)}, "at")
 	}
 	return val
 }

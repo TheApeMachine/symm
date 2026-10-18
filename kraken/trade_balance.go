@@ -90,7 +90,6 @@ func (tb *TradeBalanceResult) ToValue(wallet *Balance, quote string, epochs ...i
 	val := data.NewValue("kraken", "trade_balance", quote)
 	if len(epochs) > 0 && epochs[0] > 0 {
 		val.Epoch = uint64(epochs[0])
-		val.FormatPrefix()
 	}
 	val.Append(buf)
 	if wallet != nil {

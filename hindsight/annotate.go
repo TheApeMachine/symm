@@ -1,16 +1,10 @@
 package hindsight
 
 import (
-	"context"
 	"fmt"
-	"io"
 	"slices"
-	"strconv"
 
-	"github.com/bytedance/sonic"
-	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
 )
 
 /*
@@ -30,7 +24,7 @@ indexes count from the first trade of A, so a later read of the window
 lands C on c_idx.
 */
 func annotationVector(class string, marks [4]uint64, trades []annotationTrade) ([]float64, error) {
-	if !slices.Contains(data.ExcursionClasses, class) {
+	if !slices.Contains(excursionClasses, class) {
 		return nil, errnie.Err(errnie.Validation, fmt.Sprintf("[hindsight] %q is not an excursion class", class), nil)
 	}
 
@@ -101,16 +95,7 @@ func annotationVector(class string, marks [4]uint64, trades []annotationTrade) (
 }
 
 /*
-Annotate stores one hand-placed detection for symbol in run. The four ticks
-are A, B, C and D.
-*/
-func (service *Service) Annotate(ctx context.Context, run uint64, symbol, class string, marks [4]uint64) (string, error) {
-	return service.storeMarks(ctx, data.ExcursionOrigin, run, symbol, class, marks)
-}
-
-/*
-markedTrades reads one symbol's prints between two ticks from the tape already
-in memory.
+markedTrades is the symbol's prints from tick from through tick to.
 */
 func markedTrades(tape *runTape, symbol string, from, to uint64) []annotationTrade {
 	if tape == nil {
@@ -146,93 +131,4 @@ func markedTrades(tape *runTape, symbol string, from, to uint64) []annotationTra
 	}
 
 	return trades
-}
-
-/*
-writeMarks stores the hand-placed detection. The prints come from the caller.
-*/
-func (service *Service) writeMarks(origin string, run uint64, symbol, class string, marks [4]uint64, trades []annotationTrade) (string, error) {
-	if service == nil || service.client == nil {
-		return "", errnie.Err(errnie.Validation, "[hindsight] annotate needs a store", nil)
-	}
-
-	vector, err := annotationVector(class, marks, trades)
-
-	if err != nil {
-		return "", err
-	}
-
-	value := data.NewValue(origin, class, symbol)
-	value.Epoch = run
-	value.Tick = marks[2]
-	value.FormatPrefix()
-	data.AppendVector(value, vector, data.ExcursionKeys...)
-
-	if _, err := io.Copy(service.client, value); err != nil {
-		return "", err
-	}
-
-	return value.Prefix, nil
-}
-
-/*
-storeMarks writes the hand-placed detection under origin from the run tape
-already loaded. It does not list or download the run again.
-*/
-func (service *Service) storeMarks(ctx context.Context, origin string, run uint64, symbol, class string, marks [4]uint64) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	loaded, err := service.tape(ctx, run)
-
-	if err != nil {
-		return "", err
-	}
-
-	return service.writeMarks(origin, run, symbol, class, marks, markedTrades(loaded, symbol, marks[0], marks[3]))
-}
-
-type annotationRequest struct {
-	Run    string `json:"run"`
-	Symbol string `json:"symbol"`
-	Class  string `json:"class"`
-	A      string `json:"a"`
-	B      string `json:"b"`
-	C      string `json:"c"`
-	D      string `json:"d"`
-}
-
-func (service *Service) annotateRoute(ctx fiber.Ctx) error {
-	var request annotationRequest
-
-	if err := sonic.Unmarshal(ctx.Body(), &request); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "annotation body is not JSON")
-	}
-
-	run, err := strconv.ParseUint(request.Run, 10, 64)
-
-	if err != nil || request.Symbol == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "annotation needs a run and a symbol")
-	}
-
-	marks := [4]uint64{}
-
-	for idx, raw := range []string{request.A, request.B, request.C, request.D} {
-		marks[idx], err = strconv.ParseUint(raw, 10, 64)
-
-		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "annotation ticks must be decimal strings")
-		}
-	}
-
-	key, err := service.Annotate(ctx.Context(), run, request.Symbol, request.Class, marks)
-
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnprocessableEntity, err.Error())
-	}
-
-	return ctx.JSON(struct {
-		Key string `json:"key"`
-	}{Key: key})
 }

@@ -90,7 +90,7 @@ describe("RadixTreeViz", () => {
 		"R08/R09/R10/exit.json",
 	];
 
-	it("renders only matching branches for symbols with built up sequences", () => {
+	it("keeps every stored branch and still counts the live match", () => {
 		const symbols: Record<string, SymbolProgress> = {
 			"BTC/USD": {
 				symbol: "BTC/USD",
@@ -104,34 +104,27 @@ describe("RadixTreeViz", () => {
 			<RadixTreeViz keys={sampleKeys} symbols={symbols} />,
 		);
 
-		// Should show 2 matching branches (R01/R02/R03 and R01/R02/R04), not R05 or R08
+		expect(container.textContent).toContain("Showing all 4 branches");
+		expect(container.textContent).toContain("R01");
+		expect(container.textContent).toContain("R05");
+		expect(container.textContent).toContain("R08");
+
+		fireEvent.click(screen.getByRole("button", { name: /Matching \(2\)/ }));
+
 		expect(container.textContent).toContain("2 matching branches");
 		expect(container.textContent).toContain("1 active symbol");
-
-		// Only nodes from the matching branch should exist (ROOT, R01, R02, R03, R04)
-		expect(container.textContent).toContain("R01");
-		expect(container.textContent).toContain("R02");
 		expect(container.textContent).not.toContain("R05");
 		expect(container.textContent).not.toContain("R08");
-
-		const svg = container.querySelector("svg");
-		expect(svg?.textContent).not.toContain("BTC");
 	});
 
-	it("shows informative empty state when no active symbol sequence exists", () => {
+	it("draws the stored trie when no symbol is walking it", () => {
 		const { container } = render(
 			<RadixTreeViz keys={sampleKeys} symbols={{}} />,
 		);
-		expect(container.textContent).toContain("No Active Symbol Sequences");
-
-		// User can toggle to view all branches
-		const showAllBtn = screen.getByRole("button", {
-			name: /Show all 4 stored branches/i,
-		});
-		fireEvent.click(showAllBtn);
 
 		expect(container.textContent).toContain("Showing all 4 branches");
 		expect(container.textContent).toContain("R05");
 		expect(container.textContent).toContain("R08");
+		expect(container.textContent).not.toContain("No Active Symbol Sequences");
 	});
 });

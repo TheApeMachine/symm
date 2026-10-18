@@ -84,9 +84,11 @@ func (calibrator *Calibrator) FeedbackChunk(density float64, primeCoherence floa
 	calibrator.mu.Lock()
 	defer calibrator.mu.Unlock()
 
-	if calibrator.window != nil {
-		calibrator.window.Push(density)
+	if calibrator.window == nil {
+		return
 	}
+
+	calibrator.window.Push(density)
 
 	if !calibrator.window.Warmed() {
 		return

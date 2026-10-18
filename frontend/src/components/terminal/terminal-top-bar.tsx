@@ -1,11 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
-import { bookAtom, type Book } from "#/collections/book";
 import {
 	focusAtom,
 	onlineAtom,
 	signals,
 	tickCountAtom,
 } from "#/collections/app";
+import { type Book, bookAtom } from "#/collections/book";
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
 import { Count } from "#/components/count";
@@ -75,27 +75,15 @@ const TickCounter = () => {
 				? tickCount.toLocaleString()
 				: "—";
 
-	const displayObservations = tickCount > 0 ? tickCount.toLocaleString() : "—";
-
 	return (
-		<Flex.Row align="center" gap={6}>
-			<Flex.Column className="items-end gap-px">
-				<Typography.Label size="s" tone="f4" weight="normal">
-					Observations
-				</Typography.Label>
-				<Typography.Mono size="lg" tone="f1" data-observations="true">
-					{displayObservations}
-				</Typography.Mono>
-			</Flex.Column>
-			<Flex.Column className="items-end gap-px">
-				<Typography.Label size="s" tone="f4" weight="normal">
-					Ticks
-				</Typography.Label>
-				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					{displayTicks}
-				</Typography.Mono>
-			</Flex.Column>
-		</Flex.Row>
+		<Flex.Column className="items-end gap-px">
+			<Typography.Label size="s" tone="f4" weight="normal">
+				Ticks
+			</Typography.Label>
+			<Typography.Mono size="lg" tone="f1" data-tick="true">
+				{displayTicks}
+			</Typography.Mono>
+		</Flex.Column>
 	);
 };
 

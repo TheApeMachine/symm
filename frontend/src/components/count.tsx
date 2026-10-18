@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { signals } from "#/collections/app";
+import { deskPositionsAtom } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import { openLots } from "#/components/learning/open-positions";
 import { Flex } from "#/components/ui/flex";
@@ -12,8 +12,8 @@ lots the open-positions panel draws.
 export const Count = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const count = useSelector(
-		signals.training,
-		(state) => openLots(state, book).length,
+		deskPositionsAtom,
+		(rows) => openLots(rows, book).length,
 	);
 
 	return (

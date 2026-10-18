@@ -27,13 +27,13 @@ func TestAnnotationVectorUsesTheMarkedTrades(t *testing.T) {
 		t.Fatalf("vector: %v", err)
 	}
 
-	if len(vector) != len(data.ExcursionKeys) {
+	if len(vector) != len(excursionKeys) {
 		t.Fatalf("len = %d", len(vector))
 	}
 
 	fields := map[string]float64{}
 
-	for idx, key := range data.ExcursionKeys {
+	for idx, key := range excursionKeys {
 		fields[key] = vector[idx]
 	}
 

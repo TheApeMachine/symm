@@ -213,7 +213,6 @@ func (balance *Balance) ToValue(epochs ...int64) *data.Value {
 	val := data.NewValue("kraken", "snapshot", "balances")
 	if len(epochs) > 0 {
 		val.Epoch = uint64(epochs[0])
-		val.FormatPrefix()
 	}
 	val.Append(buf)
 	return val

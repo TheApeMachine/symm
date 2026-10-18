@@ -1,10 +1,7 @@
 package transport
 
 import (
-	"context"
 	"io"
-
-	"github.com/theapemachine/errnie"
 )
 
 /*
@@ -12,75 +9,56 @@ NewFlipFlop creates a bidirectional data flow between two ReadWriters.
 It first copies data from the source to the destination, then copies
 any response back from the destination to the source. This creates
 a complete round-trip data exchange.
-
-This is most commonly used when you want to flip an artifact into
-another process, which will set some state on that artifact, that
-will be accessible once the process flops the artifact.
-
-Parameters:
-  - from: Source ReadWriter to read initial data from and write response to
-  - to: Destination ReadWriter to write data to and read response from
-
-Returns:
-  - error: Any error that occurred during the data exchange
-
-Example:
-
-```go
-
-	package main
-
-	type Setter struct {
-		buffer *stream.Buffer
-	}
-
-	func NewSetter() *Setter {
-		return &Setter{
-			buffer: stream.NewBuffer(func(artifact *datura.Artifact) (err error) {
-				// Set the output metadata on the artifact.
-				artifact.SetMetaValue("output", "hello")
-				return nil
-			}),
-		}
-	}
-
-	func (s *Setter) Read(p []byte) (n int, err error) {
-		return s.buffer.Read(p)
-	}
-
-	func (s *Setter) Write(p []byte) (n int, err error) {
-		return s.buffer.Write(p)
-	}
-
-	func (s *Setter) Close() error {
-		return s.buffer.Close()
-	}
-
-	func main() {
-		// Create a new setter.
-		setter := NewSetter()
-
-		// Create a new, empty artifact.
-		artifact := datura.NewArtifact()
-
-		// Flip the artifact into the setter, and flop it back.
-		workflow.NewFlipFlop(artifact, setter)
-
-		// Read the output metadata from the artifact.
-		fmt.Println(datura.GetMetaValue[string](artifact, "output"))
-		// Output: hello
-	}
-
-```
 */
-func NewFlipFlop(ctx context.Context, from io.ReadWriteCloser, to io.ReadWriteCloser) (err error) {
-	if _, err = Copy(to, from); err != nil && err != io.EOF {
-		return errnie.Error(err)
+type FlipFlop struct {
+	from io.ReadWriter
+	to   io.ReadWriter
+	done bool
+}
+
+func NewFlipFlop(from, to io.ReadWriter) *FlipFlop {
+	return &FlipFlop{from: from, to: to}
+}
+
+func (flipflop *FlipFlop) Read(p []byte) (int, error) {
+	if err := flipflop.exchange(); err != nil {
+		return 0, err
 	}
 
-	if _, err = Copy(from, to); err != nil && err != io.EOF {
-		return errnie.Error(err)
+	return flipflop.from.Read(p)
+}
+
+func (flipflop *FlipFlop) Write(p []byte) (int, error) {
+	flipflop.done = false
+	return flipflop.from.Write(p)
+}
+
+func (flipflop *FlipFlop) WriteTo(w io.Writer) (int64, error) {
+	if err := flipflop.exchange(); err != nil {
+		return 0, err
 	}
 
+	if writerTo, ok := flipflop.from.(io.WriterTo); ok {
+		return writerTo.WriteTo(w)
+	}
+
+	n, err := Copy(w, flipflop.from)
+	return int64(n), err
+}
+
+func (flipflop *FlipFlop) exchange() error {
+	if flipflop.done {
+		return nil
+	}
+
+	if _, err := Copy(flipflop.to, flipflop.from); err != nil && err != io.EOF {
+		return err
+	}
+
+	if _, err := Copy(flipflop.from, flipflop.to); err != nil && err != io.EOF {
+		return err
+	}
+
+	flipflop.done = true
 	return nil
 }

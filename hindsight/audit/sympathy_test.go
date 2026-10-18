@@ -32,7 +32,7 @@ func TestSympathyStage(t *testing.T) {
 			for idx := range int64(20) {
 				val := data.NewValue("source_a", "signal", "BTC/USD")
 				val.Timestamp = uint64(base + idx*20_000_000)
-				data.AppendVector(val, []float64{100.0 + float64(idx)*0.5}, "price")
+				val.Append([]float64{100.0 + float64(idx)*0.5}, "price")
 				measurements = append(measurements, val)
 			}
 
@@ -40,7 +40,7 @@ func TestSympathyStage(t *testing.T) {
 			for idx := range int64(20) {
 				val := data.NewValue("source_b", "signal", "BTC/USD")
 				val.Timestamp = uint64(base + idx*20_000_000 + 5_000_000)
-				data.AppendVector(val, []float64{100.0 + 5.0*math.Sin(float64(idx)*math.Pi/2.0)}, "signal")
+				val.Append([]float64{100.0 + 5.0*math.Sin(float64(idx)*math.Pi/2.0)}, "signal")
 				measurements = append(measurements, val)
 			}
 
@@ -57,7 +57,7 @@ func TestSympathyStage(t *testing.T) {
 			for idx := range int64(20) {
 				val := data.NewValue("producer_one", "signal", "BTC/USD")
 				val.Timestamp = uint64(base + idx*100_000_000)
-				data.AppendVector(val, []float64{100.0 * math.Exp(float64(idx+1)*0.01)}, "quote")
+				val.Append([]float64{100.0 * math.Exp(float64(idx+1)*0.01)}, "quote")
 				measurements = append(measurements, val)
 			}
 
@@ -65,7 +65,7 @@ func TestSympathyStage(t *testing.T) {
 			for idx := range int64(20) {
 				val := data.NewValue("producer_two", "signal", "BTC/USD")
 				val.Timestamp = uint64(base + idx*100_000_000 + 10_000_000)
-				data.AppendVector(val, []float64{100.0 * math.Exp(float64(idx+1)*0.01)}, "quote")
+				val.Append([]float64{100.0 * math.Exp(float64(idx+1)*0.01)}, "quote")
 				measurements = append(measurements, val)
 			}
 
@@ -99,7 +99,7 @@ func TestSympathyStage(t *testing.T) {
 			for idx := range int64(20) {
 				val := data.NewValue("source_a", "signal", "BTC/USD")
 				val.Timestamp = uint64(base + idx*20_000_000)
-				data.AppendVector(val, []float64{100.0 + float64(idx)*1.0}, "price")
+				val.Append([]float64{100.0 + float64(idx)*1.0}, "price")
 				measurements = append(measurements, val)
 			}
 
@@ -107,7 +107,7 @@ func TestSympathyStage(t *testing.T) {
 			for idx := range int64(20) {
 				val := data.NewValue("source_b", "signal", "ETH/USD")
 				val.Timestamp = uint64(base + idx*20_000_000 + 5_000_000)
-				data.AppendVector(val, []float64{100.0 + 10.0*math.Sin(float64(idx)*math.Pi/2.0)}, "price")
+				val.Append([]float64{100.0 + 10.0*math.Sin(float64(idx)*math.Pi/2.0)}, "price")
 				measurements = append(measurements, val)
 			}
 

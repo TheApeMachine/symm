@@ -128,6 +128,45 @@ describe("detections", () => {
 		expect(detectionsStore.state.excursions?.items).toHaveLength(1);
 	});
 
+	it("counts a stored excursion into the open run list and that epoch", () => {
+		beginDetectionRuns();
+		const fields = EXCURSION_KEYS.map((_, idx) => idx + 1);
+		ingestDetectionFrame(
+			frame(
+				"up",
+				"BTC/USD",
+				[keyed(`detections/up/BTC/USD/${RUN}/9`, EXCURSION_KEYS, fields)],
+				RUN,
+			),
+		);
+		ingestDetectionFrame(done("", 0n));
+		expect(detectionsStore.state.runs).toMatchObject({
+			status: "done",
+			items: [
+				{
+					epoch: RUN.toString(),
+					fields: { up: 1, symbols: 1, first_tick: 2, ticks: 1 },
+				},
+			],
+		});
+
+		beginDetections(RUN.toString());
+		ingestDetectionFrame(
+			frame(
+				"up",
+				"BTC/USD",
+				[keyed(`detections/up/BTC/USD/${RUN}/9`, EXCURSION_KEYS, fields)],
+				RUN,
+			),
+		);
+		ingestDetectionFrame(done(""));
+		expect(detectionsStore.state.excursions).toMatchObject({
+			run: RUN.toString(),
+			status: "done",
+			items: [{ symbol: "BTC/USD", class: "up", fields: { a_idx: 1 } }],
+		});
+	});
+
 	it("drops frames of a request since replaced", () => {
 		beginDetections("7");
 		ingestDetectionFrame(

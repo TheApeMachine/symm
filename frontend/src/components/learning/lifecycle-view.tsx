@@ -134,6 +134,21 @@ const STATUS: Record<string, BadgeVariant> = {
 	abandoned: "disabled",
 };
 
+const trialVariant = (word: TrialWord): BadgeVariant => {
+	switch (word) {
+		case "win":
+			return "success";
+		case "loss":
+			return "error";
+		case "scratch":
+			return "disabled";
+		default: {
+			const unreachable: never = word;
+			return unreachable;
+		}
+	}
+};
+
 const time = (value?: string) =>
 	value ? new Date(value).toLocaleTimeString(undefined, { hour12: false }) : "";
 
@@ -973,6 +988,11 @@ export const LifecycleView = () => {
 								? life.outcome.realized
 								: life.mark?.unrealized;
 							const isCurrent = active?.id === life.id;
+							const word = trialWord(life);
+							const variant =
+								life.status === "closed" && word
+									? trialVariant(word)
+									: (STATUS[life.status] ?? "disabled");
 							return (
 								<button
 									key={life.id}
@@ -992,8 +1012,8 @@ export const LifecycleView = () => {
 										</span>
 										<Badge
 											size="xxs"
-											variant={STATUS[life.status] ?? "disabled"}
-											label={trialWord(life) ?? life.status}
+											variant={variant}
+											label={word ?? life.status}
 										/>
 									</Flex.Row>
 									<Flex.Row

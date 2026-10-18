@@ -202,12 +202,13 @@ func (sequitur *Sequitur) check(n *Node) *Rule {
 	digram := [2]Symbol{n.Val, n.Next.Val}
 
 	if match, exists := sequitur.digrams[digram]; exists {
-		if match != n && match.Next != n && match.Next != n.Next &&
-			match.Next != nil && match.Val == digram[0] && match.Next.Val == digram[1] {
+		if match.Next != nil && match.Val == digram[0] && match.Next.Val == digram[1] {
+			if match == n || match.Next == n || match.Next == n.Next {
+				return nil
+			}
+
 			return sequitur.reduce(n, match, digram)
 		}
-
-		return nil
 	}
 
 	sequitur.digrams[digram] = n

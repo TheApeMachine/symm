@@ -7,7 +7,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -36,7 +35,7 @@ Step processes the book of every distinct symbol traded in the tick's frame;
 each symbol writes its own (reserved) layer.
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	trades, err := data.AttributeOk[[]kraken.TradeData](value.Layers[0], "data")
+	trades, err := broker.Trades(value)
 
 	if err != nil {
 		errnie.Error(err)
@@ -82,17 +81,18 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		relSpread = (ask - bid) / midpoint
 	}
 
-	feeRate := data.Attribute[float64](broker.SymbolLayer(value, data.LayerPrice, symbol), "feeRate")
+	feeRate := data.Attribute[float64](broker.SymbolLayer(value, "price", symbol), "feeRate")
 	var frictionHurdle float64
 	if feeRate > 0 {
 		frictionHurdle = relSpread + 2.0*feeRate
 	}
 
-	return data.AppendSignalVector(value, signal.Name(), symbol, []float64{
+	value.Append([]float64{
 		bid,
 		ask,
 		relSpread,
 		feeRate,
 		frictionHurdle,
-	}, signal.keys...)
+	}, append(append([]string{"signal", signal.Name()}, signal.keys...), "symbol:"+symbol)...)
+	return value
 }

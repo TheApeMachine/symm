@@ -75,7 +75,7 @@ validateTapeIdentities verifies physical and accounting identities on the measur
 2. Buy volume + Sell volume == Total volume (volume conservation identity).
 */
 func (stage *TruthfulnessStage) validateTapeIdentities(measurement *data.Value) {
-	metrics := data.Metrics(measurement)
+	metrics := floatMetrics(measurement)
 
 	// 1. Crossed Market Identity Check: Best bid must never exceed best ask, and quotes must be positive.
 	bidPrice, hasBid := metrics["best_price:bid"]

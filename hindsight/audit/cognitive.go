@@ -45,7 +45,7 @@ type CognitiveStage struct {
 	exitCount      int
 	abstentionRate float64
 	meanConfidence float64
-	gate           *data.PolicyGate
+	gate           *policyGate
 	policyEpoch    uint64
 }
 
@@ -99,7 +99,7 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Value) {
 	// policy/current is judged only when no policy epoch is selected
 	// (policyEpoch == 0) and may omit the gate. A selected epoch expects
 	// one on every policy, tagged or not.
-	if measurement.Origin == data.PolicyOrigin && (stage.policyEpoch != 0 || hasGateLayer(measurement)) {
+	if measurement.Origin == "policy" && (stage.policyEpoch != 0 || hasGateLayer(measurement)) {
 		stage.recordGate(measurement)
 	}
 
@@ -112,7 +112,7 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Value) {
 	var visits int
 	hasDecision := false
 
-	metrics := data.Metrics(measurement)
+	metrics := floatMetrics(measurement)
 
 	if actVal, ok := metrics["action"]; ok {
 		hasDecision = true
@@ -145,8 +145,8 @@ func (stage *CognitiveStage) recordCognitivePhase(measurement *data.Value) {
 		visits = int(visitsVal)
 	}
 
-	if measurement.Origin == data.PolicyOrigin {
-		if read, err := data.PolicyPath(measurement); err == nil {
+	if measurement.Origin == "policy" {
+		if read, err := policyPath(measurement); err == nil {
 			path = read
 		}
 	}
@@ -175,7 +175,7 @@ recordGate keeps the gate the judged policies were trained under; a policy
 without one, or one disagreeing with the others, is a violation.
 */
 func (stage *CognitiveStage) recordGate(policy *data.Value) {
-	gate, err := data.ReadPolicyGate(policy)
+	gate, err := readPolicyGate(policy)
 
 	switch {
 	case err != nil:
@@ -309,7 +309,7 @@ func hasGateLayer(value *data.Value) bool {
 		return false
 	}
 
-	needle := "/" + data.PolicyGateLayer + "/"
+	needle := "/gate/"
 
 	for _, index := range value.Index {
 		if strings.Contains(index, needle) {
@@ -320,7 +320,7 @@ func hasGateLayer(value *data.Value) bool {
 	return false
 }
 
-func gateData(gate *data.PolicyGate) any {
+func gateData(gate *policyGate) any {
 	if gate == nil {
 		return nil
 	}

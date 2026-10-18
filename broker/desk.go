@@ -2,20 +2,16 @@ package broker
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"slices"
-	"sort"
-	"strings"
+	"math"
 	"sync"
-	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
+	tx "github.com/theapemachine/symm/data/transport"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
@@ -29,15 +25,17 @@ fills beside their shadow fills, and reports each completed round trip.
 */
 type Desk struct {
 	*runtime.System
-	mu        sync.Mutex
-	transport Transport
-	price     *Price
-	balance   *Balance
-	positions *sync.Map
-	closed    []*Position
-	closedMu  sync.RWMutex
-	books     *Book
-
+	mu             sync.Mutex
+	transport      Transport
+	rest           *network.REST
+	price          *Price
+	balance        *Balance
+	history        *History
+	positions      *sync.Map
+	virtuals       *sync.Map
+	closed         []*Position
+	closedMu       sync.RWMutex
+	books          *Book
 	positionStore  *store.Client
 	positionHub    io.Writer
 	openPublished  map[string]string
@@ -50,30 +48,169 @@ func NewDesk(
 	transport Transport,
 	price *Price,
 	balance *Balance,
+	store *store.Client,
 ) *Desk {
 	desk := &Desk{
 		transport: transport,
+		rest:      network.NewREST(),
 		balance:   balance,
+		history:   NewHistory(ctx, store),
 		price:     price,
 		positions: &sync.Map{},
+		virtuals:  &sync.Map{},
 		closed:    make([]*Position, 0),
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
-	desk.restore()
+
+	for position := range tx.Next(desk.history) {
+		desk.positions.Store(position.Scope, position)
+	}
+
 	desk.Transition(runtime.READY)
 	return desk
 }
 
-func (desk *Desk) Cash(asset string) *decimal.Decimal {
-	if desk.balance == nil {
-		if desk.price != nil {
-			return desk.price.ReferenceCash()
-		}
-
+func (desk *Desk) Balance() []byte {
+	if desk == nil || desk.balance == nil {
 		return nil
 	}
 
+	wallet := desk.balance.Wallet()
+
+	if wallet == nil {
+		return nil
+	}
+
+	account := struct {
+		Data       []kraken.BalanceData `json:"data"`
+		Unrealized *decimal.Decimal     `json:"n,omitempty"`
+		Equity     *decimal.Decimal     `json:"e,omitempty"`
+	}{Data: wallet.Data}
+
+	if trade := desk.balance.Trade(); trade != nil {
+		account.Unrealized = trade.UnrealizedPnL
+		account.Equity = trade.Equity
+	}
+
+	raw, err := sonic.Marshal(account)
+
+	if err != nil {
+		desk.Error(err)
+		return nil
+	}
+
+	return raw
+}
+
+func (desk *Desk) Positions() []byte {
+	positions := make([]*Position, 0)
+
+	for _, cache := range []*sync.Map{desk.positions, desk.virtuals} {
+		cache.Range(func(key, value any) bool {
+			position := value.(*Position)
+			desk.quote(position)
+			positions = append(positions, position)
+			return true
+		})
+	}
+
+	json, err := sonic.Marshal(positions)
+
+	if err != nil {
+		desk.Error(err)
+		return nil
+	}
+
+	return json
+}
+
+/*
+quote writes the prices the open-position card reads. A lot opened before
+its fill landed takes the ask it can see, copied so a later book update
+does not move the entry. The mark and the return come from Price.Sale.
+Exit room is how many times the visible bids cover the quantity.
+*/
+func (desk *Desk) quote(position *Position) {
+	if desk == nil || desk.price == nil || position == nil {
+		return
+	}
+
+	position.mu.Lock()
+	symbol := position.Symbol
+	qty := position.Qty
+	entry := position.EntryPrice
+	fee := position.EntryFee
+	position.mu.Unlock()
+
+	if symbol == "" || qty == nil || qty.Sign() <= 0 {
+		return
+	}
+
+	bid, ask := desk.price.Touch(symbol)
+
+	if (entry == nil || entry.Sign() <= 0) && ask != nil && ask.Sign() > 0 {
+		entry = ask.Copy()
+	}
+
+	if fee == nil && entry != nil {
+		if rate, ok := desk.price.FeeRate(symbol); ok {
+			fee = notional(entry, qty).Mul(decimal.NewFromFloat64(rate))
+		}
+	}
+
+	var mark *decimal.Decimal
+	var ret *float64
+
+	if sale, _, fraction, ok := desk.price.Sale(symbol, qty, entry, fee); ok {
+		mark = decimal.NewFromFloat64(sale)
+		ret = &fraction
+	} else if bid != nil && bid.Sign() > 0 {
+		mark = bid.Copy()
+	}
+
+	var room *float64
+	var vwap *decimal.Decimal
+
+	if desk.price.Books != nil {
+		if surface, err := desk.price.SellQuote(symbol, qty); err == nil &&
+			surface != nil &&
+			surface.BookComplete &&
+			surface.ExecutableQty != nil &&
+			surface.ExecutableQty.Sign() > 0 {
+			value := surface.ExecutableQty.Div(qty).Float64()
+			room = &value
+
+			if surface.FullyExecutable && surface.ExecutableVWAP != nil {
+				vwap = surface.ExecutableVWAP
+			}
+		}
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if (position.EntryPrice == nil || position.EntryPrice.Sign() <= 0) && entry != nil {
+		position.EntryPrice = entry
+	}
+
+	if position.EntryFee == nil && fee != nil {
+		position.EntryFee = fee
+	}
+
+	if mark != nil {
+		position.Mark = mark
+	}
+
+	position.Return = ret
+	position.ExitRoom = room
+
+	if vwap != nil {
+		position.ExitVWAP = vwap
+	}
+}
+
+func (desk *Desk) Cash(asset string) *decimal.Decimal {
 	return desk.balance.cash(asset)
 }
 
@@ -101,226 +238,6 @@ func (desk *Desk) ResetPaper() error {
 	return nil
 }
 
-func (desk *Desk) restore() {
-	if desk.balance == nil || desk.balance.Wallet() == nil {
-		return
-	}
-
-	quote := desk.balance.Quote
-
-	// Balance carries market.quote_currency from construction; an empty
-	// quote cannot be restored against.
-	if quote == "" {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[desk] balance has no quote currency to restore against",
-			nil,
-		))
-		return
-	}
-
-	quoteAlias := kraken.AssetAlias(quote)
-
-	if paper, ok := desk.transport.(*Paper); ok {
-		history, err := paper.TradesHistory()
-
-		if err == nil && len(history.Trades) > 0 {
-			desk.restoreFromHistory(history.Trades, quote)
-		}
-	}
-
-	for _, entry := range desk.balance.Wallet().Data {
-		if entry.Asset == quote || entry.Asset == quoteAlias {
-			continue
-		}
-
-		if entry.Balance == nil || entry.Balance.Sign() <= 0 {
-			continue
-		}
-
-		symbol := entry.Asset + "/" + quote
-		if desk.price != nil {
-			symbol = desk.price.normalize(symbol)
-		}
-
-		if desk.Holds(symbol) {
-			continue
-		}
-
-		desk.restoreHolding(symbol, entry.Balance)
-	}
-}
-
-func (desk *Desk) restoreFromHistory(
-	trades map[string]spot.Trade,
-	quote string,
-) {
-	tradesByPair := make(map[string][]spot.Trade)
-
-	for _, trade := range trades {
-		pair := trade.Pair
-
-		if desk.price != nil {
-			pair = desk.price.normalize(pair)
-		}
-
-		if !strings.Contains(pair, "/") && strings.HasSuffix(pair, quote) {
-			pair = strings.TrimSuffix(pair, quote) + "/" + quote
-		}
-
-		tradesByPair[pair] = append(tradesByPair[pair], trade)
-	}
-
-	for symbol, pairTrades := range tradesByPair {
-		slices.SortFunc(pairTrades, func(left, right spot.Trade) int {
-			if left.Time == nil || right.Time == nil {
-				return 0
-			}
-
-			return left.Time.Cmp(right.Time)
-		})
-
-		netVolume := decimal.NewFromInt64(0)
-		for _, trade := range pairTrades {
-			side := strings.ToLower(trade.Type)
-
-			if side == "buy" && trade.Volume != nil {
-				netVolume = netVolume.Add(trade.Volume)
-			}
-
-			if side == "sell" && trade.Volume != nil {
-				netVolume = netVolume.Sub(trade.Volume)
-			}
-		}
-
-		if netVolume.Sign() <= 0 {
-			continue
-		}
-
-		pos := NewPosition()
-		pos.symbol = symbol
-
-		for _, trade := range pairTrades {
-			side := strings.ToLower(trade.Type)
-
-			if side != "buy" && side != "sell" {
-				continue
-			}
-
-			if pos.openedAt.IsZero() && trade.Time != nil {
-				sec := int64(trade.Time.Float64())
-				pos.openedAt = time.Unix(sec, 0).UTC()
-			}
-
-			if side == "buy" {
-				pos.entryOrders = append(pos.entryOrders, &spot.OrderRequest{
-					ClOrdId:   trade.OrderID,
-					OrderType: trade.OrderType,
-					Type:      trade.Type,
-					Volume:    trade.Volume.String(),
-				})
-			}
-
-			if side == "sell" {
-				pos.exitOrders = append(pos.exitOrders, &spot.OrderRequest{
-					ClOrdId:   trade.OrderID,
-					OrderType: trade.OrderType,
-					Type:      trade.Type,
-					Volume:    trade.Volume.String(),
-				})
-			}
-
-			execData := kraken.ExecutionData{
-				Symbol:      symbol,
-				Side:        trade.Type,
-				ExecType:    "trade",
-				LastQty:     trade.Volume,
-				LastPrice:   trade.Price,
-				Cost:        trade.Cost,
-				FeeUsdEquiv: trade.Fee,
-			}
-
-			if trade.Time != nil {
-				sec := int64(trade.Time.Float64())
-				execData.Timestamp = time.Unix(sec, 0).UTC()
-			}
-
-			pos.Apply(execData)
-		}
-
-		if !pos.Closed() {
-			desk.positions.Store(symbol, []*Position{pos})
-			priceStr := "0"
-
-			if pos.entryPrice != nil {
-				priceStr = pos.entryPrice.String()
-			}
-
-			qtyStr := "0"
-
-			if pos.qty != nil {
-				qtyStr = pos.qty.String()
-			}
-
-			errnie.Info(fmt.Sprintf(
-				"[desk] restored open position from history: %s %s @ %s",
-				symbol, qtyStr, priceStr,
-			))
-		}
-	}
-}
-
-func (desk *Desk) restoreHolding(symbol string, balance *decimal.Decimal) {
-	pos := NewPosition()
-	pos.symbol = symbol
-	pos.openedAt = time.Now().UTC()
-
-	var mark *decimal.Decimal
-
-	if desk.price != nil {
-		mark = desk.price.CurrentMark(symbol)
-	}
-
-	if mark == nil || mark.Sign() <= 0 {
-		mark = decimal.NewFromFloat64(1.0)
-	}
-
-	clOrdId := uuid.NewString()
-
-	pos.entryOrders = append(pos.entryOrders, &spot.OrderRequest{
-		ClOrdId:   clOrdId,
-		OrderType: "market",
-		Type:      "buy",
-		Volume:    balance.String(),
-	})
-
-	pos.events = append(pos.events, LifeEvent{
-		At:     pos.openedAt.Format(time.RFC3339),
-		Kind:   "entry_order",
-		Detail: fmt.Sprintf("order buy %s %s", balance.String(), symbol),
-		Fields: map[string]any{
-			"cl_ord_id": clOrdId,
-			"symbol":    symbol,
-			"volume":    balance.String(),
-		},
-	})
-
-	pos.Apply(kraken.ExecutionData{
-		Symbol:    symbol,
-		Side:      "buy",
-		ExecType:  "trade",
-		LastQty:   balance,
-		LastPrice: mark,
-	})
-
-	desk.positions.Store(symbol, []*Position{pos})
-
-	errnie.Info(fmt.Sprintf(
-		"[desk] restored open holding from balance: %s %s",
-		symbol, balance.String(),
-	))
-}
-
 /*
 Enter sizes an entry from the book and the matched edge and starts working it
 in child market orders. The size is the smallest of: the exit capacity within
@@ -329,14 +246,62 @@ deviation of signed traded volume over one expected hold (participation
 within flow noise), and what the available cash buys at the budget's entry
 limit. Every refusal is an error naming its reason.
 */
-func (desk *Desk) Enter(symbol string) error {
+func (desk *Desk) Enter(symbol string, virtual bool) error {
+	if system.Cfg == nil || system.Cfg.Risk == nil || system.Cfg.Risk.MaxFraction == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] risk budget unavailable",
+			nil,
+		))
+	}
+
+	if desk == nil || desk.price == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[desk] price unavailable",
+			nil,
+		))
+	}
+
+	var ok bool
+
+	if !virtual {
+		_, ok = desk.positions.Load(symbol)
+	} else {
+		_, ok = desk.virtuals.Load(symbol)
+	}
+
+	if ok {
+		return errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[desk] position already exists for "+symbol,
+			nil,
+		))
+	}
+
 	position := NewPosition()
 
-	cash := desk.balance.cash(desk.balance.Quote)
-	// budget = cash/100 * max_fraction; integer-scaled cash cannot Mul a
-	// fractional MaxFraction without truncating it to zero.
-	pct := int64(system.Cfg.Risk.MaxFraction.Float64() * 100)
-	budget := cash.Mul(decimal.NewFromInt64(pct)).Div(decimal.NewFromInt64(10_000))
+	var cash *decimal.Decimal
+
+	if virtual {
+		if system.Cfg.Market == nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[desk] virtual wallet unavailable",
+				nil,
+			))
+		}
+
+		cash = decimal.NewFromInt64(int64(system.Cfg.Market.Balance))
+	} else {
+		cash = desk.balance.cash(desk.balance.Quote)
+	}
+
+	points := int64(math.Round(system.Cfg.Risk.MaxFraction.Float64() * 10_000))
+
+	budget := cash.Mul(decimal.NewFromInt64(points)).Div(
+		decimal.NewFromInt64(10_000),
+	)
 
 	qty, err := desk.price.Quantity(symbol, budget)
 
@@ -348,108 +313,22 @@ func (desk *Desk) Enter(symbol string) error {
 		symbol,
 		qty,
 	)
+	position.Virtual = virtual
 
-	desk.keep(symbol, position)
-
-	if err := desk.submit(symbol, order); err != nil {
-		desk.forget(symbol, position)
-		return err
-	}
-
-	var entry, fee *decimal.Decimal
-
-	if desk.price != nil {
-		if cost, costErr := desk.price.EntryCost(symbol, qty); costErr == nil && cost != nil {
-			entry = cost.EntryPrice
-			fee = cost.EntryFee
+	if !virtual {
+		if _, err := desk.rest.Post(
+			"https://api.kraken.com/0/private/AddOrder",
+			order,
+		); err != nil {
+			return errnie.Error(err)
 		}
 
-		if entry == nil {
-			entry = desk.price.CurrentMark(symbol)
-		}
+		desk.positions.Store(symbol, position)
+		return nil
 	}
 
-	position.SeedEntry(entry, fee)
+	desk.virtuals.Store(symbol, position)
 	return nil
-}
-
-func (desk *Desk) keep(symbol string, position *Position) {
-	desk.mu.Lock()
-	defer desk.mu.Unlock()
-
-	untyped, loaded := desk.positions.Load(symbol)
-
-	if loaded && untyped != nil {
-		positions := append([]*Position{}, untyped.([]*Position)...)
-		desk.positions.Store(symbol, append(positions, position))
-		return
-	}
-
-	desk.positions.Store(symbol, []*Position{position})
-}
-
-func (desk *Desk) forget(symbol string, position *Position) {
-	desk.mu.Lock()
-	defer desk.mu.Unlock()
-
-	untyped, loaded := desk.positions.Load(symbol)
-
-	if !loaded || untyped == nil {
-		return
-	}
-
-	kept := make([]*Position, 0)
-
-	for _, existing := range untyped.([]*Position) {
-		if existing != position {
-			kept = append(kept, existing)
-		}
-	}
-
-	if len(kept) == 0 {
-		desk.positions.Delete(symbol)
-		return
-	}
-
-	desk.positions.Store(symbol, kept)
-}
-
-/*
-Holds reports whether the symbol has a position on the desk: open, entering,
-or with its exit still working.
-*/
-func (desk *Desk) Holds(symbol string) bool {
-	untyped, exists := desk.positions.Load(symbol)
-
-	if exists && untyped != nil {
-		positions := untyped.([]*Position)
-
-		for _, pos := range positions {
-			if !pos.Closed() {
-				return true
-			}
-		}
-	}
-
-	if desk.price != nil {
-		normalized := desk.price.normalize(symbol)
-
-		if normalized != symbol {
-			untyped, exists = desk.positions.Load(normalized)
-
-			if exists && untyped != nil {
-				positions := untyped.([]*Position)
-
-				for _, pos := range positions {
-					if !pos.Closed() {
-						return true
-					}
-				}
-			}
-		}
-	}
-
-	return false
 }
 
 /*
@@ -457,37 +336,80 @@ Exit takes the learned exit: it sells everything still open. It always wins:
 it ends the entry plan, and when a capacity trim is in flight it sells the
 rest. A position whose sell is already working is not sold twice.
 */
-func (desk *Desk) Exit(symbol string) error {
-	desk.mu.Lock()
-	lookupSymbol := symbol
-	untyped, exists := desk.positions.Load(lookupSymbol)
+/*
+Profit reports whether closing the lot now would clear its cost. The sale
+comes from the book. ok is false when the lot or the book cannot price it.
+*/
+func (desk *Desk) Profit(symbol string, virtual bool) (bool, bool) {
+	if desk == nil || desk.price == nil || symbol == "" {
+		return false, false
+	}
 
-	if !exists && desk.price != nil {
-		normalized := desk.price.normalize(symbol)
+	var (
+		untyped any
+		ok      bool
+	)
 
-		if normalized != symbol {
-			untyped, exists = desk.positions.Load(normalized)
+	if virtual {
+		untyped, ok = desk.virtuals.Load(symbol)
+	} else {
+		untyped, ok = desk.positions.Load(symbol)
+	}
 
-			if exists {
-				lookupSymbol = normalized
-			}
+	if !ok {
+		return false, false
+	}
+
+	position := untyped.(*Position)
+	position.mu.Lock()
+	qty := position.Qty
+	entry := position.EntryPrice
+	fee := position.EntryFee
+	position.mu.Unlock()
+
+	if (entry == nil || entry.Sign() <= 0) && desk.price != nil {
+		if _, ask := desk.price.Touch(symbol); ask != nil && ask.Sign() > 0 {
+			entry = ask.Copy()
 		}
 	}
 
-	if !exists || untyped == nil {
-		desk.mu.Unlock()
-		return nil
+	_, _, _, ret, priced := desk.price.CloseOut(symbol, qty, entry, fee)
+
+	if !priced {
+		return false, false
 	}
 
-	positions := untyped.([]*Position)
-	posList := slices.Clone(positions)
-	desk.mu.Unlock()
+	return ret > 0, true
+}
 
-	for _, position := range posList {
-		order := position.Exit(lookupSymbol)
+func (desk *Desk) Exit(symbol string, virtual bool) error {
+	var (
+		untyped any
+		ok      bool
+	)
 
-		if err := desk.submit(lookupSymbol, order); err != nil {
-			position.abandonExit()
+	if !virtual {
+		untyped, ok = desk.positions.Load(symbol)
+	} else {
+		untyped, ok = desk.virtuals.Load(symbol)
+	}
+
+	if !ok {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[desk] position not found for "+symbol,
+			nil,
+		))
+	}
+
+	position := untyped.(*Position)
+	order := position.Exit(symbol)
+
+	if !virtual {
+		if _, err := desk.rest.Post(
+			"https://api.kraken.com/0/private/AddOrder",
+			order,
+		); err != nil {
 			return errnie.Error(err)
 		}
 	}
@@ -495,395 +417,17 @@ func (desk *Desk) Exit(symbol string) error {
 	return nil
 }
 
-/*
-submit writes an order to the venue transport. A nil order (nothing to do)
-or an absent transport submits nothing.
-*/
-func (desk *Desk) submit(symbol string, order *spot.OrderRequest) error {
-	if desk.transport == nil || order == nil {
-		return nil
-	}
-
-	req := &kraken.AddOrderRequest{
-		Pair:    symbol,
-		Type:    order.Type,
-		Volume:  order.Volume,
-		ClOrdId: order.ClOrdId,
-	}
-
-	buf, err := sonic.Marshal(kraken.NewAddOrderMessage("", req))
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[desk] unable to encode "+order.Type+" order for "+symbol,
-			err,
-		))
-	}
-
-	if err := desk.transport.Write(buf); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"[desk] unable to submit "+order.Type+" order for "+symbol,
-			err,
-		))
-	}
-
-	return nil
-}
-
 func (desk *Desk) Apply(execution *kraken.Execution) {
 	for _, data := range execution.Data {
-		desk.mu.Lock()
-		symbol := data.Symbol
-		untyped, exists := desk.positions.Load(symbol)
+		for _, cache := range []*sync.Map{desk.positions, desk.virtuals} {
+			untyped, ok := cache.Load(data.Symbol)
 
-		if !exists && desk.price != nil {
-			normalized := desk.price.normalize(symbol)
-
-			if normalized != symbol {
-				symbol = normalized
-				untyped, exists = desk.positions.Load(symbol)
+			if !ok {
+				continue
 			}
-		}
 
-		if !exists {
-			desk.mu.Unlock()
-			continue
-		}
-
-		positions := untyped.([]*Position)
-		allClosed := true
-
-		for _, position := range positions {
-			open := !position.Closed()
+			position := untyped.(*Position)
 			position.Apply(data)
-
-			if open && position.Closed() {
-				desk.score(position, data.LastQty)
-			}
-
-			if !position.Closed() {
-				allClosed = false
-			}
-
-			if position.Closed() {
-				desk.recordClosed(position)
-			}
-		}
-
-		if allClosed {
-			desk.positions.Delete(symbol)
-		}
-
-		desk.mu.Unlock()
-	}
-}
-
-/*
-Open returns a copy of the positions the desk holds for symbol.
-*/
-func (desk *Desk) Open(symbol string) []*Position {
-	untyped, exists := desk.positions.Load(symbol)
-
-	if !exists && desk.price != nil {
-		untyped, exists = desk.positions.Load(desk.price.normalize(symbol))
-	}
-
-	if !exists || untyped == nil {
-		return nil
-	}
-
-	desk.mu.Lock()
-	defer desk.mu.Unlock()
-
-	return slices.Clone(untyped.([]*Position))
-}
-
-/*
-score asks Price.CloseOut what the closed lot made. A missing entry or a book
-that cannot price the sale records no profit.
-*/
-func (desk *Desk) score(position *Position, qty *decimal.Decimal) {
-	if desk == nil || position == nil {
-		return
-	}
-
-	outcome := &LifeOutcome{Triggers: []string{"unpriced"}}
-
-	if desk.price != nil {
-		cost, proceeds, profit, _, ok := desk.price.CloseOut(
-			position.Symbol(), qty, position.EntryPrice(), position.EntryFee(),
-		)
-
-		if ok && cost != nil && proceeds != nil && profit != nil {
-			outcome = &LifeOutcome{
-				VenueCost:     cost.Float64(),
-				VenueProceeds: proceeds.Float64(),
-				VenueRealized: profit.Float64(),
-				Triggers:      []string{},
-			}
 		}
 	}
-
-	if position.ClosedAt() != nil && !position.OpenedAt().IsZero() {
-		outcome.HoldNs = position.ClosedAt().Sub(position.OpenedAt()).Nanoseconds()
-	}
-
-	position.SetOutcome(outcome)
-}
-
-func (desk *Desk) recordClosed(position *Position) {
-	if position == nil {
-		return
-	}
-
-	desk.closedMu.Lock()
-
-	for _, existing := range desk.closed {
-		if existing.ID() == position.ID() {
-			desk.closedMu.Unlock()
-			return
-		}
-	}
-
-	desk.closed = append(desk.closed, position)
-	desk.closedMu.Unlock()
-}
-
-/*
-Closed returns a copy of closed positions on the desk, newest first.
-*/
-func (desk *Desk) Closed() []*Position {
-	desk.closedMu.RLock()
-	defer desk.closedMu.RUnlock()
-
-	result := slices.Clone(desk.closed)
-
-	sort.Slice(result, func(leftIndex, rightIndex int) bool {
-		return result[leftIndex].OpenedAt().After(
-			result[rightIndex].OpenedAt(),
-		)
-	})
-
-	return result
-}
-
-/*
-BalanceJSON returns the serialized JSON representation of the wallet balance.
-*/
-func (desk *Desk) BalanceJSON() []byte {
-	if desk == nil || desk.balance == nil {
-		return nil
-	}
-
-	wallet := desk.balance.Wallet()
-
-	if wallet == nil {
-		return nil
-	}
-
-	raw, err := sonic.Marshal(wallet)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"[desk] balance marshal failed",
-			err,
-		))
-
-		return nil
-	}
-
-	trade := desk.balance.Trade()
-
-	if trade == nil {
-		return raw
-	}
-
-	var frame map[string]any
-
-	if err := sonic.Unmarshal(raw, &frame); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"[desk] balance unmarshal failed",
-			err,
-		))
-
-		return nil
-	}
-
-	if trade.UnrealizedPnL != nil {
-		frame["unrealized"] = trade.UnrealizedPnL.String()
-	}
-
-	if trade.Equity != nil {
-		frame["equity"] = trade.Equity.String()
-	}
-
-	merged, err := sonic.Marshal(frame)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"[desk] balance marshal failed",
-			err,
-		))
-
-		return nil
-	}
-
-	return merged
-}
-
-/*
-PositionsJSON returns open positions as a serialized JSON slice.
-*/
-func (desk *Desk) PositionsJSON(symbol ...string) []byte {
-	if desk == nil || desk.positions == nil {
-		return nil
-	}
-
-	if len(symbol) > 0 && symbol[0] != "" {
-		open := desk.Open(symbol[0])
-
-		if len(open) == 0 {
-			return nil
-		}
-
-		raw, err := sonic.Marshal(open)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"[desk] positions marshal failed",
-				err,
-			))
-
-			return nil
-		}
-
-		return raw
-	}
-
-	all := desk.OpenPositions()
-
-	if len(all) == 0 {
-		return nil
-	}
-
-	raw, err := sonic.Marshal(all)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"[desk] positions marshal failed",
-			err,
-		))
-		return nil
-	}
-
-	return raw
-}
-
-/*
-OpenPositions lists every lot the desk still holds.
-*/
-func (desk *Desk) OpenPositions() []*Position {
-	if desk == nil || desk.positions == nil {
-		return nil
-	}
-
-	var all []*Position
-
-	desk.positions.Range(func(_, val any) bool {
-		for _, pos := range heldPositions(val) {
-			if pos != nil && !pos.Closed() {
-				all = append(all, pos)
-			}
-		}
-
-		return true
-	})
-
-	return all
-}
-
-/*
-RestoreStored installs a lot previously written to the store. The wallet
-restore that ran at boot is a balance-only stand-in; this replaces it with
-the stored quantity and entry so an exit can sell the lot.
-*/
-func (desk *Desk) RestoreStored(raw []byte) (string, error) {
-	if desk == nil || len(raw) == 0 {
-		return "", nil
-	}
-
-	var stored struct {
-		ID         string           `json:"id"`
-		Symbol     string           `json:"symbol"`
-		OpenedAt   string           `json:"opened_at"`
-		Qty        *decimal.Decimal `json:"qty"`
-		EntryPrice *decimal.Decimal `json:"entry_price"`
-		EntryFee   *decimal.Decimal `json:"entry_fee"`
-		Mark       *decimal.Decimal `json:"mark"`
-	}
-
-	if err := sonic.Unmarshal(raw, &stored); err != nil {
-		return "", errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, "[desk] stored position does not decode", err,
-		))
-	}
-
-	if stored.Symbol == "" || stored.Qty == nil || stored.Qty.Sign() <= 0 {
-		return "", nil
-	}
-
-	position := NewPosition()
-
-	if stored.ID != "" {
-		position.id = stored.ID
-	}
-
-	position.symbol = stored.Symbol
-	position.qty = stored.Qty
-	position.entryPrice = stored.EntryPrice
-	position.entryFee = stored.EntryFee
-	position.mark = stored.Mark
-
-	if stored.OpenedAt != "" {
-		if opened, err := time.Parse(time.RFC3339, stored.OpenedAt); err == nil {
-			position.openedAt = opened
-		}
-	}
-
-	if position.openedAt.IsZero() {
-		position.openedAt = time.Now().UTC()
-	}
-
-	if desk.positions == nil {
-		desk.positions = &sync.Map{}
-	}
-
-	desk.positions.Store(stored.Symbol, []*Position{position})
-
-	errnie.Info(fmt.Sprintf(
-		"[desk] restored open position from store: %s %s",
-		stored.Symbol, stored.Qty.String(),
-	))
-
-	return stored.Symbol, nil
-}
-
-func heldPositions(val any) []*Position {
-	switch held := val.(type) {
-	case []*Position:
-		return held
-	case *Position:
-		if held != nil {
-			return []*Position{held}
-		}
-	}
-
-	return nil
 }

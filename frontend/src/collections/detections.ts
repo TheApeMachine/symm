@@ -4,6 +4,7 @@ import {
 	HINDSIGHT_DONE_KEYS,
 	type HindsightFrame,
 } from "#/collections/hindsight";
+import { gobLayer } from "#/providers/gob-layer";
 
 /*
 Detections are what detect stored, streamed for the Historical runs tab
@@ -83,8 +84,18 @@ const open = <T>(): Slot<T> => ({
 	items: [],
 });
 
+const DETECTION_CLASSES = ["up", "down", "chop", "flat"] as const;
+
+type DetectionClass = (typeof DETECTION_CLASSES)[number];
+
+const isDetectionClass = (role: string): role is DetectionClass =>
+	(DETECTION_CLASSES as readonly string[]).includes(role);
+
+const symbolsSeen = new Map<string, Set<string>>();
+
 export const beginDetectionRuns = () => {
 	flush();
+	symbolsSeen.clear();
 	detectionsStore.setState((state) => ({ ...state, runs: open() }));
 	return { type: "detections" };
 };
@@ -136,12 +147,19 @@ export const abortDetections = (reason: string) => {
 	console.error("detections stream failed:", reason);
 };
 
-const labelsOf = (index: string) => {
+const labelsOf = (index: string, count: number) => {
 	const at = index.indexOf(".bin/");
-	return at >= 0 ? index.slice(at + ".bin/".length).split("/") : [];
+	const parts = (at >= 0 ? index.slice(at + ".bin/".length) : index)
+		.split("/")
+		.filter((part) => part.length > 0);
+	return parts.length >= count ? parts.slice(parts.length - count) : parts;
 };
 
 const floats = (layer: { bytes: Uint8Array }) => {
+	const decoded = gobLayer(layer.bytes);
+
+	if (decoded?.kind === "floats") return decoded.floats;
+
 	if (layer.bytes.byteLength % 8 !== 0) {
 		throw new Error("detections: vector layer is not float64s");
 	}
@@ -168,7 +186,7 @@ const readVector = <K extends readonly string[]>(
 	const values = floats(layer);
 
 	if (
-		labelsOf(layer.index).join("/") !== keys.join("/") ||
+		labelsOf(layer.index, keys.length).join("/") !== keys.join("/") ||
 		values.length !== keys.length
 	) {
 		throw new Error(`detections: malformed ${frame.role} layer ${layer.index}`);
@@ -211,12 +229,110 @@ const flush = () => {
 	detectionsStore.setState(() => next);
 };
 
+const blankRun = (): Fields<typeof DETECTION_RUN_KEYS> =>
+	Object.fromEntries(DETECTION_RUN_KEYS.map((key) => [key, 0])) as Fields<
+		typeof DETECTION_RUN_KEYS
+	>;
+
+/*
+applyStoredDetection files one stored excursion. Its role is the class.
+An open run list counts it; the open epoch lists it.
+*/
+const applyStoredDetection = (
+	state: DetectionsState,
+	frame: HindsightFrame,
+	cls: DetectionClass,
+) => {
+	const fields = readVector(frame, EXCURSION_KEYS);
+	const epoch = frame.epoch.toString();
+
+	if (state.runs?.status === "streaming") {
+		const items = state.runs.items;
+		let row = items.find((item) => item.epoch === epoch);
+
+		if (!row) {
+			row = { epoch, fields: blankRun() };
+			items.push(row);
+		}
+
+		row.fields[cls] += 1;
+		const seen = symbolsSeen.get(epoch) ?? new Set<string>();
+		seen.add(frame.scope);
+		symbolsSeen.set(epoch, seen);
+		row.fields.symbols = seen.size;
+		if (row.fields.first_tick === 0 || fields.a_tick < row.fields.first_tick) {
+			row.fields.first_tick = fields.a_tick;
+		}
+		if (fields.d_tick > row.fields.last_tick) row.fields.last_tick = fields.d_tick;
+		row.fields.ticks =
+			row.fields.up + row.fields.down + row.fields.chop + row.fields.flat;
+	}
+
+	if (
+		state.excursions?.status === "streaming" &&
+		state.excursions.run === epoch
+	) {
+		state.excursions.items.push({
+			symbol: frame.scope,
+			class: cls,
+			fields,
+		});
+	}
+};
+
+const copySlots = (state: DetectionsState) => {
+	for (const name of ["runs", "excursions", "tape"] as const) {
+		const slot = state[name];
+		if (slot) (state[name] as Slot<unknown>) = { ...slot, items: [...slot.items] };
+	}
+};
+
+const ingestStoredDetection = (frame: HindsightFrame) => {
+	if (!isDetectionClass(frame.role)) return;
+
+	const fresh = pending === null;
+	const state: DetectionsState = pending ?? { ...detectionsStore.state };
+	const epoch = frame.epoch.toString();
+	const runsOpen = state.runs?.status === "streaming";
+	const excursionsOpen =
+		state.excursions?.status === "streaming" && state.excursions.run === epoch;
+
+	if (!runsOpen && !excursionsOpen) return;
+
+	if (fresh) copySlots(state);
+	pending = state;
+
+	try {
+		applyStoredDetection(state, frame, frame.role);
+	} catch (cause) {
+		const message = cause instanceof Error ? cause.message : String(cause);
+		if (state.runs?.status === "streaming") {
+			state.runs.error = message;
+			state.runs.status = "error";
+		}
+		if (excursionsOpen && state.excursions) {
+			state.excursions.error = message;
+			state.excursions.status = "error";
+		}
+		console.error(message);
+		flush();
+		return;
+	}
+
+	flushTimer ??= setTimeout(flush, FLUSH_MS);
+};
+
 /*
 ingestDetectionFrame applies one detections frame to the request it
 answers. A frame of no open request (one since replaced) is stale and not
 applied; a malformed frame fails its stream, loudly.
 */
 export const ingestDetectionFrame = (frame: HindsightFrame) => {
+	if (isDetectionClass(frame.role)) {
+		ingestStoredDetection(frame);
+		return;
+	}
+
 	const key = slotOf(frame);
 	const fresh = pending === null;
 	const state: DetectionsState = pending ?? { ...detectionsStore.state };
@@ -232,13 +348,7 @@ export const ingestDetectionFrame = (frame: HindsightFrame) => {
 		return;
 
 	// Each slot's items are copied once per flush, then appended in place.
-	if (fresh) {
-		for (const name of ["runs", "excursions", "tape"] as const) {
-			const slot = state[name];
-			if (slot)
-				(state[name] as Slot<unknown>) = { ...slot, items: [...slot.items] };
-		}
-	}
+	if (fresh) copySlots(state);
 
 	pending = state;
 	const target = state[key] as Slot<unknown>;

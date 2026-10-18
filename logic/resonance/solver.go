@@ -5,6 +5,7 @@ import (
 	"fmt"
 	goruntime "runtime"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -116,7 +117,7 @@ func (solver *Solver) Step(tick *data.Value, symbol *broker.SymbolTick) (*data.V
 	}
 
 	name := symbol.Symbol
-	sources := make(map[string]data.Signal, len(symbol.Signals))
+	sources := make(map[string]broker.Sample, len(symbol.Signals))
 
 	for _, signal := range symbol.Signals {
 		if signal.Symbol != name {
@@ -175,7 +176,6 @@ func (solver *Solver) Step(tick *data.Value, symbol *broker.SymbolTick) (*data.V
 
 	reading := data.NewValue(ReadingOrigin, ReadingRole, name)
 	reading.Epoch, reading.Tick, reading.Timestamp = tick.Epoch, tick.Tick, tick.Timestamp
-	reading.FormatPrefix()
 
 	if _, err := publishReturns(reading, out, coderArch(len(features))); err != nil {
 		return nil, errnie.Err(errnie.Internal, fmt.Sprintf("resonance: unable to publish coder reading for %s", name), err)
@@ -188,7 +188,7 @@ func (solver *Solver) Step(tick *data.Value, symbol *broker.SymbolTick) (*data.V
 ReadSurprise is the surprise a Step reading carries.
 */
 func ReadSurprise(reading *data.Value) (float64, error) {
-	surprise, ok := data.Metrics(reading)["surprise"]
+	surprise, ok := floatMetrics(reading)["surprise"]
 
 	if !ok {
 		return 0, errnie.Err(errnie.UnprocessableContent, "resonance: reading carries no surprise", nil)
@@ -276,7 +276,7 @@ Step standardizes each Feature the tick carries for the symbol (a causal
 residual z-score over its running moments) and returns every Feature's
 latest standardized value, in Features order.
 */
-func (scorer *featureScorer) Step(sources map[string]data.Signal) ([]float64, error) {
+func (scorer *featureScorer) Step(sources map[string]broker.Sample) ([]float64, error) {
 	for !scorer.isStepping.CompareAndSwap(false, true) {
 		goruntime.Gosched()
 	}
@@ -347,11 +347,11 @@ func publishReturns(prior *data.Value, out [12][]float64, arch []int) (*data.Val
 		return nil, fmt.Errorf("resonance: coder summary holds %d values, energy and surprise need 6", len(out[0]))
 	}
 
-	data.AppendVector(prior, []float64{out[0][1]}, "energy")
-	data.AppendVector(prior, []float64{out[0][5]}, "surprise")
+	prior.Append([]float64{out[0][1]}, "energy")
+	prior.Append([]float64{out[0][5]}, "surprise")
 
 	for i, val := range out[2] {
-		data.AppendVector(prior, []float64{val}, fmt.Sprintf("latent_%d", i))
+		prior.Append([]float64{val}, fmt.Sprintf("latent_%d", i))
 	}
 
 	if len(out[7]) > 0 {
@@ -361,19 +361,45 @@ func publishReturns(prior *data.Value, out [12][]float64, arch []int) (*data.Val
 			block := out[7][offset : offset+width]
 			offset += width
 
-			data.AppendVector(prior, []float64{block[0]}, fmt.Sprintf("layer_%d_error", layer))
-			data.AppendVector(prior, []float64{block[1]}, fmt.Sprintf("layer_%d_temporal", layer))
+			prior.Append([]float64{block[0]}, fmt.Sprintf("layer_%d_error", layer))
+			prior.Append([]float64{block[1]}, fmt.Sprintf("layer_%d_temporal", layer))
 
 			for j := range rows {
-				data.AppendVector(prior, []float64{block[2+j]}, fmt.Sprintf("layer_%d_state_%d", layer, j))
-				data.AppendVector(prior, []float64{block[2+rows+j]}, fmt.Sprintf("layer_%d_prediction_%d", layer, j))
+				prior.Append([]float64{block[2+j]}, fmt.Sprintf("layer_%d_state_%d", layer, j))
+				prior.Append([]float64{block[2+rows+j]}, fmt.Sprintf("layer_%d_prediction_%d", layer, j))
 			}
 		}
 	}
 
 	for i, val := range out[11] {
-		data.AppendVector(prior, []float64{val}, fmt.Sprintf("forward_curve_%d", i))
+		prior.Append([]float64{val}, fmt.Sprintf("forward_curve_%d", i))
 	}
 
 	return prior, nil
+}
+
+func floatMetrics(value *data.Value) map[string]float64 {
+	out := map[string]float64{}
+
+	if value == nil {
+		return out
+	}
+
+	for index, values := range data.Layer[[]float64](value) {
+		rest := index
+
+		if value.Prefix != "" && strings.HasPrefix(index, value.Prefix+"/") {
+			rest = strings.TrimPrefix(index, value.Prefix+"/")
+		}
+
+		labels := strings.Split(rest, "/")
+
+		for i, reading := range values {
+			if i < len(labels) {
+				out[labels[i]] = reading
+			}
+		}
+	}
+
+	return out
 }

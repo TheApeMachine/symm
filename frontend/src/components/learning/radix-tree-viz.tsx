@@ -227,9 +227,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	const projection = externalProjection ?? internalProjection;
 	const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
-	const [showAllBranches, setShowAllBranches] = useState(false);
+	const [showAllBranches, setShowAllBranches] = useState(true);
 	type BranchFilter = "matching" | "enter" | "exit" | "all";
-	const [branchFilter, setBranchFilter] = useState<BranchFilter>("matching");
+	const [branchFilter, setBranchFilter] = useState<BranchFilter>("all");
 
 	const activeSymbolList = useMemo(() => {
 		if (!symbols) return [];
@@ -289,6 +289,17 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			}
 		}
 	}, [allKeys, branchFilter, showAllBranches, matchingKeys]);
+
+	const rejectedPrefixes = useMemo(() => {
+		const set = new Set<string>();
+		for (const item of targetSymbols) {
+			const base = item.tokens.filter(Boolean).join("/");
+			for (const token of item.rejected ?? []) {
+				set.add(base ? `${base}/${token}` : token);
+			}
+		}
+		return set;
+	}, [targetSymbols]);
 
 	// Set of prefix paths ACTUALLY reached by at least one active symbol
 	const traversedPrefixes = useMemo(() => {
@@ -805,13 +816,15 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 								const midX = (s.x + t.x) / 2;
 								const midY = (s.y + t.y) / 2;
 
-								const isSymbolLink = traversedPrefixes.has(
-									grammarPrefix(link.target.data),
-								);
+								const linkPrefix = grammarPrefix(link.target.data);
+								const isRejected =
+									rejectedPrefixes.has(linkPrefix) &&
+									!traversedPrefixes.has(linkPrefix);
+								const isSymbolLink = traversedPrefixes.has(linkPrefix);
 								const isLinkActive = activePathIds
 									? activePathIds.has(link.target.data.id)
 									: selectedSymbol
-										? isSymbolLink
+										? isSymbolLink || isRejected
 										: true;
 
 								const token = link.target.data.token;
@@ -827,15 +840,25 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 										<path
 											d={d}
 											fill="none"
-											stroke={isSymbolLink ? "#38bdf8" : "var(--line2)"}
-											strokeWidth={isSymbolLink ? 2.5 : 1.2}
-											strokeOpacity={isSymbolLink ? 1 : 0.6}
-											strokeDasharray={isSymbolLink ? undefined : "4 2"}
+											stroke={
+												isRejected
+													? "var(--warn)"
+													: isSymbolLink
+														? "#38bdf8"
+														: "var(--line2)"
+											}
+											strokeWidth={isRejected || isSymbolLink ? 2.5 : 1.2}
+											strokeOpacity={isRejected || isSymbolLink ? 1 : 0.6}
+											strokeDasharray={
+												isRejected || isSymbolLink ? undefined : "4 2"
+											}
 											style={{
 												transition: "all 0.3s ease-in-out",
-												filter: isSymbolLink
-													? "drop-shadow(0 0 3px rgba(56, 189, 248, 0.5))"
-													: undefined,
+												filter: isRejected
+													? "drop-shadow(0 0 3px rgba(230, 160, 60, 0.55))"
+													: isSymbolLink
+														? "drop-shadow(0 0 3px rgba(56, 189, 248, 0.5))"
+														: undefined,
 											}}
 										/>
 										{token && (
@@ -853,14 +876,26 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 													height={14}
 													rx={2}
 													fill="var(--surface)"
-													stroke={isSymbolLink ? "#38bdf8" : "var(--line2)"}
-													strokeWidth={isSymbolLink ? 1.5 : 1}
+													stroke={
+														isRejected
+															? "var(--warn)"
+															: isSymbolLink
+																? "#38bdf8"
+																: "var(--line2)"
+													}
+													strokeWidth={isRejected || isSymbolLink ? 1.5 : 1}
 													opacity={0.95}
 												/>
 												<text
 													x={0}
 													y={3.5}
-													fill={isSymbolLink ? "#38bdf8" : "var(--acc)"}
+													fill={
+														isRejected
+															? "var(--warn)"
+															: isSymbolLink
+																? "#38bdf8"
+																: "var(--acc)"
+													}
 													fontSize="9px"
 													textAnchor="middle"
 													fontWeight="600"

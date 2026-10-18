@@ -2,6 +2,7 @@ package hindsight
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -28,90 +29,22 @@ type runTape struct {
 }
 
 /*
-tape returns the run's stitched tapes, loading them from storage the first
-time. Later scans and symbol streams use this copy.
-*/
-func (service *Service) tape(ctx context.Context, run uint64) (*runTape, error) {
-	return service.loadTape(ctx, run, func(ctx context.Context) (*runTape, error) {
-		return LoadRun(ctx, service.client, run, nil)
-	})
-}
-
-/*
-loadTape single-flights the download of one run. A caller whose context is
-canceled does not publish that cancellation: the next waiter loads the run
-itself. Publishing it made a replaced index request fail the one that
-replaced it, and the page showed "context canceled".
-*/
-func (service *Service) loadTape(
-	ctx context.Context,
-	run uint64,
-	load func(context.Context) (*runTape, error),
-) (*runTape, error) {
-	for {
-		service.tapesMu.Lock()
-
-		if loaded := service.tapes[run]; loaded != nil {
-			service.tapesMu.Unlock()
-			return loaded, nil
-		}
-
-		if wait := service.tapeWait[run]; wait != nil {
-			service.tapesMu.Unlock()
-
-			select {
-			case <-wait:
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-
-			service.tapesMu.Lock()
-			loaded, err := service.tapes[run], service.tapeErr[run]
-			service.tapesMu.Unlock()
-
-			if loaded != nil || err != nil {
-				return loaded, err
-			}
-
-			// The load we waited on belonged to a canceled caller.
-			continue
-		}
-
-		wait := make(chan struct{})
-		service.tapeWait[run] = wait
-		service.tapesMu.Unlock()
-
-		loaded, err := load(ctx)
-
-		service.tapesMu.Lock()
-
-		if err == nil {
-			service.tapes[run] = loaded
-			service.tapeErr[run] = nil
-		} else if ctx.Err() == nil {
-			service.tapeErr[run] = err
-		} else {
-			service.tapeErr[run] = nil
-		}
-
-		close(wait)
-		delete(service.tapeWait, run)
-		service.tapesMu.Unlock()
-
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		return loaded, err
-	}
-}
-
-/*
 LoadRun downloads run once and stitches each symbol's prints into one tape.
 onDownload runs after each object read.
 */
 func LoadRun(ctx context.Context, client *store.Client, run uint64, onDownload func()) (*runTape, error) {
-	keys := client.ListKeys(data.TickPrefix(run))
+	var keys []string
+
+	prefix := "workspace/tick/aggregate"
+
+	if run > 0 {
+		prefix = fmt.Sprintf("%s/%019d", prefix, run)
+	}
+
+	for key := range client.ListKeys(prefix) {
+		keys = append(keys, key)
+	}
+
 	loaded, err := assemble(ctx, client, keys, onDownload, nil)
 
 	if err == nil && client != nil {
@@ -138,13 +71,19 @@ func assemble(
 ) (*runTape, error) {
 	tape := &runTape{bySymbol: map[string][]stitch{}}
 
-	for frame, err := range store.ParallelValuesProgress(client, keys, onDownload) {
+	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		frame, err := readObject(ctx, client, key)
+
 		if err != nil {
 			return nil, err
 		}
 
-		if err := ctx.Err(); err != nil {
-			return nil, err
+		if onDownload != nil {
+			onDownload()
 		}
 
 		ticks, err := broker.ReadTick(frame)
@@ -175,26 +114,6 @@ func assemble(
 	}
 
 	return tape, nil
-}
-
-func (tape *runTape) prices(symbol string, from, to uint64) []float64 {
-	prices := make([]float64, 0)
-
-	for _, row := range tape.bySymbol[symbol] {
-		if row.frame.Tick < from || row.frame.Tick > to {
-			continue
-		}
-
-		for _, trade := range row.tick.Trades {
-			price := trade.Price.Float64()
-
-			if price > 0 {
-				prices = append(prices, price)
-			}
-		}
-	}
-
-	return prices
 }
 
 /*

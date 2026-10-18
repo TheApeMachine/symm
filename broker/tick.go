@@ -3,6 +3,7 @@ package broker
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -23,7 +24,34 @@ type SymbolTick struct {
 	Book       *Snapshot
 	BookErr    error
 	Instrument kraken.InstrumentPair
-	Signals    []data.Signal
+	Signals    []Sample
+}
+
+/*
+Sample is one signal vector on a tick: who wrote it, for which symbol, and
+the labelled floats. The address is signal/<source>/<labels>/symbol:<symbol>.
+*/
+type Sample struct {
+	Source string
+	Symbol string
+	Labels []string
+	Values []float64
+	Tags   []string
+}
+
+/*
+Metric returns the value labelled label.
+*/
+func (sample Sample) Metric(label string) (float64, error) {
+	for idx, name := range sample.Labels {
+		if name == label {
+			return sample.Values[idx], nil
+		}
+	}
+
+	return 0, errnie.Err(errnie.NotFound, fmt.Sprintf(
+		"broker: %s signal for %s has no %s", sample.Source, sample.Symbol, label,
+	), data.ErrMissing)
 }
 
 /*
@@ -41,22 +69,10 @@ func ReadTick(value *data.Value) ([]*SymbolTick, error) {
 		))
 	}
 
-	if err := data.CheckTickLayers(value); err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	layer, err := tradeLayer(value)
+	trades, err := Trades(value)
 
 	if err != nil {
 		return nil, errnie.Error(err)
-	}
-
-	trades, err := data.AttributeOk[[]kraken.TradeData](layer, "data")
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, "broker: trade layer of "+value.Prefix+" does not decode", err,
-		))
 	}
 
 	ticks := make([]*SymbolTick, 0, 1)
@@ -71,7 +87,7 @@ func ReadTick(value *data.Value) ([]*SymbolTick, error) {
 			}
 		}
 
-		raw := SymbolLayer(value, data.LayerPrice, symbol)
+		raw := SymbolLayer(value, "price", symbol)
 
 		if raw == nil {
 			return nil, errnie.Error(errnie.Err(
@@ -97,7 +113,7 @@ func ReadTick(value *data.Value) ([]*SymbolTick, error) {
 			))
 		}
 
-		if raw = SymbolLayer(value, data.LayerInstrument, symbol); raw != nil {
+		if raw = SymbolLayer(value, "instrument", symbol); raw != nil {
 			if err := sonic.Unmarshal(raw, &tick.Instrument); err != nil {
 				return nil, errnie.Error(errnie.Err(errnie.UnprocessableContent, fmt.Sprintf(
 					"broker: instrument/%s of %s does not decode", symbol, value.Prefix,
@@ -109,7 +125,7 @@ func ReadTick(value *data.Value) ([]*SymbolTick, error) {
 		bySymbol[symbol] = tick
 	}
 
-	for signal, err := range data.Signals(value) {
+	for signal, err := range Samples(value) {
 		if err != nil {
 			return nil, errnie.Error(err)
 		}
@@ -136,6 +152,20 @@ first-trade order. Aggregate ticks carry no single Scope symbol; callers that
 need an instrument for paper or policy use this (and dashboard focus) instead.
 */
 func TradedSymbols(value *data.Value) ([]string, error) {
+	trades, err := Trades(value)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return Symbols(trades), nil
+}
+
+/*
+Trades returns the frame's trades. Append stores the Kraken JSON as a gob
+[]byte under spot:trade, so the JSON is the decoded layer, not Layers[0].
+*/
+func Trades(value *data.Value) ([]kraken.TradeData, error) {
 	layer, err := tradeLayer(value)
 
 	if err != nil {
@@ -146,11 +176,11 @@ func TradedSymbols(value *data.Value) ([]string, error) {
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, "broker: trade layer does not decode", err,
+			errnie.UnprocessableContent, "broker: trade layer of "+value.Prefix+" does not decode", err,
 		))
 	}
 
-	return Symbols(trades), nil
+	return trades, nil
 }
 
 /*
@@ -159,11 +189,7 @@ tradeLayer returns the tick's single "spot:trade/<type>" layer.
 func tradeLayer(value *data.Value) ([]byte, error) {
 	var found []byte
 
-	for index, layer := range data.Indexed[[]byte](value, data.LayerTrade+"/") {
-		if !strings.HasPrefix(index, data.LayerTrade+"/") {
-			continue
-		}
-
+	for _, layer := range data.Layer[[]byte](value, "spot:trade") {
 		if found != nil {
 			return nil, errnie.Error(errnie.Err(
 				errnie.Validation, "broker: "+value.Prefix+" carries more than one trade layer", nil,
@@ -180,4 +206,71 @@ func tradeLayer(value *data.Value) ([]byte, error) {
 	}
 
 	return found, nil
+}
+
+/*
+samples yields every signal layer. The address is
+signal/<source>/<labels...>/<tags...>/symbol:<symbol>.
+*/
+func Samples(value *data.Value) iter.Seq2[Sample, error] {
+	return func(yield func(Sample, error) bool) {
+		if value == nil {
+			return
+		}
+
+		for index, values := range data.Layer[[]float64](value, "signal") {
+			sample, err := parseSample(index, values)
+
+			if !yield(sample, err) {
+				return
+			}
+		}
+	}
+}
+
+func parseSample(index string, values []float64) (Sample, error) {
+	var sample Sample
+
+	at := strings.Index(index, "/signal/")
+
+	if at < 0 && strings.HasPrefix(index, "signal/") {
+		at = 0
+	}
+
+	if at < 0 {
+		return sample, errnie.Err(errnie.Validation, "broker: "+index+" is not a signal layer", nil)
+	}
+
+	rest := index[at:]
+	rest = strings.TrimPrefix(rest, "/")
+	rest = strings.TrimPrefix(rest, "signal/")
+
+	tagAt := strings.LastIndex(rest, "/symbol:")
+
+	if tagAt < 0 || tagAt+len("/symbol:") == len(rest) {
+		return sample, errnie.Err(errnie.Validation, "broker: "+index+" has no symbol", nil)
+	}
+
+	symbol := rest[tagAt+len("/symbol:"):]
+	parts := strings.Split(rest[:tagAt], "/")
+
+	if len(parts) == 0 || parts[0] == "" {
+		return sample, errnie.Err(errnie.Validation, "broker: "+index+" has no source", nil)
+	}
+
+	sample.Source = parts[0]
+	sample.Symbol = symbol
+	parts = parts[1:]
+
+	if len(values) > len(parts) {
+		return sample, errnie.Err(errnie.Validation, fmt.Sprintf(
+			"broker: %s has %d values for %d labels", index, len(values), len(parts),
+		), nil)
+	}
+
+	sample.Values = values
+	sample.Labels = parts[:len(values)]
+	sample.Tags = parts[len(values):]
+
+	return sample, nil
 }

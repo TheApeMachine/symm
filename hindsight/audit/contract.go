@@ -48,7 +48,7 @@ func (stage *ContractStage) Run() error {
 			continue
 		}
 
-		metrics := data.Metrics(measurement)
+		metrics := floatMetrics(measurement)
 		for label, val := range metrics {
 			stage.totalChecked++
 

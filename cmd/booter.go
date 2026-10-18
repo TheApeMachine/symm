@@ -7,7 +7,6 @@ import (
 	sysruntime "runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
@@ -16,7 +15,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
@@ -59,9 +57,6 @@ type Booter struct {
 	store            *store.Client
 	hub              *ui.Hub
 	replies          sync.Map
-	// bookNs is the last level3 apply, measured on the book ingress. It is
-	// off the trade tick's critical path and reported as a side span.
-	bookNs atomic.Int64
 }
 
 func NewBooter(ctx context.Context, name string, capture ...bool) *Booter {
@@ -237,7 +232,10 @@ func (booter *Booter) initMarket() error {
 
 	booter.balance = broker.NewBalance(ctx, booter.privateTransport)
 	booter.desk = broker.NewDesk(
-		ctx, booter.privateTransport, booter.price, booter.balance,
+		ctx, booter.privateTransport,
+		booter.price,
+		booter.balance,
+		booter.store,
 	)
 
 	booter.startPrivateIngress()
@@ -283,19 +281,10 @@ func (booter *Booter) initPipeline() error {
 
 	// Hub before training: NewTraining takes the hub as io.Writer in its
 	// constructor. The dashboard process paper-trades and streams ticks
-	// through the same hub.
+	// through the same hub. Stored runs are read by the dashboard directly
+	// from the store.
 	if booter.dashboard {
-		booter.hub = ui.NewHub(ctx)
-
-		replay, err := hindsight.NewService(ctx, booter.store)
-
-		if err != nil {
-			return err
-		}
-
-		replay.Register(booter.hub.App())
-		booter.hub.Replay(replay)
-		booter.hub.Detect(replay)
+		booter.hub = ui.NewHub(ctx, booter.store)
 
 		if err := booter.hub.Run(); err != nil {
 			return err
@@ -354,12 +343,6 @@ func (booter *Booter) initPipeline() error {
 
 	if booter.workspace == nil {
 		return errnie.Err(errnie.Internal, "booter: workspace pipeline failed to start", nil)
-	}
-
-	if booter.hub != nil {
-		booter.workspace.Publish(func(value *data.Value) {
-			booter.hub.PublishTrace(value, booter.bookNs.Load())
-		})
 	}
 
 	for _, signal := range booter.signals {
@@ -516,7 +499,6 @@ func (booter *Booter) startIngress(
 
 			switch channel {
 			case "level3":
-				started := time.Now()
 				level3 := kraken.NewLevel3(buf)
 
 				if level3 == nil {
@@ -526,8 +508,6 @@ func (booter *Booter) startIngress(
 				if err := booter.book.Update(level3); err != nil && !nmruntime.ShuttingDown(booter.Context(), err) {
 					errnie.Error(err)
 				}
-
-				booter.bookNs.Store(int64(time.Since(started)))
 			case "trade":
 				data.Tick.Add(1)
 
@@ -539,13 +519,8 @@ func (booter *Booter) startIngress(
 				// The tick's Value carries the state of every component it
 				// touches, so a stored tick reproduces book, price, instrument,
 				// wallet and positions for every symbol in the frame.
-				// assemble is the cost of building that value, before the
-				// workspace queue. It is on the critical path and is not
-				// inside any disruptor stage.
-				assemble := time.Now()
-				value := data.NewValue(
-					data.TickOrigin, data.TickRole, data.TickScope,
-				).AppendJSON(buf, data.TradeIndex(msgType))
+				value := data.NewValue("workspace", "tick", "aggregate")
+				value.Append(buf, "spot:trade", msgType)
 
 				trades, err := data.AttributeOk[[]kraken.TradeData](buf, "data")
 
@@ -555,33 +530,15 @@ func (booter *Booter) startIngress(
 				}
 
 				for _, symbol := range broker.Symbols(trades) {
-					index, book := booter.book.Layer(symbol)
+					kind, book := booter.book.Layer(symbol)
 
-					value.AppendJSON(book, index).AppendJSON(
-						booter.price.JSON(symbol),
-						data.SymbolIndex(data.LayerPrice, symbol),
-					).AppendJSON(
-						booter.price.InstrumentJSON(symbol),
-						data.SymbolIndex(data.LayerInstrument, symbol),
-					)
+					value.Append(book, kind, symbol)
+					value.Append(booter.price.JSON(symbol), "price", symbol)
+					value.Append(booter.price.InstrumentJSON(symbol), "instrument", symbol)
 				}
 
-				value.AppendJSON(
-					booter.desk.BalanceJSON(),
-					data.LayerBalance,
-				).AppendJSON(
-					booter.desk.PositionsJSON(),
-					data.LayerPositions,
-				)
-
-				// Signals write one layer per trade entry (or per symbol),
-				// each into its own pre-reserved slot.
-				value.Reserve(len(booter.signals) * max(1, len(trades)))
-				value.Note(data.Span{
-					Name:   "assemble",
-					Group:  "ingress",
-					WorkNs: int64(time.Since(assemble)),
-				})
+				value.Append(booter.desk.Balance(), "balance")
+				value.Append(booter.desk.Positions(), "positions")
 				booter.workspace.Step(value)
 			case "heartbeat", "status":
 			default:

@@ -36,7 +36,7 @@ func TestCognitiveStage(t *testing.T) {
 					actionVal = 1.0 // enter
 				}
 
-				data.AppendVector(measurement, []float64{actionVal, 0.75}, "action", "confidence")
+				measurement.Append([]float64{actionVal, 0.75}, "action", "confidence")
 				measurements = append(measurements, measurement)
 			}
 
@@ -56,10 +56,9 @@ func TestCognitiveStage(t *testing.T) {
 		})
 
 		Convey("An untagged policy of a selected epoch violates the gate", func() {
-			policy := data.NewValue(data.PolicyOrigin, "enter", data.PolicyScope)
+			policy := data.NewValue("policy", "enter", "all")
 			policy.Epoch = realizationEpoch
-			policy.FormatPrefix()
-			So(data.AppendPolicy(policy, "R01/R05", []float64{0.01, 0, 1, 0.01, 1}), ShouldBeNil)
+			policy.Append([]float64{0.01, 0, 1, 0.01, 1}, "gain", "hold_seconds", "visits", "mean_reward", "confidence", "path:R01/R05")
 			stage.policyEpoch = realizationEpoch
 
 			violations := feed(stage, []*data.Value{policy})
@@ -68,7 +67,7 @@ func TestCognitiveStage(t *testing.T) {
 
 		Convey("A stored sequence without a gate tag is counted", func() {
 			policy := data.NewValue("policy", "enter", "BTC/USD")
-			data.AppendVector(policy, []float64{0.01, 0, 1, 0.01, 1}, "gain", "hold_seconds", "visits", "mean_reward", "confidence", "path:R01/R05")
+			policy.Append([]float64{0.01, 0, 1, 0.01, 1}, "gain", "hold_seconds", "visits", "mean_reward", "confidence", "path:R01/R05")
 
 			violations := feed(stage, []*data.Value{policy})
 			So(violations, ShouldBeEmpty)
@@ -86,7 +85,7 @@ func TestCognitiveStage(t *testing.T) {
 				measurement := data.NewValue("test", "test", "BTC/USD")
 
 				// No action metric emitted -> defaults to wait
-				data.AppendVector(measurement, []float64{0.0}, "confidence")
+				measurement.Append([]float64{0.0}, "confidence")
 				measurements = append(measurements, measurement)
 			}
 
@@ -109,7 +108,7 @@ func TestCognitiveStage(t *testing.T) {
 			for range int64(25) {
 				measurement := data.NewValue("test", "test", "BTC/USD")
 
-				data.AppendVector(measurement, []float64{1.0, 0.0}, "action", "confidence")
+				measurement.Append([]float64{1.0, 0.0}, "action", "confidence")
 				measurements = append(measurements, measurement)
 			}
 
@@ -155,7 +154,7 @@ func TestLiveCurrentSequences(t *testing.T) {
 				continue
 			}
 
-			if value != nil && value.Origin == data.PolicyOrigin {
+			if value != nil && value.Origin == "policy" {
 				stage.Channel() <- value
 			}
 		}

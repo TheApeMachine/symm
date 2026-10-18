@@ -91,6 +91,13 @@ Write unserializes a Value from p.
 Implements io.Writer.
 */
 func (value *Value) Write(p []byte) (n int, err error) {
+	if value.Prefix != "" {
+		layer := make([]byte, len(p))
+		copy(layer, p)
+		value.appendLayer(layer, value.Prefix)
+		return len(p), nil
+	}
+
 	if len(p) < headerSize+5 {
 		return 0, io.ErrUnexpectedEOF
 	}
@@ -100,7 +107,6 @@ func (value *Value) Write(p []byte) (n int, err error) {
 	value.SeqIdx = binary.LittleEndian.Uint64(p[24:32])
 	value.Timestamp = binary.LittleEndian.Uint64(p[32:40])
 	value.Epoch = binary.LittleEndian.Uint64(p[40:48])
-	value.slots = 0
 
 	offset := headerSize
 
@@ -136,8 +142,6 @@ func (value *Value) Write(p []byte) (n int, err error) {
 	}
 	value.Scope = string(p[offset : offset+sLen])
 	offset += sLen
-
-	value.FormatPrefix()
 
 	// Layer count
 	if len(p) < offset+2 {
@@ -200,7 +204,18 @@ io.Copy(dst, value) hands dst exactly one complete Value per call.
 Implements io.WriterTo.
 */
 func (value *Value) WriteTo(w io.Writer) (int64, error) {
-	n, err := w.Write(value.Bytes())
+	body := value.Bytes()
+
+	if value.Prefix != "" {
+		if sink, ok := w.(interface {
+			WriteAtPrefix(string, []byte) (int, error)
+		}); ok {
+			n, err := sink.WriteAtPrefix(value.Prefix, body)
+			return int64(n), err
+		}
+	}
+
+	n, err := w.Write(body)
 	return int64(n), err
 }
 
@@ -219,7 +234,6 @@ func (value *Value) ReadFrom(r io.Reader) (int64, error) {
 	value.SeqIdx = binary.LittleEndian.Uint64(fixed[24:32])
 	value.Timestamp = binary.LittleEndian.Uint64(fixed[32:40])
 	value.Epoch = binary.LittleEndian.Uint64(fixed[40:48])
-	value.slots = 0
 
 	total := int64(headerSize)
 
@@ -251,8 +265,6 @@ func (value *Value) ReadFrom(r io.Reader) (int64, error) {
 	if value.Scope, err = readStr(); err != nil {
 		return total, err
 	}
-
-	value.FormatPrefix()
 
 	var numBuf [2]byte
 	if _, err := io.ReadFull(r, numBuf[:]); err != nil {
@@ -312,4 +324,8 @@ func (value *Value) Bytes() []byte {
 	}
 
 	return buf
+}
+
+func (value *Value) Close() error {
+	return value.Err
 }

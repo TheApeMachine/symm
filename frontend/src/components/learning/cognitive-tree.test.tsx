@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cognitionStore, ingestCognitionFrame } from "#/collections/cognition";
+import {
+	cognitionStore,
+	ingestCognitionFrame,
+	ingestPolicyLayers,
+	ingestTrainRegionsLayer,
+	ingestTrainReject,
+} from "#/collections/cognition";
 import { CognitiveTree, progressOf } from "./cognitive-tree";
 
 const tree = {
@@ -102,11 +108,12 @@ describe("progressOf", () => {
 			}),
 		).toEqual({
 			symbol: "ETH/USD",
-			path: "R01/R12/R10",
-			depth: 2,
-			tokens: ["R01", "R12", "R10"],
-			matched: ["R12/R10/noop.bin"],
-		});
+		path: "R01/R12/R10",
+		depth: 2,
+		tokens: ["R01", "R12", "R10"],
+		matched: ["R12/R10/noop.bin"],
+		rejected: [],
+	});
 	});
 });
 
@@ -116,7 +123,7 @@ describe("CognitiveTree", () => {
 		vi.stubGlobal("fetch", fetchMock);
 		render(<CognitiveTree />);
 		expect(screen.getByTestId("cognitive-tree-empty").textContent).toContain(
-			"waiting for policy paths",
+			"waiting for policy/current",
 		);
 		expect(fetchMock).not.toHaveBeenCalled();
 		vi.unstubAllGlobals();
@@ -191,6 +198,40 @@ describe("CognitiveTree", () => {
 			}),
 		).toBe(false);
 		errors.mockRestore();
+	});
+
+	it("keeps the trie on the stored policy when live tokens move", () => {
+		ingestPolicyLayers(1n, [
+			{
+				index: "policy/current/R01/R02/enter.bin",
+				bytes: new Uint8Array([0]),
+			},
+			{
+				index: "policy/current/R01/R02/exit.bin",
+				bytes: new Uint8Array([0]),
+			},
+		]);
+		ingestTrainRegionsLayer(
+			9,
+			"workspace/tick/aggregate/1/0000000000000000009.bin/train/regions/ETH/USD/R01",
+			[],
+		);
+		ingestTrainReject(
+			9,
+			"workspace/tick/aggregate/1/0000000000000000009.bin/train/reject/ETH/USD/R02",
+		);
+		ingestTrainRegionsLayer(
+			10,
+			"workspace/tick/aggregate/1/0000000000000000010.bin/train/regions/ETH/USD/R04/R08/R01",
+			[],
+		);
+		render(<CognitiveTree />);
+		const meta = screen.getByTestId("cognitive-tree-meta").textContent ?? "";
+		expect(meta).toContain("2 paths");
+		expect(screen.getAllByText("R01").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("R02").length).toBeGreaterThan(0);
+		expect(screen.queryByText("R04")).toBeNull();
+		expect(screen.queryByText("R08")).toBeNull();
 	});
 
 	it("shows the loaded epoch, path count and gate", () => {

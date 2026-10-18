@@ -1,6 +1,7 @@
 package hindsight
 
 import (
+	"fmt"
 	"hash/fnv"
 	"io"
 	"slices"
@@ -29,39 +30,35 @@ func KeysFingerprint(keys []string) uint64 {
 }
 
 func manifestPrefix(run uint64) string {
-	return data.Prefix(data.TapeCacheOrigin, data.TapeManifestRole, "run", run)
+	return fmt.Sprintf("tape/manifest/run/%019d", run)
 }
 
 func stampPrefix(run uint64) string {
-	return data.Prefix(data.TapeCacheOrigin, data.TapeStampRole, "run", run)
+	return fmt.Sprintf("tape/stamp/run/%019d", run)
 }
 
 func readManifest(client *store.Client, run uint64) (keysHash float64, count float64, ok bool) {
-	for value, err := range store.Values(client, manifestPrefix(run)) {
-		if err != nil || value == nil {
-			return 0, 0, false
-		}
+	value := storedOne(client, manifestPrefix(run))
 
-		metrics := data.Metrics(value)
-
-		return metrics["keys_hash"], metrics["object_count"], true
+	if value == nil {
+		return 0, 0, false
 	}
 
-	return 0, 0, false
+	reading := metrics(value)
+
+	return reading["keys_hash"], reading["object_count"], true
 }
 
 func readStamp(client *store.Client, run uint64) (retrace, version, drafts float64, ok bool) {
-	for value, err := range store.Values(client, stampPrefix(run)) {
-		if err != nil || value == nil {
-			return 0, 0, 0, false
-		}
+	value := storedOne(client, stampPrefix(run))
 
-		metrics := data.Metrics(value)
-
-		return metrics["retrace"], metrics["detector_version"], metrics["draft_count"], true
+	if value == nil {
+		return 0, 0, 0, false
 	}
 
-	return 0, 0, 0, false
+	reading := metrics(value)
+
+	return reading["retrace"], reading["detector_version"], reading["draft_count"], true
 }
 
 /*
@@ -101,11 +98,10 @@ func WriteRunManifest(client *store.Client, run uint64, keys []string) error {
 		return nil
 	}
 
-	value := data.NewValue(data.TapeCacheOrigin, data.TapeManifestRole, "run")
+	value := data.NewValue("tape", "manifest", "run")
 	value.Epoch = run
 	value.Tick = 1
-	value.FormatPrefix()
-	data.AppendVector(value, []float64{
+	value.Append([]float64{
 		float64(KeysFingerprint(keys)),
 		float64(len(keys)),
 	}, "keys_hash", "object_count")
@@ -118,9 +114,9 @@ func WriteRunManifest(client *store.Client, run uint64, keys []string) error {
 func countRunDrafts(client *store.Client, run uint64) int {
 	count := 0
 
-	for _, class := range data.ExcursionClasses {
-		for value, err := range store.Values(client, data.DraftOrigin+"/"+class+"/") {
-			if err != nil || value == nil || value.Epoch != run {
+	for _, class := range excursionClasses {
+		for _, value := range stored(client, "draft/"+class+"/") {
+			if value == nil || value.Epoch != run {
 				continue
 			}
 
@@ -140,11 +136,10 @@ func WriteScanStamp(client *store.Client, run uint64, retrace float64, _ int) er
 		return nil
 	}
 
-	value := data.NewValue(data.TapeCacheOrigin, data.TapeStampRole, "run")
+	value := data.NewValue("tape", "stamp", "run")
 	value.Epoch = run
 	value.Tick = 1
-	value.FormatPrefix()
-	data.AppendVector(value, []float64{
+	value.Append([]float64{
 		retrace,
 		float64(strategy.ScanVersion),
 		float64(drafts),

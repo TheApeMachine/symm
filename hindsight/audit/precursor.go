@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
@@ -121,9 +122,9 @@ func (stage *PrecursorStage) recordMeasurement(measurement *data.Value) error {
 	// 1. Sensory join: the symbol's dominant region per tick.
 	if measurement.Role == "runtime:join" {
 		symbol := measurement.Scope
-		signals := make([]data.Signal, 0)
+		signals := make([]broker.Sample, 0)
 
-		for signal, err := range data.Signals(measurement) {
+		for signal, err := range broker.Samples(measurement) {
 			if err != nil {
 				return err
 			}
@@ -139,7 +140,11 @@ func (stage *PrecursorStage) recordMeasurement(measurement *data.Value) error {
 			return err
 		}
 
-		regions := stage.grid.Observe(symbol, signals)
+		regions, err := stage.grid.Observe(symbol, signals)
+
+		if err != nil {
+			return err
+		}
 
 		if len(regions) > 0 && regions[0].Brightness > 0 {
 			tokens, ok := stage.tickTokens[measurement.Scope]
@@ -155,15 +160,17 @@ func (stage *PrecursorStage) recordMeasurement(measurement *data.Value) error {
 		return nil
 	}
 
-	if measurement.Origin != data.ExcursionOrigin {
+	if measurement.Origin != "detections" {
 		return errnie.Err(errnie.Validation, "audit:precursor: unexpected measurement "+measurement.Prefix, nil)
 	}
 
 	// 2. Excursions detected by strategy.Detector.
-	fields, err := data.ExcursionFields(measurement)
+	fields := floatMetrics(measurement)
 
-	if err != nil {
-		return errnie.Err(errnie.UnprocessableContent, "audit:precursor", err)
+	for _, key := range []string{"a_tick", "b_tick", "c_tick", "d_tick", "b_price", "c_price", "b_ask", "c_bid"} {
+		if _, ok := fields[key]; !ok {
+			return errnie.Err(errnie.UnprocessableContent, "audit:precursor: "+measurement.Prefix+" has no "+key, nil)
+		}
 	}
 
 	if fields["b_ask"] <= 0 || fields["c_bid"] <= 0 {

@@ -1,36 +1,41 @@
 // @vitest-environment jsdom
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { RingBuffer, signals } from "#/collections/app";
+import { deskPositionsAtom } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
-import { Value } from "#/types/value";
+import type { DeskPosition } from "#/collections/types";
 import { Count } from "./count";
 
-const lot = (scope: string, open: number) => {
-	const ring = new RingBuffer<Value>(4);
-	ring.add(
-		new Value({
-			origin: "training",
-			scope,
-			metrics: [{ name: "position_open", raw: open }],
-		}),
-	);
-	return ring;
-};
+const lot = (symbol: string, virtual = false): DeskPosition => ({
+	id: symbol,
+	symbol,
+	virtual,
+	openedAt: "2026-10-18T08:00:00Z",
+	closedAt: null,
+	qty: "1",
+	entryPrice: "1",
+	mark: "1",
+	entryFee: null,
+	exitFee: null,
+	exitVwap: null,
+	exitRoom: null,
+	returnPct: null,
+	holdNs: 0,
+});
 
 afterEach(() => {
 	cleanup();
 	bookAtom.set("paper");
-	signals.training.setState(() => ({}));
+	deskPositionsAtom.set([]);
 });
 
 describe("Count", () => {
 	it("counts the paper lots the open-positions panel is showing", () => {
-		signals.training.setState(() => ({
-			"BTC/USD": lot("BTC/USD", 1),
-			"SENT/USD": lot("SENT/USD", 1),
-			"APE/USD · R05/R02": lot("APE/USD · R05/R02", 1),
-		}));
+		deskPositionsAtom.set([
+			lot("BTC/USD"),
+			lot("SENT/USD"),
+			lot("APE/USD", true),
+		]);
 
 		const view = render(<Count />);
 
@@ -39,10 +44,7 @@ describe("Count", () => {
 
 	it("counts virtual lots when that book is selected", () => {
 		bookAtom.set("virtual");
-		signals.training.setState(() => ({
-			"BTC/USD": lot("BTC/USD", 1),
-			"APE/USD · R05/R02": lot("APE/USD · R05/R02", 1),
-		}));
+		deskPositionsAtom.set([lot("BTC/USD"), lot("APE/USD", true)]);
 
 		const view = render(<Count />);
 

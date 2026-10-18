@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import { cn } from "#/lib/utils";
 
 export interface RadialHistoryProps {
@@ -50,6 +51,63 @@ export const RadialHistory = ({
 		return `M${x0},${y0} A${r1},${r1} 0 0 1 ${x1},${y1} L${x2},${y2} A${r0},${r0} 0 0 0 ${x3},${y3} Z`;
 	};
 
+	const sectorIds = Array.from({ length: sectors }, (_, sector) => sector);
+	const backgrounds = sectorIds.map((sector) => (
+		<path
+			key={sector}
+			d={cell(sector, inner, outer)}
+			fill="var(--sunken)"
+			stroke="var(--line)"
+			strokeWidth={0.5}
+		/>
+	));
+	const cells: ReactElement[] = [];
+	let ring = 0;
+
+	for (const row of rows) {
+		let sector = 0;
+
+		for (const value of row) {
+			if (value !== undefined && value > 0.01) {
+				cells.push(
+					<path
+						key={`${ring}:${sector}`}
+						d={cell(sector, inner + ring * step, inner + (ring + 1) * step)}
+						fill="var(--info)"
+						opacity={Math.min(1, value) * (0.25 + (0.75 * (ring + 1)) / n)}
+					/>,
+				);
+			}
+
+			sector += 1;
+		}
+
+		ring += 1;
+	}
+	const marks = labels
+		? sectorIds.map((sector) => {
+				const [x, y] = polar(
+					c,
+					outer + 9,
+					(sector + 0.5) * wedge - Math.PI / 2,
+				);
+				return (
+					<text
+						key={sector}
+						x={x}
+						y={y}
+						fontSize={8}
+						textAnchor="middle"
+						dominantBaseline="middle"
+						fill="var(--f3)"
+						className="font-mono"
+					>
+						{labels(sector)}
+					</text>
+				);
+			})
+		: [];
+
 	return (
 		<svg
 			width={size}
@@ -58,54 +116,18 @@ export const RadialHistory = ({
 			className={cn("shrink-0", className)}
 		>
 			<title>Ring</title>
-			{Array.from({ length: sectors }, (_, s) => (
+			{backgrounds}
+			{cells}
+			{highlight.map((sector) => (
 				<path
-					key={`bg${s}`}
-					d={cell(s, inner, outer)}
-					fill="var(--sunken)"
-					stroke="var(--line)"
-					strokeWidth={0.5}
-				/>
-			))}
-			{rows.map((row, i) =>
-				row.map((v, s) =>
-					v === undefined || v <= 0.01 ? null : (
-						<path
-							key={`${i}-${s}`}
-							d={cell(s, inner + i * step, inner + (i + 1) * step)}
-							fill={sectorHue(s, sectors)}
-							opacity={Math.min(1, v) * (0.25 + (0.75 * (i + 1)) / n)}
-						/>
-					),
-				),
-			)}
-			{highlight.map((s) => (
-				<path
-					key={`h${s}`}
-					d={cell(s, inner, outer + 4)}
+					key={sector}
+					d={cell(sector, inner, outer + 4)}
 					fill="none"
 					stroke="var(--f1)"
 					strokeWidth={1.5}
 				/>
 			))}
-			{labels &&
-				Array.from({ length: sectors }, (_, s) => {
-					const [x, y] = polar(c, outer + 9, (s + 0.5) * wedge - Math.PI / 2);
-					return (
-						<text
-							key={`l${s}`}
-							x={x}
-							y={y}
-							fontSize={8}
-							textAnchor="middle"
-							dominantBaseline="middle"
-							fill="var(--f3)"
-							className="font-mono"
-						>
-							{labels(s)}
-						</text>
-					);
-				})}
+			{marks}
 			{n === 0 && (
 				<text
 					x={c}

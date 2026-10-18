@@ -88,6 +88,8 @@ export interface SymbolProgress {
 	tokens: string[];
 	/* Stored key dirs Step currently matches for this symbol; undefined when unknown. */
 	matched?: string[];
+	/* Next tokens the energy gate refused. */
+	rejected?: string[];
 }
 
 export interface SequiturRuleExport {

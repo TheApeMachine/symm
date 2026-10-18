@@ -109,7 +109,7 @@ func (stage *RedundancyStage) Run() error {
 			continue
 		}
 
-		if measurement.Origin == data.ExcursionOrigin || measurement.Origin == data.PolicyOrigin {
+		if measurement.Origin == "detections" || measurement.Origin == "policy" {
 			continue
 		}
 
@@ -128,7 +128,7 @@ and updates online pairwise sufficient statistics.
 func (stage *RedundancyStage) auditMetricPairs(measurement *data.Value) {
 	values := make(map[string]float64)
 
-	maps.Copy(values, data.Metrics(measurement))
+	maps.Copy(values, floatMetrics(measurement))
 
 	metricKeys := make([]string, 0, len(values))
 	for metricKey := range values {

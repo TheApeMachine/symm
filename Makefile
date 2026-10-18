@@ -71,16 +71,16 @@ TAKER_FEE_PERCENT ?= 0.8
 MIN_MOVE_DURATION ?= 1s
 
 detect:
-	@echo "Labeling spot:trade tape with excursion detections (taker fee $(TAKER_FEE_PERCENT)%)..."
-	go run $(OVERLAY_FLAG) main.go detect $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
+	@echo "Labeling spot:trade tape with excursion detections..."
+	go run $(OVERLAY_FLAG) main.go detect $(CONFIG_FLAG) $(ARGS)
 
 train:
 	@echo "Training action tree with MCTS over detected excursions and sensory tape..."
-	go run $(OVERLAY_FLAG) main.go train $(CONFIG_FLAG) --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
+	go run $(OVERLAY_FLAG) main.go train $(CONFIG_FLAG) $(ARGS)
 
 audit:
-	@echo "Running SYMM sensory & representation health audit (taker fee $(TAKER_FEE_PERCENT)%)..."
-	go run $(OVERLAY_FLAG) main.go audit $(CONFIG_FLAG) --ticks 40000 --taker-fee-percent $(TAKER_FEE_PERCENT) $(ARGS)
+	@echo "Running SYMM sensory & representation health audit..."
+	go run $(OVERLAY_FLAG) main.go audit $(CONFIG_FLAG)
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)

@@ -8,17 +8,18 @@ afterEach(() => {
 	cleanup();
 	signals.training.setState(() => ({}));
 	positionCountAtom.set(0);
-	tabAtom.set("forward");
+	tabAtom.set("positions");
 });
 
 describe("LearningDashboard", () => {
-	it("opens on the position life-cycle view by default", () => {
+	it("opens on the open positions view by default", () => {
 		const { container } = render(<LearningDashboard />);
 
-		expect(container.textContent).toContain("Position life-cycle");
+		expect(tabAtom.get()).toBe("positions");
+		expect(container.textContent).toContain("No open positions");
 		expect(
 			container.querySelector('[data-l="lifecycle-performance"]'),
-		).not.toBeNull();
+		).toBeNull();
 	});
 
 	it("renders all learning dashboard navigation tabs", () => {
@@ -61,7 +62,7 @@ describe("LearningDashboard", () => {
 		});
 
 		expect(tabAtom.get()).toBe("cognitive");
-		expect(container.textContent).toContain("waiting for policy paths");
+		expect(container.textContent).toContain("waiting for policy/current");
 	});
 
 	it("switches to impulse map view when tab is selected", () => {

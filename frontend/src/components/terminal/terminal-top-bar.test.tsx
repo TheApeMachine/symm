@@ -1,9 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+	RingBuffer,
 	signals,
 	tickCountAtom,
-	RingBuffer,
 } from "#/collections/app";
 import { Value } from "#/types/value";
 import { TerminalTopBar } from "./terminal-top-bar";
@@ -14,11 +14,11 @@ describe("TerminalTopBar", () => {
 		signals.training.setState(() => ({}));
 	});
 
-	it("renders both Observations and Ticks readouts", () => {
+	it("renders the tick readout", () => {
 		const html = renderToStaticMarkup(<TerminalTopBar />);
-		expect(html).toContain("Observations");
+		expect(html).not.toContain("Observations");
 		expect(html).toContain("Ticks");
-		expect(html).toContain('data-observations="true"');
+		expect(html).not.toContain('data-observations="true"');
 		expect(html).toContain('data-tick="true"');
 	});
 

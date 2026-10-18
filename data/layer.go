@@ -1,15 +1,16 @@
 package data
 
 import (
+	"bytes"
+	"encoding/binary"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"iter"
 	"math"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
-	"unsafe"
 
 	"github.com/bytedance/sonic"
 	"github.com/bytedance/sonic/ast"
@@ -17,313 +18,160 @@ import (
 )
 
 /*
-Append adds one or more payload layers to Value.
-Returns the Value pointer for method chaining.
+Append stores layers on value as one gob blob, addressed by keys.
+The address is value.Prefix followed by keys, joined with "/".
+Layer reads it back with T set to the same slice type, as in
+Layer[[]Trade](value, "trade") after Append(value, []Trade{...}, "trade").
 */
-func (value *Value) Append(layers ...[]byte) *Value {
-	for _, layer := range layers {
-		value.claim(layer, value.Prefix)
-	}
+func (value *Value) Append(layers any, keys ...string) *Value {
+	var buffer bytes.Buffer
 
-	return value
-}
+	if err := gob.NewEncoder(&buffer).Encode(layers); err != nil {
+		value.Err = errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[data.Append] layer does not encode",
+			err,
+		))
 
-/*
-AppendJSON adds a JSON payload layer to Value. The layer owns a copy of buf,
-so it never aliases an ingress or ring buffer that gets reused.
-*/
-func (value *Value) AppendJSON(buf []byte, prefix string) *Value {
-	if len(buf) == 0 {
 		return value
 	}
 
-	layer := make([]byte, len(buf))
-	copy(layer, buf)
-
-	value.claim(layer, prefix)
+	value.appendLayer(buffer.Bytes(), strings.Join(append([]string{value.Prefix}, keys...), "/"))
 
 	return value
 }
 
 /*
-AppendVector stores a typed slice as raw binary bytes on value itself (in place)
-and indexes its element keys.
+Lookup finds a layer by keyword.
 */
-func AppendVector[T any](value *Value, vector []T, keys ...string) *Value {
-	if value == nil {
-		return nil
+func (value *Value) Lookup(projector any, keys ...string) {
+	for i, prefix := range value.Index {
+		for _, key := range keys {
+			if strings.Contains(prefix, key) {
+				decoder := gob.NewDecoder(
+					bytes.NewReader(value.Layers[i]),
+				)
+
+				if err := decoder.Decode(projector); err != nil {
+					value.Err = errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"[data.Lookup] "+key+" does not decode",
+						err,
+					))
+
+					return
+				}
+			}
+		}
 	}
-
-	value.claim(vectorBytes(vector), strings.Join(append(
-		[]string{value.Prefix}, keys...), "/",
-	))
-
-	return value
 }
 
 /*
-Signal is one signal vector layer of a tick: which source wrote it, for which
-symbol, the label of every value, and any trailing "key:value" tags.
+Layer yields each gob layer whose index contains prefix as a whole path
+segment. T is the type Append stored. A blob that does not decode is
+recorded on value.Err and the sequence stops. No prefix yields every layer.
 */
-type Signal struct {
-	Source string
-	Symbol string
-	Labels []string
-	Values []float64
-	Tags   []string
-}
-
-/*
-Metric returns the value labelled label, or ErrMissing.
-*/
-func (signal Signal) Metric(label string) (float64, error) {
-	if idx := slices.Index(signal.Labels, label); idx >= 0 {
-		return signal.Values[idx], nil
-	}
-
-	return 0, errnie.Err(errnie.NotFound, fmt.Sprintf(
-		"data: %s signal for %s has no %s", signal.Source, signal.Symbol, label,
-	), ErrMissing)
-}
-
-/*
-Signals yields every completed signal layer of value (IsSignalIndex), in layer
-order, including layers claimed into reserved slots. A nil reserved slot is
-still being written and is skipped. A signal layer that does not parse (no
-source or symbol, a byte length that is not whole float64s, more values than
-labels) is yielded as an error, never skipped.
-*/
-func Signals(value *Value) iter.Seq2[Signal, error] {
-	return func(yield func(Signal, error) bool) {
+func Layer[T any](value *Value, prefixes ...string) iter.Seq2[string, T] {
+	return func(yield func(string, T) bool) {
 		if value == nil {
 			return
 		}
 
 		layers, index := value.filled()
+		matched := false
 
 		for i, layer := range layers {
-			if !IsSignalIndex(index[i]) {
+			if len(prefixes) > 0 && !slices.ContainsFunc(prefixes, func(prefix string) bool {
+				return segmentContains(index[i], prefix)
+			}) {
 				continue
 			}
 
-			signal, err := ParseSignal(index[i], layer)
+			var out T
 
-			if err != nil {
-				err = errnie.Err(errnie.UnprocessableContent, "data: signal layer "+index[i], err)
+			if err := gob.NewDecoder(bytes.NewReader(layer)).Decode(&out); err != nil {
+				packed, ok := packedFloat64[T](layer)
+
+				if !ok {
+					value.Err = errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"[data.Layer] "+index[i]+" does not decode",
+						err,
+					))
+
+					return
+				}
+
+				out = packed
 			}
 
-			if !yield(signal, err) {
+			matched = true
+
+			if !yield(index[i], out) {
 				return
 			}
+		}
+
+		if len(prefixes) > 0 && !matched && value.Err == nil {
+			value.Err = errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"[data.Layer] "+strings.Join(prefixes, "/")+" is not on "+value.Prefix,
+				nil,
+			))
 		}
 	}
 }
 
 /*
-ParseSignal reads one layer written under SignalIndex.
+packedFloat64 reads a little-endian float64 vector. Stored ticks and
+detections keep that layout. Append stores the same vector as gob.
 */
-func ParseSignal(index string, layer []byte) (Signal, error) {
-	var signal Signal
-
-	rest, ok := strings.CutPrefix(index, signalNamespace+"/")
-
-	if !ok {
-		return signal, errnie.Err(errnie.Validation, "not in the "+signalNamespace+"/ namespace", nil)
-	}
-
-	// The symbol tag is last by contract: cut at its last occurrence, so a
-	// label or tag containing "/symbol:" stays a label or tag.
-	at := strings.LastIndex(rest, "/"+symbolTag)
-
-	if at < 0 || at+len("/"+symbolTag) == len(rest) {
-		return signal, errnie.Err(errnie.Validation, "no "+symbolTag+" tag", nil)
-	}
-
-	rest, symbol := rest[:at], rest[at+len("/"+symbolTag):]
-
-	parts := strings.Split(rest, "/")
-
-	if parts[0] == "" {
-		return signal, errnie.Err(errnie.Validation, "no source", nil)
-	}
-
-	signal.Source, signal.Symbol, parts = parts[0], symbol, parts[1:]
-
-	if len(layer)%8 != 0 {
-		return signal, errnie.Err(errnie.Validation, fmt.Sprintf("%d bytes is not whole float64s", len(layer)), nil)
-	}
-
-	count := len(layer) / 8
-
-	if count > len(parts) {
-		return signal, errnie.Err(errnie.Validation, fmt.Sprintf("%d values for %d labels", count, len(parts)), nil)
-	}
-
-	if count > 0 {
-		signal.Values = slices.Clone(unsafe.Slice((*float64)(unsafe.Pointer(&layer[0])), count))
-	}
-
-	signal.Labels = parts[:count]
-	signal.Tags = parts[count:]
-
-	return signal, nil
-}
-
-func vectorBytes[T any](vector []T) []byte {
-	if len(vector) == 0 {
-		return []byte{}
-	}
-
+func packedFloat64[T any](layer []byte) (T, bool) {
 	var zero T
 
-	return append([]byte(nil), unsafe.Slice((*byte)(
-		unsafe.Pointer(&vector[0]),
-	), len(vector)*int(unsafe.Sizeof(zero)))...)
+	if _, ok := any(zero).([]float64); !ok || len(layer) == 0 || len(layer)%8 != 0 {
+		return zero, false
+	}
+
+	floats := make([]float64, len(layer)/8)
+
+	for i := range floats {
+		floats[i] = math.Float64frombits(binary.LittleEndian.Uint64(layer[i*8 : i*8+8]))
+	}
+
+	packed, ok := any(floats).(T)
+
+	return packed, ok
 }
 
 /*
-Layer retrieves and unmarshals the payload at the specified layer index into *T.
-If idx is omitted, it defaults to Layer 0.
-If T is []byte, it returns the raw layer slice directly with zero unmarshaling.
+segmentContains reports whether index holds key as a whole path segment,
+so book/BTC/USD does not match book/BTC/USDT.
 */
-func Layer[T any](value *Value, idx ...int) *T {
-	i := 0
-
-	if len(idx) > 0 {
-		i = idx[0]
+func segmentContains(index, key string) bool {
+	if key == "" || index == "" {
+		return false
 	}
 
-	if value == nil || i < 0 || i >= value.visible() {
-		return nil
-	}
+	from := 0
 
-	layer := value.Layers[i]
+	for {
+		at := strings.Index(index[from:], key)
 
-	if len(layer) == 0 {
-		return nil
-	}
-
-	// Zero-copy shortcut if caller requests raw []byte
-	if raw, ok := any(layer).(*T); ok {
-		return raw
-	}
-
-	if raw, ok := any(layer).(T); ok {
-		return &raw
-	}
-
-	var target T
-
-	if err := sonic.Unmarshal(layer, &target); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			fmt.Sprintf("data: layer %d does not decode into %T", i, target),
-			err,
-		))
-
-		return nil
-	}
-
-	return &target
-}
-
-/*
-Indexed returns the layers, their source, and their indexed metrics.
-*/
-func Indexed[T any](v *Value, keys ...string) iter.Seq2[string, T] {
-	return func(yield func(string, T) bool) {
-		if v == nil {
-			return
+		if at < 0 {
+			return false
 		}
-		for i, layer := range v.Layers[:v.visible()] {
-			if i >= len(v.Index) || len(v.Index[i]) == 0 || (len(keys) > 0 && !slices.ContainsFunc(keys, func(k string) bool {
-				return strings.Contains(v.Index[i], k)
-			})) {
-				continue
-			}
 
-			var out T
-			if raw, ok := any(layer).(T); ok {
-				out = raw
-			} else if _, ok := any(out).([]float64); ok && len(layer) >= 8 {
-				out = any(unsafe.Slice((*float64)(unsafe.Pointer(&layer[0])), len(layer)/8)).(T)
-			} else {
-				anyKeys := make([]any, len(keys))
-				for ki, k := range keys {
-					anyKeys[ki] = k
-				}
-				val, err := AttributeOk[T](layer, anyKeys...)
+		at += from
+		end := at + len(key)
+		before := at == 0 || index[at-1] == '/'
+		after := end == len(index) || index[end] == '/' || strings.HasSuffix(key, "/")
 
-				if err != nil {
-					if !errors.Is(err, ErrMissing) {
-						errnie.Error(err)
-					}
-
-					continue
-				}
-
-				if reflect.ValueOf(val).IsZero() {
-					continue
-				}
-
-				out = val
-			}
-
-			if !yield(v.Index[i], out) {
-				return
-			}
+		if before && after {
+			return true
 		}
-	}
-}
 
-/*
-Layers returns the layers for a given key match.
-*/
-func Layers[T any](v *Value, keys ...string) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		if v == nil {
-			return
-		}
-		for i, layer := range v.Layers[:v.visible()] {
-			if len(keys) > 0 && (i >= len(v.Index) || len(v.Index[i]) == 0 || !slices.ContainsFunc(keys, func(k string) bool {
-				return strings.Contains(v.Index[i], k)
-			})) {
-				continue
-			}
-
-			var out T
-
-			if raw, ok := any(layer).(T); ok {
-				out = raw
-			} else if _, ok := any(out).([]float64); ok && len(layer) >= 8 {
-				floats := unsafe.Slice((*float64)(unsafe.Pointer(&layer[0])), len(layer)/8)
-				out = any(floats).(T)
-			} else {
-				anyKeys := make([]any, len(keys))
-				for ki, k := range keys {
-					anyKeys[ki] = k
-				}
-				val, err := AttributeOk[T](layer, anyKeys...)
-
-				if err != nil {
-					if !errors.Is(err, ErrMissing) {
-						errnie.Error(err)
-					}
-
-					continue
-				}
-
-				if reflect.ValueOf(val).IsZero() {
-					continue
-				}
-
-				out = val
-			}
-
-			if !yield(out) {
-				return
-			}
-		}
+		from = at + 1
 	}
 }
 
@@ -568,55 +416,4 @@ func slicePeek[T any](value any) (T, bool) {
 	}
 
 	return zero, false
-}
-
-/*
-Metrics maps the labels of value's own vector layers to their floats. Signal
-layers (per symbol, read with Signals) and JSON layers are not vectors of
-the Value and are left out.
-*/
-func Metrics(v *Value) map[string]float64 {
-	out := make(map[string]float64)
-	if v == nil {
-		return out
-	}
-
-	for i, layer := range v.Layers[:v.visible()] {
-		if len(layer) < 8 || i >= len(v.Index) {
-			continue
-		}
-
-		idx := v.Index[i]
-
-		// Signal layers are per symbol; merging them into one map would mix
-		// symbols. They read through Signals.
-		if IsSignalIndex(idx) {
-			continue
-		}
-
-		floats := unsafe.Slice((*float64)(unsafe.Pointer(&layer[0])), len(layer)/8)
-
-		// A vector layer is indexed "<key>.bin/<labels...>" (AppendVector on
-		// this or another Value). Anything else (JSON layers such as
-		// price/<sym>, book/<sym>) is not a labelled vector.
-		var afterPrefix string
-		if _, after, ok := strings.Cut(idx, ".bin/"); ok {
-			afterPrefix = after
-		} else if v.Prefix != "" && strings.HasPrefix(idx, v.Prefix+"/") {
-			afterPrefix = strings.TrimPrefix(idx, v.Prefix+"/")
-		}
-
-		if afterPrefix == "" {
-			continue
-		}
-
-		labels := strings.Split(afterPrefix, "/")
-		for k, f := range floats {
-			if k < len(labels) {
-				out[labels[k]] = f
-			}
-		}
-	}
-
-	return out
 }

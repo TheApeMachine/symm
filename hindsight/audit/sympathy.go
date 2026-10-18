@@ -106,7 +106,7 @@ func (stage *SympathyStage) recordMeasurement(measurement *data.Value) {
 	// Timestamp is the tick's local receive time in nanoseconds.
 	venueTime := int64(measurement.Timestamp)
 
-	for label, val := range data.Metrics(measurement) {
+	for label, val := range floatMetrics(measurement) {
 		streamKey := measurement.Scope + ":" + measurement.Origin + ":" + label
 		stage.streams[streamKey] = append(stage.streams[streamKey], temporal.Price{
 			At:    venueTime,

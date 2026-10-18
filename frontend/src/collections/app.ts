@@ -4,6 +4,7 @@ import { RingBuffer } from "./ring";
 export { RingBuffer };
 
 import { Value } from "#/types/value";
+
 export type { Metric, NamedNumber, Tag } from "#/types/value";
 export { Value };
 
@@ -91,9 +92,15 @@ export const positionCountAtom = createAtom<number>(0);
 export const signalSourcesAtom = createAtom<string[]>(DEFAULT_KERNELS);
 export const kernelDetailAtom = createAtom<string>("cvd");
 
-import type { DecisionT, HoldingT, PositionT } from "#/collections/types";
+import type {
+	DecisionT,
+	DeskPosition,
+	HoldingT,
+	PositionT,
+} from "#/collections/types";
 
 export const positionsAtom = createAtom<PositionT[]>([]);
+export const deskPositionsAtom = createAtom<DeskPosition[]>([]);
 // Round trips closed this session, each with the triggers of its sells.
 export const closedPositionsAtom = createAtom<HoldingT[]>([]);
 export const decisionsAtom = createAtom<DecisionT[]>([]);

@@ -26,8 +26,6 @@ func (routes *Routes) Register() {
 	})
 
 	routes.hub.app.Get("/ws", routes.hub.wsHandler(0))
-	routes.hub.app.Get("/ws/0", routes.hub.wsHandler(0))
-	routes.hub.app.Get("/ws/1", routes.hub.wsHandler(1))
 
 	routes.hub.app.Post("/workbench/query", func(reqCtx fiber.Ctx) error {
 		targetURL := "http://127.0.0.1:8081/workbench/query"

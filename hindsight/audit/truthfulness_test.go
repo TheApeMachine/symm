@@ -33,13 +33,13 @@ func TestTruthfulnessStage(t *testing.T) {
 				val.Timestamp = uint64(now.UnixNano())
 				val.Tick = uint64(idx + 1)
 
-				data.AppendVector(val, []float64{99.0}, "best_price:bid")
-				data.AppendVector(val, []float64{101.0}, "best_price:ask")
-				data.AppendVector(val, []float64{0.02}, "relative_spread")
-				data.AppendVector(val, []float64{0.001}, "fee_rate")
-				data.AppendVector(val, []float64{0.022}, "friction_hurdle")
-				data.AppendVector(val, []float64{1000.0}, "gross_notional")
-				data.AppendVector(val, []float64{0.5}, "signed_net_fraction")
+				val.Append([]float64{99.0}, "best_price:bid")
+				val.Append([]float64{101.0}, "best_price:ask")
+				val.Append([]float64{0.02}, "relative_spread")
+				val.Append([]float64{0.001}, "fee_rate")
+				val.Append([]float64{0.022}, "friction_hurdle")
+				val.Append([]float64{1000.0}, "gross_notional")
+				val.Append([]float64{0.5}, "signed_net_fraction")
 
 				measurements = append(measurements, val)
 			}
@@ -51,8 +51,8 @@ func TestTruthfulnessStage(t *testing.T) {
 
 		Convey("When auditing crossed market order book quotes (bid > ask)", func() {
 			val := data.NewValue("test", "tick", "BTC/USD")
-			data.AppendVector(val, []float64{102.0}, "best_price:bid")
-			data.AppendVector(val, []float64{100.0}, "best_price:ask")
+			val.Append([]float64{102.0}, "best_price:bid")
+			val.Append([]float64{100.0}, "best_price:ask")
 
 			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
@@ -69,9 +69,9 @@ func TestTruthfulnessStage(t *testing.T) {
 
 		Convey("When auditing relative spread identity breaches", func() {
 			val := data.NewValue("test", "tick", "BTC/USD")
-			data.AppendVector(val, []float64{99.0}, "best_price:bid")
-			data.AppendVector(val, []float64{101.0}, "best_price:ask")
-			data.AppendVector(val, []float64{0.05}, "relative_spread")
+			val.Append([]float64{99.0}, "best_price:bid")
+			val.Append([]float64{101.0}, "best_price:ask")
+			val.Append([]float64{0.05}, "relative_spread")
 
 			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
@@ -87,8 +87,8 @@ func TestTruthfulnessStage(t *testing.T) {
 
 		Convey("When auditing CVD signed_net_fraction out of bounds", func() {
 			val := data.NewValue("cvd", "tick", "BTC/USD")
-			data.AppendVector(val, []float64{50000.0}, "gross_notional")
-			data.AppendVector(val, []float64{1.5}, "signed_net_fraction")
+			val.Append([]float64{50000.0}, "gross_notional")
+			val.Append([]float64{1.5}, "signed_net_fraction")
 
 			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
@@ -104,8 +104,8 @@ func TestTruthfulnessStage(t *testing.T) {
 
 		Convey("When auditing trade anomalies (non-positive price or quantity)", func() {
 			val := data.NewValue("spot", "trade", "BTC/USD")
-			data.AppendVector(val, []float64{-10.0}, "price")
-			data.AppendVector(val, []float64{1.0}, "qty")
+			val.Append([]float64{-10.0}, "price")
+			val.Append([]float64{1.0}, "qty")
 
 			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)
@@ -121,7 +121,7 @@ func TestTruthfulnessStage(t *testing.T) {
 
 		Convey("When auditing non-finite metric values (NaN or Inf)", func() {
 			val := data.NewValue("test", "tick", "BTC/USD")
-			data.AppendVector(val, []float64{math.NaN()}, "midpoint_log_return")
+			val.Append([]float64{math.NaN()}, "midpoint_log_return")
 
 			violations := feed(stage, val)
 			So(len(violations), ShouldBeGreaterThanOrEqualTo, 1)

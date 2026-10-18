@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
@@ -122,7 +123,7 @@ Step processes every trade entry of the tick's frame; per-symbol state is keyed
 by the entry's symbol and each entry writes its own (reserved) layer.
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	trades, err := data.AttributeOk[[]kraken.TradeData](value.Layers[0], "data")
+	trades, err := broker.Trades(value)
 
 	if err != nil {
 		errnie.Error(err)
@@ -292,14 +293,15 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		histDistance, histPercentile = focal.historyPath([2]float64{bZScore, mZScore})
 	}
 
-	return data.AppendSignalVector(value, signal.Name(), trade.Symbol, []float64{
+	value.Append([]float64{
 		breadth,
 		sameDirPeer,
 		oppDirPeer,
 		breadthVelocity,
 		histDistance,
 		histPercentile,
-	}, signal.keys...)
+	}, append(append([]string{"signal", signal.Name()}, signal.keys...), "symbol:"+trade.Symbol)...)
+	return value
 }
 
 func (focal *focalState) historyPath(target [2]float64) (minDist float64, percentile float64) {

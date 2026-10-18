@@ -1,13 +1,10 @@
 package broker
 
 import (
-	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -16,80 +13,57 @@ import (
 
 type Position struct {
 	mu          sync.RWMutex
-	id          string
-	symbol      string
-	openedAt    time.Time
-	closedAt    *time.Time
-	events      []LifeEvent
-	entryOrders []*spot.OrderRequest
-	exitOrders  []*spot.OrderRequest
-	fills       []*kraken.ExecutionData
-	qty         *decimal.Decimal
-	entryPrice  *decimal.Decimal
-	exitPrice   *decimal.Decimal
-	entryFee    *decimal.Decimal
-	exitFee     *decimal.Decimal
-	mark        *decimal.Decimal
-	outcome     *LifeOutcome
+	ID          string                  `json:"id"`
+	Symbol      string                  `json:"symbol"`
+	OpenedAt    time.Time               `json:"opened_at"`
+	ClosedAt    *time.Time              `json:"closed_at"`
+	EntryOrders []*spot.OrderRequest    `json:"entry_orders,omitempty"`
+	ExitOrders  []*spot.OrderRequest    `json:"exit_orders,omitempty"`
+	Fills       []*kraken.ExecutionData `json:"fills,omitempty"`
+	Qty         *decimal.Decimal        `json:"qty,omitempty"`
+	EntryPrice  *decimal.Decimal        `json:"entry_price,omitempty"`
+	ExitPrice   *decimal.Decimal        `json:"exit_price,omitempty"`
+	EntryFee    *decimal.Decimal        `json:"entry_fee,omitempty"`
+	ExitFee     *decimal.Decimal        `json:"exit_fee,omitempty"`
+	Mark        *decimal.Decimal        `json:"mark,omitempty"`
+	ExitVWAP    *decimal.Decimal        `json:"exit_vwap,omitempty"`
+	ExitRoom    *float64                `json:"exit_room,omitempty"`
+	Return      *float64                `json:"return,omitempty"`
+	HoldNs      int64                   `json:"hold_ns,omitempty"`
+	Virtual     bool                    `json:"virtual,omitempty"`
 }
 
 func NewPosition() *Position {
 	return &Position{
-		id:          uuid.NewString(),
-		events:      make([]LifeEvent, 0),
-		entryOrders: make([]*spot.OrderRequest, 0),
-		exitOrders:  make([]*spot.OrderRequest, 0),
-		fills:       make([]*kraken.ExecutionData, 0),
-	}
-}
-
-/*
-RestorePosition recreates a historically closed position loaded from Iceberg.
-*/
-func RestorePosition(
-	id string,
-	symbol string,
-	openedAt time.Time,
-	closedAt *time.Time,
-	events []LifeEvent,
-	outcome *LifeOutcome,
-) *Position {
-	return &Position{
-		id:          id,
-		symbol:      symbol,
-		openedAt:    openedAt,
-		closedAt:    closedAt,
-		events:      events,
-		outcome:     outcome,
-		entryOrders: make([]*spot.OrderRequest, 0),
-		exitOrders:  make([]*spot.OrderRequest, 0),
-		fills:       make([]*kraken.ExecutionData, 0),
+		ID:          uuid.NewString(),
+		EntryOrders: make([]*spot.OrderRequest, 0),
+		ExitOrders:  make([]*spot.OrderRequest, 0),
+		Fills:       make([]*kraken.ExecutionData, 0),
 	}
 }
 
 /*
 Enter records a buy of qty and returns the order to submit.
 */
-func (position *Position) Enter(symbol string, qty *decimal.Decimal, path ...string) *spot.OrderRequest {
+func (position *Position) Enter(
+	symbol string, qty *decimal.Decimal, path ...string,
+) *spot.OrderRequest {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
-	position.qty = qty
-	position.symbol = symbol
+	position.Qty = qty
+	position.Symbol = symbol
 
-	if position.openedAt.IsZero() {
-		position.openedAt = time.Now().UTC()
+	if position.OpenedAt.IsZero() {
+		position.OpenedAt = time.Now().UTC()
 	}
 
 	if len(path) > 0 && path[0] != "" {
-		position.events = append(position.events, LifeEvent{
-			At:     position.openedAt.Format(time.RFC3339),
-			Kind:   "entry_match",
-			Detail: fmt.Sprintf("prefix match %s", path[0]),
-			Fields: map[string]any{
-				"path":   path[0],
-				"symbol": symbol,
-			},
+		position.EntryOrders = append(position.EntryOrders, &spot.OrderRequest{
+			ClOrdId:   position.ID,
+			OrderType: "market",
+			Type:      "buy",
+			Volume:    qty.String(),
 		})
 	}
 
@@ -102,55 +76,8 @@ func (position *Position) Enter(symbol string, qty *decimal.Decimal, path ...str
 		Volume:    qty.String(),
 	}
 
-	position.entryOrders = append(position.entryOrders, order)
-
-	position.events = append(position.events, LifeEvent{
-		At:     position.openedAt.Format(time.RFC3339),
-		Kind:   "entry_order",
-		Detail: fmt.Sprintf("order buy %s %s", qty.String(), symbol),
-		Fields: map[string]any{
-			"cl_ord_id": clOrdId,
-			"symbol":    symbol,
-			"volume":    qty.String(),
-		},
-	})
-
+	position.EntryOrders = append(position.EntryOrders, order)
 	return order
-}
-
-/*
-SetOutcome records the close Price.CloseOut scored. The ledger does not
-compute a profit of its own.
-*/
-func (position *Position) SetOutcome(outcome *LifeOutcome) {
-	if position == nil || outcome == nil {
-		return
-	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
-	position.outcome = outcome
-}
-
-/*
-SeedEntry records the price the book asked when the order was sent. A fill
-with a positive price replaces it. A fill that names no price leaves it.
-*/
-func (position *Position) SeedEntry(price, fee *decimal.Decimal) {
-	if position == nil {
-		return
-	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if (position.entryPrice == nil || position.entryPrice.Sign() <= 0) && price != nil && price.Sign() > 0 {
-		position.entryPrice = price.Copy()
-	}
-
-	if position.entryFee == nil && fee != nil && fee.Sign() > 0 {
-		position.entryFee = fee.Copy()
-	}
 }
 
 /*
@@ -162,11 +89,11 @@ func (position *Position) Exit(symbol string) *spot.OrderRequest {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
-	if position.closedLocked() || len(position.exitOrders) > 0 {
+	if position.ClosedAt != nil && position.ClosedAt.IsZero() || len(position.ExitOrders) > 0 {
 		return nil
 	}
 
-	volume := position.qty.String()
+	volume := position.Qty.String()
 	clOrdId := uuid.NewString()
 
 	order := &spot.OrderRequest{
@@ -176,172 +103,38 @@ func (position *Position) Exit(symbol string) *spot.OrderRequest {
 		Volume:    volume,
 	}
 
-	position.exitOrders = append(position.exitOrders, order)
-
-	position.events = append(position.events, LifeEvent{
-		At:     time.Now().UTC().Format(time.RFC3339),
-		Kind:   "exit_order",
-		Detail: fmt.Sprintf("order sell %s %s", volume, symbol),
-		Fields: map[string]any{
-			"cl_ord_id": clOrdId,
-			"symbol":    symbol,
-			"volume":    volume,
-		},
-	})
-
+	position.ExitOrders = append(position.ExitOrders, order)
 	return order
 }
 
-/*
-abandonExit drops the sell Exit just recorded when the venue did not take it,
-so a later exit can submit again.
-*/
-func (position *Position) abandonExit() {
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if len(position.exitOrders) > 0 {
-		position.exitOrders = position.exitOrders[:len(position.exitOrders)-1]
-	}
-
-	if n := len(position.events); n > 0 && position.events[n-1].Kind == "exit_order" {
-		position.events = position.events[:n-1]
-	}
-}
-
-func (position *Position) Qty() *decimal.Decimal {
+func (position *Position) Lifecycle() *Position {
 	position.mu.RLock()
 	defer position.mu.RUnlock()
 
-	return position.qty
-}
-
-func (position *Position) EntryPrice() *decimal.Decimal {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return position.entryPrice
-}
-
-func (position *Position) ExitPrice() *decimal.Decimal {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return position.exitPrice
-}
-
-func (position *Position) closedLocked() bool {
-	return position.qty == nil || position.qty.Sign() <= 0
-}
-
-func (position *Position) Closed() bool {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return position.closedLocked()
-}
-
-func (position *Position) Lifecycle() Lifecycle {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	status := "open"
-
-	if position.closedLocked() {
-		status = "closed"
-	}
-
-	openedAt := ""
-
-	if !position.openedAt.IsZero() {
-		openedAt = position.openedAt.Format(time.RFC3339)
-	}
-
-	closedAt := ""
-
-	if position.closedAt != nil {
-		closedAt = position.closedAt.Format(time.RFC3339)
-	}
-
-	lifecycle := Lifecycle{
-		Id:       position.id,
-		Symbol:   position.symbol,
-		Status:   status,
-		OpenedAt: openedAt,
-		ClosedAt: closedAt,
-		Events:   position.events,
-	}
-
-	if position.outcome != nil {
-		lifecycle.Outcome = position.outcome
-		return lifecycle
-	}
-
-	if position.closedLocked() && len(position.fills) > 0 {
-		outcome := &LifeOutcome{
-			ShadowDefined: false,
-			Triggers:      []string{},
-		}
-
-		for _, fill := range position.fills {
+	if position.ClosedAt != nil && position.ClosedAt.IsZero() && len(position.Fills) > 0 {
+		for _, fill := range position.Fills {
 			if fill.FeeUsdEquiv != nil {
-				outcome.VenueFees += fill.FeeUsdEquiv.Float64()
+				position.ExitFee = position.ExitFee.Add(fill.FeeUsdEquiv)
 			}
 		}
 
-		if position.closedAt != nil && !position.openedAt.IsZero() {
-			outcome.HoldNs = position.closedAt.Sub(position.openedAt).Nanoseconds()
+		if position.ClosedAt != nil && !position.OpenedAt.IsZero() {
+			position.HoldNs = position.ClosedAt.Sub(position.OpenedAt).Nanoseconds()
 		}
 
-		if position.closedAt == nil && !position.openedAt.IsZero() {
-			outcome.HoldNs = time.Since(position.openedAt).Nanoseconds()
+		if position.ClosedAt == nil && !position.OpenedAt.IsZero() {
+			position.HoldNs = time.Since(position.OpenedAt).Nanoseconds()
 		}
-
-		lifecycle.Outcome = outcome
 	}
 
-	return lifecycle
-}
-
-func (position *Position) ID() string {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return position.id
-}
-
-func (position *Position) Symbol() string {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return position.symbol
-}
-
-func (position *Position) ClosedAt() *time.Time {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return position.closedAt
-}
-
-func (position *Position) Events() []LifeEvent {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return slices.Clone(position.events)
+	return position
 }
 
 func (position *Position) Apply(execution kraken.ExecutionData) {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
-	position.fills = append(position.fills, &execution)
-
-	detail := fmt.Sprintf("%s fill", execution.Side)
-
-	if execution.LastQty != nil && execution.LastPrice != nil {
-		detail = fmt.Sprintf("%s fill %s @ %s", execution.Side, execution.LastQty.String(), execution.LastPrice.String())
-	}
+	position.Fills = append(position.Fills, &execution)
 
 	fields := map[string]any{
 		"side":      execution.Side,
@@ -368,18 +161,9 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 		fields["avg_price"] = execution.AvgPrice.String()
 	}
 
-	event := LifeEvent{
-		At:     time.Now().UTC().Format(time.RFC3339),
-		Kind:   "fill",
-		Detail: detail,
-		Fields: fields,
-	}
-
 	if !execution.Timestamp.IsZero() {
-		event.VenueAt = execution.Timestamp.UTC().Format(time.RFC3339)
+		fields["venue_at"] = execution.Timestamp.UTC().Format(time.RFC3339)
 	}
-
-	position.events = append(position.events, event)
 
 	if execution.LastQty == nil || execution.LastQty.Sign() <= 0 {
 		return
@@ -389,32 +173,32 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 
 	if side == "buy" {
 		if execution.CumQty != nil && execution.CumQty.Sign() > 0 {
-			position.qty = execution.CumQty
+			position.Qty = execution.CumQty
 		}
 
 		if execution.CumQty == nil || execution.CumQty.Sign() <= 0 {
-			if position.qty == nil {
-				position.qty = execution.LastQty
+			if position.Qty == nil {
+				position.Qty = execution.LastQty
 			}
 
-			if position.qty != nil && position.qty != execution.LastQty {
-				position.qty = position.qty.Add(execution.LastQty)
+			if position.Qty != nil && position.Qty != execution.LastQty {
+				position.Qty = position.Qty.Add(execution.LastQty)
 			}
 		}
 
 		if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
-			position.entryPrice = execution.AvgPrice
+			position.EntryPrice = execution.AvgPrice
 		} else if execution.LastPrice != nil && execution.LastPrice.Sign() > 0 {
-			position.entryPrice = execution.LastPrice
+			position.EntryPrice = execution.LastPrice
 		}
 
 		if execution.FeeUsdEquiv != nil {
-			if position.entryFee == nil {
-				position.entryFee = execution.FeeUsdEquiv
+			if position.EntryFee == nil {
+				position.EntryFee = execution.FeeUsdEquiv
 			}
 
-			if position.entryFee != nil && position.entryFee != execution.FeeUsdEquiv {
-				position.entryFee = position.entryFee.Add(execution.FeeUsdEquiv)
+			if position.EntryFee != nil && position.EntryFee != execution.FeeUsdEquiv {
+				position.EntryFee = position.EntryFee.Add(execution.FeeUsdEquiv)
 			}
 		}
 
@@ -423,93 +207,34 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 
 	if side == "sell" {
 		if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
-			position.exitPrice = execution.AvgPrice
+			position.ExitPrice = execution.AvgPrice
 		}
 
 		if (execution.AvgPrice == nil || execution.AvgPrice.Sign() <= 0) && execution.LastPrice != nil {
-			position.exitPrice = execution.LastPrice
+			position.ExitPrice = execution.LastPrice
 		}
 
 		if execution.FeeUsdEquiv != nil {
-			if position.exitFee == nil {
-				position.exitFee = execution.FeeUsdEquiv
+			if position.ExitFee == nil {
+				position.ExitFee = execution.FeeUsdEquiv
 			}
 
-			if position.exitFee != nil && position.exitFee != execution.FeeUsdEquiv {
-				position.exitFee = position.exitFee.Add(execution.FeeUsdEquiv)
+			if position.ExitFee != nil && position.ExitFee != execution.FeeUsdEquiv {
+				position.ExitFee = position.ExitFee.Add(execution.FeeUsdEquiv)
 			}
 		}
 
-		if position.qty != nil {
-			position.qty = position.qty.Sub(execution.LastQty)
+		if position.Qty != nil {
+			position.Qty = position.Qty.Sub(execution.LastQty)
 
-			if position.qty.Sign() <= 0 {
-				position.qty = decimal.NewFromFloat64(0)
+			if position.Qty.Sign() <= 0 {
+				position.Qty = decimal.NewFromFloat64(0)
 			}
 		}
 	}
 
-	if position.closedLocked() && position.closedAt == nil {
+	if position.ClosedAt != nil && position.ClosedAt.IsZero() {
 		now := time.Now().UTC()
-		position.closedAt = &now
+		position.ClosedAt = &now
 	}
-}
-
-/*
-OpenedAt returns when the position's first entry was recorded (zero if never).
-*/
-func (position *Position) OpenedAt() time.Time {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return position.openedAt
-}
-
-/*
-EntryFee returns the venue fee paid on entry fills so far, nil before any.
-*/
-func (position *Position) EntryFee() *decimal.Decimal {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return position.entryFee
-}
-
-/*
-Exiting reports whether a sell for the position has been submitted.
-*/
-func (position *Position) Exiting() bool {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return len(position.exitOrders) > 0
-}
-
-/*
-MarshalJSON exposes the position's lifecycle and economic state, so a tick
-Value can carry it as a layer.
-*/
-func (position *Position) MarshalJSON() ([]byte, error) {
-	lifecycle := position.Lifecycle()
-
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return sonic.Marshal(struct {
-		Lifecycle
-		Qty        *decimal.Decimal `json:"qty,omitempty"`
-		EntryPrice *decimal.Decimal `json:"entry_price,omitempty"`
-		ExitPrice  *decimal.Decimal `json:"exit_price,omitempty"`
-		EntryFee   *decimal.Decimal `json:"entry_fee,omitempty"`
-		ExitFee    *decimal.Decimal `json:"exit_fee,omitempty"`
-		Mark       *decimal.Decimal `json:"mark,omitempty"`
-	}{
-		Lifecycle:  lifecycle,
-		Qty:        position.qty,
-		EntryPrice: position.entryPrice,
-		ExitPrice:  position.exitPrice,
-		EntryFee:   position.entryFee,
-		ExitFee:    position.exitFee,
-		Mark:       position.mark,
-	})
 }

@@ -6,12 +6,12 @@ import (
 	"slices"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type Prior struct {
-	Signal     data.Signal
+	Signal     broker.Sample
 	Samples    int64
 	Prediction float64
 	Energy     float64
@@ -54,9 +54,13 @@ type Region struct {
 Observe applies every signal layer for symbol on this tick, then returns the
 lit regions at or above the brightness midpoint.
 */
-func (grid *Grid) Observe(symbol string, signals []data.Signal) []*Region {
-	if grid.Error() != nil || symbol == "" {
-		return nil
+func (grid *Grid) Observe(symbol string, signals []broker.Sample) ([]*Region, error) {
+	if symbol == "" {
+		return nil, nil
+	}
+
+	if err := grid.Error(); err != nil {
+		return nil, err
 	}
 
 	var byKey [RegionCount]*Region
@@ -65,6 +69,10 @@ func (grid *Grid) Observe(symbol string, signals []data.Signal) []*Region {
 	for _, signal := range signals {
 		if signal.Symbol != symbol {
 			continue
+		}
+
+		if err := pinned(symbol, signal); err != nil {
+			return nil, err
 		}
 
 		if grid.Priors[signal.Source] == nil {
@@ -100,16 +108,7 @@ func (grid *Grid) Observe(symbol string, signals []data.Signal) []*Region {
 		}
 
 		for idx, label := range signal.Labels {
-			targets, pinned := sourcePins[label]
-
-			if !pinned {
-				grid.Error(errnie.Err(
-					errnie.Validation,
-					"grid: "+symbol+" metric "+signal.Source+"/"+label+" is not pinned to a region",
-					nil,
-				))
-				continue
-			}
+			targets := sourcePins[label]
 
 			if len(targets) == 0 {
 				continue
@@ -139,7 +138,34 @@ func (grid *Grid) Observe(symbol string, signals []data.Signal) []*Region {
 		prior.Samples++
 	}
 
-	return grid.finalizeRegions(regions)
+	return grid.finalizeRegions(regions), nil
+}
+
+/*
+pinned rejects a label that the source map does not name. An unknown source
+has no pins to check. The error is returned to the caller and is not stored
+on the grid.
+*/
+func pinned(symbol string, signal broker.Sample) error {
+	sourcePins, ok := regionMetricPins[signal.Source]
+
+	if !ok {
+		return nil
+	}
+
+	for _, label := range signal.Labels {
+		if _, ok := sourcePins[label]; ok {
+			continue
+		}
+
+		return errnie.Err(
+			errnie.Validation,
+			"grid: "+symbol+" metric "+signal.Source+"/"+label+" is not pinned to a region",
+			nil,
+		)
+	}
+
+	return nil
 }
 
 func (grid *Grid) finalizeRegions(regions []*Region) []*Region {
@@ -177,7 +203,7 @@ SNM (Self-Normalized Movement) takes the reference from the prior magnitude
 and the movement itself. It measures a transition, not an isolated value.
 The result stays within \([-1,1]\) without statistical calibration.
 */
-func (grid *Grid) SNM(signal *data.Signal, idx int) float64 {
+func (grid *Grid) SNM(signal *broker.Sample, idx int) float64 {
 	prior := grid.Priors[signal.Source][signal.Symbol]
 
 	if prior == nil || idx >= len(signal.Values) || idx >= len(prior.Signal.Values) {
@@ -211,7 +237,7 @@ func (grid *Grid) Surprise(prediction, energy float64) float64 {
 Maturity calculates sensor readiness based strictly on
 empirical sample history and metric completeness (warm-up gate).
 */
-func (grid *Grid) Maturity(signal *data.Signal) float64 {
+func (grid *Grid) Maturity(signal *broker.Sample) float64 {
 	prior := grid.Priors[signal.Source][signal.Symbol]
 
 	if prior == nil || prior.Samples <= 0 {

@@ -221,7 +221,6 @@ func (execution *Execution) ToValue(epochs ...int64) *data.Value {
 	val := data.NewValue("kraken", "execution", symbol)
 	if len(epochs) > 0 && epochs[0] > 0 {
 		val.Epoch = uint64(epochs[0])
-		val.FormatPrefix()
 	}
 	val.Append(buf)
 	return val

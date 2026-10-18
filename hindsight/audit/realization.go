@@ -36,7 +36,7 @@ type RealizationStage struct {
 	predicted   map[string]float64
 	epoch       uint64
 	realized    map[string][]float64
-	pending     []data.PaperRecord
+	pending     []paperRecord
 	records     int
 	otherEpochs int
 	paths       []realizedPath
@@ -44,7 +44,7 @@ type RealizationStage struct {
 	pValue      float64
 	signAgree   float64
 	meanGap     float64
-	gate        *data.PolicyGate
+	gate        *policyGate
 }
 
 /*
@@ -101,14 +101,14 @@ func (stage *RealizationStage) observe(measurement *data.Value) error {
 	}
 
 	switch measurement.Origin {
-	case data.PolicyOrigin:
-		path, err := data.PolicyPath(measurement)
+	case "policy":
+		path, err := policyPath(measurement)
 
 		if err != nil {
 			return err
 		}
 
-		gain, ok := data.Metrics(measurement)["gain"]
+		gain, ok := floatMetrics(measurement)["gain"]
 
 		if !ok {
 			return fmt.Errorf("policy %s has no gain", measurement.Prefix)
@@ -118,7 +118,7 @@ func (stage *RealizationStage) observe(measurement *data.Value) error {
 			return fmt.Errorf("policy %s is from epoch %d, not %d", measurement.Prefix, measurement.Epoch, stage.epoch)
 		}
 
-		gate, err := data.ReadPolicyGate(measurement)
+		gate, err := readPolicyGate(measurement)
 
 		if err != nil {
 			return err
@@ -130,8 +130,8 @@ func (stage *RealizationStage) observe(measurement *data.Value) error {
 
 		stage.epoch, stage.gate = measurement.Epoch, &gate
 		stage.predicted[measurement.Role+":"+path] = gain
-	case data.PaperOrigin:
-		record, err := data.PaperFields(measurement)
+	case "paper":
+		record, err := paperFields(measurement)
 
 		if err != nil {
 			return err
@@ -145,7 +145,7 @@ func (stage *RealizationStage) observe(measurement *data.Value) error {
 	return nil
 }
 
-func (stage *RealizationStage) join(record data.PaperRecord) {
+func (stage *RealizationStage) join(record paperRecord) {
 	stage.records++
 
 	if record.PolicyEpoch != stage.epoch {

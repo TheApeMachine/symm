@@ -134,6 +134,27 @@ export class HoldingT {
 	}
 }
 
+/*
+DeskPosition is one broker.Position as JSON on the tick's positions layer.
+Decimals arrive as strings. closed_at is null while the lot is open.
+*/
+export type DeskPosition = {
+	id: string;
+	symbol: string;
+	virtual: boolean;
+	openedAt: string;
+	closedAt: string | null;
+	qty: string | null;
+	entryPrice: string | null;
+	mark: string | null;
+	entryFee: string | null;
+	exitFee: string | null;
+	exitVwap: string | null;
+	exitRoom: number | null;
+	returnPct: number | null;
+	holdNs: number;
+};
+
 export class PositionT {
 	status = "";
 	holding: HoldingT | null = null;

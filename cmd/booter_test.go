@@ -95,7 +95,7 @@ func TestBooterSignals(t *testing.T) {
 				So(len(val.Index), ShouldEqual, len(val.Layers))
 
 				count := 0
-				for vec := range data.Layers[[]float64](val, "gross_notional") {
+				for _, vec := range data.Layer[[]float64](val, "gross_notional") {
 					So(len(vec), ShouldEqual, 4)
 					count++
 				}

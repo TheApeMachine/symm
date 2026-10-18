@@ -1,248 +1,99 @@
 package data
 
 import (
-	"bytes"
-	"errors"
-	"io"
+	"encoding/binary"
+	"math"
 	"testing"
-
-	. "github.com/smartystreets/goconvey/convey"
 )
 
-type sampleTrade struct {
-	Symbol string  `json:"symbol"`
-	Price  float64 `json:"price"`
-	Qty    float64 `json:"qty"`
-}
+func TestAppendAndLayerRoundTrip(t *testing.T) {
+	value := NewValue("kraken", "trade", "BTC/USD")
 
-func TestLayer(t *testing.T) {
-	Convey("Given a Value with diverse layers", t, func() {
-		val := NewValue("kraken", "trade", "BTC/USD")
+	book := []byte("book-bytes")
+	value.Append(book, "book")
 
-		layer0 := []byte(`{"symbol":"BTC/USD","price":67500.5,"qty":1.25}`)
-		layer1 := []byte(`[-0.045,0.123,0.890]`)
-		val.Append(layer0, layer1)
+	if value.Err != nil {
+		t.Fatalf("append book: %v", value.Err)
+	}
 
-		Convey("Layer unmarshals into a struct", func() {
-			trade := Layer[sampleTrade](val, 0)
-			So(trade, ShouldNotBeNil)
-			So(trade.Symbol, ShouldEqual, "BTC/USD")
-			So(trade.Price, ShouldEqual, 67500.5)
-		})
+	var gotBook []byte
 
-		Convey("Layer unmarshals into a slice of floats", func() {
-			snm := Layer[[]float64](val, 1)
-			So(snm, ShouldNotBeNil)
-			So(len(*snm), ShouldEqual, 3)
-			So((*snm)[0], ShouldEqual, -0.045)
-		})
+	for _, layer := range Layer[[]byte](value, "book") {
+		gotBook = layer
+	}
 
-		Convey("Layer retrieves raw bytes with zero unmarshaling", func() {
-			raw := Layer[[]byte](val, 0)
-			So(raw, ShouldNotBeNil)
-			So(string(*raw), ShouldEqual, string(layer0))
-		})
-	})
-}
+	if value.Err != nil {
+		t.Fatalf("layer book: %v", value.Err)
+	}
 
-func TestAttribute(t *testing.T) {
-	Convey("Given a mixed JSON payload", t, func() {
-		payload := []byte(`{
-			"channel": "trade",
-			"data": [
-				{"symbol": "BTC/USD", "price": "67500.50", "qty": 1.25, "active": true, "count": 42}
-			]
-		}`)
+	if string(gotBook) != string(book) {
+		t.Fatalf("book %q", gotBook)
+	}
 
-		Convey("Attribute extracts native numbers", func() {
-			qty := Attribute[float64](payload, "data", 0, "qty")
-			So(qty, ShouldNotBeNil)
-			So(qty, ShouldEqual, 1.25)
-		})
+	prices := []map[string]int{{"n": 1}, {"n": 2}}
+	value.Append(prices, "price")
 
-		Convey("Attribute automatically parses string-encoded numbers", func() {
-			priceStr := Attribute[string](payload, "data", 0, "price")
-			So(priceStr, ShouldEqual, "67500.50")
+	var gotPrices []map[string]int
 
-			priceFloat := Attribute[float64](payload, "data", 0, "price")
-			So(priceFloat, ShouldEqual, 67500.50)
-		})
+	for _, layer := range Layer[[]map[string]int](value, value.Prefix+"/price") {
+		gotPrices = layer
+	}
 
-		Convey("Attribute extracts strings, booleans, and integers", func() {
-			sym := Attribute[string](payload, "data", 0, "symbol")
-			So(sym, ShouldEqual, "BTC/USD")
+	if value.Err != nil {
+		t.Fatalf("layer price: %v", value.Err)
+	}
 
-			active := Attribute[bool](payload, "data", 0, "active")
-			So(active, ShouldBeTrue)
+	if len(gotPrices) != 2 || gotPrices[0]["n"] != 1 || gotPrices[1]["n"] != 2 {
+		t.Fatalf("prices %#v", gotPrices)
+	}
 
-			count := Attribute[int](payload, "data", 0, "count")
-			So(count, ShouldEqual, 42)
+	seen := 0
 
-			count64 := Attribute[int64](payload, "data", 0, "count")
-			So(count64, ShouldEqual, int64(42))
-		})
+	for _, layer := range Layer[[]byte](value, "book") {
+		seen++
 
-		Convey("Attribute safely handles missing keys and AttributeOk", func() {
-			missingStr := Attribute[string](payload, "nonexistent")
-			So(missingStr, ShouldEqual, "")
+		if string(layer) != string(book) {
+			t.Fatalf("layers book %q", layer)
+		}
+	}
 
-			missingFloat := Attribute[float64](payload, "data", 0, "missing_price")
-			So(missingFloat, ShouldEqual, 0)
+	if seen != 1 {
+		t.Fatalf("seen %d", seen)
+	}
 
-			val, err := AttributeOk[string](payload, "channel")
-			So(err, ShouldBeNil)
-			So(val, ShouldEqual, "trade")
+	missing := NewValue("kraken", "trade", "BTC/USD")
 
-			_, err = AttributeOk[string](payload, "missing_channel")
-			So(errors.Is(err, ErrMissing), ShouldBeTrue)
-		})
+	for range Layer[[]byte](missing, "book") {
+	}
 
-		Convey("AttributeOk decodes structured attributes from their raw JSON", func() {
-			payload := []byte(`{"channel":"trade","data":[{"symbol":"BTC/USD","price":67500.5,"qty":1.25}]}`)
-			trades, err := AttributeOk[[]sampleTrade](payload, "data")
-			So(err, ShouldBeNil)
-			So(trades, ShouldHaveLength, 1)
-			So(trades[0].Symbol, ShouldEqual, "BTC/USD")
-			So(trades[0].Price, ShouldEqual, 67500.5)
-
-			first, err := AttributeOk[sampleTrade](payload, "data", 0)
-			So(err, ShouldBeNil)
-			So(first.Qty, ShouldEqual, 1.25)
-		})
-
-		Convey("AttributeOk returns an error, never a silent zero, for an undecodable attribute", func() {
-			trades, err := AttributeOk[[]sampleTrade](payload, "channel")
-			So(err, ShouldNotBeNil)
-			So(errors.Is(err, ErrMissing), ShouldBeFalse)
-			So(err.Error(), ShouldContainSubstring, "not decodable as")
-			So(trades, ShouldBeNil)
-		})
-	})
-}
-
-func BenchmarkAttribute_Float(b *testing.B) {
-	payload := []byte(`{"channel":"trade","data":[{"symbol":"BTC/USD","price":67500.50,"qty":1.25}]}`)
-
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = Attribute[float64](payload, "data", 0, "price")
+	if missing.Err == nil {
+		t.Fatal("missing layer returned no error")
 	}
 }
 
-func BenchmarkAttribute_StringNumber(b *testing.B) {
-	payload := []byte(`{"channel":"trade","data":[{"symbol":"BTC/USD","price":"67500.50","qty":1.25}]}`)
+func TestLayerReadsPackedFloat64(t *testing.T) {
+	values := []float64{0.02764, 0.02772, 0.00289}
+	packed := make([]byte, len(values)*8)
 
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = Attribute[float64](payload, "data", 0, "price")
+	for i, value := range values {
+		binary.LittleEndian.PutUint64(packed[i*8:], math.Float64bits(value))
 	}
-}
 
-func TestSignals(t *testing.T) {
-	Convey("Given a stored tick with signal layers for two symbols", t, func() {
-		tick := &Value{Origin: TickOrigin, Role: TickRole, Scope: TickScope, Epoch: 7, Tick: 42}
-		tick.FormatPrefix()
-		tick.AppendJSON([]byte(`{"bid":"1"}`), "price/BTC/USD")
-		AppendSignalVector(tick, "cvd", "BTC/USD", []float64{1.5, -0.25}, "gross_notional", "signed_net_fraction", "window:5m")
-		AppendSignalVector(tick, "hawkes", "ETH/USD", []float64{0.75}, "intensity")
+	stored := New()
+	stored.Layers = [][]byte{packed}
+	stored.Index = []string{"signal/liquidity/best_price:bid/best_price:ask/relative_spread/symbol:CPOOL/USD"}
 
-		Convey("Signals reads layers written into reserved slots", func() {
-			live := NewValue(TickOrigin, TickRole, TickScope)
-			live.Reserve(4)
-			AppendSignalVector(live, "cvd", "BTC/USD", []float64{1.5}, "gross_notional")
+	var got []float64
 
-			var got []Signal
-			for signal, err := range Signals(live) {
-				So(err, ShouldBeNil)
-				got = append(got, signal)
-			}
+	for _, layer := range Layer[[]float64](stored, "signal") {
+		got = layer
+	}
 
-			So(got, ShouldHaveLength, 1)
-			So(got[0].Symbol, ShouldEqual, "BTC/USD")
-			So(got[0].Values, ShouldResemble, []float64{1.5})
-		})
+	if stored.Err != nil {
+		t.Fatal(stored.Err)
+	}
 
-		Convey("Its key is the one Prefix derives", func() {
-			So(tick.Prefix, ShouldEqual, TickPrefix(7)+"0000000000000000042.bin")
-			So(tick.Prefix, ShouldStartWith, "workspace/tick/aggregate/0000000000000000007/")
-		})
-
-		Convey("Signals attributes every vector layer after a storage round trip", func() {
-			var buf bytes.Buffer
-			_, err := io.Copy(&buf, tick)
-			So(err, ShouldBeNil)
-
-			stored := New()
-			_, err = stored.Write(buf.Bytes())
-			So(err, ShouldBeNil)
-
-			signals := make([]Signal, 0)
-			for signal, err := range Signals(stored) {
-				So(err, ShouldBeNil)
-				signals = append(signals, signal)
-			}
-
-			So(signals, ShouldHaveLength, 2)
-			So(signals[0].Source, ShouldEqual, "cvd")
-			So(signals[0].Symbol, ShouldEqual, "BTC/USD")
-			So(signals[0].Labels, ShouldResemble, []string{"gross_notional", "signed_net_fraction"})
-			So(signals[0].Values, ShouldResemble, []float64{1.5, -0.25})
-			So(signals[0].Tags, ShouldResemble, []string{"window:5m"})
-			So(signals[1].Source, ShouldEqual, "hawkes")
-			So(signals[1].Symbol, ShouldEqual, "ETH/USD")
-
-			value, err := signals[0].Metric("signed_net_fraction")
-			So(err, ShouldBeNil)
-			So(value, ShouldEqual, -0.25)
-
-			_, err = signals[0].Metric("absent")
-			So(err, ShouldNotBeNil)
-		})
-
-		Convey("The index is the canonical signal index, free of the tick's key", func() {
-			So(tick.Index[1], ShouldEqual, "signal/cvd/gross_notional/signed_net_fraction/window:5m/symbol:BTC/USD")
-			So(tick.Index[1], ShouldEqual, SignalIndex("cvd", "BTC/USD", "gross_notional", "signed_net_fraction", "window:5m"))
-			So(tick.Index[1], ShouldNotContainSubstring, tick.Prefix)
-		})
-
-		Convey("Signal layers are not merged into Metrics", func() {
-			So(Metrics(tick), ShouldBeEmpty)
-		})
-
-		Convey("A tag containing /symbol: stays a tag; the last symbol tag names the symbol", func() {
-			AppendSignalVector(tick, "cvd", "SOL/USD", []float64{2}, "gross_notional", "ref:x/symbol:y")
-
-			var last Signal
-			for signal, err := range Signals(tick) {
-				So(err, ShouldBeNil)
-				last = signal
-			}
-
-			So(last.Symbol, ShouldEqual, "SOL/USD")
-			So(last.Labels, ShouldResemble, []string{"gross_notional"})
-			So(last.Tags, ShouldResemble, []string{"ref:x", "symbol:y"})
-		})
-
-		Convey("A signal layer without a symbol tag is an error", func() {
-			tick.claim(vectorBytes([]float64{1}), "signal/cvd/gross_notional")
-
-			var last error
-			for _, err := range Signals(tick) {
-				last = err
-			}
-
-			So(last, ShouldNotBeNil)
-		})
-
-		Convey("A layer with more values than labels is an error", func() {
-			AppendSignalVector(tick, "cvd", "BTC/USD", []float64{1, 2})
-
-			var last error
-			for _, err := range Signals(tick) {
-				last = err
-			}
-
-			So(last, ShouldNotBeNil)
-		})
-	})
+	if len(got) != len(values) || got[0] != values[0] || got[2] != values[2] {
+		t.Fatalf("packed %#v", got)
+	}
 }

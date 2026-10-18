@@ -34,7 +34,7 @@ func TestVitalityStage(t *testing.T) {
 
 			for idx := range int64(8) {
 				val := data.NewValue("pumpdump", "signal", "BTC/USD")
-				data.AppendVector(val, []float64{100 + float64(idx), float64(idx + 1)}, "best_price:bid", "volume_rate")
+				val.Append([]float64{100 + float64(idx), float64(idx + 1)}, "best_price:bid", "volume_rate")
 				measurements = append(measurements, val)
 			}
 
@@ -49,13 +49,13 @@ func TestVitalityStage(t *testing.T) {
 
 			for range int64(8) {
 				quiet := data.NewValue("pumpdump", "signal", "QUIET/USD")
-				data.AppendVector(quiet, []float64{50, 0}, "best_price:bid", "volume_rate")
+				quiet.Append([]float64{50, 0}, "best_price:bid", "volume_rate")
 				measurements = append(measurements, quiet)
 			}
 
 			for idx := range int64(8) {
 				active := data.NewValue("pumpdump", "signal", "BTC/USD")
-				data.AppendVector(active, []float64{100 + float64(idx), float64(idx + 1)}, "best_price:bid", "volume_rate")
+				active.Append([]float64{100 + float64(idx), float64(idx + 1)}, "best_price:bid", "volume_rate")
 				measurements = append(measurements, active)
 			}
 
@@ -70,7 +70,7 @@ func TestVitalityStage(t *testing.T) {
 
 			for idx := range int64(8) {
 				val := data.NewValue("sentiment", "signal", "CRO/USD")
-				data.AppendVector(val, []float64{1 + float64(idx)*0.01, -0.081}, "best_price:bid", "breadth")
+				val.Append([]float64{1 + float64(idx)*0.01, -0.081}, "best_price:bid", "breadth")
 				measurements = append(measurements, val)
 			}
 
@@ -85,7 +85,7 @@ func TestVitalityStage(t *testing.T) {
 
 			for idx := range int64(8) {
 				val := data.NewValue("sentiment", "signal", "BTC/USD")
-				data.AppendVector(val, []float64{100 + float64(idx), 0}, "best_price:bid", "historical_path_distance")
+				val.Append([]float64{100 + float64(idx), 0}, "best_price:bid", "historical_path_distance")
 				measurements = append(measurements, val)
 			}
 
@@ -104,7 +104,7 @@ func TestVitalityStage(t *testing.T) {
 					value = 0.02
 				}
 				val := data.NewValue("pumpdump", "signal", "BTC/USD")
-				data.AppendVector(val, []float64{100 + float64(idx), value}, "best_price:bid", "positive_midpoint_return")
+				val.Append([]float64{100 + float64(idx), value}, "best_price:bid", "positive_midpoint_return")
 				measurements = append(measurements, val)
 			}
 
@@ -118,7 +118,7 @@ func TestVitalityStage(t *testing.T) {
 
 			for idx := range int64(4) {
 				val := data.NewValue("liquidity", "signal", "BTC/USD")
-				data.AppendVector(val, []float64{100 + float64(idx), 0.002}, "best_price:bid", "fee_rate")
+				val.Append([]float64{100 + float64(idx), 0.002}, "best_price:bid", "fee_rate")
 				measurements = append(measurements, val)
 			}
 
@@ -136,11 +136,11 @@ func TestVitalityStage(t *testing.T) {
 
 			for idx := range int64(4) {
 				big := data.NewValue("pumpdump", "signal", "BIG/USD")
-				data.AppendVector(big, []float64{100 + float64(idx)*50, float64(idx + 1)}, "best_price:bid", "volume_rate")
+				big.Append([]float64{100 + float64(idx)*50, float64(idx + 1)}, "best_price:bid", "volume_rate")
 				measurements = append(measurements, big)
 
 				small := data.NewValue("pumpdump", "signal", "SMALL/USD")
-				data.AppendVector(small, []float64{100 + float64(idx)*0.01, 0}, "best_price:bid", "volume_rate")
+				small.Append([]float64{100 + float64(idx)*0.01, 0}, "best_price:bid", "volume_rate")
 				measurements = append(measurements, small)
 			}
 

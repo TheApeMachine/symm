@@ -169,7 +169,7 @@ func (detector *Detector) Step(
 	detector.lastResult = nil
 
 	if value.Origin == "runtime:join" {
-		for peer := range data.Layers[*data.Value](value) {
+		for _, peer := range data.Layer[*data.Value](value) {
 			if peer == nil || peer.Origin != "spot:trade" {
 				continue
 			}
@@ -999,11 +999,10 @@ func (detector *Detector) Flush(
 	)
 	value.Epoch = uint64(detector.epoch)
 	value.Tick = uint64(cTick)
-	value.FormatPrefix()
 
 	detector.emitted = append(detector.emitted, value)
 
-	data.AppendVector(value, []float64{
+	value.Append([]float64{
 		float64(aIdx),
 		float64(aTick),
 		float64(bIdx),
@@ -1014,7 +1013,7 @@ func (detector *Detector) Flush(
 		float64(dTick),
 		bPrice.Float64(),
 		cPrice.Float64(),
-	}, data.DetectExcursionKeys...)
+	}, "a_idx", "a_tick", "b_idx", "b_tick", "c_idx", "c_tick", "d_idx", "d_tick", "b_price", "c_price")
 
 	return value
 }

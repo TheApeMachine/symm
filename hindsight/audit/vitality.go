@@ -175,7 +175,7 @@ func (stage *VitalityStage) recordMetrics(measurement *data.Value) {
 
 	book := stage.symbol(measurement.Scope)
 
-	for label, val := range data.Metrics(measurement) {
+	for label, val := range floatMetrics(measurement) {
 		if isPriceLabel(label) && val > 0 {
 			if book.priceCount == 0 {
 				book.priceMin = val

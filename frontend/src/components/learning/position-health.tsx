@@ -190,6 +190,13 @@ export const REGION_KEYS = [
 	"R14",
 ];
 
+const trialReturnText = (life?: Lifecycle | null): string | null => {
+	if (life?.book !== "virtual") return null;
+	const marked = life.mark?.unrealized_return;
+	if (typeof marked !== "number" || !Number.isFinite(marked)) return "—";
+	return `${marked > 0 ? "+" : ""}${(marked * 100).toFixed(2)}%`;
+};
+
 const virtualTrialStatus = (
 	life?: Lifecycle | null,
 ): { statusText: string; verdictText: string } | null => {
@@ -318,13 +325,21 @@ export const PositionHealthGauge = ({
 					<span className="text-(--f4)">Unrealized:</span>
 					<span
 						className={
-							currentUnrealized >= 0
+							(trial
+								? (life?.mark?.unrealized_return ?? 0) >= 0
+								: currentUnrealized >= 0)
 								? "font-bold text-(--up)"
 								: "font-bold text-(--f2)"
 						}
 					>
-						{currentUnrealized >= 0 ? "+" : ""}
-						{currentUnrealized.toFixed(2)} USD ({pnlPct.toFixed(2)}%)
+						{trial ? (
+							trialReturnText(life)
+						) : (
+							<>
+								{currentUnrealized >= 0 ? "+" : ""}
+								{currentUnrealized.toFixed(2)} USD ({pnlPct.toFixed(2)}%)
+							</>
+						)}
 					</span>
 				</Flex.Row>
 			</Grid>
@@ -728,12 +743,16 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 						<span className="text-(--f4)">Unrealized Return:</span>
 						<span
 							className={
-								currentUnrealized >= 0
+								(trial
+									? (life.mark?.unrealized_return ?? 0) >= 0
+									: currentUnrealized >= 0)
 									? "font-bold text-(--up)"
 									: "font-bold text-(--f2)"
 							}
 						>
-							{cost > 0 ? (
+							{trial ? (
+								trialReturnText(life)
+							) : cost > 0 ? (
 								<>
 									{currentUnrealized >= 0 ? "+" : ""}
 									{currentUnrealized.toFixed(2)} USD ({pnlPct.toFixed(2)}%)

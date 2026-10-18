@@ -77,7 +77,7 @@ func venueTime(measurement *data.Value) time.Time {
 	if measurement == nil {
 		return time.Time{}
 	}
-	metrics := data.Metrics(measurement)
+	metrics := floatMetrics(measurement)
 	if at, ok := metrics["at"]; ok && at > 0 {
 		return time.Unix(0, int64(at))
 	}

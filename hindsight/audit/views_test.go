@@ -20,16 +20,15 @@ signalJoin builds the join TickViews would hand the grid stages for symbol
 at tick: raw signal layers, plus the touch when bid and ask are given.
 */
 func signalJoin(tick uint64, symbol string, signals []fixtureSignal, bidAsk ...float64) *data.Value {
-	join := data.NewValue(data.TickOrigin, "runtime:join", symbol)
+	join := data.NewValue("workspace", "runtime:join", symbol)
 	join.Epoch, join.Tick = 1, tick
-	join.FormatPrefix()
 
 	for _, signal := range signals {
-		data.AppendSignalVector(join, signal.source, symbol, []float64{signal.raw}, signal.label)
+		join.Append([]float64{signal.raw}, "signal", signal.source, signal.label, "symbol:"+symbol)
 	}
 
 	if len(bidAsk) == 2 {
-		data.AppendVector(join, bidAsk, "best_price:bid", "best_price:ask", touchTag)
+		join.Append(bidAsk, "best_price:bid", "best_price:ask", touchTag)
 	}
 
 	return join
@@ -72,14 +71,20 @@ excursionValue is a detector excursion Value carrying every ExcursionKeys
 field, overridden by fields.
 */
 func excursionValue(class, symbol string, fields map[string]float64) *data.Value {
-	value := data.NewValue(data.ExcursionOrigin, class, symbol)
-	values := make([]float64, len(data.ExcursionKeys))
+	keys := []string{
+		"a_idx", "a_tick", "b_idx", "b_tick", "c_idx", "c_tick", "d_idx", "d_tick",
+		"b_price", "c_price", "b_ask", "c_bid", "b_at", "c_at",
+		"entry_idx", "entry_tick", "exit_idx", "exit_tick",
+		"entry_ask", "exit_bid", "entry_at", "exit_at",
+	}
+	value := data.NewValue("detections", class, symbol)
+	values := make([]float64, len(keys))
 
-	for idx, key := range data.ExcursionKeys {
+	for idx, key := range keys {
 		values[idx] = fields[key]
 	}
 
-	data.AppendVector(value, values, data.ExcursionKeys...)
+	value.Append(values, keys...)
 	return value
 }
 

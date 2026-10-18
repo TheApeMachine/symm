@@ -1,6 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
 import * as d3 from "d3";
-import { ChevronRight, Clock } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -12,7 +11,6 @@ import {
 } from "#/collections/app";
 import {
 	branchesFromPolicyKeys,
-	type CognitionBranch,
 	cognitionStore,
 } from "#/collections/cognition";
 import {
@@ -29,10 +27,8 @@ import { Scanlines } from "#/components/ui/scanlines";
 import { cn } from "#/lib/utils";
 import { sendCommand } from "#/providers/websocket";
 import type { Value } from "#/types/value";
-import { Alert, Badge } from "../ui";
+import { Alert, Badge, Button, Flex, Section, Typography } from "../ui";
 import { basis, outcome, prediction } from "./format";
-
-const NO_BRANCHES: CognitionBranch[] = [];
 
 interface ForwardTapePoint {
 	x: number;
@@ -291,6 +287,49 @@ const getTargetRing = (
 	}
 	return null;
 };
+
+const ListRun = ({
+	active,
+	onClick,
+	label,
+	mark,
+	detail,
+	value,
+}: {
+	active: boolean;
+	onClick: () => void;
+	label: string;
+	mark: string;
+	detail: string;
+	value: string;
+}) => (
+	<Button
+		variant={active ? "solid" : "quiet"}
+		tone={active ? "accent" : "muted"}
+		shape="block"
+		fullWidth
+		size="xs"
+		onClick={onClick}
+		data-l={active ? "historical-run-active" : undefined}
+	>
+		<Flex.Column fullWidth>
+			<Flex.Row justify="between" align="center" fullWidth>
+				<Typography.Mono size="s" tone={active ? "accent" : "f1"} weight="semibold">
+					{label}
+				</Typography.Mono>
+				<Badge size="xs" variant={active ? "info" : "disabled"} label={mark} />
+			</Flex.Row>
+			<Flex.Row justify="between" fullWidth>
+				<Typography.Mono size="xs" tone="f4">
+					{detail}
+				</Typography.Mono>
+				<Typography.Mono size="xs" tone="f4">
+					{value}
+				</Typography.Mono>
+			</Flex.Row>
+		</Flex.Column>
+	</Button>
+);
 
 export interface ForwardLearningVizProps {
 	symbol?: string;
@@ -1282,25 +1321,22 @@ export const ForwardLearningViz = ({
 	}, [rawPrecursorTokens, precursorLength]);
 
 	return (
-		<div className="flex flex-col w-full h-full gap-2 font-mono text-[11px] bg-(--bg) p-2 overflow-hidden text-(--f2)">
-			{/* TOP ROW: optional fragment rail + Real Tape + Right Sidebar */}
-			<div className="flex h-3/5 gap-2 min-h-0">
+		<Flex.Column className="h-full min-h-0 overflow-hidden bg-(--bg)">
+			<Flex className="h-3/5 min-h-0">
 				{historicalOnly && (
-					<div
-						className="w-56 bg-(--surface) border-(--line) border rounded flex flex-col shrink-0 min-h-0"
+					<Section
+						fit="pane"
+						className="w-56 shrink-0 border-(--line) border-r"
 						data-l="historical-runs-list"
 					>
-						<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 text-(--f3) shrink-0 justify-between">
-							<span className="tracking-widest uppercase font-bold text-[10px]">
-								Historical Runs
-							</span>
-							<span className="text-[10px] text-(--f4)">
-								{trainedFragments.length}
-							</span>
-						</div>
+						<Section.Header
+							size="s"
+							title="Historical runs"
+							meta={trainedFragments.length}
+						/>
 						{detectionRuns.length > 0 && (
 							<select
-								className="mx-2 my-1.5 bg-(--sunken) border border-(--line) rounded px-1 py-0.5 text-[10px] text-(--f2) shrink-0"
+								className="shrink-0 border-(--line) border-b bg-(--sunken) px-2 py-1 text-[10px] text-(--f2)"
 								value={detectionRun ?? ""}
 								onChange={(event) => setDetectionRun(event.target.value)}
 								aria-label="Select detected tick epoch"
@@ -1322,15 +1358,15 @@ export const ForwardLearningViz = ({
 								{streamError}
 							</Alert>
 						)}
-						<div className="flex-1 overflow-y-auto min-h-0">
+						<Section.Body>
 							{trainedFragments.length === 0 ? (
-								<div className="p-3 text-(--f4) text-[10px] leading-relaxed">
+								<Typography.Mono size="s" tone="f4">
 									{runsSlot?.status === "done" && detectionRuns.length === 0
 										? "No epoch is labelled yet: run detect on a collected tick epoch."
 										: excursionsSlot?.status === "done"
 											? `Epoch ${excursionsSlot.run} stores no detections.`
 											: "Streaming detections from the hub…"}
-								</div>
+								</Typography.Mono>
 							) : (
 								trainedFragments
 									.map((frag, idx) => ({ frag, idx }))
@@ -1339,65 +1375,63 @@ export const ForwardLearningViz = ({
 										const active = idx === selectedFragmentIndex;
 										const cls = fragmentClassCode(frag.class, frag.direction);
 										return (
-											<button
+											<ListRun
 												key={frag.id ?? idx}
-												type="button"
+												active={active}
 												onClick={() => selectFragment(idx)}
-												className={cn(
-													"w-full text-left px-2.5 py-2 border-b border-(--line) cursor-pointer transition-colors",
-													active
-														? "bg-(--acc)/10 text-(--acc)"
-														: "hover:bg-(--sunken) text-(--f2)",
-												)}
-												data-l={active ? "historical-run-active" : undefined}
-											>
-												<div className="flex items-center justify-between gap-2">
-													<span className="font-bold text-[10px] truncate">
-														#{frag.id} {frag.symbol}
-													</span>
-													<span className="text-[9px] uppercase tracking-wider shrink-0 opacity-80">
-														[{cls}]
-													</span>
-												</div>
-												<div className="mt-0.5 text-[9px] text-(--f4) flex justify-between gap-2">
-													<span>{(frag.direction || "").toUpperCase()}</span>
-													<span>{(frag.magnitude * 100).toFixed(2)}%</span>
-												</div>
-											</button>
+												label={`#${frag.id} ${frag.symbol}`}
+												mark={cls}
+												detail={(frag.direction || "").toUpperCase()}
+												value={`${(frag.magnitude * 100).toFixed(2)}%`}
+											/>
 										);
 									})
 							)}
-						</div>
-					</div>
+						</Section.Body>
+					</Section>
 				)}
-				{/* Main Episodic Tape */}
-				<div className="flex-1 bg-(--sunken) border-(--line) border rounded flex flex-col relative min-w-0 shadow-[inset_0_0_24px_rgba(0,0,0,0.85)]">
-					{/* Tape Header */}
-					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 justify-between text-(--f3) shrink-0">
-						<div className="flex items-center gap-2 min-w-0">
+				<Flex.Column className="min-h-0 min-w-0 flex-1 border-(--line) border-r bg-(--sunken)">
+					<Section.Header
+						size="s"
+						meta={
+							currentPoints.length > 0 ? (
+								<Badge
+									variant="info"
+									label={`Δ${currentPoints[currentPoints.length - 1].y.toLocaleString(
+										undefined,
+										{
+											minimumFractionDigits: 5,
+											maximumFractionDigits: 5,
+										},
+									)}`}
+								/>
+							) : undefined
+						}
+					>
+						<Flex.Row align="center" gap={2} className="min-w-0">
 							<Badge data-l="tape-title" label="HISTORICAL RUNS" />
-							<span className="bg-(--surface) border-(--line) border px-1.5 py-0.5 rounded text-[10px] text-(--f1) font-bold shrink-0">
-								{currentSymbol}
-							</span>
+							<Badge variant="disabled" label={currentSymbol} />
 
 							{trainedFragments.length > 0 && (
-								<div
-									className="flex items-center gap-1 ml-1 min-w-0"
+								<Flex.Row
+									align="center"
+									gap={1}
 									data-l="fragment-selector"
 								>
-									<button
-										type="button"
+									<Button
+										size="xs"
+										variant="outline"
+										shape="icon"
 										onClick={() => selectFragment(selectedFragmentIndex - 1)}
 										disabled={selectedFragmentIndex <= 0}
-										className="px-1.5 py-0.5 rounded bg-(--surface) border border-(--line) text-(--f2) hover:text-(--f1) disabled:opacity-30 disabled:pointer-events-none text-[10px] cursor-pointer"
 										title="Previous fragment"
 									>
 										◀
-									</button>
+									</Button>
 									<select
 										value={selectedFragmentIndex}
 										onChange={(e) => selectFragment(Number(e.target.value))}
-										className="bg-(--surface) border border-(--line) text-(--f1) text-[10px] px-1.5 py-0.5 rounded focus:outline-none focus:border-(--acc) cursor-pointer max-w-[280px]"
+										className="max-w-70 cursor-pointer border border-(--line) bg-(--surface) px-1.5 py-0.5 text-[10px] text-(--f1)"
 										aria-label="Select historical training run"
 									>
 										{!historicalOnly && selectedFragmentIndex < 0 && (
@@ -1412,72 +1446,55 @@ export const ForwardLearningViz = ({
 											</option>
 										))}
 									</select>
-									<button
-										type="button"
+									<Button
+										size="xs"
+										variant="outline"
+										shape="icon"
 										onClick={() => selectFragment(selectedFragmentIndex + 1)}
 										disabled={
 											selectedFragmentIndex >= trainedFragments.length - 1
 										}
-										className="px-1.5 py-0.5 rounded bg-(--surface) border border-(--line) text-(--f2) hover:text-(--f1) disabled:opacity-30 disabled:pointer-events-none text-[10px] cursor-pointer"
 										title="Next fragment"
 									>
 										▶
-									</button>
-									<button
-										type="button"
+									</Button>
+									<Button
+										size="xs"
+										variant="solid"
+										tone="accent"
 										onClick={replayFragment}
 										disabled={selectedFragmentIndex < 0}
-										className="ml-1 px-1.5 py-0.5 rounded bg-(--acc)/10 text-(--acc) border border-(--acc)/30 hover:bg-(--acc)/20 disabled:opacity-30 disabled:pointer-events-none text-[10px] font-bold cursor-pointer"
 										title="Replay this fragment animation"
 									>
 										Replay
-									</button>
+									</Button>
 									{!historicalOnly && selectedFragmentIndex >= 0 && (
-										<button
-											type="button"
+										<Button
+											size="xs"
+											variant="outline"
+											tone="accent"
 											onClick={resumeLiveTape}
-											className="px-1.5 py-0.5 rounded bg-(--surface) border border-(--line) text-(--f2) hover:text-(--acc) text-[10px] font-bold cursor-pointer"
 											title="Return to live training tape"
 											data-l="resume-live-tape"
 										>
 											Live
-										</button>
+										</Button>
 									)}
-								</div>
+								</Flex.Row>
 							)}
 
-							<ChevronRight className="w-3 h-3 text-(--f4)" />
-							<span className="text-(--f1)">
+							<Typography.Mono size="s" tone="f1">
 								{points.length} frames evaluated
-							</span>
+							</Typography.Mono>
 							{timeSpanLabel && (
-								<>
-									<ChevronRight className="w-3 h-3 text-(--f4)" />
-									<span
-										className="text-(--acc) flex items-center gap-1 font-mono text-[10px] font-bold bg-(--acc)/10 px-1.5 py-0.5 rounded border border-(--acc)/20"
-										title="Time-scale span of this tape fragment"
-									>
-										<Clock className="w-3 h-3 text-(--acc)" />
-										<span>{timeSpanLabel}</span>
-									</span>
-								</>
+								<Badge
+									variant="info"
+									label={timeSpanLabel}
+									title="Time-scale span of this tape fragment"
+								/>
 							)}
-						</div>
-						<div className="flex items-center gap-3">
-							{currentPoints.length > 0 && (
-								<span className="text-[11px] font-bold text-(--acc) bg-(--acc)/10 px-2 py-0.5 rounded border border-(--acc)/20">
-									Δ
-									{currentPoints[currentPoints.length - 1].y.toLocaleString(
-										undefined,
-										{
-											minimumFractionDigits: 5,
-											maximumFractionDigits: 5,
-										},
-									)}
-								</span>
-							)}
-						</div>
-					</div>
+						</Flex.Row>
+					</Section.Header>
 
 					{/* Confirmed Excursion Banner */}
 					<AnimatePresence>
@@ -2119,26 +2136,23 @@ export const ForwardLearningViz = ({
 							</span>
 						</div>
 					</div>
-				</div>
+				</Flex.Column>
 
-				{/* Right Sidebar: Separated Historical Held-Out & Forward Paper Evidence */}
-				<div className="w-72 bg-(--surface) border-(--line) border rounded flex flex-col shrink-0 min-h-0">
-					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 text-(--f3) shrink-0 justify-between">
-						<span className="tracking-widest uppercase font-bold text-[10px]">
-							{isForward ? "Forward Paper Authority" : "Historical Validation"}
-						</span>
-						<span className="text-[10px]">
-							{evaluatedCount.toLocaleString()} frames
-						</span>
-					</div>
-
-					<div className="p-3 flex-1 overflow-y-auto flex flex-col gap-3">
-						{/* Historical Held-Out Evidence Card */}
-						<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-2">
-							<div className="uppercase tracking-widest text-(--f4) text-[9px] font-bold flex justify-between">
-								<span>Historical Prediction Outcomes</span>
-								<span className="text-(--f2)">{histOpportunities} opps</span>
-							</div>
+				<Section fit="pane" className="w-72 shrink-0">
+					<Section.Header
+						size="s"
+						title={
+							isForward ? "Forward paper authority" : "Historical validation"
+						}
+						meta={`${evaluatedCount.toLocaleString()} frames`}
+					/>
+					<Section.Body scroll className="flex flex-col">
+						<Section fit="content" className="border-(--line) border-b">
+							<Section.Header
+								size="s"
+								title="Historical prediction outcomes"
+								meta={`${histOpportunities} opps`}
+							/>
 
 							{/* Visual Stacked Outcome Distribution Bar for Number-Blind Inspection */}
 							{(() => {
@@ -2290,20 +2304,20 @@ export const ForwardLearningViz = ({
 									</strong>
 								</span>
 							</div>
-						</div>
+						</Section>
 
-						{/* Forward Paper Evidence Card */}
-						<div className="border border-(--line) p-2.5 rounded bg-(--bg) flex flex-col gap-2">
-							<div className="uppercase tracking-widest text-(--f4) text-[9px] font-bold flex justify-between">
-								<span>Forward Paper Evidence</span>
-								<span
-									className={
-										isForward ? "text-(--up) font-bold" : "text-(--f4)"
-									}
-								>
-									{isForward ? "ACTIVE" : "GATED"}
-								</span>
-							</div>
+						<Section fit="content" className="border-(--line) border-b">
+							<Section.Header
+								size="s"
+								title="Forward paper evidence"
+								meta={
+									<Badge
+										size="xs"
+										variant={isForward ? "success" : "disabled"}
+										label={isForward ? "Active" : "Gated"}
+									/>
+								}
+							/>
 
 							{/* Visual Execution Fill Ratio Meter */}
 							<div className="flex flex-col gap-1">
@@ -2383,41 +2397,38 @@ export const ForwardLearningViz = ({
 										: "None"}
 								</span>
 							</div>
-						</div>
+						</Section>
 
-						{/* Stage Gate Status */}
-						<div className="text-[10px] border border-(--line) p-2 rounded bg-(--sunken) flex flex-col gap-1">
-							<div className="flex justify-between font-bold">
-								<span className="text-(--f4) uppercase">Gate Blocker:</span>
-								<span
+						<Section.Header
+							size="s"
+							title="Gate blocker"
+							meta={
+								<Typography.Mono
+									size="s"
+									tone="down"
 									data-l="stage-blocker"
-									className="text-(--down) truncate max-w-32.5"
 								>
 									{stageBlocker || "—"}
-								</span>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
+								</Typography.Mono>
+							}
+						/>
+					</Section.Body>
+				</Section>
+			</Flex>
 
-			{/* BOTTOM ROW: Real Radix Trie Memory Table + Edge Distribution */}
-			<div className="flex h-2/5 gap-2 min-h-0">
-				{/* Radix Trie Memory Table */}
-				<div className="flex-1 bg-(--surface) border-(--line) border rounded flex flex-col min-w-0">
-					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-3 justify-between shrink-0">
-						<span className="text-(--f3) uppercase tracking-widest text-[10px] font-bold">
-							Radix Trie Memory (Active Learned Branches)
-						</span>
-						<span className="text-(--f4) text-[10px]">
-							{trieBranches
-								.reduce((acc, p) => acc + p.visits, 0)
-								.toLocaleString()}{" "}
-							observations routed
-						</span>
-					</div>
-
-					<div className="flex-1 overflow-auto p-2">
+			<Flex className="h-2/5 min-h-0 border-(--line) border-t">
+				<Section fit="pane" className="min-w-0 flex-1 border-(--line) border-r">
+					<Section.Header
+						size="s"
+						title="Radix trie memory"
+						meta={`${trieBranches
+							.reduce(
+								(acc, p) => acc + (p.observed === false ? 0 : p.visits),
+								0,
+							)
+							.toLocaleString()} observations routed`}
+					/>
+					<Section.Body>
 						<table className="w-full text-left border-collapse text-[10px]">
 							<thead>
 								<tr className="text-(--f4) border-(--line) border-b">
@@ -2446,42 +2457,49 @@ export const ForwardLearningViz = ({
 											)}
 										>
 											{p.hash}
+											{p.observed === false ? (
+												<span className="ml-1 text-(--f4)">derived</span>
+											) : null}
 										</td>
 										<td className="py-1.5 px-2 text-right">{p.depth}</td>
 										<td className="py-1.5 px-2 text-right">
-											{p.visits.toLocaleString()}
+											{p.observed === false ? "—" : p.visits.toLocaleString()}
 										</td>
 										<td
 											className={cn(
 												"py-1.5 px-2 text-right font-bold",
-												p.meanEdge >= 0 ? "text-(--up)" : "text-(--down)",
+												p.observed === false
+													? "text-(--f4)"
+													: p.meanEdge >= 0
+														? "text-(--up)"
+														: "text-(--down)",
 											)}
 										>
-											{p.meanEdge >= 0 ? "+" : ""}
-											{(p.meanEdge * 100).toFixed(1)}%
+											{p.observed === false
+												? "unavailable"
+												: `${p.meanEdge >= 0 ? "+" : ""}${(p.meanEdge * 100).toFixed(1)}%`}
 										</td>
 										<td className="py-1.5 px-2">
-											<div className="flex items-center gap-2">
-												<div className="w-12 h-1 bg-(--sunken) rounded overflow-hidden">
-													<div
-														className="h-full bg-(--info)"
-														style={{ width: `${p.confidence}%` }}
-													/>
+											{p.observed === false ? (
+												<span className="text-(--f4)">unavailable</span>
+											) : (
+												<div className="flex items-center gap-2">
+													<div className="w-12 h-1 bg-(--sunken) rounded overflow-hidden">
+														<div
+															className="h-full bg-(--info)"
+															style={{ width: `${p.confidence}%` }}
+														/>
+													</div>
+													<span>{p.confidence.toFixed(1)}%</span>
 												</div>
-												<span>{p.confidence.toFixed(1)}%</span>
-											</div>
+											)}
 										</td>
 										<td className="py-1.5 px-2 text-right">
-											<span
-												className={cn(
-													"px-1.5 py-0.5 rounded text-[8px] border font-bold",
-													p.policy === "ENTER"
-														? "bg-(--up)/10 border-(--up)/30 text-(--up)"
-														: "bg-(--line2) border-(--line) text-(--f3)",
-												)}
-											>
-												{p.policy}
-											</span>
+											<Badge
+												size="xxs"
+												variant={p.policy === "ENTER" ? "success" : "disabled"}
+												label={p.policy}
+											/>
 										</td>
 									</tr>
 								))}
@@ -2494,26 +2512,22 @@ export const ForwardLearningViz = ({
 								)}
 							</tbody>
 						</table>
-					</div>
-				</div>
+					</Section.Body>
+				</Section>
 
-				{/* Edge Distribution Panel */}
-				<div className="w-95 bg-(--surface) border-(--line) border rounded flex flex-col shrink-0 min-h-0">
-					<div className="h-8 border-(--line) border-b bg-(--sunken) flex items-center px-4 shrink-0 justify-between">
-						<div className="flex gap-4 uppercase tracking-widest text-[10px] font-bold">
-							<span className="text-(--f4)">Model</span>
-							<span className="text-(--acc)">Edge Distribution</span>
-						</div>
-						<span className="text-[10px] text-(--f4)">
-							{edgeSamples.length > 0
+				<Section fit="pane" className="w-95 shrink-0">
+					<Section.Header
+						size="s"
+						title="Edge distribution"
+						meta={
+							edgeSamples.length > 0
 								? `${edgeSamples.length} samples`
 								: evaluatedCount > 0
 									? `${evaluatedCount} evaluations`
-									: "Impartial"}
-						</span>
-					</div>
-
-					<div className="flex-1 relative overflow-hidden p-3">
+									: "Impartial"
+						}
+					/>
+					<Section.Body scroll={false} className="relative">
 						{edgeSamples.length === 0 ? (
 							<div className="absolute inset-0 flex items-center justify-center text-(--f4) text-[10px] px-4 text-center">
 								No return distribution is drawn. Mean and lower bound stay in
@@ -2587,15 +2601,18 @@ export const ForwardLearningViz = ({
 								);
 							})()
 						)}
-					</div>
+					</Section.Body>
 
-					<div className="p-2.5 border-t border-(--line) text-[10px] text-(--f4) leading-tight">
-						{edgeSamples.length === 0
-							? "A curve is omitted until completed outcomes supply their own return sample."
-							: "Histogram of graded skill samples from supervise (correct=+1, incorrect=−1). Not invented."}
-					</div>
-				</div>
-			</div>
-		</div>
+					<Section.Header
+						size="s"
+						title={
+							edgeSamples.length === 0
+								? "A curve is omitted until completed outcomes supply their own return sample."
+								: "Histogram of graded skill samples from supervise (correct=+1, incorrect=−1)."
+						}
+					/>
+				</Section>
+			</Flex>
+		</Flex.Column>
 	);
 };

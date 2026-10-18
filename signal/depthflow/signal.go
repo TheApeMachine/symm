@@ -7,7 +7,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -49,7 +48,7 @@ Step processes the book of every distinct symbol traded in the tick's frame;
 each symbol writes its own (reserved) layer.
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	trades, err := data.AttributeOk[[]kraken.TradeData](value.Layers[0], "data")
+	trades, err := broker.Trades(value)
 
 	if err != nil {
 		errnie.Error(err)
@@ -161,14 +160,15 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	state.prevAskWorst = asks[len(asks)-1][0]
 	state.hasPrev = true
 
-	return data.AppendSignalVector(value, signal.Name(), symbol, []float64{
+	value.Append([]float64{
 		bookImb,
 		touchBid,
 		touchAsk,
 		touchImb,
 		netBid,
 		activityImb,
-	}, signal.keys...)
+	}, append(append([]string{"signal", signal.Name()}, signal.keys...), "symbol:"+symbol)...)
+	return value
 }
 
 func ladder(levels []broker.Level) [][2]float64 {

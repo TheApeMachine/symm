@@ -27,7 +27,7 @@ func TestReadSnapshot(t *testing.T) {
 		}}}), ShouldBeNil)
 
 		value := data.NewValue("workspace", "tick", "aggregate").
-			AppendJSON(managed.JSON("BTC/USD"), "book/BTC/USD")
+			Append(managed.JSON("BTC/USD"), "book/BTC/USD")
 
 		Convey("It decodes every level, best first", func() {
 			snapshot, err := ReadSnapshot(value, "BTC/USD")
@@ -42,7 +42,7 @@ func TestReadSnapshot(t *testing.T) {
 
 		Convey("A tick whose book is invalid is an error naming why, never a silent miss", func() {
 			invalid := data.NewValue("workspace", "tick", "aggregate").
-				AppendJSON([]byte(`{"kind":"checksum_mismatch"}`), "book_error/BTC/USD")
+				Append([]byte(`{"kind":"checksum_mismatch"}`), "book_error/BTC/USD")
 			snapshot, err := ReadSnapshot(invalid, "BTC/USD")
 			So(snapshot, ShouldBeNil)
 			So(err, ShouldNotBeNil)
@@ -51,7 +51,7 @@ func TestReadSnapshot(t *testing.T) {
 
 		Convey("An undecodable book layer is an error", func() {
 			bad := data.NewValue("workspace", "tick", "aggregate").
-				AppendJSON([]byte(`{"bids":7}`), "book/BTC/USD")
+				Append([]byte(`{"bids":7}`), "book/BTC/USD")
 			_, err := ReadSnapshot(bad, "BTC/USD")
 			So(err, ShouldNotBeNil)
 		})

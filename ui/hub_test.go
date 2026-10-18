@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,36 +36,6 @@ func (replayer *fakeReplayer) Stream(ctx context.Context, w io.Writer, run uint6
 	return ctx.Err()
 }
 
-/*
-fakeDetector reports each Detections request it was asked for (its symbol,
-or the run for an epoch's excursions, or "runs") and holds the stream open
-until its ctx ends, reporting how it ended.
-*/
-type fakeDetector struct {
-	started chan string
-	ended   chan string
-}
-
-func (detector *fakeDetector) Detections(
-	ctx context.Context, w io.Writer, run uint64, symbol, class string, cTick uint64,
-) error {
-	name := symbol
-
-	switch {
-	case run == 0:
-		name = "runs"
-	case symbol == "":
-		name = fmt.Sprintf("run %d", run)
-	default:
-		name = fmt.Sprintf("%s %s %d", symbol, class, cTick)
-	}
-
-	detector.started <- name
-	<-ctx.Done()
-	detector.ended <- name
-	return ctx.Err()
-}
-
 func newClient() *client {
 	return &client{frames: make(chan []byte, clientQueue), done: make(chan struct{})}
 }
@@ -76,7 +45,7 @@ func TestHubReplay(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		hub := NewHub(ctx)
+		hub := NewHub(ctx, nil)
 		replayer := &fakeReplayer{started: make(chan string, 4), ended: make(chan error, 4)}
 		current := newClient()
 
@@ -174,20 +143,20 @@ func TestHubReplay(t *testing.T) {
 }
 
 func TestHubDetections(t *testing.T) {
-	Convey("Given a hub with a detector and one client", t, func() {
+	Convey("Given a hub and one dashboard client", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		hub := NewHub(ctx)
-		detector := &fakeDetector{started: make(chan string, 4), ended: make(chan string, 4)}
+		hub := NewHub(ctx, nil)
 		current := newClient()
 		defer close(current.done)
 
-		Convey("Without a detector the detections command is an error", func() {
+		Convey("Without a store the detections command is an error", func() {
 			So(hub.handleCommand(current, []byte(`{"type":"detections"}`)), ShouldNotBeNil)
 		})
 
-		hub.Detect(detector)
+		objects := &fakeObjects{started: make(chan string, 4), ended: make(chan error, 4)}
+		hub.objects = objects
 
 		Convey("A malformed request is an error and starts nothing", func() {
 			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"x"}`)), ShouldNotBeNil)
@@ -195,22 +164,22 @@ func TestHubDetections(t *testing.T) {
 			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"7","symbol":"BTC/USD","at":"9"}`)), ShouldNotBeNil)
 			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"7","symbol":"BTC/USD","class":"up"}`)), ShouldNotBeNil)
 			So(hub.handleCommand(nil, []byte(`{"type":"detections"}`)), ShouldNotBeNil)
-			So(detector.started, ShouldBeEmpty)
+			So(objects.started, ShouldBeEmpty)
 		})
 
-		Convey("Runs, excursions and a tape stream side by side; a newer tape replaces the tape", func() {
+		Convey("Runs and excursions read detections/; a tape reads that symbol", func() {
 			So(hub.handleCommand(current, []byte(`{"type":"detections"}`)), ShouldBeNil)
-			So(<-detector.started, ShouldEqual, "runs")
+			So(<-objects.started, ShouldEqual, "detections/")
 			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"7"}`)), ShouldBeNil)
-			So(<-detector.started, ShouldEqual, "run 7")
+			So(<-objects.started, ShouldEqual, "detections/")
 			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"7","symbol":"BTC/USD","class":"up","at":"9"}`)), ShouldBeNil)
-			So(<-detector.started, ShouldEqual, "BTC/USD up 9")
-			So(detector.ended, ShouldBeEmpty)
+			So(<-objects.started, ShouldEqual, "detections/up/BTC/USD/")
+			So(objects.ended, ShouldBeEmpty)
 
 			So(hub.handleCommand(current, []byte(`{"type":"detections","run":"7","symbol":"ETH/USD","class":"down","at":"12"}`)), ShouldBeNil)
-			So(<-detector.ended, ShouldEqual, "BTC/USD up 9")
-			So(<-detector.started, ShouldEqual, "ETH/USD down 12")
-			So(detector.ended, ShouldBeEmpty)
+			So(<-objects.ended, ShouldEqual, context.Canceled)
+			So(<-objects.started, ShouldEqual, "detections/down/ETH/USD/")
+			So(objects.ended, ShouldBeEmpty)
 		})
 	})
 }
@@ -220,7 +189,7 @@ func TestHub(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		hub := NewHub(ctx)
+		hub := NewHub(ctx, nil)
 
 		Convey("Dashboard commands: known ones apply, malformed or unknown ones are errors", func() {
 			defer types.SetFocus("BTC/USD")
@@ -277,7 +246,7 @@ func TestHub(t *testing.T) {
 
 func TestHubRetained(t *testing.T) {
 	Convey("Given a hub and a connected client", t, func() {
-		hub := NewHub(context.Background())
+		hub := NewHub(context.Background(), nil)
 		early := newClient()
 		hub.join("early", early)
 
@@ -318,6 +287,61 @@ func TestHubRetained(t *testing.T) {
 			rest := map[string]bool{string(<-late.frames): true, string(<-late.frames): true}
 			So(rest["eth"], ShouldBeTrue)
 			So(rest["sol"], ShouldBeTrue)
+		})
+	})
+}
+
+type fakeObjects struct {
+	frames  [][]byte
+	started chan string
+	ended   chan error
+}
+
+func (fake *fakeObjects) Stream(ctx context.Context, prefix string, dst io.Writer) error {
+	fake.started <- prefix
+
+	for _, frame := range fake.frames {
+		if _, err := dst.Write(frame); err != nil {
+			fake.ended <- err
+			return err
+		}
+	}
+
+	<-ctx.Done()
+	fake.ended <- ctx.Err()
+	return ctx.Err()
+}
+
+func TestHubS3Stream(t *testing.T) {
+	Convey("Given a hub and one dashboard client", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		hub := NewHub(ctx, nil)
+		current := newClient()
+
+		Convey("A prefix request without a store is an error", func() {
+			So(hub.handleCommand(current, []byte(`{"type":"s3","prefix":"position/open/"}`)), ShouldNotBeNil)
+			So(hub.handleCommand(current, []byte(`{"type":"s3"}`)), ShouldNotBeNil)
+			So(hub.handleCommand(nil, []byte(`{"type":"s3","prefix":"position/open/"}`)), ShouldNotBeNil)
+		})
+
+		objects := &fakeObjects{
+			frames:  [][]byte{[]byte("lot-a"), []byte("lot-b")},
+			started: make(chan string, 2),
+			ended:   make(chan error, 2),
+		}
+		hub.objects = objects
+
+		Convey("The prefix streams each object to the client that asked", func() {
+			So(hub.handleCommand(current, []byte(`{"type":"s3","prefix":"position/open/"}`)), ShouldBeNil)
+			So(<-objects.started, ShouldEqual, "position/open/")
+			So(string(<-current.frames), ShouldEqual, "lot-a")
+			So(string(<-current.frames), ShouldEqual, "lot-b")
+
+			So(hub.handleCommand(current, []byte(`{"type":"s3","prefix":"position/closed/"}`)), ShouldBeNil)
+			So(<-objects.ended, ShouldEqual, context.Canceled)
+			So(<-objects.started, ShouldEqual, "position/closed/")
 		})
 	})
 }

@@ -6,15 +6,11 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/cobra"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
-)
-
-var (
-	trainEpochs  []int64
-	trainSymbols []string
-	trainFeePct  string
+	"github.com/theapemachine/symm/system"
 )
 
 var trainCmd = &cobra.Command{
@@ -34,15 +30,21 @@ The previous policy/current tree is moved to policy/archive/ first.`,
 		ctx := cmd.Context()
 		normalizer := spot.NewNormalizer()
 		books := broker.NewBook(ctx, normalizer)
-		instrument := broker.NewInstrument(ctx, nil)
 
 		price := broker.NewPrice(
-			ctx, books, nil, instrument, normalizer,
+			ctx, books, nil, nil, normalizer,
 		)
+		desk := broker.NewDesk(ctx, nil, price, nil, nil)
+		client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
-		balance := broker.NewBalance(ctx, nil)
-		desk := broker.NewDesk(ctx, nil, price, balance)
-		client := store.NewClient(ctx, "symm")
+		if client == nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				"[train] unable to open store client",
+				nil,
+			))
+		}
+
 		hub := io.Writer(os.Stdout)
 
 		training := strategy.NewTraining(
@@ -53,4 +55,8 @@ The previous policy/current tree is moved to policy/archive/ first.`,
 			ctx, training, client, price, desk,
 		).Generate()
 	},
+}
+
+func init() {
+	rootCmd.AddCommand(trainCmd)
 }

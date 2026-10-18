@@ -1,10 +1,14 @@
 package kraken
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 )
@@ -76,6 +80,108 @@ func NewAuthenticatedREST() (*spot.REST, error) {
 	restClient.Nonce = nonce.Next
 
 	return restClient, nil
+}
+
+/*
+SignPrivate builds the JSON body and API-Key / API-Sign for one Kraken spot
+private REST call. requestURI is the path plus query, the same string Kraken
+hashes. The nonce is the process-wide generator unless body already carries one.
+*/
+func SignPrivate(requestURI string, body any) (key, signature string, signed []byte, err error) {
+	keys, err := processKeys()
+
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	nonceGen, err := ProcessAuthNonce()
+
+	if err != nil {
+		return "", "", nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"[kraken.auth] process auth nonce unavailable",
+			err,
+		))
+	}
+
+	if nonceGen == nil {
+		return "", "", nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[kraken.auth] process auth nonce missing",
+			nil,
+		))
+	}
+
+	if err := nonceGen.Err(); err != nil {
+		return "", "", nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"[kraken.auth] auth nonce high-water not persisted",
+			err,
+		))
+	}
+
+	signed, nonce, err := bodyWithNonce(body, nonceGen.Next)
+
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	signature, err = spot.Sign(keys.secret, requestURI, nonce, io.NopCloser(bytes.NewReader(signed)))
+
+	if err != nil {
+		return "", "", nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[kraken.auth] private request sign failed",
+			err,
+		))
+	}
+
+	return keys.key, signature, signed, nil
+}
+
+func bodyWithNonce(body any, next func() string) ([]byte, string, error) {
+	payload := map[string]any{}
+
+	if body != nil {
+		encoded, err := sonic.Marshal(body)
+
+		if err != nil {
+			return nil, "", errnie.Err(
+				errnie.UnprocessableContent,
+				"[kraken.auth] private body is not JSON",
+				err,
+			)
+		}
+
+		if !bytes.Equal(encoded, []byte("null")) {
+			if err := sonic.Unmarshal(encoded, &payload); err != nil {
+				return nil, "", errnie.Err(
+					errnie.UnprocessableContent,
+					"[kraken.auth] private body must be a JSON object",
+					err,
+				)
+			}
+		}
+	}
+
+	nonce := fmt.Sprint(payload["nonce"])
+
+	if nonce == "" || nonce == "<nil>" {
+		nonce = next()
+		payload["nonce"] = nonce
+	}
+
+	signed, err := sonic.Marshal(payload)
+
+	if err != nil {
+		return nil, "", errnie.Err(
+			errnie.UnprocessableContent,
+			"[kraken.auth] private body is not JSON",
+			err,
+		)
+	}
+
+	return signed, nonce, nil
 }
 
 /*

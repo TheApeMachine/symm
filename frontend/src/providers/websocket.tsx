@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import {
 	closedPositionsAtom,
 	decisionsAtom,
+	deskPositionsAtom,
 	errorAtom,
 	focusAtom,
 	type Metric,
@@ -26,6 +27,7 @@ import {
 	ingestCognitionFrame,
 	ingestPolicyLayers,
 	ingestTrainRegionsLayer,
+	ingestTrainReject,
 	LAYER_COGNITION,
 } from "#/collections/cognition";
 import {
@@ -45,6 +47,7 @@ import {
 } from "#/collections/paper";
 import { ingestSequiturFrame } from "#/collections/sequitur";
 import { topologyStore } from "#/collections/topology";
+import type { DeskPosition } from "#/collections/types";
 import { DecisionT, HoldingT, PositionT } from "#/collections/types";
 import { hubWsUrl } from "#/lib/hub";
 import {
@@ -52,6 +55,7 @@ import {
 	LAYER_POSITION,
 	POSITION_ORIGIN,
 } from "#/lib/lifecycle";
+import { gobLayer } from "#/providers/gob-layer";
 
 /*
 The hub multiplexes everything over one socket: each message is one serialized
@@ -289,12 +293,35 @@ const parseJSON = (bytes: Uint8Array): unknown => {
 };
 
 const readFloats = (bytes: Uint8Array): number[] => {
+	const decoded = gobLayer(bytes);
+
+	if (decoded?.kind === "floats") return decoded.floats;
+
+	if (bytes.length % 8 !== 0) return [];
+
 	const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	const floats: number[] = [];
 	for (let j = 0; j < bytes.length / 8; j++) {
 		floats.push(dv.getFloat64(j * 8, true));
 	}
 	return floats;
+};
+
+const layerBytes = (bytes: Uint8Array): Uint8Array => {
+	const decoded = gobLayer(bytes);
+
+	if (decoded?.kind === "bytes") return decoded.bytes;
+
+	return bytes;
+};
+
+/*
+layerAddress drops the Value prefix Append writes in front of every key.
+*/
+const layerAddress = (val: ParsedValue, index: string): string => {
+	const prefix = `${val.origin}/${val.role}/${val.scope}/`;
+
+	return index.startsWith(prefix) ? index.slice(prefix.length) : index;
 };
 
 /*
@@ -305,13 +332,15 @@ const tickSymbol = (val: ParsedValue): string => {
 	if (val.scope && val.scope !== "aggregate") return val.scope;
 
 	for (const layer of val.layers) {
-		const match = /^(?:book|price|instrument)\/(.+)$/.exec(layer.index);
+		const match = /^(?:book|price|instrument)\/(.+)$/.exec(
+			layerAddress(val, layer.index),
+		);
 		if (match) return match[1];
 	}
 
 	for (const layer of val.layers) {
-		if (layer.index.startsWith("spot:trade")) {
-			const trade = parseJSON(layer.bytes) as
+		if (layerAddress(val, layer.index).startsWith("spot:trade")) {
+			const trade = parseJSON(layerBytes(layer.bytes)) as
 				| { data?: Array<{ symbol?: string }> }
 				| undefined;
 			return trade?.data?.[0]?.symbol ?? "";
@@ -323,8 +352,9 @@ const tickSymbol = (val: ParsedValue): string => {
 
 type Wallet = {
 	data?: Array<{ asset?: string; balance?: string | number }>;
-	unrealized?: string | number;
-	equity?: string | number;
+	/* TradeBalanceResult: n is unrealized, e is equity. */
+	n?: string | number;
+	e?: string | number;
 };
 
 const moneyText = (value: string | number | null | undefined) => {
@@ -336,38 +366,170 @@ const applyBalance = (wallet: Wallet) => {
 	const quote = wallet.data?.find((entry) => entry.asset === "USD");
 	updateEquity(
 		quote?.balance !== undefined ? String(quote.balance) : null,
-		moneyText(wallet.unrealized),
-		moneyText(wallet.equity),
+		moneyText(wallet.n),
+		moneyText(wallet.e),
 	);
 };
 
-type PositionLayer = {
-	symbol?: string;
-	status?: string;
-	closed_at?: string;
-	entry_price?: string | number;
-	mark?: string | number;
+const decimalText = (value: unknown) => {
+	if (typeof value === "string" && value !== "") return value;
+	if (typeof value === "number" && Number.isFinite(value)) return String(value);
+	return null;
 };
 
-const applyPositions = (rows: PositionLayer[]) => {
+type Touch = { bid: string | null; ask: string | null; feeRate: number | null };
+
+const touches = new Map<string, Touch>();
+const bidDepth = new Map<string, number>();
+
+const rememberBook = (symbol: string, body: unknown) => {
+	if (!body || typeof body !== "object") return;
+
+	const levels = (body as { bids?: { levels?: Record<string, { quantity?: unknown }> } })
+		.bids?.levels;
+
+	if (!levels) return;
+
+	let sum = 0;
+
+	for (const level of Object.values(levels)) {
+		const qty = decimalText(level?.quantity);
+		const size = qty === null ? Number.NaN : Number(qty);
+
+		if (Number.isFinite(size) && size > 0) sum += size;
+	}
+
+	if (sum > 0) bidDepth.set(symbol, sum);
+};
+
+const exitRoomOf = (row: Record<string, unknown>, symbol: string, qty: string | null) => {
+	if (typeof row.exit_room === "number" && Number.isFinite(row.exit_room)) {
+		return row.exit_room;
+	}
+
+	if (typeof row.exit_room === "string" && row.exit_room !== "") {
+		const parsed = Number(row.exit_room);
+
+		if (Number.isFinite(parsed)) return parsed;
+	}
+
+	const depth = bidDepth.get(symbol);
+	const size = qty === null ? Number.NaN : Number(qty);
+
+	if (depth === undefined || !Number.isFinite(size) || size <= 0) return null;
+
+	return depth / size;
+};
+
+const rememberTouch = (symbol: string, body: unknown) => {
+	if (!body || typeof body !== "object") return;
+
+	const row = body as Record<string, unknown>;
+	touches.set(symbol, {
+		bid: decimalText(row.bid),
+		ask: decimalText(row.ask),
+		feeRate:
+			typeof row.feeRate === "number" && Number.isFinite(row.feeRate)
+				? row.feeRate
+				: null,
+	});
+};
+
+const touchFee = (touch: Touch | undefined, qty: string | null) => {
+	if (!touch?.ask || touch.feeRate === null || !qty) return null;
+
+	const ask = Number(touch.ask);
+	const size = Number(qty);
+
+	if (!Number.isFinite(ask) || !Number.isFinite(size)) return null;
+
+	return String(ask * size * touch.feeRate);
+};
+
+const fillNumbers = (fills: unknown) => {
+	let entry: string | null = null;
+	let fee: string | null = null;
+
+	if (!Array.isArray(fills)) return { entry, fee };
+
+	for (const raw of fills) {
+		if (!raw || typeof raw !== "object") continue;
+
+		const fill = raw as Record<string, unknown>;
+		const side = typeof fill.side === "string" ? fill.side.toLowerCase() : "";
+
+		if (side === "sell") continue;
+
+		entry ??= decimalText(fill.avg_price) ?? decimalText(fill.last_price);
+		fee ??= decimalText(fill.fee_usd_equiv);
+	}
+
+	return { entry, fee };
+};
+
+/*
+applyPositions reads the tick's positions layer. Each element is a
+broker.Position. Entry and fee live on the buy fills when the flat fields
+are empty. The mark is the price layer's bid, the sale touch.
+*/
+const applyPositions = (rows: unknown) => {
 	const open: PositionT[] = [];
 	const closed: HoldingT[] = [];
+	const desk: DeskPosition[] = [];
+	const list = Array.isArray(rows) ? rows : [];
 
-	for (const row of rows) {
+	for (const raw of list) {
+		if (!raw || typeof raw !== "object") continue;
+
+		const row = raw as Record<string, unknown>;
+
+		if (typeof row.symbol !== "string" || row.symbol === "") continue;
+
+		const closedAt = typeof row.closed_at === "string" ? row.closed_at : null;
+		const fromFills = fillNumbers(row.fills);
+		const orders = Array.isArray(row.entry_orders) ? row.entry_orders : [];
+		const firstOrder =
+			orders[0] && typeof orders[0] === "object"
+				? (orders[0] as Record<string, unknown>)
+				: undefined;
+		const touch = touches.get(row.symbol);
+		const qty = decimalText(row.qty) ?? decimalText(firstOrder?.volume);
+		const position: DeskPosition = {
+			id: typeof row.id === "string" ? row.id : row.symbol,
+			symbol: row.symbol,
+			virtual: row.virtual === true,
+			openedAt: typeof row.opened_at === "string" ? row.opened_at : "",
+			closedAt,
+			qty,
+			entryPrice: decimalText(row.entry_price) ?? fromFills.entry ?? touch?.ask ?? null,
+			mark: decimalText(row.mark) ?? touch?.bid ?? null,
+			entryFee: decimalText(row.entry_fee) ?? fromFills.fee ?? touchFee(touch, qty),
+			exitFee: decimalText(row.exit_fee),
+			exitVwap: decimalText(row.exit_vwap),
+			exitRoom: exitRoomOf(row, row.symbol, qty),
+			returnPct: typeof row.return === "number" ? row.return : null,
+			holdNs: typeof row.hold_ns === "number" ? row.hold_ns : 0,
+		};
+
+		desk.push(position);
+
+		if (position.virtual) continue;
+
 		const holding = new HoldingT({
-			symbol: row.symbol ?? "",
-			status: row.status ?? "",
-			entryPrice: row.entry_price ?? "0",
-			mark: row.mark ?? "0",
+			symbol: position.symbol,
+			status: closedAt ? "closed" : "open",
+			entryPrice: position.entryPrice ?? "0",
+			mark: position.mark ?? "0",
 		});
 
-		if (row.closed_at) {
+		if (closedAt) {
 			closed.push(holding);
 		} else {
 			open.push(new PositionT({ status: holding.status, holding }));
 		}
 	}
 
+	deskPositionsAtom.set(desk);
 	positionsAtom.set(open);
 	closedPositionsAtom.set(closed);
 	positionCountAtom.set(open.length);
@@ -402,8 +564,7 @@ readVector turns one vector layer into metrics: the labels after the Value's
 Prefix name the floats in order, and any labels past the floats are tags
 (action:<x>, path:<a/b>, ...).
 */
-const readVector = (labels: string[], bytes: Uint8Array) => {
-	const floats = readFloats(bytes);
+const readVector = (labels: string[], floats: number[]) => {
 	const metrics: Metric[] = [];
 	const provenance: Tag[] = [];
 
@@ -538,7 +699,15 @@ export function dispatchValue(val: ParsedValue) {
 
 	for (const layer of val.layers) {
 		if (layer.index.includes("train/regions/")) {
-			ingestTrainRegionsLayer(Number(val.tick), layer.index, layer.bytes);
+			ingestTrainRegionsLayer(
+				Number(val.tick),
+				layer.index,
+				readFloats(layer.bytes),
+			);
+		}
+
+		if (layer.index.includes("train/reject/")) {
+			ingestTrainReject(Number(val.tick), layer.index);
 		}
 	}
 
@@ -558,20 +727,32 @@ export function dispatchValue(val: ParsedValue) {
 
 	const readings = new Map<string, Reading>();
 	let sawPositions = false;
+	let positionPayload: unknown;
 
 	for (const layer of val.layers) {
-		const { index, bytes } = layer;
+		const { bytes } = layer;
+		const index = layerAddress(val, layer.index);
 
 		if (bytes.length === 0) continue;
 
 		if (index === "balance") {
-			applyBalance(parseJSON(bytes) as Wallet);
+			applyBalance(parseJSON(layerBytes(bytes)) as Wallet);
 			continue;
 		}
 
 		if (index === "positions") {
 			sawPositions = true;
-			applyPositions((parseJSON(bytes) as PositionLayer[]) ?? []);
+			positionPayload = parseJSON(layerBytes(bytes));
+			continue;
+		}
+
+		if (index.startsWith("price/")) {
+			rememberTouch(index.slice("price/".length), parseJSON(layerBytes(bytes)));
+			continue;
+		}
+
+		if (index.startsWith("book/")) {
+			rememberBook(index.slice("book/".length), parseJSON(layerBytes(bytes)));
 			continue;
 		}
 
@@ -582,7 +763,9 @@ export function dispatchValue(val: ParsedValue) {
 			continue;
 		}
 
-		if (bytes.length < 8 || bytes.length % 8 !== 0) continue;
+		const floats = readFloats(bytes);
+
+		if (floats.length === 0) continue;
 
 		// A signal layer names its source and symbol (parseSignalIndex); any
 		// other vector layer belongs to the Value's own origin and symbol,
@@ -602,7 +785,7 @@ export function dispatchValue(val: ParsedValue) {
 			owner = symbol;
 		}
 
-		const { metrics, provenance } = readVector(labels, bytes);
+		const { metrics, provenance } = readVector(labels, floats);
 		const key = `${source}\u0000${owner}`;
 		const reading = readings.get(key) ?? newReading(source, owner);
 
@@ -623,8 +806,10 @@ export function dispatchValue(val: ParsedValue) {
 	}
 
 	// Empty layers are skipped on the wire, so a tick without a positions
-	// layer means nothing is held.
-	if (val.role === "tick" && !sawPositions) {
+	// layer means nothing is held. Price layers in the same tick are the marks.
+	if (sawPositions) {
+		applyPositions(positionPayload ?? []);
+	} else if (val.role === "tick") {
 		applyPositions([]);
 	}
 

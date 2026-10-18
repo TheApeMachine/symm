@@ -47,6 +47,7 @@ type Training struct {
 	grid       *nmstore.Grid
 	prefixes   [][]*Token
 	actions    map[string]string
+	model      *Model
 	tokenizers *sync.Map
 	policy     *sync.Map
 	hub        io.Writer
@@ -66,6 +67,7 @@ func NewTraining(
 		client:     client,
 		grid:       nmstore.NewGrid(ctx),
 		prefixes:   make([][]*Token, 0),
+		model:      NewModel(ctx, desk, client),
 		tokenizers: &sync.Map{},
 		hub:        hub,
 		policy:     &sync.Map{},
@@ -82,9 +84,9 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		return nil
 	}
 
-	grouped := make(map[string][]data.Signal)
+	grouped := make(map[string][]broker.Sample)
 
-	for signal, err := range data.Signals(value) {
+	for signal, err := range broker.Samples(value) {
 		if err != nil {
 			training.Error(err)
 			continue
@@ -97,8 +99,14 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		found, _ := training.policy.LoadOrStore(symbol, []*Token{})
 		tokens := found.([]*Token)
 		regions := make([]*Token, 0)
+		observed, err := training.grid.Observe(symbol, signals)
 
-		for _, region := range training.grid.Observe(symbol, signals) {
+		if err != nil {
+			training.Error(err)
+			continue
+		}
+
+		for _, region := range observed {
 			regions = append(regions, &Token{
 				Key:        fmt.Sprintf("R%02d", region.Key),
 				Threshold:  region.Brightness,
@@ -110,6 +118,14 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		tok := seq.(*tokenizer.Sequitur)
 
 		admit := training.match(tokens, regions)
+
+		for _, region := range training.belowEnergy(tokens, regions) {
+			value.Append(
+				[]float64{region.Brightness},
+				"train/reject/"+symbol+"/"+region.Key,
+			)
+		}
+
 		rule, ok := tok.Analyze(admit)
 
 		if ok {
@@ -120,13 +136,18 @@ func (training *Training) Step(value *data.Value) *data.Value {
 			continue
 		}
 
-		tokens = append(tokens, regions...)
+		if len(regions) > 0 && len(admit) == 0 {
+			training.policy.Store(symbol, []*Token{})
+			continue
+		}
+
+		accepted := admitted(regions, admit)
+		tokens = append(tokens, accepted...)
 		training.policy.Store(symbol, tokens)
 		training.act(symbol, tokens)
 
-		for _, region := range regions {
-			data.AppendVector(
-				value,
+		for _, region := range accepted {
+			value.Append(
 				[]float64{region.Brightness},
 				"train/regions/"+symbol+"/"+region.Key,
 			)
@@ -141,8 +162,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 				labels[i] = t.Key
 			}
 
-			data.AppendVector(
-				value,
+			value.Append(
 				keys,
 				"train/regions/"+symbol+"/"+strings.Join(labels, "/"),
 			)
@@ -157,6 +177,10 @@ match checks if the region has enough energy to overcome the
 threshold needed to allow matching the tokens.
 */
 func (training *Training) match(sentence, regions []*Token) []string {
+	if training.model != nil && training.model.Ready() {
+		return training.model.Match(sentence, regions)
+	}
+
 	keys := make([]string, 0, len(regions))
 
 	for i, region := range regions {
@@ -172,7 +196,7 @@ func (training *Training) match(sentence, regions []*Token) []string {
 		}
 
 		for _, gate := range training.prefixes[step] {
-			if region.Key == gate.Key && region.Brightness <= gate.Threshold {
+			if region.Key == gate.Key && region.Brightness >= gate.Threshold {
 				keys = append(keys, region.Key)
 				break
 			}
@@ -182,7 +206,46 @@ func (training *Training) match(sentence, regions []*Token) []string {
 	return keys
 }
 
+/*
+belowEnergy is a region whose key is the next policy token and whose
+brightness is under that token's energy gate. Those regions are not
+admitted, and the caller publishes them so the trie can show the refusal.
+*/
+func (training *Training) belowEnergy(sentence, regions []*Token) []*Token {
+	if training.model != nil && training.model.Ready() {
+		return training.model.Below(sentence, regions)
+	}
+
+	if len(training.prefixes) == 0 {
+		return nil
+	}
+
+	out := make([]*Token, 0)
+
+	for i, region := range regions {
+		step := len(sentence) + i
+
+		if step >= len(training.prefixes) {
+			continue
+		}
+
+		for _, gate := range training.prefixes[step] {
+			if region.Key == gate.Key && region.Brightness < gate.Threshold {
+				out = append(out, region)
+				break
+			}
+		}
+	}
+
+	return out
+}
+
 func (training *Training) act(symbol string, tokens Tokens) {
+	if training.model != nil {
+		training.model.Act(symbol, tokens.String(), training.actions[tokens.String()])
+		return
+	}
+
 	action, ok := training.actions[tokens.String()]
 
 	if !ok {
@@ -191,9 +254,17 @@ func (training *Training) act(symbol string, tokens Tokens) {
 
 	switch action {
 	case "enter.bin":
-		training.desk.Enter(symbol)
+		training.desk.Enter(symbol, false)
 	case "exit.bin":
-		training.desk.Exit(symbol)
+		training.desk.Exit(symbol, false)
+	default:
+		if err := training.desk.Enter(symbol, true); err != nil {
+			err = training.desk.Exit(symbol, true)
+
+			if err != nil {
+				training.Error(err)
+			}
+		}
 	}
 }
 
@@ -205,17 +276,99 @@ func (training *Training) reloadPrefixes() {
 		return
 	}
 
-	for _, prefix := range training.client.ListKeys("policy", "current") {
-		for _, part := range strings.Split(prefix, "/") {
-			training.prefixes = append(training.prefixes, []*Token{
-				{Key: part, Threshold: 0.5, Brightness: 0.5},
-			})
+	for key := range training.client.ListKeys("policy/current") {
+		rest := strings.Trim(strings.TrimPrefix(key, "policy/current"), "/")
+		action := ""
 
-			if part == "enter.bin" || part == "exit.bin" {
-				training.actions[strings.ReplaceAll(strings.ReplaceAll(
-					prefix, "policy/current/", "",
-				), "/"+part, "")] = part
+		switch {
+		case strings.HasSuffix(rest, "enter.bin"):
+			action = "enter.bin"
+		case strings.HasSuffix(rest, "exit.bin"):
+			action = "exit.bin"
+		default:
+			continue
+		}
+
+		rest = strings.Trim(strings.TrimSuffix(rest, action), "/")
+		parts := make([]string, 0)
+
+		for _, part := range strings.Split(rest, "/") {
+			if part == "" || part == "policy" || part == "current" {
+				continue
 			}
+
+			parts = append(parts, part)
+		}
+
+		if len(parts) == 0 {
+			continue
+		}
+
+		path := strings.Join(parts, "/")
+		training.actions[path] = action
+
+		if training.model != nil {
+			training.model.Note(path)
+		}
+
+		for i, part := range parts {
+			for len(training.prefixes) <= i {
+				training.prefixes = append(training.prefixes, nil)
+			}
+
+			training.prefixes[i] = append(training.prefixes[i], &Token{
+				Key:        part,
+				Threshold:  0.5,
+				Brightness: 0.5,
+			})
 		}
 	}
+}
+
+/*
+fork gives one detection its own grid and sentence. Prefixes and actions stay
+shared and are only read after reload.
+*/
+func (training *Training) fork() *Training {
+	if training == nil {
+		return nil
+	}
+
+	return &Training{
+		System:     runtime.NewSystem(training.Context(), "training"),
+		price:      training.price,
+		desk:       training.desk,
+		client:     training.client,
+		grid:       nmstore.NewGrid(training.Context()),
+		prefixes:   training.prefixes,
+		actions:    training.actions,
+		tokenizers: &sync.Map{},
+		policy:     &sync.Map{},
+		hub:        training.hub,
+	}
+}
+
+func admitted(regions []*Token, keys []string) []*Token {
+	if len(keys) == 0 || len(regions) == 0 {
+		return nil
+	}
+
+	left := make(map[string]int, len(keys))
+
+	for _, key := range keys {
+		left[key]++
+	}
+
+	out := make([]*Token, 0, len(keys))
+
+	for _, region := range regions {
+		if left[region.Key] == 0 {
+			continue
+		}
+
+		left[region.Key]--
+		out = append(out, region)
+	}
+
+	return out
 }
