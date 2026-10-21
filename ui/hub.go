@@ -27,6 +27,14 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+Exiter takes the manual exit a dashboard operator commands for one symbol:
+the desk's learned exit, on command.
+*/
+type Exiter interface {
+	Exit(symbol string, virtual bool) error
+}
+
 type Hub struct {
 	*runtime.System
 	ctx        context.Context
@@ -35,6 +43,7 @@ type Hub struct {
 	routes     *Routes
 	clients    sync.Map // *websocket.Conn -> *client
 	replayer   Replayer
+	exiter     Exiter
 	objects    objectSource
 	client     *store.Client
 	// kept is the latest frame of each dashboard state, replayed when a
@@ -260,6 +269,14 @@ func (hub *Hub) Replay(replayer Replayer) {
 }
 
 /*
+Exiter sets the desk serving the "position.exit" command. Without one the
+command is an error.
+*/
+func (hub *Hub) Exiter(exiter Exiter) {
+	hub.exiter = exiter
+}
+
+/*
 NewHub constructs the dashboard hub from its queue-backed system boundaries.
 */
 func NewHub(ctx context.Context, store *store.Client) *Hub {
@@ -481,6 +498,30 @@ func (hub *Hub) handleCommand(from *client, payload []byte) error {
 		types.SetFocus(request.Symbol)
 	case "route":
 		types.SetRoute(request.Route)
+	case "position.exit":
+		if hub.exiter == nil {
+			return errnie.Error(errnie.Err(
+				errnie.ServiceUnavailable,
+				"[hub] position.exit command with no desk: "+string(payload),
+				nil,
+			))
+		}
+
+		if request.Symbol == "" {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[hub] position.exit command needs a symbol: "+string(payload),
+				nil,
+			))
+		}
+
+		/*
+			An operator exit closes the paper lot; a failure is the desk's error,
+			logged below by the read loop, and the socket stays open.
+		*/
+		if err := hub.exiter.Exit(request.Symbol, false); err != nil {
+			return errnie.Error(err)
+		}
 	case "hindsight":
 		// The run is a decimal string: an epoch exceeds what a JSON number
 		// carries exactly in the browser.

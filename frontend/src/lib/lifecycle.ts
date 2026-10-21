@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
-import { positionCountAtom } from "#/collections/app";
+import type { DeskPosition } from "#/collections/types";
+import { lifecycleFromDeskClosed } from "#/lib/desk-closed-lifecycle";
 
 /*
 Paper round trips as the dashboard run lives them, streamed over the hub as
@@ -51,8 +52,18 @@ export type Lifecycle = {
 	closed_at?: string | null;
 	events: LifeEvent[] | null;
 	mark?: LifeMark | null;
+	/** Bid marks sampled while the lot was open (for hold charts). */
+	marks?: LifeMark[];
 	outcome?: LifeOutcome | null;
 	book?: string;
+	/**
+	Tape ticks the closed round trip covered, carried on the desk position's
+	own run epoch: A some prints before the entry, B the entry, C the exit.
+	The Position Life-Cycle reads these as training-sample markers.
+	*/
+	marks_a?: number | null;
+	marks_b?: number | null;
+	marks_c?: number | null;
 };
 
 export type Performance = {
@@ -125,7 +136,6 @@ const publish = () => {
 		b.opened_at.localeCompare(a.opened_at),
 	);
 	snapshot = { report: summarize(all) };
-	positionCountAtom.set(snapshot.report.open_count);
 	for (const listener of listeners) listener();
 };
 
@@ -197,16 +207,51 @@ export const ingestPositionFrame = (frame: unknown) => {
 		events: [],
 	};
 
+	let marks = life.marks ?? [];
+
+	if (frame.mark) {
+		const last = marks[marks.length - 1];
+		if (!last || last.at !== frame.mark.at || last.bid !== frame.mark.bid) {
+			marks = [...marks, frame.mark].slice(-400);
+		}
+	}
+
 	const next: Lifecycle = {
 		...life,
 		status: frame.status,
 		closed_at: frame.closed_at ?? life.closed_at,
 		outcome: frame.outcome ?? life.outcome,
 		mark: frame.mark ?? life.mark,
+		marks: marks.length > 0 ? marks : life.marks,
 		events: frame.event ? [...(life.events ?? []), frame.event] : life.events,
 	};
 
 	remember(next);
+};
+
+/*
+ingestDeskClosedLots merges persisted desk round trips into the lifecycle
+report when the live position frame stream did not replay them.
+*/
+export const ingestDeskClosedLots = (rows: DeskPosition[]) => {
+	for (const row of rows) {
+		const life = lifecycleFromDeskClosed(row);
+		if (!life) {
+			continue;
+		}
+
+		const existing = lives.get(life.id);
+		if (existing && (existing.events?.length ?? 0) > 2) {
+			continue;
+		}
+
+		remember({
+			...life,
+			events: existing?.events?.length ? existing.events : life.events,
+			outcome: existing?.outcome ?? life.outcome,
+			mark: existing?.mark ?? life.mark,
+		});
+	}
 };
 
 /* resetLifecycles empties the store (tests). */

@@ -10,6 +10,7 @@ import { useSelector } from "@tanstack/react-store";
 type TerminalRoutePath =
 	| "/"
 	| "/learning"
+	| "/longtail"
 	| "/influence"
 	| "/fluid"
 	| "/signals"
@@ -26,6 +27,12 @@ export const SURFACE_ITEMS: Array<{
 }> = [
 	{ key: "dashboard", label: "Dashboard", icon: "dashboard", to: "/" },
 	{ key: "learning", label: "Forward learning", icon: "grid", to: "/learning" },
+	{
+		key: "longtail",
+		label: "Longtail",
+		icon: "signal",
+		to: "/longtail",
+	},
 	{
 		key: "diagnostics",
 		label: "System diagnostics",

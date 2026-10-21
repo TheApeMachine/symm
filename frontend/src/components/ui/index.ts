@@ -145,3 +145,4 @@ export { type ValueStore, metricOf, metricsWithPrefix, useValues } from "./value
 export { RadialHistory, type RadialHistoryProps, sectorHue } from "./radial-history";
 export { TokenRibbon, type TokenRibbonProps } from "./token-ribbon";
 export { Trail, type TrailProps } from "./trail";
+export { SeriesChart, type SeriesChartProps } from "./series-chart";

@@ -97,43 +97,6 @@ export type Instrument = Record<string, unknown> & {
 
 export type LifecycleState = string;
 
-export class SellEventT {
-	trigger = "";
-	qty = "";
-	at: bigint = 0n;
-	capacityQty = 0;
-	capacityRatio = 0;
-	budget: number | string = 0;
-	note = "";
-
-	constructor(init: Partial<SellEventT> = {}) {
-		Object.assign(this, init);
-	}
-}
-
-export class HoldingT {
-	symbol = "";
-	status = "";
-	pnl: number | string = "0";
-	entryPrice: number | string = "0";
-	mark: number | string = "0";
-	returnPct = 0;
-	capacityDefined = false;
-	capacityRatio: number | string = 0;
-	capacityBounded = false;
-	slippageBudget: number | string = 0;
-	budgetSource = "";
-	venuePnl: number | string = "0";
-	shadowPnl: number | string = "0";
-	shadowDefined = false;
-	closedAt: bigint = 0n;
-	sells: SellEventT[] = [];
-
-	constructor(init: Partial<HoldingT> = {}) {
-		Object.assign(this, init);
-	}
-}
-
 /*
 DeskPosition is one broker.Position as JSON on the tick's positions layer.
 Decimals arrive as strings. closed_at is null while the lot is open.
@@ -151,18 +114,33 @@ export type DeskPosition = {
 	exitFee: string | null;
 	exitVwap: string | null;
 	exitRoom: number | null;
+	exit_room?: number | string | null;
 	returnPct: number | null;
 	holdNs: number;
+	fills?: Array<Record<string, unknown>> | null;
+	entry_epoch?: number | string | null;
+	exit_epoch?: number | string | null;
+	entry_orders?: Array<Record<string, unknown>> | null;
+	exit_orders?: Array<Record<string, unknown>> | null;
+	/** The priced close (broker settle): never zero when unpriced — the triggers say why. */
+	outcome?: {
+		cost: string | null;
+		proceeds: string | null;
+		fees: string | null;
+		realized: string | null;
+		net_return: number | null;
+		hold_ns: number;
+		expected_hold_ns: number | null;
+		triggers: string[] | null;
+	} | null;
+	/**
+	Tape ticks of a closed round trip: A some prints before the entry (B),
+	C at the exit — the Position Life-Cycle's training-sample markers.
+	*/
+	marks?: { a: number | null; b: number | null; c: number | null } | null;
+	/** The run epoch of the round trip: the tape the A B C markers index. */
+	run?: string | null;
 };
-
-export class PositionT {
-	status = "";
-	holding: HoldingT | null = null;
-
-	constructor(init: Partial<PositionT> = {}) {
-		Object.assign(this, init);
-	}
-}
 
 export class DecisionT {
 	id = "";
@@ -471,3 +449,47 @@ export type TradeRecord = {
 		} | null;
 	} | null;
 };
+
+export class PositionT {
+	status = "";
+	holding: HoldingT | null = null;
+
+	constructor(init: Partial<PositionT> = {}) {
+		Object.assign(this, init);
+	}
+}
+export class SellEventT {
+	trigger = "";
+	qty = "";
+	at: bigint = 0n;
+	capacityQty = 0;
+	capacityRatio = 0;
+	budget: number | string = 0;
+	note = "";
+
+	constructor(init: Partial<SellEventT> = {}) {
+		Object.assign(this, init);
+	}
+}
+export class HoldingT {
+	symbol = "";
+	status = "";
+	pnl: number | string = "0";
+	entryPrice: number | string = "0";
+	mark: number | string = "0";
+	returnPct = 0;
+	capacityDefined = false;
+	capacityRatio: number | string = 0;
+	capacityBounded = false;
+	slippageBudget: number | string = 0;
+	budgetSource = "";
+	venuePnl: number | string = "0";
+	shadowPnl: number | string = "0";
+	shadowDefined = false;
+	closedAt: bigint = 0n;
+	sells: SellEventT[] = [];
+
+	constructor(init: Partial<HoldingT> = {}) {
+		Object.assign(this, init);
+	}
+}

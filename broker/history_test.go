@@ -2,16 +2,35 @@ package broker
 
 import (
 	"context"
-	"io"
 	"testing"
 )
 
-func TestHistoryColdReadEnds(t *testing.T) {
+func TestHistoryRestoreWithoutStoreEnds(t *testing.T) {
 	history := NewHistory(context.Background(), nil)
 
-	n, err := history.Read(make([]byte, 64))
+	for position, err := range history.Restore() {
+		if err != nil {
+			t.Fatalf("restore: %v", err)
+		}
 
-	if n != 0 || err != io.EOF {
-		t.Fatalf("cold read n=%d err=%v", n, err)
+		if position != nil {
+			t.Fatalf("storeless restore yielded %v", position)
+		}
+	}
+}
+
+func TestHistoryStorelessWritesAreNoops(t *testing.T) {
+	history := NewHistory(context.Background(), nil)
+
+	if err := history.Record(NewPosition()); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	if err := history.Forget("BTC/USD"); err != nil {
+		t.Fatalf("forget: %v", err)
+	}
+
+	if err := history.Drop(); err != nil {
+		t.Fatalf("drop: %v", err)
 	}
 }

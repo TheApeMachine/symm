@@ -486,6 +486,9 @@ const applyPositions = (rows: unknown) => {
 		if (typeof row.symbol !== "string" || row.symbol === "") continue;
 
 		const closedAt = typeof row.closed_at === "string" ? row.closed_at : null;
+		const entryTick =
+			typeof row.entry_tick === "number" ? row.entry_tick : null;
+		const exitTick = typeof row.exit_tick === "number" ? row.exit_tick : null;
 		const fromFills = fillNumbers(row.fills);
 		const orders = Array.isArray(row.entry_orders) ? row.entry_orders : [];
 		const firstOrder =
@@ -494,6 +497,32 @@ const applyPositions = (rows: unknown) => {
 				: undefined;
 		const touch = touches.get(row.symbol);
 		const qty = decimalText(row.qty) ?? decimalText(firstOrder?.volume);
+
+		/*
+		A settled lot carries its priced outcome (broker/settle): cost,
+		proceeds, profit, net return, hold, and the triggers naming why it
+		closed — "unpriced" when the book could not score it, never a zero.
+		*/
+		const triggers = Array.isArray(row.outcome_triggers)
+			? row.outcome_triggers.filter(
+					(entry): entry is string => typeof entry === "string",
+				)
+			: null;
+		const outcome =
+			closedAt && triggers !== null
+				? {
+						cost: decimalText(row.cost),
+						proceeds: decimalText(row.proceeds),
+						fees: decimalText(row.exit_fee),
+						realized: decimalText(row.profit),
+						net_return:
+							typeof row.net_return === "number" ? row.net_return : null,
+						hold_ns:
+							typeof row.hold_ns === "number" ? row.hold_ns : 0,
+						expected_hold_ns: null,
+						triggers,
+					}
+				: null;
 		const position: DeskPosition = {
 			id: typeof row.id === "string" ? row.id : row.symbol,
 			symbol: row.symbol,
@@ -509,6 +538,21 @@ const applyPositions = (rows: unknown) => {
 			exitRoom: exitRoomOf(row, row.symbol, qty),
 			returnPct: typeof row.return === "number" ? row.return : null,
 			holdNs: typeof row.hold_ns === "number" ? row.hold_ns : 0,
+			outcome,
+			/*
+			A closed virtual lot carries its tape markers: B at the entry,
+			C at the exit, A some ticks before the entry — the Position
+			Life-Cycle's training-sample window.
+			*/
+			marks:
+				closedAt !== null && row.virtual === true && entryTick !== null
+					? {
+							a: Math.max(0, entryTick - 10),
+							b: entryTick,
+							c: exitTick ?? entryTick,
+						}
+					: null,
+			run: typeof row.run === "string" ? row.run : null,
 		};
 
 		desk.push(position);

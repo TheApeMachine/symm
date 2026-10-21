@@ -33,6 +33,7 @@ import {
 	useLifecycles,
 } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
+import { hubBaseUrl } from "#/lib/hub";
 import { ActivePositionHealthCard, TradeRegionScores } from "./position-health";
 
 /*
@@ -850,6 +851,138 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 	);
 };
 
+/*
+A closed virtual lot is a finished search: its A B C ticks index the run's
+tape, so the operator labels it up / up_friction / down / chop / flat and
+commits it. A commit POSTs to the hub's hindsight commit — the same label
+boundary the tape scanner uses — and symm train reads nothing but committed
+detections.
+*/
+const SAMPLE_CLASSES = [
+	"up",
+	"up_friction",
+	"down",
+	"chop",
+	"flat",
+] as const;
+
+const TrainingSampleCard = ({ life }: { life: Lifecycle }) => {
+	const [class_, setClass] = useState<string>("up");
+	const [state, setState] = useState<"idle" | "saving" | "saved" | "error">(
+		"idle",
+	);
+	const [error, setError] = useState<string | null>(null);
+
+	if (life.status !== "closed" || life.book !== "virtual") return null;
+
+	const marks =
+		life.marks_a !== null &&
+		life.marks_a !== undefined &&
+		life.marks_b !== null &&
+		life.marks_b !== undefined &&
+		life.marks_c !== null &&
+		life.marks_c !== undefined
+			? { a: life.marks_a, b: life.marks_b, c: life.marks_c }
+			: null;
+
+	return (
+		<Flex.Column
+			data-l="lifecycle-training-sample"
+			className="border-(--line) border-b bg-(--surface) px-3 py-2 font-mono text-[11px]"
+			gap={2}
+		>
+			<Flex.Row align="center" gap={2} wrap="wrap">
+				<span className="font-bold uppercase tracking-wider text-[10px] text-(--f4)">
+					training sample
+				</span>
+				<span className="text-[10px] text-(--f3)">
+					A {marks === null ? "—" : marks.a} · B {marks === null ? "—" : marks.b} · C{" "}
+					{marks === null ? "—" : marks.c}
+					{life.policy_epoch ? ` · run ${life.policy_epoch}` : ""}
+				</span>
+			</Flex.Row>
+
+			<Flex.Row align="center" gap={2} wrap="wrap">
+				{SAMPLE_CLASSES.map((option) => (
+					<button
+						key={option}
+						type="button"
+						data-l={`sample-class-${option}`}
+						onClick={() => setClass(option)}
+						className={cn(
+							"px-2 py-0.5 rounded border text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer",
+							class_ === option
+								? "border-(--acc) bg-(--acc)/15 text-(--acc)"
+								: "border-(--line) text-(--f3) hover:bg-(--sunken)",
+						)}
+					>
+						{option}
+					</button>
+				))}
+
+				<button
+					type="button"
+					data-l="sample-commit"
+					disabled={marks === null || state === "saving"}
+					onClick={async () => {
+						if (marks === null || !life.policy_epoch) return;
+
+						setState("saving");
+						setError(null);
+
+						try {
+							const response = await fetch(`${hubBaseUrl()}/hindsight/commit`, {
+								method: "POST",
+								headers: { "Content-Type": "application/json" },
+								body: JSON.stringify({
+									run: life.policy_epoch,
+									symbol: life.symbol,
+									class: class_,
+									a: String(marks.a),
+									b: String(marks.b),
+									c: String(marks.c),
+									d: String(marks.c),
+								}),
+							});
+
+							if (!response.ok) {
+								throw new Error(await response.text());
+							}
+
+							setState("saved");
+						} catch (cause) {
+							setState("error");
+							setError(cause instanceof Error ? cause.message : String(cause));
+						}
+					}}
+					className={cn(
+						"ml-auto px-2.5 py-0.5 rounded border text-[10px] font-bold uppercase tracking-wider transition-colors",
+						marks === null || state === "saving"
+							? "border-(--line) text-(--f4) cursor-wait"
+							: "border-(--up)/40 text-(--up) hover:bg-(--up)/10 cursor-pointer",
+					)}
+				>
+					{state === "saving"
+						? "committing"
+						: state === "saved"
+							? "committed"
+							: "commit"}
+				</button>
+			</Flex.Row>
+
+			{marks === null ? (
+				<span className="text-[10px] text-(--f4)">
+					this lot carries no tape ticks — its run predates the markers
+				</span>
+			) : null}
+
+			{error !== null ? (
+				<span className="text-[10px] text-(--down)">{error}</span>
+			) : null}
+		</Flex.Column>
+	);
+};
+
 const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 	const outcome = life.outcome;
 	if (!outcome || life.status !== "closed") return null;
@@ -1055,6 +1188,7 @@ export const LifecycleView = () => {
 							) : (
 								<OutcomeCard life={active} />
 							)}
+							<TrainingSampleCard life={active} />
 							{(active.events ?? []).map((event, index) => (
 								// biome-ignore lint/suspicious/noArrayIndexKey: events are append-only
 								<EventRow key={index} event={event} />

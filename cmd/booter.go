@@ -285,6 +285,7 @@ func (booter *Booter) initPipeline() error {
 	// from the store.
 	if booter.dashboard {
 		booter.hub = ui.NewHub(ctx, booter.store)
+		booter.hub.Exiter(booter.desk)
 
 		if err := booter.hub.Run(); err != nil {
 			return err

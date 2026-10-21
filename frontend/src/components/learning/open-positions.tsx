@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { useSelector } from "@tanstack/react-store";
+import { sendCommand } from "#/providers/websocket";
 import { deskPositionsAtom } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import { cognitionStore, regionHistoryStore } from "#/collections/cognition";
@@ -64,6 +66,7 @@ const sectorOf = (token: string) => {
 };
 
 const PositionCard = ({ row }: { row: DeskPosition }) => {
+	const [exiting, setExiting] = useState(false);
 	const match = useSelector(
 		cognitionStore,
 		(state) => state.matches[row.symbol],
@@ -250,6 +253,38 @@ const PositionCard = ({ row }: { row: DeskPosition }) => {
 				<span>mark {row.mark ?? "—"}</span>
 				<span>fee {row.entryFee ?? "—"}</span>
 			</div>
+
+			{/*
+			Manual exit: the desk settles the lot (hub position.exit), and
+			the closed round trip lands on the Position Life-Cycle tab for
+			annotation.
+			*/}
+			<button
+				type="button"
+				data-l="position-exit"
+				disabled={exiting}
+				onClick={() => {
+					setExiting(true);
+
+					try {
+						sendCommand({
+							type: "position.exit",
+							symbol: row.symbol,
+							virtual: row.virtual,
+						});
+					} catch (cause) {
+						console.error(cause);
+					}
+				}}
+				className={cn(
+					"self-start mt-0.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border transition-colors",
+					exiting
+						? "border-(--line) text-(--f4) cursor-wait"
+						: "border-(--down)/40 text-(--down) hover:bg-(--down)/10 cursor-pointer",
+				)}
+			>
+				{exiting ? "closing" : "exit"}
+			</button>
 		</div>
 	);
 };

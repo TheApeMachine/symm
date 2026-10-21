@@ -12,25 +12,32 @@ import (
 )
 
 type Position struct {
-	mu          sync.RWMutex
-	ID          string                  `json:"id"`
-	Symbol      string                  `json:"symbol"`
-	OpenedAt    time.Time               `json:"opened_at"`
-	ClosedAt    *time.Time              `json:"closed_at"`
-	EntryOrders []*spot.OrderRequest    `json:"entry_orders,omitempty"`
-	ExitOrders  []*spot.OrderRequest    `json:"exit_orders,omitempty"`
-	Fills       []*kraken.ExecutionData `json:"fills,omitempty"`
-	Qty         *decimal.Decimal        `json:"qty,omitempty"`
-	EntryPrice  *decimal.Decimal        `json:"entry_price,omitempty"`
-	ExitPrice   *decimal.Decimal        `json:"exit_price,omitempty"`
-	EntryFee    *decimal.Decimal        `json:"entry_fee,omitempty"`
-	ExitFee     *decimal.Decimal        `json:"exit_fee,omitempty"`
-	Mark        *decimal.Decimal        `json:"mark,omitempty"`
-	ExitVWAP    *decimal.Decimal        `json:"exit_vwap,omitempty"`
-	ExitRoom    *float64                `json:"exit_room,omitempty"`
-	Return      *float64                `json:"return,omitempty"`
-	HoldNs      int64                   `json:"hold_ns,omitempty"`
-	Virtual     bool                    `json:"virtual,omitempty"`
+	mu              sync.RWMutex
+	ID              string                  `json:"id"`
+	Symbol          string                  `json:"symbol"`
+	OpenedAt        time.Time               `json:"opened_at"`
+	ClosedAt        *time.Time              `json:"closed_at"`
+	EntryTick       uint64                  `json:"entry_tick,omitempty"`
+	ExitTick        uint64                  `json:"exit_tick,omitempty"`
+	EntryOrders     []*spot.OrderRequest    `json:"entry_orders,omitempty"`
+	ExitOrders      []*spot.OrderRequest    `json:"exit_orders,omitempty"`
+	Fills           []*kraken.ExecutionData `json:"fills,omitempty"`
+	Qty             *decimal.Decimal        `json:"qty,omitempty"`
+	EntryPrice      *decimal.Decimal        `json:"entry_price,omitempty"`
+	ExitPrice       *decimal.Decimal        `json:"exit_price,omitempty"`
+	EntryFee        *decimal.Decimal        `json:"entry_fee,omitempty"`
+	ExitFee         *decimal.Decimal        `json:"exit_fee,omitempty"`
+	Mark            *decimal.Decimal        `json:"mark,omitempty"`
+	ExitVWAP        *decimal.Decimal        `json:"exit_vwap,omitempty"`
+	ExitRoom        *float64                `json:"exit_room,omitempty"`
+	Return          *float64                `json:"return,omitempty"`
+	HoldNs          int64                   `json:"hold_ns,omitempty"`
+	Virtual         bool                    `json:"virtual,omitempty"`
+	Cost            *decimal.Decimal        `json:"cost,omitempty"`
+	Proceeds        *decimal.Decimal        `json:"proceeds,omitempty"`
+	Profit          *decimal.Decimal        `json:"profit,omitempty"`
+	NetReturn       *float64                `json:"net_return,omitempty"`
+	OutcomeTriggers []string                `json:"outcome_triggers,omitempty"`
 }
 
 func NewPosition() *Position {

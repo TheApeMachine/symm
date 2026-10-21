@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as XrayRouteImport } from './routes/xray'
 import { Route as WorkbenchRouteImport } from './routes/workbench'
 import { Route as SignalsRouteImport } from './routes/signals'
+import { Route as LongtailRouteImport } from './routes/longtail'
 import { Route as LearningRouteImport } from './routes/learning'
 import { Route as InfluenceRouteImport } from './routes/influence'
 import { Route as HindsightRouteImport } from './routes/hindsight'
@@ -32,6 +33,11 @@ const WorkbenchRoute = WorkbenchRouteImport.update({
 const SignalsRoute = SignalsRouteImport.update({
   id: '/signals',
   path: '/signals',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LongtailRoute = LongtailRouteImport.update({
+  id: '/longtail',
+  path: '/longtail',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LearningRoute = LearningRouteImport.update({
@@ -72,6 +78,7 @@ export interface FileRoutesByFullPath {
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
+  '/longtail': typeof LongtailRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
@@ -83,6 +90,7 @@ export interface FileRoutesByTo {
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
+  '/longtail': typeof LongtailRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
@@ -95,6 +103,7 @@ export interface FileRoutesById {
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
+  '/longtail': typeof LongtailRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
@@ -108,6 +117,7 @@ export interface FileRouteTypes {
     | '/hindsight'
     | '/influence'
     | '/learning'
+    | '/longtail'
     | '/signals'
     | '/workbench'
     | '/xray'
@@ -119,6 +129,7 @@ export interface FileRouteTypes {
     | '/hindsight'
     | '/influence'
     | '/learning'
+    | '/longtail'
     | '/signals'
     | '/workbench'
     | '/xray'
@@ -130,6 +141,7 @@ export interface FileRouteTypes {
     | '/hindsight'
     | '/influence'
     | '/learning'
+    | '/longtail'
     | '/signals'
     | '/workbench'
     | '/xray'
@@ -142,6 +154,7 @@ export interface RootRouteChildren {
   HindsightRoute: typeof HindsightRoute
   InfluenceRoute: typeof InfluenceRoute
   LearningRoute: typeof LearningRoute
+  LongtailRoute: typeof LongtailRoute
   SignalsRoute: typeof SignalsRoute
   WorkbenchRoute: typeof WorkbenchRoute
   XrayRoute: typeof XrayRoute
@@ -168,6 +181,13 @@ declare module '@tanstack/react-router' {
       path: '/signals'
       fullPath: '/signals'
       preLoaderRoute: typeof SignalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/longtail': {
+      id: '/longtail'
+      path: '/longtail'
+      fullPath: '/longtail'
+      preLoaderRoute: typeof LongtailRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/learning': {
@@ -222,6 +242,7 @@ const rootRouteChildren: RootRouteChildren = {
   HindsightRoute: HindsightRoute,
   InfluenceRoute: InfluenceRoute,
   LearningRoute: LearningRoute,
+  LongtailRoute: LongtailRoute,
   SignalsRoute: SignalsRoute,
   WorkbenchRoute: WorkbenchRoute,
   XrayRoute: XrayRoute,
