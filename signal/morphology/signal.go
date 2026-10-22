@@ -2,13 +2,13 @@ package morphology
 
 import (
 	"context"
-	"errors"
 	"math"
 	"sort"
 
-	"github.com/theapemachine/errnie"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
@@ -25,12 +25,14 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
+	books  *broker.Book
 	states map[string]*symbolState
 	keys   []string
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
+		books:  books,
 		states: make(map[string]*symbolState),
 		keys: []string{
 			"book_shape_distance",
@@ -52,55 +54,56 @@ Step processes the book of every distinct symbol traded in the tick's frame;
 each symbol writes its own (reserved) layer.
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	trades, err := broker.Trades(value)
+	var trades []kraken.TradeData
+	value.Lookup(&trades, "spot:trade")
 
-	if err != nil {
-		errnie.Error(err)
-		return value
-	}
-
-	for _, symbol := range broker.Symbols(trades) {
-		signal.step(value, symbol)
+	for _, trade := range trades {
+		signal.step(value, trade)
 	}
 
 	return value
 }
 
-func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
+func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
 		return value
 	}
 
-	snapshot, err := broker.ReadSnapshot(value, symbol)
+	var bookAvailable bool
+	var bestBid, bestAsk *spotbook.Level
+	var bids []float64
+	var asks []float64
 
-	if err != nil {
-		// The tick records this book as not valid (book_error layer) and
-		// its transition was raised once where it happened: skip the symbol.
-		if errors.Is(err, broker.ErrBookNotValid) {
-			return value
+	signal.books.Book(trade.Symbol, func(b *spotbook.Book) {
+		bookAvailable = true
+
+		bestBid = b.BestBid()
+		bestAsk = b.BestAsk()
+		if bestBid == nil || bestAsk == nil || bestBid.Price == nil || bestAsk.Price == nil {
+			return
 		}
 
-		errnie.Error(err)
+		bids = append(bids, bestBid.Price.Float64(), bestBid.Quantity.Float64())
+		asks = append(asks, bestAsk.Price.Float64(), bestAsk.Quantity.Float64())
+
+		for _, level := range b.Bids.Levels {
+			bids = append(bids, level.Price.Float64(), level.Quantity.Float64())
+		}
+		for _, level := range b.Asks.Levels {
+			asks = append(asks, level.Price.Float64(), level.Quantity.Float64())
+		}
+	})
+
+	if !bookAvailable {
 		return value
 	}
 
-	if snapshot == nil {
-		return value
-	}
+	bestBidPrice := bestBid.Price.Float64()
+	bestAskPrice := bestAsk.Price.Float64()
+	bids = append(bids, bestBidPrice, bestBid.Quantity.Float64())
+	asks = append(asks, bestAskPrice, bestAsk.Quantity.Float64())
 
-	bestBid, bestAsk := snapshot.Touch()
-	bestBidPrice, bestAskPrice := bestBid.Price.Float64(), bestAsk.Price.Float64()
-	bids := []float64{bestBidPrice, bestAskPrice}
-	asks := []float64{bestBidPrice, bestAskPrice}
-
-	for _, level := range snapshot.Bids {
-		bids = append(bids, level.Price.Float64(), level.Quantity.Float64())
-	}
-	for _, level := range snapshot.Asks {
-		asks = append(asks, level.Price.Float64(), level.Quantity.Float64())
-	}
-
-	res, err := signal.Calculate(symbol, bids, asks)
+	res, err := signal.Calculate(trade.Symbol, bids, asks)
 	if err != nil || len(res) == 0 {
 		return value
 	}
@@ -109,7 +112,12 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		res = append(res, 0.0)
 	}
 
-	value.Append(res, append(append([]string{"signal", signal.Name()}, signal.keys...), "symbol:"+symbol)...)
+	keys := []string{
+		signal.Name(),
+		trade.Symbol,
+	}
+
+	value.Append(res, append(keys, signal.keys...)...)
 	return value
 }
 

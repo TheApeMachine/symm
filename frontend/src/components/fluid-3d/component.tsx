@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { errorAtom } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { paintPhaseDial } from "#/components/charts/phase-dial";
 import { TerminalPhaseDialChart } from "#/components/terminal/charts";
 import { Badge } from "#/components/ui/badge";
@@ -157,7 +157,7 @@ export const FluidInspector = () => {
 				setSelected,
 				(cause) => {
 					setError(cause.message);
-					errorAtom.set({
+					atoms["error"].set({
 						error: cause.message,
 						source: "FluidScene WebGPU",
 					});
@@ -167,7 +167,7 @@ export const FluidInspector = () => {
 		} catch (cause) {
 			const msg = cause instanceof Error ? cause.message : String(cause);
 			setError(msg);
-			errorAtom.set({
+			atoms["error"].set({
 				error: msg,
 				source: "FluidScene WebGPU Initialization",
 			});

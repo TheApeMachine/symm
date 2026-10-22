@@ -1,9 +1,8 @@
 import { createStore } from "@tanstack/store";
 import { useSelector } from "@tanstack/react-store";
-import { deskPositionsAtom } from "#/collections/app";
+import { signals } from "#/collections/app";
 import type { Book } from "#/collections/book";
 import { sequiturStore } from "#/collections/sequitur";
-import type { DeskPosition } from "#/collections/types";
 import { closedOnBook, onBook, openOnBook, positionReadout } from "#/components/book-readout";
 import { ingestDeskClosedLots } from "#/lib/lifecycle";
 
@@ -36,7 +35,7 @@ const MAX_SAMPLES = 180;
 const SAMPLE_EVERY_MS = 5_000;
 
 const summarizeBook = (
-	rows: DeskPosition[],
+	rows: any[],
 	book: Book,
 ): BookDeskStats => {
 	const onThisBook = rows.filter((row) => onBook(row, book));
@@ -210,6 +209,21 @@ const pushSample = (sample: LongtailSample) => {
 	});
 };
 
+const readPositions = (state: Record<string, any>): any[] => {
+	const bySymbol = new Map<string, any>();
+	for (const ring of Object.values(state)) {
+		if (!ring || ring.isEmpty()) continue;
+		const latest = ring.get(ring.getBufferLength() - 1);
+		if (!latest) continue;
+		const rows = latest.lookup("positions") as any[] | undefined;
+		if (!Array.isArray(rows)) continue;
+		for (const row of rows) {
+			if (row && row.symbol) bySymbol.set(String(row.symbol), row);
+		}
+	}
+	return [...bySymbol.values()];
+};
+
 let recorderStarted = false;
 
 export const ensureLongtailRecorder = () => {
@@ -220,7 +234,8 @@ export const ensureLongtailRecorder = () => {
 	recorderStarted = true;
 
 	const tick = () => {
-		const desk = deskPositionsAtom.get();
+		const store = signals["positions"];
+		const desk = readPositions(store.state);
 		ingestDeskClosedLots(desk);
 		const seqStats = summarizeSequitur();
 

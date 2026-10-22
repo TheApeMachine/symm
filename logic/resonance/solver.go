@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -107,8 +107,8 @@ Step advances symbol's predictive coder by one stored tick: its Features,
 standardized causally, and the tick's touch midpoint as the coder's
 reference (no reference when the tick recorded either side as absent).
 */
-func (solver *Solver) Step(tick *data.Value, symbol *broker.SymbolTick) (*data.Value, error) {
-	if tick == nil || symbol == nil || symbol.Symbol == "" {
+func (solver *Solver) Step(tick *data.Value) (*data.Value, error) {
+	if tick == nil {
 		return nil, errnie.Err(errnie.Validation, "resonance: Step needs a tick and one of its symbols", nil)
 	}
 
@@ -116,17 +116,69 @@ func (solver *Solver) Step(tick *data.Value, symbol *broker.SymbolTick) (*data.V
 		return nil, errnie.Err(errnie.Internal, "resonance: solver failed earlier", err)
 	}
 
-	name := symbol.Symbol
-	sources := make(map[string]broker.Sample, len(symbol.Signals))
+	name := tick.Scope
+	sources := make(map[string]float64, len(Features))
 
-	for _, signal := range symbol.Signals {
-		if signal.Symbol != name {
-			return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
-				"resonance: %s carries a %s signal for %s among %s's", tick.Prefix, signal.Source, signal.Symbol, name,
-			), nil)
+	// Group every signal layer on the tick by source and symbol, then pick the
+	// value each feature's label carries for this symbol. Symbols are written
+	// as two path segments (e.g. "XBT/USD") and labels follow them.
+	type sig struct {
+		labels []string
+		values []float64
+	}
+	bySource := map[string]map[string]sig{}
+
+	for _, source := range types.SignalSourceStrings {
+		layers := tick.LookupPrefix(source)
+
+		for _, layer := range layers {
+			parts := strings.Split(layer.Key, "/")
+			if len(parts) < 3 {
+				continue
+			}
+
+			symbol := parts[1] + "/" + parts[2]
+			if symbol != name {
+				continue
+			}
+
+			var values []float64
+			if err := layer.Decode(&values); err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"[resonance.Step] "+layer.Key+" does not decode",
+					err,
+				))
+			}
+
+			if bySource[source] == nil {
+				bySource[source] = make(map[string]sig)
+			}
+
+			bySource[source][symbol] = sig{
+				labels: parts[3:],
+				values: values,
+			}
+		}
+	}
+
+	for _, feature := range Features {
+		symbolSigs, ok := bySource[feature.Source]
+		if !ok {
+			continue
 		}
 
-		sources[signal.Source] = signal
+		s, ok := symbolSigs[name]
+		if !ok {
+			continue
+		}
+
+		for idx, label := range s.labels {
+			if label == feature.Label && idx < len(s.values) {
+				sources[feature.Source] = s.values[idx]
+				break
+			}
+		}
 	}
 
 	features, err := solver.scorer(name).Step(sources)
@@ -137,9 +189,9 @@ func (solver *Solver) Step(tick *data.Value, symbol *broker.SymbolTick) (*data.V
 
 	var midpoint float64
 
-	if symbol.Price.Bid != nil && symbol.Price.Ask != nil {
-		midpoint = (symbol.Price.Bid.Float64() + symbol.Price.Ask.Float64()) / 2
-	}
+	// No price/book layer is carried on the tick Value in the current
+	// refactor, so there is no touch midpoint to read. The coder steps with
+	// midpoint 0 and no reference until a price source is plumbed in.
 
 	loadedStep, _ := solver.steps.LoadOrStore(name, &atomic.Int64{})
 	step := loadedStep.(*atomic.Int64).Add(1)
@@ -276,7 +328,7 @@ Step standardizes each Feature the tick carries for the symbol (a causal
 residual z-score over its running moments) and returns every Feature's
 latest standardized value, in Features order.
 */
-func (scorer *featureScorer) Step(sources map[string]broker.Sample) ([]float64, error) {
+func (scorer *featureScorer) Step(sources map[string]float64) ([]float64, error) {
 	for !scorer.isStepping.CompareAndSwap(false, true) {
 		goruntime.Gosched()
 	}
@@ -289,16 +341,10 @@ func (scorer *featureScorer) Step(sources map[string]broker.Sample) ([]float64, 
 	}
 
 	for index, feature := range Features {
-		signal, carried := sources[feature.Source]
+		val, carried := sources[feature.Source]
 
 		if !carried {
 			continue
-		}
-
-		val, err := signal.Metric(feature.Label)
-
-		if err != nil {
-			return nil, err
 		}
 
 		var reading *statistic.MomentReading
@@ -385,14 +431,19 @@ func floatMetrics(value *data.Value) map[string]float64 {
 		return out
 	}
 
-	for index, values := range data.Layer[[]float64](value) {
-		rest := index
+	for _, layer := range value.LookupPrefix("") {
+		rest := layer.Key
 
-		if value.Prefix != "" && strings.HasPrefix(index, value.Prefix+"/") {
-			rest = strings.TrimPrefix(index, value.Prefix+"/")
+		if value.Prefix != "" && strings.HasPrefix(rest, value.Prefix+"/") {
+			rest = strings.TrimPrefix(rest, value.Prefix+"/")
 		}
 
 		labels := strings.Split(rest, "/")
+
+		var values []float64
+		if err := layer.Decode(&values); err != nil {
+			continue
+		}
 
 		for i, reading := range values {
 			if i < len(labels) {

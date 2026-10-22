@@ -2,17 +2,16 @@ package pumpdump
 
 import (
 	"context"
-	"errors"
 	"math"
 	"sync"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/volumeclock"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 )
 
 type causalEstimator struct {
@@ -48,10 +47,12 @@ type Signal struct {
 	mu     sync.Mutex
 	states map[string]*symbolState
 	keys   []string
+	books  *broker.Book
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
+		books:  books,
 		states: make(map[string]*symbolState),
 		keys: []string{
 			"spread_ratio",
@@ -72,12 +73,8 @@ Step processes every trade entry of the tick's frame; per-symbol state is keyed
 by the entry's symbol and each entry writes its own (reserved) layer.
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	trades, err := broker.Trades(value)
-
-	if err != nil {
-		errnie.Error(err)
-		return value
-	}
+	var trades []kraken.TradeData
+	value.Lookup(&trades, "spot:trade")
 
 	for _, trade := range trades {
 		signal.step(value, trade)
@@ -97,24 +94,24 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		return value
 	}
 
-	snapshot, err := broker.ReadSnapshot(value, trade.Symbol)
-
-	if err != nil {
-		// The tick records this book as not valid (book_error layer) and
-		// its transition was raised once where it happened: skip the symbol.
-		if errors.Is(err, broker.ErrBookNotValid) {
-			return value
-		}
-
-		errnie.Error(err)
-		return value
-	}
-
+	var bookAvailable bool
 	var bid, ask float64
-	hasTouch := snapshot != nil && len(snapshot.Bids) > 0 && len(snapshot.Asks) > 0
-	if hasTouch {
-		bestBid, bestAsk := snapshot.Touch()
-		bid, ask = bestBid.Price.Float64(), bestAsk.Price.Float64()
+	var hasTouch bool
+
+	signal.books.Book(trade.Symbol, func(b *spotbook.Book) {
+		bookAvailable = true
+
+		bestBid := b.BestBid()
+		bestAsk := b.BestAsk()
+		if bestBid != nil && bestAsk != nil && bestBid.Price != nil && bestAsk.Price != nil {
+			bid = bestBid.Price.Float64()
+			ask = bestAsk.Price.Float64()
+			hasTouch = true
+		}
+	})
+
+	if !bookAvailable {
+		return value
 	}
 
 	atNanos := float64(value.Timestamp)
@@ -160,13 +157,17 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		}
 	}
 
-	value.Append([]float64{
+	keys := []string{
+		signal.Name(),
+		trade.Symbol,
+	}
+
+	return value.Append([]float64{
 		spreadRatio,
 		volumeRate,
 		tradeRate,
 		volRatio,
 		posReturn,
 		negReturn,
-	}, append(append([]string{"signal", signal.Name()}, signal.keys...), "symbol:"+trade.Symbol)...)
-	return value
+	}, append(keys, signal.keys...)...)
 }

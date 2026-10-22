@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { focusAtom, signals } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
@@ -28,7 +28,7 @@ const STATS = [
 ] as const;
 
 export const CrossSectionPanel = () => {
-	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const focusSymbol = useSelector(atoms["focus"], (state) => state);
 
 	return (
 		<Panel size="lg">

@@ -2,11 +2,12 @@ package depthflow
 
 import (
 	"context"
-	"errors"
+	"sort"
 
-	"github.com/theapemachine/errnie"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
@@ -22,12 +23,14 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
+	books  *broker.Book
 	states map[string]*symbolState
 	keys   []string
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
+		books:  books,
 		states: make(map[string]*symbolState),
 		keys: []string{
 			"book_imbalance",
@@ -48,15 +51,17 @@ Step processes the book of every distinct symbol traded in the tick's frame;
 each symbol writes its own (reserved) layer.
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	trades, err := broker.Trades(value)
+	var trades []kraken.TradeData
+	value.Lookup(&trades, "spot:trade")
 
-	if err != nil {
-		errnie.Error(err)
-		return value
-	}
+	seen := make(map[string]struct{}, len(trades))
 
-	for _, symbol := range broker.Symbols(trades) {
-		signal.step(value, symbol)
+	for _, trade := range trades {
+		if _, exists := seen[trade.Symbol]; exists {
+			continue
+		}
+		seen[trade.Symbol] = struct{}{}
+		signal.step(value, trade.Symbol)
 	}
 
 	return value
@@ -64,23 +69,6 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 
 func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
-		return value
-	}
-
-	snapshot, err := broker.ReadSnapshot(value, symbol)
-
-	if err != nil {
-		// The tick records this book as not valid (book_error layer) and
-		// its transition was raised once where it happened: skip the symbol.
-		if errors.Is(err, broker.ErrBookNotValid) {
-			return value
-		}
-
-		errnie.Error(err)
-		return value
-	}
-
-	if snapshot == nil {
 		return value
 	}
 
@@ -93,89 +81,126 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		signal.states[symbol] = state
 	}
 
-	bids := ladder(snapshot.Bids)
-	asks := ladder(snapshot.Asks)
-	fullBid := snapshot.Full(snapshot.Bids)
-	fullAsk := snapshot.Full(snapshot.Asks)
+	// The `books.Book` callback is synchronous; the book is present only if
+	// the callback ran. Pending (no snapshot yet), stale (L3 socket down) and
+	// invalid (venue checksum mismatch / absent level) symbols skip the
+	// callback and the tick carries book_error/<symbol> instead.
+	signal.books.Book(symbol, func(b *spotbook.Book) {
+		bids := ladder(b.Bids, true)
+		asks := ladder(b.Asks, false)
 
-	touchBid := bids[0][0] * bids[0][1]
-	touchAsk := asks[0][0] * asks[0][1]
-
-	obsBid := 0.0
-	currentBids := make(map[float64]float64, len(bids))
-	for _, b := range bids {
-		notional := b[0] * b[1]
-		obsBid += notional
-		currentBids[b[0]] = notional
-	}
-
-	obsAsk := 0.0
-	currentAsks := make(map[float64]float64, len(asks))
-	for _, a := range asks {
-		notional := a[0] * a[1]
-		obsAsk += notional
-		currentAsks[a[0]] = notional
-	}
-
-	total := obsBid + obsAsk
-	var bookImb float64
-	if total > 0 {
-		bookImb = (obsBid - obsAsk) / total
-	}
-
-	var touchImb float64
-	if touchTotal := touchBid + touchAsk; touchTotal > 0 {
-		touchImb = (touchBid - touchAsk) / touchTotal
-	}
-
-	var netBid, activityImb float64
-	if state.hasPrev {
-		bidWorst := bids[len(bids)-1][0]
-		askWorst := asks[len(asks)-1][0]
-
-		addedBid, removedBid := levelFlow(
-			state.prevBids, currentBids, state.prevFullBid, fullBid,
-			state.prevBidWorst, bidWorst, func(price, edge float64) bool { return price >= edge },
-		)
-		addedAsk, removedAsk := levelFlow(
-			state.prevAsks, currentAsks, state.prevFullAsk, fullAsk,
-			state.prevAskWorst, askWorst, func(price, edge float64) bool { return price <= edge },
-		)
-
-		netBid = addedBid - removedBid
-		bidActivity := addedBid + removedBid
-		askActivity := addedAsk + removedAsk
-		bookActivity := bidActivity + askActivity
-
-		if bookActivity > 0 {
-			activityImb = (bidActivity - askActivity) / bookActivity
+		if len(bids) == 0 || len(asks) == 0 {
+			return
 		}
-	}
 
-	state.prevBids = currentBids
-	state.prevAsks = currentAsks
-	state.prevFullBid = fullBid
-	state.prevFullAsk = fullAsk
-	state.prevBidWorst = bids[len(bids)-1][0]
-	state.prevAskWorst = asks[len(asks)-1][0]
-	state.hasPrev = true
+		fullBid := len(b.Bids.Levels) >= b.MaxDepth
+		fullAsk := len(b.Asks.Levels) >= b.MaxDepth
 
-	value.Append([]float64{
-		bookImb,
-		touchBid,
-		touchAsk,
-		touchImb,
-		netBid,
-		activityImb,
-	}, append(append([]string{"signal", signal.Name()}, signal.keys...), "symbol:"+symbol)...)
+		touchBid := bids[0][0] * bids[0][1]
+		touchAsk := asks[0][0] * asks[0][1]
+
+		obsBid := 0.0
+		currentBids := make(map[float64]float64, len(bids))
+		for _, bid := range bids {
+			notional := bid[0] * bid[1]
+			obsBid += notional
+			currentBids[bid[0]] = notional
+		}
+
+		obsAsk := 0.0
+		currentAsks := make(map[float64]float64, len(asks))
+		for _, ask := range asks {
+			notional := ask[0] * ask[1]
+			obsAsk += notional
+			currentAsks[ask[0]] = notional
+		}
+
+		total := obsBid + obsAsk
+		var bookImb float64
+		if total > 0 {
+			bookImb = (obsBid - obsAsk) / total
+		}
+
+		var touchImb float64
+		if touchTotal := touchBid + touchAsk; touchTotal > 0 {
+			touchImb = (touchBid - touchAsk) / touchTotal
+		}
+
+		var netBid, activityImb float64
+		if state.hasPrev {
+			bidWorst := bids[len(bids)-1][0]
+			askWorst := asks[len(asks)-1][0]
+
+			addedBid, removedBid := levelFlow(
+				state.prevBids, currentBids, state.prevFullBid, fullBid,
+				state.prevBidWorst, bidWorst, func(price, edge float64) bool { return price >= edge },
+			)
+			addedAsk, removedAsk := levelFlow(
+				state.prevAsks, currentAsks, state.prevFullAsk, fullAsk,
+				state.prevAskWorst, askWorst, func(price, edge float64) bool { return price <= edge },
+			)
+
+			netBid = addedBid - removedBid
+			bidActivity := addedBid + removedBid
+			askActivity := addedAsk + removedAsk
+			bookActivity := bidActivity + askActivity
+
+			if bookActivity > 0 {
+				activityImb = (bidActivity - askActivity) / bookActivity
+			}
+		}
+
+		state.prevBids = currentBids
+		state.prevAsks = currentAsks
+		state.prevFullBid = fullBid
+		state.prevFullAsk = fullAsk
+		state.prevBidWorst = bids[len(bids)-1][0]
+		state.prevAskWorst = asks[len(asks)-1][0]
+		state.hasPrev = true
+
+		keys := []string{
+			signal.Name(),
+			symbol,
+		}
+
+		value.Append([]float64{
+			bookImb,
+			touchBid,
+			touchAsk,
+			touchImb,
+			netBid,
+			activityImb,
+		}, append(keys, signal.keys...)...)
+	})
+
 	return value
 }
 
-func ladder(levels []broker.Level) [][2]float64 {
-	pairs := make([][2]float64, len(levels))
-	for index, level := range levels {
-		pairs[index] = [2]float64{level.Price.Float64(), level.Quantity.Float64()}
+/*
+ladder returns a side's levels as price/quantity pairs, best first: bids
+descending, asks ascending.
+*/
+func ladder(side *spotbook.Side, descending bool) [][2]float64 {
+	if side == nil {
+		return nil
 	}
+
+	pairs := make([][2]float64, 0, len(side.Levels))
+
+	for _, level := range side.Levels {
+		if level == nil || level.Price == nil || level.Quantity == nil {
+			continue
+		}
+		pairs = append(pairs, [2]float64{level.Price.Float64(), level.Quantity.Float64()})
+	}
+
+	sort.Slice(pairs, func(left, right int) bool {
+		if descending {
+			return pairs[left][0] > pairs[right][0]
+		}
+		return pairs[left][0] < pairs[right][0]
+	})
+
 	return pairs
 }
 

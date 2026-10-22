@@ -1,13 +1,12 @@
 package data
 
 import (
-	"slices"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/theapemachine/errnie"
 )
 
 type Value struct {
@@ -28,29 +27,29 @@ type Value struct {
 }
 
 func NewValue(
-	prefixes ...string,
+	origin, role, scope string,
 ) *Value {
-	if len(prefixes) < 3 {
-		return &Value{
-			Err: errnie.Err(
-				errnie.Validation,
-				"[data.Value] too few prefixes",
-				nil,
-			),
-		}
-	}
+	epoch := Epoch.Load()
+	tick := Tick.Load()
 
 	value := &Value{
-		ID:        uuid.New(),
-		Prefix:    strings.Join(prefixes, "/"),
-		Epoch:     Epoch.Load(),
-		Tick:      Tick.Load(),
+		ID: uuid.New(),
+		Prefix: strings.Join([]string{
+			origin,
+			role,
+			scope,
+			fmt.Sprintf("%019d", epoch),
+			fmt.Sprintf("%019d", tick),
+		}, "/"),
+		Epoch:     epoch,
+		Tick:      tick,
 		SeqIdx:    SeqIdx.Add(1),
 		Timestamp: uint64(time.Now().UnixNano()),
-		Origin:    prefixes[0],
-		Role:      prefixes[1],
-		Scope:     prefixes[2],
+		Origin:    origin,
+		Role:      role,
+		Scope:     scope,
 		Layers:    make([][]byte, 0),
+		Index:     make([]string, 0),
 	}
 
 	return value
@@ -61,18 +60,4 @@ New returns a zeroed Value ready for deserialization.
 */
 func New() *Value {
 	return &Value{}
-}
-
-func (value *Value) appendLayer(layer []byte, index string) {
-	value.mu.Lock()
-	value.Layers = append(value.Layers, layer)
-	value.Index = append(value.Index, index)
-	value.mu.Unlock()
-}
-
-func (value *Value) filled() ([][]byte, []string) {
-	value.mu.Lock()
-	defer value.mu.Unlock()
-
-	return slices.Clone(value.Layers), slices.Clone(value.Index)
 }

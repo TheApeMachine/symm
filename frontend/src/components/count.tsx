@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { deskPositionsAtom } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import { openLots } from "#/components/learning/open-positions";
 import { Flex } from "#/components/ui/flex";
@@ -11,10 +11,12 @@ lots the open-positions panel draws.
 */
 export const Count = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const count = useSelector(
-		deskPositionsAtom,
-		(rows) => openLots(rows, book).length,
-	);
+	const store = signals["positions"];
+	const rings = useSelector(store, (state) => state);
+	const ring = rings["all"];
+	const latest = ring?.get(ring.getBufferLength() - 1);
+	const positions = (latest?.lookup("positions") as unknown as any[]) ?? [];
+	const count = openLots(positions, book).length;
 
 	return (
 		<Flex.Column align="end" gap={1}>

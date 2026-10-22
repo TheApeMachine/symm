@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useMemo, useState } from "react";
-import { focusAtom } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { type PaperRecord, paperStore } from "#/collections/paper";
 import {
 	type GrammarEvent,
@@ -389,7 +389,7 @@ const EventLog = ({ events }: { events: LoggedEvent[] }) => {
 };
 
 export const SequiturGrammarViz = () => {
-	const focus = useSelector(focusAtom, (s) => s);
+	const focus = useSelector(atoms.focus, (s) => s);
 	const feed = useSelector(sequiturStore, (state) => state[focus]);
 	const paper = useSelector(paperStore, (state) => state);
 	const now = useNow(1000);

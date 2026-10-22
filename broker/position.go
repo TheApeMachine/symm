@@ -8,12 +8,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 )
 
 type Position struct {
 	mu              sync.RWMutex
+	price           *Price
 	ID              string                  `json:"id"`
+	Path            string                  `json:"path"`
 	Symbol          string                  `json:"symbol"`
 	OpenedAt        time.Time               `json:"opened_at"`
 	ClosedAt        *time.Time              `json:"closed_at"`
@@ -40,51 +43,78 @@ type Position struct {
 	OutcomeTriggers []string                `json:"outcome_triggers,omitempty"`
 }
 
-func NewPosition() *Position {
+func NewPosition(
+	symbol string,
+	path string,
+	virtual bool,
+	price *Price,
+) *Position {
 	return &Position{
+		price:       price,
 		ID:          uuid.NewString(),
 		EntryOrders: make([]*spot.OrderRequest, 0),
 		ExitOrders:  make([]*spot.OrderRequest, 0),
 		Fills:       make([]*kraken.ExecutionData, 0),
+		Symbol:      symbol,
+		Path:        path,
+		Virtual:     virtual,
+	}
+}
+
+/*
+Update the position with a new mark, and check if the position
+should exit.
+*/
+func (position *Position) Update(mark *decimal.Decimal) {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	position.Mark = mark
+	position.ExitFee = position.price.WithFee(
+		position.Symbol, position.Qty, SELL,
+	)
+
+	// Exit if this is a virtual position and the mark is either
+	// below 2% of the entry price, or above 2% of the entry price.
+	if position.Virtual {
+		pct := position.price.RealizedReturn(
+			position.EntryPrice,
+			position.EntryFee,
+			mark,
+			position.ExitFee,
+		)
+
+		if pct < -0.02 || pct > 0.02 {
+			position.Exit()
+		}
 	}
 }
 
 /*
 Enter records a buy of qty and returns the order to submit.
 */
-func (position *Position) Enter(
-	symbol string, qty *decimal.Decimal, path ...string,
-) *spot.OrderRequest {
+func (position *Position) Enter() *spot.OrderRequest {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
-	position.Qty = qty
-	position.Symbol = symbol
-
-	if position.OpenedAt.IsZero() {
-		position.OpenedAt = time.Now().UTC()
-	}
-
-	if len(path) > 0 && path[0] != "" {
-		position.EntryOrders = append(position.EntryOrders, &spot.OrderRequest{
-			ClOrdId:   position.ID,
-			OrderType: "market",
-			Type:      "buy",
-			Volume:    qty.String(),
-		})
-	}
-
-	clOrdId := uuid.NewString()
-
-	order := &spot.OrderRequest{
-		ClOrdId:   clOrdId,
+	position.EntryOrders = append(position.EntryOrders, &spot.OrderRequest{
+		ClOrdId:   uuid.NewString(),
 		OrderType: "market",
 		Type:      "buy",
-		Volume:    qty.String(),
-	}
+		Volume:    position.Qty.String(),
+	})
 
-	position.EntryOrders = append(position.EntryOrders, order)
-	return order
+	position.ExitOrders = append(position.ExitOrders, &spot.OrderRequest{
+		ClOrdId:   uuid.NewString(),
+		OrderType: "market",
+		Type:      "sell",
+		Volume:    position.Qty.String(),
+	})
+
+	position.OpenedAt = time.Now().UTC()
+	position.EntryTick = data.Tick.Load()
+
+	return position.EntryOrders[len(position.EntryOrders)-1]
 }
 
 /*
@@ -92,49 +122,16 @@ Exit records a sell of everything open and returns the order to submit. A
 position that is closed or already has its sell pending returns nil: selling
 it again would sell quantity it no longer holds.
 */
-func (position *Position) Exit(symbol string) *spot.OrderRequest {
+func (position *Position) Exit() *spot.OrderRequest {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
-	if position.ClosedAt != nil && position.ClosedAt.IsZero() || len(position.ExitOrders) > 0 {
-		return nil
-	}
+	now := time.Now().UTC()
+	position.ClosedAt = &now
 
-	volume := position.Qty.String()
-	clOrdId := uuid.NewString()
+	position.ExitTick = data.Tick.Load()
 
-	order := &spot.OrderRequest{
-		ClOrdId:   clOrdId,
-		OrderType: "market",
-		Type:      "sell",
-		Volume:    volume,
-	}
-
-	position.ExitOrders = append(position.ExitOrders, order)
-	return order
-}
-
-func (position *Position) Lifecycle() *Position {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	if position.ClosedAt != nil && position.ClosedAt.IsZero() && len(position.Fills) > 0 {
-		for _, fill := range position.Fills {
-			if fill.FeeUsdEquiv != nil {
-				position.ExitFee = position.ExitFee.Add(fill.FeeUsdEquiv)
-			}
-		}
-
-		if position.ClosedAt != nil && !position.OpenedAt.IsZero() {
-			position.HoldNs = position.ClosedAt.Sub(position.OpenedAt).Nanoseconds()
-		}
-
-		if position.ClosedAt == nil && !position.OpenedAt.IsZero() {
-			position.HoldNs = time.Since(position.OpenedAt).Nanoseconds()
-		}
-	}
-
-	return position
+	return position.ExitOrders[len(position.ExitOrders)-1]
 }
 
 func (position *Position) Apply(execution kraken.ExecutionData) {

@@ -1,12 +1,13 @@
-import { useState } from "react";
 import { useSelector } from "@tanstack/react-store";
-import { sendCommand } from "#/providers/websocket";
-import { deskPositionsAtom } from "#/collections/app";
+import { useState } from "react";
+import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import { cognitionStore, regionHistoryStore } from "#/collections/cognition";
-import type { DeskPosition } from "#/collections/types";
+import { type RingBuffer } from "#/collections/ring";
+import { Value } from "#/types/value";
 import {
 	DistanceBar,
+	Flex,
 	formatValue,
 	Gauge,
 	type GaugeTone,
@@ -15,6 +16,7 @@ import {
 	Trail,
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
+import { sendCommand } from "#/providers/websocket";
 
 /*
 Open positions are the tick's positions layer. Entry, mark, fee and the
@@ -27,7 +29,29 @@ const TOKEN_GATE = 0.5;
 const regionLabel = (sector: number) => `R${String(sector).padStart(2, "0")}`;
 const trails = new Map<string, number[]>();
 
-export const openLots = (rows: DeskPosition[], book: Book) =>
+/*
+Positions stream over the hub as Values on the "positions" signal store,
+one ring buffer per scope ("all" on connection, "positions" per update).
+Each Value's "positions" layer holds an array of position rows. Read the
+latest entry from every ring in the store and merge rows by symbol so the
+live view always reflects the most recent update for each symbol.
+*/
+const readPositions = (state: Record<string, RingBuffer<Value>>): any[] => {
+	const bySymbol = new Map<string, any>();
+	for (const ring of Object.values(state)) {
+		if (!ring || ring.isEmpty()) continue;
+		const latest = ring.get(ring.getBufferLength() - 1);
+		if (!latest) continue;
+		const rows = latest.lookup("positions") as any[] | undefined;
+		if (!Array.isArray(rows)) continue;
+		for (const row of rows) {
+			if (row && row.symbol) bySymbol.set(String(row.symbol), row);
+		}
+	}
+	return [...bySymbol.values()];
+};
+
+export const openLots = (rows: any[], book: Book) =>
 	rows
 		.filter(
 			(row) => row.closedAt === null && row.virtual === (book === "virtual"),
@@ -46,13 +70,13 @@ const duration = (seconds?: number) => {
 			: `${Math.floor(seconds)}s`;
 };
 
-const numberOf = (value: string | null) => {
-	if (value === null) return undefined;
+const numberOf = (value: unknown) => {
+	if (value === null || value === undefined) return undefined;
 	const parsed = Number(value);
 	return Number.isFinite(parsed) ? parsed : undefined;
 };
 
-const heldSeconds = (row: DeskPosition) => {
+const heldSeconds = (row: any) => {
 	if (row.holdNs > 0) return row.holdNs / 1e9;
 	if (row.openedAt === "") return undefined;
 	const at = Date.parse(row.openedAt);
@@ -65,7 +89,7 @@ const sectorOf = (token: string) => {
 	return Number.isInteger(sector) ? sector : undefined;
 };
 
-const PositionCard = ({ row }: { row: DeskPosition }) => {
+const PositionCard = ({ row }: { row: any }) => {
 	const [exiting, setExiting] = useState(false);
 	const match = useSelector(
 		cognitionStore,
@@ -291,16 +315,23 @@ const PositionCard = ({ row }: { row: DeskPosition }) => {
 
 export const OpenPositions = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const rows = useSelector(deskPositionsAtom, (state) => state);
-	const held = rows
+	const store = signals["positions"];
+	const rings = useSelector(store, (state) => state.all);
+	const positions = readPositions(rings);
+	const held = positions
 		.filter(
 			(row) => row.closedAt === null && row.virtual === (book === "virtual"),
 		)
-		.sort((a, b) => a.symbol.localeCompare(b.symbol));
+		.sort((a, b) => String(a.symbol).localeCompare(String(b.symbol)));
 
 	if (held.length === 0) {
 		return (
-			<div className="flex-1 flex flex-col items-center justify-center gap-2 text-(--f3)">
+			<Flex.Column
+				align="center"
+				justify="center"
+				gap={2}
+				className="flex-1 text-(--f3)"
+			>
 				<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
 				<span className="text-sm">
 					{book === "virtual" ? "No virtual trades" : "No open positions"}
@@ -310,7 +341,7 @@ export const OpenPositions = () => {
 						? "a card appears when a finished rule opens a virtual trade"
 						: "cards appear here as soon as the desk holds a symbol"}
 				</span>
-			</div>
+			</Flex.Column>
 		);
 	}
 

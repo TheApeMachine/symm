@@ -1,10 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
-import { closedPositionsAtom, positionsAtom } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
-import type { HoldingT, PositionT, SellEventT } from "#/collections/types";
 import { cn } from "@/lib/utils";
 
 const formatValue = (value: unknown, digits: number): string => {
@@ -59,10 +58,6 @@ type PositionCardData = {
 	sells: SellMarker[];
 };
 
-/*
-TRIGGER_LABEL abbreviates each sell trigger for its marker. The learned exit
-is the primary exit; capacity trims and exits come from the risk monitor.
-*/
 const TRIGGER_LABEL: Record<string, string> = {
 	learned_exit: "EXIT",
 	capacity_trim: "TRIM",
@@ -70,11 +65,12 @@ const TRIGGER_LABEL: Record<string, string> = {
 	manual: "MANUAL",
 };
 
-const sellMarkers = (sells: SellEventT[] | undefined): SellMarker[] =>
+const sellMarkers = (sells: any[] | undefined): SellMarker[] =>
 	(sells ?? []).map((sell) => {
 		const trigger = String(sell.trigger ?? "");
-		const qty = typeof sell.qty === "string" && sell.qty !== "" ? sell.qty : "";
-		const at = Number(sell.at ?? 0n);
+		const qty =
+			typeof sell.qty === "string" && sell.qty !== "" ? sell.qty : "";
+		const at = Number(sell.at ?? 0);
 		const time = at > 0 ? new Date(at / 1e6).toLocaleTimeString() : "";
 
 		return {
@@ -102,11 +98,7 @@ const numeric = (value: unknown): number =>
 			? Number(value)
 			: 0;
 
-/*
-pnlPair renders venue P&L (paper fills) beside shadow P&L (every fill walked
-through the as-of book), the evaluation truth; shadow is "—" when undefined.
-*/
-const pnlPair = (holding: HoldingT) => ({
+const pnlPair = (holding: any) => ({
 	venuePnl: holding.venuePnl ? formatValue(holding.venuePnl, 4) : "—",
 	shadowPnl:
 		holding.shadowDefined && holding.shadowPnl
@@ -115,7 +107,22 @@ const pnlPair = (holding: HoldingT) => ({
 	shadowValue: holding.shadowDefined ? numeric(holding.shadowPnl) : 0,
 });
 
-const selectPositions = (rows: PositionT[]): PositionCardData[] => {
+const readPositions = (state: Record<string, any>): any[] => {
+	const bySymbol = new Map<string, any>();
+	for (const ring of Object.values(state)) {
+		if (!ring || ring.isEmpty()) continue;
+		const latest = ring.get(ring.getBufferLength() - 1);
+		if (!latest) continue;
+		const rows = latest.lookup("positions") as any[] | undefined;
+		if (!Array.isArray(rows)) continue;
+		for (const row of rows) {
+			if (row && row.symbol) bySymbol.set(String(row.symbol), row);
+		}
+	}
+	return [...bySymbol.values()];
+};
+
+const selectPositions = (rows: any[]): PositionCardData[] => {
 	const result: PositionCardData[] = [];
 
 	for (const currentPosition of rows) {
@@ -198,7 +205,7 @@ type ClosedCardData = {
 	sells: SellMarker[];
 };
 
-const selectClosed = (closed: HoldingT[]): ClosedCardData[] =>
+const selectClosed = (closed: any[]): ClosedCardData[] =>
 	closed
 		.map((holding, index) => ({
 			key: `${holding.symbol}-${String(holding.closedAt ?? index)}`,
@@ -217,7 +224,6 @@ const SellMarkers = ({ sells }: { sells: SellMarker[] }) =>
 		<Flex.Row className="mt-0.75 flex-wrap items-center gap-1 text-[8.5px]">
 			{sells.map((sell, index) => (
 				<Typography.Span
-					// biome-ignore lint/suspicious/noArrayIndexKey: sells are append-only
 					key={index}
 					data-trigger={sell.trigger}
 					title={sell.title}
@@ -261,12 +267,10 @@ const PnlPair = ({
 };
 
 export const Positions = () => {
-	const positions = useSelector(positionsAtom, selectPositions, {
-		compare: positionsEqual,
-	});
-	const closed = useSelector(closedPositionsAtom, selectClosed, {
-		compare: closedEqual,
-	});
+	const store = signals["positions"];
+	const rings = useSelector(store, (state) => state);
+	const positions = selectPositions(readPositions(rings));
+	const closed = selectClosed(readPositions(rings));
 
 	return (
 		<List className="min-h-0 flex-1 p-1.5">
@@ -303,12 +307,12 @@ export const Positions = () => {
 												SHORTFALL
 											</Typography.Span>
 										) : pos.capacityRatioNum !== undefined &&
-											pos.capacityRatioNum < 2 ? (
+												pos.capacityRatioNum < 2 ? (
 											<Typography.Span className="rounded-xs bg-(--warn)/15 border border-(--warn)/40 px-1 py-px text-[7.5px] font-bold text-(--warn) uppercase tracking-wide">
 												TIGHT
 											</Typography.Span>
 										) : pos.capacityRatioNum !== undefined &&
-											pos.capacityRatioNum >= 2 ? (
+												pos.capacityRatioNum >= 2 ? (
 											<Typography.Span className="rounded-xs bg-(--up)/15 border border-(--up)/40 px-1 py-px text-[7.5px] font-bold text-(--up) uppercase tracking-wide">
 												LIQUID
 											</Typography.Span>

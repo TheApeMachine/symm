@@ -1,11 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import {
-	candidatesAtom,
-	onlineAtom,
-	phaseAtom,
-	positionCountAtom,
-	tickCountAtom,
-} from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { ModelProblem } from "#/components/learning/model-problem";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
@@ -24,11 +18,11 @@ const Row = ({
 );
 
 export const Engine = () => {
-	const online = useSelector(onlineAtom, (state) => state === "ONLINE");
-	const phase = useSelector(phaseAtom, (state) => state);
-	const seq = useSelector(tickCountAtom, (state) => state);
-	const cand = useSelector(candidatesAtom, (state) => state);
-	const open = useSelector(positionCountAtom, (state) => state);
+	const online = useSelector(atoms["online"], (state) => state === "ONLINE");
+	const phase = useSelector(atoms["phase"], (state) => state);
+	const seq = useSelector(atoms["tickCount"], (state) => state);
+	const cand = useSelector(atoms["candidates"], (state) => state);
+	const open = useSelector(atoms["positionCount"], (state) => state);
 
 	let phaseText = "offline";
 	if (online) {

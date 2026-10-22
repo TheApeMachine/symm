@@ -1,5 +1,5 @@
-import { DEFAULT_KERNELS, focusAtom, symbolsAtom } from "#/collections/app";
-import { type TerminalSurface, terminalStore } from "#/collections/terminal";
+import { atoms, DEFAULT_KERNELS } from "#/collections/app";
+import { terminalStore, type TerminalSurface } from "#/collections/terminal";
 import { paletteGroupVariant } from "#/components/terminal/badge-tone";
 import { Badge } from "@/components/ui/badge";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -82,8 +82,8 @@ export const CommandPalette = ({
 	activeSurface: TerminalSurface;
 	onRun: (surface: TerminalSurface, source?: string, symbol?: string) => void;
 }) => {
-	const focusSymbol = useSelector(focusAtom);
-	const symbolUniverse = useSelector(symbolsAtom);
+	const focusSymbol = useSelector(atoms.focus);
+	const symbolUniverse = useSelector(atoms.symbols);
 	const terminal = useSelector(terminalStore, (state) => state);
 	const { closePalette, setPaletteQuery } = terminalStore.actions;
 	const inputRef = useRef<HTMLInputElement | null>(null);
@@ -123,7 +123,7 @@ export const CommandPalette = ({
 			}),
 		),
 		...symbolUniverse.map(
-			(symbol): PaletteCommand => ({
+			(symbol: string): PaletteCommand => ({
 				key: `symbol:${symbol}`,
 				label: symbol,
 				hint: "Focus symbol",

@@ -59,7 +59,7 @@ type Booter struct {
 	replies          sync.Map
 }
 
-func NewBooter(ctx context.Context, name string, capture ...bool) *Booter {
+func NewBooter(ctx context.Context, name string, capture bool) *Booter {
 	errnie.Apply(&errnie.Config{
 		Level: viper.GetString("system.log.level"),
 	})
@@ -85,16 +85,9 @@ func NewBooter(ctx context.Context, name string, capture ...bool) *Booter {
 		))
 	}
 
-	data.Epoch.Store(uint64(processStartedAt.UnixNano()))
-	enableCapture := name == "collect"
-
-	if len(capture) > 0 {
-		enableCapture = capture[0]
-	}
-
 	return &Booter{
 		System:  nmruntime.NewSystem(ctx, name, nil),
-		capture: enableCapture,
+		capture: capture,
 	}
 }
 
@@ -127,9 +120,23 @@ func (booter *Booter) Run() error {
 	// price and the desk. The workspace is up before any trade is subscribed.
 	booter.Transition(nmruntime.WAITING)
 
+	ctx := booter.Context()
+
 	if err := booter.initTransports(); err != nil {
 		return err
 	}
+
+	// The store client must exist before the desk: NewDesk restores open
+	// positions and virtuals from the store during construction.
+	booter.store = store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
+
+	if booter.store == nil {
+		return errnie.Err(
+			errnie.IO, "booter: store client unavailable", nil,
+		)
+	}
+
+	booter.store.Transition(nmruntime.READY)
 
 	if err := booter.initMarket(); err != nil {
 		return err
@@ -248,15 +255,15 @@ func (booter *Booter) initPipeline() error {
 
 	booter.signals = []nmruntime.Node{
 		correlation.NewSignal(ctx),
-		cvd.NewSignal(ctx),
-		depthflow.NewSignal(ctx),
+		cvd.NewSignal(ctx, booter.book),
+		depthflow.NewSignal(ctx, booter.book),
 		hawkes.NewSignal(ctx),
 		leadlag.NewSignal(ctx),
-		liquidity.NewSignal(ctx),
-		morphology.NewSignal(ctx),
-		pumpdump.NewSignal(ctx),
+		liquidity.NewSignal(ctx, booter.book),
+		morphology.NewSignal(ctx, booter.book),
+		pumpdump.NewSignal(ctx, booter.book),
 		sentiment.NewSignal(ctx),
-		toxicity.NewSignal(ctx),
+		toxicity.NewSignal(ctx, booter.book),
 	}
 
 	for _, node := range booter.signals {
@@ -269,23 +276,12 @@ func (booter *Booter) initPipeline() error {
 		}
 	}
 
-	booter.store = store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
-
-	if booter.store == nil {
-		return errnie.Err(
-			errnie.IO, "booter: store client unavailable", nil,
-		)
-	}
-
-	booter.store.Transition(nmruntime.READY)
-
 	// Hub before training: NewTraining takes the hub as io.Writer in its
 	// constructor. The dashboard process paper-trades and streams ticks
 	// through the same hub. Stored runs are read by the dashboard directly
 	// from the store.
 	if booter.dashboard {
-		booter.hub = ui.NewHub(ctx, booter.store)
-		booter.hub.Exiter(booter.desk)
+		booter.hub = ui.NewHub(ctx, booter.desk.Hello)
 
 		if err := booter.hub.Run(); err != nil {
 			return err
@@ -516,30 +512,23 @@ func (booter *Booter) startIngress(
 					continue
 				}
 
-				// One Kraken frame is one tick (it may carry several symbols).
-				// The tick's Value carries the state of every component it
-				// touches, so a stored tick reproduces book, price, instrument,
-				// wallet and positions for every symbol in the frame.
-				value := data.NewValue("workspace", "tick", "aggregate")
-				value.Append(buf, "spot:trade", msgType)
-
-				trades, err := data.AttributeOk[[]kraken.TradeData](buf, "data")
+				trade, err := kraken.NewTrade(buf)
 
 				if err != nil {
-					booter.Error(err)
+					errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"[booter] trade frame does not decode",
+						err,
+					))
+
 					continue
 				}
 
-				for _, symbol := range broker.Symbols(trades) {
-					kind, book := booter.book.Layer(symbol)
-
-					value.Append(book, kind, symbol)
-					value.Append(booter.price.JSON(symbol), "price", symbol)
-					value.Append(booter.price.InstrumentJSON(symbol), "instrument", symbol)
-				}
-
-				value.Append(booter.desk.Balance(), "balance")
-				value.Append(booter.desk.Positions(), "positions")
+				// Store the trade array, not the Kraken envelope
+				// ({"channel","type","data"}). Signal readers decode
+				// this layer as []kraken.TradeData.
+				value := data.NewValue("workspace", "tick", "aggregate")
+				value.Append(trade.Data, "spot:trade", msgType)
 				booter.workspace.Step(value)
 			case "heartbeat", "status":
 			default:

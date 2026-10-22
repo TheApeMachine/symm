@@ -11,11 +11,16 @@ import (
 Size returns the exact total byte count of the serialized Value.
 */
 func (value *Value) Size() int {
-	layers, index := value.filled()
-	total := headerSize + 1 + len(value.Origin) + 1 + len(value.Role) + 1 + len(value.Scope) + 2
-	for i := range layers {
-		total += 2 + len(index[i]) + 4 + len(layers[i])
+	total := headerSize + 1 + len(value.Origin) + 1 + len(value.Role) + 1 + len(value.Scope) + 2 + len(value.Index)
+
+	for i := range value.Index {
+		if i >= len(value.Layers) {
+			break
+		}
+
+		total += 2 + len(value.Index[i]) + 4 + len(value.Layers[i])
 	}
+
 	return total
 }
 
@@ -35,8 +40,6 @@ func (value *Value) Read(p []byte) (n int, err error) {
 	if len(p) < needed {
 		return 0, io.ErrShortBuffer
 	}
-
-	layers, index := value.filled()
 
 	// 1. Fixed numerical header (headerSize bytes)
 	copy(p[0:16], value.ID[:])
@@ -64,18 +67,18 @@ func (value *Value) Read(p []byte) (n int, err error) {
 	offset += len(value.Scope)
 
 	// 3. Layer count (uint16)
-	binary.LittleEndian.PutUint16(p[offset:offset+2], uint16(len(layers)))
+	binary.LittleEndian.PutUint16(p[offset:offset+2], uint16(len(value.Index)))
 	offset += 2
 
 	// 4. Layers
-	for i := range layers {
-		idx := index[i]
+	for i := range value.Index {
+		idx := value.Index[i]
 		binary.LittleEndian.PutUint16(p[offset:offset+2], uint16(len(idx)))
 		offset += 2
 		copy(p[offset:offset+len(idx)], idx)
 		offset += len(idx)
 
-		layer := layers[i]
+		layer := value.Layers[i]
 		lLen := len(layer)
 		binary.LittleEndian.PutUint32(p[offset:offset+4], uint32(lLen))
 		offset += 4
@@ -94,7 +97,7 @@ func (value *Value) Write(p []byte) (n int, err error) {
 	if value.Prefix != "" {
 		layer := make([]byte, len(p))
 		copy(layer, p)
-		value.appendLayer(layer, value.Prefix)
+		value.Append(layer, value.Prefix)
 		return len(p), nil
 	}
 

@@ -3,9 +3,7 @@ import * as d3 from "d3";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-	focusAtom,
-	onlineAtom,
-	positionCountAtom,
+	atoms,
 	type RingBuffer,
 	signals,
 } from "#/collections/app";
@@ -346,7 +344,7 @@ export const ForwardLearningViz = ({
 	symbol: propSymbol,
 	tapeSource = "live",
 }: ForwardLearningVizProps = {}) => {
-	const globalFocus = useSelector(focusAtom, (state) => state);
+	const globalFocus = useSelector(atoms.focus, (state) => state);
 	const targetSymbol = propSymbol || globalFocus;
 	const historicalOnly = tapeSource === "historical";
 	const tapeRef = useRef<HTMLDivElement>(null);
@@ -546,7 +544,7 @@ export const ForwardLearningViz = ({
 	 * (newest first), then the chosen epoch's excursions. A request that
 	 * cannot be sent, or a stream that fails, is shown, never swallowed.
 	 */
-	const online = useSelector(onlineAtom, (state) => state === "ONLINE");
+	const online = useSelector(atoms["online"], (state) => state === "ONLINE");
 	const detectionRuns = useSelector(
 		detectionsStore,
 		(state) => state.runs?.items ?? NO_RUNS,
@@ -657,10 +655,10 @@ export const ForwardLearningViz = ({
 	}, [trainedFragments, selectedFragmentIndex, loadFragment, historicalOnly]);
 
 	useEffect(() => {
-		const unsubPos = positionCountAtom.subscribe((count) => {
+		const unsubPos = atoms["positionCount"].subscribe((count) => {
 			setOpenPositionsCount(count);
 		});
-		setOpenPositionsCount(positionCountAtom.get());
+		setOpenPositionsCount(atoms["positionCount"].get());
 
 		return () => {
 			unsubPos?.unsubscribe?.();
@@ -827,7 +825,7 @@ export const ForwardLearningViz = ({
 				}
 
 				const metricMap: Record<string, number> = {};
-				for (const m of measurement.metrics ?? []) {
+				for (const m of measurement.lookup("metrics") ?? []) {
 					if (!m?.name) continue;
 					metricMap[String(m.name)] = m.raw ?? 0;
 				}
@@ -839,8 +837,8 @@ export const ForwardLearningViz = ({
 				const sCode = metricMap.stage_code ?? 0;
 				setStageCode(sCode);
 
-				if (measurement.provenance) {
-					for (const p of measurement.provenance) {
+				if (measurement.lookup("provenance")) {
+					for (const p of measurement.lookup("provenance")) {
 						if (p?.name === "stage_blocker" && p.value !== undefined) {
 							setStageBlocker(String(p.value));
 						}
@@ -853,8 +851,8 @@ export const ForwardLearningViz = ({
 
 				let tokensList: string[] = [];
 				let excDirection = "";
-				if (measurement.provenance) {
-					for (const p of measurement.provenance) {
+				if (measurement.lookup("provenance")) {
+					for (const p of measurement.lookup("provenance")) {
 						if (p?.name === "precursor_tokens" && p.value) {
 							tokensList = String(p.value).split(",").filter(Boolean);
 						}
@@ -866,8 +864,8 @@ export const ForwardLearningViz = ({
 				let excIgnition: number | undefined;
 				let excExit: number | undefined;
 
-				if (measurement.metadata) {
-					for (const m of measurement.metadata) {
+				if (measurement.lookup("metadata")) {
+					for (const m of measurement.lookup("metadata")) {
 						if (m?.name === "precursor_tokens" && m.value) {
 							tokensList = String(m.value).split(",").filter(Boolean);
 						}
@@ -966,8 +964,8 @@ export const ForwardLearningViz = ({
 				let rawPrice: number | undefined;
 				if (metricMap.price !== undefined) {
 					rawPrice = metricMap.price;
-				} else if (measurement.metrics) {
-					for (const met of measurement.metrics) {
+				} else if (measurement.lookup("metrics")) {
+					for (const met of measurement.lookup("metrics")) {
 						if (met?.name && met?.raw !== undefined) {
 							const lk = met.name.toLowerCase();
 							const validPrices = [

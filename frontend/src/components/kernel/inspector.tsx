@@ -1,4 +1,4 @@
-import { focusAtom, type RingBuffer, signals } from "#/collections/app";
+import { atoms, type RingBuffer, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -104,7 +104,7 @@ const metricValues = (
 export const KernelInspector = () => {
 	const navigate = useNavigate();
 	const source = useSelector(terminalStore, (state) => state.inspectorSource);
-	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const focusSymbol = useSelector(atoms["focus"], (state) => state);
 	const { closeInspect, selectSource } = terminalStore.actions;
 
 	const active = source !== null && source !== "";

@@ -4,14 +4,16 @@ import (
 	"context"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/types"
 )
 
 type Prior struct {
-	Signal     broker.Sample
+	Signal     Signal
 	Samples    int64
 	Prediction float64
 	Energy     float64
@@ -50,92 +52,149 @@ type Region struct {
 	Counts      int
 }
 
+type Signal struct {
+	Source string
+	Symbol string
+	Labels []string
+	Values []float64
+}
+
 /*
 Observe applies every signal layer for symbol on this tick, then returns the
 lit regions at or above the brightness midpoint.
 */
-func (grid *Grid) Observe(symbol string, signals []broker.Sample) ([]*Region, error) {
-	if symbol == "" {
-		return nil, nil
+func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
+	if value == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[grid.Observe] nil value",
+			nil,
+		))
 	}
 
 	if err := grid.Error(); err != nil {
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[grid.Observe] grid is in error state",
+			err,
+		))
 	}
 
 	var byKey [RegionCount]*Region
 	regions := make([]*Region, 0, RegionCount)
 
-	for _, signal := range signals {
-		if signal.Symbol != symbol {
-			continue
-		}
+	signals := map[string]map[string]Signal{}
 
-		if err := pinned(symbol, signal); err != nil {
-			return nil, err
-		}
+	for _, source := range types.SignalSourceStrings {
+		layers := value.LookupPrefix(source)
 
-		if grid.Priors[signal.Source] == nil {
-			grid.Priors[signal.Source] = make(map[string]*Prior)
-		}
-
-		prior := grid.Priors[signal.Source][symbol]
-
-		if prior == nil {
-			grid.Priors[signal.Source][symbol] = &Prior{Signal: signal}
-			continue
-		}
-
-		if prior.Samples > 0 {
-			prior.Prediction += (prior.Energy - prior.Prediction) / float64(prior.Samples)
-		}
-
-		energy := 0.0
-
-		for idx := range signal.Values {
-			snm := grid.SNM(&signal, idx)
-			energy += snm * snm
-		}
-
-		excitation := 1 + grid.Surprise(prior.Prediction, energy)
-		sourcePins, ok := regionMetricPins[signal.Source]
-
-		if !ok {
-			prior.Signal = signal
-			prior.Energy = energy
-			prior.Samples++
-			continue
-		}
-
-		for idx, label := range signal.Labels {
-			targets := sourcePins[label]
-
-			if len(targets) == 0 {
+		for _, layer := range layers {
+			parts := strings.Split(layer.Key, "/")
+			if len(parts) < 3 {
 				continue
 			}
 
-			for _, key := range targets {
-				if key >= RegionCount {
+			var values []float64
+
+			if err := layer.Decode(&values); err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"[grid.Observe] "+layer.Key+" does not decode",
+					err,
+				))
+			}
+
+			symbol := parts[1] + "/" + parts[2]
+
+			if signals[source] == nil {
+				signals[source] = make(map[string]Signal)
+			}
+
+			signals[source][symbol] = Signal{
+				Source: source,
+				Symbol: symbol,
+				Labels: parts[3:],
+				Values: values,
+			}
+
+			errnie.Debug(
+				"[grid.Observe]",
+				"parts1", parts[1],
+				"parts2", parts[2],
+				"labels", parts[3:],
+				"values", values,
+			)
+		}
+	}
+
+	for source, bySource := range signals {
+		for symbol, signal := range bySource {
+			if err := pinned(symbol, signal); err != nil {
+				return nil, err
+			}
+
+			if grid.Priors[source] == nil {
+				grid.Priors[source] = make(map[string]*Prior)
+			}
+
+			prior := grid.Priors[source][symbol]
+
+			if prior == nil {
+				grid.Priors[source][symbol] = &Prior{Signal: signal}
+				continue
+			}
+
+			if prior.Samples > 0 {
+				prior.Prediction += (prior.Energy - prior.Prediction) / float64(prior.Samples)
+			}
+
+			energy := 0.0
+
+			for idx := range signal.Values {
+				snm := grid.SNM(&signal, idx)
+				energy += snm * snm
+			}
+
+			excitation := 1 + grid.Surprise(prior.Prediction, energy)
+			sourcePins, ok := regionMetricPins[source]
+
+			if !ok {
+				prior.Signal = signal
+				prior.Energy = energy
+				prior.Samples++
+				continue
+			}
+
+			for idx, label := range signal.Labels {
+				targets := sourcePins[label]
+
+				if len(targets) == 0 {
 					continue
 				}
 
-				region := byKey[key]
+				for _, key := range targets {
+					if key >= RegionCount {
+						continue
+					}
 
-				if region == nil {
-					region = &Region{Key: key}
-					byKey[key] = region
-					regions = append(regions, region)
+					region := byKey[key]
+
+					if region == nil {
+						region = &Region{Key: key}
+						byKey[key] = region
+						regions = append(regions, region)
+					}
+
+					region.Deformation += math.Abs(grid.SNM(&signal, idx)) * excitation
+					region.Counts++
+					region.Brightness = region.Deformation / float64(region.Counts)
 				}
-
-				region.Deformation += math.Abs(grid.SNM(&signal, idx)) * excitation
-				region.Counts++
-				region.Brightness = region.Deformation / float64(region.Counts)
 			}
-		}
 
-		prior.Signal = signal
-		prior.Energy = energy
-		prior.Samples++
+			prior.Signal = signal
+			prior.Energy = energy
+			prior.Samples++
+		}
 	}
 
 	return grid.finalizeRegions(regions), nil
@@ -146,7 +205,7 @@ pinned rejects a label that the source map does not name. An unknown source
 has no pins to check. The error is returned to the caller and is not stored
 on the grid.
 */
-func pinned(symbol string, signal broker.Sample) error {
+func pinned(symbol string, signal Signal) error {
 	sourcePins, ok := regionMetricPins[signal.Source]
 
 	if !ok {
@@ -203,7 +262,7 @@ SNM (Self-Normalized Movement) takes the reference from the prior magnitude
 and the movement itself. It measures a transition, not an isolated value.
 The result stays within \([-1,1]\) without statistical calibration.
 */
-func (grid *Grid) SNM(signal *broker.Sample, idx int) float64 {
+func (grid *Grid) SNM(signal *Signal, idx int) float64 {
 	prior := grid.Priors[signal.Source][signal.Symbol]
 
 	if prior == nil || idx >= len(signal.Values) || idx >= len(prior.Signal.Values) {
@@ -237,7 +296,7 @@ func (grid *Grid) Surprise(prediction, energy float64) float64 {
 Maturity calculates sensor readiness based strictly on
 empirical sample history and metric completeness (warm-up gate).
 */
-func (grid *Grid) Maturity(signal *broker.Sample) float64 {
+func (grid *Grid) Maturity(signal *Signal) float64 {
 	prior := grid.Priors[signal.Source][signal.Symbol]
 
 	if prior == nil || prior.Samples <= 0 {

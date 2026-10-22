@@ -1,5 +1,4 @@
 import { useSelector } from "@tanstack/react-store";
-import { decisionsAtom } from "#/collections/app";
 import {
 	setDecisionsPendingFocus,
 	setDecisionsScopeSymbol,
@@ -7,7 +6,6 @@ import {
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
-import type { DecisionT } from "#/collections/types";
 
 type DecisionRow = {
 	id: string;
@@ -18,27 +16,7 @@ type DecisionRow = {
 };
 
 export const Decisions = () => {
-	const decisions = useSelector(decisionsAtom, (decisionList: DecisionT[]) => {
-		const merged = new Map<string, DecisionRow>();
-
-		for (const dec of decisionList) {
-			const symbol = typeof dec.symbol === "string" ? dec.symbol : "";
-			if (!symbol) continue;
-
-			merged.set(symbol, {
-				id: typeof dec.id === "string" ? dec.id : `dec-${symbol}`,
-				symbol,
-				action: typeof dec.action === "string" ? dec.action : "—",
-				confidence: dec.confidence ?? 0,
-				reason:
-					typeof dec.reason === "string"
-						? dec.reason
-						: "No rejection reason published",
-			});
-		}
-
-		return [...merged.values()];
-	});
+	const decisions: DecisionRow[] = [];
 
 	const inspectDecision = (symbol: string) => {
 		setDecisionsScopeSymbol(symbol);

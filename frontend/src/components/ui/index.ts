@@ -10,20 +10,25 @@ else is this folder, `theme.css`, and the three packages in package.json:
 class-variance-authority, motion, and tailwind-merge/clsx.
 */
 
-export { Alert, type AlertProps, alertVariants } from "./alert";
+export { Alert, alertVariants, type AlertProps } from "./alert";
 export {
 	Badge,
+	badgeVariants,
+	setBadge,
 	type BadgeProps,
 	type BadgeSize,
 	type BadgeVariant,
-	badgeVariants,
-	setBadge,
 } from "./badge";
-export { Button, type ButtonProps, buttonVariants } from "./button";
+export { Button, buttonVariants, type ButtonProps } from "./button";
 export { Canvas, type CanvasProps } from "./canvas";
-export { Chip, type ChipProps, chipVariants } from "./chip";
+export { Chip, chipVariants, type ChipProps } from "./chip";
 export { Component, type ComponentProps } from "./component";
-export { Divider, type DividerProps, dividerVariants } from "./divider";
+export {
+	DistanceBar,
+	type DistanceBarProps,
+	type DistanceMarker,
+} from "./distance-bar";
+export { Divider, dividerVariants, type DividerProps } from "./divider";
 export {
 	formatValue,
 	memoizedQuery,
@@ -33,116 +38,118 @@ export {
 	setText,
 	type ValueFormat,
 } from "./dom";
-export { DOT_SIZE_FOR, Dot, type DotProps, dotVariants } from "./dot";
+export { Dot, DOT_SIZE_FOR, dotVariants, type DotProps } from "./dot";
 export { AnimatePresence, Flex, flexVariants } from "./flex";
+export { Funnel, type FunnelProps, type FunnelStage } from "./funnel";
+export { Gauge, toneColor, type GaugeProps, type GaugeTone } from "./gauge";
 export {
-	type GapType,
 	Grid,
 	ISLAND_AREA_CLASS,
 	ISLAND_GRID_CLASS,
+	type GapType,
 	type IslandAreaKey,
 	type SegmentsType,
 } from "./grid";
-export { ICON_NAMES, Icon, type IconName, type IconProps } from "./icon";
+export { Icon, ICON_NAMES, type IconName, type IconProps } from "./icon";
 export {
-	type FieldProps,
 	fieldVariants,
 	Input,
-	type InputProps,
 	inputVariants,
+	type FieldProps,
+	type InputProps,
 	type SearchProps,
 } from "./input";
-export { Key, type KeyProps, keyVariants, type Modifier } from "./key";
+export { Key, keyVariants, type KeyProps, type Modifier } from "./key";
 export {
 	List,
+	listItemVariants,
+	listOptionVariants,
 	type ListItemProps,
 	type ListOptionProps,
 	type ListProps,
-	listItemVariants,
-	listOptionVariants,
 } from "./list";
 export {
 	Meter,
-	type MeterProps,
-	type MeterSize,
-	type MeterVariant,
 	meterTrackVariants,
 	meterVariants,
 	setMeter,
+	type MeterProps,
+	type MeterSize,
+	type MeterVariant,
 } from "./meter";
 export { Metric } from "./metric";
 export {
 	Modal,
-	type ModalProps,
 	modalPanelVariants,
 	modalScrimVariants,
+	type ModalProps,
 } from "./modal";
 export {
 	Nav,
-	type NavItemProps,
-	type NavProps,
 	navItemVariants,
 	navVariants,
+	type NavItemProps,
+	type NavProps,
 } from "./nav";
 export {
 	Overlay,
-	type OverlayProps,
 	overlayContentVariants,
 	overlayVariants,
+	type OverlayProps,
 } from "./overlay";
 export type { JSONPrimitive, JSONSerializable, Paint } from "./paint";
-export { Panel, type PanelProps, panelVariants } from "./panel";
+export { Panel, panelVariants, type PanelProps } from "./panel";
+export {
+	RadialHistory,
+	sectorHue,
+	type RadialHistoryProps,
+} from "./radial-history";
 export { Readout, type ReadoutProps } from "./readout";
-export { Scanlines, type ScanlinesProps, scanlinesVariants } from "./scanlines";
+export { Scanlines, scanlinesVariants, type ScanlinesProps } from "./scanlines";
 export {
 	Section,
-	type SectionHeaderProps,
-	type SectionProps,
 	sectionHeaderVariants,
 	sectionVariants,
+	type SectionHeaderProps,
+	type SectionProps,
 } from "./section";
+export { SeriesChart, type SeriesChartProps } from "./series-chart";
 export {
 	computeSparklinePath,
 	computeSparklinePaths,
 	scaleSparklineValues,
+	setSparkline,
 	Sparkline,
 	type SparklinePaths,
 	type SparklineProps,
-	setSparkline,
 } from "./sparkline";
 export { Spinner, type SpinnerProps } from "./spinner";
-export { Stat, type StatProps, statVariants } from "./stat";
+export { Stat, statVariants, type StatProps } from "./stat";
 export {
-	type TabProps,
 	Tabs,
-	type TabsProps,
 	tabsVariants,
 	tabVariants,
+	type TabProps,
+	type TabsProps,
 } from "./tabs";
-export { Toolbar, type ToolbarProps, toolbarVariants } from "./toolbar";
+export { TokenRibbon, type TokenRibbonProps } from "./token-ribbon";
+export { Toolbar, toolbarVariants, type ToolbarProps } from "./toolbar";
+export { Trail, type TrailProps } from "./trail";
 export {
 	SIZE_ORDER,
-	type Size,
 	stepSize,
+	type Size,
 	type Tone,
 	type Variant,
 } from "./types";
 export {
-	type DisplayProps,
 	displayVariants,
-	type LabelProps,
 	labelVariants,
-	type MonoProps,
 	monoVariants,
 	Typography,
-	type TypographyVariant,
 	typographyVariants,
+	type DisplayProps,
+	type LabelProps,
+	type MonoProps,
+	type TypographyVariant,
 } from "./typography";
-export { DistanceBar, type DistanceBarProps, type DistanceMarker } from "./distance-bar";
-export { Funnel, type FunnelProps, type FunnelStage } from "./funnel";
-export { Gauge, type GaugeProps, type GaugeTone, toneColor } from "./gauge";
-export { type ValueStore, metricOf, metricsWithPrefix, useValues } from "./value";
-export { RadialHistory, type RadialHistoryProps, sectorHue } from "./radial-history";
-export { TokenRibbon, type TokenRibbonProps } from "./token-ribbon";
-export { Trail, type TrailProps } from "./trail";
-export { SeriesChart, type SeriesChartProps } from "./series-chart";

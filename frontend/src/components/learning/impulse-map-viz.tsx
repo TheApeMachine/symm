@@ -3,7 +3,7 @@ import * as d3 from "d3";
 import { Grid2X2, Pause, Play, RefreshCw, Waves } from "lucide-react";
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { focusAtom } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { cn } from "#/lib/utils";
 import { sympathyAnchor } from "./grid-pins";
 import type { ImpulseNode } from "./types";
@@ -40,7 +40,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	gridRegions: propGridRegions,
 	className,
 }) => {
-	const currentFocus = useSelector(focusAtom, (s) => s);
+	const currentFocus = useSelector(atoms["focus"], (s) => s);
 	const activeSymbol = propSymbol || currentFocus || "BTC/USD";
 	const liveData = useImpulseData(propData ? "" : activeSymbol);
 

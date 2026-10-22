@@ -50,9 +50,7 @@ var (
 			)
 
 			defer cancel()
-			// `make run` runs this command: the only one that serves the
-			// dashboard. It never writes storage; collect captures ticks.
-			return NewBooter(ctx, "symm", false).WithDashboard().Run()
+			return NewBooter(ctx, "symm", true).WithDashboard().Run()
 		},
 	}
 )

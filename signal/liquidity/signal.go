@@ -2,21 +2,23 @@ package liquidity
 
 import (
 	"context"
-	"errors"
 
-	"github.com/theapemachine/errnie"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type Signal struct {
 	*runtime.System
-	keys []string
+	books *broker.Book
+	keys  []string
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
+		books: books,
 		keys: []string{
 			"best_price:bid",
 			"best_price:ask",
@@ -35,64 +37,63 @@ Step processes the book of every distinct symbol traded in the tick's frame;
 each symbol writes its own (reserved) layer.
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	trades, err := broker.Trades(value)
+	var trades []kraken.TradeData
+	value.Lookup(&trades, "spot:trade")
 
-	if err != nil {
-		errnie.Error(err)
-		return value
-	}
-
-	for _, symbol := range broker.Symbols(trades) {
-		signal.step(value, symbol)
+	for _, trade := range trades {
+		signal.step(value, trade)
 	}
 
 	return value
 }
 
-func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
+func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
 		return value
 	}
 
-	snapshot, err := broker.ReadSnapshot(value, symbol)
+	var bookAvailable bool
+	signal.books.Book(trade.Symbol, func(b *spotbook.Book) {
+		bookAvailable = true
 
-	if err != nil {
-		// The tick records this book as not valid (book_error layer) and
-		// its transition was raised once where it happened: skip the symbol.
-		if errors.Is(err, broker.ErrBookNotValid) {
-			return value
+		bestBid := b.BestBid()
+		bestAsk := b.BestAsk()
+		if bestBid == nil || bestAsk == nil || bestBid.Price == nil || bestAsk.Price == nil {
+			return
 		}
 
-		errnie.Error(err)
+		bid := bestBid.Price.Float64()
+		ask := bestAsk.Price.Float64()
+
+		midpoint := (bid + ask) / 2.0
+		var relSpread float64
+		if midpoint > 0 {
+			relSpread = (ask - bid) / midpoint
+		}
+
+		feeRate := 0.0
+		var frictionHurdle float64
+		if feeRate > 0 {
+			frictionHurdle = relSpread + 2.0*feeRate
+		}
+
+		keys := []string{
+			signal.Name(),
+			trade.Symbol,
+		}
+
+		value.Append([]float64{
+			bid,
+			ask,
+			relSpread,
+			feeRate,
+			frictionHurdle,
+		}, append(keys, signal.keys...)...)
+	})
+
+	if !bookAvailable {
 		return value
 	}
 
-	if snapshot == nil {
-		return value
-	}
-
-	bestBid, bestAsk := snapshot.Touch()
-	bid := bestBid.Price.Float64()
-	ask := bestAsk.Price.Float64()
-
-	midpoint := (bid + ask) / 2.0
-	var relSpread float64
-	if midpoint > 0 {
-		relSpread = (ask - bid) / midpoint
-	}
-
-	feeRate := data.Attribute[float64](broker.SymbolLayer(value, "price", symbol), "feeRate")
-	var frictionHurdle float64
-	if feeRate > 0 {
-		frictionHurdle = relSpread + 2.0*feeRate
-	}
-
-	value.Append([]float64{
-		bid,
-		ask,
-		relSpread,
-		feeRate,
-		frictionHurdle,
-	}, append(append([]string{"signal", signal.Name()}, signal.keys...), "symbol:"+symbol)...)
 	return value
 }

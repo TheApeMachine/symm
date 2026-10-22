@@ -4,7 +4,7 @@ import {
 	type FluidParticleFrame,
 	type FluidPhase,
 } from "./wire";
-import { errorAtom, focusAtom, onlineAtom, signals } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 
 export type FluidFeedState = "connecting" | "connected" | "disconnected";
 
@@ -36,8 +36,8 @@ export class FluidManifoldFeed {
 			return;
 		}
 
-		const symbol = focusAtom.get();
-		const manifoldStore = signals.manifold;
+		const symbol = atoms["focus"].get();
+		const manifoldStore = signals["manifold"];
 		if (!manifoldStore) {
 			return;
 		}
@@ -65,7 +65,7 @@ export class FluidManifoldFeed {
 		} catch (error) {
 			const err = errorValue(error);
 			this.handlers.onError(err);
-			errorAtom.set({
+			atoms["error"].set({
 				error: err.message,
 				source: "FluidManifoldFeed",
 				symbol,
@@ -79,10 +79,10 @@ export class FluidManifoldFeed {
 		}
 
 		this.handlers.onState(
-			onlineAtom.get() === "ONLINE" ? "connected" : "connecting",
+			atoms["online"].get() === "ONLINE" ? "connected" : "connecting",
 		);
 
-		const onlineSub = onlineAtom.subscribe((status) => {
+		const onlineSub = atoms["online"].subscribe((status) => {
 			if (this.disposed) {
 				return;
 			}
@@ -102,12 +102,12 @@ export class FluidManifoldFeed {
 		});
 		this.unsubscribeOnline = () => onlineSub.unsubscribe();
 
-		const focusSub = focusAtom.subscribe(() => {
+		const focusSub = atoms["focus"].subscribe(() => {
 			this.processLatest();
 		});
 		this.unsubscribeFocus = () => focusSub.unsubscribe();
 
-		const manifoldSub = signals.manifold.subscribe(() => {
+		const manifoldSub = signals["manifold"].subscribe(() => {
 			this.processLatest();
 		});
 		this.unsubscribeManifold = () => manifoldSub.unsubscribe();

@@ -215,5 +215,14 @@ func (balance *Balance) poll() (err error) {
 	kept := *tradeBalance
 	balance.trade.Store(&kept)
 
+	balance.value = data.NewValue("balance", "update", "all").Append(
+		map[string]any{
+			"cash":       balance.cash(balance.Quote),
+			"equity":     tradeBalance.Equity,
+			"unrealized": tradeBalance.UnrealizedPnL,
+		},
+		"balance",
+	)
+
 	return nil
 }

@@ -1,14 +1,9 @@
 package data
 
 import (
-	"bytes"
-	"encoding/binary"
-	"encoding/gob"
 	"errors"
 	"fmt"
-	"iter"
 	"math"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -24,19 +19,23 @@ Layer reads it back with T set to the same slice type, as in
 Layer[[]Trade](value, "trade") after Append(value, []Trade{...}, "trade").
 */
 func (value *Value) Append(layers any, keys ...string) *Value {
-	var buffer bytes.Buffer
+	buffer, err := sonic.Marshal(layers)
 
-	if err := gob.NewEncoder(&buffer).Encode(layers); err != nil {
+	if err != nil {
 		value.Err = errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[data.Append] layer does not encode",
 			err,
 		))
-
 		return value
 	}
 
-	value.appendLayer(buffer.Bytes(), strings.Join(append([]string{value.Prefix}, keys...), "/"))
+	value.mu.Lock()
+	value.Layers = append(value.Layers, buffer)
+	value.Index = append(value.Index, strings.Join(append(
+		[]string{value.Prefix}, keys...), "/",
+	))
+	value.mu.Unlock()
 
 	return value
 }
@@ -44,135 +43,74 @@ func (value *Value) Append(layers any, keys ...string) *Value {
 /*
 Lookup finds a layer by keyword.
 */
-func (value *Value) Lookup(projector any, keys ...string) {
-	for i, prefix := range value.Index {
-		for _, key := range keys {
-			if strings.Contains(prefix, key) {
-				decoder := gob.NewDecoder(
-					bytes.NewReader(value.Layers[i]),
-				)
+func (value *Value) Lookup(projector any, key string) {
+	var buf []byte
 
-				if err := decoder.Decode(projector); err != nil {
-					value.Err = errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"[data.Lookup] "+key+" does not decode",
-						err,
-					))
-
-					return
-				}
-			}
+	for i, index := range value.Index {
+		if strings.Contains(index, value.Prefix+"/"+key) {
+			buf = value.Layers[i]
+			break
 		}
+	}
+
+	if err := sonic.Unmarshal(buf, projector); err != nil {
+		value.Err = errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[data.Lookup] "+key+" does not decode",
+			err,
+		))
 	}
 }
 
-/*
-Layer yields each gob layer whose index contains prefix as a whole path
-segment. T is the type Append stored. A blob that does not decode is
-recorded on value.Err and the sequence stops. No prefix yields every layer.
-*/
-func Layer[T any](value *Value, prefixes ...string) iter.Seq2[string, T] {
-	return func(yield func(string, T) bool) {
-		if value == nil {
-			return
-		}
+type LayerEntry struct {
+	Key  string // Relative to the requested prefix.
+	Data []byte
+}
 
-		layers, index := value.filled()
-		matched := false
-
-		for i, layer := range layers {
-			if len(prefixes) > 0 && !slices.ContainsFunc(prefixes, func(prefix string) bool {
-				return segmentContains(index[i], prefix)
-			}) {
-				continue
-			}
-
-			var out T
-
-			if err := gob.NewDecoder(bytes.NewReader(layer)).Decode(&out); err != nil {
-				packed, ok := packedFloat64[T](layer)
-
-				if !ok {
-					value.Err = errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"[data.Layer] "+index[i]+" does not decode",
-						err,
-					))
-
-					return
-				}
-
-				out = packed
-			}
-
-			matched = true
-
-			if !yield(index[i], out) {
-				return
-			}
-		}
-
-		if len(prefixes) > 0 && !matched && value.Err == nil {
-			value.Err = errnie.Error(errnie.Err(
-				errnie.NotFound,
-				"[data.Layer] "+strings.Join(prefixes, "/")+" is not on "+value.Prefix,
-				nil,
-			))
-		}
+func (layer *LayerEntry) Decode(projector any) error {
+	if layer == nil || projector == nil {
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"[data.LayerEntry.Decode] nil layer or projector",
+			nil,
+		)
 	}
+
+	if err := sonic.Unmarshal(layer.Data, projector); err != nil {
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"[data.LayerEntry.Decode] layer does not decode",
+			err,
+		)
+	}
+
+	return nil
 }
 
 /*
-packedFloat64 reads a little-endian float64 vector. Stored ticks and
-detections keep that layout. Append stores the same vector as gob.
+LookupPrefix returns all descendant layers below key.
+For example, LookupPrefix("cvd") returns each CVD layer,
+with keys such as "BTC/USD/midpoint_log_return/...".
 */
-func packedFloat64[T any](layer []byte) (T, bool) {
-	var zero T
+func (value *Value) LookupPrefix(key string) []LayerEntry {
+	entries := make([]LayerEntry, 0)
 
-	if _, ok := any(zero).([]float64); !ok || len(layer) == 0 || len(layer)%8 != 0 {
-		return zero, false
-	}
-
-	floats := make([]float64, len(layer)/8)
-
-	for i := range floats {
-		floats[i] = math.Float64frombits(binary.LittleEndian.Uint64(layer[i*8 : i*8+8]))
-	}
-
-	packed, ok := any(floats).(T)
-
-	return packed, ok
-}
-
-/*
-segmentContains reports whether index holds key as a whole path segment,
-so book/BTC/USD does not match book/BTC/USDT.
-*/
-func segmentContains(index, key string) bool {
-	if key == "" || index == "" {
-		return false
-	}
-
-	from := 0
-
-	for {
-		at := strings.Index(index[from:], key)
-
-		if at < 0 {
-			return false
+	for i, index := range value.Index {
+		if i >= len(value.Layers) {
+			continue
 		}
 
-		at += from
-		end := at + len(key)
-		before := at == 0 || index[at-1] == '/'
-		after := end == len(index) || index[end] == '/' || strings.HasSuffix(key, "/")
-
-		if before && after {
-			return true
+		if !strings.HasPrefix(index, value.Prefix+"/"+key) {
+			continue
 		}
 
-		from = at + 1
+		entries = append(entries, LayerEntry{
+			Key:  strings.TrimPrefix(index, value.Prefix+"/"),
+			Data: value.Layers[i],
+		})
 	}
+
+	return entries
 }
 
 /*

@@ -1,9 +1,7 @@
 import {
 	DEFAULT_FOCUS_SYMBOL,
-	focusAtom,
-	observeSymbols,
-	resonanceStore,
-	symbolsAtom,
+	atoms,
+	signals,
 	type RingBuffer,
 } from "#/collections/app";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
@@ -26,7 +24,7 @@ import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
 
 const XrayPaintBridge = () => {
-	const focusSymbol = useSelector(focusAtom);
+	const focusSymbol = useSelector(atoms["focus"]);
 
 	useEffect(() => {
 		const updatePaint = (state: Record<string, RingBuffer<Value>>) => {
@@ -39,7 +37,6 @@ const XrayPaintBridge = () => {
 
 				if (sym) {
 					retainResonanceRow(sym, last as unknown as Record<string, unknown>);
-					observeSymbols([sym]);
 				}
 			}
 
@@ -48,8 +45,8 @@ const XrayPaintBridge = () => {
 			paintXrayLatent(universe, focusSymbol);
 		};
 
-		updatePaint(resonanceStore.state);
-		const subscription = resonanceStore.subscribe((state) => {
+		updatePaint(signals["resonance"].state);
+		const subscription = signals["resonance"].subscribe((state) => {
 			updatePaint(state);
 		});
 
@@ -62,9 +59,9 @@ const XrayPaintBridge = () => {
 };
 
 const XrayCarrierBar = () => {
-	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const focusSymbol = useSelector(atoms["focus"], (state) => state);
 	const [symbols, setSymbols] = useState<string[]>(() => {
-		const initial = new Set<string>(symbolsAtom.get());
+		const initial = new Set<string>(atoms["symbols"].get());
 		for (const row of getAllRetainedResonance()) {
 			if (typeof row.scope === "string") initial.add(row.scope);
 		}
@@ -74,7 +71,7 @@ const XrayCarrierBar = () => {
 
 	useEffect(() => {
 		const syncSymbols = () => {
-			const current = new Set<string>(symbolsAtom.get());
+			const current = new Set<string>(atoms["symbols"].get());
 			for (const row of getAllRetainedResonance()) {
 				if (typeof row.scope === "string") current.add(row.scope);
 			}
@@ -84,8 +81,8 @@ const XrayCarrierBar = () => {
 		};
 
 		syncSymbols();
-		const sub1 = symbolsAtom.subscribe(syncSymbols);
-		const sub2 = resonanceStore.subscribe(syncSymbols);
+		const sub1 = atoms["symbols"].subscribe(syncSymbols);
+		const sub2 = signals["resonance"].subscribe(syncSymbols);
 
 		return () => {
 			sub1.unsubscribe();
@@ -114,7 +111,7 @@ const XrayCarrierBar = () => {
 						tone={active ? "accent" : "muted"}
 						size="xs"
 						onClick={() => {
-							focusAtom.set(sym);
+							atoms["focus"].set(sym);
 						}}
 						className="shrink-0 font-mono text-[11px]"
 					>

@@ -76,19 +76,27 @@ func (model *Model) load() {
 
 	stored := data.From(buf)
 
-	for _, gates := range data.Layer[map[string]float64](stored, "threshold") {
+	var gates map[string]float64
+	stored.Lookup(&gates, "threshold")
+	if gates != nil {
 		model.Threshold = gates
 	}
 
-	for _, wins := range data.Layer[map[string]int](stored, "wins") {
+	var wins map[string]int
+	stored.Lookup(&wins, "wins")
+	if wins != nil {
 		model.Wins = wins
 	}
 
-	for _, promoted := range data.Layer[map[string]bool](stored, "promoted") {
+	var promoted map[string]bool
+	stored.Lookup(&promoted, "promoted")
+	if promoted != nil {
 		model.Promoted = promoted
 	}
 
-	for _, open := range data.Layer[map[string]string](stored, "open") {
+	var open map[string]string
+	stored.Lookup(&open, "open")
+	if open != nil {
 		model.Open = open
 	}
 
@@ -202,12 +210,12 @@ func (model *Model) Act(symbol, path, action string) {
 		model.settle(symbol, path, true)
 		return
 	case "enter":
-		if err := model.desk.Enter(symbol, false); err != nil {
+		if err := model.desk.Enter(symbol, "", false); err != nil {
 			model.Error(err)
 			return
 		}
 	case "virtual":
-		if err := model.desk.Enter(symbol, true); err != nil {
+		if err := model.desk.Enter(symbol, "", true); err != nil {
 			model.Error(err)
 			return
 		}
@@ -323,7 +331,7 @@ func (model *Model) learn(path string, profit, virtual bool) bool {
 	}
 
 	for _, action := range []string{"enter.bin", "exit.bin"} {
-		value := data.NewValue("policy", "current", path, action)
+		value := data.NewValue("policy", "current", path+"/"+action)
 		model.persist(value)
 	}
 
@@ -366,4 +374,3 @@ func (model *Model) persist(value *data.Value) {
 		model.Error(err)
 	}
 }
-

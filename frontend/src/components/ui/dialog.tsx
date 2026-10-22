@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useState } from "react";
-import { errorAtom } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
@@ -27,7 +27,7 @@ const formatValue = (value: unknown): string => {
 };
 
 export const Dialog = () => {
-	const error = useSelector(errorAtom);
+	const error = useSelector(atoms["error"]);
 	const [expanded, setExpanded] = useState(false);
 
 	if (!error) return null;
@@ -66,7 +66,7 @@ export const Dialog = () => {
 					<Button
 						variant="quiet"
 						size="xs"
-						onClick={() => errorAtom.set(null)}
+						onClick={() => atoms["error"].set(null)}
 						className="text-(--f3) hover:text-(--f1)"
 					>
 						dismiss

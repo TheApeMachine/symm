@@ -1,10 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import {
-	focusAtom,
-	kernelDetailAtom,
-	signals,
-	symbolsAtom,
-} from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import {
 	kernelCopy,
 	metricLabel,
@@ -16,9 +11,9 @@ import { Grid } from "#/components/ui/grid";
 import { Typography } from "#/components/ui/typography";
 
 export const SignalDetail = () => {
-	const focusSymbol = useSelector(focusAtom, (state) => state);
-	const selected = useSelector(kernelDetailAtom, (state) => state);
-	const symbols = useSelector(symbolsAtom, (state) => state);
+	const focusSymbol = useSelector(atoms["focus"], (state) => state);
+	const selected = useSelector(atoms["kernelDetail"], (state) => state);
+	const symbols = useSelector(atoms["symbols"], (state) => state);
 
 	const source = selected || "cvd";
 	const copy =

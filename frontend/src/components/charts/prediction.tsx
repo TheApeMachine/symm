@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { type CSSProperties, useRef } from "react";
-import { focusAtom, resonanceStore } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { Value } from "#/types/value";
 import { Flex } from "../ui";
@@ -134,9 +134,9 @@ export const parseResonanceData = (measurement: Value | undefined): ResonanceDat
 	return data;
 };
 
-const useArtifact = (): ResonanceData | undefined => {
-	const symbol = useSelector(focusAtom);
-	const published = useSelector(resonanceStore, (state) =>
+	const useArtifact = (): ResonanceData | undefined => {
+	const symbol = useSelector(atoms["focus"]);
+	const published = useSelector(signals["resonance"], (state) =>
 		state[symbol]?.end ?? 0,
 	);
 	const ring =

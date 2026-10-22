@@ -1,5 +1,5 @@
 import type { MouseEvent, ReactNode } from "react";
-import { focusAtom } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 
 const symbolExact =
@@ -63,11 +63,11 @@ export const SymbolFocusLayer = ({ children }: { children: ReactNode }) => {
 			current = current.parentElement;
 		}
 
-		if (symbol === "" || focusAtom.get() === symbol) {
+		if (symbol === "" || atoms.focus.get() === symbol) {
 			return;
 		}
 
-		focusAtom.set(symbol);
+		atoms.focus.set(symbol);
 		terminalStore.actions.selectFocusSymbol(symbol);
 	};
 

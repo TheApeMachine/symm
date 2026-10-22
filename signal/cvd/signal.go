@@ -2,11 +2,9 @@ package cvd
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"math"
 
-	"github.com/theapemachine/errnie"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
@@ -27,12 +25,14 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
+	books  *broker.Book
 	states map[string]*symbolState
 	keys   []string
 }
 
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
+		books:  books,
 		states: make(map[string]*symbolState),
 		keys: []string{
 			"midpoint_log_return",
@@ -51,12 +51,8 @@ Step processes every trade entry of the tick's frame; per-symbol state is keyed
 by the entry's symbol and each entry writes its own (reserved) layer.
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	trades, err := broker.Trades(value)
-
-	if err != nil {
-		errnie.Error(err)
-		return value
-	}
+	var trades []kraken.TradeData
+	value.Lookup(&trades, "spot:trade")
 
 	for _, trade := range trades {
 		signal.step(value, trade)
@@ -92,78 +88,66 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	tradeNotional := qty * price
 
-	snapshot, err := broker.ReadSnapshot(value, trade.Symbol)
-
-	if err != nil {
-		// The tick records this book as not valid (book_error layer) and
-		// its transition was raised once where it happened: skip the symbol.
-		if errors.Is(err, broker.ErrBookNotValid) {
-			return value
+	// The `books.Book` callback is synchronous; the book is present only if
+	// the callback ran. Pending (no snapshot yet), stale (L3 socket down) and
+	// invalid (venue checksum mismatch / absent level) symbols skip the
+	// callback and the tick carries book_error/<symbol> instead.
+	signal.books.Book(trade.Symbol, func(b *spotbook.Book) {
+		bid := b.BestBid()
+		ask := b.BestAsk()
+		if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
+			return
 		}
 
-		// errnie.Error, not signal.Error: a per-tick condition must not
-		// accumulate into the node's joined error forever.
-		errnie.Error(errnie.Err(
-			errnie.NotFound,
-			fmt.Sprintf("[cvd] snapshot for %s unavailable", trade.Symbol),
-			err,
-		))
+		midpoint := (bid.Price.Float64() + ask.Price.Float64()) / 2.0
+		tick := state.clock.Step(price, qty, float64(value.Timestamp), midpoint)
 
-		return value
-	}
-
-	var midpoint float64
-
-	hasBook := snapshot != nil
-
-	if hasBook {
-		bid, ask := snapshot.Touch()
-		midpoint = (bid.Price.Float64() + ask.Price.Float64()) / 2.0
-	}
-
-	tick := state.clock.Step(price, qty, float64(value.Timestamp), midpoint)
-
-	if tick.Counted {
-		switch side {
-		case "buy":
-			state.window.buyNotional += tradeNotional
-		case "sell":
-			state.window.sellNotional += tradeNotional
+		if tick.Counted {
+			switch side {
+			case "buy":
+				state.window.buyNotional += tradeNotional
+			case "sell":
+				state.window.sellNotional += tradeNotional
+			}
 		}
-	}
 
-	var grossNotional, signedFraction float64
+		var grossNotional, signedFraction float64
 
-	if tick.Closed {
-		flow := state.window
-		state.window = window{}
-		grossNotional = flow.buyNotional + flow.sellNotional
-		netNotional := flow.buyNotional - flow.sellNotional
-		if grossNotional > 0 {
-			signedFraction = netNotional / grossNotional
+		if tick.Closed {
+			flow := state.window
+			state.window = window{}
+			grossNotional = flow.buyNotional + flow.sellNotional
+			netNotional := flow.buyNotional - flow.sellNotional
+			if grossNotional > 0 {
+				signedFraction = netNotional / grossNotional
+			}
 		}
-	}
 
-	var midpointLogReturn, flowAligned float64
+		var midpointLogReturn, flowAligned float64
 
-	if hasBook && state.prevMidpoint > 0 {
-		midpointLogReturn = math.Log(midpoint / state.prevMidpoint)
-		flowAligned = midpointLogReturn
+		if state.prevMidpoint > 0 {
+			midpointLogReturn = math.Log(midpoint / state.prevMidpoint)
+			flowAligned = midpointLogReturn
 
-		if side == "sell" {
-			flowAligned = -midpointLogReturn
+			if side == "sell" {
+				flowAligned = -midpointLogReturn
+			}
 		}
-	}
 
-	if hasBook {
 		state.prevMidpoint = midpoint
-	}
 
-	value.Append([]float64{
-		midpointLogReturn,
-		flowAligned,
-		grossNotional,
-		signedFraction,
-	}, append(append([]string{"signal", signal.Name()}, signal.keys...), "symbol:"+trade.Symbol)...)
+		keys := []string{
+			signal.Name(),
+			trade.Symbol,
+		}
+
+		value.Append([]float64{
+			midpointLogReturn,
+			flowAligned,
+			grossNotional,
+			signedFraction,
+		}, append(keys, signal.keys...)...)
+	})
+
 	return value
 }

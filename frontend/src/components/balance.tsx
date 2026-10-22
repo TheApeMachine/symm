@@ -1,10 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
-import {
-	cashAtom,
-	equityAtom,
-	unrealizedAtom,
-} from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 
@@ -82,9 +78,9 @@ const Reading = ({
 );
 
 export const Balance = () => {
-	const cash = useSelector(cashAtom, (state) => state);
-	const unrealized = useSelector(unrealizedAtom, (state) => state);
-	const equity = useSelector(equityAtom, (state) => state);
+	const cash = useSelector(atoms["cash"], (state) => state);
+	const unrealized = useSelector(atoms["unrealized"], (state) => state);
+	const equity = useSelector(atoms["equity"], (state) => state);
 
 	const unrealizedVal = Number(unrealized);
 	const inProfit = Number.isFinite(unrealizedVal) && unrealizedVal > 0;

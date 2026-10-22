@@ -1,4 +1,4 @@
-import { focusAtom, focusMetricAtom, signals } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { sourceHeadline } from "#/components/terminal/kernel-meta";
 import {
@@ -19,7 +19,7 @@ interface MetricProps {
 }
 
 export const Metric = ({ name, compact = false }: MetricProps) => {
-	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const headline = sourceHeadline(name) ?? name;
 	const store = signals[name];
 
@@ -34,7 +34,7 @@ export const Metric = ({ name, compact = false }: MetricProps) => {
 				shape="block"
 				className="min-h-0 justify-start border-(--line) border-b"
 				onClick={() => {
-					focusMetricAtom.set(() => name);
+					atoms.focusMetric.set(() => name);
 					terminalStore.actions.inspectSource(name);
 				}}
 				fullHeight

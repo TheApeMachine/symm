@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector, useStore } from "@tanstack/react-store";
 import { useState } from "react";
-import { onlineAtom } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import type {
 	EdgeStats,
 	NodeStats,
@@ -818,7 +818,7 @@ const DiagnosticsSurface = () => {
 	// every ingest) and the Maps are read fresh off current state each render.
 	useStore(topologyStore, (state) => state.version);
 	const { nodes, edges, account } = topologyStore.state;
-	const connection = useSelector(onlineAtom, (s) => s);
+	const connection = useSelector(atoms["online"], (s) => s);
 	const [selection, setSelection] = useState<DiagnosticsSelection | null>(null);
 	const [activeTab, setActiveTab] = useState<"overview" | "value" | "json">(
 		"overview",

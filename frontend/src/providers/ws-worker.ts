@@ -1,5 +1,10 @@
 /// <reference lib="webworker" />
 
+import { atoms, signals } from "#/collections/app";
+import { RingBuffer } from "#/collections/ring";
+import { parseValues } from "#/types/decoder";
+import { Value } from "#/types/value";
+
 let socket: WebSocket | null = null;
 let connectUrl = "";
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -14,7 +19,9 @@ let pendingCommands: Record<string, unknown>[] = [];
 
 const queueCommand = (command: Record<string, unknown>) => {
 	if (command.type === "hindsight") {
-		pendingCommands = pendingCommands.filter((item) => item.type !== "hindsight");
+		pendingCommands = pendingCommands.filter(
+			(item) => item.type !== "hindsight",
+		);
 	}
 
 	pendingCommands.push(command);
@@ -161,6 +168,49 @@ const connect = (url: string) => {
 			}
 
 			if (arrayBuffer) {
+				const value = parseValues(new Uint8Array(arrayBuffer));
+				if (value) {
+					for (const val of value) {
+						const origin = val.origin;
+
+						// Route by origin: atom or signal store.
+						const atom = atoms[origin];
+						const store = signals[origin];
+
+						if (atom) {
+							// Values with atom origins are decoded in the main
+							// thread via the Value.lookup path once they land
+							// in the signals store; here we just record the
+							// tick into the ring buffer if one exists.
+							continue;
+						}
+
+						if (store) {
+							const symbol = val.scope;
+							let ring = store.state[symbol];
+
+							if (!ring) {
+								ring = new RingBuffer<Value>(50);
+								store.state[symbol] = ring;
+							}
+
+							const decoded = new Value({
+								id: val.id,
+								epoch: val.epoch,
+								tick: val.tick,
+								seqIdx: val.seqIdx,
+								timestamp: val.timestamp,
+								origin: val.origin,
+								role: val.role,
+								scope: val.scope,
+								layers: val.layers.map((layer) => layer.bytes),
+								index: val.layers.map((layer) => layer.index),
+							});
+
+							ring.add(decoded);
+						}
+					}
+				}
 				self.postMessage({ type: "BATCH", buffer: arrayBuffer }, [arrayBuffer]);
 			}
 		} catch (err) {
@@ -227,5 +277,3 @@ self.addEventListener("message", (event: MessageEvent) => {
 		}
 	}
 });
-
-export {};

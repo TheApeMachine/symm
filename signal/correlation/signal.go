@@ -4,8 +4,6 @@ import (
 	"context"
 	"unsafe"
 
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/algo"
@@ -48,12 +46,9 @@ Step processes every trade entry of the tick's frame; per-symbol state is keyed
 by the entry's symbol and each entry writes its own (reserved) layer.
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	trades, err := broker.Trades(value)
+	var trades []kraken.TradeData
 
-	if err != nil {
-		errnie.Error(err)
-		return value
-	}
+	value.Lookup(&trades, "spot:trade")
 
 	for _, trade := range trades {
 		signal.step(value, trade)

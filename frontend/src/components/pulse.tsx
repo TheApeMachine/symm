@@ -1,11 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import {
-	candidatesAtom,
-	phaseAtom,
-	positionCountAtom,
-	signalSourcesAtom,
-	tickCountAtom,
-} from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { cn } from "#/lib/utils";
 
@@ -35,14 +29,14 @@ const Reading = ({
 );
 
 export const Pulse = () => {
-	const tick = useSelector(tickCountAtom, (state) => state);
-	const phase = useSelector(phaseAtom, (state) => state);
-	const candidates = useSelector(candidatesAtom, (state) => state);
+	const tick = useSelector(atoms["tickCount"], (state) => state);
+	const phase = useSelector(atoms["phase"], (state) => state);
+	const candidates = useSelector(atoms["candidates"], (state) => state);
 	const signalCount = useSelector(
-		signalSourcesAtom,
+		atoms["signalSources"],
 		(state) => state.length,
 	);
-	const openCount = useSelector(positionCountAtom, (state) => state);
+	const openCount = useSelector(atoms["positionCount"], (state) => state);
 
 	return (
 		<Flex.Row

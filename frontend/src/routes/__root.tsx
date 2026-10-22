@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
-import { errorAtom, focusAtom, routeAtom } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { CommandPalette } from "#/components/terminal/palette";
 import { SymbolFocusLayer } from "#/components/terminal/symbol-focus";
@@ -67,7 +67,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
 
 	useEffect(() => {
-		routeAtom.set(surface);
+		atoms["route"].set(surface);
 		sendRoute(surface);
 	}, [surface]);
 	const {
@@ -88,7 +88,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 		}
 
 		if (focusSymbol) {
-			focusAtom.set(focusSymbol);
+			atoms["focus"].set(focusSymbol);
 			selectFocusSymbol(focusSymbol);
 		}
 
@@ -104,9 +104,9 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 				return;
 			}
 
-			if (event.key === "Escape" && errorAtom.get()) {
+			if (event.key === "Escape" && atoms["error"].get()) {
 				event.preventDefault();
-				errorAtom.set(null);
+				atoms["error"].set(null);
 				return;
 			}
 

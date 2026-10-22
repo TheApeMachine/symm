@@ -1,13 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { ArrowRight, HeartPulse, Radio } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
-import {
-	decisionsAtom,
-	type RingBuffer,
-	signals,
-	unrealizedAtom,
-} from "#/collections/app";
-import type { DecisionT } from "#/collections/types";
+import { atoms, type RingBuffer, signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
@@ -222,7 +216,9 @@ export const PositionHealthGauge = ({
 	life?: Lifecycle | null;
 	unrealizedVal?: number;
 }) => {
-	const rawUnrealized = useSelector(unrealizedAtom, (state) => Number(state));
+	const rawUnrealized = useSelector(atoms["unrealized"], (state) =>
+		Number(state),
+	);
 	const currentUnrealized = Number.isFinite(unrealizedVal)
 		? (unrealizedVal as number)
 		: Number.isFinite(rawUnrealized)
@@ -562,13 +558,15 @@ export const RegionTransitionPathway = ({
 };
 
 export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
-	const rawUnrealized = useSelector(unrealizedAtom, (state) => Number(state));
+	const rawUnrealized = useSelector(atoms["unrealized"], (state) =>
+		Number(state),
+	);
 	// The position's own mark against the live bid, where the run published one.
 	const currentUnrealized =
 		life.mark?.unrealized ??
 		(Number.isFinite(rawUnrealized) ? rawUnrealized : 0);
 
-	const decisions = useSelector(decisionsAtom, (list: DecisionT[]) => list);
+	const decisions: any[] = [];
 	const activeSymbol = life?.symbol ?? "";
 	const currentDecision = decisions.find((d) => d.symbol === activeSymbol);
 
@@ -611,8 +609,11 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 	}, [activeSymbol]);
 
 	const livePathFromMeasurement = useMemo(() => {
-		if (!latestValue?.provenance) return "";
-		for (const p of latestValue.provenance) {
+		const provenance = latestValue?.lookup("provenance") as
+			| { name: string; value: unknown }[]
+			| undefined;
+		if (!provenance) return "";
+		for (const p of provenance) {
 			if (p?.name === "token_path" && p.value) {
 				return String(p.value);
 			}
@@ -939,8 +940,11 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 
 	const metricMap = useMemo(() => {
 		const map: Record<string, number> = {};
-		if (!latestValue?.metrics) return map;
-		for (const m of latestValue.metrics) {
+		const metrics = latestValue?.lookup("metrics") as
+			| { name: string; raw: number }[]
+			| undefined;
+		if (!metrics) return map;
+		for (const m of metrics) {
 			if (m?.name) {
 				map[String(m.name)] = m.raw ?? 0;
 			}
@@ -949,8 +953,11 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 	}, [latestValue]);
 
 	const liveTokenPath = useMemo(() => {
-		if (!latestValue?.provenance) return "";
-		for (const p of latestValue.provenance) {
+		const provenance = latestValue?.lookup("provenance") as
+			| { name: string; value: unknown }[]
+			| undefined;
+		if (!provenance) return "";
+		for (const p of provenance) {
 			if (p?.name === "token_path" && p.value) {
 				return String(p.value);
 			}

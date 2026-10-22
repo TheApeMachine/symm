@@ -13,6 +13,7 @@ import (
 	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
+	"github.com/theapemachine/symm/types"
 )
 
 type Token struct {
@@ -84,22 +85,43 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		return nil
 	}
 
-	grouped := make(map[string][]broker.Sample)
+	grouped := make(map[string]bool)
 
-	for signal, err := range broker.Samples(value) {
-		if err != nil {
-			training.Error(err)
+	for _, idx := range value.Index {
+		rest := idx
+		if value.Prefix != "" && strings.HasPrefix(idx, value.Prefix+"/") {
+			rest = strings.TrimPrefix(idx, value.Prefix+"/")
+		}
+		parts := strings.Split(rest, "/")
+		// A signal layer key is source/symbol/label..., e.g. "cvd/BTC/USD/midpoint".
+		// Only keys from known signal sources with a fully-qualified symbol
+		// (base/quote) are tradable; skip spot:trade, train/*, and anything else.
+		if len(parts) < 3 {
 			continue
 		}
 
-		grouped[signal.Symbol] = append(grouped[signal.Symbol], signal)
+		source := parts[0]
+		isSignal := false
+		for _, s := range types.SignalSourceStrings {
+			if source == s {
+				isSignal = true
+				break
+			}
+		}
+
+		if !isSignal {
+			continue
+		}
+
+		symbol := parts[1] + "/" + parts[2]
+		grouped[symbol] = true
 	}
 
-	for symbol, signals := range grouped {
+	for symbol := range grouped {
 		found, _ := training.policy.LoadOrStore(symbol, []*Token{})
 		tokens := found.([]*Token)
 		regions := make([]*Token, 0)
-		observed, err := training.grid.Observe(symbol, signals)
+		observed, err := training.grid.Observe(value)
 
 		if err != nil {
 			training.Error(err)
@@ -254,11 +276,13 @@ func (training *Training) act(symbol string, tokens Tokens) {
 
 	switch action {
 	case "enter.bin":
-		training.desk.Enter(symbol, false)
+		if err := training.desk.Enter(symbol, "", false); err != nil {
+			training.Error(err)
+		}
 	case "exit.bin":
 		training.desk.Exit(symbol, false)
 	default:
-		if err := training.desk.Enter(symbol, true); err != nil {
+		if err := training.desk.Enter(symbol, "", true); err != nil {
 			err = training.desk.Exit(symbol, true)
 
 			if err != nil {

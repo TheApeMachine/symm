@@ -9,6 +9,7 @@ import (
 	goruntime "runtime"
 	"strings"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
@@ -217,9 +218,12 @@ func detectFields(value *data.Value) (map[string]float64, error) {
 
 	fields := map[string]float64{}
 
-	for index, values := range data.Layer[[]float64](value) {
+	for i, index := range value.Index {
+		var values []float64
+		if err := sonic.Unmarshal(value.Layers[i], &values); err != nil {
+			continue
+		}
 		labels := vectorLabels(index, len(values))
-
 		for j, reading := range values {
 			if j < len(labels) {
 				fields[labels[j]] = reading

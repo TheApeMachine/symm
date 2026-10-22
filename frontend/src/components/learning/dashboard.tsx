@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { createAtom } from "@tanstack/store";
-import { focusAtom, signals } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Tabs } from "#/components/ui/tabs";
 import { Component } from "../ui";
@@ -31,12 +31,12 @@ const TABS: Array<{ key: Tab; label: string }> = [
 export const tabAtom = createAtom<Tab>("positions");
 
 export const LearningDashboard = () => {
-	const focus = useSelector(focusAtom, (s) => s);
+	const focus = useSelector(atoms["focus"], (s) => s);
 	const tab = useSelector(tabAtom, (s) => s);
 
 	return (
 		<Component
-			store={signals.training}
+			store={signals["training"]}
 			symbol={focus}
 			className="h-full min-h-0 w-full flex flex-col"
 		>
