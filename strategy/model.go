@@ -138,7 +138,7 @@ func (model *Model) Match(sentence, regions []*Token) []string {
 
 	for i, region := range regions {
 		if model.clears(len(sentence)+i, region) {
-			keys = append(keys, region.Key)
+			keys = append(keys, key(region))
 		}
 	}
 
@@ -154,7 +154,7 @@ func (model *Model) Below(sentence, regions []*Token) []*Token {
 	for i, region := range regions {
 		step := len(sentence) + i
 
-		if model.matches(step, region.Key) && !model.clears(step, region) {
+		if model.matches(step, key(region)) && !model.clears(step, region) {
 			out = append(out, region)
 		}
 	}
@@ -178,7 +178,7 @@ func (model *Model) clears(step int, region *Token) bool {
 	for path := range model.Threshold {
 		tokens := strings.Split(path, "/")
 
-		if step >= len(tokens) || tokens[step] != region.Key {
+		if step >= len(tokens) || tokens[step] != key(region) {
 			continue
 		}
 

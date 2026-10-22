@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"io"
 	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -11,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
 	"golang.org/x/time/rate"
 )
 
@@ -136,6 +138,15 @@ func (balance *Balance) watch() {
 
 		if err := balance.poll(); err != nil {
 			errnie.Error(err)
+		}
+
+		// Push the refreshed frame to every connected dashboard; the
+		// hello callback only carries the one captured at connect. The
+		// hub is nil until the dashboard boots, so skip until it exists.
+		if balance.value != nil && ui.UI != nil {
+			if _, err := io.Copy(ui.UI, balance.value); err != nil {
+				errnie.Error(err)
+			}
 		}
 	}
 }

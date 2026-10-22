@@ -1,5 +1,3 @@
-import { useSelector } from "@tanstack/react-store";
-import { useEffect, useMemo, useState } from "react";
 import { atoms } from "#/collections/app";
 import { type PaperRecord, paperStore } from "#/collections/paper";
 import {
@@ -19,6 +17,8 @@ import {
 	Toolbar,
 	Typography,
 } from "#/components/ui";
+import { useSelector } from "@tanstack/react-store";
+import { useEffect, useMemo, useState } from "react";
 import { ModelProblem } from "./model-problem";
 import { frameToSnapshot } from "./sequitur-engine";
 import { SequiturLaminarStrata } from "./sequitur-laminar-strata";
@@ -139,7 +139,7 @@ const GatePanel = ({ frame }: { frame: SequiturFrame }) => {
 				title="Grid gate"
 				meta={`midpoint ${frame.midpoint.toPrecision(3)} · ${frame.fired.length}/${frame.active.length} fired · held ${frame.held} frame(s) before`}
 			/>
-			<div className="flex flex-col gap-0.5 p-2 bg-(--sunken)">
+			<Flex.Column gap={1} padding={2} className="bg-(--sunken)">
 				<SurpriseGate frame={frame} />
 				{frame.active.map((region) => {
 					const token = `R${String(region.key).padStart(2, "0")}`;
@@ -177,7 +177,7 @@ const GatePanel = ({ frame }: { frame: SequiturFrame }) => {
 						</div>
 					);
 				})}
-			</div>
+			</Flex.Column>
 		</Section>
 	);
 };

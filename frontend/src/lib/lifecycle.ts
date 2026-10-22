@@ -1,6 +1,10 @@
 import { useSyncExternalStore } from "react";
+import { readPositionRows, signals as appSignals } from "#/collections/app";
 import type { DeskPosition } from "#/collections/types";
-import { lifecycleFromDeskClosed } from "#/lib/desk-closed-lifecycle";
+import {
+	lifecycleFromDeskClosed,
+	lifecycleFromDeskOpen,
+} from "#/lib/desk-closed-lifecycle";
 
 /*
 Paper round trips as the dashboard run lives them, streamed over the hub as
@@ -48,6 +52,8 @@ export type Lifecycle = {
 	symbol: string;
 	status: string;
 	policy_epoch?: string;
+	/** Grammar path the desk opened the lot on (path discovery ledger). */
+	path?: string;
 	opened_at: string;
 	closed_at?: string | null;
 	events: LifeEvent[] | null;
@@ -235,21 +241,37 @@ report when the live position frame stream did not replay them.
 */
 export const ingestDeskClosedLots = (rows: DeskPosition[]) => {
 	for (const row of rows) {
-		const life = lifecycleFromDeskClosed(row);
+		const life =
+			lifecycleFromDeskClosed(row) ?? lifecycleFromDeskOpen(row);
 		if (!life) {
 			continue;
 		}
 
 		const existing = lives.get(life.id);
-		if (existing && (existing.events?.length ?? 0) > 2) {
+
+		// A richer live frame stream wins over the desk row for events;
+		// a closed desk row always wins over an open lifecycle (the row
+		// carries the settled outcome).
+		if (
+			existing &&
+			existing.status === "closed" &&
+			life.status !== "closed"
+		) {
 			continue;
 		}
+
+		const marks = [
+			...(existing?.marks ?? []),
+			...((life as { marks?: LifeMark[] }).marks ?? []),
+		].slice(-400);
 
 		remember({
 			...life,
 			events: existing?.events?.length ? existing.events : life.events,
-			outcome: existing?.outcome ?? life.outcome,
-			mark: existing?.mark ?? life.mark,
+			outcome:
+				life.outcome ?? existing?.outcome ?? life.outcome ?? null,
+			mark: life.mark ?? existing?.mark ?? null,
+			marks: marks.length > 0 ? marks : existing?.marks,
 		});
 	}
 };
@@ -268,12 +290,36 @@ const subscribe = (listener: () => void) => {
 	};
 };
 
-export const useLifecycles = (): Snapshot =>
-	useSyncExternalStore(
+/*
+ensureDeskLifecycleFeed keeps the lifecycle store fed from the desk's merged
+position frames on a timer, so the Position Life-Cycle tab shows open lots and
+settled closes even when no rich frame stream replayed them. The longtail
+recorder ingests the same rows; one interval is enough for both.
+*/
+let lifecycleFeedStarted = false;
+
+export const ensureDeskLifecycleFeed = () => {
+	if (lifecycleFeedStarted) return;
+	lifecycleFeedStarted = true;
+
+	const tick = () => {
+		const ringStore = appSignals.positions;
+		const rows = readPositionRows(ringStore.state) as DeskPosition[];
+		ingestDeskClosedLots(rows);
+	};
+
+	tick();
+	window.setInterval(tick, 2_000);
+};
+
+export const useLifecycles = (): Snapshot => {
+	ensureDeskLifecycleFeed();
+	return useSyncExternalStore(
 		subscribe,
 		() => snapshot,
 		() => snapshot,
 	);
+};
 
 /*
 selectBook keeps one book. A life with no book is a paper trade.

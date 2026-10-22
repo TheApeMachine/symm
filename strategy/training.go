@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 
@@ -16,22 +17,21 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-type Token struct {
-	Key        string
-	Threshold  float64
-	Brightness float64
-}
+type (
+	Token  = tokenizer.Token
+	Tokens = tokenizer.Tokens
+)
 
-type Tokens []*Token
-
-func (tokens Tokens) String() string {
-	out := make([]string, 0)
-
-	for _, token := range tokens {
-		out = append(out, token.Key)
+/*
+key is a token's region address: its first path element (R08, or a chord
+production's head). String() already renders the full path.
+*/
+func key(token *Token) string {
+	if len(token.Path) == 0 {
+		return ""
 	}
 
-	return strings.Join(out, "/")
+	return token.Path[0]
 }
 
 /*
@@ -77,6 +77,11 @@ func NewTraining(
 
 	training.reloadPrefixes()
 	training.Transition(runtime.INIT)
+
+	// Closed virtuals settle through this training's model so path scores
+	// (Wins/Promoted) land wherever the virtual opened.
+	desk.BindSettler(training.model)
+
 	return training
 }
 
@@ -101,13 +106,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		}
 
 		source := parts[0]
-		isSignal := false
-		for _, s := range types.SignalSourceStrings {
-			if source == s {
-				isSignal = true
-				break
-			}
-		}
+		isSignal := slices.Contains(types.SignalSourceStrings, source)
 
 		if !isSignal {
 			continue
@@ -129,11 +128,11 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		}
 
 		for _, region := range observed {
-			regions = append(regions, &Token{
-				Key:        fmt.Sprintf("R%02d", region.Key),
-				Threshold:  region.Brightness,
-				Brightness: region.Brightness,
-			})
+			regions = append(regions, tokenizer.NewToken(
+				[]string{fmt.Sprintf("R%02d", region.Key)},
+				region.Brightness,
+				region.Brightness,
+			))
 		}
 
 		seq, _ := training.tokenizers.LoadOrStore(symbol, tokenizer.NewSequitur())
@@ -144,7 +143,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		for _, region := range training.belowEnergy(tokens, regions) {
 			value.Append(
 				[]float64{region.Brightness},
-				"train/reject/"+symbol+"/"+region.Key,
+				"train/reject/"+symbol+"/"+key(region),
 			)
 		}
 
@@ -152,7 +151,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 
 		if ok {
 			path := strings.Join(tok.TerminalNames(rule), "/")
-			training.act(symbol, Tokens{{Key: path}})
+			training.act(symbol, Tokens{tokenizer.NewToken([]string{path}, 0, 0)})
 			training.policy.Store(symbol, []*Token{})
 			training.tokenizers.Store(symbol, tokenizer.NewSequitur())
 			continue
@@ -171,7 +170,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		for _, region := range accepted {
 			value.Append(
 				[]float64{region.Brightness},
-				"train/regions/"+symbol+"/"+region.Key,
+				"train/regions/"+symbol+"/"+key(region),
 			)
 		}
 
@@ -181,7 +180,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 
 			for i, t := range tokens {
 				keys[i] = t.Brightness
-				labels[i] = t.Key
+				labels[i] = key(t)
 			}
 
 			value.Append(
@@ -209,7 +208,7 @@ func (training *Training) match(sentence, regions []*Token) []string {
 		step := len(sentence) + i
 
 		if len(training.prefixes) == 0 {
-			keys = append(keys, region.Key)
+			keys = append(keys, key(region))
 			continue
 		}
 
@@ -218,8 +217,8 @@ func (training *Training) match(sentence, regions []*Token) []string {
 		}
 
 		for _, gate := range training.prefixes[step] {
-			if region.Key == gate.Key && region.Brightness >= gate.Threshold {
-				keys = append(keys, region.Key)
+			if key(region) == key(gate) && region.Brightness >= gate.Threshold {
+				keys = append(keys, key(region))
 				break
 			}
 		}
@@ -252,7 +251,7 @@ func (training *Training) belowEnergy(sentence, regions []*Token) []*Token {
 		}
 
 		for _, gate := range training.prefixes[step] {
-			if region.Key == gate.Key && region.Brightness < gate.Threshold {
+			if key(region) == key(gate) && region.Brightness < gate.Threshold {
 				out = append(out, region)
 				break
 			}
@@ -276,11 +275,15 @@ func (training *Training) act(symbol string, tokens Tokens) {
 
 	switch action {
 	case "enter.bin":
-		if err := training.desk.Enter(symbol, "", false); err != nil {
-			training.Error(err)
+		if !training.desk.Has(symbol, false) {
+			if err := training.desk.Enter(symbol, "", false); err != nil {
+				training.Error(err)
+			}
 		}
 	case "exit.bin":
-		training.desk.Exit(symbol, false)
+		if training.desk.Has(symbol, false) {
+			training.desk.Exit(symbol, false)
+		}
 	default:
 		if err := training.desk.Enter(symbol, "", true); err != nil {
 			err = training.desk.Exit(symbol, true)
@@ -316,7 +319,7 @@ func (training *Training) reloadPrefixes() {
 		rest = strings.Trim(strings.TrimSuffix(rest, action), "/")
 		parts := make([]string, 0)
 
-		for _, part := range strings.Split(rest, "/") {
+		for part := range strings.SplitSeq(rest, "/") {
 			if part == "" || part == "policy" || part == "current" {
 				continue
 			}
@@ -340,11 +343,9 @@ func (training *Training) reloadPrefixes() {
 				training.prefixes = append(training.prefixes, nil)
 			}
 
-			training.prefixes[i] = append(training.prefixes[i], &Token{
-				Key:        part,
-				Threshold:  0.5,
-				Brightness: 0.5,
-			})
+			training.prefixes[i] = append(training.prefixes[i], tokenizer.NewToken(
+				[]string{part}, 0.5, 0.5,
+			))
 		}
 	}
 }
@@ -386,11 +387,11 @@ func admitted(regions []*Token, keys []string) []*Token {
 	out := make([]*Token, 0, len(keys))
 
 	for _, region := range regions {
-		if left[region.Key] == 0 {
+		if left[key(region)] == 0 {
 			continue
 		}
 
-		left[region.Key]--
+		left[key(region)]--
 		out = append(out, region)
 	}
 

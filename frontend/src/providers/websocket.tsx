@@ -1,4 +1,5 @@
 import { atoms } from "#/collections/app";
+import { hubWsUrl } from "#/lib/hub";
 import { useEffect } from "react";
 
 /*
@@ -6,12 +7,6 @@ The hub multiplexes everything over one socket: each message is one serialized
 *data.Value, routed here by its layer index. Commands go back on the same socket.
 */
 let wsWorker: Worker | null = null;
-const hubWsUrl = () => {
-	const url = new URL(window.location.href);
-	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-	url.pathname = "/ws";
-	return url.toString();
-}
 
 const toBackendRoute = (route: string) => {
 	// The learning surface hosts the Impulse Map and Position Health inspector,
@@ -62,19 +57,13 @@ export const WsFeed = () => {
 				console.error("WS error:", data.error);
 				return;
 			}
-
-			if (data.type === "BATCH" && data.buffer instanceof ArrayBuffer) {
-				try {
-				} catch (err) {
-					console.error("WS message processing error:", err);
-				}
-			}
 		});
 
 		worker.postMessage({
 			type: "ROUTE",
 			route: toBackendRoute(atoms.route.get()),
 		});
+		
 		worker.postMessage({ type: "CONNECT", url });
 		wsWorker = worker;
 

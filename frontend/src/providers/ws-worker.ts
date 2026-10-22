@@ -17,6 +17,20 @@ const RECONNECT_MAX_MS = 10_000;
 let currentRoute = "dashboard";
 let pendingCommands: Record<string, unknown>[] = [];
 
+/*
+Signal stores are mutated in place (ring.add never replaces the store's
+state object), so selectors never fire. One counter per origin: after a batch
+lands, the store's state is replaced with a fresh object carrying the bump and
+the same ring map, which is what triggers re-renders. The counter lives on the
+state itself so a worker reload cannot re-issue a stale identity.
+*/
+const bumpStore = (
+	store: { state: Record<string, unknown>; setState: (s: never) => void },
+) => {
+	const revision = Number(store.state.revision ?? 0) + 1;
+	store.setState({ ...store.state, revision } as never);
+};
+
 const queueCommand = (command: Record<string, unknown>) => {
 	if (command.type === "hindsight") {
 		pendingCommands = pendingCommands.filter(
@@ -178,11 +192,39 @@ const connect = (url: string) => {
 						const store = signals[origin];
 
 						if (atom) {
-							// Values with atom origins are decoded in the main
-							// thread via the Value.lookup path once they land
-							// in the signals store; here we just record the
-							// tick into the ring buffer if one exists.
-							continue;
+							// Atom origins (balance, ...) carry their decoded
+							// payload in a single layer; components read it via
+							// Value.lookup on the atom's current Value.
+							atoms[origin].set(val);
+						}
+
+						// The engine readout (ticks, open positions) has no
+						// origin of its own; derive it from the wire.
+						if (origin === "workspace" && val.tick > 0n) {
+							atoms.tickCount.set(Number(val.tick));
+						}
+
+						if (origin === "positions") {
+							const layer = val.layers.find((entry) =>
+								entry.index.endsWith("positions"),
+							);
+
+							if (layer) {
+								try {
+									const rows = JSON.parse(
+										new TextDecoder().decode(layer.bytes),
+									) as Array<{ closed_at?: string | null }>;
+
+									if (Array.isArray(rows)) {
+										atoms.positionCount.set(
+											rows.filter((row) => !row.closed_at)
+												.length,
+										);
+									}
+								} catch {
+									/* next frame */
+								}
+							}
 						}
 
 						if (store) {
@@ -208,10 +250,10 @@ const connect = (url: string) => {
 							});
 
 							ring.add(decoded);
+							bumpStore(store);
 						}
 					}
 				}
-				self.postMessage({ type: "BATCH", buffer: arrayBuffer }, [arrayBuffer]);
 			}
 		} catch (err) {
 			self.postMessage({ type: "ERROR", error: String(err) });

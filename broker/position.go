@@ -62,8 +62,8 @@ func NewPosition(
 }
 
 /*
-Update the position with a new mark, and check if the position
-should exit.
+Update the position with a new mark. The mark drives the exit decision only
+through ShouldExit; the position never closes itself.
 */
 func (position *Position) Update(mark *decimal.Decimal) {
 	position.mu.Lock()
@@ -73,29 +73,43 @@ func (position *Position) Update(mark *decimal.Decimal) {
 	position.ExitFee = position.price.WithFee(
 		position.Symbol, position.Qty, SELL,
 	)
-
-	// Exit if this is a virtual position and the mark is either
-	// below 2% of the entry price, or above 2% of the entry price.
-	if position.Virtual {
-		pct := position.price.RealizedReturn(
-			position.EntryPrice,
-			position.EntryFee,
-			mark,
-			position.ExitFee,
-		)
-
-		if pct < -0.02 || pct > 0.02 {
-			position.Exit()
-		}
-	}
 }
 
 /*
-Enter records a buy of qty and returns the order to submit.
+ShouldExit reports whether a virtual position's band walk is over: the mark
+has moved more than two percent either way from the entry cost. The caller
+(desk/training settle loop) closes it; the position only reports.
+*/
+func (position *Position) ShouldExit() bool {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if !position.Virtual || position.ClosedAt != nil {
+		return false
+	}
+
+	if position.Mark == nil || position.EntryPrice == nil {
+		return false
+	}
+
+	pct := position.price.RealizedReturn(
+		position.EntryPrice,
+		position.EntryFee,
+		position.Mark,
+		position.ExitFee,
+	)
+
+	return pct < -0.02 || pct > 0.02
+}
+
+/*
+Enter records a buy of qty and returns the order to submit. A virtual
+position never submits: its fill is emulated from the desk's price at entry,
+so the path discovery ledger carries real entry costs and fees through the
+same Position.Apply path venue fills use.
 */
 func (position *Position) Enter() *spot.OrderRequest {
 	position.mu.Lock()
-	defer position.mu.Unlock()
 
 	position.EntryOrders = append(position.EntryOrders, &spot.OrderRequest{
 		ClOrdId:   uuid.NewString(),
@@ -114,7 +128,30 @@ func (position *Position) Enter() *spot.OrderRequest {
 	position.OpenedAt = time.Now().UTC()
 	position.EntryTick = data.Tick.Load()
 
-	return position.EntryOrders[len(position.EntryOrders)-1]
+	virtual := position.Virtual
+	order := position.EntryOrders[len(position.EntryOrders)-1]
+
+	position.mu.Unlock()
+
+	if virtual && position.price != nil {
+		if cost, err := position.price.EntryCost(position.Symbol, position.Qty); err == nil {
+			execution := kraken.ExecutionData{
+				Symbol:      position.Symbol,
+				Side:        "buy",
+				ExecType:    "Fill",
+				LastQty:     position.Qty,
+				CumQty:      position.Qty,
+				LastPrice:   cost.EntryPrice,
+				AvgPrice:    cost.EntryPrice,
+				FeeUsdEquiv: cost.EntryFee,
+				Timestamp:   time.Now().UTC(),
+			}
+
+			position.Apply(execution)
+		}
+	}
+
+	return order
 }
 
 /*
@@ -128,6 +165,10 @@ func (position *Position) Exit() *spot.OrderRequest {
 
 	now := time.Now().UTC()
 	position.ClosedAt = &now
+
+	if !position.OpenedAt.IsZero() {
+		position.HoldNs = int64(now.Sub(position.OpenedAt))
+	}
 
 	position.ExitTick = data.Tick.Load()
 

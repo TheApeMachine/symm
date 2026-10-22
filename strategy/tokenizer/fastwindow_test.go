@@ -87,7 +87,7 @@ func TestFastWindow(t *testing.T) {
 
 		Convey("When triggering recalibration", func() {
 			// Trigger recalibration by pushing size*2 times
-			for i := 0; i < 10; i++ {
+			for i := range 10 {
 				window.Push(float64(i))
 			}
 
@@ -103,7 +103,7 @@ func TestFastWindow(t *testing.T) {
 			})
 		})
 	})
-	
+
 	Convey("Given NewFastWindow with invalid size", t, func() {
 		Convey("It should return nil for size 0", func() {
 			window := NewFastWindow(0)
@@ -118,7 +118,7 @@ func TestFastWindow(t *testing.T) {
 
 func BenchmarkFastWindowPush(b *testing.B) {
 	window := NewFastWindow(128)
-	
+
 	for i := 0; b.Loop(); i++ {
 		window.Push(float64(i))
 	}
@@ -126,10 +126,10 @@ func BenchmarkFastWindowPush(b *testing.B) {
 
 func BenchmarkFastWindowSimulatePush(b *testing.B) {
 	window := NewFastWindow(128)
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		window.Push(float64(i))
 	}
-	
+
 	for i := 0; b.Loop(); i++ {
 		window.SimulatePush(float64(i))
 	}

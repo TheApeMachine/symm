@@ -1,10 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
 import { useState } from "react";
-import { signals } from "#/collections/app";
+import { readPositionRows, signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import { cognitionStore, regionHistoryStore } from "#/collections/cognition";
-import { type RingBuffer } from "#/collections/ring";
-import { Value } from "#/types/value";
+import { positionReadout } from "#/components/book-readout";
 import {
 	DistanceBar,
 	Flex,
@@ -36,25 +35,14 @@ Each Value's "positions" layer holds an array of position rows. Read the
 latest entry from every ring in the store and merge rows by symbol so the
 live view always reflects the most recent update for each symbol.
 */
-const readPositions = (state: Record<string, RingBuffer<Value>>): any[] => {
-	const bySymbol = new Map<string, any>();
-	for (const ring of Object.values(state)) {
-		if (!ring || ring.isEmpty()) continue;
-		const latest = ring.get(ring.getBufferLength() - 1);
-		if (!latest) continue;
-		const rows = latest.lookup("positions") as any[] | undefined;
-		if (!Array.isArray(rows)) continue;
-		for (const row of rows) {
-			if (row && row.symbol) bySymbol.set(String(row.symbol), row);
-		}
-	}
-	return [...bySymbol.values()];
-};
+const readPositions = readPositionRows;
 
 export const openLots = (rows: any[], book: Book) =>
 	rows
 		.filter(
-			(row) => row.closedAt === null && row.virtual === (book === "virtual"),
+			(row) =>
+				!positionReadout(row).closed &&
+				row.virtual === (book === "virtual"),
 		)
 		.map((row) => row.symbol)
 		.sort();
@@ -77,9 +65,9 @@ const numberOf = (value: unknown) => {
 };
 
 const heldSeconds = (row: any) => {
-	if (row.holdNs > 0) return row.holdNs / 1e9;
-	if (row.openedAt === "") return undefined;
-	const at = Date.parse(row.openedAt);
+	if (row.hold_ns > 0) return row.hold_ns / 1e9;
+	if (row.opened_at === "" || row.opened_at == null) return undefined;
+	const at = Date.parse(row.opened_at);
 	if (Number.isNaN(at)) return undefined;
 	return Math.max(0, (Date.now() - at) / 1000);
 };
@@ -99,16 +87,18 @@ const PositionCard = ({ row }: { row: any }) => {
 		regionHistoryStore,
 		(state) => state[row.symbol] ?? [],
 	);
-	const entry = numberOf(row.entryPrice);
+	const readout = positionReadout(row);
+	const entry = readout.entryPrice ?? numberOf(row.entry_price);
 	const mark = numberOf(row.mark);
 	const qty = numberOf(row.qty);
-	const vwap = numberOf(row.exitVwap);
+	const vwap = readout.exitVwap;
+	const settled = numberOf(row.net_return);
 	const pnlPct =
-		row.returnPct ??
+		(settled !== undefined ? settled / 100 : undefined) ??
 		(entry !== undefined && mark !== undefined && entry !== 0
 			? (mark - entry) / entry
 			: undefined);
-	const room = row.exitRoom ?? undefined;
+	const room = readout.exitRoom ?? undefined;
 	const pnlTone: GaugeTone =
 		pnlPct === undefined ? "muted" : pnlPct >= 0 ? "up" : "down";
 	const roomTone: GaugeTone =
@@ -136,7 +126,7 @@ const PositionCard = ({ row }: { row: any }) => {
 	const scaled = rings.map((ring) =>
 		ring.map((value) => (value === undefined ? value : value / peak)),
 	);
-	const selling = row.closedAt === null && qty === 0;
+	const selling = !positionReadout(row).closed && qty === 0;
 
 	return (
 		<div
@@ -211,7 +201,7 @@ const PositionCard = ({ row }: { row: any }) => {
 						origin={entry}
 						value={mark}
 						markers={
-							vwap === undefined
+							vwap === null || vwap === undefined
 								? []
 								: [
 										{
@@ -273,9 +263,9 @@ const PositionCard = ({ row }: { row: any }) => {
 
 			<div className="grid grid-cols-4 gap-2 border-t border-(--line) pt-2 text-[10px] text-(--f3)">
 				<span>qty {row.qty ?? "—"}</span>
-				<span>entry {row.entryPrice ?? "—"}</span>
+				<span>entry {row.entry_price ?? "—"}</span>
 				<span>mark {row.mark ?? "—"}</span>
-				<span>fee {row.entryFee ?? "—"}</span>
+				<span>fee {row.entry_fee ?? "—"}</span>
 			</div>
 
 			{/*
@@ -316,11 +306,13 @@ const PositionCard = ({ row }: { row: any }) => {
 export const OpenPositions = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const store = signals["positions"];
-	const rings = useSelector(store, (state) => state.all);
+	const rings = useSelector(store, (state) => state);
 	const positions = readPositions(rings);
 	const held = positions
 		.filter(
-			(row) => row.closedAt === null && row.virtual === (book === "virtual"),
+			(row) =>
+				!positionReadout(row).closed &&
+				row.virtual === (book === "virtual"),
 		)
 		.sort((a, b) => String(a.symbol).localeCompare(String(b.symbol)));
 

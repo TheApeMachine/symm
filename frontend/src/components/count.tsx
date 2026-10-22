@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { signals } from "#/collections/app";
+import { readPositionRows, signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import { openLots } from "#/components/learning/open-positions";
 import { Flex } from "#/components/ui/flex";
@@ -13,9 +13,7 @@ export const Count = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const store = signals["positions"];
 	const rings = useSelector(store, (state) => state);
-	const ring = rings["all"];
-	const latest = ring?.get(ring.getBufferLength() - 1);
-	const positions = (latest?.lookup("positions") as unknown as any[]) ?? [];
+	const positions = readPositionRows(rings);
 	const count = openLots(positions, book).length;
 
 	return (

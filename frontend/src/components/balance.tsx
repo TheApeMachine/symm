@@ -1,8 +1,9 @@
-import { useSelector } from "@tanstack/react-store";
-import type { ReactNode } from "react";
 import { atoms } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
+import type { Value } from "#/types/value";
+import { useSelector } from "@tanstack/react-store";
+import type { ReactNode } from "react";
 
 const fmt = (value: unknown): string => {
 	if (typeof value === "number") {
@@ -18,6 +19,12 @@ const fmt = (value: unknown): string => {
 	}
 
 	return "—";
+};
+
+const inProfit = (balance: Value) => {
+	const unrealized = balance?.lookup("unrealized");
+	const unrealizedVal = Number(unrealized);
+	return Number.isFinite(unrealizedVal) && unrealizedVal > 0;
 };
 
 /*
@@ -78,41 +85,32 @@ const Reading = ({
 );
 
 export const Balance = () => {
-	const cash = useSelector(atoms["cash"], (state) => state);
-	const unrealized = useSelector(atoms["unrealized"], (state) => state);
-	const equity = useSelector(atoms["equity"], (state) => state);
-
-	const unrealizedVal = Number(unrealized);
-	const inProfit = Number.isFinite(unrealizedVal) && unrealizedVal > 0;
+	const balance = useSelector(atoms.balance, (state) => state);
 
 	return (
-		<Flex.Row
-			align="center"
-			gap={6}
-			data-wallet="account"
-		>
+		<Flex.Row align="center" gap={6} data-wallet="account">
 			<Reading
 				label="Cash"
 				tone="f1"
 				weight="medium"
 				which="cash"
-				value={fmt(cash)}
+				value={fmt(balance?.lookup("cash"))}
 			/>
 			<Reading
 				label="Unrealized"
 				tone="f2"
 				weight="medium"
 				which="unrealized"
-				value={fmt(unrealized)}
+				value={fmt(balance?.lookup("unrealized"))}
 			/>
 			<Reading
 				label="Equity"
 				tone="accent"
 				weight="semibold"
 				which="equity"
-				value={fmt(equity)}
+				value={fmt(balance?.lookup("equity"))}
 			>
-				{inProfit ? <Lambo /> : null}
+				{inProfit(balance) ? <Lambo /> : null}
 			</Reading>
 		</Flex.Row>
 	);

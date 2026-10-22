@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
@@ -34,6 +35,19 @@ type Desk struct {
 	positions *Cache
 	virtuals  *Cache
 	books     *Book
+	settler   interface {
+		Act(symbol, path, action string)
+	}
+}
+
+/*
+BindSettler connects the model so closed virtual positions settle through
+the same Act path an open one entered on, keeping Wins/Promoted honest.
+*/
+func (desk *Desk) BindSettler(settler interface {
+	Act(symbol, path, action string)
+}) {
+	desk.settler = settler
 }
 
 func NewDesk(
@@ -76,17 +90,26 @@ func NewDesk(
 }
 
 /*
+AllPositions is every position the desk holds — open and closed, paper and
+virtual — each with its live mark. The dashboard derives every position
+readout (top bar, open lots, life-cycle, longtail) from this single frame,
+so all books stay consistent with the desk.
+*/
+func (desk *Desk) AllPositions() []*Position {
+	all := make([]*Position, 0)
+	all = append(all, desk.positions.All()...)
+	all = append(all, desk.virtuals.All()...)
+	return all
+}
+
+/*
 Hello is a callback for the ui.Hub that fires when a new WebSocket
 connection is established, and we want to update the client with
 some initial data.
 */
 func (desk *Desk) Hello() {
-	all := make([]*Position, 0)
-	all = append(all, desk.positions.All()...)
-	all = append(all, desk.virtuals.All()...)
-
 	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
-		all, "positions",
+		desk.AllPositions(), "positions",
 	))
 
 	if desk.balance.value != nil {
@@ -95,13 +118,15 @@ func (desk *Desk) Hello() {
 }
 
 /*
-Update the positions and virtuals in the UI.
+Update marks open positions against the trade price and settles any virtual
+whose band walk is over. Called from the workspace tick handler — the desk sits
+off the trade ingress path, so this is where marks become live.
 */
-func (desk *Desk) Update(data []*kraken.TradeData) {
+func (desk *Desk) Update(trades ...*kraken.TradeData) {
 	for _, val := range []*Cache{
 		desk.positions, desk.virtuals,
 	} {
-		for _, trade := range data {
+		for _, trade := range trades {
 			position := val.Get(trade.Symbol, true)
 
 			if position == nil {
@@ -111,6 +136,50 @@ func (desk *Desk) Update(data []*kraken.TradeData) {
 			position.Update(&trade.Price)
 		}
 	}
+
+	desk.SettleVirtuals()
+
+	// One merged frame per tick: every position the desk holds, open and
+	// closed, paper and virtual, each with its live mark. Every frontend
+	// position readout derives from this single frame.
+	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
+		desk.AllPositions(), "positions",
+	))
+}
+
+/*
+SettleVirtuals closes every virtual whose band walk is over. Closing routes
+through the bound settler (the model's Act "close") so the position is
+stored closed and the path scores Wins/Promoted the same way an Act-driven
+close would. With no settler it closes on the desk directly.
+*/
+func (desk *Desk) SettleVirtuals() {
+	for _, position := range desk.virtuals.All(true) {
+		if !position.ShouldExit() {
+			continue
+		}
+
+		if desk.settler != nil && position.Path != "" {
+			desk.settler.Act(position.Symbol, position.Path, "close")
+			continue
+		}
+
+		if err := desk.Exit(position.Symbol, true); err != nil {
+			desk.Error(err)
+		}
+	}
+}
+
+/*
+Has reports whether the desk holds an open position (paper or virtual)
+for the symbol.
+*/
+func (desk *Desk) Has(symbol string, virtual bool) bool {
+	if virtual {
+		return desk.virtuals.Has(symbol)
+	}
+
+	return desk.positions.Has(symbol)
 }
 
 /*
@@ -119,6 +188,10 @@ Apply an execution to the desk.
 func (desk *Desk) Apply(executions *kraken.Execution) {
 	for _, execution := range executions.Data {
 		position := desk.positions.Get(execution.Symbol, true)
+
+		if position == nil {
+			position = desk.virtuals.Get(execution.Symbol, true)
+		}
 
 		if position == nil {
 			continue
@@ -146,7 +219,19 @@ func (desk *Desk) Enter(
 
 	cash := desk.balance.cash(desk.balance.Quote)
 
-	qty, err := desk.price.Quantity(symbol, cash)
+	// The wallet lags the first ticks (private poll) and paper's quote asset
+	// may not be named in the balance map; fall back to the configured bank-
+	// roll so sizing never depends on the poll having landed.
+	if cash == nil || cash.Sign() <= 0 {
+		cash = desk.price.ReferenceCash()
+	}
+
+	// Allocation cap: never commit more than 20% of current cash.
+	if cash != nil && cash.Sign() > 0 {
+		cash = cash.Mul(decimal.NewFromFloat64(0.2))
+	}
+
+	allocation, err := desk.price.AllocateEntry(symbol, cash)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -155,6 +240,8 @@ func (desk *Desk) Enter(
 			err,
 		))
 	}
+
+	qty := allocation.Quantity
 
 	if qty == nil {
 		return errnie.Error(errnie.Err(
@@ -221,6 +308,33 @@ func (desk *Desk) Exit(symbol string, virtual bool) error {
 	}
 
 	order := position.Exit()
+
+	// Exit does not remove the position from the cache; it must move to the
+	// closed side before any settlement reads or re-opens happen.
+	if virtual {
+		desk.virtuals.Remove(position.Symbol)
+	} else {
+		desk.positions.Remove(position.Symbol)
+	}
+
+	if virtual && position.price != nil {
+		if cost, proceeds, profit, ret, ok := position.price.CloseOut(
+			position.Symbol, position.Qty, position.EntryPrice, position.EntryFee,
+		); ok {
+			position.mu.Lock()
+
+			position.Cost = cost
+			position.Proceeds = proceeds
+			position.Profit = profit
+
+			net := ret * 100
+			position.Return = &net
+			position.NetReturn = &net
+			position.OutcomeTriggers = []string{"band settle"}
+
+			position.mu.Unlock()
+		}
+	}
 
 	key := "position"
 

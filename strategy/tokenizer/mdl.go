@@ -5,10 +5,6 @@ import (
 	"math/bits"
 )
 
-type Sequencer interface {
-	Analyze(pos uint32, byteVal byte) (bool, int, []int, SegmentMeta)
-}
-
 /*
 MDL discovers natural boundaries in a raw byte stream using minimum
 description length, with optional calibrator tuning for split sensitivity.
@@ -51,11 +47,7 @@ type candidate struct {
 }
 
 func NewMDL(calibrator *Calibrator) *MDL {
-	minSeg := int(math.Log2(float64(VocabSize)) / 2)
-
-	if minSeg < 2 {
-		minSeg = 2
-	}
+	minSeg := max(int(math.Log2(float64(VocabSize))/2), 2)
 
 	return &MDL{
 		calibrator:      calibrator,

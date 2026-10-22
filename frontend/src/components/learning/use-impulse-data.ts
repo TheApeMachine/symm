@@ -4,8 +4,8 @@ import {
 	DEFAULT_KERNELS,
 	type RingBuffer,
 	signals,
-	Value,
 } from "#/collections/app";
+import type { Value } from "#/types/value";
 import {
 	createCanonicalGridNodes,
 	getCanonicalPinDefs,
@@ -86,7 +86,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				}
 			}
 
-			// Build fast lookup for training metrics
+			// Build fast lookup for training metrics from the layer payloads
 			const trainingMetrics: Record<string, number> = {};
 			if (
 				trainingRing &&
@@ -94,10 +94,26 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				trainingRing.getBufferLength() > 0
 			) {
 				const latest = trainingRing.get(trainingRing.getBufferLength() - 1);
-				if (latest?.metrics) {
-					for (const m of latest.metrics) {
-						if (m?.name) {
-							trainingMetrics[String(m.name)] = m.raw ?? 0;
+				if (latest) {
+					for (const { suffix, payload } of latest.layersUnder("train/regions")) {
+						const first = Array.isArray(payload)
+							? payload[0]
+							: payload;
+						if (typeof first !== "number") {
+							continue;
+						}
+
+						/*
+						train/regions/<symbol>/<R##> carries brightness per
+						accepted region; train/regions/<symbol>/<token path>
+						carries the whole sentence. The region is the R##
+						segment wherever it appears in the suffix.
+						*/
+						const region = suffix.match(/R\d{2}/)?.[0];
+
+						if (region) {
+							trainingMetrics[`region_brightness:${region}`] =
+								first;
 						}
 					}
 				}
@@ -114,29 +130,18 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				const kernelRing = store.state[symbol] ?? store.state["BTC/USD"];
 				if (!kernelRing || typeof kernelRing.getLast !== "function") continue;
 				const row = kernelRing.getLast();
-				if (!row?.metrics) continue;
+				if (!row) continue;
 
-				for (const m of row.metrics) {
-					if (m?.name === pin.metric) {
-						const snm = Number(m.snm);
-						const raw = Number(m.raw);
-						let act = 0;
-						if (Number.isFinite(snm) && snm !== 0) {
-							act = Math.min(1, Math.max(0, Math.abs(snm)));
-						} else if (Number.isFinite(raw) && raw !== 0) {
-							act = Math.min(1, Math.max(0, Math.abs(raw)));
-						}
+				for (const { payload } of row.layersUnder(pin.metric)) {
+					if (!Array.isArray(payload) || payload.length === 0) continue;
 
-						const snr = Number(row.snr);
-						const validSnr =
-							Number.isFinite(snr) && snr > 0
-								? Math.min(4, Math.max(0.8, snr))
-								: act >= 0.5
-									? 2.5
-									: 1.0;
-						kernelMetricSnm[pin.id] = { activation: act, snr: validSnr };
-						break;
-					}
+					const raw = Number(payload[0]);
+					if (!Number.isFinite(raw)) continue;
+
+					const act = Math.min(1, Math.max(0, Math.abs(raw)));
+					const snr = act >= 0.5 ? 2.5 : 1.0;
+					kernelMetricSnm[pin.id] = { activation: act, snr };
+					break;
 				}
 			}
 

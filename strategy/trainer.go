@@ -247,13 +247,13 @@ Stored keys keep the object name, then ".bin/", then the names.
 func vectorLabels(index string, count int) []string {
 	rest := index
 
-	if at := strings.Index(index, ".bin/"); at >= 0 {
-		rest = index[at+len(".bin/"):]
+	if _, after, ok := strings.Cut(index, ".bin/"); ok {
+		rest = after
 	}
 
 	labels := make([]string, 0)
 
-	for _, part := range strings.Split(rest, "/") {
+	for part := range strings.SplitSeq(rest, "/") {
 		if part != "" {
 			labels = append(labels, part)
 		}

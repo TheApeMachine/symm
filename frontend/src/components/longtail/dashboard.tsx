@@ -1,4 +1,4 @@
-import { deskPositionsAtom } from "#/collections/app";
+import { readPositionRows, signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import {
 	buildInsights,
@@ -135,7 +135,8 @@ export const LongtailDashboard = () => {
 
 	const { samples } = useLongtailReport();
 	const book = useSelector(bookAtom, (state) => state);
-	const desk = useSelector(deskPositionsAtom, (state) => state);
+	const rings = useSelector(signals.positions, (state) => state);
+	const desk = useMemo(() => readPositionRows(rings), [rings]);
 	const times = useMemo(() => samples.map((s) => s.at), [samples]);
 	const metrics = metricsFor(book);
 	const selectedInsights = buildInsights(samples, book);

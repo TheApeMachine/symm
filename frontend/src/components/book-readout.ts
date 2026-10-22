@@ -24,15 +24,29 @@ const dateText = (value: unknown): string | null => {
 	}
 };
 
-const epochText = (value: unknown): string | null => {
-	const epoch = decimal(value);
-	if (epoch === null || epoch === 0) return null;
+/* The desk's settled outcome, when it has priced the close. */
+export const settledOutcome = (row: DeskPosition) => {
+	if (row.cost === undefined || row.proceeds === undefined) return null;
 
-	try {
-		return new Date(epoch / 1e6).toISOString();
-	} catch {
-		return null;
-	}
+	const cost = decimal(row.cost);
+	const proceeds = decimal(row.proceeds);
+
+	if (cost === null || proceeds === null) return null;
+
+	return {
+		cost,
+		proceeds,
+		fees:
+			decimal(row.entry_fee ?? null) === null &&
+			decimal(row.exit_fee ?? null) === null
+				? null
+				: (decimal(row.entry_fee ?? 0) ?? 0) +
+					(decimal(row.exit_fee ?? 0) ?? 0),
+		realized: decimal(row.profit) ?? proceeds - cost,
+		net_return: row.net_return ?? row.return ?? null,
+		hold_ns: row.hold_ns ?? null,
+		triggers: row.outcome_triggers ?? null,
+	};
 };
 
 type ExecutionTotals = {
@@ -156,18 +170,28 @@ export const positionReadout = (row: DeskPosition): PositionReadout => {
 		sells.qty !== null && sells.cost !== null && sells.qty !== 0
 			? sells.cost / sells.qty
 			: null;
-	const openedAt = epochText(row.entry_epoch) ?? buys.firstAt;
-	const exitEpoch = epochText(row.exit_epoch);
+	const openedAt = dateText(row.opened_at) ?? buys.firstAt;
 	const fullySold =
 		buys.qty !== null && sells.qty !== null && sells.qty >= buys.qty;
-	const closed = exitEpoch !== null || fullySold;
-	const closedAt = exitEpoch ?? (fullySold ? sells.lastAt : null);
+
+	// The desk stamps closed_at when it moves a lot to its closed cache.
+	// A closed virtual settles emulated (no venue sell fill), so it only
+	// counts once the settlement outcome (cost + proceeds) has landed.
+	const closed =
+		row.closed_at !== null && row.closed_at !== undefined
+			? row.virtual !== true ||
+				(decimal(row.cost) !== null && decimal(row.proceeds) !== null)
+			: fullySold;
+
+	const closedAt =
+		dateText(row.closed_at) ?? (fullySold ? sells.lastAt : null);
 	const holdNs =
-		closedAt !== null && openedAt !== null
+		row.hold_ns ??
+		(closedAt !== null && openedAt !== null
 			? (Date.parse(closedAt) - Date.parse(openedAt)) * 1e6
-			: null;
-	const entryFee = buys.fee;
-	const exitFee = sells.fee;
+			: null);
+	const entryFee = decimal(row.entry_fee) ?? buys.fee;
+	const exitFee = decimal(row.exit_fee) ?? sells.fee;
 	const fees =
 		entryFee !== null && (sells.qty === null || exitFee !== null)
 			? entryFee + (exitFee ?? 0)
@@ -178,7 +202,21 @@ export const positionReadout = (row: DeskPosition): PositionReadout => {
 	let unrealizedPnl: number | null = null;
 	let returnPct: number | null = null;
 
-	if (buys.qty !== null && buys.cost !== null && buys.qty !== 0) {
+	// Settled round trips (the desk priced the close) are authoritative.
+	const settledCost = decimal(row.cost);
+	const settledProceeds = decimal(row.proceeds);
+	const settledReturn = row.net_return ?? row.return ?? null;
+
+	if (closed && settledCost !== null && settledProceeds !== null) {
+		grossPnl = settledProceeds - settledCost;
+		netPnl = decimal(row.profit) ?? grossPnl;
+		returnPct =
+			settledReturn !== null
+				? settledReturn / 100
+				: settledCost !== 0
+					? netPnl / settledCost
+					: null;
+	} else if (buys.qty !== null && buys.cost !== null && buys.qty !== 0) {
 		const soldQty = sells.qty ?? 0;
 		const soldBasis = buys.cost * (soldQty / buys.qty);
 		const realized =
@@ -218,10 +256,10 @@ export const positionReadout = (row: DeskPosition): PositionReadout => {
 
 	return {
 		qty,
-	entryQty: buys.qty,
-	entryCost: buys.cost,
+		entryQty: buys.qty,
+		entryCost: settledCost ?? buys.cost,
 		exitQty: sells.qty,
-		exitProceeds: sells.cost,
+		exitProceeds: settledProceeds ?? sells.cost,
 		entryPrice,
 		mark,
 		entryFee,

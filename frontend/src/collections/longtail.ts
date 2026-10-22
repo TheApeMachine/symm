@@ -1,6 +1,6 @@
 import { createStore } from "@tanstack/store";
 import { useSelector } from "@tanstack/react-store";
-import { signals } from "#/collections/app";
+import { readPositionRows, signals } from "#/collections/app";
 import type { Book } from "#/collections/book";
 import { sequiturStore } from "#/collections/sequitur";
 import { closedOnBook, onBook, openOnBook, positionReadout } from "#/components/book-readout";
@@ -209,20 +209,7 @@ const pushSample = (sample: LongtailSample) => {
 	});
 };
 
-const readPositions = (state: Record<string, any>): any[] => {
-	const bySymbol = new Map<string, any>();
-	for (const ring of Object.values(state)) {
-		if (!ring || ring.isEmpty()) continue;
-		const latest = ring.get(ring.getBufferLength() - 1);
-		if (!latest) continue;
-		const rows = latest.lookup("positions") as any[] | undefined;
-		if (!Array.isArray(rows)) continue;
-		for (const row of rows) {
-			if (row && row.symbol) bySymbol.set(String(row.symbol), row);
-		}
-	}
-	return [...bySymbol.values()];
-};
+const readPositions = readPositionRows;
 
 let recorderStarted = false;
 

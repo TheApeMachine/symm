@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/grafana/pyroscope-go"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -238,6 +239,14 @@ func (booter *Booter) initMarket() error {
 	}
 
 	booter.balance = broker.NewBalance(ctx, booter.privateTransport)
+
+	// The configured bankroll is the sizing floor: the private balance poll
+	// lags the first ticks, and entries must size from something until it
+	// lands. Once the poll has real cash, desk.Enter prefers that instead.
+	booter.price.SetReferenceCash(decimal.NewFromInt64(
+		int64(system.Cfg.Market.Balance),
+	))
+
 	booter.desk = broker.NewDesk(
 		ctx, booter.privateTransport,
 		booter.price,
@@ -522,6 +531,17 @@ func (booter *Booter) startIngress(
 					))
 
 					continue
+				}
+
+				// Marks and virtual settlement ride the same tick.
+				if booter.desk != nil {
+					trades := make([]*kraken.TradeData, len(trade.Data))
+
+					for i := range trade.Data {
+						trades[i] = &trade.Data[i]
+					}
+
+					booter.desk.Update(trades...)
 				}
 
 				// Store the trade array, not the Kraken envelope

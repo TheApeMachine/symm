@@ -1,9 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import {
-	focusAtom,
-	onlineAtom,
+	atoms,
 	signals,
-	tickCountAtom,
 } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import { terminalStore } from "#/collections/terminal";
@@ -41,9 +39,9 @@ const SymmLogo = () => (
 );
 
 const TickCounter = () => {
-	const tickCount = useSelector(tickCountAtom, (state) => state);
+	const tickCount = useSelector(atoms.tickCount, (state) => state);
 	const trainingSignals = useSelector(signals.training, (state) => state);
-	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
 
 	let steps: number | null = null;
 	const ring =
@@ -51,20 +49,8 @@ const TickCounter = () => {
 	if (ring && typeof ring.toArray === "function") {
 		const arr = ring.toArray();
 		const last = arr[arr.length - 1];
-		if (last && Array.isArray(last.metrics)) {
-			const stepMetric = last.metrics.find((m) => {
-				if (!m || typeof m !== "object") return false;
-				const metricObj = m as { name?: string; label?: string };
-				return metricObj.name === "steps" || metricObj.label === "steps";
-			});
-			if (stepMetric) {
-				const metricObj = stepMetric as { raw?: number; value?: number };
-				if (typeof metricObj.raw === "number") {
-					steps = metricObj.raw;
-				} else if (typeof metricObj.value === "number") {
-					steps = metricObj.value;
-				}
-			}
+		if (last && last.tick > 0n) {
+			steps = Number(last.tick);
 		}
 	}
 
@@ -103,8 +89,8 @@ const Rule = () => (
 );
 
 export const TerminalTopBar = () => {
-	const online = useSelector(onlineAtom, (state) => state === "ONLINE");
-	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const online = useSelector(atoms.online, (state) => state === "ONLINE");
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const book = useSelector(bookAtom, (state) => state);
 	const { openPalette, openSymbolPalette } = terminalStore.actions;
 	const choose = (next: Book) => () => bookAtom.set(next);

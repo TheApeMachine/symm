@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { signals } from "#/collections/app";
+import { readPositionRows, signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import { bookReadout } from "#/components/book-readout";
 import { Flex } from "#/components/ui/flex";
@@ -55,17 +55,4 @@ export const PaperPerformance = () => {
 	);
 };
 
-const readPositions = (state: Record<string, any>): any[] => {
-	const bySymbol = new Map<string, any>();
-	for (const ring of Object.values(state)) {
-		if (!ring || ring.isEmpty()) continue;
-		const latest = ring.get(ring.getBufferLength() - 1);
-		if (!latest) continue;
-		const rows = latest.lookup("positions") as any[] | undefined;
-		if (!Array.isArray(rows)) continue;
-		for (const row of rows) {
-			if (row && row.symbol) bySymbol.set(String(row.symbol), row);
-		}
-	}
-	return [...bySymbol.values()];
-};
+const readPositions = readPositionRows;

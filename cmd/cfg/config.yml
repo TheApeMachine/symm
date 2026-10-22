@@ -57,7 +57,7 @@ system:
     enabled: false
     addr: 127.0.0.1:6060
   log:
-    level: debug
+    level: info
   streaming:
     max_shards: 128
     lane_capacity: 4096
