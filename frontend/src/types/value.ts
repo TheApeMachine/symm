@@ -10,6 +10,12 @@ export class Value {
 	layers: Uint8Array[];
 	index: string[];
 
+	/*
+	Total wire size of the frame this value was decoded from, set by the
+	decoder's batch reader to advance the cursor. Zero for constructed values.
+	*/
+	byteLength = 0;
+
 	constructor(
 		init: {
 			id?: string;

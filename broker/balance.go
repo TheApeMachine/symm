@@ -50,6 +50,8 @@ const (
 func NewBalance(
 	ctx context.Context,
 	transport Transport,
+	price *Price,
+	bankroll *decimal.Decimal,
 ) *Balance {
 	balance := &Balance{
 		System:    runtime.NewSystem(ctx, "balance"),
@@ -58,6 +60,13 @@ func NewBalance(
 		limiter: rate.NewLimiter(rate.Limit(
 			privateDecayPerSecond/privateCallsPerUpdate,
 		), 1),
+	}
+
+	// The configured bankroll is the sizing baseline from boot; the poll
+	// supersedes it once it lands. Price.Ready() is the gate for every
+	// allocation path, so entries cannot size before reference cash exists.
+	if price != nil && bankroll != nil {
+		price.SetReferenceCash(bankroll)
 	}
 
 	if paper, ok := transport.(*Paper); ok {
@@ -138,15 +147,6 @@ func (balance *Balance) watch() {
 
 		if err := balance.poll(); err != nil {
 			errnie.Error(err)
-		}
-
-		// Push the refreshed frame to every connected dashboard; the
-		// hello callback only carries the one captured at connect. The
-		// hub is nil until the dashboard boots, so skip until it exists.
-		if balance.value != nil && ui.UI != nil {
-			if _, err := io.Copy(ui.UI, balance.value); err != nil {
-				errnie.Error(err)
-			}
 		}
 	}
 }
@@ -234,6 +234,13 @@ func (balance *Balance) poll() (err error) {
 		},
 		"balance",
 	)
+
+	// Push the refreshed frame to the active dashboard hub; the hello
+	// callback only carries the one captured at connect. With no
+	// dashboard connected there is nothing to publish to.
+	if balance.value != nil && ui.UI != nil {
+		io.Copy(ui.UI, balance.value)
+	}
 
 	return nil
 }

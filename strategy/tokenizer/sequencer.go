@@ -30,6 +30,10 @@ func NewSequencer() *Sequencer {
 Chord is the tick's region set as one symbol, e.g. [R01-R02-R03]. The first
 path element is the region; keys are sorted and deduplicated so the same set
 on any tick is the same symbol.
+
+The symbol is unambiguous because region keys carry no '-' (the strategy
+entrypoint emits path elements joined on '-'; a key containing one would
+collide across sets and is rejected at the source, not silently merged).
 */
 func Chord(tokens Tokens) string {
 	seen := make(map[string]bool, len(tokens))
@@ -62,19 +66,24 @@ func (sequencer *Sequencer) Analyze(tokens Tokens) (bool, int, []int, SegmentMet
 	sequencer.lastRule = rule
 
 	var (
-		boundary bool
-		k        int
-		events   []int
-		meta     SegmentMeta
+		boundary  bool
+		k         int
+		events    []int
+		meta      SegmentMeta
+		metaSeen  bool
 	)
 
 	for _, b := range []byte(chord) {
 		ok, at, found, seen := sequencer.mdl.Analyze(0, b)
 
-		k, events, meta = at, found, seen
+		// Keep the first boundary's verdict whole: k and events describe
+		// the byte that triggered it, so later bytes never overwrite them.
+		if ok && !boundary {
+			boundary, k, events = true, at, found
+		}
 
-		if ok {
-			boundary = true
+		if !metaSeen {
+			meta, metaSeen = seen, true
 		}
 	}
 

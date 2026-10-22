@@ -1,10 +1,9 @@
-import { useSyncExternalStore } from "react";
-import { readPositionRows, signals as appSignals } from "#/collections/app";
-import type { DeskPosition } from "#/collections/types";
+import { signals as appSignals, readPositionRows } from "#/collections/app";
 import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
 } from "#/lib/desk-closed-lifecycle";
+import { useEffect, useSyncExternalStore } from "react";
 
 /*
 Paper round trips as the dashboard run lives them, streamed over the hub as
@@ -239,10 +238,11 @@ export const ingestPositionFrame = (frame: unknown) => {
 ingestDeskClosedLots merges persisted desk round trips into the lifecycle
 report when the live position frame stream did not replay them.
 */
-export const ingestDeskClosedLots = (rows: DeskPosition[]) => {
+export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 	for (const row of rows) {
 		const life =
-			lifecycleFromDeskClosed(row) ?? lifecycleFromDeskOpen(row);
+			lifecycleFromDeskClosed(row as Record<string, unknown>) ??
+			lifecycleFromDeskOpen(row as Record<string, unknown>);
 		if (!life) {
 			continue;
 		}
@@ -252,11 +252,7 @@ export const ingestDeskClosedLots = (rows: DeskPosition[]) => {
 		// A richer live frame stream wins over the desk row for events;
 		// a closed desk row always wins over an open lifecycle (the row
 		// carries the settled outcome).
-		if (
-			existing &&
-			existing.status === "closed" &&
-			life.status !== "closed"
-		) {
+		if (existing && existing.status === "closed" && life.status !== "closed") {
 			continue;
 		}
 
@@ -268,8 +264,7 @@ export const ingestDeskClosedLots = (rows: DeskPosition[]) => {
 		remember({
 			...life,
 			events: existing?.events?.length ? existing.events : life.events,
-			outcome:
-				life.outcome ?? existing?.outcome ?? life.outcome ?? null,
+			outcome: life.outcome ?? existing?.outcome ?? life.outcome ?? null,
 			mark: life.mark ?? existing?.mark ?? null,
 			marks: marks.length > 0 ? marks : existing?.marks,
 		});
@@ -304,7 +299,7 @@ export const ensureDeskLifecycleFeed = () => {
 
 	const tick = () => {
 		const ringStore = appSignals.positions;
-		const rows = readPositionRows(ringStore.state) as DeskPosition[];
+		const rows = readPositionRows(ringStore.state) as Record<string, unknown>[];
 		ingestDeskClosedLots(rows);
 	};
 
@@ -313,7 +308,13 @@ export const ensureDeskLifecycleFeed = () => {
 };
 
 export const useLifecycles = (): Snapshot => {
-	ensureDeskLifecycleFeed();
+	// The desk feed is an interval side effect: start it once from an effect,
+	// never during render (and never when there is no window to own it).
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+		ensureDeskLifecycleFeed();
+	}, []);
+
 	return useSyncExternalStore(
 		subscribe,
 		() => snapshot,

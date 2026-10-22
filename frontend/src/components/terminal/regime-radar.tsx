@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { focusAtom, signals } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 
@@ -43,7 +43,7 @@ const radarAxes = [
 ];
 
 export const RadarPanel = () => {
-	const focusSymbol = useSelector(focusAtom, (state) => state);
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {

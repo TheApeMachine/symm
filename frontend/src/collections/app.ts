@@ -42,8 +42,9 @@ export const atoms: Record<string, Atom<any>> = {
 	online: createAtom<"ONLINE" | "OFFLINE" | "CONNECTING">("OFFLINE"),
 	symbols: createAtom<string[]>([DEFAULT_FOCUS_SYMBOL]),
 	error: createAtom<Record<string, unknown> | null>(null),
-	balance: createAtom<Value | null>(null),
 	tickCount: createAtom<number>(0),
+	balance: createAtom<Value | null>(null),
+
 	phase: createAtom<string>("—"),
 	candidates: createAtom<number>(0),
 	positionCount: createAtom<number>(0),
@@ -96,7 +97,9 @@ export const readPositionRows = (
 
 		for (const row of rows) {
 			if (!row || !row.symbol) continue;
-			const key = `${row.symbol}:${row.virtual ? "v" : "p"}`;
+			const key = row.id
+				? `lot:${row.id}`
+				: `${row.symbol}:${row.virtual ? "v" : "p"}`;
 			const held = bySymbol.get(key);
 			const at = BigInt(latest.epoch ?? 0);
 			if (!held || at >= held.at) bySymbol.set(key, { at, row });

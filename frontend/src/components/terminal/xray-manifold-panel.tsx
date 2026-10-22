@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { focusAtom, resonanceStore } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { parseResonanceData, type ResonanceData } from "#/components/charts/prediction";
 import {
 	getRetainedResonance,
@@ -123,13 +123,13 @@ const DYNAMICS_FIELDS = [
 ] as const;
 
 export const XrayManifoldPanel = () => {
-	const focusSymbol = useSelector(focusAtom);
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		const updateFromState = () => {
 			if (!root.current) return;
-			const ring = resonanceStore.state[focusSymbol];
+			const ring = signals.resonance.state[focusSymbol];
 			const last = ring && !ring.isEmpty() ? ring.getLast() : null;
 
 			if (last) {
@@ -169,7 +169,7 @@ export const XrayManifoldPanel = () => {
 		};
 
 		updateFromState();
-		const subscription = resonanceStore.subscribe(updateFromState);
+		const subscription = signals.resonance.subscribe(updateFromState);
 
 		return () => {
 			subscription.unsubscribe();

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 )
@@ -108,7 +109,7 @@ position never submits: its fill is emulated from the desk's price at entry,
 so the path discovery ledger carries real entry costs and fees through the
 same Position.Apply path venue fills use.
 */
-func (position *Position) Enter() *spot.OrderRequest {
+func (position *Position) Enter() (*spot.OrderRequest, error) {
 	position.mu.Lock()
 
 	position.EntryOrders = append(position.EntryOrders, &spot.OrderRequest{
@@ -133,25 +134,31 @@ func (position *Position) Enter() *spot.OrderRequest {
 
 	position.mu.Unlock()
 
-	if virtual && position.price != nil {
-		if cost, err := position.price.EntryCost(position.Symbol, position.Qty); err == nil {
-			execution := kraken.ExecutionData{
-				Symbol:      position.Symbol,
-				Side:        "buy",
-				ExecType:    "Fill",
-				LastQty:     position.Qty,
-				CumQty:      position.Qty,
-				LastPrice:   cost.EntryPrice,
-				AvgPrice:    cost.EntryPrice,
-				FeeUsdEquiv: cost.EntryFee,
-				Timestamp:   time.Now().UTC(),
-			}
+	if virtual {
+		cost, err := position.price.EntryCost(position.Symbol, position.Qty)
 
-			position.Apply(execution)
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[position.Enter] no fill price for "+position.Symbol,
+				err,
+			))
 		}
+
+		position.Apply(kraken.ExecutionData{
+			Symbol:      position.Symbol,
+			Side:        "buy",
+			ExecType:    "Fill",
+			LastQty:     position.Qty,
+			CumQty:      position.Qty,
+			LastPrice:   cost.EntryPrice,
+			AvgPrice:    cost.EntryPrice,
+			FeeUsdEquiv: cost.EntryFee,
+			Timestamp:   time.Now().UTC(),
+		})
 	}
 
-	return order
+	return order, nil
 }
 
 /*

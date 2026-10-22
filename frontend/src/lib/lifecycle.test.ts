@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { positionCountAtom } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import {
 	ingestPositionFrame,
 	resetLifecycles,
@@ -57,7 +57,7 @@ describe("lifecycle store", () => {
 		expect(report.lifecycles.map((life) => life.id)).toEqual(["2", "1"]);
 		expect(report.lifecycles[1].events).toHaveLength(2);
 		expect(report.open_count).toBe(1);
-		expect(positionCountAtom.get()).toBe(1);
+		expect(atoms.positionCount.get()).toBe(1);
 		expect(report.performance).toEqual({
 			closed: 1,
 			wins: 1,

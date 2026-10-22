@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net"
 	neturl "net/url"
-	"sync/atomic"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -24,6 +24,7 @@ var UI *Hub
 
 func init() {
 	UI = NewHub(context.Background())
+	UI.Run()
 }
 
 type Hub struct {
@@ -35,13 +36,14 @@ type Hub struct {
 	conn       atomic.Pointer[websocket.Conn]
 	queue      *lf.Queue[[]byte]
 	writeMu    sync.Mutex
+	stopWriter chan struct{}
 	callbacks  []func()
 }
 
 /*
 NewHub constructs the dashboard hub from its queue-backed system boundaries.
 */
-func NewHub(ctx context.Context, callbacks ...func()) *Hub {
+func NewHub(ctx context.Context) *Hub {
 	hub := &Hub{
 		ctx:        ctx,
 		listenAddr: system.Cfg.UI.Addr,
@@ -53,7 +55,7 @@ func NewHub(ctx context.Context, callbacks ...func()) *Hub {
 			WriteBufferSize: system.Cfg.UI.WebSocket.MaxMessageBytes,
 		}),
 		queue:     lf.NewQueue[[]byte](),
-		callbacks: callbacks,
+		callbacks: make([]func(), 0),
 	}
 
 	hub.routes = NewRoutes(hub)
@@ -87,38 +89,71 @@ func NewHub(ctx context.Context, callbacks ...func()) *Hub {
 
 func (hub *Hub) wsHandler() fiber.Handler {
 	return websocket.New(func(conn *websocket.Conn) {
-		if hub.conn.Load() != nil {
-			hub.conn.Load().Close()
+		// One drain goroutine owns the hub-wide queue: a new connection
+		// takes over the current writer instead of starting a racer. The
+		// drain generation lets the previous writer exit as soon as it is
+		// replaced, so a stale goroutine can never dequeue a frame it
+		// cannot deliver.
+		drain := make(chan struct{})
+
+		hub.writeMu.Lock()
+
+		if hub.stopWriter != nil {
+			close(hub.stopWriter)
 		}
 
+		hub.stopWriter = drain
+
+		old := hub.conn.Load()
 		hub.conn.Store(conn)
-		defer hub.conn.Load().Close()
+
+		if old != nil {
+			old.Close()
+		}
 
 		for _, callback := range hub.callbacks {
 			callback()
 		}
+
+		hub.writeMu.Unlock()
 
 		go func() {
 			for {
 				select {
 				case <-hub.ctx.Done():
 					return
+				case <-drain:
+					return
 				default:
+					hub.writeMu.Lock()
+
 					p, ok := hub.queue.Dequeue()
 
 					if !ok {
+						hub.writeMu.Unlock()
 						time.Sleep(10 * time.Millisecond)
 						continue
 					}
 
-					if err := hub.writeMessage(websocket.BinaryMessage, p); err != nil {
+					conn := hub.conn.Load()
+
+					if conn == nil {
+						// No dashboard attached: drop the frame — it is
+						// live state, the next one supersedes it.
+						hub.writeMu.Unlock()
+						continue
+					}
+
+					err := conn.WriteMessage(websocket.BinaryMessage, p)
+
+					hub.writeMu.Unlock()
+
+					if err != nil {
 						errnie.Error(errnie.Err(
 							errnie.IO,
 							"[hub] write to websocket failed",
 							err,
 						))
-
-						continue
 					}
 				}
 			}
@@ -157,21 +192,10 @@ func (hub *Hub) Write(p []byte) (n int, err error) {
 }
 
 /*
-writeMessage serializes websocket writes through a mutex so that multiple
-dequeue goroutines (one per replaced websocket connection) cannot write to
-the connection concurrently.
+RegisterCallback registers a callback to be called when a new websocket connection is established.
 */
-func (hub *Hub) writeMessage(messageType int, data []byte) error {
-	hub.writeMu.Lock()
-	defer hub.writeMu.Unlock()
-
-	conn := hub.conn.Load()
-	
-	if conn == nil {
-		return errnie.Err(errnie.NotFound, "hub: no websocket connection", nil)
-	}
-
-	return conn.WriteMessage(messageType, data)
+func (hub *Hub) RegisterCallback(callback func()) {
+	hub.callbacks = append(hub.callbacks, callback)
 }
 
 /*

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -26,11 +25,6 @@ var embedded embed.FS
 
 var (
 	cfgFile string
-
-	// processStartedAt is the process start instant the Hindsight Run identity
-	// is anchored to. It is captured once at process start so a run's identity
-	// never shifts as the process runs.
-	processStartedAt = time.Now()
 
 	rootCmd = &cobra.Command{
 		Use:   "symm",

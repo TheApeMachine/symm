@@ -99,6 +99,15 @@ WithDashboard makes this booter serve the dashboard: it constructs the ui Hub
 */
 func (booter *Booter) WithDashboard() *Booter {
 	booter.dashboard = true
+
+	// Hub before training: NewTraining takes the hub as io.Writer in its
+	// constructor. The dashboard process paper-trades and streams ticks
+	// through the same hub. Stored runs are read by the dashboard directly
+	// from the store.
+	if booter.dashboard {
+		booter.hub = ui.UI
+	}
+
 	return booter
 }
 
@@ -238,14 +247,10 @@ func (booter *Booter) initMarket() error {
 		)
 	}
 
-	booter.balance = broker.NewBalance(ctx, booter.privateTransport)
-
-	// The configured bankroll is the sizing floor: the private balance poll
-	// lags the first ticks, and entries must size from something until it
-	// lands. Once the poll has real cash, desk.Enter prefers that instead.
-	booter.price.SetReferenceCash(decimal.NewFromInt64(
-		int64(system.Cfg.Market.Balance),
-	))
+	booter.balance = broker.NewBalance(
+		ctx, booter.privateTransport, booter.price,
+		decimal.NewFromInt64(int64(system.Cfg.Market.Balance)),
+	)
 
 	booter.desk = broker.NewDesk(
 		ctx, booter.privateTransport,
@@ -254,6 +259,7 @@ func (booter *Booter) initMarket() error {
 		booter.store,
 	)
 
+	booter.hub.RegisterCallback(booter.desk.Hello)
 	booter.startPrivateIngress()
 
 	return nil
@@ -282,18 +288,6 @@ func (booter *Booter) initPipeline() error {
 				fmt.Sprintf("booter: %s failed construction", node.Name()),
 				node.Error(),
 			)
-		}
-	}
-
-	// Hub before training: NewTraining takes the hub as io.Writer in its
-	// constructor. The dashboard process paper-trades and streams ticks
-	// through the same hub. Stored runs are read by the dashboard directly
-	// from the store.
-	if booter.dashboard {
-		booter.hub = ui.NewHub(ctx, booter.desk.Hello)
-
-		if err := booter.hub.Run(); err != nil {
-			return err
 		}
 	}
 
@@ -331,7 +325,7 @@ func (booter *Booter) initPipeline() error {
 		if node, ok := sink.(interface{ Status() nmruntime.Stage }); ok && node.Status() != nmruntime.READY {
 			return errnie.Err(
 				errnie.NotAcceptable,
-				fmt.Sprintf("booter: sink %T is %s, not ready", sink, node.Status()),
+				fmt.Sprintf("[booter] sink %T is %s, not ready", sink, node.Status()),
 				nil,
 			)
 		}
@@ -348,7 +342,7 @@ func (booter *Booter) initPipeline() error {
 	)
 
 	if booter.workspace == nil {
-		return errnie.Err(errnie.Internal, "booter: workspace pipeline failed to start", nil)
+		return errnie.Err(errnie.Internal, "[booter] workspace pipeline failed to start", nil)
 	}
 
 	for _, signal := range booter.signals {
@@ -389,7 +383,7 @@ func (booter *Booter) seedBooks() error {
 
 	if err := booter.instrument.SubscribeBooks(); err != nil {
 		return errnie.Err(
-			errnie.Internal, "booter: level3 subscribe to instrument universe", err,
+			errnie.Internal, "[booter] level3 subscribe to instrument universe", err,
 		)
 	}
 
@@ -408,7 +402,7 @@ func (booter *Booter) seedBooks() error {
 
 		return errnie.Err(
 			errnie.NotFound,
-			"booter: level3 seeding failed; venue replies: "+strings.Join(replies, "; "),
+			"[booter] level3 seeding failed; venue replies: "+strings.Join(replies, "; "),
 			err,
 		)
 	}
@@ -462,13 +456,13 @@ first trade tick already carries a seeded book for each symbol it touches.
 func (booter *Booter) openFirehose() error {
 	if err := booter.instrument.SubscribeTrades(); err != nil {
 		return errnie.Err(
-			errnie.Internal, "booter: trade subscribe to instrument universe", err,
+			errnie.Internal, "[booter] trade subscribe to instrument universe", err,
 		)
 	}
 
 	if booter.instrument.Status() != nmruntime.READY {
 		return errnie.Err(
-			errnie.NotAcceptable, "booter: instrument universe is not seeded", nil,
+			errnie.NotAcceptable, "[booter] instrument universe is not seeded", nil,
 		)
 	}
 
@@ -533,15 +527,12 @@ func (booter *Booter) startIngress(
 					continue
 				}
 
-				// Marks and virtual settlement ride the same tick.
+				// Last trade price feeds marks, virtual settlement,
+				// and the training tape — all ride the same tick.
+				booter.price.OnTrade(trade.Data)
+
 				if booter.desk != nil {
-					trades := make([]*kraken.TradeData, len(trade.Data))
-
-					for i := range trade.Data {
-						trades[i] = &trade.Data[i]
-					}
-
-					booter.desk.Update(trades...)
+					booter.desk.OnTrade(trade.Data)
 				}
 
 				// Store the trade array, not the Kraken envelope

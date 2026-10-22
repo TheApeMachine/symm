@@ -1,11 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
-import { focusAtom, signals } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 
 export const XrayFactsPanel = () => {
-	const focusSymbol = useSelector(focusAtom);
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
 
 	return (
 		<Component

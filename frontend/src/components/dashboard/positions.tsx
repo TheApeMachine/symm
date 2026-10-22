@@ -1,10 +1,11 @@
-import { useSelector } from "@tanstack/react-store";
-import { signals } from "#/collections/app";
+import { readPositionRows, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
+import { positionReadout } from "#/components/book-readout";
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "@/lib/utils";
+import { useSelector } from "@tanstack/react-store";
 
 const formatValue = (value: unknown, digits: number): string => {
 	if (typeof value === "number") {
@@ -65,11 +66,12 @@ const TRIGGER_LABEL: Record<string, string> = {
 	manual: "MANUAL",
 };
 
-const sellMarkers = (sells: any[] | undefined): SellMarker[] =>
+const sellMarkers = (
+	sells: Record<string, unknown>[] | undefined,
+): SellMarker[] =>
 	(sells ?? []).map((sell) => {
 		const trigger = String(sell.trigger ?? "");
-		const qty =
-			typeof sell.qty === "string" && sell.qty !== "" ? sell.qty : "";
+		const qty = typeof sell.qty === "string" && sell.qty !== "" ? sell.qty : "";
 		const at = Number(sell.at ?? 0);
 		const time = at > 0 ? new Date(at / 1e6).toLocaleTimeString() : "";
 
@@ -89,111 +91,48 @@ const sellMarkers = (sells: any[] | undefined): SellMarker[] =>
 		};
 	});
 
-const numeric = (value: unknown): number =>
-	typeof value === "number"
-		? value
-		: typeof value === "string" &&
-				value !== "" &&
-				Number.isFinite(Number(value))
-			? Number(value)
-			: 0;
+const readPositions = readPositionRows;
 
-const pnlPair = (holding: any) => ({
-	venuePnl: holding.venuePnl ? formatValue(holding.venuePnl, 4) : "—",
-	shadowPnl:
-		holding.shadowDefined && holding.shadowPnl
-			? formatValue(holding.shadowPnl, 4)
-			: "—",
-	shadowValue: holding.shadowDefined ? numeric(holding.shadowPnl) : 0,
-});
-
-const readPositions = (state: Record<string, any>): any[] => {
-	const bySymbol = new Map<string, any>();
-	for (const ring of Object.values(state)) {
-		if (!ring || ring.isEmpty()) continue;
-		const latest = ring.get(ring.getBufferLength() - 1);
-		if (!latest) continue;
-		const rows = latest.lookup("positions") as any[] | undefined;
-		if (!Array.isArray(rows)) continue;
-		for (const row of rows) {
-			if (row && row.symbol) bySymbol.set(String(row.symbol), row);
-		}
-	}
-	return [...bySymbol.values()];
-};
-
-const selectPositions = (rows: any[]): PositionCardData[] => {
+const selectPositions = (
+	rows: Record<string, unknown>[],
+): PositionCardData[] => {
 	const result: PositionCardData[] = [];
 
 	for (const currentPosition of rows) {
-		const currentHolding = currentPosition.holding;
-		if (!currentHolding) continue;
-
 		const currentSymbol =
-			typeof currentHolding.symbol === "string" ? currentHolding.symbol : "";
+			typeof currentPosition.symbol === "string" ? currentPosition.symbol : "";
 		if (!currentSymbol) continue;
 
-		const rawStatus = currentHolding.status ?? currentPosition.status;
-		const positionStatus = typeof rawStatus === "string" ? rawStatus : "—";
-		if (positionStatus === "closed") continue;
+		const readout = positionReadout(currentPosition);
 
-		const pnlNum = numeric(currentHolding.pnl);
-		const ratio = Number(currentHolding.capacityRatio ?? 0);
+		// Closed lots belong to the closed section below, not the open cards.
+		if (readout.closedAt) continue;
+
+		const positionStatus = currentPosition.virtual ? "virtual" : "open";
+		const pnlNum = readout.unrealizedPnl ?? 0;
 
 		result.push({
-			capacity: currentHolding.capacityDefined
-				? `${formatValue(ratio, 2)}×${currentHolding.capacityBounded ? "+" : ""}`
-				: "—",
-			capacityShort: Boolean(currentHolding.capacityDefined) && ratio < 1,
-			capacityRatioNum: currentHolding.capacityDefined ? ratio : undefined,
-			budget: currentHolding.budgetSource
-				? `${formatValue(Number(currentHolding.slippageBudget ?? 0) * 100, 3)}% ${currentHolding.budgetSource}`
-				: "—",
-			...pnlPair(currentHolding),
-			sells: sellMarkers(currentHolding.sells),
+			capacity: "—",
+			capacityShort: false,
+			capacityRatioNum: undefined,
+			budget: currentPosition.path ? String(currentPosition.path) : "—",
+			venuePnl: "—",
+			shadowPnl: formatValue(pnlNum, 4),
+			shadowValue: pnlNum,
+			sells: sellMarkers(undefined),
 			symbol: currentSymbol,
 			status: positionStatus,
-			pnl: `${formatValue(currentHolding.pnl, 4)} USD`,
+			pnl: `${formatValue(pnlNum, 4)} USD`,
 			pnlValue: pnlNum,
-			entryPrice: formatValue(currentHolding.entryPrice, 6),
-			mark: formatValue(currentHolding.mark, 6),
-			returnPct: `${formatValue(currentHolding.returnPct, 2)}%`,
+			entryPrice: formatValue(readout.entryPrice, 6),
+			mark: formatValue(readout.mark, 6),
+			returnPct: `${formatValue(readout.returnPct, 2)}%`,
 		});
 	}
 
 	return result.sort((leftPosition, rightPosition) =>
 		leftPosition.symbol.localeCompare(rightPosition.symbol),
 	);
-};
-
-const positionsEqual = (
-	left: PositionCardData[],
-	right: PositionCardData[],
-): boolean => {
-	if (left === right) return true;
-	if (left.length !== right.length) return false;
-	for (let index = 0; index < left.length; index++) {
-		const l = left[index];
-		const r = right[index];
-		if (
-			l.symbol !== r.symbol ||
-			l.status !== r.status ||
-			l.pnl !== r.pnl ||
-			l.pnlValue !== r.pnlValue ||
-			l.entryPrice !== r.entryPrice ||
-			l.mark !== r.mark ||
-			l.returnPct !== r.returnPct ||
-			l.capacity !== r.capacity ||
-			l.capacityRatioNum !== r.capacityRatioNum ||
-			l.budget !== r.budget ||
-			l.venuePnl !== r.venuePnl ||
-			l.shadowPnl !== r.shadowPnl ||
-			l.sells.length !== r.sells.length
-		) {
-			return false;
-		}
-	}
-	return true;
 };
 
 type ClosedCardData = {
@@ -205,26 +144,30 @@ type ClosedCardData = {
 	sells: SellMarker[];
 };
 
-const selectClosed = (closed: any[]): ClosedCardData[] =>
-	closed
-		.map((holding, index) => ({
-			key: `${holding.symbol}-${String(holding.closedAt ?? index)}`,
-			symbol: String(holding.symbol ?? ""),
-			...pnlPair(holding),
-			sells: sellMarkers(holding.sells),
-		}))
-		.reverse();
+const selectClosed = (rows: Record<string, unknown>[]): ClosedCardData[] =>
+	rows
+		.map((row) => ({ row, readout: positionReadout(row) }))
+		.filter(({ readout }) => readout.closedAt !== null)
+		.map(({ row, readout }, index) => {
+			const realized = readout.netPnl ?? 0;
 
-const closedEqual = (left: ClosedCardData[], right: ClosedCardData[]) =>
-	left.length === right.length &&
-	left.every((card, index) => card.key === right[index]?.key);
+			return {
+				key: String(row.id ?? row.symbol ?? index),
+				symbol: String(row.symbol ?? ""),
+				venuePnl: "—",
+				shadowPnl: formatValue(realized, 4),
+				shadowValue: realized,
+				sells: sellMarkers(undefined),
+			};
+		})
+		.reverse();
 
 const SellMarkers = ({ sells }: { sells: SellMarker[] }) =>
 	sells.length === 0 ? null : (
 		<Flex.Row className="mt-0.75 flex-wrap items-center gap-1 text-[8.5px]">
 			{sells.map((sell, index) => (
 				<Typography.Span
-					key={index}
+					key={index.toString()}
 					data-trigger={sell.trigger}
 					title={sell.title}
 					className={cn(
@@ -267,7 +210,7 @@ const PnlPair = ({
 };
 
 export const Positions = () => {
-	const store = signals["positions"];
+	const store = signals.positions;
 	const rings = useSelector(store, (state) => state);
 	const positions = selectPositions(readPositions(rings));
 	const closed = selectClosed(readPositions(rings));
@@ -307,12 +250,12 @@ export const Positions = () => {
 												SHORTFALL
 											</Typography.Span>
 										) : pos.capacityRatioNum !== undefined &&
-												pos.capacityRatioNum < 2 ? (
+											pos.capacityRatioNum < 2 ? (
 											<Typography.Span className="rounded-xs bg-(--warn)/15 border border-(--warn)/40 px-1 py-px text-[7.5px] font-bold text-(--warn) uppercase tracking-wide">
 												TIGHT
 											</Typography.Span>
 										) : pos.capacityRatioNum !== undefined &&
-												pos.capacityRatioNum >= 2 ? (
+											pos.capacityRatioNum >= 2 ? (
 											<Typography.Span className="rounded-xs bg-(--up)/15 border border-(--up)/40 px-1 py-px text-[7.5px] font-bold text-(--up) uppercase tracking-wide">
 												LIQUID
 											</Typography.Span>

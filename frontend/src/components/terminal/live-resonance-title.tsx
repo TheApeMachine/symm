@@ -1,14 +1,14 @@
 import { useSelector } from "@tanstack/react-store";
-import { focusAtom, resonanceStore } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { parseResonanceData, type ResonanceData } from "#/components/charts/prediction";
 
 export const LiveResonanceTitle = () => {
-	const symbol = useSelector(focusAtom);
-	const published = useSelector(resonanceStore, (state) =>
+	const symbol = useSelector(atoms.focus);
+	const published = useSelector(signals.resonance, (state) =>
 		state[symbol]?.end ?? 0,
 	);
 	const ring =
-		published > 0 ? (resonanceStore.state[symbol] ?? undefined) : undefined;
+		published > 0 ? (signals.resonance.state[symbol] ?? undefined) : undefined;
 	const last =
 		ring && !ring.isEmpty() ? (ring.getLast() ?? undefined) : undefined;
 	const artifact: ResonanceData | null = last

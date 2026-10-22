@@ -21,8 +21,15 @@ const fmt = (value: unknown): string => {
 	return "—";
 };
 
+/*
+The balance producer appends one map layer ({cash, equity, unrealized}) at
+index "balance"; readers take the field out of that map before formatting.
+*/
+const field = (balance: Value | undefined, key: string) =>
+	(balance?.lookup("balance") as Record<string, unknown> | undefined)?.[key];
+
 const inProfit = (balance: Value) => {
-	const unrealized = balance?.lookup("unrealized");
+	const unrealized = field(balance, "unrealized");
 	const unrealizedVal = Number(unrealized);
 	return Number.isFinite(unrealizedVal) && unrealizedVal > 0;
 };
@@ -94,21 +101,21 @@ export const Balance = () => {
 				tone="f1"
 				weight="medium"
 				which="cash"
-				value={fmt(balance?.lookup("cash"))}
+				value={fmt(field(balance, "cash"))}
 			/>
 			<Reading
 				label="Unrealized"
 				tone="f2"
 				weight="medium"
 				which="unrealized"
-				value={fmt(balance?.lookup("unrealized"))}
+				value={fmt(field(balance, "unrealized"))}
 			/>
 			<Reading
 				label="Equity"
 				tone="accent"
 				weight="semibold"
 				which="equity"
-				value={fmt(balance?.lookup("equity"))}
+				value={fmt(field(balance, "equity"))}
 			>
 				{inProfit(balance) ? <Lambo /> : null}
 			</Reading>

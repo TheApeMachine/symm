@@ -37,6 +37,7 @@ type Desk struct {
 	books     *Book
 	settler   interface {
 		Act(symbol, path, action string)
+		Holds(symbol string, virtual bool) bool
 	}
 }
 
@@ -46,6 +47,7 @@ the same Act path an open one entered on, keeping Wins/Promoted honest.
 */
 func (desk *Desk) BindSettler(settler interface {
 	Act(symbol, path, action string)
+	Holds(symbol string, virtual bool) bool
 }) {
 	desk.settler = settler
 }
@@ -74,10 +76,13 @@ func NewDesk(
 		"virtual":  desk.virtuals,
 	} {
 		for value := range desk.history.Restore(key) {
-			var position *Position
+			position := &Position{}
 			value.Lookup(position, key)
 
-			if position == nil {
+			if value.Err != nil {
+				// A frame that does not decode is already recorded on the
+				// value; report it and keep restoring the rest.
+				desk.Error(value.Err)
 				continue
 			}
 
@@ -95,6 +100,21 @@ virtual — each with its live mark. The dashboard derives every position
 readout (top bar, open lots, life-cycle, longtail) from this single frame,
 so all books stay consistent with the desk.
 */
+/*
+forget retires a closed position's row from its cache. The history value was
+already relocated by Move; the desk keeps the row on the closed side only
+until settlement finishes with it.
+*/
+func (desk *Desk) forget(position *Position) {
+	cache := desk.positions
+
+	if position.Virtual {
+		cache = desk.virtuals
+	}
+
+	cache.Drop(position.Symbol, position.ID)
+}
+
 func (desk *Desk) AllPositions() []*Position {
 	all := make([]*Position, 0)
 	all = append(all, desk.positions.All()...)
@@ -122,18 +142,18 @@ Update marks open positions against the trade price and settles any virtual
 whose band walk is over. Called from the workspace tick handler — the desk sits
 off the trade ingress path, so this is where marks become live.
 */
-func (desk *Desk) Update(trades ...*kraken.TradeData) {
+func (desk *Desk) OnTrade(trades []kraken.TradeData) {
 	for _, val := range []*Cache{
 		desk.positions, desk.virtuals,
 	} {
-		for _, trade := range trades {
-			position := val.Get(trade.Symbol, true)
+		for i := range trades {
+			position := val.Get(trades[i].Symbol, true)
 
 			if position == nil {
 				continue
 			}
 
-			position.Update(&trade.Price)
+			position.Update(&trades[i].Price)
 		}
 	}
 
@@ -152,6 +172,9 @@ SettleVirtuals closes every virtual whose band walk is over. Closing routes
 through the bound settler (the model's Act "close") so the position is
 stored closed and the path scores Wins/Promoted the same way an Act-driven
 close would. With no settler it closes on the desk directly.
+
+A virtual the model does not hold open (restored from history without a
+policy entry) has nothing to score: it closes on the desk directly.
 */
 func (desk *Desk) SettleVirtuals() {
 	for _, position := range desk.virtuals.All(true) {
@@ -159,7 +182,8 @@ func (desk *Desk) SettleVirtuals() {
 			continue
 		}
 
-		if desk.settler != nil && position.Path != "" {
+		if desk.settler != nil && position.Path != "" &&
+			desk.settler.Holds(position.Symbol, true) {
 			desk.settler.Act(position.Symbol, position.Path, "close")
 			continue
 		}
@@ -190,6 +214,10 @@ func (desk *Desk) Apply(executions *kraken.Execution) {
 		position := desk.positions.Get(execution.Symbol, true)
 
 		if position == nil {
+			position = desk.positions.Get(execution.Symbol, false)
+		}
+
+		if position == nil {
 			position = desk.virtuals.Get(execution.Symbol, true)
 		}
 
@@ -198,6 +226,12 @@ func (desk *Desk) Apply(executions *kraken.Execution) {
 		}
 
 		position.Apply(execution)
+
+		// A paper lot whose sell filled is fully settled: retire it from
+		// the desk so it cannot shadow the next position on the symbol.
+		if !position.Virtual && position.ClosedAt != nil {
+			desk.forget(position)
+		}
 	}
 }
 
@@ -217,14 +251,13 @@ func (desk *Desk) Enter(
 
 	position := NewPosition(symbol, path, virtual, desk.price)
 
-	cash := desk.balance.cash(desk.balance.Quote)
-
-	// The wallet lags the first ticks (private poll) and paper's quote asset
-	// may not be named in the balance map; fall back to the configured bank-
-	// roll so sizing never depends on the poll having landed.
-	if cash == nil || cash.Sign() <= 0 {
-		cash = desk.price.ReferenceCash()
+	if desk.price.Status() != runtime.READY {
+		// Boot ordering, not a fault: sizing waits for fees and reference
+		// cash, so the tick is skipped silently instead of flooding the log.
+		return nil
 	}
+
+	cash := desk.balance.cash(desk.balance.Quote)
 
 	// Allocation cap: never commit more than 20% of current cash.
 	if cash != nil && cash.Sign() > 0 {
@@ -252,7 +285,16 @@ func (desk *Desk) Enter(
 	}
 
 	position.Qty = qty
-	order := position.Enter()
+
+	order, err := position.Enter()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[desk.Enter] unable to enter "+symbol,
+			err,
+		))
+	}
 
 	key := "position"
 
@@ -309,31 +351,51 @@ func (desk *Desk) Exit(symbol string, virtual bool) error {
 
 	order := position.Exit()
 
-	// Exit does not remove the position from the cache; it must move to the
-	// closed side before any settlement reads or re-opens happen.
+	// Settle before anything moves: the outcome is final the moment the
+	// exit is recorded.
+	if virtual && position.price != nil {
+		cost, proceeds, profit, ret, ok := position.price.CloseOut(
+			position.Symbol, position.Qty, position.EntryPrice, position.EntryFee,
+		)
+
+		if !ok {
+			// No price to close out against: keep the virtual open and
+			// retry on the next settlement pass.
+			position.mu.Lock()
+			position.ClosedAt = nil
+			position.HoldNs = 0
+			position.mu.Unlock()
+
+			return errnie.Err(
+				errnie.UnprocessableContent,
+				"[desk.Exit] no price to close out "+position.Symbol,
+				nil,
+			)
+		}
+
+		position.mu.Lock()
+
+		position.Cost = cost
+		position.Proceeds = proceeds
+		position.Profit = profit
+
+		net := ret * 100
+		position.Return = &net
+		position.NetReturn = &net
+		position.OutcomeTriggers = []string{"band settle"}
+
+		position.mu.Unlock()
+	}
+
+	// The exit is final: the position leaves the open cache. A paper
+	// position stays addressable on the closed side until the venue's sell
+	// executions land (Apply settles the lot wherever the position lives),
+	// then history.Move retires it from the desk entirely.
 	if virtual {
 		desk.virtuals.Remove(position.Symbol)
 	} else {
 		desk.positions.Remove(position.Symbol)
-	}
-
-	if virtual && position.price != nil {
-		if cost, proceeds, profit, ret, ok := position.price.CloseOut(
-			position.Symbol, position.Qty, position.EntryPrice, position.EntryFee,
-		); ok {
-			position.mu.Lock()
-
-			position.Cost = cost
-			position.Proceeds = proceeds
-			position.Profit = profit
-
-			net := ret * 100
-			position.Return = &net
-			position.NetReturn = &net
-			position.OutcomeTriggers = []string{"band settle"}
-
-			position.mu.Unlock()
-		}
+		defer desk.forget(position)
 	}
 
 	key := "position"
@@ -371,18 +433,6 @@ func (desk *Desk) Exit(symbol string, virtual bool) error {
 	}
 
 	return nil
-}
-
-/*
-Holding reports whether the desk holds an open position (paper or virtual)
-for the symbol.
-*/
-func (desk *Desk) Holding(symbol string, virtual bool) bool {
-	if virtual {
-		return desk.virtuals.Has(symbol)
-	}
-
-	return desk.positions.Has(symbol)
 }
 
 /*

@@ -92,6 +92,46 @@ func (cache *Cache) Restore(position *Position) {
 	}
 }
 
+/*
+Drop retires one lot from the closed side, but only if it is still the given
+lot (id match). Closed lots stay referenceable from Remove until settlement
+finishes with them; Drop is that finish.
+*/
+func (cache *Cache) Drop(symbol, id string) bool {
+	loaded, ok := cache.closed.Load(symbol)
+
+	if !ok {
+		return false
+	}
+
+	if position := loaded.(*Position); position.ID != id {
+		return false
+	}
+
+	cache.closed.Delete(symbol)
+	return true
+}
+
+/*
+Count reports how many positions sit on the given side.
+*/
+func (cache *Cache) Count(open bool) int {
+	side := cache.closed
+
+	if open {
+		side = cache.open
+	}
+
+	count := 0
+
+	side.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+
+	return count
+}
+
 func (cache *Cache) Has(symbol string) bool {
 	_, ok := cache.open.Load(symbol)
 	return ok

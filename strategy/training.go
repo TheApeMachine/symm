@@ -68,7 +68,7 @@ func NewTraining(
 		client:     client,
 		grid:       nmstore.NewGrid(ctx),
 		prefixes:   make([][]*Token, 0),
-		model:      NewModel(ctx, desk, client),
+		model:      NewModel(ctx, desk, client, hub),
 		tokenizers: &sync.Map{},
 		hub:        hub,
 		policy:     &sync.Map{},

@@ -1,22 +1,16 @@
+import { Value } from "#/types/value";
+
 const textDecoder = new TextDecoder();
 
-export interface ParsedValue {
-	id: string;
-	tick: bigint;
-	seqIdx: bigint;
-	timestamp: bigint;
-	epoch: bigint;
-	origin: string;
-	role: string;
-	scope: string;
-	layers: Array<{ index: string; bytes: Uint8Array }>;
-	byteLength: number;
-}
-
+/*
+parseOneValue decodes one wire frame into the one Value the whole frontend
+reads. byteLength records the consumed wire size so parseValues can advance
+through a batch.
+*/
 export const parseOneValue = (
 	bytes: Uint8Array,
 	byteOffset = 0,
-): ParsedValue | null => {
+): Value | null => {
 	const remaining = bytes.byteLength - byteOffset;
 	if (remaining < 53) return null;
 
@@ -83,7 +77,7 @@ export const parseOneValue = (
 	}
 
 	const totalSize = cursor - byteOffset;
-	return {
+	const value = new Value({
 		id,
 		tick,
 		seqIdx,
@@ -92,15 +86,18 @@ export const parseOneValue = (
 		origin,
 		role,
 		scope,
-		layers,
-		byteLength: totalSize,
-	};
+		layers: layers.map((layer) => layer.bytes),
+		index: layers.map((layer) => layer.index),
+	});
+
+	value.byteLength = totalSize;
+	return value;
 };
 
-export const parseValues = (bytes: Uint8Array): ParsedValue[] | null => {
+export const parseValues = (bytes: Uint8Array): Value[] | null => {
 	if (bytes.byteLength < 45) return null;
 
-	const list: ParsedValue[] = [];
+	const list: Value[] = [];
 	let offset = 0;
 
 	while (offset < bytes.byteLength) {

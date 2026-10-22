@@ -39,7 +39,6 @@ const SymmLogo = () => (
 );
 
 const TickCounter = () => {
-	const tickCount = useSelector(atoms.tickCount, (state) => state);
 	const trainingSignals = useSelector(signals.training, (state) => state);
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
 
@@ -54,12 +53,7 @@ const TickCounter = () => {
 		}
 	}
 
-	const displayTicks =
-		steps !== null
-			? steps.toLocaleString()
-			: tickCount > 0
-				? tickCount.toLocaleString()
-				: "—";
+	const displayTicks = steps !== null ? steps.toLocaleString() : "—";
 
 	return (
 		<Flex.Column className="items-end gap-px">

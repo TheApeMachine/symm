@@ -35,6 +35,7 @@ type Model struct {
 	mu              sync.Mutex
 	desk            *broker.Desk
 	client          *store.Client
+	hub             io.Writer
 	Threshold       map[string]float64
 	Wins            map[string]int
 	Promoted        map[string]bool
@@ -43,11 +44,13 @@ type Model struct {
 
 func NewModel(
 	ctx context.Context, desk *broker.Desk, client *store.Client,
+	hub io.Writer,
 ) *Model {
 	model := &Model{
 		System:    runtime.NewSystem(ctx, "model"),
 		desk:      desk,
 		client:    client,
+		hub:       hub,
 		Threshold: map[string]float64{},
 		Wins:      map[string]int{},
 		Promoted:  map[string]bool{},
@@ -242,8 +245,8 @@ func (model *Model) decide(symbol, path, action string) string {
 	model.mu.Lock()
 	defer model.mu.Unlock()
 
-	paper := model.Open[holdKey(symbol, false)] != "" || model.desk.Holding(symbol, false)
-	virtual := model.Open[holdKey(symbol, true)] != "" || model.desk.Holding(symbol, true)
+	paper := model.Open[holdKey(symbol, false)] != "" || model.desk.Has(symbol, false)
+	virtual := model.Open[holdKey(symbol, true)] != "" || model.desk.Has(symbol, true)
 
 	switch {
 	case action == "exit.bin" || (model.Promoted[path] && paper):
@@ -338,6 +341,18 @@ func (model *Model) learn(path string, profit, virtual bool) bool {
 	return promote
 }
 
+/*
+Holds reports whether the model's own book has this symbol open on the
+given side. The desk uses it to route settlement: a virtual the model does
+not hold has no path to score and closes on the desk directly.
+*/
+func (model *Model) Holds(symbol string, virtual bool) bool {
+	model.mu.Lock()
+	defer model.mu.Unlock()
+
+	return model.Open[holdKey(symbol, virtual)] != ""
+}
+
 func (model *Model) take(symbol string, virtual bool) string {
 	model.mu.Lock()
 	defer model.mu.Unlock()
@@ -364,6 +379,12 @@ func (model *Model) persist(value *data.Value) {
 	if value.Err != nil {
 		model.Error(value.Err)
 		return
+	}
+
+	// Same frame, two sinks: the dashboard reads the model live, the store
+	// keeps it for the next boot.
+	if model.hub != nil {
+		io.Copy(model.hub, value)
 	}
 
 	if model.client == nil {

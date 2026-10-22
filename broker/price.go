@@ -234,13 +234,13 @@ type Quote struct {
 	Ask *decimal.Decimal
 }
 
-func (price *Price) Update(trade *kraken.TradeData) {
-	if trade == nil {
-		return
-	}
+func (price *Price) OnTrade(trades []kraken.TradeData) {
+	for i := range trades {
+		trade := &trades[i]
 
-	normalized := price.normalize(trade.Symbol)
-	price.trades.Store(normalized, &trade.Price)
+		normalized := price.normalize(trade.Symbol)
+		price.trades.Store(normalized, &trade.Price)
+	}
 }
 
 func (price *Price) SetQuote(symbol string, bid, ask *decimal.Decimal) {

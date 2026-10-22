@@ -1,6 +1,4 @@
-import { createStore } from "@tanstack/store";
-import { createRef } from "react";
-import { focusAtom } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import type { ResonanceFrame } from "#/collections/types";
 import {
@@ -18,6 +16,8 @@ import {
 	type LatentPoint,
 	latentPointsFromFrames,
 } from "#/components/terminal/xray-view";
+import { createStore } from "@tanstack/store";
+import { createRef } from "react";
 
 const latentCanvasRef = createRef<HTMLCanvasElement>();
 const latentPointsStore = createStore<LatentPoint[]>([]);
@@ -190,7 +190,7 @@ export const XrayLatentPanel = () => (
 				return;
 			}
 
-			focusAtom.set(nearest.symbol);
+			atoms.focus.set(nearest.symbol);
 			terminalStore.actions.selectFocusSymbol(nearest.symbol);
 		}}
 		className="absolute inset-0 block size-full cursor-pointer"

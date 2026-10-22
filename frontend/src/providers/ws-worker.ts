@@ -3,7 +3,7 @@
 import { atoms, signals } from "#/collections/app";
 import { RingBuffer } from "#/collections/ring";
 import { parseValues } from "#/types/decoder";
-import { Value } from "#/types/value";
+import type { Value } from "#/types/value";
 
 let socket: WebSocket | null = null;
 let connectUrl = "";
@@ -24,9 +24,10 @@ lands, the store's state is replaced with a fresh object carrying the bump and
 the same ring map, which is what triggers re-renders. The counter lives on the
 state itself so a worker reload cannot re-issue a stale identity.
 */
-const bumpStore = (
-	store: { state: Record<string, unknown>; setState: (s: never) => void },
-) => {
+const bumpStore = (store: {
+	state: Record<string, unknown>;
+	setState: (s: never) => void;
+}) => {
 	const revision = Number(store.state.revision ?? 0) + 1;
 	store.setState({ ...store.state, revision } as never);
 };
@@ -192,39 +193,10 @@ const connect = (url: string) => {
 						const store = signals[origin];
 
 						if (atom) {
-							// Atom origins (balance, ...) carry their decoded
-							// payload in a single layer; components read it via
-							// Value.lookup on the atom's current Value.
+							// Atom origins (balance, ...) carry their payload in
+							// one layer; components read it via Value.lookup on
+							// the atom's current Value.
 							atoms[origin].set(val);
-						}
-
-						// The engine readout (ticks, open positions) has no
-						// origin of its own; derive it from the wire.
-						if (origin === "workspace" && val.tick > 0n) {
-							atoms.tickCount.set(Number(val.tick));
-						}
-
-						if (origin === "positions") {
-							const layer = val.layers.find((entry) =>
-								entry.index.endsWith("positions"),
-							);
-
-							if (layer) {
-								try {
-									const rows = JSON.parse(
-										new TextDecoder().decode(layer.bytes),
-									) as Array<{ closed_at?: string | null }>;
-
-									if (Array.isArray(rows)) {
-										atoms.positionCount.set(
-											rows.filter((row) => !row.closed_at)
-												.length,
-										);
-									}
-								} catch {
-									/* next frame */
-								}
-							}
 						}
 
 						if (store) {
@@ -236,22 +208,11 @@ const connect = (url: string) => {
 								store.state[symbol] = ring;
 							}
 
-							const decoded = new Value({
-								id: val.id,
-								epoch: val.epoch,
-								tick: val.tick,
-								seqIdx: val.seqIdx,
-								timestamp: val.timestamp,
-								origin: val.origin,
-								role: val.role,
-								scope: val.scope,
-								layers: val.layers.map((layer) => layer.bytes),
-								index: val.layers.map((layer) => layer.index),
-							});
-
-							ring.add(decoded);
+							ring.add(val);
 							bumpStore(store);
 						}
+
+						atoms.tickCount.set(Number(val.tick));
 					}
 				}
 			}

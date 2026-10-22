@@ -1,5 +1,4 @@
 import type { Book } from "#/collections/book";
-import type { DeskPosition } from "#/collections/types";
 
 const decimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 
@@ -25,7 +24,7 @@ const dateText = (value: unknown): string | null => {
 };
 
 /* The desk's settled outcome, when it has priced the close. */
-export const settledOutcome = (row: DeskPosition) => {
+export const settledOutcome = (row: Record<string, unknown>) => {
 	if (row.cost === undefined || row.proceeds === undefined) return null;
 
 	const cost = decimal(row.cost);
@@ -58,7 +57,7 @@ type ExecutionTotals = {
 };
 
 const executionTotals = (
-	row: DeskPosition,
+	row: Record<string, unknown>,
 	side: "buy" | "sell",
 ): ExecutionTotals => {
 	let qty = 0;
@@ -71,7 +70,7 @@ const executionTotals = (
 	let lastAt: string | null = null;
 	const seen = new Set<string>();
 
-	for (const fill of row.fills ?? []) {
+	for (const fill of (row.fills as Record<string, unknown>[]) ?? []) {
 		if (typeof fill.side !== "string" || fill.side.toLowerCase() !== side) {
 			continue;
 		}
@@ -118,7 +117,7 @@ const executionTotals = (
 	};
 };
 
-const orderQuantity = (orders: DeskPosition["entry_orders"]) => {
+const orderQuantity = (orders: Record<string, unknown>[]) => {
 	if (!orders || orders.length === 0) return null;
 
 	let total = 0;
@@ -156,10 +155,10 @@ export type PositionReadout = {
 };
 
 /* Position metrics come from order and execution facts; mark is a live price input. */
-export const positionReadout = (row: DeskPosition): PositionReadout => {
+export const positionReadout = (row: Record<string, unknown>): PositionReadout => {
 	const buys = executionTotals(row, "buy");
 	const sells = executionTotals(row, "sell");
-	const entryOrderQty = orderQuantity(row.entry_orders);
+	const entryOrderQty = orderQuantity(row.entry_orders as Record<string, unknown>[]);
 	const qty = buys.qty === null ? entryOrderQty : buys.qty - (sells.qty ?? 0);
 	const entryPrice =
 		buys.qty !== null && buys.cost !== null && buys.qty !== 0
@@ -212,7 +211,7 @@ export const positionReadout = (row: DeskPosition): PositionReadout => {
 		netPnl = decimal(row.profit) ?? grossPnl;
 		returnPct =
 			settledReturn !== null
-				? settledReturn / 100
+				? (settledReturn as number) / 100
 				: settledCost !== 0
 					? netPnl / settledCost
 					: null;
@@ -273,26 +272,26 @@ export const positionReadout = (row: DeskPosition): PositionReadout => {
 		returnPct,
 		openedAt,
 		closedAt,
-		holdNs,
+		holdNs: holdNs as number | null,
 		closed,
-		exitPending: (row.exit_orders?.length ?? 0) > 0 && !closed,
+		exitPending: ((row.exit_orders as Record<string, unknown>[])?.length ?? 0) > 0 && !closed,
 	};
 };
 
-export const onBook = (row: DeskPosition, book: Book) =>
+export const onBook = (row: Record<string, unknown>, book: Book) =>
 	row.virtual === (book === "virtual");
 
-export const openOnBook = (rows: DeskPosition[], book: Book) =>
+export const openOnBook = (rows: Record<string, unknown>[], book: Book) =>
 	rows.filter((row) => onBook(row, book) && !positionReadout(row).closed);
 
-export const closedOnBook = (rows: DeskPosition[], book: Book) =>
+export const closedOnBook = (rows: Record<string, unknown>[], book: Book) =>
 	rows.filter((row) => onBook(row, book) && positionReadout(row).closed);
 
-export const lotReturn = (row: DeskPosition): number | null =>
+export const lotReturn = (row: Record<string, unknown>): number | null =>
 	positionReadout(row).returnPct;
 
 /* Closed lots own book performance; open lots stand in until one closes. */
-export const bookReadout = (rows: DeskPosition[], book: Book) => {
+export const bookReadout = (rows: Record<string, unknown>[], book: Book) => {
 	const held = openOnBook(rows, book);
 	const closed = closedOnBook(rows, book);
 	const sample = closed.length > 0 ? closed : held;
