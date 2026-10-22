@@ -35,21 +35,6 @@ type Desk struct {
 	positions *Cache
 	virtuals  *Cache
 	books     *Book
-	settler   interface {
-		Act(symbol, path, action string)
-		Holds(symbol string, virtual bool) bool
-	}
-}
-
-/*
-BindSettler connects the model so closed virtual positions settle through
-the same Act path an open one entered on, keeping Wins/Promoted honest.
-*/
-func (desk *Desk) BindSettler(settler interface {
-	Act(symbol, path, action string)
-	Holds(symbol string, virtual bool) bool
-}) {
-	desk.settler = settler
 }
 
 func NewDesk(
@@ -95,41 +80,13 @@ func NewDesk(
 }
 
 /*
-AllPositions is every position the desk holds — open and closed, paper and
-virtual — each with its live mark. The dashboard derives every position
-readout (top bar, open lots, life-cycle, longtail) from this single frame,
-so all books stay consistent with the desk.
-*/
-/*
-forget retires a closed position's row from its cache. The history value was
-already relocated by Move; the desk keeps the row on the closed side only
-until settlement finishes with it.
-*/
-func (desk *Desk) forget(position *Position) {
-	cache := desk.positions
-
-	if position.Virtual {
-		cache = desk.virtuals
-	}
-
-	cache.Drop(position.Symbol, position.ID)
-}
-
-func (desk *Desk) AllPositions() []*Position {
-	all := make([]*Position, 0)
-	all = append(all, desk.positions.All()...)
-	all = append(all, desk.virtuals.All()...)
-	return all
-}
-
-/*
 Hello is a callback for the ui.Hub that fires when a new WebSocket
 connection is established, and we want to update the client with
 some initial data.
 */
 func (desk *Desk) Hello() {
 	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
-		desk.AllPositions(), "positions",
+		desk.positions.All(), "positions",
 	))
 
 	if desk.balance.value != nil {
@@ -142,56 +99,22 @@ Update marks open positions against the trade price and settles any virtual
 whose band walk is over. Called from the workspace tick handler — the desk sits
 off the trade ingress path, so this is where marks become live.
 */
-func (desk *Desk) OnTrade(trades []kraken.TradeData) {
+func (desk *Desk) Update(trades []kraken.TradeData) {
 	for _, val := range []*Cache{
 		desk.positions, desk.virtuals,
 	} {
-		for i := range trades {
-			position := val.Get(trades[i].Symbol, true)
+		for _, trade := range trades {
+			position := val.Get(trade.Symbol, true)
 
 			if position == nil {
 				continue
 			}
 
-			position.Update(&trades[i].Price)
+			position.Update(&trade.Price)
 		}
 	}
 
-	desk.SettleVirtuals()
-
-	// One merged frame per tick: every position the desk holds, open and
-	// closed, paper and virtual, each with its live mark. Every frontend
-	// position readout derives from this single frame.
-	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
-		desk.AllPositions(), "positions",
-	))
-}
-
-/*
-SettleVirtuals closes every virtual whose band walk is over. Closing routes
-through the bound settler (the model's Act "close") so the position is
-stored closed and the path scores Wins/Promoted the same way an Act-driven
-close would. With no settler it closes on the desk directly.
-
-A virtual the model does not hold open (restored from history without a
-policy entry) has nothing to score: it closes on the desk directly.
-*/
-func (desk *Desk) SettleVirtuals() {
-	for _, position := range desk.virtuals.All(true) {
-		if !position.ShouldExit() {
-			continue
-		}
-
-		if desk.settler != nil && position.Path != "" &&
-			desk.settler.Holds(position.Symbol, true) {
-			desk.settler.Act(position.Symbol, position.Path, "close")
-			continue
-		}
-
-		if err := desk.Exit(position.Symbol, true); err != nil {
-			desk.Error(err)
-		}
-	}
+	desk.Hello()
 }
 
 /*
@@ -230,7 +153,7 @@ func (desk *Desk) Apply(executions *kraken.Execution) {
 		// A paper lot whose sell filled is fully settled: retire it from
 		// the desk so it cannot shadow the next position on the symbol.
 		if !position.Virtual && position.ClosedAt != nil {
-			desk.forget(position)
+			desk.positions.Remove(position.Symbol)
 		}
 	}
 }
@@ -314,10 +237,6 @@ func (desk *Desk) Enter(
 		))
 	}
 
-	io.Copy(ui.UI, data.NewValue("positions", "update", "positions").Append(
-		[]*Position{position}, "positions",
-	))
-
 	if err := desk.Send(order, virtual); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
@@ -330,9 +249,9 @@ func (desk *Desk) Enter(
 }
 
 /*
-Exit a position.
+Exit a position and report what settled.
 */
-func (desk *Desk) Exit(symbol string, virtual bool) error {
+func (desk *Desk) Exit(symbol string, path string, virtual bool) error {
 	var position *Position
 
 	if virtual {
@@ -349,10 +268,10 @@ func (desk *Desk) Exit(symbol string, virtual bool) error {
 		)
 	}
 
-	order := position.Exit()
+	order := position.Exit(path)
 
-	// Settle before anything moves: the outcome is final the moment the
-	// exit is recorded.
+	// The outcome is final the moment the exit is recorded: settle it
+	// before the cache move can retire the row.
 	if virtual && position.price != nil {
 		cost, proceeds, profit, ret, ok := position.price.CloseOut(
 			position.Symbol, position.Qty, position.EntryPrice, position.EntryFee,
@@ -395,7 +314,6 @@ func (desk *Desk) Exit(symbol string, virtual bool) error {
 		desk.virtuals.Remove(position.Symbol)
 	} else {
 		desk.positions.Remove(position.Symbol)
-		defer desk.forget(position)
 	}
 
 	key := "position"
@@ -415,14 +333,10 @@ func (desk *Desk) Exit(symbol string, virtual bool) error {
 	)); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"[desk.Enter] failed to store position",
+			"[desk.Exit] failed to store position",
 			err,
 		))
 	}
-
-	io.Copy(ui.UI, data.NewValue("positions", "update", "positions").Append(
-		[]*Position{position}, "positions",
-	))
 
 	if err := desk.Send(order, virtual); err != nil {
 		return errnie.Error(errnie.Err(

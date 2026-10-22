@@ -1,4 +1,4 @@
-import { readPositionRows, signals } from "#/collections/app";
+import { positionRows, signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import {
 	buildInsights,
@@ -135,8 +135,8 @@ export const LongtailDashboard = () => {
 
 	const { samples } = useLongtailReport();
 	const book = useSelector(bookAtom, (state) => state);
-	const rings = useSelector(signals.positions, (state) => state);
-	const desk = useMemo(() => readPositionRows(rings), [rings]);
+	const revision = useSelector(signals.positions, (state) => state.revision);
+	const desk = useMemo(() => positionRows(signals.positions, "all"), [revision]);
 	const times = useMemo(() => samples.map((s) => s.at), [samples]);
 	const metrics = metricsFor(book);
 	const selectedInsights = buildInsights(samples, book);
@@ -307,7 +307,7 @@ export const LongtailDashboard = () => {
 													: "down";
 										return (
 											<List.Item
-												key={row.id}
+												key={String(row.id)}
 												interactive={false}
 												justify="between"
 												className="rounded-none border-(--line) border-b px-2.5 py-1.5 text-[10px]"

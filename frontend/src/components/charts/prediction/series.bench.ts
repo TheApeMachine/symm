@@ -1,5 +1,5 @@
 import { bench, describe } from "vitest";
-import type { ResonanceFrame } from "#/collections/types";
+import type { Value as ResonanceFrame } from "#/types/value";
 import { predictiveCodingSeries } from "#/components/charts/prediction/series";
 
 const frames: ResonanceFrame[] = Array.from({ length: 1024 }, (_, index) => ({

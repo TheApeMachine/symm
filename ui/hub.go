@@ -36,7 +36,7 @@ type Hub struct {
 	conn       atomic.Pointer[websocket.Conn]
 	queue      *lf.Queue[[]byte]
 	writeMu    sync.Mutex
-	stopWriter chan struct{}
+	connected  atomic.Bool
 	callbacks  []func()
 }
 
@@ -90,26 +90,29 @@ func NewHub(ctx context.Context) *Hub {
 func (hub *Hub) wsHandler() fiber.Handler {
 	return websocket.New(func(conn *websocket.Conn) {
 		// One drain goroutine owns the hub-wide queue: a new connection
-		// takes over the current writer instead of starting a racer. The
-		// drain generation lets the previous writer exit as soon as it is
-		// replaced, so a stale goroutine can never dequeue a frame it
-		// cannot deliver.
-		drain := make(chan struct{})
-
+		// takes over the current writer instead of starting a racer. A
+		// drain that finds hub.conn no longer its own exits, so a stale
+		// goroutine can never dequeue a frame it cannot deliver.
 		hub.writeMu.Lock()
 
-		if hub.stopWriter != nil {
-			close(hub.stopWriter)
-		}
-
-		hub.stopWriter = drain
-
-		old := hub.conn.Load()
-		hub.conn.Store(conn)
+		old := hub.conn.Swap(conn)
 
 		if old != nil {
 			old.Close()
 		}
+
+		// A fresh connection starts from an empty queue: stale frames for
+		// the previous connection would carry wire sequence numbers the new
+		// dashboard reads as duplicates and drop.
+		for {
+			if _, ok := hub.queue.Dequeue(); !ok {
+				break
+			}
+		}
+
+		// Attached: publishers may produce again, and the replay below
+		// (Hello) flows through Write.
+		hub.connected.Store(true)
 
 		for _, callback := range hub.callbacks {
 			callback()
@@ -119,42 +122,48 @@ func (hub *Hub) wsHandler() fiber.Handler {
 
 		go func() {
 			for {
-				select {
-				case <-hub.ctx.Done():
+				if hub.ctx.Err() != nil {
 					return
-				case <-drain:
-					return
-				default:
-					hub.writeMu.Lock()
+				}
 
-					p, ok := hub.queue.Dequeue()
+				hub.writeMu.Lock()
 
-					if !ok {
-						hub.writeMu.Unlock()
-						time.Sleep(10 * time.Millisecond)
-						continue
-					}
-
-					conn := hub.conn.Load()
-
-					if conn == nil {
-						// No dashboard attached: drop the frame — it is
-						// live state, the next one supersedes it.
-						hub.writeMu.Unlock()
-						continue
-					}
-
-					err := conn.WriteMessage(websocket.BinaryMessage, p)
-
+				// The connection this drain belongs to was replaced (or
+				// broke): stop without dequeuing so the current writer
+				// alone serves the queue.
+				if hub.conn.Load() != conn {
 					hub.writeMu.Unlock()
+					return
+				}
 
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.IO,
-							"[hub] write to websocket failed",
-							err,
-						))
+				p, ok := hub.queue.Dequeue()
+
+				if !ok {
+					hub.writeMu.Unlock()
+					time.Sleep(10 * time.Millisecond)
+					continue
+				}
+
+				err := conn.WriteMessage(websocket.BinaryMessage, p)
+
+				hub.writeMu.Unlock()
+
+				if err != nil {
+					// The write broke the connection: drop it so the
+					// next dashboard connect attaches cleanly.
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						"[hub] write to websocket failed",
+						err,
+					))
+
+					conn.Close()
+
+					if hub.conn.CompareAndSwap(conn, (*websocket.Conn)(nil)) {
+						hub.connected.Store(false)
 					}
+
+					return
 				}
 			}
 		}()
@@ -169,6 +178,12 @@ func (hub *Hub) wsHandler() fiber.Handler {
 			_, payload, err := conn.Conn.ReadMessage()
 
 			if err != nil {
+				// The dashboard is gone; publishers skip frames until the
+				// next one attaches.
+				if hub.conn.CompareAndSwap(conn, (*websocket.Conn)(nil)) {
+					hub.connected.Store(false)
+				}
+
 				return
 			}
 
@@ -187,8 +202,19 @@ without blocking: no client, or a full client queue, drops the frame.
 p must be a fresh buffer (io.Copy(hub, value) hands over value.Bytes()).
 */
 func (hub *Hub) Write(p []byte) (n int, err error) {
-	hub.queue.Enqueue(p)
+	if hub.connected.Load() {
+		hub.queue.Enqueue(p)
+	}
+
 	return len(p), nil
+}
+
+/*
+Active reports whether a dashboard is attached. Publishers that build a frame
+per tick check it to skip the serialization entirely when nobody is listening.
+*/
+func (hub *Hub) Active() bool {
+	return hub.connected.Load()
 }
 
 /*

@@ -1,6 +1,6 @@
 import { createStore } from "@tanstack/store";
 import { useSelector } from "@tanstack/react-store";
-import { readPositionRows, signals } from "#/collections/app";
+import { positionRows, signals } from "#/collections/app";
 import type { Book } from "#/collections/book";
 import { sequiturStore } from "#/collections/sequitur";
 import { closedOnBook, onBook, openOnBook, positionReadout } from "#/components/book-readout";
@@ -209,7 +209,7 @@ const pushSample = (sample: LongtailSample) => {
 	});
 };
 
-const readPositions = readPositionRows;
+const readPositions = () => positionRows(signals.positions, "all");
 
 let recorderStarted = false;
 
@@ -221,8 +221,7 @@ export const ensureLongtailRecorder = () => {
 	recorderStarted = true;
 
 	const tick = () => {
-		const store = signals["positions"];
-		const desk = readPositions(store.state);
+		const desk = readPositions();
 		ingestDeskClosedLots(desk);
 		const seqStats = summarizeSequitur();
 

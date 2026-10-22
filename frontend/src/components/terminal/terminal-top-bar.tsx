@@ -1,8 +1,4 @@
-import { useSelector } from "@tanstack/react-store";
-import {
-	atoms,
-	signals,
-} from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
@@ -17,6 +13,7 @@ import { Key } from "#/components/ui/key";
 import { Tabs } from "#/components/ui/tabs";
 import { Toolbar } from "#/components/ui/toolbar";
 import { Typography } from "#/components/ui/typography";
+import { useSelector } from "@tanstack/react-store";
 
 const SymmLogo = () => (
 	<svg
@@ -39,21 +36,7 @@ const SymmLogo = () => (
 );
 
 const TickCounter = () => {
-	const trainingSignals = useSelector(signals.training, (state) => state);
-	const focusSymbol = useSelector(atoms.focus, (state) => state);
-
-	let steps: number | null = null;
-	const ring =
-		trainingSignals[focusSymbol] || Object.values(trainingSignals)[0];
-	if (ring && typeof ring.toArray === "function") {
-		const arr = ring.toArray();
-		const last = arr[arr.length - 1];
-		if (last && last.tick > 0n) {
-			steps = Number(last.tick);
-		}
-	}
-
-	const displayTicks = steps !== null ? steps.toLocaleString() : "—";
+	const ticks = useSelector(atoms.tickCount, (state) => state);
 
 	return (
 		<Flex.Column className="items-end gap-px">
@@ -61,7 +44,7 @@ const TickCounter = () => {
 				Ticks
 			</Typography.Label>
 			<Typography.Mono size="lg" tone="f1" data-tick="true">
-				{displayTicks}
+				{ticks.toLocaleString()}
 			</Typography.Mono>
 		</Flex.Column>
 	);
@@ -83,7 +66,7 @@ const Rule = () => (
 );
 
 export const TerminalTopBar = () => {
-	const online = useSelector(atoms.online, (state) => state === "ONLINE");
+	const online = useSelector(atoms.online, (state) => state);
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const book = useSelector(bookAtom, (state) => state);
 	const { openPalette, openSymbolPalette } = terminalStore.actions;
@@ -102,11 +85,17 @@ export const TerminalTopBar = () => {
 
 			<Toolbar.Group>
 				<Badge
-					label="WebSocket"
-					variant={online ? "success" : "error"}
+					label={online}
+					variant={
+						online === "ONLINE"
+							? "success"
+							: online === "CONNECTING"
+								? "info"
+								: "error"
+					}
 					dot
-					pulse={online}
-					title={online ? "WebSocket live" : "WebSocket offline"}
+					pulse={online === "CONNECTING"}
+					title={online}
 				/>
 			</Toolbar.Group>
 

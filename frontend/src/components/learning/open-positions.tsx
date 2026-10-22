@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useState } from "react";
-import { readPositionRows, signals } from "#/collections/app";
+import { positionRows, signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import { cognitionStore, regionHistoryStore } from "#/collections/cognition";
 import { positionReadout } from "#/components/book-readout";
@@ -29,15 +29,12 @@ const regionLabel = (sector: number) => `R${String(sector).padStart(2, "0")}`;
 const trails = new Map<string, number[]>();
 
 /*
-Positions stream over the hub as Values on the "positions" signal store,
-one ring buffer per scope ("all" on connection, "positions" per update).
-Each Value's "positions" layer holds an array of position rows. Read the
-latest entry from every ring in the store and merge rows by symbol so the
-live view always reflects the most recent update for each symbol.
+The desk broadcasts one merged frame per tick on the positions store under
+scope "all"; its "positions" layer carries every row, open and closed.
 */
-const readPositions = readPositionRows;
+const readPositions = () => positionRows(signals.positions, "all");
 
-export const openLots = (rows: any[], book: Book) =>
+export const openLots = (rows: Record<string, unknown>[], book: Book) =>
 	rows
 		.filter(
 			(row) =>
@@ -64,10 +61,10 @@ const numberOf = (value: unknown) => {
 	return Number.isFinite(parsed) ? parsed : undefined;
 };
 
-const heldSeconds = (row: any) => {
-	if (row.hold_ns > 0) return row.hold_ns / 1e9;
+const heldSeconds = (row: Record<string, unknown>) => {
+	if ((row.hold_ns as number) > 0) return (row.hold_ns as number) / 1e9;
 	if (row.opened_at === "" || row.opened_at == null) return undefined;
-	const at = Date.parse(row.opened_at);
+	const at = Date.parse(row.opened_at as string);
 	if (Number.isNaN(at)) return undefined;
 	return Math.max(0, (Date.now() - at) / 1000);
 };
@@ -77,15 +74,15 @@ const sectorOf = (token: string) => {
 	return Number.isInteger(sector) ? sector : undefined;
 };
 
-const PositionCard = ({ row }: { row: any }) => {
+const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 	const [exiting, setExiting] = useState(false);
 	const match = useSelector(
 		cognitionStore,
-		(state) => state.matches[row.symbol],
+		(state) => state.matches[row.symbol as string],
 	);
 	const rings = useSelector(
 		regionHistoryStore,
-		(state) => state[row.symbol] ?? [],
+		(state) => state[row.symbol as string] ?? [],
 	);
 	const readout = positionReadout(row);
 	const entry = readout.entryPrice ?? numberOf(row.entry_price);
@@ -105,13 +102,13 @@ const PositionCard = ({ row }: { row: any }) => {
 		room === undefined ? "muted" : room < 1 ? "down" : room < 3 ? "warn" : "up";
 
 	if (pnlPct !== undefined) {
-		const prior = trails.get(row.id) ?? [];
+		const prior = trails.get(row.id as string) ?? [];
 		if (prior[prior.length - 1] !== pnlPct) {
-			trails.set(row.id, [...prior, pnlPct].slice(-90));
+			trails.set(row.id as string, [...prior, pnlPct].slice(-90));
 		}
 	}
 
-	const pnlTrail = trails.get(row.id) ?? [];
+	const pnlTrail = trails.get(row.id as string) ?? [];
 	const tokens = (match?.tokens ?? [])
 		.map(sectorOf)
 		.filter((sector): sector is number => sector !== undefined)
@@ -143,7 +140,7 @@ const PositionCard = ({ row }: { row: any }) => {
 							background: `var(--${pnlTone === "muted" ? "f4" : pnlTone})`,
 						}}
 					/>
-					<span className="text-(--f1) font-bold text-sm">{row.symbol}</span>
+					<span className="text-(--f1) font-bold text-sm">{row.symbol as string}</span>
 					{selling && (
 						<span className="text-[10px] px-1.5 rounded bg-(--down)/20 text-(--down)">
 							flat
@@ -262,10 +259,10 @@ const PositionCard = ({ row }: { row: any }) => {
 			</div>
 
 			<div className="grid grid-cols-4 gap-2 border-t border-(--line) pt-2 text-[10px] text-(--f3)">
-				<span>qty {row.qty ?? "—"}</span>
-				<span>entry {row.entry_price ?? "—"}</span>
-				<span>mark {row.mark ?? "—"}</span>
-				<span>fee {row.entry_fee ?? "—"}</span>
+				<span>qty {row.qty as number ?? "—"}</span>
+				<span>entry {row.entry_price as number ?? "—"}</span>
+				<span>mark {row.mark as number ?? "—"}</span>
+				<span>fee {row.entry_fee as number ?? "—"}</span>
 			</div>
 
 			{/*
@@ -306,8 +303,9 @@ const PositionCard = ({ row }: { row: any }) => {
 export const OpenPositions = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const store = signals["positions"];
-	const rings = useSelector(store, (state) => state);
-	const positions = readPositions(rings);
+	// The revision bump is the render trigger; the rows come from the ring.
+	useSelector(store, (state) => state.revision);
+	const positions = readPositions();
 	const held = positions
 		.filter(
 			(row) =>

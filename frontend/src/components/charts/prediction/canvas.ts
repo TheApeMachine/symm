@@ -1,4 +1,4 @@
-import type { ResonanceFrame } from "#/collections/types";
+import type { Value as ResonanceFrame } from "#/types/value";
 import { drawReturnLane } from "#/components/charts/prediction/head";
 import { drawHierarchyLane } from "#/components/charts/prediction/hierarchy";
 import { predictiveCodingSeries } from "#/components/charts/prediction/series";

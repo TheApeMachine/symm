@@ -1,9 +1,6 @@
 /// <reference lib="webworker" />
 
-import { atoms, signals } from "#/collections/app";
-import { RingBuffer } from "#/collections/ring";
-import { parseValues } from "#/types/decoder";
-import type { Value } from "#/types/value";
+export {};
 
 let socket: WebSocket | null = null;
 let connectUrl = "";
@@ -16,21 +13,6 @@ const RECONNECT_MAX_MS = 10_000;
 
 let currentRoute = "dashboard";
 let pendingCommands: Record<string, unknown>[] = [];
-
-/*
-Signal stores are mutated in place (ring.add never replaces the store's
-state object), so selectors never fire. One counter per origin: after a batch
-lands, the store's state is replaced with a fresh object carrying the bump and
-the same ring map, which is what triggers re-renders. The counter lives on the
-state itself so a worker reload cannot re-issue a stale identity.
-*/
-const bumpStore = (store: {
-	state: Record<string, unknown>;
-	setState: (s: never) => void;
-}) => {
-	const revision = Number(store.state.revision ?? 0) + 1;
-	store.setState({ ...store.state, revision } as never);
-};
 
 const queueCommand = (command: Record<string, unknown>) => {
 	if (command.type === "hindsight") {
@@ -160,10 +142,6 @@ const connect = (url: string) => {
 	});
 
 	socket.addEventListener("message", (event) => {
-		if (generation !== socketGeneration) {
-			return;
-		}
-
 		try {
 			const raw = event.data;
 			let arrayBuffer: ArrayBuffer | null = null;
@@ -183,40 +161,18 @@ const connect = (url: string) => {
 			}
 
 			if (arrayBuffer) {
-				const value = parseValues(new Uint8Array(arrayBuffer));
-				if (value) {
-					for (const val of value) {
-						const origin = val.origin;
-
-						// Route by origin: atom or signal store.
-						const atom = atoms[origin];
-						const store = signals[origin];
-
-						if (atom) {
-							// Atom origins (balance, ...) carry their payload in
-							// one layer; components read it via Value.lookup on
-							// the atom's current Value.
-							atoms[origin].set(val);
-						}
-
-						if (store) {
-							const symbol = val.scope;
-							let ring = store.state[symbol];
-
-							if (!ring) {
-								ring = new RingBuffer<Value>(50);
-								store.state[symbol] = ring;
-							}
-
-							ring.add(val);
-							bumpStore(store);
-						}
-
-						atoms.tickCount.set(Number(val.tick));
-					}
-				}
+				// The main thread parses (into Value instances — a
+				// structured clone would strip the prototype). The buffer is
+				// transferred, so no copy crosses the boundary.
+				self.postMessage(
+					{ type: "FRAMES", buffer: arrayBuffer },
+					{
+						transfer: [arrayBuffer],
+					},
+				);
 			}
 		} catch (err) {
+			console.error("error", err);
 			self.postMessage({ type: "ERROR", error: String(err) });
 		}
 	});

@@ -165,42 +165,62 @@ func (client *Client) Read(p []byte) (n int, err error) {
 	return len(p), io.EOF
 }
 
+func (client *Client) Download(ctx context.Context, key string) *data.Value {
+	body := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
+
+	_, err := client.transfer.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
+		Bucket:   aws.String(client.bucket),
+		Key:      aws.String(key),
+		WriterAt: body,
+	})
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] download error", err,
+		))
+
+		return nil
+	}
+
+	return data.From(body.Bytes())
+}
+
 /*
 Stream writes each object under prefix to dst, one Write per object.
 A canceled ctx stops the stream before the next object.
 */
-func (client *Client) Stream(ctx context.Context, prefix string, dst io.Writer) error {
-	if client == nil {
-		return errnie.Error(errnie.Err(
-			errnie.ServiceUnavailable, "[store.client] no client", nil,
-		))
+func (client *Client) Stream(ctx context.Context, prefix string) iter.Seq[*data.Value] {
+	return func(yield func(*data.Value) bool) {
+		for key := range client.ListKeys(prefix) {
+			if err := ctx.Err(); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[store.client] context canceled", err,
+				))
+
+				return
+			}
+
+			body := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
+
+			_, err := client.transfer.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
+				Bucket:   aws.String(client.bucket),
+				Key:      aws.String(key),
+				WriterAt: body,
+			})
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[store.client] download error", err,
+				))
+
+				return
+			}
+
+			if !yield(data.From(body.Bytes())) {
+				return
+			}
+		}
 	}
-
-	for key := range client.ListKeys(prefix) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		body := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
-
-		_, err := client.transfer.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
-			Bucket:   aws.String(client.bucket),
-			Key:      aws.String(key),
-			WriterAt: body,
-		})
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.IO, "[store.client] download error", err,
-			))
-		}
-
-		if _, err = dst.Write(body.Bytes()); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 /*

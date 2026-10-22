@@ -67,11 +67,11 @@ Get a position from the cache.
 func (cache *Cache) Get(symbol string, open bool) *Position {
 	if open {
 		found, ok := cache.open.Load(symbol)
-		
+
 		if !ok {
 			return nil
 		}
-		
+
 		return found.(*Position)
 	}
 
@@ -90,26 +90,6 @@ func (cache *Cache) Restore(position *Position) {
 	} else {
 		cache.open.Store(position.Symbol, position)
 	}
-}
-
-/*
-Drop retires one lot from the closed side, but only if it is still the given
-lot (id match). Closed lots stay referenceable from Remove until settlement
-finishes with them; Drop is that finish.
-*/
-func (cache *Cache) Drop(symbol, id string) bool {
-	loaded, ok := cache.closed.Load(symbol)
-
-	if !ok {
-		return false
-	}
-
-	if position := loaded.(*Position); position.ID != id {
-		return false
-	}
-
-	cache.closed.Delete(symbol)
-	return true
 }
 
 /*

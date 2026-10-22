@@ -3,14 +3,14 @@ package strategy
 import (
 	"context"
 	"io"
-	"strings"
 	"sync"
 
-	"github.com/theapemachine/errnie"
+	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/strategy/tokenizer"
 )
 
 const thresholdKey = "model/state/current"
@@ -27,19 +27,17 @@ const (
 Model is the energy gate for a token path. A region matches a path only when
 its brightness clears that path's threshold. A profitable exit lowers the
 threshold and a loss raises it. Three profitable virtual closes store the
-path as enter.bin and exit.bin. Threshold, Wins, Promoted, and Open are the
-stored model.
+path as enter.bin and exit.bin. Threshold, Wins, and Promoted are the stored
+model; open lots live on the desk cache alone, and each carries its path.
 */
 type Model struct {
 	*runtime.System `json:"-"`
 	mu              sync.Mutex
 	desk            *broker.Desk
-	client          *store.Client
-	hub             io.Writer
-	Threshold       map[string]float64
-	Wins            map[string]int
-	Promoted        map[string]bool
-	Open            map[string]string
+	store           *store.Client
+	tree            *iradix.Tree[*data.Value]
+	explored        *iradix.Tree[*data.Value]
+	sequencers      *sync.Map
 }
 
 func NewModel(
@@ -47,351 +45,78 @@ func NewModel(
 	hub io.Writer,
 ) *Model {
 	model := &Model{
-		System:    runtime.NewSystem(ctx, "model"),
-		desk:      desk,
-		client:    client,
-		hub:       hub,
-		Threshold: map[string]float64{},
-		Wins:      map[string]int{},
-		Promoted:  map[string]bool{},
-		Open:      map[string]string{},
+		System:     runtime.NewSystem(ctx, "model"),
+		desk:       desk,
+		store:      client,
+		tree:       iradix.New[*data.Value](),
+		explored:   iradix.New[*data.Value](),
+		sequencers: &sync.Map{},
 	}
 
-	model.load()
-	return model
-}
+	for prefix := range model.store.ListKeys("model/current") {
+		value := model.store.Download(ctx, prefix)
 
-func (model *Model) load() {
-	if model == nil || model.client == nil {
-		return
-	}
-
-	buf, err := object(model.Context(), model.client, thresholdKey)
-
-	if errnie.IsNotFound(err) {
-		return
-	}
-
-	if err != nil {
-		model.Error(err)
-		return
-	}
-
-	stored := data.From(buf)
-
-	var gates map[string]float64
-	stored.Lookup(&gates, "threshold")
-	if gates != nil {
-		model.Threshold = gates
-	}
-
-	var wins map[string]int
-	stored.Lookup(&wins, "wins")
-	if wins != nil {
-		model.Wins = wins
-	}
-
-	var promoted map[string]bool
-	stored.Lookup(&promoted, "promoted")
-	if promoted != nil {
-		model.Promoted = promoted
-	}
-
-	var open map[string]string
-	stored.Lookup(&open, "open")
-	if open != nil {
-		model.Open = open
-	}
-
-	if stored.Err != nil && !errnie.IsNotFound(stored.Err) {
-		model.Error(stored.Err)
-		return
-	}
-
-	if len(model.Threshold) > 0 {
-		model.Transition(runtime.READY)
-	}
-}
-
-func (model *Model) Note(path string) {
-	if model == nil || path == "" {
-		return
-	}
-
-	model.mu.Lock()
-	defer model.mu.Unlock()
-
-	model.note(path)
-}
-
-func (model *Model) note(path string) {
-	if _, ok := model.Threshold[path]; ok {
-		return
-	}
-
-	model.Threshold[path] = thresholdStart
-	model.Transition(runtime.READY)
-}
-
-func (model *Model) Match(sentence, regions []*Token) []string {
-	model.mu.Lock()
-	defer model.mu.Unlock()
-
-	keys := make([]string, 0, len(regions))
-
-	for i, region := range regions {
-		if model.clears(len(sentence)+i, region) {
-			keys = append(keys, key(region))
-		}
-	}
-
-	return keys
-}
-
-func (model *Model) Below(sentence, regions []*Token) []*Token {
-	model.mu.Lock()
-	defer model.mu.Unlock()
-
-	out := make([]*Token, 0)
-
-	for i, region := range regions {
-		step := len(sentence) + i
-
-		if model.matches(step, key(region)) && !model.clears(step, region) {
-			out = append(out, region)
-		}
-	}
-
-	return out
-}
-
-func (model *Model) matches(step int, key string) bool {
-	for path := range model.Threshold {
-		tokens := strings.Split(path, "/")
-
-		if step < len(tokens) && tokens[step] == key {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (model *Model) clears(step int, region *Token) bool {
-	for path := range model.Threshold {
-		tokens := strings.Split(path, "/")
-
-		if step >= len(tokens) || tokens[step] != key(region) {
+		if value == nil {
 			continue
 		}
 
-		if region.Brightness >= model.Threshold[path] {
-			return true
-		}
+		model.tree.Insert([]byte(prefix), value)
 	}
 
-	return false
+	return model
 }
 
-/*
-Act takes the sentence's stored action. A path with no enter or exit is a
-virtual round trip on the simulated wallet. The entry path, not the sentence
-at the exit, is what the threshold learns from.
-*/
-func (model *Model) Act(symbol, path, action string) {
-	if model == nil || model.desk == nil || symbol == "" || path == "" {
-		return
-	}
+func (model *Model) Evaluate(value *data.Value) {
+	var tokens tokenizer.Tokens
+	value.Lookup(&tokens, "tokens")
 
-	var virtual bool
+	for _, tree := range []*iradix.Tree[*data.Value]{model.tree, model.explored} {
+		action := model.Search(tree, []byte("model/current/"+tokens.String()))
 
-	switch model.decide(symbol, path, action) {
-	case "exit":
-		model.settle(symbol, path, false)
-		return
-	case "close":
-		model.settle(symbol, path, true)
-		return
-	case "enter":
-		if err := model.desk.Enter(symbol, "", false); err != nil {
-			model.Error(err)
-			return
+		if action != nil {
+			break
 		}
-	case "virtual":
-		if err := model.desk.Enter(symbol, "", true); err != nil {
-			model.Error(err)
+
+		if action == nil {
 			return
 		}
 
-		virtual = true
-	default:
-		return
-	}
-
-	model.mu.Lock()
-	model.note(path)
-	model.Open[holdKey(symbol, virtual)] = path
-	recorded := data.NewValue("model", "state", "current")
-	recorded.Append(model.Threshold, "threshold")
-	recorded.Append(model.Wins, "wins")
-	recorded.Append(model.Promoted, "promoted")
-	recorded.Append(model.Open, "open")
-	model.mu.Unlock()
-
-	model.persist(recorded)
-}
-
-func (model *Model) decide(symbol, path, action string) string {
-	model.mu.Lock()
-	defer model.mu.Unlock()
-
-	paper := model.Open[holdKey(symbol, false)] != "" || model.desk.Has(symbol, false)
-	virtual := model.Open[holdKey(symbol, true)] != "" || model.desk.Has(symbol, true)
-
-	switch {
-	case action == "exit.bin" || (model.Promoted[path] && paper):
-		return "exit"
-	case action == "enter.bin" || model.Promoted[path]:
-		if paper {
-			return ""
-		}
-
-		return "enter"
-	case virtual:
-		return "close"
-	default:
-		return "virtual"
-	}
-}
-
-func (model *Model) settle(symbol, fallback string, virtual bool) {
-	path := model.take(symbol, virtual)
-
-	if path == "" {
-		path = fallback
-	}
-
-	profit, ok := model.desk.Profit(symbol, virtual)
-
-	if err := model.desk.Exit(symbol, virtual); err != nil {
-		model.Error(err)
-		return
-	}
-
-	if path != "" && ok {
-		model.learn(path, profit, virtual)
-		return
-	}
-
-	model.mu.Lock()
-	recorded := data.NewValue("model", "state", "current")
-	recorded.Append(model.Threshold, "threshold")
-	recorded.Append(model.Wins, "wins")
-	recorded.Append(model.Promoted, "promoted")
-	recorded.Append(model.Open, "open")
-	model.mu.Unlock()
-
-	model.persist(recorded)
-}
-
-func (model *Model) learn(path string, profit, virtual bool) bool {
-	model.mu.Lock()
-
-	model.note(path)
-
-	if profit {
-		model.Threshold[path] = min(max(
-			model.Threshold[path]-thresholdStep, thresholdFloor,
-		), thresholdCeil)
-	} else {
-		model.Threshold[path] = min(max(
-			model.Threshold[path]+thresholdStep, thresholdFloor,
-		), thresholdCeil)
-	}
-
-	promote := false
-
-	if virtual && profit {
-		model.Wins[path]++
-
-		if model.Wins[path] >= virtualPromote && !model.Promoted[path] {
-			model.Promoted[path] = true
-			promote = true
+		switch action.Scope {
+		case "enter":
+			if !model.desk.Has(value.Scope, true) {
+				model.desk.Enter(value.Scope, tokens.String(), true)
+			}
+		case "exit":
+			if model.desk.Has(value.Scope, true) {
+				model.desk.Exit(value.Scope, tokens.String(), true)
+			}
 		}
 	}
+}
 
-	recorded := data.NewValue("model", "state", "current")
-	recorded.Append(model.Threshold, "threshold")
-	recorded.Append(model.Wins, "wins")
-	recorded.Append(model.Promoted, "promoted")
-	recorded.Append(model.Open, "open")
-	model.mu.Unlock()
-
-	model.persist(recorded)
-
-	if !promote {
-		return promote
-	}
-
-	for _, action := range []string{"enter.bin", "exit.bin"} {
-		value := data.NewValue("policy", "current", path+"/"+action)
-		model.persist(value)
-	}
-
-	return promote
+func (model *Model) Train() {
 }
 
 /*
-Holds reports whether the model's own book has this symbol open on the
-given side. The desk uses it to route settlement: a virtual the model does
-not hold has no path to score and closes on the desk directly.
+Search returns an action scoped Value, but only if all Values found for
+the current path agree on the action. This makes the model less deterministic,
+and more predictive.
 */
-func (model *Model) Holds(symbol string, virtual bool) bool {
-	model.mu.Lock()
-	defer model.mu.Unlock()
+func (model *Model) Search(tree *iradix.Tree[*data.Value], path []byte) *data.Value {
+	var current *data.Value
 
-	return model.Open[holdKey(symbol, virtual)] != ""
-}
+	for _, node, _ := tree.Root().PathIterator(
+		path,
+	).Next(); node != nil; _, node, _ = tree.Root().PathIterator(
+		path,
+	).Next() {
+		if current == nil || node.Scope == current.Scope {
+			current = node
+		}
 
-func (model *Model) take(symbol string, virtual bool) string {
-	model.mu.Lock()
-	defer model.mu.Unlock()
-
-	key := holdKey(symbol, virtual)
-	path := model.Open[key]
-	delete(model.Open, key)
-	return path
-}
-
-func holdKey(symbol string, virtual bool) string {
-	if virtual {
-		return symbol + "\x00virtual"
+		current = nil
+		break
 	}
 
-	return symbol + "\x00paper"
-}
-
-func (model *Model) persist(value *data.Value) {
-	if model == nil || value == nil {
-		return
-	}
-
-	if value.Err != nil {
-		model.Error(value.Err)
-		return
-	}
-
-	// Same frame, two sinks: the dashboard reads the model live, the store
-	// keeps it for the next boot.
-	if model.hub != nil {
-		io.Copy(model.hub, value)
-	}
-
-	if model.client == nil {
-		return
-	}
-
-	if _, err := io.Copy(model.client, value); err != nil {
-		model.Error(err)
-	}
+	return current
 }

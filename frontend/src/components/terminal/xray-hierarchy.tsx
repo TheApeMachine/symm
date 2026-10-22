@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import type { ResonanceFrame } from "#/collections/types";
+import type { Value as ResonanceFrame } from "#/types/value";
 import { heatColor } from "#/components/terminal/canvas";
 import { layerCellsFromState } from "#/components/terminal/xray-layers";
 import { xrayLayersFromResonance } from "#/components/terminal/xray-view";

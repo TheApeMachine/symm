@@ -234,7 +234,7 @@ type Quote struct {
 	Ask *decimal.Decimal
 }
 
-func (price *Price) OnTrade(trades []kraken.TradeData) {
+func (price *Price) Update(trades []kraken.TradeData) {
 	for i := range trades {
 		trade := &trades[i]
 

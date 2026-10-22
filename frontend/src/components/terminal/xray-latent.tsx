@@ -1,6 +1,6 @@
 import { atoms } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import type { ResonanceFrame } from "#/collections/types";
+import type { Value as ResonanceFrame } from "#/types/value";
 import {
 	clearCanvas,
 	resizeCanvas,

@@ -529,10 +529,10 @@ func (booter *Booter) startIngress(
 
 				// Last trade price feeds marks, virtual settlement,
 				// and the training tape — all ride the same tick.
-				booter.price.OnTrade(trade.Data)
+				booter.price.Update(trade.Data)
 
 				if booter.desk != nil {
-					booter.desk.OnTrade(trade.Data)
+					booter.desk.Update(trade.Data)
 				}
 
 				// Store the trade array, not the Kraken envelope

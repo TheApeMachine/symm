@@ -56,6 +56,7 @@ require (
 	github.com/gofiber/utils/v2 v2.6.2 // indirect
 	github.com/gopherjs/gopherjs v1.20.2 // indirect
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.11 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.0 // indirect
 	github.com/jtolds/gls v4.20.0+incompatible // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
@@ -99,6 +100,7 @@ require (
 	github.com/fasthttp/websocket v1.5.12 // indirect
 	github.com/gofiber/contrib/v3/websocket v1.2.0
 	github.com/gofiber/fiber/v3 v3.6.1
+	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0

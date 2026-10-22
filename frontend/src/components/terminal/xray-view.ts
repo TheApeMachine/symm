@@ -1,4 +1,4 @@
-import type { ResonanceFrame } from "#/collections/types";
+import type { Value as ResonanceFrame } from "#/types/value";
 import { parseResonanceData } from "#/components/charts/prediction";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { requirePositiveLength } from "#/lib/domain";

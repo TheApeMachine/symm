@@ -1,4 +1,4 @@
-import { readPositionRows, signals } from "#/collections/app";
+import { positionRows, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { positionReadout } from "#/components/book-readout";
 import { Flex } from "#/components/ui/flex";
@@ -91,7 +91,7 @@ const sellMarkers = (
 		};
 	});
 
-const readPositions = readPositionRows;
+const readPositions = () => positionRows(signals.positions, "all");
 
 const selectPositions = (
 	rows: Record<string, unknown>[],
@@ -211,9 +211,10 @@ const PnlPair = ({
 
 export const Positions = () => {
 	const store = signals.positions;
-	const rings = useSelector(store, (state) => state);
-	const positions = selectPositions(readPositions(rings));
-	const closed = selectClosed(readPositions(rings));
+	// The revision bump is the render trigger; the rows come from the ring.
+	useSelector(store, (state) => state.revision);
+	const positions = selectPositions(readPositions());
+	const closed = selectClosed(readPositions());
 
 	return (
 		<List className="min-h-0 flex-1 p-1.5">

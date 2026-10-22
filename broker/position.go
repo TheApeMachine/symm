@@ -17,7 +17,8 @@ type Position struct {
 	mu              sync.RWMutex
 	price           *Price
 	ID              string                  `json:"id"`
-	Path            string                  `json:"path"`
+	EntryPath       string                  `json:"entry_path"`
+	ExitPath        string                  `json:"exit_path"`
 	Symbol          string                  `json:"symbol"`
 	OpenedAt        time.Time               `json:"opened_at"`
 	ClosedAt        *time.Time              `json:"closed_at"`
@@ -57,7 +58,7 @@ func NewPosition(
 		ExitOrders:  make([]*spot.OrderRequest, 0),
 		Fills:       make([]*kraken.ExecutionData, 0),
 		Symbol:      symbol,
-		Path:        path,
+		EntryPath:   path,
 		Virtual:     virtual,
 	}
 }
@@ -166,12 +167,13 @@ Exit records a sell of everything open and returns the order to submit. A
 position that is closed or already has its sell pending returns nil: selling
 it again would sell quantity it no longer holds.
 */
-func (position *Position) Exit() *spot.OrderRequest {
+func (position *Position) Exit(path string) *spot.OrderRequest {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
 	now := time.Now().UTC()
 	position.ClosedAt = &now
+	position.ExitPath = path
 
 	if !position.OpenedAt.IsZero() {
 		position.HoldNs = int64(now.Sub(position.OpenedAt))

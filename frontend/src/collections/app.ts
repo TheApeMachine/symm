@@ -2,7 +2,6 @@ import { createAtom } from "@tanstack/react-store";
 import { type Atom, createStore, type Store } from "@tanstack/store";
 import { RingBuffer } from "./ring";
 export { RingBuffer };
-export type * from "./types";
 
 import type { Value } from "#/types/value";
 
@@ -44,7 +43,6 @@ export const atoms: Record<string, Atom<any>> = {
 	error: createAtom<Record<string, unknown> | null>(null),
 	tickCount: createAtom<number>(0),
 	balance: createAtom<Value | null>(null),
-
 	phase: createAtom<string>("—"),
 	candidates: createAtom<number>(0),
 	positionCount: createAtom<number>(0),
@@ -74,37 +72,20 @@ export const signals: Record<
 };
 
 /*
-readPositionRows merges the desk's position frames into one row per symbol:
-the merged "all" frame (open + closed, paper + virtual, live marks — the desk
-broadcasts it every tick) with any newer per-event frame merged over it, so a
-just-opened or just-closed lot shows its new state without waiting for the
-next merged frame. Every position readout on the dashboard uses this.
+positionRows reads the desk's latest frame: the ring keyed by the frame's
+scope holds the merged positions broadcast (one per tick, all lots), and
+lookup("positions") decodes the rows straight off the Value.
 */
-export const readPositionRows = (
-	rings: Record<string, RingBuffer<Value> | undefined> | undefined,
+export const positionRows = (
+	store: Store<Record<string, RingBuffer<Value>>>,
+	scope: string,
 ): any[] => {
-	// epoch -> insertion order lets newer frames overwrite older ones.
-	const bySymbol = new Map<string, { at: bigint; row: any }>();
+	const ring = store.state[scope];
+	if (!ring || ring.isEmpty()) return [];
 
-	for (const ring of Object.values(rings ?? {})) {
-		if (!ring || ring.isEmpty()) continue;
+	const latest = ring.getLast();
+	if (!latest) return [];
 
-		const latest = ring.get(ring.getBufferLength() - 1);
-		if (!latest) continue;
-
-		const rows = latest.lookup("positions") as any[] | undefined;
-		if (!Array.isArray(rows)) continue;
-
-		for (const row of rows) {
-			if (!row || !row.symbol) continue;
-			const key = row.id
-				? `lot:${row.id}`
-				: `${row.symbol}:${row.virtual ? "v" : "p"}`;
-			const held = bySymbol.get(key);
-			const at = BigInt(latest.epoch ?? 0);
-			if (!held || at >= held.at) bySymbol.set(key, { at, row });
-		}
-	}
-
-	return [...bySymbol.values()].map((entry) => entry.row);
+	const rows = latest.lookup("positions") as any[] | undefined;
+	return Array.isArray(rows) ? rows : [];
 };

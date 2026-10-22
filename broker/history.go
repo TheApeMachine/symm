@@ -29,14 +29,7 @@ func NewHistory(ctx context.Context, store *store.Client) *History {
 }
 
 func (history *History) Restore(prefix string) iter.Seq[*data.Value] {
-	return func(yield func(*data.Value) bool) {
-		value := data.New()
-		history.store.Stream(history.Context(), prefix, value)
-
-		if !yield(value) {
-			return
-		}
-	}
+	return history.store.Stream(history.Context(), prefix)
 }
 
 /*

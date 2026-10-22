@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { readPositionRows, signals } from "#/collections/app";
+import { positionRows, signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import { bookReadout } from "#/components/book-readout";
 import { Flex } from "#/components/ui/flex";
@@ -13,8 +13,9 @@ book. Closed round trips own both figures. Open lots stand in until one closes.
 export const PaperPerformance = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const store = signals["positions"];
-	const rings = useSelector(store, (state) => state);
-	const positions = readPositions(rings);
+	// The revision bump is the render trigger; the rows come from the ring.
+	useSelector(store, (state) => state.revision);
+	const positions = readPositions();
 	const readout = bookReadout(positions, book);
 	const name = book === "virtual" ? "virtual" : "paper";
 	const basis = readout.closed > 0 ? "closed" : "open";
@@ -55,4 +56,4 @@ export const PaperPerformance = () => {
 	);
 };
 
-const readPositions = readPositionRows;
+const readPositions = () => positionRows(signals.positions, "all");

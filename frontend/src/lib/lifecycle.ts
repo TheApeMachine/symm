@@ -1,4 +1,4 @@
-import { signals as appSignals, readPositionRows } from "#/collections/app";
+import { positionRows, signals as appSignals } from "#/collections/app";
 import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
@@ -298,8 +298,10 @@ export const ensureDeskLifecycleFeed = () => {
 	lifecycleFeedStarted = true;
 
 	const tick = () => {
-		const ringStore = appSignals.positions;
-		const rows = readPositionRows(ringStore.state) as Record<string, unknown>[];
+		const rows = positionRows(appSignals.positions, "all") as Record<
+			string,
+			unknown
+		>[];
 		ingestDeskClosedLots(rows);
 	};
 
