@@ -4,25 +4,19 @@ import (
 	"context"
 	"io"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/strategy/tokenizer"
 )
 
-/*
-Training paper trades the live market against the action tree the Trainer
-published: every frame becomes a region token, the token advances the
-symbol's grammar through Sequitur, and when an induced rule matches a stored
-path with an agreed action, that action is taken through the Desk.
-*/
 type Training struct {
 	*runtime.System
 	model  *Model
 	price  *broker.Price
-	desk   *broker.Desk
+	desk   Desk
 	client *store.Client
 	grid   *nmstore.Grid
 }
@@ -58,10 +52,25 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		return nil
 	}
 
-	errnie.Debug(
-		"[training.Step]",
-		"observed", observed,
-	)
+	for _, region := range observed {
+		training.model.Evaluate(data.NewValue(
+			"training", "update", region.Symbol,
+		).Append(
+			tokenizer.NewToken(region), "token",
+		))
+	}
+
+	// Append the observed regions so the frontend's Impulse Map and
+	// position-card radial charts can render them.
+	if len(observed) > 0 {
+		value.Append(observed, "train", "regions")
+	}
+
+	// Safety net: settle any closed virtuals that were not handled
+	// inside Evaluate (e.g. restored from history on restart).
+	for _, cv := range training.desk.ClosedVirtuals() {
+		training.model.Settle(cv)
+	}
 
 	return value
 }

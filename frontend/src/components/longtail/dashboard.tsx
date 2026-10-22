@@ -1,5 +1,6 @@
-import { positionRows, signals } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
+import { positionRows } from "#/components/learning/open-positions";
 import {
 	buildInsights,
 	ensureLongtailRecorder,
@@ -135,8 +136,8 @@ export const LongtailDashboard = () => {
 
 	const { samples } = useLongtailReport();
 	const book = useSelector(bookAtom, (state) => state);
-	const revision = useSelector(signals.positions, (state) => state.revision);
-	const desk = useMemo(() => positionRows(signals.positions, "all"), [revision]);
+	const state = useSelector(signals.positions, (state) => state);
+	const desk = useMemo(() => positionRows(state), [state]);
 	const times = useMemo(() => samples.map((s) => s.at), [samples]);
 	const metrics = metricsFor(book);
 	const selectedInsights = buildInsights(samples, book);
@@ -313,7 +314,7 @@ export const LongtailDashboard = () => {
 												className="rounded-none border-(--line) border-b px-2.5 py-1.5 text-[10px]"
 											>
 												<span className="truncate text-(--f1)">
-													{row.symbol}
+													{String(row.symbol ?? "")}
 													<span className="text-(--f4)"> {book}</span>
 												</span>
 												<span

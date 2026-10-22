@@ -42,14 +42,9 @@ export class FluidManifoldFeed {
 			return;
 		}
 
-		const ring =
+		const value =
 			manifoldStore.state[symbol] ??
 			Object.values(manifoldStore.state)[0];
-		if (!ring) {
-			return;
-		}
-
-		const value = ring.getLast();
 		if (!value) {
 			return;
 		}

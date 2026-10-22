@@ -1,7 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { ArrowRight, HeartPulse, Radio } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
-import { atoms, type RingBuffer, signals } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
@@ -570,55 +570,32 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 	const activeSymbol = life?.symbol ?? "";
 	const currentDecision = decisions.find((d) => d.symbol === activeSymbol);
 
-	// Read live ring buffer from signals.training for this specific symbol
-	const [latestValue, setLatestValue] = useState<Value | null>(() => {
-		const ring = signals.training?.state?.[activeSymbol];
-		if (
-			ring &&
-			typeof ring.getBufferLength === "function" &&
-			ring.getBufferLength() > 0
-		) {
-			return ring.get(ring.getBufferLength() - 1) ?? null;
-		}
-		return null;
-	});
+	// Read the live training frame for this symbol from signals.training.
+	const [latestValue, setLatestValue] = useState<Value | null>(
+		() => signals.training?.state?.[activeSymbol] ?? null,
+	);
 
 	useEffect(() => {
-		const updateRing = (state: Record<string, RingBuffer<Value>>) => {
-			const ring = state[activeSymbol];
-			if (
-				ring &&
-				typeof ring.getBufferLength === "function" &&
-				ring.getBufferLength() > 0
-			) {
-				const latest = ring.get(ring.getBufferLength() - 1);
-				if (latest) {
-					setLatestValue(latest);
-				}
+		const updateFrame = (state: Record<string, Value>) => {
+			const frame = state[activeSymbol];
+			if (frame) {
+				setLatestValue(frame);
 			}
 		};
 
 		if (signals.training?.state) {
-			updateRing(signals.training.state);
+			updateFrame(signals.training.state);
 		}
 
-		const unsub = signals.training?.subscribe(updateRing);
+		const unsub = signals.training?.subscribe(updateFrame);
 		return () => {
 			unsub?.unsubscribe?.();
 		};
 	}, [activeSymbol]);
 
 	const livePathFromMeasurement = useMemo(() => {
-		const provenance = latestValue?.lookup("provenance") as
-			| { name: string; value: unknown }[]
-			| undefined;
-		if (!provenance) return "";
-		for (const p of provenance) {
-			if (p?.name === "token_path" && p.value) {
-				return String(p.value);
-			}
-		}
-		return "";
+		const tokenPath = latestValue?.provenance().token_path;
+		return tokenPath ? String(tokenPath) : "";
 	}, [latestValue]);
 
 	const currentPath = livePathFromMeasurement || currentDecision?.cause || "";
@@ -900,69 +877,38 @@ showing the active regions, entry confluence, and exit precursor levels for the 
 export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 	const activeSymbol = life?.symbol ?? "BTC/USD";
 
-	// Subscribe to live value for activeSymbol directly from signals.training
-	const [latestValue, setLatestValue] = useState<Value | null>(() => {
-		const ring = signals.training?.state?.[activeSymbol];
-		if (
-			ring &&
-			typeof ring.getBufferLength === "function" &&
-			ring.getBufferLength() > 0
-		) {
-			return ring.get(ring.getBufferLength() - 1) ?? null;
-		}
-		return null;
-	});
+	// Subscribe to the live training frame for activeSymbol.
+	const [latestValue, setLatestValue] = useState<Value | null>(
+		() => signals.training?.state?.[activeSymbol] ?? null,
+	);
 
 	useEffect(() => {
-		const updateValue = (state: Record<string, RingBuffer<Value>>) => {
-			const ring = state[activeSymbol];
-			if (
-				ring &&
-				typeof ring.getBufferLength === "function" &&
-				ring.getBufferLength() > 0
-			) {
-				const latest = ring.get(ring.getBufferLength() - 1);
-				if (latest) {
-					setLatestValue(latest);
-				}
+		const updateFrame = (state: Record<string, Value>) => {
+			const frame = state[activeSymbol];
+			if (frame) {
+				setLatestValue(frame);
 			}
 		};
 
 		if (signals.training?.state) {
-			updateValue(signals.training.state);
+			updateFrame(signals.training.state);
 		}
 
-		const unsub = signals.training?.subscribe(updateValue);
+		const unsub = signals.training?.subscribe(updateFrame);
 		return () => {
 			unsub?.unsubscribe?.();
 		};
 	}, [activeSymbol]);
 
-	const metricMap = useMemo(() => {
-		const map: Record<string, number> = {};
-		const metrics = latestValue?.lookup("metrics") as
-			| { name: string; raw: number }[]
-			| undefined;
-		if (!metrics) return map;
-		for (const m of metrics) {
-			if (m?.name) {
-				map[String(m.name)] = m.raw ?? 0;
-			}
-		}
-		return map;
-	}, [latestValue]);
+	const metricMap = useMemo(
+		() => (latestValue ? latestValue.metrics() : {}),
+		[latestValue],
+	);
 
 	const liveTokenPath = useMemo(() => {
-		const provenance = latestValue?.lookup("provenance") as
-			| { name: string; value: unknown }[]
-			| undefined;
-		if (!provenance) return "";
-		for (const p of provenance) {
-			if (p?.name === "token_path" && p.value) {
-				return String(p.value);
-			}
-		}
-		return "";
+		const tokenPath = latestValue?.provenance().token_path;
+		if (!tokenPath) return "";
+		return String(tokenPath);
 	}, [latestValue]);
 
 	const liveTokens = useMemo(

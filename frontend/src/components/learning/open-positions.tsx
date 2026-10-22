@@ -1,6 +1,4 @@
-import { useSelector } from "@tanstack/react-store";
-import { useMemo, useState } from "react";
-import { positionRows, signals } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import { cognitionStore, regionHistoryStore } from "#/collections/cognition";
 import { positionReadout } from "#/components/book-readout";
@@ -16,11 +14,14 @@ import {
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
 import { sendCommand } from "#/providers/websocket";
+import { useSelector } from "@tanstack/react-store";
+import { useMemo, useState } from "react";
 
 /*
-Open positions are the tick's positions layer. Entry, mark, fee and the
-sale return are on that position. The token path and the region ring are
-the live train/regions sentence for the same symbol.
+Open positions are the desk's per-lot frames: one Value per symbol on the
+positions store, whose "position" layer carries the row — entry, mark, fee
+and the sale return. The token path and the region ring are the live
+train/regions sentence for the same symbol.
 */
 
 const REGIONS = 15;
@@ -29,17 +30,37 @@ const regionLabel = (sector: number) => `R${String(sector).padStart(2, "0")}`;
 const trails = new Map<string, number[]>();
 
 /*
-The desk broadcasts one merged frame per tick on the positions store under
-scope "all"; its "positions" layer carries every row, open and closed.
+positionRows decodes every lot frame the store holds into its row objects.
+The "positions" layer is a JSON array; each element is one lot row.
+A layer that decodes to a single object (not an array) is also accepted.
 */
-const readPositions = () => positionRows(signals.positions, "all");
+export const positionRows = (
+	state: Record<string, { lookup: (keys: string[]) => unknown[] }>,
+): Record<string, unknown>[] => {
+	const rows: Record<string, unknown>[] = [];
+
+	for (const frame of Object.values(state)) {
+		for (const layer of frame.lookup(["position"])) {
+			if (Array.isArray(layer)) {
+				for (const row of layer) {
+					if (row && typeof row === "object" && !Array.isArray(row)) {
+						rows.push(row as Record<string, unknown>);
+					}
+				}
+			} else if (layer && typeof layer === "object") {
+				rows.push(layer as Record<string, unknown>);
+			}
+		}
+	}
+
+	return rows;
+};
 
 export const openLots = (rows: Record<string, unknown>[], book: Book) =>
 	rows
 		.filter(
 			(row) =>
-				!positionReadout(row).closed &&
-				row.virtual === (book === "virtual"),
+				!positionReadout(row).closed && row.virtual === (book === "virtual"),
 		)
 		.map((row) => row.symbol)
 		.sort();
@@ -155,7 +176,9 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 							background: `var(--${pnlTone === "muted" ? "f4" : pnlTone})`,
 						}}
 					/>
-					<span className="text-(--f1) font-bold text-sm">{row.symbol as string}</span>
+					<span className="text-(--f1) font-bold text-sm">
+						{row.symbol as string}
+					</span>
 					{selling && (
 						<span className="text-[10px] px-1.5 rounded bg-(--down)/20 text-(--down)">
 							flat
@@ -274,10 +297,10 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 			</div>
 
 			<div className="grid grid-cols-4 gap-2 border-t border-(--line) pt-2 text-[10px] text-(--f3)">
-				<span>qty {row.qty as number ?? "—"}</span>
-				<span>entry {row.entry_price as number ?? "—"}</span>
-				<span>mark {row.mark as number ?? "—"}</span>
-				<span>fee {row.entry_fee as number ?? "—"}</span>
+				<span>qty {(row.qty as number) ?? "—"}</span>
+				<span>entry {(row.entry_price as number) ?? "—"}</span>
+				<span>mark {(row.mark as number) ?? "—"}</span>
+				<span>fee {(row.entry_fee as number) ?? "—"}</span>
 			</div>
 
 			{/*
@@ -317,15 +340,11 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 
 export const OpenPositions = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const store = signals["positions"];
-	// The revision bump is the render trigger; the rows come from the ring.
-	useSelector(store, (state) => state.revision);
-	const positions = readPositions();
-	const held = positions
+	const state = useSelector(signals.positions, (state) => state);
+	const held = positionRows(state)
 		.filter(
 			(row) =>
-				!positionReadout(row).closed &&
-				row.virtual === (book === "virtual"),
+				!positionReadout(row).closed && row.virtual === (book === "virtual"),
 		)
 		.sort((a, b) => String(a.symbol).localeCompare(String(b.symbol)));
 
@@ -353,7 +372,7 @@ export const OpenPositions = () => {
 	return (
 		<div className="flex-1 min-h-0 overflow-auto grid grid-cols-[repeat(auto-fill,minmax(440px,1fr))] content-start">
 			{held.map((row) => (
-				<PositionCard key={row.id} row={row} />
+				<PositionCard key={String(row.id ?? row.symbol)} row={row} />
 			))}
 		</div>
 	);

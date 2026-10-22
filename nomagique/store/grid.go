@@ -48,6 +48,7 @@ contract: the Impulse Map renders the grid's own accepted regions from the
 training frame's grid/regions layer.
 */
 type Region struct {
+	Symbol      string  `json:"symbol"`
 	Key         uint8   `json:"key"`
 	Deformation float64 `json:"deformation"`
 	Brightness  float64 `json:"brightness"`
@@ -118,14 +119,6 @@ func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
 				Labels: parts[3:],
 				Values: values,
 			}
-
-			errnie.Debug(
-				"[grid.Observe]",
-				"parts1", parts[1],
-				"parts2", parts[2],
-				"labels", parts[3:],
-				"values", values,
-			)
 		}
 	}
 
@@ -182,7 +175,7 @@ func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
 					region := byKey[key]
 
 					if region == nil {
-						region = &Region{Key: key}
+						region = &Region{Symbol: symbol, Key: key}
 						byKey[key] = region
 						regions = append(regions, region)
 					}

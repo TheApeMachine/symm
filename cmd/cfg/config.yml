@@ -322,6 +322,9 @@ learning:
   threshold_floor: 0.05
   threshold_ceil: 0.95
   virtual_promote: 3
+  vocab_size: 15
+  default_window_size: 15
+  shannon_capacity: 0.45
 
 paper:
   # `make run` never writes storage: every paper-trade record (one data.Value

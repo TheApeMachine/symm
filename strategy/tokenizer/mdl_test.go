@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/system"
 )
 
 func generateCorpus(paragraphs int, rng *rand.Rand) string {
@@ -62,7 +63,7 @@ func TestMDL(t *testing.T) {
 		Convey("When analyzing a random byte stream", func() {
 			rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 			for i := range 50 {
-				val := byte(rng.Intn(VocabSize))
+				val := byte(rng.Intn(system.Cfg.Learning.VocabSize))
 				seq.Analyze(uint32(i), val)
 			}
 
@@ -72,7 +73,7 @@ func TestMDL(t *testing.T) {
 		})
 
 		Convey("When forcing a boundary via ShannonCeiling", func() {
-			for i := range VocabSize {
+			for i := range system.Cfg.Learning.VocabSize {
 				ok, _, _, _ := seq.Analyze(uint32(i), byte(i))
 				if ok {
 					break
@@ -94,7 +95,7 @@ func TestMDL(t *testing.T) {
 			cal.FeedbackChunk(0.20, 1.0, 1.0)
 			cal.FeedbackChunk(0.10, 1.0, 1.0)
 
-			for i := range VocabSize {
+			for i := range system.Cfg.Learning.VocabSize {
 				_, _, _, _ = seq.Analyze(uint32(i), byte(i))
 				if len(seq.candidates) > 0 {
 					break
@@ -197,7 +198,6 @@ func BenchmarkMDLDetectBoundary(b *testing.B) {
 		generateRepetitive(10, 200),
 	}
 
-	
 	for i := 0; b.Loop(); i++ {
 		buf := profiles[i%len(profiles)]
 		dist := NewDistribution()

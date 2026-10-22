@@ -2,11 +2,22 @@
 import { render, act, cleanup } from "@testing-library/react";
 import { describe, expect, it, afterEach } from "vitest";
 import { createStore } from "@tanstack/store";
-import { RingBuffer } from "#/collections/ring";
 import { Value } from "#/types/value";
 import { Component } from "./component";
 import { Sparkline } from "./sparkline";
 import { Typography } from "./typography";
+
+/*
+append adds one scalar layer the way the Go Append addresses it: the key
+joined below the frame's prefix, the payload a JSON array (the []float64
+of the Append call), one float per key.
+*/
+const append = (value: Value, key: string, payload: unknown) => {
+	const encoded = new TextEncoder().encode(JSON.stringify(payload));
+
+	value.layers = [...value.layers, encoded];
+	value.index = [...value.index, `${value.prefix}/${key}`];
+};
 
 describe("Component telemetry binding", () => {
 	afterEach(() => {
@@ -14,17 +25,18 @@ describe("Component telemetry binding", () => {
 	});
 
 	const createSampleValue = (symbol = "BTC/USD") => {
-		return new Value({
+		const value = new Value({
 			scope: symbol,
+			prefix: "workspace/tick/aggregate",
 			timestamp: 1_700_000_000_000_000_000n,
-			metrics: [
-				{ name: "contrast", raw: 1.2346, snm: 0.65 },
-				{ name: "stability", raw: 0.942, snm: 0.942 },
-				{ name: "ambiguity", raw: 0.8, snm: 0.8 },
-			],
-			metadata: [{ name: "epoch", value: 12 }],
-			provenance: [{ name: "regime", value: "TREND" }],
 		});
+
+		append(value, "contrast", [1.2346]);
+		append(value, "stability", [0.942]);
+		append(value, "ambiguity", [0.8]);
+		append(value, "regime", ["TREND"]);
+
+		return value;
 	};
 
 	it("binds direct value prop into DOM elements", () => {
@@ -56,10 +68,6 @@ describe("Component telemetry binding", () => {
 				>
 					—
 				</Typography.Span>
-				<Typography.Span data-f="m:contrast" data-testid="raw-contrast">
-					—
-				</Typography.Span>
-				<div data-mbar="contrast" data-testid="bar" style={{ width: "0%" }} />
 			</Component>,
 		);
 
@@ -67,8 +75,6 @@ describe("Component telemetry binding", () => {
 		expect(view.getByTestId("contrast").textContent).toBe("1.235");
 		expect(view.getByTestId("stability").textContent).toBe("94.2%");
 		expect(view.getByTestId("ambiguity").textContent).toBe("true");
-		expect(view.getByTestId("raw-contrast").textContent).toBe("1.2346");
-		expect(view.getByTestId("bar").style.width).toBe("65%");
 	});
 
 	it("resets DOM elements when value is null", () => {
@@ -95,10 +101,8 @@ describe("Component telemetry binding", () => {
 		expect(view.getByTestId("symbol").textContent).toBe("—");
 	});
 
-	it("subscribes to a store with symbol and streams live ring updates", () => {
-		const store = createStore<Record<string, RingBuffer<Value>>>({});
-		const ring = new RingBuffer<Value>(10);
-		store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
+	it("subscribes to a store with symbol and streams live frames", () => {
+		const store = createStore<Record<string, Value>>({});
 
 		const view = render(
 			<Component store={store} symbol="ETH/USD">
@@ -118,43 +122,46 @@ describe("Component telemetry binding", () => {
 		expect(view.getByTestId("symbol").textContent).toBe("—");
 
 		act(() => {
-			const v = createSampleValue("ETH/USD");
-			ring.add(v);
-			store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
+			store.setState((prev) => ({
+				...prev,
+				"ETH/USD": createSampleValue("ETH/USD"),
+			}));
 		});
 
 		expect(view.getByTestId("symbol").textContent).toBe("ETH/USD");
 		expect(view.getByTestId("contrast").textContent).toBe("1.23");
 	});
 
-	it("paints a sparkline from ring history for the named headline metric", () => {
-		const store = createStore<Record<string, RingBuffer<Value>>>({});
-		const ring = new RingBuffer<Value>(10);
-		store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
+	it("paints a sparkline from frame history for the named headline metric", () => {
+		const store = createStore<Record<string, Value>>({});
 
 		const view = render(
 			<Component store={store} symbol="ETH/USD">
-				<Sparkline data-k="sparkline" data-series="contrast" title="contrast" />
+				<Sparkline
+					data-k="sparkline"
+					data-series="contrast"
+					title="contrast"
+				/>
 			</Component>,
 		);
 
 		act(() => {
-			ring.add(
-				new Value({
-					scope: "ETH/USD",
-					metrics: [
-						{ name: "contrast", raw: 0.1, snm: 0.1 },
-						{ name: "stability", raw: 9, snm: 9 },
-					],
-				}),
-			);
-			ring.add(
-				new Value({
-					scope: "ETH/USD",
-					metrics: [{ name: "contrast", raw: 0.9, snm: 0.9 }],
-				}),
-			);
-			store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
+			const first = new Value({
+				scope: "ETH/USD",
+				prefix: "workspace/tick/aggregate",
+			});
+			append(first, "contrast", [0.1]);
+			append(first, "stability", [9]);
+			store.setState((prev) => ({ ...prev, "ETH/USD": first }));
+		});
+
+		act(() => {
+			const second = new Value({
+				scope: "ETH/USD",
+				prefix: "workspace/tick/aggregate",
+			});
+			append(second, "contrast", [0.9]);
+			store.setState((prev) => ({ ...prev, "ETH/USD": second }));
 		});
 
 		const spark = view.container.querySelector('polyline[fill="none"]');
@@ -167,24 +174,25 @@ describe("Component telemetry binding", () => {
 	});
 
 	it("does not paint the first metric when the named series is absent", () => {
-		const store = createStore<Record<string, RingBuffer<Value>>>({});
-		const ring = new RingBuffer<Value>(10);
-		store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
+		const store = createStore<Record<string, Value>>({});
 
 		const view = render(
 			<Component store={store} symbol="ETH/USD">
-				<Sparkline data-k="sparkline" data-series="missing" title="missing" />
+				<Sparkline
+					data-k="sparkline"
+					data-series="missing"
+					title="missing"
+				/>
 			</Component>,
 		);
 
 		act(() => {
-			ring.add(
-				new Value({
-					scope: "ETH/USD",
-					metrics: [{ name: "contrast", raw: 0.9, snm: 0.9 }],
-				}),
-			);
-			store.setState((prev) => ({ ...prev, "ETH/USD": ring }));
+			const frame = new Value({
+				scope: "ETH/USD",
+				prefix: "workspace/tick/aggregate",
+			});
+			append(frame, "contrast", [0.9]);
+			store.setState((prev) => ({ ...prev, "ETH/USD": frame }));
 		});
 
 		const spark = view.container.querySelector('polyline[fill="none"]');

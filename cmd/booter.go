@@ -577,12 +577,6 @@ func (booter *Booter) startIngress(
 				if data.Attribute[string](buf, "result", "channel") == "level3" {
 					booter.replies.Store(data.Attribute[string](buf, "result", "symbol"), "accepted: "+string(buf))
 				}
-
-				errnie.Debug(fmt.Sprintf("[booter] %s venue accepted %s %s %s", name,
-					data.Attribute[string](buf, "method"),
-					data.Attribute[string](buf, "result", "channel"),
-					data.Attribute[string](buf, "result", "symbol"),
-				))
 			}
 		}
 	}()

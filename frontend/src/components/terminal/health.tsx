@@ -54,8 +54,7 @@ export const terminalHealthSummary = (
 		const metricName = sourceHeadlineMetric(measurement.origin).slice(
 			"metrics.".length,
 		);
-		const found = measurement.metrics?.find((m) => m.name === metricName);
-		const value = found ? (found.snm ?? found.raw) : undefined;
+		const value = measurement.metrics()[metricName];
 
 		if (typeof value === "number" && Number.isFinite(value)) {
 			strengths.push(value);

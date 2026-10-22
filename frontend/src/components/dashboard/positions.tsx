@@ -1,6 +1,7 @@
-import { positionRows, signals } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { positionReadout } from "#/components/book-readout";
+import { positionRows } from "#/components/learning/open-positions";
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
@@ -91,7 +92,7 @@ const sellMarkers = (
 		};
 	});
 
-const readPositions = () => positionRows(signals.positions, "all");
+const readPositions = () => positionRows(signals.positions.state);
 
 const selectPositions = (
 	rows: Record<string, unknown>[],
@@ -210,9 +211,9 @@ const PnlPair = ({
 };
 
 export const Positions = () => {
-	const store = signals.positions;
-	// The revision bump is the render trigger; the rows come from the ring.
-	useSelector(store, (state) => state.revision);
+	// The store's new state object is the render trigger; the rows decode
+	// from the lot frames it holds.
+	useSelector(signals.positions, (state) => state);
 	const positions = selectPositions(readPositions());
 	const closed = selectClosed(readPositions());
 

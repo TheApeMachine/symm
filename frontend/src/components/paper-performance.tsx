@@ -1,10 +1,11 @@
-import { useSelector } from "@tanstack/react-store";
-import { positionRows, signals } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import { bookReadout } from "#/components/book-readout";
+import { positionRows } from "#/components/learning/open-positions";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 import { ratePercent } from "#/lib/lifecycle";
+import { useSelector } from "@tanstack/react-store";
 
 /*
 PaperPerformance is the top bar's win rate and mean edge for the selected
@@ -12,11 +13,8 @@ book. Closed round trips own both figures. Open lots stand in until one closes.
 */
 export const PaperPerformance = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const store = signals["positions"];
-	// The revision bump is the render trigger; the rows come from the ring.
-	useSelector(store, (state) => state.revision);
-	const positions = readPositions();
-	const readout = bookReadout(positions, book);
+	const state = useSelector(signals.positions, (state) => state);
+	const readout = bookReadout(positionRows(state), book);
 	const name = book === "virtual" ? "virtual" : "paper";
 	const basis = readout.closed > 0 ? "closed" : "open";
 	const title =
@@ -55,5 +53,3 @@ export const PaperPerformance = () => {
 		</Flex.Row>
 	);
 };
-
-const readPositions = () => positionRows(signals.positions, "all");

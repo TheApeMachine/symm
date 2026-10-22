@@ -26,7 +26,9 @@ The balance producer appends one map layer ({cash, equity, unrealized}) at
 index "balance"; readers take the field out of that map before formatting.
 */
 const field = (balance: Value | undefined, key: string) =>
-	(balance?.lookup("balance") as Record<string, unknown> | undefined)?.[key];
+	(balance?.lookup(["balance"])?.[0] as Record<string, unknown> | undefined)?.[
+		key
+	];
 
 const inProfit = (balance: Value) => {
 	const unrealized = field(balance, "unrealized");

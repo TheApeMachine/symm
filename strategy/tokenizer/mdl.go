@@ -3,6 +3,8 @@ package tokenizer
 import (
 	"math"
 	"math/bits"
+
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -47,7 +49,9 @@ type candidate struct {
 }
 
 func NewMDL(calibrator *Calibrator) *MDL {
-	minSeg := max(int(math.Log2(float64(VocabSize))/2), 2)
+	minSeg := max(int(math.Log2(float64(
+		system.Cfg.Learning.VocabSize,
+	))/2), 2)
 
 	return &MDL{
 		calibrator:      calibrator,
@@ -55,7 +59,7 @@ func NewMDL(calibrator *Calibrator) *MDL {
 		dist:            NewDistribution(),
 		runningHist:     NewDistribution(),
 		MinSegmentBytes: minSeg,
-		ShannonCeiling:  ShannonCapacity,
+		ShannonCeiling:  system.Cfg.Learning.ShannonCapacity,
 		PhaseThreshold:  math.Pi / 2.0,
 	}
 }
@@ -143,9 +147,14 @@ func (seq *MDL) Analyze(pos uint32, byteVal byte) (bool, int, []int, SegmentMeta
 
 	if isBoundary {
 		absK := seq.offset + k
-		seq.candidates = append(seq.candidates, candidate{k: absK, gain: gain, forced: shannonForced || phaseForced || primeForced})
-		seq.offset = absK
 
+		seq.candidates = append(seq.candidates, candidate{
+			k:      absK,
+			gain:   gain,
+			forced: shannonForced || phaseForced || primeForced,
+		})
+
+		seq.offset = absK
 		seq.dist = NewDistribution()
 
 		for _, b := range seq.buf[seq.offset:] {
@@ -174,13 +183,10 @@ func (seq *MDL) Analyze(pos uint32, byteVal byte) (bool, int, []int, SegmentMeta
 		}
 
 		emitMeta := seq.runningMeta
-
 		emitDist := seq.getDistribution(0, emitK)
 		emitDensity := emitDist.ShannonDensity()
-
 		maxBits := float64(emitK * 8)
 		actualBits := float64(emitDist.NumDistinct() * 8)
-
 		primeCoherence := 0.0
 
 		if maxBits > 0 {
@@ -188,9 +194,7 @@ func (seq *MDL) Analyze(pos uint32, byteVal byte) (bool, int, []int, SegmentMeta
 		}
 
 		phaseCoherence := math.Exp(-seq.emaPhase)
-
 		seq.emitSplit(emitK)
-
 		seq.candidates = seq.candidates[1:]
 
 		for i := range seq.candidates {
@@ -201,7 +205,9 @@ func (seq *MDL) Analyze(pos uint32, byteVal byte) (bool, int, []int, SegmentMeta
 		seq.updateEMA(val, delta, eigenMag)
 
 		if seq.calibrator != nil {
-			seq.calibrator.FeedbackChunk(emitDensity, primeCoherence, phaseCoherence)
+			seq.calibrator.FeedbackChunk(
+				emitDensity, primeCoherence, phaseCoherence,
+			)
 		}
 
 		return true, emitK, events, emitMeta
@@ -279,7 +285,6 @@ func (seq *MDL) detectBoundary(buf []byte, dist *Distribution) (bool, int, float
 
 		baseGain := costFull - (left.Cost() + right.Cost())
 		penaltyDiff := (penaltyLeft + penaltyRight) - penaltyFull
-
 		penalizedGain := baseGain - (penaltyScale * penaltyDiff)
 
 		if penalizedGain > maxGain {
@@ -406,7 +411,6 @@ func (seq *MDL) Forecast(pos int, byteVal byte) (bool, []int, SegmentMeta) {
 
 	events := append([]int{}, seq.classifyDirection(window, k))
 	events = append(events, EventPhaseInversion)
-
 	tempMeta := seq.runningMeta.RollLeft(1)
 
 	for _, ev := range events {
@@ -416,7 +420,9 @@ func (seq *MDL) Forecast(pos int, byteVal byte) (bool, []int, SegmentMeta) {
 	return true, events, tempMeta
 }
 
-func (seq *MDL) FeedbackRetrievalQuality(overDiscriminated, underDiscriminated bool) {
+func (seq *MDL) FeedbackRetrievalQuality(
+	overDiscriminated, underDiscriminated bool,
+) {
 	if seq.calibrator == nil {
 		return
 	}
@@ -425,9 +431,13 @@ func (seq *MDL) FeedbackRetrievalQuality(overDiscriminated, underDiscriminated b
 	adjust := stddev
 
 	if overDiscriminated {
-		seq.calibrator.SetSensitivityPop(seq.calibrator.SensitivityPop() * math.Exp(adjust))
+		seq.calibrator.SetSensitivityPop(
+			seq.calibrator.SensitivityPop() * math.Exp(adjust),
+		)
 	} else if underDiscriminated {
-		seq.calibrator.SetSensitivityPop(seq.calibrator.SensitivityPop() * math.Exp(-adjust))
+		seq.calibrator.SetSensitivityPop(
+			seq.calibrator.SensitivityPop() * math.Exp(-adjust),
+		)
 	}
 }
 
@@ -458,9 +468,7 @@ func (seq *MDL) Flush() (bool, int, []int, SegmentMeta) {
 	}
 
 	emitMeta := seq.runningMeta
-
 	seq.emitSplit(emitK)
-
 	seq.candidates = seq.candidates[1:]
 
 	for i := range seq.candidates {

@@ -172,16 +172,17 @@ export class GPUStreamRenderer {
 		let baseline = Number.NaN;
 		let decay = Number.NaN;
 
-		for (const m of row.metrics) {
-			if (m.name === this.metric.value) {
-				value = m.raw;
-			}
-			if (m.name === this.metric.baseline) {
-				baseline = m.raw;
-			}
-			if (m.name === this.metric.decay) {
-				decay = m.raw;
-			}
+		const metrics = row.metrics();
+		const { value: valueKey, baseline: baselineKey, decay: decayKey } =
+			this.metric;
+		if (valueKey && valueKey in metrics) {
+			value = metrics[valueKey];
+		}
+		if (baselineKey && baselineKey in metrics) {
+			baseline = metrics[baselineKey];
+		}
+		if (decayKey && decayKey in metrics) {
+			decay = metrics[decayKey];
 		}
 
 		if (value === undefined) {

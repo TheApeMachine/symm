@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/system"
 )
 
 func TestCalibrator(t *testing.T) {
@@ -97,7 +98,9 @@ func TestCalibrator(t *testing.T) {
 				cal.ObservePhase(0.35)
 				cal.ObservePhase(0.40)
 
-				So(cal.DensityCeiling(ShannonCapacity), ShouldBeLessThan, ShannonCapacity)
+				So(cal.DensityCeiling(
+					system.Cfg.Learning.ShannonCapacity,
+				), ShouldBeLessThan, system.Cfg.Learning.VocabSize)
 				So(cal.PhaseLimit(math.Pi/2.0), ShouldBeLessThan, math.Pi/2.0)
 			})
 		})

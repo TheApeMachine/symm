@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import type { Value as ResonanceFrame } from "#/types/value";
+import { Value } from "#/types/value";
 import { heatColor } from "#/components/terminal/canvas";
 import { layerCellsFromState } from "#/components/terminal/xray-layers";
 import { xrayLayersFromResonance } from "#/components/terminal/xray-view";
@@ -125,9 +125,13 @@ that complete bounded snapshot and owns no second cache of backend state.
 export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 	const frames = (
 		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Array<ResonanceFrame | Record<string, unknown>>;
+	) as Array<Value | Record<string, unknown>>;
 
-	const focused = frames.find((frame) => frame.symbol === focusSymbol);
+	const focused = frames.find(
+		(frame) =>
+			(frame instanceof Value ? frame.scope : frame.symbol) ===
+			focusSymbol,
+	);
 	const layers = xrayLayersFromResonance(focused);
 
 	if (symbolRef.current !== null) {

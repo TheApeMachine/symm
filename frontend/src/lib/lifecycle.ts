@@ -1,4 +1,5 @@
-import { positionRows, signals as appSignals } from "#/collections/app";
+import { signals as appSignals } from "#/collections/app";
+import { positionRows } from "#/components/learning/open-positions";
 import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
@@ -286,8 +287,8 @@ const subscribe = (listener: () => void) => {
 };
 
 /*
-ensureDeskLifecycleFeed keeps the lifecycle store fed from the desk's merged
-position frames on a timer, so the Position Life-Cycle tab shows open lots and
+ensureDeskLifecycleFeed keeps the lifecycle store fed from the desk's lot
+frames on a timer, so the Position Life-Cycle tab shows open lots and
 settled closes even when no rich frame stream replayed them. The longtail
 recorder ingests the same rows; one interval is enough for both.
 */
@@ -298,11 +299,7 @@ export const ensureDeskLifecycleFeed = () => {
 	lifecycleFeedStarted = true;
 
 	const tick = () => {
-		const rows = positionRows(appSignals.positions, "all") as Record<
-			string,
-			unknown
-		>[];
-		ingestDeskClosedLots(rows);
+		ingestDeskClosedLots(positionRows(appSignals.positions.state));
 	};
 
 	tick();

@@ -1,4 +1,4 @@
-import { atoms, type RingBuffer, signals } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -12,10 +12,10 @@ import {
 } from "#/components/terminal/kernel-meta";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
+import { meterPercent } from "#/components/ui/dom";
 import { Flex } from "#/components/ui/flex";
 import { Meter } from "#/components/ui/meter";
 import { Modal } from "#/components/ui/modal";
-import { meterPercent } from "#/components/ui/dom";
 import { scaleSparklineValues } from "#/components/ui/sparkline";
 import { Typography } from "#/components/ui/typography";
 import type { Value } from "#/types/value";
@@ -27,50 +27,25 @@ const isResonance = (source: string) => source === "resonance";
 /*
 readings collects the accumulated values for one kernel directly from its store.
 */
-const readingsFromValues = (
-	ring: RingBuffer<Value> | null | undefined,
-	source?: string,
-) => {
+const readingsFromValues = (frame: Value | null, source?: string) => {
 	const points: number[] = [];
-	if (!ring || typeof ring.getBufferLength !== "function") return points;
-	const len = ring.getBufferLength();
+	if (!frame) return points;
+
+	// The kernel publishes one scalar layer per metric key.
+	const metrics = frame.metrics();
 	const headline = source ? sourceHeadline(source) : null;
+	const keys = Object.keys(metrics);
 
-	for (let i = 0; i < len; i++) {
-		const m = ring.get(i);
-		if (!m) continue;
-		let val: number | null = null;
-		if (headline) {
-			for (const metric of (m.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
-				if (metric?.name !== headline) continue;
-				const chosen = Number(
-					typeof metric.snm === "number" && Number.isFinite(metric.snm)
-						? metric.snm
-						: metric.raw,
-				);
-				if (Number.isFinite(chosen)) {
-					val = chosen;
-					break;
-				}
-			}
-		}
-		const all = (m.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? [];
-		if (val === null && all.length) {
-			const first = all[0];
-			const chosen = Number(
-				typeof first.snm === "number" && Number.isFinite(first.snm)
-					? first.snm
-					: first.raw,
-			);
-			if (Number.isFinite(chosen)) {
-				val = chosen;
-			}
-		}
-		if (val !== null && Number.isFinite(val)) {
-			points.push(val);
-		}
-	}
+	const pick = (key: string): number | null => {
+		const chosen = Number(metrics[key]);
+		return Number.isFinite(chosen) ? chosen : null;
+	};
 
+	const val =
+		(headline && keys.includes(headline) ? pick(headline) : null) ??
+		(keys.length ? pick(keys[0] ?? "") : null);
+
+	if (val !== null) points.push(val);
 	return points;
 };
 
@@ -91,14 +66,11 @@ const metricValues = (
 	const out: Record<string, { raw: number; snm: number } | null> = {};
 	for (const name of names) out[name] = null;
 	if (!row) return out;
-	for (const m of (row.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
-		if (!m || !m.name) continue;
-		const name = typeof m.name === "string" ? m.name : null;
-		if (!name || !names.includes(name)) continue;
-		out[name] = {
-			raw: Number(m.raw),
-			snm: Number(m.snm ?? m.raw),
-		};
+	const metrics = row.metrics();
+	for (const name of names) {
+		const value = metrics[name];
+		if (typeof value !== "number" || !Number.isFinite(value)) continue;
+		out[name] = { raw: value, snm: value };
 	}
 
 	return out;
@@ -113,19 +85,27 @@ export const KernelInspector = () => {
 	const active = source !== null && source !== "";
 	const resonance = active && isResonance(source);
 
-	const signalStore = source ? signals[source] : undefined;
-	const published = useSelector(signalStore ?? signals.hawkes, (state) =>
-		signalStore ? (state[focusSymbol]?.end ?? 0) : 0,
-	);
-	const ring =
-		published >= 0 ? (signalStore?.state[focusSymbol] ?? null) : null;
+	/*
+	Kernels publish into the workspace tick; resonance is the one origin
+	with a store of its own. The frame is the latest reading, the sparkline
+	series is chart-local history the modal folds frame by frame.
+	*/
+	const signalStore =
+		source === "resonance" ? signals.resonance : signals.workspace;
+	const frame = useSelector(signalStore, (state) => {
+		if (source === "resonance")
+			return (
+				state[focusSymbol.replace(/\//g, "-")] ?? state[focusSymbol]
+			);
+		return state.aggregate;
+	});
 
 	if (!active) {
 		return null;
 	}
 
 	const copy = kernelCopy(source, "");
-	const points = readingsFromValues(ring, source);
+	const points = readingsFromValues(frame ?? null, source);
 	const latest = points.length > 0 ? points[points.length - 1] : null;
 	const status: SignalHealthStatus = latest === null ? "waiting" : "measured";
 	const badge = kernelStatusMeta(status);
@@ -139,16 +119,7 @@ export const KernelInspector = () => {
 		let raw: number | null = null;
 		let snm = 0;
 
-		const count = ring?.getBufferLength ? ring.getBufferLength() : 0;
-		let row: Value | null = null;
-		for (let i = count - 1; i >= 0; i--) {
-			const candidate = ring?.get(i);
-			if (candidate && metricValues(candidate, [name])[name] !== null) {
-				row = candidate;
-				break;
-			}
-		}
-		const value = row ? metricValues(row, [name])[name] : null;
+		const value = frame ? metricValues(frame, [name])[name] : null;
 
 		if (value) {
 			raw = value.raw;

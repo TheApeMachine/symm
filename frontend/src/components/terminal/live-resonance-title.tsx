@@ -4,13 +4,9 @@ import { parseResonanceData, type ResonanceData } from "#/components/charts/pred
 
 export const LiveResonanceTitle = () => {
 	const symbol = useSelector(atoms.focus);
-	const published = useSelector(signals.resonance, (state) =>
-		state[symbol]?.end ?? 0,
+	const last = useSelector(signals.resonance, (state) =>
+		state[symbol.replace(/\//g, "-")],
 	);
-	const ring =
-		published > 0 ? (signals.resonance.state[symbol] ?? undefined) : undefined;
-	const last =
-		ring && !ring.isEmpty() ? (ring.getLast() ?? undefined) : undefined;
 	const artifact: ResonanceData | null = last
 		? (parseResonanceData(last) ?? null)
 		: null;

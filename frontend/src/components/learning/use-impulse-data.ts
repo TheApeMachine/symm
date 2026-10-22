@@ -3,8 +3,7 @@ import { useSelector } from "@tanstack/react-store";
 import {
 	atoms,
 	clockAtom,
-	DEFAULT_KERNELS,
-	type RingBuffer,
+	signalFor,
 	signals,
 } from "#/collections/app";
 import type { Value } from "#/types/value";
@@ -75,21 +74,17 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 		const updateFromTelemetry = () => {
 			const trainingState = signals.training?.state;
 
-			// Look for training ring for symbol, learner, or any non-empty ring
-			let trainingRing: RingBuffer<Value> | null = null;
+			// Look for the training frame for the symbol, or any scope.
+			let latest: Value | null = null;
 			if (trainingState) {
-				if (
-					symbol &&
-					trainingState[symbol] &&
-					!trainingState[symbol].isEmpty()
-				) {
-					trainingRing = trainingState[symbol];
-				} else if (trainingState.learner && !trainingState.learner.isEmpty()) {
-					trainingRing = trainingState.learner;
+				if (symbol && trainingState[symbol]) {
+					latest = trainingState[symbol];
+				} else if (trainingState.learner) {
+					latest = trainingState.learner;
 				} else {
-					for (const r of Object.values(trainingState)) {
-						if (r && !r.isEmpty()) {
-							trainingRing = r;
+					for (const frame of Object.values(trainingState)) {
+						if (frame) {
+							latest = frame;
 							break;
 						}
 					}
@@ -110,70 +105,58 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				brightness: number;
 				counts: number;
 			}> = [];
-			if (trainingRing && !trainingRing.isEmpty()) {
-				const latest = trainingRing.getLast();
-				if (latest) {
-					for (const { payload } of latest.layersUnder("grid/regions")) {
-						if (!Array.isArray(payload)) continue;
-						for (const region of payload) {
-							if (region && typeof region.key === "number") {
-								gridRegions.push(region);
-							}
+			if (latest) {
+				for (const { payload } of latest.layersUnder("grid/regions")) {
+					if (!Array.isArray(payload)) continue;
+					for (const region of payload) {
+						if (region && typeof region.key === "number") {
+							gridRegions.push(region);
 						}
 					}
 				}
 			}
-			if (trainingRing && !trainingRing.isEmpty()) {
-				const latest = trainingRing.getLast();
-				if (latest) {
-					for (const { suffix, payload } of latest.layersUnder("train/regions")) {
-						const first = Array.isArray(payload)
-							? payload[0]
-							: payload;
-						if (typeof first !== "number") {
-							continue;
-						}
+			if (latest) {
+				for (const { suffix, payload } of latest.layersUnder(
+					"train/regions",
+				)) {
+					const first = Array.isArray(payload)
+						? payload[0]
+						: payload;
+					if (typeof first !== "number") {
+						continue;
+					}
 
-						/*
-						train/regions/<symbol>/<R##> carries brightness per
-						accepted region; train/regions/<symbol>/<token path>
-						carries the whole sentence. The region is the R##
-						segment wherever it appears in the suffix.
-						*/
-						const region = suffix.match(/R\d{2}/)?.[0];
+					/*
+					train/regions/<symbol>/<R##> carries brightness per
+					accepted region; train/regions/<symbol>/<token path>
+					carries the whole sentence. The region is the R##
+					segment wherever it appears in the suffix.
+					*/
+					const region = suffix.match(/R\d{2}/)?.[0];
 
-						if (region) {
-							trainingMetrics[`region_brightness:${region}`] =
-								first;
-						}
+					if (region) {
+						trainingMetrics[`region_brightness:${region}`] =
+							first;
 					}
 				}
 			}
 
-			// Read specific metric activations directly from the 10 signal kernel stores
+			// Read specific metric activations off the aggregate tick.
 			const kernelMetricSnm: Record<
 				string,
 				{ activation: number; snr: number }
 			> = {};
 			for (const pin of CANONICAL_PINS) {
-				const store = signals[pin.source];
-				if (!store?.state) continue;
-				const kernelRing = store.state[symbol] ?? store.state["BTC/USD"];
-				if (!kernelRing || typeof kernelRing.getLast !== "function") continue;
-				const row = kernelRing.getLast();
-				if (!row) continue;
+				const payloads = signalFor(pin.source, symbol);
+				const payload = payloads[pin.metric];
+				if (!Array.isArray(payload) || payload.length === 0) continue;
 
-				for (const { payload } of row.layersUnder(pin.metric)) {
-					if (!Array.isArray(payload) || payload.length === 0) continue;
+				const raw = Number(payload[0]);
+				if (!Number.isFinite(raw)) continue;
 
-					const raw = Number(payload[0]);
-					if (!Number.isFinite(raw)) continue;
-
-					const act = Math.min(1, Math.max(0, Math.abs(raw)));
-					const snr = act >= 0.5 ? 2.5 : 1.0;
-					kernelMetricSnm[pin.id] = { activation: act, snr };
-					break;
-				}
+				const act = Math.min(1, Math.max(0, Math.abs(raw)));
+				const snr = act >= 0.5 ? 2.5 : 1.0;
+				kernelMetricSnm[pin.id] = { activation: act, snr };
 			}
 
 			// Read or derive brightness and member counts for each of the 15 regions (R00..R14)
@@ -295,16 +278,11 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 		});
 		unsubs.push(() => trainingSub?.unsubscribe?.());
 
-		// Peer kernel signal subscriptions
-		for (const kernel of DEFAULT_KERNELS) {
-			const store = signals[kernel];
-			if (store) {
-				const sub = store.subscribe(() => {
-					updateFromTelemetry();
-				});
-				unsubs.push(() => sub?.unsubscribe?.());
-			}
-		}
+		// The aggregate tick carries every kernel's layers.
+		const workspaceSub = signals.workspace.subscribe(() => {
+			updateFromTelemetry();
+		});
+		unsubs.push(() => workspaceSub.unsubscribe());
 
 		return () => {
 			for (const u of unsubs) {

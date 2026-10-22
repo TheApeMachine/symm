@@ -1,9 +1,10 @@
 import { createStore } from "@tanstack/store";
 import { useSelector } from "@tanstack/react-store";
-import { positionRows, signals } from "#/collections/app";
+import { signals } from "#/collections/app";
 import type { Book } from "#/collections/book";
 import { sequiturStore } from "#/collections/sequitur";
 import { closedOnBook, onBook, openOnBook, positionReadout } from "#/components/book-readout";
+import { positionRows } from "#/components/learning/open-positions";
 import { ingestDeskClosedLots } from "#/lib/lifecycle";
 
 export type Trend = "up" | "down" | "flat";
@@ -209,7 +210,7 @@ const pushSample = (sample: LongtailSample) => {
 	});
 };
 
-const readPositions = () => positionRows(signals.positions, "all");
+const readPositions = () => positionRows(signals.positions.state);
 
 let recorderStarted = false;
 

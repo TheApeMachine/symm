@@ -87,12 +87,26 @@ func NewHub(ctx context.Context) *Hub {
 	return hub
 }
 
+/*
+wsHandler serves the dashboard socket.
+
+The hub's fasthttp server recycles a connection the moment its handler
+returns (the hijacked-socket keep flag this websocket helper tries to set
+only applies to net.Listener hijacks, not fasthttp's own hijack path).
+The handler must therefore block until the dashboard actually goes away:
+reading until error does exactly that, so the browser's own connection
+lifetime — not the server's — decides when frames stop.
+*/
 func (hub *Hub) wsHandler() fiber.Handler {
 	return websocket.New(func(conn *websocket.Conn) {
-		// One drain goroutine owns the hub-wide queue: a new connection
-		// takes over the current writer instead of starting a racer. A
-		// drain that finds hub.conn no longer its own exits, so a stale
-		// goroutine can never dequeue a frame it cannot deliver.
+		defer func() {
+			conn.Close()
+
+			if hub.conn.CompareAndSwap(conn, (*websocket.Conn)(nil)) {
+				hub.connected.Store(false)
+			}
+		}()
+
 		hub.writeMu.Lock()
 
 		old := hub.conn.Swap(conn)
@@ -118,8 +132,12 @@ func (hub *Hub) wsHandler() fiber.Handler {
 			callback()
 		}
 
-		hub.writeMu.Unlock()
-
+		/*
+			This drain is the connection's writer: it lives on the handler
+			goroutine, so it is retired the instant the handler returns and no
+			drained frame can outlive its socket. It exits quietly once the
+			handler swaps in a replacement connection.
+		*/
 		go func() {
 			for {
 				if hub.ctx.Err() != nil {
@@ -128,9 +146,6 @@ func (hub *Hub) wsHandler() fiber.Handler {
 
 				hub.writeMu.Lock()
 
-				// The connection this drain belongs to was replaced (or
-				// broke): stop without dequeuing so the current writer
-				// alone serves the queue.
 				if hub.conn.Load() != conn {
 					hub.writeMu.Unlock()
 					return
@@ -140,7 +155,7 @@ func (hub *Hub) wsHandler() fiber.Handler {
 
 				if !ok {
 					hub.writeMu.Unlock()
-					time.Sleep(10 * time.Millisecond)
+					time.Sleep(5 * time.Millisecond)
 					continue
 				}
 
@@ -149,24 +164,13 @@ func (hub *Hub) wsHandler() fiber.Handler {
 				hub.writeMu.Unlock()
 
 				if err != nil {
-					// The write broke the connection: drop it so the
-					// next dashboard connect attaches cleanly.
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						"[hub] write to websocket failed",
-						err,
-					))
-
 					conn.Close()
-
-					if hub.conn.CompareAndSwap(conn, (*websocket.Conn)(nil)) {
-						hub.connected.Store(false)
-					}
-
 					return
 				}
 			}
 		}()
+
+		hub.writeMu.Unlock()
 
 		for {
 			select {
@@ -178,12 +182,8 @@ func (hub *Hub) wsHandler() fiber.Handler {
 			_, payload, err := conn.Conn.ReadMessage()
 
 			if err != nil {
-				// The dashboard is gone; publishers skip frames until the
-				// next one attaches.
-				if hub.conn.CompareAndSwap(conn, (*websocket.Conn)(nil)) {
-					hub.connected.Store(false)
-				}
-
+				// The dashboard is gone; the deferred teardown above
+				// retires this connection and the drain with it.
 				return
 			}
 

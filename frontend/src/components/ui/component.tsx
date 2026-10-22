@@ -1,5 +1,3 @@
-import type { RingBuffer } from "#/collections/app";
-import { RingCursor } from "#/collections/ring";
 import type { Value } from "#/types/value";
 import { type ReactNode, useEffect, useRef } from "react";
 import { Alert } from "./alert";
@@ -21,46 +19,54 @@ const finiteSample = (value: number | undefined): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
 
 const sampleMetric = (item: Value, name: string | null): number | null => {
+	// Scalar layers arrive as a metric-keyed map.
+	const metrics = item.metrics();
+	const keys = Object.keys(metrics);
+
 	if (name) {
-		for (const metric of item.metrics ?? []) {
-			if (metric?.name !== name) continue;
-			return finiteSample(metric.snm) ?? finiteSample(metric.raw);
-		}
-		return null;
+		if (!keys.includes(name)) return null;
+		return finiteSample(metrics[name]);
 	}
 
-	const first = item.metrics?.[0];
-	if (!first) return null;
-	return finiteSample(first.snm) ?? finiteSample(first.raw);
+	if (keys.length === 0) return null;
+	return finiteSample(metrics[keys[0] ?? ""]);
 };
 
-const seriesFromRing = (
-	ring: RingBuffer<Value>,
-	name: string | null,
-): number[] => {
-	const points: number[] = [];
-	const len = ring.getBufferLength();
-	for (let i = 0; i < len; i++) {
-		const item = ring.get(i);
-		if (!item) continue;
-		const sample = sampleMetric(item, name);
-		if (sample !== null) points.push(sample);
-	}
-	return points;
-};
-
-const paintSparkline = (root: HTMLElement, ring?: RingBuffer<Value>) => {
+/*
+The sparkline tracks the series stored on the element: each frame appends its
+sample and the window is capped, so the trend survives without a ring store.
+*/
+const appendSeries = (
+	root: HTMLElement,
+	frame: Value | undefined,
+): void => {
 	const svg = memoizedQuery<SVGElement>(root, '[data-k="sparkline"]');
 	if (!svg) return;
 
-	if (!ring || ring.isEmpty()) {
+	const name = svg.getAttribute("data-series");
+	const sample = frame ? sampleMetric(frame, name) : null;
+
+	const key = name || "";
+	const series: number[] =
+		(seriesStore.get(root)?.[key] ?? []).concat(
+			sample === null ? [] : [sample],
+		);
+	const window = series.slice(-SERIES_WINDOW);
+
+	const stored = seriesStore.get(root) ?? {};
+	stored[key] = window;
+	seriesStore.set(root, stored);
+
+	if (window.length === 0) {
 		setSparkline(svg, [], false);
 		return;
 	}
 
-	const series = seriesFromRing(ring, svg.getAttribute("data-series"));
-	setSparkline(svg, scaleSparklineValues(series), series.length > 0);
+	setSparkline(svg, scaleSparklineValues(window), true);
 };
+
+const SERIES_WINDOW = 120;
+const seriesStore = new WeakMap<HTMLElement, Record<string, number[]>>();
 
 export const reset = (root: HTMLElement, fallback = "—") => {
 	const elements = memoizedQueryAll(
@@ -70,7 +76,43 @@ export const reset = (root: HTMLElement, fallback = "—") => {
 	for (const el of elements) {
 		resetValue(el, fallback);
 	}
-	paintSparkline(root);
+	seriesStore.delete(root);
+	const svg = memoizedQuery<SVGElement>(root, '[data-k="sparkline"]');
+	if (svg) setSparkline(svg, [], false);
+};
+
+/*
+walk binds one frame to matching DOM elements. The frame's own fields
+(scope, origin, timestamp) bind to their data-metric selectors — scope
+also answering data-metric="symbol" — and each scalar layer of the frame
+(the Go Append calls addressed below the prefix) binds by its metric name.
+*/
+export const walkFrame = (root: HTMLElement, frame: Value) => {
+	const fields: Record<string, unknown> = {};
+	for (const key of [
+		"id",
+		"epoch",
+		"tick",
+		"seqIdx",
+		"timestamp",
+		"origin",
+		"role",
+		"scope",
+	] as const) {
+		fields[key] = frame[key];
+	}
+
+	bind(root, fields);
+
+	const metrics: Record<string, unknown> = {};
+	for (const { suffix, payload } of frame.readings()) {
+		if (suffix === "") continue;
+		const first = Array.isArray(payload) ? payload[0] : payload;
+		if (first === null || first === undefined) continue;
+		metrics[suffix] = first;
+	}
+
+	bind(root, metrics);
 };
 
 /*
@@ -81,7 +123,7 @@ walk an object recursively and bind its fields directly to matching DOM elements
   [data-metric-meter="<key>"], [data-metric-badge="<key>"]
 - Nested objects and arrays are traversed recursively
 */
-export const walk = (root: HTMLElement, obj: unknown) => {
+export const bind = (root: HTMLElement, obj: unknown) => {
 	if (obj === null || obj === undefined || typeof obj !== "object") return;
 
 	for (const [key, value] of Object.entries(obj)) {
@@ -125,7 +167,7 @@ export const walk = (root: HTMLElement, obj: unknown) => {
 							item,
 						);
 					}
-					walk(root, item);
+					bind(root, item);
 				} else {
 					renderValue(
 						memoizedQuery(
@@ -140,7 +182,7 @@ export const walk = (root: HTMLElement, obj: unknown) => {
 		}
 
 		if (typeof value === "object") {
-			walk(root, value);
+			bind(root, value);
 			continue;
 		}
 
@@ -181,9 +223,7 @@ export const walk = (root: HTMLElement, obj: unknown) => {
 export interface ComponentProps {
 	/* Direct single value to bind */
 	value?: Value | null;
-	/* Direct ring buffer to observe */
-	ringBuffer?: RingBuffer<Value>;
-	/* A signal store; with symbol, the Component follows that symbol's ring live. */
+	/* A signal store; with symbol, the Component follows that symbol's frame live. */
 	store?: ValueStore;
 	source?: string;
 	symbol?: string;
@@ -196,14 +236,13 @@ export interface ComponentProps {
 
 /*
 Component acts as a dynamic telemetry data-binding boundary.
-It subscribes to a Value, RingBuffer<Value>, or a named signal store
+It subscribes to a Value or a named signal store
 and dynamically binds incoming Value fields to matching data attributes in
 its children DOM tree (e.g., data-metric="<metric_name>"), bypassing React's
 render cycle for maximum streaming throughput without repetitive boilerplate.
 */
 export const Component = ({
 	value: propValue,
-	ringBuffer: propRing,
 	store,
 	symbol,
 	children,
@@ -221,7 +260,7 @@ export const Component = ({
 		// 1. Direct value prop
 		if (propValue !== undefined) {
 			if (propValue) {
-				walk(root, propValue);
+				walkFrame(root, propValue);
 				if (onValue) onValue(propValue, root);
 			} else {
 				reset(root);
@@ -229,46 +268,33 @@ export const Component = ({
 			return;
 		}
 
-		// 2. RingBuffer or Store subscription
+		// 2. Store subscription: the store holds one Value per scope.
 		reset(root);
 
-		const cursor = new RingCursor<Value>();
-		let observedRing: RingBuffer<Value> | undefined;
-		let generation = -1;
-
-		const update = (ring: RingBuffer<Value> | undefined) => {
-			if (!ring || ring.isEmpty()) {
+		const update = (frame: Value | undefined) => {
+			if (!frame) {
 				reset(root);
 				return;
 			}
 
-			if (observedRing !== ring || generation !== ring.generation) {
-				observedRing = ring;
-				generation = ring.generation;
-			}
-
-			cursor.read(ring, (val) => {
-				walk(root, val);
-				if (onValue) onValue(val, root);
-			});
-			paintSparkline(root, ring);
+			walkFrame(root, frame);
+			if (onValue) onValue(frame, root);
+			appendSeries(root, frame);
 		};
 
 		const resolve = () =>
-			propRing ??
-			(store && symbol !== undefined ? store.state[symbol] : undefined);
+			store && symbol !== undefined ? store.state[symbol] : undefined;
 
 		const current = resolve();
 		if (current) update(current);
 		if (!store) return;
 
 		const subscription = store.subscribe(() => {
-			const ring = resolve();
-			update(ring);
+			update(resolve());
 		});
 
 		return () => subscription.unsubscribe();
-	}, [propValue, propRing, store, symbol, onValue]);
+	}, [propValue, store, symbol, onValue]);
 
 	if (isLoading) {
 		return <Loader />;

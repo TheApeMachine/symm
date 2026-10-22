@@ -4,7 +4,6 @@ import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	atoms,
-	type RingBuffer,
 	signals,
 } from "#/collections/app";
 import {
@@ -20,7 +19,6 @@ import {
 	type DetectionRun,
 	detectionsStore,
 } from "#/collections/detections";
-import { RingCursor } from "#/collections/ring";
 import { Scanlines } from "#/components/ui/scanlines";
 import { cn } from "#/lib/utils";
 import { sendCommand } from "#/providers/websocket";
@@ -254,34 +252,31 @@ function signedPercent(fraction: number): string {
 	return `${body}%`;
 }
 
-const getTargetRing = (
-	records: Record<string, RingBuffer<Value>> | undefined,
+const getTargetFrame = (
+	records: Record<string, Value> | undefined,
 	target: string,
-): { ring: RingBuffer<Value>; symbol: string } | null => {
+): { frame: Value; symbol: string } | null => {
 	if (!records) return null;
-	if (target && records[target] && !records[target].isEmpty()) {
-		return { ring: records[target], symbol: target };
+	if (target && records[target]) {
+		return { frame: records[target], symbol: target };
 	}
-	if (records.learner && !records.learner.isEmpty()) {
-		return { ring: records.learner, symbol: "learner" };
+	if (records.learner) {
+		return { frame: records.learner, symbol: "learner" };
 	}
-	let bestRing: RingBuffer<Value> | null = null;
+	let best: Value | null = null;
 	let bestSym = "";
 	let latestTick = -1n;
 
-	for (const [sym, ring] of Object.entries(records)) {
-		if (!ring || ring.isEmpty()) continue;
-		const len = ring.getBufferLength();
-		const last = len > 0 ? ring.get(len - 1) : undefined;
-		const tick = last?.tick ?? 0n;
-		if (tick >= latestTick || bestRing === null) {
-			latestTick = tick;
-			bestRing = ring;
+	for (const [sym, frame] of Object.entries(records)) {
+		if (!frame) continue;
+		if (frame.tick >= latestTick || best === null) {
+			latestTick = frame.tick;
+			best = frame;
 			bestSym = sym;
 		}
 	}
-	if (bestRing) {
-		return { ring: bestRing, symbol: bestSym };
+	if (best) {
+		return { frame: best, symbol: bestSym };
 	}
 	return null;
 };
@@ -789,7 +784,6 @@ export const ForwardLearningViz = ({
 	// Historical-runs mode still reads stage/metrics for the side panels, but never
 	// mutates the tape chart — selection must stick against BTC/USD hub updates.
 	useEffect(() => {
-		const cursor = new RingCursor<Value>();
 		pendingEpisodeRef.current = [];
 		currentEpisodeRef.current = null;
 		setEpisodeQueue([]);
@@ -799,10 +793,8 @@ export const ForwardLearningViz = ({
 		}
 		lastSeenExcursionStartRef.current = -1;
 
-		const handleRing = (ring: RingBuffer<Value>) => {
-			if (!ring || ring.isEmpty()) return;
-
-			cursor.read(ring, (measurement) => {
+		const handleFrame = (measurement: Value) => {
+			{
 				const activeSym = String(measurement.scope || "TRAINING");
 				const tapePinned = historicalOnly || pinnedFragmentRef.current;
 
@@ -824,10 +816,8 @@ export const ForwardLearningViz = ({
 					setCurrentSymbol(activeSym);
 				}
 
-				const metricMap: Record<string, number> = {};
-				for (const m of (measurement.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
-					if (!m?.name) continue;
-					metricMap[String(m.name)] = m.raw ?? 0;
+				const metricMap: Record<string, number> = measurement.metrics();
+				{
 				}
 
 				const evalCount = metricMap.evaluated ?? 0;
@@ -837,10 +827,9 @@ export const ForwardLearningViz = ({
 				const sCode = metricMap.stage_code ?? 0;
 				setStageCode(sCode);
 
-				for (const p of (measurement.lookup("provenance") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
-					if (p?.name === "stage_blocker" && p.value !== undefined) {
-						setStageBlocker(String(p.value));
-					}
+				const provenance = measurement.provenance();
+				if (provenance.stage_blocker !== undefined) {
+					setStageBlocker(String(provenance.stage_blocker));
 				}
 
 				// Precursor & prediction
@@ -849,35 +838,25 @@ export const ForwardLearningViz = ({
 
 				let tokensList: string[] = [];
 				let excDirection = "";
-				for (const p of (measurement.lookup("provenance") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
-					if (p?.name === "precursor_tokens" && p.value) {
-						tokensList = String(p.value).split(",").filter(Boolean);
-					}
-					if (p?.name === "excursion_direction")
-						excDirection = String(p.value);
+				if (provenance.precursor_tokens) {
+					tokensList = String(provenance.precursor_tokens)
+						.split(",")
+						.filter(Boolean);
 				}
+				if (provenance.excursion_direction)
+					excDirection = String(provenance.excursion_direction);
 				let excStart: number | undefined;
 				let excIgnition: number | undefined;
 				let excExit: number | undefined;
 
-				{
-					for (const m of (measurement.lookup("metadata") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
-						if (m?.name === "precursor_tokens" && m.value) {
-							tokensList = String(m.value).split(",").filter(Boolean);
-						}
-						if (m?.name === "excursion_start" && m.value) {
-							excStart = Number(m.value);
-						}
-						if (m?.name === "excursion_ignition" && m.value) {
-							excIgnition = Number(m.value);
-						}
-						if (m?.name === "excursion_exit" && m.value) {
-							excExit = Number(m.value);
-						}
-						if (m?.name === "excursion_direction" && m.value) {
-							excDirection = String(m.value);
-						}
-					}
+				if (provenance.excursion_start !== undefined) {
+					excStart = Number(provenance.excursion_start);
+				}
+				if (provenance.excursion_ignition !== undefined) {
+					excIgnition = Number(provenance.excursion_ignition);
+				}
+				if (provenance.excursion_exit !== undefined) {
+					excExit = Number(provenance.excursion_exit);
 				}
 				if (!tapePinned) {
 					setRawPrecursorTokens(tokensList);
@@ -936,17 +915,13 @@ export const ForwardLearningViz = ({
 				setHistMeanReturn(metricMap.hist_mean_return ?? 0);
 				setHistLowerBound(metricMap.hist_lower_bound ?? 0);
 
-				{
-					for (const m of (measurement.lookup("provenance") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
-						if (m?.name === "edge_samples" && m.value) {
-							const parsed = String(m.value)
-								.split(",")
-								.map((part) => Number(part.trim()))
-								.filter((value) => Number.isFinite(value));
-							if (parsed.length > 0) {
-								setEdgeSamples(parsed);
-							}
-						}
+				if (provenance.edge_samples) {
+					const parsed = String(provenance.edge_samples)
+						.split(",")
+						.map((part) => Number(part.trim()))
+						.filter((value) => Number.isFinite(value));
+					if (parsed.length > 0) {
+						setEdgeSamples(parsed);
 					}
 				}
 
@@ -958,28 +933,21 @@ export const ForwardLearningViz = ({
 
 				// Extract price directly from measurement or metrics (which is log-return)
 				let rawPrice: number | undefined;
-				if (metricMap.price !== undefined) {
-					rawPrice = metricMap.price;
-				} else if (measurement.lookup("metrics")) {
-					for (const met of (measurement.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
-						if (met?.name && met?.raw !== undefined) {
-							const lk = met.name.toLowerCase();
-							const validPrices = [
-								"price",
-								"last_price",
-								"mark_price",
-								"best_price:bid",
-								"best_price:ask",
-								"trade_price",
-								"mid",
-								"close",
-							];
-							if (validPrices.includes(lk)) {
-								rawPrice = met.raw;
-								break;
-							}
-						}
-					}
+				{
+					const validPrices = [
+						"price",
+						"last_price",
+						"mark_price",
+						"best_price:bid",
+						"best_price:ask",
+						"trade_price",
+						"mid",
+						"close",
+					];
+					const found = validPrices
+						.map((key) => metricMap[key])
+						.find((value) => value !== undefined);
+					if (found !== undefined) rawPrice = found;
 				}
 
 				if (rawPrice !== undefined) {
@@ -1049,31 +1017,30 @@ export const ForwardLearningViz = ({
 					});
 				}
 
-				// String event tags are carried by the wire's provenance vector.
-				{
-					for (const m of (measurement.lookup("provenance") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
-						if (
-							m?.name === "excursion_event" &&
-							String(m.value) === "completed"
-						) {
-							if (pendingEpisodeRef.current.length > 0) {
-								const readyEpisode = [...pendingEpisodeRef.current];
-								setEpisodeQueue((q) => [...q, readyEpisode].slice(-50));
-							}
-							pendingEpisodeRef.current = [];
-						}
+				// String event tags are carried by the frame's provenance.
+				if (provenance.excursion_event === "completed") {
+					if (pendingEpisodeRef.current.length > 0) {
+						const readyEpisode = [...pendingEpisodeRef.current];
+						setEpisodeQueue((q) => [...q, readyEpisode].slice(-50));
 					}
+					pendingEpisodeRef.current = [];
 				}
-			});
+			}
 		};
 
+		const seen = new Set<string>();
+
 		const updateFromState = (
-			state: Record<string, RingBuffer<Value>> | undefined,
+			state: Record<string, Value> | undefined,
 		) => {
 			if (!state) return;
-			const target = getTargetRing(state, targetSymbol);
+			const target = getTargetFrame(state, targetSymbol);
 			if (target) {
-				handleRing(target.ring);
+				// One frame per symbol scope: feed it once per tick.
+				const key = `${target.symbol}:${target.frame.tick}`;
+				if (seen.has(key)) return;
+				seen.add(key);
+				handleFrame(target.frame);
 			}
 		};
 

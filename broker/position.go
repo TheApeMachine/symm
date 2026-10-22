@@ -83,6 +83,12 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		position.EntryFee = rate
 		position.ExitFee = rate
 	}
+
+	// Exit room: how many times the bid book can carry this position.
+	if position.price != nil && position.Qty != nil && position.Qty.Sign() > 0 {
+		room := position.price.ExitRoom(position.Symbol, position.Qty)
+		position.ExitRoom = &room
+	}
 }
 
 /*

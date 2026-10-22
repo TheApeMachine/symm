@@ -11,7 +11,8 @@ import {
 	Typography,
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
-import { useSelector } from "@tanstack/react-store";
+import type { Value } from "#/types/value";
+import { type Store, useSelector } from "@tanstack/react-store";
 
 interface MetricProps {
 	name: string;
@@ -21,7 +22,7 @@ interface MetricProps {
 export const Metric = ({ name, compact = false }: MetricProps) => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const headline = sourceHeadline(name) ?? name;
-	const store = signals[name];
+	const store = signals.workspace as Store<Record<string, Value>>;
 
 	return (
 		<Component

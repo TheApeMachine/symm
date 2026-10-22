@@ -1,7 +1,5 @@
 import { createAtom } from "@tanstack/react-store";
 import { type Atom, createStore, type Store } from "@tanstack/store";
-import { RingBuffer } from "./ring";
-export { RingBuffer };
 
 import type { Value } from "#/types/value";
 
@@ -50,87 +48,79 @@ export const atoms: Record<string, Atom<any>> = {
 	kernelDetail: createAtom<string>("cvd"),
 };
 
-export const signals: Record<
-	string,
-	Store<Record<string, RingBuffer<Value>>>
-> = {
-	category: createStore<Record<string, RingBuffer<Value>>>({}),
-	correlation: createStore<Record<string, RingBuffer<Value>>>({}),
-	cvd: createStore<Record<string, RingBuffer<Value>>>({}),
-	depthflow: createStore<Record<string, RingBuffer<Value>>>({}),
-	hawkes: createStore<Record<string, RingBuffer<Value>>>({}),
-	leadlag: createStore<Record<string, RingBuffer<Value>>>({}),
-	liquidity: createStore<Record<string, RingBuffer<Value>>>({}),
-	morphology: createStore<Record<string, RingBuffer<Value>>>({}),
-	pumpdump: createStore<Record<string, RingBuffer<Value>>>({}),
-	sentiment: createStore<Record<string, RingBuffer<Value>>>({}),
-	resonance: createStore<Record<string, RingBuffer<Value>>>({}),
-	toxicity: createStore<Record<string, RingBuffer<Value>>>({}),
-	training: createStore<Record<string, RingBuffer<Value>>>({}),
-	manifold: createStore<Record<string, RingBuffer<Value>>>({}),
-	positions: createStore<Record<string, RingBuffer<Value>>>({}),
+/*
+Named aliases for the atoms record.
+*/
+export const focusAtom = atoms.focus;
+export const routeAtom = atoms.route;
+export const focusMetricAtom = atoms.focusMetric;
+export const onlineAtom = atoms.online;
+export const symbolsAtom = atoms.symbols;
+export const errorAtom = atoms.error;
+export const tickCountAtom = atoms.tickCount;
+export const balanceAtom = atoms.balance;
+export const phaseAtom = atoms.phase;
+export const candidatesAtom = atoms.candidates;
+export const positionCountAtom = atoms.positionCount;
+export const signalSourcesAtom = atoms.signalSources;
+export const kernelDetailAtom = atoms.kernelDetail;
+
+/*
+One store per origin, keyed by the frame's scope. The tick's aggregate
+workspace frame carries the kernels' layers as one batch: signalFor reads a
+kernel's layers for a symbol straight off it, so every kernel consumer shares
+the one ingest path instead of a store of its own.
+*/
+export const signals: Record<string, Store<Record<string, Value>>> = {
+	workspace: createStore<Record<string, Value>>({}),
+	category: createStore<Record<string, Value>>({}),
+	resonance: createStore<Record<string, Value>>({}),
+	manifold: createStore<Record<string, Value>>({}),
+	training: createStore<Record<string, Value>>({}),
+	positions: createStore<Record<string, Value>>({}),
 };
 
 /*
-resonanceStore aliases the resonance signal ring so the prediction chart
-reads the solver's published frames through the store it was built against.
+Named aliases for the signal stores.
 */
-export const resonanceStore = signals["resonance"];
+export const workspaceStore = signals.workspace;
+export const resonanceStore = signals.resonance;
+export const manifoldStore = signals.manifold;
+export const trainingStore = signals.training;
+export const positionsStore = signals.positions;
 
+export const workspaceFrame = (): Value | undefined =>
+	signals.workspace.state.aggregate;
 
 /*
-positionRows reads the desk's latest frame: the ring keyed by the frame's
-scope holds the merged positions broadcast (one per tick, all lots), and
-lookup("positions") decodes the rows straight off the Value.
+signalFor reads one kernel's layers for one symbol off the aggregate tick.
+The Go Append addressed them <kernel>/<symbol>/<metric> below the frame
+prefix (the symbol's own slash arrives escaped to "-", matching the desk's
+per-lot position scopes), so the result maps each metric key to its decoded
+payload — Append wrote one scalar array per key.
 */
-export const positionRows = (
-	store: Store<Record<string, RingBuffer<Value>>>,
-	scope: string,
-): any[] => {
-	const ring = store.state[scope];
-	if (!ring || ring.isEmpty()) return [];
+export const signalFor = (
+	kernel: string,
+	symbol: string,
+): Record<string, unknown> => {
+	const frame = workspaceFrame();
+	if (!frame) return {};
 
-	const latest = ring.getLast();
-	if (!latest) return [];
+	const address = `${kernel}/${symbol}/`;
+	const found: Record<string, unknown> = {};
 
-	const rows = latest.lookup("positions") as any[] | undefined;
-	if (!Array.isArray(rows)) return [];
+	for (let i = 0; i < frame.index.length; i++) {
+		const index = frame.index[i];
+		if (!index.startsWith(`${frame.prefix}/${address}`)) continue;
 
-	/*
-	Frames can be sparse: a row that has no mark yet on this frame had one
-	on the last. Carry known values forward per field so a value never
-	blinks out between updates.
-	*/
-	const all = ring.toArray();
-	const prior =
-		all.length > 1
-			? (all[all.length - 2].lookup("positions") as any[] | undefined)
-			: undefined;
-	if (!Array.isArray(prior) || prior.length === 0) return rows;
-
-	const previous = new Map<string, Record<string, unknown>>();
-
-	for (const row of prior) {
-		if (row && typeof row.id === "string") {
-			previous.set(row.id, row);
+		try {
+			found[index.slice(`${frame.prefix}/${address}`.length)] = JSON.parse(
+				new TextDecoder().decode(frame.layers[i]),
+			);
+		} catch {
+			return {};
 		}
 	}
 
-	if (previous.size === 0) return rows;
-
-	return rows.map((row) => {
-		const before = row && typeof row.id === "string" ? previous.get(row.id) : undefined;
-
-		if (!before) return row;
-
-		const merged = { ...before };
-
-		for (const [field, value] of Object.entries(row)) {
-			if (value !== null && value !== undefined) {
-				merged[field] = value;
-			}
-		}
-
-		return merged;
-	});
+	return found;
 };

@@ -11,11 +11,8 @@ cumulative counters and cannot identify the side of the arriving trade.
 A declared zero decay has not been fitted and supplies no intensity curve.
 */
 export const hawkesSample = (row: Value): HawkesTraceSample | null => {
-	const metrics = Object.fromEntries(
-		row.metrics.map((metric) => [String(metric.name), metric.raw]),
-	);
-	const sideVal = row.provenance.find((value) => value.name === "side")?.value;
-	const side = typeof sideVal === "string" ? sideVal : "";
+	const metrics = row.metrics();
+	const side = row.provenance().side ?? "";
 
 	const buyRate = metrics["arrival_rate:buy"] ?? 0;
 	const sellRate = metrics["arrival_rate:sell"] ?? 0;
@@ -82,7 +79,6 @@ export const XrayHawkesPanel = () => {
 	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
 
 	useEffect(() => {
-		const store = signals.hawkes;
 		let samples: HawkesTraceSample[] = [];
 		let marketAt = 0n;
 		let frame = 0;
@@ -187,11 +183,12 @@ export const XrayHawkesPanel = () => {
 		};
 
 		const update = () => {
-			const ring = store.state[focusSymbol];
-			const rows = Array.from(
-				{ length: ring?.getBufferLength() ?? 0 },
-				(_, index) => ring.get(index),
-			);
+			/*
+			The kernel layers ride the aggregate workspace frame: the tick
+			is the render trigger and its hawkes rows are the sample stream.
+			*/
+			const frame = signals.workspace.state.aggregate;
+			const rows = frame ? [frame] : [];
 			samples = rows.flatMap((row) => {
 				if (!row) return [];
 				try {
@@ -202,10 +199,7 @@ export const XrayHawkesPanel = () => {
 				}
 			});
 			const latest = rows.at(-1);
-			const metrics = Object.fromEntries(
-				latest?.metrics.map((metric) => [String(metric.name), metric.raw]) ??
-					[],
-			);
+			const metrics = latest ? latest.metrics() : {};
 			const fitted = samples.at(-1);
 			const buyRate = metrics["arrival_rate:buy"];
 			const sellRate = metrics["arrival_rate:sell"];
@@ -258,7 +252,7 @@ export const XrayHawkesPanel = () => {
 		};
 
 		update();
-		const subscription = store.subscribe(update);
+		const subscription = signals.workspace.subscribe(update);
 		const unsubscribeClock = clockAtom.subscribe((timestamp) => {
 			if (timestamp === null) return;
 

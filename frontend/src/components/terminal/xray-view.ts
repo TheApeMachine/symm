@@ -104,21 +104,20 @@ export const xrayLayersFromResonance = (
 	frame: ResonanceFrame | Record<string, unknown> | null | undefined,
 ): XrayLayer[] => {
 	if (!frame) return [];
-	let layers =
-		(frame.layers as Array<Record<string, unknown>> | undefined) ?? [];
-	let surprise = frame.surprise as number | undefined;
 
-	if (
-		layers.length === 0 &&
-		"metrics" in frame &&
-		Array.isArray((frame as { metrics?: unknown }).metrics)
-	) {
-		const parsed = parseResonanceData(frame as unknown as Value);
-		if (parsed?.layers && parsed.layers.length > 0) {
-			layers = parsed.layers as unknown as Array<Record<string, unknown>>;
-			surprise = parsed.surprise;
-		}
-	}
+	/*
+	A wire reading carries its hierarchy as layer_<i>_* scalar layers:
+	parseResonanceData folds them into the layer rows the panel paints.
+	*/
+	const parsed = parseResonanceData(frame as unknown as Value);
+	const layers = parsed
+		? (parsed.layers as unknown as Array<Record<string, unknown>>)
+		: (((frame as Record<string, unknown>).layers as
+				| Array<Record<string, unknown>>
+				| undefined) ?? []);
+	const surprise =
+		parsed?.surprise ??
+		((frame as Record<string, unknown>).surprise as number | undefined);
 
 	return layers.map((layer, index) => {
 		const state = numberArray(layer.state);
@@ -245,7 +244,12 @@ export const latentPointsFromFrames = (
 	const latest = new Map<string, ResonanceFrame | Record<string, unknown>>();
 
 	for (const frame of frames) {
-		const symbol = stringValue(frame.symbol);
+		// A wire reading scopes itself to its symbol.
+		const symbol = stringValue(
+			frame instanceof Value
+				? frame.scope
+				: (frame as Record<string, unknown>).symbol,
+		);
 
 		if (symbol !== "") {
 			latest.set(symbol, frame);
@@ -254,26 +258,15 @@ export const latentPointsFromFrames = (
 
 	return [...latest.entries()].flatMap(([symbol, frame]) => {
 		/*
-			Every carrier publishes the two leading components of its settled state
-			as an embedding; only the focused one carries the full latent vector.
-			Reading the embedding first is what makes this a cross-section rather
-			than a single point, and the fallback keeps a frame that predates the
-			field plotting.
+		The reading carries its latent state as latent_<i> scalar layers;
+		the leading two components place the symbol in the universe
+		cross-section.
 		*/
-		const embedding = numberArray(frame.embedding);
-		let position =
-			embedding.length >= 2 ? embedding : numberArray(frame.latent);
-
-		if (
-			position.length < 2 &&
-			"metrics" in frame &&
-			Array.isArray((frame as { metrics?: unknown }).metrics)
-		) {
-			const parsed = parseResonanceData(frame as unknown as Value);
-			if (parsed?.latent && parsed.latent.length >= 2) {
-				position = parsed.latent.slice(0, 2);
-			}
-		}
+		const parsed =
+			frame instanceof Value ? parseResonanceData(frame) : null;
+		const position = parsed?.latent
+			? parsed.latent.slice(0, 2)
+			: numberArray((frame as Record<string, unknown>).embedding);
 
 		if (position.length < 2) {
 			return [];
@@ -281,11 +274,13 @@ export const latentPointsFromFrames = (
 
 		return [
 			{
-				key: `${symbol}:${String(frame.at ?? "")}`,
+				key: `${symbol}:${String(frame instanceof Value ? frame.tick : "")}`,
 				symbol,
 				x: position[0] ?? 0,
 				y: position[1] ?? 0,
-				category: stringValue(frame.category),
+				category: stringValue(
+					(frame as Record<string, unknown>).category,
+				),
 			},
 		];
 	});
@@ -357,10 +352,15 @@ export const retainResonanceRow = (
 	const existing = retainedResonance.get(symbol) ?? {};
 	let parsedData: Record<string, unknown> = {};
 
-	if (
-		"metrics" in row &&
-		Array.isArray((row as { metrics?: unknown }).metrics)
-	) {
+	/*
+	A wire reading parses through its scalar layers; a legacy row with an
+	array-shaped metrics block goes through the same decoder.
+	*/
+	const decodable =
+		row instanceof Value ||
+		("metrics" in row && Array.isArray((row as { metrics?: unknown }).metrics));
+
+	if (decodable) {
 		const parsed = parseResonanceData(row as unknown as Value);
 		if (parsed) {
 			parsedData = {

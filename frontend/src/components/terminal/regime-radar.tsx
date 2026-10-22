@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { atoms, signals } from "#/collections/app";
+import { atoms, signalFor, signals } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 
@@ -9,6 +9,7 @@ const radarAxes = [
 		label: "volatility",
 		source: "hawkes",
 		metric: "branching_spectral_radius",
+		key: "branching_spectral_radius",
 		x: 0,
 		y: -1,
 	},
@@ -16,6 +17,7 @@ const radarAxes = [
 		label: "trend",
 		source: "pumpdump",
 		metric: "positive_midpoint_return",
+		key: "positive_midpoint_return",
 		x: 0.951,
 		y: -0.309,
 	},
@@ -23,6 +25,7 @@ const radarAxes = [
 		label: "drive",
 		source: "cvd",
 		metric: "signed_net_fraction",
+		key: "signed_net_fraction",
 		x: 0.588,
 		y: 0.809,
 	},
@@ -30,6 +33,7 @@ const radarAxes = [
 		label: "starved",
 		source: "pumpdump",
 		metric: "trade_rate",
+		key: "trade_rate",
 		x: -0.588,
 		y: 0.809,
 	},
@@ -37,6 +41,7 @@ const radarAxes = [
 		label: "chop",
 		source: "depthflow",
 		metric: "book_imbalance",
+		key: "book_imbalance",
 		x: -0.951,
 		y: -0.309,
 	},
@@ -47,25 +52,23 @@ export const RadarPanel = () => {
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const subscriptions = radarAxes.map((axis) => {
-			const store = signals[axis.source];
+		/*
+		The kernels publish into the workspace tick as one frame: the
+		aggregate is the only store, and signalFor pulls one kernel's
+		layers for the focus symbol off it.
+		*/
+		const apply = () => {
+			if (!root.current) return;
 
-			const apply = () => {
-				if (!root.current || !store) return;
-				const ring = store.state[focusSymbol];
-				if (!ring || typeof ring.getLast !== "function") return;
-
-				const row = ring.getLast();
-				let snm = 0;
-
-				if (row) {
-					for (const m of row.metrics ?? []) {
-						if (m?.name === axis.metric) {
-							snm = m.snm ?? m.raw;
-							break;
-						}
-					}
-				}
+			for (const axis of radarAxes) {
+				// signalFor maps each metric key to its scalar array.
+				const payloads = signalFor(axis.source, focusSymbol);
+				const payload = payloads[axis.key];
+				const found = Array.isArray(payload) ? payload[0] : payload;
+				const value =
+					typeof found === "number" && Number.isFinite(found)
+						? found
+						: 0;
 
 				const arm = root.current.querySelector<SVGElement>(
 					`[data-axis="${axis.label}"]`,
@@ -73,20 +76,16 @@ export const RadarPanel = () => {
 				if (arm instanceof SVGElement) {
 					arm.style.setProperty(
 						"--axis",
-						String(Math.min(1, Math.max(0, Math.abs(snm)))),
+						String(Math.min(1, Math.max(0, Math.abs(value)))),
 					);
 				}
-			};
-
-			apply();
-			return store ? store.subscribe(apply) : { unsubscribe: () => {} };
-		});
-
-		return () => {
-			for (const subscription of subscriptions) {
-				subscription.unsubscribe();
 			}
 		};
+
+		apply();
+		const subscription = signals.workspace.subscribe(apply);
+
+		return () => subscription.unsubscribe();
 	}, [focusSymbol]);
 
 	return (

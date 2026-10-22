@@ -3,6 +3,8 @@ package tokenizer
 import (
 	"math"
 	"sync"
+
+	"github.com/theapemachine/symm/system"
 )
 
 const (
@@ -33,12 +35,14 @@ func NewCalibrator(opts ...CalibratorOption) *Calibrator {
 	calibrator := &Calibrator{
 		sensitivityPop:   1.0,
 		sensitivityPhase: 1.0,
-		window:           NewFastWindow(DefaultWindowSize),
-		phaseWindow:      NewFastWindow(DefaultWindowSize),
+		window:           NewFastWindow(system.Cfg.Learning.DefaultWindowSize),
+		phaseWindow:      NewFastWindow(system.Cfg.Learning.DefaultWindowSize),
 	}
+
 	for _, opt := range opts {
 		opt(calibrator)
 	}
+
 	return calibrator
 }
 
@@ -67,7 +71,8 @@ func (calibrator *Calibrator) SetSensitivityPhase(v float64) {
 }
 
 /*
-WindowStats returns (mean, stddev) for the density window. Zero if window is nil or not warmed.
+WindowStats returns (mean, stddev) for the density window.
+Zero if window is nil or not warmed.
 */
 func (calibrator *Calibrator) WindowStats() (mean, stddev float64) {
 	calibrator.mu.RLock()
@@ -80,7 +85,11 @@ func (calibrator *Calibrator) WindowStats() (mean, stddev float64) {
 	return calibrator.window.Stats()
 }
 
-func (calibrator *Calibrator) FeedbackChunk(density float64, primeCoherence float64, phaseCoherence float64) {
+func (calibrator *Calibrator) FeedbackChunk(
+	density float64,
+	primeCoherence float64,
+	phaseCoherence float64,
+) {
 	calibrator.mu.Lock()
 	defer calibrator.mu.Unlock()
 
@@ -99,7 +108,7 @@ func (calibrator *Calibrator) FeedbackChunk(density float64, primeCoherence floa
 		return
 	}
 
-	targetDensity := ShannonCapacity
+	targetDensity := system.Cfg.Learning.ShannonCapacity
 
 	// Base error signal from density
 	densityError := (targetDensity - meanDensity) / targetDensity
@@ -114,13 +123,19 @@ func (calibrator *Calibrator) FeedbackChunk(density float64, primeCoherence floa
 	lr := math.Max(stddev, 0.05)
 
 	calibrator.sensitivityPop *= math.Exp(errorSignal * lr)
-	calibrator.sensitivityPop = math.Max(0.01, math.Min(100.0, calibrator.sensitivityPop))
+	calibrator.sensitivityPop = math.Max(
+		0.01, math.Min(100.0, calibrator.sensitivityPop),
+	)
 
 	calibrator.sensitivityPhase *= math.Exp(errorSignal * lr)
-	calibrator.sensitivityPhase = math.Max(0.01, math.Min(100.0, calibrator.sensitivityPhase))
+	calibrator.sensitivityPhase = math.Max(
+		0.01, math.Min(100.0, calibrator.sensitivityPhase),
+	)
 }
 
-func (calibrator *Calibrator) ObservePhase(delta float64) {
+func (calibrator *Calibrator) ObservePhase(
+	delta float64,
+) {
 	calibrator.mu.Lock()
 	defer calibrator.mu.Unlock()
 
@@ -131,26 +146,39 @@ func (calibrator *Calibrator) ObservePhase(delta float64) {
 	calibrator.phaseWindow.Push(delta)
 }
 
-func (calibrator *Calibrator) DensityCeiling(fallback float64) float64 {
+func (calibrator *Calibrator) DensityCeiling(
+	fallback float64,
+) float64 {
 	calibrator.mu.RLock()
 	defer calibrator.mu.RUnlock()
 
-	return calibrator.dynamicLimit(calibrator.window, calibrator.sensitivityPop, fallback)
+	return calibrator.dynamicLimit(
+		calibrator.window, calibrator.sensitivityPop, fallback,
+	)
 }
 
-func (calibrator *Calibrator) PhaseLimit(fallback float64) float64 {
+func (calibrator *Calibrator) PhaseLimit(
+	fallback float64,
+) float64 {
 	calibrator.mu.RLock()
 	defer calibrator.mu.RUnlock()
 
-	return calibrator.dynamicLimit(calibrator.phaseWindow, calibrator.sensitivityPhase, fallback)
+	return calibrator.dynamicLimit(
+		calibrator.phaseWindow,
+		calibrator.sensitivityPhase,
+		fallback,
+	)
 }
 
-func (calibrator *Calibrator) dynamicLimit(window *FastWindow, sensitivity, fallback float64) float64 {
+func (calibrator *Calibrator) dynamicLimit(
+	window *FastWindow, sensitivity, fallback float64,
+) float64 {
 	if window == nil || !window.Warmed() {
 		return fallback
 	}
 
 	mean, stddev := window.Stats()
+
 	if mean <= 0 {
 		return fallback
 	}

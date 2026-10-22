@@ -289,16 +289,13 @@ export const decodeManifold = (value: Value): FluidManifoldFrame => {
 	let waveScale = 1;
 
 	let particleCount = 0;
-	const metrics = (value.lookup("metrics") ?? []) as unknown as Array<Record<string, unknown>>;
-	const metricsLen = metrics.length;
+	/*
+	State publishes its scalars as one layer per key; readers take the numbers
+	out of that map before feeding the ledger.
+	*/
+	const metricMap = value.metrics();
 
-	for (let i = 0; i < metricsLen; i += 1) {
-		const metric = metrics[i];
-		if (metric && metric.name === "particle_count") {
-			particleCount = Math.round(Number(metric.raw) || 0);
-			break;
-		}
-	}
+	particleCount = Math.round(Number(metricMap.particle_count) || 0);
 
 	const count = particleCount;
 	const pos = new Float32Array(count * 3);
@@ -326,12 +323,8 @@ export const decodeManifold = (value: Value): FluidManifoldFrame => {
 	let askPhase = 0;
 	let hasAsk = false;
 
-	for (let i = 0; i < metricsLen; i += 1) {
-		const metric = metrics[i];
-		if (!metric || metric.name === null) continue;
-
-		const name = typeof metric.name === "string" ? metric.name : "";
-		const val = Number(metric.raw);
+	for (const name of Object.keys(metricMap)) {
+		const val = Number(metricMap[name]);
 
 		switch (name) {
 			case "divergence":
@@ -712,7 +705,6 @@ export const decodeManifold = (value: Value): FluidManifoldFrame => {
 							throw new Error(`unknown resultant property: ${prop}`);
 					}
 				}
-				break;
 		}
 	}
 

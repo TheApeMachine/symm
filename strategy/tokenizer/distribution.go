@@ -1,12 +1,18 @@
 package tokenizer
 
-import "math"
+import (
+	"math"
+
+	"github.com/theapemachine/symm/system"
+)
 
 /*
 Distribution is a byte histogram for MDL segment costs and Shannon density.
+The counts span the full byte range: chord symbols are ASCII text, so their
+bytes (digits, brackets, hyphen) index far past the configured vocabulary.
 */
 type Distribution struct {
-	counts   [VocabSize]int
+	counts   [256]int
 	total    int
 	distinct int
 }
@@ -82,7 +88,7 @@ func (dist *Distribution) ShannonDensity() float64 {
 		entropy -= p * math.Log(p)
 	}
 
-	ceiling := math.Log(VocabSize)
+	ceiling := math.Log(float64(system.Cfg.Learning.VocabSize))
 
 	if ceiling <= 0 {
 		return 0

@@ -34,18 +34,21 @@ export const parseOneValue = (
 
 	if (cursor >= bytes.byteLength) return null;
 	const originLen = bytes[cursor++];
+
 	if (cursor + originLen > bytes.byteLength) return null;
 	const origin = textDecoder.decode(bytes.subarray(cursor, cursor + originLen));
 	cursor += originLen;
 
 	if (cursor >= bytes.byteLength) return null;
 	const roleLen = bytes[cursor++];
+
 	if (cursor + roleLen > bytes.byteLength) return null;
 	const role = textDecoder.decode(bytes.subarray(cursor, cursor + roleLen));
 	cursor += roleLen;
 
 	if (cursor >= bytes.byteLength) return null;
 	const scopeLen = bytes[cursor++];
+
 	if (cursor + scopeLen > bytes.byteLength) return null;
 	const scope = textDecoder.decode(bytes.subarray(cursor, cursor + scopeLen));
 	cursor += scopeLen;
@@ -53,6 +56,14 @@ export const parseOneValue = (
 	if (cursor + 2 > bytes.byteLength) return null;
 	const numLayers = view.getUint16(cursor - byteOffset, true);
 	cursor += 2;
+
+	if (cursor + 2 > bytes.byteLength) return null;
+	const prefixLen = view.getUint16(cursor - byteOffset, true);
+	cursor += 2;
+
+	if (cursor + prefixLen > bytes.byteLength) return null;
+	const prefix = textDecoder.decode(bytes.subarray(cursor, cursor + prefixLen));
+	cursor += prefixLen;
 
 	const layers: Array<{ index: string; bytes: Uint8Array }> = [];
 	for (let i = 0; i < numLayers; i++) {
@@ -86,6 +97,7 @@ export const parseOneValue = (
 		origin,
 		role,
 		scope,
+		prefix,
 		layers: layers.map((layer) => layer.bytes),
 		index: layers.map((layer) => layer.index),
 	});

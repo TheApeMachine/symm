@@ -40,12 +40,12 @@ func Chord(tokens Tokens) string {
 	keys := make([]string, 0, len(tokens))
 
 	for _, token := range tokens {
-		if len(token.Path) == 0 || token.Path[0] == "" || seen[token.Path[0]] {
+		if len(token.Chord) == 0 || token.Chord[0] == "" || seen[token.Chord[0]] {
 			continue
 		}
 
-		seen[token.Path[0]] = true
-		keys = append(keys, token.Path[0])
+		seen[token.Chord[0]] = true
+		keys = append(keys, token.Chord[0])
 	}
 
 	sort.Strings(keys)
@@ -66,11 +66,11 @@ func (sequencer *Sequencer) Analyze(tokens Tokens) (bool, int, []int, SegmentMet
 	sequencer.lastRule = rule
 
 	var (
-		boundary  bool
-		k         int
-		events    []int
-		meta      SegmentMeta
-		metaSeen  bool
+		boundary bool
+		k        int
+		events   []int
+		meta     SegmentMeta
+		metaSeen bool
 	)
 
 	for _, b := range []byte(chord) {

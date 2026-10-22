@@ -23,6 +23,9 @@ type Learning struct {
 	ThresholdFloor        float64
 	ThresholdCeil         float64
 	VirtualPromote        int
+	VocabSize             int
+	DefaultWindowSize     int
+	ShannonCapacity       float64
 }
 
 func NewLearning() *Learning {
@@ -35,6 +38,9 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.threshold_floor", 0.05)
 	viper.SetDefault("learning.threshold_ceil", 0.95)
 	viper.SetDefault("learning.virtual_promote", 3)
+	viper.SetDefault("learning.vocab_size", 15)
+	viper.SetDefault("learning.default_window_size", 15)
+	viper.SetDefault("learning.shannon_capacity", 0.45)
 
 	return &Learning{
 		PolicyPrefix:          viper.GetString("learning.policy_prefix"),
@@ -46,5 +52,8 @@ func NewLearning() *Learning {
 		ThresholdFloor:        viper.GetFloat64("learning.threshold_floor"),
 		ThresholdCeil:         viper.GetFloat64("learning.threshold_ceil"),
 		VirtualPromote:        viper.GetInt("learning.virtual_promote"),
+		VocabSize:             viper.GetInt("learning.vocab_size"),
+		DefaultWindowSize:     viper.GetInt("learning.default_window_size"),
+		ShannonCapacity:       viper.GetFloat64("learning.shannon_capacity"),
 	}
 }

@@ -129,15 +129,16 @@ export const XrayManifoldPanel = () => {
 	useEffect(() => {
 		const updateFromState = () => {
 			if (!root.current) return;
-			const ring = signals.resonance.state[focusSymbol];
-			const last = ring && !ring.isEmpty() ? ring.getLast() : null;
+			// The store holds one Value per symbol scope.
+			const last =
+				signals.resonance.state[focusSymbol.replace(/\//g, "-")] ??
+				null;
 
 			if (last) {
-				const sym = typeof last.scope === "string" ? last.scope : "";
-
-				if (sym) {
-					retainResonanceRow(sym, last as unknown as Record<string, unknown>);
-				}
+				retainResonanceRow(
+					last.scope,
+					last as unknown as Record<string, unknown>,
+				);
 			}
 
 			const retained = getRetainedResonance(focusSymbol);

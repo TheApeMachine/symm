@@ -1,6 +1,10 @@
 package tokenizer
 
-import "math"
+import (
+	"math"
+
+	"github.com/theapemachine/symm/system"
+)
 
 /*
 EigenMode is a lightweight phase tracker for MDL forced splits. When Trained
@@ -19,7 +23,7 @@ func (eigen *EigenMode) PhaseForByte(byteVal byte) (theta, phi float64) {
 		return 0, 0
 	}
 
-	scale := float64(byteVal) / VocabSize
+	scale := float64(byteVal) / float64(system.Cfg.Learning.VocabSize)
 	theta = scale * math.Pi
 	phi = scale * math.Pi / 2
 

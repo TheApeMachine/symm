@@ -11,7 +11,7 @@ import (
 Size returns the exact total byte count of the serialized Value.
 */
 func (value *Value) Size() int {
-	total := headerSize + 1 + len(value.Origin) + 1 + len(value.Role) + 1 + len(value.Scope) + 2 + len(value.Index)
+	total := headerSize + 1 + len(value.Origin) + 1 + len(value.Role) + 1 + len(value.Scope) + 2 + 2 + len(value.Prefix) + len(value.Index)
 
 	for i := range value.Index {
 		if i >= len(value.Layers) {
@@ -69,6 +69,13 @@ func (value *Value) Read(p []byte) (n int, err error) {
 	// 3. Layer count (uint16)
 	binary.LittleEndian.PutUint16(p[offset:offset+2], uint16(len(value.Index)))
 	offset += 2
+
+	// 3b. Prefix length (uint16) and bytes. Layers address themselves
+	// below the prefix, exactly like data.NewValue + Append build it.
+	binary.LittleEndian.PutUint16(p[offset:offset+2], uint16(len(value.Prefix)))
+	offset += 2
+	copy(p[offset:offset+len(value.Prefix)], value.Prefix)
+	offset += len(value.Prefix)
 
 	// 4. Layers
 	for i := range value.Index {
@@ -152,6 +159,18 @@ func (value *Value) Write(p []byte) (n int, err error) {
 	}
 	numLayers := int(binary.LittleEndian.Uint16(p[offset : offset+2]))
 	offset += 2
+
+	// Prefix length (uint16) and bytes, matching the decoder's layout.
+	if len(p) < offset+2 {
+		return offset, io.ErrUnexpectedEOF
+	}
+	pLen := int(binary.LittleEndian.Uint16(p[offset : offset+2]))
+	offset += 2
+	if len(p) < offset+pLen {
+		return offset, io.ErrUnexpectedEOF
+	}
+	value.Prefix = string(p[offset : offset+pLen])
+	offset += pLen
 
 	// Layers
 	value.Layers = make([][]byte, numLayers)
@@ -276,6 +295,22 @@ func (value *Value) ReadFrom(r io.Reader) (int64, error) {
 	total += 2
 	numLayers := int(binary.LittleEndian.Uint16(numBuf[:]))
 
+	// Prefix length (uint16) and bytes, matching the decoder's layout.
+	var pLenBuf [2]byte
+	if _, err := io.ReadFull(r, pLenBuf[:]); err != nil {
+		return total, err
+	}
+	total += 2
+	pLen := int(binary.LittleEndian.Uint16(pLenBuf[:]))
+	if pLen > 0 {
+		pBytes := make([]byte, pLen)
+		if _, err := io.ReadFull(r, pBytes); err != nil {
+			return total, err
+		}
+		total += int64(pLen)
+		value.Prefix = string(pBytes)
+	}
+
 	value.Layers = make([][]byte, numLayers)
 	value.Index = make([]string, numLayers)
 	var idxLenBuf [2]byte
@@ -313,7 +348,7 @@ func (value *Value) ReadFrom(r io.Reader) (int64, error) {
 
 	return total, nil
 }
-
+	
 /*
 Bytes returns a newly allocated slice containing the serialized Value.
 */

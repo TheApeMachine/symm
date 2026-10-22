@@ -2,7 +2,6 @@ import {
 	DEFAULT_FOCUS_SYMBOL,
 	atoms,
 	signals,
-	type RingBuffer,
 } from "#/collections/app";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
@@ -27,17 +26,14 @@ const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(atoms["focus"]);
 
 	useEffect(() => {
-		const updatePaint = (state: Record<string, RingBuffer<Value>>) => {
-			for (const ring of Object.values(state)) {
-				const last = ring && !ring.isEmpty() ? ring.getLast() : null;
-
+		const updatePaint = (state: Record<string, Value>) => {
+			for (const [scope, last] of Object.entries(state)) {
 				if (!last) continue;
 
-				const sym = typeof last.scope === "string" ? last.scope : "";
-
-				if (sym) {
-					retainResonanceRow(sym, last as unknown as Record<string, unknown>);
-				}
+				retainResonanceRow(
+					scope,
+					last as unknown as Record<string, unknown>,
+				);
 			}
 
 			const universe = getAllRetainedResonance();

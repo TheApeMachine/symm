@@ -1,4 +1,3 @@
-import { useSelector } from "@tanstack/react-store";
 import { atoms, signals } from "#/collections/app";
 import {
 	kernelCopy,
@@ -9,11 +8,12 @@ import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Typography } from "#/components/ui/typography";
+import { useSelector } from "@tanstack/react-store";
 
 export const SignalDetail = () => {
-	const focusSymbol = useSelector(atoms["focus"], (state) => state);
-	const selected = useSelector(atoms["kernelDetail"], (state) => state);
-	const symbols = useSelector(atoms["symbols"], (state) => state);
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
+	const selected = useSelector(atoms.kernelDetail, (state) => state);
+	const symbols = useSelector(atoms.symbols, (state) => state) as string[];
 
 	const source = selected || "cvd";
 	const copy =
@@ -69,7 +69,7 @@ export const SignalDetail = () => {
 								—
 							</Typography.Mono>
 						</Flex.Row>
-						<div className="h-1.5 overflow-hidden rounded-[2px] bg-(--line)">
+						<div className="h-1.5 overflow-hidden rounded-xs bg-(--line)">
 							<div
 								data-mbar={metric}
 								className="h-full bg-(--acc) transition-[width] duration-500 ease-out"
@@ -145,13 +145,15 @@ export const SignalDetail = () => {
 					</Typography.Label>
 					<div className="grid grid-cols-12 gap-0.75">
 						{symbols.slice(0, 24).map((symbol) => (
-							<div
+							<Flex.Row
 								key={symbol}
 								title={`${symbol} · ${source}`}
-								className="flex aspect-square items-center justify-center overflow-hidden rounded-[2px] border border-(--line) font-mono text-[8px] text-(--f3)"
+								align="center"
+								justify="center"
+								className="aspect-square overflow-hidden rounded-xs border border-(--line) font-mono text-[8px] text-(--f3)"
 							>
 								{symbol.replace(/\/.*$/, "")}
-							</div>
+							</Flex.Row>
 						))}
 					</div>
 				</div>

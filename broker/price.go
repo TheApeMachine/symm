@@ -313,6 +313,42 @@ func (price *Price) Mark(symbol string, side Direction) *decimal.Decimal {
 }
 
 /*
+ExitRoom reports how many times the visible bid book can carry the given
+quantity: total resting bid depth divided by the position's quantity.
+A value of 1.0 means the book can absorb the position exactly once;
+10.0 means ten times over. Zero when the book is empty or unavailable.
+*/
+func (price *Price) ExitRoom(symbol string, quantity *decimal.Decimal) float64 {
+	if quantity == nil || quantity.Sign() <= 0 {
+		return 0
+	}
+
+	var totalBid *decimal.Decimal
+
+	if price.Books != nil {
+		price.Books.Book(symbol, func(book *spotbook.Book) {
+			if book == nil {
+				return
+			}
+
+			level := book.BestBid()
+			for level != nil {
+				if level.Quantity != nil && level.Quantity.Sign() > 0 {
+					totalBid = totalBid.Add(level.Quantity)
+				}
+				level = level.Lower
+			}
+		})
+	}
+
+	if totalBid.Sign() <= 0 {
+		return 0
+	}
+
+	return totalBid.Div(quantity).Float64()
+}
+
+/*
 notional uses the SDK's working precision for products of differently scaled
 price and quantity inputs. Venue order formatting is performed by Normalizer.
 */

@@ -1,8 +1,7 @@
-import type { RingBuffer } from "#/collections/app";
 import type { Value } from "#/types/value";
 import type { Store } from "@tanstack/store";
 
-export type ValueStore = Store<Record<string, RingBuffer<Value>>>;
+export type ValueStore = Store<Record<string, Value>>;
 
 export type Variant =
 	| "brand"

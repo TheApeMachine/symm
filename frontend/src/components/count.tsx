@@ -1,9 +1,9 @@
-import { useSelector } from "@tanstack/react-store";
-import { positionRows, signals } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
-import { openLots } from "#/components/learning/open-positions";
+import { openLots, positionRows } from "#/components/learning/open-positions";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
+import { useSelector } from "@tanstack/react-store";
 
 /*
 Count reads the open lots on the book selected in the top bar, the same
@@ -11,9 +11,8 @@ lots the open-positions panel draws.
 */
 export const Count = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	// The revision bump is the render trigger; the rows come from the ring.
-	useSelector(signals.positions, (state) => state.revision);
-	const count = openLots(positionRows(signals.positions, "all"), book).length;
+	const state = useSelector(signals.positions, (state) => state);
+	const count = openLots(positionRows(state), book).length;
 
 	return (
 		<Flex.Column align="end" gap={1}>

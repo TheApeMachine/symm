@@ -1,8 +1,8 @@
-import { useSelector } from "@tanstack/react-store";
-import { type CSSProperties, useRef } from "react";
-import { atoms, resonanceStore, signals } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
-import { Value } from "#/types/value";
+import type { Value } from "#/types/value";
+import { useSelector } from "@tanstack/react-store";
+import { type CSSProperties, useMemo, useRef } from "react";
 import { Flex } from "../ui";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
@@ -47,12 +47,6 @@ export type ResonanceData = {
 	layers?: LayerData[];
 };
 
-const metricName = (value: string | Uint8Array | null | undefined): string => {
-	if (value == null) return "";
-	if (typeof value === "string") return value;
-	return new TextDecoder().decode(value);
-};
-
 const densify = (sparse: number[] | undefined): number[] => {
 	if (!sparse || sparse.length === 0) return [];
 	const out: number[] = [];
@@ -63,18 +57,27 @@ const densify = (sparse: number[] | undefined): number[] => {
 	return out;
 };
 
-export const parseResonanceData = (measurement: Value | undefined): ResonanceData | undefined => {
+export const parseResonanceData = (
+	measurement: Value | undefined,
+): ResonanceData | undefined => {
 	if (!measurement) return undefined;
 
-	const metrics = (measurement.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? [];
-	const provenance = (measurement.lookup("provenance") as unknown as Array<Record<string, unknown>> | undefined) ?? [];
-	const data: ResonanceData = { forwardCurve: [], dynamics: {}, latent: [], layers: [] };
+	/*
+	A resonance reading carries one scalar layer per metric, addressed by
+	its name below the value's prefix (energy, surprise, latent_N,
+	layer_L_state_N, forward_curve_N), plus its string readings.
+	*/
+	const data: ResonanceData = {
+		forwardCurve: [],
+		dynamics: {},
+		latent: [],
+		layers: [],
+	};
 
-	for (let i = 0; i < metrics.length; i++) {
-		const m = metrics[i];
-		if (!m) continue;
-		const lbl = metricName(m.name as string | Uint8Array | null);
-		const raw = typeof m.raw === "number" && Number.isFinite(m.raw) ? m.raw : undefined;
+	const metrics = measurement.metrics();
+
+	for (const [lbl, value] of Object.entries(metrics)) {
+		const raw = Number.isFinite(value) ? value : undefined;
 		if (raw === undefined) continue;
 
 		if (lbl === "task_relative_precision") data.taskRelativePrecision = raw;
@@ -105,17 +108,17 @@ export const parseResonanceData = (measurement: Value | undefined): ResonanceDat
 				}
 				const layer = data.layers[layerId];
 				if (prop === "state" && layer.state) layer.state[idx] = raw;
-				else if (prop === "prediction" && layer.prediction) layer.prediction[idx] = raw;
+				else if (prop === "prediction" && layer.prediction)
+					layer.prediction[idx] = raw;
 			}
 		}
 	}
 
-	for (let i = 0; i < provenance.length; i++) {
-		const p = provenance[i];
-		if (!p) continue;
-		const k = metricName(p.name as string | Uint8Array | null);
-		const v = metricName(p.value as string | Uint8Array | null);
-		if (k === "supported_horizon") data.supportedHorizon = Number.parseInt(v, 10);
+	const provenance = measurement.provenance();
+
+	for (const [k, v] of Object.entries(provenance)) {
+		if (k === "supported_horizon")
+			data.supportedHorizon = Number.parseInt(v, 10);
 		if (k === "resolved_steps") data.resolvedSteps = Number.parseInt(v, 10);
 		if (k === "confidence") data.confidence = Number.parseFloat(v);
 		if (k === "calibrated") data.calibrated = v === "true";
@@ -134,35 +137,96 @@ export const parseResonanceData = (measurement: Value | undefined): ResonanceDat
 	return data;
 };
 
-	const useArtifact = (): ResonanceData | undefined => {
-	const symbol = useSelector(atoms["focus"]);
-	const published = useSelector(signals["resonance"], (state) =>
-		state[symbol]?.end ?? 0,
-	);
-	const ring =
-		published > 0 ? (resonanceStore.state[symbol] ?? undefined) : undefined;
-	const row =
-		ring && !ring.isEmpty() ? (ring.getLast() ?? undefined) : undefined;
+/*
+resonanceSeries folds the tick's resonance layers for one symbol into a
+synthetic reading. The store no longer keeps the stream: the workspace frame
+carries every kernel's layers as one batch per tick, and the chart keeps its
+own bounded history of the focus symbol off it.
+*/
+export const RESONANCE_SERIES_LIMIT = 240;
+const resonanceSeries = new Map<string, number[]>();
+
+const foldResonance = (symbol: string, tick: Value | undefined) => {
+	if (!tick) return;
+
+	for (const [key, payload] of resonanceLayers(tick, symbol)) {
+		const first = Array.isArray(payload) ? payload[0] : payload;
+		if (typeof first !== "number" || !Number.isFinite(first)) continue;
+
+		const series = resonanceSeries.get(key) ?? [];
+		series.push(first);
+		if (series.length > RESONANCE_SERIES_LIMIT) {
+			series.splice(0, series.length - RESONANCE_SERIES_LIMIT);
+		}
+		resonanceSeries.set(key, series);
+	}
+};
+
+/*
+resonanceLayers yields the tick's resonance layers for one symbol as
+[metric, payload]: the Go Append addressed them
+resonance/<symbol>/<metric> below the frame prefix.
+*/
+export function* resonanceLayers(
+	frame: Value,
+	symbol: string,
+): Generator<[string, unknown]> {
+	const address = `resonance/${symbol.replace(/\//g, "-")}/`;
+
+	for (let i = 0; i < frame.index.length; i++) {
+		const index = frame.index[i];
+		if (!index.startsWith(frame.prefix)) continue;
+
+		const at = index.indexOf(`/${address}`, frame.prefix.length - 1);
+		if (at < 0) continue;
+
+		let payload: unknown;
+		try {
+			payload = JSON.parse(new TextDecoder().decode(frame.layers[i]));
+		} catch {
+			continue;
+		}
+
+		yield [index.slice(at + address.length + 1), payload];
+	}
+}
+
+const useArtifact = (): ResonanceData | undefined => {
+	const symbol = useSelector(atoms.focus);
+	/*
+	The workspace frame advances every tick: it is the render trigger, and
+	its resonance layers fold into the chart's history. The focused
+	resonance reading (its own frame) rides the resonance store.
+	*/
+	const frame = useSelector(signals.workspace, (state) => state.aggregate);
+	const reading = useSelector(signals.resonance, (state) => state[symbol]);
+
+	useMemo(() => {
+		foldResonance(symbol, frame);
+	}, [symbol, frame]);
 
 	const held = useRef<{
 		symbol: string | undefined;
-		row: Value | undefined;
-	}>({ symbol, row: undefined });
+		reading: Value | undefined;
+	}>({ symbol, reading: undefined });
 
 	if (held.current.symbol !== symbol) {
-		held.current = { symbol, row: undefined };
+		held.current = { symbol, reading: undefined };
 	}
 
-	if (row !== undefined) {
-		held.current.row = row;
+	if (reading !== undefined) {
+		held.current.reading = reading;
 	}
 
-	return parseResonanceData(held.current.row);
+	return parseResonanceData(held.current.reading);
 };
 
 const taskCalibration = (res: ResonanceData | undefined): string => {
 	if (!res) return "—";
-	if (typeof res.taskCalibration === "string" && res.taskCalibration.length > 0) {
+	if (
+		typeof res.taskCalibration === "string" &&
+		res.taskCalibration.length > 0
+	) {
 		return res.taskCalibration;
 	}
 	return res.calibrated ? "CALIBRATED" : "CALIBRATING";
@@ -170,7 +234,10 @@ const taskCalibration = (res: ResonanceData | undefined): string => {
 
 const taskSkillStatus = (res: ResonanceData | undefined): string => {
 	if (!res) return "—";
-	if (typeof res.taskSkillStatus === "string" && res.taskSkillStatus.length > 0) {
+	if (
+		typeof res.taskSkillStatus === "string" &&
+		res.taskSkillStatus.length > 0
+	) {
 		return res.taskSkillStatus;
 	}
 	return res.taskSkillReady ? "READY" : "CALIBRATING";
@@ -381,7 +448,9 @@ const VectorLane = ({
 							<div
 								key={slot.slotId}
 								className="absolute inset-y-0 right-1 left-1 origin-left"
-								style={{ transform: vectorSlotTransform(slot.index, slot.total) }}
+								style={{
+									transform: vectorSlotTransform(slot.index, slot.total),
+								}}
 							>
 								<div
 									className="absolute top-1/2 right-px left-0 h-[calc(50%-1px)] origin-top bg-(--line2)"

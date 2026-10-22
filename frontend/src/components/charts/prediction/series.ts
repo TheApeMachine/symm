@@ -97,8 +97,42 @@ export const reconstructionError = (
 };
 
 /*
+layerProfile collects one hierarchy layer's state/prediction components off a
+reading. The solver addressed them layer_<i>_state_<j> and
+layer_<i>_prediction_<j>, one scalar layer each.
+*/
+const layerProfile = (
+	metrics: Record<string, number>,
+	index: number,
+	kind: "state" | "prediction",
+): number[] => {
+	const values: number[] = [];
+
+	for (const [key, value] of Object.entries(metrics)) {
+		if (!key.startsWith(`layer_${index}_${kind}_`)) continue;
+		const slot = Number.parseInt(key.slice(`layer_${index}_${kind}_`.length), 10);
+		if (Number.isNaN(slot)) continue;
+		values[slot] = value;
+	}
+
+	return values.map((value) => (Number.isFinite(value) ? value : 0));
+};
+
+const layerCount = (metrics: Record<string, number>): number => {
+	let count = 0;
+
+	for (const key of Object.keys(metrics)) {
+		const match = /^layer_(\d+)_state_\d+$/.exec(key);
+		if (match) count = Math.max(count, Number(match[1]) + 1);
+	}
+
+	return count;
+};
+
+/*
 hierarchyTrace derives one time-aligned layer series while preserving the latest
-full state profile for inspecting what the aggregate history represents.
+full state profile for inspecting what the aggregate history represents. Each
+frame contributes one reading: its layer_<i> scalars are the observation.
 */
 const hierarchyTrace = (
 	frames: ResonanceFrame[],
@@ -106,68 +140,58 @@ const hierarchyTrace = (
 	count: number,
 ): HierarchyTrace => {
 	const reconstructs = index < count - 1;
-	const latest = frames.at(-1)?.layers?.[index] ?? null;
+	const latest = frames.at(-1);
+	const latestMetrics = latest ? latest.metrics() : {};
 
 	return {
 		index,
 		label: `L${index} · ${semanticLayerName(index, count)}`,
 		kind: reconstructs ? "reconstruction" : "context",
 		values: frames.map((frame) => {
-			const layer = frame.layers?.[index];
+			const metrics = frame.metrics();
+			const state = layerProfile(metrics, index, "state");
+			if (state.length === 0) return null;
 
 			return reconstructs
-				? reconstructionError(layer?.state, layer?.prediction)
-				: vectorNorm(finiteVector(layer?.state));
+				? reconstructionError(state, layerProfile(metrics, index, "prediction"))
+				: vectorNorm(state);
 		}),
-		state: finiteVector(latest?.state),
-		prediction: reconstructs ? finiteVector(latest?.prediction) : null,
+		state: layerProfile(latestMetrics, index, "state"),
+		prediction: reconstructs
+			? layerProfile(latestMetrics, index, "prediction")
+			: null,
 	};
 };
 
 /*
 returnHeadTrace derives the signed forecast and, where the solver publishes one,
-the residual band around it.
-
-Readiness is the solver's relative residual precision and the reach it says that
-precision supports. It used to be read from a forecastValidity block alongside
-an incremental MSE, a skill lower bound and a calibration count — none of which
+the residual band around it. The reading carries the head's scalar layers:
+forward_curve_0 is the signed expectation, task_relative_precision its
+readiness. It used to be read from a forecastValidity block alongside an
+incremental MSE, a skill lower bound and a calibration count — none of which
 appear on the wire, so the lane could only ever report "CALIBRATING" beside four
 em-dashes no matter how well the head was doing.
 */
 const returnHeadTrace = (frames: ResonanceFrame[]): ReturnHeadTrace => {
 	const latest = frames.at(-1);
+	const latestMetrics = latest ? latest.metrics() : {};
 	const expected = frames.map((frame) =>
-		finiteNumber(frame.forecast?.forwardCurve?.[0]),
+		finiteNumber(frame.metrics().forward_curve_0),
 	);
-	const uncertainty = frames.map((frame) => {
-		const entry = frame.forecast?.posterior?.[0];
-		return finiteNumber(entry?.Scale ?? (entry as { scale?: number })?.scale);
-	});
 
 	return {
 		expected,
-		upper: expected.map((value, index) => {
-			const spread = uncertainty[index];
-			return value === null || spread === null || spread < 0
-				? null
-				: value + spread;
-		}),
-		lower: expected.map((value, index) => {
-			const spread = uncertainty[index];
-			return value === null || spread === null || spread < 0
-				? null
-				: value - spread;
-		}),
-		latestExpected: finiteNumber(latest?.forecast?.forwardCurve?.[0]),
-		latestUncertainty: finiteNumber(
-			latest?.forecast?.posterior?.[0]?.Scale ??
-				(latest?.forecast?.posterior?.[0] as { scale?: number })?.scale,
+		upper: expected.map((value) => value),
+		lower: expected.map((value) => value),
+		latestExpected: finiteNumber(latestMetrics.forward_curve_0),
+		latestUncertainty: null,
+		taskRelativePrecision: finiteNumber(
+			latestMetrics.task_relative_precision,
 		),
-		taskRelativePrecision: finiteNumber(latest?.taskRelativePrecision),
-		horizon: finiteNumber(latest?.forecast?.supportedHorizon),
-		reach: finiteNumber(latest?.forecast?.probeHorizon),
-		samples: finiteNumber(latest?.samples),
-		ready: latest?.taskRelativePrecisionReady === true,
+		horizon: null,
+		reach: null,
+		samples: null,
+		ready: finiteNumber(latestMetrics.task_relative_precision) !== null,
 	};
 };
 
@@ -178,11 +202,12 @@ without collapsing five-dimensional states into misleading signed means.
 export const predictiveCodingSeries = (
 	frames: ResonanceFrame[],
 ): PredictiveCodingSeries => {
-	const layerCount = frames.at(-1)?.layers?.length ?? 0;
+	const latest = frames.at(-1);
+	const count = latest ? layerCount(latest.metrics()) : 0;
 
 	return {
-		layers: Array.from({ length: layerCount }, (_, index) =>
-			hierarchyTrace(frames, index, layerCount),
+		layers: Array.from({ length: count }, (_, index) =>
+			hierarchyTrace(frames, index, count),
 		),
 		returnHead: returnHeadTrace(frames),
 	};
