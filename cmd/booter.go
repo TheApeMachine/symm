@@ -296,8 +296,16 @@ func (booter *Booter) initPipeline() error {
 	// The collector writes the tape. It shares the paper account with the
 	// dashboard, so it must not place orders of its own.
 	if paperTrades(booter.capture, booter.dashboard) {
+		// A headless run has no dashboard to publish to: the hub stays a
+		// nil writer instead of a typed nil pointer.
+		var hub io.Writer
+
+		if booter.hub != nil {
+			hub = booter.hub
+		}
+
 		booter.training = strategy.NewTraining(
-			ctx, booter.price, booter.desk, booter.store, booter.hub,
+			ctx, booter.price, booter.desk, booter.store, hub,
 		)
 
 		if err := booter.training.Error(); err != nil {

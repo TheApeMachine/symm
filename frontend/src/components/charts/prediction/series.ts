@@ -106,7 +106,7 @@ const hierarchyTrace = (
 	count: number,
 ): HierarchyTrace => {
 	const reconstructs = index < count - 1;
-	const latest = frames.at(-1)?.layers?.[index];
+	const latest = frames.at(-1)?.layers?.[index] ?? null;
 
 	return {
 		index,

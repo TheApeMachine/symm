@@ -268,17 +268,18 @@ describe("ImpulseMapViz", () => {
 
 	it("lights up grid regions when live telemetry arrives on signals.training", () => {
 		const ring = new RingBuffer<Value>(10);
+		const regionsPayload = new TextEncoder().encode(
+			JSON.stringify([
+				{ key: 1, deformation: 5.1, brightness: 0.85, counts: 6 },
+				{ key: 7, deformation: 6.44, brightness: 0.92, counts: 7 },
+			]),
+		);
 		ring.add(
 			new Value({
 				scope: "SPACE/USD",
 				origin: "training",
-				metrics: [
-					{ name: "region_brightness:R01", raw: 0.85 },
-					{ name: "region_members:R01", raw: 6 },
-					{ name: "region_brightness:R07", raw: 0.92 },
-					{ name: "region_members:R07", raw: 7 },
-				],
-				provenance: [{ name: "token_path", value: "R01/R07" }],
+				layers: [regionsPayload],
+				index: ["training/tick/SPACE/USD/grid/regions/SPACE/USD"],
 			}),
 		);
 

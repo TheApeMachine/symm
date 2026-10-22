@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { type CSSProperties, useRef } from "react";
-import { atoms, signals } from "#/collections/app";
+import { atoms, resonanceStore, signals } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { Value } from "#/types/value";
 import { Flex } from "../ui";
@@ -66,8 +66,8 @@ const densify = (sparse: number[] | undefined): number[] => {
 export const parseResonanceData = (measurement: Value | undefined): ResonanceData | undefined => {
 	if (!measurement) return undefined;
 
-	const metrics = measurement.metrics ?? [];
-	const provenance = measurement.provenance ?? [];
+	const metrics = (measurement.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? [];
+	const provenance = (measurement.lookup("provenance") as unknown as Array<Record<string, unknown>> | undefined) ?? [];
 	const data: ResonanceData = { forwardCurve: [], dynamics: {}, latent: [], layers: [] };
 
 	for (let i = 0; i < metrics.length; i++) {

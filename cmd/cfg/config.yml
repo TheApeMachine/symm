@@ -57,7 +57,7 @@ system:
     enabled: false
     addr: 127.0.0.1:6060
   log:
-    level: info
+    level: debug
   streaming:
     max_shards: 128
     lane_capacity: 4096
@@ -144,15 +144,6 @@ regulator:
   # Number of model-surprise observations retained for the dashboard only.
   # Predictive learning retains its own sufficient statistics separately.
   history_capacity: 256
-
-cognitive:
-  # Keep the DMT radix tree fully in process. Empty persist_dir / in_memory
-  # skips the WAL so TrainSensorySequence and episodic commits do not hit disk.
-  in_memory: true
-  persist_dir: ~/.symm/cognitive
-  # Rotate the cognitive store aside on boot so a bloated WAL cannot poison the
-  # next run. No-op when in_memory is set.
-  reset_on_boot: true
 
 kraken:
   credentials:
@@ -322,33 +313,15 @@ risk:
   max_fraction: 0.20
 
 learning:
-  # Resource allocation, including the consolidated-model evaluator.
-  traders: 8
-  checkpoint_interval: 1m
-  # Opt-in rehearsal augmentation: also teach each rehearsed context with one
-  # region frame missing and with one frame swapped for another region of the
-  # same fragment (dropout-style noise). Off by default.
-  rehearsal_dropout: false
-  # Precursor horizon: maximum transitions leading up to ignition B taught as context.
-  precursor_horizon: 8
-  # Live matching acts only once every stored path under the live token path
-  # ends in the same action AND that path is at least this many tokens long.
-  # Short prefixes are shared by almost every stored path (early on nearly all
-  # of them read "enter"), so a 1-2 token agreement is coincidence, not a match.
-  # Required: there is no default in code.
+  policy_prefix: "model/current/"
+  enter_suffix: "/enter.bin"
+  exit_suffix: "/exit.bin"
   minimum_path_confidence: 2
-
-detector:
-  # A is half the B..C move before B, clamped to the symbol's first trade in
-  # the epoch. An excursion whose clamped precursor (A..B) is shorter than this
-  # many ticks is not emitted (logged, counted in the detect summary).
-  # Required: there is no default in code.
-  min_precursor_ticks: 10
-  # Entry and exit are pulled back from B and C by this fraction of the
-  # precursor length in ticks, so orders placed there can fill. Train learns
-  # and prices the pulled-back points; the exact B and C stay stored.
-  # Required: there is no default in code.
-  execution_lead_fraction: 0.1
+  threshold_start: 0.5
+  threshold_step: 0.05
+  threshold_floor: 0.05
+  threshold_ceil: 0.95
+  virtual_promote: 3
 
 paper:
   # `make run` never writes storage: every paper-trade record (one data.Value
@@ -357,11 +330,6 @@ paper:
   # Relative paths are relative to the working directory. Required while
   # paper trading is active: there is no default in code.
   records_path: paper_records/records.bin
-
-cognition:
-  # A binary confidence of 0.5 is exactly indifferent. Cognition must exceed
-  # it before replacing its current named state.
-  minimum_switch_confidence: 0.5
 
 signals:
   depthflow:
@@ -377,43 +345,3 @@ manifold:
   phase:
     lattice:
       width: 1024
-
-audit:
-  # Thresholds the audit stages judge by. They are declared hypotheses about
-  # healthy data, not tuned to make a run pass; changing one changes what a
-  # stage calls a violation, and the report names the value it used.
-  # How many symbols whose price actually moved are used to decide whether
-  # each signal in SIGNALS.md is alive. Symbols whose price did not move
-  # are not judged.
-  active_symbols: 5
-  # Minimum grid tokens per symbol before dynamics/stability are evaluated.
-  min_tokens: 20
-  # Minimum precursor and background tokens before separation is tested.
-  min_precursor_tokens: 10
-  # A single token holding more than this share of a symbol's emissions is an
-  # absorbing-state collapse.
-  dominance_share: 0.80
-  # Transition entropy within this many bits of the maximum is pure noise.
-  entropy_tolerance: 0.01
-  # Half-vs-half region distribution shift (JSD, bits) that, when significant,
-  # is a non-stationary rupture.
-  stationarity_jsd: 0.35
-  # Minimum share of scorable (non warm-up) frames that light a region.
-  grid_completeness: 0.80
-  # A metric with at least this share of zero observations is stagnant.
-  stagnant_zero_fraction: 0.80
-  # Absolute tolerance for arithmetic identities (spread, friction hurdle).
-  identity_tolerance: 0.0001
-  # A packet is "late" when it sits beyond the Chebyshev distance
-  # (1/sqrt(significance) standard deviations) from that stream's own average,
-  # or, when the stream's spread is below the dispersion floor, when it is
-  # more than latency_spike_floor_ms away from that average. One late packet
-  # is counted and does not fail the stage. The stream fails when late packets
-  # are a larger share of its arrivals than significance.
-  latency_dispersion_floor_ms: 1.0
-  latency_spike_floor_ms: 50
-  # Same-symbol metric pairs with |r| at or above this are collinear clones.
-  collinear_correlation: 0.95
-  # Asynchronous stream pairs with concordance at or above this (and
-  # significant against the shuffled null) are redundant co-movers.
-  comovement_concordance: 0.98

@@ -41,24 +41,27 @@ const readingsFromValues = (
 		if (!m) continue;
 		let val: number | null = null;
 		if (headline) {
-			for (const metric of m.metrics ?? []) {
+			for (const metric of (m.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
 				if (metric?.name !== headline) continue;
-				const chosen =
+				const chosen = Number(
 					typeof metric.snm === "number" && Number.isFinite(metric.snm)
 						? metric.snm
-						: metric.raw;
+						: metric.raw,
+				);
 				if (Number.isFinite(chosen)) {
 					val = chosen;
 					break;
 				}
 			}
 		}
-		if (val === null && m.metrics?.length) {
-			const first = m.metrics[0];
-			const chosen =
+		const all = (m.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? [];
+		if (val === null && all.length) {
+			const first = all[0];
+			const chosen = Number(
 				typeof first.snm === "number" && Number.isFinite(first.snm)
 					? first.snm
-					: first.raw;
+					: first.raw,
+			);
 			if (Number.isFinite(chosen)) {
 				val = chosen;
 			}
@@ -88,13 +91,13 @@ const metricValues = (
 	const out: Record<string, { raw: number; snm: number } | null> = {};
 	for (const name of names) out[name] = null;
 	if (!row) return out;
-	for (const m of row.metrics ?? []) {
+	for (const m of (row.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
 		if (!m || !m.name) continue;
 		const name = typeof m.name === "string" ? m.name : null;
 		if (!name || !names.includes(name)) continue;
 		out[name] = {
-			raw: m.raw,
-			snm: m.snm ?? m.raw,
+			raw: Number(m.raw),
+			snm: Number(m.snm ?? m.raw),
 		};
 	}
 

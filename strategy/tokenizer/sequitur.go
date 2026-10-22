@@ -123,6 +123,40 @@ func (sequitur *Sequitur) LastRule() *Rule {
 }
 
 /*
+Symbols is how many distinct symbols the grammar holds, root included.
+*/
+func (sequitur *Sequitur) Symbols() int {
+	sequitur.mu.Lock()
+	defer sequitur.mu.Unlock()
+
+	return len(sequitur.rules) + 1
+}
+
+/*
+Rules lists every production with its right-hand side as symbol strings:
+the grammar snapshot the hub streams so the dashboard renders the live
+rulebook.
+*/
+func (sequitur *Sequitur) Rules() [][]string {
+	sequitur.mu.Lock()
+	defer sequitur.mu.Unlock()
+
+	productions := make([][]string, 0, len(sequitur.rules))
+
+	for _, rule := range sequitur.rules {
+		symbols := make([]string, 0)
+
+		for node := rule.Head.Next; node != nil && node != rule.Head; node = node.Next {
+			symbols = append(symbols, string(node.Val))
+		}
+
+		productions = append(productions, symbols)
+	}
+
+	return productions
+}
+
+/*
 TerminalNames flattens rule into terminal token strings (e.g. R08/R07).
 */
 func (sequitur *Sequitur) TerminalNames(rule *Rule) []string {

@@ -120,6 +120,42 @@ func TestSaleFollowsTheBidWhenTheBookCannotFill(t *testing.T) {
 	}
 }
 
+/*
+The fee legs are tier rates in percent, the units the fee table speaks in: the
+entry rate rides the cost and the exit rate rides the proceeds. A flat price
+must cost the round trip and nothing more — a rate read as a dollar amount
+turns a flat lot into a large loss.
+*/
+func TestSaleAppliesTierRatesToCostAndProceeds(t *testing.T) {
+	t.Parallel()
+
+	price := broker.NewPrice(context.Background(), nil, nil, nil, spot.NewNormalizer())
+
+	symbol := "AAVE/USD"
+	tier := decimal.NewFromFloat64(1.587)
+	price.SetFee(symbol, kraken.TradeVolumeFee{Fee: tier, Minfee: tier, Maxfee: tier})
+
+	entry := decimal.NewFromFloat64(0.5)
+	qty := decimal.NewFromFloat64(10)
+	bid := decimal.NewFromFloat64(0.5)
+	ask := decimal.NewFromFloat64(0.51)
+
+	price.SetQuote(symbol, bid, ask)
+
+	_, _, ret, ok := price.Sale(symbol, qty, entry, tier)
+
+	if !ok {
+		t.Fatal("a quoted bid did not mark the lot")
+	}
+
+	// Both sides of a 1.587% tier on a flat price.
+	want := -0.03124
+
+	if ret < want-0.002 || ret > want+0.002 {
+		t.Fatalf("ret = %v, want the round trip of two tier rates (%v)", ret, want)
+	}
+}
+
 func TestSaleUsesTheBookWhenItCanTakeTheQuantity(t *testing.T) {
 	t.Parallel()
 

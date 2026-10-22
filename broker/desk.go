@@ -64,13 +64,16 @@ func NewDesk(
 			/*
 				Prefix is "[origin]/[role]/[scope]/[epoch]/[tick]": the
 				role records whether the lot was open or closed when it was
-				persisted. Anything else — an empty value, an interrupted
-				object — is not a position record and decodes to a ghost
-				keyed by the empty symbol that no update can ever mark or
-				close, so it would broadcast to every client forever.
+				persisted. The scope is the symbol and carries its own
+				slash ("BTC/USD"), so the prefix holds more than five
+				segments and only the leading role is read. Anything else —
+				an empty value, an interrupted object — is not a position
+				record and decodes to a ghost keyed by the empty symbol
+				that no update can ever mark or close, so it would
+				broadcast to every client forever.
 			*/
 			fields := strings.Split(value.Prefix, "/")
-			if len(fields) != 5 || fields[1] != "open" {
+			if len(fields) < 5 || fields[1] != "open" {
 				continue
 			}
 
@@ -389,15 +392,20 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool) error {
 		key = "virtual"
 	}
 
+	/*
+		The exit is final: the open record is retired and the closed one carries the
+		outcome. The open records of a symbol live under "[origin]/open/[symbol]/", the
+		closed record under the value's own prefix.
+	*/
 	value := data.NewValue(
-		key, "open", symbol,
+		key, "closed", symbol,
 	).Append(
 		position, "position",
 	)
 
-	if err := desk.history.Move(value, strings.ReplaceAll(
-		key, "open", "closed",
-	)); err != nil {
+	if err := desk.history.Move(
+		value, key+"/open/"+symbol+"/",
+	); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[desk.Exit] failed to store position",

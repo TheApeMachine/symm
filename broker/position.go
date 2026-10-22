@@ -74,11 +74,15 @@ func (position *Position) Update(mark *decimal.Decimal) {
 	position.Mark = mark
 
 	/*
-	Both fee legs ride the current tier as percent rates: the frontend's
-	"if sold now" adds them to the mark-over-entry move for the round trip.
+		Both fee legs ride the current tier as percent rates: the frontend's
+		"if sold now" adds them to the mark-over-entry move for the round trip.
+		Without a tier there is nothing to ride, and a leg that is erased is
+		a leg the price layer can no longer read.
 	*/
-	position.EntryFee = position.feeRate()
-	position.ExitFee = position.feeRate()
+	if rate := position.feeRate(); rate != nil {
+		position.EntryFee = rate
+		position.ExitFee = rate
+	}
 }
 
 /*
@@ -100,9 +104,19 @@ func (position *Position) feeRate() *decimal.Decimal {
 }
 
 /*
+bandPercent is how far the mark may travel from the entry price before the
+walk is over: two percent either way.
+*/
+const bandPercent = 2
+
+/*
 ShouldExit reports whether a virtual position's band walk is over: the mark
-has moved more than two percent either way from the entry cost. The caller
+has moved more than two percent either way from the entry price. The caller
 (desk/training settle loop) closes it; the position only reports.
+
+The band is the price against the entry price, not the fee-net return: the
+fee legs carry tier rates (1.587 reads as 1.587%), so they cannot carry this
+comparison, and the round trip already costs more than the band.
 */
 func (position *Position) ShouldExit() bool {
 	position.mu.Lock()
@@ -116,14 +130,13 @@ func (position *Position) ShouldExit() bool {
 		return false
 	}
 
-	pct := position.price.RealizedReturn(
-		position.EntryPrice,
-		position.EntryFee,
-		position.Mark,
-		position.ExitFee,
-	)
+	if position.EntryPrice.Sign() <= 0 {
+		return false
+	}
 
-	return pct < -0.02 || pct > 0.02
+	move := (position.Mark.Float64()/position.EntryPrice.Float64() - 1) * 100
+
+	return move < -bandPercent || move > bandPercent
 }
 
 /*
@@ -268,31 +281,23 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 			position.EntryPrice = execution.LastPrice
 		}
 
-		if execution.FeeUsdEquiv != nil {
-			if position.EntryFee == nil {
-				position.EntryFee = execution.FeeUsdEquiv
-			}
-
-			if position.EntryFee != nil && position.EntryFee != execution.FeeUsdEquiv {
-				position.EntryFee = position.EntryFee.Add(execution.FeeUsdEquiv)
-			}
-		}
-
 		/*
-			Seed the mark and both fee legs from the fill so a fresh entry
-			arrives on the wire with complete data. Update refines them
-			from the fee tier as the book moves.
+			Seed the mark and both fee legs so a fresh entry arrives on the
+			wire with complete data. Update refines them from the fee tier
+			as the book moves. The legs carry tier rates: the dollar fee of
+			the fill stays in the fill itself, where the paper ledger and
+			the frontend's execution totals read it.
 		*/
 		if position.Mark == nil {
 			position.Mark = position.EntryPrice
+		}
 
-			if position.EntryFee == nil || position.EntryFee.Sign() == 0 {
-				position.EntryFee = position.feeRate()
-			}
+		if position.EntryFee == nil || position.EntryFee.Sign() == 0 {
+			position.EntryFee = position.feeRate()
+		}
 
-			if position.ExitFee == nil || position.ExitFee.Sign() == 0 {
-				position.ExitFee = position.feeRate()
-			}
+		if position.ExitFee == nil || position.ExitFee.Sign() == 0 {
+			position.ExitFee = position.feeRate()
 		}
 
 		return
@@ -307,14 +312,12 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 			position.ExitPrice = execution.LastPrice
 		}
 
-		if execution.FeeUsdEquiv != nil {
-			if position.ExitFee == nil {
-				position.ExitFee = execution.FeeUsdEquiv
-			}
-
-			if position.ExitFee != nil && position.ExitFee != execution.FeeUsdEquiv {
-				position.ExitFee = position.ExitFee.Add(execution.FeeUsdEquiv)
-			}
+		/*
+			The exit leg carries the tier rate like the entry leg: the dollar
+			fee of the fill stays in the fill itself.
+		*/
+		if position.ExitFee == nil || position.ExitFee.Sign() == 0 {
+			position.ExitFee = position.feeRate()
 		}
 
 		if position.Qty != nil {

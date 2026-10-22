@@ -43,13 +43,15 @@ func NewGrid(ctx context.Context) *Grid {
 /*
 Region is one confluence region's evidence in a frame: Deformation is the sum
 of its self-normalized metric magnitudes |SNM|, Counts how many metrics it holds,
-and Brightness their average in [0, 1].
+and Brightness their average in [0, 1]. The JSON tags are the dashboard
+contract: the Impulse Map renders the grid's own accepted regions from the
+training frame's grid/regions layer.
 */
 type Region struct {
-	Key         uint8
-	Deformation float64
-	Brightness  float64
-	Counts      int
+	Key         uint8   `json:"key"`
+	Deformation float64 `json:"deformation"`
+	Brightness  float64 `json:"brightness"`
+	Counts      int     `json:"counts"`
 }
 
 type Signal struct {

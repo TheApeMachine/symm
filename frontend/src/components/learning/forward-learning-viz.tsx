@@ -825,7 +825,7 @@ export const ForwardLearningViz = ({
 				}
 
 				const metricMap: Record<string, number> = {};
-				for (const m of measurement.lookup("metrics") ?? []) {
+				for (const m of (measurement.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
 					if (!m?.name) continue;
 					metricMap[String(m.name)] = m.raw ?? 0;
 				}
@@ -837,11 +837,9 @@ export const ForwardLearningViz = ({
 				const sCode = metricMap.stage_code ?? 0;
 				setStageCode(sCode);
 
-				if (measurement.lookup("provenance")) {
-					for (const p of measurement.lookup("provenance")) {
-						if (p?.name === "stage_blocker" && p.value !== undefined) {
-							setStageBlocker(String(p.value));
-						}
+				for (const p of (measurement.lookup("provenance") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
+					if (p?.name === "stage_blocker" && p.value !== undefined) {
+						setStageBlocker(String(p.value));
 					}
 				}
 
@@ -851,21 +849,19 @@ export const ForwardLearningViz = ({
 
 				let tokensList: string[] = [];
 				let excDirection = "";
-				if (measurement.lookup("provenance")) {
-					for (const p of measurement.lookup("provenance")) {
-						if (p?.name === "precursor_tokens" && p.value) {
-							tokensList = String(p.value).split(",").filter(Boolean);
-						}
-						if (p?.name === "excursion_direction")
-							excDirection = String(p.value);
+				for (const p of (measurement.lookup("provenance") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
+					if (p?.name === "precursor_tokens" && p.value) {
+						tokensList = String(p.value).split(",").filter(Boolean);
 					}
+					if (p?.name === "excursion_direction")
+						excDirection = String(p.value);
 				}
 				let excStart: number | undefined;
 				let excIgnition: number | undefined;
 				let excExit: number | undefined;
 
-				if (measurement.lookup("metadata")) {
-					for (const m of measurement.lookup("metadata")) {
+				{
+					for (const m of (measurement.lookup("metadata") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
 						if (m?.name === "precursor_tokens" && m.value) {
 							tokensList = String(m.value).split(",").filter(Boolean);
 						}
@@ -940,8 +936,8 @@ export const ForwardLearningViz = ({
 				setHistMeanReturn(metricMap.hist_mean_return ?? 0);
 				setHistLowerBound(metricMap.hist_lower_bound ?? 0);
 
-				if (measurement.provenance) {
-					for (const m of measurement.provenance) {
+				{
+					for (const m of (measurement.lookup("provenance") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
 						if (m?.name === "edge_samples" && m.value) {
 							const parsed = String(m.value)
 								.split(",")
@@ -965,7 +961,7 @@ export const ForwardLearningViz = ({
 				if (metricMap.price !== undefined) {
 					rawPrice = metricMap.price;
 				} else if (measurement.lookup("metrics")) {
-					for (const met of measurement.lookup("metrics")) {
+					for (const met of (measurement.lookup("metrics") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
 						if (met?.name && met?.raw !== undefined) {
 							const lk = met.name.toLowerCase();
 							const validPrices = [
@@ -1054,8 +1050,8 @@ export const ForwardLearningViz = ({
 				}
 
 				// String event tags are carried by the wire's provenance vector.
-				if (measurement.provenance) {
-					for (const m of measurement.provenance) {
+				{
+					for (const m of (measurement.lookup("provenance") as unknown as Array<Record<string, unknown>> | undefined) ?? []) {
 						if (
 							m?.name === "excursion_event" &&
 							String(m.value) === "completed"

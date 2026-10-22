@@ -289,13 +289,13 @@ export const decodeManifold = (value: Value): FluidManifoldFrame => {
 	let waveScale = 1;
 
 	let particleCount = 0;
-	const metrics = value.metrics;
+	const metrics = (value.lookup("metrics") ?? []) as unknown as Array<Record<string, unknown>>;
 	const metricsLen = metrics.length;
 
 	for (let i = 0; i < metricsLen; i += 1) {
 		const metric = metrics[i];
 		if (metric && metric.name === "particle_count") {
-			particleCount = Math.round(metric.raw);
+			particleCount = Math.round(Number(metric.raw) || 0);
 			break;
 		}
 	}
@@ -331,7 +331,7 @@ export const decodeManifold = (value: Value): FluidManifoldFrame => {
 		if (!metric || metric.name === null) continue;
 
 		const name = typeof metric.name === "string" ? metric.name : "";
-		const val = metric.raw;
+		const val = Number(metric.raw);
 
 		switch (name) {
 			case "divergence":

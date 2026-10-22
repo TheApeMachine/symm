@@ -2,7 +2,6 @@ package system
 
 import (
 	"github.com/spf13/viper"
-	"time"
 )
 
 /*
@@ -15,28 +14,37 @@ region of the same fragment tape (deliberate noise, as dropout does). It is
 off unless enabled: the perturbed contexts never occurred in the market.
 */
 type Learning struct {
-	Traders            int
-	CheckpointInterval time.Duration
-	RehearsalDropout   bool
-	PrecursorHorizon   int
-	// MinimumPathConfidence is the matched token path length (one per token)
-	// Step requires before acting on a unanimous match. It has no default:
-	// the configuration must state it.
+	PolicyPrefix          string
+	EnterSuffix           string
+	ExitSuffix            string
 	MinimumPathConfidence int
+	ThresholdStart        float64
+	ThresholdStep         float64
+	ThresholdFloor        float64
+	ThresholdCeil         float64
+	VirtualPromote        int
 }
 
 func NewLearning() *Learning {
-	// Eight independent workers is a resource allocation; the first evaluates the shared model.
-	viper.SetDefault("learning.traders", 8)
-	// Operational persistence cadence, never a decision or outcome horizon.
-	viper.SetDefault("learning.checkpoint_interval", "1m")
-	viper.SetDefault("learning.rehearsal_dropout", false)
-	viper.SetDefault("learning.precursor_horizon", 8)
+	viper.SetDefault("learning.policy_prefix", "model/current/")
+	viper.SetDefault("learning.enter_suffix", "/enter.bin")
+	viper.SetDefault("learning.exit_suffix", "/exit.bin")
+	viper.SetDefault("learning.minimum_path_confidence", 2)
+	viper.SetDefault("learning.threshold_start", 0.5)
+	viper.SetDefault("learning.threshold_step", 0.05)
+	viper.SetDefault("learning.threshold_floor", 0.05)
+	viper.SetDefault("learning.threshold_ceil", 0.95)
+	viper.SetDefault("learning.virtual_promote", 3)
+
 	return &Learning{
-		Traders:               viper.GetInt("learning.traders"),
-		CheckpointInterval:    viper.GetDuration("learning.checkpoint_interval"),
-		RehearsalDropout:      viper.GetBool("learning.rehearsal_dropout"),
-		PrecursorHorizon:      viper.GetInt("learning.precursor_horizon"),
+		PolicyPrefix:          viper.GetString("learning.policy_prefix"),
+		EnterSuffix:           viper.GetString("learning.enter_suffix"),
+		ExitSuffix:            viper.GetString("learning.exit_suffix"),
 		MinimumPathConfidence: viper.GetInt("learning.minimum_path_confidence"),
+		ThresholdStart:        viper.GetFloat64("learning.threshold_start"),
+		ThresholdStep:         viper.GetFloat64("learning.threshold_step"),
+		ThresholdFloor:        viper.GetFloat64("learning.threshold_floor"),
+		ThresholdCeil:         viper.GetFloat64("learning.threshold_ceil"),
+		VirtualPromote:        viper.GetInt("learning.virtual_promote"),
 	}
 }

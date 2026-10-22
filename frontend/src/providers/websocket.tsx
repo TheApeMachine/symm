@@ -1,5 +1,9 @@
 import { atoms, RingBuffer, signals } from "#/collections/app";
-import { ingestTrainRegions } from "#/collections/cognition";
+import {
+	ingestCognitionFrame,
+	ingestTrainRegions,
+} from "#/collections/cognition";
+import { ingestSequiturFrame } from "#/collections/sequitur";
 import { hubWsUrl } from "#/lib/hub";
 import { parseValues } from "#/types/decoder";
 import type { Value } from "#/types/value";
@@ -66,6 +70,48 @@ const ingest = (values: Value[]) => {
 					}
 					ingestTrainRegions(Number(val.tick), val.index[i], payload);
 				}
+			}
+		}
+
+		/*
+		The grammar feed rides origin "sequitur": one frame per symbol per
+		training tick, decoded once and folded into the Sequitur store.
+		The Sequitur tab renders it; the Longtail recorder reads the same
+		store for the gate and policy rates.
+
+		The cognition feed rides origin "cognition" with role "match":
+		the live sentence and its policy hit, for the Cognitive tree and
+		the forward-learning trie. One decoder per layer.
+		*/
+		if (origin === "sequitur" || origin === "cognition") {
+			for (let i = 0; i < val.index.length; i++) {
+				let payload: unknown;
+				try {
+					payload = JSON.parse(new TextDecoder().decode(val.layers[i]));
+				} catch {
+					continue;
+				}
+
+				if (origin === "sequitur") {
+					ingestSequiturFrame(payload);
+					continue;
+				}
+
+				/*
+				The wire epoch is a uint64: it exceeds what a JS number
+				holds exactly, and the store keys epochs as strings.
+				*/
+				if (
+					val.role === "match" &&
+					payload &&
+					typeof payload === "object"
+				) {
+					(payload as Record<string, unknown>).epoch = String(
+						val.epoch,
+					);
+				}
+
+				ingestCognitionFrame(val.role, payload);
 			}
 		}
 

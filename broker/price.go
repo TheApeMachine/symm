@@ -344,7 +344,9 @@ func (price *Price) RealizedReturn(
 
 /*
 realize is RealizedReturn's arithmetic, also returning the cost and the profit
-it already subtracts. The percent is profit / cost * 100.
+it already subtracts. The percent is profit / cost * 100. The fee legs are
+tier rates in percent — the units Price.WithFee applies — so they scale the
+cost and the proceeds instead of adding to them.
 */
 func (price *Price) realize(
 	entryCost, entryFee, exitCost, exitFee *decimal.Decimal,
@@ -355,12 +357,14 @@ func (price *Price) realize(
 
 	totalEntry := entryCost
 	if entryFee != nil && entryFee.Sign() > 0 {
-		totalEntry = entryCost.Add(entryFee)
+		totalEntry = entryCost.OffsetPercent(decimalPercent.Mul(entryFee))
 	}
 
 	netExit := exitCost
 	if exitFee != nil && exitFee.Sign() > 0 {
-		netExit = exitCost.Sub(exitFee)
+		netExit = exitCost.OffsetPercent(
+			decimalPercent.Mul(exitFee).Mul(decimalNegativeOne),
+		)
 	}
 
 	gain := netExit.Sub(totalEntry)
@@ -446,7 +450,13 @@ func (price *Price) pricedExit(symbol string, quantity, entry, fee *decimal.Deci
 		return booked{}
 	}
 
-	cost, proceeds, profit, percent := price.realize(notional(entry, quantity), fee, surface.ExecutableValue, nil)
+	net := price.WithFee(symbol, surface.ExecutableValue, SELL)
+
+	if net == nil || net.Sign() <= 0 {
+		return booked{}
+	}
+
+	cost, proceeds, profit, percent := price.realize(notional(entry, quantity), fee, net, nil)
 
 	if profit == nil {
 		return booked{}

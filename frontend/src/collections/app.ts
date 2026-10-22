@@ -72,6 +72,13 @@ export const signals: Record<
 };
 
 /*
+resonanceStore aliases the resonance signal ring so the prediction chart
+reads the solver's published frames through the store it was built against.
+*/
+export const resonanceStore = signals["resonance"];
+
+
+/*
 positionRows reads the desk's latest frame: the ring keyed by the frame's
 scope holds the merged positions broadcast (one per tick, all lots), and
 lookup("positions") decodes the rows straight off the Value.

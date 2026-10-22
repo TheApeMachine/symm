@@ -284,6 +284,8 @@ func (client *Client) DeletePrefix(prefix string) error {
 
 /*
 MovePrefix copies all objects matching sourcePrefix to destPrefix, then deletes the originals.
+An object keeps the path it holds under sourcePrefix, so "position/open/BTC" moved to
+"position/closed/BTC" lands on "position/closed/BTC/<epoch>/<tick>".
 */
 func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 	for page := range client.List(sourcePrefix) {
@@ -292,9 +294,15 @@ func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 				continue
 			}
 
+			dest := destKey(destPrefix, *object.Key, sourcePrefix)
+
+			if dest == *object.Key {
+				continue
+			}
+
 			_, err := client.S3Client.CopyObject(client.Context(), &s3.CopyObjectInput{
 				Bucket:     aws.String(client.bucket),
-				Key:        aws.String(*object.Key),
+				Key:        aws.String(dest),
 				CopySource: aws.String(client.bucket + "/" + *object.Key),
 			})
 
@@ -308,8 +316,28 @@ func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 				Bucket: aws.String(client.bucket),
 				Key:    aws.String(*object.Key),
 			})
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO, "[store.client] delete object error", err,
+				))
+			}
 		}
 	}
 
 	return nil
+}
+
+/*
+destKey is where an object lands when its prefix moves: the path the object holds under the
+source prefix is kept under the destination prefix.
+*/
+func destKey(destPrefix, key, sourcePrefix string) string {
+	rel := strings.TrimPrefix(key, sourcePrefix)
+
+	if rel == "" {
+		return destPrefix
+	}
+
+	return strings.TrimSuffix(destPrefix, "/") + "/" + strings.TrimPrefix(rel, "/")
 }

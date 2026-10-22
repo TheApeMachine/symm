@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSelector } from "@tanstack/react-store";
 import {
+	atoms,
 	clockAtom,
 	DEFAULT_KERNELS,
 	type RingBuffer,
@@ -41,6 +43,14 @@ and peer signal stores for the given symbol.
 */
 export const useImpulseData = (symbol: string): ImpulseDataState => {
 	const initialNodes = useMemo(() => createCanonicalGridNodes(), []);
+
+	/*
+	The signal layers ride the raw market tick through the websocket ingest:
+	no store of their own fires when they arrive. The tick atom advances on
+	every inbound batch, so re-deriving on it re-reads the signal rings each
+	tick instead of only when training happens to publish.
+	*/
+	const tickCount = useSelector(atoms.tickCount);
 
 	const [state, setState] = useState<ImpulseDataState>(() => {
 		const initialRegions = REGION_KEYS.map((_key, idx) => ({
@@ -88,12 +98,33 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 
 			// Build fast lookup for training metrics from the layer payloads
 			const trainingMetrics: Record<string, number> = {};
-			if (
-				trainingRing &&
-				typeof trainingRing.getBufferLength === "function" &&
-				trainingRing.getBufferLength() > 0
-			) {
-				const latest = trainingRing.get(trainingRing.getBufferLength() - 1);
+			/*
+			The grid's own frame: grid/regions/<symbol> carries the regions
+			the grid accepted this tick — key, deformation, member counts,
+			and the brightness after its midpoint cut. The map renders
+			these directly.
+			*/
+			const gridRegions: Array<{
+				key: number;
+				deformation: number;
+				brightness: number;
+				counts: number;
+			}> = [];
+			if (trainingRing && !trainingRing.isEmpty()) {
+				const latest = trainingRing.getLast();
+				if (latest) {
+					for (const { payload } of latest.layersUnder("grid/regions")) {
+						if (!Array.isArray(payload)) continue;
+						for (const region of payload) {
+							if (region && typeof region.key === "number") {
+								gridRegions.push(region);
+							}
+						}
+					}
+				}
+			}
+			if (trainingRing && !trainingRing.isEmpty()) {
+				const latest = trainingRing.getLast();
 				if (latest) {
 					for (const { suffix, payload } of latest.layersUnder("train/regions")) {
 						const first = Array.isArray(payload)
@@ -153,9 +184,19 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				const key = `R${String(i).padStart(2, "0")}`;
 				const explicitBrightness = trainingMetrics[`region_brightness:${key}`];
 				const explicitMembers = trainingMetrics[`region_members:${key}`];
+				const gridRegion = gridRegions.find((region) => region.key === i);
+
+				if (gridRegion) {
+					regionBrightness[i] = gridRegion.brightness;
+					regionMembers[i] = gridRegion.counts;
+					continue;
+				}
 
 				if (explicitBrightness !== undefined && explicitBrightness > 0) {
 					regionBrightness[i] = explicitBrightness;
+					regionMembers[i] = Math.round(
+						explicitMembers ?? CANONICAL_COUNTS[i] ?? 0,
+					);
 				} else {
 					// Derive region brightness as the average activation of its member pins (matching nomagique/store/grid.go)
 					let pinSum = 0;
@@ -170,11 +211,10 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 						}
 					}
 					regionBrightness[i] = pinCount > 0 ? pinSum / pinCount : 0;
+					regionMembers[i] = Math.round(
+						explicitMembers ?? CANONICAL_COUNTS[i] ?? 0,
+					);
 				}
-
-				regionMembers[i] = Math.round(
-					explicitMembers ?? CANONICAL_COUNTS[i] ?? 0,
-				);
 			}
 
 			// Update all 81 canonical nodes
@@ -271,7 +311,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				u?.();
 			}
 		};
-	}, [symbol]);
+	}, [symbol, tickCount]);
 
 	return state;
 };

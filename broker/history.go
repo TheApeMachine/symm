@@ -52,10 +52,29 @@ func (history *History) Store(value *data.Value) error {
 }
 
 /*
-Move the prefix.
+Move retires the open records of a lot and stores the closed one: the value is written at its
+own prefix and every record under the source prefix is deleted. The value carries the outcome
+of the lot, so the closed record is written from the desk's memory and not copied from the
+open side, which still holds the state the lot had when it entered.
 */
-func (history *History) Move(value *data.Value, to string) error {
-	from := value.Prefix
-	value.Prefix = to
-	return history.store.MovePrefix(from, to)
+func (history *History) Move(value *data.Value, from string) error {
+	if _, err := history.store.WriteAtPrefix(
+		value.Prefix, value.Bytes(),
+	); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[history.Move] failed to store value",
+			err,
+		))
+	}
+
+	if err := history.store.DeletePrefix(from); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[history.Move] failed to retire open value",
+			err,
+		))
+	}
+
+	return nil
 }
