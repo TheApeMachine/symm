@@ -1,4 +1,5 @@
 import { atoms, RingBuffer, signals } from "#/collections/app";
+import { ingestTrainRegions } from "#/collections/cognition";
 import { hubWsUrl } from "#/lib/hub";
 import { parseValues } from "#/types/decoder";
 import type { Value } from "#/types/value";
@@ -23,9 +24,7 @@ const bumpStore = (store: {
 };
 
 const ingest = (values: Value[]) => {
-	console.log("ingest", values);
 	for (const val of values) {
-		console.log("ingest", val);
 		const origin = val.origin;
 
 		// Route by origin: atom or signal store.
@@ -51,7 +50,37 @@ const ingest = (values: Value[]) => {
 			bumpStore(store);
 		}
 
-		atoms.tickCount.set(Number(val.tick));
+		/*
+		The region ring and the token strip read from the cognition stores,
+		not the training store: every train/regions layer on the value feeds
+		them here, at ingest, the same for any origin that carries one.
+		*/
+		if (val.index.some((index) => index.includes("train/regions"))) {
+			for (let i = 0; i < val.index.length; i++) {
+				if (val.index[i].includes("train/regions")) {
+					let payload: unknown;
+					try {
+						payload = JSON.parse(new TextDecoder().decode(val.layers[i]));
+					} catch {
+						continue;
+					}
+					ingestTrainRegions(Number(val.tick), val.index[i], payload);
+				}
+			}
+		}
+
+		/*
+		The tick is a monotonic clock, not a per-frame payload. Frames that
+		carry no tick (or a zero/unparseable one) must not reset the
+		count — keep the last one seen.
+		*/
+		if (val.tick != null) {
+			const tick = Number(val.tick);
+
+			if (Number.isFinite(tick) && tick > 0) {
+				atoms.tickCount.set(tick);
+			}
+		}
 	}
 };
 

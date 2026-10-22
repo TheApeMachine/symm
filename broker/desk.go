@@ -61,6 +61,19 @@ func NewDesk(
 		"virtual":  desk.virtuals,
 	} {
 		for value := range desk.history.Restore(key) {
+			/*
+				Prefix is "[origin]/[role]/[scope]/[epoch]/[tick]": the
+				role records whether the lot was open or closed when it was
+				persisted. Anything else — an empty value, an interrupted
+				object — is not a position record and decodes to a ghost
+				keyed by the empty symbol that no update can ever mark or
+				close, so it would broadcast to every client forever.
+			*/
+			fields := strings.Split(value.Prefix, "/")
+			if len(fields) != 5 || fields[1] != "open" {
+				continue
+			}
+
 			position := &Position{}
 			value.Lookup(position, key)
 
@@ -68,6 +81,17 @@ func NewDesk(
 				// A frame that does not decode is already recorded on the
 				// value; report it and keep restoring the rest.
 				desk.Error(value.Err)
+				continue
+			}
+
+			/*
+				A frame whose positions layer decoded to nothing (absent,
+				empty, or a non-object payload) leaves a zero position on
+				our hands. Restoring it would key an untradeable ghost by
+				the empty symbol that no Update can ever mark or close, so
+				it would broadcast to every client forever. Skip it.
+			*/
+			if position.Symbol == "" {
 				continue
 			}
 
@@ -85,13 +109,30 @@ connection is established, and we want to update the client with
 some initial data.
 */
 func (desk *Desk) Hello() {
-	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
-		desk.positions.All(), "positions",
-	))
+	for _, virtual := range []bool{true, false} {
+		positions := desk.Positions(virtual)
+
+		if len(positions) > 0 {
+			io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
+				positions, "positions",
+			))
+		}
+	}
 
 	if desk.balance.value != nil {
 		io.Copy(ui.UI, desk.balance.value)
 	}
+}
+
+/*
+Positions returns the open positions in the desk.
+*/
+func (desk *Desk) Positions(open bool) []*Position {
+	if open {
+		return desk.positions.All()
+	}
+
+	return desk.virtuals.All()
 }
 
 /*
@@ -100,6 +141,12 @@ whose band walk is over. Called from the workspace tick handler — the desk sit
 off the trade ingress path, so this is where marks become live.
 */
 func (desk *Desk) Update(trades []kraken.TradeData) {
+	/*
+	Trade ticks are sparse: one carries a handful of symbols, so the marks
+	of everything else simply do not appear in this frame. Hello reads the
+	whole desk — every position, moved or not — so the frame always carries
+	every card and an unchanged position never blinks out and back.
+	*/
 	for _, val := range []*Cache{
 		desk.positions, desk.virtuals,
 	} {
@@ -225,11 +272,26 @@ func (desk *Desk) Enter(
 		key = "virtual"
 	}
 
+	/*
+		The desk owns the position from the moment it enters: register it in
+		the right cache so ticks mark it and Hello publishes it immediately.
+		Without this only a restart (history restore) would ever surface a
+		live entry.
+	*/
+	cache := desk.positions
+
+	if virtual {
+		cache = desk.virtuals
+	}
+
+	cache.Add(position.Symbol, position)
+
 	if err := desk.history.Store(data.NewValue(
 		key, "open", symbol,
 	).Append(
 		position, "position",
 	)); err != nil {
+		cache.Drop(position.Symbol)
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[desk.Enter] failed to store position",
@@ -238,12 +300,17 @@ func (desk *Desk) Enter(
 	}
 
 	if err := desk.Send(order, virtual); err != nil {
+		cache.Drop(position.Symbol)
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[desk.Enter] failed to send order",
 			err,
 		))
 	}
+
+	// The entry is live: hand the desk's full snapshot to every client now
+	// instead of waiting for the next trade tick to trigger a publish.
+	desk.Hello()
 
 	return nil
 }
@@ -347,6 +414,37 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool) error {
 	}
 
 	return nil
+}
+
+/*
+Virtual returns the symbol's open virtual, nil when there is none.
+*/
+func (desk *Desk) Virtual(symbol string) *Position {
+	return desk.virtuals.Get(symbol, true)
+}
+
+/*
+ClosedVirtuals returns the virtuals sitting on the closed side of the cache:
+their outcomes are what Train writes into the model. Drop retires them once
+settled.
+*/
+func (desk *Desk) ClosedVirtuals() []*Position {
+	positions := make([]*Position, 0)
+
+	for _, position := range desk.virtuals.All() {
+		if position.ClosedAt != nil {
+			positions = append(positions, position)
+		}
+	}
+
+	return positions
+}
+
+/*
+Drop retires a virtual from the desk entirely, open or closed.
+*/
+func (desk *Desk) Drop(symbol string) {
+	desk.virtuals.Drop(symbol)
 }
 
 /*

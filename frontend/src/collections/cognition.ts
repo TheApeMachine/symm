@@ -1,5 +1,52 @@
 import { createStore } from "@tanstack/store";
 
+/*
+The live symbol set, as known to the app (it also seeds the symbol
+picker). Training indexes embed the symbol — "BTC/USD" is two "/" segments
+— and the known set resolves the symbol boundary unambiguously at the
+segment level.
+*/
+export const SYMBOLS = [
+	"BTC/USD",
+	"ETH/USD",
+	"SOL/USD",
+	"XRP/USD",
+	"ADA/USD",
+	"DOGE/USD",
+	"AVAX/USD",
+	"DOT/USD",
+	"LINK/USD",
+	"LTC/USD",
+];
+
+export const rememberSymbol = (symbol: string) => {
+	if (symbol.includes("/") && !SYMBOLS.includes(symbol)) {
+		SYMBOLS.push(symbol);
+	}
+};
+
+/*
+The longest known symbol at a segment boundary, then the sentence tail.
+*/
+export const splitSymbol = (
+	path: string,
+): { symbol: string; rest: string } | null => {
+	let best: string | null = null;
+
+	for (const symbol of SYMBOLS) {
+		if (
+			(best === null || symbol.length > best.length) &&
+			(path === symbol || path.startsWith(symbol + "/"))
+		) {
+			best = symbol;
+		}
+	}
+
+	if (best === null) return null;
+
+	return { symbol: best, rest: path.slice(best.length + 1) };
+};
+
 export const COGNITION_ORIGIN = "cognition";
 export const COGNITION_TREE_ROLE = "tree";
 export const COGNITION_MATCH_ROLE = "match";
@@ -90,8 +137,14 @@ const noteRegions = (
 
 	const prior = regionRings.get(symbol) ?? [];
 	const last = prior[prior.length - 1];
+
+	/*
+	The new row starts from the previous row: a region this tick did not
+	observe keeps its last brightness instead of going dark and reappearing
+	two frames later.
+	*/
 	const row =
-		last !== undefined && last.tick === tick
+		last !== undefined
 			? last.row.slice()
 			: new Array<number | undefined>(REGION_COUNT).fill(undefined);
 
@@ -109,6 +162,10 @@ const noteRegions = (
 		}
 	});
 
+	/*
+	The row for this tick is a replace, not a new ring entry: the region
+	layers of one training frame arrive one by one.
+	*/
 	const next =
 		last !== undefined && last.tick === tick
 			? prior.slice(0, -1)
@@ -131,27 +188,27 @@ export const parseTrainRegionsIndex = (
 	if (start < 0) return null;
 
 	const tail = index.slice(start + TRAIN_REGIONS.length);
-	const parts = tail.split("/").filter(Boolean);
-	if (parts.length === 0) return null;
+	const split = splitSymbol(tail);
+	if (!split) return null;
 
-	const tokens: string[] = [];
-	let symbolEnd = 0;
+	rememberSymbol(split.symbol);
 
-	for (let i = parts.length - 1; i >= 0; i--) {
-		if (REGION.test(parts[i])) {
-			tokens.unshift(parts[i]);
-			symbolEnd = i;
-			continue;
-		}
-		break;
+	/*
+	The tail is <symbol>/<sentence...>/<leaf>, where the leaf is the region
+	(a per-brightness layer) or "tokens" (the live sentence, whose payload
+	carries the token list).
+	*/
+	const parts = split.rest.split("/").filter(Boolean);
+	const leaf = parts.pop();
+	if (leaf === undefined) return null;
+
+	if (leaf === "tokens") {
+		return { symbol: split.symbol, tokens: [] };
 	}
 
-	if (tokens.length === 0) return null;
+	if (!REGION.test(leaf)) return null;
 
-	const symbol = parts.slice(0, symbolEnd).join("/");
-	if (!symbol) return null;
-
-	return { symbol, tokens };
+	return { symbol: split.symbol, tokens: [...parts, leaf] };
 };
 
 const policyKeyFromIndex = (index: string): string | null => {
@@ -183,21 +240,66 @@ export const ingestPolicyKey = (key: string, epoch?: string) => {
 	});
 };
 
-export const ingestTrainRegionsLayer = (
+export const ingestTrainRegions = (
 	tick: number,
 	index: string,
-	brightness: number[] = [],
+	payload: unknown,
 ) => {
 	const parsed = parseTrainRegionsIndex(index);
 	if (!parsed) return false;
 
-	noteRegions(parsed.symbol, tick, parsed.tokens, brightness);
+	/*
+	Sentences arrive as one layer — a token list under /tokens. It feeds the
+	match, never a ring.
+	*/
+	if (parsed.tokens.length === 0) {
+		const tokens = Array.isArray(payload)
+			? payload.filter((token): token is string => typeof token === "string")
+			: [];
+
+		if (tokens.length === 0) return true;
+
+		cognitionStore.setState((state) => {
+			const prior = state.matches[parsed.symbol];
+
+			return {
+				...state,
+				matches: {
+					...state.matches,
+					[parsed.symbol]: {
+						symbol: parsed.symbol,
+						tick,
+						tokens,
+						stored: false,
+						match: "",
+						depth: tokens.length,
+						action: "",
+						rejected:
+							prior != null && prior.tick === tick ? prior.rejected : [],
+					},
+				},
+			};
+		});
+
+		return true;
+	}
+
+	/*
+	Per-region layers carry brightness under a <R##> tail: the ring row for
+	this tick. A payload that is not brightness belongs to no ring and does
+	not clear what prior layers set.
+	*/
+	const brightness = Array.isArray(payload)
+		? payload.map((value) => Number(value)).filter(Number.isFinite)
+		: [];
+
+	if (brightness.length > 0) {
+		noteRegions(parsed.symbol, tick, parsed.tokens, brightness);
+	}
 
 	cognitionStore.setState((state) => {
 		const prior = state.matches[parsed.symbol];
 		const tokens = parsed.tokens;
-		const path = tokens.join("/");
-		const aligned = prior != null && prior.match !== "" && prior.match === path;
 
 		return {
 			...state,
@@ -207,11 +309,12 @@ export const ingestTrainRegionsLayer = (
 					symbol: parsed.symbol,
 					tick,
 					tokens,
-					stored: aligned ? prior.stored : false,
-					match: aligned ? prior.match : "",
+					stored: false,
+					match: "",
 					depth: tokens.length,
-					action: aligned ? prior.action : "",
-					rejected: prior != null && prior.tick === tick ? prior.rejected : [],
+					action: "",
+					rejected:
+						prior != null && prior.tick === tick ? prior.rejected : [],
 				},
 			},
 		};

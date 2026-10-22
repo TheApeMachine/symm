@@ -67,7 +67,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
 
 	useEffect(() => {
-		atoms["route"].set(surface);
+		atoms.route.set(surface);
 		sendRoute(surface);
 	}, [surface]);
 	const {
@@ -88,7 +88,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 		}
 
 		if (focusSymbol) {
-			atoms["focus"].set(focusSymbol);
+			atoms.focus.set(focusSymbol);
 			selectFocusSymbol(focusSymbol);
 		}
 
@@ -104,9 +104,9 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 				return;
 			}
 
-			if (event.key === "Escape" && atoms["error"].get()) {
+			if (event.key === "Escape" && atoms.error.get()) {
 				event.preventDefault();
-				atoms["error"].set(null);
+				atoms.error.set(null);
 				return;
 			}
 

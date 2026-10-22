@@ -5,7 +5,7 @@ import {
 	cognitionStore,
 	ingestCognitionFrame,
 	ingestPolicyLayers,
-	ingestTrainRegionsLayer,
+	ingestTrainRegions,
 	ingestTrainReject,
 } from "#/collections/cognition";
 import { CognitiveTree, progressOf } from "./cognitive-tree";
@@ -211,19 +211,19 @@ describe("CognitiveTree", () => {
 				bytes: new Uint8Array([0]),
 			},
 		]);
-		ingestTrainRegionsLayer(
+		ingestTrainRegions(
 			9,
 			"workspace/tick/aggregate/1/0000000000000000009.bin/train/regions/ETH/USD/R01",
-			[],
+			[0.5],
 		);
 		ingestTrainReject(
 			9,
 			"workspace/tick/aggregate/1/0000000000000000009.bin/train/reject/ETH/USD/R02",
 		);
-		ingestTrainRegionsLayer(
+		ingestTrainRegions(
 			10,
 			"workspace/tick/aggregate/1/0000000000000000010.bin/train/regions/ETH/USD/R04/R08/R01",
-			[],
+			[0.25],
 		);
 		render(<CognitiveTree />);
 		const meta = screen.getByTestId("cognitive-tree-meta").textContent ?? "";

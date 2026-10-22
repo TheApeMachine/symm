@@ -3,6 +3,8 @@ package broker
 import (
 	"context"
 	"iter"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -23,10 +25,9 @@ func NewCache(ctx context.Context) *Cache {
 }
 
 /*
-All returns all positions in the cache.
-If you do not provide a boolean, it will return all open & closed positions.
-If you provide a false boolean, it will return all open & closed positions.
-If you provide a true boolean, it will return all open positions.
+All returns all positions in the cache, ordered by symbol so the
+published frame is deterministic: without the sort, sync.Map's random
+range order reshuffles the frontend's rows every tick.
 */
 func (cache *Cache) All(open ...bool) []*Position {
 	positions := make([]*Position, 0)
@@ -42,6 +43,10 @@ func (cache *Cache) All(open ...bool) []*Position {
 			return true
 		})
 	}
+
+	slices.SortFunc(positions, func(a, b *Position) int {
+		return strings.Compare(a.Symbol, b.Symbol)
+	})
 
 	return positions
 }
@@ -84,7 +89,16 @@ func (cache *Cache) Get(symbol string, open bool) *Position {
 	return found.(*Position)
 }
 
+/*
+Restore re-admits a position from history. A position without a symbol is
+not addressable — it can never be matched by an update or closed — so it
+never enters the cache.
+*/
 func (cache *Cache) Restore(position *Position) {
+	if position == nil || position.Symbol == "" {
+		return
+	}
+
 	if position.ClosedAt != nil && !position.ClosedAt.IsZero() {
 		cache.closed.Store(position.Symbol, position)
 	} else {
@@ -118,6 +132,10 @@ func (cache *Cache) Has(symbol string) bool {
 }
 
 func (cache *Cache) Add(symbol string, position *Position) bool {
+	if symbol == "" {
+		return true
+	}
+
 	_, ok := cache.open.LoadOrStore(symbol, position)
 	return ok
 }
@@ -132,4 +150,14 @@ func (cache *Cache) Remove(symbol string) bool {
 	position := loaded.(*Position)
 	cache.closed.Store(symbol, position)
 	return true
+}
+
+/*
+Drop retires a position from both sides of the cache. Remove closes it and
+keeps it referenceable; Drop is the separate retirement once its outcome
+has been settled.
+*/
+func (cache *Cache) Drop(symbol string) {
+	cache.open.Delete(symbol)
+	cache.closed.Delete(symbol)
 }

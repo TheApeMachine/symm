@@ -94,8 +94,14 @@ export const parseOneValue = (
 	return value;
 };
 
+/*
+parseValues parses one websocket message: raw, back-to-back Value frames
+exactly as the hub enqueues them (io.Copy(hub, value) hands over one full
+serialization per Write — no batch header). A frame that does not decode
+ends the message; values parsed before it are kept.
+*/
 export const parseValues = (bytes: Uint8Array): Value[] | null => {
-	if (bytes.byteLength < 45) return null;
+	if (bytes.byteLength < 53) return null;
 
 	const list: Value[] = [];
 	let offset = 0;
@@ -103,7 +109,7 @@ export const parseValues = (bytes: Uint8Array): Value[] | null => {
 	while (offset < bytes.byteLength) {
 		const val = parseOneValue(bytes, offset);
 		if (!val || val.byteLength === 0) {
-			return null;
+			break;
 		}
 		list.push(val);
 		offset += val.byteLength;

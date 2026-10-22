@@ -1,6 +1,7 @@
 package data
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math"
@@ -53,6 +54,26 @@ func (value *Value) Lookup(projector any, key string) {
 		}
 	}
 
+	/*
+	An absent layer is not a decode failure: the projector stays as the
+	caller left it and no error is recorded. Only a layer that is present
+	and does not decode is an error.
+	*/
+	if buf == nil {
+		return
+	}
+
+	/*
+	An empty payload is not JSON: sonic reports it as a syntax error, but
+	reading nothing into a projector is precisely "nothing decoded" — not a
+	corrupt value. An empty object/array decodes to the zero value and
+	leaves the projector untouched, which is the same outcome without the
+	error noise.
+	*/
+	if len(bytes.TrimSpace(buf)) == 0 {
+		return
+	}
+
 	if err := sonic.Unmarshal(buf, projector); err != nil {
 		value.Err = errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
@@ -60,6 +81,51 @@ func (value *Value) Lookup(projector any, key string) {
 			err,
 		))
 	}
+}
+
+/*
+Merged returns the value's layers keyed by index. The value is not changed.
+*/
+func (value *Value) Merged() map[string][]byte {
+	merged := make(map[string][]byte, len(value.Index))
+
+	for i, index := range value.Index {
+		if i < len(value.Layers) {
+			merged[index] = value.Layers[i]
+		}
+	}
+
+	return merged
+}
+
+/*
+With returns a copy of value carrying exactly the layers addressed by keys
+in order. It is how a frame says "these layers, with exactly these bytes"
+without mutating the source.
+*/
+func (value *Value) With(keys ...string) *Value {
+	clone := &Value{
+		ID:        value.ID,
+		Prefix:    value.Prefix,
+		Epoch:     value.Epoch,
+		Tick:      value.Tick,
+		SeqIdx:    value.SeqIdx,
+		Timestamp: value.Timestamp,
+		Origin:    value.Origin,
+		Role:      value.Role,
+		Scope:     value.Scope,
+	}
+
+	byIndex := value.Merged()
+
+	for _, key := range keys {
+		if buf, ok := byIndex[key]; ok {
+			clone.Index = append(clone.Index, key)
+			clone.Layers = append(clone.Layers, buf)
+		}
+	}
+
+	return clone
 }
 
 type LayerEntry struct {

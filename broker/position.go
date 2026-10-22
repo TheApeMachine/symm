@@ -72,9 +72,31 @@ func (position *Position) Update(mark *decimal.Decimal) {
 	defer position.mu.Unlock()
 
 	position.Mark = mark
-	position.ExitFee = position.price.WithFee(
-		position.Symbol, position.Qty, SELL,
-	)
+
+	/*
+	Both fee legs ride the current tier as percent rates: the frontend's
+	"if sold now" adds them to the mark-over-entry move for the round trip.
+	*/
+	position.EntryFee = position.feeRate()
+	position.ExitFee = position.feeRate()
+}
+
+/*
+feeRate is the current fee tier as a percent — the fee row's units
+(1.587 reads as 1.587%).
+*/
+func (position *Position) feeRate() *decimal.Decimal {
+	if position.price == nil {
+		return nil
+	}
+
+	fee := position.price.Fee(position.Symbol)
+
+	if fee == nil || fee.Fee == nil {
+		return nil
+	}
+
+	return fee.Fee
 }
 
 /*
@@ -253,6 +275,23 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 
 			if position.EntryFee != nil && position.EntryFee != execution.FeeUsdEquiv {
 				position.EntryFee = position.EntryFee.Add(execution.FeeUsdEquiv)
+			}
+		}
+
+		/*
+			Seed the mark and both fee legs from the fill so a fresh entry
+			arrives on the wire with complete data. Update refines them
+			from the fee tier as the book moves.
+		*/
+		if position.Mark == nil {
+			position.Mark = position.EntryPrice
+
+			if position.EntryFee == nil || position.EntryFee.Sign() == 0 {
+				position.EntryFee = position.feeRate()
+			}
+
+			if position.ExitFee == nil || position.ExitFee.Sign() == 0 {
+				position.ExitFee = position.feeRate()
 			}
 		}
 

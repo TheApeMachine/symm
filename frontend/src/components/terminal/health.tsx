@@ -1,10 +1,10 @@
-import { useEffect, useRef } from "react";
-import { tickCountAtom } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { sourceHeadlineMetric } from "#/components/terminal/kernel-meta";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 import type { Value } from "#/types/value";
+import { useEffect, useRef } from "react";
 
 export type TerminalHealth = {
 	firing: number;
@@ -86,7 +86,7 @@ export const HealthPanel = () => {
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const unsub = tickCountAtom.subscribe((tick) => {
+		const unsub = atoms.tickCount.subscribe((tick) => {
 			if (!root.current) return;
 			const el = root.current.querySelector<HTMLElement>("[data-tick]");
 			if (el) {
@@ -96,7 +96,7 @@ export const HealthPanel = () => {
 		if (root.current) {
 			const el = root.current.querySelector<HTMLElement>("[data-tick]");
 			if (el) {
-				el.textContent = String(tickCountAtom.get());
+				el.textContent = String(atoms.tickCount.get());
 			}
 		}
 		return () => {

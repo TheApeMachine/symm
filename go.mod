@@ -18,7 +18,7 @@ require (
 	github.com/smarty/go-disruptor v0.5.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/sync v0.24.0
+	github.com/stretchr/testify v1.12.1
 	golang.org/x/time v0.15.0
 	golang.org/x/tools v0.51.0
 	gonum.org/v1/gonum v0.17.0
@@ -91,6 +91,7 @@ require (
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect

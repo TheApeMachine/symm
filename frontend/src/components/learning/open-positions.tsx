@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { positionRows, signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import { cognitionStore, regionHistoryStore } from "#/collections/cognition";
@@ -90,11 +90,26 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 	const qty = numberOf(row.qty);
 	const vwap = readout.exitVwap;
 	const settled = numberOf(row.net_return);
-	const pnlPct =
-		(settled !== undefined ? settled / 100 : undefined) ??
-		(entry !== undefined && mark !== undefined && entry !== 0
-			? (mark - entry) / entry
-			: undefined);
+
+	/*
+	"If sold now" is the settled round trip, not the mark-over-entry price
+	move: proceeds against cost after both fee legs — the same arithmetic
+	the desk realizes at exit (price.RealizedReturn). The fee fields are
+	percent rates (the fee row reads ~1.587 = 1.587%), so the round trip on
+	fresh marks is the price move minus the entry rate, plus the exit rate.
+	Once the desk has settled, net_return (already percent) is the answer.
+	*/
+	const entryFee = numberOf(row.entry_fee);
+	const exitFee = numberOf(row.exit_fee);
+	const soldNow = useMemo(() => {
+		if (settled !== undefined) return settled / 100;
+		if (entry === undefined || mark === undefined || entry <= 0) {
+			return undefined;
+		}
+		const move = (mark - entry) / entry;
+		return move - ((entryFee ?? 0) + (exitFee ?? 0)) / 100;
+	}, [settled, entry, mark, entryFee, exitFee]);
+	const pnlPct = soldNow;
 	const room = readout.exitRoom ?? undefined;
 	const pnlTone: GaugeTone =
 		pnlPct === undefined ? "muted" : pnlPct >= 0 ? "up" : "down";

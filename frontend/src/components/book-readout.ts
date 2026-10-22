@@ -189,11 +189,23 @@ export const positionReadout = (row: Record<string, unknown>): PositionReadout =
 		(closedAt !== null && openedAt !== null
 			? (Date.parse(closedAt) - Date.parse(openedAt)) * 1e6
 			: null);
-	const entryFee = decimal(row.entry_fee) ?? buys.fee;
-	const exitFee = decimal(row.exit_fee) ?? sells.fee;
+	const entryFee = decimal(row.entry_fee);
+	const exitFee = decimal(row.exit_fee);
+
+	/*
+	Fee fields are percent rates once the desk is marking (Update stamps
+	the tier rate on every tick). A dollar fee only ever arrives on a
+	venue-echoed execution against a notional; without one, rates are the
+	fraction of cost, which the percent readout needs re-based.
+	*/
+	const feeFraction = (rate: number | null): number | null =>
+		rate === null ? null : rate / 100;
+
+	const entryFeeFraction = feeFraction(entryFee);
+	const exitFeeFraction = feeFraction(exitFee);
 	const fees =
-		entryFee !== null && (sells.qty === null || exitFee !== null)
-			? entryFee + (exitFee ?? 0)
+		entryFeeFraction !== null && (sells.qty === null || exitFeeFraction !== null)
+			? entryFeeFraction + (exitFeeFraction ?? 0)
 			: null;
 	const exitRoom = decimal(row.exit_room);
 	let grossPnl: number | null = null;
@@ -238,9 +250,9 @@ export const positionReadout = (row: Record<string, unknown>): PositionReadout =
 			!closed &&
 			unrealized !== null &&
 			qty !== null &&
-			entryFee !== null
+			entryFeeFraction !== null
 		) {
-			unrealizedPnl = unrealized - entryFee * (qty / buys.qty);
+			unrealizedPnl = unrealized - entryFeeFraction * buys.cost * (qty / buys.qty);
 		}
 
 		if (realized !== null && unrealized !== null) {
@@ -299,15 +311,32 @@ export const bookReadout = (rows: Record<string, unknown>[], book: Book) => {
 		.map(lotReturn)
 		.filter((value): value is number => value !== null);
 
-	return {
-		winRate:
-			returns.length > 0
-				? returns.filter((value) => value > 0).length / returns.length
-				: null,
-		edge:
-			returns.length > 0
-				? returns.reduce((sum, value) => sum + value, 0) / returns.length
-				: null,
-		closed: closed.length,
-	};
+	/*
+	A frame where no lot prices yet (returns empty) must not blank the
+	figures the previous frame showed; carry the last computed readout.
+	*/
+	const next =
+		returns.length > 0
+			? {
+					winRate:
+						returns.filter((value) => value > 0).length / returns.length,
+					edge: returns.reduce((sum, value) => sum + value, 0) / returns.length,
+					closed: closed.length,
+				}
+			: null;
+
+	const carried = lastBookReadout.get(book);
+
+	if (next === null) {
+		return carried ?? { winRate: null, edge: null, closed: closed.length };
+	}
+
+	lastBookReadout.set(book, next);
+
+	return next;
 };
+
+const lastBookReadout = new Map<
+	Book,
+	{ winRate: number; edge: number; closed: number }
+>();

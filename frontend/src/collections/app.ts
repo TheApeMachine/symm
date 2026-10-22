@@ -87,5 +87,43 @@ export const positionRows = (
 	if (!latest) return [];
 
 	const rows = latest.lookup("positions") as any[] | undefined;
-	return Array.isArray(rows) ? rows : [];
+	if (!Array.isArray(rows)) return [];
+
+	/*
+	Frames can be sparse: a row that has no mark yet on this frame had one
+	on the last. Carry known values forward per field so a value never
+	blinks out between updates.
+	*/
+	const all = ring.toArray();
+	const prior =
+		all.length > 1
+			? (all[all.length - 2].lookup("positions") as any[] | undefined)
+			: undefined;
+	if (!Array.isArray(prior) || prior.length === 0) return rows;
+
+	const previous = new Map<string, Record<string, unknown>>();
+
+	for (const row of prior) {
+		if (row && typeof row.id === "string") {
+			previous.set(row.id, row);
+		}
+	}
+
+	if (previous.size === 0) return rows;
+
+	return rows.map((row) => {
+		const before = row && typeof row.id === "string" ? previous.get(row.id) : undefined;
+
+		if (!before) return row;
+
+		const merged = { ...before };
+
+		for (const [field, value] of Object.entries(row)) {
+			if (value !== null && value !== undefined) {
+				merged[field] = value;
+			}
+		}
+
+		return merged;
+	});
 };
