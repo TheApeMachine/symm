@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { routeAtom } from "#/collections/app";
-import { WsFeed } from "./websocket";
+import { atoms, routeAtom } from "#/collections/app";
+import { cognitionStore } from "#/collections/cognition";
+import { sequiturFrame } from "#/collections/sequitur-fixture";
+import { sequiturStore } from "#/collections/sequitur";
+import { Value } from "#/types/value";
+import { ingest, WsFeed } from "./websocket";
 
 class FeedWorker {
 	static latest: FeedWorker;
@@ -18,6 +22,15 @@ class FeedWorker {
 afterEach(() => {
 	cleanup();
 	routeAtom.set("dashboard");
+	atoms.tickCount.set(0);
+	sequiturStore.setState(() => ({}));
+	cognitionStore.setState(() => ({
+		epoch: "0",
+		policyKeys: [],
+		matches: {},
+		problem: null,
+		tree: null,
+	}));
 	vi.unstubAllGlobals();
 });
 
@@ -40,5 +53,70 @@ describe("WsFeed", () => {
 			type: "ROUTE",
 			route: "fluid",
 		});
+	});
+});
+
+describe("ingest", () => {
+	it("ingests sequitur frames even though the origin has no signals store", () => {
+		const layer = new TextEncoder().encode(JSON.stringify(sequiturFrame()));
+
+		ingest([
+			new Value({
+				origin: "sequitur",
+				role: "grammar",
+				scope: "BTC/USD",
+				prefix: "sequitur",
+				index: ["sequitur/grammar/BTC-USD"],
+				layers: [layer],
+				tick: 41n,
+			}),
+		]);
+
+		expect(sequiturStore.state["BTC/USD"]?.latest.tick).toBe(41);
+		expect(atoms.tickCount.get()).toBe(41);
+	});
+
+	it("ingests cognition match frames", () => {
+		const match = {
+			symbol: "BTC/USD",
+			tick: 41,
+			tokens: ["R02"],
+			stored: false,
+			match: "",
+			depth: 1,
+			action: "noop",
+		};
+
+		ingest([
+			new Value({
+				origin: "cognition",
+				role: "match",
+				scope: "BTC/USD",
+				prefix: "cognition",
+				index: ["cognition/match/BTC-USD"],
+				layers: [new TextEncoder().encode(JSON.stringify(match))],
+				tick: 41n,
+			}),
+		]);
+
+		expect(cognitionStore.state.matches["BTC/USD"]?.action).toBe("noop");
+	});
+
+	it("still drops unbound origins rather than routing them into nothing", () => {
+		ingest([
+			new Value({
+				origin: "kraken",
+				role: "ack",
+				scope: "BTC/USD",
+				prefix: "kraken",
+				index: [],
+				layers: [],
+			}),
+		]);
+
+		const probe = (window as any).__kilo_probe;
+		expect(probe.missed).toContainEqual(
+			expect.objectContaining({ origin: "kraken" }),
+		);
 	});
 });

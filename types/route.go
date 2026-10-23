@@ -72,6 +72,12 @@ func Filters(value *data.Value) bool {
 		return isFocus(value) && (isSignal(value) || isLogic(value, "resonance"))
 	case "learning":
 		return isStrategy(value, "training")
+	case "longtail":
+		// The training performance surface reads the strategy's learning
+		// stream: the training node, the grammar feed, and the cognition
+		// match frames.
+		source := kernelSource(value.Origin)
+		return source == "training" || source == "sequitur" || source == "cognition"
 	case "xray":
 		if isSignal(value, "hawkes") {
 			return isFocus(value)

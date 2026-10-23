@@ -323,7 +323,7 @@ func (price *Price) ExitRoom(symbol string, quantity *decimal.Decimal) float64 {
 		return 0
 	}
 
-	var totalBid *decimal.Decimal
+	totalBid := decimal.NewFromInt64(0)
 
 	if price.Books != nil {
 		price.Books.Book(symbol, func(book *spotbook.Book) {

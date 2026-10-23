@@ -1,6 +1,3 @@
-import { useSelector } from "@tanstack/react-store";
-import { ArrowRight, HeartPulse, Radio } from "lucide-react";
-import React, { useEffect, useMemo, useState } from "react";
 import { atoms, signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
@@ -10,6 +7,9 @@ import { Section } from "#/components/ui/section";
 import type { Lifecycle } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
 import type { Value } from "#/types/value";
+import { useSelector } from "@tanstack/react-store";
+import { ArrowRight, HeartPulse, Radio } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
 
 export interface RegionMeta {
 	id: string;
@@ -216,9 +216,7 @@ export const PositionHealthGauge = ({
 	life?: Lifecycle | null;
 	unrealizedVal?: number;
 }) => {
-	const rawUnrealized = useSelector(atoms["unrealized"], (state) =>
-		Number(state),
-	);
+	const rawUnrealized = 0;
 	const currentUnrealized = Number.isFinite(unrealizedVal)
 		? (unrealizedVal as number)
 		: Number.isFinite(rawUnrealized)
@@ -321,9 +319,11 @@ export const PositionHealthGauge = ({
 					<span className="text-(--f4)">Unrealized:</span>
 					<span
 						className={
-							(trial
-								? (life?.mark?.unrealized_return ?? 0) >= 0
-								: currentUnrealized >= 0)
+							(
+								trial
+									? (life?.mark?.unrealized_return ?? 0) >= 0
+									: currentUnrealized >= 0
+							)
 								? "font-bold text-(--up)"
 								: "font-bold text-(--f2)"
 						}
@@ -558,17 +558,15 @@ export const RegionTransitionPathway = ({
 };
 
 export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
-	const rawUnrealized = useSelector(atoms["unrealized"], (state) =>
-		Number(state),
-	);
+	const rawUnrealized = 0;
 	// The position's own mark against the live bid, where the run published one.
 	const currentUnrealized =
-		life.mark?.unrealized ??
+		life?.mark?.unrealized ??
 		(Number.isFinite(rawUnrealized) ? rawUnrealized : 0);
 
 	const decisions: any[] = [];
 	const activeSymbol = life?.symbol ?? "";
-	const currentDecision = decisions.find((d) => d.symbol === activeSymbol);
+	const currentDecision = decisions?.find((d) => d?.symbol === activeSymbol);
 
 	// Read the live training frame for this symbol from signals.training.
 	const [latestValue, setLatestValue] = useState<Value | null>(
@@ -721,9 +719,11 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 						<span className="text-(--f4)">Unrealized Return:</span>
 						<span
 							className={
-								(trial
-									? (life.mark?.unrealized_return ?? 0) >= 0
-									: currentUnrealized >= 0)
+								(
+									trial
+										? (life.mark?.unrealized_return ?? 0) >= 0
+										: currentUnrealized >= 0
+								)
 									? "font-bold text-(--up)"
 									: "font-bold text-(--f2)"
 							}
