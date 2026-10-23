@@ -71,6 +71,13 @@ const buildSegments = (
 	return segments;
 };
 
+const SERIES_CHART_MARGIN = {
+	top: 8,
+	right: 10,
+	bottom: 22,
+	left: 40,
+} as const;
+
 /*
 SeriesChart is one metric on the monitor plate: labeled axes, grid, line, and
 a soft fill to the plot floor (or to baseline when given).
@@ -91,7 +98,7 @@ export const SeriesChart = ({
 	const patternId = useId();
 	const [keyboardIndex, setKeyboardIndex] = useState(0);
 	const width = 400;
-	const margin = { top: 8, right: 10, bottom: 22, left: 40 };
+	const margin = SERIES_CHART_MARGIN;
 	const plotW = width - margin.left - margin.right;
 	const plotH = height - margin.top - margin.bottom;
 
@@ -133,16 +140,18 @@ export const SeriesChart = ({
 			const toPoint = (index: number, value: number): Point => ({
 				index,
 				value,
-				x: margin.left + (index / spanCount) * plotW,
-				y: margin.top + plotH - ((value - minV) / span) * plotH,
+				x: SERIES_CHART_MARGIN.left + (index / spanCount) * plotW,
+				y: SERIES_CHART_MARGIN.top + plotH - ((value - minV) / span) * plotH,
 			});
 
 			const segs = buildSegments(values, toPoint);
-			const floorY = margin.top + plotH;
+			const floorY = SERIES_CHART_MARGIN.top + plotH;
 			const baselineY =
 				baseline === undefined
 					? floorY
-					: margin.top + plotH - ((baseline - minV) / span) * plotH;
+					: SERIES_CHART_MARGIN.top +
+						plotH -
+						((baseline - minV) / span) * plotH;
 
 			const areas: string[] = [];
 			const lines: string[] = [];
@@ -177,7 +186,7 @@ export const SeriesChart = ({
 						);
 
 			const xT = xTickIdx.map((index) => ({
-				x: margin.left + (index / spanCount) * plotW,
+				x: SERIES_CHART_MARGIN.left + (index / spanCount) * plotW,
 				label:
 					times && times[index] !== undefined
 						? formatTime(times[index])
@@ -194,16 +203,7 @@ export const SeriesChart = ({
 				xTicks: xT,
 				ready: finite.length >= 2,
 			};
-		}, [
-			values,
-			times,
-			yDomain,
-			baseline,
-			plotH,
-			plotW,
-			margin.left,
-			margin.top,
-		]);
+		}, [values, times, yDomain, baseline, plotH, plotW]);
 
 	if (!ready) {
 		return (

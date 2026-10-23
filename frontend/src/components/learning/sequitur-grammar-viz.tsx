@@ -121,7 +121,10 @@ const SurpriseGate = ({ frame }: { frame: SequiturFrame }) => {
 				variant={gate.passed ? "success" : gate.warm ? "warning" : "disabled"}
 				label={verdict}
 			/>
-			<span>surprise {gate.surprise.toPrecision(3)}</span>
+			<span>
+				surprise{" "}
+				{gate.surprise === null ? "undefined" : gate.surprise.toPrecision(3)}
+			</span>
 			<span>· z {gate.z === null ? "undefined" : gate.z.toFixed(2)}</span>
 		</div>
 	);
@@ -165,7 +168,7 @@ const GatePanel = ({ frame }: { frame: SequiturFrame }) => {
 								/>
 								{peak > 0 && (
 									<div
-										className="absolute inset-y-[-2px] w-px bg-amber-400"
+										className="absolute -inset-y-0.5 w-px bg-amber-400"
 										style={{ left: `${(frame.midpoint / peak) * 100}%` }}
 										title="midpoint of brightest and dimmest active region"
 									/>
@@ -194,7 +197,7 @@ const ChordStream = ({ chords }: { chords: LoggedChord[] }) => (
 			{chords.map((chord) => (
 				<div
 					key={chord.seq}
-					className={`flex flex-col items-center gap-0.5 px-1 py-0.5 border rounded-[2px] shrink-0 ${
+					className={`flex flex-col items-center gap-0.5 px-1 py-0.5 border rounded-xs shrink-0 ${
 						chord.blocked
 							? "border-dashed border-(--line) opacity-50"
 							: chord.stored
@@ -204,7 +207,7 @@ const ChordStream = ({ chords }: { chords: LoggedChord[] }) => (
 					data-testid={chord.blocked ? "chord-blocked" : "chord-appended"}
 					title={`tick ${chord.tick}${chord.blocked ? " · blocked" : ` · path ${chord.path}`}${
 						chord.gate
-							? ` · surprise ${chord.gate.surprise.toPrecision(3)} z ${chord.gate.z === null ? "undefined" : chord.gate.z.toFixed(2)}`
+							? ` · surprise ${chord.gate.surprise === null ? "undefined" : chord.gate.surprise.toPrecision(3)} z ${chord.gate.z === null ? "undefined" : chord.gate.z.toFixed(2)}`
 							: ""
 					}${chord.stored ? ` · policy ${chord.action || "disagrees"}` : ""}`}
 				>

@@ -328,7 +328,6 @@ export class GPUStreamRenderer {
 
 	private reduce() {
 		const gl = this.gl;
-		// biome-ignore lint/correctness/useHookAtTopLevel: WebGL program binding, not a React hook.
 		gl.useProgram(this.reduceProgram);
 		let sourceCount = this.count;
 
@@ -374,7 +373,6 @@ export class GPUStreamRenderer {
 			this.registration.canvas.width,
 			this.registration.canvas.height,
 		);
-		// biome-ignore lint/correctness/useHookAtTopLevel: WebGL program binding, not a React hook.
 		gl.useProgram(this.chartProgram);
 		this.bindTexture(this.chartProgram, "uValues", drawLevel.values, 0);
 		this.bindTexture(this.chartProgram, "uMetadata", drawLevel.metadata, 1);
