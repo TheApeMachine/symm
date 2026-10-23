@@ -1,6 +1,7 @@
 package tokenizer
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,14 +68,17 @@ The grammar operates on the flat token stream: each tick's regions are
 individual terminals that the grammar may group into rules.
 */
 type Sequitur struct {
-	mu         sync.Mutex
-	nextID     int
-	rules      map[int]*Rule
-	digrams    map[[2]Symbol]*Node
-	sentinel   *Node
-	length     int
-	pendingLen int
-	lastRule   *Rule
+	mu           sync.Mutex
+	nextID       int
+	rules        map[int]*Rule
+	digrams      map[[2]Symbol]*Node
+	ruleByDigram map[[2]Symbol]int
+	sentinel     *Node
+	length       int
+	pendingLen   int
+	lastRule     *Rule
+	// lastKind is create, reuse, or empty when the last Analyze only appended.
+	lastKind string
 }
 
 func NewSequitur() *Sequitur {
@@ -83,10 +87,11 @@ func NewSequitur() *Sequitur {
 	sentinel.Prev = sentinel
 
 	return &Sequitur{
-		nextID:   1,
-		rules:    make(map[int]*Rule),
-		digrams:  make(map[[2]Symbol]*Node),
-		sentinel: sentinel,
+		nextID:       1,
+		rules:        make(map[int]*Rule),
+		digrams:      make(map[[2]Symbol]*Node),
+		ruleByDigram: make(map[[2]Symbol]int),
+		sentinel:     sentinel,
 	}
 }
 
@@ -99,6 +104,7 @@ func (sequitur *Sequitur) Analyze(tokens []string) (*Rule, bool) {
 	sequitur.mu.Lock()
 	defer sequitur.mu.Unlock()
 
+	sequitur.lastKind = ""
 	var created *Rule
 
 	for _, token := range tokens {
@@ -279,6 +285,102 @@ func (sequitur *Sequitur) Flush() bool {
 }
 
 /*
+LastKind reports what the last Analyze did: "create" when a new rule was
+minted, "reuse" when an existing rule absorbed the digram, and "append"
+when the tick only extended the root.
+*/
+func (sequitur *Sequitur) LastKind() string {
+	sequitur.mu.Lock()
+	defer sequitur.mu.Unlock()
+
+	if sequitur.lastKind == "" {
+		return "append"
+	}
+
+	return sequitur.lastKind
+}
+
+/*
+RuleView is one production as the dashboard publishes it. Depth is the
+longest chain of rule references, terminals counting as 1. Count is how
+many times the digram has been replaced by this rule.
+*/
+type RuleView struct {
+	ID        int
+	Count     int
+	Depth     int
+	Symbols   []string
+	Terminals []string
+}
+
+/*
+RuleViews lists every production with its real id, use count, and depth.
+*/
+func (sequitur *Sequitur) RuleViews() []RuleView {
+	sequitur.mu.Lock()
+	defer sequitur.mu.Unlock()
+
+	views := make([]RuleView, 0, len(sequitur.rules))
+
+	for _, rule := range sequitur.rules {
+		symbols := make([]string, 0)
+		for node := rule.Head.Next; node != nil && node != rule.Head; node = node.Next {
+			if id, ok := ruleID(node.Val); ok {
+				symbols = append(symbols, RuleRef(id))
+			} else {
+				symbols = append(symbols, string(node.Val))
+			}
+		}
+
+		terminals := make([]string, 0, rule.Count)
+		sequitur.collectTerminalNames(rule, &terminals)
+
+		views = append(views, RuleView{
+			ID:        rule.ID,
+			Count:     rule.Count,
+			Depth:     sequitur.ruleDepth(rule.ID, map[int]bool{}),
+			Symbols:   symbols,
+			Terminals: terminals,
+		})
+	}
+
+	slices.SortFunc(views, func(a, b RuleView) int {
+		return a.ID - b.ID
+	})
+
+	return views
+}
+
+func (sequitur *Sequitur) ruleDepth(id int, stack map[int]bool) int {
+	if stack[id] {
+		return 1
+	}
+
+	rule := sequitur.rules[id]
+	if rule == nil || rule.Head == nil {
+		return 1
+	}
+
+	stack[id] = true
+	depth := 1
+
+	for node := rule.Head.Next; node != nil && node != rule.Head; node = node.Next {
+		child, ok := ruleID(node.Val)
+		if !ok {
+			continue
+		}
+
+		if nested := 1 + sequitur.ruleDepth(child, stack); nested > depth {
+			depth = nested
+		}
+	}
+
+	delete(stack, id)
+
+	return depth
+}
+
+/*
 RuleCount returns the number of discovered grammar rules.
 */
 func (sequitur *Sequitur) RuleCount() int {
@@ -329,6 +431,21 @@ func (sequitur *Sequitur) check(n *Node) *Rule {
 func (sequitur *Sequitur) reduce(
 	newOccur, firstOccur *Node, d [2]Symbol,
 ) *Rule {
+	if id, ok := sequitur.ruleByDigram[d]; ok {
+		if rule := sequitur.rules[id]; rule != nil {
+			rule.Count += 2
+			sequitur.substitute(firstOccur, id)
+			sequitur.substitute(newOccur, id)
+			delete(sequitur.digrams, d)
+			if sequitur.lastKind != "create" {
+				sequitur.lastKind = "reuse"
+			}
+			sequitur.lastRule = rule
+			sequitur.checkAdjacencies(firstOccur, newOccur)
+			return rule
+		}
+	}
+
 	id := sequitur.nextID
 	sequitur.nextID++
 
@@ -346,6 +463,9 @@ func (sequitur *Sequitur) reduce(
 	}
 
 	sequitur.rules[id] = rule
+	sequitur.ruleByDigram[d] = id
+	sequitur.lastKind = "create"
+	sequitur.lastRule = rule
 
 	sequitur.substitute(firstOccur, id)
 	sequitur.substitute(newOccur, id)

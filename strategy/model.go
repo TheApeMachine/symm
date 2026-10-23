@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,9 +79,28 @@ type coolDown struct {
 type tickReading struct {
 	maturity       float64
 	surprise       float64
+	hasSurprise    bool
+	z              float64
+	hasZ           bool
 	frictionPass   bool
 	frictionHurdle float64
 	ignitionPass   bool
+}
+
+// surpriseTrack is one symbol's running energy-error distribution.
+// z is the new error against the errors already seen, and it stays
+// absent until two of them exist so a spread is defined.
+type surpriseTrack struct {
+	n    int
+	mean float64
+	m2   float64
+}
+
+// regimeNote is the regime token emitted on a tick, kept only so that
+// tick's chord can be compared with the terminals that closed it.
+type regimeNote struct {
+	tick    uint64
+	symbols []string
 }
 
 type Model struct {
@@ -99,6 +119,8 @@ type Model struct {
 	settled         *sync.Map
 	ingress         *sync.Map
 	tickReadings    *sync.Map
+	lastRegime      sync.Map
+	surpriseTracks  sync.Map
 	excursions      map[string]*excursion
 	pathAnchorTick  map[string]uint64
 	venueAnchor     map[string]float64
@@ -114,23 +136,23 @@ func NewModel(
 	}
 
 	model := &Model{
-		System:       runtime.NewSystem(ctx, "model"),
-		cfg:          cfg,
-		desk:         desk,
-		store:        client,
-		hub:          hub,
-		tree:         iradix.New[*data.Value](),
-		explored:     iradix.New[*data.Value](),
-		sequencers:   &sync.Map{},
-		paths:        &sync.Map{},
-		seqPaths:     &sync.Map{},
-		settled:      &sync.Map{},
-		ingress:      &sync.Map{},
-		tickReadings: &sync.Map{},
-		excursions:      map[string]*excursion{},
-		pathAnchorTick:  map[string]uint64{},
-		venueAnchor:     map[string]float64{},
-		cool:            map[string]*coolDown{},
+		System:         runtime.NewSystem(ctx, "model"),
+		cfg:            cfg,
+		desk:           desk,
+		store:          client,
+		hub:            hub,
+		tree:           iradix.New[*data.Value](),
+		explored:       iradix.New[*data.Value](),
+		sequencers:     &sync.Map{},
+		paths:          &sync.Map{},
+		seqPaths:       &sync.Map{},
+		settled:        &sync.Map{},
+		ingress:        &sync.Map{},
+		tickReadings:   &sync.Map{},
+		excursions:     map[string]*excursion{},
+		pathAnchorTick: map[string]uint64{},
+		venueAnchor:    map[string]float64{},
+		cool:           map[string]*coolDown{},
 	}
 
 	policyPrefix := strings.TrimSuffix(cfg.PolicyPrefix, "/")
@@ -230,16 +252,10 @@ func (model *Model) NoteTick(
 		}
 	}
 
-	var surpriseSum float64
-	lit := 0
-
 	for _, region := range regions {
 		if region == nil {
 			continue
 		}
-
-		lit++
-		surpriseSum += region.Brightness
 
 		if region.Key == 12 {
 			reading.frictionHurdle = region.Brightness
@@ -250,8 +266,10 @@ func (model *Model) NoteTick(
 		}
 	}
 
-	if lit > 0 {
-		reading.surprise = 1 - surpriseSum/float64(lit)
+	if surprise, ok := grid.SymbolSurprise(symbol); ok {
+		reading.surprise = surprise
+		reading.hasSurprise = true
+		reading.z, reading.hasZ = model.scoreSurprise(symbol, surprise)
 	}
 
 	for _, bySymbol := range grid.Priors {
@@ -269,10 +287,46 @@ func (model *Model) NoteTick(
 	model.tickReadings.Store(symbol, reading)
 }
 
+func (model *Model) scoreSurprise(symbol string, surprise float64) (float64, bool) {
+	var track *surpriseTrack
+
+	if existing, ok := model.surpriseTracks.Load(symbol); ok {
+		track = existing.(*surpriseTrack)
+	} else {
+		track = &surpriseTrack{}
+		model.surpriseTracks.Store(symbol, track)
+	}
+
+	var z float64
+	has := false
+
+	if track.n >= 2 {
+		has = true
+		variance := track.m2 / float64(track.n-1)
+		if variance > 0 {
+			z = (surprise - track.mean) / math.Sqrt(variance)
+		}
+	}
+
+	track.n++
+	delta := surprise - track.mean
+	track.mean += delta / float64(track.n)
+	track.m2 += delta * (surprise - track.mean)
+
+	return z, has
+}
+
 func (model *Model) TrackSequitur(symbol string, token tokenizer.Token) {
 	if len(token.Symbols) == 0 {
+		model.lastRegime.Delete(symbol)
 		return
 	}
+
+	copied := append([]string(nil), token.Symbols...)
+	model.lastRegime.Store(symbol, regimeNote{
+		tick:    data.Tick.Load(),
+		symbols: copied,
+	})
 
 	model.mu.Lock()
 	defer model.mu.Unlock()
@@ -314,9 +368,8 @@ func (model *Model) Ingest(symbol string, regions []tokenizer.Token) tokenizer.T
 
 	untyped, _ := model.sequencers.LoadOrStore(symbol, tokenizer.NewSequencer())
 	sequencer := untyped.(*tokenizer.Sequencer)
-	before := sequencer.Grammar().RuleCount()
 	token := sequencer.Analyze(regions)
-	model.ingress.Store(symbol, sequencer.Grammar().RuleCount() > before)
+	model.ingress.Store(symbol, sequencer.Grammar().LastKind())
 
 	return token
 }
@@ -338,7 +391,7 @@ func (model *Model) Touch(symbol string) {
 	model.publishMatch(symbol, path, "noop")
 	model.publishGrammar(
 		symbol, untyped.(*tokenizer.Sequencer), tokenizer.Token{},
-		path.String(), model.ingested(symbol), "noop",
+		path.String(), model.grammarKind(symbol), "noop",
 	)
 }
 
@@ -376,7 +429,7 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 	defer func() {
 		model.publishMatch(symbol, path, reported)
 		model.publishGrammar(
-			symbol, sequencer, token, pathKey, model.ingested(symbol), reported,
+			symbol, sequencer, token, pathKey, model.grammarKind(symbol), reported,
 		)
 	}()
 
@@ -1178,15 +1231,18 @@ func (model *Model) retired(pathKey, role string) bool {
 	return score.Retired
 }
 
-func (model *Model) ingested(symbol string) bool {
+func (model *Model) grammarKind(symbol string) string {
 	flag, ok := model.ingress.Load(symbol)
 	if !ok {
-		return false
+		return "append"
 	}
 
-	created, _ := flag.(bool)
+	kind, _ := flag.(string)
+	if kind != "create" && kind != "reuse" {
+		return "append"
+	}
 
-	return created
+	return kind
 }
 
 func exploredKey(role, pathKey string) string {
@@ -1442,45 +1498,43 @@ func (model *Model) publishGrammar(
 	sequencer *tokenizer.Sequencer,
 	token tokenizer.Token,
 	pathKey string,
-	created bool,
+	kind string,
 	action string,
 ) {
 	if !hubPublishes(model.hub) || sequencer == nil || sequencer.Grammar() == nil {
 		return
 	}
 
-	grammar := sequencer.Grammar()
-	kind := "append"
-	if created {
-		kind = "create"
-	} else if grammar.RuleCount() > 1 {
-		kind = "reuse"
+	if kind != "create" && kind != "reuse" {
+		kind = "append"
 	}
 
-	productions := grammar.Rules()
-	rules := make([]map[string]any, 0, len(productions))
-	for i, symbols := range productions {
+	grammar := sequencer.Grammar()
+	confirmed, explored := model.storedPaths()
+	views := grammar.RuleViews()
+	rules := make([]map[string]any, 0, len(views))
+	for _, view := range views {
+		symbols := view.Symbols
 		if symbols == nil {
 			symbols = []string{}
 		}
-		terminals := make([]string, 0, len(symbols))
-		depth := 1
-		for _, sym := range symbols {
-			if len(sym) > 1 && sym[0] == 'M' {
-				depth = 2
-				continue
-			}
-			terminals = append(terminals, sym)
+		terminals := view.Terminals
+		if terminals == nil {
+			terminals = []string{}
 		}
-		rules = append(rules, map[string]any{
-			"id":        i + 1,
-			"name":      tokenizer.RuleRef(i + 1),
-			"count":     1,
-			"depth":     depth,
+		row := map[string]any{
+			"id":        view.ID,
+			"name":      tokenizer.RuleRef(view.ID),
+			"count":     view.Count,
+			"depth":     view.Depth,
 			"length":    len(symbols),
 			"symbols":   symbols,
 			"terminals": terminals,
-		})
+		}
+		if ruleAction := actionFor(terminals, confirmed, explored); ruleAction != "" {
+			row["action"] = ruleAction
+		}
+		rules = append(rules, row)
 	}
 
 	start := grammar.RootSequence()
@@ -1520,31 +1574,37 @@ func (model *Model) publishGrammar(
 	}
 
 	seqPath := model.sequiturPathKey(symbol)
-	pathDrift := seqPath != "" && pathKey != "" && seqPath != pathKey
+	pathDrift, pathCompared := model.regimeDrift(symbol, token)
 	gatePassed := model.gateAllows(symbol, token)
-	var gateReading map[string]any
+	frictionKnown := false
+	frictionPassed := false
+	gateReading := map[string]any{
+		"surprise": nil,
+		"z":        nil,
+		"warm":     false,
+		"passed":   gatePassed,
+		"cold":     "no reading",
+	}
 
 	if untyped, ok := model.tickReadings.Load(symbol); ok {
 		if reading, ok := untyped.(tickReading); ok {
-			gateReading = map[string]any{
-				"surprise": reading.surprise,
-				"z":        nil,
-				"warm":     reading.maturity >= model.cfg.MinGridMaturity,
-				"passed":   gatePassed,
+			if model.cfg != nil && model.cfg.RequireFrictionGate {
+				frictionKnown = true
+				frictionPassed = reading.frictionPass
 			}
-
-			if reading.maturity < model.cfg.MinGridMaturity {
+			warm := model.cfg != nil && reading.maturity >= model.cfg.MinGridMaturity
+			gateReading["warm"] = warm
+			if warm {
+				delete(gateReading, "cold")
+			} else {
 				gateReading["cold"] = "history"
 			}
-		}
-	}
-
-	if gateReading == nil {
-		gateReading = map[string]any{
-			"surprise": 1 - token.Brightness,
-			"z":        nil,
-			"warm":     true,
-			"passed":   gatePassed,
+			if reading.hasSurprise {
+				gateReading["surprise"] = reading.surprise
+			}
+			if reading.hasZ {
+				gateReading["z"] = reading.z
+			}
 		}
 	}
 
@@ -1560,10 +1620,12 @@ func (model *Model) publishGrammar(
 		"gate":      gateReading,
 		"blocked":   !gatePassed,
 		"measurement": map[string]any{
-			"canonical":    true,
-			"sequiturPath": seqPath,
-			"pathDrift":    pathDrift,
-			"frictionPass": gatePassed,
+			"canonical":       true,
+			"sequiturPath":    seqPath,
+			"pathDrift":       pathDrift,
+			"pathCompared":    pathCompared,
+			"frictionPass":    frictionPassed,
+			"frictionChecked": frictionKnown,
 		},
 		"events": []map[string]any{{
 			"kind":   kind,
@@ -1596,26 +1658,179 @@ func (model *Model) publishGrammar(
 	value.Append(frame, "grammar")
 	io.Copy(model.hub, value)
 
-	model.recordFrameMetrics(symbol, gatePassed, pathDrift, stored)
+	model.recordFrameMetrics(symbol, gatePassed, frictionKnown, frictionPassed, pathDrift, pathCompared, stored)
+}
+
+func (model *Model) regimeDrift(symbol string, chord tokenizer.Token) (bool, bool) {
+	untyped, ok := model.lastRegime.Load(symbol)
+	if !ok || len(chord.Symbols) == 0 {
+		return false, false
+	}
+
+	note, ok := untyped.(regimeNote)
+	if !ok || note.tick != data.Tick.Load() || len(note.symbols) == 0 {
+		return false, false
+	}
+
+	have := make(map[string]struct{}, len(chord.Symbols))
+	for _, sym := range chord.Symbols {
+		have[sym] = struct{}{}
+	}
+
+	for _, sym := range note.symbols {
+		if _, ok := have[sym]; !ok {
+			return true, true
+		}
+	}
+
+	return false, true
+}
+
+type storedPath struct {
+	parts []string
+	role  string
+}
+
+func (model *Model) storedPaths() (confirmed, explored []storedPath) {
+	if model == nil {
+		return nil, nil
+	}
+
+	model.mu.Lock()
+	tree := model.tree
+	exploredTree := model.explored
+	model.mu.Unlock()
+
+	if tree != nil {
+		iterator := tree.Root().Iterator()
+		for key, val, ok := iterator.Next(); ok; key, val, ok = iterator.Next() {
+			if val == nil || (val.Role != "enter" && val.Role != "exit") {
+				continue
+			}
+			confirmed = append(confirmed, storedPath{
+				parts: splitPath(string(key)),
+				role:  val.Role,
+			})
+		}
+	}
+
+	if exploredTree != nil {
+		iterator := exploredTree.Root().Iterator()
+		for key, val, ok := iterator.Next(); ok; key, val, ok = iterator.Next() {
+			role, path, cut := strings.Cut(string(key), "\x00")
+			if !cut || path == "" || (role != "enter" && role != "exit") {
+				continue
+			}
+			if val != nil {
+				var score pathScore
+				val.Lookup(&score, "score")
+				if score.Retired {
+					continue
+				}
+			}
+			explored = append(explored, storedPath{
+				parts: splitPath(path),
+				role:  role,
+			})
+		}
+	}
+
+	return confirmed, explored
+}
+
+func splitPath(path string) []string {
+	var parts []string
+
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "" {
+			continue
+		}
+		if strings.HasPrefix(segment, "[") && strings.HasSuffix(segment, "]") && len(segment) > 2 {
+			parts = append(parts, strings.Split(segment[1:len(segment)-1], "-")...)
+			continue
+		}
+		parts = append(parts, segment)
+	}
+
+	return parts
+}
+
+func actionFor(terminals []string, confirmed, explored []storedPath) string {
+	for _, path := range confirmed {
+		if covers(path.parts, terminals) {
+			return path.role
+		}
+	}
+
+	for _, path := range explored {
+		if covers(path.parts, terminals) {
+			return path.role
+		}
+	}
+
+	return ""
+}
+
+func covers(path, rule []string) bool {
+	if len(rule) == 0 || len(rule) > len(path) {
+		return false
+	}
+
+	for i := 0; i+len(rule) <= len(path); i++ {
+		matched := true
+		for j := range rule {
+			if path[i+j] != rule[j] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (model *Model) StampStock() {
+	if model == nil || model.metrics == nil {
+		return
+	}
+
+	model.mu.Lock()
+	explored := model.countExploredLocked("enter")
+	confirmed := model.countPolicyLocked("enter")
+	model.mu.Unlock()
+
+	model.metrics.setStock(explored, confirmed)
 }
 
 func (model *Model) recordFrameMetrics(
 	symbol string,
-	gatePassed, pathDrift, policyMatch bool,
+	gatePassed, frictionKnown, frictionPassed, pathDrift, pathCompared, policyMatch bool,
 ) {
 	if model.metrics == nil {
 		return
 	}
 
-	delta := TickMetrics{Symbols: 1, CanonicalTicks: 1, GateTotal: 1, FrictionTotal: 1, PathCompared: 1, PolicyChecks: 1}
+	delta := TickMetrics{Symbols: 1, CanonicalTicks: 1, GateTotal: 1, PolicyChecks: 1}
 
 	if gatePassed {
 		delta.GatePass++
-		delta.FrictionPass++
 	}
 
-	if pathDrift {
-		delta.PathDrift++
+	if frictionKnown {
+		delta.FrictionTotal = 1
+		if frictionPassed {
+			delta.FrictionPass++
+		}
+	}
+
+	if pathCompared {
+		delta.PathCompared = 1
+		if pathDrift {
+			delta.PathDrift++
+		}
 	}
 
 	if policyMatch {
@@ -1625,7 +1840,10 @@ func (model *Model) recordFrameMetrics(
 	if untyped, ok := model.tickReadings.Load(symbol); ok {
 		if reading, ok := untyped.(tickReading); ok {
 			delta.MeanMaturity = reading.maturity
-			delta.MeanSurprise = reading.surprise
+			if reading.hasSurprise {
+				delta.MeanSurprise = reading.surprise
+				delta.SurpriseSamples = 1
+			}
 		}
 	}
 
@@ -1639,9 +1857,6 @@ func (model *Model) recordFrameMetrics(
 			delta.VenueOpen++
 		}
 	}
-
-	delta.ExploredEnter = model.countExploredLocked("enter")
-	delta.ConfirmedEnter = model.countPolicyLocked("enter")
 	model.mu.Unlock()
 
 	model.metrics.add(delta)

@@ -28,6 +28,7 @@ type TickMetrics struct {
 	VirtualExcursion int     `json:"virtualExcursion"`
 	MeanMaturity     float64 `json:"meanMaturity"`
 	MeanSurprise     float64 `json:"meanSurprise"`
+	SurpriseSamples  int     `json:"surpriseSamples"`
 }
 
 type metricsAccumulator struct {
@@ -66,8 +67,6 @@ func (acc *metricsAccumulator) add(delta TickMetrics) {
 	current.CanonicalTicks += delta.CanonicalTicks
 	current.PolicyMatches += delta.PolicyMatches
 	current.PolicyChecks += delta.PolicyChecks
-	current.ExploredEnter += delta.ExploredEnter
-	current.ConfirmedEnter += delta.ConfirmedEnter
 	current.VenueOpen += delta.VenueOpen
 	current.VirtualExcursion += delta.VirtualExcursion
 
@@ -77,10 +76,33 @@ func (acc *metricsAccumulator) add(delta TickMetrics) {
 		prev := total - n
 		if total > 0 {
 			current.MeanMaturity = (current.MeanMaturity*prev + delta.MeanMaturity*n) / total
-			current.MeanSurprise = (current.MeanSurprise*prev + delta.MeanSurprise*n) / total
 		}
 	}
 
+	if delta.SurpriseSamples > 0 {
+		n := float64(delta.SurpriseSamples)
+		total := float64(current.SurpriseSamples) + n
+		prev := float64(current.SurpriseSamples)
+		current.MeanSurprise = (current.MeanSurprise*prev + delta.MeanSurprise*n) / total
+		current.SurpriseSamples += delta.SurpriseSamples
+	}
+
+	acc.snapshot.Store(current)
+}
+
+/*
+setStock records the ledger's enter-path totals once per tick. They are
+counts of stored paths, not per-symbol events, so adding them on every
+symbol would scale the rail by the lit set.
+*/
+func (acc *metricsAccumulator) setStock(explored, confirmed int) {
+	if acc == nil {
+		return
+	}
+
+	current, _ := acc.snapshot.Load().(TickMetrics)
+	current.ExploredEnter = explored
+	current.ConfirmedEnter = confirmed
 	acc.snapshot.Store(current)
 }
 

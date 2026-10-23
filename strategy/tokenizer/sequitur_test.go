@@ -91,6 +91,39 @@ func TestRuleCount(t *testing.T) {
 
 			Convey("It should report at least one rule", func() {
 				So(count, ShouldBeGreaterThan, 0)
+				So(seq.LastKind(), ShouldEqual, "create")
+			})
+		})
+
+		Convey("When the same digram repeats after its rule exists", func() {
+			seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+			seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+
+			Convey("It reuses that rule and can nest a parent", func() {
+				views := seq.RuleViews()
+				reused := false
+				nested := false
+				for _, view := range views {
+					if view.Count > 2 {
+						reused = true
+					}
+					if view.Depth >= 2 {
+						nested = true
+					}
+				}
+				So(reused, ShouldBeTrue)
+				So(nested, ShouldBeTrue)
+			})
+		})
+
+		Convey("When one more pair is separated from the existing rule", func() {
+			seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+			rules := seq.RuleCount()
+			seq.Analyze([]string{"R09", "R01", "R02", "R08", "R01", "R02"})
+
+			Convey("It reuses the rule without minting one", func() {
+				So(seq.LastKind(), ShouldEqual, "reuse")
+				So(seq.RuleCount(), ShouldEqual, rules)
 			})
 		})
 	})

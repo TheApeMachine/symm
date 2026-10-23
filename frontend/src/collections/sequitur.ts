@@ -3,9 +3,9 @@ import { createStore } from "@tanstack/store";
 /*
 The live Sequitur feed: strategy.SequiturFrame values the hub streams as
 sequitur/grammar/<symbol> (data/schema.go). Each frame is one new chord the
-grid's midpoint rule proposed, what the surprise gate made of it, every
-structural event its append caused (none when the gate blocked it) and the
-whole grammar after it.
+grid's midpoint rule proposed, what the entry gate made of it, the absolute
+energy error on that tick, every structural event its append caused, and
+the whole grammar after it.
 */
 
 export type GrammarEventKind = "append" | "create" | "reuse" | "inline";
@@ -31,15 +31,15 @@ export type GrammarRule = {
 };
 
 /*
-What the chord-level surprise gate read on the frame's tick
-(strategy.GateReading): the resonance solver's surprise, whether the
-symbol is warm (its coder's error has settled) and, while cold, why, its
-causal z-score against the symbol's surprises since it warmed (null until two
-exist), and whether the proposed chord passed. Null when
-resonance.gate is off.
+What this tick recorded for the chord. Surprise is the absolute gap
+between metric energy and its running prediction, null until a prior
+exists. z is that error against the symbol's earlier errors, null until
+two exist. warm is grid maturity. passed is the entry gate: token
+brightness, maturity, ignition, and the friction check. The friction
+check itself is measurement.frictionPass, not passed.
 */
 export type SequiturGate = {
-	surprise: number;
+	surprise: number | null;
 	z: number | null;
 	warm: boolean;
 	/* Why the symbol is still cold: "no error yet", "history" or "falling". */
@@ -51,7 +51,11 @@ export type SequiturMeasurement = {
 	canonical: boolean;
 	sequiturPath: string;
 	pathDrift: boolean;
+	/* True only on a tick that closed a regime, so a quiet tick is not a match. */
+	pathCompared?: boolean;
 	frictionPass: boolean;
+	/* True when the friction gate is in force for this tick. */
+	frictionChecked?: boolean;
 };
 
 export type SequiturFrame = {
@@ -130,7 +134,7 @@ const isGate = (value: unknown): value is SequiturGate | null => {
 	if (!value || typeof value !== "object") return false;
 	const gate = value as Partial<SequiturGate>;
 	return (
-		typeof gate.surprise === "number" &&
+		(gate.surprise === null || typeof gate.surprise === "number") &&
 		(gate.z === null || typeof gate.z === "number") &&
 		typeof gate.warm === "boolean" &&
 		// A cold reading names why; a warm one carries no reason.

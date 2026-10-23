@@ -79,6 +79,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 			training.desk.Drop(cv.Symbol)
 		}
 
+		training.model.StampStock()
 		training.metrics.publish(training.hub)
 
 		return value
@@ -126,6 +127,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		training.desk.Drop(cv.Symbol)
 	}
 
+	training.model.StampStock()
 	training.metrics.publish(training.hub)
 
 	return value

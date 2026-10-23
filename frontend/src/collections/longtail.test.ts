@@ -220,6 +220,7 @@ describe("tone thresholds", () => {
 		expect(surpriseTone(0.4)).toBe("good");
 		expect(surpriseTone(1)).toBe("warn");
 		expect(surpriseTone(3)).toBe("bad");
+		expect(surpriseTone(-0.1)).toBe("bad");
 
 		expect(reuseTone(0.6)).toBe("good");
 		expect(reuseTone(0.3)).toBe("warn");
@@ -383,6 +384,79 @@ describe("verdict", () => {
 		expect(verdict(samples, "virtual")).toEqual({
 			label: "Degrading",
 			tone: "bad",
+		});
+	});
+
+	it("calls a flat bad book stuck", () => {
+		const held = sample({
+			virtual: { closed: 5, wins: 1, winRate: 0.2, meanReturn: -0.1 },
+			training: {
+				rules: 3,
+				reuseRate: 0.1,
+				policyMatchRate: 0.1,
+				gatePassRate: 0.2,
+			},
+		});
+
+		expect(verdict([held, held], "virtual")).toEqual({
+			label: "Stuck",
+			tone: "bad",
+		});
+	});
+
+	it("does not call a book-only rise a recovery", () => {
+		const samples = [
+			sample({
+				virtual: { closed: 5, wins: 1, winRate: 0.2, meanReturn: -0.1 },
+				training: {
+					rules: 3,
+					reuseRate: 0.1,
+					policyMatchRate: 0.1,
+					gatePassRate: 0.2,
+				},
+			}),
+			sample({
+				virtual: { closed: 6, wins: 2, winRate: 0.3, meanReturn: -0.04 },
+				training: {
+					rules: 3,
+					reuseRate: 0.1,
+					policyMatchRate: 0.1,
+					gatePassRate: 0.2,
+				},
+			}),
+		];
+
+		expect(verdict(samples, "virtual")).toEqual({
+			label: "Mixed",
+			tone: "warn",
+		});
+	});
+
+	it("reports recovering when the book and the gate rise together", () => {
+		const samples = [
+			sample({
+				virtual: { closed: 5, wins: 1, winRate: 0.2, meanReturn: -0.1 },
+				training: {
+					rules: 3,
+					reuseRate: 0.1,
+					policyMatchRate: 0.1,
+					gatePassRate: 0.2,
+				},
+			}),
+			sample({
+				virtual: { closed: 6, wins: 2, winRate: 0.3, meanReturn: -0.04 },
+				training: {
+					rules: 3,
+					reuseRate: 0.1,
+					policyMatchRate: 0.1,
+					gatePassRate: 0.5,
+				},
+			}),
+		];
+
+		expect(verdict(samples, "virtual")).toEqual({
+			label: "Recovering",
+			tone: "warn",
 		});
 	});
 

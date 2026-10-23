@@ -203,7 +203,7 @@ describe("LongtailDashboard", () => {
 		).toHaveLength(6);
 
 		// Right rail blocks.
-		for (const title of ["Grammar", "Surprise gate", "Ledger", "Policy"]) {
+		for (const title of ["Grammar", "Entry gate", "Surprise", "Ledger", "Policy"]) {
 			expect(getByText(title, { selector: "div" })).toBeTruthy();
 		}
 		expect(getByText("Plain-language readings")).toBeTruthy();

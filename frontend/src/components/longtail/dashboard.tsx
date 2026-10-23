@@ -42,16 +42,6 @@ never paints green.
 
 const rate = (value: number) => `${Math.round(value * 100)}%`;
 
-const latestFinite = (values: Array<number | null | undefined>) => {
-	for (let i = values.length - 1; i >= 0; i--) {
-		const v = values[i];
-		if (v !== null && v !== undefined && Number.isFinite(v)) {
-			return v;
-		}
-	}
-	return null;
-};
-
 /* A flat sparkline sits mid-height instead of pinning to the floor. */
 const sparkPath = (
 	points: number[],
@@ -323,7 +313,7 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 	{
 		id: "gate",
 		label: "Gate pass rate",
-		caption: "chords the surprise gate accepted",
+		caption: "chords the entry gate accepted",
 		series: (samples) => {
 			const latest = samples[samples.length - 1];
 			return [
@@ -343,7 +333,7 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 	{
 		id: "surprise",
 		label: "Mean surprise",
-		caption: "predictive coder error per chord · lower is better",
+		caption: "absolute energy error versus the running prediction · lower is better",
 		series: (samples) => {
 			const latest = samples[samples.length - 1];
 			return [
@@ -360,7 +350,7 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 	{
 		id: "stable",
 		label: "Path stability",
-		caption: "canonical policy path vs sequitur path (no drift)",
+		caption: "regime terminals inside the chord that closed them",
 		series: (samples) => {
 			const latest = samples[samples.length - 1];
 			return [
@@ -631,7 +621,7 @@ export const LongtailDashboard = () => {
 						/>
 					</RailBlock>
 
-					<RailBlock title="Surprise gate">
+					<RailBlock title="Entry gate">
 						<RailRow
 							label="coders warm"
 							value={
@@ -653,6 +643,20 @@ export const LongtailDashboard = () => {
 							meter={training?.gatePassRate ?? null}
 							tone={gatePassTone(training?.gatePassRate ?? null)}
 						/>
+						<RailRow
+							label="friction pass"
+							value={
+								training?.frictionPassRate === null ||
+								training?.frictionPassRate === undefined
+									? "—"
+									: pct(training.frictionPassRate)
+							}
+							meter={training?.frictionPassRate ?? null}
+							tone={frictionPassTone(training?.frictionPassRate ?? null)}
+						/>
+					</RailBlock>
+
+					<RailBlock title="Surprise">
 						<RailRow
 							label="mean surprise"
 							value={

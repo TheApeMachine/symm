@@ -12,6 +12,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 )
 
@@ -708,5 +709,81 @@ func TestPublishGrammarFrame(t *testing.T) {
 	if _, ok := frame["policy"].(map[string]any); !ok {
 		raw, _ := json.Marshal(frame)
 		t.Fatalf("policy missing: %s", raw)
+	}
+}
+
+func TestNoteTickSurpriseIsTheEnergyError(t *testing.T) {
+	model := NewModel(context.Background(), newFakeDesk(), nil, nil, nil)
+	grid := nmstore.NewGrid(context.Background())
+	grid.Priors["book"] = map[string]*nmstore.Prior{
+		"BTC/USD": {Samples: 2, Prediction: 1, Energy: 0.25},
+	}
+
+	for range 3 {
+		model.NoteTick("BTC/USD", nil, grid)
+	}
+
+	untyped, ok := model.tickReadings.Load("BTC/USD")
+	if !ok {
+		t.Fatal("no tick reading")
+	}
+
+	reading := untyped.(tickReading)
+	if !reading.hasSurprise || reading.surprise != 0.75 {
+		t.Fatalf("surprise = %v (%v), want |0.25 - 1|", reading.surprise, reading.hasSurprise)
+	}
+
+	if reading.surprise < 0 {
+		t.Fatal("surprise went negative")
+	}
+
+	if !reading.hasZ || reading.z != 0 {
+		t.Fatalf("z = %v (%v), want 0 once the same error has a spread of zero", reading.z, reading.hasZ)
+	}
+}
+
+func TestRegimeDriftUsesTheChordThatClosed(t *testing.T) {
+	model := NewModel(context.Background(), newFakeDesk(), nil, nil, nil)
+	model.TrackSequitur("BTC/USD", tokenizer.NewToken([]string{"R01", "R02"}, 1, 1, 0))
+
+	drift, compared := model.regimeDrift("BTC/USD", tokenizer.NewToken([]string{"R00", "R01", "R02"}, 1, 1, 0))
+	if drift || !compared {
+		t.Fatalf("drift=%v compared=%v, want the regime inside the chord", drift, compared)
+	}
+
+	drift, compared = model.regimeDrift("BTC/USD", tokenizer.NewToken([]string{"R09"}, 1, 1, 0))
+	if !drift || !compared {
+		t.Fatalf("drift=%v compared=%v, want a regime outside the chord", drift, compared)
+	}
+
+	model.TrackSequitur("BTC/USD", tokenizer.Token{})
+	if _, compared = model.regimeDrift("BTC/USD", tokenizer.NewToken([]string{"R01"}, 1, 1, 0)); compared {
+		t.Fatal("a tick that did not close a regime was compared")
+	}
+}
+
+func TestStampStockIsNotScaledBySymbols(t *testing.T) {
+	model := NewModel(context.Background(), newFakeDesk(), nil, nil, nil)
+	model.BindMetrics(newMetricsAccumulator())
+	model.explored, _, _ = model.explored.Insert(
+		[]byte(exploredKey("enter", "R00/R01")),
+		data.NewValue("policy", "explored", "enter"),
+	)
+
+	model.recordFrameMetrics("BTC/USD", false, true, true, false, false, false)
+	model.recordFrameMetrics("ETH/USD", false, true, true, false, false, false)
+	model.StampStock()
+
+	snap, _ := model.metrics.snapshot.Load().(TickMetrics)
+	if snap.ExploredEnter != 1 {
+		t.Fatalf("explored = %d, want 1 path, not one per symbol", snap.ExploredEnter)
+	}
+
+	if snap.GatePass != 0 || snap.FrictionPass != 2 {
+		t.Fatalf("gate %d friction %d, want the friction check counted on its own", snap.GatePass, snap.FrictionPass)
+	}
+
+	if snap.PathCompared != 0 {
+		t.Fatalf("path comparisons = %d, want 0 when no regime closed", snap.PathCompared)
 	}
 }

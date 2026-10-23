@@ -27,6 +27,38 @@ func TestFinalizeRegionsUsesEachSymbolsMidpoint(t *testing.T) {
 	}
 }
 
+func TestSymbolSurpriseIsAbsoluteEnergyError(t *testing.T) {
+	grid := NewGrid(context.Background())
+
+	if _, ok := grid.SymbolSurprise("BTC/USD"); ok {
+		t.Fatal("a symbol with no prior reported a surprise")
+	}
+
+	grid.Priors["book"] = map[string]*Prior{
+		"BTC/USD": {Samples: 2, Prediction: 0.4, Energy: 0.1},
+	}
+
+	got, ok := grid.SymbolSurprise("BTC/USD")
+	if !ok {
+		t.Fatal("a prior with samples did not report a surprise")
+	}
+
+	if diff := got - 0.3; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("surprise = %v, want |0.1 - 0.4|", got)
+	}
+
+	if got < 0 {
+		t.Fatal("surprise went negative")
+	}
+
+	grid.Priors["book"]["BTC/USD"] = &Prior{Samples: 1, Prediction: 0, Energy: 0.5}
+
+	got, ok = grid.SymbolSurprise("BTC/USD")
+	if !ok || got != 0.5 {
+		t.Fatalf("empty prediction surprise = %v, %v; want the energy 0.5", got, ok)
+	}
+}
+
 func TestRegionSide(t *testing.T) {
 	if RegionSide(0) != "enter" || RegionSide(2) != "enter" {
 		t.Fatal("R00-R02 are the entry precursor")

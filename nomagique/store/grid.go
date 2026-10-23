@@ -42,10 +42,11 @@ func NewGrid(ctx context.Context) *Grid {
 
 /*
 Region is one confluence region's evidence in a frame: Deformation is the sum
-of its self-normalized metric magnitudes |SNM|, Counts how many metrics it holds,
-and Brightness their average in [0, 1]. The JSON tags are the dashboard
-contract: the Impulse Map renders the grid's own accepted regions from the
-training frame's grid/regions layer.
+of its self-normalized metric magnitudes |SNM| scaled by one plus the energy
+surprise, Counts how many metrics it holds, and Brightness that average.
+Brightness is not capped: the scale factor can push it above 1. The JSON
+tags are the dashboard contract: the Impulse Map renders the grid's own
+accepted regions from the training frame's grid/regions layer.
 */
 type Region struct {
 	Symbol      string  `json:"symbol"`
@@ -329,8 +330,9 @@ func (grid *Grid) SNM(signal *Signal, idx int) float64 {
 }
 
 /*
-Surprise returns the MDL prediction error: how much the current
-total metric energy deviates from the expected regime baseline.
+Surprise is the absolute gap between this tick's metric energy and the
+running prediction. It is zero when they match. An empty prediction
+returns the energy itself, which is a sum of squares and cannot be negative.
 */
 func (grid *Grid) Surprise(prediction, energy float64) float64 {
 	if prediction <= 0 {
@@ -338,6 +340,36 @@ func (grid *Grid) Surprise(prediction, energy float64) float64 {
 	}
 
 	return math.Abs(energy - prediction)
+}
+
+/*
+SymbolSurprise is the mean absolute energy error of every source that has
+a prior for symbol. The bool is false when no source has one yet: a missing
+prior is not a surprise of zero.
+*/
+func (grid *Grid) SymbolSurprise(symbol string) (float64, bool) {
+	if grid == nil || symbol == "" {
+		return 0, false
+	}
+
+	var sum float64
+	n := 0
+
+	for _, bySymbol := range grid.Priors {
+		prior := bySymbol[symbol]
+		if prior == nil || prior.Samples <= 0 {
+			continue
+		}
+
+		sum += grid.Surprise(prior.Prediction, prior.Energy)
+		n++
+	}
+
+	if n == 0 {
+		return 0, false
+	}
+
+	return sum / float64(n), true
 }
 
 /*

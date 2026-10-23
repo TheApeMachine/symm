@@ -1,6 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
 import { createStore } from "@tanstack/store";
-import { signals } from "#/collections/app";
 import type { Book } from "#/collections/book";
 import { type SequiturFeed, sequiturStore } from "#/collections/sequitur";
 import {
@@ -9,7 +8,6 @@ import {
 	openOnBook,
 	positionReadout,
 } from "#/components/book-readout";
-import { positionRows } from "#/components/learning/open-positions";
 import { deskRowsForStats, ingestDeskClosedLots } from "#/lib/lifecycle";
 
 export type Trend = "up" | "down" | "flat";
@@ -93,15 +91,21 @@ export const gatePassTone = (value: number | null): Tone =>
 				? "warn"
 				: "bad";
 
-/* Surprise is the predictive coder's error: lower is better, so the scale inverts. */
+/*
+Surprise is the absolute energy error against the running prediction.
+Lower is better. A negative value is not a better prediction: the error
+has no sign, so a negative reading is a broken measurement.
+*/
 export const surpriseTone = (value: number | null): Tone =>
 	value === null
 		? "neutral"
-		: value <= 0.5
-			? "good"
-			: value <= 2
-				? "warn"
-				: "bad";
+		: value < 0
+			? "bad"
+			: value <= 0.5
+				? "good"
+				: value <= 2
+					? "warn"
+					: "bad";
 
 /* A maturing grammar reuses its rules; one that mostly creates new rules has not found structure. */
 export const reuseTone = (value: number | null): Tone =>
@@ -188,6 +192,7 @@ export type BackendTickMetrics = {
 	virtualExcursion: number;
 	meanMaturity: number;
 	meanSurprise: number;
+	surpriseSamples: number;
 };
 
 export type TrainingSample = {
@@ -340,8 +345,9 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 			gateTotal += 1;
 			if (frame.gate.passed) gatePass += 1;
 			if (frame.gate.warm) warm += 1;
-			if (Number.isFinite(frame.gate.surprise)) {
-				surpriseSum += frame.gate.surprise;
+			const surprise = frame.gate.surprise;
+			if (surprise !== null && Number.isFinite(surprise)) {
+				surpriseSum += surprise;
 				surpriseN += 1;
 			}
 			if (frame.gate.z !== null && Number.isFinite(frame.gate.z)) {
@@ -379,13 +385,13 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 
 		violations += frame.violations.length;
 
-		if (frame.measurement) {
+		if (frame.measurement?.frictionChecked) {
 			frictionTotal += 1;
 			if (frame.measurement.frictionPass) frictionPass += 1;
-			if (frame.measurement.sequiturPath !== "") {
-				pathCompared += 1;
-				if (!frame.measurement.pathDrift) pathStable += 1;
-			}
+		}
+		if (frame.measurement?.pathCompared) {
+			pathCompared += 1;
+			if (!frame.measurement.pathDrift) pathStable += 1;
 		}
 	}
 
@@ -412,7 +418,7 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 		blockedRate: rate(blocked, policyTotal),
 		warmRate: rate(warm, gateTotal),
 		avgSurprise:
-			backend && backend.symbols > 0
+			backend && backend.surpriseSamples > 0
 				? backend.meanSurprise
 				: rate(surpriseSum, surpriseN),
 		avgZ: rate(zSum, zN),
@@ -424,16 +430,12 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 		avgMatchDepth: rate(matchDepthSum, matchDepthN),
 		outcomeRate: rate(outcomes, policyTotal),
 		violations: feedsWithFrame > 0 ? violations : null,
-		pathStableRate: rate(
-			backend?.pathCompared
-				? backend.pathCompared - backend.pathDrift
-				: pathStable,
-			backend?.pathCompared ? backend.pathCompared : pathCompared,
-		),
-		frictionPassRate: rate(
-			backend?.frictionTotal ? backend.frictionPass : frictionPass,
-			backend?.frictionTotal ? backend.frictionTotal : frictionTotal,
-		),
+		pathStableRate: backend
+			? rate(backend.pathCompared - backend.pathDrift, backend.pathCompared)
+			: rate(pathStable, pathCompared),
+		frictionPassRate: backend
+			? rate(backend.frictionPass, backend.frictionTotal)
+			: rate(frictionPass, frictionTotal),
 		exploredEnter: backend?.exploredEnter ?? null,
 		confirmedEnter: backend?.confirmedEnter ?? null,
 		venueOpen: backend?.venueOpen ?? null,
@@ -460,10 +462,12 @@ const trendOf = (current: number | null, prior: number | null): Trend => {
 };
 
 /*
-verdict answers the question the surface exists for — is the system doing
-well? — from the latest sample's levels and the edge's trend over the recent
-window. It never reports improving from a bad level, and never reports a
-verdict from data it does not have.
+verdict answers the question the surface exists for — is the learning
+system doing well, and is it improving? A bad book that is not getting
+worse is Stuck. Recovering requires the book and one of reuse, policy
+match, or the entry gate to be rising together. It never reports
+improving from a bad level, and never reports a verdict from data it
+does not have.
 */
 export const verdict = (samples: LongtailSample[], book: Book): Verdict => {
 	if (samples.length < 2) {
@@ -489,11 +493,21 @@ export const verdict = (samples: LongtailSample[], book: Book): Verdict => {
 	const good = levels.filter((tone) => tone === "good").length;
 	const bad = levels.filter((tone) => tone === "bad").length;
 	const trend = trendOf(latest[book].meanReturn, prior[book].meanReturn);
+	const learningUp = (
+		["reuseRate", "policyMatchRate", "gatePassRate"] as const
+	).some(
+		(key) =>
+			trendOf(latest.training?.[key] ?? null, prior.training?.[key] ?? null) ===
+			"up",
+	);
 
 	if (bad >= 2) {
-		return trend === "up"
-			? { label: "Recovering", tone: "warn" }
-			: { label: "Degrading", tone: "bad" };
+		if (trend === "down") return { label: "Degrading", tone: "bad" };
+		if (trend === "up" && learningUp) {
+			return { label: "Recovering", tone: "warn" };
+		}
+		if (trend === "up") return { label: "Mixed", tone: "warn" };
+		return { label: "Stuck", tone: "bad" };
 	}
 	if (good >= 3) {
 		if (trend === "down") return { label: "Slipping", tone: "warn" };
@@ -577,7 +591,7 @@ export const buildInsights = (
 		insights.push({
 			id: "grammar",
 			title: "Grammar",
-			body: `${training.rules} rules (avg depth ${fixed(training.avgRuleDepth ?? 0, 1)}, max ${training.maxRuleDepth ?? 0}); ${reuse === null ? "—" : pct(reuse)} of recent events reuse existing rules, ${create === null ? "—" : pct(create)} create new ones.${structureSentence}`,
+			body: `${training.rules} rules (avg depth ${fixed(training.avgRuleDepth ?? 0, 1)}, max ${training.maxRuleDepth ?? 0}); ${reuse === null ? "—" : pct(reuse)} of the latest frames reused an existing rule, ${create === null ? "—" : pct(create)} created one.${structureSentence}`,
 			tone: reuseTone(reuse),
 		});
 	}
@@ -585,16 +599,25 @@ export const buildInsights = (
 	if (training.gatePassRate === null) {
 		insights.push({
 			id: "gate",
-			title: "Surprise gate",
-			body: "No surprise-gate readings yet.",
+			title: "Entry gate",
+			body: "No entry-gate readings yet.",
 			tone: "neutral",
 		});
 	} else {
 		insights.push({
 			id: "gate",
-			title: "Surprise gate",
-			body: `Passes ${pct(training.gatePassRate)} of chords; mean surprise ${fixed(training.avgSurprise ?? 0)}, coders warm on ${training.warmRate === null ? "—" : pct(training.warmRate)} of feeds.`,
+			title: "Entry gate",
+			body: `Passes ${pct(training.gatePassRate)} of chords; coders warm on ${training.warmRate === null ? "—" : pct(training.warmRate)} of feeds${training.frictionPassRate === null ? "" : `; friction passes ${pct(training.frictionPassRate)}`}.`,
 			tone: gatePassTone(training.gatePassRate),
+		});
+	}
+
+	if (training.avgSurprise !== null) {
+		insights.push({
+			id: "surprise",
+			title: "Surprise",
+			body: `Mean absolute energy error ${fixed(training.avgSurprise)}${training.avgZ === null ? "" : `; mean z ${fixed(training.avgZ)}`}.`,
+			tone: surpriseTone(training.avgSurprise),
 		});
 	}
 
@@ -618,7 +641,7 @@ export const buildInsights = (
 		insights.push({
 			id: "paths",
 			title: "Path identity",
-			body: `Canonical chord paths stay aligned with Sequitur on ${pct(training.pathStableRate)} of compared ticks${training.frictionPassRate === null ? "" : `; friction gate passes ${pct(training.frictionPassRate)}`}.`,
+			body: `On ticks that closed a regime, its terminals sat inside the chord on ${pct(training.pathStableRate)} of comparisons.`,
 			tone: pathStableTone(training.pathStableRate),
 		});
 	}
@@ -665,6 +688,7 @@ export const ingestLongtailTick = (payload: unknown) => {
 		virtualExcursion: read("virtualExcursion"),
 		meanMaturity: read("meanMaturity"),
 		meanSurprise: read("meanSurprise"),
+		surpriseSamples: read("surpriseSamples"),
 	};
 
 	return true;

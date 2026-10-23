@@ -101,6 +101,12 @@ describe("ingestSequiturFrame: surprise gate", () => {
 		expect(
 			ingestSequiturFrame({
 				...sequiturFrame(),
+				gate: { surprise: null, z: null, warm: true, passed: true },
+			}),
+		).toBe(true);
+		expect(
+			ingestSequiturFrame({
+				...sequiturFrame(),
 				gate: { surprise: "high", z: null, warm: true, passed: true },
 			}),
 		).toBe(false);
