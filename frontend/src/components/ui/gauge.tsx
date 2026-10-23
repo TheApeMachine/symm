@@ -1,5 +1,5 @@
-import { cn } from "#/lib/utils";
 import type { ReactNode } from "react";
+import { cn } from "#/lib/utils";
 
 export type GaugeTone = "up" | "down" | "warn" | "acc" | "info" | "muted";
 

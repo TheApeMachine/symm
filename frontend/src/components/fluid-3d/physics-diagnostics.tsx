@@ -15,7 +15,7 @@ const formatSci = (num: number | undefined | null, prec = 3): string => {
 
 // Zero is the wire contract for a rate with no active timestep constraint.
 const formatBound = (value: number | undefined) =>
-    value === 0 ? "unbounded" : formatSci(value, 5);
+	value === 0 ? "unbounded" : formatSci(value, 5);
 
 export const PhysicsDiagnosticsHUD = ({
 	isOpen,
@@ -66,8 +66,16 @@ export const PhysicsDiagnosticsHUD = ({
 					</Typography.Label>
 					<Badge
 						size="xs"
-						variant={!integrator ? "disabled" : rejections > 0 ? "warning" : "success"}
-						label={!integrator ? "WAITING" : rejections > 0 ? `${rejections} REJECTIONS` : "ACCEPTED"}
+						variant={
+							!integrator ? "disabled" : rejections > 0 ? "warning" : "success"
+						}
+						label={
+							!integrator
+								? "WAITING"
+								: rejections > 0
+									? `${rejections} REJECTIONS`
+									: "ACCEPTED"
+						}
 						dot
 					/>
 					{version !== undefined && version > 0n ? (
@@ -212,7 +220,8 @@ export const PhysicsDiagnosticsHUD = ({
 						</div>
 
 						<Typography.Mono size="xxs" tone="f4">
-							Nominal diffusion estimates use uncapped coefficients. The hydro bound uses the solver’s grid-limited transport.
+							Nominal diffusion estimates use uncapped coefficients. The hydro
+							bound uses the solver’s grid-limited transport.
 						</Typography.Mono>
 
 						<div className="flex justify-between rounded border border-(--line) bg-(--surface) p-2 text-[11px]">
@@ -271,7 +280,9 @@ export const PhysicsDiagnosticsHUD = ({
 							<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Vorticity RMS:</span>
-									<span className="text-(--f2)">{formatSci(vorticityVal, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(vorticityVal, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Vorticity Max:</span>
@@ -311,11 +322,15 @@ export const PhysicsDiagnosticsHUD = ({
 							<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
 								<div className="flex justify-between">
 									<span className="text-(--f4)">E_internal:</span>
-									<span className="text-(--f2)">{formatSci(gasInternal, 3)}</span>
+									<span className="text-(--f2)">
+										{formatSci(gasInternal, 3)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">E_kinetic:</span>
-									<span className="text-(--f2)">{formatSci(gasKinetic, 3)}</span>
+									<span className="text-(--f2)">
+										{formatSci(gasKinetic, 3)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Min Density ρ:</span>
@@ -393,23 +408,33 @@ export const PhysicsDiagnosticsHUD = ({
 							<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Guidance Speed v_B:</span>
-									<span className="text-(--f2)">{formatSci(guidanceSpeed, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(guidanceSpeed, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Coherence ⟨|Ψ|²⟩:</span>
-									<span className="text-(--f2)">{formatSci(coherenceMag2, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(coherenceMag2, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Wave Kinetic:</span>
-									<span className="text-(--f2)">{formatSci(wave?.kinetic, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(wave?.kinetic, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Wave Potential:</span>
-									<span className="text-(--f2)">{formatSci(wave?.potential, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(wave?.potential, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Chemical Pot μ:</span>
-									<span className="text-(--f2)">{formatSci(wave?.chemical, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(wave?.chemical, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Phase Potential:</span>
@@ -427,7 +452,9 @@ export const PhysicsDiagnosticsHUD = ({
 							<div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Speed RMS:</span>
-									<span className="text-(--f2)">{formatSci(pilot?.speedRms, 4)}</span>
+									<span className="text-(--f2)">
+										{formatSci(pilot?.speedRms, 4)}
+									</span>
 								</div>
 								<div className="flex justify-between">
 									<span className="text-(--f4)">Displacement RMS:</span>
@@ -490,7 +517,9 @@ export const PhysicsDiagnosticsHUD = ({
 									</span>
 								</div>
 								<div className="flex justify-between items-center border-b border-(--line) pb-1">
-									<span className="text-(--f4)">Particle Balance Residual:</span>
+									<span className="text-(--f4)">
+										Particle Balance Residual:
+									</span>
 									<span className="text-(--f2)">
 										{formatSci(sources?.particleBalanceResidual, 6)}
 									</span>

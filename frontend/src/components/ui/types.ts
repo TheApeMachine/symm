@@ -1,5 +1,5 @@
-import type { Value } from "#/types/value";
 import type { Store } from "@tanstack/store";
+import type { Value } from "#/types/value";
 
 export type ValueStore = Store<Record<string, Value>>;
 

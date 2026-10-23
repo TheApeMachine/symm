@@ -818,7 +818,7 @@ const DiagnosticsSurface = () => {
 	// every ingest) and the Maps are read fresh off current state each render.
 	useStore(topologyStore, (state) => state.version);
 	const { nodes, edges, account } = topologyStore.state;
-	const connection = useSelector(atoms["online"], (s) => s);
+	const connection = useSelector(atoms.online, (s) => s);
 	const [selection, setSelection] = useState<DiagnosticsSelection | null>(null);
 	const [activeTab, setActiveTab] = useState<"overview" | "value" | "json">(
 		"overview",

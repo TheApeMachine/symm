@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as XrayRouteImport } from './routes/xray'
 import { Route as WorkbenchRouteImport } from './routes/workbench'
 import { Route as SignalsRouteImport } from './routes/signals'
+import { Route as ParallelRouteImport } from './routes/parallel'
 import { Route as LongtailRouteImport } from './routes/longtail'
 import { Route as LearningRouteImport } from './routes/learning'
 import { Route as InfluenceRouteImport } from './routes/influence'
@@ -33,6 +34,11 @@ const WorkbenchRoute = WorkbenchRouteImport.update({
 const SignalsRoute = SignalsRouteImport.update({
   id: '/signals',
   path: '/signals',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ParallelRoute = ParallelRouteImport.update({
+  id: '/parallel',
+  path: '/parallel',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LongtailRoute = LongtailRouteImport.update({
@@ -79,6 +85,7 @@ export interface FileRoutesByFullPath {
   '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
   '/longtail': typeof LongtailRoute
+  '/parallel': typeof ParallelRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
@@ -91,6 +98,7 @@ export interface FileRoutesByTo {
   '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
   '/longtail': typeof LongtailRoute
+  '/parallel': typeof ParallelRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
@@ -104,6 +112,7 @@ export interface FileRoutesById {
   '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
   '/longtail': typeof LongtailRoute
+  '/parallel': typeof ParallelRoute
   '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
@@ -118,6 +127,7 @@ export interface FileRouteTypes {
     | '/influence'
     | '/learning'
     | '/longtail'
+    | '/parallel'
     | '/signals'
     | '/workbench'
     | '/xray'
@@ -130,6 +140,7 @@ export interface FileRouteTypes {
     | '/influence'
     | '/learning'
     | '/longtail'
+    | '/parallel'
     | '/signals'
     | '/workbench'
     | '/xray'
@@ -142,6 +153,7 @@ export interface FileRouteTypes {
     | '/influence'
     | '/learning'
     | '/longtail'
+    | '/parallel'
     | '/signals'
     | '/workbench'
     | '/xray'
@@ -155,6 +167,7 @@ export interface RootRouteChildren {
   InfluenceRoute: typeof InfluenceRoute
   LearningRoute: typeof LearningRoute
   LongtailRoute: typeof LongtailRoute
+  ParallelRoute: typeof ParallelRoute
   SignalsRoute: typeof SignalsRoute
   WorkbenchRoute: typeof WorkbenchRoute
   XrayRoute: typeof XrayRoute
@@ -181,6 +194,13 @@ declare module '@tanstack/react-router' {
       path: '/signals'
       fullPath: '/signals'
       preLoaderRoute: typeof SignalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/parallel': {
+      id: '/parallel'
+      path: '/parallel'
+      fullPath: '/parallel'
+      preLoaderRoute: typeof ParallelRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/longtail': {
@@ -243,6 +263,7 @@ const rootRouteChildren: RootRouteChildren = {
   InfluenceRoute: InfluenceRoute,
   LearningRoute: LearningRoute,
   LongtailRoute: LongtailRoute,
+  ParallelRoute: ParallelRoute,
   SignalsRoute: SignalsRoute,
   WorkbenchRoute: WorkbenchRoute,
   XrayRoute: XrayRoute,

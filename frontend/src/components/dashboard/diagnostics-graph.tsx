@@ -67,7 +67,8 @@ export const stageMarks = (nodes: Iterable<NodeStats>) => {
 		const wait = node.avgWaitNs ?? 0;
 
 		if (work >= CHEAP_NS && work >= peakWork * 0.67) bottleneck.add(node.label);
-		if (wait >= WAIT_MARK_NS && wait >= peakWait * 0.67) waiting.add(node.label);
+		if (wait >= WAIT_MARK_NS && wait >= peakWait * 0.67)
+			waiting.add(node.label);
 	}
 
 	return { bottleneck, waiting };
@@ -1196,9 +1197,7 @@ export const buildDiagnosticsGraph = (
 	// are sorted so the layout seed does not follow goroutine completion.
 	const edgeList = Array.from(edges.values())
 		.filter((edge) => isHop(nodes, edge))
-		.sort(
-			(a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to),
-		);
+		.sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
 	const { placements, groups } = autoLayout(nodeIds, nodes, edgeList, panel);
 
 	const attachments = new Map<

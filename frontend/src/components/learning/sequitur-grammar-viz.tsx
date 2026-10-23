@@ -1,3 +1,5 @@
+import { useSelector } from "@tanstack/react-store";
+import { useEffect, useMemo, useState } from "react";
 import { atoms } from "#/collections/app";
 import { type PaperRecord, paperStore } from "#/collections/paper";
 import {
@@ -17,8 +19,6 @@ import {
 	Toolbar,
 	Typography,
 } from "#/components/ui";
-import { useSelector } from "@tanstack/react-store";
-import { useEffect, useMemo, useState } from "react";
 import { ModelProblem } from "./model-problem";
 import { frameToSnapshot } from "./sequitur-engine";
 import { SequiturLaminarStrata } from "./sequitur-laminar-strata";

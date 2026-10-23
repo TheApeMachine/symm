@@ -7,17 +7,13 @@ import { useImpulseData } from "./use-impulse-data";
 
 const SYMBOL = "BTC/USD";
 
-const frame = (
-	layers: Array<{ key: string; payload: unknown }>,
-): Value =>
+const frame = (layers: Array<{ key: string; payload: unknown }>): Value =>
 	new Value({
 		origin: "workspace",
 		role: "tick",
 		scope: "aggregate",
 		prefix: "workspace/tick/aggregate",
-		index: layers.map(
-			(layer) => `workspace/tick/aggregate/${layer.key}`,
-		),
+		index: layers.map((layer) => `workspace/tick/aggregate/${layer.key}`),
 		layers: layers.map((layer) =>
 			new TextEncoder().encode(JSON.stringify(layer.payload)),
 		),
@@ -32,10 +28,8 @@ const publish = (value: Value) => {
 	});
 };
 
-const pin = (
-	data: ReturnType<typeof useImpulseData>["data"],
-	id: string,
-) => data.find((node) => node.id === id);
+const pin = (data: ReturnType<typeof useImpulseData>["data"], id: string) =>
+	data.find((node) => node.id === id);
 
 afterEach(() => {
 	cleanup();
@@ -57,9 +51,9 @@ describe("useImpulseData", () => {
 
 		const { result } = renderHook(() => useImpulseData(SYMBOL));
 
-		expect(pin(result.current.data, "cvd:midpoint_log_return:R02")?.activation).toBe(
-			0.8,
-		);
+		expect(
+			pin(result.current.data, "cvd:midpoint_log_return:R02")?.activation,
+		).toBe(0.8);
 
 		publish(
 			frame([
@@ -70,12 +64,12 @@ describe("useImpulseData", () => {
 			]),
 		);
 
-		expect(pin(result.current.data, "cvd:midpoint_log_return:R02")?.activation).toBe(
-			0.8,
-		);
-		expect(pin(result.current.data, "hawkes:arrival_rate:buy:R00")?.activation).toBe(
-			0.4,
-		);
+		expect(
+			pin(result.current.data, "cvd:midpoint_log_return:R02")?.activation,
+		).toBe(0.8);
+		expect(
+			pin(result.current.data, "hawkes:arrival_rate:buy:R00")?.activation,
+		).toBe(0.4);
 	});
 
 	it("writes a pin to zero when the tick carries zero", () => {
@@ -99,9 +93,9 @@ describe("useImpulseData", () => {
 			]),
 		);
 
-		expect(pin(result.current.data, "cvd:midpoint_log_return:R02")?.activation).toBe(
-			0,
-		);
+		expect(
+			pin(result.current.data, "cvd:midpoint_log_return:R02")?.activation,
+		).toBe(0);
 	});
 
 	it("keeps a region when a later tick omits it", () => {

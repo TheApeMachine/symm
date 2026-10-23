@@ -1,16 +1,17 @@
+import { Link } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { Clock } from "@/components/clock";
 import { Engine } from "@/components/engine";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Nav } from "@/components/ui/nav";
-import { Link } from "@tanstack/react-router";
-import { useSelector } from "@tanstack/react-store";
 
 type TerminalRoutePath =
 	| "/"
 	| "/learning"
 	| "/longtail"
+	| "/parallel"
 	| "/influence"
 	| "/fluid"
 	| "/signals"
@@ -32,6 +33,12 @@ export const SURFACE_ITEMS: Array<{
 		label: "Longtail",
 		icon: "signal",
 		to: "/longtail",
+	},
+	{
+		key: "parallel",
+		label: "Parallel",
+		icon: "scan",
+		to: "/parallel",
 	},
 	{
 		key: "diagnostics",

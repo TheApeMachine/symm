@@ -100,8 +100,14 @@ describe("ws-worker", () => {
 		await socket.emit("message", batchBuffer);
 
 		const batchMsg = scope.messages.find(
-			(m: any) => m.type === "BATCH" && m.buffer instanceof ArrayBuffer,
-		) as { type: "BATCH"; buffer: ArrayBuffer } | undefined;
+			(m): m is { type: "BATCH"; buffer: ArrayBuffer } =>
+				typeof m === "object" &&
+				m !== null &&
+				"type" in m &&
+				m.type === "BATCH" &&
+				"buffer" in m &&
+				m.buffer instanceof ArrayBuffer,
+		);
 
 		expect(batchMsg).toBeDefined();
 		expect(batchMsg?.buffer.byteLength).toBe(batchBuffer.byteLength);

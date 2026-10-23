@@ -66,9 +66,7 @@ export const RadarPanel = () => {
 				const payload = payloads[axis.key];
 				const found = Array.isArray(payload) ? payload[0] : payload;
 				const value =
-					typeof found === "number" && Number.isFinite(found)
-						? found
-						: 0;
+					typeof found === "number" && Number.isFinite(found) ? found : 0;
 
 				const arm = root.current.querySelector<SVGElement>(
 					`[data-axis="${axis.label}"]`,

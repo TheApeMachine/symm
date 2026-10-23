@@ -1,3 +1,4 @@
+import { useSelector } from "@tanstack/react-store";
 import { atoms, signals } from "#/collections/app";
 import {
 	kernelCopy,
@@ -8,7 +9,6 @@ import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Typography } from "#/components/ui/typography";
-import { useSelector } from "@tanstack/react-store";
 
 export const SignalDetail = () => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);

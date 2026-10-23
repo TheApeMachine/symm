@@ -155,10 +155,14 @@ export type PositionReadout = {
 };
 
 /* Position metrics come from order and execution facts; mark is a live price input. */
-export const positionReadout = (row: Record<string, unknown>): PositionReadout => {
+export const positionReadout = (
+	row: Record<string, unknown>,
+): PositionReadout => {
 	const buys = executionTotals(row, "buy");
 	const sells = executionTotals(row, "sell");
-	const entryOrderQty = orderQuantity(row.entry_orders as Record<string, unknown>[]);
+	const entryOrderQty = orderQuantity(
+		row.entry_orders as Record<string, unknown>[],
+	);
 	const qty = buys.qty === null ? entryOrderQty : buys.qty - (sells.qty ?? 0);
 	const entryPrice =
 		buys.qty !== null && buys.cost !== null && buys.qty !== 0
@@ -182,8 +186,7 @@ export const positionReadout = (row: Record<string, unknown>): PositionReadout =
 				(decimal(row.cost) !== null && decimal(row.proceeds) !== null)
 			: fullySold;
 
-	const closedAt =
-		dateText(row.closed_at) ?? (fullySold ? sells.lastAt : null);
+	const closedAt = dateText(row.closed_at) ?? (fullySold ? sells.lastAt : null);
 	const holdNs =
 		row.hold_ns ??
 		(closedAt !== null && openedAt !== null
@@ -204,7 +207,8 @@ export const positionReadout = (row: Record<string, unknown>): PositionReadout =
 	const entryFeeFraction = feeFraction(entryFee);
 	const exitFeeFraction = feeFraction(exitFee);
 	const fees =
-		entryFeeFraction !== null && (sells.qty === null || exitFeeFraction !== null)
+		entryFeeFraction !== null &&
+		(sells.qty === null || exitFeeFraction !== null)
 			? entryFeeFraction + (exitFeeFraction ?? 0)
 			: null;
 	const exitRoom = decimal(row.exit_room);
@@ -252,7 +256,8 @@ export const positionReadout = (row: Record<string, unknown>): PositionReadout =
 			qty !== null &&
 			entryFeeFraction !== null
 		) {
-			unrealizedPnl = unrealized - entryFeeFraction * buys.cost * (qty / buys.qty);
+			unrealizedPnl =
+				unrealized - entryFeeFraction * buys.cost * (qty / buys.qty);
 		}
 
 		if (realized !== null && unrealized !== null) {
@@ -286,7 +291,9 @@ export const positionReadout = (row: Record<string, unknown>): PositionReadout =
 		closedAt,
 		holdNs: holdNs as number | null,
 		closed,
-		exitPending: ((row.exit_orders as Record<string, unknown>[])?.length ?? 0) > 0 && !closed,
+		exitPending:
+			((row.exit_orders as Record<string, unknown>[])?.length ?? 0) > 0 &&
+			!closed,
 	};
 };
 
@@ -318,8 +325,7 @@ export const bookReadout = (rows: Record<string, unknown>[], book: Book) => {
 	const next =
 		returns.length > 0
 			? {
-					winRate:
-						returns.filter((value) => value > 0).length / returns.length,
+					winRate: returns.filter((value) => value > 0).length / returns.length,
 					edge: returns.reduce((sum, value) => sum + value, 0) / returns.length,
 					closed: closed.length,
 				}

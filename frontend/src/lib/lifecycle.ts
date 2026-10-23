@@ -1,10 +1,10 @@
+import { useEffect, useSyncExternalStore } from "react";
 import { signals as appSignals } from "#/collections/app";
 import { positionRows } from "#/components/learning/open-positions";
 import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
 } from "#/lib/desk-closed-lifecycle";
-import { useEffect, useSyncExternalStore } from "react";
 
 /*
 Paper round trips as the dashboard run lives them, streamed over the hub as

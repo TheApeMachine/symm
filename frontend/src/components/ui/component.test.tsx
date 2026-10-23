@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { render, act, cleanup } from "@testing-library/react";
-import { describe, expect, it, afterEach } from "vitest";
+
 import { createStore } from "@tanstack/store";
+import { act, cleanup, render } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import { Value } from "#/types/value";
 import { Component } from "./component";
 import { Sparkline } from "./sparkline";
@@ -137,11 +138,7 @@ describe("Component telemetry binding", () => {
 
 		const view = render(
 			<Component store={store} symbol="ETH/USD">
-				<Sparkline
-					data-k="sparkline"
-					data-series="contrast"
-					title="contrast"
-				/>
+				<Sparkline data-k="sparkline" data-series="contrast" title="contrast" />
 			</Component>,
 		);
 
@@ -178,11 +175,7 @@ describe("Component telemetry binding", () => {
 
 		const view = render(
 			<Component store={store} symbol="ETH/USD">
-				<Sparkline
-					data-k="sparkline"
-					data-series="missing"
-					title="missing"
-				/>
+				<Sparkline data-k="sparkline" data-series="missing" title="missing" />
 			</Component>,
 		);
 

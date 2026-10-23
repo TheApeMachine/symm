@@ -6,12 +6,13 @@ import {
 	buildInsights,
 	coverageTone,
 	fixed,
+	frictionPassTone,
 	gatePassTone,
 	type LongtailSample,
 	matchTone,
+	pathStableTone,
 	pct,
 	returnTone,
-	reuseTone,
 	signedPct,
 	surpriseTone,
 	type Tone,
@@ -126,13 +127,13 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 		epsilon: 0.005,
 	},
 	{
-		id: "reuse",
-		label: "rule reuse",
-		value: (s) => s.training?.reuseRate ?? null,
+		id: "stable",
+		label: "path stable",
+		value: (s) => s.training?.pathStableRate ?? null,
 		format: (v) => `${(100 * v).toFixed(0)}%`,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: reuseTone,
+		tone: pathStableTone,
 		higherIsBetter: true,
 		epsilon: 0.005,
 	},
@@ -170,13 +171,13 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 		epsilon: 0.005,
 	},
 	{
-		id: "warm",
-		label: "coders warm",
-		value: (s) => s.training?.warmRate ?? null,
+		id: "friction",
+		label: "friction pass",
+		value: (s) => s.training?.frictionPassRate ?? null,
 		format: (v) => `${(100 * v).toFixed(0)}%`,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: warmTone,
+		tone: frictionPassTone,
 		higherIsBetter: true,
 		epsilon: 0.005,
 	},
@@ -276,7 +277,9 @@ const trainingPoint = (
 		| "avgSurprise"
 		| "reuseRate"
 		| "createRate"
-		| "policyMatchRate",
+		| "policyMatchRate"
+		| "pathStableRate"
+		| "frictionPassRate",
 ): number | null => {
 	const value = sample?.training?.[key];
 	return typeof value === "number" ? value : null;
@@ -358,27 +361,24 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 		tone: (s) => surpriseTone(trainingPoint(s, "avgSurprise")),
 	},
 	{
-		id: "reuse",
-		label: "Rule reuse vs create",
-		caption: "mix of structural events on the last append",
+		id: "stable",
+		label: "Path stability",
+		caption: "canonical policy path vs sequitur path (no drift)",
 		series: (samples) => {
 			const latest = samples[samples.length - 1];
 			return [
 				{
-					label: "reuse",
-					values: samples.map((s) => trainingPoint(s, "reuseRate")),
-					stroke: toneColor(reuseTone(trainingPoint(latest, "reuseRate"))),
-				},
-				{
-					label: "create",
-					values: samples.map((s) => trainingPoint(s, "createRate")),
-					stroke: "var(--f3)",
+					values: samples.map((s) => trainingPoint(s, "pathStableRate")),
+					stroke: toneColor(
+						pathStableTone(trainingPoint(latest, "pathStableRate")),
+					),
+					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
 				},
 			];
 		},
 		formatY: rate,
 		yDomain: [0, 1],
-		tone: (s) => reuseTone(trainingPoint(s, "reuseRate")),
+		tone: (s) => pathStableTone(trainingPoint(s, "pathStableRate")),
 	},
 	{
 		id: "match",
@@ -413,7 +413,10 @@ const ChartPanel = ({
 }) => {
 	const latestSample = samples[samples.length - 1];
 	const series = chart.series(samples);
-	const latest = latestFinite(series[0]?.values ?? []);
+	const values = series[0]?.values ?? [];
+	const tail = values[values.length - 1];
+	const latest =
+		tail !== null && tail !== undefined && Number.isFinite(tail) ? tail : null;
 	const tone = chart.tone(latestSample);
 
 	return (
@@ -671,6 +674,60 @@ export const LongtailDashboard = () => {
 									: fixed(training.avgZ)
 							}
 							tone="info"
+						/>
+					</RailBlock>
+
+					<RailBlock title="Ledger">
+						<RailRow
+							label="explored enter"
+							value={
+								training?.exploredEnter === null ||
+								training?.exploredEnter === undefined
+									? "—"
+									: String(training.exploredEnter)
+							}
+							tone="info"
+						/>
+						<RailRow
+							label="confirmed enter"
+							value={
+								training?.confirmedEnter === null ||
+								training?.confirmedEnter === undefined
+									? "—"
+									: String(training.confirmedEnter)
+							}
+							tone="info"
+						/>
+						<RailRow
+							label="venue open"
+							value={
+								training?.venueOpen === null ||
+								training?.venueOpen === undefined
+									? "—"
+									: String(training.venueOpen)
+							}
+							tone="info"
+						/>
+						<RailRow
+							label="virtual excursions"
+							value={
+								training?.virtualExcursion === null ||
+								training?.virtualExcursion === undefined
+									? "—"
+									: String(training.virtualExcursion)
+							}
+							tone="info"
+						/>
+						<RailRow
+							label="grid maturity"
+							value={
+								training?.meanMaturity === null ||
+								training?.meanMaturity === undefined
+									? "—"
+									: pct(training.meanMaturity)
+							}
+							meter={training?.meanMaturity ?? null}
+							tone={warmTone(training?.meanMaturity ?? null)}
 						/>
 					</RailBlock>
 

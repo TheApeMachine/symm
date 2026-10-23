@@ -16,11 +16,11 @@ describe("Engine", () => {
 	});
 
 	it("reads observations, decisions and phase from the live telemetry stores", () => {
-		atoms["tickCount"].set(100);
-		atoms["candidates"].set(20);
-		atoms["positionCount"].set(3);
-		atoms["phase"].set("learning");
-		atoms["online"].set("ONLINE");
+		atoms.tickCount.set(100);
+		atoms.candidates.set(20);
+		atoms.positionCount.set(3);
+		atoms.phase.set("learning");
+		atoms.online.set("ONLINE");
 
 		const markup = renderToStaticMarkup(<Engine />);
 		expect(markup).toContain(">100<");
@@ -28,7 +28,7 @@ describe("Engine", () => {
 		expect(markup).toContain(">3<");
 		expect(markup).toContain(">learning<");
 
-		atoms["online"].set("OFFLINE");
+		atoms.online.set("OFFLINE");
 		expect(renderToStaticMarkup(<Engine />)).toContain(">offline<");
 	});
 });

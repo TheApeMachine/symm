@@ -142,11 +142,7 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"covariance_score_gain_median",
 		"defined_peer_count",
 	],
-	liquidity: [
-		"best_price:bid",
-		"best_price:ask",
-		"relative_spread",
-	],
+	liquidity: ["best_price:bid", "best_price:ask", "relative_spread"],
 	pumpdump: [
 		"volume_rate",
 		"trade_rate",
@@ -162,10 +158,7 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"historical_path_distance",
 		"historical_path_percentile",
 	],
-	toxicity: [
-		"retreat_fraction:bid",
-		"net_withdrawal_rate:bid",
-	],
+	toxicity: ["retreat_fraction:bid", "net_withdrawal_rate:bid"],
 	training: [
 		"steps",
 		"decisions",

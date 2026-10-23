@@ -1,10 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-	RingBuffer,
-	atoms,
-	signals,
-} from "#/collections/app";
+import { atoms, RingBuffer, signals } from "#/collections/app";
 import { Value } from "#/types/value";
 import { TerminalTopBar } from "./terminal-top-bar";
 

@@ -44,9 +44,7 @@ describe("sourceHeadlineMetric", () => {
 	});
 
 	it("uses the anchor evidence names emitted by leadlag", () => {
-		expect(sourceHeadlineMetric("leadlag")).toBe(
-			"metrics.led_peer_share",
-		);
+		expect(sourceHeadlineMetric("leadlag")).toBe("metrics.led_peer_share");
 		expect(sourceMetrics("leadlag")).toContain("led_peer_share");
 		expect(sourceMetrics("leadlag")).toContain("best_lag_seconds_median");
 		expect(sourceMetrics("leadlag")).not.toContain("snr");

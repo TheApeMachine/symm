@@ -1,9 +1,9 @@
+import { useSelector } from "@tanstack/react-store";
+import type { ReactNode } from "react";
 import { atoms } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 import type { Value } from "#/types/value";
-import { useSelector } from "@tanstack/react-store";
-import type { ReactNode } from "react";
 
 const fmt = (value: unknown): string => {
 	if (typeof value === "number") {

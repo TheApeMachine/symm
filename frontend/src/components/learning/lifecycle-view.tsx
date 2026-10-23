@@ -1,3 +1,4 @@
+import { useSelector } from "@tanstack/react-store";
 import {
 	Activity,
 	ArrowRight,
@@ -15,13 +16,13 @@ import {
 	Zap,
 } from "lucide-react";
 import { useState } from "react";
-import { useSelector } from "@tanstack/react-store";
+import { bookAtom } from "#/collections/book";
 import { Badge, type BadgeVariant } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
-import { bookAtom } from "#/collections/book";
+import { hubBaseUrl } from "#/lib/hub";
 import {
 	type Lifecycle,
 	type LifeEvent,
@@ -33,7 +34,6 @@ import {
 	useLifecycles,
 } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
-import { hubBaseUrl } from "#/lib/hub";
 import { ActivePositionHealthCard, TradeRegionScores } from "./position-health";
 
 /*
@@ -858,13 +858,7 @@ commits it. A commit POSTs to the hub's hindsight commit — the same label
 boundary the tape scanner uses — and symm train reads nothing but committed
 detections.
 */
-const SAMPLE_CLASSES = [
-	"up",
-	"up_friction",
-	"down",
-	"chop",
-	"flat",
-] as const;
+const SAMPLE_CLASSES = ["up", "up_friction", "down", "chop", "flat"] as const;
 
 const TrainingSampleCard = ({ life }: { life: Lifecycle }) => {
 	const [class_, setClass] = useState<string>("up");
@@ -896,8 +890,8 @@ const TrainingSampleCard = ({ life }: { life: Lifecycle }) => {
 					training sample
 				</span>
 				<span className="text-[10px] text-(--f3)">
-					A {marks === null ? "—" : marks.a} · B {marks === null ? "—" : marks.b} · C{" "}
-					{marks === null ? "—" : marks.c}
+					A {marks === null ? "—" : marks.a} · B{" "}
+					{marks === null ? "—" : marks.b} · C {marks === null ? "—" : marks.c}
 					{life.policy_epoch ? ` · run ${life.policy_epoch}` : ""}
 				</span>
 			</Flex.Row>

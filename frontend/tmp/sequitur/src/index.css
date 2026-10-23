@@ -1,28 +1,34 @@
 @import "tailwindcss";
 
 @layer base {
-  :root {
-    --font-display: 'Bricolage Grotesque', sans-serif;
-    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'IBM Plex Mono', monospace;
-  }
+	:root {
+		--font-display: "Bricolage Grotesque", sans-serif;
+		--font-sans:
+			"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+		--font-mono: "IBM Plex Mono", monospace;
+	}
 
-  body {
-    font-family: var(--font-sans);
-    color: #0F172A;
-    background-color: #F8FAFC;
-  }
+	body {
+		font-family: var(--font-sans);
+		color: #0f172a;
+		background-color: #f8fafc;
+	}
 
-  h1, h2, h3, .font-display {
-    font-family: var(--font-display);
-  }
+	h1,
+	h2,
+	h3,
+	.font-display {
+		font-family: var(--font-display);
+	}
 
-  code, pre, .font-mono {
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-  }
+	code,
+	pre,
+	.font-mono {
+		font-family: var(--font-mono);
+		font-variant-numeric: tabular-nums;
+	}
 }
 
 .tabular-nums {
-  font-variant-numeric: tabular-nums;
+	font-variant-numeric: tabular-nums;
 }

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import type { ComponentType } from "react";
-import { RingBuffer } from "#/collections/ring";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { focusAtom, resonanceStore } from "#/collections/app";
+import { RingBuffer } from "#/collections/ring";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
 import {
 	clearRetainedTelemetry,
@@ -32,7 +32,7 @@ const publish = (symbol: string, embedding: number[]) => {
 		role: "frame",
 		scope: symbol,
 	});
-	(row as any).embedding = embedding;
+	(row as Record<string, unknown>).embedding = embedding;
 	const ring = new RingBuffer<Value>(1);
 	ring.add(row);
 	resonanceStore.setState((state) => ({

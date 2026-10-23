@@ -157,7 +157,7 @@ export const FluidInspector = () => {
 				setSelected,
 				(cause) => {
 					setError(cause.message);
-					atoms["error"].set({
+					atoms.error.set({
 						error: cause.message,
 						source: "FluidScene WebGPU",
 					});
@@ -167,7 +167,7 @@ export const FluidInspector = () => {
 		} catch (cause) {
 			const msg = cause instanceof Error ? cause.message : String(cause);
 			setError(msg);
-			atoms["error"].set({
+			atoms.error.set({
 				error: msg,
 				source: "FluidScene WebGPU Initialization",
 			});

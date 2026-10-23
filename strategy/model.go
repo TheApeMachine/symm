@@ -8,47 +8,14 @@ import (
 	"sync"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
-)
-
-const (
-	// maxPathLength bounds the token path so trie keys stay at a
-	// granularity that can recur in the market.
-	maxPathLength = 8
-
-	// minPathLength is the shortest path the model will act on.
-	// Shorter paths are too specific to a single tick to be reliable.
-	minPathLength = 3
-
-	// maxThreshold is the ceiling: a path whose adaptive threshold
-	// reaches this value can no longer be entered and is removed.
-	maxThreshold = 1.0
-
-	// thresholdDecay is the multiplicative factor applied on a win.
-	// The threshold decreases (path becomes easier to enter).
-	thresholdDecay = 0.7
-
-	// thresholdGrowth is the multiplicative factor applied on a loss.
-	// The threshold increases (path becomes harder to enter).
-	thresholdGrowth = 1.5
-
-	// promotionWins is the minimum number of observations required
-	// before a path can promote to the current policy tree.
-	promotionWins = 3
-
-	// promotionWinRate is the minimum win rate (wins / total) required
-	// for promotion. A path that has 3+ observations and a win rate
-	// above this promotes.
-	promotionWinRate = 0.5
-
-	// demotionLosses is the number of consecutive losses in the current
-	// tree that demotes a path back to explored.
-	demotionLosses = 3
 )
 
 // Desk is the trading surface the Model acts through.
@@ -62,51 +29,100 @@ type Desk interface {
 	Profit(symbol string, virtual bool) (bool, bool)
 	ClosedVirtuals() []*broker.Position
 	Drop(symbol string)
+	Quote(symbol string) (qty, entry, fee *decimal.Decimal, err error)
+	Realize(symbol string, qty, entry, fee *decimal.Decimal) (float64, bool)
+	Occupied(symbol string) bool
+	Open(symbol string) *broker.Position
+	ExitOccupied(symbol, path string) error
 }
 
 /*
-pathScore tracks the adaptive state of an explored path. The threshold
-is the entry gate: a token must have confidence >= threshold to trigger
-the path. Wins decrease the threshold (easier to enter); losses increase
-it (harder to enter). At maxThreshold the path is retired.
+pathScore is the persisted ledger for one path and one role. Sum and
+Count are the in-sample fee-net returns (a fraction, from the book walk).
+Frozen means that score is closed and only confirmation closes remain.
+Retired means the mean did not clear friction; the path is not entered
+again, including after a restart.
 */
 type pathScore struct {
-	Threshold float64 `json:"threshold"`
-	Wins      int     `json:"wins"`
-	Losses    int     `json:"losses"`
+	Sum     float64 `json:"sum"`
+	Count   int     `json:"count"`
+	Confirm int     `json:"confirm"`
+	Frozen  bool    `json:"frozen"`
+	Retired bool    `json:"retired"`
+}
+
+// excursion is one open ledger sample. It does not occupy the desk slot.
+type excursion struct {
+	entryPath string
+	exitPath  string
+	qty       *decimal.Decimal
+	entry     *decimal.Decimal
+	fee       *decimal.Decimal
+	closing   bool
+}
+
+// coolDown blocks a second sample of the sentence that just closed until
+// a regime token arrives that was not part of that entry path.
+type coolDown struct {
+	tokens map[string]struct{}
+}
+
+type tickReading struct {
+	maturity     float64
+	surprise     float64
+	frictionPass bool
 }
 
 type Model struct {
 	*runtime.System `json:"-"`
 	mu              sync.Mutex
+	cfg             *Config
 	desk            Desk
 	store           *store.Client
 	hub             io.Writer
+	metrics         *metricsAccumulator
 	tree            *iradix.Tree[*data.Value]
 	explored        *iradix.Tree[*data.Value]
 	sequencers      *sync.Map
 	paths           *sync.Map
+	seqPaths        *sync.Map
 	settled         *sync.Map
+	ingress         *sync.Map
+	tickReadings    *sync.Map
+	excursions      map[string]*excursion
+	cool            map[string]*coolDown
 }
 
 func NewModel(
 	ctx context.Context, desk Desk, client *store.Client,
-	hub io.Writer,
+	hub io.Writer, cfg *Config,
 ) *Model {
-	model := &Model{
-		System:     runtime.NewSystem(ctx, "model"),
-		desk:       desk,
-		store:      client,
-		hub:        hub,
-		tree:       iradix.New[*data.Value](),
-		explored:   iradix.New[*data.Value](),
-		sequencers: &sync.Map{},
-		paths:      &sync.Map{},
-		settled:    &sync.Map{},
+	if cfg == nil {
+		cfg = LoadConfig()
 	}
 
+	model := &Model{
+		System:       runtime.NewSystem(ctx, "model"),
+		cfg:          cfg,
+		desk:         desk,
+		store:        client,
+		hub:          hub,
+		tree:         iradix.New[*data.Value](),
+		explored:     iradix.New[*data.Value](),
+		sequencers:   &sync.Map{},
+		paths:        &sync.Map{},
+		seqPaths:     &sync.Map{},
+		settled:      &sync.Map{},
+		ingress:      &sync.Map{},
+		tickReadings: &sync.Map{},
+		excursions:   map[string]*excursion{},
+		cool:         map[string]*coolDown{},
+	}
+
+	policyPrefix := strings.TrimSuffix(cfg.PolicyPrefix, "/")
+
 	if client != nil {
-		for prefix := range client.ListKeys("policy/current") {
+		for prefix := range client.ListKeys(policyPrefix) {
 			// Only load enter/exit keys, not noop.
 			if !strings.Contains(prefix, "/enter") && !strings.Contains(prefix, "/exit") {
 				continue
@@ -126,175 +142,394 @@ func NewModel(
 
 			model.tree, _, _ = model.tree.Insert([]byte(path), value)
 		}
+
+		for prefix := range client.ListKeys("policy/explored") {
+			value := client.Download(ctx, prefix)
+			if value == nil {
+				continue
+			}
+
+			role := value.Role
+			if role != "enter" && role != "exit" {
+				model.Error(errnie.Err(
+					errnie.Validation,
+					"[model] explored object "+prefix+" has no enter or exit role",
+					nil,
+				))
+				continue
+			}
+
+			var path string
+			var score pathScore
+			value.Lookup(&path, "path")
+			value.Lookup(&score, "score")
+
+			if path == "" || (score.Count == 0 && !score.Retired && !score.Frozen) {
+				model.Error(errnie.Err(
+					errnie.Validation,
+					"[model] explored object "+prefix+" has no path score",
+					nil,
+				))
+				continue
+			}
+
+			model.explored, _, _ = model.explored.Insert(
+				[]byte(exploredKey(role, path)), value,
+			)
+		}
 	}
 
 	return model
 }
 
-/*
-Evaluate processes one token for one symbol and returns the model's
-action, or nil when no action is taken.
+func (model *Model) BindMetrics(acc *metricsAccumulator) {
+	model.metrics = acc
+}
 
-The token path accumulated per symbol is the trie key. The method
-handles three cases in order:
- 1. An open virtual whose band walk is over is settled and retired.
- 2. A path that matches the current policy tree acts on the stored role.
- 3. A new path at or above minPathLength starts a virtual exploration,
-    gated by the path's adaptive threshold.
+func (model *Model) policyPrefix() string {
+	return strings.TrimSuffix(model.cfg.PolicyPrefix, "/")
+}
+
+func (model *Model) NoteTick(
+	symbol string,
+	regions []*nmstore.Region,
+	grid *nmstore.Grid,
+) {
+	if symbol == "" || grid == nil {
+		return
+	}
+
+	reading := tickReading{frictionPass: true}
+
+	if model.cfg.RequireFrictionGate {
+		reading.frictionPass = false
+
+		for _, region := range regions {
+			if region == nil || region.Key != 12 {
+				continue
+			}
+
+			if region.Brightness >= model.cfg.FrictionMinBrightness {
+				reading.frictionPass = true
+				break
+			}
+		}
+	}
+
+	var surpriseSum float64
+	lit := 0
+
+	for _, region := range regions {
+		if region == nil {
+			continue
+		}
+
+		lit++
+		surpriseSum += region.Brightness
+	}
+
+	if lit > 0 {
+		reading.surprise = 1 - surpriseSum/float64(lit)
+	}
+
+	for _, bySymbol := range grid.Priors {
+		signal, ok := bySymbol[symbol]
+		if !ok || signal == nil {
+			continue
+		}
+
+		maturity := grid.Maturity(&signal.Signal)
+		if maturity > reading.maturity {
+			reading.maturity = maturity
+		}
+	}
+
+	model.tickReadings.Store(symbol, reading)
+}
+
+func (model *Model) TrackSequitur(symbol string, token tokenizer.Token) {
+	if len(token.Symbols) == 0 {
+		return
+	}
+
+	model.mu.Lock()
+	defer model.mu.Unlock()
+
+	untyped, ok := model.seqPaths.Load(symbol)
+	var path tokenizer.Tokens
+	if ok {
+		path = untyped.(tokenizer.Tokens)
+	}
+
+	path = append(path, token)
+
+	if len(path) > model.cfg.MaxPathLength {
+		path = path[len(path)-model.cfg.MaxPathLength:]
+	}
+
+	model.seqPaths.Store(symbol, path)
+}
+
+func (model *Model) sequiturPathKey(symbol string) string {
+	untyped, ok := model.seqPaths.Load(symbol)
+	if !ok {
+		return ""
+	}
+
+	return untyped.(tokenizer.Tokens).String()
+}
+
+/*
+Ingest feeds one tick's lit regions for a symbol into that symbol's
+grammar. The returned token is one regime: the terminals of a rule the
+grammar just formed. A zero token means the chord has not repeated yet,
+so it is not a path step.
+*/
+func (model *Model) Ingest(symbol string, regions []tokenizer.Token) tokenizer.Token {
+	if symbol == "" || len(regions) == 0 {
+		return tokenizer.Token{}
+	}
+
+	untyped, _ := model.sequencers.LoadOrStore(symbol, tokenizer.NewSequencer())
+	sequencer := untyped.(*tokenizer.Sequencer)
+	before := sequencer.Grammar().RuleCount()
+	token := sequencer.Analyze(regions)
+	model.ingress.Store(symbol, sequencer.Grammar().RuleCount() > before)
+
+	return token
+}
+
+/*
+Touch publishes the symbol's grammar on a tick that did not close a
+regime, so the dashboard still sees the chord.
+*/
+func (model *Model) Touch(symbol string) {
+	untyped, ok := model.sequencers.Load(symbol)
+	if !ok {
+		return
+	}
+
+	model.mu.Lock()
+	path := model.currentPath(symbol)
+	model.mu.Unlock()
+
+	model.publishMatch(symbol, path, "noop")
+	model.publishGrammar(
+		symbol, untyped.(*tokenizer.Sequencer), tokenizer.Token{},
+		path.String(), model.ingested(symbol), "noop",
+	)
+}
+
+/*
+Evaluate processes one regime token for one symbol and returns the
+model's action, or nil when no action is taken.
+
+The token is one trie edge. In order:
+ 1. A token from the sentence just sampled is ignored until a different
+    regime shows the sentence has ended. That separator is not a path step.
+ 2. An open ledger excursion closes when an exit-side regime arrives and
+    the bid book can take the size.
+ 3. The longest stored prefix of the path decides. A confirmed enter may
+    open a venue order. A confirmed exit closes the open lot.
+ 4. Otherwise an enter-side path of at least minPathLength opens a ledger
+    excursion, which does not take the symbol's position slot.
 */
 func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 	if len(token.Symbols) == 0 {
 		return nil
 	}
 
-	// Feed the token to the symbol's sequencer for grammar/MDL tracking.
-	// The sequencer's output is not the model's decision input — the model
-	// uses the token directly. The sequencer exists for the dashboard's
-	// grammar viz and for future use as a confidence modulator.
 	untyped, _ := model.sequencers.LoadOrStore(symbol, tokenizer.NewSequencer())
 	sequencer := untyped.(*tokenizer.Sequencer)
-	before := sequencer.Grammar().RuleCount()
-	sequencer.Analyze([]tokenizer.Token{token})
-	created := sequencer.Grammar().RuleCount() > before
-
-	// Accumulate the token into the symbol's path.
-	model.mu.Lock()
-	path := model.appendPath(symbol, token)
-	pathKey := path.String()
-	model.mu.Unlock()
 
 	reported := "noop"
+	var path tokenizer.Tokens
+	var pathKey string
+
 	defer func() {
 		model.publishMatch(symbol, path, reported)
-		model.publishGrammar(symbol, sequencer, token, pathKey, created, reported)
+		model.publishGrammar(
+			symbol, sequencer, token, pathKey, model.ingested(symbol), reported,
+		)
 	}()
 
-	// 1. Settle an open virtual whose band walk is over.
-	if model.desk.Has(symbol, true) {
-		virtual := model.desk.Virtual(symbol)
-		if virtual != nil && virtual.ShouldExit() {
-			model.desk.Exit(symbol, pathKey, true)
-			model.Settle(virtual)
-			model.resetPath(symbol)
+	model.mu.Lock()
+
+	if cool := model.cool[symbol]; cool != nil {
+		if _, known := cool.tokens[token.String()]; known {
+			path = model.currentPath(symbol)
+			pathKey = path.String()
+			model.mu.Unlock()
 			return nil
 		}
+
+		delete(model.cool, symbol)
+		path = model.currentPath(symbol)
+		pathKey = path.String()
+		model.mu.Unlock()
+		return nil
 	}
 
-	// 2. Current policy: S3 prefix walk — find all stored paths that are
-	//    prefixes of the current path. All must agree on action.
-	if len(path) >= minPathLength {
+	path = model.appendPath(symbol, token)
+	pathKey = path.String()
+	ex := model.excursions[symbol]
+	side := tokenSide(token)
+
+	if ex != nil && (ex.closing || side == "exit") {
+		if side == "exit" {
+			ex.exitPath = pathKey
+			ex.closing = true
+		}
+
+		model.mu.Unlock()
+		model.finishExcursion(symbol, ex)
+		return nil
+	}
+
+	if ex != nil {
+		model.mu.Unlock()
+		return nil
+	}
+
+	model.mu.Unlock()
+
+	if len(path) >= model.cfg.MinPathLength {
 		action, _ := model.evaluateTree(pathKey)
 		if action != "" {
 			reported = action
 		}
+
 		switch action {
 		case "enter":
-			if !model.desk.Has(symbol, true) {
-				model.desk.Enter(symbol, pathKey, true)
+			if model.desk != nil && !model.desk.Occupied(symbol) &&
+				model.venueSlotsAvailable() {
+				if err := model.desk.Enter(symbol, pathKey, false); err != nil {
+					model.Error(err)
+				}
 			}
+
 			val := data.NewValue("training", "enter", symbol)
 			val.Append(pathKey, "path")
 			return val
 		case "exit":
-			if model.desk.Has(symbol, true) {
-				virtual := model.desk.Virtual(symbol)
-				model.desk.Exit(symbol, pathKey, true)
-				if virtual != nil {
-					model.Settle(virtual)
-				}
-				model.resetPath(symbol)
+			if model.desk != nil && model.desk.Occupied(symbol) {
+				model.finishVenue(symbol, pathKey)
 			}
+
 			val := data.NewValue("training", "exit", symbol)
 			val.Append(pathKey, "path")
 			return val
-		case "noop":
-			// Dampener: the path matches the tree but the action is noop.
-			// This is intentional — early trie positions default to noop
-			// to prevent premature entries.
-			val := data.NewValue("training", "noop", symbol)
-			val.Append(pathKey, "path")
-			return val
 		}
 	}
 
-	// A virtual is open and not done: nothing else to do this tick.
-	if model.desk.Has(symbol, true) {
-		return nil
-	}
-
-	// 3. Explore: the path must be long enough and the token's confidence
-	//    must exceed the path's adaptive threshold.
-	if len(path) < minPathLength {
-		return nil
-	}
-
-	// Already tracking this path: check its threshold.
-	if val, found := model.explored.Get([]byte(pathKey)); found {
-		var score pathScore
-		val.Lookup(&score, "score")
-
-		// Retired: threshold at max, do not re-enter.
-		if score.Threshold >= maxThreshold {
-			return nil
+	if side != "enter" || len(path) < model.cfg.MinPathLength {
+		if side == "" {
+			model.mu.Lock()
+			if len(model.currentPath(symbol)) > 0 {
+				model.resetPath(symbol)
+			}
+			model.mu.Unlock()
 		}
 
-		// Confidence gate: the token must be confident enough.
-		if token.Confidence < score.Threshold {
-			return nil
-		}
-
-		// Re-enter to continue gathering evidence.
-		model.desk.Enter(symbol, pathKey, true)
 		return nil
 	}
 
-	// New path: start exploring. The initial threshold is the token's
-	// confidence — a high-confidence first observation sets a high bar
-	// for subsequent entries (conservative), while a low-confidence one
-	// sets a low bar (the path is easy to trigger, will learn fast).
-	if err := model.desk.Enter(symbol, pathKey, true); err == nil {
-		model.recordExplored(pathKey, symbol, token.Confidence)
+	if model.desk != nil && model.desk.Occupied(symbol) {
+		return nil
+	}
+
+	if !model.gateAllows(symbol, token) {
+		return nil
+	}
+
+	model.mu.Lock()
+	retired := model.retired(pathKey, "enter")
+	model.mu.Unlock()
+
+	if retired {
+		return nil
+	}
+
+	if err := model.openExcursion(symbol, pathKey); err != nil {
+		model.Error(err)
 	}
 
 	return nil
 }
 
+func (model *Model) gateAllows(symbol string, token tokenizer.Token) bool {
+	if model.cfg == nil {
+		return true
+	}
+
+	if token.Brightness < model.cfg.MinTokenBrightness {
+		return false
+	}
+
+	untyped, ok := model.tickReadings.Load(symbol)
+	if !ok {
+		return true
+	}
+
+	reading, ok := untyped.(tickReading)
+	if !ok {
+		return true
+	}
+
+	if reading.maturity < model.cfg.MinGridMaturity {
+		return false
+	}
+
+	return reading.frictionPass
+}
+
+func (model *Model) venueSlotsAvailable() bool {
+	if model.desk == nil || model.cfg == nil {
+		return true
+	}
+
+	limit := model.cfg.MaxVenuePositions
+	if limit <= 0 {
+		return true
+	}
+
+	open := 0
+
+	for _, position := range model.desk.Positions(true) {
+		if position != nil && !position.Virtual {
+			open++
+		}
+	}
+
+	return open < limit
+}
+
 /*
-evaluateTree performs the S3-prefix walk: it checks each prefix of the
-given path (1 segment, 2 segments, …, N segments) against the current
-policy tree. All matching stored values must agree on the same action
-for the action to be returned. Disagreement yields "noop" (the dampener).
-No matches yields ("", 0).
+evaluateTree returns the action on the longest stored prefix of pathKey.
+A shorter enter does not veto a longer exit. No stored prefix yields ("", 0).
 */
 func (model *Model) evaluateTree(pathKey string) (string, int) {
 	segments := strings.Split(pathKey, "/")
 
 	var action string
-	var found bool
 	var matchDepth int
 
 	for i := 1; i <= len(segments); i++ {
 		prefix := strings.Join(segments[:i], "/")
 		val, ok := model.tree.Get([]byte(prefix))
-		if !ok {
+		if !ok || val == nil {
 			continue
 		}
 
-		if !found {
-			action = val.Role
-			found = true
-			matchDepth = i
+		if val.Role != "enter" && val.Role != "exit" {
 			continue
 		}
 
-		if val.Role != action {
-			// Disagreement: dampen with noop.
-			return "noop", matchDepth
-		}
+		action = val.Role
 		matchDepth = i
 	}
 
-	if !found {
+	if action == "" {
 		return "", 0
 	}
 
@@ -302,12 +537,9 @@ func (model *Model) evaluateTree(pathKey string) (string, int) {
 }
 
 /*
-Settle scores a closed virtual's outcome against its entry path in the
-explored tree, adjusts the adaptive threshold, promotes the path into
-the current tree when it has enough wins at a sufficient win rate, and
-demotes current-tree paths that keep losing.
-
-Idempotent: a position is settled at most once (tracked by ID).
+Settle scores a closed lot that the desk already priced. Return on the
+position is percent. A path in the current policy is demoted from venue
+losses. Any other path is a ledger sample. Idempotent per position ID.
 */
 func (model *Model) Settle(position *broker.Position) {
 	if position == nil || position.EntryPath == "" {
@@ -318,82 +550,26 @@ func (model *Model) Settle(position *broker.Position) {
 		return
 	}
 
-	pathKey := position.EntryPath
-	symbol := position.Symbol
-
-	win := position.Return != nil && *position.Return > 0
-
-	// Update the explored tree's adaptive threshold.
-	if val, found := model.explored.Get([]byte(pathKey)); found {
-		var score pathScore
-		val.Lookup(&score, "score")
-
-		if win {
-			score.Wins++
-			score.Threshold *= thresholdDecay
-		} else {
-			score.Losses++
-			score.Threshold *= thresholdGrowth
-			if score.Threshold > maxThreshold {
-				score.Threshold = maxThreshold
-			}
-		}
-
-		updated := data.NewValue("training", "explored", symbol)
-		updated.Append(score, "score")
-
-		model.explored, _, _ = model.explored.Insert([]byte(pathKey), updated)
-
-		// Retire: threshold at max means the path is no longer enterable.
-		if score.Threshold >= maxThreshold {
-			model.explored, _, _ = model.explored.Delete([]byte(pathKey))
-			return
-		}
-
-		// Promote: enough observations and sufficient win rate.
-		total := score.Wins + score.Losses
-		if total >= promotionWins {
-			winRate := float64(score.Wins) / float64(total)
-			if winRate > promotionWinRate {
-				model.promote(pathKey, symbol)
-			}
-		}
+	if position.Return == nil {
+		model.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[model] closed position "+position.Symbol+" has no return",
+			nil,
+		))
+		return
 	}
 
-	// Demotion check: if the path is in the current tree and just lost,
-	// track consecutive losses. At demotionLosses, remove from current.
-	if val, found := model.tree.Get([]byte(pathKey)); found {
-		if !win {
-			var losses int
-			val.Lookup(&losses, "losses")
-			losses++
+	ret := *position.Return / 100
 
-			if losses >= demotionLosses {
-				// Demote: move back to explored with elevated threshold.
-				model.tree, _, _ = model.tree.Delete([]byte(pathKey))
+	if _, found := model.tree.Get([]byte(position.EntryPath)); found {
+		model.accountVenue(position.EntryPath, position.Symbol, ret)
+		return
+	}
 
-				exploredVal := data.NewValue("training", "explored", symbol)
-				exploredVal.Append(pathScore{
-					Threshold: 0.8,
-					Wins:      0,
-					Losses:    losses,
-				}, "score")
-				model.explored, _, _ = model.explored.Insert([]byte(pathKey), exploredVal)
-			} else {
-				// Update the loss counter on the current tree entry.
-				updated := data.NewValue("training", val.Role, symbol)
-				updated.Append(pathKey, "path")
-				updated.Append(losses, "losses")
-				model.tree, _, _ = model.tree.Insert([]byte(pathKey), updated)
-			}
-		} else {
-			// Win: reset the loss counter.
-			updated := data.NewValue("training", val.Role, symbol)
-			updated.Append(pathKey, "path")
-			updated.Append(0, "losses")
-			model.tree, _, _ = model.tree.Insert([]byte(pathKey), updated)
-		}
-		model.PublishPolicy()
+	model.noteSample(position.EntryPath, position.Symbol, "enter", ret)
+
+	if position.ExitPath != "" {
+		model.noteSample(position.ExitPath, position.Symbol, "exit", ret)
 	}
 }
 
@@ -412,48 +588,443 @@ func (model *Model) Train(value *data.Value) {
 		return
 	}
 
-	model.tree, _, _ = model.tree.Insert([]byte(path), value)
-	model.PublishPolicy()
-
-	if model.store != nil {
-		action := value.Role
-		if action == "" {
-			action = "enter"
-		}
-		storeKey := "policy/current/" + path + "/" + action + ".bin"
-		value.Prefix = storeKey
-		model.store.WriteAtPrefix(storeKey, value.Bytes())
+	role := value.Role
+	if role != "enter" && role != "exit" {
+		model.Error(errnie.Err(
+			errnie.Validation,
+			"[model] policy "+path+" has no enter or exit role",
+			nil,
+		))
+		return
 	}
+
+	model.writePolicy(value, path, role)
 }
 
 /*
-promote moves a path from the explored tree into the current policy tree
-and persists it.
+promote writes a confirmed path into the current policy.
 */
-func (model *Model) promote(pathKey, symbol string) {
-	val := data.NewValue("training", "enter", symbol)
+func (model *Model) promote(pathKey, symbol, role string) {
+	val := data.NewValue("training", role, symbol)
 	val.Append(pathKey, "path")
 	val.Append(0, "losses")
-
 	model.Train(val)
-	model.explored, _, _ = model.explored.Delete([]byte(pathKey))
+}
+
+func (model *Model) writePolicy(value *data.Value, pathKey, role string) {
+	model.mu.Lock()
+	model.tree, _, _ = model.tree.Insert([]byte(pathKey), value)
+	model.mu.Unlock()
+	model.PublishPolicy()
+
+	if model.store == nil {
+		return
+	}
+
+	storeKey := model.policyPrefix() + "/" + pathKey + "/" + role + ".bin"
+	value.Prefix = storeKey
+
+	if _, err := model.store.WriteAtPrefix(storeKey, value.Bytes()); err != nil {
+		model.Error(err)
+	}
+}
+
+func (model *Model) deletePolicy(pathKey, role string) {
+	if model.store == nil {
+		return
+	}
+
+	if err := model.store.DeletePrefix(model.policyPrefix() + "/" + pathKey + "/" + role + ".bin"); err != nil {
+		model.Error(err)
+	}
 }
 
 /*
-recordExplored inserts a new path into the explored tree with the
-token's confidence as the initial threshold.
+noteSample records one fee-net return (a fraction) for a path and role.
+The mean freezes after freezeAfter separate excursions. Confirmation
+closes are held out of that mean. A non-positive mean retires the path.
 */
-func (model *Model) recordExplored(pathKey, symbol string, confidence float64) {
-	score := pathScore{
-		Threshold: confidence,
-		Wins:      0,
-		Losses:    0,
+func (model *Model) noteSample(pathKey, symbol, role string, ret float64) {
+	if pathKey == "" || (role != "enter" && role != "exit") {
+		model.Error(errnie.Err(
+			errnie.Validation,
+			"[model] sample for "+symbol+" needs an enter or exit path",
+			nil,
+		))
+		return
 	}
 
-	val := data.NewValue("training", "explored", symbol)
+	key := exploredKey(role, pathKey)
+
+	model.mu.Lock()
+	score := pathScore{}
+
+	if val, found := model.explored.Get([]byte(key)); found && val != nil {
+		val.Lookup(&score, "score")
+	}
+
+	if score.Retired {
+		model.mu.Unlock()
+		return
+	}
+
+	promoteNow := false
+
+	if score.Frozen {
+		if ret > 0 {
+			score.Confirm++
+			promoteNow = score.Confirm >= model.cfg.ConfirmAfter
+		} else {
+			score.Frozen = false
+			score.Confirm = 0
+			score.Sum += ret
+			score.Count++
+			model.freezeOrRetire(&score)
+		}
+	} else {
+		score.Sum += ret
+		score.Count++
+		model.freezeOrRetire(&score)
+	}
+
+	if promoteNow {
+		model.explored, _, _ = model.explored.Delete([]byte(key))
+		model.mu.Unlock()
+		model.promote(pathKey, symbol, role)
+		model.deleteExploredObject(role, pathKey)
+		return
+	}
+
+	model.mu.Unlock()
+	model.storeScore(key, pathKey, symbol, role, score)
+}
+
+func (model *Model) freezeOrRetire(score *pathScore) {
+	if score == nil || model.cfg == nil || score.Count < model.cfg.FreezeAfter {
+		return
+	}
+
+	prior := model.cfg.PriorSamples
+	mean := (score.Sum + prior*model.cfg.MinMeanReturn) / (float64(score.Count) + prior)
+
+	if mean > model.cfg.MinMeanReturn {
+		score.Frozen = true
+		score.Confirm = 0
+		return
+	}
+
+	score.Retired = true
+	score.Frozen = false
+}
+
+func (model *Model) storeScore(key, pathKey, symbol, role string, score pathScore) {
+	val := data.NewValue("training", role, symbol)
 	val.Append(pathKey, "path")
 	val.Append(score, "score")
-	model.explored, _, _ = model.explored.Insert([]byte(pathKey), val)
+
+	model.mu.Lock()
+	model.explored, _, _ = model.explored.Insert([]byte(key), val)
+	model.mu.Unlock()
+	model.PublishPolicy()
+
+	if model.store == nil {
+		return
+	}
+
+	storeKey := "policy/explored/" + role + "/" + pathKey + ".bin"
+	val.Prefix = storeKey
+
+	if _, err := model.store.WriteAtPrefix(storeKey, val.Bytes()); err != nil {
+		model.Error(err)
+	}
+}
+
+func (model *Model) deleteExploredObject(role, pathKey string) {
+	if model.store == nil {
+		return
+	}
+
+	if err := model.store.DeletePrefix("policy/explored/" + role + "/" + pathKey + ".bin"); err != nil {
+		model.Error(err)
+	}
+}
+
+func (model *Model) openExcursion(symbol, pathKey string) error {
+	if model.desk == nil {
+		return errnie.Err(errnie.Validation, "[model] desk unavailable", nil)
+	}
+
+	model.mu.Lock()
+	blocked := model.excursions[symbol] != nil || model.retired(pathKey, "enter")
+	model.mu.Unlock()
+
+	if blocked {
+		return nil
+	}
+
+	qty, entry, fee, err := model.desk.Quote(symbol)
+	if err != nil {
+		return err
+	}
+
+	// The virtual lot is what the learning book and the longtail edge read.
+	// Confirmation still has to pass before a venue order is sent.
+	if err := model.desk.Enter(symbol, pathKey, true); err != nil {
+		return err
+	}
+
+	if model.desk.Virtual(symbol) == nil {
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"[model] virtual was not opened for "+symbol,
+			nil,
+		)
+	}
+
+	model.mu.Lock()
+	model.excursions[symbol] = &excursion{
+		entryPath: pathKey,
+		qty:       qty,
+		entry:     entry,
+		fee:       fee,
+	}
+	model.mu.Unlock()
+
+	return nil
+}
+
+func (model *Model) finishExcursion(symbol string, ex *excursion) {
+	if ex == nil || model.desk == nil {
+		return
+	}
+
+	ret, ok := model.desk.Realize(symbol, ex.qty, ex.entry, ex.fee)
+	if !ok {
+		model.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[model] book cannot take "+symbol,
+			nil,
+		))
+		return
+	}
+
+	virtual := model.desk.Virtual(symbol)
+	exitPath := ex.exitPath
+	if exitPath == "" {
+		exitPath = ex.entryPath
+	}
+
+	if virtual != nil {
+		if err := model.desk.Exit(symbol, exitPath, true); err != nil {
+			model.Error(err)
+			return
+		}
+
+		if virtual.ID != "" {
+			model.settled.LoadOrStore(virtual.ID, true)
+		}
+	}
+
+	model.mu.Lock()
+	delete(model.excursions, symbol)
+	model.cool[symbol] = &coolDown{tokens: tokenSet(ex.entryPath)}
+	model.resetPath(symbol)
+	model.mu.Unlock()
+
+	model.noteSample(ex.entryPath, symbol, "enter", ret)
+
+	if ex.exitPath != "" && ex.exitPath != ex.entryPath {
+		model.noteSample(ex.exitPath, symbol, "exit", ret)
+	}
+}
+
+func (model *Model) finishVenue(symbol, pathKey string) {
+	if model.desk == nil {
+		return
+	}
+
+	position := model.desk.Open(symbol)
+	if position == nil {
+		model.Error(errnie.Err(
+			errnie.NotFound, "[model] no open position for "+symbol, nil,
+		))
+		return
+	}
+
+	if position.Qty == nil || position.EntryPrice == nil || position.EntryFee == nil {
+		model.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[model] open position "+symbol+" has no priced entry",
+			nil,
+		))
+		return
+	}
+
+	ret, ok := model.desk.Realize(symbol, position.Qty, position.EntryPrice, position.EntryFee)
+	if !ok {
+		model.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[model] book cannot take "+symbol,
+			nil,
+		))
+		return
+	}
+
+	if err := model.desk.ExitOccupied(symbol, pathKey); err != nil {
+		model.Error(err)
+		return
+	}
+
+	model.accountVenue(position.EntryPath, position.Symbol, ret)
+
+	model.mu.Lock()
+	model.cool[symbol] = &coolDown{tokens: tokenSet(position.EntryPath)}
+	model.resetPath(symbol)
+	model.mu.Unlock()
+}
+
+func (model *Model) accountVenue(pathKey, symbol string, ret float64) {
+	if pathKey == "" {
+		return
+	}
+
+	model.mu.Lock()
+	val, found := model.tree.Get([]byte(pathKey))
+
+	if !found || val == nil {
+		model.mu.Unlock()
+		return
+	}
+
+	role := val.Role
+
+	if ret > 0 {
+		updated := data.NewValue("training", role, symbol)
+		updated.Append(pathKey, "path")
+		updated.Append(0, "losses")
+		model.tree, _, _ = model.tree.Insert([]byte(pathKey), updated)
+		model.mu.Unlock()
+		model.PublishPolicy()
+		model.writePolicy(updated, pathKey, role)
+		return
+	}
+
+	var losses int
+	val.Lookup(&losses, "losses")
+	losses++
+
+	if losses >= model.cfg.DemotionLosses {
+		model.tree, _, _ = model.tree.Delete([]byte(pathKey))
+		model.mu.Unlock()
+		model.PublishPolicy()
+		model.deletePolicy(pathKey, role)
+		model.storeScore(exploredKey(role, pathKey), pathKey, symbol, role, pathScore{
+			Retired: true,
+			Count:   losses,
+			Sum:     ret,
+		})
+		return
+	}
+
+	updated := data.NewValue("training", role, symbol)
+	updated.Append(pathKey, "path")
+	updated.Append(losses, "losses")
+	model.tree, _, _ = model.tree.Insert([]byte(pathKey), updated)
+	model.mu.Unlock()
+	model.PublishPolicy()
+	model.writePolicy(updated, pathKey, role)
+}
+
+// retired reports whether the path's role was retired. Caller holds model.mu.
+func (model *Model) retired(pathKey, role string) bool {
+	val, found := model.explored.Get([]byte(exploredKey(role, pathKey)))
+	if !found || val == nil {
+		return false
+	}
+
+	var score pathScore
+	val.Lookup(&score, "score")
+
+	return score.Retired
+}
+
+func (model *Model) ingested(symbol string) bool {
+	flag, ok := model.ingress.Load(symbol)
+	if !ok {
+		return false
+	}
+
+	created, _ := flag.(bool)
+
+	return created
+}
+
+func exploredKey(role, pathKey string) string {
+	return role + "\x00" + pathKey
+}
+
+func exploredPublishKey(stored string) (string, bool) {
+	role, path, ok := strings.Cut(stored, "\x00")
+	if !ok || path == "" || (role != "enter" && role != "exit") {
+		return "", false
+	}
+
+	return "policy/explored/" + role + "/" + path + ".bin", true
+}
+
+func tokenSet(pathKey string) map[string]struct{} {
+	set := make(map[string]struct{})
+
+	for _, part := range strings.Split(pathKey, "/") {
+		if part == "" {
+			continue
+		}
+
+		set[part] = struct{}{}
+	}
+
+	return set
+}
+
+func tokenSide(token tokenizer.Token) string {
+	enter, exit := 0, 0
+
+	for _, sym := range token.Symbols {
+		key, ok := regionIndex(sym)
+		if !ok {
+			continue
+		}
+
+		switch nmstore.RegionSide(uint8(key)) {
+		case "enter":
+			enter++
+		case "exit":
+			exit++
+		}
+	}
+
+	if exit > enter && exit > 0 {
+		return "exit"
+	}
+
+	if enter > exit && enter > 0 {
+		return "enter"
+	}
+
+	return ""
+}
+
+func regionIndex(symbol string) (int, bool) {
+	if len(symbol) != 3 || symbol[0] != 'R' {
+		return 0, false
+	}
+
+	key, err := strconv.Atoi(symbol[1:])
+	if err != nil || key < 0 || key > 255 {
+		return 0, false
+	}
+
+	return key, true
 }
 
 // appendPath adds a token to the symbol's accumulated path, trimming
@@ -466,8 +1037,8 @@ func (model *Model) appendPath(symbol string, token tokenizer.Token) tokenizer.T
 	}
 	path = append(path, token)
 
-	if len(path) > maxPathLength {
-		path = path[len(path)-maxPathLength:]
+	if model.cfg != nil && len(path) > model.cfg.MaxPathLength {
+		path = path[len(path)-model.cfg.MaxPathLength:]
 	}
 
 	model.paths.Store(symbol, path)
@@ -479,36 +1050,117 @@ func (model *Model) resetPath(symbol string) {
 	model.paths.Store(symbol, tokenizer.Tokens{})
 }
 
+// currentPath is the symbol's accumulated regime path. Caller holds model.mu.
+func (model *Model) currentPath(symbol string) tokenizer.Tokens {
+	untyped, ok := model.paths.Load(symbol)
+	if !ok {
+		return nil
+	}
+
+	return untyped.(tokenizer.Tokens)
+}
+
 /*
-PublishPolicy sends the current policy trie to the dashboard. Keys are the
-store paths the radix view reads: policy/current/<token path>/<action>.bin.
+PublishPolicy sends the policy trie to the dashboard. Confirmed paths are
+policy/current/<token path>/<action>.bin. Explored paths, including ones
+that have not been confirmed, are policy/explored/<action>/<token path>.bin.
+The radix view lays both out as one trie.
 */
+func hubPublishes(hub io.Writer) bool {
+	if hub == nil {
+		return false
+	}
+	type active interface {
+		Active() bool
+	}
+	if h, ok := hub.(active); ok {
+		return h.Active()
+	}
+	return true
+}
+
+func (model *Model) countExploredLocked(role string) int {
+	if model.explored == nil {
+		return 0
+	}
+
+	count := 0
+	prefix := role + "\x00"
+
+	iterator := model.explored.Root().Iterator()
+	for key, _, ok := iterator.Next(); ok; key, _, ok = iterator.Next() {
+		if strings.HasPrefix(string(key), prefix) {
+			count++
+		}
+	}
+
+	return count
+}
+
+func (model *Model) countPolicyLocked(role string) int {
+	if model.tree == nil {
+		return 0
+	}
+
+	count := 0
+	iterator := model.tree.Root().Iterator()
+
+	for _, val, ok := iterator.Next(); ok; _, val, ok = iterator.Next() {
+		if val != nil && val.Role == role {
+			count++
+		}
+	}
+
+	return count
+}
+
 func (model *Model) PublishPolicy() {
-	if model.hub == nil || model.tree == nil {
+	if !hubPublishes(model.hub) {
 		return
 	}
 
+	model.mu.Lock()
+	tree := model.tree
+	explored := model.explored
+	model.mu.Unlock()
+
 	keys := make([]string, 0)
-	iterator := model.tree.Root().Iterator()
-	for key, val, ok := iterator.Next(); ok; key, val, ok = iterator.Next() {
-		path := string(key)
-		if path == "" {
-			continue
-		}
 
-		if strings.Contains(path, ".bin") {
-			if !strings.HasPrefix(path, "policy/current/") {
-				path = "policy/current/" + path
+	if tree != nil {
+		iterator := tree.Root().Iterator()
+		for key, val, ok := iterator.Next(); ok; key, val, ok = iterator.Next() {
+			path := string(key)
+			if path == "" {
+				continue
 			}
-			keys = append(keys, path)
-			continue
-		}
 
-		role := "enter"
-		if val != nil && (val.Role == "enter" || val.Role == "exit") {
-			role = val.Role
+			prefix := model.policyPrefix()
+
+			if strings.Contains(path, ".bin") {
+				if !strings.HasPrefix(path, prefix+"/") {
+					path = prefix + "/" + path
+				}
+				keys = append(keys, path)
+				continue
+			}
+
+			role := "enter"
+			if val != nil && (val.Role == "enter" || val.Role == "exit") {
+				role = val.Role
+			}
+			keys = append(keys, prefix+"/"+path+"/"+role+".bin")
 		}
-		keys = append(keys, "policy/current/"+path+"/"+role+".bin")
+	}
+
+	if explored != nil {
+		iterator := explored.Root().Iterator()
+		for key, _, ok := iterator.Next(); ok; key, _, ok = iterator.Next() {
+			published, valid := exploredPublishKey(string(key))
+			if !valid {
+				continue
+			}
+			keys = append(keys, published)
+		}
 	}
 
 	value := data.NewValue("cognition", "keys", "policy")
@@ -532,7 +1184,7 @@ func (model *Model) publishGrammar(
 	created bool,
 	action string,
 ) {
-	if model.hub == nil || sequencer == nil || sequencer.Grammar() == nil {
+	if !hubPublishes(model.hub) || sequencer == nil || sequencer.Grammar() == nil {
 		return
 	}
 
@@ -606,6 +1258,35 @@ func (model *Model) publishGrammar(
 		outcome = action
 	}
 
+	seqPath := model.sequiturPathKey(symbol)
+	pathDrift := seqPath != "" && pathKey != "" && seqPath != pathKey
+	gatePassed := model.gateAllows(symbol, token)
+	var gateReading map[string]any
+
+	if untyped, ok := model.tickReadings.Load(symbol); ok {
+		if reading, ok := untyped.(tickReading); ok {
+			gateReading = map[string]any{
+				"surprise": reading.surprise,
+				"z":        nil,
+				"warm":     reading.maturity >= model.cfg.MinGridMaturity,
+				"passed":   gatePassed,
+			}
+
+			if reading.maturity < model.cfg.MinGridMaturity {
+				gateReading["cold"] = "history"
+			}
+		}
+	}
+
+	if gateReading == nil {
+		gateReading = map[string]any{
+			"surprise": 1 - token.Brightness,
+			"z":        nil,
+			"warm":     true,
+			"passed":   gatePassed,
+		}
+	}
+
 	frame := map[string]any{
 		"symbol":    symbol,
 		"epoch":     "0",
@@ -615,8 +1296,14 @@ func (model *Model) publishGrammar(
 		"midpoint":  token.Brightness,
 		"fired":     fired,
 		"held":      len(fired),
-		"gate":      nil,
-		"blocked":   false,
+		"gate":      gateReading,
+		"blocked":   !gatePassed,
+		"measurement": map[string]any{
+			"canonical":    true,
+			"sequiturPath": seqPath,
+			"pathDrift":    pathDrift,
+			"frictionPass": gatePassed,
+		},
 		"events": []map[string]any{{
 			"kind":   kind,
 			"token":  token.String(),
@@ -647,6 +1334,56 @@ func (model *Model) publishGrammar(
 	value := data.NewValue("sequitur", "grammar", symbol)
 	value.Append(frame, "grammar")
 	io.Copy(model.hub, value)
+
+	model.recordFrameMetrics(symbol, gatePassed, pathDrift, stored)
+}
+
+func (model *Model) recordFrameMetrics(
+	symbol string,
+	gatePassed, pathDrift, policyMatch bool,
+) {
+	if model.metrics == nil {
+		return
+	}
+
+	delta := TickMetrics{Symbols: 1, CanonicalTicks: 1, GateTotal: 1, FrictionTotal: 1, PathCompared: 1, PolicyChecks: 1}
+
+	if gatePassed {
+		delta.GatePass++
+		delta.FrictionPass++
+	}
+
+	if pathDrift {
+		delta.PathDrift++
+	}
+
+	if policyMatch {
+		delta.PolicyMatches++
+	}
+
+	if untyped, ok := model.tickReadings.Load(symbol); ok {
+		if reading, ok := untyped.(tickReading); ok {
+			delta.MeanMaturity = reading.maturity
+			delta.MeanSurprise = reading.surprise
+		}
+	}
+
+	model.mu.Lock()
+	if model.excursions[symbol] != nil {
+		delta.VirtualExcursion++
+	}
+
+	if model.desk != nil {
+		if position := model.desk.Open(symbol); position != nil && !position.Virtual {
+			delta.VenueOpen++
+		}
+	}
+
+	delta.ExploredEnter = model.countExploredLocked("enter")
+	delta.ConfirmedEnter = model.countPolicyLocked("enter")
+	model.mu.Unlock()
+
+	model.metrics.add(delta)
 }
 
 /*
@@ -655,7 +1392,7 @@ cognition/match frame so the position card's token ribbon and strength
 gauge render live. The shape matches the frontend's CognitionMatch type.
 */
 func (model *Model) publishMatch(symbol string, path tokenizer.Tokens, action string) {
-	if model.hub == nil {
+	if !hubPublishes(model.hub) {
 		return
 	}
 

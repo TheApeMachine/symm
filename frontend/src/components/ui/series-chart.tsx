@@ -1,5 +1,5 @@
-import { cn } from "#/lib/utils";
 import { useId, useMemo, useState } from "react";
+import { cn } from "#/lib/utils";
 import { Scanlines } from "./scanlines";
 
 export type SeriesChartProps = {
@@ -194,7 +194,16 @@ export const SeriesChart = ({
 				xTicks: xT,
 				ready: finite.length >= 2,
 			};
-		}, [values, times, yDomain, baseline, plotH, plotW]);
+		}, [
+			values,
+			times,
+			yDomain,
+			baseline,
+			plotH,
+			plotW,
+			margin.left,
+			margin.top,
+		]);
 
 	if (!ready) {
 		return (

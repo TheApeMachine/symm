@@ -182,9 +182,9 @@ export const verifyFieldRendering = async () => {
 				target.destroy();
 				depth.destroy();
 				readback.destroy();
-				const error = await device.popErrorScope();
-				if (error) throw new Error(error.message);
 			}
+			const error = await device.popErrorScope();
+			if (error) throw new Error(error.message);
 		}
 		return { passed: results.length, cases: results };
 	} finally {

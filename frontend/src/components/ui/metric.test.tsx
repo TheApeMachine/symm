@@ -21,13 +21,19 @@ describe("Metric layout", () => {
 		const { container } = render(<Metric name="cvd" />);
 
 		expect(
-			container.querySelector('[data-k="sparkline"]')?.getAttribute("data-series"),
+			container
+				.querySelector('[data-k="sparkline"]')
+				?.getAttribute("data-series"),
 		).toBe("signed_net_fraction");
 		expect(
-			container.querySelector("[data-metric-meter]")?.getAttribute("data-metric-meter"),
+			container
+				.querySelector("[data-metric-meter]")
+				?.getAttribute("data-metric-meter"),
 		).toBe("signed_net_fraction");
 		expect(
-			container.querySelector("[data-metric-badge]")?.getAttribute("data-metric-badge"),
+			container
+				.querySelector("[data-metric-badge]")
+				?.getAttribute("data-metric-badge"),
 		).toBe("signed_net_fraction");
 	});
 

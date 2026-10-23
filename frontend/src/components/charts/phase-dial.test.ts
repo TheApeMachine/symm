@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FluidOscillator } from "#/components/fluid-3d/wire";
-import { paintPhaseDial, type PhaseDialState } from "./phase-dial";
+import { type PhaseDialState, paintPhaseDial } from "./phase-dial";
 
 describe("paintPhaseDial", () => {
 	it("retains predigested channel resultants from the physics kernel", () => {

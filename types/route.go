@@ -78,19 +78,34 @@ func Filters(value *data.Value) bool {
 			return true
 		}
 		source := kernelSource(value.Origin)
-		if source == "sequitur" || source == "cognition" {
+		if source == "sequitur" {
 			return isFocus(value)
+		}
+		if source == "cognition" {
+			if value.Role == "match" {
+				return isFocus(value)
+			}
+			return true
 		}
 		if source == "workspace" || source == "positions" {
 			return true
 		}
 		return isFocus(value) && (isSignal(value) || isLogic(value, "resonance"))
 	case "longtail":
-		// The training performance surface reads the strategy's learning
-		// stream: the training node, the grammar feed, and the cognition
-		// match frames.
 		source := kernelSource(value.Origin)
-		return source == "training" || source == "sequitur" || source == "cognition"
+		if source == "training" {
+			return value.Role == "longtail" || value.Role == "regions"
+		}
+		if source == "parallel" {
+			return true
+		}
+		return source == "sequitur" || source == "cognition"
+	case "parallel":
+		source := kernelSource(value.Origin)
+		if source == "parallel" || source == "training" {
+			return source == "parallel" || value.Role == "longtail"
+		}
+		return source == "sequitur" || source == "cognition"
 	case "xray":
 		if isSignal(value, "hawkes") {
 			return isFocus(value)
@@ -123,6 +138,7 @@ func Shard(source string) int {
 		"pumpdump",
 		"resonance",
 		"training",
+		"parallel",
 		"websocket":
 		return 0
 	case

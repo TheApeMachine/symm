@@ -3,9 +3,9 @@ import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bookAtom } from "#/collections/book";
 import {
-	longtailStore,
 	type BookDeskStats,
 	type LongtailSample,
+	longtailStore,
 	type TrainingSample,
 } from "#/collections/longtail";
 import { LongtailDashboard } from "./dashboard";
@@ -39,9 +39,7 @@ class ResizeObserverStub {
 
 vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 
-const bookStats = (
-	overrides: Partial<BookDeskStats> = {},
-): BookDeskStats => ({
+const bookStats = (overrides: Partial<BookDeskStats> = {}): BookDeskStats => ({
 	closed: 0,
 	open: 0,
 	wins: 0,
@@ -74,6 +72,13 @@ const training = (overrides: Partial<TrainingSample> = {}): TrainingSample => ({
 	avgMatchDepth: null,
 	outcomeRate: null,
 	violations: null,
+	pathStableRate: null,
+	frictionPassRate: null,
+	exploredEnter: null,
+	confirmedEnter: null,
+	venueOpen: null,
+	virtualExcursion: null,
+	meanMaturity: null,
 	...overrides,
 });
 
@@ -111,7 +116,12 @@ describe("LongtailDashboard", () => {
 		longtailStore.setState(() => ({
 			samples: [
 				sample(1_000, {
-					virtual: bookStats({ closed: 4, wins: 3, winRate: 0.6, meanReturn: 0.01 }),
+					virtual: bookStats({
+						closed: 4,
+						wins: 3,
+						winRate: 0.6,
+						meanReturn: 0.01,
+					}),
 					training: training({
 						feeds: 2,
 						rules: 10,
@@ -130,10 +140,17 @@ describe("LongtailDashboard", () => {
 						policyMatchRate: 0.6,
 						avgMatchDepth: 3,
 						outcomeRate: 0.2,
+						pathStableRate: 0.9,
+						frictionPassRate: 0.85,
 					}),
 				}),
 				sample(6_000, {
-					virtual: bookStats({ closed: 5, wins: 4, winRate: 0.65, meanReturn: 0.03 }),
+					virtual: bookStats({
+						closed: 5,
+						wins: 4,
+						winRate: 0.65,
+						meanReturn: 0.03,
+					}),
 					training: training({
 						feeds: 2,
 						rules: 11,
@@ -152,6 +169,8 @@ describe("LongtailDashboard", () => {
 						policyMatchRate: 0.6,
 						avgMatchDepth: 3,
 						outcomeRate: 0.2,
+						pathStableRate: 0.92,
+						frictionPassRate: 0.88,
 					}),
 				}),
 			],
@@ -166,32 +185,39 @@ describe("LongtailDashboard", () => {
 			"edge",
 			"win",
 			"coverage",
-			"reuse",
+			"stable",
 			"gate",
 			"surprise",
 			"match",
-			"warm",
+			"friction",
 		]) {
 			expect(container.querySelector(`[data-kpi="${id}"]`)).not.toBeNull();
 		}
 
 		// Six measured charts.
-		for (const id of ["win", "return", "gate", "surprise", "reuse", "match"]) {
+		for (const id of ["win", "return", "gate", "surprise", "stable", "match"]) {
 			expect(container.querySelector(`[data-chart="${id}"]`)).not.toBeNull();
 		}
-		expect(container.querySelectorAll("svg[aria-label='metric chart']")).toHaveLength(6);
+		expect(
+			container.querySelectorAll("svg[aria-label='metric chart']"),
+		).toHaveLength(6);
 
 		// Right rail blocks.
-		expect(getByText("Grammar")).toBeTruthy();
-		expect(getByText("Surprise gate")).toBeTruthy();
-		expect(getByText("Policy")).toBeTruthy();
+		for (const title of ["Grammar", "Surprise gate", "Ledger", "Policy"]) {
+			expect(getByText(title, { selector: "div" })).toBeTruthy();
+		}
 		expect(getByText("Plain-language readings")).toBeTruthy();
 	});
 
 	it("paints a bad edge red and a good edge green — never the reverse", () => {
 		const bad = [
 			sample(1_000, {
-				virtual: bookStats({ closed: 5, wins: 1, winRate: 0.2, meanReturn: -0.1 }),
+				virtual: bookStats({
+					closed: 5,
+					wins: 1,
+					winRate: 0.2,
+					meanReturn: -0.1,
+				}),
 				training: training({
 					rules: 3,
 					reuseRate: 0.1,
@@ -202,7 +228,12 @@ describe("LongtailDashboard", () => {
 				}),
 			}),
 			sample(6_000, {
-				virtual: bookStats({ closed: 6, wins: 1, winRate: 0.15, meanReturn: -0.12 }),
+				virtual: bookStats({
+					closed: 6,
+					wins: 1,
+					winRate: 0.15,
+					meanReturn: -0.12,
+				}),
 				training: training({
 					rules: 3,
 					reuseRate: 0.1,
@@ -228,7 +259,12 @@ describe("LongtailDashboard", () => {
 
 		const good = [
 			sample(1_000, {
-				virtual: bookStats({ closed: 4, wins: 3, winRate: 0.6, meanReturn: 0.01 }),
+				virtual: bookStats({
+					closed: 4,
+					wins: 3,
+					winRate: 0.6,
+					meanReturn: 0.01,
+				}),
 				training: training({
 					rules: 10,
 					reuseRate: 0.6,
@@ -239,7 +275,12 @@ describe("LongtailDashboard", () => {
 				}),
 			}),
 			sample(6_000, {
-				virtual: bookStats({ closed: 5, wins: 4, winRate: 0.65, meanReturn: 0.03 }),
+				virtual: bookStats({
+					closed: 5,
+					wins: 4,
+					winRate: 0.65,
+					meanReturn: 0.03,
+				}),
 				training: training({
 					rules: 11,
 					reuseRate: 0.6,
@@ -264,43 +305,105 @@ describe("LongtailDashboard", () => {
 	it("paints the surprise chart by its inverted scale: low surprise is green, high surprise is red", () => {
 		longtailStore.setState(() => ({
 			samples: [
-				sample(1_000, { training: training({ avgSurprise: 0.4 }) }),
-				sample(6_000, { training: training({ avgSurprise: 0.4 }) }),
+				sample(1_000, {
+					virtual: bookStats({
+						closed: 1,
+						wins: 1,
+						winRate: 1,
+						meanReturn: 0.01,
+					}),
+					training: training({ avgSurprise: 0.4, gatePassRate: 0.5 }),
+				}),
+				sample(6_000, {
+					virtual: bookStats({
+						closed: 1,
+						wins: 1,
+						winRate: 1,
+						meanReturn: 0.01,
+					}),
+					training: training({ avgSurprise: 0.4, gatePassRate: 0.5 }),
+				}),
 			],
 			lastSampleAt: 6_000,
 		}));
 		const lowView = render(<LongtailDashboard />);
-		const lowChart = lowView.container.querySelector(
+		const lowPaths = lowView.container.querySelectorAll(
 			'[data-chart="surprise"] svg[aria-label="metric chart"] path',
-		) as SVGPathElement;
-		expect(lowChart.getAttribute("stroke")).toBe("var(--up)");
+		);
+		const lowChart = [...lowPaths].find(
+			(node) =>
+				node.getAttribute("stroke") === "var(--up)" ||
+				node.getAttribute("stroke") === "var(--down)",
+		) as SVGPathElement | undefined;
+		expect(lowChart?.getAttribute("stroke")).toBe("var(--up)");
 
 		cleanup();
 
 		longtailStore.setState(() => ({
 			samples: [
-				sample(1_000, { training: training({ avgSurprise: 3 }) }),
-				sample(6_000, { training: training({ avgSurprise: 3 }) }),
+				sample(1_000, {
+					virtual: bookStats({
+						closed: 1,
+						wins: 0,
+						winRate: 0,
+						meanReturn: -0.01,
+					}),
+					training: training({ avgSurprise: 3, gatePassRate: 0.5 }),
+				}),
+				sample(6_000, {
+					virtual: bookStats({
+						closed: 1,
+						wins: 0,
+						winRate: 0,
+						meanReturn: -0.01,
+					}),
+					training: training({ avgSurprise: 3, gatePassRate: 0.5 }),
+				}),
 			],
 			lastSampleAt: 6_000,
 		}));
 		const highView = render(<LongtailDashboard />);
-		const highChart = highView.container.querySelector(
+		const highPaths = highView.container.querySelectorAll(
 			'[data-chart="surprise"] svg[aria-label="metric chart"] path',
-		) as SVGPathElement;
-		expect(highChart.getAttribute("stroke")).toBe("var(--down)");
+		);
+		const highChart = [...highPaths].find(
+			(node) =>
+				node.getAttribute("stroke") === "var(--up)" ||
+				node.getAttribute("stroke") === "var(--down)",
+		) as SVGPathElement | undefined;
+		expect(highChart?.getAttribute("stroke")).toBe("var(--down)");
 	});
 
 	it("reads the selected book's metrics", () => {
 		longtailStore.setState(() => ({
 			samples: [
 				sample(1_000, {
-					paper: bookStats({ closed: 2, wins: 2, winRate: 1, meanReturn: 0.05 }),
-					virtual: bookStats({ closed: 2, wins: 0, winRate: 0, meanReturn: -0.05 }),
+					paper: bookStats({
+						closed: 2,
+						wins: 2,
+						winRate: 1,
+						meanReturn: 0.05,
+					}),
+					virtual: bookStats({
+						closed: 2,
+						wins: 0,
+						winRate: 0,
+						meanReturn: -0.05,
+					}),
 				}),
 				sample(6_000, {
-					paper: bookStats({ closed: 2, wins: 2, winRate: 1, meanReturn: 0.05 }),
-					virtual: bookStats({ closed: 2, wins: 0, winRate: 0, meanReturn: -0.05 }),
+					paper: bookStats({
+						closed: 2,
+						wins: 2,
+						winRate: 1,
+						meanReturn: 0.05,
+					}),
+					virtual: bookStats({
+						closed: 2,
+						wins: 0,
+						winRate: 0,
+						meanReturn: -0.05,
+					}),
 				}),
 			],
 			lastSampleAt: 6_000,
@@ -309,7 +412,7 @@ describe("LongtailDashboard", () => {
 
 		const { container } = render(<LongtailDashboard />);
 		const edge = container.querySelector(
-			'[data-kpi="edge"] .tabular-nums',
+			'[data-kpi="edge"] .font-bold',
 		) as HTMLElement;
 		expect(edge.textContent).toBe("+5.0%");
 		expect(edge.style.color).toBe("var(--up)");

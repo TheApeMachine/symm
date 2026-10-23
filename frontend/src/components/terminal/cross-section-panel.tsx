@@ -28,7 +28,7 @@ const STATS = [
 ] as const;
 
 export const CrossSectionPanel = () => {
-	const focusSymbol = useSelector(atoms["focus"], (state) => state);
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
 
 	return (
 		<Panel size="lg">
@@ -53,7 +53,8 @@ export const CrossSectionPanel = () => {
 				</Flex.Row>
 
 				<Typography.Paragraph className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
-					liquidity axes · <Typography.Span data-metric="symbol">—</Typography.Span>
+					liquidity axes ·{" "}
+					<Typography.Span data-metric="symbol">—</Typography.Span>
 				</Typography.Paragraph>
 
 				<Flex.Row align="center" justify="between">

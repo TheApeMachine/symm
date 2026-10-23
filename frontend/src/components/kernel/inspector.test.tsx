@@ -18,11 +18,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 const renderInspector = () => renderToStaticMarkup(<KernelInspector />);
 
-const metricMeasurement = (
-	key: string,
-	raw: number,
-	snm: number,
-): Value => {
+const metricMeasurement = (key: string, raw: number, snm: number): Value => {
 	return new Value({
 		origin: "toxicity",
 		scope: DEFAULT_FOCUS_SYMBOL,

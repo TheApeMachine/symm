@@ -133,6 +133,17 @@ export const matchTone = (value: number | null): Tone =>
 				? "warn"
 				: "bad";
 
+export const pathStableTone = (value: number | null): Tone =>
+	value === null
+		? "neutral"
+		: value >= 0.85
+			? "good"
+			: value >= 0.6
+				? "warn"
+				: "bad";
+
+export const frictionPassTone = gatePassTone;
+
 /* Coders whose error has settled: the gate can only trust warm symbols. */
 export const warmTone = (value: number | null): Tone =>
 	value === null
@@ -160,6 +171,25 @@ grammar feed: the grammar's structure, the mix of structural events its last
 append caused, the surprise gate's readings, and how the stored policy met the
 live token path.
 */
+export type BackendTickMetrics = {
+	symbols: number;
+	gatePass: number;
+	gateTotal: number;
+	frictionPass: number;
+	frictionTotal: number;
+	pathDrift: number;
+	pathCompared: number;
+	canonicalTicks: number;
+	policyMatches: number;
+	policyChecks: number;
+	exploredEnter: number;
+	confirmedEnter: number;
+	venueOpen: number;
+	virtualExcursion: number;
+	meanMaturity: number;
+	meanSurprise: number;
+};
+
 export type TrainingSample = {
 	feeds: number;
 	rules: number | null;
@@ -181,6 +211,13 @@ export type TrainingSample = {
 	avgMatchDepth: number | null;
 	outcomeRate: number | null;
 	violations: number | null;
+	pathStableRate: number | null;
+	frictionPassRate: number | null;
+	exploredEnter: number | null;
+	confirmedEnter: number | null;
+	venueOpen: number | null;
+	virtualExcursion: number | null;
+	meanMaturity: number | null;
 };
 
 export type LongtailSample = {
@@ -285,6 +322,10 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 	let matchDepthN = 0;
 	let outcomes = 0;
 	let violations = 0;
+	let pathCompared = 0;
+	let pathStable = 0;
+	let frictionPass = 0;
+	let frictionTotal = 0;
 
 	for (const feed of feeds) {
 		const frame = feed.latest;
@@ -333,10 +374,21 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 		if (frame.policy.outcome !== "") outcomes += 1;
 
 		violations += frame.violations.length;
+
+		if (frame.measurement) {
+			frictionTotal += 1;
+			if (frame.measurement.frictionPass) frictionPass += 1;
+			if (frame.measurement.sequiturPath !== "") {
+				pathCompared += 1;
+				if (!frame.measurement.pathDrift) pathStable += 1;
+			}
+		}
 	}
 
 	const rate = (numerator: number, denominator: number): number | null =>
 		denominator > 0 ? numerator / denominator : null;
+
+	const backend = longtailBackendMetrics;
 
 	return {
 		feeds: feedsWithFrame,
@@ -349,16 +401,40 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 		createRate: rate(eventCreate, eventTotal),
 		reuseRate: rate(eventReuse, eventTotal),
 		inlineRate: rate(eventInline, eventTotal),
-		gatePassRate: rate(gatePass, gateTotal),
+		gatePassRate: rate(
+			backend?.gateTotal ? backend.gatePass : gatePass,
+			backend?.gateTotal ? backend.gateTotal : gateTotal,
+		),
 		blockedRate: rate(blocked, policyTotal),
 		warmRate: rate(warm, gateTotal),
-		avgSurprise: rate(surpriseSum, surpriseN),
+		avgSurprise:
+			backend && backend.symbols > 0
+				? backend.meanSurprise
+				: rate(surpriseSum, surpriseN),
 		avgZ: rate(zSum, zN),
 		policyStoredRate: rate(stored, policyTotal),
-		policyMatchRate: rate(matched, policyTotal),
+		policyMatchRate: rate(
+			backend?.policyChecks ? backend.policyMatches : matched,
+			backend?.policyChecks ? backend.policyChecks : policyTotal,
+		),
 		avgMatchDepth: rate(matchDepthSum, matchDepthN),
 		outcomeRate: rate(outcomes, policyTotal),
 		violations: feedsWithFrame > 0 ? violations : null,
+		pathStableRate: rate(
+			backend?.pathCompared
+				? backend.pathCompared - backend.pathDrift
+				: pathStable,
+			backend?.pathCompared ? backend.pathCompared : pathCompared,
+		),
+		frictionPassRate: rate(
+			backend?.frictionTotal ? backend.frictionPass : frictionPass,
+			backend?.frictionTotal ? backend.frictionTotal : frictionTotal,
+		),
+		exploredEnter: backend?.exploredEnter ?? null,
+		confirmedEnter: backend?.confirmedEnter ?? null,
+		venueOpen: backend?.venueOpen ?? null,
+		virtualExcursion: backend?.virtualExcursion ?? null,
+		meanMaturity: backend && backend.symbols > 0 ? backend.meanMaturity : null,
 	};
 };
 
@@ -534,6 +610,15 @@ export const buildInsights = (
 		});
 	}
 
+	if (training.pathStableRate !== null) {
+		insights.push({
+			id: "paths",
+			title: "Path identity",
+			body: `Canonical chord paths stay aligned with Sequitur on ${pct(training.pathStableRate)} of compared ticks${training.frictionPassRate === null ? "" : `; friction gate passes ${pct(training.frictionPassRate)}`}.`,
+			tone: pathStableTone(training.pathStableRate),
+		});
+	}
+
 	if ((training.violations ?? 0) > 0) {
 		insights.push({
 			id: "violations",
@@ -544,6 +629,41 @@ export const buildInsights = (
 	}
 
 	return insights;
+};
+
+export let longtailBackendMetrics: BackendTickMetrics | null = null;
+
+export const ingestLongtailTick = (payload: unknown) => {
+	if (!payload || typeof payload !== "object") {
+		return false;
+	}
+
+	const body = payload as Record<string, unknown>;
+	const read = (key: string) => {
+		const value = body[key];
+		return typeof value === "number" && Number.isFinite(value) ? value : 0;
+	};
+
+	longtailBackendMetrics = {
+		symbols: read("symbols"),
+		gatePass: read("gatePass"),
+		gateTotal: read("gateTotal"),
+		frictionPass: read("frictionPass"),
+		frictionTotal: read("frictionTotal"),
+		pathDrift: read("pathDrift"),
+		pathCompared: read("pathCompared"),
+		canonicalTicks: read("canonicalTicks"),
+		policyMatches: read("policyMatches"),
+		policyChecks: read("policyChecks"),
+		exploredEnter: read("exploredEnter"),
+		confirmedEnter: read("confirmedEnter"),
+		venueOpen: read("venueOpen"),
+		virtualExcursion: read("virtualExcursion"),
+		meanMaturity: read("meanMaturity"),
+		meanSurprise: read("meanSurprise"),
+	};
+
+	return true;
 };
 
 export const longtailStore = createStore({

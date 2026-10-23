@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-	parseTrainRegionsIndex,
-	ingestTrainRegions,
 	cognitionStore,
+	ingestTrainRegions,
+	parseTrainRegionsIndex,
 	regionHistoryStore,
 } from "./cognition";
 
@@ -18,7 +18,7 @@ describe("training regions ingest", () => {
 	it("feeds the ring from a region layer", () => {
 		const ok = ingestTrainRegions(
 			75,
-			PREFIX + "/train/regions/BTC/USD/R01",
+			`${PREFIX}/train/regions/BTC/USD/R01`,
 			[0.5],
 		);
 		expect(ok).toBe(true);
@@ -28,11 +28,11 @@ describe("training regions ingest", () => {
 	});
 
 	it("feeds the match from the sentence layer", () => {
-		ingestTrainRegions(
-			75,
-			PREFIX + "/train/regions/BTC/USD/tokens",
-			["R01", "R02", "R03"],
-		);
+		ingestTrainRegions(75, `${PREFIX}/train/regions/BTC/USD/tokens`, [
+			"R01",
+			"R02",
+			"R03",
+		]);
 		const match = cognitionStore.state.matches["BTC/USD"];
 		expect(match.tokens).toEqual(["R01", "R02", "R03"]);
 		expect(match.depth).toBe(3);
@@ -40,10 +40,10 @@ describe("training regions ingest", () => {
 
 	it("parses both index shapes", () => {
 		expect(
-			parseTrainRegionsIndex(PREFIX + "/train/regions/BTC/USD/R07"),
+			parseTrainRegionsIndex(`${PREFIX}/train/regions/BTC/USD/R07`),
 		).toEqual({ symbol: "BTC/USD", tokens: ["R07"] });
 		expect(
-			parseTrainRegionsIndex(PREFIX + "/train/regions/BTC/USD/tokens"),
+			parseTrainRegionsIndex(`${PREFIX}/train/regions/BTC/USD/tokens`),
 		).toEqual({ symbol: "BTC/USD", tokens: [] });
 	});
 });

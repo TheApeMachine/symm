@@ -263,7 +263,8 @@ const applyStoredDetection = (
 		if (row.fields.first_tick === 0 || fields.a_tick < row.fields.first_tick) {
 			row.fields.first_tick = fields.a_tick;
 		}
-		if (fields.d_tick > row.fields.last_tick) row.fields.last_tick = fields.d_tick;
+		if (fields.d_tick > row.fields.last_tick)
+			row.fields.last_tick = fields.d_tick;
 		row.fields.ticks =
 			row.fields.up + row.fields.down + row.fields.chop + row.fields.flat;
 	}
@@ -283,7 +284,8 @@ const applyStoredDetection = (
 const copySlots = (state: DetectionsState) => {
 	for (const name of ["runs", "excursions", "tape"] as const) {
 		const slot = state[name];
-		if (slot) (state[name] as Slot<unknown>) = { ...slot, items: [...slot.items] };
+		if (slot)
+			(state[name] as Slot<unknown>) = { ...slot, items: [...slot.items] };
 	}
 };
 

@@ -4,7 +4,11 @@ import {
 	ingestCognitionFrame,
 	ingestTrainRegions,
 } from "#/collections/cognition";
-import { ensureLongtailRecorder } from "#/collections/longtail";
+import {
+	ensureLongtailRecorder,
+	ingestLongtailTick,
+} from "#/collections/longtail";
+import { ingestParallelSummary } from "#/collections/parallel";
 import { ingestSequiturFrame } from "#/collections/sequitur";
 import { hubWsUrl } from "#/lib/hub";
 import { parseValues } from "#/types/decoder";
@@ -83,6 +87,32 @@ export const ingest = (values: Value[]) => {
 		telemetry. One decoder per layer. The wire epoch is a uint64 beyond
 		exact JS numbers: the store keys epochs as strings.
 		*/
+		if (value.origin === "parallel") {
+			for (let i = 0; i < value.index.length; i++) {
+				let payload: unknown;
+				try {
+					payload = JSON.parse(new TextDecoder().decode(value.layers[i]));
+				} catch {
+					continue;
+				}
+				ingestParallelSummary(payload);
+			}
+			continue;
+		}
+
+		if (value.origin === "training" && value.role === "longtail") {
+			for (let i = 0; i < value.index.length; i++) {
+				let payload: unknown;
+				try {
+					payload = JSON.parse(new TextDecoder().decode(value.layers[i]));
+				} catch {
+					continue;
+				}
+				ingestLongtailTick(payload);
+			}
+			continue;
+		}
+
 		if (value.origin === "sequitur" || value.origin === "cognition") {
 			for (let i = 0; i < value.index.length; i++) {
 				let payload: unknown;

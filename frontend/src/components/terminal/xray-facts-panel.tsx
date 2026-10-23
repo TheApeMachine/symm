@@ -13,14 +13,15 @@ export const XrayFactsPanel = () => {
 			symbol={focusSymbol}
 			className="flex h-full flex-col"
 		>
-			<Flex.Column
-				className="mt-2 gap-2.5 border-(--line) border-t px-3.5 py-3 font-mono text-[12px]"
-			>
+			<Flex.Column className="mt-2 gap-2.5 border-(--line) border-t px-3.5 py-3 font-mono text-[12px]">
 				<Flex.Row justify="between" gap={3}>
 					<Typography.Label size="xs" tone="f3" weight="normal">
 						symbol
 					</Typography.Label>
-					<Typography.Span data-metric="symbol" className="text-right text-(--acc)">
+					<Typography.Span
+						data-metric="symbol"
+						className="text-right text-(--acc)"
+					>
 						—
 					</Typography.Span>
 				</Flex.Row>

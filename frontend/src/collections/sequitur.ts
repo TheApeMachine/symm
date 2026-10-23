@@ -47,6 +47,13 @@ export type SequiturGate = {
 	passed: boolean;
 };
 
+export type SequiturMeasurement = {
+	canonical: boolean;
+	sequiturPath: string;
+	pathDrift: boolean;
+	frictionPass: boolean;
+};
+
 export type SequiturFrame = {
 	symbol: string;
 	epoch: string;
@@ -59,6 +66,7 @@ export type SequiturFrame = {
 	gate: SequiturGate | null;
 	/* The gate did not pass this chord: nothing was appended or matched. */
 	blocked: boolean;
+	measurement?: SequiturMeasurement;
 	events: GrammarEvent[];
 	completed: string;
 	path: string;

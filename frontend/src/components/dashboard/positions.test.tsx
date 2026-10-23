@@ -11,7 +11,7 @@ signals.positions rings), so the test feeds it that wire shape: a Value
 whose "positions" layer is the JSON array the desk broadcasts.
 */
 const frame = (...rows: DeskPosition[]) => {
-	const store = signals["positions"];
+	const store = signals.positions;
 
 	for (const key of Object.keys(store.state)) delete store.state[key];
 
@@ -24,17 +24,14 @@ const frame = (...rows: DeskPosition[]) => {
 	});
 
 	// A one-slot stand-in for the worker's ring buffer.
-	store.state["all"] = {
+	store.state.all = {
 		isEmpty: () => false,
 		getBufferLength: () => 1,
 		get: () => value,
 	} as never;
 };
 
-const lot = (
-	symbol: string,
-	extra: Partial<DeskPosition> = {},
-): DeskPosition =>
+const lot = (symbol: string, extra: Partial<DeskPosition> = {}): DeskPosition =>
 	({
 		id: symbol,
 		symbol,

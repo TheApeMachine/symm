@@ -1,3 +1,5 @@
+import { useNavigate } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
 import { atoms, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
@@ -19,8 +21,6 @@ import { Modal } from "#/components/ui/modal";
 import { scaleSparklineValues } from "#/components/ui/sparkline";
 import { Typography } from "#/components/ui/typography";
 import type { Value } from "#/types/value";
-import { useNavigate } from "@tanstack/react-router";
-import { useSelector } from "@tanstack/react-store";
 
 const isResonance = (source: string) => source === "resonance";
 
@@ -79,7 +79,7 @@ const metricValues = (
 export const KernelInspector = () => {
 	const navigate = useNavigate();
 	const source = useSelector(terminalStore, (state) => state.inspectorSource);
-	const focusSymbol = useSelector(atoms["focus"], (state) => state);
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const { closeInspect, selectSource } = terminalStore.actions;
 
 	const active = source !== null && source !== "";
@@ -94,9 +94,7 @@ export const KernelInspector = () => {
 		source === "resonance" ? signals.resonance : signals.workspace;
 	const frame = useSelector(signalStore, (state) => {
 		if (source === "resonance")
-			return (
-				state[focusSymbol.replace(/\//g, "-")] ?? state[focusSymbol]
-			);
+			return state[focusSymbol.replace(/\//g, "-")] ?? state[focusSymbol];
 		return state.aggregate;
 	});
 

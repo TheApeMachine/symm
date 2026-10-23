@@ -166,7 +166,12 @@ const fieldBindGroupLayout = (gpu: FluidGPU) =>
 		],
 	});
 
-const pipeline = (gpu: FluidGPU, layout: GPUBindGroupLayout, code: string, cullMode: GPUCullMode) =>
+const pipeline = (
+	gpu: FluidGPU,
+	layout: GPUBindGroupLayout,
+	code: string,
+	cullMode: GPUCullMode,
+) =>
 	gpu.device.createRenderPipeline({
 		layout: gpu.device.createPipelineLayout({ bindGroupLayouts: [layout] }),
 		vertex: {

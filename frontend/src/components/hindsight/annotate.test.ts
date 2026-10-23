@@ -41,7 +41,11 @@ describe("annotate", () => {
 			[
 				{ kind: "up", key: "draft/up/BTC/USD/1/1.bin", fields: fields(1, 1.1) },
 				{ kind: "up", key: "draft/up/BTC/USD/1/2.bin", fields: fields(1, 1.4) },
-				{ kind: "up", key: "detections/up/BTC/USD/1/2.bin", fields: fields(1, 2) },
+				{
+					kind: "up",
+					key: "detections/up/BTC/USD/1/2.bin",
+					fields: fields(1, 2),
+				},
 			],
 			"up",
 		);

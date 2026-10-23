@@ -1,9 +1,9 @@
-import type { Value as ResonanceFrame } from "#/types/value";
 import { drawReturnLane } from "#/components/charts/prediction/head";
 import { drawHierarchyLane } from "#/components/charts/prediction/hierarchy";
 import { predictiveCodingSeries } from "#/components/charts/prediction/series";
 import { PREDICTION_LAYOUT } from "#/components/charts/prediction/trace";
 import { clearCanvas, TERMINAL_COLORS } from "#/components/terminal/canvas";
+import type { Value as ResonanceFrame } from "#/types/value";
 
 const FONT = "10px JetBrains Mono, monospace";
 

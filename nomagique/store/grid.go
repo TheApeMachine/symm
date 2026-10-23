@@ -227,6 +227,42 @@ func (grid *Grid) finalizeRegions(regions []*Region) []*Region {
 		return nil
 	}
 
+	bySymbol := make(map[string][]*Region)
+	order := make([]string, 0)
+
+	for _, region := range regions {
+		if _, seen := bySymbol[region.Symbol]; !seen {
+			order = append(order, region.Symbol)
+		}
+
+		bySymbol[region.Symbol] = append(bySymbol[region.Symbol], region)
+	}
+
+	slices.Sort(order)
+
+	kept := make([]*Region, 0, len(regions))
+
+	for _, symbol := range order {
+		kept = append(kept, cutMidpoint(bySymbol[symbol])...)
+	}
+
+	if len(kept) == 0 {
+		return nil
+	}
+
+	return kept
+}
+
+/*
+cutMidpoint keeps the regions at or above this symbol's own brightness
+midpoint. An aggregate tick carries many symbols; a quiet name stays lit
+when another name is louder.
+*/
+func cutMidpoint(regions []*Region) []*Region {
+	if len(regions) == 0 {
+		return nil
+	}
+
 	slices.SortFunc(regions, func(a, b *Region) int {
 		if a.Brightness > b.Brightness {
 			return -1
@@ -250,6 +286,23 @@ func (grid *Grid) finalizeRegions(regions []*Region) []*Region {
 	})
 
 	return regions[:cut]
+}
+
+/*
+RegionSide reports whether a confluence region is part of the entry
+precursor or the exit holding stretch. The numbers are the groups in
+regionMetricPins. Any other region is context: it can sit in a regime
+token, and it does not open or close a position by itself.
+*/
+func RegionSide(key uint8) string {
+	switch key {
+	case 0, 1, 2:
+		return "enter"
+	case 3, 4, 5:
+		return "exit"
+	default:
+		return ""
+	}
 }
 
 /*

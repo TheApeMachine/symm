@@ -5,6 +5,7 @@ export type TerminalSurface =
 	| "dashboard"
 	| "learning"
 	| "longtail"
+	| "parallel"
 	| "influence"
 	| "fluid"
 	| "signals"

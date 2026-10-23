@@ -213,14 +213,22 @@ export const parseTrainRegionsIndex = (
 
 const policyKeyFromIndex = (index: string): string | null => {
 	const match = index.match(/policy\/current\/(.+\/(?:enter|exit))\.bin/);
-	if (!match) return null;
-	return `policy/current/${match[1]}.bin`;
+	if (match) return `policy/current/${match[1]}.bin`;
+
+	const explored = index.match(/policy\/explored\/(enter|exit)\/(.+)\.bin/);
+	if (!explored) return null;
+	return `policy/explored/${explored[1]}/${explored[2]}.bin`;
+};
+
+const normalizePolicyKey = (key: string): string => {
+	if (key.includes("policy/current/") || key.includes("policy/explored/")) {
+		return key;
+	}
+	return `policy/current/${key.replace(/^\//, "")}`;
 };
 
 export const ingestPolicyKey = (key: string, epoch?: string) => {
-	const normalized = key.includes("policy/current/")
-		? key
-		: `policy/current/${key.replace(/^\//, "")}`;
+	const normalized = normalizePolicyKey(key);
 
 	cognitionStore.setState((state) => {
 		const nextEpoch = epoch ?? state.epoch;
@@ -424,11 +432,7 @@ export const ingestPolicyKeys = (keys: unknown, epoch?: string) => {
 	const normalized: string[] = [];
 	for (const key of keys) {
 		if (typeof key !== "string" || key === "") continue;
-		normalized.push(
-			key.includes("policy/current/")
-				? key
-				: `policy/current/${key.replace(/^\//, "")}`,
-		);
+		normalized.push(normalizePolicyKey(key));
 	}
 
 	cognitionStore.setState((state) => ({

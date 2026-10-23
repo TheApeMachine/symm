@@ -81,7 +81,10 @@ export const buttonVariants = cva(
 			would put a solid button's box back on a control that asked for none.
 		*/
 		compoundVariants: [
-			{ variant: "bare", class: "p-0 flex flex-col flex-1 align-center justify-center" },
+			{
+				variant: "bare",
+				class: "p-0 flex flex-col flex-1 align-center justify-center",
+			},
 			{ variant: "quiet", shape: "block", class: "justify-start" },
 			/* An icon control is a box, not a line of text, so size means edge. */
 			{ shape: "icon", size: "xxs", class: "size-4" },
@@ -123,7 +126,10 @@ export const Button = ({
 	<button
 		ref={ref}
 		type={type}
-		className={cn(buttonVariants({ variant, tone, size, shape, fullHeight, fullWidth }), className)}
+		className={cn(
+			buttonVariants({ variant, tone, size, shape, fullHeight, fullWidth }),
+			className,
+		)}
 		{...props}
 	>
 		{children}

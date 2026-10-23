@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { clockAtom, atoms, signals } from "#/collections/app";
+import { atoms, clockAtom, signals } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
 import type { Value } from "#/types/value";
 import { type HawkesTraceSample, hawkesTrace } from "./xray-hawkes-trace";
@@ -74,7 +74,7 @@ export const hawkesSample = (row: Value): HawkesTraceSample | null => {
 };
 
 export const XrayHawkesPanel = () => {
-	const focusSymbol = useSelector(atoms.focus, (state) => state);
+	const _focusSymbol = useSelector(atoms.focus, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -243,7 +243,10 @@ export const XrayHawkesPanel = () => {
 
 			if (bar) {
 				const r = radius ?? metrics.branching_spectral_radius;
-				bar.style.width = r !== undefined ? `${Math.min(100, Math.max(0, r * 100)).toFixed(1)}%` : "0%";
+				bar.style.width =
+					r !== undefined
+						? `${Math.min(100, Math.max(0, r * 100)).toFixed(1)}%`
+						: "0%";
 			}
 
 			if (latest && latest.timestamp > marketAt) marketAt = latest.timestamp;
@@ -273,7 +276,7 @@ export const XrayHawkesPanel = () => {
 			resize.disconnect();
 			cancelAnimationFrame(frame);
 		};
-	}, [focusSymbol]);
+	}, []);
 
 	return (
 		<div

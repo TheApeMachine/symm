@@ -1,7 +1,4 @@
-import {
-	positionReadout,
-	settledOutcome,
-} from "#/components/book-readout";
+import { positionReadout, settledOutcome } from "#/components/book-readout";
 import type { Lifecycle, LifeOutcome } from "#/lib/lifecycle";
 /*
 Desk lifecycle rows are derived from stored order and execution facts. A row
@@ -11,7 +8,9 @@ without a complete close or stable identity is not a closed round trip.
 lifecycleFromDeskOpen is an open desk lot as a lifecycle row: the life-cycle
 tab shows the lot holding (with its live mark) until the close frame lands.
 */
-export const lifecycleFromDeskOpen = (row: Record<string, unknown>): Lifecycle | null => {
+export const lifecycleFromDeskOpen = (
+	row: Record<string, unknown>,
+): Lifecycle | null => {
 	if (!row.id) return null;
 
 	const readout = positionReadout(row);
@@ -60,7 +59,11 @@ export const lifecycleFromDeskClosed = (
 	if (!row.id) return null;
 
 	const readout = positionReadout(row);
-	if (!readout.closed || readout.openedAt === null || readout.closedAt === null) {
+	if (
+		!readout.closed ||
+		readout.openedAt === null ||
+		readout.closedAt === null
+	) {
 		return null;
 	}
 
@@ -78,8 +81,7 @@ export const lifecycleFromDeskClosed = (
 				hold_ns:
 					settle.hold_ns ??
 					(readout.closedAt !== null && readout.openedAt !== null
-						? (Date.parse(readout.closedAt) -
-								Date.parse(readout.openedAt)) *
+						? (Date.parse(readout.closedAt) - Date.parse(readout.openedAt)) *
 							1e6
 						: 0),
 				expected_hold_ns: null,

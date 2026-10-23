@@ -1,6 +1,6 @@
 {
-  "name": "Lamina — Sequitur Grammar Visualizer",
-  "description": "An interactive, non-tree visual laboratory for exploring how the Sequitur algorithm evolves context-free grammars in real time through telescoping capsules, laminar strata, and invariant micro-steps.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+	"name": "Lamina — Sequitur Grammar Visualizer",
+	"description": "An interactive, non-tree visual laboratory for exploring how the Sequitur algorithm evolves context-free grammars in real time through telescoping capsules, laminar strata, and invariant micro-steps.",
+	"requestFramePermissions": [],
+	"majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

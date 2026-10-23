@@ -55,18 +55,31 @@ draftOf is the working prediction of cls with the widest price move. The
 committed copies live under detections/ and are not what the markers drag.
 */
 export const draftOf = (
-	excursions: { kind: string; key: string; fields: { b_price: number; c_price: number; a_tick: number; b_tick: number; c_tick: number; d_tick: number } }[],
+	excursions: {
+		kind: string;
+		key: string;
+		fields: {
+			b_price: number;
+			c_price: number;
+			a_tick: number;
+			b_tick: number;
+			c_tick: number;
+			d_tick: number;
+		};
+	}[],
 	cls: DetectionClass,
 ) => {
 	const matches = excursions.filter(
 		(excursion) => excursion.kind === cls && excursion.key.startsWith("draft/"),
 	);
 
-	return matches.sort(
-		(left, right) =>
-			Math.abs(right.fields.c_price - right.fields.b_price) -
-			Math.abs(left.fields.c_price - left.fields.b_price),
-	)[0] ?? null;
+	return (
+		matches.sort(
+			(left, right) =>
+				Math.abs(right.fields.c_price - right.fields.b_price) -
+				Math.abs(left.fields.c_price - left.fields.b_price),
+		)[0] ?? null
+	);
 };
 
 export const marksOf = (

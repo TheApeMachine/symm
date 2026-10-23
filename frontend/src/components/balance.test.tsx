@@ -5,15 +5,15 @@ import { Balance } from "#/components/balance";
 
 describe("Balance", () => {
 	beforeEach(() => {
-		atoms["cash"].set("");
-		atoms["unrealized"].set("");
-		atoms["equity"].set("");
+		atoms.cash.set("");
+		atoms.unrealized.set("");
+		atoms.equity.set("");
 	});
 
 	const setEquity = (cash: string, unrealized: string, equity: string) => {
-		atoms["cash"].set(cash);
-		atoms["unrealized"].set(unrealized);
-		atoms["equity"].set(equity);
+		atoms.cash.set(cash);
+		atoms.unrealized.set(unrealized);
+		atoms.equity.set(equity);
 	};
 
 	it("renders a placeholder before any valuation has arrived", () => {

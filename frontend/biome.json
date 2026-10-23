@@ -1,50 +1,61 @@
 {
-    "$schema": "https://biomejs.dev/schemas/2.4.5/schema.json",
-    "root": false,
-    "vcs": {
-        "enabled": false,
-        "clientKind": "git",
-        "useIgnoreFile": false
-    },
-    "files": {
-        "ignoreUnknown": true,
-        "includes": [
-            "**/src/**/*",
-            "**/.vscode/**/*",
-            "**/index.html",
-            "vite.config.ts",
-            "!**/src/routeTree.gen.ts",
-            "!**/src/providers/telemetry/telemetry/**"
-        ]
-    },
-    "formatter": {
-        "enabled": true,
-        "indentStyle": "tab"
-    },
-    "assist": {
-        "actions": {
-            "source": {
-                "organizeImports": "on"
-            }
-        }
-    },
-    "linter": {
-        "enabled": true,
-        "rules": {
-            "recommended": true
-        }
-    },
-    "javascript": {
-        "formatter": {
-            "quoteStyle": "double"
-        }
-    },
-    "css": {
-        "parser": {
-            "tailwindDirectives": true
-        },
-        "formatter": {
-            "indentStyle": "tab"
-        }
-    }
+	"$schema": "https://biomejs.dev/schemas/2.4.5/schema.json",
+	"root": true,
+	"vcs": {
+		"enabled": false,
+		"clientKind": "git",
+		"useIgnoreFile": false
+	},
+	"files": {
+		"ignoreUnknown": true,
+		"includes": [
+			"src/**",
+			".vscode/**",
+			"vite.config.ts",
+			"biome.json",
+			"package.json",
+			"tsconfig*.json",
+			"!src/routeTree.gen.ts",
+			"!src/providers/telemetry/telemetry",
+			"!src/lib/gob.ts"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab"
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double"
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["**/routeTree.gen.ts"],
+			"linter": { "enabled": false },
+			"formatter": { "enabled": false },
+			"assist": { "enabled": false }
+		}
+	],
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		},
+		"formatter": {
+			"indentStyle": "tab"
+		}
+	}
 }

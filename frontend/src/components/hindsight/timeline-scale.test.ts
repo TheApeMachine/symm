@@ -57,10 +57,7 @@ const timeline = (buckets: HindsightTimelineBucket[]): HindsightTimeline => ({
 
 describe("buildScale", () => {
 	it("puts a click on the slot that was drawn, not the next stored bucket", () => {
-		const scale = buildScale(
-			timeline([bucket(0, 1, 2), bucket(2, 5, 6)]),
-			300,
-		);
+		const scale = buildScale(timeline([bucket(0, 1, 2), bucket(2, 5, 6)]), 300);
 
 		expect(scale.xOf(5)).toBeCloseTo(200);
 		expect(scale.bucketAt(210)?.index).toBe(2);

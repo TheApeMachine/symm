@@ -1,3 +1,4 @@
+import { useSelector } from "@tanstack/react-store";
 import { atoms } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import { terminalStore } from "#/collections/terminal";
@@ -13,7 +14,6 @@ import { Key } from "#/components/ui/key";
 import { Tabs } from "#/components/ui/tabs";
 import { Toolbar } from "#/components/ui/toolbar";
 import { Typography } from "#/components/ui/typography";
-import { useSelector } from "@tanstack/react-store";
 
 const SymmLogo = () => (
 	<svg

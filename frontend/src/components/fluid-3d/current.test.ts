@@ -38,12 +38,13 @@ describe("pilotCurrentGlyphs", () => {
 		expect(vertices[7] - vertices[2]).toBe(0);
 		expect((vertices[0] + vertices[5]) / 2).toBe(0.25);
 		expect(vertices[37] - vertices[32]).toBe(-1 / 64);
-		expect(Array.from(frame.pilotVel!)).toEqual([0, 2, 0, 0, 0, -1]);
+		expect(frame.pilotVel).toBeDefined();
+		expect(Array.from(frame.pilotVel)).toEqual([0, 2, 0, 0, 0, -1]);
 	});
 	it("retains tiny backend velocities in the readout while scaling only arrow geometry", () => {
 		const tiny = particles(new Float32Array([0, 2e-12, 0, 0, 0, -1e-12]));
 		const result = pilotCurrentGlyphs(tiny, 1 / 64);
-		expect(result.peak).toBe(tiny.pilotVel![1]);
+		expect(result.peak).toBe(tiny.pilotVel?.[1]);
 		expect(result.vertices[6] - result.vertices[1]).toBe(2 / 64);
 	});
 	it("rejects mismatched telemetry instead of inventing missing vectors", () => {

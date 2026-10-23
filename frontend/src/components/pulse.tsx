@@ -29,14 +29,11 @@ const Reading = ({
 );
 
 export const Pulse = () => {
-	const tick = useSelector(atoms["tickCount"], (state) => state);
-	const phase = useSelector(atoms["phase"], (state) => state);
-	const candidates = useSelector(atoms["candidates"], (state) => state);
-	const signalCount = useSelector(
-		atoms["signalSources"],
-		(state) => state.length,
-	);
-	const openCount = useSelector(atoms["positionCount"], (state) => state);
+	const tick = useSelector(atoms.tickCount, (state) => state);
+	const phase = useSelector(atoms.phase, (state) => state);
+	const candidates = useSelector(atoms.candidates, (state) => state);
+	const signalCount = useSelector(atoms.signalSources, (state) => state.length);
+	const openCount = useSelector(atoms.positionCount, (state) => state);
 
 	return (
 		<Flex.Row
@@ -56,4 +53,3 @@ export const Pulse = () => {
 		</Flex.Row>
 	);
 };
-

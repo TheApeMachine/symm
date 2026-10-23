@@ -117,12 +117,16 @@ export const setSparkline = (
 	if (Array.isArray(areaOrValues)) {
 		const root = sparkOrSvg as HTMLElement | SVGElement | null | undefined;
 		if (!root) return;
-		sparkEl = (root.matches?.('[data-k="spark"]')
-			? root
-			: root.querySelector('[data-k="spark"]')) as SVGPolylineElement | null;
-		areaEl = (root.matches?.('[data-k="area"]')
-			? root
-			: root.querySelector('[data-k="area"]')) as SVGPolylineElement | null;
+		sparkEl = (
+			root.matches?.('[data-k="spark"]')
+				? root
+				: root.querySelector('[data-k="spark"]')
+		) as SVGPolylineElement | null;
+		areaEl = (
+			root.matches?.('[data-k="area"]')
+				? root
+				: root.querySelector('[data-k="area"]')
+		) as SVGPolylineElement | null;
 		values = areaOrValues;
 		isActive = typeof valuesOrActive === "boolean" ? valuesOrActive : true;
 	} else {

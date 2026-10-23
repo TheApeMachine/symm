@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { Value } from "#/types/value";
 import {
 	clearRetainedTelemetry,
 	getAllRetainedResonance,
@@ -13,6 +12,7 @@ import {
 	retainResonanceRow,
 	xrayLayersFromResonance,
 } from "#/components/terminal/xray-view";
+import { Value } from "#/types/value";
 
 const hawkesValue = (
 	at: string,
@@ -64,8 +64,8 @@ describe("xray-view", () => {
 			surprise: 0.85,
 			layers: [
 				{ state: [0.1, -0.2], prediction: [0.0] }, // Mismatched lengths
-				{ state: [], prediction: [] },             // Empty
-				{ state: [0.5] },                         // Missing prediction
+				{ state: [], prediction: [] }, // Empty
+				{ state: [0.5] }, // Missing prediction
 			],
 		});
 

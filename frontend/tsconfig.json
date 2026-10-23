@@ -1,40 +1,40 @@
 {
-  "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules", "tmp"],
+	"include": ["**/*.ts", "**/*.tsx"],
+	"exclude": ["node_modules", "tmp"],
 
-  "compilerOptions": {
-    "target": "ES2022",
-    "jsx": "react-jsx",
-    "module": "ESNext",
-    "paths": {
-      /*
+	"compilerOptions": {
+		"target": "ES2022",
+		"jsx": "react-jsx",
+		"module": "ESNext",
+		"paths": {
+			/*
         The chart and datagrid plugins' type declarations reach into the
         viewer's TypeScript source rather than its built declarations, which
         drags the dependency's own source through this project's compiler
         settings. The mapping points those imports back at the declarations
         the viewer publishes.
       */
-      "@perspective-dev/viewer/src/ts/*": [
-        "./node_modules/@perspective-dev/viewer/dist/esm/*"
-      ],
-      "#/*": ["./src/*"],
-      "@/*": ["./src/*"]
-    },
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client", "@webgpu/types"],
+			"@perspective-dev/viewer/src/ts/*": [
+				"./node_modules/@perspective-dev/viewer/dist/esm/*"
+			],
+			"#/*": ["./src/*"],
+			"@/*": ["./src/*"]
+		},
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"types": ["vite/client", "@webgpu/types"],
 
-    /* Bundler mode */
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "noEmit": true,
+		/* Bundler mode */
+		"moduleResolution": "bundler",
+		"allowImportingTsExtensions": true,
+		"verbatimModuleSyntax": true,
+		"noEmit": true,
 
-    /* Linting */
-    "skipLibCheck": true,
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
-  }
+		/* Linting */
+		"skipLibCheck": true,
+		"strict": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"noFallthroughCasesInSwitch": true,
+		"noUncheckedSideEffectImports": true
+	}
 }

@@ -308,8 +308,14 @@ export class WarehouseHandler extends DuckDBHandler {
 				table,
 			});
 
-			const relStart = Math.min(table.numRows, Math.max(0, startRow - targetStart));
-			const relEnd = Math.min(table.numRows, Math.max(relStart, endRow - targetStart));
+			const relStart = Math.min(
+				table.numRows,
+				Math.max(0, startRow - targetStart),
+			);
+			const relEnd = Math.min(
+				table.numRows,
+				Math.max(relStart, endRow - targetStart),
+			);
 			const slice = table.slice(relStart, relEnd);
 			dataSlice.fromArrowIpc(tableToIPC(slice, "stream"));
 		} catch (cause) {

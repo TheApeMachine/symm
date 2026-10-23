@@ -74,7 +74,9 @@ describe("hindsight projection", () => {
 
 	it("keeps an empty slot's place so a later tick is not drawn in it", () => {
 		const loaded = stream();
-		const edge = loaded.ticks.filter((tick) => tick.tick === 1 || tick.tick === 6);
+		const edge = loaded.ticks.filter(
+			(tick) => tick.tick === 1 || tick.tick === 6,
+		);
 		const buckets = bucketize(edge, "midpoint", 3, 1, 6);
 
 		expect(buckets.map((bucket) => bucket.index)).toEqual([0, 2]);
@@ -103,10 +105,9 @@ describe("hindsight projection", () => {
 	it("turns stored excursions into episodes, chop included", () => {
 		const timeline = timelineOf(stream(), null, "midpoint", "time", 10, null);
 		expect(timeline?.discovery.stored).toBe(2);
-		expect(timeline?.discovery.episodes.map((episode) => episode.kind)).toEqual([
-			"upward_excursion",
-			"chop",
-		]);
+		expect(timeline?.discovery.episodes.map((episode) => episode.kind)).toEqual(
+			["upward_excursion", "chop"],
+		);
 
 		const episode = timeline?.discovery.episodes.find(
 			(item) => item.kind === "upward_excursion",

@@ -1,10 +1,10 @@
+import { useEffect, useRef } from "react";
 import { atoms } from "#/collections/app";
 import { sourceHeadlineMetric } from "#/components/terminal/kernel-meta";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 import type { Value } from "#/types/value";
-import { useEffect, useRef } from "react";
 
 export type TerminalHealth = {
 	firing: number;

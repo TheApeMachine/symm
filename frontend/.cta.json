@@ -1,22 +1,17 @@
 {
-  "projectName": "my-tanstack-app",
-  "mode": "file-router",
-  "typescript": true,
-  "tailwind": true,
-  "packageManager": "npm",
-  "git": true,
-  "install": true,
-  "intent": true,
-  "addOnOptions": {},
-  "includeExamples": true,
-  "envVarValues": {},
-  "routerOnly": false,
-  "version": 1,
-  "framework": "react",
-  "chosenAddOns": [
-    "form",
-    "shadcn",
-    "table",
-    "tanstack-query"
-  ]
+	"projectName": "my-tanstack-app",
+	"mode": "file-router",
+	"typescript": true,
+	"tailwind": true,
+	"packageManager": "npm",
+	"git": true,
+	"install": true,
+	"intent": true,
+	"addOnOptions": {},
+	"includeExamples": true,
+	"envVarValues": {},
+	"routerOnly": false,
+	"version": 1,
+	"framework": "react",
+	"chosenAddOns": ["form", "shadcn", "table", "tanstack-query"]
 }

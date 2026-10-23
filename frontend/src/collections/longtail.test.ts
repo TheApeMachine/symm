@@ -1,27 +1,27 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { sequiturFrame, type SequiturFrame } from "./sequitur-fixture";
-import type { SequiturFeed } from "./sequitur";
 import {
 	alertVariant,
+	type BookDeskStats,
 	buildInsights,
 	coverageTone,
 	gatePassTone,
+	type LongtailSample,
 	longtailStore,
 	matchTone,
-	reuseTone,
 	returnTone,
+	reuseTone,
 	summarizeBook,
 	summarizeTraining,
 	surpriseTone,
+	type TrainingSample,
 	toneColor,
 	toneVariant,
-	type BookDeskStats,
-	type LongtailSample,
-	type TrainingSample,
 	verdict,
-	winRateTone,
 	warmTone,
+	winRateTone,
 } from "./longtail";
+import type { SequiturFeed } from "./sequitur";
+import { type SequiturFrame, sequiturFrame } from "./sequitur-fixture";
 
 afterEach(() => {
 	longtailStore.setState(() => ({ samples: [], lastSampleAt: 0 }));
@@ -31,7 +31,11 @@ afterEach(() => {
 const feed = (frame: SequiturFrame): SequiturFeed => ({
 	latest: frame,
 	frames: 1,
-	events: frame.events.map((event, i) => ({ ...event, tick: frame.tick, seq: i })),
+	events: frame.events.map((event, i) => ({
+		...event,
+		tick: frame.tick,
+		seq: i,
+	})),
 	chords: [],
 	receivedAt: 0,
 });
@@ -116,10 +120,22 @@ describe("summarizeTraining", () => {
 				sequiturFrame({
 					symbol: "ETH/USD",
 					tick: 42,
-					gate: { surprise: 1.2, z: 3, warm: false, cold: "history", passed: false },
+					gate: {
+						surprise: 1.2,
+						z: 3,
+						warm: false,
+						cold: "history",
+						passed: false,
+					},
 					blocked: true,
 					events: [
-						{ kind: "reuse", rule: 1, into: 0, from: 0, digram: ["R02", "R04"] },
+						{
+							kind: "reuse",
+							rule: 1,
+							into: 0,
+							from: 0,
+							digram: ["R02", "R04"],
+						},
 					],
 					policy: {
 						epoch: "1",
@@ -272,13 +288,23 @@ const sample = (
 		avgMatchDepth: null,
 		outcomeRate: null,
 		violations: null,
+		pathStableRate: null,
+		frictionPassRate: null,
+		exploredEnter: null,
+		confirmedEnter: null,
+		venueOpen: null,
+		virtualExcursion: null,
+		meanMaturity: null,
 		...overrides.training,
 	},
 });
 
 describe("verdict", () => {
 	it("reports warming up without data", () => {
-		expect(verdict([], "virtual")).toEqual({ label: "Warming up", tone: "neutral" });
+		expect(verdict([], "virtual")).toEqual({
+			label: "Warming up",
+			tone: "neutral",
+		});
 		expect(verdict([sample()], "virtual")).toEqual({
 			label: "Warming up",
 			tone: "neutral",
@@ -363,7 +389,10 @@ describe("verdict", () => {
 			}),
 		];
 
-		expect(verdict(samples, "virtual")).toEqual({ label: "Slipping", tone: "warn" });
+		expect(verdict(samples, "virtual")).toEqual({
+			label: "Slipping",
+			tone: "warn",
+		});
 	});
 });
 

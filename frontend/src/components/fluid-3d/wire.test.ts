@@ -99,7 +99,12 @@ describe("decodeManifold", () => {
 		const decoded = decodeManifold(val);
 
 		expect(decoded.fields.sequence).toBe(42n);
-		expect(decoded.fields.grid).toEqual({ x: 16, y: 16, z: 16, spacing: 0.0625 });
+		expect(decoded.fields.grid).toEqual({
+			x: 16,
+			y: 16,
+			z: 16,
+			spacing: 0.0625,
+		});
 		expect(decoded.particles.count).toBe(2);
 
 		const p0 = decoded.particles.particle(0);
@@ -140,8 +145,12 @@ describe("decodeManifold", () => {
 		expect(decoded.phase.oscillators[1]?.side).toBe("ask");
 
 		expect(decoded.phase.resultants).toHaveLength(2);
-		expect(decoded.phase.resultants.find((r) => r.side === "bid")?.totalAmplitude).toBe(1.5);
-		expect(decoded.phase.resultants.find((r) => r.side === "ask")?.coherence).toBe(0.85);
+		expect(
+			decoded.phase.resultants.find((r) => r.side === "bid")?.totalAmplitude,
+		).toBe(1.5);
+		expect(
+			decoded.phase.resultants.find((r) => r.side === "ask")?.coherence,
+		).toBe(0.85);
 
 		// Modes
 		expect(decoded.phase.modes).toHaveLength(1);

@@ -145,10 +145,10 @@ off the trade ingress path, so this is where marks become live.
 */
 func (desk *Desk) Update(trades []kraken.TradeData) {
 	/*
-	Trade ticks are sparse: one carries a handful of symbols, so the marks
-	of everything else simply do not appear in this frame. Hello reads the
-	whole desk — every position, moved or not — so the frame always carries
-	every card and an unchanged position never blinks out and back.
+		Trade ticks are sparse: one carries a handful of symbols, so the marks
+		of everything else simply do not appear in this frame. Hello reads the
+		whole desk — every position, moved or not — so the frame always carries
+		every card and an unchanged position never blinks out and back.
 	*/
 	for _, val := range []*Cache{
 		desk.positions, desk.virtuals,
@@ -319,6 +319,73 @@ func (desk *Desk) Enter(
 }
 
 /*
+Quote sizes an entry the same way Enter does and returns the quantity, the
+entry price, and the entry fee. The book has to be able to take the size.
+A price that is not ready is an error: the ledger must not record an
+excursion it cannot price.
+*/
+func (desk *Desk) Quote(
+	symbol string,
+) (qty, entry, fee *decimal.Decimal, err error) {
+	if desk == nil || desk.price == nil {
+		return nil, nil, nil, errnie.Err(
+			errnie.Validation, "[desk.Quote] price unavailable", nil,
+		)
+	}
+
+	if desk.balance == nil {
+		return nil, nil, nil, errnie.Err(
+			errnie.Validation, "[desk.Quote] balance unavailable", nil,
+		)
+	}
+
+	if desk.price.Status() != runtime.READY {
+		return nil, nil, nil, errnie.Err(
+			errnie.Validation, "[desk.Quote] price is not ready for "+symbol, nil,
+		)
+	}
+
+	cash := desk.balance.cash(desk.balance.Quote)
+
+	if cash != nil && cash.Sign() > 0 {
+		cash = cash.Mul(decimal.NewFromFloat64(0.2))
+	}
+
+	allocation, err := desk.price.AllocateEntry(symbol, cash)
+
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	if allocation == nil || allocation.Quantity == nil || allocation.EntryPrice == nil || allocation.EntryFee == nil {
+		return nil, nil, nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[desk.Quote] incomplete allocation for "+symbol,
+			nil,
+		)
+	}
+
+	return allocation.Quantity, allocation.EntryPrice, allocation.EntryFee, nil
+}
+
+/*
+Realize is the fee-net return of selling quantity through the bid book.
+ok is false when the book cannot take the quantity. There is no touch
+substitute: a print the book would not pay is not a sample.
+*/
+func (desk *Desk) Realize(
+	symbol string, quantity, entry, fee *decimal.Decimal,
+) (float64, bool) {
+	if desk == nil || desk.price == nil {
+		return 0, false
+	}
+
+	_, _, ret, ok := desk.price.Exit(symbol, quantity, entry, fee)
+
+	return ret, ok
+}
+
+/*
 Exit a position and report what settled.
 */
 func (desk *Desk) Exit(symbol string, path string, virtual bool) error {
@@ -429,6 +496,42 @@ Virtual returns the symbol's open virtual, nil when there is none.
 */
 func (desk *Desk) Virtual(symbol string) *Position {
 	return desk.virtuals.Get(symbol, true)
+}
+
+/*
+Occupied reports whether the symbol's single position slot is taken, by a
+venue lot or a virtual one.
+*/
+func (desk *Desk) Occupied(symbol string) bool {
+	return desk.positions.Has(symbol) || desk.virtuals.Has(symbol)
+}
+
+/*
+Open returns the symbol's open lot, preferring the venue lot.
+*/
+func (desk *Desk) Open(symbol string) *Position {
+	if position := desk.positions.Get(symbol, true); position != nil {
+		return position
+	}
+
+	return desk.virtuals.Get(symbol, true)
+}
+
+/*
+ExitOccupied closes whichever lot is open on the symbol.
+*/
+func (desk *Desk) ExitOccupied(symbol, path string) error {
+	if desk.positions.Has(symbol) {
+		return desk.Exit(symbol, path, false)
+	}
+
+	if desk.virtuals.Has(symbol) {
+		return desk.Exit(symbol, path, true)
+	}
+
+	return errnie.Err(
+		errnie.NotFound, "[desk.ExitOccupied] position not found", nil,
+	)
 }
 
 /*

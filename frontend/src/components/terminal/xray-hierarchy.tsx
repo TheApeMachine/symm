@@ -1,8 +1,8 @@
 import { createRef } from "react";
-import { Value } from "#/types/value";
 import { heatColor } from "#/components/terminal/canvas";
 import { layerCellsFromState } from "#/components/terminal/xray-layers";
 import { xrayLayersFromResonance } from "#/components/terminal/xray-view";
+import { Value } from "#/types/value";
 import { Typography } from "@/components/ui/typography";
 
 const symbolRef = createRef<HTMLSpanElement>();
@@ -129,8 +129,7 @@ export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 
 	const focused = frames.find(
 		(frame) =>
-			(frame instanceof Value ? frame.scope : frame.symbol) ===
-			focusSymbol,
+			(frame instanceof Value ? frame.scope : frame.symbol) === focusSymbol,
 	);
 	const layers = xrayLayersFromResonance(focused);
 

@@ -21,6 +21,14 @@ const actionsOf = (node: TrieNodeData | null): string[] => {
 };
 
 describe("buildTreeFromPrefixes", () => {
+	it("lays an explored path on the same terminals as a confirmed one", () => {
+		const tree = buildTreeFromPrefixes([
+			"policy/explored/enter/[R00-R03-R09-R00]/[R03-R05-R09]/[R01-R02-R03].bin",
+		]);
+		expect(tree?.children?.[0]?.token).toBe("[R00-R03-R09-R00]");
+		expect(actionsOf(tree)).toEqual(["ENTER"]);
+	});
+
 	it("keeps enter and exit when they share a grammar path", () => {
 		const actions = actionsOf(
 			buildTreeFromPrefixes([

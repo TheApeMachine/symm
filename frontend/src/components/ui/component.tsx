@@ -1,7 +1,12 @@
-import type { Value } from "#/types/value";
 import { type ReactNode, useEffect, useRef } from "react";
+import type { Value } from "#/types/value";
 import { Alert } from "./alert";
-import { memoizedQuery, memoizedQueryAll, renderValue, resetValue } from "./dom";
+import {
+	memoizedQuery,
+	memoizedQueryAll,
+	renderValue,
+	resetValue,
+} from "./dom";
 import { Loader } from "./loader";
 import { scaleSparklineValues, setSparkline } from "./sparkline";
 import type { ValueStore } from "./types";
@@ -36,10 +41,7 @@ const sampleMetric = (item: Value, name: string | null): number | null => {
 The sparkline tracks the series stored on the element: each frame appends its
 sample and the window is capped, so the trend survives without a ring store.
 */
-const appendSeries = (
-	root: HTMLElement,
-	frame: Value | undefined,
-): void => {
+const appendSeries = (root: HTMLElement, frame: Value | undefined): void => {
 	const svg = memoizedQuery<SVGElement>(root, '[data-k="sparkline"]');
 	if (!svg) return;
 
@@ -47,10 +49,9 @@ const appendSeries = (
 	const sample = frame ? sampleMetric(frame, name) : null;
 
 	const key = name || "";
-	const series: number[] =
-		(seriesStore.get(root)?.[key] ?? []).concat(
-			sample === null ? [] : [sample],
-		);
+	const series: number[] = (seriesStore.get(root)?.[key] ?? []).concat(
+		sample === null ? [] : [sample],
+	);
 	const window = series.slice(-SERIES_WINDOW);
 
 	const stored = seriesStore.get(root) ?? {};
@@ -136,10 +137,7 @@ export const bind = (root: HTMLElement, obj: unknown) => {
 				if (typeof item === "object") {
 					const name = "name" in item ? nameOf(item.name) : "";
 					if (name) {
-						renderValue(
-							memoizedQuery(root, `[data-metric="${name}"]`),
-							item,
-						);
+						renderValue(memoizedQuery(root, `[data-metric="${name}"]`), item);
 						if ("raw" in item) {
 							renderValue(
 								memoizedQuery(

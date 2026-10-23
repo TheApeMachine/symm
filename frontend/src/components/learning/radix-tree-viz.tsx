@@ -68,18 +68,28 @@ const getPorts = (
 };
 
 /*
-grammarKey drops the store location so the tree is the token path. Train
-writes policy/current/<path>/<action>.bin.
+grammarKey drops the store location so the tree is the token path.
+Confirmed paths are policy/current/<path>/<action>.bin. Explored paths
+are policy/explored/<action>/<path>.bin and land on the same terminals.
 */
 export function grammarKey(key: string): string {
 	const current = "policy/current/";
 	if (key.startsWith(current)) return key.slice(current.length);
+
+	const explored = "policy/explored/";
+	if (key.startsWith(explored)) {
+		const rest = key.slice(explored.length);
+		const slash = rest.indexOf("/");
+		if (slash <= 0) return rest;
+		const role = rest.slice(0, slash);
+		const path = rest.slice(slash + 1).replace(/\.bin$/i, "");
+		return path === "" ? rest : `${path}/${role}.bin`;
+	}
+
 	return key;
 }
 
-export function buildTreeFromPrefixes(
-	prefixes: string[],
-): TrieNodeData | null {
+export function buildTreeFromPrefixes(prefixes: string[]): TrieNodeData | null {
 	if (!prefixes || prefixes.length === 0) return null;
 
 	const root: TrieNodeData = {
@@ -1093,7 +1103,6 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 												strokeWidth={1.5}
 											/>
 										)}
-
 									</g>
 								);
 							})}

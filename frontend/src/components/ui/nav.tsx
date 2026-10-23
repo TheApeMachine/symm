@@ -22,23 +22,24 @@ page it is sitting next to.
 export const navVariants = cva(
 	"flex w-56 min-w-0 max-w-56 shrink-0 flex-col overflow-hidden",
 	{
-	variants: {
-		surface: {
-			surface: "bg-(--surface)",
-			sunken: "bg-(--sunken)",
-			none: "",
+		variants: {
+			surface: {
+				surface: "bg-(--surface)",
+				sunken: "bg-(--sunken)",
+				none: "",
+			},
+			border: {
+				right: "border-(--line) border-r",
+				left: "border-(--line) border-l",
+				none: "",
+			},
 		},
-		border: {
-			right: "border-(--line) border-r",
-			left: "border-(--line) border-l",
-			none: "",
+		defaultVariants: {
+			surface: "surface",
+			border: "right",
 		},
 	},
-	defaultVariants: {
-		surface: "surface",
-		border: "right",
-	},
-});
+);
 
 export type NavProps = ComponentProps<"nav"> & VariantProps<typeof navVariants>;
 

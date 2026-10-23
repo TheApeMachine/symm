@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { signals } from "./app";
 import { Value } from "#/types/value";
+import { signals } from "./app";
 
 describe("signals.category", () => {
 	const categoryStore = signals.category;

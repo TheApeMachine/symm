@@ -1,5 +1,5 @@
-import type { Value as ResonanceFrame } from "#/types/value";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
+import type { Value as ResonanceFrame } from "#/types/value";
 
 /*
 PredictionSample preserves an observation epoch in a chart trace. A null value
@@ -110,7 +110,10 @@ const layerProfile = (
 
 	for (const [key, value] of Object.entries(metrics)) {
 		if (!key.startsWith(`layer_${index}_${kind}_`)) continue;
-		const slot = Number.parseInt(key.slice(`layer_${index}_${kind}_`.length), 10);
+		const slot = Number.parseInt(
+			key.slice(`layer_${index}_${kind}_`.length),
+			10,
+		);
 		if (Number.isNaN(slot)) continue;
 		values[slot] = value;
 	}
@@ -185,9 +188,7 @@ const returnHeadTrace = (frames: ResonanceFrame[]): ReturnHeadTrace => {
 		lower: expected.map((value) => value),
 		latestExpected: finiteNumber(latestMetrics.forward_curve_0),
 		latestUncertainty: null,
-		taskRelativePrecision: finiteNumber(
-			latestMetrics.task_relative_precision,
-		),
+		taskRelativePrecision: finiteNumber(latestMetrics.task_relative_precision),
 		horizon: null,
 		reach: null,
 		samples: null,

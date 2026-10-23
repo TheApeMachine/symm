@@ -432,18 +432,17 @@ export const measurementToReading = (m: Measurement): MeasurementReading => {
 					name: p.name,
 					value: String(p.value),
 				}))
-			: Object.entries((m.provenance ?? {}) as Record<string, string | number>).map(
-					([name, value]) => ({
-						id: name,
-						name,
-						value: String(value),
-					}),
-				),
+			: Object.entries(
+					(m.provenance ?? {}) as Record<string, string | number>,
+				).map(([name, value]) => ({
+					id: name,
+					name,
+					value: String(value),
+				})),
 		peers,
 		Peers: peers,
 	};
 };
-
 
 /*
 formatValue keeps a metric legible across the range these estimators actually
@@ -1001,7 +1000,9 @@ const MeasurementPanel = ({
 																{peer.source}
 															</span>
 															{peer.label ? (
-																<span className="text-(--f4)">{peer.label}</span>
+																<span className="text-(--f4)">
+																	{peer.label}
+																</span>
 															) : null}
 															<span className="ml-auto text-(--f4)">
 																seq {peer.seqIdx}
@@ -1073,8 +1074,8 @@ export const StatePanel = ({
 						Observed measurement at sequence {directReading.seqIdx || "—"}
 					</span>
 					{" · "}
-					{directReading.source || "market"} ({directReading.label || "BTC/USD"})
-					{peerCount > 0 ? ` · ${peerCount} concurrent peers` : ""}
+					{directReading.source || "market"} ({directReading.label || "BTC/USD"}
+					){peerCount > 0 ? ` · ${peerCount} concurrent peers` : ""}
 				</div>
 
 				<MeasurementPanel

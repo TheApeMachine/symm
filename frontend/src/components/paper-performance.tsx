@@ -1,3 +1,4 @@
+import { useSelector } from "@tanstack/react-store";
 import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import { bookReadout } from "#/components/book-readout";
@@ -5,7 +6,6 @@ import { positionRows } from "#/components/learning/open-positions";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 import { ratePercent } from "#/lib/lifecycle";
-import { useSelector } from "@tanstack/react-store";
 
 /*
 PaperPerformance is the top bar's win rate and mean edge for the selected

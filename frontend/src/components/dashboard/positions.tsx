@@ -1,3 +1,4 @@
+import { useSelector } from "@tanstack/react-store";
 import { signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { positionReadout } from "#/components/book-readout";
@@ -6,7 +7,6 @@ import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "@/lib/utils";
-import { useSelector } from "@tanstack/react-store";
 
 const formatValue = (value: unknown, digits: number): string => {
 	if (typeof value === "number") {

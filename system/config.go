@@ -25,6 +25,7 @@ type Config struct {
 	UI        *UI
 	Workbench *Workbench
 	Audit     *Audit
+	Parallel  *Parallel
 }
 
 func NewConfig() *Config {
@@ -45,5 +46,6 @@ func NewConfig() *Config {
 		UI:        NewUI(),
 		Workbench: NewWorkbench(),
 		Audit:     NewAudit(),
+		Parallel:  NewParallel(),
 	}
 }

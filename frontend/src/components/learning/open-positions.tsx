@@ -1,3 +1,5 @@
+import { useSelector } from "@tanstack/react-store";
+import { useMemo, useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import { cognitionStore, regionHistoryStore } from "#/collections/cognition";
@@ -14,8 +16,6 @@ import {
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
 import { sendCommand } from "#/providers/websocket";
-import { useSelector } from "@tanstack/react-store";
-import { useMemo, useState } from "react";
 
 /*
 Open positions are the desk's per-lot frames: one Value per symbol on the

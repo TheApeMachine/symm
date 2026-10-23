@@ -198,8 +198,7 @@ export const episodeOf = (
 		references: [
 			point("anchor", f.entry_tick, f.entry_ask, f.entry_at),
 			point("shock_onset", f.b_tick, f.b_price, f.b_at),
-			point(crestOf(kind), f.c_tick, f.c_price, f.c_at,
-			),
+			point(crestOf(kind), f.c_tick, f.c_price, f.c_at),
 			point("exit_anchor", f.exit_tick, f.exit_bid, f.exit_at),
 		],
 	};

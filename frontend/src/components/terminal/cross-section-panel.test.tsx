@@ -13,7 +13,9 @@ describe("CrossSectionPanel", () => {
 
 		const view = render(<CrossSectionPanel />);
 
-		expect(view.container.querySelector('[data-metric="symbol"]')?.textContent).toBe("—");
+		expect(
+			view.container.querySelector('[data-metric="symbol"]')?.textContent,
+		).toBe("—");
 
 		act(() => {
 			const val = new Value({
@@ -29,9 +31,20 @@ describe("CrossSectionPanel", () => {
 			signals.liquidity.setState((prev) => ({ ...prev, "BTC/USD": ring }));
 		});
 
-		expect(view.container.querySelector('[data-metric="symbol"]')?.textContent).toBe("BTC/USD");
-		expect(view.container.querySelector('[data-metric-raw="best_price:bid"]')?.textContent).toBe("95123.45");
-		expect(view.container.querySelector('[data-metric-raw="best_price:ask"]')?.textContent).toBe("95127.25");
-		expect(view.container.querySelector('[data-metric-raw="relative_spread"]')?.textContent).toBe("4.0 bp");
+		expect(
+			view.container.querySelector('[data-metric="symbol"]')?.textContent,
+		).toBe("BTC/USD");
+		expect(
+			view.container.querySelector('[data-metric-raw="best_price:bid"]')
+				?.textContent,
+		).toBe("95123.45");
+		expect(
+			view.container.querySelector('[data-metric-raw="best_price:ask"]')
+				?.textContent,
+		).toBe("95127.25");
+		expect(
+			view.container.querySelector('[data-metric-raw="relative_spread"]')
+				?.textContent,
+		).toBe("4.0 bp");
 	});
 });

@@ -108,12 +108,12 @@ describe("progressOf", () => {
 			}),
 		).toEqual({
 			symbol: "ETH/USD",
-		path: "R01/R12/R10",
-		depth: 2,
-		tokens: ["R01", "R12", "R10"],
-		matched: ["R12/R10/noop.bin"],
-		rejected: [],
-	});
+			path: "R01/R12/R10",
+			depth: 2,
+			tokens: ["R01", "R12", "R10"],
+			matched: ["R12/R10/noop.bin"],
+			rejected: [],
+		});
 	});
 });
 

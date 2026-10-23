@@ -178,6 +178,7 @@ func (hub *Hub) writeLoop() {
 
 		var failed []*websocket.Conn
 		for _, conn := range conns {
+			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if err := conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
 				failed = append(failed, conn)
 			}

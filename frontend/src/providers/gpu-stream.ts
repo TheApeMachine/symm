@@ -173,8 +173,11 @@ export class GPUStreamRenderer {
 		let decay = Number.NaN;
 
 		const metrics = row.metrics();
-		const { value: valueKey, baseline: baselineKey, decay: decayKey } =
-			this.metric;
+		const {
+			value: valueKey,
+			baseline: baselineKey,
+			decay: decayKey,
+		} = this.metric;
 		if (valueKey && valueKey in metrics) {
 			value = metrics[valueKey];
 		}

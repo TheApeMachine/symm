@@ -378,7 +378,11 @@ export function frameToSnapshot(
 	window: number,
 ): GrammarSnapshot {
 	const snapshot = grammarResponseToSnapshot(
-		{ symbol: frame.symbol, rules: frame.rules, start: frame.start.slice(-window) },
+		{
+			symbol: frame.symbol,
+			rules: frame.rules,
+			start: frame.start.slice(-window),
+		},
 		frame.violations,
 	);
 

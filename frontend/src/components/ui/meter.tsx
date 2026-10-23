@@ -224,7 +224,7 @@ export const setMeter = (
 	if (!el) return;
 	const clamped = clampPercent(percent);
 	const fill = (el.querySelector<HTMLElement>(
-		'[data-meter-fill], [data-inline-fill]',
+		"[data-meter-fill], [data-inline-fill]",
 	) ?? el) as HTMLElement;
 
 	fill.style.width = `${clamped.toFixed(1)}%`;

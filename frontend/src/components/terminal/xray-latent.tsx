@@ -1,6 +1,7 @@
+import { createStore } from "@tanstack/store";
+import { createRef } from "react";
 import { atoms } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import type { Value as ResonanceFrame } from "#/types/value";
 import {
 	clearCanvas,
 	resizeCanvas,
@@ -16,8 +17,7 @@ import {
 	type LatentPoint,
 	latentPointsFromFrames,
 } from "#/components/terminal/xray-view";
-import { createStore } from "@tanstack/store";
-import { createRef } from "react";
+import type { Value as ResonanceFrame } from "#/types/value";
 
 const latentCanvasRef = createRef<HTMLCanvasElement>();
 const latentPointsStore = createStore<LatentPoint[]>([]);

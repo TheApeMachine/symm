@@ -226,7 +226,12 @@ export const renderValue = (
 	} else if (typeof value === "string") {
 		const fmt = format ?? element.dataset.format ?? null;
 		const num = Number(value);
-		if (fmt && !Number.isNaN(num) && Number.isFinite(num) && value.trim() !== "") {
+		if (
+			fmt &&
+			!Number.isNaN(num) &&
+			Number.isFinite(num) &&
+			value.trim() !== ""
+		) {
 			out = formatValue(num, fmt);
 		} else {
 			out = value;

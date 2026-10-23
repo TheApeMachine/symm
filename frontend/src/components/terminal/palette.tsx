@@ -1,5 +1,7 @@
+import { useSelector } from "@tanstack/react-store";
+import { useEffect, useRef } from "react";
 import { atoms, DEFAULT_KERNELS } from "#/collections/app";
-import { terminalStore, type TerminalSurface } from "#/collections/terminal";
+import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { paletteGroupVariant } from "#/components/terminal/badge-tone";
 import { Badge } from "@/components/ui/badge";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -7,8 +9,6 @@ import { Input } from "@/components/ui/input";
 import { List } from "@/components/ui/list";
 import { Modal } from "@/components/ui/modal";
 import { Typography } from "@/components/ui/typography";
-import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef } from "react";
 
 const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	{

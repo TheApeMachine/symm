@@ -1726,7 +1726,7 @@ class Component extends DCLogic {
         customElements.whenDefined('deck-stage'),
         new Promise((r) => setTimeout(r, 3000)),
       ]);
-    } catch (e) {}
+    } catch (_e) {}
     ds = document.querySelector('deck-stage');
   }
   // dc-runtime assigns window.DCLogic at init and mounts into #dc-root on
@@ -1798,8 +1798,8 @@ class Component extends DCLogic {
       ),
       new Promise((r) => setTimeout(r, 4000)),
     ]);
-  } catch (e) {}
-  try { await document.fonts.ready; } catch (e) {}
+  } catch (_e) {}
+  try { await document.fonts.ready; } catch (_e) {}
   // Jump every animation to its end state so print() never captures a slide
   // mid-entrance. Ordering matters: the 0s-transition style must be live
   // BEFORE data-deck-active is set so attribute-keyed transitions don't
@@ -1828,8 +1828,8 @@ class Component extends DCLogic {
   try {
     const sweep = () => {
       for (const a of document.getAnimations()) {
-        try { a.finish(); } catch (e) {
-          try { a.currentTime = (a.effect && a.effect.getComputedTiming().duration) || 0; a.pause(); } catch (e2) {}
+        try { a.finish(); } catch (_e) {
+          try { a.currentTime = (a.effect?.getComputedTiming().duration) || 0; a.pause(); } catch (_e2) {}
         }
       }
     };
@@ -1837,7 +1837,7 @@ class Component extends DCLogic {
     await new Promise((r) => requestAnimationFrame(r));
     sweep();
     await new Promise((r) => requestAnimationFrame(r));
-  } catch (e) {}
+  } catch (_e) {}
   // Relax break-inside on oversized elements. An element taller than a
   // printable page can't honor break-inside: avoid — browsers either overflow
   // it or push it whole to the next page, leaving a blank gap, then break it
@@ -1879,7 +1879,7 @@ class Component extends DCLogic {
         '}';
       document.head.appendChild(ost);
     }
-  } catch (e) {}
+  } catch (_e) {}
   // macOS Preview renders Skia-PDF Luminosity soft-masks as opaque grey boxes;
   // swap the CSS that triggers them for Preview-safe forms.
   try {
@@ -1891,7 +1891,7 @@ class Component extends DCLogic {
         for (const s of cs.boxShadow.split(/,(?![^(]*[)])/)) {
           const t = s.trim();
           const m = t.match(/^(rgba?[(][^)]+[)]) (-?[0-9.]+px) (-?[0-9.]+px) ([0-9.]+px) -?[0-9.]+px$/);
-          if (m && parseFloat(m[4]) > 0) outs.push('drop-shadow(' + m[2] + ' ' + m[3] + ' ' + m[4] + ' ' + m[1] + ')');
+          if (m && parseFloat(m[4]) > 0) outs.push(`drop-shadow(${m[2]} ${m[3]} ${m[4]} ${m[1]})`);
           else kept.push(t);
         }
         if (outs.length) {
@@ -1903,8 +1903,8 @@ class Component extends DCLogic {
       const mask = cs.maskImage && cs.maskImage !== 'none' ? cs.maskImage : cs.webkitMaskImage;
       if (mask && mask !== 'none' && cs.filter === 'none') el.style.setProperty('filter', 'opacity(1)', 'important');
     }
-  } catch (e) {}
-  setTimeout(() => { try { window.print(); } catch (e) {} }, 200);
+  } catch (_e) {}
+  setTimeout(() => { try { window.print(); } catch (_e) {} }, 200);
 })();
 </script>
 </body>

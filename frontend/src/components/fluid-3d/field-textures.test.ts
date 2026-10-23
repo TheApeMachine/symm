@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
 	alignedBytesPerRow,
 	fluidTextureExtent,
-	packTexture3D,
 	packFluidFieldTextures,
+	packTexture3D,
 	TEXTURE_BYTES_PER_ROW_ALIGNMENT,
 } from "./field-textures";
 import type { FluidFields } from "./wire";

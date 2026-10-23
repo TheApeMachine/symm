@@ -1,3 +1,4 @@
+import { type Store, useSelector } from "@tanstack/react-store";
 import { atoms, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { sourceHeadline } from "#/components/terminal/kernel-meta";
@@ -12,7 +13,6 @@ import {
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
 import type { Value } from "#/types/value";
-import { type Store, useSelector } from "@tanstack/react-store";
 
 interface MetricProps {
 	name: string;

@@ -1,7 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import { atoms, signals } from "#/collections/app";
-import { parseResonanceData, type ResonanceData } from "#/components/charts/prediction";
+import {
+	parseResonanceData,
+	type ResonanceData,
+} from "#/components/charts/prediction";
 import {
 	getRetainedResonance,
 	retainResonanceRow,
@@ -63,8 +66,7 @@ const ROWS = [
 const DYNAMICS_FIELDS = [
 	{
 		label: "velocity",
-		read: (d: Record<string, number> | null | undefined) =>
-			num(d?.velocity, 4),
+		read: (d: Record<string, number> | null | undefined) => num(d?.velocity, 4),
 	},
 	{
 		label: "acceleration",
@@ -131,8 +133,7 @@ export const XrayManifoldPanel = () => {
 			if (!root.current) return;
 			// The store holds one Value per symbol scope.
 			const last =
-				signals.resonance.state[focusSymbol.replace(/\//g, "-")] ??
-				null;
+				signals.resonance.state[focusSymbol.replace(/\//g, "-")] ?? null;
 
 			if (last) {
 				retainResonanceRow(
@@ -142,7 +143,9 @@ export const XrayManifoldPanel = () => {
 			}
 
 			const retained = getRetainedResonance(focusSymbol);
-			const targetRow = parseResonanceData((retained as unknown as Value | null) ?? last ?? undefined);
+			const targetRow = parseResonanceData(
+				(retained as unknown as Value | null) ?? last ?? undefined,
+			);
 
 			const set = (q: string, value: string) => {
 				const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);

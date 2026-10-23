@@ -47,13 +47,17 @@ const slotsOf = (
 	timeline: HindsightTimeline | null,
 	buckets: HindsightTimelineBucket[],
 ): number => {
-	if (timeline === null || buckets.length === 0) return Math.max(buckets.length, 1);
+	if (timeline === null || buckets.length === 0)
+		return Math.max(buckets.length, 1);
 
 	const span = timeline.span.toSequence - timeline.span.fromSequence + 1;
 	let slotWidth = 1;
 
 	for (const bucket of buckets) {
-		slotWidth = Math.max(slotWidth, bucket.toSequence - bucket.fromSequence + 1);
+		slotWidth = Math.max(
+			slotWidth,
+			bucket.toSequence - bucket.fromSequence + 1,
+		);
 	}
 
 	return Math.max(buckets.length, Math.ceil(span / slotWidth));

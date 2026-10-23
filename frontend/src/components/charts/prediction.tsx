@@ -1,8 +1,8 @@
+import { useSelector } from "@tanstack/react-store";
+import { type CSSProperties, useMemo, useRef } from "react";
 import { atoms, signals } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import type { Value } from "#/types/value";
-import { useSelector } from "@tanstack/react-store";
-import { type CSSProperties, useMemo, useRef } from "react";
 import { Flex } from "../ui";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>

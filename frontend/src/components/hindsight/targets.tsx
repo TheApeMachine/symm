@@ -216,7 +216,8 @@ export const EpisodeTargets = ({
 				<div className="shrink-0 border-(--line) border-b bg-(--sunken) px-2.5 py-1.5 font-mono text-[8px] text-(--f4) leading-relaxed">
 					up and down excursions detect stored for this run ·{" "}
 					<span className="text-(--f2)">{formatCount(episodes.length)}</span> of{" "}
-					{formatCount(discovery.stored)} stored (chop and flat are not episodes)
+					{formatCount(discovery.stored)} stored (chop and flat are not
+					episodes)
 				</div>
 			) : null}
 			<Section.Body>

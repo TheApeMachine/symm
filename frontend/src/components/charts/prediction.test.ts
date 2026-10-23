@@ -5,11 +5,11 @@ import {
 	signedVectorTransform,
 	vectorSlotTransform,
 } from "#/components/charts/prediction";
-import { Value } from "#/types/value";
 import {
 	predictiveCodingSeries,
 	reconstructionError,
 } from "#/components/charts/prediction/series";
+import { Value } from "#/types/value";
 
 describe("predictiveCodingSeries", () => {
 	it("keeps all three layers and separates adjacent reconstruction from top context", () => {
@@ -117,8 +117,6 @@ describe("signedVectorTransform", () => {
 		expect(signedVectorTransform).toBe("scaleY(calc(var(--value, 0) * -1))");
 	});
 });
-
-
 
 describe("parseResonanceData", () => {
 	it("densifies sparse latent and forward_curve metrics into lane vectors", () => {

@@ -2,10 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import * as d3 from "d3";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-	atoms,
-	signals,
-} from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import {
 	branchesFromPolicyKeys,
 	cognitionStore,
@@ -307,7 +304,11 @@ const ListRun = ({
 	>
 		<Flex.Column fullWidth>
 			<Flex.Row justify="between" align="center" fullWidth>
-				<Typography.Mono size="s" tone={active ? "accent" : "f1"} weight="semibold">
+				<Typography.Mono
+					size="s"
+					tone={active ? "accent" : "f1"}
+					weight="semibold"
+				>
 					{label}
 				</Typography.Mono>
 				<Badge size="xs" variant={active ? "info" : "disabled"} label={mark} />
@@ -539,7 +540,7 @@ export const ForwardLearningViz = ({
 	 * (newest first), then the chosen epoch's excursions. A request that
 	 * cannot be sent, or a stream that fails, is shown, never swallowed.
 	 */
-	const online = useSelector(atoms["online"], (state) => state === "ONLINE");
+	const online = useSelector(atoms.online, (state) => state === "ONLINE");
 	const detectionRuns = useSelector(
 		detectionsStore,
 		(state) => state.runs?.items ?? NO_RUNS,
@@ -650,10 +651,10 @@ export const ForwardLearningViz = ({
 	}, [trainedFragments, selectedFragmentIndex, loadFragment, historicalOnly]);
 
 	useEffect(() => {
-		const unsubPos = atoms["positionCount"].subscribe((count) => {
+		const unsubPos = atoms.positionCount.subscribe((count) => {
 			setOpenPositionsCount(count);
 		});
-		setOpenPositionsCount(atoms["positionCount"].get());
+		setOpenPositionsCount(atoms.positionCount.get());
 
 		return () => {
 			unsubPos?.unsubscribe?.();
@@ -817,8 +818,6 @@ export const ForwardLearningViz = ({
 				}
 
 				const metricMap: Record<string, number> = measurement.metrics();
-				{
-				}
 
 				const evalCount = metricMap.evaluated ?? 0;
 				setEvaluatedCount(Math.floor(evalCount));
@@ -1030,9 +1029,7 @@ export const ForwardLearningViz = ({
 
 		const seen = new Set<string>();
 
-		const updateFromState = (
-			state: Record<string, Value> | undefined,
-		) => {
+		const updateFromState = (state: Record<string, Value> | undefined) => {
 			if (!state) return;
 			const target = getTargetFrame(state, targetSymbol);
 			if (target) {
@@ -1358,13 +1355,12 @@ export const ForwardLearningViz = ({
 							currentPoints.length > 0 ? (
 								<Badge
 									variant="info"
-									label={`Δ${currentPoints[currentPoints.length - 1].y.toLocaleString(
-										undefined,
-										{
-											minimumFractionDigits: 5,
-											maximumFractionDigits: 5,
-										},
-									)}`}
+									label={`Δ${currentPoints[
+										currentPoints.length - 1
+									].y.toLocaleString(undefined, {
+										minimumFractionDigits: 5,
+										maximumFractionDigits: 5,
+									})}`}
 								/>
 							) : undefined
 						}
@@ -1374,11 +1370,7 @@ export const ForwardLearningViz = ({
 							<Badge variant="disabled" label={currentSymbol} />
 
 							{trainedFragments.length > 0 && (
-								<Flex.Row
-									align="center"
-									gap={1}
-									data-l="fragment-selector"
-								>
+								<Flex.Row align="center" gap={1} data-l="fragment-selector">
 									<Button
 										size="xs"
 										variant="outline"
@@ -2364,11 +2356,7 @@ export const ForwardLearningViz = ({
 							size="s"
 							title="Gate blocker"
 							meta={
-								<Typography.Mono
-									size="s"
-									tone="down"
-									data-l="stage-blocker"
-								>
+								<Typography.Mono size="s" tone="down" data-l="stage-blocker">
 									{stageBlocker || "—"}
 								</Typography.Mono>
 							}

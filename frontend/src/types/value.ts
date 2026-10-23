@@ -153,9 +153,7 @@ export class Value {
 	arrive as JSON arrays of floats (the Go Append call's []float64); region
 	layers arrive keyed by metric name in the suffix.
 	*/
-	layersUnder(
-		key: string,
-	): Array<{ suffix: string; payload: unknown }> {
+	layersUnder(key: string): Array<{ suffix: string; payload: unknown }> {
 		const found: Array<{ suffix: string; payload: unknown }> = [];
 
 		for (let i = 0; i < this.index.length; i++) {

@@ -128,7 +128,11 @@ describe("dom utilities", () => {
 			fill.setAttribute("data-meter-fill", "true");
 			el.appendChild(fill);
 
-			renderValue(el, { name: "signed_net_fraction", raw: -0.491, snm: -0.491 });
+			renderValue(el, {
+				name: "signed_net_fraction",
+				raw: -0.491,
+				snm: -0.491,
+			});
 
 			expect(fill.style.width).toBe("49.1%");
 			expect(el.getAttribute("aria-valuenow")).toBe("49.1");

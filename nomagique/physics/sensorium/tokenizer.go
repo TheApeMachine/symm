@@ -99,6 +99,85 @@ func (tokenizer *Tokenizer) MakeDarkBatch(seqIdx int64, mass float32) *State {
 	return state
 }
 
+/*
+RegionLit is one lit confluence cell in a tick chord.
+*/
+type RegionLit struct {
+	Key        uint8
+	Brightness float64
+}
+
+/*
+MakeRegionLitBatch builds a PIC population from lit grid regions at one
+sequence index. Brightness scales mass, energy, and heat; each region
+contributes at least one particle.
+*/
+func (tokenizer *Tokenizer) MakeRegionLitBatch(seq int64, regions []RegionLit, anomalyHeat float64) (*State, error) {
+	if tokenizer == nil {
+		return nil, errnie.Error(errnie.Err(errnie.Internal, "sensorium: nil tokenizer", nil))
+	}
+
+	if len(regions) == 0 {
+		return nil, nil
+	}
+
+	count := 0
+	for _, region := range regions {
+		reps := regionReps(region.Brightness)
+		count += reps
+		if anomalyHeat > 0 && region.Brightness > 0.7 {
+			count++
+		}
+	}
+
+	if count == 0 {
+		return nil, nil
+	}
+
+	state := newState(count)
+	index := 0
+
+	for _, region := range regions {
+		if region.Brightness <= 0 {
+			continue
+		}
+
+		byteValue := int64(region.Key) + 1
+		mass := float32(max(0.05, region.Brightness))
+		energy := mass
+		heat := float32(region.Brightness)
+
+		for rep := 0; rep < regionReps(region.Brightness); rep++ {
+			tokenizer.writeParticle(state, index, byteValue, seq, mass, energy, heat)
+			index++
+		}
+
+		if anomalyHeat > 0 && region.Brightness > 0.7 {
+			tokenizer.writeParticle(state, index, byteValue+256, seq, mass, energy*float32(1+anomalyHeat), heat)
+			index++
+		}
+	}
+
+	if index != state.N {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"sensorium: region batch particle count mismatch",
+			nil,
+		))
+	}
+
+	return state, nil
+}
+
+func regionReps(brightness float64) int {
+	reps := int(brightness * 4)
+	if reps < 1 {
+		return 1
+	}
+
+	return reps
+}
+
 func (tokenizer *Tokenizer) writeParticle(
 	state *State,
 	index int,

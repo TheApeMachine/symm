@@ -1,7 +1,7 @@
-import type { Value as ResonanceFrame } from "#/types/value";
 import { parseResonanceData } from "#/components/charts/prediction";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { requirePositiveLength } from "#/lib/domain";
+import type { Value as ResonanceFrame } from "#/types/value";
 import { Value } from "#/types/value";
 
 export type HawkesMetrics = {
@@ -54,11 +54,7 @@ const valueEpochs = (values: Value[]): Value[][] => {
 	return [...epochs.values()];
 };
 
-const valueRaw = (
-	epoch: Value[],
-	metric: string,
-	side = "",
-): number | null => {
+const valueRaw = (epoch: Value[], metric: string, side = ""): number | null => {
 	const key = side === "" ? metric : `${metric}:${side}`;
 
 	for (let index = epoch.length - 1; index >= 0; index -= 1) {
@@ -136,8 +132,7 @@ export const xrayLayersFromResonance = (
 
 const hawkesMetrics = (epoch: Value[]): HawkesMetrics => {
 	const aggregateIntensity =
-		valueRaw(epoch, "conditional_intensity") ??
-		valueRaw(epoch, "arrival_rate");
+		valueRaw(epoch, "conditional_intensity") ?? valueRaw(epoch, "arrival_rate");
 	const buyIntensity =
 		valueRaw(epoch, "conditional_intensity", "buy") ??
 		valueRaw(epoch, "arrival_rate", "buy");
@@ -177,9 +172,7 @@ const hawkesMetrics = (epoch: Value[]): HawkesMetrics => {
 hawkesMetricsFromFrames reads Hawkes intensity metrics from a flat value
 history for one symbol/source without store access.
 */
-export const hawkesMetricsFromFrames = (
-	frames: Value[],
-): HawkesMetrics => {
+export const hawkesMetricsFromFrames = (frames: Value[]): HawkesMetrics => {
 	const epoch = valueEpochs(frames).at(-1);
 
 	if (epoch === undefined) {
@@ -262,8 +255,7 @@ export const latentPointsFromFrames = (
 		the leading two components place the symbol in the universe
 		cross-section.
 		*/
-		const parsed =
-			frame instanceof Value ? parseResonanceData(frame) : null;
+		const parsed = frame instanceof Value ? parseResonanceData(frame) : null;
 		const position = parsed?.latent
 			? parsed.latent.slice(0, 2)
 			: numberArray((frame as Record<string, unknown>).embedding);
@@ -278,9 +270,7 @@ export const latentPointsFromFrames = (
 				symbol,
 				x: position[0] ?? 0,
 				y: position[1] ?? 0,
-				category: stringValue(
-					(frame as Record<string, unknown>).category,
-				),
+				category: stringValue((frame as Record<string, unknown>).category),
 			},
 		];
 	});

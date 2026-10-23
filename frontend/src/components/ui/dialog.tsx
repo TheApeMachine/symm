@@ -27,7 +27,7 @@ const formatValue = (value: unknown): string => {
 };
 
 export const Dialog = () => {
-	const error = useSelector(atoms["error"]);
+	const error = useSelector(atoms.error);
 	const [expanded, setExpanded] = useState(false);
 
 	if (!error) return null;
@@ -66,7 +66,7 @@ export const Dialog = () => {
 					<Button
 						variant="quiet"
 						size="xs"
-						onClick={() => atoms["error"].set(null)}
+						onClick={() => atoms.error.set(null)}
 						className="text-(--f3) hover:text-(--f1)"
 					>
 						dismiss

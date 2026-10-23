@@ -198,12 +198,8 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				}
 			}
 			if (latest) {
-				for (const { suffix, payload } of latest.layersUnder(
-					"train/regions",
-				)) {
-					const first = Array.isArray(payload)
-						? payload[0]
-						: payload;
+				for (const { suffix, payload } of latest.layersUnder("train/regions")) {
+					const first = Array.isArray(payload) ? payload[0] : payload;
 					if (typeof first !== "number") {
 						continue;
 					}
@@ -217,8 +213,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 					const region = suffix.match(/R\d{2}/)?.[0];
 
 					if (region) {
-						trainingMetrics[`region_brightness:${region}`] =
-							first;
+						trainingMetrics[`region_brightness:${region}`] = first;
 					}
 				}
 			}
@@ -241,11 +236,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				const act = Math.min(1, Math.max(0, Math.abs(raw)));
 				const snr = act >= 0.5 ? 2.5 : 1.0;
 				const prev = heldPins.current[pin.id];
-				if (
-					prev &&
-					prev.activation === act &&
-					prev.snr === snr
-				) {
+				if (prev && prev.activation === act && prev.snr === snr) {
 					continue;
 				}
 
@@ -285,10 +276,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 					changed = true;
 				}
 
-				if (
-					members !== undefined &&
-					heldMembers.current[i] !== members
-				) {
+				if (members !== undefined && heldMembers.current[i] !== members) {
 					heldMembers.current[i] = members;
 					changed = true;
 				}

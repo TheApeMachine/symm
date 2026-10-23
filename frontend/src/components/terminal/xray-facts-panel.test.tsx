@@ -1,20 +1,21 @@
 // @vitest-environment jsdom
 import { act, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { focusAtom, RingBuffer, signals } from "#/collections/app";
+import { focusAtom, signals } from "#/collections/app";
 import { Value } from "#/types/value";
 import { XrayFactsPanel } from "./xray-facts-panel";
 
 describe("XrayFactsPanel", () => {
 	it("renders panel and binds resonance metrics live", () => {
 		focusAtom.set("BTC/USD");
-		const ring = new RingBuffer<Value>(10);
-		signals.resonance.setState((prev) => ({ ...prev, "BTC/USD": ring }));
+		signals.resonance.setState({});
 
 		const view = render(<XrayFactsPanel />);
 
 		// Initially fallback
-		expect(view.container.querySelector('[data-metric="symbol"]')?.textContent).toBe("—");
+		expect(
+			view.container.querySelector('[data-metric="symbol"]')?.textContent,
+		).toBe("—");
 
 		// Live value
 		act(() => {
@@ -32,17 +33,32 @@ describe("XrayFactsPanel", () => {
 					{ name: "maturity", value: "42" },
 				],
 			});
-			(val as any).maturity = 42;
-			ring.add(val);
-			signals.resonance.setState((prev) => ({ ...prev, "BTC/USD": ring }));
+			(val as Record<string, unknown>).maturity = 42;
+			signals.resonance.setState((prev) => ({ ...prev, "BTC/USD": val }));
 		});
 
-		expect(view.container.querySelector('[data-metric="symbol"]')?.textContent).toBe("BTC/USD");
-		expect(view.container.querySelector('[data-metric-raw="energy"]')?.textContent).toBe("0.1234");
-		expect(view.container.querySelector('[data-metric-raw="surprise"]')?.textContent).toBe("0.0567");
-		expect(view.container.querySelector('[data-metric="confidence"]')?.textContent).toBe("95.2%");
-		expect(view.container.querySelector('[data-metric="supported_horizon"]')?.textContent).toBe("32");
-		expect(view.container.querySelector('[data-metric="resolved_steps"]')?.textContent).toBe("120");
-		expect(view.container.querySelector('[data-metric="maturity"]')?.textContent).toBe("42");
+		expect(
+			view.container.querySelector('[data-metric="symbol"]')?.textContent,
+		).toBe("BTC/USD");
+		expect(
+			view.container.querySelector('[data-metric-raw="energy"]')?.textContent,
+		).toBe("0.1234");
+		expect(
+			view.container.querySelector('[data-metric-raw="surprise"]')?.textContent,
+		).toBe("0.0567");
+		expect(
+			view.container.querySelector('[data-metric="confidence"]')?.textContent,
+		).toBe("95.2%");
+		expect(
+			view.container.querySelector('[data-metric="supported_horizon"]')
+				?.textContent,
+		).toBe("32");
+		expect(
+			view.container.querySelector('[data-metric="resolved_steps"]')
+				?.textContent,
+		).toBe("120");
+		expect(
+			view.container.querySelector('[data-metric="maturity"]')?.textContent,
+		).toBe("42");
 	});
 });

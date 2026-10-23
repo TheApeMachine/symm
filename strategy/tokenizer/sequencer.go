@@ -7,25 +7,25 @@ import (
 
 /*
 Sequitur is the per-symbol grammar engine. It receives one tick's region
-tokens (individual, not pre-grouped), feeds them to the Sequitur grammar,
-then feeds the resulting grammar symbols to MDL for boundary detection.
+tokens as a single chord, feeds that chord to the Sequitur grammar, and
+emits one regime token when a repeated digram is replaced by a rule.
 
-A token for the model is a variable-length cut over the grammar stream:
-the MDL decides where to cut, and the symbols accumulated since the last
-cut form one Token. The token is NOT a single region — it is a structural
-segment of the market tape.
+That replacement is the sentence boundary: two occurrences of the same
+regions are a shorter code than spelling them twice. The emitted token is
+one trie edge, the rule's terminals, not a step per region and not a cut
+taken from the bytes of the region label.
 
 The Sequencer is the bridge between the grid's raw observations and the
-model's trie path. It owns both the grammar and the boundary detector.
+model's trie path. It owns the grammar. The byte-level MDL stays available
+for calibration; it is not the regime cut.
 */
 type Sequencer struct {
 	sequitur *Sequitur
 	mdl      *MDL
-	// pending accumulates grammar symbols since the last MDL boundary.
+	// pending accumulates region terminals since the last rule.
 	pending []string
-	// pendingBrightness is the aggregate brightness for symbols in pending.
+	// pendingBrightness is the brightest region seen while pending.
 	pendingBrightness float64
-	pendingCount      int
 }
 
 // NewSequitur is defined in sequitur.go.
@@ -42,26 +42,28 @@ func NewSequencer() *Sequencer {
 }
 
 /*
-Analyze processes one tick's region tokens. Each region is an individual
-token (R01, R02, …) that the grid emitted above the brightness midpoint.
+Analyze processes one tick's region tokens as one chord. The regions are
+the ones the grid kept at or above that symbol's brightness midpoint.
 
-The method feeds all tokens to the grammar, then feeds the resulting
-grammar symbols to MDL. If MDL detects a boundary, it emits the
-accumulated symbols as a Token. Otherwise it returns a zero Token (no
-cut this tick — the symbols remain pending for the next boundary).
-
-Callers should check `token.Symbols != nil` to determine if a token was
-produced. A zero Token means "no boundary this tick, keep accumulating."
+A repeated chord becomes a grammar rule. That rule is one regime token:
+its terminals, in order, as a single trie edge. A chord that has not
+repeated returns a zero Token. Callers treat a zero Token as "this tick
+is inside a regime that has not closed."
 */
 func (sequencer *Sequencer) Analyze(regionTokens []Token) Token {
 	if len(regionTokens) == 0 {
 		return Token{}
 	}
 
-	// 1. Feed individual region keys to the grammar.
 	symbols := make([]string, 0, len(regionTokens))
-	for _, rt := range regionTokens {
-		for _, sym := range rt.Symbols {
+	var brightness float64
+
+	for _, region := range regionTokens {
+		if region.Brightness > brightness {
+			brightness = region.Brightness
+		}
+
+		for _, sym := range region.Symbols {
 			symbols = append(symbols, sym)
 		}
 	}
@@ -70,93 +72,51 @@ func (sequencer *Sequencer) Analyze(regionTokens []Token) Token {
 		return Token{}
 	}
 
-	// Deduplicate and sort within the tick: the same region appearing
-	// in two signals is one symbol, not two.
 	sort.Strings(symbols)
 	deduped := symbols[:0]
-	for i, s := range symbols {
-		if i == 0 || s != symbols[i-1] {
-			deduped = append(deduped, s)
+
+	for i, sym := range symbols {
+		if i == 0 || sym != symbols[i-1] {
+			deduped = append(deduped, sym)
 		}
 	}
 
-	// Feed to the grammar.
-	sequencer.sequitur.Analyze(deduped)
+	sequencer.pending = append(sequencer.pending, deduped...)
 
-	// 2. Get the grammar's output symbols for this tick's positions.
-	// After Analyze, the root's tail holds the grammar's encoding.
-	outputSymbols := sequencer.sequitur.Tail(len(deduped))
-	if len(outputSymbols) == 0 {
-		outputSymbols = deduped
+	if brightness > sequencer.pendingBrightness {
+		sequencer.pendingBrightness = brightness
 	}
 
-	// 3. Feed each output symbol's bytes to MDL.
-	var aggregateBrightness float64
-	for _, rt := range regionTokens {
-		aggregateBrightness = max(aggregateBrightness, rt.Brightness)
-	}
+	rule, boundary := sequencer.sequitur.Analyze(deduped)
 
-	var emitted bool
-	for _, sym := range outputSymbols {
-		for _, b := range []byte(sym) {
-			isBoundary, _, _, meta := sequencer.mdl.Analyze(0, b)
-			if isBoundary && !emitted {
-				// MDL says: cut here. Emit what we've accumulated.
-				sequencer.pending = append(sequencer.pending, sym)
-				sequencer.pendingBrightness = aggregateBrightness
-				sequencer.pendingCount++
-				return sequencer.emitToken(meta)
-			}
-			if !isBoundary {
-				// No boundary yet: accumulate this symbol.
-				sequencer.pending = append(sequencer.pending, sym)
-				sequencer.pendingBrightness += aggregateBrightness
-				sequencer.pendingCount++
-			}
-		}
-	}
-
-	return Token{}
-}
-
-/*
-emitToken constructs a Token from the accumulated pending symbols and
-resets the pending buffer. The confidence is derived from the MDL's
-boundary gain (how strong the structural break was) modulated by the
-aggregate brightness.
-*/
-func (sequencer *Sequencer) emitToken(meta SegmentMeta) Token {
-	symbols := sequencer.pending
-	sequencer.pending = nil
-	sequencer.pendingBrightness = 0
-	sequencer.pendingCount = 0
-
-	if len(symbols) == 0 {
+	if !boundary || rule == nil {
 		return Token{}
 	}
 
-	// Confidence: the MDL's last boundary gain (0..1 scale) blended with
-	// the brightness of the regions that contributed. A strong structural
-	// cut in a high-brightness regime is high confidence; a weak cut in a
-	// low-brightness regime is low confidence.
-	boundaryStrength := sequencer.mdl.LastGain()
-	brightness := sequencer.pendingBrightness / float64(max(sequencer.pendingCount, 1))
+	terminals := sequencer.sequitur.TerminalNames(rule)
 
-	confidence := 0.6*boundaryStrength + 0.4*brightness
-	if confidence > 1.0 {
-		confidence = 1.0
-	}
-	if confidence < 0.0 {
-		confidence = 0.0
+	if len(terminals) == 0 {
+		return Token{}
 	}
 
-	return NewToken(symbols, confidence, brightness, meta)
+	sequencer.pending = nil
+	sequencer.pendingBrightness = 0
+
+	if brightness < 0 {
+		brightness = 0
+	}
+
+	if brightness > 1 {
+		brightness = 1
+	}
+
+	return NewToken(terminals, brightness, brightness, 0)
 }
 
 /*
-Flush forces emission of any pending symbols as a Token. Called when the
-model resets its path (after a settle) to avoid losing accumulated grammar
-structure. Returns a zero Token if nothing is pending.
+Flush emits region terminals accumulated since the last rule. The model
+calls it when a sentence ends so a trailing chord is not left unnamed.
+A zero Token means nothing was pending.
 */
 func (sequencer *Sequencer) Flush() Token {
 	if len(sequencer.pending) == 0 {
@@ -164,10 +124,9 @@ func (sequencer *Sequencer) Flush() Token {
 	}
 
 	symbols := sequencer.pending
+	brightness := sequencer.pendingBrightness
 	sequencer.pending = nil
-	brightness := sequencer.pendingBrightness / float64(max(sequencer.pendingCount, 1))
 	sequencer.pendingBrightness = 0
-	sequencer.pendingCount = 0
 
 	return NewToken(symbols, brightness, brightness, 0)
 }

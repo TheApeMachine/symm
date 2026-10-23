@@ -1,5 +1,6 @@
 import "@perspective-dev/viewer/dist/css/themes.css";
 
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Tabs } from "#/components/ui/tabs";
@@ -8,7 +9,6 @@ import {
 	type WarehouseClient,
 	warehouseClient,
 } from "#/components/workbench/perspective";
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 
 /*
 The viewer is loaded on demand for the same reason its engine is: the module
@@ -105,11 +105,7 @@ export const Workbench = () => {
 				<Typography.Mono size="s" tone="f4" className="max-w-2xl text-center">
 					{error}
 				</Typography.Mono>
-				<Button
-					variant="outline"
-					size="s"
-					onClick={() => connect()}
-				>
+				<Button variant="outline" size="s" onClick={() => connect()}>
 					retry connection
 				</Button>
 			</Flex.Column>
@@ -154,7 +150,11 @@ export const Workbench = () => {
 		<Flex.Column className="h-full min-h-0 w-full">
 			<div className="flex shrink-0 items-center justify-between border-b border-(--line) bg-(--bg) px-3 py-1.5">
 				<Flex.Row align="center" gap={2}>
-					<Typography.Label size="xs" tone="f4" className="uppercase tracking-wider">
+					<Typography.Label
+						size="xs"
+						tone="f4"
+						className="uppercase tracking-wider"
+					>
 						Table
 					</Typography.Label>
 					<Tabs size="xs">

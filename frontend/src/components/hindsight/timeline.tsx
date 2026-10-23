@@ -404,7 +404,10 @@ export const Timeline = ({
 	const empty = buckets.length === 0;
 
 	return (
-		<div ref={ref} className="relative min-h-0 w-full flex-1 overflow-hidden select-none">
+		<div
+			ref={ref}
+			className="relative min-h-0 w-full flex-1 overflow-hidden select-none"
+		>
 			{empty ? (
 				<p className="px-4 py-8 font-mono text-[10px] text-(--f4)">
 					No market observations were captured for{" "}
@@ -1354,7 +1357,10 @@ const AxisBand = ({
 		if (bucket === undefined) continue;
 
 		const x = Math.min(
-			Math.max(scale.xOf(bucket.observedFromSequence || bucket.fromSequence), 0),
+			Math.max(
+				scale.xOf(bucket.observedFromSequence || bucket.fromSequence),
+				0,
+			),
 			width - 1,
 		);
 		const previous = labels[labels.length - 1];

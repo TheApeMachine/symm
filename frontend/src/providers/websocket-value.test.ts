@@ -166,9 +166,7 @@ describe("Value binary decoder", () => {
 		*/
 		expect(values?.[0].byteLength).toBe(v1.byteLength);
 
-		const second = parseValues(
-			batch.subarray(values?.[0].byteLength ?? 0),
-		);
+		const second = parseValues(batch.subarray(values?.[0].byteLength ?? 0));
 		expect(second?.[0]?.origin).toBe("training");
 	});
 
@@ -221,7 +219,7 @@ describe("ingest routing (decoded frames into stores)", () => {
 		expect(frame?.scope).toBe("BTC-USD");
 		expect(frame?.tick).toBe(105n);
 		expect(frame?.metric("surprise")).toBeCloseTo(0.85);
-		expect(frame?.provenance()["token_path"]).toBe("R01/R06");
+		expect(frame?.provenance().token_path).toBe("R01/R06");
 		expect(atoms.tickCount.get()).toBe(105);
 		expect(atoms.tickCount.get()).not.toBe(before);
 

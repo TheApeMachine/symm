@@ -1,9 +1,9 @@
+import { useSelector } from "@tanstack/react-store";
 import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import { openLots, positionRows } from "#/components/learning/open-positions";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import { useSelector } from "@tanstack/react-store";
 
 /*
 Count reads the open lots on the book selected in the top bar, the same

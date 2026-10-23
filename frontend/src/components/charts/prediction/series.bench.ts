@@ -1,6 +1,6 @@
 import { bench, describe } from "vitest";
-import { Value as ResonanceFrame } from "#/types/value";
 import { predictiveCodingSeries } from "#/components/charts/prediction/series";
+import { Value as ResonanceFrame } from "#/types/value";
 
 /*
 Frames built the way the hub builds them: layer payloads appended as JSON

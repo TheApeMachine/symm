@@ -30,6 +30,7 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/parallel"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
@@ -54,6 +55,7 @@ type Booter struct {
 	normalizer       *spot.Normalizer
 	signals          []nmruntime.Node
 	training         *strategy.Training
+	parallelRun      *parallel.Runner
 	workspace        *nmruntime.Workspace
 	store            *store.Client
 	hub              *ui.Hub
@@ -292,6 +294,7 @@ func (booter *Booter) initPipeline() error {
 	}
 
 	strategyNodes := make([]nmruntime.Node, 0, 1)
+	parallelNodes := make([]nmruntime.Node, 0, 1)
 
 	// The collector writes the tape. It shares the paper account with the
 	// dashboard, so it must not place orders of its own.
@@ -324,6 +327,21 @@ func (booter *Booter) initPipeline() error {
 		}
 	}
 
+	if paperTrades(booter.capture, booter.dashboard) && system.Cfg.Parallel.Enabled {
+		var hub io.Writer
+		if booter.hub != nil {
+			hub = booter.hub
+		}
+
+		booter.parallelRun = parallel.NewRunner(ctx, booter.price, booter.store, hub)
+		if err := booter.parallelRun.Error(); err != nil {
+			return err
+		}
+
+		booter.parallelRun.Transition(nmruntime.READY)
+		parallelNodes = append(parallelNodes, booter.parallelRun)
+	}
+
 	// The last handler group io.Copy's the tick, after every signal and
 	// training have written their layers. Only collect persists ticks;
 	// the dashboard reads the collector's tape and must not start its own.
@@ -353,6 +371,7 @@ func (booter *Booter) initPipeline() error {
 		[]nmruntime.Ring{
 			{Group: "signal", Nodes: booter.signals},
 			{Group: "strategy", Nodes: strategyNodes},
+			{Group: "parallel", Nodes: parallelNodes},
 		},
 		sinks...,
 	)

@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"io"
+	"slices"
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
@@ -14,12 +15,14 @@ import (
 
 type Training struct {
 	*runtime.System
-	model  *Model
-	price  *broker.Price
-	desk   Desk
-	client *store.Client
-	grid   *nmstore.Grid
-	hub    io.Writer
+	cfg     *Config
+	model   *Model
+	price   *broker.Price
+	desk    Desk
+	client  *store.Client
+	grid    *nmstore.Grid
+	hub     io.Writer
+	metrics *metricsAccumulator
 }
 
 func NewTraining(
@@ -29,23 +32,26 @@ func NewTraining(
 	client *store.Client,
 	hub io.Writer,
 ) *Training {
+	cfg := LoadConfig()
+	metrics := newMetricsAccumulator()
+
 	training := &Training{
-		System: runtime.NewSystem(ctx, "training", price),
-		model:  NewModel(ctx, desk, client, hub),
-		price:  price,
-		desk:   desk,
-		client: client,
-		grid:   nmstore.NewGrid(ctx),
-		hub:    hub,
+		System:  runtime.NewSystem(ctx, "training", price),
+		cfg:     cfg,
+		model:   NewModel(ctx, desk, client, hub, cfg),
+		price:   price,
+		desk:    desk,
+		client:  client,
+		grid:    nmstore.NewGrid(ctx),
+		hub:     hub,
+		metrics: metrics,
 	}
+
+	training.model.BindMetrics(metrics)
 
 	return training
 }
 
-/*
-PublishPolicy replays the current policy trie to a dashboard that just
-connected, or that asked for policy/current.
-*/
 func (training *Training) PublishPolicy() {
 	if training == nil || training.model == nil {
 		return
@@ -54,16 +60,6 @@ func (training *Training) PublishPolicy() {
 	training.model.PublishPolicy()
 }
 
-/*
-Step is the per-tick entry point. It observes the grid (which emits
-regions above the brightness midpoint), groups them by symbol, creates
-tokens, feeds each token to the model for evaluation, and publishes the
-resulting frame.
-
-The model evaluates one token per call: each token is one MDL cut over
-the grammar stream. The model accumulates tokens into a path per symbol
-and checks the path against the policy tree.
-*/
 func (training *Training) Step(value *data.Value) *data.Value {
 	if value == nil {
 		return nil
@@ -79,32 +75,46 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		return value
 	}
 
-	// Group regions by symbol: one symbol may have multiple active regions
-	// in a single tick. Each region becomes one token.
 	bySymbol := make(map[string][]tokenizer.Token)
+	regionsBySymbol := make(map[string][]*nmstore.Region)
 
 	for _, region := range observed {
 		token := tokenizer.NewTokenFromRegion(region.Key, region.Brightness)
 		bySymbol[region.Symbol] = append(bySymbol[region.Symbol], token)
+		regionsBySymbol[region.Symbol] = append(regionsBySymbol[region.Symbol], region)
 	}
 
-	// Feed each symbol's tokens to the model. The model's Evaluate
-	// accumulates them into the symbol's path and checks the trie.
-	for symbol, tokens := range bySymbol {
-		for _, token := range tokens {
-			training.model.Evaluate(symbol, token)
+	symbols := make([]string, 0, len(bySymbol))
+	for symbol := range bySymbol {
+		symbols = append(symbols, symbol)
+	}
+
+	slices.Sort(symbols)
+
+	training.metrics.reset()
+
+	for _, symbol := range symbols {
+		training.model.NoteTick(symbol, regionsBySymbol[symbol], training.grid)
+
+		regime := training.model.Ingest(symbol, bySymbol[symbol])
+		training.model.TrackSequitur(symbol, regime)
+
+		chord := tokenizer.ChordToken(bySymbol[symbol])
+		if len(chord.Symbols) == 0 {
+			training.model.Touch(symbol)
+			continue
 		}
+
+		training.model.Evaluate(symbol, chord)
 	}
 
-	// Append the observed regions so the frontend's Impulse Map and
-	// position-card radial charts can render them.
 	value.Append(observed, "train", "regions")
 
-	// Safety net: settle any closed virtuals that were not handled
-	// inside Evaluate (e.g. restored from history on restart).
 	for _, cv := range training.desk.ClosedVirtuals() {
 		training.model.Settle(cv)
 	}
+
+	training.metrics.publish(training.hub)
 
 	return value
 }
