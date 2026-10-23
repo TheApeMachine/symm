@@ -1066,7 +1066,12 @@ export const LifecycleView = () => {
 	const [selected, setSelected] = useState<string | null>(null);
 	const lifecycles = view.lifecycles
 		.map(shownLife)
-		.filter((life) => life.status === "closed");
+		.filter((life) => life.status === "closed")
+		.sort((left, right) => {
+			const leftAt = left.closed_at ? Date.parse(left.closed_at) : 0;
+			const rightAt = right.closed_at ? Date.parse(right.closed_at) : 0;
+			return rightAt - leftAt;
+		});
 	const perf = view.performance;
 	const name = book === "virtual" ? "virtual" : "paper";
 	const active =

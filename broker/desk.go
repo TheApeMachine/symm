@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 
@@ -36,7 +37,11 @@ type Desk struct {
 	history   *History
 	positions *Cache
 	virtuals  *Cache
-	books     *Book
+	// virtualArchive is every settled virtual round trip (S3 closed records
+	// at boot and each Exit). Train Drop clears the live cache only; the
+	// archive keeps closed lots visible to the dashboard.
+	virtualArchive *sync.Map
+	books          *Book
 }
 
 func NewDesk(
@@ -52,8 +57,9 @@ func NewDesk(
 		balance:   balance,
 		history:   NewHistory(ctx, store),
 		price:     price,
-		positions: NewCache(ctx),
-		virtuals:  NewCache(ctx),
+		positions:      NewCache(ctx),
+		virtuals:       NewCache(ctx),
+		virtualArchive: &sync.Map{},
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
@@ -75,9 +81,11 @@ func NewDesk(
 				broadcast to every client forever.
 			*/
 			fields := strings.Split(value.Prefix, "/")
-			if len(fields) < 5 || fields[1] != "open" {
+			if len(fields) < 5 {
 				continue
 			}
+
+			role := fields[1]
 
 			position := &Position{}
 			value.Lookup(position, key)
@@ -100,10 +108,21 @@ func NewDesk(
 				continue
 			}
 
-			val.Restore(position)
+			switch role {
+			case "open":
+				if position.ClosedAt != nil && !position.ClosedAt.IsZero() {
+					continue
+				}
 
-			if key == "virtual" {
-				types.SetVirtualOpen(position.Symbol, true)
+				val.Restore(position)
+
+				if key == "virtual" {
+					types.SetVirtualOpen(position.Symbol, true)
+				}
+			case "closed":
+				if key == "virtual" && position.ID != "" {
+					desk.archiveVirtual(position)
+				}
 			}
 		}
 	}
@@ -112,20 +131,68 @@ func NewDesk(
 	return desk
 }
 
+func (desk *Desk) archiveVirtual(position *Position) {
+	if desk == nil || position == nil || position.ID == "" {
+		return
+	}
+
+	desk.virtualArchive.Store(position.ID, position)
+}
+
+/*
+publishLots is the positions snapshot: open paper and virtual lots, any
+virtual still on the closed side awaiting Train, and every archived
+virtual close loaded from S3 or recorded at Exit.
+*/
+func (desk *Desk) publishLots() []*Position {
+	seen := make(map[string]struct{})
+	lots := make([]*Position, 0)
+
+	add := func(position *Position) {
+		if position == nil || position.ID == "" {
+			return
+		}
+
+		if _, ok := seen[position.ID]; ok {
+			return
+		}
+
+		seen[position.ID] = struct{}{}
+		lots = append(lots, position)
+	}
+
+	for _, position := range desk.positions.All(true) {
+		add(position)
+	}
+
+	for _, position := range desk.virtuals.All(true) {
+		add(position)
+	}
+
+	for _, position := range desk.virtuals.Closed() {
+		add(position)
+	}
+
+	desk.virtualArchive.Range(func(_, value any) bool {
+		add(value.(*Position))
+		return true
+	})
+
+	slices.SortFunc(lots, func(a, b *Position) int {
+		return strings.Compare(a.Symbol, b.Symbol)
+	})
+
+	return lots
+}
+
 /*
 Hello is a callback for the ui.Hub that fires when a new WebSocket
 connection is established, and we want to update the client with
 some initial data.
 */
 func (desk *Desk) Hello() {
-	// One snapshot: every lot the desk still holds. Open until Exit, then
-	// the closed virtual until Train drops it. An empty list is the snapshot
-	// when nothing is open.
-	lots := append(desk.positions.All(true), desk.virtuals.All(true)...)
-	lots = append(lots, desk.virtuals.Closed()...)
-
 	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
-		lots, "positions",
+		desk.publishLots(), "positions",
 	))
 
 	if desk.balance.value != nil {
@@ -556,6 +623,7 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool, triggers ...str
 	// then history.Move retires it from the desk entirely.
 	if virtual {
 		types.SetVirtualOpen(position.Symbol, false)
+		desk.archiveVirtual(position)
 		desk.virtuals.Remove(position.Symbol)
 	} else {
 		desk.positions.Remove(position.Symbol)

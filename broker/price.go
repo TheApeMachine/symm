@@ -904,6 +904,29 @@ func (price *Price) RoundTrip(
 }
 
 /*
+finishAllocateEntryErr maps sizing outcomes to NotFound without logging.
+Thin books, budgets below venue minimums, and crossed quotes are normal
+while scanning symbols; only unexpected IO failures are logged.
+*/
+func finishAllocateEntryErr(symbol string, err error) (*EntryCost, error) {
+	if err == nil {
+		return nil, errnie.Err(errnie.NotFound, "[price] no tradable entry for "+symbol, nil)
+	}
+
+	if errnie.IsNotFound(err) {
+		return nil, err
+	}
+
+	if errnie.IsValidation(err) || errnie.IsUnprocessableContent(err) {
+		return nil, errnie.Err(errnie.NotFound, "[price] no tradable entry for "+symbol, err)
+	}
+
+	return nil, errnie.Error(errnie.Err(
+		errnie.IO, "[price] get entry cost failed for "+symbol, err,
+	))
+}
+
+/*
 AllocateEntry prices an executable entry frozen at the allocation budget.
 It walks ask depth, then caps quantity at touchAllocationCap (by default
 one third of the touch bid), then enforces instrument minimums.
@@ -941,17 +964,17 @@ func (price *Price) AllocateEntry(
 			}
 
 			if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
-				err = errnie.Error(errnie.Err(
+				err = errnie.Err(
 					errnie.UnprocessableContent, "[price] crossed book for "+symbol, nil,
-				))
+				)
 				return
 			}
 
 			touchBid := book.BestBid().Quantity
 			if touchBid == nil || touchBid.Sign() <= 0 {
-				err = errnie.Error(errnie.Err(
+				err = errnie.Err(
 					errnie.Validation, "[price] touch bid has no size for "+symbol, nil,
-				))
+				)
 				return
 			}
 
@@ -998,9 +1021,9 @@ func (price *Price) AllocateEntry(
 			}
 
 			if qAccum.Sign() <= 0 {
-				err = errnie.Error(errnie.Err(
+				err = errnie.Err(
 					errnie.Validation, "[price] budget insufficient to fill any ask depth for "+symbol, nil,
-				))
+				)
 				return
 			}
 
@@ -1027,11 +1050,11 @@ func (price *Price) AllocateEntry(
 				}
 
 				if qNorm.Cmp(step) <= 0 {
-					err = errnie.Error(errnie.Err(
+					err = errnie.Err(
 						errnie.Validation,
 						"[price] budget insufficient for minimum tradable quantity for "+symbol,
 						nil,
-					))
+					)
 					return
 				}
 
@@ -1051,29 +1074,29 @@ func (price *Price) AllocateEntry(
 			}
 
 			if filled == nil || filled.Sign() <= 0 || gross == nil || gross.Sign() <= 0 || total == nil {
-				err = errnie.Error(errnie.Err(
+				err = errnie.Err(
 					errnie.Validation,
 					"[price] executable depth walk failed for "+symbol,
 					nil,
-				))
+				)
 				return
 			}
 
 			if filled.Cmp(qNorm) != 0 {
-				err = errnie.Error(errnie.Err(
+				err = errnie.Err(
 					errnie.UnprocessableContent,
 					"[price] insufficient ask depth for "+symbol,
 					nil,
-				))
+				)
 				return
 			}
 
 			if price.Instrument != nil && !price.Tradable(symbol, qNorm, book.BestAsk().Price) {
-				err = errnie.Error(errnie.Err(
+				err = errnie.Err(
 					errnie.Validation,
 					"[price] allocated quantity below instrument minimum for "+symbol,
 					nil,
-				))
+				)
 				return
 			}
 
@@ -1112,10 +1135,8 @@ func (price *Price) AllocateEntry(
 		return cost, nil
 	}
 
-	if err != nil && !errnie.IsNotFound(err) {
-		return nil, errnie.Error(errnie.Err(
-			errnie.IO, "[price] get entry cost failed for "+symbol, err,
-		))
+	if err != nil {
+		return finishAllocateEntryErr(symbol, err)
 	}
 
 	_, askPrice := price.Touch(symbol)
@@ -1132,7 +1153,7 @@ func (price *Price) AllocateEntry(
 	}
 
 	if qNorm == nil || qNorm.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
+		return finishAllocateEntryErr(symbol, errnie.Err(
 			errnie.Validation,
 			"[price] budget affords no quantity of "+symbol,
 			nil,
@@ -1140,7 +1161,7 @@ func (price *Price) AllocateEntry(
 	}
 
 	if price.Instrument != nil && !price.Tradable(symbol, qNorm, askPrice) {
-		return nil, errnie.Error(errnie.Err(
+		return finishAllocateEntryErr(symbol, errnie.Err(
 			errnie.Validation,
 			"[price] allocated quantity below instrument minimum for "+symbol,
 			nil,
@@ -1158,7 +1179,7 @@ func (price *Price) AllocateEntry(
 		}
 
 		if qNorm.Cmp(step) <= 0 {
-			return nil, errnie.Error(errnie.Err(
+			return finishAllocateEntryErr(symbol, errnie.Err(
 				errnie.Validation, "[price] budget insufficient for minimum quote order", nil,
 			))
 		}
@@ -1169,7 +1190,7 @@ func (price *Price) AllocateEntry(
 	}
 
 	if total == nil || gross == nil {
-		return nil, errnie.Error(errnie.Err(
+		return finishAllocateEntryErr(symbol, errnie.Err(
 			errnie.Validation, "[price] fee calculation failed for "+symbol, nil,
 		))
 	}

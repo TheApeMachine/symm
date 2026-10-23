@@ -7,6 +7,7 @@ import type { DeskPosition } from "#/collections/types";
 import { Value } from "#/types/value";
 import {
 	deskRowsForStats,
+	ingestDeskClosedLots,
 	ingestDeskSnapshot,
 	ingestPositionFrame,
 	resetLifecycles,
@@ -174,6 +175,38 @@ describe("lifecycle store", () => {
 		const ids = snapshotOf().report.lifecycles.map((life) => life.id);
 		expect(ids).toContain("open");
 		expect(ids).not.toContain("closed-0");
+	});
+
+	it("ingests every closed virtual row from a desk snapshot", () => {
+		const rows = [
+			{
+				id: "a",
+				symbol: "AAA/USD",
+				virtual: true,
+				opened_at: "2026-10-18T08:00:00Z",
+				closed_at: "2026-10-18T08:01:00Z",
+				cost: 10,
+				proceeds: 11,
+				profit: 1,
+				net_return: 10,
+			},
+			{
+				id: "b",
+				symbol: "BBB/USD",
+				virtual: true,
+				opened_at: "2026-10-18T09:00:00Z",
+				closed_at: "2026-10-18T09:01:00Z",
+				cost: 10,
+				proceeds: 9,
+				profit: -1,
+				net_return: -10,
+			},
+		];
+		ingestDeskClosedLots(rows);
+		const closed = snapshotOf()
+			.report.lifecycles.filter((life) => life.status === "closed")
+			.map((life) => life.id);
+		expect(closed.sort()).toEqual(["a", "b"]);
 	});
 
 	it("keeps closed desk lots in deskRowsForStats after they leave the hub snapshot", () => {
