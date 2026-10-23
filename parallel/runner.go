@@ -9,12 +9,14 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -93,6 +95,8 @@ func (runner *Runner) Step(value *data.Value) *data.Value {
 
 	symbolFrames := make([]map[string]any, 0, len(symbols))
 	gateTotals := newGateTotals()
+	var vizSymbol string
+	var vizCoder CoderReading
 
 	for _, symbol := range symbols {
 		regions := bySymbol[symbol]
@@ -138,6 +142,11 @@ func (runner *Runner) Step(value *data.Value) *data.Value {
 
 		gateTotals.add(gatesTreatment)
 
+		if vizSymbol == "" || symbol == types.Focus() {
+			vizSymbol = symbol
+			vizCoder = coderRead
+		}
+
 		symbolFrames = append(symbolFrames, map[string]any{
 			"symbol":       symbol,
 			"regime":       regimeLabel(regions),
@@ -176,6 +185,7 @@ func (runner *Runner) Step(value *data.Value) *data.Value {
 
 	value.Append(summary, "parallel", "summary")
 	runner.publish(summary)
+	runner.publishVisualization(value, vizSymbol, vizCoder)
 
 	return value
 }
@@ -282,8 +292,16 @@ func shouldExit(side CoderSide, phase SymbolPhase, book BookID) bool {
 }
 
 func (runner *Runner) open(book BookID, symbol string) {
+	if _, ok := runner.midpoint(symbol); !ok {
+		return
+	}
+
 	allocation, err := runner.price.AllocateEntry(symbol)
 	if err != nil {
+		if errnie.IsNotFound(err) {
+			return
+		}
+
 		runner.Error(err)
 		return
 	}

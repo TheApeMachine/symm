@@ -23,6 +23,7 @@ export type DeskPosition = {
 	mark?: string | number;
 	exit_vwap?: string | number;
 	exit_room?: number;
+	book_return?: number;
 	return?: number;
 	hold_ns?: number;
 	virtual?: boolean;

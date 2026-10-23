@@ -140,8 +140,8 @@ func (desk *Desk) Positions(open bool) []*Position {
 
 /*
 Update marks open positions against the trade price and settles any virtual
-whose band walk is over. Called from the workspace tick handler — the desk sits
-off the trade ingress path, so this is where marks become live.
+whose book edge hit the ±2% target. Called from the workspace tick handler —
+the desk sits off the trade ingress path, so this is where marks become live.
 */
 func (desk *Desk) Update(trades []kraken.TradeData) {
 	/*
@@ -161,6 +161,16 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 			}
 
 			position.Update(&trade.Price)
+		}
+	}
+
+	for _, position := range desk.virtuals.All() {
+		if position == nil || !position.ShouldExit() {
+			continue
+		}
+
+		if err := desk.Exit(position.Symbol, position.EntryPath, true, "book edge target"); err != nil {
+			desk.Error(err)
 		}
 	}
 
@@ -386,9 +396,25 @@ func (desk *Desk) Realize(
 }
 
 /*
+SaleReturn is the fee-net round-trip fraction if the lot were closed now
+through the book (Price.Sale), matching virtual CloseOut settlement.
+*/
+func (desk *Desk) SaleReturn(
+	symbol string, quantity, entry, fee *decimal.Decimal,
+) (float64, bool) {
+	if desk == nil || desk.price == nil {
+		return 0, false
+	}
+
+	_, _, ret, ok := desk.price.Sale(symbol, quantity, entry, fee)
+
+	return ret, ok
+}
+
+/*
 Exit a position and report what settled.
 */
-func (desk *Desk) Exit(symbol string, path string, virtual bool) error {
+func (desk *Desk) Exit(symbol string, path string, virtual bool, triggers ...string) error {
 	var position *Position
 
 	if virtual {
@@ -438,7 +464,11 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool) error {
 		net := ret * 100
 		position.Return = &net
 		position.NetReturn = &net
-		position.OutcomeTriggers = []string{"band settle"}
+		if len(triggers) > 0 {
+			position.OutcomeTriggers = append([]string{}, triggers...)
+		} else {
+			position.OutcomeTriggers = []string{"desk exit"}
+		}
 
 		position.mu.Unlock()
 	}

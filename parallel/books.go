@@ -20,14 +20,14 @@ const (
 )
 
 type Lot struct {
-	ID        string
-	Symbol    string
-	Book      BookID
-	EntryPath string
-	Qty       *decimal.Decimal
-	Entry     *decimal.Decimal
-	Fee       *decimal.Decimal
-	OpenedAt  time.Time
+	ID        string             `json:"id"`
+	Symbol    string             `json:"symbol"`
+	Book      BookID             `json:"book"`
+	EntryPath string             `json:"entryPath"`
+	Qty       *decimal.Decimal   `json:"qty,omitempty"`
+	Entry     *decimal.Decimal   `json:"entry,omitempty"`
+	Fee       *decimal.Decimal   `json:"fee,omitempty"`
+	OpenedAt  time.Time          `json:"openedAt"`
 }
 
 type ClosedLot struct {

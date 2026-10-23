@@ -108,6 +108,8 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		training.model.Evaluate(symbol, chord)
 	}
 
+	training.model.tryPendingExcursions()
+
 	value.Append(observed, "train", "regions")
 
 	for _, cv := range training.desk.ClosedVirtuals() {

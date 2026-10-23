@@ -74,7 +74,7 @@ func (d *fakeDesk) Enter(symbol, path string, virtual bool) error {
 	return nil
 }
 
-func (d *fakeDesk) Exit(symbol, path string, _ bool) error {
+func (d *fakeDesk) Exit(symbol, path string, _ bool, _ ...string) error {
 	return d.ExitOccupied(symbol, path)
 }
 
@@ -148,7 +148,11 @@ func (d *fakeDesk) Quote(string) (qty, entry, fee *decimal.Decimal, err error) {
 	return decimal.NewFromInt64(1), decimal.NewFromInt64(100), decimal.NewFromInt64(1), nil
 }
 
-func (d *fakeDesk) Realize(string, *decimal.Decimal, *decimal.Decimal, *decimal.Decimal) (float64, bool) {
+func (d *fakeDesk) Realize(symbol string, qty, entry, fee *decimal.Decimal) (float64, bool) {
+	return d.SaleReturn(symbol, qty, entry, fee)
+}
+
+func (d *fakeDesk) SaleReturn(string, *decimal.Decimal, *decimal.Decimal, *decimal.Decimal) (float64, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -217,6 +221,7 @@ func sampleOneExcursion(model *Model, symbol string, prior int) {
 		model.Evaluate(symbol, regionToken(6, 0.2))
 	}
 
+	model.Evaluate(symbol, regionToken(7, 0.9))
 	model.Evaluate(symbol, regionToken(0, 0.9))
 	model.Evaluate(symbol, regionToken(1, 0.9))
 	model.Evaluate(symbol, regionToken(2, 0.9))

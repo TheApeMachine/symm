@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
@@ -121,6 +122,22 @@ func (field *Field) InitError() error {
 	}
 
 	return field.initErr
+}
+
+/*
+ManifoldFrame snapshots the resident Metal domain for the fluid viewer.
+*/
+func (field *Field) ManifoldFrame() *manifold.State {
+	if field == nil || !field.healthy || field.manifold == nil {
+		return nil
+	}
+
+	version := uint64(field.tick)
+	if version == 0 {
+		version = 1
+	}
+
+	return manifold.SnapshotHost(field.manifold, version)
 }
 
 func (field *Field) SpectralHint() map[string]any {

@@ -40,7 +40,11 @@ export const ParallelDashboard = () => {
 				<span className="text-[11px] font-bold uppercase tracking-wide text-(--f1)">
 					Parallel experiment (A / B / C)
 				</span>
-				<Flex.Row gap={1}>
+				<Flex.Row gap={1} align="center">
+					<span className="hidden text-[9px] text-(--f4) lg:inline">
+						Book B field → Fluid manifold · coders → Dashboard (focus
+						symbol)
+					</span>
 					<Chip
 						variant="quiet"
 						size="s"
@@ -141,22 +145,27 @@ export const ParallelDashboard = () => {
 				))}
 				<div className="flex min-h-0 flex-col border-b border-r border-(--line)">
 					<div className="shrink-0 border-b border-(--line) px-2 py-1 text-[10px] font-bold">
-						Incumbent vs Book B
+						Physics marginal (B − A) &amp; Kuramoto R
 					</div>
 					<MetricChart
 						className="flex-1"
 						times={times}
 						series={[
-							...incumbentSeries,
 							{
-								label: "B",
-								values: samples.map((s) => s.books.B.meanReturn),
-								stroke: toneColor(
-									returnTone(latest?.books.B.meanReturn ?? null),
+								label: "B − A",
+								values: samples.map((s) => s.deltaBA),
+								stroke: "var(--success)",
+								fill: "color-mix(in srgb, var(--success) 8%, transparent)",
+							},
+							{
+								label: "R",
+								values: samples.map(
+									(s) => s.physics?.kuramotoR ?? null,
 								),
+								stroke: "var(--warning)",
 							},
 						]}
-						formatY={(v) => `${(100 * v).toFixed(1)}%`}
+						formatY={(v) => `${(100 * v).toFixed(2)}%`}
 						baseline={0}
 					/>
 				</div>

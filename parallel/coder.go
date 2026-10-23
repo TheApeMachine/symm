@@ -44,6 +44,9 @@ type CoderSide struct {
 type CoderReading struct {
 	Control   CoderSide
 	Treatment CoderSide
+
+	controlRaw   [12][]float64
+	treatmentRaw [12][]float64
 }
 
 func (read CoderReading) ForBook(book BookID) CoderSide {
@@ -94,8 +97,10 @@ func (bank *CoderBank) Step(
 	treatOut := bank.runCoder(treatment, treatFeatures, midpoint, hasReference, step, tick.Timestamp)
 
 	return CoderReading{
-		Control:   sideReading(controlOut),
-		Treatment: sideReading(treatOut),
+		Control:      sideReading(controlOut),
+		Treatment:    sideReading(treatOut),
+		controlRaw:   controlOut,
+		treatmentRaw: treatOut,
 	}, nil
 }
 

@@ -425,140 +425,16 @@ func (solver *Solver) Advance() {
 	}
 }
 
-/*
-computePhaseResultants computes each book side's amplitude-weighted Kuramoto vector
-directly from the resident oscillator particles.
-Side is determined by the token ID (even is bid, odd is ask).
-*/
-func computePhaseResultants(state *sensorium.State) []types.PhaseChannelResultant {
-	if state == nil || state.N == 0 {
+func (solver *Solver) publishReading(state *sensorium.State) *State {
+	version := solver.version.Add(1)
+	reading := SnapshotHost(solver.physics, version)
+	if reading == nil {
 		return nil
 	}
 
-	var bidReal, bidImag, bidTotalAmp float64
-	var bidCount int
-	var askReal, askImag, askTotalAmp float64
-	var askCount int
+	solver.reading.Store(reading)
 
-	for index := 0; index < state.N; index++ {
-		phase := float64(state.Phase[index])
-		amp := float64(state.Amp[index])
-		cosP := math.Cos(phase)
-		sinP := math.Sin(phase)
-
-		if (state.TokenIDs[index] & 1) == 0 {
-			bidReal += amp * cosP
-			bidImag += amp * sinP
-			bidTotalAmp += amp
-			bidCount++
-			continue
-		}
-
-		askReal += amp * cosP
-		askImag += amp * sinP
-		askTotalAmp += amp
-		askCount++
-	}
-
-	bidCoherence := 0.0
-	bidPhase := 0.0
-
-	if bidTotalAmp > 0 {
-		bidCoherence = math.Hypot(bidReal, bidImag) / bidTotalAmp
-	}
-
-	if bidCount > 0 {
-		bidPhase = math.Atan2(bidImag, bidReal)
-	}
-
-	askCoherence := 0.0
-	askPhase := 0.0
-
-	if askTotalAmp > 0 {
-		askCoherence = math.Hypot(askReal, askImag) / askTotalAmp
-	}
-
-	if askCount > 0 {
-		askPhase = math.Atan2(askImag, askReal)
-	}
-
-	return []types.PhaseChannelResultant{
-		{
-			Side:           "bid",
-			Count:          bidCount,
-			TotalAmplitude: bidTotalAmp,
-			Coherence:      bidCoherence,
-			Phase:          bidPhase,
-		},
-		{
-			Side:           "ask",
-			Count:          askCount,
-			TotalAmplitude: askTotalAmp,
-			Coherence:      askCoherence,
-			Phase:          askPhase,
-		},
-	}
-}
-
-func (solver *Solver) publishReading(state *sensorium.State) *State {
-	modeOmega, modeReal, modeImag, modeLinewidth := solver.physics.SpectralModes()
-	modes := make([]WaveMode, len(modeOmega))
-
-	for index := range modeOmega {
-		modes[index] = WaveMode{
-			Omega:     modeOmega[index],
-			Real:      modeReal[index],
-			Imag:      modeImag[index],
-			Linewidth: modeLinewidth[index],
-		}
-	}
-
-	gridX, gridY, gridZ, gridSpacing := solver.physics.Grid()
-	cells := gridX * gridY * gridZ
-	momRho := make([]float32, cells*4)
-	fieldEnergy := make([]float32, cells)
-	waveReal := make([]float32, cells)
-	waveImag := make([]float32, cells)
-	densityScale, momentumScale, energyScale, waveScale := solver.physics.PackFields(
-		momRho, fieldEnergy, waveReal, waveImag,
-	)
-
-	version := solver.version.Add(1)
-	reading := State{
-		At:      time.Now(),
-		Version: version,
-		State: &sensorium.State{
-			N:                 state.N,
-			CoherencePosition: slices.Clone(state.CoherencePosition),
-			Bytes:             slices.Clone(state.Bytes),
-			Seqs:              slices.Clone(state.Seqs),
-			TokenIDs:          slices.Clone(state.TokenIDs),
-			ContentIDs:        slices.Clone(state.ContentIDs),
-			Phase:             slices.Clone(state.Phase),
-			Omega:             slices.Clone(state.Omega),
-			Energy:            slices.Clone(state.Energy),
-			Mass:              slices.Clone(state.Mass),
-			Heat:              slices.Clone(state.Heat),
-			MaterialEnergy:    slices.Clone(state.MaterialEnergy),
-			Amp:               slices.Clone(state.Amp),
-			Pos:               slices.Clone(state.Pos),
-			Vel:               slices.Clone(state.Vel),
-			PilotVel:          slices.Clone(state.PilotVel),
-			PhasePotential:    slices.Clone(state.PhasePotential),
-			Clamped:           slices.Clone(state.Clamped),
-			Dark:              slices.Clone(state.Dark),
-		},
-		GridX: gridX, GridY: gridY, GridZ: gridZ, GridSpacing: gridSpacing,
-		MomRho: momRho, FieldEnergy: fieldEnergy, WaveReal: waveReal, WaveImag: waveImag,
-		DensityScale: densityScale, MomentumScale: momentumScale,
-		EnergyScale: energyScale, WaveScale: waveScale,
-		Reading:    solver.physics.Reading(),
-		Modes:      modes,
-		Resultants: computePhaseResultants(state),
-	}
-	solver.reading.Store(&reading)
-
-	return &reading
+	return reading
 }
 
 /*

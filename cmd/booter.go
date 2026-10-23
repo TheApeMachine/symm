@@ -30,6 +30,8 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/logic/manifold"
+	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/parallel"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
@@ -56,6 +58,7 @@ type Booter struct {
 	signals          []nmruntime.Node
 	training         *strategy.Training
 	parallelRun      *parallel.Runner
+	manifoldSolver   *manifold.Solver
 	workspace        *nmruntime.Workspace
 	store            *store.Client
 	hub              *ui.Hub
@@ -295,18 +298,36 @@ func (booter *Booter) initPipeline() error {
 
 	strategyNodes := make([]nmruntime.Node, 0, 1)
 	parallelNodes := make([]nmruntime.Node, 0, 1)
+	logicNodes := make([]nmruntime.Node, 0, 2)
+
+	var hub io.Writer
+	if booter.hub != nil {
+		hub = booter.hub
+	}
+
+	// Parallel owns the one Metal manifold used for region-chord physics.
+	// Do not start a second logic/manifold solver while the experiment runs.
+	if hub != nil && !system.Cfg.Parallel.Enabled {
+		pace := system.Cfg.Resonance.LearningRate
+		if pace <= 0 {
+			pace = 0.05
+		}
+
+		resSolver, err := resonance.NewSolver(ctx, pace)
+		if err != nil {
+			return err
+		}
+
+		logicNodes = append(logicNodes, resonance.NewBridge(ctx, resSolver, hub))
+
+		booter.manifoldSolver = manifold.NewSolver(ctx, booter.book)
+		booter.manifoldSolver.Start()
+		logicNodes = append(logicNodes, manifold.NewBridge(ctx, booter.manifoldSolver, hub))
+	}
 
 	// The collector writes the tape. It shares the paper account with the
 	// dashboard, so it must not place orders of its own.
 	if paperTrades(booter.capture, booter.dashboard) {
-		// A headless run has no dashboard to publish to: the hub stays a
-		// nil writer instead of a typed nil pointer.
-		var hub io.Writer
-
-		if booter.hub != nil {
-			hub = booter.hub
-		}
-
 		booter.training = strategy.NewTraining(
 			ctx, booter.price, booter.desk, booter.store, hub,
 		)
@@ -328,11 +349,6 @@ func (booter *Booter) initPipeline() error {
 	}
 
 	if paperTrades(booter.capture, booter.dashboard) && system.Cfg.Parallel.Enabled {
-		var hub io.Writer
-		if booter.hub != nil {
-			hub = booter.hub
-		}
-
 		booter.parallelRun = parallel.NewRunner(ctx, booter.price, booter.store, hub)
 		if err := booter.parallelRun.Error(); err != nil {
 			return err
@@ -370,6 +386,7 @@ func (booter *Booter) initPipeline() error {
 		"workspace",
 		[]nmruntime.Ring{
 			{Group: "signal", Nodes: booter.signals},
+			{Group: "logic", Nodes: logicNodes},
 			{Group: "strategy", Nodes: strategyNodes},
 			{Group: "parallel", Nodes: parallelNodes},
 		},
@@ -440,6 +457,12 @@ func (booter *Booter) seedBooks() error {
 			"[booter] level3 seeding failed; venue replies: "+strings.Join(replies, "; "),
 			err,
 		)
+	}
+
+	if booter.manifoldSolver != nil {
+		for _, symbol := range booter.instrument.Symbols() {
+			booter.manifoldSolver.Wake(symbol)
+		}
 	}
 
 	return nil

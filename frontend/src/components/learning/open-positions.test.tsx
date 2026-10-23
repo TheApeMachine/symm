@@ -19,6 +19,7 @@ const lot = (over: Partial<DeskPosition>): DeskPosition => ({
 	exitFee: over.exitFee ?? null,
 	exitVwap: over.exitVwap ?? null,
 	exitRoom: over.exitRoom ?? null,
+	book_return: over.book_return ?? 5,
 	returnPct: over.returnPct ?? null,
 	holdNs: over.holdNs ?? 75_000_000_000,
 });

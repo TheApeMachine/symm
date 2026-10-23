@@ -35,6 +35,10 @@ type Position struct {
 	Mark            *decimal.Decimal        `json:"mark,omitempty"`
 	ExitVWAP        *decimal.Decimal        `json:"exit_vwap,omitempty"`
 	ExitRoom        *float64                `json:"exit_room,omitempty"`
+	// BookReturn is fee-net round-trip return if sold now through the book
+	// (Price.Sale), as a percent matching NetReturn. The UI uses this instead
+	// of mark-over-entry so green means executable edge, not last print.
+	BookReturn      *float64                `json:"book_return,omitempty"`
 	Return          *float64                `json:"return,omitempty"`
 	HoldNs          int64                   `json:"hold_ns,omitempty"`
 	Virtual         bool                    `json:"virtual,omitempty"`
@@ -64,8 +68,8 @@ func NewPosition(
 }
 
 /*
-Update the position with a new mark. The mark drives the exit decision only
-through ShouldExit; the position never closes itself.
+Update the position with a new mark and refreshes book_return for ShouldExit.
+The position never closes itself.
 */
 func (position *Position) Update(mark *decimal.Decimal) {
 	position.mu.Lock()
@@ -84,10 +88,27 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		position.ExitFee = rate
 	}
 
-	// Exit room: how many times the bid book can carry this position.
 	if position.price != nil && position.Qty != nil && position.Qty.Sign() > 0 {
 		room := position.price.ExitRoom(position.Symbol, position.Qty)
 		position.ExitRoom = &room
+
+		if position.EntryPrice != nil && position.EntryPrice.Sign() > 0 {
+			sale, _, ret, ok := position.price.Sale(
+				position.Symbol,
+				position.Qty,
+				position.EntryPrice,
+				position.EntryFee,
+			)
+
+			if ok {
+				pct := ret * 100
+				position.BookReturn = &pct
+				position.ExitVWAP = decimal.NewFromFloat64(sale)
+			} else {
+				position.BookReturn = nil
+				position.ExitVWAP = nil
+			}
+		}
 	}
 }
 
@@ -110,19 +131,18 @@ func (position *Position) feeRate() *decimal.Decimal {
 }
 
 /*
-bandPercent is how far the mark may travel from the entry price before the
-walk is over: two percent either way.
+edgeTargetPercent is the fee-net round-trip return (Price.Sale / book_return)
+at which a virtual lot takes profit or stops out: two percent either way.
 */
-const bandPercent = 2
+const edgeTargetPercent = 2
 
 /*
-ShouldExit reports whether a virtual position's band walk is over: the mark
-has moved more than two percent either way from the entry price. The caller
-(desk/training settle loop) closes it; the position only reports.
+ShouldExit reports whether a virtual lot's executable round-trip edge has
+reached the profit target or stop. The caller closes it; the position only
+reports.
 
-The band is the price against the entry price, not the fee-net return: the
-fee legs carry tier rates (1.587 reads as 1.587%), so they cannot carry this
-comparison, and the round trip already costs more than the band.
+The threshold is book_return from Update (Sale through the live book), not
+last-trade mark over entry. Without a priced book there is no exit signal.
 */
 func (position *Position) ShouldExit() bool {
 	position.mu.Lock()
@@ -132,17 +152,13 @@ func (position *Position) ShouldExit() bool {
 		return false
 	}
 
-	if position.Mark == nil || position.EntryPrice == nil {
+	if position.BookReturn == nil {
 		return false
 	}
 
-	if position.EntryPrice.Sign() <= 0 {
-		return false
-	}
+	edge := *position.BookReturn
 
-	move := (position.Mark.Float64()/position.EntryPrice.Float64() - 1) * 100
-
-	return move < -bandPercent || move > bandPercent
+	return edge >= edgeTargetPercent || edge <= -edgeTargetPercent
 }
 
 /*

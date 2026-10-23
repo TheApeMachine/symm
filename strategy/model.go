@@ -23,7 +23,8 @@ import (
 type Desk interface {
 	Has(symbol string, virtual bool) bool
 	Enter(symbol string, path string, virtual bool) error
-	Exit(symbol string, path string, virtual bool) error
+	Exit(symbol string, path string, virtual bool, triggers ...string) error
+	SaleReturn(symbol string, qty, entry, fee *decimal.Decimal) (float64, bool)
 	Virtual(symbol string) *broker.Position
 	Positions(open bool) []*broker.Position
 	Profit(symbol string, virtual bool) (bool, bool)
@@ -68,9 +69,11 @@ type coolDown struct {
 }
 
 type tickReading struct {
-	maturity     float64
-	surprise     float64
-	frictionPass bool
+	maturity       float64
+	surprise       float64
+	frictionPass   bool
+	frictionHurdle float64
+	ignitionPass   bool
 }
 
 type Model struct {
@@ -199,7 +202,7 @@ func (model *Model) NoteTick(
 		return
 	}
 
-	reading := tickReading{frictionPass: true}
+	reading := tickReading{frictionPass: true, ignitionPass: !model.cfg.RequireIgnitionRegime}
 
 	if model.cfg.RequireFrictionGate {
 		reading.frictionPass = false
@@ -226,6 +229,14 @@ func (model *Model) NoteTick(
 
 		lit++
 		surpriseSum += region.Brightness
+
+		if region.Key == 12 {
+			reading.frictionHurdle = region.Brightness
+		}
+
+		if region.Key == 7 && region.Brightness >= model.cfg.IgnitionMinBrightness {
+			reading.ignitionPass = true
+		}
 	}
 
 	if lit > 0 {
@@ -382,7 +393,7 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 		}
 
 		model.mu.Unlock()
-		model.finishExcursion(symbol, ex)
+		model.tryFinishExcursion(symbol, ex)
 		return nil
 	}
 
@@ -480,7 +491,76 @@ func (model *Model) gateAllows(symbol string, token tokenizer.Token) bool {
 		return false
 	}
 
+	if model.cfg.RequireIgnitionRegime && !reading.ignitionPass {
+		return false
+	}
+
 	return reading.frictionPass
+}
+
+func (model *Model) minExitReturn(symbol string) float64 {
+	floor := model.cfg.MinBookReturnToExit
+	if floor < 0 {
+		floor = 0
+	}
+
+	untyped, ok := model.tickReadings.Load(symbol)
+	if !ok {
+		return floor
+	}
+
+	reading, ok := untyped.(tickReading)
+	if !ok {
+		return floor
+	}
+
+	if reading.frictionHurdle > floor {
+		return reading.frictionHurdle
+	}
+
+	return floor
+}
+
+func (model *Model) tryFinishExcursion(symbol string, ex *excursion) {
+	if ex == nil || model.desk == nil {
+		return
+	}
+
+	ret, ok := model.desk.SaleReturn(symbol, ex.qty, ex.entry, ex.fee)
+	if !ok {
+		return
+	}
+
+	if ret <= model.minExitReturn(symbol) {
+		return
+	}
+
+	model.finishExcursion(symbol, ex, ret)
+}
+
+func (model *Model) tryPendingExcursions() {
+	if model.desk == nil {
+		return
+	}
+
+	model.mu.Lock()
+	pending := make([]*excursion, 0, len(model.excursions))
+	symbols := make([]string, 0, len(model.excursions))
+
+	for symbol, ex := range model.excursions {
+		if ex == nil || !ex.closing {
+			continue
+		}
+
+		symbols = append(symbols, symbol)
+		pending = append(pending, ex)
+	}
+
+	model.mu.Unlock()
+
+	for index, symbol := range symbols {
+		model.tryFinishExcursion(symbol, pending[index])
+	}
 }
 
 func (model *Model) venueSlotsAvailable() bool {
@@ -545,6 +625,10 @@ func (model *Model) Settle(position *broker.Position) {
 	if position == nil || position.EntryPath == "" {
 		return
 	}
+
+	model.mu.Lock()
+	delete(model.excursions, position.Symbol)
+	model.mu.Unlock()
 
 	if _, done := model.settled.LoadOrStore(position.ID, true); done {
 		return
@@ -695,6 +779,12 @@ func (model *Model) noteSample(pathKey, symbol, role string, ret float64) {
 		return
 	}
 
+	if score.Retired {
+		model.mu.Unlock()
+		model.retireExploredPath(key, pathKey, role)
+		return
+	}
+
 	model.mu.Unlock()
 	model.storeScore(key, pathKey, symbol, role, score)
 }
@@ -715,6 +805,14 @@ func (model *Model) freezeOrRetire(score *pathScore) {
 
 	score.Retired = true
 	score.Frozen = false
+}
+
+func (model *Model) retireExploredPath(key, pathKey, role string) {
+	model.mu.Lock()
+	model.explored, _, _ = model.explored.Delete([]byte(key))
+	model.mu.Unlock()
+	model.deleteExploredObject(role, pathKey)
+	model.PublishPolicy()
 }
 
 func (model *Model) storeScore(key, pathKey, symbol, role string, score pathScore) {
@@ -793,18 +891,8 @@ func (model *Model) openExcursion(symbol, pathKey string) error {
 	return nil
 }
 
-func (model *Model) finishExcursion(symbol string, ex *excursion) {
+func (model *Model) finishExcursion(symbol string, ex *excursion, ret float64) {
 	if ex == nil || model.desk == nil {
-		return
-	}
-
-	ret, ok := model.desk.Realize(symbol, ex.qty, ex.entry, ex.fee)
-	if !ok {
-		model.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"[model] book cannot take "+symbol,
-			nil,
-		))
 		return
 	}
 
@@ -815,8 +903,7 @@ func (model *Model) finishExcursion(symbol string, ex *excursion) {
 	}
 
 	if virtual != nil {
-		if err := model.desk.Exit(symbol, exitPath, true); err != nil {
-			model.Error(err)
+		if err := model.desk.Exit(symbol, exitPath, true, "regime exit"); err != nil {
 			return
 		}
 
@@ -860,13 +947,8 @@ func (model *Model) finishVenue(symbol, pathKey string) {
 		return
 	}
 
-	ret, ok := model.desk.Realize(symbol, position.Qty, position.EntryPrice, position.EntryFee)
+	ret, ok := model.desk.SaleReturn(symbol, position.Qty, position.EntryPrice, position.EntryFee)
 	if !ok {
-		model.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"[model] book cannot take "+symbol,
-			nil,
-		))
 		return
 	}
 
@@ -1154,7 +1236,15 @@ func (model *Model) PublishPolicy() {
 
 	if explored != nil {
 		iterator := explored.Root().Iterator()
-		for key, _, ok := iterator.Next(); ok; key, _, ok = iterator.Next() {
+		for key, val, ok := iterator.Next(); ok; key, val, ok = iterator.Next() {
+			if val != nil {
+				var score pathScore
+				val.Lookup(&score, "score")
+				if score.Retired {
+					continue
+				}
+			}
+
 			published, valid := exploredPublishKey(string(key))
 			if !valid {
 				continue

@@ -1,10 +1,9 @@
 package parallel
 
 import (
-	"bytes"
 	"context"
 	"encoding"
-	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
@@ -22,18 +21,18 @@ const (
 	saveEverySeq = 128
 )
 
-type symbolPersist struct {
-	Features     []resonance.Feature
-	Steps        int64
-	Moments      [][]byte
-	Standardized []float64
-	Control      []byte
-	Treatment    []byte
+type symbolPersistJSON struct {
+	Features     []resonance.Feature `json:"features"`
+	Steps        int64               `json:"steps"`
+	Moments      [][]byte            `json:"moments"`
+	Standardized []float64           `json:"standardized"`
+	Control      []byte              `json:"control"`
+	Treatment    []byte              `json:"treatment"`
 }
 
-type ledgerPersist struct {
-	Open    map[BookID]map[string]*Lot
-	Returns map[BookID][]float64
+type ledgerPersistJSON struct {
+	Open    map[BookID]map[string]*Lot `json:"open"`
+	Returns map[BookID][]float64       `json:"returns"`
 }
 
 func (runner *Runner) restore(client *store.Client) {
@@ -149,7 +148,7 @@ func (bank *CoderBank) SaveSymbol(symbol string) ([]byte, int, error) {
 
 	dropped += droppedTreat
 
-	state := symbolPersist{
+	state := symbolPersistJSON{
 		Features:     resonance.Features,
 		Standardized: slices.Clone(pair.scorer.standardized),
 		Moments:      make([][]byte, len(pair.scorer.moments)),
@@ -162,7 +161,6 @@ func (bank *CoderBank) SaveSymbol(symbol string) ([]byte, int, error) {
 			return nil, 0, fmt.Errorf("parallel: %s moments not marshalable", symbol)
 		}
 
-		var err error
 		if state.Moments[index], err = marshaler.MarshalBinary(); err != nil {
 			return nil, 0, errnie.Err(errnie.Internal, fmt.Sprintf("parallel: %s moments[%d]", symbol, index), err)
 		}
@@ -182,12 +180,12 @@ func (bank *CoderBank) SaveSymbol(symbol string) ([]byte, int, error) {
 
 	state.Treatment = treatmentBlob
 
-	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(state); err != nil {
+	blob, err := json.Marshal(state)
+	if err != nil {
 		return nil, 0, errnie.Err(errnie.Internal, "parallel: encoding "+symbol+"'s state", err)
 	}
 
-	return buf.Bytes(), dropped, nil
+	return blob, dropped, nil
 }
 
 func (bank *CoderBank) LoadSymbol(symbol string, blob []byte) error {
@@ -202,8 +200,8 @@ func (bank *CoderBank) LoadSymbol(symbol string, blob []byte) error {
 	}
 	bank.mu.Unlock()
 
-	var state symbolPersist
-	if err := gob.NewDecoder(bytes.NewReader(blob)).Decode(&state); err != nil {
+	var state symbolPersistJSON
+	if err := json.Unmarshal(blob, &state); err != nil {
 		return errnie.Err(errnie.UnprocessableContent, "parallel: "+symbol+"'s state does not decode", err)
 	}
 
@@ -264,17 +262,26 @@ func (ledger *Ledger) Marshal() ([]byte, error) {
 	ledger.mu.Lock()
 	defer ledger.mu.Unlock()
 
-	state := ledgerPersist{
-		Open:    ledger.open,
+	state := ledgerPersistJSON{
+		Open:    map[BookID]map[string]*Lot{},
 		Returns: ledger.returns,
 	}
 
-	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(state); err != nil {
-		return nil, err
+	for book, open := range ledger.open {
+		if state.Open[book] == nil {
+			state.Open[book] = map[string]*Lot{}
+		}
+
+		for symbol, lot := range open {
+			if lot == nil {
+				continue
+			}
+
+			state.Open[book][symbol] = lot
+		}
 	}
 
-	return buf.Bytes(), nil
+	return json.Marshal(state)
 }
 
 func (ledger *Ledger) Unmarshal(blob []byte) error {
@@ -282,8 +289,8 @@ func (ledger *Ledger) Unmarshal(blob []byte) error {
 		return fmt.Errorf("parallel: nil ledger")
 	}
 
-	var state ledgerPersist
-	if err := gob.NewDecoder(bytes.NewReader(blob)).Decode(&state); err != nil {
+	var state ledgerPersistJSON
+	if err := json.Unmarshal(blob, &state); err != nil {
 		return err
 	}
 
@@ -291,7 +298,27 @@ func (ledger *Ledger) Unmarshal(blob []byte) error {
 	defer ledger.mu.Unlock()
 
 	if state.Open != nil {
-		ledger.open = state.Open
+		open := map[BookID]map[string]*Lot{
+			BookControl:   {},
+			BookTreatment: {},
+			BookPhysics:   {},
+		}
+
+		for book, symbols := range state.Open {
+			if open[book] == nil {
+				open[book] = map[string]*Lot{}
+			}
+
+			for symbol, lot := range symbols {
+				if lot == nil {
+					continue
+				}
+
+				open[book][symbol] = lot
+			}
+		}
+
+		ledger.open = open
 	}
 
 	if state.Returns != nil {

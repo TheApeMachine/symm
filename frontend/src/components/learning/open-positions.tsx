@@ -112,24 +112,16 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 	const vwap = readout.exitVwap;
 	const settled = numberOf(row.net_return);
 
+	const bookReturn = numberOf(row.book_return);
 	/*
-	"If sold now" is the settled round trip, not the mark-over-entry price
-	move: proceeds against cost after both fee legs — the same arithmetic
-	the desk realizes at exit (price.RealizedReturn). The fee fields are
-	percent rates (the fee row reads ~1.587 = 1.587%), so the round trip on
-	fresh marks is the price move minus the entry rate, plus the exit rate.
-	Once the desk has settled, net_return (already percent) is the answer.
+	"If sold now" is the book-grounded round trip (Price.Sale / CloseOut
+	family), not last-trade mark. Settled lots use net_return from the desk.
 	*/
-	const entryFee = numberOf(row.entry_fee);
-	const exitFee = numberOf(row.exit_fee);
 	const soldNow = useMemo(() => {
 		if (settled !== undefined) return settled / 100;
-		if (entry === undefined || mark === undefined || entry <= 0) {
-			return undefined;
-		}
-		const move = (mark - entry) / entry;
-		return move - ((entryFee ?? 0) + (exitFee ?? 0)) / 100;
-	}, [settled, entry, mark, entryFee, exitFee]);
+		if (bookReturn !== undefined) return bookReturn / 100;
+		return undefined;
+	}, [settled, bookReturn]);
 	const pnlPct = soldNow;
 	const room = readout.exitRoom ?? undefined;
 	const pnlTone: GaugeTone =
@@ -207,7 +199,7 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 								</span>
 							)
 						}
-						caption="if sold now"
+						caption="book edge"
 					/>
 					<Gauge
 						value={

@@ -105,6 +105,9 @@ func Filters(value *data.Value) bool {
 		if source == "parallel" || source == "training" {
 			return source == "parallel" || value.Role == "longtail"
 		}
+		if isLogic(value, "resonance", "manifold") {
+			return isFocus(value) || value.Role == "parallel"
+		}
 		return source == "sequitur" || source == "cognition"
 	case "xray":
 		if isSignal(value, "hawkes") {

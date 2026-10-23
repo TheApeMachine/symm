@@ -212,6 +212,7 @@ export const positionReadout = (
 			? entryFeeFraction + (exitFeeFraction ?? 0)
 			: null;
 	const exitRoom = decimal(row.exit_room);
+	const bookReturn = decimal(row.book_return);
 	let grossPnl: number | null = null;
 	let netPnl: number | null = null;
 	let unrealizedPnl: number | null = null;
@@ -268,6 +269,10 @@ export const positionReadout = (
 			netPnl = grossPnl - fees;
 			returnPct = netPnl / buys.cost;
 		}
+	}
+
+	if (!closed && bookReturn !== null && entryPrice !== null && entryPrice > 0) {
+		returnPct = bookReturn / 100;
 	}
 
 	return {
