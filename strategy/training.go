@@ -72,6 +72,15 @@ func (training *Training) Step(value *data.Value) *data.Value {
 	}
 
 	if len(observed) == 0 {
+		training.model.reviewExcursions()
+
+		for _, cv := range training.desk.ClosedVirtuals() {
+			training.model.Settle(cv)
+			training.desk.Drop(cv.Symbol)
+		}
+
+		training.metrics.publish(training.hub)
+
 		return value
 	}
 
@@ -108,12 +117,13 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		training.model.Evaluate(symbol, chord)
 	}
 
-	training.model.tryPendingExcursions()
+	training.model.reviewExcursions()
 
 	value.Append(observed, "train", "regions")
 
 	for _, cv := range training.desk.ClosedVirtuals() {
 		training.model.Settle(cv)
+		training.desk.Drop(cv.Symbol)
 	}
 
 	training.metrics.publish(training.hub)

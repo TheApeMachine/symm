@@ -1,10 +1,12 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { signals as appSignals } from "#/collections/app";
+import { positionReadout } from "#/components/book-readout";
 import { positionRows } from "#/components/learning/open-positions";
 import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
 } from "#/lib/desk-closed-lifecycle";
+import { syncOpenPositionCount } from "#/lib/open-position-count";
 
 /*
 Paper round trips as the dashboard run lives them, streamed over the hub as
@@ -62,6 +64,8 @@ export type Lifecycle = {
 	marks?: LifeMark[];
 	outcome?: LifeOutcome | null;
 	book?: string;
+	/** Set when this row was copied from a desk lot snapshot. */
+	desk?: boolean;
 	/**
 	Tape ticks the closed round trip covered, carried on the desk position's
 	own run epoch: A some prints before the entry, B the entry, C the exit.
@@ -142,6 +146,7 @@ const publish = () => {
 		b.opened_at.localeCompare(a.opened_at),
 	);
 	snapshot = { report: summarize(all) };
+	syncOpenPositionCount();
 	for (const listener of listeners) listener();
 };
 
@@ -236,10 +241,34 @@ export const ingestPositionFrame = (frame: unknown) => {
 };
 
 /*
-ingestDeskClosedLots merges persisted desk round trips into the lifecycle
-report when the live position frame stream did not replay them.
+ingestDeskClosedLots mirrors the desk snapshot. A lot is open when it is in
+that snapshot without a close, and closed when Exit put a close on it. Desk
+rows that are no longer open are removed. A close already recorded stays.
 */
 export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
+	const openIds = new Set(
+		rows
+			.filter((row) => row.id && !positionReadout(row).closed)
+			.map((row) => String(row.id)),
+	);
+
+	let dropped = false;
+
+	for (const [id, life] of lives) {
+		if (!life.desk || life.status === "closed") {
+			continue;
+		}
+
+		if (!openIds.has(id)) {
+			lives.delete(id);
+			dropped = true;
+		}
+	}
+
+	if (dropped) {
+		publish();
+	}
+
 	for (const row of rows) {
 		const life =
 			lifecycleFromDeskClosed(row as Record<string, unknown>) ??
@@ -270,6 +299,10 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 			marks: marks.length > 0 ? marks : existing?.marks,
 		});
 	}
+};
+
+export const ingestDeskSnapshot = () => {
+	ingestDeskClosedLots(positionRows(appSignals.positions.state));
 };
 
 /* resetLifecycles empties the store (tests). */

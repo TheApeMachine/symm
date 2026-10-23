@@ -29,14 +29,18 @@ describe("buildTreeFromPrefixes", () => {
 		expect(actionsOf(tree)).toEqual(["ENTER"]);
 	});
 
-	it("keeps enter and exit when they share a grammar path", () => {
-		const actions = actionsOf(
-			buildTreeFromPrefixes([
-				"policy/current/R01/R02/enter.bin",
-				"policy/current/R01/R02/exit.bin",
-			]),
-		);
-		expect(actions).toEqual(["ENTER", "EXIT"]);
+	it("places enter and exit on separate branches from root", () => {
+		const tree = buildTreeFromPrefixes([
+			"policy/current/R01/R02/enter.bin",
+			"policy/current/R04/R05/exit.bin",
+		]);
+		const enterLeaf = tree?.children?.find((c) => c.token === "R01")
+			?.children?.[0]?.children?.find((c) => c.action === "ENTER");
+		const exitLeaf = tree?.children?.find((c) => c.token === "R04")
+			?.children?.[0]?.children?.find((c) => c.action === "EXIT");
+		expect(enterLeaf?.action).toBe("ENTER");
+		expect(exitLeaf?.action).toBe("EXIT");
+		expect(enterLeaf?.prefix).not.toBe(exitLeaf?.prefix);
 	});
 });
 

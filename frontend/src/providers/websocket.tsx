@@ -11,6 +11,8 @@ import {
 import { ingestParallelSummary } from "#/collections/parallel";
 import { ingestSequiturFrame } from "#/collections/sequitur";
 import { hubWsUrl } from "#/lib/hub";
+import { ingestDeskSnapshot } from "#/lib/lifecycle";
+import { syncOpenPositionCount } from "#/lib/open-position-count";
 import { parseValues } from "#/types/decoder";
 import type { Value } from "#/types/value";
 
@@ -171,6 +173,11 @@ export const ingest = (values: Value[]) => {
 				...prev,
 				[value.scope]: value,
 			}));
+
+			if (value.origin === "positions") {
+				syncOpenPositionCount();
+				ingestDeskSnapshot();
+			}
 
 			/*
 			train/regions layers feed the region ring and the token strip at

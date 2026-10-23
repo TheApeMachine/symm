@@ -173,6 +173,10 @@ func PublishReading(state *State, scope string, epoch, tick, timestamp uint64) *
 	}
 
 	if scope == "" {
+		scope = state.Symbol
+	}
+
+	if scope == "" {
 		scope = types.Focus()
 	}
 

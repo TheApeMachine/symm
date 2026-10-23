@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -99,6 +100,10 @@ func NewDesk(
 			}
 
 			val.Restore(position)
+
+			if key == "virtual" {
+				types.SetVirtualOpen(position.Symbol, true)
+			}
 		}
 	}
 
@@ -112,15 +117,15 @@ connection is established, and we want to update the client with
 some initial data.
 */
 func (desk *Desk) Hello() {
-	for _, virtual := range []bool{true, false} {
-		positions := desk.Positions(virtual)
+	// One snapshot: every lot the desk still holds. Open until Exit, then
+	// the closed virtual until Train drops it. An empty list is the snapshot
+	// when nothing is open.
+	lots := append(desk.positions.All(true), desk.virtuals.All(true)...)
+	lots = append(lots, desk.virtuals.Closed()...)
 
-		if len(positions) > 0 {
-			io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
-				positions, "positions",
-			))
-		}
-	}
+	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
+		lots, "positions",
+	))
 
 	if desk.balance.value != nil {
 		io.Copy(ui.UI, desk.balance.value)
@@ -132,16 +137,17 @@ Positions returns the open positions in the desk.
 */
 func (desk *Desk) Positions(open bool) []*Position {
 	if open {
-		return desk.positions.All()
+		return desk.positions.All(true)
 	}
 
-	return desk.virtuals.All()
+	return desk.virtuals.All(true)
 }
 
 /*
-Update marks open positions against the trade price and settles any virtual
-whose book edge hit the ±2% target. Called from the workspace tick handler —
-the desk sits off the trade ingress path, so this is where marks become live.
+Update marks open positions against the trade price. Virtual lots close only
+through the strategy model (regime exit + priced book), not on a desk threshold.
+Called from the workspace tick handler — the desk sits off the trade ingress
+path, so this is where marks become live.
 */
 func (desk *Desk) Update(trades []kraken.TradeData) {
 	/*
@@ -150,6 +156,11 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 		whole desk — every position, moved or not — so the frame always carries
 		every card and an unchanged position never blinks out and back.
 	*/
+	traded := make(map[string]struct{}, len(trades))
+	for _, trade := range trades {
+		traded[trade.Symbol] = struct{}{}
+	}
+
 	for _, val := range []*Cache{
 		desk.positions, desk.virtuals,
 	} {
@@ -162,15 +173,20 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 
 			position.Update(&trade.Price)
 		}
-	}
 
-	for _, position := range desk.virtuals.All() {
-		if position == nil || !position.ShouldExit() {
-			continue
-		}
+		for _, position := range val.All(true) {
+			if position == nil || position.Symbol == "" {
+				continue
+			}
 
-		if err := desk.Exit(position.Symbol, position.EntryPath, true, "book edge target"); err != nil {
-			desk.Error(err)
+			if _, ok := traded[position.Symbol]; ok {
+				continue
+			}
+
+			mark := desk.price.CurrentMark(position.Symbol)
+			if mark != nil {
+				position.Update(mark)
+			}
 		}
 	}
 
@@ -235,9 +251,11 @@ func (desk *Desk) Enter(
 	position := NewPosition(symbol, path, virtual, desk.price)
 
 	if desk.price.Status() != runtime.READY {
-		// Boot ordering, not a fault: sizing waits for fees and reference
-		// cash, so the tick is skipped silently instead of flooding the log.
-		return nil
+		return errnie.Err(
+			errnie.NotFound,
+			"[desk.Enter] price is not ready for "+symbol,
+			nil,
+		)
 	}
 
 	cash := desk.balance.cash(desk.balance.Quote)
@@ -250,6 +268,10 @@ func (desk *Desk) Enter(
 	allocation, err := desk.price.AllocateEntry(symbol, cash)
 
 	if err != nil {
+		if errnie.IsNotFound(err) {
+			return err
+		}
+
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[desk.Enter] unable to size entry for "+symbol,
@@ -299,12 +321,19 @@ func (desk *Desk) Enter(
 
 	cache.Add(position.Symbol, position)
 
+	if virtual {
+		types.SetVirtualOpen(symbol, true)
+	}
+
 	if err := desk.history.Store(data.NewValue(
 		key, "open", symbol,
 	).Append(
 		position, "position",
 	)); err != nil {
 		cache.Drop(position.Symbol)
+		if virtual {
+			types.SetVirtualOpen(symbol, false)
+		}
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[desk.Enter] failed to store position",
@@ -376,6 +405,52 @@ func (desk *Desk) Quote(
 	}
 
 	return allocation.Quantity, allocation.EntryPrice, allocation.EntryFee, nil
+}
+
+/*
+Friction is the round-trip cost of the symbol: the relative spread plus
+both fee legs. The return is a fraction of price, the same units as
+SaleReturn. ok is false when the book or the fee tier is missing.
+*/
+func (desk *Desk) Friction(symbol string) (float64, bool) {
+	if desk == nil || desk.price == nil || symbol == "" {
+		return 0, false
+	}
+
+	bid, ask := desk.price.Touch(symbol)
+	if bid == nil || ask == nil || bid.Sign() <= 0 || ask.Sign() <= 0 || ask.Cmp(bid) <= 0 {
+		return 0, false
+	}
+
+	mid := bid.Add(ask).Div(decimal.NewFromInt64(2))
+	if mid.Sign() <= 0 {
+		return 0, false
+	}
+
+	fee := desk.price.Fee(symbol)
+	if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 {
+		return 0, false
+	}
+
+	hurdle := ask.Sub(bid).Div(mid).Float64() + 2*fee.Fee.Float64()/100
+	if hurdle <= 0 {
+		return 0, false
+	}
+
+	return hurdle, true
+}
+
+/*
+OpenMark is the fee-net book return at the fill, the baseline a later
+print is measured from.
+*/
+func (desk *Desk) OpenMark(symbol string) (float64, bool) {
+	position := desk.Open(symbol)
+	if position == nil || position.Qty == nil || position.EntryPrice == nil || position.EntryFee == nil {
+		return 0, false
+	}
+
+	return desk.SaleReturn(symbol, position.Qty, position.EntryPrice, position.EntryFee)
 }
 
 /*
@@ -478,6 +553,7 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool, triggers ...str
 	// executions land (Apply settles the lot wherever the position lives),
 	// then history.Move retires it from the desk entirely.
 	if virtual {
+		types.SetVirtualOpen(position.Symbol, false)
 		desk.virtuals.Remove(position.Symbol)
 	} else {
 		desk.positions.Remove(position.Symbol)
@@ -517,6 +593,8 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool, triggers ...str
 			err,
 		))
 	}
+
+	desk.Hello()
 
 	return nil
 }
@@ -570,21 +648,14 @@ their outcomes are what Train writes into the model. Drop retires them once
 settled.
 */
 func (desk *Desk) ClosedVirtuals() []*Position {
-	positions := make([]*Position, 0)
-
-	for _, position := range desk.virtuals.All() {
-		if position.ClosedAt != nil {
-			positions = append(positions, position)
-		}
-	}
-
-	return positions
+	return desk.virtuals.Closed()
 }
 
 /*
 Drop retires a virtual from the desk entirely, open or closed.
 */
 func (desk *Desk) Drop(symbol string) {
+	types.SetVirtualOpen(symbol, false)
 	desk.virtuals.Drop(symbol)
 }
 

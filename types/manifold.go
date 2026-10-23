@@ -22,6 +22,7 @@ type PhaseChannelResultant struct {
 }
 
 type ManifoldState struct {
+	Symbol        string
 	At            time.Time
 	Version       uint64
 	State         *sensorium.State

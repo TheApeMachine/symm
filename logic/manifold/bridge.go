@@ -82,7 +82,13 @@ func (bridge *Bridge) Step(tick *data.Value) *data.Value {
 	}
 
 	bridge.lastVersion = reading.Version
-	frame := PublishReading(reading, types.Focus(), tick.Epoch, tick.Tick, tick.Timestamp)
+
+	scope := reading.Symbol
+	if focus := types.Focus(); focus != "" && scope != focus {
+		return tick
+	}
+
+	frame := PublishReading(reading, scope, tick.Epoch, tick.Tick, tick.Timestamp)
 	if frame == nil {
 		return tick
 	}

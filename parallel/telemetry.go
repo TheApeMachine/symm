@@ -41,6 +41,8 @@ func (runner *Runner) publishManifoldFrame(tick *data.Value, scope string) {
 		scope = types.Focus()
 	}
 
+	frame.Symbol = scope
+
 	value := manifold.PublishReading(
 		frame,
 		scope,

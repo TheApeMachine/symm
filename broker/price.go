@@ -571,9 +571,9 @@ func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Dec
 	}
 
 	if quantity == nil && err == nil {
-		err = errnie.Error(errnie.Err(
+		err = errnie.Err(
 			errnie.NotFound, "[price] book unavailable for "+symbol, nil,
-		))
+		)
 	}
 
 	// Cash too small for QtyMin/CostMin → abstain, do not round up into an
@@ -589,6 +589,10 @@ func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Dec
 		}
 	}
 
+	if err != nil && errnie.IsNotFound(err) {
+		return quantity, err
+	}
+
 	return quantity, errnie.Error(err)
 }
 
@@ -599,9 +603,7 @@ func (price *Price) Affordable(
 	cost := price.WithFee(symbol, unit.SetScale(decimal.DefaultScale), BUY)
 
 	if cost == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound, "[price] entry fee unavailable for "+symbol, nil,
-		))
+		return nil, errnie.Err(errnie.NotFound, "[price] entry fee unavailable for "+symbol, nil)
 	}
 
 	requested := cash.SetScale(decimal.DefaultScale).Div(cost)
@@ -692,16 +694,12 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 	var err error
 
 	if price.Books == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound, "entry cost: books unavailable", nil,
-		))
+		return nil, errnie.Err(errnie.NotFound, "entry cost: books unavailable", nil)
 	}
 
 	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestAsk() == nil || book.BestBid() == nil {
-			err = errnie.Error(errnie.Err(
-				errnie.NotFound, "entry cost: book unavailable for "+symbol, nil,
-			))
+			err = errnie.Err(errnie.NotFound, "entry cost: book unavailable for "+symbol, nil)
 			return
 		}
 
@@ -731,9 +729,7 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 		exitFactor := price.WithFee(symbol, decimalOne, SELL)
 
 		if total == nil || exitFactor == nil {
-			err = errnie.Error(errnie.Err(
-				errnie.NotFound, "entry cost: fee unavailable for "+symbol, nil,
-			))
+			err = errnie.Err(errnie.NotFound, "entry cost: fee unavailable for "+symbol, nil)
 			return
 		}
 
@@ -813,9 +809,7 @@ func (price *Price) RoundTrip(
 	}
 
 	if price.Fee(symbol) == nil {
-		return nil, nil, errnie.Error(errnie.Err(
-			errnie.NotFound, "[price] fee unavailable for "+symbol, nil,
-		))
+		return nil, nil, errnie.Err(errnie.NotFound, "[price] fee unavailable for "+symbol, nil)
 	}
 
 	budget, err := price.budget()
@@ -864,9 +858,7 @@ func (price *Price) AllocateEntry(
 	fee := price.Fee(symbol)
 
 	if fee == nil || fee.Fee == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound, "[price] fee unavailable for "+symbol, nil,
-		))
+		return nil, errnie.Err(errnie.NotFound, "[price] fee unavailable for "+symbol, nil)
 	}
 
 	feeRate := decimalPercent.Mul(fee.Fee)
@@ -877,9 +869,7 @@ func (price *Price) AllocateEntry(
 	if price.Books != nil {
 		price.Books.Book(symbol, func(book *spotbook.Book) {
 			if book == nil || book.BestAsk() == nil || book.BestBid() == nil {
-				err = errnie.Error(errnie.Err(
-					errnie.NotFound, "[price] book unavailable for "+symbol, nil,
-				))
+				err = errnie.Err(errnie.NotFound, "[price] book unavailable for "+symbol, nil)
 				return
 			}
 
@@ -1009,9 +999,7 @@ func (price *Price) AllocateEntry(
 			exitFactor := price.WithFee(symbol, decimalOne, SELL)
 
 			if exitFactor == nil {
-				err = errnie.Error(errnie.Err(
-					errnie.NotFound, "[price] exit factor unavailable for "+symbol, nil,
-				))
+				err = errnie.Err(errnie.NotFound, "[price] exit factor unavailable for "+symbol, nil)
 				return
 			}
 
@@ -1050,9 +1038,7 @@ func (price *Price) AllocateEntry(
 	_, askPrice := price.Touch(symbol)
 
 	if askPrice == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound, "[price] no book or quote available for "+symbol, nil,
-		))
+		return nil, errnie.Err(errnie.NotFound, "[price] no book or quote available for "+symbol, nil)
 	}
 
 	qRaw := maxGross.Div(askPrice)
@@ -1093,9 +1079,7 @@ func (price *Price) AllocateEntry(
 	exitFactor := price.WithFee(symbol, decimalOne, SELL)
 
 	if exitFactor == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound, "[price] exit factor unavailable for "+symbol, nil,
-		))
+		return nil, errnie.Err(errnie.NotFound, "[price] exit factor unavailable for "+symbol, nil)
 	}
 
 	breakEvenGross := total.Div(exitFactor)
@@ -1143,9 +1127,7 @@ func (price *Price) Liquidate(
 	if price.Books != nil {
 		price.Books.Book(symbol, func(book *spotbook.Book) {
 			if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
-				err = errnie.Error(errnie.Err(
-					errnie.NotFound, "[price] book unavailable for "+symbol, nil,
-				))
+				err = errnie.Err(errnie.NotFound, "[price] book unavailable for "+symbol, nil)
 
 				return
 			}
@@ -1194,18 +1176,14 @@ func (price *Price) Liquidate(
 	bidPrice, _ := price.Touch(symbol)
 
 	if bidPrice == nil {
-		return nil, nil, errnie.Error(errnie.Err(
-			errnie.NotFound, "[price] no book or bid price available for "+symbol, nil,
-		))
+		return nil, nil, errnie.Err(errnie.NotFound, "[price] no book or bid price available for "+symbol, nil)
 	}
 
 	gross = notional(bidPrice, quantity)
 	net = price.WithFee(symbol, gross, SELL)
 
 	if net == nil {
-		return nil, nil, errnie.Error(errnie.Err(
-			errnie.NotFound, "[price] exit fee unavailable for "+symbol, nil,
-		))
+		return nil, nil, errnie.Err(errnie.NotFound, "[price] exit fee unavailable for "+symbol, nil)
 	}
 
 	return net, gross, nil
@@ -1224,35 +1202,21 @@ func (price *Price) SellQuote(
 	}
 
 	if price.Books == nil {
-		return nil, errnie.Error(
-			errnie.Err(
-				errnie.NotFound,
-				"[price] books unavailable",
-				nil,
-			),
+		return surface, errnie.Err(
+			errnie.NotFound,
+			"[price] books unavailable",
+			nil,
 		)
 	}
 
 	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
-			errnie.Error(errnie.Err(
-				errnie.NotFound,
-				"[price] book unavailable for "+symbol,
-				nil,
-			))
-
 			return
 		}
 
 		// A crossed or touching book prices no liquidation; it reads as
 		// book shape, not as a fault. See EntryCost above.
 		if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"[price] crossed book for "+symbol,
-				nil,
-			))
-
 			return
 		}
 
@@ -1267,12 +1231,6 @@ func (price *Price) SellQuote(
 		filled, gross, err := price.Walk(book, quantity, SELL)
 
 		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"symm: walk failed for "+symbol,
-				err,
-			))
-
 			return
 		}
 

@@ -28,11 +28,6 @@ type Config struct {
 	MinTokenBrightness    float64
 	MinGridMaturity       float64
 
-	// MinBookReturnToExit is the minimum fee-net book return (fraction) required
-	// before a regime exit closes a virtual excursion. Zero means any positive
-	// executable edge after friction hurdle.
-	MinBookReturnToExit float64
-
 	// RequireIgnitionRegime blocks enter unless R07 (explosive ignition) is lit.
 	RequireIgnitionRegime bool
 	IgnitionMinBrightness float64
@@ -52,7 +47,6 @@ func LoadConfig() *Config {
 	viper.SetDefault("learning.friction_min_brightness", 0.35)
 	viper.SetDefault("learning.min_token_brightness", 0.25)
 	viper.SetDefault("learning.min_grid_maturity", 0.35)
-	viper.SetDefault("learning.min_book_return_to_exit", 0.0)
 	viper.SetDefault("learning.require_ignition_regime", true)
 	viper.SetDefault("learning.ignition_min_brightness", 0.35)
 
@@ -70,7 +64,6 @@ func LoadConfig() *Config {
 		FrictionMinBrightness: viper.GetFloat64("learning.friction_min_brightness"),
 		MinTokenBrightness:    viper.GetFloat64("learning.min_token_brightness"),
 		MinGridMaturity:       viper.GetFloat64("learning.min_grid_maturity"),
-		MinBookReturnToExit:   viper.GetFloat64("learning.min_book_return_to_exit"),
 		RequireIgnitionRegime: viper.GetBool("learning.require_ignition_regime"),
 		IgnitionMinBrightness: viper.GetFloat64("learning.ignition_min_brightness"),
 	}

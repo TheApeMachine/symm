@@ -69,8 +69,9 @@ const getPorts = (
 
 /*
 grammarKey drops the store location so the tree is the token path.
-Confirmed paths are policy/current/<path>/<action>.bin. Explored paths
-are policy/explored/<action>/<path>.bin and land on the same terminals.
+Confirmed paths are policy/current/<path>/<action>.bin. Enter paths end
+precursor A→B; exit paths are a separate holding B→C walk from root.
+Explored paths are policy/explored/<action>/<path>.bin.
 */
 export function grammarKey(key: string): string {
 	const current = "policy/current/";

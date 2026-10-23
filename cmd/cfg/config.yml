@@ -326,6 +326,12 @@ learning:
   default_window_size: 15
   shannon_capacity: 0.45
 
+detector:
+  # Fewest ticks in the clamped A→B precursor before detect emits an excursion.
+  min_precursor_ticks: 10
+  # Pull B, C, entry, and exit back by this fraction of the A→B span (ticks).
+  execution_lead_fraction: 0.1
+
 paper:
   # `make run` never writes storage: every paper-trade record (one data.Value
   # per traded decision, data.PaperKeys) is appended to this local file, and

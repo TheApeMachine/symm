@@ -140,6 +140,24 @@ func (cache *Cache) Add(symbol string, position *Position) bool {
 	return ok
 }
 
+/*
+Closed returns positions on the closed side only, in symbol order.
+*/
+func (cache *Cache) Closed() []*Position {
+	positions := make([]*Position, 0)
+
+	cache.closed.Range(func(key, value any) bool {
+		positions = append(positions, value.(*Position))
+		return true
+	})
+
+	slices.SortFunc(positions, func(a, b *Position) int {
+		return strings.Compare(a.Symbol, b.Symbol)
+	})
+
+	return positions
+}
+
 func (cache *Cache) Remove(symbol string) bool {
 	loaded, ok := cache.open.LoadAndDelete(symbol)
 

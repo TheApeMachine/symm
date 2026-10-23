@@ -244,9 +244,9 @@ func (solver *Solver) markDirty(symbol string) {
 	solver.dirty.Store(symbol, struct{}{})
 }
 
-func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
+func (solver *Solver) project() (departures []int64, batch *sensorium.State, host string) {
 	if solver.book == nil {
-		return nil, nil
+		return nil, nil, ""
 	}
 
 	seen := make(map[int64]string, len(solver.loaded))
@@ -309,7 +309,7 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 		for _, state := range states {
 			sensorium.StatePool.Put(state)
 		}
-		return nil, nil
+		return nil, nil, hostSymbol(dirtySymbols)
 	}
 
 	for contentID := range solver.loaded {
@@ -325,7 +325,7 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 	batch = collectStates(states)
 	solver.loaded = seen
 
-	return departures, batch
+	return departures, batch, hostSymbol(dirtySymbols)
 }
 
 /*
@@ -394,7 +394,7 @@ func (solver *Solver) Advance() {
 	}
 	defer solver.isAdvancing.Store(false)
 
-	departures, batch := solver.project()
+	departures, batch, host := solver.project()
 
 	if err := solver.dataset.Error(); err != nil {
 		solver.Error(err)
@@ -421,13 +421,31 @@ func (solver *Solver) Advance() {
 	}
 
 	if state != nil {
-		solver.publishReading(state)
+		solver.publishReading(host)
 	}
 }
 
-func (solver *Solver) publishReading(state *sensorium.State) *State {
+func hostSymbol(dirty []string) string {
+	if len(dirty) == 0 {
+		return ""
+	}
+
+	focus := types.Focus()
+	for _, symbol := range dirty {
+		if symbol == focus {
+			return focus
+		}
+	}
+
+	sorted := append([]string(nil), dirty...)
+	slices.Sort(sorted)
+
+	return sorted[len(sorted)-1]
+}
+
+func (solver *Solver) publishReading(host string) *State {
 	version := solver.version.Add(1)
-	reading := SnapshotHost(solver.physics, version)
+	reading := SnapshotHost(solver.physics, version, host)
 	if reading == nil {
 		return nil
 	}

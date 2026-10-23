@@ -30,6 +30,8 @@ type Desk interface {
 	Profit(symbol string, virtual bool) (bool, bool)
 	ClosedVirtuals() []*broker.Position
 	Drop(symbol string)
+	Friction(symbol string) (float64, bool)
+	OpenMark(symbol string) (float64, bool)
 	Quote(symbol string) (qty, entry, fee *decimal.Decimal, err error)
 	Realize(symbol string, qty, entry, fee *decimal.Decimal) (float64, bool)
 	Occupied(symbol string) bool
@@ -59,7 +61,12 @@ type excursion struct {
 	qty       *decimal.Decimal
 	entry     *decimal.Decimal
 	fee       *decimal.Decimal
-	closing   bool
+	// anchor is the fee-net book return at the open print. The hurdle is
+	// measured from this reading, so the spread already in the fill is not
+	// itself an exit.
+	anchor   float64
+	anchored bool
+	cause    string
 }
 
 // coolDown blocks a second sample of the sentence that just closed until
@@ -93,6 +100,7 @@ type Model struct {
 	ingress         *sync.Map
 	tickReadings    *sync.Map
 	excursions      map[string]*excursion
+	venueAnchor     map[string]float64
 	cool            map[string]*coolDown
 }
 
@@ -119,6 +127,7 @@ func NewModel(
 		ingress:      &sync.Map{},
 		tickReadings: &sync.Map{},
 		excursions:   map[string]*excursion{},
+		venueAnchor:  map[string]float64{},
 		cool:         map[string]*coolDown{},
 	}
 
@@ -338,12 +347,17 @@ model's action, or nil when no action is taken.
 The token is one trie edge. In order:
  1. A token from the sentence just sampled is ignored until a different
     regime shows the sentence has ended. That separator is not a path step.
- 2. An open ledger excursion closes when an exit-side regime arrives and
-    the bid book can take the size.
+ 2. An open ledger excursion is left to develop. It closes later, from the
+    fee-net book return, when that return has moved one friction hurdle
+    from the open print: up through a profit, or down by the same amount.
  3. The longest stored prefix of the path decides. A confirmed enter may
     open a venue order. A confirmed exit closes the open lot.
  4. Otherwise an enter-side path of at least minPathLength opens a ledger
     excursion, which does not take the symbol's position slot.
+
+Precursor (A→B) and holding (B→C) are separate trie walks: opening a
+sample or a venue lot resets the symbol path so exit keys are only the
+holding fragment, never enter plus exit on one terminal prefix.
 */
 func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 	if len(token.Symbols) == 0 {
@@ -386,17 +400,6 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 	ex := model.excursions[symbol]
 	side := tokenSide(token)
 
-	if ex != nil && (ex.closing || side == "exit") {
-		if side == "exit" {
-			ex.exitPath = pathKey
-			ex.closing = true
-		}
-
-		model.mu.Unlock()
-		model.tryFinishExcursion(symbol, ex)
-		return nil
-	}
-
 	if ex != nil {
 		model.mu.Unlock()
 		return nil
@@ -404,33 +407,37 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 
 	model.mu.Unlock()
 
-	if len(path) >= model.cfg.MinPathLength {
-		action, _ := model.evaluateTree(pathKey)
-		if action != "" {
-			reported = action
+	action, _ := model.evaluateTree(pathKey)
+	if action != "" {
+		reported = action
+	}
+
+	if action == "exit" {
+		if model.desk != nil && model.desk.Occupied(symbol) {
+			model.finishVenue(symbol, pathKey)
 		}
 
-		switch action {
-		case "enter":
-			if model.desk != nil && !model.desk.Occupied(symbol) &&
-				model.venueSlotsAvailable() {
-				if err := model.desk.Enter(symbol, pathKey, false); err != nil {
-					model.Error(err)
-				}
-			}
+		val := data.NewValue("training", "exit", symbol)
+		val.Append(pathKey, "path")
+		return val
+	}
 
-			val := data.NewValue("training", "enter", symbol)
-			val.Append(pathKey, "path")
-			return val
-		case "exit":
-			if model.desk != nil && model.desk.Occupied(symbol) {
-				model.finishVenue(symbol, pathKey)
+	if len(path) >= model.cfg.MinPathLength && action == "enter" {
+		if model.desk != nil && !model.desk.Occupied(symbol) &&
+			model.venueSlotsAvailable() {
+			if err := model.desk.Enter(symbol, pathKey, false); err != nil {
+				model.Error(err)
+			} else {
+				model.mu.Lock()
+				model.resetPath(symbol)
+				model.mu.Unlock()
+				model.anchorVenue(symbol)
 			}
-
-			val := data.NewValue("training", "exit", symbol)
-			val.Append(pathKey, "path")
-			return val
 		}
+
+		val := data.NewValue("training", "enter", symbol)
+		val.Append(pathKey, "path")
+		return val
 	}
 
 	if side != "enter" || len(path) < model.cfg.MinPathLength {
@@ -462,7 +469,9 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 	}
 
 	if err := model.openExcursion(symbol, pathKey); err != nil {
-		model.Error(err)
+		if !errnie.IsNotFound(err) {
+			model.Error(err)
+		}
 	}
 
 	return nil
@@ -498,57 +507,23 @@ func (model *Model) gateAllows(symbol string, token tokenizer.Token) bool {
 	return reading.frictionPass
 }
 
-func (model *Model) minExitReturn(symbol string) float64 {
-	floor := model.cfg.MinBookReturnToExit
-	if floor < 0 {
-		floor = 0
-	}
-
-	untyped, ok := model.tickReadings.Load(symbol)
-	if !ok {
-		return floor
-	}
-
-	reading, ok := untyped.(tickReading)
-	if !ok {
-		return floor
-	}
-
-	if reading.frictionHurdle > floor {
-		return reading.frictionHurdle
-	}
-
-	return floor
-}
-
-func (model *Model) tryFinishExcursion(symbol string, ex *excursion) {
-	if ex == nil || model.desk == nil {
-		return
-	}
-
-	ret, ok := model.desk.SaleReturn(symbol, ex.qty, ex.entry, ex.fee)
-	if !ok {
-		return
-	}
-
-	if ret <= model.minExitReturn(symbol) {
-		return
-	}
-
-	model.finishExcursion(symbol, ex, ret)
-}
-
-func (model *Model) tryPendingExcursions() {
+/*
+reviewExcursions closes an open ledger sample when its fee-net book return
+has moved one friction hurdle from the open print. Up, that move has to
+come out as a profit. Down, the same hurdle is the stop. A print inside
+the band leaves the position open.
+*/
+func (model *Model) reviewExcursions() {
 	if model.desk == nil {
 		return
 	}
 
 	model.mu.Lock()
-	pending := make([]*excursion, 0, len(model.excursions))
 	symbols := make([]string, 0, len(model.excursions))
+	pending := make([]*excursion, 0, len(model.excursions))
 
 	for symbol, ex := range model.excursions {
-		if ex == nil || !ex.closing {
+		if ex == nil {
 			continue
 		}
 
@@ -559,8 +534,134 @@ func (model *Model) tryPendingExcursions() {
 	model.mu.Unlock()
 
 	for index, symbol := range symbols {
-		model.tryFinishExcursion(symbol, pending[index])
+		model.reviewExcursion(symbol, pending[index])
 	}
+
+	model.reviewVenues()
+}
+
+func (model *Model) reviewExcursion(symbol string, ex *excursion) {
+	if ex == nil || model.desk == nil {
+		return
+	}
+
+	hurdle, ok := model.desk.Friction(symbol)
+	if !ok || hurdle <= 0 {
+		model.Error(errnie.Err(
+			errnie.NotFound,
+			"[model] friction hurdle unavailable for "+symbol,
+			nil,
+		))
+		return
+	}
+
+	ret, ok := model.desk.SaleReturn(symbol, ex.qty, ex.entry, ex.fee)
+	if !ok {
+		return
+	}
+
+	if !ex.anchored {
+		ex.anchor = ret
+		ex.anchored = true
+		return
+	}
+
+	if ret-ex.anchor >= hurdle && ret > 0 {
+		ex.cause = "cleared friction"
+		model.finishExcursion(symbol, ex, ret)
+		return
+	}
+
+	if ex.anchor-ret >= hurdle {
+		ex.cause = "friction dip"
+		model.finishExcursion(symbol, ex, ret)
+	}
+}
+
+func (model *Model) anchorVenue(symbol string) {
+	if model.desk == nil {
+		return
+	}
+
+	position := model.desk.Open(symbol)
+	if position == nil || position.Virtual || position.Qty == nil || position.EntryPrice == nil || position.EntryFee == nil {
+		return
+	}
+
+	ret, ok := model.desk.OpenMark(symbol)
+	if !ok {
+		return
+	}
+
+	model.mu.Lock()
+	model.venueAnchor[symbol] = ret
+	model.mu.Unlock()
+}
+
+func (model *Model) reviewVenues() {
+	if model.desk == nil {
+		return
+	}
+
+	for _, position := range model.desk.Positions(true) {
+		if position == nil || position.Virtual || position.Symbol == "" {
+			continue
+		}
+
+		model.reviewVenue(position)
+	}
+}
+
+func (model *Model) reviewVenue(position *broker.Position) {
+	symbol := position.Symbol
+	hurdle, ok := model.desk.Friction(symbol)
+	if !ok || hurdle <= 0 {
+		model.Error(errnie.Err(
+			errnie.NotFound,
+			"[model] friction hurdle unavailable for "+symbol,
+			nil,
+		))
+		return
+	}
+
+	if position.Qty == nil || position.EntryPrice == nil || position.EntryFee == nil {
+		return
+	}
+
+	ret, ok := model.desk.SaleReturn(symbol, position.Qty, position.EntryPrice, position.EntryFee)
+	if !ok {
+		return
+	}
+
+	model.mu.Lock()
+	anchor, seen := model.venueAnchor[symbol]
+	if !seen {
+		model.venueAnchor[symbol] = ret
+		model.mu.Unlock()
+		return
+	}
+	model.mu.Unlock()
+
+	if ret-anchor < hurdle && anchor-ret < hurdle {
+		return
+	}
+
+	if ret-anchor >= hurdle && ret <= 0 {
+		return
+	}
+
+	if err := model.desk.ExitOccupied(symbol, position.EntryPath); err != nil {
+		model.Error(err)
+		return
+	}
+
+	model.accountVenue(position.EntryPath, symbol, ret)
+
+	model.mu.Lock()
+	delete(model.venueAnchor, symbol)
+	model.cool[symbol] = &coolDown{tokens: tokenSet(position.EntryPath)}
+	model.resetPath(symbol)
+	model.mu.Unlock()
 }
 
 func (model *Model) venueSlotsAvailable() bool {
@@ -626,13 +727,13 @@ func (model *Model) Settle(position *broker.Position) {
 		return
 	}
 
-	model.mu.Lock()
-	delete(model.excursions, position.Symbol)
-	model.mu.Unlock()
-
 	if _, done := model.settled.LoadOrStore(position.ID, true); done {
 		return
 	}
+
+	model.mu.Lock()
+	delete(model.excursions, position.Symbol)
+	model.mu.Unlock()
 
 	if position.Return == nil {
 		model.Error(errnie.Err(
@@ -649,6 +750,11 @@ func (model *Model) Settle(position *broker.Position) {
 		model.accountVenue(position.EntryPath, position.Symbol, ret)
 		return
 	}
+
+	model.mu.Lock()
+	model.cool[position.Symbol] = &coolDown{tokens: tokenSet(position.EntryPath)}
+	model.resetPath(position.Symbol)
+	model.mu.Unlock()
 
 	model.noteSample(position.EntryPath, position.Symbol, "enter", ret)
 
@@ -781,7 +887,8 @@ func (model *Model) noteSample(pathKey, symbol, role string, ret float64) {
 
 	if score.Retired {
 		model.mu.Unlock()
-		model.retireExploredPath(key, pathKey, role)
+		model.storeScore(key, pathKey, symbol, role, score)
+		model.deleteExploredObject(role, pathKey)
 		return
 	}
 
@@ -805,14 +912,6 @@ func (model *Model) freezeOrRetire(score *pathScore) {
 
 	score.Retired = true
 	score.Frozen = false
-}
-
-func (model *Model) retireExploredPath(key, pathKey, role string) {
-	model.mu.Lock()
-	model.explored, _, _ = model.explored.Delete([]byte(key))
-	model.mu.Unlock()
-	model.deleteExploredObject(role, pathKey)
-	model.PublishPolicy()
 }
 
 func (model *Model) storeScore(key, pathKey, symbol, role string, score pathScore) {
@@ -862,21 +961,23 @@ func (model *Model) openExcursion(symbol, pathKey string) error {
 
 	qty, entry, fee, err := model.desk.Quote(symbol)
 	if err != nil {
+		if errnie.IsNotFound(err) {
+			return nil
+		}
 		return err
 	}
 
 	// The virtual lot is what the learning book and the longtail edge read.
 	// Confirmation still has to pass before a venue order is sent.
 	if err := model.desk.Enter(symbol, pathKey, true); err != nil {
+		if errnie.IsNotFound(err) {
+			return nil
+		}
 		return err
 	}
 
 	if model.desk.Virtual(symbol) == nil {
-		return errnie.Err(
-			errnie.UnprocessableContent,
-			"[model] virtual was not opened for "+symbol,
-			nil,
-		)
+		return nil
 	}
 
 	model.mu.Lock()
@@ -886,6 +987,11 @@ func (model *Model) openExcursion(symbol, pathKey string) error {
 		entry:     entry,
 		fee:       fee,
 	}
+	if ret, ok := model.desk.OpenMark(symbol); ok {
+		model.excursions[symbol].anchor = ret
+		model.excursions[symbol].anchored = true
+	}
+	model.resetPath(symbol)
 	model.mu.Unlock()
 
 	return nil
@@ -903,7 +1009,12 @@ func (model *Model) finishExcursion(symbol string, ex *excursion, ret float64) {
 	}
 
 	if virtual != nil {
-		if err := model.desk.Exit(symbol, exitPath, true, "regime exit"); err != nil {
+		trigger := ex.cause
+		if trigger == "" {
+			trigger = "book"
+		}
+
+		if err := model.desk.Exit(symbol, exitPath, true, trigger); err != nil {
 			return
 		}
 

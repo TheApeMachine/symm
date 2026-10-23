@@ -14,7 +14,7 @@ SnapshotHost builds a ManifoldState from a resident sensorium host after a
 step. Parallel and the L3 solver share this encoder so the fluid viewer sees
 the same wire shape from either source.
 */
-func SnapshotHost(host *sensorium.Manifold, version uint64) *State {
+func SnapshotHost(host *sensorium.Manifold, version uint64, symbol string) *State {
 	if host == nil {
 		return nil
 	}
@@ -47,6 +47,7 @@ func SnapshotHost(host *sensorium.Manifold, version uint64) *State {
 	)
 
 	return &State{
+		Symbol:  symbol,
 		At:      time.Now(),
 		Version: version,
 		State: &sensorium.State{

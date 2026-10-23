@@ -22,14 +22,6 @@ export const ParallelDashboard = () => {
 		},
 	];
 
-	const incumbentSeries: ChartSeries[] = [
-		{
-			values: samples.map((s) => s.incumbent?.meanReturn ?? null),
-			stroke: "var(--info)",
-			fill: "color-mix(in srgb, var(--info) 8%, transparent)",
-		},
-	];
-
 	return (
 		<Flex.Column className="h-full min-h-0 overflow-hidden bg-(--bg) font-mono text-(--f2)">
 			<Flex.Row
@@ -148,7 +140,7 @@ export const ParallelDashboard = () => {
 						Physics marginal (B − A) &amp; Kuramoto R
 					</div>
 					<MetricChart
-						className="flex-1"
+						className="min-h-0 flex-1"
 						times={times}
 						series={[
 							{
@@ -157,6 +149,14 @@ export const ParallelDashboard = () => {
 								stroke: "var(--success)",
 								fill: "color-mix(in srgb, var(--success) 8%, transparent)",
 							},
+						]}
+						formatY={(v) => `${(100 * v).toFixed(2)}%`}
+						baseline={0}
+					/>
+					<MetricChart
+						className="min-h-0 flex-1 border-t border-(--line)"
+						times={times}
+						series={[
 							{
 								label: "R",
 								values: samples.map(
@@ -165,8 +165,7 @@ export const ParallelDashboard = () => {
 								stroke: "var(--warning)",
 							},
 						]}
-						formatY={(v) => `${(100 * v).toFixed(2)}%`}
-						baseline={0}
+						formatY={(v) => v.toFixed(3)}
 					/>
 				</div>
 			</div>

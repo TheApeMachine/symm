@@ -271,7 +271,7 @@ export const positionReadout = (
 		}
 	}
 
-	if (!closed && bookReturn !== null && entryPrice !== null && entryPrice > 0) {
+	if (!closed && bookReturn !== null) {
 		returnPct = bookReturn / 100;
 	}
 

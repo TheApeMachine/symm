@@ -157,13 +157,21 @@ func (d *fakeDesk) SaleReturn(string, *decimal.Decimal, *decimal.Decimal, *decim
 	defer d.mu.Unlock()
 
 	if len(d.closes) == 0 {
-		return 0.01, true
+		return 0, true
 	}
 
 	next := d.closes[0]
 	d.closes = d.closes[1:]
 
 	return next.ret, next.ok
+}
+
+func (d *fakeDesk) Friction(string) (float64, bool) {
+	return 0.01, true
+}
+
+func (d *fakeDesk) OpenMark(string) (float64, bool) {
+	return 0, true
 }
 
 func (d *fakeDesk) Occupied(symbol string) bool {
@@ -213,10 +221,15 @@ func regionToken(key uint8, brightness float64) tokenizer.Token {
 	return tokenizer.NewTokenFromRegion(key, brightness)
 }
 
-// sampleOneExcursion feeds the entry precursor R00/R01/R02 and the exit
-// region R03. After the first sample, a foreign region has to arrive
-// before the same precursor can be sampled again.
+// sampleOneExcursion opens the precursor, then settles it from the book.
+// The default settlement is a fee-net return one hurdle above the open
+// print, which is a cleared-friction profit. Pass a return to settle at
+// that print instead.
 func sampleOneExcursion(model *Model, symbol string, prior int) {
+	sampleExcursionAt(model, symbol, prior, 0.01, true)
+}
+
+func sampleExcursionAt(model *Model, symbol string, prior int, ret float64, ok bool) {
 	if prior > 0 {
 		model.Evaluate(symbol, regionToken(6, 0.2))
 	}
@@ -225,7 +238,12 @@ func sampleOneExcursion(model *Model, symbol string, prior int) {
 	model.Evaluate(symbol, regionToken(0, 0.9))
 	model.Evaluate(symbol, regionToken(1, 0.9))
 	model.Evaluate(symbol, regionToken(2, 0.9))
-	model.Evaluate(symbol, regionToken(3, 0.9))
+
+	if desk, isFake := model.desk.(*fakeDesk); isFake {
+		desk.queue(scriptedClose{ret: ret, ok: ok})
+	}
+
+	model.reviewExcursions()
 }
 
 func TestLedgerDoesNotPromoteOnTwoWins(t *testing.T) {
@@ -265,10 +283,6 @@ func TestConfirmedPathOpensAVenueOrder(t *testing.T) {
 
 	if _, found := model.tree.Get([]byte("R00/R01/R02")); !found {
 		t.Fatal("confirmed entry path missing from the current policy")
-	}
-
-	if _, found := model.tree.Get([]byte("R00/R01/R02/R03")); !found {
-		t.Fatal("confirmed exit path missing from the current policy")
 	}
 
 	if desk.venue != 0 {
@@ -317,12 +331,11 @@ func TestNegativeMeanRetiresThePath(t *testing.T) {
 	cfg := LoadConfig()
 
 	for i := 0; i < cfg.FreezeAfter; i++ {
-		desk.queue(scriptedClose{ret: -0.02, ok: true})
-		sampleOneExcursion(model, symbol, i)
+		sampleExcursionAt(model, symbol, i, -0.02, true)
 	}
 
 	quotes := desk.quotes
-	sampleOneExcursion(model, symbol, cfg.FreezeAfter)
+	sampleExcursionAt(model, symbol, cfg.FreezeAfter, -0.02, true)
 
 	if desk.quotes != quotes {
 		t.Fatalf("quotes went from %d to %d after the path was retired", quotes, desk.quotes)
@@ -334,14 +347,14 @@ func TestBookMissDoesNotScore(t *testing.T) {
 	model := NewModel(context.Background(), desk, nil, nil, nil)
 	const symbol = "ADA/USD"
 
-	desk.queue(scriptedClose{ok: false})
-	sampleOneExcursion(model, symbol, 0)
+	sampleExcursionAt(model, symbol, 0, 0, false)
 
 	if _, found := model.explored.Get([]byte(exploredKey("enter", "R00/R01/R02"))); found {
 		t.Fatal("a close the book could not take was recorded")
 	}
 
-	model.Evaluate(symbol, regionToken(3, 0.9))
+	desk.queue(scriptedClose{ret: 0.01, ok: true})
+	model.reviewExcursions()
 
 	if _, found := model.explored.Get([]byte(exploredKey("enter", "R00/R01/R02"))); !found {
 		t.Fatal("retry against a book that can take the size left no score")
@@ -357,7 +370,7 @@ func TestLongestMatchExitOverridesShorterEnter(t *testing.T) {
 		[]byte("R00/R01/R02"), newDataValue("enter", symbol, "R00/R01/R02"),
 	)
 	model.tree, _, _ = model.tree.Insert(
-		[]byte("R00/R01/R02/R03"), newDataValue("exit", symbol, "R00/R01/R02/R03"),
+		[]byte("R03"), newDataValue("exit", symbol, "R03"),
 	)
 
 	model.Evaluate(symbol, regionToken(0, 0.9))
@@ -405,6 +418,72 @@ func TestModelChordToken(t *testing.T) {
 	}
 }
 
+func TestBookReturnInsideFrictionStaysOpen(t *testing.T) {
+	desk := newFakeDesk()
+	model := NewModel(context.Background(), desk, nil, nil, nil)
+	const symbol = "XRP/USD"
+
+	model.Evaluate(symbol, regionToken(0, 0.9))
+	model.Evaluate(symbol, regionToken(1, 0.9))
+	model.Evaluate(symbol, regionToken(2, 0.9))
+
+	if !desk.Has(symbol, true) {
+		t.Fatal("enter path did not open a virtual lot")
+	}
+
+	desk.queue(scriptedClose{ret: 0.004, ok: true})
+	model.reviewExcursions()
+
+	if !desk.Has(symbol, true) {
+		t.Fatal("a return inside the friction hurdle closed the virtual")
+	}
+
+	desk.queue(scriptedClose{ret: -0.004, ok: true})
+	model.reviewExcursions()
+
+	if !desk.Has(symbol, true) {
+		t.Fatal("a dip smaller than the friction hurdle closed the virtual")
+	}
+}
+
+func TestClearedFrictionClosesVirtual(t *testing.T) {
+	desk := newFakeDesk()
+	model := NewModel(context.Background(), desk, nil, nil, nil)
+	const symbol = "XRP/USD"
+
+	model.Evaluate(symbol, regionToken(0, 0.9))
+	model.Evaluate(symbol, regionToken(1, 0.9))
+	model.Evaluate(symbol, regionToken(2, 0.9))
+
+	desk.queue(scriptedClose{ret: 0.01, ok: true})
+	model.reviewExcursions()
+
+	if desk.Has(symbol, true) {
+		t.Fatal("clearing the friction hurdle left the virtual open")
+	}
+
+	if _, found := model.explored.Get([]byte(exploredKey("enter", "R00/R01/R02"))); !found {
+		t.Fatal("cleared friction did not score the enter path")
+	}
+}
+
+func TestFrictionDipClosesVirtual(t *testing.T) {
+	desk := newFakeDesk()
+	model := NewModel(context.Background(), desk, nil, nil, nil)
+	const symbol = "AVAX/USD"
+
+	model.Evaluate(symbol, regionToken(0, 0.9))
+	model.Evaluate(symbol, regionToken(1, 0.9))
+	model.Evaluate(symbol, regionToken(2, 0.9))
+
+	desk.queue(scriptedClose{ret: -0.01, ok: true})
+	model.reviewExcursions()
+
+	if desk.Has(symbol, true) {
+		t.Fatal("a one-hurdle dip left the virtual open")
+	}
+}
+
 func TestModelMaxPathLength(t *testing.T) {
 	model := NewModel(context.Background(), newFakeDesk(), nil, nil, nil)
 	const symbol = "DOT/USD"
@@ -433,7 +512,7 @@ func TestModelDemotion(t *testing.T) {
 
 	model.tree, _, _ = model.tree.Insert([]byte(entry), newDataValue("enter", symbol, entry))
 	model.tree, _, _ = model.tree.Insert(
-		[]byte(entry+"/R03"), newDataValue("exit", symbol, entry+"/R03"),
+		[]byte("R03"), newDataValue("exit", symbol, "R03"),
 	)
 
 	for i := 0; i < cfg.DemotionLosses; i++ {

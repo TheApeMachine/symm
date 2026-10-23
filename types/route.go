@@ -79,11 +79,11 @@ func Filters(value *data.Value) bool {
 		}
 		source := kernelSource(value.Origin)
 		if source == "sequitur" {
-			return isFocus(value)
+			return isFocusOrVirtualOpen(value)
 		}
 		if source == "cognition" {
 			if value.Role == "match" {
-				return isFocus(value)
+				return isFocusOrVirtualOpen(value)
 			}
 			return true
 		}

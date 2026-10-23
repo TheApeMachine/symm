@@ -40,19 +40,19 @@ func projectionSolver(t testing.TB) *Solver {
 func TestSolverProject(t *testing.T) {
 	Convey("Only symbols refreshed from the venue may evict their resident orders", t, func() {
 		solver := projectionSolver(t)
-		departures, batch := solver.project()
+		departures, batch, _ := solver.project()
 		So(departures, ShouldBeEmpty)
 		So(batch.N, ShouldEqual, 4)
 		sensorium.StatePool.Put(batch)
 		Convey("A quiet book retains every resident", func() {
-			departures, batch = solver.project()
+			departures, batch, _ = solver.project()
 			So(departures, ShouldBeEmpty)
 			So(batch, ShouldBeNil)
 			So(len(solver.loaded), ShouldEqual, 4)
 		})
 		Convey("Updating BTC preserves ETH, then a real BTC deletion removes one identity", func() {
 			solver.markDirty("BTC/USD")
-			departures, batch = solver.project()
+			departures, batch, _ = solver.project()
 			So(departures, ShouldBeEmpty)
 			So(batch.N, ShouldEqual, 2)
 			sensorium.StatePool.Put(batch)
@@ -60,7 +60,7 @@ func TestSolverProject(t *testing.T) {
 			err := solver.book.Update(&kraken.Level3{Type: "update", Data: []kraken.Level3Data{{Symbol: "BTC/USD", Bids: []kraken.Level3Order{{OrderID: "BTC/USD-bid", LimitPrice: decimal.NewFromInt64(99), OrderQty: decimal.NewFromInt64(0), Timestamp: time.Unix(101, 0), Event: "delete"}}}}})
 			So(err, ShouldBeNil)
 			solver.markDirty("BTC/USD")
-			departures, batch = solver.project()
+			departures, batch, _ = solver.project()
 			So(len(departures), ShouldEqual, 1)
 			So(batch.N, ShouldEqual, 1)
 			sensorium.StatePool.Put(batch)

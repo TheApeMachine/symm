@@ -137,7 +137,7 @@ func (field *Field) ManifoldFrame() *manifold.State {
 		version = 1
 	}
 
-	return manifold.SnapshotHost(field.manifold, version)
+	return manifold.SnapshotHost(field.manifold, version, "")
 }
 
 func (field *Field) SpectralHint() map[string]any {

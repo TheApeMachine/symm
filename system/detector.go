@@ -14,9 +14,9 @@ configuration must state both (cmd/cfg/config.yml).
 MinPrecursorTicks is the fewest ticks between A and B an emitted excursion
 may have once A is clamped to the epoch's first stored tick.
 
-ExecutionLeadFraction pulls the entry back from B and the exit back from C
-by this fraction of the precursor's length in ticks, so an order placed at
-the learned point can fill before the move it targets.
+ExecutionLeadFraction pulls recorded B and C (and entry/exit) back by this
+fraction of the A→B precursor length in ticks, so orders placed on those
+points can fill before the move they target.
 */
 type Detector struct {
 	MinPrecursorTicks     int64

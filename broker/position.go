@@ -68,7 +68,7 @@ func NewPosition(
 }
 
 /*
-Update the position with a new mark and refreshes book_return for ShouldExit.
+Update the position with a new mark and refreshes book_return for the UI.
 The position never closes itself.
 */
 func (position *Position) Update(mark *decimal.Decimal) {
@@ -128,37 +128,6 @@ func (position *Position) feeRate() *decimal.Decimal {
 	}
 
 	return fee.Fee
-}
-
-/*
-edgeTargetPercent is the fee-net round-trip return (Price.Sale / book_return)
-at which a virtual lot takes profit or stops out: two percent either way.
-*/
-const edgeTargetPercent = 2
-
-/*
-ShouldExit reports whether a virtual lot's executable round-trip edge has
-reached the profit target or stop. The caller closes it; the position only
-reports.
-
-The threshold is book_return from Update (Sale through the live book), not
-last-trade mark over entry. Without a priced book there is no exit signal.
-*/
-func (position *Position) ShouldExit() bool {
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if !position.Virtual || position.ClosedAt != nil {
-		return false
-	}
-
-	if position.BookReturn == nil {
-		return false
-	}
-
-	edge := *position.BookReturn
-
-	return edge >= edgeTargetPercent || edge <= -edgeTargetPercent
 }
 
 /*
