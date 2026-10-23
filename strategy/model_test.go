@@ -241,13 +241,11 @@ func sampleOneExcursion(model *Model, symbol string, prior int) {
 
 func sampleExcursionAt(model *Model, symbol string, prior int, ret float64, ok bool) {
 	if prior > 0 {
+		// The token after a close ends the cool-down. It is not a step.
 		model.Evaluate(symbol, regionToken(6, 0.2))
 	}
 
-	model.Evaluate(symbol, regionToken(7, 0.9))
 	model.Evaluate(symbol, regionToken(0, 0.9))
-	model.Evaluate(symbol, regionToken(1, 0.9))
-	model.Evaluate(symbol, regionToken(2, 0.9))
 
 	if desk, isFake := model.desk.(*fakeDesk); isFake {
 		desk.queue(scriptedClose{ret: ret, ok: ok})
@@ -264,7 +262,7 @@ func TestLedgerDoesNotPromoteOnTwoWins(t *testing.T) {
 	sampleOneExcursion(model, symbol, 0)
 	sampleOneExcursion(model, symbol, 1)
 
-	if _, found := model.tree.Get([]byte("R00/R01/R02")); found {
+	if _, found := model.tree.Get([]byte("R00")); found {
 		t.Fatal("two winning excursions wrote the path into the current policy")
 	}
 
@@ -291,7 +289,7 @@ func TestConfirmedPathOpensAVenueOrder(t *testing.T) {
 		sampleOneExcursion(model, symbol, i)
 	}
 
-	if _, found := model.tree.Get([]byte("R00/R01/R02")); !found {
+	if _, found := model.tree.Get([]byte("R00")); !found {
 		t.Fatal("confirmed entry path missing from the current policy")
 	}
 
@@ -359,14 +357,14 @@ func TestBookMissDoesNotScore(t *testing.T) {
 
 	sampleExcursionAt(model, symbol, 0, 0, false)
 
-	if _, found := model.explored.Get([]byte(exploredKey("enter", "R00/R01/R02"))); found {
+	if _, found := model.explored.Get([]byte(exploredKey("enter", "R00"))); found {
 		t.Fatal("a close the book could not take was recorded")
 	}
 
 	desk.queue(scriptedClose{ret: 0.01, ok: true})
 	model.reviewExcursions()
 
-	if _, found := model.explored.Get([]byte(exploredKey("enter", "R00/R01/R02"))); !found {
+	if _, found := model.explored.Get([]byte(exploredKey("enter", "R00"))); !found {
 		t.Fatal("retry against a book that can take the size left no score")
 	}
 }
@@ -377,15 +375,13 @@ func TestLongestMatchExitOverridesShorterEnter(t *testing.T) {
 	const symbol = "DOGE/USD"
 
 	model.tree, _, _ = model.tree.Insert(
-		[]byte("R00/R01/R02"), newDataValue("enter", symbol, "R00/R01/R02"),
+		[]byte("R00"), newDataValue("enter", symbol, "R00"),
 	)
 	model.tree, _, _ = model.tree.Insert(
 		[]byte("R03"), newDataValue("exit", symbol, "R03"),
 	)
 
-	model.Evaluate(symbol, regionToken(0, 0.9))
-	model.Evaluate(symbol, regionToken(1, 0.9))
-	entered := model.Evaluate(symbol, regionToken(2, 0.9))
+	entered := model.Evaluate(symbol, regionToken(0, 0.9))
 	exited := model.Evaluate(symbol, regionToken(3, 0.9))
 
 	if entered == nil || entered.Role != "enter" {
@@ -491,7 +487,7 @@ func TestClearedFrictionClosesVirtual(t *testing.T) {
 		t.Fatal("clearing the friction hurdle left the virtual open")
 	}
 
-	if _, found := model.explored.Get([]byte(exploredKey("enter", "R00/R01/R02"))); !found {
+	if _, found := model.explored.Get([]byte(exploredKey("enter", "R00"))); !found {
 		t.Fatal("cleared friction did not score the enter path")
 	}
 }
@@ -527,8 +523,8 @@ func TestCloseWritesPrecursorAndHoldingAsSeparatePaths(t *testing.T) {
 	desk.queue(scriptedClose{ret: 0.01, ok: true})
 	model.reviewExcursions()
 
-	const precursor = "R00/R01/R02"
-	const holding = "R02/R03/R04"
+	const precursor = "R00"
+	const holding = "R00/R03/R04"
 
 	if _, found := model.explored.Get([]byte(exploredKey("enter", precursor))); !found {
 		t.Fatal("precursor was not stored as its own enter path")
@@ -583,8 +579,14 @@ func TestModelMaxPathLength(t *testing.T) {
 	const symbol = "DOT/USD"
 	cfg := LoadConfig()
 
+	model.Evaluate(symbol, regionToken(0, 0.9))
+
 	for i := 0; i < cfg.MaxPathLength+4; i++ {
-		model.Evaluate(symbol, regionToken(uint8(i%3), 0.5))
+		key := uint8(3)
+		if i%2 == 1 {
+			key = 4
+		}
+		model.Evaluate(symbol, regionToken(key, 0.5))
 	}
 
 	untyped, ok := model.paths.Load(symbol)
@@ -601,7 +603,7 @@ func TestModelDemotion(t *testing.T) {
 	desk := newFakeDesk()
 	model := newTestModel(desk, nil)
 	const symbol = "LTC/USD"
-	const entry = "R00/R01/R02"
+	const entry = "R00"
 	cfg := LoadConfig()
 
 	model.tree, _, _ = model.tree.Insert([]byte(entry), newDataValue("enter", symbol, entry))
@@ -671,7 +673,7 @@ func TestExploredPathIsPublishedAsATrieKey(t *testing.T) {
 		}
 	}
 
-	want := "policy/explored/enter/R00/R01/R02.bin"
+	want := "policy/explored/enter/R00.bin"
 	found := false
 	for _, key := range keys {
 		if key == want {
@@ -811,14 +813,152 @@ func TestPrecursorAnchorUsesTheTapeTick(t *testing.T) {
 
 	virtual := desk.Virtual(symbol)
 	if virtual == nil {
-		t.Fatal("three enter chords did not open a virtual lot")
+		t.Fatal("the enter regime did not open a virtual lot")
 	}
 
 	if virtual.MarkATick != 8550 {
-		t.Fatalf("mark A = %d, want the first chord's tape tick 8550", virtual.MarkATick)
+		t.Fatalf("mark A = %d, want the regime's tape tick 8550", virtual.MarkATick)
 	}
 
-	if virtual.EntryTick != 8560 {
-		t.Fatalf("entry tick = %d, want the opening chord's tape tick 8560", virtual.EntryTick)
+	if virtual.EntryTick != 8550 {
+		t.Fatalf("entry tick = %d, want the regime's tape tick 8550", virtual.EntryTick)
+	}
+}
+
+func TestOppositionAndOraclesDoNotOpenOrWipe(t *testing.T) {
+	desk := newFakeDesk()
+	model := newTestModel(desk, nil)
+	const symbol = "BTC/USD"
+
+	model.Evaluate(symbol, regionToken(2, 0.9))
+	model.Evaluate(symbol, regionToken(7, 0.9))
+	model.Evaluate(symbol, tokenizer.NewToken([]string{"R00", "R02"}, 0.9, 0.9, 0))
+
+	if desk.Has(symbol, true) {
+		t.Fatal("opposition or an oracle opened a sample")
+	}
+
+	model.Evaluate(symbol, regionToken(0, 0.1))
+
+	if desk.Has(symbol, true) {
+		t.Fatal("brightness under the starting threshold opened a sample")
+	}
+
+	model.Evaluate(symbol, regionToken(0, 0.9))
+
+	if !desk.Has(symbol, true) {
+		t.Fatal("brightness above the starting threshold did not open a sample")
+	}
+}
+
+func TestRestoredVirtualIsNotTheLearningSlot(t *testing.T) {
+	desk := newFakeDesk()
+	model := newTestModel(desk, nil)
+	const symbol = "BTC/USD"
+
+	desk.open[symbol] = &broker.Position{
+		Symbol:     symbol,
+		Virtual:    true,
+		EntryPath:  "restored",
+		Qty:        decimal.NewFromInt64(1),
+		EntryPrice: decimal.NewFromInt64(100),
+		EntryFee:   decimal.NewFromInt64(1),
+	}
+
+	model.Evaluate(symbol, regionToken(0, 0.9))
+
+	if desk.entries != 0 {
+		t.Fatal("the sample took the restored lot's slot")
+	}
+
+	if desk.quotes != 1 {
+		t.Fatalf("quotes = %d, want the sample priced beside the restored lot", desk.quotes)
+	}
+
+	if _, ok := model.excursions[symbol]; !ok {
+		t.Fatal("the restored lot blocked the learning sample")
+	}
+
+	desk.queue(scriptedClose{ret: 0.01, ok: true})
+	model.reviewExcursions()
+
+	if _, found := model.explored.Get([]byte(exploredKey("enter", "R00"))); !found {
+		t.Fatal("the sample beside the restored lot was not scored")
+	}
+
+	if desk.open[symbol] == nil || desk.open[symbol].EntryPath != "restored" {
+		t.Fatal("scoring the sample closed the restored lot")
+	}
+}
+
+func scoreFor(t *testing.T, model *Model, path string) pathScore {
+	t.Helper()
+	val, found := model.explored.Get([]byte(exploredKey("enter", path)))
+	if !found || val == nil {
+		t.Fatalf("no score for %s", path)
+	}
+	var score pathScore
+	val.Lookup(&score, "score")
+	return score
+}
+
+func TestThresholdRisesAfterALossAndFallsAfterAWin(t *testing.T) {
+	desk := newFakeDesk()
+	model := newTestModel(desk, nil)
+	const symbol = "BTC/USD"
+
+	model.Evaluate(symbol, regionToken(0, 0.9))
+	desk.queue(scriptedClose{ret: -0.02, ok: true})
+	model.reviewExcursions()
+
+	score := scoreFor(t, model, "R00")
+	if score.Threshold < 0.54 || score.Threshold > 0.56 {
+		t.Fatalf("threshold = %v, want about 0.55 after a loss", score.Threshold)
+	}
+
+	model.Evaluate(symbol, regionToken(6, 0.2))
+	model.Evaluate(symbol, regionToken(0, 0.5))
+	if desk.quotes != 1 {
+		t.Fatalf("quotes = %d, want the dimmer print refused", desk.quotes)
+	}
+
+	model.Evaluate(symbol, regionToken(0, 0.6))
+	desk.queue(scriptedClose{ret: 0.02, ok: true})
+	model.reviewExcursions()
+
+	score = scoreFor(t, model, "R00")
+	if score.Threshold < 0.49 || score.Threshold > 0.51 {
+		t.Fatalf("threshold = %v, want about 0.50 after the win", score.Threshold)
+	}
+}
+
+func TestThresholdAtTheCeilingPrunesThePath(t *testing.T) {
+	desk := newFakeDesk()
+	model := newTestModel(desk, nil)
+	const symbol = "BTC/USD"
+	cfg := model.cfg
+	// Keep the mean rule from retiring the path before the ceiling does.
+	cfg.FreezeAfter = 100
+
+	steps := int((cfg.ThresholdCeil-cfg.ThresholdStart)/cfg.ThresholdStep + 0.5)
+	for i := 0; i < steps; i++ {
+		if i > 0 {
+			model.Evaluate(symbol, regionToken(6, 0.2))
+		}
+		model.Evaluate(symbol, regionToken(0, 1))
+		desk.queue(scriptedClose{ret: -0.02, ok: true})
+		model.reviewExcursions()
+	}
+
+	score := scoreFor(t, model, "R00")
+	if !score.Retired || score.Threshold < cfg.ThresholdCeil-1e-9 {
+		t.Fatalf("threshold = %v retired = %v, want the ceiling to prune the path", score.Threshold, score.Retired)
+	}
+
+	quotes := desk.quotes
+	model.Evaluate(symbol, regionToken(6, 0.2))
+	model.Evaluate(symbol, regionToken(0, 1))
+	if desk.quotes != quotes {
+		t.Fatal("a pruned path was entered again")
 	}
 }

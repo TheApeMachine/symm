@@ -188,7 +188,7 @@ const ChordStream = ({ chords }: { chords: LoggedChord[] }) => (
 		<Section.Header
 			size="s"
 			title="Chord stream"
-			meta={`last ${chords.length} chords proposed · dashed: blocked by the surprise gate, not appended to S`}
+			meta={`last ${chords.length} chords proposed · dashed: no enter or exit vote, so not a path step`}
 		/>
 		<div className="flex gap-1 overflow-x-auto p-2 bg-(--sunken)">
 			{chords.map((chord) => (

@@ -14,19 +14,19 @@ SymbolPhase tracks Kuramoto order and a guidance scalar from lit regions.
 This is the per-symbol physics readout fed to Book B and Book C.
 */
 type SymbolPhase struct {
-	R         float64
-	DeltaR    float64
-	Guidance  float64
-	Heat      float64
-	Conflict  float64
-	Stable    bool
-	Surprise  float64
-	priorR    float64
-	history   []float64
+	R        float64
+	DeltaR   float64
+	Guidance float64
+	Heat     float64
+	Conflict float64
+	Stable   bool
+	Surprise float64
+	priorR   float64
+	history  []float64
 }
 
 type PhaseField struct {
-	mu      sync.Mutex
+	mu       sync.Mutex
 	bySymbol map[string]*SymbolPhase
 }
 
@@ -83,11 +83,17 @@ func kuramotoFromRegions(regions []*nmstore.Region) (r, guidance, heat, conflict
 		sumSin += weight * math.Sin(phase)
 		heat += weight
 
-		switch nmstore.RegionSide(region.Key) {
+		side, with := nmstore.RegionVote(region.Key)
+		delta := weight * region.Deformation
+		if !with {
+			delta = -delta
+		}
+
+		switch side {
 		case "enter":
-			enter += weight * region.Deformation
+			enter += delta
 		case "exit":
-			exit += weight * region.Deformation
+			exit += delta
 		}
 	}
 

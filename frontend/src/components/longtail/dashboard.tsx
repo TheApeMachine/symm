@@ -313,7 +313,7 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 	{
 		id: "gate",
 		label: "Gate pass rate",
-		caption: "chords the entry gate accepted",
+		caption: "enter regimes bright enough for their path",
 		series: (samples) => {
 			const latest = samples[samples.length - 1];
 			return [

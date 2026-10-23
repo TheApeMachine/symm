@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -620,7 +621,7 @@ func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Dec
 		}
 	}
 
-	if err != nil && errnie.IsNotFound(err) {
+	if err != nil && (errnie.IsNotFound(err) || sizingAbstain(err)) {
 		return quantity, err
 	}
 
@@ -641,22 +642,22 @@ func (price *Price) Affordable(
 	quantity, err := price.normalizer.FormatSize(symbol, requested)
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.Validation,
 			"[price] cannot normalize quantity for "+symbol,
 			err,
-		))
+		)
 	}
 
 	if notional(cost, quantity).Cmp(cash) > 0 {
 		step := quantity.GetSmallestIncrement()
 
 		if step == nil || step.Sign() <= 0 || quantity.Cmp(step) <= 0 {
-			return nil, errnie.Error(errnie.Err(
+			return nil, errnie.Err(
 				errnie.Validation,
 				"[price] available cash below minimum order for "+symbol,
 				nil,
-			))
+			)
 		}
 
 		quantity = quantity.Sub(step)
@@ -672,9 +673,9 @@ func (price *Price) Walk(
 	side Direction,
 ) (*decimal.Decimal, *decimal.Decimal, error) {
 	if book == nil || requested == nil || requested.Sign() <= 0 {
-		return nil, nil, errnie.Error(errnie.Err(
+		return nil, nil, errnie.Err(
 			errnie.Validation, "[price] valid book and positive quantity required", nil,
-		))
+		)
 	}
 
 	quantity, gross := decimalZero, decimalZero
@@ -715,9 +716,9 @@ func (price *Price) Walk(
 	// rate of hundreds a second across the instrument universe, which buries
 	// the faults that do matter.
 	if quantity.Cmp(requested) < 0 {
-		return quantity, gross, errnie.Error(errnie.Err(
+		return quantity, gross, errnie.Err(
 			errnie.UnprocessableContent, "[price] insufficient book depth", nil,
-		))
+		)
 	}
 
 	return quantity, gross, nil
@@ -726,9 +727,9 @@ func (price *Price) Walk(
 /* EntryCost prices a complete entry from the resident book and current fee. */
 func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryCost, error) {
 	if quantity == nil || quantity.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.Validation, "entry cost: positive quantity required", nil,
-		))
+		)
 	}
 
 	var cost *EntryCost
@@ -751,18 +752,24 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 		// unprocessable so a caller sizes around it, exactly as it sizes
 		// around insufficient depth.
 		if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
-			err = errnie.Error(errnie.Err(
+			err = errnie.Err(
 				errnie.UnprocessableContent, "entry cost: crossed book for "+symbol, nil,
-			))
+			)
 			return
 		}
 
 		filled, gross, walkErr := price.Walk(book, quantity, BUY)
 
 		if walkErr != nil {
-			err = errnie.Error(errnie.Err(
-				errnie.IO, "[price] get entry cost failed for "+symbol, walkErr,
-			))
+			if sizingAbstain(walkErr) {
+				err = errnie.Err(
+					errnie.UnprocessableContent, "entry cost: book cannot fill "+symbol, walkErr,
+				)
+			} else {
+				err = errnie.Err(
+					errnie.IO, "[price] get entry cost failed for "+symbol, walkErr,
+				)
+			}
 			return
 		}
 
@@ -798,11 +805,11 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 	})
 
 	if cost == nil && err == nil {
-		err = errnie.Error(errnie.Err(
+		err = errnie.Err(
 			errnie.UnprocessableContent,
 			"entry cost: complete executable book required for "+symbol,
 			nil,
-		))
+		)
 	}
 
 	return cost, err
@@ -825,11 +832,11 @@ func (price *Price) budget(referenceCash ...*decimal.Decimal) (*decimal.Decimal,
 	}
 
 	if cash == nil || cash.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.Validation,
 			"[price] positive reference cash required to allocate entry",
 			nil,
-		))
+		)
 	}
 
 	return cash.SetScale(decimal.DefaultScale), nil
@@ -843,19 +850,19 @@ liquidity event.
 */
 func touchAllocationCap(touchBid *decimal.Decimal) (*decimal.Decimal, error) {
 	if touchBid == nil || touchBid.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.Validation, "[price] touch bid quantity required for allocation cap", nil,
-		))
+		)
 	}
 
 	divisor := viper.GetInt("trading.allocation.touch_carry_divisor")
 
 	if divisor < 1 {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.Validation,
 			"[price] trading.allocation.touch_carry_divisor must be at least 1",
 			nil,
-		))
+		)
 	}
 
 	return touchBid.Div(decimal.NewFromInt64(int64(divisor))), nil
@@ -882,19 +889,27 @@ func (price *Price) RoundTrip(
 	budget, err := price.budget()
 
 	if err != nil {
+		if sizingAbstain(err) {
+			return nil, nil, err
+		}
+
 		return nil, nil, errnie.Error(err)
 	}
 
 	quantity, err := price.Affordable(symbol, budget, entry)
 
 	if err != nil {
+		if sizingAbstain(err) {
+			return nil, nil, err
+		}
+
 		return nil, nil, errnie.Error(err)
 	}
 
 	if quantity.Sign() <= 0 {
-		return nil, nil, errnie.Error(errnie.Err(
+		return nil, nil, errnie.Err(
 			errnie.Validation, "[price] budget affords no quantity of "+symbol, nil,
-		))
+		)
 	}
 
 	total := price.WithFee(symbol, notional(entry, quantity), BUY)
@@ -904,26 +919,52 @@ func (price *Price) RoundTrip(
 }
 
 /*
+sizingAbstain reports whether err is a routine no-entry reading while scanning
+symbols. errnie.IsKind only classifies the outermost ErrnieError, so IO wrappers
+around validation causes must be walked explicitly.
+*/
+func sizingAbstain(err error) bool {
+	for err != nil {
+		if errnie.IsValidation(err) || errnie.IsUnprocessableContent(err) || errnie.IsNotFound(err) {
+			return true
+		}
+
+		var next error
+
+		if typed, ok := err.(*errnie.ErrnieError); ok && typed.Cause != nil {
+			next = typed.Cause
+		} else {
+			next = errors.Unwrap(err)
+		}
+
+		if next == err {
+			break
+		}
+
+		err = next
+	}
+
+	return false
+}
+
+/*
 finishAllocateEntryErr maps sizing outcomes to NotFound without logging.
 Thin books, budgets below venue minimums, and crossed quotes are normal
-while scanning symbols; only unexpected IO failures are logged.
+while scanning symbols; unexpected IO failures are returned without logging
+so callers decide whether to escalate.
 */
 func finishAllocateEntryErr(symbol string, err error) (*EntryCost, error) {
 	if err == nil {
 		return nil, errnie.Err(errnie.NotFound, "[price] no tradable entry for "+symbol, nil)
 	}
 
-	if errnie.IsNotFound(err) {
-		return nil, err
-	}
-
-	if errnie.IsValidation(err) || errnie.IsUnprocessableContent(err) {
+	if errnie.IsNotFound(err) || sizingAbstain(err) {
 		return nil, errnie.Err(errnie.NotFound, "[price] no tradable entry for "+symbol, err)
 	}
 
-	return nil, errnie.Error(errnie.Err(
+	return nil, errnie.Err(
 		errnie.IO, "[price] get entry cost failed for "+symbol, err,
-	))
+	)
 }
 
 /*
@@ -1253,9 +1294,9 @@ func (price *Price) Liquidate(
 			}
 
 			if book.BestBid().Price.Cmp(book.BestAsk().Price) >= 0 {
-				err = errnie.Error(errnie.Err(
+				err = errnie.Err(
 					errnie.UnprocessableContent, "[price] crossed book for "+symbol, nil,
-				))
+				)
 
 				return
 			}
@@ -1263,17 +1304,23 @@ func (price *Price) Liquidate(
 			filled, g, walkErr := price.Walk(book, quantity, SELL)
 
 			if walkErr != nil {
-				err = errnie.Error(errnie.Err(
-					errnie.IO, "[price] liquidate failed for "+symbol, walkErr,
-				))
+				if sizingAbstain(walkErr) {
+					err = errnie.Err(
+						errnie.UnprocessableContent, "[price] liquidate cannot fill "+symbol, walkErr,
+					)
+				} else {
+					err = errnie.Err(
+						errnie.IO, "[price] liquidate failed for "+symbol, walkErr,
+					)
+				}
 
 				return
 			}
 
 			if filled == nil || filled.Sign() <= 0 {
-				err = errnie.Error(errnie.Err(
+				err = errnie.Err(
 					errnie.Validation, "[price] zero fill during liquidation for "+symbol, nil,
-				))
+				)
 
 				return
 			}
@@ -1288,9 +1335,13 @@ func (price *Price) Liquidate(
 	}
 
 	if err != nil && !errnie.IsNotFound(err) {
-		return nil, nil, errnie.Error(errnie.Err(
+		if sizingAbstain(err) {
+			return nil, nil, err
+		}
+
+		return nil, nil, errnie.Err(
 			errnie.IO, "[price] liquidate failed for "+symbol, err,
-		))
+		)
 	}
 
 	bidPrice, _ := price.Touch(symbol)

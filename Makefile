@@ -10,7 +10,7 @@ export GOEXPERIMENT := arenas
 # the real Metal solver per frame and legitimately need more than Go's 600s
 # default per-binary budget.
 OVERLAY_FLAG := $(if $(wildcard overlay.json),-overlay=$(CURDIR)/overlay.json,)
-GO_TEST_FLAGS := $(OVERLAY_FLAG) -p 1 -timeout 30m
+GO_TEST_FLAGS := -p 1 -timeout 30m
 
 SYMM_BIN := bin/symm
 # Leave CONFIG empty to use the binary's default configuration search.
@@ -25,7 +25,7 @@ ADVISOR_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-flow test-go test-race test-cover test-e2e test-frontend bench run paper collect detect train audit dump strip-trailing-newlines physics-metallib physics-manifold-metallib build-cuda
+.PHONY: build test test-flow test-go test-race test-cover test-e2e test-frontend bench run paper dump strip-trailing-newlines physics-metallib physics-manifold-metallib build-cuda
 
 test: test-flow test-go test-race test-frontend
 
@@ -53,34 +53,18 @@ bench:
 # currently collapses producers (Number/SetMetric pipelines are invisible to the
 # static Project/Binding scanner) and the Influence UI loses most of the graph.
 run:
-	go run $(OVERLAY_FLAG) main.go $(CONFIG_FLAG)
+	go run main.go $(CONFIG_FLAG)
 
 # paper uploads the records `make run` appended to paper.records_path; run
 # itself never writes storage.
 paper:
-	go run $(OVERLAY_FLAG) main.go paper $(CONFIG_FLAG)
-
-collect:
-	@echo "symm collect running (Ctrl+C to stop)"
-	go run $(OVERLAY_FLAG) main.go collect $(CONFIG_FLAG)
+	go run main.go paper $(CONFIG_FLAG)
 
 # The fee must be the one detect ran with (TAKER_FEE_PERCENT, same as detect
 # --taker-fee-percent); the audit checks it against the stored detections.
 # Override: make audit TAKER_FEE_PERCENT=0.26 ARGS="--epoch 1791596128450467000"
 TAKER_FEE_PERCENT ?= 0.8
 MIN_MOVE_DURATION ?= 1s
-
-detect:
-	@echo "Labeling spot:trade tape with excursion detections..."
-	go run $(OVERLAY_FLAG) main.go detect $(CONFIG_FLAG) $(ARGS)
-
-train:
-	@echo "Training action tree with MCTS over detected excursions and sensory tape..."
-	go run $(OVERLAY_FLAG) main.go train $(CONFIG_FLAG) $(ARGS)
-
-audit:
-	@echo "Running SYMM sensory & representation health audit..."
-	go run $(OVERLAY_FLAG) main.go audit $(CONFIG_FLAG)
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)
@@ -98,7 +82,7 @@ physics-manifold-metallib:
 
 build: physics-metallib
 	@mkdir -p bin
-	go build $(OVERLAY_FLAG) -race -o $(SYMM_BIN) .
+	go build -race -o $(SYMM_BIN) .
 
 build-cuda:
 	p=nomagique/physics/sensorium

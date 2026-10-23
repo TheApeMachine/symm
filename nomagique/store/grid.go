@@ -290,20 +290,40 @@ func cutMidpoint(regions []*Region) []*Region {
 }
 
 /*
-RegionSide reports whether a confluence region is part of the entry
-precursor or the exit holding stretch. The numbers are the groups in
-regionMetricPins. Any other region is context: it can sit in a regime
-token, and it does not open or close a position by itself.
+RegionVote is the side a confluence region speaks for, and whether it
+votes with that side. The groups are the ones in SIGNALS.md.
+
+Detector and support vote for their side: R00 and R01 for enter, R03 and
+R04 for exit. Opposition votes against its side: R02 against enter, R05
+against exit. Regime, history, and risk oracles (R06–R14) are context.
+They return ("", false) and do not open or close a position.
+*/
+func RegionVote(key uint8) (side string, with bool) {
+	switch key {
+	case 0, 1:
+		return "enter", true
+	case 2:
+		return "enter", false
+	case 3, 4:
+		return "exit", true
+	case 5:
+		return "exit", false
+	default:
+		return "", false
+	}
+}
+
+/*
+RegionSide is the side a region votes for. Opposition and oracles return
+"" because they do not cast a vote for that side.
 */
 func RegionSide(key uint8) string {
-	switch key {
-	case 0, 1, 2:
-		return "enter"
-	case 3, 4, 5:
-		return "exit"
-	default:
+	side, with := RegionVote(key)
+	if !with {
 		return ""
 	}
+
+	return side
 }
 
 /*

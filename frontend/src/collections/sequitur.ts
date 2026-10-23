@@ -2,10 +2,10 @@ import { createStore } from "@tanstack/store";
 
 /*
 The live Sequitur feed: strategy.SequiturFrame values the hub streams as
-sequitur/grammar/<symbol> (data/schema.go). Each frame is one new chord the
-grid's midpoint rule proposed, what the entry gate made of it, the absolute
-energy error on that tick, every structural event its append caused, and
-the whole grammar after it.
+sequitur/grammar/<symbol> (data/schema.go). Each frame is the regime the
+grammar closed, or the chord when none closed, whether that regime's
+terminals voted enter, the absolute energy error on that tick, every
+structural event its append caused, and the whole grammar after it.
 */
 
 export type GrammarEventKind = "append" | "create" | "reuse" | "inline";
@@ -34,9 +34,10 @@ export type GrammarRule = {
 What this tick recorded for the chord. Surprise is the absolute gap
 between metric energy and its running prediction, null until a prior
 exists. z is that error against the symbol's earlier errors, null until
-two exist. warm is grid maturity. passed is the entry gate: token
-brightness, maturity, ignition, and the friction check. The friction
-check itself is measurement.frictionPass, not passed.
+two exist. warm is grid maturity, a reading only. passed means the
+regime voted enter and its brightness cleared that path's threshold.
+The threshold rises after a losing exit and falls after a winning one.
+The friction check itself is measurement.frictionPass, not passed.
 */
 export type SequiturGate = {
 	surprise: number | null;

@@ -607,7 +607,7 @@ export const buildInsights = (
 		insights.push({
 			id: "gate",
 			title: "Entry gate",
-			body: `Passes ${pct(training.gatePassRate)} of chords; coders warm on ${training.warmRate === null ? "—" : pct(training.warmRate)} of feeds${training.frictionPassRate === null ? "" : `; friction passes ${pct(training.frictionPassRate)}`}.`,
+			body: `Brightness cleared the path threshold on ${pct(training.gatePassRate)} of frames; coders warm on ${training.warmRate === null ? "—" : pct(training.warmRate)} of feeds${training.frictionPassRate === null ? "" : `; friction passes ${pct(training.frictionPassRate)}`}.`,
 			tone: gatePassTone(training.gatePassRate),
 		});
 	}

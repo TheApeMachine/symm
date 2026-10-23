@@ -346,25 +346,17 @@ func (desk *Desk) Enter(
 	allocation, err := desk.price.AllocateEntry(symbol, cash)
 
 	if err != nil {
-		if errnie.IsNotFound(err) {
-			return err
-		}
-
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[desk.Enter] unable to size entry for "+symbol,
-			err,
-		))
+		return err
 	}
 
 	qty := allocation.Quantity
 
 	if qty == nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
+		return errnie.Err(
+			errnie.NotFound,
 			"[desk.Enter] no tradable quantity for "+symbol,
 			nil,
-		))
+		)
 	}
 
 	position.Qty = qty
@@ -372,11 +364,7 @@ func (desk *Desk) Enter(
 	order, err := position.Enter(tick)
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[desk.Enter] unable to enter "+symbol,
-			err,
-		))
+		return err
 	}
 
 	key := "position"

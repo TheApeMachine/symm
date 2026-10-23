@@ -60,15 +60,27 @@ func TestSymbolSurpriseIsAbsoluteEnergyError(t *testing.T) {
 }
 
 func TestRegionSide(t *testing.T) {
-	if RegionSide(0) != "enter" || RegionSide(2) != "enter" {
-		t.Fatal("R00-R02 are the entry precursor")
+	if RegionSide(0) != "enter" || RegionSide(1) != "enter" {
+		t.Fatal("R00 and R01 vote for enter")
 	}
 
-	if RegionSide(3) != "exit" || RegionSide(5) != "exit" {
-		t.Fatal("R03-R05 are the exit stretch")
+	if side, with := RegionVote(2); side != "enter" || with {
+		t.Fatal("R02 is enter opposition and votes against enter")
+	}
+
+	if RegionSide(2) != "" {
+		t.Fatal("R02 does not cast an enter vote")
+	}
+
+	if RegionSide(3) != "exit" || RegionSide(4) != "exit" {
+		t.Fatal("R03 and R04 vote for exit")
+	}
+
+	if side, with := RegionVote(5); side != "exit" || with {
+		t.Fatal("R05 is exit opposition and votes against exit")
 	}
 
 	if RegionSide(7) != "" {
-		t.Fatal("a regime region is neither an entry nor an exit")
+		t.Fatal("an oracle region casts no side vote")
 	}
 }

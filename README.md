@@ -6,17 +6,15 @@
 market by measuring its own results — and prove, afterwards, that it was thinking
 straight when it did.**
 
-S.Y.M.M. conditions live Kraken ticker, trade, futures and Level 3 order-book data
-into typed numerical measurements; rasterizes those measurements into a self-
-organizing *impulse map*; extracts watershed regions and cognitive precursors into an
-immutable prefix-tree cognition engine; evaluates actions through a statistical
-training coordinator gated by cognitive confidence and measured skill exceeding
-measurement error; and dispatches authorized decisions through an atomic exchange
-execution desk.
-
-Everything that crosses the wire is captured byte-for-byte, so **Hindsight** can later
-reconstruct exactly what the system knew at any historical moment and check whether the
-machinery was sane.
+S.Y.M.M. connects to Kraken (public trades, authenticated private channel, and
+Level 3 order books), turns each market moment into typed numerical measurements,
+projects those measurements into a shared **confluence grid**, compresses live
+regimes into **Sequitur token paths**, and matches those paths against policies
+stored in object storage. Authorized **enter** and **exit** actions go through
+**`broker.Desk`**, which sizes from the book, tracks fills, and persists open and
+closed lots. Every aggregate workspace tick is a **`data.Value`** whose layers hold
+the full pipeline state; the process **`io.Copy`**s that value to SeaweedFS (S3)
+and the dashboard hub replays the latest frame on connect.
 
 > ### ⚠️ Read this first
 >
@@ -29,26 +27,24 @@ machinery was sane.
 >   system is or will be profitable. The evidence so far is that markets are hard and
 >   fees are relentless. Most of this code exists to *measure* whether an edge is real,
 >   precisely because assuming one is the most expensive mistake available.
-> - **Simulation is not proof.** Simulated fills are forward observations
->   under a stated, deliberately conservative execution model. They are not exchange
->   profitability, and their totals are records of what the learner realized — never a balance
->   anyone holds.
-> - **Trading real funds risks losing them.** Setting `trading.model: real` points
->   experimental software at real money. Doing so is entirely at your own risk.
+> - **Simulation is not proof.** Paper fills and virtual ledger samples are forward
+>   observations under a stated execution model. They are not exchange profitability,
+>   and their totals are records of what the learner realized — never a balance anyone
+>   holds.
+> - **Trading real funds risks losing them.** Pointing experimental software at a live
+>   Kraken account is entirely at your own risk.
 > - Software provided **as is**, without warranty of any kind.
 
 ## Contents
 
-- [What changed](#what-changed)
+- [Overview](#overview)
 - [Architecture](#architecture)
 - [Runtime data flow](#runtime-data-flow)
-- [Signals](#signals)
-- [Logic solvers](#logic-solvers)
-- [The learning pipeline](#the-learning-pipeline)
-- [Execution and order lifecycle](#execution-and-order-lifecycle)
-- [Hindsight](#hindsight)
+- [Signals and the grid](#signals-and-the-grid)
+- [Solvers and parallel experiment](#solvers-and-parallel-experiment)
+- [Learning and execution](#learning-and-execution)
+- [Storage and Hindsight](#storage-and-hindsight)
 - [Nomagique](#nomagique)
-- [Telemetry](#telemetry)
 - [Dashboard](#dashboard)
 - [Configuration](#configuration)
 - [Build and run](#build-and-run)
@@ -56,544 +52,329 @@ machinery was sane.
 - [Repository map](#repository-map)
 - [Design references](#design-references)
 
-## What changed
+## Overview
 
-Earlier versions of this system decided by committee: advisors deliberated, a planner
-scored candidates, an opportunity layer gated entries, allocation sized them, and a
-stoploss regulator closed them. That whole stack is **gone** — deleted, not unmounted.
+The live process runs one **LMAX-style pipeline** per aggregate trade tick:
 
-| Removed                                               | Replaced by                                                             |
-|-------------------------------------------------------|-------------------------------------------------------------------------|
-| `strategy` advisors, planner, opportunity, allocation | streaming `strategy.Training` coordinator and `strategy.Trader`         |
-| stoploss engine and momentum exits                    | `Training` evaluates actions and commands exits from live market state  |
-| `regulator/` online control optimizer                 | cognitive confidence and empirical skill vs. uncertainty gate authority |
-| `logic.Analyzer`, evidence graph, causal solver       | the impulse map, watershed regions, and prefix-tree cognition           |
-| `types.Thesis` shared coordination object             | `types.Envelope` on a streaming workspace                               |
-| `backtest/` replay driver                             | delayed supervision with `Rehearsal` against catalog excursions         |
+1. **Ten signal handlers** append measurement layers to a shared `data.Value`.
+2. **`strategy.Training`** observes the grid, emits region tokens, runs per-symbol
+   **Sequitur** grammars, and drives **`strategy.Model`** (prefix-tree policies,
+   virtual excursions, and venue entries through the desk).
+3. **Sinks** persist the tick (`store.Client` → S3) and stream it (`ui.Hub` → WebSocket).
 
-The reason is singular: a second mechanism that could open or close a position is a
-second policy, learning nothing and contradicting the one whose outcomes are being
-measured. There is now exactly one decision path.
+Venue lots open and close only through **`Model` → `Desk`**.
+
+Stored tape supports offline **detect** (excursion labels), **train** (policy
+`enter.bin` / `exit.bin` from detections), and **audit** (metric health on active
+symbols). Those flows share the same S3 prefixes and [`SIGNALS.md`](SIGNALS.md)
+contract; details are in [`AGENTS.md`](AGENTS.md).
 
 ## Architecture
 
 ```text
-      Kraken WebSocket v2 · public · authenticated · L3 · futures
+     Kraken WebSocket v2 · public trades · private · Level 3
                               │
               ┌───────────────┴───────────────┐
               │                               │
-       raw frame capture              parsed envelopes
-     (catalog & storeTee)                     │
+        level3 ingress                  trade ingress
+        (book stays in                 (aggregate tick)
+         broker.Book)                         │
               │                               ▼
               │                    ┌──────────────────────┐
-              │                    │  streaming workspace │
+              │                    │  nmruntime.Workspace │
               │                    ├──────────────────────┤
-              │                    │ ingress (pub/prv/fut)│
-              │                    │ eleven signals       │
-              │                    │ logic solvers        │
-              │                    │ cognition solver     │
+              │                    │ signal (×10)         │
+              │                    │ logic (optional)     │
+              │                    │ strategy.Training    │
+              │                    │ parallel (optional)  │
               │                    └──────────┬───────────┘
               │                               │
-              │                               ▼
-              │                    ┌──────────────────────┐
-              │                    │   strategy.impulse   │
-              │                    │  quality grid & maps │
-              │                    └──────────┬───────────┘
-              │                               │
-              │                               ▼
-              │                    ┌──────────────────────┐
-              │                    │  strategy.Precursor  │
-              │                    │  token sequence path │
-              │                    └──────────┬───────────┘
-              │                               │
-              │                               ▼
-              │                    ┌──────────────────────┐
-              │                    │   cognition.Engine   │
-              │                    │ iradix CAS state     │
-              │                    └──────────┬───────────┘
-              │                               │
-              │                               ▼
-              │                    ┌──────────────────────┐
-              │                    │  strategy.Training   │
-              │                    │ confidence & skill vs│
-              │                    │ uncertainty gating   │
-              │                    └──────────┬───────────┘
-              │                               │
-              │                               ▼
-              │                    ┌──────────────────────┐
-              │                    │   strategy.Trader    │
-              │                    │ atomic per-symbol    │
-              │                    │ order lifecycle      │
-              │                    └──────────┬───────────┘
-              │                               │
-              │                               ▼
-              │                    ┌──────────────────────┐
-              │                    │     broker.Desk      │
-              │                    │   Kraken or Paper    │
-              │                    └──────────┬───────────┘
-              │                               ▲
-              │                               │ fills (ApplyExecution)
-              │                               │
-              ▼                               ▼
-       catalog (Iceberg)  ◄── drain ───  Rehearsal (delayed supervision)
+              │              ┌────────────────┴────────────────┐
+              │              ▼                                 ▼
+              │     store.Client (S3 tape)              ui.Hub (WS)
+              │              │                                 │
+              │              │ policies, positions,            │
+              │              │ detections, drafts              ▼
+              │              │                          React dashboard
+              ▼              ▼
+        broker.Price ◄── broker.Desk ──► paper or live Kraken REST/WS
 ```
 
-There is **one numerical pipeline** and no observation transport overhead. Signal and logic
-producers finish first; the shared grid update, precursor generation, cognitive query, policy
-evaluation and on-demand inspection run within the same consumer turn. Keeping those
-dependent steps together avoids separate polling barriers and stops a pending
-cognition batch from withholding all learner progress.
+**`strategy.Training`** owns the grid step, tokenizer ingest, and model evaluation.
+**`parallel.Runner`** is an optional side experiment (predictive coders + physics
+field on virtual books); it does not mutate `strategy`.
+
+When the dashboard is enabled (`make run` / default `symm`), resonance and manifold
+bridges publish to the hub unless **`parallel.enabled`** is true (parallel owns the
+Metal manifold slot in that mode).
 
 ## Runtime data flow
 
-### Boot
+### Boot (`cmd/booter.go`)
 
-[`cmd.rootCmd`](cmd/root.go) assembles the system in dependency order:
+Assembly order:
 
-1. Open the Hindsight Iceberg catalog (`tables.Open(ctx)`) and ensure schemas.
-2. Initialize WebSocket transports (`public`, `private`, `futures`).
-3. Build the price cache, instrument registry, and balance manager.
-4. Verify initial fee tables and cash balances are ready.
-5. Construct `strategy.Training` and `strategy.Trader`, wiring execution callbacks.
-6. Mount `ui.Hub` on `127.0.0.1:8765` and attach state providers.
-7. Restore stored catalog excursions into `Rehearsal` to warm up prior weights.
-8. Start periodic checkpointing and background `PollUntrained` replay.
-9. Record the active run identity (commit, build ID, config digest) in the catalog.
-10. Construct numerical signals, solvers (manifold, category, resonance), and cognition.
-11. Assemble the multi-tier `nmruntime.Workspace` with strict execution boundaries.
-12. Subscribe to market instruments, transition all subsystems to `READY`, start catalog drain, and open market ingress.
+1. Open Kraken **public** WebSocket; **private** WebSocket or **`broker.Paper`** when `market.model: paper`.
+2. Construct **`store.Client`** (S3 bucket from config) — required before **`broker.Desk`** restores positions.
+3. Build **instrument registry**, **`broker.Book`**, **`broker.Price`**, **`broker.Balance`**, **`broker.Desk`**.
+4. Wire **`ui.Hub`**: desk hello callback, policy list refresh, **`hindsight.Commit`** on `POST /hindsight/commit`.
+5. Start **private ingress** (executions → `desk.Apply`).
+6. Mount **ten signals**, optional **resonance/manifold** bridges, **`strategy.Training`**, optional **`parallel.Runner`**, 
+   then **`nmruntime.NewWorkspace`** with sinks (`store` when capturing, `hub` when serving the dashboard).
+7. **Seed Level 3** snapshots for every subscribed symbol (`book.Wait`); boot fails if any symbol never seeds.
+8. **Subscribe trades** and step the workspace on each aggregate **`spot:trade`** tick.
 
-Nothing subscribes to market data until every consumer can accept an envelope.
-Connected transports stay `BUSY` and deliberately discard frames until both runtime
-layers cross `READY`.
+Level 3 deltas update **`broker.Book`** in ingress goroutines; signals read the
+book through the guarded API. The workspace tick carries the trade array as
+`spot:trade`, not the raw Kraken envelope.
 
-### Ingress
+### One tick
 
-Level 3 orders never leave the websocket transport and its resident book.
-Delta-dependent signals run at that transport boundary; their measurements and a
-lightweight symbol/time notification enter the workspace. The learner reads the book
-through the guarded API — it does not transport order arrays.
+For each symbol with lit grid regions at or above the brightness midpoint:
 
-A read can legitimately be **newer** than the notification that triggered it, so
-journal records keep local decision/valuation time separate from the triggering market
-timestamp. These are different facts and are never conflated.
+- Regions become **tokens**; **Sequitur** proposes regime boundaries.
+- A **chord token** (cross-symbol agreement) triggers **`Model.Evaluate`**.
+- The model walks the longest matching **policy prefix** (`enter` / `exit` / virtual excursion).
+- Closed virtual lots **`Settle`** into path scores; venue lots reconcile through **`Desk`**.
 
-### Measurements
+Sale price and return for decisions come from **`broker/price.go`** (`Price.Exit` and the book).
 
-A measurement is a source-and-symbol observation with explicit provenance: observation
-interval, event-time validity, estimator maturity, SNR (which may be *undefined* rather
-than zero), and named metrics with raw value, optional normalization, and unit.
+## Signals and the grid
 
-A signal reports numbers. It does not choose a market category or a trading action.
-The governing test, from [`signal/README.md`](signal/README.md):
+Ten signals are mounted in the live workspace:
 
-> Two downstream consumers may disagree about what a metric implies while agreeing
-> completely about what the metric measures.
+| Signal        | Primary inputs    | Role                                      |
+|---------------|-------------------|-------------------------------------------|
+| `correlation` | ticker            | Cross-asset return dependence             |
+| `cvd`         | trade, book       | Aggressive flow vs midpoint               |
+| `depthflow`   | L3                | Displayed depth flow and imbalance        |
+| `hawkes`      | trade             | Self/cross-excitation intensities         |
+| `leadlag`     | ticker            | Lagged return alignment                   |
+| `liquidity`   | ticker, book      | Touch capacity and cost                   |
+| `morphology`  | L3                | Book shape geometry                       |
+| `pumpdump`    | trade, L3         | Volume-clock activity and spread response |
+| `sentiment`   | ticker            | Cohort breadth and agreement              |
+| `toxicity`    | ticker, trade, L3 | Touch liquidity fate                      |
 
-## Signals
+Each signal appends **`data.Value`** layers; it does **not** choose trades.
 
-Eleven signals fill the canonical measurement slots the grid consumes. Their estimators
-derive windows and scales from observed data rather than sharing fixed horizons.
+**[`SIGNALS.md`](SIGNALS.md)** maps metrics to the fifteen grid regions (enter
+detector/support/opposition and exit families). **`nomagique/store.Grid.Observe`**
+computes self-normalized magnitudes (SNM), energy surprise, and **brightness** per
+region. Live tokens use regions at or above the brightness midpoint.
 
-| Signal        | Inputs            | Measures                                                                                                                                                     |
-|---------------|-------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `correlation` | ticker            | Asynchronous signed return correlation, dependence magnitude, covariance and temporal overlap between supplied price paths.                                  |
-| `cvd`         | trade, ticker     | Executed aggressive flow — quantity, notional, one-sidedness, execution rate — against contemporaneous midpoint response.                                    |
-| `depthflow`   | L3                | How displayed depth is distributed bid/ask and how it is added, removed and redistributed through time.                                                      |
-| `derivatives` | futures           | Open interest and its change, derivative/reference basis, basis drift, and aligned derivative vs reference returns.                                          |
-| `hawkes`      | trade             | Arrival counts and rates, conditional buy/sell intensities, background rates, self- and cross-excitation, stability.                                         |
-| `leadlag`     | ticker            | Temporal alignment of two return paths: dependence at zero lag, at explicit shifts, and the best shift found.                                                |
-| `liquidity`   | ticker, book      | Displayed executable capacity at touch, the cost separating those prices, and divergence from the symbol's own causal baseline.                              |
-| `morphology`  | L3                | Book shape as geometry — Wasserstein distance and worst local disagreement between sides, concentration, entropy.                                            |
-| `pumpdump`    | trade, L3         | Volume-clocked tape activity, spread structure and midpoint response. (The package name is legacy; "pump" and "dump" are interpretations, not measurements.) |
-| `sentiment`   | ticker            | Cross-sectional cohort state: per-member returns, advance/decline participation, signed breadth, directional agreement.                                      |
-| `toxicity`    | ticker, trade, L3 | What happened to previously displayed touch liquidity — executed, price-moved-away, withdrawn or replenished beyond what fills explain.                      |
+## Solvers and parallel experiment
 
-Mathematical specifications live beside each implementation in `signal/<name>/README.md`.
-The measurement contract itself is [`signal/README.md`](signal/README.md), and the
-metric→category mapping is generated into `signal/metric_map.json` by `make metric-map`.
+| Component             | When mounted                            | Purpose                                                               |
+|-----------------------|-----------------------------------------|-----------------------------------------------------------------------|
+| **`logic/resonance`** | Dashboard on, `parallel.enabled: false` | Predictive-coding surprise (optional chord gate via `resonance.gate`) |
+| **`logic/manifold`**  | Same                                    | Metal fluid readout of L3 population; separate goroutine + hub bridge |
+| **`parallel.Runner`** | `parallel.enabled: true`                | Tagged virtual books, coders, physics field                           |
 
-## Logic solvers
+## Learning and execution
 
-Four stateful solvers are mounted directly in the workloads that produce their inputs.
+### Policy paths
 
-| Solver                          | Output                                                                                                                               |
-|---------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| [`category`](logic/category/)   | Cross-signal hypotheses from metric support, opposition, and missing evidence — a dimensionality reduction over the measurement set. |
-| [`cognition`](logic/cognition/) | DMT-backed episodic sequences, prefix-tree activations and cognitive paths.                                                          |
-| [`resonance`](logic/resonance/) | Per-symbol predictive-coding state and an online forward-return forecast with a Student-t predictive distribution.                   |
-| [`manifold`](logic/manifold/)   | A GPU (Metal) fluid readout of the visible L3 order population, with Hawkes excitation injected into the oscillators.                |
+- Per-symbol **Sequitur** streams compress regime tokens; **chord** tokens encode multi-symbol agreement.
+- **`Model`** stores confirmed paths in an **`iradix`** trie and on S3 under
+  `learning.policy_prefix` (default in config: `model/current/…/enter.bin` and
+  `…/exit.bin`).
+- **Promotion** uses in-sample fee-net returns on virtual excursions: confirm counts,
+  freeze after enough samples, demotion on repeated losses (`learning.*` in config).
+- **Enter** can require friction and ignition region gates (`RequireFrictionGate`,
+  `RequireIgnitionRegime`).
 
-The manifold steps on its own goroutine and publishes itself to the dashboard through a
-viewer; it is never published from the workspace's own step.
+Precursor (A→B) and holding (B→C) are **separate trie walks**: opening a sample or
+venue lot resets the symbol path so exit keys are holding fragments only.
 
-## The learning pipeline
+**`Model.Train`** inserts labelled paths into the policy tree and persists them for
+offline **train** and live promotion.
 
-### The impulse map
+### Desk and positions
 
-Signals and solvers write their observations into a per-symbol 2D grid (`strategy/impulse`). Each cell records the supplied raw value and presence mask — missing observations provide no activity and are never inferred. Signed changes are scaled by adaptive level dispersion, baseline maturity, measurement maturity, and signal power.
+- **`broker.Desk`** sizes entries from cash budget, touch carry divisor, and ask walk; exits use held inventory.
+- **`broker.History`** persists open lots under `position/open/<symbol>/…` and closed
+  lots under `position/closed/<id>/…` (loaded at desk construction).
+- Paper mode uses the native **`kraken paper`** CLI transport; **`market.model: paper`**
+  selects it at boot.
 
-Current quality-conditioned activity is rasterized into a square grid. Connected plateaus merge, uphill paths form watershed basins, and Otsu between-class variance retains the stronger basin class. There is **no** arbitrary cluster count or neighborhood radius. Regions are ordered by peak intensity.
+| Environment variable                   | Purpose                                                      |
+|----------------------------------------|--------------------------------------------------------------|
+| `L3_API_KEY` / `L3_API_SECRET`         | Collector role (live `symm` uses **`kraken.RoleCollector`**) |
+| `KRAKEN_API_KEY` / `KRAKEN_API_SECRET` | Main role for other tools                                    |
+| `SYMM_PPROF`                           | Force pprof when config disables it                          |
 
-### Precursor and token paths
+Kraken roles are **separate key pairs** (nonce isolation). Unset role env vars fail
+startup; there is no fallback between roles.
 
-[`strategy.Precursor`](strategy/precursor.go) translates impulse snapshot states into ordered token sequences. It extracts the top watershed basin identifiers, encodes net inventory exposure into dyadic tokens, and formats them into sequential paths for prefix-tree retrieval. Because token sequences maintain strict causal ordering, contextual prefixes represent increasingly specific market regimes.
+## Storage and Hindsight
 
-### The cognition engine
+**Object storage** (SeaweedFS behind S3) holds the authoritative artifacts:
 
-[`cognition.Engine`](logic/cognition/engine.go) maintains episodic situational memory backed by an immutable prefix tree (`iradix.Tree`).
-The engine state couples the prefix tree and logical step clock into a single immutable `engineState` that is published via Compare-And-Swap (CAS):
-```go
-type engineState struct {
-    root *iradix.Tree[[]byte]
-    step uint64
-}
-```
-Committed tree roots never disagree with their logical clock. Retrieval traverses prefix paths to match active market precursors against historical outcomes, producing:
-- Empirical support (count of verified observations)
-- Class posterior probabilities (policy bias $P(\text{action}) - 0.5$)
-- Contextual ambiguity (entropy over candidate actions)
-- Surprisal metrics against current regime transitions
+| Prefix family                        | Contents                                                 |
+|--------------------------------------|----------------------------------------------------------|
+| Workspace tape                       | Aggregate ticks written by `store.Client` as `io.Writer` |
+| `model/current/` (configurable)      | Learned enter/exit policy blobs                          |
+| `position/open/`, `position/closed/` | Open and closed lots                                     |
+| `detections/`                        | Committed labelled excursions                            |
+| Hindsight drafts                     | Per-run A/B/C/D working markers                          |
 
-### Training coordinator and authority gating
+The store client keeps an in-memory **immutable radix index** of keys for listing
+and ordered replay. Prefix reads and writes use a **`data.Value`** seeded with that
+prefix on a client safe to share across goroutines.
 
-[`strategy.Training`](strategy/training.go) consumes streaming workspace measurements, advances the precursor, queries cognition, and evaluates action candidates (`WAIT`, `ENTER`, `EXIT`, `SCALE`).
+**Hindsight** ties labelling to storage:
 
-`ActionEnter` execution authority is rigorously gated. It is granted only when:
-1. **Learned situations exist**: Historical precedents have been recorded for the context.
-2. **Support is positive**: Empirical support $> 0$.
-3. **Cognitive confidence exceeds prior**: Posterior action probability exceeds the uninformative baseline (0.5 for binary outcomes).
-4. **Surprisal is bounded**: The observation does not trigger a surprisal break.
-5. **Low ambiguity**: Normalized entropy is below 0.85.
-6. **Measured skill exceeds uncertainty**: For sample count $N \ge 2$, the sample mean return $\bar{r} = \frac{\sum r_i}{N}$ must exceed its own standard error $SE(\bar{r}) = \sqrt{\frac{s^2}{N}}$, where $s^2 = \frac{\sum r_i^2 - \frac{(\sum r_i)^2}{N}}{N - 1}$:
-   $$\bar{r} - SE(\bar{r}) > 0$$
-   An edge must be statistically larger than its own economic measurement error before touching real risk. Models with fewer than 2 completed trades or non-positive lower bounds remain unentitled to live risk.
-
-Training continuously tracks live metrics (`wins`, `losses`, `pnl`, and empirical win rate) without artificial smoothing or synthetic distributions.
-
-### Rehearsal and delayed supervision
-
-[`strategy.Rehearsal`](strategy/rehearsal.go) provides delayed supervision without leaking future tape.
-- As the catalog drains confirmed market records, `Rehearsal.Step` discovers objective price excursions over verified horizons.
-- Excursions evaluate pending decisions against real forward price moves, generating supervision records and updating the shared `cognition.Engine`.
-- The most recent excursion is published atomically as an immutable `*tables.ExcursionRecord` (`rehearsal.LastExcursion()`), eliminating data races with the live `Training.Step()` loop.
-- Periodic background checkpointing persists catalog training state. The background worker (`PollUntrained`) replays newly cataloged records into the shared cognition engine *without* invoking `Engine.Restore()`, protecting live inference from transient empty model states.
-
-## Execution and order lifecycle
-
-### Atomic per-symbol lifecycle and capital admission
-
-Order placement and cancellation are inherently stateful exchange transactions. To eliminate race conditions where simultaneous signals could dispatch duplicate orders or overwrite positions:
-- [`strategy.Trader`](strategy/trader.go) coordinates portfolio admission across symbols through an atomic capital reservation boundary, and serializes order operations with per-symbol locks.
-- For `ActionEnter`, `Trader` generates a stable UUID client order ID (`ClOrdId`), reserves capital, and registers a pending [`position.Regulator`](broker/position/regulator.go) *before* the order request is dispatched to the exchange.
-- Incoming exchange execution events arriving over WebSocket cannot outrun local position awareness.
-
-### Cumulative fill reconciliation and lifecycle states
-
-[`position.Regulator`](broker/position/regulator.go) exclusively owns position inventory, pending order state, and cumulative venue fill reconciliation.
-- When Kraken WebSocket execution events arrive, `Trader.ApplyExecution()` matches the authoritative order ID and reconciles cumulative executed volume, price, and fees via `Regulator.ReconcileFill()`. Fills update inventory deltas, and fee allocations are retained with exact subtraction.
-- The position transitions through explicit lifecycle states (`entry_pending` -> `open` -> `exit_pending` -> `closed`), preventing exit fills from overwriting entry facts or premature position removal upon exit dispatch.
-- Readers in risk, UI telemetry, and accounting observe consistent position state without mutex contention or torn reads.
-
-### Authoritative exit sizing
-
-[`broker.Desk.Exit`](broker/desk.go) derives exit order quantity strictly from held inventory (`regulator.Volume()`) rather than the originally requested entry volume. When an entry order only partially fills, subsequent exit orders sell only the volume that was actually filled on exchange; zero-inventory exits are rejected immediately.
-
-### Paper and real
-
-`trading.model: paper` routes balances, fills, history and orders through the native `kraken paper` CLI while public market data continues to come from Kraken. The paper ledger is external to this process; it is not an in-memory fake exchange.
-
-`trading.model: real` routes account operations and orders to Kraken.
-
-| Environment variable | Purpose                                                  |
-|----------------------|----------------------------------------------------------|
-| `KRAKEN_API_KEY`     | Kraken API public key.                                   |
-| `KRAKEN_API_SECRET`  | Kraken API secret consumed by the SDK.                   |
-| `SYMM_PPROF`         | Enables the pprof listener even when config disables it. |
-| `DATURA_INSPECT`     | Enables DMT/datura inspection output.                    |
-
-There is no automatic `SYMM_*` mapping for Viper configuration; use a YAML file for
-everything else.
-
-## Hindsight
-
-Full specification: [`hindsight/README.md`](hindsight/README.md) — sixty numbered sections
-of contract.
-
-Hindsight is the retrospective inspection and mathematical-validation engine. It answers:
-
-> When the market entered an objectively interesting historical condition, what exactly
-> did SYMM know, calculate, retain, infer and produce at that moment — and was that
-> machinery mathematically, semantically, numerically, temporally and causally sane?
-
-It is explicitly **not** a strategy tuner, threshold optimizer, parameter search, profit
-simulator, regret calculator, or "what should we have done?" engine.
-
-### Three laws
-
-1. **Future selects, past determines.** The future may tell Hindsight *where to look*. It
-   may never change what SYMM *knew* there. A later +20% excursion identifies a reference
-   point; it is not an input to the reconstructed state at that point.
-2. **Exact provenance.** Every derived fact traces to the exact captured frame that caused
-   its computation and the exact resident state version that participated. Timestamp
-   proximity is not provenance.
-3. **Correctness, not profit.** A mathematically valid system may select cash immediately
-   before a +40% move — if every contract held, Hindsight reports no defect. A profitable
-   trade containing broken mathematics is reported as a defect regardless of outcome.
-
-### How it works
-
-Every raw websocket frame is captured byte-for-byte with a minted **capture identity**
-before it is parsed, tagged with its origin kind and endpoint. Envelope manifests record
-that one raw frame may produce zero, one, or many envelopes. Witnesses record what
-*changed* at bounded decision moments. Runs carry code commit, build ID, config digest and
-schema versions, so a capture is never silently compared across incompatible code.
-
-Episodes are objectively interesting market regions — upward and downward excursions,
-reversals, volatility expansion and contraction, spread expansion, liquidity collapse,
-arrival clusters — selected without consulting any SYMM trading output. Reference points
-are coordinates on the historical record: an *anchor* is where an excursion retrospectively
-began, which never means SYMM should have bought there. A market excursion is never called
-profit, and undefined is never rendered as zero.
-
-Witness overflow marks the run `GAPPED` rather than silently losing records.
-
-### Tools
-
-```bash
-make metric-map            # regenerate signal/metric_map.json from signal/metric_map.csv
-make metric-lineage        # regenerate frontend/public/metric-lineage.json
-```
-
-The dashboard's `/hindsight` surface reads the same store: runs, captures, persisted
-states, gaps, envelopes, lifecycle records and the position index, with a
-plain-language/expert explainer that translates only *declared* vocabulary. Colour there
-encodes **knowability, not desirability** — it never judges a value good or bad.
+- The dashboard **`/hindsight`** surface edits draft markers on stored tape.
+- **`POST /hindsight/commit`** (`hindsight.Commit`) writes a **`detections/…`**
+  object from a closed **virtual** lot and tape ticks A–D.
+- **`hindsight.StoreDrafts`** and **`hindsight.Annotate`** prepare and adjust drafts
+  when scanning tape offline.
 
 ## Nomagique
 
-[`nomagique/`](nomagique/) is the embedded numeric library, vendored in-repo. The name is
-the thesis: **no magic numbers**. Window sizes, adaptation rates and baseline half-lives
-are derived from observed data — its event-time spacing, dispersion and stability — so
-estimators self-calibrate.
+[`nomagique/`](nomagique/) is the embedded numeric library: composed **`Step`**
+pipelines, the learning **grid**, statistics, Hawkes helpers, resonance learning,
+and the Metal **sensorium** physics used by manifold and parallel.
 
-The contract is a composed pipeline of `Step(Number) Number` nodes. A primitive owns no
-goroutines, no locks and no magic constants; a signal is one such pipeline and holds no
-math of its own. The library implements EWMA and windowed statistics, Hawkes fitting,
-recursive least squares, adaptive standardization, resonance predictive coding, the
-learning grid and its region watershed, prior/model recall, reward ledgers, correlation
-and vector engines, and the Metal fluid solver.
-
-**The package boundary is absolute.** `nomagique` organizes and optimizes numbers. It has
-no knowledge of market symbols, wallets, orders, fills, equity or funding — including in
-its tests. `symm` owns all execution rules, economic accounting and display vocabulary.
-
-## Telemetry
-
-[`telemetry/`](telemetry/) defines the binary wire format for high-throughput frontend
-frames. The schema is [`telemetry.fbs`](telemetry/telemetry.fbs) (FlatBuffers); generated
-Go lands in `telemetry/generated/` and generated TypeScript in
-`frontend/src/providers/telemetry/`.
-
-Regenerate both sides together — never run bare `flatc`:
-
-```bash
-make generate-telemetry
-```
-
-The WebSocket carries binary FlatBuffers telemetry and manifold frames. The hub
-encodes the solver’s immutable published state, including wave modes, phase
-resultants, and accepted-step physics health. A connected socket alone does not
-mean the solver has published a state.
+**Boundary:** `nomagique` organizes numbers. **`symm`** owns symbols, wallets,
+orders, policies, and display vocabulary — including in tests.
 
 ## Dashboard
 
-[`ui.Hub`](ui/hub.go) serves on `127.0.0.1:8765`:
+**`ui.Hub`** listens on **`127.0.0.1:8765`** (see `ui.addr` in config):
 
-| Endpoint                | Purpose                                                                                   |
-|-------------------------|-------------------------------------------------------------------------------------------|
-| `ws://…/ws`             | Binary state and telemetry stream, plus focus-symbol commands.                            |
-| `GET …/learning`        | Coherent on-demand agent state for the selected symbol.                                   |
-| `GET …/learning/skill`  | Current skill reading and mode.                                                           |
-| `GET …/learning/events` | The run's durable decision journal.                                                       |
-| `GET …/trades`          | Completed round trips.                                                                    |
-| `GET …/hindsight/*`     | Runs, captures, states, gaps, envelopes, lifecycle, timeline, resident state, metric map. |
+| Endpoint                  | Purpose                                                                    |
+|---------------------------|----------------------------------------------------------------------------|
+| `ws://…/ws`               | Frame stream; focus symbol and route commands from the browser             |
+| `POST …/hindsight/commit` | Persist one labelled detection from the Hindsight UI                       |
+| `POST …/workbench/query`  | Proxy to optional Perspective workbench (`workbench.url`, default `:8081`) |
 
-The frontend is a React 19 / TanStack Start terminal on port 3000.
+The frontend is **React 19 / TanStack Start / Vite** on port **3000**
+(`cd frontend && pnpm dev`). Build-time overrides: `VITE_SYMM_WS_URL`,
+`VITE_SYMM_WEBRTC_URL`.
 
-| Surface                  | What it shows                                                                                                |
-|--------------------------|--------------------------------------------------------------------------------------------------------------|
-| `/` Dashboard            | Equity, balances, positions, queue depths, system telemetry.                                                 |
-| `/learning`              | The learning coordinator: impulse map, regions, cognition predictions, training metrics, and live decisions. |
-| `/hindsight`             | Run browser + DuckDB-bucketed research timeline (needs `make workbench`); envelope/excursions stay typed.    |
-| `/fluid`                 | Live L3 manifold: particle fields, phase modes, and physics health over WebSocket.                           |
-| `/signals`               | Per-signal metric timeseries and estimator state.                                                            |
-| `/xray`                  | Resonance hidden state and prequential skill history.                                                        |
-| `/cortex`                | DMT prefix-tree activations and episodic paths.                                                              |
-| `/influence`, `/lineage` | Relationship, influence and metric-lineage views.                                                            |
-| `/journal`               | Completed round trips and realized PnL.                                                                      |
-| `/diagnostics`           | Live pipeline topology, per-stage and per-queue health and latency.                                          |
-| `/workbench`             | Perspective Virtual Server over DuckDB/Iceberg (Arrow IPC). Requires `make workbench`.                       |
+| Route          | Surface                                                |
+|----------------|--------------------------------------------------------|
+| `/`            | Balances, positions, queue health                      |
+| `/learning`    | Grid regions, grammars, policy match, training metrics |
+| `/longtail`    | Path score / long-tail ledger views                    |
+| `/parallel`    | Parallel experiment telemetry                          |
+| `/signals`     | Per-signal metric readouts                             |
+| `/xray`        | Resonance state                                        |
+| `/fluid`       | Manifold / phase field                                 |
+| `/influence`   | Metric influence graph                                 |
+| `/hindsight`   | Tape review and commit                                 |
+| `/diagnostics` | Pipeline topology and latency                          |
+| `/workbench`   | Perspective over stored runs (needs workbench service) |
 
-Analytical DuckDB is a **separate process** so cgo/GC never share the trading
-binary. In one terminal run `make workbench` (listens on `:8081`); the hub proxies
-`POST /workbench/query` there. Trading/`make run` is unchanged if workbench is down —
-only `/workbench` and Hindsight research timelines need it.
-
-The browser sends the selected focus symbol back to the backend, so detailed telemetry is
-gated to the active market rather than broadcast for every pair.
-
-Build-time overrides: `VITE_SYMM_WS_URL`, `VITE_SYMM_WEBRTC_URL`.
+The hub starts in **`ui` package `init`** when the backend binary links `ui`.
 
 ## Configuration
 
-Configuration loads in this order:
+Load order:
 
 1. `--config <path>` when supplied (failure is fatal).
 2. `cmd/cfg/config.yml`
 3. `./config.yml`
 4. `$HOME/.symm/config.yml`
-5. The copy of `cmd/cfg/config.yml` embedded in the binary.
+5. Embedded copy of `cmd/cfg/config.yml`
 
-The checked-in defaults give you: data under `~/.symm/data`; **paper execution**; USD
-quote-market discovery; authenticated L3 depth alongside ticker, trade and futures;
-bounded ordered capture and witness queues; an in-memory DMT cognitive tree; a 0.50
-per-entry quote-notional ceiling; and pprof disabled. See
-[`cmd/cfg/config.yml`](cmd/cfg/config.yml) for the complete file.
+Defaults in the checked-in file include **paper execution** (`market.model: paper`),
+USD quote discovery, L3 alongside trades, S3 bucket **`symm`**, bounded websocket
+buffers, and learning thresholds under **`learning.*`**. See
+[`cmd/cfg/config.yml`](cmd/cfg/config.yml).
 
-Runtime files under `system.data_path`:
-
-| File               | Purpose                                                                 |
-|--------------------|-------------------------------------------------------------------------|
-| `catalog/`         | Iceberg metadata and Parquet tables for runs, captures, and excursions. |
-| `positions.sqlite` | Persisted position and completed-trade state.                           |
-| `checkpoint.bin`   | Periodic binary model state checkpoint.                                 |
-
-### What survives a restart
-
-The catalog and model checkpoints do. On startup `Rehearsal` restores recent catalog
-excursions and checkpoints to warm up prior weights, so a new process starts with learned
-situations rather than cold. Execution authority is never inherited — empirical win rate and
-skill must be confirmed in the active session.
+Important groups: **`storage.s3`**, **`market.*`** (fees, L3 subscribe pacing),
+**`learning.*`**, **`resonance.*`**, **`parallel.*`**, **`kraken.credentials.*`**.
 
 ## Build and run
 
 ### Prerequisites
 
-- Go 1.26.1
-- pnpm 10.28.1
-- A sibling checkout of `../datura` (used by the cognition solver via `go.mod` replace)
-- macOS with Metal for the GPU manifold path
-- The native `kraken` CLI for paper account and execution operations
-- Kraken credentials for authenticated private and L3 connections
-- `flatc` only if regenerating telemetry bindings
+- **Go 1.26.1** (module version in `go.mod`)
+- **pnpm 10.28.1** for the frontend (`frontend/package.json`)
+- **SeaweedFS** (or compatible S3) at `storage.s3.endpoint`
+- **macOS + Metal** for manifold / parallel GPU paths
+- **`kraken` CLI** for paper wallet operations
+- Kraken API keys for collector (and main if you use REST tools)
+- Optional: **Pyroscope** / Grafana from `docker-compose.yml` for profiling
 
-`qpool`, reached through DMT, uses `go:linkname` runtime hooks, so Go 1.26 needs
-`GOFLAGS=-ldflags=-checklinkname=0` to link. The Makefile exports it — use the Makefile so
-the setting reaches nested Go and cgo subprocesses.
+The Makefile sets **`GOEXPERIMENT=arenas`**. After editing `.metal` sources, run
+**`make physics-metallib`**.
 
 ### Run
 
+Backend (capture, dashboard hub, and paper trading when configured):
+
 ```bash
-make run          # backend + dashboard as one interruptible session; Ctrl+C stops both
+make run
 make run CONFIG=/absolute/path/to/config.yml
 ```
 
-Then open **http://127.0.0.1:3000** (dashboard) or **http://127.0.0.1:3000/learning**
-(the agent).
-
-Other entry points:
-
-```bash
-make build                 # race-enabled binary → bin/symm  (rebuilds the Metal lib first)
-make experimental          # live observability stack, forced paper-only
-make debug                 # DATURA_INSPECT=1
-make run-profile           # pprof at http://127.0.0.1:6060/debug/pprof/
-make physics-metallib      # regenerate the embedded Metal library after editing a .metal file
-make metric-lineage        # regenerate frontend/public/metric-lineage.json
-make metric-map            # regenerate signal/metric_map.json
-```
-
-Editing a `.metal` file requires `make physics-metallib` — the library is `go:embed`ed, so
-`go build` alone will not pick up the change.
-
-Frontend on its own:
+Frontend (separate terminal):
 
 ```bash
 cd frontend && pnpm install && pnpm dev
 ```
 
+Open **http://127.0.0.1:3000** — WebSocket defaults to **http://127.0.0.1:8765/ws**.
+
+```bash
+make build          # race binary → bin/symm (rebuilds Metal lib first)
+make test-go        # Go tests (-p 1, 30m timeout)
+make test-race
+make bench
+make physics-metallib
+make dump           # scripts/dump-repo.py snapshot
+```
+
+Metric map generators:
+
+```bash
+go run ./tools/metricmap
+go run ./tools/metriclineage
+```
+
 ## Tests and benchmarks
 
-The Go suite uses GoConvey and covers package behaviour, concurrency, calculation
-benchmarks, transport fixtures and a deterministic Level 3 market model under
-[`tests/market`](tests/market/).
-
-Metal pipeline creation is XPC-global, so package binaries must not initialize independent
-domains concurrently — tests run with `-p 1` and a 30m budget. The linker flag is required
-to **link**; compile and vet pass without it.
+Go tests use **GoConvey**; Metal tests require **`-p 1`** (see Makefile). Frontend:
+**Vitest**, **Biome**, **`pnpm typecheck`**.
 
 ```bash
-make test-go          # Go tests
-make test-race        # Go race suite
-make test-cover       # coverage → runs/coverage.out
-make bench            # benchmarks with allocations
-make test             # Go tests + race + frontend production build
+make test           # controlflow + test-go + test-race + frontend production build
+make test-frontend  # pnpm build only (not Vitest)
+cd frontend && pnpm test && pnpm lint && pnpm typecheck
 ```
-
-```bash
-cd frontend
-pnpm test             # Vitest
-pnpm typecheck        # TypeScript
-pnpm lint             # Biome
-pnpm build            # production build
-pnpm bench            # Vitest benchmarks
-```
-
-`make test-frontend` runs `pnpm build` only; it does not run Vitest.
 
 ## Repository map
 
-| Path                | Responsibility                                                                                                                                                                                                                      |
-|---------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `main.go`, `cmd/`   | Cobra entrypoint, config loading, system assembly, runtime workspace, and telemetry streaming.                                                                                                                                      |
-| `kraken/`           | Kraken wire models and normalized exchange payloads.                                                                                                                                                                                |
-| `kraken/websocket/` | Public/private/futures/L3 transport, subscriptions, nonce management, paper routing, raw capture hooks.                                                                                                                             |
-| `types/`            | Envelope, measurement, action, decision, cognition, holding, phase and UI types.                                                                                                                                                    |
-| `signal/`           | The eleven numerical conditioners, their specs and the metric map.                                                                                                                                                                  |
-| `logic/`            | Category, cognition, resonance and manifold solvers.                                                                                                                                                                                |
-| `strategy/`         | The learning coordinator: impulse map and watershed regions, precursor token paths, cognition tree integration, training evaluation and skill-vs-uncertainty gating, atomic trader order management, rehearsal delayed supervision. |
-| `broker/`           | Instruments, price and fee economics, wallet, desk, position regulation.                                                                                                                                                            |
-| `hindsight/`        | Capture identity, sequencing, manifests, witnesses, episodes, replay, integrity, validation.                                                                                                                                        |
-| `store/`            | SQLite engine, ordered capture writer, async witness writer, learning journal, repositories.                                                                                                                                        |
-| `nomagique/`        | Embedded numeric library (composed primitives, learning grid, physics, estimators).                                                                                                                                                 |
-| `telemetry/`        | FlatBuffers schema and generated Go bindings.                                                                                                                                                                                       |
-| `ui/`               | Dashboard WebSocket, HTTP inspection routes, binary manifold transport.                                                                                                                                                             |
-| `frontend/`         | React/TanStack terminal and its stores.                                                                                                                                                                                             |
-| `tests/`            | Deterministic Level 3 market model and fixtures.                                                                                                                                                                                    |
-| `system/`           | Runtime configuration and pipeline diagnostics.                                                                                                                                                                                     |
-| `tools/`            | Metric lineage and metric map generators.                                                                                                                                                                                           |
-| `specs/`            | Design contracts, research notes and reviews (some historical).                                                                                                                                                                     |
-
-### Adding or changing a signal
-
-1. Emit dimensional numerical metrics with correct timestamps, units, maturity and
-   uncertainty — and leave SNR *undefined* rather than zero when no noise model exists.
-2. Keep market categories and trading actions out of the signal package.
-3. Compose one `nomagique` pipeline; the signal itself holds no state and does no math.
-4. Mount it in the workload that produces its inputs and register its measurement slots.
-5. Document it in `signal/<name>/README.md` and regenerate the metric map.
-6. Cover multi-step behaviour and invalid input with mirrored GoConvey tests.
-7. Add a benchmark when the change affects repeated calculation.
+| Path                  | Responsibility                                         |
+|-----------------------|--------------------------------------------------------|
+| `main.go`, `cmd/`     | Cobra entry, **`Booter`** assembly, ingress, workspace |
+| `kraken/`, `network/` | Wire models, WebSocket clients, credentials, REST      |
+| `data/`               | **`Value`** tape cells, layers, transport helpers      |
+| `signal/`             | Ten live numerical conditioners                        |
+| `logic/`              | Resonance and manifold solvers + hub bridges           |
+| `strategy/`           | **`Training`**, **`Model`**, tokenizer / Sequitur      |
+| `parallel/`           | Optional parallel experiment runner                    |
+| `broker/`             | Book, price, desk, positions, paper transport          |
+| `store/`              | S3 client, prefix I/O, key index                       |
+| `hindsight/`          | Commit, drafts, annotation helpers                     |
+| `nomagique/`          | Numeric kernels, grid, physics                         |
+| `ui/`                 | Fiber hub, WebSocket, HTTP routes                      |
+| `frontend/`           | Terminal dashboard                                     |
+| `system/`             | Typed config (`system.Cfg`), detector/audit structs    |
+| `tools/`              | Metric map / lineage generators                        |
+| `SIGNALS.md`          | Metric → grid region contract                          |
+| `specs/`              | Subsystem design notes                                 |
 
 ## Design references
 
-- [`AGENTS.md`](AGENTS.md) — implementation, safety, testing and architecture rules.
-- [`hindsight/README.md`](hindsight/README.md) — the sixty-section inspection contract.
-- [`signal/README.md`](signal/README.md) — the measurement envelope contract.
-- [`nomagique/README.md`](nomagique/README.md), [`nomagique/DESIGN.md`](nomagique/DESIGN.md) — the numeric library.
-- [`specs/manifold.md`](specs/manifold.md), [`specs/pnl.md`](specs/pnl.md), [`specs/market-simulator.md`](specs/market-simulator.md) — subsystem contracts.
-- Remaining `specs/` documents predate the agent rewrite and are historical.
+- [`AGENTS.md`](AGENTS.md) — pipeline, storage, detect/train conventions
+- [`SIGNALS.md`](SIGNALS.md) — grid pins and metric roles
+- [`specs/manifold.md`](specs/manifold.md), [`specs/pnl.md`](specs/pnl.md) — subsystem contracts
+- [`frontend/README.md`](frontend/README.md) — UI frame conventions
 
 ## Terminal
 

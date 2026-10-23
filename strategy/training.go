@@ -120,12 +120,18 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		training.model.TrackSequitur(symbol, regime)
 
 		chord := tokenizer.ChordToken(bySymbol[symbol])
-		if len(chord.Symbols) == 0 {
+		training.model.noteChord(symbol, chord)
+
+		// A closed regime is the path edge. A tick that did not close one,
+		// or closed one whose terminals do not vote a side, publishes the
+		// chord and leaves the path where it is. Oracles in that regime
+		// are context, not a step.
+		if len(regime.Symbols) == 0 || tokenSide(regime) == "" {
 			training.model.Touch(symbol)
 			continue
 		}
 
-		training.model.Evaluate(symbol, chord)
+		training.model.Evaluate(symbol, regime)
 	}
 
 	training.model.reviewExcursions()

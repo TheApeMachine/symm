@@ -170,8 +170,16 @@ func (position *Position) Enter(tick uint64) (*spot.OrderRequest, error) {
 		cost, err := position.price.EntryCost(position.Symbol, position.Qty)
 
 		if err != nil {
+			if sizingAbstain(err) {
+				return nil, errnie.Err(
+					errnie.NotFound,
+					"[position.Enter] no fill price for "+position.Symbol,
+					err,
+				)
+			}
+
 			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
+				errnie.IO,
 				"[position.Enter] no fill price for "+position.Symbol,
 				err,
 			))
