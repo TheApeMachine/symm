@@ -259,26 +259,30 @@ const mean = (values: number[]): number | null =>
 		: null;
 
 /*
-summarizeBook reads one book's desk rows into its round-trip statistics.
-Returns are only counted for closed lots the desk has priced; a book with no
-priced closes reports nulls, never a fabricated zero.
+summarizeBook reads one book's desk rows into round-trip statistics via
+positionReadout (broker net_return / CloseOut economics). Only settled lots
+with a net return participate; open lots never affect edge. Nulls when there
+is nothing priced — never a fabricated zero.
 */
 export const summarizeBook = (
 	rows: Record<string, unknown>[],
 	book: Book,
 ): BookDeskStats => {
 	const onThisBook = rows.filter((row) => onBook(row, book));
-	const closed = closedOnBook(rows, book);
-	const returns = closed
-		.map((row) => positionReadout(row).returnPct)
-		.filter((value): value is number => value !== null);
+	const settled = closedOnBook(rows, book).filter((row) => {
+		const readout = positionReadout(row);
+		return readout.returnPct !== null;
+	});
+	const returns = settled.map(
+		(row) => positionReadout(row).returnPct as number,
+	);
 	const wins = returns.filter((value) => value > 0).length;
-	const holds = closed
+	const holds = settled
 		.map((row) => positionReadout(row).holdNs)
 		.filter((value): value is number => value !== null && value > 0);
 
 	return {
-		closed: closed.length,
+		closed: settled.length,
 		open: openOnBook(onThisBook, book).length,
 		wins,
 		winRate: returns.length > 0 ? wins / returns.length : null,
@@ -547,7 +551,7 @@ export const buildInsights = (
 		insights.push({
 			id: "edge",
 			title: `Round-trip edge (${book})`,
-			body: `Mean return ${bookStats.meanReturn === null ? "—" : signedPct(bookStats.meanReturn)} on ${bookStats.closed} closed ${book} lots; win rate ${pct(bookStats.winRate)} (${bookStats.wins}/${bookStats.closed}).${trendSentence}`,
+			body: `Mean return ${bookStats.meanReturn === null ? "—" : signedPct(bookStats.meanReturn)} on ${bookStats.closed} settled ${book} lots; win rate ${pct(bookStats.winRate)} (${bookStats.wins}/${bookStats.closed}).${trendSentence}`,
 			tone: returnTone(bookStats.meanReturn),
 		});
 	}

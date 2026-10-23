@@ -128,10 +128,18 @@ func (price *Price) CopyFeesTo(dst *Price) {
 		return
 	}
 
+	if dst.fees == nil {
+		dst.fees = &sync.Map{}
+	}
+
 	price.fees.Range(func(key, value any) bool {
 		dst.fees.Store(key, value)
 		return true
 	})
+
+	if fee := price.defaultFee.Load(); fee != nil {
+		dst.defaultFee.Store(fee)
+	}
 }
 
 func (price *Price) SetReferenceCash(cash *decimal.Decimal) {
@@ -313,39 +321,45 @@ func (price *Price) Mark(symbol string, side Direction) *decimal.Decimal {
 }
 
 /*
-ExitRoom reports how many times the visible bid book can carry the given
-quantity: total resting bid depth divided by the position's quantity.
-A value of 1.0 means the book can absorb the position exactly once;
-10.0 means ten times over. Zero when the book is empty or unavailable.
+ExitRoom reports how many times the touch bid can carry the given quantity:
+best-bid size divided by the position quantity. A value of 1.0 means the
+touch alone can absorb the lot once; values below 1 mean the touch cannot
+carry a full exit. Zero when the touch is empty or unavailable.
 */
-func (price *Price) ExitRoom(symbol string, quantity *decimal.Decimal) float64 {
-	if quantity == nil || quantity.Sign() <= 0 {
-		return 0
+func (price *Price) ExitRoom(symbol string, quantity *decimal.Decimal) *decimal.Decimal {
+	if price == nil || quantity == nil || quantity.Sign() <= 0 {
+		return nil
 	}
 
-	totalBid := decimal.NewFromInt64(0)
-
-	if price.Books != nil {
-		price.Books.Book(symbol, func(book *spotbook.Book) {
-			if book == nil {
-				return
-			}
-
-			level := book.BestBid()
-			for level != nil {
-				if level.Quantity != nil && level.Quantity.Sign() > 0 {
-					totalBid = totalBid.Add(level.Quantity)
-				}
-				level = level.Lower
-			}
-		})
+	touchBid := price.TouchBidQuantity(symbol)
+	if touchBid == nil || touchBid.Sign() <= 0 {
+		return nil
 	}
 
-	if totalBid.Sign() <= 0 {
-		return 0
+	return touchBid.Div(quantity)
+}
+
+/*
+TouchBidQuantity is resting size at the best bid only.
+*/
+func (price *Price) TouchBidQuantity(symbol string) *decimal.Decimal {
+	if price == nil || price.Books == nil {
+		return nil
 	}
 
-	return totalBid.Div(quantity).Float64()
+	var touch *decimal.Decimal
+
+	price.Books.Book(symbol, func(book *spotbook.Book) {
+		if book == nil || book.BestBid() == nil {
+			return
+		}
+
+		if book.BestBid().Quantity != nil && book.BestBid().Quantity.Sign() > 0 {
+			touch = book.BestBid().Quantity
+		}
+	})
+
+	return touch
 }
 
 /*
@@ -374,21 +388,26 @@ func (price *Price) CurrentMark(symbol string) *decimal.Decimal {
 func (price *Price) RealizedReturn(
 	entryCost, entryFee, exitCost, exitFee *decimal.Decimal,
 ) float64 {
-	_, _, _, percent := price.realize(entryCost, entryFee, exitCost, exitFee)
-	return percent
+	cost, _, profit := price.realize(entryCost, entryFee, exitCost, exitFee)
+
+	pct := NetReturnPercentDecimal(cost, profit)
+	if pct == nil {
+		return 0
+	}
+
+	return pct.Float64()
 }
 
 /*
-realize is RealizedReturn's arithmetic, also returning the cost and the profit
-it already subtracts. The percent is profit / cost * 100. The fee legs are
-tier rates in percent — the units Price.WithFee applies — so they scale the
-cost and the proceeds instead of adding to them.
+realize is RealizedReturn's arithmetic. The fee legs are tier rates in
+percent — the units Price.WithFee applies — so they scale the cost and the
+proceeds instead of adding to them.
 */
 func (price *Price) realize(
 	entryCost, entryFee, exitCost, exitFee *decimal.Decimal,
-) (cost, proceeds, profit *decimal.Decimal, percent float64) {
+) (cost, proceeds, profit *decimal.Decimal) {
 	if entryCost == nil || entryCost.Sign() <= 0 || exitCost == nil {
-		return nil, nil, nil, 0
+		return nil, nil, nil
 	}
 
 	totalEntry := entryCost
@@ -406,10 +425,21 @@ func (price *Price) realize(
 	gain := netExit.Sub(totalEntry)
 
 	if totalEntry.Sign() <= 0 {
-		return totalEntry, netExit, gain, 0
+		return totalEntry, netExit, gain
 	}
 
-	return totalEntry, netExit, gain, gain.Div(totalEntry).Mul(decimalHundred).Float64()
+	return totalEntry, netExit, gain
+}
+
+/*
+NetReturnPercentDecimal is profit divided by cost, scaled to a display percent.
+*/
+func NetReturnPercentDecimal(cost, profit *decimal.Decimal) *decimal.Decimal {
+	if cost == nil || cost.Sign() <= 0 || profit == nil {
+		return nil
+	}
+
+	return profit.Div(cost).Mul(decimalHundred)
 }
 
 /*
@@ -425,7 +455,7 @@ func (price *Price) Exit(symbol string, quantity, entry, fee *decimal.Decimal) (
 		return 0, 0, 0, false
 	}
 
-	return taken.sale.Float64(), taken.proceeds.Float64(), taken.ret, true
+	return taken.sale.Float64(), taken.proceeds.Float64(), taken.ret.Float64(), true
 }
 
 /*
@@ -436,11 +466,11 @@ so a mark exists whenever the touch does.
 func (price *Price) Sale(symbol string, quantity, entry, fee *decimal.Decimal) (sale, proceeds, ret float64, ok bool) {
 	taken := price.booked(symbol, quantity, entry, fee)
 
-	if !taken.ok || taken.sale == nil || taken.proceeds == nil {
+	if !taken.ok || taken.sale == nil || taken.proceeds == nil || taken.ret == nil {
 		return 0, 0, 0, false
 	}
 
-	return taken.sale.Float64(), taken.proceeds.Float64(), taken.ret, true
+	return taken.sale.Float64(), taken.proceeds.Float64(), taken.ret.Float64(), true
 }
 
 /*
@@ -449,14 +479,14 @@ and the profit realize already computed. No entry is not a profit.
 */
 func (price *Price) CloseOut(
 	symbol string, quantity, entry, fee *decimal.Decimal,
-) (cost, proceeds, profit *decimal.Decimal, ret float64, ok bool) {
+) (cost, proceeds, profit, sale *decimal.Decimal, ok bool) {
 	taken := price.booked(symbol, quantity, entry, fee)
 
 	if !taken.ok {
-		return nil, nil, nil, 0, false
+		return nil, nil, nil, nil, false
 	}
 
-	return taken.cost, taken.proceeds, taken.profit, taken.ret, true
+	return taken.cost, taken.proceeds, taken.profit, taken.sale, true
 }
 
 func (price *Price) booked(symbol string, quantity, entry, fee *decimal.Decimal) booked {
@@ -471,7 +501,7 @@ func (price *Price) booked(symbol string, quantity, entry, fee *decimal.Decimal)
 
 type booked struct {
 	sale, cost, proceeds, profit *decimal.Decimal
-	ret                          float64
+	ret                          *decimal.Decimal
 	ok                           bool
 }
 
@@ -486,21 +516,21 @@ func (price *Price) pricedExit(symbol string, quantity, entry, fee *decimal.Deci
 		return booked{}
 	}
 
-	net := price.WithFee(symbol, surface.ExecutableValue, SELL)
+	net := surface.ExecutableValue
 
 	if net == nil || net.Sign() <= 0 {
 		return booked{}
 	}
 
-	cost, proceeds, profit, percent := price.realize(notional(entry, quantity), fee, net, nil)
+	cost, proceeds, profit := price.realize(notional(entry, quantity), fee, net, nil)
 
-	if profit == nil {
+	if profit == nil || cost == nil {
 		return booked{}
 	}
 
 	return booked{
 		sale: surface.ExecutableVWAP, cost: cost, proceeds: proceeds, profit: profit,
-		ret: percent / 100, ok: true,
+		ret: profit.Div(cost), ok: true,
 	}
 }
 
@@ -528,15 +558,15 @@ func (price *Price) pricedMark(symbol string, quantity, entry, fee *decimal.Deci
 		return booked{}
 	}
 
-	cost, proceeds, profit, percent := price.realize(notional(entry, quantity), fee, net, nil)
+	cost, proceeds, profit := price.realize(notional(entry, quantity), fee, net, nil)
 
-	if profit == nil {
+	if profit == nil || cost == nil {
 		return booked{}
 	}
 
 	return booked{
 		sale: bid, cost: cost, proceeds: proceeds, profit: profit,
-		ret: percent / 100, ok: true,
+		ret: profit.Div(cost), ok: true,
 	}
 }
 
@@ -618,7 +648,17 @@ func (price *Price) Affordable(
 	}
 
 	if notional(cost, quantity).Cmp(cash) > 0 {
-		quantity = quantity.Sub(quantity.GetSmallestIncrement())
+		step := quantity.GetSmallestIncrement()
+
+		if step == nil || step.Sign() <= 0 || quantity.Cmp(step) <= 0 {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[price] available cash below minimum order for "+symbol,
+				nil,
+			))
+		}
+
+		quantity = quantity.Sub(step)
 	}
 
 	return quantity, nil
@@ -716,11 +756,11 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*EntryC
 			return
 		}
 
-		filled, gross, err := price.Walk(book, quantity, BUY)
+		filled, gross, walkErr := price.Walk(book, quantity, BUY)
 
-		if err != nil {
+		if walkErr != nil {
 			err = errnie.Error(errnie.Err(
-				errnie.IO, "[price] get entry cost failed for "+symbol, err,
+				errnie.IO, "[price] get entry cost failed for "+symbol, walkErr,
 			))
 			return
 		}
@@ -880,16 +920,13 @@ func (price *Price) AllocateEntry(
 				return
 			}
 
-			// 1. Calculate bid cushion
-			totalBidQty := decimalZero
-			bidLevel := book.BestBid()
-			for bidLevel != nil {
-				if bidLevel.Quantity != nil && bidLevel.Quantity.Sign() > 0 {
-					totalBidQty = totalBidQty.Add(bidLevel.Quantity)
-				}
-				bidLevel = bidLevel.Lower
+			touchBid := book.BestBid().Quantity
+			if touchBid == nil || touchBid.Sign() <= 0 {
+				err = errnie.Error(errnie.Err(
+					errnie.Validation, "[price] touch bid has no size for "+symbol, nil,
+				))
+				return
 			}
-			maxBidCap := totalBidQty.Mul(decimal.NewFromFloat64(0.5))
 
 			bestAskPrice := book.BestAsk().Price
 			maxAskPrice := bestAskPrice.Mul(decimal.NewFromInt64(2))
@@ -922,9 +959,8 @@ func (price *Price) AllocateEntry(
 				break
 			}
 
-			// If bid book is visible, cap qAccum by 50% of visible bid cushion
-			if maxBidCap.Sign() > 0 && qAccum.Cmp(maxBidCap) > 0 {
-				qAccum = maxBidCap
+			if qAccum.Cmp(touchBid) > 0 {
+				qAccum = touchBid
 			}
 
 			if qAccum.Sign() <= 0 {
@@ -942,7 +978,7 @@ func (price *Price) AllocateEntry(
 
 			filled, gross, walkErr := price.Walk(book, qNorm, BUY)
 
-			if walkErr != nil && !errnie.IsUnprocessableContent(walkErr) {
+			if walkErr != nil {
 				err = walkErr
 				return
 			}
@@ -966,9 +1002,13 @@ func (price *Price) AllocateEntry(
 				}
 
 				qNorm = qNorm.Sub(step)
+				if sized, normErr := price.normalizer.FormatSize(symbol, qNorm); normErr == nil {
+					qNorm = sized
+				}
+
 				filled, gross, walkErr = price.Walk(book, qNorm, BUY)
 
-				if walkErr != nil && !errnie.IsUnprocessableContent(walkErr) {
+				if walkErr != nil {
 					err = walkErr
 					return
 				}
@@ -980,6 +1020,15 @@ func (price *Price) AllocateEntry(
 				err = errnie.Error(errnie.Err(
 					errnie.Validation,
 					"[price] executable depth walk failed for "+symbol,
+					nil,
+				))
+				return
+			}
+
+			if filled.Cmp(qNorm) != 0 {
+				err = errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"[price] insufficient ask depth for "+symbol,
 					nil,
 				))
 				return
@@ -1009,7 +1058,7 @@ func (price *Price) AllocateEntry(
 
 			cost = &EntryCost{
 				Total:              total,
-				Quantity:           qNorm,
+				Quantity:           filled,
 				EntryPrice:         entryPrice,
 				BestAsk:            book.BestAsk().Price,
 				BestBid:            book.BestBid().Price,
@@ -1046,6 +1095,22 @@ func (price *Price) AllocateEntry(
 
 	if normErr != nil {
 		qNorm = qRaw
+	}
+
+	if qNorm == nil || qNorm.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[price] budget affords no quantity of "+symbol,
+			nil,
+		))
+	}
+
+	if price.Instrument != nil && !price.Tradable(symbol, qNorm, askPrice) {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[price] allocated quantity below instrument minimum for "+symbol,
+			nil,
+		))
 	}
 
 	gross := notional(askPrice, qNorm)
@@ -1140,11 +1205,11 @@ func (price *Price) Liquidate(
 				return
 			}
 
-			filled, g, err := price.Walk(book, quantity, SELL)
+			filled, g, walkErr := price.Walk(book, quantity, SELL)
 
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO, "[price] liquidate failed for "+symbol, err,
+			if walkErr != nil {
+				err = errnie.Error(errnie.Err(
+					errnie.IO, "[price] liquidate failed for "+symbol, walkErr,
 				))
 
 				return
@@ -1397,7 +1462,16 @@ func (price *Price) WithFee(
 	amount *decimal.Decimal,
 	direction Direction,
 ) *decimal.Decimal {
+	if price == nil || amount == nil || amount.Sign() <= 0 {
+		return nil
+	}
+
 	fee := price.Fee(symbol)
+
+	if fee == nil || fee.Fee == nil {
+		return nil
+	}
+
 	rate := decimalPercent.Mul(fee.Fee)
 
 	if direction == SELL {

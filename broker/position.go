@@ -34,18 +34,17 @@ type Position struct {
 	ExitFee         *decimal.Decimal        `json:"exit_fee,omitempty"`
 	Mark            *decimal.Decimal        `json:"mark,omitempty"`
 	ExitVWAP        *decimal.Decimal        `json:"exit_vwap,omitempty"`
-	ExitRoom        *float64                `json:"exit_room,omitempty"`
-	// BookReturn is fee-net round-trip return if sold now through the book
-	// (Price.Sale), as a percent matching NetReturn. The UI uses this instead
-	// of mark-over-entry so green means executable edge, not last print.
-	BookReturn      *float64                `json:"book_return,omitempty"`
-	Return          *float64                `json:"return,omitempty"`
+	ExitRoom        *decimal.Decimal        `json:"exit_room,omitempty"`
+	// BookReturn is CloseOut net return in percent — the same PnL % virtual
+	// settlement writes to net_return when the lot closes.
+	BookReturn      *decimal.Decimal        `json:"book_return,omitempty"`
+	Return          *decimal.Decimal        `json:"return,omitempty"`
 	HoldNs          int64                   `json:"hold_ns,omitempty"`
 	Virtual         bool                    `json:"virtual,omitempty"`
 	Cost            *decimal.Decimal        `json:"cost,omitempty"`
 	Proceeds        *decimal.Decimal        `json:"proceeds,omitempty"`
 	Profit          *decimal.Decimal        `json:"profit,omitempty"`
-	NetReturn       *float64                `json:"net_return,omitempty"`
+	NetReturn       *decimal.Decimal        `json:"net_return,omitempty"`
 	OutcomeTriggers []string                `json:"outcome_triggers,omitempty"`
 }
 
@@ -77,39 +76,35 @@ func (position *Position) Update(mark *decimal.Decimal) {
 
 	position.Mark = mark
 
-	/*
-		Both fee legs ride the current tier as percent rates: the frontend's
-		"if sold now" adds them to the mark-over-entry move for the round trip.
-		Without a tier there is nothing to ride, and a leg that is erased is
-		a leg the price layer can no longer read.
-	*/
 	if rate := position.feeRate(); rate != nil {
 		position.EntryFee = rate
 		position.ExitFee = rate
 	}
 
-	if position.price != nil && position.Qty != nil && position.Qty.Sign() > 0 {
-		room := position.price.ExitRoom(position.Symbol, position.Qty)
-		position.ExitRoom = &room
-
-		if position.EntryPrice != nil && position.EntryPrice.Sign() > 0 {
-			sale, _, ret, ok := position.price.Sale(
-				position.Symbol,
-				position.Qty,
-				position.EntryPrice,
-				position.EntryFee,
-			)
-
-			if ok {
-				pct := ret * 100
-				position.BookReturn = &pct
-				position.ExitVWAP = decimal.NewFromFloat64(sale)
-			} else {
-				position.BookReturn = nil
-				position.ExitVWAP = nil
-			}
-		}
+	if position.price == nil || position.Qty == nil || position.Qty.Sign() <= 0 ||
+		position.EntryPrice == nil || position.EntryPrice.Sign() <= 0 {
+		return
 	}
+
+	position.ExitRoom = position.price.ExitRoom(position.Symbol, position.Qty)
+
+	cost, proceeds, profit, sale, ok := position.price.CloseOut(
+		position.Symbol, position.Qty, position.EntryPrice, position.EntryFee,
+	)
+	if !ok {
+		position.BookReturn = nil
+		position.ExitVWAP = nil
+		position.Cost = nil
+		position.Proceeds = nil
+		position.Profit = nil
+		return
+	}
+
+	position.Cost = cost
+	position.Proceeds = proceeds
+	position.Profit = profit
+	position.BookReturn = NetReturnPercentDecimal(cost, profit)
+	position.ExitVWAP = sale
 }
 
 /*
@@ -272,13 +267,6 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 			position.EntryPrice = execution.LastPrice
 		}
 
-		/*
-			Seed the mark and both fee legs so a fresh entry arrives on the
-			wire with complete data. Update refines them from the fee tier
-			as the book moves. The legs carry tier rates: the dollar fee of
-			the fill stays in the fill itself, where the paper ledger and
-			the frontend's execution totals read it.
-		*/
 		if position.Mark == nil {
 			position.Mark = position.EntryPrice
 		}
@@ -303,10 +291,6 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 			position.ExitPrice = execution.LastPrice
 		}
 
-		/*
-			The exit leg carries the tier rate like the entry leg: the dollar
-			fee of the fill stays in the fill itself.
-		*/
 		if position.ExitFee == nil || position.ExitFee.Sign() == 0 {
 			position.ExitFee = position.feeRate()
 		}

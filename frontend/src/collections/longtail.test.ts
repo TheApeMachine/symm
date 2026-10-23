@@ -77,6 +77,25 @@ describe("summarizeBook", () => {
 		expect(stats.worstReturn).toBeNull();
 	});
 
+	it("ignores closed lots the desk has not priced for edge stats", () => {
+		const rows = [
+			{
+				id: "pending",
+				symbol: "BTC/USD",
+				virtual: true,
+				closed_at: "2026-01-01T00:00:00Z",
+				cost: 100,
+				proceeds: 105,
+			},
+			openLot("ETH/USD", true),
+		];
+
+		const stats = summarizeBook(rows, "virtual");
+		expect(stats.closed).toBe(0);
+		expect(stats.winRate).toBeNull();
+		expect(stats.open).toBe(1);
+	});
+
 	it("summarizes settled round trips per book", () => {
 		const rows = [
 			closedLot("BTC/USD", true, 5),

@@ -22,14 +22,14 @@ export type DeskPosition = {
 	exit_fee?: string | number;
 	mark?: string | number;
 	exit_vwap?: string | number;
-	exit_room?: number;
-	book_return?: number;
-	return?: number;
+	exit_room?: string | number;
+	book_return?: string | number;
+	return?: string | number;
 	hold_ns?: number;
 	virtual?: boolean;
 	cost?: string | number;
 	proceeds?: string | number;
 	profit?: string | number;
-	net_return?: number;
+	net_return?: string | number;
 	outcome_triggers?: string[];
 };

@@ -514,7 +514,7 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool, triggers ...str
 	// The outcome is final the moment the exit is recorded: settle it
 	// before the cache move can retire the row.
 	if virtual && position.price != nil {
-		cost, proceeds, profit, ret, ok := position.price.CloseOut(
+		cost, proceeds, profit, _, ok := position.price.CloseOut(
 			position.Symbol, position.Qty, position.EntryPrice, position.EntryFee,
 		)
 
@@ -539,9 +539,8 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool, triggers ...str
 		position.Proceeds = proceeds
 		position.Profit = profit
 
-		net := ret * 100
-		position.Return = &net
-		position.NetReturn = &net
+		position.Return = NetReturnPercentDecimal(cost, profit)
+		position.NetReturn = position.Return
 		if len(triggers) > 0 {
 			position.OutcomeTriggers = append([]string{}, triggers...)
 		} else {
@@ -680,7 +679,7 @@ func (desk *Desk) Profit(symbol string, virtual bool) (bool, bool) {
 		return false, false
 	}
 
-	return *position.Return > 0, true
+	return position.Return.Sign() > 0, true
 }
 
 /*

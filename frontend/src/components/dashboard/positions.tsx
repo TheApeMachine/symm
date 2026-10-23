@@ -110,7 +110,7 @@ const selectPositions = (
 		if (readout.closedAt) continue;
 
 		const positionStatus = currentPosition.virtual ? "virtual" : "open";
-		const pnlNum = readout.unrealizedPnl ?? 0;
+		const pnlNum = readout.netPnl ?? 0;
 
 		result.push({
 			capacity: "—",

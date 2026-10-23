@@ -754,7 +754,7 @@ func (model *Model) Settle(position *broker.Position) {
 		return
 	}
 
-	ret := *position.Return / 100
+	ret := position.Return.Div(decimal.NewFromFloat64(100)).Float64()
 
 	if _, found := model.tree.Get([]byte(position.EntryPath)); found {
 		model.accountVenue(position.EntryPath, position.Symbol, ret)

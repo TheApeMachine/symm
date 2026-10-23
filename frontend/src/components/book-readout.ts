@@ -2,7 +2,7 @@ import type { Book } from "#/collections/book";
 
 const decimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 
-const decimal = (value: unknown): number | null => {
+export const decimal = (value: unknown): number | null => {
 	if (typeof value === "number") return value;
 
 	if (typeof value !== "string") return null;
@@ -23,6 +23,16 @@ const dateText = (value: unknown): string | null => {
 	}
 };
 
+const returnFraction = (row: Record<string, unknown>, closed: boolean) => {
+	if (closed) {
+		const settled = decimal(row.net_return ?? row.return ?? null);
+		return settled === null ? null : settled / 100;
+	}
+
+	const open = decimal(row.book_return);
+	return open === null ? null : open / 100;
+};
+
 /* The desk's settled outcome, when it has priced the close. */
 export const settledOutcome = (row: Record<string, unknown>) => {
 	if (row.cost === undefined || row.proceeds === undefined) return null;
@@ -35,12 +45,7 @@ export const settledOutcome = (row: Record<string, unknown>) => {
 	return {
 		cost,
 		proceeds,
-		fees:
-			decimal(row.entry_fee ?? null) === null &&
-			decimal(row.exit_fee ?? null) === null
-				? null
-				: (decimal(row.entry_fee ?? 0) ?? 0) +
-					(decimal(row.exit_fee ?? 0) ?? 0),
+		fees: null,
 		realized: decimal(row.profit) ?? proceeds - cost,
 		net_return: row.net_return ?? row.return ?? null,
 		hold_ns: row.hold_ns ?? null,
@@ -51,7 +56,6 @@ export const settledOutcome = (row: Record<string, unknown>) => {
 type ExecutionTotals = {
 	qty: number | null;
 	cost: number | null;
-	fee: number | null;
 	firstAt: string | null;
 	lastAt: string | null;
 };
@@ -62,10 +66,8 @@ const executionTotals = (
 ): ExecutionTotals => {
 	let qty = 0;
 	let cost = 0;
-	let fee = 0;
 	let sawFill = false;
 	let costKnown = true;
-	let feeKnown = true;
 	let firstAt: string | null = null;
 	let lastAt: string | null = null;
 	const seen = new Set<string>();
@@ -86,7 +88,6 @@ const executionTotals = (
 		if (fillQty === null) continue;
 
 		const fillCost = decimal(fill.cost);
-		const fillFee = decimal(fill.fee_usd_equiv);
 		const fillAt = dateText(fill.timestamp);
 
 		qty += fillQty;
@@ -98,12 +99,6 @@ const executionTotals = (
 			cost += fillCost;
 		}
 
-		if (fillFee === null) {
-			feeKnown = false;
-		} else {
-			fee += fillFee;
-		}
-
 		firstAt ??= fillAt;
 		lastAt = fillAt ?? lastAt;
 	}
@@ -111,23 +106,9 @@ const executionTotals = (
 	return {
 		qty: sawFill ? qty : null,
 		cost: sawFill && costKnown ? cost : null,
-		fee: sawFill && feeKnown ? fee : null,
 		firstAt,
 		lastAt,
 	};
-};
-
-const orderQuantity = (orders: Record<string, unknown>[]) => {
-	if (!orders || orders.length === 0) return null;
-
-	let total = 0;
-	for (const order of orders) {
-		const quantity = decimal(order.volume);
-		if (quantity === null) return null;
-		total += quantity;
-	}
-
-	return total;
 };
 
 export type PositionReadout = {
@@ -154,32 +135,26 @@ export type PositionReadout = {
 	exitPending: boolean;
 };
 
-/* Position metrics come from order and execution facts; mark is a live price input. */
+/*
+Position economics come from the desk row (broker/price.go). Fills only
+help detect venue round trips when closed_at is absent.
+*/
 export const positionReadout = (
 	row: Record<string, unknown>,
 ): PositionReadout => {
 	const buys = executionTotals(row, "buy");
 	const sells = executionTotals(row, "sell");
-	const entryOrderQty = orderQuantity(
-		row.entry_orders as Record<string, unknown>[],
-	);
-	const qty = buys.qty === null ? entryOrderQty : buys.qty - (sells.qty ?? 0);
-	const entryPrice =
-		buys.qty !== null && buys.cost !== null && buys.qty !== 0
-			? buys.cost / buys.qty
-			: null;
+	const qty = decimal(row.qty);
+	const entryPrice = decimal(row.entry_price);
 	const mark = decimal(row.mark);
-	const exitVwap =
-		sells.qty !== null && sells.cost !== null && sells.qty !== 0
-			? sells.cost / sells.qty
-			: null;
+	const exitVwap = decimal(row.exit_vwap);
+	const exitRoom = decimal(row.exit_room);
+	const entryFee = decimal(row.entry_fee);
+	const exitFee = decimal(row.exit_fee);
 	const openedAt = dateText(row.opened_at) ?? buys.firstAt;
 	const fullySold =
 		buys.qty !== null && sells.qty !== null && sells.qty >= buys.qty;
 
-	// The desk stamps closed_at when it moves a lot to its closed cache.
-	// A closed virtual settles emulated (no venue sell fill), so it only
-	// counts once the settlement outcome (cost + proceeds) has landed.
 	const closed =
 		row.closed_at !== null && row.closed_at !== undefined
 			? row.virtual !== true ||
@@ -192,100 +167,35 @@ export const positionReadout = (
 		(closedAt !== null && openedAt !== null
 			? (Date.parse(closedAt) - Date.parse(openedAt)) * 1e6
 			: null);
-	const entryFee = decimal(row.entry_fee);
-	const exitFee = decimal(row.exit_fee);
 
-	/*
-	Fee fields are percent rates once the desk is marking (Update stamps
-	the tier rate on every tick). A dollar fee only ever arrives on a
-	venue-echoed execution against a notional; without one, rates are the
-	fraction of cost, which the percent readout needs re-based.
-	*/
-	const feeFraction = (rate: number | null): number | null =>
-		rate === null ? null : rate / 100;
-
-	const entryFeeFraction = feeFraction(entryFee);
-	const exitFeeFraction = feeFraction(exitFee);
-	const fees =
-		entryFeeFraction !== null &&
-		(sells.qty === null || exitFeeFraction !== null)
-			? entryFeeFraction + (exitFeeFraction ?? 0)
-			: null;
-	const exitRoom = decimal(row.exit_room);
-	const bookReturn = decimal(row.book_return);
-	let grossPnl: number | null = null;
-	let netPnl: number | null = null;
-	let unrealizedPnl: number | null = null;
-	let returnPct: number | null = null;
-
-	// Settled round trips (the desk priced the close) are authoritative.
 	const settledCost = decimal(row.cost);
 	const settledProceeds = decimal(row.proceeds);
-	const settledReturn = row.net_return ?? row.return ?? null;
+	const profit = decimal(row.profit);
+	const returnPct = returnFraction(row, closed);
+
+	let netPnl: number | null = null;
+	let grossPnl: number | null = null;
+	let unrealizedPnl: number | null = null;
 
 	if (closed && settledCost !== null && settledProceeds !== null) {
 		grossPnl = settledProceeds - settledCost;
-		netPnl = decimal(row.profit) ?? grossPnl;
-		returnPct =
-			settledReturn !== null
-				? (settledReturn as number) / 100
-				: settledCost !== 0
-					? netPnl / settledCost
-					: null;
-	} else if (buys.qty !== null && buys.cost !== null && buys.qty !== 0) {
-		const soldQty = sells.qty ?? 0;
-		const soldBasis = buys.cost * (soldQty / buys.qty);
-		const realized =
-			sells.qty === null
-				? closed
-					? null
-					: 0
-				: sells.cost === null
-					? null
-					: sells.cost - soldBasis;
-		const remainingQty = buys.qty - soldQty;
-		const remainingBasis = buys.cost * (remainingQty / buys.qty);
-		const unrealized = closed
-			? 0
-			: mark === null || qty === null
-				? null
-				: mark * qty - remainingBasis;
-
-		if (
-			!closed &&
-			unrealized !== null &&
-			qty !== null &&
-			entryFeeFraction !== null
-		) {
-			unrealizedPnl =
-				unrealized - entryFeeFraction * buys.cost * (qty / buys.qty);
-		}
-
-		if (realized !== null && unrealized !== null) {
-			grossPnl = realized + unrealized;
-		}
-
-		if (grossPnl !== null && fees !== null) {
-			netPnl = grossPnl - fees;
-			returnPct = netPnl / buys.cost;
-		}
-	}
-
-	if (!closed && bookReturn !== null) {
-		returnPct = bookReturn / 100;
+		netPnl = profit;
+	} else if (!closed && profit !== null) {
+		netPnl = profit;
+		unrealizedPnl = profit;
 	}
 
 	return {
 		qty,
 		entryQty: buys.qty,
-		entryCost: settledCost ?? buys.cost,
+		entryCost: settledCost,
 		exitQty: sells.qty,
-		exitProceeds: settledProceeds ?? sells.cost,
+		exitProceeds: settledProceeds,
 		entryPrice,
 		mark,
 		entryFee,
 		exitFee,
-		fees,
+		fees: null,
 		exitVwap,
 		exitRoom,
 		grossPnl,

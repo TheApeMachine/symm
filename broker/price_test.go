@@ -329,6 +329,20 @@ func TestPrice_AllocateEntryAndLiquidate(t *testing.T) {
 			_, allocErrNeg := price.AllocateEntry(symbol, decimal.NewFromFloat64(-100))
 			So(allocErrNeg, ShouldNotBeNil)
 		})
+
+		Convey("AllocateEntry never exceeds touch bid size", func() {
+			referenceCash := decimal.NewFromFloat64(1000.0)
+			cost, allocErr := price.AllocateEntry(symbol, referenceCash)
+			So(allocErr, ShouldBeNil)
+			So(cost.Quantity.Cmp(decimal.NewFromFloat64(0.02)), ShouldBeLessThanOrEqualTo, 0)
+		})
+
+		Convey("ExitRoom counts touch bid only", func() {
+			qty := decimal.NewFromFloat64(0.01)
+			room := price.ExitRoom(symbol, qty)
+			So(room, ShouldNotBeNil)
+			So(room.Float64(), ShouldAlmostEqual, 2.0, 0.001)
+		})
 	})
 
 	Convey("Given a broker.Price with quote-only pricing", t, func() {

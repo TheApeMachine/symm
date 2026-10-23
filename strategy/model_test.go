@@ -116,7 +116,7 @@ func (d *fakeDesk) Profit(symbol string, _ bool) (bool, bool) {
 		return false, false
 	}
 
-	return *position.Return > 0, true
+	return position.Return.Sign() > 0, true
 }
 
 func (d *fakeDesk) ClosedVirtuals() []*broker.Position {

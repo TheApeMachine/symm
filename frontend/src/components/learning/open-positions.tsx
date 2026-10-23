@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import { cognitionStore, regionHistoryStore } from "#/collections/cognition";
@@ -76,12 +76,6 @@ const duration = (seconds?: number) => {
 			: `${Math.floor(seconds)}s`;
 };
 
-const numberOf = (value: unknown) => {
-	if (value === null || value === undefined) return undefined;
-	const parsed = Number(value);
-	return Number.isFinite(parsed) ? parsed : undefined;
-};
-
 const heldSeconds = (row: Record<string, unknown>) => {
 	if ((row.hold_ns as number) > 0) return (row.hold_ns as number) / 1e9;
 	if (row.opened_at === "" || row.opened_at == null) return undefined;
@@ -106,23 +100,11 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 		(state) => state[row.symbol as string] ?? [],
 	);
 	const readout = positionReadout(row);
-	const entry = readout.entryPrice ?? numberOf(row.entry_price);
-	const mark = numberOf(row.mark);
-	const qty = numberOf(row.qty);
+	const entry = readout.entryPrice;
+	const mark = readout.mark;
+	const qty = readout.qty;
 	const vwap = readout.exitVwap;
-	const settled = numberOf(row.net_return);
-
-	const bookReturn = numberOf(row.book_return);
-	/*
-	"If sold now" is the book-grounded round trip (Price.Sale / CloseOut
-	family), not last-trade mark. Settled lots use net_return from the desk.
-	*/
-	const soldNow = useMemo(() => {
-		if (settled !== undefined) return settled / 100;
-		if (bookReturn !== undefined) return bookReturn / 100;
-		return undefined;
-	}, [settled, bookReturn]);
-	const pnlPct = soldNow;
+	const pnlPct = readout.returnPct ?? undefined;
 	const room = readout.exitRoom ?? undefined;
 	const pnlTone: GaugeTone =
 		pnlPct === undefined ? "muted" : pnlPct >= 0 ? "up" : "down";
@@ -199,7 +181,7 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 								</span>
 							)
 						}
-						caption="book edge"
+						caption="P&L"
 					/>
 					<Gauge
 						value={

@@ -107,7 +107,7 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 	{
 		id: "win",
 		label: `win rate (${book})`,
-		value: (s) => s[book]?.winRate ?? 0,
+		value: (s) => s[book]?.winRate ?? null,
 		format: (v) => `${(100 * v).toFixed(0)}%`,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
@@ -289,7 +289,7 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 	{
 		id: "win",
 		label: `${book} win rate`,
-		caption: "closed lots with derived net returns",
+		caption: "desk net_return on settled lots (fraction)",
 		series: (samples) => {
 			const latest = samples[samples.length - 1];
 			return [
@@ -308,7 +308,7 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 	{
 		id: "return",
 		label: `${book} mean return`,
-		caption: "average net return on priced lots",
+		caption: "mean desk net_return on settled lots (fraction)",
 		series: (samples) => {
 			const latest = samples[samples.length - 1];
 			return [
@@ -544,7 +544,7 @@ export const LongtailDashboard = () => {
 						label={book}
 						value={
 							bookStats
-								? `${bookStats.open} open · ${bookStats.closed} closed`
+								? `${bookStats.open} open · ${bookStats.closed} settled`
 								: "no data"
 						}
 					/>

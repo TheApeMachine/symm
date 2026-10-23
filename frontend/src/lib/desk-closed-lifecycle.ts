@@ -1,8 +1,12 @@
-import { positionReadout, settledOutcome } from "#/components/book-readout";
+import {
+	decimal,
+	positionReadout,
+	settledOutcome,
+} from "#/components/book-readout";
 import type { Lifecycle, LifeOutcome } from "#/lib/lifecycle";
 /*
-Desk lifecycle rows are derived from stored order and execution facts. A row
-without a complete close or stable identity is not a closed round trip.
+Desk lifecycle rows mirror the broker position JSON. A row without a
+complete close or stable identity is not a closed round trip.
 */
 /*
 lifecycleFromDeskOpen is an open desk lot as a lifecycle row: the life-cycle
@@ -25,12 +29,8 @@ export const lifecycleFromDeskOpen = (
 					bid: mark,
 					quantity: readout.qty ?? 0,
 					entry_price: readout.entryPrice ?? 0,
-					unrealized: readout.unrealizedPnl ?? 0,
-					unrealized_return:
-						readout.entryPrice && readout.entryPrice !== 0
-							? (readout.unrealizedPnl ?? 0) /
-								(readout.entryPrice * (readout.qty ?? 0))
-							: 0,
+					unrealized: readout.netPnl ?? 0,
+					unrealized_return: readout.returnPct ?? 0,
 				};
 
 	return {
@@ -68,17 +68,20 @@ export const lifecycleFromDeskClosed = (
 		return null;
 	}
 
-	// The desk's settled outcome (emulated virtual closes never produce
-	// venue executions) wins over the fill-derived readout.
 	const settle = settledOutcome(row);
+	const settledReturn = settle ? decimal(settle.net_return) : null;
+	const netReturn =
+		readout.returnPct ??
+		(settledReturn === null ? null : settledReturn / 100);
 
-	const outcome = settle
-		? {
+	const outcome =
+		settle && netReturn !== null
+			? {
 				cost: settle.cost,
 				proceeds: settle.proceeds,
-				fees: settle.fees ?? 0,
+				fees: 0,
 				realized: settle.realized,
-				net_return: ((settle.net_return as number) ?? 0) / 100,
+				net_return: netReturn,
 				hold_ns:
 					settle.hold_ns ??
 					(readout.closedAt !== null && readout.openedAt !== null
@@ -88,23 +91,7 @@ export const lifecycleFromDeskClosed = (
 				expected_hold_ns: null,
 				triggers: settle.triggers ?? ["desk settle"],
 			}
-		: readout.entryCost === null ||
-				readout.exitProceeds === null ||
-				readout.fees === null ||
-				readout.netPnl === null ||
-				readout.returnPct === null ||
-				readout.holdNs === null
-			? null
-			: {
-					cost: readout.entryCost,
-					proceeds: readout.exitProceeds,
-					fees: readout.fees,
-					realized: readout.netPnl,
-					net_return: readout.returnPct,
-					hold_ns: readout.holdNs,
-					expected_hold_ns: null,
-					triggers: ["stored desk close"],
-				};
+			: null;
 
 	return {
 		id: row.id as string,
