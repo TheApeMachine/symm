@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import { useSelector } from "@tanstack/react-store";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-	atoms,
 	clockAtom,
 	signalFor,
 	signals,
+	workspaceFrame,
 } from "#/collections/app";
 import type { Value } from "#/types/value";
 import {
@@ -44,12 +43,16 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 	const initialNodes = useMemo(() => createCanonicalGridNodes(), []);
 
 	/*
-	The signal layers ride the raw market tick through the websocket ingest:
-	no store of their own fires when they arrive. The tick atom advances on
-	every inbound batch, so re-deriving on it re-reads the signal rings each
-	tick instead of only when training happens to publish.
+	A tick carries whichever kernels and regions fired. The rest are absent,
+	not dark. Held readings stay until a later tick names that pin or region.
 	*/
-	const tickCount = useSelector(atoms.tickCount);
+	const heldPins = useRef<Record<string, { activation: number; snr: number }>>(
+		{},
+	);
+	const heldBrightness = useRef<number[]>(new Array(15).fill(0));
+	const heldMembers = useRef<number[]>(
+		REGION_KEYS.map((_key, idx) => Math.round(CANONICAL_COUNTS[idx] ?? 0)),
+	);
 
 	const [state, setState] = useState<ImpulseDataState>(() => {
 		const initialRegions = REGION_KEYS.map((_key, idx) => ({
@@ -70,6 +73,69 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 
 	useEffect(() => {
 		if (!symbol) return;
+
+		heldPins.current = {};
+		heldBrightness.current = new Array(15).fill(0);
+		heldMembers.current = REGION_KEYS.map((_key, idx) =>
+			Math.round(CANONICAL_COUNTS[idx] ?? 0),
+		);
+
+		const publish = () => {
+			const updatedNodes: ImpulseNode[] = CANONICAL_PINS.map((pin) => {
+				const reading = heldPins.current[pin.id];
+
+				return {
+					id: pin.id,
+					label: `${pin.source}:${pin.metric}`,
+					cluster: pin.cluster,
+					snr: reading?.snr ?? 1,
+					activation: reading?.activation ?? 0,
+				};
+			});
+
+			const regionsList = REGION_KEYS.map((_key, idx) => {
+				const strength = heldBrightness.current[idx] ?? 0;
+
+				return {
+					id: idx,
+					strength,
+					authority: strength >= 0.5 ? 1 : strength,
+					members: heldMembers.current[idx] ?? 0,
+				};
+			});
+
+			const activeEventsList: Array<{
+				id?: number;
+				label: string;
+				activity: number;
+				members?: number;
+			}> = [];
+
+			for (let i = 0; i < 15; i++) {
+				const strength = heldBrightness.current[i] ?? 0;
+				if (strength > 0.02) {
+					const meta = REGIONS[REGION_KEYS[i]];
+					activeEventsList.push({
+						id: i,
+						label: meta
+							? `${meta.id} ${meta.title}`
+							: `R${String(i).padStart(2, "0")}`,
+						activity: strength,
+						members: heldMembers.current[i],
+					});
+				}
+			}
+
+			activeEventsList.sort((a, b) => b.activity - a.activity);
+
+			setState({
+				data: updatedNodes,
+				regions: regionsList,
+				activeEvents: activeEventsList,
+				gridCells: updatedNodes.length,
+				gridRegions: 15,
+			});
+		};
 
 		const updateFromTelemetry = () => {
 			const trainingState = signals.training?.state;
@@ -104,12 +170,28 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				deformation: number;
 				brightness: number;
 				counts: number;
+				symbol?: string;
 			}> = [];
-			if (latest) {
-				for (const { payload } of latest.layersUnder("grid/regions")) {
-					if (!Array.isArray(payload)) continue;
-					for (const region of payload) {
-						if (region && typeof region.key === "number") {
+			/*
+			Training.Step appends the lit regions onto the workspace tick
+			as train/regions. A training-origin frame may also carry
+			grid/regions. Either shape is the region list the map draws.
+			*/
+			const regionFrames = [workspaceFrame(), latest];
+			for (const frame of regionFrames) {
+				if (!frame) continue;
+				for (const key of ["train/regions", "grid/regions"]) {
+					for (const { payload } of frame.layersUnder(key)) {
+						if (!Array.isArray(payload)) continue;
+						for (const region of payload) {
+							if (!region || typeof region.key !== "number") continue;
+							if (
+								typeof region.symbol === "string" &&
+								region.symbol !== "" &&
+								region.symbol !== symbol
+							) {
+								continue;
+							}
 							gridRegions.push(region);
 						}
 					}
@@ -141,11 +223,13 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				}
 			}
 
-			// Read specific metric activations off the aggregate tick.
-			const kernelMetricSnm: Record<
-				string,
-				{ activation: number; snr: number }
-			> = {};
+			let changed = false;
+
+			/*
+			A kernel layer names its metrics. Pins whose metric is on this
+			tick take that reading, including zero. Pins the tick does not
+			name keep the reading they already hold.
+			*/
 			for (const pin of CANONICAL_PINS) {
 				const payloads = signalFor(pin.source, symbol);
 				const payload = payloads[pin.metric];
@@ -156,112 +240,65 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 
 				const act = Math.min(1, Math.max(0, Math.abs(raw)));
 				const snr = act >= 0.5 ? 2.5 : 1.0;
-				kernelMetricSnm[pin.id] = { activation: act, snr };
+				const prev = heldPins.current[pin.id];
+				if (
+					prev &&
+					prev.activation === act &&
+					prev.snr === snr
+				) {
+					continue;
+				}
+
+				heldPins.current[pin.id] = { activation: act, snr };
+				changed = true;
 			}
 
-			// Read or derive brightness and member counts for each of the 15 regions (R00..R14)
-			const regionBrightness: number[] = new Array(15).fill(0);
-			const regionMembers: number[] = new Array(15).fill(0);
-
+			/*
+			Region rows arrive as their own objects. A region missing from
+			this tick is not a dark region; its brightness and members stay.
+			*/
 			for (let i = 0; i < 15; i++) {
 				const key = `R${String(i).padStart(2, "0")}`;
 				const explicitBrightness = trainingMetrics[`region_brightness:${key}`];
 				const explicitMembers = trainingMetrics[`region_members:${key}`];
 				const gridRegion = gridRegions.find((region) => region.key === i);
 
-				if (gridRegion) {
-					regionBrightness[i] = gridRegion.brightness;
-					regionMembers[i] = gridRegion.counts;
-					continue;
-				}
+				let brightness: number | undefined;
+				let members: number | undefined;
 
-				if (explicitBrightness !== undefined && explicitBrightness > 0) {
-					regionBrightness[i] = explicitBrightness;
-					regionMembers[i] = Math.round(
-						explicitMembers ?? CANONICAL_COUNTS[i] ?? 0,
-					);
-				} else {
-					// Derive region brightness as the average activation of its member pins (matching nomagique/store/grid.go)
-					let pinSum = 0;
-					let pinCount = 0;
-					for (const pin of CANONICAL_PINS) {
-						if (pin.cluster === i) {
-							const reading = kernelMetricSnm[pin.id];
-							if (reading) {
-								pinSum += reading.activation;
-								pinCount++;
-							}
-						}
+				if (gridRegion && typeof gridRegion.brightness === "number") {
+					brightness = gridRegion.brightness;
+					if (typeof gridRegion.counts === "number") {
+						members = gridRegion.counts;
 					}
-					regionBrightness[i] = pinCount > 0 ? pinSum / pinCount : 0;
-					regionMembers[i] = Math.round(
-						explicitMembers ?? CANONICAL_COUNTS[i] ?? 0,
-					);
+				} else if (explicitBrightness !== undefined) {
+					brightness = explicitBrightness;
+					if (explicitMembers !== undefined) {
+						members = Math.round(explicitMembers);
+					}
+				}
+
+				if (brightness === undefined) continue;
+
+				if (heldBrightness.current[i] !== brightness) {
+					heldBrightness.current[i] = brightness;
+					changed = true;
+				}
+
+				if (
+					members !== undefined &&
+					heldMembers.current[i] !== members
+				) {
+					heldMembers.current[i] = members;
+					changed = true;
 				}
 			}
 
-			// Update all 81 canonical nodes
-			const updatedNodes: ImpulseNode[] = CANONICAL_PINS.map((pin) => {
-				const directReading = kernelMetricSnm[pin.id];
-				const regBrightness = regionBrightness[pin.cluster] ?? 0;
-				const activation =
-					directReading !== undefined && directReading.activation > 0
-						? directReading.activation
-						: regBrightness;
-				const snr = directReading?.snr ?? (activation >= 0.5 ? 2.5 : 1.0);
-
-				return {
-					id: pin.id,
-					label: `${pin.source}:${pin.metric}`,
-					cluster: pin.cluster,
-					snr,
-					activation,
-				};
-			});
-
-			// Build 15 regions
-			const regionsList = REGION_KEYS.map((_key, idx) => ({
-				id: idx,
-				strength: regionBrightness[idx],
-				authority: regionBrightness[idx] >= 0.5 ? 1 : regionBrightness[idx],
-				members: regionMembers[idx],
-			}));
-
-			// Build active events sorted brightest first
-			const activeEventsList: Array<{
-				id?: number;
-				label: string;
-				activity: number;
-				members?: number;
-			}> = [];
-
-			for (let i = 0; i < 15; i++) {
-				const strength = regionBrightness[i];
-				if (strength > 0.02) {
-					const meta = REGIONS[REGION_KEYS[i]];
-					activeEventsList.push({
-						id: i,
-						label: meta
-							? `${meta.id} ${meta.title}`
-							: `R${String(i).padStart(2, "0")}`,
-						activity: strength,
-						members: regionMembers[i],
-					});
-				}
-			}
-
-			activeEventsList.sort((a, b) => b.activity - a.activity);
-
-			setState({
-				data: updatedNodes,
-				regions: regionsList,
-				activeEvents: activeEventsList,
-				gridCells: updatedNodes.length,
-				gridRegions: 15,
-			});
+			if (changed) publish();
 		};
 
-		// Run immediately
+		// A symbol change drops the previous symbol's readings first.
+		publish();
 		updateFromTelemetry();
 
 		const unsubs: Array<(() => void) | undefined> = [];
@@ -289,7 +326,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				u?.();
 			}
 		};
-	}, [symbol, tickCount]);
+	}, [symbol]);
 
 	return state;
 };

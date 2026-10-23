@@ -71,7 +71,20 @@ func Filters(value *data.Value) bool {
 		}
 		return isFocus(value) && (isSignal(value) || isLogic(value, "resonance"))
 	case "learning":
-		return isStrategy(value, "training")
+		// Forward learning: the aggregate workspace tick (train/regions,
+		// kernel layers), focused signal streams for the impulse map, and
+		// the grammar and cognition feeds for the inspector tabs.
+		if isStrategy(value, "training") {
+			return true
+		}
+		source := kernelSource(value.Origin)
+		if source == "sequitur" || source == "cognition" {
+			return isFocus(value)
+		}
+		if source == "workspace" || source == "positions" {
+			return true
+		}
+		return isFocus(value) && (isSignal(value) || isLogic(value, "resonance"))
 	case "longtail":
 		// The training performance surface reads the strategy's learning
 		// stream: the training node, the grammar feed, and the cognition

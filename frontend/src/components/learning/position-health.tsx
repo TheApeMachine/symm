@@ -1,4 +1,6 @@
-import { atoms, signals } from "#/collections/app";
+import { ArrowRight, HeartPulse, Radio } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
@@ -7,9 +9,6 @@ import { Section } from "#/components/ui/section";
 import type { Lifecycle } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
 import type { Value } from "#/types/value";
-import { useSelector } from "@tanstack/react-store";
-import { ArrowRight, HeartPulse, Radio } from "lucide-react";
-import React, { useEffect, useMemo, useState } from "react";
 
 export interface RegionMeta {
 	id: string;
@@ -564,7 +563,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 		life?.mark?.unrealized ??
 		(Number.isFinite(rawUnrealized) ? rawUnrealized : 0);
 
-	const decisions: any[] = [];
+	const decisions: { symbol?: string; cause?: string }[] = [];
 	const activeSymbol = life?.symbol ?? "";
 	const currentDecision = decisions?.find((d) => d?.symbol === activeSymbol);
 

@@ -32,6 +32,8 @@ export const updateClock = (at: number | bigint | null | undefined) => {
 	}
 };
 
+// Bracket lookup (`atoms["focus"]`) needs a wide bag type; atoms are still strongly typed at creation.
+// biome-ignore lint/suspicious/noExplicitAny: TanStack Atom value types do not unify under one generic.
 export const atoms: Record<string, Atom<any>> = {
 	focus: createAtom<string>(DEFAULT_FOCUS_SYMBOL),
 	route: createAtom<string>("dashboard"),
@@ -113,13 +115,33 @@ export const signalFor = (
 		const index = frame.index[i];
 		if (!index.startsWith(`${frame.prefix}/${address}`)) continue;
 
+		let payload: unknown;
 		try {
-			found[index.slice(`${frame.prefix}/${address}`.length)] = JSON.parse(
-				new TextDecoder().decode(frame.layers[i]),
-			);
+			payload = JSON.parse(new TextDecoder().decode(frame.layers[i]));
 		} catch {
-			return {};
+			continue;
 		}
+
+		/*
+		A kernel writes its metrics as one float array addressed by every
+		metric name: cvd/BTC/USD/midpoint_log_return/flow_aligned_... The
+		suffix splits into those names, one scalar array each, which is the
+		shape readers look up by metric.
+		*/
+		const suffix = index.slice(`${frame.prefix}/${address}`.length);
+		const names = suffix.split("/").filter(Boolean);
+		if (
+			Array.isArray(payload) &&
+			names.length > 1 &&
+			names.length === payload.length
+		) {
+			for (let n = 0; n < names.length; n++) {
+				found[names[n]] = [payload[n]];
+			}
+			continue;
+		}
+
+		found[suffix] = payload;
 	}
 
 	return found;

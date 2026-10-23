@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { atoms, signals, updateClock } from "#/collections/app";
 import {
 	ingestCognitionFrame,
@@ -8,7 +9,46 @@ import { ingestSequiturFrame } from "#/collections/sequitur";
 import { hubWsUrl } from "#/lib/hub";
 import { parseValues } from "#/types/decoder";
 import type { Value } from "#/types/value";
-import { useEffect } from "react";
+
+type KiloProbeMiss = { origin: string; scope: string };
+
+type KiloProbeLast = {
+	origin: string;
+	scope: string;
+	prefix: string;
+	idxLen: number;
+	idx0: string | undefined;
+	idx1: string | undefined;
+};
+
+type KiloProbe = {
+	count: number;
+	origins: Record<string, number>;
+	scopes: Record<string, number>;
+	missed: KiloProbeMiss[];
+	stored: number;
+	last: KiloProbeLast | null;
+};
+
+declare global {
+	interface Window {
+		__kilo_probe?: KiloProbe;
+	}
+}
+
+const ensureKiloProbe = (): KiloProbe => {
+	if (!window.__kilo_probe) {
+		window.__kilo_probe = {
+			count: 0,
+			origins: {},
+			scopes: {},
+			missed: [],
+			stored: 0,
+			last: null,
+		};
+	}
+	return window.__kilo_probe;
+};
 
 /*
 ingest routes one decoded batch. An origin with an atom (balance, ...) sets
@@ -18,15 +58,7 @@ sequitur and training-region feeds are folded into their own stores here —
 the same for any origin that carries their layers.
 */
 export const ingest = (values: Value[]) => {
-	;(window as any).__kilo_probe = (window as any).__kilo_probe || {
-		count: 0,
-		origins: {} as Record<string, number>,
-		scopes: {} as Record<string, number>,
-		missed: [] as any[],
-		stored: 0,
-		last: null as any,
-	};
-	const probe = (window as any).__kilo_probe;
+	const probe = ensureKiloProbe();
 	probe.count++;
 	for (const value of values) {
 		probe.origins[value.origin] = (probe.origins[value.origin] || 0) + 1;
@@ -85,37 +117,46 @@ export const ingest = (values: Value[]) => {
 		}
 
 		/*
-		Only origins the dashboard binds to have a store; a frame from any
-		other origin (kraken acks, desk lifecycle) is telemetry the socket
-		delivers and ingest ignores rather than routes into nothing.
+		Balance is one account frame, not a per-symbol store. The top bar
+		reads cash, equity, and unrealized off atoms.balance.
 		*/
-		const store = signals[value.origin];
-		if (!store) {
-			probe.missed = (probe.missed || []);
-			if (probe.missed.length < 5) probe.missed.push({ origin: value.origin, scope: value.scope });
-			continue;
-		}
-		probe.stored = (probe.stored || 0) + 1;
+		if (value.origin === "balance") {
+			atoms.balance.set(value);
+		} else {
+			/*
+			Only origins the dashboard binds to have a store; a frame from any
+			other origin (kraken acks, desk lifecycle) is telemetry the socket
+			delivers and ingest ignores rather than routes into nothing.
+			*/
+			const store = signals[value.origin];
+			if (!store) {
+				probe.missed = probe.missed || [];
+				if (probe.missed.length < 5)
+					probe.missed.push({ origin: value.origin, scope: value.scope });
+				continue;
+			}
+			probe.stored = (probe.stored || 0) + 1;
 
-		store.setState((prev) => ({
-			...prev,
-			[value.scope]: value,
-		}));
+			store.setState((prev) => ({
+				...prev,
+				[value.scope]: value,
+			}));
 
-		/*
-		train/regions layers feed the region ring and the token strip at
-		ingest, whatever origin carried them.
-		*/
-		if (value.index.some((index) => index.includes("train/regions"))) {
-			for (let i = 0; i < value.index.length; i++) {
-				if (!value.index[i].includes("train/regions")) continue;
-				let payload: unknown;
-				try {
-					payload = JSON.parse(new TextDecoder().decode(value.layers[i]));
-				} catch {
-					continue;
+			/*
+			train/regions layers feed the region ring and the token strip at
+			ingest, whatever origin carried them.
+			*/
+			if (value.index.some((index) => index.includes("train/regions"))) {
+				for (let i = 0; i < value.index.length; i++) {
+					if (!value.index[i].includes("train/regions")) continue;
+					let payload: unknown;
+					try {
+						payload = JSON.parse(new TextDecoder().decode(value.layers[i]));
+					} catch {
+						continue;
+					}
+					ingestTrainRegions(Number(value.tick), value.index[i], payload);
 				}
-				ingestTrainRegions(Number(value.tick), value.index[i], payload);
 			}
 		}
 
@@ -141,15 +182,8 @@ The hub multiplexes everything over one socket: each message is one serialized
 */
 let wsWorker: Worker | null = null;
 
-const toBackendRoute = (route: string) => {
-	// The learning surface hosts the Impulse Map and Position Health inspector,
-	// which require focused signal streams (CVD, Hawkes, Depthflow, etc.) to light up
-	// the SOM grid confluence regions.
-	return route === "learning" ? "dashboard" : route;
-};
-
 export const sendRoute = (route: string) => {
-	wsWorker?.postMessage({ type: "ROUTE", route: toBackendRoute(route) });
+	wsWorker?.postMessage({ type: "ROUTE", route });
 };
 
 /*
@@ -219,7 +253,7 @@ export const WsFeed = () => {
 
 		worker.postMessage({
 			type: "ROUTE",
-			route: toBackendRoute(atoms.route.get()),
+			route: atoms.route.get(),
 		});
 
 		worker.postMessage({ type: "CONNECT", url });
@@ -230,7 +264,7 @@ export const WsFeed = () => {
 		});
 
 		const unsubscribeRoute = atoms.route.subscribe((route: string) => {
-			worker.postMessage({ type: "ROUTE", route: toBackendRoute(route) });
+			worker.postMessage({ type: "ROUTE", route });
 		});
 
 		return () => {

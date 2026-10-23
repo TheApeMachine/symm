@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -77,15 +78,15 @@ type pathScore struct {
 
 type Model struct {
 	*runtime.System `json:"-"`
-	mu             sync.Mutex
-	desk           Desk
-	store          *store.Client
-	hub            io.Writer
-	tree           *iradix.Tree[*data.Value]
-	explored       *iradix.Tree[*data.Value]
-	sequencers     *sync.Map
-	paths          *sync.Map
-	settled        *sync.Map
+	mu              sync.Mutex
+	desk            Desk
+	store           *store.Client
+	hub             io.Writer
+	tree            *iradix.Tree[*data.Value]
+	explored        *iradix.Tree[*data.Value]
+	sequencers      *sync.Map
+	paths           *sync.Map
+	settled         *sync.Map
 }
 
 func NewModel(
@@ -152,7 +153,9 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 	// grammar viz and for future use as a confidence modulator.
 	untyped, _ := model.sequencers.LoadOrStore(symbol, tokenizer.NewSequencer())
 	sequencer := untyped.(*tokenizer.Sequencer)
+	before := sequencer.Grammar().RuleCount()
 	sequencer.Analyze([]tokenizer.Token{token})
+	created := sequencer.Grammar().RuleCount() > before
 
 	// Accumulate the token into the symbol's path.
 	model.mu.Lock()
@@ -160,8 +163,11 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 	pathKey := path.String()
 	model.mu.Unlock()
 
-	// Publish the current token path to the dashboard.
-	model.publishMatch(symbol, path, "noop")
+	reported := "noop"
+	defer func() {
+		model.publishMatch(symbol, path, reported)
+		model.publishGrammar(symbol, sequencer, token, pathKey, created, reported)
+	}()
 
 	// 1. Settle an open virtual whose band walk is over.
 	if model.desk.Has(symbol, true) {
@@ -177,7 +183,10 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 	// 2. Current policy: S3 prefix walk — find all stored paths that are
 	//    prefixes of the current path. All must agree on action.
 	if len(path) >= minPathLength {
-		action, matchDepth := model.evaluateTree(pathKey)
+		action, _ := model.evaluateTree(pathKey)
+		if action != "" {
+			reported = action
+		}
 		switch action {
 		case "enter":
 			if !model.desk.Has(symbol, true) {
@@ -220,7 +229,7 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 	}
 
 	// Already tracking this path: check its threshold.
-	if val := model.explored.Get([]byte(pathKey)); val != nil {
+	if val, found := model.explored.Get([]byte(pathKey)); found {
 		var score pathScore
 		val.Lookup(&score, "score")
 
@@ -384,6 +393,7 @@ func (model *Model) Settle(position *broker.Position) {
 			updated.Append(0, "losses")
 			model.tree, _, _ = model.tree.Insert([]byte(pathKey), updated)
 		}
+		model.PublishPolicy()
 	}
 }
 
@@ -403,6 +413,7 @@ func (model *Model) Train(value *data.Value) {
 	}
 
 	model.tree, _, _ = model.tree.Insert([]byte(path), value)
+	model.PublishPolicy()
 
 	if model.store != nil {
 		action := value.Role
@@ -466,6 +477,176 @@ func (model *Model) appendPath(symbol string, token tokenizer.Token) tokenizer.T
 // resetPath clears the symbol's accumulated path. Caller must hold model.mu.
 func (model *Model) resetPath(symbol string) {
 	model.paths.Store(symbol, tokenizer.Tokens{})
+}
+
+/*
+PublishPolicy sends the current policy trie to the dashboard. Keys are the
+store paths the radix view reads: policy/current/<token path>/<action>.bin.
+*/
+func (model *Model) PublishPolicy() {
+	if model.hub == nil || model.tree == nil {
+		return
+	}
+
+	keys := make([]string, 0)
+	iterator := model.tree.Root().Iterator()
+	for key, val, ok := iterator.Next(); ok; key, val, ok = iterator.Next() {
+		path := string(key)
+		if path == "" {
+			continue
+		}
+
+		if strings.Contains(path, ".bin") {
+			if !strings.HasPrefix(path, "policy/current/") {
+				path = "policy/current/" + path
+			}
+			keys = append(keys, path)
+			continue
+		}
+
+		role := "enter"
+		if val != nil && (val.Role == "enter" || val.Role == "exit") {
+			role = val.Role
+		}
+		keys = append(keys, "policy/current/"+path+"/"+role+".bin")
+	}
+
+	value := data.NewValue("cognition", "keys", "policy")
+	value.Append(map[string]any{
+		"epoch": "0",
+		"keys":  keys,
+	}, "cognition")
+	io.Copy(model.hub, value)
+}
+
+/*
+publishGrammar sends one sequitur frame for the symbol: the grammar after
+this token, whether the append created or reused a rule, and how the path
+met the current policy. The longtail surface reads these frames.
+*/
+func (model *Model) publishGrammar(
+	symbol string,
+	sequencer *tokenizer.Sequencer,
+	token tokenizer.Token,
+	pathKey string,
+	created bool,
+	action string,
+) {
+	if model.hub == nil || sequencer == nil || sequencer.Grammar() == nil {
+		return
+	}
+
+	grammar := sequencer.Grammar()
+	kind := "append"
+	if created {
+		kind = "create"
+	} else if grammar.RuleCount() > 1 {
+		kind = "reuse"
+	}
+
+	productions := grammar.Rules()
+	rules := make([]map[string]any, 0, len(productions))
+	for i, symbols := range productions {
+		if symbols == nil {
+			symbols = []string{}
+		}
+		terminals := make([]string, 0, len(symbols))
+		depth := 1
+		for _, sym := range symbols {
+			if len(sym) > 1 && sym[0] == 'M' {
+				depth = 2
+				continue
+			}
+			terminals = append(terminals, sym)
+		}
+		rules = append(rules, map[string]any{
+			"id":        i + 1,
+			"name":      tokenizer.RuleRef(i + 1),
+			"count":     1,
+			"depth":     depth,
+			"length":    len(symbols),
+			"symbols":   symbols,
+			"terminals": terminals,
+		})
+	}
+
+	start := grammar.RootSequence()
+	if start == nil {
+		start = []string{}
+	}
+
+	fired := token.Symbols
+	if fired == nil {
+		fired = []string{}
+	}
+
+	active := make([]map[string]any, 0, len(fired))
+	for _, sym := range fired {
+		if len(sym) != 3 || sym[0] != 'R' {
+			continue
+		}
+		key, err := strconv.Atoi(sym[1:])
+		if err != nil {
+			continue
+		}
+		active = append(active, map[string]any{
+			"key":        key,
+			"brightness": token.Brightness,
+		})
+	}
+
+	treeAction, depth := model.evaluateTree(pathKey)
+	stored := treeAction != ""
+	match := ""
+	if stored {
+		match = pathKey
+	}
+	outcome := ""
+	if action == "enter" || action == "exit" {
+		outcome = action
+	}
+
+	frame := map[string]any{
+		"symbol":    symbol,
+		"epoch":     "0",
+		"tick":      int(data.Tick.Load()),
+		"timestamp": strconv.FormatUint(data.Tick.Load(), 10),
+		"active":    active,
+		"midpoint":  token.Brightness,
+		"fired":     fired,
+		"held":      len(fired),
+		"gate":      nil,
+		"blocked":   false,
+		"events": []map[string]any{{
+			"kind":   kind,
+			"token":  token.String(),
+			"rule":   0,
+			"into":   0,
+			"from":   0,
+			"digram": []string{"", ""},
+		}},
+		"completed": "",
+		"path":      pathKey,
+		"policy": map[string]any{
+			"epoch":   "0",
+			"paths":   0,
+			"trading": model.desk != nil,
+			"stored":  stored,
+			"match":   match,
+			"depth":   depth,
+			"action":  action,
+			"outcome": outcome,
+		},
+		"rules":          rules,
+		"start":          start,
+		"rawLength":      grammar.RootLength(),
+		"grammarSymbols": grammar.Symbols(),
+		"violations":     []string{},
+	}
+
+	value := data.NewValue("sequitur", "grammar", symbol)
+	value.Append(frame, "grammar")
+	io.Copy(model.hub, value)
 }
 
 /*

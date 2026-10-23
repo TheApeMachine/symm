@@ -40,7 +40,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	gridRegions: propGridRegions,
 	className,
 }) => {
-	const currentFocus = useSelector(atoms["focus"], (s) => s);
+	const currentFocus = useSelector(atoms.focus, (s) => s);
 	const activeSymbol = propSymbol || currentFocus || "BTC/USD";
 	const liveData = useImpulseData(propData ? "" : activeSymbol);
 
@@ -68,8 +68,6 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	const nodesRef = useRef<ImpulseNode[]>([]);
 	const layoutModeRef = useRef<"grid" | "regions">(layoutMode);
 	layoutModeRef.current = layoutMode;
-	const isPlayingRef = useRef(true);
-	isPlayingRef.current = isPlaying;
 
 	const prevBoundsRef = useRef<{
 		minX: number;
@@ -409,15 +407,6 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			const width = dimensions.width || 800;
 			const height = dimensions.height || 600;
 
-			// Decay activations naturally over time when feed is running
-			if (isPlayingRef.current) {
-				for (const n of nodesRef.current) {
-					if ((n.activation || 0) > 0) {
-						n.activation = Math.max(0, (n.activation || 0) - 0.002);
-					}
-				}
-			}
-
 			renderScene(nodesRef.current, layoutModeRef.current, width, height, 30);
 		});
 
@@ -589,8 +578,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					"x",
 					d3
 						.forceX<ImpulseNode>(
-							(d) =>
-								sympathyAnchor(Number(d.cluster || 0), width, height).x,
+							(d) => sympathyAnchor(Number(d.cluster || 0), width, height).x,
 						)
 						.strength(0.55),
 				)
@@ -598,8 +586,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					"y",
 					d3
 						.forceY<ImpulseNode>(
-							(d) =>
-								sympathyAnchor(Number(d.cluster || 0), width, height).y,
+							(d) => sympathyAnchor(Number(d.cluster || 0), width, height).y,
 						)
 						.strength(0.55),
 				)

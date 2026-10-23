@@ -1,8 +1,8 @@
+import { useSelector } from "@tanstack/react-store";
+import { createAtom } from "@tanstack/store";
 import { atoms, signals } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Tabs } from "#/components/ui/tabs";
-import { useSelector } from "@tanstack/react-store";
-import { createAtom } from "@tanstack/store";
 import { Component } from "../ui";
 import { CognitiveTree } from "./cognitive-tree";
 import { ForwardLearningViz } from "./forward-learning-viz";

@@ -24,7 +24,7 @@ import {
 } from "./longtail";
 
 afterEach(() => {
-	longtailStore.setState({ samples: [], lastSampleAt: 0 });
+	longtailStore.setState(() => ({ samples: [], lastSampleAt: 0 }));
 });
 
 /* One live grammar feed around a frame, shaped as the store holds it. */

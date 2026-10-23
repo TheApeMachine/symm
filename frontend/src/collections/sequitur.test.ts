@@ -49,6 +49,52 @@ describe("ingestSequiturFrame", () => {
 	});
 });
 
+describe("ingestSequiturFrame: backend grammar layer", () => {
+	it("accepts a frame shaped like strategy.Model.publishGrammar", () => {
+		expect(
+			ingestSequiturFrame({
+				symbol: "BTC/USD",
+				epoch: "0",
+				tick: 0,
+				timestamp: "0",
+				active: [{ key: 1, brightness: 0.8 }],
+				midpoint: 0.8,
+				fired: ["R01"],
+				held: 1,
+				gate: null,
+				blocked: false,
+				events: [
+					{
+						kind: "append",
+						token: "R01",
+						rule: 0,
+						into: 0,
+						from: 0,
+						digram: ["", ""],
+					},
+				],
+				completed: "",
+				path: "R01",
+				policy: {
+					epoch: "0",
+					paths: 0,
+					trading: true,
+					stored: false,
+					match: "",
+					depth: 0,
+					action: "noop",
+					outcome: "",
+				},
+				rules: [],
+				start: ["R01"],
+				rawLength: 1,
+				grammarSymbols: 1,
+				violations: [],
+			}),
+		).toBe(true);
+	});
+});
+
 describe("ingestSequiturFrame: surprise gate", () => {
 	it("refuses a frame whose gate reading is malformed", () => {
 		const error = vi.spyOn(console, "error").mockImplementation(() => {});

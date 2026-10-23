@@ -314,6 +314,14 @@ func (booter *Booter) initPipeline() error {
 
 		booter.training.Transition(nmruntime.READY)
 		strategyNodes = append(strategyNodes, booter.training)
+
+		if booter.hub != nil {
+			publish := func(string) {
+				booter.training.PublishPolicy()
+			}
+			booter.hub.RegisterCallback(func() { booter.training.PublishPolicy() })
+			booter.hub.HandleList(publish)
+		}
 	}
 
 	// The last handler group io.Copy's the tick, after every signal and

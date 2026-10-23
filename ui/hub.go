@@ -33,11 +33,12 @@ type Hub struct {
 	app        *fiber.App
 	listenAddr string
 	routes     *Routes
-	conn       atomic.Pointer[websocket.Conn]
+	clients    map[*websocket.Conn]struct{}
 	queue      *lf.Queue[[]byte]
 	writeMu    sync.Mutex
 	connected  atomic.Bool
 	callbacks  []func()
+	list       atomic.Value
 }
 
 /*
@@ -54,9 +55,13 @@ func NewHub(ctx context.Context) *Hub {
 			ReadBufferSize:  system.Cfg.UI.WebSocket.MaxMessageBytes,
 			WriteBufferSize: system.Cfg.UI.WebSocket.MaxMessageBytes,
 		}),
+		clients:   make(map[*websocket.Conn]struct{}),
 		queue:     lf.NewQueue[[]byte](),
 		callbacks: make([]func(), 0),
 	}
+
+	hub.list.Store(func(string) {})
+	go hub.writeLoop()
 
 	hub.routes = NewRoutes(hub)
 	hub.System = runtime.NewSystem(ctx, "hub")
@@ -102,75 +107,24 @@ func (hub *Hub) wsHandler() fiber.Handler {
 		defer func() {
 			conn.Close()
 
-			if hub.conn.CompareAndSwap(conn, (*websocket.Conn)(nil)) {
+			hub.writeMu.Lock()
+			delete(hub.clients, conn)
+			if len(hub.clients) == 0 {
 				hub.connected.Store(false)
 			}
+			hub.writeMu.Unlock()
 		}()
 
 		hub.writeMu.Lock()
-
-		old := hub.conn.Swap(conn)
-
-		if old != nil {
-			old.Close()
-		}
-
-		// A fresh connection starts from an empty queue: stale frames for
-		// the previous connection would carry wire sequence numbers the new
-		// dashboard reads as duplicates and drop.
-		for {
-			if _, ok := hub.queue.Dequeue(); !ok {
-				break
-			}
-		}
-
+		hub.clients[conn] = struct{}{}
 		// Attached: publishers may produce again, and the replay below
-		// (Hello) flows through Write.
+		// (Hello) flows through Write to every attached dashboard.
 		hub.connected.Store(true)
+		hub.writeMu.Unlock()
 
 		for _, callback := range hub.callbacks {
 			callback()
 		}
-
-		/*
-			This drain is the connection's writer: it lives on the handler
-			goroutine, so it is retired the instant the handler returns and no
-			drained frame can outlive its socket. It exits quietly once the
-			handler swaps in a replacement connection.
-		*/
-		go func() {
-			for {
-				if hub.ctx.Err() != nil {
-					return
-				}
-
-				hub.writeMu.Lock()
-
-				if hub.conn.Load() != conn {
-					hub.writeMu.Unlock()
-					return
-				}
-
-				p, ok := hub.queue.Dequeue()
-
-				if !ok {
-					hub.writeMu.Unlock()
-					time.Sleep(5 * time.Millisecond)
-					continue
-				}
-
-				err := conn.WriteMessage(websocket.BinaryMessage, p)
-
-				hub.writeMu.Unlock()
-
-				if err != nil {
-					conn.Close()
-					return
-				}
-			}
-		}()
-
-		hub.writeMu.Unlock()
 
 		for {
 			select {
@@ -183,7 +137,7 @@ func (hub *Hub) wsHandler() fiber.Handler {
 
 			if err != nil {
 				// The dashboard is gone; the deferred teardown above
-				// retires this connection and the drain with it.
+				// drops this socket. The others keep their frames.
 				return
 			}
 
@@ -194,6 +148,45 @@ func (hub *Hub) wsHandler() fiber.Handler {
 	}, websocket.Config{
 		Origins: []string{"*"},
 	})
+}
+
+/*
+writeLoop is the one writer for every dashboard socket. A frame dequeued
+from the hub queue is written to each attached client. A client whose write
+fails is closed and dropped; the rest stay up, so a second dashboard cannot
+kick the first one off and start the reconnect fight.
+*/
+func (hub *Hub) writeLoop() {
+	for {
+		if hub.ctx.Err() != nil {
+			return
+		}
+
+		hub.writeMu.Lock()
+		payload, ok := hub.queue.Dequeue()
+		if !ok {
+			hub.writeMu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+
+		conns := make([]*websocket.Conn, 0, len(hub.clients))
+		for conn := range hub.clients {
+			conns = append(conns, conn)
+		}
+		hub.writeMu.Unlock()
+
+		var failed []*websocket.Conn
+		for _, conn := range conns {
+			if err := conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+				failed = append(failed, conn)
+			}
+		}
+
+		for _, conn := range failed {
+			conn.Close()
+		}
+	}
 }
 
 /*
@@ -222,6 +215,18 @@ RegisterCallback registers a callback to be called when a new websocket connecti
 */
 func (hub *Hub) RegisterCallback(callback func()) {
 	hub.callbacks = append(hub.callbacks, callback)
+}
+
+/*
+HandleList registers the function that answers a dashboard "s3" command.
+The cognitive tree asks for policy/current when it opens.
+*/
+func (hub *Hub) HandleList(fn func(string)) {
+	if fn == nil {
+		fn = func(string) {}
+	}
+
+	hub.list.Store(fn)
 }
 
 /*
@@ -257,6 +262,10 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		types.SetRoute(request.Route)
 	case "position.exit":
 	case "hindsight":
+	case "s3":
+		if fn, ok := hub.list.Load().(func(string)); ok {
+			fn(request.Prefix)
+		}
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,

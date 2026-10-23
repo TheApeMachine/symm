@@ -3,8 +3,8 @@ import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { atoms, routeAtom } from "#/collections/app";
 import { cognitionStore } from "#/collections/cognition";
-import { sequiturFrame } from "#/collections/sequitur-fixture";
 import { sequiturStore } from "#/collections/sequitur";
+import { sequiturFrame } from "#/collections/sequitur-fixture";
 import { Value } from "#/types/value";
 import { ingest, WsFeed } from "./websocket";
 
@@ -76,6 +76,26 @@ describe("ingest", () => {
 		expect(atoms.tickCount.get()).toBe(41);
 	});
 
+	it("keeps a balance frame on the account atom", () => {
+		const layer = new TextEncoder().encode(
+			JSON.stringify({ cash: "12.50", equity: "40.00", unrealized: "-1.25" }),
+		);
+		const frame = new Value({
+			origin: "balance",
+			role: "update",
+			scope: "all",
+			prefix: "balance/update/all",
+			index: ["balance/update/all/balance"],
+			layers: [layer],
+			tick: 9n,
+		});
+
+		ingest([frame]);
+
+		expect(atoms.balance.get()).toBe(frame);
+		expect(atoms.tickCount.get()).toBe(9);
+	});
+
 	it("ingests cognition match frames", () => {
 		const match = {
 			symbol: "BTC/USD",
@@ -114,7 +134,7 @@ describe("ingest", () => {
 			}),
 		]);
 
-		const probe = (window as any).__kilo_probe;
+		const probe = window.__kilo_probe;
 		expect(probe.missed).toContainEqual(
 			expect.objectContaining({ origin: "kraken" }),
 		);

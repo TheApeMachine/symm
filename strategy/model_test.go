@@ -1,7 +1,9 @@
 package strategy
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -10,7 +12,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
-	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 )
 
@@ -150,24 +151,18 @@ func (d *fakeDesk) setMark(symbol string, mark *decimal.Decimal) {
 // helpers
 // ---------------------------------------------------------------------------
 
-// tokenValue builds a data.Value carrying one region token for the symbol.
-func tokenValue(symbol string, regionKey uint8) *data.Value {
-	region := &nmstore.Region{
-		Symbol:     symbol,
-		Key:        regionKey,
-		Brightness: 0.5,
-	}
-	token := tokenizer.NewToken(region)
-	return data.NewValue("training", "update", symbol).Append(token, "token")
+// regionToken builds a single region token for testing.
+func regionToken(key uint8, brightness float64) tokenizer.Token {
+	return tokenizer.NewTokenFromRegion(key, brightness)
 }
 
 // ---------------------------------------------------------------------------
 // tests
 // ---------------------------------------------------------------------------
 
-// TestModelExplorePromoteAct verifies the full learning cycle:
-// a new path is explored, three profitable closes promote it into the
-// policy tree, and the promoted path then acts without re-exploring.
+// TestModelExplorePromoteAct verifies the full learning cycle with the
+// new win-rate promotion: a new path is explored, enough wins at a
+// sufficient win-rate promote it, and the promoted path then acts.
 func TestModelExplorePromoteAct(t *testing.T) {
 	ctx := context.Background()
 	desk := newFakeDesk()
@@ -175,16 +170,16 @@ func TestModelExplorePromoteAct(t *testing.T) {
 
 	const symbol = "BTC/USD"
 
-	// --- Path accumulates below minPathLength: no action. ---
-	model.Evaluate(tokenValue(symbol, 1)) // R01, len 1
-	model.Evaluate(tokenValue(symbol, 2)) // R02, len 2
+	// --- Below minPathLength: no action. ---
+	model.Evaluate(symbol, regionToken(1, 0.8)) // R01, len 1
+	model.Evaluate(symbol, regionToken(2, 0.7)) // R02, len 2
 
 	if desk.Has(symbol, true) {
 		t.Fatal("expected no virtual after 2 tokens (below minPathLength)")
 	}
 
-	// --- Path reaches minPathLength: virtual entered, path explored. ---
-	model.Evaluate(tokenValue(symbol, 3)) // R03, len 3
+	// --- Path reaches minPathLength: virtual entered (high confidence). ---
+	model.Evaluate(symbol, regionToken(3, 0.9)) // R03, len 3
 
 	if !desk.Has(symbol, true) {
 		t.Fatal("expected virtual after 3 tokens")
@@ -198,8 +193,8 @@ func TestModelExplorePromoteAct(t *testing.T) {
 		t.Fatalf("entry path = %q, want %q", pos.EntryPath, "R01/R02/R03")
 	}
 
-	// --- Path grows, virtual still open, no action. ---
-	model.Evaluate(tokenValue(symbol, 4)) // R04, len 4
+	// --- Grow path, virtual still open, no action. ---
+	model.Evaluate(symbol, regionToken(4, 0.6)) // R04, len 4
 	if !desk.Has(symbol, true) {
 		t.Fatal("expected virtual still open")
 	}
@@ -208,49 +203,49 @@ func TestModelExplorePromoteAct(t *testing.T) {
 	desk.setMark(symbol, decimal.NewFromInt64(103))
 
 	// --- Next tick settles the virtual (win: +3%). ---
-	model.Evaluate(tokenValue(symbol, 5))
+	model.Evaluate(symbol, regionToken(5, 0.5))
 
 	if desk.Has(symbol, true) {
-		t.Fatal("expected virtual to be settled and dropped")
+		t.Fatal("expected virtual to be settled")
 	}
 
 	// --- Cycle 2: same path, second win. ---
-	model.Evaluate(tokenValue(symbol, 1)) // R01, len 1 (reset)
-	model.Evaluate(tokenValue(symbol, 2)) // R02, len 2
-	model.Evaluate(tokenValue(symbol, 3)) // R03, len 3 → re-enter (explored)
+	model.Evaluate(symbol, regionToken(1, 0.8))
+	model.Evaluate(symbol, regionToken(2, 0.7))
+	model.Evaluate(symbol, regionToken(3, 0.9))
 
 	if !desk.Has(symbol, true) {
 		t.Fatal("expected virtual re-entered on cycle 2")
 	}
 
 	desk.setMark(symbol, decimal.NewFromInt64(102)) // +2% → win
-	model.Evaluate(tokenValue(symbol, 4))          // settle
+	model.Evaluate(symbol, regionToken(4, 0.5))     // settle
 
 	if desk.Has(symbol, true) {
 		t.Fatal("expected virtual settled after cycle 2")
 	}
 
-	// --- Cycle 3: same path, third win → promotion. ---
-	model.Evaluate(tokenValue(symbol, 1))
-	model.Evaluate(tokenValue(symbol, 2))
-	model.Evaluate(tokenValue(symbol, 3)) // R03 → re-enter
+	// --- Cycle 3: third win → promotion (3 wins, 0 losses, winRate 1.0 > 0.5). ---
+	model.Evaluate(symbol, regionToken(1, 0.8))
+	model.Evaluate(symbol, regionToken(2, 0.7))
+	model.Evaluate(symbol, regionToken(3, 0.9))
 
 	if !desk.Has(symbol, true) {
 		t.Fatal("expected virtual re-entered on cycle 3")
 	}
 
 	desk.setMark(symbol, decimal.NewFromInt64(101)) // +1% → win
-	model.Evaluate(tokenValue(symbol, 4))          // settle → promote
+	model.Evaluate(symbol, regionToken(4, 0.5))     // settle → promote
 
 	if desk.Has(symbol, true) {
 		t.Fatal("expected virtual settled after cycle 3")
 	}
 
 	// --- Promoted path: Evaluate returns the stored action. ---
-	model.Evaluate(tokenValue(symbol, 1)) // R01, len 1
-	model.Evaluate(tokenValue(symbol, 2)) // R02, len 2
+	model.Evaluate(symbol, regionToken(1, 0.8)) // R01, len 1
+	model.Evaluate(symbol, regionToken(2, 0.7)) // R02, len 2
 
-	result := model.Evaluate(tokenValue(symbol, 3)) // R03, len 3
+	result := model.Evaluate(symbol, regionToken(3, 0.9)) // R03, len 3
 
 	if result == nil {
 		t.Fatal("expected Evaluate to return the promoted action, got nil")
@@ -264,76 +259,163 @@ func TestModelExplorePromoteAct(t *testing.T) {
 	}
 }
 
-// TestModelLossNotPromoted verifies that a losing path is not promoted
-// into the policy tree. The path stays in explored and re-enters on
-// recurrence, but Evaluate returns nil (no stored action).
-func TestModelLossNotPromoted(t *testing.T) {
+// TestModelLossThresholdIncrease verifies that a losing path's threshold
+// increases, making it harder to re-enter.
+func TestModelLossThresholdIncrease(t *testing.T) {
 	ctx := context.Background()
 	desk := newFakeDesk()
 	model := NewModel(ctx, desk, nil, nil)
 
 	const symbol = "ETH/USD"
 
-	// One losing cycle on path R10/R11/R12.
-	model.Evaluate(tokenValue(symbol, 10))
-	model.Evaluate(tokenValue(symbol, 11))
-	model.Evaluate(tokenValue(symbol, 12)) // enter
+	// First cycle: enter with confidence 0.5, then lose.
+	model.Evaluate(symbol, regionToken(10, 0.5))
+	model.Evaluate(symbol, regionToken(11, 0.5))
+	model.Evaluate(symbol, regionToken(12, 0.5)) // enter (confidence 0.5 >= threshold 0)
 
 	if !desk.Has(symbol, true) {
 		t.Fatal("expected virtual entered")
 	}
 
 	desk.setMark(symbol, decimal.NewFromInt64(97)) // -3% → loss
-	model.Evaluate(tokenValue(symbol, 13))       // settle
+	model.Evaluate(symbol, regionToken(13, 0.3))   // settle
 
 	if desk.Has(symbol, true) {
 		t.Fatal("expected virtual settled")
 	}
 
-	// Next cycle: same path re-enters (explored), Evaluate returns nil.
-	model.Evaluate(tokenValue(symbol, 10))
-	model.Evaluate(tokenValue(symbol, 11))
-	result := model.Evaluate(tokenValue(symbol, 12))
+	// After the loss, the threshold increased (0.5 * 1.5 = 0.75).
+	// Re-entering requires confidence >= 0.75.
+	// Feed a token with confidence 0.5: should NOT re-enter.
+	model.Evaluate(symbol, regionToken(10, 0.5))
+	model.Evaluate(symbol, regionToken(11, 0.5))
+	result := model.Evaluate(symbol, regionToken(12, 0.5)) // confidence 0.5 < 0.75
 
-	if result != nil {
-		t.Fatalf("expected nil (explored, not promoted), got role=%q", result.Role)
+	_ = result
+	if desk.Has(symbol, true) {
+		t.Fatal("expected no re-entry: confidence below elevated threshold")
 	}
 
+	// Now feed with higher confidence: should re-enter.
+	model.Evaluate(symbol, regionToken(10, 0.9))
+	model.Evaluate(symbol, regionToken(11, 0.9))
+	model.Evaluate(symbol, regionToken(12, 0.9)) // confidence 0.9 >= 0.75
+
 	if !desk.Has(symbol, true) {
-		t.Fatal("expected virtual re-entered for continued exploration")
+		t.Fatal("expected re-entry: confidence above elevated threshold")
 	}
 }
 
-// TestModelMaxLossesRetires verifies that a path which loses maxLosses
-// times in a row is retired: it is no longer re-entered.
-func TestModelMaxLossesRetires(t *testing.T) {
+// TestModelMaxThresholdRetires verifies that repeated losses push the
+// threshold to max, retiring the path entirely.
+func TestModelMaxThresholdRetires(t *testing.T) {
 	ctx := context.Background()
 	desk := newFakeDesk()
 	model := NewModel(ctx, desk, nil, nil)
 
 	const symbol = "SOL/USD"
 
-	// Three losing cycles on the same path.
-	for i := 0; i < maxLosses; i++ {
-		model.Evaluate(tokenValue(symbol, 20))
-		model.Evaluate(tokenValue(symbol, 21))
-		model.Evaluate(tokenValue(symbol, 22)) // enter / re-enter
+	// Start with a high initial threshold so losses push it to max fast.
+	for i := 0; i < 5; i++ {
+		model.Evaluate(symbol, regionToken(20, 0.9))
+		model.Evaluate(symbol, regionToken(21, 0.9))
+		model.Evaluate(symbol, regionToken(22, 0.9)) // enter
 
 		if !desk.Has(symbol, true) {
 			t.Fatalf("cycle %d: expected virtual entered", i)
 		}
 
 		desk.setMark(symbol, decimal.NewFromInt64(95)) // -5% → loss
-		model.Evaluate(tokenValue(symbol, 23))       // settle
+		model.Evaluate(symbol, regionToken(23, 0.5))   // settle
 	}
 
-	// Fourth cycle: path is retired, no entry.
-	model.Evaluate(tokenValue(symbol, 20))
-	model.Evaluate(tokenValue(symbol, 21))
-	model.Evaluate(tokenValue(symbol, 22))
+	// After 5 losses: threshold = 0.9 * 1.5^5 ≈ 7.1, capped at 1.0.
+	// Path should be retired. Even max confidence won't re-enter.
+	model.Evaluate(symbol, regionToken(20, 1.0))
+	model.Evaluate(symbol, regionToken(21, 1.0))
+	model.Evaluate(symbol, regionToken(22, 1.0))
 
 	if desk.Has(symbol, true) {
-		t.Fatal("expected path to be retired after maxLosses consecutive losses")
+		t.Fatal("expected path to be retired: threshold at max")
+	}
+}
+
+// TestModelNoopDampener verifies that when multiple prefixes match but
+// disagree on action, the result is noop (the dampener).
+func TestModelNoopDampener(t *testing.T) {
+	ctx := context.Background()
+	desk := newFakeDesk()
+	model := NewModel(ctx, desk, nil, nil)
+
+	const symbol = "ADA/USD"
+
+	// Manually insert conflicting paths into the tree:
+	// R01 → enter
+	// R01/R02 → exit
+	// These disagree: a path of R01/R02/R03 should yield noop.
+
+	val1 := newDataValue("enter", symbol, "R01")
+	model.tree, _, _ = model.tree.Insert([]byte("R01"), val1)
+
+	val2 := newDataValue("exit", symbol, "R01/R02")
+	model.tree, _, _ = model.tree.Insert([]byte("R01/R02"), val2)
+
+	// Evaluate: path R01/R02/R03 matches both R01 (enter) and R01/R02 (exit).
+	// They disagree → noop.
+	model.Evaluate(symbol, regionToken(1, 0.9))
+	model.Evaluate(symbol, regionToken(2, 0.9))
+	result := model.Evaluate(symbol, regionToken(3, 0.9))
+
+	if result == nil {
+		t.Fatal("expected noop result from disagreement, got nil")
+	}
+	if result.Role != "noop" {
+		t.Fatalf("role = %q, want %q (disagreement dampener)", result.Role, "noop")
+	}
+
+	// No position should be opened on a noop.
+	if desk.Has(symbol, true) {
+		t.Fatal("expected no position on noop")
+	}
+}
+
+// TestModelAgreementYieldsAction verifies that when all matching prefixes
+// agree, the action is returned.
+func TestModelAgreementYieldsAction(t *testing.T) {
+	ctx := context.Background()
+	desk := newFakeDesk()
+	model := NewModel(ctx, desk, nil, nil)
+
+	const symbol = "DOGE/USD"
+
+	// Insert agreeing paths:
+	// R01 → enter
+	// R01/R02 → enter
+	// R01/R02/R03 → enter
+
+	val1 := newDataValue("enter", symbol, "R01")
+	model.tree, _, _ = model.tree.Insert([]byte("R01"), val1)
+
+	val2 := newDataValue("enter", symbol, "R01/R02")
+	model.tree, _, _ = model.tree.Insert([]byte("R01/R02"), val2)
+
+	val3 := newDataValue("enter", symbol, "R01/R02/R03")
+	model.tree, _, _ = model.tree.Insert([]byte("R01/R02/R03"), val3)
+
+	// Evaluate: path R01/R02/R03 matches all three, all agree → enter.
+	model.Evaluate(symbol, regionToken(1, 0.9))
+	model.Evaluate(symbol, regionToken(2, 0.9))
+	result := model.Evaluate(symbol, regionToken(3, 0.9))
+
+	if result == nil {
+		t.Fatal("expected enter result from agreement, got nil")
+	}
+	if result.Role != "enter" {
+		t.Fatalf("role = %q, want %q", result.Role, "enter")
+	}
+
+	if !desk.Has(symbol, true) {
+		t.Fatal("expected position entered")
 	}
 }
 
@@ -344,55 +426,48 @@ func TestModelPathReset(t *testing.T) {
 	desk := newFakeDesk()
 	model := NewModel(ctx, desk, nil, nil)
 
-	const symbol = "ADA/USD"
+	const symbol = "AVAX/USD"
 
-	// Build path R01/R02/R03, enter virtual.
-	model.Evaluate(tokenValue(symbol, 1))
-	model.Evaluate(tokenValue(symbol, 2))
-	model.Evaluate(tokenValue(symbol, 3))
+	// Build path, enter virtual.
+	model.Evaluate(symbol, regionToken(1, 0.9))
+	model.Evaluate(symbol, regionToken(2, 0.9))
+	model.Evaluate(symbol, regionToken(3, 0.9))
 
 	if !desk.Has(symbol, true) {
 		t.Fatal("expected virtual entered")
 	}
 
-	// Grow the path to R01/R02/R03/R04/R05.
-	model.Evaluate(tokenValue(symbol, 4))
-	model.Evaluate(tokenValue(symbol, 5))
-
-	// Trigger exit and settle.
+	// Grow, trigger exit, settle.
+	model.Evaluate(symbol, regionToken(4, 0.5))
 	desk.setMark(symbol, decimal.NewFromInt64(103))
-	model.Evaluate(tokenValue(symbol, 6)) // settle, path resets
+	model.Evaluate(symbol, regionToken(5, 0.5)) // settle, path resets
 
 	if desk.Has(symbol, true) {
 		t.Fatal("expected virtual settled")
 	}
 
-	// After reset, the next token starts a fresh path of length 1.
-	model.Evaluate(tokenValue(symbol, 7)) // R07, len 1
+	// After reset, next token starts fresh (len 1 < minPathLength).
+	model.Evaluate(symbol, regionToken(6, 0.9))
 
-	// Still below minPathLength: no virtual.
 	if desk.Has(symbol, true) {
-		t.Fatal("expected no virtual after path reset (len 1 < minPathLength)")
+		t.Fatal("expected no virtual after path reset (len 1)")
 	}
 }
 
-// TestModelMaxPathLength verifies that the path is trimmed to
-// maxPathLength when it grows beyond the bound.
+// TestModelMaxPathLength verifies path trimming.
 func TestModelMaxPathLength(t *testing.T) {
 	ctx := context.Background()
 	desk := newFakeDesk()
 	model := NewModel(ctx, desk, nil, nil)
 
-	const symbol = "DOGE/USD"
+	const symbol = "DOT/USD"
 
-	// Feed maxPathLength + 4 distinct tokens. The path should be
-	// trimmed to the last maxPathLength tokens.
+	// Feed maxPathLength + 4 tokens without triggering exit.
 	for i := uint8(1); i <= uint8(maxPathLength+4); i++ {
-		model.Evaluate(tokenValue(symbol, i))
+		model.Evaluate(symbol, regionToken(i, 0.5))
 	}
 
-	// The virtual was entered when the path first reached minPathLength
-	// (token 3, path "R01/R02/R03"). It's still open (mark never moved).
+	// The virtual was entered at token 3. It's still open (mark never moved).
 	if !desk.Has(symbol, true) {
 		t.Fatal("expected virtual to still be open")
 	}
@@ -402,8 +477,148 @@ func TestModelMaxPathLength(t *testing.T) {
 		t.Fatal("expected non-nil virtual")
 	}
 
-	// The entry path should be the first minPathLength tokens.
+	// Entry path should be the first minPathLength tokens.
 	if pos.EntryPath != "R01/R02/R03" {
 		t.Fatalf("entry path = %q, want %q", pos.EntryPath, "R01/R02/R03")
 	}
+}
+
+// TestModelChordToken verifies that multi-symbol tokens (chords) work
+// as single trie edges.
+func TestModelChordToken(t *testing.T) {
+	ctx := context.Background()
+	desk := newFakeDesk()
+	model := NewModel(ctx, desk, nil, nil)
+
+	const symbol = "LINK/USD"
+
+	// A chord token: two regions as one token.
+	chord := tokenizer.NewToken([]string{"R01", "R02"}, 0.8, 0.8, 0)
+
+	if chord.String() != "[R01-R02]" {
+		t.Fatalf("chord string = %q, want %q", chord.String(), "[R01-R02]")
+	}
+
+	model.Evaluate(symbol, chord)                         // [R01-R02], len 1
+	model.Evaluate(symbol, tokenizer.NewTokenFromRegion(3, 0.7)) // R03, len 2
+	model.Evaluate(symbol, tokenizer.NewTokenFromRegion(4, 0.6)) // R04, len 3
+
+	if !desk.Has(symbol, true) {
+		t.Fatal("expected virtual after 3 tokens")
+	}
+
+	pos := desk.Virtual(symbol)
+	if pos.EntryPath != "[R01-R02]/R03/R04" {
+		t.Fatalf("entry path = %q, want %q", pos.EntryPath, "[R01-R02]/R03/R04")
+	}
+}
+
+// TestModelDemotion verifies that a promoted path that keeps losing is
+// demoted back to explored.
+func TestModelDemotion(t *testing.T) {
+	ctx := context.Background()
+	desk := newFakeDesk()
+	model := NewModel(ctx, desk, nil, nil)
+
+	const symbol = "LTC/USD"
+
+	// Manually insert a promoted path.
+	val := newDataValue("enter", symbol, "R10/R11/R12")
+	model.tree, _, _ = model.tree.Insert([]byte("R10/R11/R12"), val)
+
+	// Three losing cycles on the same path → demotion.
+	for i := 0; i < demotionLosses; i++ {
+		model.Evaluate(symbol, regionToken(10, 0.9))
+		model.Evaluate(symbol, regionToken(11, 0.9))
+		model.Evaluate(symbol, regionToken(12, 0.9)) // enter from tree
+
+		if !desk.Has(symbol, true) {
+			t.Fatalf("cycle %d: expected virtual entered", i)
+		}
+
+		desk.setMark(symbol, decimal.NewFromInt64(95)) // -5% → loss
+		model.Evaluate(symbol, regionToken(13, 0.3))   // settle
+	}
+
+	// After 3 losses, the path should be demoted from the current tree.
+	// Next cycle: it's in explored now, with elevated threshold.
+	// With confidence 0.9 and threshold 0.8, it should still enter.
+	model.Evaluate(symbol, regionToken(10, 0.9))
+	model.Evaluate(symbol, regionToken(11, 0.9))
+	model.Evaluate(symbol, regionToken(12, 0.9))
+
+	// It enters (from explored, not from the current tree).
+	if !desk.Has(symbol, true) {
+		t.Fatal("expected re-entry from explored after demotion")
+	}
+
+	// But the tree should no longer have the path.
+	_, found := model.tree.Get([]byte("R10/R11/R12"))
+	if found {
+		t.Fatal("expected path to be demoted from current tree")
+	}
+}
+
+// newDataValue constructs a data.Value with the given role, scope, and path
+// for direct tree insertion in tests.
+func newDataValue(role, scope, path string) *data.Value {
+	val := data.NewValue("training", role, scope)
+	val.Append(path, "path")
+	val.Append(0, "losses")
+	return val
+}
+
+type hubCapture struct {
+	payloads [][]byte
+}
+
+func (capture *hubCapture) Write(payload []byte) (int, error) {
+	copied := make([]byte, len(payload))
+	copy(copied, payload)
+	capture.payloads = append(capture.payloads, copied)
+	return len(payload), nil
+}
+
+// TestPublishGrammarFrame verifies Evaluate emits a sequitur/grammar frame
+// the dashboard ingests as a SequiturFrame.
+func TestPublishGrammarFrame(t *testing.T) {
+	ctx := context.Background()
+	capture := &hubCapture{}
+	model := NewModel(ctx, newFakeDesk(), nil, capture)
+
+	model.Evaluate("BTC/USD", regionToken(1, 0.8))
+
+	var grammar *data.Value
+	for _, payload := range capture.payloads {
+		value := data.New()
+		if _, err := value.ReadFrom(bytes.NewReader(payload)); err != nil {
+			t.Fatalf("decode hub payload: %v", err)
+		}
+		if value.Origin == "sequitur" {
+			grammar = value
+		}
+	}
+
+	if grammar == nil {
+		t.Fatal("Evaluate did not publish a sequitur frame")
+	}
+
+	var frame map[string]any
+	grammar.Lookup(&frame, "grammar")
+	if frame == nil {
+		t.Fatal("sequitur frame missing grammar layer")
+	}
+
+	raw, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatalf("marshal grammar layer: %v", err)
+	}
+
+	if frame["symbol"] != "BTC/USD" {
+		t.Fatalf("symbol = %v, want BTC/USD", frame["symbol"])
+	}
+	if _, ok := frame["policy"].(map[string]any); !ok {
+		t.Fatalf("policy missing: %s", raw)
+	}
+	t.Logf("grammar layer: %s", raw)
 }

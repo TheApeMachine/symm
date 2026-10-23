@@ -1,6 +1,6 @@
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Scanlines } from "#/components/ui/scanlines";
 import { cn } from "#/lib/utils";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 export type ChartSeries = {
 	values: Array<number | null | undefined>;

@@ -53,7 +53,7 @@ cut this tick — the symbols remain pending for the next boundary).
 Callers should check `token.Symbols != nil` to determine if a token was
 produced. A zero Token means "no boundary this tick, keep accumulating."
 */
-func (sequencer *Sequitur) Analyze(regionTokens []Token) Token {
+func (sequencer *Sequencer) Analyze(regionTokens []Token) Token {
 	if len(regionTokens) == 0 {
 		return Token{}
 	}
@@ -125,7 +125,7 @@ resets the pending buffer. The confidence is derived from the MDL's
 boundary gain (how strong the structural break was) modulated by the
 aggregate brightness.
 */
-func (sequencer *Sequitur) emitToken(meta SegmentMeta) Token {
+func (sequencer *Sequencer) emitToken(meta SegmentMeta) Token {
 	symbols := sequencer.pending
 	sequencer.pending = nil
 	sequencer.pendingBrightness = 0
@@ -158,7 +158,7 @@ Flush forces emission of any pending symbols as a Token. Called when the
 model resets its path (after a settle) to avoid losing accumulated grammar
 structure. Returns a zero Token if nothing is pending.
 */
-func (sequencer *Sequitur) Flush() Token {
+func (sequencer *Sequencer) Flush() Token {
 	if len(sequencer.pending) == 0 {
 		return Token{}
 	}
@@ -175,14 +175,14 @@ func (sequencer *Sequitur) Flush() Token {
 /*
 Grammar exposes the underlying Sequitur for persistence and the dashboard.
 */
-func (sequencer *Sequitur) Grammar() *Sequitur {
+func (sequencer *Sequencer) Grammar() *Sequitur {
 	return sequencer.sequitur
 }
 
 /*
 MDL exposes the boundary detector for calibration feedback.
 */
-func (sequencer *Sequitur) MDL() *MDL {
+func (sequencer *Sequencer) MDL() *MDL {
 	return sequencer.mdl
 }
 

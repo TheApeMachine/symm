@@ -1,3 +1,5 @@
+import { useSelector } from "@tanstack/react-store";
+import { useMemo } from "react";
 import { bookAtom } from "#/collections/book";
 import {
 	alertVariant,
@@ -22,8 +24,6 @@ import {
 } from "#/collections/longtail";
 import { Alert, Badge, Chip } from "#/components/ui";
 import { Flex } from "#/components/ui/flex";
-import { useSelector } from "@tanstack/react-store";
-import { useMemo } from "react";
 import { type ChartSeries, MetricChart } from "./metric-chart";
 
 /*
@@ -117,7 +117,7 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 	{
 		id: "coverage",
 		label: "action coverage",
-		value: (s) => s.training.actionCoverage,
+		value: (s) => s.training?.actionCoverage ?? null,
 		format: (v) => `${(100 * v).toFixed(0)}%`,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
@@ -128,7 +128,7 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 	{
 		id: "reuse",
 		label: "rule reuse",
-		value: (s) => s.training.reuseRate,
+		value: (s) => s.training?.reuseRate ?? null,
 		format: (v) => `${(100 * v).toFixed(0)}%`,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
@@ -139,7 +139,7 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 	{
 		id: "gate",
 		label: "gate pass",
-		value: (s) => s.training.gatePassRate,
+		value: (s) => s.training?.gatePassRate ?? null,
 		format: (v) => `${(100 * v).toFixed(0)}%`,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
@@ -150,7 +150,7 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 	{
 		id: "surprise",
 		label: "surprise",
-		value: (s) => s.training.avgSurprise,
+		value: (s) => s.training?.avgSurprise ?? null,
 		format: (v) => v.toFixed(2),
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${Math.abs(delta).toFixed(2)}`,
@@ -161,7 +161,7 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 	{
 		id: "match",
 		label: "policy match",
-		value: (s) => s.training.policyMatchRate,
+		value: (s) => s.training?.policyMatchRate ?? null,
 		format: (v) => `${(100 * v).toFixed(0)}%`,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
@@ -172,7 +172,7 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 	{
 		id: "warm",
 		label: "coders warm",
-		value: (s) => s.training.warmRate,
+		value: (s) => s.training?.warmRate ?? null,
 		format: (v) => `${(100 * v).toFixed(0)}%`,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
@@ -256,11 +256,30 @@ type ChartDef = {
 	id: string;
 	label: string;
 	caption: string;
-	series: (sample: LongtailSample) => ChartSeries[];
+	series: (samples: LongtailSample[]) => ChartSeries[];
 	formatY: (value: number) => string;
 	yDomain?: [number, number];
 	baseline?: number;
-	tone: (sample: LongtailSample) => Tone;
+	tone: (sample: LongtailSample | undefined) => Tone;
+};
+
+const bookPoint = (
+	sample: LongtailSample | undefined,
+	book: "paper" | "virtual",
+	key: "winRate" | "meanReturn",
+): number | null => sample?.[book]?.[key] ?? null;
+
+const trainingPoint = (
+	sample: LongtailSample | undefined,
+	key:
+		| "gatePassRate"
+		| "avgSurprise"
+		| "reuseRate"
+		| "createRate"
+		| "policyMatchRate",
+): number | null => {
+	const value = sample?.training?.[key];
+	return typeof value === "number" ? value : null;
 };
 
 const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
@@ -268,105 +287,118 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 		id: "win",
 		label: `${book} win rate`,
 		caption: "closed lots with derived net returns",
-		series: (s) => [
-			{
-				values: s?.[book]?.winRate === null ? [null] : [s?.[book]?.winRate ?? 0],
-				stroke: toneColor(winRateTone(s?.[book]?.winRate ?? 0)),
-				fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-			},
-		],
+		series: (samples) => {
+			const latest = samples[samples.length - 1];
+			return [
+				{
+					values: samples.map((s) => bookPoint(s, book, "winRate")),
+					stroke: toneColor(winRateTone(bookPoint(latest, book, "winRate"))),
+					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
+				},
+			];
+		},
 		formatY: rate,
 		yDomain: [0, 1],
 		baseline: 0.5,
-		tone: (s) => winRateTone(s?.[book]?.winRate),
+		tone: (s) => winRateTone(bookPoint(s, book, "winRate")),
 	},
 	{
 		id: "return",
 		label: `${book} mean return`,
 		caption: "average net return on priced lots",
-		series: (s) => [
-			{
-				values:
-					s?.[book]?.meanReturn === null ? [null] : [s?.[book]?.meanReturn ?? 0],
-				stroke: toneColor(returnTone(s?.[book]?.meanReturn)),
-				fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-			},
-		],
+		series: (samples) => {
+			const latest = samples[samples.length - 1];
+			return [
+				{
+					values: samples.map((s) => bookPoint(s, book, "meanReturn")),
+					stroke: toneColor(returnTone(bookPoint(latest, book, "meanReturn"))),
+					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
+				},
+			];
+		},
 		formatY: (v) => `${(100 * v).toFixed(1)}%`,
 		baseline: 0,
-		tone: (s) => returnTone(s?.[book]?.meanReturn ?? 0),
+		tone: (s) => returnTone(bookPoint(s, book, "meanReturn")),
 	},
 	{
 		id: "gate",
 		label: "Gate pass rate",
 		caption: "chords the surprise gate accepted",
-		series: (s) => [
-			{
-				values:
-					s.training.gatePassRate === null
-						? [null]
-						: [s.training.gatePassRate ?? 0],
-				stroke: toneColor(gatePassTone(s.training.gatePassRate)),
-				fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-			},
-		],
+		series: (samples) => {
+			const latest = samples[samples.length - 1];
+			return [
+				{
+					values: samples.map((s) => trainingPoint(s, "gatePassRate")),
+					stroke: toneColor(
+						gatePassTone(trainingPoint(latest, "gatePassRate")),
+					),
+					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
+				},
+			];
+		},
 		formatY: rate,
 		yDomain: [0, 1],
-		tone: (s) => gatePassTone(s.training.gatePassRate ?? 0),
+		tone: (s) => gatePassTone(trainingPoint(s, "gatePassRate")),
 	},
 	{
 		id: "surprise",
 		label: "Mean surprise",
 		caption: "predictive coder error per chord · lower is better",
-		series: (s) => [
-			{
-				values:
-					s.training.avgSurprise === null ? [null] : [s.training.avgSurprise],
-				stroke: toneColor(surpriseTone(s.training.avgSurprise)),
-				fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-			},
-		],
+		series: (samples) => {
+			const latest = samples[samples.length - 1];
+			return [
+				{
+					values: samples.map((s) => trainingPoint(s, "avgSurprise")),
+					stroke: toneColor(surpriseTone(trainingPoint(latest, "avgSurprise"))),
+					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
+				},
+			];
+		},
 		formatY: (v) => v.toFixed(2),
-		tone: (s) => surpriseTone(s.training.avgSurprise),
+		tone: (s) => surpriseTone(trainingPoint(s, "avgSurprise")),
 	},
 	{
 		id: "reuse",
 		label: "Rule reuse vs create",
 		caption: "mix of structural events on the last append",
-		series: (s) => [
-			{
-				label: "reuse",
-				values: s.training.reuseRate === null ? [null] : [s.training.reuseRate],
-				stroke: toneColor(reuseTone(s.training.reuseRate)),
-			},
-			{
-				label: "create",
-				values:
-					s.training.createRate === null ? [null] : [s.training.createRate],
-				stroke: "var(--f3)",
-			},
-		],
+		series: (samples) => {
+			const latest = samples[samples.length - 1];
+			return [
+				{
+					label: "reuse",
+					values: samples.map((s) => trainingPoint(s, "reuseRate")),
+					stroke: toneColor(reuseTone(trainingPoint(latest, "reuseRate"))),
+				},
+				{
+					label: "create",
+					values: samples.map((s) => trainingPoint(s, "createRate")),
+					stroke: "var(--f3)",
+				},
+			];
+		},
 		formatY: rate,
 		yDomain: [0, 1],
-		tone: (s) => reuseTone(s.training.reuseRate),
+		tone: (s) => reuseTone(trainingPoint(s, "reuseRate")),
 	},
 	{
 		id: "match",
 		label: "Policy match rate",
 		caption: "live paths ending on a stored policy",
-		series: (s) => [
-			{
-				values:
-					s.training.policyMatchRate === null
-						? [null]
-						: [s.training.policyMatchRate],
-				stroke: toneColor(matchTone(s.training.policyMatchRate)),
-				fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-			},
-		],
+		series: (samples) => {
+			const latest = samples[samples.length - 1];
+			return [
+				{
+					values: samples.map((s) => trainingPoint(s, "policyMatchRate")),
+					stroke: toneColor(
+						matchTone(trainingPoint(latest, "policyMatchRate")),
+					),
+					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
+				},
+			];
+		},
 		formatY: rate,
 		yDomain: [0, 1],
-		tone: (s) => matchTone(s.training.policyMatchRate),
+		tone: (s) => matchTone(trainingPoint(s, "policyMatchRate")),
 	},
 ];
 
@@ -379,8 +411,8 @@ const ChartPanel = ({
 	samples: LongtailSample[];
 	times: number[];
 }) => {
-const latestSample = samples[samples.length - 1];
-	const series = chart.series(latestSample);
+	const latestSample = samples[samples.length - 1];
+	const series = chart.series(samples);
 	const latest = latestFinite(series[0]?.values ?? []);
 	const tone = chart.tone(latestSample);
 

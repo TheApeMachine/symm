@@ -1,5 +1,5 @@
-import { createStore } from "@tanstack/store";
 import { useSelector } from "@tanstack/react-store";
+import { createStore } from "@tanstack/store";
 import { signals } from "#/collections/app";
 import type { Book } from "#/collections/book";
 import { type SequiturFeed, sequiturStore } from "#/collections/sequitur";
@@ -54,40 +54,94 @@ paints as info rather than disappearing into a dead band.
 export const alertVariant = (
 	tone: Tone,
 ): "success" | "warning" | "error" | "info" =>
-	tone === "good" ? "success" : tone === "warn" ? "warning" : tone === "bad" ? "error" : "info";
+	tone === "good"
+		? "success"
+		: tone === "warn"
+			? "warning"
+			: tone === "bad"
+				? "error"
+				: "info";
 
 /*
 Per-metric tone thresholds. A null reading is neutral: absence of data is
 neither good nor bad, and painting it green or red would invent a verdict.
 */
 export const winRateTone = (value: number | null): Tone =>
-	value === null ? "neutral" : value >= 0.55 ? "good" : value >= 0.45 ? "warn" : "bad";
+	value === null
+		? "neutral"
+		: value >= 0.55
+			? "good"
+			: value >= 0.45
+				? "warn"
+				: "bad";
 
 export const returnTone = (value: number | null): Tone =>
-	value === null ? "neutral" : value > 0 ? "good" : value >= -0.01 ? "warn" : "bad";
+	value === null
+		? "neutral"
+		: value > 0
+			? "good"
+			: value >= -0.01
+				? "warn"
+				: "bad";
 
 export const gatePassTone = (value: number | null): Tone =>
-	value === null ? "neutral" : value >= 0.7 ? "good" : value >= 0.4 ? "warn" : "bad";
+	value === null
+		? "neutral"
+		: value >= 0.7
+			? "good"
+			: value >= 0.4
+				? "warn"
+				: "bad";
 
 /* Surprise is the predictive coder's error: lower is better, so the scale inverts. */
 export const surpriseTone = (value: number | null): Tone =>
-	value === null ? "neutral" : value <= 0.5 ? "good" : value <= 2 ? "warn" : "bad";
+	value === null
+		? "neutral"
+		: value <= 0.5
+			? "good"
+			: value <= 2
+				? "warn"
+				: "bad";
 
 /* A maturing grammar reuses its rules; one that mostly creates new rules has not found structure. */
 export const reuseTone = (value: number | null): Tone =>
-	value === null ? "neutral" : value >= 0.5 ? "good" : value >= 0.25 ? "warn" : "bad";
+	value === null
+		? "neutral"
+		: value >= 0.5
+			? "good"
+			: value >= 0.25
+				? "warn"
+				: "bad";
 
 /* The share of grammar rules that carry a stored enter/exit action: how much of the grammar is trained. */
 export const coverageTone = (value: number | null): Tone =>
-	value === null ? "neutral" : value >= 0.5 ? "good" : value >= 0.25 ? "warn" : "bad";
+	value === null
+		? "neutral"
+		: value >= 0.5
+			? "good"
+			: value >= 0.25
+				? "warn"
+				: "bad";
 
 /* How often the live token path ends on a stored policy path. */
 export const matchTone = (value: number | null): Tone =>
-	value === null ? "neutral" : value >= 0.5 ? "good" : value >= 0.2 ? "warn" : "bad";
+	value === null
+		? "neutral"
+		: value >= 0.5
+			? "good"
+			: value >= 0.2
+				? "warn"
+				: "bad";
 
 /* Coders whose error has settled: the gate can only trust warm symbols. */
 export const warmTone = (value: number | null): Tone =>
-	value === null ? "neutral" : value >= 0.7 ? "good" : value >= 0.4 ? "warn" : "bad";
+	value === null
+		? "neutral"
+		: value >= 0.7
+			? "good"
+			: value >= 0.4
+				? "warn"
+				: "bad";
 
 export type BookDeskStats = {
 	closed: number;
@@ -163,7 +217,9 @@ const median = (values: number[]): number => {
 };
 
 const mean = (values: number[]): number | null =>
-	values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+	values.length > 0
+		? values.reduce((sum, value) => sum + value, 0) / values.length
+		: null;
 
 /*
 summarizeBook reads one book's desk rows into its round-trip statistics.
@@ -337,12 +393,13 @@ export const verdict = (samples: LongtailSample[], book: Book): Verdict => {
 	const latest = samples[samples.length - 1];
 	const prior = samples[Math.max(0, samples.length - 16)];
 
+	const training = latest.training;
 	const levels = [
 		returnTone(latest[book].meanReturn),
 		winRateTone(latest[book].winRate),
-		reuseTone(latest.training.reuseRate),
-		matchTone(latest.training.policyMatchRate),
-		gatePassTone(latest.training.gatePassRate),
+		reuseTone(training?.reuseRate ?? null),
+		matchTone(training?.policyMatchRate ?? null),
+		gatePassTone(training?.gatePassRate ?? null),
 	].filter((tone) => tone !== "neutral");
 
 	if (levels.length < 2) {
@@ -547,7 +604,7 @@ export const resetLongtailRecorder = () => {
 		recorderHandle = null;
 	}
 	recorderStarted = false;
-	longtailStore.setState({ samples: [], lastSampleAt: 0 });
+	longtailStore.setState(() => ({ samples: [], lastSampleAt: 0 }));
 };
 
 export const useLongtailReport = () =>

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render } from "@testing-library/react";
+import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bookAtom } from "#/collections/book";
 import {
@@ -94,7 +94,7 @@ const sample = (
 afterEach(() => {
 	cleanup();
 	bookAtom.set("paper");
-	longtailStore.setState({ samples: [], lastSampleAt: 0 });
+	longtailStore.setState(() => ({ samples: [], lastSampleAt: 0 }));
 });
 
 describe("LongtailDashboard", () => {
@@ -108,7 +108,7 @@ describe("LongtailDashboard", () => {
 	});
 
 	it("renders the KPI strip, the six charts, and the right rail", () => {
-		longtailStore.setState({
+		longtailStore.setState(() => ({
 			samples: [
 				sample(1_000, {
 					virtual: bookStats({ closed: 4, wins: 3, winRate: 0.6, meanReturn: 0.01 }),
@@ -156,7 +156,7 @@ describe("LongtailDashboard", () => {
 				}),
 			],
 			lastSampleAt: 6_000,
-		});
+		}));
 		bookAtom.set("virtual");
 
 		const { container, getByText } = render(<LongtailDashboard />);
@@ -214,7 +214,7 @@ describe("LongtailDashboard", () => {
 			}),
 		];
 
-		longtailStore.setState({ samples: bad, lastSampleAt: 6_000 });
+		longtailStore.setState(() => ({ samples: bad, lastSampleAt: 6_000 }));
 		bookAtom.set("virtual");
 		const badView = render(<LongtailDashboard />);
 
@@ -251,7 +251,7 @@ describe("LongtailDashboard", () => {
 			}),
 		];
 
-		longtailStore.setState({ samples: good, lastSampleAt: 6_000 });
+		longtailStore.setState(() => ({ samples: good, lastSampleAt: 6_000 }));
 		const goodView = render(<LongtailDashboard />);
 
 		const goodEdge = goodView.container.querySelector(
@@ -262,13 +262,13 @@ describe("LongtailDashboard", () => {
 	});
 
 	it("paints the surprise chart by its inverted scale: low surprise is green, high surprise is red", () => {
-		longtailStore.setState({
+		longtailStore.setState(() => ({
 			samples: [
 				sample(1_000, { training: training({ avgSurprise: 0.4 }) }),
 				sample(6_000, { training: training({ avgSurprise: 0.4 }) }),
 			],
 			lastSampleAt: 6_000,
-		});
+		}));
 		const lowView = render(<LongtailDashboard />);
 		const lowChart = lowView.container.querySelector(
 			'[data-chart="surprise"] svg[aria-label="metric chart"] path',
@@ -277,13 +277,13 @@ describe("LongtailDashboard", () => {
 
 		cleanup();
 
-		longtailStore.setState({
+		longtailStore.setState(() => ({
 			samples: [
 				sample(1_000, { training: training({ avgSurprise: 3 }) }),
 				sample(6_000, { training: training({ avgSurprise: 3 }) }),
 			],
 			lastSampleAt: 6_000,
-		});
+		}));
 		const highView = render(<LongtailDashboard />);
 		const highChart = highView.container.querySelector(
 			'[data-chart="surprise"] svg[aria-label="metric chart"] path',
@@ -292,7 +292,7 @@ describe("LongtailDashboard", () => {
 	});
 
 	it("reads the selected book's metrics", () => {
-		longtailStore.setState({
+		longtailStore.setState(() => ({
 			samples: [
 				sample(1_000, {
 					paper: bookStats({ closed: 2, wins: 2, winRate: 1, meanReturn: 0.05 }),
@@ -304,7 +304,7 @@ describe("LongtailDashboard", () => {
 				}),
 			],
 			lastSampleAt: 6_000,
-		});
+		}));
 		bookAtom.set("paper");
 
 		const { container } = render(<LongtailDashboard />);

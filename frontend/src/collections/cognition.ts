@@ -36,7 +36,7 @@ export const splitSymbol = (
 	for (const symbol of SYMBOLS) {
 		if (
 			(best === null || symbol.length > best.length) &&
-			(path === symbol || path.startsWith(symbol + "/"))
+			(path === symbol || path.startsWith(`${symbol}/`))
 		) {
 			best = symbol;
 		}
@@ -313,8 +313,7 @@ export const ingestTrainRegions = (
 					match: "",
 					depth: tokens.length,
 					action: "",
-					rejected:
-						prior != null && prior.tick === tick ? prior.rejected : [],
+					rejected: prior != null && prior.tick === tick ? prior.rejected : [],
 				},
 			},
 		};
@@ -323,15 +322,15 @@ export const ingestTrainRegions = (
 	return true;
 };
 
-export const branchesFromPolicyKeys = (
-	keys: string[],
-): CognitionBranch[] => {
+export const branchesFromPolicyKeys = (keys: string[]): CognitionBranch[] => {
 	const out: CognitionBranch[] = [];
 
 	for (const raw of keys) {
 		if (!raw.includes("enter.bin")) continue;
 
-		const trimmed = raw.replace(/^policy\/current\//, "").replace(/\/enter\.bin$/, "");
+		const trimmed = raw
+			.replace(/^policy\/current\//, "")
+			.replace(/\/enter\.bin$/, "");
 		const depth = trimmed.split("/").filter(Boolean).length;
 
 		out.push({
@@ -414,7 +413,41 @@ const isMatch = (value: unknown): value is CognitionMatch => {
 	);
 };
 
+/*
+ingestPolicyKeys replaces the stored policy list. The model publishes it
+when a dashboard connects and again whenever the current tree changes.
+An empty list is a real answer: nothing is trained yet.
+*/
+export const ingestPolicyKeys = (keys: unknown, epoch?: string) => {
+	if (!Array.isArray(keys)) return false;
+
+	const normalized: string[] = [];
+	for (const key of keys) {
+		if (typeof key !== "string" || key === "") continue;
+		normalized.push(
+			key.includes("policy/current/")
+				? key
+				: `policy/current/${key.replace(/^\//, "")}`,
+		);
+	}
+
+	cognitionStore.setState((state) => ({
+		...state,
+		epoch: epoch && epoch !== "" ? epoch : state.epoch,
+		policyKeys: normalized,
+	}));
+	return true;
+};
+
 export const ingestCognitionFrame = (role: string, payload: unknown) => {
+	if (role === "keys" && payload && typeof payload === "object") {
+		const body = payload as { keys?: unknown; epoch?: unknown };
+		return ingestPolicyKeys(
+			body.keys,
+			typeof body.epoch === "string" ? body.epoch : undefined,
+		);
+	}
+
 	if (role === COGNITION_TREE_ROLE && isTree(payload)) {
 		const tree = payload as CognitionTreeFrame;
 		cognitionStore.setState(() => ({
