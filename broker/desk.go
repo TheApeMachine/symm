@@ -343,6 +343,9 @@ func (desk *Desk) Enter(
 
 	if err := desk.Send(order, virtual); err != nil {
 		cache.Drop(position.Symbol)
+		if virtual {
+			types.SetVirtualOpen(symbol, false)
+		}
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[desk.Enter] failed to send order",

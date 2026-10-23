@@ -309,7 +309,7 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State, hos
 		for _, state := range states {
 			sensorium.StatePool.Put(state)
 		}
-		return nil, nil, hostSymbol(dirtySymbols)
+		return nil, nil, hostSymbol(solver.loaded)
 	}
 
 	for contentID := range solver.loaded {
@@ -325,7 +325,7 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State, hos
 	batch = collectStates(states)
 	solver.loaded = seen
 
-	return departures, batch, hostSymbol(dirtySymbols)
+	return departures, batch, hostSymbol(solver.loaded)
 }
 
 /*
@@ -425,22 +425,43 @@ func (solver *Solver) Advance() {
 	}
 }
 
-func hostSymbol(dirty []string) string {
-	if len(dirty) == 0 {
+/*
+hostSymbol names the shared field. The domain is one manifold, so the
+snapshot is the focus when a symbol is selected, and otherwise one symbol
+that still has resident orders when the field steps without a book refresh.
+*/
+func hostSymbol(loaded map[int64]string) string {
+	if focus := types.Focus(); focus != "" {
+		return focus
+	}
+
+	if len(loaded) == 0 {
 		return ""
 	}
 
-	focus := types.Focus()
-	for _, symbol := range dirty {
-		if symbol == focus {
-			return focus
+	symbols := make([]string, 0, len(loaded))
+	seen := map[string]struct{}{}
+
+	for _, symbol := range loaded {
+		if symbol == "" {
+			continue
 		}
+
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+
+		seen[symbol] = struct{}{}
+		symbols = append(symbols, symbol)
 	}
 
-	sorted := append([]string(nil), dirty...)
-	slices.Sort(sorted)
+	if len(symbols) == 0 {
+		return ""
+	}
 
-	return sorted[len(sorted)-1]
+	slices.Sort(symbols)
+
+	return symbols[len(symbols)-1]
 }
 
 func (solver *Solver) publishReading(host string) *State {

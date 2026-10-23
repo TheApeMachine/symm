@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
+	"github.com/theapemachine/symm/types"
 )
 
 func projectionSolver(t testing.TB) *Solver {
@@ -74,4 +75,23 @@ func TestSolverProject(t *testing.T) {
 			So(quiet, ShouldEqual, 2)
 		})
 	})
+}
+
+func TestHostSymbolIsTheSharedField(t *testing.T) {
+	previous := types.Focus()
+	t.Cleanup(func() { types.SetFocus(previous) })
+
+	types.SetFocus("ETH/USD")
+	if got := hostSymbol(nil); got != "ETH/USD" {
+		t.Fatalf("hostSymbol() = %q, want the focus", got)
+	}
+
+	types.SetFocus("")
+	if got := hostSymbol(nil); got != "" {
+		t.Fatalf("hostSymbol() = %q, want the unlabeled field", got)
+	}
+
+	if got := hostSymbol(map[int64]string{1: "BTC/USD"}); got != "BTC/USD" {
+		t.Fatalf("hostSymbol(loaded) = %q, want a resident symbol", got)
+	}
 }

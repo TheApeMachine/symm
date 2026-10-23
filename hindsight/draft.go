@@ -37,12 +37,30 @@ func writeDraftTo(client *store.Client, value *data.Value) error {
 		}
 	}
 
-	if fields["a_tick"] < 1 {
-		fields["a_tick"] = fields["b_tick"]
-		fields["a_idx"] = fields["b_idx"]
+	if fields["a_tick"] < 1 || fields["a_idx"] < 1 {
+		return errnie.Err(errnie.UnprocessableContent, "hindsight: "+value.Prefix+" has no A", nil)
 	}
 
-	ApplyExecutionLeadFields(fields)
+	_, alreadyShifted := fields["entry_idx"]
+
+	if !alreadyShifted {
+		beforeBTick := fields["b_tick"]
+		beforeBIdx := fields["b_idx"]
+		beforeCTick := fields["c_tick"]
+		beforeCIdx := fields["c_idx"]
+
+		ApplyExecutionLeadFields(fields)
+
+		moved := fields["b_tick"] != beforeBTick || fields["b_idx"] != beforeBIdx ||
+			fields["c_tick"] != beforeCTick || fields["c_idx"] != beforeCIdx
+		if moved {
+			return errnie.Err(
+				errnie.UnprocessableContent,
+				"hindsight: "+value.Prefix+" lead moved B/C but the price is still the original print",
+				nil,
+			)
+		}
+	}
 
 	entryAsk := fields["b_price"]
 	if v, ok := fields["b_ask"]; ok && v > 0 {

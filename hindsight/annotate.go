@@ -28,8 +28,6 @@ func annotationVector(class string, marks [4]uint64, trades []annotationTrade) (
 		return nil, err
 	}
 
-	marks = leadAdjustedMarks(marks)
-
 	indexOf := func(tick uint64, last bool) (int, error) {
 		found := -1
 
@@ -72,6 +70,8 @@ func annotationVector(class string, marks [4]uint64, trades []annotationTrade) (
 		return nil, err
 	}
 
+	outB, outC := leadAdjustedIndices(a, b, c)
+
 	touch := func(price, side float64) float64 {
 		if side > 0 {
 			return side
@@ -80,42 +80,42 @@ func annotationVector(class string, marks [4]uint64, trades []annotationTrade) (
 		return price
 	}
 
-	bb, cc := trades[b], trades[c]
+	bb, cc := trades[outB], trades[outC]
 
 	return []float64{
-		float64(a), float64(marks[0]), float64(b), float64(marks[1]),
-		float64(c), float64(marks[2]), float64(d), float64(marks[3]),
+		float64(a), float64(marks[0]), float64(outB), float64(bb.tick),
+		float64(outC), float64(cc.tick), float64(d), float64(marks[3]),
 		bb.price, cc.price, touch(bb.price, bb.ask), touch(cc.price, cc.bid),
 		float64(bb.at), float64(cc.at),
-		float64(b), float64(marks[1]), float64(c), float64(marks[2]),
+		float64(outB), float64(bb.tick), float64(outC), float64(cc.tick),
 		touch(bb.price, bb.ask), touch(cc.price, cc.bid), float64(bb.at), float64(cc.at),
 	}, nil
 }
 
-func leadAdjustedMarks(marks [4]uint64) [4]uint64 {
+func leadAdjustedIndices(a, b, c int) (outB, outC int) {
+	outB, outC = b, c
+
 	if system.Cfg == nil || system.Cfg.Detector == nil {
-		return marks
+		return outB, outC
 	}
 
-	precursor := int64(marks[1]) - int64(marks[0])
-	lead := system.Cfg.Detector.LeadSpan(precursor)
+	lead := system.Cfg.Detector.LeadSpan(int64(b - a))
 	if lead <= 0 {
-		return marks
+		return outB, outC
 	}
 
-	out := marks
-	out[1] = marks[1] - uint64(lead)
-	out[2] = marks[2] - uint64(lead)
+	outB = b - int(lead)
+	outC = c - int(lead)
 
-	if out[1] < out[0] {
-		out[1] = out[0]
+	if outB < a {
+		outB = a
 	}
 
-	if out[2] < out[1] {
-		out[2] = out[1]
+	if outC < outB {
+		outC = outB
 	}
 
-	return out
+	return outB, outC
 }
 
 func validateAnnotation(class string, marks [4]uint64) error {

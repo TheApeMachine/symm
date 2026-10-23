@@ -26,46 +26,28 @@ func (detector *Detector) LeadSpan(precursorSpan int64) int64 {
 }
 
 /*
-ApplyExecutionLead shifts B and C earlier by the same lead derived from the
-precursor (A→B). Trade indices and workspace ticks move together; entry is
-the shifted B and exit is the shifted C.
+ApplyExecutionLead shifts B and C earlier by one lead, taken from the A→B
+tick span. Index and tick move by that same count so the pair still names
+one print. Entry is the shifted B and exit is the shifted C.
 */
 func (detector *Detector) ApplyExecutionLead(
 	aIdx, aTick, bIdx, bTick, cIdx, cTick int64,
 ) (outBIdx, outBTick, outCIdx, outCTick, entryIdx, entryTick, exitIdx, exitTick int64) {
-	precursorIdx := bIdx - aIdx
-	if precursorIdx < 1 {
-		precursorIdx = 1
-	}
-
 	precursorTick := bTick - aTick
 	if precursorTick < 1 {
 		precursorTick = 1
 	}
 
-	leadIdx := detector.LeadSpan(precursorIdx)
-	leadTick := detector.LeadSpan(precursorTick)
+	lead := detector.LeadSpan(precursorTick)
 
-	outBIdx = bIdx - leadIdx
-	outBTick = bTick - leadTick
-	outCIdx = cIdx - leadIdx
-	outCTick = cTick - leadTick
-
-	if outBIdx < aIdx {
-		outBIdx = aIdx
+	for lead > 0 && (bIdx-lead < aIdx || bTick-lead < aTick) {
+		lead--
 	}
 
-	if outBTick < aTick {
-		outBTick = aTick
-	}
-
-	if outCIdx < outBIdx {
-		outCIdx = outBIdx
-	}
-
-	if outCTick < outBTick {
-		outCTick = outBTick
-	}
+	outBIdx = bIdx - lead
+	outBTick = bTick - lead
+	outCIdx = cIdx - lead
+	outCTick = cTick - lead
 
 	entryIdx, entryTick = outBIdx, outBTick
 	exitIdx, exitTick = outCIdx, outCTick

@@ -81,11 +81,12 @@ func (bridge *Bridge) Step(tick *data.Value) *data.Value {
 		return tick
 	}
 
-	bridge.lastVersion = reading.Version
-
+	// The advance is the shared field. Publish it under the focus when one
+	// is selected, so a symbol that did not trade this step still receives
+	// the field that stepped.
 	scope := reading.Symbol
-	if focus := types.Focus(); focus != "" && scope != focus {
-		return tick
+	if focus := types.Focus(); focus != "" {
+		scope = focus
 	}
 
 	frame := PublishReading(reading, scope, tick.Epoch, tick.Tick, tick.Timestamp)
@@ -94,5 +95,6 @@ func (bridge *Bridge) Step(tick *data.Value) *data.Value {
 	}
 
 	io.Copy(bridge.hub, frame)
+	bridge.lastVersion = reading.Version
 	return tick
 }

@@ -391,6 +391,25 @@ func TestLongestMatchExitOverridesShorterEnter(t *testing.T) {
 	}
 }
 
+func TestMatchedExitClearsThePathWhenFlat(t *testing.T) {
+	desk := newFakeDesk()
+	model := NewModel(context.Background(), desk, nil, nil, nil)
+	const symbol = "ATOM/USD"
+
+	model.tree, _, _ = model.tree.Insert(
+		[]byte("R03"), newDataValue("exit", symbol, "R03"),
+	)
+
+	model.Evaluate(symbol, regionToken(3, 0.9))
+	model.Evaluate(symbol, regionToken(0, 0.9))
+	model.Evaluate(symbol, regionToken(1, 0.9))
+	model.Evaluate(symbol, regionToken(2, 0.9))
+
+	if !desk.Has(symbol, true) {
+		t.Fatal("matched exit left its prefix in place and the next enter did not open")
+	}
+}
+
 func TestModelChordToken(t *testing.T) {
 	desk := newFakeDesk()
 	model := NewModel(context.Background(), desk, nil, nil, nil)
@@ -481,6 +500,40 @@ func TestFrictionDipClosesVirtual(t *testing.T) {
 
 	if desk.Has(symbol, true) {
 		t.Fatal("a one-hurdle dip left the virtual open")
+	}
+}
+
+func TestCloseWritesPrecursorAndHoldingAsSeparatePaths(t *testing.T) {
+	desk := newFakeDesk()
+	model := NewModel(context.Background(), desk, nil, nil, nil)
+	const symbol = "XNY/USD"
+
+	model.Evaluate(symbol, regionToken(0, 0.9))
+	model.Evaluate(symbol, regionToken(1, 0.9))
+	model.Evaluate(symbol, regionToken(2, 0.9))
+	model.Evaluate(symbol, regionToken(3, 0.9))
+	model.Evaluate(symbol, regionToken(4, 0.9))
+
+	desk.queue(scriptedClose{ret: 0.01, ok: true})
+	model.reviewExcursions()
+
+	const precursor = "R00/R01/R02"
+	const holding = "R02/R03/R04"
+
+	if _, found := model.explored.Get([]byte(exploredKey("enter", precursor))); !found {
+		t.Fatal("precursor was not stored as its own enter path")
+	}
+
+	if _, found := model.explored.Get([]byte(exploredKey("exit", holding))); !found {
+		t.Fatal("holding fragment was not stored as its own exit path")
+	}
+
+	if _, found := model.explored.Get([]byte(exploredKey("exit", precursor))); found {
+		t.Fatal("exit terminal was written on the precursor path")
+	}
+
+	if _, found := model.explored.Get([]byte(exploredKey("enter", holding))); found {
+		t.Fatal("enter terminal was written on the holding path")
 	}
 }
 

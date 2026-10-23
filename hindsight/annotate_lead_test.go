@@ -10,14 +10,15 @@ func TestAnnotationVectorShiftsBAndC(t *testing.T) {
 	system.Cfg = system.NewConfig()
 	system.Cfg.Detector = &system.Detector{
 		MinPrecursorTicks:     10,
-		ExecutionLeadFraction: 0.1,
+		ExecutionLeadFraction: 0.5,
 	}
 
 	trades := []annotationTrade{
 		{tick: 100, price: 1.0, ask: 1.01},
-		{tick: 109, price: 1.04, ask: 1.05},
+		{tick: 108, price: 1.04, ask: 1.05},
 		{tick: 110, price: 1.05, ask: 1.06},
-		{tick: 129, price: 1.09, bid: 1.08},
+		{tick: 127, price: 1.08, bid: 1.07},
+		{tick: 128, price: 1.09, bid: 1.08},
 		{tick: 130, price: 1.10, bid: 1.09},
 		{tick: 140, price: 1.08, bid: 1.07},
 	}
@@ -27,12 +28,12 @@ func TestAnnotationVectorShiftsBAndC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if vec[3] != 109 {
-		t.Fatalf("stored b_tick = %v, want 109", vec[3])
+	if vec[3] != 108 {
+		t.Fatalf("stored b_tick = %v, want 108 from the earlier print", vec[3])
 	}
 
-	if vec[5] != 129 {
-		t.Fatalf("stored c_tick = %v, want 129", vec[5])
+	if vec[5] != 128 {
+		t.Fatalf("stored c_tick = %v, want 128 from the earlier print", vec[5])
 	}
 
 	if vec[15] != vec[3] || vec[17] != vec[5] {

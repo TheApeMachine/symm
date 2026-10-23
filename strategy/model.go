@@ -401,6 +401,9 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 	side := tokenSide(token)
 
 	if ex != nil {
+		// Tokens after the open are the holding fragment. The precursor
+		// stays on entryPath. This walk is its own path from the root.
+		ex.exitPath = pathKey
 		model.mu.Unlock()
 		return nil
 	}
@@ -416,6 +419,13 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 		if model.desk != nil && model.desk.Occupied(symbol) {
 			model.finishVenue(symbol, pathKey)
 		}
+
+		// A matched exit clears the token sequence whether or not a lot
+		// closed. Leaving the prefix in place makes the next tokens keep
+		// matching exit until max_path_length slides it off.
+		model.mu.Lock()
+		model.resetPath(symbol)
+		model.mu.Unlock()
 
 		val := data.NewValue("training", "exit", symbol)
 		val.Append(pathKey, "path")
@@ -748,6 +758,9 @@ func (model *Model) Settle(position *broker.Position) {
 
 	if _, found := model.tree.Get([]byte(position.EntryPath)); found {
 		model.accountVenue(position.EntryPath, position.Symbol, ret)
+		model.mu.Lock()
+		delete(model.venueAnchor, position.Symbol)
+		model.mu.Unlock()
 		return
 	}
 
@@ -888,7 +901,6 @@ func (model *Model) noteSample(pathKey, symbol, role string, ret float64) {
 	if score.Retired {
 		model.mu.Unlock()
 		model.storeScore(key, pathKey, symbol, role, score)
-		model.deleteExploredObject(role, pathKey)
 		return
 	}
 
@@ -991,7 +1003,23 @@ func (model *Model) openExcursion(symbol, pathKey string) error {
 		model.excursions[symbol].anchor = ret
 		model.excursions[symbol].anchored = true
 	}
+
+	// B, the ignition token, is the last step of the precursor and the
+	// first step of the holding path. The holding path then grows on its
+	// own from the root.
+	precursor := model.currentPath(symbol)
+	var ignition tokenizer.Token
+	if len(precursor) > 0 {
+		ignition = precursor[len(precursor)-1]
+	}
+
 	model.resetPath(symbol)
+
+	if len(ignition.Symbols) > 0 {
+		held := model.appendPath(symbol, ignition)
+		model.excursions[symbol].exitPath = held.String()
+	}
+
 	model.mu.Unlock()
 
 	return nil
@@ -1004,9 +1032,6 @@ func (model *Model) finishExcursion(symbol string, ex *excursion, ret float64) {
 
 	virtual := model.desk.Virtual(symbol)
 	exitPath := ex.exitPath
-	if exitPath == "" {
-		exitPath = ex.entryPath
-	}
 
 	if virtual != nil {
 		trigger := ex.cause
@@ -1071,6 +1096,7 @@ func (model *Model) finishVenue(symbol, pathKey string) {
 	model.accountVenue(position.EntryPath, position.Symbol, ret)
 
 	model.mu.Lock()
+	delete(model.venueAnchor, symbol)
 	model.cool[symbol] = &coolDown{tokens: tokenSet(position.EntryPath)}
 	model.resetPath(symbol)
 	model.mu.Unlock()
