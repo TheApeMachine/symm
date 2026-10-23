@@ -39,7 +39,14 @@ type Hub struct {
 	connected  atomic.Bool
 	callbacks  []func()
 	list       atomic.Value
+	commit     atomic.Value
 }
+
+/*
+CommitFunc answers POST /hindsight/commit. The body is the dashboard's
+sample JSON. The return bytes are the JSON response.
+*/
+type CommitFunc func(body []byte) ([]byte, error)
 
 /*
 NewHub constructs the dashboard hub from its queue-backed system boundaries.
@@ -61,6 +68,9 @@ func NewHub(ctx context.Context) *Hub {
 	}
 
 	hub.list.Store(func(string) {})
+	hub.commit.Store(CommitFunc(func([]byte) ([]byte, error) {
+		return nil, errnie.Err(errnie.NotAcceptable, "[hindsight] commit is not attached", nil)
+	}))
 	go hub.writeLoop()
 
 	hub.routes = NewRoutes(hub)
@@ -222,6 +232,19 @@ func (hub *Hub) RegisterCallback(callback func()) {
 HandleList registers the function that answers a dashboard "s3" command.
 The cognitive tree asks for policy/current when it opens.
 */
+/*
+HandleCommit registers the function that stores a labelled training sample.
+*/
+func (hub *Hub) HandleCommit(fn CommitFunc) {
+	if fn == nil {
+		fn = func([]byte) ([]byte, error) {
+			return nil, errnie.Err(errnie.NotAcceptable, "[hindsight] commit is not attached", nil)
+		}
+	}
+
+	hub.commit.Store(fn)
+}
+
 func (hub *Hub) HandleList(fn func(string)) {
 	if fn == nil {
 		fn = func(string) {}

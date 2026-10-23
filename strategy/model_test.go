@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func (d *fakeDesk) Has(symbol string, virtual bool) bool {
 	return ok && position.Virtual == virtual
 }
 
-func (d *fakeDesk) Enter(symbol, path string, virtual bool) error {
+func (d *fakeDesk) Enter(symbol, path string, virtual bool, tick uint64) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -70,13 +71,14 @@ func (d *fakeDesk) Enter(symbol, path string, virtual bool) error {
 		EntryFee:   decimal.NewFromInt64(1),
 		Mark:       decimal.NewFromInt64(100),
 		OpenedAt:   time.Now().UTC(),
+		EntryTick:  tick,
 	}
 
 	return nil
 }
 
-func (d *fakeDesk) Exit(symbol, path string, _ bool, _ ...string) error {
-	return d.ExitOccupied(symbol, path)
+func (d *fakeDesk) Exit(symbol, path string, _ bool, tick uint64, _ ...string) error {
+	return d.ExitOccupied(symbol, path, tick)
 }
 
 func (d *fakeDesk) Virtual(symbol string) *broker.Position {
@@ -190,7 +192,7 @@ func (d *fakeDesk) Open(symbol string) *broker.Position {
 	return d.open[symbol]
 }
 
-func (d *fakeDesk) ExitOccupied(symbol, path string) error {
+func (d *fakeDesk) ExitOccupied(symbol, path string, tick uint64) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -202,6 +204,7 @@ func (d *fakeDesk) ExitOccupied(symbol, path string) error {
 	now := time.Now().UTC()
 	position.ClosedAt = &now
 	position.ExitPath = path
+	position.ExitTick = tick
 	delete(d.open, symbol)
 	d.closed[symbol] = position
 	d.exits++
@@ -216,6 +219,12 @@ func (d *fakeDesk) queue(closes ...scriptedClose) {
 	d.mu.Lock()
 	d.closes = append(d.closes, closes...)
 	d.mu.Unlock()
+}
+
+func newTestModel(desk Desk, hub io.Writer) *Model {
+	model := NewModel(context.Background(), desk, nil, hub, nil)
+	model.noteTape(1)
+	return model
 }
 
 func regionToken(key uint8, brightness float64) tokenizer.Token {
@@ -249,7 +258,7 @@ func sampleExcursionAt(model *Model, symbol string, prior int, ret float64, ok b
 
 func TestLedgerDoesNotPromoteOnTwoWins(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "BTC/USD"
 
 	sampleOneExcursion(model, symbol, 0)
@@ -274,7 +283,7 @@ func TestLedgerDoesNotPromoteOnTwoWins(t *testing.T) {
 
 func TestConfirmedPathOpensAVenueOrder(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "BTC/USD"
 
 	cfg := LoadConfig()
@@ -312,7 +321,7 @@ func TestConfirmedPathOpensAVenueOrder(t *testing.T) {
 
 func TestSameTrendIsOneSample(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "ETH/USD"
 
 	sampleOneExcursion(model, symbol, 0)
@@ -327,7 +336,7 @@ func TestSameTrendIsOneSample(t *testing.T) {
 
 func TestNegativeMeanRetiresThePath(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "SOL/USD"
 	cfg := LoadConfig()
 
@@ -345,7 +354,7 @@ func TestNegativeMeanRetiresThePath(t *testing.T) {
 
 func TestBookMissDoesNotScore(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "ADA/USD"
 
 	sampleExcursionAt(model, symbol, 0, 0, false)
@@ -364,7 +373,7 @@ func TestBookMissDoesNotScore(t *testing.T) {
 
 func TestLongestMatchExitOverridesShorterEnter(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "DOGE/USD"
 
 	model.tree, _, _ = model.tree.Insert(
@@ -394,7 +403,7 @@ func TestLongestMatchExitOverridesShorterEnter(t *testing.T) {
 
 func TestMatchedExitClearsThePathWhenFlat(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "ATOM/USD"
 
 	model.tree, _, _ = model.tree.Insert(
@@ -413,7 +422,7 @@ func TestMatchedExitClearsThePathWhenFlat(t *testing.T) {
 
 func TestModelChordToken(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "LINK/USD"
 
 	chord := tokenizer.NewToken([]string{"R00", "R01"}, 0.8, 0.8, 0)
@@ -440,7 +449,7 @@ func TestModelChordToken(t *testing.T) {
 
 func TestBookReturnInsideFrictionStaysOpen(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "XRP/USD"
 
 	model.Evaluate(symbol, regionToken(0, 0.9))
@@ -468,7 +477,7 @@ func TestBookReturnInsideFrictionStaysOpen(t *testing.T) {
 
 func TestClearedFrictionClosesVirtual(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "XRP/USD"
 
 	model.Evaluate(symbol, regionToken(0, 0.9))
@@ -489,7 +498,7 @@ func TestClearedFrictionClosesVirtual(t *testing.T) {
 
 func TestFrictionDipClosesVirtual(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "AVAX/USD"
 
 	model.Evaluate(symbol, regionToken(0, 0.9))
@@ -506,7 +515,7 @@ func TestFrictionDipClosesVirtual(t *testing.T) {
 
 func TestCloseWritesPrecursorAndHoldingAsSeparatePaths(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "XNY/USD"
 
 	model.Evaluate(symbol, regionToken(0, 0.9))
@@ -539,7 +548,7 @@ func TestCloseWritesPrecursorAndHoldingAsSeparatePaths(t *testing.T) {
 }
 
 func TestAppendPathSkipsConsecutiveDuplicate(t *testing.T) {
-	model := NewModel(context.Background(), newFakeDesk(), nil, nil, nil)
+	model := newTestModel(newFakeDesk(), nil)
 	const symbol = "ACU/USD"
 
 	chord := tokenizer.ChordToken([]tokenizer.Token{
@@ -570,7 +579,7 @@ func TestAppendPathSkipsConsecutiveDuplicate(t *testing.T) {
 }
 
 func TestModelMaxPathLength(t *testing.T) {
-	model := NewModel(context.Background(), newFakeDesk(), nil, nil, nil)
+	model := newTestModel(newFakeDesk(), nil)
 	const symbol = "DOT/USD"
 	cfg := LoadConfig()
 
@@ -590,7 +599,7 @@ func TestModelMaxPathLength(t *testing.T) {
 
 func TestModelDemotion(t *testing.T) {
 	desk := newFakeDesk()
-	model := NewModel(context.Background(), desk, nil, nil, nil)
+	model := newTestModel(desk, nil)
 	const symbol = "LTC/USD"
 	const entry = "R00/R01/R02"
 	cfg := LoadConfig()
@@ -640,7 +649,7 @@ func (capture *hubCapture) Write(payload []byte) (int, error) {
 
 func TestExploredPathIsPublishedAsATrieKey(t *testing.T) {
 	capture := &hubCapture{}
-	model := NewModel(context.Background(), newFakeDesk(), nil, capture, nil)
+	model := newTestModel(newFakeDesk(), capture)
 	const symbol = "BTC/USD"
 
 	sampleOneExcursion(model, symbol, 0)
@@ -676,7 +685,7 @@ func TestExploredPathIsPublishedAsATrieKey(t *testing.T) {
 
 func TestPublishGrammarFrame(t *testing.T) {
 	capture := &hubCapture{}
-	model := NewModel(context.Background(), newFakeDesk(), nil, capture, nil)
+	model := newTestModel(newFakeDesk(), capture)
 
 	model.Evaluate("BTC/USD", regionToken(1, 0.8))
 
@@ -713,7 +722,7 @@ func TestPublishGrammarFrame(t *testing.T) {
 }
 
 func TestNoteTickSurpriseIsTheEnergyError(t *testing.T) {
-	model := NewModel(context.Background(), newFakeDesk(), nil, nil, nil)
+	model := newTestModel(newFakeDesk(), nil)
 	grid := nmstore.NewGrid(context.Background())
 	grid.Priors["book"] = map[string]*nmstore.Prior{
 		"BTC/USD": {Samples: 2, Prediction: 1, Energy: 0.25},
@@ -743,7 +752,7 @@ func TestNoteTickSurpriseIsTheEnergyError(t *testing.T) {
 }
 
 func TestRegimeDriftUsesTheChordThatClosed(t *testing.T) {
-	model := NewModel(context.Background(), newFakeDesk(), nil, nil, nil)
+	model := newTestModel(newFakeDesk(), nil)
 	model.TrackSequitur("BTC/USD", tokenizer.NewToken([]string{"R01", "R02"}, 1, 1, 0))
 
 	drift, compared := model.regimeDrift("BTC/USD", tokenizer.NewToken([]string{"R00", "R01", "R02"}, 1, 1, 0))
@@ -763,7 +772,7 @@ func TestRegimeDriftUsesTheChordThatClosed(t *testing.T) {
 }
 
 func TestStampStockIsNotScaledBySymbols(t *testing.T) {
-	model := NewModel(context.Background(), newFakeDesk(), nil, nil, nil)
+	model := newTestModel(newFakeDesk(), nil)
 	model.BindMetrics(newMetricsAccumulator())
 	model.explored, _, _ = model.explored.Insert(
 		[]byte(exploredKey("enter", "R00/R01")),
@@ -785,5 +794,31 @@ func TestStampStockIsNotScaledBySymbols(t *testing.T) {
 
 	if snap.PathCompared != 0 {
 		t.Fatalf("path comparisons = %d, want 0 when no regime closed", snap.PathCompared)
+	}
+}
+
+func TestPrecursorAnchorUsesTheTapeTick(t *testing.T) {
+	desk := newFakeDesk()
+	model := newTestModel(desk, nil)
+	const symbol = "BTC/USD"
+
+	model.noteTape(8550)
+	model.Evaluate(symbol, regionToken(0, 0.9))
+	model.noteTape(8555)
+	model.Evaluate(symbol, regionToken(1, 0.9))
+	model.noteTape(8560)
+	model.Evaluate(symbol, regionToken(2, 0.9))
+
+	virtual := desk.Virtual(symbol)
+	if virtual == nil {
+		t.Fatal("three enter chords did not open a virtual lot")
+	}
+
+	if virtual.MarkATick != 8550 {
+		t.Fatalf("mark A = %d, want the first chord's tape tick 8550", virtual.MarkATick)
+	}
+
+	if virtual.EntryTick != 8560 {
+		t.Fatalf("entry tick = %d, want the opening chord's tape tick 8560", virtual.EntryTick)
 	}
 }

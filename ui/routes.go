@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/proxy"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -26,6 +27,31 @@ func (routes *Routes) Register() {
 	})
 
 	routes.hub.app.Get("/ws", routes.hub.wsHandler())
+
+	routes.hub.app.Post("/hindsight/commit", func(reqCtx fiber.Ctx) error {
+		fn, _ := routes.hub.commit.Load().(CommitFunc)
+		if fn == nil {
+			return reqCtx.Status(fiber.StatusServiceUnavailable).SendString("[hindsight] commit is not attached")
+		}
+
+		payload, err := fn(reqCtx.Body())
+		if err != nil {
+			status := fiber.StatusInternalServerError
+			switch {
+			case errnie.IsNotFound(err):
+				status = fiber.StatusNotFound
+			case errnie.IsKind(err, errnie.Validation), errnie.IsKind(err, errnie.UnprocessableContent):
+				status = fiber.StatusUnprocessableEntity
+			case errnie.IsKind(err, errnie.NotAcceptable):
+				status = fiber.StatusServiceUnavailable
+			}
+
+			return reqCtx.Status(status).SendString(err.Error())
+		}
+
+		reqCtx.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSON)
+		return reqCtx.Status(fiber.StatusOK).Send(payload)
+	})
 
 	routes.hub.app.Post("/workbench/query", func(reqCtx fiber.Ctx) error {
 		targetURL := "http://127.0.0.1:8081/workbench/query"

@@ -9,8 +9,8 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/spf13/viper"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
@@ -52,11 +52,11 @@ func NewDesk(
 	store *store.Client,
 ) *Desk {
 	desk := &Desk{
-		transport: transport,
-		rest:      network.NewREST(),
-		balance:   balance,
-		history:   NewHistory(ctx, store),
-		price:     price,
+		transport:      transport,
+		rest:           network.NewREST(),
+		balance:        balance,
+		history:        NewHistory(ctx, store),
+		price:          price,
 		positions:      NewCache(ctx),
 		virtuals:       NewCache(ctx),
 		virtualArchive: &sync.Map{},
@@ -129,6 +129,17 @@ func NewDesk(
 
 	desk.Transition(runtime.READY)
 	return desk
+}
+
+/*
+ArchiveVirtual keeps a settled virtual lot visible after the live cache drops it.
+*/
+func (desk *Desk) ArchiveVirtual(position *Position) {
+	if desk.virtualArchive == nil {
+		desk.virtualArchive = &sync.Map{}
+	}
+
+	desk.archiveVirtual(position)
 }
 
 func (desk *Desk) archiveVirtual(position *Position) {
@@ -306,7 +317,7 @@ func (desk *Desk) Apply(executions *kraken.Execution) {
 Enter a new position.
 */
 func (desk *Desk) Enter(
-	symbol string, path string, virtual bool,
+	symbol string, path string, virtual bool, tick uint64,
 ) error {
 	if desk.positions.Has(symbol) || desk.virtuals.Has(symbol) {
 		return errnie.Err(
@@ -358,7 +369,7 @@ func (desk *Desk) Enter(
 
 	position.Qty = qty
 
-	order, err := position.Enter()
+	order, err := position.Enter(tick)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -559,7 +570,7 @@ func (desk *Desk) SaleReturn(
 /*
 Exit a position and report what settled.
 */
-func (desk *Desk) Exit(symbol string, path string, virtual bool, triggers ...string) error {
+func (desk *Desk) Exit(symbol string, path string, virtual bool, tick uint64, triggers ...string) error {
 	var position *Position
 
 	if virtual {
@@ -576,12 +587,15 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool, triggers ...str
 		)
 	}
 
-	order := position.Exit(path)
+	order, err := position.Exit(path, tick)
+	if err != nil {
+		return err
+	}
 
 	// The outcome is final the moment the exit is recorded: settle it
 	// before the cache move can retire the row.
 	if virtual && position.price != nil {
-		cost, proceeds, profit, _, ok := position.price.CloseOut(
+		cost, proceeds, profit, sale, ok := position.price.CloseOut(
 			position.Symbol, position.Qty, position.EntryPrice, position.EntryFee,
 		)
 
@@ -591,6 +605,7 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool, triggers ...str
 			position.mu.Lock()
 			position.ClosedAt = nil
 			position.HoldNs = 0
+			position.ExitTick = 0
 			position.mu.Unlock()
 
 			return errnie.Err(
@@ -605,6 +620,10 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool, triggers ...str
 		position.Cost = cost
 		position.Proceeds = proceeds
 		position.Profit = profit
+		if sale != nil {
+			position.ExitPrice = sale
+			position.ExitVWAP = sale
+		}
 
 		position.Return = NetReturnPercentDecimal(cost, profit)
 		position.NetReturn = position.Return
@@ -698,13 +717,13 @@ func (desk *Desk) Open(symbol string) *Position {
 /*
 ExitOccupied closes whichever lot is open on the symbol.
 */
-func (desk *Desk) ExitOccupied(symbol, path string) error {
+func (desk *Desk) ExitOccupied(symbol, path string, tick uint64) error {
 	if desk.positions.Has(symbol) {
-		return desk.Exit(symbol, path, false)
+		return desk.Exit(symbol, path, false, tick)
 	}
 
 	if desk.virtuals.Has(symbol) {
-		return desk.Exit(symbol, path, true)
+		return desk.Exit(symbol, path, true, tick)
 	}
 
 	return errnie.Err(

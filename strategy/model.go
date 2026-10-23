@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -23,8 +24,8 @@ import (
 // *broker.Desk satisfies this interface.
 type Desk interface {
 	Has(symbol string, virtual bool) bool
-	Enter(symbol string, path string, virtual bool) error
-	Exit(symbol string, path string, virtual bool, triggers ...string) error
+	Enter(symbol string, path string, virtual bool, tick uint64) error
+	Exit(symbol string, path string, virtual bool, tick uint64, triggers ...string) error
 	SaleReturn(symbol string, qty, entry, fee *decimal.Decimal) (float64, bool)
 	Virtual(symbol string) *broker.Position
 	Positions(open bool) []*broker.Position
@@ -37,7 +38,7 @@ type Desk interface {
 	Realize(symbol string, qty, entry, fee *decimal.Decimal) (float64, bool)
 	Occupied(symbol string) bool
 	Open(symbol string) *broker.Position
-	ExitOccupied(symbol, path string) error
+	ExitOccupied(symbol, path string, tick uint64) error
 }
 
 /*
@@ -123,8 +124,11 @@ type Model struct {
 	surpriseTracks  sync.Map
 	excursions      map[string]*excursion
 	pathAnchorTick  map[string]uint64
-	venueAnchor     map[string]float64
-	cool            map[string]*coolDown
+	// tape is the workspace value's own tick for the step in progress.
+	// Path anchors, entries, and exits stamp this, not the ingress counter.
+	tape        atomic.Uint64
+	venueAnchor map[string]float64
+	cool        map[string]*coolDown
 }
 
 func NewModel(
@@ -226,6 +230,28 @@ func (model *Model) policyPrefix() string {
 	return strings.TrimSuffix(model.cfg.PolicyPrefix, "/")
 }
 
+/*
+noteTape binds the workspace value's tick for this step. Anchors, entries,
+and exits read it so a consumer running behind ingress does not collapse
+several chords onto one counter value.
+*/
+func (model *Model) noteTape(tick uint64) {
+	if model == nil {
+		return
+	}
+
+	model.tape.Store(tick)
+}
+
+func (model *Model) requireTape() (uint64, error) {
+	tick := model.tape.Load()
+	if tick == 0 {
+		return 0, errnie.Err(errnie.Validation, "[model] tape tick is unset", nil)
+	}
+
+	return tick, nil
+}
+
 func (model *Model) NoteTick(
 	symbol string,
 	regions []*nmstore.Region,
@@ -324,7 +350,7 @@ func (model *Model) TrackSequitur(symbol string, token tokenizer.Token) {
 
 	copied := append([]string(nil), token.Symbols...)
 	model.lastRegime.Store(symbol, regimeNote{
-		tick:    data.Tick.Load(),
+		tick:    model.tape.Load(),
 		symbols: copied,
 	})
 
@@ -490,7 +516,10 @@ func (model *Model) Evaluate(symbol string, token tokenizer.Token) *data.Value {
 	if len(path) >= model.cfg.MinPathLength && action == "enter" {
 		if model.desk != nil && !model.desk.Occupied(symbol) &&
 			model.venueSlotsAvailable() {
-			if err := model.desk.Enter(symbol, pathKey, false); err != nil {
+			tick, err := model.requireTape()
+			if err != nil {
+				model.Error(err)
+			} else if err := model.desk.Enter(symbol, pathKey, false, tick); err != nil {
 				model.Error(err)
 			} else {
 				model.mu.Lock()
@@ -715,7 +744,13 @@ func (model *Model) reviewVenue(position *broker.Position) {
 		return
 	}
 
-	if err := model.desk.ExitOccupied(symbol, position.EntryPath); err != nil {
+	tick, err := model.requireTape()
+	if err != nil {
+		model.Error(err)
+		return
+	}
+
+	if err := model.desk.ExitOccupied(symbol, position.EntryPath, tick); err != nil {
 		model.Error(err)
 		return
 	}
@@ -1040,7 +1075,12 @@ func (model *Model) openExcursion(symbol, pathKey string) error {
 	markA := model.pathAnchorTick[symbol]
 	model.mu.Unlock()
 
-	if err := model.desk.Enter(symbol, pathKey, true); err != nil {
+	tick, err := model.requireTape()
+	if err != nil {
+		return err
+	}
+
+	if err := model.desk.Enter(symbol, pathKey, true, tick); err != nil {
 		if errnie.IsNotFound(err) {
 			return nil
 		}
@@ -1103,7 +1143,13 @@ func (model *Model) finishExcursion(symbol string, ex *excursion, ret float64) {
 			trigger = "book"
 		}
 
-		if err := model.desk.Exit(symbol, exitPath, true, trigger); err != nil {
+		tick, err := model.requireTape()
+		if err != nil {
+			model.Error(err)
+			return
+		}
+
+		if err := model.desk.Exit(symbol, exitPath, true, tick, trigger); err != nil {
 			return
 		}
 
@@ -1152,7 +1198,13 @@ func (model *Model) finishVenue(symbol, pathKey string) {
 		return
 	}
 
-	if err := model.desk.ExitOccupied(symbol, pathKey); err != nil {
+	tick, err := model.requireTape()
+	if err != nil {
+		model.Error(err)
+		return
+	}
+
+	if err := model.desk.ExitOccupied(symbol, pathKey, tick); err != nil {
 		model.Error(err)
 		return
 	}
@@ -1344,8 +1396,10 @@ func (model *Model) appendPath(symbol string, token tokenizer.Token) tokenizer.T
 	}
 
 	if len(path) == 1 {
-		if _, ok := model.pathAnchorTick[symbol]; !ok {
-			model.pathAnchorTick[symbol] = data.Tick.Load()
+		if tick := model.tape.Load(); tick > 0 {
+			if _, ok := model.pathAnchorTick[symbol]; !ok {
+				model.pathAnchorTick[symbol] = tick
+			}
 		}
 	}
 
@@ -1611,8 +1665,8 @@ func (model *Model) publishGrammar(
 	frame := map[string]any{
 		"symbol":    symbol,
 		"epoch":     "0",
-		"tick":      int(data.Tick.Load()),
-		"timestamp": strconv.FormatUint(data.Tick.Load(), 10),
+		"tick":      int(model.tape.Load()),
+		"timestamp": strconv.FormatUint(model.tape.Load(), 10),
 		"active":    active,
 		"midpoint":  token.Brightness,
 		"fired":     fired,
@@ -1668,7 +1722,7 @@ func (model *Model) regimeDrift(symbol string, chord tokenizer.Token) (bool, boo
 	}
 
 	note, ok := untyped.(regimeNote)
-	if !ok || note.tick != data.Tick.Load() || len(note.symbols) == 0 {
+	if !ok || note.tick != model.tape.Load() || len(note.symbols) == 0 {
 		return false, false
 	}
 

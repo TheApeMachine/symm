@@ -14,40 +14,40 @@ import (
 )
 
 type Position struct {
-	mu              sync.RWMutex
-	price           *Price
-	ID              string                  `json:"id"`
-	EntryPath       string                  `json:"entry_path"`
-	ExitPath        string                  `json:"exit_path"`
-	Symbol          string                  `json:"symbol"`
-	OpenedAt        time.Time               `json:"opened_at"`
-	ClosedAt        *time.Time              `json:"closed_at"`
-	PolicyEpoch     uint64                  `json:"policy_epoch,omitempty"`
-	MarkATick       uint64                  `json:"mark_a_tick,omitempty"`
-	EntryTick       uint64                  `json:"entry_tick,omitempty"`
-	ExitTick        uint64                  `json:"exit_tick,omitempty"`
-	EntryOrders     []*spot.OrderRequest    `json:"entry_orders,omitempty"`
-	ExitOrders      []*spot.OrderRequest    `json:"exit_orders,omitempty"`
-	Fills           []*kraken.ExecutionData `json:"fills,omitempty"`
-	Qty             *decimal.Decimal        `json:"qty,omitempty"`
-	EntryPrice      *decimal.Decimal        `json:"entry_price,omitempty"`
-	ExitPrice       *decimal.Decimal        `json:"exit_price,omitempty"`
-	EntryFee        *decimal.Decimal        `json:"entry_fee,omitempty"`
-	ExitFee         *decimal.Decimal        `json:"exit_fee,omitempty"`
-	Mark            *decimal.Decimal        `json:"mark,omitempty"`
-	ExitVWAP        *decimal.Decimal        `json:"exit_vwap,omitempty"`
-	ExitRoom        *decimal.Decimal        `json:"exit_room,omitempty"`
+	mu          sync.RWMutex
+	price       *Price
+	ID          string                  `json:"id"`
+	EntryPath   string                  `json:"entry_path"`
+	ExitPath    string                  `json:"exit_path"`
+	Symbol      string                  `json:"symbol"`
+	OpenedAt    time.Time               `json:"opened_at"`
+	ClosedAt    *time.Time              `json:"closed_at"`
+	PolicyEpoch uint64                  `json:"policy_epoch,omitempty"`
+	MarkATick   uint64                  `json:"mark_a_tick,omitempty"`
+	EntryTick   uint64                  `json:"entry_tick,omitempty"`
+	ExitTick    uint64                  `json:"exit_tick,omitempty"`
+	EntryOrders []*spot.OrderRequest    `json:"entry_orders,omitempty"`
+	ExitOrders  []*spot.OrderRequest    `json:"exit_orders,omitempty"`
+	Fills       []*kraken.ExecutionData `json:"fills,omitempty"`
+	Qty         *decimal.Decimal        `json:"qty,omitempty"`
+	EntryPrice  *decimal.Decimal        `json:"entry_price,omitempty"`
+	ExitPrice   *decimal.Decimal        `json:"exit_price,omitempty"`
+	EntryFee    *decimal.Decimal        `json:"entry_fee,omitempty"`
+	ExitFee     *decimal.Decimal        `json:"exit_fee,omitempty"`
+	Mark        *decimal.Decimal        `json:"mark,omitempty"`
+	ExitVWAP    *decimal.Decimal        `json:"exit_vwap,omitempty"`
+	ExitRoom    *decimal.Decimal        `json:"exit_room,omitempty"`
 	// BookReturn is CloseOut net return in percent — the same PnL % virtual
 	// settlement writes to net_return when the lot closes.
-	BookReturn      *decimal.Decimal        `json:"book_return,omitempty"`
-	Return          *decimal.Decimal        `json:"return,omitempty"`
-	HoldNs          int64                   `json:"hold_ns,omitempty"`
-	Virtual         bool                    `json:"virtual,omitempty"`
-	Cost            *decimal.Decimal        `json:"cost,omitempty"`
-	Proceeds        *decimal.Decimal        `json:"proceeds,omitempty"`
-	Profit          *decimal.Decimal        `json:"profit,omitempty"`
-	NetReturn       *decimal.Decimal        `json:"net_return,omitempty"`
-	OutcomeTriggers []string                `json:"outcome_triggers,omitempty"`
+	BookReturn      *decimal.Decimal `json:"book_return,omitempty"`
+	Return          *decimal.Decimal `json:"return,omitempty"`
+	HoldNs          int64            `json:"hold_ns,omitempty"`
+	Virtual         bool             `json:"virtual,omitempty"`
+	Cost            *decimal.Decimal `json:"cost,omitempty"`
+	Proceeds        *decimal.Decimal `json:"proceeds,omitempty"`
+	Profit          *decimal.Decimal `json:"profit,omitempty"`
+	NetReturn       *decimal.Decimal `json:"net_return,omitempty"`
+	OutcomeTriggers []string         `json:"outcome_triggers,omitempty"`
 }
 
 func NewPosition(
@@ -133,7 +133,11 @@ position never submits: its fill is emulated from the desk's price at entry,
 so the path discovery ledger carries real entry costs and fees through the
 same Position.Apply path venue fills use.
 */
-func (position *Position) Enter() (*spot.OrderRequest, error) {
+func (position *Position) Enter(tick uint64) (*spot.OrderRequest, error) {
+	if tick == 0 {
+		return nil, errnie.Err(errnie.Validation, "[position.Enter] tape tick is unset", nil)
+	}
+
 	position.mu.Lock()
 
 	position.EntryOrders = append(position.EntryOrders, &spot.OrderRequest{
@@ -151,7 +155,6 @@ func (position *Position) Enter() (*spot.OrderRequest, error) {
 	})
 
 	position.OpenedAt = time.Now().UTC()
-	tick := data.Tick.Load()
 	position.PolicyEpoch = data.Epoch.Load()
 	position.EntryTick = tick
 	if position.MarkATick == 0 {
@@ -195,7 +198,11 @@ Exit records a sell of everything open and returns the order to submit. A
 position that is closed or already has its sell pending returns nil: selling
 it again would sell quantity it no longer holds.
 */
-func (position *Position) Exit(path string) *spot.OrderRequest {
+func (position *Position) Exit(path string, tick uint64) (*spot.OrderRequest, error) {
+	if tick == 0 {
+		return nil, errnie.Err(errnie.Validation, "[position.Exit] tape tick is unset", nil)
+	}
+
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
@@ -207,9 +214,9 @@ func (position *Position) Exit(path string) *spot.OrderRequest {
 		position.HoldNs = int64(now.Sub(position.OpenedAt))
 	}
 
-	position.ExitTick = data.Tick.Load()
+	position.ExitTick = tick
 
-	return position.ExitOrders[len(position.ExitOrders)-1]
+	return position.ExitOrders[len(position.ExitOrders)-1], nil
 }
 
 func (position *Position) Apply(execution kraken.ExecutionData) {

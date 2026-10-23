@@ -16,9 +16,13 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic/manifold"
+	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/parallel"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -30,9 +34,6 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/store"
-	"github.com/theapemachine/symm/logic/manifold"
-	"github.com/theapemachine/symm/logic/resonance"
-	"github.com/theapemachine/symm/parallel"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
@@ -265,6 +266,13 @@ func (booter *Booter) initMarket() error {
 	)
 
 	booter.hub.RegisterCallback(booter.desk.Hello)
+	if booter.hub != nil && booter.store != nil {
+		desk := booter.desk
+		client := booter.store
+		booter.hub.HandleCommit(func(body []byte) ([]byte, error) {
+			return hindsight.Commit(desk, client, body)
+		})
+	}
 	booter.startPrivateIngress()
 
 	return nil

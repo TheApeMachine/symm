@@ -5,6 +5,7 @@ import (
 	"io"
 	"slices"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -64,6 +65,15 @@ func (training *Training) Step(value *data.Value) *data.Value {
 	if value == nil {
 		return nil
 	}
+
+	if value.Tick == 0 {
+		training.Error(errnie.Err(
+			errnie.Validation, "[training] tick has no tape index", nil,
+		))
+		return nil
+	}
+
+	training.model.noteTape(value.Tick)
 
 	observed, err := training.grid.Observe(value)
 	if err != nil {
