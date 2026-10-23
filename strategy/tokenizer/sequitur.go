@@ -32,6 +32,17 @@ func ruleID(sym Symbol) (int, bool) {
 }
 
 /*
+RuleRef is the display form of a rule symbol for external consumption:
+M1, M2, … The frontend's ruleName and the grammar viz both use this form.
+*/
+func RuleRef(id int) string {
+	if id <= 0 {
+		return "S"
+	}
+	return "M" + strconv.Itoa(id)
+}
+
+/*
 Node is a doubly-linked element in the Sequitur sequence.
 */
 type Node struct {
@@ -52,6 +63,8 @@ type Rule struct {
 /*
 Sequitur discovers hierarchical structure in a stream of string tokens via
 online digram replacement. Repeated digrams are promoted to new rules.
+The grammar operates on the flat token stream: each tick's regions are
+individual terminals that the grammar may group into rules.
 */
 type Sequitur struct {
 	mu         sync.Mutex
@@ -64,12 +77,8 @@ type Sequitur struct {
 	lastRule   *Rule
 }
 
-/*
-NewSequitur creates a new Sequitur.
-*/
 func NewSequitur() *Sequitur {
 	sentinel := &Node{}
-
 	sentinel.Next = sentinel
 	sentinel.Prev = sentinel
 
@@ -82,9 +91,9 @@ func NewSequitur() *Sequitur {
 }
 
 /*
-Analyze appends tokens to the grammar, runs digram replacement after each one,
-and reports whether a new rule was created on this call. When a rule is created,
-LastRule returns it until the next creation.
+Analyze appends tokens to the grammar's root sequence, runs digram
+replacement after each one, and records the most recently created rule.
+Returns the created rule (or nil) and whether a structural event occurred.
 */
 func (sequitur *Sequitur) Analyze(tokens []string) (*Rule, bool) {
 	sequitur.mu.Lock()
@@ -113,29 +122,69 @@ func (sequitur *Sequitur) Analyze(tokens []string) (*Rule, bool) {
 }
 
 /*
+Tail returns the last n symbols in the root sequence as display strings.
+A rule reference is rendered as its RuleRef (M1, M2, …); a terminal is
+itself. This is what the Sequencer feeds to MDL after each Analyze call.
+*/
+func (sequitur *Sequitur) Tail(n int) []string {
+	sequitur.mu.Lock()
+	defer sequitur.mu.Unlock()
+
+	if n <= 0 || sequitur.length == 0 {
+		return nil
+	}
+	if n > sequitur.length {
+		n = sequitur.length
+	}
+
+	// Walk back n positions from the tail.
+	type pos struct {
+		node *Node
+		idx  int
+	}
+
+	var collect []pos
+	current := sequitur.sentinel.Prev
+	for i := 0; i < n && current != sequitur.sentinel && current != nil; i++ {
+		collect = append(collect, pos{current, i})
+		current = current.Prev
+	}
+
+	// Reverse to get oldest-first order.
+	out := make([]string, 0, len(collect))
+	for i := len(collect) - 1; i >= 0; i-- {
+		sym := collect[i].node.Val
+		if id, ok := ruleID(sym); ok {
+			out = append(out, RuleRef(id))
+		} else {
+			out = append(out, string(sym))
+		}
+	}
+
+	return out
+}
+
+/*
 LastRule is the most recently created production, or nil.
 */
 func (sequitur *Sequitur) LastRule() *Rule {
 	sequitur.mu.Lock()
 	defer sequitur.mu.Unlock()
-
 	return sequitur.lastRule
 }
 
 /*
-Symbols is how many distinct symbols the grammar holds, root included.
+Symbols is how many distinct symbols the grammar holds, rules included.
 */
 func (sequitur *Sequitur) Symbols() int {
 	sequitur.mu.Lock()
 	defer sequitur.mu.Unlock()
-
 	return len(sequitur.rules) + 1
 }
 
 /*
-Rules lists every production with its right-hand side as symbol strings:
-the grammar snapshot the hub streams so the dashboard renders the live
-rulebook.
+Rules lists every production with its right-hand side as display strings.
+The dashboard's rulebook and the SequiturFrame's rules field use this.
 */
 func (sequitur *Sequitur) Rules() [][]string {
 	sequitur.mu.Lock()
@@ -145,11 +194,13 @@ func (sequitur *Sequitur) Rules() [][]string {
 
 	for _, rule := range sequitur.rules {
 		symbols := make([]string, 0)
-
 		for node := rule.Head.Next; node != nil && node != rule.Head; node = node.Next {
-			symbols = append(symbols, string(node.Val))
+			if id, ok := ruleID(node.Val); ok {
+				symbols = append(symbols, RuleRef(id))
+			} else {
+				symbols = append(symbols, string(node.Val))
+			}
 		}
-
 		productions = append(productions, symbols)
 	}
 
@@ -157,7 +208,36 @@ func (sequitur *Sequitur) Rules() [][]string {
 }
 
 /*
-TerminalNames flattens rule into terminal token strings (e.g. R08/R07).
+RootSequence returns the full root as display strings, oldest first.
+Used for the SequiturFrame's `start` field.
+*/
+func (sequitur *Sequitur) RootSequence() []string {
+	sequitur.mu.Lock()
+	defer sequitur.mu.Unlock()
+
+	out := make([]string, 0, sequitur.length)
+	for node := sequitur.sentinel.Next; node != nil && node != sequitur.sentinel; node = node.Next {
+		if id, ok := ruleID(node.Val); ok {
+			out = append(out, RuleRef(id))
+		} else {
+			out = append(out, string(node.Val))
+		}
+	}
+
+	return out
+}
+
+/*
+RootLength is the number of symbols currently in the root sequence.
+*/
+func (sequitur *Sequitur) RootLength() int {
+	sequitur.mu.Lock()
+	defer sequitur.mu.Unlock()
+	return sequitur.length
+}
+
+/*
+TerminalNames flattens rule into terminal token strings (e.g. R08, R07).
 */
 func (sequitur *Sequitur) TerminalNames(rule *Rule) []string {
 	if sequitur == nil || rule == nil || rule.Head == nil {
@@ -179,17 +259,15 @@ func (sequitur *Sequitur) collectTerminalNames(rule *Rule, names *[]string) {
 			if nested := sequitur.rules[id]; nested != nil {
 				sequitur.collectTerminalNames(nested, names)
 			}
-
 			continue
 		}
-
 		*names = append(*names, string(node.Val))
 	}
 }
 
 /*
-Flush reports whether there are tokens since the last boundary.
-The caller should treat true as a flush boundary and emit their buffer.
+Flush reports whether there are tokens since the last boundary and resets
+the pending counter.
 */
 func (sequitur *Sequitur) Flush() bool {
 	sequitur.mu.Lock()
@@ -197,7 +275,6 @@ func (sequitur *Sequitur) Flush() bool {
 
 	hasPending := sequitur.pendingLen > 0
 	sequitur.pendingLen = 0
-
 	return hasPending
 }
 
@@ -207,9 +284,10 @@ RuleCount returns the number of discovered grammar rules.
 func (sequitur *Sequitur) RuleCount() int {
 	sequitur.mu.Lock()
 	defer sequitur.mu.Unlock()
-
 	return len(sequitur.rules)
 }
+
+// --- internal (caller must hold mu) ---
 
 func (sequitur *Sequitur) appendNode(n *Node) {
 	last := sequitur.sentinel.Prev
@@ -240,20 +318,18 @@ func (sequitur *Sequitur) check(n *Node) *Rule {
 			if match == n || match.Next == n || match.Next == n.Next {
 				return nil
 			}
-
 			return sequitur.reduce(n, match, digram)
 		}
 	}
 
 	sequitur.digrams[digram] = n
-
 	return nil
 }
 
 func (sequitur *Sequitur) reduce(
 	newOccur, firstOccur *Node, d [2]Symbol,
 ) *Rule {
-	ruleID := sequitur.nextID
+	id := sequitur.nextID
 	sequitur.nextID++
 
 	head := &Node{}
@@ -264,15 +340,15 @@ func (sequitur *Sequitur) reduce(
 	n1.Next = n2
 
 	rule := &Rule{
-		ID:    ruleID,
+		ID:    id,
 		Count: 2,
 		Head:  head,
 	}
 
-	sequitur.rules[ruleID] = rule
+	sequitur.rules[id] = rule
 
-	sequitur.substitute(firstOccur, ruleID)
-	sequitur.substitute(newOccur, ruleID)
+	sequitur.substitute(firstOccur, id)
+	sequitur.substitute(newOccur, id)
 
 	delete(sequitur.digrams, d)
 
@@ -300,15 +376,12 @@ func (sequitur *Sequitur) checkAdjacencies(a, b *Node) {
 	if !sequitur.isSentinel(a) && !sequitur.isSentinel(a.Prev) {
 		sequitur.check(a.Prev)
 	}
-
 	if !sequitur.isSentinel(a) {
 		sequitur.check(a)
 	}
-
 	if !sequitur.isSentinel(b) && b != a && !sequitur.isSentinel(b.Prev) {
 		sequitur.check(b.Prev)
 	}
-
 	if !sequitur.isSentinel(b) && b != a {
 		sequitur.check(b)
 	}

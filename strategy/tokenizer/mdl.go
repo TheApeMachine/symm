@@ -34,6 +34,11 @@ type MDL struct {
 	candidates []candidate
 	offset     int
 
+	// lastGain is the MDL boundary gain from the most recent cut,
+	// normalised to [0, 1]. Used by the Sequencer to compute token
+	// confidence: a strong structural break yields high confidence.
+	lastGain float64
+
 	MinSegmentBytes int
 
 	ShannonCeiling float64
@@ -153,6 +158,10 @@ func (seq *MDL) Analyze(pos uint32, byteVal byte) (bool, int, []int, SegmentMeta
 			gain:   gain,
 			forced: shannonForced || phaseForced || primeForced,
 		})
+
+		// Track the gain for the Sequencer's confidence computation.
+		// Normalise: a gain of 1.0+ means a very strong structural break.
+		seq.lastGain = gain
 
 		seq.offset = absK
 		seq.dist = NewDistribution()
@@ -439,6 +448,16 @@ func (seq *MDL) FeedbackRetrievalQuality(
 			seq.calibrator.SensitivityPop() * math.Exp(-adjust),
 		)
 	}
+}
+
+// LastGain returns the normalised boundary gain from the most recent cut.
+// Zero when no boundary has been detected yet. The Sequencer uses this to
+// compute token confidence.
+func (seq *MDL) LastGain() float64 {
+	if seq.lastGain > 1.0 {
+		return 1.0
+	}
+	return seq.lastGain
 }
 
 func (seq *MDL) Phase() (float64, float64) {
