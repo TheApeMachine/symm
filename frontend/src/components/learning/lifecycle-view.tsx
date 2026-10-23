@@ -34,7 +34,6 @@ import {
 	useLifecycles,
 } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
-import { ActivePositionHealthCard, TradeRegionScores } from "./position-health";
 
 /*
 Confluence region taxonomy mapped to human-readable names and visual color tones.
@@ -966,7 +965,14 @@ const TrainingSampleCard = ({ life }: { life: Lifecycle }) => {
 
 			{marks === null ? (
 				<span className="text-[10px] text-(--f4)">
-					this lot carries no tape ticks — its run predates the markers
+					commit needs entry_tick and exit_tick on the desk lot (B and C); A
+					uses mark_a_tick when set, otherwise entry
+				</span>
+			) : null}
+			{marks !== null && !life.policy_epoch ? (
+				<span className="text-[10px] text-(--f4)">
+					commit needs policy_epoch on the lot (the tick run / workspace epoch
+					at entry)
 				</span>
 			) : null}
 
@@ -1048,18 +1054,19 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 };
 
 /*
-LifecycleView follows every paper position through its life, as the run
-publishes it over the hub: the policy match that opened it, the desk's sizing
-inputs, each order and paper fill, the open position marked against the live
-bid, the policy exit match that closed it and the outcome. Paper trading has
-no real-exchange ledger: those figures read "not available", never zero.
+LifecycleView is the settled round-trip archive: only closed desk lots appear
+in the list. Open lots live on Open positions. Each row replays match, sizing,
+fills, exit, and outcome from the hub tape; paper exchange figures read
+"not available", never zero.
 */
 export const LifecycleView = () => {
 	const { report } = useLifecycles();
 	const book = useSelector(bookAtom, (state) => state);
 	const view = selectBook(report, book);
 	const [selected, setSelected] = useState<string | null>(null);
-	const lifecycles = view.lifecycles.map(shownLife);
+	const lifecycles = view.lifecycles
+		.map(shownLife)
+		.filter((life) => life.status === "closed");
 	const perf = view.performance;
 	const name = book === "virtual" ? "virtual" : "paper";
 	const active =
@@ -1107,7 +1114,7 @@ export const LifecycleView = () => {
 				<Flex.Column className="w-64 shrink-0 overflow-auto border-(--line) border-r bg-(--surface)/40 max-lg:w-full">
 					{lifecycles.length === 0 ? (
 						<Typography.Mono size="s" tone="f3" className="p-3">
-							No positions this session yet.
+							No closed positions this session yet.
 						</Typography.Mono>
 					) : (
 						lifecycles.map((life) => {
@@ -1177,11 +1184,7 @@ export const LifecycleView = () => {
 							/>
 							<LifecycleStepper life={active} />
 							<StrategyIntelligenceCard life={active} />
-							{active.status !== "closed" ? (
-								<ActivePositionHealthCard life={active} />
-							) : (
-								<OutcomeCard life={active} />
-							)}
+							<OutcomeCard life={active} />
 							<TrainingSampleCard life={active} />
 							{(active.events ?? []).map((event, index) => (
 								// biome-ignore lint/suspicious/noArrayIndexKey: events are append-only
@@ -1193,10 +1196,6 @@ export const LifecycleView = () => {
 							Select a position to see its life cycle.
 						</Typography.Mono>
 					)}
-				</Flex.Column>
-
-				<Flex.Column className="w-96 shrink-0 overflow-hidden border-(--line) border-l max-lg:w-full">
-					<TradeRegionScores life={active} />
 				</Flex.Column>
 			</Flex>
 		</Flex.Column>

@@ -57,11 +57,43 @@ const ensureKiloProbe = (): KiloProbe => {
 };
 
 /*
+advanceMarketTick moves the UI trade counter only on workspace aggregate
+ticks (spot:trade steps). Manifold, resonance, parallel, balance, desk
+hello, and grammar frames also carry tick headers; applying those blindly
+made the counter jump when a batch ended on a side-channel Value or a
+stale replay.
+*/
+const advanceMarketTick = (value: Value) => {
+	if (value.origin !== "workspace" || value.scope !== "aggregate") {
+		return;
+	}
+
+	if (value.tick == null) {
+		return;
+	}
+
+	const tick = Number(value.tick);
+
+	if (!Number.isFinite(tick) || tick <= 0) {
+		return;
+	}
+
+	const prev = atoms.tickCount.get();
+
+	if (tick < prev) {
+		return;
+	}
+
+	atoms.tickCount.set(tick);
+	updateClock(value.timestamp);
+};
+
+/*
 ingest routes one decoded batch. An origin with an atom (balance, ...) sets
-it; an origin with a signal store takes the frame under its scope. The tick
-atom and clock advance on every frame that carries a tick, and the cognition,
-sequitur and training-region feeds are folded into their own stores here —
-the same for any origin that carries their layers.
+it; an origin with a signal store takes the frame under its scope. The trade
+counter follows workspace aggregate ticks only (see advanceMarketTick).
+Cognition, sequitur and training-region feeds are folded into their own
+stores here — the same for any origin that carries their layers.
 */
 export const ingest = (values: Value[]) => {
 	const probe = ensureKiloProbe();
@@ -136,15 +168,6 @@ export const ingest = (values: Value[]) => {
 				ingestCognitionFrame(value.role, payload);
 			}
 
-			if (value.tick != null) {
-				const tick = Number(value.tick);
-
-				if (Number.isFinite(tick) && tick > 0) {
-					atoms.tickCount.set(tick);
-					updateClock(value.timestamp);
-				}
-			}
-
 			continue;
 		}
 
@@ -197,19 +220,7 @@ export const ingest = (values: Value[]) => {
 			}
 		}
 
-		/*
-		The tick is a monotonic clock, not a per-frame payload. Frames that
-		carry no tick (or a zero/unparseable one) must not reset the count —
-		keep the last one seen.
-		*/
-		if (value.tick != null) {
-			const tick = Number(value.tick);
-
-			if (Number.isFinite(tick) && tick > 0) {
-				atoms.tickCount.set(tick);
-				updateClock(value.timestamp);
-			}
-		}
+		advanceMarketTick(value);
 	}
 };
 

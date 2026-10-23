@@ -63,7 +63,7 @@ describe("OpenPositions", () => {
 		expect(view.getByText("RLC/USD")).toBeTruthy();
 		expect(view.getByText("held 1m 15s")).toBeTruthy();
 		expect(view.getByText("5.0%")).toBeTruthy();
-		expect(view.getByText("qty 2")).toBeTruthy();
+		expect(view.getByText(/ahead after fees|behind after fees|roughly flat/i)).toBeTruthy();
 	});
 
 	it("shows exit room on the gauge when the book covers the lot", () => {

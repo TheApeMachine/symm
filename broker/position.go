@@ -22,6 +22,8 @@ type Position struct {
 	Symbol          string                  `json:"symbol"`
 	OpenedAt        time.Time               `json:"opened_at"`
 	ClosedAt        *time.Time              `json:"closed_at"`
+	PolicyEpoch     uint64                  `json:"policy_epoch,omitempty"`
+	MarkATick       uint64                  `json:"mark_a_tick,omitempty"`
 	EntryTick       uint64                  `json:"entry_tick,omitempty"`
 	ExitTick        uint64                  `json:"exit_tick,omitempty"`
 	EntryOrders     []*spot.OrderRequest    `json:"entry_orders,omitempty"`
@@ -149,7 +151,12 @@ func (position *Position) Enter() (*spot.OrderRequest, error) {
 	})
 
 	position.OpenedAt = time.Now().UTC()
-	position.EntryTick = data.Tick.Load()
+	tick := data.Tick.Load()
+	position.PolicyEpoch = data.Epoch.Load()
+	position.EntryTick = tick
+	if position.MarkATick == 0 {
+		position.MarkATick = tick
+	}
 
 	virtual := position.Virtual
 	order := position.EntryOrders[len(position.EntryOrders)-1]

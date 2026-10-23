@@ -537,6 +537,37 @@ func TestCloseWritesPrecursorAndHoldingAsSeparatePaths(t *testing.T) {
 	}
 }
 
+func TestAppendPathSkipsConsecutiveDuplicate(t *testing.T) {
+	model := NewModel(context.Background(), newFakeDesk(), nil, nil, nil)
+	const symbol = "ACU/USD"
+
+	chord := tokenizer.ChordToken([]tokenizer.Token{
+		tokenizer.NewTokenFromRegion(0, 0.8),
+		tokenizer.NewTokenFromRegion(9, 0.8),
+	})
+
+	model.mu.Lock()
+	first := model.appendPath(symbol, chord)
+	second := model.appendPath(symbol, chord)
+	other := model.appendPath(
+		symbol,
+		tokenizer.ChordToken([]tokenizer.Token{
+			tokenizer.NewTokenFromRegion(1, 0.8),
+		}),
+	)
+	model.mu.Unlock()
+
+	if len(first) != 1 {
+		t.Fatalf("first append len = %d, want 1", len(first))
+	}
+	if len(second) != 1 {
+		t.Fatalf("duplicate append len = %d, want 1", len(second))
+	}
+	if len(other) != 2 {
+		t.Fatalf("after transition len = %d, want 2", len(other))
+	}
+}
+
 func TestModelMaxPathLength(t *testing.T) {
 	model := NewModel(context.Background(), newFakeDesk(), nil, nil, nil)
 	const symbol = "DOT/USD"

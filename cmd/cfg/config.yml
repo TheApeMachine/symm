@@ -189,6 +189,11 @@ market:
                # deploying smaller slices of your capital, sized according to the liquidity 
                # actually available in the book.
                #
+               # trading.allocation.touch_carry_divisor enforces that cap on
+               # every entry: at most one third of the touch bid, or nothing if
+               # the venue minimum is larger than that slice. Profitable and
+               # sympathetic beats greedy; the market sets size, not ambition.
+               #
                # Because if you're paying to be your own liquidity, you're gonna have a bad time.
                #
                # The point of the numbers is not to pretend that $200 magically turns into $38 
@@ -303,6 +308,13 @@ ui:
 
 trading:
   model: paper
+  allocation:
+    # Upper bound on quote cash one desk entry may spend (Enter / Quote).
+    max_fraction: 0.20
+    # Entry quantity cap: best-bid size divided by this divisor. 3 means we
+    # take at most one third of what the touch can carry, so a touch exit
+    # still has margin if the book thins. Below instrument minimum → no entry.
+    touch_carry_divisor: 3
   persistence:
     # Stoploss checkpoints and trade-journal updates leave guardian threads
     # through this ordered, non-dropping queue.

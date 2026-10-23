@@ -4,6 +4,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import type { DeskPosition } from "#/collections/types";
+import {
+	ingestDeskSnapshot,
+	resetLifecycles,
+} from "#/lib/lifecycle";
 import { Value } from "#/types/value";
 import { PaperPerformance } from "./paper-performance";
 
@@ -45,29 +49,24 @@ const lot = (over: Partial<DeskPosition>): DeskPosition =>
 
 afterEach(() => {
 	cleanup();
+	resetLifecycles();
 	bookAtom.set("paper");
 	signals.positions.setState(() => ({}));
 });
 
 describe("PaperPerformance", () => {
-	it("reads win rate and mean edge from the open lots", () => {
-		ingest(
-			lot({ symbol: "BTC/USD", book_return: 10 }),
-			lot({ symbol: "ETH/USD", book_return: -10 }),
-		);
-
+	it("shows dashes until a priced close is recorded in the lifecycle store", () => {
+		ingest(lot({ symbol: "BTC/USD", book_return: 10, virtual: true }));
 		const view = render(<PaperPerformance />);
-
-		expect(view.getByText("50.0%")).toBeTruthy();
-		expect(view.getByText("0.0%")).toBeTruthy();
+		expect(view.getAllByText("—").length).toBeGreaterThanOrEqual(2);
 	});
 
-	it("prefers closed round trips once one has closed", () => {
+	it("reads win rate and edge from settled virtual closes the session remembers", () => {
 		ingest(
-			lot({ symbol: "BTC/USD", book_return: -10 }),
 			lot({
 				id: "done",
-				symbol: "ETH/USD",
+				symbol: "UP/USD",
+				virtual: true,
 				closed_at: "2026-10-18T09:00:00Z",
 				cost: "10",
 				proceeds: "12",
@@ -75,6 +74,8 @@ describe("PaperPerformance", () => {
 				net_return: 20,
 			}),
 		);
+		ingestDeskSnapshot();
+		bookAtom.set("virtual");
 
 		const view = render(<PaperPerformance />);
 

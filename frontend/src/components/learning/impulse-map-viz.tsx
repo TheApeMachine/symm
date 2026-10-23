@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { atoms } from "#/collections/app";
 import { cn } from "#/lib/utils";
 import { sympathyAnchor } from "./grid-pins";
+import { REGION_KEYS, REGIONS } from "./position-health";
 import type { ImpulseNode } from "./types";
 import { useImpulseData } from "./use-impulse-data";
 
@@ -45,9 +46,19 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	const liveData = useImpulseData(propData ? "" : activeSymbol);
 
 	const data = propData ?? liveData.data;
-	const _regions = propRegions ?? (propData ? [] : liveData.regions);
-	const activeEvents =
+	const regions =
+		propRegions ??
+		(propData
+			? REGION_KEYS.map((_, id) => ({
+					id,
+					strength: 0,
+					authority: 0,
+					members: 0,
+				}))
+			: liveData.regions);
+	const _activeEvents =
 		propActiveEvents ?? (propData ? [] : liveData.activeEvents);
+	void _activeEvents;
 	const gridCells =
 		propGridCells ?? (propData ? undefined : liveData.gridCells);
 	const gridRegions =
@@ -635,7 +646,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 			uniqueClusters.add(Number(node.cluster));
 		}
 	}
-	for (const r of _regions) {
+	for (const r of regions) {
 		if (r.id != null && Number(r.id) >= 0) {
 			uniqueClusters.add(Number(r.id));
 		}
@@ -643,8 +654,8 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	const regionCount =
 		gridRegions !== undefined
 			? gridRegions
-			: _regions.length > 0
-				? _regions.length
+			: regions.length > 0
+				? regions.length
 				: uniqueClusters.size;
 
 	return (
@@ -828,59 +839,73 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					</span>
 				</div>
 
-				{/* Market Tape / Active Regions Overlay */}
-				<div className="absolute top-4 left-4 w-68 bg-(--surface)/85 backdrop-blur border border-(--line) rounded p-3 pointer-events-none shadow-xl font-mono">
-					<div className="text-[10px] uppercase tracking-widest text-(--f4) mb-2 flex items-center justify-between">
-						<span>
-							{activeEvents.length > 0
-								? `Active Regions (${activeEvents.length})`
-								: "Market Tape Feed"}
-						</span>
+				{/* Global grid regions R00–R14: stable order, brightness per tick */}
+				<div
+					data-l="region-brightness-panel"
+					className="absolute top-4 left-4 w-72 bg-(--surface)/90 backdrop-blur border border-(--line) rounded p-2.5 pointer-events-none shadow-xl font-mono"
+				>
+					<div className="text-[10px] uppercase tracking-widest text-(--f4) mb-2 flex items-center justify-between gap-2">
+						<span>Grid regions · {activeSymbol.replace("/USD", "")}</span>
 						{isPlaying && (
-							<span className="w-1.5 h-1.5 rounded-full bg-(--up) animate-pulse" />
+							<span className="w-1.5 h-1.5 rounded-full bg-(--up) animate-pulse shrink-0" />
 						)}
 					</div>
-					<div className="space-y-1.5 text-xs max-h-60 overflow-y-auto">
-						{activeEvents.length > 0 ? (
-							activeEvents.map((evt) => (
+					<div className="space-y-1 text-[10px] max-h-[min(420px,55vh)] overflow-y-auto pr-0.5">
+						{REGION_KEYS.map((regionKey, idx) => {
+							const meta = REGIONS[regionKey];
+							const row = regions[idx] ?? regions.find((r) => r.id === idx);
+							const strength = row?.strength ?? 0;
+							const members = row?.members;
+							const lit = strength > 0.02;
+
+							return (
 								<div
-									key={
-										evt.id !== undefined
-											? `event-${evt.id}`
-											: `event-${evt.label}`
-									}
-									className="flex flex-col gap-1 text-(--f2)"
+									key={regionKey}
+									data-l={`region-row-${regionKey}`}
+									className="flex flex-col gap-0.5"
 								>
-									<div className="flex justify-between items-center text-[11px]">
-										<span className="truncate pr-2 font-medium">
-											{evt.label}
-										</span>
-										<div className="flex items-center gap-1.5 shrink-0">
-											{evt.members != null && (
-												<span className="text-[10px] text-(--f4)">
-													{evt.members}m
-												</span>
+									<div className="flex justify-between items-baseline gap-2">
+										<span
+											className={cn(
+												"truncate font-medium",
+												lit ? "text-(--f1)" : "text-(--f4)",
 											)}
-											<span className="text-(--acc) font-bold">
-												{evt.activity.toFixed(2)}
+										>
+											{regionKey}{" "}
+											<span className="font-normal opacity-80">
+												{meta?.title ?? ""}
 											</span>
-										</div>
+										</span>
+										<span
+											className={cn(
+												"tabular-nums shrink-0 font-bold",
+												lit ? "text-(--acc)" : "text-(--f4)",
+											)}
+										>
+											{strength.toFixed(2)}
+											{members != null && members > 0 ? (
+												<span className="text-[9px] font-normal text-(--f4) ml-1">
+													{members}m
+												</span>
+											) : null}
+										</span>
 									</div>
-									<div className="w-full h-1 bg-(--sunken) rounded-full overflow-hidden">
+									<div className="h-1 bg-(--sunken) rounded-full overflow-hidden">
 										<div
-											className="h-full bg-(--acc) rounded-full transition-all"
+											className="h-full rounded-full transition-[width] duration-150"
 											style={{
-												width: `${Math.min(100, Math.max(6, evt.activity * 100))}%`,
+												width: `${Math.min(100, strength * 100)}%`,
+												background: lit
+													? strength >= 0.5
+														? "var(--acc)"
+														: "var(--info)"
+													: "var(--line2)",
 											}}
 										/>
 									</div>
 								</div>
-							))
-						) : (
-							<div className="text-(--f4) text-[11px] italic">
-								Quiescent · Awaiting impulse
-							</div>
-						)}
+							);
+						})}
 					</div>
 				</div>
 			</div>

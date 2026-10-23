@@ -293,6 +293,11 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 
 		remember({
 			...life,
+			policy_epoch: life.policy_epoch ?? existing?.policy_epoch,
+			marks_a: life.marks_a ?? existing?.marks_a,
+			marks_b: life.marks_b ?? existing?.marks_b,
+			marks_c: life.marks_c ?? existing?.marks_c,
+			path: life.path ?? existing?.path,
 			events: existing?.events?.length ? existing.events : life.events,
 			outcome: life.outcome ?? existing?.outcome ?? life.outcome ?? null,
 			mark: life.mark ?? existing?.mark ?? null,
@@ -303,6 +308,57 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 
 export const ingestDeskSnapshot = () => {
 	ingestDeskClosedLots(positionRows(appSignals.positions.state));
+};
+
+const deskRowFromClosedLife = (life: Lifecycle): Record<string, unknown> | null => {
+	if (life.status !== "closed" || !life.outcome) {
+		return null;
+	}
+
+	const outcome = life.outcome;
+	return {
+		id: life.id,
+		symbol: life.symbol,
+		virtual: life.book === "virtual",
+		opened_at: life.opened_at,
+		closed_at: life.closed_at,
+		cost: outcome.cost,
+		proceeds: outcome.proceeds,
+		profit: outcome.realized,
+		/* Desk wire format: percent points; readout divides by 100. */
+		net_return: outcome.net_return * 100,
+		hold_ns: outcome.hold_ns,
+	};
+};
+
+/*
+deskRowsForStats is the positions snapshot plus closed desk lots the lifecycle
+store still holds after Train drops them from the hub frame. Edge and win rate
+must use this, not positionRows alone.
+*/
+export const deskRowsForStats = (): Record<string, unknown>[] => {
+	const rows = positionRows(appSignals.positions.state);
+	const seen = new Set(
+		rows.filter((row) => row.id).map((row) => String(row.id)),
+	);
+
+	for (const life of lives.values()) {
+		if (!life.desk || life.status !== "closed" || !life.outcome) {
+			continue;
+		}
+
+		if (seen.has(life.id)) {
+			continue;
+		}
+
+		const row = deskRowFromClosedLife(life);
+		if (row) {
+			rows.push(row);
+			seen.add(life.id);
+		}
+	}
+
+	return rows;
 };
 
 /* resetLifecycles empties the store (tests). */

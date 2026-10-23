@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { summarizeBook } from "#/collections/longtail";
+import { signals } from "#/collections/app";
+import type { DeskPosition } from "#/collections/types";
+import { Value } from "#/types/value";
 import {
+	deskRowsForStats,
+	ingestDeskSnapshot,
 	ingestPositionFrame,
 	resetLifecycles,
 	selectBook,
@@ -168,6 +174,34 @@ describe("lifecycle store", () => {
 		const ids = snapshotOf().report.lifecycles.map((life) => life.id);
 		expect(ids).toContain("open");
 		expect(ids).not.toContain("closed-0");
+	});
+
+	it("keeps closed desk lots in deskRowsForStats after they leave the hub snapshot", () => {
+		const row = {
+			id: "closed-up",
+			symbol: "UP/USD",
+			virtual: true,
+			opened_at: "2026-10-18T08:00:00Z",
+			closed_at: "2026-10-18T09:00:00Z",
+			cost: 200,
+			proceeds: 200.03,
+			profit: 0.03,
+			net_return: 0.2,
+		} as DeskPosition;
+		const value = new Value({
+			origin: "positions",
+			role: "update",
+			scope: "UP-USD",
+		});
+		value.layers = [new TextEncoder().encode(JSON.stringify(row))];
+		value.index = [`${value.prefix}/position`];
+		signals.positions.setState(() => ({ "UP-USD": value }));
+		ingestDeskSnapshot();
+		signals.positions.setState(() => ({}));
+
+		const stats = summarizeBook(deskRowsForStats(), "virtual");
+		expect(stats.closed).toBe(1);
+		expect(stats.meanReturn).toBeCloseTo(0.002);
 	});
 
 	it("keeps a virtual life out of the paper book", () => {

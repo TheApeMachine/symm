@@ -100,6 +100,7 @@ type Model struct {
 	ingress         *sync.Map
 	tickReadings    *sync.Map
 	excursions      map[string]*excursion
+	pathAnchorTick  map[string]uint64
 	venueAnchor     map[string]float64
 	cool            map[string]*coolDown
 }
@@ -126,9 +127,10 @@ func NewModel(
 		settled:      &sync.Map{},
 		ingress:      &sync.Map{},
 		tickReadings: &sync.Map{},
-		excursions:   map[string]*excursion{},
-		venueAnchor:  map[string]float64{},
-		cool:         map[string]*coolDown{},
+		excursions:      map[string]*excursion{},
+		pathAnchorTick:  map[string]uint64{},
+		venueAnchor:     map[string]float64{},
+		cool:            map[string]*coolDown{},
 	}
 
 	policyPrefix := strings.TrimSuffix(cfg.PolicyPrefix, "/")
@@ -981,6 +983,10 @@ func (model *Model) openExcursion(symbol, pathKey string) error {
 
 	// The virtual lot is what the learning book and the longtail edge read.
 	// Confirmation still has to pass before a venue order is sent.
+	model.mu.Lock()
+	markA := model.pathAnchorTick[symbol]
+	model.mu.Unlock()
+
 	if err := model.desk.Enter(symbol, pathKey, true); err != nil {
 		if errnie.IsNotFound(err) {
 			return nil
@@ -988,8 +994,13 @@ func (model *Model) openExcursion(symbol, pathKey string) error {
 		return err
 	}
 
-	if model.desk.Virtual(symbol) == nil {
+	virtual := model.desk.Virtual(symbol)
+	if virtual == nil {
 		return nil
+	}
+
+	if markA > 0 && markA <= virtual.EntryTick {
+		virtual.MarkATick = markA
 	}
 
 	model.mu.Lock()
@@ -1247,17 +1258,39 @@ func regionIndex(symbol string) (int, bool) {
 }
 
 // appendPath adds a token to the symbol's accumulated path, trimming
-// to maxPathLength, and stores it. Caller must hold model.mu.
+// to maxPathLength, and stores it. Consecutive identical tokens are
+// skipped so the trie learns transitions, not dwell length. Caller
+// must hold model.mu.
 func (model *Model) appendPath(symbol string, token tokenizer.Token) tokenizer.Tokens {
+	label := token.String()
+	if label == "" {
+		untyped, ok := model.paths.Load(symbol)
+		if ok {
+			return untyped.(tokenizer.Tokens)
+		}
+		return nil
+	}
+
 	untyped, ok := model.paths.Load(symbol)
 	var path tokenizer.Tokens
 	if ok {
 		path = untyped.(tokenizer.Tokens)
 	}
+
+	if len(path) > 0 && path[len(path)-1].String() == label {
+		return path
+	}
+
 	path = append(path, token)
 
 	if model.cfg != nil && len(path) > model.cfg.MaxPathLength {
 		path = path[len(path)-model.cfg.MaxPathLength:]
+	}
+
+	if len(path) == 1 {
+		if _, ok := model.pathAnchorTick[symbol]; !ok {
+			model.pathAnchorTick[symbol] = data.Tick.Load()
+		}
 	}
 
 	model.paths.Store(symbol, path)
@@ -1267,6 +1300,7 @@ func (model *Model) appendPath(symbol string, token tokenizer.Token) tokenizer.T
 // resetPath clears the symbol's accumulated path. Caller must hold model.mu.
 func (model *Model) resetPath(symbol string) {
 	model.paths.Store(symbol, tokenizer.Tokens{})
+	delete(model.pathAnchorTick, symbol)
 }
 
 // currentPath is the symbol's accumulated regime path. Caller holds model.mu.

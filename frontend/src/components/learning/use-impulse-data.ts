@@ -83,13 +83,16 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 		const publish = () => {
 			const updatedNodes: ImpulseNode[] = CANONICAL_PINS.map((pin) => {
 				const reading = heldPins.current[pin.id];
+				const regionLit = heldBrightness.current[pin.cluster] ?? 0;
+				const metricAct = reading?.activation ?? 0;
+				const activation = Math.max(metricAct, regionLit);
 
 				return {
 					id: pin.id,
 					label: `${pin.source}:${pin.metric}`,
 					cluster: pin.cluster,
-					snr: reading?.snr ?? 1,
-					activation: reading?.activation ?? 0,
+					snr: reading?.snr ?? (activation >= 0.5 ? 2.5 : 1),
+					activation,
 				};
 			});
 
@@ -104,29 +107,17 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				};
 			});
 
-			const activeEventsList: Array<{
-				id?: number;
-				label: string;
-				activity: number;
-				members?: number;
-			}> = [];
+			const activeEventsList = REGION_KEYS.map((regionKey, idx) => {
+				const meta = REGIONS[regionKey];
+				const strength = heldBrightness.current[idx] ?? 0;
 
-			for (let i = 0; i < 15; i++) {
-				const strength = heldBrightness.current[i] ?? 0;
-				if (strength > 0.02) {
-					const meta = REGIONS[REGION_KEYS[i]];
-					activeEventsList.push({
-						id: i,
-						label: meta
-							? `${meta.id} ${meta.title}`
-							: `R${String(i).padStart(2, "0")}`,
-						activity: strength,
-						members: heldMembers.current[i],
-					});
-				}
-			}
-
-			activeEventsList.sort((a, b) => b.activity - a.activity);
+				return {
+					id: idx,
+					label: meta ? `${meta.id} ${meta.title}` : regionKey,
+					activity: strength,
+					members: heldMembers.current[idx],
+				};
+			});
 
 			setState({
 				data: updatedNodes,
@@ -172,6 +163,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				counts: number;
 				symbol?: string;
 			}> = [];
+			let sawRegionLayer = false;
 			/*
 			Training.Step appends the lit regions onto the workspace tick
 			as train/regions. A training-origin frame may also carry
@@ -183,6 +175,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				for (const key of ["train/regions", "grid/regions"]) {
 					for (const { payload } of frame.layersUnder(key)) {
 						if (!Array.isArray(payload)) continue;
+						sawRegionLayer = true;
 						for (const region of payload) {
 							if (!region || typeof region.key !== "number") continue;
 							if (
@@ -245,40 +238,43 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			}
 
 			/*
-			Region rows arrive as their own objects. A region missing from
-			this tick is not a dark region; its brightness and members stay.
+			Each tick's train/regions row is the grid's lit set for this
+			symbol (post midpoint cut). Regions absent from that row read
+			as zero so consistently dead slots stay visible in the panel.
 			*/
-			for (let i = 0; i < 15; i++) {
-				const key = `R${String(i).padStart(2, "0")}`;
-				const explicitBrightness = trainingMetrics[`region_brightness:${key}`];
-				const explicitMembers = trainingMetrics[`region_members:${key}`];
-				const gridRegion = gridRegions.find((region) => region.key === i);
+			if (sawRegionLayer) {
+				for (let i = 0; i < 15; i++) {
+					const regionKey = `R${String(i).padStart(2, "0")}`;
+					const explicitBrightness =
+						trainingMetrics[`region_brightness:${regionKey}`];
+					const explicitMembers =
+						trainingMetrics[`region_members:${regionKey}`];
+					const gridRegion = gridRegions.find((region) => region.key === i);
 
-				let brightness: number | undefined;
-				let members: number | undefined;
+					let brightness = 0;
+					let members: number | undefined;
 
-				if (gridRegion && typeof gridRegion.brightness === "number") {
-					brightness = gridRegion.brightness;
-					if (typeof gridRegion.counts === "number") {
-						members = gridRegion.counts;
+					if (gridRegion && typeof gridRegion.brightness === "number") {
+						brightness = gridRegion.brightness;
+						if (typeof gridRegion.counts === "number") {
+							members = gridRegion.counts;
+						}
+					} else if (explicitBrightness !== undefined) {
+						brightness = explicitBrightness;
+						if (explicitMembers !== undefined) {
+							members = Math.round(explicitMembers);
+						}
 					}
-				} else if (explicitBrightness !== undefined) {
-					brightness = explicitBrightness;
-					if (explicitMembers !== undefined) {
-						members = Math.round(explicitMembers);
+
+					if (heldBrightness.current[i] !== brightness) {
+						heldBrightness.current[i] = brightness;
+						changed = true;
 					}
-				}
 
-				if (brightness === undefined) continue;
-
-				if (heldBrightness.current[i] !== brightness) {
-					heldBrightness.current[i] = brightness;
-					changed = true;
-				}
-
-				if (members !== undefined && heldMembers.current[i] !== members) {
-					heldMembers.current[i] = members;
-					changed = true;
+					if (members !== undefined && heldMembers.current[i] !== members) {
+						heldMembers.current[i] = members;
+						changed = true;
+					}
 				}
 			}
 

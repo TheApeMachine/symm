@@ -7,6 +7,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/spf13/viper"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
@@ -221,6 +222,8 @@ func TestSaleUsesTheBookWhenItCanTakeTheQuantity(t *testing.T) {
 }
 
 func TestPrice_AllocateEntryAndLiquidate(t *testing.T) {
+	viper.SetDefault("trading.allocation.touch_carry_divisor", 3)
+
 	Convey("Given a broker.Price with isolated Book and fee", t, func() {
 		ctx := context.Background()
 		normalizer := spot.NewNormalizer()
@@ -304,11 +307,10 @@ func TestPrice_AllocateEntryAndLiquidate(t *testing.T) {
 			// Total entry cost (gross + taker entry fee) must NOT exceed the reference cash (1,000).
 			So(cost.Total.Cmp(budget), ShouldBeLessThanOrEqualTo, 0)
 
-			// The entry must walk past level 1 (500) into level 2: quantity > 0.01
-			So(cost.Quantity.Cmp(decimal.NewFromFloat64(0.01)), ShouldBeGreaterThan, 0)
+			touchCap := decimal.NewFromFloat64(0.02).Div(decimal.NewFromInt64(3))
+			So(cost.Quantity.Cmp(touchCap), ShouldBeLessThanOrEqualTo, 0)
 
-			// VWAP entry price must reflect walking into higher ask level (> 50,000)
-			So(cost.EntryPrice.Cmp(decimal.NewFromFloat64(50000.0)), ShouldBeGreaterThan, 0)
+			So(cost.EntryPrice.Cmp(decimal.NewFromFloat64(50000.0)), ShouldBeGreaterThanOrEqualTo, 0)
 
 			Convey("Liquidate walks bid depth carrying exact quantity with fees/slippage", func() {
 				netProceeds, grossProceeds, liqErr := price.Liquidate(symbol, cost.Quantity)
@@ -330,11 +332,12 @@ func TestPrice_AllocateEntryAndLiquidate(t *testing.T) {
 			So(allocErrNeg, ShouldNotBeNil)
 		})
 
-		Convey("AllocateEntry never exceeds touch bid size", func() {
+		Convey("AllocateEntry never exceeds one third of touch bid size", func() {
 			referenceCash := decimal.NewFromFloat64(1000.0)
 			cost, allocErr := price.AllocateEntry(symbol, referenceCash)
 			So(allocErr, ShouldBeNil)
-			So(cost.Quantity.Cmp(decimal.NewFromFloat64(0.02)), ShouldBeLessThanOrEqualTo, 0)
+			touchCap := decimal.NewFromFloat64(0.02).Div(decimal.NewFromInt64(3))
+			So(cost.Quantity.Cmp(touchCap), ShouldBeLessThanOrEqualTo, 0)
 		})
 
 		Convey("ExitRoom counts touch bid only", func() {

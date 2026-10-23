@@ -185,13 +185,10 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 
 const KpiTile = ({ kpi, samples }: { kpi: Kpi; samples: LongtailSample[] }) => {
 	const series = samples.map(kpi.value);
-	const latest = latestFinite(series);
-	const prior =
-		series.length > 16
-			? series[series.length - 16]
-			: series.length > 0
-				? series[0]
-				: null;
+	const lastSample = samples[samples.length - 1];
+	const latest = lastSample ? kpi.value(lastSample) : null;
+	const priorSample = samples[Math.max(0, samples.length - 16)];
+	const prior = priorSample ? kpi.value(priorSample) : null;
 	const delta =
 		latest !== null && prior !== null && Number.isFinite(prior)
 			? latest - prior

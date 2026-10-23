@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { RingBuffer, signals } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { Value } from "#/types/value";
 import { ImpulseMapViz } from "./impulse-map-viz";
 import type { ImpulseNode } from "./types";
@@ -171,9 +171,8 @@ describe("ImpulseMapViz", () => {
 		const halos = container.querySelectorAll(".halos circle");
 		expect(halos.length).toBeGreaterThan(0);
 
-		// Active regions empirical overlay displays the active region
-		const activeOverlay = container.querySelector(".space-y-1\\.5");
-		expect(activeOverlay?.textContent).toContain("Region #2");
+		const panel = container.querySelector('[data-l="region-brightness-panel"]');
+		expect(panel?.textContent).toContain("R02");
 	});
 
 	it("toggles between Initial Grid and Discovered Regions with correct controls", () => {
@@ -241,9 +240,9 @@ describe("ImpulseMapViz", () => {
 		const hudRegionEl = container.querySelector('[data-l="hud-region-count"]');
 
 		expect(metricCountEl?.textContent).toBe("5");
-		expect(regionCountEl?.textContent).toBe("3");
+		expect(regionCountEl?.textContent).toBe("15");
 		expect(hudMetricEl?.textContent).toBe("5");
-		expect(hudRegionEl?.textContent).toBe("3");
+		expect(hudRegionEl?.textContent).toBe("15");
 	});
 
 	it("renders canonical grid regions and cells when no data prop is provided", () => {
@@ -267,21 +266,33 @@ describe("ImpulseMapViz", () => {
 	});
 
 	it("lights up grid regions when live telemetry arrives on signals.training", () => {
-		const ring = new RingBuffer<Value>(10);
-		const regionsPayload = new TextEncoder().encode(
-			JSON.stringify([
-				{ key: 1, deformation: 5.1, brightness: 0.85, counts: 6 },
-				{ key: 7, deformation: 6.44, brightness: 0.92, counts: 7 },
-			]),
-		);
-		ring.add(
-			new Value({
-				scope: "SPACE/USD",
-				origin: "training",
-				layers: [regionsPayload],
-				index: ["training/tick/SPACE/USD/grid/regions/SPACE/USD"],
-			}),
-		);
+		const frame = new Value({
+			origin: "training",
+			role: "tick",
+			scope: "SPACE-USD",
+			prefix: "training/tick/SPACE-USD",
+		});
+		frame.layers = [
+			new TextEncoder().encode(
+				JSON.stringify([
+					{
+						symbol: "SPACE/USD",
+						key: 1,
+						deformation: 5.1,
+						brightness: 0.85,
+						counts: 6,
+					},
+					{
+						symbol: "SPACE/USD",
+						key: 7,
+						deformation: 6.44,
+						brightness: 0.92,
+						counts: 7,
+					},
+				]),
+			),
+		];
+		frame.index = [`${frame.prefix}/grid/regions`];
 
 		const { container } = render(
 			<div style={{ width: "800px", height: "600px" }}>
@@ -290,15 +301,17 @@ describe("ImpulseMapViz", () => {
 		);
 
 		act(() => {
-			signals.training.setState(() => ({ "SPACE/USD": ring }));
+			signals.training.setState(() => ({ "SPACE/USD": frame }));
 		});
 
-		// Active regions should appear in overlay
-		const activeOverlay = container.querySelector(".space-y-1\\.5");
-		expect(activeOverlay?.textContent).toContain("R07");
-		expect(activeOverlay?.textContent).toContain("R01");
-		expect(activeOverlay?.textContent).toContain("0.92");
-		expect(activeOverlay?.textContent).toContain("0.85");
+		const panel = container.querySelector('[data-l="region-brightness-panel"]');
+		expect(panel?.textContent).toContain("R07");
+		expect(panel?.textContent).toContain("R01");
+		expect(panel?.textContent).toContain("0.92");
+		expect(panel?.textContent).toContain("0.85");
+		expect(container.querySelectorAll('[data-l^="region-row-R"]').length).toBe(
+			15,
+		);
 
 		// Highly active nodes have golden stroke
 		const goldCircles = Array.from(

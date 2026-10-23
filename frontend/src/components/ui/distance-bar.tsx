@@ -21,9 +21,9 @@ export interface DistanceBarProps {
 }
 
 /*
-DistanceBar shows how far a live value sits from a reference: the reference
-is the centre line, the fill runs from it to the value, green to the right
-(above) and red to the left (below).
+DistanceBar shows how far `value` sits from `origin` (centre tick). Fill is
+green when value >= origin and red when below — price comparison only, not
+P&L, fees, or exit economics.
 */
 export const DistanceBar = ({
 	origin,

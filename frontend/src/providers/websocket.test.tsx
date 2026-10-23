@@ -73,7 +73,7 @@ describe("ingest", () => {
 		]);
 
 		expect(sequiturStore.state["BTC/USD"]?.latest.tick).toBe(41);
-		expect(atoms.tickCount.get()).toBe(41);
+		expect(atoms.tickCount.get()).toBe(0);
 	});
 
 	it("keeps a balance frame on the account atom", () => {
@@ -93,7 +93,32 @@ describe("ingest", () => {
 		ingest([frame]);
 
 		expect(atoms.balance.get()).toBe(frame);
-		expect(atoms.tickCount.get()).toBe(9);
+		expect(atoms.tickCount.get()).toBe(0);
+	});
+
+	it("advances the trade counter only on workspace aggregate ticks", () => {
+		ingest([
+			new Value({
+				origin: "workspace",
+				role: "tick",
+				scope: "aggregate",
+				prefix: "workspace/tick/aggregate",
+				index: ["workspace/tick/aggregate/spot:trade"],
+				layers: [new TextEncoder().encode("[]")],
+				tick: 100n,
+			}),
+			new Value({
+				origin: "manifold",
+				role: "parallel",
+				scope: "BTC-USD",
+				prefix: "manifold/parallel/BTC-USD",
+				index: [],
+				layers: [],
+				tick: 95n,
+			}),
+		]);
+
+		expect(atoms.tickCount.get()).toBe(100);
 	});
 
 	it("ingests cognition match frames", () => {

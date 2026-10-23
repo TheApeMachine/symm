@@ -10,7 +10,7 @@ import {
 	positionReadout,
 } from "#/components/book-readout";
 import { positionRows } from "#/components/learning/open-positions";
-import { ingestDeskClosedLots } from "#/lib/lifecycle";
+import { deskRowsForStats, ingestDeskClosedLots } from "#/lib/lifecycle";
 
 export type Trend = "up" | "down" | "flat";
 
@@ -693,7 +693,7 @@ const pushSample = (sample: LongtailSample) => {
 	});
 };
 
-const readPositions = () => positionRows(signals.positions.state);
+const readPositions = () => deskRowsForStats();
 
 let recorderStarted = false;
 let recorderHandle: number | null = null;

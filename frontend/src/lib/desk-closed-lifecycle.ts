@@ -4,6 +4,10 @@ import {
 	settledOutcome,
 } from "#/components/book-readout";
 import type { Lifecycle, LifeOutcome } from "#/lib/lifecycle";
+import {
+	policyEpochFromRow,
+	tapeMarksFromDeskRow,
+} from "#/lib/desk-tape-marks";
 /*
 Desk lifecycle rows mirror the broker position JSON. A row without a
 complete close or stable identity is not a closed round trip.
@@ -93,6 +97,23 @@ export const lifecycleFromDeskClosed = (
 			}
 			: null;
 
+	const tape = tapeMarksFromDeskRow(row);
+	const entryPath =
+		typeof row.entry_path === "string" ? row.entry_path : undefined;
+	const triggers = settle?.triggers ?? [];
+	const openDetail = row.virtual
+		? `virtual open · tick ${tape?.b ?? "—"}${entryPath ? ` · ${entryPath}` : ""}`
+		: `desk open · tick ${tape?.b ?? "—"}`;
+	const exitTick = tape?.c;
+	const exitTickText =
+		exitTick === undefined ? "" : ` · tick ${exitTick}`;
+	const closeDetail =
+		triggers.length > 0
+			? `${triggers.join(", ")}${exitTickText}`
+			: readout.returnPct === null
+				? `closed${exitTickText}`
+				: `return ${(readout.returnPct * 100).toFixed(2)}%${exitTickText}`;
+
 	return {
 		id: row.id as string,
 		symbol: row.symbol as string,
@@ -101,24 +122,21 @@ export const lifecycleFromDeskClosed = (
 		closed_at: readout.closedAt,
 		book: row.virtual ? "virtual" : "paper",
 		desk: true,
-		policy_epoch: row.run as string | undefined,
-		path: row.path as string | undefined,
-		marks_a: (row.marks as Record<string, unknown>)?.a as number | null,
-		marks_b: (row.marks as Record<string, unknown>)?.b as number | null,
-		marks_c: (row.marks as Record<string, unknown>)?.c as number | null,
+		policy_epoch: policyEpochFromRow(row),
+		path: entryPath ?? (row.path as string | undefined),
+		marks_a: tape?.a ?? null,
+		marks_b: tape?.b ?? null,
+		marks_c: tape?.c ?? null,
 		events: [
 			{
 				at: readout.openedAt,
 				kind: "opened",
-				detail: "restored from stored desk lot",
+				detail: openDetail,
 			},
 			{
 				at: readout.closedAt,
 				kind: "closed",
-				detail:
-					readout.returnPct === null
-						? "closed"
-						: `return ${(readout.returnPct * 100).toFixed(2)}%`,
+				detail: closeDetail,
 			},
 		],
 		outcome: outcome as LifeOutcome | null,

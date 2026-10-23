@@ -13,6 +13,8 @@ export type DeskPosition = {
 	symbol: string;
 	opened_at: string;
 	closed_at?: string | null;
+	policy_epoch?: number;
+	mark_a_tick?: number;
 	entry_tick?: number;
 	exit_tick?: number;
 	qty?: string | number;

@@ -8,6 +8,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/spf13/viper"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
@@ -20,8 +21,8 @@ import (
 )
 
 /*
-Desk owns open positions: it sizes entries from the book (exit capacity
-within the slippage budget, flow noise and cash), works them in child market
+Desk owns open positions: it sizes entries from the book (cash budget,
+touch-bid carry divisor, and ask walk), works them in child market
 orders, takes the learned exit, runs the capacity monitor, accumulates venue
 fills beside their shadow fills, and reports each completed round trip.
 */
@@ -260,9 +261,8 @@ func (desk *Desk) Enter(
 
 	cash := desk.balance.cash(desk.balance.Quote)
 
-	// Allocation cap: never commit more than 20% of current cash.
 	if cash != nil && cash.Sign() > 0 {
-		cash = cash.Mul(decimal.NewFromFloat64(0.2))
+		cash = cash.Mul(decimal.NewFromFloat64(viper.GetFloat64("trading.allocation.max_fraction")))
 	}
 
 	allocation, err := desk.price.AllocateEntry(symbol, cash)
@@ -390,7 +390,7 @@ func (desk *Desk) Quote(
 	cash := desk.balance.cash(desk.balance.Quote)
 
 	if cash != nil && cash.Sign() > 0 {
-		cash = cash.Mul(decimal.NewFromFloat64(0.2))
+		cash = cash.Mul(decimal.NewFromFloat64(viper.GetFloat64("trading.allocation.max_fraction")))
 	}
 
 	allocation, err := desk.price.AllocateEntry(symbol, cash)

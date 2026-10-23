@@ -2,32 +2,22 @@ import { useSelector } from "@tanstack/react-store";
 import { useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
-import { cognitionStore, regionHistoryStore } from "#/collections/cognition";
 import { positionReadout } from "#/components/book-readout";
-import {
-	DistanceBar,
-	Flex,
-	formatValue,
-	Gauge,
-	type GaugeTone,
-	RadialHistory,
-	TokenRibbon,
-	Trail,
-} from "#/components/ui";
+import { PositionLotVisual } from "#/components/learning/position-lot-visual";
+import { Flex, formatValue, Gauge, type GaugeTone, Trail } from "#/components/ui";
 import { cn } from "#/lib/utils";
 import { sendCommand } from "#/providers/websocket";
 
 /*
 Open positions are the desk's per-lot frames: one Value per symbol on the
 positions store, whose "position" layer carries the row — entry, mark, fee
-and the sale return. The token path and the region ring are the live
-train/regions sentence for the same symbol.
+and the sale return from broker/price.go.
 */
 
-const REGIONS = 15;
-const TOKEN_GATE = 0.5;
-const regionLabel = (sector: number) => `R${String(sector).padStart(2, "0")}`;
 const trails = new Map<string, number[]>();
+
+/* Match default Gauge SVG height so the P&L trail aligns with the dials. */
+const GAUGE_SIZE = 96;
 
 /*
 positionRows decodes every lot frame the store holds into its row objects.
@@ -84,21 +74,8 @@ const heldSeconds = (row: Record<string, unknown>) => {
 	return Math.max(0, (Date.now() - at) / 1000);
 };
 
-const sectorOf = (token: string) => {
-	const sector = Number(token.slice(1));
-	return Number.isInteger(sector) ? sector : undefined;
-};
-
 const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 	const [exiting, setExiting] = useState(false);
-	const match = useSelector(
-		cognitionStore,
-		(state) => state.matches[row.symbol as string],
-	);
-	const rings = useSelector(
-		regionHistoryStore,
-		(state) => state[row.symbol as string] ?? [],
-	);
 	const readout = positionReadout(row);
 	const entry = readout.entryPrice;
 	const mark = readout.mark;
@@ -119,20 +96,6 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 	}
 
 	const pnlTrail = trails.get(row.id as string) ?? [];
-	const tokens = (match?.tokens ?? [])
-		.map(sectorOf)
-		.filter((sector): sector is number => sector !== undefined)
-		.map((sector) => [sector]);
-	const strength = rings.length
-		? rings[rings.length - 1]?.[tokens[tokens.length - 1]?.[0] ?? -1]
-		: undefined;
-	const peak = Math.max(
-		1,
-		...rings.flat().filter((value): value is number => value !== undefined),
-	);
-	const scaled = rings.map((ring) =>
-		ring.map((value) => (value === undefined ? value : value / peak)),
-	);
 	const selling = !positionReadout(row).closed && qty === 0;
 
 	return (
@@ -164,7 +127,7 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 				</span>
 			</div>
 
-			<div className="grid grid-cols-[auto_1fr] gap-4 items-center">
+			<div className="grid grid-cols-[auto_1fr] gap-4 items-start">
 				<div className="flex gap-1">
 					<Gauge
 						value={
@@ -205,76 +168,27 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 						caption="exit room"
 					/>
 				</div>
-				<div className="flex flex-col gap-2 min-w-0">
-					<DistanceBar
-						origin={entry}
-						value={mark}
-						markers={
-							vwap === null || vwap === undefined
-								? []
-								: [
-										{
-											value: vwap,
-											label: "average price selling everything",
-											color: "var(--info)",
-										},
-									]
-						}
-						leftLabel="less than paid"
-						rightLabel="more than paid"
+				<div className="flex min-w-0 flex-col gap-0">
+					<Trail
+						values={pnlTrail}
+						width={240}
+						height={GAUGE_SIZE}
+						className="max-w-full"
 					/>
-					<Trail values={pnlTrail} width={240} height={40} />
-				</div>
-			</div>
-
-			<div className="grid grid-cols-[auto_1fr] gap-4 items-start border-t border-(--line) pt-3">
-				<div className="flex flex-col items-center">
-					<RadialHistory
-						sectors={REGIONS}
-						rows={scaled}
-						highlight={tokens[tokens.length - 1] ?? []}
-						labels={regionLabel}
-						size={170}
-					/>
-					<span className="text-[9px] text-(--f4)">
-						grid regions · outer ring = now
+					<span className="-mt-3 text-[10px] text-(--f3) leading-tight">
+						Close-now P&amp;L trail
 					</span>
 				</div>
-				<div className="flex flex-col gap-3 min-w-0">
-					<div>
-						<div className="text-[10px] text-(--f3) mb-1">token sequence</div>
-						<TokenRibbon tokens={tokens} label={regionLabel} />
-					</div>
-					<div className="flex items-center gap-2">
-						<Gauge
-							size={56}
-							sweep={180}
-							value={
-								strength === undefined
-									? undefined
-									: Math.min(1, strength / (2 * TOKEN_GATE))
-							}
-							tone={
-								strength !== undefined && strength >= TOKEN_GATE
-									? "acc"
-									: "muted"
-							}
-							ticks={[0.5]}
-						/>
-						<span className="text-[10px] text-(--f3) leading-tight">
-							token strength
-							<br />
-							<span className="text-(--f4)">tick = needed to advance</span>
-						</span>
-					</div>
-				</div>
 			</div>
 
-			<div className="grid grid-cols-4 gap-2 border-t border-(--line) pt-2 text-[10px] text-(--f3)">
-				<span>qty {(row.qty as number) ?? "—"}</span>
-				<span>entry {(row.entry_price as number) ?? "—"}</span>
-				<span>mark {(row.mark as number) ?? "—"}</span>
-				<span>fee {(row.entry_fee as number) ?? "—"}</span>
+			<div className="border-t border-(--line) pt-3">
+				<PositionLotVisual
+					pnlPct={pnlPct}
+					exitRoom={room}
+					entry={entry}
+					mark={mark}
+					exitVwap={vwap ?? undefined}
+				/>
 			</div>
 
 			{/*

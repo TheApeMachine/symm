@@ -98,7 +98,7 @@ describe("useImpulseData", () => {
 		).toBe(0);
 	});
 
-	it("keeps a region when a later tick omits it", () => {
+	it("zeros a region when the next tick's lit set omits it", () => {
 		publish(
 			frame([
 				{
@@ -120,9 +120,8 @@ describe("useImpulseData", () => {
 
 		expect(result.current.regions[2]?.strength).toBe(0.9);
 		expect(result.current.regions[2]?.members).toBe(4);
-		expect(result.current.activeEvents.some((event) => event.id === 2)).toBe(
-			true,
-		);
+		expect(result.current.activeEvents).toHaveLength(15);
+		expect(result.current.activeEvents[2]?.activity).toBe(0.9);
 
 		publish(
 			frame([
@@ -141,14 +140,7 @@ describe("useImpulseData", () => {
 			]),
 		);
 
-		expect(result.current.regions[2]?.strength).toBe(0.9);
-		expect(result.current.regions[4]?.strength).toBe(0.6);
-
-		act(() => {
-			clockAtom.set(1_700_000_000_000);
-		});
-
-		expect(result.current.regions[2]?.strength).toBe(0.9);
+		expect(result.current.regions[2]?.strength).toBe(0);
 		expect(result.current.regions[4]?.strength).toBe(0.6);
 	});
 });

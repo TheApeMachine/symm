@@ -1,26 +1,23 @@
 import { useSelector } from "@tanstack/react-store";
-import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
-import { bookReadout } from "#/components/book-readout";
-import { positionRows } from "#/components/learning/open-positions";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import { ratePercent } from "#/lib/lifecycle";
+import { ratePercent, selectBook, useLifecycles } from "#/lib/lifecycle";
 
 /*
-PaperPerformance is the top bar's win rate and mean edge for the selected
-book. Closed round trips own both figures. Open lots stand in until one closes.
+Top-bar win rate and edge match the Position Life-Cycle header: settled desk
+round trips the session remembers, including virtual closes Train already
+dropped from the live positions snapshot.
 */
 export const PaperPerformance = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const state = useSelector(signals.positions, (state) => state);
-	const readout = bookReadout(positionRows(state), book);
+	const { report } = useLifecycles();
+	const perf = selectBook(report, book).performance;
 	const name = book === "virtual" ? "virtual" : "paper";
-	const basis = readout.closed > 0 ? "closed" : "open";
 	const title =
-		readout.winRate !== null
-			? `${name} ${basis} lots · win rate ${ratePercent(readout.winRate)} · mean edge ${ratePercent(readout.edge)}`
-			: `no ${name} lots with a price yet`;
+		perf.closed > 0
+			? `${name} settled lots · win rate ${ratePercent(perf.win_rate)} · mean edge ${ratePercent(perf.mean_return)} (${perf.closed} closed)`
+			: `no settled ${name} round trips this session yet`;
 
 	return (
 		<Flex.Row align="center" gap={6} data-wallet="performance" title={title}>
@@ -34,7 +31,7 @@ export const PaperPerformance = () => {
 					weight="medium"
 					data-performance="win-rate"
 				>
-					{ratePercent(readout.winRate)}
+					{ratePercent(perf.win_rate)}
 				</Typography.Mono>
 			</Flex.Column>
 			<Flex.Column className="items-end gap-px">
@@ -47,7 +44,7 @@ export const PaperPerformance = () => {
 					weight="medium"
 					data-performance="edge"
 				>
-					{ratePercent(readout.edge)}
+					{ratePercent(perf.mean_return)}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>

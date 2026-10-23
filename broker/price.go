@@ -11,6 +11,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -835,6 +836,32 @@ func (price *Price) budget(referenceCash ...*decimal.Decimal) (*decimal.Decimal,
 }
 
 /*
+touchAllocationCap is the largest entry size allowed versus the touch bid:
+touch quantity divided by trading.allocation.touch_carry_divisor (default 3).
+The market sets the ceiling; we leave headroom so a later exit is not the
+liquidity event.
+*/
+func touchAllocationCap(touchBid *decimal.Decimal) (*decimal.Decimal, error) {
+	if touchBid == nil || touchBid.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "[price] touch bid quantity required for allocation cap", nil,
+		))
+	}
+
+	divisor := viper.GetInt("trading.allocation.touch_carry_divisor")
+
+	if divisor < 1 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[price] trading.allocation.touch_carry_divisor must be at least 1",
+			nil,
+		))
+	}
+
+	return touchBid.Div(decimal.NewFromInt64(int64(divisor))), nil
+}
+
+/*
 RoundTrip prices one complete long at the allocation budget: the quantity the
 budget affords at entry, bought at entry and sold at exit, both legs paying the
 taker fee. It returns the net PnL in quote currency and the total entry cost.
@@ -878,8 +905,8 @@ func (price *Price) RoundTrip(
 
 /*
 AllocateEntry prices an executable entry frozen at the allocation budget.
-It walks ask depth to derive the maximum executable quantity such that
-gross notional plus taker entry fee does not exceed the budget.
+It walks ask depth, then caps quantity at touchAllocationCap (by default
+one third of the touch bid), then enforces instrument minimums.
 */
 func (price *Price) AllocateEntry(
 	symbol string,
@@ -959,8 +986,15 @@ func (price *Price) AllocateEntry(
 				break
 			}
 
-			if qAccum.Cmp(touchBid) > 0 {
-				qAccum = touchBid
+			touchCap, capErr := touchAllocationCap(touchBid)
+
+			if capErr != nil {
+				err = capErr
+				return
+			}
+
+			if qAccum.Cmp(touchCap) > 0 {
+				qAccum = touchCap
 			}
 
 			if qAccum.Sign() <= 0 {

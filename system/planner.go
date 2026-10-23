@@ -18,6 +18,7 @@ type PlannerConfig struct {
 
 func NewPlannerConfig() *PlannerConfig {
 	viper.SetDefault("trading.allocation.max_fraction", 0.20)
+	viper.SetDefault("trading.allocation.touch_carry_divisor", 3)
 	viper.SetDefault("trading.allocation.max_loss_fraction", 0.02)
 	viper.SetDefault("trading.allocation.aggregate_max_loss_fraction", 0.06)
 	viper.SetDefault(

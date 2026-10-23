@@ -78,21 +78,50 @@ afterEach(() => {
 	bookAtom.set("paper");
 });
 
+const paperClosed = {
+	...event("closed", "closed", "closed: pnl -1.100000"),
+	closed_at: "2026-10-10T08:03:00Z",
+	outcome: {
+		cost: 100.1,
+		proceeds: 99,
+		fees: 0.2,
+		realized: -1.1,
+		net_return: -0.011,
+		hold_ns: 180e9,
+		expected_hold_ns: 120e9,
+		triggers: ["policy exit match R02/R03 (depth 2)"],
+	},
+};
+
 describe("LifecycleView", () => {
-	it("renders an open paper position from hub frames, marked at the live bid", () => {
+	it("omits open paper positions from the list until they close", () => {
 		const { container } = render(<LifecycleView />);
-		expect(container.textContent).toContain("No positions this session yet.");
+		expect(container.textContent).toContain(
+			"No closed positions this session yet.",
+		);
 
 		deliver([...entered, mark]);
+		expect(container.textContent).toContain(
+			"No closed positions this session yet.",
+		);
+		expect(container.textContent).not.toContain("SUI/USD · holding");
+	});
+
+	it("renders a closed paper position from hub frames", () => {
+		const { container } = render(<LifecycleView />);
+		deliver([...entered, mark, paperClosed]);
 
 		const kinds = [...container.querySelectorAll("[data-lifecycle-event]")].map(
 			(el) => el.getAttribute("data-lifecycle-event"),
 		);
-		expect(kinds).toEqual(["entry_match", "sizing", "order_submitted", "fill"]);
-		expect(container.textContent).toContain("SUI/USD · holding");
-		expect(
-			container.querySelector('[data-l="lifecycle-mark"]')?.textContent,
-		).toContain("+2.40 USD unrealized");
+		expect(kinds).toEqual([
+			"entry_match",
+			"sizing",
+			"order_submitted",
+			"fill",
+			"closed",
+		]);
+		expect(container.textContent).toContain("SUI/USD · closed");
 		expect(container.textContent).toContain("R01/R02/R03");
 	});
 
@@ -104,20 +133,7 @@ describe("LifecycleView", () => {
 			event("exiting", "exit_match", "policy exit match R02/R03 (depth 2)", {
 				trigger: "policy exit match R02/R03 (depth 2)",
 			}),
-			{
-				...event("closed", "closed", "closed: pnl -1.100000"),
-				closed_at: "2026-10-10T08:03:00Z",
-				outcome: {
-					cost: 100.1,
-					proceeds: 99,
-					fees: 0.2,
-					realized: -1.1,
-					net_return: -0.011,
-					hold_ns: 180e9,
-					expected_hold_ns: 120e9,
-					triggers: ["policy exit match R02/R03 (depth 2)"],
-				},
-			},
+			paperClosed,
 		]);
 
 		const outcome = container.querySelector('[data-l="lifecycle-outcome"]');
@@ -139,7 +155,7 @@ describe("LifecycleView", () => {
 
 	it("draws only the sizing inputs the event carries", () => {
 		const { container } = render(<LifecycleView />);
-		deliver(entered);
+		deliver([...entered, paperClosed]);
 
 		const sizing = container.querySelector(
 			'[data-lifecycle-event="sizing"] button',
@@ -154,7 +170,7 @@ describe("LifecycleView", () => {
 		expect(widget?.textContent).not.toContain("Bound by");
 	});
 
-	it("shows an open virtual as holding, with virtual performance labels", () => {
+	it("omits open virtual lots from the list", () => {
 		bookAtom.set("virtual");
 		const { container } = render(<LifecycleView />);
 		deliver([
@@ -178,15 +194,11 @@ describe("LifecycleView", () => {
 			},
 		]);
 
-		expect(container.textContent).toContain("TEL/USD · holding");
+		expect(container.textContent).toContain(
+			"No closed positions this session yet.",
+		);
+		expect(container.textContent).not.toContain("TEL/USD · holding");
 		expect(container.textContent).toContain("virtual outcome");
-		expect(container.textContent).toContain("virtual win");
-		const stage = (label: string) =>
-			[...container.querySelectorAll("span")].find(
-				(element) => element.textContent === label,
-			);
-		expect(stage("1. Match")?.className).not.toContain("animate-pulse");
-		expect(stage("4. Hold")?.className).toContain("font-bold");
 	});
 
 	it("labels a virtual close with virtual P&L", () => {
